@@ -378,6 +378,15 @@ func TestRedactorEntropy(t *testing.T) {
 		{"deploy subject", "repo:smallhoursorg/example:ref:refs/heads/main", false},
 		{"commit version", "0a1b2c3d4e5f", false},
 		{"lowercase plus digits only", "abcdefghijklmnopqrst1234567890", false},
+		// The bar follows the length: a 20- or 22-character token
+		// (secrets.token_urlsafe(16) is 22) cannot reach 4.5 bits a
+		// character, and was never masked; an identifier with a digit
+		// and a unit setting of the same length stay readable.
+		{"22-character url-safe token", "k3J9xQ2mZ8pL0vT7wR4nY6", true}, // gitleaks:allow — made up for this test
+		{"20-character url-safe token", "k3J9xQ2mZ8pL0vT7wR4n", true},   // gitleaks:allow — made up for this test
+		{"identifier with a digit", "loadEd25519PrivateKey", false},
+		{"unit setting", "RandomizedDelaySec=40s", false},
+		{"error name with a digit", "Sha256DigestMismatchAt0", false},
 	} {
 		out, _ := (*Redactor)(nil).Redact("x " + tc.in + " y")
 		if masked := strings.Contains(out, "[masked, "); masked != tc.masked {
@@ -385,6 +394,67 @@ func TestRedactorEntropy(t *testing.T) {
 		}
 		if !tc.masked && !strings.Contains(out, tc.in) {
 			t.Errorf("%s: changed: %q", tc.name, out)
+		}
+	}
+}
+
+// A redacted_env the body already carries below its top level — a
+// deployResult's, nested in a status — is hoisted into the body's own,
+// with the keys the filter found, each once.
+func TestRedactJSONHoistsANestedRedactedEnv(t *testing.T) {
+	r := NewRedactor([]string{"TOP=hunter2hunter2hunter2"}, nil) // gitleaks:allow
+	body := `{"error":"failed","status":{"last_deploy":{"redacted_env":["API_TOKEN"],"detail":{"log_tail":["[redacted:API_TOKEN]"]}},"deploys":[{"redacted_env":["DB_URL","API_TOKEN"]}]},"note":"hunter2hunter2hunter2"}`
+	out := r.redactJSON([]byte(body))
+	var got struct {
+		RedactedEnv []string `json:"redacted_env"`
+	}
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(got.RedactedEnv, ",") != "API_TOKEN,DB_URL,TOP" {
+		t.Fatalf("redacted_env = %v in %s", got.RedactedEnv, out)
+	}
+}
+
+// The hoist also runs when the filter itself found nothing — the
+// detail's early replacement left only markers — and adds no field
+// when the name is a string's text rather than a field.
+func TestRedactJSONHoistsWithNothingOfItsOwnToReport(t *testing.T) {
+	r := NewRedactor(nil, nil)
+	for _, tc := range []struct{ name, body, want string }{
+		{"a nested field alone", `{"error":"failed","status":{"last_deploy":{"redacted_env":["API_TOKEN"],"detail":{"probe":{"body":"[redacted:API_TOKEN]"}}}}}`, `"redacted_env":["API_TOKEN"]`},
+		{"the name as text", `{"error":"the field is called \"redacted_env\""}`, ""},
+	} {
+		out := r.redactJSON([]byte(tc.body))
+		var got struct {
+			RedactedEnv *[]string `json:"redacted_env"`
+		}
+		if err := json.Unmarshal([]byte(out), &got); err != nil {
+			t.Fatal(err)
+		}
+		if tc.want == "" && got.RedactedEnv != nil {
+			t.Errorf("%s: gained a field: %s", tc.name, out)
+		}
+		if tc.want != "" && (got.RedactedEnv == nil || !strings.HasPrefix(out, `{"error":"failed","redacted_env":["API_TOKEN"]`)) {
+			t.Errorf("%s: no top-level field in %s", tc.name, out)
+		}
+	}
+}
+
+// An assignment is judged by its parts: the key stays readable and the
+// value is masked on its own, and a short value is not carried over the
+// bar by its key's letters.
+func TestRedactorEntropyJudgesAnAssignmentByItsParts(t *testing.T) {
+	for _, tc := range []struct{ name, in, want string }{
+		// A key the shape rules know (`API_KEY=`) is theirs first; one
+		// they do not is layer 4's, by its parts.
+		{"a secret assigned", "BUILD_ID=zK9dQ2mX8pL0vT7wR4nY6bH1", "BUILD_ID=[masked, 24 chars]"},
+		{"a short value", "SOME_SETTING_NAME=aB3dE5fG7h", "SOME_SETTING_NAME=aB3dE5fG7h"},
+		{"base64 padding is no assignment", "k3J9xQ2mZ8pL0vT7wR4nY6bH1cD5fG==", "[masked, 32 chars]"},
+		{"a dotted version's assignment", "APP_VERSION=2026.11.07-rc1", "APP_VERSION=2026.11.07-rc1"},
+	} {
+		if got, _ := (*Redactor)(nil).Redact(tc.in); got != tc.want {
+			t.Errorf("%s:\n got %q\nwant %q", tc.name, got, tc.want)
 		}
 	}
 }

@@ -383,21 +383,31 @@ func TestProberProcessDeathKeepsLastProbe(t *testing.T) {
 	}
 }
 
-// A failing probe's body is kept only up to probeBodyExcerpt bytes:
-// the excerpt is a diagnosis, not a page.
+// A failing probe's body is read only up to probeBodyRead bytes, less
+// the token that bound cut in two: the excerpt a deploy's detail keeps
+// is a diagnosis, not a page, and is cut to probeBodyExcerpt once the
+// known values are replaced (TestFailureDetailCutsAfterTheKnownValues).
 func TestProbeOnceKeepsABoundedBodyExcerpt(t *testing.T) {
-	big := strings.Repeat("x", probeBodyExcerpt*3)
-	sock := unixServer(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusInternalServerError)
-		_, _ = w.Write([]byte(big))
-	}))
-	p := &httpProber{clock: newFakeClock()}
-	err := p.probeOnce(context.Background(), testSocketRef(t, sock), "/health", time.Second)
-	var pe *probeError
-	if !errors.As(err, &pe) || pe.status != http.StatusInternalServerError {
-		t.Fatalf("want a probe error with the status, got %v", err)
-	}
-	if len(pe.body) != probeBodyExcerpt || pe.body != big[:probeBodyExcerpt] {
-		t.Fatalf("body excerpt is %d bytes, want the first %d", len(pe.body), probeBodyExcerpt)
+	big := strings.Repeat("word1 ", probeBodyRead)
+	cut := big[:probeBodyRead]
+	cut = cut[:strings.LastIndexByte(cut, ' ')+1] + "…"
+	exact := big[:probeBodyRead]
+	for _, tc := range []struct{ name, body, want string }{
+		{"a longer body loses the cut token", big, cut},
+		{"a body of exactly the read is whole", exact, exact},
+	} {
+		sock := unixServer(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = w.Write([]byte(tc.body))
+		}))
+		p := &httpProber{clock: newFakeClock()}
+		err := p.probeOnce(context.Background(), testSocketRef(t, sock), "/health", time.Second)
+		var pe *probeError
+		if !errors.As(err, &pe) || pe.status != http.StatusInternalServerError {
+			t.Fatalf("%s: want a probe error with the status, got %v", tc.name, err)
+		}
+		if pe.body != tc.want {
+			t.Fatalf("%s: body read is %d bytes ending %q, want %d ending %q", tc.name, len(pe.body), pe.body[len(pe.body)-12:], len(tc.want), tc.want[len(tc.want)-12:])
+		}
 	}
 }

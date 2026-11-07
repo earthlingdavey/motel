@@ -85,18 +85,62 @@ func (journalctlReader) tail(ctx context.Context, of tailOf, since time.Time, n 
 	// The line count bounds the entries, not their size: a single entry
 	// can be as long as journald lets a line be. The output streams
 	// through a writer that keeps only the last bytes, more than the
-	// response cap so that capTail still sees "there was more" (a
-	// dropped prefix leaves a partial first line for it to cut), and
-	// memory is fixed whatever the app wrote.
-	out, err := runJournalctl(ctx, tailArgs(of.units, streamIDs(found), since, n), 2*deployLogMaxBytes)
+	// response cap so that capTail still sees "there was more", and
+	// memory is fixed whatever the app wrote. A dropped prefix leaves a
+	// partial first line, whose first token the bound may have cut in
+	// two: that token goes (dropUnfinished), since a fragment of an
+	// env_file value is one the filter cannot match. One byte more is
+	// read than kept, to tell an output of exactly the limit, which is
+	// whole, from a longer one.
+	const limit = 2 * deployLogMaxBytes
+	out, err := runJournalctl(ctx, tailArgs(of.units, streamIDs(found), since, n), limit+1)
 	if err != nil {
 		return nil, err
 	}
-	text := strings.TrimRight(string(out), "\n")
+	text := boundedTail(out, limit)
 	if text == "" {
 		return nil, nil
 	}
 	return strings.Split(text, "\n"), nil
+}
+
+// boundedTail is the text of out, read through a tailWriter one byte
+// larger than limit: an out longer than limit was cut by the read, so
+// it is trimmed to limit and loses the token the cut may have split
+// (dropUnfinished); one of at most limit bytes was read whole and keeps
+// its first token.
+func boundedTail(out []byte, limit int) string {
+	cut := len(out) > limit
+	if cut {
+		out = out[len(out)-limit:]
+	}
+	text := strings.TrimRight(string(out), "\n")
+	if cut {
+		text = dropUnfinished(text, true)
+	}
+	return text
+}
+
+// dropUnfinished removes the token a read bound may have cut in two:
+// the first token of s (atStart: a kept suffix) or its last (a kept
+// prefix), up to or from the nearest whitespace, and puts an ellipsis
+// where it was. A bound that fell inside an env_file value left a
+// fragment the response filter cannot match and no heuristic can see
+// (redact.go); without a whitespace to cut at, the whole of s goes. A
+// value with a space in it can still be cut (DESIGN-liveswap.md,
+// "Accepted residuals").
+func dropUnfinished(s string, atStart bool) string {
+	const marker = "…"
+	if atStart {
+		if i := strings.IndexAny(s, " \t\r\n"); i >= 0 {
+			return marker + s[i:]
+		}
+		return marker
+	}
+	if i := strings.LastIndexAny(s, " \t\r\n"); i >= 0 {
+		return s[:i+1] + marker
+	}
+	return marker
 }
 
 // journalWindow is what both runs share. A second of slack: the

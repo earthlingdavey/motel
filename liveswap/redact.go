@@ -45,13 +45,22 @@ import (
 //     PEM private keys, password=… assignments).
 //  4. Entropy: a token of entropyMinLen or more characters from the
 //     base64 or hex alphabet, mixed enough to look generated and with
-//     Shannon entropy above the class's threshold, replaced with
-//     [masked, N chars]. Never a fingerprint: a hash of a secret is a
-//     small leak of it.
+//     Shannon entropy above the class's threshold — a bar that follows
+//     the token's length, since a short one cannot reach a fixed bar
+//     (looksGenerated) — replaced with [masked, N chars]. Never a
+//     fingerprint: a hash of a secret is a small leak of it. An
+//     assignment is judged by its parts (maskGenerated).
+//
+// Layer 1 also runs early, as a failed deploy's detail is built
+// (failureDetail, app.go), before the journal tail and the probe body
+// are cut to their caps: a cut inside a known value would leave a
+// fragment this layer cannot match and no heuristic can see.
 //
 // Best effort past layer 1, and documented as such in
 // DESIGN-threat-model.md: an encoding not in the list, a value under
-// secretMinLen, a secret split across lines, all pass.
+// secretMinLen, a secret split across lines, and a short generated
+// token the length-aware bar still misses (about half at 20 to 22
+// characters), all pass.
 //
 // Four rules hold across the layers and every writer of a body, and
 // the code is judged against them, not the other way round:
@@ -412,6 +421,33 @@ func (r *Redactor) replaceKnown(s string, seen map[string]bool) string {
 	return s
 }
 
+// nestedStrings is every string in an array under name, anywhere in
+// the decoded JSON v, appended to out: the strings, and only those,
+// since the field is key names.
+func nestedStrings(v any, name string, out []string) []string {
+	switch t := v.(type) {
+	case map[string]any:
+		for k, child := range t {
+			if k != name {
+				out = nestedStrings(child, name, out)
+				continue
+			}
+			if items, ok := child.([]any); ok {
+				for _, it := range items {
+					if s, ok := it.(string); ok {
+						out = append(out, s)
+					}
+				}
+			}
+		}
+	case []any:
+		for _, child := range t {
+			out = nestedStrings(child, name, out)
+		}
+	}
+	return out
+}
+
 // union is both lists' names, each once, sorted.
 func union(a, b []string) []string {
 	set := make(map[string]bool, len(a)+len(b))
@@ -517,15 +553,26 @@ func (r *Redactor) heuristics(s string) string {
 		}
 		return m
 	})
-	return entropyTokenRe.ReplaceAllStringFunc(s, func(tok string) string {
-		if r != nil && r.safeTokens[tok] {
-			return tok
-		}
-		if looksGenerated(tok) {
-			return "[masked, " + strconv.Itoa(len(tok)) + " chars]"
-		}
+	return entropyTokenRe.ReplaceAllStringFunc(s, r.maskGenerated)
+}
+
+// maskGenerated is layer 4 over one token. An assignment — an `=` with
+// more after it, where base64 pads only at its end — is judged by its
+// parts: `RandomizedDelaySec=40s` is a setting a reader needs, and
+// `BUILD_ID=<secret>` keeps its key and masks its value (a key the
+// shape rules know, `API_KEY=`, is theirs first); a value short of
+// entropyMinLen is not carried over the bar by its key's letters.
+func (r *Redactor) maskGenerated(tok string) string {
+	if r != nil && r.safeTokens[tok] {
 		return tok
-	})
+	}
+	if i := strings.IndexByte(tok, '='); i > 0 && i < len(tok)-1 && tok[i+1] != '=' {
+		return r.maskGenerated(tok[:i]) + "=" + r.maskGenerated(tok[i+1:])
+	}
+	if len(tok) >= entropyMinLen && looksGenerated(tok) {
+		return "[masked, " + strconv.Itoa(len(tok)) + " chars]"
+	}
+	return tok
 }
 
 // redactJSON filters a marshalled JSON body and, when a known value
@@ -568,7 +615,12 @@ func (r *Redactor) redactJSON(raw []byte) string {
 	} else {
 		body = r.filterBody(string(raw), seen)
 	}
-	if len(seen) > 0 {
+	// The hoist runs when the filter found a value, and when the body
+	// carries a redacted_env of its own below the top level — a
+	// deployResult's, whose values the detail replaced before any
+	// filter ran, so that the filter finds nothing here (app.go,
+	// failureDetail).
+	if len(seen) > 0 || strings.Contains(body, `"redacted_env"`) {
 		names := reportedKeys(seen)
 		for i, n := range names {
 			names[i] = r.replaceKnown(n, seen)
@@ -634,31 +686,30 @@ func outcomeAlternation() string {
 }
 
 // withField sets a string-array field on a JSON object body, merged
-// with any array the body already holds under that name. The body is
-// the filter's output: an existing array there — a stored record's
-// own redacted_env, read back — has been through every layer as body
-// text, so its entries are kept, never replaced, and nothing that
-// did not pass the filter is added. The final pass runs before this
-// (rule 2). The object is re-marshalled, so its top-level keys come
-// out sorted; its values are carried as raw JSON, so a nested object
-// keeps its keys' order. Anything but an object is returned as it is.
+// with every array the body already holds under that name, at its top
+// level or below it. The body is the filter's output: an array there —
+// a stored record's own redacted_env, read back, or a deployResult's
+// (RedactedEnv, the keys its detail's early replacement found) nested
+// in a status — has been through every layer as body text, so its
+// entries are kept, never replaced, and nothing that did not pass the
+// filter is added; hoisting them keeps the body's own field the one
+// place a reader looks. The final pass runs before this (rule 2). The
+// object is re-marshalled, so its top-level keys come out sorted; its
+// values are carried as raw JSON, so a nested object keeps its keys'
+// order. Anything but an object is returned as it is.
 func withField(body, name string, values []string) string {
 	var obj map[string]json.RawMessage
 	if err := json.Unmarshal([]byte(body), &obj); err != nil || obj == nil {
 		return body
 	}
-	var had []string
-	if raw, ok := obj[name]; ok {
-		var items []any
-		if json.Unmarshal(raw, &items) == nil {
-			for _, it := range items {
-				if str, ok := it.(string); ok {
-					had = append(had, str) // the strings, and only those: the field is key names
-				}
-			}
-		}
+	var tree any
+	_ = json.Unmarshal([]byte(body), &tree) // obj parsed, so this does too
+	had := nestedStrings(tree, name, nil)
+	all := union(values, had)
+	if len(all) == 0 {
+		return body // the name was a string's text, not a field: no empty field is added
 	}
-	v, err := json.Marshal(union(values, had))
+	v, err := json.Marshal(all)
 	if err != nil {
 		return body
 	}
@@ -701,8 +752,25 @@ func looksGenerated(tok string) bool {
 	if !other { // hex alphabet only
 		return h >= entropyHex
 	}
-	return upper && lower && h >= entropyBase64
+	// A string's entropy over its own characters is at most log2(len):
+	// 4.32 bits at 20 characters, 4.46 at 22, so a fixed bar of 4.5 is
+	// out of a short token's reach however random it is. The bar
+	// follows the length, entropySlack under that ceiling, up to
+	// entropyBase64. Measured 2026-11-07 on random url-safe tokens
+	// against the mixed-case tokens in this repository's own text
+	// (DESIGN-liveswap.md, "Accepted residuals"): this masks 55% of
+	// random 20- and 22-character tokens and 41% of 24, where the
+	// fixed bar masked none, and one non-secret of 148 (an e-mail's
+	// local part); a bar 0.9·log2(len) would mask 80% of each length
+	// and nine non-secrets, among them identifiers with a digit
+	// (`loadEd25519PrivateKey`) and unit settings.
+	bar := math.Min(entropyBase64, math.Log2(float64(len(tok)))-entropySlack)
+	return upper && lower && h >= bar
 }
+
+// entropySlack is how far under log2(len) the base64 bar sits for a
+// token too short to reach entropyBase64 (looksGenerated).
+const entropySlack = 0.3
 
 func shannon(s string) float64 {
 	var counts [256]int

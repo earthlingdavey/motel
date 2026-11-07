@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -1091,6 +1092,31 @@ func TestWebhookDeployRecordKeepsItsRecordedKeys(t *testing.T) {
 	w := do(t, h, http.MethodGet, "/demo?deploy=v1", appToken(t), "")
 	if w.Code != 200 || !strings.Contains(w.Body.String(), `"redacted_env":["NEW","OLD"]`) || strings.Contains(w.Body.String(), "newvaluenewvalue1234") {
 		t.Fatalf("record: %d %s", w.Code, w.Body.String())
+	}
+}
+
+// A failed deploy whose only known value was in its detail — replaced
+// as the detail was built, so the response filter finds nothing — still
+// answers with the body's own top-level redacted_env, in the failure
+// body and in the status after it.
+func TestWebhookFailureBodyReportsTheDetailsKeys(t *testing.T) {
+	h, rig := newTestHandler(t)
+	rig.spec.deployLogLines = 40
+	rig.spec.envFile = filepath.Join(t.TempDir(), "app.env")
+	must(t, os.WriteFile(rig.spec.envFile, []byte("SECRET=hunter2hunter2\n"), 0o600))
+	rig.prober.err = fmt.Errorf("not healthy within deadline 5m: %w", &probeError{status: 500, body: "bad token hunter2hunter2"})
+	post := do(t, h, http.MethodPost, "/demo", appToken(t), `{"url":"https://x/a.tgz","version":"v1"}`)
+	get := do(t, h, http.MethodGet, "/demo", appToken(t), "")
+	for name, w := range map[string]*httptest.ResponseRecorder{"failure body": post, "status": get} {
+		var got struct {
+			RedactedEnv []string `json:"redacted_env"`
+		}
+		if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+			t.Fatalf("%s: %d %s: %v", name, w.Code, w.Body.String(), err)
+		}
+		if body := w.Body.String(); strings.Join(got.RedactedEnv, ",") != "SECRET" || strings.Contains(body, "hunter2hunter2") || !strings.Contains(body, "bad token [redacted:SECRET]") {
+			t.Fatalf("%s: %d %s", name, w.Code, body)
+		}
 	}
 }
 

@@ -194,8 +194,9 @@ Properties that matter to the model:
   redacted like the value. Third, shape rules for
   credentials with a recognisable form. Fourth, entropy: a run of 20+
   characters from the base64 or hex alphabet, mixed and with Shannon
-  entropy above the class's bar, is replaced by `[masked, N chars]`,
-  never by a fingerprint. Markers are chosen so that none contains a
+  entropy above the class's bar — one that follows the run's length,
+  since a short run cannot reach a fixed bar — is replaced by
+  `[masked, N chars]`, never by a fingerprint. Markers are chosen so that none contains a
   known value (a key named for its own value gets a number in
   brackets), and the first layer runs once more over the finished
   bytes — any fallback included — so the promise holds for the bytes
