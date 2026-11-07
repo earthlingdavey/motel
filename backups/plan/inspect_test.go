@@ -2,6 +2,7 @@ package plan
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -79,6 +80,27 @@ func TestAnEmptyGlobIsNotBlamedOnAVariable(t *testing.T) {
 	}
 }
 
+// Nor is an import that fails with no made-up value in the adapter's
+// words — a literal path that is not there — whatever variables the
+// file has besides: the hint about imports is for a path made of one.
+func TestALiteralImportThatIsNotThereIsNotBlamedOnAVariable(t *testing.T) {
+	fakeMotel(t)
+	file := filepath.Join(t.TempDir(), "Caddyfile")
+	write(t, file, "import sites/missing.caddy\nemail {$ACME_EMAIL}\n")
+	_, err := Make(context.Background(), file)
+	if err == nil || !strings.Contains(err.Error(), "File to import not found: sites/missing.caddy") || strings.Contains(err.Error(), "made-up values") {
+		t.Fatalf("%v", err)
+	}
+	// Nor a literal glob that matches nothing, warned of beside the error
+	// of a directive that took no made-up value: the directive's hint,
+	// not the import's.
+	write(t, file, "import nowhere/*.caddy\nthing {$MAGIC}\n")
+	_, err = Make(context.Background(), file)
+	if err == nil || !strings.Contains(err.Error(), "unrecognized value") || !strings.Contains(err.Error(), "settles it") || strings.Contains(err.Error(), "import literally") {
+		t.Fatalf("%v", err)
+	}
+}
+
 // The adapter's warning is read as the adapter writes it, a JSON line
 // among others on stderr, and never taken from anything else there.
 func TestEmptyGlobsAreReadFromTheAdaptersOwnWarning(t *testing.T) {
@@ -93,13 +115,161 @@ No files matching import glob pattern: not JSON, not the adapter's
 	}
 }
 
+// A variable every made-up value fails at a directive's check of is
+// tried one occurrence at a time, in a copy of the Caddyfile's
+// directory (probe). An occurrence in a file the Caddyfile imports is
+// in the copy, substituted, and found; one the adapter reaches past the
+// copy — an import by absolute path — is seen by the value the copy's
+// environment gives the variable, and refused as not knowable; and a
+// copy checked away from its directory, read alone, is refused the same
+// way where a file beside it holds the variable.
+func TestAProbeReachesWhatTheCaddyfileImports(t *testing.T) {
+	fakeMotel(t)
+	for name, tc := range map[string]struct {
+		imports, site, refused string // the import line; sites/x.caddy; what the refusal names, "" for a plan made
+		away                   bool   // checked as a copy away from its directory
+	}{
+		"a root in an imported file":                {"import sites/x.caddy", "root /srv/{$X:tls1.2}\n", "depends on the environment variable(s) X", false},
+		"nothing a plan reads, in an imported file": {"import sites/x.caddy", "header_up X-Env {$X:tls1.2}\n", "", false},
+		"an import by absolute path":                {"import ABS/sites/x.caddy", "header_up X-Env {$X:tls1.2}\n", "could not be told", false},
+		"a copy read alone, the file beside it":     {"import sites/x.caddy", "header_up X-Env {$X:tls1.2}\n", "could not be told", true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			file := filepath.Join(dir, "Caddyfile")
+			write(t, file, strings.Replace(tc.imports, "ABS", dir, 1)+"\ntls {\n\tprotocols {$X:tls1.2}\n}\n")
+			write(t, filepath.Join(dir, "sites", "x.caddy"), tc.site)
+			configDir := dir
+			if tc.away {
+				configDir = t.TempDir()
+			}
+			_, err := Inspect(context.Background(), file, configDir)
+			if tc.refused == "" && err != nil {
+				t.Fatalf("refused: %v", err)
+			}
+			if tc.refused != "" && (err == nil || !strings.Contains(err.Error(), tc.refused)) {
+				t.Fatalf("want a refusal naming %q, got %v", tc.refused, err)
+			}
+		})
+	}
+}
+
+// A probe's refusal is the directive's own unless it came through an
+// import: a token a snippet or an imported file brought in has the
+// import chain after the line [measured, Caddy 2.11.7], and is refused
+// once where the import may expand it again.
+func TestARefusalThroughAnImportIsNotTheDirectivesOwn(t *testing.T) {
+	plain := `{"level":"error","msg":"parsing caddyfile tokens for 'tls': wrong protocol name or protocol not supported: 'hsb-probe-x-1.invalid', at /tmp/hsb-probe-1/Caddyfile:3"}`
+	chain := `{"level":"error","msg":"parsing caddyfile tokens for 'tls': wrong protocol name or protocol not supported: 'hsb-probe-x-1.invalid', at /tmp/hsb-probe-1/Caddyfile:21 import chain ['/tmp/hsb-probe-1/Caddyfile:25 (import site)']"}`
+	if throughAnImport(plain) || !throughAnImport(chain) || throughAnImport("") {
+		t.Fatal("throughAnImport")
+	}
+}
+
+// An import's words end before the parser's location: its line number
+// is a digit, and so is a value a variable may be tried at ("1", "2").
+func TestAnImportsWordsEndBeforeTheParsersLocation(t *testing.T) {
+	words, atImport := importWords(errors.New("exit status 1"), `{"level":"error","ts":1,"msg":"File to import not found: sites/1.caddy, at /etc/motel/Caddyfile:1"}`+"\n")
+	if !atImport || !strings.HasSuffix(words, "sites/1.caddy") {
+		t.Fatalf("importWords = %q, %v", words, atImport)
+	}
+	if words, atImport := importWords(&emptyGlobError{[]string{"sites/1/*.caddy"}}, ""); !atImport || words != "sites/1/*.caddy" {
+		t.Fatalf("importWords of an empty glob = %q, %v", words, atImport)
+	}
+}
+
+// Where a token stands is read as the lexer reads lines [Caddy 2.11.7,
+// caddyconfig/caddyfile/lexer.go, parse.go; the comment's backslash and
+// the escaped one held by
+// TestIntegrationTheAdapterRefusesAnImportAndADirectiveAsInspectReadsThem]:
+// a `\` escapes the newline after it, through the spaces before any
+// token and through the rest of a comment; a space after a token
+// returns the token and drops the escape; any other character uses it
+// up; spaces are unicode.IsSpace. The first token of a logical line, or the
+// first after a `}`, is where a directive's or a subdirective's name is
+// read.
+func TestATokenLeadingItsLineStandsWhereANameIsRead(t *testing.T) {
+	for _, tc := range []struct {
+		raw   string
+		leads bool
+	}{
+		{"{$X} a\n", true},
+		{"  {$X} a\n", true},
+		{"root {$X}\n", false},
+		{"a\nroot {$X}\n", false},
+		{"root \\\n\t{$X}\n", false},
+		{"a\r\nroot \\\r\n\t{$X}\r\n", false},
+		{"root \\ \t\n{$X}\n", false},  // the escape holds through spaces
+		{"root \\\\\n{$X}\n", true},    // an escaped backslash chains nothing
+		{"root \\\\\\\n{$X}\n", false}, // three: one escaped, one chaining
+		{"root a\\b\n{$X}\n", true},    // used up by the b
+		{"\\\n{$X}\n", true},
+		{"} {$X} a\n", true},
+		{"}\t\\\n{$X}\n", true},
+		{"# c \\\n{$X} a\n", true},             // the comment ends at the newline the backslash escapes
+		{"# C:\\certs\n{$X} a\n", true},        // a backslash anywhere in a comment holds to its end
+		{"root /x # C:\\certs\n{$X}\n", false}, // and chains the line onto the directive before the comment
+		{"foo # c \\\n{$X}\n", false},
+		{"foo#bar\\\n{$X}\n", false}, // no comment: the # is not at a token's start
+		{"# {$X}\n", false},          // a comment's own line
+		{"a\nb \\\n\t{$X}\nc\n", false},
+		{"\t\"{$X}\" a\n", true}, // a quoted name is a name
+		{"`{$X}` a\n", true},
+		{"root \"{$X}\"\n", false}, // a quoted argument
+		{"\v{$X}\n", true},         // the lexer's other spaces
+		{"\u00a0{$X} a\n", true},   // and its Unicode ones
+		{"root\u00a0{$X}\n", false},
+		{"files uploads\\ \n{$X} a\n", true}, // the space returns the token, and the escape goes with it
+		{"files uploads\\\n{$X} a\n", false},
+		{"root \\\u00a0\n{$X}\n", false}, // no token begun: the escape holds through the space
+	} {
+		off := strings.Index(tc.raw, "{$X}")
+		if got := leadsItsLine([]byte(tc.raw), off); got != tc.leads {
+			t.Errorf("leadsItsLine(%q) = %v", tc.raw, got)
+		}
+	}
+}
+
+// What a failed trial failed at is read off the adapter's words as the
+// real adapter writes them [measured, Caddy 2.11.7; held there by
+// TestIntegrationTheAdapterRefusesAnImportAndADirectiveAsInspectReadsThem]:
+// its parser's about an import, a directive's own with the HTTP
+// adapter's prefix, or neither.
+func TestTheAdaptersWordsAreReadAsItWritesThem(t *testing.T) {
+	for _, tc := range []struct {
+		said                  string
+		atImport, atDirective bool
+	}{
+		{`{"level":"error","ts":1,"msg":"File to import not found: sites/hsb-placeholder-env.invalid.caddy, at /etc/motel/Caddyfile:1"}`, true, false},
+		{`{"level":"error","ts":1,"msg":"Could not import /etc/motel/sites: is a directory, at /etc/motel/Caddyfile:1"}`, true, false},
+		{`{"level":"warn","ts":1,"msg":"No files matching import glob pattern","pattern":"sites/hsb-placeholder-env.invalid/*.caddy"}`, true, false},
+		// A glob matching nothing is a warning, and the directive after
+		// it fails: the import's, since the parser met it first.
+		{`{"level":"warn","ts":1,"msg":"No files matching import glob pattern","pattern":"sites/hsb-placeholder-env.invalid/*.caddy"}
+{"level":"error","ts":1,"msg":"parsing caddyfile tokens for 'tls': wrong protocol name or protocol not supported: 'hsb-placeholder-env.invalid', at /etc/motel/Caddyfile:4"}`, true, true},
+		{`{"level":"error","ts":1,"msg":"parsing caddyfile tokens for 'tls': wrong protocol name or protocol not supported: '1', at /etc/motel/Caddyfile:3"}`, false, true},
+		{`{"level":"error","ts":1,"msg":"parsing caddyfile tokens for 'reverse_proxy': getting module named 'http.reverse_proxy.selection_policies.1': module not registered: http.reverse_proxy.selection_policies.1, at /etc/motel/Caddyfile:3"}`, false, true},
+		{`{"level":"error","ts":1,"msg":"parsing caddyfile tokens for 'redir': Redir code not in the 3xx range or 401: '1', at /etc/motel/Caddyfile:2"}`, false, true},
+		{`{"level":"error","ts":1,"msg":"parsing caddyfile tokens for 'email': wrong argument count or unexpected line ending after 'email', at /etc/motel/Caddyfile:2"}`, false, true},
+		{`Error: unrecognized value 'hsb-placeholder-magic.invalid'`, false, false},
+		{``, false, false},
+	} {
+		if got := failedAtImport(tc.said); got != tc.atImport {
+			t.Errorf("failedAtImport(%q) = %v", tc.said, got)
+		}
+		if got := failedAtDirective(tc.said); got != tc.atDirective {
+			t.Errorf("failedAtDirective(%q) = %v", tc.said, got)
+		}
+	}
+}
+
 // An app that declares no backup and takes its name from the
 // environment is named as the server names it only by luck: it is said
 // as that, not under the name a default gives it here.
 func TestAnUndeclaredAppNamedThroughTheEnvironment(t *testing.T) {
 	fakeMotel(t)
 	file := filepath.Join(t.TempDir(), "Caddyfile")
-	write(t, file, "app {$SHOP_NAME:shop}\n")
+	write(t, file, "app blog\napp {$SHOP_NAME:shop}\n")
 	got, err := Inspect(context.Background(), file, filepath.Dir(file))
 	if err != nil {
 		t.Fatal(err)
@@ -110,7 +280,7 @@ func TestAnUndeclaredAppNamedThroughTheEnvironment(t *testing.T) {
 
 	// A variable tried after it, that names nothing, is not blamed for it
 	// — and one that also names an undeclared app is.
-	write(t, file, "app {$SHOP_NAME:shop}\nemail {$Z_EMAIL:a@example.com}\n")
+	write(t, file, "app blog\napp {$SHOP_NAME:shop}\nemail {$Z_EMAIL:a@example.com}\n")
 	got, err = Inspect(context.Background(), file, filepath.Dir(file))
 	if err != nil {
 		t.Fatal(err)
@@ -149,11 +319,17 @@ func TestAPlaceholderRootIsRefusedOnlyWhereABackupIsDeclared(t *testing.T) {
 		{"an env root, a backup declared", "root {env.LIVESWAP_ROOT}\n", "placeholder", ""},
 		{"an env root, no backup declared", "# no app declares a backup\nroot {env.LIVESWAP_ROOT}\n", "", ""},
 		{"an import through a variable, no backup declared", "# no app declares a backup\nimport sites/{$ENV:prod}.caddy\n", "ENV", ""},
+		{"an import glob through a variable, no backup declared", "# no app declares a backup\nimport sites/{$ENV:prod}/*.caddy\n", "ENV", ""},
 		{"an empty glob, no backup declared", "# no app declares a backup\nimport nowhere/*.caddy\n", "matches no file", ""},
+		// A value a directive checks by form (#394): no made-up value
+		// adapts, and none reached anything a plan reads.
+		{"a value a directive checks by form, no backup declared", "# no app declares a backup\ntls {\n\tprotocols {$TLS_MIN:tls1.2}\n}\n", "", ""},
+		{"a value a directive checks by form, a backup declared", "tls {\n\tprotocols {$TLS_MIN:tls1.2}\n}\n", "", "/var/lib/liveswap"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			file := filepath.Join(t.TempDir(), "Caddyfile")
 			write(t, file, tc.caddyfile)
+			write(t, filepath.Join(filepath.Dir(file), "sites", "prod", "a.caddy"), "# what the default imports\n")
 			ins, err := Inspect(context.Background(), file, filepath.Dir(file))
 			made, merr := Make(context.Background(), file)
 			if tc.refused != "" {
