@@ -5,6 +5,7 @@ dist/
 reference/
 build/
 /to-do
+__pycache__/
 # Claude Code: the triage skill is shared; worktrees, plans and local
 # settings are one machine's.
 /.claude/*

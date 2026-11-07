@@ -16,7 +16,7 @@ VERSION ?= $(shell (git describe --tags --exact-match 2>/dev/null || echo v0.0.0
 # Distro image for the package install smoke test (install-test).
 DISTRO ?= debian:13
 
-.PHONY: test test-integration vet tidy tidy-check lint fuzz fuzz-list vulncheck pin-watch-check secretscan usage usage-check build package clean-debs install-test e2e e2e-backup soak e2e-logs clean
+.PHONY: test test-integration vet tidy tidy-check lint fuzz fuzz-list vulncheck pin-watch-check secretscan usage usage-claude usage-check build package clean-debs install-test e2e e2e-backup soak e2e-logs clean
 
 test:
 	$(COMPOSE) run --rm dev go test -race -cover $(PKGS)
@@ -181,7 +181,7 @@ GO_LDFLAGS = -s -w -X github.com/caddyserver/caddy/v2.CustomVersion=v$(VERSION)
 
 # The public ledger of what building motel costs: Claude Code
 # sessions, Actions runner minutes and Copilot credits as month-level
-# facts in usage/*.csv, rendered to docs/footprint.md. Reads the
+# facts in usage/ (CSVs), rendered to docs/footprint.md. Reads the
 # transcripts under ~/.claude/projects (the compose service mounts them
 # read-only) and the Actions API with your gh login — the token gh
 # hands over carries the login's full scope, though public run data
@@ -189,10 +189,34 @@ GO_LDFLAGS = -s -w -X github.com/caddyserver/caddy/v2.CustomVersion=v$(VERSION)
 # records for 90 days — fill in usage/copilot.csv from GitHub billing
 # (its note column is public too), and commit what changed. --user: the
 # files it writes stay yours on a Linux host (the container is root).
+# The sessions are spread over several machines and each sees only its
+# own transcripts, so every machine writes its own file,
+# usage/claude/$(USAGE_MACHINE).csv, and the page sums them. Name each
+# machine once, on the host: `git config --global motel.usage-machine
+# <label>` (a public label: the file name; per clone, without --global,
+# if your ~/.gitconfig is synced between machines). USAGE_MATCH: project-
+# directory names to count besides motel, comma-separated, for a
+# checkout that kept an older name: `git config motel.usage-match
+# <names>` (per checkout, or --global). usage-claude is the transcript
+# half alone, for the other machines: no token, so no Actions API
+# budget spent. Commit the machine's file with the page; when two
+# machines' commits conflict in the page, take either side and run
+# usage-check: it re-renders the page and fails until the re-rendered
+# page is staged.
 USAGE_REPO ?= smallhoursorg/motel
+USAGE_MATCH ?= $(shell git config motel.usage-match)
+USAGE_MACHINE ?= $(shell git config motel.usage-machine)
+# Through the environment, not spliced into the recipe: a value with a
+# quote or a `$` reaches the script as typed. --match= so a value that
+# starts with a hyphen is a value, not an option.
+export USAGE_MATCH USAGE_MACHINE
+USAGE_FLAGS = --match="$$USAGE_MATCH" --machine="$$USAGE_MACHINE"
 usage:
 	GH_TOKEN=$$(gh auth token) $(COMPOSE) run --rm --user "$$(id -u):$$(id -g)" usage \
-		python3 -I .github/scripts/usage.py collect-claude collect-actions render --repo $(USAGE_REPO)
+		python3 -I .github/scripts/usage.py collect-claude collect-actions render --repo $(USAGE_REPO) $(USAGE_FLAGS)
+usage-claude:
+	$(COMPOSE) run --rm --user "$$(id -u):$$(id -g)" usage \
+		python3 -I .github/scripts/usage.py collect-claude render $(USAGE_FLAGS)
 
 # The PR-CI half of usage, like tidy-check: runs the merge rule's tests,
 # then re-renders docs/footprint.md from the committed CSVs (no

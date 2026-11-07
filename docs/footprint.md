@@ -20,8 +20,9 @@ energy figures), network transfer, and the models' training.
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
 | 2026-08 | — | — | — | — | — | — | 6,377 | 38 | 1.3 | 0.5 | 60 | — |
 | 2026-09 | 13,412 | 13.7 | 3.9 | 2,692 | 287 | 82.3 | 18,295 | 110 | 4.3 | 1.6 | 265 | — |
-| 2026-10 | 16,862 | 11.2 | 4.2 | 1,936 | 219 | 62.9 | 16,854 | 101 | 4.0 | 1.5 | 244 | — |
-| **Total** | 30,274 | 24.9 | 8.1 | 4,628 | 506 | 145.3 | 41,526 | 249 | 9.6 | 3.6 | 569 | — |
+| 2026-10 | 16,899 | 11.2 | 4.2 | 1,938 | 220 | 63.0 | 16,854 | 101 | 4.0 | 1.5 | 244 | — |
+| 2026-11 | 2,284 | 3.9 | 0.4 | 473 | 67 | 19.1 | — | — | — | — | — | — |
+| **Total** | 32,595 | 28.8 | 8.4 | 5,103 | 573 | 164.5 | 41,526 | 249 | 9.6 | 3.6 | 569 | — |
 
 A dash is a month the source has no rows for. Claude USD is what the
 tokens would cost at list price, not what was paid (Claude Code runs on
@@ -33,8 +34,8 @@ Every kWh and kgCO2e is an estimate, see below.
 
 | Model | Calls | Input Mtok | Output Mtok | Cache-write Mtok | Cache-read Gtok | List USD | kgCO2e |
 |---|---:|---:|---:|---:|---:|---:|---:|
-| claude-fable-5-1 | 9,953 | 0.20 | 11.5 | 66.1 | 2.88 | 2,383 | 84.4 |
-| claude-opus-5-5 | 15,671 | 0.03 | 9.3 | 68.6 | 4.00 | 1,433 | 45.6 |
+| claude-fable-5-1 | 12,237 | 0.27 | 15.4 | 78.2 | 3.24 | 2,856 | 103.5 |
+| claude-opus-5-5 | 15,708 | 0.03 | 9.3 | 68.7 | 4.00 | 1,435 | 45.7 |
 | claude-opus-5 | 4,612 | 0.01 | 4.0 | 14.8 | 1.16 | 804 | 15.1 |
 | claude-opus-4-8 | 28 | 0.00 | 0.1 | 0.1 | 0.01 | 8 | 0.2 |
 | claude-haiku-4-5-20251001 | 10 | 0.00 | 0.0 | 0.1 | 0.00 | 0 | 0.0 |
@@ -62,16 +63,22 @@ many runner types its jobs used.
 ## Where the numbers come from
 
 - **Claude Code sessions.** Claude Code keeps a transcript of every
-  session under `~/.claude/projects`; each API call's token counts are
-  read from there, one count per message, taking the final line of a
-  streamed reply (the first line's output count is a placeholder, which
-  is how ccusage, checked against this on 2026-10-16, comes out about a
-  fifth low on output while agreeing on every other column). Only
-  project directories named after this repository, its worktrees and
-  clones are counted. Claude Code purges transcripts after 30 days by
-  default (Sources: transcripts), and did here until 2026-10-14:
-  sessions before 2026-09-13 are gone, so this part of the ledger starts
-  there although the GitHub repository started on 2026-08-16.
+  session under `~/.claude/projects` on the machine it ran on; each API
+  call's token counts are read from there, one count per message,
+  taking the final line of a streamed reply (the first line's output
+  count is a placeholder, which is how ccusage, checked against this on
+  2026-10-16, comes out about a fifth low on output while agreeing on
+  every other column). Only project directories named after this
+  repository, its worktrees and clones are counted. The sessions are
+  spread over several machines, each of which sees only its own
+  transcripts, so each keeps its own file under
+  [`usage/claude/`](../usage/claude) and the figures here are their sum.
+  Claude Code purges transcripts after 30 days by
+  default (Sources: transcripts), and the first machine on the ledger
+  did until 2026-10-14: its sessions before 2026-09-13 are gone, so this
+  part of the ledger starts there although the GitHub repository
+  started on 2026-08-16.
+  Machines so far: laptop, lima-agent.
 - **Claude USD.** Anthropic's published prices per model (Sources:
   prices). Cache writes cost 1.25× (5-minute) or 2× (1-hour) the input
   price; cache reads the per-model rate.
@@ -80,9 +87,9 @@ many runner types its jobs used.
   CO2 per token). Cache writes count as input tokens, cache reads at
   0.08× an input token; kWh is derived back from CO2 at the 287
   gCO2e/kWh those factors assume. Anthropic publishes no energy figures.
-  By these factors the average call here comes out at 16.7 Wh;
+  By these factors the average call here comes out at 17.6 Wh;
   Google's published median for a Gemini Apps text prompt is
-  0.24 Wh (Sources: a published per-prompt figure), 70× lower,
+  0.24 Wh (Sources: a published per-prompt figure), 73× lower,
   though a chat prompt and a coding call with a large cached context
   are different work. Read these as an order of magnitude, not a
   measurement.

@@ -4,13 +4,22 @@
 Three sources, month-level CSVs under usage/, rendered to
 docs/footprint.md:
 
-  collect-claude   usage/claude.csv   Claude Code sessions, from the
-                   transcripts Claude Code keeps under ~/.claude/projects
-                   (mounted read-only at CLAUDE_PROJECTS by the `usage`
-                   compose service): the project directories whose name
-                   contains --match (default: motel), which is this
-                   repository, its worktrees and its clones. One row per
-                   month and model: API calls and tokens by kind.
+  collect-claude   usage/claude/      Claude Code sessions, from the
+                   <machine>.csv      transcripts Claude Code keeps under
+                   ~/.claude/projects (mounted read-only at CLAUDE_PROJECTS
+                   by the `usage` compose service): the project directories
+                   whose name contains motel or one of the --match names
+                   (comma-separated: extra names, for a checkout that
+                   kept an older one), which is this repository, its
+                   worktrees and its clones. One row per month and
+                   model: API calls and tokens by kind. The sessions are
+                   spread over several machines and each sees only its
+                   own transcripts, so every machine writes its own
+                   file, named by --machine (a public label), and render
+                   sums the files. The label is set once per machine,
+                   on the host: `git config --global motel.usage-machine
+                   <label>`; make reads it, and motel.usage-match for
+                   the extra names.
   collect-actions  usage/runs.csv     GitHub Actions, from the API for
                    usage/jobs.csv     --repo (GH_TOKEN required). runs.csv:
                    one row per month and workflow, the runs with at
@@ -18,7 +27,8 @@ docs/footprint.md:
                    runner types its jobs used. jobs.csv: one row per
                    month, workflow and runner label: jobs, seconds,
                    billed minutes (each job rounded up to the minute).
-  render           docs/footprint.md  from the CSVs, usage/copilot.csv
+  render           docs/footprint.md  from the CSVs (the machine files
+                   summed), usage/copilot.csv
                    (AI credits typed in by hand from GitHub billing; its
                    note column is public too) and usage/factors.json
                    (prices, CO2 factors, runner watts, each with its
@@ -39,7 +49,18 @@ transcript, Actions runs past GitHub's retention — then the committed
 month stays and a warning says why; runs.csv and jobs.csv decide each
 month together, so a run is never kept without its jobs. --recompute
 replaces regardless (for a parser fix). A month the source no longer
-has at all is kept either way; delete its rows by hand to drop it.
+has at all is kept either way; delete its rows by hand to drop it. The
+rule holds file by file, so a run on one machine never lowers a month
+or touches another machine's share; the page is the sum of the files
+committed so far. Each machine commits its file and the page together;
+when two such commits meet, take either side of the page and run `make
+usage-check`: it re-renders the page from the merged files and fails
+until that page is staged. One machine under two labels is summed
+twice, so the label lives in the host's git config, once per machine,
+where every worktree and clone reads it; a label with no file yet, or a
+fresh row identical to one in another machine's file, warns. --match
+adds names: the default is always counted. To relabel a machine, `git
+mv` its file and set the config again.
 
 `make usage` runs all three steps; `make usage-check` (CI) runs
 usage_test.py, then re-renders from the committed CSVs and fails on a
@@ -59,6 +80,22 @@ occurrence, detection; fix size, risk):
   The error names the file; `make usage-check` re-renders the page once
   it is fixed. A full schema or a render-before-write is more code than
   a loud, recoverable failure buys.
+- Two machines sharing one label, because ~/.gitconfig is synced
+  between them, write one file: the merge rule keeps the larger
+  machine's months and warns that the source shrank on the other's
+  runs (S3 O2 D1 = 6; size 3, risk 2). The Makefile says to set the
+  label per clone, without --global, when the global config is synced;
+  a label kept beside the transcripts would be per machine by
+  construction, and that mount is read-only and Claude Code's.
+- A USAGE_MACHINE typed on the command line that is not the machine's
+  configured label writes a second file, and the page sums the machine
+  twice (S3 O5 D1 = 15; size 3, risk 2). The run warns, naming the
+  existing labels and any row of theirs identical to a fresh one. That
+  row check is a warning, not a stop, because two machines can produce
+  one identical small row (a single title call) and a stop would leave
+  no way on. A fingerprint committed beside each machine file would
+  decide it exactly, and is a second file format for a case the warning
+  already names.
 """
 
 import argparse
@@ -76,7 +113,8 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 
-CLAUDE_CSV = "usage/claude.csv"
+CLAUDE_DIR = "usage/claude"
+DEFAULT_MATCH = "motel"
 RUNS_CSV = "usage/runs.csv"
 JOBS_CSV = "usage/jobs.csv"
 COPILOT_CSV = "usage/copilot.csv"
@@ -89,6 +127,8 @@ COPILOT_REVIEW_WORKFLOW = "copilot-pull-request-reviewer"
 API_HOST = "api.github.com"
 # Copilot's agent runners carry a per-environment UUID (ubuntu-cca-<uuid>): one family, not a row each.
 UUID_SUFFIX = re.compile(r"-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
+# A machine's label is a public file name: lowercase letters, digits and hyphens.
+MACHINE = re.compile(r"[a-z0-9][a-z0-9-]*")
 
 
 def warn(msg):
@@ -171,15 +211,110 @@ def tokens(v):
     return int(v or 0)
 
 
-def collect_claude(root, match):
-    if not match:
-        sys.exit("--match must not be empty: it would count every project on this machine")
+def claude_path(machine):
+    return os.path.join(CLAUDE_DIR, machine + ".csv")
+
+
+def stems():
+    """(path, stem) for every usage/claude/*.csv, in order."""
+    return [(p, os.path.basename(p)[:-len(".csv")]) for p in sorted(glob.glob(claude_path("*")))]
+
+
+def machines():
+    """The labels with a file; a file no label can name stops the run, or it would be summed and never reachable."""
+    for path, m in stems():
+        if not MACHINE.fullmatch(m) or not os.path.isfile(path):
+            sys.exit(f"{path}: not a machine file (a label is lowercase letters, digits and hyphens); rename or remove it")
+    return [m for _, m in stems()]
+
+
+def so_far():
+    """For a message on the way out: the labels there are, without a stray file's exit taking the message's place."""
+    return "files so far: " + (", ".join(m for _, m in stems() if MACHINE.fullmatch(m)) or "none yet")
+
+
+def label(machine):
+    """A valid --machine: it names this machine's file and is a public label. A bad one stops the run."""
+    if not machine:
+        sys.exit("--machine is not set: each machine's sessions go in their own file, so name this one, once, "
+                 f"on the host: `git config --global motel.usage-machine <label>` (make reads it; {so_far()}). "
+                 "Set it per clone, without --global, if your ~/.gitconfig is synced between machines")
+    if not MACHINE.fullmatch(machine):
+        sys.exit(f"--machine {machine!r} must be lowercase letters, digits and hyphens: it names "
+                 f"{CLAUDE_DIR}/<machine>.csv, a public file ({so_far()})")
+    return machine
+
+
+def check_machine(machine):
+    """The label, checked before anything is read; one with no file yet is said so."""
+    label(machine)
+    have = machines()
+    if have and machine not in have:
+        # A label the machine has not used before: a typo for one it has is summed twice, and
+        # same_machine catches that only while a committed row is still what this run counts.
+        warn(f"{machine} is a new machine ({so_far()}); if this one already has a file, use that label")
+
+
+def match_names(match):
+    return [n.strip() for n in match.split(",") if n.strip()]
+
+
+def match_list(match):
+    """The names counted: the default and --match's extras; a --match that names nothing stops the run."""
+    names = match_names(match)
+    if match and not names:
+        sys.exit(f"--match {match!r} names nothing: a name, or several comma-separated")
+    return list(dict.fromkeys([DEFAULT_MATCH, *names]))
+
+
+def same_machine(machine, fresh):
+    """Warn when another label's file holds a row identical to a fresh one.
+
+    Two machines all but never produce the same six counts for a month
+    and model, so an identical row means this machine was run before
+    under another label, and summing the two files would count it twice.
+    A warning, not a stop: one small row (a single title call) can
+    coincide, and a stop would leave no way on. The run goes on to write
+    this label's file, so both ways out undo that.
+    """
+    this = claude_path(machine)
+    for other in machines():
+        if other != machine and any(r in fresh for r in read_csv(claude_path(other))):
+            # The way out is for a label that is new; an established file is not to be removed on a coincidence.
+            out = (f": either `git mv -f {claude_path(other)} {this}` and run again, or `rm {this}` and run with "
+                   f"--machine {other}" if not os.path.exists(this) else "; a single small row can also coincide")
+            warn(f"{claude_path(other)} holds a row identical to one counted here. If that is this machine under "
+                 f"an earlier label, the two files are summed twice{out}")
+            return
+
+
+def read_claude():
+    """Every machine's rows together; a (month, model) repeats across machines and render sums them."""
+    return [r for m in machines() for r in read_csv(claude_path(m))]
+
+
+def collect_claude(root, names):
+    if not names:
+        sys.exit("no project-directory names to count")
     if not os.path.isdir(root):
         sys.exit(f"{root} is not a directory: is ~/.claude/projects mounted? (docker-compose.yml, service usage)")
-    dirs = [d for d in sorted(glob.glob(os.path.join(root, "*"))) if match in os.path.basename(d)]
+    projects = sorted(os.path.basename(d) for d in glob.glob(os.path.join(root, "*")) if os.path.isdir(d))
+    dirs = [os.path.join(root, d) for d in projects if any(n in d for n in names)]
+    # The others are counted, not named: they are this machine's other projects, and a run's
+    # output gets pasted. The count is there so a checkout under an older name is seen left out.
+    n_others = len(projects) - len(dirs)
+    others = (f"{n_others} other project director{'y' if n_others == 1 else 'ies'} (see --match; none at all means "
+              "the mount is empty: docker-compose.yml, service usage)")
     if not dirs:
-        sys.exit(f"no project directory under {root} has '{match}' in its name")
+        sys.exit(f"no project directory under {root} has {' or '.join(repr(n) for n in names)} in its name; {others}")
     print("claude: " + ", ".join(os.path.basename(d) for d in dirs))
+    if len(dirs) < len(projects):
+        print(f"claude: not counted: {others}")
+    for n in names:
+        if n != DEFAULT_MATCH and not any(n in d for d in projects):
+            # A typo in --match is otherwise silent for good. The default is left out: a machine whose
+            # checkout kept the older name has no motel directory, and that is what --match is for.
+            warn(f"no project directory here has {n!r} in its name")
     msgs, files = {}, 0  # (message.id, requestId) -> [month, model, counts]
     for d in dirs:
         for path in glob.glob(os.path.join(d, "**", "*.jsonl"), recursive=True):
@@ -371,7 +506,7 @@ def price(model, prices):
 
 
 def claude_derived(r, factors):
-    """(usd, gCO2e) for one claude.csv row."""
+    """(usd, gCO2e) for one row of a machine's claude file."""
     prices = factors["prices_usd_per_mtok"]
     p, mult = price(r["model"], prices), prices["cache_write_multiplier"]
     g = factors["claude_gco2e_per_mtok"]
@@ -439,7 +574,7 @@ def table(header, rows):
 
 
 def render(factors):
-    claude, runs, jobs, copilot = read_csv(CLAUDE_CSV), read_csv(RUNS_CSV), read_csv(JOBS_CSV), read_copilot()
+    claude, runs, jobs, copilot = read_claude(), read_csv(RUNS_CSV), read_csv(JOBS_CSV), read_copilot()
     a, g = factors["actions"], factors["claude_gco2e_per_mtok"]
     grid_c = g["grid_gco2e_per_kwh"]
     months = sorted({r["month"] for r in claude + runs + jobs} | set(copilot))
@@ -566,16 +701,22 @@ many runner types its jobs used.
 ## Where the numbers come from
 
 - **Claude Code sessions.** Claude Code keeps a transcript of every
-  session under `~/.claude/projects`; each API call's token counts are
-  read from there, one count per message, taking the final line of a
-  streamed reply (the first line's output count is a placeholder, which
-  is how ccusage, checked against this on 2026-10-16, comes out about a
-  fifth low on output while agreeing on every other column). Only
-  project directories named after this repository, its worktrees and
-  clones are counted. Claude Code purges transcripts after 30 days by
-  default (Sources: transcripts), and did here until 2026-10-14:
-  sessions before 2026-09-13 are gone, so this part of the ledger starts
-  there although the GitHub repository started on 2026-08-16.
+  session under `~/.claude/projects` on the machine it ran on; each API
+  call's token counts are read from there, one count per message,
+  taking the final line of a streamed reply (the first line's output
+  count is a placeholder, which is how ccusage, checked against this on
+  2026-10-16, comes out about a fifth low on output while agreeing on
+  every other column). Only project directories named after this
+  repository, its worktrees and clones are counted. The sessions are
+  spread over several machines, each of which sees only its own
+  transcripts, so each keeps its own file under
+  [`usage/claude/`](../usage/claude) and the figures here are their sum.
+  Claude Code purges transcripts after 30 days by
+  default (Sources: transcripts), and the first machine on the ledger
+  did until 2026-10-14: its sessions before 2026-09-13 are gone, so this
+  part of the ledger starts there although the GitHub repository
+  started on 2026-08-16.
+  Machines so far: {", ".join(machines()) or "none"}.
 - **Claude USD.** Anthropic's published prices per model (Sources:
   prices). Cache writes cost 1.25× (5-minute) or 2× (1-hour) the input
   price; cache reads the per-model rate.
@@ -625,7 +766,12 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("steps", nargs="+", choices=["collect-claude", "collect-actions", "render"])
     ap.add_argument("--repo", help="owner/name for collect-actions (make passes USAGE_REPO)")
-    ap.add_argument("--match", default="motel", help="substring of the project directories to count")
+    ap.add_argument("--match", default="",
+                    help=f"project-directory names to count besides {DEFAULT_MATCH}, comma-separated, for a checkout that "
+                         "kept an older name (make reads git config motel.usage-match)")
+    ap.add_argument("--machine", default="",
+                    help=f"this machine's public label: its sessions go in {CLAUDE_DIR}/<machine>.csv (make passes "
+                         "USAGE_MACHINE, from git config motel.usage-machine)")
     ap.add_argument("--projects", default=os.environ.get("CLAUDE_PROJECTS", "/claude-projects"),
                     help="the mounted ~/.claude/projects")
     ap.add_argument("--recompute", action="store_true", help="replace committed months even when a row shrank")
@@ -634,6 +780,9 @@ def main():
     read_copilot()
     factors = load_factors()
     token = os.environ.get("GH_TOKEN")
+    if "collect-claude" in args.steps:
+        machine, names = args.machine, match_list(args.match)
+        check_machine(machine)
     if "collect-actions" in args.steps:
         if not token:
             sys.exit("GH_TOKEN is not set: `make usage` passes `gh auth token`; log in with `gh auth login`")
@@ -644,11 +793,15 @@ def main():
     # leaves the page behind its CSVs.
     groups = []
     if "collect-claude" in args.steps:
-        groups.append([(CLAUDE_CSV, ["month", "model"], CLAUDE_COLS, collect_claude(args.projects, args.match))])
+        fresh = collect_claude(args.projects, names)
+        same_machine(machine, fresh)
+        groups.append([(claude_path(machine), ["month", "model"], CLAUDE_COLS, fresh)])
     if "collect-actions" in args.steps:
         nruns, njobs = collect_actions(args.repo, token)
         groups.append([(RUNS_CSV, ["month", "workflow"], ["runs"], nruns),
                        (JOBS_CSV, ["month", "workflow", "runner"], JOBS_COLS, njobs)])
+    if "collect-claude" in args.steps:
+        os.makedirs(CLAUDE_DIR, exist_ok=True)  # here, not before collect-actions: nothing is written until all is collected
     for group in groups:
         merge(group, args.recompute)
     if groups or "render" in args.steps:

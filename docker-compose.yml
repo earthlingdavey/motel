@@ -70,7 +70,7 @@ services:
 
   # The usage ledger (`make usage`, .github/scripts/usage.py): reads the
   # Claude Code transcripts from the host read-only and the Actions API
-  # with the token make passes in, writes usage/*.csv and
+  # with the token make passes in, writes the CSVs under usage/ and
   # docs/footprint.md into the checkout. Stdlib only, so the image is
   # the whole runtime, pinned here where Dependabot watches it.
   usage:

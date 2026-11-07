@@ -236,8 +236,10 @@ make lint vet tidy     # golangci-lint (gofmt-gated), go vet, go mod tidy
 make tidy-check        # fails if go mod tidy would change a module's go.mod/go.sum; CI runs it on every PR
 make vulncheck         # govulncheck, all modules (tool dep in go.mod — Dependabot-bumped)
 make secretscan        # gitleaks secret scan: full history, or the working tree in a git worktree (same image as the CI gate)
-make usage             # what building this costs (Claude Code, Actions minutes, Copilot) → usage/*.csv + docs/footprint.md; needs gh auth login
-make usage-check       # usage.py's tests, then fails if docs/footprint.md no longer matches usage/*.csv; CI runs it on every PR
+make usage             # what building this costs (Claude Code, Actions minutes, Copilot) → usage/ CSVs + docs/footprint.md; needs gh auth login
+                       #   and, once per machine, `git config --global motel.usage-machine <label>`: each machine's sessions get their own usage/claude/<label>.csv, summed on the page
+make usage-claude      # the Claude Code half alone (no token), to run on each machine the sessions live on
+make usage-check       # usage.py's tests, then fails if docs/footprint.md no longer matches the usage/ CSVs; CI runs it on every PR
 make pin-watch-check   # pin-watch.py's manifest rules (dismissals, go.mod-held pins), in the same python image; usage-check runs it first
 make fuzz              # fuzz the untrusted-input surfaces (FUZZTIME=2m per target)
 make fuzz-list         # what fuzz will run (discovered per module, not listed by hand); CI runs it on every PR
