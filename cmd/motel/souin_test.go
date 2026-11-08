@@ -67,11 +67,13 @@ func souinCaddyfile(cacheBlock, handlerBlock, upstream string) string {
 
 // souinRig is one Caddy config serving one origin through the cache.
 type souinRig struct {
-	t      *testing.T
-	calls  atomic.Int64 // requests the origin answered
-	prefix string       // path prefix: stored entries outlive a config reload
-	origin *httptest.Server
-	client *http.Client
+	t         *testing.T
+	calls     atomic.Int64  // requests the origin answered
+	firstCall chan struct{} // closed when the origin receives its first request
+	once      sync.Once
+	prefix    string // path prefix: stored entries outlive a config reload
+	origin    *httptest.Server
+	client    *http.Client
 }
 
 var souinRigs atomic.Int64
@@ -89,12 +91,14 @@ func startSouin(t *testing.T, cacheBlock string, origin http.HandlerFunc) *souin
 func startSouinHandler(t *testing.T, cacheBlock, handlerBlock string, origin http.HandlerFunc) *souinRig {
 	t.Helper()
 	rig := &souinRig{
-		t:      t,
-		prefix: fmt.Sprintf("/rig%d", souinRigs.Add(1)),
-		client: &http.Client{Timeout: 10 * time.Second},
+		t:         t,
+		prefix:    fmt.Sprintf("/rig%d", souinRigs.Add(1)),
+		firstCall: make(chan struct{}),
+		client:    &http.Client{Timeout: 10 * time.Second},
 	}
 	rig.origin = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		rig.calls.Add(1)
+		rig.once.Do(func() { close(rig.firstCall) })
 		origin(w, r)
 	}))
 	t.Cleanup(rig.origin.Close)
@@ -155,9 +159,11 @@ func (rig *souinRig) fetch(url string, headers ...string) (reply, error) {
 	return reply{status: res.StatusCode, header: res.Header, body: string(body)}, nil
 }
 
-// concurrent sends one request, then the others once the first is in
-// flight, so they coalesce on its upstream call, and returns the replies
-// in order. A transport error fails the test here, on its own goroutine.
+// concurrent sends one request and, once the origin has received it (so
+// its upstream call is held open and the rest coalesce on it), the
+// others, and returns the replies in order. A transport error fails the
+// test here, on its own goroutine. The caller asserts rig.calls to show
+// the coalescing happened.
 func (rig *souinRig) concurrent(n int, path string) []reply {
 	rig.t.Helper()
 	replies := make([]reply, n)
@@ -170,7 +176,11 @@ func (rig *souinRig) concurrent(n int, path string) []reply {
 			replies[i], errs[i] = rig.fetch(rig.url(path))
 		}()
 		if i == 0 {
-			time.Sleep(50 * time.Millisecond)
+			select {
+			case <-rig.firstCall:
+			case <-time.After(5 * time.Second):
+				rig.t.Fatal("the first request never reached the origin")
+			}
 		}
 	}
 	wg.Wait()
@@ -321,9 +331,11 @@ func TestSouinStaleWhileRevalidateRefreshesThroughReverseProxy(t *testing.T) {
 			if got := rig.get("/swr"); got.body != "version 1" {
 				t.Fatalf("the stale copy should be served while revalidating, got %q (%s)", got.body, got.cacheStatus())
 			}
+			// Any later version shows the refresh stored: a second
+			// refresh may already have run on a slow runner.
 			deadline := time.Now().Add(3 * time.Second)
 			for time.Now().Before(deadline) {
-				if got := rig.get("/swr"); got.body == "version 2" {
+				if got := rig.get("/swr"); got.body != "version 1" {
 					return
 				}
 				time.Sleep(200 * time.Millisecond)
@@ -347,6 +359,9 @@ func TestSouinCoalescedRequestsGetTheUpstreamError(t *testing.T) {
 		if got.status != http.StatusServiceUnavailable || got.body != "upstream down" {
 			t.Errorf("request %d: %d %q, want 503 %q (%s)", i+1, got.status, got.body, "upstream down", got.cacheStatus())
 		}
+	}
+	if got := rig.calls.Load(); got != 1 {
+		t.Errorf("origin answered %d requests, want 1: the requests did not coalesce, so the test saw nothing", got)
 	}
 }
 
@@ -411,7 +426,12 @@ func TestSouinUntaggedResponsesAreNotIndexedUnderTheEmptyTag(t *testing.T) {
 	}
 	// The admin module wires its handlers once the middleware is up, and
 	// the admin listener is replaced on the config load, so a refused
-	// dial is retried like a 404.
+	// dial is retried like a 404. Accepted residual (S2 × O2 × D1 = 4):
+	// Souin's adminAPI stores that handler map from a goroutine and reads
+	// it unsynchronised, so a poll that lands before the write may make
+	// -race report the third-party race and fail the package loudly; if
+	// it does, this test moves to the integration lane with the other
+	// caddytest suites.
 	var (
 		listing reply
 		err     error
@@ -424,6 +444,11 @@ func TestSouinUntaggedResponsesAreNotIndexedUnderTheEmptyTag(t *testing.T) {
 	}
 	if err != nil {
 		t.Fatalf("surrogate index listing: %v", err)
+	}
+	if listing.status != http.StatusOK {
+		// Caddy's 404 body is JSON too, so without this the test would
+		// read an error object as the index.
+		t.Fatalf("surrogate index listing: %d %q; the Souin API is not mounted on the admin endpoint", listing.status, listing.body)
 	}
 	var index map[string]string
 	if err := json.Unmarshal([]byte(listing.body), &index); err != nil {
@@ -528,24 +553,31 @@ func TestSouinNoCacheResponseIsRevalidated(t *testing.T) {
 		}
 	})
 	t.Run("with etag", func(t *testing.T) {
+		// The conditional request finds the content changed, so only a
+		// revalidation made before the reply can produce version 2: a
+		// stored copy served first and refreshed behind it would show
+		// version 1 again.
 		var conditional atomic.Int64 // origin requests carrying our ETag
 		rig := startSouin(t, otterCache, func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Cache-Control", "no-cache")
-			w.Header().Set("ETag", `"v1"`)
 			if r.Header.Get("If-None-Match") == `"v1"` {
 				conditional.Add(1)
-				w.WriteHeader(http.StatusNotModified)
+				w.Header().Set("ETag", `"v2"`)
+				_, _ = fmt.Fprint(w, "version 2")
 				return
 			}
+			w.Header().Set("ETag", `"v1"`)
 			_, _ = fmt.Fprint(w, "version 1")
 		})
-		rig.get("/etag")
+		if got := rig.get("/etag"); got.body != "version 1" {
+			t.Fatalf("first response %q", got.body)
+		}
 		got := rig.get("/etag")
-		if got.status != http.StatusOK || got.body != "version 1" {
-			t.Errorf("second response %d %q (%s)", got.status, got.body, got.cacheStatus())
+		if got.status != http.StatusOK || got.body != "version 2" {
+			t.Errorf("second response %d %q (%s): the no-cache response was reused without revalidation", got.status, got.body, got.cacheStatus())
 		}
 		if calls := rig.calls.Load(); calls != 2 {
-			t.Errorf("origin answered %d requests, want 2 (%s): the no-cache response was reused without revalidation", calls, got.cacheStatus())
+			t.Errorf("origin answered %d requests, want 2", calls)
 		} else if conditional.Load() != 1 {
 			t.Errorf("the revalidation did not carry If-None-Match with the stored ETag")
 		}
