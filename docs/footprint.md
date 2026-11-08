@@ -20,9 +20,9 @@ energy figures), network transfer, and the models' training.
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
 | 2026-08 | — | — | — | — | — | — | 6,377 | 38 | 1.3 | 0.5 | 60 | — |
 | 2026-09 | 13,412 | 13.7 | 3.9 | 2,692 | 287 | 82.3 | 18,295 | 110 | 4.3 | 1.6 | 265 | — |
-| 2026-10 | 16,899 | 11.2 | 4.2 | 1,938 | 220 | 63.0 | 16,854 | 101 | 4.0 | 1.5 | 244 | — |
-| 2026-11 | 2,371 | 3.9 | 0.4 | 489 | 68 | 19.6 | — | — | — | — | — | — |
-| **Total** | 32,682 | 28.9 | 8.4 | 5,120 | 575 | 165.0 | 41,526 | 249 | 9.6 | 3.6 | 569 | — |
+| 2026-10 | 18,988 | 15.8 | 4.6 | 2,219 | 262 | 75.2 | 16,854 | 101 | 4.0 | 1.5 | 244 | — |
+| 2026-11 | 2,951 | 4.7 | 0.5 | 570 | 78 | 22.5 | — | — | — | — | — | — |
+| **Total** | 35,351 | 34.2 | 9.0 | 5,481 | 627 | 180.1 | 41,526 | 249 | 9.6 | 3.6 | 569 | — |
 
 A dash is a month the source has no rows for. Claude USD is what the
 tokens would cost at list price, not what was paid (Claude Code runs on
@@ -34,8 +34,8 @@ Every kWh and kgCO2e is an estimate, see below.
 
 | Model | Calls | Input Mtok | Output Mtok | Cache-write Mtok | Cache-read Gtok | List USD | kgCO2e |
 |---|---:|---:|---:|---:|---:|---:|---:|
-| claude-fable-5-1 | 12,324 | 0.27 | 15.5 | 78.7 | 3.25 | 2,873 | 104.0 |
-| claude-opus-5-5 | 15,708 | 0.03 | 9.3 | 68.7 | 4.00 | 1,435 | 45.7 |
+| claude-fable-5-1 | 12,673 | 0.28 | 16.2 | 80.3 | 3.32 | 2,955 | 107.4 |
+| claude-opus-5-5 | 18,028 | 0.04 | 13.9 | 84.7 | 4.46 | 1,715 | 57.4 |
 | claude-opus-5 | 4,612 | 0.01 | 4.0 | 14.8 | 1.16 | 804 | 15.1 |
 | claude-opus-4-8 | 28 | 0.00 | 0.1 | 0.1 | 0.01 | 8 | 0.2 |
 | claude-haiku-4-5-20251001 | 10 | 0.00 | 0.0 | 0.1 | 0.00 | 0 | 0.0 |
@@ -78,7 +78,7 @@ many runner types its jobs used.
   did until 2026-10-14: its sessions before 2026-09-13 are gone, so this
   part of the ledger starts there although the GitHub repository
   started on 2026-08-16.
-  Machines so far: laptop, lima64.
+  Machines so far: laptop, lima16, lima64.
 - **Claude USD.** Anthropic's published prices per model (Sources:
   prices). Cache writes cost 1.25× (5-minute) or 2× (1-hour) the input
   price; cache reads the per-model rate.
@@ -87,9 +87,9 @@ many runner types its jobs used.
   CO2 per token). Cache writes count as input tokens, cache reads at
   0.08× an input token; kWh is derived back from CO2 at the 287
   gCO2e/kWh those factors assume. Anthropic publishes no energy figures.
-  By these factors the average call here comes out at 17.6 Wh;
+  By these factors the average call here comes out at 17.7 Wh;
   Google's published median for a Gemini Apps text prompt is
-  0.24 Wh (Sources: a published per-prompt figure), 73× lower,
+  0.24 Wh (Sources: a published per-prompt figure), 74× lower,
   though a chat prompt and a coding call with a large cached context
   are different work. Read these as an order of magnitude, not a
   measurement.
