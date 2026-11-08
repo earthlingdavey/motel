@@ -27,6 +27,17 @@ import (
 // has. Each skip says what lifts it. They run Caddy in this test binary
 // through caddytest, as Souin's own plugin tests do, so the module graph
 // under test is motel's, not Souin's.
+//
+// This is the one caddytest suite in the unit lane; liveswap's and
+// penaltybox's are `integration`-tagged and run with -p 1 because they
+// all pin admin :2999 and http :9080. This one stays here because it
+// needs no systemd and nothing else in the root module listens on those
+// ports, so `go test ./cmd/motel/` keeps exercising the cache a bump
+// changes. Accepted residual (S2 × O2 × D1 = 4; a lane move scores
+// risk 2): a second caddytest suite in the root module, or a Caddy of
+// the developer's own on those ports, fails the package loudly with
+// "POSTed configuration isn't active"; the move to the integration lane
+// is then due, with `Integration` in the test names.
 
 // otterCache is the cache block the shipped Caddyfiles use.
 const otterCache = "otter\n\t\t\tttl 60s"
@@ -109,51 +120,65 @@ func (r reply) cacheStatus() string { return r.header.Get("Cache-Status") }
 
 func (r reply) hit() bool { return strings.Contains(r.cacheStatus(), "; hit") }
 
-// get requests the path on the cached site; headers are name, value pairs.
+// get requests the path on the cached site and fails the test on a
+// transport error; headers are name, value pairs. Call it from the test
+// goroutine only: concurrent collects errors from its workers instead.
 func (rig *souinRig) get(path string, headers ...string) reply {
 	rig.t.Helper()
-	return rig.fetch("http://localhost:9080"+rig.prefix+path, headers...)
-}
-
-func (rig *souinRig) fetch(url string, headers ...string) reply {
-	rig.t.Helper()
-	req, err := http.NewRequest(http.MethodGet, url, nil)
+	got, err := rig.fetch(rig.url(path), headers...)
 	if err != nil {
 		rig.t.Fatal(err)
+	}
+	return got
+}
+
+func (rig *souinRig) url(path string) string { return "http://localhost:9080" + rig.prefix + path }
+
+// fetch is one GET with its body read; the error names the URL.
+func (rig *souinRig) fetch(url string, headers ...string) (reply, error) {
+	req, err := http.NewRequest(http.MethodGet, url, nil)
+	if err != nil {
+		return reply{}, err
 	}
 	for i := 0; i+1 < len(headers); i += 2 {
 		req.Header.Set(headers[i], headers[i+1])
 	}
 	res, err := rig.client.Do(req)
 	if err != nil {
-		rig.t.Fatalf("GET %s: %v", url, err)
+		return reply{}, fmt.Errorf("GET %s: %w", url, err)
 	}
 	defer func() { _ = res.Body.Close() }()
 	body, err := io.ReadAll(res.Body)
 	if err != nil {
-		rig.t.Fatalf("GET %s: read body: %v", url, err)
+		return reply{}, fmt.Errorf("GET %s: read body: %w", url, err)
 	}
-	return reply{status: res.StatusCode, header: res.Header, body: string(body)}
+	return reply{status: res.StatusCode, header: res.Header, body: string(body)}, nil
 }
 
 // concurrent sends one request, then the others once the first is in
 // flight, so they coalesce on its upstream call, and returns the replies
-// in order.
+// in order. A transport error fails the test here, on its own goroutine.
 func (rig *souinRig) concurrent(n int, path string) []reply {
 	rig.t.Helper()
 	replies := make([]reply, n)
+	errs := make([]error, n)
 	var wg sync.WaitGroup
 	for i := range replies {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			replies[i] = rig.get(path)
+			replies[i], errs[i] = rig.fetch(rig.url(path))
 		}()
 		if i == 0 {
 			time.Sleep(50 * time.Millisecond)
 		}
 	}
 	wg.Wait()
+	for i, err := range errs {
+		if err != nil {
+			rig.t.Fatalf("request %d: %v", i+1, err)
+		}
+	}
 	return replies
 }
 
@@ -228,19 +253,21 @@ var staleStorages = map[string]string{
 
 // TestSouinServesStaleCopiesOnError: with stale-if-error, a stored
 // response outlives its TTL by the stale window so that an origin
-// failure is answered with the stale copy. Otter keeps the response
-// body only for the TTL (storages/otter SetMultiLevel stores it with
-// `duration`, where badger, nuts, redis, nats and etcd use `duration +
-// stale`), so with motel's storage the copy is gone the moment it goes
-// stale, and the client gets the error. Not fixed by the Souin bump: the
-// otter case is skipped until darkweak/storages ships an otter whose
-// SetMultiLevel keeps the body for `duration + stale`; remove the skip
-// with that bump.
+// failure is answered with the stale copy. Souin stores a response for
+// its TTL plus any stale-while-revalidate window it declares, and
+// counts on the storage to add the configured `stale` on top; the
+// default storage and badger, nuts, redis, nats and etcd do, otter
+// stores the body for exactly the duration it is handed (storages/otter
+// SetMultiLevel), so with motel's storage a stale-if-error copy is gone
+// the moment it goes stale and the client gets the error. Not fixed by
+// the Souin bump: the otter case is skipped until darkweak/storages
+// ships an otter that keeps the body for `duration + stale`; remove the
+// skip with that bump.
 func TestSouinServesStaleCopiesOnError(t *testing.T) {
 	for name, cacheBlock := range staleStorages {
 		t.Run(name, func(t *testing.T) {
 			if name == "otter" {
-				t.Skip("storages/otter v0.0.21 stores the body for the TTL only, so no stale copy exists; lift when otter keeps it for TTL + stale")
+				t.Skip("storages/otter v0.0.21 adds no stale window to the body it stores, so no stale-if-error copy exists; lift when otter keeps it for TTL + stale")
 			}
 			var version atomic.Int64
 			rig := startSouin(t, cacheBlock, func(w http.ResponseWriter, r *http.Request) {
@@ -273,8 +300,10 @@ func TestSouinServesStaleCopiesOnError(t *testing.T) {
 // (darkweak/souin#684); and when it did, the Caddy wrapper handed
 // reverse_proxy the client's request, whose context is cancelled as
 // soon as the stale response is written, so the refresh always failed
-// and the entry was stale forever (darkweak/souin#699). On otter the
-// stale copy is not kept at all (TestSouinServesStaleCopiesOnError).
+// and the entry was stale forever (darkweak/souin#699). The otter case
+// passes because Souin adds the stale-while-revalidate window to the
+// stored duration itself; stale-if-error gets no such room, which is
+// why only that test skips otter (TestSouinServesStaleCopiesOnError).
 func TestSouinStaleWhileRevalidateRefreshesThroughReverseProxy(t *testing.T) {
 	for name, cacheBlock := range staleStorages {
 		t.Run(name, func(t *testing.T) {
@@ -380,13 +409,21 @@ func TestSouinUntaggedResponsesAreNotIndexedUnderTheEmptyTag(t *testing.T) {
 			t.Fatalf("GET %s: %d", p, got.status)
 		}
 	}
-	// The admin module wires its handlers once the middleware is up.
-	var listing reply
+	// The admin module wires its handlers once the middleware is up, and
+	// the admin listener is replaced on the config load, so a refused
+	// dial is retried like a 404.
+	var (
+		listing reply
+		err     error
+	)
 	for deadline := time.Now().Add(5 * time.Second); ; time.Sleep(100 * time.Millisecond) {
-		listing = rig.fetch("http://localhost:2999/souin-api/souin/surrogate_keys")
-		if listing.status == http.StatusOK || time.Now().After(deadline) {
+		listing, err = rig.fetch("http://localhost:2999/souin-api/souin/surrogate_keys")
+		if (err == nil && listing.status == http.StatusOK) || time.Now().After(deadline) {
 			break
 		}
+	}
+	if err != nil {
+		t.Fatalf("surrogate index listing: %v", err)
 	}
 	var index map[string]string
 	if err := json.Unmarshal([]byte(listing.body), &index); err != nil {
