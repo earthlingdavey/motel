@@ -9,7 +9,7 @@ go 1.27.1
 
 require (
 	github.com/caddyserver/caddy/v2 v2.11.7
-	github.com/darkweak/souin/plugins/caddy v1.7.9
+	github.com/darkweak/souin/plugins/caddy v1.7.10
 	github.com/darkweak/storages/otter/caddy v0.0.22
 	github.com/smallhoursorg/motel/box v0.0.0-00010101000000-000000000000
 	github.com/smallhoursorg/motel/liveswap v0.0.0-00010101000000-000000000000
@@ -52,8 +52,8 @@ require (
 	github.com/coreos/go-oidc/v3 v3.21.0 // indirect
 	github.com/coreos/go-systemd/v22 v22.7.0 // indirect
 	github.com/cpuguy83/go-md2man/v2 v2.0.7 // indirect
-	github.com/darkweak/souin v1.7.9 // indirect
-	github.com/darkweak/storages/core v0.0.21 // indirect
+	github.com/darkweak/souin v1.7.10 // indirect
+	github.com/darkweak/storages/core v0.0.22 // indirect
 	github.com/darkweak/storages/otter v0.0.21 // indirect
 	github.com/dgraph-io/badger v1.6.2 // indirect
 	github.com/dgraph-io/badger/v2 v2.2007.4 // indirect
