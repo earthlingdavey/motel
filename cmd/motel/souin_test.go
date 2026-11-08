@@ -227,6 +227,30 @@ func TestSouinDoesNotStoreSetCookieResponses(t *testing.T) {
 			}
 		})
 	}
+	// The exception the rule leaves the origin: no-cache="Set-Cookie"
+	// (RFC 9111 §5.2.2.4, qualified form) says the cookie is not part of
+	// the stored copy, so the page is cached and served without it.
+	t.Run("qualified no-cache excludes the cookie", func(t *testing.T) {
+		rig := startSouin(t, otterCache, func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Cache-Control", `public, max-age=60, no-cache="Set-Cookie"`)
+			w.Header().Set("Set-Cookie", "session=1; Path=/")
+			_, _ = fmt.Fprint(w, "page")
+		})
+		first := rig.get("/home")
+		second := rig.get("/home")
+		if first.header.Get("Set-Cookie") == "" {
+			t.Fatalf("origin's cookie did not reach the first client: %+v", first.header)
+		}
+		if !second.hit() {
+			t.Errorf("the page was not stored although the cookie was excluded from the stored copy: %s", second.cacheStatus())
+		}
+		if cookies := second.header.Values("Set-Cookie"); len(cookies) != 0 {
+			t.Errorf("the stored copy carries the first client's cookie: %q", cookies)
+		}
+		if got := rig.calls.Load(); got != 1 {
+			t.Errorf("origin answered %d requests, want 1", got)
+		}
+	})
 }
 
 // TestSouinPrivateIsHonouredWhenAuthorizationIsAKeyedHeader: keying on
