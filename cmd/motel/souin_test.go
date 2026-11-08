@@ -461,20 +461,47 @@ func TestSouinGlobalCacheKeysReachTheHandler(t *testing.T) {
 
 // TestSouinNoCacheResponseIsRevalidated: a stored response marked
 // no-cache may be reused only after the origin confirmed it (RFC 9111
-// §5.2.2.4), so every request reaches the origin. v1.7.9 does this; the
-// test guards it across the bump, which reworks how no-cache is read
-// (only the unqualified directive forces revalidation from then on).
+// §5.2.2.4), so every request reaches the origin. Without a validator
+// v1.7.9 does this; with an ETag it serves the stored copy as a hit and
+// never asks (darkweak/souin#877, the reproduction this follows). The
+// bump reworks how no-cache is read: only the unqualified directive
+// forces revalidation from then on.
 func TestSouinNoCacheResponseIsRevalidated(t *testing.T) {
-	var version atomic.Int64
-	rig := startSouin(t, otterCache, func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Cache-Control", "no-cache")
-		_, _ = fmt.Fprintf(w, "version %d", version.Add(1))
+	t.Run("without validator", func(t *testing.T) {
+		var version atomic.Int64
+		rig := startSouin(t, otterCache, func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Cache-Control", "no-cache")
+			_, _ = fmt.Fprintf(w, "version %d", version.Add(1))
+		})
+		rig.get("/news")
+		if got := rig.get("/news"); got.body != "version 2" {
+			t.Errorf("second response %q (%s): the no-cache response was reused without revalidation", got.body, got.cacheStatus())
+		}
+		if got := rig.calls.Load(); got != 2 {
+			t.Errorf("origin answered %d requests, want 2", got)
+		}
 	})
-	rig.get("/news")
-	if got := rig.get("/news"); got.body != "version 2" {
-		t.Errorf("second response %q (%s): the no-cache response was reused without revalidation", got.body, got.cacheStatus())
-	}
-	if got := rig.calls.Load(); got != 2 {
-		t.Errorf("origin answered %d requests, want 2", got)
-	}
+	t.Run("with etag", func(t *testing.T) {
+		var conditional atomic.Int64 // origin requests carrying our ETag
+		rig := startSouin(t, otterCache, func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Cache-Control", "no-cache")
+			w.Header().Set("ETag", `"v1"`)
+			if r.Header.Get("If-None-Match") == `"v1"` {
+				conditional.Add(1)
+				w.WriteHeader(http.StatusNotModified)
+				return
+			}
+			_, _ = fmt.Fprint(w, "version 1")
+		})
+		rig.get("/etag")
+		got := rig.get("/etag")
+		if got.status != http.StatusOK || got.body != "version 1" {
+			t.Errorf("second response %d %q (%s)", got.status, got.body, got.cacheStatus())
+		}
+		if calls := rig.calls.Load(); calls != 2 {
+			t.Errorf("origin answered %d requests, want 2 (%s): the no-cache response was reused without revalidation", calls, got.cacheStatus())
+		} else if conditional.Load() != 1 {
+			t.Errorf("the revalidation did not carry If-None-Match with the stored ETag")
+		}
+	})
 }
