@@ -113,3 +113,11 @@ func TestSuspects(t *testing.T) {
 		}
 	}
 }
+
+func TestHeartbeatFailureSuspectsNoChannel(t *testing.T) {
+	_, _, recv := renderFull(t)
+	w := failWatch{kinds: map[string]string{"pager": "webhook", "students-bob": "webhook", "ops": "slack"}, channels: recv}
+	if got := w.suspects(failedSample{integration: "webhook", receiver: "heartbeat"}); len(got) != 0 {
+		t.Fatalf("a failing heartbeat blamed %v", got)
+	}
+}

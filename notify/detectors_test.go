@@ -311,3 +311,21 @@ func TestSeverityChangeEndsTheOldAlert(t *testing.T) {
 		t.Fatalf("posts = %+v", got)
 	}
 }
+
+func TestDiskPollerKeepsAPathItCannotMeasure(t *testing.T) {
+	fail := false
+	d := diskPoller{stat: func(string) (float64, uint64, error) {
+		if fail {
+			return 0, 0, os.ErrPermission
+		}
+		return 92, 1, nil
+	}}
+	if evs := d.poll([]string{"/var/lib/liveswap"}); len(evs) != 1 || !evs[0].Firing {
+		t.Fatalf("first: %+v", evs)
+	}
+	fail = true
+	evs := d.poll([]string{"/var/lib/liveswap"})
+	if len(evs) != 1 || !evs[0].Firing || evs[0].Severity != SeverityCritical {
+		t.Fatalf("a failed statfs cleared the alert: %+v", evs)
+	}
+}

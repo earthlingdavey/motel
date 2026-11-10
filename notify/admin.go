@@ -218,9 +218,12 @@ func serveTest(w http.ResponseWriter, r *http.Request) error {
 	defer cancel()
 	receiver := "ch-" + req.Channel
 	var before counts
-	if read != nil {
+	baseline := false
+	for i := 0; read != nil && i < 3 && !baseline; i++ {
 		if body, err := read(ctx); err == nil {
-			before = countsFor(body, receiver)
+			before, baseline = countsFor(body, receiver), true
+		} else {
+			time.Sleep(300 * time.Millisecond) // socket activation may be starting it
 		}
 	}
 	nonce := make([]byte, 4)
@@ -236,10 +239,11 @@ func serveTest(w http.ResponseWriter, r *http.Request) error {
 		return caddy.APIError{HTTPStatus: http.StatusBadGateway, Err: fmt.Errorf("posting to Alertmanager: %w", err)}
 	}
 	res := TestResult{Channel: req.Channel}
-	if read == nil {
-		res.Note = "posted; Alertmanager's counters cannot be read here, so watch the channel"
+	if !baseline {
+		res.Note = "posted; Alertmanager's counters could not be read before it, so watch the channel"
 		return writeJSON(w, res)
 	}
+	attemptFailed := false
 	deadline := time.Now().Add(testWait)
 	for time.Now().Before(deadline) {
 		select {
@@ -260,6 +264,13 @@ func serveTest(w http.ResponseWriter, r *http.Request) error {
 			res.Failed = after.reason
 			return writeJSON(w, res)
 		}
+		attemptFailed = attemptFailed || after.requestsFailed > before.requestsFailed
+	}
+	if attemptFailed {
+		// A 5xx or a refused connection: Alertmanager retries until the
+		// group's next tick before it counts the notification failed.
+		res.Failed = "every attempt failed so far, and Alertmanager is still retrying"
+		return writeJSON(w, res)
 	}
 	res.Note = fmt.Sprintf("posted, but Alertmanager reported neither a delivery nor a failure within %s", testWait)
 	return writeJSON(w, res)

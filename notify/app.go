@@ -185,6 +185,8 @@ func (a *App) Start() error {
 	switch {
 	case errors.Is(err, errNotSetUp):
 		a.logger.Warn("notify: Alertmanager is not set up on this box (run motel notify setup as root); events are journal lines only until it is", zap.String("state_dir", a.stateDir()))
+	case errors.Is(err, errUnanswered):
+		a.logger.Warn("notify: "+errUnanswered.Error(), zap.String("state_dir", a.stateDir()), zap.Error(err))
 	case err != nil:
 		a.logger.Error("notify: Alertmanager's config was not updated", zap.String("state_dir", a.stateDir()), zap.Error(err))
 	case reloaded:

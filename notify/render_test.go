@@ -14,6 +14,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"go.yaml.in/yaml/v3"
 )
@@ -22,15 +23,14 @@ var update = flag.Bool("update", false, "rewrite testdata/*.golden")
 
 const testStateDir = "/var/lib/motel-notify"
 
-func renderFull(t *testing.T) ([]byte, map[string]string, *resolved) {
+func renderFull(t *testing.T) ([]byte, map[string]string, map[string][]string) {
 	t.Helper()
 	a := mustParse(t, fullBlock)
 	r, err := a.resolve(testTrust(), testSecrets())
 	if err != nil {
 		t.Fatal(err)
 	}
-	cfg, files, _ := render(r, testStateDir)
-	return cfg, files, r
+	return render(r, testStateDir)
 }
 
 func TestRenderGolden(t *testing.T) {
@@ -384,5 +384,37 @@ func TestApplyWithoutAlertmanagerRunning(t *testing.T) {
 	}
 	if got, _ := os.ReadFile(filepath.Join(dir, ConfigName)); string(got) != "cfg\n" {
 		t.Fatalf("file = %q: written for Alertmanager's next start", got)
+	}
+}
+
+// TestApplyRetriesAnUnansweredReload: a reload Alertmanager did not
+// answer is an error, and the next load asks again though the file has
+// not changed since.
+func TestApplyRetriesAnUnansweredReload(t *testing.T) {
+	dir := t.TempDir()
+	sock := filepath.Join(t.TempDir(), "hung.sock")
+	l, err := net.Listen("unix", sock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = l.Close() })
+	go func() {
+		for {
+			c, err := l.Accept()
+			if err != nil {
+				return
+			}
+			t.Cleanup(func() { _ = c.Close() })
+		}
+	}()
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	if _, err := apply(ctx, dir, []byte("cfg\n"), nil, newAMClient(sock)); !errors.Is(err, errUnanswered) {
+		t.Fatalf("a hung Alertmanager: err = %v", err)
+	}
+	f, good := startFakeAM(t)
+	reloaded, err := apply(context.Background(), dir, []byte("cfg\n"), nil, newAMClient(good))
+	if err != nil || !reloaded || f.reloads != 1 {
+		t.Fatalf("the next load: reloaded %v err %v reloads %d", reloaded, err, f.reloads)
 	}
 }

@@ -442,3 +442,31 @@ func countAlert(as []amAlert, name string) int {
 	}
 	return n
 }
+
+// TestReleaseFallsBackToTheServingConfig: Caddy stops a new config whose
+// reload failed after notify's Start, and the old one serves on.
+func TestReleaseFallsBackToTheServingConfig(t *testing.T) {
+	e := newEngine()
+	old, nu := &App{}, &App{}
+	p := &recPoster{}
+	e.configure(old, p, nil, zap.NewNop())
+	e.configure(nu, p, nil, zap.NewNop())
+	e.release(nu)
+	e.mu.Lock()
+	active, running := e.active, e.running
+	e.mu.Unlock()
+	if active != old || !running {
+		t.Fatalf("after the failed reload: active is old %v, running %v", active == old, running)
+	}
+	// A reload that succeeds: the new starts, the old stops; the new
+	// keeps the engine.
+	e.configure(nu, p, nil, zap.NewNop())
+	e.release(old)
+	if e.active != nu {
+		t.Fatal("a successful reload's old Stop took the engine")
+	}
+	e.release(nu)
+	if e.active != nil || e.running {
+		t.Fatal("the last config's Stop left the engine running")
+	}
+}

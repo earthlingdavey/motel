@@ -248,7 +248,13 @@ whichever config serves when it clears.
   keys once `backup_record off`, a filesystem's once its path is not
   measured; each fired key is resolved with a journal line. An
   unreadable backup record keeps what fired firing beside
-  `backup_unreadable`.
+  `backup_unreadable`, and a filesystem statfs cannot measure keeps
+  what it fired.
+- **Reloads.** A reload Alertmanager does not answer is a warning, and
+  the config counts as unacknowledged, so the next load reloads it
+  though the file has not changed. A reload that fails after notify's
+  Start stops the new config while the old one serves on; the engine
+  goes back to the old one.
 
 ## Failed delivery
 
@@ -405,7 +411,7 @@ on its general scales. notify's examples:
 | Two channels of one integration in one receiver: a failure names both as suspects, and neither is told | notify/channelfailed.go (`suspects`) | 2 | 5 | 3 | an operator's choice of channels; the line names both, and the counter is Alertmanager's own; one receiver per channel would double every route |
 | A teacher with a single channel: `ChannelFailed` has no other channel to go to | notify/channelfailed.go | 2 | 5 | 1 | the `notify: channel failed` line and Alertmanager's counter say it; the design asks for "the other teacher channels" and there are none |
 | `motel notify test` reads the counters for 15 s; a slow receiver answers "neither yet" | notify/admin.go (`testWait`) | 2 | 2 | 1 | the answer says so; Alertmanager's retries continue |
-| Alertmanager refuses a reload of a config that dropped a channel: motel puts the previous config back, but has already removed the dropped channel's `url-<KEY>` file, so Alertmanager's next start fails on the restored config until motel's next load | notify/state.go (`apply`) | 4 | 2 | 1 | 8; two faults (a render Alertmanager refuses, which the amtool tests rule out for every shape, then a restart before the next load), and Alertmanager names the missing file; keeping the files until a reload succeeds adds state to the write (size 2, risk 2). /code-review of the PoC |
+| Alertmanager refuses a reload: motel puts the previous config back, but the URL files are already the new ones (a changed value rewritten, a dropped channel's removed), so the old config in memory sends a changed channel to its new URL, and Alertmanager's next start fails on a removed file until motel's next load | notify/state.go (`apply`) | 4 | 2 | 1 | 8; two faults (a render Alertmanager refuses, which the amtool tests rule out for every shape, then a restart before the next load), and Alertmanager names the missing file; a new URL is the one the signer committed; keeping the old files until a reload succeeds adds state to the write (size 2, risk 2). /code-review of the PoC, passes 1 and 2 |
 
 ### Owed
 
@@ -413,6 +419,7 @@ on its general scales. notify's examples:
 |---|---|---|---|---|
 | The box channel's `secrets/_box/` slot writing `_box.env`, and students' `secrets/<app>/NOTIFY_*` withheld from the unit's environment (#418) | — | — | — | the box subsystem, before any release: today root writes `_box.env` by hand |
 | motel restarted while a state key fires: the engine's table is in memory and liveswap's watchdog does not re-report a loop it was already in, so the alert ends at `resolve_timeout` and a false recovery is told; the backup, disk and TLS sources re-detect on their next poll | 3 | 4 | 3 | the next slice: liveswap re-reports its watchdog state at Start, or the engine reads Alertmanager's alert list at start (#22 of the review) |
+| A secret missing from `_box.env` refuses the whole config at load, as `motel validate` must: at a reboot motel does not start, and every site is down for an alert channel (named in the journal) | 4 | 5 | 1 | the `_box` slot: the box handler's consistency check refuses a push whose `notify` block names a secret the push does not carry, before it reaches the box; at load a missing secret then drops its channel with a warning. Load and validate cannot be told apart in Provision today (/code-review pass 2) |
 | A reboot of a box with motel rendering (the review's #3 asks for one): setup's layout survives a motel restart by construction, measured only for the hand-installed stack on hotserve-1 | — | — | — | a run on hotserve-1 after `motel notify setup` |
 | Slack and Discord with real hooks; ntfy's formatting of Alertmanager's payload (the hotserve-1 test delivered the JSON body as the message) | — | — | — | needs the owner's hooks |
 | Debian upgrading `prometheus-alertmanager` (its postinst restarts the unit directly): whether the socket's fd is passed was not tested | — | — | — | a hotserve-1 run of `apt-get install --reinstall` |

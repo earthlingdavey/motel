@@ -172,6 +172,10 @@ type engine struct {
 	running bool
 	cancel  context.CancelFunc
 	done    chan struct{}
+	// live are the configs started and not stopped, oldest first: a
+	// reload that fails after notify's Start stops the new config while
+	// the old one serves on, and the engine goes back to it.
+	live []liveConfig
 
 	// The polled sources, and what the active config points them at.
 	backup     backupPoller
@@ -526,7 +530,7 @@ func (e *engine) attempt(ctx context.Context) (again bool, wait time.Duration) {
 
 // poll asks the polled sources, outside the lock: the disk every
 // minute, the backup record every five.
-func (e *engine) poll() {
+func (e *engine) poll(ctx context.Context) {
 	e.mu.Lock()
 	if e.active == nil {
 		e.mu.Unlock()
@@ -541,7 +545,7 @@ func (e *engine) poll() {
 	read := e.metrics
 	e.mu.Unlock()
 	if diskDue && read != nil {
-		ctx, cancel := context.WithTimeout(context.Background(), amRequestTimeout)
+		ctx, cancel := context.WithTimeout(ctx, amRequestTimeout)
 		e.scrapeFailed(ctx, read)
 		cancel()
 	}
@@ -561,7 +565,7 @@ func (e *engine) run(ctx context.Context, tickEvery time.Duration) {
 	ticker := time.NewTicker(tickEvery)
 	defer ticker.Stop()
 	e.tick()
-	e.poll()
+	e.poll(ctx)
 	var retry <-chan time.Time
 	for {
 		if retry == nil {
@@ -581,7 +585,7 @@ func (e *engine) run(ctx context.Context, tickEvery time.Duration) {
 			return
 		case <-ticker.C:
 			e.tick()
-			e.poll()
+			e.poll(ctx)
 		case <-e.wake:
 		case <-retry:
 			retry = nil
@@ -591,9 +595,18 @@ func (e *engine) run(ctx context.Context, tickEvery time.Duration) {
 
 // configure points the engine at a config and starts its goroutine the
 // first time. Called from App.Start.
+type liveConfig struct {
+	a      *App
+	post   poster
+	known  []string
+	logger *zap.Logger
+}
+
 func (e *engine) configure(a *App, post poster, known []string, logger *zap.Logger) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
+	e.live = slices.DeleteFunc(e.live, func(l liveConfig) bool { return l.a == a })
+	e.live = append(e.live, liveConfig{a, post, known, logger})
 	e.setConfig(a, post, known, logger)
 	if !e.running {
 		ctx, cancel := context.WithCancel(context.Background())
@@ -642,14 +655,9 @@ func (e *engine) prune(apps []string) {
 		}
 		delete(e.states, key)
 	}
-	if e.backupPath == "" {
-		e.backup.set.prev = nil
-	}
-	for k := range e.disk.set.prev {
-		if !slices.Contains(e.diskPaths, e.disk.set.prev[k].Instance) {
-			delete(e.disk.set.prev, k)
-		}
-	}
+	// The pollers' own memory is their goroutine's (poll runs outside
+	// mu): a clear they report later for a key pruned here finds no
+	// state, and is nothing.
 	for app := range e.mutes {
 		if !slices.Contains(apps, app) {
 			delete(e.mutes, app)
@@ -659,14 +667,25 @@ func (e *engine) prune(apps []string) {
 }
 
 // release is App.Stop: when the stopping config is the one the engine
-// serves, the engine stops taking events and stops its goroutine. A
-// reload's new config has started already (Caddy starts the new before
-// it stops the old), so then this config is not the active one and the
-// engine runs on.
+// serves, and no other started config is live, the engine stops taking
+// events and stops its goroutine. A reload's new config has started
+// already (Caddy starts the new before it stops the old), so then this
+// config is not the active one and the engine runs on; a reload that
+// failed stops the new one, and the engine goes back to the old.
 func (e *engine) release(a *App) {
 	e.mu.Lock()
+	e.live = slices.DeleteFunc(e.live, func(l liveConfig) bool { return l.a == a })
 	if e.active != a {
 		e.mu.Unlock()
+		return
+	}
+	if n := len(e.live); n > 0 {
+		// The config that started last was stopped while an older one
+		// serves on: a reload that failed after notify's Start.
+		l := e.live[n-1]
+		e.setConfig(l.a, l.post, l.known, l.logger)
+		e.mu.Unlock()
+		l.logger.Info("notify: the config serving before a failed reload has the engine again")
 		return
 	}
 	e.active = nil

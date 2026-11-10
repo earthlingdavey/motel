@@ -174,6 +174,7 @@ func render(r *resolved, stateDir string) ([]byte, map[string]string, map[string
 	heartbeat := blackhole
 	if r.heartbeat != "" {
 		heartbeat = add(amRecv{Name: "heartbeat", WebhookConfigs: []amWebhook{{URLFile: file(r.heartbeat), SendResolved: false}}})
+		receivers[heartbeat] = []string{} // no channel: its failure is no channel's, and every teacher channel hears it
 	}
 	direct := amRoute{
 		Receiver:       blackhole,

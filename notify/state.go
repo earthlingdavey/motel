@@ -9,6 +9,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
+	"syscall"
 )
 
 // errNotSetUp is a state directory that is not there: `motel notify
@@ -104,8 +106,14 @@ func writeIfChanged(dir, name string, data []byte) (bool, error) {
 // starts, which socket activation does on motel's first post.
 func apply(ctx context.Context, dir string, cfg []byte, files map[string]string, am *amClient) (reloaded bool, err error) {
 	changed, previous, err := writeState(dir, cfg, files)
-	if err != nil || !changed {
+	if err != nil {
 		return false, err
+	}
+	acked.Lock()
+	known := bytes.Equal(acked.cfg[dir], cfg)
+	acked.Unlock()
+	if !changed && known {
+		return false, nil
 	}
 	err = am.reload(ctx)
 	var refused *amStatusError
@@ -117,8 +125,28 @@ func apply(ctx context.Context, dir string, cfg []byte, files map[string]string,
 		}
 		return false, err
 	}
-	if err != nil {
-		return false, nil //nolint:nilerr // not running yet: it loads the file when socket activation starts it
+	if errors.Is(err, fs.ErrNotExist) || errors.Is(err, syscall.ECONNREFUSED) {
+		return false, nil // no socket: it loads the file when it starts
 	}
+	if err != nil {
+		// It did not answer: the next load reloads again, since the
+		// config is not acknowledged.
+		return false, fmt.Errorf("%w: %w", errUnanswered, err)
+	}
+	acked.Lock()
+	acked.cfg[dir] = bytes.Clone(cfg)
+	acked.Unlock()
 	return true, nil
 }
+
+// acked is the config each state directory's Alertmanager last answered
+// a reload for, in this process: a file on disk that Alertmanager never
+// confirmed is reloaded again at the next load, though it has not
+// changed.
+var acked = struct {
+	sync.Mutex
+	cfg map[string][]byte
+}{cfg: map[string][]byte{}}
+
+// errUnanswered is a reload Alertmanager did not answer.
+var errUnanswered = errors.New("alertmanager did not answer the reload; it loads the file when it next starts, and motel asks again at its next load")

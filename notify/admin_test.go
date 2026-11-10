@@ -213,6 +213,33 @@ func TestServeTest(t *testing.T) {
 	if res.Delivered || res.Failed == "" {
 		t.Fatalf("a failing channel: %s", w.Body.String())
 	}
+	// Attempts failing and still retried (a 5xx): named failing, not
+	// "neither".
+	set(amCounts(0, 0, 0, 0))
+	go func() {
+		time.Sleep(300 * time.Millisecond)
+		set(amCounts(1, 2, 2, 0))
+	}()
+	w, err = callAdmin(t, serveTest, http.MethodPost, TestRequest{Channel: "ops"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	res = TestResult{}
+	_ = json.Unmarshal(w.Body.Bytes(), &res)
+	if res.Delivered || !strings.Contains(res.Failed, "still retrying") {
+		t.Fatalf("a retrying channel: %s", w.Body.String())
+	}
+	// No baseline: no verdict.
+	te.metrics = func(context.Context) ([]byte, error) { return nil, errors.New("starting") }
+	w, err = callAdmin(t, serveTest, http.MethodPost, TestRequest{Channel: "ops"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	res = TestResult{}
+	_ = json.Unmarshal(w.Body.Bytes(), &res)
+	if res.Delivered || res.Failed != "" || res.Note == "" {
+		t.Fatalf("no baseline: %s", w.Body.String())
+	}
 	if _, err := callAdmin(t, serveTest, http.MethodPost, TestRequest{Channel: "nosuch"}); apiStatus(err) != http.StatusUnprocessableEntity {
 		t.Fatalf("an unknown channel: %v", err)
 	}

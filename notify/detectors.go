@@ -230,8 +230,16 @@ func (d *diskPoller) poll(paths []string) []Event {
 	var fire []Event
 	for _, p := range paths {
 		used, dev, err := stat(p)
-		if err != nil || seen[dev] {
-			continue // a path not made yet, or a filesystem already measured
+		if err != nil {
+			// Not measured is not cleared: a path that fired keeps firing.
+			k := Event{Name: alertDiskLow, Source: "disk", Instance: p}.key()
+			if prev, ok := d.set.prev[k]; ok {
+				fire = append(fire, prev)
+			}
+			continue
+		}
+		if seen[dev] {
+			continue // a filesystem already measured
 		}
 		seen[dev] = true
 		level := diskLevel(d.level[p], used)
