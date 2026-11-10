@@ -6,8 +6,8 @@ COMPOSE ?= docker compose
 # the root module — nested modules are excluded from a parent module's
 # pattern even in workspace mode — so test/vet name each module's tree
 # explicitly.
-MODULES ?= . backups box liveswap penaltybox
-PKGS = ./... ./backups/... ./box/... ./liveswap/... ./penaltybox/...
+MODULES ?= . backups box liveswap notify penaltybox
+PKGS = ./... ./backups/... ./box/... ./liveswap/... ./notify/... ./penaltybox/...
 
 # Release version: the tag when present (release.yml passes it in),
 # else a digit-leading dev placeholder that deb version rules accept.
@@ -52,7 +52,7 @@ test-integration:
 	$(COMPOSE) exec -T dev-systemd /bin/sh /src/test/systemd/ready.sh || status=1; \
 	if [ $$status -eq 0 ]; then \
 		$(COMPOSE) exec -T -e XDG_RUNTIME_DIR=/run/user/0 dev-systemd \
-			go test -count=1 -race -tags integration -v -run Integration -p 1 ./backups/... ./box/... ./liveswap/... ./penaltybox/... || status=1; \
+			go test -count=1 -race -tags integration -v -run Integration -p 1 ./backups/... ./box/... ./liveswap/... ./notify/... ./penaltybox/... || status=1; \
 	fi; \
 	if [ $$status -ne 0 ]; then $(COMPOSE) exec -T dev-systemd journalctl --no-pager -n 100 || true; fi; \
 	$(COMPOSE) rm -sf dev-systemd >/dev/null; \

@@ -13,6 +13,7 @@ require (
 	github.com/darkweak/storages/otter/caddy v0.0.22
 	github.com/smallhoursorg/motel/box v0.0.0-00010101000000-000000000000
 	github.com/smallhoursorg/motel/liveswap v0.0.0-00010101000000-000000000000
+	github.com/smallhoursorg/motel/notify v0.0.0-00010101000000-000000000000
 	github.com/smallhoursorg/motel/penaltybox v0.0.0-00010101000000-000000000000
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/pflag v1.1.0
@@ -199,8 +200,10 @@ require (
 )
 
 replace (
+	github.com/smallhoursorg/motel/backups => ./backups
 	github.com/smallhoursorg/motel/box => ./box
 	github.com/smallhoursorg/motel/liveswap => ./liveswap
+	github.com/smallhoursorg/motel/notify => ./notify
 	github.com/smallhoursorg/motel/penaltybox => ./penaltybox
 )
 

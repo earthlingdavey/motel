@@ -38,7 +38,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        module: [".", "backups", "box", "liveswap", "penaltybox"]
+        module: [".", "backups", "box", "liveswap", "notify", "penaltybox"]
     runs-on: ubuntu-latest
     name: lint (${{ matrix.module }})
     steps:

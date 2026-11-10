@@ -562,6 +562,22 @@ func (a *App) buildSpec(name string, cfg *AppConfig) (*appSpec, error) {
 	}, nil
 }
 
+// TrustSources is each app's effective deploy_trust (its own blocks, or
+// the global ones it falls back to), as this config built them in
+// Provision: for the notify module, which sends an app's events to the
+// channels bound to an identity the app trusts, and refuses a binding
+// no app trusts. Nil before Provision.
+func (a *App) TrustSources() map[string][]deploytrust.Source {
+	if a.specs == nil {
+		return nil
+	}
+	out := make(map[string][]deploytrust.Source, len(a.specs))
+	for name, spec := range a.specs {
+		out[name] = slices.Clone(spec.trust)
+	}
+	return out
+}
+
 // Validate enforces semantic invariants (runs after Provision has
 // applied defaults, for JSON and Caddyfile config alike).
 func (a *App) Validate() error {
