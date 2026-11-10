@@ -134,11 +134,30 @@ each value once more, to its `url-<KEY>` file in the state directory,
 because Alertmanager's `*_file` fields read a file: that is the copy
 the prometheus uid reads, and the config itself holds paths only.
 
-**Owed** (see "Owed"): the box channel writing `_box.env` from a
-signed push's `secrets/_box/NOTIFY_*.age` (#418's reserved slot, which
-reverses box/DESIGN-box.md open question 5), and deployers' channels
-from `secrets/<app>/NOTIFY_*` withheld from the app's environment.
-Until then root writes `_box.env` by hand, as the e2e image does.
+**The box channel writes the file**: a signed push's
+`secrets/_box/NOTIFY_*.age` (#418's reserved slot; box/DESIGN-box.md,
+"The box's own slot", which reverses its open question 5 for this one
+use) is decrypted by root into `_box.env` as an app's secrets are into
+its env file, and a push that changes the file reloads motel, so a new
+URL is rendered at once (`make secret APP=_box VAR=NOTIFY_OPS_URL` in
+the box's repository; docs/secrets.md). The box handler validates a
+push before root writes its values, and cannot read them: `motel
+validate` is told the names the push carries
+(`MOTEL_NOTIFY_PUSHED_SECRETS`, names only, read in `validate` alone and
+for the default `secrets_file` alone, `PushedSecretsEnv`) and takes each
+as held, unchecked; a value the URL check refuses is refused at the
+reload the push makes, which the box rolls back. A box with no
+repository, or a `secrets_file` of the operator's own, is written by
+root by hand, as the e2e image does.
+
+**The `NOTIFY_` prefix is notify's.** A `NOTIFY_` variable among an
+app's own secrets (`secrets/<app>/NOTIFY_*.age`, in its env file) is
+withheld from the app unit's environment and stays a known value to the
+filter; an inline `env NOTIFY_…` line is refused (liveswap,
+`notifyOwnedEnvKey`). No line reads such a value yet: a deployer's
+channel is a `channel` line whose URL is in `_box/`, bound with `bind`;
+the per-app block that would read an app's own (#417's bundled secrets
+too) is a later slice ("Owed").
 
 ## The route tree
 
@@ -386,7 +405,7 @@ package is installed rather than a binary fetched.
 | `/run/motel-notify/am.sock` | 0660 | root:motel | systemd (the socket unit) | root, motel |
 | `/var/lib/motel-notify/` | 2750 | motel:prometheus | setup (makes), motel | Alertmanager |
 | `…/alertmanager.yml`, `…/url-<KEY>` | 0640 | motel:prometheus (born in the setgid dir) | motel, each by rename | Alertmanager |
-| `/etc/motel/secrets/_box.env` | 0640 | root:motel | root (the box applier, owed) | motel |
+| `/etc/motel/secrets/_box.env` | 0640 | root:motel | root: the box applier from `secrets/_box/`, or by hand | motel |
 | `/etc/systemd/system/motel-am.socket`, `…/prometheus-alertmanager.service.d/10-motel.conf` | 0644 | root | setup | systemd |
 | `/var/lib/prometheus/alertmanager/` | 0750 | prometheus | Alertmanager (the notification log, silences) | Alertmanager |
 
@@ -456,11 +475,10 @@ on its general scales. notify's examples:
 
 | Owed | S | O | D | Lands in |
 |---|---|---|---|---|
-| The box channel's `secrets/_box/` slot writing `_box.env`, and deployers' `secrets/<app>/NOTIFY_*` withheld from the unit's environment (#418) | — | — | — | the box subsystem, before any release: today root writes `_box.env` by hand |
 | motel restarted while a state key fires: the engine's table is in memory and liveswap's watchdog does not re-report a loop it was already in, so the alert ends at `resolve_timeout` and a false recovery is told; the backup, disk and TLS sources re-detect on their next poll | 3 | 4 | 3 | the next slice: liveswap re-reports its watchdog state at Start, or the engine reads Alertmanager's alert list at start (#22 of the review) |
 | A secret missing from `_box.env` refuses the whole config at load, as `motel validate` must: at a reboot motel does not start, and every site is down for an alert channel (named in the journal) | 4 | 5 | 1 | the `_box` slot: the box handler's consistency check refuses a push whose `notify` block names a secret the push does not carry, before it reaches the box; at load a missing secret then drops its channel with a warning. Load and validate cannot be told apart in Provision today (/code-review pass 2) |
 | Slack and Discord with real hooks; ntfy's formatting of Alertmanager's payload (the hotserve-1 test delivered the JSON body as the message) | — | — | — | needs the owner's hooks |
-| A per-app `notify` block (`deploy_succeeded on` per app, app-scoped channels); the pull API and the later channel kinds, for which the `notify: event` line is the record | — | — | — | later slices |
+| A per-app `notify` block (`deploy_succeeded on` per app, app-scoped channels, reading the app's own withheld `NOTIFY_` values); the pull API and the later channel kinds, for which the `notify: event` line is the record | — | — | — | later slices |
 
 ## e2e rows
 
@@ -533,3 +551,7 @@ Dated one-liners; the full text of each is in git.
   code is kept, not thrown away; the Owed rows that bar a production
   box (the `_box` slot, a missing secret refusing boot, the watchdog
   after a restart) are a follow-up PR before the next release.
+- 2026-11-10 — The first Owed row landed: the box channel writes
+  `_box.env` from `secrets/_box/` and reloads on its change, the
+  handler's validate is told the names a push carries, and the `NOTIFY_`
+  prefix is withheld from every app's environment.

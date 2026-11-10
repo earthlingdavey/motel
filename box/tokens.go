@@ -40,6 +40,16 @@ type Shape struct {
 	// so it does not hold the two readings to agree, as Walk does for
 	// the host and the signers.
 	AppEnv map[string]AppEnv
+	// Notify is the global notify block, nil for none: where it reads
+	// the box's own secrets from, for secretsFit. Read like AppEnv.
+	Notify *NotifyBlock
+}
+
+// NotifyBlock is what the box reads of the global notify block.
+type NotifyBlock struct {
+	// SecretsFile is the secrets_file line's argument, "" for none (the
+	// default, the file the box writes from secrets/_box/).
+	SecretsFile string
 }
 
 // AppEnv is an app block's env_file and env lines.
@@ -132,6 +142,7 @@ const (
 	kindSnippet                   // a top-level `(name)` block
 	kindLiveswap                  // the global block's `liveswap` block
 	kindApp                       // an `app <name>` block in the liveswap block
+	kindNotify                    // the global block's `notify` block
 )
 
 // frame is one open brace.
@@ -315,6 +326,10 @@ func walk(input []byte) (*Shape, error) {
 			if first.Text == "liveswap" {
 				child.kind = kindLiveswap
 			}
+			if first.Text == "notify" && opens && shape.Notify == nil { // Caddy refuses a second
+				shape.Notify = &NotifyBlock{}
+				child.kind = kindNotify
+			}
 		case kindLiveswap:
 			if first.Text == "app" && len(args) > 0 && appName.MatchString(args[0]) {
 				shape.Apps = append(shape.Apps, args[0])
@@ -335,6 +350,10 @@ func walk(input []byte) (*Shape, error) {
 				e.Env = append(e.Env, args[0])
 			}
 			shape.AppEnv[top.app] = e
+		case kindNotify:
+			if first.Text == "secrets_file" && len(args) > 0 {
+				shape.Notify.SecretsFile = args[0]
+			}
 		case kindBox:
 			switch first.Text {
 			case "signer":

@@ -50,16 +50,18 @@ type fakeValidator struct {
 	got   []byte
 	host  string   // the host reachability was asked for
 	door  []string // the loaded server's listen addresses it was given
+	// boxSecrets are the box slot's variables it was told the push carries.
+	boxSecrets []string
 	// block, when set, is waited on inside validate: the admission lock
 	// is held meanwhile.
 	block   chan struct{}
 	entered chan struct{}
 }
 
-func (f *fakeValidator) validate(ctx context.Context, _ string, caddyfile []byte, host string, door []string) (string, error) {
+func (f *fakeValidator) validate(ctx context.Context, _ string, caddyfile []byte, host string, door, boxSecrets []string) (string, error) {
 	f.mu.Lock()
 	f.calls++
-	f.got, f.host, f.door = caddyfile, host, door
+	f.got, f.host, f.door, f.boxSecrets = caddyfile, host, door, boxSecrets
 	block, entered := f.block, f.entered
 	msg, err := f.msg, f.err
 	f.mu.Unlock()

@@ -75,7 +75,7 @@ func (a *App) Provision(ctx caddy.Context) error {
 	if err != nil {
 		return fmt.Errorf("notify: %w", err)
 	}
-	if a.cfg, err = a.resolve(trust, secrets); err != nil {
+	if a.cfg, err = a.resolveWith(trust, secrets, pushedSecrets()); err != nil {
 		return fmt.Errorf("notify: %w", err)
 	}
 	// Every value the file holds is a known value to the filter, named

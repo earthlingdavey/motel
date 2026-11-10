@@ -185,6 +185,15 @@ type resolved struct {
 // trusts, a secret the box does not hold, a URL that is not https to a
 // public address. Errors name keys and channels, never a value.
 func (a *App) resolve(trust map[string][]TrustSource, secrets map[string]string) (*resolved, error) {
+	return a.resolveWith(trust, secrets, nil)
+}
+
+// resolveWith is resolve with held, the secrets a box push carries
+// (pushedSecrets): each is taken as held by the box without its value
+// being read or checked, and is given no URL. Only `motel validate`
+// passes any, and only for the box's own secrets file, which is where
+// root writes a push's secrets/_box/.
+func (a *App) resolveWith(trust map[string][]TrustSource, secrets map[string]string, held map[string]bool) (*resolved, error) {
 	r := &resolved{
 		channels:    map[string]Channel{},
 		appChannels: map[string][]string{},
@@ -258,6 +267,9 @@ func (a *App) resolve(trust map[string][]TrustSource, secrets map[string]string)
 		}
 	}
 	for key, who := range keys {
+		if held[key] && a.secretsFile() == DefaultSecretsFile {
+			continue
+		}
 		v, ok := secrets[key]
 		if !ok || v == "" {
 			return nil, fmt.Errorf("%s: secret %s is not in the box's secrets (%s)", who, key, a.secretsFile())

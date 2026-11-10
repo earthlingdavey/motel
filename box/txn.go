@@ -26,7 +26,9 @@ import (
 // The set is the Caddyfile and each env file step 15a put in the record
 // (envfiles.go). The Caddyfile is always the record's first file; it is
 // in the set — written, and reloaded — only when its bytes change, so a
-// set of env files alone reloads nothing. Env files are written first,
+// set of apps' env files alone reloads nothing; the box's own env file
+// (_box.env), which notify reads at a load, reloads when its bytes
+// change (reloads). Env files are written first,
 // in app-name order, then the Caddyfile, so that a reload of a file
 // that names a new env_file finds it in place. Recovery reads every
 // file of the set against its own prev and new and acts on the phase.
@@ -147,7 +149,7 @@ func (r *record) valid() error {
 	}
 	for i, e := range r.Secrets {
 		switch {
-		case !appName.MatchString(e.App) || (i > 0 && e.App <= r.Secrets[i-1].App):
+		case !secretSlot(e.App) || (i > 0 && e.App <= r.Secrets[i-1].App):
 			return errors.New("an env file's app is not in the grammar, or out of order")
 		case e.PrevSHA256 == "" && (len(e.Prev) > 0 || e.NewSHA256 == ""):
 			return errors.New("an env file that was absent with bytes, or absent before and after")
@@ -202,7 +204,8 @@ func (a *applied) valid() error {
 
 // validManaged holds a secrets tree and the app → digest map of the env
 // files the box manages, as the record and applied.json carry them: the
-// tree "" or 40 hex; at most 32 apps in the grammar, each at a digest
+// tree "" or 40 hex; at most 32 slots in the grammar (an app's, or the
+// box's own, secretSlot), each at a digest
 // (F5); and env files listed only beside a tree (F6), since they come
 // only from a commit with secrets.
 func validManaged(tree string, m map[string]string) error {
@@ -213,7 +216,7 @@ func validManaged(tree string, m map[string]string) error {
 		return errors.New("more env files listed than apps may have secrets")
 	}
 	for app, d := range m {
-		if !appName.MatchString(app) || !isDigest(d) {
+		if !secretSlot(app) || !isDigest(d) {
 			return errors.New("an env file listed is not an app and a digest")
 		}
 	}
@@ -233,7 +236,7 @@ func validNameLists(added, changed, removed, oob []string) bool {
 			return false
 		}
 	}
-	return len(oob) <= 2*proof.MaxSecretApps && !slices.ContainsFunc(oob, func(s string) bool { return !appName.MatchString(s) })
+	return len(oob) <= 2*proof.MaxSecretApps && !slices.ContainsFunc(oob, func(s string) bool { return !secretSlot(s) })
 }
 
 // validSecretNames reports whether names is a list root writes: within
@@ -265,8 +268,25 @@ type txn struct {
 func (t *txn) files() bool { return len(t.rec.Secrets) > 0 }
 
 // caddyfileInSet reports whether the push changes the Caddyfile: only
-// then is it written, and motel reloaded.
+// then is it written.
 func (t *txn) caddyfileInSet() bool { return t.rec.PrevSHA256 != t.rec.NewSHA256 }
+
+// reloads reports whether the set reloads motel: when the Caddyfile
+// changes, or the box's own env file (_box.env) does, which notify reads
+// at a config load and not, as an app reads its env file, at a launch
+// (DESIGN-box.md, "The box's own slot"). An env file rewritten for its
+// mode alone changes nothing a load reads.
+func (t *txn) reloads() bool {
+	if t.caddyfileInSet() {
+		return true
+	}
+	for _, e := range t.rec.Secrets {
+		if e.App == boxSlot && e.PrevSHA256 != e.NewSHA256 {
+			return true
+		}
+	}
+	return false
+}
 
 // pick is the catalogue's text for the set: the first when it is the
 // Caddyfile alone, the second when env files are in it.
@@ -592,11 +612,11 @@ func (a *Applier) swapFailed(ctx context.Context, t *txn, app string, changed bo
 	return nil
 }
 
-// reloadSwapped is swapped → applied: the reload, if the Caddyfile is in
-// the set, then every file of the set read back, then the record, then
-// the baseline.
+// reloadSwapped is swapped → applied: the reload, if the set reloads
+// (the Caddyfile or the box's own env file in it), then every file of
+// the set read back, then the record, then the baseline.
 func (a *Applier) reloadSwapped(ctx context.Context, t *txn) error {
-	if t.caddyfileInSet() {
+	if t.reloads() {
 		if err := a.systemd.Reload(ctx); err != nil {
 			a.logger.Warn("box reload failed", zap.String("id", t.rec.ID), zap.String("error", proof.Bound(err.Error())))
 			return a.rollback(ctx, t, msgReloadFailed, false)
@@ -619,7 +639,7 @@ func (a *Applier) reloadSwapped(ctx context.Context, t *txn) error {
 		// first file changed says what happened.
 		a.recordUnwritten(t, err)
 		why := msgRecordAfterReload
-		if !t.caddyfileInSet() {
+		if !t.reloads() {
 			why = msgRolledBackUnrecordedFiles
 		}
 		return a.rollback(ctx, t, why, false)
@@ -689,9 +709,9 @@ func (a *Applier) rollback(ctx context.Context, t *txn, why string, recovering b
 
 // rollingBack is the rolling_back row: the previous bytes of every file
 // of the set on disk (put back where the new ones stand), then — if the
-// Caddyfile was in the set — a reload, asking is-active first in
-// recovery, since a crash may have been a reboot. A set of env files
-// alone reloads nothing: they are back, and the push rolled back.
+// set reloads (reloads) — a reload, asking is-active first in
+// recovery, since a crash may have been a reboot. A set of apps' env
+// files alone reloads nothing: they are back, and the push rolled back.
 func (a *Applier) rollingBack(ctx context.Context, t *txn, recovering bool) error {
 	fs, err := a.states(t)
 	if err != nil {
@@ -726,7 +746,7 @@ func (a *Applier) rollingBack(ctx context.Context, t *txn, recovering bool) erro
 		}
 	}
 	why := t.rec.Error
-	if !t.caddyfileInSet() {
+	if !t.reloads() {
 		if why == "" {
 			why = msgRolledBackInterruptedFiles
 		}

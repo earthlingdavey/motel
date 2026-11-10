@@ -19,6 +19,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"syscall"
 	"time"
@@ -52,10 +53,21 @@ const xOK = 0x1
 // to keep). msg is a refusal's whole catalogue text; err is the box's
 // own trouble (the staged file could not be written, a child could not
 // start, whether backups are installed could not be told, an adaptation
-// that does not read).
+// that does not read). boxSecrets are the variables of the push's
+// secrets/_box/: values the box does not hold yet, which root writes
+// into the notify block's secrets file only once the push is installed,
+// so `motel validate` is told their names (NotifyPushedSecretsEnv) and
+// does not refuse them as missing.
 type validator interface {
-	validate(ctx context.Context, id string, caddyfile []byte, host string, door []string) (msg string, err error)
+	validate(ctx context.Context, id string, caddyfile []byte, host string, door, boxSecrets []string) (msg string, err error)
 }
+
+// NotifyPushedSecretsEnv names, to `motel validate`, the secrets a push
+// carries in its secrets/_box/: a comma-separated list of names, never
+// a value. notify's Provision, in `motel validate` alone, takes each as
+// held by the box without reading its value, which only root can open
+// (notify.PushedSecretsEnv, which cmd/motel's test holds equal to this).
+const NotifyPushedSecretsEnv = "MOTEL_NOTIFY_PUSHED_SECRETS" //nolint:gosec // G101: a variable's name, not a credential
 
 // childValidator runs the real children.
 type childValidator struct {
@@ -109,13 +121,17 @@ func serviceVariable(key string) bool {
 	return strings.HasPrefix(key, "LC_") || strings.HasPrefix(key, "XDG_")
 }
 
-func (c *childValidator) validate(ctx context.Context, id string, caddyfile []byte, host string, door []string) (string, error) {
+func (c *childValidator) validate(ctx context.Context, id string, caddyfile []byte, host string, door, boxSecrets []string) (string, error) {
 	staged := filepath.Join(c.stage, stagedConfig(id))
 	if err := writeExclusive(staged, caddyfile, 0o600); err != nil {
 		return "", fmt.Errorf("staging the Caddyfile for validate: %w", err)
 	}
 	defer os.Remove(staged) //nolint:errcheck // a leftover is swept at the next admission
-	if msg, err := c.run(ctx, "motel validate", loadError, c.motel, "validate", "--adapter", "caddyfile", "--config", staged); msg != "" || err != nil {
+	// Set whether or not the push has any, and last, so that one in the
+	// service's own environment is never what validate reads.
+	v := *c
+	v.env = append(slices.Clone(c.env), NotifyPushedSecretsEnv+"="+strings.Join(boxSecrets, ","))
+	if msg, err := v.run(ctx, "motel validate", loadError, c.motel, "validate", "--adapter", "caddyfile", "--config", staged); msg != "" || err != nil {
 		return msg, err
 	}
 	if msg, err := c.adapt(ctx, staged, host, door); msg != "" || err != nil {

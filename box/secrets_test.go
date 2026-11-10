@@ -405,6 +405,47 @@ func TestSecretsFit(t *testing.T) {
 			}
 		})
 	}
+	t.Run("the box's own slot", func(t *testing.T) {
+		withNotify := func(block string) []byte {
+			return []byte(strings.Replace(string(secretsFile("", "")), "\tliveswap {", "\tnotify {\n"+block+"\t}\n\n\tliveswap {", 1))
+		}
+		const ops = "\t\tchannel ops ntfy {secret.NOTIFY_OPS_URL}\n\t\toperator ops\n"
+		for name, c := range map[string]struct {
+			file    []byte
+			secrets *proof.Secrets
+			want    string
+		}{
+			"read by the notify block":       {withNotify(ops), secrets("_box:NOTIFY_OPS_URL,NOTIFY_SPARE_URL"), ""},
+			"the default, spelt out":         {withNotify(ops + "\t\tsecrets_file /etc/motel//secrets/_box.env\n"), secrets("_box:NOTIFY_OPS_URL"), ""},
+			"beside an app's":                {withNotify(ops), secrets("_box:NOTIFY_OPS_URL", "example:K"), "app example has secrets and no env_file"},
+			"no notify block":                {secretsFile("", ""), secrets("_box:NOTIFY_OPS_URL"), "deploy.example.com/secrets/_box/ holds the box's notify secrets, and the new Caddyfile has no notify block to read them: add one, or remove the directory"},
+			"another secrets_file":           {withNotify(ops + "\t\tsecrets_file /etc/motel/s3cr3t.env\n"), secrets("_box:NOTIFY_OPS_URL"), "deploy.example.com/secrets/_box/ is written to /etc/motel/secrets/_box.env, and the notify block's secrets_file is another file: remove the secrets_file line"},
+			"a name not notify's":            {withNotify(ops), secrets("_box:NOTIFY_OPS_URL,DATABASE_URL"), "deploy.example.com/secrets/_box/DATABASE_URL.age: the box's own slot holds notify's channel URLs alone"},
+			"a lowercase notify name":        {withNotify(ops), secrets("_box:NOTIFY_ops"), "the box's own slot holds notify's channel URLs alone"},
+			"an app's env_file is the box's": {secretsFile("\t\t\tenv_file /etc/motel/secrets/_box.env\n", ""), secrets(), "app example's env_file is the box's own secrets file, which notify reads and no app is given: use /etc/motel/secrets/example.env"},
+		} {
+			t.Run(name, func(t *testing.T) {
+				shape, err := Walk(c.file)
+				if err != nil {
+					t.Fatal(err)
+				}
+				err = secretsFit(shape, c.secrets, "deploy.example.com/Caddyfile")
+				if c.want == "" {
+					if err != nil {
+						t.Fatal(err)
+					}
+					return
+				}
+				var r *refusal
+				if !errors.As(err, &r) || !strings.Contains(r.msg, c.want) {
+					t.Fatalf("got %v, want a refusal containing %q", err, c.want)
+				}
+				if strings.Contains(r.msg, "s3cr3t") {
+					t.Fatalf("a secrets_file value was quoted back: %v", err)
+				}
+			})
+		}
+	})
 	t.Run("an env_file value is never quoted back", func(t *testing.T) {
 		shape, err := Walk(secretsFile("\t\t\tenv_file /etc/motel/s3cr3t-path.env\n", ""))
 		if err != nil {

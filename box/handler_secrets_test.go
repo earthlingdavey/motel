@@ -84,6 +84,22 @@ func TestPushSecretsFit(t *testing.T) {
 	}
 }
 
+// A push's secrets/_box/ is named to validate, which root has not yet
+// written into _box.env: the names in the commit's order, never a value.
+func TestPushNamesBoxSecretsToValidate(t *testing.T) {
+	p := newPushRig(t)
+	enc := func(v string) []byte { return encrypt(t, []byte(v), newIdentity(t).Recipient()) }
+	file := bytes.Replace(boxFile(2, p.alice), []byte("\tliveswap {"), []byte("\tnotify {\n\t\tchannel ops ntfy {secret.NOTIFY_OPS_URL}\n\t\toperator ops\n\t}\n\n\tliveswap {"), 1)
+	c := p.repo.commitSecrets(file, secrets{"_box": {"NOTIFY_OPS_URL": enc("https://ntfy.sh/ops"), "NOTIFY_HC_URL": enc("https://hc-ping.com/x")}}, &p.alice, p.base)
+	id := randomID(t)
+	if w := p.post(t, p.h, push{id: id, token: p.token(t, c), body: bytes.NewReader(tgz(t, p.repo.bundleFiles(c, p.base)))}); w.Code != http.StatusGatewayTimeout || !exists(p.x("in/"+id+".tar")) {
+		t.Fatalf("a push of the box's own secrets: %d %s", w.Code, w.Body)
+	}
+	if !slices.Equal(p.val.boxSecrets, []string{"NOTIFY_HC_URL", "NOTIFY_OPS_URL"}) {
+		t.Fatalf("validate was told %q", p.val.boxSecrets)
+	}
+}
+
 // The fast path answers a replay of the commit the box runs only while
 // every env file it lists stands at its digest: after the loss of one,
 // the push goes to root, which writes it again.

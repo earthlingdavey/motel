@@ -485,9 +485,11 @@ type standIn struct {
 var boxID = regexp.MustCompile(`^[0-9a-f]{32}$`)
 
 // secretNames are the grammars root holds the secrets' names to
-// (box/secrets.go): an app's name as box/tokens.go reads one, a
-// variable's as liveswap does.
-var secretNames = proof.Names{App: regexp.MustCompile(`^[a-z0-9-]{1,63}$`).MatchString, Var: liveswap.ValidEnvKey}
+// (box/secrets.go): an app's name as box/tokens.go reads one, or the
+// box's own slot, _box; a variable's as liveswap does.
+var secretNames = proof.Names{App: func(s string) bool { return s == "_box" || appNameRe.MatchString(s) }, Var: liveswap.ValidEnvKey}
+
+var appNameRe = regexp.MustCompile(`^[a-z0-9-]{1,63}$`)
 
 func newStandIn(t *testing.T, baseline string, installed []byte) *standIn {
 	s := &standIn{t: t, baseline: baseline, installed: installed, path: boxFile,
@@ -1193,6 +1195,24 @@ func TestBoxApply(t *testing.T) {
 			"- secrets updated; the Caddyfile is unchanged, nothing reloaded; apps `example`\n") {
 			t.Errorf("the job summary, secrets alone:\n%s", b)
 		}
+		// The box's own secrets alone: notify reads them at a load, so
+		// the push reloads, and no app is told to relaunch for them.
+		if out, code := g.secrets("", "https://ntfy.sh/ops", "set", "APP=_box", "VAR=NOTIFY_OPS_URL"); code != 0 {
+			t.Fatalf("make secret APP=_box: exit %d\n%s", code, out)
+		}
+		head = g.commit("the operator's channel")
+		out, code = g.apply()
+		if code != 0 || !strings.Contains(out, "apply: deploy.example.com secrets: _box: added NOTIFY_OPS_URL\n") ||
+			!strings.Contains(out, "deploy.example.com at "+head[:7]+": the box's notify secrets updated and loaded; the Caddyfile is unchanged, running apps are not restarted") ||
+			strings.Contains(out, "_box reads its secrets") || strings.Contains(out, "ntfy.sh") {
+			t.Fatalf("the box's own secrets: exit %d\n%s", code, out)
+		}
+		g.remove("deploy.example.com/secrets/_box")
+		g.change("no notify secrets")
+		if out, code := g.apply(); code != 0 {
+			t.Fatalf("the box's own secrets removed: exit %d\n%s", code, out)
+		}
+
 		// A recipients file written on Windows reads as age reads it.
 		g.write(recipientsFile, strings.ReplaceAll(g.read(recipientsFile), "\n", "\r\n"))
 		g.change("crlf")

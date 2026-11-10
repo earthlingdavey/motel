@@ -23,7 +23,7 @@ import (
 	// non-dumpable before main runs (see liveswap/harden).
 	_ "github.com/smallhoursorg/motel/box"
 	_ "github.com/smallhoursorg/motel/liveswap"
-	_ "github.com/smallhoursorg/motel/notify"
+	"github.com/smallhoursorg/motel/notify"
 	_ "github.com/smallhoursorg/motel/penaltybox"
 
 	// HTTP cache (Souin) with in-memory Otter storage.
@@ -37,6 +37,12 @@ func main() {
 	// cannot be registered twice, so this comes first.
 	if gate(os.Args[1:], os.Stderr) {
 		os.Exit(1)
+	}
+	// Provisioning cannot tell `motel validate` from a load; notify's
+	// refusals of the box's secrets differ between the two
+	// (notify/DESIGN-notify.md, "Secrets at load").
+	if len(os.Args) > 1 {
+		notify.SetCommand(os.Args[1])
 	}
 	caddycmd.Main()
 }

@@ -818,6 +818,56 @@ else
 fi
 rm -f /etc/motel/secrets/node-example.env
 settled "secrets removed"
+
+echo "=== box apply 8b: the box's own secrets, a notify channel's URL ==="
+# secrets/_box/ into /etc/motel/secrets/_box.env, which notify reads at a
+# config load: validate is told the name the push carries (the value is
+# not on the box yet), and a push of it alone reloads motel. No
+# Alertmanager on this box: notify says so and serves.
+BOXENV=/etc/motel/secrets/_box.env
+notify_secret() { # <var> <value>: make secret APP=_box; output in $work/sout
+	(cd "$repo" && printf '%s' "$2" | make -s secret APP=_box VAR="$1") >"$work/sout" 2>&1
+}
+cp "$repo/$FILE" "$work/fnonotify"
+notify_secret NOTIFY_OPS_URL https://ntfy.sh/e2e-box-ops-1 || fail "make secret APP=_box: $(cat "$work/sout")"
+grep -qF "notify block reads NOTIFY_OPS_URL yet" "$work/sout" \
+	&& pass "make secret APP=_box says no notify line reads it yet" || fail "make secret APP=_box: $(cat "$work/sout")"
+awk '{ print } !done && /^\{/ { print "\tnotify {\n\t\tchannel ops ntfy {secret.NOTIFY_OPS_URL}\n\t\toperator ops\n\t}"; done = 1 }' \
+	"$work/fnonotify" >"$repo/$FILE"
+N1=$(commit_index alice "notify: the operator's channel, its URL in secrets/_box/")
+t0=$(date +%s)
+if template_apply "$N1" && grep -qxF "apply: $HOST secrets: _box: added NOTIFY_OPS_URL" "$work/tout" \
+	&& ! grep -qF "_box reads its secrets" "$work/tout"; then
+	pass "a notify block and its secret in secrets/_box/ pass validate and apply"
+else
+	fail "a push of the box's own secret: $(cat "$work/tout")"
+fi
+[ "$(stat -c '%a %U %G' "$BOXENV" 2>/dev/null)" = "640 root motel" ] && grep -qxF 'NOTIFY_OPS_URL="https://ntfy.sh/e2e-box-ops-1"' "$BOXENV" \
+	&& pass "_box.env is 0640 root:motel, holding the value" || fail "_box.env: $(stat -c '%a %U %G' "$BOXENV" 2>&1) $(cat "$BOXENV" 2>&1)"
+journalctl -u motel --since "@$t0" --no-pager -o cat | grep -q 'Alertmanager is not set up on this box' \
+	&& pass "the reload loaded the notify block" || fail "no notify line after the reload"
+settled "box secret added"
+notify_secret NOTIFY_OPS_URL https://ntfy.sh/e2e-box-ops-2 || fail "make secret APP=_box, again: $(cat "$work/sout")"
+N2=$(commit_index alice "notify: rotate the operator's channel")
+t0=$(date +%s)
+if template_apply "$N2" && grep -qxF "apply: $HOST secrets: _box: changed NOTIFY_OPS_URL" "$work/tout" \
+	&& grep -qF ": the box's notify secrets updated and loaded; the Caddyfile is unchanged" "$work/tout"; then
+	pass "a rotated notify URL is sent alone"
+else
+	fail "a notify rotation: $(cat "$work/tout")"
+fi
+[ "$(reloads_since "$t0")" -ge 1 ] && grep -qxF 'NOTIFY_OPS_URL="https://ntfy.sh/e2e-box-ops-2"' "$BOXENV" \
+	&& pass "the box's own secrets alone reloaded motel" || fail "after the rotation: $(reloads_since "$t0") reloads; $(cat "$BOXENV" 2>&1)"
+settled "box secret rotated"
+git -C "$repo" rm -r -q "$HOST/secrets/_box"
+cp "$work/fnonotify" "$repo/$FILE"
+N3=$(commit_index alice "notify: gone")
+if template_apply "$N3" && grep -qxF "apply: $HOST secrets: _box: removed NOTIFY_OPS_URL" "$work/tout" && [ ! -e "$BOXENV" ]; then
+	pass "the box's own secrets removed with the notify block: _box.env is gone"
+else
+	fail "removal of the box's own secrets: $(cat "$work/tout"); $(ls -la /etc/motel/secrets 2>&1)"
+fi
+settled "box secrets removed"
 # The box's first key back, and age.pub from it.
 mv "$work/identity.old" /etc/motel/age/identity && [ "$(motel box key 2>/dev/null)" = "$KEY" ] \
 	&& pass "the box's first key is back" || fail "could not put the box's first key back"

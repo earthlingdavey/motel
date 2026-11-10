@@ -84,7 +84,7 @@ func (p *pushing) admit(b *proof.Bundle, body []byte) (done bool, err error) {
 	// 6. Validate, as the serving process would load it, and reach
 	// box_webhook on / for the host the walk found, through the door
 	// this push came in by.
-	if msg, err := h.validator.validate(p.r.Context(), p.id, b.Caddyfile, vd.host, arrivedAt(p.r)); err != nil {
+	if msg, err := h.validator.validate(p.r.Context(), p.id, b.Caddyfile, vd.host, arrivedAt(p.r), boxSecretNames(vd.secrets)); err != nil {
 		return true, p.fail(err)
 	} else if msg != "" {
 		return true, p.refuse(b, &refusal{msg: msg})

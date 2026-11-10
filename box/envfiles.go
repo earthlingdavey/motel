@@ -25,8 +25,9 @@ import (
 // here keeps:
 //
 //  1. Root writes only `<app>.env` names in secretsDir, for an app in
-//     the app grammar, and removes only one applied.json lists whose
-//     app HEAD no longer has. Any other name there is left alone.
+//     the app grammar or the box's own slot (`_box`, secretSlot), and
+//     removes only one applied.json lists whose app HEAD no longer has.
+//     Any other name there is left alone.
 //  2. An installed env file is read without following a link, without
 //     blocking, held to a regular file, to maxEnvRead plus one byte. A
 //     link at the name reads as no file (it is replaced, never
@@ -467,7 +468,7 @@ func (a *Applier) removeEnvTemps(id string) {
 	}
 	for _, e := range entries {
 		m := envTempName.FindStringSubmatch(e.Name())
-		if m == nil || !appName.MatchString(m[1]) || (id != "" && m[2] != id) || !e.Type().IsRegular() {
+		if m == nil || !secretSlot(m[1]) || (id != "" && m[2] != id) || !e.Type().IsRegular() {
 			continue
 		}
 		if err := os.Remove(filepath.Join(dir, e.Name())); err != nil && !errors.Is(err, fs.ErrNotExist) {
@@ -480,5 +481,5 @@ func (a *Applier) removeEnvTemps(id string) {
 // journal do: `<app>/<VAR>`, each in its grammar.
 func secretName(s string) bool {
 	app, v, ok := strings.Cut(s, "/")
-	return ok && appName.MatchString(app) && len(v) <= proof.MaxVarName && liveswap.ValidEnvKey(v)
+	return ok && secretSlot(app) && len(v) <= proof.MaxVarName && liveswap.ValidEnvKey(v)
 }

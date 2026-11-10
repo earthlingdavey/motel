@@ -1281,6 +1281,31 @@ func TestBuildEnvPrecedenceAndPlaceholders(t *testing.T) {
 	}
 }
 
+// A NOTIFY_ variable in an app's env_file is a notify channel's URL,
+// which the box writes there from secrets/<app>/NOTIFY_*.age: withheld
+// from the unit's environment, and still a value the filter knows.
+func TestBuildEnvWithholdsNotifyVariables(t *testing.T) {
+	spec := testSpec(t)
+	envFile := filepath.Join(t.TempDir(), "app.env")
+	must(t, os.WriteFile(envFile, []byte("DATABASE_URL=\"postgres://db\"\nNOTIFY_BLOG_URL=\"https://ntfy.sh/blog-topic\"\n"), 0o600))
+	spec.envFile = envFile
+	env, secrets, _, err := buildEnvFull(spec, "v1", spec.dirs.socket("0a1b2c3d0a1b2c3d"), spec.dirs.release("v1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, kv := range env {
+		if strings.HasPrefix(kv, "NOTIFY_") {
+			t.Errorf("%s reached the unit's environment", kv)
+		}
+	}
+	if !slices.Contains(env, "DATABASE_URL=postgres://db") {
+		t.Errorf("the file's other values are withheld too: %v", env)
+	}
+	if !slices.Contains(secrets, "NOTIFY_BLOG_URL=https://ntfy.sh/blog-topic") {
+		t.Errorf("a withheld value is no longer a known value to the filter: %v", secrets)
+	}
+}
+
 func TestBuildEnvDoesNotLeakSupervisorSecrets(t *testing.T) {
 	t.Setenv("ACME_DNS_API_TOKEN", "hunter2")
 	t.Setenv("AWS_SECRET_ACCESS_KEY", "tok")

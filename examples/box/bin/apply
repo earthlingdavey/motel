@@ -276,9 +276,12 @@ done_ok() {
 		secrets_said
 		a=$(apps)
 		# The diff is the Caddyfile's: none means the box wrote env files
-		# alone, and an env file is read at an app's launch, not a reload.
+		# alone, and an app's env file is read at its launch, not a
+		# reload. The box's own (_box), which notify reads, reloads.
 		if [ -n "$d" ]; then
 			what='loaded; running apps are not restarted'
+		elif list secrets_added secrets_changed secrets_removed | grep -q '^_box/'; then
+			what="the box's notify secrets updated and loaded; the Caddyfile is unchanged, running apps are not restarted"
 		else
 			what='secrets updated; the Caddyfile is unchanged, nothing reloaded'
 		fi
@@ -298,6 +301,7 @@ $s"
 		md="$md
 - $what${a:+; apps $a}"
 		for app in $(list secrets_added secrets_changed secrets_removed | sed 's,/.*,,' | LC_ALL=C sort -u); do
+			[ "$app" != _box ] || continue # notify read them at the reload
 			printf 'apply: %s reads its secrets at its next launch; a deploy of a new version launches it now\n' "$app"
 			md="$md
 - \`$app\` reads its secrets at its next launch; a deploy of a new version launches it now"

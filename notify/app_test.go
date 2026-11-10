@@ -150,3 +150,43 @@ func TestEverySecretIsAKnownValue(t *testing.T) {
 		t.Fatalf("summary = %q", got[0].Annotations["summary"])
 	}
 }
+
+// The box handler validates a push before root writes its
+// secrets/_box/ into _box.env: `motel validate` takes the names the
+// push carries as held, in validate alone and for the box's own file
+// alone, and refuses every other missing one as before.
+func TestValidateTakesAPushsSecretsAsHeld(t *testing.T) {
+	if _, err := os.Stat(DefaultSecretsFile); err == nil {
+		t.Skip("this machine has a box's secrets file")
+	}
+	t.Cleanup(func() { SetCommand("") })
+	src := func(secretsFile string) string {
+		line := ""
+		if secretsFile != "" {
+			line = "\t\tsecrets_file " + secretsFile + "\n"
+		}
+		return "{\n\tadmin off\n\tnotify {\n\t\tchannel ops ntfy {secret.NOTIFY_OPS_URL}\n\t\toperator ops\n" + line +
+			"\t\tstate_dir " + t.TempDir() + "\n\t}\n}\n:8080 {\n\trespond ok\n}\n"
+	}
+	t.Setenv(PushedSecretsEnv, "NOTIFY_OTHER_URL,NOTIFY_OPS_URL")
+	SetCommand("validate")
+	if err := validate(t, src("")); err != nil {
+		t.Fatalf("a secret the push carries was refused as missing: %v", err)
+	}
+	// Another file is not where root writes the push's secrets.
+	err := validate(t, src(filepath.Join(t.TempDir(), "other.env")))
+	if err == nil || !strings.Contains(err.Error(), "secret NOTIFY_OPS_URL is not in the box's secrets") {
+		t.Fatalf("a custom secrets_file: err = %v", err)
+	}
+	// Not named: refused.
+	t.Setenv(PushedSecretsEnv, "NOTIFY_OTHER_URL")
+	if err := validate(t, src("")); err == nil || !strings.Contains(err.Error(), "secret NOTIFY_OPS_URL is not in the box's secrets") {
+		t.Fatalf("a secret the push does not carry: err = %v", err)
+	}
+	// In any other command the variable is nobody's word.
+	t.Setenv(PushedSecretsEnv, "NOTIFY_OPS_URL")
+	SetCommand("run")
+	if err := validate(t, src("")); err == nil {
+		t.Fatal("a load took the variable's names as held")
+	}
+}

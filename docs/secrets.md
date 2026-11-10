@@ -156,6 +156,32 @@ optional `export ` dropped, one pair of quotes around a value taken off.
 For a file that is already on the box, see [Move a hand-made env file
 in](#move-a-hand-made-env-file-in).
 
+### A notify channel's URL
+
+A channel the box's `notify` block names (notify/DESIGN-notify.md) is a
+URL that is a credential by itself, so it is a secret too, of the box
+rather than of an app: `APP=_box`, named `NOTIFY_` then capitals.
+
+```sh
+make secret APP=_box VAR=NOTIFY_OPS_URL
+```
+
+The box writes these to `/etc/motel/secrets/_box.env`, which notify
+reads and no app is given, and reloads motel when they change: a
+channel's new URL is in use once the push is applied. The block reads
+each by name:
+
+```
+notify {
+    channel ops ntfy {secret.NOTIFY_OPS_URL}
+    operator ops
+}
+```
+
+A `_box/` value with no `notify` block to read it is refused. A
+`NOTIFY_` variable among an app's own secrets never reaches the
+app: motel withholds the prefix from every app's environment.
+
 ### Let a new signer read them
 
 `make signer`, run by the new person, also adds their key to every
@@ -290,8 +316,9 @@ push.
 
 motel reads an app's env file each time the app launches: a
 deploy, a rollback, or a relaunch after a crash or a reboot. A push
-never restarts a running app, and a push of secrets alone reloads
-nothing. So a value that must change now — a leaked key, say — is
+never restarts a running app, and a push of apps' secrets alone reloads
+nothing (the box's own, `_box/`, reload motel: [A notify channel's
+URL](#a-notify-channels-url)). So a value that must change now — a leaked key, say — is
 `make secret`, a push, and then a launch of the app. The quickest is a
 rollback to the version that is running: in the app's repository,
 Actions → deploy → **Run workflow**, with the running version as the

@@ -2026,7 +2026,13 @@ func buildEnvFull(spec *appSpec, version, socket, releaseDir string) (env, secre
 		if err != nil {
 			return nil, nil, 0, fmt.Errorf("env_file: %w", err)
 		}
-		env = append(env, fileVars...)
+		for _, kv := range fileVars {
+			if !notifyOwnedEnvKey(kv) {
+				env = append(env, kv)
+			}
+		}
+		// Every value the file holds is a known value to the filter,
+		// a withheld one too: it is a credential all the same.
 		secrets, envFileMode = fileVars, perm
 	}
 	for k, v := range spec.env {
@@ -2056,6 +2062,20 @@ var shellOwnedEnvKeys = map[string]bool{"IFS": true, "OPTIND": true, "PPID": tru
 func shellOwnedEnvKey(key string) bool { return shellOwnedEnvKeys[key] }
 
 const shellOwnedEnvKeyMsg = "is set by the shell every app unit runs behind (/bin/sh resets IFS, OPTIND, PPID and PWD at its start), so an app cannot be given it"
+
+// notifyEnvPrefix is the notify module's: a NOTIFY_ variable is a
+// notify channel's URL (notify/DESIGN-notify.md, "Secrets"), a
+// credential motel reads and no app is given. One in an app's env_file
+// (the box writes secrets/<app>/NOTIFY_*.age there) is withheld from
+// the unit's environment and stays a known value to the filter; one in
+// an inline env line, which could only be meant for the app, is refused
+// by name (#418, #417's rule).
+const notifyEnvPrefix = "NOTIFY_"
+
+// notifyOwnedEnvKey reports whether a KEY or KEY=value is notify's.
+func notifyOwnedEnvKey(kv string) bool { return strings.HasPrefix(kv, notifyEnvPrefix) }
+
+const notifyOwnedEnvKeyMsg = "is notify's: a NOTIFY_ variable is a notify channel's URL, which motel reads and no app is given; name it otherwise"
 
 // The env_file mode check. motel reads the file as the motel
 // user, so its mode is not motel's concern; the documented

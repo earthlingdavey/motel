@@ -8,6 +8,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"syscall"
 	"time"
@@ -46,11 +47,28 @@ const (
 // app's block names with env_file to read its secrets.
 func managedEnvFile(app string) string { return secretsDir + "/" + app + ".env" }
 
-// secretNames are the grammars the secrets' names are held to: an app
+// boxSlot is the one secrets directory that names no app: the box's
+// own (DESIGN-box.md, "The box's own slot"), whose values notify reads
+// as its channel URLs and no app is given. Outside the app grammar, so
+// no app can be named for it; its env file is /etc/motel/secrets/_box.env
+// (managedEnvFile), notify's default secrets_file.
+const boxSlot = "_box"
+
+// secretSlot is a secrets directory's name: an app's, in liveswap's
+// grammar, or the box's own.
+func secretSlot(name string) bool { return name == boxSlot || appName.MatchString(name) }
+
+// secretNames are the grammars the secrets' names are held to: a
 // directory is named for a liveswap app (appName, as the token walk
-// reads app lines), a value's file for a variable an env file can
-// carry.
-var secretNames = proof.Names{App: appName.MatchString, Var: liveswap.ValidEnvKey}
+// reads app lines) or is the box's own slot, a value's file for a
+// variable an env file can carry.
+var secretNames = proof.Names{App: secretSlot, Var: liveswap.ValidEnvKey}
+
+// boxVar is the grammar of a variable in the box's own slot: notify's
+// secret names (notify/config.go, secretRef), `NOTIFY_` then capitals,
+// digits and underscores. The slot is notify's alone (#418's open
+// question 1).
+var boxVar = regexp.MustCompile(`^NOTIFY_[A-Z0-9_]*$`)
 
 // errNotIdentity is a key file that is there and does not read as the
 // box's (the Console commands table's text); age's own parse error is
@@ -294,6 +312,12 @@ func secretsFit(shape *Shape, s *proof.Secrets, caddyfile string) error {
 	has := map[string]bool{}
 	for _, a := range s.Apps {
 		has[a.Name] = true
+		if a.Name == boxSlot {
+			if err := boxSlotFits(shape, a, dir); err != nil {
+				return err
+			}
+			continue
+		}
 		block, ok := shape.AppEnv[a.Name]
 		if !ok {
 			return refused("%s/%s/ names no app in the new Caddyfile: add the app, or remove the directory", dir, a.Name)
@@ -330,6 +354,8 @@ func secretsFit(shape *Shape, s *proof.Secrets, caddyfile string) error {
 			if !has[name] {
 				return refused("app %s's env_file is %s, and %s/%s/ holds no secret: add one, or remove the env_file line", name, clean, dir, name)
 			}
+		case isEnv && other == boxSlot:
+			return refused("app %s's env_file is the box's own secrets file, which notify reads and no app is given: use %s", name, managedEnvFile(name))
 		case isEnv && appName.MatchString(other):
 			return refused("app %s's env_file is app %s's secrets file", name, other)
 		default:
@@ -337,4 +363,40 @@ func secretsFit(shape *Shape, s *proof.Secrets, caddyfile string) error {
 		}
 	}
 	return nil
+}
+
+// boxSlotFits holds the box's own slot, secrets/_box/, to the file
+// beside it: notify's secret names alone, and a notify block that reads
+// them from the file the box writes. Like the rest of secretsFit, a
+// courtesy against a signer's mistake. A secrets_file line is compared
+// as a path and never quoted back, as an env_file is.
+func boxSlotFits(shape *Shape, a proof.SecretApp, dir string) error {
+	for _, v := range a.Vars {
+		if !boxVar.MatchString(v.Name) {
+			return refused("%s/%s/%s.age: the box's own slot holds notify's channel URLs alone, each named NOTIFY_ then capitals, digits and underscores", dir, boxSlot, v.Name)
+		}
+	}
+	switch {
+	case shape.Notify == nil:
+		return refused("%s/%s/ holds the box's notify secrets, and the new Caddyfile has no notify block to read them: add one, or remove the directory", dir, boxSlot)
+	case shape.Notify.SecretsFile != "" && filepath.Clean(shape.Notify.SecretsFile) != managedEnvFile(boxSlot):
+		return refused("%s/%s/ is written to %s, and the notify block's secrets_file is another file: remove the secrets_file line", dir, boxSlot, managedEnvFile(boxSlot))
+	}
+	return nil
+}
+
+// boxSecretNames are the variables of the box's own slot in s, in the
+// commit's order: the names `motel validate` is told the push carries
+// (NotifyPushedSecretsEnv).
+func boxSecretNames(s *proof.Secrets) []string {
+	var out []string
+	for _, a := range s.Apps {
+		if a.Name != boxSlot {
+			continue
+		}
+		for _, v := range a.Vars {
+			out = append(out, v.Name)
+		}
+	}
+	return out
 }
