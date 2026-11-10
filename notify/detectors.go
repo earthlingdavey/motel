@@ -202,8 +202,9 @@ func (b *backupPoller) poll(now time.Time, path string) []Event {
 // motel's directories, one per device, every minute.
 type diskPoller struct {
 	set   stateSet
-	level map[string]string // instance → the severity it fires at
-	stat  func(path string) (used float64, dev uint64, err error)
+	level map[uint64]string // device → the severity it fires at: the
+	// filesystem's, whichever path stands for it as the path list changes
+	stat func(path string) (used float64, dev uint64, err error)
 }
 
 // The thresholds: warning at 80 % used, critical at 90; each clears 5
@@ -233,7 +234,7 @@ func statfs(path string) (float64, uint64, error) {
 
 func (d *diskPoller) poll(paths []string) []Event {
 	if d.level == nil {
-		d.level = map[string]string{}
+		d.level = map[uint64]string{}
 	}
 	stat := d.stat
 	if stat == nil {
@@ -255,8 +256,8 @@ func (d *diskPoller) poll(paths []string) []Event {
 			continue // a filesystem already measured
 		}
 		seen[dev] = true
-		level := diskLevel(d.level[p], used)
-		d.level[p] = level
+		level := diskLevel(d.level[dev], used)
+		d.level[dev] = level
 		if level == "" {
 			continue
 		}

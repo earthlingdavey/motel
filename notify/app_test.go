@@ -126,3 +126,27 @@ func TestValidateWithoutLiveswap(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 }
+
+// TestEverySecretIsAKnownValue: a value no channel line names is still
+// masked in what motel sends.
+func TestEverySecretIsAKnownValue(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "_box.env")
+	if err := os.WriteFile(path, []byte("NOTIFY_OPS_URL=\"https://ntfy.sh/ops\"\nNOTIFY_SPARE_URL=\"https://ntfy.sh/spare-topic-7f3a\"\nOTHER=\"x\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	secrets, err := readSecrets(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if secrets["NOTIFY_SPARE_URL"] == "" || secrets["OTHER"] == "" {
+		t.Fatalf("secrets = %v", secrets)
+	}
+	te := newTestEngine(t)
+	te.known = knownValues(secrets)
+	ev := deployFailed()
+	ev.Summary = "posting to https://ntfy.sh/spare-topic-7f3a failed"
+	te.report(ev)
+	if got := te.drain(); strings.Contains(got[0].Annotations["summary"], "spare-topic") {
+		t.Fatalf("summary = %q", got[0].Annotations["summary"])
+	}
+}

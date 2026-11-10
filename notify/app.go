@@ -47,6 +47,7 @@ type App struct {
 	rendered  []byte              // alertmanager.yml, rendered in Provision
 	files     map[string]string   // the URL files it names
 	receivers map[string][]string // each receiver's channels
+	known     []string            // every KEY=value of the secrets file, for the filter
 	// diskPaths are the directories whose filesystems the disk source
 	// measures: Caddy's data, the apps' root, notify's own state.
 	diskPaths []string
@@ -77,6 +78,9 @@ func (a *App) Provision(ctx caddy.Context) error {
 	if a.cfg, err = a.resolve(trust, secrets); err != nil {
 		return fmt.Errorf("notify: %w", err)
 	}
+	// Every value the file holds is a known value to the filter, named
+	// by a channel line or not: a spare URL is as much a credential.
+	a.known = knownValues(secrets)
 	a.rendered, a.files, a.receivers = render(a.cfg, a.stateDir())
 	theEngine.failures.register(ctx.GetMetricsRegistry())
 
@@ -140,9 +144,10 @@ func appTrust(ctx caddy.Context) (map[string][]TrustSource, *liveswap.App, error
 // own cap on an env file (box/DESIGN-box.md, Caps) is far below it.
 const maxSecretsFile = 1 << 20
 
-// readSecrets is the NOTIFY_ values of the box tier's env file. A
-// missing file is no values, so each secret a line names is refused by
-// name (resolve), not as an I/O error.
+// readSecrets is the box tier's env file: every value, for the filter,
+// of which the channel lines name NOTIFY_ ones. A missing file is no
+// values, so each secret a line names is refused by name (resolve), not
+// as an I/O error.
 func readSecrets(path string) (map[string]string, error) {
 	f, err := os.Open(path) //nolint:gosec // the configured secrets file
 	if errors.Is(err, fs.ErrNotExist) {
@@ -166,9 +171,7 @@ func readSecrets(path string) (map[string]string, error) {
 	out := make(map[string]string, len(vars))
 	for _, kv := range vars {
 		k, v, _ := strings.Cut(kv, "=")
-		if strings.HasPrefix(k, "NOTIFY_") {
-			out[k] = v
-		}
+		out[k] = v
 	}
 	return out, nil
 }
@@ -182,11 +185,7 @@ func (a *App) Start() error {
 	a.applyRender(am)
 	// Every value the box's secrets hold is a known value to the
 	// filter, whatever line names it.
-	pairs := make([]string, 0, len(a.cfg.urls))
-	for k, v := range a.cfg.urls {
-		pairs = append(pairs, k+"="+v)
-	}
-	theEngine.configure(a, am, pairs, a.logger)
+	theEngine.configure(a, am, a.known, a.logger)
 	return nil
 }
 
@@ -243,4 +242,14 @@ func (a *App) backupRecord() string {
 		return ""
 	}
 	return a.BackupRecord
+}
+
+// knownValues is the filter's known values: every KEY=value of the
+// secrets file.
+func knownValues(secrets map[string]string) []string {
+	out := make([]string, 0, len(secrets))
+	for k, v := range secrets {
+		out = append(out, k+"="+v)
+	}
+	return out
 }

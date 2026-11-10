@@ -124,9 +124,10 @@ private address would reach a listener an app opened.
 ## Secrets
 
 The values are read from `/etc/motel/secrets/_box.env` (`KEY="value"`
-lines, liveswap's env-file format, `NOTIFY_` keys only), 0640
-root:motel, bound into no unit. Every value is a known value to
-liveswap's filter, which every summary passes through. motel writes
+lines, liveswap's env-file format; channel lines name `NOTIFY_` keys),
+0640 root:motel, bound into no unit. Every value in the file, named by
+a channel line or not, is a known value to liveswap's filter, which
+every summary passes through. motel writes
 each value once more, to its `url-<KEY>` file in the state directory,
 because Alertmanager's `*_file` fields read a file: that is the copy
 the prometheus uid reads, and the config itself holds paths only.
@@ -162,7 +163,7 @@ take the kind's own receivers, the operator's. State receivers
 [alertname=~"watchdog_.*"]`, `equal [app]`, with no severity matcher
 (#418's watchdog events are critical). Slack and Discord get a fixed
 title and text built from motel's summary; json and ntfy the payload
-whole. Nothing in the block is a template.
+whole; in a grouped Slack or Discord message each alert that has resolved is marked `[RESOLVED]`. Nothing in the block is a template.
 
 The timings are measured (2026-11-10, hotserve-1, Debian 13 arm64):
 
@@ -193,7 +194,7 @@ a deploy does not change its identity.
 |---|---|---|---|---|---|
 | `watchdog_throttled` | liveswap | state | critical | the restart budget is spent; again on any failed probe or crash during a recovery's hold, below the restart threshold too | the first healthy probe after it, held `max(30s, watchdog_grace)`; a deploy that succeeds; `watchdog off` |
 | `relaunch_refused` | liveswap | state | critical | the watchdog's relaunch is refused at its pre-flight | any path publishes an instance |
-| `deploy_failed` | liveswap | event | warning | a 5xx outcome; the summary names the version and the phase, never the error's text | — |
+| `deploy_failed` | liveswap | event | warning | a 5xx outcome, a push's upload that could not be staged, or app dirs that are not motel's; the summary names the version and the phase, never the error's text, and says nothing of what serves now | — |
 | `deploy_refused` | liveswap | event | warning | a 422 (liveswap's own words, through the filter) | — |
 | `rollback` | liveswap | event | warning | `?rollback=` succeeds | — |
 | `deploy_succeeded` | liveswap | event | info | a deploy succeeds; dropped unless `deploy_succeeded on` | — |
@@ -203,7 +204,7 @@ a deploy does not change its identity.
 | `drill_failed` | backup | state | critical | the last drill could not begin, the check found damage, or an app's latest drill proved nothing (`App.RestoreDrill`, as `status` reads it); the summary names the apps, never the drill's detail | the next drill that proves every app |
 | `backup_unreadable` | backup | state | warning | the record does not parse | it reads |
 | `cert_failed/<identifier>` | tls | state | warning; critical with under 7 days left | CertMagic's `cert_failed` | its `cert_obtained`, or 13 h with no report (a name no config manages any more) |
-| `disk_low/<path>` | disk | state | warning at 80 % used, critical at 90 | statfs, every minute, one per device, of the liveswap root, Caddy's data and the state directory | five points under its threshold |
+| `disk_low/<path>` | disk | state | warning at 80 % used, critical at 90 | statfs, every minute, one per device, of the liveswap root, Caddy's data and the state directory; the level is held per device, whichever path stands for it | five points under its threshold |
 | `Watchdog` | notify | heartbeat | none | every minute, alive 4 m | — |
 | `ChannelFailed` | notify | direct | warning | Alertmanager's failure counter rose ("Failed delivery") | `endsAt` +15 m |
 

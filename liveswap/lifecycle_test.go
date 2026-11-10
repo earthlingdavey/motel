@@ -3,9 +3,14 @@ package liveswap
 import (
 	"context"
 	"errors"
+	"io"
+	"net/http"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -82,7 +87,7 @@ func TestLifecycleDeployFailedNamesThePhaseNotTheError(t *testing.T) {
 	if !ok {
 		t.Fatalf("events = %v", n.names())
 	}
-	if strings.Contains(ev.Summary, "SECRET-OUTPUT") || !strings.Contains(ev.Summary, "deploy of v1 failed") {
+	if strings.Contains(ev.Summary, "SECRET-OUTPUT") || !strings.Contains(ev.Summary, "deploy of v1 failed") || strings.Contains(ev.Summary, "keeps serving") {
 		t.Fatalf("summary = %q", ev.Summary)
 	}
 	if got := n.names(); got[len(got)-1] != EventDeployEnded {
@@ -332,4 +337,40 @@ func TestLifecycleWatchdogOffEndsALoop(t *testing.T) {
 	if alerted {
 		t.Fatal("the loop is still reported")
 	}
+}
+
+// TestLifecyclePushFailuresBeforeThePipelineAreReported: a push that
+// fails before deployLocked (a full disk while the upload is staged, or
+// app dirs that are not motel's) skips the pipeline's own report, and is
+// still a deploy_failed.
+func TestLifecyclePushFailuresBeforeThePipelineAreReported(t *testing.T) {
+	t.Run("staging", func(t *testing.T) {
+		h, rig := newTestHandler(t)
+		n := &recNotifier{}
+		rig.ma.setNotifier(n)
+		h.stage = func(io.Reader, string, int64) (string, string, error) {
+			return "", "", &stagingError{syscall.ENOSPC}
+		}
+		w := send(t, h, gzipDeploy(t, "/demo?version=v9", appToken(t), "tarball-bytes"))
+		if w.Code != http.StatusInternalServerError {
+			t.Fatalf("status %d: %s", w.Code, w.Body.String())
+		}
+		ev, ok := n.find(EventDeployFailed)
+		if !ok || ev.Release != "v9" || !strings.Contains(ev.Summary, "could not be staged") || ev.DeployedBy == "" {
+			t.Fatalf("events = %v, %+v", n.names(), ev)
+		}
+	})
+	t.Run("dirs", func(t *testing.T) {
+		h, rig := newTestHandler(t)
+		n := &recNotifier{}
+		rig.ma.setNotifier(n)
+		blocker := filepath.Join(t.TempDir(), "not-a-dir")
+		must(t, os.WriteFile(blocker, nil, 0o600))
+		rig.spec.dirs.tmp = filepath.Join(blocker, "tmp")
+		send(t, h, gzipDeploy(t, "/demo?version=v9", appToken(t), "tarball-bytes"))
+		ev, ok := n.find(EventDeployFailed)
+		if !ok || !strings.Contains(ev.Summary, "before it began") {
+			t.Fatalf("events = %v, %+v", n.names(), ev)
+		}
+	})
 }

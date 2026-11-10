@@ -151,6 +151,19 @@ func TestRenderComposesReceivers(t *testing.T) {
 	}
 }
 
+// TestRenderMarksResolvedAlertsInText: Slack and Discord get motel's
+// text, not the payload; a grouped notification names which alerts in
+// it have resolved.
+func TestRenderMarksResolvedAlertsInText(t *testing.T) {
+	if !strings.Contains(msgText, `if eq .Status "resolved"`) || !strings.Contains(msgText, "[RESOLVED]") {
+		t.Fatalf("msgText = %s", msgText)
+	}
+	cfg, _, _ := renderFull(t)
+	if !bytes.Contains(cfg, []byte("[RESOLVED]")) {
+		t.Fatal("the rendered config does not carry it")
+	}
+}
+
 func TestRenderPlumbingFirstAndInhibition(t *testing.T) {
 	cfg, _, _ := renderFull(t)
 	var c amConfig

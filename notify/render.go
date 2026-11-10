@@ -117,7 +117,9 @@ type amDiscord struct {
 // and no log tail. Fixed here, never from the block.
 const (
 	msgTitle = `[{{ .Status | toUpper }}] {{ .CommonLabels.alertname }}{{ if .CommonLabels.app }} {{ .CommonLabels.app }}{{ end }}`
-	msgText  = `{{ range .Alerts }}{{ .Annotations.summary }}{{ "\n" }}{{ end }}`
+	// Each alert's own status, where it differs from the group's: a
+	// grouped notification names which of its alerts has resolved.
+	msgText = `{{ range .Alerts }}{{ if eq .Status "resolved" }}[RESOLVED] {{ end }}{{ .Annotations.summary }}{{ "\n" }}{{ end }}`
 )
 
 const configHeader = "# Rendered by motel from the Caddyfile's notify block (notify/DESIGN-notify.md).\n" +

@@ -119,7 +119,7 @@ receivers:
       - api_url_file: /var/lib/motel-notify/url-NOTIFY_OPS_URL
         send_resolved: true
         title: '[{{ .Status | toUpper }}] {{ .CommonLabels.alertname }}{{ if .CommonLabels.app }} {{ .CommonLabels.app }}{{ end }}'
-        text: '{{ range .Alerts }}{{ .Annotations.summary }}{{ "\n" }}{{ end }}'
+        text: '{{ range .Alerts }}{{ if eq .Status "resolved" }}[RESOLVED] {{ end }}{{ .Annotations.summary }}{{ "\n" }}{{ end }}'
   - name: blackhole
   - name: heartbeat
     webhook_configs:
@@ -130,7 +130,7 @@ receivers:
       - webhook_url_file: /var/lib/motel-notify/url-NOTIFY_ALICE_URL
         send_resolved: false
         title: '[{{ .Status | toUpper }}] {{ .CommonLabels.alertname }}{{ if .CommonLabels.app }} {{ .CommonLabels.app }}{{ end }}'
-        message: '{{ range .Alerts }}{{ .Annotations.summary }}{{ "\n" }}{{ end }}'
+        message: '{{ range .Alerts }}{{ if eq .Status "resolved" }}[RESOLVED] {{ end }}{{ .Annotations.summary }}{{ "\n" }}{{ end }}'
   - name: ch-bob
     webhook_configs:
       - url_file: /var/lib/motel-notify/url-NOTIFY_BOB_URL
@@ -140,7 +140,7 @@ receivers:
       - api_url_file: /var/lib/motel-notify/url-NOTIFY_OPS_URL
         send_resolved: false
         title: '[{{ .Status | toUpper }}] {{ .CommonLabels.alertname }}{{ if .CommonLabels.app }} {{ .CommonLabels.app }}{{ end }}'
-        text: '{{ range .Alerts }}{{ .Annotations.summary }}{{ "\n" }}{{ end }}'
+        text: '{{ range .Alerts }}{{ if eq .Status "resolved" }}[RESOLVED] {{ end }}{{ .Annotations.summary }}{{ "\n" }}{{ end }}'
   - name: ch-pager
     webhook_configs:
       - url_file: /var/lib/motel-notify/url-NOTIFY_PAGER_URL
@@ -150,7 +150,7 @@ receivers:
       - api_url_file: /var/lib/motel-notify/url-NOTIFY_OPS_URL
         send_resolved: true
         title: '[{{ .Status | toUpper }}] {{ .CommonLabels.alertname }}{{ if .CommonLabels.app }} {{ .CommonLabels.app }}{{ end }}'
-        text: '{{ range .Alerts }}{{ .Annotations.summary }}{{ "\n" }}{{ end }}'
+        text: '{{ range .Alerts }}{{ if eq .Status "resolved" }}[RESOLVED] {{ end }}{{ .Annotations.summary }}{{ "\n" }}{{ end }}'
   - name: state-disk-box-critical
     webhook_configs:
       - url_file: /var/lib/motel-notify/url-NOTIFY_PAGER_URL
@@ -159,19 +159,19 @@ receivers:
       - api_url_file: /var/lib/motel-notify/url-NOTIFY_OPS_URL
         send_resolved: true
         title: '[{{ .Status | toUpper }}] {{ .CommonLabels.alertname }}{{ if .CommonLabels.app }} {{ .CommonLabels.app }}{{ end }}'
-        text: '{{ range .Alerts }}{{ .Annotations.summary }}{{ "\n" }}{{ end }}'
+        text: '{{ range .Alerts }}{{ if eq .Status "resolved" }}[RESOLVED] {{ end }}{{ .Annotations.summary }}{{ "\n" }}{{ end }}'
   - name: state-disk-box-warning
     slack_configs:
       - api_url_file: /var/lib/motel-notify/url-NOTIFY_OPS_URL
         send_resolved: true
         title: '[{{ .Status | toUpper }}] {{ .CommonLabels.alertname }}{{ if .CommonLabels.app }} {{ .CommonLabels.app }}{{ end }}'
-        text: '{{ range .Alerts }}{{ .Annotations.summary }}{{ "\n" }}{{ end }}'
+        text: '{{ range .Alerts }}{{ if eq .Status "resolved" }}[RESOLVED] {{ end }}{{ .Annotations.summary }}{{ "\n" }}{{ end }}'
   - name: event-box-info
     slack_configs:
       - api_url_file: /var/lib/motel-notify/url-NOTIFY_OPS_URL
         send_resolved: false
         title: '[{{ .Status | toUpper }}] {{ .CommonLabels.alertname }}{{ if .CommonLabels.app }} {{ .CommonLabels.app }}{{ end }}'
-        text: '{{ range .Alerts }}{{ .Annotations.summary }}{{ "\n" }}{{ end }}'
+        text: '{{ range .Alerts }}{{ if eq .Status "resolved" }}[RESOLVED] {{ end }}{{ .Annotations.summary }}{{ "\n" }}{{ end }}'
   - name: event-box-critical
     webhook_configs:
       - url_file: /var/lib/motel-notify/url-NOTIFY_PAGER_URL
@@ -180,24 +180,24 @@ receivers:
       - api_url_file: /var/lib/motel-notify/url-NOTIFY_OPS_URL
         send_resolved: false
         title: '[{{ .Status | toUpper }}] {{ .CommonLabels.alertname }}{{ if .CommonLabels.app }} {{ .CommonLabels.app }}{{ end }}'
-        text: '{{ range .Alerts }}{{ .Annotations.summary }}{{ "\n" }}{{ end }}'
+        text: '{{ range .Alerts }}{{ if eq .Status "resolved" }}[RESOLVED] {{ end }}{{ .Annotations.summary }}{{ "\n" }}{{ end }}'
   - name: event-box-warning
     slack_configs:
       - api_url_file: /var/lib/motel-notify/url-NOTIFY_OPS_URL
         send_resolved: false
         title: '[{{ .Status | toUpper }}] {{ .CommonLabels.alertname }}{{ if .CommonLabels.app }} {{ .CommonLabels.app }}{{ end }}'
-        text: '{{ range .Alerts }}{{ .Annotations.summary }}{{ "\n" }}{{ end }}'
+        text: '{{ range .Alerts }}{{ if eq .Status "resolved" }}[RESOLVED] {{ end }}{{ .Annotations.summary }}{{ "\n" }}{{ end }}'
   - name: event-app-blog-info
     slack_configs:
       - api_url_file: /var/lib/motel-notify/url-NOTIFY_OPS_URL
         send_resolved: false
         title: '[{{ .Status | toUpper }}] {{ .CommonLabels.alertname }}{{ if .CommonLabels.app }} {{ .CommonLabels.app }}{{ end }}'
-        text: '{{ range .Alerts }}{{ .Annotations.summary }}{{ "\n" }}{{ end }}'
+        text: '{{ range .Alerts }}{{ if eq .Status "resolved" }}[RESOLVED] {{ end }}{{ .Annotations.summary }}{{ "\n" }}{{ end }}'
     discord_configs:
       - webhook_url_file: /var/lib/motel-notify/url-NOTIFY_ALICE_URL
         send_resolved: false
         title: '[{{ .Status | toUpper }}] {{ .CommonLabels.alertname }}{{ if .CommonLabels.app }} {{ .CommonLabels.app }}{{ end }}'
-        message: '{{ range .Alerts }}{{ .Annotations.summary }}{{ "\n" }}{{ end }}'
+        message: '{{ range .Alerts }}{{ if eq .Status "resolved" }}[RESOLVED] {{ end }}{{ .Annotations.summary }}{{ "\n" }}{{ end }}'
   - name: event-app-blog-critical
     webhook_configs:
       - url_file: /var/lib/motel-notify/url-NOTIFY_PAGER_URL
@@ -206,29 +206,29 @@ receivers:
       - api_url_file: /var/lib/motel-notify/url-NOTIFY_OPS_URL
         send_resolved: false
         title: '[{{ .Status | toUpper }}] {{ .CommonLabels.alertname }}{{ if .CommonLabels.app }} {{ .CommonLabels.app }}{{ end }}'
-        text: '{{ range .Alerts }}{{ .Annotations.summary }}{{ "\n" }}{{ end }}'
+        text: '{{ range .Alerts }}{{ if eq .Status "resolved" }}[RESOLVED] {{ end }}{{ .Annotations.summary }}{{ "\n" }}{{ end }}'
     discord_configs:
       - webhook_url_file: /var/lib/motel-notify/url-NOTIFY_ALICE_URL
         send_resolved: false
         title: '[{{ .Status | toUpper }}] {{ .CommonLabels.alertname }}{{ if .CommonLabels.app }} {{ .CommonLabels.app }}{{ end }}'
-        message: '{{ range .Alerts }}{{ .Annotations.summary }}{{ "\n" }}{{ end }}'
+        message: '{{ range .Alerts }}{{ if eq .Status "resolved" }}[RESOLVED] {{ end }}{{ .Annotations.summary }}{{ "\n" }}{{ end }}'
   - name: event-app-blog-warning
     slack_configs:
       - api_url_file: /var/lib/motel-notify/url-NOTIFY_OPS_URL
         send_resolved: false
         title: '[{{ .Status | toUpper }}] {{ .CommonLabels.alertname }}{{ if .CommonLabels.app }} {{ .CommonLabels.app }}{{ end }}'
-        text: '{{ range .Alerts }}{{ .Annotations.summary }}{{ "\n" }}{{ end }}'
+        text: '{{ range .Alerts }}{{ if eq .Status "resolved" }}[RESOLVED] {{ end }}{{ .Annotations.summary }}{{ "\n" }}{{ end }}'
     discord_configs:
       - webhook_url_file: /var/lib/motel-notify/url-NOTIFY_ALICE_URL
         send_resolved: false
         title: '[{{ .Status | toUpper }}] {{ .CommonLabels.alertname }}{{ if .CommonLabels.app }} {{ .CommonLabels.app }}{{ end }}'
-        message: '{{ range .Alerts }}{{ .Annotations.summary }}{{ "\n" }}{{ end }}'
+        message: '{{ range .Alerts }}{{ if eq .Status "resolved" }}[RESOLVED] {{ end }}{{ .Annotations.summary }}{{ "\n" }}{{ end }}'
   - name: event-app-shop-info
     slack_configs:
       - api_url_file: /var/lib/motel-notify/url-NOTIFY_OPS_URL
         send_resolved: false
         title: '[{{ .Status | toUpper }}] {{ .CommonLabels.alertname }}{{ if .CommonLabels.app }} {{ .CommonLabels.app }}{{ end }}'
-        text: '{{ range .Alerts }}{{ .Annotations.summary }}{{ "\n" }}{{ end }}'
+        text: '{{ range .Alerts }}{{ if eq .Status "resolved" }}[RESOLVED] {{ end }}{{ .Annotations.summary }}{{ "\n" }}{{ end }}'
   - name: event-app-shop-critical
     webhook_configs:
       - url_file: /var/lib/motel-notify/url-NOTIFY_PAGER_URL
@@ -239,7 +239,7 @@ receivers:
       - api_url_file: /var/lib/motel-notify/url-NOTIFY_OPS_URL
         send_resolved: false
         title: '[{{ .Status | toUpper }}] {{ .CommonLabels.alertname }}{{ if .CommonLabels.app }} {{ .CommonLabels.app }}{{ end }}'
-        text: '{{ range .Alerts }}{{ .Annotations.summary }}{{ "\n" }}{{ end }}'
+        text: '{{ range .Alerts }}{{ if eq .Status "resolved" }}[RESOLVED] {{ end }}{{ .Annotations.summary }}{{ "\n" }}{{ end }}'
   - name: event-app-shop-warning
     webhook_configs:
       - url_file: /var/lib/motel-notify/url-NOTIFY_BOB_URL
@@ -248,18 +248,18 @@ receivers:
       - api_url_file: /var/lib/motel-notify/url-NOTIFY_OPS_URL
         send_resolved: false
         title: '[{{ .Status | toUpper }}] {{ .CommonLabels.alertname }}{{ if .CommonLabels.app }} {{ .CommonLabels.app }}{{ end }}'
-        text: '{{ range .Alerts }}{{ .Annotations.summary }}{{ "\n" }}{{ end }}'
+        text: '{{ range .Alerts }}{{ if eq .Status "resolved" }}[RESOLVED] {{ end }}{{ .Annotations.summary }}{{ "\n" }}{{ end }}'
   - name: event-app-wiki-info
     slack_configs:
       - api_url_file: /var/lib/motel-notify/url-NOTIFY_OPS_URL
         send_resolved: false
         title: '[{{ .Status | toUpper }}] {{ .CommonLabels.alertname }}{{ if .CommonLabels.app }} {{ .CommonLabels.app }}{{ end }}'
-        text: '{{ range .Alerts }}{{ .Annotations.summary }}{{ "\n" }}{{ end }}'
+        text: '{{ range .Alerts }}{{ if eq .Status "resolved" }}[RESOLVED] {{ end }}{{ .Annotations.summary }}{{ "\n" }}{{ end }}'
     discord_configs:
       - webhook_url_file: /var/lib/motel-notify/url-NOTIFY_ALICE_URL
         send_resolved: false
         title: '[{{ .Status | toUpper }}] {{ .CommonLabels.alertname }}{{ if .CommonLabels.app }} {{ .CommonLabels.app }}{{ end }}'
-        message: '{{ range .Alerts }}{{ .Annotations.summary }}{{ "\n" }}{{ end }}'
+        message: '{{ range .Alerts }}{{ if eq .Status "resolved" }}[RESOLVED] {{ end }}{{ .Annotations.summary }}{{ "\n" }}{{ end }}'
   - name: event-app-wiki-critical
     webhook_configs:
       - url_file: /var/lib/motel-notify/url-NOTIFY_PAGER_URL
@@ -268,29 +268,29 @@ receivers:
       - api_url_file: /var/lib/motel-notify/url-NOTIFY_OPS_URL
         send_resolved: false
         title: '[{{ .Status | toUpper }}] {{ .CommonLabels.alertname }}{{ if .CommonLabels.app }} {{ .CommonLabels.app }}{{ end }}'
-        text: '{{ range .Alerts }}{{ .Annotations.summary }}{{ "\n" }}{{ end }}'
+        text: '{{ range .Alerts }}{{ if eq .Status "resolved" }}[RESOLVED] {{ end }}{{ .Annotations.summary }}{{ "\n" }}{{ end }}'
     discord_configs:
       - webhook_url_file: /var/lib/motel-notify/url-NOTIFY_ALICE_URL
         send_resolved: false
         title: '[{{ .Status | toUpper }}] {{ .CommonLabels.alertname }}{{ if .CommonLabels.app }} {{ .CommonLabels.app }}{{ end }}'
-        message: '{{ range .Alerts }}{{ .Annotations.summary }}{{ "\n" }}{{ end }}'
+        message: '{{ range .Alerts }}{{ if eq .Status "resolved" }}[RESOLVED] {{ end }}{{ .Annotations.summary }}{{ "\n" }}{{ end }}'
   - name: event-app-wiki-warning
     slack_configs:
       - api_url_file: /var/lib/motel-notify/url-NOTIFY_OPS_URL
         send_resolved: false
         title: '[{{ .Status | toUpper }}] {{ .CommonLabels.alertname }}{{ if .CommonLabels.app }} {{ .CommonLabels.app }}{{ end }}'
-        text: '{{ range .Alerts }}{{ .Annotations.summary }}{{ "\n" }}{{ end }}'
+        text: '{{ range .Alerts }}{{ if eq .Status "resolved" }}[RESOLVED] {{ end }}{{ .Annotations.summary }}{{ "\n" }}{{ end }}'
     discord_configs:
       - webhook_url_file: /var/lib/motel-notify/url-NOTIFY_ALICE_URL
         send_resolved: false
         title: '[{{ .Status | toUpper }}] {{ .CommonLabels.alertname }}{{ if .CommonLabels.app }} {{ .CommonLabels.app }}{{ end }}'
-        message: '{{ range .Alerts }}{{ .Annotations.summary }}{{ "\n" }}{{ end }}'
+        message: '{{ range .Alerts }}{{ if eq .Status "resolved" }}[RESOLVED] {{ end }}{{ .Annotations.summary }}{{ "\n" }}{{ end }}'
   - name: state-box-info
     slack_configs:
       - api_url_file: /var/lib/motel-notify/url-NOTIFY_OPS_URL
         send_resolved: true
         title: '[{{ .Status | toUpper }}] {{ .CommonLabels.alertname }}{{ if .CommonLabels.app }} {{ .CommonLabels.app }}{{ end }}'
-        text: '{{ range .Alerts }}{{ .Annotations.summary }}{{ "\n" }}{{ end }}'
+        text: '{{ range .Alerts }}{{ if eq .Status "resolved" }}[RESOLVED] {{ end }}{{ .Annotations.summary }}{{ "\n" }}{{ end }}'
   - name: state-box-critical
     webhook_configs:
       - url_file: /var/lib/motel-notify/url-NOTIFY_PAGER_URL
@@ -299,24 +299,24 @@ receivers:
       - api_url_file: /var/lib/motel-notify/url-NOTIFY_OPS_URL
         send_resolved: true
         title: '[{{ .Status | toUpper }}] {{ .CommonLabels.alertname }}{{ if .CommonLabels.app }} {{ .CommonLabels.app }}{{ end }}'
-        text: '{{ range .Alerts }}{{ .Annotations.summary }}{{ "\n" }}{{ end }}'
+        text: '{{ range .Alerts }}{{ if eq .Status "resolved" }}[RESOLVED] {{ end }}{{ .Annotations.summary }}{{ "\n" }}{{ end }}'
   - name: state-box-warning
     slack_configs:
       - api_url_file: /var/lib/motel-notify/url-NOTIFY_OPS_URL
         send_resolved: true
         title: '[{{ .Status | toUpper }}] {{ .CommonLabels.alertname }}{{ if .CommonLabels.app }} {{ .CommonLabels.app }}{{ end }}'
-        text: '{{ range .Alerts }}{{ .Annotations.summary }}{{ "\n" }}{{ end }}'
+        text: '{{ range .Alerts }}{{ if eq .Status "resolved" }}[RESOLVED] {{ end }}{{ .Annotations.summary }}{{ "\n" }}{{ end }}'
   - name: state-app-blog-info
     slack_configs:
       - api_url_file: /var/lib/motel-notify/url-NOTIFY_OPS_URL
         send_resolved: true
         title: '[{{ .Status | toUpper }}] {{ .CommonLabels.alertname }}{{ if .CommonLabels.app }} {{ .CommonLabels.app }}{{ end }}'
-        text: '{{ range .Alerts }}{{ .Annotations.summary }}{{ "\n" }}{{ end }}'
+        text: '{{ range .Alerts }}{{ if eq .Status "resolved" }}[RESOLVED] {{ end }}{{ .Annotations.summary }}{{ "\n" }}{{ end }}'
     discord_configs:
       - webhook_url_file: /var/lib/motel-notify/url-NOTIFY_ALICE_URL
         send_resolved: true
         title: '[{{ .Status | toUpper }}] {{ .CommonLabels.alertname }}{{ if .CommonLabels.app }} {{ .CommonLabels.app }}{{ end }}'
-        message: '{{ range .Alerts }}{{ .Annotations.summary }}{{ "\n" }}{{ end }}'
+        message: '{{ range .Alerts }}{{ if eq .Status "resolved" }}[RESOLVED] {{ end }}{{ .Annotations.summary }}{{ "\n" }}{{ end }}'
   - name: state-app-blog-critical
     webhook_configs:
       - url_file: /var/lib/motel-notify/url-NOTIFY_PAGER_URL
@@ -325,29 +325,29 @@ receivers:
       - api_url_file: /var/lib/motel-notify/url-NOTIFY_OPS_URL
         send_resolved: true
         title: '[{{ .Status | toUpper }}] {{ .CommonLabels.alertname }}{{ if .CommonLabels.app }} {{ .CommonLabels.app }}{{ end }}'
-        text: '{{ range .Alerts }}{{ .Annotations.summary }}{{ "\n" }}{{ end }}'
+        text: '{{ range .Alerts }}{{ if eq .Status "resolved" }}[RESOLVED] {{ end }}{{ .Annotations.summary }}{{ "\n" }}{{ end }}'
     discord_configs:
       - webhook_url_file: /var/lib/motel-notify/url-NOTIFY_ALICE_URL
         send_resolved: true
         title: '[{{ .Status | toUpper }}] {{ .CommonLabels.alertname }}{{ if .CommonLabels.app }} {{ .CommonLabels.app }}{{ end }}'
-        message: '{{ range .Alerts }}{{ .Annotations.summary }}{{ "\n" }}{{ end }}'
+        message: '{{ range .Alerts }}{{ if eq .Status "resolved" }}[RESOLVED] {{ end }}{{ .Annotations.summary }}{{ "\n" }}{{ end }}'
   - name: state-app-blog-warning
     slack_configs:
       - api_url_file: /var/lib/motel-notify/url-NOTIFY_OPS_URL
         send_resolved: true
         title: '[{{ .Status | toUpper }}] {{ .CommonLabels.alertname }}{{ if .CommonLabels.app }} {{ .CommonLabels.app }}{{ end }}'
-        text: '{{ range .Alerts }}{{ .Annotations.summary }}{{ "\n" }}{{ end }}'
+        text: '{{ range .Alerts }}{{ if eq .Status "resolved" }}[RESOLVED] {{ end }}{{ .Annotations.summary }}{{ "\n" }}{{ end }}'
     discord_configs:
       - webhook_url_file: /var/lib/motel-notify/url-NOTIFY_ALICE_URL
         send_resolved: true
         title: '[{{ .Status | toUpper }}] {{ .CommonLabels.alertname }}{{ if .CommonLabels.app }} {{ .CommonLabels.app }}{{ end }}'
-        message: '{{ range .Alerts }}{{ .Annotations.summary }}{{ "\n" }}{{ end }}'
+        message: '{{ range .Alerts }}{{ if eq .Status "resolved" }}[RESOLVED] {{ end }}{{ .Annotations.summary }}{{ "\n" }}{{ end }}'
   - name: state-app-shop-info
     slack_configs:
       - api_url_file: /var/lib/motel-notify/url-NOTIFY_OPS_URL
         send_resolved: true
         title: '[{{ .Status | toUpper }}] {{ .CommonLabels.alertname }}{{ if .CommonLabels.app }} {{ .CommonLabels.app }}{{ end }}'
-        text: '{{ range .Alerts }}{{ .Annotations.summary }}{{ "\n" }}{{ end }}'
+        text: '{{ range .Alerts }}{{ if eq .Status "resolved" }}[RESOLVED] {{ end }}{{ .Annotations.summary }}{{ "\n" }}{{ end }}'
   - name: state-app-shop-critical
     webhook_configs:
       - url_file: /var/lib/motel-notify/url-NOTIFY_PAGER_URL
@@ -358,7 +358,7 @@ receivers:
       - api_url_file: /var/lib/motel-notify/url-NOTIFY_OPS_URL
         send_resolved: true
         title: '[{{ .Status | toUpper }}] {{ .CommonLabels.alertname }}{{ if .CommonLabels.app }} {{ .CommonLabels.app }}{{ end }}'
-        text: '{{ range .Alerts }}{{ .Annotations.summary }}{{ "\n" }}{{ end }}'
+        text: '{{ range .Alerts }}{{ if eq .Status "resolved" }}[RESOLVED] {{ end }}{{ .Annotations.summary }}{{ "\n" }}{{ end }}'
   - name: state-app-shop-warning
     webhook_configs:
       - url_file: /var/lib/motel-notify/url-NOTIFY_BOB_URL
@@ -367,18 +367,18 @@ receivers:
       - api_url_file: /var/lib/motel-notify/url-NOTIFY_OPS_URL
         send_resolved: true
         title: '[{{ .Status | toUpper }}] {{ .CommonLabels.alertname }}{{ if .CommonLabels.app }} {{ .CommonLabels.app }}{{ end }}'
-        text: '{{ range .Alerts }}{{ .Annotations.summary }}{{ "\n" }}{{ end }}'
+        text: '{{ range .Alerts }}{{ if eq .Status "resolved" }}[RESOLVED] {{ end }}{{ .Annotations.summary }}{{ "\n" }}{{ end }}'
   - name: state-app-wiki-info
     slack_configs:
       - api_url_file: /var/lib/motel-notify/url-NOTIFY_OPS_URL
         send_resolved: true
         title: '[{{ .Status | toUpper }}] {{ .CommonLabels.alertname }}{{ if .CommonLabels.app }} {{ .CommonLabels.app }}{{ end }}'
-        text: '{{ range .Alerts }}{{ .Annotations.summary }}{{ "\n" }}{{ end }}'
+        text: '{{ range .Alerts }}{{ if eq .Status "resolved" }}[RESOLVED] {{ end }}{{ .Annotations.summary }}{{ "\n" }}{{ end }}'
     discord_configs:
       - webhook_url_file: /var/lib/motel-notify/url-NOTIFY_ALICE_URL
         send_resolved: true
         title: '[{{ .Status | toUpper }}] {{ .CommonLabels.alertname }}{{ if .CommonLabels.app }} {{ .CommonLabels.app }}{{ end }}'
-        message: '{{ range .Alerts }}{{ .Annotations.summary }}{{ "\n" }}{{ end }}'
+        message: '{{ range .Alerts }}{{ if eq .Status "resolved" }}[RESOLVED] {{ end }}{{ .Annotations.summary }}{{ "\n" }}{{ end }}'
   - name: state-app-wiki-critical
     webhook_configs:
       - url_file: /var/lib/motel-notify/url-NOTIFY_PAGER_URL
@@ -387,20 +387,20 @@ receivers:
       - api_url_file: /var/lib/motel-notify/url-NOTIFY_OPS_URL
         send_resolved: true
         title: '[{{ .Status | toUpper }}] {{ .CommonLabels.alertname }}{{ if .CommonLabels.app }} {{ .CommonLabels.app }}{{ end }}'
-        text: '{{ range .Alerts }}{{ .Annotations.summary }}{{ "\n" }}{{ end }}'
+        text: '{{ range .Alerts }}{{ if eq .Status "resolved" }}[RESOLVED] {{ end }}{{ .Annotations.summary }}{{ "\n" }}{{ end }}'
     discord_configs:
       - webhook_url_file: /var/lib/motel-notify/url-NOTIFY_ALICE_URL
         send_resolved: true
         title: '[{{ .Status | toUpper }}] {{ .CommonLabels.alertname }}{{ if .CommonLabels.app }} {{ .CommonLabels.app }}{{ end }}'
-        message: '{{ range .Alerts }}{{ .Annotations.summary }}{{ "\n" }}{{ end }}'
+        message: '{{ range .Alerts }}{{ if eq .Status "resolved" }}[RESOLVED] {{ end }}{{ .Annotations.summary }}{{ "\n" }}{{ end }}'
   - name: state-app-wiki-warning
     slack_configs:
       - api_url_file: /var/lib/motel-notify/url-NOTIFY_OPS_URL
         send_resolved: true
         title: '[{{ .Status | toUpper }}] {{ .CommonLabels.alertname }}{{ if .CommonLabels.app }} {{ .CommonLabels.app }}{{ end }}'
-        text: '{{ range .Alerts }}{{ .Annotations.summary }}{{ "\n" }}{{ end }}'
+        text: '{{ range .Alerts }}{{ if eq .Status "resolved" }}[RESOLVED] {{ end }}{{ .Annotations.summary }}{{ "\n" }}{{ end }}'
     discord_configs:
       - webhook_url_file: /var/lib/motel-notify/url-NOTIFY_ALICE_URL
         send_resolved: true
         title: '[{{ .Status | toUpper }}] {{ .CommonLabels.alertname }}{{ if .CommonLabels.app }} {{ .CommonLabels.app }}{{ end }}'
-        message: '{{ range .Alerts }}{{ .Annotations.summary }}{{ "\n" }}{{ end }}'
+        message: '{{ range .Alerts }}{{ if eq .Status "resolved" }}[RESOLVED] {{ end }}{{ .Annotations.summary }}{{ "\n" }}{{ end }}'

@@ -728,11 +728,12 @@ func (ma *managedApp) reportDeploy(c collaborators, req deployRequest, result de
 	case errors.As(err, &ve):
 		ev.Name, ev.Summary = EventDeployRefused, "deploy of "+req.version+" refused: "+firstLine(ve.msg)
 	default:
+		// What serves now is not said: a first deploy, or one to an app
+		// already down, leaves nothing serving.
 		ev.Name, ev.Summary = EventDeployFailed, "deploy of "+req.version+" failed"
 		if result.Phase != "" {
 			ev.Summary += " in phase " + result.Phase
 		}
-		ev.Summary += "; the previous version keeps serving"
 	}
 	ma.lifecycle(c, ev)
 	if err == nil && ma.wd.endLoopAlert() {

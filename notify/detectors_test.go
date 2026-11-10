@@ -406,3 +406,20 @@ func TestTLSKeyUnreportedIsCleared(t *testing.T) {
 		t.Fatalf("not resolved after %v unreported (state %+v)", tlsStale, te.states[key])
 	}
 }
+
+// TestDiskLevelHeldByDevice: the path that stands for a filesystem can
+// change with the config (liveswap added or removed); its hysteresis is
+// the filesystem's, so a held critical stays critical above 85 %.
+func TestDiskLevelHeldByDevice(t *testing.T) {
+	used := map[string]float64{"/var/lib/liveswap": 92, "/var/lib/motel": 92}
+	d := diskPoller{stat: func(p string) (float64, uint64, error) { return used[p], 7, nil }}
+	if evs := d.poll([]string{"/var/lib/liveswap", "/var/lib/motel"}); len(evs) != 1 || evs[0].Severity != SeverityCritical {
+		t.Fatalf("first: %+v", evs)
+	}
+	used["/var/lib/motel"] = 86
+	for _, e := range d.poll([]string{"/var/lib/motel"}) {
+		if e.Firing && e.Severity != SeverityCritical {
+			t.Fatalf("a held critical became %s when its path changed: %+v", e.Severity, e)
+		}
+	}
+}
