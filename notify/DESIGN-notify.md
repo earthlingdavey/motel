@@ -345,8 +345,12 @@ reinstalled under motel 0.6.2~notifypoc1): the socket's fd is passed
 (`Listening on systemd activated listeners`), nothing listens on 9093
 or 9094, and `motel notify test` delivers at once; the postinst
 re-enables the service, so it then starts at boot rather than at its
-socket's first connection, still on the socket alone. Two unit facts
-were measured too: `motel-am.socket` must name its service
+socket's first connection, still on the socket alone. A reboot with motel rendering (2026-11-10, hotserve-1,
+13.2 s to multi-user): `motel-am.socket` listening at 11.9 s,
+Alertmanager started at 12.0 s on the rendered file left from before,
+motel's render and reload at 12.8 s, motel ready at 12.9 s; no ordering
+cycle, no listener on 9093 or 9094, a heartbeat at once and `motel
+notify test` delivered. Two unit facts were measured too: `motel-am.socket` must name its service
 (`Service=prometheus-alertmanager.service`), or systemd refuses it; and
 Alertmanager needs Debian's `/usr/share/prometheus` templates, so the
 package is installed rather than a binary fetched.
@@ -431,7 +435,6 @@ on its general scales. notify's examples:
 | The box channel's `secrets/_box/` slot writing `_box.env`, and students' `secrets/<app>/NOTIFY_*` withheld from the unit's environment (#418) | — | — | — | the box subsystem, before any release: today root writes `_box.env` by hand |
 | motel restarted while a state key fires: the engine's table is in memory and liveswap's watchdog does not re-report a loop it was already in, so the alert ends at `resolve_timeout` and a false recovery is told; the backup, disk and TLS sources re-detect on their next poll | 3 | 4 | 3 | the next slice: liveswap re-reports its watchdog state at Start, or the engine reads Alertmanager's alert list at start (#22 of the review) |
 | A secret missing from `_box.env` refuses the whole config at load, as `motel validate` must: at a reboot motel does not start, and every site is down for an alert channel (named in the journal) | 4 | 5 | 1 | the `_box` slot: the box handler's consistency check refuses a push whose `notify` block names a secret the push does not carry, before it reaches the box; at load a missing secret then drops its channel with a warning. Load and validate cannot be told apart in Provision today (/code-review pass 2) |
-| A reboot of a box with motel rendering (the review's #3 asks for one): setup's layout survives a motel restart by construction, measured only for the hand-installed stack on hotserve-1 | — | — | — | a run on hotserve-1 after `motel notify setup` |
 | Slack and Discord with real hooks; ntfy's formatting of Alertmanager's payload (the hotserve-1 test delivered the JSON body as the message) | — | — | — | needs the owner's hooks |
 | A per-app `notify` block (`deploy_succeeded on` per app, app-scoped channels); the pull API and the later channel kinds, for which the `notify: event` line is the record | — | — | — | later slices |
 
