@@ -126,6 +126,12 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request, _ caddyhttp.
 			return h.deployRecord(w, ma, q.Get("deploy"))
 		}
 		s := ma.status()
+		if src := h.app.metricsSource; src != nil {
+			// Best-effort and bounded by the source itself: a store that
+			// does not answer is an error inside the object, never a
+			// failed or stalled status.
+			s.Metrics = src.AppMetrics(r.Context(), ma.name)
+		}
 		return RespondJSON(w, http.StatusOK, s, ma.redactorFor(s))
 	case http.MethodPost:
 		return h.deploy(w, r, ma, who.By)

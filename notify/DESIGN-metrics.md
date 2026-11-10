@@ -131,7 +131,7 @@ is motel's text; nothing in the Caddyfile is a rule or a template.
 | `metrics_store_read_only` | `max(vm_storage_is_read_only) > 0` | 2 m | box, state, critical | the operator |
 | `metrics_store_disk_fill` | `min(predict_linear(vm_free_disk_space_bytes[6h], 86400)) < 0` | 30 m | box, state, warning | the operator |
 | `app_memory_high` | `max by (app) (motel_app_memory_bytes / motel_app_memory_max_bytes) > 0.9` | 10 m | `app`, `subject="app:<app>"`, state, warning | the operator and the app's bound channels |
-| `ChannelFailed` (one per told channel) | `sum(increase(alertmanager_notifications_failed_total{integration=…, receiver=~…}[5m])) > 0` | — | exactly motel's `ChannelFailed` labels | the told channel alone |
+| `ChannelFailed` (one per told channel) | `sum(increase(alertmanager_notifications_failed_total{integration=…, receiver_name=~…}[5m])) > 0` | — | exactly motel's `ChannelFailed` labels | the told channel alone |
 
 Each fixed rule carries `kind="state"`, `severity`, `subject`, `source="vmalert"`
 and `key="vmalert/<subject>/<name>"`, so slice one's route tree routes it
@@ -148,7 +148,7 @@ that integration (notify's `suspects`), the render writes a rule whose
 labels are exactly those motel's own `ChannelFailed` posts for that
 failure: `alertname`, `notify_channel`, `severity="warning"`,
 `subject="box"`, `integration`, `suspects`. Receivers that share all
-three are one rule (`receiver=~"a|b"`). Two posts with the same labels
+three are one rule (`receiver_name=~"a|b"`). Two posts with the same labels
 are one alert in Alertmanager, so the two sources deduplicate; the
 heartbeat receiver (no channel, so no suspect) is left to motel's own.
 With no `notify` block the group is empty.
