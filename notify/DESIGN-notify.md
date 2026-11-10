@@ -400,7 +400,7 @@ and the route check (`SendRequest.Check`):
 |---|---|
 | a source not `[a-z0-9-]{1,32}` (stamped `external:<name>`) | one grammar, so a key cannot pose as a detector's |
 | a subject not `box` or `app:<an app the box runs>` | an app subject reaches its deployers |
-| motel's own names: `Watchdog`, `ChannelFailed`, `NotifyTest`, `deploy_in_progress`, `watchdog_*`, the deploy events, `disk_low`, `cert_failed`, `backup_*`, `drill_failed` | a producer that could post them could mute an app, fake the heartbeat, or speak as a detector |
+| motel's own names: `Watchdog`, `ChannelFailed`, `NotifyTest`, `deploy_in_progress`, `watchdog_*`, the deploy events, `disk_low`, `cert_failed`, `backup_*`, `drill_failed`, and the metrics store's (`metrics_store_down`, `metrics_rules_down`, `metrics_store_read_only`, `metrics_store_disk_fill`, `app_memory_high`) | a producer that could post them could mute an app, fake the heartbeat, or speak as a detector |
 | a summary empty, on two lines, or over 200 characters; details over 2 KiB or with names not `[a-z][a-z0-9_]*` | #418's limits |
 | a body with unknown fields (a raw Alertmanager label set) | the route takes the request, never labels |
 | a name or instance the filter would mask (a channel URL, a secret-shaped token) | both are the key, the labels and the answer, which the filter does not rewrite |

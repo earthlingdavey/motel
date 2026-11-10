@@ -43,6 +43,8 @@ func TestSendCheck(t *testing.T) {
 		{"mute", func(r *SendRequest) { r.Name = "deploy_in_progress" }, "motel's own"},
 		{"deploy_failed", func(r *SendRequest) { r.Name = "deploy_failed" }, "motel's own"},
 		{"channel failed", func(r *SendRequest) { r.Name = "channelfailed" }, "motel's own"},
+		{"metrics chain", func(r *SendRequest) { r.Name = "metrics_store_down" }, "motel's own"},
+		{"store rule", func(r *SendRequest) { r.Name = "app_memory_high" }, "motel's own"},
 		{"state", func(r *SendRequest) { r.State = "on" }, "state is"},
 		{"severity", func(r *SendRequest) { r.Severity = "page" }, "severity is"},
 		{"instance", func(r *SendRequest) { r.Instance = "a b" }, "instance is"},
