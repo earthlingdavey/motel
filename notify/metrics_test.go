@@ -436,6 +436,9 @@ func TestMetricsViewSummary(t *testing.T) {
 			{labels: map[string]string{"__name__": "motel_app_memory_bytes"}, points: pts(10, 40, 30)},
 			{labels: map[string]string{"__name__": "motel_app_memory_max_bytes"}, points: pts(100, 100, 100)},
 		}
+	}, instant: func(q string) []series {
+		asked = append(asked, q)
+		return []series{{points: []point{{t: end, v: 40}}}}
 	}}
 	v := newMetricsView(f, zap.NewNop())
 	v.now = func() time.Time { return end }
@@ -476,7 +479,7 @@ func TestMetricsViewStaleIsHistory(t *testing.T) {
 			{labels: map[string]string{"__name__": "motel_app_memory_bytes"}, points: old(30)},
 			{labels: map[string]string{"__name__": "motel_app_memory_max_bytes"}, points: old(100)},
 		}
-	}}
+	}, instant: func(string) []series { return []series{{points: []point{{t: end, v: 30}}}} }}
 	v := newMetricsView(f, zap.NewNop())
 	v.now = func() time.Time { return end }
 	got, _ := json.Marshal(v.AppMetrics(context.Background(), "blog"))
@@ -512,6 +515,29 @@ func TestMetricsViewMaxKeepsAPeakBetweenSteps(t *testing.T) {
 	want := `{"window":"1h","at":"2026-11-10T12:00:00Z","memory_bytes":{"now":10,"max":1000}}`
 	if string(got) != want {
 		t.Fatalf("a peak between steps:\n got %s\nwant %s", got, want)
+	}
+}
+
+// The range's first step can carry a sample from before the hour; the
+// raw peak leaves it out, and so does the max.
+func TestMetricsViewMaxLeavesOutASampleBeforeTheHour(t *testing.T) {
+	end := time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC)
+	f := &fakeRange{
+		ans: func(q string) []series {
+			if strings.HasPrefix(q, "sum(rate(") {
+				return nil
+			}
+			return []series{{labels: map[string]string{"__name__": "motel_app_memory_bytes"},
+				points: []point{{t: end.Add(-viewWindow), v: 1000}, {t: end, v: 10}}}}
+		},
+		instant: func(string) []series { return []series{{points: []point{{t: end, v: 10}}}} },
+	}
+	v := newMetricsView(f, zap.NewNop())
+	v.now = func() time.Time { return end }
+	got, _ := json.Marshal(v.AppMetrics(context.Background(), "blog"))
+	want := `{"window":"1h","at":"2026-11-10T12:00:00Z","memory_bytes":{"now":10,"max":10}}`
+	if string(got) != want {
+		t.Fatalf("a sample before the hour:\n got %s\nwant %s", got, want)
 	}
 }
 

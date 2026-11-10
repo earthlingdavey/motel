@@ -155,9 +155,9 @@ func (v *metricsView) ask(ctx context.Context, app string, now time.Time) (AppMe
 		if fresh(last) {
 			m.Now = &last.v
 		}
-		for _, p := range memPts {
-			m.Max = max(m.Max, p.v)
-		}
+		// The max is the raw peak's alone: the range's first step can
+		// carry a sample from before the hour, which max_over_time
+		// rightly leaves out.
 		for _, s := range peak {
 			for _, p := range s.points {
 				m.Max = max(m.Max, p.v)
