@@ -37,8 +37,12 @@ const cgroupRoot = "/sys/fs/cgroup"
 // vmalert, and `metrics` in GET /<app>. Not `metrics`, which is Caddy's
 // own global option.
 type MetricsStore struct {
-	Store    string `json:"store,omitempty"`
-	StateDir string `json:"state_dir,omitempty"`
+	Store string `json:"store,omitempty"`
+
+	// stateDir is where the rules are written: always
+	// DefaultMetricsStateDir, which motel-vmalert.service's -rule names;
+	// a test's directory in tests.
+	stateDirOverride string
 
 	logger *zap.Logger
 	client *storeClient
@@ -63,10 +67,10 @@ func (m *MetricsStore) store() string {
 }
 
 func (m *MetricsStore) stateDir() string {
-	if m.StateDir == "" {
+	if m.stateDirOverride == "" {
 		return DefaultMetricsStateDir
 	}
-	return m.StateDir
+	return m.stateDirOverride
 }
 
 // Provision checks the block, and wires the push, the collector and
@@ -74,10 +78,8 @@ func (m *MetricsStore) stateDir() string {
 // to nothing, so `motel validate` leaves the box as it was.
 func (m *MetricsStore) Provision(ctx caddy.Context) error {
 	m.logger = ctx.Logger()
-	for name, p := range map[string]string{"store": m.Store, "state_dir": m.StateDir} {
-		if p != "" && !filepath.IsAbs(p) {
-			return fmt.Errorf("metrics_store: %s %q is not an absolute path", name, p)
-		}
+	if m.Store != "" && !filepath.IsAbs(m.Store) {
+		return fmt.Errorf("metrics_store: store %q is not an absolute path", m.Store)
 	}
 	m.client = newStoreClient(m.store())
 	reg := ctx.GetMetricsRegistry()
@@ -192,10 +194,10 @@ func parseMetricsStoreOption(d *caddyfile.Dispenser, existing any) (any, error) 
 //
 //	metrics_store {
 //	    store <socket path>
-//	    state_dir <path>
 //	}
 //
-// An empty block, or the bare option, takes both defaults.
+// An empty block, or the bare option, takes the default. There is no
+// state_dir: vmalert's unit reads the rules from the one setup makes.
 func (m *MetricsStore) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
 	d.Next() // the option's name
 	if d.NextArg() {
@@ -203,10 +205,11 @@ func (m *MetricsStore) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
 	}
 	for d.NextBlock(0) {
 		name := d.Val()
-		switch name {
-		case "store", "state_dir":
-		default:
+		if name != "store" {
 			return d.Errf("unknown metrics_store subdirective %q", name)
+		}
+		if m.Store != "" {
+			return d.Err("metrics_store: store is given more than once")
 		}
 		if !d.NextArg() {
 			return d.ArgErr()
@@ -216,13 +219,9 @@ func (m *MetricsStore) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
 			return d.ArgErr()
 		}
 		if !filepath.IsAbs(v) {
-			return d.Errf("metrics_store: %s %q is not an absolute path", name, v)
+			return d.Errf("metrics_store: store %q is not an absolute path", v)
 		}
-		if name == "store" {
-			m.Store = v
-		} else {
-			m.StateDir = v
-		}
+		m.Store = v
 		if d.NextBlock(d.Nesting()) {
 			return d.Err("metrics_store's lines take no block")
 		}

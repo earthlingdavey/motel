@@ -121,7 +121,7 @@ func (v *metricsView) ask(ctx context.Context, app string, now time.Time) (AppMe
 	if err != nil {
 		return AppMetrics{}, err
 	}
-	cpu, err := v.store.queryRange(ctx, fmt.Sprintf(`rate(motel_app_cpu_seconds_total{app=%q}[2m])`, app), start, end, viewStep)
+	cpu, err := v.store.queryRange(ctx, fmt.Sprintf(`sum(rate(motel_app_cpu_seconds_total{app=%q}[2m]))`, app), start, end, viewStep)
 	if err != nil {
 		return AppMetrics{}, err
 	}

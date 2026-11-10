@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net"
 	"net/http"
 	"net/url"
@@ -184,7 +185,7 @@ func parsePoint(pr []any) (point, error) {
 		return point{}, errBadPoint
 	}
 	v, err := strconv.ParseFloat(vs, 64)
-	if err != nil {
+	if err != nil || math.IsNaN(v) || math.IsInf(v, 0) {
 		return point{}, errBadPoint
 	}
 	sec := int64(ts)

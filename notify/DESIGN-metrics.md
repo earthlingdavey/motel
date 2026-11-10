@@ -77,14 +77,16 @@ TCP listener is in a namespace no app is in: from the host namespace
 ```
 metrics_store {
     store <socket path>      # default /run/motel-metrics/vm.sock
-    state_dir <path>         # default /var/lib/motel-metrics
 }
 ```
 
 Not `metrics`: Caddy's own global option of that name turns on its HTTP
-metrics, which the push carries when it is set. Both paths are absolute
-or refused. The block takes nothing else: the push interval, the rules
-and the queries are motel's, fixed. A `metrics_store` block with no
+metrics, which the push carries when it is set. The path is absolute,
+and given once, or refused. There is no `state_dir`: vmalert's unit
+reads the rules from `/var/lib/motel-metrics`, so a directory of the
+block's own would be written and never read (/code-review pass 2). The
+block takes nothing else: the push interval, the rules and the queries
+are motel's, fixed. A `metrics_store` block with no
 `notify` block loads, with a warning at every load: the rules still
 reach Alertmanager, whose config then sends nothing.
 
@@ -104,7 +106,7 @@ Go module; no metrics state in motel. The registry holds:
 | `motel_notify_delivery_failed_total` | notify's engine |
 | `motel_metrics_push_failed_total` | the push, below |
 | `motel_app_up{app}`, `motel_app_release_info{app,release}` | liveswap's `AppSamples`: 1 while an instance runs; the running release |
-| `motel_app_memory_bytes{app}`, `motel_app_memory_max_bytes{app}`, `motel_app_cpu_seconds_total{app}` | the running unit's cgroup (`memory.current`, `MemoryMax=`, `cpu.stat` `usage_usec`), read at each gather; absent while nothing runs or the file cannot be read |
+| `motel_app_memory_bytes{app}`, `motel_app_memory_max_bytes{app}`, `motel_app_cpu_seconds_total{app,unit}` | the running unit's cgroup (`memory.current`, `MemoryMax=` when the kernel enforces it, `cpu.stat` `usage_usec`), read at each gather; absent while nothing runs or the file cannot be read. The CPU counter is one series per unit: each new unit counts from zero, and a count that rose across a cutover would read as the new unit's |
 
 The per-app series are a collector registered on the same registry, so
 an operator's own scraper of the admin `/metrics` sees them too. Label
@@ -198,7 +200,7 @@ The deployer's route and credential, unchanged (the fresh-slate draft,
 Two fixed `query_range` templates over the socket, scoped to
 `app="<name>"`, the last hour at a 60 s step: the memory pair
 (`{__name__=~"motel_app_memory_bytes|motel_app_memory_max_bytes",app=…}`)
-and `rate(motel_app_cpu_seconds_total{app=…}[2m])`. `at` is the newest
+and `sum(rate(motel_app_cpu_seconds_total{app=…}[2m]))`. `at` is the newest
 point; `max` and `avg` are over the hour; `now`, `avg_5m` and
 `memory_max_bytes` come only from points of the last three minutes and
 five minutes, so an app that stopped, or a cap a later release dropped,
@@ -283,7 +285,7 @@ read path from the store into `GET /<app>`.
   could rewrite it to scrape anything the namespace reaches, which is
   the namespace's own loopback and Alertmanager: nothing T5 lacks.
 - **T6** (a compromised config repository): can add or remove the block
-  and move its two paths, no more; no rule, query or template is
+  and move its socket path, no more; no rule, query or template is
   configurable.
 - **The namespace's daemons** (`_victoria-metrics`, Debian's packages):
   the proxy gives whatever runs in the namespace Alertmanager's whole
@@ -355,6 +357,7 @@ on its general scales. metrics' examples:
 | Residual | Where | S | O | D | Why accepted |
 |---|---|---|---|---|---|
 | vmalert's `ChannelFailed` resolves 5 minutes after the last failure and re-sends the resolve for 15; with motel's labels it ends motel's own alert early, and a rise after that is told again | notify/metricsrules.go | 2 | 3 | 3 | 18; direct alerts never send a recovery, so the early end is silent; a second rise is a second failure, told |
+| `GET /<app>` runs its two queries one after the other in the one 2 s budget: a store answering each in over a second answers the whole object as the error, cached 30 s | notify/metricsview.go (`ask`) | 2 | 2 | 1 | 4; the answer says the store did not answer, which is true; running them at once adds a goroutine and a join (size 2) to a path that is best-effort by design. /code-review pass 2 |
 | vmalert's rules have no flapping guard: a condition that flaps around its threshold fires and resolves at each crossing | notify/metricsrules.go | 2 | 3 | 3 | 18; every rule has a `for:` of 2 to 30 minutes, which bounds a flap to one pair per `for:` |
 
 ### Owed

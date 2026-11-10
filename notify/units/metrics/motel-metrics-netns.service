@@ -9,6 +9,9 @@ Before=victoria-metrics.service motel-vmalert.service motel-am-proxy.socket mote
 [Service]
 Type=oneshot
 RemainAfterExit=yes
+# A namespace left by a start that failed half-way, or a stop that did
+# not run, would make the add fail with "File exists" at every start.
+ExecStartPre=-/usr/sbin/ip netns delete motel-metrics
 ExecStart=/usr/sbin/ip netns add motel-metrics
 ExecStart=/usr/sbin/ip -n motel-metrics link set lo up
 ExecStop=/usr/sbin/ip netns delete motel-metrics

@@ -277,7 +277,9 @@ func (p *pusher) release(m *MetricsStore) {
 		older.m.applyRules()
 		return
 	}
-	p.active = nil
+	// Nothing of the stopped config is held: its registry holds its
+	// apps, its store client a transport.
+	p.setLive(liveStore{logger: p.logger})
 	var evs []Event
 	if p.storeDown {
 		evs = append(evs, storeEvent(eventStoreDown, false))

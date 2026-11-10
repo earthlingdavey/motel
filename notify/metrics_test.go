@@ -33,14 +33,15 @@ func TestMetricsStoreBlock(t *testing.T) {
 	if err != nil || m.store() != DefaultStoreSocket || m.stateDir() != DefaultMetricsStateDir {
 		t.Fatalf("the bare option: %+v, %v", m, err)
 	}
-	m, err = parseStore("metrics_store {\n store /run/x/vm.sock\n state_dir /var/lib/x\n}")
-	if err != nil || m.store() != "/run/x/vm.sock" || m.stateDir() != "/var/lib/x" {
-		t.Fatalf("both paths: %+v, %v", m, err)
+	m, err = parseStore("metrics_store {\n store /run/x/vm.sock\n}")
+	if err != nil || m.store() != "/run/x/vm.sock" || m.stateDir() != DefaultMetricsStateDir {
+		t.Fatalf("a store path: %+v, %v", m, err)
 	}
 	for src, want := range map[string]string{
 		"metrics_store on":                         "wrong argument count",
 		"metrics_store {\n store run/vm.sock\n}":   "not an absolute path",
-		"metrics_store {\n state_dir x\n}":         "not an absolute path",
+		"metrics_store {\n state_dir /srv/m\n}":    `unknown metrics_store subdirective "state_dir"`,
+		"metrics_store {\n store /a\n store /b\n}": "store is given more than once",
 		"metrics_store {\n store\n}":               "wrong argument count",
 		"metrics_store {\n store /a /b\n}":         "wrong argument count",
 		"metrics_store {\n interval 10s\n}":        `unknown metrics_store subdirective "interval"`,
@@ -112,9 +113,9 @@ func TestAppCollector(t *testing.T) {
 		"motel_app_up,app=evil": 1, "motel_app_up,app=nocg": 1,
 		"motel_app_release_info,app=blog,release=v2": 1, "motel_app_release_info,app=shop,release=v1": 1,
 		"motel_app_release_info,app=evil,release=v1": 1, "motel_app_release_info,app=nocg,release=v1": 1,
-		"motel_app_memory_bytes,app=blog":      31457280,
-		"motel_app_memory_max_bytes,app=blog":  268435456,
-		"motel_app_cpu_seconds_total,app=blog": 2.5,
+		"motel_app_memory_bytes,app=blog":                            31457280,
+		"motel_app_memory_max_bytes,app=blog":                        268435456,
+		"motel_app_cpu_seconds_total,app=blog,unit=app-blog.service": 2.5,
 	}
 	if len(got) != len(want) {
 		t.Errorf("series = %v", got)
@@ -192,6 +193,9 @@ func TestParseQueryAnswerRefuses(t *testing.T) {
 		`{"status":"success","data":{"resultType":"scalar","result":[]}}`,
 		`{"status":"success","data":{"resultType":"vector","result":[{"metric":{},"value":[1,2]}]}}`,
 		`{"status":"success","data":{"resultType":"vector","result":[{"metric":{},"value":[1,"x"]}]}}`,
+		// json.Marshal refuses both, and the status would fail with them.
+		`{"status":"success","data":{"resultType":"matrix","result":[{"metric":{},"values":[[1,"NaN"]]}]}}`,
+		`{"status":"success","data":{"resultType":"matrix","result":[{"metric":{},"values":[[1,"+Inf"]]}]}}`,
 	} {
 		if _, err := parseQueryAnswer([]byte(body)); err == nil {
 			t.Errorf("%s: accepted", body)
@@ -354,9 +358,9 @@ func TestPusherReleaseClearsWhatFires(t *testing.T) {
 func TestPusherGoesBackToTheOlderConfig(t *testing.T) {
 	tp := newTestPusher(t)
 	dir := t.TempDir()
-	tp.m.StateDir, tp.m.rules, tp.m.logger = dir, []byte("older\n"), zap.NewNop()
+	tp.m.stateDirOverride, tp.m.rules, tp.m.logger = dir, []byte("older\n"), zap.NewNop()
 	tp.live = append(tp.live, liveStore{m: tp.m, store: tp.store, gather: prometheus.NewRegistry(), logger: zap.NewNop()})
-	newer := &MetricsStore{StateDir: dir, rules: []byte("newer\n"), logger: zap.NewNop()}
+	newer := &MetricsStore{stateDirOverride: dir, rules: []byte("newer\n"), logger: zap.NewNop()}
 	newer.applyRules() // its Start
 	tp.configure(liveStore{m: newer, store: tp.store, gather: prometheus.NewRegistry(), logger: zap.NewNop()})
 	if tp.active != newer {
@@ -372,6 +376,9 @@ func TestPusherGoesBackToTheOlderConfig(t *testing.T) {
 	tp.release(tp.m)
 	if tp.active != nil || tp.running {
 		t.Fatal("still running with no config")
+	}
+	if tp.gather != nil || tp.pusher.store != nil {
+		t.Fatal("the pusher holds a stopped config's registry or store")
 	}
 }
 
@@ -414,7 +421,7 @@ func TestMetricsViewSummary(t *testing.T) {
 	var asked []string
 	f := &fakeRange{ans: func(q string) []series {
 		asked = append(asked, q)
-		if strings.HasPrefix(q, "rate(") {
+		if strings.HasPrefix(q, "sum(rate(") {
 			return []series{{labels: map[string]string{"app": "blog"}, points: pts(0.25, 0.25, 0.25, 0.5, 0.5, 0.5, 0.5, 0.5)}}
 		}
 		return []series{
@@ -454,7 +461,7 @@ func TestMetricsViewStaleIsHistory(t *testing.T) {
 		return []point{{t: end.Add(-25 * time.Minute), v: v}, {t: end.Add(-20 * time.Minute), v: v}}
 	}
 	f := &fakeRange{ans: func(q string) []series {
-		if strings.HasPrefix(q, "rate(") {
+		if strings.HasPrefix(q, "sum(rate(") {
 			return []series{{points: old(0.5)}}
 		}
 		return []series{

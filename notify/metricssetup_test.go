@@ -124,6 +124,8 @@ func TestMetricsUnitsAreTheMeasuredOnes(t *testing.T) {
 	has("the drop-in", unitVMDropIn, "ExecStart=\n", "-httpListenAddr=127.0.0.1:8428 ", "NetworkNamespacePath=/run/netns/motel-metrics",
 		"MemoryMax=256M", "-memory.allowedBytes=96MiB", "-retentionPeriod=14d", "-promscrape.config="+DefaultMetricsStateDir+"/"+scrapeName,
 		"Requires=motel-metrics-netns.service")
+	// A namespace left behind must not fail every later start.
+	has("the namespace unit", unitNetns, "ExecStartPre=-/usr/sbin/ip netns delete motel-metrics\nExecStart=/usr/sbin/ip netns add motel-metrics")
 	has("motel-vm.socket", unitVMSocket, "ListenStream="+DefaultStoreSocket+"\n", "SocketGroup=motel", "SocketMode=0660")
 	has("motel-vm.service", unitVMProxy, "NetworkNamespacePath=/run/netns/motel-metrics", "systemd-socket-proxyd --exit-idle-time=5min 127.0.0.1:8428")
 	// The cold-boot ordering cycle's fix.

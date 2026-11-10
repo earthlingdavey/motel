@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"os"
+	"path"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -27,7 +28,7 @@ var (
 	appMemoryMaxDesc = prometheus.NewDesc("motel_app_memory_max_bytes",
 		"The running unit's MemoryMax=, when it has one.", []string{"app"}, nil)
 	appCPUDesc = prometheus.NewDesc("motel_app_cpu_seconds_total",
-		"CPU the running unit has used, from its cgroup's cpu.stat; restarts at each new unit.", []string{"app"}, nil)
+		"CPU the running unit has used, from its cgroup's cpu.stat: one series per unit, since each new unit counts from zero.", []string{"app", "unit"}, nil)
 )
 
 // appSampler is liveswap's side: *liveswap.App.
@@ -73,7 +74,7 @@ func (c appCollector) Collect(ch chan<- prometheus.Metric) {
 			ch <- prometheus.MustNewConstMetric(appMemoryDesc, prometheus.GaugeValue, float64(v), s.App)
 		}
 		if usec, ok := readCPUUsage(filepath.Join(dir, "cpu.stat")); ok {
-			ch <- prometheus.MustNewConstMetric(appCPUDesc, prometheus.CounterValue, float64(usec)/1e6, s.App)
+			ch <- prometheus.MustNewConstMetric(appCPUDesc, prometheus.CounterValue, float64(usec)/1e6, s.App, path.Base(s.Cgroup))
 		}
 	}
 }
