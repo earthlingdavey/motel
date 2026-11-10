@@ -132,7 +132,7 @@ COPY e2e/notify/Caddyfile /etc/motel/Caddyfile
 # URL per channel, each a path on the stub receiver.
 RUN install -d -m 2750 -o root -g motel /etc/motel/secrets \
 	&& printf '%s\n' \
-		'NOTIFY_TEACHER_URL="http://e2e-sink:8080/teacher"' \
+		'NOTIFY_OPS_URL="http://e2e-sink:8080/ops"' \
 		'NOTIFY_ONCALL_URL="http://e2e-sink:8080/broken"' \
 		'NOTIFY_BLOG_URL="http://e2e-sink:8080/blog"' \
 		'NOTIFY_HC_URL="http://e2e-sink:8080/deadman"' \

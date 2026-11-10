@@ -37,7 +37,7 @@ func TestFailWatchRises(t *testing.T) {
 	}
 }
 
-func TestScrapeFailedTellsTheOtherTeacherChannels(t *testing.T) {
+func TestScrapeFailedTellsTheOtherOperatorChannels(t *testing.T) {
 	te := newTestEngine(t)
 	a := mustParse(t, fullBlock)
 	r, err := a.resolve(testTrust(), testSecrets())
@@ -55,7 +55,7 @@ func TestScrapeFailedTellsTheOtherTeacherChannels(t *testing.T) {
 		t.Fatal("the baseline posted")
 	}
 	// The blog receiver's slack config failed: ops is the only slack
-	// channel in it, so pager (the other teacher channel) is told.
+	// channel in it, so pager (the other operator channel) is told.
 	body = metricsHead + failedLine("slack", "event-app-blog-warning", "clientError", 1) + failedLine("webhook", "", "other", 0)
 	te.scrapeFailed(context.Background(), read)
 	got := te.drain()
@@ -67,7 +67,7 @@ func TestScrapeFailedTellsTheOtherTeacherChannels(t *testing.T) {
 		t.Fatalf("lines = %+v", lines)
 	}
 	// Without receiver_name, every webhook channel is a suspect (pager,
-	// students-bob): ops is told.
+	// bob): ops is told.
 	body = metricsHead + failedLine("slack", "event-app-blog-warning", "clientError", 1) + failedLine("webhook", "", "other", 4)
 	te.scrapeFailed(context.Background(), read)
 	got = te.drain()
@@ -99,7 +99,7 @@ func TestSuspects(t *testing.T) {
 
 func TestHeartbeatFailureSuspectsNoChannel(t *testing.T) {
 	_, _, recv := renderFull(t)
-	w := failWatch{kinds: map[string]string{"pager": "webhook", "students-bob": "webhook", "ops": "slack"}, channels: recv}
+	w := failWatch{kinds: map[string]string{"pager": "webhook", "bob": "webhook", "ops": "slack"}, channels: recv}
 	if got := w.suspects(failedSample{integration: "webhook", receiver: "heartbeat"}); len(got) != 0 {
 		t.Fatalf("a failing heartbeat blamed %v", got)
 	}

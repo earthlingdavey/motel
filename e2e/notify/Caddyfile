@@ -11,7 +11,7 @@
 		allow_insecure_http
 		artifact_allowlist e2e-artifacts:8080
 
-		# blog trusts the minted deploy key, which a student's channel is
+		# blog trusts the minted deploy key, which a deployer's channel is
 		# bound to; shop trusts another key nobody binds.
 		app blog {
 			command ./server
@@ -38,12 +38,12 @@
 	}
 
 	notify {
-		channel teacher json {secret.NOTIFY_TEACHER_URL}
+		channel ops json {secret.NOTIFY_OPS_URL}
 		# Answers 400: the failing channel channel_failed must name.
 		channel oncall discord {secret.NOTIFY_ONCALL_URL}
-		channel blog-student ntfy {secret.NOTIFY_BLOG_URL}
-		teacher teacher oncall
-		bind local:/shared/deploy.pub blog-student
+		channel blog-deployer ntfy {secret.NOTIFY_BLOG_URL}
+		operator ops oncall
+		bind local:/shared/deploy.pub blog-deployer
 		heartbeat {secret.NOTIFY_HC_URL}
 		allow_insecure_channels
 	}

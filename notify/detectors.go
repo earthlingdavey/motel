@@ -170,7 +170,7 @@ func (b *backupPoller) poll(now time.Time, path string) []Event {
 			failed = true
 		}
 		// A box event about an app: the app is the instance, never
-		// the app label, so it reaches the teacher alone.
+		// the app label, so it reaches the operator alone.
 		if a.LastOK != nil && now.Sub(a.LastOK.Time) > status.StaleAfter {
 			fire = append(fire, ev("backup_stale", SeverityCritical, name,
 				fmt.Sprintf("the backup of %s is stale: the last complete one is from %s", name, record.When(a.LastOK.Time))))

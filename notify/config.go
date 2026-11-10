@@ -169,7 +169,7 @@ func (id identity) matches(s TrustSource) bool {
 type resolved struct {
 	channels map[string]Channel
 	order    []string // channel names, sorted
-	teacher  []string // channel names, deduplicated, in the order given
+	operator []string // channel names, deduplicated, in the order given
 	// appChannels is each app's bound channels, sorted; an app with
 	// none is absent.
 	appChannels map[string][]string
@@ -180,7 +180,7 @@ type resolved struct {
 
 // resolve checks the whole block against the apps' trust and the
 // secrets file's values, and is every refusal `motel validate` makes
-// for it: a teacher naming no channel, a channel named twice, a
+// for it: an operator line naming no channel, a channel named twice, a
 // binding to a channel that does not exist or to an identity no app
 // trusts, a secret the box does not hold, a URL that is not https to a
 // public address. Errors name keys and channels, never a value.
@@ -202,15 +202,15 @@ func (a *App) resolve(trust map[string][]TrustSource, secrets map[string]string)
 		r.order = append(r.order, ch.Name)
 	}
 	sort.Strings(r.order)
-	if len(a.Teacher) == 0 {
-		return nil, errors.New("no teacher line: name the channels that receive the box's events with teacher <channel>")
+	if len(a.Operator) == 0 {
+		return nil, errors.New("no operator line: name the channels that receive every event with operator <channel>")
 	}
-	for _, name := range a.Teacher {
+	for _, name := range a.Operator {
 		if _, ok := r.channels[name]; !ok {
-			return nil, fmt.Errorf("teacher names %s, which no channel line defines", name)
+			return nil, fmt.Errorf("operator names %s, which no channel line defines", name)
 		}
-		if !slices.Contains(r.teacher, name) {
-			r.teacher = append(r.teacher, name)
+		if !slices.Contains(r.operator, name) {
+			r.operator = append(r.operator, name)
 		}
 	}
 	for app := range trust {
@@ -240,7 +240,7 @@ func (a *App) resolve(trust map[string][]TrustSource, secrets map[string]string)
 		if !trusted {
 			// A revoked key or a repository taken out of deploy_trust:
 			// the binding would reach nobody's events, or, once the
-			// identity is trusted again, reach them without the teacher
+			// identity is trusted again, reach them without the operator
 			// having said so again.
 			return nil, fmt.Errorf("bind %q: no app's deploy_trust trusts this identity; remove the line, or trust it", b.Identity)
 		}

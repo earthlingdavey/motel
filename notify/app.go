@@ -21,12 +21,12 @@ func init() {
 	caddy.RegisterModule(App{})
 }
 
-// App is the `notify` global option: the channels, who the teacher is,
+// App is the `notify` global option: the channels, who the operator is,
 // which identity's channels an app's events also reach, and where
 // Alertmanager is (DESIGN-notify.md).
 type App struct {
 	Channels        []Channel `json:"channels,omitempty"`
-	Teacher         []string  `json:"teacher,omitempty"`
+	Operator        []string  `json:"operator,omitempty"`
 	Binds           []Bind    `json:"binds,omitempty"`
 	HeartbeatSecret string    `json:"heartbeat_secret,omitempty"`
 	// DeploySucceeded sends deploy_succeeded, which #418's table has

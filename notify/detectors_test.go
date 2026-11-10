@@ -264,7 +264,7 @@ func TestPruneEndsWhatNoSourceClears(t *testing.T) {
 	te.report(Event{Name: alertDiskLow, Kind: kindState, Severity: SeverityWarning, Source: "disk", Instance: "/var/lib/liveswap", Summary: "x", Firing: true})
 	te.mute("blog", true)
 	te.drain()
-	a := mustParse(t, "notify {\nchannel ops slack {secret.NOTIFY_OPS_URL}\nteacher ops\nbackup_record off\n}")
+	a := mustParse(t, "notify {\nchannel ops slack {secret.NOTIFY_OPS_URL}\noperator ops\nbackup_record off\n}")
 	r, err := a.resolve(map[string][]TrustSource{"shop": nil}, testSecrets())
 	if err != nil {
 		t.Fatal(err)

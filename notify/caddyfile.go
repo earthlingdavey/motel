@@ -31,7 +31,7 @@ func parseGlobalOption(d *caddyfile.Dispenser, existing any) (any, error) {
 //
 //	notify {
 //	    channel <name> <kind> {secret.NOTIFY_<NAME>} [severity <floor>]
-//	    teacher <channel>...
+//	    operator <channel>...
 //	    bind <identity> <channel>
 //	    heartbeat {secret.NOTIFY_<NAME>}
 //	    deploy_succeeded on|off
@@ -43,7 +43,7 @@ func parseGlobalOption(d *caddyfile.Dispenser, existing any) (any, error) {
 //	}
 //
 // The grammar is checked here, line by line; what needs the whole
-// configuration (a teacher naming a channel, a binding no app trusts,
+// configuration (an operator line naming a channel, a binding no app trusts,
 // a secret the box does not hold) is checked in Provision, so that
 // `motel validate` refuses it with the rest.
 func (a *App) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
@@ -74,12 +74,12 @@ func (a *App) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
 				return d.Err(err.Error())
 			}
 			a.Channels = append(a.Channels, ch)
-		case "teacher":
+		case "operator":
 			args := d.RemainingArgs()
 			if len(args) == 0 {
-				return d.Err("teacher names one or more channels")
+				return d.Err("operator names one or more channels")
 			}
-			a.Teacher = append(a.Teacher, args...)
+			a.Operator = append(a.Operator, args...)
 		case "bind":
 			args := d.RemainingArgs()
 			if len(args) != 2 {

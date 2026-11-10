@@ -28,7 +28,7 @@ func init() {
 // adminAPI is notify's two routes on the admin API, which listens on
 // /run/motel/admin.sock: root and the motel uid reach it, and no app
 // does (the path is not in any app's view). They are how a producer
-// outside motel emits an event, and how a teacher proves a channel.
+// outside motel emits an event, and how an operator proves a channel.
 type adminAPI struct{}
 
 func (adminAPI) CaddyModule() caddy.ModuleInfo {
@@ -198,7 +198,7 @@ var testWait = 15 * time.Second
 
 // serveTest is POST /notify/test: one NotifyTest alert to one channel,
 // then Alertmanager's own counters read until they move. The only way a
-// teacher proves a URL before an incident does (#418, open question 4).
+// operator proves a URL before an incident does (#418, open question 4).
 func serveTest(w http.ResponseWriter, r *http.Request) error {
 	var req TestRequest
 	if err := readJSON(r, &req); err != nil {

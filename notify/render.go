@@ -48,7 +48,7 @@ const (
 	alertDiskLow       = "disk_low"
 
 	// labelChannel addresses one channel directly: ChannelFailed (to
-	// each of the teacher's other channels) and NotifyTest.
+	// each of the operator's other channels) and NotifyTest.
 	labelChannel = "notify_channel"
 )
 
@@ -165,10 +165,10 @@ func render(r *resolved, stateDir string) ([]byte, map[string]string, map[string
 		return rc.Name
 	}
 
-	// The root's receiver is the teacher, and no alert should reach
+	// The root's receiver is the operator's, and no alert should reach
 	// it: every alert motel posts matches a route below.
 	cfg.Route = amRoute{
-		Receiver:       add(recv("fallback", r.teacher, true)),
+		Receiver:       add(recv("fallback", r.operator, true)),
 		GroupBy:        []string{"alertname", "app", "subject"},
 		GroupWait:      stateGroupWait,
 		GroupInterval:  stateGroupInterval,
@@ -180,7 +180,7 @@ func render(r *resolved, stateDir string) ([]byte, map[string]string, map[string
 	heartbeat := blackhole
 	if r.heartbeat != "" {
 		heartbeat = add(amRecv{Name: "heartbeat", WebhookConfigs: []amWebhook{{URLFile: file(r.heartbeat), SendResolved: false}}})
-		receivers[heartbeat] = []string{} // no channel: its failure is no channel's, and every teacher channel hears it
+		receivers[heartbeat] = []string{} // no channel: its failure is no channel's, and every operator channel hears it
 	}
 	direct := amRoute{
 		Receiver:       blackhole,
@@ -212,13 +212,13 @@ func render(r *resolved, stateDir string) ([]byte, map[string]string, map[string
 
 	// 2. One route per kind, carrying the timing; under it a route per
 	// app that has channels of its own, each with a receiver composed
-	// of the teacher's channels and the app's, by severity. A box
+	// of the operator's channels and the app's, by severity. A box
 	// event (no app label) stays on the kind's own receivers, which
-	// are the teacher's.
+	// are the operator's.
 	audience := func(kind, who string, extra []string) amRoute {
 		chans := func(sev string) []string {
 			var out []string
-			for _, n := range append(slices.Clone(r.teacher), extra...) {
+			for _, n := range append(slices.Clone(r.operator), extra...) {
 				if r.channels[n].receives(sev) && !slices.Contains(out, n) {
 					out = append(out, n)
 				}

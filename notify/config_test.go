@@ -62,11 +62,11 @@ func mustParse(t *testing.T, src string) *App {
 const fullBlock = `notify {
 	channel ops slack {secret.NOTIFY_OPS_URL}
 	channel pager ntfy {secret.NOTIFY_PAGER_URL} severity critical
-	channel students-alice discord {secret.NOTIFY_ALICE_URL}
-	channel students-bob json {secret.NOTIFY_BOB_URL} severity warning
-	teacher ops pager
-	bind local:/etc/motel/alice.pub students-alice
-	bind "oidc:https://token.actions.githubusercontent.com repository=org/shop" students-bob
+	channel alice discord {secret.NOTIFY_ALICE_URL}
+	channel bob json {secret.NOTIFY_BOB_URL} severity warning
+	operator ops pager
+	bind local:/etc/motel/alice.pub alice
+	bind "oidc:https://token.actions.githubusercontent.com repository=org/shop" bob
 	heartbeat {secret.NOTIFY_HC_URL}
 	deploy_succeeded on
 }`
@@ -76,11 +76,11 @@ func TestCaddyfileFullBlock(t *testing.T) {
 	got, _ := json.Marshal(a)
 	want := `{"channels":[{"name":"ops","kind":"slack","secret":"NOTIFY_OPS_URL","severity":"info"},` +
 		`{"name":"pager","kind":"ntfy","secret":"NOTIFY_PAGER_URL","severity":"critical"},` +
-		`{"name":"students-alice","kind":"discord","secret":"NOTIFY_ALICE_URL","severity":"info"},` +
-		`{"name":"students-bob","kind":"json","secret":"NOTIFY_BOB_URL","severity":"warning"}],` +
-		`"teacher":["ops","pager"],` +
-		`"binds":[{"identity":"local:/etc/motel/alice.pub","channel":"students-alice"},` +
-		`{"identity":"oidc:https://token.actions.githubusercontent.com repository=org/shop","channel":"students-bob"}],` +
+		`{"name":"alice","kind":"discord","secret":"NOTIFY_ALICE_URL","severity":"info"},` +
+		`{"name":"bob","kind":"json","secret":"NOTIFY_BOB_URL","severity":"warning"}],` +
+		`"operator":["ops","pager"],` +
+		`"binds":[{"identity":"local:/etc/motel/alice.pub","channel":"alice"},` +
+		`{"identity":"oidc:https://token.actions.githubusercontent.com repository=org/shop","channel":"bob"}],` +
 		`"heartbeat_secret":"NOTIFY_HC_URL","deploy_succeeded":true}`
 	if string(got) != want {
 		t.Fatalf("JSON:\n got %s\nwant %s", got, want)
@@ -98,7 +98,7 @@ func TestCaddyfileRefusals(t *testing.T) {
 		{"bad severity", `channel ops slack {secret.NOTIFY_OPS_URL} severity page`, "not critical, warning or info"},
 		{"option after URL", `channel ops slack {secret.NOTIFY_OPS_URL} floor critical`, "only severity follows"},
 		{"too few", `channel ops slack`, "channel takes"},
-		{"empty teacher", `teacher`, "teacher names one or more channels"},
+		{"empty operator", `operator`, "operator names one or more channels"},
 		{"bind one arg", `bind ops`, "bind takes"},
 		{"bind no prefix", `bind alice ops`, "an identity starts local:/"},
 		{"bind oidc no claim", `bind oidc:https://token.actions.githubusercontent.com ops`, "at least one claim"},
@@ -107,7 +107,7 @@ func TestCaddyfileRefusals(t *testing.T) {
 		{"heartbeat literal", `heartbeat https://hc-ping.com/x`, "never in the Caddyfile"},
 		{"deploy_succeeded yes", `deploy_succeeded yes`, "on or off"},
 		{"unknown", `quiet_hours 22-07`, "unknown notify subdirective"},
-		{"block on a line", "teacher ops {\n\tx\n}", "take no block"},
+		{"block on a line", "operator ops {\n\tx\n}", "take no block"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -131,11 +131,11 @@ func TestResolveComposesAudiences(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := strings.Join(r.teacher, ","); got != "ops,pager" {
-		t.Errorf("teacher = %s", got)
+	if got := strings.Join(r.operator, ","); got != "ops,pager" {
+		t.Errorf("operator = %s", got)
 	}
 	// alice's key is trusted by blog and wiki; bob's repository by shop.
-	want := map[string]string{"blog": "students-alice", "wiki": "students-alice", "shop": "students-bob"}
+	want := map[string]string{"blog": "alice", "wiki": "alice", "shop": "bob"}
 	for app, ch := range want {
 		if got := strings.Join(r.appChannels[app], ","); got != ch {
 			t.Errorf("app %s channels = %q, want %q", app, got, ch)
@@ -161,20 +161,20 @@ func TestResolveRefusals(t *testing.T) {
 		secrets    map[string]string
 		want       string
 	}{
-		{"no teacher", base, nil, "no teacher line"},
-		{"teacher unknown", base + "teacher ops pager", nil, "teacher names pager"},
-		{"channel twice", base + "channel ops json {secret.NOTIFY_BOB_URL}\nteacher ops", nil, "defined twice"},
-		{"bind unknown channel", base + "teacher ops\nbind local:/etc/motel/alice.pub nobody", nil, "names channel nobody"},
-		{"bind untrusted key", base + "teacher ops\nbind local:/etc/motel/carol.pub alice", nil, "no app's deploy_trust trusts"},
-		{"bind claim not pinned", base + "teacher ops\nbind \"local:/etc/motel/alice.pub sub=alice\" alice", nil, "no app's deploy_trust trusts"},
-		{"bind wrong repository", base + "teacher ops\nbind \"" + ghIssuer + " repository=org/blog\" alice", nil, "no app's deploy_trust trusts"},
-		{"missing secret", base + "teacher ops", map[string]string{"NOTIFY_OPS_URL": "https://hooks.slack.com/x"}, "secret NOTIFY_ALICE_URL is not in the box's secrets"},
-		{"empty secret", base + "teacher ops", map[string]string{"NOTIFY_OPS_URL": "https://hooks.slack.com/x", "NOTIFY_ALICE_URL": ""}, "NOTIFY_ALICE_URL is not in"},
-		{"heartbeat missing", base + "teacher ops\nheartbeat {secret.NOTIFY_HC_URL}", map[string]string{"NOTIFY_OPS_URL": "https://a.example.org/", "NOTIFY_ALICE_URL": "https://b.example.org/"}, "heartbeat: secret NOTIFY_HC_URL"},
-		{"http", base + "teacher ops", map[string]string{"NOTIFY_OPS_URL": "http://hooks.example.org/x", "NOTIFY_ALICE_URL": "https://b.example.org/"}, "is not an https URL"},
-		{"loopback", base + "teacher ops", map[string]string{"NOTIFY_OPS_URL": "https://127.0.0.1:9000/x", "NOTIFY_ALICE_URL": "https://b.example.org/"}, "not to a public address"},
-		{"private v4", base + "teacher ops", map[string]string{"NOTIFY_OPS_URL": "https://10.1.2.3/x", "NOTIFY_ALICE_URL": "https://b.example.org/"}, "not to a public address"},
-		{"localhost", base + "teacher ops", map[string]string{"NOTIFY_OPS_URL": "https://localhost/x", "NOTIFY_ALICE_URL": "https://b.example.org/"}, "not to a public host name"},
+		{"no operator", base, nil, "no operator line"},
+		{"operator unknown", base + "operator ops pager", nil, "operator names pager"},
+		{"channel twice", base + "channel ops json {secret.NOTIFY_BOB_URL}\noperator ops", nil, "defined twice"},
+		{"bind unknown channel", base + "operator ops\nbind local:/etc/motel/alice.pub nobody", nil, "names channel nobody"},
+		{"bind untrusted key", base + "operator ops\nbind local:/etc/motel/carol.pub alice", nil, "no app's deploy_trust trusts"},
+		{"bind claim not pinned", base + "operator ops\nbind \"local:/etc/motel/alice.pub sub=alice\" alice", nil, "no app's deploy_trust trusts"},
+		{"bind wrong repository", base + "operator ops\nbind \"" + ghIssuer + " repository=org/blog\" alice", nil, "no app's deploy_trust trusts"},
+		{"missing secret", base + "operator ops", map[string]string{"NOTIFY_OPS_URL": "https://hooks.slack.com/x"}, "secret NOTIFY_ALICE_URL is not in the box's secrets"},
+		{"empty secret", base + "operator ops", map[string]string{"NOTIFY_OPS_URL": "https://hooks.slack.com/x", "NOTIFY_ALICE_URL": ""}, "NOTIFY_ALICE_URL is not in"},
+		{"heartbeat missing", base + "operator ops\nheartbeat {secret.NOTIFY_HC_URL}", map[string]string{"NOTIFY_OPS_URL": "https://a.example.org/", "NOTIFY_ALICE_URL": "https://b.example.org/"}, "heartbeat: secret NOTIFY_HC_URL"},
+		{"http", base + "operator ops", map[string]string{"NOTIFY_OPS_URL": "http://hooks.example.org/x", "NOTIFY_ALICE_URL": "https://b.example.org/"}, "is not an https URL"},
+		{"loopback", base + "operator ops", map[string]string{"NOTIFY_OPS_URL": "https://127.0.0.1:9000/x", "NOTIFY_ALICE_URL": "https://b.example.org/"}, "not to a public address"},
+		{"private v4", base + "operator ops", map[string]string{"NOTIFY_OPS_URL": "https://10.1.2.3/x", "NOTIFY_ALICE_URL": "https://b.example.org/"}, "not to a public address"},
+		{"localhost", base + "operator ops", map[string]string{"NOTIFY_OPS_URL": "https://localhost/x", "NOTIFY_ALICE_URL": "https://b.example.org/"}, "not to a public host name"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -197,7 +197,7 @@ func TestResolveRefusals(t *testing.T) {
 }
 
 func TestResolveNoLiveswap(t *testing.T) {
-	a := mustParse(t, "notify {\nchannel ops slack {secret.NOTIFY_OPS_URL}\nteacher ops\n}")
+	a := mustParse(t, "notify {\nchannel ops slack {secret.NOTIFY_OPS_URL}\noperator ops\n}")
 	r, err := a.resolve(map[string][]TrustSource{}, testSecrets())
 	if err != nil {
 		t.Fatal(err)
@@ -205,7 +205,7 @@ func TestResolveNoLiveswap(t *testing.T) {
 	if len(r.apps) != 0 || len(r.appChannels) != 0 {
 		t.Fatalf("apps %v channels %v", r.apps, r.appChannels)
 	}
-	a = mustParse(t, "notify {\nchannel ops slack {secret.NOTIFY_OPS_URL}\nteacher ops\nbind local:/etc/motel/alice.pub ops\n}")
+	a = mustParse(t, "notify {\nchannel ops slack {secret.NOTIFY_OPS_URL}\noperator ops\nbind local:/etc/motel/alice.pub ops\n}")
 	if _, err := a.resolve(map[string][]TrustSource{}, testSecrets()); err == nil {
 		t.Fatal("a binding with no apps at all was accepted")
 	}
@@ -244,7 +244,7 @@ func TestCheckURL(t *testing.T) {
 		{"https://metadata.google.internal/", false, false},
 		{"https://intranet/", false, false},
 		{"https://ntfy.sh./x", false, true},
-		{"http://e2e-sink:8080/teacher", true, true},
+		{"http://e2e-sink:8080/operator", true, true},
 		{"http://127.0.0.1:18090/x", true, true},
 		{"ftp://e2e-sink/x", true, false},
 	}

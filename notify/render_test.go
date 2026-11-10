@@ -101,7 +101,7 @@ func receiverChannels(t *testing.T, cfg []byte) map[string][]string {
 	return out
 }
 
-// TestRenderComposesReceivers reads the receivers back: the teacher's
+// TestRenderComposesReceivers reads the receivers back: the operator's
 // channels plus the app's, each channel only at or above its floor.
 func TestRenderComposesReceivers(t *testing.T) {
 	cfg, _, _ := renderFull(t)
@@ -112,7 +112,7 @@ func TestRenderComposesReceivers(t *testing.T) {
 		"blackhole":               nil,
 		"heartbeat":               {"NOTIFY_HC_URL"},
 		"ch-ops":                  {ops},
-		"ch-students-bob":         {bob},
+		"ch-bob":                  {bob},
 		"event-box-info":          {ops},
 		"event-box-warning":       {ops},
 		"event-box-critical":      {ops, pager},
@@ -218,7 +218,7 @@ func TestRenderPassesAmtoolCheckConfig(t *testing.T) {
 // TestRenderRoutesWithAmtool asks Alertmanager's own router where each
 // alert motel posts goes, which is the route tree's whole contract:
 // plumbing to its own receivers, app alerts to the composed ones, box
-// alerts to the teacher's, nothing to the fallback.
+// alerts to the operator's, nothing to the fallback.
 func TestRenderRoutesWithAmtool(t *testing.T) {
 	tool := amtool(t)
 	cfg := writeRendered(t)
@@ -228,7 +228,7 @@ func TestRenderRoutesWithAmtool(t *testing.T) {
 	}{
 		{[]string{"alertname=Watchdog", "severity=none"}, "heartbeat"},
 		{[]string{"alertname=ChannelFailed", "notify_channel=pager", "severity=warning"}, "ch-pager"},
-		{[]string{"alertname=NotifyTest", "notify_channel=students-alice", "severity=info"}, "ch-students-alice"},
+		{[]string{"alertname=NotifyTest", "notify_channel=alice", "severity=info"}, "ch-alice"},
 		{[]string{"alertname=deploy_in_progress", "kind=mute", "app=blog", "severity=none"}, "blackhole"},
 		{[]string{"alertname=deploy_failed", "kind=event", "app=blog", "severity=warning"}, "event-app-blog-warning"},
 		{[]string{"alertname=deploy_succeeded", "kind=event", "app=shop", "severity=info"}, "event-app-shop-info"},
@@ -238,7 +238,7 @@ func TestRenderRoutesWithAmtool(t *testing.T) {
 		{[]string{"alertname=disk_low", "kind=state", "subject=box", "severity=warning"}, "state-disk-box-warning"},
 		{[]string{"alertname=cert_failed", "kind=state", "subject=box", "severity=warning"}, "state-box-warning"},
 		// An app with no bindings of its own (none here) or a name no
-		// route knows: the teacher's, on the kind's own receivers.
+		// route knows: the operator's, on the kind's own receivers.
 		{[]string{"alertname=watchdog_throttled", "kind=state", "app=nobody", "severity=critical"}, "state-box-critical"},
 		{[]string{"alertname=x"}, "fallback"},
 	}

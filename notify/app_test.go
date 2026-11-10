@@ -84,7 +84,7 @@ func TestValidateThroughCaddy(t *testing.T) {
 	notify {
 		channel ops slack {secret.NOTIFY_OPS_URL}
 		channel alice ntfy {secret.NOTIFY_ALICE_URL}
-		teacher ops
+		operator ops
 		` + binding + `
 		secrets_file ` + secrets + `
 		state_dir ` + state + `
@@ -113,7 +113,7 @@ func TestValidateWithoutLiveswap(t *testing.T) {
 	if err := os.WriteFile(secrets, []byte("NOTIFY_OPS_URL=https://ntfy.sh/ops\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	src := "{\n\tadmin off\n\tnotify {\n\t\tchannel ops ntfy {secret.NOTIFY_OPS_URL}\n\t\tteacher ops\n\t\tsecrets_file " + secrets + "\n\t}\n}\n:8080 {\n\trespond ok\n}\n"
+	src := "{\n\tadmin off\n\tnotify {\n\t\tchannel ops ntfy {secret.NOTIFY_OPS_URL}\n\t\toperator ops\n\t\tsecrets_file " + secrets + "\n\t}\n}\n:8080 {\n\trespond ok\n}\n"
 	if err := validate(t, src); err != nil {
 		t.Fatal(err)
 	}

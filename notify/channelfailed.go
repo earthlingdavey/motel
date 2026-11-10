@@ -14,7 +14,7 @@ import (
 // channel_failed without the metrics package (DESIGN-notify.md,
 // "Failed delivery"): once a minute motel reads Alertmanager's own
 // alertmanager_notifications_failed_total over the socket, and when it
-// has risen tells the teacher's other channels, one ChannelFailed alert
+// has risen tells the operator's other channels, one ChannelFailed alert
 // per channel, each routed to that channel alone (notify_channel=).
 // With --enable-feature=receiver-name-in-metrics (the drop-in sets it)
 // the counter names the receiver, and the failing channel is narrowed
@@ -29,7 +29,7 @@ const channelFailedLife = 15 * time.Minute
 // reads the counter against.
 type failWatch struct {
 	prev     map[string]float64 // integration/receiver/reason → value
-	teacher  []string
+	operator []string
 	kinds    map[string]string   // channel → integration
 	channels map[string][]string // receiver → channels
 }
@@ -82,7 +82,7 @@ func (w *failWatch) suspects(s failedSample) []string {
 }
 
 // scrapeFailed is one read of the counter; it posts ChannelFailed for
-// each rise to every teacher channel that is not a suspect.
+// each rise to every operator channel that is not a suspect.
 func (e *engine) scrapeFailed(ctx context.Context, read func(context.Context) ([]byte, error)) {
 	body, err := read(ctx)
 	var m amMetrics
@@ -118,7 +118,7 @@ func (e *engine) scrapeFailed(ctx context.Context, read func(context.Context) ([
 			continue
 		}
 		var to []string
-		for _, ch := range e.fail.teacher {
+		for _, ch := range e.fail.operator {
 			if !slices.Contains(sus, ch) {
 				to = append(to, ch)
 			}

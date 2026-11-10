@@ -10,13 +10,13 @@
 # (research: alertmanager_edge_tests.md, its addendum), through motel:
 #
 #   Watchdog                      → /deadman, at once
-#   deploy_failed (a real deploy) → /teacher and /blog, the same second
-#   a box one-shot (notify send)  → /teacher only, at once
+#   deploy_failed (a real deploy) → /ops and /blog, the same second
+#   a box one-shot (notify send)  → /ops only, at once
 #   four distinct one-shots       → four deliveries, none lost
 #   watchdog_throttled blog       → nothing: inhibited by deploy_in_progress
-#   watchdog_throttled shop       → /teacher, after the 30 s group_wait
-#   a box state (notify send)     → /teacher at +30 s; its recovery within a minute of motel's hold
-#   oncall (answers 400)          → ChannelFailed to /teacher, naming oncall
+#   watchdog_throttled shop       → /ops, after the 30 s group_wait
+#   a box state (notify send)     → /ops at +30 s; its recovery within a minute of motel's hold
+#   oncall (answers 400)          → ChannelFailed to /ops, naming oncall
 #
 # and the socket's reach: no TCP listener, root and motel admitted,
 # nobody refused, nothing of it in an app's sandbox view; the journal
@@ -128,13 +128,13 @@ t_v1=$(now_ms)
 code=$(deploy demo-v3-broken.tar.gz v3)
 t_v3=$(now_ms)
 [ "$code" = 500 ] && pass "deploy v3 fails (its health check never passes)" || fail "deploy v3 returned $code"
-t1=$(first_arrival /teacher deploy_failed "$t_v1" 15 "" blog)
+t1=$(first_arrival /ops deploy_failed "$t_v1" 15 "" blog)
 t2=$(first_arrival /blog deploy_failed "$t_v1" 15 "" blog)
-within "deploy_failed to the teacher" "$t1" "$t_v3" -2 3
-within "deploy_failed to blog's student" "$t2" "$t_v3" -2 3
-none "deploy_succeeded is off by default" /teacher deploy_succeeded "$t_v1"
-none "deploy_in_progress reaches nobody (teacher)" /teacher deploy_in_progress 0
-none "deploy_in_progress reaches nobody (student)" /blog deploy_in_progress 0
+within "deploy_failed to the operator" "$t1" "$t_v3" -2 3
+within "deploy_failed to blog's deployer" "$t2" "$t_v3" -2 3
+none "deploy_succeeded is off by default" /ops deploy_succeeded "$t_v1"
+none "deploy_in_progress reaches nobody (operator)" /ops deploy_in_progress 0
+none "deploy_in_progress reaches nobody (deployer)" /blog deploy_in_progress 0
 journalctl -u motel -o cat --no-pager | grep 'notify: event' | grep -q 'liveswap/app:blog/deploy_failed' \
 	&& pass "journal: notify: event liveswap/app:blog/deploy_failed" || fail "no notify: event line for the failed deploy"
 
@@ -142,14 +142,14 @@ echo "=== notify 4: one-shots from outside ==="
 t_box=$(now_ms)
 send --name nightly_job_failed --severity warning --summary "e2e: the nightly job failed" \
 	&& pass "notify send: $(cat /tmp/send.out)" || fail "notify send: $(cat /tmp/send.out)"
-t=$(first_arrival /teacher nightly_job_failed "$t_box" 10)
-within "a box one-shot to the teacher" "$t" "$t_box" 0 2
+t=$(first_arrival /ops nightly_job_failed "$t_box" 10)
+within "a box one-shot to the operator" "$t" "$t_box" 0 2
 sleep 1
-none "a box one-shot reaches no student" /blog nightly_job_failed "$t_box"
+none "a box one-shot reaches no deployer" /blog nightly_job_failed "$t_box"
 t_four=$(now_ms)
 for n in 1 2 3 4; do send --name batch_item_failed --instance "item-$n" --summary "e2e: item $n failed"; done
 sleep 3
-n=$(arrivals /teacher batch_item_failed "$t_four" | wc -l)
+n=$(arrivals /ops batch_item_failed "$t_four" | wc -l)
 [ "$n" -eq 4 ] && pass "four distinct one-shots in a burst: four deliveries, none lost" || fail "four one-shots: $n deliveries"
 send --subject app:nosuch --name x_failed --summary "e2e" && fail "a subject naming no app was accepted" || pass "refused: $(tail -1 /tmp/send.out)"
 send --name deploy_in_progress --subject app:blog --summary "e2e" && fail "the mute's name was accepted" || pass "refused: $(tail -1 /tmp/send.out)"
@@ -166,17 +166,17 @@ t_state=$(now_ms)
 post_alert '{"alertname":"watchdog_throttled","kind":"state","app":"blog","subject":"app:blog","severity":"critical"}' >/dev/null
 post_alert '{"alertname":"watchdog_throttled","kind":"state","app":"shop","subject":"app:shop","severity":"critical"}' >/dev/null
 send --name disk_check --state firing --severity warning --summary "e2e: a state from outside" || fail "send firing: $(cat /tmp/send.out)"
-t=$(first_arrival /teacher watchdog_throttled "$t_state" 60 firing shop)
-within "watchdog_throttled shop to the teacher (group_wait)" "$t" "$t_state" 28 45
-t=$(first_arrival /teacher disk_check "$t_state" 60 firing)
-within "a box state to the teacher (group_wait)" "$t" "$t_state" 28 45
-none "watchdog_throttled blog: inhibited, to the student" /blog watchdog_throttled "$t_state"
-none "watchdog_throttled blog: inhibited, to the teacher" /teacher watchdog_throttled "$t_state" blog
+t=$(first_arrival /ops watchdog_throttled "$t_state" 60 firing shop)
+within "watchdog_throttled shop to the operator (group_wait)" "$t" "$t_state" 28 45
+t=$(first_arrival /ops disk_check "$t_state" 60 firing)
+within "a box state to the operator (group_wait)" "$t" "$t_state" 28 45
+none "watchdog_throttled blog: inhibited, to the deployer" /blog watchdog_throttled "$t_state"
+none "watchdog_throttled blog: inhibited, to the operator" /ops watchdog_throttled "$t_state" blog
 am 'http://am/api/v2/alerts?filter=alertname%3D%22watchdog_throttled%22&filter=app%3D%22blog%22' | grep -q '"state":"suppressed"' \
 	&& pass "Alertmanager holds watchdog_throttled blog suppressed (inhibitedBy deploy_in_progress)" || fail "watchdog_throttled blog is not suppressed"
 t_res=$(now_ms)
 send --name disk_check --state resolved --severity warning --summary "e2e: a state from outside" || fail "send resolved: $(cat /tmp/send.out)"
-t=$(first_arrival /teacher disk_check "$t_res" 120 resolved)
+t=$(first_arrival /ops disk_check "$t_res" 120 resolved)
 within "the recovery, after motel's 30 s hold and a one-minute tick" "$t" "$t_res" 29 100
 journalctl -u motel -o cat --no-pager | grep 'notify: event' | grep 'external:e2e/box/disk_check' | grep -q '"state":"resolved"' \
 	&& pass "journal: the resolve's notify: event line" || fail "no resolved line for disk_check"
@@ -184,10 +184,10 @@ journalctl -u motel -o cat --no-pager | grep 'notify: event' | grep 'external:e2
 echo "=== notify 6: a failing channel ==="
 n=$(arrivals /broken - 0 | wc -l)
 [ "$n" -gt 0 ] && pass "oncall was tried $n times and refused (400)" || fail "oncall was never tried"
-t=$(first_arrival /teacher ChannelFailed 0 90)
+t=$(first_arrival /ops ChannelFailed 0 90)
 if [ -n "$t" ]; then
-	pass "ChannelFailed reached the teacher's other channel"
-	arrivals /teacher ChannelFailed 0 | head -1 | grep -q ' teacher$' && pass "addressed to channel teacher alone" || fail "ChannelFailed addressed elsewhere: $(arrivals /teacher ChannelFailed 0 | head -1)"
+	pass "ChannelFailed reached the operator's other channel"
+	arrivals /ops ChannelFailed 0 | head -1 | grep -q ' ops$' && pass "addressed to channel ops alone" || fail "ChannelFailed addressed elsewhere: $(arrivals /ops ChannelFailed 0 | head -1)"
 else
 	fail "no ChannelFailed within 90 s"
 fi
@@ -195,8 +195,8 @@ journalctl -u motel -o cat --no-pager | grep 'notify: channel failed' | grep -q 
 	&& pass "journal: notify: channel failed names oncall" || fail "no channel failed line naming oncall"
 
 echo "=== notify 7: motel notify test ==="
-out=$(motel notify test teacher 2>&1) && echo "$out" | grep -q 'delivered to teacher' \
-	&& pass "notify test teacher: $out" || fail "notify test teacher: $out"
+out=$(motel notify test ops 2>&1) && echo "$out" | grep -q 'delivered to ops' \
+	&& pass "notify test ops: $out" || fail "notify test ops: $out"
 out=$(motel notify test oncall 2>&1) && fail "notify test oncall succeeded: $out" || pass "notify test oncall fails: $(echo "$out" | tail -1)"
 
 echo "=== notify 8: an app's sandbox has none of it in view ==="
@@ -213,13 +213,13 @@ done
 
 echo "=== notify 9: what was delivered once stays delivered once ==="
 # Alertmanager retried the failing oncall at every tick while each alert
-# lived; the teacher's own channel, delivered, must have had each alert
+# lived; the operator's own channel, delivered, must have had each alert
 # once only.
 for a in nightly_job_failed deploy_failed; do
-	n=$(arrivals /teacher "$a" 0 | wc -l)
+	n=$(arrivals /ops "$a" 0 | wc -l)
 	want=1; [ "$a" = deploy_failed ] && want=$(arrivals /blog deploy_failed 0 | wc -l)
-	[ "$n" -eq "$want" ] && pass "$a reached the teacher $n time(s), as many as it was posted, beside a failing channel's retries" \
-		|| fail "$a reached the teacher $n times, want $want"
+	[ "$n" -eq "$want" ] && pass "$a reached the operator $n time(s), as many as it was posted, beside a failing channel's retries" \
+		|| fail "$a reached the operator $n times, want $want"
 done
 
 echo "=== notify 10: no channel URL in any journal ==="

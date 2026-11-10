@@ -30,15 +30,15 @@ From #418 and #137, without their solutions:
    alert with one recovery message or a one-shot; `critical` pages,
    `warning` and `info` report; a one-line summary with no secret and
    no log tail.
-2. **Routing by the teacher-and-students model**: box events to the
-   teacher's channels; app events to the teacher's channels and the
+2. **Routing by audience**: box events to the
+   operator's channels; app events to the operator's channels and the
    channels bound to the identities the app's `deploy_trust` trusts;
    nobody else. A binding to an identity no app trusts is refused.
 3. **The mapping is a committed line**, never a token claim or
    self-registration. Channel URLs are secrets on the existing age
    path, readable by the motel uid, never printed.
 4. **Slack, Discord, ntfy and a json webhook**, with retries; a failed
-   delivery is a journal line, a counter and an event to the teacher's
+   delivery is a journal line, a counter and an event to the operator's
    other channels.
 5. **Behaviour**: firing and resolved with one recovery, a short wait
    to batch a burst, a repeat while something stays wrong, a flapping
@@ -79,7 +79,7 @@ suite asserts them closed on a box where they exist.
 ```
 notify {
     channel <name> json|ntfy|slack|discord {secret.NOTIFY_<NAME>} [severity critical|warning|info]
-    teacher <channel>...
+    operator <channel>...
     bind <identity> <channel>
     heartbeat {secret.NOTIFY_<NAME>}
     deploy_succeeded on|off          # off by default (#418's table)
@@ -109,15 +109,15 @@ connects to nothing), each naming keys and channels, never a value:
 |---|---|
 | a literal URL, or `{env.*}` | `a channel URL is written {secret.NOTIFY_<NAME>}, its value in the box's secrets, never in the Caddyfile` |
 | a secret not named `NOTIFY_…` | `the secret's name is NOTIFY_ followed by capitals, digits and underscores` |
-| no `teacher` line | `no teacher line: name the channels that receive the box's events with teacher <channel>` |
-| `teacher` naming no channel line | `teacher names <c>, which no channel line defines` |
+| no `operator` line | `no operator line: name the channels that receive every event with operator <channel>` |
+| `operator` naming no channel line | `operator names <c>, which no channel line defines` |
 | a channel defined twice | `channel <c> is defined twice` |
 | `bind` to a channel that does not exist | `bind "<id>" names channel <c>, which no channel line defines` |
 | `bind` to an identity no app's `deploy_trust` trusts | `bind "<id>": no app's deploy_trust trusts this identity; remove the line, or trust it` |
 | a secret the box does not hold | `channel <c>: secret <KEY> is not in the box's secrets (<file>)` |
 | a URL not https, not to a public address, or to a local name (`localhost`, `*.local`, `*.internal`, a single label) | `channel <c>: the value of <KEY> is not an https URL` / `… is not to a public address …` / `… is not to a public host name` |
 
-The URL check is every URL's, not only a student's: Alertmanager sends
+The URL check is every URL's, not only a deployer's: Alertmanager sends
 from the network namespace every app shares, so a URL to loopback or a
 private address would reach a listener an app opened.
 
@@ -133,7 +133,7 @@ the prometheus uid reads, and the config itself holds paths only.
 
 **Owed** (see "Owed"): the box channel writing `_box.env` from a
 signed push's `secrets/_box/NOTIFY_*.age` (#418's reserved slot, which
-reverses box/DESIGN-box.md open question 5), and students' channels
+reverses box/DESIGN-box.md open question 5), and deployers' channels
 from `secrets/<app>/NOTIFY_*` withheld from the app's environment.
 Until then root writes `_box.env` by hand, as the e2e image does.
 
@@ -147,16 +147,16 @@ Rendered by `render` (notify/render.go); the golden file is
 | 1 | `alertname="Watchdog"` | `heartbeat` (the heartbeat's `url_file`), or a blackhole | `group_by [alertname]`, wait 0 s, interval 5 m, repeat 4 m (under the interval, so each 5 m flush re-sends) |
 | 2 | `notify_channel=~".+"` (ChannelFailed, NotifyTest), one child per channel | `ch-<channel>` | `group_by ['...']`, wait 0 s, interval 1 m |
 | 3 | `alertname="deploy_in_progress"` | blackhole: it exists to inhibit | — |
-| 4 | `kind="state", alertname="disk_low"` | the teacher's, by severity | wait 30 s, interval 1 m, repeat 24 h |
+| 4 | `kind="state", alertname="disk_low"` | the operator's, by severity | wait 30 s, interval 1 m, repeat 24 h |
 | 5 | `kind="event"`, a child per app with channels of its own, each with `severity` children | `event-<box\|app-a>-<severity>` | `group_by ['...']`, wait 0 s, interval 1 m |
 | 6 | `kind="state"`, the same children | `state-<box\|app-a>-<severity>` | wait 30 s, interval 1 m, repeat 4 h |
-| root | anything else (nothing motel posts) | `fallback`, the teacher's | — |
+| root | anything else (nothing motel posts) | `fallback`, the operator's | — |
 
 Plumbing first, so nothing below can swallow it; no `continue:`
-anywhere. An app's receiver is **composed**: the teacher's channels
+anywhere. An app's receiver is **composed**: the operator's channels
 plus every channel bound to an identity the app trusts, each only at
 or above its floor; an app with no binding has no child and its events
-take the kind's own receivers, the teacher's. State receivers
+take the kind's own receivers, the operator's. State receivers
 `send_resolved`; event and direct ones never do. The inhibit rule:
 `source_matchers [alertname="deploy_in_progress"]`, `target_matchers
 [alertname=~"watchdog_.*"]`, `equal [app]`, with no severity matcher
@@ -282,7 +282,7 @@ no reading, and the baseline stays the last good one. `alertmanager_notification
 and, with the drop-in's `receiver-name-in-metrics`, the receiver. A
 rise (the first read is a baseline; a lower value is a restart,
 counted from zero) is a `notify: channel failed` line, and one
-`ChannelFailed` alert to each teacher channel that is not a suspect,
+`ChannelFailed` alert to each operator channel that is not a suspect,
 each routed to that channel alone (`notify_channel=`). The suspects are
 the failing integration's channels in that receiver (`render` returns
 each receiver's channels), or in every receiver when the counter names
@@ -315,7 +315,7 @@ and the route check (`SendRequest.Check`):
 | Refused | Why |
 |---|---|
 | a source not `[a-z0-9-]{1,32}` (stamped `external:<name>`) | one grammar, so a key cannot pose as a detector's |
-| a subject not `box` or `app:<an app the box runs>` | an app subject reaches its students |
+| a subject not `box` or `app:<an app the box runs>` | an app subject reaches its deployers |
 | motel's own names: `Watchdog`, `ChannelFailed`, `NotifyTest`, `deploy_in_progress`, `watchdog_*`, the deploy events, `disk_low`, `cert_failed`, `backup_*`, `drill_failed` | a producer that could post them could mute an app, fake the heartbeat, or speak as a detector |
 | a summary empty, on two lines, or over 200 characters; details over 2 KiB or with names not `[a-z][a-z0-9_]*` | #418's limits |
 | a body with unknown fields (a raw Alertmanager label set) | the route takes the request, never labels |
@@ -421,7 +421,7 @@ and API have no authentication of their own and are reached only
 through the socket: root by `ssh -L 9093:/run/motel-notify/am.sock
 root@box` (OpenSSH forwards to a remote unix socket since 6.7), then
 `http://localhost:9093` or `amtool --alertmanager.url`; on the box, the
-`motel notify` commands or `curl --unix-socket`. A student sees
+`motel notify` commands or `curl --unix-socket`. A deployer sees
 notifications at their channel; not Alertmanager's UI, other apps, box
 events or silences.
 
@@ -441,10 +441,10 @@ on its general scales. notify's examples:
 
 | Residual | Where | S | O | D | Why accepted |
 |---|---|---|---|---|---|
-| A public host name that resolves, or rebinds, to a private address is posted to: the check is on the URL as written | notify/config.go (`checkURL`) | 1 | 5 | 5 | a channel URL is a signer's line today, and a signer can already run any code as an app that reaches the same addresses; scored by what T6 gains (nothing). Rescore when #417 lets a student choose a URL |
+| A public host name that resolves, or rebinds, to a private address is posted to: the check is on the URL as written | notify/config.go (`checkURL`) | 1 | 5 | 5 | a channel URL is a signer's line today, and a signer can already run any code as an app that reaches the same addresses; scored by what T6 gains (nothing). Rescore when #417 lets a deployer choose a URL |
 | motel stopped for more than five minutes: Alertmanager resolves each firing state alert at `resolve_timeout`, and the channels get a recovery that did not happen | notify/engine.go (no `endsAt` on re-posts) | 2 | 3 | 3 | 18; a stop that long is itself a fault the heartbeat reports (Watchdog's silence pages first); keeping the alerts alive across a stop needs state on disk (size 3) |
 | Two channels of one integration in one receiver: a failure names both as suspects, and neither is told | notify/channelfailed.go (`suspects`) | 2 | 5 | 3 | an operator's choice of channels; the line names both, and the counter is Alertmanager's own; one receiver per channel would double every route |
-| A teacher with a single channel: `ChannelFailed` has no other channel to go to | notify/channelfailed.go | 2 | 5 | 1 | the `notify: channel failed` line and Alertmanager's counter say it; the design asks for "the other teacher channels" and there are none |
+| An operator with a single channel: `ChannelFailed` has no other channel to go to | notify/channelfailed.go | 2 | 5 | 1 | the `notify: channel failed` line and Alertmanager's counter say it; the design asks for "the other operator channels" and there are none |
 | `motel notify test` reads the counters for 15 s; a slow receiver answers "neither yet" | notify/admin.go (`testWait`) | 2 | 2 | 1 | the answer says so; Alertmanager's retries continue |
 | Alertmanager refuses a reload: motel puts the previous config back, but the URL files are already the new ones (a changed value rewritten, a dropped channel's removed), so the old config in memory sends a changed channel to its new URL, and Alertmanager's next start fails on a removed file until motel's next load | notify/state.go (`apply`) | 4 | 2 | 1 | 8; two faults (a render Alertmanager refuses, which the amtool tests rule out for every shape, then a restart before the next load), and Alertmanager names the missing file; a new URL is the one the signer committed; keeping the old files until a reload succeeds adds state to the write (size 2, risk 2). /code-review of the PoC, passes 1 and 2 |
 
@@ -452,7 +452,7 @@ on its general scales. notify's examples:
 
 | Owed | S | O | D | Lands in |
 |---|---|---|---|---|
-| The box channel's `secrets/_box/` slot writing `_box.env`, and students' `secrets/<app>/NOTIFY_*` withheld from the unit's environment (#418) | — | — | — | the box subsystem, before any release: today root writes `_box.env` by hand |
+| The box channel's `secrets/_box/` slot writing `_box.env`, and deployers' `secrets/<app>/NOTIFY_*` withheld from the unit's environment (#418) | — | — | — | the box subsystem, before any release: today root writes `_box.env` by hand |
 | motel restarted while a state key fires: the engine's table is in memory and liveswap's watchdog does not re-report a loop it was already in, so the alert ends at `resolve_timeout` and a false recovery is told; the backup, disk and TLS sources re-detect on their next poll | 3 | 4 | 3 | the next slice: liveswap re-reports its watchdog state at Start, or the engine reads Alertmanager's alert list at start (#22 of the review) |
 | A secret missing from `_box.env` refuses the whole config at load, as `motel validate` must: at a reboot motel does not start, and every site is down for an alert channel (named in the journal) | 4 | 5 | 1 | the `_box` slot: the box handler's consistency check refuses a push whose `notify` block names a secret the push does not carry, before it reaches the box; at load a missing secret then drops its channel with a warning. Load and validate cannot be told apart in Provision today (/code-review pass 2) |
 | Slack and Discord with real hooks; ntfy's formatting of Alertmanager's payload (the hotserve-1 test delivered the JSON body as the message) | — | — | — | needs the owner's hooks |
@@ -468,15 +468,15 @@ suite runs `motel notify setup` itself and asserts: no TCP listener on
 directory `drwxr-s--- motel prometheus`; the rendered config passes
 `amtool check-config`; root and motel reach the socket and nobody does;
 no URL in the config or the status API; the heartbeat; a real failing
-deploy's `deploy_failed` to the teacher and the bound student within
+deploy's `deploy_failed` to the operator and the bound deployer within
 the same seconds, `deploy_succeeded` and `deploy_in_progress` to
-nobody, its journal line; an external one-shot to the teacher alone;
+nobody, its journal line; an external one-shot to the operator alone;
 four distinct one-shots in a burst, four deliveries; `send`'s
 refusals, and nobody unable to send; the inhibition of the deploying
 app's `watchdog_throttled` while another app's arrives after the
 `group_wait`; a state from outside at +30 s and its recovery after
 motel's hold and one tick; a channel answering 400 named in
-`ChannelFailed` to the other teacher channel; `motel notify test`
+`ChannelFailed` to the other operator channel; `motel notify test`
 delivered and failed; the view probe's three keys closed from inside a
 sandboxed app; no URL in either journal. Not in e2e (unit-tested
 only): the five-minute give-up of an undeliverable post, the bucket's

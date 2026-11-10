@@ -21,8 +21,8 @@ func fixture(t *testing.T) []byte {
 // TestParseAMMetricsRealBody reads what Debian's Alertmanager 0.28.1
 // served on hotserve-1: with receiver-name-in-metrics, a failed counter
 // pre-made at zero for each receiver and reason of the integrations the
-// config uses (there, only webhook: the teacher is an ntfy channel), and
-// the one attempt `motel notify test` made to ch-teacher.
+// config uses (there, only webhook: the operator's channel is ntfy), and
+// the one attempt `motel notify test` made to ch-operator.
 func TestParseAMMetricsRealBody(t *testing.T) {
 	m, err := parseAMMetrics(fixture(t))
 	if err != nil {
@@ -38,15 +38,15 @@ func TestParseAMMetricsRealBody(t *testing.T) {
 			t.Fatalf("no notification had failed: %+v", s)
 		}
 	}
-	for _, want := range []string{"ch-teacher", "event-box-info", "state-box-critical", "fallback"} {
+	for _, want := range []string{"ch-operator", "event-box-info", "state-box-critical", "fallback"} {
 		if !receivers[want] {
 			t.Errorf("no series for receiver %s (have %d receivers)", want, len(receivers))
 		}
 	}
-	if m.requests["ch-teacher"] != 1 || m.requestsFailed["ch-teacher"] != 0 {
-		t.Fatalf("ch-teacher: requests %v failed %v", m.requests["ch-teacher"], m.requestsFailed["ch-teacher"])
+	if m.requests["ch-operator"] != 1 || m.requestsFailed["ch-operator"] != 0 {
+		t.Fatalf("ch-operator: requests %v failed %v", m.requests["ch-operator"], m.requestsFailed["ch-operator"])
 	}
-	c, err := countsFor(fixture(t), "ch-teacher")
+	c, err := countsFor(fixture(t), "ch-operator")
 	if err != nil || !c.delivered(counts{}) {
 		t.Fatalf("counts = %+v, %v", c, err)
 	}
@@ -110,7 +110,7 @@ func TestParseAMMetricsRefusesWhatIsNotAReading(t *testing.T) {
 			if _, err := parseAMMetrics([]byte(body)); err == nil {
 				t.Fatal("accepted")
 			}
-			if _, err := countsFor([]byte(body), "ch-teacher"); err == nil {
+			if _, err := countsFor([]byte(body), "ch-operator"); err == nil {
 				t.Fatal("countsFor accepted")
 			}
 		})

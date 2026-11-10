@@ -1,6 +1,7 @@
 # Alertmanager 0.28.1+ds (Debian 13, arm64) GET /metrics over its unix socket, with
 # --enable-feature=receiver-name-in-metrics: hotserve-1, 2026-11-10, after one
-# motel notify test to channel teacher. The test fixture for parseAMMetrics.
+# motel notify test to one channel, whose name is changed to operator here
+# (receiver ch-operator); nothing else is edited. The fixture for parseAMMetrics.
 # HELP alertmanager_alerts How many alerts by state.
 # TYPE alertmanager_alerts gauge
 alertmanager_alerts{state="active"} 2
@@ -146,14 +147,14 @@ alertmanager_nflog_snapshot_duration_seconds_count 6
 alertmanager_nflog_snapshot_size_bytes 2211
 # HELP alertmanager_notification_latency_seconds The latency of notifications in seconds.
 # TYPE alertmanager_notification_latency_seconds histogram
-alertmanager_notification_latency_seconds_bucket{integration="webhook",receiver_name="ch-teacher",le="1"} 1
-alertmanager_notification_latency_seconds_bucket{integration="webhook",receiver_name="ch-teacher",le="5"} 1
-alertmanager_notification_latency_seconds_bucket{integration="webhook",receiver_name="ch-teacher",le="10"} 1
-alertmanager_notification_latency_seconds_bucket{integration="webhook",receiver_name="ch-teacher",le="15"} 1
-alertmanager_notification_latency_seconds_bucket{integration="webhook",receiver_name="ch-teacher",le="20"} 1
-alertmanager_notification_latency_seconds_bucket{integration="webhook",receiver_name="ch-teacher",le="+Inf"} 1
-alertmanager_notification_latency_seconds_sum{integration="webhook",receiver_name="ch-teacher"} 0.29144244
-alertmanager_notification_latency_seconds_count{integration="webhook",receiver_name="ch-teacher"} 1
+alertmanager_notification_latency_seconds_bucket{integration="webhook",receiver_name="ch-operator",le="1"} 1
+alertmanager_notification_latency_seconds_bucket{integration="webhook",receiver_name="ch-operator",le="5"} 1
+alertmanager_notification_latency_seconds_bucket{integration="webhook",receiver_name="ch-operator",le="10"} 1
+alertmanager_notification_latency_seconds_bucket{integration="webhook",receiver_name="ch-operator",le="15"} 1
+alertmanager_notification_latency_seconds_bucket{integration="webhook",receiver_name="ch-operator",le="20"} 1
+alertmanager_notification_latency_seconds_bucket{integration="webhook",receiver_name="ch-operator",le="+Inf"} 1
+alertmanager_notification_latency_seconds_sum{integration="webhook",receiver_name="ch-operator"} 0.29144244
+alertmanager_notification_latency_seconds_count{integration="webhook",receiver_name="ch-operator"} 1
 alertmanager_notification_latency_seconds_bucket{integration="webhook",receiver_name="event-box-critical",le="1"} 0
 alertmanager_notification_latency_seconds_bucket{integration="webhook",receiver_name="event-box-critical",le="5"} 0
 alertmanager_notification_latency_seconds_bucket{integration="webhook",receiver_name="event-box-critical",le="10"} 0
@@ -236,7 +237,7 @@ alertmanager_notification_latency_seconds_sum{integration="webhook",receiver_nam
 alertmanager_notification_latency_seconds_count{integration="webhook",receiver_name="state-disk-box-warning"} 0
 # HELP alertmanager_notification_requests_failed_total The total number of failed notification requests.
 # TYPE alertmanager_notification_requests_failed_total counter
-alertmanager_notification_requests_failed_total{integration="webhook",receiver_name="ch-teacher"} 0
+alertmanager_notification_requests_failed_total{integration="webhook",receiver_name="ch-operator"} 0
 alertmanager_notification_requests_failed_total{integration="webhook",receiver_name="event-box-critical"} 0
 alertmanager_notification_requests_failed_total{integration="webhook",receiver_name="event-box-info"} 0
 alertmanager_notification_requests_failed_total{integration="webhook",receiver_name="event-box-warning"} 0
@@ -249,7 +250,7 @@ alertmanager_notification_requests_failed_total{integration="webhook",receiver_n
 alertmanager_notification_requests_failed_total{integration="webhook",receiver_name="state-disk-box-warning"} 0
 # HELP alertmanager_notification_requests_total The total number of attempted notification requests.
 # TYPE alertmanager_notification_requests_total counter
-alertmanager_notification_requests_total{integration="webhook",receiver_name="ch-teacher"} 1
+alertmanager_notification_requests_total{integration="webhook",receiver_name="ch-operator"} 1
 alertmanager_notification_requests_total{integration="webhook",receiver_name="event-box-critical"} 0
 alertmanager_notification_requests_total{integration="webhook",receiver_name="event-box-info"} 0
 alertmanager_notification_requests_total{integration="webhook",receiver_name="event-box-warning"} 0
@@ -262,7 +263,7 @@ alertmanager_notification_requests_total{integration="webhook",receiver_name="st
 alertmanager_notification_requests_total{integration="webhook",receiver_name="state-disk-box-warning"} 0
 # HELP alertmanager_notifications_failed_total The total number of failed notifications.
 # TYPE alertmanager_notifications_failed_total counter
-alertmanager_notifications_failed_total{integration="webhook",reason="clientError",receiver_name="ch-teacher"} 0
+alertmanager_notifications_failed_total{integration="webhook",reason="clientError",receiver_name="ch-operator"} 0
 alertmanager_notifications_failed_total{integration="webhook",reason="clientError",receiver_name="event-box-critical"} 0
 alertmanager_notifications_failed_total{integration="webhook",reason="clientError",receiver_name="event-box-info"} 0
 alertmanager_notifications_failed_total{integration="webhook",reason="clientError",receiver_name="event-box-warning"} 0
@@ -273,7 +274,7 @@ alertmanager_notifications_failed_total{integration="webhook",reason="clientErro
 alertmanager_notifications_failed_total{integration="webhook",reason="clientError",receiver_name="state-disk-box-critical"} 0
 alertmanager_notifications_failed_total{integration="webhook",reason="clientError",receiver_name="state-disk-box-info"} 0
 alertmanager_notifications_failed_total{integration="webhook",reason="clientError",receiver_name="state-disk-box-warning"} 0
-alertmanager_notifications_failed_total{integration="webhook",reason="contextCanceled",receiver_name="ch-teacher"} 0
+alertmanager_notifications_failed_total{integration="webhook",reason="contextCanceled",receiver_name="ch-operator"} 0
 alertmanager_notifications_failed_total{integration="webhook",reason="contextCanceled",receiver_name="event-box-critical"} 0
 alertmanager_notifications_failed_total{integration="webhook",reason="contextCanceled",receiver_name="event-box-info"} 0
 alertmanager_notifications_failed_total{integration="webhook",reason="contextCanceled",receiver_name="event-box-warning"} 0
@@ -284,7 +285,7 @@ alertmanager_notifications_failed_total{integration="webhook",reason="contextCan
 alertmanager_notifications_failed_total{integration="webhook",reason="contextCanceled",receiver_name="state-disk-box-critical"} 0
 alertmanager_notifications_failed_total{integration="webhook",reason="contextCanceled",receiver_name="state-disk-box-info"} 0
 alertmanager_notifications_failed_total{integration="webhook",reason="contextCanceled",receiver_name="state-disk-box-warning"} 0
-alertmanager_notifications_failed_total{integration="webhook",reason="contextDeadlineExceeded",receiver_name="ch-teacher"} 0
+alertmanager_notifications_failed_total{integration="webhook",reason="contextDeadlineExceeded",receiver_name="ch-operator"} 0
 alertmanager_notifications_failed_total{integration="webhook",reason="contextDeadlineExceeded",receiver_name="event-box-critical"} 0
 alertmanager_notifications_failed_total{integration="webhook",reason="contextDeadlineExceeded",receiver_name="event-box-info"} 0
 alertmanager_notifications_failed_total{integration="webhook",reason="contextDeadlineExceeded",receiver_name="event-box-warning"} 0
@@ -295,7 +296,7 @@ alertmanager_notifications_failed_total{integration="webhook",reason="contextDea
 alertmanager_notifications_failed_total{integration="webhook",reason="contextDeadlineExceeded",receiver_name="state-disk-box-critical"} 0
 alertmanager_notifications_failed_total{integration="webhook",reason="contextDeadlineExceeded",receiver_name="state-disk-box-info"} 0
 alertmanager_notifications_failed_total{integration="webhook",reason="contextDeadlineExceeded",receiver_name="state-disk-box-warning"} 0
-alertmanager_notifications_failed_total{integration="webhook",reason="other",receiver_name="ch-teacher"} 0
+alertmanager_notifications_failed_total{integration="webhook",reason="other",receiver_name="ch-operator"} 0
 alertmanager_notifications_failed_total{integration="webhook",reason="other",receiver_name="event-box-critical"} 0
 alertmanager_notifications_failed_total{integration="webhook",reason="other",receiver_name="event-box-info"} 0
 alertmanager_notifications_failed_total{integration="webhook",reason="other",receiver_name="event-box-warning"} 0
@@ -306,7 +307,7 @@ alertmanager_notifications_failed_total{integration="webhook",reason="other",rec
 alertmanager_notifications_failed_total{integration="webhook",reason="other",receiver_name="state-disk-box-critical"} 0
 alertmanager_notifications_failed_total{integration="webhook",reason="other",receiver_name="state-disk-box-info"} 0
 alertmanager_notifications_failed_total{integration="webhook",reason="other",receiver_name="state-disk-box-warning"} 0
-alertmanager_notifications_failed_total{integration="webhook",reason="serverError",receiver_name="ch-teacher"} 0
+alertmanager_notifications_failed_total{integration="webhook",reason="serverError",receiver_name="ch-operator"} 0
 alertmanager_notifications_failed_total{integration="webhook",reason="serverError",receiver_name="event-box-critical"} 0
 alertmanager_notifications_failed_total{integration="webhook",reason="serverError",receiver_name="event-box-info"} 0
 alertmanager_notifications_failed_total{integration="webhook",reason="serverError",receiver_name="event-box-warning"} 0
@@ -319,7 +320,7 @@ alertmanager_notifications_failed_total{integration="webhook",reason="serverErro
 alertmanager_notifications_failed_total{integration="webhook",reason="serverError",receiver_name="state-disk-box-warning"} 0
 # HELP alertmanager_notifications_total The total number of attempted notifications.
 # TYPE alertmanager_notifications_total counter
-alertmanager_notifications_total{integration="webhook",receiver_name="ch-teacher"} 2
+alertmanager_notifications_total{integration="webhook",receiver_name="ch-operator"} 2
 alertmanager_notifications_total{integration="webhook",receiver_name="event-box-critical"} 0
 alertmanager_notifications_total{integration="webhook",receiver_name="event-box-info"} 0
 alertmanager_notifications_total{integration="webhook",receiver_name="event-box-warning"} 0

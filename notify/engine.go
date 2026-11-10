@@ -642,10 +642,10 @@ func (e *engine) setConfig(a *App, post poster, known []string, logger *zap.Logg
 	if c, ok := post.(*amClient); ok {
 		e.metrics = c.metrics
 	}
-	e.fail.teacher, e.fail.channels = nil, a.receivers
+	e.fail.operator, e.fail.channels = nil, a.receivers
 	e.fail.kinds = map[string]string{}
 	if a.cfg != nil {
-		e.fail.teacher = slices.Clone(a.cfg.teacher)
+		e.fail.operator = slices.Clone(a.cfg.operator)
 		for name, ch := range a.cfg.channels {
 			e.fail.kinds[name] = channelKinds[ch.Kind]
 		}

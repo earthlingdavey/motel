@@ -23,14 +23,14 @@ route:
       group_interval: 1m
       repeat_interval: 4h
       routes:
+        - receiver: ch-alice
+          matchers: [notify_channel="alice"]
+        - receiver: ch-bob
+          matchers: [notify_channel="bob"]
         - receiver: ch-ops
           matchers: [notify_channel="ops"]
         - receiver: ch-pager
           matchers: [notify_channel="pager"]
-        - receiver: ch-students-alice
-          matchers: [notify_channel="students-alice"]
-        - receiver: ch-students-bob
-          matchers: [notify_channel="students-bob"]
     - receiver: blackhole
       matchers: [alertname="deploy_in_progress"]
     - receiver: state-disk-box-info
@@ -125,6 +125,16 @@ receivers:
     webhook_configs:
       - url_file: /var/lib/motel-notify/url-NOTIFY_HC_URL
         send_resolved: false
+  - name: ch-alice
+    discord_configs:
+      - webhook_url_file: /var/lib/motel-notify/url-NOTIFY_ALICE_URL
+        send_resolved: false
+        title: '[{{ .Status | toUpper }}] {{ .CommonLabels.alertname }}{{ if .CommonLabels.app }} {{ .CommonLabels.app }}{{ end }}'
+        message: '{{ range .Alerts }}{{ .Annotations.summary }}{{ "\n" }}{{ end }}'
+  - name: ch-bob
+    webhook_configs:
+      - url_file: /var/lib/motel-notify/url-NOTIFY_BOB_URL
+        send_resolved: false
   - name: ch-ops
     slack_configs:
       - api_url_file: /var/lib/motel-notify/url-NOTIFY_OPS_URL
@@ -134,16 +144,6 @@ receivers:
   - name: ch-pager
     webhook_configs:
       - url_file: /var/lib/motel-notify/url-NOTIFY_PAGER_URL
-        send_resolved: false
-  - name: ch-students-alice
-    discord_configs:
-      - webhook_url_file: /var/lib/motel-notify/url-NOTIFY_ALICE_URL
-        send_resolved: false
-        title: '[{{ .Status | toUpper }}] {{ .CommonLabels.alertname }}{{ if .CommonLabels.app }} {{ .CommonLabels.app }}{{ end }}'
-        message: '{{ range .Alerts }}{{ .Annotations.summary }}{{ "\n" }}{{ end }}'
-  - name: ch-students-bob
-    webhook_configs:
-      - url_file: /var/lib/motel-notify/url-NOTIFY_BOB_URL
         send_resolved: false
   - name: state-disk-box-info
     slack_configs:
