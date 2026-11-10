@@ -1,0 +1,22 @@
+# Written by `motel notify setup` (notify/DESIGN-notify.md, "Packaging and
+# setup"). Alertmanager's only listener: a unix socket in a runtime
+# directory of its own (not /run/motel, which motel.service removes
+# whenever motel stops), 0660 root:motel. Every app runs as the motel
+# uid, so the group is not what keeps apps out: no app's sandbox has
+# /run/motel-notify in its view. The group keeps out every other
+# system user. No TCP port is opened, so nothing listens on 9093 or
+# the cluster's 9094.
+[Unit]
+Description=Alertmanager's unix socket, for root and motel (motel notify setup)
+
+[Socket]
+# The service is not named after the socket.
+Service=prometheus-alertmanager.service
+ListenStream=/run/motel-notify/am.sock
+SocketUser=root
+SocketGroup=motel
+SocketMode=0660
+RemoveOnStop=yes
+
+[Install]
+WantedBy=sockets.target

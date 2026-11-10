@@ -62,6 +62,18 @@ depends:
   # 12).
   - openssh-client
 
+# notify's delivery (notify/DESIGN-notify.md, "Packaging and setup"):
+# Suggests, not Depends. Debian's prometheus-alertmanager starts on
+# install, listening on :9093 and gossiping on 0.0.0.0:9094, and apt may
+# configure a dependency, and so start it, before any script of motel's
+# runs; on a box with no firewall that is the alert and silence API on
+# the internet. `motel notify setup`, run by root, masks the unit, then
+# installs it, configures socket activation and starts it, in that
+# order. Nothing of notify's is installed until then: the units it
+# writes ship in the binary.
+suggests:
+  - prometheus-alertmanager
+
 # Every entry pins its mode. Without file_info nfpm copies the mode of
 # the file on the build host, so the package would carry whatever the
 # builder's umask happened to be — `make package` under umask 0002

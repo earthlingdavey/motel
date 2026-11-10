@@ -1,0 +1,7 @@
+# Written by `motel notify setup`: a config Alertmanager can start from
+# before motel's first render, which replaces it on motel's next load of a
+# Caddyfile with a notify block. Every alert goes nowhere.
+route:
+  receiver: blackhole
+receivers:
+  - name: blackhole
