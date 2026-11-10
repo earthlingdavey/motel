@@ -71,6 +71,7 @@ func (a *App) Provision(ctx caddy.Context) error {
 		return fmt.Errorf("notify: %w", err)
 	}
 	a.rendered, a.files = render(a.cfg, a.stateDir())
+	theEngine.failures.register(ctx.GetMetricsRegistry())
 	if a.AllowInsecureChannels {
 		a.logger.Warn("notify: allow_insecure_channels is on: channel URLs may be http and private addresses, which Alertmanager reaches from the network namespace every app shares; for test rigs only")
 	}
@@ -159,11 +160,21 @@ func (a *App) Start() error {
 	case reloaded:
 		a.logger.Info("notify: Alertmanager reloaded the rendered config", zap.String("config", filepath.Join(a.stateDir(), ConfigName)))
 	}
+	// Every value the box's secrets hold is a known value to the
+	// filter, whatever line names it.
+	pairs := make([]string, 0, len(a.cfg.urls))
+	for k, v := range a.cfg.urls {
+		pairs = append(pairs, k+"="+v)
+	}
+	theEngine.configure(a, am, liveswap.NewRedactor(pairs, nil), a.logger)
 	return nil
 }
 
-// Stop is a no-op.
-func (a *App) Stop() error { return nil }
+// Stop lets go of the engine, unless a newer config has taken it.
+func (a *App) Stop() error {
+	theEngine.release(a)
+	return nil
+}
 
 var (
 	_ caddy.App         = (*App)(nil)

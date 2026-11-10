@@ -3,6 +3,7 @@ package notify
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -39,10 +40,18 @@ func newAMClient(socket string) *amClient {
 	return &amClient{socket: socket, http: &http.Client{Transport: tr, Timeout: amRequestTimeout}}
 }
 
+// amAlert is one alert in Alertmanager's v2 API (POST /api/v2/alerts).
+type amAlert struct {
+	Labels      map[string]string `json:"labels"`
+	Annotations map[string]string `json:"annotations,omitempty"`
+	StartsAt    time.Time         `json:"startsAt,omitzero"`
+	EndsAt      time.Time         `json:"endsAt,omitzero"`
+}
+
 // maxErrBody is how much of an error response is kept for a message.
 const maxErrBody = 512
 
-func (c *amClient) do(ctx context.Context, method, path string, body []byte) ([]byte, error) {
+func (c *amClient) do(ctx context.Context, method, path string, body []byte) ([]byte, error) { //nolint:unparam // the body is read by GET /metrics (channel_failed, next commit)
 	var rd io.Reader
 	if body != nil {
 		rd = bytes.NewReader(body)
@@ -98,5 +107,14 @@ func unwrapURLError(err error) error {
 
 func (c *amClient) reload(ctx context.Context) error {
 	_, err := c.do(ctx, http.MethodPost, "/-/reload", nil)
+	return err
+}
+
+func (c *amClient) postAlerts(ctx context.Context, alerts []amAlert) error {
+	body, err := json.Marshal(alerts)
+	if err != nil {
+		return err
+	}
+	_, err = c.do(ctx, http.MethodPost, "/api/v2/alerts", body)
 	return err
 }
