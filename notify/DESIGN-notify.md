@@ -4,10 +4,12 @@ This document describes the present: what is built, why, and what it
 promises. History lives in git (`git log -- notify/DESIGN-notify.md`);
 the "History" section at the end holds only dated one-liners.
 
-**Status: proof of concept, slice one** (branch
-`poc/notify-alertmanager`): the notify core. No metrics store, no
-vmalert, no `metrics` in `GET /<app>`; those are slice two, designed in
-"Later slices" and not built. Normative for what is built: a change
+**Status: experimental, slice one**: the notify core. Opt-in (nothing
+runs without a `notify` block, and the package only Suggests
+Alertmanager); not for production boxes until the first three rows of
+"Owed" land. No metrics store, no vmalert, no `metrics` in
+`GET /<app>`; those are slice two, designed in "Later slices" and not
+built. Normative for what is built: a change
 that cannot hold a line here changes the line in the same PR, with
 the reason.
 
@@ -448,7 +450,7 @@ on its general scales. notify's examples:
 | Two channels of one integration in one receiver: a failure names both as suspects, and neither is told | notify/channelfailed.go (`suspects`) | 2 | 5 | 3 | an operator's choice of channels; the line names both, and the counter is Alertmanager's own; one receiver per channel would double every route |
 | An operator with a single channel: `ChannelFailed` has no other channel to go to | notify/channelfailed.go | 2 | 5 | 1 | the `notify: channel failed` line and Alertmanager's counter say it; the design asks for "the other operator channels" and there are none |
 | `motel notify test` reads the counters for 15 s; a slow receiver answers "neither yet" | notify/admin.go (`testWait`) | 2 | 2 | 1 | the answer says so; Alertmanager's retries continue |
-| Alertmanager refuses a reload: motel puts the previous config back, but the URL files are already the new ones (a changed value rewritten, a dropped channel's removed), so the old config in memory sends a changed channel to its new URL, and Alertmanager's next start fails on a removed file until motel's next load | notify/state.go (`apply`) | 4 | 2 | 1 | 8; two faults (a render Alertmanager refuses, which the amtool tests rule out for every shape, then a restart before the next load), and Alertmanager names the missing file; a new URL is the one the signer committed; keeping the old files until a reload succeeds adds state to the write (size 2, risk 2). /code-review of the PoC, passes 1 and 2 |
+| Alertmanager refuses a reload: motel puts the previous config back, but the URL files are already the new ones (a changed value rewritten, a dropped channel's removed), so the old config in memory sends a changed channel to its new URL, and Alertmanager's next start fails on a removed file until motel's next load | notify/state.go (`apply`) | 4 | 2 | 1 | 8; two faults (a render Alertmanager refuses, which the amtool tests rule out for every shape, then a restart before the next load), and Alertmanager names the missing file; a new URL is the one the signer committed; keeping the old files until a reload succeeds adds state to the write (size 2, risk 2). /code-review of slice one, passes 1 and 2 |
 
 ### Owed
 
@@ -527,3 +529,7 @@ Dated one-liners; the full text of each is in git.
   and the e2e suite. The state directory is `/var/lib/motel-notify`,
   not the draft's `/var/lib/motel/notify`: `/var/lib/motel` is 0750
   motel:motel and the prometheus uid cannot traverse it.
+- 2026-11-10 — Reframed from proof of concept to experimental: the
+  code is kept, not thrown away; the Owed rows that bar a production
+  box (the `_box` slot, a missing secret refusing boot, the watchdog
+  after a restart) are a follow-up PR before the next release.
