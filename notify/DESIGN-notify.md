@@ -52,6 +52,10 @@ From #418 and #137, without their solutions:
 
 ## The shape
 
+motel's own footprint is unchanged by the module: 64.2 MB RSS (22 MB
+cgroup) on hotserve-1 with the block loaded, against 64.3 MB for 0.6.1;
+Alertmanager beside it 42.6 MB RSS (24 MB cgroup).
+
 | Piece | What | Where |
 |---|---|---|
 | Alertmanager | Debian 13's `prometheus-alertmanager` 0.28.1: routing, grouping, dedupe, repeat, resolved-once, inhibition, retries, the notification log, 18 receiver kinds | Debian's unit with motel's drop-in (`notify/units/10-motel.conf`): socket-activated, `--cluster.listen-address=` (no gossip), `--enable-feature=receiver-name-in-metrics`, `MemoryMax=128M` |
@@ -334,8 +338,15 @@ motel controls:
    it), `enable --now motel-am.socket`;
 5. `try-reload-or-restart motel.service`, which renders.
 
-Run again, it puts the units back as the binary ships them. Two unit
-facts were measured: `motel-am.socket` must name its service
+Run again, it puts the units back as the binary ships them. Debian
+upgrading or reinstalling the package, whose postinst restarts the
+unit directly, was measured on hotserve-1 (2026-11-10, 0.28.1
+reinstalled under motel 0.6.2~notifypoc1): the socket's fd is passed
+(`Listening on systemd activated listeners`), nothing listens on 9093
+or 9094, and `motel notify test` delivers at once; the postinst
+re-enables the service, so it then starts at boot rather than at its
+socket's first connection, still on the socket alone. Two unit facts
+were measured too: `motel-am.socket` must name its service
 (`Service=prometheus-alertmanager.service`), or systemd refuses it; and
 Alertmanager needs Debian's `/usr/share/prometheus` templates, so the
 package is installed rather than a binary fetched.
@@ -422,7 +433,6 @@ on its general scales. notify's examples:
 | A secret missing from `_box.env` refuses the whole config at load, as `motel validate` must: at a reboot motel does not start, and every site is down for an alert channel (named in the journal) | 4 | 5 | 1 | the `_box` slot: the box handler's consistency check refuses a push whose `notify` block names a secret the push does not carry, before it reaches the box; at load a missing secret then drops its channel with a warning. Load and validate cannot be told apart in Provision today (/code-review pass 2) |
 | A reboot of a box with motel rendering (the review's #3 asks for one): setup's layout survives a motel restart by construction, measured only for the hand-installed stack on hotserve-1 | — | — | — | a run on hotserve-1 after `motel notify setup` |
 | Slack and Discord with real hooks; ntfy's formatting of Alertmanager's payload (the hotserve-1 test delivered the JSON body as the message) | — | — | — | needs the owner's hooks |
-| Debian upgrading `prometheus-alertmanager` (its postinst restarts the unit directly): whether the socket's fd is passed was not tested | — | — | — | a hotserve-1 run of `apt-get install --reinstall` |
 | A per-app `notify` block (`deploy_succeeded on` per app, app-scoped channels); the pull API and the later channel kinds, for which the `notify: event` line is the record | — | — | — | later slices |
 
 ## e2e rows
