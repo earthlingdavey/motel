@@ -57,14 +57,15 @@ type NotifyBlock struct {
 }
 
 // notifySecret is the name a channel or heartbeat line's
-// {secret.<NAME>} argument reads, if it is one.
+// {secret.<NAME>} argument reads, if it is one notify takes (boxVar):
+// a name it refuses is validate's to name, with notify's own reason.
 func notifySecret(arg string) (string, bool) {
 	name, ok := strings.CutPrefix(arg, "{secret.")
 	if !ok {
 		return "", false
 	}
 	name, ok = strings.CutSuffix(name, "}")
-	return name, ok && name != ""
+	return name, ok && boxVar.MatchString(name)
 }
 
 // AppEnv is an app block's env_file and env lines.

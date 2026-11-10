@@ -416,7 +416,7 @@ func FuzzWalk(f *testing.F) {
 // channel and heartbeat lines, in file order; anything else is notify's
 // to refuse.
 func TestWalkNotify(t *testing.T) {
-	f := strings.Replace(good, "\tliveswap {", "\tnotify {\n\t\tchannel ops ntfy {secret.NOTIFY_OPS_URL} severity warning\n\t\tchannel raw json https://hooks.example.com/x\n\t\toperator ops\n\t\theartbeat {secret.NOTIFY_HC_URL}\n\t\tsecrets_file /etc/motel/secrets/_box.env\n\t}\n\n\tliveswap {", 1)
+	f := strings.Replace(good, "\tliveswap {", "\tnotify {\n\t\tchannel ops ntfy {secret.NOTIFY_OPS_URL} severity warning\n\t\tchannel raw json https://hooks.example.com/x\n\t\tchannel odd json {secret.OPS_URL}\n\t\toperator ops\n\t\theartbeat {secret.NOTIFY_HC_URL}\n\t\tsecrets_file /etc/motel/secrets/_box.env\n\t}\n\n\tliveswap {", 1)
 	s, err := Walk(file(f))
 	if err != nil {
 		t.Fatal(err)

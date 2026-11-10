@@ -134,7 +134,7 @@ running config (`caddy.ActiveContext`):
 
 | Load | A channel whose secret is missing, or whose value is refused |
 |---|---|
-| `motel validate` (by hand, CI's `make check`, the box handler's step 6) | refused, as the table says; the handler's names its push carries in `secrets/_box/` as held ("Secrets") |
+| `motel validate` (by hand, CI's `make check`, the box handler's step 6) | refused, as the table says; the handler and `make check` name the secrets in `secrets/_box/` (`MOTEL_NOTIFY_PUSHED_SECRETS`), taken as held ("Secrets") |
 | a reload (`motel reload`, `systemctl reload`, the box applier's): a config is running | refused; the running config serves on, and the box applier rolls its push back |
 | the first load of `motel run` (a boot, a restart, an unattended upgrade's): nothing running | the channel is **dropped** from that load (from the operator line, each binding, the route tree; the heartbeat, if it is its secret), each a `notify: a channel is dropped from this load` error line naming the line and the key, never a value; and one more if no operator channel is left. motel serves |
 

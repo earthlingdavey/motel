@@ -1139,6 +1139,18 @@ func TestBoxCheckSecrets(t *testing.T) {
 	if out, code := check(); code != 0 || out != "deploy.example.com/Caddyfile → https://deploy.example.com/ (1 app, 1 signer, 1 secret)\n" {
 		t.Fatalf("one secret: exit %d\n%s", code, out)
 	}
+	// A notify block reading the box's own secret, which is not on this
+	// machine: validate is told it is the push's.
+	withoutNotify := r.read(boxFile)
+	r.write(boxFile, strings.Replace(withoutNotify, "{\n", "{\n\tnotify {\n\t\tchannel ops ntfy {secret.NOTIFY_OPS_URL}\n\t\toperator ops\n\t}\n", 1))
+	if out, code := r.secrets("", "https://ntfy.sh/ops-topic", "set", "APP=_box", "VAR=NOTIFY_OPS_URL"); code != 0 {
+		t.Fatalf("make secret APP=_box: exit %d\n%s", code, out)
+	}
+	if out, code := check(); code != 0 || !strings.Contains(out, "(1 app, 1 signer, 2 secrets)") {
+		t.Fatalf("a notify block and its secret in _box/: exit %d\n%s", code, out)
+	}
+	r.remove("deploy.example.com/secrets/_box")
+	r.write(boxFile, withoutNotify)
 
 	// Two names one file on a Mac's disk: the box takes both, so a
 	// warning, annotated in Actions.

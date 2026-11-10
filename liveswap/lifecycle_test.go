@@ -455,6 +455,56 @@ func TestReportedAlertsForgottenAndUnreadable(t *testing.T) {
 	if got := n.names(); len(got) != 0 {
 		t.Fatalf("an unreadable file: %v", got)
 	}
+	if _, err := os.Stat(rig.spec.dirs.alerts); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("an unreadable alerts.json is kept, to be warned of at every start: %v", err)
+	}
+}
+
+// recoveringNotifier has the watchdog report the loop's recovery the
+// moment the loop is told standing: the recovery a listener with no key
+// yet dropped.
+type recoveringNotifier struct {
+	recNotifier
+	ma *managedApp
+}
+
+func (r *recoveringNotifier) Lifecycle(ev LifecycleEvent) {
+	r.recNotifier.Lifecycle(ev)
+	if ev.Standing {
+		r.ma.wd.healthyAlert(time.Now(), time.Hour)
+	}
+}
+
+// A loop that moved to its recovery while it was told standing is told
+// recovered after it, or nothing would ever end the standing alert.
+func TestReportStandingTellsARecoveryBegunMeanwhile(t *testing.T) {
+	rig := newTestRig(t)
+	rig.ma.wd.throttledAlert(true)
+	n := &recoveringNotifier{ma: rig.ma}
+	rig.ma.reportStanding(n, rig.spec)
+	if got := n.names(); !slices.Equal(got, []string{EventWatchdogThrottled, EventWatchdogRecovered}) {
+		t.Fatalf("told %v", got)
+	}
+}
+
+// ReportStanding, on a candidate config, reads the file once for this
+// process but leaves where the writes go to configure: a config Caddy
+// may still refuse never points them at its own root.
+func TestReportStandingLeavesTheWritesWhereConfigurePutThem(t *testing.T) {
+	rig := newTestRig(t)
+	must(t, os.MkdirAll(rig.spec.dirs.app, 0o750))
+	rig.ma.restoreAlerts(rig.spec, zap.NewNop())
+	other := testSpec(t) // another root
+	must(t, os.MkdirAll(other.dirs.app, 0o750))
+	a := &App{managed: map[string]*managedApp{"demo": rig.ma}, specs: map[string]*appSpec{"demo": other}, logger: zap.NewNop()}
+	a.ReportStanding(&recNotifier{})
+	rig.ma.wd.setRefused()
+	if _, err := os.Stat(rig.spec.dirs.alerts); err != nil {
+		t.Fatalf("the serving config's alerts.json: %v", err)
+	}
+	if _, err := os.Stat(other.dirs.alerts); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("the candidate's root got a write: %v", err)
+	}
 }
 
 // A recovery's hold outlives a restart: the next process tells it as

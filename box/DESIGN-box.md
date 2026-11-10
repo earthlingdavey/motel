@@ -1613,7 +1613,9 @@ Three things differ:
 - **The handler cannot read the values** it validates against: step 6's
   `motel validate` is told the names the push carries, in
   `MOTEL_NOTIFY_PUSHED_SECRETS` (names only, set last over the service's
-  environment), and takes each as held without checking a value; a
+  environment), and takes each as held without checking a value, as
+  the template's `make check` tells it from `motel box describe`'s
+  `secret _box` lines; a
   value notify refuses (not an https URL to a public host) is refused at
   the reload, which rolls the push back.
 

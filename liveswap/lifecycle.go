@@ -104,7 +104,12 @@ func (a *App) ReportStanding(n Notifier) {
 		if spec == nil {
 			continue
 		}
-		ma.restoreAlerts(spec, a.logger.Named(name))
+		// Read the file if this process has not, but point the writes
+		// nowhere new: that is configure's, once this config's liveswap
+		// has started, and a candidate config may yet be refused.
+		if !ma.wd.isRestored() {
+			ma.restoreAlerts(spec, a.logger.Named(name))
+		}
 		ma.reportStanding(n, spec)
 	}
 }
@@ -126,8 +131,8 @@ func (ma *managedApp) reportStanding(n Notifier, spec *appSpec) {
 	// then fire an alert nothing ends. So whatever has ended once they
 	// are told is told ended here too: a second end is no change.
 	defer func() {
-		nowLoop, _, nowRefused := ma.wd.standing(now(), hold)
-		if loop && !nowLoop {
+		nowLoop, nowRecovering, nowRefused := ma.wd.standing(now(), hold)
+		if loop && (!nowLoop || nowRecovering && !recovering) {
 			ma.tell(n, LifecycleEvent{Name: EventWatchdogRecovered, Release: release, Hold: hold, Summary: "healthy again after a restart loop"})
 		}
 		if refused && !nowRefused {
@@ -136,8 +141,10 @@ func (ma *managedApp) reportStanding(n Notifier, spec *appSpec) {
 	}()
 	switch {
 	case loop && recovering:
+		// Its summary is the alert's while it is held, which a listener
+		// that lost it posts as firing: it says both.
 		ma.tell(n, LifecycleEvent{Name: EventWatchdogRecovered, Release: release, Hold: hold, Standing: true,
-			Summary: "healthy again after a restart loop"})
+			Summary: "a restart loop, reported before motel's restart; healthy since, its recovery held"})
 	case loop:
 		ma.tell(n, LifecycleEvent{Name: EventWatchdogThrottled, Release: release, Standing: true,
 			Summary: "the restart loop is still reported: it ends once the app is healthy for its hold"})
@@ -189,6 +196,8 @@ func (ma *managedApp) restoreAlerts(spec *appSpec, logger *zap.Logger) {
 		return err
 	}
 	if err := ma.wd.restoreAlerts(load, save); err != nil {
-		logger.Warn("watchdog: what notify was told before this start could not be read; taken as nothing", zap.String("file", path), zap.Error(err))
+		// Removed, so the warning is said once: nothing stands now.
+		logger.Warn("watchdog: what notify was told before this start could not be read; taken as nothing, and removed", zap.String("file", path), zap.Error(err))
+		_ = save(reportedAlerts{})
 	}
 }

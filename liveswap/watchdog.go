@@ -248,6 +248,12 @@ func (w *watchdogState) standing(now time.Time, hold time.Duration) (loop, recov
 	return loop, recovering, w.refused
 }
 
+func (w *watchdogState) isRestored() bool {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.restored
+}
+
 // restoreAlerts reads alerts.json into the flags, once per process, and
 // points the writes of each change at it. A file that is not there is
 // nothing standing; one that does not read is said and taken as
