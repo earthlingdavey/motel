@@ -206,7 +206,7 @@ func serveTest(w http.ResponseWriter, r *http.Request) error {
 	}
 	e := theEngine
 	e.mu.Lock()
-	active, post, read, now := e.active, e.post, e.metrics, e.now()
+	active, post, read, now, logger := e.active, e.post, e.metrics, e.now(), e.logger
 	e.mu.Unlock()
 	if active == nil || active.cfg == nil {
 		return caddy.APIError{HTTPStatus: http.StatusServiceUnavailable, Err: errors.New("this box's Caddyfile has no notify block")}
@@ -220,9 +220,12 @@ func serveTest(w http.ResponseWriter, r *http.Request) error {
 	var before counts
 	baseline := false
 	for i := 0; read != nil && i < 3 && !baseline; i++ {
-		if body, err := read(ctx); err == nil {
-			before, baseline = countsFor(body, receiver), true
-		} else {
+		body, err := read(ctx)
+		if err == nil {
+			before, err = countsFor(body, receiver)
+			baseline = err == nil
+		}
+		if err != nil {
 			time.Sleep(300 * time.Millisecond) // socket activation may be starting it
 		}
 	}
@@ -234,7 +237,7 @@ func serveTest(w http.ResponseWriter, r *http.Request) error {
 		Annotations: map[string]string{"summary": "a test from motel notify test: if you can read this, the channel " + req.Channel + " works"},
 		StartsAt:    now, EndsAt: now.Add(oneShotLife),
 	}
-	e.logger.Info("notify: test", zap.String("channel", req.Channel))
+	logger.Info("notify: test", zap.String("channel", req.Channel))
 	if err := post.postAlerts(ctx, []amAlert{alert}); err != nil {
 		return caddy.APIError{HTTPStatus: http.StatusBadGateway, Err: fmt.Errorf("posting to Alertmanager: %w", err)}
 	}
@@ -255,7 +258,10 @@ func serveTest(w http.ResponseWriter, r *http.Request) error {
 		if err != nil {
 			continue
 		}
-		after := countsFor(body, receiver)
+		after, err := countsFor(body, receiver)
+		if err != nil {
+			continue // no reading this time; the next one may be whole
+		}
 		if after.delivered(before) {
 			res.Delivered = true
 			return writeJSON(w, res)
@@ -281,11 +287,9 @@ func writeJSON(w http.ResponseWriter, v any) error {
 	return json.NewEncoder(w).Encode(v)
 }
 
-// counts is one receiver's attempts, as Alertmanager counts them with
-// receiver-name-in-metrics on: requests (each attempt to send), failed
-// requests, and notifications given up as failed. A delivery is an
-// attempt that did not fail; alertmanager_notifications_total is raised
-// before the first attempt, so it says nothing of the outcome.
+// counts is one receiver's attempts, as parseAMMetrics reads them: a
+// delivery is an attempt that did not fail (requests minus failed
+// requests rose); failed is notifications given up as failed.
 type counts struct {
 	requests, requestsFailed, failed float64
 	reason                           string
@@ -295,9 +299,13 @@ func (c counts) delivered(before counts) bool {
 	return c.requests-c.requestsFailed > before.requests-before.requestsFailed
 }
 
-func countsFor(body []byte, receiver string) counts {
-	var c counts
-	for _, s := range parseFailed(body) {
+func countsFor(body []byte, receiver string) (counts, error) {
+	m, err := parseAMMetrics(body)
+	if err != nil {
+		return counts{}, err
+	}
+	c := counts{requests: m.requests[receiver], requestsFailed: m.requestsFailed[receiver]}
+	for _, s := range m.failed {
 		if s.receiver == receiver {
 			c.failed += s.value
 			if s.value > 0 {
@@ -305,26 +313,7 @@ func countsFor(body []byte, receiver string) counts {
 			}
 		}
 	}
-	for line := range strings.SplitSeq(string(body), "\n") {
-		var dst *float64
-		rest, ok := strings.CutPrefix(line, "alertmanager_notification_requests_total{")
-		if ok {
-			dst = &c.requests
-		} else if rest, ok = strings.CutPrefix(line, "alertmanager_notification_requests_failed_total{"); ok {
-			dst = &c.requestsFailed
-		} else {
-			continue
-		}
-		end := strings.LastIndex(rest, "} ")
-		if end < 0 || parseLabels(rest[:end])["receiver_name"] != receiver {
-			continue
-		}
-		var v float64
-		if _, err := fmt.Sscan(rest[end+2:], &v); err == nil {
-			*dst += v
-		}
-	}
-	return c
+	return c, nil
 }
 
 var _ caddy.AdminRouter = adminAPI{}

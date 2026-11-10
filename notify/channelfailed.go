@@ -1,13 +1,10 @@
 package notify
 
 import (
-	"bufio"
-	"bytes"
 	"context"
 	"fmt"
 	"slices"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
 
@@ -24,80 +21,9 @@ import (
 // to that receiver's channels of the failing integration; without it,
 // to every channel of the integration.
 
-const failedMetric = "alertmanager_notifications_failed_total"
-
 // channelFailedLife is the alert's endsAt: re-posted while the counter
 // keeps rising, gone a quarter-hour after it stops.
 const channelFailedLife = 15 * time.Minute
-
-// failedSample is one series of the counter.
-type failedSample struct {
-	integration, receiver, reason string
-	value                         float64
-}
-
-// parseFailed reads the counter's series out of a /metrics body.
-func parseFailed(body []byte) []failedSample {
-	var out []failedSample
-	sc := bufio.NewScanner(bytes.NewReader(body))
-	sc.Buffer(make([]byte, 64<<10), 1<<20)
-	for sc.Scan() {
-		line := sc.Text()
-		rest, ok := strings.CutPrefix(line, failedMetric+"{")
-		if !ok {
-			continue
-		}
-		end := strings.LastIndex(rest, "} ")
-		if end < 0 {
-			continue
-		}
-		labels := parseLabels(rest[:end])
-		value := strings.Fields(rest[end+2:])
-		if len(value) == 0 {
-			continue // a line cut short (the body is capped)
-		}
-		v, err := strconv.ParseFloat(value[0], 64)
-		if err != nil {
-			continue
-		}
-		out = append(out, failedSample{integration: labels["integration"], receiver: labels["receiver_name"], reason: labels["reason"], value: v})
-	}
-	return out
-}
-
-// parseLabels reads `a="x",b="y\"z"` as the exposition format writes it.
-func parseLabels(s string) map[string]string {
-	out := map[string]string{}
-	for s != "" {
-		eq := strings.IndexByte(s, '=')
-		if eq < 0 || eq+1 >= len(s) || s[eq+1] != '"' {
-			return out
-		}
-		name := strings.TrimSpace(s[:eq])
-		s = s[eq+2:]
-		var b strings.Builder
-		i := 0
-		for ; i < len(s) && s[i] != '"'; i++ {
-			if s[i] == '\\' && i+1 < len(s) {
-				i++
-				switch s[i] {
-				case 'n':
-					b.WriteByte('\n')
-				default:
-					b.WriteByte(s[i])
-				}
-				continue
-			}
-			b.WriteByte(s[i])
-		}
-		out[name] = b.String()
-		if i+1 >= len(s) {
-			return out
-		}
-		s = strings.TrimPrefix(s[i+1:], ",")
-	}
-	return out
-}
 
 // failWatch is the engine's memory of the counter, and the config it
 // reads the counter against.
@@ -159,17 +85,23 @@ func (w *failWatch) suspects(s failedSample) []string {
 // each rise to every teacher channel that is not a suspect.
 func (e *engine) scrapeFailed(ctx context.Context, read func(context.Context) ([]byte, error)) {
 	body, err := read(ctx)
-	if err != nil {
-		e.logger.Debug("notify: reading Alertmanager's metrics", zap.Error(err))
-		return
+	var m amMetrics
+	if err == nil {
+		m, err = parseAMMetrics(body)
 	}
 	e.mu.Lock()
 	defer e.mu.Unlock()
+	if err != nil {
+		// No reading this minute: the baseline stays the last good one,
+		// so the next good read is compared with it, not with nothing.
+		e.logger.Debug("notify: reading Alertmanager's metrics", zap.Error(err))
+		return
+	}
 	if e.active == nil {
 		return
 	}
 	now := e.now()
-	for _, s := range e.fail.rises(parseFailed(body)) {
+	for _, s := range e.fail.rises(m.failed) {
 		sus := e.fail.suspects(s)
 		key := "notify/box/channel_failed/" + strings.Join(sus, ",")
 		summary := fmt.Sprintf("Alertmanager could not deliver through %s (%s)", s.integration, s.reason)

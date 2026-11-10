@@ -263,7 +263,10 @@ whichever config serves when it clears.
 ## Failed delivery
 
 Once a minute motel reads Alertmanager's own `/metrics` over the
-socket. `alertmanager_notifications_failed_total` names the integration
+socket, with Prometheus's text parser (`prometheus/common/expfmt`,
+already in the binary through Caddy's metrics). The read is strict: a
+body cut short, a malformed line, or one without the failed counter is
+no reading, and the baseline stays the last good one. `alertmanager_notifications_failed_total` names the integration
 and, with the drop-in's `receiver-name-in-metrics`, the receiver. A
 rise (the first read is a baseline; a lower value is a restart,
 counted from zero) is a `notify: channel failed` line, and one

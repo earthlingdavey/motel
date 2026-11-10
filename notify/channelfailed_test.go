@@ -19,23 +19,6 @@ func failedLine(integration, receiver, reason string, v int) string {
 	return fmt.Sprintf("%s{integration=%q,receiver_name=%q,reason=%q} %d\n", failedMetric, integration, receiver, reason, v)
 }
 
-func TestParseFailed(t *testing.T) {
-	body := metricsHead + failedLine("slack", "ch-ops", "clientError", 3) +
-		`alertmanager_notifications_total{integration="slack"} 9` + "\n" +
-		failedMetric + `{integration="webhook",receiver_name="odd \"name\"",reason="other"} 1` + "\n"
-	got := parseFailed([]byte(body))
-	if len(got) != 2 || got[0] != (failedSample{"slack", "ch-ops", "clientError", 3}) || got[1].receiver != `odd "name"` {
-		t.Fatalf("samples = %+v", got)
-	}
-}
-
-func TestParseFailedLineCutShort(t *testing.T) {
-	body := failedMetric + `{integration="webhook",reason="other"} ` + "\n" + failedMetric + `{integration="webhook"} `
-	if got := parseFailed([]byte(body)); len(got) != 0 {
-		t.Fatalf("samples = %+v", got)
-	}
-}
-
 func TestFailWatchRises(t *testing.T) {
 	var w failWatch
 	s := func(r string, v float64) failedSample { return failedSample{"webhook", r, "other", v} }
