@@ -52,7 +52,11 @@ func parseFailed(body []byte) []failedSample {
 			continue
 		}
 		labels := parseLabels(rest[:end])
-		v, err := strconv.ParseFloat(strings.Fields(rest[end+2:])[0], 64)
+		value := strings.Fields(rest[end+2:])
+		if len(value) == 0 {
+			continue // a line cut short (the body is capped)
+		}
+		v, err := strconv.ParseFloat(value[0], 64)
 		if err != nil {
 			continue
 		}

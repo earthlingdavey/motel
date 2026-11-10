@@ -155,22 +155,32 @@ func TestServeSendRefusals(t *testing.T) {
 	}
 }
 
+func amCounts(notifications, requests, requestsFailed, failed int) string {
+	const receiver = "ch-ops"
+	return fmt.Sprintf("alertmanager_notifications_total{integration=\"slack\",receiver_name=%q} %d\n", receiver, notifications) +
+		fmt.Sprintf("alertmanager_notification_requests_total{integration=\"slack\",receiver_name=%q} %d\n", receiver, requests) +
+		fmt.Sprintf("alertmanager_notification_requests_failed_total{integration=\"slack\",receiver_name=%q} %d\n", receiver, requestsFailed) +
+		failedLine("slack", receiver, "serverError", failed)
+}
+
+// TestServeTest: a delivery is an attempt that did not fail. A receiver
+// whose attempts fail and are retried has notifications_total raised
+// before the first one, which must not read as delivered.
 func TestServeTest(t *testing.T) {
 	te := withEngine(t)
 	saved := testWait
 	testWait = 2 * time.Second
 	t.Cleanup(func() { testWait = saved })
-	var sent atomic.Int32
-	te.metrics = func(context.Context) ([]byte, error) {
-		body := fmt.Sprintf("alertmanager_notifications_total{integration=\"slack\",receiver_name=\"ch-ops\"} %d\n", sent.Load()) +
-			failedLine("slack", "ch-ops", "clientError", 0)
-		return []byte(body), nil
-	}
-	te.p.err = nil
-	// Alertmanager delivers on the second read.
+	var body atomic.Pointer[string]
+	set := func(s string) { body.Store(&s) }
+	te.metrics = func(context.Context) ([]byte, error) { return []byte(*body.Load()), nil }
+
+	set(amCounts(0, 0, 0, 0))
 	go func() {
 		time.Sleep(300 * time.Millisecond)
-		sent.Store(1)
+		set(amCounts(1, 1, 1, 0)) // attempted, failed, being retried
+		time.Sleep(300 * time.Millisecond)
+		set(amCounts(1, 2, 1, 0)) // the retry got through
 	}()
 	w, err := callAdmin(t, serveTest, http.MethodPost, TestRequest{Channel: "ops"})
 	if err != nil {
@@ -185,8 +195,39 @@ func TestServeTest(t *testing.T) {
 	if len(posts) != 1 || posts[0].Labels[labelChannel] != "ops" || posts[0].Labels["alertname"] != "NotifyTest" || posts[0].Labels["test"] == "" {
 		t.Fatalf("posts = %+v", posts)
 	}
+
+	// Attempts that fail and are given up: failed, never delivered.
+	set(amCounts(0, 0, 0, 0))
+	go func() {
+		time.Sleep(300 * time.Millisecond)
+		set(amCounts(1, 1, 1, 0))
+		time.Sleep(300 * time.Millisecond)
+		set(amCounts(1, 3, 3, 1))
+	}()
+	w, err = callAdmin(t, serveTest, http.MethodPost, TestRequest{Channel: "ops"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	res = TestResult{}
+	_ = json.Unmarshal(w.Body.Bytes(), &res)
+	if res.Delivered || res.Failed == "" {
+		t.Fatalf("a failing channel: %s", w.Body.String())
+	}
 	if _, err := callAdmin(t, serveTest, http.MethodPost, TestRequest{Channel: "nosuch"}); apiStatus(err) != http.StatusUnprocessableEntity {
 		t.Fatalf("an unknown channel: %v", err)
+	}
+}
+
+func TestServeSendCarriesDetails(t *testing.T) {
+	te := withEngine(t)
+	r := goodSend()
+	r.Details = map[string]string{"serial": "XYZ", "temp": "61"}
+	if _, err := callAdmin(t, serveSend, http.MethodPost, r); err != nil {
+		t.Fatal(err)
+	}
+	got := te.drain()
+	if len(got) != 1 || got[0].Annotations["detail_serial"] != "XYZ" || got[0].Annotations["detail_temp"] != "61" {
+		t.Fatalf("posts = %+v", got)
 	}
 }
 
@@ -226,6 +267,7 @@ func TestSetupOrderAndFiles(t *testing.T) {
 	}
 	want := []string{
 		"systemctl mask prometheus-alertmanager.service",
+		"systemctl stop prometheus-alertmanager.service",
 		"apt-get install -y --no-install-recommends prometheus-alertmanager",
 		"systemctl daemon-reload",
 		"systemctl unmask prometheus-alertmanager.service",

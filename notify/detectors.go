@@ -145,6 +145,13 @@ func (b *backupPoller) poll(now time.Time, path string) []Event {
 	var fire []Event
 	st, err := record.Read(path)
 	if err != nil {
+		// What fired stays fired: an unreadable record says nothing has
+		// been put right.
+		for _, prev := range b.set.prev {
+			if prev.Name != "backup_unreadable" {
+				fire = append(fire, prev)
+			}
+		}
 		fire = append(fire, ev("backup_unreadable", SeverityWarning, "", "the backup record cannot be read, so whether the backups are fresh is not known"))
 		return b.set.diff(fire)
 	}

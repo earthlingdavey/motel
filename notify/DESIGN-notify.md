@@ -240,8 +240,15 @@ whichever config serves when it clears.
 - **The mute** is `deploy_in_progress` for the app, posted at a
   deploy's start, re-posted each minute, ended at its end.
 - **Summaries** pass through liveswap's filter, primed with every
-  channel URL (and, at liveswap's end, with the app's own values), and
-  are cut to 200 runes.
+  channel URL (and, at liveswap's end, with the app's own values), with
+  the release as a safe name (a git sha is otherwise masked by the
+  entropy layer), and are cut to 200 runes.
+- **A config that drops a source** ends what nothing can clear any
+  more: the keys of an app it no longer runs (and its mute), the backup
+  keys once `backup_record off`, a filesystem's once its path is not
+  measured; each fired key is resolved with a journal line. An
+  unreadable backup record keeps what fired firing beside
+  `backup_unreadable`.
 
 ## Failed delivery
 
@@ -286,9 +293,14 @@ and the route check (`SendRequest.Check`):
 Accepted, an external event is one like motel's own: the filter, the
 bucket, the journal line, the queue. `motel notify test` posts one
 `NotifyTest` alert with a nonce label, routed to the channel alone,
-then reads the channel's receiver's counters for 15 s: delivered,
-failed (with Alertmanager's reason class), or neither yet; it exits 1
-unless delivered, and never prints the URL.
+then reads the channel's receiver's counters for 15 s: delivered when
+an attempt did not fail (`notification_requests_total` rose more than
+`notification_requests_failed_total`; `notifications_total` is raised
+before the first attempt and says nothing of the outcome), failed when
+Alertmanager gave up (with its reason class), or neither yet; it exits
+1 unless delivered, and never prints the URL. An external producer's
+`--detail key=value` pairs are annotations `detail_<key>`, through the
+filter.
 
 ## Packaging and setup
 
@@ -301,7 +313,10 @@ order certain rather than preventing it. On a box with no firewall
 internet. So **`motel notify setup`**, run by root, does it in an order
 motel controls:
 
-1. `systemctl mask prometheus-alertmanager.service`;
+1. `systemctl mask prometheus-alertmanager.service`, then `stop` it:
+   one installed by hand before setup runs on Debian's ports, and a
+   mask stops nothing, nor would the socket be handed to a service
+   already running;
 2. `apt-get install -y --no-install-recommends prometheus-alertmanager`
    unless installed (measured: the masked install left nothing
    listening);
@@ -390,6 +405,7 @@ on its general scales. notify's examples:
 | Two channels of one integration in one receiver: a failure names both as suspects, and neither is told | notify/channelfailed.go (`suspects`) | 2 | 5 | 3 | an operator's choice of channels; the line names both, and the counter is Alertmanager's own; one receiver per channel would double every route |
 | A teacher with a single channel: `ChannelFailed` has no other channel to go to | notify/channelfailed.go | 2 | 5 | 1 | the `notify: channel failed` line and Alertmanager's counter say it; the design asks for "the other teacher channels" and there are none |
 | `motel notify test` reads the counters for 15 s; a slow receiver answers "neither yet" | notify/admin.go (`testWait`) | 2 | 2 | 1 | the answer says so; Alertmanager's retries continue |
+| Alertmanager refuses a reload of a config that dropped a channel: motel puts the previous config back, but has already removed the dropped channel's `url-<KEY>` file, so Alertmanager's next start fails on the restored config until motel's next load | notify/state.go (`apply`) | 4 | 2 | 1 | 8; two faults (a render Alertmanager refuses, which the amtool tests rule out for every shape, then a restart before the next load), and Alertmanager names the missing file; keeping the files until a reload succeeds adds state to the write (size 2, risk 2). /code-review of the PoC |
 
 ### Owed
 

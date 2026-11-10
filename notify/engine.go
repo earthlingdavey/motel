@@ -42,6 +42,9 @@ type Event struct {
 	// Hold is how long a state alert's condition must stay clear before
 	// its recovery is posted; at least minHold.
 	Hold time.Duration
+	// Details are an external producer's key=value pairs (motel notify
+	// send --detail), annotations detail_<key>, through the filter.
+	Details map[string]string
 }
 
 func (ev Event) subject() string {
@@ -149,7 +152,9 @@ type engine struct {
 	now    func() time.Time
 	logger *zap.Logger
 	post   poster
-	redact *liveswap.Redactor
+	// known is every channel URL, as KEY=value: the filter's known
+	// values for every summary.
+	known []string
 
 	deploySucceeded bool
 	active          *App // the config whose Start configured it; nil when none is running
@@ -211,8 +216,13 @@ func (e *engine) bucketFor(key string) *bucket {
 	return b
 }
 
-func (e *engine) clean(s string) string {
-	s, _ = e.redact.Redact(s)
+// clean is s through liveswap's filter, its known values the channel
+// URLs and safe the names the text carries (a release, which the
+// entropy layer would mask when it is a git sha), cut to maxSummary.
+// One filter per event: events are rare, and a filter holds its safe
+// names.
+func (e *engine) clean(s string, safe ...string) string {
+	s, _ = liveswap.NewRedactor(e.known, safe).Redact(s)
 	return deploytrust.CutRunes(s, maxSummary)
 }
 
@@ -223,7 +233,14 @@ func (e *engine) report(ev Event) {
 	if e.active == nil {
 		return
 	}
-	ev.Summary = e.clean(ev.Summary)
+	ev.Summary = e.clean(ev.Summary, ev.Release)
+	if len(ev.Details) > 0 {
+		d := make(map[string]string, len(ev.Details))
+		for k, v := range ev.Details {
+			d[k] = e.clean(v, ev.Release)
+		}
+		ev.Details = d
+	}
 	if ev.Severity == "" {
 		ev.Severity = SeverityWarning
 	}
@@ -242,7 +259,7 @@ func (e *engine) report(ev Event) {
 	}
 	key := ev.key()
 	st := e.states[key]
-	if ev.Firing && st != nil && st.posted && st.firing && st.ev.Severity != ev.Severity {
+	if ev.Firing && st != nil && st.posted && st.ev.Severity != ev.Severity {
 		// The same key at another severity (a disk from 80 to 90 %) is
 		// another alert to Alertmanager, whose labels carry it: the old
 		// one is ended in the post that fires the new.
@@ -250,7 +267,7 @@ func (e *engine) report(ev Event) {
 			old := st.ev
 			e.journal(ev, "firing", zap.String("was", old.Severity))
 			e.enqueue(&pending{key: key, alerts: []amAlert{stateAlertFor(old, st.startsAt, now), stateAlertFor(ev, now, time.Time{})}, first: now, journal: true})
-			st.ev, st.startsAt, st.lastPost, st.clearSince = ev, now, now, time.Time{}
+			st.ev, st.firing, st.startsAt, st.lastPost, st.clearSince = ev, true, now, now, time.Time{}
 			return
 		}
 		ev.Severity = st.ev.Severity // held at the old one until the bucket allows
@@ -394,7 +411,15 @@ func oneShotAlert(ev Event, now time.Time) amAlert {
 	if ev.DeployedBy != "" {
 		l["deployed_by"] = ev.DeployedBy
 	}
-	return amAlert{Labels: l, Annotations: map[string]string{"summary": ev.Summary}, StartsAt: now, EndsAt: now.Add(oneShotLife)}
+	return amAlert{Labels: l, Annotations: annotations(ev), StartsAt: now, EndsAt: now.Add(oneShotLife)}
+}
+
+func annotations(ev Event) map[string]string {
+	ann := map[string]string{"summary": ev.Summary}
+	for k, v := range ev.Details {
+		ann["detail_"+k] = v
+	}
+	return ann
 }
 
 // stateAlertFor is the alert for a state key; a zero endsAt leaves
@@ -402,7 +427,7 @@ func oneShotAlert(ev Event, now time.Time) amAlert {
 // endsAt now resolves it at once (measured: the younger resolved alert
 // wins the merge).
 func stateAlertFor(ev Event, startsAt, endsAt time.Time) amAlert {
-	ann := map[string]string{"summary": ev.Summary}
+	ann := annotations(ev)
 	if ev.Release != "" {
 		ann["release"] = ev.Release
 	}
@@ -566,10 +591,10 @@ func (e *engine) run(ctx context.Context, tickEvery time.Duration) {
 
 // configure points the engine at a config and starts its goroutine the
 // first time. Called from App.Start.
-func (e *engine) configure(a *App, post poster, redact *liveswap.Redactor, logger *zap.Logger) {
+func (e *engine) configure(a *App, post poster, known []string, logger *zap.Logger) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	e.setConfig(a, post, redact, logger)
+	e.setConfig(a, post, known, logger)
 	if !e.running {
 		ctx, cancel := context.WithCancel(context.Background())
 		e.running, e.cancel, e.done = true, cancel, make(chan struct{})
@@ -578,8 +603,8 @@ func (e *engine) configure(a *App, post poster, redact *liveswap.Redactor, logge
 }
 
 // setConfig is configure's state, with mu held.
-func (e *engine) setConfig(a *App, post poster, redact *liveswap.Redactor, logger *zap.Logger) {
-	e.active, e.post, e.redact, e.logger = a, post, redact, logger
+func (e *engine) setConfig(a *App, post poster, known []string, logger *zap.Logger) {
+	e.active, e.post, e.known, e.logger = a, post, known, logger
 	e.deploySucceeded = a.DeploySucceeded
 	e.backupPath, e.diskPaths = a.backupRecord(), a.diskPaths
 	if c, ok := post.(*amClient); ok {
@@ -591,6 +616,44 @@ func (e *engine) setConfig(a *App, post poster, redact *liveswap.Redactor, logge
 		e.fail.teacher = slices.Clone(a.cfg.teacher)
 		for name, ch := range a.cfg.channels {
 			e.fail.kinds[name] = channelKinds[ch.Kind]
+		}
+		e.prune(a.cfg.apps)
+	}
+}
+
+// prune ends what no detector of the new config can clear: the keys of
+// an app it no longer runs, the backup keys once the record is off, a
+// filesystem's once its path is not measured; and an app's mute. Each
+// fired key is resolved, as a journal line, so its channels hear the
+// end of it. Called with mu held.
+func (e *engine) prune(apps []string) {
+	now := e.now()
+	for key, st := range e.states {
+		ev := st.ev
+		gone := ev.App != "" && !slices.Contains(apps, ev.App) ||
+			ev.Source == "backup" && e.backupPath == "" ||
+			ev.Source == "disk" && !slices.Contains(e.diskPaths, ev.Instance)
+		if !gone {
+			continue
+		}
+		if st.posted {
+			e.journal(ev, "resolved", zap.String("why", "the config no longer has its source"))
+			e.postState(key, st, now, now, true)
+		}
+		delete(e.states, key)
+	}
+	if e.backupPath == "" {
+		e.backup.set.prev = nil
+	}
+	for k := range e.disk.set.prev {
+		if !slices.Contains(e.diskPaths, e.disk.set.prev[k].Instance) {
+			delete(e.disk.set.prev, k)
+		}
+	}
+	for app := range e.mutes {
+		if !slices.Contains(apps, app) {
+			delete(e.mutes, app)
+			e.enqueue(&pending{key: "mute/" + app, alerts: []amAlert{muteAlert(app, now, now)}, first: now})
 		}
 	}
 }

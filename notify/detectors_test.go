@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -176,6 +177,25 @@ func TestBackupPoller(t *testing.T) {
 	}
 }
 
+// TestBackupPollerUnreadableKeepsWhatFired: a record that cannot be read
+// says nothing was put right.
+func TestBackupPollerUnreadableKeepsWhatFired(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "status.json")
+	now := time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC)
+	writeRecord(t, path, &record.Status{Apps: map[string]*record.App{}, LastDrill: &record.Drill{Time: now, Detail: "could not begin"}})
+	var b backupPoller
+	if got := names(b.poll(now, path)); !got["drill_failed"] {
+		t.Fatalf("first poll: %v", got)
+	}
+	if err := os.WriteFile(path, []byte("{not json"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got := names(b.poll(now.Add(5*time.Minute), path))
+	if got["-drill_failed"] || !got["drill_failed"] || !got["backup_unreadable"] {
+		t.Fatalf("unreadable: %v", got)
+	}
+}
+
 func TestDiskLevel(t *testing.T) {
 	cases := []struct {
 		prev string
@@ -207,6 +227,74 @@ func TestDiskPollerOncePerFilesystem(t *testing.T) {
 	evs = d.poll(paths)
 	if len(evs) != 1 || evs[0].Firing {
 		t.Fatalf("after the clean-up: %+v", evs)
+	}
+}
+
+// TestSeverityChangeInsideTheHold: a key cleared and fired again at
+// another severity before its hold ends is the same case.
+func TestSeverityChangeInsideTheHold(t *testing.T) {
+	te := newTestEngine(t)
+	ev := Event{Name: alertDiskLow, Kind: kindState, Severity: SeverityWarning, Source: "disk", Instance: "/", Summary: "85%", Firing: true}
+	te.report(ev)
+	te.drain()
+	ev.Firing = false
+	te.report(ev)
+	te.advance(10 * time.Second)
+	ev.Firing, ev.Severity = true, SeverityCritical
+	te.report(ev)
+	got := te.drain()
+	if len(got) != 2 || got[0].Labels["severity"] != "warning" || got[0].EndsAt.IsZero() || got[1].Labels["severity"] != "critical" {
+		t.Fatalf("posts = %+v", got)
+	}
+	te.advance(time.Minute)
+	te.tick()
+	for _, a := range te.drain() {
+		if a.Labels["alertname"] == alertDiskLow && !a.EndsAt.IsZero() {
+			t.Fatalf("a resolve after the re-fire: %+v", a)
+		}
+	}
+}
+
+// TestPruneEndsWhatNoSourceClears: an app taken out of the config, or
+// the backup record turned off, leaves no key re-posted for ever.
+func TestPruneEndsWhatNoSourceClears(t *testing.T) {
+	te := newTestEngine(t)
+	te.report(watchdog(true))
+	te.report(Event{Name: "drill_failed", Kind: kindState, Severity: SeverityCritical, Source: "backup", Summary: "x", Firing: true})
+	te.report(Event{Name: alertDiskLow, Kind: kindState, Severity: SeverityWarning, Source: "disk", Instance: "/var/lib/liveswap", Summary: "x", Firing: true})
+	te.mute("blog", true)
+	te.drain()
+	a := mustParse(t, "notify {\nchannel ops slack {secret.NOTIFY_OPS_URL}\nteacher ops\nbackup_record off\n}")
+	r, err := a.resolve(map[string][]TrustSource{"shop": nil}, testSecrets())
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.cfg, a.diskPaths = r, []string{"/var/lib/motel"}
+	te.setConfig(a, te.p, te.known, te.logger)
+	got := te.drain()
+	ended := map[string]bool{}
+	for _, x := range got {
+		if !x.EndsAt.IsZero() && !x.EndsAt.After(te.at) {
+			ended[x.Labels["alertname"]] = true
+		}
+	}
+	for _, n := range []string{"watchdog_throttled", "drill_failed", alertDiskLow, alertDeployMute} {
+		if !ended[n] {
+			t.Errorf("%s not ended: %+v", n, got)
+		}
+	}
+	if len(te.states) != 0 || len(te.mutes) != 0 {
+		t.Fatalf("left: %v %v", te.states, te.mutes)
+	}
+}
+
+func TestSummaryKeepsAShaRelease(t *testing.T) {
+	te := newTestEngine(t)
+	sha := "3f2a9c1e8b7d6a5f4e3d2c1b0a9f8e7d6c5b4a39"
+	te.report(Event{Name: "deploy_failed", Kind: kindEvent, App: "blog", Source: "liveswap", Release: sha, Summary: "deploy of " + sha + " failed"})
+	got := te.drain()
+	if len(got) != 1 || !strings.Contains(got[0].Annotations["summary"], sha) {
+		t.Fatalf("summary = %q", got[0].Annotations["summary"])
 	}
 }
 

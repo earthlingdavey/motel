@@ -196,7 +196,7 @@ func (a *App) Start() error {
 	for k, v := range a.cfg.urls {
 		pairs = append(pairs, k+"="+v)
 	}
-	theEngine.configure(a, am, liveswap.NewRedactor(pairs, nil), a.logger)
+	theEngine.configure(a, am, pairs, a.logger)
 	return nil
 }
 

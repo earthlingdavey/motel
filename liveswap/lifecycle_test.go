@@ -183,6 +183,18 @@ func TestLifecycleDeployEndsALoop(t *testing.T) {
 	}
 }
 
+// TestLifecycleKeepsAShaRelease: a version that is a git sha is a name
+// in the summary, not a token for the entropy layer to mask.
+func TestLifecycleKeepsAShaRelease(t *testing.T) {
+	rig, n := notifiedRig(t)
+	sha := "3f2a9c1e8b7d6a5f4e3d2c1b0a9f8e7d6c5b4a39"
+	must(t, rig.ma.Deploy(context.Background(), deployRequest{url: "https://x/1", version: sha}))
+	ev, _ := n.find(EventDeploySucceeded)
+	if ev.Summary != "deployed "+sha {
+		t.Fatalf("summary = %q", ev.Summary)
+	}
+}
+
 func TestLifecycleNoNotifierIsSilent(t *testing.T) {
 	rig := newTestRig(t)
 	deployV1(t, rig) // no notifier: nothing to call, nothing panics

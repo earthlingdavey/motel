@@ -29,6 +29,13 @@ func TestParseFailed(t *testing.T) {
 	}
 }
 
+func TestParseFailedLineCutShort(t *testing.T) {
+	body := failedMetric + `{integration="webhook",reason="other"} ` + "\n" + failedMetric + `{integration="webhook"} `
+	if got := parseFailed([]byte(body)); len(got) != 0 {
+		t.Fatalf("samples = %+v", got)
+	}
+}
+
 func TestFailWatchRises(t *testing.T) {
 	var w failWatch
 	s := func(r string, v float64) failedSample { return failedSample{"webhook", r, "other", v} }
@@ -56,7 +63,7 @@ func TestScrapeFailedTellsTheOtherTeacherChannels(t *testing.T) {
 	}
 	a.cfg = r
 	_, _, a.receivers = render(r, testStateDir)
-	te.setConfig(a, te.p, te.redact, te.logger) // no goroutine: the test drains
+	te.setConfig(a, te.p, te.known, te.logger) // no goroutine: the test drains
 
 	body := metricsHead + failedLine("slack", "event-app-blog-warning", "clientError", 0) + failedLine("webhook", "", "other", 0)
 	read := func(context.Context) ([]byte, error) { return []byte(body), nil }

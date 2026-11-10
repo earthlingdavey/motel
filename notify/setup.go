@@ -114,6 +114,13 @@ func setup(sys system, root string, out io.Writer) error {
 		return err
 	}
 	say("masked %s, so the install starts nothing", amService)
+	// One installed by hand before setup runs on Debian's :9093 and
+	// 0.0.0.0:9094, and the mask does not stop it; nor would the socket
+	// be handed to a service already running. Stopped here, it next
+	// starts from its socket, with the drop-in.
+	if err := sys.run("systemctl", "stop", amService); err != nil {
+		return err
+	}
 	if sys.installed(amPackage) {
 		say("%s is installed", amPackage)
 	} else {

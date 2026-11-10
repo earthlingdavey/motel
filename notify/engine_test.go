@@ -11,8 +11,6 @@ import (
 	"github.com/prometheus/client_golang/prometheus/testutil"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zaptest/observer"
-
-	"github.com/smallhoursorg/motel/liveswap"
 )
 
 type recPoster struct {
@@ -58,7 +56,7 @@ func newTestEngine(t *testing.T) *testEngine {
 	te.logger = zap.New(core)
 	te.post = te.p
 	te.active = &App{}
-	te.redact = liveswap.NewRedactor([]string{"NOTIFY_OPS_URL=https://hooks.slack.com/services/T0/B0/secretpart"}, nil) // gitleaks:allow
+	te.known = []string{"NOTIFY_OPS_URL=https://hooks.slack.com/services/T0/B0/secretpart"} // gitleaks:allow
 	return te
 }
 

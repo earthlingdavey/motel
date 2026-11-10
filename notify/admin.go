@@ -18,6 +18,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/smallhoursorg/motel/liveswap"
+	"github.com/smallhoursorg/motel/liveswap/backupdecl"
 )
 
 func init() {
@@ -88,7 +89,7 @@ func (r SendRequest) Check() error {
 	}
 	if r.Subject != "box" {
 		app, ok := strings.CutPrefix(r.Subject, "app:")
-		if !ok || !appNameRe.MatchString(app) {
+		if !ok || !backupdecl.ValidAppName(app) {
 			return errors.New("subject is box or app:<name>")
 		}
 	}
@@ -128,8 +129,6 @@ func (r SendRequest) Check() error {
 	return nil
 }
 
-var appNameRe = regexp.MustCompile(`^[a-z0-9-]{1,63}$`)
-
 func readJSON(r *http.Request, v any) error {
 	if r.Method != http.MethodPost {
 		return caddy.APIError{HTTPStatus: http.StatusMethodNotAllowed, Err: errors.New("POST only")}
@@ -164,7 +163,8 @@ func serveSend(w http.ResponseWriter, r *http.Request) error {
 	if active == nil || active.cfg == nil {
 		return caddy.APIError{HTTPStatus: http.StatusServiceUnavailable, Err: errors.New("this box's Caddyfile has no notify block")}
 	}
-	ev := Event{Name: req.Name, Severity: req.Severity, Instance: req.Instance, Source: "external:" + req.Source, Summary: req.Summary, Kind: kindEvent}
+	ev := Event{Name: req.Name, Severity: req.Severity, Instance: req.Instance, Source: "external:" + req.Source,
+		Summary: req.Summary, Kind: kindEvent, Details: req.Details}
 	if app, ok := strings.CutPrefix(req.Subject, "app:"); ok {
 		if !slices.Contains(active.cfg.apps, app) {
 			return unprocessable(fmt.Errorf("subject %s names no app this box runs", req.Subject))
@@ -252,12 +252,12 @@ func serveTest(w http.ResponseWriter, r *http.Request) error {
 			continue
 		}
 		after := countsFor(body, receiver)
-		if after.failed > before.failed {
-			res.Failed = after.reason
+		if after.delivered(before) {
+			res.Delivered = true
 			return writeJSON(w, res)
 		}
-		if after.sent > before.sent {
-			res.Delivered = true
+		if after.failed > before.failed {
+			res.Failed = after.reason
 			return writeJSON(w, res)
 		}
 	}
@@ -270,11 +270,18 @@ func writeJSON(w http.ResponseWriter, v any) error {
 	return json.NewEncoder(w).Encode(v)
 }
 
-// counts is one receiver's notifications, sent and failed, as
-// Alertmanager counts them with receiver-name-in-metrics on.
+// counts is one receiver's attempts, as Alertmanager counts them with
+// receiver-name-in-metrics on: requests (each attempt to send), failed
+// requests, and notifications given up as failed. A delivery is an
+// attempt that did not fail; alertmanager_notifications_total is raised
+// before the first attempt, so it says nothing of the outcome.
 type counts struct {
-	sent, failed float64
-	reason       string
+	requests, requestsFailed, failed float64
+	reason                           string
+}
+
+func (c counts) delivered(before counts) bool {
+	return c.requests-c.requestsFailed > before.requests-before.requestsFailed
 }
 
 func countsFor(body []byte, receiver string) counts {
@@ -288,8 +295,13 @@ func countsFor(body []byte, receiver string) counts {
 		}
 	}
 	for line := range strings.SplitSeq(string(body), "\n") {
-		rest, ok := strings.CutPrefix(line, "alertmanager_notifications_total{")
-		if !ok {
+		var dst *float64
+		rest, ok := strings.CutPrefix(line, "alertmanager_notification_requests_total{")
+		if ok {
+			dst = &c.requests
+		} else if rest, ok = strings.CutPrefix(line, "alertmanager_notification_requests_failed_total{"); ok {
+			dst = &c.requestsFailed
+		} else {
 			continue
 		}
 		end := strings.LastIndex(rest, "} ")
@@ -298,7 +310,7 @@ func countsFor(body []byte, receiver string) counts {
 		}
 		var v float64
 		if _, err := fmt.Sscan(rest[end+2:], &v); err == nil {
-			c.sent += v
+			*dst += v
 		}
 	}
 	return c
