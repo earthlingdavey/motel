@@ -6,8 +6,8 @@ COMPOSE ?= docker compose
 # the root module — nested modules are excluded from a parent module's
 # pattern even in workspace mode — so test/vet name each module's tree
 # explicitly.
-MODULES ?= . backups box liveswap penaltybox
-PKGS = ./... ./backups/... ./box/... ./liveswap/... ./penaltybox/...
+MODULES ?= . backups box liveswap notify penaltybox
+PKGS = ./... ./backups/... ./box/... ./liveswap/... ./notify/... ./penaltybox/...
 
 # Release version: the tag when present (release.yml passes it in),
 # else a digit-leading dev placeholder that deb version rules accept.
@@ -16,7 +16,7 @@ VERSION ?= $(shell (git describe --tags --exact-match 2>/dev/null || echo v0.0.0
 # Distro image for the package install smoke test (install-test).
 DISTRO ?= debian:13
 
-.PHONY: test test-integration vet tidy tidy-check lint fuzz fuzz-list vulncheck pin-watch-check secretscan usage usage-claude usage-check build package clean-debs install-test e2e e2e-backup soak e2e-logs clean
+.PHONY: test test-integration vet tidy tidy-check lint fuzz fuzz-list vulncheck pin-watch-check secretscan usage usage-claude usage-check build package clean-debs install-test e2e e2e-backup e2e-notify soak e2e-logs clean
 
 test:
 	$(COMPOSE) run --rm dev go test -race -cover $(PKGS)
@@ -52,7 +52,7 @@ test-integration:
 	$(COMPOSE) exec -T dev-systemd /bin/sh /src/test/systemd/ready.sh || status=1; \
 	if [ $$status -eq 0 ]; then \
 		$(COMPOSE) exec -T -e XDG_RUNTIME_DIR=/run/user/0 dev-systemd \
-			go test -count=1 -race -tags integration -v -run Integration -p 1 ./backups/... ./box/... ./liveswap/... ./penaltybox/... || status=1; \
+			go test -count=1 -race -tags integration -v -run Integration -p 1 ./backups/... ./box/... ./liveswap/... ./notify/... ./penaltybox/... || status=1; \
 	fi; \
 	if [ $$status -ne 0 ]; then $(COMPOSE) exec -T dev-systemd journalctl --no-pager -n 100 || true; fi; \
 	$(COMPOSE) rm -sf dev-systemd >/dev/null; \
@@ -341,6 +341,21 @@ e2e:
 		$(COMPOSE) exec -T e2e-motel journalctl --no-pager -n 300 || true; \
 	fi; \
 	$(COMPOSE) down --remove-orphans; \
+	exit $$status
+
+# The notify suite: a box with Debian's Alertmanager and a stub receiver
+# (e2e/notify/run.sh). Its own target, as the backup suite is: its waits
+# are Alertmanager's timings, about four minutes, which no other lane
+# should pay. It takes down only its own services.
+e2e-notify:
+	$(cgroup2_preflight)
+	$(COMPOSE) up --build -d e2e-notify-box e2e-sink e2e-artifacts
+	status=0; \
+	$(COMPOSE) exec -T e2e-notify-box /bin/sh /suite-notify.sh || status=1; \
+	if [ $$status -ne 0 ]; then \
+		$(COMPOSE) exec -T e2e-notify-box journalctl --no-pager -n 200 -u motel -u prometheus-alertmanager -u motel-am.socket || true; \
+	fi; \
+	$(COMPOSE) rm -sf e2e-notify-box e2e-sink >/dev/null; \
 	exit $$status
 
 # The backup suite: a box with systemd, Debian's restic and sqlite3, and

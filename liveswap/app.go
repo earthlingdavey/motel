@@ -280,6 +280,7 @@ type managedApp struct {
 	specMu    sync.RWMutex
 	spec      *appSpec
 	verifiers []deploytrust.Verifier // resolved deploy-auth trust sources; rewired every reload
+	notifier  Notifier               // the notify module's listener, rewired every Start (lifecycle.go)
 	runner    runner
 	prober    prober
 	fetch     fetcher
@@ -458,6 +459,9 @@ type appConfigState struct {
 	verifiers []deploytrust.Verifier
 	logger    *zap.Logger
 	store     stateStore
+	// notifier is the serving config's, which the candidate's Start
+	// replaced (setNotifier, after configure).
+	notifier Notifier
 }
 
 // owner is the config installing this definition (see rollbackConfig).
@@ -487,7 +491,7 @@ func (ma *managedApp) installSpec(owner any, spec *appSpec, verifiers []deploytr
 	defer ma.specMu.Unlock()
 	changed := ma.spec != nil && !specEqual(ma.spec, spec)
 	if ma.spec != nil {
-		ma.prev = &appConfigState{spec: ma.spec, verifiers: ma.verifiers, logger: ma.logger, store: ma.store}
+		ma.prev = &appConfigState{spec: ma.spec, verifiers: ma.verifiers, logger: ma.logger, store: ma.store, notifier: ma.notifier}
 	}
 	ma.configuredBy = owner
 	ma.spec = spec
@@ -542,20 +546,23 @@ type collaborators struct {
 	// onPhase is the request's phase listener, carried with the
 	// snapshot so setPhase needs no lock to find it.
 	onPhase func(phase string)
+	// notifier is the notify module's, or nil (lifecycle.go).
+	notifier Notifier
 }
 
 func (ma *managedApp) snapshot() collaborators {
 	ma.specMu.RLock()
 	defer ma.specMu.RUnlock()
 	return collaborators{
-		spec:    ma.spec,
-		runner:  ma.runner,
-		prober:  ma.prober,
-		fetch:   ma.fetch,
-		clock:   ma.clock,
-		store:   ma.store,
-		journal: ma.journal,
-		logger:  ma.logger,
+		spec:     ma.spec,
+		runner:   ma.runner,
+		prober:   ma.prober,
+		fetch:    ma.fetch,
+		clock:    ma.clock,
+		store:    ma.store,
+		journal:  ma.journal,
+		logger:   ma.logger,
+		notifier: ma.notifier,
 	}
 }
 
@@ -703,6 +710,38 @@ func (ma *managedApp) Deploy(ctx context.Context, req deployRequest) error {
 	return ma.deployLocked(ctx, req, c)
 }
 
+// reportDeploy tells the notifier what a deploy came to (#418's table:
+// failed or refused, a rollback, a success that is off by default
+// there), then that it has ended, which lifts the deploy mute. A
+// success also ends a reported restart loop. The summary names the
+// version and the phase, never the error's text, which can quote what
+// the app printed; a refusal's is liveswap's own words, through the
+// filter.
+func (ma *managedApp) reportDeploy(c collaborators, req deployRequest, result deployResult, err error) {
+	ev := LifecycleEvent{Release: req.version, DeployedBy: req.by}
+	var ve validationError
+	switch {
+	case err == nil && req.rollback:
+		ev.Name, ev.Summary = EventRollback, "rolled back to "+req.version
+	case err == nil:
+		ev.Name, ev.Summary = EventDeploySucceeded, "deployed "+req.version
+	case errors.As(err, &ve):
+		ev.Name, ev.Summary = EventDeployRefused, "deploy of "+req.version+" refused: "+firstLine(ve.msg)
+	default:
+		// What serves now is not said: a first deploy, or one to an app
+		// already down, leaves nothing serving.
+		ev.Name, ev.Summary = EventDeployFailed, "deploy of "+req.version+" failed"
+		if result.Phase != "" {
+			ev.Summary += " in phase " + result.Phase
+		}
+	}
+	ma.lifecycle(c, ev)
+	if err == nil && ma.wd.endLoopAlert() {
+		ma.lifecycle(c, LifecycleEvent{Name: EventWatchdogRecovered, Release: req.version, Summary: "a deploy of " + req.version + " ended the restart loop"})
+	}
+	ma.lifecycle(c, LifecycleEvent{Name: EventDeployEnded, Release: req.version})
+}
+
 // unlockDeploy lets go of deployMu for any holder but the watchdog, and
 // wakes the watchdog: a restart that found the lock held waits for
 // this, not for a timer (handleFailure). A poke where nothing changed
@@ -740,6 +779,7 @@ func (ma *managedApp) deployLocked(ctx context.Context, req deployRequest, c col
 	ma.mu.Lock()
 	ma.phases = nil
 	ma.mu.Unlock()
+	ma.lifecycle(c, LifecycleEvent{Name: EventDeployStarted, Release: req.version, DeployedBy: req.by})
 
 	pin := req.sha256 // a rollback's is read once it is accepted, below
 
@@ -817,6 +857,7 @@ func (ma *managedApp) deployLocked(ctx context.Context, req deployRequest, c col
 		if !relaunch && (err == nil || (accepted && !errors.As(err, &ve))) {
 			ma.recordDeploy(c, result)
 		}
+		ma.reportDeploy(c, req, result, err)
 	}()
 
 	// Before anything is read or written through the app's dirs: one
@@ -1584,6 +1625,9 @@ func (ma *managedApp) publishInstance(c collaborators, inst *instance) error {
 	ma.mu.Lock()
 	ma.current = inst
 	ma.mu.Unlock()
+	if ma.wd.takeRefused() {
+		ma.lifecycle(c, LifecycleEvent{Name: EventRelaunchResolved, Release: inst.version, Summary: "an instance of " + inst.version + " runs again"})
+	}
 	ma.activeSocket.Store(inst.sock)
 	// Persisted before the caps are reconciled: the record is what a
 	// restart recovers, and a sync that waits on the manager must not
@@ -1805,7 +1849,7 @@ func (ma *managedApp) restoreSpec(owner any) bool {
 		return false
 	}
 	p := ma.prev
-	ma.spec, ma.verifiers, ma.logger, ma.store = p.spec, p.verifiers, p.logger, p.store
+	ma.spec, ma.verifiers, ma.logger, ma.store, ma.notifier = p.spec, p.verifiers, p.logger, p.store, p.notifier
 	ma.prev = nil
 	ma.configuredBy = nil
 	if sr, ok := ma.runner.(*systemdRunner); ok {

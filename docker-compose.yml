@@ -109,6 +109,7 @@ services:
     build:
       context: .
       dockerfile: e2e/Dockerfile
+      target: box
     privileged: true
     cgroup: host
     stop_signal: SIGRTMIN+3
@@ -141,12 +142,44 @@ services:
     build:
       context: .
       dockerfile: e2e/Dockerfile
+      target: box
     command: ["/usr/bin/motel", "run", "--config", "/etc/motel/Caddyfile"]
     # Plain `motel run`, not systemd: the image's SIGRTMIN+3 stop
     # signal would be ignored and cost a 10s SIGKILL wait on teardown.
     stop_signal: SIGTERM
     volumes:
       - ./e2e/penaltybox/upstream.Caddyfile:/etc/motel/Caddyfile:ro
+
+  # The notify suite's box and receiver (`make e2e-notify`), apart from
+  # the e2e stack as the backup suite's are: its waits are Alertmanager's
+  # own timings (a 30 s group_wait, a one-minute tick), which every other
+  # lane would otherwise pay. The box is e2e-motel's image with Debian's
+  # prometheus-alertmanager installed (e2e/Dockerfile, notify-box); the
+  # receiver is a stub that logs each delivery with its time.
+  e2e-notify-box:
+    build:
+      context: .
+      dockerfile: e2e/Dockerfile
+      target: notify-box
+    privileged: true
+    cgroup: host
+    stop_signal: SIGRTMIN+3
+    tmpfs:
+      - /run
+      - /run/lock
+    volumes:
+      - /sys/fs/cgroup:/sys/fs/cgroup:rw
+      - ./e2e/lib.sh:/lib.sh:ro
+      - ./e2e/notify/run.sh:/suite-notify.sh:ro
+    depends_on:
+      - e2e-artifacts
+      - e2e-sink
+
+  e2e-sink:
+    image: python:3.14-slim
+    command: ["python3", "-I", "/sink.py"]
+    volumes:
+      - ./e2e/notify/sink.py:/sink.py:ro
 
   # The backup suite's storage and its box (`make e2e-backup`), apart
   # from the e2e stack above: a backup talks to neither motel nor the

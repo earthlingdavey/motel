@@ -3,9 +3,11 @@ package liveswap
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io/fs"
 	"math/rand/v2"
 	"net"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -81,6 +83,73 @@ type watchdogState struct {
 	skipGraceFor     handle // superviseInstance re-arms no grace for this handle
 	lastFailure      string
 	jitter           func() float64 // test seam; nil = rand.Float64
+	// What the notify module was told (lifecycle.go): alerted while a
+	// restart loop is reported and not yet over, recovering once its
+	// recovery is reported and the hold runs, refused while a relaunch
+	// refusal stands.
+	alerted, recovering, refused bool
+}
+
+// throttledAlert records that the restart loop is reported; it says
+// whether a report is due: on the throttle itself, and on any failure
+// while the loop is reported, which ends a recovery's hold.
+func (w *watchdogState) throttledAlert(throttling bool) bool {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if !throttling && !w.alerted {
+		return false
+	}
+	due := throttling || w.recovering
+	w.alerted, w.recovering = true, false
+	return due
+}
+
+// healthyAlert is a healthy probe: it says whether the recovery is to
+// be reported (the first healthy probe of a reported loop), and ends
+// the loop's report once the app has been healthy for hold, the span
+// after which the backoff resets too.
+func (w *watchdogState) healthyAlert(now time.Time, hold time.Duration) bool {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if !w.alerted {
+		return false
+	}
+	if !w.healthySince.IsZero() && now.Sub(w.healthySince) >= hold {
+		w.alerted, w.recovering = false, false
+		return false
+	}
+	if w.recovering {
+		return false
+	}
+	w.recovering = true
+	return true
+}
+
+// endLoopAlert ends a reported loop, and says whether one was reported:
+// a deploy that succeeded (#418: "or a deploy succeeds"), or the
+// watchdog turned off, after which nothing would ever report it healthy.
+func (w *watchdogState) endLoopAlert() bool {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	was := w.alerted
+	w.alerted, w.recovering = false, false
+	return was
+}
+
+func (w *watchdogState) setRefused() bool {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	was := w.refused
+	w.refused = true
+	return !was
+}
+
+func (w *watchdogState) takeRefused() bool {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	was := w.refused
+	w.refused = false
+	return was
 }
 
 // watchdogSnapshot is the status-endpoint view.
@@ -313,6 +382,12 @@ func (ma *managedApp) watchdogLoop(ctx context.Context) {
 func (ma *managedApp) parkWatchdog(ctx context.Context, c collaborators) {
 	if c.spec != nil && !c.spec.watchdogOn {
 		ma.wd.setState(wdStateDisabled)
+		// Every way a reload turns the watchdog off ends here, mid-wait
+		// or not: a loop it was reporting is over, since no probe will
+		// run to say so.
+		if ma.wd.endLoopAlert() {
+			ma.lifecycle(c, LifecycleEvent{Name: EventWatchdogRecovered, Summary: "the watchdog was turned off, which ends the restart loop's report"})
+		}
 	} else {
 		ma.wd.setState(wdStateIdle)
 	}
@@ -385,6 +460,7 @@ func (ma *managedApp) superviseInstance(ctx context.Context, c collaborators, in
 			if spec.healthPath == "" {
 				// health_path off: liveness is the whole check.
 				ma.wd.recordHealthy(c.clock.Now(), backoffResetAfter(spec))
+				ma.noteHealthy(c, spec, inst.version)
 				continue
 			}
 			err := c.prober.probeOnce(ctx, inst.sock, spec.healthPath, spec.healthTimeout)
@@ -396,14 +472,17 @@ func (ma *managedApp) superviseInstance(ctx context.Context, c collaborators, in
 			}
 			if err == nil {
 				ma.wd.recordHealthy(c.clock.Now(), backoffResetAfter(spec))
+				ma.noteHealthy(c, spec, inst.version)
 				continue
 			}
 			if c.clock.Now().Before(graceUntil) {
 				ma.wd.noteFlap() // don't count, but break the healthy streak
+				ma.noteUnhealthy(c, inst.version)
 				c.logger.Debug("watchdog: probe failed during grace", zap.Error(err))
 				continue
 			}
 			n := ma.wd.recordFailure(err.Error())
+			ma.noteUnhealthy(c, inst.version)
 			c.logger.Warn("watchdog: health probe failed",
 				zap.String("kind", classifyProbeErr(err)),
 				zap.Int("consecutive", n),
@@ -427,6 +506,10 @@ func (ma *managedApp) handleFailure(ctx context.Context, c collaborators, inst *
 	// Deploys that end from here on, leaving inst current, ended over
 	// it: the backoff below is not waited out after one.
 	deploys := ma.deploysEnded.Load()
+	if ma.wd.throttledAlert(false) {
+		ma.lifecycle(c, LifecycleEvent{Name: EventWatchdogThrottled, Release: inst.version,
+			Summary: "the restart loop goes on: " + kind.String() + " again before the app was healthy for long"})
+	}
 	if !c.runner.Alive(inst.handle) {
 		// Never route to a dead port while pacing the restart: a fast
 		// clean 5xx beats dialing it, and the freed port could be
@@ -451,6 +534,11 @@ func (ma *managedApp) handleFailure(ctx context.Context, c collaborators, inst *
 		}
 		wait := ma.wd.untilBudgetFrees(c.clock.Now(), spec.wdWindow)
 		ma.wd.setState(wdStateThrottled)
+		if ma.wd.throttledAlert(true) {
+			ma.lifecycle(c, LifecycleEvent{Name: EventWatchdogThrottled, Release: inst.version,
+				Summary: fmt.Sprintf("restart loop: %d restarts in %s spent the watchdog's budget (last cause: %s); the next waits %s",
+					spec.wdRestarts, spec.wdWindow, kind, wait.Round(time.Second))})
+		}
 		alive := c.runner.Alive(inst.handle)
 		if !alive {
 			ma.unrouteIf(inst)
@@ -617,6 +705,12 @@ func (ma *managedApp) handleFailure(ctx context.Context, c collaborators, inst *
 		// cause is fixed, launches the app again.
 		ma.dropIf(inst)
 		ma.wd.setLastFailure(err.Error())
+		if ma.wd.setRefused() {
+			// The refusal's own text names the release's machine or its
+			// command, never a log tail; the filter runs over it anyway.
+			ma.lifecycle(c, LifecycleEvent{Name: EventRelaunchRefused, Release: inst.version,
+				Summary: "the watchdog's relaunch of " + inst.version + " was refused, so the app is down: " + firstLine(err.Error())})
+		}
 		c.logger.Error("watchdog: relaunch refused; the app stays down until a deploy of another version (or a rollback to one), or a reload once the cause is fixed, launches it",
 			zap.String("version", inst.version), zap.Error(err))
 		return true
@@ -647,6 +741,36 @@ func (ma *managedApp) handleFailure(ctx context.Context, c collaborators, inst *
 		zap.Int("pid", newInst.handle.state().PID),
 		zap.Duration("backoff_was", d))
 	return true
+}
+
+// noteUnhealthy is a failed probe: one inside a reported recovery's hold
+// ends the hold (the loop is reported again), so a recovery is told
+// only for an app that stayed healthy the whole hold, whether or not
+// its failures reach the restart threshold.
+func (ma *managedApp) noteUnhealthy(c collaborators, version string) {
+	if ma.wd.throttledAlert(false) {
+		ma.lifecycle(c, LifecycleEvent{Name: EventWatchdogThrottled, Release: version,
+			Summary: "the restart loop goes on: a health probe failed before the app was healthy for long"})
+	}
+}
+
+// noteHealthy reports the end of a restart loop on the first healthy
+// probe after it, with the hold the notify module waits before it says
+// so (max(30s, watchdog_grace)).
+func (ma *managedApp) noteHealthy(c collaborators, spec *appSpec, version string) {
+	hold := backoffResetAfter(spec)
+	if ma.wd.healthyAlert(c.clock.Now(), hold) {
+		ma.lifecycle(c, LifecycleEvent{Name: EventWatchdogRecovered, Release: version, Hold: hold,
+			Summary: "healthy again after a restart loop"})
+	}
+}
+
+// firstLine is s up to its first line break.
+func firstLine(s string) string {
+	if i := strings.IndexAny(s, "\r\n"); i >= 0 {
+		return s[:i]
+	}
+	return s
 }
 
 // watchdogDisabled re-reads the live spec: the answer to "may I still

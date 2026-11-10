@@ -884,3 +884,33 @@ func TestMatchClaimsNumeric(t *testing.T) {
 		t.Error("array-valued claim must not match a string constraint")
 	}
 }
+
+// TestSourceLabelAndPinnedClaims holds the two accessors notify's
+// bindings read to the source Build makes: the preset's issuer behind
+// the label, `subject` folded into `sub`, and nothing a token carries.
+func TestSourceLabelAndPinnedClaims(t *testing.T) {
+	srcs, err := Build([]TrustConfig{{Kind: "github", Audience: "a", Claims: map[string]string{"repository": "org/blog"}}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := srcs[0]
+	if got := s.Label(); got != "oidc:"+githubIssuer {
+		t.Fatalf("label = %q", got)
+	}
+	if v, ok := s.PinnedClaim("repository"); !ok || v != "org/blog" {
+		t.Fatalf("repository = %q, %v", v, ok)
+	}
+	if _, ok := s.PinnedClaim("actor"); ok {
+		t.Fatal("a claim the source does not pin was reported pinned")
+	}
+	srcs, err = Build([]TrustConfig{{Kind: "gitlab", Audience: "a", Subject: "project_path:org/app:ref_type:branch:ref:main"}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v, ok := srcs[0].PinnedClaim("sub"); !ok || !strings.HasPrefix(v, "project_path:org/app") {
+		t.Fatalf("sub = %q, %v", v, ok)
+	}
+	if l := localTrust(nil, "a").Label(); l != "local:test-key" {
+		t.Fatalf("local label = %q", l)
+	}
+}

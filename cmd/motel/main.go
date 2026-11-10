@@ -1,7 +1,8 @@
 // Command motel is the smallhours app server: Caddy with
 // zero-downtime app deploys (liveswap), rate-limit hint enforcement
 // (penaltybox), the config channel (box, being built: see
-// box/DESIGN-box.md) and HTTP caching (Souin + Otter storage)
+// box/DESIGN-box.md), notify (who motel tells, through Alertmanager:
+// notify/DESIGN-notify.md) and HTTP caching (Souin + Otter storage)
 // compiled in.
 // It is distributed as its own binary and OS packages — see the repo
 // README — and behaves exactly like a custom Caddy build: same CLI,
@@ -22,6 +23,7 @@ import (
 	// non-dumpable before main runs (see liveswap/harden).
 	_ "github.com/smallhoursorg/motel/box"
 	_ "github.com/smallhoursorg/motel/liveswap"
+	_ "github.com/smallhoursorg/motel/notify"
 	_ "github.com/smallhoursorg/motel/penaltybox"
 
 	// HTTP cache (Souin) with in-memory Otter storage.

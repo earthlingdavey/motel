@@ -61,6 +61,9 @@ type Handler struct {
 	app     *App
 	logger  *zap.Logger
 	limiter *deploytrust.Limiter
+	// stage is a test seam for stageUpload; nil is stageUpload. A full
+	// disk cannot be made in a test that runs as root.
+	stage func(body io.Reader, tmpDir string, maxBytes int64) (string, string, error)
 }
 
 // CaddyModule returns the Caddy module information.
@@ -231,9 +234,17 @@ func (h *Handler) deployPush(w http.ResponseWriter, r *http.Request, ma *managed
 		// refusal comes before it.
 		c.logger.Error("deploy failed", zap.String("version", version), zap.String("via", by),
 			zap.String("source", "push"), zap.String("remote", r.RemoteAddr), zap.Error(err))
+		// Before the pipeline, so its own report does not run: the box's
+		// failure, told as the pipeline's would be.
+		ma.lifecycle(c, LifecycleEvent{Name: EventDeployFailed, Release: version, DeployedBy: by,
+			Summary: "deploy of " + version + " failed before it began: the app's directories are not as motel made them"})
 		return h.mapDeployResult(w, ma, err)
 	}
-	archive, digest, err := stageUpload(r.Body, spec.dirs.tmp, spec.maxArtifactSize)
+	stage := h.stage
+	if stage == nil {
+		stage = stageUpload
+	}
+	archive, digest, err := stage(r.Body, spec.dirs.tmp, spec.maxArtifactSize)
 	var stgErr *stagingError
 	switch {
 	case errors.Is(err, errArtifactTooLarge):
@@ -241,7 +252,10 @@ func (h *Handler) deployPush(w http.ResponseWriter, r *http.Request, ma *managed
 			"error": fmt.Sprintf("uploaded artifact exceeds max_artifact_size (%d bytes)", spec.maxArtifactSize)}, ma.redactorFor(statusSnapshot{}))
 	case errors.As(err, &stgErr):
 		// A local filesystem failure (mkdir/create/write/close, e.g. a
-		// full disk) is a server error, like a failed URL download.
+		// full disk) is a server error, like a failed URL download, and
+		// reported as one: the pipeline's own report never runs.
+		ma.lifecycle(c, LifecycleEvent{Name: EventDeployFailed, Release: version, DeployedBy: by,
+			Summary: "deploy of " + version + " failed before it began: the upload could not be staged on the box"})
 		return RespondJSON(w, http.StatusInternalServerError, map[string]string{"error": "staging upload: " + err.Error()}, ma.redactorFor(statusSnapshot{}))
 	case err != nil:
 		// Otherwise the body read itself failed — a bad request.
