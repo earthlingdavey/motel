@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/caddyserver/caddy/v2"
+	"github.com/caddyserver/caddy/v2/modules/caddyevents"
 	"go.uber.org/zap"
 
 	"github.com/smallhoursorg/motel/liveswap"
@@ -38,11 +39,16 @@ type App struct {
 	SecretsFile           string `json:"secrets_file,omitempty"`
 	StateDir              string `json:"state_dir,omitempty"`
 	Socket                string `json:"alertmanager,omitempty"`
+	// BackupRecord is the backup record's path; "off" reads none.
+	BackupRecord string `json:"backup_record,omitempty"`
 
 	logger   *zap.Logger
 	cfg      *resolved
 	rendered []byte            // alertmanager.yml, rendered in Provision
 	files    map[string]string // the URL files it names
+	// diskPaths are the directories whose filesystems the disk source
+	// measures: Caddy's data, the apps' root, notify's own state.
+	diskPaths []string
 }
 
 // CaddyModule returns the Caddy module information.
@@ -59,7 +65,7 @@ func (App) CaddyModule() caddy.ModuleInfo {
 // it was.
 func (a *App) Provision(ctx caddy.Context) error {
 	a.logger = ctx.Logger()
-	trust, err := appTrust(ctx)
+	trust, ls, err := appTrust(ctx)
 	if err != nil {
 		return err
 	}
@@ -72,6 +78,29 @@ func (a *App) Provision(ctx caddy.Context) error {
 	}
 	a.rendered, a.files = render(a.cfg, a.stateDir())
 	theEngine.failures.register(ctx.GetMetricsRegistry())
+
+	// The sources. liveswap's events reach the engine through its
+	// Notifier; CertMagic's through Caddy's events app, subscribed by
+	// name (never all events); the backup record and the disks are
+	// polled by the engine.
+	a.diskPaths = []string{caddy.AppDataDir(), a.stateDir()}
+	if ls != nil {
+		ls.SetNotifier(lifecycleSink{theEngine})
+		a.diskPaths = append([]string{ls.Root}, a.diskPaths...)
+	}
+	evApp, err := ctx.App("events")
+	if err != nil {
+		return fmt.Errorf("notify: the events app: %w", err)
+	}
+	events, ok := evApp.(*caddyevents.App)
+	if !ok {
+		return fmt.Errorf("notify: the events app is a %T", evApp)
+	}
+	for _, name := range []string{"cert_failed", "cert_obtained"} {
+		if err := events.On(name, tlsHandler{theEngine}); err != nil {
+			return fmt.Errorf("notify: subscribing to %s: %w", name, err)
+		}
+	}
 	if a.AllowInsecureChannels {
 		a.logger.Warn("notify: allow_insecure_channels is on: channel URLs may be http and private addresses, which Alertmanager reaches from the network namespace every app shares; for test rigs only")
 	}
@@ -82,17 +111,17 @@ func (a *App) Provision(ctx caddy.Context) error {
 // config. With no liveswap block there are no apps, and every event is
 // the box's. AppIfConfigured, not App: App would instantiate an empty
 // liveswap, whose Start stops every app unit it does not know.
-func appTrust(ctx caddy.Context) (map[string][]TrustSource, error) {
+func appTrust(ctx caddy.Context) (map[string][]TrustSource, *liveswap.App, error) {
 	mod, err := ctx.AppIfConfigured("liveswap")
 	if errors.Is(err, caddy.ErrNotConfigured) {
-		return map[string][]TrustSource{}, nil
+		return map[string][]TrustSource{}, nil, nil
 	}
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	ls, ok := mod.(*liveswap.App)
 	if !ok {
-		return nil, fmt.Errorf("notify: the liveswap app is a %T", mod)
+		return nil, nil, fmt.Errorf("notify: the liveswap app is a %T", mod)
 	}
 	out := map[string][]TrustSource{}
 	for app, sources := range ls.TrustSources() {
@@ -103,7 +132,7 @@ func appTrust(ctx caddy.Context) (map[string][]TrustSource, error) {
 			out[app] = []TrustSource{}
 		}
 	}
-	return out, nil
+	return out, ls, nil
 }
 
 // maxSecretsFile is how much of the secrets file is read: the box's
@@ -193,4 +222,14 @@ func (a *App) socket() string {
 		return DefaultSocket
 	}
 	return a.Socket
+}
+
+func (a *App) backupRecord() string {
+	switch a.BackupRecord {
+	case "":
+		return DefaultBackupRecord
+	case "off":
+		return ""
+	}
+	return a.BackupRecord
 }

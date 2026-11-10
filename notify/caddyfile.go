@@ -39,6 +39,7 @@ func parseGlobalOption(d *caddyfile.Dispenser, existing any) (any, error) {
 //	    secrets_file <path>
 //	    state_dir <path>
 //	    alertmanager <unix socket path>
+//	    backup_record <path>|off
 //	}
 //
 // The grammar is checked here, line by line; what needs the whole
@@ -120,7 +121,7 @@ func (a *App) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
 				return d.ArgErr()
 			}
 			a.AllowInsecureChannels = true
-		case "secrets_file", "state_dir", "alertmanager":
+		case "secrets_file", "state_dir", "alertmanager", "backup_record":
 			name := d.Val()
 			if !d.NextArg() {
 				return d.ArgErr()
@@ -134,6 +135,8 @@ func (a *App) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
 				a.SecretsFile = v
 			case "state_dir":
 				a.StateDir = v
+			case "backup_record":
+				a.BackupRecord = v
 			default:
 				a.Socket = v
 			}

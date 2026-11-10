@@ -20,6 +20,7 @@ replace (
 require (
 	github.com/caddyserver/caddy/v2 v2.11.7
 	github.com/prometheus/client_golang v1.25.0
+	github.com/smallhoursorg/motel/backups v0.0.0-00010101000000-000000000000
 	github.com/smallhoursorg/motel/liveswap v0.0.0-00010101000000-000000000000
 	go.uber.org/zap v1.28.0
 	go.yaml.in/yaml/v3 v3.0.5

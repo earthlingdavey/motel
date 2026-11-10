@@ -1,0 +1,223 @@
+package liveswap
+
+import (
+	"context"
+	"errors"
+	"slices"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+)
+
+type recNotifier struct {
+	mu  sync.Mutex
+	evs []LifecycleEvent
+}
+
+func (r *recNotifier) Lifecycle(ev LifecycleEvent) {
+	r.mu.Lock()
+	r.evs = append(r.evs, ev)
+	r.mu.Unlock()
+}
+
+func (r *recNotifier) names() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var out []string
+	for _, e := range r.evs {
+		out = append(out, e.Name)
+	}
+	return out
+}
+
+func (r *recNotifier) find(name string) (LifecycleEvent, bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, e := range r.evs {
+		if e.Name == name {
+			return e, true
+		}
+	}
+	return LifecycleEvent{}, false
+}
+
+func (r *recNotifier) reset() {
+	r.mu.Lock()
+	r.evs = nil
+	r.mu.Unlock()
+}
+
+func notifiedRig(t *testing.T) (*testRig, *recNotifier) {
+	t.Helper()
+	rig := newTestRig(t)
+	n := &recNotifier{}
+	rig.ma.setNotifier(n)
+	return rig, n
+}
+
+func TestLifecycleDeploySucceeded(t *testing.T) {
+	rig, n := notifiedRig(t)
+	must(t, rig.ma.Deploy(context.Background(), deployRequest{url: "https://x/1", version: "v1", by: "local:/k.pub sub=alice"}))
+	if got := n.names(); !slices.Equal(got, []string{EventDeployStarted, EventDeploySucceeded, EventDeployEnded}) {
+		t.Fatalf("events = %v", got)
+	}
+	ev, _ := n.find(EventDeploySucceeded)
+	if ev.App != "demo" || ev.Release != "v1" || ev.DeployedBy != "local:/k.pub sub=alice" || ev.Summary != "deployed v1" {
+		t.Fatalf("event = %+v", ev)
+	}
+}
+
+func TestLifecycleDeployFailedNamesThePhaseNotTheError(t *testing.T) {
+	rig, n := notifiedRig(t)
+	rig.fetch.err = errors.New("fetching: the app printed SECRET-OUTPUT on stderr")
+	if err := rig.ma.Deploy(context.Background(), deployRequest{url: "https://x/1", version: "v1"}); err == nil {
+		t.Fatal("the deploy succeeded")
+	}
+	ev, ok := n.find(EventDeployFailed)
+	if !ok {
+		t.Fatalf("events = %v", n.names())
+	}
+	if strings.Contains(ev.Summary, "SECRET-OUTPUT") || !strings.Contains(ev.Summary, "deploy of v1 failed") {
+		t.Fatalf("summary = %q", ev.Summary)
+	}
+	if got := n.names(); got[len(got)-1] != EventDeployEnded {
+		t.Fatalf("the mute is not lifted last: %v", got)
+	}
+}
+
+func TestLifecycleDeployRefused(t *testing.T) {
+	rig, n := notifiedRig(t)
+	deployV1(t, rig)
+	n.reset()
+	// A version already on disk: the request's own mistake, a 422.
+	must(t, rig.ma.Deploy(context.Background(), deployRequest{url: "https://x/2", version: "v2"}))
+	n.reset()
+	err := rig.ma.Deploy(context.Background(), deployRequest{url: "https://x/1b", version: "v1"})
+	var ve validationError
+	if !errors.As(err, &ve) {
+		t.Fatalf("err = %v", err)
+	}
+	ev, ok := n.find(EventDeployRefused)
+	if !ok || !strings.Contains(ev.Summary, "refused") {
+		t.Fatalf("events = %v, refused = %+v", n.names(), ev)
+	}
+}
+
+func TestLifecycleRollback(t *testing.T) {
+	rig, n := notifiedRig(t)
+	deployV1(t, rig)
+	must(t, rig.ma.Deploy(context.Background(), deployRequest{url: "https://x/2", version: "v2"}))
+	n.reset()
+	must(t, rig.ma.Deploy(context.Background(), deployRequest{version: "v1", rollback: true}))
+	ev, ok := n.find(EventRollback)
+	if !ok || ev.Summary != "rolled back to v1" {
+		t.Fatalf("events = %v", n.names())
+	}
+}
+
+// TestLifecycleWatchdogLoop: a restart loop is reported at the throttle,
+// its recovery at the first healthy probe with max(30s, grace) as the
+// hold, and a deploy that follows a loop ends it.
+func TestLifecycleWatchdogLoop(t *testing.T) {
+	rig, n := notifiedRig(t)
+	rig.spec.wdRestarts = 1
+	rig.spec.wdWindow = 30 * time.Second
+	rig.spec.wdGrace = 45 * time.Second
+	deployV1(t, rig)
+	rig.startWatchdogT(t)
+	waitUntil(t, "watchdog to arm", func() bool {
+		s := rig.ma.wd.currentState()
+		return s == wdStateGrace || s == wdStateWatching
+	})
+	rig.runner.handleAt(0).kill()
+	advanceUntil(t, rig, time.Second, "the budgeted restart", func() bool { return rig.runner.startCount() == 2 })
+	rig.runner.handleAt(1).kill()
+	advanceUntil(t, rig, time.Second, "the throttle", func() bool { return rig.ma.wd.currentState() == wdStateThrottled })
+	waitUntil(t, "watchdog_throttled", func() bool { _, ok := n.find(EventWatchdogThrottled); return ok })
+	ev, _ := n.find(EventWatchdogThrottled)
+	if ev.Release != "v1" || !strings.Contains(ev.Summary, "restart loop") {
+		t.Fatalf("throttled = %+v", ev)
+	}
+	if _, ok := n.find(EventWatchdogRecovered); ok {
+		t.Fatal("recovered while throttled")
+	}
+	// The window frees, the watchdog restarts, the probes pass.
+	advanceUntil(t, rig, 5*time.Second, "watchdog_recovered", func() bool { _, ok := n.find(EventWatchdogRecovered); return ok })
+	ev, _ = n.find(EventWatchdogRecovered)
+	if ev.Hold != 45*time.Second {
+		t.Fatalf("hold = %v, want the watchdog grace", ev.Hold)
+	}
+	count := func(name string) int {
+		c := 0
+		for _, x := range n.names() {
+			if x == name {
+				c++
+			}
+		}
+		return c
+	}
+	if got := count(EventWatchdogRecovered); got != 1 {
+		t.Fatalf("recovered reported %d times", got)
+	}
+}
+
+func TestLifecycleDeployEndsALoop(t *testing.T) {
+	rig, n := notifiedRig(t)
+	rig.spec.wdRestarts = 1
+	deployV1(t, rig)
+	rig.startWatchdogT(t)
+	waitUntil(t, "watchdog to arm", func() bool {
+		s := rig.ma.wd.currentState()
+		return s == wdStateGrace || s == wdStateWatching
+	})
+	rig.runner.handleAt(0).kill()
+	advanceUntil(t, rig, time.Second, "the budgeted restart", func() bool { return rig.runner.startCount() == 2 })
+	rig.runner.handleAt(1).kill()
+	advanceUntil(t, rig, time.Second, "the throttle", func() bool { return rig.ma.wd.currentState() == wdStateThrottled })
+	waitUntil(t, "watchdog_throttled", func() bool { _, ok := n.find(EventWatchdogThrottled); return ok })
+	must(t, rig.ma.Deploy(context.Background(), deployRequest{url: "https://x/2", version: "v2"}))
+	ev, ok := n.find(EventWatchdogRecovered)
+	if !ok || ev.Release != "v2" || ev.Hold != 0 {
+		t.Fatalf("recovered = %+v, %v (events %v)", ev, ok, n.names())
+	}
+}
+
+func TestLifecycleNoNotifierIsSilent(t *testing.T) {
+	rig := newTestRig(t)
+	deployV1(t, rig) // no notifier: nothing to call, nothing panics
+}
+
+func TestWatchdogAlertFlags(t *testing.T) {
+	var w watchdogState
+	now := time.Unix(0, 0)
+	if w.throttledAlert(false) {
+		t.Fatal("a failure with no loop reported is no report")
+	}
+	for range 2 {
+		if !w.throttledAlert(true) {
+			t.Fatal("each throttle is reported")
+		}
+	}
+	if w.throttledAlert(false) {
+		t.Fatal("a failure inside a loop, before any recovery, is not reported again")
+	}
+	w.healthySince = now
+	if !w.healthyAlert(now, 30*time.Second) {
+		t.Fatal("the first healthy probe of a loop is its recovery")
+	}
+	if w.healthyAlert(now.Add(time.Second), 30*time.Second) {
+		t.Fatal("the recovery is reported once")
+	}
+	if !w.throttledAlert(false) {
+		t.Fatal("a failure during the recovery's hold is reported, which ends the hold")
+	}
+	w.healthySince = now
+	_ = w.healthyAlert(now, 30*time.Second)
+	if w.healthyAlert(now.Add(31*time.Second), 30*time.Second) || w.alerted {
+		t.Fatal("past the hold the loop's report is over")
+	}
+	if !w.setRefused() || w.setRefused() || !w.takeRefused() || w.takeRefused() {
+		t.Fatal("refused flag")
+	}
+}

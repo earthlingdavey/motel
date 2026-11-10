@@ -3,6 +3,7 @@ package notify
 import (
 	"context"
 	"errors"
+	"slices"
 	"sync"
 	"time"
 
@@ -167,6 +168,13 @@ type engine struct {
 	cancel  context.CancelFunc
 	done    chan struct{}
 
+	// The polled sources, and what the active config points them at.
+	backup     backupPoller
+	disk       diskPoller
+	backupPath string
+	diskPaths  []string
+	lastDisk   time.Time
+
 	failures *failCounter
 }
 
@@ -230,6 +238,19 @@ func (e *engine) report(ev Event) {
 	}
 	key := ev.key()
 	st := e.states[key]
+	if ev.Firing && st != nil && st.posted && st.firing && st.ev.Severity != ev.Severity {
+		// The same key at another severity (a disk from 80 to 90 %) is
+		// another alert to Alertmanager, whose labels carry it: the old
+		// one is ended in the post that fires the new.
+		if e.bucketFor(key).take(now) {
+			old := st.ev
+			e.journal(ev, "firing", zap.String("was", old.Severity))
+			e.enqueue(&pending{key: key, alerts: []amAlert{stateAlertFor(old, st.startsAt, now), stateAlertFor(ev, now, time.Time{})}, first: now, journal: true})
+			st.ev, st.startsAt, st.lastPost, st.clearSince = ev, now, now, time.Time{}
+			return
+		}
+		ev.Severity = st.ev.Severity // held at the old one until the bucket allows
+	}
 	if ev.Firing {
 		if st == nil {
 			st = &stateAlert{}
@@ -474,6 +495,30 @@ func (e *engine) attempt(ctx context.Context) (again bool, wait time.Duration) {
 	}
 }
 
+// poll asks the polled sources, outside the lock: the disk every
+// minute, the backup record every five.
+func (e *engine) poll() {
+	e.mu.Lock()
+	if e.active == nil {
+		e.mu.Unlock()
+		return
+	}
+	now := e.now()
+	path, paths := e.backupPath, slices.Clone(e.diskPaths)
+	diskDue := now.Sub(e.lastDisk) >= time.Minute
+	if diskDue {
+		e.lastDisk = now
+	}
+	e.mu.Unlock()
+	evs := e.backup.poll(now, path)
+	if diskDue {
+		evs = append(evs, e.disk.poll(paths)...)
+	}
+	for _, ev := range evs {
+		e.report(ev)
+	}
+}
+
 // run is the engine's goroutine: the queue, and a tick every
 // tickEvery.
 func (e *engine) run(ctx context.Context, tickEvery time.Duration) {
@@ -481,6 +526,7 @@ func (e *engine) run(ctx context.Context, tickEvery time.Duration) {
 	ticker := time.NewTicker(tickEvery)
 	defer ticker.Stop()
 	e.tick()
+	e.poll()
 	var retry <-chan time.Time
 	for {
 		if retry == nil {
@@ -500,6 +546,7 @@ func (e *engine) run(ctx context.Context, tickEvery time.Duration) {
 			return
 		case <-ticker.C:
 			e.tick()
+			e.poll()
 		case <-e.wake:
 		case <-retry:
 			retry = nil
@@ -514,6 +561,7 @@ func (e *engine) configure(a *App, post poster, redact *liveswap.Redactor, logge
 	defer e.mu.Unlock()
 	e.active, e.post, e.redact, e.logger = a, post, redact, logger
 	e.deploySucceeded = a.DeploySucceeded
+	e.backupPath, e.diskPaths = a.backupRecord(), a.diskPaths
 	if !e.running {
 		ctx, cancel := context.WithCancel(context.Background())
 		e.running, e.cancel, e.done = true, cancel, make(chan struct{})

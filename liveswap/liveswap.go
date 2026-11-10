@@ -98,10 +98,13 @@ type App struct {
 
 	logger  *zap.Logger
 	managed map[string]*managedApp
-	specs   map[string]*appSpec // built in Provision, installed at Start
-	clients *fetchClients
-	started bool     // Start ran: this config counts as live until Cleanup
-	pooled  []string // pool keys this config instance holds references to
+	// notifier is the notify module's listener (SetNotifier), handed
+	// to every app at Start; nil reports to nobody.
+	notifier Notifier
+	specs    map[string]*appSpec // built in Provision, installed at Start
+	clients  *fetchClients
+	started  bool     // Start ran: this config counts as live until Cleanup
+	pooled   []string // pool keys this config instance holds references to
 	// recoverCancel/recoverWG own the boot-recovery goroutines this
 	// config started, so Cleanup can end them before rolling back or
 	// releasing anything.
@@ -758,6 +761,7 @@ func (a *App) Start() error {
 	}
 	for name, ma := range a.managed {
 		ma.configure(a, a.specs[name], a.appVerifiers[name], a.logger.Named(name), a.clients, a.systemdConn())
+		ma.setNotifier(a.notifier)
 		ma.startWatchdog()
 	}
 	a.started = true
