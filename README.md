@@ -64,6 +64,13 @@ Debian's unit starts listening on a port the moment it is installed.
 `motel notify setup`, as root, masks it, installs it and starts it on
 a unix socket only.
 
+It suggests `victoria-metrics` (Debian's, 143 MB installed, vmalert
+included) for the metrics store ([notify/DESIGN-metrics.md](notify/DESIGN-metrics.md),
+experimental), for the same reason: its unit listens on `0.0.0.0:8428`,
+unauthenticated, once installed. `motel metrics setup`, as root, after
+`motel notify setup`, masks it, installs it and starts it in a network
+namespace of its own, reached through a unix socket only.
+
 <details>
 <summary><b>Without the package</b> — the raw binary, for other systemd hosts</summary>
 

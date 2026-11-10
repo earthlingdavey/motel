@@ -1,0 +1,16 @@
+# Written by `motel metrics setup` (notify/DESIGN-metrics.md, "The shape").
+# Started by motel-vm.socket: joins the store's namespace and forwards
+# each connection to its 127.0.0.1:8428; exits after five idle minutes.
+[Unit]
+Description=Bridge /run/motel-metrics/vm.sock to the metrics store in its namespace
+Requires=victoria-metrics.service motel-vm.socket
+After=victoria-metrics.service motel-vm.socket
+
+[Service]
+Type=notify
+NetworkNamespacePath=/run/netns/motel-metrics
+ExecStart=/usr/lib/systemd/systemd-socket-proxyd --exit-idle-time=5min 127.0.0.1:8428
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+NoNewPrivileges=yes

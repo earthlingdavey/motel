@@ -1,0 +1,16 @@
+# Written by `motel metrics setup` (notify/DESIGN-metrics.md, "The shape").
+# Started by motel-am-proxy.socket: forwards vmalert's posts, and the
+# store's scrape of Alertmanager's /metrics, to Alertmanager's socket.
+[Unit]
+Description=Bridge the metrics namespace's 127.0.0.1:9093 to Alertmanager's unix socket
+Requires=motel-am-proxy.socket motel-am.socket
+After=motel-am-proxy.socket motel-am.socket
+
+[Service]
+Type=notify
+NetworkNamespacePath=/run/netns/motel-metrics
+ExecStart=/usr/lib/systemd/systemd-socket-proxyd --exit-idle-time=5min /run/motel-notify/am.sock
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+NoNewPrivileges=yes

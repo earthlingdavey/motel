@@ -71,8 +71,14 @@ depends:
 # installs it, configures socket activation and starts it, in that
 # order. Nothing of notify's is installed until then: the units it
 # writes ship in the binary.
+# The metrics store (notify/DESIGN-metrics.md), Suggests for the same
+# reason: Debian's victoria-metrics starts on install listening on
+# 0.0.0.0:8428 with no authentication. `motel metrics setup` masks it,
+# installs it and starts it in a network namespace of its own. vmalert
+# ships in the same package.
 suggests:
   - prometheus-alertmanager
+  - victoria-metrics
 
 # Every entry pins its mode. Without file_info nfpm copies the mode of
 # the file on the build host, so the package would carry whatever the
