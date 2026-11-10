@@ -21,6 +21,7 @@ require (
 	github.com/caddyserver/caddy/v2 v2.11.7
 	github.com/smallhoursorg/motel/liveswap v0.0.0-00010101000000-000000000000
 	go.uber.org/zap v1.28.0
+	go.yaml.in/yaml/v3 v3.0.5
 )
 
 require (
@@ -149,7 +150,6 @@ require (
 	go.uber.org/automaxprocs v1.6.0 // indirect
 	go.uber.org/multierr v1.11.0 // indirect
 	go.uber.org/zap/exp v0.3.0 // indirect
-	go.yaml.in/yaml/v3 v3.0.5 // indirect
 	golang.org/x/crypto v0.58.0 // indirect
 	golang.org/x/crypto/x509roots/fallback v0.0.0-20260929172509-b39ff6d641ec // indirect
 	golang.org/x/exp v0.0.0-20260908205506-85c1c2202aba // indirect

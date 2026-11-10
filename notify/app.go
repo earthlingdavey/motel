@@ -1,11 +1,13 @@
 package notify
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
 	"io/fs"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/caddyserver/caddy/v2"
@@ -37,8 +39,10 @@ type App struct {
 	StateDir              string `json:"state_dir,omitempty"`
 	Socket                string `json:"alertmanager,omitempty"`
 
-	logger *zap.Logger
-	cfg    *resolved
+	logger   *zap.Logger
+	cfg      *resolved
+	rendered []byte            // alertmanager.yml, rendered in Provision
+	files    map[string]string // the URL files it names
 }
 
 // CaddyModule returns the Caddy module information.
@@ -66,6 +70,7 @@ func (a *App) Provision(ctx caddy.Context) error {
 	if a.cfg, err = a.resolve(trust, secrets); err != nil {
 		return fmt.Errorf("notify: %w", err)
 	}
+	a.rendered, a.files = render(a.cfg, a.stateDir())
 	if a.AllowInsecureChannels {
 		a.logger.Warn("notify: allow_insecure_channels is on: channel URLs may be http and private addresses, which Alertmanager reaches from the network namespace every app shares; for test rigs only")
 	}
@@ -137,8 +142,25 @@ func readSecrets(path string) (map[string]string, error) {
 	return out, nil
 }
 
-// Start is a no-op until the renderer and the poster exist.
-func (a *App) Start() error { return nil }
+// Start writes the rendered config into the state directory and has
+// Alertmanager load it. Nothing here fails the config load: serving
+// never waits on notify, and every failure is a journal line naming
+// what to do.
+func (a *App) Start() error {
+	ctx, cancel := context.WithTimeout(context.Background(), amRequestTimeout)
+	defer cancel()
+	am := newAMClient(a.socket())
+	reloaded, err := apply(ctx, a.stateDir(), a.rendered, a.files, am)
+	switch {
+	case errors.Is(err, errNotSetUp):
+		a.logger.Warn("notify: Alertmanager is not set up on this box (run motel notify setup as root); events are journal lines only until it is", zap.String("state_dir", a.stateDir()))
+	case err != nil:
+		a.logger.Error("notify: Alertmanager's config was not updated", zap.String("state_dir", a.stateDir()), zap.Error(err))
+	case reloaded:
+		a.logger.Info("notify: Alertmanager reloaded the rendered config", zap.String("config", filepath.Join(a.stateDir(), ConfigName)))
+	}
+	return nil
+}
 
 // Stop is a no-op.
 func (a *App) Stop() error { return nil }
@@ -147,3 +169,17 @@ var (
 	_ caddy.App         = (*App)(nil)
 	_ caddy.Provisioner = (*App)(nil)
 )
+
+func (a *App) stateDir() string {
+	if a.StateDir == "" {
+		return DefaultStateDir
+	}
+	return a.StateDir
+}
+
+func (a *App) socket() string {
+	if a.Socket == "" {
+		return DefaultSocket
+	}
+	return a.Socket
+}
