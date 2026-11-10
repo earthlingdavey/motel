@@ -353,8 +353,11 @@ func TestPusherReleaseClearsWhatFires(t *testing.T) {
 
 func TestPusherGoesBackToTheOlderConfig(t *testing.T) {
 	tp := newTestPusher(t)
+	dir := t.TempDir()
+	tp.m.StateDir, tp.m.rules, tp.m.logger = dir, []byte("older\n"), zap.NewNop()
 	tp.live = append(tp.live, liveStore{m: tp.m, store: tp.store, gather: prometheus.NewRegistry(), logger: zap.NewNop()})
-	newer := &MetricsStore{}
+	newer := &MetricsStore{StateDir: dir, rules: []byte("newer\n"), logger: zap.NewNop()}
+	newer.applyRules() // its Start
 	tp.configure(liveStore{m: newer, store: tp.store, gather: prometheus.NewRegistry(), logger: zap.NewNop()})
 	if tp.active != newer {
 		t.Fatal("configure did not take the newer config")
@@ -362,6 +365,9 @@ func TestPusherGoesBackToTheOlderConfig(t *testing.T) {
 	tp.release(newer) // its reload failed after Start: the older serves on
 	if tp.active != tp.m || !tp.running {
 		t.Fatalf("active = %p, running %v; want the older config, running", tp.active, tp.running)
+	}
+	if b, _ := os.ReadFile(filepath.Join(dir, RulesName)); string(b) != "older\n" {
+		t.Fatalf("vmalert still reads the stopped config's rules: %q", b)
 	}
 	tp.release(tp.m)
 	if tp.active != nil || tp.running {
@@ -437,6 +443,31 @@ func TestMetricsViewSummary(t *testing.T) {
 	v.AppMetrics(context.Background(), "blog")
 	if f.calls != 4 {
 		t.Fatalf("%d queries after the cache expired, want 4", f.calls)
+	}
+}
+
+// An app that stopped 20 minutes ago, or a cap a later release dropped,
+// keeps its last points in the hour: history, never now.
+func TestMetricsViewStaleIsHistory(t *testing.T) {
+	end := time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC)
+	old := func(v float64) []point {
+		return []point{{t: end.Add(-25 * time.Minute), v: v}, {t: end.Add(-20 * time.Minute), v: v}}
+	}
+	f := &fakeRange{ans: func(q string) []series {
+		if strings.HasPrefix(q, "rate(") {
+			return []series{{points: old(0.5)}}
+		}
+		return []series{
+			{labels: map[string]string{"__name__": "motel_app_memory_bytes"}, points: old(30)},
+			{labels: map[string]string{"__name__": "motel_app_memory_max_bytes"}, points: old(100)},
+		}
+	}}
+	v := newMetricsView(f, zap.NewNop())
+	v.now = func() time.Time { return end }
+	got, _ := json.Marshal(v.AppMetrics(context.Background(), "blog"))
+	want := `{"window":"1h","at":"2026-11-10T11:40:00Z","memory_bytes":{"max":30},"cpu_cores":{"avg":0.5}}`
+	if string(got) != want {
+		t.Fatalf("stale series:\n got %s\nwant %s", got, want)
 	}
 }
 

@@ -204,8 +204,12 @@ func metricsSetup(sys system, root string, out io.Writer) error {
 		{"systemctl", "daemon-reload"},
 		{"systemctl", "unmask", vmService},
 		{"systemctl", "enable", "--now", netnsUnit, vmService, vmSocket, amProxySock, vmalertUnit},
-		// A re-run's vmalert is the unit just written.
+		// A re-run's units are the ones just written: the store was
+		// stopped above, so its start took the drop-in; vmalert and the
+		// two proxies, which a push keeps alive, are restarted (the
+		// proxies' sockets hold their listeners meanwhile).
 		{"systemctl", "restart", vmalertUnit},
+		{"systemctl", "try-restart", "motel-vm.service", "motel-am-proxy.service"},
 	} {
 		if err := sys.run(step[0], step[1:]...); err != nil {
 			return err

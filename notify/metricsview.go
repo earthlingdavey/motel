@@ -17,6 +17,11 @@ const (
 	viewWindow = time.Hour
 	viewStep   = time.Minute
 	viewRecent = 5 * time.Minute
+	// viewFresh is how old the newest point may be and still be the
+	// present: a series that stopped (an app stopped, a cap a later
+	// release dropped) keeps its last point in the hour, which is history,
+	// not now.
+	viewFresh = 3 * viewStep
 	// viewBudget bounds both queries: the route never waits longer.
 	viewBudget = 2 * time.Second
 	// viewCache is how long an answer, or a failure, is reused: a
@@ -45,13 +50,16 @@ type AppMetrics struct {
 }
 
 type memorySumm struct {
-	Now float64 `json:"now"`
-	Max float64 `json:"max"`
+	// Now is absent when the series has no point in the last viewFresh.
+	Now *float64 `json:"now,omitempty"`
+	Max float64  `json:"max"`
 }
 
 type cpuSummary struct {
-	Avg5m float64 `json:"avg_5m"`
-	Avg   float64 `json:"avg"`
+	// Avg5m is absent when the series has no point in the last five
+	// minutes.
+	Avg5m *float64 `json:"avg_5m,omitempty"`
+	Avg   float64  `json:"avg"`
 }
 
 type viewEntry struct {
@@ -133,15 +141,19 @@ func (v *metricsView) ask(ctx context.Context, app string, now time.Time) (AppMe
 			maxPts = append(maxPts, s.points...)
 		}
 	}
+	fresh := func(p point) bool { return !p.t.Before(end.Add(-viewFresh)) }
 	if last, ok := latest(memPts); ok {
-		m := &memorySumm{Now: last.v}
+		m := &memorySumm{}
+		if fresh(last) {
+			m.Now = &last.v
+		}
 		for _, p := range memPts {
 			m.Max = max(m.Max, p.v)
 		}
 		out.Memory = m
 		seen(last.t)
 	}
-	if last, ok := latest(maxPts); ok {
+	if last, ok := latest(maxPts); ok && fresh(last) {
 		out.MemoryMax = &last.v
 	}
 	var cpuPts []point
@@ -154,12 +166,16 @@ func (v *metricsView) ask(ctx context.Context, app string, now time.Time) (AppMe
 		var n int
 		for _, p := range cpuPts {
 			sum += p.v
-			if p.t.After(last.t.Add(-viewRecent)) {
+			if p.t.After(end.Add(-viewRecent)) {
 				recent += p.v
 				n++
 			}
 		}
-		c.Avg, c.Avg5m = sum/float64(len(cpuPts)), recent/float64(n)
+		c.Avg = sum / float64(len(cpuPts))
+		if n > 0 {
+			avg := recent / float64(n)
+			c.Avg5m = &avg
+		}
 		out.CPU = c
 		seen(last.t)
 	}

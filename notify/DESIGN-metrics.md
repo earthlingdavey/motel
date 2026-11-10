@@ -199,8 +199,11 @@ Two fixed `query_range` templates over the socket, scoped to
 `app="<name>"`, the last hour at a 60 s step: the memory pair
 (`{__name__=~"motel_app_memory_bytes|motel_app_memory_max_bytes",app=…}`)
 and `rate(motel_app_cpu_seconds_total{app=…}[2m])`. `at` is the newest
-point; `max` and `avg` are over the hour; a number with no points is
-absent. The store answers 30 s behind the present
+point; `max` and `avg` are over the hour; `now`, `avg_5m` and
+`memory_max_bytes` come only from points of the last three minutes and
+five minutes, so an app that stopped, or a cap a later release dropped,
+is history in `max` and `avg` and never reported as the present; a
+number with no points is absent. The store answers 30 s behind the present
 (`-search.latencyOffset`). No free-form query, no label enumeration, no
 box series, no other app: the name is the configured app the route
 already resolved.
@@ -235,8 +238,9 @@ after `motel notify setup`:
    motel:_victoria-metrics with `scrape.yml` and, unless motel has
    rendered one, a `rules.yml` of the fixed groups;
 5. `daemon-reload`, `unmask`, `enable --now` the namespace, the store,
-   both sockets and vmalert, and `restart` vmalert so a re-run's unit
-   is the one running;
+   both sockets and vmalert, then `restart` vmalert and `try-restart`
+   both proxies, so a re-run's units are the ones running (the store was
+   stopped in step 2, so its start takes the drop-in);
 6. `try-reload-or-restart motel.service`, which renders.
 
 Run again, it puts the units back as the binary ships them. The drop-in

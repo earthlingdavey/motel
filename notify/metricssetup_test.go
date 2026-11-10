@@ -49,6 +49,7 @@ func TestMetricsSetupOrderAndFiles(t *testing.T) {
 		"systemctl unmask victoria-metrics.service",
 		"systemctl enable --now motel-metrics-netns.service victoria-metrics.service motel-vm.socket motel-am-proxy.socket motel-vmalert.service",
 		"systemctl restart motel-vmalert.service",
+		"systemctl try-restart motel-vm.service motel-am-proxy.service",
 		"systemctl try-reload-or-restart motel.service",
 	}
 	if !slices.Equal(f.cmds, want) {

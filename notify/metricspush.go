@@ -85,14 +85,18 @@ var thePusher = newPusher(theEngine.report)
 
 // registerFailed puts the push's failure counter on a config's
 // registry, beside notify's own.
-func (p *pusher) registerFailed(reg *prometheus.Registry) {
+// The counter registered already (the same config's registry) is no
+// error.
+func (p *pusher) registerFailed(reg *prometheus.Registry) error {
 	if reg == nil {
-		return
+		return nil
 	}
-	if err := reg.Register(p.failed); err != nil {
-		var dup prometheus.AlreadyRegisteredError
-		_ = errors.As(err, &dup)
+	err := reg.Register(p.failed)
+	var dup prometheus.AlreadyRegisteredError
+	if errors.As(err, &dup) {
+		return nil
 	}
+	return err
 }
 
 func storeEvent(name string, firing bool) Event {
@@ -217,10 +221,14 @@ func (p *pusher) run(ctx context.Context) {
 	for {
 		pctx, cancel := context.WithTimeout(ctx, storeRequestTimeout)
 		p.pushOnce(pctx)
-		if odd = !odd; odd {
-			p.checkRules(pctx)
-		}
 		cancel()
+		if odd = !odd; odd {
+			// A budget of its own: a slow push must not leave the check
+			// none, which it would take for no reading.
+			cctx, cancel := context.WithTimeout(ctx, storeRequestTimeout)
+			p.checkRules(cctx)
+			cancel()
+		}
 		select {
 		case <-ctx.Done():
 			return
@@ -260,8 +268,13 @@ func (p *pusher) release(m *MetricsStore) {
 		return
 	}
 	if n := len(p.live); n > 0 {
-		p.setLive(p.live[n-1])
+		// The config that started last was stopped while an older one
+		// serves on: a reload that failed after Start. Its Start had
+		// written its rules; the serving one's go back.
+		older := p.live[n-1]
+		p.setLive(older)
 		p.mu.Unlock()
+		older.m.applyRules()
 		return
 	}
 	p.active = nil

@@ -91,23 +91,23 @@ func channelFailedRules(n *App) vmGroup {
 	if n == nil || n.cfg == nil {
 		return g
 	}
+	// channel_failed's own reading of a failure: one definition of the
+	// suspects, so that the two sources cannot drift apart.
+	w := failWatch{kinds: map[string]string{}, channels: n.receivers}
+	for name, ch := range n.cfg.channels {
+		w.kinds[name] = channelKinds[ch.Kind]
+	}
 	type told struct{ channel, integration, suspects string }
 	receivers := map[told][]string{}
 	for name, chans := range n.receivers {
 		var ints []string
 		for _, ch := range chans {
-			if k := channelKinds[n.cfg.channels[ch].Kind]; k != "" && !slices.Contains(ints, k) {
+			if k := w.kinds[ch]; k != "" && !slices.Contains(ints, k) {
 				ints = append(ints, k)
 			}
 		}
 		for _, in := range ints {
-			var sus []string
-			for _, ch := range chans {
-				if channelKinds[n.cfg.channels[ch].Kind] == in && !slices.Contains(sus, ch) {
-					sus = append(sus, ch)
-				}
-			}
-			sort.Strings(sus)
+			sus := w.suspects(failedSample{integration: in, receiver: name})
 			for _, op := range n.cfg.operator {
 				if !slices.Contains(sus, op) {
 					k := told{op, in, strings.Join(sus, ",")}

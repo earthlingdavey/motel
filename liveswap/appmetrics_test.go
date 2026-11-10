@@ -75,6 +75,25 @@ func TestStatusMetricsOnlyWithASource(t *testing.T) {
 	}
 }
 
+// A cap the kernel does not enforce is no cap, as status says
+// (capsForStatus): the store must not hold one either.
+func TestSampleMemoryMaxOnlyWhenEnforced(t *testing.T) {
+	caps := resourceCaps{memoryMax: 256 << 20}
+	for _, c := range []struct {
+		hs   handleState
+		want uint64
+	}{
+		{handleState{Caps: caps}, 256 << 20},
+		{handleState{Caps: caps, CapsUnknown: true}, 0},
+		{handleState{Caps: caps, CapsUnenforced: []string{"memory_max"}}, 0},
+		{handleState{Caps: caps, CapsUnenforced: []string{"tasks_max"}}, 256 << 20},
+	} {
+		if got := sampleMemoryMax(c.hs); got != c.want {
+			t.Errorf("sampleMemoryMax(%+v) = %d, want %d", c.hs, got, c.want)
+		}
+	}
+}
+
 func TestSystemdHandleStateCarriesItsCgroup(t *testing.T) {
 	h := &systemdHandle{unit: "app-demo.service"}
 	if got := h.state().Cgroup; got != "" {

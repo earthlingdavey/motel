@@ -2,6 +2,7 @@ package liveswap
 
 import (
 	"context"
+	"maps"
 	"slices"
 )
 
@@ -29,13 +30,8 @@ type AppSample struct {
 
 // AppSamples is every app this config runs, sorted by name.
 func (a *App) AppSamples() []AppSample {
-	names := make([]string, 0, len(a.managed))
-	for name := range a.managed {
-		names = append(names, name)
-	}
-	slices.Sort(names)
-	out := make([]AppSample, 0, len(names))
-	for _, name := range names {
+	out := make([]AppSample, 0, len(a.managed))
+	for _, name := range slices.Sorted(maps.Keys(a.managed)) {
 		out = append(out, a.managed[name].sample())
 	}
 	return out
@@ -53,10 +49,18 @@ func (ma *managedApp) sample() AppSample {
 	hs := ma.current.handle.state()
 	s.Running = c.runner != nil && c.runner.Alive(ma.current.handle)
 	s.Cgroup = hs.Cgroup
-	if !hs.CapsUnknown {
-		s.MemoryMax = hs.Caps.memoryMax
-	}
+	s.MemoryMax = sampleMemoryMax(hs)
 	return s
+}
+
+// sampleMemoryMax is the unit's MemoryMax= when it is known to be
+// applied and the kernel enforces it: a value the kernel ignores is not
+// a cap, as status says (capsForStatus).
+func sampleMemoryMax(hs handleState) uint64 {
+	if hs.CapsUnknown || slices.Contains(hs.CapsUnenforced, "memory_max") {
+		return 0
+	}
+	return hs.Caps.memoryMax
 }
 
 // MetricsSource answers the `metrics` object of GET /<app>. It must

@@ -85,7 +85,9 @@ func (m *MetricsStore) Provision(ctx caddy.Context) error {
 	if reg != nil {
 		m.reg = reg
 	}
-	thePusher.registerFailed(reg)
+	if err := thePusher.registerFailed(reg); err != nil {
+		m.logger.Warn("metrics_store: motel_metrics_push_failed_total is not on the admin /metrics", zap.Error(err))
+	}
 
 	mod, err := ctx.AppIfConfigured("liveswap")
 	switch {
@@ -125,6 +127,16 @@ func (m *MetricsStore) Provision(ctx caddy.Context) error {
 // Start writes the rules and points the push at this config. Nothing
 // here fails the config load: every failure is a journal line.
 func (m *MetricsStore) Start() error {
+	m.applyRules()
+	thePusher.configure(liveStore{m: m, store: m.client, gather: m.reg, logger: m.logger})
+	return nil
+}
+
+// applyRules writes this config's rules, with a journal line for each
+// outcome: at Start, and when the pusher goes back to this config after
+// a newer one was stopped by a failed reload, whose rules had replaced
+// these.
+func (m *MetricsStore) applyRules() {
 	path := filepath.Join(m.stateDir(), RulesName)
 	switch changed, err := writeRules(m.stateDir(), m.rules); {
 	case errors.Is(err, errMetricsNotSetUp):
@@ -134,8 +146,6 @@ func (m *MetricsStore) Start() error {
 	case changed:
 		m.logger.Info("metrics_store: wrote the rules; vmalert reads them within a minute", zap.String("rules", path))
 	}
-	thePusher.configure(liveStore{m: m, store: m.client, gather: m.reg, logger: m.logger})
-	return nil
 }
 
 // Stop lets go of the pusher, unless a newer config has taken it.
