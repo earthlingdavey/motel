@@ -154,9 +154,18 @@ func channelFailedRules(n *App) vmGroup {
 }
 
 // renderRules is the rule file for a config: the fixed groups, and the
-// ChannelFailed rules of its notify block (n nil: none).
+// ChannelFailed rules of its notify block. With no notify block (n nil)
+// both groups are empty: Alertmanager keeps the last config notify
+// rendered when the block is removed (its Stop releases only the
+// engine), so a rule that fired then would still reach those channels,
+// a deployer's among them. Empty groups, not none: vmalert refuses a
+// file with no group (-dryRun: "No rules for validation").
 func renderRules(n *App) []byte {
-	f := vmRuleFile{Groups: []vmGroup{fixedRules(), channelFailedRules(n)}}
+	fixed := fixedRules()
+	if n == nil {
+		fixed.Rules = []vmRule{}
+	}
+	f := vmRuleFile{Groups: []vmGroup{fixed, channelFailedRules(n)}}
 	var b bytes.Buffer
 	b.WriteString(rulesHeader)
 	enc := yaml.NewEncoder(&b)

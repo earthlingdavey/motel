@@ -33,7 +33,7 @@ iproute2 if missing); writes the namespace unit, the drop-in that moves
 the store into the namespace with its memory capped, the socket
 /run/motel-metrics/vm.sock (0660 root:motel) and its proxy, the
 in-namespace proxy to Alertmanager and vmalert's unit, and
-/var/lib/motel-metrics with the scrapes and the store's fixed rules;
+/var/lib/motel-metrics with the scrapes and an empty rule file;
 unmasks it, starts them all and reloads motel, which renders the rules
 and pushes. Run motel notify setup first. Run again, it puts the units
 back as the binary ships them.`,

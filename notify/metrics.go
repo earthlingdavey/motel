@@ -113,7 +113,7 @@ func (m *MetricsStore) Provision(ctx caddy.Context) error {
 	mod, err = ctx.AppIfConfigured("notify")
 	switch {
 	case errors.Is(err, caddy.ErrNotConfigured):
-		m.logger.Warn("metrics_store: no notify block: the store's rules reach Alertmanager, whose config then sends nothing")
+		m.logger.Warn("metrics_store: no notify block: vmalert is given no rule, so nothing the store sees is told to anyone; the store keeps the numbers, and GET /<app> reads them")
 	case err != nil:
 		return err
 	default:

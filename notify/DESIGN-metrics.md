@@ -87,8 +87,12 @@ reads the rules from `/var/lib/motel-metrics`, so a directory of the
 block's own would be written and never read (/code-review pass 2). The
 block takes nothing else: the push interval, the rules and the queries
 are motel's, fixed. A `metrics_store` block with no
-`notify` block loads, with a warning at every load: the rules still
-reach Alertmanager, whose config then sends nothing.
+`notify` block loads, with a warning at every load, and vmalert is given
+no rule: Alertmanager keeps the last config notify rendered when the
+block is removed (notify's Stop releases only its engine), so a rule
+that fired would still reach the old operator's and deployers' channels
+(Copilot on #423). The store keeps the numbers, and `GET /<app>` reads
+them.
 
 ## What motel pushes
 
@@ -124,8 +128,8 @@ notify's engine; the next success clears it, after the engine's hold.
 
 vmalert reads `rules.yml`, which motel renders at every config load
 (`-configCheckInterval=1m` re-reads it: vmalert's HTTP listener is in
-the namespace, so motel has no reload to call). setup writes the fixed
-groups first, so vmalert starts before motel's first render. Every rule
+the namespace, so motel has no reload to call). setup writes the two
+groups empty first, so vmalert starts before motel's first render. Every rule
 is motel's text; nothing in the Caddyfile is a rule or a template.
 
 | Rule | Expression | For | Labels | Reaches |
@@ -153,7 +157,8 @@ failure: `alertname`, `notify_channel`, `severity="warning"`,
 three are one rule (`receiver_name=~"a|b"`). Two posts with the same labels
 are one alert in Alertmanager, so the two sources deduplicate; the
 heartbeat receiver (no channel, so no suspect) is left to motel's own.
-With no `notify` block the group is empty.
+With no `notify` block both groups are empty (vmalert refuses a rule
+file with no group at all).
 
 **Not the Watchdog.** The fresh-slate draft and DESIGN-notify.md's
 "Later slices" had vmalert's `Watchdog` beside motel's, deduplicated.
@@ -197,10 +202,13 @@ The deployer's route and credential, unchanged (the fresh-slate draft,
 }
 ```
 
-Two fixed `query_range` templates over the socket, scoped to
-`app="<name>"`, the last hour at a 60 s step: the memory pair
-(`{__name__=~"motel_app_memory_bytes|motel_app_memory_max_bytes",app=…}`)
-and `sum(rate(motel_app_cpu_seconds_total{app=…}[2m]))`. `at` is the newest
+Three fixed queries over the socket, scoped to `app="<name>"`: two
+`query_range` templates over the last hour at a 60 s step, the memory
+pair (`{__name__=~"motel_app_memory_bytes|motel_app_memory_max_bytes",app=…}`)
+and `sum(rate(motel_app_cpu_seconds_total{app=…}[2m]))`, and one instant
+`max_over_time(motel_app_memory_bytes{app=…}[1h])` for `max`, since a
+60 s step holds one of the two samples a minute the push writes and a
+peak between steps would be lost (Copilot on #423). `at` is the newest
 point; `max` and `avg` are over the hour; `now`, `avg_5m` and
 `memory_max_bytes` come only from points of the last three minutes and
 five minutes, so an app that stopped, or a cap a later release dropped,
@@ -210,9 +218,9 @@ number with no points is absent. The store answers 30 s behind the present
 box series, no other app: the name is the configured app the route
 already resolved.
 
-The answer is best-effort: one 2 s budget for both queries, cached per
-app for 30 s, so a token (a stolen one, T2) cannot drive the store
-harder than one query pair per app per 30 s. A store that does not
+The answer is best-effort: one 2 s budget for the three queries,
+cached per app for 30 s, so a token (a stolen one, T2) cannot drive the
+store harder than three queries per app per 30 s. A store that does not
 answer is `"metrics": {"error": "the metrics store did not answer"}`,
 fixed text, and the status is otherwise the same; the route never waits
 longer or fails for it. The whole body passes the app's response filter,
@@ -238,7 +246,8 @@ after `motel notify setup`:
    proxies, and `motel-vmalert.service` (all in the binary,
    `notify/units/metrics/`), and `/var/lib/motel-metrics` 2750
    motel:_victoria-metrics with `scrape.yml` and, unless motel has
-   rendered one, a `rules.yml` of the fixed groups;
+   rendered one, a `rules.yml` of empty groups, which vmalert starts
+   from until motel's render a moment later;
 5. `daemon-reload`, `unmask`, `enable --now` the namespace, the store,
    both sockets and vmalert, then `restart` vmalert and `try-restart`
    both proxies, so a re-run's units are the ones running (the store was
@@ -275,7 +284,7 @@ read path from the store into `GET /<app>`.
   TCP listener is in a namespace it is not in. It runs as the motel uid,
   so the view, not the mode, is the gate.
 - **T2** (a stolen deploy token): reads that app's `metrics` object,
-  far less than the deploy it can already do, at most one query pair
+  far less than the deploy it can already do, at most three queries
   per 30 s; nothing of the box or of other apps; it cannot write to the
   store or reach vmalert.
 - **T5** (RCE in motel): full read and write of the store (including
@@ -357,7 +366,7 @@ on its general scales. metrics' examples:
 | Residual | Where | S | O | D | Why accepted |
 |---|---|---|---|---|---|
 | vmalert's `ChannelFailed` resolves 5 minutes after the last failure and re-sends the resolve for 15; with motel's labels it ends motel's own alert early, and a rise after that is told again | notify/metricsrules.go | 2 | 3 | 3 | 18; direct alerts never send a recovery, so the early end is silent; a second rise is a second failure, told |
-| `GET /<app>` runs its two queries one after the other in the one 2 s budget: a store answering each in over a second answers the whole object as the error, cached 30 s | notify/metricsview.go (`ask`) | 2 | 2 | 1 | 4; the answer says the store did not answer, which is true; running them at once adds a goroutine and a join (size 2) to a path that is best-effort by design. /code-review pass 2 |
+| `GET /<app>` runs its three queries one after the other in the one 2 s budget: a store answering each in over two thirds of a second answers the whole object as the error, cached 30 s | notify/metricsview.go (`ask`) | 2 | 2 | 1 | 4; the answer says the store did not answer, which is true; running them at once adds goroutines and a join (size 2) to a path that is best-effort by design. /code-review pass 2; the third query from Copilot on #423 leaves the score as it was |
 | vmalert's rules have no flapping guard: a condition that flaps around its threshold fires and resolves at each crossing | notify/metricsrules.go | 2 | 3 | 3 | 18; every rule has a `for:` of 2 to 30 minutes, which bounds a flap to one pair per `for:` |
 
 ### Owed

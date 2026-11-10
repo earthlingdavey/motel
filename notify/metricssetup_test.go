@@ -83,7 +83,7 @@ func TestMetricsSetupOrderAndFiles(t *testing.T) {
 		}
 	}
 	if b, _ := os.ReadFile(filepath.Join(dir, RulesName)); !bytes.Equal(b, renderRules(nil)) {
-		t.Error("the first rules are not the fixed groups")
+		t.Error("the first rules are not the empty groups")
 	}
 
 	// Again, on a box set up: nothing installed, motel's rules kept,

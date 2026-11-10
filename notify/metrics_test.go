@@ -382,13 +382,21 @@ func TestPusherGoesBackToTheOlderConfig(t *testing.T) {
 	}
 }
 
-// fakeRange is query_range, scripted per query.
+// fakeRange is query_range and the instant query, scripted per query.
 type fakeRange struct {
-	mu    sync.Mutex
-	calls int
-	err   error
-	block chan struct{}
-	ans   func(q string) []series
+	mu      sync.Mutex
+	calls   int
+	err     error
+	block   chan struct{}
+	ans     func(q string) []series
+	instant func(q string) []series
+}
+
+func (f *fakeRange) query(ctx context.Context, q string) ([]series, error) {
+	if f.instant == nil {
+		return nil, f.err // not counted: calls is query_range's
+	}
+	return f.instant(q), nil
 }
 
 func (f *fakeRange) queryRange(ctx context.Context, q string, _, _ time.Time, _ time.Duration) ([]series, error) {
@@ -475,6 +483,35 @@ func TestMetricsViewStaleIsHistory(t *testing.T) {
 	want := `{"window":"1h","at":"2026-11-10T11:40:00Z","memory_bytes":{"max":30},"cpu_cores":{"avg":0.5}}`
 	if string(got) != want {
 		t.Fatalf("stale series:\n got %s\nwant %s", got, want)
+	}
+}
+
+// The hour's max is the store's max_over_time over the raw samples
+// (pushed every 30 s), not the max of a 60 s-step range, which holds one
+// sample a step: a peak between two steps is the max.
+func TestMetricsViewMaxKeepsAPeakBetweenSteps(t *testing.T) {
+	end := time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC)
+	f := &fakeRange{
+		ans: func(q string) []series {
+			if strings.HasPrefix(q, "sum(rate(") {
+				return nil
+			}
+			return []series{{labels: map[string]string{"__name__": "motel_app_memory_bytes"},
+				points: []point{{t: end.Add(-time.Minute), v: 10}, {t: end, v: 10}}}}
+		},
+		instant: func(q string) []series {
+			if q != `max_over_time(motel_app_memory_bytes{app="blog"}[1h])` {
+				t.Errorf("instant query %s", q)
+			}
+			return []series{{points: []point{{t: end, v: 1000}}}}
+		},
+	}
+	v := newMetricsView(f, zap.NewNop())
+	v.now = func() time.Time { return end }
+	got, _ := json.Marshal(v.AppMetrics(context.Background(), "blog"))
+	want := `{"window":"1h","at":"2026-11-10T12:00:00Z","memory_bytes":{"now":10,"max":1000}}`
+	if string(got) != want {
+		t.Fatalf("a peak between steps:\n got %s\nwant %s", got, want)
 	}
 }
 

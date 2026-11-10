@@ -153,6 +153,10 @@ rules=$(inns curl -s --max-time 5 http://127.0.0.1:8880/api/v1/rules)
 for r in ChannelFailed app_memory_high metrics_store_read_only metrics_store_disk_fill; do
 	printf '%s' "$rules" | grep -q "\"name\":\"$r\"" && pass "vmalert loaded $r" || fail "vmalert has no $r: $(printf '%s' "$rules" | cut -c1-200)"
 done
+# What metrics 7 counts after the notify block goes: present now, so its
+# absence then is not a field the API never had.
+printf '%s' "$rules" | grep -q '"type":"alerting"' && pass "vmalert's API marks its rules \"type\":\"alerting\"" \
+	|| fail "vmalert's API has no \"type\":\"alerting\": $(printf '%s' "$rules" | cut -c1-300)"
 a=$(wait_result vmalert-up 'up{job="vmalert"} == 1' 90) && pass "the store scrapes vmalert" || fail "the store has no up{job=\"vmalert\"}"
 a=$(wait_result am-up 'up{job="alertmanager"} == 1' 90) && pass "the store scrapes Alertmanager through the in-namespace proxy" \
 	|| fail "the store has no up{job=\"alertmanager\"}: $(q 'up')"
@@ -202,6 +206,31 @@ done
 journalctl -u motel -o cat --no-pager | grep -q 'metrics_store: push failed' \
 	&& pass "journal: metrics_store: push failed" || fail "no push failed line"
 systemctl start motel-vm.socket
+
+echo "=== metrics 7: the notify block removed, metrics_store kept ==="
+# Alertmanager keeps the last config notify rendered, so vmalert must be
+# given no rule that could still reach those channels.
+sed '/^\tnotify {$/,/^\t}$/d' /etc/motel/Caddyfile >/tmp/Caddyfile.nonotify
+if grep -q 'notify {' /tmp/Caddyfile.nonotify || ! grep -q 'metrics_store' /tmp/Caddyfile.nonotify; then
+	fail "could not cut the notify block out of the Caddyfile"
+fi
+cp /tmp/Caddyfile.nonotify /etc/motel/Caddyfile
+systemctl reload motel && pass "reloaded without the notify block" || fail "the reload without the notify block failed"
+i=0
+until ! grep -q 'alert:' "$STATE/rules.yml"; do i=$((i + 1)); [ "$i" -ge 40 ] && break; sleep 0.5; done
+grep -q 'alert:' "$STATE/rules.yml" && fail "rules.yml still has alerting rules: $(grep -c 'alert:' "$STATE/rules.yml")" \
+	|| pass "motel rendered rules.yml with no alerting rule"
+end=$(( $(date +%s) + 100 ))
+while [ "$(date +%s)" -lt "$end" ]; do
+	rules=$(inns curl -s --max-time 5 http://127.0.0.1:8880/api/v1/rules)
+	printf '%s' "$rules" | grep -q '"status":"success"' && ! printf '%s' "$rules" | grep -q '"type":"alerting"' && break
+	sleep 5
+done
+printf '%s' "$rules" | grep -q '"status":"success"' && ! printf '%s' "$rules" | grep -q '"type":"alerting"' \
+	&& pass "vmalert re-read the rules: zero alerting rules loaded" \
+	|| fail "vmalert still loads alerting rules: $(printf '%s' "$rules" | grep -o '"name":"[^"]*","type":"alerting"' | head -5 | tr '\n' ' ')"
+journalctl -u motel -o cat --no-pager | grep -q 'metrics_store: no notify block: vmalert is given no rule' \
+	&& pass "journal: no notify block, no rule" || fail "no 'no notify block' line"
 
 echo
 if [ "$FAILURES" -ne 0 ]; then

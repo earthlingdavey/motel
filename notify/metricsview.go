@@ -34,9 +34,10 @@ const (
 // the store's own words.
 const errViewStore = "the metrics store did not answer"
 
-// rangeQuerier is the store's query_range.
+// rangeQuerier is the store's query_range and instant query.
 type rangeQuerier interface {
 	queryRange(ctx context.Context, q string, start, end time.Time, step time.Duration) ([]series, error)
+	query(ctx context.Context, q string) ([]series, error)
 }
 
 // AppMetrics is the `metrics` object.
@@ -125,6 +126,13 @@ func (v *metricsView) ask(ctx context.Context, app string, now time.Time) (AppMe
 	if err != nil {
 		return AppMetrics{}, err
 	}
+	// The hour's peak over the raw samples, which the push writes every
+	// 30 s: the range above holds one sample a step, and a peak between
+	// two steps would be lost.
+	peak, err := v.store.query(ctx, fmt.Sprintf(`max_over_time(motel_app_memory_bytes{app=%q}[1h])`, app))
+	if err != nil {
+		return AppMetrics{}, err
+	}
 	out := AppMetrics{Window: "1h"}
 	var newest time.Time
 	seen := func(t time.Time) {
@@ -149,6 +157,11 @@ func (v *metricsView) ask(ctx context.Context, app string, now time.Time) (AppMe
 		}
 		for _, p := range memPts {
 			m.Max = max(m.Max, p.v)
+		}
+		for _, s := range peak {
+			for _, p := range s.points {
+				m.Max = max(m.Max, p.v)
+			}
 		}
 		out.Memory = m
 		seen(last.t)

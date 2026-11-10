@@ -13,6 +13,7 @@ import (
 	"strings"
 	"testing"
 
+	"go.uber.org/zap"
 	"go.yaml.in/yaml/v3"
 )
 
@@ -38,22 +39,56 @@ func parseRules(t *testing.T, b []byte) vmRuleFile {
 	return f
 }
 
+// Without a notify block no rule alerts: Alertmanager would still hold
+// the last config notify rendered, and send the store's alerts to its
+// channels. The groups stay, empty, which vmalert accepts (-dryRun
+// refuses a file with no group at all).
 func TestRenderRulesWithoutNotify(t *testing.T) {
 	f := parseRules(t, renderRules(nil))
-	if len(f.Groups) != 2 || f.Groups[0].Name != "motel-store" || len(f.Groups[0].Rules) != 3 {
+	if len(f.Groups) != 2 || f.Groups[0].Name != "motel-store" || f.Groups[1].Name != "motel-channel-failed" {
 		t.Fatalf("groups = %+v", f.Groups)
 	}
-	if len(f.Groups[1].Rules) != 0 {
-		t.Fatalf("no notify block, yet ChannelFailed rules: %+v", f.Groups[1].Rules)
+	for _, g := range f.Groups {
+		if len(g.Rules) != 0 {
+			t.Errorf("no notify block, yet group %s has rules: %+v", g.Name, g.Rules)
+		}
+	}
+	if !strings.HasPrefix(string(renderRules(nil)), rulesHeader) {
+		t.Error("no header")
+	}
+}
+
+// A reload that drops the notify block and keeps metrics_store: the
+// rules file the new config writes holds no alerting rule.
+func TestRulesAfterNotifyIsRemoved(t *testing.T) {
+	dir := t.TempDir()
+	both := &MetricsStore{stateDirOverride: dir, rules: renderRules(notifyApp(t)), logger: zap.NewNop()}
+	both.applyRules()
+	alone := &MetricsStore{stateDirOverride: dir, rules: renderRules(nil), logger: zap.NewNop()}
+	alone.applyRules()
+	b, err := os.ReadFile(filepath.Join(dir, RulesName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, g := range parseRules(t, b).Groups {
+		for _, r := range g.Rules {
+			if r.Alert != "" {
+				t.Errorf("after the notify block went, vmalert still has %s", r.Alert)
+			}
+		}
+	}
+}
+
+func TestFixedRulesAreMotelsStateAlerts(t *testing.T) {
+	f := parseRules(t, renderRules(notifyApp(t)))
+	if len(f.Groups[0].Rules) != 3 {
+		t.Fatalf("fixed rules = %+v", f.Groups[0].Rules)
 	}
 	for _, r := range f.Groups[0].Rules {
 		if r.Labels["kind"] != kindState || r.Labels["source"] != sourceVMAlert || r.For == "" || r.Labels["severity"] == "" ||
 			r.Labels["key"] != "vmalert/"+r.Labels["subject"]+"/"+r.Alert {
 			t.Errorf("rule %s: labels %v, for %q: not routed as one of motel's state alerts", r.Alert, r.Labels, r.For)
 		}
-	}
-	if !strings.HasPrefix(string(renderRules(nil)), rulesHeader) {
-		t.Error("no header")
 	}
 }
 
