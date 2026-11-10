@@ -241,11 +241,10 @@ after `motel notify setup`:
 
 Run again, it puts the units back as the binary ships them. The drop-in
 replaces Debian's `ExecStart=`, so `/etc/default/victoria-metrics` (a
-conffile) stays as shipped and an upgrade never prompts. Two unit facts
-were measured on hotserve-1 and are in the files: a socket unit bound
+conffile) stays as shipped and an upgrade never prompts. One unit fact
+was measured on hotserve-1 and is in the files: a socket unit bound
 inside the namespace has `DefaultDependencies=no` and orders itself
-after the namespace by hand (the first boot's ordering cycle); and the
-proxy's service names its socket's service.
+after the namespace by hand (the first boot's ordering cycle).
 
 ## Paths
 
@@ -375,12 +374,19 @@ in the namespace; the socket `srw-rw---- root motel` and the state
 directory `drwxr-s--- motel _victoria-metrics`; root and motel reach the
 store and nobody does; the store's and vmalert's `MemoryMax`; the
 rendered `rules.yml` passes `vmalert -dryRun`; motel's push arrives
-(`job="motel"`), with a deployed app's `motel_app_*`; `GET /<app>` with
-the deploy token carries `metrics` with the app's memory; vmalert's
+(`job="motel"`), with a deployed app's `motel_app_up`, release and CPU,
+and its memory where the host's memory controller reaches the user
+manager's units (Debian 13 delegates it; a CI container's host may not,
+and the suite then asserts the series absent); `GET /<app>` with the
+deploy token carries `metrics`, and without one is a 401; vmalert's
 rules loaded, and its `ChannelFailed` for the failing channel firing
 with motel's labels while Alertmanager holds one such alert, not two;
 the view probe's three metrics keys closed from inside a sandboxed app;
-the store stopped, `GET /<app>` answering at once with the error.
+the store's socket stopped, `GET /<app>` answering at once (13 ms
+measured) with the error and the rest of the status whole, and the
+`push failed` line. First run 2026-11-10 on the lima arm64 VM: the
+two sources' `ChannelFailed` held by Alertmanager as one alert, with
+vmalert's `generatorURL`.
 Not in e2e (unit-tested only): `metrics_store_down`'s five minutes and
 `metrics_rules_down`'s three reads, the cache's 30 s.
 

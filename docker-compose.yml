@@ -175,6 +175,30 @@ services:
       - e2e-artifacts
       - e2e-sink
 
+  # The metrics suite's box (`make e2e-metrics`): the notify box with
+  # Debian's victoria-metrics installed and masked (e2e/Dockerfile,
+  # metrics-box), and the same stub receiver. Its own, as notify's is:
+  # its waits are the store's and vmalert's (a 30 s scrape, a minute's
+  # evaluation, the store's 30 s latency offset).
+  e2e-metrics-box:
+    build:
+      context: .
+      dockerfile: e2e/Dockerfile
+      target: metrics-box
+    privileged: true
+    cgroup: host
+    stop_signal: SIGRTMIN+3
+    tmpfs:
+      - /run
+      - /run/lock
+    volumes:
+      - /sys/fs/cgroup:/sys/fs/cgroup:rw
+      - ./e2e/lib.sh:/lib.sh:ro
+      - ./e2e/metrics/run.sh:/suite-metrics.sh:ro
+    depends_on:
+      - e2e-artifacts
+      - e2e-sink
+
   e2e-sink:
     image: python:3.14-slim
     command: ["python3", "-I", "/sink.py"]

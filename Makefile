@@ -16,7 +16,7 @@ VERSION ?= $(shell (git describe --tags --exact-match 2>/dev/null || echo v0.0.0
 # Distro image for the package install smoke test (install-test).
 DISTRO ?= debian:13
 
-.PHONY: test test-integration vet tidy tidy-check lint fuzz fuzz-list vulncheck pin-watch-check secretscan usage usage-claude usage-check build package clean-debs install-test e2e e2e-backup e2e-notify soak e2e-logs clean
+.PHONY: test test-integration vet tidy tidy-check lint fuzz fuzz-list vulncheck pin-watch-check secretscan usage usage-claude usage-check build package clean-debs install-test e2e e2e-backup e2e-notify e2e-metrics soak e2e-logs clean
 
 test:
 	$(COMPOSE) run --rm dev go test -race -cover $(PKGS)
@@ -356,6 +356,19 @@ e2e-notify:
 		$(COMPOSE) exec -T e2e-notify-box journalctl --no-pager -n 200 -u motel -u prometheus-alertmanager -u motel-am.socket || true; \
 	fi; \
 	$(COMPOSE) rm -sf e2e-notify-box e2e-sink >/dev/null; \
+	exit $$status
+
+# The metrics suite: notify's box with Debian's victoria-metrics, and the
+# same stub receiver; its own target and CI job, as notify's.
+e2e-metrics:
+	$(cgroup2_preflight)
+	$(COMPOSE) up --build -d e2e-metrics-box e2e-sink e2e-artifacts
+	status=0; \
+	$(COMPOSE) exec -T e2e-metrics-box /bin/sh /suite-metrics.sh || status=1; \
+	if [ $$status -ne 0 ]; then \
+		$(COMPOSE) exec -T e2e-metrics-box journalctl --no-pager -n 200 -u motel -u victoria-metrics -u motel-vmalert -u motel-vm.socket -u motel-vm.service -u motel-am-proxy.socket -u motel-am-proxy.service -u motel-metrics-netns || true; \
+	fi; \
+	$(COMPOSE) rm -sf e2e-metrics-box e2e-sink >/dev/null; \
 	exit $$status
 
 # The backup suite: a box with systemd, Debian's restic and sqlite3, and
