@@ -183,10 +183,51 @@ func TestValidateTakesAPushsSecretsAsHeld(t *testing.T) {
 	if err := validate(t, src("")); err == nil || !strings.Contains(err.Error(), "secret NOTIFY_OPS_URL is not in the box's secrets") {
 		t.Fatalf("a secret the push does not carry: err = %v", err)
 	}
-	// In any other command the variable is nobody's word.
+	// In any other command the variable is nobody's word: a reload of a
+	// running config refuses the missing secret.
 	t.Setenv(PushedSecretsEnv, "NOTIFY_OPS_URL")
 	SetCommand("run")
+	orig := configRunning
+	configRunning = func() bool { return true }
+	t.Cleanup(func() { configRunning = orig })
 	if err := validate(t, src("")); err == nil {
 		t.Fatal("a load took the variable's names as held")
+	}
+}
+
+// The first load of `motel run` (a boot) drops a channel whose secret is
+// missing and serves; validate, a reload (a config running) and a load
+// told no command refuse it.
+func TestBootDropsAMissingSecret(t *testing.T) {
+	orig := configRunning
+	t.Cleanup(func() { SetCommand(""); configRunning = orig })
+	running := false
+	configRunning = func() bool { return running }
+	dir := t.TempDir()
+	secrets := filepath.Join(dir, "_box.env")
+	if err := os.WriteFile(secrets, []byte("NOTIFY_OPS_URL=https://ntfy.sh/ops\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	src := "{\n\tadmin off\n\tnotify {\n\t\tchannel ops ntfy {secret.NOTIFY_OPS_URL}\n\t\tchannel spare json {secret.NOTIFY_SPARE_URL}\n\t\toperator ops spare\n\t\tsecrets_file " + secrets +
+		"\n\t\tstate_dir " + filepath.Join(dir, "state") + "\n\t}\n}\n:8080 {\n\trespond ok\n}\n"
+	for _, c := range []struct {
+		cmd     string
+		running bool
+		ok      bool
+	}{
+		{"run", false, true},
+		{"run", true, false},
+		{"validate", false, false},
+		{"", false, false},
+	} {
+		SetCommand(c.cmd)
+		running = c.running
+		err := validate(t, src)
+		if c.ok && err != nil {
+			t.Errorf("%q, running %v: refused: %v", c.cmd, c.running, err)
+		}
+		if !c.ok && (err == nil || !strings.Contains(err.Error(), "secret NOTIFY_SPARE_URL is not in the box's secrets")) {
+			t.Errorf("%q, running %v: err = %v", c.cmd, c.running, err)
+		}
 	}
 }

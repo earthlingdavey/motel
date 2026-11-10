@@ -178,8 +178,9 @@ notify {
 }
 ```
 
-A `_box/` value with no `notify` block to read it is refused. A
-`NOTIFY_` variable among an app's own secrets never reaches the
+A push whose `notify` block names a secret `secrets/_box/` does not
+hold is refused, as is a `_box/` value with no `notify` block to read
+it. A `NOTIFY_` variable among an app's own secrets never reaches the
 app: motel withholds the prefix from every app's environment.
 
 ### Let a new signer read them

@@ -2,6 +2,7 @@ package notify
 
 import (
 	"encoding/json"
+	"slices"
 	"strings"
 	"testing"
 
@@ -193,6 +194,60 @@ func TestResolveRefusals(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// A boot's load drops a channel whose secret it cannot use, from every
+// place that names it, and says which, by line and key; anything else
+// is refused as at any load.
+func TestResolveDropsAtBoot(t *testing.T) {
+	a := mustParse(t, fullBlock)
+	sec := testSecrets()
+	delete(sec, "NOTIFY_PAGER_URL")              // an operator channel, missing
+	sec["NOTIFY_ALICE_URL"] = "http://10.0.0.1/" // alice's bound channel, refused
+	delete(sec, "NOTIFY_HC_URL")                 // the heartbeat
+	if _, _, err := a.resolveWith(testTrust(), sec, nil, false); err == nil {
+		t.Fatal("a load that does not drop accepted the missing secrets")
+	}
+	r, dropped, err := a.resolveWith(testTrust(), sec, nil, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(r.order, ","); got != "bob,ops" {
+		t.Errorf("channels %s", got)
+	}
+	if got := strings.Join(r.operator, ","); got != "ops" {
+		t.Errorf("operator %s", got)
+	}
+	if _, ok := r.appChannels["blog"]; ok || strings.Join(r.appChannels["shop"], ",") != "bob" {
+		t.Errorf("appChannels %v", r.appChannels)
+	}
+	if r.heartbeat != "" || r.urls["NOTIFY_PAGER_URL"] != "" || r.urls["NOTIFY_OPS_URL"] == "" {
+		t.Errorf("heartbeat %q urls %v", r.heartbeat, r.urls)
+	}
+	var reasons []string
+	for _, e := range dropped {
+		reasons = append(reasons, e.Error())
+	}
+	want := []string{
+		"channel alice: the value of NOTIFY_ALICE_URL is not an https URL",
+		"heartbeat: secret NOTIFY_HC_URL is not in the box's secrets (/etc/motel/secrets/_box.env)",
+		"channel pager: secret NOTIFY_PAGER_URL is not in the box's secrets (/etc/motel/secrets/_box.env)",
+	}
+	if !slices.Equal(reasons, want) {
+		t.Errorf("dropped:\n%s\nwant\n%s", strings.Join(reasons, "\n"), strings.Join(want, "\n"))
+	}
+	// What renders names no URL file it does not write.
+	cfg, files, _ := render(r, "/state")
+	for _, gone := range []string{"url-NOTIFY_PAGER_URL", "url-NOTIFY_ALICE_URL", "url-NOTIFY_HC_URL"} {
+		if _, ok := files[gone]; ok || strings.Contains(string(cfg), gone) {
+			t.Errorf("%s is rendered", gone)
+		}
+	}
+	// A refusal that is not a secret's is refused all the same.
+	b := mustParse(t, "notify {\nchannel ops slack {secret.NOTIFY_OPS_URL}\noperator ops nosuch\n}")
+	if _, _, err := b.resolveWith(testTrust(), map[string]string{}, nil, true); err == nil || !strings.Contains(err.Error(), "operator names nosuch") {
+		t.Fatalf("err = %v", err)
 	}
 }
 

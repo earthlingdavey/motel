@@ -4,6 +4,8 @@ import (
 	"os"
 	"strings"
 	"sync/atomic"
+
+	"github.com/caddyserver/caddy/v2"
 )
 
 // What a load knows of the command it runs under (DESIGN-notify.md,
@@ -50,3 +52,17 @@ func pushedSecrets() map[string]bool {
 	}
 	return out
 }
+
+// dropsChannels reports whether this load drops a channel whose secret
+// it cannot use (missing from the secrets file, or a value the URL
+// check refuses) instead of refusing the config: the first load of
+// `motel run`, with no config running. That load is a boot, or a
+// restart, and refusing it would leave every site down for an alert
+// channel; validate and a reload refuse, a refused reload keeping the
+// running config, as cmd/motel's gate does for its own rules.
+func dropsChannels() bool { return runningCommand() == "run" && !configRunning() }
+
+// configRunning reports whether Caddy runs a config now: none before a
+// process's first load has started, nor after a stop. A variable, so a
+// test can stand in for a running one.
+var configRunning = func() bool { return caddy.ActiveContext().Context != nil }

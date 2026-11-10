@@ -75,8 +75,17 @@ func (a *App) Provision(ctx caddy.Context) error {
 	if err != nil {
 		return fmt.Errorf("notify: %w", err)
 	}
-	if a.cfg, err = a.resolveWith(trust, secrets, pushedSecrets()); err != nil {
+	var dropped []error
+	if a.cfg, dropped, err = a.resolveWith(trust, secrets, pushedSecrets(), dropsChannels()); err != nil {
 		return fmt.Errorf("notify: %w", err)
+	}
+	for _, why := range dropped {
+		// The reason names the line and the key, never a value.
+		a.logger.Error("notify: a channel is dropped from this load: its secret cannot be used; motel validate and motel reload refuse the config until it is mended",
+			zap.String("reason", why.Error()), zap.String("secrets_file", a.secretsFile()))
+	}
+	if len(dropped) > 0 && len(a.cfg.operator) == 0 {
+		a.logger.Error("notify: no operator channel is left in this load: box events are journal lines only", zap.String("secrets_file", a.secretsFile()))
 	}
 	// Every value the file holds is a known value to the filter, named
 	// by a channel line or not: a spare URL is as much a credential.

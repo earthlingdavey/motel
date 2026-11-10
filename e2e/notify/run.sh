@@ -226,6 +226,42 @@ echo "=== notify 10: no channel URL in any journal ==="
 n=$(journalctl -u motel -u prometheus-alertmanager -o cat --no-pager | grep -c 'e2e-sink' || true)
 [ "$n" -eq 0 ] && pass "no channel URL in motel's or Alertmanager's journal" || fail "$n journal lines hold a channel URL"
 
+echo "=== notify 11: a secret missing at boot drops its channel; validate and reload refuse ==="
+# A channel line whose secret _box.env does not hold: the box's
+# consistency check refuses such a push, so this is a hand edit, or a
+# file lost. A boot must not take every site down for it.
+cp /etc/motel/Caddyfile /tmp/Caddyfile.before
+sed -i 's#^\(\t*\)operator ops oncall#\1channel spare json {secret.NOTIFY_SPARE_URL}\n\1operator ops oncall spare#' /etc/motel/Caddyfile
+grep -q 'NOTIFY_SPARE_URL' /etc/motel/Caddyfile || fail "fixture: the spare channel line is not in the Caddyfile"
+if motel validate --adapter caddyfile --config /etc/motel/Caddyfile >/tmp/validate.out 2>&1; then
+	fail "motel validate took a channel whose secret is missing"
+else
+	grep -q 'channel spare: secret NOTIFY_SPARE_URL is not in the box' /tmp/validate.out \
+		&& pass "motel validate refuses it, naming the channel and the key" || fail "validate: $(tail -2 /tmp/validate.out)"
+fi
+if systemctl reload motel 2>/dev/null; then
+	fail "a reload took a channel whose secret is missing"
+else
+	systemctl is-active -q motel && pass "a reload refuses it, and the running config serves on" || fail "motel is not active after the refused reload"
+fi
+t_boot=$(date +%s)
+systemctl restart motel
+i=0
+until systemctl is-active -q motel && [ -S /run/motel/admin.sock ]; do
+	i=$((i + 1)); [ "$i" -ge 120 ] && break; sleep 0.5
+done
+systemctl is-active -q motel && pass "motel starts on it: the boot is not refused" || fail "motel did not start: $(journalctl -u motel -o cat --no-pager -n 5)"
+journalctl -u motel --since "@$t_boot" -o cat --no-pager | grep 'notify: a channel is dropped from this load' | grep -q 'channel spare: secret NOTIFY_SPARE_URL' \
+	&& pass "journal: the dropped channel, by line and key" || fail "no journal line names the dropped channel"
+out=$(motel notify test ops 2>&1) && echo "$out" | grep -q 'delivered to ops' \
+	&& pass "the other channels deliver: $out" || fail "notify test ops after the boot: $out"
+cp /tmp/Caddyfile.before /etc/motel/Caddyfile
+systemctl restart motel
+i=0
+until systemctl is-active -q motel && [ -S /run/motel/admin.sock ]; do
+	i=$((i + 1)); [ "$i" -ge 120 ] && break; sleep 0.5
+done
+
 echo
 if [ "$FAILURES" -ne 0 ]; then
 	echo "notify suite: $FAILURES failure(s)"

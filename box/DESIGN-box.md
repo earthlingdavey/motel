@@ -1651,6 +1651,7 @@ as a path, after `filepath.Clean`, and never quoted back: it may hold a
 | a secret named `SOCKET` | `secret SOCKET for app <app>: motel sets SOCKET last, so it would never reach the app` |
 | an app whose `env_file` is `/etc/motel/secrets/_box.env` | `app <app>'s env_file is the box's own secrets file, which notify reads and no app is given: use /etc/motel/secrets/<app>.env` |
 | a file in `secrets/_box/` not named `NOTIFY_` then capitals, digits and underscores | `<host>/secrets/_box/<VAR>.age: the box's own slot holds notify's channel URLs alone, each named NOTIFY_ then capitals, digits and underscores` |
+| a `notify` block reading the box's own file (no `secrets_file`, or that file) whose `channel` or `heartbeat` line names a secret `secrets/_box/` does not hold, whether or not the push has the directory | `the notify block reads secret <NAME>, and <host>/secrets/_box/ does not hold it: make secret APP=_box VAR=<NAME>, or remove the line` (notify drops such a channel at a boot rather than refuse it: notify/DESIGN-notify.md, "Secrets at load"; this is where the mistake is told) |
 | `secrets/_box/` and no `notify` block | `<host>/secrets/_box/ holds the box's notify secrets, and the new Caddyfile has no notify block to read them: add one, or remove the directory` |
 | `secrets/_box/` and a `notify` block whose `secrets_file` is another file (compared as a path, never quoted back) | `<host>/secrets/_box/ is written to /etc/motel/secrets/_box.env, and the notify block's secrets_file is another file: remove the secrets_file line` |
 
@@ -2687,3 +2688,6 @@ Dated one-liners; the full text of each is in git.
   reversing Open question 5's lean against a reserved slot for this one
   use; a set that changes `_box.env` reloads motel, and the handler's
   validate is told the names the push carries.
+- 2026-11-10 — A push whose notify block names a secret `secrets/_box/`
+  does not hold is refused at the door: notify drops such a channel at
+  a boot rather than refuse the boot.

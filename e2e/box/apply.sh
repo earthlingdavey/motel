@@ -847,6 +847,19 @@ fi
 journalctl -u motel --since "@$t0" --no-pager -o cat | grep -q 'Alertmanager is not set up on this box' \
 	&& pass "the reload loaded the notify block" || fail "no notify line after the reload"
 settled "box secret added"
+# A channel line whose secret the push does not carry: refused at the
+# door, since a boot would drop the channel (notify's "Secrets at load").
+cp "$repo/$FILE" "$work/fnotify"
+sed -i 's#^\(\t*\)operator ops$#\1channel pager slack {secret.NOTIFY_PAGER_URL}\n\1operator ops pager#' "$repo/$FILE"
+NP=$(commit_index alice "notify: a channel whose secret is not in secrets/_box/")
+if ! template_apply "$NP" && grep -qF "the notify block reads secret NOTIFY_PAGER_URL, and $HOST/secrets/_box/ does not hold it: make secret APP=_box VAR=NOTIFY_PAGER_URL" "$work/tout"; then
+	pass "a notify block naming a secret the push does not carry is refused, by name"
+else
+	fail "an uncarried notify secret: $(cat "$work/tout")"
+fi
+[ "$(baseline)" = "$N1" ] && pass "the baseline did not move" || fail "the baseline is $(baseline), not $N1"
+settled "uncarried notify secret"
+cp "$work/fnotify" "$repo/$FILE"
 notify_secret NOTIFY_OPS_URL https://ntfy.sh/e2e-box-ops-2 || fail "make secret APP=_box, again: $(cat "$work/sout")"
 N2=$(commit_index alice "notify: rotate the operator's channel")
 t0=$(date +%s)

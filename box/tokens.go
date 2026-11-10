@@ -50,6 +50,21 @@ type NotifyBlock struct {
 	// SecretsFile is the secrets_file line's argument, "" for none (the
 	// default, the file the box writes from secrets/_box/).
 	SecretsFile string
+	// Secrets are the names the channel and heartbeat lines read, each
+	// written {secret.<NAME>}, in file order: what a push must carry in
+	// secrets/_box/. A URL written any other way is notify's to refuse.
+	Secrets []string
+}
+
+// notifySecret is the name a channel or heartbeat line's
+// {secret.<NAME>} argument reads, if it is one.
+func notifySecret(arg string) (string, bool) {
+	name, ok := strings.CutPrefix(arg, "{secret.")
+	if !ok {
+		return "", false
+	}
+	name, ok = strings.CutSuffix(name, "}")
+	return name, ok && name != ""
 }
 
 // AppEnv is an app block's env_file and env lines.
@@ -351,8 +366,17 @@ func walk(input []byte) (*Shape, error) {
 			}
 			shape.AppEnv[top.app] = e
 		case kindNotify:
-			if first.Text == "secrets_file" && len(args) > 0 {
+			switch {
+			case first.Text == "secrets_file" && len(args) > 0:
 				shape.Notify.SecretsFile = args[0]
+			case first.Text == "channel" && len(args) >= 3:
+				if name, ok := notifySecret(args[2]); ok {
+					shape.Notify.Secrets = append(shape.Notify.Secrets, name)
+				}
+			case first.Text == "heartbeat" && len(args) >= 1:
+				if name, ok := notifySecret(args[0]); ok {
+					shape.Notify.Secrets = append(shape.Notify.Secrets, name)
+				}
 			}
 		case kindBox:
 			switch first.Text {

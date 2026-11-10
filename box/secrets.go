@@ -309,6 +309,9 @@ func secretsShown(caddyfile string) string {
 // author meant to keep out of the run's output.
 func secretsFit(shape *Shape, s *proof.Secrets, caddyfile string) error {
 	dir := secretsShown(caddyfile)
+	if err := notifyCarried(shape, s, dir); err != nil {
+		return err
+	}
 	has := map[string]bool{}
 	for _, a := range s.Apps {
 		has[a.Name] = true
@@ -399,4 +402,28 @@ func boxSecretNames(s *proof.Secrets) []string {
 		}
 	}
 	return out
+}
+
+// notifyCarried holds a notify block that reads the box's own secrets
+// file to the push: every secret a channel or heartbeat line names must
+// be in secrets/_box/, since root writes that file from the push alone
+// and a load drops a channel whose secret is missing (notify/DESIGN-
+// notify.md, "Secrets at load"): the mistake is told here, at the push,
+// not found at the next boot. A secrets_file of the operator's own is
+// the operator's, and nothing here checks it.
+func notifyCarried(shape *Shape, s *proof.Secrets, dir string) error {
+	n := shape.Notify
+	if n == nil || (n.SecretsFile != "" && filepath.Clean(n.SecretsFile) != managedEnvFile(boxSlot)) {
+		return nil
+	}
+	carried := map[string]bool{}
+	for _, name := range boxSecretNames(s) {
+		carried[name] = true
+	}
+	for _, name := range n.Secrets {
+		if !carried[name] {
+			return refused("the notify block reads secret %s, and %s/%s/ does not hold it: make secret APP=%s VAR=%s, or remove the line", proof.Bound(name), dir, boxSlot, boxSlot, proof.Bound(name))
+		}
+	}
+	return nil
 }

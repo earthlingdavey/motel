@@ -116,12 +116,38 @@ connects to nothing), each naming keys and channels, never a value:
 | a channel defined twice | `channel <c> is defined twice` |
 | `bind` to a channel that does not exist | `bind "<id>" names channel <c>, which no channel line defines` |
 | `bind` to an identity no app's `deploy_trust` trusts | `bind "<id>": no app's deploy_trust trusts this identity; remove the line, or trust it` |
-| a secret the box does not hold | `channel <c>: secret <KEY> is not in the box's secrets (<file>)` |
-| a URL not https, not to a public address, or to a local name (`localhost`, `*.local`, `*.internal`, a single label) | `channel <c>: the value of <KEY> is not an https URL` / `… is not to a public address …` / `… is not to a public host name` |
+| a secret the box does not hold (a boot drops the channel instead: "Secrets at load") | `channel <c>: secret <KEY> is not in the box's secrets (<file>)` |
+| a URL not https, not to a public address, or to a local name (`localhost`, `*.local`, `*.internal`, a single label); a boot drops the channel instead | `channel <c>: the value of <KEY> is not an https URL` / `… is not to a public address …` / `… is not to a public host name` |
 
 The URL check is every URL's, not only a deployer's: Alertmanager sends
 from the network namespace every app shares, so a URL to loopback or a
 private address would reach a listener an app opened.
+
+### Secrets at load
+
+The last two rows are a secret's, and a boot does not refuse them.
+Provisioning cannot tell `motel validate` from a config load (Caddy's
+`Context` says neither), so cmd/motel tells notify the command it runs
+(`SetCommand`, before Caddy's own command), and a load reads Caddy's
+running config (`caddy.ActiveContext`):
+
+| Load | A channel whose secret is missing, or whose value is refused |
+|---|---|
+| `motel validate` (by hand, CI's `make check`, the box handler's step 6) | refused, as the table says; the handler's names its push carries in `secrets/_box/` as held ("Secrets") |
+| a reload (`motel reload`, `systemctl reload`, the box applier's): a config is running | refused; the running config serves on, and the box applier rolls its push back |
+| the first load of `motel run` (a boot, a restart, an unattended upgrade's): nothing running | the channel is **dropped** from that load (from the operator line, each binding, the route tree; the heartbeat, if it is its secret), each a `notify: a channel is dropped from this load` error line naming the line and the key, never a value; and one more if no operator channel is left. motel serves |
+
+Refusing a boot would take every site down for an alert channel; a
+dropped channel is the one cost, said in the journal, and the next
+`motel validate` or reload says it again. This is the rule cmd/motel's
+gate keeps for its own checks (an admin API on TCP, an unread backup
+declaration): validate and reload refuse, run serves. The box makes
+the case rare: its consistency check refuses a push whose `notify`
+block names a secret the push does not carry in `secrets/_box/`
+(box/DESIGN-box.md, "Which checks run where"), so `_box.env` lacks one
+only by a hand edit or a lost file. Every other refusal of the table
+refuses a boot too: they are the Caddyfile's, which the same signer
+committed whole.
 
 ## Secrets
 
@@ -476,7 +502,6 @@ on its general scales. notify's examples:
 | Owed | S | O | D | Lands in |
 |---|---|---|---|---|
 | motel restarted while a state key fires: the engine's table is in memory and liveswap's watchdog does not re-report a loop it was already in, so the alert ends at `resolve_timeout` and a false recovery is told; the backup, disk and TLS sources re-detect on their next poll | 3 | 4 | 3 | the next slice: liveswap re-reports its watchdog state at Start, or the engine reads Alertmanager's alert list at start (#22 of the review) |
-| A secret missing from `_box.env` refuses the whole config at load, as `motel validate` must: at a reboot motel does not start, and every site is down for an alert channel (named in the journal) | 4 | 5 | 1 | the `_box` slot: the box handler's consistency check refuses a push whose `notify` block names a secret the push does not carry, before it reaches the box; at load a missing secret then drops its channel with a warning. Load and validate cannot be told apart in Provision today (/code-review pass 2) |
 | Slack and Discord with real hooks; ntfy's formatting of Alertmanager's payload (the hotserve-1 test delivered the JSON body as the message) | — | — | — | needs the owner's hooks |
 | A per-app `notify` block (`deploy_succeeded on` per app, app-scoped channels, reading the app's own withheld `NOTIFY_` values); the pull API and the later channel kinds, for which the `notify: event` line is the record | — | — | — | later slices |
 
@@ -555,3 +580,7 @@ Dated one-liners; the full text of each is in git.
   `_box.env` from `secrets/_box/` and reloads on its change, the
   handler's validate is told the names a push carries, and the `NOTIFY_`
   prefix is withheld from every app's environment.
+- 2026-11-10 — The Owed row "a missing secret refuses the boot" landed:
+  the box refuses a push whose notify block names a secret it does not
+  carry; validate and a reload refuse a missing one, and a boot drops
+  its channel with an error line ("Secrets at load").
