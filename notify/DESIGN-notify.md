@@ -191,7 +191,7 @@ a deploy does not change its identity.
 
 | Event | Source | Kind | Severity | Fires | Resolves |
 |---|---|---|---|---|---|
-| `watchdog_throttled` | liveswap | state | critical | the restart budget is spent; again on a failure during a recovery's hold | the first healthy probe after it, held `max(30s, watchdog_grace)`; a deploy that succeeds; `watchdog off` |
+| `watchdog_throttled` | liveswap | state | critical | the restart budget is spent; again on any failed probe or crash during a recovery's hold, below the restart threshold too | the first healthy probe after it, held `max(30s, watchdog_grace)`; a deploy that succeeds; `watchdog off` |
 | `relaunch_refused` | liveswap | state | critical | the watchdog's relaunch is refused at its pre-flight | any path publishes an instance |
 | `deploy_failed` | liveswap | event | warning | a 5xx outcome; the summary names the version and the phase, never the error's text | — |
 | `deploy_refused` | liveswap | event | warning | a 422 (liveswap's own words, through the filter) | — |
@@ -199,8 +199,8 @@ a deploy does not change its identity.
 | `deploy_succeeded` | liveswap | event | info | a deploy succeeds; dropped unless `deploy_succeeded on` | — |
 | `deploy_in_progress` | liveswap | the mute | none | a deploy starts; re-posted each minute while it runs | it ends, whatever it came to |
 | `backup_stale/<app>` | backup | state | critical | the app's last complete backup is older than `status.StaleAfter` (3 h) | it is fresh |
-| `backup_run_failed` | backup | state | warning | the last run ended early, or an app's class is failed | a run ends ok |
-| `drill_failed` | backup | state | critical | the last drill could not begin, or the check found damage | the next drill |
+| `backup_run_failed` | backup | state | warning | the last run ended early, or an app's class is anything but ok or pending (`motel-backup run`'s own rule for a failed run) | a run ends with every app ok or pending |
+| `drill_failed` | backup | state | critical | the last drill could not begin, the check found damage, or an app's latest drill proved nothing (`App.RestoreDrill`, as `status` reads it); the summary names the apps, never the drill's detail | the next drill that proves every app |
 | `backup_unreadable` | backup | state | warning | the record does not parse | it reads |
 | `cert_failed/<identifier>` | tls | state | warning; critical with under 7 days left | CertMagic's `cert_failed` | its `cert_obtained`, or 13 h with no report (a name no config manages any more) |
 | `disk_low/<path>` | disk | state | warning at 80 % used, critical at 90 | statfs, every minute, one per device, of the liveswap root, Caddy's data and the state directory | five points under its threshold |
@@ -239,7 +239,7 @@ whichever config serves when it clears.
   queue (512), retried with backoff from 2 s to 30 s for five minutes,
   then given up as `notify: delivery failed` (error level for an
   event) and `motel_notify_delivery_failed_total` on the admin
-  `/metrics`. A refusal (4xx) is given up at once. Socket activation
+  `/metrics`. A refusal (4xx) is given up at once; a 5xx is retried like a refused connect. Socket activation
   restarts Alertmanager in about a second, so the usual outage is one
   failed connect.
 - **The mute** is `deploy_in_progress` for the app, posted at a
@@ -319,6 +319,7 @@ and the route check (`SendRequest.Check`):
 | motel's own names: `Watchdog`, `ChannelFailed`, `NotifyTest`, `deploy_in_progress`, `watchdog_*`, the deploy events, `disk_low`, `cert_failed`, `backup_*`, `drill_failed` | a producer that could post them could mute an app, fake the heartbeat, or speak as a detector |
 | a summary empty, on two lines, or over 200 characters; details over 2 KiB or with names not `[a-z][a-z0-9_]*` | #418's limits |
 | a body with unknown fields (a raw Alertmanager label set) | the route takes the request, never labels |
+| a name or instance the filter would mask (a channel URL, a secret-shaped token) | both are the key, the labels and the answer, which the filter does not rewrite |
 
 Accepted, an external event is one like motel's own: the filter, the
 bucket, the journal line, the queue. `motel notify test` posts one

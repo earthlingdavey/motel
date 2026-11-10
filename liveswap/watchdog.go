@@ -477,10 +477,12 @@ func (ma *managedApp) superviseInstance(ctx context.Context, c collaborators, in
 			}
 			if c.clock.Now().Before(graceUntil) {
 				ma.wd.noteFlap() // don't count, but break the healthy streak
+				ma.noteUnhealthy(c, inst.version)
 				c.logger.Debug("watchdog: probe failed during grace", zap.Error(err))
 				continue
 			}
 			n := ma.wd.recordFailure(err.Error())
+			ma.noteUnhealthy(c, inst.version)
 			c.logger.Warn("watchdog: health probe failed",
 				zap.String("kind", classifyProbeErr(err)),
 				zap.Int("consecutive", n),
@@ -739,6 +741,17 @@ func (ma *managedApp) handleFailure(ctx context.Context, c collaborators, inst *
 		zap.Int("pid", newInst.handle.state().PID),
 		zap.Duration("backoff_was", d))
 	return true
+}
+
+// noteUnhealthy is a failed probe: one inside a reported recovery's hold
+// ends the hold (the loop is reported again), so a recovery is told
+// only for an app that stayed healthy the whole hold, whether or not
+// its failures reach the restart threshold.
+func (ma *managedApp) noteUnhealthy(c collaborators, version string) {
+	if ma.wd.throttledAlert(false) {
+		ma.lifecycle(c, LifecycleEvent{Name: EventWatchdogThrottled, Release: version,
+			Summary: "the restart loop goes on: a health probe failed before the app was healthy for long"})
+	}
 }
 
 // noteHealthy reports the end of a restart loop on the first healthy

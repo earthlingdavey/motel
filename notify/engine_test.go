@@ -379,6 +379,21 @@ func TestDeliveryRetriedThenGivenUp(t *testing.T) {
 	}
 }
 
+// TestDeliveryServerErrorIsRetried: a 5xx is Alertmanager's trouble,
+// not a refusal of the alert.
+func TestDeliveryServerErrorIsRetried(t *testing.T) {
+	te := newTestEngine(t)
+	te.p.err = &amStatusError{path: "/api/v2/alerts", code: 503, msg: "busy"}
+	te.report(deployFailed())
+	if again, wait := te.attempt(context.Background()); again || wait == 0 {
+		t.Fatal("a 503 was given up at once")
+	}
+	te.p.err = nil
+	if again, _ := te.attempt(context.Background()); !again || len(te.p.take()) != 1 {
+		t.Fatal("not delivered once Alertmanager answered")
+	}
+}
+
 func TestDeliveryRefusedIsFinal(t *testing.T) {
 	te := newTestEngine(t)
 	te.p.err = &amStatusError{path: "/api/v2/alerts", code: 400, msg: "bad"}

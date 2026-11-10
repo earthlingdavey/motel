@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"slices"
 	"sort"
+	"strings"
 	"syscall"
 	"time"
 
@@ -156,6 +157,7 @@ func (b *backupPoller) poll(now time.Time, path string) []Event {
 		return b.set.diff(fire)
 	}
 	failed := st.Error != ""
+	var unproven []string
 	apps := make([]string, 0, len(st.Apps))
 	for name := range st.Apps {
 		apps = append(apps, name)
@@ -166,8 +168,15 @@ func (b *backupPoller) poll(now time.Time, path string) []Event {
 		if a == nil {
 			continue
 		}
-		if a.Class == record.Failed {
+		// motel-backup's own rule for a run (`run` exits failed): every
+		// app ok, or pending its first data.
+		if a.Class != record.OK && a.Class != record.Pending {
 			failed = true
+		}
+		// The newest snapshot's drill that proved nothing, as `status`
+		// reads it: not made good by an older proof.
+		if a.RestoreDrill != nil {
+			unproven = append(unproven, name)
 		}
 		// A box event about an app: the app is the instance, never
 		// the app label, so it reaches the operator alone.
@@ -179,8 +188,12 @@ func (b *backupPoller) poll(now time.Time, path string) []Event {
 	if failed {
 		fire = append(fire, ev("backup_run_failed", SeverityWarning, "", "the last backup run failed or ended early; motel-backup status says what"))
 	}
-	if d := st.LastDrill; (d != nil && d.Detail != "") || (st.LastCheck != nil && st.LastCheck.Class == record.CheckDamaged) {
-		fire = append(fire, ev("drill_failed", SeverityCritical, "", "the last restore drill proved nothing or found the repository damaged; motel-backup status says what"))
+	if d := st.LastDrill; (d != nil && d.Detail != "") || (st.LastCheck != nil && st.LastCheck.Class == record.CheckDamaged) || len(unproven) > 0 {
+		summary := "the last restore drill proved nothing or found the repository damaged; motel-backup status says what"
+		if len(unproven) > 0 {
+			summary = "the last restore drill did not prove " + strings.Join(unproven, ", ") + "; motel-backup status says why"
+		}
+		fire = append(fire, ev("drill_failed", SeverityCritical, "", summary))
 	}
 	return b.set.diff(fire)
 }

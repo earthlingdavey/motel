@@ -166,6 +166,44 @@ func TestLifecycleWatchdogLoop(t *testing.T) {
 	}
 }
 
+// TestLifecycleFailedProbeEndsTheRecoveryHold: after a loop's recovery is
+// reported, one failed probe, far below the restart threshold, reports
+// the loop again, so notify's hold ends and no recovery is told for an
+// app that did not stay healthy.
+func TestLifecycleFailedProbeEndsTheRecoveryHold(t *testing.T) {
+	rig, n := notifiedRig(t)
+	rig.spec.wdRestarts = 1
+	rig.spec.wdWindow = 30 * time.Second
+	deployV1(t, rig)
+	rig.startWatchdogT(t)
+	waitUntil(t, "watchdog to arm", func() bool {
+		s := rig.ma.wd.currentState()
+		return s == wdStateGrace || s == wdStateWatching
+	})
+	rig.runner.handleAt(0).kill()
+	advanceUntil(t, rig, time.Second, "the budgeted restart", func() bool { return rig.runner.startCount() == 2 })
+	rig.runner.handleAt(1).kill()
+	advanceUntil(t, rig, time.Second, "the throttle", func() bool { return rig.ma.wd.currentState() == wdStateThrottled })
+	advanceUntil(t, rig, 5*time.Second, "watchdog_recovered", func() bool { _, ok := n.find(EventWatchdogRecovered); return ok })
+	count := func(name string) int {
+		c := 0
+		for _, x := range n.names() {
+			if x == name {
+				c++
+			}
+		}
+		return c
+	}
+	before := count(EventWatchdogThrottled)
+	rig.prober.setProbeErr(errors.New("health: 503"))
+	advanceUntil(t, rig, time.Second, "the loop reported again", func() bool { return count(EventWatchdogThrottled) > before })
+	if got := rig.ma.wd.failureCount(); got >= rig.spec.wdFailures {
+		t.Fatalf("the report waited for the restart threshold: %d failures", got)
+	}
+	rig.prober.setProbeErr(nil)
+	advanceUntil(t, rig, time.Second, "a second recovery", func() bool { return count(EventWatchdogRecovered) == 2 })
+}
+
 func TestLifecycleDeployEndsALoop(t *testing.T) {
 	rig, n := notifiedRig(t)
 	rig.spec.wdRestarts = 1

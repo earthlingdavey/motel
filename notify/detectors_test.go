@@ -177,6 +177,43 @@ func TestBackupPoller(t *testing.T) {
 	}
 }
 
+// TestBackupPollerFollowsMotelBackupsVerdicts: a run is failed unless
+// every app is ok or pending (motel-backup run's own exit), and a drill
+// that did not prove an app is drill_failed, as status reads both.
+func TestBackupPollerFollowsMotelBackupsVerdicts(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "status.json")
+	now := time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC)
+	fresh := &record.Snapshot{ID: "a", Time: now.Add(-time.Hour)}
+	for _, class := range []record.Class{record.Incomplete, record.DataMissing, record.NotAttempted, record.Failed} {
+		var b backupPoller
+		writeRecord(t, path, &record.Status{Apps: map[string]*record.App{"blog": {Class: class, LastOK: fresh}}})
+		if got := names(b.poll(now, path)); !got["backup_run_failed"] {
+			t.Errorf("class %q: %v", class, got)
+		}
+	}
+	for _, class := range []record.Class{record.OK, record.Pending} {
+		var b backupPoller
+		writeRecord(t, path, &record.Status{Apps: map[string]*record.App{"blog": {Class: class, LastOK: fresh}}})
+		if got := names(b.poll(now, path)); got["backup_run_failed"] {
+			t.Errorf("class %q is no failure: %v", class, got)
+		}
+	}
+	var b backupPoller
+	writeRecord(t, path, &record.Status{Apps: map[string]*record.App{
+		"blog": {Class: record.OK, LastOK: fresh, RestoreDrill: &record.Drill{Time: now, Detail: "the restored database fails its integrity check"}},
+		"shop": {Class: record.OK, LastOK: fresh, RestoreProven: &record.Drill{Time: now}},
+	}})
+	evs := b.poll(now, path)
+	if got := names(evs); !got["drill_failed"] {
+		t.Fatalf("a per-app drill that proved nothing: %v", got)
+	}
+	for _, e := range evs {
+		if e.Name == "drill_failed" && (!strings.Contains(e.Summary, "blog") || strings.Contains(e.Summary, "shop") || strings.Contains(e.Summary, "integrity")) {
+			t.Fatalf("summary = %q", e.Summary)
+		}
+	}
+}
+
 // TestBackupPollerUnreadableKeepsWhatFired: a record that cannot be read
 // says nothing was put right.
 func TestBackupPollerUnreadableKeepsWhatFired(t *testing.T) {

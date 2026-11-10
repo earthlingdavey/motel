@@ -534,8 +534,9 @@ func (e *engine) attempt(ctx context.Context) (again bool, wait time.Duration) {
 	case err == nil:
 		e.queue = e.queue[1:]
 		return true, 0
-	case errors.As(err, &refused), e.now().Sub(p.first) >= e.retryFor:
-		// Refused is final; retried for long enough is too.
+	case errors.As(err, &refused) && refused.code < 500, e.now().Sub(p.first) >= e.retryFor:
+		// Refused (4xx) is final; retried for long enough is too. A 5xx
+		// is Alertmanager's own trouble, retried like a refused connect.
 		e.queue = e.queue[1:]
 		e.gaveUp(p, err)
 		return true, 0

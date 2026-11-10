@@ -245,6 +245,21 @@ func TestServeTest(t *testing.T) {
 	}
 }
 
+// TestServeSendRefusesAMaskedInstance: the instance is in the key, the
+// labels and the answer, which the filter does not rewrite.
+func TestServeSendRefusesAMaskedInstance(t *testing.T) {
+	te := withEngine(t)
+	r := goodSend()
+	r.Instance = "https://hooks.slack.com/services/T0/B0/secretpart" // gitleaks:allow
+	_, err := callAdmin(t, serveSend, http.MethodPost, r)
+	if apiStatus(err) != http.StatusUnprocessableEntity || strings.Contains(err.Error(), "secretpart") {
+		t.Fatalf("a channel URL as the instance: %v", err)
+	}
+	if len(te.queue) != 0 || len(te.lines("notify: event")) != 0 {
+		t.Fatal("a refused event was journalled or queued")
+	}
+}
+
 func TestServeSendCarriesDetails(t *testing.T) {
 	te := withEngine(t)
 	r := goodSend()
