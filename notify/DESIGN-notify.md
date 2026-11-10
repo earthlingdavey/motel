@@ -6,8 +6,9 @@ the "History" section at the end holds only dated one-liners.
 
 **Status: experimental, slice one**: the notify core. Opt-in (nothing
 runs without a `notify` block, and the package only Suggests
-Alertmanager); not for production boxes until the first three rows of
-"Owed" land. No metrics store, no vmalert, no `metrics` in
+Alertmanager); the three Owed rows that barred a production box
+landed on 2026-11-10 ("History"), and what is owed still ("Owed") is
+real Slack and Discord hooks and later slices. No metrics store, no vmalert, no `metrics` in
 `GET /<app>`; those are slice two, designed in "Later slices" and not
 built. Normative for what is built: a change
 that cannot hold a line here changes the line in the same PR, with
@@ -319,6 +320,25 @@ whichever config serves when it clears.
   hold.
 - **The watchdog turned off** while a restart loop is reported ends the
   report (`watchdog_recovered`): no probe would ever say so.
+- **A motel restart** empties the table while Alertmanager keeps each
+  firing alert until `resolve_timeout`. The backup, disk and TLS
+  sources re-detect within a poll, before it; liveswap's watchdog would
+  not, since a fresh process does not know a loop it was already in,
+  and a refused relaunch is refused again by recovery with nothing
+  reported. So liveswap keeps what it told in each app's `alerts.json`
+  (a loop, a refusal; written on each change, removed when none stands,
+  forgotten for an app a reload removes), and **re-reports it at
+  notify's Start** (`ReportStanding`, pulled by notify once its engine
+  serves the config, whichever app Caddy starts first). Each is a
+  standing report: the engine ignores it for a key it holds (a reload),
+  and takes it as told for one it does not, journaled with
+  `standing: true` — a loop fires again (Alertmanager merges it with the
+  alert it holds: no second message), a recovery under way is held for
+  its hold and then resolved. The other way round, reading
+  Alertmanager's alert list at start, was not taken: Alertmanager keeps
+  no alerts across its own restart (a reboot), and what it holds says
+  nothing to liveswap, whose watchdog would still not report the
+  loop's end, leaving an adopted key firing for good.
 
 ## Failed delivery
 
@@ -434,6 +454,7 @@ package is installed rather than a binary fetched.
 | `/etc/motel/secrets/_box.env` | 0640 | root:motel | root: the box applier from `secrets/_box/`, or by hand | motel |
 | `/etc/systemd/system/motel-am.socket`, `…/prometheus-alertmanager.service.d/10-motel.conf` | 0644 | root | setup | systemd |
 | `/var/lib/prometheus/alertmanager/` | 0750 | prometheus | Alertmanager (the notification log, silences) | Alertmanager |
+| `<liveswap root>/<app>/alerts.json` | 0600 | motel | motel (liveswap's watchdog, on each change; removed when nothing stands) | motel (once per process, for `ReportStanding`); in no app's view |
 
 ## Threat model
 
@@ -491,7 +512,7 @@ on its general scales. notify's examples:
 | Residual | Where | S | O | D | Why accepted |
 |---|---|---|---|---|---|
 | A public host name that resolves, or rebinds, to a private address is posted to: the check is on the URL as written | notify/config.go (`checkURL`) | 1 | 5 | 5 | a channel URL is a signer's line today, and a signer can already run any code as an app that reaches the same addresses; scored by what T6 gains (nothing). Rescore when #417 lets a deployer choose a URL |
-| motel stopped for more than five minutes: Alertmanager resolves each firing state alert at `resolve_timeout`, and the channels get a recovery that did not happen | notify/engine.go (no `endsAt` on re-posts) | 2 | 3 | 3 | 18; a stop that long is itself a fault the heartbeat reports (Watchdog's silence pages first); keeping the alerts alive across a stop needs state on disk (size 3) |
+| motel stopped for more than five minutes: Alertmanager resolves each firing state alert at `resolve_timeout`, and the channels get a recovery that did not happen (at motel's start the watchdog's standing reports fire its alerts again, and the pollers theirs) | notify/engine.go (no `endsAt` on re-posts) | 2 | 3 | 3 | 18; a stop that long is itself a fault the heartbeat reports (Watchdog's silence pages first); keeping Alertmanager's alerts alive across a stop would need a poster outside motel; a restart (seconds) is "Behaviour"'s, and keeps them |
 | Two channels of one integration in one receiver: a failure names both as suspects, and neither is told | notify/channelfailed.go (`suspects`) | 2 | 5 | 3 | an operator's choice of channels; the line names both, and the counter is Alertmanager's own; one receiver per channel would double every route |
 | An operator with a single channel: `ChannelFailed` has no other channel to go to | notify/channelfailed.go | 2 | 5 | 1 | the `notify: channel failed` line and Alertmanager's counter say it; the design asks for "the other operator channels" and there are none |
 | `motel notify test` reads the counters for 15 s; a slow receiver answers "neither yet" | notify/admin.go (`testWait`) | 2 | 2 | 1 | the answer says so; Alertmanager's retries continue |
@@ -501,7 +522,6 @@ on its general scales. notify's examples:
 
 | Owed | S | O | D | Lands in |
 |---|---|---|---|---|
-| motel restarted while a state key fires: the engine's table is in memory and liveswap's watchdog does not re-report a loop it was already in, so the alert ends at `resolve_timeout` and a false recovery is told; the backup, disk and TLS sources re-detect on their next poll | 3 | 4 | 3 | the next slice: liveswap re-reports its watchdog state at Start, or the engine reads Alertmanager's alert list at start (#22 of the review) |
 | Slack and Discord with real hooks; ntfy's formatting of Alertmanager's payload (the hotserve-1 test delivered the JSON body as the message) | — | — | — | needs the owner's hooks |
 | A per-app `notify` block (`deploy_succeeded on` per app, app-scoped channels, reading the app's own withheld `NOTIFY_` values); the pull API and the later channel kinds, for which the `notify: event` line is the record | — | — | — | later slices |
 
@@ -525,9 +545,14 @@ app's `watchdog_throttled` while another app's arrives after the
 motel's hold and one tick; a channel answering 400 named in
 `ChannelFailed` to the other operator channel; `motel notify test`
 delivered and failed; the view probe's three keys closed from inside a
-sandboxed app; no URL in either journal. Not in e2e (unit-tested
-only): the five-minute give-up of an undeliverable post, the bucket's
-hour.
+sandboxed app; no URL in either journal; a channel whose secret is
+missing refused by `motel validate` and `systemctl reload`, dropped at
+`systemctl restart` with its journal line while the other channels
+deliver; a relaunch refused, then motel restarted: told again,
+standing, Alertmanager's alert kept alive (its `endsAt` moves) and no
+recovery told, then the cause mended and a reload: the recovery after
+the hold, and `alerts.json` gone. Not in e2e (unit-tested only): the
+five-minute give-up of an undeliverable post, the bucket's hour.
 
 ## Later slices
 
@@ -584,3 +609,8 @@ Dated one-liners; the full text of each is in git.
   the box refuses a push whose notify block names a secret it does not
   carry; validate and a reload refuse a missing one, and a boot drops
   its channel with an error line ("Secrets at load").
+- 2026-11-10 — The Owed row "a restart while a state key fires" landed:
+  liveswap keeps what its watchdog reported in `alerts.json` and
+  re-reports it at notify's Start, as standing reports the engine
+  ignores when it holds the key ("Behaviour"). With the two rows before
+  it, the three that barred a production box are in.

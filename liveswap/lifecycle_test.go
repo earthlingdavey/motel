@@ -374,3 +374,85 @@ func TestLifecyclePushFailuresBeforeThePipelineAreReported(t *testing.T) {
 		}
 	})
 }
+
+// What the watchdog told notify outlives the process in alerts.json:
+// written on each change, removed once nothing stands, and told again,
+// standing, by the next process's ReportStanding, whichever app Caddy
+// starts first.
+func TestReportStandingAfterARestart(t *testing.T) {
+	rig := newTestRig(t)
+	must(t, os.MkdirAll(rig.spec.dirs.app, 0o750))
+	rig.ma.restoreAlerts(rig.spec, zap.NewNop())
+	file := func() string {
+		data, err := os.ReadFile(rig.spec.dirs.alerts)
+		if errors.Is(err, os.ErrNotExist) {
+			return "absent"
+		}
+		must(t, err)
+		return string(data)
+	}
+	if !rig.ma.wd.throttledAlert(true) {
+		t.Fatal("the throttle was not due")
+	}
+	rig.ma.wd.setRefused()
+	if got := file(); got != `{"loop":true,"refused":true}` {
+		t.Fatalf("alerts.json = %s", got)
+	}
+	// A new process: a managedApp of the same name, never configured.
+	restarted := func() (*App, *managedApp) {
+		ma := newManagedApp("demo")
+		return &App{managed: map[string]*managedApp{"demo": ma}, specs: map[string]*appSpec{"demo": rig.spec}, logger: zap.NewNop()}, ma
+	}
+	a, ma := restarted()
+	n := &recNotifier{}
+	a.ReportStanding(n)
+	if got := n.names(); !slices.Equal(got, []string{EventWatchdogThrottled, EventRelaunchRefused}) {
+		t.Fatalf("after a restart: %v", got)
+	}
+	for _, ev := range n.evs {
+		if !ev.Standing || ev.App != "demo" || ev.Summary == "" {
+			t.Errorf("%+v", ev)
+		}
+	}
+	// A recovery under way in this process is told as one, with its hold.
+	n.reset()
+	ma.wd.healthyAlert(time.Now(), time.Minute)
+	a.ReportStanding(n)
+	if ev, ok := n.find(EventWatchdogRecovered); !ok || !ev.Standing || ev.Hold != backoffResetAfter(rig.spec) {
+		t.Fatalf("a recovery under way: %v", n.names())
+	}
+	// Ended: nothing stands, the file is gone, and a later process tells
+	// nothing.
+	ma.wd.endLoopAlert()
+	ma.wd.takeRefused()
+	if got := file(); got != "absent" {
+		t.Fatalf("alerts.json = %s once nothing stands", got)
+	}
+	a, _ = restarted()
+	n.reset()
+	a.ReportStanding(n)
+	if got := n.names(); len(got) != 0 {
+		t.Fatalf("nothing stands, yet: %v", got)
+	}
+}
+
+// An app the serving config removed forgets what it reported; a file
+// that does not read is taken as nothing, never a reason to stop.
+func TestReportedAlertsForgottenAndUnreadable(t *testing.T) {
+	rig := newTestRig(t)
+	must(t, os.MkdirAll(rig.spec.dirs.app, 0o750))
+	rig.ma.restoreAlerts(rig.spec, zap.NewNop())
+	rig.ma.wd.throttledAlert(true)
+	rig.ma.wd.forgetAlerts()
+	if _, err := os.Stat(rig.spec.dirs.alerts); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("a removed app's alerts.json: %v", err)
+	}
+	must(t, os.WriteFile(rig.spec.dirs.alerts, []byte("{not json"), 0o600))
+	ma := newManagedApp("demo")
+	a := &App{managed: map[string]*managedApp{"demo": ma}, specs: map[string]*appSpec{"demo": rig.spec}, logger: zap.NewNop()}
+	n := &recNotifier{}
+	a.ReportStanding(n)
+	if got := n.names(); len(got) != 0 {
+		t.Fatalf("an unreadable file: %v", got)
+	}
+}

@@ -86,8 +86,62 @@ type watchdogState struct {
 	// What the notify module was told (lifecycle.go): alerted while a
 	// restart loop is reported and not yet over, recovering once its
 	// recovery is reported and the hold runs, refused while a relaunch
-	// refusal stands.
+	// refusal stands. alerted and refused outlive the process in
+	// alerts.json (persistAlerts), so that a motel restarted while one
+	// stands reports it again (ReportStanding).
 	alerted, recovering, refused bool
+	// persisted is the pair alerts.json was last asked to hold, and gen
+	// counts each change of it; saveAlerts writes one (nil: nowhere to
+	// write yet, before the app's first configure).
+	persisted  reportedAlerts
+	gen        uint64
+	saveAlerts func(reportedAlerts) error
+	// saveMu orders the writes, savedGen the newest one written: a
+	// slower write of an older pair never lands over a newer one.
+	saveMu   sync.Mutex
+	savedGen uint64
+	// restored is set once alerts.json has been read into the flags,
+	// at the app's first configure in this process or its first
+	// ReportStanding, whichever comes first.
+	restored bool
+}
+
+// reportedAlerts is alerts.json: what the watchdog told the notify
+// module and has not ended. Written on each change, read once per
+// process.
+type reportedAlerts struct {
+	Loop    bool `json:"loop,omitempty"`    // a restart loop
+	Refused bool `json:"refused,omitempty"` // a relaunch refusal
+}
+
+// alertsChanged is called with mu held after a flag may have changed:
+// it returns the write of the new pair to run once mu is released, or
+// nil when nothing persisted changed.
+func (w *watchdogState) alertsChanged() func() {
+	now := reportedAlerts{Loop: w.alerted, Refused: w.refused}
+	if now == w.persisted || w.saveAlerts == nil {
+		w.persisted = now // before the first configure: the file's own
+		return nil
+	}
+	w.persisted = now
+	w.gen++
+	gen, save := w.gen, w.saveAlerts
+	return func() {
+		w.saveMu.Lock()
+		defer w.saveMu.Unlock()
+		if gen <= w.savedGen {
+			return
+		}
+		w.savedGen = gen
+		_ = save(now) // the writer journals its own failure
+	}
+}
+
+// runSave calls a deferred write if there is one.
+func runSave(f func()) {
+	if f != nil {
+		f()
+	}
 }
 
 // throttledAlert records that the restart loop is reported; it says
@@ -95,12 +149,15 @@ type watchdogState struct {
 // while the loop is reported, which ends a recovery's hold.
 func (w *watchdogState) throttledAlert(throttling bool) bool {
 	w.mu.Lock()
-	defer w.mu.Unlock()
 	if !throttling && !w.alerted {
+		w.mu.Unlock()
 		return false
 	}
 	due := throttling || w.recovering
 	w.alerted, w.recovering = true, false
+	save := w.alertsChanged()
+	w.mu.Unlock()
+	runSave(save)
 	return due
 }
 
@@ -110,18 +167,22 @@ func (w *watchdogState) throttledAlert(throttling bool) bool {
 // after which the backoff resets too.
 func (w *watchdogState) healthyAlert(now time.Time, hold time.Duration) bool {
 	w.mu.Lock()
-	defer w.mu.Unlock()
-	if !w.alerted {
+	switch {
+	case !w.alerted:
+		w.mu.Unlock()
 		return false
-	}
-	if !w.healthySince.IsZero() && now.Sub(w.healthySince) >= hold {
+	case !w.healthySince.IsZero() && now.Sub(w.healthySince) >= hold:
 		w.alerted, w.recovering = false, false
+		save := w.alertsChanged()
+		w.mu.Unlock()
+		runSave(save)
 		return false
-	}
-	if w.recovering {
+	case w.recovering:
+		w.mu.Unlock()
 		return false
 	}
 	w.recovering = true
+	w.mu.Unlock()
 	return true
 }
 
@@ -130,26 +191,75 @@ func (w *watchdogState) healthyAlert(now time.Time, hold time.Duration) bool {
 // watchdog turned off, after which nothing would ever report it healthy.
 func (w *watchdogState) endLoopAlert() bool {
 	w.mu.Lock()
-	defer w.mu.Unlock()
 	was := w.alerted
 	w.alerted, w.recovering = false, false
+	save := w.alertsChanged()
+	w.mu.Unlock()
+	runSave(save)
 	return was
 }
 
 func (w *watchdogState) setRefused() bool {
 	w.mu.Lock()
-	defer w.mu.Unlock()
 	was := w.refused
 	w.refused = true
+	save := w.alertsChanged()
+	w.mu.Unlock()
+	runSave(save)
 	return !was
 }
 
 func (w *watchdogState) takeRefused() bool {
 	w.mu.Lock()
-	defer w.mu.Unlock()
 	was := w.refused
 	w.refused = false
+	save := w.alertsChanged()
+	w.mu.Unlock()
+	runSave(save)
 	return was
+}
+
+// forgetAlerts ends what was reported, for an app the serving config no
+// longer runs: the notify module resolves its keys itself, and an app
+// of the name added later starts with nothing standing.
+func (w *watchdogState) forgetAlerts() {
+	w.mu.Lock()
+	w.alerted, w.recovering, w.refused = false, false, false
+	save := w.alertsChanged()
+	w.mu.Unlock()
+	runSave(save)
+}
+
+// standing is what the notify module was told and has not ended: a
+// restart loop, whether its recovery's hold runs, a relaunch refusal.
+func (w *watchdogState) standing() (loop, recovering, refused bool) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.alerted, w.recovering, w.refused
+}
+
+// restoreAlerts reads alerts.json into the flags, once per process, and
+// points the writes of each change at it. A file that is not there is
+// nothing standing; one that does not read is said and taken as
+// nothing (the alert it held ends at Alertmanager's resolve_timeout, as
+// before this file), never a reason to stop the app.
+func (w *watchdogState) restoreAlerts(load func() (reportedAlerts, error), save func(reportedAlerts) error) error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.saveAlerts = save
+	if w.restored {
+		return nil
+	}
+	w.restored = true
+	r, err := load()
+	if err != nil {
+		return err
+	}
+	// Flags already set in this process (none before the first
+	// configure) are newer than the file.
+	w.alerted, w.refused = w.alerted || r.Loop, w.refused || r.Refused
+	w.persisted = r
+	return nil
 }
 
 // watchdogSnapshot is the status-endpoint view.

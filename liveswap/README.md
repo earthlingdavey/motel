@@ -1680,6 +1680,7 @@ gives up after the cutover turns red a deploy the box completed.
   shared/                 persistent data, survives deploys (the app's HOME)
   state.json              current version, nonce and unit name
   deploying.json          a URL or push deploy in flight; gone when it ends
+  alerts.json             a restart loop or refused relaunch reported to notify and not over; gone when none is
   deploys/v1.4.2.json     each version's latest deploy outcome (see Deploy records)
   tmp/                    download staging
 ```

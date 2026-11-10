@@ -509,6 +509,7 @@ func (ma *managedApp) installSpec(owner any, spec *appSpec, verifiers []deploytr
 		sr.setLogger(logger)
 	}
 	ma.store = &fileStateStore{path: spec.dirs.state}
+	ma.restoreAlerts(spec, logger)
 	if changed {
 		logger.Info("app definition changed; it applies at the app's next launch (deploy, rollback, or relaunch after a crash, health failure or reboot), except its resource caps, which reach the running instance now")
 	}
@@ -1898,6 +1899,7 @@ func (ma *managedApp) Destruct() error {
 		}
 		return nil
 	}
+	ma.wd.forgetAlerts()
 	// Removed by a reload that is now serving: no unit may outlive
 	// the definition. A deploy of the app may still be in flight — a
 	// reload stops the old config's servers without waiting for their

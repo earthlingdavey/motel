@@ -550,3 +550,73 @@ func TestReleaseOfTheLastConfigClearsTheTable(t *testing.T) {
 		t.Fatal("the old key came back with the block")
 	}
 }
+
+// A standing report (liveswap's ReportStanding at Start) is what a
+// detector told before: ignored for a key the table holds, taken as
+// told for one it does not, after a motel restart emptied the table
+// while Alertmanager kept the alert.
+func TestStandingReports(t *testing.T) {
+	standing := func(firing bool) Event {
+		ev := watchdog(firing)
+		ev.Standing = true
+		return ev
+	}
+	t.Run("firing, the table empty: it fires", func(t *testing.T) {
+		te := newTestEngine(t)
+		te.report(standing(true))
+		got := te.drain()
+		if countAlert(got, "watchdog_throttled") != 1 || !got[0].EndsAt.IsZero() {
+			t.Fatalf("posts = %+v", got)
+		}
+		if l := te.lines("notify: event"); len(l) != 1 || l[0].ContextMap()["state"] != "firing" || l[0].ContextMap()["standing"] != true {
+			t.Fatalf("journal = %+v", l)
+		}
+	})
+	t.Run("the table holds it: ignored", func(t *testing.T) {
+		te := newTestEngine(t)
+		te.report(watchdog(true))
+		te.report(watchdog(false)) // a recovery's hold under way
+		te.drain()
+		te.lines("notify: event")
+		te.advance(20 * time.Second)
+		te.report(standing(true))
+		te.report(standing(false))
+		if got := te.drain(); len(got) != 0 {
+			t.Fatalf("a standing report was posted: %+v", got)
+		}
+		te.advance(11 * time.Second) // the hold from the first clear, not from the standing one
+		te.tick()
+		if got := te.drain(); countAlert(got, "watchdog_throttled") != 1 || got[0].EndsAt.IsZero() {
+			t.Fatalf("the recovery after the hold = %+v", got)
+		}
+	})
+	t.Run("a recovery under way, the table empty: held, kept alive, resolved after the hold", func(t *testing.T) {
+		te := newTestEngine(t)
+		ev := standing(false)
+		ev.Hold = 45 * time.Second
+		te.report(ev)
+		got := te.drain()
+		if countAlert(got, "watchdog_throttled") != 1 || !got[0].EndsAt.IsZero() {
+			t.Fatalf("not kept alive: %+v", got)
+		}
+		te.advance(44 * time.Second)
+		te.tick()
+		for _, a := range te.drain() {
+			if a.Labels["alertname"] == "watchdog_throttled" && !a.EndsAt.IsZero() {
+				t.Fatal("resolved inside the hold")
+			}
+		}
+		te.advance(2 * time.Second)
+		te.tick()
+		if got := te.drain(); countAlert(got, "watchdog_throttled") != 1 || !got[0].EndsAt.Equal(te.at) {
+			t.Fatalf("the resolve = %+v", got)
+		}
+		states := []string{}
+		for _, l := range te.lines("notify: event") {
+			states = append(states, l.ContextMap()["state"].(string))
+		}
+		if strings.Join(states, ",") != "held,resolved" {
+			t.Fatalf("journal states = %v", states)
+		}
+	})
+}

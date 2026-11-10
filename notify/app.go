@@ -43,6 +43,7 @@ type App struct {
 	BackupRecord string `json:"backup_record,omitempty"`
 
 	logger    *zap.Logger
+	ls        *liveswap.App // this config's, or nil: ReportStanding at Start
 	cfg       *resolved
 	rendered  []byte              // alertmanager.yml, rendered in Provision
 	files     map[string]string   // the URL files it names
@@ -99,6 +100,7 @@ func (a *App) Provision(ctx caddy.Context) error {
 	// polled by the engine.
 	a.diskPaths = []string{caddy.AppDataDir(), a.stateDir()}
 	if ls != nil {
+		a.ls = ls
 		ls.SetNotifier(lifecycleSink{theEngine})
 		a.diskPaths = append([]string{ls.Root}, a.diskPaths...)
 	}
@@ -195,6 +197,14 @@ func (a *App) Start() error {
 	// Every value the box's secrets hold is a known value to the
 	// filter, whatever line names it.
 	theEngine.configure(a, am, a.known, a.logger)
+	// What liveswap's watchdogs reported and has not ended, again: after
+	// a motel restart the table is empty, and nothing else would report
+	// a loop already under way or a refused relaunch (DESIGN-notify.md,
+	// "Behaviour"). Pulled here, once the engine serves this config,
+	// whichever app Caddy starts first.
+	if a.ls != nil {
+		a.ls.ReportStanding(lifecycleSink{theEngine})
+	}
 	return nil
 }
 

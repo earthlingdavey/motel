@@ -262,6 +262,65 @@ until systemctl is-active -q motel && [ -S /run/motel/admin.sock ]; do
 	i=$((i + 1)); [ "$i" -ge 120 ] && break; sleep 0.5
 done
 
+echo "=== notify 12: motel restarted while a state alert fires: it is told again, and still resolves ==="
+# A relaunch refused: blog's command gone from its release, then its
+# process killed. Nothing re-detects that after a restart (recovery's
+# own refusal reports nothing), so without liveswap's alerts.json and
+# its standing report the alert would end at resolve_timeout, and a
+# recovery be told for an app that is down.
+rr_alert() { am 'http://am/api/v2/alerts?filter=alertname%3D%22relaunch_refused%22&filter=app%3D%22blog%22'; }
+rr_ends() { rr_alert | sed -n 's/.*"endsAt":"\([^"]*\)".*/\1/p' | head -1; }
+code=$(deploy demo-v1.tar.gz rr1)
+[ "$code" = 200 ] && pass "deploy rr1" || fail "deploy rr1 returned $code: $(cat /tmp/deploy-body)"
+REL=/var/lib/liveswap/blog/releases/rr1
+cp "$REL/server" /tmp/server.rr1
+pid=$(json_num "$(status)" pid)
+t_rr=$(now_ms)
+rm "$REL/server"
+[ -n "$pid" ] && kill -9 "$pid"
+i=0
+until journalctl -u motel -o cat --no-pager | grep 'notify: event' | grep 'liveswap/app:blog/relaunch_refused' | grep -q '"state":"firing"'; do
+	i=$((i + 1)); [ "$i" -ge 120 ] && break; sleep 0.5
+done
+journalctl -u motel -o cat --no-pager | grep 'notify: event' | grep 'liveswap/app:blog/relaunch_refused' | grep -q '"state":"firing"' \
+	&& pass "the refused relaunch fires relaunch_refused" || fail "no relaunch_refused after the kill (pid '$pid')"
+grep -q '"refused":true' /var/lib/liveswap/blog/alerts.json 2>/dev/null \
+	&& pass "alerts.json keeps it for a restart" || fail "alerts.json: $(cat /var/lib/liveswap/blog/alerts.json 2>&1)"
+t=$(first_arrival /ops relaunch_refused "$t_rr" 60 firing blog)
+within "relaunch_refused to the operator (group_wait)" "$t" "$t_rr" 0 45
+e0=$(rr_ends)
+t_restart=$(date +%s)
+systemctl restart motel
+i=0
+until systemctl is-active -q motel && [ -S /run/motel/admin.sock ]; do
+	i=$((i + 1)); [ "$i" -ge 120 ] && break; sleep 0.5
+done
+i=0
+until journalctl -u motel --since "@$t_restart" -o cat --no-pager | grep 'notify: event' | grep 'liveswap/app:blog/relaunch_refused' | grep -q '"standing":true'; do
+	i=$((i + 1)); [ "$i" -ge 40 ] && break; sleep 0.5
+done
+journalctl -u motel --since "@$t_restart" -o cat --no-pager | grep 'notify: event' | grep 'liveswap/app:blog/relaunch_refused' | grep -q '"standing":true' \
+	&& pass "after the restart, motel tells it again, standing" || fail "no standing relaunch_refused after the restart"
+i=0
+until [ -n "$e0" ] && [ -n "$(rr_ends)" ] && expr "$(rr_ends)" \> "$e0" >/dev/null; do
+	i=$((i + 1)); [ "$i" -ge 40 ] && break; sleep 0.5
+done
+e1=$(rr_ends)
+[ -n "$e0" ] && [ -n "$e1" ] && expr "$e1" \> "$e0" >/dev/null \
+	&& pass "Alertmanager's alert is kept alive across the restart (endsAt $e0 → $e1)" || fail "the alert's endsAt did not move: '$e0' → '$e1'"
+rr_alert | grep -q '"state":"active"' && pass "the alert is still active" || fail "the alert: $(rr_alert | head -c 300)"
+n=$(arrivals /ops relaunch_refused "$t_rr" resolved blog | wc -l)
+[ "$n" -eq 0 ] && pass "no recovery reached the operator across the restart" || fail "$n recoveries while blog is down"
+# The cause mended and a reload: recovery launches it, and the standing
+# alert resolves after motel's hold.
+cp /tmp/server.rr1 "$REL/server"
+chown --reference="$REL" "$REL/server" 2>/dev/null || true
+t_fix=$(now_ms)
+systemctl reload motel || fail "the reload after the mend"
+t=$(first_arrival /ops relaunch_refused "$t_fix" 150 resolved blog)
+within "the recovery once an instance runs again (hold, then a tick)" "$t" "$t_fix" 25 150
+[ ! -e /var/lib/liveswap/blog/alerts.json ] && pass "alerts.json is gone once nothing stands" || fail "alerts.json: $(cat /var/lib/liveswap/blog/alerts.json 2>&1)"
+
 echo
 if [ "$FAILURES" -ne 0 ]; then
 	echo "notify suite: $FAILURES failure(s)"

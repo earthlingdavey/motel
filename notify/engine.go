@@ -45,6 +45,14 @@ type Event struct {
 	// Details are an external producer's key=value pairs (motel notify
 	// send --detail), annotations detail_<key>, through the filter.
 	Details map[string]string
+	// Standing, on a state alert, is a detector's report of what it
+	// told before and has not ended (liveswap's ReportStanding, at
+	// Start): ignored for a key the table holds; for one it does not —
+	// a motel restarted since, its table empty while Alertmanager still
+	// holds the alert — taken as told: a firing one fires, a cleared one
+	// is held as after a firing one was told, so its recovery comes
+	// after the hold and never at resolve_timeout.
+	Standing bool
 }
 
 func (ev Event) subject() string {
@@ -277,6 +285,21 @@ func (e *engine) report(ev Event) {
 	}
 	key := ev.key()
 	st := e.states[key]
+	if ev.Standing {
+		if st != nil {
+			return // the table holds it: nothing was lost
+		}
+		if !ev.Firing {
+			// Told before this process: the alert Alertmanager holds is
+			// the posted one, kept alive through the hold and resolved
+			// after it.
+			st = &stateAlert{ev: ev, posted: true, startsAt: now, lastSeen: now, clearSince: now, hold: max(ev.Hold, minHold)}
+			e.states[key] = st
+			e.journal(ev, "held")
+			e.reconcile(key, st, now)
+			return
+		}
+	}
 	if ev.Firing && st != nil && st.posted && st.ev.Severity != ev.Severity {
 		// The same key at another severity (a disk from 80 to 90 %) is
 		// another alert to Alertmanager, whose labels carry it: the old
@@ -481,6 +504,10 @@ func (e *engine) journal(ev Event, state string, extra ...zap.Field) {
 	}
 	if ev.DeployedBy != "" {
 		fields = append(fields, zap.String("deployed_by", ev.DeployedBy))
+	}
+	if ev.Standing {
+		// Told before this process started; reported again.
+		fields = append(fields, zap.Bool("standing", true))
 	}
 	e.logger.Info("notify: event", append(fields, extra...)...)
 }
