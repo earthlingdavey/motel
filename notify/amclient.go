@@ -51,7 +51,7 @@ type amAlert struct {
 // maxErrBody is how much of an error response is kept for a message.
 const maxErrBody = 512
 
-func (c *amClient) do(ctx context.Context, method, path string, body []byte) ([]byte, error) { //nolint:unparam // the body is read by GET /metrics (channel_failed, next commit)
+func (c *amClient) do(ctx context.Context, method, path string, body []byte) ([]byte, error) {
 	var rd io.Reader
 	if body != nil {
 		rd = bytes.NewReader(body)
@@ -117,4 +117,9 @@ func (c *amClient) postAlerts(ctx context.Context, alerts []amAlert) error {
 	}
 	_, err = c.do(ctx, http.MethodPost, "/api/v2/alerts", body)
 	return err
+}
+
+// metrics is Alertmanager's own /metrics, which channel_failed reads.
+func (c *amClient) metrics(ctx context.Context) ([]byte, error) {
+	return c.do(ctx, http.MethodGet, "/metrics", nil)
 }

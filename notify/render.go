@@ -125,10 +125,11 @@ const ConfigName = "alertmanager.yml"
 // urlFileName is the file holding one secret's value, beside the config.
 func urlFileName(key string) string { return "url-" + key }
 
-// render is the Alertmanager configuration for a resolved block, and
-// the URL files it names (file name → value). stateDir is where both
-// will be written, which the config's url_file paths name.
-func render(r *resolved, stateDir string) ([]byte, map[string]string) {
+// render is the Alertmanager configuration for a resolved block, the
+// URL files it names (file name → value), and each receiver's channels,
+// which channel_failed reads a failing receiver against. stateDir is
+// where the files will be written, which the url_file paths name.
+func render(r *resolved, stateDir string) ([]byte, map[string]string, map[string][]string) {
 	files := make(map[string]string, len(r.urls))
 	for key, v := range r.urls {
 		files[urlFileName(key)] = v
@@ -136,8 +137,10 @@ func render(r *resolved, stateDir string) ([]byte, map[string]string) {
 	file := func(key string) string { return filepath.Join(stateDir, urlFileName(key)) }
 
 	cfg := amConfig{Global: amGlobal{ResolveTimeout: "5m"}}
+	receivers := map[string][]string{}
 	recv := func(name string, channels []string, resolved bool) amRecv {
 		rc := amRecv{Name: name}
+		receivers[name] = slices.Clone(channels)
 		for _, n := range channels {
 			ch := r.channels[n]
 			switch channelKinds[ch.Kind] {
@@ -273,7 +276,7 @@ func render(r *resolved, stateDir string) ([]byte, map[string]string) {
 		panic(err)
 	}
 	_ = enc.Close()
-	return b.Bytes(), files
+	return b.Bytes(), files, receivers
 }
 
 func (ch Channel) floor() string {

@@ -29,7 +29,7 @@ func renderFull(t *testing.T) ([]byte, map[string]string, *resolved) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cfg, files := render(r, testStateDir)
+	cfg, files, _ := render(r, testStateDir)
 	return cfg, files, r
 }
 
@@ -196,7 +196,7 @@ func writeRendered(t *testing.T) string {
 		t.Fatal(err)
 	}
 	dir := t.TempDir()
-	cfg, files := render(r, dir)
+	cfg, files, _ := render(r, dir)
 	if _, _, err := writeState(dir, cfg, files); err != nil {
 		t.Fatal(err)
 	}

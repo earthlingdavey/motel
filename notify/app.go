@@ -42,10 +42,11 @@ type App struct {
 	// BackupRecord is the backup record's path; "off" reads none.
 	BackupRecord string `json:"backup_record,omitempty"`
 
-	logger   *zap.Logger
-	cfg      *resolved
-	rendered []byte            // alertmanager.yml, rendered in Provision
-	files    map[string]string // the URL files it names
+	logger    *zap.Logger
+	cfg       *resolved
+	rendered  []byte              // alertmanager.yml, rendered in Provision
+	files     map[string]string   // the URL files it names
+	receivers map[string][]string // each receiver's channels
 	// diskPaths are the directories whose filesystems the disk source
 	// measures: Caddy's data, the apps' root, notify's own state.
 	diskPaths []string
@@ -76,7 +77,7 @@ func (a *App) Provision(ctx caddy.Context) error {
 	if a.cfg, err = a.resolve(trust, secrets); err != nil {
 		return fmt.Errorf("notify: %w", err)
 	}
-	a.rendered, a.files = render(a.cfg, a.stateDir())
+	a.rendered, a.files, a.receivers = render(a.cfg, a.stateDir())
 	theEngine.failures.register(ctx.GetMetricsRegistry())
 
 	// The sources. liveswap's events reach the engine through its

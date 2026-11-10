@@ -175,6 +175,10 @@ type engine struct {
 	diskPaths  []string
 	lastDisk   time.Time
 
+	// channel_failed's memory of Alertmanager's counter, and the read.
+	fail    failWatch
+	metrics func(context.Context) ([]byte, error)
+
 	failures *failCounter
 }
 
@@ -509,7 +513,13 @@ func (e *engine) poll() {
 	if diskDue {
 		e.lastDisk = now
 	}
+	read := e.metrics
 	e.mu.Unlock()
+	if diskDue && read != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), amRequestTimeout)
+		e.scrapeFailed(ctx, read)
+		cancel()
+	}
 	evs := e.backup.poll(now, path)
 	if diskDue {
 		evs = append(evs, e.disk.poll(paths)...)
@@ -559,13 +569,29 @@ func (e *engine) run(ctx context.Context, tickEvery time.Duration) {
 func (e *engine) configure(a *App, post poster, redact *liveswap.Redactor, logger *zap.Logger) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	e.active, e.post, e.redact, e.logger = a, post, redact, logger
-	e.deploySucceeded = a.DeploySucceeded
-	e.backupPath, e.diskPaths = a.backupRecord(), a.diskPaths
+	e.setConfig(a, post, redact, logger)
 	if !e.running {
 		ctx, cancel := context.WithCancel(context.Background())
 		e.running, e.cancel, e.done = true, cancel, make(chan struct{})
 		go e.run(ctx, 5*time.Second)
+	}
+}
+
+// setConfig is configure's state, with mu held.
+func (e *engine) setConfig(a *App, post poster, redact *liveswap.Redactor, logger *zap.Logger) {
+	e.active, e.post, e.redact, e.logger = a, post, redact, logger
+	e.deploySucceeded = a.DeploySucceeded
+	e.backupPath, e.diskPaths = a.backupRecord(), a.diskPaths
+	if c, ok := post.(*amClient); ok {
+		e.metrics = c.metrics
+	}
+	e.fail.teacher, e.fail.channels = nil, a.receivers
+	e.fail.kinds = map[string]string{}
+	if a.cfg != nil {
+		e.fail.teacher = slices.Clone(a.cfg.teacher)
+		for name, ch := range a.cfg.channels {
+			e.fail.kinds[name] = channelKinds[ch.Kind]
+		}
 	}
 }
 
