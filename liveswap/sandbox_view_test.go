@@ -42,6 +42,8 @@ var sandboxViewKeys = []string{
 	"root_listing", "state", "apptmp", "current", "release", "root",
 	// motel's own state, sockets and config.
 	"motel_lib", "run_motel", "etc_motel", "admin_socket", "mgr_socket",
+	// notify's Alertmanager socket and rendered state.
+	"notify_run", "notify_socket", "notify_state",
 	// The manager's process, via /proc.
 	"mgr_root", "mgr_environ",
 	// The rest of the host, which nothing bound.

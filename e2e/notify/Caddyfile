@@ -1,0 +1,54 @@
+# The notify suite's box (e2e/notify/run.sh): the starter's admin socket,
+# two apps, and a notify block whose channels are paths on the stub
+# receiver, e2e-sink. Plain HTTP and a private address are refused for
+# every channel on a real box; allow_insecure_channels admits them here.
+{
+	admin unix//run/motel/admin.sock
+	auto_https off
+
+	liveswap {
+		root /var/lib/liveswap
+		allow_insecure_http
+		artifact_allowlist e2e-artifacts:8080
+
+		# blog trusts the minted deploy key, which a student's channel is
+		# bound to; shop trusts another key nobody binds.
+		app blog {
+			command ./server
+			deploy_trust local {
+				public_key /shared/deploy.pub
+				audience e2e
+				max_token_ttl 87600h
+			}
+			health_interval 250ms
+			health_timeout 1s
+			soak 1s
+			deadline 10s
+			drain 500ms
+			grace 3s
+			watchdog_grace 5s
+		}
+		app shop {
+			command ./server
+			deploy_trust local {
+				public_key /etc/motel/shop.pub
+				audience e2e
+			}
+		}
+	}
+
+	notify {
+		channel teacher json {secret.NOTIFY_TEACHER_URL}
+		# Answers 400: the failing channel channel_failed must name.
+		channel oncall discord {secret.NOTIFY_ONCALL_URL}
+		channel blog-student ntfy {secret.NOTIFY_BLOG_URL}
+		teacher teacher oncall
+		bind local:/shared/deploy.pub blog-student
+		heartbeat {secret.NOTIFY_HC_URL}
+		allow_insecure_channels
+	}
+}
+
+:8081 {
+	liveswap_webhook
+}

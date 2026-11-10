@@ -195,6 +195,35 @@ jobs:
       # scenarios fail.
       - run: make e2e COMPOSE="$COMPOSE"
 
+  # The notify suite: its own stack (a box with Debian's Alertmanager and
+  # a stub receiver), so its own job, as the backup suite's is.
+  e2e-notify:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-latest, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.runner }}
+    name: e2e-notify (${{ matrix.runner }})
+    steps:
+      # Before checkout; floor and why: ci.yml's lint job.
+      - name: CA certificates at least the pinned floor
+        run: |
+          floor=20260816
+          v=$(dpkg-query -W -f='${Version}' ca-certificates)
+          if ! dpkg --compare-versions "$v" ge "$floor"; then
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq --only-upgrade ca-certificates
+            sudo systemctl try-restart docker
+            v=$(dpkg-query -W -f='${Version}' ca-certificates)
+            dpkg --compare-versions "$v" ge "$floor" || { echo "ca-certificates $v is below $floor" >&2; exit 1; }
+          fi
+          echo "ca-certificates $v"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/runner-sample
+      # The e2e job says why (the runner's Ubuntu kernel).
+      - run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+      - run: make e2e-notify COMPOSE="$COMPOSE"
+
   # The backup suite: its own stack (a box with Debian's restic and
   # sqlite3, and an S3 server), so its own job — run beside e2e it costs
   # its own length plus a build, not a longer critical path. The same
@@ -433,7 +462,7 @@ jobs:
 
   ci-ok:
     if: always()
-    needs: [lint, test, govulncheck, e2e, e2e-backup, package, install-test, gitleaks, usage-check]
+    needs: [lint, test, govulncheck, e2e, e2e-backup, e2e-notify, package, install-test, gitleaks, usage-check]
     runs-on: ubuntu-latest
     steps:
       - name: assert every needed job succeeded

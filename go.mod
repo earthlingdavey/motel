@@ -123,6 +123,7 @@ require (
 	github.com/shurcooL/sanitized_anchor_name v1.0.0 // indirect
 	github.com/sirupsen/logrus v1.10.2 // indirect
 	github.com/slackhq/nebula v1.11.2 // indirect
+	github.com/smallhoursorg/motel/backups v0.0.0-00010101000000-000000000000 // indirect
 	github.com/smallstep/android-attestation v0.0.0-20260722204520-a51b1564ebda // indirect
 	github.com/smallstep/certificates v0.30.3-0.20261105213751-6d5a251fbe01 // indirect
 	github.com/smallstep/cli-utils v0.13.0 // indirect

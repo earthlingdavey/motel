@@ -28,28 +28,26 @@ motel renders its config for, delivers.`,
 	})
 }
 
+// defaultAdmin is the starter's admin address (packaging/Caddyfile).
+const defaultAdmin = "unix//run/motel/admin.sock"
+
 // adminFlags are how a command finds the running motel's admin API: the
-// address, or the Caddyfile that names it (the starter's is
-// unix//run/motel/admin.sock).
+// starter's address, another, or a Caddyfile that names one. Not the
+// box's Caddyfile by default: reading it adapts the whole file, which
+// logs, and the admin address is the starter's on every box.
 func adminFlags(c *cobra.Command) {
-	c.Flags().String("config", "/etc/motel/Caddyfile", "the Caddyfile whose admin address to use")
-	c.Flags().String("address", "", "the admin API's address, over the one the Caddyfile names")
+	c.Flags().String("address", defaultAdmin, "the admin API's address")
+	c.Flags().String("config", "", "a Caddyfile whose admin address to use instead")
 }
 
 func adminPost(c *cobra.Command, uri string, body any) ([]byte, error) {
 	addr, _ := c.Flags().GetString("address")
-	cfgFile, _ := c.Flags().GetString("config")
-	if addr == "" {
-		if _, err := os.Stat(cfgFile); err == nil {
-			a, err := caddycmd.DetermineAdminAPIAddress("", nil, cfgFile, "caddyfile")
-			if err != nil {
-				return nil, err
-			}
-			addr = a
+	if cfgFile, _ := c.Flags().GetString("config"); cfgFile != "" {
+		a, err := caddycmd.DetermineAdminAPIAddress("", nil, cfgFile, "caddyfile")
+		if err != nil {
+			return nil, err
 		}
-	}
-	if addr == "" {
-		addr = "unix//run/motel/admin.sock"
+		addr = a
 	}
 	b, err := json.Marshal(body)
 	if err != nil {
@@ -58,7 +56,7 @@ func adminPost(c *cobra.Command, uri string, body any) ([]byte, error) {
 	h := http.Header{"Content-Type": {"application/json"}}
 	resp, err := caddycmd.AdminAPIRequest(addr, http.MethodPost, uri, h, bytes.NewReader(b))
 	if err != nil {
-		return nil, err // AdminAPIRequest already says what the answer was
+		return nil, apiRefusal(err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 	return io.ReadAll(io.LimitReader(resp.Body, 64<<10))
@@ -185,4 +183,22 @@ the units back as the binary ships them.`,
 			return setup(hostSystem{out: c.OutOrStdout()}, "/", c.OutOrStdout())
 		},
 	}
+}
+
+// apiRefusal is the admin API's own words for a refusal, which
+// AdminAPIRequest wraps as `caddy responded with error: HTTP 422:
+// {"error":"…"}`.
+func apiRefusal(err error) error {
+	msg := err.Error()
+	i := strings.Index(msg, "{")
+	if i < 0 {
+		return err
+	}
+	var body struct {
+		Error string `json:"error"`
+	}
+	if json.Unmarshal([]byte(strings.TrimSpace(msg[i:])), &body) != nil || body.Error == "" {
+		return err
+	}
+	return errors.New(body.Error)
 }

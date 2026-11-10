@@ -89,6 +89,12 @@ exists motel_lib open closed /var/lib/motel
 exists run_motel open closed /run/motel
 exists etc_motel open closed /etc/motel
 exists admin_socket open closed /run/motel/admin.sock
+# notify's Alertmanager: its socket admits the motel uid, which every
+# app is, so only the view keeps an app from posting or silencing
+# alerts; and the config and channel URLs motel renders for it.
+exists notify_run open closed /run/motel-notify
+exists notify_socket open closed /run/motel-notify/am.sock
+exists notify_state open closed /var/lib/motel-notify
 probe_uid=${MOTEL_UID:-$(id -u)}
 emit uid "$probe_uid"
 exists mgr_socket open closed "/run/user/$probe_uid/systemd/private"

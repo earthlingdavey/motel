@@ -18,7 +18,10 @@ COPY . .
 RUN CGO_ENABLED=0 GOFLAGS=-buildvcs=false go build -trimpath -o /motel ./cmd/motel \
 	&& cd backups && CGO_ENABLED=0 GOFLAGS=-buildvcs=false go build -trimpath -o /motel-backup ./cmd/motel-backup
 
-FROM debian:trixie-slim
+# The box. A named stage, because the notify suite's box below builds on
+# it: docker-compose.yml names this one as e2e-motel's and e2e-upstream's
+# target, or they would get the last stage.
+FROM debian:trixie-slim AS box
 ENV DEBIAN_FRONTEND=noninteractive
 # libpam-systemd: pam_systemd gives user@<uid>.service its runtime dir;
 # dbus: logind; procps + curl: the in-container systemd suite;
@@ -107,3 +110,31 @@ RUN useradd -m -G adm admin
 
 STOPSIGNAL SIGRTMIN+3
 CMD ["/sbin/init"]
+
+# The notify suite's box (make e2e-notify, e2e/notify/run.sh): the same
+# box with Debian's Alertmanager installed as `motel notify setup` would
+# install it, masked first so that nothing it enables starts; the suite
+# runs setup itself, which finds the package installed and does the
+# rest. iproute2: the suite's `ss`, for what listens.
+FROM box AS notify-box
+RUN systemctl mask prometheus-alertmanager.service \
+	&& apt-get update \
+	&& apt-get install -y --no-install-recommends prometheus-alertmanager iproute2 \
+	&& rm -rf /var/lib/apt/lists/*
+# shop's deploy key, which nothing binds a channel to; /shared is where
+# e2e-token.service mints blog's (no volume: this box shares it with no
+# runner).
+RUN mkdir -p /shared \
+	&& motel deploy-keygen --out /etc/motel/shop.key >/dev/null 2>&1 \
+	&& cp /etc/motel/shop.key.pub /etc/motel/shop.pub && chmod 644 /etc/motel/shop.pub
+COPY e2e/notify/Caddyfile /etc/motel/Caddyfile
+# The box tier's secrets, as the applier would write secrets/_box/: one
+# URL per channel, each a path on the stub receiver.
+RUN install -d -m 2750 -o root -g motel /etc/motel/secrets \
+	&& printf '%s\n' \
+		'NOTIFY_TEACHER_URL="http://e2e-sink:8080/teacher"' \
+		'NOTIFY_ONCALL_URL="http://e2e-sink:8080/broken"' \
+		'NOTIFY_BLOG_URL="http://e2e-sink:8080/blog"' \
+		'NOTIFY_HC_URL="http://e2e-sink:8080/deadman"' \
+		> /etc/motel/secrets/_box.env \
+	&& chown root:motel /etc/motel/secrets/_box.env && chmod 0640 /etc/motel/secrets/_box.env

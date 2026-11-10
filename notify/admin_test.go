@@ -301,3 +301,14 @@ func TestUnitsAreTheMeasuredOnes(t *testing.T) {
 		t.Error("the drop-in names a TCP listen address")
 	}
 }
+
+func TestAPIRefusal(t *testing.T) {
+	err := apiRefusal(errors.New(`caddy responded with error: HTTP 422: {"error":"subject app:x names no app this box runs"}` + "\n"))
+	if err.Error() != "subject app:x names no app this box runs" {
+		t.Fatalf("err = %q", err)
+	}
+	other := errors.New("performing request: dial unix /run/motel/admin.sock: connect: permission denied")
+	if !errors.Is(apiRefusal(other), other) {
+		t.Fatal("a transport error was rewritten")
+	}
+}
