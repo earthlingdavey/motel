@@ -418,3 +418,27 @@ func TestApplyRetriesAnUnansweredReload(t *testing.T) {
 		t.Fatalf("the next load: reloaded %v err %v reloads %d", reloaded, err, f.reloads)
 	}
 }
+
+// TestRenderHeartbeatRepeatsEveryFlush: Alertmanager re-sends at a flush
+// only when the last send was more than repeat_interval ago, stamped
+// after the send returned; a repeat equal to the group interval skips
+// every other flush.
+func TestRenderHeartbeatRepeatsEveryFlush(t *testing.T) {
+	cfg, _, _ := renderFull(t)
+	var c amConfig
+	if err := yaml.Unmarshal(cfg, &c); err != nil {
+		t.Fatal(err)
+	}
+	hb := c.Route.Routes[0]
+	if hb.Receiver != "heartbeat" {
+		t.Fatalf("first route = %+v", hb)
+	}
+	interval, err1 := time.ParseDuration(hb.GroupInterval)
+	repeat, err2 := time.ParseDuration(hb.RepeatInterval)
+	if err1 != nil || err2 != nil {
+		t.Fatalf("durations %q %q", hb.GroupInterval, hb.RepeatInterval)
+	}
+	if interval != 5*time.Minute || repeat >= interval {
+		t.Fatalf("group_interval %v, repeat_interval %v: want a 5m interval and a repeat under it", interval, repeat)
+	}
+}

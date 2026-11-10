@@ -125,9 +125,10 @@ func (w *watchdogState) healthyAlert(now time.Time, hold time.Duration) bool {
 	return true
 }
 
-// deployedAlert is a deploy that succeeded, which ends a reported loop
-// (#418: "or a deploy succeeds"); it says whether one was reported.
-func (w *watchdogState) deployedAlert() bool {
+// endLoopAlert ends a reported loop, and says whether one was reported:
+// a deploy that succeeded (#418: "or a deploy succeeds"), or the
+// watchdog turned off, after which nothing would ever report it healthy.
+func (w *watchdogState) endLoopAlert() bool {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	was := w.alerted
@@ -381,6 +382,12 @@ func (ma *managedApp) watchdogLoop(ctx context.Context) {
 func (ma *managedApp) parkWatchdog(ctx context.Context, c collaborators) {
 	if c.spec != nil && !c.spec.watchdogOn {
 		ma.wd.setState(wdStateDisabled)
+		// Every way a reload turns the watchdog off ends here, mid-wait
+		// or not: a loop it was reporting is over, since no probe will
+		// run to say so.
+		if ma.wd.endLoopAlert() {
+			ma.lifecycle(c, LifecycleEvent{Name: EventWatchdogRecovered, Summary: "the watchdog was turned off, which ends the restart loop's report"})
+		}
 	} else {
 		ma.wd.setState(wdStateIdle)
 	}

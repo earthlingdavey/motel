@@ -26,8 +26,14 @@ const (
 	stateRepeatInterval = "4h"
 	diskRepeatInterval  = "24h"
 	// The heartbeat: Alertmanager re-sends the firing Watchdog every
-	// five minutes, which is Healthchecks' period.
+	// five minutes, which is Healthchecks' period. The repeat is under
+	// the group interval on purpose: Alertmanager re-sends at a flush
+	// only when the last send's log entry is older than repeat_interval,
+	// and that entry is stamped after the send returns, so a repeat
+	// equal to the interval is a few milliseconds short at the next
+	// flush and the ping goes out every other one, every ten minutes.
 	heartbeatInterval = "5m"
+	heartbeatRepeat   = "4m"
 )
 
 // Label values motel sets, which routing reads.
@@ -197,7 +203,7 @@ func render(r *resolved, stateDir string) ([]byte, map[string]string, map[string
 			GroupBy:        []string{"alertname"},
 			GroupWait:      eventGroupWait,
 			GroupInterval:  heartbeatInterval,
-			RepeatInterval: heartbeatInterval,
+			RepeatInterval: heartbeatRepeat,
 		},
 		direct,
 		// It exists to inhibit, and reaches no one.

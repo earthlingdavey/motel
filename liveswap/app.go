@@ -459,6 +459,9 @@ type appConfigState struct {
 	verifiers []deploytrust.Verifier
 	logger    *zap.Logger
 	store     stateStore
+	// notifier is the serving config's, which the candidate's Start
+	// replaced (setNotifier, after configure).
+	notifier Notifier
 }
 
 // owner is the config installing this definition (see rollbackConfig).
@@ -488,7 +491,7 @@ func (ma *managedApp) installSpec(owner any, spec *appSpec, verifiers []deploytr
 	defer ma.specMu.Unlock()
 	changed := ma.spec != nil && !specEqual(ma.spec, spec)
 	if ma.spec != nil {
-		ma.prev = &appConfigState{spec: ma.spec, verifiers: ma.verifiers, logger: ma.logger, store: ma.store}
+		ma.prev = &appConfigState{spec: ma.spec, verifiers: ma.verifiers, logger: ma.logger, store: ma.store, notifier: ma.notifier}
 	}
 	ma.configuredBy = owner
 	ma.spec = spec
@@ -732,7 +735,7 @@ func (ma *managedApp) reportDeploy(c collaborators, req deployRequest, result de
 		ev.Summary += "; the previous version keeps serving"
 	}
 	ma.lifecycle(c, ev)
-	if err == nil && ma.wd.deployedAlert() {
+	if err == nil && ma.wd.endLoopAlert() {
 		ma.lifecycle(c, LifecycleEvent{Name: EventWatchdogRecovered, Release: req.version, Summary: "a deploy of " + req.version + " ended the restart loop"})
 	}
 	ma.lifecycle(c, LifecycleEvent{Name: EventDeployEnded, Release: req.version})
@@ -1845,7 +1848,7 @@ func (ma *managedApp) restoreSpec(owner any) bool {
 		return false
 	}
 	p := ma.prev
-	ma.spec, ma.verifiers, ma.logger, ma.store = p.spec, p.verifiers, p.logger, p.store
+	ma.spec, ma.verifiers, ma.logger, ma.store, ma.notifier = p.spec, p.verifiers, p.logger, p.store, p.notifier
 	ma.prev = nil
 	ma.configuredBy = nil
 	if sr, ok := ma.runner.(*systemdRunner); ok {

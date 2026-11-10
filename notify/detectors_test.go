@@ -329,3 +329,43 @@ func TestDiskPollerKeepsAPathItCannotMeasure(t *testing.T) {
 		t.Fatalf("a failed statfs cleared the alert: %+v", evs)
 	}
 }
+
+// TestTLSKeyUnreportedIsCleared: CertMagic reports cert_failed on every
+// failed attempt for a name it manages, at least every six hours; a
+// name taken out of the config is never reported again, and its key is
+// cleared once tlsStale has passed.
+func TestTLSKeyUnreportedIsCleared(t *testing.T) {
+	te := newTestEngine(t)
+	h := tlsHandler{te.engine}
+	fail := func() {
+		if err := h.Handle(context.Background(), certEvent(t, "cert_failed", map[string]any{"identifier": "gone.example.org", "renewal": false})); err != nil {
+			t.Fatal(err)
+		}
+	}
+	fail()
+	te.drain()
+	key := "tls/box/cert_failed/gone.example.org"
+	// Retried and failed again six hours on: still firing past 13 h
+	// from the first report.
+	te.advance(6 * time.Hour)
+	fail()
+	te.advance(7 * time.Hour)
+	te.tick()
+	if st := te.states[key]; st == nil || !st.firing {
+		t.Fatal("cleared while CertMagic was still reporting it")
+	}
+	// No report for 13 h: taken as cleared, then resolved after the hold.
+	te.advance(6 * time.Hour)
+	te.tick()
+	te.advance(31 * time.Second)
+	te.tick()
+	resolved := false
+	for _, a := range te.drain() {
+		if a.Labels["alertname"] == "cert_failed" && !a.EndsAt.IsZero() && !a.EndsAt.After(te.at) {
+			resolved = true
+		}
+	}
+	if !resolved || te.states[key] != nil {
+		t.Fatalf("not resolved after %v unreported (state %+v)", tlsStale, te.states[key])
+	}
+}

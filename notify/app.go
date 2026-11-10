@@ -178,9 +178,25 @@ func readSecrets(path string) (map[string]string, error) {
 // never waits on notify, and every failure is a journal line naming
 // what to do.
 func (a *App) Start() error {
+	am := newAMClient(a.socket())
+	a.applyRender(am)
+	// Every value the box's secrets hold is a known value to the
+	// filter, whatever line names it.
+	pairs := make([]string, 0, len(a.cfg.urls))
+	for k, v := range a.cfg.urls {
+		pairs = append(pairs, k+"="+v)
+	}
+	theEngine.configure(a, am, pairs, a.logger)
+	return nil
+}
+
+// applyRender writes this config's render into the state directory and
+// has Alertmanager load it, with a journal line for each outcome: at
+// Start, and when the engine goes back to this config after a newer one
+// was stopped by a failed reload, whose render had replaced this one's.
+func (a *App) applyRender(am *amClient) {
 	ctx, cancel := context.WithTimeout(context.Background(), amRequestTimeout)
 	defer cancel()
-	am := newAMClient(a.socket())
 	reloaded, err := apply(ctx, a.stateDir(), a.rendered, a.files, am)
 	switch {
 	case errors.Is(err, errNotSetUp):
@@ -192,14 +208,6 @@ func (a *App) Start() error {
 	case reloaded:
 		a.logger.Info("notify: Alertmanager reloaded the rendered config", zap.String("config", filepath.Join(a.stateDir(), ConfigName)))
 	}
-	// Every value the box's secrets hold is a known value to the
-	// filter, whatever line names it.
-	pairs := make([]string, 0, len(a.cfg.urls))
-	for k, v := range a.cfg.urls {
-		pairs = append(pairs, k+"="+v)
-	}
-	theEngine.configure(a, am, pairs, a.logger)
-	return nil
 }
 
 // Stop lets go of the engine, unless a newer config has taken it.

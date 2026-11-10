@@ -2,6 +2,8 @@ package notify
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"syscall"
@@ -468,5 +470,68 @@ func TestReleaseFallsBackToTheServingConfig(t *testing.T) {
 	e.release(nu)
 	if e.active != nil || e.running {
 		t.Fatal("the last config's Stop left the engine running")
+	}
+}
+
+// TestReleaseReappliesTheServingRender: a reload that fails after
+// notify's Start leaves the candidate's render in the state directory
+// and in Alertmanager; going back to the serving config puts its render
+// back and reloads.
+func TestReleaseReappliesTheServingRender(t *testing.T) {
+	f, sock := startFakeAM(t)
+	dir := t.TempDir()
+	mk := func(cfg string) *App {
+		return &App{StateDir: dir, Socket: sock, rendered: []byte(cfg), files: map[string]string{}, logger: zap.NewNop()}
+	}
+	e := newEngine()
+	saved := theEngine
+	theEngine = e
+	t.Cleanup(func() { theEngine = saved })
+	old, nu := mk("serving\n"), mk("candidate\n")
+	am := newAMClient(sock)
+	old.applyRender(am)
+	e.configure(old, am, nil, zap.NewNop())
+	nu.applyRender(am)
+	e.configure(nu, am, nil, zap.NewNop())
+	if got, _ := os.ReadFile(filepath.Join(dir, ConfigName)); string(got) != "candidate\n" {
+		t.Fatalf("after the candidate's Start: %q", got)
+	}
+	f.mu.Lock()
+	before := f.reloads
+	f.mu.Unlock()
+	e.release(nu)
+	if got, _ := os.ReadFile(filepath.Join(dir, ConfigName)); string(got) != "serving\n" {
+		t.Fatalf("after the failed reload the file is %q, want the serving config's", got)
+	}
+	f.mu.Lock()
+	after := f.reloads
+	f.mu.Unlock()
+	if after != before+1 {
+		t.Fatalf("reloads %d → %d: Alertmanager was not told", before, after)
+	}
+	e.release(old)
+}
+
+// TestReleaseOfTheLastConfigClearsTheTable: with no config running
+// notify, nothing can clear what the table holds, and a block added
+// back later must not fire it again.
+func TestReleaseOfTheLastConfigClearsTheTable(t *testing.T) {
+	e := newEngine()
+	a := &App{}
+	e.configure(a, &recPoster{}, nil, zap.NewNop())
+	e.report(watchdog(true))
+	e.mute("blog", true)
+	e.release(a)
+	if len(e.states) != 0 || len(e.mutes) != 0 || len(e.buckets) != 0 {
+		t.Fatalf("left: states %v mutes %v buckets %v", e.states, e.mutes, e.buckets)
+	}
+	b := &App{}
+	e.configure(b, &recPoster{}, nil, zap.NewNop())
+	defer e.release(b)
+	e.mu.Lock()
+	n := len(e.states)
+	e.mu.Unlock()
+	if n != 0 {
+		t.Fatal("the old key came back with the block")
 	}
 }

@@ -8,6 +8,10 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"go.uber.org/zap"
+
+	"github.com/smallhoursorg/motel/liveswap/deploytrust"
 )
 
 type recNotifier struct {
@@ -231,5 +235,63 @@ func TestWatchdogAlertFlags(t *testing.T) {
 	}
 	if !w.setRefused() || w.setRefused() || !w.takeRefused() || w.takeRefused() {
 		t.Fatal("refused flag")
+	}
+}
+
+// TestRollbackRestoresTheNotifier: a candidate config rejected after
+// liveswap's Start (another app's Start failed) had installed its own
+// notifier, nil when it had no notify block; the serving config's
+// comes back with its definition.
+func TestRollbackRestoresTheNotifier(t *testing.T) {
+	rig := newTestRig(t)
+	clients := &fetchClients{}
+	specA, specB := testSpec(t), testSpec(t)
+	ownerA, ownerB := new(int), new(int)
+	served := &recNotifier{}
+	rig.ma.configure(ownerA, specA, deploytrust.Verifiers(specA.trust, nil), zap.NewNop(), clients, userManager)
+	rig.ma.setNotifier(served)
+	rig.ma.configure(ownerB, specB, deploytrust.Verifiers(specB.trust, nil), zap.NewNop(), clients, userManager)
+	rig.ma.setNotifier(nil) // the candidate has no notify block
+	if !rig.ma.rollbackConfig(ownerB) {
+		t.Fatal("the candidate did not roll back")
+	}
+	if got := rig.ma.snapshot().notifier; got != Notifier(served) {
+		t.Fatalf("after the rollback the notifier is %v, want the serving config's", got)
+	}
+}
+
+// TestLifecycleWatchdogOffEndsALoop: a reload that turns the watchdog
+// off while a restart loop is reported ends the report, since no probe
+// will run again to say the app is healthy.
+func TestLifecycleWatchdogOffEndsALoop(t *testing.T) {
+	rig, n := notifiedRig(t)
+	rig.spec.wdRestarts = 1
+	deployV1(t, rig)
+	rig.startWatchdogT(t)
+	waitUntil(t, "watchdog to arm", func() bool {
+		s := rig.ma.wd.currentState()
+		return s == wdStateGrace || s == wdStateWatching
+	})
+	rig.runner.handleAt(0).kill()
+	advanceUntil(t, rig, time.Second, "the budgeted restart", func() bool { return rig.runner.startCount() == 2 })
+	rig.runner.handleAt(1).kill()
+	advanceUntil(t, rig, time.Second, "the throttle", func() bool { return rig.ma.wd.currentState() == wdStateThrottled })
+	waitUntil(t, "watchdog_throttled", func() bool { _, ok := n.find(EventWatchdogThrottled); return ok })
+	// The reload: the same app with `watchdog off`.
+	off := *rig.spec
+	off.watchdogOn = false
+	rig.ma.specMu.Lock()
+	rig.ma.spec = &off
+	rig.ma.specMu.Unlock()
+	rig.ma.pokeWatchdog()
+	waitUntil(t, "watchdog_recovered", func() bool { _, ok := n.find(EventWatchdogRecovered); return ok })
+	if rig.ma.wd.currentState() != wdStateDisabled {
+		t.Fatalf("state = %s", rig.ma.wd.currentState())
+	}
+	rig.ma.wd.mu.Lock()
+	alerted := rig.ma.wd.alerted
+	rig.ma.wd.mu.Unlock()
+	if alerted {
+		t.Fatal("the loop is still reported")
 	}
 }

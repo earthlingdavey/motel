@@ -74,8 +74,9 @@ const (
 	// minHold is the least a recovery waits: #418's watchdog rule,
 	// max(30s, watchdog_grace), with 30 s for every other state.
 	minHold = 30 * time.Second
-	// bucketSize transitions per key, refilled one per bucketRefill:
-	// four messages an hour from a flapping key, at most.
+	// bucketSize transitions per key at once, refilled one per
+	// bucketRefill: a flapping key sends four, then one a quarter-hour
+	// (up to about eight in its first hour, four an hour after).
 	bucketSize   = 4
 	bucketRefill = 15 * time.Minute
 	// retryFor is how long a post is retried before it is given up,
@@ -129,7 +130,20 @@ type stateAlert struct {
 	clearSince time.Time
 	hold       time.Duration
 	heldLogged bool
+	// lastSeen is when the detector last said it fires: for a source
+	// that never says it has cleared (tlsStale), the end is its silence.
+	lastSeen time.Time
 }
+
+// tlsStale is how long a cert_failed key may go unreported before it is
+// taken as cleared. CertMagic reports cert_failed on every failed
+// attempt for a name it manages, and its longest retry interval is six
+// hours (certmagic's retryIntervals, repeated for up to 30 days), so a
+// name still failing is reported at least every six hours. A name taken
+// out of the config is never reported again, and never obtained, so no
+// cert_obtained clears it: thirteen hours is two retries missed and an
+// hour more.
+const tlsStale = 13 * time.Hour
 
 // pending is a post waiting for Alertmanager.
 type pending struct {
@@ -271,7 +285,7 @@ func (e *engine) report(ev Event) {
 			old := st.ev
 			e.journal(ev, "firing", zap.String("was", old.Severity))
 			e.enqueue(&pending{key: key, alerts: []amAlert{stateAlertFor(old, st.startsAt, now), stateAlertFor(ev, now, time.Time{})}, first: now, journal: true})
-			st.ev, st.firing, st.startsAt, st.lastPost, st.clearSince = ev, true, now, now, time.Time{}
+			st.ev, st.firing, st.startsAt, st.lastPost, st.clearSince, st.lastSeen = ev, true, now, now, time.Time{}, now
 			return
 		}
 		ev.Severity = st.ev.Severity // held at the old one until the bucket allows
@@ -281,7 +295,7 @@ func (e *engine) report(ev Event) {
 			st = &stateAlert{}
 			e.states[key] = st
 		}
-		st.ev, st.firing, st.clearSince = ev, true, time.Time{}
+		st.ev, st.firing, st.clearSince, st.lastSeen = ev, true, time.Time{}, now
 	} else {
 		if st == nil {
 			return // nothing was told
@@ -379,6 +393,11 @@ func (e *engine) tick() {
 		}}, first: now})
 	}
 	for key, st := range e.states {
+		if st.ev.Source == "tls" && st.firing && now.Sub(st.lastSeen) >= tlsStale {
+			e.logger.Info("notify: cert_failed not reported again; taken as cleared",
+				zap.String("key", key), zap.Duration("unreported_for", now.Sub(st.lastSeen)))
+			st.firing, st.clearSince, st.hold = false, now, minHold
+		}
 		e.reconcile(key, st, now)
 	}
 	for app, at := range e.mutes {
@@ -681,14 +700,23 @@ func (e *engine) release(a *App) {
 	}
 	if n := len(e.live); n > 0 {
 		// The config that started last was stopped while an older one
-		// serves on: a reload that failed after notify's Start.
+		// serves on: a reload that failed after notify's Start. Its
+		// Start had written its render; the serving one's goes back.
 		l := e.live[n-1]
 		e.setConfig(l.a, l.post, l.known, l.logger)
 		e.mu.Unlock()
 		l.logger.Info("notify: the config serving before a failed reload has the engine again")
+		if am, ok := l.post.(*amClient); ok && l.a.rendered != nil {
+			l.a.applyRender(am)
+		}
 		return
 	}
 	e.active = nil
+	// No config runs notify any more: what the table holds can no longer
+	// be cleared by anything, and must not fire again if a later config
+	// brings the block back. Alertmanager ends what it was told at
+	// resolve_timeout.
+	e.states, e.mutes, e.buckets = map[string]*stateAlert{}, map[string]time.Time{}, map[string]*bucket{}
 	cancel, done, running := e.cancel, e.done, e.running
 	e.running = false
 	e.mu.Unlock()

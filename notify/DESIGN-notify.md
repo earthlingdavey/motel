@@ -144,7 +144,7 @@ Rendered by `render` (notify/render.go); the golden file is
 
 | # | Route | Receiver | Timing |
 |---|---|---|---|
-| 1 | `alertname="Watchdog"` | `heartbeat` (the heartbeat's `url_file`), or a blackhole | `group_by [alertname]`, wait 0 s, interval and repeat 5 m |
+| 1 | `alertname="Watchdog"` | `heartbeat` (the heartbeat's `url_file`), or a blackhole | `group_by [alertname]`, wait 0 s, interval 5 m, repeat 4 m (under the interval, so each 5 m flush re-sends) |
 | 2 | `notify_channel=~".+"` (ChannelFailed, NotifyTest), one child per channel | `ch-<channel>` | `group_by ['...']`, wait 0 s, interval 1 m |
 | 3 | `alertname="deploy_in_progress"` | blackhole: it exists to inhibit | — |
 | 4 | `kind="state", alertname="disk_low"` | the teacher's, by severity | wait 30 s, interval 1 m, repeat 24 h |
@@ -191,7 +191,7 @@ a deploy does not change its identity.
 
 | Event | Source | Kind | Severity | Fires | Resolves |
 |---|---|---|---|---|---|
-| `watchdog_throttled` | liveswap | state | critical | the restart budget is spent; again on a failure during a recovery's hold | the first healthy probe after it, held `max(30s, watchdog_grace)`; a deploy that succeeds |
+| `watchdog_throttled` | liveswap | state | critical | the restart budget is spent; again on a failure during a recovery's hold | the first healthy probe after it, held `max(30s, watchdog_grace)`; a deploy that succeeds; `watchdog off` |
 | `relaunch_refused` | liveswap | state | critical | the watchdog's relaunch is refused at its pre-flight | any path publishes an instance |
 | `deploy_failed` | liveswap | event | warning | a 5xx outcome; the summary names the version and the phase, never the error's text | — |
 | `deploy_refused` | liveswap | event | warning | a 422 (liveswap's own words, through the filter) | — |
@@ -202,7 +202,7 @@ a deploy does not change its identity.
 | `backup_run_failed` | backup | state | warning | the last run ended early, or an app's class is failed | a run ends ok |
 | `drill_failed` | backup | state | critical | the last drill could not begin, or the check found damage | the next drill |
 | `backup_unreadable` | backup | state | warning | the record does not parse | it reads |
-| `cert_failed/<identifier>` | tls | state | warning; critical with under 7 days left | CertMagic's `cert_failed` | its `cert_obtained` |
+| `cert_failed/<identifier>` | tls | state | warning; critical with under 7 days left | CertMagic's `cert_failed` | its `cert_obtained`, or 13 h with no report (a name no config manages any more) |
 | `disk_low/<path>` | disk | state | warning at 80 % used, critical at 90 | statfs, every minute, one per device, of the liveswap root, Caddy's data and the state directory | five points under its threshold |
 | `Watchdog` | notify | heartbeat | none | every minute, alive 4 m | — |
 | `ChannelFailed` | notify | direct | warning | Alertmanager's failure counter rose ("Failed delivery") | `endsAt` +15 m |
@@ -231,8 +231,9 @@ whichever config serves when it clears.
   posted with `endsAt=now`. A key that changes severity (a disk from
   80 to 90 %) ends its old alert in the post that fires the new one.
 - **The flapping guard.** Every key's transitions spend from a bucket
-  of four, refilled one per 15 minutes: a flapping key sends at most
-  four messages in its first hour, then one per quarter-hour. Past it a
+  of four, refilled one per 15 minutes: a flapping key sends four at
+  once, then one per quarter-hour, so up to about eight in its first
+  hour and four an hour after. Past it a
   one-shot is suppressed and a state change held, each with a line.
 - **Unreachable Alertmanager.** Posts wait in a bounded in-memory
   queue (512), retried with backoff from 2 s to 30 s for five minutes,
@@ -258,7 +259,18 @@ whichever config serves when it clears.
   the config counts as unacknowledged, so the next load reloads it
   though the file has not changed. A reload that fails after notify's
   Start stops the new config while the old one serves on; the engine
-  goes back to the old one.
+  goes back to the old one, and puts the old one's render back in the
+  state directory and in Alertmanager. When the last config running
+  notify stops, the engine's table, mutes and buckets are emptied: a
+  block added back later starts clean.
+- **A certificate no config names** is never obtained and never
+  reported again, so no `cert_obtained` clears it. CertMagic reports
+  `cert_failed` on every failed attempt for a name it manages, and its
+  longest retry interval is six hours; a `cert_failed` key unreported
+  for 13 hours is taken as cleared, with a line, and resolved after the
+  hold.
+- **The watchdog turned off** while a restart loop is reported ends the
+  report (`watchdog_recovered`): no probe would ever say so.
 
 ## Failed delivery
 
@@ -282,7 +294,12 @@ the review's point that a notify-only box would otherwise have no
 
 motel posts `Watchdog` every minute; its route sends it to the
 `heartbeat` channel's URL every five minutes, a Healthchecks ping
-(`https://hc-ping.com/<uuid>`, Period 5 min). Silence means the box,
+(`https://hc-ping.com/<uuid>`, Period 5 min). The route's repeat (4 m)
+is under its group interval (5 m): Alertmanager re-sends at a flush only
+when its last send's log entry, stamped after the send returned, is
+older than the repeat, so an equal repeat skipped every other flush and
+pinged every ten minutes (Fable review of #422, from Alertmanager
+0.28.1's dedupe stage). Silence means the box,
 motel or Alertmanager is down, which is the chain that delivers
 everything else. Uptime stays an external keyword check per host.
 
