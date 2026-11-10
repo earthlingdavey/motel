@@ -110,14 +110,33 @@ func (a *App) ReportStanding(n Notifier) {
 }
 
 func (ma *managedApp) reportStanding(n Notifier, spec *appSpec) {
-	loop, recovering, refused := ma.wd.standing()
+	now := time.Now
+	if c := ma.snapshot().clock; c != nil {
+		now = c.Now
+	}
+	hold := backoffResetAfter(spec)
+	loop, recovering, refused := ma.wd.standing(now(), hold)
 	release := ""
 	if inst := ma.currentInstance(); inst != nil {
 		release = inst.version
 	}
+	// What ends between the read above and the reports below is told by
+	// the goroutine that ended it, before or after them; told before, a
+	// listener that had no key dropped it, and the standing report would
+	// then fire an alert nothing ends. So whatever has ended once they
+	// are told is told ended here too: a second end is no change.
+	defer func() {
+		nowLoop, _, nowRefused := ma.wd.standing(now(), hold)
+		if loop && !nowLoop {
+			ma.tell(n, LifecycleEvent{Name: EventWatchdogRecovered, Release: release, Hold: hold, Summary: "healthy again after a restart loop"})
+		}
+		if refused && !nowRefused {
+			ma.tell(n, LifecycleEvent{Name: EventRelaunchResolved, Release: release, Summary: "an instance runs again"})
+		}
+	}()
 	switch {
 	case loop && recovering:
-		ma.tell(n, LifecycleEvent{Name: EventWatchdogRecovered, Release: release, Hold: backoffResetAfter(spec), Standing: true,
+		ma.tell(n, LifecycleEvent{Name: EventWatchdogRecovered, Release: release, Hold: hold, Standing: true,
 			Summary: "healthy again after a restart loop"})
 	case loop:
 		ma.tell(n, LifecycleEvent{Name: EventWatchdogThrottled, Release: release, Standing: true,
@@ -165,7 +184,7 @@ func (ma *managedApp) restoreAlerts(spec *appSpec, logger *zap.Logger) {
 			err = writeOwnFile(path, alertsTempPattern, data)
 		}
 		if err != nil {
-			logger.Warn("watchdog: what notify was told could not be kept for a restart; a restart now may let an alert lapse", zap.String("file", path), zap.Error(err))
+			logger.Warn("watchdog: what notify was told could not be kept for a restart: until the next change, a restart reports what the file still says", zap.String("file", path), zap.Error(err))
 		}
 		return err
 	}

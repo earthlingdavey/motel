@@ -207,9 +207,6 @@ func (cfg *AppConfig) unmarshalBlock(d *caddyfile.Dispenser, backupFiles *[]stri
 			if shellOwnedEnvKey(key) {
 				return d.Errf("env key %q %s", key, shellOwnedEnvKeyMsg)
 			}
-			if notifyOwnedEnvKey(key) {
-				return d.Errf("env key %q %s", key, notifyOwnedEnvKeyMsg)
-			}
 			if cfg.Env == nil {
 				cfg.Env = make(map[string]string)
 			}

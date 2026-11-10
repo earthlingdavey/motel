@@ -297,6 +297,16 @@ func (t *txn) pick(caddyfile, files string) string {
 	return caddyfile
 }
 
+// reloadFailed is the catalogue's text for a reload that failed: the
+// Caddyfile's, or, when the set reloaded for the box's own env file
+// alone, that file's.
+func (t *txn) reloadFailed() string {
+	if t.caddyfileInSet() {
+		return msgReloadFailed
+	}
+	return msgReloadFailedBox
+}
+
 func (t *txn) installFailed(err error) string {
 	return t.pick(installFailed(err), installFailedFiles(err))
 }
@@ -619,7 +629,7 @@ func (a *Applier) reloadSwapped(ctx context.Context, t *txn) error {
 	if t.reloads() {
 		if err := a.systemd.Reload(ctx); err != nil {
 			a.logger.Warn("box reload failed", zap.String("id", t.rec.ID), zap.String("error", proof.Bound(err.Error())))
-			return a.rollback(ctx, t, msgReloadFailed, false)
+			return a.rollback(ctx, t, t.reloadFailed(), false)
 		}
 	}
 	// "applied" means these bytes: a console edit since the swap is
@@ -788,7 +798,7 @@ func (a *Applier) rollingBack(ctx context.Context, t *txn, recovering bool) erro
 // unrecorded), one a crash cut short, or a reason the record does not
 // give.
 func bothFailed(why string) string {
-	if why == msgReloadFailed {
+	if why == msgReloadFailed || why == msgReloadFailedBox {
 		return msgBothReloads
 	}
 	return msgPrevReloadFailed

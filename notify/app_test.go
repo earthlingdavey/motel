@@ -173,6 +173,10 @@ func TestValidateTakesAPushsSecretsAsHeld(t *testing.T) {
 	if err := validate(t, src("")); err != nil {
 		t.Fatalf("a secret the push carries was refused as missing: %v", err)
 	}
+	// The box's file however it is spelt, as the box compares it.
+	if err := validate(t, src("/etc/motel//secrets/./_box.env")); err != nil {
+		t.Fatalf("the box's file spelt otherwise: %v", err)
+	}
 	// Another file is not where root writes the push's secrets.
 	err := validate(t, src(filepath.Join(t.TempDir(), "other.env")))
 	if err == nil || !strings.Contains(err.Error(), "secret NOTIFY_OPS_URL is not in the box's secrets") {

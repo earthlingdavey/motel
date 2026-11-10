@@ -440,7 +440,8 @@ what the box takes, and warns as one nears a cap. A Deno app also needs
 The box's own secrets, `APP=_box`, are notify's channel URLs: the box
 writes them to `/etc/motel/secrets/_box.env`, which no app is given,
 and reloads motel when they change, so a new URL is in use once the
-push is applied (motel's [Secrets](https://github.com/smallhoursorg/motel/blob/main/docs/secrets.md#a-notify-channels-url)
+push is applied; a `NOTIFY_` name among an app's own secrets is
+withheld from the app (motel's [Secrets](https://github.com/smallhoursorg/motel/blob/main/docs/secrets.md#a-notify-channels-url)
 page).
 
 Whoever can get a signed commit onto `main` can read these files

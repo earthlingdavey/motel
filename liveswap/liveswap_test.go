@@ -163,7 +163,6 @@ func TestValidate(t *testing.T) {
 		{"negative watchdog window", func(a *App) { a.Apps["blog"].WatchdogWindow = caddy.Duration(-time.Second) }, "watchdog_window must be positive"},
 		{"bad env key", func(a *App) { a.Apps["blog"].Env = map[string]string{"my-var": "1"} }, `env key "my-var"`},
 		{"shell-owned env key", func(a *App) { a.Apps["blog"].Env = map[string]string{"PWD": "/x"} }, `env key "PWD" is set by the shell`},
-		{"notify-owned env key", func(a *App) { a.Apps["blog"].Env = map[string]string{"NOTIFY_OPS_URL": "https://ntfy.sh/x"} }, `env key "NOTIFY_OPS_URL" is notify's`},
 		{"tasks_max 1", func(a *App) { a.Apps["blog"].TasksMax = 1 }, "tasks_max must be at least 2"},
 		{"negative deploy_log_lines", func(a *App) { n := -1; a.Apps["blog"].DeployLogLines = &n }, "deploy_log_lines must be between"},
 		{"deploy_log_lines over 1000", func(a *App) { n := 1001; a.Apps["blog"].DeployLogLines = &n }, "deploy_log_lines must be between"},

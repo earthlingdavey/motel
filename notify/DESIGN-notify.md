@@ -175,13 +175,23 @@ for the default `secrets_file` alone, `PushedSecretsEnv`) and takes each
 as held, unchecked; a value the URL check refuses is refused at the
 reload the push makes, which the box rolls back. A box with no
 repository, or a `secrets_file` of the operator's own, is written by
-root by hand, as the e2e image does.
+root by hand, as the e2e image does. A box whose root wrote `_box.env`
+by hand and that takes pushes moves each value into its repository
+(`make secret APP=_box …`) in its next push, whatever that push
+changes: the box refuses any push whose `notify` block names a secret
+it does not carry, and the first that carries them replaces the
+hand-made file, named as edited out of band.
 
-**The `NOTIFY_` prefix is notify's.** A `NOTIFY_` variable among an
-app's own secrets (`secrets/<app>/NOTIFY_*.age`, in its env file) is
-withheld from the app unit's environment and stays a known value to the
-filter; an inline `env NOTIFY_…` line is refused (liveswap,
-`notifyOwnedEnvKey`). No line reads such a value yet: a deployer's
+**The `NOTIFY_` prefix is notify's in what the box writes.** A
+`NOTIFY_` variable among an app's own secrets (`secrets/<app>/NOTIFY_*.age`,
+in the env file the box writes under `/etc/motel/secrets`) is withheld
+from the app unit's environment, named in a warning at each launch, and
+stays a known value to the filter (liveswap, `notifyOwnedEnvKey`); `make
+check` warns of it before the push (`motel box describe`) and `make
+secret` as it is set. An inline `env` line and an env file the operator
+keeps elsewhere are the operator's, and pass: refusing them would refuse
+a boot over an app's own variable name (/code-review of this change).
+No line reads such a value yet: a deployer's
 channel is a `channel` line whose URL is in `_box/`, bound with `bind`;
 the per-app block that would read an app's own (#417's bundled secrets
 too) is a later slice ("Owed").
@@ -326,15 +336,19 @@ whichever config serves when it clears.
   not, since a fresh process does not know a loop it was already in,
   and a refused relaunch is refused again by recovery with nothing
   reported. So liveswap keeps what it told in each app's `alerts.json`
-  (a loop, a refusal; written on each change, removed when none stands,
-  forgotten for an app a reload removes), and **re-reports it at
+  (a loop, whether its recovery's hold runs, a refusal; written on each
+  change, removed when none stands, forgotten for an app a reload
+  removes or the start's sweep finds unconfigured), and **re-reports it at
   notify's Start** (`ReportStanding`, pulled by notify once its engine
   serves the config, whichever app Caddy starts first). Each is a
   standing report: the engine ignores it for a key it holds (a reload),
   and takes it as told for one it does not, journaled with
   `standing: true` — a loop fires again (Alertmanager merges it with the
   alert it holds: no second message), a recovery under way is held for
-  its hold and then resolved. The other way round, reading
+  its hold and then resolved; a recovery whose hold has passed is not
+  told again. What ends while the reports are told (a recovery's
+  relaunch at the same start) is told ended once more after them, so a
+  standing report never outlives what it reports. The other way round, reading
   Alertmanager's alert list at start, was not taken: Alertmanager keeps
   no alerts across its own restart (a reboot), and what it holds says
   nothing to liveswap, whose watchdog would still not report the
@@ -516,6 +530,9 @@ on its general scales. notify's examples:
 | Two channels of one integration in one receiver: a failure names both as suspects, and neither is told | notify/channelfailed.go (`suspects`) | 2 | 5 | 3 | an operator's choice of channels; the line names both, and the counter is Alertmanager's own; one receiver per channel would double every route |
 | An operator with a single channel: `ChannelFailed` has no other channel to go to | notify/channelfailed.go | 2 | 5 | 1 | the `notify: channel failed` line and Alertmanager's counter say it; the design asks for "the other operator channels" and there are none |
 | `motel notify test` reads the counters for 15 s; a slow receiver answers "neither yet" | notify/admin.go (`testWait`) | 2 | 2 | 1 | the answer says so; Alertmanager's retries continue |
+| At a boot, an event liveswap reports before notify's Start (Caddy starts the apps in no fixed order) is dropped, the engine serving no config yet: a recovery at that instant ends its alert at `resolve_timeout`, up to five minutes late | notify/engine.go (`report`, `active == nil`) | 2 | 3 | 3 | 18; what stands is told again at notify's Start (`ReportStanding`), and an end told meanwhile is told again after it; holding events for a config not yet started adds a queue with its own lifetime (size 3). /code-review of the Owed rows |
+| A failed write of `alerts.json` (EIO, a read-only remount) leaves the old file until the next change, and a restart before it reports what the file still says | liveswap/watchdog.go (`alertsChanged`) | 3 | 3 | 1 | 9; the warning at the failure names the file and the consequence; a retry needs a timer outside the transitions (size 2, risk 2). /code-review of the Owed rows |
+| A box whose apps already read a `NOTIFY_` variable from `secrets/<app>/` loses it from the app's environment at the next launch after the upgrade | liveswap/app.go (`notifyOwnedEnvKey`) | 3 | 5 | 1 | 15; each launch names the withheld keys in the journal and `make check` warns before a push; the prefix is what keeps a channel URL from an app. /code-review of the Owed rows |
 | Alertmanager refuses a reload: motel puts the previous config back, but the URL files are already the new ones (a changed value rewritten, a dropped channel's removed), so the old config in memory sends a changed channel to its new URL, and Alertmanager's next start fails on a removed file until motel's next load | notify/state.go (`apply`) | 4 | 2 | 1 | 8; two faults (a render Alertmanager refuses, which the amtool tests rule out for every shape, then a restart before the next load), and Alertmanager names the missing file; a new URL is the one the signer committed; keeping the old files until a reload succeeds adds state to the write (size 2, risk 2). /code-review of slice one, passes 1 and 2 |
 
 ### Owed

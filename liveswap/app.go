@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"regexp"
 	"slices"
 	"strings"
@@ -1553,9 +1554,14 @@ func (spec *appSpec) prepareLaunch(logger *zap.Logger, version string) (launch, 
 	}
 	l := launch{version: version, nonce: nonce, socket: spec.dirs.socket(nonce), releaseDir: spec.dirs.release(version)}
 	l.sock = spec.dirs.socketRef(nonce)
-	if l.env, l.secrets, l.envFileMode, err = buildEnvFull(spec, version, l.socket, l.releaseDir); err != nil {
+	var withheld []string
+	if l.env, l.secrets, withheld, l.envFileMode, err = buildEnvFull(spec, version, l.socket, l.releaseDir); err != nil {
 		l.sock.retire()
 		return launch{}, err
+	}
+	if len(withheld) > 0 {
+		logger.Warn("env_file: NOTIFY_ variables withheld from the app: the box writes them from secrets/<app>/ for notify, which no app is given; name the variable otherwise if the app needs it",
+			zap.String("env_file", spec.envFile), zap.Strings("withheld", withheld))
 	}
 	if spec.envFile != "" {
 		warnEnvFileModeBits(logger, spec.name, spec.envFile, l.envFileMode)
@@ -2012,7 +2018,7 @@ func inheritedEnv() []string {
 // shape a deny-by-default view fails in. Applied before env_file and
 // env, so an operator can still point it elsewhere.
 func buildEnv(spec *appSpec, version, socket, releaseDir string) ([]string, error) {
-	env, _, _, err := buildEnvFull(spec, version, socket, releaseDir)
+	env, _, _, _, err := buildEnvFull(spec, version, socket, releaseDir)
 	return env, err
 }
 
@@ -2021,17 +2027,21 @@ func buildEnv(spec *appSpec, version, socket, releaseDir string) ([]string, erro
 // among them — it lives in the Caddyfile, in a repo, and is not secret
 // by policy — and neither are HOME, SOCKET or the inherited PATH,
 // which a diagnostic has to be able to name.
-func buildEnvFull(spec *appSpec, version, socket, releaseDir string) (env, secrets []string, envFileMode os.FileMode, err error) {
+func buildEnvFull(spec *appSpec, version, socket, releaseDir string) (env, secrets, withheld []string, envFileMode os.FileMode, err error) {
 	env = append(inheritedEnv(), "HOME="+spec.dirs.shared)
 	if spec.envFile != "" {
 		fileVars, perm, err := readEnvFile(spec.envFile)
 		if err != nil {
-			return nil, nil, 0, fmt.Errorf("env_file: %w", err)
+			return nil, nil, nil, 0, fmt.Errorf("env_file: %w", err)
 		}
+		boxs := boxWritten(spec.envFile)
 		for _, kv := range fileVars {
-			if !notifyOwnedEnvKey(kv) {
-				env = append(env, kv)
+			if boxs && notifyOwnedEnvKey(kv) {
+				key, _, _ := strings.Cut(kv, "=")
+				withheld = append(withheld, key)
+				continue
 			}
+			env = append(env, kv)
 		}
 		// Every value the file holds is a known value to the filter,
 		// a withheld one too: it is a credential all the same.
@@ -2041,7 +2051,7 @@ func buildEnvFull(spec *appSpec, version, socket, releaseDir string) (env, secre
 		env = append(env, k+"="+expandPlaceholders(v, spec, version, socket, releaseDir))
 	}
 	env = append(env, "SOCKET="+socket)
-	return env, secrets, envFileMode, nil
+	return env, secrets, withheld, envFileMode, nil
 }
 
 // envKeyRe is what systemd accepts in Environment=; the exec runner
@@ -2065,19 +2075,28 @@ func shellOwnedEnvKey(key string) bool { return shellOwnedEnvKeys[key] }
 
 const shellOwnedEnvKeyMsg = "is set by the shell every app unit runs behind (/bin/sh resets IFS, OPTIND, PPID and PWD at its start), so an app cannot be given it"
 
-// notifyEnvPrefix is the notify module's: a NOTIFY_ variable is a
-// notify channel's URL (notify/DESIGN-notify.md, "Secrets"), a
-// credential motel reads and no app is given. One in an app's env_file
-// (the box writes secrets/<app>/NOTIFY_*.age there) is withheld from
-// the unit's environment and stays a known value to the filter; one in
-// an inline env line, which could only be meant for the app, is refused
-// by name (#418, #417's rule).
+// notifyEnvPrefix is the notify module's in what the box writes: a
+// NOTIFY_ variable there is a notify channel's URL (notify/DESIGN-
+// notify.md, "Secrets"), a credential motel reads and no app is given.
+// One in an env file the box wrote (secrets/<app>/NOTIFY_*.age, in
+// /etc/motel/secrets) is withheld from the unit's environment, named in
+// a warning at each launch, and stays a known value to the filter
+// (#418, #417's rule). An inline env line, and an env file the operator
+// keeps anywhere else, are the operator's and pass as they are.
 const notifyEnvPrefix = "NOTIFY_"
 
 // notifyOwnedEnvKey reports whether a KEY or KEY=value is notify's.
 func notifyOwnedEnvKey(kv string) bool { return strings.HasPrefix(kv, notifyEnvPrefix) }
 
-const notifyOwnedEnvKeyMsg = "is notify's: a NOTIFY_ variable is a notify channel's URL, which motel reads and no app is given; name it otherwise"
+// boxSecretsDir is where the box writes each app's env file
+// (box/DESIGN-box.md, "Values and the env file"). A variable so a test
+// can stand in for it.
+var boxSecretsDir = "/etc/motel/secrets" //nolint:gosec // G101: a directory's path, not a credential
+
+// boxWritten reports whether an env_file is one the box writes.
+func boxWritten(envFile string) bool {
+	return strings.HasPrefix(filepath.Clean(envFile), boxSecretsDir+"/")
+}
 
 // The env_file mode check. motel reads the file as the motel
 // user, so its mode is not motel's concern; the documented

@@ -611,9 +611,6 @@ func (a *App) Validate() error {
 			if shellOwnedEnvKey(k) {
 				return fmt.Errorf("app %s: env key %q %s", name, k, shellOwnedEnvKeyMsg)
 			}
-			if notifyOwnedEnvKey(k) {
-				return fmt.Errorf("app %s: env key %q %s", name, k, notifyOwnedEnvKeyMsg)
-			}
 		}
 		if len(cfg.Command) == 0 {
 			return fmt.Errorf("app %s: command is required", name)

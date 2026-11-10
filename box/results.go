@@ -46,7 +46,10 @@ const (
 	msgInterruptedStopped = "interrupted; the previous Caddyfile is on disk; motel is not running — systemctl reset-failed motel, then systemctl start motel, loads it"
 	msgNoRecord           = "the box has no record of this push; push again"
 	msgReloadFailed       = "the reload failed; the previous Caddyfile is back and running — journalctl -u motel -n 50 on the box says why"
-	msgRecordAfterReload  = "the record could not be updated after a successful reload (disk full); rolled back to keep the file and the record consistent"
+	// The same, for a set whose Caddyfile is unchanged: the box's own
+	// env file (_box.env) was what reloaded, and notify refused it.
+	msgReloadFailedBox   = "the reload failed on the box's new notify secrets; the previous ones are back and running — journalctl -u motel -n 50 on the box says why (notify takes a channel URL that is https to a public host)"
+	msgRecordAfterReload = "the record could not be updated after a successful reload (disk full); rolled back to keep the file and the record consistent"
 	// The swap landed, then the `swapped` record or the swap's own fsync
 	// failed: nothing was reloaded before the rollback.
 	msgRolledBackUnrecorded = "the Caddyfile was swapped, then a write after the swap failed; rolled back: the previous Caddyfile is back and running"

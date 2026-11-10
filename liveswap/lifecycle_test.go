@@ -456,3 +456,66 @@ func TestReportedAlertsForgottenAndUnreadable(t *testing.T) {
 		t.Fatalf("an unreadable file: %v", got)
 	}
 }
+
+// A recovery's hold outlives a restart: the next process tells it as
+// the recovery, with its hold, not as a loop; and one whose hold has
+// passed is not told at all, since notify has resolved it.
+func TestReportStandingKeepsARecoverysHold(t *testing.T) {
+	rig := newTestRig(t)
+	must(t, os.MkdirAll(rig.spec.dirs.app, 0o750))
+	rig.ma.restoreAlerts(rig.spec, zap.NewNop())
+	rig.ma.wd.throttledAlert(true)
+	now := rig.clock.Now()
+	if !rig.ma.wd.healthyAlert(now, time.Minute) {
+		t.Fatal("the recovery was not due")
+	}
+	ma := newManagedApp("demo")
+	a := &App{managed: map[string]*managedApp{"demo": ma}, specs: map[string]*appSpec{"demo": rig.spec}, logger: zap.NewNop()}
+	n := &recNotifier{}
+	a.ReportStanding(n)
+	if got := n.names(); !slices.Equal(got, []string{EventWatchdogRecovered}) || !n.evs[0].Standing {
+		t.Fatalf("after a restart in the hold: %v", got)
+	}
+	// In this process, healthy for the hold: over, though the flag waits
+	// for the next probe.
+	rig.ma.wd.mu.Lock()
+	rig.ma.wd.healthySince = rig.clock.Now().Add(-time.Hour)
+	rig.ma.wd.mu.Unlock()
+	n.reset()
+	rig.ma.reportStanding(n, rig.spec)
+	if got := n.names(); len(got) != 0 {
+		t.Fatalf("a recovery whose hold has passed was told again: %v", got)
+	}
+}
+
+// endingNotifier ends the loop and the refusal the moment it is told
+// they stand, as the watchdog's or recovery's goroutine could between
+// ReportStanding's read and its report, and records what it is told.
+type endingNotifier struct {
+	recNotifier
+	ma *managedApp
+}
+
+func (e *endingNotifier) Lifecycle(ev LifecycleEvent) {
+	e.recNotifier.Lifecycle(ev)
+	if ev.Standing {
+		e.ma.wd.endLoopAlert()
+		e.ma.wd.takeRefused()
+	}
+}
+
+// What ends while ReportStanding tells it is told ended too: the
+// goroutine that ended it may have told a listener that had no key yet.
+func TestReportStandingTellsWhatEndedMeanwhile(t *testing.T) {
+	rig := newTestRig(t)
+	must(t, os.MkdirAll(rig.spec.dirs.app, 0o750))
+	rig.ma.restoreAlerts(rig.spec, zap.NewNop())
+	rig.ma.wd.throttledAlert(true)
+	rig.ma.wd.setRefused()
+	n := &endingNotifier{ma: rig.ma}
+	rig.ma.reportStanding(n, rig.spec)
+	want := []string{EventWatchdogThrottled, EventRelaunchRefused, EventWatchdogRecovered, EventRelaunchResolved}
+	if got := n.names(); !slices.Equal(got, want) {
+		t.Fatalf("told %v, want %v", got, want)
+	}
+}

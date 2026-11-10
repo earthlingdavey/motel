@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"sync"
 	"sync/atomic"
@@ -131,6 +132,12 @@ func sweepUnowned(ctx context.Context, r *systemdRunner, root, app string, logge
 	if vetoed.Load() {
 		return nil
 	}
-	pruneSockets(newAppDirs(root, app), nil, logger)
+	dirs := newAppDirs(root, app)
+	pruneSockets(dirs, nil, logger)
+	// What its watchdog had reported is over with it: an app of the name
+	// added back later starts with nothing standing (lifecycle.go).
+	if err := os.Remove(dirs.alerts); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		logger.Warn("removing the alerts file of an app no longer in the config", zap.String("file", dirs.alerts), zap.Error(err))
+	}
 	return nil
 }

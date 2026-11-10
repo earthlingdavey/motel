@@ -356,12 +356,3 @@ func TestCaddyfileOldAllowlistDirectiveIsHelpful(t *testing.T) {
 		t.Fatalf("want rename hint, got %v", err)
 	}
 }
-
-func TestCaddyfileRefusesNotifyEnvKey(t *testing.T) {
-	d := caddyfile.NewTestDispenser("liveswap {\n\troot /tmp/x\n\tapp blog {\n\t\tcommand ./server\n\t\tenv NOTIFY_OPS_URL https://ntfy.sh/x\n\t}\n}")
-	var a App
-	err := a.UnmarshalCaddyfile(d)
-	if err == nil || !strings.Contains(err.Error(), `env key "NOTIFY_OPS_URL" is notify's`) {
-		t.Fatalf("an inline NOTIFY_ env line: err = %v", err)
-	}
-}

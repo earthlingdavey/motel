@@ -1152,7 +1152,7 @@ func TestApplyBoxSecretsRollBack(t *testing.T) {
 	head := b.repo.commitSecrets(b.v1, secrets{"_box": {"NOTIFY_OPS_URL": encrypt(t, []byte("https://ntfy.sh/new"), id.Recipient())}}, &b.alice, b.base)
 	b.sd.reloads = []error{errReload}
 	r := b.pushOne(b.repo.bundleFiles(head, b.base))
-	if r.Phase != phaseRolledBack || r.Error != msgReloadFailed {
+	if r.Phase != phaseRolledBack || r.Error != msgReloadFailedBox {
 		t.Fatalf("%+v", r)
 	}
 	if !bytes.Equal(b.env("_box"), old) || !bytes.Equal(b.installed(), b.v1) || b.applied().SHA != b.base || b.sd.reloaded != 2 {

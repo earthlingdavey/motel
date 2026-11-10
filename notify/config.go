@@ -6,6 +6,7 @@ import (
 	"maps"
 	"net/netip"
 	"net/url"
+	"path/filepath"
 	"regexp"
 	"slices"
 	"sort"
@@ -280,7 +281,7 @@ func (a *App) resolveWith(trust map[string][]TrustSource, secrets map[string]str
 	var dropped []error
 	for _, key := range slices.Sorted(maps.Keys(keys)) {
 		who := keys[key]
-		if held[key] && a.secretsFile() == DefaultSecretsFile {
+		if held[key] && filepath.Clean(a.secretsFile()) == DefaultSecretsFile {
 			continue
 		}
 		v, ok := secrets[key]

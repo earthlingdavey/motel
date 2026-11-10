@@ -110,15 +110,16 @@ type watchdogState struct {
 // module and has not ended. Written on each change, read once per
 // process.
 type reportedAlerts struct {
-	Loop    bool `json:"loop,omitempty"`    // a restart loop
-	Refused bool `json:"refused,omitempty"` // a relaunch refusal
+	Loop       bool `json:"loop,omitempty"`       // a restart loop
+	Recovering bool `json:"recovering,omitempty"` // its recovery told, the hold running
+	Refused    bool `json:"refused,omitempty"`    // a relaunch refusal
 }
 
 // alertsChanged is called with mu held after a flag may have changed:
 // it returns the write of the new pair to run once mu is released, or
 // nil when nothing persisted changed.
 func (w *watchdogState) alertsChanged() func() {
-	now := reportedAlerts{Loop: w.alerted, Refused: w.refused}
+	now := reportedAlerts{Loop: w.alerted, Recovering: w.alerted && w.recovering, Refused: w.refused}
 	if now == w.persisted || w.saveAlerts == nil {
 		w.persisted = now // before the first configure: the file's own
 		return nil
@@ -182,7 +183,9 @@ func (w *watchdogState) healthyAlert(now time.Time, hold time.Duration) bool {
 		return false
 	}
 	w.recovering = true
+	save := w.alertsChanged()
 	w.mu.Unlock()
+	runSave(save)
 	return true
 }
 
@@ -231,11 +234,18 @@ func (w *watchdogState) forgetAlerts() {
 }
 
 // standing is what the notify module was told and has not ended: a
-// restart loop, whether its recovery's hold runs, a relaunch refusal.
-func (w *watchdogState) standing() (loop, recovering, refused bool) {
+// restart loop, whether its recovery's hold runs, a relaunch refusal. A
+// recovery whose hold has passed (the app healthy for hold since) is
+// over though the flag waits for the next probe to clear it: notify
+// has resolved it, or will, so it is not told again.
+func (w *watchdogState) standing(now time.Time, hold time.Duration) (loop, recovering, refused bool) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	return w.alerted, w.recovering, w.refused
+	loop, recovering = w.alerted, w.alerted && w.recovering
+	if recovering && !w.healthySince.IsZero() && now.Sub(w.healthySince) >= hold {
+		loop, recovering = false, false
+	}
+	return loop, recovering, w.refused
 }
 
 // restoreAlerts reads alerts.json into the flags, once per process, and
@@ -257,7 +267,10 @@ func (w *watchdogState) restoreAlerts(load func() (reportedAlerts, error), save 
 	}
 	// Flags already set in this process (none before the first
 	// configure) are newer than the file.
-	w.alerted, w.refused = w.alerted || r.Loop, w.refused || r.Refused
+	if !w.alerted && r.Loop {
+		w.alerted, w.recovering = true, r.Recovering
+	}
+	w.refused = w.refused || r.Refused
 	w.persisted = r
 	return nil
 }

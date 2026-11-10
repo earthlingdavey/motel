@@ -745,11 +745,12 @@ changes:
   `/etc/motel/secrets/_box.env`, 0640 root:motel, read by notify at each
   config load and bound into no unit. Nothing new for T5, which read the
   hand-written file the same way, nor for a signer, who already chose
-  every URL in the `notify` block. A `NOTIFY_` variable an app's own env
-  file holds is withheld from its environment and an inline one refused
-  (liveswap/app.go, `notifyOwnedEnvKey`): an app never holds a channel
-  URL, which would let a poisoned dependency (T1) post to the channel as
-  motel.
+  every URL in the `notify` block. A `NOTIFY_` variable in an env
+  file the box writes for an app is withheld from the app's environment
+  (liveswap/app.go, `notifyOwnedEnvKey`): no app is given a channel URL
+  from the box's repository, which would let a poisoned dependency (T1)
+  post to the channel as motel. An operator's own inline `env` line or
+  env file is the operator's to word.
 - **New: names and lengths are public to repository readers.** The
   layout puts each variable's name in a file name, and age pads
   nothing, so anyone with `contents:read` learns which apps have
