@@ -195,7 +195,7 @@ func TestObservePanicIsCounted(t *testing.T) {
 			o.ma.requests.setRelease("v1")
 			func() {
 				defer func() {
-					if p := recover(); p != http.ErrAbortHandler {
+					if p, _ := recover().(error); !errors.Is(p, http.ErrAbortHandler) {
 						t.Errorf("panic %v, want http.ErrAbortHandler passed on", p)
 					}
 				}()
