@@ -1281,6 +1281,42 @@ func TestBuildEnvPrecedenceAndPlaceholders(t *testing.T) {
 	}
 }
 
+// A NOTIFY_ variable in an env file the box wrote is a notify channel's
+// URL, from secrets/<app>/NOTIFY_*.age: withheld from the unit's
+// environment, named, and still a value the filter knows. In an env file
+// the operator keeps elsewhere it is the operator's, and passes.
+func TestBuildEnvWithholdsNotifyVariables(t *testing.T) {
+	boxDir := t.TempDir()
+	orig := boxSecretsDir
+	boxSecretsDir = boxDir
+	t.Cleanup(func() { boxSecretsDir = orig })
+	body := []byte("DATABASE_URL=\"postgres://db\"\nNOTIFY_BLOG_URL=\"https://ntfy.sh/blog-topic\"\n")
+	spec := testSpec(t)
+	spec.envFile = filepath.Join(boxDir, "demo.env")
+	must(t, os.WriteFile(spec.envFile, body, 0o600))
+	env, secrets, withheld, _, err := buildEnvFull(spec, "v1", spec.dirs.socket("0a1b2c3d0a1b2c3d"), spec.dirs.release("v1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, kv := range env {
+		if strings.HasPrefix(kv, "NOTIFY_") {
+			t.Errorf("%s reached the unit's environment", kv)
+		}
+	}
+	if !slices.Contains(env, "DATABASE_URL=postgres://db") || !slices.Equal(withheld, []string{"NOTIFY_BLOG_URL"}) {
+		t.Errorf("env %v, withheld %v", env, withheld)
+	}
+	if !slices.Contains(secrets, "NOTIFY_BLOG_URL=https://ntfy.sh/blog-topic") {
+		t.Errorf("a withheld value is no longer a known value to the filter: %v", secrets)
+	}
+	spec.envFile = filepath.Join(t.TempDir(), "operator.env")
+	must(t, os.WriteFile(spec.envFile, body, 0o600))
+	env, _, withheld, _, err = buildEnvFull(spec, "v1", spec.dirs.socket("0a1b2c3d0a1b2c3d"), spec.dirs.release("v1"))
+	if err != nil || !slices.Contains(env, "NOTIFY_BLOG_URL=https://ntfy.sh/blog-topic") || withheld != nil {
+		t.Errorf("an operator's own env file: env %v, withheld %v, err %v", env, withheld, err)
+	}
+}
+
 func TestBuildEnvDoesNotLeakSupervisorSecrets(t *testing.T) {
 	t.Setenv("ACME_DNS_API_TOKEN", "hunter2")
 	t.Setenv("AWS_SECRET_ACCESS_KEY", "tok")

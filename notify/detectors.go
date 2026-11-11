@@ -21,7 +21,7 @@ import (
 type lifecycleSink struct{ e *engine }
 
 func (s lifecycleSink) Lifecycle(ev liveswap.LifecycleEvent) {
-	base := Event{App: ev.App, Source: "liveswap", Summary: ev.Summary, Release: ev.Release, DeployedBy: ev.DeployedBy}
+	base := Event{App: ev.App, Source: "liveswap", Summary: ev.Summary, Release: ev.Release, DeployedBy: ev.DeployedBy, Standing: ev.Standing}
 	state := func(name, sev string, firing bool) {
 		base.Name, base.Kind, base.Severity, base.Firing, base.Hold = name, kindState, sev, firing, ev.Hold
 		s.e.report(base)

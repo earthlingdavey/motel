@@ -43,6 +43,7 @@ type App struct {
 	BackupRecord string `json:"backup_record,omitempty"`
 
 	logger    *zap.Logger
+	ls        *liveswap.App // this config's, or nil: ReportStanding at Start
 	cfg       *resolved
 	rendered  []byte              // alertmanager.yml, rendered in Provision
 	files     map[string]string   // the URL files it names
@@ -71,12 +72,30 @@ func (a *App) Provision(ctx caddy.Context) error {
 	if err != nil {
 		return err
 	}
-	secrets, err := readSecrets(a.secretsFile())
-	if err != nil {
+	drop := dropsChannels()
+	secrets, unusable := readSecrets(a.secretsFile())
+	switch {
+	case unusable != nil && !drop:
+		return fmt.Errorf("notify: %w", unusable)
+	case unusable != nil:
+		// A boot serves: a file it cannot read or parse drops every line
+		// that reads a secret, as a missing secret does ("Secrets at
+		// load"), and the error is the file's, never a value.
+		a.logger.Error("notify: the box's secrets file cannot be used: every channel that reads a secret is dropped from this load; motel validate and motel reload refuse the config until it is mended",
+			zap.String("secrets_file", a.secretsFile()), zap.Error(unusable))
+		secrets = map[string]string{}
+	}
+	var dropped []error
+	if a.cfg, dropped, err = a.resolveWith(trust, secrets, pushedSecrets(), drop, unusable); err != nil {
 		return fmt.Errorf("notify: %w", err)
 	}
-	if a.cfg, err = a.resolve(trust, secrets); err != nil {
-		return fmt.Errorf("notify: %w", err)
+	for _, why := range dropped {
+		// The reason names the line and the key, never a value.
+		a.logger.Error("notify: a channel is dropped from this load: its secret cannot be used; motel validate and motel reload refuse the config until it is mended",
+			zap.String("reason", why.Error()), zap.String("secrets_file", a.secretsFile()))
+	}
+	if len(dropped) > 0 && len(a.cfg.operator) == 0 {
+		a.logger.Error("notify: no operator channel is left in this load: box events are journal lines only", zap.String("secrets_file", a.secretsFile()))
 	}
 	// Every value the file holds is a known value to the filter, named
 	// by a channel line or not: a spare URL is as much a credential.
@@ -90,6 +109,7 @@ func (a *App) Provision(ctx caddy.Context) error {
 	// polled by the engine.
 	a.diskPaths = []string{caddy.AppDataDir(), a.stateDir()}
 	if ls != nil {
+		a.ls = ls
 		ls.SetNotifier(lifecycleSink{theEngine})
 		a.diskPaths = append([]string{ls.Root}, a.diskPaths...)
 	}
@@ -186,6 +206,14 @@ func (a *App) Start() error {
 	// Every value the box's secrets hold is a known value to the
 	// filter, whatever line names it.
 	theEngine.configure(a, am, a.known, a.logger)
+	// What liveswap's watchdogs reported and has not ended, again: after
+	// a motel restart the table is empty, and nothing else would report
+	// a loop already under way or a refused relaunch (DESIGN-notify.md,
+	// "Behaviour"). Pulled here, once the engine serves this config,
+	// whichever app Caddy starts first.
+	if a.ls != nil {
+		a.ls.ReportStanding(lifecycleSink{theEngine})
+	}
 	return nil
 }
 

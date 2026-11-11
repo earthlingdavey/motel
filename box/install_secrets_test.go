@@ -1084,3 +1084,90 @@ func TestUnchangedSecrets(t *testing.T) {
 		}
 	}
 }
+
+// The box's own slot, secrets/_box/, is installed as an app's secrets
+// are, into _box.env, and reloads motel whenever its bytes change:
+// notify reads the file at a config load, not at an app's launch. An
+// app's secrets alone still reload nothing.
+func TestApplyBoxSecrets(t *testing.T) {
+	b, id := newSecretsBox(t)
+	enc := func(v string) []byte { return encrypt(t, []byte(v), id.Recipient()) }
+
+	c1 := b.repo.commitSecrets(b.v1, secrets{"_box": {"NOTIFY_OPS_URL": enc("https://ntfy.sh/ops-1")}}, &b.alice, b.base)
+	r := b.pushOne(b.repo.bundleFiles(c1, b.base))
+	want := rendered(t, "NOTIFY_OPS_URL=https://ntfy.sh/ops-1")
+	if r.Phase != phaseApplied || !bytes.Equal(b.env("_box"), want) || b.envMode("_box") != 0o640 {
+		t.Fatalf("%+v; _box.env %q", r, b.env("_box"))
+	}
+	if b.sd.reloaded != 1 || !r.Reloaded {
+		t.Errorf("%d reloads for the box's own secrets, want 1; result says reloaded %v", b.sd.reloaded, r.Reloaded)
+	}
+	if a := b.applied(); a.Secrets["_box"] != digest(want) || !slices.Equal(r.SecretsAdded, []string{"_box/NOTIFY_OPS_URL"}) {
+		t.Errorf("applied.json %+v, result %+v", a, r)
+	}
+
+	// A rotation reloads again; an app's secrets beside it change nothing
+	// of that.
+	c2 := b.repo.commitSecrets(b.v1, secrets{"_box": {"NOTIFY_OPS_URL": enc("https://ntfy.sh/ops-2")}, "example": {"KEY": enc("v")}}, &b.alice, c1)
+	r = b.pushOne(b.repo.bundleFiles(c2, c1))
+	if r.Phase != phaseApplied || b.sd.reloaded != 2 || !r.Reloaded || !slices.Equal(r.SecretsChanged, []string{"_box/NOTIFY_OPS_URL"}) {
+		t.Fatalf("%+v; %d reloads", r, b.sd.reloaded)
+	}
+
+	// An app's secrets alone: no reload.
+	c3 := b.repo.commitSecrets(b.v1, secrets{"_box": {"NOTIFY_OPS_URL": enc("https://ntfy.sh/ops-2")}, "example": {"KEY": enc("w")}}, &b.alice, c2)
+	r = b.pushOne(b.repo.bundleFiles(c3, c2))
+	if r.Phase != phaseApplied || b.sd.reloaded != 2 || r.Reloaded {
+		t.Fatalf("%+v; %d reloads for an app's secrets alone", r, b.sd.reloaded)
+	}
+
+	// The box's file given back its mode alone changes nothing a load
+	// reads: rewritten, not reloaded.
+	if err := os.Chmod(b.envPath("_box"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	c4 := b.repo.commitSecrets(b.v1, secrets{"_box": {"NOTIFY_OPS_URL": enc("https://ntfy.sh/ops-2")}, "example": {"KEY": enc("w")}}, &b.alice, c3)
+	r = b.pushOne(b.repo.bundleFiles(c4, c3))
+	if r.Phase != phaseApplied || b.envMode("_box") != 0o640 || b.sd.reloaded != 2 || r.Reloaded {
+		t.Fatalf("%+v; mode %v; %d reloads", r, b.envMode("_box"), b.sd.reloaded)
+	}
+
+	// The same values over other bytes (a hand edit, or the file an
+	// operator wrote before the slot): rewritten and reloaded, though no
+	// name changed, and the result says so, for the workflow's line.
+	b.putEnv("_box", []byte("NOTIFY_OPS_URL=https://ntfy.sh/ops-2\n"), 0o640)
+	c4b := b.repo.commitSecrets(b.v1, secrets{"_box": {"NOTIFY_OPS_URL": enc("https://ntfy.sh/ops-2")}, "example": {"KEY": enc("w")}}, &b.alice, c4)
+	r = b.pushOne(b.repo.bundleFiles(c4b, c4))
+	if r.Phase != phaseApplied || b.sd.reloaded != 3 || !r.Reloaded || len(r.SecretsAdded)+len(r.SecretsChanged)+len(r.SecretsRemoved) != 0 ||
+		!slices.Equal(r.SecretsOutOfBand, []string{"_box"}) {
+		t.Fatalf("%+v; %d reloads for other bytes of the same values", r, b.sd.reloaded)
+	}
+	c4 = c4b
+
+	// The slot gone: the file removed, and motel reloaded without it.
+	c5 := b.repo.commitSecrets(b.v1, secrets{"example": {"KEY": enc("w")}}, &b.alice, c4)
+	r = b.pushOne(b.repo.bundleFiles(c5, c4))
+	if r.Phase != phaseApplied || b.env("_box") != nil || b.sd.reloaded != 4 || !r.Reloaded || !slices.Equal(r.SecretsRemoved, []string{"_box/NOTIFY_OPS_URL"}) {
+		t.Fatalf("%+v; _box.env %q; %d reloads", r, b.env("_box"), b.sd.reloaded)
+	}
+}
+
+// A reload that refuses the box's new secrets rolls them back, with the
+// Caddyfile it never touched, and reloads the previous file.
+func TestApplyBoxSecretsRollBack(t *testing.T) {
+	b, id := newSecretsBox(t)
+	old := rendered(t, "NOTIFY_OPS_URL=https://ntfy.sh/old")
+	b.putEnv("_box", old, 0o640)
+	a := b.applied()
+	a.SecretsTree, a.Secrets = strings.Repeat("e", 40), map[string]string{"_box": digest(old)}
+	b.writeApplied(a)
+	head := b.repo.commitSecrets(b.v1, secrets{"_box": {"NOTIFY_OPS_URL": encrypt(t, []byte("https://ntfy.sh/new"), id.Recipient())}}, &b.alice, b.base)
+	b.sd.reloads = []error{errReload}
+	r := b.pushOne(b.repo.bundleFiles(head, b.base))
+	if r.Phase != phaseRolledBack || r.Error != msgReloadFailedBox {
+		t.Fatalf("%+v", r)
+	}
+	if !bytes.Equal(b.env("_box"), old) || !bytes.Equal(b.installed(), b.v1) || b.applied().SHA != b.base || b.sd.reloaded != 2 {
+		t.Errorf("not rolled back: _box.env %q, %d reloads", b.env("_box"), b.sd.reloaded)
+	}
+}

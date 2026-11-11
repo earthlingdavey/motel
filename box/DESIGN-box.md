@@ -870,6 +870,7 @@ touched does not stop their write-back.
 | record | `secrets_tree`, `secrets_installed` | applier | HEAD's secrets tree id (`""` for none) and the `app → sha256` map of every env file the box manages once the push applies: what `applied.json` gets |
 | record, result | `secrets_added`, `secrets_changed`, `secrets_removed` | applier | the secrets the push adds, changes or removes, as `<app>/<VAR>`, sorted; never a value. In the record too, so a result recovery writes carries them. A secret is changed when its value is, so a rekey that keeps the values lists none |
 | record, result | `secrets_edited_out_of_band` | applier | the apps whose env file root wrote or removed over bytes it had not installed — a digest differing from `applied.json`'s, a listed file gone or not at the mode and owner it set, or a file it never installed for an app this push installs ("Values and the env file") |
+| result | `reloaded` | applier | on an applied result, `true` when the push reloaded motel: the Caddyfile changed, or the box's own env file's bytes did ("The box's own slot"); absent otherwise. The names above cannot say it: the same values over other bytes reload, and a rekey that renders the same bytes does not. The template's `bin/apply` reads it for its line |
 | record, result | `diff` | applier | unified diff, redacted (layers 3 and 4), capped per Caps |
 | record, result | `apps` | applier | app names from the incoming file's token walk: the global `liveswap` block's `app` lines whose name is in liveswap's app-name grammar (one outside it fails the load anyway), so a result's size stays under the handler's read cap |
 | record, result | `box_webhook` | applier | the host |
@@ -1040,6 +1041,7 @@ can do both by other means.
 | A push against an installed file the walk refuses for any reason but an empty signer list (a console edit that imports, say) answers 500 (`could not check the push: the Caddyfile this box runs <reason>; nothing changed`), and root records `failed` for one the handler admitted before the edit, where `GET /` answers 409 for the same file | Handler contract; Message catalogue | 2 | 5 | 1 | 10; red and named; the workflow posts only after `GET /` answered 200, so it meets the 409 first unless the console edit lands mid-run. Root's `failed` is the States table's checking → failed, as designed: it writes only `out/<id>.json`, with no `txn.json`, and leaves `applied.json` as it was. A typed refusal of the running file through `check`, the push and the applier's phase is a branch in each (size 2, risk 1) |
 | The load warning for a `box` block with no audience gives an app's remedy, `audience <a name for this box>`. In a repository of several boxes, following it on each gets `bin/apply`'s one token refused on every box but the one it names | `WarnUnboundSource` (liveswap/deploytrust), from box/app.go; docs/outside-github.md, section 4 | 2 | 5 | 1 | 10; red and named: the push goes red, and the journal says `invalid audience claim`. The docs say why a box push's audience is shared. Size 2, risk 2: the warning has one remedy for both kinds of block, and giving the box its own is a branch |
 | An SSH signer that armors at a width other than ssh-keygen's 70 columns (Go's `encoding/pem` wraps at 64, RFC 2045 at 76) has every commit refused as a bundle error: the box reads one spelling, since each spelling is a commit id of its own | step 12; `canonicalSSHArmor` | 2 | 5 | 1 | 10; red and named, and the refusal says what to sign with (ssh-keygen, git's own `gpg.ssh.program`); taking a second width would be a second id for one signature, the hole the rule closes |
+| A push whose `notify` block names a secret `secrets/_box/` does not hold is refused on a box with no slot yet, whose `_box.env` an operator wrote by hand and validate would read | "Which checks run where" (`notifyCarried`) | 2 | 5 | 1 | 10; refused by name with the remedy (`make secret APP=_box VAR=<NAME>`), whose push replaces the hand-written file; the handler cannot read the box's file to tell the two apart, and the merge notes of #424 say it. /code-review xhigh on #424 |
 
 **Owed** (over the bar, not yet fixed):
 
@@ -1118,6 +1120,7 @@ an empty cell means nobody, by design.
 | `/etc/motel/.age.pub.box-<random>` | 0644 | root:root | `box key` | `box key` | — | `box key` (renamed over `age.pub`, or removed on failure; the next run removes a crash's) |
 | `/etc/motel/secrets/` | 2750 | root:motel | tmpfiles.d | applier | motel, handler, applier | — |
 | `/etc/motel/secrets/<app>.env` | 0640 | root:motel (born in the setgid dir) | applier | applier | motel (each launch of `<app>`, and its response filter), handler (step 4's digest), applier | applier (when `applied.json` lists the app and HEAD has no `secrets/<app>/`) |
+| `/etc/motel/secrets/_box.env` | 0640 | root:motel (born in the setgid dir) | applier | applier | motel (notify, at each config load; no app), handler (step 4's digest), applier | applier (when `applied.json` lists `_box` and HEAD has no `secrets/_box/`) |
 | `/etc/motel/secrets/.<app>.env.box-<id>` | 0640 | root:motel (born in the setgid dir) | applier | applier | — | applier (renamed over `<app>.env`, or removed on failure; recovery removes a crash's) |
 | `/var/lib/motel-box/` | 2750 | root:motel | tmpfiles.d | — | — | postremove (`apt purge`; the tree whole, with every row under it, unless something is mounted at or under it) |
 | `…/stage/` | 0700 | motel:motel | tmpfiles.d | handler (bundle temporaries) | handler, applier (sweep) | handler (its own temporaries) |
@@ -1411,6 +1414,8 @@ deploy.example.com/
     example/
       DATABASE_URL.age    # one variable of the app example: its value, encrypted
       STRIPE_KEY.age
+    _box/
+      NOTIFY_OPS_URL.age  # the box's own: a notify channel's URL ("The box's own slot")
 ```
 
 | Entry | Rule | Bundled |
@@ -1419,10 +1424,13 @@ deploy.example.com/
 | `<host>/secrets/recipients` | a regular file (`100644`/`100755`), optional | no: root never reads it |
 | `<host>/secrets/<app>/` | a tree whose name is in liveswap's app grammar, `^[a-z0-9-]{1,63}$` (`appName`, box/tokens.go) | its tree, under `trees/` |
 | `<host>/secrets/<app>/<VAR>.age` | a regular file; `<VAR>` matches liveswap's `envKeyRe`, `^[A-Za-z_][A-Za-z0-9_]*$` (liveswap/app.go), within the Caps table's length | its blob, under `blobs/<sha>` |
+| `<host>/secrets/_box/` and its `<VAR>.age` | the box's own slot ("The box's own slot"): held as an app's directory and its files are, and counted among the Caps table's apps | as an app's |
 | anything else: another file in `secrets/` or in an app's directory, a directory in an app's, a symlink (`120000`), a submodule (`160000`), a name outside the grammars | refused by name | — |
 
-`_backup`, outside the app grammar, is held for Open question 5 and
-refused today like any other name.
+`_box`, outside the app grammar, is the box's own slot ("The box's own
+slot"), for the values the box reads rather than an app. `_backup` is
+held for Open question 5 and refused today like any other name outside
+the grammars.
 
 `recipients` is age's own recipients-file format, read by the
 template's `make` targets and its workflow, never by the box. Its first
@@ -1571,8 +1579,9 @@ What root does with what is already there, per app:
 Any other name in `/etc/motel/secrets/` is left alone and never
 listed.
 
-The app reads its env file at its next launch. A push of secrets
-alone reloads nothing ("Running apps are never restarted", after the trust chain), and it
+The app reads its env file at its next launch. A push of apps' secrets
+alone reloads nothing ("Running apps are never restarted", after the trust chain; the
+box's own file is the exception, "The box's own slot"), and it
 does not relaunch the app: root asking the serving process for a
 relaunch would be root consuming its word. The relaunch is the
 deployer's, through the webhook — a rollback to the running version,
@@ -1580,6 +1589,43 @@ or a deploy of it with the same artifact (`relaunchRefusal`,
 liveswap/app.go; docs/secrets.md, "When a value reaches the app") —
 so the workflow's line says what launches the app now: a deploy of a
 new version. Open question 4.
+
+### The box's own slot
+
+`secrets/_box/` holds the values the box itself reads, not an app:
+notify's channel URLs (notify/DESIGN-notify.md, "Secrets"), each
+`NOTIFY_<NAME>.age`. It is proved, decrypted, held to the value rules
+and rendered exactly as an app's directory is, to
+`/etc/motel/secrets/_box.env`, notify's default `secrets_file`; it is
+listed in `applied.json` as `_box`, its names in results and journal
+lines are `_box/<VAR>`, and every row of the table above applies to it
+as to an app (`secretSlot`, box/secrets.go, is the one grammar of both).
+Three things differ:
+
+- **No app reads it.** No app's `env_file` may name it (the consistency
+  checks below), and liveswap withholds every `NOTIFY_` variable an env
+  file the box writes holds from the app unit's environment, naming it at
+  each launch; `motel box describe` warns of one in `secrets/<app>/`: the
+  prefix is notify's.
+- **notify reads it at a config load**, not an app at a launch, so a set
+  in which `_box.env`'s bytes change reloads motel as a changed
+  Caddyfile does (`reloads`, box/txn.go); a reload that refuses the new
+  values rolls the set back and reloads the previous file. A rewrite for
+  the file's mode alone reloads nothing.
+- **The handler cannot read the values** it validates against: step 6's
+  `motel validate` is told the names the push carries, in
+  `MOTEL_NOTIFY_PUSHED_SECRETS` (names only, set last over the service's
+  environment), and takes each as held without checking a value, as
+  the template's `make check` tells it from `motel box describe`'s
+  `secret _box` lines; a
+  value notify refuses (not an https URL to a public host) is refused at
+  the reload, which rolls the push back.
+
+Why a slot, where Open question 5 leans against one for the backup
+credential: a delivery URL must be readable by the motel uid to be used
+at all, and the backup credential must not be (#418). `_box.env` is
+0640 root:motel like every env file the box writes, and bound into no
+unit: `/etc/motel` is in no app's view (`sandboxMotelPaths`).
 
 ### Which checks run where
 
@@ -1608,6 +1654,11 @@ as a path, after `filepath.Clean`, and never quoted back: it may hold a
 | an app whose `env_file` is its own, with no secret | `app <app>'s env_file is /etc/motel/secrets/<app>.env, and <host>/secrets/<app>/ holds no secret: add one, or remove the env_file line` |
 | a secret an inline `env` line also sets | `app <app> sets <VAR> with env and as a secret; env wins over env_file, so the secret would never reach it` (`buildEnvFull`, liveswap/app.go, appends inline `env` after the file's lines, and the manager keeps the last) |
 | a secret named `SOCKET` | `secret SOCKET for app <app>: motel sets SOCKET last, so it would never reach the app` |
+| an app whose `env_file` is `/etc/motel/secrets/_box.env` | `app <app>'s env_file is the box's own secrets file, which notify reads and no app is given: use /etc/motel/secrets/<app>.env` |
+| a file in `secrets/_box/` not named `NOTIFY_` then capitals, digits and underscores | `<host>/secrets/_box/<VAR>.age: the box's own slot holds notify's channel URLs alone, each named NOTIFY_ then capitals, digits and underscores` |
+| a `notify` block reading the box's own file (no `secrets_file`, or that file) whose `channel` or `heartbeat` line names a secret `secrets/_box/` does not hold, whether or not the push has the directory | `the notify block reads secret <NAME>, and <host>/secrets/_box/ does not hold it: make secret APP=_box VAR=<NAME>, or remove the line` (notify drops such a channel at a boot rather than refuse it: notify/DESIGN-notify.md, "Secrets at load"; this is where the mistake is told, and the handler checks it before step 6's validate, which would refuse it in words that name no remedy) |
+| `secrets/_box/` and no `notify` block | `<host>/secrets/_box/ holds the box's notify secrets, and the new Caddyfile has no notify block to read them: add one, or remove the directory` |
+| `secrets/_box/` and a `notify` block whose `secrets_file` is another file (compared as a path, never quoted back) | `<host>/secrets/_box/ is written to /etc/motel/secrets/_box.env, and the notify block's secrets_file is another file: remove the secrets_file line` |
 
 An `env_file` outside `/etc/motel/secrets/` is the operator's
 file, and nothing here checks that it is on the box (Accepted
@@ -1688,7 +1739,7 @@ says. The workflow's action is in the last column.
 | 202 | `verified` | `verified; installing` | applier | poll, 30 min bound; then red naming `journalctl -u motel-box-apply` |
 | 200 / poll | `applied` | `loaded; running apps are not restarted` / `secrets updated; the Caddyfile is unchanged, nothing reloaded` (a set of env files alone) | applier | green |
 | 422 / poll | `failed` | `the install failed before the Caddyfile changed: <error>; nothing changed` / `interrupted before the Caddyfile changed; nothing changed` / `the install failed before the box's files changed: <error>; nothing changed` / `interrupted before the box's files changed; nothing changed` (env files in the set) / `interrupted; the previous Caddyfile is on disk; motel is not running — systemctl reset-failed motel, then systemctl start motel, loads it` (the reset clears a `start-limit-hit`, which would refuse the start) / `the box has no record of this push; push again` | applier | red |
-| 422 / poll | `rolled_back` | `the reload failed; the previous Caddyfile is back and running — journalctl -u motel -n 50 on the box says why` / `a write after the first file changed failed; rolled back: the previous Caddyfile and env files are back` / `interrupted after the box's files changed; rolled back: the previous files are back` (env files in the set) / `the record could not be updated after a successful reload (disk full); rolled back to keep the file and the record consistent` / `the Caddyfile was swapped, then a write after the swap failed; rolled back: the previous Caddyfile is back and running` (the `swapped` record, or the swap's own `fsync`, failed; nothing was reloaded first) / `interrupted after the Caddyfile changed; rolled back: the previous Caddyfile is back and running` (recovery, after a crash past the swap) | applier | red |
+| 422 / poll | `rolled_back` | `the reload failed; the previous Caddyfile is back and running — journalctl -u motel -n 50 on the box says why` / `the reload failed on the box's new notify secrets; the previous ones are back and running — journalctl -u motel -n 50 on the box says why (notify takes a channel URL that is https to a public host)` (the Caddyfile unchanged, `_box.env` reloaded) / `a write after the first file changed failed; rolled back: the previous Caddyfile and env files are back` / `interrupted after the box's files changed; rolled back: the previous files are back` (env files in the set) / `the record could not be updated after a successful reload (disk full); rolled back to keep the file and the record consistent` / `the Caddyfile was swapped, then a write after the swap failed; rolled back: the previous Caddyfile is back and running` (the `swapped` record, or the swap's own `fsync`, failed; nothing was reloaded first) / `interrupted after the Caddyfile changed; rolled back: the previous Caddyfile is back and running` (recovery, after a crash past the swap) | applier | red |
 | 422 / poll | `unknown` | `the reload failed and so did the reload of the previous file; the previous file is on disk; journalctl -u motel` (the first reload failed) / `rolled back, but the reload of the previous file failed; the previous file is on disk; journalctl -u motel` (any other rollback) / `the Caddyfile changed during the transaction; it is left as found` / `the env file for <app> changed during the transaction; it is left as found` / `applied but the baseline could not be recorded; motel box baseline <sha> on the box records it (the next push then reports the file as edited out of band; it was not)` / `unchanged, but the baseline could not be recorded; push again, which records it` (a `no_change`: nothing changed, so the same chain verifies again) | applier | red; `box baseline` on the console, or for `unchanged` a push again |
 | 202 | `admitted` | `{"phase":"admitted"}` | handler | keep polling, 30 min bound; then red naming `journalctl -u motel-box-apply` |
 | 504 | — | `{id}` | handler | poll from the start |
@@ -2240,7 +2291,7 @@ full placement is DESIGN-threat-model.md, "Config webhook" and T6.
 | Compromised laptop, software signing key | Everything the operator can | Nothing the operator cannot; this is the operator |
 | Compromised laptop, hardware-held key (`sk-` types) | Push unsigned or GPG-signed commits (refused) | Sign without a touch |
 | Holder of a reader's private key — a signer's SSH key, or a reader's age identity — with read access to the repository | Decrypt every value encrypted to that key in any copy of the repository's history, offline: nothing on the box or at GitHub sees it beyond the clone | Change anything on the box with the reader's key alone (a signer's key also signs: the laptop rows) |
-| Reader of the repository (a token or app with `contents:read`, a fork, GitHub itself) | Learn which apps have secrets, every variable's name, each value's length, and when each changed | Read a value |
+| Reader of the repository (a token or app with `contents:read`, a fork, GitHub itself) | Learn which apps have secrets, every variable's name, each value's length, and when each changed; the names of the box's notify channels' secrets (`_box/`) | Read a value |
 | Holder of the box key (root; a copy of `/etc/motel/age`, an image cloned from the box) | Decrypt every value ever encrypted to it, in every copy of the history | — (root reads the env files anyway) |
 | Supervisor RCE (T5, the motel uid) | Read every env file, as it always could (they are motel's to read at launch); answer `GET /` with any `recipient`, which the workflow only compares — the remedy it names is a person's `make rekey` after reading the key from root over SSH, and the gain would be values the motel uid already reads; drop any bundle into `in/` without the handler, and so **make root install any configuration a signer signed that descends from the baseline and whose objects it holds** — `HEAD` again over a console edit, or a signer's signed unmerged branch — because the token-to-commit binding (step 4) is the handler's and root cannot repeat it; **skip the handler's validation**, which root never repeats — a file that fails to load is rolled back, but a signer-signed file that loads and only `motel-backup validate` would have refused is installed, bounded only by the signature, identity, proof and descent checks; report "loaded" for a reload that did nothing; read `out/` and `applied.json`; tell the workflow anything (the response and the poll are motel's) | Write `/etc/motel/Caddyfile`, an env file, `applied.json` or a result itself; make root install anything a signer did not sign (unsigned, non-descendant, other-host, other-path, placeholder-smuggled), a secret included; read the box key (0600, in a 0700 root directory); persist its *own* configuration across a restart |
 | Root on the box | Everything, by definition | — |
@@ -2279,7 +2330,7 @@ computer (Open question 6).
 | One age file per variable, names in the clear | One age file per app, names hidden | A pull request shows which variable was added, changed or removed; CI checks names and sizes before merge with no key; the template takes one value at a prompt that does not echo and pipes it to age, so plaintext never touches the laptop's disk, where a whole file would be edited as a plaintext temporary. Two branches that change different variables merge. The cost: names and lengths are the repository's to read. |
 | A classic X25519 box key | A post-quantum hybrid key (ML-KEM-768 + X25519, age v1.3's `age1pq`) | age refuses to mix a post-quantum recipient with SSH-key recipients in one file, and the readers are the signers' SSH keys. Open question 6. |
 | The previous bytes of each env file in the record | Hard-link each previous file aside in `secrets/` | One durable artifact recovery reasons from (I8), as the Caddyfile's `prev` already is; a second artifact would need crash rows of its own. The cost: the record's read cap, 16 MiB. |
-| A set of env files alone reloads nothing | Reload anyway | motel reads an env file at an app's launch, never at a load ("Running apps are never restarted", after the trust chain). |
+| A set of apps' env files alone reloads nothing; one that changes `_box.env` reloads | Reload anyway | motel reads an app's env file at the app's launch, never at a load ("Running apps are never restarted", after the trust chain); notify reads `_box.env` at a load ("The box's own slot"). |
 | No relaunch after a secrets change | Relaunch each app whose secrets changed | Root asking the serving process for it would be root consuming its word (backups' D10). The relaunch is the deployer's, through the webhook: a rollback to the running version (liveswap/DESIGN-liveswap.md, Behavior specification). Open question 4. |
 | Readers per box, in each box's `recipients` | One list of readers for the repository | A person may read one box's secrets and not another's; signers must match across boxes because every commit is on every box's chain, and readers have no such cause. |
 | The consistency checks in the handler and CI, not in root | In root | They catch mistakes and guard nothing; root installs what a signer signed and reads no more of an app block than the walk does. |
@@ -2333,7 +2384,11 @@ computer (Open question 6).
    app grammar so that no app's name collides. Lean: no, while
    `motel-backup setup` is a person's step by its own rule; and when
    backups land, they include or exclude `/etc/motel/age` and
-   `/etc/motel/secrets` deliberately.
+   `/etc/motel/secrets` deliberately. The reserved slot itself exists
+   since 2026-11-10, as `secrets/_box/` for notify's channel URLs ("The
+   box's own slot"), for a reason this credential does not share: the
+   motel uid must read a delivery URL to use it, and must never read
+   the backup repository's key.
 6. **Post-quantum.** The box key is X25519, so ciphertext the
    repository keeps for ever is open to a future quantum computer.
    age's hybrid keys cannot share a file with SSH-key readers, and
@@ -2633,3 +2688,11 @@ Dated one-liners; the full text of each is in git.
   Copilot's fourth round asked after the sk signature's counter: it is
   under the signature (measured 2026-11-07), so only the key varies it
   and it is no twin — not a failure, not scored; step 12 says so.
+- 2026-11-10 — The box's own slot, `secrets/_box/` into
+  `/etc/motel/secrets/_box.env` for notify's channel URLs (#418),
+  reversing Open question 5's lean against a reserved slot for this one
+  use; a set that changes `_box.env` reloads motel, and the handler's
+  validate is told the names the push carries.
+- 2026-11-10 — A push whose notify block names a secret `secrets/_box/`
+  does not hold is refused at the door: notify drops such a channel at
+  a boot rather than refuse the boot.

@@ -13,6 +13,7 @@ import (
 	"syscall"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"go.uber.org/zap"
 
@@ -276,7 +277,7 @@ func TestWatchdogAlertFlags(t *testing.T) {
 	if w.healthyAlert(now.Add(31*time.Second), 30*time.Second) || w.alerted {
 		t.Fatal("past the hold the loop's report is over")
 	}
-	if !w.setRefused() || w.setRefused() || !w.takeRefused() || w.takeRefused() {
+	if !w.setRefused("v1", "x") || w.setRefused("v1", "x") || !w.takeRefused() || w.takeRefused() {
 		t.Fatal("refused flag")
 	}
 }
@@ -373,4 +374,280 @@ func TestLifecyclePushFailuresBeforeThePipelineAreReported(t *testing.T) {
 			t.Fatalf("events = %v, %+v", n.names(), ev)
 		}
 	})
+}
+
+// What the watchdog told notify outlives the process in alerts.json:
+// written on each change, removed once nothing stands, and told again,
+// standing, by the next process's ReportStanding, whichever app Caddy
+// starts first.
+func TestReportStandingAfterARestart(t *testing.T) {
+	rig := newTestRig(t)
+	must(t, os.MkdirAll(rig.spec.dirs.app, 0o750))
+	rig.ma.restoreAlerts(rig.spec, zap.NewNop())
+	file := func() string {
+		data, err := os.ReadFile(rig.spec.dirs.alerts)
+		if errors.Is(err, os.ErrNotExist) {
+			return "absent"
+		}
+		must(t, err)
+		return string(data)
+	}
+	if !rig.ma.wd.throttledAlert(true) {
+		t.Fatal("the throttle was not due")
+	}
+	rig.ma.wd.setRefused("v1", "pre-flight: built for arm64, this box is amd64")
+	if got := file(); got != `{"loop":true,"refused":true,"refused_release":"v1","refused_reason":"pre-flight: built for arm64, this box is amd64"}` {
+		t.Fatalf("alerts.json = %s", got)
+	}
+	// A new process: a managedApp of the same name, never configured.
+	restarted := func() (*App, *managedApp) {
+		ma := newManagedApp("demo")
+		return &App{managed: map[string]*managedApp{"demo": ma}, specs: map[string]*appSpec{"demo": rig.spec}, logger: zap.NewNop()}, ma
+	}
+	a, ma := restarted()
+	n := &recNotifier{}
+	a.ReportStanding(n)
+	if got := n.names(); !slices.Equal(got, []string{EventWatchdogThrottled, EventRelaunchRefused}) {
+		t.Fatalf("after a restart: %v", got)
+	}
+	for _, ev := range n.evs {
+		if !ev.Standing || ev.App != "demo" || ev.Summary == "" {
+			t.Errorf("%+v", ev)
+		}
+	}
+	// The refusal is told again with its release and its reason, which
+	// the standing report's summary replaces at Alertmanager.
+	if ev, _ := n.find(EventRelaunchRefused); ev.Release != "v1" ||
+		ev.Summary != "the watchdog's relaunch of v1 was refused, so the app is down: pre-flight: built for arm64, this box is amd64; still reported until an instance runs again" {
+		t.Errorf("the standing refusal: %+v", ev)
+	}
+	// A recovery under way in this process is told as one, with its hold.
+	n.reset()
+	ma.wd.healthyAlert(time.Now(), time.Minute)
+	a.ReportStanding(n)
+	if ev, ok := n.find(EventWatchdogRecovered); !ok || !ev.Standing || ev.Hold != backoffResetAfter(rig.spec) {
+		t.Fatalf("a recovery under way: %v", n.names())
+	}
+	// Ended: nothing stands, the file is gone, and a later process tells
+	// nothing.
+	ma.wd.endLoopAlert()
+	ma.wd.takeRefused()
+	if got := file(); got != "absent" {
+		t.Fatalf("alerts.json = %s once nothing stands", got)
+	}
+	a, _ = restarted()
+	n.reset()
+	a.ReportStanding(n)
+	if got := n.names(); len(got) != 0 {
+		t.Fatalf("nothing stands, yet: %v", got)
+	}
+}
+
+// An app the serving config removed forgets what it reported; a file
+// that does not read is taken as nothing, never a reason to stop.
+func TestReportedAlertsForgottenAndUnreadable(t *testing.T) {
+	rig := newTestRig(t)
+	must(t, os.MkdirAll(rig.spec.dirs.app, 0o750))
+	rig.ma.restoreAlerts(rig.spec, zap.NewNop())
+	rig.ma.wd.throttledAlert(true)
+	rig.ma.wd.forgetAlerts()
+	if _, err := os.Stat(rig.spec.dirs.alerts); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("a removed app's alerts.json: %v", err)
+	}
+	must(t, os.WriteFile(rig.spec.dirs.alerts, []byte("{not json"), 0o600))
+	ma := newManagedApp("demo")
+	a := &App{managed: map[string]*managedApp{"demo": ma}, specs: map[string]*appSpec{"demo": rig.spec}, logger: zap.NewNop()}
+	n := &recNotifier{}
+	a.ReportStanding(n)
+	if got := n.names(); len(got) != 0 {
+		t.Fatalf("an unreadable file: %v", got)
+	}
+	if _, err := os.Stat(rig.spec.dirs.alerts); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("an unreadable alerts.json is kept, to be warned of at every start: %v", err)
+	}
+}
+
+// recoveringNotifier has the watchdog report the loop's recovery the
+// moment the loop is told standing: the recovery a listener with no key
+// yet dropped.
+type recoveringNotifier struct {
+	recNotifier
+	ma *managedApp
+}
+
+func (r *recoveringNotifier) Lifecycle(ev LifecycleEvent) {
+	r.recNotifier.Lifecycle(ev)
+	if ev.Standing {
+		r.ma.wd.healthyAlert(time.Now(), time.Hour)
+	}
+}
+
+// A loop that moved to its recovery while it was told standing is told
+// recovered after it, or nothing would ever end the standing alert.
+func TestReportStandingTellsARecoveryBegunMeanwhile(t *testing.T) {
+	rig := newTestRig(t)
+	rig.ma.wd.throttledAlert(true)
+	n := &recoveringNotifier{ma: rig.ma}
+	rig.ma.reportStanding(n, rig.spec)
+	if got := n.names(); !slices.Equal(got, []string{EventWatchdogThrottled, EventWatchdogRecovered}) {
+		t.Fatalf("told %v", got)
+	}
+}
+
+// ReportStanding, on a candidate config, reads the file once for this
+// process but leaves where the writes go to configure: a config Caddy
+// may still refuse never points them at its own root.
+func TestReportStandingLeavesTheWritesWhereConfigurePutThem(t *testing.T) {
+	rig := newTestRig(t)
+	must(t, os.MkdirAll(rig.spec.dirs.app, 0o750))
+	rig.ma.restoreAlerts(rig.spec, zap.NewNop())
+	other := testSpec(t) // another root
+	must(t, os.MkdirAll(other.dirs.app, 0o750))
+	a := &App{managed: map[string]*managedApp{"demo": rig.ma}, specs: map[string]*appSpec{"demo": other}, logger: zap.NewNop()}
+	a.ReportStanding(&recNotifier{})
+	rig.ma.wd.setRefused("v1", "pre-flight: built for arm64, this box is amd64")
+	if _, err := os.Stat(rig.spec.dirs.alerts); err != nil {
+		t.Fatalf("the serving config's alerts.json: %v", err)
+	}
+	if _, err := os.Stat(other.dirs.alerts); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("the candidate's root got a write: %v", err)
+	}
+}
+
+// A recovery's hold outlives a restart: the next process tells it as
+// the recovery, with its hold, not as a loop; and one whose hold has
+// passed is not told at all, since notify has resolved it.
+func TestReportStandingKeepsARecoverysHold(t *testing.T) {
+	rig := newTestRig(t)
+	must(t, os.MkdirAll(rig.spec.dirs.app, 0o750))
+	rig.ma.restoreAlerts(rig.spec, zap.NewNop())
+	rig.ma.wd.throttledAlert(true)
+	now := rig.clock.Now()
+	if !rig.ma.wd.healthyAlert(now, time.Minute) {
+		t.Fatal("the recovery was not due")
+	}
+	ma := newManagedApp("demo")
+	a := &App{managed: map[string]*managedApp{"demo": ma}, specs: map[string]*appSpec{"demo": rig.spec}, logger: zap.NewNop()}
+	n := &recNotifier{}
+	a.ReportStanding(n)
+	if got := n.names(); !slices.Equal(got, []string{EventWatchdogRecovered}) || !n.evs[0].Standing {
+		t.Fatalf("after a restart in the hold: %v", got)
+	}
+	// In this process, healthy for the hold: over, though the flag waits
+	// for the next probe.
+	rig.ma.wd.mu.Lock()
+	rig.ma.wd.healthySince = rig.clock.Now().Add(-time.Hour)
+	rig.ma.wd.mu.Unlock()
+	n.reset()
+	rig.ma.reportStanding(n, rig.spec)
+	if got := n.names(); len(got) != 0 {
+		t.Fatalf("a recovery whose hold has passed was told again: %v", got)
+	}
+}
+
+// endingNotifier ends the loop and the refusal the moment it is told
+// they stand, as the watchdog's or recovery's goroutine could between
+// ReportStanding's read and its report, and records what it is told.
+type endingNotifier struct {
+	recNotifier
+	ma *managedApp
+}
+
+func (e *endingNotifier) Lifecycle(ev LifecycleEvent) {
+	e.recNotifier.Lifecycle(ev)
+	if ev.Standing {
+		e.ma.wd.endLoopAlert()
+		e.ma.wd.takeRefused()
+	}
+}
+
+// What ends while ReportStanding tells it is told ended too: the
+// goroutine that ended it may have told a listener that had no key yet.
+func TestReportStandingTellsWhatEndedMeanwhile(t *testing.T) {
+	rig := newTestRig(t)
+	must(t, os.MkdirAll(rig.spec.dirs.app, 0o750))
+	rig.ma.restoreAlerts(rig.spec, zap.NewNop())
+	rig.ma.wd.throttledAlert(true)
+	rig.ma.wd.setRefused("v1", "pre-flight: built for arm64, this box is amd64")
+	n := &endingNotifier{ma: rig.ma}
+	rig.ma.reportStanding(n, rig.spec)
+	want := []string{EventWatchdogThrottled, EventRelaunchRefused, EventWatchdogRecovered, EventRelaunchResolved}
+	if got := n.names(); !slices.Equal(got, want) {
+		t.Fatalf("told %v, want %v", got, want)
+	}
+}
+
+// A candidate config that moved liveswap's root, then was refused,
+// leaves the watchdog writing alerts.json under the serving root.
+func TestRollbackPointsAlertsBackAtTheServingRoot(t *testing.T) {
+	rig := newTestRig(t)
+	serving, candidate := rig.spec, testSpec(t) // two roots
+	for _, s := range []*appSpec{serving, candidate} {
+		must(t, os.MkdirAll(s.dirs.app, 0o750))
+	}
+	servingOwner, candidateOwner := new(int), new(int)
+	rig.ma.configure(servingOwner, serving, nil, zap.NewNop(), nil, nil)
+	rig.ma.configure(candidateOwner, candidate, nil, zap.NewNop(), nil, nil)
+	if !rig.ma.rollbackConfig(candidateOwner) {
+		t.Fatal("the candidate was not rolled back")
+	}
+	rig.ma.wd.setRefused("v1", "pre-flight: built for arm64, this box is amd64")
+	if _, err := os.Stat(serving.dirs.alerts); err != nil {
+		t.Fatalf("the serving root's alerts.json: %v", err)
+	}
+	if _, err := os.Stat(candidate.dirs.alerts); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("the refused candidate's root got the write: %v", err)
+	}
+}
+
+// The reason kept is the first line, cut at a rune boundary within its
+// bound; a refusal already standing keeps what it was told with.
+func TestRefusalReasonBounded(t *testing.T) {
+	w := &watchdogState{}
+	long := strings.Repeat("é", refusedReasonMax) + "\nsecond line"
+	if !w.setRefused("v2", long) {
+		t.Fatal("not new")
+	}
+	_, reason := w.refusal()
+	if len(reason) > refusedReasonMax || !utf8.ValidString(reason) || strings.Contains(reason, "second") {
+		t.Fatalf("reason %d bytes, valid %v", len(reason), utf8.ValidString(reason))
+	}
+	w.setRefused("v3", "another")
+	if rel, _ := w.refusal(); rel != "v2" {
+		t.Fatalf("release %s", rel)
+	}
+	w.takeRefused()
+	if rel, reason := w.refusal(); rel != "" || reason != "" {
+		t.Fatalf("after the end: %q %q", rel, reason)
+	}
+}
+
+// A watchdog change whose write is still in flight when a refused
+// candidate is rolled back (taken under the lock before, run after)
+// leaves the serving root's alerts.json holding it all the same.
+func TestRollbackOutrunsAnAlertsWriteInFlight(t *testing.T) {
+	rig := newTestRig(t)
+	serving, candidate := rig.spec, testSpec(t) // two roots
+	for _, s := range []*appSpec{serving, candidate} {
+		must(t, os.MkdirAll(s.dirs.app, 0o750))
+	}
+	servingOwner, candidateOwner := new(int), new(int)
+	rig.ma.configure(servingOwner, serving, nil, zap.NewNop(), nil, nil)
+	rig.ma.configure(candidateOwner, candidate, nil, zap.NewNop(), nil, nil)
+	w := &rig.ma.wd
+	w.mu.Lock()
+	w.refused, w.refusedRelease, w.refusedReason = true, "v1", "refused"
+	inFlight := w.alertsChanged() // its write still to run, at the candidate's root
+	w.mu.Unlock()
+	if !rig.ma.rollbackConfig(candidateOwner) {
+		t.Fatal("the candidate was not rolled back")
+	}
+	runSave(inFlight)
+	data, err := os.ReadFile(serving.dirs.alerts)
+	if err != nil || !strings.Contains(string(data), `"refused":true`) {
+		t.Fatalf("the serving root's alerts.json: %q, %v", data, err)
+	}
+	if _, err := os.Stat(candidate.dirs.alerts); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("the late write landed at the refused candidate's root: %v", err)
+	}
 }

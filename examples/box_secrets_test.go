@@ -297,6 +297,9 @@ func TestBoxSecretSet(t *testing.T) {
 		{[]string{"APP=recipients", "VAR=X"}, "that name is the recipients file's"},
 		{[]string{"APP=" + strings.Repeat("a", 64), "VAR=X"}, "at most 63 characters"},
 		{[]string{"APP=example", "VAR=X", "BOX=nope.example.com"}, "no box nope.example.com here"},
+		{[]string{"APP=_box", "VAR=DATABASE_URL"}, "variable 'DATABASE_URL': the box's own secrets (APP=_box) are notify's channel URLs, each named NOTIFY_ then capitals, digits and _"},
+		{[]string{"APP=_box", "VAR=NOTIFY_ops"}, "variable 'NOTIFY_ops': the box's own secrets (APP=_box) are notify's"},
+		{[]string{"APP=_boxes", "VAR=X"}, "app '_boxes': lower-case letters, digits and - only, as in its app block (or _box, for a notify channel's URL)"},
 	} {
 		if out, code := r.secrets("", "v", "set", c.env...); code != 1 || !strings.Contains(out, c.want) {
 			t.Errorf("%v: exit %d, want %q\n%s", c.env, code, c.want, out)
@@ -317,6 +320,24 @@ func TestBoxSecretSet(t *testing.T) {
 		t.Errorf("an app the file does not declare: exit %d\n%s", code, out)
 	}
 	r.write(boxFile, f)
+
+	// The box's own slot: a notify channel's URL, which the notify
+	// block reads by name; no env_file hint, and the notify hint once
+	// the name is read.
+	notifyFile := "deploy.example.com/secrets/_box/NOTIFY_OPS_URL.age"
+	if out, code := r.secrets("", "https://ntfy.sh/ops-topic", "set", "APP=_box", "VAR=NOTIFY_OPS_URL"); code != 0 ||
+		!strings.Contains(out, "secret: "+notifyFile+", encrypted to 3 keys, added to the commit\n") ||
+		!strings.Contains(out, "secret: no line of "+boxFile+"'s notify block reads NOTIFY_OPS_URL yet: a channel reads it as  channel <name> json|ntfy|slack|discord {secret.NOTIFY_OPS_URL}") ||
+		strings.Contains(out, "env_file") {
+		t.Errorf("APP=_box: exit %d\n%s", code, out)
+	}
+	r.mustDecrypt(boxID, notifyFile, "https://ntfy.sh/ops-topic")
+	r.write(boxFile, strings.Replace(f, "{\n", "{\n\tnotify {\n\t\tchannel ops ntfy {secret.NOTIFY_OPS_URL}\n\t\toperator ops\n\t}\n", 1))
+	if out, code := r.secrets("", "https://ntfy.sh/ops-2", "set", "APP=_box", "VAR=NOTIFY_OPS_URL"); code != 0 || strings.Contains(out, "notify block reads") {
+		t.Errorf("APP=_box, read by a channel line: exit %d\n%s", code, out)
+	}
+	r.write(boxFile, f)
+	r.remove("deploy.example.com/secrets/_box")
 
 	// On a Mac's disk two names that differ in case are one file: the
 	// second would overwrite the first.
@@ -509,6 +530,24 @@ func TestBoxSecretsListShowRekey(t *testing.T) {
 		if r.read(f) != b {
 			t.Errorf("%s changed in a refused rekey", f)
 		}
+	}
+}
+
+// A NOTIFY_ name in an app's directory is warned of on stderr: what show
+// prints on stdout is the value alone, so a capture of it is too.
+func TestBoxSecretShowOfANotifyNameIsTheValueAlone(t *testing.T) {
+	r, _, _ := readersRepo(t)
+	_, box := r.boxKey("box")
+	if out, code := r.secrets("", "three", "set", "APP=example", "VAR=NOTIFY_LEGACY", "BOX_KEY="+box); code != 0 {
+		t.Fatalf("set NOTIFY_LEGACY: exit %d\n%s", code, out)
+	}
+	show := exec.Command(filepath.Join(r.dir, "bin", "secrets"), "show")
+	show.Dir, show.Env = r.dir, append(append([]string{}, r.env...), "APP=example", "VAR=NOTIFY_LEGACY")
+	var stdout, stderr strings.Builder
+	show.Stdout, show.Stderr = &stdout, &stderr
+	if err := show.Run(); err != nil || stdout.String() != "three" ||
+		!strings.Contains(stderr.String(), "motel withholds a NOTIFY_ variable from example's environment") {
+		t.Errorf("show of a NOTIFY_ name: %v\nstdout %q\nstderr %q", err, stdout.String(), stderr.String())
 	}
 }
 
@@ -1118,6 +1157,18 @@ func TestBoxCheckSecrets(t *testing.T) {
 	if out, code := check(); code != 0 || out != "deploy.example.com/Caddyfile → https://deploy.example.com/ (1 app, 1 signer, 1 secret)\n" {
 		t.Fatalf("one secret: exit %d\n%s", code, out)
 	}
+	// A notify block reading the box's own secret, which is not on this
+	// machine: validate is told it is the push's.
+	withoutNotify := r.read(boxFile)
+	r.write(boxFile, strings.Replace(withoutNotify, "{\n", "{\n\tnotify {\n\t\tchannel ops ntfy {secret.NOTIFY_OPS_URL}\n\t\toperator ops\n\t}\n", 1))
+	if out, code := r.secrets("", "https://ntfy.sh/ops-topic", "set", "APP=_box", "VAR=NOTIFY_OPS_URL"); code != 0 {
+		t.Fatalf("make secret APP=_box: exit %d\n%s", code, out)
+	}
+	if out, code := check(); code != 0 || !strings.Contains(out, "(1 app, 1 signer, 2 secrets)") {
+		t.Fatalf("a notify block and its secret in _box/: exit %d\n%s", code, out)
+	}
+	r.remove("deploy.example.com/secrets/_box")
+	r.write(boxFile, withoutNotify)
 
 	// Two names one file on a Mac's disk: the box takes both, so a
 	// warning, annotated in Actions.

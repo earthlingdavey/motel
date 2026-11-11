@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"maps"
 	"net/http"
 	"os"
@@ -82,6 +83,37 @@ func TestPushSecretsFit(t *testing.T) {
 	if w := p.post(t, p.h, push{id: id, token: p.token(t, c), body: bytes.NewReader(tgz(t, p.repo.bundleFiles(c, p.base)))}); w.Code != http.StatusGatewayTimeout || !exists(p.x("in/"+id+".tar")) {
 		t.Fatalf("a push whose secrets fit: %d %s", w.Code, w.Body)
 	}
+}
+
+// A push's secrets/_box/ is named to validate, which root has not yet
+// written into _box.env: the names in the commit's order, never a value.
+func TestPushNamesBoxSecretsToValidate(t *testing.T) {
+	p := newPushRig(t)
+	enc := func(v string) []byte { return encrypt(t, []byte(v), newIdentity(t).Recipient()) }
+	file := bytes.Replace(boxFile(2, p.alice), []byte("\tliveswap {"), []byte("\tnotify {\n\t\tchannel ops ntfy {secret.NOTIFY_OPS_URL}\n\t\toperator ops\n\t}\n\n\tliveswap {"), 1)
+	c := p.repo.commitSecrets(file, secrets{"_box": {"NOTIFY_OPS_URL": enc("https://ntfy.sh/ops"), "NOTIFY_HC_URL": enc("https://hc-ping.com/x")}}, &p.alice, p.base)
+	id := randomID(t)
+	if w := p.post(t, p.h, push{id: id, token: p.token(t, c), body: bytes.NewReader(tgz(t, p.repo.bundleFiles(c, p.base)))}); w.Code != http.StatusGatewayTimeout || !exists(p.x("in/"+id+".tar")) {
+		t.Fatalf("a push of the box's own secrets: %d %s", w.Code, w.Body)
+	}
+	if !slices.Equal(p.val.boxSecrets, []string{"NOTIFY_HC_URL", "NOTIFY_OPS_URL"}) {
+		t.Fatalf("validate was told %q", p.val.boxSecrets)
+	}
+}
+
+// A notify block naming a secret the push does not carry is refused
+// before validate, which would refuse it too in words that name no
+// remedy.
+func TestPushRefusesAnUncarriedNotifySecretBeforeValidate(t *testing.T) {
+	p := newPushRig(t)
+	file := bytes.Replace(boxFile(2, p.alice), []byte("\tliveswap {"), []byte("\tnotify {\n\t\tchannel ops ntfy {secret.NOTIFY_OPS_URL}\n\t\toperator ops\n\t}\n\n\tliveswap {"), 1)
+	c := p.repo.commitSecrets(file, nil, &p.alice, p.base)
+	id := randomID(t)
+	m := wantResult(t, p.post(t, p.h, push{id: id, token: p.token(t, c), body: bytes.NewReader(tgz(t, p.repo.bundleFiles(c, p.base)))}), http.StatusUnprocessableEntity, id, phaseRefused)
+	if !strings.Contains(fmt.Sprint(m["error"]), "the notify block reads secret NOTIFY_OPS_URL") || p.val.calls != 0 {
+		t.Fatalf("%v; validate ran %d times", m, p.val.calls)
+	}
+	p.untouched(t)
 }
 
 // The fast path answers a replay of the commit the box runs only while
@@ -615,6 +647,23 @@ func TestDescribeSecretsWarns(t *testing.T) {
 		if !strings.Contains(out.String(), want) {
 			t.Errorf("no %q in:\n%s", want, out.String())
 		}
+	}
+}
+
+// A NOTIFY_ secret in an app's slot is withheld from the app at its
+// launch: make check says so, a warning and not a refusal.
+func TestDescribeWarnsOfAWithheldNotifySecret(t *testing.T) {
+	id := newIdentity(t)
+	path := writeTree(t, secretsFile("\t\t\tenv_file /etc/motel/secrets/example.env\n", ""), map[string][]byte{
+		"example/NOTIFY_FROM.age": encrypt(t, []byte("ops@example.com"), id.Recipient()),
+	})
+	var out bytes.Buffer
+	if err := describe(path, &out); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "warning app example's secret NOTIFY_FROM is withheld from the app: a NOTIFY_ variable in an env file the box writes is notify's (a channel's URL goes in ") ||
+		!strings.Contains(out.String(), "deploy.example.com/secrets/_box/); name it otherwise if the app reads it\n") {
+		t.Errorf("describe:\n%s", out.String())
 	}
 }
 

@@ -226,6 +226,101 @@ echo "=== notify 10: no channel URL in any journal ==="
 n=$(journalctl -u motel -u prometheus-alertmanager -o cat --no-pager | grep -c 'e2e-sink' || true)
 [ "$n" -eq 0 ] && pass "no channel URL in motel's or Alertmanager's journal" || fail "$n journal lines hold a channel URL"
 
+echo "=== notify 11: a secret missing at boot drops its channel; validate and reload refuse ==="
+# A channel line whose secret _box.env does not hold: the box's
+# consistency check refuses such a push, so this is a hand edit, or a
+# file lost. A boot must not take every site down for it.
+cp /etc/motel/Caddyfile /tmp/Caddyfile.before
+sed -i 's#^\(\t*\)operator ops oncall#\1channel spare json {secret.NOTIFY_SPARE_URL}\n\1operator ops oncall spare#' /etc/motel/Caddyfile
+grep -q 'NOTIFY_SPARE_URL' /etc/motel/Caddyfile || fail "fixture: the spare channel line is not in the Caddyfile"
+if motel validate --adapter caddyfile --config /etc/motel/Caddyfile >/tmp/validate.out 2>&1; then
+	fail "motel validate took a channel whose secret is missing"
+else
+	grep -q 'channel spare: secret NOTIFY_SPARE_URL is not in the box' /tmp/validate.out \
+		&& pass "motel validate refuses it, naming the channel and the key" || fail "validate: $(tail -2 /tmp/validate.out)"
+fi
+if systemctl reload motel 2>/dev/null; then
+	fail "a reload took a channel whose secret is missing"
+else
+	systemctl is-active -q motel && pass "a reload refuses it, and the running config serves on" || fail "motel is not active after the refused reload"
+fi
+t_boot=$(date +%s)
+systemctl restart motel
+i=0
+until systemctl is-active -q motel && [ -S /run/motel/admin.sock ]; do
+	i=$((i + 1)); [ "$i" -ge 120 ] && break; sleep 0.5
+done
+systemctl is-active -q motel && pass "motel starts on it: the boot is not refused" || fail "motel did not start: $(journalctl -u motel -o cat --no-pager -n 5)"
+journalctl -u motel --since "@$t_boot" -o cat --no-pager | grep 'notify: a channel is dropped from this load' | grep -q 'channel spare: secret NOTIFY_SPARE_URL' \
+	&& pass "journal: the dropped channel, by line and key" || fail "no journal line names the dropped channel"
+out=$(motel notify test ops 2>&1) && echo "$out" | grep -q 'delivered to ops' \
+	&& pass "the other channels deliver: $out" || fail "notify test ops after the boot: $out"
+cp /tmp/Caddyfile.before /etc/motel/Caddyfile
+systemctl restart motel
+i=0
+until systemctl is-active -q motel && [ -S /run/motel/admin.sock ]; do
+	i=$((i + 1)); [ "$i" -ge 120 ] && break; sleep 0.5
+done
+
+echo "=== notify 12: motel restarted while a state alert fires: it is told again, and still resolves ==="
+# A relaunch refused: blog's command gone from its release, then its
+# process killed. Nothing re-detects that after a restart (recovery's
+# own refusal reports nothing), so without liveswap's alerts.json and
+# its standing report the alert would end at resolve_timeout, and a
+# recovery be told for an app that is down.
+rr_alert() { am 'http://am/api/v2/alerts?filter=alertname%3D%22relaunch_refused%22&filter=app%3D%22blog%22'; }
+rr_ends() { rr_alert | sed -n 's/.*"endsAt":"\([^"]*\)".*/\1/p' | head -1; }
+code=$(deploy demo-v1.tar.gz rr1)
+[ "$code" = 200 ] && pass "deploy rr1" || fail "deploy rr1 returned $code: $(cat /tmp/deploy-body)"
+REL=/var/lib/liveswap/blog/releases/rr1
+cp "$REL/server" /tmp/server.rr1
+pid=$(json_num "$(status)" pid)
+t_rr=$(now_ms)
+rm "$REL/server"
+[ -n "$pid" ] && kill -9 "$pid"
+i=0
+until journalctl -u motel -o cat --no-pager | grep 'notify: event' | grep 'liveswap/app:blog/relaunch_refused' | grep -q '"state":"firing"'; do
+	i=$((i + 1)); [ "$i" -ge 120 ] && break; sleep 0.5
+done
+journalctl -u motel -o cat --no-pager | grep 'notify: event' | grep 'liveswap/app:blog/relaunch_refused' | grep -q '"state":"firing"' \
+	&& pass "the refused relaunch fires relaunch_refused" || fail "no relaunch_refused after the kill (pid '$pid')"
+grep -q '"refused":true' /var/lib/liveswap/blog/alerts.json 2>/dev/null \
+	&& pass "alerts.json keeps it for a restart" || fail "alerts.json: $(cat /var/lib/liveswap/blog/alerts.json 2>&1)"
+t=$(first_arrival /ops relaunch_refused "$t_rr" 60 firing blog)
+within "relaunch_refused to the operator (group_wait)" "$t" "$t_rr" 0 45
+e0=$(rr_ends)
+t_restart=$(date +%s)
+systemctl restart motel
+i=0
+until systemctl is-active -q motel && [ -S /run/motel/admin.sock ]; do
+	i=$((i + 1)); [ "$i" -ge 120 ] && break; sleep 0.5
+done
+i=0
+until journalctl -u motel --since "@$t_restart" -o cat --no-pager | grep 'notify: event' | grep 'liveswap/app:blog/relaunch_refused' | grep -q '"standing":true'; do
+	i=$((i + 1)); [ "$i" -ge 40 ] && break; sleep 0.5
+done
+journalctl -u motel --since "@$t_restart" -o cat --no-pager | grep 'notify: event' | grep 'liveswap/app:blog/relaunch_refused' | grep -q '"standing":true' \
+	&& pass "after the restart, motel tells it again, standing" || fail "no standing relaunch_refused after the restart"
+i=0
+until [ -n "$e0" ] && [ -n "$(rr_ends)" ] && expr "$(rr_ends)" \> "$e0" >/dev/null; do
+	i=$((i + 1)); [ "$i" -ge 40 ] && break; sleep 0.5
+done
+e1=$(rr_ends)
+[ -n "$e0" ] && [ -n "$e1" ] && expr "$e1" \> "$e0" >/dev/null \
+	&& pass "Alertmanager's alert is kept alive across the restart (endsAt $e0 → $e1)" || fail "the alert's endsAt did not move: '$e0' → '$e1'"
+rr_alert | grep -q '"state":"active"' && pass "the alert is still active" || fail "the alert: $(rr_alert | head -c 300)"
+n=$(arrivals /ops relaunch_refused "$t_rr" resolved blog | wc -l)
+[ "$n" -eq 0 ] && pass "no recovery reached the operator across the restart" || fail "$n recoveries while blog is down"
+# The cause mended and a reload: recovery launches it, and the standing
+# alert resolves after motel's hold.
+cp /tmp/server.rr1 "$REL/server"
+chown --reference="$REL" "$REL/server" 2>/dev/null || true
+t_fix=$(now_ms)
+systemctl reload motel || fail "the reload after the mend"
+t=$(first_arrival /ops relaunch_refused "$t_fix" 150 resolved blog)
+within "the recovery once an instance runs again (hold, then a tick)" "$t" "$t_fix" 25 150
+[ ! -e /var/lib/liveswap/blog/alerts.json ] && pass "alerts.json is gone once nothing stands" || fail "alerts.json: $(cat /var/lib/liveswap/blog/alerts.json 2>&1)"
+
 echo
 if [ "$FAILURES" -ne 0 ]; then
 	echo "notify suite: $FAILURES failure(s)"

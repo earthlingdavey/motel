@@ -3,8 +3,10 @@ package notify
 import (
 	"errors"
 	"fmt"
+	"maps"
 	"net/netip"
 	"net/url"
+	"path/filepath"
 	"regexp"
 	"slices"
 	"sort"
@@ -185,6 +187,28 @@ type resolved struct {
 // trusts, a secret the box does not hold, a URL that is not https to a
 // public address. Errors name keys and channels, never a value.
 func (a *App) resolve(trust map[string][]TrustSource, secrets map[string]string) (*resolved, error) {
+	r, _, err := a.resolveWith(trust, secrets, nil, false, nil)
+	return r, err
+}
+
+// resolveWith is resolve with two departures from it, each one load's
+// (DESIGN-notify.md, "Secrets at load"):
+//
+//   - held are the secrets a box push carries (pushedSecrets): each is
+//     taken as held by the box without its value being read or checked,
+//     and is given no URL. Only `motel validate` passes any, and only for
+//     the box's own secrets file, which is where root writes a push's
+//     secrets/_box/.
+//   - drop, a boot's load (dropsChannels), drops a channel whose secret
+//     is missing or whose value is refused, rather than refusing the
+//     config: it leaves the operator line, the bindings and the route
+//     tree, and each is in dropped, by its line and key, for the
+//     journal. A missing heartbeat secret drops the heartbeat.
+//   - unusable is why the secrets file could not be read or parsed, or
+//     nil: every secret is then unusable, so a drop takes out every line
+//     that reads one, each reason naming the file's error, and any other
+//     load refuses the first.
+func (a *App) resolveWith(trust map[string][]TrustSource, secrets map[string]string, held map[string]bool, drop bool, unusable error) (*resolved, []error, error) {
 	r := &resolved{
 		channels:    map[string]Channel{},
 		appChannels: map[string][]string{},
@@ -193,21 +217,21 @@ func (a *App) resolve(trust map[string][]TrustSource, secrets map[string]string)
 	}
 	for _, ch := range a.Channels {
 		if err := ch.check(); err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		if _, dup := r.channels[ch.Name]; dup {
-			return nil, fmt.Errorf("channel %s is defined twice", ch.Name)
+			return nil, nil, fmt.Errorf("channel %s is defined twice", ch.Name)
 		}
 		r.channels[ch.Name] = ch
 		r.order = append(r.order, ch.Name)
 	}
 	sort.Strings(r.order)
 	if len(a.Operator) == 0 {
-		return nil, errors.New("no operator line: name the channels that receive every event with operator <channel>")
+		return nil, nil, errors.New("no operator line: name the channels that receive every event with operator <channel>")
 	}
 	for _, name := range a.Operator {
 		if _, ok := r.channels[name]; !ok {
-			return nil, fmt.Errorf("operator names %s, which no channel line defines", name)
+			return nil, nil, fmt.Errorf("operator names %s, which no channel line defines", name)
 		}
 		if !slices.Contains(r.operator, name) {
 			r.operator = append(r.operator, name)
@@ -220,10 +244,10 @@ func (a *App) resolve(trust map[string][]TrustSource, secrets map[string]string)
 	for _, b := range a.Binds {
 		id, err := parseIdentity(b.Identity)
 		if err != nil {
-			return nil, fmt.Errorf("bind %q: %w", b.Identity, err)
+			return nil, nil, fmt.Errorf("bind %q: %w", b.Identity, err)
 		}
 		if _, ok := r.channels[b.Channel]; !ok {
-			return nil, fmt.Errorf("bind %q names channel %s, which no channel line defines", b.Identity, b.Channel)
+			return nil, nil, fmt.Errorf("bind %q names channel %s, which no channel line defines", b.Identity, b.Channel)
 		}
 		trusted := false
 		for _, app := range r.apps {
@@ -242,32 +266,83 @@ func (a *App) resolve(trust map[string][]TrustSource, secrets map[string]string)
 			// the binding would reach nobody's events, or, once the
 			// identity is trusted again, reach them without the operator
 			// having said so again.
-			return nil, fmt.Errorf("bind %q: no app's deploy_trust trusts this identity; remove the line, or trust it", b.Identity)
+			return nil, nil, fmt.Errorf("bind %q: no app's deploy_trust trusts this identity; remove the line, or trust it", b.Identity)
 		}
 	}
 	for app := range r.appChannels {
 		sort.Strings(r.appChannels[app])
 	}
-	keys := map[string]string{} // secret key → the first line that names it
+	// Each secret key → every line that reads it, in the block's order:
+	// a drop takes them all out (without), so the reason names them all.
+	keys := map[string][]string{}
 	for _, name := range r.order {
-		keys[r.channels[name].Secret] = "channel " + name
+		key := r.channels[name].Secret
+		keys[key] = append(keys[key], "channel "+name)
 	}
 	if r.heartbeat != "" {
-		if _, ok := keys[r.heartbeat]; !ok {
-			keys[r.heartbeat] = "heartbeat"
-		}
+		keys[r.heartbeat] = append(keys[r.heartbeat], "heartbeat")
 	}
-	for key, who := range keys {
+	bad := map[string]bool{}
+	var dropped []error
+	for _, key := range slices.Sorted(maps.Keys(keys)) {
+		who := strings.Join(keys[key], ", ")
+		if held[key] && filepath.Clean(a.secretsFile()) == DefaultSecretsFile {
+			continue
+		}
 		v, ok := secrets[key]
-		if !ok || v == "" {
-			return nil, fmt.Errorf("%s: secret %s is not in the box's secrets (%s)", who, key, a.secretsFile())
+		var why error
+		switch {
+		case unusable != nil:
+			why = fmt.Errorf("%s: secret %s cannot be read: %w", who, key, unusable)
+		case !ok || v == "":
+			why = fmt.Errorf("%s: secret %s is not in the box's secrets (%s)", who, key, a.secretsFile())
+		default:
+			if err := checkURL(v, a.AllowInsecureChannels); err != nil {
+				why = fmt.Errorf("%s: the value of %s %w", who, key, err)
+			}
 		}
-		if err := checkURL(v, a.AllowInsecureChannels); err != nil {
-			return nil, fmt.Errorf("%s: the value of %s %w", who, key, err)
+		if why == nil {
+			r.urls[key] = v
+			continue
 		}
-		r.urls[key] = v
+		if !drop {
+			return nil, nil, why
+		}
+		bad[key] = true
+		dropped = append(dropped, why)
 	}
-	return r, nil
+	if len(bad) > 0 {
+		r.without(bad)
+	}
+	return r, dropped, nil
+}
+
+// without takes out of r every channel whose secret is in bad, and the
+// heartbeat if its secret is: from the channel lines, the operator's
+// list and each app's bound channels, so that nothing renders a URL
+// file that is not there.
+func (r *resolved) without(bad map[string]bool) {
+	gone := map[string]bool{}
+	for _, name := range r.order {
+		if bad[r.channels[name].Secret] {
+			gone[name] = true
+			delete(r.channels, name)
+		}
+	}
+	keep := func(names []string) []string {
+		return slices.DeleteFunc(names, func(n string) bool { return gone[n] })
+	}
+	r.order, r.operator = keep(r.order), keep(r.operator)
+	for app, chans := range r.appChannels {
+		if chans = keep(chans); len(chans) == 0 {
+			delete(r.appChannels, app)
+		} else {
+			r.appChannels[app] = chans
+		}
+	}
+	if bad[r.heartbeat] {
+		r.heartbeat = ""
+	}
 }
 
 // checkURL refuses what Alertmanager must not be pointed at: it sends

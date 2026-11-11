@@ -427,6 +427,7 @@ next deploy of a new version, or a relaunch after a crash or a reboot.
 | Remove one | `git rm deploy.example.com/secrets/example/DATABASE_URL.age` |
 | Bring in an env file made on the box | `ssh root@box.example.com cat /etc/motel/example.env \| make secrets-import APP=example` |
 | Let a new reader read what is there, or move it all to a rebuilt box's key | `make rekey`, or `make rekey BOX_KEY=…` |
+| Set a notify channel's URL, the box's own (its `notify` block reads it as `{secret.NOTIFY_OPS_URL}`) | `make secret APP=_box VAR=NOTIFY_OPS_URL` |
 
 A box's first secret, by `make secret` or `make secrets-import`, also
 takes `BOX_KEY=$(ssh root@box.example.com motel box key)`: it makes
@@ -435,6 +436,13 @@ the recipients file. With more than one box, name the one you mean:
 `make check`, on every push and pull request, holds the secrets to
 what the box takes, and warns as one nears a cap. A Deno app also needs
 `--allow-env=` to name each variable it reads.
+
+The box's own secrets, `APP=_box`, are notify's channel URLs: the box
+writes them to `/etc/motel/secrets/_box.env`, which no app is given,
+and reloads motel when they change, so a new URL is in use once the
+push is applied; a `NOTIFY_` name among an app's own secrets is
+withheld from the app (motel's [Secrets](https://github.com/smallhoursorg/motel/blob/main/docs/secrets.md#a-notify-channels-url)
+page).
 
 Whoever can get a signed commit onto `main` can read these files
 anyway: one site in the Caddyfile serves any file the `motel` user

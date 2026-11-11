@@ -6,8 +6,9 @@ the "History" section at the end holds only dated one-liners.
 
 **Status: experimental, slice one**: the notify core. Opt-in (nothing
 runs without a `notify` block, and the package only Suggests
-Alertmanager); not for production boxes until the first three rows of
-"Owed" land. No metrics store, no vmalert, no `metrics` in
+Alertmanager); the three Owed rows that barred a production box
+landed on 2026-11-10 ("History"), and what is owed still ("Owed") is
+real Slack and Discord hooks and later slices. No metrics store, no vmalert, no `metrics` in
 `GET /<app>`; those are slice two, designed in "Later slices" and not
 built. Normative for what is built: a change
 that cannot hold a line here changes the line in the same PR, with
@@ -116,12 +117,38 @@ connects to nothing), each naming keys and channels, never a value:
 | a channel defined twice | `channel <c> is defined twice` |
 | `bind` to a channel that does not exist | `bind "<id>" names channel <c>, which no channel line defines` |
 | `bind` to an identity no app's `deploy_trust` trusts | `bind "<id>": no app's deploy_trust trusts this identity; remove the line, or trust it` |
-| a secret the box does not hold | `channel <c>: secret <KEY> is not in the box's secrets (<file>)` |
-| a URL not https, not to a public address, or to a local name (`localhost`, `*.local`, `*.internal`, a single label) | `channel <c>: the value of <KEY> is not an https URL` / `… is not to a public address …` / `… is not to a public host name` |
+| a secret the box does not hold (a boot drops the channel instead: "Secrets at load") | `channel <c>: secret <KEY> is not in the box's secrets (<file>)` |
+| a URL not https, not to a public address, or to a local name (`localhost`, `*.local`, `*.internal`, a single label); a boot drops the channel instead | `channel <c>: the value of <KEY> is not an https URL` / `… is not to a public address …` / `… is not to a public host name` |
 
 The URL check is every URL's, not only a deployer's: Alertmanager sends
 from the network namespace every app shares, so a URL to loopback or a
 private address would reach a listener an app opened.
+
+### Secrets at load
+
+The last two rows are a secret's, and a boot does not refuse them.
+Provisioning cannot tell `motel validate` from a config load (Caddy's
+`Context` says neither), so cmd/motel tells notify the command it runs
+(`SetCommand`, before Caddy's own command), and a load reads Caddy's
+running config (`caddy.ActiveContext`):
+
+| Load | A channel whose secret is missing, or whose value is refused |
+|---|---|
+| `motel validate` (by hand, CI's `make check`, the box handler's step 6) | refused, as the table says; the handler and `make check` name the secrets in `secrets/_box/` (`MOTEL_NOTIFY_PUSHED_SECRETS`), taken as held ("Secrets") |
+| a reload (`motel reload`, `systemctl reload`, the box applier's): a config is running | refused; the running config serves on, and the box applier rolls its push back |
+| the first load of `motel run` (a boot, a restart, an unattended upgrade's): nothing running | the channel is **dropped** from that load (from the operator line, each binding, the route tree; the heartbeat, if it is its secret), each a `notify: a channel is dropped from this load` error line naming every line that reads the key, and the key, never a value; and one more if no operator channel is left. A secrets file that cannot be read or parsed (a line without `=`, over 1 MiB, unreadable) is every secret unusable: one error line names the file and its error, and every line that reads a secret is dropped. motel serves |
+
+Refusing a boot would take every site down for an alert channel; a
+dropped channel is the one cost, said in the journal, and the next
+`motel validate` or reload says it again. This is the rule cmd/motel's
+gate keeps for its own checks (an admin API on TCP, an unread backup
+declaration): validate and reload refuse, run serves. The box makes
+the case rare: its consistency check refuses a push whose `notify`
+block names a secret the push does not carry in `secrets/_box/`
+(box/DESIGN-box.md, "Which checks run where"), so `_box.env` lacks one
+only by a hand edit or a lost file. Every other refusal of the table
+refuses a boot too: they are the Caddyfile's, which the same signer
+committed whole.
 
 ## Secrets
 
@@ -134,11 +161,40 @@ each value once more, to its `url-<KEY>` file in the state directory,
 because Alertmanager's `*_file` fields read a file: that is the copy
 the prometheus uid reads, and the config itself holds paths only.
 
-**Owed** (see "Owed"): the box channel writing `_box.env` from a
-signed push's `secrets/_box/NOTIFY_*.age` (#418's reserved slot, which
-reverses box/DESIGN-box.md open question 5), and deployers' channels
-from `secrets/<app>/NOTIFY_*` withheld from the app's environment.
-Until then root writes `_box.env` by hand, as the e2e image does.
+**The box channel writes the file**: a signed push's
+`secrets/_box/NOTIFY_*.age` (#418's reserved slot; box/DESIGN-box.md,
+"The box's own slot", which reverses its open question 5 for this one
+use) is decrypted by root into `_box.env` as an app's secrets are into
+its env file, and a push that changes the file reloads motel, so a new
+URL is rendered at once (`make secret APP=_box VAR=NOTIFY_OPS_URL` in
+the box's repository; docs/secrets.md). The box handler validates a
+push before root writes its values, and cannot read them: `motel
+validate` is told the names the push carries
+(`MOTEL_NOTIFY_PUSHED_SECRETS`, names only, read in `validate` alone and
+for the default `secrets_file` alone, `PushedSecretsEnv`) and takes each
+as held, unchecked; a value the URL check refuses is refused at the
+reload the push makes, which the box rolls back. A box with no
+repository, or a `secrets_file` of the operator's own, is written by
+root by hand, as the e2e image does. A box whose root wrote `_box.env`
+by hand and that takes pushes moves each value into its repository
+(`make secret APP=_box …`) in its next push, whatever that push
+changes: the box refuses any push whose `notify` block names a secret
+it does not carry, and the first that carries them replaces the
+hand-made file, named as edited out of band.
+
+**The `NOTIFY_` prefix is notify's in what the box writes.** A
+`NOTIFY_` variable among an app's own secrets (`secrets/<app>/NOTIFY_*.age`,
+in the env file the box writes under `/etc/motel/secrets`) is withheld
+from the app unit's environment, named in a warning at each launch, and
+stays a known value to the filter (liveswap, `notifyOwnedEnvKey`); `make
+check` warns of it before the push (`motel box describe`) and `make
+secret` as it is set. An inline `env` line and an env file the operator
+keeps elsewhere are the operator's, and pass: refusing them would refuse
+a boot over an app's own variable name (/code-review of this change).
+No line reads such a value yet: a deployer's
+channel is a `channel` line whose URL is in `_box/`, bound with `bind`;
+the per-app block that would read an app's own (#417's bundled secrets
+too) is a later slice ("Owed").
 
 ## The route tree
 
@@ -274,6 +330,31 @@ whichever config serves when it clears.
   hold.
 - **The watchdog turned off** while a restart loop is reported ends the
   report (`watchdog_recovered`): no probe would ever say so.
+- **A motel restart** empties the table while Alertmanager keeps each
+  firing alert until `resolve_timeout`. The backup, disk and TLS
+  sources re-detect within a poll, before it; liveswap's watchdog would
+  not, since a fresh process does not know a loop it was already in,
+  and a refused relaunch is refused again by recovery with nothing
+  reported. So liveswap keeps what it told in each app's `alerts.json`
+  (a loop, whether its recovery's hold runs, a refusal with its release
+  and reason, so that the report says them again; written on each
+  change, removed when none stands, forgotten for an app a reload
+  removes or the start's sweep finds unconfigured), and **re-reports it at
+  notify's Start** (`ReportStanding`, pulled by notify once its engine
+  serves the config, whichever app Caddy starts first). Each is a
+  standing report: the engine ignores it for a key it holds (a reload),
+  and takes it as told for one it does not, journaled with
+  `standing: true` (the report's own lines; the key's later lines are
+  this process's) — a loop fires again (Alertmanager merges it with the
+  alert it holds: no second message), a recovery under way is held for
+  its hold and then resolved; a recovery whose hold has passed is not
+  told again. What ends while the reports are told (a recovery's
+  relaunch at the same start) is told ended once more after them, so a
+  standing report never outlives what it reports. The other way round, reading
+  Alertmanager's alert list at start, was not taken: Alertmanager keeps
+  no alerts across its own restart (a reboot), and what it holds says
+  nothing to liveswap, whose watchdog would still not report the
+  loop's end, leaving an adopted key firing for good.
 
 ## Failed delivery
 
@@ -386,9 +467,10 @@ package is installed rather than a binary fetched.
 | `/run/motel-notify/am.sock` | 0660 | root:motel | systemd (the socket unit) | root, motel |
 | `/var/lib/motel-notify/` | 2750 | motel:prometheus | setup (makes), motel | Alertmanager |
 | `…/alertmanager.yml`, `…/url-<KEY>` | 0640 | motel:prometheus (born in the setgid dir) | motel, each by rename | Alertmanager |
-| `/etc/motel/secrets/_box.env` | 0640 | root:motel | root (the box applier, owed) | motel |
+| `/etc/motel/secrets/_box.env` | 0640 | root:motel | root: the box applier from `secrets/_box/`, or by hand | motel |
 | `/etc/systemd/system/motel-am.socket`, `…/prometheus-alertmanager.service.d/10-motel.conf` | 0644 | root | setup | systemd |
 | `/var/lib/prometheus/alertmanager/` | 0750 | prometheus | Alertmanager (the notification log, silences) | Alertmanager |
+| `<liveswap root>/<app>/alerts.json` | 0600 | motel | motel (liveswap's watchdog, on each change; removed when nothing stands) | motel (once per process, for `ReportStanding`); in no app's view |
 
 ## Threat model
 
@@ -446,21 +528,23 @@ on its general scales. notify's examples:
 | Residual | Where | S | O | D | Why accepted |
 |---|---|---|---|---|---|
 | A public host name that resolves, or rebinds, to a private address is posted to: the check is on the URL as written | notify/config.go (`checkURL`) | 1 | 5 | 5 | a channel URL is a signer's line today, and a signer can already run any code as an app that reaches the same addresses; scored by what T6 gains (nothing). Rescore when #417 lets a deployer choose a URL |
-| motel stopped for more than five minutes: Alertmanager resolves each firing state alert at `resolve_timeout`, and the channels get a recovery that did not happen | notify/engine.go (no `endsAt` on re-posts) | 2 | 3 | 3 | 18; a stop that long is itself a fault the heartbeat reports (Watchdog's silence pages first); keeping the alerts alive across a stop needs state on disk (size 3) |
+| motel stopped for more than five minutes: Alertmanager resolves each firing state alert at `resolve_timeout`, and the channels get a recovery that did not happen (at motel's start the watchdog's standing reports fire its alerts again, and the pollers theirs) | notify/engine.go (no `endsAt` on re-posts) | 2 | 3 | 3 | 18; a stop that long is itself a fault the heartbeat reports (Watchdog's silence pages first); keeping Alertmanager's alerts alive across a stop would need a poster outside motel; a restart (seconds) is "Behaviour"'s, and keeps them |
 | Two channels of one integration in one receiver: a failure names both as suspects, and neither is told | notify/channelfailed.go (`suspects`) | 2 | 5 | 3 | an operator's choice of channels; the line names both, and the counter is Alertmanager's own; one receiver per channel would double every route |
 | An operator with a single channel: `ChannelFailed` has no other channel to go to | notify/channelfailed.go | 2 | 5 | 1 | the `notify: channel failed` line and Alertmanager's counter say it; the design asks for "the other operator channels" and there are none |
 | `motel notify test` reads the counters for 15 s; a slow receiver answers "neither yet" | notify/admin.go (`testWait`) | 2 | 2 | 1 | the answer says so; Alertmanager's retries continue |
+| At a boot, an event liveswap reports before notify's Start (Caddy starts the apps in no fixed order) is dropped, the engine serving no config yet: a recovery at that instant ends its alert at `resolve_timeout`, up to five minutes late | notify/engine.go (`report`, `active == nil`) | 2 | 3 | 3 | 18; what stands is told again at notify's Start (`ReportStanding`), and an end told meanwhile is told again after it; holding events for a config not yet started adds a queue with its own lifetime (size 3). /code-review of the Owed rows |
+| A restart after notify has resolved a recovery but before the next healthy probe clears `alerts.json` (with `health_interval 2m` and a 30 s hold, up to about 90 s) replays the recovery: the emptied engine posts the alert held, then resolved, and the operator sees the firing and recovery messages again. A reload does the same when it lengthens the hold (the standing report judges it with the candidate's `watchdog_grace`), and so does a push just after a restart (the watchdog's own `healthySince` is new) | liveswap/watchdog.go (`reportedAlerts` keeps `Recovering`, not when the hold began); liveswap/lifecycle.go (`reportStanding`) | 2 | 2 | 1 | 4; a duplicate the operator sees, only for a restart or reload inside one health interval after a hold ends; persisting the hold's start, and the engine honouring it, is size 3 (risk 2). Copilot round 1 on #424, widened by /code-review xhigh on #424 |
+| A restart inside a recovery's hold, then a relaunch that fails for good (no instance runs after the restart): the persisted `recovering` is re-reported as a held recovery, so the engine resolves the alert of an app that is down, and the flags stay for the next restart | liveswap/lifecycle.go (`reportStanding`) | 3 | 2 | 3 | 18; two faults, a restart inside a hold and then a relaunch that fails; the journal names the failed relaunch and status shows the app down; telling it apart needs a branch on whether an instance runs after recovery (size 2, risk 2). /code-review xhigh on #424 |
+| A failed write of `alerts.json` (EIO, a read-only remount) leaves the old file until the next change, and a restart before it reports what the file still says | liveswap/watchdog.go (`alertsChanged`) | 3 | 3 | 1 | 9; the warning at the failure names the file and the consequence; a retry needs a timer outside the transitions (size 2, risk 2). /code-review of the Owed rows |
+| An app that read a `NOTIFY_` variable from an env file in `/etc/motel/secrets/` — the box's `secrets/<app>/`, or an operator's own file kept in that directory — loses it from the app's environment at the next launch after the upgrade | liveswap/app.go (`notifyOwnedEnvKey`, `boxWritten`: a test of the directory) | 3 | 5 | 1 | 15; each launch names the withheld keys and the directory in the journal, and `make check` warns before a push; the prefix is what keeps a channel URL from an app. /code-review of the Owed rows, widened by /code-review xhigh on #424 |
 | Alertmanager refuses a reload: motel puts the previous config back, but the URL files are already the new ones (a changed value rewritten, a dropped channel's removed), so the old config in memory sends a changed channel to its new URL, and Alertmanager's next start fails on a removed file until motel's next load | notify/state.go (`apply`) | 4 | 2 | 1 | 8; two faults (a render Alertmanager refuses, which the amtool tests rule out for every shape, then a restart before the next load), and Alertmanager names the missing file; a new URL is the one the signer committed; keeping the old files until a reload succeeds adds state to the write (size 2, risk 2). /code-review of slice one, passes 1 and 2 |
 
 ### Owed
 
 | Owed | S | O | D | Lands in |
 |---|---|---|---|---|
-| The box channel's `secrets/_box/` slot writing `_box.env`, and deployers' `secrets/<app>/NOTIFY_*` withheld from the unit's environment (#418) | — | — | — | the box subsystem, before any release: today root writes `_box.env` by hand |
-| motel restarted while a state key fires: the engine's table is in memory and liveswap's watchdog does not re-report a loop it was already in, so the alert ends at `resolve_timeout` and a false recovery is told; the backup, disk and TLS sources re-detect on their next poll | 3 | 4 | 3 | the next slice: liveswap re-reports its watchdog state at Start, or the engine reads Alertmanager's alert list at start (#22 of the review) |
-| A secret missing from `_box.env` refuses the whole config at load, as `motel validate` must: at a reboot motel does not start, and every site is down for an alert channel (named in the journal) | 4 | 5 | 1 | the `_box` slot: the box handler's consistency check refuses a push whose `notify` block names a secret the push does not carry, before it reaches the box; at load a missing secret then drops its channel with a warning. Load and validate cannot be told apart in Provision today (/code-review pass 2) |
 | Slack and Discord with real hooks; ntfy's formatting of Alertmanager's payload (the hotserve-1 test delivered the JSON body as the message) | — | — | — | needs the owner's hooks |
-| A per-app `notify` block (`deploy_succeeded on` per app, app-scoped channels); the pull API and the later channel kinds, for which the `notify: event` line is the record | — | — | — | later slices |
+| A per-app `notify` block (`deploy_succeeded on` per app, app-scoped channels, reading the app's own withheld `NOTIFY_` values); the pull API and the later channel kinds, for which the `notify: event` line is the record | — | — | — | later slices |
 
 ## e2e rows
 
@@ -482,9 +566,14 @@ app's `watchdog_throttled` while another app's arrives after the
 motel's hold and one tick; a channel answering 400 named in
 `ChannelFailed` to the other operator channel; `motel notify test`
 delivered and failed; the view probe's three keys closed from inside a
-sandboxed app; no URL in either journal. Not in e2e (unit-tested
-only): the five-minute give-up of an undeliverable post, the bucket's
-hour.
+sandboxed app; no URL in either journal; a channel whose secret is
+missing refused by `motel validate` and `systemctl reload`, dropped at
+`systemctl restart` with its journal line while the other channels
+deliver; a relaunch refused, then motel restarted: told again,
+standing, Alertmanager's alert kept alive (its `endsAt` moves) and no
+recovery told, then the cause mended and a reload: the recovery after
+the hold, and `alerts.json` gone. Not in e2e (unit-tested only): the
+five-minute give-up of an undeliverable post, the bucket's hour.
 
 ## Later slices
 
@@ -533,3 +622,23 @@ Dated one-liners; the full text of each is in git.
   code is kept, not thrown away; the Owed rows that bar a production
   box (the `_box` slot, a missing secret refusing boot, the watchdog
   after a restart) are a follow-up PR before the next release.
+- 2026-11-10 — The first Owed row landed: the box channel writes
+  `_box.env` from `secrets/_box/` and reloads on its change, the
+  handler's validate is told the names a push carries, and the `NOTIFY_`
+  prefix is withheld from the env files in `/etc/motel/secrets/`, where
+  the box writes them.
+- 2026-11-10 — The Owed row "a missing secret refuses the boot" landed:
+  the box refuses a push whose notify block names a secret it does not
+  carry; validate and a reload refuse a missing one, and a boot drops
+  its channel with an error line ("Secrets at load").
+- 2026-11-10 — The Owed row "a restart while a state key fires" landed:
+  liveswap keeps what its watchdog reported in `alerts.json` and
+  re-reports it at notify's Start, as standing reports the engine
+  ignores when it holds the key ("Behaviour"). With the two rows before
+  it, the three that barred a production box are in.
+- 2026-11-11 — /code-review xhigh of #424 and Copilot's third round:
+  a boot drops every line of a secrets file it cannot use, a dropped
+  secret's reason names every line that reads it, `alerts.json` keeps
+  a refusal's release and reason for the standing report, a standing
+  report's later lines are not standing, and a rollback writes what
+  stands to the serving root ahead of any write still in flight.
