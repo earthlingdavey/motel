@@ -222,6 +222,14 @@ type fakeStore struct {
 	imports   []string
 	up        []series
 	queryErr  error
+	ro        bool
+	roErr     error
+}
+
+func (f *fakeStore) readOnly(context.Context) (bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.ro, f.roErr
 }
 
 func (f *fakeStore) importText(_ context.Context, text []byte) error {
@@ -350,6 +358,132 @@ func TestRulesDownAfterThreeReads(t *testing.T) {
 	evs = tp.take()
 	if len(evs) != 1 || evs[0].Name != eventRulesDown || evs[0].Firing {
 		t.Fatalf("vmalert up again: %+v", evs)
+	}
+}
+
+// A read-only store refuses its own scrapes, so no rule can see the
+// flag: motel reads it from the store's /metrics and says so itself,
+// once, as the critical that names the cause. What follows from it is
+// not told as something else: no metrics_rules_down from a store that
+// keeps no scrape of vmalert, no metrics_store_down for its refused
+// imports.
+func TestReadOnlyStoreIsToldAsItself(t *testing.T) {
+	tp := newTestPusher(t)
+	ctx := context.Background()
+	tp.store.ro = true
+	tp.store.importErr = errors.New("503: the storage is in read-only mode")
+	// Told at every read that finds it, not once: the engine drops what
+	// it is told while no notify block runs.
+	for range 2 * rulesDownReads {
+		tp.checkChain(ctx)
+		evs := tp.take()
+		if len(evs) != 1 || evs[0].Name != eventStoreReadOnly || !evs[0].Firing || evs[0].Severity != SeverityCritical || evs[0].Kind != kindState {
+			t.Fatalf("events = %+v", evs)
+		}
+	}
+	tp.pushOnce(ctx)
+	tp.at = tp.at.Add(storeDownAfter)
+	tp.pushOnce(ctx)
+	if evs := tp.take(); len(evs) != 0 {
+		t.Fatalf("a read-only store was told as something else: %+v", evs)
+	}
+	// One ask the store does not answer (a store at its floor is slow)
+	// is no reading: what was told stands, and so does the hold, for the
+	// pushes and for the count toward metrics_rules_down.
+	tp.store.roErr = errors.New("timeout")
+	tp.checkChain(ctx)
+	tp.pushOnce(ctx)
+	tp.store.roErr = nil
+	tp.checkChain(ctx)
+	for _, ev := range tp.take() {
+		if ev.Name != eventStoreReadOnly {
+			t.Fatalf("one unanswered ask let %s through", ev.Name)
+		}
+	}
+	// readOnlyStale in a row: the store may be down, and
+	// metrics_store_down says that. One line says the ask fails.
+	tp.store.roErr = errors.New("refused")
+	for range readOnlyStale {
+		tp.checkChain(ctx)
+	}
+	if n := tp.logs.FilterMessage("metrics_store: could not read whether the store is read-only").Len(); n != 2 {
+		t.Fatalf("%d lines for two spells of failing asks, want 2", n)
+	}
+	tp.pushOnce(ctx)
+	evs := tp.take()
+	if len(evs) != 1 || evs[0].Name != eventStoreDown || !evs[0].Firing {
+		t.Fatalf("a store that stopped answering while read-only: %+v", evs)
+	}
+	tp.store.roErr, tp.store.ro, tp.store.importErr = nil, false, nil
+	tp.store.up = []series{{points: []point{{t: tp.at, v: 1}}}}
+	tp.checkChain(ctx)
+	tp.pushOnce(ctx)
+	evs = tp.take()
+	if len(evs) != 2 || evs[0].Name != eventStoreReadOnly || evs[0].Firing || evs[1].Name != eventStoreDown || evs[1].Firing {
+		t.Fatalf("writable again: %+v", evs)
+	}
+	// Stopped while read-only: cleared, since nothing else can.
+	tp.store.ro = true
+	tp.checkChain(ctx)
+	tp.take()
+	tp.release(tp.m)
+	cleared := false
+	for _, ev := range tp.take() {
+		cleared = cleared || (ev.Name == eventStoreReadOnly && !ev.Firing)
+	}
+	if !cleared {
+		t.Fatal("released while read-only: not cleared")
+	}
+}
+
+func TestParseReadOnly(t *testing.T) {
+	for page, want := range map[string]bool{
+		"vm_rows 3\nvm_storage_is_read_only 0\n":                              false,
+		"vm_storage_is_read_only 1\nvm_rows 3\n":                              true,
+		`vm_storage_is_read_only{path="/var/lib/victoria-metrics"} 1` + "\n":  true,
+		`vm_storage_is_read_only{path="/var/lib/a b"} 0 1731300000000` + "\n": false, // a timestamp is not the value
+		"vm_storage_is_read_only\t1\n":                                        true,
+	} {
+		if got, err := parseReadOnly([]byte(page)); err != nil || got != want {
+			t.Errorf("%q: %v, %v", page, got, err)
+		}
+	}
+	for _, page := range []string{"", "vm_rows 3\n", "vm_storage_is_read_only_total 1\n", "vm_storage_is_read_only x\n",
+		"vm_storage_is_read_only \n", `vm_storage_is_read_only{path="x" 1` + "\n"} {
+		if _, err := parseReadOnly([]byte(page)); err == nil {
+			t.Errorf("%q: read as an answer", page)
+		}
+	}
+}
+
+// A reload that moves the `store` socket: the store before's failures
+// are not the new one's history. Nothing fires on them, and what was
+// firing is cleared by the new store's own answer.
+func TestPusherStartsAfreshOnAnotherStore(t *testing.T) {
+	tp := newTestPusher(t)
+	ctx := context.Background()
+	tp.store.importErr = errors.New("connect: no such file or directory")
+	tp.pushOnce(ctx)
+	tp.checkRules(ctx)
+	tp.checkRules(ctx) // two reads without vmalert, 4.5 minutes of failed pushes
+	tp.at = tp.at.Add(storeDownAfter - pushEvery)
+	moved := &MetricsStore{Store: "/run/elsewhere/vm.sock"}
+	tp.setLive(liveStore{m: moved, store: tp.store, gather: prometheus.NewRegistry(), logger: zap.NewNop()})
+	tp.at = tp.at.Add(pushEvery)
+	tp.pushOnce(ctx)
+	tp.checkRules(ctx)
+	if evs := tp.take(); len(evs) != 0 {
+		t.Fatalf("the store before's history fired on the new one: %+v", evs)
+	}
+	// The same socket (a reload that changed nothing of the store) keeps
+	// its history: the outage is the same outage.
+	same := &MetricsStore{Store: "/run/elsewhere/vm.sock"}
+	tp.setLive(liveStore{m: same, store: tp.store, gather: prometheus.NewRegistry(), logger: zap.NewNop()})
+	tp.at = tp.at.Add(storeDownAfter)
+	tp.pushOnce(ctx)
+	evs := tp.take()
+	if len(evs) != 1 || evs[0].Name != eventStoreDown || !evs[0].Firing {
+		t.Fatalf("the same store's outage: %+v", evs)
 	}
 }
 

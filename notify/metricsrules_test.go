@@ -81,7 +81,7 @@ func TestRulesAfterNotifyIsRemoved(t *testing.T) {
 
 func TestFixedRulesAreMotelsStateAlerts(t *testing.T) {
 	f := parseRules(t, renderRules(notifyApp(t)))
-	if len(f.Groups[0].Rules) != 3 {
+	if len(f.Groups[0].Rules) != 2 {
 		t.Fatalf("fixed rules = %+v", f.Groups[0].Rules)
 	}
 	for _, r := range f.Groups[0].Rules {

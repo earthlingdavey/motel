@@ -443,7 +443,15 @@ motel controls:
    it), `enable --now motel-am.socket`;
 5. `try-reload-or-restart motel.service`, which renders.
 
-Run again, it puts the units back as the binary ships them. Debian
+Run again, it puts the units back as the binary ships them. A re-run
+that fails after the mask unmasks the service on its way out and starts its socket
+(a connection that arrived during the mask fails the socket, which
+then starts nothing), so a failed re-run does not
+leave Alertmanager unstartable; a first run that fails before step 4's
+`unmask` stays masked, and one that fails after it is left as far as it
+got, with the drop-in and the socket already written
+(notify/DESIGN-metrics.md, "Accepted residuals").
+Debian
 upgrading or reinstalling the package, whose postinst restarts the
 unit directly, was measured on hotserve-1 (2026-11-10, 0.28.1
 reinstalled under motel 0.6.2~notifypoc1): the socket's fd is passed

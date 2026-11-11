@@ -113,9 +113,10 @@ func metricsUnits() []struct {
 //
 // root is a prefix for every path written (tests); the commands run as
 // given. Each step says what it did on out.
-func metricsSetup(sys system, root string, out io.Writer) error {
+func metricsSetup(sys system, root string, out io.Writer) (err error) {
 	at := func(p string) string { return filepath.Join(root, p) }
 	say := func(format string, a ...any) { _, _ = fmt.Fprintf(out, format+"\n", a...) }
+	rerun := isFile(at(filepath.Join(unitDir, vmService+".d", "10-motel.conf")))
 
 	if _, err := os.Stat(at(socketPath)); errors.Is(err, fs.ErrNotExist) {
 		return fmt.Errorf("%s is not installed: run motel notify setup first (vmalert posts to Alertmanager's socket)", socketPath)
@@ -130,6 +131,7 @@ func metricsSetup(sys system, root string, out io.Writer) error {
 		return err
 	}
 	say("masked %s, so the install starts nothing", vmService)
+	defer putBackOnFailure(sys, say, rerun, vmService, []string{vmSocket}, []string{vmService, vmalertUnit}, &err)()
 	// One installed by hand before setup runs on Debian's 0.0.0.0:8428,
 	// and the mask does not stop it. Stopped here, it next starts in the
 	// namespace, with the drop-in.

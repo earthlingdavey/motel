@@ -24,7 +24,6 @@ const rulesHeader = "# Rendered by motel (notify/DESIGN-metrics.md, \"Rules\").\
 const (
 	sourceVMAlert = "vmalert"
 
-	ruleStoreReadOnly = "metrics_store_read_only"
 	ruleStoreDiskFill = "metrics_store_disk_fill"
 	ruleAppMemoryHigh = "app_memory_high"
 )
@@ -60,14 +59,11 @@ func stateLabels(name, severity, subject string) map[string]string {
 }
 
 // fixedRules are the store's own: motel's text, nothing configurable.
+// The store being read-only is not among them: no rule can see it
+// (metricspush.go, checkReadOnly).
 func fixedRules() vmGroup {
 	app := stateLabels(ruleAppMemoryHigh, SeverityWarning, "app:{{ $labels.app }}")
 	return vmGroup{Name: "motel-store", Interval: "1m", Rules: []vmRule{
-		{
-			Alert: ruleStoreReadOnly, Expr: "max(vm_storage_is_read_only) > 0", For: "2m",
-			Labels:      stateLabels(ruleStoreReadOnly, SeverityCritical, "box"),
-			Annotations: map[string]string{"summary": "the metrics store is read-only: its disk is below its free-space floor, and nothing new is kept"},
-		},
 		{
 			// Both windows: free space is the whole filesystem's, and one
 			// large write (a release, an upgrade) tilts the six-hour line

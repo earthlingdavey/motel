@@ -92,6 +92,59 @@ func (c *storeClient) importText(ctx context.Context, text []byte) error {
 	return err
 }
 
+// readOnlyMetric is the store's own flag in its /metrics: 1 once its
+// disk is below -storage.minFreeDiskSpaceBytes, when it refuses every
+// write, its own scrapes among them.
+const readOnlyMetric = "vm_storage_is_read_only"
+
+// readOnly reads the flag from the store's /metrics. A page without it
+// is an error, not "writable": motel would otherwise vouch for a store
+// whose page it could not read.
+func (c *storeClient) readOnly(ctx context.Context) (bool, error) {
+	data, err := c.do(ctx, http.MethodGet, "/metrics", nil, "")
+	if err != nil {
+		return false, err
+	}
+	return parseReadOnly(data)
+}
+
+func parseReadOnly(page []byte) (bool, error) {
+	found, ro := false, false
+	for line := range strings.Lines(string(page)) {
+		rest, ok := strings.CutPrefix(line, readOnlyMetric)
+		if !ok || rest == "" {
+			continue
+		}
+		switch rest[0] {
+		case '{':
+			// The labels' values may hold spaces; the value follows them.
+			i := strings.LastIndexByte(rest, '}')
+			if i < 0 {
+				return false, fmt.Errorf("the metrics store's /metrics: %s's labels do not close", readOnlyMetric)
+			}
+			rest = rest[i+1:]
+		case ' ', '\t':
+		default:
+			continue // another metric this one's name begins
+		}
+		// The value is the first field; a timestamp may follow it.
+		f := strings.Fields(rest)
+		if len(f) == 0 {
+			return false, fmt.Errorf("the metrics store's /metrics: %s has no value", readOnlyMetric)
+		}
+		v, err := strconv.ParseFloat(f[0], 64)
+		if err != nil {
+			return false, fmt.Errorf("the metrics store's /metrics: %s is %q", readOnlyMetric, f[0])
+		}
+		found = true
+		ro = ro || v > 0
+	}
+	if !found {
+		return false, fmt.Errorf("the metrics store's /metrics has no %s", readOnlyMetric)
+	}
+	return ro, nil
+}
+
 // point is one sample of a query's answer.
 type point struct {
 	t time.Time
