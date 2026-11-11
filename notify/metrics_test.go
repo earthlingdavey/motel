@@ -683,6 +683,45 @@ func TestMetricsViewStaleIsHistory(t *testing.T) {
 	}
 }
 
+// The day's range steps 5 m, so its newest point can be over 5 m old
+// for a running app: still now, and avg_5m is that point alone (a 5 m
+// rate already). Twenty minutes is history, for the day too.
+func TestMetricsViewDayFreshness(t *testing.T) {
+	end := time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC)
+	for _, c := range []struct {
+		name   string
+		newest time.Duration
+		want   string
+	}{
+		{"running", 5*time.Minute + 20*time.Second,
+			`{"window":"24h","at":"2026-11-10T11:54:40Z","memory_bytes":{"now":30,"max":40},"memory_max_bytes":100,"cpu_cores":{"avg_5m":0.5,"avg":0.375}}`},
+		{"stopped", 20 * time.Minute,
+			`{"window":"24h","at":"2026-11-10T11:40:00Z","memory_bytes":{"max":40},"cpu_cores":{"avg":0.375}}`},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			at := end.Add(-c.newest)
+			two := func(old, last float64) []point {
+				return []point{{t: at.Add(-5 * time.Minute), v: old}, {t: at, v: last}}
+			}
+			f := &fakeRange{ans: func(q string) []series {
+				if strings.HasPrefix(q, "sum(rate(") {
+					return []series{{points: two(0.25, 0.5)}}
+				}
+				return []series{
+					{labels: map[string]string{"__name__": "motel_app_memory_bytes"}, points: two(40, 30)},
+					{labels: map[string]string{"__name__": "motel_app_memory_max_bytes"}, points: two(100, 100)},
+				}
+			}, instant: func(string) []series { return []series{{points: []point{{t: end, v: 40}}}} }}
+			v := newMetricsView(f, zap.NewNop())
+			v.now = func() time.Time { return end }
+			got, _ := json.Marshal(v.AppMetrics(context.Background(), "blog", "24h"))
+			if string(got) != c.want {
+				t.Fatalf("the day:\n got %s\nwant %s", got, c.want)
+			}
+		})
+	}
+}
+
 // The hour's max is the store's max_over_time over the raw samples
 // (pushed every 30 s), not the max of a 60 s-step range, which holds one
 // sample a step: a peak between two steps is the max.

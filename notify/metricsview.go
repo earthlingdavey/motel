@@ -17,13 +17,14 @@ import (
 // liveswap_observe counted; run at once within one budget, and cached
 // per app and window.
 const (
-	// viewRecent is what avg_5m averages over.
+	// viewRecent is what avg_5m averages over, up to the newest point.
 	viewRecent = 5 * time.Minute
-	// viewFresh is how old the newest point may be and still be the
-	// present: a series that stopped (an app stopped, a cap a later
-	// release dropped) keeps its last point in the window, which is
-	// history, not now.
-	viewFresh = 3 * time.Minute
+	// viewFreshSteps is how many of the window's steps old the newest
+	// point may be and still be the present (3 m for the hour, 15 m for
+	// the day, whose newest step can be over 5 m old): a series that
+	// stopped (an app stopped, a cap a later release dropped) keeps its
+	// last point in the window, which is history, not now.
+	viewFreshSteps = 3
 	// viewBudget bounds the queries together: the route never waits longer.
 	viewBudget = 2 * time.Second
 	// viewCache is how long an answer, or a failure, is reused: a
@@ -67,7 +68,8 @@ type AppMetrics struct {
 }
 
 type memorySumm struct {
-	// Now is absent when the series has no point in the last viewFresh.
+	// Now is absent when the series has no point in the window's last
+	// viewFreshSteps steps.
 	Now *float64 `json:"now,omitempty"`
 	// Max is absent when the window holds no raw sample: the range's
 	// first step can still carry one from just before it.
@@ -75,8 +77,9 @@ type memorySumm struct {
 }
 
 type cpuSummary struct {
-	// Avg5m is absent when the series has no point in the last five
-	// minutes.
+	// Avg5m is the mean of the points in the five minutes up to the
+	// newest (the newest alone for the day, a 5 m rate already); absent
+	// when the newest is not fresh.
 	Avg5m *float64 `json:"avg_5m,omitempty"`
 	Avg   float64  `json:"avg"`
 }
@@ -234,7 +237,7 @@ func (v *metricsView) ask(ctx context.Context, app, window string, w viewWindow,
 			maxPts = append(maxPts, s.points...)
 		}
 	}
-	fresh := func(p point) bool { return !p.t.Before(end.Add(-viewFresh)) }
+	fresh := func(p point) bool { return !p.t.Before(end.Add(-viewFreshSteps * w.step)) }
 	if last, ok := latest(memPts); ok {
 		m := &memorySumm{}
 		if fresh(last) {
@@ -267,7 +270,7 @@ func (v *metricsView) ask(ctx context.Context, app, window string, w viewWindow,
 		var n int
 		for _, p := range cpuPts {
 			sum += p.v
-			if p.t.After(end.Add(-viewRecent)) {
+			if fresh(last) && p.t.After(last.t.Add(-viewRecent)) {
 				recent += p.v
 				n++
 			}

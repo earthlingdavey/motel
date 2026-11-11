@@ -325,12 +325,15 @@ and `sum(rate(motel_app_cpu_seconds_total{app=…}[2m]))` (`[5m]` for the
 day, one step); one instant `max_over_time(motel_app_memory_bytes{app=…}[<window>])` for `max`, since a
 60 s step holds one of the two samples a minute the push writes and a
 peak between steps would be lost (Copilot on #423). `at` is the newest
-point; `max` and `avg` are over the hour; `now`, `avg_5m` and
-`memory_max_bytes` come only from points of the last three minutes and
-five minutes, so an app that stopped, or a cap a later release dropped,
-is history in `max` and `avg` and never reported as the present; a
-number with no points is absent (`max` too, when the hour holds no raw
-sample). The CPU averages are rounded to a millionth of a core: an
+point; `max` and `avg` are over the window; `now`, `avg_5m` and
+`memory_max_bytes` come only from a newest point at most three steps
+old (3 minutes for the hour, 15 for the day, whose newest step can be
+over 5 minutes old for a running app), `avg_5m` being the mean of the
+points in the five minutes up to it (the day's newest alone, a 5 m
+rate already), so an app that stopped, or a cap a later release
+dropped, is history in `max` and `avg` and never reported as the
+present; a number with no points is absent (`max` too, when the window
+holds no raw sample). The CPU averages are rounded to a millionth of a core: an
 unrounded float is a run of twenty digits the response filter masks as
 a generated value, and the status would be withheld.
 
@@ -541,7 +544,7 @@ on its general scales. metrics' examples:
 | An app whose route has no `liveswap_observe` has no request numbers, and nothing says so at load | liveswap/observe.go | 2 | 3 | 2 | 12; `metrics` then has no `requests`, which a deployer sees; a load-time check needs the HTTP app's routes, which the liveswap app cannot read |
 | The counts a motel restart (or a crash) ends within the last 30 s were never pushed, and are lost | liveswap/observe.go | 1 | 3 | 4 | 12; at most one push's worth, and the store reads the restart as a reset |
 | vmalert's rules have no flapping guard: a condition that flaps around its threshold fires and resolves at each crossing | notify/metricsrules.go | 2 | 3 | 3 | 18; every rule has a `for:` of 2 to 30 minutes, which bounds a flap to one pair per `for:` |
-| `now` and `at` in `GET /<app>` are judged by the range's step timestamps, not the samples': the store carries a sample forward onto the 60 s grid, so a stopped app's or a dropped cap's last value can read as now for up to about one step past `viewFresh` (3 m) | notify/metricsview.go (`fresh`) | 2 | 3 | 3 | 18; the status beside it says whether the app runs; the source timestamps need a `timestamp()` query per series (size 2, risk 2). Copilot round 2 on #423 |
+| `now` and `at` in `GET /<app>` are judged by the range's step timestamps, not the samples': the store carries a sample forward onto the step grid, so a stopped app's or a dropped cap's last value can read as now for up to about one step past the three steps `fresh` allows (3 m for the hour, 15 m for the day) | notify/metricsview.go (`fresh`) | 2 | 3 | 3 | 18; the status beside it says whether the app runs; the source timestamps need a `timestamp()` query per series (size 2, risk 2). Copilot round 2 on #423 |
 | vmalert's `ChannelFailed` has no baseline: the store's `increase()` counts a series' first sample from zero (measured on 1.112.0: first seen at 3 gives 3, and again after a 17-minute gap), so a failure Alertmanager counted before `motel metrics setup`, or before a store outage of over ten minutes, is told once as new, for five minutes | notify/metricsrules.go | 2 | 2 | 3 | 12; one late warning to the operator's other channels about a channel that did fail; motel's own source keeps its baseline. A gate on the counter's age changes the expression every channel's rule shares (risk 2) and wants a run against the store to prove. /code-review pass 3 on #423 |
 | A failed re-run's put-back starts `motel-vm.socket` (and `motel-am.socket`) whether or not it was active when setup began: one an operator had stopped to keep the store stopped is started, and a re-run after a first run that failed past the drop-in starts the socket of a stack that never ran | notify/setup.go (`putBackOnFailure`) | 2 | 2 | 3 | 12; a setup that succeeds enables and starts the same socket, which is what the operator ran it for; with the drop-in in place the store it can start is confined to the namespace. /code-review pass 2 on #425 |
 | A first run of either setup that fails after its own `unmask` (`disable`, `enable --now`, a `restart`, the motel reload) is left unmasked and maybe partly started, not masked | notify/setup.go, notify/metricssetup.go | 2 | 3 | 1 | 6; every unit and drop-in is written before the unmask, so what can run is motel's confined shape (Alertmanager on its socket with no cluster port, the store in its namespace); setup ends on its error naming the step, and the next run is a re-run, with the put-back. A remask there (size 2, risk 2) would mask a service whose socket may be enabled already, so a connection fails the socket: the state the put-back exists to undo. Copilot round 3 on #425 |
