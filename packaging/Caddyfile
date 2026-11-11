@@ -113,6 +113,7 @@
 # 	# cache first, and cached pages skip the penalty box (motel's
 # 	# penaltybox/README.md, "Compatibility with Souin").
 # 	route {
+# 		# liveswap_observe myapp # count responses for the metrics store (first: it sees cache hits)
 # 		# hint_penaltybox        # rate limiting driven by app hint headers
 # 		# cache                  # serve cached pages
 # 		reverse_proxy {

@@ -367,6 +367,10 @@ there would defeat the pool.
 - `mu` guards current instance/phase/last-deploy.
 - `activeSocket` is the single atomic the proxy hot path reads: the
   current instance's pinned socket, or nil while nothing serves.
+- `requests` is the response observer's counters ("The response
+  observer"): an atomic pointer to the current release's, read on
+  every observed request, and the release before's under its own
+  mutex, which only a release change and a gather take.
 - `ownerLock(app)` (one mutex per app name) makes "stop what nobody
   owns, then prune its socket dirs" one step with respect to recovery:
   the start-time sweep of unconfigured apps holds it across the manager
@@ -606,6 +610,43 @@ properly needs the type checker, which is a real dependency for a
 property no operator ever sees. The trigger for revisiting is
 backwards edges reappearing *despite* this table.
 
+### The response observer (`observe.go`)
+
+`liveswap_observe <app>` is a handler the operator writes first in an
+app's site or route. It counts each response under the app's current
+release by status class (`1xx` for 101 alone, `2xx` to `5xx`, and
+`aborted` for a client gone before the headers), times it to its
+headers in a fixed histogram, and reads the cache's verdict from
+`Cache-Status` (hit, stale, miss, bypass). It exists because Caddy's
+request metrics carry a server and a handler, never a liveswap app
+(notify/DESIGN-metrics.md, "The response observer").
+
+- **Where.** Ordered before `redir`, the earliest standard anchor
+  (box_webhook's), so that at site level it sorts outside `cache`
+  (before `rewrite`) and `hint_penaltybox` and counts what they answer;
+  in a `route`, first by the written order. The app is named on the
+  line, not learned in `GetUpstreams`: a cache hit never reaches it.
+- **Which release.** The counters follow `current`, not `activeSocket`:
+  `publishInstance` and the reattach set the release, an unroute does
+  not, so a release that crashed owns the 502s that follow it. A return
+  to the release before (a rollback) swaps the two back; neither
+  restarts from zero. Responses before any release count under `""`.
+- **What it keeps.** Atomics per release (classes, buckets, a sum,
+  cache results), the current release's and the one before's, for the
+  app's life in the pool. Nothing of a request: no path, query, header
+  or client.
+- **What it costs.** 280 ns and two allocations a request on the dev
+  VM's arm64 (`BenchmarkObserve`; one of the two is the benchmark's own
+  handler), and through the e2e stack (e2e/bench/observe.sh, ab
+  keep-alive, the median of three runs) the observed site against the
+  bare one in the same run: c=1 5 286 against 5 344 req/s, p50 0.184
+  against 0.182 ms; c=16 52 335 against 53 366, p50 0.237 against
+  0.232 ms. Behind the cache, 10 646 against 10 762 at c=1, level at
+  c=16. The bare site measured before the handler existed (9228935):
+  5 127 and 51 786 req/s, within the runs' spread.
+- **What it never does.** Write, buffer or change a byte, or fail a
+  request: an error from the handlers after it is returned as it came.
+
 ### File-by-file
 
 | File | Concern |
@@ -621,6 +662,8 @@ backwards edges reappearing *despite* this table.
 | `deploytrust/` | leaf package: deploy auth — the `deploy_trust` grammar (`Parse`), its sources and verifiers (OIDC + local-key JWT verification), the webhook preamble (`Limiter.Authenticate`) and what a failed attempt costs the journal (`Limiter`, on an injected clock). Imports nothing of liveswap's; the box webhook authenticates through it too. `trusttest/` beside it mints tokens and runs an issuer for tests |
 | `internal/dispenser/` | leaf package: the one Caddyfile rule the parsers here and `deploytrust.Parse` apply alike — a repeated subdirective is refused — in one place so the two cannot drift |
 | `upstreams.go` | dynamic upstream source (the cutover read side) |
+| `observe.go` | `liveswap_observe`: the response observer's handler and writer, and the per-release counters on `managedApp` ("The response observer") |
+| `appmetrics.go` | what the metrics store reads of liveswap: `AppSamples` (each app's instance and its request counts) and the `MetricsSource` hook that adds `metrics` to `GET /<app>`, with the `?range=` windows |
 | `runner.go` / `runner_systemd.go` / `systemd_dbus.go` | runner interface + the systemd transient-unit implementation + its D-Bus client |
 | `sweep.go` | `App.Start`'s reconciliation against the manager: stop the units, and prune the dirs, of apps no loaded config names. Module-layer (the pool is the ledger), driving the runner |
 | `socket.go` | the per-instance socket: nonce, path checks, stale-socket pruning, the unix dialer |
@@ -1046,7 +1089,10 @@ report as in effect, until a SetCaps succeeds.
    users can wire notifications. Lean: yes, cheap and composable.
 2. **Admin endpoints** (`caddy liveswap status/rollback`) alongside the
    webhook. Lean: later; the webhook + status JSON covers CI and cron.
-3. **Metrics.** Lean: add with events.
+3. **Metrics.** Per-app request counts are the response observer's
+   ("The response observer"), pushed with the units' cgroup numbers by
+   the metrics store (notify/DESIGN-metrics.md); deploy counters, the
+   non-goal above, are not.
 4. **Config-change restarts** — an explicit "apply now" admin action
    instead of waiting for the next launch. A rollback to the running
    version, or a deploy of it with the same artifact, is that action
@@ -1131,3 +1177,7 @@ Dated one-liners; the full text of each is in git.
   residual with the numbers, and the steeper bar first proposed is
   declined there. An assignment is judged by its parts, so a setting
   stays readable and `KEY=<secret>` keeps its key.
+- 2026-11-11 — The response observer, `liveswap_observe`: per-release
+  counts of an app's responses (class, time to headers, cache verdict),
+  measured on the request path before and after (part of #418, slice
+  three of notify and metrics).

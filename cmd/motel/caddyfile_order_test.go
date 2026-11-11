@@ -18,6 +18,20 @@ import (
 // cache hit never reaches the penalty box. Inside route the written
 // order holds, which is why penaltybox/README.md and the starter
 // packaging/Caddyfile put hint_penaltybox first in a route.
+// TestStarterObserveFirst holds the starter's example route to its
+// written order with liveswap_observe on: the observer outside the
+// cache and penaltybox, so that it counts what they answer too.
+func TestStarterObserveFirst(t *testing.T) {
+	order := adaptedHandlerOrder(t, starterExampleSite(t))
+	got := slices.DeleteFunc(order, func(h string) bool {
+		return h != "liveswap_observe" && h != "cache" && h != "hint_penaltybox" && h != "reverse_proxy"
+	})
+	want := []string{"liveswap_observe", "hint_penaltybox", "cache", "reverse_proxy"}
+	if !slices.Equal(got, want) {
+		t.Errorf("handler order %v, want %v", got, want)
+	}
+}
+
 func TestPenaltyboxCacheOrder(t *testing.T) {
 	site := func(body string) string { return "example.com {" + body + "\n}\n" }
 	cases := []struct {
@@ -77,10 +91,11 @@ func starterExampleSite(t *testing.T) string {
 		}
 		line = strings.TrimPrefix(strings.TrimPrefix(line, "#"), " ")
 		// The optional directives are commented once more in the block:
-		// "# cache", alone or before a trailing comment, but not prose
+		// "# cache" (with its argument, for liveswap_observe), alone or
+		// before a trailing comment, but not prose
 		// that happens to start with the word.
 		body := strings.TrimLeft(line, "\t")
-		for _, d := range []string{"hint_penaltybox", "cache"} {
+		for _, d := range []string{"liveswap_observe myapp", "hint_penaltybox", "cache"} {
 			rest, ok := strings.CutPrefix(body, "# "+d)
 			if ok && (rest == "" || strings.HasPrefix(strings.TrimLeft(rest, " "), "#")) {
 				line = line[:len(line)-len(body)] + strings.TrimPrefix(body, "# ")

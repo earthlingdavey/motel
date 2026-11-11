@@ -164,6 +164,27 @@ deploy.example.com {
 }
 ```
 
+To count an app's responses for the metrics store (experimental,
+notify/DESIGN-metrics.md), write `liveswap_observe <app>` first in its
+site or route: per release, it counts each response's status class,
+times it to its headers, and reads a cache's `Cache-Status` verdict, and
+`GET /<app>` with the deploy token gains `metrics.requests`
+(`?range=1h`, the default, or `?range=24h`). It keeps nothing of a
+request, and costs about 0.3 µs on one (liveswap/DESIGN-liveswap.md,
+"The response observer").
+
+```
+blog.example.com {
+	route {
+		liveswap_observe blog
+		cache
+		reverse_proxy {
+			dynamic liveswap blog
+		}
+	}
+}
+```
+
 Apps must listen on the unix socket at the injected `SOCKET` path —
 one per instance, in a `run/<nonce>/` dir of its own; motel proxies to
 it and health-probes it, and nothing listens on a TCP port. Their
