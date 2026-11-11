@@ -149,7 +149,14 @@ code=$(curl -s -o /tmp/get-noauth -w '%{http_code}' --max-time 5 "$HOOK")
 [ "$code" = 401 ] && ! grep -q metrics /tmp/get-noauth && pass "GET /blog without a token: 401, no metrics" || fail "GET /blog without a token: $code"
 
 echo "=== metrics 4: vmalert ==="
-rules=$(inns curl -s --max-time 5 http://127.0.0.1:8880/api/v1/rules)
+# Setup's first rules.yml is the empty groups and motel writes the real
+# one right after; vmalert re-reads the file once a minute
+# (-configCheckInterval), so wait out one re-read.
+i=0
+until rules=$(inns curl -s --max-time 5 http://127.0.0.1:8880/api/v1/rules) \
+	&& printf '%s' "$rules" | grep -q '"name":"ChannelFailed"'; do
+	i=$((i + 1)); [ "$i" -ge 45 ] && break; sleep 2
+done
 for r in ChannelFailed app_memory_high metrics_store_read_only metrics_store_disk_fill; do
 	printf '%s' "$rules" | grep -q "\"name\":\"$r\"" && pass "vmalert loaded $r" || fail "vmalert has no $r: $(printf '%s' "$rules" | cut -c1-200)"
 done
