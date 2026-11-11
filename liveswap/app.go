@@ -311,6 +311,9 @@ type managedApp struct {
 	// activeSocket is what GetUpstreams reads on every request; storing
 	// it is the cutover. nil = nothing serving yet.
 	activeSocket atomic.Pointer[socketRef]
+	// requests is what liveswap_observe counts, per release (observe.go):
+	// set to the new release wherever current gets a new instance.
+	requests requestCounts
 
 	// Watchdog plumbing. The goroutine is pool-scoped like everything
 	// else here: started once (first Start), never touched by
@@ -1321,6 +1324,7 @@ func (ma *managedApp) ensureRunning() error {
 		ma.mu.Lock()
 		ma.current = inst
 		ma.mu.Unlock()
+		ma.requests.setRelease(inst.version)
 		ma.activeSocket.Store(inst.sock)
 		ma.wd.setLastFailure("") // a recovery that gave up, or a refusal, is over
 		c.logger.Info("reattached to running instance", zap.String("version", st.CurrentVersion))
@@ -1632,6 +1636,9 @@ func (ma *managedApp) publishInstance(c collaborators, inst *instance) error {
 	ma.mu.Lock()
 	ma.current = inst
 	ma.mu.Unlock()
+	// Before the cutover: the first response the new socket serves is
+	// counted as the new release's.
+	ma.requests.setRelease(inst.version)
 	if ma.wd.takeRefused() {
 		ma.lifecycle(c, LifecycleEvent{Name: EventRelaunchResolved, Release: inst.version, Summary: "an instance of " + inst.version + " runs again"})
 	}

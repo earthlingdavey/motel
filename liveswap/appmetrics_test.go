@@ -4,24 +4,27 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"reflect"
 	"strings"
 	"testing"
 )
 
 type fakeMetricsSource struct {
-	asked []string
-	reply any
+	asked   []string
+	windows []string
+	reply   any
 }
 
-func (f *fakeMetricsSource) AppMetrics(_ context.Context, app string) any {
+func (f *fakeMetricsSource) AppMetrics(_ context.Context, app, window string) any {
 	f.asked = append(f.asked, app)
+	f.windows = append(f.windows, window)
 	return f.reply
 }
 
 func TestAppSamplesReportTheRunningInstance(t *testing.T) {
 	h, _ := newTestHandler(t)
 	got := h.app.AppSamples()
-	if len(got) != 1 || got[0] != (AppSample{App: "demo"}) {
+	if len(got) != 1 || !reflect.DeepEqual(got[0], AppSample{App: "demo"}) {
 		t.Fatalf("before a deploy: %+v", got)
 	}
 	do(t, h, http.MethodPost, "/demo", appToken(t), `{"url":"https://x/1.tgz","version":"v1"}`)
@@ -103,5 +106,26 @@ func TestSystemdHandleStateCarriesItsCgroup(t *testing.T) {
 	h.cgroup.Store(&cg)
 	if got := h.state().Cgroup; got != cg {
 		t.Fatalf("Cgroup = %q, want %q", got, cg)
+	}
+}
+
+func TestStatusMetricsRange(t *testing.T) {
+	h, _ := newTestHandler(t)
+	do(t, h, http.MethodPost, "/demo", appToken(t), `{"url":"https://x/1.tgz","version":"v1"}`)
+	// Refused with no source too: a typo is told on every box.
+	if w := do(t, h, http.MethodGet, "/demo?range=7d", appToken(t), ""); w.Code != http.StatusUnprocessableEntity ||
+		!strings.Contains(w.Body.String(), "range must be one of 1h, 24h") {
+		t.Fatalf("?range=7d with no source: %d %s", w.Code, w.Body.String())
+	}
+	src := &fakeMetricsSource{reply: map[string]any{"window": "x"}}
+	h.app.SetMetricsSource(src)
+	do(t, h, http.MethodGet, "/demo", appToken(t), "")
+	do(t, h, http.MethodGet, "/demo?range=24h", appToken(t), "")
+	do(t, h, http.MethodGet, "/demo?range=1h", appToken(t), "")
+	if w := do(t, h, http.MethodGet, "/demo?range=", appToken(t), ""); w.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("an empty range: %d %s", w.Code, w.Body.String())
+	}
+	if strings.Join(src.windows, " ") != "1h 24h 1h" {
+		t.Fatalf("the source was asked for %v", src.windows)
 	}
 }

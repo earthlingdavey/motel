@@ -14,6 +14,7 @@ import (
 	"net/url"
 	"os"
 	"path"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -125,12 +126,21 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request, _ caddyhttp.
 		if q.Has("deploy") {
 			return h.deployRecord(w, ma, q.Get("deploy"))
 		}
+		window := MetricsRanges[0]
+		if q.Has("range") {
+			// Refused whether or not the box keeps metrics: a typo is told
+			// the same on every box.
+			if window = q.Get("range"); !slices.Contains(MetricsRanges, window) {
+				return RespondJSON(w, http.StatusUnprocessableEntity, map[string]string{
+					"error": "range must be one of " + strings.Join(MetricsRanges, ", ")}, ma.redactorFor(statusSnapshot{}))
+			}
+		}
 		s := ma.status()
 		if src := h.app.metricsSource; src != nil {
 			// Best-effort and bounded by the source itself: a store that
 			// does not answer is an error inside the object, never a
 			// failed or stalled status.
-			s.Metrics = src.AppMetrics(r.Context(), ma.name)
+			s.Metrics = src.AppMetrics(r.Context(), ma.name, window)
 		}
 		return RespondJSON(w, http.StatusOK, s, ma.redactorFor(s))
 	case http.MethodPost:

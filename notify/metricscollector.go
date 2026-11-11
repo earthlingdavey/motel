@@ -29,6 +29,14 @@ var (
 		"The running unit's MemoryMax=, when it has one.", []string{"app"}, nil)
 	appCPUDesc = prometheus.NewDesc("motel_app_cpu_seconds_total",
 		"CPU the running unit has used, from its cgroup's cpu.stat: one series per unit, since each new unit counts from zero.", []string{"app", "unit"}, nil)
+	// liveswap_observe's counts, per release: the current one and the
+	// one before.
+	appRequestsDesc = prometheus.NewDesc("motel_app_requests_total",
+		"Responses liveswap_observe saw, by status class (aborted: the client went before the headers).", []string{"app", "release", "class"}, nil)
+	appResponseDesc = prometheus.NewDesc("motel_app_response_seconds",
+		"The app's own responses' time to headers, as liveswap_observe timed them (cache hits and upgrades left out).", []string{"app", "release"}, nil)
+	appCacheDesc = prometheus.NewDesc("motel_app_cache_responses_total",
+		"Responses a cache in front of the app spoke for, by its Cache-Status verdict.", []string{"app", "release", "result"}, nil)
 )
 
 // appSampler is liveswap's side: *liveswap.App.
@@ -45,7 +53,8 @@ type appCollector struct {
 }
 
 func (c appCollector) Describe(ch chan<- *prometheus.Desc) {
-	for _, d := range []*prometheus.Desc{appUpDesc, appReleaseDesc, appMemoryDesc, appMemoryMaxDesc, appCPUDesc} {
+	for _, d := range []*prometheus.Desc{appUpDesc, appReleaseDesc, appMemoryDesc, appMemoryMaxDesc, appCPUDesc,
+		appRequestsDesc, appResponseDesc, appCacheDesc} {
 		ch <- d
 	}
 }
@@ -60,6 +69,9 @@ func (c appCollector) Collect(ch chan<- prometheus.Metric) {
 		if s.Release != "" {
 			ch <- prometheus.MustNewConstMetric(appReleaseDesc, prometheus.GaugeValue, 1, s.App, s.Release)
 		}
+		// Whether or not an instance runs: a release that crashed owns
+		// the 502s that follow.
+		collectRequests(ch, s.App, s.Requests)
 		if !s.Running {
 			continue
 		}
@@ -75,6 +87,33 @@ func (c appCollector) Collect(ch chan<- prometheus.Metric) {
 		}
 		if usec, ok := readCPUUsage(filepath.Join(dir, "cpu.stat")); ok {
 			ch <- prometheus.MustNewConstMetric(appCPUDesc, prometheus.CounterValue, float64(usec)/1e6, s.App, path.Base(s.Cgroup))
+		}
+	}
+}
+
+// collectRequests is one app's request series. A release with no
+// response yet has none: an app with no observer pushes nothing.
+func collectRequests(ch chan<- prometheus.Metric, app string, rs []liveswap.ReleaseRequests) {
+	for _, r := range rs {
+		var total uint64
+		for _, n := range r.ByClass {
+			total += n
+		}
+		if total == 0 {
+			continue
+		}
+		for i, n := range r.ByClass {
+			ch <- prometheus.MustNewConstMetric(appRequestsDesc, prometheus.CounterValue, float64(n), app, r.Release, liveswap.RequestClasses[i])
+		}
+		buckets := make(map[float64]uint64, len(r.Buckets))
+		for i, n := range r.Buckets {
+			buckets[liveswap.ResponseBuckets[i]] = n
+		}
+		ch <- prometheus.MustNewConstHistogram(appResponseDesc, r.Count, r.SumSeconds, buckets, app, r.Release)
+		for i, n := range r.Cache {
+			if n > 0 {
+				ch <- prometheus.MustNewConstMetric(appCacheDesc, prometheus.CounterValue, float64(n), app, r.Release, liveswap.CacheResults[i])
+			}
 		}
 	}
 }

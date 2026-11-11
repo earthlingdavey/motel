@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"math"
 	"net"
 	"net/http"
 	"os"
@@ -17,6 +18,7 @@ import (
 
 	"github.com/caddyserver/caddy/v2/caddyconfig/caddyfile"
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/common/expfmt"
 	dto "github.com/prometheus/client_model/go"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zaptest/observer"
@@ -562,21 +564,31 @@ func TestReleaseRetiresTheRulesOnAReloadAlone(t *testing.T) {
 	}
 }
 
-// fakeRange is query_range and the instant query, scripted per query.
+// fakeRange is query_range and the instant queries, scripted per
+// query: instant answers the memory peak (max_over_time), requests the
+// four request queries.
 type fakeRange struct {
-	mu      sync.Mutex
-	calls   int
-	err     error
-	block   chan struct{}
-	ans     func(q string) []series
-	instant func(q string) []series
+	mu       sync.Mutex
+	calls    int
+	err      error
+	block    chan struct{}
+	ans      func(q string) []series
+	instant  func(q string) []series
+	requests func(q string) []series
 }
 
 func (f *fakeRange) query(ctx context.Context, q string) ([]series, error) {
-	if f.instant == nil {
+	script := f.requests
+	if strings.HasPrefix(q, "max_over_time(") {
+		script = f.instant
+	}
+	if script == nil {
 		return nil, f.err // not counted: calls is query_range's
 	}
-	return f.instant(q), nil
+	// The view asks its queries at once: the scripts run one at a time.
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return script(q), nil
 }
 
 func (f *fakeRange) queryRange(ctx context.Context, q string, _, _ time.Time, _ time.Duration) ([]series, error) {
@@ -594,6 +606,8 @@ func (f *fakeRange) queryRange(ctx context.Context, q string, _, _ time.Time, _ 
 	if f.err != nil {
 		return nil, f.err
 	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	return f.ans(q), nil
 }
 
@@ -622,7 +636,7 @@ func TestMetricsViewSummary(t *testing.T) {
 	}}
 	v := newMetricsView(f, zap.NewNop())
 	v.now = func() time.Time { return end }
-	got, _ := json.Marshal(v.AppMetrics(context.Background(), "blog"))
+	got, _ := json.Marshal(v.AppMetrics(context.Background(), "blog", "1h"))
 	want := `{"window":"1h","at":"2026-11-10T12:00:00Z","memory_bytes":{"now":30,"max":40},"memory_max_bytes":100,"cpu_cores":{"avg_5m":0.5,"avg":0.40625}}`
 	if string(got) != want {
 		t.Fatalf("metrics:\n got %s\nwant %s", got, want)
@@ -633,12 +647,12 @@ func TestMetricsViewSummary(t *testing.T) {
 		}
 	}
 	// Cached: the second ask within 30 s queries nothing.
-	v.AppMetrics(context.Background(), "blog")
+	v.AppMetrics(context.Background(), "blog", "1h")
 	if f.calls != 2 {
 		t.Fatalf("%d queries for two asks inside the cache", f.calls)
 	}
 	v.now = func() time.Time { return end.Add(viewCache) }
-	v.AppMetrics(context.Background(), "blog")
+	v.AppMetrics(context.Background(), "blog", "1h")
 	if f.calls != 4 {
 		t.Fatalf("%d queries after the cache expired, want 4", f.calls)
 	}
@@ -662,7 +676,7 @@ func TestMetricsViewStaleIsHistory(t *testing.T) {
 	}, instant: func(string) []series { return []series{{points: []point{{t: end, v: 30}}}} }}
 	v := newMetricsView(f, zap.NewNop())
 	v.now = func() time.Time { return end }
-	got, _ := json.Marshal(v.AppMetrics(context.Background(), "blog"))
+	got, _ := json.Marshal(v.AppMetrics(context.Background(), "blog", "1h"))
 	want := `{"window":"1h","at":"2026-11-10T11:40:00Z","memory_bytes":{"max":30},"cpu_cores":{"avg":0.5}}`
 	if string(got) != want {
 		t.Fatalf("stale series:\n got %s\nwant %s", got, want)
@@ -691,7 +705,7 @@ func TestMetricsViewMaxKeepsAPeakBetweenSteps(t *testing.T) {
 	}
 	v := newMetricsView(f, zap.NewNop())
 	v.now = func() time.Time { return end }
-	got, _ := json.Marshal(v.AppMetrics(context.Background(), "blog"))
+	got, _ := json.Marshal(v.AppMetrics(context.Background(), "blog", "1h"))
 	want := `{"window":"1h","at":"2026-11-10T12:00:00Z","memory_bytes":{"now":10,"max":1000}}`
 	if string(got) != want {
 		t.Fatalf("a peak between steps:\n got %s\nwant %s", got, want)
@@ -708,13 +722,13 @@ func TestMetricsViewMaxLeavesOutASampleBeforeTheHour(t *testing.T) {
 				return nil
 			}
 			return []series{{labels: map[string]string{"__name__": "motel_app_memory_bytes"},
-				points: []point{{t: end.Add(-viewWindow), v: 1000}, {t: end, v: 10}}}}
+				points: []point{{t: end.Add(-time.Hour), v: 1000}, {t: end, v: 10}}}}
 		},
 		instant: func(string) []series { return []series{{points: []point{{t: end, v: 10}}}} },
 	}
 	v := newMetricsView(f, zap.NewNop())
 	v.now = func() time.Time { return end }
-	got, _ := json.Marshal(v.AppMetrics(context.Background(), "blog"))
+	got, _ := json.Marshal(v.AppMetrics(context.Background(), "blog", "1h"))
 	want := `{"window":"1h","at":"2026-11-10T12:00:00Z","memory_bytes":{"now":10,"max":10}}`
 	if string(got) != want {
 		t.Fatalf("a sample before the hour:\n got %s\nwant %s", got, want)
@@ -732,13 +746,13 @@ func TestMetricsViewNoPeakIsNoMax(t *testing.T) {
 				return nil
 			}
 			return []series{{labels: map[string]string{"__name__": "motel_app_memory_bytes"},
-				points: []point{{t: end.Add(-viewWindow), v: 1000}}}}
+				points: []point{{t: end.Add(-time.Hour), v: 1000}}}}
 		},
 		instant: func(string) []series { return nil },
 	}
 	v := newMetricsView(f, zap.NewNop())
 	v.now = func() time.Time { return end }
-	got, _ := json.Marshal(v.AppMetrics(context.Background(), "blog"))
+	got, _ := json.Marshal(v.AppMetrics(context.Background(), "blog", "1h"))
 	want := `{"window":"1h","at":"2026-11-10T11:00:00Z","memory_bytes":{}}`
 	if string(got) != want {
 		t.Fatalf("no raw sample in the hour:\n got %s\nwant %s", got, want)
@@ -762,7 +776,7 @@ func TestMetricsViewCPUIsRounded(t *testing.T) {
 	}}
 	v := newMetricsView(f, zap.NewNop())
 	v.now = func() time.Time { return end }
-	got, _ := json.Marshal(v.AppMetrics(context.Background(), "blog"))
+	got, _ := json.Marshal(v.AppMetrics(context.Background(), "blog", "1h"))
 	want := `{"window":"1h","at":"2026-11-10T12:00:00Z","cpu_cores":{"avg_5m":0.000006,"avg":0.000023}}`
 	if string(got) != want {
 		t.Fatalf("tiny averages:\n got %s\nwant %s", got, want)
@@ -774,7 +788,7 @@ func TestMetricsViewCPUIsRounded(t *testing.T) {
 
 func TestMetricsViewNoData(t *testing.T) {
 	v := newMetricsView(&fakeRange{ans: func(string) []series { return nil }}, zap.NewNop())
-	got, _ := json.Marshal(v.AppMetrics(context.Background(), "blog"))
+	got, _ := json.Marshal(v.AppMetrics(context.Background(), "blog", "1h"))
 	if string(got) != `{"window":"1h"}` {
 		t.Fatalf("no data: %s", got)
 	}
@@ -783,7 +797,7 @@ func TestMetricsViewNoData(t *testing.T) {
 func TestMetricsViewStoreFailing(t *testing.T) {
 	f := &fakeRange{err: errors.New("dial unix /run/motel-metrics/vm.sock: connect: connection refused")}
 	v := newMetricsView(f, zap.NewNop())
-	got, _ := json.Marshal(v.AppMetrics(context.Background(), "blog"))
+	got, _ := json.Marshal(v.AppMetrics(context.Background(), "blog", "1h"))
 	if string(got) != `{"error":"the metrics store did not answer"}` {
 		t.Fatalf("a failing store: %s", got)
 	}
@@ -799,7 +813,7 @@ func TestMetricsViewBudgetAndOneQueryInFlight(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			answers[i] = v.AppMetrics(context.Background(), "blog")
+			answers[i] = v.AppMetrics(context.Background(), "blog", "1h")
 		}()
 	}
 	wg.Wait()
@@ -811,17 +825,18 @@ func TestMetricsViewBudgetAndOneQueryInFlight(t *testing.T) {
 			t.Fatalf("answers = %+v", answers)
 		}
 	}
-	if f.calls != 1 {
-		t.Fatalf("%d queries for three concurrent asks, want 1", f.calls)
+	// One ask in flight for the three: its two range queries, at once.
+	if f.calls != 2 {
+		t.Fatalf("%d range queries for three concurrent asks, want 2", f.calls)
 	}
 	// A request that gives up before the store answers gets the error at
 	// once.
 	v2 := newMetricsView(&fakeRange{block: make(chan struct{}), ans: func(string) []series { return nil }}, zap.NewNop())
-	go v2.AppMetrics(context.Background(), "blog")
+	go v2.AppMetrics(context.Background(), "blog", "1h")
 	time.Sleep(50 * time.Millisecond)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if a := v2.AppMetrics(ctx, "blog").(AppMetrics); a.Error != errViewStore {
+	if a := v2.AppMetrics(ctx, "blog", "1h").(AppMetrics); a.Error != errViewStore {
 		t.Fatalf("a cancelled request: %+v", a)
 	}
 }
@@ -841,5 +856,139 @@ func TestWriteRules(t *testing.T) {
 	st, err := os.Stat(filepath.Join(dir, RulesName))
 	if err != nil || st.Mode().Perm() != 0o640 {
 		t.Fatalf("rules.yml: %v %v", st, err)
+	}
+}
+
+// liveswap_observe's counts reach the registry per release, a stopped
+// app's among them; a release with no response pushes nothing.
+func TestAppCollectorRequests(t *testing.T) {
+	var cur liveswap.ReleaseRequests
+	cur.Release = "v2"
+	cur.ByClass[1], cur.ByClass[4] = 90, 10 // 2xx, 5xx
+	cur.Buckets[0], cur.Buckets[len(cur.Buckets)-1] = 40, 95
+	cur.Count, cur.SumSeconds = 100, 4.5
+	cur.Cache[0], cur.Cache[2] = 30, 60 // hit, miss
+	empty := liveswap.ReleaseRequests{Release: "v1"}
+	reg := prometheus.NewPedanticRegistry()
+	if err := reg.Register(appCollector{root: t.TempDir(), apps: fakeSampler{
+		{App: "blog", Release: "v2", Requests: []liveswap.ReleaseRequests{cur, empty}},
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	mfs, err := reg.Gather()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var b strings.Builder
+	enc := expfmt.NewEncoder(&b, expfmt.NewFormat(expfmt.TypeTextPlain))
+	for _, mf := range mfs {
+		if err := enc.Encode(mf); err != nil {
+			t.Fatal(err)
+		}
+	}
+	text := b.String()
+	for _, line := range []string{
+		`motel_app_requests_total{app="blog",class="2xx",release="v2"} 90`,
+		`motel_app_requests_total{app="blog",class="5xx",release="v2"} 10`,
+		`motel_app_requests_total{app="blog",class="aborted",release="v2"} 0`,
+		`motel_app_response_seconds_bucket{app="blog",release="v2",le="0.005"} 40`,
+		`motel_app_response_seconds_bucket{app="blog",release="v2",le="10"} 95`,
+		`motel_app_response_seconds_bucket{app="blog",release="v2",le="+Inf"} 100`,
+		`motel_app_response_seconds_sum{app="blog",release="v2"} 4.5`,
+		`motel_app_response_seconds_count{app="blog",release="v2"} 100`,
+		`motel_app_cache_responses_total{app="blog",release="v2",result="hit"} 30`,
+		`motel_app_cache_responses_total{app="blog",release="v2",result="miss"} 60`,
+	} {
+		if !strings.Contains(text, line+"\n") {
+			t.Errorf("missing %s", line)
+		}
+	}
+	for _, absent := range []string{`release="v1"`, `result="stale"`} {
+		if strings.Contains(text, absent) {
+			t.Errorf("%s pushed: %s", absent, text)
+		}
+	}
+}
+
+func TestMetricsViewRequests(t *testing.T) {
+	end := time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC)
+	one := func(labels map[string]string, v float64) series {
+		return series{labels: labels, points: []point{{t: end, v: v}}}
+	}
+	var asked []string
+	f := &fakeRange{ans: func(string) []series { return nil }, requests: func(q string) []series {
+		asked = append(asked, q)
+		switch {
+		case strings.HasPrefix(q, "sum by (class)"):
+			return []series{
+				one(map[string]string{"class": "2xx"}, 2990.0000001),
+				one(map[string]string{"class": "5xx"}, 7),
+				one(map[string]string{"class": "aborted"}, 3),
+				one(map[string]string{"class": "4xx"}, 0),
+			}
+		case strings.HasPrefix(q, "histogram_quantile(0.5,"):
+			return []series{one(nil, 0.0123456789)}
+		case strings.HasPrefix(q, "histogram_quantile(0.95,"):
+			return []series{one(nil, 0.2468)}
+		case strings.HasPrefix(q, "sum by (result)"):
+			return []series{
+				one(map[string]string{"result": "hit"}, 1000),
+				one(map[string]string{"result": "stale"}, 1),
+				one(map[string]string{"result": "miss"}, 2000),
+			}
+		}
+		t.Errorf("unexpected instant query %s", q)
+		return nil
+	}}
+	v := newMetricsView(f, zap.NewNop())
+	v.now = func() time.Time { return end }
+	got, _ := json.Marshal(v.AppMetrics(context.Background(), "blog", "24h"))
+	want := `{"window":"24h","requests":{"total":3000,"per_second":0.035,"by_class":{"2xx":2990,"5xx":7,"aborted":3},` +
+		`"5xx_share":0.0023,"p50_ms":12.3,"p95_ms":246.8,"cache_hit_share":0.3336}}`
+	if string(got) != want {
+		t.Fatalf("requests:\n got %s\nwant %s", got, want)
+	}
+	if len(asked) != 4 {
+		t.Fatalf("%d request queries, want 4: %v", len(asked), asked)
+	}
+	for _, q := range asked {
+		if !strings.Contains(q, `{app="blog"}[24h]`) {
+			t.Errorf("a query not scoped to the app and window: %s", q)
+		}
+	}
+	if regexp.MustCompile(`[A-Za-z0-9+=_-]{20,}`).Match(got) {
+		t.Fatalf("a run the response filter's entropy layer would read: %s", got)
+	}
+	// The windows are cached apart.
+	if f.calls != 2 {
+		t.Fatalf("%d range queries", f.calls)
+	}
+	v.AppMetrics(context.Background(), "blog", "1h")
+	if f.calls != 4 {
+		t.Fatalf("%d range queries after asking the hour too, want 4", f.calls)
+	}
+}
+
+// No observer on the app's route: no request series, no `requests`;
+// NaN quantiles (no response in the window) are absent, not NaN.
+func TestMetricsViewRequestsAbsent(t *testing.T) {
+	v := newMetricsView(&fakeRange{ans: func(string) []series { return nil }}, zap.NewNop())
+	got, _ := json.Marshal(v.AppMetrics(context.Background(), "blog", "1h"))
+	if string(got) != `{"window":"1h"}` {
+		t.Fatalf("no observer: %s", got)
+	}
+	nan := series{points: []point{{t: time.Now(), v: math.NaN()}}}
+	v = newMetricsView(&fakeRange{ans: func(string) []series { return nil }, requests: func(q string) []series {
+		if strings.HasPrefix(q, "sum by (class)") {
+			return []series{{labels: map[string]string{"class": "2xx"}, points: []point{{t: time.Now(), v: 0}}}}
+		}
+		return []series{nan}
+	}}, zap.NewNop())
+	got, _ = json.Marshal(v.AppMetrics(context.Background(), "blog", "1h"))
+	if string(got) != `{"window":"1h","requests":{"total":0,"per_second":0}}` {
+		t.Fatalf("an idle window: %s", got)
+	}
+	if a := v.AppMetrics(context.Background(), "blog", "7d").(AppMetrics); a.Error != errViewStore {
+		t.Fatalf("an unknown window: %+v", a)
 	}
 }
