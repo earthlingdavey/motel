@@ -56,7 +56,7 @@ their solutions:
 | The store | Debian 13's `victoria-metrics` 1.112.0: storage, MetricsQL, vmui, its own scrapes | Debian's unit with motel's drop-in (`notify/units/metrics/10-motel.conf`): `NetworkNamespacePath=`, `-httpListenAddr=127.0.0.1:8428` inside it, `-retentionPeriod=14d`, `MemoryMax=256M`, `-memory.allowedBytes=96MiB` |
 | Its listener | `/run/motel-metrics/vm.sock`, 0660 root:motel (`motel-vm.socket`) → `systemd-socket-proxyd` in the namespace (`DynamicUser=yes`, no capability) → `127.0.0.1:8428` | no TCP port in the host namespace |
 | vmalert | from the same package (Debian 13 has no `vmalert` package): evaluates `rules.yml` every minute, keeps its alert state in the store | `motel-vmalert.service`, `User=_victoria-metrics`, in the namespace, `MemoryMax=128M` |
-| Its outlet | `127.0.0.1:9093` bound **inside** the namespace (`motel-am-proxy.socket`) → `systemd-socket-proxyd` (`_victoria-metrics` with the motel group, no capability, a view of the socket's directory alone) → `/run/motel-notify/am.sock` | vmalert speaks TCP only, to its datasource and its notifier (unix_socket_test.md) |
+| Its outlet | `127.0.0.1:9093` bound **inside** the namespace (`motel-am-proxy.socket`) → `systemd-socket-proxyd` (`_victoria-metrics` with motel as its group, no capability, a view of the socket's directory alone) → `/run/motel-notify/am.sock` | vmalert speaks TCP only, to its datasource and its notifier (unix_socket_test.md) |
 | Its config | `rules.yml` (rendered by motel at every config load) and `scrape.yml` (written by setup), 0640 | `/var/lib/motel-metrics`, 2750 motel:_victoria-metrics (setup makes it) |
 | motel's part | the `metrics_store` block, the push, the per-app collector, the rules render, the watch of the chain, `metrics` in `GET /<app>`, `motel metrics setup` | `notify/metrics*.go`; liveswap's `AppSamples` and `MetricsSource` (liveswap/appmetrics.go) |
 
@@ -83,7 +83,15 @@ back read-only). That needs a static uid, since `DynamicUser=` implies
 (measured): the uid is `_victoria-metrics`, the namespace daemons' own,
 whose processes are the proxy's only clients. A bug in it gives them the
 uid they hold, and a group whose one path in that view is the socket
-they reach through it anyway.
+they reach through it anyway. motel is the proxy's primary group, not a
+supplementary one: the kernel lets a process attach to, or read the
+`/proc` of, one whose uid and gids all match its own, whatever their
+supplementary groups, so with the store's gid the store could have
+attached to the proxy and used its group past its view (Debian leaves
+`ptrace_scope` at 0; measured, Copilot on #426). With motel's gid the
+store's uid is refused both. `PrivateUsers=` would refuse them too, but
+cannot carry a supplementary group (the unit fails, 217/USER, with
+`yes` and with `identity`).
 
 **Who reaches the socket, and why.** As for notify's: every app runs as
 the motel uid, so the socket's group is not what keeps apps out; their
@@ -378,8 +386,8 @@ read path from the store into `GET /<app>`.
   compromise of either is a compromise of a root-installed Debian
   package, outside what motel defends. motel's own units give it no
   more: neither proxy runs as root ("The shape"), and the am proxy, the
-  one they reach, holds their uid and a group that reaches only the
-  socket in its view.
+  one they reach, holds their uid with motel's gid, so they cannot act
+  as it, and the group reaches only the socket in its view.
 - The store holds label values motel chose (app, release, Caddy's
   server and handler names). A leak of it is low-sensitivity by
   construction; `GET /<app>` is app-scoped anyway, so a deployer never
@@ -484,8 +492,10 @@ deploy token carries `metrics`, and without one is a 401; vmalert's
 rules loaded, and its `ChannelFailed` for the failing channel firing
 with motel's labels while Alertmanager holds one such alert, not two;
 both proxies running as a uid not root with no capability, the am proxy
-as `_victoria-metrics` in the motel group, with Alertmanager's socket in
-its view and none of `/etc/motel`, `/var/lib/liveswap` or `/run/motel`;
+as `_victoria-metrics` with gid motel and no other group, with
+Alertmanager's socket in its view and none of `/etc/motel`,
+`/var/lib/liveswap` or `/run/motel`, and the store's uid refused its
+`/proc` and an attach;
 the store stopped by hand, started again by motel's next push with vmalert beside it;
 the store made read-only (its free-space floor set above any disk): no series carries the flag, and motel's `metrics_store_read_only` is in Alertmanager, critical;
 motel's shutdown leaving `rules.yml`'s alerting rules, and a reload

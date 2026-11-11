@@ -208,10 +208,22 @@ for u in motel-vm.service motel-am-proxy.service; do
 		|| fail "$u: pid $pid, uid '$uid', CapBnd '$bnd'"
 done
 # The am proxy holds the motel group for Alertmanager's socket, so the
-# group's files must be out of its view, and the socket in it.
+# group's files must be out of its view, and the socket in it; and the
+# group is its primary one, so the store's uid cannot act as it.
 pid=$(systemctl show -p MainPID --value motel-am-proxy.service)
-[ "$(ps -o user= -p "$pid")" = _victoria-metrics ] && grep -q "^Groups:.*\b$(getent group motel | cut -d: -f3)\b" "/proc/$pid/status" \
-	&& pass "the am proxy is _victoria-metrics in group motel" || fail "the am proxy: $(ps -o user= -p "$pid"), $(grep ^Groups "/proc/$pid/status")"
+motel_gid=$(getent group motel | cut -d: -f3)
+[ "$(ps -o user= -p "$pid")" = _victoria-metrics ] && [ "$(sed -n 's/^Gid:[[:space:]]*\([0-9]*\).*/\1/p' "/proc/$pid/status")" = "$motel_gid" ] \
+	&& [ "$(sed -n 's/^Groups:[[:space:]]*//p' "/proc/$pid/status" | tr -d ' \t')" = "$motel_gid" ] \
+	&& pass "the am proxy is _victoria-metrics, gid motel and no other group" \
+	|| fail "the am proxy: $(ps -o user= -p "$pid"), $(grep -E '^(Gid|Groups)' "/proc/$pid/status" | tr '\n' ' ')"
+if runuser -u _victoria-metrics -- cat "/proc/$pid/environ" >/dev/null 2>&1; then
+	fail "the store's uid reads the am proxy's /proc: it could attach to it and act with the motel group"
+else
+	pass "the store's uid is refused the am proxy's /proc"
+fi
+nr=117; [ "$(uname -m)" = x86_64 ] && nr=101
+att=$(runuser -u _victoria-metrics -- perl -e '$r=syscall('"$nr"',16,'"$pid"',0,0); print $r==0?"attached":"refused"')
+[ "$att" = refused ] && pass "the store's uid cannot attach to the am proxy" || fail "the store's uid attached to the am proxy ($att)"
 if [ -e "/proc/$pid/root/etc/motel" ] || [ -e "/proc/$pid/root/var/lib/liveswap" ] || [ -e "/proc/$pid/root/run/motel" ]; then
 	fail "the am proxy sees the motel group's paths: $(ls -d "/proc/$pid/root/etc/motel" "/proc/$pid/root/var/lib/liveswap" "/proc/$pid/root/run/motel" 2>/dev/null | tr '\n' ' ')"
 else

@@ -203,7 +203,9 @@ func TestMetricsUnitsAreTheMeasuredOnes(t *testing.T) {
 		"ListenStream=127.0.0.1:9093", "NetworkNamespacePath=/run/netns/motel-metrics", "WantedBy=multi-user.target")
 	has("motel-am-proxy.service", unitAMProxy, "systemd-socket-proxyd --exit-idle-time=5min "+DefaultSocket, "Requires=motel-am-proxy.socket motel-am.socket",
 		// Not root, and the motel group's files out of its view.
-		"User=_victoria-metrics", "SupplementaryGroups=motel", "CapabilityBoundingSet=\n", "TemporaryFileSystem=/:ro",
+		// motel as the primary group, so the store's processes (the
+		// same uid, another gid) cannot attach to it.
+		"User=_victoria-metrics", "Group=motel\n", "CapabilityBoundingSet=\n", "TemporaryFileSystem=/:ro",
 		"BindReadOnlyPaths=/usr -/bin -/lib -/lib64 -/etc/ld.so.cache /run/motel-notify /run/systemd/notify\n")
 	// Either one has systemd keep the host's root, and the view with it
 	// (measured, systemd 257).
@@ -211,6 +213,9 @@ func TestMetricsUnitsAreTheMeasuredOnes(t *testing.T) {
 		if strings.Contains(string(unitAMProxy), "\n"+bad) {
 			t.Errorf("motel-am-proxy.service has %s, which undoes TemporaryFileSystem=/", bad)
 		}
+	}
+	if strings.Contains(string(unitAMProxy), "\nSupplementaryGroups=") {
+		t.Error("motel-am-proxy.service holds the motel group as a supplementary one: the store's processes could attach to it")
 	}
 	has("motel-vmalert.service", unitVMAlert, "User=_victoria-metrics", "NetworkNamespacePath=/run/netns/motel-metrics",
 		"-rule="+DefaultMetricsStateDir+"/"+RulesName+" ", "-configCheckInterval=1m", "-disableAlertgroupLabel",
