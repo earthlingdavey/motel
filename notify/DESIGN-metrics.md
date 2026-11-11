@@ -5,7 +5,9 @@ promises. History lives in git (`git log -- notify/DESIGN-metrics.md`);
 the "History" section at the end holds only dated one-liners.
 
 **Status: experimental, slice two** of notify and metrics, stacked on
-slice one (notify/DESIGN-notify.md, PR #422). Opt-in twice over: nothing
+slice one (notify/DESIGN-notify.md, PR #422), **with slice three's
+response observer** ("The response observer"; its rules, the operator's
+`rule` lines and the post-deploy comparison, are owed). Opt-in twice over: nothing
 runs without a `metrics_store` block, and the package only Suggests
 `victoria-metrics`. Slice one's Owed rows that barred a production box
 landed with #424; not for production boxes until this document's own
@@ -59,6 +61,7 @@ their solutions:
 | Its outlet | `127.0.0.1:9093` bound **inside** the namespace (`motel-am-proxy.socket`) → `systemd-socket-proxyd` (`_victoria-metrics` with motel as its group, no capability, a view of the socket's directory alone) → `/run/motel-notify/am.sock` | vmalert speaks TCP only, to its datasource and its notifier (unix_socket_test.md) |
 | Its config | `rules.yml` (rendered by motel at every config load) and `scrape.yml` (written by setup), 0640 | `/var/lib/motel-metrics`, 2750 motel:_victoria-metrics (setup makes it) |
 | motel's part | the `metrics_store` block, the push, the per-app collector, the rules render, the watch of the chain, `metrics` in `GET /<app>`, `motel metrics setup` | `notify/metrics*.go`; liveswap's `AppSamples` and `MetricsSource` (liveswap/appmetrics.go) |
+| The response observer | `liveswap_observe <app>`, a handler the operator writes first in an app's site or route: its responses by class, time to headers and cache verdict, per release | liveswap/observe.go ("The response observer") |
 
 Every unit file is the one measured on hotserve-1 since 2026-11-10
 12:13 UTC (hotserve1_stack_test.md: three cold boots, no host listener,
@@ -157,12 +160,14 @@ Go module; no metrics state in motel. The registry holds:
 | `motel_notify_delivery_failed_total` | notify's engine |
 | `motel_metrics_push_failed_total` | the push, below |
 | `motel_app_up{app}`, `motel_app_release_info{app,release}` | liveswap's `AppSamples`: 1 while an instance runs; the current release, running or not (`motel_app_up` says which) |
+| `motel_app_requests_total{app,release,class}`, `motel_app_response_seconds{app,release}` (a histogram), `motel_app_cache_responses_total{app,release,result}` | the response observer, below: the current release's counts and the one before's, for an app whose route has `liveswap_observe` and that has answered at least once |
 | `motel_app_memory_bytes{app}`, `motel_app_memory_max_bytes{app}`, `motel_app_cpu_seconds_total{app,unit}` | the running unit's cgroup (its working set: `memory.current` less `memory.stat`'s `inactive_file`, the page cache the kernel gives back before the cap is felt, so an app that reads files under a cap does not read as at its limit; `MemoryMax=` when the kernel enforces it, `cpu.stat` `usage_usec`), read at each gather; absent while nothing runs or the file cannot be read. The CPU counter is one series per unit: each new unit counts from zero, and a count that rose across a cutover would read as the new unit's |
 
 The per-app series are a collector registered on the same registry, so
 an operator's own scraper of the admin `/metrics` sees them too. Label
-values are what motel chose: app names, release names. No request path,
-client address or header reaches the store.
+values are what motel chose: app names, release names, and the
+observer's fixed classes and cache results. No request path, client
+address or header reaches the store.
 
 **The push failing.** A failed push is retried at the next interval and
 counted (`motel_metrics_push_failed_total`); the first failure after a
@@ -170,6 +175,36 @@ success is a warning line, `metrics_store: push failed`, and the first
 success after failures an info line. Pushes failing for five minutes
 fire `metrics_store_down` (box, state, warning; source `metrics`) through
 notify's engine; the next success clears it, after the engine's hold.
+
+## The response observer
+
+Caddy's request metrics carry a server and a handler, never an app, and
+no handler motel had saw a liveswap app's responses (the Decisions row
+this section replaces). `liveswap_observe <app>` is that handler; its
+mechanics, its order and its measured cost are DESIGN-liveswap.md's
+("The response observer"). What it gives this store:
+
+- **Classes.** `1xx` (a 101 alone: an upgrade's final response), `2xx`
+  to `5xx`, and `aborted`, a client gone before the headers (counted in
+  the total, never in the 5xx share). An error with nothing written (no
+  instance running: a 502 that `handle_errors` answers after) takes its
+  handler error's status.
+- **Latency.** The time to the response's headers, in Prometheus's
+  default buckets (5 ms to 10 s): of the app's own responses, so a cache
+  hit, a 101 and an aborted request are left out. p50 and p95 are
+  `histogram_quantile` over them: an estimate inside a bucket.
+- **The cache.** The `Cache-Status` the cache in front wrote (RFC 9211,
+  as Souin writes it): hit, stale (a hit with `fwd=stale`), miss
+  (`fwd=uri-miss`, or a revalidation) or bypass. A response no cache
+  spoke for is in no result.
+- **Releases.** Each response counts under the release current when it
+  began, kept for the current release and the one before (which the
+  post-deploy comparison will read), for as long as the process runs.
+  A motel restart starts them from zero, which the store's `increase()`
+  reads as a counter reset.
+
+An app with no `liveswap_observe` in its route pushes no request series,
+and its `metrics` has no `requests`.
 
 ## Rules
 
@@ -264,15 +299,20 @@ The deployer's route and credential, unchanged (the fresh-slate draft,
   "at": "2026-11-10T12:00:00Z",
   "memory_bytes": {"now": 31457280, "max": 41943040},
   "memory_max_bytes": 268435456,
-  "cpu_cores": {"avg_5m": 0.004, "avg": 0.003}
+  "cpu_cores": {"avg_5m": 0.004, "avg": 0.003},
+  "requests": {"total": 1234, "per_second": 0.343, "by_class": {"2xx": 1200, "4xx": 31, "5xx": 3},
+               "5xx_share": 0.0024, "p50_ms": 12.3, "p95_ms": 80.1, "cache_hit_share": 0.61}
 }
 ```
 
-Three fixed queries over the socket, scoped to `app="<name>"`: two
-`query_range` templates over the last hour at a 60 s step, the memory
+The window is `?range=`: `1h`, the default, or `24h`, a fixed set
+(liveswap's `MetricsRanges`); any other is a 422, on a box with no
+store too. Seven fixed queries over the socket, scoped to `app="<name>"`
+and run at once. Two `query_range` templates over the window, at a 60 s
+step for the hour and 5 m for the day, the memory
 pair (`{__name__=~"motel_app_memory_bytes|motel_app_memory_max_bytes",app=…}`)
-and `sum(rate(motel_app_cpu_seconds_total{app=…}[2m]))`, and one instant
-`max_over_time(motel_app_memory_bytes{app=…}[1h])` for `max`, since a
+and `sum(rate(motel_app_cpu_seconds_total{app=…}[2m]))` (`[5m]` for the
+day, one step); one instant `max_over_time(motel_app_memory_bytes{app=…}[<window>])` for `max`, since a
 60 s step holds one of the two samples a minute the push writes and a
 peak between steps would be lost (Copilot on #423). `at` is the newest
 point; `max` and `avg` are over the hour; `now`, `avg_5m` and
@@ -282,14 +322,28 @@ is history in `max` and `avg` and never reported as the present; a
 number with no points is absent (`max` too, when the hour holds no raw
 sample). The CPU averages are rounded to a millionth of a core: an
 unrounded float is a run of twenty digits the response filter masks as
-a generated value, and the status would be withheld. The store answers 30 s behind the present
+a generated value, and the status would be withheld.
+
+`requests` is four instant queries over the window: `sum by (class)` of
+`increase(motel_app_requests_total)`, `histogram_quantile` at 0.5 and
+0.95 of the summed buckets' `increase`, and `sum by (result)` of the
+cache counts. `per_second` is the total over the window's length;
+`5xx_share` is of the responses sent (the total less `aborted`);
+`cache_hit_share` is hits and stale hits of the responses a cache spoke
+for. Every release in the window is summed: the status beside it names
+the current one. Every float is rounded (shares to 1/10 000, rates to
+1/1 000, milliseconds to a tenth), for the CPU averages' reason. A
+share or quantile with no response under it is absent, and so is
+`requests` when the store holds no request series for the app.
+The store answers 30 s behind the present
 (`-search.latencyOffset`). No free-form query, no label enumeration, no
 box series, no other app: the name is the configured app the route
 already resolved.
 
-The answer is best-effort: one 2 s budget for the three queries,
-cached per app for 30 s, so a token (a stolen one, T2) cannot drive the
-store harder than three queries per app per 30 s. A store that does not
+The answer is best-effort: one 2 s budget for the seven queries, run at
+once, and cached per app and window for 30 s, so a token (a stolen one,
+T2) cannot drive the store harder than seven queries per app and window
+per 30 s, fourteen with both windows. A store that does not
 answer is `"metrics": {"error": "the metrics store did not answer"}`,
 fixed text, and the status is otherwise the same; the route never waits
 longer or fails for it. The whole body passes the app's response filter,
@@ -361,16 +415,20 @@ after the namespace by hand (the first boot's ordering cycle).
 ## Threat model
 
 New: two resident daemons motel did not write, in a namespace of their
-own, one reachable from the host by unix-socket permission alone; and a
-read path from the store into `GET /<app>`.
+own, one reachable from the host by unix-socket permission alone; a
+read path from the store into `GET /<app>`; and, with slice three, a
+handler on every observed app's request path.
 
 - **T1** (a poisoned dependency in an app): the socket and the state
   directory are not in its view (the probe's three keys); the store's
   TCP listener is in a namespace it is not in. It runs as the motel uid,
-  so the view, not the mode, is the gate.
+  so the view, not the mode, is the gate. Its responses reach the
+  observer as a status, a time and a `Cache-Status` value, reduced to
+  a class, a bucket and one of four results: an app can make its own
+  numbers read badly, and no label of its choosing reaches the store.
 - **T2** (a stolen deploy token): reads that app's `metrics` object,
-  far less than the deploy it can already do, at most three queries
-  per 30 s; nothing of the box or of other apps; it cannot write to the
+  far less than the deploy it can already do, at most fourteen queries
+  per 30 s (seven per window); nothing of the box or of other apps; it cannot write to the
   store or reach vmalert.
 - **T5** (RCE in motel): full read and write of the store (including
   its delete API) and the ability to rewrite `rules.yml`, which can make
@@ -419,7 +477,10 @@ UTC on 2026-11-10, 2,600 series: the store 108 to 117 MB RSS
 while active and gone after five idle minutes, the store's disk 4.8 MB.
 Alertmanager and motel unchanged. `-memory.allowedBytes=96MiB` holds the
 caches under the 154 MB the default allowed, so the cap leaves room for
-queries; its RSS on a box is owed below.
+queries; its RSS on a box is owed below. The response observer adds at
+most 24 series per observed app and release (six classes, the
+histogram's 14, four cache results), two releases each: under 500 for
+ten apps, against the 2,600 measured.
 
 ## Decisions
 
@@ -437,8 +498,12 @@ or a line of theirs the facts overturned:
 | `ChannelFailed` from vmalert is rendered per told channel with motel's labels | the only form in which Alertmanager deduplicates the two sources |
 | `MemoryMax=256M`, `-memory.allowedBytes=96MiB`, 14 days | the measured working set above; both caps mandatory, since the store sizes its caches from what it can see |
 | The rules are motel's text; the Caddyfile has no `rule` line yet | the review's finding 17: a rule or template a config author writes can pull any app's series into a notification; operator rules are owed with a grammar of fixed kinds |
-| Per-app numbers are the unit's cgroup, not its requests | Caddy's request metrics carry server and handler, never the app, and no handler sees a liveswap app's responses without a Caddyfile change; the response observer is owed |
-| `metrics` is a summary, not a series | the smallest object that answers "is my app well"; `?range=` is owed with the request numbers it is for |
+| Per-app request numbers need a handler the operator writes, `liveswap_observe <app>` | Caddy's request metrics carry server and handler, never the app; a Caddy app cannot add a handler to the HTTP app's routes, and a dynamic upstream sees no response. The app is named on the line, since a cache hit never reaches the upstream |
+| The observer sorts before `redir` | the earliest standard directive an order can anchor on; `cache` sorts before `rewrite`, so an observer anchored later would never see a hit (cmd/motel's order tests) |
+| Its counts follow `current`, not `activeSocket` | a release that crashed owns the 502s that follow it, which is what a post-deploy comparison must see |
+| Latency is to the headers, of the app's own responses | a streamed body or an upgrade has no response time to speak of; a hit is the cache's |
+| `metrics` is a summary, not a series; `?range=` is `1h` or `24h` | the smallest object that answers "is my app well", over the two spans a deployer asks about; a fixed set, so a token cannot ask the store for any span |
+| `metrics`' queries run at once | seven one after another would not fit the 2 s budget on a slow store (the residual row this replaced) |
 
 ## Triage
 
@@ -457,7 +522,9 @@ on its general scales. metrics' examples:
 | Residual | Where | S | O | D | Why accepted |
 |---|---|---|---|---|---|
 | vmalert's `ChannelFailed` resolves 5 minutes after the last failure and re-sends the resolve for 15; with motel's labels it ends motel's own alert early, and a rise after that is told again | notify/metricsrules.go | 2 | 3 | 3 | 18; direct alerts never send a recovery, so the early end is silent; a second rise is a second failure, told |
-| `GET /<app>` runs its three queries one after the other in the one 2 s budget: a store answering each in over two thirds of a second answers the whole object as the error, cached 30 s | notify/metricsview.go (`ask`) | 2 | 2 | 1 | 4; the answer says the store did not answer, which is true; running them at once adds goroutines and a join (size 2) to a path that is best-effort by design. /code-review pass 2; the third query from Copilot on #423 leaves the score as it was |
+| A cache hit after a cutover counts under the new release though the page was the old one's: the new release's 5xx and hit shares carry the old's cached answers until they expire | liveswap/observe.go | 2 | 3 | 3 | 18; latency leaves hits out, and a cache's TTL bounds the mix (30 s in the starter); telling a stored page's release needs a header the cache would store, a change to every app's responses |
+| An app whose route has no `liveswap_observe` has no request numbers, and nothing says so at load | liveswap/observe.go | 2 | 3 | 2 | 12; `metrics` then has no `requests`, which a deployer sees; a load-time check needs the HTTP app's routes, which the liveswap app cannot read |
+| The counts a motel restart (or a crash) ends within the last 30 s were never pushed, and are lost | liveswap/observe.go | 1 | 3 | 4 | 12; at most one push's worth, and the store reads the restart as a reset |
 | vmalert's rules have no flapping guard: a condition that flaps around its threshold fires and resolves at each crossing | notify/metricsrules.go | 2 | 3 | 3 | 18; every rule has a `for:` of 2 to 30 minutes, which bounds a flap to one pair per `for:` |
 | `now` and `at` in `GET /<app>` are judged by the range's step timestamps, not the samples': the store carries a sample forward onto the 60 s grid, so a stopped app's or a dropped cap's last value can read as now for up to about one step past `viewFresh` (3 m) | notify/metricsview.go (`fresh`) | 2 | 3 | 3 | 18; the status beside it says whether the app runs; the source timestamps need a `timestamp()` query per series (size 2, risk 2). Copilot round 2 on #423 |
 | vmalert's `ChannelFailed` has no baseline: the store's `increase()` counts a series' first sample from zero (measured on 1.112.0: first seen at 3 gives 3, and again after a 17-minute gap), so a failure Alertmanager counted before `motel metrics setup`, or before a store outage of over ten minutes, is told once as new, for five minutes | notify/metricsrules.go | 2 | 2 | 3 | 12; one late warning to the operator's other channels about a channel that did fail; motel's own source keeps its baseline. A gate on the counter's age changes the expression every channel's rule shares (risk 2) and wants a run against the store to prove. /code-review pass 3 on #423 |
@@ -470,7 +537,7 @@ on its general scales. metrics' examples:
 
 | Owed | S | O | D | Lands in |
 |---|---|---|---|---|
-| The response observer: per-app requests by class, 5xx share, p50 and p95, cache hit share, in the push, `metrics` and the rules (with `?range=24h`, and the post-deploy comparison) | — | — | — | slice three: needs a handler on the app's request path |
+| The response observer's numbers in the rules: the post-deploy comparison (#418: the new release against the old one's trailing window of the same length, a sample floor, absolute thresholds, a failure count; it notifies only) | — | — | — | slice three's rules PR, with the operator's `rule` lines |
 | Operator rules (the fresh-slate draft's `rule` line), as a grammar of fixed kinds with parameters, never a template | — | — | — | slice three |
 | The store's RSS with `-memory.allowedBytes=96MiB` after a day, and on a 1 or 2 GB box | — | — | — | the next deploy to hotserve-1 |
 | A reboot with motel rendering `rules.yml` and pushing, as slice one's was measured, on a booted Debian host: the namespace's and the sockets' cold-boot order, a connection made while setup has the store masked, and a failed setup re-run's put-back (Copilot round 2 on #425); the two proxies' users and the am proxy's view, measured so far in the e2e box only | — | — | — | the next deploy to hotserve-1 |
@@ -493,7 +560,10 @@ rendered `rules.yml` passes `vmalert -dryRun`; motel's push arrives
 and its memory where the host's memory controller reaches the user
 manager's units (Debian 13 delegates it; a CI container's host may not,
 and the suite then asserts the series absent); `GET /<app>` with the
-deploy token carries `metrics`, and without one is a 401; vmalert's
+deploy token carries `metrics`, and without one is a 401; an observed, cached site's
+responses counted by class, cache result and latency, and a site of an
+app with nothing running counted as 5xx; `GET /<app>?range=24h` carrying
+`requests`, and `?range=7d` a 422; vmalert's
 rules loaded, and its `ChannelFailed` for the failing channel firing
 with motel's labels while Alertmanager holds one such alert, not two;
 both proxies running as a uid not root with no capability, the am proxy
@@ -555,3 +625,7 @@ Dated one-liners; the full text of each is in git.
   for the motel group it needs, which is its primary group so the store
   cannot attach to it), and the drop-in sets the store's data to 0750 at
   every start (Debian ships 0755).
+- 2026-11-11 — Slice three's response observer, `liveswap_observe`:
+  request series per release in the push, `requests` and `?range=` in
+  `GET /<app>`, whose queries now run at once (the serial-queries row
+  goes); the request path measured before and after.
