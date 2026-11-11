@@ -86,18 +86,18 @@ func (m *MetricsStore) provision(ctx caddy.Context, ls *liveswap.App, n *App, lo
 		ls.SetMetricsSource(newMetricsView(m.client, m.logger))
 	}
 	if n == nil {
-		m.logger.Warn(StoreAloneMessage)
+		m.logger.Warn(storeAloneMessage)
 	}
 	m.rules = renderRules(n)
 	return nil
 }
 
-// StoreAloneMessage is what a monitor block that is a metrics line alone
+// storeAloneMessage is what a monitor block that is a metrics line alone
 // says at every load: no channel, so vmalert is given no rule.
 // Alertmanager keeps the last config notify rendered (its Stop releases
 // only the engine), so a rule that fired would still reach the old
 // channels (Copilot on #423).
-const StoreAloneMessage = "monitor metrics: the monitor block has no channel, only its metrics line: vmalert is given no rule, so nothing the store sees is told to anyone; the store keeps the numbers, and GET /<app> reads them"
+const storeAloneMessage = "monitor metrics: the monitor block has no channel, only its metrics line: vmalert is given no rule, so nothing the store sees is told to anyone; the store keeps the numbers, and GET /<app> reads them"
 
 // start writes the rules and points the push at this config:
 // App.Start's, after notify's engine. Nothing here fails the config

@@ -2,6 +2,7 @@ package notify
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -36,8 +37,9 @@ type App struct {
 	Binds           []Bind    `json:"binds,omitempty"`
 	HeartbeatSecret string    `json:"heartbeat_secret,omitempty"`
 	// DeploySucceeded sends deploy_succeeded, which #418's table has
-	// off by default.
-	DeploySucceeded bool `json:"deploy_succeeded,omitempty"`
+	// off by default; nil for no line. A pointer, so that
+	// `deploy_succeeded off` is a line in the JSON too (storeAlone).
+	DeploySucceeded *bool `json:"deploy_succeeded,omitempty"`
 	// AllowInsecureChannels admits http and private addresses for test
 	// rigs whose receiver is a stub on the compose network. Warned at
 	// every load.
@@ -110,10 +112,25 @@ func (a *App) Provision(ctx caddy.Context) error {
 // line"). Any other line is notify's, and makes the block notify's
 // too, held to its refusals: an operator line among them. A block with
 // no line at all is refused as notify's, for its missing operator line.
+//
+// A line is a field present in the app's JSON, which is what a JSON
+// config writes and what the Caddyfile adapts to: every field is
+// omitempty, and one a line can set to its zero value is a pointer
+// (deploy_succeeded off). So the test is the JSON with the metrics line
+// taken out, never a list of fields a new one could be missing from.
 func (a *App) storeAlone() bool {
-	return a.Metrics != nil && len(a.Channels) == 0 && len(a.Operator) == 0 && len(a.Binds) == 0 &&
-		a.HeartbeatSecret == "" && !a.DeploySucceeded && !a.AllowInsecureChannels &&
-		a.SecretsFile == "" && a.StateDir == "" && a.Socket == "" && a.BackupRecord == ""
+	if a.Metrics == nil {
+		return false
+	}
+	rest := *a
+	rest.Metrics = nil
+	b, err := json.Marshal(&rest)
+	return err == nil && string(b) == "{}"
+}
+
+// deploySucceeded is the deploy_succeeded line: off when absent.
+func (a *App) deploySucceeded() bool {
+	return a.DeploySucceeded != nil && *a.DeploySucceeded
 }
 
 // provisionNotify is Provision's notify part.

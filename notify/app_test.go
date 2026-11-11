@@ -7,6 +7,7 @@ import (
 	"encoding/pem"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -371,6 +372,7 @@ func TestAMetricsLineAloneIsTheStoreWithoutNotify(t *testing.T) {
 		{"an empty block", []string{""}, "no operator line"},
 		{"an option alone", []string{"deploy_succeeded on"}, "no operator line"},
 		{"metrics and an option", []string{"metrics", "state_dir /tmp/x"}, "no operator line"},
+		{"metrics and an option at its default", []string{"metrics", "deploy_succeeded off"}, "no operator line"},
 		{"metrics and an operator line", []string{"metrics", "operator ops"}, "operator names ops, which no channel line defines"},
 		{"metrics and a channel", []string{"metrics", "channel ops ntfy {secret.NOTIFY_OPS_URL}"}, "no operator line"},
 		{"a relative socket in the JSON", nil, "is not an absolute path"},
@@ -440,6 +442,40 @@ func TestStartAndStopBothParts(t *testing.T) {
 		thePusher.mu.Unlock()
 		if engine != nil || pusher != nil {
 			t.Errorf("%s: after Stop the engine serves %p, the pusher %p; want neither", c.name, engine, pusher)
+		}
+	}
+}
+
+// Every field of the app but Metrics is a notify line: set to any value
+// a line can give it, the block is notify's. A field added later is
+// held to it with no list to update; one that is not omitempty makes
+// every metrics line alone notify's, which the test above refuses.
+func TestEveryOtherFieldIsANotifyLine(t *testing.T) {
+	if !(&App{Metrics: &MetricsStore{}}).storeAlone() {
+		t.Fatal("a metrics line alone is not the store alone")
+	}
+	typ := reflect.TypeOf(App{})
+	for i := range typ.NumField() {
+		f := typ.Field(i)
+		if !f.IsExported() || f.Name == "Metrics" {
+			continue
+		}
+		a := &App{Metrics: &MetricsStore{}}
+		v := reflect.ValueOf(a).Elem().Field(i)
+		switch v.Kind() {
+		case reflect.Slice:
+			v.Set(reflect.MakeSlice(v.Type(), 1, 1))
+		case reflect.String:
+			v.SetString("x")
+		case reflect.Bool:
+			v.SetBool(true)
+		case reflect.Pointer:
+			v.Set(reflect.New(v.Type().Elem())) // its zero value: deploy_succeeded off
+		default:
+			t.Fatalf("field %s is a %s: give it a value here", f.Name, v.Kind())
+		}
+		if a.storeAlone() {
+			t.Errorf("a metrics line beside %s is taken for the store alone", f.Name)
 		}
 	}
 }

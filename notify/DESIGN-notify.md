@@ -103,7 +103,9 @@ part. A block that is a `metrics` line alone runs no notify: no
 render, no engine, no Alertmanager config, and the warning
 DESIGN-metrics.md's "The metrics line" names. Any other line makes the
 block notify's, held to every refusal below, its missing `operator`
-line among them; so is a block with no line at all. `notify` and
+line among them, whatever it says (`deploy_succeeded off` too; in a
+JSON config, any of notify's fields present); so is a block with no
+line at all. `notify` and
 `metrics_store` as global options are refused when the Caddyfile is
 adapted, naming the block and the line to write instead.
 

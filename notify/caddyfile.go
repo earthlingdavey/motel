@@ -121,11 +121,10 @@ func (a *App) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
 			if !d.NextArg() {
 				return d.ArgErr()
 			}
+			on := d.Val() == "on"
 			switch d.Val() {
-			case "on":
-				a.DeploySucceeded = true
-			case "off":
-				a.DeploySucceeded = false
+			case "on", "off":
+				a.DeploySucceeded = &on
 			default:
 				return d.Errf("deploy_succeeded takes on or off, not %q", d.Val())
 			}

@@ -669,7 +669,7 @@ func (e *engine) configure(a *App, post poster, known []string, logger *zap.Logg
 // setConfig is configure's state, with mu held.
 func (e *engine) setConfig(a *App, post poster, known []string, logger *zap.Logger) {
 	e.active, e.post, e.known, e.logger = a, post, known, logger
-	e.deploySucceeded = a.DeploySucceeded
+	e.deploySucceeded = a.deploySucceeded()
 	e.backupPath, e.diskPaths = a.backupRecord(), a.diskPaths
 	if c, ok := post.(*amClient); ok {
 		e.metrics = c.metrics
