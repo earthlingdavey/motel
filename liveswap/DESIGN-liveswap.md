@@ -615,9 +615,10 @@ backwards edges reappearing *despite* this table.
 `liveswap_observe <app>` is a handler the operator writes first in an
 app's site or route. It counts each response under the app's current
 release by status class (`1xx` for 101 alone, `2xx` to `5xx`, and
-`aborted` for a client gone before the headers), times it to its
-headers in a fixed histogram, and reads the cache's verdict from
-`Cache-Status` (hit, stale, miss, bypass). It exists because Caddy's
+`aborted` for a request no headers went to: its client gone first, or
+its handler aborted), times it to its headers in a fixed histogram,
+and reads the cache's verdict from `Cache-Status` (hit, stale, miss,
+bypass). It exists because Caddy's
 request metrics carry a server and a handler, never a liveswap app
 (notify/DESIGN-metrics.md, "The response observer").
 

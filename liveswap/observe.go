@@ -84,27 +84,46 @@ func (o *Observe) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
 }
 
 // ServeHTTP times the response to its headers and counts it under the
-// app's current release. Never fails a request: it only reads.
-func (o *Observe) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddyhttp.Handler) error {
+// app's current release. Never fails a request: it only reads. The
+// count is deferred, so that a handler's panic is counted too (Caddy's
+// `abort`, and reverse_proxy's on a stream cut mid-body, both panic
+// http.ErrAbortHandler); the panic goes on as it came.
+func (o *Observe) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddyhttp.Handler) (err error) {
 	rc := o.ma.requests.current()
 	ow := &observeWriter{ResponseWriter: w, start: time.Now()}
-	err := next.ServeHTTP(ow, r)
-	if !ow.seen {
-		// Nothing written: an error the server's handle_errors answers
-		// after this returns (no instance running, a handler's error),
-		// or a client gone first.
-		ow.seen, ow.at = true, time.Now()
-		ow.status = http.StatusInternalServerError
-		var he caddyhttp.HandlerError
-		if errors.As(err, &he) && he.StatusCode != 0 {
-			ow.status = he.StatusCode
+	returned := false
+	defer func() {
+		if !ow.seen {
+			ow.unanswered(r, err, returned)
 		}
-		if ow.status == statusClientClosed || (err != nil && r.Context().Err() != nil) {
-			ow.status = 0
-		}
-	}
-	rc.record(ow)
+		rc.record(ow)
+	}()
+	err = next.ServeHTTP(ow, r)
+	returned = true
 	return err
+}
+
+// unanswered notes what a request nothing was written for gets: no
+// response, when a handler panicked or the client went first; the 200
+// net/http sends for a handler that returned no error; or the status
+// of the error the server's handle_errors answers after this returns
+// (no instance running, a handler's error).
+func (w *observeWriter) unanswered(r *http.Request, err error, returned bool) {
+	w.seen, w.at = true, time.Now()
+	var he caddyhttp.HandlerError
+	switch {
+	case !returned || r.Context().Err() != nil:
+		w.status = 0
+	case err == nil:
+		w.status = http.StatusOK
+	case errors.As(err, &he) && he.StatusCode != 0:
+		w.status = he.StatusCode
+		if w.status == statusClientClosed {
+			w.status = 0
+		}
+	default:
+		w.status = http.StatusInternalServerError
+	}
 }
 
 // statusClientClosed is the status reverse_proxy gives a request whose
@@ -118,7 +137,7 @@ type observeWriter struct {
 	http.ResponseWriter
 	start  time.Time
 	seen   bool
-	status int // 0: the client went first
+	status int // 0: no response (the client went first, or a panic)
 	at     time.Time
 	cache  cacheResult
 }
@@ -217,8 +236,9 @@ func parseCacheStatus(v string) cacheResult {
 }
 
 // The classes a response is counted under, in RequestClasses' order:
-// 101 alone of the 1xx, and "aborted" for a client gone before the
-// headers (in the total, not in the 5xx share).
+// 101 alone of the 1xx, and "aborted" for a request no headers went to,
+// its client gone first or its handler aborted (in the total, not in
+// the 5xx share).
 const (
 	class1xx = iota
 	class2xx

@@ -112,6 +112,14 @@ func TestObserveClasses(t *testing.T) {
 		{"a flush before any write", context.Background(), func(w http.ResponseWriter, _ *http.Request) error {
 			return http.NewResponseController(w).Flush()
 		}, "2xx", true},
+		// net/http sends a 200 for a handler that returns no error having
+		// written nothing (a route no terminal handler matched).
+		{"nothing written, no error", context.Background(), func(http.ResponseWriter, *http.Request) error {
+			return nil
+		}, "2xx", true},
+		{"the client gone, no error", cancelled, func(http.ResponseWriter, *http.Request) error {
+			return nil
+		}, "aborted", false},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			got, _, _ := observeOnce(t, c.ctx, c.next)
@@ -120,6 +128,42 @@ func TestObserveClasses(t *testing.T) {
 			}
 			if timed := got.Count == 1; timed != c.latency {
 				t.Fatalf("timed %v, want %v (count %d)", timed, c.latency, got.Count)
+			}
+		})
+	}
+}
+
+// A handler that panics is counted, and its panic goes on: Caddy's
+// `abort` before any header (no response: aborted), reverse_proxy's on a
+// stream cut mid-body (the status that went).
+func TestObservePanicIsCounted(t *testing.T) {
+	for _, c := range []struct {
+		name  string
+		next  caddyhttp.HandlerFunc
+		class string
+	}{
+		{"abort", func(http.ResponseWriter, *http.Request) error {
+			panic(http.ErrAbortHandler)
+		}, "aborted"},
+		{"a stream cut mid-body", func(w http.ResponseWriter, _ *http.Request) error {
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("part"))
+			panic(http.ErrAbortHandler)
+		}, "2xx"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			o := &Observe{App: "demo", ma: &managedApp{name: "demo"}}
+			o.ma.requests.setRelease("v1")
+			func() {
+				defer func() {
+					if p := recover(); p != http.ErrAbortHandler {
+						t.Errorf("panic %v, want http.ErrAbortHandler passed on", p)
+					}
+				}()
+				_ = o.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/", nil), c.next)
+			}()
+			if cc := classCounts(o.ma.requests.samples()[0]); len(cc) != 1 || cc[c.class] != 1 {
+				t.Fatalf("classes %v, want one %s", cc, c.class)
 			}
 		})
 	}

@@ -185,10 +185,12 @@ mechanics, its order and its measured cost are DESIGN-liveswap.md's
 ("The response observer"). What it gives this store:
 
 - **Classes.** `1xx` (a 101 alone: an upgrade's final response), `2xx`
-  to `5xx`, and `aborted`, a client gone before the headers (counted in
-  the total, never in the 5xx share). An error with nothing written (no
-  instance running: a 502 that `handle_errors` answers after) takes its
-  handler error's status.
+  to `5xx`, and `aborted`, a request no headers went to: its client
+  gone first, or its handler aborted (Caddy's `abort`, a panic), counted
+  in the total, never in the 5xx share. An error with nothing written
+  (no instance running: a 502 that `handle_errors` answers after) takes
+  its handler error's status; no error and nothing written is the 200
+  net/http sends.
 - **Latency.** The time to the response's headers, in Prometheus's
   default buckets (5 ms to 10 s): of the app's own responses, so a cache
   hit, a 101 and an aborted request are left out. p50 and p95 are
