@@ -15,7 +15,9 @@ import (
 // AppSample is one app as it runs now.
 type AppSample struct {
 	App string
-	// Release is the running release; "" when nothing runs.
+	// Release is the current release, running or not (Running says
+	// which): after a crash it names the release that crashed. "" when
+	// the app has no current release.
 	Release string
 	// Running is whether the instance is alive, as status reports it.
 	Running bool

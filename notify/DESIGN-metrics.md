@@ -100,7 +100,14 @@ units and still run, so the stopped config's rules would go on
 evaluating. motel's own shutdown leaves the rules, so the store's alerts
 reach the operator while motel is down; Caddy empties its running
 context before it stops the last config's apps, which is how the two
-are told apart (`pusher.release`; Copilot round 3 on #423).
+are told apart (`pusher.release`; Copilot round 3 on #423). A boot of a
+config with no block (the block removed, then a restart or a reboot
+rather than a reload) builds no `MetricsStore`, so cmd/motel's gate
+does the same at `motel run` alone, before Caddy loads the config it
+has just adapted: the groups empty in setup's state directory, and the
+same line on stderr; nothing on a box the store is not set up on, and
+nothing at `validate` or `reload` (`notify.RetireRules`; Copilot round
+4 on #423).
 
 ## What motel pushes
 
@@ -117,7 +124,7 @@ Go module; no metrics state in motel. The registry holds:
 | `caddy_http_*` | Caddy, when the Caddyfile has Caddy's `metrics` option; per server and handler, never per app |
 | `motel_notify_delivery_failed_total` | notify's engine |
 | `motel_metrics_push_failed_total` | the push, below |
-| `motel_app_up{app}`, `motel_app_release_info{app,release}` | liveswap's `AppSamples`: 1 while an instance runs; the running release |
+| `motel_app_up{app}`, `motel_app_release_info{app,release}` | liveswap's `AppSamples`: 1 while an instance runs; the current release, running or not (`motel_app_up` says which) |
 | `motel_app_memory_bytes{app}`, `motel_app_memory_max_bytes{app}`, `motel_app_cpu_seconds_total{app,unit}` | the running unit's cgroup (its working set: `memory.current` less `memory.stat`'s `inactive_file`, the page cache the kernel gives back before the cap is felt, so an app that reads files under a cap does not read as at its limit; `MemoryMax=` when the kernel enforces it, `cpu.stat` `usage_usec`), read at each gather; absent while nothing runs or the file cannot be read. The CPU counter is one series per unit: each new unit counts from zero, and a count that rose across a cutover would read as the new unit's |
 
 The per-app series are a collector registered on the same registry, so
@@ -422,7 +429,8 @@ rules loaded, and its `ChannelFailed` for the failing channel firing
 with motel's labels while Alertmanager holds one such alert, not two;
 the store stopped by hand, started again by motel's next push with vmalert beside it;
 motel's shutdown leaving `rules.yml`'s alerting rules, and a reload
-without the `metrics_store` block writing none;
+without the `metrics_store` block writing none; a restart without it
+writing none too, and vmalert loading zero alerting rules after;
 the view probe's three metrics keys closed from inside a sandboxed app;
 the store's socket stopped, `GET /<app>` answering at once (13 ms
 measured) with the error and the rest of the status whole, and the
@@ -452,3 +460,7 @@ Dated one-liners; the full text of each is in git.
 - 2026-11-11 — Copilot round 3 on #423, triaged: a reload that takes the
   `metrics_store` block away retires its rules (the both-to-neither row
   goes with it); motel's shutdown keeps them (e2e metrics 8).
+- 2026-11-11 — Copilot round 4 on #423, triaged: a restart (not a
+  reload) after the block is removed retires the rules too, from
+  cmd/motel's gate at `motel run` (e2e metrics 9); `motel_app_release_info`
+  documented as the current release, running or not.

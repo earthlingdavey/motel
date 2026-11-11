@@ -42,7 +42,10 @@ func gate(args []string, stderr io.Writer) (stop bool) {
 	if cmd != "validate" && cmd != "reload" && cmd != "run" {
 		return false
 	}
-	warning, err := checkConfig(cmd, args[1:])
+	cfg, warning, err := checkAndLoad(cmd, args[1:])
+	if cmd == "run" && cfg != nil {
+		retireMetricsRules(cfg, stderr)
+	}
 	switch {
 	case err != nil && cmd == "run":
 		_, _ = fmt.Fprintf(stderr, "ERROR: %v (served all the same; `motel reload` refuses this until it is mended)\n", err)
@@ -89,22 +92,29 @@ func commandFlags(name string, args []string) (*pflag.FlagSet, bool) {
 // two rules, each on its own, and joins what they refuse: neither
 // rule's early returns can drop the other's.
 func checkConfig(cmd string, args []string) (warning string, err error) {
+	_, warning, err = checkAndLoad(cmd, args)
+	return warning, err
+}
+
+// checkAndLoad is checkConfig, and hands back the config it loaded:
+// nil when it loaded none.
+func checkAndLoad(cmd string, args []string) (cfg []byte, warning string, err error) {
 	cfg, file, adapter, err := loadConfig(cmd, args)
 	if errors.Is(err, errCaddysToSay) {
-		return "", nil
+		return nil, "", nil
 	}
 	if err != nil {
-		return "", err
+		return nil, "", err
 	}
 	adminErr := checkAdmin(cfg)
 	warning, err = checkBackups(cmd, file, adapter)
 	switch {
 	case adminErr == nil:
-		return warning, err
+		return cfg, warning, err
 	case err == nil:
-		return warning, adminErr
+		return cfg, warning, adminErr
 	}
-	return warning, errors.New(adminErr.Error() + "; and " + err.Error())
+	return cfg, warning, errors.New(adminErr.Error() + "; and " + err.Error())
 }
 
 // errCaddysToSay is loadConfig's answer for a config that does not load:

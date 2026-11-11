@@ -150,16 +150,38 @@ func (m *MetricsStore) applyRules() {
 	}
 }
 
-// retireRules writes the rules of no block, the groups empty, when a
-// reload takes the metrics_store block away (pusher.release).
+// What a config with no metrics_store block says when it retires the
+// rules a config with one wrote, at a reload (pusher.release) or at the
+// boot of one (cmd/motel's gate, RetireRules).
+const (
+	RulesRetiredMessage    = "metrics_store: the block is gone: vmalert is given no rule; the store and vmalert still run until motel metrics setup's units are stopped"
+	RulesNotRetiredMessage = "metrics_store: the block is gone, and its rules were not retired: vmalert still evaluates them"
+)
+
+// RetireRules writes the rules of no block, the two groups empty, into
+// dir, the state directory setup made: what vmalert must read once no
+// config has a metrics_store block. It reports whether the file
+// changed; a box the store is not set up on has nothing to retire, and
+// is no error. cmd/motel's gate calls it at `motel run` with a config
+// that has no block, which builds no MetricsStore to do it (Copilot
+// round 4 on #423); a reload's is pusher.release's.
+func RetireRules(dir string) (bool, error) {
+	changed, err := writeRules(dir, renderRules(nil))
+	if errors.Is(err, errMetricsNotSetUp) {
+		return false, nil
+	}
+	return changed, err
+}
+
+// retireRules is RetireRules when a reload takes the block away
+// (pusher.release).
 func (m *MetricsStore) retireRules() {
 	path := filepath.Join(m.stateDir(), RulesName)
-	switch changed, err := writeRules(m.stateDir(), renderRules(nil)); {
-	case errors.Is(err, errMetricsNotSetUp):
+	switch changed, err := RetireRules(m.stateDir()); {
 	case err != nil:
-		m.logger.Error("metrics_store: the block is gone, and its rules were not retired: vmalert still evaluates them", zap.String("rules", path), zap.Error(err))
+		m.logger.Error(RulesNotRetiredMessage, zap.String("rules", path), zap.Error(err))
 	case changed:
-		m.logger.Info("metrics_store: the block is gone: vmalert is given no rule; the store and vmalert still run until motel metrics setup's units are stopped", zap.String("rules", path))
+		m.logger.Info(RulesRetiredMessage, zap.String("rules", path))
 	}
 }
 

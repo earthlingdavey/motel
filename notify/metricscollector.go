@@ -22,7 +22,7 @@ var (
 	appUpDesc = prometheus.NewDesc("motel_app_up",
 		"1 while an instance of the app runs, else 0.", []string{"app"}, nil)
 	appReleaseDesc = prometheus.NewDesc("motel_app_release_info",
-		"The app's running release, as a label; always 1.", []string{"app", "release"}, nil)
+		"The app's current release, running or not (motel_app_up says which), as a label; always 1.", []string{"app", "release"}, nil)
 	appMemoryDesc = prometheus.NewDesc("motel_app_memory_bytes",
 		"The running unit's working set: its cgroup's memory.current less memory.stat's inactive_file.", []string{"app"}, nil)
 	appMemoryMaxDesc = prometheus.NewDesc("motel_app_memory_max_bytes",

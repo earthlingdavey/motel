@@ -287,6 +287,45 @@ grep -q 'alert:' "$STATE/rules.yml" && fail "the metrics_store block is gone, ye
 journalctl -u motel -o cat --no-pager | grep -q 'metrics_store: the block is gone: vmalert is given no rule' \
 	&& pass "journal: the block is gone, no rule" || fail "no 'the block is gone' line"
 
+echo "=== metrics 9: the metrics_store block removed, then a restart, not a reload ==="
+# A config with no block builds no MetricsStore, so the boot's gate
+# retires the rules a config with one wrote.
+cp /tmp/Caddyfile.both /etc/motel/Caddyfile
+systemctl reload motel && pass "reloaded with both blocks again" || fail "the reload with both blocks failed"
+i=0
+until grep -q 'alert:' "$STATE/rules.yml"; do i=$((i + 1)); [ "$i" -ge 40 ] && break; sleep 0.5; done
+grep -q 'alert:' "$STATE/rules.yml" && pass "both blocks again: rules.yml has alerting rules" || fail "rules.yml has no alerting rule with both blocks"
+# vmalert loads them before the restart, so the zero after it is its
+# re-read of the retired file, not a load it never made.
+end=$(( $(date +%s) + 100 ))
+while [ "$(date +%s)" -lt "$end" ]; do
+	rules=$(inns curl -s --max-time 5 http://127.0.0.1:8880/api/v1/rules)
+	printf '%s' "$rules" | grep -q '"type":"alerting"' && break
+	sleep 5
+done
+printf '%s' "$rules" | grep -q '"type":"alerting"' && pass "vmalert loads alerting rules again" || fail "vmalert never loaded the rules again: $(printf '%s' "$rules" | cut -c1-300)"
+cp /tmp/Caddyfile.nostore /etc/motel/Caddyfile
+since=$(date '+%Y-%m-%d %H:%M:%S')
+systemctl restart motel && pass "restarted without the metrics_store block" || fail "the restart without the metrics_store block failed"
+grep -q 'alert:' "$STATE/rules.yml" && fail "restarted with no block, yet rules.yml has alerting rules: $(grep -c 'alert:' "$STATE/rules.yml")" \
+	|| pass "restarted with no block: rules.yml has no alerting rule"
+journalctl -u motel --since "$since" -o cat --no-pager | grep -q 'metrics_store: the block is gone: vmalert is given no rule' \
+	&& pass "journal: the boot retired the rules" || fail "no 'the block is gone' line at the boot"
+end=$(( $(date +%s) + 100 ))
+while [ "$(date +%s)" -lt "$end" ]; do
+	rules=$(inns curl -s --max-time 5 http://127.0.0.1:8880/api/v1/rules)
+	printf '%s' "$rules" | grep -q '"status":"success"' && ! printf '%s' "$rules" | grep -q '"type":"alerting"' && break
+	sleep 5
+done
+printf '%s' "$rules" | grep -q '"status":"success"' && ! printf '%s' "$rules" | grep -q '"type":"alerting"' \
+	&& pass "vmalert re-read the rules after the restart: zero alerting rules loaded" \
+	|| fail "vmalert still loads alerting rules after the restart: $(printf '%s' "$rules" | grep -o '"name":"[^"]*","type":"alerting"' | head -5 | tr '\n' ' ')"
+cp /tmp/Caddyfile.both /etc/motel/Caddyfile
+systemctl restart motel && pass "restored: both blocks, restarted" || fail "the restart with both blocks failed"
+i=0
+until grep -q 'alert:' "$STATE/rules.yml"; do i=$((i + 1)); [ "$i" -ge 40 ] && break; sleep 0.5; done
+grep -q 'alert:' "$STATE/rules.yml" && pass "a boot with the block writes its rules" || fail "a boot with the block wrote no alerting rule"
+
 echo
 if [ "$FAILURES" -ne 0 ]; then
 	echo "metrics suite: $FAILURES failure(s)"
