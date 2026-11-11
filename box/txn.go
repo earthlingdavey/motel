@@ -349,6 +349,7 @@ func (t *txn) result(phase, msg string) result {
 		ID: r.ID, Phase: phase, Commit: r.Commit, Path: r.Path, Signer: r.Signer,
 		BoxWebhook: r.BoxWebhook, OutOfBand: r.OutOfBand, Apps: r.Apps, Diff: r.Diff, Error: msg,
 		Named:        t.named,
+		Reloaded:     phase == phaseApplied && t.reloads(),
 		SecretsAdded: r.SecretsAdded, SecretsChanged: r.SecretsChanged, SecretsRemoved: r.SecretsRemoved,
 		SecretsOutOfBand: r.SecretsOutOfBand,
 	}

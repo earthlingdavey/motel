@@ -1560,7 +1560,7 @@ func (spec *appSpec) prepareLaunch(logger *zap.Logger, version string) (launch, 
 		return launch{}, err
 	}
 	if len(withheld) > 0 {
-		logger.Warn("env_file: NOTIFY_ variables withheld from the app: the box writes them from secrets/<app>/ for notify, which no app is given; name the variable otherwise if the app needs it",
+		logger.Warn("env_file: NOTIFY_ variables withheld from the app: the env file is in /etc/motel/secrets, where the box writes notify's, and no app is given one; name the variable otherwise if the app needs it",
 			zap.String("env_file", spec.envFile), zap.Strings("withheld", withheld))
 	}
 	if spec.envFile != "" {
@@ -1858,8 +1858,11 @@ func (ma *managedApp) restoreSpec(owner any) bool {
 	p := ma.prev
 	ma.spec, ma.verifiers, ma.logger, ma.store, ma.notifier = p.spec, p.verifiers, p.logger, p.store, p.notifier
 	// The candidate's install pointed the watchdog's alerts.json writes
-	// at its own root: back to the serving one (Copilot round 1 on #424).
+	// at its own root: back to the serving one (Copilot round 1 on #424),
+	// and what stands written there, ahead of a write still in flight to
+	// the candidate's (round 3).
 	ma.restoreAlerts(p.spec, p.logger)
+	ma.wd.rewriteAlerts()
 	ma.prev = nil
 	ma.configuredBy = nil
 	if sr, ok := ma.runner.(*systemdRunner); ok {
@@ -2081,22 +2084,29 @@ const shellOwnedEnvKeyMsg = "is set by the shell every app unit runs behind (/bi
 // notifyEnvPrefix is the notify module's in what the box writes: a
 // NOTIFY_ variable there is a notify channel's URL (notify/DESIGN-
 // notify.md, "Secrets"), a credential motel reads and no app is given.
-// One in an env file the box wrote (secrets/<app>/NOTIFY_*.age, in
-// /etc/motel/secrets) is withheld from the unit's environment, named in
-// a warning at each launch, and stays a known value to the filter
-// (#418, #417's rule). An inline env line, and an env file the operator
-// keeps anywhere else, are the operator's and pass as they are.
+// One in an env file in /etc/motel/secrets, where the box writes them
+// (secrets/<app>/NOTIFY_*.age), is withheld from the unit's environment,
+// named in a warning at each launch, and stays a known value to the
+// filter (#418, #417's rule); so is one in an operator's own file kept
+// in that directory (notify/DESIGN-notify.md, Accepted residuals). An
+// inline env line, and an env file the operator keeps anywhere else,
+// are the operator's and pass as they are.
 const notifyEnvPrefix = "NOTIFY_"
 
 // notifyOwnedEnvKey reports whether a KEY or KEY=value is notify's.
 func notifyOwnedEnvKey(kv string) bool { return strings.HasPrefix(kv, notifyEnvPrefix) }
 
-// boxSecretsDir is where the box writes each app's env file
-// (box/DESIGN-box.md, "Values and the env file"). A variable so a test
-// can stand in for it.
-var boxSecretsDir = "/etc/motel/secrets" //nolint:gosec // G101: a directory's path, not a credential
+// BoxSecretsDir is where the box writes each app's env file
+// (box/DESIGN-box.md, "Values and the env file"), held equal to the
+// box's own by cmd/motel's test; boxSecretsDir is it, a variable so a
+// test can stand in for it.
+const BoxSecretsDir = "/etc/motel/secrets" //nolint:gosec // G101: a directory's path, not a credential
 
-// boxWritten reports whether an env_file is one the box writes.
+var boxSecretsDir = BoxSecretsDir
+
+// boxWritten reports whether an env_file is in the directory the box
+// writes them in: a test of the path alone, so an operator's own file
+// kept there is held to the box's rules too.
 func boxWritten(envFile string) bool {
 	return strings.HasPrefix(filepath.Clean(envFile), boxSecretsDir+"/")
 }

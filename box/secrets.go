@@ -54,6 +54,15 @@ func managedEnvFile(app string) string { return secretsDir + "/" + app + ".env" 
 // (managedEnvFile), notify's default secrets_file.
 const boxSlot = "_box"
 
+// SecretsDir and BoxSecretsFile are secretsDir and the box's own env
+// file, for cmd/motel's test to hold equal to what liveswap withholds
+// from (BoxSecretsDir) and notify reads (DefaultSecretsFile): the three
+// modules restate them and import none of the others for it.
+const (
+	SecretsDir     = secretsDir
+	BoxSecretsFile = secretsDir + "/" + boxSlot + ".env"
+)
+
 // secretSlot is a secrets directory's name: an app's, in liveswap's
 // grammar, or the box's own.
 func secretSlot(name string) bool { return name == boxSlot || appName.MatchString(name) }
@@ -406,11 +415,15 @@ func boxSecretNames(s *proof.Secrets) []string {
 
 // notifyCarried holds a notify block that reads the box's own secrets
 // file to the push: every secret a channel or heartbeat line names must
-// be in secrets/_box/, since root writes that file from the push alone
-// and a load drops a channel whose secret is missing (notify/DESIGN-
-// notify.md, "Secrets at load"): the mistake is told here, at the push,
-// not found at the next boot. A secrets_file of the operator's own is
-// the operator's, and nothing here checks it.
+// be in secrets/_box/, and a load drops a channel whose secret is
+// missing (notify/DESIGN-notify.md, "Secrets at load"): the mistake is
+// told here, at the push, not found at the next boot. It reads the push
+// alone, not the box: a box with no slot yet, whose _box.env an
+// operator wrote by hand, is refused too though validate would read
+// that file, and the remedy the refusal names, the slot, replaces the
+// hand-written file (DESIGN-box.md, Accepted residuals). A
+// secrets_file of the operator's own is the operator's, and nothing
+// here checks it.
 func notifyCarried(shape *Shape, s *proof.Secrets, dir string) error {
 	n := shape.Notify
 	if n == nil || (n.SecretsFile != "" && filepath.Clean(n.SecretsFile) != managedEnvFile(boxSlot)) {

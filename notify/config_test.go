@@ -2,6 +2,7 @@ package notify
 
 import (
 	"encoding/json"
+	"errors"
 	"slices"
 	"strings"
 	"testing"
@@ -206,10 +207,10 @@ func TestResolveDropsAtBoot(t *testing.T) {
 	delete(sec, "NOTIFY_PAGER_URL")              // an operator channel, missing
 	sec["NOTIFY_ALICE_URL"] = "http://10.0.0.1/" // alice's bound channel, refused
 	delete(sec, "NOTIFY_HC_URL")                 // the heartbeat
-	if _, _, err := a.resolveWith(testTrust(), sec, nil, false); err == nil {
+	if _, _, err := a.resolveWith(testTrust(), sec, nil, false, nil); err == nil {
 		t.Fatal("a load that does not drop accepted the missing secrets")
 	}
-	r, dropped, err := a.resolveWith(testTrust(), sec, nil, true)
+	r, dropped, err := a.resolveWith(testTrust(), sec, nil, true, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -246,8 +247,56 @@ func TestResolveDropsAtBoot(t *testing.T) {
 	}
 	// A refusal that is not a secret's is refused all the same.
 	b := mustParse(t, "notify {\nchannel ops slack {secret.NOTIFY_OPS_URL}\noperator ops nosuch\n}")
-	if _, _, err := b.resolveWith(testTrust(), map[string]string{}, nil, true); err == nil || !strings.Contains(err.Error(), "operator names nosuch") {
+	if _, _, err := b.resolveWith(testTrust(), map[string]string{}, nil, true, nil); err == nil || !strings.Contains(err.Error(), "operator names nosuch") {
 		t.Fatalf("err = %v", err)
+	}
+}
+
+// A secret that several lines read is dropped from each, and the
+// reason names every one of them, not only the last in the block.
+func TestResolveDropNamesEveryLineOfASharedSecret(t *testing.T) {
+	a := mustParse(t, "notify {\nchannel ops slack {secret.NOTIFY_OPS_URL}\nchannel ops2 json {secret.NOTIFY_OPS_URL}\nchannel spare ntfy {secret.NOTIFY_PAGER_URL}\noperator ops ops2 spare\nheartbeat {secret.NOTIFY_OPS_URL}\n}")
+	sec := testSecrets()
+	delete(sec, "NOTIFY_OPS_URL")
+	r, dropped, err := a.resolveWith(testTrust(), sec, nil, true, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(dropped) != 1 || dropped[0].Error() != "channel ops, channel ops2, heartbeat: secret NOTIFY_OPS_URL is not in the box's secrets (/etc/motel/secrets/_box.env)" {
+		t.Fatalf("dropped %v", dropped)
+	}
+	if strings.Join(r.order, ",") != "spare" || r.heartbeat != "" {
+		t.Errorf("order %v heartbeat %q", r.order, r.heartbeat)
+	}
+	// A refusal names them all too.
+	if _, _, err := a.resolveWith(testTrust(), sec, nil, false, nil); err == nil || !strings.HasPrefix(err.Error(), "channel ops, channel ops2, heartbeat: ") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+// A secrets file that cannot be used drops, at a boot, every line that
+// reads a secret, each reason naming the file's error; any other load
+// refuses.
+func TestResolveDropsEveryLineOfAnUnusableFile(t *testing.T) {
+	a := mustParse(t, fullBlock)
+	unusable := errors.New("/etc/motel/secrets/_box.env:2: not KEY=VALUE")
+	r, dropped, err := a.resolveWith(testTrust(), map[string]string{}, nil, true, unusable)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(r.order) != 0 || len(r.operator) != 0 || len(r.appChannels) != 0 || r.heartbeat != "" || len(r.urls) != 0 {
+		t.Errorf("left: order %v operator %v apps %v heartbeat %q urls %v", r.order, r.operator, r.appChannels, r.heartbeat, r.urls)
+	}
+	if len(dropped) != 5 {
+		t.Fatalf("dropped %v", dropped)
+	}
+	for _, e := range dropped {
+		if !errors.Is(e, unusable) || !strings.Contains(e.Error(), "cannot be read: "+unusable.Error()) {
+			t.Errorf("reason %v", e)
+		}
+	}
+	if _, _, err := a.resolveWith(testTrust(), map[string]string{}, nil, false, unusable); !errors.Is(err, unusable) {
+		t.Fatalf("a load that does not drop: err = %v", err)
 	}
 }
 

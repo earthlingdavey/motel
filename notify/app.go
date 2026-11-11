@@ -72,12 +72,21 @@ func (a *App) Provision(ctx caddy.Context) error {
 	if err != nil {
 		return err
 	}
-	secrets, err := readSecrets(a.secretsFile())
-	if err != nil {
-		return fmt.Errorf("notify: %w", err)
+	drop := dropsChannels()
+	secrets, unusable := readSecrets(a.secretsFile())
+	switch {
+	case unusable != nil && !drop:
+		return fmt.Errorf("notify: %w", unusable)
+	case unusable != nil:
+		// A boot serves: a file it cannot read or parse drops every line
+		// that reads a secret, as a missing secret does ("Secrets at
+		// load"), and the error is the file's, never a value.
+		a.logger.Error("notify: the box's secrets file cannot be used: every channel that reads a secret is dropped from this load; motel validate and motel reload refuse the config until it is mended",
+			zap.String("secrets_file", a.secretsFile()), zap.Error(unusable))
+		secrets = map[string]string{}
 	}
 	var dropped []error
-	if a.cfg, dropped, err = a.resolveWith(trust, secrets, pushedSecrets(), dropsChannels()); err != nil {
+	if a.cfg, dropped, err = a.resolveWith(trust, secrets, pushedSecrets(), drop, unusable); err != nil {
 		return fmt.Errorf("notify: %w", err)
 	}
 	for _, why := range dropped {

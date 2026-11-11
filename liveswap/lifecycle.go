@@ -150,15 +150,22 @@ func (ma *managedApp) reportStanding(n Notifier, spec *appSpec) {
 			Summary: "the restart loop is still reported: it ends once the app is healthy for its hold"})
 	}
 	if refused {
-		ma.tell(n, LifecycleEvent{Name: EventRelaunchRefused, Release: release, Standing: true,
-			Summary: "the watchdog's relaunch was refused, so the app is down; still reported until an instance runs again"})
+		// Told with the release and the reason it was refused for: the
+		// report replaces the alert's summary at Alertmanager.
+		refusedRel, reason := ma.wd.refusal()
+		if refusedRel == "" {
+			refusedRel = release // a file written before they were kept
+		}
+		ma.tell(n, LifecycleEvent{Name: EventRelaunchRefused, Release: refusedRel, Standing: true,
+			Summary: refusedSummary(refusedRel, reason) + "; still reported until an instance runs again"})
 	}
 }
 
-// alertsMax bounds alerts.json as read: motel writes under 64 bytes.
+// alertsMax bounds alerts.json as read: motel writes under 1 KiB (a
+// refusal's reason is within refusedReasonMax).
 const alertsMax = 4 << 10
 
-// alertsTempPattern names persistAlerts' temp file (writeOwnFile).
+// alertsTempPattern names the alerts file's temp file (writeOwnFile).
 const alertsTempPattern = ".alerts-*.tmp"
 
 // restoreAlerts reads the app's alerts.json into its watchdog's flags,

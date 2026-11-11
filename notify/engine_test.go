@@ -2,6 +2,7 @@ package notify
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -613,9 +614,26 @@ func TestStandingReports(t *testing.T) {
 		}
 		states := []string{}
 		for _, l := range te.lines("notify: event") {
-			states = append(states, l.ContextMap()["state"].(string))
+			// Only the report itself was told before this process.
+			states = append(states, fmt.Sprintf("%s:%v", l.ContextMap()["state"], l.ContextMap()["standing"]))
 		}
-		if strings.Join(states, ",") != "held,resolved" {
+		if strings.Join(states, ",") != "held:true,resolved:<nil>" {
+			t.Fatalf("journal states = %v", states)
+		}
+	})
+	t.Run("firing, then a recovery this process saw: its lines are not standing", func(t *testing.T) {
+		te := newTestEngine(t)
+		te.report(standing(true))
+		te.drain()
+		te.report(watchdog(false))
+		te.advance(31 * time.Second)
+		te.tick()
+		te.drain()
+		var states []string
+		for _, l := range te.lines("notify: event") {
+			states = append(states, fmt.Sprintf("%s:%v", l.ContextMap()["state"], l.ContextMap()["standing"]))
+		}
+		if strings.Join(states, ",") != "firing:true,resolved:<nil>" {
 			t.Fatalf("journal states = %v", states)
 		}
 	})

@@ -160,6 +160,19 @@ Before you upgrade:
   `apt install --allow-downgrades ./motel_<old>_$(dpkg --print-architecture).deb`
   puts it back — the same restart, in reverse, and nothing to download
   first. On a VPS, a snapshot taken first is the fuller way back.
+- **Going back to v0.6.1 or earlier from a release with notify, on a
+  box that takes pushes,** wants one push first. Those releases know
+  neither the `notify` block nor the box's own `secrets/_box/`: they
+  refuse the Caddyfile, and their box channel refuses an
+  `applied.json` that lists `_box`, so every push after the downgrade
+  fails before it begins. While the box still runs the newer release,
+  push a commit without the `notify` block and without
+  `secrets/_box/`: it removes `/etc/motel/secrets/_box.env` and takes
+  `_box` out of `applied.json`. Then go back. On a box already back,
+  root at the console removes the `"_box"` entry from the `secrets` map
+  in `/var/lib/motel-box/applied.json` and deletes
+  `/etc/motel/secrets/_box.env`, and the next push (without the block
+  and the directory) applies.
 - **Upgrade motel and the host separately.** motel measures what
   the host can sandbox at every start and refuses to start on a host
   that cannot deliver it ([liveswap/README.md](../liveswap/README.md#sandbox)),

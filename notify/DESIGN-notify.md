@@ -136,7 +136,7 @@ running config (`caddy.ActiveContext`):
 |---|---|
 | `motel validate` (by hand, CI's `make check`, the box handler's step 6) | refused, as the table says; the handler and `make check` name the secrets in `secrets/_box/` (`MOTEL_NOTIFY_PUSHED_SECRETS`), taken as held ("Secrets") |
 | a reload (`motel reload`, `systemctl reload`, the box applier's): a config is running | refused; the running config serves on, and the box applier rolls its push back |
-| the first load of `motel run` (a boot, a restart, an unattended upgrade's): nothing running | the channel is **dropped** from that load (from the operator line, each binding, the route tree; the heartbeat, if it is its secret), each a `notify: a channel is dropped from this load` error line naming the line and the key, never a value; and one more if no operator channel is left. motel serves |
+| the first load of `motel run` (a boot, a restart, an unattended upgrade's): nothing running | the channel is **dropped** from that load (from the operator line, each binding, the route tree; the heartbeat, if it is its secret), each a `notify: a channel is dropped from this load` error line naming every line that reads the key, and the key, never a value; and one more if no operator channel is left. A secrets file that cannot be read or parsed (a line without `=`, over 1 MiB, unreadable) is every secret unusable: one error line names the file and its error, and every line that reads a secret is dropped. motel serves |
 
 Refusing a boot would take every site down for an alert channel; a
 dropped channel is the one cost, said in the journal, and the next
@@ -336,14 +336,16 @@ whichever config serves when it clears.
   not, since a fresh process does not know a loop it was already in,
   and a refused relaunch is refused again by recovery with nothing
   reported. So liveswap keeps what it told in each app's `alerts.json`
-  (a loop, whether its recovery's hold runs, a refusal; written on each
+  (a loop, whether its recovery's hold runs, a refusal with its release
+  and reason, so that the report says them again; written on each
   change, removed when none stands, forgotten for an app a reload
   removes or the start's sweep finds unconfigured), and **re-reports it at
   notify's Start** (`ReportStanding`, pulled by notify once its engine
   serves the config, whichever app Caddy starts first). Each is a
   standing report: the engine ignores it for a key it holds (a reload),
   and takes it as told for one it does not, journaled with
-  `standing: true` — a loop fires again (Alertmanager merges it with the
+  `standing: true` (the report's own lines; the key's later lines are
+  this process's) — a loop fires again (Alertmanager merges it with the
   alert it holds: no second message), a recovery under way is held for
   its hold and then resolved; a recovery whose hold has passed is not
   told again. What ends while the reports are told (a recovery's
@@ -531,9 +533,10 @@ on its general scales. notify's examples:
 | An operator with a single channel: `ChannelFailed` has no other channel to go to | notify/channelfailed.go | 2 | 5 | 1 | the `notify: channel failed` line and Alertmanager's counter say it; the design asks for "the other operator channels" and there are none |
 | `motel notify test` reads the counters for 15 s; a slow receiver answers "neither yet" | notify/admin.go (`testWait`) | 2 | 2 | 1 | the answer says so; Alertmanager's retries continue |
 | At a boot, an event liveswap reports before notify's Start (Caddy starts the apps in no fixed order) is dropped, the engine serving no config yet: a recovery at that instant ends its alert at `resolve_timeout`, up to five minutes late | notify/engine.go (`report`, `active == nil`) | 2 | 3 | 3 | 18; what stands is told again at notify's Start (`ReportStanding`), and an end told meanwhile is told again after it; holding events for a config not yet started adds a queue with its own lifetime (size 3). /code-review of the Owed rows |
-| A restart after notify has resolved a recovery but before the next healthy probe clears `alerts.json` (with `health_interval 2m` and a 30 s hold, up to about 90 s) replays the recovery: the emptied engine posts the alert held, then resolved, and the operator sees the firing and recovery messages again | liveswap/watchdog.go (`reportedAlerts` keeps `Recovering`, not when the hold began) | 2 | 2 | 1 | 4; a duplicate the operator sees, only for a restart inside one health interval after a hold ends; persisting the hold's start, and the engine honouring it, is size 3 (risk 2). Copilot round 1 on #424 |
+| A restart after notify has resolved a recovery but before the next healthy probe clears `alerts.json` (with `health_interval 2m` and a 30 s hold, up to about 90 s) replays the recovery: the emptied engine posts the alert held, then resolved, and the operator sees the firing and recovery messages again. A reload does the same when it lengthens the hold (the standing report judges it with the candidate's `watchdog_grace`), and so does a push just after a restart (the watchdog's own `healthySince` is new) | liveswap/watchdog.go (`reportedAlerts` keeps `Recovering`, not when the hold began); liveswap/lifecycle.go (`reportStanding`) | 2 | 2 | 1 | 4; a duplicate the operator sees, only for a restart or reload inside one health interval after a hold ends; persisting the hold's start, and the engine honouring it, is size 3 (risk 2). Copilot round 1 on #424, widened by /code-review xhigh on #424 |
+| A restart inside a recovery's hold, then a relaunch that fails for good (no instance runs after the restart): the persisted `recovering` is re-reported as a held recovery, so the engine resolves the alert of an app that is down, and the flags stay for the next restart | liveswap/lifecycle.go (`reportStanding`) | 3 | 2 | 3 | 18; two faults, a restart inside a hold and then a relaunch that fails; the journal names the failed relaunch and status shows the app down; telling it apart needs a branch on whether an instance runs after recovery (size 2, risk 2). /code-review xhigh on #424 |
 | A failed write of `alerts.json` (EIO, a read-only remount) leaves the old file until the next change, and a restart before it reports what the file still says | liveswap/watchdog.go (`alertsChanged`) | 3 | 3 | 1 | 9; the warning at the failure names the file and the consequence; a retry needs a timer outside the transitions (size 2, risk 2). /code-review of the Owed rows |
-| A box whose apps already read a `NOTIFY_` variable from `secrets/<app>/` loses it from the app's environment at the next launch after the upgrade | liveswap/app.go (`notifyOwnedEnvKey`) | 3 | 5 | 1 | 15; each launch names the withheld keys in the journal and `make check` warns before a push; the prefix is what keeps a channel URL from an app. /code-review of the Owed rows |
+| An app that read a `NOTIFY_` variable from an env file in `/etc/motel/secrets/` — the box's `secrets/<app>/`, or an operator's own file kept in that directory — loses it from the app's environment at the next launch after the upgrade | liveswap/app.go (`notifyOwnedEnvKey`, `boxWritten`: a test of the directory) | 3 | 5 | 1 | 15; each launch names the withheld keys and the directory in the journal, and `make check` warns before a push; the prefix is what keeps a channel URL from an app. /code-review of the Owed rows, widened by /code-review xhigh on #424 |
 | Alertmanager refuses a reload: motel puts the previous config back, but the URL files are already the new ones (a changed value rewritten, a dropped channel's removed), so the old config in memory sends a changed channel to its new URL, and Alertmanager's next start fails on a removed file until motel's next load | notify/state.go (`apply`) | 4 | 2 | 1 | 8; two faults (a render Alertmanager refuses, which the amtool tests rule out for every shape, then a restart before the next load), and Alertmanager names the missing file; a new URL is the one the signer committed; keeping the old files until a reload succeeds adds state to the write (size 2, risk 2). /code-review of slice one, passes 1 and 2 |
 
 ### Owed
@@ -622,7 +625,8 @@ Dated one-liners; the full text of each is in git.
 - 2026-11-10 — The first Owed row landed: the box channel writes
   `_box.env` from `secrets/_box/` and reloads on its change, the
   handler's validate is told the names a push carries, and the `NOTIFY_`
-  prefix is withheld from every app's environment.
+  prefix is withheld from the env files in `/etc/motel/secrets/`, where
+  the box writes them.
 - 2026-11-10 — The Owed row "a missing secret refuses the boot" landed:
   the box refuses a push whose notify block names a secret it does not
   carry; validate and a reload refuse a missing one, and a boot drops
@@ -632,3 +636,9 @@ Dated one-liners; the full text of each is in git.
   re-reports it at notify's Start, as standing reports the engine
   ignores when it holds the key ("Behaviour"). With the two rows before
   it, the three that barred a production box are in.
+- 2026-11-11 — /code-review xhigh of #424 and Copilot's third round:
+  a boot drops every line of a secrets file it cannot use, a dropped
+  secret's reason names every line that reads it, `alerts.json` keeps
+  a refusal's release and reason for the standing report, a standing
+  report's later lines are not standing, and a rollback writes what
+  stands to the serving root ahead of any write still in flight.

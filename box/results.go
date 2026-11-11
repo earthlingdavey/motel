@@ -141,6 +141,11 @@ type result struct {
 	// Named is the object ids Error names, which an answer holds out of
 	// the response filter as it does Commit.
 	Named []string `json:"named,omitempty"`
+	// Reloaded, on an applied result, says that the push reloaded motel:
+	// the Caddyfile changed, or the box's own env file did (txn.reloads),
+	// which the names below cannot tell — the same values over other
+	// bytes reload, and a rekey of the same bytes does not.
+	Reloaded bool `json:"reloaded,omitempty"`
 	// The secrets the push adds, changes and removes, as <app>/<VAR>,
 	// and the apps whose env file root wrote or removed over bytes it
 	// had not installed: names, never a value (I9).
@@ -231,7 +236,7 @@ func resultFields(r result) []zap.Field {
 		zap.String("id", r.ID), zap.String("phase", r.Phase), zap.String("commit", r.Commit),
 		zap.String("path", proof.Bound(r.Path)), zap.String("signer", r.Signer), zap.String("box", r.BoxWebhook),
 		zap.Bool("caddyfile_edited_out_of_band", r.OutOfBand), zap.Strings("apps", r.Apps),
-		zap.String("diff", r.Diff), zap.String("error", r.Error), zap.Strings("named", r.Named),
+		zap.String("diff", r.Diff), zap.String("error", r.Error), zap.Strings("named", r.Named), zap.Bool("reloaded", r.Reloaded),
 		zap.Strings("secrets_added", r.SecretsAdded), zap.Strings("secrets_changed", r.SecretsChanged),
 		zap.Strings("secrets_removed", r.SecretsRemoved), zap.Strings("secrets_edited_out_of_band", r.SecretsOutOfBand),
 	}

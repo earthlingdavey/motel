@@ -1740,4 +1740,5 @@ Dated one-liners; the full text of each is in git.
   `v0.5.0-rc1` measured through B2's S3 endpoint.
 - 2026-11-10 — The box's own secrets slot (`secrets/_box/` into
   `/etc/motel/secrets/_box.env`, notify's channel URLs) and the `NOTIFY_`
-  prefix withheld from every app's environment (#418).
+  prefix withheld from the env files in `/etc/motel/secrets/`, where the
+  box writes them (#418).

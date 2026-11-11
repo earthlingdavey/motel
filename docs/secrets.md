@@ -181,9 +181,11 @@ notify {
 A push whose `notify` block names a secret `secrets/_box/` does not
 hold is refused, as is a `_box/` value with no `notify` block to read
 it. A `NOTIFY_` variable among an app's own secrets never reaches the
-app: motel withholds the prefix from the env file the box writes for an
-app, says so in the journal at each launch, and `make check` warns of
-it; name such a variable otherwise if the app reads it.
+app: motel withholds the prefix from every env file in
+`/etc/motel/secrets/`, where the box writes an app's (an env file of
+your own kept there is held to it too), says so in the journal at each
+launch, and `make check` warns of it; name such a variable otherwise if
+the app reads it.
 
 ### Let a new signer read them
 

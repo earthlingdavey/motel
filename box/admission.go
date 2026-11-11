@@ -84,6 +84,8 @@ func (p *pushing) admit(b *proof.Bundle, body []byte) (done bool, err error) {
 	// A notify block naming a secret the push does not carry would be
 	// refused by validate too (the box does not hold it yet), in words
 	// that do not say where the value goes: told first, with the remedy.
+	// secretsFit, below, runs it again, as `motel box describe` does: a
+	// walk over the names, and the same answer.
 	if err := notifyCarried(vd.next, vd.secrets, secretsShown(b.Path)); err != nil {
 		return true, p.refuse(b, err)
 	}

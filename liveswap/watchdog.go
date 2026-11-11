@@ -11,6 +11,7 @@ import (
 	"sync"
 	"syscall"
 	"time"
+	"unicode/utf8"
 
 	"go.uber.org/zap"
 )
@@ -86,10 +87,15 @@ type watchdogState struct {
 	// What the notify module was told (lifecycle.go): alerted while a
 	// restart loop is reported and not yet over, recovering once its
 	// recovery is reported and the hold runs, refused while a relaunch
-	// refusal stands. alerted and refused outlive the process in
-	// alerts.json (persistAlerts), so that a motel restarted while one
+	// refusal stands. They outlive the process in alerts.json
+	// (alertsChanged writes it), so that a motel restarted while one
 	// stands reports it again (ReportStanding).
 	alerted, recovering, refused bool
+	// refusedRelease and refusedReason are what the refusal was told
+	// with, kept beside the flag so that a standing report says them
+	// again: Alertmanager merges it over the original alert, and a
+	// generic summary would replace the reason in every repeat.
+	refusedRelease, refusedReason string
 	// persisted is the pair alerts.json was last asked to hold, and gen
 	// counts each change of it; saveAlerts writes one (nil: nowhere to
 	// write yet, before the app's first configure).
@@ -113,6 +119,28 @@ type reportedAlerts struct {
 	Loop       bool `json:"loop,omitempty"`       // a restart loop
 	Recovering bool `json:"recovering,omitempty"` // its recovery told, the hold running
 	Refused    bool `json:"refused,omitempty"`    // a relaunch refusal
+	// The refusal's release and reason (its error's first line, within
+	// refusedReasonMax bytes), as it was told.
+	RefusedRelease string `json:"refused_release,omitempty"`
+	RefusedReason  string `json:"refused_reason,omitempty"`
+}
+
+// refusedReasonMax bounds the reason kept in alerts.json: a pre-flight
+// refusal's first line names a machine or a command, well inside it.
+const refusedReasonMax = 512
+
+// boundReason is the reason as kept: its first line, cut at a rune
+// boundary within refusedReasonMax bytes.
+func boundReason(s string) string {
+	s = firstLine(s)
+	if len(s) <= refusedReasonMax {
+		return s
+	}
+	cut := refusedReasonMax
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+	return s[:cut]
 }
 
 // alertsChanged is called with mu held after a flag may have changed:
@@ -120,6 +148,9 @@ type reportedAlerts struct {
 // nil when nothing persisted changed.
 func (w *watchdogState) alertsChanged() func() {
 	now := reportedAlerts{Loop: w.alerted, Recovering: w.alerted && w.recovering, Refused: w.refused}
+	if w.refused {
+		now.RefusedRelease, now.RefusedReason = w.refusedRelease, w.refusedReason
+	}
 	if now == w.persisted || w.saveAlerts == nil {
 		w.persisted = now // before the first configure: the file's own
 		return nil
@@ -127,15 +158,31 @@ func (w *watchdogState) alertsChanged() func() {
 	w.persisted = now
 	w.gen++
 	gen, save := w.gen, w.saveAlerts
-	return func() {
-		w.saveMu.Lock()
-		defer w.saveMu.Unlock()
-		if gen <= w.savedGen {
-			return
-		}
-		w.savedGen = gen
-		_ = save(now) // the writer journals its own failure
+	return func() { w.writeAlerts(gen, save, now) }
+}
+
+// rewriteAlerts writes what stands with the writer now installed, as a
+// change newer than any write still in flight to the one before, which
+// lands ahead of this one or not at all: a rollback's, whose candidate
+// had pointed the writes at its own root (Copilot round 3 on #424).
+func (w *watchdogState) rewriteAlerts() {
+	w.mu.Lock()
+	w.gen++
+	gen, save, now := w.gen, w.saveAlerts, w.persisted
+	w.mu.Unlock()
+	w.writeAlerts(gen, save, now)
+}
+
+// writeAlerts writes r, the pair of change gen, with save, unless a
+// newer change has been written already. Called without mu.
+func (w *watchdogState) writeAlerts(gen uint64, save func(reportedAlerts) error, r reportedAlerts) {
+	w.saveMu.Lock()
+	defer w.saveMu.Unlock()
+	if gen <= w.savedGen {
+		return
 	}
+	w.savedGen = gen
+	_ = save(r) // the writer journals its own failure
 }
 
 // runSave calls a deferred write if there is one.
@@ -202,10 +249,15 @@ func (w *watchdogState) endLoopAlert() bool {
 	return was
 }
 
-func (w *watchdogState) setRefused() bool {
+// setRefused records a relaunch refusal of release for reason, and says
+// whether it is new and so to be told. One already standing keeps what
+// it was told with.
+func (w *watchdogState) setRefused(release, reason string) bool {
 	w.mu.Lock()
 	was := w.refused
-	w.refused = true
+	if !was {
+		w.refused, w.refusedRelease, w.refusedReason = true, release, boundReason(reason)
+	}
 	save := w.alertsChanged()
 	w.mu.Unlock()
 	runSave(save)
@@ -215,7 +267,7 @@ func (w *watchdogState) setRefused() bool {
 func (w *watchdogState) takeRefused() bool {
 	w.mu.Lock()
 	was := w.refused
-	w.refused = false
+	w.refused, w.refusedRelease, w.refusedReason = false, "", ""
 	save := w.alertsChanged()
 	w.mu.Unlock()
 	runSave(save)
@@ -228,6 +280,7 @@ func (w *watchdogState) takeRefused() bool {
 func (w *watchdogState) forgetAlerts() {
 	w.mu.Lock()
 	w.alerted, w.recovering, w.refused = false, false, false
+	w.refusedRelease, w.refusedReason = "", ""
 	save := w.alertsChanged()
 	w.mu.Unlock()
 	runSave(save)
@@ -246,6 +299,13 @@ func (w *watchdogState) standing(now time.Time, hold time.Duration) (loop, recov
 		loop, recovering = false, false
 	}
 	return loop, recovering, w.refused
+}
+
+// refusal is the standing refusal's release and reason, as it was told.
+func (w *watchdogState) refusal() (release, reason string) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.refusedRelease, w.refusedReason
 }
 
 func (w *watchdogState) isRestored() bool {
@@ -276,7 +336,9 @@ func (w *watchdogState) restoreAlerts(load func() (reportedAlerts, error), save 
 	if !w.alerted && r.Loop {
 		w.alerted, w.recovering = true, r.Recovering
 	}
-	w.refused = w.refused || r.Refused
+	if !w.refused && r.Refused {
+		w.refused, w.refusedRelease, w.refusedReason = true, r.RefusedRelease, boundReason(r.RefusedReason)
+	}
 	w.persisted = r
 	return nil
 }
@@ -834,11 +896,11 @@ func (ma *managedApp) handleFailure(ctx context.Context, c collaborators, inst *
 		// cause is fixed, launches the app again.
 		ma.dropIf(inst)
 		ma.wd.setLastFailure(err.Error())
-		if ma.wd.setRefused() {
+		if ma.wd.setRefused(inst.version, err.Error()) {
 			// The refusal's own text names the release's machine or its
 			// command, never a log tail; the filter runs over it anyway.
 			ma.lifecycle(c, LifecycleEvent{Name: EventRelaunchRefused, Release: inst.version,
-				Summary: "the watchdog's relaunch of " + inst.version + " was refused, so the app is down: " + firstLine(err.Error())})
+				Summary: refusedSummary(inst.version, boundReason(err.Error()))})
 		}
 		c.logger.Error("watchdog: relaunch refused; the app stays down until a deploy of another version (or a rollback to one), or a reload once the cause is fixed, launches it",
 			zap.String("version", inst.version), zap.Error(err))
@@ -892,6 +954,20 @@ func (ma *managedApp) noteHealthy(c collaborators, spec *appSpec, version string
 		ma.lifecycle(c, LifecycleEvent{Name: EventWatchdogRecovered, Release: version, Hold: hold,
 			Summary: "healthy again after a restart loop"})
 	}
+}
+
+// refusedSummary is a relaunch refusal's summary, as told and as a
+// standing report tells it again.
+func refusedSummary(release, reason string) string {
+	s := "the watchdog's relaunch"
+	if release != "" {
+		s += " of " + release
+	}
+	s += " was refused, so the app is down"
+	if reason != "" {
+		s += ": " + reason
+	}
+	return s
 }
 
 // firstLine is s up to its first line break.

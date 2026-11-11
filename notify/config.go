@@ -187,7 +187,7 @@ type resolved struct {
 // trusts, a secret the box does not hold, a URL that is not https to a
 // public address. Errors name keys and channels, never a value.
 func (a *App) resolve(trust map[string][]TrustSource, secrets map[string]string) (*resolved, error) {
-	r, _, err := a.resolveWith(trust, secrets, nil, false)
+	r, _, err := a.resolveWith(trust, secrets, nil, false, nil)
 	return r, err
 }
 
@@ -204,7 +204,11 @@ func (a *App) resolve(trust map[string][]TrustSource, secrets map[string]string)
 //     config: it leaves the operator line, the bindings and the route
 //     tree, and each is in dropped, by its line and key, for the
 //     journal. A missing heartbeat secret drops the heartbeat.
-func (a *App) resolveWith(trust map[string][]TrustSource, secrets map[string]string, held map[string]bool, drop bool) (*resolved, []error, error) {
+//   - unusable is why the secrets file could not be read or parsed, or
+//     nil: every secret is then unusable, so a drop takes out every line
+//     that reads one, each reason naming the file's error, and any other
+//     load refuses the first.
+func (a *App) resolveWith(trust map[string][]TrustSource, secrets map[string]string, held map[string]bool, drop bool, unusable error) (*resolved, []error, error) {
 	r := &resolved{
 		channels:    map[string]Channel{},
 		appChannels: map[string][]string{},
@@ -268,25 +272,28 @@ func (a *App) resolveWith(trust map[string][]TrustSource, secrets map[string]str
 	for app := range r.appChannels {
 		sort.Strings(r.appChannels[app])
 	}
-	keys := map[string]string{} // secret key → the first line that names it
+	// Each secret key → every line that reads it, in the block's order:
+	// a drop takes them all out (without), so the reason names them all.
+	keys := map[string][]string{}
 	for _, name := range r.order {
-		keys[r.channels[name].Secret] = "channel " + name
+		key := r.channels[name].Secret
+		keys[key] = append(keys[key], "channel "+name)
 	}
 	if r.heartbeat != "" {
-		if _, ok := keys[r.heartbeat]; !ok {
-			keys[r.heartbeat] = "heartbeat"
-		}
+		keys[r.heartbeat] = append(keys[r.heartbeat], "heartbeat")
 	}
 	bad := map[string]bool{}
 	var dropped []error
 	for _, key := range slices.Sorted(maps.Keys(keys)) {
-		who := keys[key]
+		who := strings.Join(keys[key], ", ")
 		if held[key] && filepath.Clean(a.secretsFile()) == DefaultSecretsFile {
 			continue
 		}
 		v, ok := secrets[key]
 		var why error
 		switch {
+		case unusable != nil:
+			why = fmt.Errorf("%s: secret %s cannot be read: %w", who, key, unusable)
 		case !ok || v == "":
 			why = fmt.Errorf("%s: secret %s is not in the box's secrets (%s)", who, key, a.secretsFile())
 		default:

@@ -297,6 +297,7 @@ func (e *engine) report(ev Event) {
 			e.states[key] = st
 			e.journal(ev, "held")
 			e.reconcile(key, st, now)
+			st.ev.Standing = false // told again once; what follows is this process's
 			return
 		}
 	}
@@ -329,6 +330,9 @@ func (e *engine) report(ev Event) {
 		}
 	}
 	e.reconcile(key, st, now)
+	// A standing report's own lines say so; the event kept for the
+	// key's later lines (a held post, the resolve) is this process's.
+	st.ev.Standing = false
 }
 
 // reconcile moves one state key towards what its detector says, as far

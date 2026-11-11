@@ -1099,8 +1099,8 @@ func TestApplyBoxSecrets(t *testing.T) {
 	if r.Phase != phaseApplied || !bytes.Equal(b.env("_box"), want) || b.envMode("_box") != 0o640 {
 		t.Fatalf("%+v; _box.env %q", r, b.env("_box"))
 	}
-	if b.sd.reloaded != 1 {
-		t.Errorf("%d reloads for the box's own secrets, want 1", b.sd.reloaded)
+	if b.sd.reloaded != 1 || !r.Reloaded {
+		t.Errorf("%d reloads for the box's own secrets, want 1; result says reloaded %v", b.sd.reloaded, r.Reloaded)
 	}
 	if a := b.applied(); a.Secrets["_box"] != digest(want) || !slices.Equal(r.SecretsAdded, []string{"_box/NOTIFY_OPS_URL"}) {
 		t.Errorf("applied.json %+v, result %+v", a, r)
@@ -1110,14 +1110,14 @@ func TestApplyBoxSecrets(t *testing.T) {
 	// of that.
 	c2 := b.repo.commitSecrets(b.v1, secrets{"_box": {"NOTIFY_OPS_URL": enc("https://ntfy.sh/ops-2")}, "example": {"KEY": enc("v")}}, &b.alice, c1)
 	r = b.pushOne(b.repo.bundleFiles(c2, c1))
-	if r.Phase != phaseApplied || b.sd.reloaded != 2 || !slices.Equal(r.SecretsChanged, []string{"_box/NOTIFY_OPS_URL"}) {
+	if r.Phase != phaseApplied || b.sd.reloaded != 2 || !r.Reloaded || !slices.Equal(r.SecretsChanged, []string{"_box/NOTIFY_OPS_URL"}) {
 		t.Fatalf("%+v; %d reloads", r, b.sd.reloaded)
 	}
 
 	// An app's secrets alone: no reload.
 	c3 := b.repo.commitSecrets(b.v1, secrets{"_box": {"NOTIFY_OPS_URL": enc("https://ntfy.sh/ops-2")}, "example": {"KEY": enc("w")}}, &b.alice, c2)
 	r = b.pushOne(b.repo.bundleFiles(c3, c2))
-	if r.Phase != phaseApplied || b.sd.reloaded != 2 {
+	if r.Phase != phaseApplied || b.sd.reloaded != 2 || r.Reloaded {
 		t.Fatalf("%+v; %d reloads for an app's secrets alone", r, b.sd.reloaded)
 	}
 
@@ -1128,14 +1128,26 @@ func TestApplyBoxSecrets(t *testing.T) {
 	}
 	c4 := b.repo.commitSecrets(b.v1, secrets{"_box": {"NOTIFY_OPS_URL": enc("https://ntfy.sh/ops-2")}, "example": {"KEY": enc("w")}}, &b.alice, c3)
 	r = b.pushOne(b.repo.bundleFiles(c4, c3))
-	if r.Phase != phaseApplied || b.envMode("_box") != 0o640 || b.sd.reloaded != 2 {
+	if r.Phase != phaseApplied || b.envMode("_box") != 0o640 || b.sd.reloaded != 2 || r.Reloaded {
 		t.Fatalf("%+v; mode %v; %d reloads", r, b.envMode("_box"), b.sd.reloaded)
 	}
+
+	// The same values over other bytes (a hand edit, or the file an
+	// operator wrote before the slot): rewritten and reloaded, though no
+	// name changed, and the result says so, for the workflow's line.
+	b.putEnv("_box", []byte("NOTIFY_OPS_URL=https://ntfy.sh/ops-2\n"), 0o640)
+	c4b := b.repo.commitSecrets(b.v1, secrets{"_box": {"NOTIFY_OPS_URL": enc("https://ntfy.sh/ops-2")}, "example": {"KEY": enc("w")}}, &b.alice, c4)
+	r = b.pushOne(b.repo.bundleFiles(c4b, c4))
+	if r.Phase != phaseApplied || b.sd.reloaded != 3 || !r.Reloaded || len(r.SecretsAdded)+len(r.SecretsChanged)+len(r.SecretsRemoved) != 0 ||
+		!slices.Equal(r.SecretsOutOfBand, []string{"_box"}) {
+		t.Fatalf("%+v; %d reloads for other bytes of the same values", r, b.sd.reloaded)
+	}
+	c4 = c4b
 
 	// The slot gone: the file removed, and motel reloaded without it.
 	c5 := b.repo.commitSecrets(b.v1, secrets{"example": {"KEY": enc("w")}}, &b.alice, c4)
 	r = b.pushOne(b.repo.bundleFiles(c5, c4))
-	if r.Phase != phaseApplied || b.env("_box") != nil || b.sd.reloaded != 3 || !slices.Equal(r.SecretsRemoved, []string{"_box/NOTIFY_OPS_URL"}) {
+	if r.Phase != phaseApplied || b.env("_box") != nil || b.sd.reloaded != 4 || !r.Reloaded || !slices.Equal(r.SecretsRemoved, []string{"_box/NOTIFY_OPS_URL"}) {
 		t.Fatalf("%+v; _box.env %q; %d reloads", r, b.env("_box"), b.sd.reloaded)
 	}
 }
