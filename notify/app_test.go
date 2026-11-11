@@ -12,6 +12,8 @@ import (
 
 	"github.com/caddyserver/caddy/v2"
 	"github.com/caddyserver/caddy/v2/caddyconfig"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zaptest/observer"
 
 	// The Caddyfile adapter and the liveswap option, as the motel
 	// binary links them.
@@ -268,6 +270,36 @@ func TestBootDropsTheChannelsOfAnUnusableSecretsFile(t *testing.T) {
 		}
 		if !c.ok && (err == nil || !strings.Contains(err.Error(), secrets+":2: not KEY=VALUE")) {
 			t.Errorf("%q, running %v: err = %v", c.cmd, c.running, err)
+		}
+	}
+}
+
+// TestNoHeartbeatIsWarned: a block with no heartbeat line loads (the
+// Watchdog goes to the blackhole), and every load says so; so does a
+// boot that drops the line for its secret; one with the line says
+// nothing of it.
+func TestNoHeartbeatIsWarned(t *testing.T) {
+	// The secrets are given to resolveWith; the file only names them.
+	secrets := filepath.Join(t.TempDir(), "_box.env")
+	ops := Channel{Name: "ops", Kind: "ntfy", Secret: "NOTIFY_OPS_URL"}
+	for _, c := range []struct {
+		name, heartbeat string
+		secrets         map[string]string
+		want            int
+	}{
+		{"no line", "", map[string]string{"NOTIFY_OPS_URL": "https://ntfy.sh/ops"}, 1},
+		{"the line, its secret missing at a boot", "NOTIFY_HC_URL", map[string]string{"NOTIFY_OPS_URL": "https://ntfy.sh/ops"}, 1},
+		{"the line", "NOTIFY_HC_URL", map[string]string{"NOTIFY_OPS_URL": "https://ntfy.sh/ops", "NOTIFY_HC_URL": "https://hc-ping.com/x"}, 0},
+	} {
+		core, logs := observer.New(zap.WarnLevel)
+		a := &App{Channels: []Channel{ops}, Operator: []string{"ops"}, HeartbeatSecret: c.heartbeat, SecretsFile: secrets, logger: zap.New(core)}
+		r, _, err := a.resolveWith(map[string][]TrustSource{}, c.secrets, nil, true, nil)
+		if err != nil {
+			t.Fatalf("%s: %v", c.name, err)
+		}
+		a.warnAtLoad(r.heartbeat)
+		if n := len(logs.FilterMessageSnippet("notify: no heartbeat in this load").All()); n != c.want {
+			t.Errorf("%s: %d warnings, want %d (%v)", c.name, n, c.want, logs.All())
 		}
 	}
 }

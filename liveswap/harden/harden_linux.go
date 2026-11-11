@@ -35,12 +35,10 @@ import "syscall"
 // the Go runtime's own start-up plus the initializers of syscall's
 // dependencies, well under a millisecond — during which a same-UID
 // process racing on /proc could still read the new supervisor's
-// environment. On the support matrix that is a read race only: Yama's
-// default ptrace_scope=1 forbids a non-descendant from PTRACE_ATTACH
-// or PTRACE_SEIZE at any time (Yama gates PTRACE_MODE_ATTACH, which
-// the dumpable flag does not govern), so an app cannot take control
-// of the supervisor in that window; on a host with ptrace_scope=0 an
-// attach made then would survive this call. Only the kernel closes
+// environment, or attach to it: Debian 13 leaves Yama's ptrace_scope
+// at 0, and an attach made in the window survives this call (with
+// ptrace_scope=1, Yama forbids a non-descendant's PTRACE_ATTACH at any
+// time, and the window is a read race alone). Only the kernel closes
 // the window, and only from the app's side: app units in their own
 // PID namespace (PrivatePIDs= on the units, #35) cannot see the
 // supervisor at all — a namespace on motel.service would not help,

@@ -166,7 +166,8 @@ func TestMetricsSetupFailingPutsTheStoreBack(t *testing.T) {
 
 // TestMetricsUnitsAreTheMeasuredOnes holds the shipped units to what ran
 // on hotserve-1 (hotserve1_stack_test.md), with this slice's paths and
-// caps.
+// caps; the proxies' users and the drop-in's chmod were measured in the
+// e2e box only (notify/DESIGN-metrics.md, "The shape").
 func TestMetricsUnitsAreTheMeasuredOnes(t *testing.T) {
 	has := func(name string, unit []byte, wants ...string) {
 		t.Helper()
@@ -180,15 +181,40 @@ func TestMetricsUnitsAreTheMeasuredOnes(t *testing.T) {
 		"MemoryMax=256M", "-memory.allowedBytes=96MiB", "-retentionPeriod=14d", "-promscrape.config="+DefaultMetricsStateDir+"/"+scrapeName,
 		"Requires=motel-metrics-netns.service",
 		// The store's start brings vmalert, which a stop of the store stopped.
-		"Wants=motel-vmalert.service")
+		"Wants=motel-vmalert.service",
+		// Debian's 0755 would let every local uid read the series.
+		"ExecStartPre=+/usr/bin/chmod 0750 /var/lib/victoria-metrics\n")
 	// A namespace left behind must not fail every later start.
 	has("the namespace unit", unitNetns, "ExecStartPre=-/usr/sbin/ip netns delete motel-metrics\nExecStart=/usr/sbin/ip netns add motel-metrics")
 	has("motel-vm.socket", unitVMSocket, "ListenStream="+DefaultStoreSocket+"\n", "SocketGroup=motel", "SocketMode=0660")
-	has("motel-vm.service", unitVMProxy, "NetworkNamespacePath=/run/netns/motel-metrics", "systemd-socket-proxyd --exit-idle-time=5min 127.0.0.1:8428")
+	has("motel-vm.service", unitVMProxy, "NetworkNamespacePath=/run/netns/motel-metrics", "systemd-socket-proxyd --exit-idle-time=5min 127.0.0.1:8428",
+		// Not root (the box audit of 2026-11-11).
+		"DynamicUser=yes", "CapabilityBoundingSet=\n")
 	// The cold-boot ordering cycle's fix.
 	has("motel-am-proxy.socket", unitAMProxySocket, "DefaultDependencies=no", "After=sysinit.target motel-metrics-netns.service",
 		"ListenStream=127.0.0.1:9093", "NetworkNamespacePath=/run/netns/motel-metrics", "WantedBy=multi-user.target")
-	has("motel-am-proxy.service", unitAMProxy, "systemd-socket-proxyd --exit-idle-time=5min "+DefaultSocket, "Requires=motel-am-proxy.socket motel-am.socket")
+	has("motel-am-proxy.service", unitAMProxy, "systemd-socket-proxyd --exit-idle-time=5min "+DefaultSocket, "Requires=motel-am-proxy.socket motel-am.socket",
+		// Not root, and the motel group's files out of its view.
+		// motel as the primary group, so the store's processes (the
+		// same uid, another gid) cannot attach to it.
+		"User=_victoria-metrics", "Group=motel\n", "CapabilityBoundingSet=\n", "TemporaryFileSystem=/:ro",
+		"BindReadOnlyPaths=/usr -/bin -/lib -/lib64 -/etc/ld.so.cache /run/motel-notify /run/systemd/notify\n")
+	forbidden := map[string]string{
+		// Either one has systemd keep the host's root, and the view with
+		// it (measured, systemd 257).
+		"DynamicUser=":   "undoes TemporaryFileSystem=/",
+		"ProtectSystem=": "undoes TemporaryFileSystem=/",
+		// The kernel's ptrace check ignores supplementary groups.
+		"SupplementaryGroups=": "lets the store's processes, the same uid and gid, attach to it",
+	}
+	for _, line := range strings.Split(string(unitAMProxy), "\n") {
+		line = strings.TrimSpace(line)
+		for key, why := range forbidden {
+			if strings.HasPrefix(line, key) {
+				t.Errorf("motel-am-proxy.service has %q, which %s", line, why)
+			}
+		}
+	}
 	has("motel-vmalert.service", unitVMAlert, "User=_victoria-metrics", "NetworkNamespacePath=/run/netns/motel-metrics",
 		"-rule="+DefaultMetricsStateDir+"/"+RulesName+" ", "-configCheckInterval=1m", "-disableAlertgroupLabel",
 		"-notifier.url=http://127.0.0.1:9093", "-remoteWrite.url=http://127.0.0.1:8428", "-remoteRead.url=http://127.0.0.1:8428", "MemoryMax=128M")

@@ -54,15 +54,47 @@ their solutions:
 |---|---|---|
 | The namespace | `motel-metrics`, holding a loopback only | `motel-metrics-netns.service`, a oneshot (`ip netns add`, `lo up`) |
 | The store | Debian 13's `victoria-metrics` 1.112.0: storage, MetricsQL, vmui, its own scrapes | Debian's unit with motel's drop-in (`notify/units/metrics/10-motel.conf`): `NetworkNamespacePath=`, `-httpListenAddr=127.0.0.1:8428` inside it, `-retentionPeriod=14d`, `MemoryMax=256M`, `-memory.allowedBytes=96MiB` |
-| Its listener | `/run/motel-metrics/vm.sock`, 0660 root:motel (`motel-vm.socket`) → `systemd-socket-proxyd` in the namespace → `127.0.0.1:8428` | no TCP port in the host namespace |
+| Its listener | `/run/motel-metrics/vm.sock`, 0660 root:motel (`motel-vm.socket`) → `systemd-socket-proxyd` in the namespace (`DynamicUser=yes`, no capability) → `127.0.0.1:8428` | no TCP port in the host namespace |
 | vmalert | from the same package (Debian 13 has no `vmalert` package): evaluates `rules.yml` every minute, keeps its alert state in the store | `motel-vmalert.service`, `User=_victoria-metrics`, in the namespace, `MemoryMax=128M` |
-| Its outlet | `127.0.0.1:9093` bound **inside** the namespace (`motel-am-proxy.socket`) → `systemd-socket-proxyd` → `/run/motel-notify/am.sock` | vmalert speaks TCP only, to its datasource and its notifier (unix_socket_test.md) |
+| Its outlet | `127.0.0.1:9093` bound **inside** the namespace (`motel-am-proxy.socket`) → `systemd-socket-proxyd` (`_victoria-metrics` with motel as its group, no capability, a view of the socket's directory alone) → `/run/motel-notify/am.sock` | vmalert speaks TCP only, to its datasource and its notifier (unix_socket_test.md) |
 | Its config | `rules.yml` (rendered by motel at every config load) and `scrape.yml` (written by setup), 0640 | `/var/lib/motel-metrics`, 2750 motel:_victoria-metrics (setup makes it) |
 | motel's part | the `metrics_store` block, the push, the per-app collector, the rules render, the watch of the chain, `metrics` in `GET /<app>`, `motel metrics setup` | `notify/metrics*.go`; liveswap's `AppSamples` and `MetricsSource` (liveswap/appmetrics.go) |
 
 Every unit file is the one measured on hotserve-1 since 2026-11-10
 12:13 UTC (hotserve1_stack_test.md: three cold boots, no host listener,
-both directions verified), with the paths and flags of this section.
+both directions verified), with the paths and flags of this section,
+except the two proxies' users and the drop-in's chmod of the store's
+data, set after the box's audit of 2026-11-11 found both proxies running
+as root and the data world-readable: measured in the e2e box (systemd
+257), not yet on hotserve-1.
+
+**The proxies run as no root.** Each passes bytes it does not parse, and
+motel shapes some of them (its own reads through `vm.sock`, and what
+vmalert posts from the rules motel renders), so a proxy as root would
+make a bug in it T5's way to root. `motel-vm.service` needs nothing: its
+listener comes by socket activation and it connects to the namespace's
+loopback, so it is `DynamicUser=yes` with an empty
+`CapabilityBoundingSet=`. `motel-am-proxy.service` must connect to
+Alertmanager's socket, 0660 root:motel, so it holds the motel group,
+which also reads the env files and the box's exchange tree; its view is
+deny-by-default as an app's is (`TemporaryFileSystem=/:ro`, then `/usr`,
+the linker's cache, `/run/motel-notify` and systemd's notify socket bound
+back read-only). That needs a static uid, since `DynamicUser=` implies
+`ProtectSystem=strict`, under which systemd keeps the host's root
+(measured): the uid is `_victoria-metrics`, the namespace daemons' own,
+whose processes are the proxy's only clients. A bug in it gives them the
+uid they hold, and a group whose one path in that view is the socket
+they reach through it anyway. motel is the proxy's primary group, not a
+supplementary one: the kernel lets a process attach to, or read the
+`/proc` of, one whose uid and gids all match its own, whatever their
+supplementary groups, so with the store's gid the store could have
+attached to the proxy and used its group past its view (Debian leaves
+`ptrace_scope` at 0; measured, Copilot on #426). With motel's gid the
+store's uid is refused both. `PrivateUsers=` would refuse them too; it
+failed (217/USER, with `yes` and with `identity`) beside a supplementary
+group, and with motel as the primary group it is untried. A signal checks
+the uid alone, so the store's processes can still stop or kill the
+proxy, which stops nothing they could not stop by stopping vmalert.
 
 **Who reaches the socket, and why.** As for notify's: every app runs as
 the motel uid, so the socket's group is not what keeps apps out; their
@@ -284,7 +316,11 @@ after `motel notify setup`:
    `notify/units/metrics/`), and `/var/lib/motel-metrics` 2750
    motel:_victoria-metrics with `scrape.yml` and, unless motel has
    rendered one, a `rules.yml` of empty groups, which vmalert starts
-   from until motel's render a moment later;
+   from until motel's render a moment later. The drop-in sets the
+   store's data directory `/var/lib/victoria-metrics` to 0750 at every
+   start (`ExecStartPre=+/usr/bin/chmod`): Debian ships it 0755, which
+   lets every local uid read every series past the socket's group, and
+   a purge and reinstall makes it so again;
    The drop-in's `Wants=motel-vmalert.service` has the store's start
    bring vmalert: a `systemctl stop victoria-metrics` stops vmalert too,
    and motel's next push starts the store again through the socket. To
@@ -318,7 +354,7 @@ after the namespace by hand (the first boot's ordering cycle).
 | `/var/lib/motel-metrics/` | 2750 | motel:_victoria-metrics | setup (makes), motel | the store, vmalert |
 | `…/rules.yml` | 0640 | motel:_victoria-metrics | motel, by rename; setup when absent | vmalert |
 | `…/scrape.yml` | 0640 | motel:_victoria-metrics | setup | the store |
-| `/var/lib/victoria-metrics/` | Debian's | _victoria-metrics | the store, vmalert's state through it | the store |
+| `/var/lib/victoria-metrics/` | 0750 (the drop-in, at every start; Debian ships 0755) | _victoria-metrics | the store, vmalert's state through it | the store |
 | `/run/netns/motel-metrics` | — | root | the namespace unit | systemd |
 | `/etc/systemd/system/motel-metrics-netns.service`, `motel-vm.socket`, `motel-vm.service`, `motel-am-proxy.socket`, `motel-am-proxy.service`, `motel-vmalert.service`, `victoria-metrics.service.d/10-motel.conf` | 0644 | root | setup | systemd |
 
@@ -341,7 +377,9 @@ read path from the store into `GET /<app>`.
   vmalert post any alert to Alertmanager, which T5 could already post
   itself. scrape.yml is setup's, but motel's uid owns the directory and
   could rewrite it to scrape anything the namespace reaches, which is
-  the namespace's own loopback and Alertmanager: nothing T5 lacks.
+  the namespace's own loopback and Alertmanager: nothing T5 lacks. The
+  bytes it sends through either proxy reach no root process ("The
+  shape").
 - **T6** (a compromised config repository): can add or remove the block
   and move its socket path, no more; no rule, query or template is
   configurable.
@@ -349,7 +387,11 @@ read path from the store into `GET /<app>`.
   the proxy gives whatever runs in the namespace Alertmanager's whole
   API, silences included. Only the store and vmalert run there; a
   compromise of either is a compromise of a root-installed Debian
-  package, outside what motel defends.
+  package, outside what motel defends. motel's own units give it no
+  more: neither proxy runs as root ("The shape"), and the am proxy, the
+  one they reach, holds their uid with motel's gid, so they cannot attach
+  to it or read its `/proc`, and the group reaches only the socket in its
+  view.
 - The store holds label values motel chose (app, release, Caddy's
   server and handler names). A leak of it is low-sensitivity by
   construction; `GET /<app>` is app-scoped anyway, so a deployer never
@@ -431,8 +473,9 @@ on its general scales. metrics' examples:
 | The response observer: per-app requests by class, 5xx share, p50 and p95, cache hit share, in the push, `metrics` and the rules (with `?range=24h`, and the post-deploy comparison) | — | — | — | slice three: needs a handler on the app's request path |
 | Operator rules (the fresh-slate draft's `rule` line), as a grammar of fixed kinds with parameters, never a template | — | — | — | slice three |
 | The store's RSS with `-memory.allowedBytes=96MiB` after a day, and on a 1 or 2 GB box | — | — | — | the next deploy to hotserve-1 |
-| A reboot with motel rendering `rules.yml` and pushing, as slice one's was measured, on a booted Debian host: the namespace's and the sockets' cold-boot order, a connection made while setup has the store masked, and a failed setup re-run's put-back (Copilot round 2 on #425) | — | — | — | the next deploy to hotserve-1 |
-| Debian's security support for `victoria-metrics` 1.112.0 on trixie, and a dist-upgrade check of the drop-in's flags | — | — | — | before any release |
+| A reboot with motel rendering `rules.yml` and pushing, as slice one's was measured, on a booted Debian host: the namespace's and the sockets' cold-boot order, a connection made while setup has the store masked, and a failed setup re-run's put-back (Copilot round 2 on #425); the two proxies' users and the am proxy's view, measured so far in the e2e box only | — | — | — | the next deploy to hotserve-1 |
+| motel says nothing when setup's units on disk are older than the binary's: a box upgraded past a change to them (this one: the proxies' users, the chmods) keeps the old units until root re-runs both setups. A load could compare the installed files with the embedded ones and warn | 3 | 5 | 5 | the next PR on the feature branch, before it merges to main (/code-review of #426) |
+| Debian's security support for `victoria-metrics` 1.112.0 and `prometheus-alertmanager` 0.28.1 on trixie, whose binaries are built with Go 1.24.2 (the store, vmalert) and 1.24.1 (Alertmanager), and a dist-upgrade check of both drop-ins' flags | — | — | — | before any release |
 
 ## e2e rows
 
@@ -442,7 +485,8 @@ image with Debian's `victoria-metrics` installed and masked
 runs `motel notify setup` and `motel metrics setup` itself and asserts:
 no TCP listener on 8428, 8880 or 9093 in the host namespace, all three
 in the namespace; the socket `srw-rw---- root motel` and the state
-directory `drwxr-s--- motel _victoria-metrics`; root and motel reach the
+directory `drwxr-s--- motel _victoria-metrics`; the store's data
+`drwxr-x--- _victoria-metrics _victoria-metrics`; root and motel reach the
 store and nobody does; the store's and vmalert's `MemoryMax`; the
 rendered `rules.yml` passes `vmalert -dryRun`; motel's push arrives
 (`job="motel"`), with a deployed app's `motel_app_up`, release and CPU,
@@ -452,6 +496,13 @@ and the suite then asserts the series absent); `GET /<app>` with the
 deploy token carries `metrics`, and without one is a 401; vmalert's
 rules loaded, and its `ChannelFailed` for the failing channel firing
 with motel's labels while Alertmanager holds one such alert, not two;
+both proxies running as a uid not root with no capability, the am proxy
+as `_victoria-metrics` with gid motel and no other group, with
+Alertmanager's socket in its view and none of `/etc/motel`,
+`/var/lib/liveswap` or any other path an app's view hides, and the
+store's uid refused its `/proc` and an attach (with a control: the same
+uid attaching to a sleeper of its own; a host that refuses that too has
+the `/proc` check stand for it);
 the store stopped by hand, started again by motel's next push with vmalert beside it;
 the store made read-only (its free-space floor set above any disk): no series carries the flag, and motel's `metrics_store_read_only` is in Alertmanager, critical;
 motel's shutdown leaving `rules.yml`'s alerting rules, and a reload
@@ -499,3 +550,8 @@ Dated one-liners; the full text of each is in git.
 - 2026-11-11 — Copilot round 3 on #425, triaged: a first run that fails
   after its unmask is left unmasked in motel's confined shape (row); the
   three sentences that said it stays masked corrected.
+- 2026-11-11 — The audit of hotserve-1 on the feature branch: both
+  socket proxies run as no root (the am proxy in a deny-by-default view,
+  for the motel group it needs, which is its primary group so the store
+  cannot attach to it), and the drop-in sets the store's data to 0750 at
+  every start (Debian ships 0755).

@@ -1156,17 +1156,20 @@ the mechanism:
    *Residual, recorded because `liveswap/harden` cites it:* app units
    outlive supervisor restarts, so a same-UID app could in principle
    race the interval between `execve` and that `init` — well under a
-   millisecond — and read the new supervisor's environment. On Debian
-   13 that is a *read* race: Yama's default
-   `kernel.yama.ptrace_scope=1` forbids a non-descendant from
-   `PTRACE_ATTACH`/`PTRACE_SEIZE` at any time (Yama gates
-   `PTRACE_MODE_ATTACH`, which the dumpable flag does not govern), so
-   an app cannot seize the supervisor in the window; a host set to
-   `ptrace_scope=0` is outside this model. The window is closed from
-   the app's side by the namespaces above — an app in its own user
-   namespace cannot read the supervisor's `/proc` at all, and one in
-   its own PID namespace cannot see the supervisor's PID — and since
-   every app is sandboxed it stands for nothing on a running box.
+   millisecond — and read the new supervisor's environment, or attach
+   to it. Debian 13 leaves Yama's `kernel.yama.ptrace_scope` at 0
+   (measured on hotserve-1, a stock Debian 13 image, after a reboot:
+   0, set by no sysctl file and no boot parameter), so in that window a
+   same-UID process outside the apps' namespaces could also
+   `PTRACE_ATTACH` the supervisor, and an attach made then survives the
+   init; a host that raises it to 1 makes the window a read race
+   alone, since Yama gates `PTRACE_MODE_ATTACH`, which the dumpable
+   flag does not govern. The window is closed from the app's side by
+   the namespaces above, whatever the sysctl — an app in its own user
+   namespace is refused the supervisor's `/proc` and `ptrace` alike
+   (commoncap's check, "The shared-UID rule"), and one in its own PID
+   namespace cannot see the supervisor's PID — and since every app is
+   sandboxed it stands for nothing on a running box.
 
    *The capability probe runs under the shared uid.* It starts a real
    transient unit, bounded at 30 s, so any process holding that uid can

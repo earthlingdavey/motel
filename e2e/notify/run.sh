@@ -94,6 +94,13 @@ listeners=$(ss -ltnH 2>/dev/null | awk '{print $4}' | grep -E ':(9093|9094)$' ||
 	&& pass "the socket is srw-rw---- root motel" || fail "the socket is $(stat -c '%A %U %G' "$SOCK" 2>&1)"
 [ "$(stat -c '%A %U %G' "$STATE")" = "drwxr-s--- motel prometheus" ] \
 	&& pass "$STATE is drwxr-s--- motel prometheus" || fail "$STATE is $(stat -c '%A %U %G' "$STATE" 2>&1)"
+# Debian ships it 0755: the drop-in sets the mode at every start, so no
+# other uid reads the notification log or the silences. A connection to
+# the socket starts Alertmanager, if motel's render has not yet.
+curl -s -o /dev/null --max-time 10 --unix-socket "$SOCK" http://am/-/ready
+[ "$(stat -c '%A %U %G' /var/lib/prometheus/alertmanager)" = "drwxr-x--- prometheus prometheus" ] \
+	&& pass "Alertmanager's storage is drwxr-x--- prometheus prometheus" \
+	|| fail "Alertmanager's storage is $(stat -c '%A %U %G' /var/lib/prometheus/alertmanager 2>&1)"
 i=0
 until grep -q 'Rendered by motel' "$STATE/alertmanager.yml" 2>/dev/null; do
 	i=$((i + 1)); [ "$i" -ge 40 ] && break; sleep 0.25
@@ -225,6 +232,17 @@ done
 echo "=== notify 10: no channel URL in any journal ==="
 n=$(journalctl -u motel -u prometheus-alertmanager -o cat --no-pager | grep -c 'e2e-sink' || true)
 [ "$n" -eq 0 ] && pass "no channel URL in motel's or Alertmanager's journal" || fail "$n journal lines hold a channel URL"
+
+echo "=== notify 10a: no heartbeat line, warned ==="
+sed '/^[[:space:]]*heartbeat /d' /etc/motel/Caddyfile >/tmp/Caddyfile.nohb
+grep -q 'heartbeat ' /tmp/Caddyfile.nohb && fail "fixture: could not cut the heartbeat line"
+motel validate --adapter caddyfile --config /tmp/Caddyfile.nohb >/tmp/validate-nohb.out 2>&1 \
+	&& grep -q 'notify: no heartbeat in this load' /tmp/validate-nohb.out \
+	&& pass "motel validate takes a block with no heartbeat line, and warns" \
+	|| fail "validate without a heartbeat: $(tail -3 /tmp/validate-nohb.out)"
+motel validate --adapter caddyfile --config /etc/motel/Caddyfile >/tmp/validate-hb.out 2>&1
+grep -q 'no heartbeat' /tmp/validate-hb.out && fail "validate warns of no heartbeat with the line in place" \
+	|| pass "and with the line, no such warning"
 
 echo "=== notify 11: a secret missing at boot drops its channel; validate and reload refuse ==="
 # A channel line whose secret _box.env does not hold: the box's

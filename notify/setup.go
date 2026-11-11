@@ -227,6 +227,7 @@ func setup(sys system, root string, out io.Writer) (err error) {
 		}
 		say("wrote %s, a config that sends nothing, until motel renders the notify block", filepath.Join(DefaultStateDir, ConfigName))
 	}
+	// Its mode is the drop-in's, set at every start (Debian ships 0755).
 	if err := os.MkdirAll(at(amStorage), 0o750); err != nil {
 		return err
 	}

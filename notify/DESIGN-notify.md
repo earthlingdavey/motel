@@ -84,7 +84,7 @@ notify {
     channel <name> json|ntfy|slack|discord {secret.NOTIFY_<NAME>} [severity critical|warning|info]
     operator <channel>...
     bind <identity> <channel>
-    heartbeat {secret.NOTIFY_<NAME>}
+    heartbeat {secret.NOTIFY_<NAME>} # none: warned at every load
     deploy_succeeded on|off          # off by default (#418's table)
     allow_insecure_channels          # test rigs only; warned at every load
     secrets_file <path>              # default /etc/motel/secrets/_box.env
@@ -386,6 +386,11 @@ pinged every ten minutes (Fable review of #422, from Alertmanager
 0.28.1's dedupe stage). Silence means the box,
 motel or Alertmanager is down, which is the chain that delivers
 everything else. Uptime stays an external keyword check per host.
+A block with no `heartbeat` line loads, with its `Watchdog` routed to
+the blackhole receiver, and every load (`motel validate` too) warns
+`notify: no heartbeat in this load`, as for `allow_insecure_channels`:
+nothing outside the box would hear that it stopped. A boot that drops
+the line for its secret ("Secrets at load") warns the same.
 
 ## External producers and tests
 
@@ -438,7 +443,11 @@ motel controls:
 3. writes the drop-in and the socket unit (both ship in the binary,
    `notify/units/`), `/var/lib/motel-notify` 2750 motel:prometheus with
    a config that sends nothing (kept if motel has rendered one), and
-   Alertmanager's storage directory;
+   Alertmanager's storage directory, whose mode is the drop-in's:
+   `ExecStartPre=+/usr/bin/chmod 0750` at every start, since Debian ships
+   it 0755 and a purge and reinstall makes it so again (dpkg keeps an
+   existing directory's mode on an upgrade, measured with a reinstall of
+   0.28.1, and the postinst only chowns it);
 4. `daemon-reload`, `unmask`, `disable` the service (its socket starts
    it), `enable --now motel-am.socket`;
 5. `try-reload-or-restart motel.service`, which renders.
@@ -477,7 +486,7 @@ package is installed rather than a binary fetched.
 | `…/alertmanager.yml`, `…/url-<KEY>` | 0640 | motel:prometheus (born in the setgid dir) | motel, each by rename | Alertmanager |
 | `/etc/motel/secrets/_box.env` | 0640 | root:motel | root: the box applier from `secrets/_box/`, or by hand | motel |
 | `/etc/systemd/system/motel-am.socket`, `…/prometheus-alertmanager.service.d/10-motel.conf` | 0644 | root | setup | systemd |
-| `/var/lib/prometheus/alertmanager/` | 0750 | prometheus | Alertmanager (the notification log, silences) | Alertmanager |
+| `/var/lib/prometheus/alertmanager/` | 0750 (the drop-in, at every start; Debian ships 0755) | prometheus | Alertmanager (the notification log, silences) | Alertmanager |
 | `<liveswap root>/<app>/alerts.json` | 0600 | motel | motel (liveswap's watchdog, on each change; removed when nothing stands) | motel (once per process, for `ReportStanding`); in no app's view |
 
 ## Threat model
@@ -561,7 +570,8 @@ image with Debian's Alertmanager installed and masked
 (e2e/Dockerfile, `notify-box`), and a stub receiver (`e2e-sink`). The
 suite runs `motel notify setup` itself and asserts: no TCP listener on
 9093 or 9094; the socket `srw-rw---- root motel` and the state
-directory `drwxr-s--- motel prometheus`; the rendered config passes
+directory `drwxr-s--- motel prometheus`; Alertmanager's storage
+`drwxr-x--- prometheus prometheus`; the rendered config passes
 `amtool check-config`; root and motel reach the socket and nobody does;
 no URL in the config or the status API; the heartbeat; a real failing
 deploy's `deploy_failed` to the operator and the bound deployer within
@@ -651,3 +661,7 @@ Dated one-liners; the full text of each is in git.
   a refusal's release and reason for the standing report, a standing
   report's later lines are not standing, and a rollback writes what
   stands to the serving root ahead of any write still in flight.
+- 2026-11-11 — The audit of hotserve-1 on the feature branch: a load
+  with no heartbeat is warned, and the drop-in sets Alertmanager's
+  storage to the 0750 this document gave it at every start (Debian
+  ships 0755).

@@ -415,7 +415,7 @@ func TestUnitsAreTheMeasuredOnes(t *testing.T) {
 		}
 	}
 	drop := string(unitDropIn)
-	for _, want := range []string{"ExecStart=\n", "--web.systemd-socket", "--config.file=" + DefaultStateDir + "/" + ConfigName, "--cluster.listen-address= ", "receiver-name-in-metrics", "Requires=motel-am.socket"} {
+	for _, want := range []string{"ExecStart=\n", "--web.systemd-socket", "--config.file=" + DefaultStateDir + "/" + ConfigName, "--cluster.listen-address= ", "receiver-name-in-metrics", "Requires=motel-am.socket", "ExecStartPre=+/usr/bin/chmod 0750 " + amStorage + "\n"} {
 		if !strings.Contains(drop, want) {
 			t.Errorf("drop-in lacks %q", want)
 		}
