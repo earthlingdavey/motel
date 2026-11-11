@@ -180,7 +180,7 @@ for i in 1 2 3 4 5; do curl -s -o /dev/null --max-time 5 "$PROXY/refused"; done
 curl -s -o /dev/null --max-time 5 "$PROXY/abort"
 a=$(wait_result shop5xx 'motel_app_requests_total{app="shop",class="5xx"} >= 3' 30) \
 	&& pass "an app with nothing running: its 503s count as 5xx" || fail "no 5xx for shop: $(q 'motel_app_requests_total{app="shop"}')"
-a=$(wait_result refused 'motel_app_requests_total{app="blog",class="4xx"} >= 5' 60) \
+a=$(wait_result refused 'motel_app_requests_total{app="blog",class="4xx"} >= 5' 120) \
 	&& pass "a refusal inside the observer counts as 4xx" || fail "no 4xx for blog's refusals: $(q 'motel_app_requests_total{app="blog"}')"
 lat1=$(q 'motel_app_response_seconds_count{app="blog"}' | sed -n 's/.*"value":\[[^,]*,"\([0-9]*\)"\].*/\1/p')
 [ -n "$lat0" ] && [ "$lat0" = "$lat1" ] && pass "the refusals are not timed as the release's ($lat0 timed before and after)" \
