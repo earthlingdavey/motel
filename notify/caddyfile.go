@@ -145,6 +145,12 @@ func (a *App) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
 			if d.NextArg() {
 				return d.ArgErr()
 			}
+			if v == "" {
+				// An empty value would be no line in the JSON (omitempty):
+				// the default, read silently, and beside a metrics line
+				// the store alone (storeAlone).
+				return d.Errf("%s takes a path, not an empty string; leave the line out for the default", name)
+			}
 			switch name {
 			case "secrets_file":
 				a.SecretsFile = v

@@ -373,6 +373,7 @@ func TestAMetricsLineAloneIsTheStoreWithoutNotify(t *testing.T) {
 		{"an option alone", []string{"deploy_succeeded on"}, "no operator line"},
 		{"metrics and an option", []string{"metrics", "state_dir /tmp/x"}, "no operator line"},
 		{"metrics and an option at its default", []string{"metrics", "deploy_succeeded off"}, "no operator line"},
+		{"metrics and an empty path", []string{"metrics", `state_dir ""`}, "state_dir takes a path, not an empty string"},
 		{"metrics and an operator line", []string{"metrics", "operator ops"}, "operator names ops, which no channel line defines"},
 		{"metrics and a channel", []string{"metrics", "channel ops ntfy {secret.NOTIFY_OPS_URL}"}, "no operator line"},
 		{"a relative socket in the JSON", nil, "is not an absolute path"},

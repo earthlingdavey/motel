@@ -108,6 +108,10 @@ func TestCaddyfileRefusals(t *testing.T) {
 		{"bind dup claim", `bind "local:/k.pub sub=a sub=b" ops`, "given twice"},
 		{"heartbeat literal", `heartbeat https://hc-ping.com/x`, "never in the Caddyfile"},
 		{"deploy_succeeded yes", `deploy_succeeded yes`, "on or off"},
+		{"secrets_file empty", `secrets_file ""`, "secrets_file takes a path, not an empty string"},
+		{"state_dir empty", `state_dir ""`, "state_dir takes a path, not an empty string"},
+		{"alertmanager empty", `alertmanager ""`, "alertmanager takes a path, not an empty string"},
+		{"backup_record empty", `backup_record ""`, "backup_record takes a path, not an empty string"},
 		{"unknown", `quiet_hours 22-07`, "unknown monitor subdirective"},
 		{"block on a line", "operator ops {\n\tx\n}", "take no block"},
 	}
