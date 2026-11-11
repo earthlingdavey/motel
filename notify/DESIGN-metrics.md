@@ -205,7 +205,10 @@ mechanics, its order and its measured cost are DESIGN-liveswap.md's
   entry, or on a bypass comes before the one reverse_proxy adds. With no
   cache in front, an app's own `Cache-Status` is read as its cache's
   verdict, and its hits are left out of the latency like the cache's.
-  A miss whose upstream failed is a miss too: Souin names it
+  Souin's `key=` is unquoted and holds the request's query, so the
+  parameters are read up to it, and after it only the stale hit's ending
+  (`; fwd=stale`, and a `; fwd-status=<n>` after it): a `;` or `,` in a
+  URL is never a verdict. A miss whose upstream failed is a miss too: Souin names it
   (`detail=SERVE-HTTP-ERROR`) and returns the error, nothing written. A
   response no cache spoke for is in no result.
 - **Releases.** Each response counts under the release whose instance

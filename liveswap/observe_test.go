@@ -31,6 +31,19 @@ func TestParseCacheStatus(t *testing.T) {
 		{`Souin; fwd="bypass"`, cacheBypass},
 		// One value holding two entries: the first is read.
 		{"Souin; hit, CDN; fwd=uri-miss", cacheHit},
+		// Souin's key is unquoted and holds the request's query: what is in
+		// it is never a parameter, nor an entry's end.
+		{"Souin; fwd=uri-miss; stored; key=GET-http-example.com-/a;hit", cacheMiss},
+		{"Souin; fwd=uri-miss; stored; key=GET-http-example.com-/?q=a;%20hit", cacheMiss},
+		{"Souin; fwd=uri-miss; stored; key=GET-http-example.com-/?ids=1,2", cacheMiss},
+		{"Souin; fwd=bypass; key=GET-http-example.com-/?x=;fwd=uri-miss", cacheBypass},
+		{"Souin; hit; ttl=-3; key=GET-http-example.com-/?ids=1,2; detail=OTTER; fwd=stale", cacheStale},
+		{"Souin; hit; ttl=-3; key=GET-http-example.com-/?ids=1,2; detail=OTTER; fwd=stale; fwd-status=500", cacheStale},
+		// A key that holds a stale ending (from a header the key takes),
+		// followed by the hit's detail.
+		{"Souin; hit; ttl=5; key=GET-http-example.com-/-en; fwd=stale; detail=OTTER", cacheHit},
+		{"Souin; hit; ttl=5; key=GET-http-example.com-/-en; fwd=stale; fwd-status=x; detail=OTTER", cacheHit},
+		{"Souin; hit; ttl=5; key=GET-http-example.com-/; fwd=stale; fwd-status=", cacheHit},
 		{"Souin", cacheNone},
 		{"garbage;;;", cacheNone},
 	} {
@@ -463,7 +476,7 @@ func BenchmarkObserve(b *testing.B) {
 		if _, err := u.GetUpstreams(r); err != nil {
 			return err
 		}
-		w.Header().Set("Cache-Status", "Souin; fwd=uri-miss; stored")
+		w.Header().Set("Cache-Status", "Souin; fwd=uri-miss; stored; key=GET-http-example.com-/blog/a-post?page=2")
 		w.WriteHeader(http.StatusOK)
 		return nil
 	})

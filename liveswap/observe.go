@@ -250,27 +250,46 @@ const (
 // front, it is the app's own, and is read as its cache's verdict. The
 // entry is a hit (stale when it says fwd=stale), a miss (fwd=uri-miss,
 // or a stored revalidation, fwd=request), or a bypass (fwd=bypass).
+//
+// Souin's key is unquoted and holds the request's query (and any header
+// the key is configured to take), so a ',' or ';' after `key=` is the
+// client's, never the header's: the parameters are read up to it, and
+// after it only the ending Souin gives a stale hit (staleEnding).
 func parseCacheStatus(v string) cacheResult {
 	if v == "" {
 		return cacheNone
 	}
-	if i := strings.IndexByte(v, ','); i >= 0 {
-		v = v[:i]
-	}
 	hit, stale := false, false
 	fwd := ""
 	// Cut, not Split: this runs on every response, and Split allocates.
-	_, rest, _ := strings.Cut(v, ";")
+	name, rest, _ := strings.Cut(v, ";")
+	if strings.IndexByte(name, ',') >= 0 {
+		return cacheNone // the first entry has no parameters
+	}
 	for rest != "" {
 		var p string
 		p, rest, _ = strings.Cut(rest, ";")
 		p = strings.TrimSpace(p)
+		if strings.HasPrefix(p, "key=") {
+			// Souin writes hit before the key: only a hit is read for its
+			// stale ending.
+			stale = stale || (hit && staleEnding(v))
+			break
+		}
+		last := false
+		if i := strings.IndexByte(p, ','); i >= 0 {
+			// The first entry ends here.
+			p, last = strings.TrimSpace(p[:i]), true
+		}
 		switch {
 		case p == "hit":
 			hit = true
 		case strings.HasPrefix(p, "fwd="):
 			fwd = strings.ToLower(strings.Trim(p[len("fwd="):], `"`))
 			stale = stale || fwd == "stale"
+		}
+		if last {
+			break
 		}
 	}
 	switch {
@@ -284,6 +303,22 @@ func parseCacheStatus(v string) cacheResult {
 		return cacheMiss
 	}
 	return cacheNone
+}
+
+// staleEnding is whether a value with Souin's key in it ends as a stale
+// hit's does: `; fwd=stale`, which Souin appends last, or that and the
+// `; fwd-status=<n>` it adds after it when the origin failed. Read at
+// the end alone, so that a key holding either text is never taken for
+// it: a hit's key is followed by its `; detail=`.
+func staleEnding(v string) bool {
+	if strings.HasSuffix(v, "; fwd=stale") {
+		return true
+	}
+	i := len(v)
+	for i > 0 && v[i-1] >= '0' && v[i-1] <= '9' {
+		i--
+	}
+	return i < len(v) && strings.HasSuffix(v[:i], "; fwd=stale; fwd-status=")
 }
 
 // The classes a response is counted under, in RequestClasses' order:
