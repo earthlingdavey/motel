@@ -171,7 +171,6 @@ type viewAnswers struct {
 func (v *metricsView) ask(ctx context.Context, app, window string, w viewWindow, now time.Time) (AppMetrics, error) {
 	start, end := now.Add(-w.span), now
 	sel := fmt.Sprintf(`app=%q`, app)
-	span := window
 	var a viewAnswers
 	type job struct {
 		dst *[]series
@@ -190,11 +189,11 @@ func (v *metricsView) ask(ctx context.Context, app, window string, w viewWindow,
 		// The window's peak over the raw samples, which the push writes
 		// every 30 s: the range above holds one sample a step, and a peak
 		// between two steps would be lost.
-		{&a.peak, instant(`max_over_time(motel_app_memory_bytes{` + sel + `}[` + span + `])`)},
-		{&a.classes, instant(`sum by (class) (increase_pure(motel_app_requests_total{` + sel + `}[` + span + `]))`)},
-		{&a.p50, instant(`histogram_quantile(0.5, sum by (le) (increase_pure(motel_app_response_seconds_bucket{` + sel + `}[` + span + `])))`)},
-		{&a.p95, instant(`histogram_quantile(0.95, sum by (le) (increase_pure(motel_app_response_seconds_bucket{` + sel + `}[` + span + `])))`)},
-		{&a.cache, instant(`sum by (result) (increase_pure(motel_app_cache_responses_total{` + sel + `}[` + span + `]))`)},
+		{&a.peak, instant(`max_over_time(motel_app_memory_bytes{` + sel + `}[` + window + `])`)},
+		{&a.classes, instant(`sum by (class) (increase_pure(motel_app_requests_total{` + sel + `}[` + window + `]))`)},
+		{&a.p50, instant(`histogram_quantile(0.5, sum by (le) (increase_pure(motel_app_response_seconds_bucket{` + sel + `}[` + window + `])))`)},
+		{&a.p95, instant(`histogram_quantile(0.95, sum by (le) (increase_pure(motel_app_response_seconds_bucket{` + sel + `}[` + window + `])))`)},
+		{&a.cache, instant(`sum by (result) (increase_pure(motel_app_cache_responses_total{` + sel + `}[` + window + `]))`)},
 	}
 	// The request counters through increase_pure, not increase: an
 	// app's series appears with its first push, already at the count
@@ -275,9 +274,9 @@ func (v *metricsView) ask(ctx context.Context, app, window string, w viewWindow,
 				n++
 			}
 		}
-		c.Avg = roundCores(sum / float64(len(cpuPts)))
+		c.Avg = roundTo(sum/float64(len(cpuPts)), 1e6)
 		if n > 0 {
-			avg := roundCores(recent / float64(n))
+			avg := roundTo(recent/float64(n), 1e6)
 			c.Avg5m = &avg
 		}
 		out.CPU = c
@@ -357,16 +356,13 @@ func quantileMs(ss []series) *float64 {
 	return nil
 }
 
-// roundTo keeps v to 1/per: every float in the object is rounded, for
-// roundCores' reason.
-func roundTo(v, per float64) float64 { return math.Round(v*per) / per }
-
-// roundCores keeps a CPU average to a millionth of a core. An unrounded
-// one marshals as a run of twenty or more digits (5.740305648246404e-05
-// is 0.00005740305648246404 in JSON), which the app's response filter
+// roundTo keeps v to 1/per; every float in the object is rounded (a CPU
+// average to a millionth of a core). An unrounded one marshals as a run
+// of twenty or more digits (5.740305648246404e-05 is
+// 0.00005740305648246404 in JSON), which the app's response filter
 // reads as a generated secret and masks inside the number; the body is
 // then no JSON, and the whole status is withheld.
-func roundCores(v float64) float64 { return math.Round(v*1e6) / 1e6 }
+func roundTo(v, per float64) float64 { return math.Round(v*per) / per }
 
 // latest is the newest point.
 func latest(pts []point) (point, bool) {
