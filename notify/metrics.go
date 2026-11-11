@@ -77,6 +77,20 @@ func (m *MetricsStore) provision(ctx caddy.Context, ls *liveswap.App, n *App, lo
 	if err := thePusher.registerFailed(reg); err != nil {
 		m.logger.Warn("monitor metrics: motel_metrics_push_failed_total is not on the admin /metrics", zap.Error(err))
 	}
+	if reg != nil {
+		// The disks notify's disk source measures, which a disk_fill
+		// rule reads; the store alone's: the apps' root and Caddy's data.
+		paths := []string{caddy.AppDataDir()}
+		if ls != nil {
+			paths = append([]string{ls.Root}, paths...)
+		}
+		if n != nil {
+			paths = n.diskPaths
+		}
+		if err := reg.Register(diskCollector{paths: paths}); err != nil {
+			return fmt.Errorf("monitor: metrics: registering the disk series: %w", err)
+		}
+	}
 	if ls != nil {
 		if reg != nil {
 			if err := reg.Register(appCollector{apps: ls, root: cgroupRoot}); err != nil {

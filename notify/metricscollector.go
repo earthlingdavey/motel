@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 
 	"github.com/prometheus/client_golang/prometheus"
 
@@ -191,4 +192,52 @@ func readStat(path, key string) (uint64, bool) {
 		}
 	}
 	return 0, false
+}
+
+// diskAvailMetric is the box's disk series, which an operator's
+// disk_fill rule reads (operatorrules.go).
+const diskAvailMetric = "motel_disk_avail_bytes"
+
+const diskAvailDescHelp = "Bytes a user can still write on the filesystem holding the path: one series per filesystem, under the first of motel's directories on it (the apps' root, Caddy's data, notify's state)."
+
+var diskAvailDesc = prometheus.NewDesc(diskAvailMetric, diskAvailDescHelp, []string{"path"}, nil)
+
+// diskCollector is the box's disk series: statfs at each gather of the
+// directories notify's disk source measures, one series per device, as
+// that source reads them (diskPoller).
+type diskCollector struct {
+	paths []string
+	stat  func(path string) (avail uint64, dev uint64, err error)
+}
+
+func (c diskCollector) Describe(ch chan<- *prometheus.Desc) { ch <- diskAvailDesc }
+
+func (c diskCollector) Collect(ch chan<- prometheus.Metric) {
+	stat := c.stat
+	if stat == nil {
+		stat = statAvail
+	}
+	seen := map[uint64]bool{}
+	for _, p := range c.paths {
+		avail, dev, err := stat(p)
+		if err != nil || seen[dev] {
+			continue // not measured is no sample: the rule's line keeps its last
+		}
+		seen[dev] = true
+		ch <- prometheus.MustNewConstMetric(diskAvailDesc, prometheus.GaugeValue, float64(avail), p)
+	}
+}
+
+// statAvail is what a user can still write on the filesystem holding
+// path, as df's Avail, and the device it is on.
+func statAvail(path string) (uint64, uint64, error) {
+	var fs syscall.Statfs_t
+	if err := syscall.Statfs(path, &fs); err != nil {
+		return 0, 0, err
+	}
+	var st syscall.Stat_t
+	if err := syscall.Stat(path, &st); err != nil {
+		return 0, 0, err
+	}
+	return fs.Bavail * uint64(fs.Bsize), st.Dev, nil //nolint:gosec // a block size is positive
 }
