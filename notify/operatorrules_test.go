@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // withRules is fullBlock with a metrics line and the rule lines given.
@@ -147,6 +148,23 @@ func TestRuleRefusals(t *testing.T) {
 	mustParse(t, withRules("rule a post_deploy {\n\t\tmax_p95 800ms\n\t}", "rule b post_deploy app shop {\n\t\tmax_p95 1s\n\t}"))
 }
 
+// A refusal of the lines together names the second rule's line; a
+// latency is kept to the nanosecond as written.
+func TestRuleLinesTogether(t *testing.T) {
+	_, err := parse(t, withRules("rule x threshold 5xx_share > 0.05 for 10m", "rule y disk_fill within 7d", "rule x disk_fill within 1d"))
+	if err == nil || !strings.Contains(err.Error(), "rule x is defined twice, at Testfile:14") {
+		t.Errorf("a duplicate: %v", err)
+	}
+	_, err = parse(t, withRules("rule a post_deploy {\n\t\tmax_p95 1s\n\t}", "rule b post_deploy {\n\t\tmax_p95 2s\n\t}"))
+	if err == nil || !strings.Contains(err.Error(), "rule b: a second post_deploy for every app") || !strings.Contains(err.Error(), "at Testfile:15") {
+		t.Errorf("a second post_deploy: %v", err)
+	}
+	a := mustParse(t, withRules("rule a post_deploy {\n\t\tmax_p95 1001ms\n\t}", "rule b threshold p95 > 1.001s for 10m"))
+	if got := time.Duration(a.Metrics.Rules[0].MaxP95); got != 1001*time.Millisecond {
+		t.Errorf("max_p95 1001ms = %s", got)
+	}
+}
+
 // A rule line reads the store's numbers: without the metrics line it is
 // refused, naming the line, wherever the metrics line would be.
 func TestRuleNeedsTheMetricsLine(t *testing.T) {
@@ -165,10 +183,15 @@ func TestRuleRefusalsAtProvision(t *testing.T) {
 	dir := t.TempDir()
 	key := filepath.Join(dir, "deploy.pub")
 	writePubKey(t, key)
+	secrets := filepath.Join(dir, "_box.env")
+	if err := os.WriteFile(secrets, []byte("NOTIFY_OPS_URL=https://ntfy.sh/ops\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	notify := "\t\tchannel ops ntfy {secret.NOTIFY_OPS_URL}\n\t\toperator ops\n\t\tsecrets_file " + secrets + "\n\t\tstate_dir " + filepath.Join(dir, "state") + "\n"
 	block := func(rules string) string {
 		return "{\n\tadmin off\n\tliveswap {\n\t\troot " + filepath.Join(dir, "liveswap") + "\n\t\tartifact_allowlist example.org\n\t\tapp blog {\n\t\t\tcommand ./server\n" +
 			"\t\t\tdeploy_trust local {\n\t\t\t\tpublic_key " + key + "\n\t\t\t\taudience blog\n\t\t\t}\n\t\t}\n\t}\n" +
-			"\tmonitor {\n\t\tmetrics /run/x/vm.sock\n\t\t" + rules + "\n\t}\n}\n:8080 {\n\trespond ok\n}\n"
+			"\tmonitor {\n" + notify + "\t\tmetrics /run/x/vm.sock\n\t\t" + rules + "\n\t}\n}\n:8080 {\n\trespond ok\n}\n"
 	}
 	if _, err := provision(t, block("rule blog_errors threshold 5xx_share > 0.05 for 10m app blog")); err != nil {
 		t.Fatalf("a rule on a configured app: %v", err)
@@ -181,7 +204,12 @@ func TestRuleRefusalsAtProvision(t *testing.T) {
 		!strings.Contains(err.Error(), "names app shop") {
 		t.Errorf("a post_deploy on an unknown app: %v", err)
 	}
-	noLiveswap := "{\n\tadmin off\n\tmonitor {\n\t\tmetrics /run/x/vm.sock\n\t\trule e threshold 5xx_share > 0.05 for 10m app blog\n\t}\n}\n:8080 {\n\trespond ok\n}\n"
+	// A block with no channel: the rules would reach no one.
+	alone := "{\n\tadmin off\n\tmonitor {\n\t\tmetrics /run/x/vm.sock\n\t\trule e threshold 5xx_share > 0.05 for 10m\n\t}\n}\n:8080 {\n\trespond ok\n}\n"
+	if _, err := provision(t, alone); err == nil || !strings.Contains(err.Error(), "rule e reaches no one: the monitor block has no channel") {
+		t.Errorf("rules in a block with no channel: %v", err)
+	}
+	noLiveswap := "{\n\tadmin off\n\tmonitor {\n" + notify + "\t\tmetrics /run/x/vm.sock\n\t\trule e threshold 5xx_share > 0.05 for 10m app blog\n\t}\n}\n:8080 {\n\trespond ok\n}\n"
 	if _, err := provision(t, noLiveswap); err == nil || !strings.Contains(err.Error(), "no liveswap block") {
 		t.Errorf("a rule naming an app with no liveswap block: %v", err)
 	}

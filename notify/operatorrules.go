@@ -3,6 +3,7 @@ package notify
 import (
 	"errors"
 	"fmt"
+	"math"
 	"regexp"
 	"slices"
 	"strconv"
@@ -224,7 +225,7 @@ func parseRule(d *caddyfile.Dispenser) (Rule, error) {
 			case "max_p95":
 				var s float64
 				if s, err = parseValue(unitLatency, v); err == nil {
-					r.MaxP95 = caddy.Duration(time.Duration(s * float64(time.Second)))
+					r.MaxP95 = caddy.Duration(time.Duration(math.Round(s * float64(time.Second))))
 				}
 			case "failures":
 				r.Failures, err = parseCount(v)

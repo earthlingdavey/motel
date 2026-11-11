@@ -185,11 +185,15 @@ func (a *App) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
 			if ruleWithoutMetrics == nil {
 				ruleWithoutMetrics = d.Err(errRuleNeedsMetrics.Error())
 			}
+			at := *d // the rule's line, for a refusal of the lines together
 			r, err := parseRule(d)
 			if err != nil {
 				return err
 			}
 			rules = append(rules, r)
+			if err := checkRules(rules, nil); err != nil {
+				return at.Err(err.Error())
+			}
 		default:
 			return d.Errf("unknown monitor subdirective %q", d.Val())
 		}
@@ -200,9 +204,6 @@ func (a *App) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
 	if len(rules) > 0 {
 		if a.Metrics == nil {
 			return ruleWithoutMetrics
-		}
-		if err := checkRules(rules, nil); err != nil {
-			return err
 		}
 		a.Metrics.Rules = rules
 	}

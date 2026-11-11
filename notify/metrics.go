@@ -91,6 +91,11 @@ func (m *MetricsStore) provision(ctx caddy.Context, ls *liveswap.App, n *App, lo
 	if ls == nil && slices.ContainsFunc(m.Rules, func(r Rule) bool { return r.App != "" }) {
 		return errors.New("monitor: a rule names an app, and the config has no liveswap block")
 	}
+	// A rule in a block with no channel would reach no one: no notify
+	// renders it, or hears a deploy for post_deploy.
+	if n == nil && len(m.Rules) > 0 {
+		return fmt.Errorf("monitor: rule %s reaches no one: the monitor block has no channel, only its metrics line and rules; add channel and operator lines, or remove the rules", m.Rules[0].Name)
+	}
 	if err := thePusher.registerFailed(reg); err != nil {
 		m.logger.Warn("monitor metrics: motel_metrics_push_failed_total is not on the admin /metrics", zap.Error(err))
 	}
