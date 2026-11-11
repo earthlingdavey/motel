@@ -1,6 +1,6 @@
-# Written by `motel notify setup`: a config Alertmanager can start from
+# Written by `motel monitor setup`: a config Alertmanager can start from
 # before motel's first render, which replaces it on motel's next load of a
-# Caddyfile with a notify block. Every alert goes nowhere.
+# Caddyfile whose monitor block has channels. Every alert goes nowhere.
 route:
   receiver: blackhole
 receivers:

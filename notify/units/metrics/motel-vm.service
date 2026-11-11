@@ -1,4 +1,4 @@
-# Written by `motel metrics setup` (notify/DESIGN-metrics.md, "The shape").
+# Written by `motel monitor setup --metrics` (notify/DESIGN-metrics.md, "The shape").
 # Started by motel-vm.socket: joins the store's namespace and forwards
 # each connection to its 127.0.0.1:8428; exits after five idle minutes.
 [Unit]

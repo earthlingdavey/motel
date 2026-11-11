@@ -8,49 +8,10 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-
-	caddycmd "github.com/caddyserver/caddy/v2/cmd"
-	"github.com/spf13/cobra"
 )
 
-func init() {
-	caddycmd.RegisterCommand(caddycmd.Command{
-		Name:  "metrics",
-		Usage: "<command>",
-		Short: "The metrics store: set up Debian's VictoriaMetrics for motel",
-		Long: `Commands of the metrics store (notify/DESIGN-metrics.md in the motel
-repository). motel measures and pushes; Debian's VictoriaMetrics stores,
-in a private network namespace behind a unix socket; vmalert evaluates
-the rules motel renders, and posts to Alertmanager.`,
-		CobraFunc: func(cmd *cobra.Command) {
-			cmd.AddCommand(&cobra.Command{
-				Use:   "setup",
-				Short: "Install and configure Debian's victoria-metrics for motel (root)",
-				Long: `Installs victoria-metrics so that it never listens in the host's network
-namespace: masks its unit first, so the install starts nothing (Debian's
-would listen on 0.0.0.0:8428, unauthenticated); installs it (and
-iproute2 if missing); writes the namespace unit, the drop-in that moves
-the store into the namespace with its memory capped, the socket
-/run/motel-metrics/vm.sock (0660 root:motel) and its proxy, the
-in-namespace proxy to Alertmanager and vmalert's unit, and
-/var/lib/motel-metrics with the scrapes and an empty rule file;
-unmasks it, starts them all and reloads motel, which renders the rules
-and pushes. Run motel notify setup first. Run again, it puts the units
-back as the binary ships them.`,
-				Args: cobra.NoArgs,
-				RunE: func(c *cobra.Command, _ []string) error {
-					if os.Geteuid() != 0 {
-						return errors.New("motel metrics setup installs a package and writes units: run it as root")
-					}
-					return metricsSetup(hostSystem{out: c.OutOrStdout()}, "/", c.OutOrStdout())
-				},
-			})
-		},
-	})
-}
-
-// The files `motel metrics setup` writes, which ship in the binary: the
-// package installs nothing of the store's until root asks.
+// The files `motel monitor setup --metrics` writes, which ship in the
+// binary: the package installs nothing of the store's until root asks.
 var (
 	//go:embed units/metrics/motel-metrics-netns.service
 	unitNetns []byte
@@ -102,14 +63,15 @@ func metricsUnits() []struct {
 	}
 }
 
-// metricsSetup is `motel metrics setup`: Debian's victoria-metrics,
-// installed so that it never listens in the host's namespace, even for a
-// moment. Debian's unit starts on install on 0.0.0.0:8428 with no
+// metricsSetup is the store's part of `motel monitor setup --metrics`,
+// after Alertmanager's (runSetup): Debian's victoria-metrics, installed
+// so that it never listens in the host's namespace, even for a moment. Debian's unit starts on install on 0.0.0.0:8428 with no
 // authentication (DESIGN-metrics.md, "Packaging and setup"), so the
 // order is root's, as for notify's: mask, install, write the units and
 // the state directory, unmask, start the namespace, the store, both
-// sockets and vmalert, and have motel render. It needs notify's setup
-// first: vmalert's outlet is Alertmanager's socket.
+// sockets and vmalert, and have motel render. It refuses unless
+// Alertmanager's setup has run: vmalert's outlet is Alertmanager's
+// socket.
 //
 // root is a prefix for every path written (tests); the commands run as
 // given. Each step says what it did on out.
@@ -119,7 +81,7 @@ func metricsSetup(sys system, root string, out io.Writer) (err error) {
 	rerun := isFile(at(filepath.Join(unitDir, vmService+".d", "10-motel.conf")))
 
 	if _, err := os.Stat(at(socketPath)); errors.Is(err, fs.ErrNotExist) {
-		return fmt.Errorf("%s is not installed: run motel notify setup first (vmalert posts to Alertmanager's socket)", socketPath)
+		return fmt.Errorf("%s is not installed: run motel monitor setup --metrics, which sets up Alertmanager first (vmalert posts to Alertmanager's socket)", socketPath)
 	} else if err != nil {
 		return err
 	}

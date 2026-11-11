@@ -10,7 +10,7 @@ import (
 	"testing"
 )
 
-// notifySetUp makes root look like a box where motel notify setup ran.
+// notifySetUp makes root look like a box where Alertmanager's setup ran.
 func notifySetUp(t *testing.T, root string) {
 	t.Helper()
 	p := filepath.Join(root, socketPath)
@@ -25,7 +25,7 @@ func notifySetUp(t *testing.T, root string) {
 func TestMetricsSetupNeedsNotify(t *testing.T) {
 	f := &fakeSystem{}
 	err := metricsSetup(f, t.TempDir(), &bytes.Buffer{})
-	if err == nil || !strings.Contains(err.Error(), "run motel notify setup first") {
+	if err == nil || !strings.Contains(err.Error(), "run motel monitor setup --metrics, which sets up Alertmanager first") {
 		t.Fatalf("err = %v", err)
 	}
 	if len(f.cmds) != 0 {
@@ -60,7 +60,7 @@ func TestMetricsSetupOrderAndFiles(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if !bytes.HasPrefix(b, []byte("# Written by `motel metrics setup`")) {
+		if !bytes.HasPrefix(b, []byte("# Written by `motel monitor setup --metrics`")) {
 			t.Errorf("%s = %q", u.path, b[:40])
 		}
 	}
@@ -222,4 +222,57 @@ func TestMetricsUnitsAreTheMeasuredOnes(t *testing.T) {
 		t.Error("the drop-in listens beyond the namespace's loopback")
 	}
 	has("scrape.yml", scrapeConfig, `job_name: vmalert`, `"127.0.0.1:8880"`, `job_name: alertmanager`, `"127.0.0.1:9093"`)
+}
+
+// `motel monitor setup` is Alertmanager's setup alone; with --metrics,
+// the store's follows it, and runs only once Alertmanager's has
+// succeeded. A re-run with --metrics runs both again, each a re-run.
+func TestMonitorSetupRunsAlertmanagerThenTheStore(t *testing.T) {
+	has := func(cmds []string, c string) bool { return slices.Contains(cmds, c) }
+	root := t.TempDir()
+	alone := &fakeSystem{}
+	if err := runSetup(alone, root, &bytes.Buffer{}, false); err != nil {
+		t.Fatal(err)
+	}
+	if !has(alone.cmds, "systemctl mask "+amService) || has(alone.cmds, "systemctl mask "+vmService) {
+		t.Fatalf("without --metrics: %v; want Alertmanager's setup alone", alone.cmds)
+	}
+	if isFile(filepath.Join(root, unitDir, vmSocket)) {
+		t.Fatal("without --metrics, the store's units were written")
+	}
+
+	both := &fakeSystem{}
+	if err := runSetup(both, t.TempDir(), &bytes.Buffer{}, true); err != nil {
+		t.Fatal(err)
+	}
+	am, vm := slices.Index(both.cmds, "systemctl mask "+amService), slices.Index(both.cmds, "systemctl mask "+vmService)
+	reloads := 0
+	for _, c := range both.cmds {
+		if c == "systemctl try-reload-or-restart motel.service" {
+			reloads++
+		}
+	}
+	if am != 0 || vm <= am || reloads != 2 {
+		t.Fatalf("with --metrics: %v; want Alertmanager's setup, then the store's, each reloading motel", both.cmds)
+	}
+
+	// Alertmanager's setup fails: the store's never starts.
+	failed := &fakeSystem{failOn: "systemctl enable --now " + amSocket}
+	if err := runSetup(failed, t.TempDir(), &bytes.Buffer{}, true); err == nil || has(failed.cmds, "systemctl mask "+vmService) {
+		t.Fatalf("Alertmanager's setup failed: err %v, commands %v; want the error, and nothing of the store", err, failed.cmds)
+	}
+
+	// A re-run: both again, each finding its own drop-in (the put-back
+	// armed), Alertmanager's first.
+	if err := runSetup(&fakeSystem{isInstalled: true}, root, &bytes.Buffer{}, true); err != nil {
+		t.Fatal(err)
+	}
+	again := &fakeSystem{isInstalled: true, failOn: "systemctl restart " + vmalertUnit}
+	if err := runSetup(again, root, &bytes.Buffer{}, true); err == nil {
+		t.Fatal("the failing re-run succeeded")
+	}
+	if slices.Index(again.cmds, "systemctl mask "+amService) != 0 || !has(again.cmds, "systemctl try-reload-or-restart motel.service") ||
+		!slices.ContainsFunc(again.cmds, func(c string) bool { return strings.HasPrefix(c, "systemctl start "+vmSocket) }) {
+		t.Fatalf("a re-run that fails in the store's setup: %v; want Alertmanager's setup first, whole, then the store's put back", again.cmds)
+	}
 }

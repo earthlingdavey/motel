@@ -364,7 +364,7 @@ func TestSetupOrderAndFiles(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if !bytes.HasPrefix(b, []byte("# Written by `motel notify setup`")) {
+		if !bytes.HasPrefix(b, []byte("# Written by `motel monitor setup`")) {
 			t.Errorf("%s = %q", p, b[:40])
 		}
 	}

@@ -1,9 +1,9 @@
-# Written by `motel metrics setup` (notify/DESIGN-metrics.md, "The shape").
+# Written by `motel monitor setup --metrics` (notify/DESIGN-metrics.md, "The shape").
 # 127.0.0.1:9093 bound inside the motel-metrics namespace, where vmalert
 # posts its alerts (it speaks TCP only); its service forwards them to
 # Alertmanager's unix socket. Nothing in the host's namespace listens.
 [Unit]
-Description=Alertmanager for vmalert: 127.0.0.1:9093 in the metrics namespace (motel metrics setup)
+Description=Alertmanager for vmalert: 127.0.0.1:9093 in the metrics namespace (motel monitor setup --metrics)
 # Every socket unit is implicitly Before=sockets.target, and the namespace
 # service runs after basic.target, which is after sockets.target: an
 # ordering cycle systemd breaks by dropping this socket's start (measured

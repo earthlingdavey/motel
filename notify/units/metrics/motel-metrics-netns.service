@@ -1,9 +1,9 @@
-# Written by `motel metrics setup` (notify/DESIGN-metrics.md, "The shape").
+# Written by `motel monitor setup --metrics` (notify/DESIGN-metrics.md, "The shape").
 # A network namespace holding a loopback only, for the metrics store and
 # vmalert, which speak TCP: what listens in here is reachable from no app,
 # since every app shares the host's namespace.
 [Unit]
-Description=Private network namespace for the metrics store and vmalert (motel metrics setup)
+Description=Private network namespace for the metrics store and vmalert (motel monitor setup --metrics)
 Before=victoria-metrics.service motel-vmalert.service motel-am-proxy.socket motel-vm.service
 
 [Service]
