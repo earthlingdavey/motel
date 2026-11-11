@@ -143,9 +143,13 @@ func markUpstream(r *http.Request, ma *managedApp, sock *socketRef) {
 // response, when a handler panicked or the client went first; the 200
 // net/http sends for a handler that returned no error; or the status
 // of the error the server's handle_errors answers after this returns
-// (no instance running, a handler's error).
+// (no instance running, a handler's error). The cache's verdict is read
+// as for a written response: a miss whose upstream failed is still a
+// miss (Souin writes `fwd=uri-miss; ... detail=SERVE-HTTP-ERROR` and
+// returns the error).
 func (w *observeWriter) unanswered(r *http.Request, err error, returned bool) {
 	w.seen, w.at = true, time.Now()
+	w.cache = parseCacheStatus(w.Header().Get("Cache-Status"))
 	var he caddyhttp.HandlerError
 	switch {
 	case !returned || r.Context().Err() != nil:

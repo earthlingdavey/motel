@@ -202,7 +202,9 @@ mechanics, its order and its measured cost are DESIGN-liveswap.md's
   header's first, which the observer reads: it replaces an app's own
   entry, or on a bypass comes before the one reverse_proxy adds. With no
   cache in front, an app's own `Cache-Status` is read as its cache's
-  verdict, and its hits are left out of the latency like the cache's. A
+  verdict, and its hits are left out of the latency like the cache's.
+  A miss whose upstream failed is a miss too: Souin names it
+  (`detail=SERVE-HTTP-ERROR`) and returns the error, nothing written. A
   response no cache spoke for is in no result.
 - **Releases.** Each response counts under the release whose instance
   it went to (the socket the app's upstream selected), or, when it went

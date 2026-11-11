@@ -264,6 +264,16 @@ func TestObserveCache(t *testing.T) {
 	if got.Cache[3] != 1 || got.Count != 1 {
 		t.Errorf("an app's entry after Souin's bypass: cache %v, timed %d; want bypass, timed", got.Cache, got.Count)
 	}
+	// A miss whose upstream failed: Souin names the miss and returns the
+	// error, nothing written. Still a miss, so a hit share is not of the
+	// responses that worked alone.
+	got, _, _ = observeOnce(t, context.Background(), proxied(func(w http.ResponseWriter, _ *http.Request) error {
+		w.Header().Set("Cache-Status", "Souin; fwd=uri-miss; key=GET-http-example.com-/; detail=SERVE-HTTP-ERROR")
+		return caddyhttp.Error(http.StatusServiceUnavailable, errors.New("no upstreams available"))
+	}))
+	if got.Cache[2] != 1 || got.ByClass[class5xx] != 1 {
+		t.Errorf("a failed miss: cache %v, classes %v; want one miss, a 5xx", got.Cache, classCounts(got))
+	}
 	// No cache in front: counted under no result.
 	got, _, _ = observeOnce(t, context.Background(), proxied(func(w http.ResponseWriter, _ *http.Request) error {
 		w.WriteHeader(http.StatusOK)
