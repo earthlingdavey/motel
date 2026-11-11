@@ -25,7 +25,7 @@ func notifySetUp(t *testing.T, root string) {
 func TestMetricsSetupNeedsNotify(t *testing.T) {
 	f := &fakeSystem{}
 	err := metricsSetup(f, t.TempDir(), &bytes.Buffer{})
-	if err == nil || !strings.Contains(err.Error(), "run motel monitor setup --metrics, which sets up Alertmanager first") {
+	if err == nil || !strings.Contains(err.Error(), "/etc/systemd/system/motel-am.socket is missing: Alertmanager's setup has not run") {
 		t.Fatalf("err = %v", err)
 	}
 	if len(f.cmds) != 0 {
@@ -228,7 +228,7 @@ func TestMetricsUnitsAreTheMeasuredOnes(t *testing.T) {
 // the store's follows it, and runs only once Alertmanager's has
 // succeeded. A re-run with --metrics runs both again, each a re-run.
 func TestMonitorSetupRunsAlertmanagerThenTheStore(t *testing.T) {
-	has := func(cmds []string, c string) bool { return slices.Contains(cmds, c) }
+	has := slices.Contains[[]string]
 	root := t.TempDir()
 	alone := &fakeSystem{}
 	if err := runSetup(alone, root, &bytes.Buffer{}, false); err != nil {

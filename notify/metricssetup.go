@@ -81,7 +81,7 @@ func metricsSetup(sys system, root string, out io.Writer) (err error) {
 	rerun := isFile(at(filepath.Join(unitDir, vmService+".d", "10-motel.conf")))
 
 	if _, err := os.Stat(at(socketPath)); errors.Is(err, fs.ErrNotExist) {
-		return fmt.Errorf("%s is not installed: run motel monitor setup --metrics, which sets up Alertmanager first (vmalert posts to Alertmanager's socket)", socketPath)
+		return fmt.Errorf("%s is missing: Alertmanager's setup has not run, and vmalert posts to its socket", socketPath)
 	} else if err != nil {
 		return err
 	}

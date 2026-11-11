@@ -32,11 +32,25 @@ renders.`,
 	// The commands monitor replaced: hidden, and refused with the new
 	// spelling, as the Caddyfile's old blocks are.
 	movedCommand("notify", func(args []string) string {
-		return "motel notify is now motel monitor: motel monitor " + strings.Join(args, " ")
+		return "motel notify is now motel monitor: motel monitor " + shellWords(args)
 	})
 	movedCommand("metrics", func([]string) string {
 		return "motel metrics setup is now motel monitor setup --metrics, which sets up Alertmanager, then the store"
 	})
+}
+
+// shellWords is args as a shell would read them back: each that holds
+// anything but a plain word's characters single-quoted, so that the new
+// spelling of `--summary "a b"` can be pasted as it is.
+func shellWords(args []string) string {
+	out := make([]string, len(args))
+	for i, a := range args {
+		out[i] = a
+		if a == "" || strings.Trim(a, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-./:=@%+,") != "" {
+			out[i] = "'" + strings.ReplaceAll(a, "'", `'\''`) + "'"
+		}
+	}
+	return strings.Join(out, " ")
 }
 
 // movedCommand registers name as a hidden command that runs nothing and

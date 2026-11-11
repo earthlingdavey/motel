@@ -47,6 +47,8 @@ func TestTheOldCommandsSayTheNewSpelling(t *testing.T) {
 	}{
 		{"notify", []string{"setup"}, "motel notify is now motel monitor: motel monitor setup"},
 		{"notify", []string{"send", "--source", "cron"}, "motel monitor send --source cron"},
+		{"notify", []string{"send", "--summary", "the nightly job failed", "--detail", "who=it's"}, `motel monitor send --summary 'the nightly job failed' --detail 'who=it'\''s'`},
+		{"notify", []string{"send", "--summary", ""}, "motel monitor send --summary ''"},
 		{"metrics", []string{"setup"}, "motel metrics setup is now motel monitor setup --metrics"},
 	} {
 		def, ok := caddycmd.Commands()[c.name]
