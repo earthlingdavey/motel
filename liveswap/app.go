@@ -756,7 +756,8 @@ func (ma *managedApp) reportDeploy(c collaborators, req deployRequest, result de
 	ma.lifecycle(c, LifecycleEvent{Name: EventDeployEnded, Release: req.version})
 }
 
-// cutover is what a deploy's promote replaced, and when.
+// cutover is what a deploy's promote replaced (nil for none running),
+// and when.
 type cutover struct {
 	replaced *instance
 	at       time.Time
@@ -1123,7 +1124,12 @@ func (ma *managedApp) deployLocked(ctx context.Context, req deployRequest, c col
 		logger.Error("state persistence failed; deploys still work but a Caddy restart will not know about this version", zap.Error(err))
 	}
 	promoted = true // past the cutover: never clean up the now-live release
-	cut = cutover{replaced: old, at: c.clock.Now()}
+	// What it replaced is what served: an instance that had died (a
+	// crash loop, unrouted) is no release's baseline.
+	cut = cutover{at: c.clock.Now()}
+	if old != nil && c.runner.Alive(old.handle) {
+		cut.replaced = old
+	}
 
 	// A successful deploy is the fast path out of any watchdog wait:
 	// it clears the failure count, restart budget and backoff, then

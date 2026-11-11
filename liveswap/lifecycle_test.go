@@ -99,6 +99,14 @@ func TestLifecycleDeployNamesTheReleaseItReplaced(t *testing.T) {
 	if ev, _ := n.find(EventRollback); ev.Previous != "v2" || ev.Cutover.IsZero() {
 		t.Fatalf("the rollback to v1: previous %q, cutover %v", ev.Previous, ev.Cutover)
 	}
+	// One that died before the deploy (a crash loop, unrouted) served
+	// nothing: no release before it.
+	n.reset()
+	rig.runner.handleAt(len(rig.runner.handles) - 1).dieQuietly()
+	must(t, rig.ma.Deploy(context.Background(), deployRequest{url: "https://x/4", version: "v4"}))
+	if ev, _ := n.find(EventDeploySucceeded); ev.Previous != "" {
+		t.Fatalf("v4 after a dead v1: previous %q", ev.Previous)
+	}
 	n.reset()
 	rig.fetch.err = errors.New("fetching failed")
 	if err := rig.ma.Deploy(context.Background(), deployRequest{url: "https://x/3", version: "v3"}); err == nil {
