@@ -569,3 +569,26 @@ func TestReportStandingTellsWhatEndedMeanwhile(t *testing.T) {
 		t.Fatalf("told %v, want %v", got, want)
 	}
 }
+
+// A candidate config that moved liveswap's root, then was refused,
+// leaves the watchdog writing alerts.json under the serving root.
+func TestRollbackPointsAlertsBackAtTheServingRoot(t *testing.T) {
+	rig := newTestRig(t)
+	serving, candidate := rig.spec, testSpec(t) // two roots
+	for _, s := range []*appSpec{serving, candidate} {
+		must(t, os.MkdirAll(s.dirs.app, 0o750))
+	}
+	servingOwner, candidateOwner := new(int), new(int)
+	rig.ma.configure(servingOwner, serving, nil, zap.NewNop(), nil, nil)
+	rig.ma.configure(candidateOwner, candidate, nil, zap.NewNop(), nil, nil)
+	if !rig.ma.rollbackConfig(candidateOwner) {
+		t.Fatal("the candidate was not rolled back")
+	}
+	rig.ma.wd.setRefused()
+	if _, err := os.Stat(serving.dirs.alerts); err != nil {
+		t.Fatalf("the serving root's alerts.json: %v", err)
+	}
+	if _, err := os.Stat(candidate.dirs.alerts); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("the refused candidate's root got the write: %v", err)
+	}
+}

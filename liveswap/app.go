@@ -1857,6 +1857,9 @@ func (ma *managedApp) restoreSpec(owner any) bool {
 	}
 	p := ma.prev
 	ma.spec, ma.verifiers, ma.logger, ma.store, ma.notifier = p.spec, p.verifiers, p.logger, p.store, p.notifier
+	// The candidate's install pointed the watchdog's alerts.json writes
+	// at its own root: back to the serving one (Copilot round 1 on #424).
+	ma.restoreAlerts(p.spec, p.logger)
 	ma.prev = nil
 	ma.configuredBy = nil
 	if sr, ok := ma.runner.(*systemdRunner); ok {
