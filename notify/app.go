@@ -113,10 +113,11 @@ func (a *App) Provision(ctx caddy.Context) error {
 // too, held to its refusals: an operator line among them. A block with
 // no line at all is refused as notify's, for its missing operator line.
 //
-// A line is a field present in the app's JSON, which is what a JSON
-// config writes and what the Caddyfile adapts to: every field is
-// omitempty, and one a line can set to its zero value is a pointer
-// (deploy_succeeded off). So the test is the JSON with the metrics line
+// A line is a field with a value in the app's JSON, which is what a
+// JSON config writes and what the Caddyfile adapts to: every field is
+// omitempty, so an empty list or string or a false bool is none, as no
+// Caddyfile line writes one; the one field a line can set to its zero
+// value is a pointer (deploy_succeeded off), so that it counts. So the test is the JSON with the metrics line
 // taken out, never a list of fields a new one could be missing from.
 func (a *App) storeAlone() bool {
 	if a.Metrics == nil {
