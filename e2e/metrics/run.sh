@@ -158,7 +158,7 @@ code=$(curl -s -o /tmp/get-noauth -w '%{http_code}' --max-time 5 "$HOOK")
 echo "=== metrics 3a: the response observer ==="
 PROXY=http://localhost:8080
 # Twenty misses (the query is in the cache's key), then the same path
-# twice: the second is a hit. shop has no release: its 502s are 5xx.
+# twice: the second is a hit. shop has no release: its 503s are 5xx.
 i=1
 while [ "$i" -le 20 ]; do curl -s -o /dev/null --max-time 5 "$PROXY/?n=$i"; i=$((i + 1)); done
 curl -s -o /dev/null --max-time 5 "$PROXY/same"
@@ -179,7 +179,7 @@ lat0=$(q 'motel_app_response_seconds_count{app="blog"}' | sed -n 's/.*"value":\[
 for i in 1 2 3 4 5; do curl -s -o /dev/null --max-time 5 "$PROXY/refused"; done
 curl -s -o /dev/null --max-time 5 "$PROXY/abort"
 a=$(wait_result shop5xx 'motel_app_requests_total{app="shop",class="5xx"} >= 3' 30) \
-	&& pass "an app with nothing running: its 502s count as 5xx" || fail "no 5xx for shop: $(q 'motel_app_requests_total{app="shop"}')"
+	&& pass "an app with nothing running: its 503s count as 5xx" || fail "no 5xx for shop: $(q 'motel_app_requests_total{app="shop"}')"
 a=$(wait_result refused 'motel_app_requests_total{app="blog",class="4xx"} >= 5' 60) \
 	&& pass "a refusal inside the observer counts as 4xx" || fail "no 4xx for blog's refusals: $(q 'motel_app_requests_total{app="blog"}')"
 lat1=$(q 'motel_app_response_seconds_count{app="blog"}' | sed -n 's/.*"value":\[[^,]*,"\([0-9]*\)"\].*/\1/p')

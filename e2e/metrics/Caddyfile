@@ -65,7 +65,7 @@
 }
 
 # The response observer (metrics 3a): blog behind the cache, observed
-# outside it; shop, never deployed, observed while it answers 502.
+# outside it; shop, never deployed, observed while it answers 503.
 # /refused stands for penaltybox's refusal: answered inside the
 # observer, never by the app, so counted and not timed as the release's;
 # /abort for a cut stream, counted as aborted.
