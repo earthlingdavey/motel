@@ -109,6 +109,42 @@ func TestMetricsSetupOrderAndFiles(t *testing.T) {
 	}
 }
 
+// A re-run that fails after the mask (here the units' reload) must not
+// leave a store that worked masked and stopped; a first run that fails
+// stays masked, since Debian's unit without the drop-in listens wide.
+func TestMetricsSetupFailingPutsTheStoreBack(t *testing.T) {
+	root := t.TempDir()
+	notifySetUp(t, root)
+	first := &fakeSystem{failOn: "systemctl daemon-reload"}
+	if err := metricsSetup(first, root, &bytes.Buffer{}); err == nil {
+		t.Fatal("the first run did not fail")
+	}
+	if slices.Contains(first.cmds, "systemctl unmask victoria-metrics.service") {
+		t.Fatalf("a failed first run unmasked the store: %v", first.cmds)
+	}
+	// The drop-in is on disk now: this run is a re-run.
+	f := &fakeSystem{isInstalled: true, failOn: "systemctl daemon-reload"}
+	var out bytes.Buffer
+	if err := metricsSetup(f, root, &out); err == nil {
+		t.Fatal("the re-run did not fail")
+	}
+	want := []string{
+		"systemctl mask victoria-metrics.service",
+		"systemctl is-active --quiet victoria-metrics.service",
+		"systemctl stop victoria-metrics.service",
+		"systemctl daemon-reload", // fails
+		"systemctl daemon-reload",
+		"systemctl unmask victoria-metrics.service",
+		"systemctl start victoria-metrics.service motel-vmalert.service",
+	}
+	if !slices.Equal(f.cmds, want) {
+		t.Fatalf("commands:\n%s\nwant\n%s", strings.Join(f.cmds, "\n"), strings.Join(want, "\n"))
+	}
+	if !strings.Contains(out.String(), "is unmasked again") {
+		t.Fatalf("setup did not say it put the store back: %s", out.String())
+	}
+}
+
 // TestMetricsUnitsAreTheMeasuredOnes holds the shipped units to what ran
 // on hotserve-1 (hotserve1_stack_test.md), with this slice's paths and
 // caps.

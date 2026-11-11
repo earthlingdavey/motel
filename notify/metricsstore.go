@@ -92,6 +92,43 @@ func (c *storeClient) importText(ctx context.Context, text []byte) error {
 	return err
 }
 
+// readOnlyMetric is the store's own flag in its /metrics: 1 once its
+// disk is below -storage.minFreeDiskSpaceBytes, when it refuses every
+// write, its own scrapes among them.
+const readOnlyMetric = "vm_storage_is_read_only"
+
+// readOnly reads the flag from the store's /metrics. A page without it
+// is an error, not "writable": motel would otherwise vouch for a store
+// whose page it could not read.
+func (c *storeClient) readOnly(ctx context.Context) (bool, error) {
+	data, err := c.do(ctx, http.MethodGet, "/metrics", nil, "")
+	if err != nil {
+		return false, err
+	}
+	return parseReadOnly(data)
+}
+
+func parseReadOnly(page []byte) (bool, error) {
+	found, ro := false, false
+	for line := range strings.Lines(string(page)) {
+		rest, ok := strings.CutPrefix(line, readOnlyMetric)
+		if !ok || rest == "" || (rest[0] != ' ' && rest[0] != '{') {
+			continue
+		}
+		f := strings.Fields(rest)
+		v, err := strconv.ParseFloat(f[len(f)-1], 64)
+		if err != nil {
+			return false, fmt.Errorf("the metrics store's /metrics: %s is %q", readOnlyMetric, f[len(f)-1])
+		}
+		found = true
+		ro = ro || v > 0
+	}
+	if !found {
+		return false, fmt.Errorf("the metrics store's /metrics has no %s", readOnlyMetric)
+	}
+	return ro, nil
+}
+
 // point is one sample of a query's answer.
 type point struct {
 	t time.Time

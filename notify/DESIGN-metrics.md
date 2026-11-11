@@ -149,7 +149,6 @@ is motel's text; nothing in the Caddyfile is a rule or a template.
 
 | Rule | Expression | For | Labels | Reaches |
 |---|---|---|---|---|
-| `metrics_store_read_only` | `max(vm_storage_is_read_only) > 0` | 2 m | box, state, critical | the operator |
 | `metrics_store_disk_fill` | `min(predict_linear(vm_free_disk_space_bytes[6h], 86400)) < 0 and min(predict_linear(vm_free_disk_space_bytes[1h], 86400)) < 0` | 30 m | box, state, warning | the operator |
 | `app_memory_high` | `max by (app) (motel_app_memory_bytes / motel_app_memory_max_bytes) > 0.9` | 10 m | `app`, `subject="app:<app>"`, state, warning | the operator and the app's bound channels |
 | `ChannelFailed` (one per told channel) | `sum(increase(alertmanager_notifications_failed_total{integration=…, receiver_name=~…}[5m])) > 0` | — | exactly motel's `ChannelFailed` labels | the told channel alone |
@@ -195,13 +194,25 @@ the chain instead (below).
 | Event | Source | Kind | Severity | Fires | Resolves |
 |---|---|---|---|---|---|
 | `metrics_store_down` | metrics | state | warning | every push has failed for 5 minutes | a push succeeds |
+| `metrics_store_read_only` | metrics | state | critical | the store's own `/metrics`, read over the socket once a minute, has `vm_storage_is_read_only` above 0: its disk is below its free-space floor and nothing new is kept | one read has it 0 |
 | `metrics_rules_down` | metrics | state | warning | the store has not seen vmalert up (`max(max_over_time(up{job="vmalert"}[3m]))` empty or 0) at three reads in a row, a minute apart | one read sees it up |
 
 A read the store does not answer is no reading: `metrics_store_down`
-says so. When the last config with a `metrics_store` block stops, both
-keys are reported cleared, so nothing fires on with no source. The
+says so.
+
+**Read-only is motel's to tell, not a rule's.** A read-only store
+refuses every write, its own scrapes among them (measured on Debian's
+1.112.0: `/metrics` has the flag at 1, `max(vm_storage_is_read_only) > 0`
+returns nothing), so the rule slice two first shipped could never fire,
+and `up{job="vmalert"}` went unstored with it. motel reads the flag
+from the store's `/metrics` and reports it through the engine. While it
+is set, the two things that follow from it are not told as something
+else: the count toward `metrics_rules_down` does not run, and
+`metrics_store_down` is not raised for the refused imports.
+ When the last config with a `metrics_store` block stops, the
+chain's keys are reported cleared, so nothing fires on with no source. The
 heartbeat (DESIGN-notify.md, "Dead-man and uptime") vouches for the box,
-motel and Alertmanager; these two for the store and vmalert; the store's
+motel and Alertmanager; these three for the store and vmalert; the store's
 own scrape of Alertmanager feeds the second `ChannelFailed`.
 
 ## metrics in GET /<app>
@@ -279,7 +290,12 @@ after `motel notify setup`:
    stopped in step 2, so its start takes the drop-in);
 6. `try-reload-or-restart motel.service`, which renders.
 
-Run again, it puts the units back as the binary ships them. The drop-in
+Run again, it puts the units back as the binary ships them. A re-run
+that fails after the mask (an install, a unit written to a full disk, a
+reload) unmasks the store on its way out, and starts it and vmalert
+again if the store was running, so a stack that worked is not left
+masked and stopped; a first run that fails stays masked, since Debian's
+unit without the drop-in listens on `0.0.0.0`. The drop-in
 replaces Debian's `ExecStart=`, so `/etc/default/victoria-metrics` (a
 conffile) stays as shipped and an upgrade never prompts. One unit fact
 was measured on hotserve-1 and is in the files: a socket unit bound
@@ -401,8 +417,6 @@ on its general scales. metrics' examples:
 
 | Owed | S | O | D | Lands in |
 |---|---|---|---|---|
-| A read-only store (its disk at the free-space floor) refuses its own self-scrape, so `metrics_store_read_only` never fires and `up{job="vmalert"}` goes unstored: the operator gets `metrics_store_down` (true) and `metrics_rules_down` (false), never the critical that names the cause. Measured on Debian's 1.112.0. The fix reads `vm_storage_is_read_only` from the store's `/metrics` over the socket in motel's own check and reports it through the engine. /code-review pass 3 on #423 | 3 | 3 | 3 | its own PR on `feature/notify-and-metrics`, before the merge to main |
-| `motel metrics setup` re-run masks and stops a working store before any step that can fail; an error after that (a full disk at the unit writes, a failed `apt-get`) leaves it masked and stopped until a run succeeds. `motel notify setup` has the same order for Alertmanager. The error is setup's own, printed; the fix unmasks and restarts on the way out when the drop-in is in place. /code-review pass 3 on #423 | 4 | 3 | 1 | the same PR, for both setups |
 | The response observer: per-app requests by class, 5xx share, p50 and p95, cache hit share, in the push, `metrics` and the rules (with `?range=24h`, and the post-deploy comparison) | — | — | — | slice three: needs a handler on the app's request path |
 | Operator rules (the fresh-slate draft's `rule` line), as a grammar of fixed kinds with parameters, never a template | — | — | — | slice three |
 | The store's RSS with `-memory.allowedBytes=96MiB` after a day, and on a 1 or 2 GB box | — | — | — | the next deploy to hotserve-1 |
@@ -428,6 +442,7 @@ deploy token carries `metrics`, and without one is a 401; vmalert's
 rules loaded, and its `ChannelFailed` for the failing channel firing
 with motel's labels while Alertmanager holds one such alert, not two;
 the store stopped by hand, started again by motel's next push with vmalert beside it;
+the store made read-only (its free-space floor set above any disk): no series carries the flag, and motel's `metrics_store_read_only` is in Alertmanager, critical;
 motel's shutdown leaving `rules.yml`'s alerting rules, and a reload
 without the `metrics_store` block writing none; a restart without it
 writing none too, and vmalert loading zero alerting rules after;
@@ -457,6 +472,9 @@ Dated one-liners; the full text of each is in git.
   the working set for `motel_app_memory_bytes`, `max` absent with no raw
   sample, the disk rule's second window, the store's `Wants=` for
   vmalert; one row accepted, two owed.
+- 2026-11-11 — The two rows pass 3 left owed: `metrics_store_read_only` is
+  motel's own read of the store's `/metrics` (the rule could never fire,
+  and is gone), and both setups unmask on a failed re-run.
 - 2026-11-11 — Copilot round 3 on #423, triaged: a reload that takes the
   `metrics_store` block away retires its rules (the both-to-neither row
   goes with it); motel's shutdown keeps them (e2e metrics 8).

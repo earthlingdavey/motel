@@ -28,15 +28,17 @@ const (
 	// rulesQuery is the store's view of vmalert.
 	rulesQuery = `max(max_over_time(up{job="vmalert"}[3m]))`
 
-	eventStoreDown = "metrics_store_down"
-	eventRulesDown = "metrics_rules_down"
-	sourceMetrics  = "metrics"
+	eventStoreDown     = "metrics_store_down"
+	eventRulesDown     = "metrics_rules_down"
+	eventStoreReadOnly = "metrics_store_read_only"
+	sourceMetrics      = "metrics"
 )
 
 // storeAPI is the store, as the pusher uses it.
 type storeAPI interface {
 	importText(ctx context.Context, text []byte) error
 	query(ctx context.Context, q string) ([]series, error)
+	readOnly(ctx context.Context) (bool, error)
 }
 
 type liveStore struct {
@@ -61,6 +63,7 @@ type pusher struct {
 	storeDown    bool
 	rulesBad     int
 	rulesDown    bool
+	readOnly     bool
 
 	failed prometheus.Counter
 
@@ -102,6 +105,9 @@ func (p *pusher) registerFailed(reg *prometheus.Registry) error {
 func storeEvent(name string, firing bool) Event {
 	ev := Event{Name: name, Kind: kindState, Severity: SeverityWarning, Source: sourceMetrics, Firing: firing}
 	switch name {
+	case eventStoreReadOnly:
+		ev.Severity = SeverityCritical
+		ev.Summary = "the metrics store is read-only: its disk is below its free-space floor, and nothing new is kept"
 	case eventStoreDown:
 		ev.Summary = "motel could not push its metrics to the metrics store for five minutes"
 	default:
@@ -149,7 +155,9 @@ func (p *pusher) pushOnce(ctx context.Context) {
 		} else {
 			log.Debug("metrics_store: push failed", zap.String("store", a.store()), zap.Error(err))
 		}
-		if now.Sub(p.failingSince) >= storeDownAfter {
+		// A read-only store refuses every import: metrics_store_read_only
+		// names that, and a second alert for its consequence would not.
+		if now.Sub(p.failingSince) >= storeDownAfter && !p.readOnly {
 			p.storeDown = true
 			evs = append(evs, storeEvent(eventStoreDown, true))
 		}
@@ -169,9 +177,49 @@ func (p *pusher) pushOnce(ctx context.Context) {
 	}
 }
 
+// checkReadOnly asks the store itself whether it is read-only, and
+// says whether it is. motel asks, not a rule: a read-only store refuses
+// its own scrape with every other write, so the flag never reaches a
+// series a rule could read (measured on Debian's 1.112.0). An ask the
+// store does not answer is no reading, and the last one stands.
+func (p *pusher) checkReadOnly(ctx context.Context) bool {
+	p.mu.Lock()
+	a, st := p.active, p.store
+	p.mu.Unlock()
+	if a == nil {
+		return false
+	}
+	ro, err := st.readOnly(ctx)
+	var evs []Event
+	p.mu.Lock()
+	if p.active != a {
+		p.mu.Unlock()
+		return false
+	}
+	if err == nil && ro != p.readOnly {
+		p.readOnly = ro
+		evs = append(evs, storeEvent(eventStoreReadOnly, ro))
+		if ro {
+			// What the store kept of vmalert is as old as the floor: the
+			// count of reads without it starts again when it writes.
+			p.rulesBad = 0
+		}
+	}
+	ro = p.readOnly
+	p.mu.Unlock()
+	for _, ev := range evs {
+		p.report(ev)
+	}
+	return ro
+}
+
 // checkRules asks the store whether it has seen vmalert up. A query the
 // store does not answer is no reading: metrics_store_down says that.
+// Nor is one from a read-only store, which keeps no scrape of vmalert.
 func (p *pusher) checkRules(ctx context.Context) {
+	if p.checkReadOnly(ctx) {
+		return
+	}
 	p.mu.Lock()
 	a, st := p.active, p.store
 	p.mu.Unlock()
@@ -258,7 +306,7 @@ func (p *pusher) setLive(l liveStore) {
 
 // release is MetricsStore.Stop: as notify's engine, it goes back to an
 // older config still live (a reload that failed after Start), and with
-// none it stops, reporting both chain keys cleared, since nothing can
+// none it stops, reporting the chain keys cleared, since nothing can
 // clear them any more.
 func (p *pusher) release(m *MetricsStore) {
 	p.mu.Lock()
@@ -287,7 +335,10 @@ func (p *pusher) release(m *MetricsStore) {
 	if p.rulesDown {
 		evs = append(evs, storeEvent(eventRulesDown, false))
 	}
-	p.failingSince, p.storeDown, p.rulesBad, p.rulesDown = time.Time{}, false, 0, false
+	if p.readOnly {
+		evs = append(evs, storeEvent(eventStoreReadOnly, false))
+	}
+	p.failingSince, p.storeDown, p.rulesBad, p.rulesDown, p.readOnly = time.Time{}, false, 0, false, false
 	cancel, done, running := p.cancel, p.done, p.running
 	p.running = false
 	p.mu.Unlock()

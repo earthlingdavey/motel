@@ -222,6 +222,14 @@ type fakeStore struct {
 	imports   []string
 	up        []series
 	queryErr  error
+	ro        bool
+	roErr     error
+}
+
+func (f *fakeStore) readOnly(context.Context) (bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.ro, f.roErr
 }
 
 func (f *fakeStore) importText(_ context.Context, text []byte) error {
@@ -350,6 +358,72 @@ func TestRulesDownAfterThreeReads(t *testing.T) {
 	evs = tp.take()
 	if len(evs) != 1 || evs[0].Name != eventRulesDown || evs[0].Firing {
 		t.Fatalf("vmalert up again: %+v", evs)
+	}
+}
+
+// A read-only store refuses its own scrapes, so no rule can see the
+// flag: motel reads it from the store's /metrics and says so itself,
+// once, as the critical that names the cause. What follows from it is
+// not told as something else: no metrics_rules_down from a store that
+// keeps no scrape of vmalert, no metrics_store_down for its refused
+// imports.
+func TestReadOnlyStoreIsToldAsItself(t *testing.T) {
+	tp := newTestPusher(t)
+	ctx := context.Background()
+	tp.store.ro = true
+	tp.store.importErr = errors.New("503: the storage is in read-only mode")
+	tp.checkRules(ctx)
+	evs := tp.take()
+	if len(evs) != 1 || evs[0].Name != eventStoreReadOnly || !evs[0].Firing || evs[0].Severity != SeverityCritical || evs[0].Kind != kindState {
+		t.Fatalf("events = %+v", evs)
+	}
+	for range 2 * rulesDownReads {
+		tp.checkRules(ctx)
+	}
+	tp.pushOnce(ctx)
+	tp.at = tp.at.Add(storeDownAfter)
+	tp.pushOnce(ctx)
+	if evs := tp.take(); len(evs) != 0 {
+		t.Fatalf("a read-only store was told as something else: %+v", evs)
+	}
+	// An ask the store does not answer is no reading: the last stands.
+	tp.store.roErr = errors.New("refused")
+	tp.checkRules(ctx)
+	if evs := tp.take(); len(evs) != 0 {
+		t.Fatalf("a failed ask changed the reading: %+v", evs)
+	}
+	tp.store.roErr, tp.store.ro, tp.store.importErr = nil, false, nil
+	tp.store.up = []series{{points: []point{{t: tp.at, v: 1}}}}
+	tp.checkRules(ctx)
+	evs = tp.take()
+	if len(evs) != 1 || evs[0].Name != eventStoreReadOnly || evs[0].Firing {
+		t.Fatalf("writable again: %+v", evs)
+	}
+	// Stopped while read-only: cleared, since nothing else can.
+	tp.store.ro = true
+	tp.checkRules(ctx)
+	tp.take()
+	tp.release(tp.m)
+	evs = tp.take()
+	if len(evs) != 1 || evs[0].Name != eventStoreReadOnly || evs[0].Firing {
+		t.Fatalf("released while read-only: %+v", evs)
+	}
+}
+
+func TestParseReadOnly(t *testing.T) {
+	for page, want := range map[string]bool{
+		"vm_rows 3\nvm_storage_is_read_only 0\n":                             false,
+		"vm_storage_is_read_only 1\nvm_rows 3\n":                             true,
+		`vm_storage_is_read_only{path="/var/lib/victoria-metrics"} 1` + "\n": true,
+	} {
+		if got, err := parseReadOnly([]byte(page)); err != nil || got != want {
+			t.Errorf("%q: %v, %v", page, got, err)
+		}
+	}
+	for _, page := range []string{"", "vm_rows 3\n", "vm_storage_is_read_only_total 1\n", "vm_storage_is_read_only x\n"} {
+		if _, err := parseReadOnly([]byte(page)); err == nil {
+			t.Errorf("%q: read as an answer", page)
+		}
 	}
 }
 

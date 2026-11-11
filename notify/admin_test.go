@@ -279,11 +279,17 @@ func TestServeSendCarriesDetails(t *testing.T) {
 type fakeSystem struct {
 	cmds        []string
 	isInstalled bool
-	owners      map[string][2]int
+	// failOn fails the first command that begins with it.
+	failOn string
+	owners map[string][2]int
 }
 
 func (f *fakeSystem) run(name string, args ...string) error {
 	f.cmds = append(f.cmds, name+" "+strings.Join(args, " "))
+	if f.failOn != "" && strings.HasPrefix(f.cmds[len(f.cmds)-1], f.failOn) {
+		f.failOn = ""
+		return errors.New("exit status 1")
+	}
 	return nil
 }
 func (f *fakeSystem) installed(string) bool { return f.isInstalled }
@@ -301,6 +307,35 @@ func (f *fakeSystem) lookupUser(name string) (int, int, error) {
 	return 103, 103, nil
 }
 func (f *fakeSystem) lookupGroup(string) (int, error) { return 103, nil }
+
+// A re-run that fails after the mask must not leave Alertmanager
+// masked: its socket could then start nothing. It is not started here;
+// its socket does that at the next connection.
+func TestSetupFailingUnmasksAlertmanager(t *testing.T) {
+	root := t.TempDir()
+	if err := setup(&fakeSystem{}, root, &bytes.Buffer{}); err != nil {
+		t.Fatal(err)
+	}
+	f := &fakeSystem{isInstalled: true, failOn: "systemctl daemon-reload"}
+	if err := setup(f, root, &bytes.Buffer{}); err == nil {
+		t.Fatal("the re-run did not fail")
+	}
+	want := []string{
+		"systemctl mask " + amService,
+		"systemctl is-active --quiet " + amService,
+		"systemctl stop " + amService,
+		"systemctl daemon-reload", // fails
+		"systemctl daemon-reload",
+		"systemctl unmask " + amService,
+	}
+	if !slices.Equal(f.cmds, want) {
+		t.Fatalf("commands:\n%s\nwant\n%s", strings.Join(f.cmds, "\n"), strings.Join(want, "\n"))
+	}
+	first := &fakeSystem{failOn: "systemctl daemon-reload"}
+	if err := setup(first, t.TempDir(), &bytes.Buffer{}); err == nil || slices.Contains(first.cmds, "systemctl unmask "+amService) {
+		t.Fatalf("a failed first run: err %v, commands %v", err, first.cmds)
+	}
+}
 
 func TestSetupOrderAndFiles(t *testing.T) {
 	root := t.TempDir()

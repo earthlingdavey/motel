@@ -77,7 +77,7 @@ var reservedNames = []string{
 	liveswap.EventDeploySucceeded, liveswap.EventRollback, liveswap.EventDeployStarted, liveswap.EventDeployEnded,
 	"backup_stale", "backup_run_failed", "backup_unreadable", "drill_failed",
 	// The metrics store's chain and rules (DESIGN-metrics.md).
-	eventStoreDown, eventRulesDown, ruleStoreReadOnly, ruleStoreDiskFill, ruleAppMemoryHigh,
+	eventStoreDown, eventRulesDown, eventStoreReadOnly, ruleStoreDiskFill, ruleAppMemoryHigh,
 }
 
 const maxDetails = 2 << 10

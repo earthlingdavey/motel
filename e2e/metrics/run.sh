@@ -157,7 +157,7 @@ until rules=$(inns curl -s --max-time 5 http://127.0.0.1:8880/api/v1/rules) \
 	&& printf '%s' "$rules" | grep -q '"name":"ChannelFailed"'; do
 	i=$((i + 1)); [ "$i" -ge 45 ] && break; sleep 2
 done
-for r in ChannelFailed app_memory_high metrics_store_read_only metrics_store_disk_fill; do
+for r in ChannelFailed app_memory_high metrics_store_disk_fill; do
 	printf '%s' "$rules" | grep -q "\"name\":\"$r\"" && pass "vmalert loaded $r" || fail "vmalert has no $r: $(printf '%s' "$rules" | cut -c1-200)"
 done
 # What metrics 7 counts after the notify block goes: present now, so its
@@ -204,6 +204,35 @@ done
 [ "$i" -lt 45 ] && pass "motel's push started the store again, and vmalert with it" \
 	|| fail "after 90 s: the store $(systemctl is-active victoria-metrics), vmalert $(systemctl is-active motel-vmalert)"
 a=$(wait_result vmalert-up-again 'up{job="vmalert"} == 1' 90) && pass "the store scrapes vmalert again" || fail "no up{job=\"vmalert\"} after the restart"
+
+echo "=== metrics 4b: a read-only store is told by motel, as itself ==="
+# The store's free-space floor set above any disk: it is read-only from
+# its start, refuses motel's imports and its own scrapes, and no rule
+# can see the flag. motel reads it from the store's /metrics.
+dropin=/etc/systemd/system/victoria-metrics.service.d
+{
+	echo '[Service]'
+	echo 'ExecStart='
+	echo "$(grep '^ExecStart=/' "$dropin/10-motel.conf") -storage.minFreeDiskSpaceBytes=1000000000000000"
+} >"$dropin/20-e2e-read-only.conf"
+systemctl daemon-reload && systemctl restart victoria-metrics
+i=0
+until vm http://vm/metrics | grep -q '^vm_storage_is_read_only.* 1$'; do i=$((i + 1)); [ "$i" -ge 30 ] && break; sleep 2; done
+[ "$i" -lt 30 ] && pass "the store says it is read-only: $(vm http://vm/metrics | grep '^vm_storage_is_read_only')" \
+	|| fail "the store is not read-only: $(vm http://vm/metrics | grep '^vm_storage_is_read_only')"
+has_result "$(q 'max(vm_storage_is_read_only) > 0')" && fail "a rule could have seen the flag after all" \
+	|| pass "no series carries the flag: the store refused its own scrape"
+roq='filter=alertname%3D%22metrics_store_read_only%22'
+i=0
+until am "http://am/api/v2/alerts?$roq" | grep -q '"severity":"critical"'; do i=$((i + 1)); [ "$i" -ge 60 ] && break; sleep 2; done
+[ "$i" -lt 60 ] && pass "motel posted metrics_store_read_only, critical" \
+	|| fail "no metrics_store_read_only in Alertmanager after 120 s: $(am "http://am/api/v2/alerts?$roq" | cut -c1-300)"
+rm "$dropin/20-e2e-read-only.conf"
+systemctl daemon-reload && systemctl restart victoria-metrics
+i=0
+until vm http://vm/metrics | grep -q '^vm_storage_is_read_only.* 0$'; do i=$((i + 1)); [ "$i" -ge 30 ] && break; sleep 2; done
+a=$(wait_result vmalert-up-writable 'up{job="vmalert"} == 1' 120) && pass "writable again, and the store scrapes vmalert" \
+	|| fail "the store did not come back writable: $(vm http://vm/metrics | grep '^vm_storage_is_read_only')"
 
 echo "=== metrics 5: an app's sandbox has none of it in view ==="
 code=$(deploy demo-probe.tar.gz sb1)

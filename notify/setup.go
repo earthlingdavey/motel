@@ -46,6 +46,43 @@ type system interface {
 	lookupGroup(name string) (gid int, err error)
 }
 
+// isFile reports a regular file at p.
+func isFile(p string) bool {
+	fi, err := os.Lstat(p)
+	return err == nil && fi.Mode().IsRegular()
+}
+
+// putBackOnFailure is deferred by a setup right after it masks service,
+// before the stop. A setup masks and stops the daemon before any step
+// that can fail (an install, a unit written to a full disk), and an
+// error would leave a stack that worked masked and stopped until a
+// later run got through. So on a re-run (motel's drop-in was in place
+// when setup began) a failure unmasks the service, and starts start
+// again if the service was running. A first run is left masked: without
+// the drop-in, Debian's unit listens beyond the box.
+func putBackOnFailure(sys system, say func(string, ...any), rerun bool, service string, start []string, err *error) func() {
+	if !rerun {
+		return func() {}
+	}
+	wasRunning := sys.run("systemctl", "is-active", "--quiet", service) == nil
+	return func() {
+		if *err == nil {
+			return
+		}
+		steps := [][]string{{"daemon-reload"}, {"unmask", service}}
+		if wasRunning && len(start) > 0 {
+			steps = append(steps, append([]string{"start"}, start...))
+		}
+		for _, s := range steps {
+			if rerr := sys.run("systemctl", s...); rerr != nil {
+				say("setup failed, and so did putting %s back (systemctl %s: %v): it may be masked and stopped", service, strings.Join(s, " "), rerr)
+				return
+			}
+		}
+		say("setup failed; %s is unmasked again, and running if it was", service)
+	}
+}
+
 type hostSystem struct{ out io.Writer }
 
 func (h hostSystem) run(name string, args ...string) error {
@@ -102,9 +139,10 @@ func (hostSystem) lookupGroup(name string) (int, error) {
 //
 // root is a prefix for every path written (tests); the commands run as
 // given. Each step says what it did on out.
-func setup(sys system, root string, out io.Writer) error {
+func setup(sys system, root string, out io.Writer) (err error) {
 	at := func(p string) string { return filepath.Join(root, p) }
 	say := func(format string, a ...any) { _, _ = fmt.Fprintf(out, format+"\n", a...) }
+	rerun := isFile(at(dropInPath))
 
 	motelUID, _, err := sys.lookupUser("motel")
 	if err != nil {
@@ -114,6 +152,8 @@ func setup(sys system, root string, out io.Writer) error {
 		return err
 	}
 	say("masked %s, so the install starts nothing", amService)
+	// Its socket starts it again at the next connection, once unmasked.
+	defer putBackOnFailure(sys, say, rerun, amService, nil, &err)()
 	// One installed by hand before setup runs on Debian's :9093 and
 	// 0.0.0.0:9094, and the mask does not stop it; nor would the socket
 	// be handed to a service already running. Stopped here, it next
