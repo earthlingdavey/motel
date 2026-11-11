@@ -238,6 +238,7 @@ systemctl start motel-vm.socket
 echo "=== metrics 7: the notify block removed, metrics_store kept ==="
 # Alertmanager keeps the last config notify rendered, so vmalert must be
 # given no rule that could still reach those channels.
+cp /etc/motel/Caddyfile /tmp/Caddyfile.both
 sed '/^\tnotify {$/,/^\t}$/d' /etc/motel/Caddyfile >/tmp/Caddyfile.nonotify
 if grep -q 'notify {' /tmp/Caddyfile.nonotify || ! grep -q 'metrics_store' /tmp/Caddyfile.nonotify; then
 	fail "could not cut the notify block out of the Caddyfile"
@@ -259,6 +260,32 @@ printf '%s' "$rules" | grep -q '"status":"success"' && ! printf '%s' "$rules" | 
 	|| fail "vmalert still loads alerting rules: $(printf '%s' "$rules" | grep -o '"name":"[^"]*","type":"alerting"' | head -5 | tr '\n' ' ')"
 journalctl -u motel -o cat --no-pager | grep -q 'metrics_store: no notify block: vmalert is given no rule' \
 	&& pass "journal: no notify block, no rule" || fail "no 'no notify block' line"
+
+echo "=== metrics 8: motel's shutdown keeps the rules; the metrics_store block removed retires them ==="
+# A shutdown leaves the rules, so the store's alerts reach the operator
+# while motel is down; a reload to a config with no metrics_store block
+# writes the groups empty, as vmalert and the store still run.
+cp /tmp/Caddyfile.both /etc/motel/Caddyfile
+systemctl reload motel && pass "reloaded with both blocks again" || fail "the reload with both blocks failed"
+i=0
+until grep -q 'alert:' "$STATE/rules.yml"; do i=$((i + 1)); [ "$i" -ge 40 ] && break; sleep 0.5; done
+grep -q 'alert:' "$STATE/rules.yml" && pass "both blocks again: rules.yml has alerting rules" || fail "rules.yml has no alerting rule with both blocks"
+systemctl stop motel
+grep -q 'alert:' "$STATE/rules.yml" && pass "motel stopped: rules.yml keeps its alerting rules" \
+	|| fail "motel's shutdown retired the rules: $(head -c 300 "$STATE/rules.yml")"
+systemctl start motel && pass "motel started again" || fail "motel did not start again"
+sed '/^\tmetrics_store$/d' /tmp/Caddyfile.both >/tmp/Caddyfile.nostore
+if grep -q '^[[:space:]]*metrics_store' /tmp/Caddyfile.nostore || ! grep -q 'notify {' /tmp/Caddyfile.nostore; then
+	fail "could not cut the metrics_store block out of the Caddyfile"
+fi
+cp /tmp/Caddyfile.nostore /etc/motel/Caddyfile
+systemctl reload motel && pass "reloaded without the metrics_store block" || fail "the reload without the metrics_store block failed"
+i=0
+until ! grep -q 'alert:' "$STATE/rules.yml"; do i=$((i + 1)); [ "$i" -ge 40 ] && break; sleep 0.5; done
+grep -q 'alert:' "$STATE/rules.yml" && fail "the metrics_store block is gone, yet rules.yml has alerting rules: $(grep -c 'alert:' "$STATE/rules.yml")" \
+	|| pass "the metrics_store block is gone: rules.yml has no alerting rule"
+journalctl -u motel -o cat --no-pager | grep -q 'metrics_store: the block is gone: vmalert is given no rule' \
+	&& pass "journal: the block is gone, no rule" || fail "no 'the block is gone' line"
 
 echo
 if [ "$FAILURES" -ne 0 ]; then

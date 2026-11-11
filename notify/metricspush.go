@@ -298,4 +298,14 @@ func (p *pusher) release(m *MetricsStore) {
 	for _, ev := range evs {
 		p.report(ev)
 	}
+	// A config serving on with no metrics_store block took the block
+	// away: vmalert and the store still run (setup's units), and the
+	// stopped config's rules would go on reaching the channels. motel's
+	// own shutdown leaves them, so the store's alerts reach the operator
+	// while motel is down: Caddy empties its running context before it
+	// stops the last config's apps (caddy.Stop), so configRunning
+	// (load.go) is a reload's alone here.
+	if configRunning() {
+		m.retireRules()
+	}
 }

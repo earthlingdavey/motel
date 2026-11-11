@@ -150,6 +150,19 @@ func (m *MetricsStore) applyRules() {
 	}
 }
 
+// retireRules writes the rules of no block, the groups empty, when a
+// reload takes the metrics_store block away (pusher.release).
+func (m *MetricsStore) retireRules() {
+	path := filepath.Join(m.stateDir(), RulesName)
+	switch changed, err := writeRules(m.stateDir(), renderRules(nil)); {
+	case errors.Is(err, errMetricsNotSetUp):
+	case err != nil:
+		m.logger.Error("metrics_store: the block is gone, and its rules were not retired: vmalert still evaluates them", zap.String("rules", path), zap.Error(err))
+	case changed:
+		m.logger.Info("metrics_store: the block is gone: vmalert is given no rule; the store and vmalert still run until motel metrics setup's units are stopped", zap.String("rules", path))
+	}
+}
+
 // Stop lets go of the pusher, unless a newer config has taken it.
 func (m *MetricsStore) Stop() error {
 	thePusher.release(m)

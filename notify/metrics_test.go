@@ -394,6 +394,40 @@ func TestPusherGoesBackToTheOlderConfig(t *testing.T) {
 	}
 }
 
+// A reload to a config with no metrics_store block (both blocks to
+// notify alone, or to neither) retires the stopped config's rules;
+// motel's own shutdown keeps them (Copilot round 3 on #423).
+func TestReleaseRetiresTheRulesOnAReloadAlone(t *testing.T) {
+	for _, reload := range []bool{true, false} {
+		tp := newTestPusher(t)
+		dir := t.TempDir()
+		core, logs := observer.New(zap.InfoLevel)
+		tp.m.stateDirOverride, tp.m.rules, tp.m.logger = dir, renderRules(notifyApp(t)), zap.New(core)
+		tp.m.applyRules() // its Start
+		was := configRunning
+		configRunning = func() bool { return reload }
+		tp.release(tp.m)
+		configRunning = was
+		b, err := os.ReadFile(filepath.Join(dir, RulesName))
+		if err != nil {
+			t.Fatal(err)
+		}
+		alerting := strings.Contains(string(b), "alert:")
+		gone := logs.FilterMessage("metrics_store: the block is gone: vmalert is given no rule; the store and vmalert still run until motel metrics setup's units are stopped").Len()
+		switch {
+		case reload && (alerting || gone != 1):
+			t.Errorf("a reload took the block away: rules.yml has alerting rules %v, %d journal lines; want none, and one", alerting, gone)
+		case !reload && (!alerting || gone != 0):
+			t.Errorf("motel's shutdown: rules.yml has alerting rules %v, %d journal lines; want them kept, and no line", alerting, gone)
+		}
+		if reload {
+			if f := parseRules(t, b); len(f.Groups) != 2 {
+				t.Errorf("retired rules: %d groups, want the two, empty (vmalert refuses a file with none)", len(f.Groups))
+			}
+		}
+	}
+}
+
 // fakeRange is query_range and the instant query, scripted per query.
 type fakeRange struct {
 	mu      sync.Mutex

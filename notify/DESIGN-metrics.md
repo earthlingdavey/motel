@@ -7,8 +7,9 @@ the "History" section at the end holds only dated one-liners.
 **Status: experimental, slice two** of notify and metrics, stacked on
 slice one (notify/DESIGN-notify.md, PR #422). Opt-in twice over: nothing
 runs without a `metrics_store` block, and the package only Suggests
-`victoria-metrics`. Not for production boxes until slice one's Owed rows
-that bar one have landed, and this document's own "Owed" rows marked so.
+`victoria-metrics`. Slice one's Owed rows that barred a production box
+landed with #424; not for production boxes until this document's own
+"Owed" rows marked so land.
 Normative for what is built: a change that cannot hold a line here
 changes the line in the same PR, with the reason.
 
@@ -92,7 +93,14 @@ no rule: Alertmanager keeps the last config notify rendered when the
 block is removed (notify's Stop releases only its engine), so a rule
 that fired would still reach the old operator's and deployers' channels
 (Copilot on #423). The store keeps the numbers, and `GET /<app>` reads
-them.
+them. A reload to a config with no `metrics_store` block (notify alone,
+or neither) writes the groups empty too, with the journal line
+`metrics_store: the block is gone`: the store and vmalert are setup's
+units and still run, so the stopped config's rules would go on
+evaluating. motel's own shutdown leaves the rules, so the store's alerts
+reach the operator while motel is down; Caddy empties its running
+context before it stops the last config's apps, which is how the two
+are told apart (`pusher.release`; Copilot round 3 on #423).
 
 ## What motel pushes
 
@@ -160,7 +168,8 @@ three are one rule (`receiver_name=~"a|b"`). Two posts with the same labels
 are one alert in Alertmanager, so the two sources deduplicate; the
 heartbeat receiver (no channel, so no suspect) is left to motel's own.
 With no `notify` block both groups are empty (vmalert refuses a rule
-file with no group at all).
+file with no group at all); so are they after a reload takes the
+`metrics_store` block away ("The metrics_store block").
 
 **Not the Watchdog.** The fresh-slate draft and DESIGN-notify.md's
 "Later slices" had vmalert's `Watchdog` beside motel's, deduplicated.
@@ -378,7 +387,6 @@ on its general scales. metrics' examples:
 | `GET /<app>` runs its three queries one after the other in the one 2 s budget: a store answering each in over two thirds of a second answers the whole object as the error, cached 30 s | notify/metricsview.go (`ask`) | 2 | 2 | 1 | 4; the answer says the store did not answer, which is true; running them at once adds goroutines and a join (size 2) to a path that is best-effort by design. /code-review pass 2; the third query from Copilot on #423 leaves the score as it was |
 | vmalert's rules have no flapping guard: a condition that flaps around its threshold fires and resolves at each crossing | notify/metricsrules.go | 2 | 3 | 3 | 18; every rule has a `for:` of 2 to 30 minutes, which bounds a flap to one pair per `for:` |
 | `now` and `at` in `GET /<app>` are judged by the range's step timestamps, not the samples': the store carries a sample forward onto the 60 s grid, so a stopped app's or a dropped cap's last value can read as now for up to about one step past `viewFresh` (3 m) | notify/metricsview.go (`fresh`) | 2 | 3 | 3 | 18; the status beside it says whether the app runs; the source timestamps need a `timestamp()` query per series (size 2, risk 2). Copilot round 2 on #423 |
-| A reload from both `notify` and `metrics_store` to neither stops the push but leaves `rules.yml`: vmalert keeps evaluating, and Alertmanager its last routes, so the store's own `metrics_store_*` alerts can still reach the removed channels | notify/metricspush.go (`release`) | 3 | 2 | 1 | 6; the channels that get them are the ones the operator just removed and will see; retiring the rules there means telling a reload from motel's shutdown, at which the rules must stay (size 2, risk 2); `motel metrics setup` is the way back to a box without the store. Copilot round 2 on #423 |
 
 | vmalert's `ChannelFailed` has no baseline: the store's `increase()` counts a series' first sample from zero (measured on 1.112.0: first seen at 3 gives 3, and again after a 17-minute gap), so a failure Alertmanager counted before `motel metrics setup`, or before a store outage of over ten minutes, is told once as new, for five minutes | notify/metricsrules.go | 2 | 2 | 3 | 12; one late warning to the operator's other channels about a channel that did fail; motel's own source keeps its baseline. A gate on the counter's age changes the expression every channel's rule shares (risk 2) and wants a run against the store to prove. /code-review pass 3 on #423 |
 
@@ -413,6 +421,8 @@ deploy token carries `metrics`, and without one is a 401; vmalert's
 rules loaded, and its `ChannelFailed` for the failing channel firing
 with motel's labels while Alertmanager holds one such alert, not two;
 the store stopped by hand, started again by motel's next push with vmalert beside it;
+motel's shutdown leaving `rules.yml`'s alerting rules, and a reload
+without the `metrics_store` block writing none;
 the view probe's three metrics keys closed from inside a sandboxed app;
 the store's socket stopped, `GET /<app>` answering at once (13 ms
 measured) with the error and the rest of the status whole, and the
@@ -439,3 +449,6 @@ Dated one-liners; the full text of each is in git.
   the working set for `motel_app_memory_bytes`, `max` absent with no raw
   sample, the disk rule's second window, the store's `Wants=` for
   vmalert; one row accepted, two owed.
+- 2026-11-11 — Copilot round 3 on #423, triaged: a reload that takes the
+  `metrics_store` block away retires its rules (the both-to-neither row
+  goes with it); motel's shutdown keeps them (e2e metrics 8).
