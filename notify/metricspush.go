@@ -25,6 +25,10 @@ const (
 	// find vmalert not up before metrics_rules_down fires: a fresh
 	// store has not scraped it yet.
 	rulesDownReads = 3
+	// readOnlyStale is how many asks in a row the store must leave
+	// unanswered before its last "read-only" stops holding the other two
+	// events back.
+	readOnlyStale = 3
 	// rulesQuery is the store's view of vmalert.
 	rulesQuery = `max(max_over_time(up{job="vmalert"}[3m]))`
 
@@ -63,11 +67,10 @@ type pusher struct {
 	storeDown    bool
 	rulesBad     int
 	rulesDown    bool
-	// readOnly is what was told; readOnlyNow is the last ask's answer,
-	// false when the store did not give one.
-	readOnly          bool
-	readOnlyNow       bool
-	readOnlyAskFailed bool
+	// readOnly is the last answer the store gave, and what was told;
+	// readOnlyMisses counts the asks it has not answered since.
+	readOnly       bool
+	readOnlyMisses int
 
 	failed prometheus.Counter
 
@@ -161,7 +164,7 @@ func (p *pusher) pushOnce(ctx context.Context) {
 		}
 		// A read-only store refuses every import: metrics_store_read_only
 		// names that, and a second alert for its consequence would not.
-		if now.Sub(p.failingSince) >= storeDownAfter && !p.readOnlyNow {
+		if now.Sub(p.failingSince) >= storeDownAfter && !p.heldReadOnly() {
 			p.storeDown = true
 			evs = append(evs, storeEvent(eventStoreDown, true))
 		}
@@ -188,8 +191,9 @@ func (p *pusher) pushOnce(ctx context.Context) {
 // at every read that finds it set, as the other two are: the engine
 // drops what it is told while no notify block runs, and one told only
 // when it changed would then never be told. An ask the store does not
-// answer is no reading: what was told stands, but nothing is held back
-// on its account, since the store may by now be down.
+// answer is no reading: what was told stands, and for readOnlyStale
+// asks so does the hold on the other two events (heldReadOnly).
+// It returns whether that hold stands.
 func (p *pusher) checkReadOnly(ctx context.Context) bool {
 	p.mu.Lock()
 	a, st, log := p.active, p.store, p.logger
@@ -205,21 +209,20 @@ func (p *pusher) checkReadOnly(ctx context.Context) bool {
 		return false
 	}
 	if err != nil {
-		if !p.readOnlyAskFailed {
+		if p.readOnlyMisses == 0 {
 			log.Warn("metrics_store: could not read whether the store is read-only", zap.String("store", a.store()), zap.Error(err))
 		}
-		p.readOnlyAskFailed, p.readOnlyNow = true, false
+		p.readOnlyMisses++
+		held := p.heldReadOnly()
 		p.mu.Unlock()
-		return false
+		return held
 	}
-	p.readOnlyAskFailed, p.readOnlyNow = false, ro
+	p.readOnlyMisses = 0
 	switch {
 	case ro:
-		if !p.readOnly {
-			// What the store kept of vmalert is as old as the floor: the
-			// count of reads without it starts again when it writes.
-			p.rulesBad = 0
-		}
+		// What the store kept of vmalert is as old as the floor: the
+		// count of reads without it starts again when it writes.
+		p.rulesBad = 0
 		p.readOnly = true
 		evs = append(evs, storeEvent(eventStoreReadOnly, true))
 	case p.readOnly:
@@ -233,8 +236,17 @@ func (p *pusher) checkReadOnly(ctx context.Context) bool {
 	return ro
 }
 
+// heldReadOnly is whether the store's last answer was read-only and
+// still stands: what follows from a read-only store is then not told
+// as something else. One ask the store does not answer leaves it
+// standing (a store at its floor is slow); readOnlyStale in a row do
+// not, since the store may by then be down. Called with mu held.
+func (p *pusher) heldReadOnly() bool {
+	return p.readOnly && p.readOnlyMisses < readOnlyStale
+}
+
 // checkChain is the minute's watch: whether the store is read-only,
-// and unless it is, whether it has seen vmalert up. A read-only store
+// and unless that holds, whether it has seen vmalert up. A read-only store
 // keeps no scrape of vmalert, so its answer to the second is no
 // reading. Each ask has a budget of its own: a slow /metrics must not
 // leave the query none.
@@ -370,7 +382,7 @@ func (p *pusher) release(m *MetricsStore) {
 		evs = append(evs, storeEvent(eventStoreReadOnly, false))
 	}
 	p.failingSince, p.storeDown, p.rulesBad, p.rulesDown = time.Time{}, false, 0, false
-	p.readOnly, p.readOnlyNow, p.readOnlyAskFailed = false, false, false
+	p.readOnly, p.readOnlyMisses = false, 0
 	cancel, done, running := p.cancel, p.done, p.running
 	p.running = false
 	p.mu.Unlock()

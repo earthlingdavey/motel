@@ -143,6 +143,25 @@ func TestMetricsSetupFailingPutsTheStoreBack(t *testing.T) {
 	if !strings.Contains(out.String(), "systemctl daemon-reload: exit status 1") || !strings.Contains(out.String(), "check that it is unmasked and running") {
 		t.Fatalf("setup did not say it put the store back: %s", out.String())
 	}
+	// The put-back getting through: a re-run whose install fails. And a
+	// store that was not running is not started, only its socket.
+	for _, c := range []struct{ failOn, start string }{
+		{"apt-get", "systemctl start motel-vm.socket victoria-metrics.service motel-vmalert.service"},
+		{"apt-get|systemctl is-active", "systemctl start motel-vm.socket"},
+	} {
+		f := &fakeSystem{failOn: c.failOn}
+		out.Reset()
+		if err := metricsSetup(f, root, &out); err == nil {
+			t.Fatalf("failOn %q: the re-run did not fail", c.failOn)
+		}
+		n := len(f.cmds)
+		if n < 3 || !slices.Equal(f.cmds[n-3:], []string{"systemctl daemon-reload", "systemctl unmask victoria-metrics.service", c.start}) {
+			t.Errorf("failOn %q: commands %v", c.failOn, f.cmds)
+		}
+		if !strings.Contains(out.String(), "victoria-metrics.service is unmasked again") {
+			t.Errorf("failOn %q: setup said %s", c.failOn, out.String())
+		}
+	}
 }
 
 // TestMetricsUnitsAreTheMeasuredOnes holds the shipped units to what ran

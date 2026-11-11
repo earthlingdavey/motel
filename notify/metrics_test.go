@@ -387,14 +387,27 @@ func TestReadOnlyStoreIsToldAsItself(t *testing.T) {
 	if evs := tp.take(); len(evs) != 0 {
 		t.Fatalf("a read-only store was told as something else: %+v", evs)
 	}
-	// The store stops answering: no reading. What was told stands, one
-	// line says the ask failed, and nothing is held back any longer: the
-	// store may be down, and metrics_store_down says that.
+	// One ask the store does not answer (a store at its floor is slow)
+	// is no reading: what was told stands, and so does the hold, for the
+	// pushes and for the count toward metrics_rules_down.
+	tp.store.roErr = errors.New("timeout")
+	tp.checkChain(ctx)
+	tp.pushOnce(ctx)
+	tp.store.roErr = nil
+	tp.checkChain(ctx)
+	for _, ev := range tp.take() {
+		if ev.Name != eventStoreReadOnly {
+			t.Fatalf("one unanswered ask let %s through", ev.Name)
+		}
+	}
+	// readOnlyStale in a row: the store may be down, and
+	// metrics_store_down says that. One line says the ask fails.
 	tp.store.roErr = errors.New("refused")
-	tp.checkChain(ctx)
-	tp.checkChain(ctx)
-	if n := tp.logs.FilterMessage("metrics_store: could not read whether the store is read-only").Len(); n != 1 {
-		t.Fatalf("%d lines for an ask failing twice, want 1", n)
+	for range readOnlyStale {
+		tp.checkChain(ctx)
+	}
+	if n := tp.logs.FilterMessage("metrics_store: could not read whether the store is read-only").Len(); n != 2 {
+		t.Fatalf("%d lines for two spells of failing asks, want 2", n)
 	}
 	tp.pushOnce(ctx)
 	evs := tp.take()
@@ -404,8 +417,9 @@ func TestReadOnlyStoreIsToldAsItself(t *testing.T) {
 	tp.store.roErr, tp.store.ro, tp.store.importErr = nil, false, nil
 	tp.store.up = []series{{points: []point{{t: tp.at, v: 1}}}}
 	tp.checkChain(ctx)
+	tp.pushOnce(ctx)
 	evs = tp.take()
-	if len(evs) != 1 || evs[0].Name != eventStoreReadOnly || evs[0].Firing {
+	if len(evs) != 2 || evs[0].Name != eventStoreReadOnly || evs[0].Firing || evs[1].Name != eventStoreDown || evs[1].Firing {
 		t.Fatalf("writable again: %+v", evs)
 	}
 	// Stopped while read-only: cleared, since nothing else can.

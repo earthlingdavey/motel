@@ -279,14 +279,15 @@ func TestServeSendCarriesDetails(t *testing.T) {
 type fakeSystem struct {
 	cmds        []string
 	isInstalled bool
-	// failOn fails every command that begins with it.
+	// failOn fails every command that begins with one of its
+	// |-separated prefixes.
 	failOn string
 	owners map[string][2]int
 }
 
 func (f *fakeSystem) run(name string, args ...string) error {
 	f.cmds = append(f.cmds, name+" "+strings.Join(args, " "))
-	if f.failOn != "" && strings.HasPrefix(f.cmds[len(f.cmds)-1], f.failOn) {
+	if f.failOn != "" && slices.ContainsFunc(strings.Split(f.failOn, "|"), func(p string) bool { return strings.HasPrefix(f.cmds[len(f.cmds)-1], p) }) {
 		return errors.New("exit status 1")
 	}
 	return nil

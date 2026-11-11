@@ -229,8 +229,10 @@ until am "http://am/api/v2/alerts?$roq" | grep -q '"severity":"critical"'; do i=
 # Two of the store's 30 s self-scrapes have come and gone by now: had it
 # kept one, a rule would see the flag.
 while [ $(( $(date +%s) - ro_at )) -lt 75 ]; do sleep 2; done
-has_result "$(q 'max(max_over_time(vm_storage_is_read_only[5m])) > 0')" && fail "a rule could have seen the flag after all" \
-	|| pass "75 s read-only and no series carries the flag: the store refused its own scrapes"
+a=$(q 'max(max_over_time(vm_storage_is_read_only[5m])) > 0')
+printf '%s' "$a" | grep -q '"status":"success"' && ! has_result "$a" \
+	&& pass "75 s read-only and no series carries the flag: the store refused its own scrapes" \
+	|| fail "a rule could have seen the flag after all, or the store did not answer: $(printf '%s' "$a" | cut -c1-200)"
 rm "$dropin/20-e2e-read-only.conf"
 systemctl daemon-reload && systemctl restart victoria-metrics
 back_at=$(date +%s)
@@ -238,7 +240,7 @@ i=0
 until vm http://vm/metrics | grep -q '^vm_storage_is_read_only.* 0$'; do i=$((i + 1)); [ "$i" -ge 30 ] && break; sleep 2; done
 [ "$i" -lt 30 ] && pass "the store is writable again" || fail "the store is still read-only: $(vm http://vm/metrics | grep '^vm_storage_is_read_only')"
 # A sample from after the restart, not one kept from before the floor.
-a=$(wait_result vmalert-up-writable "timestamp(up{job=\"vmalert\"} == 1) > $back_at" 120) && pass "and scrapes vmalert again" \
+a=$(wait_result vmalert-up-writable "(timestamp(up{job=\"vmalert\"}) > $back_at) and (up{job=\"vmalert\"} == 1)" 120) && pass "and scrapes vmalert again" \
 	|| fail "no fresh up{job=\"vmalert\"} after the store came back: $(q 'timestamp(up{job="vmalert"})')"
 
 echo "=== metrics 5: an app's sandbox has none of it in view ==="
