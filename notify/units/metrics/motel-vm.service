@@ -10,6 +10,12 @@ After=victoria-metrics.service motel-vm.socket
 Type=notify
 NetworkNamespacePath=/run/netns/motel-metrics
 ExecStart=/usr/lib/systemd/systemd-socket-proxyd --exit-idle-time=5min 127.0.0.1:8428
+# Not root: a uid of its own for the run, and no capability. It needs
+# none: its listener comes by socket activation and it connects to the
+# namespace's loopback, so the bytes motel and the store send through it
+# reach nothing a bug in it could turn into root.
+DynamicUser=yes
+CapabilityBoundingSet=
 PrivateTmp=yes
 ProtectSystem=strict
 ProtectHome=yes

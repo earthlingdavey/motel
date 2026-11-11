@@ -10,7 +10,22 @@ After=motel-am-proxy.socket motel-am.socket
 Type=notify
 NetworkNamespacePath=/run/netns/motel-metrics
 ExecStart=/usr/lib/systemd/systemd-socket-proxyd --exit-idle-time=5min /run/motel-notify/am.sock
+# Not root, and no capability. Its one reach is Alertmanager's socket,
+# 0660 root:motel, so it holds the group, and the group also reads what
+# the motel uid reads (the env files, the box's exchange tree): so the
+# view is deny-by-default, as an app's is (liveswap/sandbox.go), an empty
+# root with the OS the proxy runs on, the socket's directory and
+# systemd's notify socket bound back read-only. That needs a static uid:
+# DynamicUser= implies ProtectSystem=strict, under which systemd does not
+# mount the empty root (measured, systemd 257). The uid is the namespace
+# daemons' own, the proxy's only clients: a bug in it gives them the uid
+# they hold and a group whose one path in this view is the socket they
+# reach through it.
+User=_victoria-metrics
+SupplementaryGroups=motel
+CapabilityBoundingSet=
+TemporaryFileSystem=/:ro
+BindReadOnlyPaths=/usr -/bin -/lib -/lib64 -/etc/ld.so.cache /run/motel-notify /run/systemd/notify
+PrivateDevices=yes
 PrivateTmp=yes
-ProtectSystem=strict
-ProtectHome=yes
 NoNewPrivileges=yes

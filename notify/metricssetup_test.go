@@ -10,7 +10,9 @@ import (
 	"testing"
 )
 
-// notifySetUp makes root look like a box where motel notify setup ran.
+// notifySetUp makes root look like a box where motel notify setup ran,
+// with the store's data directory as Debian's package ships it, 0755
+// (the fake install makes nothing).
 func notifySetUp(t *testing.T, root string) {
 	t.Helper()
 	p := filepath.Join(root, socketPath)
@@ -18,6 +20,9 @@ func notifySetUp(t *testing.T, root string) {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(p, unitSocket, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, vmDataDir), 0o755); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -84,6 +89,12 @@ func TestMetricsSetupOrderAndFiles(t *testing.T) {
 	}
 	if b, _ := os.ReadFile(filepath.Join(dir, RulesName)); !bytes.Equal(b, renderRules(nil)) {
 		t.Error("the first rules are not the empty groups")
+	}
+	// Debian's 0755 would let every local uid read the series.
+	if st, err := os.Stat(filepath.Join(root, vmDataDir)); err != nil {
+		t.Error(err)
+	} else if st.Mode().Perm() != 0o750 {
+		t.Errorf("the store's data directory is %v, want 0750", st.Mode())
 	}
 
 	// Again, on a box set up: nothing installed, motel's rules kept,
@@ -184,11 +195,23 @@ func TestMetricsUnitsAreTheMeasuredOnes(t *testing.T) {
 	// A namespace left behind must not fail every later start.
 	has("the namespace unit", unitNetns, "ExecStartPre=-/usr/sbin/ip netns delete motel-metrics\nExecStart=/usr/sbin/ip netns add motel-metrics")
 	has("motel-vm.socket", unitVMSocket, "ListenStream="+DefaultStoreSocket+"\n", "SocketGroup=motel", "SocketMode=0660")
-	has("motel-vm.service", unitVMProxy, "NetworkNamespacePath=/run/netns/motel-metrics", "systemd-socket-proxyd --exit-idle-time=5min 127.0.0.1:8428")
+	has("motel-vm.service", unitVMProxy, "NetworkNamespacePath=/run/netns/motel-metrics", "systemd-socket-proxyd --exit-idle-time=5min 127.0.0.1:8428",
+		// Not root (the box audit of 2026-11-11).
+		"DynamicUser=yes", "CapabilityBoundingSet=\n")
 	// The cold-boot ordering cycle's fix.
 	has("motel-am-proxy.socket", unitAMProxySocket, "DefaultDependencies=no", "After=sysinit.target motel-metrics-netns.service",
 		"ListenStream=127.0.0.1:9093", "NetworkNamespacePath=/run/netns/motel-metrics", "WantedBy=multi-user.target")
-	has("motel-am-proxy.service", unitAMProxy, "systemd-socket-proxyd --exit-idle-time=5min "+DefaultSocket, "Requires=motel-am-proxy.socket motel-am.socket")
+	has("motel-am-proxy.service", unitAMProxy, "systemd-socket-proxyd --exit-idle-time=5min "+DefaultSocket, "Requires=motel-am-proxy.socket motel-am.socket",
+		// Not root, and the motel group's files out of its view.
+		"User=_victoria-metrics", "SupplementaryGroups=motel", "CapabilityBoundingSet=\n", "TemporaryFileSystem=/:ro",
+		"BindReadOnlyPaths=/usr -/bin -/lib -/lib64 -/etc/ld.so.cache /run/motel-notify /run/systemd/notify\n")
+	// Either one has systemd keep the host's root, and the view with it
+	// (measured, systemd 257).
+	for _, bad := range []string{"DynamicUser=", "ProtectSystem="} {
+		if strings.Contains(string(unitAMProxy), "\n"+bad) {
+			t.Errorf("motel-am-proxy.service has %s, which undoes TemporaryFileSystem=/", bad)
+		}
+	}
 	has("motel-vmalert.service", unitVMAlert, "User=_victoria-metrics", "NetworkNamespacePath=/run/netns/motel-metrics",
 		"-rule="+DefaultMetricsStateDir+"/"+RulesName+" ", "-configCheckInterval=1m", "-disableAlertgroupLabel",
 		"-notifier.url=http://127.0.0.1:9093", "-remoteWrite.url=http://127.0.0.1:8428", "-remoteRead.url=http://127.0.0.1:8428", "MemoryMax=128M")

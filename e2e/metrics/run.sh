@@ -77,6 +77,11 @@ done
 	&& pass "the store's socket is srw-rw---- root motel" || fail "the socket is $(stat -c '%A %U %G' "$VM" 2>&1)"
 [ "$(stat -c '%A %U %G' "$STATE")" = "drwxr-s--- motel _victoria-metrics" ] \
 	&& pass "$STATE is drwxr-s--- motel _victoria-metrics" || fail "$STATE is $(stat -c '%A %U %G' "$STATE" 2>&1)"
+# Debian ships it 0755: setup sets the mode, so no other uid reads the
+# series past the socket's group.
+[ "$(stat -c '%A %U %G' /var/lib/victoria-metrics)" = "drwxr-x--- _victoria-metrics _victoria-metrics" ] \
+	&& pass "the store's data is drwxr-x--- _victoria-metrics _victoria-metrics" \
+	|| fail "the store's data is $(stat -c '%A %U %G' /var/lib/victoria-metrics 2>&1)"
 [ "$(vm http://vm/health)" = OK ] && pass "root reaches the store" || fail "root: $(vm http://vm/health)"
 [ "$(runuser -u motel -- curl -s --max-time 5 --unix-socket "$VM" http://vm/health)" = OK ] \
 	&& pass "the motel user reaches it" || fail "the motel user is refused"
@@ -190,6 +195,29 @@ until am "http://am/api/v2/alerts?$amq" | grep -q '"generatorURL":"http'; do
 done
 [ "$i" -lt 38 ] && pass "the one alert was posted by vmalert too (its generatorURL)" \
 	|| fail "no vmalert post merged into the alert in 75 s: $(am "http://am/api/v2/alerts?$amq" | cut -c1-400)"
+
+echo "=== metrics 4c: the two proxies run as no root ==="
+# Both carried traffic just now (motel's reads through vm.sock, vmalert's
+# posts and the store's scrape through the in-namespace port), so both run.
+for u in motel-vm.service motel-am-proxy.service; do
+	pid=$(systemctl show -p MainPID --value "$u")
+	uid=$(stat -c %u "/proc/$pid" 2>/dev/null)
+	bnd=$(sed -n 's/^CapBnd:[[:space:]]*//p' "/proc/$pid/status" 2>/dev/null)
+	[ "$pid" != 0 ] && [ -n "$uid" ] && [ "$uid" != 0 ] && [ "$bnd" = 0000000000000000 ] \
+		&& pass "$u runs as uid $uid ($(ps -o user= -p "$pid")), no capability" \
+		|| fail "$u: pid $pid, uid '$uid', CapBnd '$bnd'"
+done
+# The am proxy holds the motel group for Alertmanager's socket, so the
+# group's files must be out of its view, and the socket in it.
+pid=$(systemctl show -p MainPID --value motel-am-proxy.service)
+[ "$(ps -o user= -p "$pid")" = _victoria-metrics ] && grep -q "^Groups:.*\b$(getent group motel | cut -d: -f3)\b" "/proc/$pid/status" \
+	&& pass "the am proxy is _victoria-metrics in group motel" || fail "the am proxy: $(ps -o user= -p "$pid"), $(grep ^Groups "/proc/$pid/status")"
+if [ -e "/proc/$pid/root/etc/motel" ] || [ -e "/proc/$pid/root/var/lib/liveswap" ] || [ -e "/proc/$pid/root/run/motel" ]; then
+	fail "the am proxy sees the motel group's paths: $(ls -d "/proc/$pid/root/etc/motel" "/proc/$pid/root/var/lib/liveswap" "/proc/$pid/root/run/motel" 2>/dev/null | tr '\n' ' ')"
+else
+	pass "the am proxy sees none of /etc/motel, /var/lib/liveswap, /run/motel"
+fi
+[ -S "/proc/$pid/root$AMS" ] && pass "and sees Alertmanager's socket" || fail "the am proxy has no $AMS in its view"
 
 echo "=== metrics 4a: the store stopped by hand comes back with vmalert ==="
 # A stop of the store stops vmalert and the proxy (both Require it).

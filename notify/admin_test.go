@@ -341,6 +341,10 @@ func TestSetupFailingUnmasksAlertmanager(t *testing.T) {
 
 func TestSetupOrderAndFiles(t *testing.T) {
 	root := t.TempDir()
+	// Alertmanager's storage as Debian's package ships it.
+	if err := os.MkdirAll(filepath.Join(root, amStorage), 0o755); err != nil {
+		t.Fatal(err)
+	}
 	fs0 := &fakeSystem{}
 	var out bytes.Buffer
 	if err := setup(fs0, root, &out); err != nil {
@@ -378,6 +382,12 @@ func TestSetupOrderAndFiles(t *testing.T) {
 	}
 	if fs0.owners[dir] != [2]int{986, 103} {
 		t.Errorf("state dir owner = %v, want motel:prometheus", fs0.owners[dir])
+	}
+	storage := filepath.Join(root, amStorage)
+	if st, err := os.Stat(storage); err != nil {
+		t.Error(err)
+	} else if st.Mode().Perm() != 0o750 || fs0.owners[storage] != [2]int{103, 103} {
+		t.Errorf("Alertmanager's storage is %v, owner %v; want 0750 prometheus", st.Mode(), fs0.owners[storage])
 	}
 	cfg, err := os.ReadFile(filepath.Join(dir, ConfigName))
 	if err != nil || !bytes.Contains(cfg, []byte("receiver: blackhole")) {

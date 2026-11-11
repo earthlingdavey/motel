@@ -94,6 +94,11 @@ listeners=$(ss -ltnH 2>/dev/null | awk '{print $4}' | grep -E ':(9093|9094)$' ||
 	&& pass "the socket is srw-rw---- root motel" || fail "the socket is $(stat -c '%A %U %G' "$SOCK" 2>&1)"
 [ "$(stat -c '%A %U %G' "$STATE")" = "drwxr-s--- motel prometheus" ] \
 	&& pass "$STATE is drwxr-s--- motel prometheus" || fail "$STATE is $(stat -c '%A %U %G' "$STATE" 2>&1)"
+# Debian ships it 0755: setup sets the mode, so no other uid reads the
+# notification log or the silences.
+[ "$(stat -c '%A %U %G' /var/lib/prometheus/alertmanager)" = "drwxr-x--- prometheus prometheus" ] \
+	&& pass "Alertmanager's storage is drwxr-x--- prometheus prometheus" \
+	|| fail "Alertmanager's storage is $(stat -c '%A %U %G' /var/lib/prometheus/alertmanager 2>&1)"
 i=0
 until grep -q 'Rendered by motel' "$STATE/alertmanager.yml" 2>/dev/null; do
 	i=$((i + 1)); [ "$i" -ge 40 ] && break; sleep 0.25

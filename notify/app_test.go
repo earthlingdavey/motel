@@ -12,6 +12,8 @@ import (
 
 	"github.com/caddyserver/caddy/v2"
 	"github.com/caddyserver/caddy/v2/caddyconfig"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zaptest/observer"
 
 	// The Caddyfile adapter and the liveswap option, as the motel
 	// binary links them.
@@ -268,6 +270,23 @@ func TestBootDropsTheChannelsOfAnUnusableSecretsFile(t *testing.T) {
 		}
 		if !c.ok && (err == nil || !strings.Contains(err.Error(), secrets+":2: not KEY=VALUE")) {
 			t.Errorf("%q, running %v: err = %v", c.cmd, c.running, err)
+		}
+	}
+}
+
+// TestNoHeartbeatIsWarned: a block with no heartbeat line loads (the
+// Watchdog goes to the blackhole), and every load says so; one with
+// the line says nothing of it.
+func TestNoHeartbeatIsWarned(t *testing.T) {
+	for _, c := range []struct {
+		secret string
+		want   int
+	}{{"", 1}, {"NOTIFY_HC_URL", 0}} {
+		core, logs := observer.New(zap.WarnLevel)
+		a := &App{HeartbeatSecret: c.secret, logger: zap.New(core)}
+		a.warnAtLoad()
+		if n := len(logs.FilterMessageSnippet("notify: no heartbeat line").All()); n != c.want {
+			t.Errorf("heartbeat %q: %d warnings, want %d (%v)", c.secret, n, c.want, logs.All())
 		}
 	}
 }

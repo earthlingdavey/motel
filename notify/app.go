@@ -126,10 +126,21 @@ func (a *App) Provision(ctx caddy.Context) error {
 			return fmt.Errorf("notify: subscribing to %s: %w", name, err)
 		}
 	}
+	a.warnAtLoad()
+	return nil
+}
+
+// warnAtLoad says, at every load (validate's too), what the block
+// accepts but the operator should hear each time.
+func (a *App) warnAtLoad() {
 	if a.AllowInsecureChannels {
 		a.logger.Warn("notify: allow_insecure_channels is on: channel URLs may be http and private addresses, which Alertmanager reaches from the network namespace every app shares; for test rigs only")
 	}
-	return nil
+	// Without the line the Watchdog goes to the blackhole: a box, motel
+	// or Alertmanager that stops is told by no one (requirement 6).
+	if a.HeartbeatSecret == "" {
+		a.logger.Warn("notify: no heartbeat line: nothing outside the box hears that it, motel or Alertmanager stopped; add heartbeat {secret.NOTIFY_<NAME>} with a dead-man check's ping URL (notify/DESIGN-notify.md, \"Dead-man and uptime\")")
+	}
 }
 
 // appTrust is each app's deploy_trust, from liveswap's own provisioned

@@ -227,10 +227,17 @@ func setup(sys system, root string, out io.Writer) (err error) {
 		}
 		say("wrote %s, a config that sends nothing, until motel renders the notify block", filepath.Join(DefaultStateDir, ConfigName))
 	}
+	// Alertmanager's notification log and silences. Debian ships the
+	// directory 0755, which MkdirAll leaves as it is, so the mode is set
+	// too; dpkg keeps an existing directory's mode on an upgrade, and
+	// the postinst only chowns it.
 	if err := os.MkdirAll(at(amStorage), 0o750); err != nil {
 		return err
 	}
 	if err := sys.chown(at(amStorage), promUID, promGID); err != nil {
+		return err
+	}
+	if err := os.Chmod(at(amStorage), 0o750); err != nil { //nolint:gosec // G302: a directory; 0750 is the tightening
 		return err
 	}
 
