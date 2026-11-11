@@ -322,9 +322,10 @@ monitor {
 A rule line in a block with no `metrics` line is refused (`a rule line
 needs the monitor block's metrics line`), wherever the line is; in JSON
 the rules are the `metrics` object's (`apps.monitor.metrics.rules`), so
-none can be written without it. A block that is a `metrics` line and
-rules alone runs no notify, and its operator group is empty, as the
-fixed ones are ("The metrics line").
+none can be written without it. A block with rule lines and no channel
+is refused (`rule <name> reaches no one: the monitor block has no
+channel`): it runs no notify ("The metrics line"), so nothing would
+render its rules or hear a deploy.
 
 What is checked (notify/operatorrules.go: the Caddyfile's lines at
 parse, a JSON config's at Provision, both by `motel validate`):
@@ -383,15 +384,18 @@ post_deploy is motel's.
 **`motel_disk_avail_bytes{path}`** is the box series `disk_fill`
 reads: statfs's available bytes (df's Avail) for the directories
 notify's disk source measures (the apps' root, Caddy's data, notify's
-state directory), one series per filesystem, named by the first of them
-on it, read at each gather.
+state directory), one series per filesystem, read at each gather. It is
+named by the first of them on it, and keeps that name while the path is
+measured: a stat of it that fails once leaves the series to the next
+path on the device under the same name, so a rule's history is not cut
+in two.
 
 **The post-deploy comparison** (notify/postdeploy.go) is motel's: vmalert
 knows neither when the cutover was nor which release came before.
 liveswap's `deploy_succeeded` and `rollback` carry both: `Previous`, the
 release whose instance served until the new one was published (none
-after a first deploy, or for an app that was down; a relaunch names its
-own release), and `Cutover`, when. `lifecycleSink` hands them to the
+after a first deploy, or when that instance was not running: a crash
+loop's release is no baseline; a relaunch names its own release), and `Cutover`, when. `lifecycleSink` hands them to the
 comparison before the engine's toggles, so `deploy_succeeded off` still
 compares. For an app with a rule (its own, else the every-app one),
 for each whole minute e since the cutover up to `window`, both read at
@@ -407,6 +411,8 @@ is given, past the offset:
   `release="OLD"` with `[<e>s] offset <e>s`, its last e before the
   cutover.
 
+The checks due at a tick run at once, each within the store's 10 s
+budget, so a slow store does not stretch the minute between them.
 A check is **skipped**, neither a pass nor a failure, while the new
 release has fewer than `min_requests` responses sent (aborted left
 out), and when the store does not answer (a debug line, `the post-deploy
@@ -857,3 +863,8 @@ Dated one-liners; the full text of each is in git.
 - 2026-11-11 — The operator's `rule` lines: `threshold` and `disk_fill`
   rendered into `motel-operator`, `post_deploy` evaluated by motel; the
   two slice-three rows of "Owed" close.
+- 2026-11-11 — /code-review pass 1 on operator rules, triaged: rules in a
+  block with no channel are refused, a dead instance is no release's
+  baseline, the post-deploy checks due together run at once, a disk
+  series keeps its path's name, a refusal of two rule lines names its
+  line, `max_p95` kept to the nanosecond.
