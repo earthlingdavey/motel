@@ -397,6 +397,27 @@ func TestAMetricsLineAloneIsTheStoreWithoutNotify(t *testing.T) {
 // config, notify's first; Stop lets go of both. The store alone never
 // takes the engine.
 func TestStartAndStopBothParts(t *testing.T) {
+	// Fresh ones, put back after: Provision and Start reach the
+	// globals, and no other test's state is this one's to read or leave.
+	savedEngine, savedPusher := theEngine, thePusher
+	theEngine = newEngine()
+	thePusher = newPusher(theEngine.report)
+	t.Cleanup(func() {
+		// A failed assertion may leave either running: stop both.
+		thePusher.mu.Lock()
+		m := thePusher.active
+		thePusher.mu.Unlock()
+		if m != nil {
+			thePusher.release(m)
+		}
+		theEngine.mu.Lock()
+		a := theEngine.active
+		theEngine.mu.Unlock()
+		if a != nil {
+			theEngine.release(a)
+		}
+		theEngine, thePusher = savedEngine, savedPusher
+	})
 	dir := t.TempDir()
 	secrets := filepath.Join(dir, "_box.env")
 	if err := os.WriteFile(secrets, []byte("NOTIFY_OPS_URL=https://ntfy.sh/ops\n"), 0o600); err != nil {

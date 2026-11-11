@@ -400,10 +400,10 @@ echo "=== metrics 7: the channels removed, the metrics line kept ==="
 # given no rule that could still reach those channels. Every line of the
 # monitor block but metrics is cut: a metrics line alone runs no notify.
 cp /etc/motel/Caddyfile /tmp/Caddyfile.both
-awk '/^\tmonitor \{$/ { inb = 1; print; next } inb && /^\t\}$/ { inb = 0; print; next } inb && !/^\t\tmetrics$/ { next } { print }' \
+awk '/^\tmonitor \{$/ { inb = 1; print; next } inb && /^\t\}$/ { inb = 0; print; next } inb && !/^\t\tmetrics( |$)/ { next } { print }' \
 	/etc/motel/Caddyfile >/tmp/Caddyfile.nonotify
 if grep -qE '^[[:space:]]*(channel|operator|bind|heartbeat|allow_insecure_channels)( |$)' /tmp/Caddyfile.nonotify \
-	|| ! grep -q '^[[:space:]]*monitor {$' /tmp/Caddyfile.nonotify || ! grep -q '^[[:space:]]*metrics$' /tmp/Caddyfile.nonotify; then
+	|| ! grep -q '^[[:space:]]*monitor {$' /tmp/Caddyfile.nonotify || ! grep -qE '^[[:space:]]*metrics( |$)' /tmp/Caddyfile.nonotify; then
 	fail "could not cut the monitor block down to its metrics line: $(sed -n '/monitor {/,/^\t}/p' /tmp/Caddyfile.nonotify)"
 fi
 cp /tmp/Caddyfile.nonotify /etc/motel/Caddyfile
@@ -437,8 +437,8 @@ systemctl stop motel
 grep -q 'alert:' "$STATE/rules.yml" && pass "motel stopped: rules.yml keeps its alerting rules" \
 	|| fail "motel's shutdown retired the rules: $(head -c 300 "$STATE/rules.yml")"
 systemctl start motel && pass "motel started again" || fail "motel did not start again"
-sed '/^\t\tmetrics$/d' /tmp/Caddyfile.both >/tmp/Caddyfile.nostore
-if grep -q '^[[:space:]]*metrics$' /tmp/Caddyfile.nostore || ! grep -q '^[[:space:]]*monitor {$' /tmp/Caddyfile.nostore; then
+sed -E '/^\t\tmetrics( |$)/d' /tmp/Caddyfile.both >/tmp/Caddyfile.nostore
+if grep -qE '^[[:space:]]*metrics( |$)' /tmp/Caddyfile.nostore || ! grep -q '^[[:space:]]*monitor {$' /tmp/Caddyfile.nostore; then
 	fail "could not cut the metrics line out of the Caddyfile"
 fi
 cp /tmp/Caddyfile.nostore /etc/motel/Caddyfile
