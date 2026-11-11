@@ -637,9 +637,10 @@ request metrics carry a server and a handler, never a liveswap app
   penaltybox's refusal) counts under `current` as it began, and so does
   one with no socket routed: an unroute does not change `current`, so a
   release that crashed owns the 502s that follow it. Only a response
-  that went to the upstream is timed. A return to the release before (a
-  rollback) swaps the two back; neither restarts from zero. Responses
-  before any release count under `""`.
+  that went to the upstream, or that the cache fetched from it (a miss
+  Souin coalesced onto another request's call too), is timed. A return
+  to the release before (a rollback) swaps the two back; neither
+  restarts from zero. Responses before any release count under `""`.
 - **What it keeps.** Atomics per release (classes, buckets, a sum,
   cache results), the current release's and the one before's, for the
   app's life in the pool. Nothing of a request: no path, query, header

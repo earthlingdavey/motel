@@ -86,8 +86,9 @@ func (o *Observe) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
 // ServeHTTP times the response to its headers and counts it under the
 // release whose instance the request went to, which the app's
 // GetUpstreams marks (markUpstream); one that went to none (a cache
-// hit, penaltybox's refusal, any other handler's answer) counts under
-// the release current when it began. Never fails a request: it only
+// hit, penaltybox's refusal, any other handler's answer, a miss Souin
+// coalesced onto another request's upstream call) counts under the
+// release current when it began. Never fails a request: it only
 // reads. The count is deferred, so that a handler's panic is counted
 // too (Caddy's `abort`, and reverse_proxy's on a stream cut mid-body,
 // both panic http.ErrAbortHandler); the panic goes on as it came.
@@ -345,12 +346,16 @@ func (rc *releaseCounts) record(w *observeWriter, proxied bool) {
 	if w.cache != cacheNone {
 		rc.cache[w.cache-1].Add(1)
 	}
-	// The latency is the release's own: a response that never went to it
-	// (a cache hit, penaltybox's refusal, a `respond`) is another
-	// handler's, a hit is the cache's though a stale one's revalidation
-	// went on, an upgrade's is no response time, and an aborted one has
-	// no headers.
-	if !proxied || c == class1xx || c == classAborted || w.cache == cacheHit || w.cache == cacheStale {
+	// The latency is the release's own: of a response that went to it, or
+	// that the cache fetched from it for this request (a miss or a bypass:
+	// Souin coalesces concurrent misses into one upstream call, and only
+	// the first request's selection is made, yet each waited on the app).
+	// A response that went to neither (a hit, penaltybox's refusal, a
+	// `respond`) is another handler's, a hit is the cache's though a
+	// stale one's revalidation went on, an upgrade's is no response time,
+	// and an aborted one has no headers.
+	fetched := proxied || w.cache == cacheMiss || w.cache == cacheBypass
+	if !fetched || c == class1xx || c == classAborted || w.cache == cacheHit || w.cache == cacheStale {
 		return
 	}
 	d := w.at.Sub(w.start)

@@ -232,6 +232,9 @@ func TestObserveCache(t *testing.T) {
 		// answer still.
 		{"Souin; hit; ttl=-1; fwd=stale", true, 1, false},
 		{"Souin; fwd=uri-miss; stored", true, 2, true},
+		// A miss Souin coalesced onto another request's upstream call: no
+		// selection of its own, yet it waited on the app.
+		{"Souin; fwd=uri-miss; stored", false, 2, true},
 		{"Souin; fwd=bypass; detail=IS-MUTATION-REQUEST", true, 3, true},
 	} {
 		next := caddyhttp.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) error {

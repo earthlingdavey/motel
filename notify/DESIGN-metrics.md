@@ -193,8 +193,10 @@ mechanics, its order and its measured cost are DESIGN-liveswap.md's
   net/http sends.
 - **Latency.** The time to the response's headers, in Prometheus's
   default buckets (5 ms to 10 s): of the app's own responses, those that
-  went to its upstream, so a cache hit, penaltybox's refusal, any other
-  handler's answer, a 101 and an aborted request are left out. p50 and
+  went to its upstream or that the cache fetched from it (a miss or a
+  bypass, a miss Souin coalesced onto another request's upstream call
+  among them), so a cache hit, penaltybox's refusal, any other handler's
+  answer, a 101 and an aborted request are left out. p50 and
   p95 are `histogram_quantile` over them: an estimate inside a bucket.
 - **The cache.** The `Cache-Status` the cache in front wrote (RFC 9211,
   as Souin writes it): hit, stale (a hit with `fwd=stale`), miss
@@ -208,8 +210,9 @@ mechanics, its order and its measured cost are DESIGN-liveswap.md's
   response no cache spoke for is in no result.
 - **Releases.** Each response counts under the release whose instance
   it went to (the socket the app's upstream selected), or, when it went
-  to none (a cache hit, a refusal, no instance running), the release
-  current when it began; kept for the current release and the one
+  to none (a cache hit, a refusal, no instance running, a miss Souin
+  coalesced onto another request's call), the release current when it
+  began; kept for the current release and the one
   before (which the post-deploy comparison will read), for as long as
   the process runs.
   A motel restart starts them from zero, which the store's `increase()`
@@ -521,7 +524,7 @@ or a line of theirs the facts overturned:
 | Per-app request numbers need a handler the operator writes, `liveswap_observe <app>` | Caddy's request metrics carry server and handler, never the app; a Caddy app cannot add a handler to the HTTP app's routes, and a dynamic upstream sees no response. The app is named on the line, since a cache hit never reaches the upstream |
 | The observer sorts before `redir` | the earliest standard directive an order can anchor on; `cache` sorts before `rewrite`, so an observer anchored later would never see a hit (cmd/motel's order tests) |
 | Its counts follow the selected instance's release, else `current`, not `activeSocket` | a request selected after a cutover is the new release's, one selected before it the old's, however long it runs; and a release that crashed owns the 502s that follow it (no socket, so `current`), which is what a post-deploy comparison must see |
-| Latency is to the headers, of the responses that went to the app | a streamed body or an upgrade has no response time to speak of; a hit is the cache's, a refusal penaltybox's |
+| Latency is to the headers, of the responses that went to the app or that the cache fetched from it | a streamed body or an upgrade has no response time to speak of; a hit is the cache's, a refusal penaltybox's |
 | `metrics` is a summary, not a series; `?range=` is `1h` or `24h` | the smallest object that answers "is my app well", over the two spans a deployer asks about; a fixed set, so a token cannot ask the store for any span |
 | `metrics`' queries run at once | seven one after another would not fit the 2 s budget on a slow store (the residual row this replaced) |
 
@@ -545,6 +548,7 @@ on its general scales. metrics' examples:
 | A cache hit after a cutover counts under the new release though the page was the old one's: the new release's 5xx and hit shares carry the old's cached answers until they expire | liveswap/observe.go | 2 | 3 | 3 | 18; latency leaves hits out, and a cache's TTL bounds the mix (30 s in the starter); telling a stored page's release needs a header the cache would store, a change to every app's responses |
 | An app whose route has no `liveswap_observe` has no request numbers, and nothing says so at load | liveswap/observe.go | 2 | 3 | 2 | 12; `metrics` then has no `requests`, which a deployer sees; a load-time check needs the HTTP app's routes, which the liveswap app cannot read |
 | `requests.per_second` is the window's total over the window's whole length, so in the first window after the observer begins counting an app's responses (`liveswap_observe` added to its route, a new app) it reads low by the share of the window before; `total` counts the same responses | notify/metricsview.go (`summarizeRequests`) | 2 | 5 | 3 | 30, accepted under the skill's rule 4: the covered span needs the series' first sample (an eighth query, `tfirst_over_time`; size 3, risk 2), and that sample holds every count since motel began counting, an unknown span (hours, when the store is set up on a running box), so a rate over the covered span reads high where this one reads low. It ends correct once the series is a window old, and a deploy starts no new span: every release in the window is summed. /code-review pass 1 on slice three |
+| A miss Souin coalesced onto another request's upstream call counts under the release current when it began, not the one the call went to: across a cutover, the waiters of a call in flight at that instant can be counted under the other release | liveswap/observe.go (`markUpstream`) | 2 | 5 | 3 | 30, accepted under the skill's rule 4: only the first request's selection is made, inside Souin's singleflight, and the waiters learn nothing of it but the shared response; carrying it to them needs a change to Souin (size 3, risk 3). It is bounded to the misses on one URL waiting at the cutover instant, the same mix the cached-page row above accepts, and their latency is counted. /code-review pass 2 on slice three |
 | The counts a motel restart (or a crash) ends within the last 30 s were never pushed, and are lost | liveswap/observe.go | 1 | 3 | 4 | 12; at most one push's worth, and the store reads the restart as a reset |
 | vmalert's rules have no flapping guard: a condition that flaps around its threshold fires and resolves at each crossing | notify/metricsrules.go | 2 | 3 | 3 | 18; every rule has a `for:` of 2 to 30 minutes, which bounds a flap to one pair per `for:` |
 | `now` and `at` in `GET /<app>` are judged by the range's step timestamps, not the samples': the store carries a sample forward onto the step grid, so a stopped app's or a dropped cap's last value can read as now for up to about one step past the three steps `fresh` allows (3 m for the hour, 15 m for the day) | notify/metricsview.go (`fresh`) | 2 | 3 | 3 | 18; the status beside it says whether the app runs; the source timestamps need a `timestamp()` query per series (size 2, risk 2). Copilot round 2 on #423 |
