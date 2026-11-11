@@ -533,6 +533,24 @@ func TestBoxSecretsListShowRekey(t *testing.T) {
 	}
 }
 
+// A NOTIFY_ name in an app's directory is warned of on stderr: what show
+// prints on stdout is the value alone, so a capture of it is too.
+func TestBoxSecretShowOfANotifyNameIsTheValueAlone(t *testing.T) {
+	r, _, _ := readersRepo(t)
+	_, box := r.boxKey("box")
+	if out, code := r.secrets("", "three", "set", "APP=example", "VAR=NOTIFY_LEGACY", "BOX_KEY="+box); code != 0 {
+		t.Fatalf("set NOTIFY_LEGACY: exit %d\n%s", code, out)
+	}
+	show := exec.Command(filepath.Join(r.dir, "bin", "secrets"), "show")
+	show.Dir, show.Env = r.dir, append(append([]string{}, r.env...), "APP=example", "VAR=NOTIFY_LEGACY")
+	var stdout, stderr strings.Builder
+	show.Stdout, show.Stderr = &stdout, &stderr
+	if err := show.Run(); err != nil || stdout.String() != "three" ||
+		!strings.Contains(stderr.String(), "motel withholds a NOTIFY_ variable from example's environment") {
+		t.Errorf("show of a NOTIFY_ name: %v\nstdout %q\nstderr %q", err, stdout.String(), stderr.String())
+	}
+}
+
 func TestBoxSignerAddsAReader(t *testing.T) {
 	r := secretsRepo(t)
 	r.key("id_ed25519")
