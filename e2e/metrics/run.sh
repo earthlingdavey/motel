@@ -9,6 +9,7 @@
 #   the store's TCP in its namespace only; its socket's mode and reach
 #   motel's push (job="motel"), with a deployed app's motel_app_*
 #   GET /<app> with the deploy token carries the app's metrics
+#   observe's counts in the store and in GET /<app>?range=
 #   vmalert's rules loaded; its ChannelFailed and motel's one alert
 #   nothing of the store in an app's sandbox view
 #   the store's socket gone: GET /<app> answers at once, with the error
@@ -153,6 +154,52 @@ printf '%s' "$m" | grep -q '"metrics":{"window":"1h","at":"' && printf '%s' "$m"
 	|| fail "GET /blog's metrics: $(printf '%s' "$m" | grep -o '"metrics":.*' | cut -c1-300)"
 code=$(curl -s -o /tmp/get-noauth -w '%{http_code}' --max-time 5 "$HOOK")
 [ "$code" = 401 ] && ! grep -q metrics /tmp/get-noauth && pass "GET /blog without a token: 401, no metrics" || fail "GET /blog without a token: $code"
+
+echo "=== metrics 3a: the response observer ==="
+PROXY=http://localhost:8080
+# Twenty misses (the query is in the cache's key), then the same path
+# twice: the second is a hit. shop has no release: its 503s are 5xx.
+i=1
+while [ "$i" -le 20 ]; do curl -s -o /dev/null --max-time 5 "$PROXY/?n=$i"; i=$((i + 1)); done
+curl -s -o /dev/null --max-time 5 "$PROXY/same"
+hit=$(curl -s -o /dev/null -D - --max-time 5 "$PROXY/same" | tr -d '\r' | sed -n 's/^[Cc]ache-[Ss]tatus: //p')
+case "$hit" in *"; hit"*) pass "the cache answered the repeat: $hit" ;; *) fail "the repeat was no hit: '$hit'" ;; esac
+for i in 1 2 3; do curl -s -o /dev/null --max-time 5 http://localhost:8085/; done
+a=$(wait_result requests 'motel_app_requests_total{app="blog",release="v1",class="2xx"} >= 22' 90) \
+	&& pass "motel_app_requests_total counts blog v1's 2xx" || fail "no 2xx count for blog v1: $(q 'motel_app_requests_total')"
+a=$(wait_result cachehit 'motel_app_cache_responses_total{app="blog",release="v1",result="hit"} >= 1' 30) \
+	&& pass "motel_app_cache_responses_total counts the hit" || fail "no cache hit counted: $(q 'motel_app_cache_responses_total')"
+a=$(wait_result cachemiss 'motel_app_cache_responses_total{app="blog",release="v1",result="miss"} >= 21' 30) \
+	&& pass "motel_app_cache_responses_total counts the misses" || fail "no cache misses counted: $(q 'motel_app_cache_responses_total')"
+a=$(wait_result latency 'motel_app_response_seconds_count{app="blog",release="v1"} >= 21' 30) \
+	&& pass "motel_app_response_seconds times the app's own responses" || fail "no latency histogram: $(q 'motel_app_response_seconds_count')"
+# Every proxied response so far is in the store (the row above): the
+# timed count stands still while the refusals and the abort go by.
+lat0=$(q 'motel_app_response_seconds_count{app="blog"}' | sed -n 's/.*"value":\[[^,]*,"\([0-9]*\)"\].*/\1/p')
+for i in 1 2 3 4 5; do curl -s -o /dev/null --max-time 5 "$PROXY/refused"; done
+curl -s -o /dev/null --max-time 5 "$PROXY/abort"
+a=$(wait_result shop5xx 'motel_app_requests_total{app="shop",class="5xx"} >= 3' 30) \
+	&& pass "an app with nothing running: its 503s count as 5xx" || fail "no 5xx for shop: $(q 'motel_app_requests_total{app="shop"}')"
+a=$(wait_result refused 'motel_app_requests_total{app="blog",class="4xx"} >= 5' 120) \
+	&& pass "a refusal inside the observer counts as 4xx" || fail "no 4xx for blog's refusals: $(q 'motel_app_requests_total{app="blog"}')"
+lat1=$(q 'motel_app_response_seconds_count{app="blog"}' | sed -n 's/.*"value":\[[^,]*,"\([0-9]*\)"\].*/\1/p')
+[ -n "$lat0" ] && [ "$lat0" = "$lat1" ] && pass "the refusals are not timed as the release's ($lat0 timed before and after)" \
+	|| fail "the refusals changed the release's timed count: $lat0 -> $lat1"
+a=$(wait_result aborted 'motel_app_requests_total{app="blog",class="aborted"} >= 1' 30) \
+	&& pass "an aborted request counts as aborted" || fail "no aborted count: $(q 'motel_app_requests_total{app="blog"}')"
+m=""
+end=$(( $(date +%s) + 120 ))
+while [ "$(date +%s)" -lt "$end" ]; do
+	m=$(curl -s --max-time 5 -H "Authorization: Bearer $TOKEN" "$HOOK?range=24h")
+	printf '%s' "$m" | grep -q '"requests":{"total":[1-9]' && break
+	sleep 5
+done
+printf '%s' "$m" | grep -q '"window":"24h"' && printf '%s' "$m" | grep -q '"requests":{"total":[1-9][0-9]*,"per_second":[0-9.]*,"by_class":{"2xx":[1-9]' \
+	&& printf '%s' "$m" | grep -q '"cache_hit_share":0\.[0-9]' \
+	&& pass "GET /blog?range=24h carries requests: $(printf '%s' "$m" | grep -o '"requests":{[^}]*}[^}]*}' | cut -c1-240)" \
+	|| fail "GET /blog?range=24h's requests: $(printf '%s' "$m" | grep -o '"metrics":.*' | cut -c1-400)"
+code=$(curl -s -o /tmp/range7d -w '%{http_code}' --max-time 5 -H "Authorization: Bearer $TOKEN" "$HOOK?range=7d")
+[ "$code" = 422 ] && pass "?range=7d is a 422" || fail "?range=7d: $code $(cat /tmp/range7d)"
 
 echo "=== metrics 4: vmalert ==="
 # Setup's first rules.yml is the empty groups and motel writes the real

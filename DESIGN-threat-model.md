@@ -498,6 +498,15 @@ idle-eviction). The origin's hint header is strict-parsed and fails
 open. It is a minor surface: denial-of-protection under bad config, not
 injection or exhaustion.
 
+**observe** (the response observer, liveswap/DESIGN-liveswap.md)
+reads what passes it and keeps none of it: a response's status is a
+class, its time to headers a histogram bucket, its `Cache-Status` one of
+four fixed results, in counters per app and release. No path, query,
+header value or client address is kept, so nothing of a request reaches
+the metrics store's labels. Its memory is fixed per app (two releases'
+counters), whatever the traffic, so a flood costs it nothing it keeps;
+an app can make its own numbers read badly (T1), never another's.
+
 ### Supervisor⇄app and app⇄app boundaries
 
 Every app runs as `motel`, in its own user namespace and its own PID
@@ -1745,3 +1754,6 @@ Dated one-liners; the full text of each is in git.
   `/etc/motel/secrets/_box.env`, notify's channel URLs) and the `NOTIFY_`
   prefix withheld from the env files in `/etc/motel/secrets/`, where the
   box writes them (#418).
+- 2026-11-11 — The response observer, `observe`: a handler on
+  an observed app's request path that keeps a class, a bucket and a
+  cache result, never a request's bytes (#418, slice three).

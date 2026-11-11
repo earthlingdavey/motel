@@ -28,6 +28,10 @@ type AppSample struct {
 	// MemoryMax is the unit's MemoryMax= as the manager applied it; 0
 	// when the unit has none, or when it is not known to be applied.
 	MemoryMax uint64
+	// Requests is what observe counted, the current release's
+	// first and the one before's after it; empty when no observer has
+	// seen a response for the app.
+	Requests []ReleaseRequests
 }
 
 // AppSamples is every app this config runs, sorted by name.
@@ -43,7 +47,7 @@ func (ma *managedApp) sample() AppSample {
 	c := ma.snapshot()
 	ma.mu.Lock()
 	defer ma.mu.Unlock()
-	s := AppSample{App: ma.name}
+	s := AppSample{App: ma.name, Requests: ma.requests.samples()}
 	if ma.current == nil {
 		return s
 	}
@@ -65,13 +69,19 @@ func sampleMemoryMax(hs handleState) uint64 {
 	return hs.Caps.memoryMax
 }
 
-// MetricsSource answers the `metrics` object of GET /<app>. It must
-// answer within its own short budget whatever the store does, and is
-// called with the request's context; what it returns is marshalled
-// into the status and passes the app's response filter with the rest.
+// MetricsSource answers the `metrics` object of GET /<app>, over the
+// window `?range=` named (one of MetricsRanges). It must answer within
+// its own short budget whatever the store does, and is called with the
+// request's context; what it returns is marshalled into the status and
+// passes the app's response filter with the rest.
 type MetricsSource interface {
-	AppMetrics(ctx context.Context, app string) any
+	AppMetrics(ctx context.Context, app, window string) any
 }
+
+// MetricsRanges are the windows `?range=` takes, the first the default:
+// a fixed set, so that a token cannot ask the store for any span it
+// likes.
+var MetricsRanges = []string{"1h", "24h"}
 
 // SetMetricsSource installs the metrics_store module's source on this
 // config. Called from its Provision, after liveswap's own, so a config

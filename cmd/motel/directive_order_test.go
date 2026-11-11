@@ -36,3 +36,33 @@ func TestBoxWebhookRunsFirst(t *testing.T) {
 		}
 	}
 }
+
+// TestObserveRunsOutside adapts an app site in the binary as shipped
+// and holds observe ahead of the cache and penaltybox, at site
+// level, where Caddy sorts: it must see the cache's hits and
+// penaltybox's refusals (liveswap/caddyfile.go).
+func TestObserveRunsOutside(t *testing.T) {
+	const in = `app.example.com {
+	hint_penaltybox
+	cache
+	reverse_proxy {
+		dynamic liveswap blog
+	}
+	observe blog
+}
+`
+	cfg, _, err := caddyconfig.GetAdapter("caddyfile").Adapt([]byte(in), map[string]any{"filename": "Caddyfile"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(cfg)
+	obs := strings.Index(s, `"handler":"liveswap_observe"`)
+	if obs < 0 {
+		t.Fatalf("no observe: %s", s)
+	}
+	for _, other := range []string{`"handler":"cache"`, `"handler":"hint_penaltybox"`, `"handler":"reverse_proxy"`} {
+		if i := strings.Index(s, other); i < 0 || i < obs {
+			t.Errorf("%s runs before observe (or is missing): %s", other, s)
+		}
+	}
+}

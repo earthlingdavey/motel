@@ -9,6 +9,12 @@
 	admin unix//run/motel/admin.sock
 	auto_https off
 
+	# The observed site's cache (metrics 3a): its hits are counted.
+	cache {
+		ttl 30s
+		otter
+	}
+
 	liveswap {
 		root /var/lib/liveswap
 		allow_insecure_http
@@ -56,4 +62,30 @@
 
 :8081 {
 	liveswap_webhook
+}
+
+# The response observer (metrics 3a): blog behind the cache, observed
+# outside it; shop, never deployed, observed while it answers 503.
+# /refused stands for penaltybox's refusal: answered inside the
+# observer, never by the app, so counted and not timed as the release's;
+# /abort for a cut stream, counted as aborted.
+:8080 {
+	route {
+		observe blog
+		@refused path /refused
+		respond @refused 429
+		@cut path /abort
+		abort @cut
+		cache
+		reverse_proxy {
+			dynamic liveswap blog
+		}
+	}
+}
+
+:8085 {
+	observe shop
+	reverse_proxy {
+		dynamic liveswap shop
+	}
 }

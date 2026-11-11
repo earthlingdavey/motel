@@ -367,6 +367,10 @@ there would defeat the pool.
 - `mu` guards current instance/phase/last-deploy.
 - `activeSocket` is the single atomic the proxy hot path reads: the
   current instance's pinned socket, or nil while nothing serves.
+- `requests` is the response observer's counters ("The response
+  observer"): an atomic pointer to the current release's, read on
+  every observed request, and the release before's under its own
+  mutex, which only a release change and a gather take.
 - `ownerLock(app)` (one mutex per app name) makes "stop what nobody
   owns, then prune its socket dirs" one step with respect to recovery:
   the start-time sweep of unconfigured apps holds it across the manager
@@ -606,6 +610,67 @@ properly needs the type checker, which is a real dependency for a
 property no operator ever sees. The trigger for revisiting is
 backwards edges reappearing *despite* this table.
 
+### The response observer (`observe.go`)
+
+`observe <app>` is a handler the operator writes first in an
+app's site or route. It counts each response under its release ("Which
+release") by status class (`1xx` for 101 alone, `2xx` to `5xx`, and
+`aborted` for a request no headers went to: its client gone first, or
+its handler aborted), times it to the headers the client is sent
+(behind the cache, after Souin has buffered the whole body) in a fixed
+histogram, and reads the cache's verdict from `Cache-Status` (hit,
+stale, miss, bypass). It exists because Caddy's request metrics carry a
+server and a handler, never a liveswap app (notify/DESIGN-metrics.md,
+"The response observer"). The directive is `observe`; the module
+(`http.handlers.liveswap_observe`, what an adapted JSON config names)
+keeps liveswap's prefix, as `liveswap_webhook`'s does, so that no other
+plugin's handler can take its ID.
+
+- **Where.** Ordered before `redir`, the earliest standard anchor
+  (box_webhook's), so that at site level it sorts outside `cache`
+  (before `rewrite`) and `hint_penaltybox` and counts what they answer;
+  in a `route`, first by the written order. The app is named on the
+  line, not learned in `GetUpstreams`: a cache hit never reaches it.
+- **Which release.** A response counts under the release whose
+  instance served it: `publishInstance` and the reattach set the
+  release and give its counters to the instance's socket before routing
+  it, and `GetUpstreams` marks the request's observer, found in the
+  request's vars, with the socket it selected (the last selection, on a
+  retry). A request selected before a cutover stays the old release's
+  however long it runs. One that reached no upstream (a cache hit,
+  penaltybox's refusal) counts under `current` as it began, and so does
+  one with no socket routed: an unroute does not change `current`, so a
+  release that crashed owns the errors that follow it (502s while its
+  socket is routed and refuses, 503s once it is unrouted). Only a
+  response that went to the upstream, or that the cache fetched from it
+  (a miss Souin coalesced onto another request's call too), is timed. A
+  return to the release before (a rollback) swaps the two back; neither
+  restarts from zero. Responses before any release count under `""`.
+- **What it keeps.** Atomics per release (classes, buckets, a sum,
+  cache results), the current release's and the one before's, for the
+  app's life in the pool. Nothing of a request: no path, query, header
+  or client.
+- **What it costs.** 280 ns and two allocations a request on the dev
+  VM's arm64 (`BenchmarkObserve` as it was first, to a handler that
+  writes a status; one of the two is the benchmark's own handler). With
+  the upstream mark (/code-review pass 1 on slice three), the benchmark
+  prepares the request as Caddy's server does and selects the upstream:
+  410 ns and five allocations, against 375 ns for the same benchmark
+  before the mark (`GetUpstreams`' own allocations are three of the
+  five), so the mark costs about 37 ns; the parser that reads up to
+  Souin's `key=` (/code-review pass 2) about 430 ns with a real key in
+  the header. Through the e2e stack (e2e/bench/observe.sh, ab
+  keep-alive, the median of three runs) the observed site against the
+  bare one in the same run, at the branch's last commit (0d02d5f, load
+  0.3): c=1 5 428 against 5 437 req/s, p50 0.180 against 0.180 ms;
+  c=16 51 900 against 53 533 (−3 %), p50 0.235 against 0.236 ms, p95
+  0.772 against 0.699. Behind the cache, 10 830 against 10 951 at c=1,
+  122 105 against 122 190 at c=16. The bare site measured before the
+  handler existed (9228935): 5 127 and 51 786 req/s, within the runs'
+  spread.
+- **What it never does.** Write, buffer or change a byte, or fail a
+  request: an error from the handlers after it is returned as it came.
+
 ### File-by-file
 
 | File | Concern |
@@ -621,6 +686,8 @@ backwards edges reappearing *despite* this table.
 | `deploytrust/` | leaf package: deploy auth — the `deploy_trust` grammar (`Parse`), its sources and verifiers (OIDC + local-key JWT verification), the webhook preamble (`Limiter.Authenticate`) and what a failed attempt costs the journal (`Limiter`, on an injected clock). Imports nothing of liveswap's; the box webhook authenticates through it too. `trusttest/` beside it mints tokens and runs an issuer for tests |
 | `internal/dispenser/` | leaf package: the one Caddyfile rule the parsers here and `deploytrust.Parse` apply alike — a repeated subdirective is refused — in one place so the two cannot drift |
 | `upstreams.go` | dynamic upstream source (the cutover read side) |
+| `observe.go` | `observe`: the response observer's handler and writer, and the per-release counters on `managedApp` ("The response observer") |
+| `appmetrics.go` | what the metrics store reads of liveswap: `AppSamples` (each app's instance and its request counts) and the `MetricsSource` hook that adds `metrics` to `GET /<app>`, with the `?range=` windows |
 | `runner.go` / `runner_systemd.go` / `systemd_dbus.go` | runner interface + the systemd transient-unit implementation + its D-Bus client |
 | `sweep.go` | `App.Start`'s reconciliation against the manager: stop the units, and prune the dirs, of apps no loaded config names. Module-layer (the pool is the ledger), driving the runner |
 | `socket.go` | the per-instance socket: nonce, path checks, stale-socket pruning, the unix dialer |
@@ -878,6 +945,7 @@ severity × occurrence × detection, then the fix's size and risk.
 | An admin API on a socket-activated listener (`admin fd/3`, `fdgram/3`) is refused by `motel validate` and `reload`, and said at `run`, as a TCP one is, though the descriptor systemd passed may be a unix socket: the gate reads the config alone and cannot see what the descriptor is. | `checkAdmin` (cmd/motel/backupcheck.go) | 2 | 5 | 1 | 10 | size 2, risk 2 (taking `fd/` on trust is fail-open for a TCP descriptor; asking the manager what it passed is a new state) | Red and named, with the remedy in the message (`admin unix//run/motel/admin.sock`, or `admin off`); the package ships no socket unit, and the starter's socket needs none. |
 | Layer 4 of the response filter misses a short generated token: its bar follows the token's length (`looksGenerated`, `log2(len) − 0.3` bits a character up to 4.5), which masks about 55% of random 20- and 22-character url-safe tokens, 41% at 24, 29% at 26 and all that the fixed bar masked above; the rest of a runtime secret an app prints bare (`secrets.token_urlsafe(16)`'s 22 characters, half the time) reaches the CI log. | `looksGenerated`, `maskGenerated` (redact.go) | 3 | 5 | 5 | 75 | size 1, risk 2: a bar of `0.9·log2(len)`, as first proposed, masks 80% of each short length but also nine of the 148 mixed-case tokens in this repository's own text — identifiers with a digit (`loadEd25519PrivateKey`), unit settings (`RandomizedDelaySec=40s`) — in the failed-deploy bodies the filter exists to keep readable; the bar taken masks one (an e-mail's local part). Measured 2026-11-07 | The known values are not at stake: `env_file` values are replaced whole, and now before the caps cut (`failureDetail`), so no fragment of one leaks. What remains is a secret the app fetched at runtime and printed bare, under 26 characters, on a failed deploy; `deploy_log_lines 0` keeps the app's output on the box, as the README says for a public repository. An assignment is judged by its parts, so `KEY=<secret>` keeps its key and masks its value whatever the key's letters add. |
 | A read bound — the journal tail's 16 KiB, the probe body's 4 KiB — that falls inside an `env_file` value holding whitespace leaves the part of it before (journal) or after (probe) the nearest space as a fragment the filter cannot match, when the replacement of other values shrinks the text enough for the kept cap to reach it. `dropUnfinished` removes the unfinished token up to the nearest whitespace, which is the whole of a value without one. | `dropUnfinished` (journal.go), `probeOnce` (health.go) | 3 | 1 | 5 | 15 | size 2, risk 2: cutting at a line instead of a token drops a diagnosis's first or last line for a case that needs a value with a space, printed at the bound, behind several kilobytes of other known values | Three things must hold at once: a value with whitespace in it (a URL password or a sentence, not a token), printed so that the read bound falls inside it, and enough other known values before (probe) or after (journal) it for their markers to pull the fragment under the kept cap. The fragment is at most one space-delimited piece of the value. `deploy_log_lines 0` keeps the app's output on the box. |
+| `e2e/bench/observe.sh` names the stack's network `<the directory's name>_default`: with `COMPOSE_PROJECT_NAME` set, or a directory name Compose normalises (upper case, a dot), `docker run` refuses the network and the bench stops before measuring | `e2e/bench/observe.sh` | 2 | 5 | 1 | 10 | size 1, risk 2 | under 20, and the fix is not size 1 and risk 1: reading the network off the running `e2e-motel` container (`docker inspect`) is one line, but no test runs the bench, and running it here would bring up the stack beside the running suites. The failure is loud and names the network. /code-review pass 2 on slice three |
 
 **Owed** (over the bar, not yet fixed):
 
@@ -1046,7 +1114,10 @@ report as in effect, until a SetCaps succeeds.
    users can wire notifications. Lean: yes, cheap and composable.
 2. **Admin endpoints** (`caddy liveswap status/rollback`) alongside the
    webhook. Lean: later; the webhook + status JSON covers CI and cron.
-3. **Metrics.** Lean: add with events.
+3. **Metrics.** Per-app request counts are the response observer's
+   ("The response observer"), pushed with the units' cgroup numbers by
+   the metrics store (notify/DESIGN-metrics.md); deploy counters, the
+   non-goal above, are not.
 4. **Config-change restarts** — an explicit "apply now" admin action
    instead of waiting for the next launch. A rollback to the running
    version, or a deploy of it with the same artifact, is that action
@@ -1131,3 +1202,7 @@ Dated one-liners; the full text of each is in git.
   residual with the numbers, and the steeper bar first proposed is
   declined there. An assignment is judged by its parts, so a setting
   stays readable and `KEY=<secret>` keeps its key.
+- 2026-11-11 — The response observer, `observe`: per-release
+  counts of an app's responses (class, time to headers, cache verdict),
+  measured on the request path before and after (part of #418, slice
+  three of notify and metrics).

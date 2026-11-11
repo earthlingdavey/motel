@@ -10,27 +10,41 @@ import (
 	"go.uber.org/zap"
 )
 
-// metrics in GET /<app> (DESIGN-metrics.md): three fixed queries over
-// the store's socket, scoped to the app the route resolved: two
-// query_range templates over the last hour at a minute's step and one
-// instant query for the hour's peak; best-effort within one budget, and
-// cached per app.
+// metrics in GET /<app> (DESIGN-metrics.md): seven fixed queries over
+// the store's socket, scoped to the app the route resolved, over one of
+// liveswap.MetricsRanges: two query_range templates (memory, CPU), the
+// window's memory peak, and four instant queries over the requests
+// observe counted; run at once within one budget, and cached
+// per app and window.
 const (
-	viewWindow = time.Hour
-	viewStep   = time.Minute
+	// viewRecent is what avg_5m averages over, up to the newest point.
 	viewRecent = 5 * time.Minute
-	// viewFresh is how old the newest point may be and still be the
-	// present: a series that stopped (an app stopped, a cap a later
-	// release dropped) keeps its last point in the hour, which is history,
-	// not now.
-	viewFresh = 3 * viewStep
-	// viewBudget bounds the three queries together: the route never waits longer.
+	// viewFreshSteps is how many of the window's steps old the newest
+	// point may be and still be the present (3 m for the hour, 15 m for
+	// the day, whose newest step can be over 5 m old): a series that
+	// stopped (an app stopped, a cap a later release dropped) keeps its
+	// last point in the window, which is history, not now.
+	viewFreshSteps = 3
+	// viewBudget bounds the queries together: the route never waits longer.
 	viewBudget = 2 * time.Second
 	// viewCache is how long an answer, or a failure, is reused: a
-	// token, stolen or not, drives at most the three queries per app
-	// per viewCache.
+	// token, stolen or not, drives at most one set of queries per app
+	// and window per viewCache.
 	viewCache = 30 * time.Second
 )
+
+// viewWindow is one `?range=`: its span, the range queries' step, and
+// the CPU rate's own window (two steps at the hour's 60 s; one at the
+// day's 5 m, which a rate over less would sample between).
+type viewWindow struct {
+	span, step time.Duration
+	rate       string
+}
+
+var viewWindows = map[string]viewWindow{
+	"1h":  {span: time.Hour, step: time.Minute, rate: "2m"},
+	"24h": {span: 24 * time.Hour, step: 5 * time.Minute, rate: "5m"},
+}
 
 // errViewStore is the one failure a deployer reads: fixed text, never
 // the store's own words.
@@ -44,27 +58,50 @@ type rangeQuerier interface {
 
 // AppMetrics is the `metrics` object.
 type AppMetrics struct {
-	Window    string      `json:"window,omitempty"`
-	At        *time.Time  `json:"at,omitempty"`
-	Memory    *memorySumm `json:"memory_bytes,omitempty"`
-	MemoryMax *float64    `json:"memory_max_bytes,omitempty"`
-	CPU       *cpuSummary `json:"cpu_cores,omitempty"`
-	Error     string      `json:"error,omitempty"`
+	Window    string          `json:"window,omitempty"`
+	At        *time.Time      `json:"at,omitempty"`
+	Memory    *memorySumm     `json:"memory_bytes,omitempty"`
+	MemoryMax *float64        `json:"memory_max_bytes,omitempty"`
+	CPU       *cpuSummary     `json:"cpu_cores,omitempty"`
+	Requests  *requestSummary `json:"requests,omitempty"`
+	Error     string          `json:"error,omitempty"`
 }
 
 type memorySumm struct {
-	// Now is absent when the series has no point in the last viewFresh.
+	// Now is absent when the series has no point in the window's last
+	// viewFreshSteps steps.
 	Now *float64 `json:"now,omitempty"`
-	// Max is absent when the hour holds no raw sample: the range's first
-	// step can still carry one from just before it.
+	// Max is absent when the window holds no raw sample: the range's
+	// first step can still carry one from just before it.
 	Max *float64 `json:"max,omitempty"`
 }
 
 type cpuSummary struct {
-	// Avg5m is absent when the series has no point in the last five
-	// minutes.
+	// Avg5m is the mean of the points in the five minutes up to the
+	// newest (the newest alone for the day, a 5 m rate already); absent
+	// when the newest is not fresh.
 	Avg5m *float64 `json:"avg_5m,omitempty"`
 	Avg   float64  `json:"avg"`
+}
+
+// requestSummary is what observe counted over the window,
+// every release together. Absent when the store holds no request series
+// for the app (no observer on its route).
+type requestSummary struct {
+	Total     uint64            `json:"total"`
+	PerSecond float64           `json:"per_second"`
+	ByClass   map[string]uint64 `json:"by_class,omitempty"`
+	// Share5xx is of the responses sent: a client gone first (aborted)
+	// is in the total, not here. Absent with none sent.
+	Share5xx *float64 `json:"5xx_share,omitempty"`
+	// P50 and P95 are the app's own responses' time to headers (cache
+	// hits left out), interpolated in the histogram's buckets; absent
+	// with none.
+	P50 *float64 `json:"p50_ms,omitempty"`
+	P95 *float64 `json:"p95_ms,omitempty"`
+	// CacheHitShare is hits (stale ones too) of the responses a cache
+	// spoke for; absent when none did.
+	CacheHitShare *float64 `json:"cache_hit_share,omitempty"`
 }
 
 type viewEntry struct {
@@ -90,10 +127,17 @@ func newMetricsView(store rangeQuerier, logger *zap.Logger) *metricsView {
 // AppMetrics answers from the cache, or waits for the one query in
 // flight for app, or makes it. A request that gives up first gets the
 // error object; the query it waited for still fills the cache.
-func (v *metricsView) AppMetrics(ctx context.Context, app string) any {
+func (v *metricsView) AppMetrics(ctx context.Context, app, window string) any {
+	w, ok := viewWindows[window]
+	if !ok {
+		// liveswap refuses any other; a window it adds that this does
+		// not know is told as the store's failure, never guessed at.
+		return AppMetrics{Error: errViewStore}
+	}
+	key := app + "\x00" + window
 	now := v.now()
 	v.mu.Lock()
-	e := v.cache[app]
+	e := v.cache[key]
 	if e != nil && now.Sub(e.at) < viewCache {
 		v.mu.Unlock()
 		select {
@@ -104,12 +148,12 @@ func (v *metricsView) AppMetrics(ctx context.Context, app string) any {
 		}
 	}
 	e = &viewEntry{at: now, done: make(chan struct{})}
-	v.cache[app] = e
+	v.cache[key] = e
 	v.mu.Unlock()
 
 	qctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), viewBudget)
 	defer cancel()
-	val, err := v.ask(qctx, app, now)
+	val, err := v.ask(qctx, app, window, w, now)
 	if err != nil {
 		v.logger.Debug("metrics_store: GET /<app>'s metrics", zap.String("app", app), zap.Error(err))
 		val = AppMetrics{Error: errViewStore}
@@ -119,25 +163,64 @@ func (v *metricsView) AppMetrics(ctx context.Context, app string) any {
 	return val
 }
 
-func (v *metricsView) ask(ctx context.Context, app string, now time.Time) (AppMetrics, error) {
-	start, end := now.Add(-viewWindow), now
-	mem, err := v.store.queryRange(ctx,
-		fmt.Sprintf(`{__name__=~"motel_app_memory_bytes|motel_app_memory_max_bytes",app=%q}`, app), start, end, viewStep)
-	if err != nil {
-		return AppMetrics{}, err
+// viewAnswers is the seven queries' answers.
+type viewAnswers struct {
+	mem, cpu, peak, classes, p50, p95, cache []series
+}
+
+func (v *metricsView) ask(ctx context.Context, app, window string, w viewWindow, now time.Time) (AppMetrics, error) {
+	start, end := now.Add(-w.span), now
+	sel := fmt.Sprintf(`app=%q`, app)
+	var a viewAnswers
+	type job struct {
+		dst *[]series
+		run func() ([]series, error)
 	}
-	cpu, err := v.store.queryRange(ctx, fmt.Sprintf(`sum(rate(motel_app_cpu_seconds_total{app=%q}[2m]))`, app), start, end, viewStep)
-	if err != nil {
-		return AppMetrics{}, err
+	instant := func(q string) func() ([]series, error) {
+		return func() ([]series, error) { return v.store.query(ctx, q) }
 	}
-	// The hour's peak over the raw samples, which the push writes every
-	// 30 s: the range above holds one sample a step, and a peak between
-	// two steps would be lost.
-	peak, err := v.store.query(ctx, fmt.Sprintf(`max_over_time(motel_app_memory_bytes{app=%q}[1h])`, app))
-	if err != nil {
-		return AppMetrics{}, err
+	jobs := []job{
+		{&a.mem, func() ([]series, error) {
+			return v.store.queryRange(ctx, `{__name__=~"motel_app_memory_bytes|motel_app_memory_max_bytes",`+sel+`}`, start, end, w.step)
+		}},
+		{&a.cpu, func() ([]series, error) {
+			return v.store.queryRange(ctx, `sum(rate(motel_app_cpu_seconds_total{`+sel+`}[`+w.rate+`]))`, start, end, w.step)
+		}},
+		// The window's peak over the raw samples, which the push writes
+		// every 30 s: the range above holds one sample a step, and a peak
+		// between two steps would be lost.
+		{&a.peak, instant(`max_over_time(motel_app_memory_bytes{` + sel + `}[` + window + `])`)},
+		{&a.classes, instant(`sum by (class) (increase_pure(motel_app_requests_total{` + sel + `}[` + window + `]))`)},
+		{&a.p50, instant(`histogram_quantile(0.5, sum by (le) (increase_pure(motel_app_response_seconds_bucket{` + sel + `}[` + window + `])))`)},
+		{&a.p95, instant(`histogram_quantile(0.95, sum by (le) (increase_pure(motel_app_response_seconds_bucket{` + sel + `}[` + window + `])))`)},
+		{&a.cache, instant(`sum by (result) (increase_pure(motel_app_cache_responses_total{` + sel + `}[` + window + `]))`)},
 	}
-	out := AppMetrics{Window: "1h"}
+	// The request counters through increase_pure, not increase: an
+	// app's series appears with its first push, already at the count
+	// that push carried, and the store's increase drops a series' first
+	// value when it is large (measured on 1.112.0: 22 responses read as
+	// 0, one as 1); increase_pure counts from zero when nothing comes
+	// before.
+	//
+	// At once: seven one after another would not fit the budget on a
+	// slow store. Each writes its own answer; the first error is the
+	// answer's.
+	errs := make([]error, len(jobs))
+	var wg sync.WaitGroup
+	for i, j := range jobs {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			*j.dst, errs[i] = j.run()
+		}()
+	}
+	wg.Wait()
+	for _, err := range errs {
+		if err != nil {
+			return AppMetrics{}, err
+		}
+	}
+	out := AppMetrics{Window: window}
 	var newest time.Time
 	seen := func(t time.Time) {
 		if t.After(newest) {
@@ -145,7 +228,7 @@ func (v *metricsView) ask(ctx context.Context, app string, now time.Time) (AppMe
 		}
 	}
 	var memPts, maxPts []point
-	for _, s := range mem {
+	for _, s := range a.mem {
 		switch s.labels["__name__"] {
 		case "motel_app_memory_bytes":
 			memPts = append(memPts, s.points...)
@@ -153,16 +236,16 @@ func (v *metricsView) ask(ctx context.Context, app string, now time.Time) (AppMe
 			maxPts = append(maxPts, s.points...)
 		}
 	}
-	fresh := func(p point) bool { return !p.t.Before(end.Add(-viewFresh)) }
+	fresh := func(p point) bool { return !p.t.Before(end.Add(-viewFreshSteps * w.step)) }
 	if last, ok := latest(memPts); ok {
 		m := &memorySumm{}
 		if fresh(last) {
 			m.Now = &last.v
 		}
 		// The max is the raw peak's alone: the range's first step can
-		// carry a sample from before the hour, which max_over_time
+		// carry a sample from before the window, which max_over_time
 		// rightly leaves out.
-		for _, s := range peak {
+		for _, s := range a.peak {
 			for _, p := range s.points {
 				if m.Max == nil || p.v > *m.Max {
 					v := p.v
@@ -177,7 +260,7 @@ func (v *metricsView) ask(ctx context.Context, app string, now time.Time) (AppMe
 		out.MemoryMax = &last.v
 	}
 	var cpuPts []point
-	for _, s := range cpu {
+	for _, s := range a.cpu {
 		cpuPts = append(cpuPts, s.points...)
 	}
 	if last, ok := latest(cpuPts); ok {
@@ -186,14 +269,14 @@ func (v *metricsView) ask(ctx context.Context, app string, now time.Time) (AppMe
 		var n int
 		for _, p := range cpuPts {
 			sum += p.v
-			if p.t.After(end.Add(-viewRecent)) {
+			if fresh(last) && p.t.After(last.t.Add(-viewRecent)) {
 				recent += p.v
 				n++
 			}
 		}
-		c.Avg = roundCores(sum / float64(len(cpuPts)))
+		c.Avg = roundTo(sum/float64(len(cpuPts)), 1e6)
 		if n > 0 {
-			avg := roundCores(recent / float64(n))
+			avg := roundTo(recent/float64(n), 1e6)
 			c.Avg5m = &avg
 		}
 		out.CPU = c
@@ -202,15 +285,81 @@ func (v *metricsView) ask(ctx context.Context, app string, now time.Time) (AppMe
 	if !newest.IsZero() {
 		out.At = &newest
 	}
+	out.Requests = summarizeRequests(a, w.span)
 	return out, nil
 }
 
-// roundCores keeps a CPU average to a millionth of a core. An unrounded
-// one marshals as a run of twenty or more digits (5.740305648246404e-05
-// is 0.00005740305648246404 in JSON), which the app's response filter
+// summarizeRequests reads the four request queries; nil when the store
+// holds no request series for the app.
+func summarizeRequests(a viewAnswers, span time.Duration) *requestSummary {
+	if len(a.classes) == 0 {
+		return nil
+	}
+	r := &requestSummary{ByClass: map[string]uint64{}}
+	for _, s := range a.classes {
+		v, ok := instantValue(s)
+		if !ok {
+			continue
+		}
+		n := uint64(math.Round(v))
+		if class := s.labels["class"]; class != "" && n > 0 {
+			r.ByClass[class] += n
+		}
+		r.Total += n
+	}
+	r.PerSecond = roundTo(float64(r.Total)/span.Seconds(), 1e6)
+	if sent := r.Total - r.ByClass["aborted"]; sent > 0 {
+		share := roundTo(float64(r.ByClass["5xx"])/float64(sent), 1e4)
+		r.Share5xx = &share
+	}
+	r.P50 = quantileMs(a.p50)
+	r.P95 = quantileMs(a.p95)
+	var hits, spoke float64
+	for _, s := range a.cache {
+		v, ok := instantValue(s)
+		if !ok {
+			continue
+		}
+		spoke += v
+		if res := s.labels["result"]; res == "hit" || res == "stale" {
+			hits += v
+		}
+	}
+	if spoke > 0 {
+		share := roundTo(hits/spoke, 1e4)
+		r.CacheHitShare = &share
+	}
+	return r
+}
+
+// instantValue is an instant answer's one value, when it is a number.
+func instantValue(s series) (float64, bool) {
+	if len(s.points) == 0 {
+		return 0, false
+	}
+	v := s.points[len(s.points)-1].v
+	return v, !math.IsNaN(v) && !math.IsInf(v, 0) && v >= 0
+}
+
+// quantileMs is histogram_quantile's answer in milliseconds, to a tenth;
+// nil with no response in the window (no answer, or NaN).
+func quantileMs(ss []series) *float64 {
+	for _, s := range ss {
+		if v, ok := instantValue(s); ok {
+			ms := roundTo(v*1e3, 10)
+			return &ms
+		}
+	}
+	return nil
+}
+
+// roundTo keeps v to 1/per; every float in the object is rounded (a CPU
+// average to a millionth of a core). An unrounded one marshals as a run
+// of twenty or more digits (5.740305648246404e-05 is
+// 0.00005740305648246404 in JSON), which the app's response filter
 // reads as a generated secret and masks inside the number; the body is
 // then no JSON, and the whole status is withheld.
-func roundCores(v float64) float64 { return math.Round(v*1e6) / 1e6 }
+func roundTo(v, per float64) float64 { return math.Round(v*per) / per }
 
 // latest is the newest point.
 func latest(pts []point) (point, bool) {
