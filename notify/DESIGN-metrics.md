@@ -416,10 +416,10 @@ on its general scales. metrics' examples:
 | `GET /<app>` runs its three queries one after the other in the one 2 s budget: a store answering each in over two thirds of a second answers the whole object as the error, cached 30 s | notify/metricsview.go (`ask`) | 2 | 2 | 1 | 4; the answer says the store did not answer, which is true; running them at once adds goroutines and a join (size 2) to a path that is best-effort by design. /code-review pass 2; the third query from Copilot on #423 leaves the score as it was |
 | vmalert's rules have no flapping guard: a condition that flaps around its threshold fires and resolves at each crossing | notify/metricsrules.go | 2 | 3 | 3 | 18; every rule has a `for:` of 2 to 30 minutes, which bounds a flap to one pair per `for:` |
 | `now` and `at` in `GET /<app>` are judged by the range's step timestamps, not the samples': the store carries a sample forward onto the 60 s grid, so a stopped app's or a dropped cap's last value can read as now for up to about one step past `viewFresh` (3 m) | notify/metricsview.go (`fresh`) | 2 | 3 | 3 | 18; the status beside it says whether the app runs; the source timestamps need a `timestamp()` query per series (size 2, risk 2). Copilot round 2 on #423 |
-
 | vmalert's `ChannelFailed` has no baseline: the store's `increase()` counts a series' first sample from zero (measured on 1.112.0: first seen at 3 gives 3, and again after a 17-minute gap), so a failure Alertmanager counted before `motel metrics setup`, or before a store outage of over ten minutes, is told once as new, for five minutes | notify/metricsrules.go | 2 | 2 | 3 | 12; one late warning to the operator's other channels about a channel that did fail; motel's own source keeps its baseline. A gate on the counter's age changes the expression every channel's rule shares (risk 2) and wants a run against the store to prove. /code-review pass 3 on #423 |
 | A failed re-run's put-back starts `motel-vm.socket` (and `motel-am.socket`) whether or not it was active when setup began: one an operator had stopped to keep the store stopped is started, and a re-run after a first run that failed past the drop-in starts the socket of a stack that never ran | notify/setup.go (`putBackOnFailure`) | 2 | 2 | 3 | 12; a setup that succeeds enables and starts the same socket, which is what the operator ran it for; with the drop-in in place the store it can start is confined to the namespace. /code-review pass 2 on #425 |
 | A store that turns read-only while `metrics_store_down` or `metrics_rules_down` already fires leaves that warning firing beside the critical until the store is writable (the read-only path holds back new ones, and does not clear old ones) | notify/metricspush.go (`checkReadOnly`) | 2 | 2 | 3 | 12; the warning was true when raised and the critical beside it names the cause; clearing them there is two more branches in the path every read takes. Copilot on #425 |
+| A reload that moves the `store` line to another socket starts the counts afresh (`setLive`) but keeps what already fires, `metrics_store_read_only` among them, until the new store answers: a read-only alert raised for the old store stays told while the new one does not answer | notify/metricspush.go (`setLive`) | 2 | 2 | 1 | 4; it needs the old store read-only and the new one not answering; the first answer of the new store clears it, and the new store's own silence fires `metrics_store_down`, which names the push failing, once `readOnlyStale` asks have gone unanswered (`heldReadOnly`, as for any read-only store that stops answering). Clearing it at the move would resolve it on no evidence. Copilot round 2 on #425 |
 
 ### Owed
 
@@ -428,7 +428,7 @@ on its general scales. metrics' examples:
 | The response observer: per-app requests by class, 5xx share, p50 and p95, cache hit share, in the push, `metrics` and the rules (with `?range=24h`, and the post-deploy comparison) | — | — | — | slice three: needs a handler on the app's request path |
 | Operator rules (the fresh-slate draft's `rule` line), as a grammar of fixed kinds with parameters, never a template | — | — | — | slice three |
 | The store's RSS with `-memory.allowedBytes=96MiB` after a day, and on a 1 or 2 GB box | — | — | — | the next deploy to hotserve-1 |
-| A reboot with motel rendering `rules.yml` and pushing, as slice one's was measured | — | — | — | the next deploy to hotserve-1 |
+| A reboot with motel rendering `rules.yml` and pushing, as slice one's was measured, on a booted Debian host: the namespace's and the sockets' cold-boot order, a connection made while setup has the store masked, and a failed setup re-run's put-back (Copilot round 2 on #425) | — | — | — | the next deploy to hotserve-1 |
 | Debian's security support for `victoria-metrics` 1.112.0 on trixie, and a dist-upgrade check of the drop-in's flags | — | — | — | before any release |
 
 ## e2e rows
@@ -490,3 +490,6 @@ Dated one-liners; the full text of each is in git.
   reload) after the block is removed retires the rules too, from
   cmd/motel's gate at `motel run` (e2e metrics 9); `motel_app_release_info`
   documented as the current release, running or not.
+- 2026-11-11 — #425 rebased onto #423's merge; Copilot round 2 on #425,
+  triaged: a store move's carried alert accepted (row), the booted-host
+  checks named in the reboot row.
