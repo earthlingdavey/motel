@@ -236,9 +236,15 @@ const (
 	cacheBypass
 )
 
-// parseCacheStatus reads the first (outermost) cache's entry: a hit
-// (stale when it says fwd=stale), a miss (fwd=uri-miss, or a stored
-// revalidation, fwd=request), or a bypass (fwd=bypass).
+// parseCacheStatus reads the first entry of the header's first value,
+// which is Souin's whenever it is in front: it Sets its one entry after
+// the response on a lookup, and before next on a bypass, where
+// reverse_proxy then Adds an app's own Cache-Status after it. RFC 9211
+// puts the cache nearest the client last, but Souin replaces what came
+// before it, so the last would be an app's on a bypass. With no cache in
+// front, it is the app's own, and is read as its cache's verdict. The
+// entry is a hit (stale when it says fwd=stale), a miss (fwd=uri-miss,
+// or a stored revalidation, fwd=request), or a bypass (fwd=bypass).
 func parseCacheStatus(v string) cacheResult {
 	if v == "" {
 		return cacheNone

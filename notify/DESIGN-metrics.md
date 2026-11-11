@@ -198,8 +198,12 @@ mechanics, its order and its measured cost are DESIGN-liveswap.md's
   p95 are `histogram_quantile` over them: an estimate inside a bucket.
 - **The cache.** The `Cache-Status` the cache in front wrote (RFC 9211,
   as Souin writes it): hit, stale (a hit with `fwd=stale`), miss
-  (`fwd=uri-miss`, or a revalidation) or bypass. A response no cache
-  spoke for is in no result.
+  (`fwd=uri-miss`, or a revalidation) or bypass. Souin's entry is the
+  header's first, which the observer reads: it replaces an app's own
+  entry, or on a bypass comes before the one reverse_proxy adds. With no
+  cache in front, an app's own `Cache-Status` is read as its cache's
+  verdict, and its hits are left out of the latency like the cache's. A
+  response no cache spoke for is in no result.
 - **Releases.** Each response counts under the release whose instance
   it went to (the socket the app's upstream selected), or, when it went
   to none (a cache hit, a refusal, no instance running), the release

@@ -29,8 +29,7 @@ func TestParseCacheStatus(t *testing.T) {
 		{"Souin; fwd=request; detail=REQUEST-REVALIDATION", cacheMiss},
 		{"Souin; fwd=bypass; detail=UNSUPPORTED-METHOD", cacheBypass},
 		{`Souin; fwd="bypass"`, cacheBypass},
-		// The outermost cache's entry is the first; a CDN's after it is not
-		// this cache's verdict.
+		// One value holding two entries: the first is read.
 		{"Souin; hit, CDN; fwd=uri-miss", cacheHit},
 		{"Souin", cacheNone},
 		{"garbage;;;", cacheNone},
@@ -254,8 +253,19 @@ func TestObserveCache(t *testing.T) {
 			t.Errorf("%q: the header was changed: %q", c.header, rec.Header().Get("Cache-Status"))
 		}
 	}
-	// No cache in front: counted under no result.
+	// On a bypass Souin sets its entry before the app answers, and
+	// reverse_proxy adds the app's own after it: Souin's is the verdict.
 	got, _, _ := observeOnce(t, context.Background(), proxied(func(w http.ResponseWriter, _ *http.Request) error {
+		w.Header().Set("Cache-Status", "Souin; fwd=bypass; detail=IS-MUTATION-REQUEST")
+		w.Header().Add("Cache-Status", "app; hit")
+		w.WriteHeader(http.StatusOK)
+		return nil
+	}))
+	if got.Cache[3] != 1 || got.Count != 1 {
+		t.Errorf("an app's entry after Souin's bypass: cache %v, timed %d; want bypass, timed", got.Cache, got.Count)
+	}
+	// No cache in front: counted under no result.
+	got, _, _ = observeOnce(t, context.Background(), proxied(func(w http.ResponseWriter, _ *http.Request) error {
 		w.WriteHeader(http.StatusOK)
 		return nil
 	}))
