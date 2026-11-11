@@ -456,6 +456,37 @@ func TestParseReadOnly(t *testing.T) {
 	}
 }
 
+// A reload that moves the `store` socket: the store before's failures
+// are not the new one's history. Nothing fires on them, and what was
+// firing is cleared by the new store's own answer.
+func TestPusherStartsAfreshOnAnotherStore(t *testing.T) {
+	tp := newTestPusher(t)
+	ctx := context.Background()
+	tp.store.importErr = errors.New("connect: no such file or directory")
+	tp.pushOnce(ctx)
+	tp.checkRules(ctx)
+	tp.checkRules(ctx) // two reads without vmalert, 4.5 minutes of failed pushes
+	tp.at = tp.at.Add(storeDownAfter - pushEvery)
+	moved := &MetricsStore{Store: "/run/elsewhere/vm.sock"}
+	tp.setLive(liveStore{m: moved, store: tp.store, gather: prometheus.NewRegistry(), logger: zap.NewNop()})
+	tp.at = tp.at.Add(pushEvery)
+	tp.pushOnce(ctx)
+	tp.checkRules(ctx)
+	if evs := tp.take(); len(evs) != 0 {
+		t.Fatalf("the store before's history fired on the new one: %+v", evs)
+	}
+	// The same socket (a reload that changed nothing of the store) keeps
+	// its history: the outage is the same outage.
+	same := &MetricsStore{Store: "/run/elsewhere/vm.sock"}
+	tp.setLive(liveStore{m: same, store: tp.store, gather: prometheus.NewRegistry(), logger: zap.NewNop()})
+	tp.at = tp.at.Add(storeDownAfter)
+	tp.pushOnce(ctx)
+	evs := tp.take()
+	if len(evs) != 1 || evs[0].Name != eventStoreDown || !evs[0].Firing {
+		t.Fatalf("the same store's outage: %+v", evs)
+	}
+}
+
 func TestPusherReleaseClearsWhatFires(t *testing.T) {
 	tp := newTestPusher(t)
 	tp.storeDown, tp.rulesDown = true, true

@@ -344,6 +344,12 @@ func (p *pusher) configure(l liveStore) {
 }
 
 func (p *pusher) setLive(l liveStore) {
+	if p.active != nil && l.m != nil && p.active.store() != l.m.store() {
+		// Another store: the one before's outage is not its history, and
+		// must not count toward its alerts. What is firing stays told,
+		// until a read of this store clears it or bears it out.
+		p.failingSince, p.rulesBad, p.readOnlyMisses = time.Time{}, 0, 0
+	}
 	p.active, p.store, p.gather, p.logger = l.m, l.store, l.gather, l.logger
 }
 
