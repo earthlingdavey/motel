@@ -279,7 +279,7 @@ func TestServeSendCarriesDetails(t *testing.T) {
 type fakeSystem struct {
 	cmds        []string
 	isInstalled bool
-	// failOn fails the first command that begins with it.
+	// failOn fails every command that begins with it.
 	failOn string
 	owners map[string][2]int
 }
@@ -287,7 +287,6 @@ type fakeSystem struct {
 func (f *fakeSystem) run(name string, args ...string) error {
 	f.cmds = append(f.cmds, name+" "+strings.Join(args, " "))
 	if f.failOn != "" && strings.HasPrefix(f.cmds[len(f.cmds)-1], f.failOn) {
-		f.failOn = ""
 		return errors.New("exit status 1")
 	}
 	return nil
@@ -322,11 +321,13 @@ func TestSetupFailingUnmasksAlertmanager(t *testing.T) {
 	}
 	want := []string{
 		"systemctl mask " + amService,
-		"systemctl is-active --quiet " + amService,
 		"systemctl stop " + amService,
 		"systemctl daemon-reload", // fails
-		"systemctl daemon-reload",
+		"systemctl daemon-reload", // and again: the rest is still tried
 		"systemctl unmask " + amService,
+		// A connection during the mask fails the socket; started, it
+		// listens again.
+		"systemctl start " + amSocket,
 	}
 	if !slices.Equal(f.cmds, want) {
 		t.Fatalf("commands:\n%s\nwant\n%s", strings.Join(f.cmds, "\n"), strings.Join(want, "\n"))

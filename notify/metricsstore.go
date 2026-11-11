@@ -112,13 +112,29 @@ func parseReadOnly(page []byte) (bool, error) {
 	found, ro := false, false
 	for line := range strings.Lines(string(page)) {
 		rest, ok := strings.CutPrefix(line, readOnlyMetric)
-		if !ok || rest == "" || (rest[0] != ' ' && rest[0] != '{') {
+		if !ok || rest == "" {
 			continue
 		}
+		switch rest[0] {
+		case '{':
+			// The labels' values may hold spaces; the value follows them.
+			i := strings.LastIndexByte(rest, '}')
+			if i < 0 {
+				return false, fmt.Errorf("the metrics store's /metrics: %s's labels do not close", readOnlyMetric)
+			}
+			rest = rest[i+1:]
+		case ' ', '\t':
+		default:
+			continue // another metric this one's name begins
+		}
+		// The value is the first field; a timestamp may follow it.
 		f := strings.Fields(rest)
-		v, err := strconv.ParseFloat(f[len(f)-1], 64)
+		if len(f) == 0 {
+			return false, fmt.Errorf("the metrics store's /metrics: %s has no value", readOnlyMetric)
+		}
+		v, err := strconv.ParseFloat(f[0], 64)
 		if err != nil {
-			return false, fmt.Errorf("the metrics store's /metrics: %s is %q", readOnlyMetric, f[len(f)-1])
+			return false, fmt.Errorf("the metrics store's /metrics: %s is %q", readOnlyMetric, f[0])
 		}
 		found = true
 		ro = ro || v > 0

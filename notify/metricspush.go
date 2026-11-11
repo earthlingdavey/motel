@@ -63,7 +63,11 @@ type pusher struct {
 	storeDown    bool
 	rulesBad     int
 	rulesDown    bool
-	readOnly     bool
+	// readOnly is what was told; readOnlyNow is the last ask's answer,
+	// false when the store did not give one.
+	readOnly          bool
+	readOnlyNow       bool
+	readOnlyAskFailed bool
 
 	failed prometheus.Counter
 
@@ -157,7 +161,7 @@ func (p *pusher) pushOnce(ctx context.Context) {
 		}
 		// A read-only store refuses every import: metrics_store_read_only
 		// names that, and a second alert for its consequence would not.
-		if now.Sub(p.failingSince) >= storeDownAfter && !p.readOnly {
+		if now.Sub(p.failingSince) >= storeDownAfter && !p.readOnlyNow {
 			p.storeDown = true
 			evs = append(evs, storeEvent(eventStoreDown, true))
 		}
@@ -180,11 +184,15 @@ func (p *pusher) pushOnce(ctx context.Context) {
 // checkReadOnly asks the store itself whether it is read-only, and
 // says whether it is. motel asks, not a rule: a read-only store refuses
 // its own scrape with every other write, so the flag never reaches a
-// series a rule could read (measured on Debian's 1.112.0). An ask the
-// store does not answer is no reading, and the last one stands.
+// series a rule could read (measured on Debian's 1.112.0). It is told
+// at every read that finds it set, as the other two are: the engine
+// drops what it is told while no notify block runs, and one told only
+// when it changed would then never be told. An ask the store does not
+// answer is no reading: what was told stands, but nothing is held back
+// on its account, since the store may by now be down.
 func (p *pusher) checkReadOnly(ctx context.Context) bool {
 	p.mu.Lock()
-	a, st := p.active, p.store
+	a, st, log := p.active, p.store, p.logger
 	p.mu.Unlock()
 	if a == nil {
 		return false
@@ -196,16 +204,28 @@ func (p *pusher) checkReadOnly(ctx context.Context) bool {
 		p.mu.Unlock()
 		return false
 	}
-	if err == nil && ro != p.readOnly {
-		p.readOnly = ro
-		evs = append(evs, storeEvent(eventStoreReadOnly, ro))
-		if ro {
+	if err != nil {
+		if !p.readOnlyAskFailed {
+			log.Warn("metrics_store: could not read whether the store is read-only", zap.String("store", a.store()), zap.Error(err))
+		}
+		p.readOnlyAskFailed, p.readOnlyNow = true, false
+		p.mu.Unlock()
+		return false
+	}
+	p.readOnlyAskFailed, p.readOnlyNow = false, ro
+	switch {
+	case ro:
+		if !p.readOnly {
 			// What the store kept of vmalert is as old as the floor: the
 			// count of reads without it starts again when it writes.
 			p.rulesBad = 0
 		}
+		p.readOnly = true
+		evs = append(evs, storeEvent(eventStoreReadOnly, true))
+	case p.readOnly:
+		p.readOnly = false
+		evs = append(evs, storeEvent(eventStoreReadOnly, false))
 	}
-	ro = p.readOnly
 	p.mu.Unlock()
 	for _, ev := range evs {
 		p.report(ev)
@@ -213,13 +233,26 @@ func (p *pusher) checkReadOnly(ctx context.Context) bool {
 	return ro
 }
 
-// checkRules asks the store whether it has seen vmalert up. A query the
-// store does not answer is no reading: metrics_store_down says that.
-// Nor is one from a read-only store, which keeps no scrape of vmalert.
-func (p *pusher) checkRules(ctx context.Context) {
-	if p.checkReadOnly(ctx) {
+// checkChain is the minute's watch: whether the store is read-only,
+// and unless it is, whether it has seen vmalert up. A read-only store
+// keeps no scrape of vmalert, so its answer to the second is no
+// reading. Each ask has a budget of its own: a slow /metrics must not
+// leave the query none.
+func (p *pusher) checkChain(ctx context.Context) {
+	rctx, cancel := context.WithTimeout(ctx, storeRequestTimeout)
+	ro := p.checkReadOnly(rctx)
+	cancel()
+	if ro {
 		return
 	}
+	cctx, cancel := context.WithTimeout(ctx, storeRequestTimeout)
+	defer cancel()
+	p.checkRules(cctx)
+}
+
+// checkRules asks the store whether it has seen vmalert up. A query the
+// store does not answer is no reading: metrics_store_down says that.
+func (p *pusher) checkRules(ctx context.Context) {
 	p.mu.Lock()
 	a, st := p.active, p.store
 	p.mu.Unlock()
@@ -271,11 +304,9 @@ func (p *pusher) run(ctx context.Context) {
 		p.pushOnce(pctx)
 		cancel()
 		if odd = !odd; odd {
-			// A budget of its own: a slow push must not leave the check
+			// Budgets of its own: a slow push must not leave the check
 			// none, which it would take for no reading.
-			cctx, cancel := context.WithTimeout(ctx, storeRequestTimeout)
-			p.checkRules(cctx)
-			cancel()
+			p.checkChain(ctx)
 		}
 		select {
 		case <-ctx.Done():
@@ -338,7 +369,8 @@ func (p *pusher) release(m *MetricsStore) {
 	if p.readOnly {
 		evs = append(evs, storeEvent(eventStoreReadOnly, false))
 	}
-	p.failingSince, p.storeDown, p.rulesBad, p.rulesDown, p.readOnly = time.Time{}, false, 0, false, false
+	p.failingSince, p.storeDown, p.rulesBad, p.rulesDown = time.Time{}, false, 0, false
+	p.readOnly, p.readOnlyNow, p.readOnlyAskFailed = false, false, false
 	cancel, done, running := p.cancel, p.done, p.running
 	p.running = false
 	p.mu.Unlock()

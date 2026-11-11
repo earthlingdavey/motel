@@ -444,8 +444,9 @@ motel controls:
 5. `try-reload-or-restart motel.service`, which renders.
 
 Run again, it puts the units back as the binary ships them. A re-run
-that fails after the mask unmasks the service on its way out (its
-socket starts it at the next connection), so a failed re-run does not
+that fails after the mask unmasks the service on its way out and starts its socket
+(a connection that arrived during the mask fails the socket, which
+then starts nothing), so a failed re-run does not
 leave Alertmanager unstartable; a first run that fails stays masked.
 Debian
 upgrading or reinstalling the package, whose postinst restarts the

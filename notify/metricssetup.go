@@ -131,7 +131,7 @@ func metricsSetup(sys system, root string, out io.Writer) (err error) {
 		return err
 	}
 	say("masked %s, so the install starts nothing", vmService)
-	defer putBackOnFailure(sys, say, rerun, vmService, []string{vmService, vmalertUnit}, &err)()
+	defer putBackOnFailure(sys, say, rerun, vmService, []string{vmSocket}, []string{vmService, vmalertUnit}, &err)()
 	// One installed by hand before setup runs on Debian's 0.0.0.0:8428,
 	// and the mask does not stop it. Stopped here, it next starts in the
 	// namespace, with the drop-in.

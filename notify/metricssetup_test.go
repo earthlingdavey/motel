@@ -133,14 +133,14 @@ func TestMetricsSetupFailingPutsTheStoreBack(t *testing.T) {
 		"systemctl is-active --quiet victoria-metrics.service",
 		"systemctl stop victoria-metrics.service",
 		"systemctl daemon-reload", // fails
-		"systemctl daemon-reload",
+		"systemctl daemon-reload", // and again: the rest is still tried
 		"systemctl unmask victoria-metrics.service",
-		"systemctl start victoria-metrics.service motel-vmalert.service",
+		"systemctl start motel-vm.socket victoria-metrics.service motel-vmalert.service",
 	}
 	if !slices.Equal(f.cmds, want) {
 		t.Fatalf("commands:\n%s\nwant\n%s", strings.Join(f.cmds, "\n"), strings.Join(want, "\n"))
 	}
-	if !strings.Contains(out.String(), "is unmasked again") {
+	if !strings.Contains(out.String(), "systemctl daemon-reload: exit status 1") || !strings.Contains(out.String(), "check that it is unmasked and running") {
 		t.Fatalf("setup did not say it put the store back: %s", out.String())
 	}
 }

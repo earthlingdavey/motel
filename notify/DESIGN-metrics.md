@@ -205,10 +205,14 @@ refuses every write, its own scrapes among them (measured on Debian's
 1.112.0: `/metrics` has the flag at 1, `max(vm_storage_is_read_only) > 0`
 returns nothing), so the rule slice two first shipped could never fire,
 and `up{job="vmalert"}` went unstored with it. motel reads the flag
-from the store's `/metrics` and reports it through the engine. While it
-is set, the two things that follow from it are not told as something
+from the store's `/metrics` and reports it through the engine, at every
+read that finds it set (the engine drops what it is told while no
+`notify` block runs, so one told only when it changed could be lost).
+While a fresh read has it set, the two things that follow from it are not told as something
 else: the count toward `metrics_rules_down` does not run, and
-`metrics_store_down` is not raised for the refused imports.
+`metrics_store_down` is not raised for the refused imports. A read the
+store does not answer holds nothing back: the store may by then be
+down, and `metrics_store_down` says that.
  When the last config with a `metrics_store` block stops, the
 chain's keys are reported cleared, so nothing fires on with no source. The
 heartbeat (DESIGN-notify.md, "Dead-man and uptime") vouches for the box,
@@ -292,8 +296,9 @@ after `motel notify setup`:
 
 Run again, it puts the units back as the binary ships them. A re-run
 that fails after the mask (an install, a unit written to a full disk, a
-reload) unmasks the store on its way out, and starts it and vmalert
-again if the store was running, so a stack that worked is not left
+reload) unmasks the store on its way out, starts `motel-vm.socket` (a
+connection that arrived while the store was masked fails the socket),
+and starts the store and vmalert again if the store was running, so a stack that worked is not left
 masked and stopped; a first run that fails stays masked, since Debian's
 unit without the drop-in listens on `0.0.0.0`. The drop-in
 replaces Debian's `ExecStart=`, so `/etc/default/victoria-metrics` (a

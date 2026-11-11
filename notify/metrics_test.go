@@ -372,13 +372,14 @@ func TestReadOnlyStoreIsToldAsItself(t *testing.T) {
 	ctx := context.Background()
 	tp.store.ro = true
 	tp.store.importErr = errors.New("503: the storage is in read-only mode")
-	tp.checkRules(ctx)
-	evs := tp.take()
-	if len(evs) != 1 || evs[0].Name != eventStoreReadOnly || !evs[0].Firing || evs[0].Severity != SeverityCritical || evs[0].Kind != kindState {
-		t.Fatalf("events = %+v", evs)
-	}
+	// Told at every read that finds it, not once: the engine drops what
+	// it is told while no notify block runs.
 	for range 2 * rulesDownReads {
-		tp.checkRules(ctx)
+		tp.checkChain(ctx)
+		evs := tp.take()
+		if len(evs) != 1 || evs[0].Name != eventStoreReadOnly || !evs[0].Firing || evs[0].Severity != SeverityCritical || evs[0].Kind != kindState {
+			t.Fatalf("events = %+v", evs)
+		}
 	}
 	tp.pushOnce(ctx)
 	tp.at = tp.at.Add(storeDownAfter)
@@ -386,41 +387,55 @@ func TestReadOnlyStoreIsToldAsItself(t *testing.T) {
 	if evs := tp.take(); len(evs) != 0 {
 		t.Fatalf("a read-only store was told as something else: %+v", evs)
 	}
-	// An ask the store does not answer is no reading: the last stands.
+	// The store stops answering: no reading. What was told stands, one
+	// line says the ask failed, and nothing is held back any longer: the
+	// store may be down, and metrics_store_down says that.
 	tp.store.roErr = errors.New("refused")
-	tp.checkRules(ctx)
-	if evs := tp.take(); len(evs) != 0 {
-		t.Fatalf("a failed ask changed the reading: %+v", evs)
+	tp.checkChain(ctx)
+	tp.checkChain(ctx)
+	if n := tp.logs.FilterMessage("metrics_store: could not read whether the store is read-only").Len(); n != 1 {
+		t.Fatalf("%d lines for an ask failing twice, want 1", n)
+	}
+	tp.pushOnce(ctx)
+	evs := tp.take()
+	if len(evs) != 1 || evs[0].Name != eventStoreDown || !evs[0].Firing {
+		t.Fatalf("a store that stopped answering while read-only: %+v", evs)
 	}
 	tp.store.roErr, tp.store.ro, tp.store.importErr = nil, false, nil
 	tp.store.up = []series{{points: []point{{t: tp.at, v: 1}}}}
-	tp.checkRules(ctx)
+	tp.checkChain(ctx)
 	evs = tp.take()
 	if len(evs) != 1 || evs[0].Name != eventStoreReadOnly || evs[0].Firing {
 		t.Fatalf("writable again: %+v", evs)
 	}
 	// Stopped while read-only: cleared, since nothing else can.
 	tp.store.ro = true
-	tp.checkRules(ctx)
+	tp.checkChain(ctx)
 	tp.take()
 	tp.release(tp.m)
-	evs = tp.take()
-	if len(evs) != 1 || evs[0].Name != eventStoreReadOnly || evs[0].Firing {
-		t.Fatalf("released while read-only: %+v", evs)
+	cleared := false
+	for _, ev := range tp.take() {
+		cleared = cleared || (ev.Name == eventStoreReadOnly && !ev.Firing)
+	}
+	if !cleared {
+		t.Fatal("released while read-only: not cleared")
 	}
 }
 
 func TestParseReadOnly(t *testing.T) {
 	for page, want := range map[string]bool{
-		"vm_rows 3\nvm_storage_is_read_only 0\n":                             false,
-		"vm_storage_is_read_only 1\nvm_rows 3\n":                             true,
-		`vm_storage_is_read_only{path="/var/lib/victoria-metrics"} 1` + "\n": true,
+		"vm_rows 3\nvm_storage_is_read_only 0\n":                              false,
+		"vm_storage_is_read_only 1\nvm_rows 3\n":                              true,
+		`vm_storage_is_read_only{path="/var/lib/victoria-metrics"} 1` + "\n":  true,
+		`vm_storage_is_read_only{path="/var/lib/a b"} 0 1731300000000` + "\n": false, // a timestamp is not the value
+		"vm_storage_is_read_only\t1\n":                                        true,
 	} {
 		if got, err := parseReadOnly([]byte(page)); err != nil || got != want {
 			t.Errorf("%q: %v, %v", page, got, err)
 		}
 	}
-	for _, page := range []string{"", "vm_rows 3\n", "vm_storage_is_read_only_total 1\n", "vm_storage_is_read_only x\n"} {
+	for _, page := range []string{"", "vm_rows 3\n", "vm_storage_is_read_only_total 1\n", "vm_storage_is_read_only x\n",
+		"vm_storage_is_read_only \n", `vm_storage_is_read_only{path="x" 1` + "\n"} {
 		if _, err := parseReadOnly([]byte(page)); err == nil {
 			t.Errorf("%q: read as an answer", page)
 		}

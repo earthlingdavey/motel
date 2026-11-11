@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"os/user"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -57,29 +58,36 @@ func isFile(p string) bool {
 // that can fail (an install, a unit written to a full disk), and an
 // error would leave a stack that worked masked and stopped until a
 // later run got through. So on a re-run (motel's drop-in was in place
-// when setup began) a failure unmasks the service, and starts start
-// again if the service was running. A first run is left masked: without
-// the drop-in, Debian's unit listens beyond the box.
-func putBackOnFailure(sys system, say func(string, ...any), rerun bool, service string, start []string, err *error) func() {
+// when setup began) a failure unmasks the service and starts sockets:
+// a connection that arrived while the service was masked fails its
+// activation socket, which then starts nothing. daemons are started
+// too if the service was running. Every step is tried, whatever the one
+// before it did. A first run is left masked: without the drop-in,
+// Debian's unit listens beyond the box.
+func putBackOnFailure(sys system, say func(string, ...any), rerun bool, service string, sockets, daemons []string, err *error) func() {
 	if !rerun {
 		return func() {}
 	}
-	wasRunning := sys.run("systemctl", "is-active", "--quiet", service) == nil
+	start := sockets
+	if len(daemons) > 0 && sys.run("systemctl", "is-active", "--quiet", service) == nil {
+		start = append(slices.Clone(sockets), daemons...)
+	}
 	return func() {
 		if *err == nil {
 			return
 		}
-		steps := [][]string{{"daemon-reload"}, {"unmask", service}}
-		if wasRunning && len(start) > 0 {
-			steps = append(steps, append([]string{"start"}, start...))
-		}
+		steps := [][]string{{"daemon-reload"}, {"unmask", service}, append([]string{"start"}, start...)}
+		var failed []string
 		for _, s := range steps {
 			if rerr := sys.run("systemctl", s...); rerr != nil {
-				say("setup failed, and so did putting %s back (systemctl %s: %v): it may be masked and stopped", service, strings.Join(s, " "), rerr)
-				return
+				failed = append(failed, fmt.Sprintf("systemctl %s: %v", strings.Join(s, " "), rerr))
 			}
 		}
-		say("setup failed; %s is unmasked again, and running if it was", service)
+		if len(failed) > 0 {
+			say("setup failed, and so did putting %s back as it was (%s): check that it is unmasked and running", service, strings.Join(failed, "; "))
+			return
+		}
+		say("setup failed; put back as it was: %s unmasked, %s started", service, strings.Join(start, " and "))
 	}
 }
 
@@ -153,7 +161,7 @@ func setup(sys system, root string, out io.Writer) (err error) {
 	}
 	say("masked %s, so the install starts nothing", amService)
 	// Its socket starts it again at the next connection, once unmasked.
-	defer putBackOnFailure(sys, say, rerun, amService, nil, &err)()
+	defer putBackOnFailure(sys, say, rerun, amService, []string{amSocket}, nil, &err)()
 	// One installed by hand before setup runs on Debian's :9093 and
 	// 0.0.0.0:9094, and the mask does not stop it; nor would the socket
 	// be handed to a service already running. Stopped here, it next
