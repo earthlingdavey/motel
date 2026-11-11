@@ -12,6 +12,7 @@
 #   GET /<app> with the deploy token carries the app's metrics
 #   observe's counts in the store and in GET /<app>?range=
 #   vmalert's rules loaded; its ChannelFailed and motel's one alert
+#   the operator's rules: a threshold through vmalert, the post-deploy comparison
 #   nothing of the store in an app's sandbox view
 #   the store's socket gone: GET /<app> answers at once, with the error
 . /lib.sh
@@ -25,6 +26,7 @@ STATE=/var/lib/motel-metrics
 NS=motel-metrics
 vm() { curl -s --max-time 10 --unix-socket "$VM" "$@"; }
 am() { curl -s --max-time 10 --unix-socket "$AMS" "$@"; }
+sinklog() { curl -s --max-time 5 "$SINK/log"; }
 # q <query>: an instant query's answer, from the store.
 q() { vm -G --data-urlencode "query=$1" http://vm/api/v1/query; }
 # has_result <answer>: the answer holds at least one series.
@@ -114,6 +116,16 @@ grep -q 'notify_channel: ops' "$STATE/rules.yml" \
 	&& pass "motel rendered the rules, with ChannelFailed for the operator's channels" || fail "rules.yml: $(head -c 400 "$STATE/rules.yml")"
 vmalert -dryRun -rule="$STATE/rules.yml" >/tmp/dry.out 2>&1 \
 	&& pass "vmalert -dryRun passes the rendered rules" || fail "vmalert -dryRun: $(tail -3 /tmp/dry.out)"
+# The operator's group: the threshold and disk_fill lines, motel's own
+# expressions over increase_pure; post_deploy is motel's to evaluate.
+op=$(sed -n '/name: motel-operator/,$p' "$STATE/rules.yml")
+for r in errors_high blog_slow disk_filling; do
+	printf '%s' "$op" | grep -q "alert: $r\$" || fail "the motel-operator group has no $r: $(printf '%s' "$op" | head -c 300)"
+done
+printf '%s' "$op" | grep -q 'increase_pure(motel_app_requests_total' && ! printf '%s' "$op" | grep -q 'increase(' \
+	&& ! grep -q 'blog_regressed' "$STATE/rules.yml" && printf '%s' "$op" | grep -q 'key: rules/app:blog/blog_slow' \
+	&& pass "the motel-operator group holds the threshold and disk_fill rules, through increase_pure, keyed rules/<subject>/<name>" \
+	|| fail "the motel-operator group: $(printf '%s' "$op" | head -c 600)"
 
 echo "=== metrics 2: the push ==="
 code=$(deploy demo-v1.tar.gz v1)
@@ -218,7 +230,7 @@ until rules=$(inns curl -s --max-time 5 http://127.0.0.1:8880/api/v1/rules) \
 	&& printf '%s' "$rules" | grep -q '"name":"ChannelFailed"'; do
 	i=$((i + 1)); [ "$i" -ge 45 ] && break; sleep 2
 done
-for r in ChannelFailed app_memory_high metrics_store_disk_fill; do
+for r in ChannelFailed app_memory_high metrics_store_disk_fill errors_high blog_slow disk_filling; do
 	printf '%s' "$rules" | grep -q "\"name\":\"$r\"" && pass "vmalert loaded $r" || fail "vmalert has no $r: $(printf '%s' "$rules" | cut -c1-200)"
 done
 # What metrics 7 counts after the channels go: present now, so its
@@ -444,9 +456,11 @@ systemctl stop motel
 grep -q 'alert:' "$STATE/rules.yml" && pass "motel stopped: rules.yml keeps its alerting rules" \
 	|| fail "motel's shutdown retired the rules: $(head -c 300 "$STATE/rules.yml")"
 systemctl start motel && pass "motel started again" || fail "motel did not start again"
-sed -E '/^\t\tmetrics( |$)/d' /tmp/Caddyfile.both >/tmp/Caddyfile.nostore
-if grep -qE '^[[:space:]]*metrics( |$)' /tmp/Caddyfile.nostore || ! grep -q '^[[:space:]]*monitor {$' /tmp/Caddyfile.nostore; then
-	fail "could not cut the metrics line out of the Caddyfile"
+# The rule lines go with it: they need the metrics line.
+awk '/^\t\tmetrics( |$)/ { next } /^\t\trule / { if ($0 ~ /\{$/) inr = 1; next } inr { if ($0 ~ /^\t\t\}$/) inr = 0; next } { print }' \
+	/tmp/Caddyfile.both >/tmp/Caddyfile.nostore
+if grep -qE '^[[:space:]]*(metrics|rule|window|max_5xx_share)( |$)' /tmp/Caddyfile.nostore || ! grep -q '^[[:space:]]*monitor {$' /tmp/Caddyfile.nostore; then
+	fail "could not cut the metrics and rule lines out of the Caddyfile: $(sed -n '/monitor {/,/^\t}/p' /tmp/Caddyfile.nostore)"
 fi
 cp /tmp/Caddyfile.nostore /etc/motel/Caddyfile
 systemctl reload motel && pass "reloaded without the metrics line" || fail "the reload without the metrics line failed"
@@ -495,6 +509,56 @@ systemctl restart motel && pass "restored: the whole monitor block, restarted" |
 i=0
 until grep -q 'alert:' "$STATE/rules.yml"; do i=$((i + 1)); [ "$i" -ge 40 ] && break; sleep 0.5; done
 grep -q 'alert:' "$STATE/rules.yml" && pass "a boot with the metrics line writes its rules" || fail "a boot with the metrics line wrote no alerting rule"
+
+echo "=== metrics 10: the operator's rules ==="
+# errors_high, a threshold over every app, fires for shop, whose site
+# answers 503 with no release; blog_regressed compares blog's next
+# release, whose every page answers 500, with the probe release before
+# it. Both reach Alertmanager as the operator's rules: source rules,
+# the app's label, so route 6 sends them to the app's channels too.
+PROXY=http://localhost:8080
+t10=$(date +%s)
+i=1
+while [ "$i" -le 30 ]; do curl -s -o /dev/null --max-time 5 "$PROXY/?pd=$i"; i=$((i + 1)); done
+sleep 31 # one push carries the probe release's answers before the cutover
+code=$(deploy demo-errors.tar.gz errs1)
+[ "$code" = 200 ] && pass "deploy errs1, a release whose pages answer 500" || fail "deploy errs1 returned $code: $(cat /tmp/deploy-body)"
+c=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 "$PROXY/?pe=0")
+[ "$c" = 500 ] || fail "fixture: errs1 answers $c, not 500"
+amf() { am "http://am/api/v2/alerts?filter=alertname%3D%22$1%22&filter=app%3D%22$2%22"; }
+reg="" thr=""
+end=$(( $(date +%s) + 300 ))
+i=1
+while [ "$(date +%s)" -lt "$end" ]; do
+	for j in 1 2 3 4 5; do curl -s -o /dev/null --max-time 5 "$PROXY/?pe=$i-$j"; done
+	curl -s -o /dev/null --max-time 5 http://localhost:8085/
+	i=$((i + 1))
+	[ -z "$reg" ] && amf post_deploy_regressed blog | grep -q '"fingerprint"' && reg=$(amf post_deploy_regressed blog)
+	[ -z "$thr" ] && amf errors_high shop | grep -q '"fingerprint"' && thr=$(amf errors_high shop)
+	[ -n "$reg" ] && [ -n "$thr" ] && break
+	sleep 3
+done
+for l in '"source":"rules"' '"kind":"event"' '"subject":"app:blog"' '"key":"rules/app:blog/post_deploy_regressed"' '"release":"errs1"' '"severity":"warning"'; do
+	printf '%s' "$reg" | grep -q "$l" || { fail "post_deploy_regressed in Alertmanager lacks $l: $(printf '%s' "$reg" | cut -c1-500)"; reg=bad; break; }
+done
+[ -n "$reg" ] && [ "$reg" != bad ] && printf '%s' "$reg" | grep -q '"summary":"blog errs1 regressed [0-9]*m after its deploy, over [0-9]* responses: 5xx share 1 against 0 before it' \
+	&& pass "post_deploy_regressed reached Alertmanager in $(( $(date +%s) - t10 )) s, the app's, source rules, both releases' numbers: $(printf '%s' "$reg" | grep -o '"summary":"[^"]*"')" \
+	|| fail "no post_deploy_regressed for blog as wanted: $(printf '%s' "$reg" | cut -c1-500)"
+for l in '"source":"rules"' '"kind":"state"' '"subject":"app:shop"' '"key":"rules/app:shop/errors_high"' '"generatorURL":"http'; do
+	printf '%s' "$thr" | grep -q "$l" || { fail "errors_high in Alertmanager lacks $l: $(printf '%s' "$thr" | cut -c1-500)"; thr=bad; break; }
+done
+[ -n "$thr" ] && [ "$thr" != bad ] \
+	&& pass "vmalert's errors_high fired for shop and reached Alertmanager: source rules, app shop, its key" \
+	|| fail "no errors_high for shop as wanted: $(printf '%s' "$thr" | cut -c1-500)"
+i=0
+until sinklog | grep -q '/blog [a-z]* post_deploy_regressed blog '; do
+	i=$((i + 1)); [ "$i" -ge 20 ] && break; sleep 1
+done
+sinklog | grep -q '/blog [a-z]* post_deploy_regressed blog ' && sinklog | grep -q '/ops [a-z]* post_deploy_regressed blog ' \
+	&& pass "post_deploy_regressed reached the operator's channel and blog's deployer's" \
+	|| fail "the sink: $(sinklog | grep post_deploy | tail -5 | tr '\n' ';')"
+n=$(journalctl -u motel -o cat --no-pager | grep -c 'rules/app:blog/post_deploy_regressed' || true)
+[ "$n" -eq 1 ] && pass "one post_deploy_regressed, journalled once" || fail "post_deploy_regressed journalled $n times"
 
 echo
 if [ "$FAILURES" -ne 0 ]; then
