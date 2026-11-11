@@ -24,7 +24,8 @@ ExecStart=/usr/lib/systemd/systemd-socket-proxyd --exit-idle-time=5min /run/mote
 # supplementary groups, so with the store's gid the store could act as
 # the proxy, group and all, past this view (Debian leaves ptrace_scope at
 # 0). With motel's gid it is refused (measured). PrivateUsers= would
-# refuse it too, but cannot carry a supplementary group (217/USER).
+# refuse it too; it failed (217/USER) beside a supplementary group, and
+# with motel as the primary group it is untried.
 User=_victoria-metrics
 Group=motel
 CapabilityBoundingSet=

@@ -293,11 +293,11 @@ func TestNoHeartbeatIsWarned(t *testing.T) {
 	} {
 		core, logs := observer.New(zap.WarnLevel)
 		a := &App{Channels: []Channel{ops}, Operator: []string{"ops"}, HeartbeatSecret: c.heartbeat, SecretsFile: secrets, logger: zap.New(core)}
-		var err error
-		if a.cfg, _, err = a.resolveWith(map[string][]TrustSource{}, c.secrets, nil, true, nil); err != nil {
+		r, _, err := a.resolveWith(map[string][]TrustSource{}, c.secrets, nil, true, nil)
+		if err != nil {
 			t.Fatalf("%s: %v", c.name, err)
 		}
-		a.warnAtLoad()
+		a.warnAtLoad(r.heartbeat)
 		if n := len(logs.FilterMessageSnippet("notify: no heartbeat in this load").All()); n != c.want {
 			t.Errorf("%s: %d warnings, want %d (%v)", c.name, n, c.want, logs.All())
 		}

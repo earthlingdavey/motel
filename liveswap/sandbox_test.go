@@ -2047,3 +2047,32 @@ func TestAdminSocketInView(t *testing.T) {
 		}
 	}
 }
+
+// TestE2EProxyViewHidesTheMotelPaths holds e2e/metrics/run.sh's view
+// check of the am proxy to sandboxMotelPaths: the proxy holds the motel
+// group, so every path an app's view hides must be out of its view too,
+// but for Alertmanager's own socket directory, which it is bound.
+func TestE2EProxyViewHidesTheMotelPaths(t *testing.T) {
+	b, err := os.ReadFile("../e2e/metrics/run.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	script := string(b)
+	i := strings.Index(script, "for p in /var/lib/motel ")
+	if i < 0 {
+		t.Fatal("e2e/metrics/run.sh has no view check of the am proxy")
+	}
+	list, _, ok := strings.Cut(script[i:], "; do")
+	if !ok {
+		t.Fatal("the am proxy's view check in e2e/metrics/run.sh has no loop body")
+	}
+	have := map[string]bool{}
+	for _, f := range strings.Fields(strings.ReplaceAll(list, "\\\n", " "))[3:] {
+		have[f] = true
+	}
+	for _, p := range sandboxMotelPaths {
+		if p != "/run/motel-notify" && !have[p] {
+			t.Errorf("the am proxy's view check in e2e/metrics/run.sh lacks %s", p)
+		}
+	}
+}

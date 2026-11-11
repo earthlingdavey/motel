@@ -199,15 +199,21 @@ func TestMetricsUnitsAreTheMeasuredOnes(t *testing.T) {
 		// same uid, another gid) cannot attach to it.
 		"User=_victoria-metrics", "Group=motel\n", "CapabilityBoundingSet=\n", "TemporaryFileSystem=/:ro",
 		"BindReadOnlyPaths=/usr -/bin -/lib -/lib64 -/etc/ld.so.cache /run/motel-notify /run/systemd/notify\n")
-	// Either one has systemd keep the host's root, and the view with it
-	// (measured, systemd 257).
-	for _, bad := range []string{"DynamicUser=", "ProtectSystem="} {
-		if strings.Contains(string(unitAMProxy), "\n"+bad) {
-			t.Errorf("motel-am-proxy.service has %s, which undoes TemporaryFileSystem=/", bad)
-		}
+	forbidden := map[string]string{
+		// Either one has systemd keep the host's root, and the view with
+		// it (measured, systemd 257).
+		"DynamicUser=":   "undoes TemporaryFileSystem=/",
+		"ProtectSystem=": "undoes TemporaryFileSystem=/",
+		// The kernel's ptrace check ignores supplementary groups.
+		"SupplementaryGroups=": "lets the store's processes, the same uid and gid, attach to it",
 	}
-	if strings.Contains(string(unitAMProxy), "\nSupplementaryGroups=") {
-		t.Error("motel-am-proxy.service holds the motel group as a supplementary one: the store's processes could attach to it")
+	for _, line := range strings.Split(string(unitAMProxy), "\n") {
+		line = strings.TrimSpace(line)
+		for key, why := range forbidden {
+			if strings.HasPrefix(line, key) {
+				t.Errorf("motel-am-proxy.service has %q, which %s", line, why)
+			}
+		}
 	}
 	has("motel-vmalert.service", unitVMAlert, "User=_victoria-metrics", "NetworkNamespacePath=/run/netns/motel-metrics",
 		"-rule="+DefaultMetricsStateDir+"/"+RulesName+" ", "-configCheckInterval=1m", "-disableAlertgroupLabel",

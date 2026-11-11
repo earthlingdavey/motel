@@ -90,9 +90,11 @@ supplementary one: the kernel lets a process attach to, or read the
 supplementary groups, so with the store's gid the store could have
 attached to the proxy and used its group past its view (Debian leaves
 `ptrace_scope` at 0; measured, Copilot on #426). With motel's gid the
-store's uid is refused both. `PrivateUsers=` would refuse them too, but
-cannot carry a supplementary group (the unit fails, 217/USER, with
-`yes` and with `identity`).
+store's uid is refused both. `PrivateUsers=` would refuse them too; it
+failed (217/USER, with `yes` and with `identity`) beside a supplementary
+group, and with motel as the primary group it is untried. A signal checks
+the uid alone, so the store's processes can still stop or kill the
+proxy, which stops nothing they could not stop by stopping vmalert.
 
 **Who reaches the socket, and why.** As for notify's: every app runs as
 the motel uid, so the socket's group is not what keeps apps out; their
@@ -387,8 +389,9 @@ read path from the store into `GET /<app>`.
   compromise of either is a compromise of a root-installed Debian
   package, outside what motel defends. motel's own units give it no
   more: neither proxy runs as root ("The shape"), and the am proxy, the
-  one they reach, holds their uid with motel's gid, so they cannot act
-  as it, and the group reaches only the socket in its view.
+  one they reach, holds their uid with motel's gid, so they cannot attach
+  to it or read its `/proc`, and the group reaches only the socket in its
+  view.
 - The store holds label values motel chose (app, release, Caddy's
   server and handler names). A leak of it is low-sensitivity by
   construction; `GET /<app>` is app-scoped anyway, so a deployer never

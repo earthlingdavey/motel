@@ -289,19 +289,25 @@ attach() {
 	runuser -u _victoria-metrics -- perl -e '$p='"$1"'; $r=syscall('"$nr"',16,$p,0,0); if ($r==0) { waitpid($p,0); syscall('"$nr"',17,$p,0,0); print "attached" } else { print "refused" }'
 }
 runuser -u _victoria-metrics -- sleep 60 &
-sleep 0.5
-sleeper=$(pgrep -u _victoria-metrics -x sleep | head -1)
-control=$(attach "$sleeper")
+i=0
+until sleeper=$(pgrep -u _victoria-metrics -x sleep | head -1) && [ -n "$sleeper" ]; do
+	i=$((i + 1)); [ "$i" -ge 50 ] && break; sleep 0.2
+done
+control=refused
+[ -n "$sleeper" ] && control=$(attach "$sleeper")
 kill "$sleeper" 2>/dev/null
+wait 2>/dev/null
 att=$(attach "$pid")
+[ -n "$sleeper" ] || fail "fixture: no sleeper of the store's uid after 10 s, so no control for the attach"
 case "$control,$att" in
 attached,refused) pass "the store's uid cannot attach to the am proxy (and can attach to a sleeper of its own)" ;;
 refused,refused) pass "this host refuses the store's uid any attach (ptrace_scope $(cat /proc/sys/kernel/yama/ptrace_scope 2>/dev/null)): the /proc check above stands for the unit" ;;
 *) fail "the store's uid attached to the am proxy (control: $control)"; kill -CONT "$pid" 2>/dev/null ;;
 esac
-# Every path an app's view hides (liveswap/sandbox.go, sandboxMotelPaths)
-# and the apps' root: the motel group reaches them on a packaged box, and
-# only Alertmanager's socket directory is bound back.
+# Every path an app's view hides (liveswap/sandbox.go, sandboxMotelPaths,
+# which TestE2EProxyViewHidesTheMotelPaths holds this list to) and the
+# apps' root: the motel group reaches them on a packaged box, and only
+# Alertmanager's socket directory is bound back.
 seen=""
 for p in /var/lib/motel /run/motel /etc/motel /etc/liveswap /var/lib/motel-box /var/lib/motel-notify \
 	/run/motel-metrics /var/lib/motel-metrics /var/lib/liveswap; do
