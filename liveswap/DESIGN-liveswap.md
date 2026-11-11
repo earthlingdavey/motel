@@ -613,14 +613,15 @@ backwards edges reappearing *despite* this table.
 ### The response observer (`observe.go`)
 
 `liveswap_observe <app>` is a handler the operator writes first in an
-app's site or route. It counts each response under the app's current
-release by status class (`1xx` for 101 alone, `2xx` to `5xx`, and
+app's site or route. It counts each response under its release ("Which
+release") by status class (`1xx` for 101 alone, `2xx` to `5xx`, and
 `aborted` for a request no headers went to: its client gone first, or
-its handler aborted), times it to its headers in a fixed histogram,
-and reads the cache's verdict from `Cache-Status` (hit, stale, miss,
-bypass). It exists because Caddy's
-request metrics carry a server and a handler, never a liveswap app
-(notify/DESIGN-metrics.md, "The response observer").
+its handler aborted), times it to the headers the client is sent
+(behind the cache, after Souin has buffered the whole body) in a fixed
+histogram, and reads the cache's verdict from `Cache-Status` (hit,
+stale, miss, bypass). It exists because Caddy's request metrics carry a
+server and a handler, never a liveswap app (notify/DESIGN-metrics.md,
+"The response observer").
 
 - **Where.** Ordered before `redir`, the earliest standard anchor
   (box_webhook's), so that at site level it sorts outside `cache`

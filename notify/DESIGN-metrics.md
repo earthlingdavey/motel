@@ -196,8 +196,13 @@ mechanics, its order and its measured cost are DESIGN-liveswap.md's
   went to its upstream or that the cache fetched from it (a miss or a
   bypass, a miss Souin coalesced onto another request's upstream call
   among them), so a cache hit, penaltybox's refusal, any other handler's
-  answer, a 101 and an aborted request are left out. p50 and
-  p95 are `histogram_quantile` over them: an estimate inside a bucket.
+  answer, a 101 and an aborted request are left out. The headers are
+  those the client is sent: behind Souin they go when it sends the
+  response, which it buffers whole first to store it, so a miss's time
+  runs to the end of the app's body, the time the client waited for its
+  first byte; with no cache in front it is the app's own time to
+  headers. p50 and p95 are `histogram_quantile` over them: an estimate
+  inside a bucket.
 - **The cache.** The `Cache-Status` the cache in front wrote (RFC 9211,
   as Souin writes it): hit, stale (a hit with `fwd=stale`), miss
   (`fwd=uri-miss`, or a revalidation) or bypass. Souin's entry is the
