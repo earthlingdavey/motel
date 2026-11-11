@@ -325,14 +325,19 @@ unrounded float is a run of twenty digits the response filter masks as
 a generated value, and the status would be withheld.
 
 `requests` is four instant queries over the window: `sum by (class)` of
-`increase(motel_app_requests_total)`, `histogram_quantile` at 0.5 and
-0.95 of the summed buckets' `increase`, and `sum by (result)` of the
-cache counts. `per_second` is the total over the window's length;
+`increase_pure(motel_app_requests_total)`, `histogram_quantile` at 0.5
+and 0.95 of the summed buckets' `increase_pure`, and `sum by (result)`
+of the cache counts. `increase_pure`, not `increase`: a series appears
+with its first push, already at that push's count, and the store's
+`increase` drops a series' first value when it is large (measured on
+1.112.0 in e2e metrics 3a: 22 responses read as 0, a single hit as 1);
+`increase_pure` counts from zero when no sample comes before. `per_second` is the total over the window's length;
 `5xx_share` is of the responses sent (the total less `aborted`);
 `cache_hit_share` is hits and stale hits of the responses a cache spoke
 for. Every release in the window is summed: the status beside it names
-the current one. Every float is rounded (shares to 1/10 000, rates to
-1/1 000, milliseconds to a tenth), for the CPU averages' reason. A
+the current one. Every float is rounded (shares to 1/10 000, rates to a
+millionth, so that a day's few requests are not 0, milliseconds to a
+tenth), for the CPU averages' reason. A
 share or quantile with no response under it is absent, and so is
 `requests` when the store holds no request series for the app.
 The store answers 30 s behind the present

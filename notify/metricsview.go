@@ -188,11 +188,18 @@ func (v *metricsView) ask(ctx context.Context, app, window string, w viewWindow,
 		// every 30 s: the range above holds one sample a step, and a peak
 		// between two steps would be lost.
 		{&a.peak, instant(`max_over_time(motel_app_memory_bytes{` + sel + `}[` + span + `])`)},
-		{&a.classes, instant(`sum by (class) (increase(motel_app_requests_total{` + sel + `}[` + span + `]))`)},
-		{&a.p50, instant(`histogram_quantile(0.5, sum by (le) (increase(motel_app_response_seconds_bucket{` + sel + `}[` + span + `])))`)},
-		{&a.p95, instant(`histogram_quantile(0.95, sum by (le) (increase(motel_app_response_seconds_bucket{` + sel + `}[` + span + `])))`)},
-		{&a.cache, instant(`sum by (result) (increase(motel_app_cache_responses_total{` + sel + `}[` + span + `]))`)},
+		{&a.classes, instant(`sum by (class) (increase_pure(motel_app_requests_total{` + sel + `}[` + span + `]))`)},
+		{&a.p50, instant(`histogram_quantile(0.5, sum by (le) (increase_pure(motel_app_response_seconds_bucket{` + sel + `}[` + span + `])))`)},
+		{&a.p95, instant(`histogram_quantile(0.95, sum by (le) (increase_pure(motel_app_response_seconds_bucket{` + sel + `}[` + span + `])))`)},
+		{&a.cache, instant(`sum by (result) (increase_pure(motel_app_cache_responses_total{` + sel + `}[` + span + `]))`)},
 	}
+	// The request counters through increase_pure, not increase: an
+	// app's series appears with its first push, already at the count
+	// that push carried, and the store's increase drops a series' first
+	// value when it is large (measured on 1.112.0: 22 responses read as
+	// 0, one as 1); increase_pure counts from zero when nothing comes
+	// before.
+	//
 	// At once: seven one after another would not fit the budget on a
 	// slow store. Each writes its own answer; the first error is the
 	// answer's.
@@ -298,7 +305,7 @@ func summarizeRequests(a viewAnswers, span time.Duration) *requestSummary {
 		}
 		r.Total += n
 	}
-	r.PerSecond = roundTo(float64(r.Total)/span.Seconds(), 1e3)
+	r.PerSecond = roundTo(float64(r.Total)/span.Seconds(), 1e6)
 	if sent := r.Total - r.ByClass["aborted"]; sent > 0 {
 		share := roundTo(float64(r.ByClass["5xx"])/float64(sent), 1e4)
 		r.Share5xx = &share

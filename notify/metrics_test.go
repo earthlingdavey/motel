@@ -943,7 +943,7 @@ func TestMetricsViewRequests(t *testing.T) {
 	v := newMetricsView(f, zap.NewNop())
 	v.now = func() time.Time { return end }
 	got, _ := json.Marshal(v.AppMetrics(context.Background(), "blog", "24h"))
-	want := `{"window":"24h","requests":{"total":3000,"per_second":0.035,"by_class":{"2xx":2990,"5xx":7,"aborted":3},` +
+	want := `{"window":"24h","requests":{"total":3000,"per_second":0.034722,"by_class":{"2xx":2990,"5xx":7,"aborted":3},` +
 		`"5xx_share":0.0023,"p50_ms":12.3,"p95_ms":246.8,"cache_hit_share":0.3336}}`
 	if string(got) != want {
 		t.Fatalf("requests:\n got %s\nwant %s", got, want)
