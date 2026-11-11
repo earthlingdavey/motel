@@ -5,8 +5,8 @@ promises. History lives in git (`git log -- notify/DESIGN-notify.md`);
 the "History" section at the end holds only dated one-liners.
 
 **Status: experimental, slice one**: the notify core. Opt-in (nothing
-runs without a `notify` block, and the package only Suggests
-Alertmanager); the three Owed rows that barred a production box
+runs without a `monitor` block with channels, and the package only
+Suggests Alertmanager); the three Owed rows that barred a production box
 landed on 2026-11-10 ("History"), and what is owed still ("Owed") is
 real Slack and Discord hooks and later slices. The metrics store,
 vmalert and `metrics` in `GET /<app>` are slice two, in
@@ -18,7 +18,8 @@ the reason.
 Alertmanager delivers.** motel's detectors (the watchdog, the deploy
 handler, the backup record, CertMagic's events, the filesystems) post
 alerts to an Alertmanager that listens on a unix socket only, and
-whose whole configuration motel renders from one Caddyfile block. It
+whose whole configuration motel renders from the Caddyfile's `monitor`
+block, which also holds the metrics store's line (DESIGN-metrics.md). It
 is its own module (`notify/`), importing liveswap (the apps' deploy
 trust, the response filter) and the backup record, never the other way
 round: liveswap reports to a `Notifier` interface and knows nothing of
@@ -64,7 +65,7 @@ Alertmanager beside it 42.6 MB RSS (24 MB cgroup).
 | Alertmanager | Debian 13's `prometheus-alertmanager` 0.28.1: routing, grouping, dedupe, repeat, resolved-once, inhibition, retries, the notification log, 18 receiver kinds | Debian's unit with motel's drop-in (`notify/units/10-motel.conf`): socket-activated, `--cluster.listen-address=` (no gossip), `--enable-feature=receiver-name-in-metrics`, `MemoryMax=128M` |
 | Its listener | `/run/motel-notify/am.sock`, 0660 root:motel, a systemd socket unit (`notify/units/motel-am.socket`); no TCP port | its own runtime directory: `/run/motel` is motel.service's `RuntimeDirectory`, removed whenever motel stops |
 | Its config | `alertmanager.yml` and one `url-<KEY>` file per channel secret, 0640, rendered by motel at every config load | `/var/lib/motel-notify`, 2750 motel:prometheus (setup makes it); not `/var/lib/motel`, which is 0750 motel:motel and the prometheus uid cannot traverse |
-| motel's part | the `notify` block and its refusals, the renderer, the engine (state table, flapping guard, mute, heartbeat, retry queue), the detectors, `channel_failed`, two admin routes, three commands | `notify/` |
+| motel's part | the `monitor` block's notify lines and their refusals, the renderer, the engine (state table, flapping guard, mute, heartbeat, retry queue), the detectors, `channel_failed`, two admin routes, `motel monitor send`, `test` and `setup` | `notify/` |
 
 **Who reaches the socket, and why.** Every deployed app runs as the
 motel uid, so the socket's group is not what keeps apps out. Their
@@ -77,10 +78,10 @@ socket, penaltybox"). The group keeps out every other system user
 paths (`notify_run`, `notify_socket`, `notify_state`) and the e2e
 suite asserts them closed on a box where they exist.
 
-## The notify block
+## The monitor block
 
 ```
-notify {
+monitor {
     channel <name> json|ntfy|slack|discord {secret.NOTIFY_<NAME>} [severity critical|warning|info]
     operator <channel>...
     bind <identity> <channel>
@@ -91,8 +92,20 @@ notify {
     state_dir <path>                 # default /var/lib/motel-notify
     alertmanager <socket path>       # default /run/motel-notify/am.sock
     backup_record <path>|off         # default /var/lib/motel-backup/status.json
+    metrics [<socket path>]          # the metrics store (DESIGN-metrics.md, "The metrics line")
 }
 ```
+
+Every line but `metrics` is notify's, and this document's. One block
+holds who hears, the numbers and, when they land, the operator's rules
+("Decisions"); it is one Caddy app, `monitor`, of which the store is a
+part. A block that is a `metrics` line alone runs no notify: no
+render, no engine, no Alertmanager config, and the warning
+DESIGN-metrics.md's "The metrics line" names. Any other line makes the
+block notify's, held to every refusal below, its missing `operator`
+line among them; so is a block with no line at all. `notify` and
+`metrics_store` as global options are refused when the Caddyfile is
+adapted, naming the block and the line to write instead.
 
 A URL is only ever `{secret.NOTIFY_<NAME>}`: a Slack or Discord hook is
 a credential by itself, and the Caddyfile is a commit anyone who reads
@@ -110,6 +123,7 @@ connects to nothing), each naming keys and channels, never a value:
 
 | Condition | Refused as |
 |---|---|
+| a `notify` global option (refused at the adapt, before Provision) | ``the notify block is now `monitor { … }`, with the same lines (notify/DESIGN-notify.md)`` |
 | a literal URL, or `{env.*}` | `a channel URL is written {secret.NOTIFY_<NAME>}, its value in the box's secrets, never in the Caddyfile` |
 | a secret not named `NOTIFY_…` | `the secret's name is NOTIFY_ followed by capitals, digits and underscores` |
 | no `operator` line | `no operator line: name the channels that receive every event with operator <channel>` |
@@ -136,14 +150,14 @@ running config (`caddy.ActiveContext`):
 |---|---|
 | `motel validate` (by hand, CI's `make check`, the box handler's step 6) | refused, as the table says; the handler and `make check` name the secrets in `secrets/_box/` (`MOTEL_NOTIFY_PUSHED_SECRETS`), taken as held ("Secrets") |
 | a reload (`motel reload`, `systemctl reload`, the box applier's): a config is running | refused; the running config serves on, and the box applier rolls its push back |
-| the first load of `motel run` (a boot, a restart, an unattended upgrade's): nothing running | the channel is **dropped** from that load (from the operator line, each binding, the route tree; the heartbeat, if it is its secret), each a `notify: a channel is dropped from this load` error line naming every line that reads the key, and the key, never a value; and one more if no operator channel is left. A secrets file that cannot be read or parsed (a line without `=`, over 1 MiB, unreadable) is every secret unusable: one error line names the file and its error, and every line that reads a secret is dropped. motel serves |
+| the first load of `motel run` (a boot, a restart, an unattended upgrade's): nothing running | the channel is **dropped** from that load (from the operator line, each binding, the route tree; the heartbeat, if it is its secret), each a `monitor: a channel is dropped from this load` error line naming every line that reads the key, and the key, never a value; and one more if no operator channel is left. A secrets file that cannot be read or parsed (a line without `=`, over 1 MiB, unreadable) is every secret unusable: one error line names the file and its error, and every line that reads a secret is dropped. motel serves |
 
 Refusing a boot would take every site down for an alert channel; a
 dropped channel is the one cost, said in the journal, and the next
 `motel validate` or reload says it again. This is the rule cmd/motel's
 gate keeps for its own checks (an admin API on TCP, an unread backup
 declaration): validate and reload refuse, run serves. The box makes
-the case rare: its consistency check refuses a push whose `notify`
+the case rare: its consistency check refuses a push whose `monitor`
 block names a secret the push does not carry in `secrets/_box/`
 (box/DESIGN-box.md, "Which checks run where"), so `_box.env` lacks one
 only by a hand edit or a lost file. Every other refusal of the table
@@ -178,7 +192,7 @@ repository, or a `secrets_file` of the operator's own, is written by
 root by hand, as the e2e image does. A box whose root wrote `_box.env`
 by hand and that takes pushes moves each value into its repository
 (`make secret APP=_box …`) in its next push, whatever that push
-changes: the box refuses any push whose `notify` block names a secret
+changes: the box refuses any push whose `monitor` block names a secret
 it does not carry, and the first that carries them replaces the
 hand-made file, named as edited out of band.
 
@@ -280,7 +294,7 @@ Alertmanager, and the Stop of the config it serves ends its goroutine.
 Its pollers are the engine's too, so a key one fired is cleared by
 whichever config serves when it clears.
 
-- **Journal first.** Every event is a `notify: event` line (key,
+- **Journal first.** Every event is a `monitor: event` line (key,
   state, severity, summary, source, release, deployed_by) before its
   post is queued. Re-posts, the heartbeat and the mute are not events.
 - **State.** A key fires once and is re-posted every minute while it
@@ -296,7 +310,7 @@ whichever config serves when it clears.
   one-shot is suppressed and a state change held, each with a line.
 - **Unreachable Alertmanager.** Posts wait in a bounded in-memory
   queue (512), retried with backoff from 2 s to 30 s for five minutes,
-  then given up as `notify: delivery failed` (error level for an
+  then given up as `monitor: delivery failed` (error level for an
   event) and `motel_notify_delivery_failed_total` on the admin
   `/metrics`. A refusal (4xx) is given up at once; a 5xx is retried like a refused connect. Socket activation
   restarts Alertmanager in about a second, so the usual outage is one
@@ -365,7 +379,7 @@ body cut short, a malformed line, or one without the failed counter is
 no reading, and the baseline stays the last good one. `alertmanager_notifications_failed_total` names the integration
 and, with the drop-in's `receiver-name-in-metrics`, the receiver. A
 rise (the first read is a baseline; a lower value is a restart,
-counted from zero) is a `notify: channel failed` line, and one
+counted from zero) is a `monitor: channel failed` line, and one
 `ChannelFailed` alert to each operator channel that is not a suspect,
 each routed to that channel alone (`notify_channel=`). The suspects are
 the failing integration's channels in that receiver (`render` returns
@@ -388,13 +402,13 @@ motel or Alertmanager is down, which is the chain that delivers
 everything else. Uptime stays an external keyword check per host.
 A block with no `heartbeat` line loads, with its `Watchdog` routed to
 the blackhole receiver, and every load (`motel validate` too) warns
-`notify: no heartbeat in this load`, as for `allow_insecure_channels`:
+`monitor: no heartbeat in this load`, as for `allow_insecure_channels`:
 nothing outside the box would hear that it stopped. A boot that drops
 the line for its secret ("Secrets at load") warns the same.
 
 ## External producers and tests
 
-`motel notify send` posts to `POST /notify/events`, and `motel notify
+`motel monitor send` posts to `POST /notify/events`, and `motel monitor
 test <channel>` to `POST /notify/test`, both `admin.api.notify` routes
 on the admin socket: root and the motel uid reach it, no app does.
 External producers never post to Alertmanager's socket on the
@@ -411,7 +425,7 @@ and the route check (`SendRequest.Check`):
 | a name or instance the filter would mask (a channel URL, a secret-shaped token) | both are the key, the labels and the answer, which the filter does not rewrite |
 
 Accepted, an external event is one like motel's own: the filter, the
-bucket, the journal line, the queue. `motel notify test` posts one
+bucket, the journal line, the queue. `motel monitor test` posts one
 `NotifyTest` alert with a nonce label, routed to the channel alone,
 then reads the channel's receiver's counters for 15 s: delivered when
 an attempt did not fail (`notification_requests_total` rose more than
@@ -430,8 +444,9 @@ gossip on `0.0.0.0:9094`): apt may configure a dependency, and run its
 postinst, before motel's own scripts run, and `Pre-Depends` makes that
 order certain rather than preventing it. On a box with no firewall
 (hotserve-1 has none) that is the alert and silence API on the
-internet. So **`motel notify setup`**, run by root, does it in an order
-motel controls:
+internet. So **`motel monitor setup`**, run by root, does it in an order
+motel controls (with `--metrics`, the store's setup follows,
+DESIGN-metrics.md, "Packaging and setup"):
 
 1. `systemctl mask prometheus-alertmanager.service`, then `stop` it:
    one installed by hand before setup runs on Debian's ports, and a
@@ -465,14 +480,14 @@ upgrading or reinstalling the package, whose postinst restarts the
 unit directly, was measured on hotserve-1 (2026-11-10, 0.28.1
 reinstalled under motel 0.6.2~notifypoc1): the socket's fd is passed
 (`Listening on systemd activated listeners`), nothing listens on 9093
-or 9094, and `motel notify test` delivers at once; the postinst
+or 9094, and `motel monitor test` delivers at once; the postinst
 re-enables the service, so it then starts at boot rather than at its
 socket's first connection, still on the socket alone. A reboot with motel rendering (2026-11-10, hotserve-1,
 13.2 s to multi-user): `motel-am.socket` listening at 11.9 s,
 Alertmanager started at 12.0 s on the rendered file left from before,
 motel's render and reload at 12.8 s, motel ready at 12.9 s; no ordering
 cycle, no listener on 9093 or 9094, a heartbeat at once and `motel
-notify test` delivered. Two unit facts were measured too: `motel-am.socket` must name its service
+monitor test` delivered. Two unit facts were measured too: `motel-am.socket` must name its service
 (`Service=prometheus-alertmanager.service`), or systemd refuses it; and
 Alertmanager needs Debian's `/usr/share/prometheus` templates, so the
 package is installed rather than a binary fetched.
@@ -524,9 +539,15 @@ and API have no authentication of their own and are reached only
 through the socket: root by `ssh -L 9093:/run/motel-notify/am.sock
 root@box` (OpenSSH forwards to a remote unix socket since 6.7), then
 `http://localhost:9093` or `amtool --alertmanager.url`; on the box, the
-`motel notify` commands or `curl --unix-socket`. A deployer sees
+`motel monitor` commands or `curl --unix-socket`. A deployer sees
 notifications at their channel; not Alertmanager's UI, other apps, box
 events or silences.
+
+## Decisions
+
+| Decision | Why |
+|---|---|
+| One block, `monitor`, for notify and the metrics store | notify, the numbers and the rules over them are one idea to the person configuring the box; `metrics` is Caddy's own global option, so the store cannot be a block of that name; one global option yields one Caddy app, so the store is a part of the monitor app (`App.Metrics`), not an app of its own. A `notify` or `metrics_store` block is refused by name, and `motel notify` and `motel metrics` exit 1 with the new spelling: everything here is unreleased, so there is no alias |
 
 ## Triage
 
@@ -547,8 +568,8 @@ on its general scales. notify's examples:
 | A public host name that resolves, or rebinds, to a private address is posted to: the check is on the URL as written | notify/config.go (`checkURL`) | 1 | 5 | 5 | a channel URL is a signer's line today, and a signer can already run any code as an app that reaches the same addresses; scored by what T6 gains (nothing). Rescore when #417 lets a deployer choose a URL |
 | motel stopped for more than five minutes: Alertmanager resolves each firing state alert at `resolve_timeout`, and the channels get a recovery that did not happen (at motel's start the watchdog's standing reports fire its alerts again, and the pollers theirs) | notify/engine.go (no `endsAt` on re-posts) | 2 | 3 | 3 | 18; a stop that long is itself a fault the heartbeat reports (Watchdog's silence pages first); keeping Alertmanager's alerts alive across a stop would need a poster outside motel; a restart (seconds) is "Behaviour"'s, and keeps them |
 | Two channels of one integration in one receiver: a failure names both as suspects, and neither is told | notify/channelfailed.go (`suspects`) | 2 | 5 | 3 | an operator's choice of channels; the line names both, and the counter is Alertmanager's own; one receiver per channel would double every route |
-| An operator with a single channel: `ChannelFailed` has no other channel to go to | notify/channelfailed.go | 2 | 5 | 1 | the `notify: channel failed` line and Alertmanager's counter say it; the design asks for "the other operator channels" and there are none |
-| `motel notify test` reads the counters for 15 s; a slow receiver answers "neither yet" | notify/admin.go (`testWait`) | 2 | 2 | 1 | the answer says so; Alertmanager's retries continue |
+| An operator with a single channel: `ChannelFailed` has no other channel to go to | notify/channelfailed.go | 2 | 5 | 1 | the `monitor: channel failed` line and Alertmanager's counter say it; the design asks for "the other operator channels" and there are none |
+| `motel monitor test` reads the counters for 15 s; a slow receiver answers "neither yet" | notify/admin.go (`testWait`) | 2 | 2 | 1 | the answer says so; Alertmanager's retries continue |
 | At a boot, an event liveswap reports before notify's Start (Caddy starts the apps in no fixed order) is dropped, the engine serving no config yet: a recovery at that instant ends its alert at `resolve_timeout`, up to five minutes late | notify/engine.go (`report`, `active == nil`) | 2 | 3 | 3 | 18; what stands is told again at notify's Start (`ReportStanding`), and an end told meanwhile is told again after it; holding events for a config not yet started adds a queue with its own lifetime (size 3). /code-review of the Owed rows |
 | A restart after notify has resolved a recovery but before the next healthy probe clears `alerts.json` (with `health_interval 2m` and a 30 s hold, up to about 90 s) replays the recovery: the emptied engine posts the alert held, then resolved, and the operator sees the firing and recovery messages again. A reload does the same when it lengthens the hold (the standing report judges it with the candidate's `watchdog_grace`), and so does a push just after a restart (the watchdog's own `healthySince` is new) | liveswap/watchdog.go (`reportedAlerts` keeps `Recovering`, not when the hold began); liveswap/lifecycle.go (`reportStanding`) | 2 | 2 | 1 | 4; a duplicate the operator sees, only for a restart or reload inside one health interval after a hold ends; persisting the hold's start, and the engine honouring it, is size 3 (risk 2). Copilot round 1 on #424, widened by /code-review xhigh on #424 |
 | A restart inside a recovery's hold, then a relaunch that fails for good (no instance runs after the restart): the persisted `recovering` is re-reported as a held recovery, so the engine resolves the alert of an app that is down, and the flags stay for the next restart | liveswap/lifecycle.go (`reportStanding`) | 3 | 2 | 3 | 18; two faults, a restart inside a hold and then a relaunch that fails; the journal names the failed relaunch and status shows the app down; telling it apart needs a branch on whether an instance runs after recovery (size 2, risk 2). /code-review xhigh on #424 |
@@ -561,14 +582,14 @@ on its general scales. notify's examples:
 | Owed | S | O | D | Lands in |
 |---|---|---|---|---|
 | Slack and Discord with real hooks; ntfy's formatting of Alertmanager's payload (the hotserve-1 test delivered the JSON body as the message) | — | — | — | needs the owner's hooks |
-| A per-app `notify` block (`deploy_succeeded on` per app, app-scoped channels, reading the app's own withheld `NOTIFY_` values); the pull API and the later channel kinds, for which the `notify: event` line is the record | — | — | — | later slices |
+| Per-app notify lines (`deploy_succeeded on` per app, app-scoped channels, reading the app's own withheld `NOTIFY_` values); the pull API and the later channel kinds, for which the `monitor: event` line is the record | — | — | — | later slices |
 
 ## e2e rows
 
 `make e2e-notify` (e2e/notify/run.sh): a box built from e2e-motel's
 image with Debian's Alertmanager installed and masked
 (e2e/Dockerfile, `notify-box`), and a stub receiver (`e2e-sink`). The
-suite runs `motel notify setup` itself and asserts: no TCP listener on
+suite runs `motel monitor setup` itself and asserts: no TCP listener on
 9093 or 9094; the socket `srw-rw---- root motel` and the state
 directory `drwxr-s--- motel prometheus`; Alertmanager's storage
 `drwxr-x--- prometheus prometheus`; the rendered config passes
@@ -582,7 +603,7 @@ refusals, and nobody unable to send; the inhibition of the deploying
 app's `watchdog_throttled` while another app's arrives after the
 `group_wait`; a state from outside at +30 s and its recovery after
 motel's hold and one tick; a channel answering 400 named in
-`ChannelFailed` to the other operator channel; `motel notify test`
+`ChannelFailed` to the other operator channel; `motel monitor test`
 delivered and failed; the view probe's three keys closed from inside a
 sandboxed app; no URL in either journal; a channel whose secret is
 missing refused by `motel validate` and `systemctl reload`, dropped at
@@ -590,15 +611,18 @@ missing refused by `motel validate` and `systemctl reload`, dropped at
 deliver; a relaunch refused, then motel restarted: told again,
 standing, Alertmanager's alert kept alive (its `endsAt` moves) and no
 recovery told, then the cause mended and a reload: the recovery after
-the hold, and `alerts.json` gone. Not in e2e (unit-tested only): the
+the hold, and `alerts.json` gone; a `notify` block refused by `motel
+validate` naming `monitor`, and `motel notify setup` exiting 1 with
+`motel monitor setup`. Not in e2e (unit-tested only): the
 five-minute give-up of an undeliverable post, the bucket's hour.
 
 ## Later slices
 
 Slice two, the metrics store (Debian's `victoria-metrics` in a private
 network namespace behind a `systemd-socket-proxyd` unix socket), motel's
-push, rules over its series, `metrics` in `GET /<app>` and `motel
-metrics setup`, is notify/DESIGN-metrics.md. Its vmalert renders a
+push, rules over its series, `metrics` in `GET /<app>`, the monitor
+block's `metrics` line and `motel monitor setup --metrics`, is
+notify/DESIGN-metrics.md. Its vmalert renders a
 second `ChannelFailed` with motel's labels, which Alertmanager
 deduplicates; it posts no `Watchdog`, which this section once promised:
 with motel's labels it would either keep the heartbeat pinging while
@@ -665,3 +689,7 @@ Dated one-liners; the full text of each is in git.
   with no heartbeat is warned, and the drop-in sets Alertmanager's
   storage to the 0750 this document gave it at every start (Debian
   ships 0755).
+- 2026-11-11 — One block, `monitor`: the notify block's lines and the
+  metrics store's `metrics` line, one Caddy app; `motel notify` is
+  `motel monitor`, and `notify` and `metrics_store` are refused by name
+  ("Decisions").

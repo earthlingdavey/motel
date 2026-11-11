@@ -112,7 +112,7 @@ STOPSIGNAL SIGRTMIN+3
 CMD ["/sbin/init"]
 
 # The notify suite's box (make e2e-notify, e2e/notify/run.sh): the same
-# box with Debian's Alertmanager installed as `motel notify setup` would
+# box with Debian's Alertmanager installed as `motel monitor setup` would
 # install it, masked first so that nothing it enables starts; the suite
 # runs setup itself, which finds the package installed and does the
 # rest. iproute2: the suite's `ss`, for what listens.
@@ -141,10 +141,11 @@ RUN install -d -m 2750 -o root -g motel /etc/motel/secrets \
 
 # The metrics suite's box (make e2e-metrics, e2e/metrics/run.sh): the
 # notify suite's box with Debian's victoria-metrics (the store and
-# vmalert) installed as `motel metrics setup` would install it, masked
-# first so that its unit, which listens on 0.0.0.0:8428, never starts; the
-# suite runs notify's setup and then the store's, which finds the package
-# installed and does the rest.
+# vmalert) installed as `motel monitor setup --metrics` would install
+# it, masked first so that its unit, which listens on 0.0.0.0:8428, never
+# starts; the suite runs `motel monitor setup --metrics`, Alertmanager's
+# setup and then the store's, which finds the package installed and does
+# the rest.
 FROM notify-box AS metrics-box
 RUN systemctl mask victoria-metrics.service \
 	&& apt-get update \

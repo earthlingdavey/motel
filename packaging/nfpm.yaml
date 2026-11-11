@@ -67,15 +67,15 @@ depends:
 # install, listening on :9093 and gossiping on 0.0.0.0:9094, and apt may
 # configure a dependency, and so start it, before any script of motel's
 # runs; on a box with no firewall that is the alert and silence API on
-# the internet. `motel notify setup`, run by root, masks the unit, then
+# the internet. `motel monitor setup`, run by root, masks the unit, then
 # installs it, configures socket activation and starts it, in that
 # order. Nothing of notify's is installed until then: the units it
 # writes ship in the binary.
 # The metrics store (notify/DESIGN-metrics.md), Suggests for the same
 # reason: Debian's victoria-metrics starts on install listening on
-# 0.0.0.0:8428 with no authentication. `motel metrics setup` masks it,
-# installs it and starts it in a network namespace of its own. vmalert
-# ships in the same package.
+# 0.0.0.0:8428 with no authentication. `motel monitor setup --metrics`
+# masks it, installs it and starts it in a network namespace of its own.
+# vmalert ships in the same package.
 suggests:
   - prometheus-alertmanager
   - victoria-metrics

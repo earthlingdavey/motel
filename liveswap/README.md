@@ -164,8 +164,9 @@ deploy.example.com {
 }
 ```
 
-To count an app's responses for the metrics store (experimental,
-notify/DESIGN-metrics.md), write `observe <app>` first in its
+To count an app's responses for the metrics store (the monitor
+block's `metrics` line; experimental, notify/DESIGN-metrics.md), write
+`observe <app>` first in its
 site or route: per release, it counts each response's status class,
 times it to its headers, and reads a cache's `Cache-Status` verdict, and
 `GET /<app>` with the deploy token gains `metrics.requests`
