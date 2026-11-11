@@ -70,7 +70,7 @@ func (c appCollector) Collect(ch chan<- prometheus.Metric) {
 			ch <- prometheus.MustNewConstMetric(appReleaseDesc, prometheus.GaugeValue, 1, s.App, s.Release)
 		}
 		// Whether or not an instance runs: a release that crashed owns
-		// the 502s that follow.
+		// the 502s and 503s that follow.
 		collectRequests(ch, s.App, s.Requests)
 		if !s.Running {
 			continue

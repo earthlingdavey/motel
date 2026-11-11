@@ -188,7 +188,7 @@ mechanics, its order and its measured cost are DESIGN-liveswap.md's
   to `5xx`, and `aborted`, a request no headers went to: its client
   gone first, or its handler aborted (Caddy's `abort`, a panic), counted
   in the total, never in the 5xx share. An error with nothing written
-  (no instance running: a 502 that `handle_errors` answers after) takes
+  (no instance running: a 503 that `handle_errors` answers after) takes
   its handler error's status; no error and nothing written is the 200
   net/http sends.
 - **Latency.** The time to the response's headers, in Prometheus's
@@ -526,7 +526,7 @@ or a line of theirs the facts overturned:
 | The rules are motel's text; the Caddyfile has no `rule` line yet | the review's finding 17: a rule or template a config author writes can pull any app's series into a notification; operator rules are owed with a grammar of fixed kinds |
 | Per-app request numbers need a handler the operator writes, `liveswap_observe <app>` | Caddy's request metrics carry server and handler, never the app; a Caddy app cannot add a handler to the HTTP app's routes, and a dynamic upstream sees no response. The app is named on the line, since a cache hit never reaches the upstream |
 | The observer sorts before `redir` | the earliest standard directive an order can anchor on; `cache` sorts before `rewrite`, so an observer anchored later would never see a hit (cmd/motel's order tests) |
-| Its counts follow the selected instance's release, else `current`, not `activeSocket` | a request selected after a cutover is the new release's, one selected before it the old's, however long it runs; and a release that crashed owns the 502s that follow it (no socket, so `current`), which is what a post-deploy comparison must see |
+| Its counts follow the selected instance's release, else `current`, not `activeSocket` | a request selected after a cutover is the new release's, one selected before it the old's, however long it runs; and a release that crashed owns the errors that follow it (502s while its socket is routed, then 503s with no socket, so `current`), which is what a post-deploy comparison must see |
 | Latency is to the headers, of the responses that went to the app or that the cache fetched from it | a streamed body or an upgrade has no response time to speak of; a hit is the cache's, a refusal penaltybox's |
 | `metrics` is a summary, not a series; `?range=` is `1h` or `24h` | the smallest object that answers "is my app well", over the two spans a deployer asks about; a fixed set, so a token cannot ask the store for any span |
 | `metrics`' queries run at once | seven one after another would not fit the 2 s budget on a slow store (the residual row this replaced) |

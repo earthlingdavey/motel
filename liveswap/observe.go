@@ -121,7 +121,8 @@ const observeVar = "liveswap_observe"
 // markUpstream tells the observer of r, when it observes ma, that the
 // request reached ma's upstream selection, and so is the release's own
 // response, and which release's instance it went to: sock's, or with
-// none routed (a 502 follows), the current release's, which owns it.
+// none routed (reverse_proxy's 503 follows), the current release's,
+// which owns it.
 // reverse_proxy may select again (a retry): the last selection counts.
 func markUpstream(r *http.Request, ma *managedApp, sock *socketRef) {
 	ow, _ := caddyhttp.GetVar(r.Context(), observeVar).(*observeWriter)
@@ -468,8 +469,9 @@ func (r *requestCounts) current() *releaseCounts {
 // and returns its counters, which the caller gives the instance's
 // socket before routing it (socketRef.counts). Called where the
 // current instance changes (publishInstance, the reattach), not where
-// it is unrouted: a release that crashed still owns the 502s that
-// follow. A return to the release before swaps the two back, so
+// it is unrouted: a release that crashed still owns the errors that
+// follow (502s while its socket is routed and refuses, 503s once it is
+// unrouted). A return to the release before swaps the two back, so
 // neither's counters restart.
 func (r *requestCounts) setRelease(version string) *releaseCounts {
 	r.mu.Lock()

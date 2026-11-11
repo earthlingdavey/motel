@@ -54,8 +54,9 @@ func (u *Upstreams) Provision(ctx caddy.Context) error {
 	return nil
 }
 
-// GetUpstreams returns the active version's address, or an error (a
-// 502 with a clear log line) when nothing has been deployed yet. It
+// GetUpstreams returns the active version's address, or an error when
+// no instance is routed (nothing deployed yet, or one that crashed),
+// which reverse_proxy logs before it finds no upstream and answers 503. It
 // tells the app's liveswap_observe, if the route has one, which release
 // the request went to.
 func (u *Upstreams) GetUpstreams(r *http.Request) ([]*reverseproxy.Upstream, error) {

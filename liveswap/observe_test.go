@@ -113,7 +113,8 @@ func classCounts(r ReleaseRequests) map[string]uint64 {
 }
 
 func TestObserveClasses(t *testing.T) {
-	he := caddyhttp.Error(http.StatusBadGateway, errors.New("liveswap app \"demo\" has no running version yet"))
+	// reverse_proxy's answer when GetUpstreams has no instance routed.
+	he := caddyhttp.Error(http.StatusServiceUnavailable, errors.New("no upstreams available"))
 	cancelled, cancel := context.WithCancel(context.Background())
 	cancel()
 	for _, c := range []struct {
