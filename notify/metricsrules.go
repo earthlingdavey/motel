@@ -29,6 +29,9 @@ const (
 	ruleAppMemoryHigh = "app_memory_high"
 )
 
+const storeDiskFillExpr = "min(predict_linear(vm_free_disk_space_bytes[6h], 86400)) < 0" +
+	" and min(predict_linear(vm_free_disk_space_bytes[1h], 86400)) < 0"
+
 type vmRuleFile struct {
 	Groups []vmGroup `yaml:"groups"`
 }
@@ -66,7 +69,11 @@ func fixedRules() vmGroup {
 			Annotations: map[string]string{"summary": "the metrics store is read-only: its disk is below its free-space floor, and nothing new is kept"},
 		},
 		{
-			Alert: ruleStoreDiskFill, Expr: "min(predict_linear(vm_free_disk_space_bytes[6h], 86400)) < 0", For: "30m",
+			// Both windows: free space is the whole filesystem's, and one
+			// large write (a release, an upgrade) tilts the six-hour line
+			// below zero for hours. The hour's line is flat again once the
+			// write is an hour old.
+			Alert: ruleStoreDiskFill, Expr: storeDiskFillExpr, For: "30m",
 			Labels:      stateLabels(ruleStoreDiskFill, SeverityWarning, "box"),
 			Annotations: map[string]string{"summary": "the metrics store's disk is predicted to fill within a day"},
 		},

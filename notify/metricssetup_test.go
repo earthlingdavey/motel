@@ -123,7 +123,9 @@ func TestMetricsUnitsAreTheMeasuredOnes(t *testing.T) {
 	}
 	has("the drop-in", unitVMDropIn, "ExecStart=\n", "-httpListenAddr=127.0.0.1:8428 ", "NetworkNamespacePath=/run/netns/motel-metrics",
 		"MemoryMax=256M", "-memory.allowedBytes=96MiB", "-retentionPeriod=14d", "-promscrape.config="+DefaultMetricsStateDir+"/"+scrapeName,
-		"Requires=motel-metrics-netns.service")
+		"Requires=motel-metrics-netns.service",
+		// The store's start brings vmalert, which a stop of the store stopped.
+		"Wants=motel-vmalert.service")
 	// A namespace left behind must not fail every later start.
 	has("the namespace unit", unitNetns, "ExecStartPre=-/usr/sbin/ip netns delete motel-metrics\nExecStart=/usr/sbin/ip netns add motel-metrics")
 	has("motel-vm.socket", unitVMSocket, "ListenStream="+DefaultStoreSocket+"\n", "SocketGroup=motel", "SocketMode=0660")

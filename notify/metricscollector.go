@@ -24,7 +24,7 @@ var (
 	appReleaseDesc = prometheus.NewDesc("motel_app_release_info",
 		"The app's running release, as a label; always 1.", []string{"app", "release"}, nil)
 	appMemoryDesc = prometheus.NewDesc("motel_app_memory_bytes",
-		"The running unit's memory, from its cgroup's memory.current.", []string{"app"}, nil)
+		"The running unit's working set: its cgroup's memory.current less memory.stat's inactive_file.", []string{"app"}, nil)
 	appMemoryMaxDesc = prometheus.NewDesc("motel_app_memory_max_bytes",
 		"The running unit's MemoryMax=, when it has one.", []string{"app"}, nil)
 	appCPUDesc = prometheus.NewDesc("motel_app_cpu_seconds_total",
@@ -70,7 +70,7 @@ func (c appCollector) Collect(ch chan<- prometheus.Metric) {
 		if !ok {
 			continue
 		}
-		if v, ok := readCgroupUint(filepath.Join(dir, "memory.current")); ok {
+		if v, ok := readWorkingSet(dir); ok {
 			ch <- prometheus.MustNewConstMetric(appMemoryDesc, prometheus.GaugeValue, float64(v), s.App)
 		}
 		if usec, ok := readCPUUsage(filepath.Join(dir, "cpu.stat")); ok {
@@ -94,7 +94,7 @@ func (c appCollector) cgroupDir(cg string) (string, bool) {
 }
 
 // maxCgroupFile bounds a read of one cgroup file: cpu.stat is a few
-// lines.
+// lines, and memory.stat's inactive_file is among its first.
 const maxCgroupFile = 4 << 10
 
 func readSmall(path string) ([]byte, bool) {
@@ -117,8 +117,28 @@ func readCgroupUint(path string) (uint64, bool) {
 	return v, err == nil
 }
 
+// readWorkingSet is memory.current less memory.stat's inactive_file:
+// the page cache the kernel gives back before the cap is felt. An app
+// that reads files under a MemoryMax= fills its cgroup with cache up to
+// the cap and stays there with no pressure, so memory.current alone
+// reads as an app at its limit. A memory.stat that cannot be read
+// leaves memory.current as it is.
+func readWorkingSet(dir string) (uint64, bool) {
+	cur, ok := readCgroupUint(filepath.Join(dir, "memory.current"))
+	if !ok {
+		return 0, false
+	}
+	if inactive, ok := readStat(filepath.Join(dir, "memory.stat"), "inactive_file"); ok && inactive <= cur {
+		cur -= inactive
+	}
+	return cur, true
+}
+
 // readCPUUsage is cpu.stat's usage_usec.
-func readCPUUsage(path string) (uint64, bool) {
+func readCPUUsage(path string) (uint64, bool) { return readStat(path, "usage_usec") }
+
+// readStat is one key of a cgroup's flat keyed file.
+func readStat(path, key string) (uint64, bool) {
 	b, ok := readSmall(path)
 	if !ok {
 		return 0, false
@@ -126,7 +146,7 @@ func readCPUUsage(path string) (uint64, bool) {
 	sc := bufio.NewScanner(bytes.NewReader(b))
 	for sc.Scan() {
 		k, v, ok := strings.Cut(sc.Text(), " ")
-		if ok && k == "usage_usec" {
+		if ok && k == key {
 			n, err := strconv.ParseUint(strings.TrimSpace(v), 10, 64)
 			return n, err == nil
 		}

@@ -89,6 +89,14 @@ func TestFixedRulesAreMotelsStateAlerts(t *testing.T) {
 			r.Labels["key"] != "vmalert/"+r.Labels["subject"]+"/"+r.Alert {
 			t.Errorf("rule %s: labels %v, for %q: not routed as one of motel's state alerts", r.Alert, r.Labels, r.For)
 		}
+		// One large write tilts the six-hour line alone; the hour's must agree.
+		if r.Alert == ruleStoreDiskFill {
+			for _, part := range []string{"[6h]", " and ", "[1h]"} {
+				if !strings.Contains(r.Expr, part) {
+					t.Errorf("%s reads one window (no %q): %s", r.Alert, part, r.Expr)
+				}
+			}
+		}
 	}
 }
 

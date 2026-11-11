@@ -191,6 +191,20 @@ done
 [ "$i" -lt 38 ] && pass "the one alert was posted by vmalert too (its generatorURL)" \
 	|| fail "no vmalert post merged into the alert in 75 s: $(am "http://am/api/v2/alerts?$amq" | cut -c1-400)"
 
+echo "=== metrics 4a: the store stopped by hand comes back with vmalert ==="
+# A stop of the store stops vmalert and the proxy (both Require it).
+# motel's next push connects to the socket, whose proxy starts the store
+# again; the store's Wants= brings vmalert back with it.
+systemctl stop victoria-metrics
+systemctl is-active -q motel-vmalert && fail "vmalert still runs with the store stopped" || pass "stopping the store stops vmalert"
+i=0
+until systemctl is-active -q victoria-metrics && systemctl is-active -q motel-vmalert; do
+	i=$((i + 1)); [ "$i" -ge 45 ] && break; sleep 2
+done
+[ "$i" -lt 45 ] && pass "motel's push started the store again, and vmalert with it" \
+	|| fail "after 90 s: the store $(systemctl is-active victoria-metrics), vmalert $(systemctl is-active motel-vmalert)"
+a=$(wait_result vmalert-up-again 'up{job="vmalert"} == 1' 90) && pass "the store scrapes vmalert again" || fail "no up{job=\"vmalert\"} after the restart"
+
 echo "=== metrics 5: an app's sandbox has none of it in view ==="
 code=$(deploy demo-probe.tar.gz sb1)
 [ "$code" = 200 ] || fail "deploy of the probe release returned $code: $(cat /tmp/deploy-body)"

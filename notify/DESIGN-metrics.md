@@ -110,7 +110,7 @@ Go module; no metrics state in motel. The registry holds:
 | `motel_notify_delivery_failed_total` | notify's engine |
 | `motel_metrics_push_failed_total` | the push, below |
 | `motel_app_up{app}`, `motel_app_release_info{app,release}` | liveswap's `AppSamples`: 1 while an instance runs; the running release |
-| `motel_app_memory_bytes{app}`, `motel_app_memory_max_bytes{app}`, `motel_app_cpu_seconds_total{app,unit}` | the running unit's cgroup (`memory.current`, `MemoryMax=` when the kernel enforces it, `cpu.stat` `usage_usec`), read at each gather; absent while nothing runs or the file cannot be read. The CPU counter is one series per unit: each new unit counts from zero, and a count that rose across a cutover would read as the new unit's |
+| `motel_app_memory_bytes{app}`, `motel_app_memory_max_bytes{app}`, `motel_app_cpu_seconds_total{app,unit}` | the running unit's cgroup (its working set: `memory.current` less `memory.stat`'s `inactive_file`, the page cache the kernel gives back before the cap is felt, so an app that reads files under a cap does not read as at its limit; `MemoryMax=` when the kernel enforces it, `cpu.stat` `usage_usec`), read at each gather; absent while nothing runs or the file cannot be read. The CPU counter is one series per unit: each new unit counts from zero, and a count that rose across a cutover would read as the new unit's |
 
 The per-app series are a collector registered on the same registry, so
 an operator's own scraper of the admin `/metrics` sees them too. Label
@@ -135,7 +135,7 @@ is motel's text; nothing in the Caddyfile is a rule or a template.
 | Rule | Expression | For | Labels | Reaches |
 |---|---|---|---|---|
 | `metrics_store_read_only` | `max(vm_storage_is_read_only) > 0` | 2 m | box, state, critical | the operator |
-| `metrics_store_disk_fill` | `min(predict_linear(vm_free_disk_space_bytes[6h], 86400)) < 0` | 30 m | box, state, warning | the operator |
+| `metrics_store_disk_fill` | `min(predict_linear(vm_free_disk_space_bytes[6h], 86400)) < 0 and min(predict_linear(vm_free_disk_space_bytes[1h], 86400)) < 0` | 30 m | box, state, warning | the operator |
 | `app_memory_high` | `max by (app) (motel_app_memory_bytes / motel_app_memory_max_bytes) > 0.9` | 10 m | `app`, `subject="app:<app>"`, state, warning | the operator and the app's bound channels |
 | `ChannelFailed` (one per told channel) | `sum(increase(alertmanager_notifications_failed_total{integration=…, receiver_name=~…}[5m])) > 0` | — | exactly motel's `ChannelFailed` labels | the told channel alone |
 
@@ -145,6 +145,8 @@ as one of motel's state alerts: route 6, per app when it names one, the
 state receivers' `send_resolved`, one recovery when vmalert resolves it.
 vmalert runs with `-disableAlertgroupLabel`, so an alert's labels are
 the rule's and the expression's only.
+
+**The disk rule reads two windows.** Free space is the whole filesystem's, and one write of D bytes tilts the six-hour line below zero for hours on any disk with under about 7 × D free (computed at 30 s samples: 70 minutes at 6 × D, 286 at 2 × D). The hour's line is flat again once the write is an hour old, so with both and the 30 minutes' `for:` a single write fires only when it took half of what was free.
 
 **ChannelFailed, a second source.** The store scrapes Alertmanager's
 `/metrics` through the in-namespace proxy, every 30 s. For each
@@ -213,7 +215,10 @@ point; `max` and `avg` are over the hour; `now`, `avg_5m` and
 `memory_max_bytes` come only from points of the last three minutes and
 five minutes, so an app that stopped, or a cap a later release dropped,
 is history in `max` and `avg` and never reported as the present; a
-number with no points is absent. The store answers 30 s behind the present
+number with no points is absent (`max` too, when the hour holds no raw
+sample). The CPU averages are rounded to a millionth of a core: an
+unrounded float is a run of twenty digits the response filter masks as
+a generated value, and the status would be withheld. The store answers 30 s behind the present
 (`-search.latencyOffset`). No free-form query, no label enumeration, no
 box series, no other app: the name is the configured app the route
 already resolved.
@@ -248,6 +253,10 @@ after `motel notify setup`:
    motel:_victoria-metrics with `scrape.yml` and, unless motel has
    rendered one, a `rules.yml` of empty groups, which vmalert starts
    from until motel's render a moment later;
+   The drop-in's `Wants=motel-vmalert.service` has the store's start
+   bring vmalert: a `systemctl stop victoria-metrics` stops vmalert too,
+   and motel's next push starts the store again through the socket. To
+   keep the store stopped, stop `motel-vm.socket` as well;
 5. `daemon-reload`, `unmask`, `enable --now` the namespace, the store,
    both sockets and vmalert, then `restart` vmalert and `try-restart`
    both proxies, so a re-run's units are the ones running (the store was
@@ -371,10 +380,14 @@ on its general scales. metrics' examples:
 | `now` and `at` in `GET /<app>` are judged by the range's step timestamps, not the samples': the store carries a sample forward onto the 60 s grid, so a stopped app's or a dropped cap's last value can read as now for up to about one step past `viewFresh` (3 m) | notify/metricsview.go (`fresh`) | 2 | 3 | 3 | 18; the status beside it says whether the app runs; the source timestamps need a `timestamp()` query per series (size 2, risk 2). Copilot round 2 on #423 |
 | A reload from both `notify` and `metrics_store` to neither stops the push but leaves `rules.yml`: vmalert keeps evaluating, and Alertmanager its last routes, so the store's own `metrics_store_*` alerts can still reach the removed channels | notify/metricspush.go (`release`) | 3 | 2 | 1 | 6; the channels that get them are the ones the operator just removed and will see; retiring the rules there means telling a reload from motel's shutdown, at which the rules must stay (size 2, risk 2); `motel metrics setup` is the way back to a box without the store. Copilot round 2 on #423 |
 
+| vmalert's `ChannelFailed` has no baseline: the store's `increase()` counts a series' first sample from zero (measured on 1.112.0: first seen at 3 gives 3, and again after a 17-minute gap), so a failure Alertmanager counted before `motel metrics setup`, or before a store outage of over ten minutes, is told once as new, for five minutes | notify/metricsrules.go | 2 | 2 | 3 | 12; one late warning to the operator's other channels about a channel that did fail; motel's own source keeps its baseline. A gate on the counter's age changes the expression every channel's rule shares (risk 2) and wants a run against the store to prove. /code-review pass 3 on #423 |
+
 ### Owed
 
 | Owed | S | O | D | Lands in |
 |---|---|---|---|---|
+| A read-only store (its disk at the free-space floor) refuses its own self-scrape, so `metrics_store_read_only` never fires and `up{job="vmalert"}` goes unstored: the operator gets `metrics_store_down` (true) and `metrics_rules_down` (false), never the critical that names the cause. Measured on Debian's 1.112.0. The fix reads `vm_storage_is_read_only` from the store's `/metrics` over the socket in motel's own check and reports it through the engine. /code-review pass 3 on #423 | 3 | 3 | 3 | its own PR on `feature/notify-and-metrics`, before the merge to main |
+| `motel metrics setup` re-run masks and stops a working store before any step that can fail; an error after that (a full disk at the unit writes, a failed `apt-get`) leaves it masked and stopped until a run succeeds. `motel notify setup` has the same order for Alertmanager. The error is setup's own, printed; the fix unmasks and restarts on the way out when the drop-in is in place. /code-review pass 3 on #423 | 4 | 3 | 1 | the same PR, for both setups |
 | The response observer: per-app requests by class, 5xx share, p50 and p95, cache hit share, in the push, `metrics` and the rules (with `?range=24h`, and the post-deploy comparison) | — | — | — | slice three: needs a handler on the app's request path |
 | Operator rules (the fresh-slate draft's `rule` line), as a grammar of fixed kinds with parameters, never a template | — | — | — | slice three |
 | The store's RSS with `-memory.allowedBytes=96MiB` after a day, and on a 1 or 2 GB box | — | — | — | the next deploy to hotserve-1 |
@@ -399,6 +412,7 @@ and the suite then asserts the series absent); `GET /<app>` with the
 deploy token carries `metrics`, and without one is a 401; vmalert's
 rules loaded, and its `ChannelFailed` for the failing channel firing
 with motel's labels while Alertmanager holds one such alert, not two;
+the store stopped by hand, started again by motel's next push with vmalert beside it;
 the view probe's three metrics keys closed from inside a sandboxed app;
 the store's socket stopped, `GET /<app>` answering at once (13 ms
 measured) with the error and the rest of the status whole, and the
@@ -420,3 +434,8 @@ Dated one-liners; the full text of each is in git.
   `Watchdog` beside motel's is reversed** (the merge hazard, "Rules");
   vmalert's `ChannelFailed` is kept as a second source in the one form
   Alertmanager deduplicates.
+- 2026-11-11 — /code-review pass 3 (xhigh, the user's) on #423, triaged: the CPU
+  averages rounded (the response filter withheld an idle app's status),
+  the working set for `motel_app_memory_bytes`, `max` absent with no raw
+  sample, the disk rule's second window, the store's `Wants=` for
+  vmalert; one row accepted, two owed.

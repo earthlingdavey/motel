@@ -3,16 +3,18 @@ package notify
 import (
 	"context"
 	"fmt"
+	"math"
 	"sync"
 	"time"
 
 	"go.uber.org/zap"
 )
 
-// metrics in GET /<app> (DESIGN-metrics.md): two fixed query_range
-// templates over the store's socket, scoped to the app the route
-// resolved, the last hour at a minute's step; best-effort within one
-// budget, and cached per app.
+// metrics in GET /<app> (DESIGN-metrics.md): three fixed queries over
+// the store's socket, scoped to the app the route resolved: two
+// query_range templates over the last hour at a minute's step and one
+// instant query for the hour's peak; best-effort within one budget, and
+// cached per app.
 const (
 	viewWindow = time.Hour
 	viewStep   = time.Minute
@@ -22,11 +24,11 @@ const (
 	// release dropped) keeps its last point in the hour, which is history,
 	// not now.
 	viewFresh = 3 * viewStep
-	// viewBudget bounds both queries: the route never waits longer.
+	// viewBudget bounds the three queries together: the route never waits longer.
 	viewBudget = 2 * time.Second
 	// viewCache is how long an answer, or a failure, is reused: a
-	// token, stolen or not, drives at most one query pair per app per
-	// viewCache.
+	// token, stolen or not, drives at most the three queries per app
+	// per viewCache.
 	viewCache = 30 * time.Second
 )
 
@@ -53,7 +55,9 @@ type AppMetrics struct {
 type memorySumm struct {
 	// Now is absent when the series has no point in the last viewFresh.
 	Now *float64 `json:"now,omitempty"`
-	Max float64  `json:"max"`
+	// Max is absent when the hour holds no raw sample: the range's first
+	// step can still carry one from just before it.
+	Max *float64 `json:"max,omitempty"`
 }
 
 type cpuSummary struct {
@@ -160,7 +164,10 @@ func (v *metricsView) ask(ctx context.Context, app string, now time.Time) (AppMe
 		// rightly leaves out.
 		for _, s := range peak {
 			for _, p := range s.points {
-				m.Max = max(m.Max, p.v)
+				if m.Max == nil || p.v > *m.Max {
+					v := p.v
+					m.Max = &v
+				}
 			}
 		}
 		out.Memory = m
@@ -184,9 +191,9 @@ func (v *metricsView) ask(ctx context.Context, app string, now time.Time) (AppMe
 				n++
 			}
 		}
-		c.Avg = sum / float64(len(cpuPts))
+		c.Avg = roundCores(sum / float64(len(cpuPts)))
 		if n > 0 {
-			avg := recent / float64(n)
+			avg := roundCores(recent / float64(n))
 			c.Avg5m = &avg
 		}
 		out.CPU = c
@@ -197,6 +204,13 @@ func (v *metricsView) ask(ctx context.Context, app string, now time.Time) (AppMe
 	}
 	return out, nil
 }
+
+// roundCores keeps a CPU average to a millionth of a core. An unrounded
+// one marshals as a run of twenty or more digits (5.740305648246404e-05
+// is 0.00005740305648246404 in JSON), which the app's response filter
+// reads as a generated secret and masks inside the number; the body is
+// then no JSON, and the whole status is withheld.
+func roundCores(v float64) float64 { return math.Round(v*1e6) / 1e6 }
 
 // latest is the newest point.
 func latest(pts []point) (point, bool) {

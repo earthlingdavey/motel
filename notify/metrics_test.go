@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"testing"
@@ -93,11 +94,20 @@ func TestAppCollector(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(root, cg), 0o750); err != nil {
 		t.Fatal(err)
 	}
+	// blog holds 4 MiB of page cache the kernel would give back: its
+	// working set is memory.current less inactive_file. nostat has no
+	// memory.stat, and reads as memory.current.
+	nostat := "/user.slice/app-nostat.service"
+	if err := os.MkdirAll(filepath.Join(root, nostat), 0o750); err != nil {
+		t.Fatal(err)
+	}
 	for name, body := range map[string]string{
-		"memory.current": "31457280\n",
-		"cpu.stat":       "usage_usec 2500000\nuser_usec 2000000\nsystem_usec 500000\n",
+		cg + "/memory.current":     "35651584\n",
+		cg + "/memory.stat":        "anon 20971520\nfile 14680064\ninactive_anon 0\nactive_anon 20971520\ninactive_file 4194304\nactive_file 10485760\n",
+		cg + "/cpu.stat":           "usage_usec 2500000\nuser_usec 2000000\nsystem_usec 500000\n",
+		nostat + "/memory.current": "1048576\n",
 	} {
-		if err := os.WriteFile(filepath.Join(root, cg, name), []byte(body), 0o600); err != nil {
+		if err := os.WriteFile(filepath.Join(root, name), []byte(body), 0o600); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -107,10 +117,12 @@ func TestAppCollector(t *testing.T) {
 		{App: "wiki"},                // never deployed
 		{App: "evil", Release: "v1", Running: true, Cgroup: "/../../etc"},    // a path out of the root reads nothing
 		{App: "nocg", Release: "v1", Running: true, Cgroup: "/nowhere/here"}, // unreadable: no number, no error
+		{App: "nostat", Running: true, Cgroup: nostat},
 	}})
 	want := map[string]float64{
 		"motel_app_up,app=blog": 1, "motel_app_up,app=shop": 0, "motel_app_up,app=wiki": 0,
-		"motel_app_up,app=evil": 1, "motel_app_up,app=nocg": 1,
+		"motel_app_up,app=evil": 1, "motel_app_up,app=nocg": 1, "motel_app_up,app=nostat": 1,
+		"motel_app_memory_bytes,app=nostat":          1048576,
 		"motel_app_release_info,app=blog,release=v2": 1, "motel_app_release_info,app=shop,release=v1": 1,
 		"motel_app_release_info,app=evil,release=v1": 1, "motel_app_release_info,app=nocg,release=v1": 1,
 		"motel_app_memory_bytes,app=blog":                            31457280,
@@ -538,6 +550,57 @@ func TestMetricsViewMaxLeavesOutASampleBeforeTheHour(t *testing.T) {
 	want := `{"window":"1h","at":"2026-11-10T12:00:00Z","memory_bytes":{"now":10,"max":10}}`
 	if string(got) != want {
 		t.Fatalf("a sample before the hour:\n got %s\nwant %s", got, want)
+	}
+}
+
+// An app that stopped just over an hour ago: the range's first step
+// still carries its last sample, and the raw peak holds nothing. The max
+// is absent, never 0.
+func TestMetricsViewNoPeakIsNoMax(t *testing.T) {
+	end := time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC)
+	f := &fakeRange{
+		ans: func(q string) []series {
+			if strings.HasPrefix(q, "sum(rate(") {
+				return nil
+			}
+			return []series{{labels: map[string]string{"__name__": "motel_app_memory_bytes"},
+				points: []point{{t: end.Add(-viewWindow), v: 1000}}}}
+		},
+		instant: func(string) []series { return nil },
+	}
+	v := newMetricsView(f, zap.NewNop())
+	v.now = func() time.Time { return end }
+	got, _ := json.Marshal(v.AppMetrics(context.Background(), "blog"))
+	want := `{"window":"1h","at":"2026-11-10T11:00:00Z","memory_bytes":{}}`
+	if string(got) != want {
+		t.Fatalf("no raw sample in the hour:\n got %s\nwant %s", got, want)
+	}
+}
+
+// An idle app's CPU averages are tiny floats; unrounded, each marshals
+// as a run of twenty or more digits, which the response filter masks as
+// a generated secret, and the whole status is withheld.
+func TestMetricsViewCPUIsRounded(t *testing.T) {
+	end := time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC)
+	f := &fakeRange{ans: func(q string) []series {
+		if !strings.HasPrefix(q, "sum(rate(") {
+			return nil
+		}
+		return []series{{points: []point{
+			{t: end.Add(-10 * time.Minute), v: 0.00005740305648246404},
+			{t: end.Add(-time.Minute), v: 0.00001234567890123456},
+			{t: end, v: 0.0000000912345678901234},
+		}}}
+	}}
+	v := newMetricsView(f, zap.NewNop())
+	v.now = func() time.Time { return end }
+	got, _ := json.Marshal(v.AppMetrics(context.Background(), "blog"))
+	want := `{"window":"1h","at":"2026-11-10T12:00:00Z","cpu_cores":{"avg_5m":0.000006,"avg":0.000023}}`
+	if string(got) != want {
+		t.Fatalf("tiny averages:\n got %s\nwant %s", got, want)
+	}
+	if regexp.MustCompile(`[A-Za-z0-9+=_-]{20,}`).Match(got) {
+		t.Fatalf("a run the response filter's entropy layer would read: %s", got)
 	}
 }
 
