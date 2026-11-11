@@ -562,8 +562,8 @@ func TestReleaseRetiresTheRulesOnAReloadAlone(t *testing.T) {
 			t.Errorf("motel's shutdown: rules.yml has alerting rules %v, %d journal lines; want them kept, and no line", alerting, gone)
 		}
 		if reload {
-			if f := parseRules(t, b); len(f.Groups) != 2 {
-				t.Errorf("retired rules: %d groups, want the two, empty (vmalert refuses a file with none)", len(f.Groups))
+			if f := parseRules(t, b); len(f.Groups) != 3 {
+				t.Errorf("retired rules: %d groups, want the three, empty (vmalert refuses a file with none)", len(f.Groups))
 			}
 		}
 	}

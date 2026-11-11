@@ -54,11 +54,13 @@ func refusedOption(msg string) func(*caddyfile.Dispenser, any) (any, error) {
 //	    alertmanager <unix socket path>
 //	    backup_record <path>|off
 //	    metrics [<socket path>]
+//	    rule <name> <kind> <parameters>...
 //	}
 //
-// Every line but metrics is notify's: who hears. metrics turns on the
-// store (DESIGN-metrics.md), at its default socket or the absolute
-// path given. The grammar is checked here, line by line; what needs
+// Every line but metrics and rule is notify's: who hears. metrics turns
+// on the store (DESIGN-metrics.md), at its default socket or the
+// absolute path given; a rule line is one of the operator's rules over
+// its numbers (operatorrules.go), and needs the metrics line. The grammar is checked here, line by line; what needs
 // the whole configuration (an operator line naming a channel, a binding
 // no app trusts, a secret the box does not hold) is checked in
 // Provision, so that `motel validate` refuses it with the rest.
@@ -67,6 +69,8 @@ func (a *App) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
 	if d.NextArg() {
 		return d.ArgErr() // everything is in the block
 	}
+	var rules []Rule
+	var ruleWithoutMetrics error // the first rule line's, if no metrics line comes
 	for d.NextBlock(0) {
 		switch d.Val() {
 		case "channel":
@@ -177,12 +181,30 @@ func (a *App) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
 				m.Store = v
 			}
 			a.Metrics = m
+		case "rule":
+			if ruleWithoutMetrics == nil {
+				ruleWithoutMetrics = d.Err(errRuleNeedsMetrics.Error())
+			}
+			r, err := parseRule(d)
+			if err != nil {
+				return err
+			}
+			rules = append(rules, r)
 		default:
 			return d.Errf("unknown monitor subdirective %q", d.Val())
 		}
 		if d.NextBlock(d.Nesting()) {
 			return d.Err("the monitor block's lines take no block")
 		}
+	}
+	if len(rules) > 0 {
+		if a.Metrics == nil {
+			return ruleWithoutMetrics
+		}
+		if err := checkRules(rules, nil); err != nil {
+			return err
+		}
+		a.Metrics.Rules = rules
 	}
 	return nil
 }

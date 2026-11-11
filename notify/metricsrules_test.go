@@ -45,7 +45,7 @@ func parseRules(t *testing.T, b []byte) vmRuleFile {
 // refuses a file with no group at all).
 func TestRenderRulesWithoutNotify(t *testing.T) {
 	f := parseRules(t, renderRules(nil))
-	if len(f.Groups) != 2 || f.Groups[0].Name != "motel-store" || f.Groups[1].Name != "motel-channel-failed" {
+	if len(f.Groups) != 3 || f.Groups[0].Name != "motel-store" || f.Groups[1].Name != "motel-channel-failed" || f.Groups[2].Name != operatorGroup {
 		t.Fatalf("groups = %+v", f.Groups)
 	}
 	for _, g := range f.Groups {

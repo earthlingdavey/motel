@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 
 	"github.com/caddyserver/caddy/v2"
 	"github.com/prometheus/client_golang/prometheus"
@@ -31,6 +32,9 @@ const cgroupRoot = "/sys/fs/cgroup"
 // option yields one app.
 type MetricsStore struct {
 	Store string `json:"store,omitempty"`
+	// Rules are the block's rule lines (operatorrules.go), which need
+	// the metrics line: so they are its, in the JSON.
+	Rules []Rule `json:"rules,omitempty"`
 
 	// stateDir is where the rules are written: always
 	// DefaultMetricsStateDir, which motel-vmalert.service's -rule names;
@@ -73,6 +77,19 @@ func (m *MetricsStore) provision(ctx caddy.Context, ls *liveswap.App, n *App, lo
 	m.reg = prometheus.NewRegistry() // a context with no registry: an empty push
 	if reg != nil {
 		m.reg = reg
+	}
+	var apps map[string]bool
+	if ls != nil {
+		apps = map[string]bool{}
+		for app := range ls.TrustSources() {
+			apps[app] = true
+		}
+	}
+	if err := checkRules(m.Rules, apps); err != nil {
+		return fmt.Errorf("monitor: %w", err)
+	}
+	if ls == nil && slices.ContainsFunc(m.Rules, func(r Rule) bool { return r.App != "" }) {
+		return errors.New("monitor: a rule names an app, and the config has no liveswap block")
 	}
 	if err := thePusher.registerFailed(reg); err != nil {
 		m.logger.Warn("monitor metrics: motel_metrics_push_failed_total is not on the admin /metrics", zap.Error(err))
