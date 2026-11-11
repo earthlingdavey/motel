@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/caddyserver/caddy/v2"
 	"github.com/caddyserver/caddy/v2/caddyconfig/caddyfile"
 	"github.com/caddyserver/caddy/v2/modules/caddyhttp"
 )
@@ -40,15 +41,48 @@ func TestParseCacheStatus(t *testing.T) {
 	}
 }
 
-// observeOnce runs one request through an observer of a fresh app and
-// returns its counts.
+// publishFor routes a socket of version on ma as publishInstance does:
+// the release set, its counts on the socket, then the socket routed.
+func publishFor(ma *managedApp, version string) {
+	sock := &socketRef{pinned: "/run/" + version + ".sock", linked: true}
+	sock.counts.Store(ma.requests.setRelease(version))
+	ma.activeSocket.Store(sock)
+}
+
+// caddyRequest is a request prepared as Caddy's server prepares one
+// (its vars among the rest).
+func caddyRequest(ctx context.Context) *http.Request {
+	return caddyhttp.PrepareRequest(httptest.NewRequest(http.MethodGet, "/", nil).WithContext(ctx), caddy.NewReplacer(), nil, nil)
+}
+
+// proxied is next behind reverse_proxy to the observed app: the upstream
+// selected first (GetUpstreams), then next.
+func proxied(next caddyhttp.HandlerFunc) caddyhttp.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) error {
+		ow := caddyhttp.GetVar(r.Context(), observeVar).(*observeWriter)
+		_, _ = (&Upstreams{App: ow.ma.name, ma: ow.ma}).GetUpstreams(r)
+		return next(w, r)
+	}
+}
+
+// noInstance is next behind reverse_proxy to the observed app with no
+// instance routed: the selection made, and none found.
+func noInstance(next caddyhttp.HandlerFunc) caddyhttp.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) error {
+		ow := caddyhttp.GetVar(r.Context(), observeVar).(*observeWriter)
+		markUpstream(r, ow.ma, nil)
+		return next(w, r)
+	}
+}
+
+// observeOnce runs one request through an observer of a fresh app, v1
+// routed, and returns its counts.
 func observeOnce(t *testing.T, ctx context.Context, next caddyhttp.HandlerFunc) (ReleaseRequests, *httptest.ResponseRecorder, error) {
 	t.Helper()
 	o := &Observe{App: "demo", ma: &managedApp{name: "demo"}}
-	o.ma.requests.setRelease("v1")
+	publishFor(o.ma, "v1")
 	rec := httptest.NewRecorder()
-	r := httptest.NewRequest(http.MethodGet, "/", nil).WithContext(ctx)
-	err := o.ServeHTTP(rec, r, next)
+	err := o.ServeHTTP(rec, caddyRequest(ctx), next)
 	s := o.ma.requests.samples()
 	if len(s) == 0 || s[0].Release != "v1" {
 		t.Fatalf("samples %+v", s)
@@ -77,46 +111,52 @@ func TestObserveClasses(t *testing.T) {
 		class   string
 		latency bool
 	}{
-		{"implicit 200", context.Background(), func(w http.ResponseWriter, _ *http.Request) error {
+		{"implicit 200", context.Background(), proxied(func(w http.ResponseWriter, _ *http.Request) error {
 			_, err := w.Write([]byte("hello"))
 			return err
-		}, "2xx", true},
-		{"503", context.Background(), func(w http.ResponseWriter, _ *http.Request) error {
+		}), "2xx", true},
+		{"503", context.Background(), proxied(func(w http.ResponseWriter, _ *http.Request) error {
 			w.WriteHeader(http.StatusServiceUnavailable)
 			return nil
-		}, "5xx", true},
-		{"interim 103 then 302", context.Background(), func(w http.ResponseWriter, _ *http.Request) error {
+		}), "5xx", true},
+		{"interim 103 then 302", context.Background(), proxied(func(w http.ResponseWriter, _ *http.Request) error {
 			w.WriteHeader(http.StatusEarlyHints)
 			w.WriteHeader(http.StatusFound)
 			return nil
-		}, "3xx", true},
-		{"an upgrade", context.Background(), func(w http.ResponseWriter, _ *http.Request) error {
+		}), "3xx", true},
+		{"an upgrade", context.Background(), proxied(func(w http.ResponseWriter, _ *http.Request) error {
 			w.WriteHeader(http.StatusSwitchingProtocols)
 			return nil
-		}, "1xx", false},
-		{"an error, nothing written", context.Background(), func(http.ResponseWriter, *http.Request) error {
+		}), "1xx", false},
+		{"no instance, nothing written", context.Background(), noInstance(func(http.ResponseWriter, *http.Request) error {
 			return he
-		}, "5xx", true},
-		{"an error with no status", context.Background(), func(http.ResponseWriter, *http.Request) error {
+		}), "5xx", true},
+		{"an error with no status", context.Background(), proxied(func(http.ResponseWriter, *http.Request) error {
 			return errors.New("boom")
-		}, "5xx", true},
-		{"a 404 error", context.Background(), func(http.ResponseWriter, *http.Request) error {
+		}), "5xx", true},
+		{"a 404 error", context.Background(), proxied(func(http.ResponseWriter, *http.Request) error {
 			return caddyhttp.Error(http.StatusNotFound, nil)
-		}, "4xx", true},
-		{"reverse_proxy's 499", context.Background(), func(http.ResponseWriter, *http.Request) error {
+		}), "4xx", true},
+		{"reverse_proxy's 499", context.Background(), proxied(func(http.ResponseWriter, *http.Request) error {
 			return caddyhttp.Error(statusClientClosed, context.Canceled)
-		}, "aborted", false},
-		{"the client gone, an error", cancelled, func(http.ResponseWriter, *http.Request) error {
+		}), "aborted", false},
+		{"the client gone, an error", cancelled, proxied(func(http.ResponseWriter, *http.Request) error {
 			return caddyhttp.Error(http.StatusBadGateway, context.Canceled)
-		}, "aborted", false},
-		{"a flush before any write", context.Background(), func(w http.ResponseWriter, _ *http.Request) error {
+		}), "aborted", false},
+		{"a flush before any write", context.Background(), proxied(func(w http.ResponseWriter, _ *http.Request) error {
 			return http.NewResponseController(w).Flush()
-		}, "2xx", true},
+		}), "2xx", true},
+		// Answered before the upstream (penaltybox's refusal, a `respond`):
+		// counted, never timed as the release's.
+		{"a refusal before the upstream", context.Background(), func(w http.ResponseWriter, _ *http.Request) error {
+			w.WriteHeader(http.StatusTooManyRequests)
+			return nil
+		}, "4xx", false},
 		// net/http sends a 200 for a handler that returns no error having
 		// written nothing (a route no terminal handler matched).
 		{"nothing written, no error", context.Background(), func(http.ResponseWriter, *http.Request) error {
 			return nil
-		}, "2xx", true},
+		}, "2xx", false},
 		{"the client gone, no error", cancelled, func(http.ResponseWriter, *http.Request) error {
 			return nil
 		}, "aborted", false},
@@ -182,20 +222,28 @@ func TestObserveReturnsTheErrorAndWritesNothing(t *testing.T) {
 
 func TestObserveCache(t *testing.T) {
 	for _, c := range []struct {
-		header  string
-		result  int
-		latency bool
+		header   string
+		upstream bool // the request went to the app
+		result   int
+		latency  bool
 	}{
-		{"Souin; hit; ttl=10; detail=OTTER", 0, false},
-		{"Souin; hit; ttl=-1; fwd=stale", 1, false},
-		{"Souin; fwd=uri-miss; stored", 2, true},
-		{"Souin; fwd=bypass; detail=IS-MUTATION-REQUEST", 3, true},
+		{"Souin; hit; ttl=10; detail=OTTER", false, 0, false},
+		{"Souin; hit; ttl=-1; fwd=stale", false, 1, false},
+		// A stale hit whose revalidation went to the app: the cache's
+		// answer still.
+		{"Souin; hit; ttl=-1; fwd=stale", true, 1, false},
+		{"Souin; fwd=uri-miss; stored", true, 2, true},
+		{"Souin; fwd=bypass; detail=IS-MUTATION-REQUEST", true, 3, true},
 	} {
-		got, rec, _ := observeOnce(t, context.Background(), func(w http.ResponseWriter, _ *http.Request) error {
+		next := caddyhttp.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) error {
 			w.Header().Set("Cache-Status", c.header)
 			w.WriteHeader(http.StatusOK)
 			return nil
 		})
+		if c.upstream {
+			next = proxied(next)
+		}
+		got, rec, _ := observeOnce(t, context.Background(), next)
 		if got.Cache[c.result] != 1 {
 			t.Errorf("%q: cache %v, want %s", c.header, got.Cache, CacheResults[c.result])
 		}
@@ -207,10 +255,10 @@ func TestObserveCache(t *testing.T) {
 		}
 	}
 	// No cache in front: counted under no result.
-	got, _, _ := observeOnce(t, context.Background(), func(w http.ResponseWriter, _ *http.Request) error {
+	got, _, _ := observeOnce(t, context.Background(), proxied(func(w http.ResponseWriter, _ *http.Request) error {
 		w.WriteHeader(http.StatusOK)
 		return nil
-	})
+	}))
 	if got.Cache != [len(CacheResults)]uint64{} {
 		t.Errorf("no Cache-Status, yet %v", got.Cache)
 	}
@@ -220,7 +268,7 @@ func TestObserveLatencyBuckets(t *testing.T) {
 	rc := &releaseCounts{release: "v1"}
 	start := time.Unix(1000, 0)
 	for _, d := range []time.Duration{time.Millisecond, 20 * time.Millisecond, 20 * time.Millisecond, 3 * time.Second, time.Minute} {
-		rc.record(&observeWriter{start: start, at: start.Add(d), seen: true, status: http.StatusOK})
+		rc.record(&observeWriter{start: start, at: start.Add(d), seen: true, status: http.StatusOK}, true)
 	}
 	s := rc.snapshot()
 	if s.Count != 5 {
@@ -298,6 +346,55 @@ func TestRequestCountsReleases(t *testing.T) {
 	}
 }
 
+// A response counts under the release whose instance the request went
+// to, not the one current when it began: a request selected after a
+// cutover is the new release's, one selected before it the old's
+// whenever it ends. Another app's selection is not this observer's.
+func TestObserveCountsTheReleaseThatServed(t *testing.T) {
+	ma := &managedApp{name: "demo"}
+	publishFor(ma, "v1")
+	o := &Observe{App: "demo", ma: ma}
+	u := &Upstreams{App: "demo", ma: ma}
+	// Entered under v1, selected after the cutover to v2.
+	_ = o.ServeHTTP(httptest.NewRecorder(), caddyRequest(context.Background()), caddyhttp.HandlerFunc(func(w http.ResponseWriter, r *http.Request) error {
+		publishFor(ma, "v2")
+		_, _ = u.GetUpstreams(r)
+		w.WriteHeader(http.StatusOK)
+		return nil
+	}))
+	// Selected under v2, answered after the rollback to v1.
+	_ = o.ServeHTTP(httptest.NewRecorder(), caddyRequest(context.Background()), caddyhttp.HandlerFunc(func(w http.ResponseWriter, r *http.Request) error {
+		_, _ = u.GetUpstreams(r)
+		publishFor(ma, "v1")
+		w.WriteHeader(http.StatusBadGateway)
+		return nil
+	}))
+	s := ma.requests.samples()
+	if len(s) != 2 || s[0].Release != "v1" || s[1].Release != "v2" {
+		t.Fatalf("samples %+v", s)
+	}
+	if cc := classCounts(s[0]); len(cc) != 0 {
+		t.Errorf("v1 counted %v, want nothing", cc)
+	}
+	if cc := classCounts(s[1]); cc["2xx"] != 1 || cc["5xx"] != 1 || s[1].Count != 2 {
+		t.Errorf("v2 counted %v (timed %d), want a 2xx and a 5xx, both timed", cc, s[1].Count)
+	}
+	// Another app's upstream in the observed route.
+	other := &managedApp{name: "shop"}
+	publishFor(other, "s1")
+	_ = o.ServeHTTP(httptest.NewRecorder(), caddyRequest(context.Background()), caddyhttp.HandlerFunc(func(w http.ResponseWriter, r *http.Request) error {
+		_, _ = (&Upstreams{App: "shop", ma: other}).GetUpstreams(r)
+		w.WriteHeader(http.StatusOK)
+		return nil
+	}))
+	if s := ma.requests.samples(); s[0].ByClass[class2xx] != 1 || s[0].Count != 0 {
+		t.Errorf("demo's v1 after shop's selection: %+v, want one 2xx, untimed", s[0])
+	}
+	if s := other.requests.samples(); s[0].ByClass != [numClasses]uint64{} {
+		t.Errorf("shop counted %+v", s[0])
+	}
+}
+
 // A deploy sets the release responses are counted under, and the
 // sample carries them.
 func TestObserveFollowsTheDeploy(t *testing.T) {
@@ -332,17 +429,23 @@ func TestObserveCaddyfile(t *testing.T) {
 }
 
 // BenchmarkObserve is the observer's own cost on the request path: one
-// response through it to a handler that writes a status.
+// response through it, in a request prepared as Caddy's server prepares
+// one, to a handler that selects the app's upstream (as reverse_proxy
+// does) and writes a status.
 func BenchmarkObserve(b *testing.B) {
 	o := &Observe{App: "demo", ma: &managedApp{name: "demo"}}
-	o.ma.requests.setRelease("v1")
-	next := caddyhttp.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) error {
+	publishFor(o.ma, "v1")
+	u := &Upstreams{App: "demo", ma: o.ma}
+	next := caddyhttp.HandlerFunc(func(w http.ResponseWriter, r *http.Request) error {
+		if _, err := u.GetUpstreams(r); err != nil {
+			return err
+		}
 		w.Header().Set("Cache-Status", "Souin; fwd=uri-miss; stored")
 		w.WriteHeader(http.StatusOK)
 		return nil
 	})
-	r := httptest.NewRequest(http.MethodGet, "/", nil)
 	w := &discardWriter{h: http.Header{}}
+	r := caddyhttp.PrepareRequest(httptest.NewRequest(http.MethodGet, "/", nil), caddy.NewReplacer(), w, nil)
 	b.ReportAllocs()
 	b.ResetTimer()
 	for b.Loop() {

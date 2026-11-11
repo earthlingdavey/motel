@@ -192,16 +192,20 @@ mechanics, its order and its measured cost are DESIGN-liveswap.md's
   its handler error's status; no error and nothing written is the 200
   net/http sends.
 - **Latency.** The time to the response's headers, in Prometheus's
-  default buckets (5 ms to 10 s): of the app's own responses, so a cache
-  hit, a 101 and an aborted request are left out. p50 and p95 are
-  `histogram_quantile` over them: an estimate inside a bucket.
+  default buckets (5 ms to 10 s): of the app's own responses, those that
+  went to its upstream, so a cache hit, penaltybox's refusal, any other
+  handler's answer, a 101 and an aborted request are left out. p50 and
+  p95 are `histogram_quantile` over them: an estimate inside a bucket.
 - **The cache.** The `Cache-Status` the cache in front wrote (RFC 9211,
   as Souin writes it): hit, stale (a hit with `fwd=stale`), miss
   (`fwd=uri-miss`, or a revalidation) or bypass. A response no cache
   spoke for is in no result.
-- **Releases.** Each response counts under the release current when it
-  began, kept for the current release and the one before (which the
-  post-deploy comparison will read), for as long as the process runs.
+- **Releases.** Each response counts under the release whose instance
+  it went to (the socket the app's upstream selected), or, when it went
+  to none (a cache hit, a refusal, no instance running), the release
+  current when it began; kept for the current release and the one
+  before (which the post-deploy comparison will read), for as long as
+  the process runs.
   A motel restart starts them from zero, which the store's `increase()`
   reads as a counter reset.
 
@@ -507,8 +511,8 @@ or a line of theirs the facts overturned:
 | The rules are motel's text; the Caddyfile has no `rule` line yet | the review's finding 17: a rule or template a config author writes can pull any app's series into a notification; operator rules are owed with a grammar of fixed kinds |
 | Per-app request numbers need a handler the operator writes, `liveswap_observe <app>` | Caddy's request metrics carry server and handler, never the app; a Caddy app cannot add a handler to the HTTP app's routes, and a dynamic upstream sees no response. The app is named on the line, since a cache hit never reaches the upstream |
 | The observer sorts before `redir` | the earliest standard directive an order can anchor on; `cache` sorts before `rewrite`, so an observer anchored later would never see a hit (cmd/motel's order tests) |
-| Its counts follow `current`, not `activeSocket` | a release that crashed owns the 502s that follow it, which is what a post-deploy comparison must see |
-| Latency is to the headers, of the app's own responses | a streamed body or an upgrade has no response time to speak of; a hit is the cache's |
+| Its counts follow the selected instance's release, else `current`, not `activeSocket` | a request selected after a cutover is the new release's, one selected before it the old's, however long it runs; and a release that crashed owns the 502s that follow it (no socket, so `current`), which is what a post-deploy comparison must see |
+| Latency is to the headers, of the responses that went to the app | a streamed body or an upgrade has no response time to speak of; a hit is the cache's, a refusal penaltybox's |
 | `metrics` is a summary, not a series; `?range=` is `1h` or `24h` | the smallest object that answers "is my app well", over the two spans a deployer asks about; a fixed set, so a token cannot ask the store for any span |
 | `metrics`' queries run at once | seven one after another would not fit the 2 s budget on a slow store (the residual row this replaced) |
 

@@ -1324,7 +1324,7 @@ func (ma *managedApp) ensureRunning() error {
 		ma.mu.Lock()
 		ma.current = inst
 		ma.mu.Unlock()
-		ma.requests.setRelease(inst.version)
+		inst.sock.counts.Store(ma.requests.setRelease(inst.version))
 		ma.activeSocket.Store(inst.sock)
 		ma.wd.setLastFailure("") // a recovery that gave up, or a refusal, is over
 		c.logger.Info("reattached to running instance", zap.String("version", st.CurrentVersion))
@@ -1636,9 +1636,10 @@ func (ma *managedApp) publishInstance(c collaborators, inst *instance) error {
 	ma.mu.Lock()
 	ma.current = inst
 	ma.mu.Unlock()
-	// Before the cutover: the first response the new socket serves is
-	// counted as the new release's.
-	ma.requests.setRelease(inst.version)
+	// Before the cutover: a request the new socket is selected for counts
+	// as the new release's; one that went to the old socket stays the
+	// old's, whenever it ends (markUpstream).
+	inst.sock.counts.Store(ma.requests.setRelease(inst.version))
 	if ma.wd.takeRefused() {
 		ma.lifecycle(c, LifecycleEvent{Name: EventRelaunchResolved, Release: inst.version, Summary: "an instance of " + inst.version + " runs again"})
 	}

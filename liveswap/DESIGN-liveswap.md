@@ -627,18 +627,31 @@ request metrics carry a server and a handler, never a liveswap app
   (before `rewrite`) and `hint_penaltybox` and counts what they answer;
   in a `route`, first by the written order. The app is named on the
   line, not learned in `GetUpstreams`: a cache hit never reaches it.
-- **Which release.** The counters follow `current`, not `activeSocket`:
-  `publishInstance` and the reattach set the release, an unroute does
-  not, so a release that crashed owns the 502s that follow it. A return
-  to the release before (a rollback) swaps the two back; neither
-  restarts from zero. Responses before any release count under `""`.
+- **Which release.** A response counts under the release whose
+  instance served it: `publishInstance` and the reattach set the
+  release and give its counters to the instance's socket before routing
+  it, and `GetUpstreams` marks the request's observer, found in the
+  request's vars, with the socket it selected (the last selection, on a
+  retry). A request selected before a cutover stays the old release's
+  however long it runs. One that reached no upstream (a cache hit,
+  penaltybox's refusal) counts under `current` as it began, and so does
+  one with no socket routed: an unroute does not change `current`, so a
+  release that crashed owns the 502s that follow it. Only a response
+  that went to the upstream is timed. A return to the release before (a
+  rollback) swaps the two back; neither restarts from zero. Responses
+  before any release count under `""`.
 - **What it keeps.** Atomics per release (classes, buckets, a sum,
   cache results), the current release's and the one before's, for the
   app's life in the pool. Nothing of a request: no path, query, header
   or client.
 - **What it costs.** 280 ns and two allocations a request on the dev
-  VM's arm64 (`BenchmarkObserve`; one of the two is the benchmark's own
-  handler), and through the e2e stack (e2e/bench/observe.sh, ab
+  VM's arm64 (`BenchmarkObserve` as it was first, to a handler that
+  writes a status; one of the two is the benchmark's own handler). With
+  the upstream mark (/code-review pass 1 on slice three), the benchmark
+  prepares the request as Caddy's server does and selects the upstream:
+  410 ns and five allocations, against 375 ns for the same benchmark
+  before the mark (`GetUpstreams`' own allocations are three of the
+  five), so the mark costs about 37 ns. Through the e2e stack (e2e/bench/observe.sh, ab
   keep-alive, the median of three runs) the observed site against the
   bare one in the same run: c=1 5 286 against 5 344 req/s, p50 0.184
   against 0.182 ms; c=16 52 335 against 53 366, p50 0.237 against

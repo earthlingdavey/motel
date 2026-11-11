@@ -84,23 +84,59 @@ func (o *Observe) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
 }
 
 // ServeHTTP times the response to its headers and counts it under the
-// app's current release. Never fails a request: it only reads. The
-// count is deferred, so that a handler's panic is counted too (Caddy's
-// `abort`, and reverse_proxy's on a stream cut mid-body, both panic
-// http.ErrAbortHandler); the panic goes on as it came.
+// release whose instance the request went to, which the app's
+// GetUpstreams marks (markUpstream); one that went to none (a cache
+// hit, penaltybox's refusal, any other handler's answer) counts under
+// the release current when it began. Never fails a request: it only
+// reads. The count is deferred, so that a handler's panic is counted
+// too (Caddy's `abort`, and reverse_proxy's on a stream cut mid-body,
+// both panic http.ErrAbortHandler); the panic goes on as it came.
 func (o *Observe) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddyhttp.Handler) (err error) {
 	rc := o.ma.requests.current()
-	ow := &observeWriter{ResponseWriter: w, start: time.Now()}
+	ow := &observeWriter{ResponseWriter: w, ma: o.ma, start: time.Now()}
+	// In the request's vars, which every copy of it shares (Souin's,
+	// reverse_proxy's clone): no new context or request to allocate.
+	caddyhttp.SetVar(r.Context(), observeVar, ow)
 	returned := false
 	defer func() {
 		if !ow.seen {
 			ow.unanswered(r, err, returned)
 		}
-		rc.record(ow)
+		up := ow.upstream.Load()
+		if up != nil {
+			rc = up
+		}
+		rc.record(ow, up != nil)
 	}()
 	err = next.ServeHTTP(ow, r)
 	returned = true
 	return err
+}
+
+// observeVar is the vars key the observer leaves itself under for the
+// app's GetUpstreams.
+const observeVar = "liveswap_observe"
+
+// markUpstream tells the observer of r, when it observes ma, that the
+// request reached ma's upstream selection, and so is the release's own
+// response, and which release's instance it went to: sock's, or with
+// none routed (a 502 follows), the current release's, which owns it.
+// reverse_proxy may select again (a retry): the last selection counts.
+func markUpstream(r *http.Request, ma *managedApp, sock *socketRef) {
+	ow, _ := caddyhttp.GetVar(r.Context(), observeVar).(*observeWriter)
+	if ow == nil || ow.ma != ma {
+		return
+	}
+	var rc *releaseCounts
+	if sock != nil {
+		rc = sock.counts.Load()
+	}
+	if rc == nil {
+		rc = ma.requests.current()
+	}
+	// Atomic: under Souin the selection runs on its own goroutine, which
+	// can outlive the response it gave up on.
+	ow.upstream.Store(rc)
 }
 
 // unanswered notes what a request nothing was written for gets: no
@@ -135,11 +171,15 @@ const statusClientClosed = 499
 // never buffers or changes a byte.
 type observeWriter struct {
 	http.ResponseWriter
+	ma     *managedApp
 	start  time.Time
 	seen   bool
 	status int // 0: no response (the client went first, or a panic)
 	at     time.Time
 	cache  cacheResult
+	// upstream is the counts of the release whose instance the request
+	// went to (markUpstream); nil: it reached no upstream selection.
+	upstream atomic.Pointer[releaseCounts]
 }
 
 func (w *observeWriter) note(status int) {
@@ -287,15 +327,20 @@ type releaseCounts struct {
 	cache    [len(CacheResults)]atomic.Uint64
 }
 
-func (rc *releaseCounts) record(w *observeWriter) {
+// record counts w; proxied is whether it reached the app's upstream
+// selection.
+func (rc *releaseCounts) record(w *observeWriter, proxied bool) {
 	c := classOf(w.status)
 	rc.classes[c].Add(1)
 	if w.cache != cacheNone {
 		rc.cache[w.cache-1].Add(1)
 	}
-	// The latency is the release's own: a cache hit's is the cache's, an
-	// upgrade's is no response time, and an aborted one has no headers.
-	if c == class1xx || c == classAborted || w.cache == cacheHit || w.cache == cacheStale {
+	// The latency is the release's own: a response that never went to it
+	// (a cache hit, penaltybox's refusal, a `respond`) is another
+	// handler's, a hit is the cache's though a stale one's revalidation
+	// went on, an upgrade's is no response time, and an aborted one has
+	// no headers.
+	if !proxied || c == class1xx || c == classAborted || w.cache == cacheHit || w.cache == cacheStale {
 		return
 	}
 	d := w.at.Sub(w.start)
@@ -369,30 +414,34 @@ func (r *requestCounts) current() *releaseCounts {
 	return rc
 }
 
-// setRelease makes version the release responses are counted under.
-// Called where the current instance changes (publishInstance, the
-// reattach), not where it is unrouted: a release that crashed still
-// owns the 502s that follow. A return to the release before swaps the
-// two back, so neither's counters restart.
-func (r *requestCounts) setRelease(version string) {
+// setRelease makes version the release responses are counted under,
+// and returns its counters, which the caller gives the instance's
+// socket before routing it (socketRef.counts). Called where the
+// current instance changes (publishInstance, the reattach), not where
+// it is unrouted: a release that crashed still owns the 502s that
+// follow. A return to the release before swaps the two back, so
+// neither's counters restart.
+func (r *requestCounts) setRelease(version string) *releaseCounts {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	cur := r.cur.Load()
 	switch {
 	case cur != nil && cur.release == version:
-		return
+		return cur
 	case r.prev != nil && r.prev.release == version:
 		back := r.prev
 		r.prev = cur
 		r.cur.Store(back)
-		return
+		return back
 	}
 	// The counts made before any release ("") are set aside only while
 	// there is nothing better to keep.
 	if cur != nil && (cur.release != "" || r.prev == nil) {
 		r.prev = cur
 	}
-	r.cur.Store(&releaseCounts{release: version})
+	rc := &releaseCounts{release: version}
+	r.cur.Store(rc)
+	return rc
 }
 
 // samples is both releases' counts, current first.
