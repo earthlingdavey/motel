@@ -40,13 +40,18 @@ type Shape struct {
 	// so it does not hold the two readings to agree, as Walk does for
 	// the host and the signers.
 	AppEnv map[string]AppEnv
-	// Notify is the global notify block, nil for none: where it reads
-	// the box's own secrets from, for secretsFit. Read like AppEnv.
+	// Notify is the global monitor block, nil for none: where its notify
+	// lines read the box's own secrets from, for secretsFit. Read like
+	// AppEnv.
 	Notify *NotifyBlock
 }
 
-// NotifyBlock is what the box reads of the global notify block.
+// NotifyBlock is what the box reads of the global monitor block: its
+// notify lines (notify/DESIGN-notify.md).
 type NotifyBlock struct {
+	// Channels is whether a channel line is there: a monitor block that
+	// is a metrics line alone runs no notify, which reads no secret.
+	Channels bool
 	// SecretsFile is the secrets_file line's argument, "" for none (the
 	// default, the file the box writes from secrets/_box/).
 	SecretsFile string
@@ -158,7 +163,7 @@ const (
 	kindSnippet                   // a top-level `(name)` block
 	kindLiveswap                  // the global block's `liveswap` block
 	kindApp                       // an `app <name>` block in the liveswap block
-	kindNotify                    // the global block's `notify` block
+	kindNotify                    // the global block's `monitor` block
 )
 
 // frame is one open brace.
@@ -342,7 +347,7 @@ func walk(input []byte) (*Shape, error) {
 			if first.Text == "liveswap" {
 				child.kind = kindLiveswap
 			}
-			if first.Text == "notify" && opens && shape.Notify == nil { // Caddy refuses a second
+			if first.Text == "monitor" && opens && shape.Notify == nil { // Caddy refuses a second
 				shape.Notify = &NotifyBlock{}
 				child.kind = kindNotify
 			}
@@ -371,6 +376,7 @@ func walk(input []byte) (*Shape, error) {
 			case first.Text == "secrets_file" && len(args) > 0:
 				shape.Notify.SecretsFile = args[0]
 			case first.Text == "channel" && len(args) >= 3:
+				shape.Notify.Channels = true
 				if name, ok := notifySecret(args[2]); ok {
 					shape.Notify.Secrets = append(shape.Notify.Secrets, name)
 				}

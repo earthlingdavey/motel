@@ -90,7 +90,7 @@ func TestPushSecretsFit(t *testing.T) {
 func TestPushNamesBoxSecretsToValidate(t *testing.T) {
 	p := newPushRig(t)
 	enc := func(v string) []byte { return encrypt(t, []byte(v), newIdentity(t).Recipient()) }
-	file := bytes.Replace(boxFile(2, p.alice), []byte("\tliveswap {"), []byte("\tnotify {\n\t\tchannel ops ntfy {secret.NOTIFY_OPS_URL}\n\t\toperator ops\n\t}\n\n\tliveswap {"), 1)
+	file := bytes.Replace(boxFile(2, p.alice), []byte("\tliveswap {"), []byte("\tmonitor {\n\t\tchannel ops ntfy {secret.NOTIFY_OPS_URL}\n\t\toperator ops\n\t}\n\n\tliveswap {"), 1)
 	c := p.repo.commitSecrets(file, secrets{"_box": {"NOTIFY_OPS_URL": enc("https://ntfy.sh/ops"), "NOTIFY_HC_URL": enc("https://hc-ping.com/x")}}, &p.alice, p.base)
 	id := randomID(t)
 	if w := p.post(t, p.h, push{id: id, token: p.token(t, c), body: bytes.NewReader(tgz(t, p.repo.bundleFiles(c, p.base)))}); w.Code != http.StatusGatewayTimeout || !exists(p.x("in/"+id+".tar")) {
@@ -101,16 +101,16 @@ func TestPushNamesBoxSecretsToValidate(t *testing.T) {
 	}
 }
 
-// A notify block naming a secret the push does not carry is refused
+// A monitor block naming a secret the push does not carry is refused
 // before validate, which would refuse it too in words that name no
 // remedy.
 func TestPushRefusesAnUncarriedNotifySecretBeforeValidate(t *testing.T) {
 	p := newPushRig(t)
-	file := bytes.Replace(boxFile(2, p.alice), []byte("\tliveswap {"), []byte("\tnotify {\n\t\tchannel ops ntfy {secret.NOTIFY_OPS_URL}\n\t\toperator ops\n\t}\n\n\tliveswap {"), 1)
+	file := bytes.Replace(boxFile(2, p.alice), []byte("\tliveswap {"), []byte("\tmonitor {\n\t\tchannel ops ntfy {secret.NOTIFY_OPS_URL}\n\t\toperator ops\n\t}\n\n\tliveswap {"), 1)
 	c := p.repo.commitSecrets(file, nil, &p.alice, p.base)
 	id := randomID(t)
 	m := wantResult(t, p.post(t, p.h, push{id: id, token: p.token(t, c), body: bytes.NewReader(tgz(t, p.repo.bundleFiles(c, p.base)))}), http.StatusUnprocessableEntity, id, phaseRefused)
-	if !strings.Contains(fmt.Sprint(m["error"]), "the notify block reads secret NOTIFY_OPS_URL") || p.val.calls != 0 {
+	if !strings.Contains(fmt.Sprint(m["error"]), "the monitor block reads secret NOTIFY_OPS_URL") || p.val.calls != 0 {
 		t.Fatalf("%v; validate ran %d times", m, p.val.calls)
 	}
 	p.untouched(t)

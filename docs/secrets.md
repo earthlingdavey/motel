@@ -158,7 +158,7 @@ in](#move-a-hand-made-env-file-in).
 
 ### A notify channel's URL
 
-A channel the box's `notify` block names (notify/DESIGN-notify.md) is a
+A channel the box's `monitor` block names (notify/DESIGN-notify.md) is a
 URL that is a credential by itself, so it is a secret too, of the box
 rather than of an app: `APP=_box`, named `NOTIFY_` then capitals.
 
@@ -172,15 +172,15 @@ channel's new URL is in use once the push is applied. The block reads
 each by name:
 
 ```
-notify {
+monitor {
     channel ops ntfy {secret.NOTIFY_OPS_URL}
     operator ops
 }
 ```
 
-A push whose `notify` block names a secret `secrets/_box/` does not
-hold is refused, as is a `_box/` value with no `notify` block to read
-it. A `NOTIFY_` variable among an app's own secrets never reaches the
+A push whose `monitor` block names a secret `secrets/_box/` does not
+hold is refused, as is a `_box/` value with no `monitor` block with a
+channel to read it. A `NOTIFY_` variable among an app's own secrets never reaches the
 app: motel withholds the prefix from every env file in
 `/etc/motel/secrets/`, where the box writes an app's (an env file of
 your own kept there is held to it too), says so in the journal at each

@@ -412,19 +412,29 @@ func FuzzWalk(f *testing.F) {
 	})
 }
 
-// The notify block's secrets are the {secret.<NAME>} arguments of its
+// The monitor block's secrets are the {secret.<NAME>} arguments of its
 // channel and heartbeat lines, in file order; anything else is notify's
 // to refuse.
 func TestWalkNotify(t *testing.T) {
-	f := strings.Replace(good, "\tliveswap {", "\tnotify {\n\t\tchannel ops ntfy {secret.NOTIFY_OPS_URL} severity warning\n\t\tchannel raw json https://hooks.example.com/x\n\t\tchannel odd json {secret.OPS_URL}\n\t\toperator ops\n\t\theartbeat {secret.NOTIFY_HC_URL}\n\t\tsecrets_file /etc/motel/secrets/_box.env\n\t}\n\n\tliveswap {", 1)
+	f := strings.Replace(good, "\tliveswap {", "\tmonitor {\n\t\tchannel ops ntfy {secret.NOTIFY_OPS_URL} severity warning\n\t\tchannel raw json https://hooks.example.com/x\n\t\tchannel odd json {secret.OPS_URL}\n\t\toperator ops\n\t\theartbeat {secret.NOTIFY_HC_URL}\n\t\tsecrets_file /etc/motel/secrets/_box.env\n\t}\n\n\tliveswap {", 1)
 	s, err := Walk(file(f))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if s.Notify == nil || s.Notify.SecretsFile != "/etc/motel/secrets/_box.env" || !slices.Equal(s.Notify.Secrets, []string{"NOTIFY_OPS_URL", "NOTIFY_HC_URL"}) {
+	if s.Notify == nil || !s.Notify.Channels || s.Notify.SecretsFile != "/etc/motel/secrets/_box.env" || !slices.Equal(s.Notify.Secrets, []string{"NOTIFY_OPS_URL", "NOTIFY_HC_URL"}) {
 		t.Fatalf("%+v", s.Notify)
 	}
+	// A metrics line alone is a monitor block with no channel.
+	f = strings.Replace(good, "\tliveswap {", "\tmonitor {\n\t\tmetrics\n\t}\n\n\tliveswap {", 1)
+	if s, err := Walk(file(f)); err != nil || s.Notify == nil || s.Notify.Channels || len(s.Notify.Secrets) != 0 {
+		t.Fatalf("a metrics line alone: %+v, %v", s.Notify, err)
+	}
+	// The old block is no monitor block: Caddy refuses it at validate.
+	f = strings.Replace(good, "\tliveswap {", "\tnotify {\n\t\tchannel ops ntfy {secret.NOTIFY_OPS_URL}\n\t\toperator ops\n\t}\n\n\tliveswap {", 1)
+	if s, err := Walk(file(f)); err != nil || s.Notify != nil {
+		t.Fatalf("the old notify block: %+v, %v", s.Notify, err)
+	}
 	if s, err := Walk(file(good)); err != nil || s.Notify != nil {
-		t.Fatalf("no notify block: %+v, %v", s, err)
+		t.Fatalf("no monitor block: %+v, %v", s, err)
 	}
 }

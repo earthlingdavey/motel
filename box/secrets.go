@@ -378,8 +378,8 @@ func secretsFit(shape *Shape, s *proof.Secrets, caddyfile string) error {
 }
 
 // boxSlotFits holds the box's own slot, secrets/_box/, to the file
-// beside it: notify's secret names alone, and a notify block that reads
-// them from the file the box writes. Like the rest of secretsFit, a
+// beside it: notify's secret names alone, and a monitor block whose
+// channels read them from the file the box writes. Like the rest of secretsFit, a
 // courtesy against a signer's mistake. A secrets_file line is compared
 // as a path and never quoted back, as an env_file is.
 func boxSlotFits(shape *Shape, a proof.SecretApp, dir string) error {
@@ -389,10 +389,10 @@ func boxSlotFits(shape *Shape, a proof.SecretApp, dir string) error {
 		}
 	}
 	switch {
-	case shape.Notify == nil:
-		return refused("%s/%s/ holds the box's notify secrets, and the new Caddyfile has no notify block to read them: add one, or remove the directory", dir, boxSlot)
+	case shape.Notify == nil || !shape.Notify.Channels:
+		return refused("%s/%s/ holds the box's notify secrets, and the new Caddyfile has no monitor block with a channel to read them: add one, or remove the directory", dir, boxSlot)
 	case shape.Notify.SecretsFile != "" && filepath.Clean(shape.Notify.SecretsFile) != managedEnvFile(boxSlot):
-		return refused("%s/%s/ is written to %s, and the notify block's secrets_file is another file: remove the secrets_file line", dir, boxSlot, managedEnvFile(boxSlot))
+		return refused("%s/%s/ is written to %s, and the monitor block's secrets_file is another file: remove the secrets_file line", dir, boxSlot, managedEnvFile(boxSlot))
 	}
 	return nil
 }
@@ -413,7 +413,7 @@ func boxSecretNames(s *proof.Secrets) []string {
 	return out
 }
 
-// notifyCarried holds a notify block that reads the box's own secrets
+// notifyCarried holds a monitor block that reads the box's own secrets
 // file to the push: every secret a channel or heartbeat line names must
 // be in secrets/_box/, and a load drops a channel whose secret is
 // missing (notify/DESIGN-notify.md, "Secrets at load"): the mistake is
@@ -435,7 +435,7 @@ func notifyCarried(shape *Shape, s *proof.Secrets, dir string) error {
 	}
 	for _, name := range n.Secrets {
 		if !carried[name] {
-			return refused("the notify block reads secret %s, and %s/%s/ does not hold it: make secret APP=%s VAR=%s, or remove the line", proof.Bound(name), dir, boxSlot, boxSlot, proof.Bound(name))
+			return refused("the monitor block reads secret %s, and %s/%s/ does not hold it: make secret APP=%s VAR=%s, or remove the line", proof.Bound(name), dir, boxSlot, boxSlot, proof.Bound(name))
 		}
 	}
 	return nil

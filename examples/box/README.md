@@ -427,7 +427,7 @@ next deploy of a new version, or a relaunch after a crash or a reboot.
 | Remove one | `git rm deploy.example.com/secrets/example/DATABASE_URL.age` |
 | Bring in an env file made on the box | `ssh root@box.example.com cat /etc/motel/example.env \| make secrets-import APP=example` |
 | Let a new reader read what is there, or move it all to a rebuilt box's key | `make rekey`, or `make rekey BOX_KEY=…` |
-| Set a notify channel's URL, the box's own (its `notify` block reads it as `{secret.NOTIFY_OPS_URL}`) | `make secret APP=_box VAR=NOTIFY_OPS_URL` |
+| Set a notify channel's URL, the box's own (its `monitor` block reads it as `{secret.NOTIFY_OPS_URL}`) | `make secret APP=_box VAR=NOTIFY_OPS_URL` |
 
 A box's first secret, by `make secret` or `make secrets-import`, also
 takes `BOX_KEY=$(ssh root@box.example.com motel box key)`: it makes

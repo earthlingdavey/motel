@@ -830,30 +830,30 @@ notify_secret() { # <var> <value>: make secret APP=_box; output in $work/sout
 }
 cp "$repo/$FILE" "$work/fnonotify"
 notify_secret NOTIFY_OPS_URL https://ntfy.sh/e2e-box-ops-1 || fail "make secret APP=_box: $(cat "$work/sout")"
-grep -qF "notify block reads NOTIFY_OPS_URL yet" "$work/sout" \
+grep -qF "monitor block reads NOTIFY_OPS_URL yet" "$work/sout" \
 	&& pass "make secret APP=_box says no notify line reads it yet" || fail "make secret APP=_box: $(cat "$work/sout")"
-awk '{ print } !done && /^\{/ { print "\tnotify {\n\t\tchannel ops ntfy {secret.NOTIFY_OPS_URL}\n\t\toperator ops\n\t}"; done = 1 }' \
+awk '{ print } !done && /^\{/ { print "\tmonitor {\n\t\tchannel ops ntfy {secret.NOTIFY_OPS_URL}\n\t\toperator ops\n\t}"; done = 1 }' \
 	"$work/fnonotify" >"$repo/$FILE"
 N1=$(commit_index alice "notify: the operator's channel, its URL in secrets/_box/")
 t0=$(date +%s)
 if template_apply "$N1" && grep -qxF "apply: $HOST secrets: _box: added NOTIFY_OPS_URL" "$work/tout" \
 	&& ! grep -qF "_box reads its secrets" "$work/tout"; then
-	pass "a notify block and its secret in secrets/_box/ pass validate and apply"
+	pass "a monitor block and its secret in secrets/_box/ pass validate and apply"
 else
 	fail "a push of the box's own secret: $(cat "$work/tout")"
 fi
 [ "$(stat -c '%a %U %G' "$BOXENV" 2>/dev/null)" = "640 root motel" ] && grep -qxF 'NOTIFY_OPS_URL="https://ntfy.sh/e2e-box-ops-1"' "$BOXENV" \
 	&& pass "_box.env is 0640 root:motel, holding the value" || fail "_box.env: $(stat -c '%a %U %G' "$BOXENV" 2>&1) $(cat "$BOXENV" 2>&1)"
 journalctl -u motel --since "@$t0" --no-pager -o cat | grep -q 'Alertmanager is not set up on this box' \
-	&& pass "the reload loaded the notify block" || fail "no notify line after the reload"
+	&& pass "the reload loaded the monitor block" || fail "no monitor line after the reload"
 settled "box secret added"
 # A channel line whose secret the push does not carry: refused at the
 # door, since a boot would drop the channel (notify's "Secrets at load").
 cp "$repo/$FILE" "$work/fnotify"
 sed -i 's#^\(\t*\)operator ops$#\1channel pager slack {secret.NOTIFY_PAGER_URL}\n\1operator ops pager#' "$repo/$FILE"
 NP=$(commit_index alice "notify: a channel whose secret is not in secrets/_box/")
-if ! template_apply "$NP" && grep -qF "the notify block reads secret NOTIFY_PAGER_URL, and $HOST/secrets/_box/ does not hold it: make secret APP=_box VAR=NOTIFY_PAGER_URL" "$work/tout"; then
-	pass "a notify block naming a secret the push does not carry is refused, by name"
+if ! template_apply "$NP" && grep -qF "the monitor block reads secret NOTIFY_PAGER_URL, and $HOST/secrets/_box/ does not hold it: make secret APP=_box VAR=NOTIFY_PAGER_URL" "$work/tout"; then
+	pass "a monitor block naming a secret the push does not carry is refused, by name"
 else
 	fail "an uncarried notify secret: $(cat "$work/tout")"
 fi
@@ -876,7 +876,7 @@ git -C "$repo" rm -r -q "$HOST/secrets/_box"
 cp "$work/fnonotify" "$repo/$FILE"
 N3=$(commit_index alice "notify: gone")
 if template_apply "$N3" && grep -qxF "apply: $HOST secrets: _box: removed NOTIFY_OPS_URL" "$work/tout" && [ ! -e "$BOXENV" ]; then
-	pass "the box's own secrets removed with the notify block: _box.env is gone"
+	pass "the box's own secrets removed with the monitor block: _box.env is gone"
 else
 	fail "removal of the box's own secrets: $(cat "$work/tout"); $(ls -la /etc/motel/secrets 2>&1)"
 fi
