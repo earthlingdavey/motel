@@ -10,14 +10,6 @@ import (
 	"github.com/caddyserver/caddy/v2/caddyconfig"
 )
 
-// TestPenaltyboxCacheOrder pins where Caddy's directive sorting puts
-// hint_penaltybox against Souin's cache in this build, which compiles
-// both in. Souin registers cache before rewrite and penaltybox
-// registers hint_penaltybox before reverse_proxy, so wherever Caddy
-// sorts (site level, or inside a handle block) cache runs first and a
-// cache hit never reaches the penalty box. Inside route the written
-// order holds, which is why penaltybox/README.md and the starter
-// packaging/Caddyfile put hint_penaltybox first in a route.
 // TestStarterObserveFirst holds the starter's example route to its
 // written order with liveswap_observe on: the observer outside the
 // cache and penaltybox, so that it counts what they answer too.
@@ -32,6 +24,14 @@ func TestStarterObserveFirst(t *testing.T) {
 	}
 }
 
+// TestPenaltyboxCacheOrder pins where Caddy's directive sorting puts
+// hint_penaltybox against Souin's cache in this build, which compiles
+// both in. Souin registers cache before rewrite and penaltybox
+// registers hint_penaltybox before reverse_proxy, so wherever Caddy
+// sorts (site level, or inside a handle block) cache runs first and a
+// cache hit never reaches the penalty box. Inside route the written
+// order holds, which is why penaltybox/README.md and the starter
+// packaging/Caddyfile put hint_penaltybox first in a route.
 func TestPenaltyboxCacheOrder(t *testing.T) {
 	site := func(body string) string { return "example.com {" + body + "\n}\n" }
 	cases := []struct {
