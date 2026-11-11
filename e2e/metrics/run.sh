@@ -173,8 +173,20 @@ a=$(wait_result cachemiss 'motel_app_cache_responses_total{app="blog",release="v
 	&& pass "motel_app_cache_responses_total counts the misses" || fail "no cache misses counted: $(q 'motel_app_cache_responses_total')"
 a=$(wait_result latency 'motel_app_response_seconds_count{app="blog",release="v1"} >= 21' 30) \
 	&& pass "motel_app_response_seconds times the app's own responses" || fail "no latency histogram: $(q 'motel_app_response_seconds_count')"
+# Every proxied response so far is in the store (the row above): the
+# timed count stands still while the refusals and the abort go by.
+lat0=$(q 'motel_app_response_seconds_count{app="blog"}' | sed -n 's/.*"value":\[[^,]*,"\([0-9]*\)"\].*/\1/p')
+for i in 1 2 3 4 5; do curl -s -o /dev/null --max-time 5 "$PROXY/refused"; done
+curl -s -o /dev/null --max-time 5 "$PROXY/abort"
 a=$(wait_result shop5xx 'motel_app_requests_total{app="shop",class="5xx"} >= 3' 30) \
 	&& pass "an app with nothing running: its 502s count as 5xx" || fail "no 5xx for shop: $(q 'motel_app_requests_total{app="shop"}')"
+a=$(wait_result refused 'motel_app_requests_total{app="blog",class="4xx"} >= 5' 60) \
+	&& pass "a refusal inside the observer counts as 4xx" || fail "no 4xx for blog's refusals: $(q 'motel_app_requests_total{app="blog"}')"
+lat1=$(q 'motel_app_response_seconds_count{app="blog"}' | sed -n 's/.*"value":\[[^,]*,"\([0-9]*\)"\].*/\1/p')
+[ -n "$lat0" ] && [ "$lat0" = "$lat1" ] && pass "the refusals are not timed as the release's ($lat0 timed before and after)" \
+	|| fail "the refusals changed the release's timed count: $lat0 -> $lat1"
+a=$(wait_result aborted 'motel_app_requests_total{app="blog",class="aborted"} >= 1' 30) \
+	&& pass "an aborted request counts as aborted" || fail "no aborted count: $(q 'motel_app_requests_total{app="blog"}')"
 m=""
 end=$(( $(date +%s) + 120 ))
 while [ "$(date +%s)" -lt "$end" ]; do

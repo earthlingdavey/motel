@@ -501,12 +501,13 @@ case "$(body)" in "hello v1"*) pass "proxy serves the relaunched instance" ;; *)
 removal_config() { # <out>
 	awk '
 		/^\t\tapp [a-z-]+ \{/ { skip = 1 }
-		/^:808[0-3] \{/    { skip = 2 }
+		/^:80(8[0-3]|9[0-2]) \{/ { skip = 2 }  # the app sites, and e2e/bench/observe.sh ones
 		skip == 0 { print }
 		skip == 1 && /^\t\t}$/ { skip = 0 }
 		skip == 2 && /^}$/     { skip = 0 }
 	' /etc/motel/Caddyfile > "$1"
 	grep -q '^\t\tapp ' "$1" && die "removal config still names an app"
+	grep -q 'dynamic liveswap\|liveswap_observe' "$1" && die "removal config still has a site of an app"
 	grep -q 'liveswap {' "$1" || die "removal config lost the liveswap block"
 }
 # load_config POSTs a Caddyfile to the admin API. Caddy flushes adapter
