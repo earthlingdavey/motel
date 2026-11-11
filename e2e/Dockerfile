@@ -143,9 +143,9 @@ RUN install -d -m 2750 -o root -g motel /etc/motel/secrets \
 # notify suite's box with Debian's victoria-metrics (the store and
 # vmalert) installed as `motel monitor setup --metrics` would install
 # it, masked first so that its unit, which listens on 0.0.0.0:8428, never
-# starts; the suite runs `motel monitor setup --metrics`, Alertmanager's
-# setup and then the store's, which finds the package installed and does
-# the rest.
+# starts; the suite runs `motel monitor setup`, then `motel monitor
+# setup --metrics`, the store's setup, which finds the package installed
+# and does the rest.
 FROM notify-box AS metrics-box
 RUN systemctl mask victoria-metrics.service \
 	&& apt-get update \

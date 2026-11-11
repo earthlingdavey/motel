@@ -400,10 +400,13 @@ starts on install listening on `0.0.0.0:8428`, unauthenticated
 (measured, debian_package_namespace_test.md), and a `Depends` cannot
 order motel's scripts before it. vmalert ships in the same package, so
 there is one package to suggest. **`motel monitor setup --metrics`**,
-run by root, runs Alertmanager's setup (DESIGN-notify.md, "Packaging
-and setup") and, once that has succeeded, the store's, stopping at the
-first that fails; `motel monitor setup` alone is Alertmanager's. The
-store's:
+run by root, is the store's setup. On a box where Alertmanager's has
+not run (`motel-am.socket` is not installed), Alertmanager's runs first
+(DESIGN-notify.md, "Packaging and setup") and the store's only once it
+has succeeded; where it has, Alertmanager is left as it runs, since its
+setup masks and stops it, which loses the alerts it holds in memory
+and what waits in a group. `motel monitor setup` alone is
+Alertmanager's. The store's:
 
 1. refuses unless Alertmanager's setup has run (`motel-am.socket` is
    installed): vmalert's outlet is Alertmanager's socket;
@@ -431,8 +434,9 @@ store's:
    stopped in step 2, so its start takes the drop-in);
 6. `try-reload-or-restart motel.service`, which renders.
 
-Run again, it puts the units back as the binary ships them, both
-stacks' (Alertmanager's setup runs at every `--metrics`). A re-run
+Run again, it puts the store's units back as the binary ships them,
+and touches nothing of Alertmanager's; `motel monitor setup` does that
+for Alertmanager's. A re-run
 that fails after the mask (an install, a unit written to a full disk, a
 reload) unmasks the store on its way out, starts `motel-vm.socket` (a
 connection that arrived while the store was masked fails the socket),
@@ -541,7 +545,7 @@ or a line of theirs the facts overturned:
 | No second package (`motel-metrics`); the units ship in the binary | slice one's precedent: the package installs nothing of the stack until root runs setup, so a second `.deb` would hold six unit files and a command |
 | vmalert comes from `victoria-metrics` | Debian 13 ships `/usr/bin/vmalert` in it and has no `vmalert` package (`apt-cache search vmalert`, 2026-11-10) |
 | The store's setup is `--metrics` on `motel monitor setup`, after Alertmanager's | vmalert's only outlet is Alertmanager's socket, and its proxy's unit requires `motel-am.socket` |
-| `--metrics` runs Alertmanager's setup every time, set up or not | it is a re-run that puts Alertmanager's units back as the binary ships them, with its put-back armed, so one command brings both stacks up to the binary (the Owed row on units older than the binary); its cost is a mask and an unmask of a socket-activated Alertmanager and one more reload |
+| `--metrics` runs Alertmanager's setup only where it has not run | Alertmanager's setup masks and stops a running Alertmanager, which loses the alerts it holds in memory and what waits in a group: the store is added, or its units put back, without that; `motel monitor setup` puts Alertmanager's back when they need it. /code-review pass 2 on the monitor block, reversing pass 1's every-time rule |
 | No vmalert `Watchdog` | the merge hazard above; motel watches the chain instead |
 | `ChannelFailed` from vmalert is rendered per told channel with motel's labels | the only form in which Alertmanager deduplicates the two sources |
 | `MemoryMax=256M`, `-memory.allowedBytes=96MiB`, 14 days | the measured working set above; both caps mandatory, since the store sizes its caches from what it can see |
@@ -583,7 +587,7 @@ on its general scales. metrics' examples:
 | A first run of either setup that fails after its own `unmask` (`disable`, `enable --now`, a `restart`, the motel reload) is left unmasked and maybe partly started, not masked | notify/setup.go, notify/metricssetup.go | 2 | 3 | 1 | 6; every unit and drop-in is written before the unmask, so what can run is motel's confined shape (Alertmanager on its socket with no cluster port, the store in its namespace); setup ends on its error naming the step, and the next run is a re-run, with the put-back. A remask there (size 2, risk 2) would mask a service whose socket may be enabled already, so a connection fails the socket: the state the put-back exists to undo. Copilot round 3 on #425 |
 | A store that turns read-only while `metrics_store_down` or `metrics_rules_down` already fires leaves that warning firing beside the critical until the store is writable (the read-only path holds back new ones, and does not clear old ones) | notify/metricspush.go (`checkReadOnly`) | 2 | 2 | 3 | 12; the warning was true when raised and the critical beside it names the cause; clearing them there is two more branches in the path every read takes. Copilot on #425 |
 | A reload that moves the `metrics` line to another socket starts the counts afresh (`setLive`) but keeps what already fires, `metrics_store_read_only` among them, until the new store answers: a read-only alert raised for the old store stays told while the new one does not answer | notify/metricspush.go (`setLive`) | 2 | 2 | 1 | 4; it needs the old store read-only and the new one not answering; the first answer of the new store clears it, and the new store's own silence fires `metrics_store_down`, which names the push failing, once `readOnlyStale` asks have gone unanswered (`heldReadOnly`, as for any read-only store that stops answering). Clearing it at the move would resolve it on no evidence. Copilot round 2 on #425 |
-| `motel monitor setup --metrics` reloads motel twice, Alertmanager's setup's first, before the store is installed: a `metrics` line that this reload loads for the first time (written, never reloaded) starts the push's failure count then, so an install of the store slower than five minutes fires `metrics_store_down`, and the journal has a `not set up` and a `push failed` line, until the first push after the store's setup clears it | notify/cmd.go (`runSetup`) | 2 | 2 | 1 | 4; it needs the line unloaded before setup and a slow install; the alert names its cause and clears itself, and the two setups run as two commands had the same order; skipping Alertmanager's reload under `--metrics` is a flag through its setup (size 2, risk 2). /code-review pass 1 on the monitor block |
+| `motel monitor setup --metrics` on a box where Alertmanager is not set up yet reloads motel twice, Alertmanager's setup's first, before the store is installed: a `metrics` line that this reload loads for the first time (written, never reloaded) starts the push's failure count then, so an install of the store slower than five minutes fires `metrics_store_down`, and the journal has a `not set up` and a `push failed` line, until the first push after the store's setup clears it | notify/cmd.go (`runSetup`) | 2 | 2 | 1 | 4; it needs Alertmanager not set up, the line unloaded before setup and a slow install; the alert names its cause and clears itself, and the two setups run as two commands had the same order; skipping Alertmanager's reload under `--metrics` is a flag through its setup (size 2, risk 2). /code-review pass 1 on the monitor block |
 
 ### Owed
 
@@ -593,7 +597,7 @@ on its general scales. metrics' examples:
 | Operator rules (the fresh-slate draft's `rule` line), as a grammar of fixed kinds with parameters, never a template | — | — | — | slice three |
 | The store's RSS with `-memory.allowedBytes=96MiB` after a day, and on a 1 or 2 GB box | — | — | — | the next deploy to hotserve-1 |
 | A reboot with motel rendering `rules.yml` and pushing, as slice one's was measured, on a booted Debian host: the namespace's and the sockets' cold-boot order, a connection made while setup has the store masked, and a failed setup re-run's put-back (Copilot round 2 on #425); the two proxies' users and the am proxy's view, measured so far in the e2e box only | — | — | — | the next deploy to hotserve-1 |
-| motel says nothing when setup's units on disk are older than the binary's: a box upgraded past a change to them (this one: the proxies' users, the chmods) keeps the old units until root re-runs `motel monitor setup --metrics`. A load could compare the installed files with the embedded ones and warn | 3 | 5 | 5 | the next PR on the feature branch, before it merges to main (/code-review of #426) |
+| motel says nothing when setup's units on disk are older than the binary's: a box upgraded past a change to them (this one: the proxies' users, the chmods) keeps the old units until root re-runs both setups (`motel monitor setup`, then `motel monitor setup --metrics`). A load could compare the installed files with the embedded ones and warn | 3 | 5 | 5 | the next PR on the feature branch, before it merges to main (/code-review of #426) |
 | Debian's security support for `victoria-metrics` 1.112.0 and `prometheus-alertmanager` 0.28.1 on trixie, whose binaries are built with Go 1.24.2 (the store, vmalert) and 1.24.1 (Alertmanager), and a dist-upgrade check of both drop-ins' flags | — | — | — | before any release |
 
 ## e2e rows
@@ -603,7 +607,8 @@ image with Debian's `victoria-metrics` installed and masked
 (e2e/Dockerfile, `metrics-box`), and the same stub receiver. The suite
 runs `motel monitor setup` and then `motel monitor setup --metrics`
 itself and asserts: nothing of the store set up without `--metrics`,
-and with it Alertmanager's setup before the store's;
+and with it the store's setup alone, the running Alertmanager left as
+it was (the same invocation, not masked);
 no TCP listener on 8428, 8880 or 9093 in the host namespace, all three
 in the namespace; the socket `srw-rw---- root motel` and the state
 directory `drwxr-s--- motel _victoria-metrics`; the store's data

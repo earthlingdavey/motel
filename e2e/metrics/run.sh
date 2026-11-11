@@ -4,7 +4,7 @@
 # The box is the notify suite's with Debian's victoria-metrics installed
 # and masked; motel runs e2e/metrics/Caddyfile, the notify suite's
 # monitor block plus a `metrics` line. The suite runs `motel monitor
-# setup`, then `motel monitor setup --metrics`, then checks
+# setup`, then `motel monitor setup --metrics` (the store's alone), then checks
 # notify/DESIGN-metrics.md's "e2e rows":
 #
 #   the store's TCP in its namespace only; its socket's mode and reach
@@ -53,18 +53,25 @@ journalctl -u motel -o cat --no-pager | grep -q 'the metrics store is not set up
 	|| fail "no 'not set up' line for the store before setup"
 
 echo "=== metrics 1: setup ==="
-# Without --metrics, Alertmanager's setup alone; with it, Alertmanager's
-# again (a re-run), then the store's.
+# Without --metrics, Alertmanager's setup alone; with it, on a box where
+# Alertmanager is set up, the store's alone: Alertmanager's setup would
+# mask and stop it, and what it holds in memory would go.
 motel monitor setup >/tmp/nsetup.out 2>&1 && pass "monitor setup ran" || fail "monitor setup: $(cat /tmp/nsetup.out)"
 [ ! -e /etc/systemd/system/motel-vm.socket ] && [ ! -e /etc/systemd/system/victoria-metrics.service.d/10-motel.conf ] \
 	&& pass "without --metrics, nothing of the store is set up" || fail "monitor setup wrote the store's units: $(ls /etc/systemd/system)"
+am -o /dev/null http://am/-/ready # started by its socket, if motel's render has not yet
+am_run=$(systemctl show -p InvocationID --value prometheus-alertmanager)
 if motel monitor setup --metrics >/tmp/msetup.out 2>&1; then
 	pass "monitor setup --metrics ran: $(tr '\n' ';' </tmp/msetup.out | cut -c1-240)"
 else
 	fail "monitor setup --metrics: $(cat /tmp/msetup.out)"
 fi
-awk '/^masked prometheus-alertmanager.service/ { a = NR } /^masked victoria-metrics.service/ { v = NR } END { exit !(a && v && a < v) }' /tmp/msetup.out \
-	&& pass "--metrics ran Alertmanager's setup, then the store's" || fail "the order of --metrics: $(grep '^masked' /tmp/msetup.out | tr '\n' ';')"
+! grep -q 'prometheus-alertmanager' /tmp/msetup.out && grep -q '^masked victoria-metrics.service' /tmp/msetup.out \
+	&& grep -q '^Alertmanager is set up' /tmp/msetup.out \
+	&& pass "--metrics ran the store's setup alone, saying Alertmanager was left as it runs" || fail "--metrics: $(grep -E '^(masked|Alertmanager)' /tmp/msetup.out | tr '\n' ';')"
+[ -n "$am_run" ] && [ "$(systemctl show -p InvocationID --value prometheus-alertmanager)" = "$am_run" ] \
+	&& pass "the running Alertmanager is the same invocation after --metrics" \
+	|| fail "Alertmanager's invocation: '$am_run' before --metrics, '$(systemctl show -p InvocationID --value prometheus-alertmanager)' after"
 i=0
 until inns ss -ltnH 2>/dev/null | grep -q '127.0.0.1:8880'; do
 	i=$((i + 1)); [ "$i" -ge 60 ] && break; sleep 0.5

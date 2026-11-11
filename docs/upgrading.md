@@ -248,10 +248,17 @@ store, vmalert and Alertmanager keep running throughout: their units
 are setup's. Step 3's load renders Alertmanager's config, writes the
 rules again and resumes the push.
 
-`motel monitor setup` need not run again for this upgrade: the units it
-writes differ from the old setups' only in their comments. Re-run it
-(`--metrics` for the store too) as root only when an upgrade's notes
-say the units changed.
+Neither setup need run again for this upgrade: the units they write
+differ from the old setups' only in their comments and in the
+`Description=` lines, which name the old commands (`systemctl status`
+shows `(motel notify setup)` until they are rewritten), and nothing in
+how they run. To have them read the new names, root runs `motel
+monitor setup --metrics`, which rewrites the store's units and restarts
+vmalert and the store (a push or two fails meanwhile) without touching
+Alertmanager, and `motel monitor setup`, which rewrites Alertmanager's
+and restarts it: what it holds in memory goes (motel posts each firing
+state alert again within a minute; a one-shot waiting in a group is
+lost), so at a quiet moment.
 
 ## Patching the host
 

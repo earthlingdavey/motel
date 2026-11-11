@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 
 	caddycmd "github.com/caddyserver/caddy/v2/cmd"
@@ -219,8 +220,11 @@ gives it motel's config and socket activation, the socket unit
 leaves it to start on its socket's first connection, starts the socket
 and reloads motel, which renders the monitor block's channels.
 
-With --metrics, then the store, once Alertmanager's setup has
-succeeded (vmalert posts to Alertmanager's socket): installs
+With --metrics, the store, which posts to Alertmanager's socket: on a
+box where Alertmanager is not set up yet (no motel-am.socket),
+Alertmanager's setup above runs first, and the store's only once it
+has succeeded; where it is, Alertmanager is left as it runs, and only
+the store's setup runs. The store's: installs
 victoria-metrics so that it never listens in the host's network
 namespace: masks its unit first, so the install starts nothing
 (Debian's would listen on 0.0.0.0:8428, unauthenticated); installs it
@@ -230,10 +234,11 @@ moves the store into the namespace with its memory capped, the socket
 in-namespace proxy to Alertmanager and vmalert's unit, and
 /var/lib/motel-metrics with the scrapes and an empty rule file;
 unmasks it, starts them all and reloads motel, which renders the rules
-and pushes. Alertmanager's setup runs first every time, so a re-run
-puts both back.
+and pushes.
 
-Run again, it puts the units back as the binary ships them.`,
+Run again, each puts its units back as the binary ships them:
+motel monitor setup Alertmanager's (stopping it for the while: what it
+holds in memory goes), motel monitor setup --metrics the store's.`,
 		Args: cobra.NoArgs,
 		RunE: func(c *cobra.Command, _ []string) error {
 			if os.Geteuid() != 0 {
@@ -242,14 +247,22 @@ Run again, it puts the units back as the binary ships them.`,
 			return runSetup(hostSystem{out: c.OutOrStdout()}, "/", c.OutOrStdout(), metrics)
 		},
 	}
-	c.Flags().BoolVar(&metrics, "metrics", false, "set up the metrics store too, after Alertmanager")
+	c.Flags().BoolVar(&metrics, "metrics", false, "set up the metrics store (and Alertmanager first, where it is not set up)")
 	return c
 }
 
-// runSetup is `motel monitor setup`: Alertmanager's setup, then with
-// metrics the store's, stopping at the first that fails. Each keeps its
-// own refusals and its own put-back on a failed re-run.
+// runSetup is `motel monitor setup`: Alertmanager's setup; with
+// metrics, the store's, after Alertmanager's only where that has not
+// run (its socket unit is not installed, the store setup's own guard).
+// A re-run with metrics leaves a running Alertmanager alone: its setup
+// masks and stops it, which loses the alerts it holds in memory and
+// what waits in a group. Each setup keeps its own refusals and its own
+// put-back on a failed re-run, and the first that fails stops the rest.
 func runSetup(sys system, root string, out io.Writer, metrics bool) error {
+	if metrics && isFile(filepath.Join(root, socketPath)) {
+		_, _ = fmt.Fprintf(out, "Alertmanager is set up (%s): left as it runs; motel monitor setup re-runs its setup\n", socketPath)
+		return metricsSetup(sys, root, out)
+	}
 	if err := setup(sys, root, out); err != nil {
 		return err
 	}

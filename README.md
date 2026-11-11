@@ -68,9 +68,9 @@ It suggests `victoria-metrics` (Debian's, 143 MB installed, vmalert
 included) for the metrics store ([notify/DESIGN-metrics.md](notify/DESIGN-metrics.md),
 experimental), for the same reason: its unit listens on `0.0.0.0:8428`,
 unauthenticated, once installed. `motel monitor setup --metrics`, as
-root, sets up Alertmanager as above, then masks it, installs it and
-starts it in a network namespace of its own, reached through a unix
-socket only.
+root, sets up Alertmanager as above if it is not yet, then masks it,
+installs it and starts it in a network namespace of its own, reached
+through a unix socket only.
 
 <details>
 <summary><b>Without the package</b> — the raw binary, for other systemd hosts</summary>
