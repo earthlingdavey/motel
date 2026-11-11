@@ -204,6 +204,55 @@ There is no APT repository yet, so nothing upgrades motel behind
 your back; the hosted repository on the [roadmap](../README.md#roadmap) is what
 will change that.
 
+## From the notify and metrics_store blocks
+
+A box built from the notify-and-metrics feature branch before the
+`monitor` block (no release has either) runs a `notify` block and
+perhaps a `metrics_store` block. The new binary refuses both, naming
+`monitor`, and the old one refuses `monitor`, so no Caddyfile loads on
+both: upgrading with the old blocks in place stops every site, since
+the install restarts motel onto a binary that refuses to start on the
+file. Do it in this order:
+
+1. **Push the Caddyfile without the `notify` and `metrics_store`
+   blocks**, and without `secrets/_box/`: the old box channel refuses
+   that directory beside a file with no `notify` block, and the push
+   removes `/etc/motel/secrets/_box.env` (the encrypted files stay in
+   the repository's history). The old motel validates and reloads it.
+   On a box with no push channel, root edits the blocks out of
+   `/etc/motel/Caddyfile` and runs `systemctl reload motel`.
+2. **Upgrade the package**, as above. The new motel starts on that
+   Caddyfile, which has nothing for it to refuse.
+3. **Push the Caddyfile with `monitor { … }`**: the notify block's
+   lines unchanged under the new name, and `metrics` (with its socket
+   path, if `store` named one) as a line inside it for the
+   `metrics_store` block; and `secrets/_box/` back, restored from the
+   commit before step 1's (`git checkout <that commit> --
+   <host>/secrets/_box`), so no value is typed again. On a box with no
+   push channel, root writes the block into the file, puts `_box.env`
+   back if it went, and reloads.
+
+**No alert is delivered between step 1's reload and step 3's.** motel
+posts nothing to Alertmanager: no event, no `Watchdog`, so the
+heartbeat stops pinging and the dead-man check pages once its own
+period is out (pause it first, or expect it). Alertmanager keeps the
+last config motel rendered and ends what was firing at its
+`resolve_timeout`, five minutes on, with a recovery to the channels
+that did not happen. Step 1's reload also retires the store's rules:
+the reload to a config with no `metrics_store` block writes
+`/var/lib/motel-metrics/rules.yml` with its groups empty
+(`grep -c 'alert:'` on it says 0), so vmalert evaluates nothing, and
+motel stops pushing, so the store keeps no motel series for the gap
+(its own scrapes of itself, vmalert and Alertmanager go on). The
+store, vmalert and Alertmanager keep running throughout: their units
+are setup's. Step 3's load renders Alertmanager's config, writes the
+rules again and resumes the push.
+
+`motel monitor setup` need not run again for this upgrade: the units it
+writes differ from the old setups' only in their comments. Re-run it
+(`--metrics` for the store too) as root only when an upgrade's notes
+say the units changed.
+
 ## Patching the host
 
 Apps run on the box's own `/usr`, so `apt upgrade` reaches an app at

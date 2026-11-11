@@ -107,7 +107,9 @@ line among them, whatever it says (`deploy_succeeded off` too; in a
 JSON config, any of notify's fields present); so is a block with no
 line at all. `notify` and
 `metrics_store` as global options are refused when the Caddyfile is
-adapted, naming the block and the line to write instead.
+adapted, naming the block and the line to write instead, and the
+upgrade order for a box that has them (docs/upgrading.md, "From the
+notify and metrics_store blocks").
 
 A URL is only ever `{secret.NOTIFY_<NAME>}`: a Slack or Discord hook is
 a credential by itself, and the Caddyfile is a commit anyone who reads
@@ -125,7 +127,7 @@ connects to nothing), each naming keys and channels, never a value:
 
 | Condition | Refused as |
 |---|---|
-| a `notify` global option (refused at the adapt, before Provision) | ``the notify block is now `monitor { … }`, with the same lines (notify/DESIGN-notify.md)`` |
+| a `notify` global option (refused at the adapt, before Provision) | ``the notify block is now `monitor { … }`, with the same lines; to move a box onto it, docs/upgrading.md, "From the notify and metrics_store blocks"`` |
 | a literal URL, or `{env.*}` | `a channel URL is written {secret.NOTIFY_<NAME>}, its value in the box's secrets, never in the Caddyfile` |
 | a secret not named `NOTIFY_…` | `the secret's name is NOTIFY_ followed by capitals, digits and underscores` |
 | no `operator` line | `no operator line: name the channels that receive every event with operator <channel>` |
@@ -569,6 +571,7 @@ on its general scales. notify's examples:
 |---|---|---|---|---|---|
 | A public host name that resolves, or rebinds, to a private address is posted to: the check is on the URL as written | notify/config.go (`checkURL`) | 1 | 5 | 5 | a channel URL is a signer's line today, and a signer can already run any code as an app that reaches the same addresses; scored by what T6 gains (nothing). Rescore when #417 lets a deployer choose a URL |
 | motel stopped for more than five minutes: Alertmanager resolves each firing state alert at `resolve_timeout`, and the channels get a recovery that did not happen (at motel's start the watchdog's standing reports fire its alerts again, and the pollers theirs) | notify/engine.go (no `endsAt` on re-posts) | 2 | 3 | 3 | 18; a stop that long is itself a fault the heartbeat reports (Watchdog's silence pages first); keeping Alertmanager's alerts alive across a stop would need a poster outside motel; a restart (seconds) is "Behaviour"'s, and keeps them |
+| A box on the feature branch's `notify` or `metrics_store` block cannot move to the `monitor` block in one load: the new binary refuses the old blocks and the old binary the new one, so the upgrade runs with no notify between two pushes (docs/upgrading.md, "From the notify and metrics_store blocks"): no event is delivered, the heartbeat stops (the dead-man check pages), Alertmanager ends what fired at `resolve_timeout` with a recovery that did not happen, and the store's rules are retired at the first push's reload | notify/caddyfile.go (`refusedOption`) | 3 | 5 | 1 | 15; once per box, only for boxes that ran the unreleased feature branch, in an order the doc names and the refusal points at, and the dead-man check reports the gap; a transitional alias (the old names loading, warned, for one release) is a second grammar and a new state to retire (size 3, risk 2). /code-review pass 1 on the monitor block, finding 1; the user chose the documented order over a transitional alias |
 | Two channels of one integration in one receiver: a failure names both as suspects, and neither is told | notify/channelfailed.go (`suspects`) | 2 | 5 | 3 | an operator's choice of channels; the line names both, and the counter is Alertmanager's own; one receiver per channel would double every route |
 | An operator with a single channel: `ChannelFailed` has no other channel to go to | notify/channelfailed.go | 2 | 5 | 1 | the `monitor: channel failed` line and Alertmanager's counter say it; the design asks for "the other operator channels" and there are none |
 | `motel monitor test` reads the counters for 15 s; a slow receiver answers "neither yet" | notify/admin.go (`testWait`) | 2 | 2 | 1 | the answer says so; Alertmanager's retries continue |
