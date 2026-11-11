@@ -1,0 +1,24 @@
+# Written by `motel metrics setup` (notify/DESIGN-metrics.md, "The shape").
+# 127.0.0.1:9093 bound inside the motel-metrics namespace, where vmalert
+# posts its alerts (it speaks TCP only); its service forwards them to
+# Alertmanager's unix socket. Nothing in the host's namespace listens.
+[Unit]
+Description=Alertmanager for vmalert: 127.0.0.1:9093 in the metrics namespace (motel metrics setup)
+# Every socket unit is implicitly Before=sockets.target, and the namespace
+# service runs after basic.target, which is after sockets.target: an
+# ordering cycle systemd breaks by dropping this socket's start (measured
+# at a cold boot on hotserve-1). So: no default dependencies, and the
+# order after the namespace by hand.
+DefaultDependencies=no
+Requires=motel-metrics-netns.service
+After=sysinit.target motel-metrics-netns.service
+Conflicts=shutdown.target
+Before=shutdown.target
+
+[Socket]
+ListenStream=127.0.0.1:9093
+NetworkNamespacePath=/run/netns/motel-metrics
+
+[Install]
+# Not sockets.target, for the same cycle.
+WantedBy=multi-user.target

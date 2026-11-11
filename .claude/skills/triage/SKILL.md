@@ -23,6 +23,7 @@ the behaviour they describe. Read only the one the finding is in:
 | liveswap | `liveswap/DESIGN-liveswap.md`, "Accepted residuals" and the **Owed** table after it (scored rows; no per-level examples yet, so the general scales) |
 | backups (`backups/`, and `cmd/motel/backupcheck.go`, the validate and reload gate) | `backups/README.md`, "Accepted residuals" (scored rows; general scales) |
 | notify (`notify/`, and liveswap's `Notifier` in `liveswap/lifecycle.go`) | `notify/DESIGN-notify.md`, "Triage": examples, "Accepted residuals" and "Owed" |
+| metrics (`notify/metrics*.go`, `notify/units/metrics/`, and liveswap's `MetricsSource` in `liveswap/appmetrics.go`) | `notify/DESIGN-metrics.md`, "Triage": examples, "Accepted residuals" and "Owed" |
 | usage ledger (`.github/scripts/usage.py`, `usage/`, `docs/footprint.md`) | the docstring of `usage.py`, "Accepted residuals" (scored rows; general scales) |
 
 A subsystem with no examples yet is scored on the general scales

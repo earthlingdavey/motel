@@ -137,13 +137,17 @@ var sandboxNeverReachable = []string{"/run/user", "/dev", "/sys", "/proc"}
 // the documented env-file directories, the box applier's exchange tree
 // (box/DESIGN-box.md, "Paths, owners, and who may touch what"), and
 // notify's Alertmanager socket and the config and channel URLs motel
-// renders for it (notify/DESIGN-notify.md): a mistake to put the
-// liveswap *root* inside of, and never reachable as a bind source. The
-// socket's mode admits the motel uid, which every app runs as, so the
-// view is what keeps an app from posting alerts or silencing them.
+// renders for it (notify/DESIGN-notify.md), and the metrics store's
+// socket and the rules motel renders for vmalert
+// (notify/DESIGN-metrics.md): a mistake to put the liveswap *root*
+// inside of, and never reachable as a bind source. Both sockets' modes
+// admit the motel uid, which every app runs as, so the view is what
+// keeps an app from posting alerts, silencing them, or reading and
+// writing the store.
 var sandboxMotelPaths = []string{
 	"/var/lib/motel", "/run/motel", "/etc/motel", "/etc/liveswap",
 	"/var/lib/motel-box", "/run/motel-notify", "/var/lib/motel-notify",
+	"/run/motel-metrics", "/var/lib/motel-metrics",
 }
 
 // sandboxSpec is what the runner needs to render the sandbox

@@ -1761,6 +1761,11 @@ type statusSnapshot struct {
 	// release unless it is the running version, which the list puts
 	// first; absent when there are none.
 	OrderedByMtime []string `json:"ordered_by_mtime,omitempty"`
+	// Metrics is the metrics_store module's summary of the app's
+	// numbers (notify/DESIGN-metrics.md, "metrics in GET /<app>"): set
+	// by GET /<app> alone, and only when a metrics_store block is
+	// loaded.
+	Metrics any `json:"metrics,omitempty"`
 }
 
 // capsSnapshot is resourceCaps on the wire, in the directives' own

@@ -1,0 +1,15 @@
+# Written by `motel metrics setup` (notify/DESIGN-metrics.md, "Rules"),
+# as /var/lib/motel-metrics/scrape.yml. What the store scrapes inside its
+# namespace: itself, vmalert (whose `up` motel reads for
+# metrics_rules_down), and Alertmanager's /metrics through the
+# in-namespace proxy (the second ChannelFailed). motel pushes; it is not
+# scraped.
+global:
+  scrape_interval: 30s
+scrape_configs:
+  - job_name: victoria-metrics
+    static_configs: [{targets: ["127.0.0.1:8428"]}]
+  - job_name: vmalert
+    static_configs: [{targets: ["127.0.0.1:8880"]}]
+  - job_name: alertmanager
+    static_configs: [{targets: ["127.0.0.1:9093"]}]

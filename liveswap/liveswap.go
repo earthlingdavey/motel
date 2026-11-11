@@ -110,6 +110,9 @@ type App struct {
 	// releasing anything.
 	recoverCancel context.CancelFunc
 	recoverWG     *sync.WaitGroup // pointer: App values are copied by Caddy
+	// metricsSource is the metrics_store module's (SetMetricsSource),
+	// which adds `metrics` to GET /<app>; nil adds nothing.
+	metricsSource MetricsSource
 	// manager is the manager connection everything this config starts
 	// talks to — its apps' runners, its unknown-app sweep, and (when
 	// the seams below are nil) its capability measurement. Typed as

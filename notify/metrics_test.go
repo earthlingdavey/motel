@@ -1,0 +1,711 @@
+package notify
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"io"
+	"net"
+	"net/http"
+	"os"
+	"path/filepath"
+	"regexp"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/caddyserver/caddy/v2/caddyconfig/caddyfile"
+	"github.com/prometheus/client_golang/prometheus"
+	dto "github.com/prometheus/client_model/go"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zaptest/observer"
+
+	"github.com/smallhoursorg/motel/liveswap"
+)
+
+func parseStore(src string) (*MetricsStore, error) {
+	m := new(MetricsStore)
+	return m, m.UnmarshalCaddyfile(caddyfile.NewTestDispenser(src))
+}
+
+func TestMetricsStoreBlock(t *testing.T) {
+	m, err := parseStore("metrics_store")
+	if err != nil || m.store() != DefaultStoreSocket || m.stateDir() != DefaultMetricsStateDir {
+		t.Fatalf("the bare option: %+v, %v", m, err)
+	}
+	m, err = parseStore("metrics_store {\n store /run/x/vm.sock\n}")
+	if err != nil || m.store() != "/run/x/vm.sock" || m.stateDir() != DefaultMetricsStateDir {
+		t.Fatalf("a store path: %+v, %v", m, err)
+	}
+	for src, want := range map[string]string{
+		"metrics_store on":                         "wrong argument count",
+		"metrics_store {\n store run/vm.sock\n}":   "not an absolute path",
+		"metrics_store {\n state_dir /srv/m\n}":    `unknown metrics_store subdirective "state_dir"`,
+		"metrics_store {\n store /a\n store /b\n}": "store is given more than once",
+		"metrics_store {\n store\n}":               "wrong argument count",
+		"metrics_store {\n store /a /b\n}":         "wrong argument count",
+		"metrics_store {\n interval 10s\n}":        `unknown metrics_store subdirective "interval"`,
+		"metrics_store {\n store /a {\n  x\n }\n}": "take no block",
+	} {
+		if _, err := parseStore(src); err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("%q: %v, want %q", src, err, want)
+		}
+	}
+}
+
+type fakeSampler []liveswap.AppSample
+
+func (f fakeSampler) AppSamples() []liveswap.AppSample { return f }
+
+func gatherValues(t *testing.T, c prometheus.Collector) map[string]float64 {
+	t.Helper()
+	reg := prometheus.NewPedanticRegistry()
+	if err := reg.Register(c); err != nil {
+		t.Fatal(err)
+	}
+	mfs, err := reg.Gather()
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := map[string]float64{}
+	for _, mf := range mfs {
+		for _, m := range mf.GetMetric() {
+			k := mf.GetName()
+			for _, l := range m.GetLabel() {
+				k += "," + l.GetName() + "=" + l.GetValue()
+			}
+			out[k] = value(m)
+		}
+	}
+	return out
+}
+
+func value(m *dto.Metric) float64 {
+	if g := m.GetGauge(); g != nil {
+		return g.GetValue()
+	}
+	return m.GetCounter().GetValue()
+}
+
+func TestAppCollector(t *testing.T) {
+	root := t.TempDir()
+	cg := "/user.slice/app-blog.service"
+	if err := os.MkdirAll(filepath.Join(root, cg), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	// blog holds 4 MiB of page cache the kernel would give back: its
+	// working set is memory.current less inactive_file. nostat has no
+	// memory.stat, and reads as memory.current.
+	nostat := "/user.slice/app-nostat.service"
+	if err := os.MkdirAll(filepath.Join(root, nostat), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	for name, body := range map[string]string{
+		cg + "/memory.current":     "35651584\n",
+		cg + "/memory.stat":        "anon 20971520\nfile 14680064\ninactive_anon 0\nactive_anon 20971520\ninactive_file 4194304\nactive_file 10485760\n",
+		cg + "/cpu.stat":           "usage_usec 2500000\nuser_usec 2000000\nsystem_usec 500000\n",
+		nostat + "/memory.current": "1048576\n",
+	} {
+		if err := os.WriteFile(filepath.Join(root, name), []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got := gatherValues(t, appCollector{root: root, apps: fakeSampler{
+		{App: "blog", Release: "v2", Running: true, Cgroup: cg, MemoryMax: 268435456},
+		{App: "shop", Release: "v1"}, // stopped: up 0, no numbers
+		{App: "wiki"},                // never deployed
+		{App: "evil", Release: "v1", Running: true, Cgroup: "/../../etc"},    // a path out of the root reads nothing
+		{App: "nocg", Release: "v1", Running: true, Cgroup: "/nowhere/here"}, // unreadable: no number, no error
+		{App: "nostat", Running: true, Cgroup: nostat},
+	}})
+	want := map[string]float64{
+		"motel_app_up,app=blog": 1, "motel_app_up,app=shop": 0, "motel_app_up,app=wiki": 0,
+		"motel_app_up,app=evil": 1, "motel_app_up,app=nocg": 1, "motel_app_up,app=nostat": 1,
+		"motel_app_memory_bytes,app=nostat":          1048576,
+		"motel_app_release_info,app=blog,release=v2": 1, "motel_app_release_info,app=shop,release=v1": 1,
+		"motel_app_release_info,app=evil,release=v1": 1, "motel_app_release_info,app=nocg,release=v1": 1,
+		"motel_app_memory_bytes,app=blog":                            31457280,
+		"motel_app_memory_max_bytes,app=blog":                        268435456,
+		"motel_app_cpu_seconds_total,app=blog,unit=app-blog.service": 2.5,
+	}
+	if len(got) != len(want) {
+		t.Errorf("series = %v", got)
+	}
+	for k, v := range want {
+		if got[k] != v {
+			t.Errorf("%s = %v, want %v", k, got[k], v)
+		}
+	}
+}
+
+// unixServer serves h on a unix socket in a test directory.
+func unixServer(t *testing.T, h http.Handler) string {
+	t.Helper()
+	sock := filepath.Join(t.TempDir(), "vm.sock")
+	l, err := net.Listen("unix", sock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := &http.Server{Handler: h, ReadHeaderTimeout: time.Second}
+	go func() { _ = srv.Serve(l) }()
+	t.Cleanup(func() { _ = srv.Close() })
+	return sock
+}
+
+func TestStoreClient(t *testing.T) {
+	var gotPath, gotBody string
+	sock := unixServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/import/prometheus":
+			b, _ := io.ReadAll(r.Body)
+			gotPath, gotBody = r.URL.RequestURI(), string(b)
+			w.WriteHeader(http.StatusNoContent)
+		case "/api/v1/query":
+			_, _ = io.WriteString(w, `{"status":"success","data":{"resultType":"vector","result":[{"metric":{"job":"vmalert"},"value":[1762776000,"1"]}]}}`)
+		case "/api/v1/query_range":
+			if r.URL.Query().Get("step") != "60" || r.URL.Query().Get("start") == "" {
+				http.Error(w, "bad range", http.StatusBadRequest)
+				return
+			}
+			_, _ = io.WriteString(w, `{"status":"success","data":{"resultType":"matrix","result":[{"metric":{"__name__":"m"},"values":[[1762776000,"1.5"],[1762776060.5,"2"]]}]}}`)
+		default:
+			http.Error(w, "unsupported path", http.StatusBadRequest)
+		}
+	}))
+	c := newStoreClient(sock)
+	ctx := context.Background()
+	if err := c.importText(ctx, []byte("x 1\n")); err != nil {
+		t.Fatal(err)
+	}
+	if gotPath != importPath || gotBody != "x 1\n" {
+		t.Fatalf("import: %s %q", gotPath, gotBody)
+	}
+	v, err := c.query(ctx, rulesQuery)
+	if err != nil || len(v) != 1 || v[0].labels["job"] != "vmalert" || v[0].points[0].v != 1 {
+		t.Fatalf("query: %+v %v", v, err)
+	}
+	now := time.Unix(1762776120, 0)
+	m, err := c.queryRange(ctx, "m", now.Add(-time.Hour), now, time.Minute)
+	if err != nil || len(m) != 1 || len(m[0].points) != 2 || m[0].points[1].v != 2 || m[0].points[1].t.UnixMilli() != 1762776060500 {
+		t.Fatalf("query_range: %+v %v", m, err)
+	}
+	if _, err := c.do(ctx, http.MethodGet, "/nope", nil, ""); err == nil || !strings.Contains(err.Error(), "answered 400") {
+		t.Fatalf("a refusal: %v", err)
+	}
+	if _, err := newStoreClient(filepath.Join(t.TempDir(), "absent.sock")).query(ctx, "x"); err == nil {
+		t.Fatal("no socket, no error")
+	}
+}
+
+func TestParseQueryAnswerRefuses(t *testing.T) {
+	for _, body := range []string{
+		`not json`,
+		`{"status":"error","error":"bad query"}`,
+		`{"status":"success","data":{"resultType":"scalar","result":[]}}`,
+		`{"status":"success","data":{"resultType":"vector","result":[{"metric":{},"value":[1,2]}]}}`,
+		`{"status":"success","data":{"resultType":"vector","result":[{"metric":{},"value":[1,"x"]}]}}`,
+		// json.Marshal refuses both, and the status would fail with them.
+		`{"status":"success","data":{"resultType":"matrix","result":[{"metric":{},"values":[[1,"NaN"]]}]}}`,
+		`{"status":"success","data":{"resultType":"matrix","result":[{"metric":{},"values":[[1,"+Inf"]]}]}}`,
+	} {
+		if _, err := parseQueryAnswer([]byte(body)); err == nil {
+			t.Errorf("%s: accepted", body)
+		}
+	}
+}
+
+// fakeStore is the store, scripted.
+type fakeStore struct {
+	mu        sync.Mutex
+	importErr error
+	imports   []string
+	up        []series
+	queryErr  error
+}
+
+func (f *fakeStore) importText(_ context.Context, text []byte) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.imports = append(f.imports, string(text))
+	return f.importErr
+}
+
+func (f *fakeStore) query(context.Context, string) ([]series, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.up, f.queryErr
+}
+
+type testPusher struct {
+	*pusher
+	at       time.Time
+	reported []Event
+	logs     *observer.ObservedLogs
+	store    *fakeStore
+	m        *MetricsStore
+}
+
+func newTestPusher(t *testing.T) *testPusher {
+	t.Helper()
+	tp := &testPusher{at: time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC), store: &fakeStore{}, m: &MetricsStore{}}
+	tp.pusher = newPusher(func(ev Event) { tp.reported = append(tp.reported, ev) })
+	tp.now = func() time.Time { return tp.at }
+	core, logs := observer.New(zap.DebugLevel)
+	tp.logs = logs
+	reg := prometheus.NewRegistry()
+	reg.MustRegister(prometheus.NewGauge(prometheus.GaugeOpts{Name: "motel_test_gauge", Help: "a gauge"}))
+	// No goroutine: the test calls pushOnce and checkRules itself.
+	tp.setLive(liveStore{m: tp.m, store: tp.store, gather: reg, logger: zap.New(core)})
+	return tp
+}
+
+func (tp *testPusher) take() []Event {
+	out := tp.reported
+	tp.reported = nil
+	return out
+}
+
+func TestPushSendsTheRegistry(t *testing.T) {
+	tp := newTestPusher(t)
+	tp.pushOnce(context.Background())
+	if len(tp.store.imports) != 1 || !strings.Contains(tp.store.imports[0], "# TYPE motel_test_gauge gauge\nmotel_test_gauge 0\n") {
+		t.Fatalf("imports = %q", tp.store.imports)
+	}
+}
+
+func TestPushFailingFiresStoreDown(t *testing.T) {
+	tp := newTestPusher(t)
+	tp.store.importErr = errors.New("connect: no such file or directory")
+	ctx := context.Background()
+	for i := 0; i < 10; i++ { // 4.5 minutes of failures
+		tp.pushOnce(ctx)
+		tp.at = tp.at.Add(pushEvery)
+	}
+	if evs := tp.take(); len(evs) != 0 {
+		t.Fatalf("before five minutes: %+v", evs)
+	}
+	if n := len(tp.logs.FilterMessage("metrics_store: push failed").FilterLevelExact(zap.WarnLevel).All()); n != 1 {
+		t.Fatalf("%d warning lines for one outage, want 1", n)
+	}
+	tp.pushOnce(ctx) // 5 minutes
+	evs := tp.take()
+	if len(evs) != 1 || evs[0].Name != eventStoreDown || !evs[0].Firing || evs[0].Kind != kindState || evs[0].Source != sourceMetrics {
+		t.Fatalf("at five minutes: %+v", evs)
+	}
+	if got := counterValue(t, tp.failed); got != 11 {
+		t.Fatalf("motel_metrics_push_failed_total = %v, want 11", got)
+	}
+	tp.store.importErr = nil
+	tp.pushOnce(ctx)
+	evs = tp.take()
+	if len(evs) != 1 || evs[0].Name != eventStoreDown || evs[0].Firing {
+		t.Fatalf("after a success: %+v", evs)
+	}
+	if len(tp.logs.FilterMessage("metrics_store: push succeeded again").All()) != 1 {
+		t.Fatal("no recovery line")
+	}
+	tp.pushOnce(ctx)
+	if evs := tp.take(); len(evs) != 0 {
+		t.Fatalf("a second success reported %+v", evs)
+	}
+}
+
+func counterValue(t *testing.T, c prometheus.Counter) float64 {
+	t.Helper()
+	var m dto.Metric
+	if err := c.Write(&m); err != nil {
+		t.Fatal(err)
+	}
+	return m.GetCounter().GetValue()
+}
+
+func TestRulesDownAfterThreeReads(t *testing.T) {
+	tp := newTestPusher(t)
+	ctx := context.Background()
+	up := func(v float64) []series {
+		return []series{{points: []point{{t: tp.at, v: v}}}}
+	}
+	for _, res := range [][]series{nil, up(0)} {
+		tp.store.up = res
+		if tp.checkRules(ctx); len(tp.take()) != 0 {
+			t.Fatal("fired before three reads")
+		}
+	}
+	// A read the store does not answer is no reading: it neither counts
+	// nor resets.
+	tp.store.queryErr = errors.New("refused")
+	tp.checkRules(ctx)
+	tp.store.queryErr = nil
+	if len(tp.take()) != 0 {
+		t.Fatal("a failed read counted")
+	}
+	tp.checkRules(ctx)
+	evs := tp.take()
+	if len(evs) != 1 || evs[0].Name != eventRulesDown || !evs[0].Firing {
+		t.Fatalf("the third read: %+v", evs)
+	}
+	tp.store.up = up(1)
+	tp.checkRules(ctx)
+	evs = tp.take()
+	if len(evs) != 1 || evs[0].Name != eventRulesDown || evs[0].Firing {
+		t.Fatalf("vmalert up again: %+v", evs)
+	}
+}
+
+func TestPusherReleaseClearsWhatFires(t *testing.T) {
+	tp := newTestPusher(t)
+	tp.storeDown, tp.rulesDown = true, true
+	tp.release(tp.m)
+	evs := tp.take()
+	if len(evs) != 2 || evs[0].Firing || evs[1].Firing {
+		t.Fatalf("release reported %+v", evs)
+	}
+	tp.pushOnce(context.Background())
+	if len(tp.store.imports) != 0 {
+		t.Fatal("pushed with no config")
+	}
+}
+
+func TestPusherGoesBackToTheOlderConfig(t *testing.T) {
+	tp := newTestPusher(t)
+	dir := t.TempDir()
+	tp.m.stateDirOverride, tp.m.rules, tp.m.logger = dir, []byte("older\n"), zap.NewNop()
+	tp.live = append(tp.live, liveStore{m: tp.m, store: tp.store, gather: prometheus.NewRegistry(), logger: zap.NewNop()})
+	newer := &MetricsStore{stateDirOverride: dir, rules: []byte("newer\n"), logger: zap.NewNop()}
+	newer.applyRules() // its Start
+	tp.configure(liveStore{m: newer, store: tp.store, gather: prometheus.NewRegistry(), logger: zap.NewNop()})
+	if tp.active != newer {
+		t.Fatal("configure did not take the newer config")
+	}
+	tp.release(newer) // its reload failed after Start: the older serves on
+	if tp.active != tp.m || !tp.running {
+		t.Fatalf("active = %p, running %v; want the older config, running", tp.active, tp.running)
+	}
+	if b, _ := os.ReadFile(filepath.Join(dir, RulesName)); string(b) != "older\n" {
+		t.Fatalf("vmalert still reads the stopped config's rules: %q", b)
+	}
+	tp.release(tp.m)
+	if tp.active != nil || tp.running {
+		t.Fatal("still running with no config")
+	}
+	if tp.gather != nil || tp.pusher.store != nil {
+		t.Fatal("the pusher holds a stopped config's registry or store")
+	}
+}
+
+// A reload to a config with no metrics_store block (both blocks to
+// notify alone, or to neither) retires the stopped config's rules;
+// motel's own shutdown keeps them (Copilot round 3 on #423).
+func TestReleaseRetiresTheRulesOnAReloadAlone(t *testing.T) {
+	for _, reload := range []bool{true, false} {
+		tp := newTestPusher(t)
+		dir := t.TempDir()
+		core, logs := observer.New(zap.InfoLevel)
+		tp.m.stateDirOverride, tp.m.rules, tp.m.logger = dir, renderRules(notifyApp(t)), zap.New(core)
+		tp.m.applyRules() // its Start
+		was := configRunning
+		configRunning = func() bool { return reload }
+		tp.release(tp.m)
+		configRunning = was
+		b, err := os.ReadFile(filepath.Join(dir, RulesName))
+		if err != nil {
+			t.Fatal(err)
+		}
+		alerting := strings.Contains(string(b), "alert:")
+		gone := logs.FilterMessage("metrics_store: the block is gone: vmalert is given no rule; the store and vmalert still run until motel metrics setup's units are stopped").Len()
+		switch {
+		case reload && (alerting || gone != 1):
+			t.Errorf("a reload took the block away: rules.yml has alerting rules %v, %d journal lines; want none, and one", alerting, gone)
+		case !reload && (!alerting || gone != 0):
+			t.Errorf("motel's shutdown: rules.yml has alerting rules %v, %d journal lines; want them kept, and no line", alerting, gone)
+		}
+		if reload {
+			if f := parseRules(t, b); len(f.Groups) != 2 {
+				t.Errorf("retired rules: %d groups, want the two, empty (vmalert refuses a file with none)", len(f.Groups))
+			}
+		}
+	}
+}
+
+// fakeRange is query_range and the instant query, scripted per query.
+type fakeRange struct {
+	mu      sync.Mutex
+	calls   int
+	err     error
+	block   chan struct{}
+	ans     func(q string) []series
+	instant func(q string) []series
+}
+
+func (f *fakeRange) query(ctx context.Context, q string) ([]series, error) {
+	if f.instant == nil {
+		return nil, f.err // not counted: calls is query_range's
+	}
+	return f.instant(q), nil
+}
+
+func (f *fakeRange) queryRange(ctx context.Context, q string, _, _ time.Time, _ time.Duration) ([]series, error) {
+	f.mu.Lock()
+	f.calls++
+	block := f.block
+	f.mu.Unlock()
+	if block != nil {
+		select {
+		case <-block:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
+	if f.err != nil {
+		return nil, f.err
+	}
+	return f.ans(q), nil
+}
+
+func TestMetricsViewSummary(t *testing.T) {
+	end := time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC)
+	pts := func(vals ...float64) []point {
+		out := make([]point, len(vals))
+		for i, v := range vals {
+			out[i] = point{t: end.Add(time.Duration(i-len(vals)+1) * time.Minute), v: v}
+		}
+		return out
+	}
+	var asked []string
+	f := &fakeRange{ans: func(q string) []series {
+		asked = append(asked, q)
+		if strings.HasPrefix(q, "sum(rate(") {
+			return []series{{labels: map[string]string{"app": "blog"}, points: pts(0.25, 0.25, 0.25, 0.5, 0.5, 0.5, 0.5, 0.5)}}
+		}
+		return []series{
+			{labels: map[string]string{"__name__": "motel_app_memory_bytes"}, points: pts(10, 40, 30)},
+			{labels: map[string]string{"__name__": "motel_app_memory_max_bytes"}, points: pts(100, 100, 100)},
+		}
+	}, instant: func(q string) []series {
+		asked = append(asked, q)
+		return []series{{points: []point{{t: end, v: 40}}}}
+	}}
+	v := newMetricsView(f, zap.NewNop())
+	v.now = func() time.Time { return end }
+	got, _ := json.Marshal(v.AppMetrics(context.Background(), "blog"))
+	want := `{"window":"1h","at":"2026-11-10T12:00:00Z","memory_bytes":{"now":30,"max":40},"memory_max_bytes":100,"cpu_cores":{"avg_5m":0.5,"avg":0.40625}}`
+	if string(got) != want {
+		t.Fatalf("metrics:\n got %s\nwant %s", got, want)
+	}
+	for _, q := range asked {
+		if !strings.Contains(q, `app="blog"`) {
+			t.Errorf("a query not scoped to the app: %s", q)
+		}
+	}
+	// Cached: the second ask within 30 s queries nothing.
+	v.AppMetrics(context.Background(), "blog")
+	if f.calls != 2 {
+		t.Fatalf("%d queries for two asks inside the cache", f.calls)
+	}
+	v.now = func() time.Time { return end.Add(viewCache) }
+	v.AppMetrics(context.Background(), "blog")
+	if f.calls != 4 {
+		t.Fatalf("%d queries after the cache expired, want 4", f.calls)
+	}
+}
+
+// An app that stopped 20 minutes ago, or a cap a later release dropped,
+// keeps its last points in the hour: history, never now.
+func TestMetricsViewStaleIsHistory(t *testing.T) {
+	end := time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC)
+	old := func(v float64) []point {
+		return []point{{t: end.Add(-25 * time.Minute), v: v}, {t: end.Add(-20 * time.Minute), v: v}}
+	}
+	f := &fakeRange{ans: func(q string) []series {
+		if strings.HasPrefix(q, "sum(rate(") {
+			return []series{{points: old(0.5)}}
+		}
+		return []series{
+			{labels: map[string]string{"__name__": "motel_app_memory_bytes"}, points: old(30)},
+			{labels: map[string]string{"__name__": "motel_app_memory_max_bytes"}, points: old(100)},
+		}
+	}, instant: func(string) []series { return []series{{points: []point{{t: end, v: 30}}}} }}
+	v := newMetricsView(f, zap.NewNop())
+	v.now = func() time.Time { return end }
+	got, _ := json.Marshal(v.AppMetrics(context.Background(), "blog"))
+	want := `{"window":"1h","at":"2026-11-10T11:40:00Z","memory_bytes":{"max":30},"cpu_cores":{"avg":0.5}}`
+	if string(got) != want {
+		t.Fatalf("stale series:\n got %s\nwant %s", got, want)
+	}
+}
+
+// The hour's max is the store's max_over_time over the raw samples
+// (pushed every 30 s), not the max of a 60 s-step range, which holds one
+// sample a step: a peak between two steps is the max.
+func TestMetricsViewMaxKeepsAPeakBetweenSteps(t *testing.T) {
+	end := time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC)
+	f := &fakeRange{
+		ans: func(q string) []series {
+			if strings.HasPrefix(q, "sum(rate(") {
+				return nil
+			}
+			return []series{{labels: map[string]string{"__name__": "motel_app_memory_bytes"},
+				points: []point{{t: end.Add(-time.Minute), v: 10}, {t: end, v: 10}}}}
+		},
+		instant: func(q string) []series {
+			if q != `max_over_time(motel_app_memory_bytes{app="blog"}[1h])` {
+				t.Errorf("instant query %s", q)
+			}
+			return []series{{points: []point{{t: end, v: 1000}}}}
+		},
+	}
+	v := newMetricsView(f, zap.NewNop())
+	v.now = func() time.Time { return end }
+	got, _ := json.Marshal(v.AppMetrics(context.Background(), "blog"))
+	want := `{"window":"1h","at":"2026-11-10T12:00:00Z","memory_bytes":{"now":10,"max":1000}}`
+	if string(got) != want {
+		t.Fatalf("a peak between steps:\n got %s\nwant %s", got, want)
+	}
+}
+
+// The range's first step can carry a sample from before the hour; the
+// raw peak leaves it out, and so does the max.
+func TestMetricsViewMaxLeavesOutASampleBeforeTheHour(t *testing.T) {
+	end := time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC)
+	f := &fakeRange{
+		ans: func(q string) []series {
+			if strings.HasPrefix(q, "sum(rate(") {
+				return nil
+			}
+			return []series{{labels: map[string]string{"__name__": "motel_app_memory_bytes"},
+				points: []point{{t: end.Add(-viewWindow), v: 1000}, {t: end, v: 10}}}}
+		},
+		instant: func(string) []series { return []series{{points: []point{{t: end, v: 10}}}} },
+	}
+	v := newMetricsView(f, zap.NewNop())
+	v.now = func() time.Time { return end }
+	got, _ := json.Marshal(v.AppMetrics(context.Background(), "blog"))
+	want := `{"window":"1h","at":"2026-11-10T12:00:00Z","memory_bytes":{"now":10,"max":10}}`
+	if string(got) != want {
+		t.Fatalf("a sample before the hour:\n got %s\nwant %s", got, want)
+	}
+}
+
+// An app that stopped just over an hour ago: the range's first step
+// still carries its last sample, and the raw peak holds nothing. The max
+// is absent, never 0.
+func TestMetricsViewNoPeakIsNoMax(t *testing.T) {
+	end := time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC)
+	f := &fakeRange{
+		ans: func(q string) []series {
+			if strings.HasPrefix(q, "sum(rate(") {
+				return nil
+			}
+			return []series{{labels: map[string]string{"__name__": "motel_app_memory_bytes"},
+				points: []point{{t: end.Add(-viewWindow), v: 1000}}}}
+		},
+		instant: func(string) []series { return nil },
+	}
+	v := newMetricsView(f, zap.NewNop())
+	v.now = func() time.Time { return end }
+	got, _ := json.Marshal(v.AppMetrics(context.Background(), "blog"))
+	want := `{"window":"1h","at":"2026-11-10T11:00:00Z","memory_bytes":{}}`
+	if string(got) != want {
+		t.Fatalf("no raw sample in the hour:\n got %s\nwant %s", got, want)
+	}
+}
+
+// An idle app's CPU averages are tiny floats; unrounded, each marshals
+// as a run of twenty or more digits, which the response filter masks as
+// a generated secret, and the whole status is withheld.
+func TestMetricsViewCPUIsRounded(t *testing.T) {
+	end := time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC)
+	f := &fakeRange{ans: func(q string) []series {
+		if !strings.HasPrefix(q, "sum(rate(") {
+			return nil
+		}
+		return []series{{points: []point{
+			{t: end.Add(-10 * time.Minute), v: 0.00005740305648246404},
+			{t: end.Add(-time.Minute), v: 0.00001234567890123456},
+			{t: end, v: 0.0000000912345678901234},
+		}}}
+	}}
+	v := newMetricsView(f, zap.NewNop())
+	v.now = func() time.Time { return end }
+	got, _ := json.Marshal(v.AppMetrics(context.Background(), "blog"))
+	want := `{"window":"1h","at":"2026-11-10T12:00:00Z","cpu_cores":{"avg_5m":0.000006,"avg":0.000023}}`
+	if string(got) != want {
+		t.Fatalf("tiny averages:\n got %s\nwant %s", got, want)
+	}
+	if regexp.MustCompile(`[A-Za-z0-9+=_-]{20,}`).Match(got) {
+		t.Fatalf("a run the response filter's entropy layer would read: %s", got)
+	}
+}
+
+func TestMetricsViewNoData(t *testing.T) {
+	v := newMetricsView(&fakeRange{ans: func(string) []series { return nil }}, zap.NewNop())
+	got, _ := json.Marshal(v.AppMetrics(context.Background(), "blog"))
+	if string(got) != `{"window":"1h"}` {
+		t.Fatalf("no data: %s", got)
+	}
+}
+
+func TestMetricsViewStoreFailing(t *testing.T) {
+	f := &fakeRange{err: errors.New("dial unix /run/motel-metrics/vm.sock: connect: connection refused")}
+	v := newMetricsView(f, zap.NewNop())
+	got, _ := json.Marshal(v.AppMetrics(context.Background(), "blog"))
+	if string(got) != `{"error":"the metrics store did not answer"}` {
+		t.Fatalf("a failing store: %s", got)
+	}
+}
+
+func TestMetricsViewBudgetAndOneQueryInFlight(t *testing.T) {
+	f := &fakeRange{block: make(chan struct{}), ans: func(string) []series { return nil }}
+	v := newMetricsView(f, zap.NewNop())
+	start := time.Now()
+	var wg sync.WaitGroup
+	answers := make([]any, 3)
+	for i := range answers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			answers[i] = v.AppMetrics(context.Background(), "blog")
+		}()
+	}
+	wg.Wait()
+	if d := time.Since(start); d > viewBudget+time.Second {
+		t.Fatalf("a store that never answers held the route %v", d)
+	}
+	for _, a := range answers {
+		if a.(AppMetrics).Error != errViewStore {
+			t.Fatalf("answers = %+v", answers)
+		}
+	}
+	if f.calls != 1 {
+		t.Fatalf("%d queries for three concurrent asks, want 1", f.calls)
+	}
+	// A request that gives up before the store answers gets the error at
+	// once.
+	v2 := newMetricsView(&fakeRange{block: make(chan struct{}), ans: func(string) []series { return nil }}, zap.NewNop())
+	go v2.AppMetrics(context.Background(), "blog")
+	time.Sleep(50 * time.Millisecond)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if a := v2.AppMetrics(ctx, "blog").(AppMetrics); a.Error != errViewStore {
+		t.Fatalf("a cancelled request: %+v", a)
+	}
+}
+
+func TestWriteRules(t *testing.T) {
+	dir := t.TempDir()
+	if _, err := writeRules(filepath.Join(dir, "absent"), []byte("x")); !errors.Is(err, errMetricsNotSetUp) {
+		t.Fatalf("no state dir: %v", err)
+	}
+	changed, err := writeRules(dir, renderRules(nil))
+	if err != nil || !changed {
+		t.Fatalf("first write: %v %v", changed, err)
+	}
+	if changed, err = writeRules(dir, renderRules(nil)); err != nil || changed {
+		t.Fatalf("the same rules again: %v %v", changed, err)
+	}
+	st, err := os.Stat(filepath.Join(dir, RulesName))
+	if err != nil || st.Mode().Perm() != 0o640 {
+		t.Fatalf("rules.yml: %v %v", st, err)
+	}
+}

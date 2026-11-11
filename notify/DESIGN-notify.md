@@ -8,9 +8,9 @@ the "History" section at the end holds only dated one-liners.
 runs without a `notify` block, and the package only Suggests
 Alertmanager); the three Owed rows that barred a production box
 landed on 2026-11-10 ("History"), and what is owed still ("Owed") is
-real Slack and Discord hooks and later slices. No metrics store, no vmalert, no `metrics` in
-`GET /<app>`; those are slice two, designed in "Later slices" and not
-built. Normative for what is built: a change
+real Slack and Discord hooks and later slices. The metrics store,
+vmalert and `metrics` in `GET /<app>` are slice two, in
+notify/DESIGN-metrics.md. Normative for what is built: a change
 that cannot hold a line here changes the line in the same PR, with
 the reason.
 
@@ -400,7 +400,7 @@ and the route check (`SendRequest.Check`):
 |---|---|
 | a source not `[a-z0-9-]{1,32}` (stamped `external:<name>`) | one grammar, so a key cannot pose as a detector's |
 | a subject not `box` or `app:<an app the box runs>` | an app subject reaches its deployers |
-| motel's own names: `Watchdog`, `ChannelFailed`, `NotifyTest`, `deploy_in_progress`, `watchdog_*`, the deploy events, `disk_low`, `cert_failed`, `backup_*`, `drill_failed` | a producer that could post them could mute an app, fake the heartbeat, or speak as a detector |
+| motel's own names: `Watchdog`, `ChannelFailed`, `NotifyTest`, `deploy_in_progress`, `watchdog_*`, the deploy events, `disk_low`, `cert_failed`, `backup_*`, `drill_failed`, and the metrics store's (`metrics_store_down`, `metrics_rules_down`, `metrics_store_read_only`, `metrics_store_disk_fill`, `app_memory_high`) | a producer that could post them could mute an app, fake the heartbeat, or speak as a detector |
 | a summary empty, on two lines, or over 200 characters; details over 2 KiB or with names not `[a-z][a-z0-9_]*` | #418's limits |
 | a body with unknown fields (a raw Alertmanager label set) | the route takes the request, never labels |
 | a name or instance the filter would mask (a channel URL, a secret-shaped token) | both are the key, the labels and the answer, which the filter does not rewrite |
@@ -577,13 +577,14 @@ five-minute give-up of an undeliverable post, the bucket's hour.
 
 ## Later slices
 
-Designed in the fresh-slate draft, not built: the metrics store
-(Debian's `victoria-metrics` in a private network namespace behind a
-`systemd-socket-proxyd` unix socket), motel pushing its registry to it,
-rules over its series, `metrics` in `GET /<app>`, and a
-`motel metrics setup` with the same mask-first order. vmalert's
-`Watchdog` and failed-delivery rules would be second sources beside
-motel's own; Alertmanager deduplicates.
+Slice two, the metrics store (Debian's `victoria-metrics` in a private
+network namespace behind a `systemd-socket-proxyd` unix socket), motel's
+push, rules over its series, `metrics` in `GET /<app>` and `motel
+metrics setup`, is notify/DESIGN-metrics.md. Its vmalert renders a
+second `ChannelFailed` with motel's labels, which Alertmanager
+deduplicates; it posts no `Watchdog`, which this section once promised:
+with motel's labels it would either keep the heartbeat pinging while
+motel is down or resolve motel's own (DESIGN-metrics.md, "Rules").
 
 ## History
 

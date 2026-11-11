@@ -138,3 +138,16 @@ RUN install -d -m 2750 -o root -g motel /etc/motel/secrets \
 		'NOTIFY_HC_URL="http://e2e-sink:8080/deadman"' \
 		> /etc/motel/secrets/_box.env \
 	&& chown root:motel /etc/motel/secrets/_box.env && chmod 0640 /etc/motel/secrets/_box.env
+
+# The metrics suite's box (make e2e-metrics, e2e/metrics/run.sh): the
+# notify suite's box with Debian's victoria-metrics (the store and
+# vmalert) installed as `motel metrics setup` would install it, masked
+# first so that its unit, which listens on 0.0.0.0:8428, never starts; the
+# suite runs notify's setup and then the store's, which finds the package
+# installed and does the rest.
+FROM notify-box AS metrics-box
+RUN systemctl mask victoria-metrics.service \
+	&& apt-get update \
+	&& apt-get install -y --no-install-recommends victoria-metrics \
+	&& rm -rf /var/lib/apt/lists/*
+COPY e2e/metrics/Caddyfile /etc/motel/Caddyfile

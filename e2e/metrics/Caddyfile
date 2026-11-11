@@ -1,0 +1,59 @@
+# The metrics suite's box (e2e/metrics/run.sh): the notify suite's
+# Caddyfile (e2e/notify/Caddyfile) with a metrics_store block, which takes
+# both defaults: the socket motel metrics setup makes, and its state
+# directory. The notify block is the same: the store's rules route through
+# its tree, and vmalert's ChannelFailed is rendered from its receivers.
+# Plain HTTP and a private address are refused for every channel on a
+# real box; allow_insecure_channels admits them here.
+{
+	admin unix//run/motel/admin.sock
+	auto_https off
+
+	liveswap {
+		root /var/lib/liveswap
+		allow_insecure_http
+		artifact_allowlist e2e-artifacts:8080
+
+		# blog trusts the minted deploy key, which a deployer's channel is
+		# bound to; shop trusts another key nobody binds.
+		app blog {
+			command ./server
+			deploy_trust local {
+				public_key /shared/deploy.pub
+				audience e2e
+				max_token_ttl 87600h
+			}
+			health_interval 250ms
+			health_timeout 1s
+			soak 1s
+			deadline 10s
+			drain 500ms
+			grace 3s
+			watchdog_grace 5s
+		}
+		app shop {
+			command ./server
+			deploy_trust local {
+				public_key /etc/motel/shop.pub
+				audience e2e
+			}
+		}
+	}
+
+	notify {
+		channel ops json {secret.NOTIFY_OPS_URL}
+		# Answers 400: the failing channel channel_failed must name.
+		channel oncall discord {secret.NOTIFY_ONCALL_URL}
+		channel blog-deployer ntfy {secret.NOTIFY_BLOG_URL}
+		operator ops oncall
+		bind local:/shared/deploy.pub blog-deployer
+		heartbeat {secret.NOTIFY_HC_URL}
+		allow_insecure_channels
+	}
+
+	metrics_store
+}
+
+:8081 {
+	liveswap_webhook
+}

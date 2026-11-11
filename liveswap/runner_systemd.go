@@ -320,6 +320,9 @@ func (h *systemdHandle) state() handleState {
 	if u := h.unenforced.Load(); u != nil {
 		st.CapsUnenforced = *u
 	}
+	if cg := h.cgroup.Load(); cg != nil {
+		st.Cgroup = *cg
+	}
 	h.capsLock.Unlock()
 	return st
 }

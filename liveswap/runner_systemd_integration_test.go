@@ -969,6 +969,7 @@ func TestIntegrationSystemdSandboxedUnit(t *testing.T) {
 		"motel_lib": "closed", "run_motel": "closed", "etc_motel": "closed",
 		"admin_socket": "closed", "mgr_socket": "closed",
 		"notify_run": "closed", "notify_socket": "closed", "notify_state": "closed",
+		"metrics_run": "closed", "metrics_socket": "closed", "metrics_state": "closed",
 		"cgroup": "readonly", "tmp": "writable", "home": shared, "xdg_runtime": "unset",
 		// No core dump of a crashed app, and no way to raise the soft
 		// limit back: LimitCORE=0 on both, read back from inside.
