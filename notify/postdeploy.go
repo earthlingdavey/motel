@@ -148,7 +148,7 @@ type due struct {
 	elapsed time.Duration
 }
 
-// tick makes every check due: each outside the lock, one after another.
+// tick makes every check due, outside the lock.
 func (c *comparator) tick(ctx context.Context) {
 	c.mu.Lock()
 	if c.active == nil {
@@ -182,35 +182,49 @@ func (c *comparator) tick(ctx context.Context) {
 	store, logger := c.store, c.logger
 	c.mu.Unlock()
 
+	// At once, each within its own budget: one after another, a slow
+	// store would stretch a tick past the minute between checks, and
+	// the window could end before a regression's count is reached.
+	var wg sync.WaitGroup
 	for _, d := range dues {
-		cctx, cancel := context.WithTimeout(ctx, storeRequestTimeout)
-		v := checkRelease(cctx, store, d.cmp, d.rule, d.elapsed)
-		cancel()
-		if v.err != nil {
-			logger.Debug("monitor rules: the post-deploy check is skipped: the metrics store did not answer",
-				zap.String("app", d.cmp.app), zap.String("release", d.cmp.release), zap.Error(v.err))
-			continue
-		}
-		var ev *Event
-		c.mu.Lock()
-		if c.runs[d.cmp.app] == d.run { // not ended or replaced meanwhile
-			switch {
-			case v.skipped:
-			case !v.failed:
-				d.run.failed = 0
-			default:
-				d.run.failed++
-				if d.run.failed >= d.rule.failures() {
-					delete(c.runs, d.cmp.app)
-					e := regressedEvent(d.cmp, d.rule, d.elapsed, v, d.run.failed)
-					ev = &e
-				}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			c.check(ctx, store, logger, d)
+		}()
+	}
+	wg.Wait()
+}
+
+// check makes one due check and counts its outcome.
+func (c *comparator) check(ctx context.Context, store instantQuerier, logger *zap.Logger, d due) {
+	cctx, cancel := context.WithTimeout(ctx, storeRequestTimeout)
+	v := checkRelease(cctx, store, d.cmp, d.rule, d.elapsed)
+	cancel()
+	if v.err != nil {
+		logger.Debug("monitor rules: the post-deploy check is skipped: the metrics store did not answer",
+			zap.String("app", d.cmp.app), zap.String("release", d.cmp.release), zap.Error(v.err))
+		return
+	}
+	var ev *Event
+	c.mu.Lock()
+	if c.runs[d.cmp.app] == d.run { // not ended or replaced meanwhile
+		switch {
+		case v.skipped:
+		case !v.failed:
+			d.run.failed = 0
+		default:
+			d.run.failed++
+			if d.run.failed >= d.rule.failures() {
+				delete(c.runs, d.cmp.app)
+				e := regressedEvent(d.cmp, d.rule, d.elapsed, v, d.run.failed)
+				ev = &e
 			}
 		}
-		c.mu.Unlock()
-		if ev != nil {
-			c.report(*ev)
-		}
+	}
+	c.mu.Unlock()
+	if ev != nil {
+		c.report(*ev)
 	}
 }
 

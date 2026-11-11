@@ -24,6 +24,11 @@ type relStore struct {
 	err     error
 	queries []string
 	at      []time.Time
+	// together, when set, holds each query until that many are in
+	// flight at once, or fails it after a second.
+	together int
+	inFlight int
+	cond     *sync.Cond
 }
 
 func (s *relStore) set(key string, sent, errs float64, p95 float64) {
@@ -37,6 +42,22 @@ var releaseRe = regexp.MustCompile(`release="([^"]*)"`)
 func (s *relStore) queryAt(_ context.Context, q string, t time.Time) ([]series, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.together > 0 {
+		if s.cond == nil {
+			s.cond = sync.NewCond(&s.mu)
+		}
+		s.inFlight++
+		s.cond.Broadcast()
+		deadline := time.Now().Add(time.Second)
+		for s.inFlight < s.together && time.Now().Before(deadline) {
+			go func() { time.Sleep(10 * time.Millisecond); s.cond.Broadcast() }()
+			s.cond.Wait()
+		}
+		if s.inFlight < s.together {
+			s.inFlight--
+			return nil, errors.New("slow: alone")
+		}
+	}
 	s.queries = append(s.queries, q)
 	s.at = append(s.at, t)
 	if s.err != nil {
@@ -76,7 +97,8 @@ type testComparator struct {
 func newTestComparator(t *testing.T, rules ...Rule) *testComparator {
 	t.Helper()
 	tc := &testComparator{at: time.Date(2026, 11, 11, 12, 0, 0, 0, time.UTC), store: &relStore{nums: map[string]releaseNumbers{}}, m: &MetricsStore{Rules: rules}}
-	tc.comparator = newComparator(func(ev Event) { tc.evs = append(tc.evs, ev) })
+	var mu sync.Mutex
+	tc.comparator = newComparator(func(ev Event) { mu.Lock(); tc.evs = append(tc.evs, ev); mu.Unlock() })
 	tc.now = func() time.Time { return tc.at }
 	tc.every = time.Hour // the tests tick it themselves
 	core, logs := observer.New(zap.DebugLevel)
@@ -381,5 +403,22 @@ func TestLifecycleSinkTapsTheDeploy(t *testing.T) {
 	s.Lifecycle(liveswap.LifecycleEvent{Name: liveswap.EventDeployFailed, App: "blog", Release: "v3"})
 	if run := tc.runs["blog"]; run == nil || run.release != "v2" {
 		t.Fatalf("a failed deploy ended the comparison: %+v", tc.runs)
+	}
+}
+
+// The checks due at once are made at once: a store that takes its time
+// over each does not stretch the tick past the minute between checks.
+func TestPostDeployChecksAtOnce(t *testing.T) {
+	r := regressRule
+	r.Failures = 1
+	tc := newTestComparator(t, r)
+	tc.store.together = 2
+	tc.store.set("v2", 200, 100, 0.1)
+	tc.store.set("s2", 200, 100, 0.1)
+	tc.deployed(liveswap.LifecycleEvent{Name: liveswap.EventDeploySucceeded, App: "shop", Release: "s2", Cutover: tc.at})
+	tc.deploy("blog", "v2", "")
+	tc.minute()
+	if len(tc.evs) != 2 {
+		t.Fatalf("two apps due at once: %d events, want both", len(tc.evs))
 	}
 }
