@@ -221,8 +221,9 @@ leaves it to start on its socket's first connection, starts the socket
 and reloads motel, which renders the monitor block's channels.
 
 With --metrics, the store, which posts to Alertmanager's socket: on a
-box where Alertmanager is not set up yet (no motel-am.socket),
-Alertmanager's setup above runs first, and the store's only once it
+box where Alertmanager's setup has not run to its end (motel-am.socket
+not enabled and listening, or the service masked), Alertmanager's setup
+above runs first, and the store's only once it
 has succeeded; where it is, Alertmanager is left as it runs, and only
 the store's setup runs. The store's: installs
 victoria-metrics so that it never listens in the host's network
@@ -253,14 +254,14 @@ holds in memory goes), motel monitor setup --metrics the store's.`,
 
 // runSetup is `motel monitor setup`: Alertmanager's setup; with
 // metrics, the store's, after Alertmanager's only where that has not
-// run (its socket unit is not installed, the store setup's own guard).
-// A re-run with metrics leaves a running Alertmanager alone: its setup
-// masks and stops it, which loses the alerts it holds in memory and
-// what waits in a group. Each setup keeps its own refusals and its own
-// put-back on a failed re-run, and the first that fails stops the rest.
+// run to its end (amSetUp). A re-run with metrics leaves a working
+// Alertmanager alone: its setup masks and stops it, which loses the
+// alerts it holds in memory and what waits in a group. Each setup keeps
+// its own refusals and its own put-back on a failed re-run, and the
+// first that fails stops the rest.
 func runSetup(sys system, root string, out io.Writer, metrics bool) error {
-	if metrics && isFile(filepath.Join(root, socketPath)) {
-		_, _ = fmt.Fprintf(out, "Alertmanager is set up (%s): left as it runs; motel monitor setup re-runs its setup\n", socketPath)
+	if metrics && amSetUp(sys, root) {
+		_, _ = fmt.Fprintf(out, "Alertmanager is set up (%s enabled and listening): left as it runs; motel monitor setup re-runs its setup\n", amSocket)
 		return metricsSetup(sys, root, out)
 	}
 	if err := setup(sys, root, out); err != nil {
@@ -270,6 +271,25 @@ func runSetup(sys system, root string, out io.Writer, metrics bool) error {
 		return nil
 	}
 	return metricsSetup(sys, root, out)
+}
+
+// amSetUp reports an Alertmanager setup that ran to its end: the socket
+// unit written, the service not masked, and the socket enabled and
+// active. A first setup writes the socket unit before it unmasks the
+// service and enables the socket, so the file alone would take one that
+// failed between for a working Alertmanager, masked and deaf (Copilot
+// round 1 on #428); then Alertmanager's setup runs again, which is its
+// recovery, and touches nothing that works.
+func amSetUp(sys system, root string) bool {
+	if !isFile(filepath.Join(root, socketPath)) {
+		return false
+	}
+	// `systemctl mask` is a link to /dev/null where the unit would be.
+	if dest, err := os.Readlink(filepath.Join(root, unitDir, amService)); err == nil && dest == os.DevNull {
+		return false
+	}
+	return sys.run("systemctl", "is-enabled", "--quiet", amSocket) == nil &&
+		sys.run("systemctl", "is-active", "--quiet", amSocket) == nil
 }
 
 // apiRefusal is the admin API's own words for a refusal, which

@@ -452,8 +452,8 @@ order certain rather than preventing it. On a box with no firewall
 (hotserve-1 has none) that is the alert and silence API on the
 internet. So **`motel monitor setup`**, run by root, does it in an order
 motel controls (`--metrics` adds the store's setup, after this one
-only where this one has not run: DESIGN-metrics.md, "Packaging and
-setup"):
+only where this one has not run to its end: DESIGN-metrics.md,
+"Packaging and setup"):
 
 1. `systemctl mask prometheus-alertmanager.service`, then `stop` it:
    one installed by hand before setup runs on Debian's ports, and a

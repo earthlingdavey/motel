@@ -401,7 +401,9 @@ starts on install listening on `0.0.0.0:8428`, unauthenticated
 order motel's scripts before it. vmalert ships in the same package, so
 there is one package to suggest. **`motel monitor setup --metrics`**,
 run by root, is the store's setup. On a box where Alertmanager's has
-not run (`motel-am.socket` is not installed), Alertmanager's runs first
+not run to its end (`motel-am.socket` not installed, not enabled or not
+listening, or the service still masked: a first run that failed after
+writing the socket unit), Alertmanager's runs first, as its recovery,
 (DESIGN-notify.md, "Packaging and setup") and the store's only once it
 has succeeded; where it has, Alertmanager is left as it runs, since its
 setup masks and stops it, which loses the alerts it holds in memory
@@ -545,7 +547,7 @@ or a line of theirs the facts overturned:
 | No second package (`motel-metrics`); the units ship in the binary | slice one's precedent: the package installs nothing of the stack until root runs setup, so a second `.deb` would hold six unit files and a command |
 | vmalert comes from `victoria-metrics` | Debian 13 ships `/usr/bin/vmalert` in it and has no `vmalert` package (`apt-cache search vmalert`, 2026-11-10) |
 | The store's setup is `--metrics` on `motel monitor setup`, after Alertmanager's | vmalert's only outlet is Alertmanager's socket, and its proxy's unit requires `motel-am.socket` |
-| `--metrics` runs Alertmanager's setup only where it has not run | Alertmanager's setup masks and stops a running Alertmanager, which loses the alerts it holds in memory and what waits in a group: the store is added, or its units put back, without that; `motel monitor setup` puts Alertmanager's back when they need it. /code-review pass 2 on the monitor block, reversing pass 1's every-time rule |
+| `--metrics` runs Alertmanager's setup only where it has not run to its end | Alertmanager's setup masks and stops a running Alertmanager, which loses the alerts it holds in memory and what waits in a group: the store is added, or its units put back, without that; `motel monitor setup` puts Alertmanager's back when they need it. Its end is the socket enabled and listening and the service unmasked, not the socket unit's file, which a first run writes before it unmasks (Copilot round 1 on #428). /code-review pass 2 on the monitor block, reversing pass 1's every-time rule |
 | No vmalert `Watchdog` | the merge hazard above; motel watches the chain instead |
 | `ChannelFailed` from vmalert is rendered per told channel with motel's labels | the only form in which Alertmanager deduplicates the two sources |
 | `MemoryMax=256M`, `-memory.allowedBytes=96MiB`, 14 days | the measured working set above; both caps mandatory, since the store sizes its caches from what it can see |

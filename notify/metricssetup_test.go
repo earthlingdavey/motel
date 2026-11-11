@@ -271,19 +271,19 @@ func TestMonitorSetupRunsAlertmanagerOnlyWhereItIsNotSetUp(t *testing.T) {
 	if err := runSetup(storeOnly, root, &out, true); err != nil {
 		t.Fatal(err)
 	}
-	for _, c := range storeOnly.cmds {
+	for _, c := range acts(storeOnly.cmds) {
 		if strings.Contains(c, amService) || strings.Contains(c, amSocket) {
 			t.Fatalf("with Alertmanager set up, --metrics ran %q: %v", c, storeOnly.cmds)
 		}
 	}
-	if storeOnly.cmds[0] != "systemctl mask "+vmService || !strings.Contains(out.String(), "Alertmanager is set up") {
+	if acts(storeOnly.cmds)[0] != "systemctl mask "+vmService || !strings.Contains(out.String(), "Alertmanager is set up") {
 		t.Fatalf("with Alertmanager set up: %v\n%s; want the store's setup alone, and a line saying why", storeOnly.cmds, out.String())
 	}
 	again := &fakeSystem{isInstalled: true, failOn: "systemctl restart " + vmalertUnit}
 	if err := runSetup(again, root, &bytes.Buffer{}, true); err == nil {
 		t.Fatal("the failing re-run succeeded")
 	}
-	if again.cmds[0] != "systemctl mask "+vmService || has(again.cmds, "systemctl mask "+amService) ||
+	if acts(again.cmds)[0] != "systemctl mask "+vmService || has(again.cmds, "systemctl mask "+amService) ||
 		!slices.ContainsFunc(again.cmds, func(c string) bool { return strings.HasPrefix(c, "systemctl start "+vmSocket) }) {
 		t.Fatalf("a re-run that fails in the store's setup: %v; want the store's setup alone, put back", again.cmds)
 	}
@@ -291,5 +291,50 @@ func TestMonitorSetupRunsAlertmanagerOnlyWhereItIsNotSetUp(t *testing.T) {
 	amAgain := &fakeSystem{isInstalled: true}
 	if err := runSetup(amAgain, root, &bytes.Buffer{}, false); err != nil || amAgain.cmds[0] != "systemctl mask "+amService || has(amAgain.cmds, "systemctl mask "+vmService) {
 		t.Fatalf("motel monitor setup on a set-up box: %v, %v; want Alertmanager's setup alone", err, amAgain.cmds)
+	}
+}
+
+// acts is what setup did to the host, its probes of systemd's state
+// left out.
+func acts(cmds []string) []string {
+	return slices.DeleteFunc(slices.Clone(cmds), func(c string) bool {
+		return strings.HasPrefix(c, "systemctl is-enabled ") || strings.HasPrefix(c, "systemctl is-active ")
+	})
+}
+
+// A first Alertmanager setup that failed after it wrote its socket unit
+// left the service masked or the socket not enabled: --metrics runs
+// Alertmanager's setup again, its recovery, before the store's, and
+// does not take the file for a working Alertmanager (Copilot round 1 on
+// #428).
+func TestMetricsSetupFinishesAnUnfinishedAlertmanagerSetup(t *testing.T) {
+	for _, c := range []struct {
+		name   string
+		masked bool   // the mask link is still in place
+		probe  string // the probe that fails
+	}{
+		{"masked", true, ""},
+		{"the socket not enabled", false, "systemctl is-enabled"},
+		{"the socket not listening", false, "systemctl is-active"},
+	} {
+		root := t.TempDir()
+		first := &fakeSystem{failOn: "systemctl unmask " + amService}
+		if err := runSetup(first, root, &bytes.Buffer{}, false); err == nil || !isFile(filepath.Join(root, socketPath)) {
+			t.Fatalf("%s: the first setup: %v; want it failed after writing %s", c.name, err, socketPath)
+		}
+		if c.masked {
+			if err := os.Symlink(os.DevNull, filepath.Join(root, unitDir, amService)); err != nil {
+				t.Fatal(err)
+			}
+		}
+		retry := &fakeSystem{isInstalled: true, failOn: c.probe}
+		if err := runSetup(retry, root, &bytes.Buffer{}, true); err != nil {
+			t.Fatalf("%s: %v", c.name, err)
+		}
+		done := acts(retry.cmds)
+		am, unmask, vm := slices.Index(done, "systemctl mask "+amService), slices.Index(done, "systemctl unmask "+amService), slices.Index(done, "systemctl mask "+vmService)
+		if am != 0 || unmask < 0 || vm <= unmask {
+			t.Errorf("%s: --metrics after a failed first setup: %v; want Alertmanager's setup, whole, then the store's", c.name, done)
+		}
 	}
 }
