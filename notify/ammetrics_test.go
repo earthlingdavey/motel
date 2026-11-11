@@ -22,7 +22,7 @@ func fixture(t *testing.T) []byte {
 // served on hotserve-1: with receiver-name-in-metrics, a failed counter
 // pre-made at zero for each receiver and reason of the integrations the
 // config uses (there, only webhook: the operator's channel is ntfy), and
-// the one attempt `motel notify test` made to ch-operator.
+// the one attempt `motel monitor test` made to ch-operator.
 func TestParseAMMetricsRealBody(t *testing.T) {
 	m, err := parseAMMetrics(fixture(t))
 	if err != nil {
@@ -173,7 +173,7 @@ func TestScrapeFailedKeepsTheBaselineOverABadRead(t *testing.T) {
 			}
 		}
 	}
-	if n := len(te.lines("notify: channel failed")); n != 1 {
+	if n := len(te.lines("monitor: channel failed")); n != 1 {
 		t.Fatalf("channel failed lines = %d", n)
 	}
 }

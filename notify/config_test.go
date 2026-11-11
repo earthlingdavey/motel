@@ -61,7 +61,7 @@ func mustParse(t *testing.T, src string) *App {
 	return a
 }
 
-const fullBlock = `notify {
+const fullBlock = `monitor {
 	channel ops slack {secret.NOTIFY_OPS_URL}
 	channel pager ntfy {secret.NOTIFY_PAGER_URL} severity critical
 	channel alice discord {secret.NOTIFY_ALICE_URL}
@@ -108,12 +108,12 @@ func TestCaddyfileRefusals(t *testing.T) {
 		{"bind dup claim", `bind "local:/k.pub sub=a sub=b" ops`, "given twice"},
 		{"heartbeat literal", `heartbeat https://hc-ping.com/x`, "never in the Caddyfile"},
 		{"deploy_succeeded yes", `deploy_succeeded yes`, "on or off"},
-		{"unknown", `quiet_hours 22-07`, "unknown notify subdirective"},
+		{"unknown", `quiet_hours 22-07`, "unknown monitor subdirective"},
 		{"block on a line", "operator ops {\n\tx\n}", "take no block"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			_, err := parse(t, "notify {\n\t"+c.body+"\n}")
+			_, err := parse(t, "monitor {\n\t"+c.body+"\n}")
 			if err == nil || !strings.Contains(err.Error(), c.want) {
 				t.Fatalf("err = %v, want it to contain %q", err, c.want)
 			}
@@ -180,7 +180,7 @@ func TestResolveRefusals(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			a := mustParse(t, "notify {\n"+c.body+"\n}")
+			a := mustParse(t, "monitor {\n"+c.body+"\n}")
 			sec := c.secrets
 			if sec == nil {
 				sec = testSecrets()
@@ -246,7 +246,7 @@ func TestResolveDropsAtBoot(t *testing.T) {
 		}
 	}
 	// A refusal that is not a secret's is refused all the same.
-	b := mustParse(t, "notify {\nchannel ops slack {secret.NOTIFY_OPS_URL}\noperator ops nosuch\n}")
+	b := mustParse(t, "monitor {\nchannel ops slack {secret.NOTIFY_OPS_URL}\noperator ops nosuch\n}")
 	if _, _, err := b.resolveWith(testTrust(), map[string]string{}, nil, true, nil); err == nil || !strings.Contains(err.Error(), "operator names nosuch") {
 		t.Fatalf("err = %v", err)
 	}
@@ -255,7 +255,7 @@ func TestResolveDropsAtBoot(t *testing.T) {
 // A secret that several lines read is dropped from each, and the
 // reason names every one of them, not only the last in the block.
 func TestResolveDropNamesEveryLineOfASharedSecret(t *testing.T) {
-	a := mustParse(t, "notify {\nchannel ops slack {secret.NOTIFY_OPS_URL}\nchannel ops2 json {secret.NOTIFY_OPS_URL}\nchannel spare ntfy {secret.NOTIFY_PAGER_URL}\noperator ops ops2 spare\nheartbeat {secret.NOTIFY_OPS_URL}\n}")
+	a := mustParse(t, "monitor {\nchannel ops slack {secret.NOTIFY_OPS_URL}\nchannel ops2 json {secret.NOTIFY_OPS_URL}\nchannel spare ntfy {secret.NOTIFY_PAGER_URL}\noperator ops ops2 spare\nheartbeat {secret.NOTIFY_OPS_URL}\n}")
 	sec := testSecrets()
 	delete(sec, "NOTIFY_OPS_URL")
 	r, dropped, err := a.resolveWith(testTrust(), sec, nil, true, nil)
@@ -301,7 +301,7 @@ func TestResolveDropsEveryLineOfAnUnusableFile(t *testing.T) {
 }
 
 func TestResolveNoLiveswap(t *testing.T) {
-	a := mustParse(t, "notify {\nchannel ops slack {secret.NOTIFY_OPS_URL}\noperator ops\n}")
+	a := mustParse(t, "monitor {\nchannel ops slack {secret.NOTIFY_OPS_URL}\noperator ops\n}")
 	r, err := a.resolve(map[string][]TrustSource{}, testSecrets())
 	if err != nil {
 		t.Fatal(err)
@@ -309,7 +309,7 @@ func TestResolveNoLiveswap(t *testing.T) {
 	if len(r.apps) != 0 || len(r.appChannels) != 0 {
 		t.Fatalf("apps %v channels %v", r.apps, r.appChannels)
 	}
-	a = mustParse(t, "notify {\nchannel ops slack {secret.NOTIFY_OPS_URL}\noperator ops\nbind local:/etc/motel/alice.pub ops\n}")
+	a = mustParse(t, "monitor {\nchannel ops slack {secret.NOTIFY_OPS_URL}\noperator ops\nbind local:/etc/motel/alice.pub ops\n}")
 	if _, err := a.resolve(map[string][]TrustSource{}, testSecrets()); err == nil {
 		t.Fatal("a binding with no apps at all was accepted")
 	}

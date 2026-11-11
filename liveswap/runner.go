@@ -245,6 +245,6 @@ type handleState struct {
 	CapsUnenforced []string `json:"-"`
 	// Cgroup is the unit's cgroup path under /sys/fs/cgroup, as the
 	// manager last reported it; "" until it has. Not persisted: the
-	// metrics_store module reads the unit's numbers from it.
+	// metrics store reads the unit's numbers from it.
 	Cgroup string `json:"-"`
 }

@@ -27,28 +27,33 @@ import (
 )
 
 func parseStore(src string) (*MetricsStore, error) {
-	m := new(MetricsStore)
-	return m, m.UnmarshalCaddyfile(caddyfile.NewTestDispenser(src))
+	a := new(App)
+	err := a.UnmarshalCaddyfile(caddyfile.NewTestDispenser(src))
+	return a.Metrics, err
 }
 
-func TestMetricsStoreBlock(t *testing.T) {
-	m, err := parseStore("metrics_store")
-	if err != nil || m.store() != DefaultStoreSocket || m.stateDir() != DefaultMetricsStateDir {
-		t.Fatalf("the bare option: %+v, %v", m, err)
+func TestMetricsLine(t *testing.T) {
+	m, err := parseStore("monitor {\n metrics\n}")
+	if err != nil || m == nil || m.store() != DefaultStoreSocket || m.stateDir() != DefaultMetricsStateDir {
+		t.Fatalf("the bare line: %+v, %v", m, err)
 	}
-	m, err = parseStore("metrics_store {\n store /run/x/vm.sock\n}")
-	if err != nil || m.store() != "/run/x/vm.sock" || m.stateDir() != DefaultMetricsStateDir {
+	m, err = parseStore("monitor {\n metrics /run/x/vm.sock\n}")
+	if err != nil || m == nil || m.store() != "/run/x/vm.sock" || m.stateDir() != DefaultMetricsStateDir {
 		t.Fatalf("a store path: %+v, %v", m, err)
 	}
+	if m, err = parseStore("monitor {\n operator ops\n}"); err != nil || m != nil {
+		t.Fatalf("no metrics line: %+v, %v; want none", m, err)
+	}
 	for src, want := range map[string]string{
-		"metrics_store on":                         "wrong argument count",
-		"metrics_store {\n store run/vm.sock\n}":   "not an absolute path",
-		"metrics_store {\n state_dir /srv/m\n}":    `unknown metrics_store subdirective "state_dir"`,
-		"metrics_store {\n store /a\n store /b\n}": "store is given more than once",
-		"metrics_store {\n store\n}":               "wrong argument count",
-		"metrics_store {\n store /a /b\n}":         "wrong argument count",
-		"metrics_store {\n interval 10s\n}":        `unknown metrics_store subdirective "interval"`,
-		"metrics_store {\n store /a {\n  x\n }\n}": "take no block",
+		"monitor {\n metrics run/vm.sock\n}":       "not an absolute path",
+		"monitor {\n metrics /a\n metrics /b\n}":   "metrics is given more than once",
+		"monitor {\n metrics\n metrics\n}":         "metrics is given more than once",
+		"monitor {\n metrics /a /b\n}":             "wrong argument count",
+		"monitor {\n metrics /a {\n  x\n }\n}":     "take no block",
+		"monitor {\n metrics {\n  store /a\n }\n}": "take no block",
+		"monitor {\n metrics_store\n}":             `unknown monitor subdirective "metrics_store"`,
+		"monitor {\n store /run/x/vm.sock\n}":      `unknown monitor subdirective "store"`,
+		"monitor {\n interval 10s\n}":              `unknown monitor subdirective "interval"`,
 	} {
 		if _, err := parseStore(src); err == nil || !strings.Contains(err.Error(), want) {
 			t.Errorf("%q: %v, want %q", src, err, want)
@@ -295,7 +300,7 @@ func TestPushFailingFiresStoreDown(t *testing.T) {
 	if evs := tp.take(); len(evs) != 0 {
 		t.Fatalf("before five minutes: %+v", evs)
 	}
-	if n := len(tp.logs.FilterMessage("metrics_store: push failed").FilterLevelExact(zap.WarnLevel).All()); n != 1 {
+	if n := len(tp.logs.FilterMessage("monitor metrics: push failed").FilterLevelExact(zap.WarnLevel).All()); n != 1 {
 		t.Fatalf("%d warning lines for one outage, want 1", n)
 	}
 	tp.pushOnce(ctx) // 5 minutes
@@ -312,7 +317,7 @@ func TestPushFailingFiresStoreDown(t *testing.T) {
 	if len(evs) != 1 || evs[0].Name != eventStoreDown || evs[0].Firing {
 		t.Fatalf("after a success: %+v", evs)
 	}
-	if len(tp.logs.FilterMessage("metrics_store: push succeeded again").All()) != 1 {
+	if len(tp.logs.FilterMessage("monitor metrics: push succeeded again").All()) != 1 {
 		t.Fatal("no recovery line")
 	}
 	tp.pushOnce(ctx)
@@ -375,7 +380,7 @@ func TestReadOnlyStoreIsToldAsItself(t *testing.T) {
 	tp.store.ro = true
 	tp.store.importErr = errors.New("503: the storage is in read-only mode")
 	// Told at every read that finds it, not once: the engine drops what
-	// it is told while no notify block runs.
+	// it is told while no config runs notify.
 	for range 2 * rulesDownReads {
 		tp.checkChain(ctx)
 		evs := tp.take()
@@ -408,7 +413,7 @@ func TestReadOnlyStoreIsToldAsItself(t *testing.T) {
 	for range readOnlyStale {
 		tp.checkChain(ctx)
 	}
-	if n := tp.logs.FilterMessage("metrics_store: could not read whether the store is read-only").Len(); n != 2 {
+	if n := tp.logs.FilterMessage("monitor metrics: could not read whether the store is read-only").Len(); n != 2 {
 		t.Fatalf("%d lines for two spells of failing asks, want 2", n)
 	}
 	tp.pushOnce(ctx)
@@ -530,8 +535,8 @@ func TestPusherGoesBackToTheOlderConfig(t *testing.T) {
 	}
 }
 
-// A reload to a config with no metrics_store block (both blocks to
-// notify alone, or to neither) retires the stopped config's rules;
+// A reload to a config with no metrics line (the monitor block to
+// channels alone, or to none) retires the stopped config's rules;
 // motel's own shutdown keeps them (Copilot round 3 on #423).
 func TestReleaseRetiresTheRulesOnAReloadAlone(t *testing.T) {
 	for _, reload := range []bool{true, false} {
@@ -549,10 +554,10 @@ func TestReleaseRetiresTheRulesOnAReloadAlone(t *testing.T) {
 			t.Fatal(err)
 		}
 		alerting := strings.Contains(string(b), "alert:")
-		gone := logs.FilterMessage("metrics_store: the block is gone: vmalert is given no rule; the store and vmalert still run until motel metrics setup's units are stopped").Len()
+		gone := logs.FilterMessage("monitor metrics: the metrics line is gone: vmalert is given no rule; the store and vmalert, which motel monitor setup --metrics started, run until their units are stopped").Len()
 		switch {
 		case reload && (alerting || gone != 1):
-			t.Errorf("a reload took the block away: rules.yml has alerting rules %v, %d journal lines; want none, and one", alerting, gone)
+			t.Errorf("a reload took the metrics line away: rules.yml has alerting rules %v, %d journal lines; want none, and one", alerting, gone)
 		case !reload && (!alerting || gone != 0):
 			t.Errorf("motel's shutdown: rules.yml has alerting rules %v, %d journal lines; want them kept, and no line", alerting, gone)
 		}

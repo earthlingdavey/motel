@@ -11,7 +11,7 @@ import (
 )
 
 // Alertmanager's delivery counters, which motel reads from its /metrics
-// over the socket: channel_failed from the first, `motel notify test`
+// over the socket: channel_failed from the first, `motel monitor test`
 // from all three. With --enable-feature=receiver-name-in-metrics (the
 // drop-in sets it) each carries receiver_name beside integration.
 const (

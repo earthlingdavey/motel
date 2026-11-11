@@ -13,9 +13,9 @@ import (
 	"syscall"
 )
 
-// errNotSetUp is a state directory that is not there: `motel notify
+// errNotSetUp is a state directory that is not there: `motel monitor
 // setup` has not run, so there is no Alertmanager to configure.
-var errNotSetUp = errors.New("alertmanager is not set up on this box (run motel notify setup as root)")
+var errNotSetUp = errors.New("alertmanager is not set up on this box (run motel monitor setup as root)")
 
 // writeState writes what render made into dir: each URL file, then the
 // config, each to a temporary beside it and renamed over the name, so

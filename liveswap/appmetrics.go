@@ -6,11 +6,11 @@ import (
 	"slices"
 )
 
-// What the metrics_store module reads of liveswap (notify/DESIGN-metrics.md):
-// each app's running instance, for the per-app series it pushes, and a
-// hook that adds the app's numbers to GET /<app>. liveswap knows
-// nothing of the store; it reports through these, as it reports its
-// lifecycle through Notifier.
+// What the metrics store (the monitor block's metrics line) reads of
+// liveswap (notify/DESIGN-metrics.md): each app's running instance, for
+// the per-app series it pushes, and a hook that adds the app's numbers
+// to GET /<app>. liveswap knows nothing of the store; it reports through
+// these, as it reports its lifecycle through Notifier.
 
 // AppSample is one app as it runs now.
 type AppSample struct {
@@ -83,7 +83,8 @@ type MetricsSource interface {
 // likes.
 var MetricsRanges = []string{"1h", "24h"}
 
-// SetMetricsSource installs the metrics_store module's source on this
-// config. Called from its Provision, after liveswap's own, so a config
-// without a metrics_store block has no `metrics` in its status.
+// SetMetricsSource installs the metrics store's source on this config.
+// Called from the monitor app's Provision, after liveswap's own, so a
+// config whose monitor block has no metrics line has no `metrics` in its
+// status.
 func (a *App) SetMetricsSource(s MetricsSource) { a.metricsSource = s }

@@ -284,7 +284,7 @@ func TestWatchdogAlertFlags(t *testing.T) {
 
 // TestRollbackRestoresTheNotifier: a candidate config rejected after
 // liveswap's Start (another app's Start failed) had installed its own
-// notifier, nil when it had no notify block; the serving config's
+// notifier, nil when it had no monitor block; the serving config's
 // comes back with its definition.
 func TestRollbackRestoresTheNotifier(t *testing.T) {
 	rig := newTestRig(t)
@@ -295,7 +295,7 @@ func TestRollbackRestoresTheNotifier(t *testing.T) {
 	rig.ma.configure(ownerA, specA, deploytrust.Verifiers(specA.trust, nil), zap.NewNop(), clients, userManager)
 	rig.ma.setNotifier(served)
 	rig.ma.configure(ownerB, specB, deploytrust.Verifiers(specB.trust, nil), zap.NewNop(), clients, userManager)
-	rig.ma.setNotifier(nil) // the candidate has no notify block
+	rig.ma.setNotifier(nil) // the candidate has no monitor block
 	if !rig.ma.rollbackConfig(ownerB) {
 		t.Fatal("the candidate did not roll back")
 	}
