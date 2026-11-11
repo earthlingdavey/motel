@@ -329,9 +329,6 @@ func summarizeRequests(a viewAnswers, span time.Duration) *requestSummary {
 		share := roundTo(hits/spoke, 1e4)
 		r.CacheHitShare = &share
 	}
-	if len(r.ByClass) == 0 {
-		r.ByClass = nil
-	}
 	return r
 }
 
