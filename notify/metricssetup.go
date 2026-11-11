@@ -74,7 +74,6 @@ const (
 	vmPackage   = "victoria-metrics"
 	vmService   = "victoria-metrics.service"
 	vmUser      = "_victoria-metrics"
-	vmDataDir   = "/var/lib/victoria-metrics"
 	ipPackage   = "iproute2"
 	unitDir     = "/etc/systemd/system"
 	netnsUnit   = "motel-metrics-netns.service"
@@ -156,13 +155,6 @@ func metricsSetup(sys system, root string, out io.Writer) (err error) {
 	vmGID, err := sys.lookupGroup(vmUser)
 	if err != nil {
 		return fmt.Errorf("the %s group, which %s makes: %w", vmUser, vmPackage, err)
-	}
-	// The store's data: Debian ships the directory 0755, so every local
-	// uid would read every series past the socket's group. dpkg keeps an
-	// existing directory's mode on an upgrade, and the postinst only
-	// chowns it.
-	if err := os.Chmod(at(vmDataDir), 0o750); err != nil { //nolint:gosec // G302: a directory; 0750 is the tightening
-		return fmt.Errorf("the store's data directory, which %s makes: %w", vmPackage, err)
 	}
 
 	for _, f := range metricsUnits() {

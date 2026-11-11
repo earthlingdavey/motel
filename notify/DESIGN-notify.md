@@ -388,8 +388,9 @@ motel or Alertmanager is down, which is the chain that delivers
 everything else. Uptime stays an external keyword check per host.
 A block with no `heartbeat` line loads, with its `Watchdog` routed to
 the blackhole receiver, and every load (`motel validate` too) warns
-`notify: no heartbeat line`, as for `allow_insecure_channels`: nothing
-outside the box would hear that it stopped.
+`notify: no heartbeat in this load`, as for `allow_insecure_channels`:
+nothing outside the box would hear that it stopped. A boot that drops
+the line for its secret ("Secrets at load") warns the same.
 
 ## External producers and tests
 
@@ -442,10 +443,11 @@ motel controls:
 3. writes the drop-in and the socket unit (both ship in the binary,
    `notify/units/`), `/var/lib/motel-notify` 2750 motel:prometheus with
    a config that sends nothing (kept if motel has rendered one), and
-   Alertmanager's storage directory, 0750: Debian ships it 0755, and
-   dpkg keeps an existing directory's mode on an upgrade (measured: a
-   reinstall of 0.28.1 left a 0750 directory as it was; the postinst
-   only chowns it);
+   Alertmanager's storage directory, whose mode is the drop-in's:
+   `ExecStartPre=+/usr/bin/chmod 0750` at every start, since Debian ships
+   it 0755 and a purge and reinstall makes it so again (dpkg keeps an
+   existing directory's mode on an upgrade, measured with a reinstall of
+   0.28.1, and the postinst only chowns it);
 4. `daemon-reload`, `unmask`, `disable` the service (its socket starts
    it), `enable --now motel-am.socket`;
 5. `try-reload-or-restart motel.service`, which renders.
@@ -484,7 +486,7 @@ package is installed rather than a binary fetched.
 | `…/alertmanager.yml`, `…/url-<KEY>` | 0640 | motel:prometheus (born in the setgid dir) | motel, each by rename | Alertmanager |
 | `/etc/motel/secrets/_box.env` | 0640 | root:motel | root: the box applier from `secrets/_box/`, or by hand | motel |
 | `/etc/systemd/system/motel-am.socket`, `…/prometheus-alertmanager.service.d/10-motel.conf` | 0644 | root | setup | systemd |
-| `/var/lib/prometheus/alertmanager/` | 0750 (setup; Debian ships 0755) | prometheus | Alertmanager (the notification log, silences) | Alertmanager |
+| `/var/lib/prometheus/alertmanager/` | 0750 (the drop-in, at every start; Debian ships 0755) | prometheus | Alertmanager (the notification log, silences) | Alertmanager |
 | `<liveswap root>/<app>/alerts.json` | 0600 | motel | motel (liveswap's watchdog, on each change; removed when nothing stands) | motel (once per process, for `ReportStanding`); in no app's view |
 
 ## Threat model
@@ -659,7 +661,7 @@ Dated one-liners; the full text of each is in git.
   a refusal's release and reason for the standing report, a standing
   report's later lines are not standing, and a rollback writes what
   stands to the serving root ahead of any write still in flight.
-- 2026-11-11 — The audit of hotserve-1 on the feature branch: a block
-  with no `heartbeat` line is warned at every load, and setup sets
-  Alertmanager's storage to the 0750 this document gave it (Debian
+- 2026-11-11 — The audit of hotserve-1 on the feature branch: a load
+  with no heartbeat is warned, and the drop-in sets Alertmanager's
+  storage to the 0750 this document gave it at every start (Debian
   ships 0755).

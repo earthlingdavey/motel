@@ -77,8 +77,9 @@ done
 	&& pass "the store's socket is srw-rw---- root motel" || fail "the socket is $(stat -c '%A %U %G' "$VM" 2>&1)"
 [ "$(stat -c '%A %U %G' "$STATE")" = "drwxr-s--- motel _victoria-metrics" ] \
 	&& pass "$STATE is drwxr-s--- motel _victoria-metrics" || fail "$STATE is $(stat -c '%A %U %G' "$STATE" 2>&1)"
-# Debian ships it 0755: setup sets the mode, so no other uid reads the
-# series past the socket's group.
+# Debian ships it 0755: the drop-in sets the mode at every start (setup
+# started the store), so no other uid reads the series past the socket's
+# group.
 [ "$(stat -c '%A %U %G' /var/lib/victoria-metrics)" = "drwxr-x--- _victoria-metrics _victoria-metrics" ] \
 	&& pass "the store's data is drwxr-x--- _victoria-metrics _victoria-metrics" \
 	|| fail "the store's data is $(stat -c '%A %U %G' /var/lib/victoria-metrics 2>&1)"
@@ -196,41 +197,6 @@ done
 [ "$i" -lt 38 ] && pass "the one alert was posted by vmalert too (its generatorURL)" \
 	|| fail "no vmalert post merged into the alert in 75 s: $(am "http://am/api/v2/alerts?$amq" | cut -c1-400)"
 
-echo "=== metrics 4c: the two proxies run as no root ==="
-# Both carried traffic just now (motel's reads through vm.sock, vmalert's
-# posts and the store's scrape through the in-namespace port), so both run.
-for u in motel-vm.service motel-am-proxy.service; do
-	pid=$(systemctl show -p MainPID --value "$u")
-	uid=$(stat -c %u "/proc/$pid" 2>/dev/null)
-	bnd=$(sed -n 's/^CapBnd:[[:space:]]*//p' "/proc/$pid/status" 2>/dev/null)
-	[ "$pid" != 0 ] && [ -n "$uid" ] && [ "$uid" != 0 ] && [ "$bnd" = 0000000000000000 ] \
-		&& pass "$u runs as uid $uid ($(ps -o user= -p "$pid")), no capability" \
-		|| fail "$u: pid $pid, uid '$uid', CapBnd '$bnd'"
-done
-# The am proxy holds the motel group for Alertmanager's socket, so the
-# group's files must be out of its view, and the socket in it; and the
-# group is its primary one, so the store's uid cannot act as it.
-pid=$(systemctl show -p MainPID --value motel-am-proxy.service)
-motel_gid=$(getent group motel | cut -d: -f3)
-[ "$(ps -o user= -p "$pid")" = _victoria-metrics ] && [ "$(sed -n 's/^Gid:[[:space:]]*\([0-9]*\).*/\1/p' "/proc/$pid/status")" = "$motel_gid" ] \
-	&& [ "$(sed -n 's/^Groups:[[:space:]]*//p' "/proc/$pid/status" | tr -d ' \t')" = "$motel_gid" ] \
-	&& pass "the am proxy is _victoria-metrics, gid motel and no other group" \
-	|| fail "the am proxy: $(ps -o user= -p "$pid"), $(grep -E '^(Gid|Groups)' "/proc/$pid/status" | tr '\n' ' ')"
-if runuser -u _victoria-metrics -- cat "/proc/$pid/environ" >/dev/null 2>&1; then
-	fail "the store's uid reads the am proxy's /proc: it could attach to it and act with the motel group"
-else
-	pass "the store's uid is refused the am proxy's /proc"
-fi
-nr=117; [ "$(uname -m)" = x86_64 ] && nr=101
-att=$(runuser -u _victoria-metrics -- perl -e '$r=syscall('"$nr"',16,'"$pid"',0,0); print $r==0?"attached":"refused"')
-[ "$att" = refused ] && pass "the store's uid cannot attach to the am proxy" || fail "the store's uid attached to the am proxy ($att)"
-if [ -e "/proc/$pid/root/etc/motel" ] || [ -e "/proc/$pid/root/var/lib/liveswap" ] || [ -e "/proc/$pid/root/run/motel" ]; then
-	fail "the am proxy sees the motel group's paths: $(ls -d "/proc/$pid/root/etc/motel" "/proc/$pid/root/var/lib/liveswap" "/proc/$pid/root/run/motel" 2>/dev/null | tr '\n' ' ')"
-else
-	pass "the am proxy sees none of /etc/motel, /var/lib/liveswap, /run/motel"
-fi
-[ -S "/proc/$pid/root$AMS" ] && pass "and sees Alertmanager's socket" || fail "the am proxy has no $AMS in its view"
-
 echo "=== metrics 4a: the store stopped by hand comes back with vmalert ==="
 # A stop of the store stops vmalert and the proxy (both Require it).
 # motel's next push connects to the socket, whose proxy starts the store
@@ -282,6 +248,68 @@ until vm http://vm/metrics | grep -q '^vm_storage_is_read_only.* 0$'; do i=$((i 
 # A sample from after the restart, not one kept from before the floor.
 a=$(wait_result vmalert-up-writable "(timestamp(up{job=\"vmalert\"}) > $back_at) and (up{job=\"vmalert\"} == 1)" 120) && pass "and scrapes vmalert again" \
 	|| fail "no fresh up{job=\"vmalert\"} after the store came back: $(q 'timestamp(up{job="vmalert"})')"
+
+echo "=== metrics 4c: the two proxies run as no root ==="
+# Each runs while it carries traffic (motel's push through vm.sock every
+# 30 s, the store's scrape of Alertmanager through the in-namespace port);
+# 4b restarted the store, which stops the vm proxy until the next push.
+for u in motel-vm.service motel-am-proxy.service; do
+	i=0
+	until [ "$(systemctl show -p MainPID --value "$u")" != 0 ]; do i=$((i + 1)); [ "$i" -ge 45 ] && break; sleep 2; done
+	pid=$(systemctl show -p MainPID --value "$u")
+	uid=$(stat -c %u "/proc/$pid" 2>/dev/null)
+	bnd=$(sed -n 's/^CapBnd:[[:space:]]*//p' "/proc/$pid/status" 2>/dev/null)
+	[ "$pid" != 0 ] && [ -n "$uid" ] && [ "$uid" != 0 ] && [ "$bnd" = 0000000000000000 ] \
+		&& pass "$u runs as uid $uid ($(ps -o user= -p "$pid")), no capability" \
+		|| fail "$u: pid $pid, uid '$uid', CapBnd '$bnd'"
+done
+# The am proxy holds the motel group for Alertmanager's socket, so the
+# group's paths must be out of its view, and the socket in it; and the
+# group is its primary one, so the store's uid cannot act as it.
+pid=$(systemctl show -p MainPID --value motel-am-proxy.service)
+motel_gid=$(getent group motel | cut -d: -f3)
+[ "$(ps -o user= -p "$pid")" = _victoria-metrics ] && [ "$(sed -n 's/^Gid:[[:space:]]*\([0-9]*\).*/\1/p' "/proc/$pid/status")" = "$motel_gid" ] \
+	&& [ "$(sed -n 's/^Groups:[[:space:]]*//p' "/proc/$pid/status" | tr -d ' \t')" = "$motel_gid" ] \
+	&& pass "the am proxy is _victoria-metrics, gid motel and no other group" \
+	|| fail "the am proxy: $(ps -o user= -p "$pid"), $(grep -E '^(Gid|Groups)' "/proc/$pid/status" | tr '\n' ' ')"
+# Yama does not gate a /proc read, so this one holds on any host.
+if runuser -u _victoria-metrics -- cat "/proc/$pid/environ" >/dev/null 2>&1; then
+	fail "the store's uid reads the am proxy's /proc: it could attach to it and act with the motel group"
+else
+	pass "the store's uid is refused the am proxy's /proc"
+fi
+# An attach, with a control: the store's uid attaching to a sleeper of
+# its own uid and gid. Where that is refused too (ptrace_scope 1 or more,
+# or a seccomp that denies ptrace), the refusal proves nothing of the
+# unit, and the /proc check above stands for it. An attach that gets
+# through is detached at once, so a stopped proxy cannot fail the
+# sections after this one.
+nr=117; [ "$(uname -m)" = x86_64 ] && nr=101
+attach() {
+	runuser -u _victoria-metrics -- perl -e '$p='"$1"'; $r=syscall('"$nr"',16,$p,0,0); if ($r==0) { waitpid($p,0); syscall('"$nr"',17,$p,0,0); print "attached" } else { print "refused" }'
+}
+runuser -u _victoria-metrics -- sleep 60 &
+sleep 0.5
+sleeper=$(pgrep -u _victoria-metrics -x sleep | head -1)
+control=$(attach "$sleeper")
+kill "$sleeper" 2>/dev/null
+att=$(attach "$pid")
+case "$control,$att" in
+attached,refused) pass "the store's uid cannot attach to the am proxy (and can attach to a sleeper of its own)" ;;
+refused,refused) pass "this host refuses the store's uid any attach (ptrace_scope $(cat /proc/sys/kernel/yama/ptrace_scope 2>/dev/null)): the /proc check above stands for the unit" ;;
+*) fail "the store's uid attached to the am proxy (control: $control)"; kill -CONT "$pid" 2>/dev/null ;;
+esac
+# Every path an app's view hides (liveswap/sandbox.go, sandboxMotelPaths)
+# and the apps' root: the motel group reaches them on a packaged box, and
+# only Alertmanager's socket directory is bound back.
+seen=""
+for p in /var/lib/motel /run/motel /etc/motel /etc/liveswap /var/lib/motel-box /var/lib/motel-notify \
+	/run/motel-metrics /var/lib/motel-metrics /var/lib/liveswap; do
+	[ -e "/proc/$pid/root$p" ] && seen="$seen $p"
+done
+[ -z "$seen" ] && pass "the am proxy sees none of motel's paths but Alertmanager's socket directory" \
+	|| fail "the am proxy sees:$seen"
+[ -S "/proc/$pid/root$AMS" ] && pass "and sees Alertmanager's socket" || fail "the am proxy has no $AMS in its view"
 
 echo "=== metrics 5: an app's sandbox has none of it in view ==="
 code=$(deploy demo-probe.tar.gz sb1)

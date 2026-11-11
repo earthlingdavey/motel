@@ -94,8 +94,10 @@ listeners=$(ss -ltnH 2>/dev/null | awk '{print $4}' | grep -E ':(9093|9094)$' ||
 	&& pass "the socket is srw-rw---- root motel" || fail "the socket is $(stat -c '%A %U %G' "$SOCK" 2>&1)"
 [ "$(stat -c '%A %U %G' "$STATE")" = "drwxr-s--- motel prometheus" ] \
 	&& pass "$STATE is drwxr-s--- motel prometheus" || fail "$STATE is $(stat -c '%A %U %G' "$STATE" 2>&1)"
-# Debian ships it 0755: setup sets the mode, so no other uid reads the
-# notification log or the silences.
+# Debian ships it 0755: the drop-in sets the mode at every start, so no
+# other uid reads the notification log or the silences. A connection to
+# the socket starts Alertmanager, if motel's render has not yet.
+curl -s -o /dev/null --max-time 10 --unix-socket "$SOCK" http://am/-/ready
 [ "$(stat -c '%A %U %G' /var/lib/prometheus/alertmanager)" = "drwxr-x--- prometheus prometheus" ] \
 	&& pass "Alertmanager's storage is drwxr-x--- prometheus prometheus" \
 	|| fail "Alertmanager's storage is $(stat -c '%A %U %G' /var/lib/prometheus/alertmanager 2>&1)"

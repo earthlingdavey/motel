@@ -275,18 +275,31 @@ func TestBootDropsTheChannelsOfAnUnusableSecretsFile(t *testing.T) {
 }
 
 // TestNoHeartbeatIsWarned: a block with no heartbeat line loads (the
-// Watchdog goes to the blackhole), and every load says so; one with
-// the line says nothing of it.
+// Watchdog goes to the blackhole), and every load says so; so does a
+// boot that drops the line for its secret; one with the line says
+// nothing of it.
 func TestNoHeartbeatIsWarned(t *testing.T) {
+	// The secrets are given to resolveWith; the file only names them.
+	secrets := filepath.Join(t.TempDir(), "_box.env")
+	ops := Channel{Name: "ops", Kind: "ntfy", Secret: "NOTIFY_OPS_URL"}
 	for _, c := range []struct {
-		secret string
-		want   int
-	}{{"", 1}, {"NOTIFY_HC_URL", 0}} {
+		name, heartbeat string
+		secrets         map[string]string
+		want            int
+	}{
+		{"no line", "", map[string]string{"NOTIFY_OPS_URL": "https://ntfy.sh/ops"}, 1},
+		{"the line, its secret missing at a boot", "NOTIFY_HC_URL", map[string]string{"NOTIFY_OPS_URL": "https://ntfy.sh/ops"}, 1},
+		{"the line", "NOTIFY_HC_URL", map[string]string{"NOTIFY_OPS_URL": "https://ntfy.sh/ops", "NOTIFY_HC_URL": "https://hc-ping.com/x"}, 0},
+	} {
 		core, logs := observer.New(zap.WarnLevel)
-		a := &App{HeartbeatSecret: c.secret, logger: zap.New(core)}
+		a := &App{Channels: []Channel{ops}, Operator: []string{"ops"}, HeartbeatSecret: c.heartbeat, SecretsFile: secrets, logger: zap.New(core)}
+		var err error
+		if a.cfg, _, err = a.resolveWith(map[string][]TrustSource{}, c.secrets, nil, true, nil); err != nil {
+			t.Fatalf("%s: %v", c.name, err)
+		}
 		a.warnAtLoad()
-		if n := len(logs.FilterMessageSnippet("notify: no heartbeat line").All()); n != c.want {
-			t.Errorf("heartbeat %q: %d warnings, want %d (%v)", c.secret, n, c.want, logs.All())
+		if n := len(logs.FilterMessageSnippet("notify: no heartbeat in this load").All()); n != c.want {
+			t.Errorf("%s: %d warnings, want %d (%v)", c.name, n, c.want, logs.All())
 		}
 	}
 }

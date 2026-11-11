@@ -10,9 +10,7 @@ import (
 	"testing"
 )
 
-// notifySetUp makes root look like a box where motel notify setup ran,
-// with the store's data directory as Debian's package ships it, 0755
-// (the fake install makes nothing).
+// notifySetUp makes root look like a box where motel notify setup ran.
 func notifySetUp(t *testing.T, root string) {
 	t.Helper()
 	p := filepath.Join(root, socketPath)
@@ -20,9 +18,6 @@ func notifySetUp(t *testing.T, root string) {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(p, unitSocket, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.MkdirAll(filepath.Join(root, vmDataDir), 0o755); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -89,12 +84,6 @@ func TestMetricsSetupOrderAndFiles(t *testing.T) {
 	}
 	if b, _ := os.ReadFile(filepath.Join(dir, RulesName)); !bytes.Equal(b, renderRules(nil)) {
 		t.Error("the first rules are not the empty groups")
-	}
-	// Debian's 0755 would let every local uid read the series.
-	if st, err := os.Stat(filepath.Join(root, vmDataDir)); err != nil {
-		t.Error(err)
-	} else if st.Mode().Perm() != 0o750 {
-		t.Errorf("the store's data directory is %v, want 0750", st.Mode())
 	}
 
 	// Again, on a box set up: nothing installed, motel's rules kept,
@@ -177,7 +166,8 @@ func TestMetricsSetupFailingPutsTheStoreBack(t *testing.T) {
 
 // TestMetricsUnitsAreTheMeasuredOnes holds the shipped units to what ran
 // on hotserve-1 (hotserve1_stack_test.md), with this slice's paths and
-// caps.
+// caps; the proxies' users and the drop-in's chmod were measured in the
+// e2e box only (notify/DESIGN-metrics.md, "The shape").
 func TestMetricsUnitsAreTheMeasuredOnes(t *testing.T) {
 	has := func(name string, unit []byte, wants ...string) {
 		t.Helper()
@@ -191,7 +181,9 @@ func TestMetricsUnitsAreTheMeasuredOnes(t *testing.T) {
 		"MemoryMax=256M", "-memory.allowedBytes=96MiB", "-retentionPeriod=14d", "-promscrape.config="+DefaultMetricsStateDir+"/"+scrapeName,
 		"Requires=motel-metrics-netns.service",
 		// The store's start brings vmalert, which a stop of the store stopped.
-		"Wants=motel-vmalert.service")
+		"Wants=motel-vmalert.service",
+		// Debian's 0755 would let every local uid read the series.
+		"ExecStartPre=+/usr/bin/chmod 0750 /var/lib/victoria-metrics\n")
 	// A namespace left behind must not fail every later start.
 	has("the namespace unit", unitNetns, "ExecStartPre=-/usr/sbin/ip netns delete motel-metrics\nExecStart=/usr/sbin/ip netns add motel-metrics")
 	has("motel-vm.socket", unitVMSocket, "ListenStream="+DefaultStoreSocket+"\n", "SocketGroup=motel", "SocketMode=0660")

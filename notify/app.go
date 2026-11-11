@@ -136,10 +136,12 @@ func (a *App) warnAtLoad() {
 	if a.AllowInsecureChannels {
 		a.logger.Warn("notify: allow_insecure_channels is on: channel URLs may be http and private addresses, which Alertmanager reaches from the network namespace every app shares; for test rigs only")
 	}
-	// Without the line the Watchdog goes to the blackhole: a box, motel
-	// or Alertmanager that stops is told by no one (requirement 6).
-	if a.HeartbeatSecret == "" {
-		a.logger.Warn("notify: no heartbeat line: nothing outside the box hears that it, motel or Alertmanager stopped; add heartbeat {secret.NOTIFY_<NAME>} with a dead-man check's ping URL (notify/DESIGN-notify.md, \"Dead-man and uptime\")")
+	// Without a heartbeat the Watchdog goes to the blackhole: a box,
+	// motel or Alertmanager that stops is told by no one (requirement 6).
+	// The resolved one, so a boot that drops the line for its secret
+	// says so too.
+	if a.cfg == nil || a.cfg.heartbeat == "" {
+		a.logger.Warn("notify: no heartbeat in this load: nothing outside the box hears that it, motel or Alertmanager stopped; add heartbeat {secret.NOTIFY_<NAME>} with a dead-man check's ping URL, or mend its secret (notify/DESIGN-notify.md, \"Dead-man and uptime\")")
 	}
 }
 
