@@ -654,13 +654,17 @@ server and a handler, never a liveswap app (notify/DESIGN-metrics.md,
   prepares the request as Caddy's server does and selects the upstream:
   410 ns and five allocations, against 375 ns for the same benchmark
   before the mark (`GetUpstreams`' own allocations are three of the
-  five), so the mark costs about 37 ns. Through the e2e stack (e2e/bench/observe.sh, ab
+  five), so the mark costs about 37 ns; the parser that reads up to
+  Souin's `key=` (/code-review pass 2) about 430 ns with a real key in
+  the header. Through the e2e stack (e2e/bench/observe.sh, ab
   keep-alive, the median of three runs) the observed site against the
-  bare one in the same run: c=1 5 286 against 5 344 req/s, p50 0.184
-  against 0.182 ms; c=16 52 335 against 53 366, p50 0.237 against
-  0.232 ms. Behind the cache, 10 646 against 10 762 at c=1, level at
-  c=16. The bare site measured before the handler existed (9228935):
-  5 127 and 51 786 req/s, within the runs' spread.
+  bare one in the same run, at the branch's last commit (0d02d5f, load
+  0.3): c=1 5 428 against 5 437 req/s, p50 0.180 against 0.180 ms;
+  c=16 51 900 against 53 533 (−3 %), p50 0.235 against 0.236 ms, p95
+  0.772 against 0.699. Behind the cache, 10 830 against 10 951 at c=1,
+  122 105 against 122 190 at c=16. The bare site measured before the
+  handler existed (9228935): 5 127 and 51 786 req/s, within the runs'
+  spread.
 - **What it never does.** Write, buffer or change a byte, or fail a
   request: an error from the handlers after it is returned as it came.
 
