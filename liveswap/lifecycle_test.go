@@ -76,6 +76,37 @@ func TestLifecycleDeploySucceeded(t *testing.T) {
 	if ev.App != "demo" || ev.Release != "v1" || ev.DeployedBy != "local:/k.pub sub=alice" || ev.Summary != "deployed v1" {
 		t.Fatalf("event = %+v", ev)
 	}
+	// A first deploy replaced nothing; its cutover is when it published.
+	if ev.Previous != "" || ev.Cutover.IsZero() {
+		t.Fatalf("a first deploy: previous %q, cutover %v", ev.Previous, ev.Cutover)
+	}
+}
+
+// The release a deploy replaced is the one serving before its cutover,
+// and so for a rollback; a failed deploy names none.
+func TestLifecycleDeployNamesTheReleaseItReplaced(t *testing.T) {
+	rig, n := notifiedRig(t)
+	deployV1(t, rig)
+	n.reset()
+	before := rig.clock.Now()
+	must(t, rig.ma.Deploy(context.Background(), deployRequest{url: "https://x/2", version: "v2"}))
+	ev, _ := n.find(EventDeploySucceeded)
+	if ev.Previous != "v1" || ev.Cutover.Before(before) {
+		t.Fatalf("v2 after v1: previous %q, cutover %v (the deploy began %v)", ev.Previous, ev.Cutover, before)
+	}
+	n.reset()
+	must(t, rig.ma.Deploy(context.Background(), deployRequest{version: "v1", rollback: true}))
+	if ev, _ := n.find(EventRollback); ev.Previous != "v2" || ev.Cutover.IsZero() {
+		t.Fatalf("the rollback to v1: previous %q, cutover %v", ev.Previous, ev.Cutover)
+	}
+	n.reset()
+	rig.fetch.err = errors.New("fetching failed")
+	if err := rig.ma.Deploy(context.Background(), deployRequest{url: "https://x/3", version: "v3"}); err == nil {
+		t.Fatal("the deploy succeeded")
+	}
+	if ev, _ := n.find(EventDeployFailed); ev.Previous != "" || !ev.Cutover.IsZero() {
+		t.Fatalf("a failed deploy names a cutover: previous %q, cutover %v", ev.Previous, ev.Cutover)
+	}
 }
 
 func TestLifecycleDeployFailedNamesThePhaseNotTheError(t *testing.T) {

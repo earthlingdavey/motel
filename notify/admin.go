@@ -78,6 +78,8 @@ var reservedNames = []string{
 	"backup_stale", "backup_run_failed", "backup_unreadable", "drill_failed",
 	// The metrics store's chain and rules (DESIGN-metrics.md).
 	eventStoreDown, eventRulesDown, eventStoreReadOnly, ruleStoreDiskFill, ruleAppMemoryHigh,
+	// The operator's rules' own event (postdeploy.go).
+	eventPostDeployRegressed,
 }
 
 const maxDetails = 2 << 10

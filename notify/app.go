@@ -176,7 +176,7 @@ func (a *App) provisionNotify(ctx caddy.Context, ls *liveswap.App) error {
 	a.diskPaths = []string{caddy.AppDataDir(), a.stateDir()}
 	if ls != nil {
 		a.ls = ls
-		ls.SetNotifier(lifecycleSink{theEngine})
+		ls.SetNotifier(lifecycleSink{e: theEngine, c: theComparator})
 		a.diskPaths = append([]string{ls.Root}, a.diskPaths...)
 	}
 	evApp, err := ctx.App("events")
@@ -313,7 +313,7 @@ func (a *App) startNotify() {
 	// "Behaviour"). Pulled here, once the engine serves this config,
 	// whichever app Caddy starts first.
 	if a.ls != nil {
-		a.ls.ReportStanding(lifecycleSink{theEngine})
+		a.ls.ReportStanding(lifecycleSink{e: theEngine})
 	}
 }
 
@@ -343,6 +343,7 @@ func (a *App) applyRender(am *amClient) {
 func (a *App) Stop() error {
 	if a.Metrics != nil {
 		thePusher.release(a.Metrics)
+		theComparator.release(a.Metrics)
 	}
 	if a.notifies {
 		theEngine.release(a)

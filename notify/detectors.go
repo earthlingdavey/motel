@@ -17,10 +17,19 @@ import (
 )
 
 // lifecycleSink is liveswap's Notifier: #418's first events, as
-// liveswap reports them (liveswap/lifecycle.go), into the engine.
-type lifecycleSink struct{ e *engine }
+// liveswap reports them (liveswap/lifecycle.go), into the engine; and a
+// deploy's or a rollback's success into the post-deploy comparison
+// (c, nil for none), before the engine's toggles, which drop
+// deploy_succeeded unless `deploy_succeeded on`.
+type lifecycleSink struct {
+	e *engine
+	c *comparator
+}
 
 func (s lifecycleSink) Lifecycle(ev liveswap.LifecycleEvent) {
+	if s.c != nil && (ev.Name == liveswap.EventDeploySucceeded || ev.Name == liveswap.EventRollback) {
+		s.c.deployed(ev)
+	}
 	base := Event{App: ev.App, Source: "liveswap", Summary: ev.Summary, Release: ev.Release, DeployedBy: ev.DeployedBy, Standing: ev.Standing}
 	state := func(name, sev string, firing bool) {
 		base.Name, base.Kind, base.Severity, base.Firing, base.Hold = name, kindState, sev, firing, ev.Hold

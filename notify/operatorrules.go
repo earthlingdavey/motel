@@ -21,11 +21,14 @@ import (
 // a template: what a rule reads is motel's text, so a config author
 // cannot pull any app's series, or the box's, into a notification.
 const (
-	ruleThreshold = "threshold"
-	ruleDiskFill  = "disk_fill"
+	ruleThreshold  = "threshold"
+	ruleDiskFill   = "disk_fill"
+	rulePostDeploy = "post_deploy"
 
 	sourceRules = "rules"
-	// operatorGroup is the vmalert group of the operator's rules.
+	// operatorGroup is the vmalert group of the operator's threshold
+	// and disk_fill rules; post_deploy is motel's to evaluate
+	// (postdeploy.go).
 	operatorGroup = "motel-operator"
 
 	// requestWindow is what a request metric is computed over, and
@@ -47,12 +50,18 @@ type Rule struct {
 	Op     string         `json:"op,omitempty"`
 	Value  float64        `json:"value,omitempty"`
 	For    caddy.Duration `json:"for,omitempty"`
-	// MinRequests is the sample floor of a threshold over a share or a
-	// quantile (default 20).
+	// MinRequests is the sample floor: a threshold over a share or a
+	// quantile (default 20), and post_deploy's (default 100).
 	MinRequests int `json:"min_requests,omitempty"`
 
 	// disk_fill
 	Within caddy.Duration `json:"within,omitempty"`
+
+	// post_deploy
+	Window      caddy.Duration `json:"window,omitempty"`
+	Max5xxShare *float64       `json:"max_5xx_share,omitempty"`
+	MaxP95      caddy.Duration `json:"max_p95,omitempty"`
+	Failures    int            `json:"failures,omitempty"`
 }
 
 // The units a threshold's value is written in.
@@ -93,15 +102,21 @@ var thresholdMetricNames = []string{"5xx_share", "p50", "p95", "request_rate", "
 const (
 	// maxLatency is the top of the response histogram's buckets
 	// (liveswap.ResponseBuckets): a quantile above it reads as it.
-	minLatency         = time.Millisecond
-	maxLatency         = 10 * time.Second
-	minFor             = time.Minute
-	maxFor             = 24 * time.Hour
-	minWithin          = time.Hour
-	maxWithin          = 30 * 24 * time.Hour
-	maxMinRequests     = 1_000_000
-	defaultMinRequests = 20
-	diskFillFor        = 30 * time.Minute
+	minLatency           = time.Millisecond
+	maxLatency           = 10 * time.Second
+	minFor               = time.Minute
+	maxFor               = 24 * time.Hour
+	minWithin            = time.Hour
+	maxWithin            = 30 * 24 * time.Hour
+	minWindow            = time.Minute
+	maxWindow            = 24 * time.Hour
+	maxMinRequests       = 1_000_000
+	maxFailures          = 60
+	defaultMinRequests   = 20
+	defaultPostDeployMin = 100
+	defaultWindow        = 30 * time.Minute
+	defaultFailures      = 3
+	diskFillFor          = 30 * time.Minute
 )
 
 var (
@@ -119,10 +134,13 @@ var errRuleNeedsMetrics = errors.New("a rule line needs the monitor block's metr
 //
 //	rule <name> threshold <metric> >|< <value> for <dur> [app <name>] [min_requests N] [severity warning|critical]
 //	rule <name> disk_fill within <dur> [severity warning|critical]
+//	rule <name> post_deploy [app <name>] {
+//	    window <dur>  min_requests N  max_5xx_share <share>  max_p95 <dur>  failures N
+//	}
 func parseRule(d *caddyfile.Dispenser) (Rule, error) {
 	args := d.RemainingArgs()
 	if len(args) < 2 {
-		return Rule{}, d.Err("rule takes <name> threshold|disk_fill and its parameters")
+		return Rule{}, d.Err("rule takes <name> threshold|disk_fill|post_deploy and its parameters")
 	}
 	r := Rule{Name: args[0], Kind: args[1]}
 	if err := checkRuleName(r.Name); err != nil {
@@ -174,10 +192,56 @@ func parseRule(d *caddyfile.Dispenser) (Rule, error) {
 		}); err != nil {
 			return Rule{}, errf("%v", err)
 		}
+	case rulePostDeploy:
+		if err := parseOptions(rest, map[string]func(string) error{
+			"app": func(v string) error { r.App = v; return nil },
+		}); err != nil {
+			return Rule{}, errf("%v", err)
+		}
+		seen := map[string]bool{}
+		for nesting := d.Nesting(); d.NextBlock(nesting); {
+			key := d.Val()
+			vals := d.RemainingArgs()
+			if len(vals) != 1 {
+				return Rule{}, errf("%s takes one value", key)
+			}
+			if seen[key] {
+				return Rule{}, errf("%s is given more than once", key)
+			}
+			seen[key] = true
+			v := vals[0]
+			var err error
+			switch key {
+			case "window":
+				r.Window, err = parseRuleDuration(v)
+			case "min_requests":
+				r.MinRequests, err = parseCount(v)
+			case "max_5xx_share":
+				var s float64
+				if s, err = parseValue(unitShare, v); err == nil {
+					r.Max5xxShare = &s
+				}
+			case "max_p95":
+				var s float64
+				if s, err = parseValue(unitLatency, v); err == nil {
+					r.MaxP95 = caddy.Duration(time.Duration(s * float64(time.Second)))
+				}
+			case "failures":
+				r.Failures, err = parseCount(v)
+			default:
+				return Rule{}, errf("unknown post_deploy parameter %q; it takes window, min_requests, max_5xx_share, max_p95 and failures", key)
+			}
+			if err != nil {
+				return Rule{}, errf("%s: %v", key, err)
+			}
+			if d.NextBlock(d.Nesting()) {
+				return Rule{}, errf("%s takes no block", key)
+			}
+		}
 	default:
-		return Rule{}, errf("unknown kind %q; a rule is threshold or disk_fill", r.Kind)
+		return Rule{}, errf("unknown kind %q; a rule is threshold, disk_fill or post_deploy", r.Kind)
 	}
-	if d.NextBlock(d.Nesting()) {
+	if r.Kind != rulePostDeploy && d.NextBlock(d.Nesting()) {
 		return Rule{}, errf("a %s rule takes no block", r.Kind)
 	}
 	if err := r.check(); err != nil {
@@ -288,6 +352,9 @@ func (r Rule) check() error {
 	if r.Kind != ruleDiskFill && r.Within != 0 {
 		return bad("within is disk_fill's")
 	}
+	if r.Kind != rulePostDeploy && (r.Window != 0 || r.Max5xxShare != nil || r.MaxP95 != 0 || r.Failures != 0) {
+		return bad("window, max_5xx_share, max_p95 and failures are post_deploy's")
+	}
 	if r.MinRequests != 0 && (r.MinRequests < 1 || r.MinRequests > maxMinRequests) {
 		return bad("min_requests is from 1 to %d", maxMinRequests)
 	}
@@ -319,8 +386,30 @@ func (r Rule) check() error {
 		if d := time.Duration(r.Within); d < minWithin || d > maxWithin || d%time.Second != 0 {
 			return bad("within is whole seconds from 1h to 30d, not %s", d)
 		}
+	case rulePostDeploy:
+		if r.Severity != "" {
+			return bad("post_deploy's event is a warning: it takes no severity")
+		}
+		if d := time.Duration(r.Window); d != 0 && (d < minWindow || d > maxWindow || d%time.Minute != 0) {
+			return bad("window is whole minutes from 1m to 24h, not %s", d)
+		}
+		if r.Failures != 0 && (r.Failures < 1 || r.Failures > maxFailures) {
+			return bad("failures is from 1 to %d", maxFailures)
+		}
+		if r.Max5xxShare == nil && r.MaxP95 == 0 {
+			return bad("post_deploy needs max_5xx_share, max_p95 or both: what a regression is")
+		}
+		if s := r.Max5xxShare; s != nil && (*s <= 0 || *s >= 1) {
+			return bad("max_5xx_share is a share between 0 and 1, not %v", *s)
+		}
+		if d := time.Duration(r.MaxP95); d != 0 && (d < minLatency || d >= maxLatency) {
+			return bad("max_p95 is from 1ms to under 10s (the top of the latency buckets), not %s", d)
+		}
+		if checks := int(r.window() / time.Minute); r.failures() > checks {
+			return bad("%d failures in a row need a window of at least %d minutes: a check is made each minute", r.failures(), r.failures())
+		}
 	default:
-		return bad("unknown kind %q; a rule is threshold or disk_fill", r.Kind)
+		return bad("unknown kind %q; a rule is threshold, disk_fill or post_deploy", r.Kind)
 	}
 	return nil
 }
@@ -355,16 +444,35 @@ func (r Rule) severity() string {
 }
 
 func (r Rule) minRequests() int {
-	if r.MinRequests != 0 {
+	switch {
+	case r.MinRequests != 0:
 		return r.MinRequests
+	case r.Kind == rulePostDeploy:
+		return defaultPostDeployMin
 	}
 	return defaultMinRequests
 }
 
-// checkRules holds the lines together: names unique; and, given this config's apps (nil
+func (r Rule) window() time.Duration {
+	if r.Window == 0 {
+		return defaultWindow
+	}
+	return time.Duration(r.Window)
+}
+
+func (r Rule) failures() int {
+	if r.Failures == 0 {
+		return defaultFailures
+	}
+	return r.Failures
+}
+
+// checkRules holds the lines together: names unique, one post_deploy
+// for every app and one per app; and, given this config's apps (nil
 // for no liveswap block), each app a rule names configured.
 func checkRules(rules []Rule, apps map[string]bool) error {
 	names := map[string]bool{}
+	postDeploy := map[string]bool{}
 	for _, r := range rules {
 		if err := r.check(); err != nil {
 			return err
@@ -373,6 +481,16 @@ func checkRules(rules []Rule, apps map[string]bool) error {
 			return fmt.Errorf("rule %s is defined twice", r.Name)
 		}
 		names[r.Name] = true
+		if r.Kind == rulePostDeploy {
+			if postDeploy[r.App] {
+				scope := "every app"
+				if r.App != "" {
+					scope = r.App
+				}
+				return fmt.Errorf("rule %s: a second post_deploy for %s; there is one for every app, and one per app that replaces it", r.Name, scope)
+			}
+			postDeploy[r.App] = true
+		}
 	}
 	if apps == nil {
 		return nil

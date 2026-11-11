@@ -38,6 +38,15 @@ type LifecycleEvent struct {
 	Release    string
 	DeployedBy string
 	Summary    string
+	// Previous and Cutover, on EventDeploySucceeded and EventRollback,
+	// are the release whose instance served until this one was
+	// published (empty when none did: a first deploy, or an app that
+	// was down) and when that was. The notify module's post-deploy
+	// comparison reads both (notify/DESIGN-metrics.md, "Operator
+	// rules"). A relaunch of the running release names it as its own
+	// Previous.
+	Previous string
+	Cutover  time.Time
 	// Hold, on EventWatchdogRecovered, is how long the app must stay
 	// healthy before the recovery counts: max(30s, watchdog_grace), the
 	// span after which the watchdog's own backoff resets.

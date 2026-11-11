@@ -28,8 +28,9 @@ type Event struct {
 	// names the app in Instance instead.
 	App      string
 	Instance string
-	// Source is the detector: liveswap, backup, tls, disk, or
-	// external:<name> for `motel monitor send`.
+	// Source is the detector: liveswap, backup, tls, disk, metrics,
+	// rules (the operator's post_deploy), or external:<name> for
+	// `motel monitor send`.
 	Source  string
 	Summary string
 	// Release and DeployedBy are labels on a one-shot (part of what

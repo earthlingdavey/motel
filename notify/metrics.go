@@ -136,6 +136,7 @@ const storeAloneMessage = "monitor metrics: the monitor block has no channel, on
 func (m *MetricsStore) start() {
 	m.applyRules()
 	thePusher.configure(liveStore{m: m, store: m.client, gather: m.reg, logger: m.logger})
+	theComparator.configure(liveRules{m: m, store: m.client, logger: m.logger})
 }
 
 // applyRules writes this config's rules, with a journal line for each

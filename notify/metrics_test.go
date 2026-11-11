@@ -169,6 +169,10 @@ func TestStoreClient(t *testing.T) {
 			gotPath, gotBody = r.URL.RequestURI(), string(b)
 			w.WriteHeader(http.StatusNoContent)
 		case "/api/v1/query":
+			if tm := r.URL.Query().Get("time"); tm != "" && tm != "1762776000" {
+				http.Error(w, "bad time", http.StatusBadRequest)
+				return
+			}
 			_, _ = io.WriteString(w, `{"status":"success","data":{"resultType":"vector","result":[{"metric":{"job":"vmalert"},"value":[1762776000,"1"]}]}}`)
 		case "/api/v1/query_range":
 			if r.URL.Query().Get("step") != "60" || r.URL.Query().Get("start") == "" {
@@ -191,6 +195,12 @@ func TestStoreClient(t *testing.T) {
 	v, err := c.query(ctx, rulesQuery)
 	if err != nil || len(v) != 1 || v[0].labels["job"] != "vmalert" || v[0].points[0].v != 1 {
 		t.Fatalf("query: %+v %v", v, err)
+	}
+	if v, err := c.queryAt(ctx, rulesQuery, time.Unix(1762776000, 0)); err != nil || len(v) != 1 {
+		t.Fatalf("queryAt: %+v %v", v, err)
+	}
+	if _, err := c.queryAt(ctx, rulesQuery, time.Unix(1762776001, 0)); err == nil {
+		t.Fatal("queryAt sent another time")
 	}
 	now := time.Unix(1762776120, 0)
 	m, err := c.queryRange(ctx, "m", now.Add(-time.Hour), now, time.Minute)

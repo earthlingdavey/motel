@@ -33,6 +33,8 @@ func TestRuleLines(t *testing.T) {
 		"rule shop_slow threshold p95 > 1.5s for 15m app shop min_requests 50 severity critical",
 		"rule blog_quiet threshold request_rate < 0.1 for 1h app blog",
 		"rule disk_filling disk_fill within 7d",
+		"rule regress post_deploy {\n\t\twindow 20m\n\t\tmax_5xx_share 0.02\n\t}",
+		"rule blog_regress post_deploy app blog {\n\t\tmin_requests 30\n\t\tmax_p95 800ms\n\t\tfailures 2\n\t}",
 	))
 	b, _ := json.Marshal(a.Metrics)
 	got := strings.NewReplacer(`\u003e`, ">", `\u003c`, "<").Replace(string(b))
@@ -40,18 +42,22 @@ func TestRuleLines(t *testing.T) {
 		`{"name":"errors_high","kind":"threshold","metric":"5xx_share","op":">","value":0.05,"for":600000000000},` +
 		`{"name":"shop_slow","kind":"threshold","app":"shop","severity":"critical","metric":"p95","op":">","value":1.5,"for":900000000000,"min_requests":50},` +
 		`{"name":"blog_quiet","kind":"threshold","app":"blog","metric":"request_rate","op":"<","value":0.1,"for":3600000000000},` +
-		`{"name":"disk_filling","kind":"disk_fill","within":604800000000000}]}`
+		`{"name":"disk_filling","kind":"disk_fill","within":604800000000000},` +
+		`{"name":"regress","kind":"post_deploy","window":1200000000000,"max_5xx_share":0.02},` +
+		`{"name":"blog_regress","kind":"post_deploy","app":"blog","min_requests":30,"max_p95":800000000,"failures":2}]}`
 	if got != want {
 		t.Fatalf("metrics =\n%s\nwant\n%s", got, want)
 	}
 	r := a.Metrics.Rules
-	if r[0].minRequests() != 20 || r[0].severity() != SeverityWarning {
-		t.Errorf("defaults: %d %s", r[0].minRequests(), r[0].severity())
+	if r[4].minRequests() != 100 || r[4].failures() != 3 || r[4].window().String() != "20m0s" || r[0].minRequests() != 20 || r[0].severity() != SeverityWarning {
+		t.Errorf("defaults: %d %d %s %d %s", r[4].minRequests(), r[4].failures(), r[4].window(), r[0].minRequests(), r[0].severity())
 	}
 }
 
 func TestRuleRefusals(t *testing.T) {
 	for _, c := range []struct{ line, want string }{
+		{"rule", "rule takes <name> threshold|disk_fill|post_deploy"},
+		{"rule x", "rule takes <name> threshold|disk_fill|post_deploy"},
 		{"rule Errors threshold 5xx_share > 0.05 for 10m", "a rule's name is lowercase letters"},
 		{"rule 9lives threshold 5xx_share > 0.05 for 10m", "a rule's name is lowercase letters"},
 		{"rule a-b threshold 5xx_share > 0.05 for 10m", "a rule's name is lowercase letters"},
@@ -63,6 +69,7 @@ func TestRuleRefusals(t *testing.T) {
 		{"rule watchdog threshold memory_share > 0.5 for 10m", "is one of motel's own alerts"},
 		{"rule watchdog_x threshold memory_share > 0.5 for 10m", "is one of motel's own alerts"},
 		{"rule deploy_failed threshold memory_share > 0.5 for 10m", "is one of motel's own alerts"},
+		{"rule post_deploy_regressed threshold memory_share > 0.5 for 10m", "is one of motel's own alerts"},
 		{"rule disk_low disk_fill within 7d", "is one of motel's own alerts"},
 		{"rule x sum 5xx_share > 0.05 for 10m", `unknown kind "sum"`},
 		{"rule x threshold 5xx_share > 0.05", "threshold takes <metric> > | < <value> for <duration>"},
@@ -106,12 +113,38 @@ func TestRuleRefusals(t *testing.T) {
 		{"rule x disk_fill within 31d", "within is whole seconds from 1h to 30d"},
 		{"rule x disk_fill within 7d app shop", `unknown option "app"; it takes severity`},
 		{"rule x disk_fill within 7d severity page", "severity is warning or critical"},
+		{"rule x post_deploy", "post_deploy needs max_5xx_share, max_p95 or both"},
+		{"rule x post_deploy {\n\t}", "post_deploy needs max_5xx_share, max_p95 or both"},
+		{"rule x post_deploy {\n\t\twindow 30m\n\t}", "post_deploy needs max_5xx_share, max_p95 or both"},
+		{"rule x post_deploy {\n\t\tmax_5xx_share 0.02\n\t\tquery up\n\t}", `unknown post_deploy parameter "query"`},
+		{"rule x post_deploy {\n\t\tmax_5xx_share 0.02\n\t\tseverity critical\n\t}", `unknown post_deploy parameter "severity"`},
+		{"rule x post_deploy {\n\t\tmax_5xx_share 0.02 0.03\n\t}", "max_5xx_share takes one value"},
+		{"rule x post_deploy {\n\t\tmax_5xx_share 0.02\n\t\tmax_5xx_share 0.03\n\t}", "max_5xx_share is given more than once"},
+		{"rule x post_deploy {\n\t\tmax_5xx_share 2\n\t}", "max_5xx_share is a share between 0 and 1"},
+		{"rule x post_deploy {\n\t\tmax_5xx_share 0\n\t}", "max_5xx_share is a share between 0 and 1"},
+		{"rule x post_deploy {\n\t\tmax_p95 10s\n\t}", "max_p95 is from 1ms to under 10s"},
+		{"rule x post_deploy {\n\t\tmax_p95 0.5ms\n\t}", "max_p95 is from 1ms to under 10s"},
+		{"rule x post_deploy {\n\t\tmax_p95 800\n\t}", "is not a duration in ms or s"},
+		{"rule x post_deploy {\n\t\tmax_p95 800ms\n\t\twindow 90s\n\t}", "window is whole minutes from 1m to 24h"},
+		{"rule x post_deploy {\n\t\tmax_p95 800ms\n\t\twindow 25h\n\t}", "window is whole minutes from 1m to 24h"},
+		{"rule x post_deploy {\n\t\tmax_p95 800ms\n\t\tfailures 0\n\t}", `failures: "0" is not a whole number from 1`},
+		{"rule x post_deploy {\n\t\tmax_p95 800ms\n\t\tfailures 61\n\t}", "failures is from 1 to 60"},
+		{"rule x post_deploy {\n\t\tmax_p95 800ms\n\t\twindow 2m\n\t}", "3 failures in a row need a window of at least 3 minutes"},
+		{"rule x post_deploy {\n\t\tmax_p95 800ms\n\t\tmin_requests 0\n\t}", `min_requests: "0" is not a whole number from 1`},
+		{"rule x post_deploy app {\n\t\tmax_p95 800ms\n\t}", "app takes a value"},
+		{"rule x post_deploy shop {\n\t\tmax_p95 800ms\n\t}", `unknown option "shop"; it takes app`},
+		{"rule x post_deploy {\n\t\tmax_p95 800ms {\n\t\t\tx\n\t\t}\n\t}", "max_p95 takes no block"},
 		{"rule x threshold 5xx_share > 0.05 for 10m\n\trule x disk_fill within 7d", "rule x is defined twice"},
+		{"rule a post_deploy {\n\t\tmax_p95 800ms\n\t}\n\trule b post_deploy {\n\t\tmax_5xx_share 0.1\n\t}", "a second post_deploy for every app"},
+		{"rule a post_deploy app shop {\n\t\tmax_p95 800ms\n\t}\n\trule b post_deploy app shop {\n\t\tmax_5xx_share 0.1\n\t}", "a second post_deploy for shop"},
 	} {
 		if _, err := parse(t, withRules(c.line)); err == nil || !strings.Contains(err.Error(), c.want) {
 			t.Errorf("%q: err = %v, want %q", c.line, err, c.want)
 		}
 	}
+	// One for every app and one per app is no duplicate: the app's
+	// replaces the other for it.
+	mustParse(t, withRules("rule a post_deploy {\n\t\tmax_p95 800ms\n\t}", "rule b post_deploy app shop {\n\t\tmax_p95 1s\n\t}"))
 }
 
 // A rule line reads the store's numbers: without the metrics line it is
@@ -144,6 +177,10 @@ func TestRuleRefusalsAtProvision(t *testing.T) {
 		!strings.Contains(err.Error(), "rule shop_errors names app shop, which the liveswap block does not configure") {
 		t.Errorf("a rule on an unknown app: %v", err)
 	}
+	if _, err := provision(t, block("rule shop_regress post_deploy app shop {\n\t\t\tmax_p95 1s\n\t\t}")); err == nil ||
+		!strings.Contains(err.Error(), "names app shop") {
+		t.Errorf("a post_deploy on an unknown app: %v", err)
+	}
 	noLiveswap := "{\n\tadmin off\n\tmonitor {\n\t\tmetrics /run/x/vm.sock\n\t\trule e threshold 5xx_share > 0.05 for 10m app blog\n\t}\n}\n:8080 {\n\trespond ok\n}\n"
 	if _, err := provision(t, noLiveswap); err == nil || !strings.Contains(err.Error(), "no liveswap block") {
 		t.Errorf("a rule naming an app with no liveswap block: %v", err)
@@ -156,8 +193,10 @@ func TestRuleRefusalsAtProvision(t *testing.T) {
 		{Rule{Name: "x", Kind: ruleThreshold, Metric: "up", Op: ">", Value: 0.05, For: 600e9}, `unknown metric "up"`},
 		{Rule{Name: "x", Kind: ruleDiskFill, Within: 3600e9, Metric: "p95"}, "metric, op, value and for are a threshold's"},
 		{Rule{Name: "x", Kind: ruleThreshold, Metric: "5xx_share", Op: ">", Value: 0.05, For: 600e9, Within: 3600e9}, "within is disk_fill's"},
+		{Rule{Name: "x", Kind: ruleThreshold, Metric: "5xx_share", Op: ">", Value: 0.05, For: 600e9, Failures: 2}, "are post_deploy's"},
 		{Rule{Name: "x", Kind: ruleDiskFill, Within: 3600e9, App: "blog"}, "disk_fill is the box's"},
 		{Rule{Name: "x", Kind: ruleDiskFill, Within: 3600e9, MinRequests: 5}, "min_requests is a request rule's"},
+		{Rule{Name: "x", Kind: rulePostDeploy, MaxP95: 1e9, Severity: SeverityCritical}, "it takes no severity"},
 		{Rule{Name: "x", Kind: "expr"}, `unknown kind "expr"`},
 		{Rule{Name: "X", Kind: ruleDiskFill, Within: 3600e9}, "a rule's name is lowercase"},
 	} {
@@ -177,6 +216,7 @@ func TestOperatorRulesRender(t *testing.T) {
 		"rule busy threshold cpu_cores > 1.5 for 10m app shop",
 		"rule median threshold p50 > 200ms for 10m",
 		"rule disk_filling disk_fill within 7d severity critical",
+		"rule regress post_deploy {\n\t\tmax_5xx_share 0.02\n\t}",
 	)
 	f := parseRules(t, renderRules(a))
 	if len(f.Groups) != 3 || f.Groups[2].Name != operatorGroup || f.Groups[2].Interval != "1m" {
@@ -187,7 +227,7 @@ func TestOperatorRulesRender(t *testing.T) {
 		rules[r.Alert] = r
 	}
 	if len(rules) != 8 {
-		t.Fatalf("operator rules = %+v; want every line", f.Groups[2].Rules)
+		t.Fatalf("operator rules = %+v; want the threshold and disk_fill lines, no post_deploy", f.Groups[2].Rules)
 	}
 	every := func(r string) string { return `sum by (app) (increase_pure(motel_app_requests_total{` + r + `}[5m]))` }
 	shop := func(metric, extra string) string {

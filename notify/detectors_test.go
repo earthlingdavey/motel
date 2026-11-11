@@ -17,7 +17,7 @@ import (
 
 func TestLifecycleSinkMapsLiveswapsEvents(t *testing.T) {
 	te := newTestEngine(t)
-	s := lifecycleSink{te.engine}
+	s := lifecycleSink{e: te.engine}
 	s.Lifecycle(liveswap.LifecycleEvent{Name: liveswap.EventDeployStarted, App: "blog", Release: "v2"})
 	s.Lifecycle(liveswap.LifecycleEvent{Name: liveswap.EventWatchdogThrottled, App: "blog", Release: "v1", Summary: "restart loop"})
 	s.Lifecycle(liveswap.LifecycleEvent{Name: liveswap.EventDeployFailed, App: "blog", Release: "v2", DeployedBy: "local:/k", Summary: "deploy of v2 failed"})
