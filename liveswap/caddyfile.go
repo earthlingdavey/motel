@@ -23,13 +23,13 @@ func init() {
 	// The webhook is terminal, but give it a sane default position for
 	// site blocks that mix it with other directives.
 	httpcaddyfile.RegisterDirectiveOrder("liveswap_webhook", httpcaddyfile.Before, "reverse_proxy")
-	httpcaddyfile.RegisterHandlerDirective("liveswap_observe", parseObserveDirective)
+	httpcaddyfile.RegisterHandlerDirective("observe", parseObserveDirective)
 	// Outside the cache and penaltybox, so that it sees the cache's hits
 	// and penaltybox's refusals: cache sorts before rewrite, and an
 	// anchor inserts immediately before a standard directive, so the
 	// earliest one motel can use is redir (box_webhook's, for the same
 	// reason).
-	httpcaddyfile.RegisterDirectiveOrder("liveswap_observe", httpcaddyfile.Before, "redir")
+	httpcaddyfile.RegisterDirectiveOrder("observe", httpcaddyfile.Before, "redir")
 }
 
 func parseObserveDirective(h httpcaddyfile.Helper) (caddyhttp.MiddlewareHandler, error) {

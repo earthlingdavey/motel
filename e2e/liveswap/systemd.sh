@@ -507,7 +507,7 @@ removal_config() { # <out>
 		skip == 2 && /^}$/     { skip = 0 }
 	' /etc/motel/Caddyfile > "$1"
 	grep -q '^\t\tapp ' "$1" && die "removal config still names an app"
-	grep -q 'dynamic liveswap\|liveswap_observe' "$1" && die "removal config still has a site of an app"
+	grep -qE 'dynamic liveswap|^[[:space:]]+observe ' "$1" && die "removal config still has a site of an app"
 	grep -q 'liveswap {' "$1" || die "removal config lost the liveswap block"
 }
 # load_config POSTs a Caddyfile to the admin API. Caddy flushes adapter

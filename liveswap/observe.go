@@ -25,7 +25,7 @@ func init() {
 // release. Written by the operator first in the app's site or route:
 //
 //	route {
-//	    liveswap_observe <app>
+//	    observe <app>
 //	    cache
 //	    reverse_proxy {
 //	        dynamic liveswap <app>
@@ -54,7 +54,7 @@ func (Observe) CaddyModule() caddy.ModuleInfo {
 // Provision resolves the app reference, as Upstreams does.
 func (o *Observe) Provision(ctx caddy.Context) error {
 	if o.App == "" {
-		return fmt.Errorf("an app name is required: liveswap_observe <app>")
+		return fmt.Errorf("an app name is required: observe <app>")
 	}
 	appModule, err := ctx.App("liveswap")
 	if err != nil {
@@ -67,7 +67,7 @@ func (o *Observe) Provision(ctx caddy.Context) error {
 	return nil
 }
 
-// UnmarshalCaddyfile parses `liveswap_observe <app>`.
+// UnmarshalCaddyfile parses `observe <app>`.
 func (o *Observe) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
 	d.Next() // the directive's name
 	if !d.NextArg() {
@@ -78,7 +78,7 @@ func (o *Observe) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
 		return d.ArgErr()
 	}
 	if d.NextBlock(0) {
-		return d.Err("liveswap_observe takes no block")
+		return d.Err("observe takes no block")
 	}
 	return nil
 }

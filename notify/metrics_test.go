@@ -898,7 +898,7 @@ func TestWriteRules(t *testing.T) {
 	}
 }
 
-// liveswap_observe's counts reach the registry per release, a stopped
+// observe's counts reach the registry per release, a stopped
 // app's among them; a release with no response pushes nothing.
 func TestAppCollectorRequests(t *testing.T) {
 	var cur liveswap.ReleaseRequests

@@ -165,7 +165,7 @@ deploy.example.com {
 ```
 
 To count an app's responses for the metrics store (experimental,
-notify/DESIGN-metrics.md), write `liveswap_observe <app>` first in its
+notify/DESIGN-metrics.md), write `observe <app>` first in its
 site or route: per release, it counts each response's status class,
 times it to its headers, and reads a cache's `Cache-Status` verdict, and
 `GET /<app>` with the deploy token gains `metrics.requests`
@@ -176,7 +176,7 @@ request, and costs about 0.3 µs on one (liveswap/DESIGN-liveswap.md,
 ```
 blog.example.com {
 	route {
-		liveswap_observe blog
+		observe blog
 		cache
 		reverse_proxy {
 			dynamic liveswap blog

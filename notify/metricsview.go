@@ -14,7 +14,7 @@ import (
 // the store's socket, scoped to the app the route resolved, over one of
 // liveswap.MetricsRanges: two query_range templates (memory, CPU), the
 // window's memory peak, and four instant queries over the requests
-// liveswap_observe counted; run at once within one budget, and cached
+// observe counted; run at once within one budget, and cached
 // per app and window.
 const (
 	// viewRecent is what avg_5m averages over, up to the newest point.
@@ -84,7 +84,7 @@ type cpuSummary struct {
 	Avg   float64  `json:"avg"`
 }
 
-// requestSummary is what liveswap_observe counted over the window,
+// requestSummary is what observe counted over the window,
 // every release together. Absent when the store holds no request series
 // for the app (no observer on its route).
 type requestSummary struct {

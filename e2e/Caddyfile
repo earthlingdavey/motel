@@ -130,7 +130,7 @@
 # bare site.
 :8090 {
 	route {
-		liveswap_observe demo
+		observe demo
 		reverse_proxy {
 			dynamic liveswap demo
 		}
@@ -139,7 +139,7 @@
 
 :8091 {
 	route {
-		liveswap_observe demo
+		observe demo
 		cache
 		reverse_proxy {
 			dynamic liveswap demo

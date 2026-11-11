@@ -29,12 +29,12 @@ var (
 		"The running unit's MemoryMax=, when it has one.", []string{"app"}, nil)
 	appCPUDesc = prometheus.NewDesc("motel_app_cpu_seconds_total",
 		"CPU the running unit has used, from its cgroup's cpu.stat: one series per unit, since each new unit counts from zero.", []string{"app", "unit"}, nil)
-	// liveswap_observe's counts, per release: the current one and the
+	// observe's counts, per release: the current one and the
 	// one before.
 	appRequestsDesc = prometheus.NewDesc("motel_app_requests_total",
-		"Responses liveswap_observe saw, by status class (aborted: the client went before the headers).", []string{"app", "release", "class"}, nil)
+		"Responses observe saw, by status class (aborted: the client went before the headers).", []string{"app", "release", "class"}, nil)
 	appResponseDesc = prometheus.NewDesc("motel_app_response_seconds",
-		"The app's own responses' time to headers, as liveswap_observe timed them (cache hits and upgrades left out).", []string{"app", "release"}, nil)
+		"The app's own responses' time to headers, as observe timed them (cache hits and upgrades left out).", []string{"app", "release"}, nil)
 	appCacheDesc = prometheus.NewDesc("motel_app_cache_responses_total",
 		"Responses a cache in front of the app spoke for, by its Cache-Status verdict.", []string{"app", "release", "result"}, nil)
 )

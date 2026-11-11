@@ -450,13 +450,13 @@ func TestObserveFollowsTheDeploy(t *testing.T) {
 
 func TestObserveCaddyfile(t *testing.T) {
 	var o Observe
-	if err := o.UnmarshalCaddyfile(caddyfile.NewTestDispenser(`liveswap_observe blog`)); err != nil || o.App != "blog" {
+	if err := o.UnmarshalCaddyfile(caddyfile.NewTestDispenser(`observe blog`)); err != nil || o.App != "blog" {
 		t.Fatalf("parse: %v %+v", err, o)
 	}
 	for _, in := range []string{
-		`liveswap_observe`,
-		`liveswap_observe blog shop`,
-		"liveswap_observe blog {\n\tx\n}",
+		`observe`,
+		`observe blog shop`,
+		"observe blog {\n\tx\n}",
 	} {
 		var o Observe
 		if err := o.UnmarshalCaddyfile(caddyfile.NewTestDispenser(in)); err == nil {

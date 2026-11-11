@@ -9,7 +9,7 @@
 #   the store's TCP in its namespace only; its socket's mode and reach
 #   motel's push (job="motel"), with a deployed app's motel_app_*
 #   GET /<app> with the deploy token carries the app's metrics
-#   liveswap_observe's counts in the store and in GET /<app>?range=
+#   observe's counts in the store and in GET /<app>?range=
 #   vmalert's rules loaded; its ChannelFailed and motel's one alert
 #   nothing of the store in an app's sandbox view
 #   the store's socket gone: GET /<app> answers at once, with the error

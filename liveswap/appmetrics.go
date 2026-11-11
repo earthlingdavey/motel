@@ -28,7 +28,7 @@ type AppSample struct {
 	// MemoryMax is the unit's MemoryMax= as the manager applied it; 0
 	// when the unit has none, or when it is not known to be applied.
 	MemoryMax uint64
-	// Requests is what liveswap_observe counted, the current release's
+	// Requests is what observe counted, the current release's
 	// first and the one before's after it; empty when no observer has
 	// seen a response for the app.
 	Requests []ReleaseRequests

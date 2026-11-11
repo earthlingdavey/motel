@@ -1,5 +1,5 @@
 #!/bin/sh
-# The request path's cost, before and with liveswap_observe
+# The request path's cost, before and with observe
 # (notify/DESIGN-metrics.md, "The response observer"; the triage rule's
 # measurement before a fix on every app's path). Run from the repo root:
 #

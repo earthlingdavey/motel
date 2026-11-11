@@ -612,7 +612,7 @@ backwards edges reappearing *despite* this table.
 
 ### The response observer (`observe.go`)
 
-`liveswap_observe <app>` is a handler the operator writes first in an
+`observe <app>` is a handler the operator writes first in an
 app's site or route. It counts each response under its release ("Which
 release") by status class (`1xx` for 101 alone, `2xx` to `5xx`, and
 `aborted` for a request no headers went to: its client gone first, or
@@ -621,7 +621,10 @@ its handler aborted), times it to the headers the client is sent
 histogram, and reads the cache's verdict from `Cache-Status` (hit,
 stale, miss, bypass). It exists because Caddy's request metrics carry a
 server and a handler, never a liveswap app (notify/DESIGN-metrics.md,
-"The response observer").
+"The response observer"). The directive is `observe`; the module
+(`http.handlers.liveswap_observe`, what an adapted JSON config names)
+keeps liveswap's prefix, as `liveswap_webhook`'s does, so that no other
+plugin's handler can take its ID.
 
 - **Where.** Ordered before `redir`, the earliest standard anchor
   (box_webhook's), so that at site level it sorts outside `cache`
@@ -683,7 +686,7 @@ server and a handler, never a liveswap app (notify/DESIGN-metrics.md,
 | `deploytrust/` | leaf package: deploy auth — the `deploy_trust` grammar (`Parse`), its sources and verifiers (OIDC + local-key JWT verification), the webhook preamble (`Limiter.Authenticate`) and what a failed attempt costs the journal (`Limiter`, on an injected clock). Imports nothing of liveswap's; the box webhook authenticates through it too. `trusttest/` beside it mints tokens and runs an issuer for tests |
 | `internal/dispenser/` | leaf package: the one Caddyfile rule the parsers here and `deploytrust.Parse` apply alike — a repeated subdirective is refused — in one place so the two cannot drift |
 | `upstreams.go` | dynamic upstream source (the cutover read side) |
-| `observe.go` | `liveswap_observe`: the response observer's handler and writer, and the per-release counters on `managedApp` ("The response observer") |
+| `observe.go` | `observe`: the response observer's handler and writer, and the per-release counters on `managedApp` ("The response observer") |
 | `appmetrics.go` | what the metrics store reads of liveswap: `AppSamples` (each app's instance and its request counts) and the `MetricsSource` hook that adds `metrics` to `GET /<app>`, with the `?range=` windows |
 | `runner.go` / `runner_systemd.go` / `systemd_dbus.go` | runner interface + the systemd transient-unit implementation + its D-Bus client |
 | `sweep.go` | `App.Start`'s reconciliation against the manager: stop the units, and prune the dirs, of apps no loaded config names. Module-layer (the pool is the ledger), driving the runner |
@@ -1199,7 +1202,7 @@ Dated one-liners; the full text of each is in git.
   residual with the numbers, and the steeper bar first proposed is
   declined there. An assignment is judged by its parts, so a setting
   stays readable and `KEY=<secret>` keeps its key.
-- 2026-11-11 — The response observer, `liveswap_observe`: per-release
+- 2026-11-11 — The response observer, `observe`: per-release
   counts of an app's responses (class, time to headers, cache verdict),
   measured on the request path before and after (part of #418, slice
   three of notify and metrics).

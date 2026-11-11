@@ -311,7 +311,7 @@ type managedApp struct {
 	// activeSocket is what GetUpstreams reads on every request; storing
 	// it is the cutover. nil = nothing serving yet.
 	activeSocket atomic.Pointer[socketRef]
-	// requests is what liveswap_observe counts, per release (observe.go):
+	// requests is what observe counts, per release (observe.go):
 	// set to the new release wherever current gets a new instance.
 	requests requestCounts
 
