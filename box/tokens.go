@@ -347,6 +347,16 @@ func walk(input []byte) (*Shape, error) {
 			if first.Text == "liveswap" {
 				child.kind = kindLiveswap
 			}
+			// The blocks the monitor block replaced, refused here by name
+			// as motel validate refuses them (notify/caddyfile.go): the
+			// walk would read no monitor block, and the slot's check
+			// below would refuse the push in words that name neither.
+			switch first.Text {
+			case "notify":
+				return nil, refuse("has a notify block, which is now `monitor { … }`, with the same lines; to move a box onto it, docs/upgrading.md, \"From the notify and metrics_store blocks\"")
+			case "metrics_store":
+				return nil, refuse("has a metrics_store block, which is now a `metrics [<socket path>]` line in the monitor block; to move a box onto it, docs/upgrading.md, \"From the notify and metrics_store blocks\"")
+			}
 			if first.Text == "monitor" && opens && shape.Notify == nil { // Caddy refuses a second
 				shape.Notify = &NotifyBlock{}
 				child.kind = kindNotify

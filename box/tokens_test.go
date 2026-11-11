@@ -429,10 +429,17 @@ func TestWalkNotify(t *testing.T) {
 	if s, err := Walk(file(f)); err != nil || s.Notify == nil || s.Notify.Channels || len(s.Notify.Secrets) != 0 {
 		t.Fatalf("a metrics line alone: %+v, %v", s.Notify, err)
 	}
-	// The old block is no monitor block: Caddy refuses it at validate.
-	f = strings.Replace(good, "\tliveswap {", "\tnotify {\n\t\tchannel ops ntfy {secret.NOTIFY_OPS_URL}\n\t\toperator ops\n\t}\n\n\tliveswap {", 1)
-	if s, err := Walk(file(f)); err != nil || s.Notify != nil {
-		t.Fatalf("the old notify block: %+v, %v", s.Notify, err)
+	// The old blocks are refused by name, pointing at the upgrade's
+	// order, before the slot's check could refuse them as no block.
+	for old, want := range map[string]string{
+		"\tnotify {\n\t\tchannel ops ntfy {secret.NOTIFY_OPS_URL}\n\t\toperator ops\n\t}\n": "the Caddyfile has a notify block, which is now `monitor { … }`, with the same lines; to move a box onto it, docs/upgrading.md",
+		"\tmetrics_store\n": "the Caddyfile has a metrics_store block, which is now a `metrics [<socket path>]` line in the monitor block",
+		"\tmetrics_store {\n\t\tstore /run/x/vm.sock\n\t}\n": "has a metrics_store block",
+	} {
+		f = strings.Replace(good, "\tliveswap {", old+"\n\tliveswap {", 1)
+		if _, err := Walk(file(f)); err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("%q: %v, want %q", old, err, want)
+		}
 	}
 	if s, err := Walk(file(good)); err != nil || s.Notify != nil {
 		t.Fatalf("no monitor block: %+v, %v", s, err)
