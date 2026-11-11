@@ -6,8 +6,10 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -224,8 +226,32 @@ func (c diskCollector) Collect(ch chan<- prometheus.Metric) {
 			continue // not measured is no sample: the rule's line keeps its last
 		}
 		seen[dev] = true
-		ch <- prometheus.MustNewConstMetric(diskAvailDesc, prometheus.GaugeValue, float64(avail), p)
+		ch <- prometheus.MustNewConstMetric(diskAvailDesc, prometheus.GaugeValue, float64(avail), diskLabels.name(dev, p, c.paths))
 	}
+}
+
+// diskLabels keeps the path a filesystem's series is named by for as
+// long as that path is measured: a stat of it that fails once must not
+// rename the series after the next path on the device, which would cut
+// a disk_fill rule's history in two. The process's, as the per-device
+// level of notify's disk source is.
+var diskLabels = &diskNames{byDev: map[uint64]string{}}
+
+type diskNames struct {
+	mu    sync.Mutex
+	byDev map[uint64]string
+}
+
+// name is the device's series' path: the one it had while that is
+// still among paths, else p, measured now.
+func (n *diskNames) name(dev uint64, p string, paths []string) string {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	if had, ok := n.byDev[dev]; ok && slices.Contains(paths, had) {
+		return had
+	}
+	n.byDev[dev] = p
+	return p
 }
 
 // statAvail is what a user can still write on the filesystem holding
