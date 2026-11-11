@@ -300,8 +300,10 @@ that fails after the mask (an install, a unit written to a full disk, a
 reload) unmasks the store on its way out, starts `motel-vm.socket` (a
 connection that arrived while the store was masked fails the socket),
 and starts the store and vmalert again if the store was running, so a stack that worked is not left
-masked and stopped; a first run that fails stays masked, since Debian's
-unit without the drop-in listens on `0.0.0.0`. The drop-in
+masked and stopped; a first run that fails before step 5's `unmask`
+stays masked, since Debian's unit without the drop-in listens on
+`0.0.0.0`, and one that fails after it is left as far as it got, every
+unit already written ("Accepted residuals"). The drop-in
 replaces Debian's `ExecStart=`, so `/etc/default/victoria-metrics` (a
 conffile) stays as shipped and an upgrade never prompts. One unit fact
 was measured on hotserve-1 and is in the files: a socket unit bound
@@ -418,6 +420,7 @@ on its general scales. metrics' examples:
 | `now` and `at` in `GET /<app>` are judged by the range's step timestamps, not the samples': the store carries a sample forward onto the 60 s grid, so a stopped app's or a dropped cap's last value can read as now for up to about one step past `viewFresh` (3 m) | notify/metricsview.go (`fresh`) | 2 | 3 | 3 | 18; the status beside it says whether the app runs; the source timestamps need a `timestamp()` query per series (size 2, risk 2). Copilot round 2 on #423 |
 | vmalert's `ChannelFailed` has no baseline: the store's `increase()` counts a series' first sample from zero (measured on 1.112.0: first seen at 3 gives 3, and again after a 17-minute gap), so a failure Alertmanager counted before `motel metrics setup`, or before a store outage of over ten minutes, is told once as new, for five minutes | notify/metricsrules.go | 2 | 2 | 3 | 12; one late warning to the operator's other channels about a channel that did fail; motel's own source keeps its baseline. A gate on the counter's age changes the expression every channel's rule shares (risk 2) and wants a run against the store to prove. /code-review pass 3 on #423 |
 | A failed re-run's put-back starts `motel-vm.socket` (and `motel-am.socket`) whether or not it was active when setup began: one an operator had stopped to keep the store stopped is started, and a re-run after a first run that failed past the drop-in starts the socket of a stack that never ran | notify/setup.go (`putBackOnFailure`) | 2 | 2 | 3 | 12; a setup that succeeds enables and starts the same socket, which is what the operator ran it for; with the drop-in in place the store it can start is confined to the namespace. /code-review pass 2 on #425 |
+| A first run of either setup that fails after its own `unmask` (`disable`, `enable --now`, a `restart`, the motel reload) is left unmasked and maybe partly started, not masked | notify/setup.go, notify/metricssetup.go | 2 | 3 | 1 | 6; every unit and drop-in is written before the unmask, so what can run is motel's confined shape (Alertmanager on its socket with no cluster port, the store in its namespace); setup ends on its error naming the step, and the next run is a re-run, with the put-back. A remask there (size 2, risk 2) would mask a service whose socket may be enabled already, so a connection fails the socket: the state the put-back exists to undo. Copilot round 3 on #425 |
 | A store that turns read-only while `metrics_store_down` or `metrics_rules_down` already fires leaves that warning firing beside the critical until the store is writable (the read-only path holds back new ones, and does not clear old ones) | notify/metricspush.go (`checkReadOnly`) | 2 | 2 | 3 | 12; the warning was true when raised and the critical beside it names the cause; clearing them there is two more branches in the path every read takes. Copilot on #425 |
 | A reload that moves the `store` line to another socket starts the counts afresh (`setLive`) but keeps what already fires, `metrics_store_read_only` among them, until the new store answers: a read-only alert raised for the old store stays told while the new one does not answer | notify/metricspush.go (`setLive`) | 2 | 2 | 1 | 4; it needs the old store read-only and the new one not answering; the first answer of the new store clears it, and the new store's own silence fires `metrics_store_down`, which names the push failing, once `readOnlyStale` asks have gone unanswered (`heldReadOnly`, as for any read-only store that stops answering). Clearing it at the move would resolve it on no evidence. Copilot round 2 on #425 |
 
@@ -493,3 +496,6 @@ Dated one-liners; the full text of each is in git.
 - 2026-11-11 — #425 rebased onto #423's merge; Copilot round 2 on #425,
   triaged: a store move's carried alert accepted (row), the booted-host
   checks named in the reboot row.
+- 2026-11-11 — Copilot round 3 on #425, triaged: a first run that fails
+  after its unmask is left unmasked in motel's confined shape (row); the
+  three sentences that said it stays masked corrected.

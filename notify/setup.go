@@ -62,8 +62,11 @@ func isFile(p string) bool {
 // a connection that arrived while the service was masked fails its
 // activation socket, which then starts nothing. daemons are started
 // too if the service was running. Every step is tried, whatever the one
-// before it did. A first run is left masked: without the drop-in,
-// Debian's unit listens beyond the box.
+// before it did. A first run that fails before its own unmask is left
+// masked: until the drop-in is written, Debian's unit listens beyond
+// the box. One that fails after it is left as far as it got, every unit
+// and drop-in already written, so what runs is motel's confined shape;
+// the next run is a re-run (DESIGN-metrics.md, "Accepted residuals").
 func putBackOnFailure(sys system, say func(string, ...any), rerun bool, service string, sockets, daemons []string, err *error) func() {
 	if !rerun {
 		return func() {}
