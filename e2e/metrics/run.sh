@@ -174,8 +174,15 @@ amq='filter=alertname%3D%22ChannelFailed%22&filter=notify_channel%3D%22ops%22&fi
 n=$(am "http://am/api/v2/alerts?$amq" | grep -o '"fingerprint"' | wc -l)
 [ "$n" -eq 1 ] && pass "Alertmanager holds one ChannelFailed for ops naming oncall: the two sources are one alert" \
 	|| fail "Alertmanager holds $n such alerts: $(am "http://am/api/v2/alerts?$amq" | cut -c1-400)"
-am "http://am/api/v2/alerts?$amq" | grep -q '"generatorURL":"http' \
-	&& pass "the one alert was posted by vmalert too (its generatorURL)" || fail "no vmalert post merged into the alert"
+# The merged alert carries the generatorURL of whichever source posted
+# last: motel reposts every minute and vmalert re-sends at each 1m
+# evaluation, so wait out one re-send for vmalert's to be the latest.
+i=0
+until am "http://am/api/v2/alerts?$amq" | grep -q '"generatorURL":"http'; do
+	i=$((i + 1)); [ "$i" -ge 38 ] && break; sleep 2
+done
+[ "$i" -lt 38 ] && pass "the one alert was posted by vmalert too (its generatorURL)" \
+	|| fail "no vmalert post merged into the alert in 75 s: $(am "http://am/api/v2/alerts?$amq" | cut -c1-400)"
 
 echo "=== metrics 5: an app's sandbox has none of it in view ==="
 code=$(deploy demo-probe.tar.gz sb1)
