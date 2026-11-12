@@ -117,6 +117,35 @@ func TestLifecycleDeployNamesTheReleaseItReplaced(t *testing.T) {
 	}
 }
 
+// The cutover is when the traffic moved, not when the publication
+// returned: the caps' sync after the swap can wait on the manager.
+func TestLifecycleCutoverIsTheSwap(t *testing.T) {
+	rig, n := notifiedRig(t)
+	held, release := rig.holdFetch(t)
+	done := make(chan error, 1)
+	go func() {
+		done <- rig.ma.Deploy(context.Background(), deployRequest{url: "https://x/a.tgz", version: "v1"})
+	}()
+	held()
+	// Installed during the fetch: the publication finds the instance
+	// without these caps and applies them, a manager call that takes
+	// ten seconds here.
+	spec := testSpec(t)
+	spec.caps = resourceCaps{cpuQuota: 100}
+	rig.ma.configure(new(int), spec, nil, zap.NewNop(), &fetchClients{}, userManager)
+	var applied time.Time
+	rig.runner.setCapsHook = func(resourceCaps) {
+		applied = rig.clock.Now()
+		rig.clock.Advance(10 * time.Second)
+	}
+	release(nil)
+	must(t, <-done)
+	ev, ok := n.find(EventDeploySucceeded)
+	if !ok || applied.IsZero() || !ev.Cutover.Equal(applied) {
+		t.Fatalf("cutover %v; the caps were applied at %v, ten seconds before the publication returned", ev.Cutover, applied)
+	}
+}
+
 func TestLifecycleDeployFailedNamesThePhaseNotTheError(t *testing.T) {
 	rig, n := notifiedRig(t)
 	rig.fetch.err = errors.New("fetching: the app printed SECRET-OUTPUT on stderr")

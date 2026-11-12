@@ -1120,13 +1120,14 @@ func (ma *managedApp) deployLocked(ctx context.Context, req deployRequest, c col
 	// ignored: a CI client hanging up must not abort stop-old or GC.
 	ma.setPhase(c, "promoting")
 	newInst := l.instance(newHandle)
-	if err := ma.publishInstance(c, newInst); err != nil { // ← the cutover
+	swapped, err := ma.publishInstance(c, newInst) // ← the cutover
+	if err != nil {
 		logger.Error("state persistence failed; deploys still work but a Caddy restart will not know about this version", zap.Error(err))
 	}
 	promoted = true // past the cutover: never clean up the now-live release
 	// What it replaced is what served: an instance that had died (a
 	// crash loop, unrouted) is no release's baseline.
-	cut = cutover{at: c.clock.Now()}
+	cut = cutover{at: swapped}
 	if old != nil && c.runner.Alive(old.handle) {
 		cut.replaced = old
 	}
@@ -1378,7 +1379,7 @@ func (ma *managedApp) ensureRunning() error {
 		}
 		return &transientRecoveryError{fmt.Errorf("relaunching %s: %w", st.CurrentVersion, err)}
 	}
-	if err := ma.publishInstance(c, inst); err != nil {
+	if _, err := ma.publishInstance(c, inst); err != nil {
 		c.logger.Warn("persisting recovered state", zap.Error(err))
 	}
 	ma.wd.setLastFailure("") // a recovery that gave up, or a refusal, is over
@@ -1656,8 +1657,10 @@ func (l launch) instance(h handle) *instance {
 // and watchdog restarts must all go through it. The replaced
 // instance's pinned socket is the caller's to retire, once that
 // instance is stopped. A persist failure is returned, not logged: each
-// caller has its own severity and message.
-func (ma *managedApp) publishInstance(c collaborators, inst *instance) error {
+// caller has its own severity and message. It returns when the traffic
+// was cut over: the persist and the caps' sync after it can wait on the
+// manager.
+func (ma *managedApp) publishInstance(c collaborators, inst *instance) (time.Time, error) {
 	ma.mu.Lock()
 	ma.current = inst
 	ma.mu.Unlock()
@@ -1668,6 +1671,7 @@ func (ma *managedApp) publishInstance(c collaborators, inst *instance) error {
 	if ma.wd.takeRefused() {
 		ma.lifecycle(c, LifecycleEvent{Name: EventRelaunchResolved, Release: inst.version, Summary: "an instance of " + inst.version + " runs again"})
 	}
+	swapped := c.clock.Now()
 	ma.activeSocket.Store(inst.sock)
 	// Persisted before the caps are reconciled: the record is what a
 	// restart recovers, and a sync that waits on the manager must not
@@ -1680,7 +1684,7 @@ func (ma *managedApp) publishInstance(c collaborators, inst *instance) error {
 	// instance carries the accepted configuration's caps whichever
 	// path published it.
 	ma.syncCaps()
-	return err
+	return swapped, err
 }
 
 // unrouteIf clears activeSocket only while inst is still current, under
