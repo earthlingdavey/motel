@@ -873,7 +873,11 @@ in the namespace; the socket `srw-rw---- root motel` and the state
 directory `drwxr-s--- motel _victoria-metrics`; the store's data
 `drwxr-x--- _victoria-metrics _victoria-metrics`; root and motel reach the
 store and nobody does; the store's and vmalert's `MemoryMax`; the
-rendered `rules.yml` passes `vmalert -dryRun`; motel's push arrives
+rendered `rules.yml` passes `vmalert -dryRun`; notify's five tests
+over vmalert and vmalert-tool, which `make test` skips for want of them
+(the dry runs, the threshold and disk_fill rules firing, a counter
+after a push gap, a disk step), run from a test binary built for the
+box (e2e/Dockerfile's `notify-tests`), none skipped; motel's push arrives
 (`job="motel"`), with a deployed app's `motel_app_up`, release and CPU,
 and its memory where the host's memory controller reaches the user
 manager's units (Debian 13 delegates it; a CI container's host may not,
