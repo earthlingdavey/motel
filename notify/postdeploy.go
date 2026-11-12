@@ -263,9 +263,11 @@ func (c *comparator) check(ctx context.Context, store instantQuerier, logger *za
 
 // releaseNumbers are one release's over a window. The p95 is of the
 // responses timed (the histogram's count: a cache hit is sent and never
-// timed), and there is one only with min_requests of them.
+// timed), and there is one only with min_requests of them; timed is
+// that count, read when the p95 is wanted.
 type releaseNumbers struct {
 	sent, errors float64
+	timed        float64
 	p95          float64
 	hasP95       bool
 }
@@ -385,7 +387,11 @@ func queryRelease(ctx context.Context, store instantQuerier, app, release string
 	if len(timed) == 0 {
 		return n, nil
 	}
-	if val, ok := instantValue(timed[0]); !ok || val < floor {
+	val, ok := instantValue(timed[0])
+	if !ok {
+		return n, nil
+	}
+	if n.timed = val; val < floor {
 		return n, nil
 	}
 	q, err := store.queryAt(ctx, "histogram_quantile(0.95, sum by (le) ("+buckets+"))", at)
@@ -422,13 +428,20 @@ func regressedEvent(r comparison, rule Rule, elapsed time.Duration, v verdict, f
 		}
 		parts = append(parts, p)
 	}
+	// Why the bound alone counted: no release before, too few sent, or,
+	// for a p95 over its bound, too few of the old release's responses
+	// timed (a cache hit is sent and never timed).
+	overP95 := rule.MaxP95 != 0 && v.newer.hasP95 && v.newer.p95 > time.Duration(rule.MaxP95).Seconds()
 	baseline := ""
 	switch {
-	case v.hasOld:
 	case r.previous == "":
 		baseline = "; no release before it to compare"
-	default: // under the floor: no baseline
+	case !v.hasOld: // under the floor: no baseline
 		baseline = fmt.Sprintf("; the release before it sent %d responses, too few to compare", int(v.old.sent))
+	case overP95 && !v.old.hasP95 && v.old.timed < float64(rule.minRequests()):
+		baseline = fmt.Sprintf("; the release before it had %d responses timed, too few to compare its p95", int(v.old.timed))
+	case overP95 && !v.old.hasP95:
+		baseline = "; the release before it has no p95 to compare"
 	}
 	checks := "check"
 	if failed > 1 {

@@ -551,7 +551,10 @@ regressed 3m after its deploy, over 240 responses: 5xx share 0.0833
 against 0.004 before it; 3 failing checks in a row (rule regress)`, a share
 to 1/10 000, a p95 to the millisecond. With no baseline, it says which:
 `no release before it to compare`, or `the release before it sent 12
-responses, too few to compare`. The release before is not named:
+responses, too few to compare`; and for a p95 over its bound with no
+old p95, `the release before it had 6 responses timed, too few to
+compare its p95` (a cached site's old release can send enough and time
+too few; Copilot round 3 on #429). The release before is not named:
 the filter keeps the event's own release whole, and would mask another
 git sha. It never acts: no refusal, no rollback (requirement 4). A new
 deploy or rollback of the app ends the comparison in flight and starts

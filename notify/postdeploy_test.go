@@ -258,8 +258,13 @@ func TestPostDeployP95NeedsItsFloorTimed(t *testing.T) {
 	tc2.store.setTimed("v1 old", 6)
 	tc2.store.set("v2", 300, 0, 3)
 	tc2.minute()
-	if len(tc2.evs) != 1 || strings.Contains(tc2.evs[0].Summary, "before it") {
+	if len(tc2.evs) != 1 || strings.Contains(tc2.evs[0].Summary, "before it,") || strings.Contains(tc2.evs[0].Summary, "before it;") {
 		t.Fatalf("an old release with 6 timed as the p95 baseline: %+v", tc2.evs)
+	}
+	// The summary says why there was no comparison: the old release had
+	// enough sent, and too few timed (Copilot round 3 on #429).
+	if !strings.Contains(tc2.evs[0].Summary, "p95 3000ms; the release before it had 6 responses timed, too few to compare its p95;") {
+		t.Fatalf("summary %q: no word of the p95 baseline", tc2.evs[0].Summary)
 	}
 }
 
@@ -290,7 +295,9 @@ func TestPostDeployTheOldIsWorseGuard(t *testing.T) {
 		{"5xx over the bound, old over it, a rise under 1.2 times", 100000, 5500, 0.1, 100000, 5000, 0.1, "v1", false, "", ""},
 		{"p95 over the bound, under old × 1.2", 200, 0, 1.0, 200, 0, 0.9, "v1", false, "", ""},
 		{"p95 over the bound, over old × 1.2", 200, 0, 1.2, 200, 0, 0.9, "v1", true, "p95 1200ms against 900ms before it", ""},
-		{"p95 over the bound, old has none", 200, 0, 1.2, 200, 0, 0, "v1", true, "p95 1200ms;", "p95 1200ms against"},
+		{"p95 over the bound, old has none", 200, 0, 1.2, 200, 0, 0, "v1", true, "p95 1200ms; the release before it has no p95 to compare;", "p95 1200ms against"},
+		// Only a p95 over its bound says why it had no baseline.
+		{"5xx over the bound, p95 within it, old has no p95", 200, 20, 0.5, 200, 2, 0, "v1", true, "5xx share 0.1 against 0.01 before it, p95 500ms; 1 failing", "compare"},
 		{"no old samples: the bound alone", 200, 20, 0.1, 0, 0, 0, "v1", true, "; the release before it sent 0 responses, too few to compare;", "against"},
 		{"old under the floor: the bound alone", 200, 20, 0.1, 99, 50, 0.1, "v1", true, "; the release before it sent 99 responses, too few to compare;", "against"},
 		{"a first deploy: the bound alone", 200, 20, 0.1, 200, 100, 0.1, "", true, "no release before it to compare", "against"},
