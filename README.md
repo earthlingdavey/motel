@@ -20,7 +20,7 @@ Built in:
 | **[penaltybox](penaltybox/)** | Rate limiting driven by your app's `X-Rate-Limit-Level` hint headers — weighted sliding-window budgets, tiers, and a penalty box for clients that cross them. |
 | **[box](examples/box/)** | Config from git: the box's Caddyfile lives in a repository of its own, and each signed push to `main` reaches the box, which checks the commit's signature, validates the file, installs it as root, and rolls back a reload that fails. The apps' secrets ride along, encrypted to the box's own key. CI holds no SSH key. |
 | **[backups](backups/)** | Hourly backups of what each app declares — its SQLite databases and the files under its `shared/` — into a [restic](https://restic.net) repository off the box, a weekly drill that proves a restore would work, and `motel-backup restore` to put an app back. A program of its own in the package, `motel-backup`, which runs Debian's restic and sqlite3 in sandboxed units and links no Caddy; motel validates the declaration and does nothing else with it. The operator's guide is [docs/backups.md](docs/backups.md). |
-| **[notify](notify/DESIGN-notify.md)** | Who motel tells, about what (experimental): a restart loop, a failed or refused deploy, a rollback, a stale backup, a failed certificate renewal, a filling disk, a release worse than the one it replaced, the operator's own threshold rules, each to the operator's channels and, for an app, to the channels bound to the identities it trusts, from the `monitor` block in the Caddyfile, whose `metrics` line also keeps the box's and each app's numbers ([notify/DESIGN-metrics.md](notify/DESIGN-metrics.md)). Debian's Alertmanager delivers, on a unix socket and no port, with a config motel renders; `motel monitor setup` installs it, and `motel monitor setup --metrics` the store too. |
+| **[notify](notify/DESIGN-notify.md)** | Who motel tells, about what (experimental): a restart loop, a failed or refused deploy, a rollback, a stale backup, a failed certificate renewal, a filling disk, a release worse than the one it replaced, the operator's own threshold rules, each to the operator's channels and, for an app, to the channels bound to the identities it trusts, from the `monitor` block in the Caddyfile, whose `metrics` line also keeps the box's and each app's numbers ([notify/DESIGN-metrics.md](notify/DESIGN-metrics.md)). Debian's Alertmanager delivers, on a unix socket and no port, with a config motel renders; `motel monitor setup` installs it, and `motel monitor setup --metrics` the store too. The operator's guide is [docs/monitor.md](docs/monitor.md). |
 | **cache** | HTTP page caching via [Souin](https://github.com/darkweak/souin) with in-memory [Otter](https://github.com/darkweak/storages) storage. |
 | everything Caddy has | Automatic HTTPS, HTTP/2 + HTTP/3, the Caddyfile, the admin API — motel *is* Caddy underneath, with the modules above compiled in. |
 
@@ -163,6 +163,9 @@ GitHub Actions with no stored secret.
 [Backups](docs/backups.md) copies each app's databases and files into a
 bucket off the box every hour, proves weekly that a restore would
 work, and puts an app back.
+[Monitor](docs/monitor.md) (experimental, in no release yet) tells you
+when something on the box goes wrong, at ntfy, Slack, Discord or any
+webhook, and keeps each app's numbers.
 
 
 ## What motel is (and isn't)
@@ -227,12 +230,13 @@ each one is there. What is still ahead:
   later milestone.
 - **A hosted APT repository**, with package signing and auto-updates.
 
-Not committed to, but worth naming: a metrics/alerts module alongside
-liveswap and penaltybox. The first thing it would earn its keep on is
-alerting when the watchdog is stuck in a restart loop — the watchdog
-retries a crash or a health failure forever by design (only a release
-that cannot run at all is refused once), so the loop itself is the
-signal that a release is broken.
+In progress, on the `feature/notify-and-metrics` branch and in no
+release yet: [monitor](docs/monitor.md), alerts and metrics beside
+liveswap and penaltybox. Among other things it reports when the
+watchdog is stuck in a restart loop: the watchdog retries a crash or a
+health failure forever by design (only a release that cannot run at
+all is refused once), so the loop itself is the signal that a release
+is broken.
 
 ## Questions, bugs and ideas
 
