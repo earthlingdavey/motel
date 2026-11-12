@@ -3,6 +3,9 @@ package notify
 import (
 	"context"
 	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
 	"regexp"
 	"slices"
 	"strings"
@@ -575,6 +578,12 @@ func TestPostDeployARelaunchIsNoNewRelease(t *testing.T) {
 	if len(tc.runs) != 0 {
 		t.Fatalf("a relaunch started a comparison: %+v", tc.runs["blog"])
 	}
+	// The names alone decide: a cutover to the release serving without
+	// the mark compares nothing either (/code-review of the mark).
+	tc.deploy("blog", "v2", "v2")
+	if len(tc.runs) != 0 {
+		t.Fatalf("a cutover to the release serving, unmarked, started a comparison: %+v", tc.runs["blog"])
+	}
 	tc.deploy("blog", "v2", "v1")
 	tc.store.set("v1 old", 200, 0, 0.1)
 	tc.store.set("v2", 200, 100, 2) // 5xx and p95 both over
@@ -601,11 +610,12 @@ func TestPostDeployARelaunchAfterAStop(t *testing.T) {
 		name, release string
 		relaunch      bool
 		want          string
+		first         string // the first check's window
 	}{
 		{"the release that had stopped, relaunched", "v1", true,
-			"blog v1 is over its bound 2m after its relaunch (its earlier instance had stopped), over 200 responses: 5xx share 0.1, p95 100ms; 2 failing checks in a row (rule regress)"},
+			"blog v1 is over its bound 2m after its relaunch (its earlier instance had stopped), over 200 responses: 5xx share 0.1, p95 100ms; 2 failing checks in a row (rule regress)", "[20s]"},
 		{"a new release after a stopped one", "v2", false,
-			"blog v2 regressed 2m after its deploy, over 200 responses: 5xx share 0.1, p95 100ms; no release before it to compare; 2 failing checks in a row (rule regress)"},
+			"blog v2 regressed 2m after its deploy, over 200 responses: 5xx share 0.1, p95 100ms; no release before it to compare; 2 failing checks in a row (rule regress)", "[1m]"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			tc := newTestComparator(t, regressRule)
@@ -636,8 +646,54 @@ func TestPostDeployARelaunchAfterAStop(t *testing.T) {
 					t.Errorf("a release before it was asked for: %s", q)
 				}
 			}
+			// A relaunch's window starts past the stopped instance's
+			// last push (relaunchSkip).
+			if q := tc.store.queries[0]; !strings.Contains(q, c.first) {
+				t.Errorf("the first check's query has no %s: %s", c.first, q)
+			}
 		})
 	}
+}
+
+// A relaunch after a stop, over the store's own MetricsQL: v2
+// crash-looped and the operator rolled back to it. The crash loop's
+// 503s count under v2, the release current when they began, and the
+// last of them reach the store with the first push after the cutover,
+// in the counters the relaunched instance counts into. Pushes every
+// 30 s from 0, the cutover at 10m05s: 10 503s a push until it, the push
+// at 10m30s carries the last 10 and the relaunched instance's first 20
+// 2xx, then 20 2xx a push. Each check reads none of the 503s, and the
+// 2xx from that push on; read from the cutover, the first check's 5xx
+// share was 0.2 (10 of 50), over any bound, for an instance that
+// answered nothing but 2xx (/code-review of the relaunch mark).
+func TestPostDeployARelaunchReadsPastTheStoppedInstance(t *testing.T) {
+	tool := vmTool(t, "vmalert-tool")
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, RulesName), renderRules(nil), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	r := comparison{app: "blog", release: "v2", cutover: time.Unix(605, 0), relaunch: true}
+	var b strings.Builder
+	b.WriteString(`rule_files: [` + RulesName + `]
+evaluation_interval: 30s
+tests:
+  - interval: 30s
+    input_series:
+      - series: 'process_start_time_seconds{job="motel"}'
+        values: '1x40'
+      - series: 'motel_app_requests_total{app="blog",release="v2",class="5xx",job="motel"}'
+        values: '0+10x21 210x19'
+      - series: 'motel_app_requests_total{app="blog",release="v2",class="2xx",job="motel"}'
+        values: '0x20 20+20x19'
+    metricsql_expr_test:
+`)
+	for k, ok2xx := range []int{20, 60, 100} {
+		elapsed := time.Duration(k+1) * postDeployEvery
+		q := classesQuery(releaseSelector(r.app, r.release), newWindow(r, elapsed), 0)
+		fmt.Fprintf(&b, "      - expr: '%s'\n        eval_time: %ds\n        exp_samples:\n", strings.ReplaceAll(q, "'", "''"), r.cutover.Add(elapsed).Unix())
+		fmt.Fprintf(&b, "          - {labels: '{class=\"2xx\"}', value: %d}\n          - {labels: '{class=\"5xx\"}', value: 0}\n", ok2xx)
+	}
+	runUnittest(t, tool, dir, b.String())
 }
 
 // A check the store did not answer is asked again, at its own time, and

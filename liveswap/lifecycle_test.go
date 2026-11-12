@@ -170,6 +170,30 @@ func TestLifecycleCutoverMarksARelaunch(t *testing.T) {
 	}
 }
 
+// The cutover is told from what holds at the swap: a relaunch taken
+// while v1 served (no record, the same pin), whose instance died before
+// the swap, is a relaunch after a stop (no Previous), which it then is;
+// notify's window for one starts past the dead instance's last push.
+// With no instance in memory, nothing routes to the app and the
+// launch's sweep stops any unit the manager holds, so a relaunch named
+// by state.json alone had stopped too (/code-review of the relaunch
+// mark).
+func TestLifecycleCutoverIsToldFromTheSwap(t *testing.T) {
+	rig, n := notifiedRig(t)
+	must(t, deployV1Pinned(t, rig, pinA))
+	n.reset()
+	served := rig.runner.handleAt(0)
+	rig.runner.startHook = func() { served.dieQuietly() }
+	must(t, deployV1Pinned(t, rig, pinA))
+	rig.runner.startHook = nil
+	if ev, ok := n.find(EventCutover); !ok || ev.Release != "v1" || ev.Previous != "" || !ev.Relaunch {
+		t.Fatalf("a relaunch whose instance died before the swap: cutover %+v", ev)
+	}
+	if last := rig.ma.status().LastDeploy; last.Status != "succeeded" || last.Note != "relaunched v1 (same artifact)" {
+		t.Fatalf("the deploy was not the relaunch it began as: %+v", last)
+	}
+}
+
 // The watchdog's restart of a crashed instance, and a restart's
 // recovery, publish no cutover: neither starts a post-deploy
 // comparison.
