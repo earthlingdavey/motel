@@ -18,6 +18,13 @@ COPY . .
 RUN CGO_ENABLED=0 GOFLAGS=-buildvcs=false go build -trimpath -o /motel ./cmd/motel \
 	&& cd backups && CGO_ENABLED=0 GOFLAGS=-buildvcs=false go build -trimpath -o /motel-backup ./cmd/motel-backup
 
+# notify's tests that run vmalert and vmalert-tool over the rendered
+# rules, compiled for the metrics box, which has both (Debian's
+# victoria-metrics); the dev image has neither, so `make test` skips
+# them. Built only for the metrics box.
+FROM builder AS notify-tests
+RUN cd notify && CGO_ENABLED=0 GOFLAGS=-buildvcs=false go test -c -o /notify.test .
+
 # The box. A named stage, because the notify suite's box below builds on
 # it: docker-compose.yml names this one as e2e-motel's and e2e-upstream's
 # target, or they would get the last stage.
@@ -151,4 +158,5 @@ RUN systemctl mask victoria-metrics.service \
 	&& apt-get update \
 	&& apt-get install -y --no-install-recommends victoria-metrics \
 	&& rm -rf /var/lib/apt/lists/*
+COPY --from=notify-tests /notify.test /usr/local/bin/notify.test
 COPY e2e/metrics/Caddyfile /etc/motel/Caddyfile

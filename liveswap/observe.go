@@ -40,7 +40,8 @@ type Observe struct {
 	// App names the liveswap app whose responses these are.
 	App string `json:"app,omitempty"`
 
-	ma *managedApp
+	ma      *managedApp
+	counted bool // in ma.observers
 }
 
 // CaddyModule returns the Caddy module information.
@@ -60,9 +61,28 @@ func (o *Observe) Provision(ctx caddy.Context) error {
 	if err != nil {
 		return err
 	}
-	o.ma = appModule.(*App).managedApp(o.App)
-	if o.ma == nil {
+	ma := appModule.(*App).managedApp(o.App)
+	if ma == nil {
 		return fmt.Errorf("unknown liveswap app %q (define it in the liveswap global options)", o.App)
+	}
+	o.observe(ma)
+	return nil
+}
+
+// observe makes ma the app observed, by one handler more.
+func (o *Observe) observe(ma *managedApp) {
+	o.ma = ma
+	ma.observers.Add(1)
+	o.counted = true
+}
+
+// Cleanup is the config's unload (or its load failing): the app is
+// observed by one handler fewer. A reload provisions the new config's
+// before it cleans up the old's, so an app observed by both stays so.
+func (o *Observe) Cleanup() error {
+	if o.counted {
+		o.ma.observers.Add(-1)
+		o.counted = false
 	}
 	return nil
 }
@@ -514,6 +534,7 @@ func (r *requestCounts) samples() []ReleaseRequests {
 // Interface guards.
 var (
 	_ caddy.Provisioner           = (*Observe)(nil)
+	_ caddy.CleanerUpper          = (*Observe)(nil)
 	_ caddyhttp.MiddlewareHandler = (*Observe)(nil)
 	_ caddyfile.Unmarshaler       = (*Observe)(nil)
 )

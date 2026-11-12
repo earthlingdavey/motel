@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 
 	"github.com/caddyserver/caddy/v2"
 	"github.com/prometheus/client_golang/prometheus"
@@ -31,6 +32,9 @@ const cgroupRoot = "/sys/fs/cgroup"
 // option yields one app.
 type MetricsStore struct {
 	Store string `json:"store,omitempty"`
+	// Rules are the block's rule lines (operatorrules.go), which need
+	// the metrics line: so they are its, in the JSON.
+	Rules []Rule `json:"rules,omitempty"`
 
 	// stateDir is where the rules are written: always
 	// DefaultMetricsStateDir, which motel-vmalert.service's -rule names;
@@ -74,8 +78,45 @@ func (m *MetricsStore) provision(ctx caddy.Context, ls *liveswap.App, n *App, lo
 	if reg != nil {
 		m.reg = reg
 	}
+	var apps map[string]bool
+	if ls != nil {
+		apps = map[string]bool{}
+		for app := range ls.TrustSources() {
+			apps[app] = true
+		}
+	}
+	if err := checkRules(m.Rules, apps); err != nil {
+		return fmt.Errorf("monitor: %w", err)
+	}
+	if ls == nil && slices.ContainsFunc(m.Rules, func(r Rule) bool { return r.App != "" }) {
+		return errors.New("monitor: a rule names an app, and the config has no liveswap block")
+	}
+	if ls != nil {
+		if err := checkMemoryCapped(m.Rules, ls.MemoryCapped()); err != nil {
+			return fmt.Errorf("monitor: %w", err)
+		}
+	}
+	// A rule in a block with no channel would reach no one: no notify
+	// renders it, or hears a deploy for post_deploy.
+	if n == nil && len(m.Rules) > 0 {
+		return fmt.Errorf("monitor: rule %s reaches no one: the monitor block has no channel, only its metrics line and rules; add channel and operator lines, or remove the rules", m.Rules[0].Name)
+	}
 	if err := thePusher.registerFailed(reg); err != nil {
 		m.logger.Warn("monitor metrics: motel_metrics_push_failed_total is not on the admin /metrics", zap.Error(err))
+	}
+	if reg != nil {
+		// The disks notify's disk source measures, which a disk_fill
+		// rule reads; the store alone's: the apps' root and Caddy's data.
+		paths := []string{caddy.AppDataDir()}
+		if ls != nil {
+			paths = append([]string{ls.Root}, paths...)
+		}
+		if n != nil {
+			paths = n.diskPaths
+		}
+		if err := reg.Register(diskCollector{paths: paths}); err != nil {
+			return fmt.Errorf("monitor: metrics: registering the disk series: %w", err)
+		}
 	}
 	if ls != nil {
 		if reg != nil {
@@ -105,6 +146,7 @@ const storeAloneMessage = "monitor metrics: the monitor block has no channel, on
 func (m *MetricsStore) start() {
 	m.applyRules()
 	thePusher.configure(liveStore{m: m, store: m.client, gather: m.reg, logger: m.logger})
+	theComparator.configure(liveRules{m: m, store: m.client, logger: m.logger})
 }
 
 // applyRules writes this config's rules, with a journal line for each

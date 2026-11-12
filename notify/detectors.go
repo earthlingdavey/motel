@@ -17,10 +17,23 @@ import (
 )
 
 // lifecycleSink is liveswap's Notifier: #418's first events, as
-// liveswap reports them (liveswap/lifecycle.go), into the engine.
-type lifecycleSink struct{ e *engine }
+// liveswap reports them (liveswap/lifecycle.go), into the engine; and a
+// deploy's or a rollback's cutover, told at the swap, into the
+// post-deploy comparison (c, nil for none). The cutover is no event of
+// the engine's: deploy_succeeded, which it drops unless
+// `deploy_succeeded on`, comes after the drain.
+type lifecycleSink struct {
+	e *engine
+	c *comparator
+}
 
 func (s lifecycleSink) Lifecycle(ev liveswap.LifecycleEvent) {
+	if ev.Name == liveswap.EventCutover {
+		if s.c != nil {
+			s.c.deployed(ev)
+		}
+		return
+	}
 	base := Event{App: ev.App, Source: "liveswap", Summary: ev.Summary, Release: ev.Release, DeployedBy: ev.DeployedBy, Standing: ev.Standing}
 	state := func(name, sev string, firing bool) {
 		base.Name, base.Kind, base.Severity, base.Firing, base.Hold = name, kindState, sev, firing, ev.Hold
@@ -204,7 +217,7 @@ type diskPoller struct {
 	set   stateSet
 	level map[uint64]string // device → the severity it fires at: the
 	// filesystem's, whichever path stands for it as the path list changes
-	stat func(path string) (used float64, dev uint64, err error)
+	stat func(path string) (diskNumbers, error)
 }
 
 // The thresholds: warning at 80 % used, critical at 90; each clears 5
@@ -215,21 +228,41 @@ const (
 	diskGap  = 5
 )
 
-func statfs(path string) (float64, uint64, error) {
+// diskNumbers are a filesystem's, as df reads them: the disk source's
+// used share, and the disk series' available bytes (metricscollector.go).
+type diskNumbers struct {
+	usedPct float64
+	avail   uint64
+	dev     uint64
+}
+
+// statDisk is statfs and the device of the filesystem holding path.
+func statDisk(path string) (diskNumbers, error) {
 	var fs syscall.Statfs_t
 	if err := syscall.Statfs(path, &fs); err != nil {
-		return 0, 0, err
+		return diskNumbers{}, err
 	}
 	var st syscall.Stat_t
 	if err := syscall.Stat(path, &st); err != nil {
-		return 0, 0, err
+		return diskNumbers{}, err
 	}
-	used := fs.Blocks - fs.Bfree
-	if used+fs.Bavail == 0 {
-		return 0, st.Dev, nil
+	return fsNumbers(fs, st.Dev), nil
+}
+
+// fsNumbers reads statfs's counts as df does: blocks of f_frsize (the
+// fragment size, which f_bsize, the preferred I/O size, need not be),
+// f_bsize where a filesystem leaves f_frsize 0.
+func fsNumbers(fs syscall.Statfs_t, dev uint64) diskNumbers {
+	unit := uint64(fs.Frsize) //nolint:gosec // a block size is positive
+	if unit == 0 {
+		unit = uint64(fs.Bsize) //nolint:gosec // a block size is positive
 	}
-	// As df reports it: used over what a user can have.
-	return 100 * float64(used) / float64(used+fs.Bavail), st.Dev, nil
+	n := diskNumbers{avail: fs.Bavail * unit, dev: dev}
+	// Used over what a user can have.
+	if used := fs.Blocks - fs.Bfree; used+fs.Bavail > 0 {
+		n.usedPct = 100 * float64(used) / float64(used+fs.Bavail)
+	}
+	return n
 }
 
 func (d *diskPoller) poll(paths []string) []Event {
@@ -238,20 +271,28 @@ func (d *diskPoller) poll(paths []string) []Event {
 	}
 	stat := d.stat
 	if stat == nil {
-		stat = statfs
+		stat = statDisk
 	}
+	// On their own goroutines, as the disk series' are (statAll): a
+	// statfs that hangs (a network mount whose server went away) must
+	// not hold the engine's goroutine, which posts every event and the
+	// heartbeat.
+	results := diskPollStats.statAll(paths, stat)
 	seen := map[uint64]bool{}
 	var fire []Event
-	for _, p := range paths {
-		used, dev, err := stat(p)
+	for i, p := range paths {
+		n, err := results[i].n, results[i].err
 		if err != nil {
-			// Not measured is not cleared: a path that fired keeps firing.
+			// Not measured is not cleared: a path that fired keeps
+			// firing, and one that did not fires nothing; a statfs not
+			// back in time is not measured.
 			k := Event{Name: alertDiskLow, Source: "disk", Instance: p}.key()
 			if prev, ok := d.set.prev[k]; ok {
 				fire = append(fire, prev)
 			}
 			continue
 		}
+		used, dev := n.usedPct, n.dev
 		if seen[dev] {
 			continue // a filesystem already measured
 		}

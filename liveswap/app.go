@@ -314,6 +314,11 @@ type managedApp struct {
 	// requests is what observe counts, per release (observe.go):
 	// set to the new release wherever current gets a new instance.
 	requests requestCounts
+	// observers is how many observe handlers of the loaded configs name
+	// the app (Provision adds one, Cleanup takes it away): while one
+	// does, its current release's counts are the app's numbers even at
+	// zero (AppSample.Observed).
+	observers atomic.Int32
 
 	// Watchdog plumbing. The goroutine is pool-scoped like everything
 	// else here: started once (first Start), never touched by
@@ -1101,7 +1106,21 @@ func (ma *managedApp) deployLocked(ctx context.Context, req deployRequest, c col
 	// ignored: a CI client hanging up must not abort stop-old or GC.
 	ma.setPhase(c, "promoting")
 	newInst := l.instance(newHandle)
-	if err := ma.publishInstance(c, newInst); err != nil { // ← the cutover
+	// The cutover is told at the swap itself: before the state's
+	// persist and the caps' sync, which can wait on the manager, and
+	// not with the deploy's result after the drain, the old instance's
+	// stop and GC, so what compares the release that serves starts with
+	// its traffic. What it replaced is what served at that moment: an
+	// instance that had died (a crash loop, unrouted) is no release's
+	// baseline. Nothing after the swap fails the deploy.
+	tellCutover := func(swapped time.Time) {
+		cut := LifecycleEvent{Name: EventCutover, Release: req.version, DeployedBy: req.by, Cutover: swapped}
+		if old != nil && c.runner.Alive(old.handle) {
+			cut.Previous = old.version
+		}
+		ma.lifecycle(c, cut)
+	}
+	if err := ma.publishInstance(c, newInst, tellCutover); err != nil { // ← the cutover
 		logger.Error("state persistence failed; deploys still work but a Caddy restart will not know about this version", zap.Error(err))
 	}
 	promoted = true // past the cutover: never clean up the now-live release
@@ -1353,7 +1372,7 @@ func (ma *managedApp) ensureRunning() error {
 		}
 		return &transientRecoveryError{fmt.Errorf("relaunching %s: %w", st.CurrentVersion, err)}
 	}
-	if err := ma.publishInstance(c, inst); err != nil {
+	if err := ma.publishInstance(c, inst, nil); err != nil {
 		c.logger.Warn("persisting recovered state", zap.Error(err))
 	}
 	ma.wd.setLastFailure("") // a recovery that gave up, or a refusal, is over
@@ -1631,8 +1650,11 @@ func (l launch) instance(h handle) *instance {
 // and watchdog restarts must all go through it. The replaced
 // instance's pinned socket is the caller's to retire, once that
 // instance is stopped. A persist failure is returned, not logged: each
-// caller has its own severity and message.
-func (ma *managedApp) publishInstance(c collaborators, inst *instance) error {
+// caller has its own severity and message. onSwap, a deploy's (nil for
+// the watchdog's and recovery's), is called the moment the traffic
+// moves, with that time: the persist and the caps' sync after it can
+// wait on the manager.
+func (ma *managedApp) publishInstance(c collaborators, inst *instance, onSwap func(time.Time)) error {
 	ma.mu.Lock()
 	ma.current = inst
 	ma.mu.Unlock()
@@ -1643,7 +1665,11 @@ func (ma *managedApp) publishInstance(c collaborators, inst *instance) error {
 	if ma.wd.takeRefused() {
 		ma.lifecycle(c, LifecycleEvent{Name: EventRelaunchResolved, Release: inst.version, Summary: "an instance of " + inst.version + " runs again"})
 	}
+	swapped := c.clock.Now()
 	ma.activeSocket.Store(inst.sock)
+	if onSwap != nil {
+		onSwap(swapped)
+	}
 	// Persisted before the caps are reconciled: the record is what a
 	// restart recovers, and a sync that waits on the manager must not
 	// hold it back from naming the instance that is already serving.

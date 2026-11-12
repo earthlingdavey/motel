@@ -370,7 +370,10 @@ there would defeat the pool.
 - `requests` is the response observer's counters ("The response
   observer"): an atomic pointer to the current release's, read on
   every observed request, and the release before's under its own
-  mutex, which only a release change and a gather take.
+  mutex, which only a release change and a gather take. `observers`
+  counts the loaded configs' observe handlers naming the app
+  (Provision adds one, Cleanup takes it back): while one does, the
+  current release's counts are pushed even at zero (`AppSample.Observed`).
 - `ownerLock(app)` (one mutex per app name) makes "stop what nobody
   owns, then prune its socket dirs" one step with respect to recovery:
   the start-time sweep of unconfigured apps holds it across the manager

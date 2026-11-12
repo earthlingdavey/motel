@@ -169,6 +169,10 @@ func TestStoreClient(t *testing.T) {
 			gotPath, gotBody = r.URL.RequestURI(), string(b)
 			w.WriteHeader(http.StatusNoContent)
 		case "/api/v1/query":
+			if tm := r.URL.Query().Get("time"); tm != "" && tm != "1762776000.250" {
+				http.Error(w, "bad time", http.StatusBadRequest)
+				return
+			}
 			_, _ = io.WriteString(w, `{"status":"success","data":{"resultType":"vector","result":[{"metric":{"job":"vmalert"},"value":[1762776000,"1"]}]}}`)
 		case "/api/v1/query_range":
 			if r.URL.Query().Get("step") != "60" || r.URL.Query().Get("start") == "" {
@@ -191,6 +195,14 @@ func TestStoreClient(t *testing.T) {
 	v, err := c.query(ctx, rulesQuery)
 	if err != nil || len(v) != 1 || v[0].labels["job"] != "vmalert" || v[0].points[0].v != 1 {
 		t.Fatalf("query: %+v %v", v, err)
+	}
+	// To the millisecond: a second's truncation moved the old release's
+	// window off the push after the cutover.
+	if v, err := c.queryAt(ctx, rulesQuery, time.Unix(1762776000, 250_400_000)); err != nil || len(v) != 1 {
+		t.Fatalf("queryAt: %+v %v", v, err)
+	}
+	if _, err := c.queryAt(ctx, rulesQuery, time.Unix(1762776000, 0)); err == nil {
+		t.Fatal("queryAt sent another time")
 	}
 	now := time.Unix(1762776120, 0)
 	m, err := c.queryRange(ctx, "m", now.Add(-time.Hour), now, time.Minute)
@@ -562,8 +574,8 @@ func TestReleaseRetiresTheRulesOnAReloadAlone(t *testing.T) {
 			t.Errorf("motel's shutdown: rules.yml has alerting rules %v, %d journal lines; want them kept, and no line", alerting, gone)
 		}
 		if reload {
-			if f := parseRules(t, b); len(f.Groups) != 2 {
-				t.Errorf("retired rules: %d groups, want the two, empty (vmalert refuses a file with none)", len(f.Groups))
+			if f := parseRules(t, b); len(f.Groups) != 3 {
+				t.Errorf("retired rules: %d groups, want the three, empty (vmalert refuses a file with none)", len(f.Groups))
 			}
 		}
 	}
@@ -904,7 +916,8 @@ func TestWriteRules(t *testing.T) {
 }
 
 // observe's counts reach the registry per release, a stopped
-// app's among them; a release with no response pushes nothing.
+// app's among them; a release with no response pushes nothing, but the
+// current release of an observed app, at zero.
 func TestAppCollectorRequests(t *testing.T) {
 	var cur liveswap.ReleaseRequests
 	cur.Release = "v2"
@@ -916,6 +929,9 @@ func TestAppCollectorRequests(t *testing.T) {
 	reg := prometheus.NewPedanticRegistry()
 	if err := reg.Register(appCollector{root: t.TempDir(), apps: fakeSampler{
 		{App: "blog", Release: "v2", Requests: []liveswap.ReleaseRequests{cur, empty}},
+		{App: "shop", Release: "s2", Observed: true, Requests: []liveswap.ReleaseRequests{{Release: "s2"}, {Release: "s1"}}},
+		{App: "idle", Release: "i1", Requests: []liveswap.ReleaseRequests{{Release: "i1"}}},
+		{App: "new", Observed: true, Requests: []liveswap.ReleaseRequests{{}}},
 	}}); err != nil {
 		t.Fatal(err)
 	}
@@ -942,12 +958,14 @@ func TestAppCollectorRequests(t *testing.T) {
 		`motel_app_response_seconds_count{app="blog",release="v2"} 100`,
 		`motel_app_cache_responses_total{app="blog",release="v2",result="hit"} 30`,
 		`motel_app_cache_responses_total{app="blog",release="v2",result="miss"} 60`,
+		`motel_app_requests_total{app="shop",class="2xx",release="s2"} 0`,
+		`motel_app_response_seconds_count{app="shop",release="s2"} 0`,
 	} {
 		if !strings.Contains(text, line+"\n") {
 			t.Errorf("missing %s", line)
 		}
 	}
-	for _, absent := range []string{`release="v1"`, `result="stale"`} {
+	for _, absent := range []string{`release="v1"`, `result="stale"`, `release="s1"`, `app="idle",class`, `motel_app_response_seconds_count{app="idle"`, `release=""`} {
 		if strings.Contains(text, absent) {
 			t.Errorf("%s pushed: %s", absent, text)
 		}

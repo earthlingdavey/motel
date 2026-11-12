@@ -93,11 +93,12 @@ monitor {
     alertmanager <socket path>       # default /run/motel-notify/am.sock
     backup_record <path>|off         # default /var/lib/motel-backup/status.json
     metrics [<socket path>]          # the metrics store (DESIGN-metrics.md, "The metrics line")
+    rule <name> <kind> …             # the operator's rules; needs metrics (DESIGN-metrics.md, "Operator rules")
 }
 ```
 
-Every line but `metrics` is notify's, and this document's. One block
-holds who hears, the numbers and, when they land, the operator's rules
+Every line but `metrics` and `rule` is notify's, and this document's. One block
+holds who hears, the numbers and the operator's rules over them
 ("Decisions"); it is one Caddy app, `monitor`, of which the store is a
 part. A block that is a `metrics` line alone runs no notify: no
 render, no engine, no Alertmanager config, and the warning
@@ -282,12 +283,22 @@ a deploy does not change its identity.
 | `drill_failed` | backup | state | critical | the last drill could not begin, the check found damage, or an app's latest drill proved nothing (`App.RestoreDrill`, as `status` reads it); the summary names the apps, never the drill's detail | the next drill that proves every app |
 | `backup_unreadable` | backup | state | warning | the record does not parse | it reads |
 | `cert_failed/<identifier>` | tls | state | warning; critical with under 7 days left | CertMagic's `cert_failed` | its `cert_obtained`, or 13 h with no report (a name no config manages any more) |
-| `disk_low/<path>` | disk | state | warning at 80 % used, critical at 90 | statfs, every minute, one per device, of the liveswap root, Caddy's data and the state directory; the level is held per device, whichever path stands for it | five points under its threshold |
+| `disk_low/<path>` | disk | state | warning at 80 % used, critical at 90 | statfs, every minute, one per device, of the liveswap root, Caddy's data and the state directory, each on its own goroutine within 2 s (a path not back is not measured, and starts no other statfs until it is back); the level is held per device, whichever path stands for it | five points under its threshold |
 | `Watchdog` | notify | heartbeat | none | every minute, alive 4 m | — |
 | `ChannelFailed` | notify | direct | warning | Alertmanager's failure counter rose ("Failed delivery") | `endsAt` +15 m |
+| `post_deploy_regressed` | rules | event | warning | a `post_deploy` rule's checks after a deploy or a rollback of the app failed `failures` times in a row: the new release over a bound and worse than the one it replaced (DESIGN-metrics.md, "Operator rules"); once per deploy, and it never acts | — |
+| `<rule name>` | rules | state, by vmalert | the rule's | an operator's `threshold` or `disk_fill` rule holds for its `for:` (DESIGN-metrics.md, "Operator rules"); `subject` is the app's, or `box` for a disk | vmalert resolves it |
 
+Sources are `liveswap`, `backup`, `tls`, `disk`, `notify`, `metrics`
+(the store's chain, DESIGN-metrics.md), `vmalert` (its fixed rules),
+`rules` (the operator's rules, #418's reserved `source: rules` and
+`key: rules/<subject>/<rule name>`, and `/<path>` after it for a
+`disk_fill` rule's filesystem) and `external:<name>`.
 liveswap reports through `liveswap.Notifier` (liveswap/lifecycle.go),
-on the goroutine where the event happened. notify subscribes to
+on the goroutine where the event happened. A deploy's or a rollback's
+`cutover`, told at the swap with the release it replaced and when
+(`Previous`, `Cutover`), is no event of the engine's: it starts the
+post-deploy comparison (DESIGN-metrics.md, "Operator rules"). notify subscribes to
 `cert_failed` and `cert_obtained` by name through Caddy's events app.
 The backup record and the disks are polled by the engine. A box with
 no backup record has no backups set up and says nothing.
@@ -333,7 +344,10 @@ whichever config serves when it clears.
   measured; each fired key is resolved with a journal line. An
   unreadable backup record keeps what fired firing beside
   `backup_unreadable`, and a filesystem statfs cannot measure keeps
-  what it fired.
+  what it fired, and fires nothing new: a statfs that fails, or that
+  is not back within 2 s (a network mount whose server went away), so
+  that a filesystem that hangs holds back neither the engine's posts
+  nor the heartbeat (Copilot round 3 on #429).
 - **Reloads.** A reload Alertmanager does not answer is a warning, and
   the config counts as unacknowledged, so the next load reloads it
   though the file has not changed. A reload that fails after notify's
@@ -425,7 +439,7 @@ and the route check (`SendRequest.Check`):
 |---|---|
 | a source not `[a-z0-9-]{1,32}` (stamped `external:<name>`) | one grammar, so a key cannot pose as a detector's |
 | a subject not `box` or `app:<an app the box runs>` | an app subject reaches its deployers |
-| motel's own names: `Watchdog`, `ChannelFailed`, `NotifyTest`, `deploy_in_progress`, `watchdog_*`, the deploy events, `disk_low`, `cert_failed`, `backup_*`, `drill_failed`, and the metrics store's (`metrics_store_down`, `metrics_rules_down`, `metrics_store_read_only`, `metrics_store_disk_fill`, `app_memory_high`) | a producer that could post them could mute an app, fake the heartbeat, or speak as a detector |
+| motel's own names: `Watchdog`, `ChannelFailed`, `NotifyTest`, `deploy_in_progress`, `watchdog_*`, the deploy events, `disk_low`, `cert_failed`, `backup_*`, `drill_failed`, and the metrics store's (`metrics_store_down`, `metrics_rules_down`, `metrics_store_read_only`, `metrics_store_disk_fill`, `app_memory_high`) and the operator's rules' `post_deploy_regressed` | a producer that could post them could mute an app, fake the heartbeat, or speak as a detector |
 | a summary empty, on two lines, or over 200 characters; details over 2 KiB or with names not `[a-z][a-z0-9_]*` | #418's limits |
 | a body with unknown fields (a raw Alertmanager label set) | the route takes the request, never labels |
 | a name or instance the filter would mask (a channel URL, a secret-shaped token) | both are the key, the labels and the answer, which the filter does not rewrite |
@@ -701,3 +715,12 @@ Dated one-liners; the full text of each is in git.
   metrics store's `metrics` line, one Caddy app; `motel notify` is
   `motel monitor`, and `notify` and `metrics_store` are refused by name
   ("Decisions").
+- 2026-11-11 — The operator's `rule` lines (DESIGN-metrics.md,
+  "Operator rules"): `source: rules`, the `post_deploy_regressed` event,
+  and its name reserved.
+- 2026-11-12 — Copilot round 3 on #429, triaged: the disk source's
+  statfs ran on the engine's goroutine, so a filesystem that hung held
+  every post and the heartbeat until it came back (single fault, fixed):
+  it runs as the disk series' does, each path on its own goroutine
+  within 2 s, a path not back not measured, and none started again
+  while one is out.

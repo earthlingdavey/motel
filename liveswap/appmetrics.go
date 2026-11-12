@@ -32,6 +32,10 @@ type AppSample struct {
 	// first and the one before's after it; empty when no observer has
 	// seen a response for the app.
 	Requests []ReleaseRequests
+	// Observed is whether an observe handler of a loaded config names
+	// the app: its current release's counts are then its numbers even
+	// before its first response, where an app with none has no numbers.
+	Observed bool
 }
 
 // AppSamples is every app this config runs, sorted by name.
@@ -47,7 +51,7 @@ func (ma *managedApp) sample() AppSample {
 	c := ma.snapshot()
 	ma.mu.Lock()
 	defer ma.mu.Unlock()
-	s := AppSample{App: ma.name, Requests: ma.requests.samples()}
+	s := AppSample{App: ma.name, Requests: ma.requests.samples(), Observed: ma.observers.Load() > 0}
 	if ma.current == nil {
 		return s
 	}

@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -17,7 +19,7 @@ import (
 
 func TestLifecycleSinkMapsLiveswapsEvents(t *testing.T) {
 	te := newTestEngine(t)
-	s := lifecycleSink{te.engine}
+	s := lifecycleSink{e: te.engine}
 	s.Lifecycle(liveswap.LifecycleEvent{Name: liveswap.EventDeployStarted, App: "blog", Release: "v2"})
 	s.Lifecycle(liveswap.LifecycleEvent{Name: liveswap.EventWatchdogThrottled, App: "blog", Release: "v1", Summary: "restart loop"})
 	s.Lifecycle(liveswap.LifecycleEvent{Name: liveswap.EventDeployFailed, App: "blog", Release: "v2", DeployedBy: "local:/k", Summary: "deploy of v2 failed"})
@@ -254,7 +256,7 @@ func TestDiskLevel(t *testing.T) {
 func TestDiskPollerOncePerFilesystem(t *testing.T) {
 	used := map[string]float64{"/var/lib/liveswap": 85, "/var/lib/motel": 85, "/var/lib/motel-notify": 40}
 	dev := map[string]uint64{"/var/lib/liveswap": 1, "/var/lib/motel": 1, "/var/lib/motel-notify": 2}
-	d := diskPoller{stat: func(p string) (float64, uint64, error) { return used[p], dev[p], nil }}
+	d := diskPoller{stat: func(p string) (diskNumbers, error) { return diskNumbers{usedPct: used[p], dev: dev[p]}, nil }}
 	paths := []string{"/var/lib/liveswap", "/var/lib/motel", "/var/lib/motel-notify"}
 	evs := d.poll(paths)
 	if len(evs) != 1 || evs[0].Instance != "/var/lib/liveswap" || evs[0].Severity != SeverityWarning || !evs[0].Firing {
@@ -351,11 +353,11 @@ func TestSeverityChangeEndsTheOldAlert(t *testing.T) {
 
 func TestDiskPollerKeepsAPathItCannotMeasure(t *testing.T) {
 	fail := false
-	d := diskPoller{stat: func(string) (float64, uint64, error) {
+	d := diskPoller{stat: func(string) (diskNumbers, error) {
 		if fail {
-			return 0, 0, os.ErrPermission
+			return diskNumbers{}, os.ErrPermission
 		}
-		return 92, 1, nil
+		return diskNumbers{usedPct: 92, dev: 1}, nil
 	}}
 	if evs := d.poll([]string{"/var/lib/liveswap"}); len(evs) != 1 || !evs[0].Firing {
 		t.Fatalf("first: %+v", evs)
@@ -364,6 +366,102 @@ func TestDiskPollerKeepsAPathItCannotMeasure(t *testing.T) {
 	evs := d.poll([]string{"/var/lib/liveswap"})
 	if len(evs) != 1 || !evs[0].Firing || evs[0].Severity != SeverityCritical {
 		t.Fatalf("a failed statfs cleared the alert: %+v", evs)
+	}
+}
+
+// A statfs that hangs (a network mount whose server went away) holds
+// back no poll, which runs on the engine's goroutine: the path is not
+// measured, so one that fired keeps firing and one that did not fires
+// nothing, the other paths are, and the polls meanwhile start no other
+// statfs of it (Copilot round 3 on #429).
+func TestDiskPollerStatThatHangs(t *testing.T) {
+	defer func(w time.Duration) { diskStatWait = w }(diskStatWait)
+	diskStatWait = 50 * time.Millisecond
+	release := make(chan struct{})
+	defer func() {
+		select {
+		case <-release:
+		default:
+			close(release)
+		}
+	}()
+	var hang atomic.Bool
+	var calls atomic.Int32
+	used := map[string]float64{"/srv/hang-fired": 92, "/srv/hang-quiet": 40, "/var/lib/hang-other": 85}
+	dev := map[string]uint64{"/srv/hang-fired": 1, "/srv/hang-quiet": 2, "/var/lib/hang-other": 3}
+	d := diskPoller{stat: func(p string) (diskNumbers, error) {
+		if hang.Load() && p != "/var/lib/hang-other" {
+			calls.Add(1)
+			<-release
+		}
+		return diskNumbers{usedPct: used[p], dev: dev[p]}, nil
+	}}
+	paths := []string{"/srv/hang-fired", "/srv/hang-quiet", "/var/lib/hang-other"}
+	poll := func() []Event {
+		t.Helper()
+		got := make(chan []Event, 1)
+		go func() { got <- d.poll(paths) }()
+		select {
+		case evs := <-got:
+			return evs
+		case <-time.After(5 * time.Second):
+			t.Fatal("a poll waited on a statfs that hangs")
+			return nil
+		}
+	}
+	// Each event as instance=severity, or instance=resolved.
+	state := func(evs []Event) string {
+		var out []string
+		for _, e := range evs {
+			v := e.Severity
+			if !e.Firing {
+				v = "resolved"
+			}
+			out = append(out, e.Instance+"="+v)
+		}
+		slices.Sort(out)
+		return strings.Join(out, " ")
+	}
+	firing := "/srv/hang-fired=critical /var/lib/hang-other=warning"
+	if got := state(poll()); got != firing {
+		t.Fatalf("first: %s", got)
+	}
+	// The fired path's filesystem cleans up and the quiet one fills,
+	// while both hang: neither is measured, so what fires is as it was.
+	hang.Store(true)
+	used["/srv/hang-fired"], used["/srv/hang-quiet"] = 10, 95
+	for range 3 {
+		if got := state(poll()); got != firing {
+			t.Fatalf("a poll over a hung statfs changed what fires: %s", got)
+		}
+	}
+	if n := calls.Load(); n != 2 {
+		t.Fatalf("%d statfs of the hung paths, want one each", n)
+	}
+	used["/var/lib/hang-other"] = 50
+	if got := state(poll()); got != "/srv/hang-fired=critical /var/lib/hang-other=resolved" {
+		t.Fatalf("the path that answers is measured: %s", got)
+	}
+	hang.Store(false)
+	close(release)
+	// The two released statfs come back each in its own time, and a poll
+	// between them would see one path measured and the other not: wait
+	// until neither is out, then one poll measures both.
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		diskPollStats.mu.Lock()
+		out := diskPollStats.busy["/srv/hang-fired"] || diskPollStats.busy["/srv/hang-quiet"]
+		diskPollStats.mu.Unlock()
+		if !out {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the released statfs did not come back")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	if got := state(poll()); got != "/srv/hang-fired=resolved /srv/hang-quiet=critical" {
+		t.Fatalf("after it came back: %s", got)
 	}
 }
 
@@ -412,7 +510,7 @@ func TestTLSKeyUnreportedIsCleared(t *testing.T) {
 // the filesystem's, so a held critical stays critical above 85 %.
 func TestDiskLevelHeldByDevice(t *testing.T) {
 	used := map[string]float64{"/var/lib/liveswap": 92, "/var/lib/motel": 92}
-	d := diskPoller{stat: func(p string) (float64, uint64, error) { return used[p], 7, nil }}
+	d := diskPoller{stat: func(p string) (diskNumbers, error) { return diskNumbers{usedPct: used[p], dev: 7}, nil }}
 	if evs := d.poll([]string{"/var/lib/liveswap", "/var/lib/motel"}); len(evs) != 1 || evs[0].Severity != SeverityCritical {
 		t.Fatalf("first: %+v", evs)
 	}

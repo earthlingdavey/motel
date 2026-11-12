@@ -156,9 +156,10 @@ func channelFailedRules(n *App) vmGroup {
 	return g
 }
 
-// renderRules is the rule file for a config: the fixed groups, and the
-// ChannelFailed rules of its monitor block's channels. With no notify
-// (n nil: a metrics line alone, or no config) both groups are empty:
+// renderRules is the rule file for a config: the fixed groups, the
+// ChannelFailed rules of its monitor block's channels, and the
+// operator's threshold and disk_fill lines (operatorrules.go). With no
+// notify (n nil: a metrics line alone, or no config) every group is empty:
 // Alertmanager keeps the last config notify rendered when the channels
 // are removed (its Stop releases only the engine), so a rule that fired
 // then would still reach those channels,
@@ -169,7 +170,7 @@ func renderRules(n *App) []byte {
 	if n == nil {
 		fixed.Rules = []vmRule{}
 	}
-	f := vmRuleFile{Groups: []vmGroup{fixed, channelFailedRules(n)}}
+	f := vmRuleFile{Groups: []vmGroup{fixed, channelFailedRules(n), operatorRules(n)}}
 	var b bytes.Buffer
 	b.WriteString(rulesHeader)
 	enc := yaml.NewEncoder(&b)

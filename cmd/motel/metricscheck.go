@@ -46,3 +46,61 @@ func retireMetricsRules(cfg []byte, stderr io.Writer) {
 		_, _ = fmt.Fprintf(stderr, "%s: %s\n", notify.RulesRetiredMessage, path)
 	}
 }
+
+// observeHandler is liveswap's response observer as a route's handler
+// names it in the JSON (liveswap/observe.go).
+const observeHandler = "liveswap_observe"
+
+// checkObserved refuses a rule that names an app whose responses no
+// route observes: a request threshold or a post_deploy reads the series
+// an `observe <app>` handler counts, and with none they are never
+// pushed, so the rule never fires. notify's Provision cannot tell (the
+// HTTP app's routes may provision after it), so the gate asks the whole
+// config: every handler under the HTTP app, at any depth of routes and
+// subroutes. An every-app rule is every observed app's. A config that is
+// not JSON, or whose monitor app is not an object, is Caddy's to refuse.
+func checkObserved(cfg []byte) error {
+	var c struct {
+		Apps struct {
+			Monitor *struct {
+				Metrics *struct {
+					Rules []notify.Rule `json:"rules"`
+				} `json:"metrics"`
+			} `json:"monitor"`
+			HTTP json.RawMessage `json:"http"`
+		} `json:"apps"`
+	}
+	if json.Unmarshal(cfg, &c) != nil || c.Apps.Monitor == nil || c.Apps.Monitor.Metrics == nil {
+		return nil
+	}
+	observed := map[string]bool{}
+	var walk func(v any)
+	walk = func(v any) {
+		switch x := v.(type) {
+		case map[string]any:
+			if x["handler"] == observeHandler {
+				if app, ok := x["app"].(string); ok {
+					observed[app] = true
+				}
+			}
+			for _, e := range x {
+				walk(e)
+			}
+		case []any:
+			for _, e := range x {
+				walk(e)
+			}
+		}
+	}
+	var http any
+	if len(c.Apps.HTTP) > 0 && json.Unmarshal(c.Apps.HTTP, &http) != nil {
+		return nil
+	}
+	walk(http)
+	for _, r := range c.Apps.Monitor.Metrics.Rules {
+		if r.App != "" && r.ReadsResponses() && !observed[r.App] {
+			return fmt.Errorf("monitor: rule %s reads app %s's responses, and no route has `observe %s`: its request numbers are never pushed, so the rule would never fire; add `observe %s` first in the app's site or route", r.Name, r.App, r.App, r.App)
+		}
+	}
+	return nil
+}

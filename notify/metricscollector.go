@@ -3,11 +3,16 @@ package notify
 import (
 	"bufio"
 	"bytes"
+	"context"
+	"errors"
 	"os"
 	"path"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
 
@@ -71,7 +76,7 @@ func (c appCollector) Collect(ch chan<- prometheus.Metric) {
 		}
 		// Whether or not an instance runs: a release that crashed owns
 		// the 502s and 503s that follow.
-		collectRequests(ch, s.App, s.Requests)
+		collectRequests(ch, s)
 		if !s.Running {
 			continue
 		}
@@ -92,14 +97,19 @@ func (c appCollector) Collect(ch chan<- prometheus.Metric) {
 }
 
 // collectRequests is one app's request series. A release with no
-// response yet has none: an app with no observer pushes nothing.
-func collectRequests(ch chan<- prometheus.Metric, app string, rs []liveswap.ReleaseRequests) {
-	for _, r := range rs {
+// response yet has none, but the current release of an app an observer
+// counts for: its zeros are the app's numbers, so that a request_rate
+// rule's `<` holds for an app that has had no request since motel
+// started (the counts start from zero), as it does once its series is
+// in the store. An app with no observer pushes nothing.
+func collectRequests(ch chan<- prometheus.Metric, s liveswap.AppSample) {
+	app := s.App
+	for _, r := range s.Requests {
 		var total uint64
 		for _, n := range r.ByClass {
 			total += n
 		}
-		if total == 0 {
+		if total == 0 && (!s.Observed || r.Release == "" || r.Release != s.Release) {
 			continue
 		}
 		for i, n := range r.ByClass {
@@ -191,4 +201,170 @@ func readStat(path, key string) (uint64, bool) {
 		}
 	}
 	return 0, false
+}
+
+// diskAvailMetric is the box's disk series, which an operator's
+// disk_fill rule reads (operatorrules.go).
+const diskAvailMetric = "motel_disk_avail_bytes"
+
+const diskAvailDescHelp = "Bytes a user can still write on the filesystem holding the path: one series per filesystem, under the first of motel's directories on it (the apps' root, Caddy's data, notify's state)."
+
+var diskAvailDesc = prometheus.NewDesc(diskAvailMetric, diskAvailDescHelp, []string{"path"}, nil)
+
+// diskCollector is the box's disk series: statfs at each gather of the
+// directories notify's disk source measures, one series per device, as
+// that source reads them (diskPoller).
+type diskCollector struct {
+	paths []string
+	stat  func(path string) (diskNumbers, error)
+}
+
+func (c diskCollector) Describe(ch chan<- *prometheus.Desc) { ch <- diskAvailDesc }
+
+func (c diskCollector) Collect(ch chan<- prometheus.Metric) {
+	stat := c.stat
+	if stat == nil {
+		stat = statDisk
+	}
+	// Every path first, at once: a series keeps its name only while that
+	// path is still on its device (diskNames.name).
+	results := diskStats.statAll(c.paths, stat)
+	type measured struct {
+		path string
+		n    diskNumbers
+	}
+	var got []measured
+	devOf := map[string]uint64{}
+	for i, p := range c.paths {
+		r := results[i]
+		if r.err != nil {
+			continue // not measured is no sample: the rule's line keeps its last
+		}
+		got = append(got, measured{p, r.n})
+		devOf[p] = r.n.dev
+	}
+	seen := map[uint64]bool{}
+	for _, m := range got {
+		if seen[m.n.dev] {
+			continue
+		}
+		seen[m.n.dev] = true
+		ch <- prometheus.MustNewConstMetric(diskAvailDesc, prometheus.GaugeValue, float64(m.n.avail), diskLabels.name(m.n.dev, m.path, c.paths, devOf))
+	}
+}
+
+// diskStatWait is how long a gather, or a poll of notify's disk source,
+// waits for the paths' statfs: a filesystem that hangs (a network mount
+// whose server went away) must not hold back the push and the admin
+// /metrics, and every motel series with them, nor notify's engine. A
+// path not answered in time is not measured.
+var diskStatWait = 2 * time.Second
+
+// diskStat is one path's statfs, as it came back.
+type diskStat struct {
+	n   diskNumbers
+	err error
+}
+
+// diskStats is the process's statfs calls of the disk series that have
+// not come back: one per path at most, so a filesystem that hangs holds
+// one goroutine, not one more at each gather. diskPollStats is notify's
+// disk source's (diskPoller), apart, so that a gather's statfs of a
+// path is never a poll's busy one.
+var (
+	diskStats     = &statsInFlight{busy: map[string]bool{}}
+	diskPollStats = &statsInFlight{busy: map[string]bool{}}
+)
+
+type statsInFlight struct {
+	mu   sync.Mutex
+	busy map[string]bool
+}
+
+// errStatBusy is a path whose statfs has not come back since a gather
+// before.
+var errStatBusy = errors.New("the statfs of a gather before has not come back")
+
+// statAll is each path's statfs, all started at once and waited for up
+// to diskStatWait: a path not back by then, or whose statfs of a call
+// before is still out (errStatBusy), has an error and no numbers.
+func (s *statsInFlight) statAll(paths []string, stat func(string) (diskNumbers, error)) []diskStat {
+	ctx, cancel := context.WithTimeout(context.Background(), diskStatWait)
+	defer cancel()
+	results := make([]<-chan diskStat, len(paths))
+	for i, p := range paths {
+		results[i] = s.start(p, stat)
+	}
+	out := make([]diskStat, len(paths))
+	for i := range paths {
+		// One back already is taken past the deadline too: a select
+		// with both ready picks either.
+		select {
+		case out[i] = <-results[i]:
+		default:
+			select {
+			case out[i] = <-results[i]:
+			case <-ctx.Done():
+				out[i].err = ctx.Err()
+			}
+		}
+	}
+	return out
+}
+
+// start runs stat(path) on its own goroutine, and returns where its
+// answer comes; at once, with errStatBusy, while one before is out.
+func (s *statsInFlight) start(path string, stat func(string) (diskNumbers, error)) <-chan diskStat {
+	out := make(chan diskStat, 1)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.busy[path] {
+		out <- diskStat{err: errStatBusy}
+		return out
+	}
+	s.busy[path] = true
+	go func() {
+		n, err := stat(path)
+		s.mu.Lock()
+		delete(s.busy, path)
+		s.mu.Unlock()
+		out <- diskStat{n, err}
+	}()
+	return out
+}
+
+// diskLabels keeps the path a filesystem's series is named by for as
+// long as that path is measured: a stat of it that fails once must not
+// rename the series after the next path on the device, which would cut
+// a disk_fill rule's history in two. The process's, as the per-device
+// level of notify's disk source is.
+var diskLabels = &diskNames{byDev: map[uint64]string{}}
+
+type diskNames struct {
+	mu    sync.Mutex
+	byDev map[uint64]string
+}
+
+// name is the device's series' path: the one it had while that is
+// still among paths and not measured on another device now (devOf: the
+// paths measured at this gather), else p, measured now. A path names
+// one device's series at most: two series of one name are a gather
+// error (the push drops the second, the admin /metrics answers 500). A
+// path moved to another filesystem (a disk mounted there) names that
+// one's series, and the device it left is named by its next path.
+func (n *diskNames) name(dev uint64, p string, paths []string, devOf map[string]uint64) string {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	if had, ok := n.byDev[dev]; ok && slices.Contains(paths, had) {
+		if d, now := devOf[had]; !now || d == dev {
+			return had
+		}
+	}
+	for d, had := range n.byDev {
+		if had == p {
+			delete(n.byDev, d)
+		}
+	}
+	n.byDev[dev] = p
+	return p
 }

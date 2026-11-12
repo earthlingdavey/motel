@@ -27,6 +27,11 @@ const (
 	EventRollback          = "rollback"
 	EventDeployStarted     = "deploy_started"
 	EventDeployEnded       = "deploy_ended"
+	// EventCutover is a deploy's or a rollback's traffic moving to its
+	// release, told at the swap, before the old instance's drain and
+	// stop and the deploy's own result: the post-deploy comparison
+	// starts from it. Not a notification of its own.
+	EventCutover = "cutover"
 )
 
 // LifecycleEvent is one thing that happened to an app. Summary is one
@@ -38,6 +43,14 @@ type LifecycleEvent struct {
 	Release    string
 	DeployedBy string
 	Summary    string
+	// Previous and Cutover, on EventCutover, are the release whose
+	// instance served until this one was published (empty when none
+	// did: a first deploy, or an app that was down) and when that was. The notify module's post-deploy
+	// comparison reads both (notify/DESIGN-metrics.md, "Operator
+	// rules"). A relaunch of the running release names it as its own
+	// Previous.
+	Previous string
+	Cutover  time.Time
 	// Hold, on EventWatchdogRecovered, is how long the app must stay
 	// healthy before the recovery counts: max(30s, watchdog_grace), the
 	// span after which the watchdog's own backoff resets.

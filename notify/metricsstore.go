@@ -167,6 +167,18 @@ func (c *storeClient) query(ctx context.Context, q string) ([]series, error) {
 	return parseQueryAnswer(data)
 }
 
+// queryAt is an instant query at t, to the millisecond, which the
+// store takes as given when it is more than -search.latencyOffset in
+// the past.
+func (c *storeClient) queryAt(ctx context.Context, q string, t time.Time) ([]series, error) {
+	v := url.Values{"query": {q}, "time": {strconv.FormatFloat(float64(t.UnixMilli())/1000, 'f', 3, 64)}}
+	data, err := c.do(ctx, http.MethodGet, "/api/v1/query?"+v.Encode(), nil, "")
+	if err != nil {
+		return nil, err
+	}
+	return parseQueryAnswer(data)
+}
+
 // queryRange is a range query over [start, end] at step.
 func (c *storeClient) queryRange(ctx context.Context, q string, start, end time.Time, step time.Duration) ([]series, error) {
 	v := url.Values{
