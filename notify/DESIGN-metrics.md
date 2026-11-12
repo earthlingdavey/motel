@@ -71,7 +71,14 @@ both directions verified), with the paths and flags of this section,
 except the two proxies' users and the drop-in's chmod of the store's
 data, set after the box's audit of 2026-11-11 found both proxies running
 as root and the data world-readable: measured in the e2e box (systemd
-257), not yet on hotserve-1.
+257), not yet on hotserve-1; so is the namespace unit's test for a
+leftover before its delete (2026-11-12). A fourth cold boot, on
+2026-11-11 at 15:04 UTC with motel (9228935) rendering `rules.yml` and
+pushing, brought every
+unit up within a second of the namespace (the am proxy's service at its
+first connection, nine seconds later), with no failed unit, no
+ordering cycle and no listener in the host namespace; vmalert loaded
+motel's rules, and the store scraped itself, vmalert and Alertmanager.
 
 **The proxies run as no root.** Each passes bytes it does not parse, and
 motel shapes some of them (its own reads through `vm.sock`, and what
@@ -901,7 +908,35 @@ UTC on 2026-11-10, 2,600 series: the store 108 to 117 MB RSS
 while active and gone after five idle minutes, the store's disk 4.8 MB.
 Alertmanager and motel unchanged. `-memory.allowedBytes=96MiB` holds the
 caches under the 154 MB the default allowed, so the cap leaves room for
-queries; its RSS on a box is owed below. The response observer adds at
+queries.
+
+A day with that cap and motel pushing, on the same box from 15:00 UTC on
+2026-11-11 (25 hourly samples, a cold boot at 15:04; the units of
+9228935, before #426, whose changes, the proxies' users and the data
+directories' modes, leave the store's memory as it was), 3,415 to 3,512
+series:
+
+| | Min | Median | Max |
+|---|---|---|---|
+| The store's RSS, from an hour after the boot | 174 MB | 186 MB | 191 MB |
+| Its caches (`vm_cache_size_bytes`, summed), from the same hour | 101 MiB | 103 MiB | 116 MiB |
+| vmalert | 27 MB | 28 MB | 28 MB |
+| Alertmanager | 40 MB | 42 MB | 42 MB |
+| Each proxy | 7 MB | 7 MB | 7 MB |
+| motel | 63 MB | 66 MB | 67 MB |
+| `GET /example` with its `metrics`, through the deploy host from the box | 22 ms | 31 ms (p95 34) | 37 ms |
+
+The store reached its level within an hour of each start (107 MB three
+minutes after setup restarted it, 174 MB an hour after the boot) and
+moved 3 MB in the last twelve hours; its cgroup peaked at 203 MiB, 53 MiB
+under `MemoryMax`. That is above the 156 MB it had reached on the default
+share 16 hours after its start (2026-11-11 14:00, 3,264 series, before
+motel pushed): the cap sizes the caches, which sit a little over it
+(three of them at 32 MiB each, 96 MiB of the total), and not the rest of
+the process; why the rest grew is not measured. The disk grew from 5.8 to
+8.0 MB, 2.2 MB a day. No OOM kill, no restart, no failed unit. The
+store's proxy no longer idles out, since motel's push keeps it busy: the
+stack beside motel is about 270 MB. The response observer adds at
 most 24 series per observed app and release (six classes, the
 histogram's 14, four cache results), two releases each: under 500 for
 ten apps, against the 2,600 measured.
@@ -974,13 +1009,16 @@ on its general scales. metrics' examples:
 | A reload that moves the `metrics` line to another socket starts the counts afresh (`setLive`) but keeps what already fires, `metrics_store_read_only` among them, until the new store answers: a read-only alert raised for the old store stays told while the new one does not answer | notify/metricspush.go (`setLive`) | 2 | 2 | 1 | 4; it needs the old store read-only and the new one not answering; the first answer of the new store clears it, and the new store's own silence fires `metrics_store_down`, which names the push failing, once `readOnlyStale` asks have gone unanswered (`heldReadOnly`, as for any read-only store that stops answering). Clearing it at the move would resolve it on no evidence. Copilot round 2 on #425 |
 | `motel monitor setup --metrics` on a box where Alertmanager is not set up yet reloads motel twice, Alertmanager's setup's first, before the store is installed: a `metrics` line that this reload loads for the first time (written, never reloaded) starts the push's failure count then, so an install of the store slower than five minutes fires `metrics_store_down`, and the journal has a `not set up` and a `push failed` line, until the first push after the store's setup clears it | notify/cmd.go (`runSetup`) | 2 | 2 | 1 | 4; it needs Alertmanager not set up, the line unloaded before setup and a slow install; the alert names its cause and clears itself, and the two setups run as two commands had the same order; skipping Alertmanager's reload under `--metrics` is a flag through its setup (size 2, risk 2). /code-review pass 1 on the monitor block |
 | A rule refused at Provision (an `app` the liveswap block does not configure, `memory_share` of an uncapped app, rules in a block with no channel, a rule naming an app with no liveswap block) names the rule, not its Caddyfile file and line: Provision reads the adapted JSON, which carries no position | notify/metrics.go (`provision`) | 2 | 5 | 1 | 10; the rule's name is unique in the block, so the refusal points at one line, and notify's own Provision refusals (an `operator` or `bind` naming no channel) name keys, not lines, alike; a position in each rule's JSON, set by the adapter alone, is a field every config carries (size 3, risk 2), and moving the no-channel check into the parse fixes one refusal of four (size 2). Copilot round 3 on #429 |
+| e2e metrics 4 reads vmalert's send counters, `vmalert_alerts_sent_total` and `vmalert_alerts_send_errors_total`, which are per notifier and so every group's, not the ChannelFailed group's: a send error of another group's alert (an operator rule firing in the wait) fails the check, and another group's send raises the sent count | e2e/metrics/run.sh | 2 | 2 | 1 | 4; it needs another alert firing and Alertmanager refusing its post, which is a failure of the outlet the check exists to catch, and the fail line names the counters; vmalert 1.112.0 has no per-group send counter. The group's own evaluation count is the gate, and the sent count only corroborates. /code-review passes 1 and 2 on #430 |
+| e2e metrics 4 no longer sees vmalert's post inside Alertmanager: it proves a send vmalert counted as accepted and one alert held, so a notifier pointed at another Alertmanager that answers 2xx would pass it | e2e/metrics/run.sh | 3 | 1 | 1 | 3; metrics 10 fails on it, naming it: it reads `errors_high`, which vmalert alone posts, in Alertmanager with vmalert's `generatorURL`. The outlet is `motel-am-proxy.socket` to `/run/motel-notify/am.sock`, pinned by `TestMetricsUnitsAreTheMeasuredOnes`, and the store's scrape of Alertmanager (metrics 4's `up{job="alertmanager"}`) goes through the same proxy; reading the post in Alertmanager without the phase race needs motel's post held off or both phases timed (size 3, risk 2). The merged alert's latest poster is still printed. /code-review pass 2 on #430; rescored from 15 by the review of the rebased tree |
+| e2e metrics 4 takes vmalert's counters from one scrape, which is not one instant: vmalert writes the send-error counter earlier in the page than the group's evaluation count, so a second evaluation whose send fails between the two lines is counted with its error unseen, and a refused post passes | e2e/metrics/run.sh | 3 | 1 | 5 | 15; it needs Alertmanager refusing vmalert's post, the first evaluation's send having succeeded, and the failure landing in the microseconds between two lines of one page; one more scrape after the gate closes it (size 1, risk 2). /code-review of the rebased tree on #430 |
 
 ### Owed
 
 | Owed | S | O | D | Lands in |
 |---|---|---|---|---|
-| The store's RSS with `-memory.allowedBytes=96MiB` after a day, and on a 1 or 2 GB box | — | — | — | the next deploy to hotserve-1 |
-| A reboot with motel rendering `rules.yml` and pushing, as slice one's was measured, on a booted Debian host: the namespace's and the sockets' cold-boot order, a connection made while setup has the store masked, and a failed setup re-run's put-back (Copilot round 2 on #425); the two proxies' users and the am proxy's view, measured so far in the e2e box only | — | — | — | the next deploy to hotserve-1 |
+| The store's RSS on a 1 or 2 GB box (a day on hotserve-1's 3.8 GB is in "Footprint") | — | — | — | a deploy to a box of that size |
+| On a booted Debian host: a connection made while setup has the store masked, and a failed setup re-run's put-back (Copilot round 2 on #425); the two proxies' users and the am proxy's view (#426), and the namespace unit's test for a leftover, measured so far in the e2e box only (hotserve-1 runs the units of 9228935), and a cold boot of these units: setup's re-run does not restart the namespace unit, which is active, so its new `ExecStartPre` first runs at a reboot. The cold boot with motel rendering and pushing is measured with the units of 9228935 ("The shape") | — | — | — | the next deploy to hotserve-1, and a reboot after it |
 | motel says nothing when setup's units on disk are older than the binary's: a box upgraded past a change to them (this one: the proxies' users, the chmods) keeps the old units until root re-runs both setups (`motel monitor setup`, then `motel monitor setup --metrics`). A load could compare the installed files with the embedded ones and warn | 3 | 5 | 5 | the next PR on the feature branch, before it merges to main (/code-review of #426) |
 | Debian's security support for `victoria-metrics` 1.112.0 and `prometheus-alertmanager` 0.28.1 on trixie, whose binaries are built with Go 1.24.2 (the store, vmalert) and 1.24.1 (Alertmanager), and a dist-upgrade check of both drop-ins' flags | — | — | — | before any release |
 
@@ -1193,3 +1231,17 @@ Dated one-liners; the full text of each is in git.
   accepted by the operator), a first push the store did not take (12), p50 and
   p95 apart and the day's two-day scan (4 each, measured at 1.3 to
   2.2 ms a query against the 2 s budget). The `inc` text on a gap inside the window corrected.
+- 2026-11-12 — A day on hotserve-1 with the store's caps and motel
+  pushing, and a cold boot ("Footprint", "The shape"); the two rows that
+  owed them narrowed to what is left. The namespace unit deletes a
+  leftover only when there is one, so a start with none logs no error; e2e
+  metrics 4 counts vmalert's post at its send, not by the merged alert's
+  `generatorURL`, which motel's post can hide.
+- 2026-11-12 — /code-review of #430's rebased tree (ten findings),
+  triaged: a reading of vmalert must hold the send-error counter's
+  line, which a renamed counter had read as no error (30); the fail
+  line says which reading failed; the namespace check looks for
+  `motel-metrics` alone before setup. The Owed row asks for the reboot
+  the new `ExecStartPre` needs. Accepted: a send error between two
+  lines of one scrape (15); the other-Alertmanager row rescored to 3,
+  since metrics 10 sees vmalert's post in Alertmanager.
