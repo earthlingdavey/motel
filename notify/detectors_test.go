@@ -254,7 +254,7 @@ func TestDiskLevel(t *testing.T) {
 func TestDiskPollerOncePerFilesystem(t *testing.T) {
 	used := map[string]float64{"/var/lib/liveswap": 85, "/var/lib/motel": 85, "/var/lib/motel-notify": 40}
 	dev := map[string]uint64{"/var/lib/liveswap": 1, "/var/lib/motel": 1, "/var/lib/motel-notify": 2}
-	d := diskPoller{stat: func(p string) (float64, uint64, error) { return used[p], dev[p], nil }}
+	d := diskPoller{stat: func(p string) (diskNumbers, error) { return diskNumbers{usedPct: used[p], dev: dev[p]}, nil }}
 	paths := []string{"/var/lib/liveswap", "/var/lib/motel", "/var/lib/motel-notify"}
 	evs := d.poll(paths)
 	if len(evs) != 1 || evs[0].Instance != "/var/lib/liveswap" || evs[0].Severity != SeverityWarning || !evs[0].Firing {
@@ -351,11 +351,11 @@ func TestSeverityChangeEndsTheOldAlert(t *testing.T) {
 
 func TestDiskPollerKeepsAPathItCannotMeasure(t *testing.T) {
 	fail := false
-	d := diskPoller{stat: func(string) (float64, uint64, error) {
+	d := diskPoller{stat: func(string) (diskNumbers, error) {
 		if fail {
-			return 0, 0, os.ErrPermission
+			return diskNumbers{}, os.ErrPermission
 		}
-		return 92, 1, nil
+		return diskNumbers{usedPct: 92, dev: 1}, nil
 	}}
 	if evs := d.poll([]string{"/var/lib/liveswap"}); len(evs) != 1 || !evs[0].Firing {
 		t.Fatalf("first: %+v", evs)
@@ -412,7 +412,7 @@ func TestTLSKeyUnreportedIsCleared(t *testing.T) {
 // the filesystem's, so a held critical stays critical above 85 %.
 func TestDiskLevelHeldByDevice(t *testing.T) {
 	used := map[string]float64{"/var/lib/liveswap": 92, "/var/lib/motel": 92}
-	d := diskPoller{stat: func(p string) (float64, uint64, error) { return used[p], 7, nil }}
+	d := diskPoller{stat: func(p string) (diskNumbers, error) { return diskNumbers{usedPct: used[p], dev: 7}, nil }}
 	if evs := d.poll([]string{"/var/lib/liveswap", "/var/lib/motel"}); len(evs) != 1 || evs[0].Severity != SeverityCritical {
 		t.Fatalf("first: %+v", evs)
 	}

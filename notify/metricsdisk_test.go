@@ -3,8 +3,10 @@ package notify
 import (
 	"os"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"testing"
+	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/testutil"
@@ -16,14 +18,14 @@ func TestDiskCollector(t *testing.T) {
 	diskLabels = &diskNames{byDev: map[uint64]string{}}
 	c := diskCollector{
 		paths: []string{"/var/lib/liveswap", "/var/lib/caddy", "/var/lib/motel-notify", "/gone"},
-		stat: func(p string) (uint64, uint64, error) {
+		stat: func(p string) (diskNumbers, error) {
 			switch p {
 			case "/var/lib/liveswap", "/var/lib/caddy":
-				return 1000, 1, nil
+				return diskNumbers{avail: 1000, dev: 1}, nil
 			case "/var/lib/motel-notify":
-				return 50, 2, nil
+				return diskNumbers{avail: 50, dev: 2}, nil
 			}
-			return 0, 0, os.ErrNotExist
+			return diskNumbers{}, os.ErrNotExist
 		},
 	}
 	want := `# HELP motel_disk_avail_bytes ` + diskAvailDescHelp + `
@@ -36,8 +38,8 @@ motel_disk_avail_bytes{path="/var/lib/motel-notify"} 50
 	if err := testutil.GatherAndCompare(reg, strings.NewReader(want)); err != nil {
 		t.Fatal(err)
 	}
-	if avail, _, err := statAvail(t.TempDir()); err != nil || avail == 0 {
-		t.Errorf("statAvail of a temp dir: %d, %v", avail, err)
+	if n, err := statDisk(t.TempDir()); err != nil || n.avail == 0 {
+		t.Errorf("statDisk of a temp dir: %+v, %v", n, err)
 	}
 }
 
@@ -48,11 +50,11 @@ func TestDiskSeriesKeepsItsName(t *testing.T) {
 	failing := false
 	c := diskCollector{
 		paths: []string{"/var/lib/liveswap", "/var/lib/caddy"},
-		stat: func(p string) (uint64, uint64, error) {
+		stat: func(p string) (diskNumbers, error) {
 			if p == "/var/lib/liveswap" && failing {
-				return 0, 0, os.ErrPermission
+				return diskNumbers{}, os.ErrPermission
 			}
-			return 1000, 1, nil
+			return diskNumbers{avail: 1000, dev: 1}, nil
 		},
 	}
 	reg := prometheus.NewPedanticRegistry()
@@ -69,7 +71,7 @@ motel_disk_avail_bytes{path="/var/lib/liveswap"} 1000
 	}
 	// A path no longer measured (a reload moved the apps' root) names
 	// the series no more.
-	c2 := diskCollector{paths: []string{"/srv/apps", "/var/lib/caddy"}, stat: func(string) (uint64, uint64, error) { return 5, 1, nil }}
+	c2 := diskCollector{paths: []string{"/srv/apps", "/var/lib/caddy"}, stat: func(string) (diskNumbers, error) { return diskNumbers{avail: 5, dev: 1}, nil }}
 	reg2 := prometheus.NewPedanticRegistry()
 	reg2.MustRegister(c2)
 	if err := testutil.GatherAndCompare(reg2, strings.NewReader(strings.ReplaceAll(strings.ReplaceAll(want, "/var/lib/liveswap", "/srv/apps"), "} 1000", "} 5"))); err != nil {
@@ -85,7 +87,7 @@ func TestDiskSeriesFollowsAMount(t *testing.T) {
 	dev := map[string]uint64{"/var/lib/liveswap": 1, "/var/lib/caddy": 1}
 	c := diskCollector{
 		paths: []string{"/var/lib/liveswap", "/var/lib/caddy"},
-		stat:  func(p string) (uint64, uint64, error) { return 1000 * dev[p], dev[p], nil },
+		stat:  func(p string) (diskNumbers, error) { return diskNumbers{avail: 1000 * dev[p], dev: dev[p]}, nil },
 	}
 	reg := prometheus.NewPedanticRegistry()
 	reg.MustRegister(c)
@@ -107,17 +109,70 @@ motel_disk_avail_bytes{path="/var/lib/liveswap"} 2000
 	}
 	// Its stat failing now leaves the moved path to its own filesystem:
 	// the one it left keeps the name it took.
-	c.stat = func(p string) (uint64, uint64, error) {
+	c.stat = func(p string) (diskNumbers, error) {
 		if p == "/var/lib/liveswap" {
-			return 0, 0, os.ErrPermission
+			return diskNumbers{}, os.ErrPermission
 		}
-		return 1000, 1, nil
+		return diskNumbers{avail: 1000, dev: 1}, nil
 	}
 	reg2 := prometheus.NewPedanticRegistry()
 	reg2.MustRegister(c)
 	if err := testutil.GatherAndCompare(reg2, strings.NewReader(head+`motel_disk_avail_bytes{path="/var/lib/caddy"} 1000
 `)); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// A statfs that hangs holds back no gather: the path has no sample
+// until it comes back, and the gathers meanwhile start no other.
+func TestDiskStatThatHangs(t *testing.T) {
+	diskLabels = &diskNames{byDev: map[uint64]string{}}
+	defer func(w time.Duration) { diskStatWait = w }(diskStatWait)
+	diskStatWait = 50 * time.Millisecond
+	release := make(chan struct{})
+	var calls atomic.Int32
+	c := diskCollector{
+		paths: []string{"/srv/nfs", "/var/lib/caddy"},
+		stat: func(p string) (diskNumbers, error) {
+			if p == "/srv/nfs" {
+				calls.Add(1)
+				<-release
+				return diskNumbers{avail: 7, dev: 2}, nil
+			}
+			return diskNumbers{avail: 1000, dev: 1}, nil
+		},
+	}
+	reg := prometheus.NewPedanticRegistry()
+	reg.MustRegister(c)
+	head := `# HELP motel_disk_avail_bytes ` + diskAvailDescHelp + `
+# TYPE motel_disk_avail_bytes gauge
+`
+	for range 3 {
+		start := time.Now()
+		if err := testutil.GatherAndCompare(reg, strings.NewReader(head+`motel_disk_avail_bytes{path="/var/lib/caddy"} 1000
+`)); err != nil {
+			t.Fatal(err)
+		}
+		if d := time.Since(start); d > 2*time.Second {
+			t.Fatalf("a gather waited %s", d)
+		}
+	}
+	if n := calls.Load(); n != 1 {
+		t.Fatalf("%d statfs of the hung path, want the one", n)
+	}
+	close(release)
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		err := testutil.GatherAndCompare(reg, strings.NewReader(head+`motel_disk_avail_bytes{path="/srv/nfs"} 7
+motel_disk_avail_bytes{path="/var/lib/caddy"} 1000
+`))
+		if err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("after it came back: %v", err)
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }
 

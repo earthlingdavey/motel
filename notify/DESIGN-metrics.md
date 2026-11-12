@@ -385,7 +385,11 @@ post_deploy is motel's.
 reads: statfs's available bytes (df's Avail: available blocks of
 `f_frsize`, read by the same helper as the disk source) for the directories
 notify's disk source measures (the apps' root, Caddy's data, notify's
-state directory), one series per filesystem, read at each gather. It is
+state directory), one series per filesystem, read at each gather, all
+at once, each within 2 s: a path whose statfs has not come back (a
+network mount whose server went away) has no sample, and no gather
+starts another for it until it does, so a filesystem that hangs holds
+back neither the push nor the admin /metrics. It is
 named by the first of them on it, and keeps that name while the path is
 measured: a stat of it that fails once leaves the series to the next
 path on the device under the same name, so a rule's history is not cut

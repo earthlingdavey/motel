@@ -217,7 +217,7 @@ type diskPoller struct {
 	set   stateSet
 	level map[uint64]string // device → the severity it fires at: the
 	// filesystem's, whichever path stands for it as the path list changes
-	stat func(path string) (used float64, dev uint64, err error)
+	stat func(path string) (diskNumbers, error)
 }
 
 // The thresholds: warning at 80 % used, critical at 90; each clears 5
@@ -265,23 +265,18 @@ func fsNumbers(fs syscall.Statfs_t, dev uint64) diskNumbers {
 	return n
 }
 
-func statfs(path string) (float64, uint64, error) {
-	n, err := statDisk(path)
-	return n.usedPct, n.dev, err
-}
-
 func (d *diskPoller) poll(paths []string) []Event {
 	if d.level == nil {
 		d.level = map[uint64]string{}
 	}
 	stat := d.stat
 	if stat == nil {
-		stat = statfs
+		stat = statDisk
 	}
 	seen := map[uint64]bool{}
 	var fire []Event
 	for _, p := range paths {
-		used, dev, err := stat(p)
+		n, err := stat(p)
 		if err != nil {
 			// Not measured is not cleared: a path that fired keeps firing.
 			k := Event{Name: alertDiskLow, Source: "disk", Instance: p}.key()
@@ -290,6 +285,7 @@ func (d *diskPoller) poll(paths []string) []Event {
 			}
 			continue
 		}
+		used, dev := n.usedPct, n.dev
 		if seen[dev] {
 			continue // a filesystem already measured
 		}

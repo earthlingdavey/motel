@@ -3,6 +3,8 @@ package notify
 import (
 	"bufio"
 	"bytes"
+	"context"
+	"errors"
 	"os"
 	"path"
 	"path/filepath"
@@ -10,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
 
@@ -208,7 +211,7 @@ var diskAvailDesc = prometheus.NewDesc(diskAvailMetric, diskAvailDescHelp, []str
 // that source reads them (diskPoller).
 type diskCollector struct {
 	paths []string
-	stat  func(path string) (avail uint64, dev uint64, err error)
+	stat  func(path string) (diskNumbers, error)
 }
 
 func (c diskCollector) Describe(ch chan<- *prometheus.Desc) { ch <- diskAvailDesc }
@@ -216,32 +219,96 @@ func (c diskCollector) Describe(ch chan<- *prometheus.Desc) { ch <- diskAvailDes
 func (c diskCollector) Collect(ch chan<- prometheus.Metric) {
 	stat := c.stat
 	if stat == nil {
-		stat = statAvail
+		stat = statDisk
 	}
-	// Every path first: a series keeps its name only while that path is
-	// still on its device (diskNames.name).
+	// Every path first, at once: a series keeps its name only while that
+	// path is still on its device (diskNames.name).
+	ctx, cancel := context.WithTimeout(context.Background(), diskStatWait)
+	defer cancel()
+	results := make([]<-chan diskStat, len(c.paths))
+	for i, p := range c.paths {
+		results[i] = diskStats.start(p, stat)
+	}
 	type measured struct {
-		path       string
-		avail, dev uint64
+		path string
+		n    diskNumbers
 	}
 	var got []measured
 	devOf := map[string]uint64{}
-	for _, p := range c.paths {
-		avail, dev, err := stat(p)
-		if err != nil {
+	for i, p := range c.paths {
+		var r diskStat
+		// One back already is taken past the deadline too: a select
+		// with both ready picks either.
+		select {
+		case r = <-results[i]:
+		default:
+			select {
+			case r = <-results[i]:
+			case <-ctx.Done():
+				r.err = ctx.Err()
+			}
+		}
+		if r.err != nil {
 			continue // not measured is no sample: the rule's line keeps its last
 		}
-		got = append(got, measured{p, avail, dev})
-		devOf[p] = dev
+		got = append(got, measured{p, r.n})
+		devOf[p] = r.n.dev
 	}
 	seen := map[uint64]bool{}
 	for _, m := range got {
-		if seen[m.dev] {
+		if seen[m.n.dev] {
 			continue
 		}
-		seen[m.dev] = true
-		ch <- prometheus.MustNewConstMetric(diskAvailDesc, prometheus.GaugeValue, float64(m.avail), diskLabels.name(m.dev, m.path, c.paths, devOf))
+		seen[m.n.dev] = true
+		ch <- prometheus.MustNewConstMetric(diskAvailDesc, prometheus.GaugeValue, float64(m.n.avail), diskLabels.name(m.n.dev, m.path, c.paths, devOf))
 	}
+}
+
+// diskStatWait is how long a gather waits for the paths' statfs: a
+// filesystem that hangs (a network mount whose server went away) must
+// not hold back the push and the admin /metrics, and every motel series
+// with them. A path not answered in time has no sample.
+var diskStatWait = 2 * time.Second
+
+// diskStat is one path's statfs, as it came back.
+type diskStat struct {
+	n   diskNumbers
+	err error
+}
+
+// diskStats is the process's statfs calls of the disk series that have
+// not come back: one per path at most, so a filesystem that hangs holds
+// one goroutine, not one more at each gather.
+var diskStats = &statsInFlight{busy: map[string]bool{}}
+
+type statsInFlight struct {
+	mu   sync.Mutex
+	busy map[string]bool
+}
+
+// errStatBusy is a path whose statfs has not come back since a gather
+// before.
+var errStatBusy = errors.New("the statfs of a gather before has not come back")
+
+// start runs stat(path) on its own goroutine, and returns where its
+// answer comes; at once, with errStatBusy, while one before is out.
+func (s *statsInFlight) start(path string, stat func(string) (diskNumbers, error)) <-chan diskStat {
+	out := make(chan diskStat, 1)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.busy[path] {
+		out <- diskStat{err: errStatBusy}
+		return out
+	}
+	s.busy[path] = true
+	go func() {
+		n, err := stat(path)
+		s.mu.Lock()
+		delete(s.busy, path)
+		s.mu.Unlock()
+		out <- diskStat{n, err}
+	}()
+	return out
 }
 
 // diskLabels keeps the path a filesystem's series is named by for as
@@ -280,9 +347,3 @@ func (n *diskNames) name(dev uint64, p string, paths []string, devOf map[string]
 	return p
 }
 
-// statAvail is what a user can still write on the filesystem holding
-// path, as df's Avail, and the device it is on.
-func statAvail(path string) (uint64, uint64, error) {
-	n, err := statDisk(path)
-	return n.avail, n.dev, err
-}
