@@ -2,6 +2,7 @@ package notify
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -439,8 +440,18 @@ tests:
 }
 
 // runUnittest runs vmalert-tool's unittest over test, in dir beside
-// its rules.yml.
+// its rules.yml, and fails the test unless every case read as wanted.
 func runUnittest(t *testing.T, tool, dir, test string) {
+	t.Helper()
+	if out, ok := vmUnittest(t, tool, dir, test); !ok {
+		t.Fatalf("vmalert-tool unittest:\n%s", out)
+	}
+}
+
+// vmUnittest runs vmalert-tool's unittest over test, in dir beside its
+// rules.yml, and says whether every case read as wanted, with the
+// tool's output.
+func vmUnittest(t *testing.T, tool, dir, test string) (string, bool) {
 	t.Helper()
 	if err := os.WriteFile(filepath.Join(dir, "test.yml"), []byte(test), 0o600); err != nil {
 		t.Fatal(err)
@@ -448,9 +459,10 @@ func runUnittest(t *testing.T, tool, dir, test string) {
 	cmd := exec.Command(tool, "unittest", "-files", "test.yml")
 	cmd.Dir = dir
 	out, err := cmd.CombinedOutput()
-	if err != nil || !strings.Contains(string(out), "SUCCESS") {
-		t.Fatalf("vmalert-tool unittest: %v\n%s", err, out)
+	if err != nil {
+		return fmt.Sprintf("%v\n%s", err, out), false
 	}
+	return string(out), strings.Contains(string(out), "SUCCESS")
 }
 
 // A request counter over the store's own MetricsQL: a series new to the

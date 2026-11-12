@@ -619,12 +619,16 @@ const pushApart = pushEvery / 2
 // responses read as 0, e2e metrics 3a). The push's first sample is
 // before the window when the pushes ran up to it, and inside it on a
 // store younger than the window or after a gap in the pushes (the
-// store down, or read-only). Any other series the window reads through
+// store down, or read-only) over the window's start; a gap inside the
+// window leaves it before the gap, so a series born in that gap is
+// first seen after it and counted from zero, rightly, its birth being
+// inside the window. Any other series the window reads through
 // increase: one back at or above its last value came back after a gap;
 // one that came with the push's first sample (the metrics line first
 // loaded on a box whose observer had counted for hours, or one born or
-// restarted in a gap) holds every count since motel began, or since it
-// was born, which increase_pure would read as the window's own. With
+// restarted in a gap over the window's start) holds every count since
+// motel began, or since it was born, which increase_pure would read as
+// the window's own. With
 // no push in the store at all, scalar is NaN, nothing compares above
 // it, and every series goes through increase. Where a sample comes
 // just before the window the two agree.

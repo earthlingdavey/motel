@@ -242,15 +242,17 @@ printf '%s' "$m" | grep -q '"window":"24h"' && printf '%s' "$m" | grep -q '"requ
 # view reads the store's own 2xx count, and the misses (a series that
 # came after the push's first sample, at 21) are counted from zero, a
 # hit share near 0.05; the store's increase alone dropped them, a share
-# of 1 (DESIGN-metrics, "metrics in GET /<app>").
+# of 1 (DESIGN-metrics, "metrics in GET /<app>"). The store's count is
+# read again beside each view, over the view's window, so a response
+# that arrives meanwhile or a series gone stale moves both.
 val() { q "$1" | sed -n 's/.*"value":\[[^,]*,"\([0-9]*\)"\].*/\1/p'; }
-raw2xx=$(val 'sum(motel_app_requests_total{app="blog",class="2xx"})')
 for r in 1h 24h; do
-	m=""
+	m="" raw2xx=""
 	end=$(( $(date +%s) + 60 ))
 	while [ "$(date +%s)" -lt "$end" ]; do
+		raw2xx=$(val "sum(last_over_time(motel_app_requests_total{app=\"blog\",class=\"2xx\"}[$r]))")
 		m=$(curl -s --max-time 5 -H "Authorization: Bearer $TOKEN" "$HOOK?range=$r")
-		printf '%s' "$m" | grep -q "\"by_class\":{\"2xx\":$raw2xx[,}]" && printf '%s' "$m" | grep -q '"cache_hit_share":0\.0[0-9]*[,}]' && break
+		[ -n "$raw2xx" ] && printf '%s' "$m" | grep -q "\"by_class\":{\"2xx\":$raw2xx[,}]" && printf '%s' "$m" | grep -q '"cache_hit_share":0\.0[0-9]*[,}]' && break
 		sleep 5
 	done
 	[ -n "$raw2xx" ] && printf '%s' "$m" | grep -q "\"by_class\":{\"2xx\":$raw2xx[,}]" && printf '%s' "$m" | grep -q '"cache_hit_share":0\.0[0-9]*[,}]' \

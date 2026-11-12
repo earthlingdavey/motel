@@ -414,14 +414,17 @@ cache result's first), counted from zero, whose first value `increase`
 would drop (22 responses read as 0, e2e metrics 3a). The push's first
 sample is before the window when the pushes ran up to it, and inside
 it on a store younger than the window (the first hour, or day, of
-`GET /<app>`'s numbers after setup) or after a gap in the pushes. Half
+`GET /<app>`'s numbers after setup) or after a gap in the pushes over
+the window's start; a gap inside the window leaves it before the gap,
+so a series born in that gap is first seen after it and counted from
+zero, rightly, since its birth is inside the window. Half
 a push, 15 s at the 30 s push (`pushApart`, `pushEvery / 2`): one push
 is one import, which the store stamps chunk by chunk with each chunk's
 own time, so one push's samples can be milliseconds apart, and the next
 push comes 30 s later. A series back at or above its last value after a
 gap in the pushes of over five minutes (the store down, or read-only),
 or one that came with the push's first sample (born, or motel
-restarted, in a gap; the metrics line first loaded on a box whose
+restarted, in a gap over the window's start; the metrics line first loaded on a box whose
 observer had counted for hours), holds every count since motel began,
 or since it did, which `increase_pure` read as the window's own for
 five minutes (a 20-minute gap at 10 a push: 1 730 where 10 was due,
@@ -961,6 +964,8 @@ on its general scales. metrics' examples:
 | A relaunch after a stop is compared from 40 s after its cutover (`relaunchSkip`): the relaunched instance's answers before then are in none of its checks, so a regression over by then is not told by the comparison | notify/postdeploy.go (`newWindow`) | 2 | 5 | 3 | 30, accepted under the skill's rule 4: those answers come in the first push after the cutover with the stopped instance's last ones, under the release's one set of counters, and only counters split at the cutover (a new state in the observer, size 3, risk 3) tell the two apart; read from the cutover, a crash loop's last 503s were the relaunch's in every check. The threshold rules and `GET /<app>` count them. /code-review of the relaunch mark; for the operator to accept |
 | A relaunch after a stop whose first push after the cutover the store did not take within 40 s of the cutover (an import that failed, or a push gathered late behind a slow chain check) reads the stopped instance's last push as its own: a crash loop's last 503s in every check | notify/postdeploy.go (`relaunchSkip`) | 2 | 2 | 3 | 12; it needs the release's instance to have failed before (the crash loop) and the store to fail that one import; starting the window at the pusher's first import taken after the cutover is a state shared between the pusher and the comparator (size 3, risk 2). /code-review of the relaunch mark |
 | vmalert's rules have no flapping guard: a condition that flaps around its threshold fires and resolves at each crossing | notify/metricsrules.go | 2 | 3 | 3 | 18; every rule has a `for:` of 2 to 30 minutes, which bounds a flap to one pair per `for:` |
+| `GET /<app>`'s p50 and p95 each run the guarded histogram expression over every bucket, the view's heaviest, where `histogram_quantiles("phi", 0.5, 0.95, …)` would run it once | notify/metricsview.go (`requestQueries`) | 2 | 2 | 1 | 4; on a store of two days of ten apps at the push's 30 s (401 series, 2.3 million samples), one p95 took 1.6 ms at the day and 2.0 ms at the hour, both quantiles in one 1.3 ms and 1.8 ms (2026-11-12, uncached), against the 2 s budget; a view over it answers `the metrics store did not answer`. One query is a `phi` label to read (size 2, risk 2). /code-review of the view's guard |
+| `GET /<app>?range=24h` reads two days through the guard (`[1d] offset 1d` for the series' earlier sample) and three more rollups a series | notify/operatorrules.go (`guardedIncrease`), notify/metricsview.go | 2 | 2 | 1 | 4; on the same store, the day's request query took 1.4 ms against 0.4 ms for `increase_pure` alone, the p95 1.6 ms against 0.7 ms, against the 2 s budget, and a view over it says so; a lookback sized to the window, or no guard when the push is older than the window, is a second expression to prove against the store (size 2, risk 2). /code-review of the view's guard |
 | `now` and `at` in `GET /<app>` are judged by the range's step timestamps, not the samples': the store carries a sample forward onto the step grid, so a stopped app's or a dropped cap's last value can read as now for up to about one step past the three steps `fresh` allows (3 m for the hour, 15 m for the day) | notify/metricsview.go (`fresh`) | 2 | 3 | 3 | 18; the status beside it says whether the app runs; the source timestamps need a `timestamp()` query per series (size 2, risk 2). Copilot round 2 on #423 |
 | vmalert's `ChannelFailed` has no baseline: the store's `increase()` counts a series' first sample from zero (measured on 1.112.0: first seen at 3 gives 3, and again after a 17-minute gap), so a failure Alertmanager counted before `motel monitor setup --metrics`, or before a store outage of over ten minutes, is told once as new, for five minutes | notify/metricsrules.go | 2 | 2 | 3 | 12; one late warning to the operator's other channels about a channel that did fail; motel's own source keeps its baseline. A gate on the counter's age changes the expression every channel's rule shares (risk 2) and wants a run against the store to prove. /code-review pass 3 on #423 |
 | A failed re-run's put-back starts `motel-vm.socket` (and `motel-am.socket`) whether or not it was active when setup began: one an operator had stopped to keep the store stopped is started, and a re-run after a first run that failed past the drop-in starts the socket of a stack that never ran | notify/setup.go (`putBackOnFailure`) | 2 | 2 | 3 | 12; a setup that succeeds enables and starts the same socket, which is what the operator ran it for; with the drop-in in place the store it can start is confined to the namespace. /code-review pass 2 on #425 |
@@ -1173,3 +1178,18 @@ Dated one-liners; the full text of each is in git.
   rows scored 30 (`per_second` low for a young series, a coalesced miss
   counted under the release current when it began, an app's own
   `Cache-Status` read with no cache in front) accepted.
+- 2026-11-12 — /code-review of the view's guard and the relaunch mark
+  (ten findings): a relaunch after a stop is compared from 40 s after
+  its cutover (`relaunchSkip`), since the stopped instance's last
+  answers, a crash loop's 503s among them, come with the first push
+  after it under the same counters and were read as the relaunch's in
+  every check (10 503s against 40 2xx at the first, measured against
+  the store); a cutover with `Previous` = the release starts no
+  comparison whatever its mark. Both cases are told from what holds at
+  the swap; a relaunch `state.json` alone names had stopped, nothing
+  routing to it and the launch's sweep stopping any unit (the finding
+  that said otherwise did not hold). e2e metrics 3a reads the store's
+  2xx beside each view. Accepted: the relaunch's first 40 s (30, for
+  the operator), a first push the store did not take (12), p50 and
+  p95 apart and the day's two-day scan (4 each, measured at 1.3 to
+  2.2 ms a query against the 2 s budget). The `inc` text on a gap inside the window corrected.

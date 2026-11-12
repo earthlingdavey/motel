@@ -1025,8 +1025,8 @@ func TestMetricsViewRequests(t *testing.T) {
 		`histogram_quantile(0.5, sum by (le) (` + dayHist + `))`,
 		`histogram_quantile(0.95, sum by (le) (` + dayHist + `))`,
 		`sum by (result) (` + day(`motel_app_cache_responses_total{app="blog"}`) + `)`,
-	}; !slices.Equal(sorted(asked), sorted(want)) {
-		t.Errorf("the day's request queries =\n%s\nwant\n%s", strings.Join(sorted(asked), "\n"), strings.Join(sorted(want), "\n"))
+	}; !slices.Equal(slices.Sorted(slices.Values(asked)), slices.Sorted(slices.Values(want))) {
+		t.Errorf("the day's request queries =\n%s\nwant\n%s", strings.Join(asked, "\n"), strings.Join(want, "\n"))
 	}
 	if regexp.MustCompile(`[A-Za-z0-9+=_-]{20,}`).Match(got) {
 		t.Fatalf("a run the response filter's entropy layer would read: %s", got)
@@ -1052,15 +1052,9 @@ func TestMetricsViewRequests(t *testing.T) {
 		`histogram_quantile(0.5, sum by (le) (` + hist + `))`,
 		`histogram_quantile(0.95, sum by (le) (` + hist + `))`,
 		`sum by (result) (` + fmt.Sprintf(hour, "motel_app_cache_responses_total", "motel_app_cache_responses_total", "") + `)`,
-	}; !slices.Equal(sorted(asked), sorted(want)) {
-		t.Errorf("the hour's request queries =\n%s\nwant\n%s", strings.Join(sorted(asked), "\n"), strings.Join(sorted(want), "\n"))
+	}; !slices.Equal(slices.Sorted(slices.Values(asked)), slices.Sorted(slices.Values(want))) {
+		t.Errorf("the hour's request queries =\n%s\nwant\n%s", strings.Join(asked, "\n"), strings.Join(want, "\n"))
 	}
-}
-
-func sorted(s []string) []string {
-	s = slices.Clone(s)
-	slices.Sort(s)
-	return s
 }
 
 // No observer on the app's route: no request series, no `requests`;

@@ -3,7 +3,6 @@ package notify
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -155,11 +154,5 @@ func viewUnittest(t *testing.T, tool, dir string, cases []viewCase, qs func(stri
 			}
 		}
 	}
-	if err := os.WriteFile(filepath.Join(dir, "test.yml"), []byte(b.String()), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	cmd := exec.Command(tool, "unittest", "-files", "test.yml")
-	cmd.Dir = dir
-	out, err := cmd.CombinedOutput()
-	return string(out), err == nil && strings.Contains(string(out), "SUCCESS")
+	return vmUnittest(t, tool, dir, b.String())
 }
