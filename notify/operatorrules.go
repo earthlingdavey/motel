@@ -710,7 +710,7 @@ func diskFillRule(r Rule) vmRule {
 func diskFillShape(within time.Duration) (long, short, hold time.Duration) {
 	long = diskFillWindow
 	if within > diskFillScale {
-		long = (diskFillWindow * time.Duration(within/time.Minute) / time.Duration(diskFillScale/time.Minute)).Truncate(time.Minute)
+		long = (diskFillWindow * (within / time.Minute) / (diskFillScale / time.Minute)).Truncate(time.Minute)
 	}
 	return long, (long / 6).Truncate(time.Minute), (long / 12).Truncate(time.Minute)
 }
