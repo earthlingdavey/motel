@@ -121,10 +121,10 @@ wrote /etc/systemd/system/prometheus-alertmanager.service.d/10-motel.conf
 wrote /etc/systemd/system/motel-am.socket
 wrote /var/lib/motel-notify/alertmanager.yml, a config that sends nothing, until motel renders the monitor block's channels
 Alertmanager listens on /run/motel-notify/am.sock only, started by its first connection
-reloaded motel, which renders the monitor block's channels into /var/lib/motel-notify/alertmanager.yml
+reloaded motel, whose config has no monitor block with channels: Alertmanager sends nothing until there is one (docs/monitor.md); add it, then systemctl reload motel
 masked victoria-metrics.service, so the install starts nothing
 iproute2 is installed
-installed [victoria-metrics]
+installed victoria-metrics
 wrote /etc/systemd/system/victoria-metrics.service.d/10-motel.conf
 wrote /etc/systemd/system/motel-metrics-netns.service
 wrote /etc/systemd/system/motel-vm.socket
@@ -135,12 +135,14 @@ wrote /etc/systemd/system/motel-vmalert.service
 wrote /var/lib/motel-metrics/scrape.yml
 wrote /var/lib/motel-metrics/rules.yml
 the store listens on /run/motel-metrics/vm.sock only, its TCP in the motel-metrics namespace
-reloaded motel, which renders the store's rules into /var/lib/motel-metrics/rules.yml and pushes
+reloaded motel, whose config has no monitor block with a metrics line: nothing is pushed until there is one (docs/monitor.md); add it, then systemctl reload motel
 ```
 
-The two `reloaded motel` lines are printed whether or not the Caddyfile
-has a monitor block yet. If it has none, nothing is rendered and
-nothing is pushed until step 4 loads one. Run again later, setup puts
+The two `reloaded motel` lines say what the loaded config does with
+what setup made: here it has no monitor block yet, so nothing is
+rendered and nothing is pushed until step 4 loads one. With the block
+loaded, they say `which renders the monitor block's channels into …`
+and `which renders the store's rules into … and pushes`. Run again later, setup puts
 its units back as the binary ships them. `motel monitor setup` (without
 `--metrics`) restarts Alertmanager, which forgets the alerts it holds,
 so run it at a quiet moment. `--metrics` on a box where Alertmanager is
@@ -169,44 +171,45 @@ It must be **root:motel 0640**. A file made elsewhere and moved in with
 `mv` keeps its owner, group and mode: one made in `/root` with
 `install -m 600`, or by an editor under umask 077, is root:root 0600.
 One made in place gets the directory's group, motel, but keeps its
-mode, and 0600 shuts motel out all the same. Then:
+mode, and 0600 shuts motel out all the same. `validate`, run as root,
+refuses such a file, though root can read it:
 
 ```
 $ ls -l /etc/motel/secrets/_box.env
 -rw------- 1 root root 269 Nov 12 17:46 /etc/motel/secrets/_box.env
 $ motel validate --config /etc/motel/Caddyfile
-Valid configuration
-$ systemctl reload motel
-Job for motel.service failed.
-See "systemctl status motel.service" and "journalctl -xeu motel.service" for details.
+… monitor: the motel user cannot read the box's secrets file /etc/motel/secrets/_box.env (root:root 0600): a reload would be refused and a restart would drop every channel; chown root:motel /etc/motel/secrets/_box.env && chmod 0640 /etc/motel/secrets/_box.env
 ```
 
-`validate` passes, because root can read the file. The reload is
-refused, and the journal says why (`monitor: reading the box's secrets:
-open /etc/motel/secrets/_box.env: permission denied`). A restart or a
-reboot loads the config without a single channel, and the journal says
-so with `monitor: the box's secrets file cannot be used: every channel
-that reads a secret is dropped from this load` and `monitor: no
-operator channel is left in this load: box events are journal lines
-only`. Fix it with:
+A reload is refused too, and the journal says why (`monitor: reading
+the box's secrets: open /etc/motel/secrets/_box.env: permission
+denied`). A restart or a reboot loads the config without a single
+channel, and the journal says so with `monitor: the box's secrets file
+cannot be used: every channel that reads a secret is dropped from this
+load` and `monitor: no operator channel is left in this load: box
+events are journal lines only`. Fix it with:
 
 ```sh
 chown root:motel /etc/motel/secrets/_box.env && chmod 0640 /etc/motel/secrets/_box.env
 systemctl reload motel
 ```
 
-Use `systemctl reload motel` here, not `motel reload --config …`. If
-the Caddyfile has not changed, `motel reload` loads nothing, so the
-dropped channels stay dropped. It still exits 0 and prints no error:
-only motel's journal says `config is unchanged`. `systemctl reload`
-forces the load.
+`motel reload --config /etc/motel/Caddyfile` does the same: with a
+monitor block in the file it loads it even when the Caddyfile has not
+changed, as `systemctl reload` does, since the block reads
+`_box.env`, which the Caddyfile does not hold.
 
-A key that is missing, or set to nothing (`NOTIFY_OPS_URL=`), is
-refused by `validate` and by a reload:
+A key that is missing is refused by `validate` and by a reload, and so
+is one set to nothing (`NOTIFY_OPS_URL=`):
 
 ```
 monitor: channel phone: secret NOTIFY_PHONE_URL is not in the box's secrets (/etc/motel/secrets/_box.env)
+monitor: channel ops: secret NOTIFY_OPS_URL is empty in the box's secrets (/etc/motel/secrets/_box.env): give it the channel's URL
 ```
+
+`motel monitor test <channel>` on a channel a boot dropped says so
+(`channel phone was dropped from this load: its secret could not be
+used …`) and names the mend.
 
 ### The block's lines
 
@@ -305,7 +308,10 @@ An event is either a one-shot (the default) or, with `--state firing`,
 a state that holds until a `--state resolved` with the same `--source`,
 `--subject`, `--name` and `--instance`. A `resolved` that differs in
 any of the four, or one sent when nothing is firing, does nothing, and
-still answers `sent …`. `--summary` is always needed: one line, at
+answers `resolved nothing: no state fires under <key> …` (exit 0, so a
+producer may resolve whatever it last said). On a box where
+`motel monitor setup` has not run, `send` exits 1 with `journalled as
+<key>, and delivered nowhere: …`. `--summary` is always needed: one line, at
 most 200 characters. When a state resolves, the message repeats the
 summary it fired with, not the one you give.
 
@@ -431,7 +437,11 @@ event is about: `<source>/<subject>/<name>[/<instance>]`. Other lines
 start the same way, with `monitor:` or `monitor metrics:` (a warning
 or an error says what to do). If the block was loaded before setup ran,
 you will see
-`monitor: Alertmanager is not set up on this box (run motel monitor setup as root); events are journal lines only until it is`.
+`monitor: Alertmanager is not set up on this box (run motel monitor setup as root); events are journal lines only until it is`,
+and `motel validate` and `motel reload` say it too, as a `WARNING:`
+line. They also warn when the units a setup wrote differ from the ones
+this motel would write (after an upgrade that changed them), and name
+the setup to run again.
 When Alertmanager cannot deliver, `journalctl -u prometheus-alertmanager`
 gives its reason, with the receiver and the channel's kind but never
 the URL:
@@ -442,12 +452,14 @@ time=2026-11-12T17:45:33.575Z level=ERROR source=dispatch.go:360 msg="Notify for
 
 motel reads Alertmanager's failure counters, and tells the operator's
 other channels about a failure as `ChannelFailed` (DESIGN-notify.md,
-"Failed delivery"). That goes wrong in two cases. With a single
-operator channel there is no other channel to tell. And two channels
-of one integration count as one, so a failure points at both as
-suspects, and neither hears it: ntfy and json are both Alertmanager's
-webhook integration. Give the operator two channels of different
-integrations, such as ntfy and Slack. ntfy with json is one.
+"Failed delivery"). `ChannelFailed` is a warning, so a channel with
+`severity critical` never hears it. That goes wrong in two cases.
+With a single operator channel there is no other channel to tell. And
+two channels of one integration count as one, so a failure points at
+both as suspects, and neither hears it: ntfy and json are both
+Alertmanager's webhook integration. Give the operator two channels of
+different integrations, such as ntfy and Slack, and let one of them
+take warnings. ntfy with json is one integration.
 
 A state is told twice: once when it fires (after 30 seconds, so a burst
 arrives as one message) and once when it resolves. While it holds, a
@@ -464,13 +476,9 @@ untested):
 | Kind | What is posted | Firing | Resolved |
 |---|---|---|---|
 | `json` | Alertmanager's webhook JSON as it is: `status`, `receiver`, and for each alert its `labels` (`alertname`, `severity`, `key`, `app` or `instance`) and `annotations.summary` | `"status":"firing"` | `"status":"resolved"` |
-| `ntfy` | the same JSON, POSTed to the topic URL with no title or priority. ntfy shows the JSON text itself as the message, and every message has the default priority, critical ones too | — | — |
-| `slack` | an attachment: title `[FIRING] disk_low` (with the app's name after it for an app event), text the summary, one line per alert | colour `danger` (red), for warnings and info as well as criticals | title and each line prefixed `[RESOLVED]`, colour `good` |
-| `discord` | an embed: the same title, the summary as its description | colour 10038562 (dark red), whatever the severity | `[RESOLVED]`, colour 3066993 (green) |
-
-Slack's title links to `http://<the box's hostname>:9093/#/alerts?…`,
-and so does its fallback text. Nothing answers there: Alertmanager
-listens on its socket only, and Debian ships no UI.
+| `ntfy` | the same JSON, POSTed to the topic URL with no title. ntfy shows the JSON text itself as the message. A critical is sent at ntfy's priority 5 (urgent) and a warning at 4 (high), as an `X-Priority` header, `ChannelFailed` and `motel monitor test` at 4 too; info at the default | — | — (a recovery has its alert's priority: the header is fixed per severity) |
+| `slack` | an attachment: title `[FIRING] disk_low` (with the app's name after it for an app event), text the summary, one line per alert; no title link, and the title as the fallback text | colour by severity: `danger` (red) for a critical, `warning` (yellow) for a warning, blue for info | title and each line prefixed `[RESOLVED]`, colour `good` |
+| `discord` | an embed: the same title, the summary as its description | colour 10038562 (dark red), whatever the severity: Alertmanager 0.28 has no setting for it | `[RESOLVED]`, colour 3066993 (green) |
 
 ## Look at the numbers
 
@@ -592,32 +600,36 @@ DESIGN-metrics.md's [Operator rules](../notify/DESIGN-metrics.md#operator-rules)
 
 ## Turn it off, and remove it
 
-Taking the block out and reloading is not enough by itself.
-Alertmanager keeps running with the last config motel wrote, and five
-minutes later it sends every alert that was firing as `[RESOLVED]` to
-your channels, although nothing recovered. Stop Alertmanager first, so
-that nothing more goes out. As root:
+A reload that takes the block out gives Alertmanager the config that
+sends nothing (setup's own), removes the channel URLs motel copied for
+it (`/var/lib/motel-notify/url-*`) and retires vmalert's rules. What
+Alertmanager still holds then ends with no message, rather than as a
+`[RESOLVED]` that did not happen; the journal says
+`monitor: no loaded config has the monitor block's channels: Alertmanager was given the config that sends nothing …`.
+A restart or a boot into the Caddyfile without the block does the same
+(cmd/motel's gate at `motel run`), saying `monitor: this config has no
+monitor block with channels: Alertmanager was given the config that
+sends nothing …`. As root:
 
 ```sh
 # 1. Pause the heartbeat's check off the box: from here on the pings stop.
-# 2. Stop Alertmanager, so that it sends nothing more. On a box set up
-#    with --metrics, vmalert and its proxy's socket go first: a
-#    connection from vmalert to that socket starts Alertmanager again.
-systemctl disable --now motel-vmalert.service motel-am-proxy.socket   # --metrics only
-systemctl disable --now motel-am.socket prometheus-alertmanager.service
-# 3. Take the monitor block out of the Caddyfile (with a box repo: push
+# 2. Take the monitor block out of the Caddyfile (with a box repo: push
 #    it without the block and without secrets/_box/), then:
 systemctl reload motel
+# 3. Stop Alertmanager, and on a box set up with --metrics vmalert and
+#    its proxy's socket first: a connection from vmalert to that socket
+#    starts Alertmanager again.
+systemctl disable --now motel-vmalert.service motel-am-proxy.socket   # --metrics only
+systemctl disable --now motel-am.socket prometheus-alertmanager.service
 # 4. The rest of the store, if setup --metrics ran:
 systemctl disable --now motel-vm.socket victoria-metrics.service motel-metrics-netns.service
 systemctl stop motel-vm.service motel-am-proxy.service
 ```
 
 To stop here is to turn it off. The packages stay installed, and so do
-the units, the rendered config, the channel URLs that motel copied for
-Alertmanager (`/var/lib/motel-notify/url-*`) and the stored numbers. To
+the units, the config that sends nothing and the stored numbers. To
 turn it back on, put the URLs back (with a box repo,
-`git checkout <the commit before step 3's> -- <host>/secrets/_box`;
+`git checkout <the commit before step 2's> -- <host>/secrets/_box`;
 without one, `_box.env` is still in place) and the block with them,
 then run `motel monitor setup [--metrics]` again, which enables
 everything again. A push of the block without `secrets/_box/` is
@@ -636,10 +648,10 @@ rm -f /etc/systemd/system/motel-am.socket /etc/systemd/system/motel-metrics-netn
 rm -rf /etc/systemd/system/prometheus-alertmanager.service.d /etc/systemd/system/victoria-metrics.service.d
 systemctl daemon-reload
 systemctl reset-failed
-# 7. motel's state for them, which holds a copy of each channel URL:
+# 7. motel's state for them:
 rm -rf /var/lib/motel-notify /var/lib/motel-metrics /run/motel-notify /run/motel-metrics
 # 8. The URLs themselves: delete /etc/motel/secrets/_box.env (with a box
-#    repo, the push without secrets/_box/ in step 3 already removed it).
+#    repo, the push without secrets/_box/ in step 2 already removed it).
 rm -f /etc/motel/secrets/_box.env
 # 9. This page's recipes, if you installed them: they fail once there is
 #    no block to send to. Take OnFailure=motel-send-failed@%n.service
@@ -656,11 +668,11 @@ systemctl daemon-reload
 and the two drop-ins in step 6, and the state in step 7. It also
 leaves the `prometheus` and `_victoria-metrics` system users and their
 groups, which `userdel prometheus` and `userdel _victoria-metrics`
-remove. Purging before steps 2 and 4 leaves five of setup's units
+remove. Purging before steps 3 and 4 leaves five of setup's units
 enabled with no package behind them (both of Alertmanager's sockets
 and the store's, the namespace and vmalert), and the next connection to
 Alertmanager's socket fails it. If you purged first, run the
-`systemctl disable --now` lines of steps 2 and 4 anyway. systemctl
+`systemctl disable --now` lines of steps 3 and 4 anyway. systemctl
 names the two packages' units as missing and exits 5, and still stops
 and disables the rest. Then do steps 6 and 7.
 
@@ -674,10 +686,10 @@ the sites: v0.6.1 refuses those too.
 |---|---|---|
 | Every command and message on this page | motel's metrics e2e box (`make e2e-metrics`'s image), Debian 13, at 01b2fd5, 2026-11-12 | as shown |
 | Setup from nothing, with Debian's packages downloaded | the same box, after `apt purge` | as shown |
-| The false recovery after the block alone is removed | the same box: block out at 17:52:17, `[RESOLVED]` for a firing `disk_low` and `reboot_required` at 17:56:57–17:57:03, the disk still full | why step 2 comes before step 3 |
-| Stopping Alertmanager before taking the block out | the same box: stopped at 18:03:37, block out at 18:03:38, a `disk_low` firing | nothing delivered in the six minutes after |
+| The false recovery after the block alone was removed, before the reload gave Alertmanager the config that sends nothing | the same box at 01b2fd5: block out at 17:52:17, `[RESOLVED]` for a firing `disk_low` and `reboot_required` at 17:56:57–17:57:03, the disk still full | what step 2's reload now prevents |
+| The block taken out by a reload, a state firing | motel's notify e2e box (`make e2e-notify`, section 14), Debian 13 | the state directory holds the config that sends nothing and no URL file; the alert's end, posted by root at once rather than awaited, reaches no channel |
 | `apt purge` with nothing disabled first | the same box. Its `policy-rc.d` refuses the packages' own stop at removal, as Docker images do, so a real box's prerm may stop more | five units left enabled, as above |
-| The removal in this page's order, and `apt purge` first, where the packages' own stops run | the same image at c979404 with `policy-rc.d` removed, 2026-11-12 | steps 2 to 9 leave nothing but the two system users. Purged first, the same five units stay enabled, both unix sockets fail at their next connection, and steps 2, 4, 6 and 7 clear them |
+| The removal, with Alertmanager stopped before the block went (this page's order before the reload sent nothing), and `apt purge` first, where the packages' own stops run | the same image at c979404 with `policy-rc.d` removed, 2026-11-12 | steps 2 to 9 leave nothing but the two system users. Purged first, the same five units stay enabled, both unix sockets fail at their next connection, and steps 2, 4, 6 and 7 clear them |
 | Going back to v0.6.1 | the same box, with v0.6.1's arm64 `.deb` | refuses `monitor` and `observe`, and starts once both are out, with `_box.env` still there |
 | Real Slack, Discord and ntfy servers | not tried. On hotserve-1, an ntfy topic showed the JSON body as the message | owed (DESIGN-notify.md, "Owed") |
 | The heartbeat's pings | the same image at c979404, at the stub receiver | 299 s and 300 s apart undisturbed; 439 s across a restart of motel 140 s after a ping |

@@ -155,7 +155,7 @@ running config (`caddy.ActiveContext`):
 
 | Load | A channel whose secret is missing, or whose value is refused |
 |---|---|
-| `motel validate` (by hand, CI's `make check`, the box handler's step 6) | refused, as the table says; the handler and `make check` name the secrets in `secrets/_box/` (`MOTEL_NOTIFY_PUSHED_SECRETS`), taken as held ("Secrets") |
+| `motel validate` (by hand, CI's `make check`, the box handler's step 6) | refused, as the table says; the handler and `make check` name the secrets in `secrets/_box/` (`MOTEL_NOTIFY_PUSHED_SECRETS`), taken as held ("Secrets"). validate runs as root, who reads any file, so it also refuses a secrets file the motel user could not read, by its owner, group and mode against motel's uid and groups (`motelCannotRead`): root:root 0600 after an `mv`, which the server's own read would refuse at a reload and drop every channel over at a boot |
 | a reload (`motel reload`, `systemctl reload`, the box applier's): a config is running | refused; the running config serves on, and the box applier rolls its push back |
 | the first load of `motel run` (a boot, a restart, an unattended upgrade's): nothing running | the channel is **dropped** from that load (from the operator line, each binding, the route tree; the heartbeat, if it is its secret), each a `monitor: a channel is dropped from this load` error line naming every line that reads the key, and the key, never a value; and one more if no operator channel is left. A secrets file that cannot be read or parsed (a line without `=`, over 1 MiB, unreadable) is every secret unusable: one error line names the file and its error, and every line that reads a secret is dropped. motel serves |
 
@@ -356,7 +356,25 @@ whichever config serves when it clears.
   goes back to the old one, and puts the old one's render back in the
   state directory and in Alertmanager. When the last config running
   notify stops, the engine's table, mutes and buckets are emptied: a
-  block added back later starts clean.
+  block added back later starts clean. When that stop is a reload's
+  (a config serves on without notify: the block or its channels taken
+  out), Alertmanager is given setup's config that sends nothing and
+  the URL files are removed (`applyNothing`): what it holds ends at
+  `resolve_timeout` through the blackhole, where the last render's
+  receivers would have told every channel a recovery that did not
+  happen. motel's own shutdown leaves the render, so that a restart
+  keeps what fired: Caddy empties its running context before it stops
+  the last config's apps, so `configRunning` is a reload's alone at
+  Stop, as for the store's rules (DESIGN-metrics.md, "The metrics
+  line"). A restart or a boot into a config that runs no notify starts
+  no App to do it, so cmd/motel's gate does it at `motel run`, as it
+  retires the store's rules (`notify.SendNothing`), reloading
+  Alertmanager only when the state directory changed, so that a box
+  whose block never had channels starts no Alertmanager for it.
+  `motel reload` of a Caddyfile with a monitor block passes
+  `--force`, as `systemctl reload` does: the block reads the secrets
+  file, which the config does not hold, so a mended `_box.env` would
+  otherwise load nothing (cmd/motel's gate, `reloadForces`).
 - **A certificate no config names** is never obtained and never
   reported again, so no `cert_obtained` clears it. CertMagic reports
   `cert_failed` on every failed attempt for a name it manages, and its
@@ -401,8 +419,10 @@ no reading, and the baseline stays the last good one. `alertmanager_notification
 and, with the drop-in's `receiver-name-in-metrics`, the receiver. A
 rise (the first read is a baseline; a lower value is a restart,
 counted from zero) is a `monitor: channel failed` line, and one
-`ChannelFailed` alert to each operator channel that is not a suspect,
-each routed to that channel alone (`notify_channel=`). The suspects are
+`ChannelFailed` alert to each operator channel that is not a suspect
+and whose `severity` floor takes a warning, which `ChannelFailed` is
+(`failureAudience`, vmalert's rules' too), each routed to that channel
+alone (`notify_channel=`). The suspects are
 the failing integration's channels in that receiver (`render` returns
 each receiver's channels), or in every receiver when the counter names
 none. A key's bucket bounds the storm. This needs no metrics package:
@@ -456,6 +476,18 @@ Alertmanager gave up (with its reason class), or neither yet; it exits
 1 unless delivered, and never prints the URL. An external producer's
 `--detail key=value` pairs are annotations `detail_<key>`, through the
 filter.
+
+What a load would say in the journal alone, the commands say too. On a
+box setup has not run on (no state directory), `send` journals the
+event and exits 1 (`journalled as <key>, and delivered nowhere`), and
+`test` answers 503, both naming `motel monitor setup`; `motel validate`
+and `motel reload` warn (cmd/motel's gate, `notify.LoadWarnings`). A
+`resolved` that finds nothing firing under its key answers `resolved
+nothing` with exit 0, since a producer may resolve whatever it last
+said. `test` on a channel a boot dropped names it dropped, and the
+mend. Every load's gate, `run`'s among them, warns when a unit setup
+wrote differs from the one this binary would write, naming the setup
+to run again: an upgraded box keeps the old units until root does.
 
 ## Packaging and setup
 
@@ -568,8 +600,9 @@ against vmalert's proxy (`ip netns exec motel-metrics amtool
 --alertmanager.url=http://127.0.0.1:9093 alert`, measured), and from
 root's laptop through `ssh -L 9093:/run/motel-notify/am.sock root@box`
 (OpenSSH forwards to a remote unix socket since 6.7; not measured).
-Slack's title link and fallback name Alertmanager's external URL,
-`http://<hostname>:9093/#/alerts…`, where nothing answers. A deployer
+Slack's title link, which Alertmanager's defaults point at its external
+URL (`http://<hostname>:9093/#/alerts…`, where nothing answers), is
+rendered empty, and its fallback is motel's title. A deployer
 sees notifications at their channel; not Alertmanager, other apps, box
 events or silences. The operator's guide to all of this is
 docs/monitor.md.
@@ -599,7 +632,10 @@ on its general scales. notify's examples:
 | A public host name that resolves, or rebinds, to a private address is posted to: the check is on the URL as written | notify/config.go (`checkURL`) | 1 | 5 | 5 | a channel URL is a signer's line today, and a signer can already run any code as an app that reaches the same addresses; scored by what T6 gains (nothing). Rescore when #417 lets a deployer choose a URL |
 | motel stopped for more than five minutes: Alertmanager resolves each firing state alert at `resolve_timeout`, and the channels get a recovery that did not happen (at motel's start the watchdog's standing reports fire its alerts again, and the pollers theirs) | notify/engine.go (no `endsAt` on re-posts) | 2 | 3 | 3 | 18; a stop that long is itself a fault the heartbeat reports (Watchdog's silence pages first); keeping Alertmanager's alerts alive across a stop would need a poster outside motel; a restart (seconds) is "Behaviour"'s, and keeps them |
 | A box on the feature branch's `notify` or `metrics_store` block cannot move to the `monitor` block in one load: the new binary refuses the old blocks and the old binary the new one, so the upgrade runs with no notify between two pushes (docs/upgrading.md, "From the notify and metrics_store blocks"): no event is delivered, the heartbeat stops (the dead-man check pages), Alertmanager ends what fired at `resolve_timeout` with a recovery that did not happen, and the store's rules are retired at the first push's reload | notify/caddyfile.go (`refusedOption`) | 3 | 5 | 1 | 15; once per box, only for boxes that ran the unreleased feature branch, in an order the doc names and the refusal points at, and the dead-man check reports the gap; a transitional alias (the old names loading, warned, for one release) is a second grammar and a new state to retire (size 3, risk 2). /code-review pass 1 on the monitor block, finding 1; the user chose the documented order over a transitional alias |
-| An operator with a single channel: `ChannelFailed` has no other channel to go to | notify/channelfailed.go | 2 | 5 | 1 | the `monitor: channel failed` line and Alertmanager's counter say it; the design asks for "the other operator channels" and there are none |
+| An operator with a single channel: `ChannelFailed` has no other channel to go to | notify/channelfailed.go | 2 | 5 | 1 | the `monitor: channel failed` line and Alertmanager's counter say it; the design asks for "the other operator channels" and there are none. So it is for an operator whose other channels take criticals alone (`failureAudience`) |
+| A recovery on an ntfy channel carries its alert's priority: a critical state's `[RESOLVED]` is sent at ntfy's 5 (urgent) too | notify/render.go (`ntfyPriority`) | 2 | 5 | 1 | 10; the header is fixed per receiver, and a receiver takes an alert and its end alike; the body says `resolved`. A priority by status needs a receiver per status (size 3, risk 2). #433 |
+| Two producers send a `firing` and a `resolved` of one key at once: the resolve's answer (`resolved nothing`, or `sent`) is read before its report runs, so it can say the opposite of what the report did | notify/admin.go (`serveSend`) | 2 | 2 | 3 | 12; two producers racing on one key, and the state ends as the reports leave it; the answer alone is wrong, and the journal lines say what happened. The report returning what it found changes a function the pusher takes as a value (size 2, risk 2). /code-review pass 2 on #433 |
+| `motel --help` and its commands' usage say `caddy` and link caddyserver.com's docs | Caddy's root command (binary-wide) | 2 | 5 | 1 | 10; the commands themselves are motel's and work as printed under `motel`; renaming Caddy's root command is a change to every command's help, not monitor's (size 2, risk 2). The deploy of 01b2fd5 to hotserve-1 |
 | `motel monitor test` reads the counters for 15 s; a slow receiver answers "neither yet" | notify/admin.go (`testWait`) | 2 | 2 | 1 | the answer says so; Alertmanager's retries continue |
 | At a boot, an event liveswap reports before notify's Start (Caddy starts the apps in no fixed order) is dropped, the engine serving no config yet: a recovery at that instant ends its alert at `resolve_timeout`, up to five minutes late | notify/engine.go (`report`, `active == nil`) | 2 | 3 | 3 | 18; what stands is told again at notify's Start (`ReportStanding`), and an end told meanwhile is told again after it; holding events for a config not yet started adds a queue with its own lifetime (size 3). /code-review of the Owed rows |
 | A restart after notify has resolved a recovery but before the next healthy probe clears `alerts.json` (with `health_interval 2m` and a 30 s hold, up to about 90 s) replays the recovery: the emptied engine posts the alert held, then resolved, and the operator sees the firing and recovery messages again. A reload does the same when it lengthens the hold (the standing report judges it with the candidate's `watchdog_grace`), and so does a push just after a restart (the watchdog's own `healthySince` is new) | liveswap/watchdog.go (`reportedAlerts` keeps `Recovering`, not when the hold began); liveswap/lifecycle.go (`reportStanding`) | 2 | 2 | 1 | 4; a duplicate the operator sees, only for a restart or reload inside one health interval after a hold ends; persisting the hold's start, and the engine honouring it, is size 3 (risk 2). Copilot round 1 on #424, widened by /code-review xhigh on #424 |
@@ -612,9 +648,9 @@ on its general scales. notify's examples:
 
 | Owed | S | O | D | Lands in |
 |---|---|---|---|---|
-| ntfy and json share the webhook integration, and so do any two channels of one kind in one receiver: a failure of one names every such channel as a suspect, a working one among them, and none of them is told (`ChannelFailed` goes only to the operator channels that are not suspects). Moved from Accepted: its product is 30, over the bar of 20 (the operator/deployer review of 2026-11-11, rechecked at 01b2fd5) | 2 | 5 | 3 | the next code PR on feature/notify-and-metrics (notify/channelfailed.go, `suspects`) |
+| ntfy and json share the webhook integration, and so do any two channels of one kind in one receiver: a failure of one names every such channel as a suspect, a working one among them, and none of them is told (`ChannelFailed` goes only to the operator channels that are not suspects). Moved from Accepted: its product is 30, over the bar of 20 (the operator/deployer review of 2026-11-11, rechecked at 01b2fd5 and at 04e52a9) | 2 | 5 | 3 | its own PR, "monitor: one receiver per channel" (notify/render.go, channelfailed.go `suspects`, metricsrules.go: each channel its own receiver under `continue` routes, so that a failure names one channel; size 3, risk 2). Independent of #433, and it reshapes every route |
 | An external producer's state (`motel monitor send --state firing`) does not outlive a restart of motel: the engine's table is emptied and nothing reports the key again, as liveswap's standing reports and the pollers do for motel's own, so Alertmanager ends the alert at `resolve_timeout` and the channels get a recovery that did not happen; the producer's later `resolved` finds no state. Measured in the metrics e2e box at c979404: restart at 19:36:55, `[RESOLVED]` for both states at 19:41:55. docs/monitor.md tells a producer to send `firing` again every few minutes meanwhile (the second-model review of #432) | 3 | 4 | 5 | the next code PR on feature/notify-and-metrics (notify/engine.go: keep external states across a restart, as liveswap keeps `alerts.json`; size 3, risk 2) |
-| Slack and Discord with real hooks; ntfy's formatting of Alertmanager's payload (the hotserve-1 test delivered the JSON body as the message) | — | — | — | needs the owner's hooks |
+| Slack and Discord with real hooks; ntfy's formatting of Alertmanager's payload (the hotserve-1 test delivered the JSON body as the message) and its title, which needs ntfy's message templating, a server feature; Discord's colour, dark red for anything firing whatever the severity (2 5 3 = 30): Alertmanager 0.28.1's `discord_config` has no colour field (amtool refuses `color`, measured 2026-11-12), and the way round it, Discord's Slack-compatible endpoint, is untried without a real hook | — | — | — | needs the owner's hooks |
 | Per-app notify lines (`deploy_succeeded on` per app, app-scoped channels, reading the app's own withheld `NOTIFY_` values); the pull API and the later channel kinds, for which the `monitor: event` line is the record | — | — | — | later slices |
 
 ## e2e rows
@@ -622,14 +658,17 @@ on its general scales. notify's examples:
 `make e2e-notify` (e2e/notify/run.sh): a box built from e2e-motel's
 image with Debian's Alertmanager installed and masked
 (e2e/Dockerfile, `notify-box`), and a stub receiver (`e2e-sink`). The
-suite runs `motel monitor setup` itself and asserts: no TCP listener on
+suite runs `motel monitor setup` itself, and before it asserts that
+`motel validate` warns Alertmanager is not set up, `send` exits 1 and
+`test` fails, each naming setup; after it, it asserts: no TCP listener on
 9093 or 9094; the socket `srw-rw---- root motel` and the state
 directory `drwxr-s--- motel prometheus`; Alertmanager's storage
 `drwxr-x--- prometheus prometheus`; the rendered config passes
 `amtool check-config`; root and motel reach the socket and nobody does;
 no URL in the config or the status API; the heartbeat; a real failing
 deploy's `deploy_failed` to the operator and the bound deployer within
-the same seconds, `deploy_succeeded` and `deploy_in_progress` to
+the same seconds (the deployer's ntfy channel with `X-Priority: 4`),
+`deploy_succeeded` and `deploy_in_progress` to
 nobody, its journal line; an external one-shot to the operator alone;
 four distinct one-shots in a burst, four deliveries; `send`'s
 refusals, and nobody unable to send; the inhibition of the deploying
@@ -641,12 +680,19 @@ delivered and failed; the view probe's three keys closed from inside a
 sandboxed app; no URL in either journal; a channel whose secret is
 missing refused by `motel validate` and `systemctl reload`, dropped at
 `systemctl restart` with its journal line while the other channels
-deliver; a relaunch refused, then motel restarted: told again,
+deliver, named dropped by `motel monitor test`, and back after its key
+is added to `_box.env` and a plain `motel reload` of the unchanged
+Caddyfile; a root:root 0600 `_box.env` refused by root's `motel
+validate`; a relaunch refused, then motel restarted: told again,
 standing, Alertmanager's alert kept alive (its `endsAt` moves) and no
 recovery told, then the cause mended and a reload: the recovery after
 the hold, and `alerts.json` gone; a `notify` block refused by `motel
 validate` naming `monitor`, and `motel notify setup` exiting 1 with
-`motel monitor setup`. Not in e2e (unit-tested only): the
+`motel monitor setup`; the block taken out by a reload while a state
+fires: the state directory holds the config that sends nothing and no
+URL file, the journal says so, and the alert's end, posted by root at
+once rather than awaited at `resolve_timeout`, reaches no channel. Not
+in e2e (unit-tested only): the
 five-minute give-up of an undeliverable post, the bucket's hour.
 
 ## Later slices
