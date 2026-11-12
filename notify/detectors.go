@@ -273,12 +273,19 @@ func (d *diskPoller) poll(paths []string) []Event {
 	if stat == nil {
 		stat = statDisk
 	}
+	// On their own goroutines, as the disk series' are (statAll): a
+	// statfs that hangs (a network mount whose server went away) must
+	// not hold the engine's goroutine, which posts every event and the
+	// heartbeat.
+	results := diskPollStats.statAll(paths, stat)
 	seen := map[uint64]bool{}
 	var fire []Event
-	for _, p := range paths {
-		n, err := stat(p)
+	for i, p := range paths {
+		n, err := results[i].n, results[i].err
 		if err != nil {
-			// Not measured is not cleared: a path that fired keeps firing.
+			// Not measured is not cleared: a path that fired keeps
+			// firing, and one that did not fires nothing; a statfs not
+			// back in time is not measured.
 			k := Event{Name: alertDiskLow, Source: "disk", Instance: p}.key()
 			if prev, ok := d.set.prev[k]; ok {
 				fire = append(fire, prev)

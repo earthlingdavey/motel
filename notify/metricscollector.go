@@ -228,12 +228,7 @@ func (c diskCollector) Collect(ch chan<- prometheus.Metric) {
 	}
 	// Every path first, at once: a series keeps its name only while that
 	// path is still on its device (diskNames.name).
-	ctx, cancel := context.WithTimeout(context.Background(), diskStatWait)
-	defer cancel()
-	results := make([]<-chan diskStat, len(c.paths))
-	for i, p := range c.paths {
-		results[i] = diskStats.start(p, stat)
-	}
+	results := diskStats.statAll(c.paths, stat)
 	type measured struct {
 		path string
 		n    diskNumbers
@@ -241,18 +236,7 @@ func (c diskCollector) Collect(ch chan<- prometheus.Metric) {
 	var got []measured
 	devOf := map[string]uint64{}
 	for i, p := range c.paths {
-		var r diskStat
-		// One back already is taken past the deadline too: a select
-		// with both ready picks either.
-		select {
-		case r = <-results[i]:
-		default:
-			select {
-			case r = <-results[i]:
-			case <-ctx.Done():
-				r.err = ctx.Err()
-			}
-		}
+		r := results[i]
 		if r.err != nil {
 			continue // not measured is no sample: the rule's line keeps its last
 		}
@@ -269,10 +253,11 @@ func (c diskCollector) Collect(ch chan<- prometheus.Metric) {
 	}
 }
 
-// diskStatWait is how long a gather waits for the paths' statfs: a
-// filesystem that hangs (a network mount whose server went away) must
-// not hold back the push and the admin /metrics, and every motel series
-// with them. A path not answered in time has no sample.
+// diskStatWait is how long a gather, or a poll of notify's disk source,
+// waits for the paths' statfs: a filesystem that hangs (a network mount
+// whose server went away) must not hold back the push and the admin
+// /metrics, and every motel series with them, nor notify's engine. A
+// path not answered in time is not measured.
 var diskStatWait = 2 * time.Second
 
 // diskStat is one path's statfs, as it came back.
@@ -283,8 +268,13 @@ type diskStat struct {
 
 // diskStats is the process's statfs calls of the disk series that have
 // not come back: one per path at most, so a filesystem that hangs holds
-// one goroutine, not one more at each gather.
-var diskStats = &statsInFlight{busy: map[string]bool{}}
+// one goroutine, not one more at each gather. diskPollStats is notify's
+// disk source's (diskPoller), apart, so that a gather's statfs of a
+// path is never a poll's busy one.
+var (
+	diskStats     = &statsInFlight{busy: map[string]bool{}}
+	diskPollStats = &statsInFlight{busy: map[string]bool{}}
+)
 
 type statsInFlight struct {
 	mu   sync.Mutex
@@ -294,6 +284,33 @@ type statsInFlight struct {
 // errStatBusy is a path whose statfs has not come back since a gather
 // before.
 var errStatBusy = errors.New("the statfs of a gather before has not come back")
+
+// statAll is each path's statfs, all started at once and waited for up
+// to diskStatWait: a path not back by then, or whose statfs of a call
+// before is still out (errStatBusy), has an error and no numbers.
+func (s *statsInFlight) statAll(paths []string, stat func(string) (diskNumbers, error)) []diskStat {
+	ctx, cancel := context.WithTimeout(context.Background(), diskStatWait)
+	defer cancel()
+	results := make([]<-chan diskStat, len(paths))
+	for i, p := range paths {
+		results[i] = s.start(p, stat)
+	}
+	out := make([]diskStat, len(paths))
+	for i := range paths {
+		// One back already is taken past the deadline too: a select
+		// with both ready picks either.
+		select {
+		case out[i] = <-results[i]:
+		default:
+			select {
+			case out[i] = <-results[i]:
+			case <-ctx.Done():
+				out[i].err = ctx.Err()
+			}
+		}
+	}
+	return out
+}
 
 // start runs stat(path) on its own goroutine, and returns where its
 // answer comes; at once, with errStatBusy, while one before is out.
