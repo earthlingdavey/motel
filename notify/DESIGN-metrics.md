@@ -874,6 +874,7 @@ on its general scales. metrics' examples:
 | A store that turns read-only while `metrics_store_down` or `metrics_rules_down` already fires leaves that warning firing beside the critical until the store is writable (the read-only path holds back new ones, and does not clear old ones) | notify/metricspush.go (`checkReadOnly`) | 2 | 2 | 3 | 12; the warning was true when raised and the critical beside it names the cause; clearing them there is two more branches in the path every read takes. Copilot on #425 |
 | A reload that moves the `metrics` line to another socket starts the counts afresh (`setLive`) but keeps what already fires, `metrics_store_read_only` among them, until the new store answers: a read-only alert raised for the old store stays told while the new one does not answer | notify/metricspush.go (`setLive`) | 2 | 2 | 1 | 4; it needs the old store read-only and the new one not answering; the first answer of the new store clears it, and the new store's own silence fires `metrics_store_down`, which names the push failing, once `readOnlyStale` asks have gone unanswered (`heldReadOnly`, as for any read-only store that stops answering). Clearing it at the move would resolve it on no evidence. Copilot round 2 on #425 |
 | `motel monitor setup --metrics` on a box where Alertmanager is not set up yet reloads motel twice, Alertmanager's setup's first, before the store is installed: a `metrics` line that this reload loads for the first time (written, never reloaded) starts the push's failure count then, so an install of the store slower than five minutes fires `metrics_store_down`, and the journal has a `not set up` and a `push failed` line, until the first push after the store's setup clears it | notify/cmd.go (`runSetup`) | 2 | 2 | 1 | 4; it needs Alertmanager not set up, the line unloaded before setup and a slow install; the alert names its cause and clears itself, and the two setups run as two commands had the same order; skipping Alertmanager's reload under `--metrics` is a flag through its setup (size 2, risk 2). /code-review pass 1 on the monitor block |
+| A rule refused at Provision (an `app` the liveswap block does not configure, `memory_share` of an uncapped app, rules in a block with no channel, a rule naming an app with no liveswap block) names the rule, not its Caddyfile file and line: Provision reads the adapted JSON, which carries no position | notify/metrics.go (`provision`) | 2 | 5 | 1 | 10; the rule's name is unique in the block, so the refusal points at one line, and notify's own Provision refusals (an `operator` or `bind` naming no channel) name keys, not lines, alike; a position in each rule's JSON, set by the adapter alone, is a field every config carries (size 3, risk 2), and moving the no-channel check into the parse fixes one refusal of four (size 2). Copilot round 3 on #429 |
 
 ### Owed
 
@@ -1042,3 +1043,11 @@ Dated one-liners; the full text of each is in git.
   gap leaves no hole; the e2e metrics box runs every vmalert test, held
   to the list by a test. No row added; the fresh-counter row widened to
   the first five minutes after a gap.
+- 2026-11-12 — Copilot round 3 on #429, triaged: notify's disk source
+  runs its statfs as the disk series' do, so a filesystem that hangs
+  holds back no poll of the engine (DESIGN-notify.md); a regression's
+  summary says when the release before had too few responses timed for
+  a p95; a refusal at Provision names its rule and not its line, a row.
+  An app's threshold beside an every-app one on the same metric, which
+  both fire today, is left to the operator's decision: whether an app's
+  rule overrides, and how, is a design choice, not this change's.
