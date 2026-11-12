@@ -292,7 +292,8 @@ a deploy does not change its identity.
 Sources are `liveswap`, `backup`, `tls`, `disk`, `notify`, `metrics`
 (the store's chain, DESIGN-metrics.md), `vmalert` (its fixed rules),
 `rules` (the operator's rules, #418's reserved `source: rules` and
-`key: rules/<subject>/<rule name>`) and `external:<name>`.
+`key: rules/<subject>/<rule name>`, and `/<path>` after it for a
+`disk_fill` rule's filesystem) and `external:<name>`.
 liveswap reports through `liveswap.Notifier` (liveswap/lifecycle.go),
 on the goroutine where the event happened. A deploy's or a rollback's
 `cutover`, told at the swap with the release it replaced and when

@@ -615,12 +615,16 @@ func thresholdExpr(r Rule) string {
 // series, one alert per filesystem, with the horizon from within.
 func diskFillRule(r Rule) vmRule {
 	h := strconv.Itoa(int(time.Duration(r.Within).Seconds()))
+	// Each filesystem's alert its own key, as disk_low's: the path is
+	// the instance (<source>/<subject>/<name>/<instance>).
+	labels := ruleLabels(r.Name, r.severity(), "box")
+	labels["key"] += "/{{ $labels.path }}"
 	return vmRule{
 		Alert: r.Name,
 		Expr: "min by (path) (predict_linear(" + diskAvailMetric + "[6h], " + h + ")) < 0" +
 			" and min by (path) (predict_linear(" + diskAvailMetric + "[1h], " + h + ")) < 0",
 		For:    promDuration(diskFillFor),
-		Labels: ruleLabels(r.Name, r.severity(), "box"),
+		Labels: labels,
 		Annotations: map[string]string{"summary": fmt.Sprintf("the filesystem holding {{ $labels.path }} is predicted to fill within %s (rule %s)",
 			promDuration(time.Duration(r.Within)), r.Name)},
 	}

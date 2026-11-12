@@ -370,7 +370,7 @@ parse, a JSON config's at Provision, both by `motel validate`):
 | `threshold cache_hit_share` | `(HITS or SPOKE * 0) / SPOKE > v and SPOKE >= floor`, both `sum by (app) (increase_pure(motel_app_cache_responses_total[5m]))`, HITS over `result=~"hit\|stale"` | `for` | as above | as above |
 | `threshold memory_share` | `max by (app) (motel_app_memory_bytes / motel_app_memory_max_bytes) > v` | `for` | as above | as above |
 | `threshold cpu_cores` | `sum by (app) (rate(motel_app_cpu_seconds_total[5m])) > v` | `for` | as above | as above |
-| `disk_fill` | `min by (path) (predict_linear(motel_disk_avail_bytes[6h], H)) < 0 and min by (path) (predict_linear(motel_disk_avail_bytes[1h], H)) < 0`, H `within` in seconds | 30 m | `path`, `subject="box"`, `kind="state"`, `severity`, `source="rules"`, `key="rules/box/<name>"` | the operator |
+| `disk_fill` | `min by (path) (predict_linear(motel_disk_avail_bytes[6h], H)) < 0 and min by (path) (predict_linear(motel_disk_avail_bytes[1h], H)) < 0`, H `within` in seconds | 30 m | `path`, `subject="box"`, `kind="state"`, `severity`, `source="rules"`, `key="rules/box/<name>/<path>"`, each filesystem's alert its own key, as `disk_low`'s | the operator |
 | `post_deploy` | motel's queries, below | — | the event `post_deploy_regressed`: `app`, `subject="app:<app>"`, `kind="event"`, `severity="warning"`, `source="rules"`, `key="rules/app:<app>/post_deploy_regressed"`, `release`, `deployed_by`; the rule's name as `detail_rule` | the operator and the app's bound channels |
 
 With `app`, every selector carries `app="<name>"`, quoted (a name of

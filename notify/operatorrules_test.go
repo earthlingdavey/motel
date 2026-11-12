@@ -286,7 +286,7 @@ func TestOperatorRulesRender(t *testing.T) {
 	for name, want := range map[string]map[string]string{
 		"errors_high":  {"kind": "state", "severity": "warning", "subject": "app:{{ $labels.app }}", "source": "rules", "key": "rules/app:{{ $labels.app }}/errors_high"},
 		"shop_slow":    {"kind": "state", "severity": "critical", "subject": "app:shop", "source": "rules", "key": "rules/app:shop/shop_slow"},
-		"disk_filling": {"kind": "state", "severity": "critical", "subject": "box", "source": "rules", "key": "rules/box/disk_filling"},
+		"disk_filling": {"kind": "state", "severity": "critical", "subject": "box", "source": "rules", "key": "rules/box/disk_filling/{{ $labels.path }}"},
 	} {
 		got := rules[name].Labels
 		if len(got) != len(want) {
@@ -380,6 +380,8 @@ tests:
         values: '10+10x20'
       - series: 'motel_disk_avail_bytes{path="/var/lib/liveswap",job="motel"}'
         values: '100000000000-1000000000x480'
+      - series: 'motel_disk_avail_bytes{path="/var/lib/caddy",job="motel"}'
+        values: '50000000000-1000000000x480'
     alert_rule_test:
       - eval_time: 4m
         groupname: motel-operator
@@ -397,7 +399,9 @@ tests:
         groupname: motel-operator
         alertname: disk_filling
         exp_alerts:
-          - exp_labels: {path: /var/lib/liveswap, kind: state, severity: warning, subject: box, source: rules, key: "rules/box/disk_filling"}
+          - exp_labels: {path: /var/lib/caddy, kind: state, severity: warning, subject: box, source: rules, key: "rules/box/disk_filling//var/lib/caddy"}
+            exp_annotations: {summary: "the filesystem holding /var/lib/caddy is predicted to fill within 1d (rule disk_filling)"}
+          - exp_labels: {path: /var/lib/liveswap, kind: state, severity: warning, subject: box, source: rules, key: "rules/box/disk_filling//var/lib/liveswap"}
             exp_annotations: {summary: "the filesystem holding /var/lib/liveswap is predicted to fill within 1d (rule disk_filling)"}
 `
 	if err := os.WriteFile(filepath.Join(dir, "test.yml"), []byte(test), 0o600); err != nil {
