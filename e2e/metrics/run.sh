@@ -84,11 +84,12 @@ inside=$(inns ss -ltnH 2>/dev/null | awk '{print $4}' | sort | tr '\n' ' ')
 for a in 127.0.0.1:8428 127.0.0.1:8880 127.0.0.1:9093; do
 	case " $inside" in *" $a "*) pass "in the namespace: $a" ;; *) fail "not in the namespace: $a (it holds: $inside)" ;; esac
 done
-# The box had no namespace before setup: its unit's first start, a cold
-# boot's, logs no error for the one it would delete.
-journalctl -u motel-metrics-netns -o cat --no-pager | grep -q 'Cannot remove namespace' \
-	&& fail "the namespace's first start logged: $(journalctl -u motel-metrics-netns -o cat --no-pager | grep 'Cannot remove')" \
-	|| pass "the namespace's first start logged no error"
+# The box had no namespace before setup: at its unit's first start, a
+# cold boot's, the delete of a leftover exits 0, not as an error the `-`
+# ignores (`ip netns delete` of none exits 1 and logs it).
+pre=$(systemctl show -p ExecStartPre --value motel-metrics-netns)
+case "$pre" in *"code=exited ; status=0 }"*) pass "the namespace's first start: its leftover's delete exited 0" ;;
+*) fail "the namespace's ExecStartPre: $pre" ;; esac
 [ "$(stat -c '%A %U %G' "$VM")" = "srw-rw---- root motel" ] \
 	&& pass "the store's socket is srw-rw---- root motel" || fail "the socket is $(stat -c '%A %U %G' "$VM" 2>&1)"
 [ "$(stat -c '%A %U %G' "$STATE")" = "drwxr-s--- motel _victoria-metrics" ] \
@@ -306,28 +307,29 @@ n=$(am "http://am/api/v2/alerts?$amq" | grep -o '"fingerprint"' | wc -l)
 # of Alertmanager's counter; vmalert at its group's, fixed by the group's
 # id), so when motel's follows vmalert's by less than a poll, vmalert's is
 # never seen (x86 CI at f23c74f: 1 s apart). vmalert sends a firing alert
-# at each evaluation of its group (no -rule.resendDelay) and counts the
-# evaluation after the send returns: one more evaluation, every minute,
-# with a send and no send error while its ChannelFailed fires and one
-# alert in Alertmanager, is its post taken into motel's alert.
-vmx() { inns curl -s --max-time 5 http://127.0.0.1:8880/metrics | awk -v m="$1" 'index($0, m) == 1 {s += $NF} END {print s + 0}'; }
+# at each evaluation of its group (no -rule.resendDelay), counts a send
+# error when the send returns, and counts the evaluation after that: one
+# more evaluation, every minute, with a send and no send error while its
+# ChannelFailed fires and one alert in Alertmanager, is its post taken
+# into motel's alert. Each poll reads the counters from one scrape, so a
+# send in flight is either in all three readings or in none.
+vmsnap() { snap=$(inns curl -s --max-time 5 http://127.0.0.1:8880/metrics); }
+vmx() { printf '%s\n' "$snap" | awk -v m="$1" 'index($0, m) == 1 {s += $NF} END {print s + 0}'; }
 evals='vmalert_iteration_duration_seconds_count{group="motel-channel-failed"'
-ev0=$(vmx "$evals")
-sent0=$(vmx vmalert_alerts_sent_total)
-err0=$(vmx vmalert_alerts_send_errors_total)
+vmsnap
+ev0=$(vmx "$evals") sent0=$(vmx vmalert_alerts_sent_total) err0=$(vmx vmalert_alerts_send_errors_total)
 i=0
-until [ "$(vmx "$evals")" -gt "$ev0" ] && [ "$(vmx vmalert_alerts_sent_total)" -gt "$sent0" ]; do
+until vmsnap && [ "$(vmx "$evals")" -gt "$ev0" ] && [ "$(vmx vmalert_alerts_sent_total)" -gt "$sent0" ]; do
 	i=$((i + 1)); [ "$i" -ge 38 ] && break; sleep 2
 done
-sent=$(vmx vmalert_alerts_sent_total)
-err=$(vmx vmalert_alerts_send_errors_total)
+ev=$(vmx "$evals") sent=$(vmx vmalert_alerts_sent_total) err=$(vmx vmalert_alerts_send_errors_total)
+firing=$(vmx 'vmalert_alerts_firing{alertname="ChannelFailed"')
 n=$(am "http://am/api/v2/alerts?$amq" | grep -o '"fingerprint"' | wc -l)
 last=motel
 am "http://am/api/v2/alerts?$amq" | grep -q '"generatorURL":"http' && last=vmalert
-[ "$i" -lt 38 ] && [ "$sent" -gt "$sent0" ] && [ "$err" = "$err0" ] && [ "$n" -eq 1 ] \
-	&& [ "$(vmx 'vmalert_alerts_firing{alertname="ChannelFailed"')" -ge 1 ] \
+[ "$i" -lt 38 ] && [ "$err" = "$err0" ] && [ "$firing" -ge 1 ] && [ "$n" -eq 1 ] \
 	&& pass "vmalert posted its ChannelFailed and Alertmanager still holds one alert (the latest post: $last's)" \
-	|| fail "no vmalert post merged into the alert in 75 s: evaluations $ev0 -> $(vmx "$evals"), sent $sent0 -> $sent, errors $err0 -> $err, $n alerts: $(am "http://am/api/v2/alerts?$amq" | cut -c1-400)"
+	|| fail "no vmalert post merged into the alert in 75 s: evaluations $ev0 -> $ev, sent $sent0 -> $sent, errors $err0 -> $err, firing $firing, $n alerts: $(am "http://am/api/v2/alerts?$amq" | cut -c1-400)"
 
 echo "=== metrics 4a: the store stopped by hand comes back with vmalert ==="
 # A stop of the store stops vmalert and the proxy (both Require it).

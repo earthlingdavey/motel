@@ -71,8 +71,10 @@ both directions verified), with the paths and flags of this section,
 except the two proxies' users and the drop-in's chmod of the store's
 data, set after the box's audit of 2026-11-11 found both proxies running
 as root and the data world-readable: measured in the e2e box (systemd
-257), not yet on hotserve-1. A fourth cold boot, on 2026-11-11 at 15:04
-UTC with motel (9228935) rendering `rules.yml` and pushing, brought every
+257), not yet on hotserve-1; so is the namespace unit's test for a
+leftover before its delete (2026-11-12). A fourth cold boot, on
+2026-11-11 at 15:04 UTC with motel (9228935) rendering `rules.yml` and
+pushing, brought every
 unit up within a second of the namespace (the am proxy's service at its
 first connection, nine seconds later), with no failed unit, no
 ordering cycle and no listener in the host namespace; vmalert loaded
@@ -909,7 +911,7 @@ caches under the 154 MB the default allowed, so the cap leaves room for
 queries.
 
 A day with that cap and motel pushing, on the same box from 15:00 UTC on
-2026-11-11 (25 hourly samples, a cold boot at 15:05; the units of
+2026-11-11 (25 hourly samples, a cold boot at 15:04; the units of
 9228935, before #426, whose changes, the proxies' users and the data
 directories' modes, leave the store's memory as it was), 3,415 to 3,512
 series:
@@ -1013,7 +1015,7 @@ on its general scales. metrics' examples:
 | Owed | S | O | D | Lands in |
 |---|---|---|---|---|
 | The store's RSS on a 1 or 2 GB box (a day on hotserve-1's 3.8 GB is in "Footprint") | — | — | — | a deploy to a box of that size |
-| On a booted Debian host: a connection made while setup has the store masked, and a failed setup re-run's put-back (Copilot round 2 on #425); the two proxies' users and the am proxy's view, measured so far in the e2e box only (hotserve-1 runs the units before #426). The cold boot with motel rendering and pushing is measured ("The shape") | — | — | — | the next deploy to hotserve-1 |
+| On a booted Debian host: a connection made while setup has the store masked, and a failed setup re-run's put-back (Copilot round 2 on #425); the two proxies' users and the am proxy's view (#426), and the namespace unit's test for a leftover, measured so far in the e2e box only (hotserve-1 runs the units of 9228935). The cold boot with motel rendering and pushing is measured ("The shape") | — | — | — | the next deploy to hotserve-1 |
 | motel says nothing when setup's units on disk are older than the binary's: a box upgraded past a change to them (this one: the proxies' users, the chmods) keeps the old units until root re-runs both setups (`motel monitor setup`, then `motel monitor setup --metrics`). A load could compare the installed files with the embedded ones and warn | 3 | 5 | 5 | the next PR on the feature branch, before it merges to main (/code-review of #426) |
 | Debian's security support for `victoria-metrics` 1.112.0 and `prometheus-alertmanager` 0.28.1 on trixie, whose binaries are built with Go 1.24.2 (the store, vmalert) and 1.24.1 (Alertmanager), and a dist-upgrade check of both drop-ins' flags | — | — | — | before any release |
 
@@ -1229,6 +1231,6 @@ Dated one-liners; the full text of each is in git.
 - 2026-11-12 — A day on hotserve-1 with the store's caps and motel
   pushing, and a cold boot ("Footprint", "The shape"); the two rows that
   owed them narrowed to what is left. The namespace unit deletes a
-  leftover only when there is one, so a cold boot logs no error; e2e
+  leftover only when there is one, so a start with none logs no error; e2e
   metrics 4 counts vmalert's post at its send, not by the merged alert's
   `generatorURL`, which motel's post can hide.
