@@ -722,17 +722,8 @@ func (ma *managedApp) Deploy(ctx context.Context, req deployRequest) error {
 // version and the phase, never the error's text, which can quote what
 // the app printed; a refusal's is liveswap's own words, through the
 // filter.
-//
-// cut is the cutover a success made: the instance it replaced (nil for
-// none) and when the new one was published.
-func (ma *managedApp) reportDeploy(c collaborators, req deployRequest, result deployResult, err error, cut cutover) {
+func (ma *managedApp) reportDeploy(c collaborators, req deployRequest, result deployResult, err error) {
 	ev := LifecycleEvent{Release: req.version, DeployedBy: req.by}
-	if err == nil {
-		ev.Cutover = cut.at
-		if cut.replaced != nil {
-			ev.Previous = cut.replaced.version
-		}
-	}
 	var ve validationError
 	switch {
 	case err == nil && req.rollback:
@@ -754,13 +745,6 @@ func (ma *managedApp) reportDeploy(c collaborators, req deployRequest, result de
 		ma.lifecycle(c, LifecycleEvent{Name: EventWatchdogRecovered, Release: req.version, Summary: "a deploy of " + req.version + " ended the restart loop"})
 	}
 	ma.lifecycle(c, LifecycleEvent{Name: EventDeployEnded, Release: req.version})
-}
-
-// cutover is what a deploy's promote replaced (nil for none running),
-// and when.
-type cutover struct {
-	replaced *instance
-	at       time.Time
 }
 
 // unlockDeploy lets go of deployMu for any holder but the watchdog, and
@@ -817,9 +801,6 @@ func (ma *managedApp) deployLocked(ctx context.Context, req deployRequest, c col
 	// marker goes once the record is written, whatever the deploy came
 	// to.
 	marked := false
-	// cut is the cutover, once made: what the deploy's report names as
-	// the release it replaced, and when.
-	var cut cutover
 	defer func() {
 		if !marked {
 			return
@@ -881,7 +862,7 @@ func (ma *managedApp) deployLocked(ctx context.Context, req deployRequest, c col
 		if !relaunch && (err == nil || (accepted && !errors.As(err, &ve))) {
 			ma.recordDeploy(c, result)
 		}
-		ma.reportDeploy(c, req, result, err, cut)
+		ma.reportDeploy(c, req, result, err)
 	}()
 
 	// Before anything is read or written through the app's dirs: one
@@ -1125,12 +1106,16 @@ func (ma *managedApp) deployLocked(ctx context.Context, req deployRequest, c col
 		logger.Error("state persistence failed; deploys still work but a Caddy restart will not know about this version", zap.Error(err))
 	}
 	promoted = true // past the cutover: never clean up the now-live release
-	// What it replaced is what served: an instance that had died (a
-	// crash loop, unrouted) is no release's baseline.
-	cut = cutover{at: swapped}
+	// Told now, not with the deploy's result after the drain, the old
+	// instance's stop and GC: what compares the release that serves
+	// starts with its traffic. What it replaced is what served: an
+	// instance that had died (a crash loop, unrouted) is no release's
+	// baseline. Nothing after this point fails the deploy.
+	cut := LifecycleEvent{Name: EventCutover, Release: req.version, DeployedBy: req.by, Cutover: swapped}
 	if old != nil && c.runner.Alive(old.handle) {
-		cut.replaced = old
+		cut.Previous = old.version
 	}
+	ma.lifecycle(c, cut)
 
 	// A successful deploy is the fast path out of any watchdog wait:
 	// it clears the failure count, restart budget and backoff, then

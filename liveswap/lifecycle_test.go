@@ -69,7 +69,7 @@ func notifiedRig(t *testing.T) (*testRig, *recNotifier) {
 func TestLifecycleDeploySucceeded(t *testing.T) {
 	rig, n := notifiedRig(t)
 	must(t, rig.ma.Deploy(context.Background(), deployRequest{url: "https://x/1", version: "v1", by: "local:/k.pub sub=alice"}))
-	if got := n.names(); !slices.Equal(got, []string{EventDeployStarted, EventDeploySucceeded, EventDeployEnded}) {
+	if got := n.names(); !slices.Equal(got, []string{EventDeployStarted, EventCutover, EventDeploySucceeded, EventDeployEnded}) {
 		t.Fatalf("events = %v", got)
 	}
 	ev, _ := n.find(EventDeploySucceeded)
@@ -77,8 +77,9 @@ func TestLifecycleDeploySucceeded(t *testing.T) {
 		t.Fatalf("event = %+v", ev)
 	}
 	// A first deploy replaced nothing; its cutover is when it published.
-	if ev.Previous != "" || ev.Cutover.IsZero() {
-		t.Fatalf("a first deploy: previous %q, cutover %v", ev.Previous, ev.Cutover)
+	cut, _ := n.find(EventCutover)
+	if cut.Release != "v1" || cut.DeployedBy != "local:/k.pub sub=alice" || cut.Previous != "" || cut.Cutover.IsZero() {
+		t.Fatalf("a first deploy's cutover: %+v", cut)
 	}
 }
 
@@ -90,13 +91,13 @@ func TestLifecycleDeployNamesTheReleaseItReplaced(t *testing.T) {
 	n.reset()
 	before := rig.clock.Now()
 	must(t, rig.ma.Deploy(context.Background(), deployRequest{url: "https://x/2", version: "v2"}))
-	ev, _ := n.find(EventDeploySucceeded)
+	ev, _ := n.find(EventCutover)
 	if ev.Previous != "v1" || ev.Cutover.Before(before) {
 		t.Fatalf("v2 after v1: previous %q, cutover %v (the deploy began %v)", ev.Previous, ev.Cutover, before)
 	}
 	n.reset()
 	must(t, rig.ma.Deploy(context.Background(), deployRequest{version: "v1", rollback: true}))
-	if ev, _ := n.find(EventRollback); ev.Previous != "v2" || ev.Cutover.IsZero() {
+	if ev, _ := n.find(EventCutover); ev.Release != "v1" || ev.Previous != "v2" || ev.Cutover.IsZero() {
 		t.Fatalf("the rollback to v1: previous %q, cutover %v", ev.Previous, ev.Cutover)
 	}
 	// One that died before the deploy (a crash loop, unrouted) served
@@ -104,16 +105,16 @@ func TestLifecycleDeployNamesTheReleaseItReplaced(t *testing.T) {
 	n.reset()
 	rig.runner.handleAt(len(rig.runner.handles) - 1).dieQuietly()
 	must(t, rig.ma.Deploy(context.Background(), deployRequest{url: "https://x/4", version: "v4"}))
-	if ev, _ := n.find(EventDeploySucceeded); ev.Previous != "" {
-		t.Fatalf("v4 after a dead v1: previous %q", ev.Previous)
+	if ev, ok := n.find(EventCutover); !ok || ev.Previous != "" {
+		t.Fatalf("v4 after a dead v1: %+v", ev)
 	}
 	n.reset()
 	rig.fetch.err = errors.New("fetching failed")
 	if err := rig.ma.Deploy(context.Background(), deployRequest{url: "https://x/3", version: "v3"}); err == nil {
 		t.Fatal("the deploy succeeded")
 	}
-	if ev, _ := n.find(EventDeployFailed); ev.Previous != "" || !ev.Cutover.IsZero() {
-		t.Fatalf("a failed deploy names a cutover: previous %q, cutover %v", ev.Previous, ev.Cutover)
+	if _, ok := n.find(EventCutover); ok {
+		t.Fatalf("a deploy failed before its promote told a cutover: %v", n.names())
 	}
 }
 
@@ -140,7 +141,7 @@ func TestLifecycleCutoverIsTheSwap(t *testing.T) {
 	}
 	release(nil)
 	must(t, <-done)
-	ev, ok := n.find(EventDeploySucceeded)
+	ev, ok := n.find(EventCutover)
 	if !ok || applied.IsZero() || !ev.Cutover.Equal(applied) {
 		t.Fatalf("cutover %v; the caps were applied at %v, ten seconds before the publication returned", ev.Cutover, applied)
 	}
@@ -626,6 +627,44 @@ func (e *endingNotifier) Lifecycle(ev LifecycleEvent) {
 	if ev.Standing {
 		e.ma.wd.endLoopAlert()
 		e.ma.wd.takeRefused()
+	}
+}
+
+// clockedNotifier records when, on the rig's clock, each event was told.
+type clockedNotifier struct {
+	recNotifier
+	clock *fakeClock
+	at    map[string]time.Time
+}
+
+func (c *clockedNotifier) Lifecycle(ev LifecycleEvent) {
+	c.recNotifier.Lifecycle(ev)
+	c.mu.Lock()
+	c.at[ev.Name] = c.clock.Now()
+	c.mu.Unlock()
+}
+
+// The cutover is told at the swap, not with the deploy's result: a
+// drain longer than a post-deploy window (Copilot round 1 on #429) must
+// not start the comparison after its window.
+func TestLifecycleCutoverIsToldBeforeTheDrain(t *testing.T) {
+	rig := newTestRig(t)
+	n := &clockedNotifier{clock: rig.clock, at: map[string]time.Time{}}
+	rig.ma.setNotifier(n)
+	deployV1(t, rig)
+	n.reset()
+	rig.spec.drain = 4 * time.Minute
+	must(t, rig.ma.Deploy(context.Background(), deployRequest{url: "https://x/2", version: "v2"}))
+	cut, ok := n.find(EventCutover)
+	if !ok || cut.Previous != "v1" || !n.at[EventCutover].Equal(cut.Cutover) {
+		t.Fatalf("cutover %+v, told at %v", cut, n.at[EventCutover])
+	}
+	if done := n.at[EventDeploySucceeded]; done.Sub(cut.Cutover) < 4*time.Minute {
+		t.Fatalf("deploy_succeeded told %v after the cutover: the drain did not run", done.Sub(cut.Cutover))
+	}
+	names := n.names()
+	if slices.Index(names, EventCutover) > slices.Index(names, EventDeploySucceeded) {
+		t.Fatalf("events = %v", names)
 	}
 }
 

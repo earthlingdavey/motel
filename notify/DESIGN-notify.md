@@ -294,10 +294,10 @@ Sources are `liveswap`, `backup`, `tls`, `disk`, `notify`, `metrics`
 `rules` (the operator's rules, #418's reserved `source: rules` and
 `key: rules/<subject>/<rule name>`) and `external:<name>`.
 liveswap reports through `liveswap.Notifier` (liveswap/lifecycle.go),
-on the goroutine where the event happened; a deploy's or a rollback's
-success, with the release it replaced and when (`Previous`, `Cutover`),
-also starts the post-deploy comparison, before the engine's
-`deploy_succeeded` toggle. notify subscribes to
+on the goroutine where the event happened. A deploy's or a rollback's
+`cutover`, told at the swap with the release it replaced and when
+(`Previous`, `Cutover`), is no event of the engine's: it starts the
+post-deploy comparison (DESIGN-metrics.md, "Operator rules"). notify subscribes to
 `cert_failed` and `cert_obtained` by name through Caddy's events app.
 The backup record and the disks are polled by the engine. A box with
 no backup record has no backups set up and says nothing.

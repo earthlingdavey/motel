@@ -118,7 +118,7 @@ func caddyMs(n int) caddy.Duration      { return caddy.Duration(time.Duration(n)
 // deploy is liveswap's report of a cutover at the test's now; the
 // clock then moves to where the store answers for it.
 func (tc *testComparator) deploy(app, release, previous string) {
-	tc.deployed(liveswap.LifecycleEvent{Name: liveswap.EventDeploySucceeded, App: app, Release: release, Previous: previous, DeployedBy: "local:/k.pub", Cutover: tc.at})
+	tc.deployed(liveswap.LifecycleEvent{Name: liveswap.EventCutover, App: app, Release: release, Previous: previous, DeployedBy: "local:/k.pub", Cutover: tc.at})
 	tc.at = tc.at.Add(storeLag + time.Second)
 }
 
@@ -300,7 +300,7 @@ func TestPostDeployANewDeployCancels(t *testing.T) {
 		t.Fatalf("in flight: %+v", tc.runs)
 	}
 	// A rollback is a deploy too.
-	tc.deployed(liveswap.LifecycleEvent{Name: liveswap.EventRollback, App: "blog", Release: "v2", Previous: "v3", Cutover: tc.at})
+	tc.deployed(liveswap.LifecycleEvent{Name: liveswap.EventCutover, App: "blog", Release: "v2", Previous: "v3", Cutover: tc.at})
 	if run := tc.runs["blog"]; run == nil || run.release != "v2" || run.previous != "v3" {
 		t.Fatalf("after the rollback: %+v", tc.runs["blog"])
 	}
@@ -373,7 +373,7 @@ func TestPostDeployRelease(t *testing.T) {
 	c := newComparator(func(Event) {})
 	m := &MetricsStore{Rules: []Rule{regressRule}}
 	c.configure(liveRules{m: m, store: &relStore{nums: map[string]releaseNumbers{}}, logger: zap.NewNop()})
-	c.deployed(liveswap.LifecycleEvent{Name: liveswap.EventDeploySucceeded, App: "blog", Release: "v2"})
+	c.deployed(liveswap.LifecycleEvent{Name: liveswap.EventCutover, App: "blog", Release: "v2"})
 	if !c.running || len(c.runs) != 1 {
 		t.Fatalf("running %v, in flight %d", c.running, len(c.runs))
 	}
@@ -387,7 +387,7 @@ func TestPostDeployRelease(t *testing.T) {
 	if c.running || len(c.runs) != 0 {
 		t.Fatalf("after the last Stop: running %v, in flight %d", c.running, len(c.runs))
 	}
-	c.deployed(liveswap.LifecycleEvent{Name: liveswap.EventDeploySucceeded, App: "blog", Release: "v3"})
+	c.deployed(liveswap.LifecycleEvent{Name: liveswap.EventCutover, App: "blog", Release: "v3"})
 	if len(c.runs) != 0 {
 		t.Fatal("compared with no config")
 	}
@@ -399,16 +399,45 @@ func TestLifecycleSinkTapsTheDeploy(t *testing.T) {
 	te := newTestEngine(t)
 	tc := newTestComparator(t, regressRule)
 	s := lifecycleSink{e: te.engine, c: tc.comparator}
-	s.Lifecycle(liveswap.LifecycleEvent{Name: liveswap.EventDeploySucceeded, App: "blog", Release: "v2", Previous: "v1", Cutover: tc.at})
+	s.Lifecycle(liveswap.LifecycleEvent{Name: liveswap.EventCutover, App: "blog", Release: "v2", Previous: "v1", Cutover: tc.at})
 	if len(te.queue) != 0 {
-		t.Errorf("deploy_succeeded off, yet queued: %+v", te.queue[0].alerts)
+		t.Errorf("the cutover is no event, yet queued: %+v", te.queue[0].alerts)
 	}
 	if run := tc.runs["blog"]; run == nil || run.previous != "v1" {
 		t.Fatalf("in flight: %+v", tc.runs)
 	}
+	// The deploy's result, after the drain, neither starts one nor
+	// replaces it.
+	s.Lifecycle(liveswap.LifecycleEvent{Name: liveswap.EventDeploySucceeded, App: "blog", Release: "v2"})
 	s.Lifecycle(liveswap.LifecycleEvent{Name: liveswap.EventDeployFailed, App: "blog", Release: "v3"})
-	if run := tc.runs["blog"]; run == nil || run.release != "v2" {
-		t.Fatalf("a failed deploy ended the comparison: %+v", tc.runs)
+	if run := tc.runs["blog"]; run == nil || run.release != "v2" || run.previous != "v1" {
+		t.Fatalf("a deploy's result changed the comparison: %+v", tc.runs)
+	}
+	s.Lifecycle(liveswap.LifecycleEvent{Name: liveswap.EventDeploySucceeded, App: "shop", Release: "s2"})
+	if tc.runs["shop"] != nil {
+		t.Fatal("deploy_succeeded started a comparison")
+	}
+}
+
+// A drain longer than the window (Copilot round 1 on #429): the
+// comparison runs from the cutover, so its three checks are made while
+// the old instance drains, and the regression is told.
+func TestPostDeployADrainLongerThanTheWindow(t *testing.T) {
+	r := regressRule
+	r.Window, r.Failures = caddyMinutes(3), 3
+	te := newTestEngine(t)
+	tc := newTestComparator(t, r)
+	s := lifecycleSink{e: te.engine, c: tc.comparator}
+	s.Lifecycle(liveswap.LifecycleEvent{Name: liveswap.EventCutover, App: "blog", Release: "v2", Previous: "v1", Cutover: tc.at})
+	tc.at = tc.at.Add(storeLag + time.Second)
+	tc.store.set("v2", 200, 200, 0.1)
+	for range 3 {
+		tc.minute()
+	}
+	// The drain of 4 m ends now: the deploy's result.
+	s.Lifecycle(liveswap.LifecycleEvent{Name: liveswap.EventDeploySucceeded, App: "blog", Release: "v2"})
+	if len(tc.evs) != 1 || !strings.Contains(tc.evs[0].Summary, "3 failing checks in a row") {
+		t.Fatalf("a regression under a 4 m drain: %+v", tc.evs)
 	}
 }
 
@@ -421,7 +450,7 @@ func TestPostDeployChecksAtOnce(t *testing.T) {
 	tc.store.together = 2
 	tc.store.set("v2", 200, 100, 0.1)
 	tc.store.set("s2", 200, 100, 0.1)
-	tc.deployed(liveswap.LifecycleEvent{Name: liveswap.EventDeploySucceeded, App: "shop", Release: "s2", Cutover: tc.at})
+	tc.deployed(liveswap.LifecycleEvent{Name: liveswap.EventCutover, App: "shop", Release: "s2", Cutover: tc.at})
 	tc.deploy("blog", "v2", "")
 	tc.minute()
 	if len(tc.evs) != 2 {

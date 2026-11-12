@@ -393,14 +393,20 @@ in two.
 
 **The post-deploy comparison** (notify/postdeploy.go) is motel's: vmalert
 knows neither when the cutover was nor which release came before.
-liveswap's `deploy_succeeded` and `rollback` carry both: `Previous`, the
-release whose instance served until the new one was published (none
-after a first deploy, or when that instance was not running: a crash
-loop's release is no baseline; a relaunch names its own release), and `Cutover`, when the traffic moved (the swap itself, not the
-state's persist and the caps' sync after it, which can wait on the
-manager). `lifecycleSink` hands them to the
-comparison before the engine's toggles, so `deploy_succeeded off` still
-compares. For an app with a rule (its own, else the every-app one),
+liveswap tells both at the swap itself, in a lifecycle event of its
+own, `cutover`, which is no notification: `Previous`, the release whose
+instance served until the new one was published (none after a first
+deploy, or when that instance was not running: a crash loop's release
+is no baseline; a relaunch names its own release), and `Cutover`, when
+the traffic moved (not the state's persist and the caps' sync after
+it, which can wait on the manager). It comes before the old instance's
+drain and stop and before the deploy's result (`deploy_succeeded`,
+`rollback`), which a long `drain` would otherwise have started the
+comparison after its window (Copilot round 1 on #429); nothing after
+the swap fails a deploy. A deploy, a rollback and a relaunch tell it;
+the watchdog's restarts and a motel restart's recovery publish an
+instance without one, and start no comparison. `lifecycleSink` hands
+it to the comparison alone, so `deploy_succeeded off` still compares. For an app with a rule (its own, else the every-app one),
 for each whole minute e since the cutover up to `window`, both read at
 cutover + e, 35 s after it: the store answers an instant query within
 its `-search.latencyOffset` (30 s) of the present as of 30 s earlier,
@@ -885,3 +891,6 @@ Dated one-liners; the full text of each is in git.
   makes the window's last check, a 5xx rise over an old release already
   over its bound must be beyond chance, and the disk series counts
   `f_frsize` blocks, read by the disk source's own statfs.
+- 2026-11-12 — Copilot round 1 on #429, triaged: the comparison starts at
+  liveswap's `cutover`, told at the swap, not with the deploy's result
+  after the drain.

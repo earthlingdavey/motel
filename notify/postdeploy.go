@@ -122,10 +122,11 @@ func (c *comparator) ruleFor(app string) (Rule, bool) {
 	return Rule{}, false
 }
 
-// deployed starts a comparison at a deploy's or a rollback's success,
-// told by liveswap through lifecycleSink before the engine's toggles. A
-// deploy of an app with one in flight ends it: the release it compared
-// no longer serves.
+// deployed starts a comparison at a deploy's or a rollback's cutover,
+// which liveswap tells through lifecycleSink at the swap itself, before
+// the old instance's drain and stop and the deploy's result. A deploy of
+// an app with one in flight ends it: the release it compared no longer
+// serves.
 func (c *comparator) deployed(ev liveswap.LifecycleEvent) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
