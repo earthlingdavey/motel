@@ -169,7 +169,7 @@ func TestStoreClient(t *testing.T) {
 			gotPath, gotBody = r.URL.RequestURI(), string(b)
 			w.WriteHeader(http.StatusNoContent)
 		case "/api/v1/query":
-			if tm := r.URL.Query().Get("time"); tm != "" && tm != "1762776000" {
+			if tm := r.URL.Query().Get("time"); tm != "" && tm != "1762776000.250" {
 				http.Error(w, "bad time", http.StatusBadRequest)
 				return
 			}
@@ -196,10 +196,12 @@ func TestStoreClient(t *testing.T) {
 	if err != nil || len(v) != 1 || v[0].labels["job"] != "vmalert" || v[0].points[0].v != 1 {
 		t.Fatalf("query: %+v %v", v, err)
 	}
-	if v, err := c.queryAt(ctx, rulesQuery, time.Unix(1762776000, 0)); err != nil || len(v) != 1 {
+	// To the millisecond: a second's truncation moved the old release's
+	// window off the push after the cutover.
+	if v, err := c.queryAt(ctx, rulesQuery, time.Unix(1762776000, 250_400_000)); err != nil || len(v) != 1 {
 		t.Fatalf("queryAt: %+v %v", v, err)
 	}
-	if _, err := c.queryAt(ctx, rulesQuery, time.Unix(1762776001, 0)); err == nil {
+	if _, err := c.queryAt(ctx, rulesQuery, time.Unix(1762776000, 0)); err == nil {
 		t.Fatal("queryAt sent another time")
 	}
 	now := time.Unix(1762776120, 0)

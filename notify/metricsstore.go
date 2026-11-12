@@ -167,10 +167,11 @@ func (c *storeClient) query(ctx context.Context, q string) ([]series, error) {
 	return parseQueryAnswer(data)
 }
 
-// queryAt is an instant query at t, which the store takes as given
-// when it is more than -search.latencyOffset in the past.
+// queryAt is an instant query at t, to the millisecond, which the
+// store takes as given when it is more than -search.latencyOffset in
+// the past.
 func (c *storeClient) queryAt(ctx context.Context, q string, t time.Time) ([]series, error) {
-	v := url.Values{"query": {q}, "time": {strconv.FormatInt(t.Unix(), 10)}}
+	v := url.Values{"query": {q}, "time": {strconv.FormatFloat(float64(t.UnixMilli())/1000, 'f', 3, 64)}}
 	data, err := c.do(ctx, http.MethodGet, "/api/v1/query?"+v.Encode(), nil, "")
 	if err != nil {
 		return nil, err
