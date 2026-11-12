@@ -166,8 +166,9 @@ func TestMetricsSetupFailingPutsTheStoreBack(t *testing.T) {
 
 // TestMetricsUnitsAreTheMeasuredOnes holds the shipped units to what ran
 // on hotserve-1 (hotserve1_stack_test.md), with this slice's paths and
-// caps; the proxies' users and the drop-in's chmod were measured in the
-// e2e box only (notify/DESIGN-metrics.md, "The shape").
+// caps; the proxies' users, the drop-in's chmod and the namespace unit's
+// test for a leftover were measured in the e2e box only
+// (notify/DESIGN-metrics.md, "The shape").
 func TestMetricsUnitsAreTheMeasuredOnes(t *testing.T) {
 	has := func(name string, unit []byte, wants ...string) {
 		t.Helper()

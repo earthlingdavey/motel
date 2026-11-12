@@ -63,7 +63,7 @@ motel monitor setup >/tmp/nsetup.out 2>&1 && pass "monitor setup ran" || fail "m
 	&& pass "without --metrics, nothing of the store is set up" || fail "monitor setup wrote the store's units: $(ls /etc/systemd/system)"
 am -o /dev/null http://am/-/ready # started by its socket, if motel's render has not yet
 am_run=$(systemctl show -p InvocationID --value prometheus-alertmanager)
-ns_before=$(ls -A /run/netns 2>/dev/null)
+ns_before=$(ls -d "/run/netns/$NS" 2>/dev/null)
 if motel monitor setup --metrics >/tmp/msetup.out 2>&1; then
 	pass "monitor setup --metrics ran: $(tr '\n' ';' </tmp/msetup.out | cut -c1-240)"
 else
@@ -89,9 +89,9 @@ done
 # cold boot takes: its delete of a leftover exits 0, not as an error the
 # `-` ignores (`ip netns delete` of none exits 1 and logs it).
 pre=$(systemctl show -p ExecStartPre --value motel-metrics-netns)
-case "$ns_before:$pre" in :*"code=exited ; status=0 }"*|:*"code=exited ; status=0/"*)
+case "$ns_before:$pre" in :*"code=exited ; status=0 }"*)
 	pass "the namespace's first start, with none before: its leftover's delete exited 0" ;;
-*) fail "the namespace's ExecStartPre, with '$ns_before' in /run/netns before setup: $pre" ;; esac
+*) fail "the namespace's ExecStartPre, with '$ns_before' there before setup: $pre" ;; esac
 [ "$(stat -c '%A %U %G' "$VM")" = "srw-rw---- root motel" ] \
 	&& pass "the store's socket is srw-rw---- root motel" || fail "the socket is $(stat -c '%A %U %G' "$VM" 2>&1)"
 [ "$(stat -c '%A %U %G' "$STATE")" = "drwxr-s--- motel _victoria-metrics" ] \
@@ -316,9 +316,13 @@ n=$(am "http://am/api/v2/alerts?$amq" | grep -o '"fingerprint"' | wc -l)
 # (two 1 m intervals and a margin) with no send error while its
 # ChannelFailed fires and one alert in Alertmanager is its post taken
 # into motel's alert. The sent count is every group's, so it only
-# corroborates.
+# corroborates. A reading must hold the error counter's line: one that
+# lacks it (a renamed counter) would read as no error.
 evals='vmalert_iteration_duration_seconds_count{group="motel-channel-failed"'
-vmsnap() { snap=$(inns curl -sf --max-time 5 http://127.0.0.1:8880/metrics) && printf '%s\n' "$snap" | grep -qF "$evals"; }
+vmsnap() {
+	snap=$(inns curl -sf --max-time 5 http://127.0.0.1:8880/metrics) && printf '%s\n' "$snap" | grep -qF "$evals" \
+		&& printf '%s\n' "$snap" | grep -q '^vmalert_alerts_send_errors_total{'
+}
 vmx() { printf '%s\n' "$snap" | awk -v m="$1" 'index($0, m) == 1 {s += $NF} END {print s + 0}'; }
 i=0
 until vmsnap; do i=$((i + 1)); [ "$i" -ge 5 ] && break; sleep 2; done
@@ -335,7 +339,7 @@ last=motel
 printf '%s' "$body" | grep -q '"generatorURL":"http' && last=vmalert
 [ "$ok0" -lt 5 ] && [ "$i" -lt 68 ] && [ "$sent" -gt "$sent0" ] && [ "$err" = "$err0" ] && [ "$firing" -ge 1 ] && [ "$n" -eq 1 ] \
 	&& pass "vmalert posted its ChannelFailed and Alertmanager still holds one alert (the latest post: $last's)" \
-	|| fail "no vmalert post merged into the alert in 135 s: evaluations $ev0 -> $ev, sent $sent0 -> $sent, errors $err0 -> $err, firing $firing, $n alerts: $(printf '%s' "$body" | cut -c1-400)"
+	|| fail "vmalert's post into the one alert is not shown (the first reading: try $ok0, 5 is none; two evaluations: poll $i, 68 is 135 s and none): evaluations $ev0 -> $ev, sent $sent0 -> $sent, errors $err0 -> $err, firing $firing, $n alerts: $(printf '%s' "$body" | cut -c1-400)"
 
 echo "=== metrics 4a: the store stopped by hand comes back with vmalert ==="
 # A stop of the store stops vmalert and the proxy (both Require it).

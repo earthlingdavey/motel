@@ -919,7 +919,7 @@ series:
 | | Min | Median | Max |
 |---|---|---|---|
 | The store's RSS, from an hour after the boot | 174 MB | 186 MB | 191 MB |
-| Its caches (`vm_cache_size_bytes`, summed) | 101 MiB | 103 MiB | 116 MiB |
+| Its caches (`vm_cache_size_bytes`, summed), from the same hour | 101 MiB | 103 MiB | 116 MiB |
 | vmalert | 27 MB | 28 MB | 28 MB |
 | Alertmanager | 40 MB | 42 MB | 42 MB |
 | Each proxy | 7 MB | 7 MB | 7 MB |
@@ -1010,14 +1010,15 @@ on its general scales. metrics' examples:
 | `motel monitor setup --metrics` on a box where Alertmanager is not set up yet reloads motel twice, Alertmanager's setup's first, before the store is installed: a `metrics` line that this reload loads for the first time (written, never reloaded) starts the push's failure count then, so an install of the store slower than five minutes fires `metrics_store_down`, and the journal has a `not set up` and a `push failed` line, until the first push after the store's setup clears it | notify/cmd.go (`runSetup`) | 2 | 2 | 1 | 4; it needs Alertmanager not set up, the line unloaded before setup and a slow install; the alert names its cause and clears itself, and the two setups run as two commands had the same order; skipping Alertmanager's reload under `--metrics` is a flag through its setup (size 2, risk 2). /code-review pass 1 on the monitor block |
 | A rule refused at Provision (an `app` the liveswap block does not configure, `memory_share` of an uncapped app, rules in a block with no channel, a rule naming an app with no liveswap block) names the rule, not its Caddyfile file and line: Provision reads the adapted JSON, which carries no position | notify/metrics.go (`provision`) | 2 | 5 | 1 | 10; the rule's name is unique in the block, so the refusal points at one line, and notify's own Provision refusals (an `operator` or `bind` naming no channel) name keys, not lines, alike; a position in each rule's JSON, set by the adapter alone, is a field every config carries (size 3, risk 2), and moving the no-channel check into the parse fixes one refusal of four (size 2). Copilot round 3 on #429 |
 | e2e metrics 4 reads vmalert's send counters, `vmalert_alerts_sent_total` and `vmalert_alerts_send_errors_total`, which are per notifier and so every group's, not the ChannelFailed group's: a send error of another group's alert (an operator rule firing in the wait) fails the check, and another group's send raises the sent count | e2e/metrics/run.sh | 2 | 2 | 1 | 4; it needs another alert firing and Alertmanager refusing its post, which is a failure of the outlet the check exists to catch, and the fail line names the counters; vmalert 1.112.0 has no per-group send counter. The group's own evaluation count is the gate, and the sent count only corroborates. /code-review passes 1 and 2 on #430 |
-| e2e metrics 4 no longer sees vmalert's post inside Alertmanager: it proves a send vmalert counted as accepted and one alert held, so a notifier pointed at another Alertmanager that answers 2xx would pass it | e2e/metrics/run.sh | 3 | 1 | 5 | 15; the outlet is `motel-am-proxy.socket` to `/run/motel-notify/am.sock`, pinned by `TestMetricsUnitsAreTheMeasuredOnes`, and the store's scrape of Alertmanager (metrics 4's `up{job="alertmanager"}`) goes through the same proxy; reading the post in Alertmanager without the phase race needs motel's post held off or both phases timed (size 3, risk 2). The merged alert's latest poster is still printed. /code-review pass 2 on #430 |
+| e2e metrics 4 no longer sees vmalert's post inside Alertmanager: it proves a send vmalert counted as accepted and one alert held, so a notifier pointed at another Alertmanager that answers 2xx would pass it | e2e/metrics/run.sh | 3 | 1 | 1 | 3; metrics 10 fails on it, naming it: it reads `errors_high`, which vmalert alone posts, in Alertmanager with vmalert's `generatorURL`. The outlet is `motel-am-proxy.socket` to `/run/motel-notify/am.sock`, pinned by `TestMetricsUnitsAreTheMeasuredOnes`, and the store's scrape of Alertmanager (metrics 4's `up{job="alertmanager"}`) goes through the same proxy; reading the post in Alertmanager without the phase race needs motel's post held off or both phases timed (size 3, risk 2). The merged alert's latest poster is still printed. /code-review pass 2 on #430; rescored from 15 by the review of the rebased tree |
+| e2e metrics 4 takes vmalert's counters from one scrape, which is not one instant: vmalert writes the send-error counter earlier in the page than the group's evaluation count, so a second evaluation whose send fails between the two lines is counted with its error unseen, and a refused post passes | e2e/metrics/run.sh | 3 | 1 | 5 | 15; it needs Alertmanager refusing vmalert's post, the first evaluation's send having succeeded, and the failure landing in the microseconds between two lines of one page; one more scrape after the gate closes it (size 1, risk 2). /code-review of the rebased tree on #430 |
 
 ### Owed
 
 | Owed | S | O | D | Lands in |
 |---|---|---|---|---|
 | The store's RSS on a 1 or 2 GB box (a day on hotserve-1's 3.8 GB is in "Footprint") | — | — | — | a deploy to a box of that size |
-| On a booted Debian host: a connection made while setup has the store masked, and a failed setup re-run's put-back (Copilot round 2 on #425); the two proxies' users and the am proxy's view (#426), and the namespace unit's test for a leftover, measured so far in the e2e box only (hotserve-1 runs the units of 9228935). The cold boot with motel rendering and pushing is measured ("The shape") | — | — | — | the next deploy to hotserve-1 |
+| On a booted Debian host: a connection made while setup has the store masked, and a failed setup re-run's put-back (Copilot round 2 on #425); the two proxies' users and the am proxy's view (#426), and the namespace unit's test for a leftover, measured so far in the e2e box only (hotserve-1 runs the units of 9228935), and a cold boot of these units: setup's re-run does not restart the namespace unit, which is active, so its new `ExecStartPre` first runs at a reboot. The cold boot with motel rendering and pushing is measured with the units of 9228935 ("The shape") | — | — | — | the next deploy to hotserve-1, and a reboot after it |
 | motel says nothing when setup's units on disk are older than the binary's: a box upgraded past a change to them (this one: the proxies' users, the chmods) keeps the old units until root re-runs both setups (`motel monitor setup`, then `motel monitor setup --metrics`). A load could compare the installed files with the embedded ones and warn | 3 | 5 | 5 | the next PR on the feature branch, before it merges to main (/code-review of #426) |
 | Debian's security support for `victoria-metrics` 1.112.0 and `prometheus-alertmanager` 0.28.1 on trixie, whose binaries are built with Go 1.24.2 (the store, vmalert) and 1.24.1 (Alertmanager), and a dist-upgrade check of both drop-ins' flags | — | — | — | before any release |
 
@@ -1236,3 +1237,11 @@ Dated one-liners; the full text of each is in git.
   leftover only when there is one, so a start with none logs no error; e2e
   metrics 4 counts vmalert's post at its send, not by the merged alert's
   `generatorURL`, which motel's post can hide.
+- 2026-11-12 — /code-review of #430's rebased tree (ten findings),
+  triaged: a reading of vmalert must hold the send-error counter's
+  line, which a renamed counter had read as no error (30); the fail
+  line says which reading failed; the namespace check looks for
+  `motel-metrics` alone before setup. The Owed row asks for the reboot
+  the new `ExecStartPre` needs. Accepted: a send error between two
+  lines of one scrape (15); the other-Alertmanager row rescored to 3,
+  since metrics 10 sees vmalert's post in Alertmanager.
