@@ -71,7 +71,12 @@ both directions verified), with the paths and flags of this section,
 except the two proxies' users and the drop-in's chmod of the store's
 data, set after the box's audit of 2026-11-11 found both proxies running
 as root and the data world-readable: measured in the e2e box (systemd
-257), not yet on hotserve-1.
+257), not yet on hotserve-1. A fourth cold boot, on 2026-11-11 at 15:04
+UTC with motel (9228935) rendering `rules.yml` and pushing, brought every
+unit up within a second of the namespace (the am proxy's service at its
+first connection, nine seconds later), with no failed unit, no
+ordering cycle and no listener in the host namespace; vmalert loaded
+motel's rules, and the store scraped itself, vmalert and Alertmanager.
 
 **The proxies run as no root.** Each passes bytes it does not parse, and
 motel shapes some of them (its own reads through `vm.sock`, and what
@@ -901,7 +906,35 @@ UTC on 2026-11-10, 2,600 series: the store 108 to 117 MB RSS
 while active and gone after five idle minutes, the store's disk 4.8 MB.
 Alertmanager and motel unchanged. `-memory.allowedBytes=96MiB` holds the
 caches under the 154 MB the default allowed, so the cap leaves room for
-queries; its RSS on a box is owed below. The response observer adds at
+queries.
+
+A day with that cap and motel pushing, on the same box from 15:00 UTC on
+2026-11-11 (25 hourly samples, a cold boot at 15:05; the units of
+9228935, before #426, whose changes, the proxies' users and the data
+directories' modes, leave the store's memory as it was), 3,415 to 3,512
+series:
+
+| | Min | Median | Max |
+|---|---|---|---|
+| The store's RSS, from an hour after the boot | 174 MB | 186 MB | 191 MB |
+| Its caches (`vm_cache_size_bytes`, summed) | 101 MiB | 103 MiB | 116 MiB |
+| vmalert | 27 MB | 28 MB | 28 MB |
+| Alertmanager | 40 MB | 42 MB | 42 MB |
+| Each proxy | 7 MB | 7 MB | 7 MB |
+| motel | 63 MB | 66 MB | 67 MB |
+| `GET /example` with its `metrics`, through the deploy host from the box | 22 ms | 31 ms (p95 34) | 37 ms |
+
+The store reached its level within an hour of each start (107 MB three
+minutes after setup restarted it, 174 MB an hour after the boot) and
+moved 3 MB in the last twelve hours; its cgroup peaked at 203 MiB, 53 MiB
+under `MemoryMax`. That is above the 156 MB it had reached on the default
+share 16 hours after its start (2026-11-11 14:00, 3,264 series, before
+motel pushed): the cap sizes the caches, which sit a little over it
+(three of them at 32 MiB each, 96 MiB of the total), and not the rest of
+the process; why the rest grew is not measured. The disk grew from 5.8 to
+8.0 MB, 2.2 MB a day. No OOM kill, no restart, no failed unit. The
+store's proxy no longer idles out, since motel's push keeps it busy: the
+stack beside motel is about 270 MB. The response observer adds at
 most 24 series per observed app and release (six classes, the
 histogram's 14, four cache results), two releases each: under 500 for
 ten apps, against the 2,600 measured.
@@ -979,8 +1012,8 @@ on its general scales. metrics' examples:
 
 | Owed | S | O | D | Lands in |
 |---|---|---|---|---|
-| The store's RSS with `-memory.allowedBytes=96MiB` after a day, and on a 1 or 2 GB box | — | — | — | the next deploy to hotserve-1 |
-| A reboot with motel rendering `rules.yml` and pushing, as slice one's was measured, on a booted Debian host: the namespace's and the sockets' cold-boot order, a connection made while setup has the store masked, and a failed setup re-run's put-back (Copilot round 2 on #425); the two proxies' users and the am proxy's view, measured so far in the e2e box only | — | — | — | the next deploy to hotserve-1 |
+| The store's RSS on a 1 or 2 GB box (a day on hotserve-1's 3.8 GB is in "Footprint") | — | — | — | a deploy to a box of that size |
+| On a booted Debian host: a connection made while setup has the store masked, and a failed setup re-run's put-back (Copilot round 2 on #425); the two proxies' users and the am proxy's view, measured so far in the e2e box only (hotserve-1 runs the units before #426). The cold boot with motel rendering and pushing is measured ("The shape") | — | — | — | the next deploy to hotserve-1 |
 | motel says nothing when setup's units on disk are older than the binary's: a box upgraded past a change to them (this one: the proxies' users, the chmods) keeps the old units until root re-runs both setups (`motel monitor setup`, then `motel monitor setup --metrics`). A load could compare the installed files with the embedded ones and warn | 3 | 5 | 5 | the next PR on the feature branch, before it merges to main (/code-review of #426) |
 | Debian's security support for `victoria-metrics` 1.112.0 and `prometheus-alertmanager` 0.28.1 on trixie, whose binaries are built with Go 1.24.2 (the store, vmalert) and 1.24.1 (Alertmanager), and a dist-upgrade check of both drop-ins' flags | — | — | — | before any release |
 
@@ -1193,3 +1226,9 @@ Dated one-liners; the full text of each is in git.
   accepted by the operator), a first push the store did not take (12), p50 and
   p95 apart and the day's two-day scan (4 each, measured at 1.3 to
   2.2 ms a query against the 2 s budget). The `inc` text on a gap inside the window corrected.
+- 2026-11-12 — A day on hotserve-1 with the store's caps and motel
+  pushing, and a cold boot ("Footprint", "The shape"); the two rows that
+  owed them narrowed to what is left. The namespace unit deletes a
+  leftover only when there is one, so a cold boot logs no error; e2e
+  metrics 4 counts vmalert's post at its send, not by the merged alert's
+  `generatorURL`, which motel's post can hide.

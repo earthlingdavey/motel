@@ -184,8 +184,9 @@ func TestMetricsUnitsAreTheMeasuredOnes(t *testing.T) {
 		"Wants=motel-vmalert.service",
 		// Debian's 0755 would let every local uid read the series.
 		"ExecStartPre=+/usr/bin/chmod 0750 /var/lib/victoria-metrics\n")
-	// A namespace left behind must not fail every later start.
-	has("the namespace unit", unitNetns, "ExecStartPre=-/usr/sbin/ip netns delete motel-metrics\nExecStart=/usr/sbin/ip netns add motel-metrics")
+	// A namespace left behind must not fail every later start, and a
+	// cold boot, which has none, must log no error for it.
+	has("the namespace unit", unitNetns, "ExecStartPre=-/bin/sh -c 'test ! -e /run/netns/motel-metrics || exec /usr/sbin/ip netns delete motel-metrics'\nExecStart=/usr/sbin/ip netns add motel-metrics")
 	has("motel-vm.socket", unitVMSocket, "ListenStream="+DefaultStoreSocket+"\n", "SocketGroup=motel", "SocketMode=0660")
 	has("motel-vm.service", unitVMProxy, "NetworkNamespacePath=/run/netns/motel-metrics", "systemd-socket-proxyd --exit-idle-time=5min 127.0.0.1:8428",
 		// Not root (the box audit of 2026-11-11).
