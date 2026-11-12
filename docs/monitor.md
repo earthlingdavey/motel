@@ -136,7 +136,7 @@ its units back as the binary ships them. `motel monitor setup` (without
 so run it at a quiet moment. `--metrics` on a box where Alertmanager is
 already set up leaves Alertmanager alone and redoes only the store.
 
-Each test answers in under 15 seconds:
+Each test answers within about 15 seconds:
 
 ```
 $ motel monitor test ops
@@ -155,9 +155,11 @@ floor is.
 URL. The block names each value as `{secret.NOTIFY_<NAME>}`, because a
 Slack or Discord hook URL works as a password by itself and the
 Caddyfile is not secret. motel reads the file and no app is given it.
-It must be **root:motel 0640**. A file root makes any other way is
-root's, with whatever mode it was made with: `install -m 600`, or an
-editor under umask 077, gives root:root 0600, and then:
+It must be **root:motel 0640**. A file made elsewhere and moved in with
+`mv` keeps its owner, group and mode: one made in `/root` with
+`install -m 600`, or by an editor under umask 077, is root:root 0600.
+One made in place gets the directory's group, motel, but keeps its
+mode, and 0600 shuts motel out all the same. Then:
 
 ```
 $ ls -l /etc/motel/secrets/_box.env
@@ -555,10 +557,10 @@ that nothing more goes out. As root:
 ```sh
 # 1. Pause the heartbeat's check off the box: from here on the pings stop.
 # 2. Stop Alertmanager, so that it sends nothing more. On a box set up
-#    with --metrics, vmalert and its proxy's socket go with it: a
+#    with --metrics, vmalert and its proxy's socket go first: a
 #    connection from vmalert to that socket starts Alertmanager again.
-systemctl disable --now motel-am.socket prometheus-alertmanager.service
 systemctl disable --now motel-vmalert.service motel-am-proxy.socket   # --metrics only
+systemctl disable --now motel-am.socket prometheus-alertmanager.service
 # 3. Take the monitor block out of the Caddyfile (with a box repo: push
 #    it without the block and without secrets/_box/), then:
 systemctl reload motel
@@ -595,6 +597,13 @@ rm -rf /var/lib/motel-notify /var/lib/motel-metrics /run/motel-notify /run/motel
 # 8. The URLs themselves: delete /etc/motel/secrets/_box.env (with a box
 #    repo, the push without secrets/_box/ in step 3 already removed it).
 rm -f /etc/motel/secrets/_box.env
+# 9. This page's recipes, if you installed them: they fail once there is
+#    no block to send to. Take OnFailure=motel-send-failed@%n.service
+#    out of each job that has it too.
+systemctl disable --now motel-reboot-required.timer
+rm -f /etc/systemd/system/motel-reboot-required.timer /etc/systemd/system/motel-reboot-required.service \
+  /etc/systemd/system/motel-send-failed@.service
+systemctl daemon-reload
 ```
 
 `apt purge` removes `/var/lib/prometheus`, `/var/lib/victoria-metrics`

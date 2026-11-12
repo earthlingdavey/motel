@@ -176,14 +176,12 @@ Before you upgrade:
   channel also refuses an `applied.json` that lists the box's own
   `secrets/_box/`, so every push after the downgrade would fail before
   it began. While the box still runs the newer release:
-  1. **Stop Alertmanager**: `systemctl disable --now motel-am.socket
-     prometheus-alertmanager.service`, and on a box set up with
-     `--metrics` also `systemctl disable --now motel-vmalert.service
-     motel-am-proxy.socket` (vmalert's proxy would start Alertmanager
-     again). Otherwise Alertmanager reports every alert that was firing
-     as recovered five minutes after the next step, though nothing
-     recovered. Pause the heartbeat's check first, since the pings stop
-     too.
+  1. **Pause the heartbeat's check, then stop Alertmanager**, as
+     [Monitor](monitor.md#turn-it-off-and-remove-it)'s steps 1 and 2
+     say (on a box set up with `--metrics`, vmalert and its proxy's
+     socket first). Otherwise Alertmanager reports every alert that was
+     firing as recovered five minutes after the next step, though
+     nothing recovered.
   2. **Take out the `monitor` block and every `observe` line.** On a box
      that takes pushes, push a commit without them and without
      `secrets/_box/`. It removes `/etc/motel/secrets/_box.env` and takes
@@ -195,11 +193,15 @@ Before you upgrade:
      back.
   3. **Go back** with the `.deb`, as above.
 
-  The store and vmalert keep running after this, and so do Alertmanager's
-  units if you skip step 1. They are setup's, not the package's, and the
-  older release neither uses nor stops them.
-  [Monitor](monitor.md#turn-it-off-and-remove-it) stops and removes
-  them. On a box already back whose motel refused to start, root edits
+  The store keeps running after this, and so do Alertmanager and
+  vmalert if you skip step 1, as do any of Monitor's recipe units you
+  installed (they fail once `motel monitor send` is gone). They are
+  setup's or yours, not the package's, and the older release neither
+  uses nor stops them. [Monitor](monitor.md#turn-it-off-and-remove-it)
+  stops and removes them. Coming back to a release with monitor later
+  means its setup again: step 1 left Alertmanager disabled, so
+  `motel monitor setup [--metrics]` runs before the block is pushed
+  back ("To turn it back on", there). On a box already back whose motel refused to start, root edits
   the block and the `observe` lines out of `/etc/motel/Caddyfile` and
   runs `systemctl restart motel`. On a box that takes pushes, root also
   removes the `"_box"` entry from the `secrets` map in
