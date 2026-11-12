@@ -51,6 +51,18 @@ type LifecycleEvent struct {
 	// Previous.
 	Previous string
 	Cutover  time.Time
+	// Relaunch, on EventCutover, marks a cutover to the release the app
+	// last ran: the instance it replaced was of the same release, alive
+	// (a deploy or rollback naming the version that serves) or not (a
+	// rollback to a release whose instance had crashed, or that nothing
+	// in memory runs since a refused relaunch or a failed recovery,
+	// state.json naming it). With Previous equal to Release it is no new
+	// release, and the post-deploy comparison starts none; with Previous
+	// empty the comparison is the bound alone, worded as a relaunch.
+	// Only the cutover carries it: the comparison is its one reader, and
+	// deploy_succeeded and rollback say what the deploy came to in
+	// liveswap's own summary, which a relaunch does not change.
+	Relaunch bool
 	// Hold, on EventWatchdogRecovered, is how long the app must stay
 	// healthy before the recovery counts: max(30s, watchdog_grace), the
 	// span after which the watchdog's own backoff resets.

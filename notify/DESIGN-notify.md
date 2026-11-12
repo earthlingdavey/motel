@@ -296,8 +296,9 @@ Sources are `liveswap`, `backup`, `tls`, `disk`, `notify`, `metrics`
 `disk_fill` rule's filesystem) and `external:<name>`.
 liveswap reports through `liveswap.Notifier` (liveswap/lifecycle.go),
 on the goroutine where the event happened. A deploy's or a rollback's
-`cutover`, told at the swap with the release it replaced and when
-(`Previous`, `Cutover`), is no event of the engine's: it starts the
+`cutover`, told at the swap with the release it replaced, when, and
+whether it is a relaunch of the release the app last ran (`Previous`,
+`Cutover`, `Relaunch`), is no event of the engine's: it starts the
 post-deploy comparison (DESIGN-metrics.md, "Operator rules"). notify subscribes to
 `cert_failed` and `cert_obtained` by name through Caddy's events app.
 The backup record and the disks are polled by the engine. A box with

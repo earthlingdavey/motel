@@ -500,9 +500,11 @@ liveswap tells both at the swap itself, in a lifecycle event of its
 own, `cutover`, which is no notification: `Previous`, the release whose
 instance served until the new one was published (none after a first
 deploy, or when that instance was not running: a crash loop's release
-is no baseline; a relaunch names its own release), and `Cutover`, when
-the traffic moved. It is told at that moment, from inside the
-publication, before the state's persist and the caps' sync, which can
+is no baseline; a relaunch names its own release), `Cutover`, when
+the traffic moved, and `Relaunch`, set when the release published is
+the one the app last ran (the instance it replaced, alive or not, else
+the version `state.json` names when no instance is in memory). It is
+told at that moment, from inside the publication, before the state's persist and the caps' sync, which can
 wait on the manager (Copilot round 2 on #429), and before the old instance's
 drain and stop and before the deploy's result (`deploy_succeeded`,
 `rollback`), which a long `drain` would otherwise have started the
@@ -511,12 +513,28 @@ the swap fails a deploy. A deploy, a rollback and a relaunch tell it;
 the watchdog's restarts and a motel restart's recovery publish an
 instance without one, and start no comparison. `lifecycleSink` hands
 it to the comparison alone, so `deploy_succeeded off` still compares.
-A relaunch of the release serving (`Previous` = the release) starts
-none, and leaves one in flight for that release as it was: it is no
-new release, and both instances count into the release's one set of
-counters, so no window could tell the old instance's answers from the
-new one's (a baseline over both would take in the relaunched
-instance's first push, and could hide its regression). For an app with a rule (its own, else the every-app one),
+A relaunch is one of two cases, told apart by liveswap's `Relaunch`
+and `Previous`, not by comparing names (the operator's decision of
+2026-11-12):
+
+- **its instance still served** (`Relaunch`, `Previous` = the release:
+  a deploy of the running version with the same artifact, or a
+  rollback to it): it starts no comparison, and leaves one in flight
+  for that release as it was. It is no new release, and both instances
+  count into the release's one set of counters, so no window could
+  tell the old instance's answers from the new one's (a baseline over
+  both would take in the relaunched instance's first push, and could
+  hide its regression).
+- **its instance had stopped** (`Relaunch`, no `Previous`): a rollback
+  to the release that had crashed (its instance dead, the watchdog
+  throttled), or that nothing in memory runs (dropped after a refused
+  relaunch, or a recovery that failed). Deploying it again is refused
+  as a version that exists ("versions are immutable"); the rollback is
+  the operator's or deployer's way to it. It is compared as a first
+  deploy is, with the bound alone, and its event says it is a
+  relaunch, not a regression (below).
+
+For an app with a rule (its own, else the every-app one),
 for each whole minute e since the cutover up to `window`, both read at
 cutover + e, 35 s after it: the store answers an instant query within
 its `-search.latencyOffset` (30 s) of the present as of 30 s earlier,
@@ -557,8 +575,8 @@ already over it needs a share above 1.2 × its own, and further above it
 than chance puts two samples of one rate (a two-proportion z-score of
 2), so an app that errs steadily is not told at every deploy. That is
 this design's refinement of the planning's `new 5xx > old 5xx`
-("Decisions"). An old release with fewer than `min_requests` responses
-sent in its window, or with none, is no baseline: the bound alone
+("Decisions"), which the operator confirmed on 2026-11-12. An old
+release with fewer than `min_requests` responses sent in its window, or with none, is no baseline: the bound alone
 counts. A pass resets the count; a check skipped neither breaks nor
 extends it, so "in a row" counts the checks over the floor. After `failures` failing checks in a row, motel
 reports one `post_deploy_regressed` through notify's engine (the filter,
@@ -570,7 +588,13 @@ to 1/10 000, a p95 to the millisecond. With no baseline, it says which:
 responses, too few to compare`; and for a p95 over its bound with no
 old p95, `the release before it had 6 responses timed, too few to
 compare its p95` (a cached site's old release can send enough and time
-too few; Copilot round 3 on #429). The release before is not named:
+too few; Copilot round 3 on #429). A relaunch whose instance had
+stopped says so in place of both: `blog v1 is over its bound 3m after
+its relaunch (its earlier instance had stopped), over 240 responses:
+5xx share 0.0833; 3 failing checks in a row (rule regress)`, with the
+same name, labels, severity and audiences; a new release after a
+stopped one keeps `regressed … after its deploy` and `no release
+before it to compare`. The release before is not named:
 the filter keeps the event's own release whole, and would mask another
 git sha. It never acts: no refusal, no rollback (requirement 4). A new
 deploy or rollback of the app ends the comparison in flight and starts
@@ -879,9 +903,9 @@ or a line of theirs the facts overturned:
 | The operator's rules are a grammar of fixed kinds with parameters (`threshold`, `disk_fill`, `post_deploy`), never an expression or a template | the review's finding 17: a rule or template a config author writes could pull any app's series, or the box's, into a notification that reaches an app's deployers (T6); a kind reads only motel's own expression, of the app named or each app for itself, so a config author chooses a bound and a duration, never what is read |
 | disk_fill's windows and `for` scale with `within` beyond a day, and wait for their history | a regression extrapolated a hundred times past its window fires on a step; scaled, a step must be the same share of free space at every horizon ("Operator rules", disk_fill's shape). Not a bound on `within`, which would refuse the horizons a disk is watched over. /code-review pass 4 on operator rules |
 | A request metric is over a fixed five minutes, with a floor of 20 by default | long enough for a small app to reach a floor, short enough that a rule fires within its `for` and five minutes; one window keeps the expression motel's. The floor keeps two requests, one of them a 5xx, from being a 50 % share |
-| A relaunch of the release serving starts no post-deploy comparison | it is no new release; the observer's counters are per release, so the old and new instance share them, and a comparison would need the counters split at the cutover (a new state in the observer) to keep the new instance's answers out of the baseline. A relaunch that regresses is told by the threshold rules (Copilot round 2 on #429) |
+| A relaunch of the release serving starts no post-deploy comparison; a relaunch of a release whose instance had stopped is compared with the bound alone and told as a relaunch | the first is no new release; the observer's counters are per release, so the old and new instance share them, and a comparison would need the counters split at the cutover (a new state in the observer) to keep the new instance's answers out of the baseline. A relaunch that regresses is told by the threshold rules (Copilot round 2 on #429). The second (a rollback to the release that had crashed; deploying it again is refused as a version that exists) has no baseline, but the bound still holds, so the warning stays, worded `is over its bound … after its relaunch (its earlier instance had stopped)`, not `regressed … after its deploy`. liveswap marks both on the `cutover` (`Relaunch`), so notify does not infer them from `Previous` = the release; the deploy events carry no mark, since the comparison is the mark's one reader. The operator's decision of 2026-11-12 |
 | The post-deploy comparison is motel's, not vmalert's, and only tells | vmalert knows neither the cutover nor the release before; #418 and requirement 4: motel never refuses a cutover or rolls back over a number |
-| A post-deploy check fails only when the new release is over its bound and worse than the old one (p95: by 1.2 ×; a 5xx share, when the old was over the bound too: by 1.2 × and beyond chance, a z-score of 2) | the user's decision in slice three's planning: an app that was always so is not a deploy's regression; an old release under the floor is no baseline, so the bound alone counts after a first deploy or a quiet one. The 5xx margin refines the planning's `new > old` (/code-review pass 2 on operator rules): with none, an app erring steadily over its bound is told at a deploy whose share is higher by noise alone |
+| A post-deploy check fails only when the new release is over its bound and worse than the old one (p95: by 1.2 ×; a 5xx share, when the old was over the bound too: by 1.2 × and beyond chance, a z-score of 2) | the user's decision in slice three's planning: an app that was always so is not a deploy's regression; an old release under the floor is no baseline, so the bound alone counts after a first deploy or a quiet one. The 5xx margin refines the planning's `new > old` (/code-review pass 2 on operator rules): with none, an app erring steadily over its bound is told at a deploy whose share is higher by noise alone. The operator confirmed the refinement on 2026-11-12 |
 | Per-app request numbers need a handler the operator writes, `observe <app>` | Caddy's request metrics carry server and handler, never the app; a Caddy app cannot add a handler to the HTTP app's routes, and a dynamic upstream sees no response. The app is named on the line, since a cache hit never reaches the upstream |
 | The observer sorts before `redir` | the earliest standard directive an order can anchor on; `cache` sorts before `rewrite`, so an observer anchored later would never see a hit (cmd/motel's order tests) |
 | Its counts follow the selected instance's release, else `current`, not `activeSocket` | a request selected after a cutover is the new release's, one selected before it the old's, however long it runs; and a release that crashed owns the errors that follow it (502s while its socket is routed, then 503s with no socket, so `current`), which is what a post-deploy comparison must see |
@@ -909,9 +933,9 @@ on its general scales. metrics' examples:
 | A cache hit after a cutover counts under the new release though the page was the old one's: the new release's 5xx and hit shares carry the old's cached answers until they expire | liveswap/observe.go | 2 | 3 | 3 | 18; latency leaves hits out, and a cache's TTL bounds the mix (30 s in the starter); telling a stored page's release needs a header the cache would store, a change to every app's responses |
 | An app's threshold beside an every-app one on the same metric both fire for that app: the app's line adds a rule and cannot loosen or silence the every-app one, so when both hold its channels get two alerts | notify/operatorrules.go | 2 | 5 | 1 | 10; each alert is true and names its own rule; replacement (an app's rule taking the app out of the every-app one's selectors) is a feature for the operator to weigh, an explicit `replaces <rule>` the shape that neither breaks layered severities nor drops coverage silently; not built here (Copilot round 3 on #429) |
 | An app whose route has no `observe` has no request numbers, and nothing says so at load | liveswap/observe.go | 2 | 3 | 2 | 12; `metrics` then has no `requests`, which a deployer sees; a load-time check needs the HTTP app's routes, which the liveswap app cannot read. A rule naming such an app is refused by cmd/motel's gate ("Operator rules") |
-| `requests.per_second` is the window's total over the window's whole length, so in the first window after the observer begins counting an app's responses (`observe` added to its route, a new app) it reads low by the share of the window before; `total` counts the same responses | notify/metricsview.go (`summarizeRequests`) | 2 | 5 | 3 | 30, accepted under the skill's rule 4: the covered span needs the series' first sample (an eighth query, `tfirst_over_time`; size 3, risk 2), and that sample holds every count since motel began counting, an unknown span (hours, when the store is set up on a running box), so a rate over the covered span reads high where this one reads low. It ends correct once the series is a window old, and a deploy starts no new span: every release in the window is summed. /code-review pass 1 on slice three |
-| A miss Souin coalesced onto another request's upstream call counts under the release current when it began, not the one the call went to: across a cutover, the waiters of a call in flight at that instant can be counted under the other release | liveswap/observe.go (`markUpstream`) | 2 | 5 | 3 | 30, accepted under the skill's rule 4: only the first request's selection is made, inside Souin's singleflight, and the waiters learn nothing of it but the shared response; carrying it to them needs a change to Souin (size 3, risk 3). It is bounded to the misses on one URL waiting at the cutover instant, the same mix the cached-page row above accepts, and their latency is counted. /code-review pass 2 on slice three |
-| With no cache in front, an app's own `Cache-Status` is read as a cache's verdict: its own hits are counted in `cache_hit_share` and left out of the latency, so an app that marks every response a hit leaves its own latency out of its numbers | liveswap/observe.go (`parseCacheStatus`) | 2 | 5 | 3 | 30, accepted under the skill's rule 4: telling Souin's entry from an app's needs Souin's `cache_name` (the observer would read the cache app's configuration, a dependency liveswap does not have) or the request's path through the cache, which a stale hit's background revalidation shares (it runs on a clone of the request, vars and all); size 3, risk 2. The app's own cache is a cache that spoke, and an app moves only its own numbers (T1); the post-deploy comparison reads latency through it too, for both releases alike. /code-review pass 2 on slice three |
+| `requests.per_second` is the window's total over the window's whole length, so in the first window after the observer begins counting an app's responses (`observe` added to its route, a new app) it reads low by the share of the window before; `total` counts the same responses | notify/metricsview.go (`summarizeRequests`) | 2 | 5 | 3 | 30, accepted under the skill's rule 4: the covered span needs the series' first sample (an eighth query, `tfirst_over_time`; size 3, risk 2), and that sample holds every count since motel began counting, an unknown span (hours, when the store is set up on a running box), so a rate over the covered span reads high where this one reads low. It ends correct once the series is a window old, and a deploy starts no new span: every release in the window is summed. /code-review pass 1 on slice three. The operator accepted it on 2026-11-12 |
+| A miss Souin coalesced onto another request's upstream call counts under the release current when it began, not the one the call went to: across a cutover, the waiters of a call in flight at that instant can be counted under the other release | liveswap/observe.go (`markUpstream`) | 2 | 5 | 3 | 30, accepted under the skill's rule 4: only the first request's selection is made, inside Souin's singleflight, and the waiters learn nothing of it but the shared response; carrying it to them needs a change to Souin (size 3, risk 3). It is bounded to the misses on one URL waiting at the cutover instant, the same mix the cached-page row above accepts, and their latency is counted. /code-review pass 2 on slice three. The operator accepted it on 2026-11-12 |
+| With no cache in front, an app's own `Cache-Status` is read as a cache's verdict: its own hits are counted in `cache_hit_share` and left out of the latency, so an app that marks every response a hit leaves its own latency out of its numbers | liveswap/observe.go (`parseCacheStatus`) | 2 | 5 | 3 | 30, accepted under the skill's rule 4: telling Souin's entry from an app's needs Souin's `cache_name` (the observer would read the cache app's configuration, a dependency liveswap does not have) or the request's path through the cache, which a stale hit's background revalidation shares (it runs on a clone of the request, vars and all); size 3, risk 2. The app's own cache is a cache that spoke, and an app moves only its own numbers (T1); the post-deploy comparison reads latency through it too, for both releases alike. /code-review pass 2 on slice three. The operator accepted it on 2026-11-12 |
 | The counts a motel restart (or a crash) ends within the last 30 s were never pushed, and are lost | liveswap/observe.go | 1 | 3 | 4 | 12; at most one push's worth, and the store reads the restart as a reset |
 | A fresh counter is read through `increase`, which drops a first push that is large beside the next (a burst, then a lull), in two cases the store cannot tell from a gap or from a lifetime: one that comes with the push's first sample after the store's start or after a gap in the pushes of over two minutes (a new release deployed in the gap, a class's first response in it: the series' first sample is the push's), and under a release name the store saw within the day whose fresh count is above the last it had (a rollback past the two releases the observer keeps). The window under-reads that push for its length: five minutes for a rule, an hour or a day for `GET /<app>` | notify/operatorrules.go (`counterIncrease`), notify/metricsview.go | 2 | 5 | 3 | 30, accepted under the skill's rule 4: both read the same as a series that holds counts from before the window, which `increase_pure` would count whole; telling them apart needs the series' age from motel (a label or a series per process and release on every request series: size 3, risk 3). An under-read of one push, against a lifetime read in its place. /code-review pass 4 on operator rules; the gap case pass 5's, the push term narrowed from a day to two minutes; narrowed 2026-11-12 from the first five minutes after the push first came, or came back, to the series that came with that push, so that a series born after it counts from zero on a store younger than the window (`GET /<app>`'s Owed row) |
 | A motel restart (or a crash) inside a post-deploy window loses the comparison: nothing compares that deploy again, and a regression is told only by a threshold rule | notify/postdeploy.go | 2 | 2 | 3 | 12; the comparison is in memory, and keeping it across a restart is state on disk for a notification (size 2, risk 2); a restart rarely falls in the half hour after a deploy, and the numbers stay in `GET /<app>` |
@@ -1117,3 +1141,14 @@ Dated one-liners; the full text of each is in git.
   fresh-counter row narrows to the series that came with that push.
   Measured against the store in `TestMetricsViewCountsOverTheStore` and
   `TestOperatorRulesCountOnAFreshStore`, both in the e2e list.
+- 2026-11-12 — The operator's decisions on #429: a relaunch of a
+  release whose instance had stopped (a rollback to the release that had
+  crashed) is still compared with the bound alone, and its
+  `post_deploy_regressed` says `is over its bound … after its relaunch
+  (its earlier instance had stopped)`; liveswap marks a relaunch on the
+  `cutover` (`Relaunch`), and the comparison reads the mark, not
+  `Previous` = the release. The refined 5xx rule (1.2 × and a z-score of
+  2 over an old release already over its bound) confirmed. #427's three
+  rows scored 30 (`per_second` low for a young series, a coalesced miss
+  counted under the release current when it began, an app's own
+  `Cache-Status` read with no cache in front) accepted.

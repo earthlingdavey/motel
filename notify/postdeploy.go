@@ -61,6 +61,11 @@ type instantQuerier interface {
 type comparison struct {
 	app, release, previous, deployedBy string
 	cutover                            time.Time
+	// relaunch is a cutover to the release the app last ran, whose
+	// instance had stopped (LifecycleEvent.Relaunch with no Previous):
+	// its bound alone counts, and its event says relaunch, not
+	// regressed.
+	relaunch bool
 	// next is the next check's number k: over the k minutes from the
 	// cutover, due storeLag after them.
 	next int
@@ -138,12 +143,15 @@ func (c *comparator) deployed(ev liveswap.LifecycleEvent) {
 	if c.active == nil || ev.App == "" {
 		return
 	}
-	if ev.Previous != "" && ev.Previous == ev.Release {
+	if ev.Relaunch && ev.Previous == ev.Release {
 		// A relaunch of the release serving is no new release, and the
 		// two instances count into the release's one set of counters,
 		// so no window could tell them apart: no comparison starts, and
 		// one in flight for that release goes on, its windows as they
-		// were (Copilot round 2 on #429).
+		// were (Copilot round 2 on #429). liveswap says it is one; a
+		// relaunch whose instance had stopped (no Previous) is compared
+		// with the bound alone, as a relaunch (the operator's decision
+		// of 2026-11-12).
 		return
 	}
 	if _, ok := c.runs[ev.App]; ok {
@@ -157,7 +165,7 @@ func (c *comparator) deployed(ev liveswap.LifecycleEvent) {
 	if cut.IsZero() {
 		cut = c.now()
 	}
-	c.runs[ev.App] = &comparison{app: ev.App, release: ev.Release, previous: ev.Previous, deployedBy: ev.DeployedBy, cutover: cut, next: 1}
+	c.runs[ev.App] = &comparison{app: ev.App, release: ev.Release, previous: ev.Previous, deployedBy: ev.DeployedBy, cutover: cut, next: 1, relaunch: ev.Relaunch && ev.Previous == ""}
 }
 
 // due is one check to make: over elapsed from the cutover, read at
@@ -411,7 +419,10 @@ func queryRelease(ctx context.Context, store instantQuerier, app, release string
 // reaches the operator and the app's bound channels, with both
 // releases' numbers. The release before is not named in the summary:
 // the filter keeps the event's own release whole, and would mask
-// another git sha.
+// another git sha. A relaunch of a release whose instance had stopped
+// is said as one: over its bound after its relaunch, not regressed
+// after its deploy, and the parenthesis is why there is no baseline
+// (the operator's decision of 2026-11-12).
 func regressedEvent(r comparison, rule Rule, elapsed time.Duration, v verdict, failed int) Event {
 	var parts []string
 	if rule.Max5xxShare != nil {
@@ -434,6 +445,7 @@ func regressedEvent(r comparison, rule Rule, elapsed time.Duration, v verdict, f
 	overP95 := rule.MaxP95 != 0 && v.newer.hasP95 && v.newer.p95 > time.Duration(rule.MaxP95).Seconds()
 	baseline := ""
 	switch {
+	case r.relaunch: // said by the parenthesis below
 	case r.previous == "":
 		baseline = "; no release before it to compare"
 	case !v.hasOld: // under the floor: no baseline
@@ -447,8 +459,12 @@ func regressedEvent(r comparison, rule Rule, elapsed time.Duration, v verdict, f
 	if failed > 1 {
 		checks = "checks in a row"
 	}
-	summary := fmt.Sprintf("%s %s regressed %s after its deploy, over %d responses: %s%s; %d failing %s (rule %s)",
-		r.app, r.release, promDuration(elapsed), int(v.newer.sent), strings.Join(parts, ", "), baseline, failed, checks, rule.Name)
+	what := "regressed " + promDuration(elapsed) + " after its deploy"
+	if r.relaunch {
+		what = "is over its bound " + promDuration(elapsed) + " after its relaunch (its earlier instance had stopped)"
+	}
+	summary := fmt.Sprintf("%s %s %s, over %d responses: %s%s; %d failing %s (rule %s)",
+		r.app, r.release, what, int(v.newer.sent), strings.Join(parts, ", "), baseline, failed, checks, rule.Name)
 	return Event{
 		Name: eventPostDeployRegressed, Kind: kindEvent, Severity: SeverityWarning, App: r.app, Source: sourceRules,
 		Release: r.release, DeployedBy: r.deployedBy, Summary: summary,

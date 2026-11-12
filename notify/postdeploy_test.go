@@ -140,6 +140,14 @@ func (tc *testComparator) deploy(app, release, previous string) {
 	tc.at = tc.at.Add(storeLag + time.Second)
 }
 
+// relaunch is liveswap's report of a relaunch's cutover: previous the
+// release itself when its instance still served, empty when it had
+// stopped.
+func (tc *testComparator) relaunch(app, release, previous string) {
+	tc.deployed(liveswap.LifecycleEvent{Name: liveswap.EventCutover, App: app, Release: release, Previous: previous, DeployedBy: "local:/k.pub", Cutover: tc.at, Relaunch: true})
+	tc.at = tc.at.Add(storeLag + time.Second)
+}
+
 // minute moves to the next check and makes it.
 func (tc *testComparator) minute() {
 	tc.at = tc.at.Add(time.Minute)
@@ -555,15 +563,15 @@ func TestPostDeployALateTickMakesTheLastCheck(t *testing.T) {
 	}
 }
 
-// A relaunch of the release serving (Previous = Release) is no new
-// release: it starts no comparison, and one in flight for that release
-// goes on as it was, so its baseline never takes in the relaunched
-// instance's answers (Copilot round 2 on #429).
+// A relaunch of the release serving (liveswap's Relaunch, Previous =
+// Release) is no new release: it starts no comparison, and one in
+// flight for that release goes on as it was, so its baseline never
+// takes in the relaunched instance's answers (Copilot round 2 on #429).
 func TestPostDeployARelaunchIsNoNewRelease(t *testing.T) {
 	r := regressRule
 	r.Failures = 2
 	tc := newTestComparator(t, r)
-	tc.deploy("blog", "v2", "v2")
+	tc.relaunch("blog", "v2", "v2")
 	if len(tc.runs) != 0 {
 		t.Fatalf("a relaunch started a comparison: %+v", tc.runs["blog"])
 	}
@@ -572,13 +580,63 @@ func TestPostDeployARelaunchIsNoNewRelease(t *testing.T) {
 	tc.store.set("v2", 200, 100, 2) // 5xx and p95 both over
 	tc.minute()
 	run := tc.runs["blog"]
-	tc.deployed(liveswap.LifecycleEvent{Name: liveswap.EventCutover, App: "blog", Release: "v2", Previous: "v2", Cutover: tc.at})
+	tc.deployed(liveswap.LifecycleEvent{Name: liveswap.EventCutover, App: "blog", Release: "v2", Previous: "v2", Cutover: tc.at, Relaunch: true})
 	if tc.runs["blog"] != run || run.previous != "v1" || run.failed != 1 {
 		t.Fatalf("the relaunch touched the comparison in flight: %+v", tc.runs["blog"])
 	}
 	tc.minute()
 	if len(tc.evs) != 1 || !strings.Contains(tc.evs[0].Summary, "against 0 before it") || !strings.Contains(tc.evs[0].Summary, "p95 2000ms against 100ms") {
 		t.Fatalf("after the relaunch, v2 against v1: %+v", tc.evs)
+	}
+}
+
+// A relaunch of a release whose instance had stopped (Relaunch, no
+// Previous: a rollback to the release that had crashed) is compared
+// with the bound alone, and its event says so as a relaunch rather than
+// a regression after a deploy; a new release after a stopped one keeps
+// the deploy's words. Name, labels, severity and audience are the same
+// (the operator's decision of 2026-11-12).
+func TestPostDeployARelaunchAfterAStop(t *testing.T) {
+	for _, c := range []struct {
+		name, release string
+		relaunch      bool
+		want          string
+	}{
+		{"the release that had stopped, relaunched", "v1", true,
+			"blog v1 is over its bound 2m after its relaunch (its earlier instance had stopped), over 200 responses: 5xx share 0.1, p95 100ms; 2 failing checks in a row (rule regress)"},
+		{"a new release after a stopped one", "v2", false,
+			"blog v2 regressed 2m after its deploy, over 200 responses: 5xx share 0.1, p95 100ms; no release before it to compare; 2 failing checks in a row (rule regress)"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			tc := newTestComparator(t, regressRule)
+			if c.relaunch {
+				tc.relaunch("blog", c.release, "")
+			} else {
+				tc.deploy("blog", c.release, "")
+			}
+			if run := tc.runs["blog"]; run == nil || run.relaunch != c.relaunch {
+				t.Fatalf("the comparison: %+v", run)
+			}
+			tc.store.set(c.release, 200, 20, 0.1)
+			tc.minute()
+			tc.minute()
+			if len(tc.evs) != 1 {
+				t.Fatalf("after two failing checks: %+v", tc.evs)
+			}
+			ev := tc.evs[0]
+			if ev.Name != eventPostDeployRegressed || ev.Kind != kindEvent || ev.Severity != SeverityWarning || ev.App != "blog" ||
+				ev.Source != sourceRules || ev.Release != c.release || ev.DeployedBy != "local:/k.pub" || ev.Details["rule"] != "regress" || len(ev.Details) != 1 {
+				t.Fatalf("event = %+v", ev)
+			}
+			if ev.Summary != c.want {
+				t.Errorf("summary =\n%s\nwant\n%s", ev.Summary, c.want)
+			}
+			for _, q := range tc.store.queries {
+				if oldWindow.MatchString(q) {
+					t.Errorf("a release before it was asked for: %s", q)
+				}
+			}
+		})
 	}
 }
 
