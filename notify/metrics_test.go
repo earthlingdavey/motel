@@ -914,7 +914,8 @@ func TestWriteRules(t *testing.T) {
 }
 
 // observe's counts reach the registry per release, a stopped
-// app's among them; a release with no response pushes nothing.
+// app's among them; a release with no response pushes nothing, but the
+// current release of an observed app, at zero.
 func TestAppCollectorRequests(t *testing.T) {
 	var cur liveswap.ReleaseRequests
 	cur.Release = "v2"
@@ -926,6 +927,9 @@ func TestAppCollectorRequests(t *testing.T) {
 	reg := prometheus.NewPedanticRegistry()
 	if err := reg.Register(appCollector{root: t.TempDir(), apps: fakeSampler{
 		{App: "blog", Release: "v2", Requests: []liveswap.ReleaseRequests{cur, empty}},
+		{App: "shop", Release: "s2", Observed: true, Requests: []liveswap.ReleaseRequests{{Release: "s2"}, {Release: "s1"}}},
+		{App: "idle", Release: "i1", Requests: []liveswap.ReleaseRequests{{Release: "i1"}}},
+		{App: "new", Observed: true, Requests: []liveswap.ReleaseRequests{{}}},
 	}}); err != nil {
 		t.Fatal(err)
 	}
@@ -952,12 +956,14 @@ func TestAppCollectorRequests(t *testing.T) {
 		`motel_app_response_seconds_count{app="blog",release="v2"} 100`,
 		`motel_app_cache_responses_total{app="blog",release="v2",result="hit"} 30`,
 		`motel_app_cache_responses_total{app="blog",release="v2",result="miss"} 60`,
+		`motel_app_requests_total{app="shop",class="2xx",release="s2"} 0`,
+		`motel_app_response_seconds_count{app="shop",release="s2"} 0`,
 	} {
 		if !strings.Contains(text, line+"\n") {
 			t.Errorf("missing %s", line)
 		}
 	}
-	for _, absent := range []string{`release="v1"`, `result="stale"`} {
+	for _, absent := range []string{`release="v1"`, `result="stale"`, `release="s1"`, `app="idle",class`, `motel_app_response_seconds_count{app="idle"`, `release=""`} {
 		if strings.Contains(text, absent) {
 			t.Errorf("%s pushed: %s", absent, text)
 		}

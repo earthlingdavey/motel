@@ -448,6 +448,32 @@ func TestObserveFollowsTheDeploy(t *testing.T) {
 	}
 }
 
+// An app is observed while a loaded config's observe names it: a
+// reload provisions the new config's handler before it cleans up the
+// old's, and a Cleanup after a failed Provision (counted nothing) or a
+// second one takes nothing away.
+func TestObserveCountsItsHandlers(t *testing.T) {
+	h, _ := newTestHandler(t)
+	ma := h.app.managedApp("demo")
+	observed := func() bool { return h.app.AppSamples()[0].Observed }
+	if observed() {
+		t.Fatal("observed with no handler")
+	}
+	old, next := &Observe{App: "demo"}, &Observe{App: "demo"}
+	old.observe(ma)
+	next.observe(ma)
+	must(t, old.Cleanup())
+	must(t, old.Cleanup())
+	must(t, (&Observe{App: "demo"}).Cleanup()) // its Provision failed
+	if !observed() {
+		t.Fatal("the reload's handler does not observe the app")
+	}
+	must(t, next.Cleanup())
+	if observed() {
+		t.Fatal("observed after the last handler's Cleanup")
+	}
+}
+
 func TestObserveCaddyfile(t *testing.T) {
 	var o Observe
 	if err := o.UnmarshalCaddyfile(caddyfile.NewTestDispenser(`observe blog`)); err != nil || o.App != "blog" {

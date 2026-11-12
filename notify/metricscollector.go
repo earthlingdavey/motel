@@ -76,7 +76,7 @@ func (c appCollector) Collect(ch chan<- prometheus.Metric) {
 		}
 		// Whether or not an instance runs: a release that crashed owns
 		// the 502s and 503s that follow.
-		collectRequests(ch, s.App, s.Requests)
+		collectRequests(ch, s)
 		if !s.Running {
 			continue
 		}
@@ -97,14 +97,19 @@ func (c appCollector) Collect(ch chan<- prometheus.Metric) {
 }
 
 // collectRequests is one app's request series. A release with no
-// response yet has none: an app with no observer pushes nothing.
-func collectRequests(ch chan<- prometheus.Metric, app string, rs []liveswap.ReleaseRequests) {
-	for _, r := range rs {
+// response yet has none, but the current release of an app an observer
+// counts for: its zeros are the app's numbers, so that a request_rate
+// rule's `<` holds for an app that has had no request since motel
+// started (the counts start from zero), as it does once its series is
+// in the store. An app with no observer pushes nothing.
+func collectRequests(ch chan<- prometheus.Metric, s liveswap.AppSample) {
+	app := s.App
+	for _, r := range s.Requests {
 		var total uint64
 		for _, n := range r.ByClass {
 			total += n
 		}
-		if total == 0 {
+		if total == 0 && (!s.Observed || r.Release == "" || r.Release != s.Release) {
 			continue
 		}
 		for i, n := range r.ByClass {

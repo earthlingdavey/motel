@@ -243,7 +243,13 @@ mechanics, its order and its measured cost are DESIGN-liveswap.md's
   reads as a counter reset.
 
 An app with no `observe` in its route pushes no request series,
-and its `metrics` has no `requests`.
+and its `metrics` has no `requests`. An observed app's current release
+is pushed from the first push, at zero before its first response
+(liveswap counts the loaded configs' observers of each app: a reload
+provisions the new config's before it cleans up the old's): with no
+series, a `request_rate <` rule could never hold for an app no one has
+reached since motel started, the stopped traffic it exists to tell. The
+release before is pushed once it has a response.
 
 ## Rules
 

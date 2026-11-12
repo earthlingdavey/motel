@@ -314,6 +314,11 @@ type managedApp struct {
 	// requests is what observe counts, per release (observe.go):
 	// set to the new release wherever current gets a new instance.
 	requests requestCounts
+	// observers is how many observe handlers of the loaded configs name
+	// the app (Provision adds one, Cleanup takes it away): while one
+	// does, its current release's counts are the app's numbers even at
+	// zero (AppSample.Observed).
+	observers atomic.Int32
 
 	// Watchdog plumbing. The goroutine is pool-scoped like everything
 	// else here: started once (first Start), never touched by

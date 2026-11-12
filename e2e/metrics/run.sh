@@ -136,6 +136,12 @@ a=$(wait_result up 'motel_app_up{app="blog"} == 1' 90) \
 	&& pass "motel_app_up{app=\"blog\"} is 1" || fail "no motel_app_up for blog: $(q 'motel_app_up')"
 a=$(wait_result release 'motel_app_release_info{app="blog",release="v1"}' 30) \
 	&& pass "motel_app_release_info names v1" || fail "no release_info for blog v1"
+# Observed, and no request through the proxy yet (metrics 3a sends the
+# first): the current release's counts are pushed at zero, so that a
+# request_rate rule's `<` holds for an app no one has reached.
+a=$(wait_result zero 'motel_app_requests_total{app="blog",release="v1",class="2xx"} == 0' 60) \
+	&& pass "an observed release with no response yet is pushed at zero" \
+	|| fail "no zero count for blog v1 before its first request: $(q 'motel_app_requests_total')"
 a=$(wait_result cpu 'motel_app_cpu_seconds_total{app="blog"} > 0' 60) \
 	&& pass "motel_app_cpu_seconds_total for blog" || fail "no CPU for blog: $(q 'motel_app_cpu_seconds_total')"
 # The unit's memory is its cgroup's memory.current, which exists only
