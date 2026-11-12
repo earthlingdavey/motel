@@ -218,14 +218,29 @@ func (c diskCollector) Collect(ch chan<- prometheus.Metric) {
 	if stat == nil {
 		stat = statAvail
 	}
-	seen := map[uint64]bool{}
+	// Every path first: a series keeps its name only while that path is
+	// still on its device (diskNames.name).
+	type measured struct {
+		path       string
+		avail, dev uint64
+	}
+	var got []measured
+	devOf := map[string]uint64{}
 	for _, p := range c.paths {
 		avail, dev, err := stat(p)
-		if err != nil || seen[dev] {
+		if err != nil {
 			continue // not measured is no sample: the rule's line keeps its last
 		}
-		seen[dev] = true
-		ch <- prometheus.MustNewConstMetric(diskAvailDesc, prometheus.GaugeValue, float64(avail), diskLabels.name(dev, p, c.paths))
+		got = append(got, measured{p, avail, dev})
+		devOf[p] = dev
+	}
+	seen := map[uint64]bool{}
+	for _, m := range got {
+		if seen[m.dev] {
+			continue
+		}
+		seen[m.dev] = true
+		ch <- prometheus.MustNewConstMetric(diskAvailDesc, prometheus.GaugeValue, float64(m.avail), diskLabels.name(m.dev, m.path, c.paths, devOf))
 	}
 }
 
@@ -242,12 +257,24 @@ type diskNames struct {
 }
 
 // name is the device's series' path: the one it had while that is
-// still among paths, else p, measured now.
-func (n *diskNames) name(dev uint64, p string, paths []string) string {
+// still among paths and not measured on another device now (devOf: the
+// paths measured at this gather), else p, measured now. A path names
+// one device's series at most: two series of one name are a gather
+// error (the push drops the second, the admin /metrics answers 500). A path moved to another
+// filesystem (a disk mounted there) names that one's series, and the
+// device it left is named by its next path.
+func (n *diskNames) name(dev uint64, p string, paths []string, devOf map[string]uint64) string {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 	if had, ok := n.byDev[dev]; ok && slices.Contains(paths, had) {
-		return had
+		if d, now := devOf[had]; !now || d == dev {
+			return had
+		}
+	}
+	for d, had := range n.byDev {
+		if had == p {
+			delete(n.byDev, d)
+		}
 	}
 	n.byDev[dev] = p
 	return p

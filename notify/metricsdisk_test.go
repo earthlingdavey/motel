@@ -77,6 +77,50 @@ motel_disk_avail_bytes{path="/var/lib/liveswap"} 1000
 	}
 }
 
+// A path that moves to another filesystem (a disk mounted on it) names
+// that filesystem's series, and the one it left takes its next path's
+// name: never two series of one name, which would fail the gather.
+func TestDiskSeriesFollowsAMount(t *testing.T) {
+	diskLabels = &diskNames{byDev: map[uint64]string{}}
+	dev := map[string]uint64{"/var/lib/liveswap": 1, "/var/lib/caddy": 1}
+	c := diskCollector{
+		paths: []string{"/var/lib/liveswap", "/var/lib/caddy"},
+		stat:  func(p string) (uint64, uint64, error) { return 1000 * dev[p], dev[p], nil },
+	}
+	reg := prometheus.NewPedanticRegistry()
+	reg.MustRegister(c)
+	head := `# HELP motel_disk_avail_bytes ` + diskAvailDescHelp + `
+# TYPE motel_disk_avail_bytes gauge
+`
+	if err := testutil.GatherAndCompare(reg, strings.NewReader(head+`motel_disk_avail_bytes{path="/var/lib/liveswap"} 1000
+`)); err != nil {
+		t.Fatal(err)
+	}
+	dev["/var/lib/liveswap"] = 2
+	want := head + `motel_disk_avail_bytes{path="/var/lib/caddy"} 1000
+motel_disk_avail_bytes{path="/var/lib/liveswap"} 2000
+`
+	for range 2 {
+		if err := testutil.GatherAndCompare(reg, strings.NewReader(want)); err != nil {
+			t.Fatalf("after the mount: %v", err)
+		}
+	}
+	// Its stat failing now leaves the moved path to its own filesystem:
+	// the one it left keeps the name it took.
+	c.stat = func(p string) (uint64, uint64, error) {
+		if p == "/var/lib/liveswap" {
+			return 0, 0, os.ErrPermission
+		}
+		return 1000, 1, nil
+	}
+	reg2 := prometheus.NewPedanticRegistry()
+	reg2.MustRegister(c)
+	if err := testutil.GatherAndCompare(reg2, strings.NewReader(head+`motel_disk_avail_bytes{path="/var/lib/caddy"} 1000
+`)); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // statfs counts blocks in f_frsize, as df does; f_bsize is the
 // preferred I/O size and need not be it.
 func TestFsNumbersCountFragments(t *testing.T) {

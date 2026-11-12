@@ -389,7 +389,10 @@ state directory), one series per filesystem, read at each gather. It is
 named by the first of them on it, and keeps that name while the path is
 measured: a stat of it that fails once leaves the series to the next
 path on the device under the same name, so a rule's history is not cut
-in two.
+in two. A path measured on another device (a disk mounted on it) names
+that device's series, and the one it left is named by its next path: a
+name is one series' at a time, since two are a gather error (the push
+drops the second, the admin /metrics answers 500).
 
 **The post-deploy comparison** (notify/postdeploy.go) is motel's: vmalert
 knows neither when the cutover was nor which release came before.
