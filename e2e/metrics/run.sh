@@ -131,7 +131,7 @@ for r in errors_high blog_slow disk_filling; do
 	printf '%s' "$op" | grep -q "alert: $r\$" || fail "the motel-operator group has no $r: $(printf '%s' "$op" | head -c 300)"
 done
 printf '%s' "$op" | grep -q 'increase_pure(motel_app_requests_total' \
-	&& printf '%s' "$op" | grep -q 'unless present_over_time(motel_app_requests_total' \
+	&& printf '%s' "$op" | grep -q 'unless (present_over_time(motel_app_requests_total' \
 	&& printf '%s' "$op" | grep -q 'or increase(motel_app_requests_total' \
 	&& ! grep -q 'blog_regressed' "$STATE/rules.yml" && printf '%s' "$op" | grep -q 'key: rules/app:blog/blog_slow' \
 	&& pass "the motel-operator group holds the threshold and disk_fill rules, through the counter guard, keyed rules/<subject>/<name>" \
