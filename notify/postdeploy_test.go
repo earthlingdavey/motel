@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -266,19 +267,20 @@ func TestPostDeployAPassResetsTheCount(t *testing.T) {
 	tc.minute()
 	bad()
 	tc.minute()
-	// A skip (the store not answering) neither fails nor passes.
+	// The store not answering neither fails nor passes: the check is
+	// asked again.
 	tc.store.err = errors.New("down")
 	tc.minute()
 	tc.store.err = nil
 	if len(tc.evs) != 0 {
 		t.Fatalf("told with a pass between the failures: %+v", tc.evs)
 	}
-	if tc.logs.FilterMessage("monitor rules: the post-deploy check is skipped: the metrics store did not answer").Len() != 1 {
+	if tc.logs.FilterMessage("monitor rules: the post-deploy check is asked again: the metrics store did not answer").Len() != 1 {
 		t.Error("no debug line for the store not answering")
 	}
 	tc.minute()
-	if len(tc.evs) != 1 || !strings.Contains(tc.evs[0].Summary, "2 failing checks in a row") {
-		t.Fatalf("two in a row, a skip between: %+v", tc.evs)
+	if len(tc.evs) != 1 || !strings.Contains(tc.evs[0].Summary, "regressed 4m after") || !strings.Contains(tc.evs[0].Summary, "2 failing checks in a row") {
+		t.Fatalf("two in a row, the second asked again: %+v", tc.evs)
 	}
 }
 
@@ -511,5 +513,60 @@ func TestPostDeployARelaunchIsNoNewRelease(t *testing.T) {
 	tc.minute()
 	if len(tc.evs) != 1 || !strings.Contains(tc.evs[0].Summary, "against 0 before it") || !strings.Contains(tc.evs[0].Summary, "p95 2000ms against 100ms") {
 		t.Fatalf("after the relaunch, v2 against v1: %+v", tc.evs)
+	}
+}
+
+// A check the store did not answer is asked again, at its own time, and
+// the minutes it held up after it in turn: with failures equal to the
+// window's minutes, a store that missed one still lets the regression be
+// told. One that does not answer past the grace ends the comparison,
+// with a warning.
+func TestPostDeployAsksAgainWhatTheStoreDidNotAnswer(t *testing.T) {
+	r := regressRule
+	r.Window, r.Failures = caddyMinutes(3), 3
+	tc := newTestComparator(t, r)
+	cutover := tc.at
+	tc.deploy("blog", "v2", "")
+	tc.store.set("v2", 200, 20, 0.1)
+	tc.minute()
+	tc.store.err = errors.New("timeout")
+	tc.minute() // minute 2: no answer
+	tc.minute() // minute 3, and 2 still owed: no answer
+	tc.store.err = nil
+	tc.at = tc.at.Add(10 * time.Second)
+	tc.tick(context.Background()) // minute 2
+	if len(tc.evs) != 0 {
+		t.Fatalf("told before the third check: %+v", tc.evs)
+	}
+	tc.at = tc.at.Add(10 * time.Second)
+	tc.tick(context.Background()) // minute 3
+	if len(tc.evs) != 1 || !strings.Contains(tc.evs[0].Summary, "regressed 3m after") || !strings.Contains(tc.evs[0].Summary, "3 failing checks in a row") {
+		t.Fatalf("after the store came back: %+v", tc.evs)
+	}
+	// Each check read at its own minute, whenever it was made.
+	var mins []time.Duration
+	for i, at := range tc.store.at {
+		if !strings.HasPrefix(tc.store.queries[i], "histogram_quantile") {
+			mins = append(mins, at.Sub(cutover))
+		}
+	}
+	if want := []time.Duration{time.Minute, 2 * time.Minute, 2 * time.Minute, 2 * time.Minute, 3 * time.Minute}; !slices.Equal(mins, want) {
+		t.Errorf("read at cutover + %v, want %v", mins, want)
+	}
+
+	tc.deploy("blog", "v3", "v2")
+	tc.store.err = errors.New("timeout")
+	for range 2 + int(postDeployGrace/time.Minute) {
+		tc.minute()
+	}
+	if len(tc.runs) != 1 {
+		t.Fatal("ended within the grace")
+	}
+	tc.minute()
+	if len(tc.runs) != 0 || len(tc.evs) != 1 {
+		t.Fatalf("past the grace: %d in flight, %d events", len(tc.runs), len(tc.evs))
+	}
+	if n := tc.logs.FilterMessageSnippet("ended unfinished").FilterField(zap.String("release", "v3")).Len(); n != 1 {
+		t.Errorf("%d warning lines, want one", n)
 	}
 }

@@ -445,8 +445,14 @@ The checks due at a tick run at once, each within the store's 10 s
 budget, so a slow store does not stretch the minute between them.
 A check is **skipped**, neither a pass nor a failure, while the new
 release has fewer than `min_requests` responses sent (aborted left
-out), and when the store does not answer (a debug line, `the post-deploy
-check is skipped`). It **fails** when the new release is over
+out). One the store does not answer is **asked again** at the next tick
+(a debug line, `the post-deploy check is asked again`), and the minutes
+it held up after it in turn, one a tick, each read at its own time, so a
+late answer is the one it would have been and failures equal to the
+window's minutes stay reachable; a minute a stalled tick left behind is
+made late the same way. A store that has not answered 10 minutes past
+the window's end ends the comparison, with a warning line (`ended
+unfinished`). It **fails** when the new release is over
 `max_p95` with a p95 above 1.2 × the old's (a quantile is an estimate
 inside a bucket), or over `max_5xx_share` and worse than the old: an old
 release within the bound makes crossing it the regression; an old one
@@ -457,9 +463,7 @@ this design's refinement of the planning's `new 5xx > old 5xx`
 ("Decisions"). An old release with fewer than `min_requests` responses
 sent in its window, or with none, is no baseline: the bound alone
 counts. A pass resets the count; a check skipped neither breaks nor
-extends it, so "in a row" counts the checks that were answered and over
-the floor. A tick late past the window's end still makes the window's
-last check. After `failures` failing checks in a row, motel
+extends it, so "in a row" counts the checks over the floor. After `failures` failing checks in a row, motel
 reports one `post_deploy_regressed` through notify's engine (the filter,
 the bucket, the journal line), and the comparison ends: `blog v2
 regressed 3m after its deploy, over 240 responses: 5xx share 0.0833

@@ -45,6 +45,10 @@ const (
 	// errs steadily is not told at every deploy.
 	shareMargin = 1.2
 	shareZ      = 2
+	// postDeployGrace is how long past the window's end a check the
+	// store did not answer is asked again before the comparison ends
+	// unfinished.
+	postDeployGrace = 10 * time.Minute
 )
 
 // instantQuerier is the store's instant query at a time.
@@ -180,23 +184,21 @@ func (c *comparator) tick(ctx context.Context) {
 			delete(c.runs, app) // the config serving has no rule for it any more
 			continue
 		}
-		// The latest whole minute the store can answer for: one a
-		// stalled tick missed is not made late.
-		k := int(now.Sub(r.cutover.Add(storeLag)) / postDeployEvery)
-		if k < r.next {
+		// The next minute owed, once the store can answer for it: one a
+		// stalled tick or a store that did not answer left behind is
+		// made late, read at its own time, one a tick, so that with
+		// failures equal to the window's minutes the regression's count
+		// can still be reached.
+		latest := int(now.Sub(r.cutover.Add(storeLag)) / postDeployEvery)
+		if latest < r.next {
 			continue
 		}
-		if last := int(rule.window() / postDeployEvery); k > last {
-			if r.next > last {
-				delete(c.runs, app) // the window is over: the release held
-				c.logger.Debug("monitor rules: the post-deploy comparison ended with its window", zap.String("app", app), zap.String("release", r.release))
-				continue
-			}
-			// A tick late past the window's end still makes its last
-			// check: with failures equal to the window's minutes, the
-			// regression's count needs it.
-			k = last
+		if last := int(rule.window() / postDeployEvery); r.next > last {
+			delete(c.runs, app) // the window is over: the release held
+			c.logger.Debug("monitor rules: the post-deploy comparison ended with its window", zap.String("app", app), zap.String("release", r.release))
+			continue
 		}
+		k := r.next
 		elapsed := time.Duration(k) * postDeployEvery
 		r.next = k + 1
 		dues = append(dues, due{run: r, cmp: *r, rule: rule, elapsed: elapsed})
@@ -223,15 +225,23 @@ func (c *comparator) check(ctx context.Context, store instantQuerier, logger *za
 	cctx, cancel := context.WithTimeout(ctx, storeRequestTimeout)
 	v := checkRelease(cctx, store, d.cmp, d.rule, d.elapsed)
 	cancel()
-	if v.err != nil {
-		logger.Debug("monitor rules: the post-deploy check is skipped: the metrics store did not answer",
-			zap.String("app", d.cmp.app), zap.String("release", d.cmp.release), zap.Error(v.err))
-		return
-	}
 	var ev *Event
 	c.mu.Lock()
 	if c.runs[d.cmp.app] == d.run { // not ended or replaced meanwhile
 		switch {
+		case v.err != nil:
+			// Asked again at the next tick: a check skipped would leave
+			// the count short of failures equal to the window's minutes.
+			// Past the grace the comparison ends, said where it is seen.
+			if c.now().Sub(d.cmp.cutover.Add(d.rule.window()+storeLag)) > postDeployGrace {
+				delete(c.runs, d.cmp.app)
+				logger.Warn("monitor rules: the post-deploy comparison ended unfinished: the metrics store did not answer its checks",
+					zap.String("app", d.cmp.app), zap.String("release", d.cmp.release), zap.Int("failing_in_a_row", d.run.failed), zap.Error(v.err))
+				break
+			}
+			d.run.next = int(d.elapsed / postDeployEvery)
+			logger.Debug("monitor rules: the post-deploy check is asked again: the metrics store did not answer",
+				zap.String("app", d.cmp.app), zap.String("release", d.cmp.release), zap.Error(v.err))
 		case v.skipped:
 		case !v.failed:
 			d.run.failed = 0
