@@ -57,7 +57,7 @@ their solutions:
 | Piece | What | Where |
 |---|---|---|
 | The namespace | `motel-metrics`, holding a loopback only | `motel-metrics-netns.service`, a oneshot (`ip netns add`, `lo up`) |
-| The store | Debian 13's `victoria-metrics` 1.112.0: storage, MetricsQL, vmui, its own scrapes | Debian's unit with motel's drop-in (`notify/units/metrics/10-motel.conf`): `NetworkNamespacePath=`, `-httpListenAddr=127.0.0.1:8428` inside it, `-retentionPeriod=14d`, `MemoryMax=256M`, `-memory.allowedBytes=96MiB` |
+| The store | Debian 13's `victoria-metrics` 1.112.0: storage, MetricsQL, its own scrapes (no vmui: Debian builds it without, "Viewing") | Debian's unit with motel's drop-in (`notify/units/metrics/10-motel.conf`): `NetworkNamespacePath=`, `-httpListenAddr=127.0.0.1:8428` inside it, `-retentionPeriod=14d`, `MemoryMax=256M`, `-memory.allowedBytes=96MiB` |
 | Its listener | `/run/motel-metrics/vm.sock`, 0660 root:motel (`motel-vm.socket`) → `systemd-socket-proxyd` in the namespace (`DynamicUser=yes`, no capability) → `127.0.0.1:8428` | no TCP port in the host namespace |
 | vmalert | from the same package (Debian 13 has no `vmalert` package): evaluates `rules.yml` every minute, keeps its alert state in the store | `motel-vmalert.service`, `User=_victoria-metrics`, in the namespace, `MemoryMax=128M` |
 | Its outlet | `127.0.0.1:9093` bound **inside** the namespace (`motel-am-proxy.socket`) → `systemd-socket-proxyd` (`_victoria-metrics` with motel as its group, no capability, a view of the socket's directory alone) → `/run/motel-notify/am.sock` | vmalert speaks TCP only, to its datasource and its notifier (unix_socket_test.md) |
@@ -262,8 +262,9 @@ release before is pushed once it has a response.
 
 vmalert reads `rules.yml`, which motel renders at every config load
 (`-configCheckInterval=1m` re-reads it: vmalert's HTTP listener is in
-the namespace, so motel has no reload to call). setup writes the two
-groups empty first, so vmalert starts before motel's first render. Every rule
+the namespace, so motel has no reload to call). setup writes the three
+groups (`motel-store`, `motel-channel-failed`, `motel-operator`) empty
+first, so vmalert starts before motel's first render. Every rule
 is motel's text; nothing in the Caddyfile is an expression or a
 template, and the operator's `rule` lines choose among motel's kinds
 ("Operator rules").
@@ -294,7 +295,7 @@ failure: `alertname`, `notify_channel`, `severity="warning"`,
 three are one rule (`receiver_name=~"a|b"`). Two posts with the same labels
 are one alert in Alertmanager, so the two sources deduplicate; the
 heartbeat receiver (no channel, so no suspect) is left to motel's own.
-With no channel (a `metrics` line alone) both groups are empty
+With no channel (a `metrics` line alone) every group is empty
 (vmalert refuses a rule file with no group at all); so are they after a
 reload takes the `metrics` line away ("The metrics line").
 
@@ -889,14 +890,19 @@ handler on every observed app's request path.
 ## Viewing
 
 No new listener, no new credential kind, no session, as for
-Alertmanager. root, on a laptop: `ssh -L
+Alertmanager, and no UI: Debian's package is built without vmui, so
+`/vmui/` answers `404 page not found`, though the store's index page at
+`/` still links it (measured on 1.112.0 in the e2e box, 2026-11-12).
+On the box, `curl --unix-socket /run/motel-metrics/vm.sock
+http://vm/api/v1/query?...` (docs/monitor.md, "Look at the numbers",
+has the queries). root, on a laptop: `ssh -L
 /run/user/$UID/vm.sock:/run/motel-metrics/vm.sock root@box` for
 command-line clients, or a short-lived `ssh -L 8428:/run/motel-metrics/vm.sock`
-for vmui in a browser, closed after (a TCP forward is an unauthenticated
-full-power API for every process on the laptop). On the box, `curl
---unix-socket /run/motel-metrics/vm.sock http://vm/api/v1/query?...`.
-A deployer reads `GET /<app>`'s `metrics`; not vmui, not the rules,
-not other apps.
+for a client that speaks only TCP, such as a laptop's own Grafana,
+closed after (a TCP forward is an unauthenticated full-power API for
+every process on the laptop). Neither forward is measured. A deployer
+reads `GET /<app>`'s `metrics`; not the store, not the rules, not
+other apps.
 
 ## Footprint
 

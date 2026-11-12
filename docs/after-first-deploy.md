@@ -192,6 +192,9 @@ see during the restart, and how to pick a quiet moment for it.
   setting them up, checking on them and restoring are
   [Backups](backups.md), which says first
   [who runs which](backups.md#who-runs-these).
+- **Hearing when something goes wrong** (experimental, not in a
+  release yet): the `monitor` block, `motel monitor setup` and your
+  channels are [Monitor](monitor.md).
 - **Everything else:** [liveswap/README.md](../liveswap/README.md) is the
   reference for every option, status code and edge.
 
