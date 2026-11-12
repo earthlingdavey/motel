@@ -188,7 +188,7 @@ func TestPostDeployFailsAfterItsCountInARow(t *testing.T) {
 	}
 	var sawNew, sawOld bool
 	for _, q := range tc.store.queries {
-		if !strings.Contains(q, "unless present_over_time(") || !strings.Contains(q, ") or increase(") {
+		if !strings.Contains(q, "unless (present_over_time(") || !strings.Contains(q, ") or increase(") {
 			t.Errorf("a query not through counterIncrease: %s", q)
 		}
 		sawNew = sawNew || strings.Contains(q, counterIncrease(`motel_app_requests_total{app="blog",release="v2"}`, 2*time.Minute, 0))

@@ -293,9 +293,11 @@ func TestOperatorRulesRender(t *testing.T) {
 		}
 	}
 	// The guard itself, whole: increase_pure for a series new to the
-	// store once the push is older than the window, increase otherwise.
+	// store, or back below its last value, once the push is older than
+	// the window; increase otherwise.
 	if got, want := counterIncrease(`m{app="a"}`, 150*time.Second, 90*time.Second),
-		`((increase_pure(m{app="a"}[150s] offset 90s) unless present_over_time(m{app="a"}[1d] offset 4m))`+
+		`((increase_pure(m{app="a"}[150s] offset 90s) unless (present_over_time(m{app="a"}[1d] offset 4m)`+
+			` unless (last_over_time(m{app="a"}[1d] offset 4m) > first_over_time(m{app="a"}[150s] offset 90s))))`+
 			` and on() present_over_time(process_start_time_seconds{job="motel"}[1d] offset 4m)) or increase(m{app="a"}[150s] offset 90s)`; got != want {
 		t.Errorf("counterIncrease =\n%s\nwant\n%s", got, want)
 	}
@@ -442,11 +444,13 @@ func runUnittest(t *testing.T, tool, dir, test string) {
 
 // A request counter over the store's own MetricsQL: a series new to the
 // store once the push is older than the window counts from zero (fresh
-// answers a burst of 400 and nothing after, which increase would drop);
-// one back after a 20-minute gap in the pushes is not read as its
-// lifetime (gapped counts 10 a minute throughout, 500 by its return);
-// nor is one that came with the push itself (the metrics line first
-// loaded on a box whose observer had counted 5000).
+// answers a burst of 400 and nothing after, which increase would drop),
+// and so does one back below its last value (reused, a release name
+// rolled back to with a fresh counter); one back after a 20-minute gap
+// in the pushes is not read as its lifetime (gapped counts 10 a minute
+// throughout, 500 by its return); nor is one that came with the push
+// itself (the metrics line first loaded on a box whose observer had
+// counted 5000).
 func TestOperatorRulesCountAfterAGap(t *testing.T) {
 	tool := vmTool(t, "vmalert-tool")
 	dir := t.TempDir()
@@ -465,6 +469,8 @@ tests:
         values: '_x30 400x60'
       - series: 'motel_app_requests_total{app="gapped",release="v1",class="2xx",job="motel"}'
         values: '0+10x30 _x20 500+10x40'
+      - series: 'motel_app_requests_total{app="reused",release="v1",class="2xx",job="motel"}'
+        values: '0+100x10 _x30 400x50'
     alert_rule_test:
       - eval_time: 33m
         groupname: motel-operator
@@ -472,6 +478,12 @@ tests:
         exp_alerts:
           - exp_labels: {app: fresh, kind: state, severity: warning, subject: "app:fresh", source: rules, key: "rules/app:fresh/busy"}
             exp_annotations: {summary: "fresh: its requests a second over 5 minutes has been above 1 for 2m (rule busy); now 1.333"}
+      - eval_time: 44m
+        groupname: motel-operator
+        alertname: busy
+        exp_alerts:
+          - exp_labels: {app: reused, kind: state, severity: warning, subject: "app:reused", source: rules, key: "rules/app:reused/busy"}
+            exp_annotations: {summary: "reused: its requests a second over 5 minutes has been above 1 for 2m (rule busy); now 1.333"}
       - eval_time: 54m
         groupname: motel-operator
         alertname: busy

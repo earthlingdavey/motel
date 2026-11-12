@@ -593,15 +593,17 @@ const counterLookback = "1d"
 // The store's increase_pure counts from zero whenever no sample comes
 // within about the window before it, and its increase drops a first
 // value that is large beside the next step (measured on 1.112.0). A
-// series new to the store with the push already older than the window
-// is a new one of motel's (a release's first push after its cutover, a
-// class's first response), counted from zero since it was: through
-// increase_pure, whose first value its increase would drop (22
-// responses read as 0, e2e metrics 3a). Any other series the window
-// reads through increase: one with an earlier sample came back after a
-// gap in the pushes (the store down, or read-only), and one that came
-// with the push itself (the metrics line first loaded on a box whose
-// observer had counted for hours) holds every count since motel began;
+// series new to the store, or back below its last value (a fresh
+// counter: a release name the store saw within the day, rolled back
+// to), with the push already older than the window, is a new one of
+// motel's (a release's first push after its cutover, a class's first
+// response), counted from zero since it was: through increase_pure,
+// whose first value its increase would drop (22 responses read as 0,
+// e2e metrics 3a). Any other series the window reads through increase:
+// one back at or above its last value came back after a gap in the
+// pushes (the store down, or read-only), and one that came with the
+// push itself (the metrics line first loaded on a box whose observer
+// had counted for hours) holds every count since motel began;
 // increase_pure would read either's first value as the window's own.
 // Where a sample comes just before the window the two agree.
 func counterIncrease(sel string, win, off time.Duration) string {
@@ -610,8 +612,10 @@ func counterIncrease(sel string, win, off time.Duration) string {
 		offset = " offset " + promDuration(off)
 	}
 	w := "[" + promDuration(win) + "]" + offset
-	return "((increase_pure(" + sel + w + ") unless present_over_time(" + sel + "[" + counterLookback + "] offset " + back + "))" +
-		" and on() present_over_time(" + pushSeries + "[" + counterLookback + "] offset " + back + "))" +
+	before := "[" + counterLookback + "] offset " + back
+	return "((increase_pure(" + sel + w + ") unless (present_over_time(" + sel + before + ")" +
+		" unless (last_over_time(" + sel + before + ") > first_over_time(" + sel + w + "))))" +
+		" and on() present_over_time(" + pushSeries + before + "))" +
 		" or increase(" + sel + w + ")"
 }
 
