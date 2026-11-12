@@ -57,11 +57,11 @@ func gateArgs(args []string, stderr io.Writer) (stop bool, run []string) {
 	if cmd == "run" && cfg != nil {
 		retireMetricsRules(cfg, stderr)
 	}
-	if cfg != nil {
-		warnMonitor(cmd, cfg, stderr)
-	}
-	if cmd == "reload" && cfg != nil && reloadForces(args[1:], cfg) {
-		run = append(append([]string{}, args...), "--force")
+	if monitor := monitorJSON(cfg); monitor != nil {
+		warnMonitor(cmd, monitor, stderr)
+		if cmd == "reload" && reloadForces(args[1:], monitor) {
+			run = append(append([]string{}, args...), "--force")
+		}
 	}
 	switch {
 	case err != nil && cmd == "run":

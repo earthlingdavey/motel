@@ -177,6 +177,9 @@ func TestResolveRefusals(t *testing.T) {
 		{"bind deployed_by pasted whole", base + "operator ops\nbind \"" + ghIssuer + " repository=org/shop ref=refs/heads/main actor=octo\" alice", nil, "pins actor, ref: a binding names what a source pins, not a token's every claim (deployed_by shows them all); remove actor and ref from the line"},
 		{"bind wrong repository", base + "operator ops\nbind \"" + ghIssuer + " repository=org/blog\" alice", nil, "no app's deploy_trust trusts"},
 		{"bind wrong repository and a token's claim", base + "operator ops\nbind \"" + ghIssuer + " repository=org/blog ref=refs/heads/main\" alice", nil, "no app's deploy_trust trusts"},
+		// Without ref= it would name no claim, which an oidc line must:
+		// the advice would be refused in turn.
+		{"bind an oidc token's claim alone", base + "operator ops\nbind \"" + ghIssuer + " ref=refs/heads/main\" alice", nil, "no app's deploy_trust trusts"},
 		{"missing secret", base + "operator ops", map[string]string{"NOTIFY_OPS_URL": "https://hooks.slack.com/x"}, "secret NOTIFY_ALICE_URL is not in the box's secrets"},
 		{"empty secret", base + "operator ops", map[string]string{"NOTIFY_OPS_URL": "https://hooks.slack.com/x", "NOTIFY_ALICE_URL": ""}, "secret NOTIFY_ALICE_URL is empty in the box's secrets (/etc/motel/secrets/_box.env): give it the channel's URL"},
 		{"heartbeat missing", base + "operator ops\nheartbeat {secret.NOTIFY_HC_URL}", map[string]string{"NOTIFY_OPS_URL": "https://a.example.org/", "NOTIFY_ALICE_URL": "https://b.example.org/"}, "heartbeat: secret NOTIFY_HC_URL"},

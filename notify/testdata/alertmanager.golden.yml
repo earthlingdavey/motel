@@ -151,6 +151,10 @@ receivers:
     webhook_configs:
       - url_file: /var/lib/motel-notify/url-NOTIFY_PAGER_URL
         send_resolved: false
+        http_config:
+          http_headers:
+            X-Priority:
+              values: ["4"]
   - name: state-disk-box-info
     slack_configs:
       - api_url_file: /var/lib/motel-notify/url-NOTIFY_OPS_URL

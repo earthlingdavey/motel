@@ -188,7 +188,11 @@ func unpinnedClaims(id identity, apps []string, trust map[string][]TrustSource) 
 					matches = false
 				}
 			}
-			if matches && len(extra) > 0 {
+			// The line without them must still be an identity: an oidc
+			// one names at least one claim (parseIdentity), so some claim
+			// it names must be pinned, and match.
+			kept := len(extra) < len(id.claims) || strings.HasPrefix(id.label, "local:")
+			if matches && len(extra) > 0 && kept {
 				sort.Strings(extra)
 				return extra
 			}

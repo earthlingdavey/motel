@@ -178,8 +178,10 @@ func render(r *resolved, stateDir string) ([]byte, map[string]string, map[string
 
 	cfg := amConfig{Global: amGlobal{ResolveTimeout: "5m"}}
 	receivers := map[string][]string{}
-	// sev is the one severity every alert the receiver gets carries, ""
-	// for a receiver that gets several (the fallback, a channel's own).
+	// sev is the severity the receiver's alerts carry, "" for the
+	// fallback, whose may be any. A channel's own receiver carries
+	// ChannelFailed's warning, and a test at it too, so that a test proves
+	// the priority the failure would arrive at.
 	recv := func(name string, channels []string, resolved bool, sev string) amRecv {
 		rc := amRecv{Name: name}
 		receivers[name] = slices.Clone(channels)
@@ -234,7 +236,7 @@ func render(r *resolved, stateDir string) ([]byte, map[string]string, map[string
 	for _, n := range r.order {
 		direct.Routes = append(direct.Routes, amRoute{
 			Matchers: []string{fmt.Sprintf("%s=%q", labelChannel, n)},
-			Receiver: add(recv("ch-"+n, []string{n}, false, "")),
+			Receiver: add(recv("ch-"+n, []string{n}, false, SeverityWarning)),
 		})
 	}
 	cfg.Route.Routes = append(cfg.Route.Routes,

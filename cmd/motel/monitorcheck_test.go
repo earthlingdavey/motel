@@ -37,6 +37,8 @@ func TestTheGateForcesAReloadOfTheMonitorBlock(t *testing.T) {
 	write(t, withBlock, "{\n\tadmin off\n\tmonitor {\n\t\tchannel ops ntfy {secret.NOTIFY_OPS_URL}\n\t\toperator ops\n\t}\n}\n", 0o644)
 	noBlock := config + "/Caddyfile.none"
 	write(t, noBlock, "{\n\tadmin off\n}\n", 0o644)
+	storeAlone := config + "/Caddyfile.store"
+	write(t, storeAlone, "{\n\tadmin off\n\tmonitor {\n\t\tmetrics\n\t}\n}\n", 0o644)
 	for _, c := range []struct {
 		args []string
 		want []string
@@ -44,7 +46,10 @@ func TestTheGateForcesAReloadOfTheMonitorBlock(t *testing.T) {
 		{[]string{"reload", "--config", withBlock}, []string{"reload", "--config", withBlock, "--force"}},
 		{[]string{"reload", "--config", withBlock, "--force"}, []string{"reload", "--config", withBlock, "--force"}},
 		{[]string{"reload", "-f", "--config", withBlock}, []string{"reload", "-f", "--config", withBlock}},
+		{[]string{"reload", "--config", withBlock, "--force=false"}, []string{"reload", "--config", withBlock, "--force=false"}},
 		{[]string{"reload", "--config", noBlock}, []string{"reload", "--config", noBlock}},
+		// A metrics line alone reads no secrets.
+		{[]string{"reload", "--config", storeAlone}, []string{"reload", "--config", storeAlone}},
 		{[]string{"validate", "--config", withBlock}, []string{"validate", "--config", withBlock}},
 		{[]string{"version"}, []string{"version"}},
 	} {

@@ -34,7 +34,7 @@ func LoadWarnings(cmd string, monitor []byte) []string {
 			out = append(out, "monitor: Alertmanager is not set up on this box: motel journals every event and delivers none until root runs motel monitor setup")
 		}
 		if a.Metrics != nil {
-			if _, err := os.Stat(a.Metrics.stateDir()); errors.Is(err, fs.ErrNotExist) {
+			if missing(a.Metrics.stateDir()) {
 				out = append(out, "monitor: the metrics store is not set up on this box: nothing is pushed or evaluated until root runs motel monitor setup --metrics")
 			}
 		}
@@ -50,6 +50,23 @@ func LoadWarnings(cmd string, monitor []byte) []string {
 		}
 	}
 	return out
+}
+
+// ReadsSecrets reports whether a config's monitor app (its JSON) reads
+// the box's secrets file at its load: every block that runs notify, all
+// but a metrics line alone.
+func ReadsSecrets(monitor []byte) bool {
+	var a App
+	if len(monitor) == 0 || string(monitor) == "null" || json.Unmarshal(monitor, &a) != nil {
+		return false
+	}
+	return !a.storeAlone()
+}
+
+// missing reports a state directory setup has not made.
+func missing(dir string) bool {
+	_, err := os.Stat(dir)
+	return errors.Is(err, fs.ErrNotExist)
 }
 
 // amUnits are Alertmanager's setup's unit files, as metricsUnits are
@@ -83,14 +100,17 @@ func staleUnits(units []struct {
 	return out
 }
 
-// uncommented is a unit file without its comment lines (systemd's # and ;).
+// uncommented is a unit file as systemd reads it: each line trimmed,
+// without its blank lines and its comment lines (# and ;), so that a
+// reformat changes nothing.
 func uncommented(b []byte) []byte {
 	var out []byte
 	for line := range bytes.Lines(b) {
-		if t := bytes.TrimSpace(line); len(t) > 0 && (t[0] == '#' || t[0] == ';') {
+		t := bytes.TrimSpace(line)
+		if len(t) == 0 || t[0] == '#' || t[0] == ';' {
 			continue
 		}
-		out = append(out, line...)
+		out = append(append(out, t...), '\n')
 	}
 	return out
 }

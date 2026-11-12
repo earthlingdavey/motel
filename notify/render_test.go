@@ -220,7 +220,7 @@ func TestRenderNtfyPriority(t *testing.T) {
 		"event-box-critical":          "5",
 		"state-disk-box-critical":     "5",
 		"state-app-shop-critical":     "5",
-		"ch-pager":                    "",
+		"ch-pager":                    "4", // ChannelFailed's warning, and a test at it
 		"fallback":                    "",
 		"event-app-shop-critical/bob": "",
 		"state-app-shop-critical/bob": "",

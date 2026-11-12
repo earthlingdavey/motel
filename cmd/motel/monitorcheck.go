@@ -23,33 +23,30 @@ func monitorJSON(cfg []byte) []byte {
 }
 
 // warnMonitor says what notify.LoadWarnings finds of the config's
-// monitor block: what setup has not made, at validate and reload, whose
-// loads would journal it alone; units older than this binary's, at run
-// too.
-func warnMonitor(cmd string, cfg []byte, stderr io.Writer) {
-	for _, w := range notify.LoadWarnings(cmd, monitorJSON(cfg)) {
+// monitor block (its JSON, nil for none): what setup has not made, at
+// validate and reload, whose loads would journal it alone; units that
+// differ from this binary's, at run too.
+func warnMonitor(cmd string, monitor []byte, stderr io.Writer) {
+	for _, w := range notify.LoadWarnings(cmd, monitor) {
 		_, _ = fmt.Fprintf(stderr, "WARNING: %s\n", w)
 	}
 }
 
 // reloadForces reports whether `motel reload` must load the config even
-// when it is unchanged: the monitor block reads the box's secrets file
-// at every load, which the config does not hold, so a mended _box.env
-// leaves the Caddyfile as it was, and Caddy's unchanged-config check
-// would load nothing (it answers 200, saying `config is unchanged` in
-// the server's journal alone), leaving the channels a boot dropped
-// dropped. `systemctl reload motel`, which the box's push uses after it
-// writes the secrets, passes --force for the same reason
-// (packaging/motel.service); this is that, for the command an operator
-// types.
-func reloadForces(args []string, cfg []byte) bool {
-	if monitorJSON(cfg) == nil {
+// when it is unchanged: a monitor block with channels reads the box's
+// secrets file at every load, which the config does not hold, so a
+// mended _box.env leaves the Caddyfile as it was, and Caddy's
+// unchanged-config check would load nothing (it answers 200, saying
+// `config is unchanged` in the server's journal alone), leaving the
+// channels a boot dropped dropped. `systemctl reload motel`, which the
+// box's push uses after it writes the secrets, passes --force for the
+// same reason (packaging/motel.service); this is that, for the command
+// an operator types. A --force the command already names, true or
+// false, is left as it is.
+func reloadForces(args []string, monitor []byte) bool {
+	if !notify.ReadsSecrets(monitor) {
 		return false
 	}
 	fs, ok := commandFlags("reload", args)
-	if !ok {
-		return false
-	}
-	forced, err := fs.GetBool("force")
-	return err == nil && !forced
+	return ok && !fs.Changed("force")
 }

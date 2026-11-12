@@ -8,9 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"io/fs"
 	"net/http"
-	"os"
 	"regexp"
 	"slices"
 	"strings"
@@ -216,8 +214,7 @@ type SendResult struct {
 // directory: without it there is no Alertmanager to post to, and every
 // event is a journal line only (errNotSetUp).
 func (a *App) setUp() bool {
-	_, err := os.Stat(a.stateDir())
-	return !errors.Is(err, fs.ErrNotExist)
+	return !missing(a.stateDir())
 }
 
 // TestRequest is `motel monitor test`'s body.

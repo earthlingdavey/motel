@@ -1,6 +1,7 @@
 package notify
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"strings"
@@ -46,8 +47,10 @@ func TestLoadWarningsSayStaleUnits(t *testing.T) {
 	if got := stale("run"); got != "" {
 		t.Fatalf("this binary's units: %s", got)
 	}
-	// A comment changed, and nothing else: not stale.
-	put(dropInPath, append([]byte("# Written by an older motel monitor setup\n"), uncommented(unitDropIn)...))
+	// A comment changed, a blank line and CRLF endings, and nothing
+	// else: not stale.
+	reformatted := bytes.ReplaceAll(append([]byte("# Written by an older motel monitor setup\n\n"), uncommented(unitDropIn)...), []byte("\n"), []byte("\r\n"))
+	put(dropInPath, reformatted)
 	if got := stale("run"); got != "" {
 		t.Fatalf("a comment alone: %s", got)
 	}
