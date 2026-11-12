@@ -37,7 +37,8 @@ checked where.
 | Alertmanager | Debian's `prometheus-alertmanager`. It routes and sends, using a config motel writes from the block | `/run/motel-notify/am.sock` only (0660 root:motel) |
 | the store (with `metrics`) | Debian's `victoria-metrics`: the numbers, kept 14 days, and vmalert, which checks the rules motel writes | `/run/motel-metrics/vm.sock` only (0660 root:motel). Its TCP stays inside a network namespace of its own, `motel-metrics` |
 
-Neither opens a TCP port on the box. Neither ships a web UI, either.
+Neither Alertmanager nor the store opens a TCP port on the box, and
+neither ships a web UI.
 Debian's Alertmanager page at `/` says "The Debian package of the
 alertmanager does not include a web application", and the store's
 `/vmui/` answers `404 page not found`. You look at things with `curl`
@@ -212,10 +213,13 @@ monitor {
   criticals but no info. A URL has to be https, to a public address and
   host name; anything else is refused by name.
 - **`operator`**: required. It names the channels that hear everything.
-- **`bind`**: `<identity>` is written the way an app's `deploy_trust`
-  is: `local:/etc/motel/alice.pub`, or `oidc:<issuer> repository=<org>/<repo>`
-  (quoted when it holds a space). A bind to an identity that no app
-  trusts is refused, so revoking a key also means removing its bind.
+- **`bind`**: `<identity>` is written as a deploy's `deployed_by` shows
+  it in `GET /<app>`, not as the `deploy_trust` block:
+  `local:/etc/motel/alice.pub`, or
+  `"oidc:<issuer> repository=<org>/<repo>"`, quoted because an oidc
+  identity always carries a claim after a space. A bind to an identity
+  that no app trusts is refused, so revoking a key also means removing
+  its bind.
 - **`heartbeat`**: without it, every load warns `monitor: no heartbeat
   in this load: nothing outside the box hears that it, motel or
   Alertmanager stopped`.
@@ -253,9 +257,11 @@ keyword check) against each site: it fetches a page and looks for a
 word that only the app's own page contains, so an error page reads as
 down. A cached copy would still read as up, so check a page the cache
 does not hold, such as the app's health path if the site routes it to
-the app. penaltybox never boxes such a monitor: it counts only
-responses an app labels level 2 or 3 ([penaltybox](../penaltybox/README.md#the-wire-contract)),
-and an ordinary page is level 1.
+the app. penaltybox does not box such a monitor by default: it counts
+only responses an app labels level 2 or 3, and an ordinary page is
+level 1 ([penaltybox](../penaltybox/README.md#the-wire-contract)). A
+site set to `min_level 1` counts every response, the monitor's too, so
+check a path that site does not penalise.
 
 ## Your own events: `motel monitor send`
 
@@ -337,8 +343,15 @@ Description=Tell the operator that %i failed (motel monitor send)
 [Service]
 Type=oneshot
 Environment=HOME=/root
-ExecStart=/usr/bin/motel monitor send --source systemd --name unit_failed --instance %i --summary "%i failed: journalctl -u %i says why"
+ExecStart=/usr/bin/motel monitor send --source systemd --name unit_failed --instance %i --summary "%i failed: see journalctl -u %i"
 ```
+
+`--instance` takes at most 128 letters, digits and `._:/@-`, and the
+summary at most 200 characters, so a unit name over about 90
+characters, or one with an escape in it (a template instance such as
+`srv\x2ddata`), is refused (`Error: instance is at most 128 letters,
+digits and ._:/@-`). The notifier unit then fails, and no channel
+hears that the job failed: name the units you point here plainly.
 
 Then, in the job's unit (or in a drop-in made with
 `systemctl edit nightly-report.service`):
@@ -349,9 +362,8 @@ OnFailure=motel-send-failed@%n.service
 ```
 
 After `systemctl daemon-reload`, a failing `nightly-report.service`
-reaches every operator channel as `[FIRING] unit_failed`, with the text
-`nightly-report.service failed: journalctl -u nightly-report.service
-says why`. motel already reports its own failures (backups and the
+reaches every operator channel as `[FIRING] unit_failed`, with the
+summary naming the unit. motel already reports its own failures (backups and the
 drill among them), so there is no need to point `motel-backup.service`
 at this.
 
@@ -360,7 +372,9 @@ at this.
 ### In the journal
 
 Every event is written to motel's journal before it is delivered, so the
-journal is the record even when a channel is down:
+journal is the record even when a channel is down. These two are from
+a test of `--state firing`, then `--state resolved` (the reboot
+recipe's one-shot says `"state":"oneshot"`):
 
 ```
 $ journalctl -u motel -o cat | grep '"monitor: event"'
@@ -540,21 +554,28 @@ that nothing more goes out. As root:
 
 ```sh
 # 1. Pause the heartbeat's check off the box: from here on the pings stop.
-# 2. Stop Alertmanager, so that it sends nothing more:
+# 2. Stop Alertmanager, so that it sends nothing more. On a box set up
+#    with --metrics, vmalert and its proxy's socket go with it: a
+#    connection from vmalert to that socket starts Alertmanager again.
 systemctl disable --now motel-am.socket prometheus-alertmanager.service
+systemctl disable --now motel-vmalert.service motel-am-proxy.socket   # --metrics only
 # 3. Take the monitor block out of the Caddyfile (with a box repo: push
 #    it without the block and without secrets/_box/), then:
 systemctl reload motel
-# 4. The store and vmalert, if setup --metrics ran:
-systemctl disable --now motel-vmalert.service motel-vm.socket motel-am-proxy.socket victoria-metrics.service motel-metrics-netns.service
+# 4. The rest of the store, if setup --metrics ran:
+systemctl disable --now motel-vm.socket victoria-metrics.service motel-metrics-netns.service
 systemctl stop motel-vm.service motel-am-proxy.service
 ```
 
 To stop here is to turn it off. The packages stay installed, and so do
 the units, the rendered config, the channel URLs that motel copied for
 Alertmanager (`/var/lib/motel-notify/url-*`) and the stored numbers. To
-turn it back on, put the block back and run `motel monitor setup
-[--metrics]` again. Setup enables everything again.
+turn it back on, put the URLs back (with a box repo,
+`git checkout <the commit before step 3's> -- <host>/secrets/_box`;
+without one, `_box.env` is still in place) and the block with them,
+then run `motel monitor setup [--metrics]` again, which enables
+everything again. A push of the block without `secrets/_box/` is
+refused, since its channels name secrets the push does not carry.
 
 To remove it, carry on:
 

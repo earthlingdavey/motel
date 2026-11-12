@@ -177,10 +177,13 @@ Before you upgrade:
   `secrets/_box/`, so every push after the downgrade would fail before
   it began. While the box still runs the newer release:
   1. **Stop Alertmanager**: `systemctl disable --now motel-am.socket
-     prometheus-alertmanager.service`. Otherwise it reports every alert
-     that was firing as recovered five minutes after the next step,
-     though nothing recovered. Pause the heartbeat's check first, since
-     the pings stop too.
+     prometheus-alertmanager.service`, and on a box set up with
+     `--metrics` also `systemctl disable --now motel-vmalert.service
+     motel-am-proxy.socket` (vmalert's proxy would start Alertmanager
+     again). Otherwise Alertmanager reports every alert that was firing
+     as recovered five minutes after the next step, though nothing
+     recovered. Pause the heartbeat's check first, since the pings stop
+     too.
   2. **Take out the `monitor` block and every `observe` line.** On a box
      that takes pushes, push a commit without them and without
      `secrets/_box/`. It removes `/etc/motel/secrets/_box.env` and takes
@@ -269,7 +272,9 @@ file. Do it in this order:
 
 The new binary can check step 3's file before you install it, from the
 `.deb` as above (`/root/motel-new/usr/bin/motel validate --config
-<the new file>`, which reads `_box.env` to check each secret). Writing the `monitor` block into the file before the
+<the new file>`). It reads `_box.env` to check each secret, and on a
+box that takes pushes step 1's push deletes that file, so run the
+check before step 1. Writing the `monitor` block into the file before the
 install, so that the install's restart reads it, would skip the gap
 below. It is untested, and it leaves a file the running binary refuses
 until the install: a reload in between fails, and a restart stops every
