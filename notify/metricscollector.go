@@ -332,9 +332,9 @@ type diskNames struct {
 // still among paths and not measured on another device now (devOf: the
 // paths measured at this gather), else p, measured now. A path names
 // one device's series at most: two series of one name are a gather
-// error (the push drops the second, the admin /metrics answers 500). A path moved to another
-// filesystem (a disk mounted there) names that one's series, and the
-// device it left is named by its next path.
+// error (the push drops the second, the admin /metrics answers 500). A
+// path moved to another filesystem (a disk mounted there) names that
+// one's series, and the device it left is named by its next path.
 func (n *diskNames) name(dev uint64, p string, paths []string, devOf map[string]uint64) string {
 	n.mu.Lock()
 	defer n.mu.Unlock()

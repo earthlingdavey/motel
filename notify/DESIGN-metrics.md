@@ -924,3 +924,10 @@ Dated one-liners; the full text of each is in git.
 - 2026-11-12 — Copilot round 2 on #429, triaged: `cutover` is told from
   inside the publication, before the persist and the caps' sync; a
   relaunch of the release serving starts no comparison.
+- 2026-11-12 — /code-review pass 3 on operator rules, triaged: a path
+  moved to another filesystem names that one's disk series, a disk
+  statfs that hangs holds back no gather, an observed app's current
+  release is pushed at zero (`request_rate <` for an app no one has
+  reached), a post-deploy check the store did not answer is asked again,
+  the regression's summary says why there was no baseline, and a
+  disk_fill alert's key names its filesystem.
