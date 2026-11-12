@@ -373,7 +373,11 @@ there would defeat the pool.
   mutex, which only a release change and a gather take. `observers`
   counts the loaded configs' observe handlers naming the app
   (Provision adds one, Cleanup takes it back): while one does, the
-  current release's counts are pushed even at zero (`AppSample.Observed`).
+  current release's counts are pushed even at zero (`AppSample.Observed`);
+  while none does (its `observe` line taken out), nothing of its counts
+  is pushed, though they live on in the pool and resume if a line names
+  it again: pushed unchanged, they would read as an app no request
+  reaches.
 - `ownerLock(app)` (one mutex per app name) makes "stop what nobody
   owns, then prune its socket dirs" one step with respect to recovery:
   the start-time sweep of unconfigured apps holds it across the manager
@@ -670,7 +674,12 @@ plugin's handler can take its ID.
   0.772 against 0.699. Behind the cache, 10 830 against 10 951 at c=1,
   122 105 against 122 190 at c=16. The bare site measured before the
   handler existed (9228935): 5 127 and 51 786 req/s, within the runs'
-  spread.
+  spread. The three buckets under 5 ms (0.5, 1 and 2.5 ms, added after
+  hotserve-1's example read p50 2.5 ms and p95 4.8 ms for responses of
+  about 0.5 ms) cost nothing measurable: 441 ns against 441 ns, five
+  allocations each, the median of five runs of each on the dev VM on
+  2026-11-12; a response under 0.5 ms finds its bucket at the first
+  comparison, as one under 5 ms did before.
 - **What it never does.** Write, buffer or change a byte, or fail a
   request: an error from the handlers after it is returned as it came.
 

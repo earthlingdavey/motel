@@ -304,22 +304,27 @@ func TestObserveCache(t *testing.T) {
 func TestObserveLatencyBuckets(t *testing.T) {
 	rc := &releaseCounts{release: "v1"}
 	start := time.Unix(1000, 0)
-	for _, d := range []time.Duration{time.Millisecond, 20 * time.Millisecond, 20 * time.Millisecond, 3 * time.Second, time.Minute} {
+	for _, d := range []time.Duration{300 * time.Microsecond, time.Millisecond, 20 * time.Millisecond, 20 * time.Millisecond, 3 * time.Second, time.Minute} {
 		rc.record(&observeWriter{start: start, at: start.Add(d), seen: true, status: http.StatusOK}, true)
 	}
 	s := rc.snapshot()
-	if s.Count != 5 {
+	if s.Count != 6 {
 		t.Fatalf("count %d", s.Count)
 	}
-	// Cumulative: ≤5 ms holds 1, ≤25 ms 3, ≤5 s 4; a minute is +Inf only.
-	want := map[float64]uint64{.005: 1, .01: 1, .025: 3, 2.5: 3, 5: 4, 10: 4}
+	// Cumulative: ≤0.5 ms holds 1, ≤1 ms 2 (a bound is inclusive), ≤5 ms
+	// 2, ≤25 ms 4, ≤5 s 5; a minute is +Inf only. Under 5 ms, an app's
+	// times are told apart (hotserve-1's example answered in 0.5 ms).
+	want := map[float64]uint64{.0005: 1, .001: 2, .0025: 2, .005: 2, .01: 2, .025: 4, 2.5: 4, 5: 5, 10: 5}
 	for i, b := range ResponseBuckets {
 		if n, ok := want[b]; ok && s.Buckets[i] != n {
 			t.Errorf("bucket le=%v: %d, want %d", b, s.Buckets[i], n)
 		}
 	}
-	if s.SumSeconds < 63.04 || s.SumSeconds > 63.05 {
-		t.Errorf("sum %v s, want 63.041", s.SumSeconds)
+	if len(want) != 9 || ResponseBuckets[0] != .0005 || ResponseBuckets[len(ResponseBuckets)-1] != 10 {
+		t.Errorf("buckets %v", ResponseBuckets)
+	}
+	if s.SumSeconds < 63.0412 || s.SumSeconds > 63.0414 {
+		t.Errorf("sum %v s, want 63.0413", s.SumSeconds)
 	}
 }
 

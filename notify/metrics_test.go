@@ -917,9 +917,26 @@ func TestWriteRules(t *testing.T) {
 	}
 }
 
+// TestLatencyBoundsAreTheBuckets: a p50 or p95 rule's bound is told
+// apart by the histogram only within its buckets: the lowest bound a
+// rule takes is at or above the first bucket, so it is not inside one
+// that reads every response under it as half of it; the highest is the
+// last bucket.
+func TestLatencyBoundsAreTheBuckets(t *testing.T) {
+	b := liveswap.ResponseBuckets
+	if first := time.Duration(b[0] * float64(time.Second)); first > minLatency {
+		t.Errorf("the first bucket is %v, above the least bound a rule takes (%v)", first, minLatency)
+	}
+	if last := time.Duration(b[len(b)-1] * float64(time.Second)); last != maxLatency {
+		t.Errorf("the last bucket is %v, the greatest bound %v", last, maxLatency)
+	}
+}
+
 // observe's counts reach the registry per release, a stopped
 // app's among them; a release with no response pushes nothing, but the
-// current release of an observed app, at zero.
+// current release of an observed app, at zero. An app no loaded config
+// observes any more pushes nothing of what it counted: unchanged
+// counters would read as an app with no request.
 func TestAppCollectorRequests(t *testing.T) {
 	var cur liveswap.ReleaseRequests
 	cur.Release = "v2"
@@ -930,7 +947,8 @@ func TestAppCollectorRequests(t *testing.T) {
 	empty := liveswap.ReleaseRequests{Release: "v1"}
 	reg := prometheus.NewPedanticRegistry()
 	if err := reg.Register(appCollector{root: t.TempDir(), apps: fakeSampler{
-		{App: "blog", Release: "v2", Requests: []liveswap.ReleaseRequests{cur, empty}},
+		{App: "blog", Release: "v2", Observed: true, Requests: []liveswap.ReleaseRequests{cur, empty}},
+		{App: "gone", Release: "g2", Requests: []liveswap.ReleaseRequests{cur}},
 		{App: "shop", Release: "s2", Observed: true, Requests: []liveswap.ReleaseRequests{{Release: "s2"}, {Release: "s1"}}},
 		{App: "idle", Release: "i1", Requests: []liveswap.ReleaseRequests{{Release: "i1"}}},
 		{App: "new", Observed: true, Requests: []liveswap.ReleaseRequests{{}}},
@@ -953,7 +971,7 @@ func TestAppCollectorRequests(t *testing.T) {
 		`motel_app_requests_total{app="blog",class="2xx",release="v2"} 90`,
 		`motel_app_requests_total{app="blog",class="5xx",release="v2"} 10`,
 		`motel_app_requests_total{app="blog",class="aborted",release="v2"} 0`,
-		`motel_app_response_seconds_bucket{app="blog",release="v2",le="0.005"} 40`,
+		`motel_app_response_seconds_bucket{app="blog",release="v2",le="0.0005"} 40`,
 		`motel_app_response_seconds_bucket{app="blog",release="v2",le="10"} 95`,
 		`motel_app_response_seconds_bucket{app="blog",release="v2",le="+Inf"} 100`,
 		`motel_app_response_seconds_sum{app="blog",release="v2"} 4.5`,
@@ -967,7 +985,7 @@ func TestAppCollectorRequests(t *testing.T) {
 			t.Errorf("missing %s", line)
 		}
 	}
-	for _, absent := range []string{`release="v1"`, `result="stale"`, `release="s1"`, `app="idle",class`, `motel_app_response_seconds_count{app="idle"`, `release=""`} {
+	for _, absent := range []string{`release="v1"`, `result="stale"`, `release="s1"`, `app="idle",class`, `motel_app_response_seconds_count{app="idle"`, `release=""`, `motel_app_requests_total{app="gone"`, `motel_app_response_seconds_count{app="gone"`} {
 		if strings.Contains(text, absent) {
 			t.Errorf("%s pushed: %s", absent, text)
 		}

@@ -363,9 +363,14 @@ var RequestClasses = [numClasses]string{"1xx", "2xx", "3xx", "4xx", "5xx", "abor
 // ReleaseRequests.Cache; a response no cache spoke for is not counted.
 var CacheResults = [4]string{"hit", "stale", "miss", "bypass"}
 
-// ResponseBuckets are the latency histogram's upper bounds in seconds
-// (Prometheus's defaults): the time to the response's headers.
-var ResponseBuckets = [...]float64{.005, .01, .025, .05, .1, .25, .5, 1, 2.5, 5, 10}
+// ResponseBuckets are the latency histogram's upper bounds in seconds:
+// the time to the response's headers. Prometheus's defaults (5 ms to
+// 10 s) with three below them, 0.5, 1 and 2.5 ms: an app that answers
+// in under 5 ms, as one behind a socket on the same box does
+// (hotserve-1's example: 99.3 % of its responses), would otherwise read
+// a p50 of 2.5 ms and a p95 of 4.75 ms whatever its own times, and a
+// regression inside those 5 ms would be invisible to post_deploy.
+var ResponseBuckets = [...]float64{.0005, .001, .0025, .005, .01, .025, .05, .1, .25, .5, 1, 2.5, 5, 10}
 
 func classOf(status int) int {
 	switch {
