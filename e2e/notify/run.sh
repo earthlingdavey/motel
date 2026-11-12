@@ -415,6 +415,20 @@ am http://am/api/v2/status | grep -q 'e2e-sink\|receiver: ops\|ch-ops' && fail "
 	|| pass "Alertmanager runs it: no receiver of motel's channels"
 journalctl -u motel --since "@$t_reload" -o cat --no-pager | grep -q 'Alertmanager was given the config that sends nothing' \
 	&& pass "journal: Alertmanager was given the config that sends nothing" || fail "no journal line for the removal"
+# The end Alertmanager would reach at resolve_timeout, brought forward:
+# root posts the alert's own labels with endsAt now. Under the last
+# render that is a [RESOLVED] to ops at the group's next tick; under the
+# config that sends nothing, nothing.
+labels=$(am 'http://am/api/v2/alerts?filter=alertname%3D%22removal_probe%22' | sed -n 's/.*"labels":\({[^}]*}\).*/\1/p' | head -1)
+t_end=$(now_ms)
+if [ -n "$labels" ]; then
+	am -o /dev/null -X POST -H 'Content-Type: application/json' http://am/api/v2/alerts \
+		-d "[{\"labels\":$labels,\"annotations\":{\"summary\":\"e2e: firing when the block goes\"},\"endsAt\":\"$(date -u +%Y-%m-%dT%H:%M:%S.000Z)\"}]"
+	sleep 75
+	none "its end reaches no channel: no recovery that did not happen" /ops removal_probe "$t_end"
+else
+	fail "Alertmanager holds no removal_probe to end"
+fi
 cp /tmp/Caddyfile.before /etc/motel/Caddyfile
 
 echo

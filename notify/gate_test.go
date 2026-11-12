@@ -46,6 +46,11 @@ func TestLoadWarningsSayStaleUnits(t *testing.T) {
 	if got := stale("run"); got != "" {
 		t.Fatalf("this binary's units: %s", got)
 	}
+	// A comment changed, and nothing else: not stale.
+	put(dropInPath, append([]byte("# Written by an older motel monitor setup\n"), uncommented(unitDropIn)...))
+	if got := stale("run"); got != "" {
+		t.Fatalf("a comment alone: %s", got)
+	}
 	put(socketPath, []byte("[Socket]\nListenStream=/run/old.sock\n"))
 	put(metricsUnits()[5].path, []byte("[Service]\nUser=root\n"))
 	got := stale("run")

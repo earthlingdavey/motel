@@ -65,8 +65,10 @@ func amUnits() []struct {
 }
 
 // staleUnits is each unit file setup wrote that differs from the one
-// this binary would write. A file that is not there is not stale: setup
-// has not run, which LoadWarnings says otherwise, or root removed it.
+// this binary would write, comments aside: a change to a comment alone
+// changes nothing in how the unit runs, and is not worth a warning at
+// every load. A file that is not there is not stale: setup has not run,
+// which LoadWarnings says otherwise, or root removed it.
 func staleUnits(units []struct {
 	path string
 	data []byte
@@ -74,9 +76,21 @@ func staleUnits(units []struct {
 	var out []string
 	for _, u := range units {
 		b, err := os.ReadFile(filepath.Join(unitRoot, u.path))
-		if err == nil && !bytes.Equal(b, u.data) {
+		if err == nil && !bytes.Equal(uncommented(b), uncommented(u.data)) {
 			out = append(out, u.path)
 		}
+	}
+	return out
+}
+
+// uncommented is a unit file without its comment lines (systemd's # and ;).
+func uncommented(b []byte) []byte {
+	var out []byte
+	for line := range bytes.Lines(b) {
+		if t := bytes.TrimSpace(line); len(t) > 0 && (t[0] == '#' || t[0] == ';') {
+			continue
+		}
+		out = append(out, line...)
 	}
 	return out
 }
