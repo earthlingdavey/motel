@@ -224,21 +224,46 @@ const (
 	diskGap  = 5
 )
 
-func statfs(path string) (float64, uint64, error) {
+// diskNumbers are a filesystem's, as df reads them: the disk source's
+// used share, and the disk series' available bytes (metricscollector.go).
+type diskNumbers struct {
+	usedPct float64
+	avail   uint64
+	dev     uint64
+}
+
+// statDisk is statfs and the device of the filesystem holding path.
+func statDisk(path string) (diskNumbers, error) {
 	var fs syscall.Statfs_t
 	if err := syscall.Statfs(path, &fs); err != nil {
-		return 0, 0, err
+		return diskNumbers{}, err
 	}
 	var st syscall.Stat_t
 	if err := syscall.Stat(path, &st); err != nil {
-		return 0, 0, err
+		return diskNumbers{}, err
 	}
-	used := fs.Blocks - fs.Bfree
-	if used+fs.Bavail == 0 {
-		return 0, st.Dev, nil
+	return fsNumbers(fs, st.Dev), nil
+}
+
+// fsNumbers reads statfs's counts as df does: blocks of f_frsize (the
+// fragment size, which f_bsize, the preferred I/O size, need not be),
+// f_bsize where a filesystem leaves f_frsize 0.
+func fsNumbers(fs syscall.Statfs_t, dev uint64) diskNumbers {
+	unit := uint64(fs.Frsize) //nolint:gosec // a block size is positive
+	if unit == 0 {
+		unit = uint64(fs.Bsize) //nolint:gosec // a block size is positive
 	}
-	// As df reports it: used over what a user can have.
-	return 100 * float64(used) / float64(used+fs.Bavail), st.Dev, nil
+	n := diskNumbers{avail: fs.Bavail * unit, dev: dev}
+	// Used over what a user can have.
+	if used := fs.Blocks - fs.Bfree; used+fs.Bavail > 0 {
+		n.usedPct = 100 * float64(used) / float64(used+fs.Bavail)
+	}
+	return n
+}
+
+func statfs(path string) (float64, uint64, error) {
+	n, err := statDisk(path)
+	return n.usedPct, n.dev, err
 }
 
 func (d *diskPoller) poll(paths []string) []Event {

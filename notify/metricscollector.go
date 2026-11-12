@@ -10,7 +10,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"syscall"
 
 	"github.com/prometheus/client_golang/prometheus"
 
@@ -257,13 +256,6 @@ func (n *diskNames) name(dev uint64, p string, paths []string) string {
 // statAvail is what a user can still write on the filesystem holding
 // path, as df's Avail, and the device it is on.
 func statAvail(path string) (uint64, uint64, error) {
-	var fs syscall.Statfs_t
-	if err := syscall.Statfs(path, &fs); err != nil {
-		return 0, 0, err
-	}
-	var st syscall.Stat_t
-	if err := syscall.Stat(path, &st); err != nil {
-		return 0, 0, err
-	}
-	return fs.Bavail * uint64(fs.Bsize), st.Dev, nil //nolint:gosec // a block size is positive
+	n, err := statDisk(path)
+	return n.avail, n.dev, err
 }
