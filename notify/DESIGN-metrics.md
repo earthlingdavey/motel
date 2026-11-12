@@ -398,15 +398,22 @@ own, `cutover`, which is no notification: `Previous`, the release whose
 instance served until the new one was published (none after a first
 deploy, or when that instance was not running: a crash loop's release
 is no baseline; a relaunch names its own release), and `Cutover`, when
-the traffic moved (not the state's persist and the caps' sync after
-it, which can wait on the manager). It comes before the old instance's
+the traffic moved. It is told at that moment, from inside the
+publication, before the state's persist and the caps' sync, which can
+wait on the manager (Copilot round 2 on #429), and before the old instance's
 drain and stop and before the deploy's result (`deploy_succeeded`,
 `rollback`), which a long `drain` would otherwise have started the
 comparison after its window (Copilot round 1 on #429); nothing after
 the swap fails a deploy. A deploy, a rollback and a relaunch tell it;
 the watchdog's restarts and a motel restart's recovery publish an
 instance without one, and start no comparison. `lifecycleSink` hands
-it to the comparison alone, so `deploy_succeeded off` still compares. For an app with a rule (its own, else the every-app one),
+it to the comparison alone, so `deploy_succeeded off` still compares.
+A relaunch of the release serving (`Previous` = the release) starts
+none, and leaves one in flight for that release as it was: it is no
+new release, and both instances count into the release's one set of
+counters, so no window could tell the old instance's answers from the
+new one's (a baseline over both would take in the relaunched
+instance's first push, and could hide its regression). For an app with a rule (its own, else the every-app one),
 for each whole minute e since the cutover up to `window`, both read at
 cutover + e, 35 s after it: the store answers an instant query within
 its `-search.latencyOffset` (30 s) of the present as of 30 s earlier,
@@ -720,6 +727,7 @@ or a line of theirs the facts overturned:
 | `MemoryMax=256M`, `-memory.allowedBytes=96MiB`, 14 days | the measured working set above; both caps mandatory, since the store sizes its caches from what it can see |
 | The operator's rules are a grammar of fixed kinds with parameters (`threshold`, `disk_fill`, `post_deploy`), never an expression or a template | the review's finding 17: a rule or template a config author writes could pull any app's series, or the box's, into a notification that reaches an app's deployers (T6); a kind reads only motel's own expression, of the app named or each app for itself, so a config author chooses a bound and a duration, never what is read |
 | A request metric is over a fixed five minutes, with a floor of 20 by default | long enough for a small app to reach a floor, short enough that a rule fires within its `for` and five minutes; one window keeps the expression motel's. The floor keeps two requests, one of them a 5xx, from being a 50 % share |
+| A relaunch of the release serving starts no post-deploy comparison | it is no new release; the observer's counters are per release, so the old and new instance share them, and a comparison would need the counters split at the cutover (a new state in the observer) to keep the new instance's answers out of the baseline. A relaunch that regresses is told by the threshold rules (Copilot round 2 on #429) |
 | The post-deploy comparison is motel's, not vmalert's, and only tells | vmalert knows neither the cutover nor the release before; #418 and requirement 4: motel never refuses a cutover or rolls back over a number |
 | A post-deploy check fails only when the new release is over its bound and worse than the old one (p95: by 1.2 ×; a 5xx share, when the old was over the bound too: by 1.2 × and beyond chance, a z-score of 2) | the user's decision in slice three's planning: an app that was always so is not a deploy's regression; an old release under the floor is no baseline, so the bound alone counts after a first deploy or a quiet one. The 5xx margin refines the planning's `new > old` (/code-review pass 2 on operator rules): with none, an app erring steadily over its bound is told at a deploy whose share is higher by noise alone |
 | Per-app request numbers need a handler the operator writes, `observe <app>` | Caddy's request metrics carry server and handler, never the app; a Caddy app cannot add a handler to the HTTP app's routes, and a dynamic upstream sees no response. The app is named on the line, since a cache hit never reaches the upstream |
@@ -894,3 +902,6 @@ Dated one-liners; the full text of each is in git.
 - 2026-11-12 — Copilot round 1 on #429, triaged: the comparison starts at
   liveswap's `cutover`, told at the swap, not with the deploy's result
   after the drain.
+- 2026-11-12 — Copilot round 2 on #429, triaged: `cutover` is told from
+  inside the publication, before the persist and the caps' sync; a
+  relaunch of the release serving starts no comparison.

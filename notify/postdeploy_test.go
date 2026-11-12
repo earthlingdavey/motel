@@ -486,3 +486,30 @@ func TestPostDeployALateTickMakesTheLastCheck(t *testing.T) {
 		t.Fatalf("after the last check: %d in flight, %d more queries", len(tc.runs), len(tc.store.queries)-n)
 	}
 }
+
+// A relaunch of the release serving (Previous = Release) is no new
+// release: it starts no comparison, and one in flight for that release
+// goes on as it was, so its baseline never takes in the relaunched
+// instance's answers (Copilot round 2 on #429).
+func TestPostDeployARelaunchIsNoNewRelease(t *testing.T) {
+	r := regressRule
+	r.Failures = 2
+	tc := newTestComparator(t, r)
+	tc.deploy("blog", "v2", "v2")
+	if len(tc.runs) != 0 {
+		t.Fatalf("a relaunch started a comparison: %+v", tc.runs["blog"])
+	}
+	tc.deploy("blog", "v2", "v1")
+	tc.store.set("v1 old", 200, 0, 0.1)
+	tc.store.set("v2", 200, 100, 2) // 5xx and p95 both over
+	tc.minute()
+	run := tc.runs["blog"]
+	tc.deployed(liveswap.LifecycleEvent{Name: liveswap.EventCutover, App: "blog", Release: "v2", Previous: "v2", Cutover: tc.at})
+	if tc.runs["blog"] != run || run.previous != "v1" || run.failed != 1 {
+		t.Fatalf("the relaunch touched the comparison in flight: %+v", tc.runs["blog"])
+	}
+	tc.minute()
+	if len(tc.evs) != 1 || !strings.Contains(tc.evs[0].Summary, "against 0 before it") || !strings.Contains(tc.evs[0].Summary, "p95 2000ms against 100ms") {
+		t.Fatalf("after the relaunch, v2 against v1: %+v", tc.evs)
+	}
+}

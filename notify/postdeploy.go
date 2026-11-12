@@ -133,6 +133,14 @@ func (c *comparator) deployed(ev liveswap.LifecycleEvent) {
 	if c.active == nil || ev.App == "" {
 		return
 	}
+	if ev.Previous != "" && ev.Previous == ev.Release {
+		// A relaunch of the release serving is no new release, and the
+		// two instances count into the release's one set of counters,
+		// so no window could tell them apart: no comparison starts, and
+		// one in flight for that release goes on, its windows as they
+		// were (Copilot round 2 on #429).
+		return
+	}
 	if _, ok := c.runs[ev.App]; ok {
 		delete(c.runs, ev.App)
 		c.logger.Debug("monitor rules: a new deploy ends the post-deploy comparison in flight", zap.String("app", ev.App), zap.String("release", ev.Release))
