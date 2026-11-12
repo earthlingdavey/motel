@@ -232,8 +232,8 @@ func TestPostDeployTheOldIsWorseGuard(t *testing.T) {
 		{"p95 over the bound, under old × 1.2", 200, 0, 1.0, 200, 0, 0.9, "v1", false, "", ""},
 		{"p95 over the bound, over old × 1.2", 200, 0, 1.2, 200, 0, 0.9, "v1", true, "p95 1200ms against 900ms before it", ""},
 		{"p95 over the bound, old has none", 200, 0, 1.2, 200, 0, 0, "v1", true, "p95 1200ms;", "p95 1200ms against"},
-		{"no old samples: the bound alone", 200, 20, 0.1, 0, 0, 0, "v1", true, "no release before it to compare", "against"},
-		{"old under the floor: the bound alone", 200, 20, 0.1, 99, 50, 0.1, "v1", true, "no release before it to compare", "against"},
+		{"no old samples: the bound alone", 200, 20, 0.1, 0, 0, 0, "v1", true, "; the release before it sent 0 responses, too few to compare;", "against"},
+		{"old under the floor: the bound alone", 200, 20, 0.1, 99, 50, 0.1, "v1", true, "; the release before it sent 99 responses, too few to compare;", "against"},
 		{"a first deploy: the bound alone", 200, 20, 0.1, 200, 100, 0.1, "", true, "no release before it to compare", "against"},
 	} {
 		t.Run(c.name, func(t *testing.T) {

@@ -413,8 +413,12 @@ func regressedEvent(r comparison, rule Rule, elapsed time.Duration, v verdict, f
 		parts = append(parts, p)
 	}
 	baseline := ""
-	if !v.hasOld {
+	switch {
+	case v.hasOld:
+	case r.previous == "":
 		baseline = "; no release before it to compare"
+	default: // under the floor: no baseline
+		baseline = fmt.Sprintf("; the release before it sent %d responses, too few to compare", int(v.old.sent))
 	}
 	checks := "check"
 	if failed > 1 {
