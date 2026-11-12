@@ -494,6 +494,9 @@ func TestObserveAfterNoneStartsFromZero(t *testing.T) {
 	ma := h.app.managedApp("demo")
 	first := &Observe{App: "demo"}
 	first.observe(ma)
+	// The release before too, with a cache's verdict.
+	old := ma.requests.setRelease("v0")
+	old.record(&observeWriter{start: time.Unix(0, 0), at: time.Unix(0, int64(time.Second)), seen: true, status: http.StatusOK, cache: cacheMiss}, false)
 	rc := ma.requests.setRelease("v1")
 	for range 3 {
 		rc.record(&observeWriter{start: time.Unix(0, 0), at: time.Unix(0, int64(time.Millisecond)), seen: true, status: http.StatusOK}, true)
@@ -511,8 +514,15 @@ func TestObserveAfterNoneStartsFromZero(t *testing.T) {
 	}
 	back := &Observe{App: "demo"}
 	back.observe(ma)
-	if s := ma.requests.samples()[0]; s.Count != 0 || s.ByClass[class2xx] != 0 || s.SumSeconds != 0 || s.Release != "v1" {
-		t.Fatalf("the line put back resumed the counts: %+v", s)
+	samples := ma.requests.samples()
+	if len(samples) != 2 || samples[0].Release != "v1" || samples[1].Release != "v0" {
+		t.Fatalf("releases after the zero: %+v", samples)
+	}
+	for _, s := range samples {
+		zero := ReleaseRequests{Release: s.Release}
+		if s != zero {
+			t.Fatalf("the line put back resumed %s's counts: %+v", s.Release, s)
+		}
 	}
 	rc.record(&observeWriter{start: time.Unix(0, 0), at: time.Unix(0, int64(time.Millisecond)), seen: true, status: http.StatusOK}, true)
 	if count() != 1 {

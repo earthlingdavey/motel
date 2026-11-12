@@ -51,7 +51,12 @@ func (ma *managedApp) sample() AppSample {
 	c := ma.snapshot()
 	ma.mu.Lock()
 	defer ma.mu.Unlock()
-	s := AppSample{App: ma.name, Requests: ma.requests.samples(), Observed: ma.observers.Load() > 0}
+	// Whether observed before the counts: the first observer after none
+	// zeroes them before it is counted (Observe.observe), so a sample
+	// that sees it sees the zeroed counts, and one that does not is
+	// pushed nothing.
+	observed := ma.observers.Load() > 0
+	s := AppSample{App: ma.name, Requests: ma.requests.samples(), Observed: observed}
 	if ma.current == nil {
 		return s
 	}

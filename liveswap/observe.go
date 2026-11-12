@@ -77,11 +77,18 @@ func (o *Observe) Provision(ctx caddy.Context) error {
 // counted since motel started, in one window. A reload provisions the
 // new config's handlers before it cleans up the old's, so an app
 // observed by both is never at none and keeps its counts.
+//
+// The counts are zeroed before the handler is counted, and a sample
+// reads the count of handlers before the counts (managedApp.sample): a
+// push gathered meanwhile sees no observer and sends nothing, never the
+// old counts as an observed app's. Provisions run one at a time (config
+// loads are serialized), so the test at none is not raced by another.
 func (o *Observe) observe(ma *managedApp) {
 	o.ma = ma
-	if ma.observers.Add(1) == 1 {
+	if ma.observers.Load() == 0 {
 		ma.requests.zero()
 	}
+	ma.observers.Add(1)
 	o.counted = true
 }
 
