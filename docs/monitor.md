@@ -24,8 +24,9 @@ The transcripts below come from motel's metrics e2e box at commit
 receiver on the compose network over plain HTTP, which only the test
 rig's `allow_insecure_channels` line allows, and the example blocks
 here were validated with https values. Nothing on this page has been
-tried against real Slack, Discord or ntfy servers, or on a box rebooted
-with monitor set up.
+tried against real Slack or Discord. A real ntfy topic and a reboot
+with monitor set up were tried only on another box, at an earlier
+commit.
 [The last section](#what-has-been-verified-where) says what was
 checked where.
 
@@ -100,6 +101,15 @@ The smallest block, with one channel and the numbers:
 	}
 }
 ```
+
+The box-repo path needs this branch's `examples/box` tooling in the
+repository, since no release has monitor yet. A repository made from a
+released template refuses `APP=_box` (`app '_box': lower-case letters,
+digits and - only`). Its `check` job validates with the latest release
+unless `MOTEL_VERSION` names another, and no release knows the block,
+so every commit that has it fails that job with `unrecognized global
+option: monitor`. The push still reaches the box, which checks it with
+its own motel.
 
 On a box with nothing installed yet, setup says:
 
@@ -186,9 +196,10 @@ systemctl reload motel
 ```
 
 Use `systemctl reload motel` here, not `motel reload --config …`. If
-the Caddyfile has not changed, `motel reload` answers `config is
-unchanged` and loads nothing, so the dropped channels stay dropped.
-`systemctl reload` forces the load.
+the Caddyfile has not changed, `motel reload` loads nothing, so the
+dropped channels stay dropped. It still exits 0 and prints no error:
+only motel's journal says `config is unchanged`. `systemctl reload`
+forces the load.
 
 A key that is missing, or set to nothing (`NOTIFY_OPS_URL=`), is
 refused by `validate` and by a reload:
@@ -215,13 +226,17 @@ monitor {
   criticals but no info. A URL has to be https, to a public address and
   host name; anything else is refused by name.
 - **`operator`**: required. It names the channels that hear everything.
-- **`bind`**: `<identity>` is written as a deploy's `deployed_by` shows
-  it in `GET /<app>`, not as the `deploy_trust` block:
+- **`bind`**: `<identity>` starts as a deploy's `deployed_by` does in
+  `GET /<app>`, and is not written as the `deploy_trust` block:
   `local:/etc/motel/alice.pub`, or
   `"oidc:<issuer> repository=<org>/<repo>"`, quoted because an oidc
-  identity always carries a claim after a space. A bind to an identity
-  that no app trusts is refused, so revoking a key also means removing
-  its bind.
+  identity always carries a claim after a space. Give only claims the
+  app's `deploy_trust` pins. `deployed_by` also shows what the token
+  carried (`ref=…`, `actor=…`, `sub=…`), and a bind with one of those
+  is refused unless the block pins it. A bind to an identity that no
+  app trusts is refused in the same words (`no app's deploy_trust
+  trusts this identity`), so revoking a key also means removing its
+  bind.
 - **`heartbeat`**: without it, every load warns `monitor: no heartbeat
   in this load: nothing outside the box hears that it, motel or
   Alertmanager stopped`.
@@ -235,16 +250,24 @@ block](../notify/DESIGN-notify.md#the-monitor-block).
 Nothing on a box can report that the box itself is down. A dead-man
 check off the box can: it expects a ping on a schedule and alerts you
 when one is missed. motel pings it every five minutes for as long as
-motel and Alertmanager both run.
+motel and Alertmanager both run. A restart of motel, or a reload that
+changes Alertmanager's config, starts the five minutes again, so the
+ping after one can come later: 7 minutes 20 seconds after the last was
+measured, and about nine is the most. The Grace below covers it.
 
 1. Make a check at [Healthchecks](https://healthchecks.io) (or another
    service that takes a plain ping URL) with **Period 5 minutes** and a
    Grace of 10 minutes. It then reports the box down about 15 minutes
    after the last ping.
 2. Put its ping URL in the secrets file as `NOTIFY_HC_URL`, and add the
-   line `heartbeat {secret.NOTIFY_HC_URL}` to the block.
-3. `motel validate --config /etc/motel/Caddyfile`, then
-   `systemctl reload motel`. The first ping goes out within the minute.
+   line `heartbeat {secret.NOTIFY_HC_URL}` to the block. With a box
+   repo, do both there (`make secret APP=_box VAR=NOTIFY_HC_URL`, and
+   the line in the repository's Caddyfile) and push: a line or a secret
+   edited in on the box is gone at the next push, which replaces both
+   files.
+3. Without a box repo, `motel validate --config /etc/motel/Caddyfile`,
+   then `systemctl reload motel`. The first ping goes out within the
+   minute.
 
 The ping is Alertmanager's JSON for an alert named `Watchdog`, POSTed
 to the URL: `"summary":"motel is running and can reach Alertmanager"`.
@@ -269,15 +292,31 @@ check a path that site does not penalise.
 
 Anything that can run a command can send an event: cron, a systemd
 unit, a script. `motel monitor send` posts it over the admin socket.
-Each event becomes a `monitor: event` line in the journal and reaches
-the operator's channels (or, with `--subject app:<name>`, that app's
-deployers too). An event is either a one-shot (the default) or, with
-`--state firing`, a state that holds until a `--state resolved` with the
-same `--source`, `--name` and `--instance`. `--summary` is always
-needed: one line, at most 200 characters. When a state resolves, the
-message repeats the summary it fired with, not the one you give.
-Sending `resolved` when nothing is firing does nothing. The names motel
-uses itself are refused:
+Each event becomes a `monitor: event` line in the journal and goes to
+the operator's channels (with `--subject app:<name>`, to that app's
+deployers too). Two things keep an event from a channel. A channel
+with a `severity` floor hears nothing below it, and an event is a
+warning unless `--severity` says otherwise. And one key (the source,
+subject, name and instance together) sends four messages at once, then
+one more every 15 minutes: past that, an event is a journal line only,
+marked `"suppressed":"more than four an hour for this key"`.
+
+An event is either a one-shot (the default) or, with `--state firing`,
+a state that holds until a `--state resolved` with the same `--source`,
+`--subject`, `--name` and `--instance`. A `resolved` that differs in
+any of the four, or one sent when nothing is firing, does nothing, and
+still answers `sent …`. `--summary` is always needed: one line, at
+most 200 characters. When a state resolves, the message repeats the
+summary it fired with, not the one you give.
+
+**A state does not outlive a restart of motel** (an upgrade of the
+package restarts it). motel forgets the state, and five minutes later
+Alertmanager tells your channels it is `[RESOLVED]`, although nothing
+recovered. So a producer of a state sends `--state firing` again every
+two or three minutes for as long as the condition holds (a repeat while the
+state is firing sends no second message), or sends one-shots instead.
+
+The names motel uses itself are refused:
 
 ```
 $ motel monitor send --source reboot --name watchdog_x --summary x
@@ -364,8 +403,11 @@ OnFailure=motel-send-failed@%n.service
 ```
 
 After `systemctl daemon-reload`, a failing `nightly-report.service`
-reaches every operator channel as `[FIRING] unit_failed`, with the
-summary naming the unit. motel already reports its own failures (backups and the
+reaches the operator's channels as `[FIRING] unit_failed`, with the
+summary naming the unit. It is a warning, so a channel whose floor is
+`severity critical` does not hear it, and a unit that fails more often
+than the four-then-one-a-quarter-hour above is a journal line only for
+the rest. motel already reports its own failures (backups and the
 drill among them), so there is no need to point `motel-backup.service`
 at this.
 
@@ -404,8 +446,8 @@ other channels about a failure as `ChannelFailed` (DESIGN-notify.md,
 operator channel there is no other channel to tell. And two channels
 of one integration count as one, so a failure points at both as
 suspects, and neither hears it: ntfy and json are both Alertmanager's
-webhook integration. Give the operator two channels of different kinds,
-such as ntfy and Slack.
+webhook integration. Give the operator two channels of different
+integrations, such as ntfy and Slack. ntfy with json is one.
 
 A state is told twice: once when it fires (after 30 seconds, so a burst
 arrives as one message) and once when it resolves. While it holds, a
@@ -505,8 +547,10 @@ ip netns exec motel-metrics curl -s http://127.0.0.1:8880/api/v1/rules
 ```
 
 There are three groups: `motel-store` (motel's fixed rules),
-`motel-channel-failed` and `motel-operator` (your `rule` lines). Each
-`rules` list is empty while there is nothing to evaluate.
+`motel-channel-failed` and `motel-operator` (your `threshold` and
+`disk_fill` rules). A `post_deploy` rule is never listed here: motel
+evaluates it, not vmalert. Each `rules` list is empty while there is
+nothing to evaluate.
 
 On a box with notifications only, ask the API over its socket:
 `curl -s --unix-socket /run/motel-notify/am.sock http://am/api/v2/alerts`.
@@ -633,6 +677,10 @@ the sites: v0.6.1 refuses those too.
 | The false recovery after the block alone is removed | the same box: block out at 17:52:17, `[RESOLVED]` for a firing `disk_low` and `reboot_required` at 17:56:57–17:57:03, the disk still full | why step 2 comes before step 3 |
 | Stopping Alertmanager before taking the block out | the same box: stopped at 18:03:37, block out at 18:03:38, a `disk_low` firing | nothing delivered in the six minutes after |
 | `apt purge` with nothing disabled first | the same box. Its `policy-rc.d` refuses the packages' own stop at removal, as Docker images do, so a real box's prerm may stop more | five units left enabled, as above |
+| The removal in this page's order, and `apt purge` first, where the packages' own stops run | the same image at c979404 with `policy-rc.d` removed, 2026-11-12 | steps 2 to 9 leave nothing but the two system users. Purged first, the same five units stay enabled, both unix sockets fail at their next connection, and steps 2, 4, 6 and 7 clear them |
 | Going back to v0.6.1 | the same box, with v0.6.1's arm64 `.deb` | refuses `monitor` and `observe`, and starts once both are out, with `_box.env` still there |
 | Real Slack, Discord and ntfy servers | not tried. On hotserve-1, an ntfy topic showed the JSON body as the message | owed (DESIGN-notify.md, "Owed") |
+| The heartbeat's pings | the same image at c979404, at the stub receiver | 299 s and 300 s apart undisturbed; 439 s across a restart of motel 140 s after a ping |
+| A `--state firing` across a restart of motel | the same image at c979404 | `[RESOLVED]` five minutes after the restart, nothing having resolved it |
+| A reboot after going back to v0.6.1 | the same image, the container restarted | the store and vmalert come back, Alertmanager and both its sockets stay down, nothing is sent |
 | A reboot with monitor set up | hotserve-1 (Debian 13, at 9228935), three cold boots | the store and its sockets come back. Not checked here at 01b2fd5 |

@@ -165,7 +165,7 @@ bucket off the box every hour, proves weekly that a restore would
 work, and puts an app back.
 [Monitor](docs/monitor.md) (experimental, in no release yet) tells you
 when something on the box goes wrong, at ntfy, Slack, Discord or any
-webhook, and keeps each app's numbers.
+URL that takes Alertmanager's JSON, and keeps each app's numbers.
 
 
 ## What motel is (and isn't)

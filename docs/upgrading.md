@@ -195,13 +195,17 @@ Before you upgrade:
 
   The store keeps running after this, and so do Alertmanager and
   vmalert if you skip step 1, as do any of Monitor's recipe units you
-  installed (they fail once `motel monitor send` is gone). They are
+  installed (they fail once `motel monitor send` is gone). A reboot
+  starts vmalert again with the store, whose unit wants it, though
+  step 1 disabled it; its proxy's socket stays down, so it reaches no
+  Alertmanager and nothing is sent. They are
   setup's or yours, not the package's, and the older release neither
   uses nor stops them. [Monitor](monitor.md#turn-it-off-and-remove-it)
   stops and removes them. Coming back to a release with monitor later
-  means its setup again: step 1 left Alertmanager disabled, so
-  `motel monitor setup [--metrics]` runs before the block is pushed
-  back ("To turn it back on", there). On a box already back whose motel refused to start, root edits
+  means its setup again: step 1 left Alertmanager disabled, so once
+  the block and its URLs are back, root runs
+  `motel monitor setup [--metrics]` ("To turn it back on", there). On
+  a box already back whose motel refused to start, root edits
   the block and the `observe` lines out of `/etc/motel/Caddyfile` and
   runs `systemctl restart motel`. On a box that takes pushes, root also
   removes the `"_box"` entry from the `secrets` map in
@@ -257,8 +261,12 @@ file. Do it in this order:
    On a box with no push channel, root edits the blocks out of
    `/etc/motel/Caddyfile` and runs `systemctl reload motel`. So does a
    box that takes pushes but whose blocks were edited into the file by
-   hand and never committed; commit the `monitor` block before its
-   next push, which replaces the file with the repository's.
+   hand and never committed. Its next push replaces the file with the
+   repository's, so before that push commit the `monitor` block, and
+   with it each secret the block reads
+   (`make secret APP=_box VAR=NOTIFY_<NAME>`): a `_box.env` written by
+   hand does not count, and a push of the block without
+   `secrets/_box/` is refused, naming the secret.
 2. **Upgrade the package**, as above. The new motel starts on that
    Caddyfile, which has nothing for it to refuse.
 3. **Push the Caddyfile with `monitor { … }`**: the notify block's
@@ -304,13 +312,17 @@ reload (`metrics_store: the block is gone: vmalert is given no rule;
 step 1's file (`monitor metrics: the metrics line is gone: vmalert is
 given no rule; …`).
 
-**Run both setups again if the box was built before b7754fc** (#426,
-2026-11-11). Their units have changed how they run since then: the two
+**Run setup again if the box was built before b7754fc** (#426,
+2026-11-11): both setups on a box that had a `metrics_store` block,
+and `motel monitor setup` alone on one that had only `notify`
+(`--metrics` there would install the store and start it). Their units
+have changed how they run since then: the two
 socket proxies run as root until the store's units are rewritten
 (`ps -eo user,cmd | grep socket-proxyd` shows `root`), and
 Alertmanager's and the store's data directories stay 0755, readable by
-every local user, until both drop-ins are rewritten. After step 3, root
-runs `motel monitor setup --metrics`. It rewrites the store's units and
+every local user, until both drop-ins are rewritten. After step 3, on
+a box with the store, root runs `motel monitor setup --metrics`. It
+rewrites the store's units and
 restarts vmalert and the store (a push or two fails meanwhile) without
 touching Alertmanager. Then, at a quiet moment, root runs
 `motel monitor setup`. It rewrites Alertmanager's units and restarts
