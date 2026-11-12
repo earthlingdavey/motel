@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // The files `motel monitor setup --metrics` writes, which ship in the
@@ -46,8 +47,11 @@ const (
 
 // The units of the shape before Alertmanager held its own listener in
 // the namespace: a socket on 127.0.0.1:9093 there, and a proxy from it to
-// Alertmanager's unix socket. Setup retires them.
-var oldAMProxy = []string{"motel-am-proxy.socket", "motel-am-proxy.service"}
+// Alertmanager's unix socket. Setup retires them, the socket first.
+const (
+	oldAMProxySocket  = "motel-am-proxy.socket"
+	oldAMProxyService = "motel-am-proxy.service"
+)
 
 // metricsUnits are setup's unit files, each at its path under unitDir.
 func metricsUnits() []struct {
@@ -183,16 +187,23 @@ func metricsSetup(sys system, root string, out io.Writer) (err error) {
 	// which Alertmanager's own socket binds next: it goes first, before
 	// the reload, with its proxy.
 	retired = true
-	if isFile(at(filepath.Join(unitDir, oldAMProxy[0]))) {
-		if err := sys.run("systemctl", append([]string{"disable", "--now"}, oldAMProxy...)...); err != nil {
+	// Each by its own file, so a retirement cut short (a remove that
+	// failed) is finished by the next run.
+	var gone []string
+	for _, u := range []string{oldAMProxySocket, oldAMProxyService} {
+		if !isFile(at(filepath.Join(unitDir, u))) {
+			continue
+		}
+		if err := sys.run("systemctl", "disable", "--now", u); err != nil {
 			return err
 		}
-		for _, u := range oldAMProxy {
-			if err := os.Remove(at(filepath.Join(unitDir, u))); err != nil && !errors.Is(err, fs.ErrNotExist) {
-				return err
-			}
+		if err := os.Remove(at(filepath.Join(unitDir, u))); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return err
 		}
-		say("retired %s and %s: Alertmanager listens in the namespace itself", oldAMProxy[0], oldAMProxy[1])
+		gone = append(gone, u)
+	}
+	if len(gone) > 0 {
+		say("retired %s: Alertmanager listens in the namespace itself", strings.Join(gone, " and "))
 	}
 	for _, step := range [][]string{
 		{"systemctl", "daemon-reload"},

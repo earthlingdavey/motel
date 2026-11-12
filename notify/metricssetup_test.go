@@ -195,8 +195,8 @@ func TestMetricsSetupRetiresTheProxyShape(t *testing.T) {
 		notifySetUp(t, root)
 		for _, p := range []string{
 			filepath.Join(unitDir, vmService+".d", "10-motel.conf"),
-			filepath.Join(unitDir, oldAMProxy[0]),
-			filepath.Join(unitDir, oldAMProxy[1]),
+			filepath.Join(unitDir, oldAMProxySocket),
+			filepath.Join(unitDir, oldAMProxyService),
 		} {
 			if err := os.MkdirAll(filepath.Dir(filepath.Join(root, p)), 0o750); err != nil {
 				t.Fatal(err)
@@ -214,7 +214,11 @@ func TestMetricsSetupRetiresTheProxyShape(t *testing.T) {
 	if err := metricsSetup(f, root, &out); err != nil {
 		t.Fatal(err)
 	}
-	retire := slices.Index(f.cmds, "systemctl disable --now motel-am-proxy.socket motel-am-proxy.service")
+	sock := slices.Index(f.cmds, "systemctl disable --now motel-am-proxy.socket")
+	retire := slices.Index(f.cmds, "systemctl disable --now motel-am-proxy.service")
+	if sock < 0 || retire < sock {
+		t.Fatalf("commands: %v; want the proxy's socket disabled, then its service", f.cmds)
+	}
 	reload := slices.Index(f.cmds, "systemctl daemon-reload")
 	restart := slices.Index(f.cmds, "systemctl restart "+amService)
 	enable := slices.IndexFunc(f.cmds, func(c string) bool { return strings.HasPrefix(c, "systemctl enable --now ") })
@@ -230,7 +234,7 @@ func TestMetricsSetupRetiresTheProxyShape(t *testing.T) {
 	if n != 1 {
 		t.Errorf("Alertmanager in %d commands, want its one restart: %v", n, f.cmds)
 	}
-	for _, u := range oldAMProxy {
+	for _, u := range []string{oldAMProxySocket, oldAMProxyService} {
 		if _, err := os.Lstat(filepath.Join(root, unitDir, u)); !errors.Is(err, fs.ErrNotExist) {
 			t.Errorf("%s is still there: %v", u, err)
 		}
@@ -266,8 +270,24 @@ func TestMetricsSetupRetiresTheProxyShape(t *testing.T) {
 	if slices.ContainsFunc(f.cmds, func(c string) bool { return strings.Contains(c, amService) || strings.Contains(c, "motel-am-proxy") }) {
 		t.Errorf("a failure before the retirement touched Alertmanager or the proxy: %v", f.cmds)
 	}
-	if !isFile(filepath.Join(root, unitDir, oldAMProxy[0])) {
+	if !isFile(filepath.Join(root, unitDir, oldAMProxySocket)) {
 		t.Error("a failure before the retirement removed the proxy's socket")
+	}
+
+	// A retirement cut short (the service's file left behind) is
+	// finished by the next run (/code-review pass 1 on #435).
+	root = plant(t)
+	if err := os.Remove(filepath.Join(root, unitDir, oldAMProxySocket)); err != nil {
+		t.Fatal(err)
+	}
+	f = &fakeSystem{isInstalled: true}
+	out.Reset()
+	if err := metricsSetup(f, root, &out); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(f.cmds, "systemctl disable --now motel-am-proxy.service") || slices.Contains(f.cmds, "systemctl disable --now motel-am-proxy.socket") ||
+		isFile(filepath.Join(root, unitDir, oldAMProxyService)) || !strings.Contains(out.String(), "retired motel-am-proxy.service: ") {
+		t.Errorf("the service left alone: %v\n%s; want it disabled and removed", f.cmds, out.String())
 	}
 }
 
