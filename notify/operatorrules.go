@@ -583,9 +583,16 @@ func thresholdRule(r Rule) vmRule {
 const pushSeries = `process_start_time_seconds{job="motel"}`
 
 // counterLookback is how far back counterIncrease looks for a series'
-// earlier sample, and for the push's: a gap in the pushes up to it is
-// read as a gap.
+// earlier sample: a release name the store saw within it, rolled back
+// to with a fresh counter, is told by its last value.
 const counterLookback = "1d"
+
+// pushLookback is how far before the window counterIncrease looks for
+// the push: four pushes, so that one lost is no gap. With a push in it
+// the pushes ran up to the window, and a series with no sample before
+// the window was born since; one born in a gap in the pushes (the store
+// down, or read-only) is first seen with every count since its birth.
+const pushLookback = 4 * pushEvery
 
 // counterIncrease is a request counter's increase (sel: the metric and
 // its selector) over win, ending off before the query's time.
@@ -595,27 +602,48 @@ const counterLookback = "1d"
 // value that is large beside the next step (measured on 1.112.0). A
 // series new to the store, or back below its last value (a fresh
 // counter: a release name the store saw within the day, rolled back
-// to), with the push already older than the window, is a new one of
-// motel's (a release's first push after its cutover, a class's first
+// to), with the push coming up to the window, is a new one of motel's
+// (a release's first push after its cutover, a class's first
 // response), counted from zero since it was: through increase_pure,
 // whose first value its increase would drop (22 responses read as 0,
 // e2e metrics 3a). Any other series the window reads through increase:
 // one back at or above its last value came back after a gap in the
-// pushes (the store down, or read-only), and one that came with the
-// push itself (the metrics line first loaded on a box whose observer
-// had counted for hours) holds every count since motel began;
-// increase_pure would read either's first value as the window's own.
-// Where a sample comes just before the window the two agree.
+// pushes (the store down, or read-only); one first seen, or back below
+// its last value, after a gap was born or restarted in it; and one
+// that came with the push itself (the metrics line first loaded on a
+// box whose observer had counted for hours) holds every count since
+// motel began; increase_pure would read each one's first value as the
+// window's own. Where a sample comes just before the window the two
+// agree.
 func counterIncrease(sel string, win, off time.Duration) string {
+	return guardedIncrease(sel, sel, "", win, off)
+}
+
+// histogramIncrease is counterIncrease over a histogram's buckets
+// (metric_bucket and matchers), each histogram told new or fresh by
+// its count (metric_count), so that all its buckets go one way: told
+// per bucket, a fresh counter under a name the store saw has some
+// buckets above their last values (through increase) and some below
+// (through increase_pure), and the quantile mixes the two (0.1 s read
+// as 0.97 s, /code-review pass 5 on operator rules).
+func histogramIncrease(metric, matchers string, win, off time.Duration) string {
+	return guardedIncrease(metric+"_bucket"+matchers, metric+"_count"+matchers, " ignoring(le)", win, off)
+}
+
+// guardedIncrease is sel's increase through increase_pure where by
+// (sel itself, or a histogram's count) is new or fresh and the push
+// came up to the window, matched on its labels but those match leaves
+// out; through increase otherwise.
+func guardedIncrease(sel, by, match string, win, off time.Duration) string {
 	offset, back := "", promDuration(win+off)
 	if off > 0 {
 		offset = " offset " + promDuration(off)
 	}
 	w := "[" + promDuration(win) + "]" + offset
 	before := "[" + counterLookback + "] offset " + back
-	return "((increase_pure(" + sel + w + ") unless (present_over_time(" + sel + before + ")" +
-		" unless (last_over_time(" + sel + before + ") > first_over_time(" + sel + w + "))))" +
-		" and on() present_over_time(" + pushSeries + before + "))" +
+	return "((increase_pure(" + sel + w + ") unless" + match + " (present_over_time(" + by + before + ")" +
+		" unless (last_over_time(" + by + before + ") > first_over_time(" + by + w + "))))" +
+		" and on() present_over_time(" + pushSeries + "[" + promDuration(pushLookback) + "] offset " + back + "))" +
 		" or increase(" + sel + w + ")"
 }
 
@@ -623,7 +651,7 @@ func counterIncrease(sel string, win, off time.Duration) string {
 // (app), which carries the label notify's route tree sends to the
 // app's channels by), over the request window, with the sample floor
 // for a share or a quantile. The request counters are read through
-// counterIncrease.
+// counterIncrease, the response histogram through histogramIncrease.
 func thresholdExpr(r Rule) string {
 	app := ""
 	if r.App != "" {
@@ -655,7 +683,7 @@ func thresholdExpr(r Rule) string {
 		if r.Metric == "p95" {
 			q = "0.95"
 		}
-		return "histogram_quantile(" + q + ", sum by (app, le) (" + counterIncrease("motel_app_response_seconds_bucket"+sel(), requestWindow, 0) + "))" +
+		return "histogram_quantile(" + q + ", sum by (app, le) (" + histogramIncrease("motel_app_response_seconds", sel(), requestWindow, 0) + "))" +
 			cmp + " and " + sum("motel_app_response_seconds_count") + floor
 	case "request_rate":
 		return sum("motel_app_requests_total") + " / " + strconv.Itoa(int(requestWindow.Seconds())) + cmp
@@ -689,7 +717,7 @@ func diskFillRule(r Rule) vmRule {
 		Alert: r.Name,
 		Expr: "min by (path) (predict_linear(" + diskAvailMetric + "[" + promDuration(long) + "], " + h + ")) < 0" +
 			" and min by (path) (predict_linear(" + diskAvailMetric + "[" + promDuration(short) + "], " + h + ")) < 0" +
-			" and max by (path) (present_over_time(" + diskAvailMetric + "[" + promDuration(short) + "] offset " + promDuration(long-short) + "))",
+			" and max by (path) (present_over_time(" + diskAvailMetric + "[" + promDuration(long) + "] offset " + promDuration(long-short) + "))",
 		For:    promDuration(hold),
 		Labels: labels,
 		Annotations: map[string]string{"summary": fmt.Sprintf("the filesystem holding {{ $labels.path }} is predicted to fill within %s (rule %s)",
@@ -705,8 +733,11 @@ func diskFillRule(r Rule) vmRule {
 // must then be as large a share of it to fire at 30 days as at one
 // (about half); over 6 h, a 30-day horizon fired on a step of 2 %
 // (/code-review pass 4 on operator rules). The rule's third term wants
-// a sample in the long window's first sixth: over less history the
-// windows are shorter than their shape, and a step fires again.
+// a sample older than the long window's last five sixths: over less
+// history the windows are shorter than their shape, and a step fires
+// again. Any sample in a long window before that, not one in its first
+// sixth alone, so that a gap in the pushes longer than the short window
+// leaves no hole when it slides into that sixth (/code-review pass 5).
 func diskFillShape(within time.Duration) (long, short, hold time.Duration) {
 	long = diskFillWindow
 	if within > diskFillScale {

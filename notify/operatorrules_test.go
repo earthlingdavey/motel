@@ -270,22 +270,23 @@ func TestOperatorRulesRender(t *testing.T) {
 		t.Fatalf("operator rules = %+v; want the threshold and disk_fill lines, no post_deploy", f.Groups[2].Rules)
 	}
 	inc := func(sel string) string { return counterIncrease(sel, 5*time.Minute, 0) }
+	hist := func(m string) string { return histogramIncrease("motel_app_response_seconds", m, 5*time.Minute, 0) }
 	every := func(r string) string { return `sum by (app) (` + inc(`motel_app_requests_total{`+r+`}`) + `)` }
 	shop := func(metric, extra string) string {
 		return `sum by (app) (` + inc(metric+`{app="shop"`+extra+`}`) + `)`
 	}
 	for name, want := range map[string]string{
 		"errors_high": "(" + every(`class="5xx"`) + " / " + every(`class!="aborted"`) + ") > 0.05 and " + every(`class!="aborted"`) + " >= 20",
-		"shop_slow": `histogram_quantile(0.95, sum by (app, le) (` + inc(`motel_app_response_seconds_bucket{app="shop"}`) + `)) > 1.5 and ` +
+		"shop_slow": `histogram_quantile(0.95, sum by (app, le) (` + hist(`{app="shop"}`) + `)) > 1.5 and ` +
 			shop("motel_app_response_seconds_count", "") + " >= 50",
 		"blog_quiet": `sum by (app) (` + inc(`motel_app_requests_total{app="blog"}`) + `) / 300 < 0.1`,
 		"hits_low": `(sum by (app) (` + inc(`motel_app_cache_responses_total{result=~"hit|stale"}`) + `) or sum by (app) (` + inc(`motel_app_cache_responses_total`) + `) * 0)` +
 			` / sum by (app) (` + inc(`motel_app_cache_responses_total`) + `) < 0.5 and sum by (app) (` + inc(`motel_app_cache_responses_total`) + `) >= 20`,
 		"mem":    `max by (app) (motel_app_memory_bytes / motel_app_memory_max_bytes) > 0.8`,
 		"busy":   `sum by (app) (rate(motel_app_cpu_seconds_total{app="shop"}[5m])) > 1.5`,
-		"median": `histogram_quantile(0.5, sum by (app, le) (` + inc(`motel_app_response_seconds_bucket`) + `)) > 0.2 and sum by (app) (` + inc(`motel_app_response_seconds_count`) + `) >= 20`,
+		"median": `histogram_quantile(0.5, sum by (app, le) (` + hist(``) + `)) > 0.2 and sum by (app) (` + inc(`motel_app_response_seconds_count`) + `) >= 20`,
 		"disk_filling": `min by (path) (predict_linear(motel_disk_avail_bytes[42h], 604800)) < 0 and min by (path) (predict_linear(motel_disk_avail_bytes[7h], 604800)) < 0` +
-			` and max by (path) (present_over_time(motel_disk_avail_bytes[7h] offset 35h))`,
+			` and max by (path) (present_over_time(motel_disk_avail_bytes[42h] offset 35h))`,
 	} {
 		r := rules[name]
 		if r.Expr != want {
@@ -293,13 +294,20 @@ func TestOperatorRulesRender(t *testing.T) {
 		}
 	}
 	// The guard itself, whole: increase_pure for a series new to the
-	// store, or back below its last value, once the push is older than
-	// the window; increase otherwise.
+	// store, or back below its last value, with the push coming up to
+	// the window; increase otherwise. A histogram's buckets are told by
+	// its count.
 	if got, want := counterIncrease(`m{app="a"}`, 150*time.Second, 90*time.Second),
 		`((increase_pure(m{app="a"}[150s] offset 90s) unless (present_over_time(m{app="a"}[1d] offset 4m)`+
 			` unless (last_over_time(m{app="a"}[1d] offset 4m) > first_over_time(m{app="a"}[150s] offset 90s))))`+
-			` and on() present_over_time(process_start_time_seconds{job="motel"}[1d] offset 4m)) or increase(m{app="a"}[150s] offset 90s)`; got != want {
+			` and on() present_over_time(process_start_time_seconds{job="motel"}[2m] offset 4m)) or increase(m{app="a"}[150s] offset 90s)`; got != want {
 		t.Errorf("counterIncrease =\n%s\nwant\n%s", got, want)
+	}
+	if got, want := histogramIncrease("h", `{app="a"}`, 5*time.Minute, 0),
+		`((increase_pure(h_bucket{app="a"}[5m]) unless ignoring(le) (present_over_time(h_count{app="a"}[1d] offset 5m)`+
+			` unless (last_over_time(h_count{app="a"}[1d] offset 5m) > first_over_time(h_count{app="a"}[5m]))))`+
+			` and on() present_over_time(process_start_time_seconds{job="motel"}[2m] offset 5m)) or increase(h_bucket{app="a"}[5m])`; got != want {
+		t.Errorf("histogramIncrease =\n%s\nwant\n%s", got, want)
 	}
 	for name, want := range map[string]map[string]string{
 		"errors_high":  {"kind": "state", "severity": "warning", "subject": "app:{{ $labels.app }}", "source": "rules", "key": "rules/app:{{ $labels.app }}/errors_high"},
@@ -499,6 +507,83 @@ tests:
         groupname: motel-operator
         alertname: busy
         exp_alerts: []
+  - interval: 1m
+    input_series:
+      - series: 'process_start_time_seconds{job="motel"}'
+        values: '1x59 _x20 1x40'
+      - series: 'motel_app_requests_total{app="born",release="v2",class="2xx",job="motel"}'
+        values: '_x80 900+50x40'
+      - series: 'motel_app_requests_total{app="restarted",release="v1",class="2xx",job="motel"}'
+        values: '0+50x59 _x20 750+50x40'
+      - series: 'motel_app_requests_total{app="after",release="v3",class="2xx",job="motel"}'
+        values: '_x90 400x30'
+    alert_rule_test:
+      - eval_time: 84m
+        groupname: motel-operator
+        alertname: busy
+        exp_alerts: []
+      - eval_time: 93m
+        groupname: motel-operator
+        alertname: busy
+        exp_alerts:
+          - exp_labels: {app: after, kind: state, severity: warning, subject: "app:after", source: rules, key: "rules/app:after/busy"}
+            exp_annotations: {summary: "after: its requests a second over 5 minutes has been above 1 for 2m (rule busy); now 1.333"}
+`
+	runUnittest(t, tool, dir, test)
+}
+
+// A histogram is read whole, by its count: under a release name rolled
+// back to with a fresh counter, reused's buckets that came back below
+// their last values and the one above it are all counted from zero (380
+// of 400 under 0.1 s), not some through increase_pure and one through
+// increase (0.1 s read as 0, a p95 of 0.97 s). slow is new to the store
+// (all in increase_pure); kept came back after a gap at its last values,
+// its history slow and its new answers fast, all through increase.
+func TestOperatorRulesHistogramIsReadWhole(t *testing.T) {
+	tool := vmTool(t, "vmalert-tool")
+	dir := t.TempDir()
+	a := rulesApp(t, "rule slow threshold p95 > 500ms for 2m min_requests 5")
+	if err := os.WriteFile(filepath.Join(dir, RulesName), renderRules(a), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	test := `rule_files: [rules.yml]
+evaluation_interval: 1m
+tests:
+  - interval: 1m
+    input_series:
+      - series: 'process_start_time_seconds{job="motel"}'
+        values: '1x90'
+      - series: 'motel_app_response_seconds_bucket{app="reused",release="v1",le="0.1",job="motel"}'
+        values: '0+1x10 _x30 380x50'
+      - series: 'motel_app_response_seconds_bucket{app="reused",release="v1",le="1",job="motel"}'
+        values: '0+50x10 _x30 395x50'
+      - series: 'motel_app_response_seconds_bucket{app="reused",release="v1",le="+Inf",job="motel"}'
+        values: '0+100x10 _x30 400x50'
+      - series: 'motel_app_response_seconds_count{app="reused",release="v1",job="motel"}'
+        values: '0+100x10 _x30 400x50'
+      - series: 'motel_app_response_seconds_bucket{app="slow",release="v1",le="0.1",job="motel"}'
+        values: '_x40 0x50'
+      - series: 'motel_app_response_seconds_bucket{app="slow",release="v1",le="1",job="motel"}'
+        values: '_x40 50x50'
+      - series: 'motel_app_response_seconds_bucket{app="slow",release="v1",le="+Inf",job="motel"}'
+        values: '_x40 50x50'
+      - series: 'motel_app_response_seconds_count{app="slow",release="v1",job="motel"}'
+        values: '_x40 50x50'
+      - series: 'motel_app_response_seconds_bucket{app="kept",release="v1",le="0.1",job="motel"}'
+        values: '0x10 _x30 0+10x50'
+      - series: 'motel_app_response_seconds_bucket{app="kept",release="v1",le="1",job="motel"}'
+        values: '0x10 _x30 0+10x50'
+      - series: 'motel_app_response_seconds_bucket{app="kept",release="v1",le="+Inf",job="motel"}'
+        values: '0+100x10 _x30 1000+10x50'
+      - series: 'motel_app_response_seconds_count{app="kept",release="v1",job="motel"}'
+        values: '0+100x10 _x30 1000+10x50'
+    alert_rule_test:
+      - eval_time: 44m
+        groupname: motel-operator
+        alertname: slow
+        exp_alerts:
+          - exp_labels: {app: slow, kind: state, severity: warning, subject: "app:slow", source: rules, key: "rules/app:slow/slow"}
+            exp_annotations: {summary: "slow: its p95 time to headers over 5 minutes has been above 500ms for 2m (rule slow); now 955ms"}
 `
 	runUnittest(t, tool, dir, test)
 }
@@ -520,6 +605,39 @@ func TestDiskFillShape(t *testing.T) {
 			t.Errorf("within %s: %s, %s, %s; want %s, %s, %s", c.within, l, s, h, c.long, c.short, c.hold)
 		}
 	}
+}
+
+// disk_fill's history is any sample older than its long window's last
+// five sixths: a two-hour gap in the pushes (the store down) leaves no
+// hole when it slides into the long window's first sixth, five hours
+// on, and a rule still waits five hours from the series' first sample.
+func TestDiskFillHistoryOverAGap(t *testing.T) {
+	tool := vmTool(t, "vmalert-tool")
+	dir := t.TempDir()
+	a := rulesApp(t, "rule disk_day disk_fill within 1d")
+	if err := os.WriteFile(filepath.Join(dir, RulesName), renderRules(a), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	test := `rule_files: [rules.yml]
+evaluation_interval: 1m
+tests:
+  - interval: 1m
+    input_series:
+      - series: 'motel_disk_avail_bytes{path="/var/lib/liveswap",job="motel"}'
+        values: '1440000000000-1000000000x599 _x120 720000000000-1000000000x480'
+    alert_rule_test:
+      - eval_time: 5h20m
+        groupname: motel-operator
+        alertname: disk_day
+        exp_alerts: []
+      - eval_time: 16h30m
+        groupname: motel-operator
+        alertname: disk_day
+        exp_alerts:
+          - exp_labels: {path: /var/lib/liveswap, kind: state, severity: warning, subject: box, source: rules, key: "rules/box/disk_day//var/lib/liveswap"}
+            exp_annotations: {summary: "the filesystem holding /var/lib/liveswap is predicted to fill within 1d (rule disk_day)"}
+`
+	runUnittest(t, tool, dir, test)
 }
 
 // A one-off step of a fifth of the free space (a deploy's extraction, a

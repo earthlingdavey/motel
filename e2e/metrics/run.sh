@@ -117,11 +117,13 @@ grep -q 'notify_channel: ops' "$STATE/rules.yml" \
 vmalert -dryRun -rule="$STATE/rules.yml" >/tmp/dry.out 2>&1 \
 	&& pass "vmalert -dryRun passes the rendered rules" || fail "vmalert -dryRun: $(tail -3 /tmp/dry.out)"
 # notify's tests over vmalert and vmalert-tool, which `make test` skips
-# for want of them: each must run here, none skip.
-vmtests='^(TestRenderedRulesPassVMAlertDryRun|TestOperatorRulesPassVMAlertDryRun|TestOperatorRulesFire|TestOperatorRulesCountAfterAGap|TestDiskFillStepIsNoTrend)$'
+# for want of them: each must run here, none skip. The list is every
+# test that calls vmTool (TestE2EMetricsListsEveryVMAlertTest).
+vmtests='^(TestRenderedRulesPassVMAlertDryRun|TestRenderedRulesFireAsMotelsAlerts|TestOperatorRulesPassVMAlertDryRun|TestOperatorRulesFire|TestOperatorRulesCountAfterAGap|TestOperatorRulesHistogramIsReadWhole|TestDiskFillHistoryOverAGap|TestDiskFillStepIsNoTrend)$'
+nvm=$(printf '%s' "$vmtests" | tr '|' '\n' | wc -l)
 (cd /tmp && notify.test -test.run "$vmtests" -test.v -test.count=1) >/tmp/vmtests.out 2>&1
-[ $? -eq 0 ] && [ "$(grep -c '^--- PASS' /tmp/vmtests.out)" = 5 ] && ! grep -q -- '--- SKIP' /tmp/vmtests.out \
-	&& pass "notify's five vmalert tests run and pass against the box's vmalert and vmalert-tool" \
+[ $? -eq 0 ] && [ "$(grep -c '^--- PASS' /tmp/vmtests.out)" = "$nvm" ] && ! grep -q -- '--- SKIP' /tmp/vmtests.out \
+	&& pass "notify's $nvm vmalert tests run and pass against the box's vmalert and vmalert-tool" \
 	|| fail "notify's vmalert tests: $(grep -E -- '^(--- |FAIL|ok)|SKIP' /tmp/vmtests.out | head -10)"
 # The operator's group: the threshold and disk_fill lines, motel's own
 # expressions, each counter through the guard (increase_pure for a

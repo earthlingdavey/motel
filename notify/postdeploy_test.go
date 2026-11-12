@@ -87,14 +87,14 @@ func (s *relStore) queryAt(_ context.Context, q string, t time.Time) ([]series, 
 		return nil, nil // no series
 	}
 	pt := func(v float64) []point { return []point{{t: time.Unix(0, 0), v: v}} }
-	if strings.Contains(q, "motel_app_response_seconds_count") {
-		return []series{{labels: map[string]string{}, points: pt(s.timed[key])}}, nil
-	}
-	if strings.HasPrefix(q, "histogram_quantile") {
+	if strings.HasPrefix(q, "histogram_quantile") { // its buckets are told by the count
 		if !n.hasP95 {
 			return nil, nil
 		}
 		return []series{{labels: map[string]string{}, points: pt(n.p95)}}, nil
+	}
+	if strings.Contains(q, "motel_app_response_seconds_count") {
+		return []series{{labels: map[string]string{}, points: pt(s.timed[key])}}, nil
 	}
 	return []series{
 		{labels: map[string]string{"class": "2xx"}, points: pt(n.sent - n.errors)},
@@ -188,8 +188,11 @@ func TestPostDeployFailsAfterItsCountInARow(t *testing.T) {
 	}
 	var sawNew, sawOld bool
 	for _, q := range tc.store.queries {
-		if !strings.Contains(q, "unless (present_over_time(") || !strings.Contains(q, ") or increase(") {
+		if !strings.Contains(q, " (present_over_time(") || !strings.Contains(q, ") or increase(") {
 			t.Errorf("a query not through counterIncrease: %s", q)
+		}
+		if strings.Contains(q, "_bucket") && !strings.Contains(q, `) unless ignoring(le) (present_over_time(motel_app_response_seconds_count{app="blog"`) {
+			t.Errorf("a bucket query not through histogramIncrease: %s", q)
 		}
 		sawNew = sawNew || strings.Contains(q, counterIncrease(`motel_app_requests_total{app="blog",release="v2"}`, 2*time.Minute, 0))
 		sawOld = sawOld || strings.Contains(q, `{app="blog",release="v1"}[150s] offset 90s)`) &&

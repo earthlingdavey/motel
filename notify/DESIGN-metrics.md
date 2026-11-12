@@ -373,12 +373,12 @@ parse, a JSON config's at Provision, both by `motel validate`):
 | Kind | Expression | For | Labels | Reaches |
 |---|---|---|---|---|
 | `threshold 5xx_share` | `(sum by (app) (inc(motel_app_requests_total{class="5xx"})) / SENT) > v and SENT >= floor`, SENT the same over `class!="aborted"` | `for` | `app`, `subject="app:<app>"`, `kind="state"`, `severity`, `source="rules"`, `key="rules/app:<app>/<name>"` | the operator and the app's bound channels |
-| `threshold p50`, `p95` | `histogram_quantile(q, sum by (app, le) (inc(motel_app_response_seconds_bucket))) > v and sum by (app) (inc(motel_app_response_seconds_count)) >= floor`, v in seconds | `for` | as above | as above |
+| `threshold p50`, `p95` | `histogram_quantile(q, sum by (app, le) (hinc(motel_app_response_seconds))) > v and sum by (app) (inc(motel_app_response_seconds_count)) >= floor`, v in seconds | `for` | as above | as above |
 | `threshold request_rate` | `sum by (app) (inc(motel_app_requests_total)) / 300 > v` | `for` | as above | as above |
 | `threshold cache_hit_share` | `(HITS or SPOKE * 0) / SPOKE > v and SPOKE >= floor`, both `sum by (app) (inc(motel_app_cache_responses_total))`, HITS over `result=~"hit\|stale"` | `for` | as above | as above |
 | `threshold memory_share` | `max by (app) (motel_app_memory_bytes / motel_app_memory_max_bytes) > v` | `for` | as above | as above |
 | `threshold cpu_cores` | `sum by (app) (rate(motel_app_cpu_seconds_total[5m])) > v` | `for` | as above | as above |
-| `disk_fill` | `min by (path) (predict_linear(motel_disk_avail_bytes[L], H)) < 0 and min by (path) (predict_linear(motel_disk_avail_bytes[L/6], H)) < 0 and max by (path) (present_over_time(motel_disk_avail_bytes[L/6] offset 5L/6))`, H `within` in seconds, L 6 h up to a `within` of a day and `within`/4 beyond it, in whole minutes | L/12: 30 m up to a day | `path`, `subject="box"`, `kind="state"`, `severity`, `source="rules"`, `key="rules/box/<name>/<path>"`, each filesystem's alert its own key, as `disk_low`'s | the operator |
+| `disk_fill` | `min by (path) (predict_linear(motel_disk_avail_bytes[L], H)) < 0 and min by (path) (predict_linear(motel_disk_avail_bytes[L/6], H)) < 0 and max by (path) (present_over_time(motel_disk_avail_bytes[L] offset 5L/6))`, H `within` in seconds, L 6 h up to a `within` of a day and `within`/4 beyond it, in whole minutes | L/12: 30 m up to a day | `path`, `subject="box"`, `kind="state"`, `severity`, `source="rules"`, `key="rules/box/<name>/<path>"`, each filesystem's alert its own key, as `disk_low`'s | the operator |
 | `post_deploy` | motel's queries, below | — | the event `post_deploy_regressed`: `app`, `subject="app:<app>"`, `kind="event"`, `severity="warning"`, `source="rules"`, `key="rules/app:<app>/post_deploy_regressed"`, `release`, `deployed_by`; the rule's name as `detail_rule` | the operator and the app's bound channels |
 
 With `app`, every selector carries `app="<name>"`, quoted (a name of
@@ -392,7 +392,7 @@ over a fixed five minutes, and the 5xx share is of the responses sent, as
 ```
 ((increase_pure(X[5m]) unless (present_over_time(X[1d] offset 5m)
       unless (last_over_time(X[1d] offset 5m) > first_over_time(X[5m]))))
-  and on() present_over_time(process_start_time_seconds{job="motel"}[1d] offset 5m))
+  and on() present_over_time(process_start_time_seconds{job="motel"}[2m] offset 5m))
 or increase(X[5m])
 ```
 
@@ -401,22 +401,33 @@ within about the window before it, and its `increase` drops a first
 value that is large beside the next step (both measured on 1.112.0).
 Neither alone is right: a series new to the store, or back below its
 last value (a fresh counter under a release name the store saw within
-the day: a rollback past the two releases the observer keeps), with the
-push already older than the window, is one of motel's new ones (a
-release's first push after its cutover, a class's first response),
-counted from zero, whose first value `increase` would drop (22
-responses read as 0, e2e metrics 3a); a series back at or above its
-last value after a gap in the pushes of over five minutes (the store
-down, or read-only), or one that came with the push itself (the
-metrics line first loaded on a box whose observer had counted for
-hours), holds every count since motel began, which `increase_pure`
-read as the window's own for five minutes (a 20-minute gap at 10 a
-push: 1 730 where 10 was due; /code-review pass 4 on operator rules).
-Where a sample comes just before the window the two agree. What is
-left: a gap of over a day reads as a new series ("Accepted
-residuals"), and a fresh counter back above the last value its name
-had is read as a gap, through `increase`, which drops a first push
-that is large beside the next: the two cannot be told apart.
+the day: a rollback past the two releases the observer keeps), with
+the push coming up to the window (a push in the two minutes, four
+pushes, before it), is one of motel's new ones (a release's first push
+after its cutover, a class's first response), counted from zero, whose
+first value `increase` would drop (22 responses read as 0, e2e metrics
+3a); a series back at or above its last value after a gap in the
+pushes of over five minutes (the store down, or read-only), one first
+seen or back below its last value just after a gap (born, or motel
+restarted, in it), or one that came with the push itself (the metrics
+line first loaded on a box whose observer had counted for hours),
+holds every count since motel began, or since it did, which
+`increase_pure` read as the window's own for five minutes (a 20-minute
+gap at 10 a push: 1 730 where 10 was due, /code-review pass 4 on
+operator rules; a series born 2 minutes into a 20-minute gap: 360 to
+450 where 100 was due, pass 5, when the push term asked for a push
+anywhere in the day before). Where a sample comes just before the
+window the two agree. What is left: a fresh counter back above the
+last value its name had is read as a gap, and so is any fresh counter
+in the first five minutes after the push first comes, or comes back
+after a gap of over two minutes, through `increase`, which drops a
+first push that is large beside the next ("Accepted residuals").
+`hinc(H)`, the response histogram's (`histogramIncrease`), is `inc`
+over `H_bucket` with its tests asked of `H_count` and matched
+`unless ignoring(le)`: a histogram's buckets go one way together.
+Told per bucket, a fresh counter under a name the store saw had some
+buckets above their last values and some below, and a p95 of 0.1 s
+read 0.97 s (/code-review pass 5 on operator rules).
 CPU is `rate` over the per-unit counters, each from
 zero when its unit starts. The summary says the bound and the value in
 plain words: `shop: the 5xx share of its responses over 5 minutes has
@@ -424,25 +435,31 @@ been above 0.05 for 10m (rule errors_high); now 12.5%`. The threshold
 and disk_fill rules are `rules.yml`'s third group, `motel-operator`;
 post_deploy is motel's.
 
-**disk_fill's shape** is the store's own rule's (`metrics_store_disk_fill`:
-a day ahead over 6 h and 1 h, held 30 m) up to a `within` of a day, and
-beyond it the same shape scaled to the horizon: windows of a quarter and
-a 24th of it, held for a 48th (7d: 42 h, 7 h, 3 h 30 m; 30d: 180 h,
-30 h, 15 h), all inside the store's 14 days. A regression is scale-free,
-so a one-off step in free space (a deploy's extraction, a staged backup,
-an image pulled) must then be as large a share of it to fire at 30 days
-as at one, about half of what is free; over 6 h and 1 h, a 30-day
-horizon fired on a step of 2 % and a 7-day one on 8 % (simulated at the
-push's 30 s, and the 7-day case in vmalert-tool; /code-review pass 4 on
-operator rules). The third term wants a sample in the long window's
-first sixth: over less history the windows are shorter than their shape
-and a step fires again, so a rule waits for its history (5 h at a day
-or less, 150 h at 30d) after the store's setup or a filesystem's first
-series. A bound on `within` was the other way: it would refuse the
-week and month horizons a disk is watched over. The `for` kept at 30 m
-would still let a step of a quarter of the free space fire at 30d; a
-`for` longer than the short window would stop any step, but a horizon
-of an hour would wait longer than itself.
+**disk_fill's shape** is the store's own rule's
+(`metrics_store_disk_fill`: a day ahead over 6 h and 1 h, held 30 m) up
+to a `within` of a day, and beyond it the same shape scaled to the
+horizon: windows of a quarter and a 24th of it, held for a 48th (7d: 42
+h, 7 h, 3 h 30 m; 30d: 180 h, 30 h, 15 h), all inside the store's 14
+days. A regression is scale-free, so a one-off step in free space (a
+deploy's extraction, a staged backup, an image pulled) must then be as
+large a share of it to fire at 30 days as at one, about half of what is
+free; over 6 h and 1 h, a 30-day horizon fired on a step of 2 % and a
+7-day one on 8 % (simulated at the push's 30 s, and the 7-day case in
+vmalert-tool; /code-review pass 4 on operator rules). The third term
+wants a sample older than the long window's last five sixths: over less
+history the windows are shorter than their shape and a step fires again,
+so a rule waits for its history (5 h at a day or less, 150 h at 30d)
+after the store's setup or a filesystem's first series. Any sample in a
+long window before them (back to 330 h at 30d, inside the 14 days), not
+one in the long window's first sixth alone: a gap in the pushes longer
+than the short window (the store down for 2 h, at a day) left a hole
+there when it slid into that sixth, five hours on, and a firing alert
+resolved and fired again (/code-review pass 5). A bound on `within` was
+the other way: it would refuse the week and month horizons a disk is
+watched over. The `for` kept at 30 m would still let a step of a quarter
+of the free space fire at 30d; a `for` longer than the short window
+would stop any step, but a horizon of an hour would wait longer than
+itself.
 
 **`motel_disk_avail_bytes{path}`** is the box series `disk_fill`
 reads: statfs's available bytes (df's Avail: available blocks of
@@ -492,8 +509,8 @@ which moved both windows back off the cutover (measured in e2e metrics
 is given, past the offset:
 
 - **the new release**: `sum by (class) (inc(motel_app_requests_total{app="A",release="NEW"}))`,
-  and with `max_p95`, `histogram_quantile(0.95, sum by (le) (inc(motel_app_response_seconds_bucket{app="A",release="NEW"})))`,
-  `inc` the threshold rules' over `[<e>m]` (its guards' offsets moved by the window and any offset);
+  and with `max_p95`, `histogram_quantile(0.95, sum by (le) (hinc(motel_app_response_seconds{app="A",release="NEW"})))`,
+  `inc` and `hinc` the threshold rules' over `[<e>m]` (their guards' offsets moved by the window and any offset);
 - **the old**, asked only once the new is over a bound: the same over
   `release="OLD"` with `[<e+30>s] offset <e−30>s`, its last e before
   the cutover and one push past it: its answers in the last half minute
@@ -844,8 +861,7 @@ on its general scales. metrics' examples:
 | A miss Souin coalesced onto another request's upstream call counts under the release current when it began, not the one the call went to: across a cutover, the waiters of a call in flight at that instant can be counted under the other release | liveswap/observe.go (`markUpstream`) | 2 | 5 | 3 | 30, accepted under the skill's rule 4: only the first request's selection is made, inside Souin's singleflight, and the waiters learn nothing of it but the shared response; carrying it to them needs a change to Souin (size 3, risk 3). It is bounded to the misses on one URL waiting at the cutover instant, the same mix the cached-page row above accepts, and their latency is counted. /code-review pass 2 on slice three |
 | With no cache in front, an app's own `Cache-Status` is read as a cache's verdict: its own hits are counted in `cache_hit_share` and left out of the latency, so an app that marks every response a hit leaves its own latency out of its numbers | liveswap/observe.go (`parseCacheStatus`) | 2 | 5 | 3 | 30, accepted under the skill's rule 4: telling Souin's entry from an app's needs Souin's `cache_name` (the observer would read the cache app's configuration, a dependency liveswap does not have) or the request's path through the cache, which a stale hit's background revalidation shares (it runs on a clone of the request, vars and all); size 3, risk 2. The app's own cache is a cache that spoke, and an app moves only its own numbers (T1); the post-deploy comparison reads latency through it too, for both releases alike. /code-review pass 2 on slice three |
 | The counts a motel restart (or a crash) ends within the last 30 s were never pushed, and are lost | liveswap/observe.go | 1 | 3 | 4 | 12; at most one push's worth, and the store reads the restart as a reset |
-| A request counter whose pushes stopped for over a day while motel kept counting (the store down that long) comes back read as a new series: for five minutes its window holds every count since motel began | notify/operatorrules.go (`counterIncrease`) | 2 | 3 | 3 | 18; `metrics_store_down` was told the whole day; a longer lookback is a longer scan of every request series at every evaluation of every rule. /code-review pass 4 on operator rules |
-| A fresh counter is read through `increase`, which drops a first push that is large beside the next (a burst, then a lull), in two cases the store cannot tell from a gap or from a lifetime: in the first five minutes after the push first reaches the store (a new release deployed then), and under a release name the store saw within the day whose fresh count is above the last it had (a rollback past the two releases the observer keeps). The window under-reads that push for five minutes | notify/operatorrules.go (`counterIncrease`) | 2 | 5 | 3 | 30, accepted under the skill's rule 4: both read the same as a series that holds counts from before the window, which `increase_pure` would count whole; telling them apart needs the series' age from motel (a label or a series per process and release on every request series: size 3, risk 3). An under-read of one push, against a lifetime read in its place. /code-review pass 4 on operator rules |
+| A fresh counter is read through `increase`, which drops a first push that is large beside the next (a burst, then a lull), in two cases the store cannot tell from a gap or from a lifetime: in the first five minutes after the push first reaches the store, or comes back after a gap in the pushes of over two minutes (a new release deployed then, a class's first response), and under a release name the store saw within the day whose fresh count is above the last it had (a rollback past the two releases the observer keeps). The window under-reads that push for five minutes | notify/operatorrules.go (`counterIncrease`) | 2 | 5 | 3 | 30, accepted under the skill's rule 4: both read the same as a series that holds counts from before the window, which `increase_pure` would count whole; telling them apart needs the series' age from motel (a label or a series per process and release on every request series: size 3, risk 3). An under-read of one push, against a lifetime read in its place. /code-review pass 4 on operator rules; the gap case pass 5's, the push term narrowed from a day to two minutes |
 | A motel restart (or a crash) inside a post-deploy window loses the comparison: nothing compares that deploy again, and a regression is told only by a threshold rule | notify/postdeploy.go | 2 | 2 | 3 | 12; the comparison is in memory, and keeping it across a restart is state on disk for a notification (size 2, risk 2); a restart rarely falls in the half hour after a deploy, and the numbers stay in `GET /<app>` |
 | vmalert's rules have no flapping guard: a condition that flaps around its threshold fires and resolves at each crossing | notify/metricsrules.go | 2 | 3 | 3 | 18; every rule has a `for:` of 2 to 30 minutes, which bounds a flap to one pair per `for:` |
 | `now` and `at` in `GET /<app>` are judged by the range's step timestamps, not the samples': the store carries a sample forward onto the step grid, so a stopped app's or a dropped cap's last value can read as now for up to about one step past the three steps `fresh` allows (3 m for the hour, 15 m for the day) | notify/metricsview.go (`fresh`) | 2 | 3 | 3 | 18; the status beside it says whether the app runs; the source timestamps need a `timestamp()` query per series (size 2, risk 2). Copilot round 2 on #423 |
@@ -880,11 +896,13 @@ in the namespace; the socket `srw-rw---- root motel` and the state
 directory `drwxr-s--- motel _victoria-metrics`; the store's data
 `drwxr-x--- _victoria-metrics _victoria-metrics`; root and motel reach the
 store and nobody does; the store's and vmalert's `MemoryMax`; the
-rendered `rules.yml` passes `vmalert -dryRun`; notify's five tests
+rendered `rules.yml` passes `vmalert -dryRun`; notify's eight tests
 over vmalert and vmalert-tool, which `make test` skips for want of them
-(the dry runs, the threshold and disk_fill rules firing, a counter
-after a push gap, a disk step), run from a test binary built for the
-box (e2e/Dockerfile's `notify-tests`), none skipped; motel's push arrives
+(the dry runs, the fixed rules firing, the threshold and disk_fill
+rules firing, a counter after a push gap, a histogram read whole, disk
+history over a gap, a disk step), every test that calls `vmTool`
+(`TestE2EMetricsListsEveryVMAlertTest` holds the list to them), run
+from a test binary built for the box (e2e/Dockerfile's `notify-tests`), none skipped; motel's push arrives
 (`job="motel"`), with a deployed app's `motel_app_up`, release and CPU,
 and its memory where the host's memory controller reaches the user
 manager's units (Debian 13 delegates it; a CI container's host may not,
@@ -1012,3 +1030,12 @@ Dated one-liners; the full text of each is in git.
   Provision; a request rule unobserved, by the gate); a post-deploy
   query is read to the millisecond; notify's vmalert tests run in the
   e2e metrics box. Two rows accepted, `GET /<app>`'s counters owed.
+- 2026-11-12 — /code-review pass 5 on operator rules, triaged: the guard's
+  push term asks for a push in the two minutes before the window, not
+  the day, so a counter born or reset in a push gap is not read as its
+  lifetime (and the over-a-day row closes); a histogram's buckets are
+  told new or fresh by its count, as one; disk_fill's history term
+  takes any sample before the long window's last five sixths, so a push
+  gap leaves no hole; the e2e metrics box runs every vmalert test, held
+  to the list by a test. No row added; the fresh-counter row widened to
+  the first five minutes after a gap.

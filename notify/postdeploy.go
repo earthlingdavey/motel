@@ -342,8 +342,9 @@ func shareRose(newer, old releaseNumbers) bool {
 // cache hits among them, and on a cached site a few misses (one of
 // them a cold start) would otherwise make the quantile, in every
 // check of the cumulative window after it.
-// The counters through counterIncrease: the new release's series
-// appears with its first push already at that push's count.
+// The counters through counterIncrease, the buckets through
+// histogramIncrease: the new release's series appears with its first
+// push already at that push's count.
 func queryRelease(ctx context.Context, store instantQuerier, app, release string, at time.Time, elapsed time.Duration, old, wantP95 bool, floor float64) (releaseNumbers, error) {
 	var n releaseNumbers
 	win, off := elapsed, time.Duration(0)
@@ -355,6 +356,7 @@ func queryRelease(ctx context.Context, store instantQuerier, app, release string
 	}
 	sel := "{app=" + strconv.Quote(app) + ",release=" + strconv.Quote(release) + "}"
 	inc := func(metric string) string { return counterIncrease(metric+sel, win, off) }
+	buckets := histogramIncrease("motel_app_response_seconds", sel, win, off)
 	classes, err := store.queryAt(ctx, "sum by (class) ("+inc("motel_app_requests_total")+")", at)
 	if err != nil {
 		return n, err
@@ -386,7 +388,7 @@ func queryRelease(ctx context.Context, store instantQuerier, app, release string
 	if val, ok := instantValue(timed[0]); !ok || val < floor {
 		return n, nil
 	}
-	q, err := store.queryAt(ctx, "histogram_quantile(0.95, sum by (le) ("+inc("motel_app_response_seconds_bucket")+"))", at)
+	q, err := store.queryAt(ctx, "histogram_quantile(0.95, sum by (le) ("+buckets+"))", at)
 	if err != nil {
 		return n, err
 	}

@@ -3,6 +3,9 @@ package notify
 import (
 	"context"
 	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"maps"
 	"os"
 	"os/exec"
@@ -189,6 +192,52 @@ func vmTool(t *testing.T, name string) string {
 		t.Skipf("%s is not installed (Debian: victoria-metrics)", name)
 	}
 	return p
+}
+
+// The e2e metrics box runs, by name, every test of notify's that needs
+// vmalert or vmalert-tool (`make test` skips them): a test added here
+// and not to e2e/metrics/run.sh's list would run nowhere.
+func TestE2EMetricsListsEveryVMAlertTest(t *testing.T) {
+	files, err := filepath.Glob("*_test.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fset := token.NewFileSet()
+	var need []string
+	for _, name := range files {
+		f, err := parser.ParseFile(fset, name, nil, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, d := range f.Decls {
+			fn, ok := d.(*ast.FuncDecl)
+			if !ok || fn.Body == nil || !strings.HasPrefix(fn.Name.Name, "Test") {
+				continue
+			}
+			ast.Inspect(fn.Body, func(n ast.Node) bool {
+				if c, ok := n.(*ast.CallExpr); ok {
+					if id, ok := c.Fun.(*ast.Ident); ok && id.Name == "vmTool" && !slices.Contains(need, fn.Name.Name) {
+						need = append(need, fn.Name.Name)
+					}
+				}
+				return true
+			})
+		}
+	}
+	run, err := os.ReadFile(filepath.Join("..", "e2e", "metrics", "run.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := regexp.MustCompile(`(?m)^vmtests='\^\(([^)]*)\)\$'$`).FindSubmatch(run)
+	if m == nil {
+		t.Fatal("e2e/metrics/run.sh has no vmtests='^(...)$' line")
+	}
+	listed := strings.Split(string(m[1]), "|")
+	slices.Sort(need)
+	slices.Sort(listed)
+	if len(need) == 0 || !slices.Equal(need, listed) {
+		t.Errorf("e2e/metrics/run.sh's vmtests = %v; the tests that call vmTool are %v", listed, need)
+	}
 }
 
 func TestRenderedRulesPassVMAlertDryRun(t *testing.T) {
