@@ -382,7 +382,8 @@ and disk_fill rules are `rules.yml`'s third group, `motel-operator`;
 post_deploy is motel's.
 
 **`motel_disk_avail_bytes{path}`** is the box series `disk_fill`
-reads: statfs's available bytes (df's Avail) for the directories
+reads: statfs's available bytes (df's Avail: available blocks of
+`f_frsize`, read by the same helper as the disk source) for the directories
 notify's disk source measures (the apps' root, Caddy's data, notify's
 state directory), one series per filesystem, read at each gather. It is
 named by the first of them on it, and keeps that name while the path is
@@ -395,7 +396,9 @@ knows neither when the cutover was nor which release came before.
 liveswap's `deploy_succeeded` and `rollback` carry both: `Previous`, the
 release whose instance served until the new one was published (none
 after a first deploy, or when that instance was not running: a crash
-loop's release is no baseline; a relaunch names its own release), and `Cutover`, when. `lifecycleSink` hands them to the
+loop's release is no baseline; a relaunch names its own release), and `Cutover`, when the traffic moved (the swap itself, not the
+state's persist and the caps' sync after it, which can wait on the
+manager). `lifecycleSink` hands them to the
 comparison before the engine's toggles, so `deploy_succeeded off` still
 compares. For an app with a rule (its own, else the every-app one),
 for each whole minute e since the cutover up to `window`, both read at
@@ -408,8 +411,9 @@ is given, past the offset:
 - **the new release**: `sum by (class) (increase_pure(motel_app_requests_total{app="A",release="NEW"}[<e>s]))`,
   and with `max_p95`, `histogram_quantile(0.95, sum by (le) (increase_pure(motel_app_response_seconds_bucket{app="A",release="NEW"}[<e>s])))`;
 - **the old**, asked only once the new is over a bound: the same over
-  `release="OLD"` with `[<e>s] offset <e>s`, its last e before the
-  cutover.
+  `release="OLD"` with `[<e+30>s] offset <e−30>s`, its last e before
+  the cutover and one push past it: its answers in the last half minute
+  before the cutover reach the store with the first push after it.
 
 The checks due at a tick run at once, each within the store's 10 s
 budget, so a slow store does not stretch the minute between them.
@@ -417,11 +421,19 @@ A check is **skipped**, neither a pass nor a failure, while the new
 release has fewer than `min_requests` responses sent (aborted left
 out), and when the store does not answer (a debug line, `the post-deploy
 check is skipped`). It **fails** when the new release is over
-`max_5xx_share` with a share above the old's, or over `max_p95` with a
-p95 above 1.2 × the old's (a quantile is an estimate inside a bucket).
-An old release with fewer than `min_requests` responses sent in its
-window, or with none, is no baseline: the bound alone counts. A pass
-resets the count. After `failures` failing checks in a row, motel
+`max_p95` with a p95 above 1.2 × the old's (a quantile is an estimate
+inside a bucket), or over `max_5xx_share` and worse than the old: an old
+release within the bound makes crossing it the regression; an old one
+already over it needs a share above 1.2 × its own, and further above it
+than chance puts two samples of one rate (a two-proportion z-score of
+2), so an app that errs steadily is not told at every deploy. That is
+this design's refinement of the planning's `new 5xx > old 5xx`
+("Decisions"). An old release with fewer than `min_requests` responses
+sent in its window, or with none, is no baseline: the bound alone
+counts. A pass resets the count; a check skipped neither breaks nor
+extends it, so "in a row" counts the checks that were answered and over
+the floor. A tick late past the window's end still makes the window's
+last check. After `failures` failing checks in a row, motel
 reports one `post_deploy_regressed` through notify's engine (the filter,
 the bucket, the journal line), and the comparison ends: `blog v2
 regressed 3m after its deploy, over 240 responses: 5xx share 0.0833
@@ -703,7 +715,7 @@ or a line of theirs the facts overturned:
 | The operator's rules are a grammar of fixed kinds with parameters (`threshold`, `disk_fill`, `post_deploy`), never an expression or a template | the review's finding 17: a rule or template a config author writes could pull any app's series, or the box's, into a notification that reaches an app's deployers (T6); a kind reads only motel's own expression, of the app named or each app for itself, so a config author chooses a bound and a duration, never what is read |
 | A request metric is over a fixed five minutes, with a floor of 20 by default | long enough for a small app to reach a floor, short enough that a rule fires within its `for` and five minutes; one window keeps the expression motel's. The floor keeps two requests, one of them a 5xx, from being a 50 % share |
 | The post-deploy comparison is motel's, not vmalert's, and only tells | vmalert knows neither the cutover nor the release before; #418 and requirement 4: motel never refuses a cutover or rolls back over a number |
-| A post-deploy check fails only when the new release is over its bound and worse than the old one (p95: by 1.2 ×) | the user's decision in slice three's planning: an app that was always so is not a deploy's regression; an old release under the floor is no baseline, so the bound alone counts after a first deploy or a quiet one |
+| A post-deploy check fails only when the new release is over its bound and worse than the old one (p95: by 1.2 ×; a 5xx share, when the old was over the bound too: by 1.2 × and beyond chance, a z-score of 2) | the user's decision in slice three's planning: an app that was always so is not a deploy's regression; an old release under the floor is no baseline, so the bound alone counts after a first deploy or a quiet one. The 5xx margin refines the planning's `new > old` (/code-review pass 2 on operator rules): with none, an app erring steadily over its bound is told at a deploy whose share is higher by noise alone |
 | Per-app request numbers need a handler the operator writes, `observe <app>` | Caddy's request metrics carry server and handler, never the app; a Caddy app cannot add a handler to the HTTP app's routes, and a dynamic upstream sees no response. The app is named on the line, since a cache hit never reaches the upstream |
 | The observer sorts before `redir` | the earliest standard directive an order can anchor on; `cache` sorts before `rewrite`, so an observer anchored later would never see a hit (cmd/motel's order tests) |
 | Its counts follow the selected instance's release, else `current`, not `activeSocket` | a request selected after a cutover is the new release's, one selected before it the old's, however long it runs; and a release that crashed owns the errors that follow it (502s while its socket is routed, then 503s with no socket, so `current`), which is what a post-deploy comparison must see |
@@ -868,3 +880,8 @@ Dated one-liners; the full text of each is in git.
   baseline, the post-deploy checks due together run at once, a disk
   series keeps its path's name, a refusal of two rule lines names its
   line, `max_p95` kept to the nanosecond.
+- 2026-11-12 — /code-review pass 2 on operator rules, triaged: the cutover
+  is the swap, the old release's window runs a push past it, a late tick
+  makes the window's last check, a 5xx rise over an old release already
+  over its bound must be beyond chance, and the disk series counts
+  `f_frsize` blocks, read by the disk source's own statfs.
