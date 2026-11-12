@@ -1,6 +1,7 @@
 package notify
 
 import (
+	"path/filepath"
 	"strings"
 
 	"github.com/caddyserver/caddy/v2/caddyconfig"
@@ -9,27 +10,39 @@ import (
 )
 
 func init() {
-	httpcaddyfile.RegisterGlobalOption("notify", parseGlobalOption)
+	httpcaddyfile.RegisterGlobalOption("monitor", parseGlobalOption)
+	// The two blocks the monitor block replaced: refused by name, so
+	// that a Caddyfile written for them says what to write instead of
+	// Caddy's "unrecognized global option".
+	httpcaddyfile.RegisterGlobalOption("notify", refusedOption("the notify block is now `monitor { … }`, with the same lines; to move a box onto it, docs/upgrading.md, \"From the notify and metrics_store blocks\""))
+	httpcaddyfile.RegisterGlobalOption("metrics_store", refusedOption("metrics_store is now a `metrics [<socket path>]` line in the monitor block; to move a box onto it, docs/upgrading.md, \"From the notify and metrics_store blocks\""))
 }
 
 func parseGlobalOption(d *caddyfile.Dispenser, existing any) (any, error) {
 	if existing != nil {
-		return nil, d.Err("the notify option is given more than once")
+		return nil, d.Err("the monitor option is given more than once")
 	}
 	a := new(App)
 	if err := a.UnmarshalCaddyfile(d); err != nil {
 		return nil, err
 	}
 	return httpcaddyfile.App{
-		Name:  "notify",
+		Name:  appID,
 		Value: caddyconfig.JSON(a, nil),
 	}, nil
 }
 
+func refusedOption(msg string) func(*caddyfile.Dispenser, any) (any, error) {
+	return func(d *caddyfile.Dispenser, _ any) (any, error) {
+		d.Next() // the option's name, for the error's line
+		return nil, d.Err(msg)
+	}
+}
+
 // UnmarshalCaddyfile parses the global option (DESIGN-notify.md, "The
-// notify block"):
+// monitor block"; DESIGN-metrics.md, "The metrics line"):
 //
-//	notify {
+//	monitor {
 //	    channel <name> <kind> {secret.NOTIFY_<NAME>} [severity <floor>]
 //	    operator <channel>...
 //	    bind <identity> <channel>
@@ -40,12 +53,15 @@ func parseGlobalOption(d *caddyfile.Dispenser, existing any) (any, error) {
 //	    state_dir <path>
 //	    alertmanager <unix socket path>
 //	    backup_record <path>|off
+//	    metrics [<socket path>]
 //	}
 //
-// The grammar is checked here, line by line; what needs the whole
-// configuration (an operator line naming a channel, a binding no app trusts,
-// a secret the box does not hold) is checked in Provision, so that
-// `motel validate` refuses it with the rest.
+// Every line but metrics is notify's: who hears. metrics turns on the
+// store (DESIGN-metrics.md), at its default socket or the absolute
+// path given. The grammar is checked here, line by line; what needs
+// the whole configuration (an operator line naming a channel, a binding
+// no app trusts, a secret the box does not hold) is checked in
+// Provision, so that `motel validate` refuses it with the rest.
 func (a *App) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
 	d.Next() // the option's name
 	if d.NextArg() {
@@ -105,11 +121,10 @@ func (a *App) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
 			if !d.NextArg() {
 				return d.ArgErr()
 			}
+			on := d.Val() == "on"
 			switch d.Val() {
-			case "on":
-				a.DeploySucceeded = true
-			case "off":
-				a.DeploySucceeded = false
+			case "on", "off":
+				a.DeploySucceeded = &on
 			default:
 				return d.Errf("deploy_succeeded takes on or off, not %q", d.Val())
 			}
@@ -130,6 +145,12 @@ func (a *App) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
 			if d.NextArg() {
 				return d.ArgErr()
 			}
+			if v == "" {
+				// An empty value would be no line in the JSON (omitempty):
+				// the default, read silently, and beside a metrics line
+				// the store alone (storeAlone).
+				return d.Errf("%s takes a path, not an empty string; leave the line out for the default", name)
+			}
 			switch name {
 			case "secrets_file":
 				a.SecretsFile = v
@@ -140,11 +161,27 @@ func (a *App) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
 			default:
 				a.Socket = v
 			}
+		case "metrics":
+			if a.Metrics != nil {
+				return d.Err("metrics is given more than once")
+			}
+			m := new(MetricsStore)
+			if d.NextArg() {
+				v := d.Val()
+				if d.NextArg() {
+					return d.ArgErr()
+				}
+				if !filepath.IsAbs(v) {
+					return d.Errf("metrics: the store's socket %q is not an absolute path", v)
+				}
+				m.Store = v
+			}
+			a.Metrics = m
 		default:
-			return d.Errf("unknown notify subdirective %q", d.Val())
+			return d.Errf("unknown monitor subdirective %q", d.Val())
 		}
 		if d.NextBlock(d.Nesting()) {
-			return d.Err("notify's lines take no block")
+			return d.Err("the monitor block's lines take no block")
 		}
 	}
 	return nil

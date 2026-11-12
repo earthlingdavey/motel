@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 
 	caddycmd "github.com/caddyserver/caddy/v2/cmd"
@@ -16,14 +17,57 @@ import (
 
 func init() {
 	caddycmd.RegisterCommand(caddycmd.Command{
-		Name:  "notify",
+		Name:  "monitor",
 		Usage: "<command>",
-		Short: "Who motel tells: send an event, test a channel, set up Alertmanager",
-		Long: `Commands of the notify module (notify/DESIGN-notify.md in the motel
-repository). motel detects; Debian's Alertmanager, on a unix socket
-motel renders its config for, delivers.`,
+		Short: "Who motel tells, and the numbers: send an event, test a channel, set up Alertmanager and the store",
+		Long: `Commands of the monitor block (notify/DESIGN-notify.md and
+notify/DESIGN-metrics.md in the motel repository). motel detects;
+Debian's Alertmanager, on a unix socket motel renders its config for,
+delivers. With the block's metrics line, motel pushes its numbers to
+Debian's VictoriaMetrics, whose vmalert evaluates the rules motel
+renders.`,
 		CobraFunc: func(cmd *cobra.Command) {
 			cmd.AddCommand(sendCommand(), testCommand(), setupCommand())
+		},
+	})
+	// The commands monitor replaced: hidden, and refused with the new
+	// spelling, as the Caddyfile's old blocks are.
+	movedCommand("notify", func(args []string) string {
+		return "motel notify is now motel monitor: motel monitor " + shellWords(args)
+	})
+	movedCommand("metrics", func([]string) string {
+		return "motel metrics setup is now motel monitor setup --metrics, which sets up Alertmanager, then the store"
+	})
+}
+
+// shellWords is args as a shell would read them back: each that holds
+// anything but a plain word's characters single-quoted, so that the new
+// spelling of `--summary "a b"` can be pasted as it is.
+func shellWords(args []string) string {
+	out := make([]string, len(args))
+	for i, a := range args {
+		out[i] = a
+		if a == "" || strings.Trim(a, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-./:=@%+,") != "" {
+			out[i] = "'" + strings.ReplaceAll(a, "'", `'\''`) + "'"
+		}
+	}
+	return strings.Join(out, " ")
+}
+
+// movedCommand registers name as a hidden command that runs nothing and
+// exits non-zero, saying what to run instead.
+func movedCommand(name string, moved func(args []string) string) {
+	caddycmd.RegisterCommand(caddycmd.Command{
+		Name:  name,
+		Usage: "",
+		Short: "Moved to motel monitor",
+		CobraFunc: func(cmd *cobra.Command) {
+			cmd.Hidden = true
+			cmd.DisableFlagParsing = true
+			cmd.Args = cobra.ArbitraryArgs
+			cmd.RunE = func(_ *cobra.Command, args []string) error {
+				return errors.New(strings.TrimSpace(moved(args)))
+			}
 		},
 	})
 }
@@ -71,15 +115,15 @@ func sendCommand() *cobra.Command {
 		Long: `Sends one event to the running motel over its admin socket (root and the
 motel user reach it), which checks it, stamps source external:<name>,
 passes the text through the response filter, applies the flapping guard
-and writes the notify: event line, as for its own events; then
+and writes the monitor: event line, as for its own events; then
 Alertmanager routes it like any other.
 
 A one-shot by default. With --state firing, a state alert that stays
 until a --state resolved for the same name, subject and instance.
 
-    motel notify send --source smartd --name disk_failing --severity critical \
+    motel monitor send --source smartd --name disk_failing --severity critical \
         --instance /dev/sda --summary "SMART says /dev/sda is failing"
-    motel notify send --source cron --name reboot_required --state firing \
+    motel monitor send --source cron --name reboot_required --state firing \
         --summary "a kernel update waits for a reboot"
 
 Refused: motel's own event names (watchdog_*, deploy_*, rollback,
@@ -163,9 +207,10 @@ neither yet. It exits 1 unless delivered. The URL is never printed.`,
 }
 
 func setupCommand() *cobra.Command {
-	return &cobra.Command{
-		Use:   "setup",
-		Short: "Install and configure Debian's Alertmanager for motel (root)",
+	var metrics bool
+	c := &cobra.Command{
+		Use:   "setup [--metrics]",
+		Short: "Install and configure Debian's Alertmanager, and with --metrics its VictoriaMetrics, for motel (root)",
 		Long: `Installs prometheus-alertmanager so that it never listens on a port:
 masks its unit first, so the install starts nothing (Debian's would
 listen on :9093 and 0.0.0.0:9094); installs it; writes the drop-in that
@@ -173,16 +218,78 @@ gives it motel's config and socket activation, the socket unit
 (/run/motel-notify/am.sock, 0660 root:motel), and
 /var/lib/motel-notify with a config that sends nothing; unmasks it,
 leaves it to start on its socket's first connection, starts the socket
-and reloads motel, which renders the notify block. Run again, it puts
-the units back as the binary ships them.`,
+and reloads motel, which renders the monitor block's channels.
+
+With --metrics, the store, which posts to Alertmanager's socket: on a
+box where Alertmanager's setup has not run to its end (motel-am.socket
+not enabled and listening, or the service masked), Alertmanager's setup
+above runs first, and the store's only once it
+has succeeded; where it is, Alertmanager is left as it runs, and only
+the store's setup runs. The store's: installs
+victoria-metrics so that it never listens in the host's network
+namespace: masks its unit first, so the install starts nothing
+(Debian's would listen on 0.0.0.0:8428, unauthenticated); installs it
+(and iproute2 if missing); writes the namespace unit, the drop-in that
+moves the store into the namespace with its memory capped, the socket
+/run/motel-metrics/vm.sock (0660 root:motel) and its proxy, the
+in-namespace proxy to Alertmanager and vmalert's unit, and
+/var/lib/motel-metrics with the scrapes and an empty rule file;
+unmasks it, starts them all and reloads motel, which renders the rules
+and pushes.
+
+Run again, each puts its units back as the binary ships them:
+motel monitor setup Alertmanager's (stopping it for the while: what it
+holds in memory goes), motel monitor setup --metrics the store's.`,
 		Args: cobra.NoArgs,
 		RunE: func(c *cobra.Command, _ []string) error {
 			if os.Geteuid() != 0 {
-				return errors.New("motel notify setup installs a package and writes units: run it as root")
+				return errors.New("motel monitor setup installs packages and writes units: run it as root")
 			}
-			return setup(hostSystem{out: c.OutOrStdout()}, "/", c.OutOrStdout())
+			return runSetup(hostSystem{out: c.OutOrStdout()}, "/", c.OutOrStdout(), metrics)
 		},
 	}
+	c.Flags().BoolVar(&metrics, "metrics", false, "set up the metrics store (and Alertmanager first, where it is not set up)")
+	return c
+}
+
+// runSetup is `motel monitor setup`: Alertmanager's setup; with
+// metrics, the store's, after Alertmanager's only where that has not
+// run to its end (amSetUp). A re-run with metrics leaves a working
+// Alertmanager alone: its setup masks and stops it, which loses the
+// alerts it holds in memory and what waits in a group. Each setup keeps
+// its own refusals and its own put-back on a failed re-run, and the
+// first that fails stops the rest.
+func runSetup(sys system, root string, out io.Writer, metrics bool) error {
+	if metrics && amSetUp(sys, root) {
+		_, _ = fmt.Fprintf(out, "Alertmanager is set up (%s enabled and listening): left as it runs; motel monitor setup re-runs its setup\n", amSocket)
+		return metricsSetup(sys, root, out)
+	}
+	if err := setup(sys, root, out); err != nil {
+		return err
+	}
+	if !metrics {
+		return nil
+	}
+	return metricsSetup(sys, root, out)
+}
+
+// amSetUp reports an Alertmanager setup that ran to its end: the socket
+// unit written, the service not masked, and the socket enabled and
+// active. A first setup writes the socket unit before it unmasks the
+// service and enables the socket, so the file alone would take one that
+// failed between for a working Alertmanager, masked and deaf (Copilot
+// round 1 on #428); then Alertmanager's setup runs again, which is its
+// recovery, and touches nothing that works.
+func amSetUp(sys system, root string) bool {
+	if !isFile(filepath.Join(root, socketPath)) {
+		return false
+	}
+	// `systemctl mask` is a link to /dev/null where the unit would be.
+	if dest, err := os.Readlink(filepath.Join(root, unitDir, amService)); err == nil && dest == os.DevNull {
+		return false
+	}
+	return sys.run("systemctl", "is-enabled", "--quiet", amSocket) == nil &&
+		sys.run("systemctl", "is-active", "--quiet", amSocket) == nil
 }
 
 // apiRefusal is the admin API's own words for a refusal, which

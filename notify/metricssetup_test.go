@@ -10,7 +10,7 @@ import (
 	"testing"
 )
 
-// notifySetUp makes root look like a box where motel notify setup ran.
+// notifySetUp makes root look like a box where Alertmanager's setup ran.
 func notifySetUp(t *testing.T, root string) {
 	t.Helper()
 	p := filepath.Join(root, socketPath)
@@ -25,7 +25,7 @@ func notifySetUp(t *testing.T, root string) {
 func TestMetricsSetupNeedsNotify(t *testing.T) {
 	f := &fakeSystem{}
 	err := metricsSetup(f, t.TempDir(), &bytes.Buffer{})
-	if err == nil || !strings.Contains(err.Error(), "run motel notify setup first") {
+	if err == nil || !strings.Contains(err.Error(), "/etc/systemd/system/motel-am.socket is missing: Alertmanager's setup has not run") {
 		t.Fatalf("err = %v", err)
 	}
 	if len(f.cmds) != 0 {
@@ -60,7 +60,7 @@ func TestMetricsSetupOrderAndFiles(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if !bytes.HasPrefix(b, []byte("# Written by `motel metrics setup`")) {
+		if !bytes.HasPrefix(b, []byte("# Written by `motel monitor setup --metrics`")) {
 			t.Errorf("%s = %q", u.path, b[:40])
 		}
 	}
@@ -222,4 +222,119 @@ func TestMetricsUnitsAreTheMeasuredOnes(t *testing.T) {
 		t.Error("the drop-in listens beyond the namespace's loopback")
 	}
 	has("scrape.yml", scrapeConfig, `job_name: vmalert`, `"127.0.0.1:8880"`, `job_name: alertmanager`, `"127.0.0.1:9093"`)
+}
+
+// `motel monitor setup` is Alertmanager's setup alone. With --metrics
+// on a box where it has not run, Alertmanager's runs first and the
+// store's only once it has succeeded; where it has, Alertmanager is
+// left as it runs (its setup would mask and stop it) and the store's
+// runs alone, a re-run of it with its put-back armed.
+func TestMonitorSetupRunsAlertmanagerOnlyWhereItIsNotSetUp(t *testing.T) {
+	has := slices.Contains[[]string]
+	root := t.TempDir()
+	alone := &fakeSystem{}
+	if err := runSetup(alone, root, &bytes.Buffer{}, false); err != nil {
+		t.Fatal(err)
+	}
+	if !has(alone.cmds, "systemctl mask "+amService) || has(alone.cmds, "systemctl mask "+vmService) {
+		t.Fatalf("without --metrics: %v; want Alertmanager's setup alone", alone.cmds)
+	}
+	if isFile(filepath.Join(root, unitDir, vmSocket)) {
+		t.Fatal("without --metrics, the store's units were written")
+	}
+
+	both := &fakeSystem{}
+	if err := runSetup(both, t.TempDir(), &bytes.Buffer{}, true); err != nil {
+		t.Fatal(err)
+	}
+	am, vm := slices.Index(both.cmds, "systemctl mask "+amService), slices.Index(both.cmds, "systemctl mask "+vmService)
+	reloads := 0
+	for _, c := range both.cmds {
+		if c == "systemctl try-reload-or-restart motel.service" {
+			reloads++
+		}
+	}
+	if am != 0 || vm <= am || reloads != 2 {
+		t.Fatalf("with --metrics: %v; want Alertmanager's setup, then the store's, each reloading motel", both.cmds)
+	}
+
+	// Alertmanager's setup fails: the store's never starts.
+	failed := &fakeSystem{failOn: "systemctl enable --now " + amSocket}
+	if err := runSetup(failed, t.TempDir(), &bytes.Buffer{}, true); err == nil || has(failed.cmds, "systemctl mask "+vmService) {
+		t.Fatalf("Alertmanager's setup failed: err %v, commands %v; want the error, and nothing of the store", err, failed.cmds)
+	}
+
+	// Alertmanager set up (root, from the first run above): --metrics
+	// touches nothing of it, first run of the store's or a re-run.
+	var out bytes.Buffer
+	storeOnly := &fakeSystem{isInstalled: true}
+	if err := runSetup(storeOnly, root, &out, true); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range acts(storeOnly.cmds) {
+		if strings.Contains(c, amService) || strings.Contains(c, amSocket) {
+			t.Fatalf("with Alertmanager set up, --metrics ran %q: %v", c, storeOnly.cmds)
+		}
+	}
+	if acts(storeOnly.cmds)[0] != "systemctl mask "+vmService || !strings.Contains(out.String(), "Alertmanager is set up") {
+		t.Fatalf("with Alertmanager set up: %v\n%s; want the store's setup alone, and a line saying why", storeOnly.cmds, out.String())
+	}
+	again := &fakeSystem{isInstalled: true, failOn: "systemctl restart " + vmalertUnit}
+	if err := runSetup(again, root, &bytes.Buffer{}, true); err == nil {
+		t.Fatal("the failing re-run succeeded")
+	}
+	if acts(again.cmds)[0] != "systemctl mask "+vmService || has(again.cmds, "systemctl mask "+amService) ||
+		!slices.ContainsFunc(again.cmds, func(c string) bool { return strings.HasPrefix(c, "systemctl start "+vmSocket) }) {
+		t.Fatalf("a re-run that fails in the store's setup: %v; want the store's setup alone, put back", again.cmds)
+	}
+	// Without --metrics, Alertmanager's setup runs again: its re-run.
+	amAgain := &fakeSystem{isInstalled: true}
+	if err := runSetup(amAgain, root, &bytes.Buffer{}, false); err != nil || amAgain.cmds[0] != "systemctl mask "+amService || has(amAgain.cmds, "systemctl mask "+vmService) {
+		t.Fatalf("motel monitor setup on a set-up box: %v, %v; want Alertmanager's setup alone", err, amAgain.cmds)
+	}
+}
+
+// acts is what setup did to the host, its probes of systemd's state
+// left out.
+func acts(cmds []string) []string {
+	return slices.DeleteFunc(slices.Clone(cmds), func(c string) bool {
+		return strings.HasPrefix(c, "systemctl is-enabled ") || strings.HasPrefix(c, "systemctl is-active ")
+	})
+}
+
+// A first Alertmanager setup that failed after it wrote its socket unit
+// left the service masked or the socket not enabled: --metrics runs
+// Alertmanager's setup again, its recovery, before the store's, and
+// does not take the file for a working Alertmanager (Copilot round 1 on
+// #428).
+func TestMetricsSetupFinishesAnUnfinishedAlertmanagerSetup(t *testing.T) {
+	for _, c := range []struct {
+		name   string
+		masked bool   // the mask link is still in place
+		probe  string // the probe that fails
+	}{
+		{"masked", true, ""},
+		{"the socket not enabled", false, "systemctl is-enabled"},
+		{"the socket not listening", false, "systemctl is-active"},
+	} {
+		root := t.TempDir()
+		first := &fakeSystem{failOn: "systemctl unmask " + amService}
+		if err := runSetup(first, root, &bytes.Buffer{}, false); err == nil || !isFile(filepath.Join(root, socketPath)) {
+			t.Fatalf("%s: the first setup: %v; want it failed after writing %s", c.name, err, socketPath)
+		}
+		if c.masked {
+			if err := os.Symlink(os.DevNull, filepath.Join(root, unitDir, amService)); err != nil {
+				t.Fatal(err)
+			}
+		}
+		retry := &fakeSystem{isInstalled: true, failOn: c.probe}
+		if err := runSetup(retry, root, &bytes.Buffer{}, true); err != nil {
+			t.Fatalf("%s: %v", c.name, err)
+		}
+		done := acts(retry.cmds)
+		am, unmask, vm := slices.Index(done, "systemctl mask "+amService), slices.Index(done, "systemctl unmask "+amService), slices.Index(done, "systemctl mask "+vmService)
+		if am != 0 || unmask < 0 || vm <= unmask {
+			t.Errorf("%s: --metrics after a failed first setup: %v; want Alertmanager's setup, whole, then the store's", c.name, done)
+		}
+	}
 }

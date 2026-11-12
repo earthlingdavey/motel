@@ -95,7 +95,7 @@ func TestOneShotJournalledThenPosted(t *testing.T) {
 	te := newTestEngine(t)
 	te.report(deployFailed())
 	// The line is written before the post is even attempted.
-	lines := te.lines("notify: event")
+	lines := te.lines("monitor: event")
 	if len(lines) != 1 || lines[0].ContextMap()["key"] != "liveswap/app:blog/deploy_failed" || lines[0].ContextMap()["state"] != "oneshot" {
 		t.Fatalf("journal = %+v", lines)
 	}
@@ -136,7 +136,7 @@ func TestOneShotBucket(t *testing.T) {
 		t.Fatalf("posted %d one-shots in six seconds, want 4", len(got))
 	}
 	sup := 0
-	for _, l := range te.lines("notify: event") {
+	for _, l := range te.lines("monitor: event") {
 		if l.ContextMap()["suppressed"] != nil {
 			sup++
 		}
@@ -199,7 +199,7 @@ func TestStateFiresRepostsAndResolvesAfterHold(t *testing.T) {
 		t.Fatalf("resolve = %+v", resolved)
 	}
 	states := map[string]int{}
-	for _, l := range te.lines("notify: event") {
+	for _, l := range te.lines("monitor: event") {
 		states[l.ContextMap()["state"].(string)]++
 	}
 	if states["firing"] != 1 || states["resolved"] != 1 {
@@ -266,7 +266,7 @@ func TestStateFlappingGuard(t *testing.T) {
 		te.advance(3 * time.Minute)
 		te.tick()
 	}
-	for _, l := range te.lines("notify: event") {
+	for _, l := range te.lines("monitor: event") {
 		if l.ContextMap()["held"] == nil {
 			transitions++
 		}
@@ -310,7 +310,7 @@ func TestMute(t *testing.T) {
 	if len(got) != 1 || !got[0].EndsAt.Equal(te.at) {
 		t.Fatalf("unmute = %+v", got)
 	}
-	if len(te.lines("notify: event")) != 0 {
+	if len(te.lines("monitor: event")) != 0 {
 		t.Fatal("the mute is not an event")
 	}
 }
@@ -339,7 +339,7 @@ func TestSummaryRedactedAndCut(t *testing.T) {
 	if strings.Contains(s, "secretpart") || len([]rune(s)) > maxSummary {
 		t.Fatalf("summary = %q", s)
 	}
-	if l := te.lines("notify: event"); strings.Contains(l[0].ContextMap()["summary"].(string), "secretpart") {
+	if l := te.lines("monitor: event"); strings.Contains(l[0].ContextMap()["summary"].(string), "secretpart") {
 		t.Fatal("the journal line holds the secret")
 	}
 }
@@ -368,7 +368,7 @@ func TestDeliveryRetriedThenGivenUp(t *testing.T) {
 	te.attempt(context.Background())
 	te.advance(5 * time.Minute)
 	te.attempt(context.Background())
-	lines := te.lines("notify: delivery failed")
+	lines := te.lines("monitor: delivery failed")
 	if len(lines) != 1 || lines[0].Level != zap.ErrorLevel || lines[0].ContextMap()["key"] != "liveswap/app:blog/rollback" {
 		t.Fatalf("delivery failed lines = %+v", lines)
 	}
@@ -402,7 +402,7 @@ func TestDeliveryRefusedIsFinal(t *testing.T) {
 	if again, _ := te.attempt(context.Background()); !again {
 		t.Fatal("a refusal was retried")
 	}
-	if len(te.lines("notify: delivery failed")) != 1 || len(te.queue) != 0 {
+	if len(te.lines("monitor: delivery failed")) != 1 || len(te.queue) != 0 {
 		t.Fatal("a refused post was not given up")
 	}
 }
@@ -569,7 +569,7 @@ func TestStandingReports(t *testing.T) {
 		if countAlert(got, "watchdog_throttled") != 1 || !got[0].EndsAt.IsZero() {
 			t.Fatalf("posts = %+v", got)
 		}
-		if l := te.lines("notify: event"); len(l) != 1 || l[0].ContextMap()["state"] != "firing" || l[0].ContextMap()["standing"] != true {
+		if l := te.lines("monitor: event"); len(l) != 1 || l[0].ContextMap()["state"] != "firing" || l[0].ContextMap()["standing"] != true {
 			t.Fatalf("journal = %+v", l)
 		}
 	})
@@ -578,7 +578,7 @@ func TestStandingReports(t *testing.T) {
 		te.report(watchdog(true))
 		te.report(watchdog(false)) // a recovery's hold under way
 		te.drain()
-		te.lines("notify: event")
+		te.lines("monitor: event")
 		te.advance(20 * time.Second)
 		te.report(standing(true))
 		te.report(standing(false))
@@ -613,7 +613,7 @@ func TestStandingReports(t *testing.T) {
 			t.Fatalf("the resolve = %+v", got)
 		}
 		states := []string{}
-		for _, l := range te.lines("notify: event") {
+		for _, l := range te.lines("monitor: event") {
 			// Only the report itself was told before this process.
 			states = append(states, fmt.Sprintf("%s:%v", l.ContextMap()["state"], l.ContextMap()["standing"]))
 		}
@@ -630,7 +630,7 @@ func TestStandingReports(t *testing.T) {
 		te.tick()
 		te.drain()
 		var states []string
-		for _, l := range te.lines("notify: event") {
+		for _, l := range te.lines("monitor: event") {
 			states = append(states, fmt.Sprintf("%s:%v", l.ContextMap()["state"], l.ContextMap()["standing"]))
 		}
 		if strings.Join(states, ",") != "firing:true,resolved:<nil>" {

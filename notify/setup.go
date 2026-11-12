@@ -18,7 +18,7 @@ import (
 	"time"
 )
 
-// The files `motel notify setup` writes, which ship in the binary: the
+// The files `motel monitor setup` writes, which ship in the binary: the
 // package installs nothing of notify's until root asks.
 var (
 	//go:embed units/motel-am.socket
@@ -137,7 +137,7 @@ func (hostSystem) lookupGroup(name string) (int, error) {
 	return strconv.Atoi(g.Gid)
 }
 
-// setup is `motel notify setup`: Debian's Alertmanager, installed so
+// setup is `motel monitor setup`: Debian's Alertmanager, installed so
 // that it never listens on a port, even for a moment. Debian's unit
 // starts on install on :9093 and gossips on 0.0.0.0:9094, and a host
 // with no firewall would put both on the internet; a `Depends` cannot
@@ -225,7 +225,7 @@ func setup(sys system, root string, out io.Writer) (err error) {
 		if err := sys.chown(cfg, motelUID, promGID); err != nil {
 			return err
 		}
-		say("wrote %s, a config that sends nothing, until motel renders the notify block", filepath.Join(DefaultStateDir, ConfigName))
+		say("wrote %s, a config that sends nothing, until motel renders the monitor block's channels", filepath.Join(DefaultStateDir, ConfigName))
 	}
 	// Its mode is the drop-in's, set at every start (Debian ships 0755).
 	if err := os.MkdirAll(at(amStorage), 0o750); err != nil {
@@ -251,7 +251,7 @@ func setup(sys system, root string, out io.Writer) (err error) {
 	if err := sys.run("systemctl", "try-reload-or-restart", "motel.service"); err != nil {
 		return err
 	}
-	say("reloaded motel, which renders the notify block into %s", filepath.Join(DefaultStateDir, ConfigName))
+	say("reloaded motel, which renders the monitor block's channels into %s", filepath.Join(DefaultStateDir, ConfigName))
 	return nil
 }
 

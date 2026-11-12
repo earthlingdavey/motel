@@ -1,4 +1,4 @@
-# Written by `motel metrics setup` (notify/DESIGN-metrics.md, "Rules").
+# Written by `motel monitor setup --metrics` (notify/DESIGN-metrics.md, "Rules").
 # vmalert from Debian's victoria-metrics package, in the store's
 # namespace: it queries the store, keeps its alert state in it (so a
 # restart keeps its `for:` timers), and posts to Alertmanager through
@@ -7,7 +7,7 @@
 # No alertgroup label: an alert's labels are the rule's and its
 # expression's, which is what lets its ChannelFailed and motel's be one.
 [Unit]
-Description=vmalert, the metrics store's rules (motel metrics setup)
+Description=vmalert, the metrics store's rules (motel monitor setup --metrics)
 Requires=motel-metrics-netns.service victoria-metrics.service
 After=motel-metrics-netns.service victoria-metrics.service motel-am-proxy.socket
 

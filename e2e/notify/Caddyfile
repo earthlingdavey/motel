@@ -1,5 +1,5 @@
 # The notify suite's box (e2e/notify/run.sh): the starter's admin socket,
-# two apps, and a notify block whose channels are paths on the stub
+# two apps, and a monitor block whose channels are paths on the stub
 # receiver, e2e-sink. Plain HTTP and a private address are refused for
 # every channel on a real box; allow_insecure_channels admits them here.
 {
@@ -37,7 +37,7 @@
 		}
 	}
 
-	notify {
+	monitor {
 		channel ops json {secret.NOTIFY_OPS_URL}
 		# Answers 400: the failing channel channel_failed must name.
 		channel oncall discord {secret.NOTIFY_ONCALL_URL}

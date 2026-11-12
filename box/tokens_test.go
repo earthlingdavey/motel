@@ -412,19 +412,36 @@ func FuzzWalk(f *testing.F) {
 	})
 }
 
-// The notify block's secrets are the {secret.<NAME>} arguments of its
+// The monitor block's secrets are the {secret.<NAME>} arguments of its
 // channel and heartbeat lines, in file order; anything else is notify's
 // to refuse.
 func TestWalkNotify(t *testing.T) {
-	f := strings.Replace(good, "\tliveswap {", "\tnotify {\n\t\tchannel ops ntfy {secret.NOTIFY_OPS_URL} severity warning\n\t\tchannel raw json https://hooks.example.com/x\n\t\tchannel odd json {secret.OPS_URL}\n\t\toperator ops\n\t\theartbeat {secret.NOTIFY_HC_URL}\n\t\tsecrets_file /etc/motel/secrets/_box.env\n\t}\n\n\tliveswap {", 1)
+	f := strings.Replace(good, "\tliveswap {", "\tmonitor {\n\t\tchannel ops ntfy {secret.NOTIFY_OPS_URL} severity warning\n\t\tchannel raw json https://hooks.example.com/x\n\t\tchannel odd json {secret.OPS_URL}\n\t\toperator ops\n\t\theartbeat {secret.NOTIFY_HC_URL}\n\t\tsecrets_file /etc/motel/secrets/_box.env\n\t}\n\n\tliveswap {", 1)
 	s, err := Walk(file(f))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if s.Notify == nil || s.Notify.SecretsFile != "/etc/motel/secrets/_box.env" || !slices.Equal(s.Notify.Secrets, []string{"NOTIFY_OPS_URL", "NOTIFY_HC_URL"}) {
+	if s.Notify == nil || !s.Notify.Channels || s.Notify.SecretsFile != "/etc/motel/secrets/_box.env" || !slices.Equal(s.Notify.Secrets, []string{"NOTIFY_OPS_URL", "NOTIFY_HC_URL"}) {
 		t.Fatalf("%+v", s.Notify)
 	}
+	// A metrics line alone is a monitor block with no channel.
+	f = strings.Replace(good, "\tliveswap {", "\tmonitor {\n\t\tmetrics\n\t}\n\n\tliveswap {", 1)
+	if s, err := Walk(file(f)); err != nil || s.Notify == nil || s.Notify.Channels || len(s.Notify.Secrets) != 0 {
+		t.Fatalf("a metrics line alone: %+v, %v", s.Notify, err)
+	}
+	// The old blocks are refused by name, pointing at the upgrade's
+	// order, before the slot's check could refuse them as no block.
+	for old, want := range map[string]string{
+		"\tnotify {\n\t\tchannel ops ntfy {secret.NOTIFY_OPS_URL}\n\t\toperator ops\n\t}\n": "the Caddyfile has a notify block, which is now `monitor { … }`, with the same lines; to move a box onto it, docs/upgrading.md",
+		"\tmetrics_store\n": "the Caddyfile has a metrics_store block, which is now a `metrics [<socket path>]` line in the monitor block",
+		"\tmetrics_store {\n\t\tstore /run/x/vm.sock\n\t}\n": "has a metrics_store block",
+	} {
+		f = strings.Replace(good, "\tliveswap {", old+"\n\tliveswap {", 1)
+		if _, err := Walk(file(f)); err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("%q: %v, want %q", old, err, want)
+		}
+	}
 	if s, err := Walk(file(good)); err != nil || s.Notify != nil {
-		t.Fatalf("no notify block: %+v, %v", s, err)
+		t.Fatalf("no monitor block: %+v, %v", s, err)
 	}
 }

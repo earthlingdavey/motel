@@ -2,6 +2,7 @@ package notify
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -21,17 +22,24 @@ func init() {
 	caddy.RegisterModule(App{})
 }
 
-// App is the `notify` global option: the channels, who the operator is,
-// which identity's channels an app's events also reach, and where
-// Alertmanager is (DESIGN-notify.md).
+// appID is the Caddy app's ID and the global option's name: one global
+// option yields one Caddy app (httpcaddyfile), so the store is a part of
+// this app, not an app of its own.
+const appID = "monitor"
+
+// App is the `monitor` global option. Its notify lines are the
+// channels, who the operator is, which identity's channels an app's
+// events also reach, and where Alertmanager is (DESIGN-notify.md); its
+// metrics line is the store (DESIGN-metrics.md).
 type App struct {
 	Channels        []Channel `json:"channels,omitempty"`
 	Operator        []string  `json:"operator,omitempty"`
 	Binds           []Bind    `json:"binds,omitempty"`
 	HeartbeatSecret string    `json:"heartbeat_secret,omitempty"`
 	// DeploySucceeded sends deploy_succeeded, which #418's table has
-	// off by default.
-	DeploySucceeded bool `json:"deploy_succeeded,omitempty"`
+	// off by default; nil for no line. A pointer, so that
+	// `deploy_succeeded off` is a line in the JSON too (storeAlone).
+	DeploySucceeded *bool `json:"deploy_succeeded,omitempty"`
 	// AllowInsecureChannels admits http and private addresses for test
 	// rigs whose receiver is a stub on the compose network. Warned at
 	// every load.
@@ -41,8 +49,14 @@ type App struct {
 	Socket                string `json:"alertmanager,omitempty"`
 	// BackupRecord is the backup record's path; "off" reads none.
 	BackupRecord string `json:"backup_record,omitempty"`
+	// Metrics is the metrics line, nil for none (DESIGN-metrics.md,
+	// "The metrics line").
+	Metrics *MetricsStore `json:"metrics,omitempty"`
 
-	logger    *zap.Logger
+	logger *zap.Logger
+	// notifies is whether this config runs notify: every block but a
+	// metrics line alone (storeAlone). Set in Provision.
+	notifies  bool
 	ls        *liveswap.App // this config's, or nil: ReportStanding at Start
 	cfg       *resolved
 	rendered  []byte              // alertmanager.yml, rendered in Provision
@@ -57,45 +71,97 @@ type App struct {
 // CaddyModule returns the Caddy module information.
 func (App) CaddyModule() caddy.ModuleInfo {
 	return caddy.ModuleInfo{
-		ID:  "notify",
+		ID:  appID,
 		New: func() caddy.Module { return new(App) },
 	}
 }
 
 // Provision checks the block against the apps liveswap configures and
-// the box's secrets (resolve). It writes nothing and connects to
+// the box's secrets (resolve), and wires the store into this config
+// when the block has a metrics line. It writes nothing and connects to
 // nothing, so `motel validate` runs every refusal and leaves the box as
-// it was.
+// it was. notify's part comes first: the store's rules are rendered
+// from its receivers.
 func (a *App) Provision(ctx caddy.Context) error {
 	a.logger = ctx.Logger()
-	trust, ls, err := appTrust(ctx)
+	ls, err := liveswapApp(ctx)
 	if err != nil {
 		return err
 	}
+	a.notifies = !a.storeAlone()
+	if a.notifies {
+		if err := a.provisionNotify(ctx, ls); err != nil {
+			return err
+		}
+	}
+	if a.Metrics != nil {
+		var n *App
+		if a.notifies {
+			n = a
+		}
+		if err := a.Metrics.provision(ctx, ls, n, a.logger); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// storeAlone reports a block that is a metrics line and nothing else:
+// the store keeps the numbers, and there is no notify to run (no
+// engine, no Alertmanager config; DESIGN-metrics.md, "The metrics
+// line"). Any other line is notify's, and makes the block notify's
+// too, held to its refusals: an operator line among them. A block with
+// no line at all is refused as notify's, for its missing operator line.
+//
+// A line is a field with a value in the app's JSON, which is what a
+// JSON config writes and what the Caddyfile adapts to: every field is
+// omitempty, so an empty list or string or a false bool is none, as no
+// Caddyfile line writes one; the one field a line can set to its zero
+// value is a pointer (deploy_succeeded off), so that it counts. So the test is the JSON with the metrics line
+// taken out, never a list of fields a new one could be missing from.
+func (a *App) storeAlone() bool {
+	if a.Metrics == nil {
+		return false
+	}
+	rest := *a
+	rest.Metrics = nil
+	b, err := json.Marshal(&rest)
+	return err == nil && string(b) == "{}"
+}
+
+// deploySucceeded is the deploy_succeeded line: off when absent.
+func (a *App) deploySucceeded() bool {
+	return a.DeploySucceeded != nil && *a.DeploySucceeded
+}
+
+// provisionNotify is Provision's notify part.
+func (a *App) provisionNotify(ctx caddy.Context, ls *liveswap.App) error {
+	trust := appTrust(ls)
 	drop := dropsChannels()
 	secrets, unusable := readSecrets(a.secretsFile())
 	switch {
 	case unusable != nil && !drop:
-		return fmt.Errorf("notify: %w", unusable)
+		return fmt.Errorf("monitor: %w", unusable)
 	case unusable != nil:
 		// A boot serves: a file it cannot read or parse drops every line
 		// that reads a secret, as a missing secret does ("Secrets at
 		// load"), and the error is the file's, never a value.
-		a.logger.Error("notify: the box's secrets file cannot be used: every channel that reads a secret is dropped from this load; motel validate and motel reload refuse the config until it is mended",
+		a.logger.Error("monitor: the box's secrets file cannot be used: every channel that reads a secret is dropped from this load; motel validate and motel reload refuse the config until it is mended",
 			zap.String("secrets_file", a.secretsFile()), zap.Error(unusable))
 		secrets = map[string]string{}
 	}
 	var dropped []error
+	var err error
 	if a.cfg, dropped, err = a.resolveWith(trust, secrets, pushedSecrets(), drop, unusable); err != nil {
-		return fmt.Errorf("notify: %w", err)
+		return fmt.Errorf("monitor: %w", err)
 	}
 	for _, why := range dropped {
 		// The reason names the line and the key, never a value.
-		a.logger.Error("notify: a channel is dropped from this load: its secret cannot be used; motel validate and motel reload refuse the config until it is mended",
+		a.logger.Error("monitor: a channel is dropped from this load: its secret cannot be used; motel validate and motel reload refuse the config until it is mended",
 			zap.String("reason", why.Error()), zap.String("secrets_file", a.secretsFile()))
 	}
 	if len(dropped) > 0 && len(a.cfg.operator) == 0 {
-		a.logger.Error("notify: no operator channel is left in this load: box events are journal lines only", zap.String("secrets_file", a.secretsFile()))
+		a.logger.Error("monitor: no operator channel is left in this load: box events are journal lines only", zap.String("secrets_file", a.secretsFile()))
 	}
 	// Every value the file holds is a known value to the filter, named
 	// by a channel line or not: a spare URL is as much a credential.
@@ -115,15 +181,15 @@ func (a *App) Provision(ctx caddy.Context) error {
 	}
 	evApp, err := ctx.App("events")
 	if err != nil {
-		return fmt.Errorf("notify: the events app: %w", err)
+		return fmt.Errorf("monitor: the events app: %w", err)
 	}
 	events, ok := evApp.(*caddyevents.App)
 	if !ok {
-		return fmt.Errorf("notify: the events app is a %T", evApp)
+		return fmt.Errorf("monitor: the events app is a %T", evApp)
 	}
 	for _, name := range []string{"cert_failed", "cert_obtained"} {
 		if err := events.On(name, tlsHandler{theEngine}); err != nil {
-			return fmt.Errorf("notify: subscribing to %s: %w", name, err)
+			return fmt.Errorf("monitor: subscribing to %s: %w", name, err)
 		}
 	}
 	a.warnAtLoad(a.cfg.heartbeat)
@@ -136,32 +202,41 @@ func (a *App) Provision(ctx caddy.Context) error {
 // so too.
 func (a *App) warnAtLoad(heartbeat string) {
 	if a.AllowInsecureChannels {
-		a.logger.Warn("notify: allow_insecure_channels is on: channel URLs may be http and private addresses, which Alertmanager reaches from the network namespace every app shares; for test rigs only")
+		a.logger.Warn("monitor: allow_insecure_channels is on: channel URLs may be http and private addresses, which Alertmanager reaches from the network namespace every app shares; for test rigs only")
 	}
 	// Without a heartbeat the Watchdog goes to the blackhole: a box,
 	// motel or Alertmanager that stops is told by no one (requirement 6).
 	if heartbeat == "" {
-		a.logger.Warn("notify: no heartbeat in this load: nothing outside the box hears that it, motel or Alertmanager stopped; add heartbeat {secret.NOTIFY_<NAME>} with a dead-man check's ping URL, or mend its secret (notify/DESIGN-notify.md, \"Dead-man and uptime\")")
+		a.logger.Warn("monitor: no heartbeat in this load: nothing outside the box hears that it, motel or Alertmanager stopped; add heartbeat {secret.NOTIFY_<NAME>} with a dead-man check's ping URL, or mend its secret (notify/DESIGN-notify.md, \"Dead-man and uptime\")")
 	}
 }
 
-// appTrust is each app's deploy_trust, from liveswap's own provisioned
-// config. With no liveswap block there are no apps, and every event is
-// the box's. AppIfConfigured, not App: App would instantiate an empty
-// liveswap, whose Start stops every app unit it does not know.
-func appTrust(ctx caddy.Context) (map[string][]TrustSource, *liveswap.App, error) {
+// liveswapApp is this config's liveswap app, nil for no liveswap block.
+// AppIfConfigured, not App: App would instantiate an empty liveswap,
+// whose Start stops every app unit it does not know.
+func liveswapApp(ctx caddy.Context) (*liveswap.App, error) {
 	mod, err := ctx.AppIfConfigured("liveswap")
 	if errors.Is(err, caddy.ErrNotConfigured) {
-		return map[string][]TrustSource{}, nil, nil
+		return nil, nil
 	}
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	ls, ok := mod.(*liveswap.App)
 	if !ok {
-		return nil, nil, fmt.Errorf("notify: the liveswap app is a %T", mod)
+		return nil, fmt.Errorf("monitor: the liveswap app is a %T", mod)
 	}
+	return ls, nil
+}
+
+// appTrust is each app's deploy_trust, from liveswap's own provisioned
+// config. With no liveswap block (ls nil) there are no apps, and every
+// event is the box's.
+func appTrust(ls *liveswap.App) map[string][]TrustSource {
 	out := map[string][]TrustSource{}
+	if ls == nil {
+		return out
+	}
 	for app, sources := range ls.TrustSources() {
 		for _, s := range sources {
 			out[app] = append(out[app], s)
@@ -170,7 +245,7 @@ func appTrust(ctx caddy.Context) (map[string][]TrustSource, *liveswap.App, error
 			out[app] = []TrustSource{}
 		}
 	}
-	return out, ls, nil
+	return out
 }
 
 // maxSecretsFile is how much of the secrets file is read: the box's
@@ -210,10 +285,23 @@ func readSecrets(path string) (map[string]string, error) {
 }
 
 // Start writes the rendered config into the state directory and has
-// Alertmanager load it. Nothing here fails the config load: serving
-// never waits on notify, and every failure is a journal line naming
-// what to do.
+// Alertmanager load it, then writes the store's rules and points the
+// push at this config. Nothing here fails the config load: serving
+// never waits on notify or the store, and every failure is a journal
+// line naming what to do. notify's engine comes first, so that the
+// store's chain events reach an engine serving this config.
 func (a *App) Start() error {
+	if a.notifies {
+		a.startNotify()
+	}
+	if a.Metrics != nil {
+		a.Metrics.start()
+	}
+	return nil
+}
+
+// startNotify is Start's notify part.
+func (a *App) startNotify() {
 	am := newAMClient(a.socket())
 	a.applyRender(am)
 	// Every value the box's secrets hold is a known value to the
@@ -227,7 +315,6 @@ func (a *App) Start() error {
 	if a.ls != nil {
 		a.ls.ReportStanding(lifecycleSink{theEngine})
 	}
-	return nil
 }
 
 // applyRender writes this config's render into the state directory and
@@ -240,19 +327,26 @@ func (a *App) applyRender(am *amClient) {
 	reloaded, err := apply(ctx, a.stateDir(), a.rendered, a.files, am)
 	switch {
 	case errors.Is(err, errNotSetUp):
-		a.logger.Warn("notify: Alertmanager is not set up on this box (run motel notify setup as root); events are journal lines only until it is", zap.String("state_dir", a.stateDir()))
+		a.logger.Warn("monitor: Alertmanager is not set up on this box (run motel monitor setup as root); events are journal lines only until it is", zap.String("state_dir", a.stateDir()))
 	case errors.Is(err, errUnanswered):
-		a.logger.Warn("notify: "+errUnanswered.Error(), zap.String("state_dir", a.stateDir()), zap.Error(err))
+		a.logger.Warn("monitor: "+errUnanswered.Error(), zap.String("state_dir", a.stateDir()), zap.Error(err))
 	case err != nil:
-		a.logger.Error("notify: Alertmanager's config was not updated", zap.String("state_dir", a.stateDir()), zap.Error(err))
+		a.logger.Error("monitor: Alertmanager's config was not updated", zap.String("state_dir", a.stateDir()), zap.Error(err))
 	case reloaded:
-		a.logger.Info("notify: Alertmanager reloaded the rendered config", zap.String("config", filepath.Join(a.stateDir(), ConfigName)))
+		a.logger.Info("monitor: Alertmanager reloaded the rendered config", zap.String("config", filepath.Join(a.stateDir(), ConfigName)))
 	}
 }
 
-// Stop lets go of the engine, unless a newer config has taken it.
+// Stop lets go of the pusher and the engine, unless a newer config has
+// taken them. The pusher first: what it clears as it stops reaches an
+// engine still serving this config.
 func (a *App) Stop() error {
-	theEngine.release(a)
+	if a.Metrics != nil {
+		thePusher.release(a.Metrics)
+	}
+	if a.notifies {
+		theEngine.release(a)
+	}
 	return nil
 }
 

@@ -29,7 +29,7 @@ type Event struct {
 	App      string
 	Instance string
 	// Source is the detector: liveswap, backup, tls, disk, or
-	// external:<name> for `motel notify send`.
+	// external:<name> for `motel monitor send`.
 	Source  string
 	Summary string
 	// Release and DeployedBy are labels on a one-shot (part of what
@@ -42,7 +42,7 @@ type Event struct {
 	// Hold is how long a state alert's condition must stay clear before
 	// its recovery is posted; at least minHold.
 	Hold time.Duration
-	// Details are an external producer's key=value pairs (motel notify
+	// Details are an external producer's key=value pairs (motel monitor
 	// send --detail), annotations detail_<key>, through the filter.
 	Details map[string]string
 	// Standing, on a state alert, is a detector's report of what it
@@ -160,7 +160,7 @@ type pending struct {
 	first   time.Time
 	attempt int
 	// journal says the post carries an event: a failure to deliver it
-	// is a `notify: delivery failed` line. Re-posts, the heartbeat and
+	// is a `monitor: delivery failed` line. Re-posts, the heartbeat and
 	// the mute fail at debug.
 	journal bool
 }
@@ -421,7 +421,7 @@ func (e *engine) tick() {
 	}
 	for key, st := range e.states {
 		if st.ev.Source == "tls" && st.firing && now.Sub(st.lastSeen) >= tlsStale {
-			e.logger.Info("notify: cert_failed not reported again; taken as cleared",
+			e.logger.Info("monitor: cert_failed not reported again; taken as cleared",
 				zap.String("key", key), zap.Duration("unreported_for", now.Sub(st.lastSeen)))
 			st.firing, st.clearSince, st.hold = false, now, minHold
 		}
@@ -495,7 +495,7 @@ func muteAlert(app string, now, endsAt time.Time) amAlert {
 	}
 }
 
-// journal is the `notify: event` line, written before the post: with
+// journal is the `monitor: event` line, written before the post: with
 // Alertmanager down, the event is still on record.
 func (e *engine) journal(ev Event, state string, extra ...zap.Field) {
 	fields := []zap.Field{
@@ -513,7 +513,7 @@ func (e *engine) journal(ev Event, state string, extra ...zap.Field) {
 		// Told before this process started; reported again.
 		fields = append(fields, zap.Bool("standing", true))
 	}
-	e.logger.Info("notify: event", append(fields, extra...)...)
+	e.logger.Info("monitor: event", append(fields, extra...)...)
 }
 
 // enqueue adds a post. Called with mu held. A full queue drops its
@@ -537,7 +537,7 @@ func (e *engine) gaveUp(p *pending, err error) {
 	if p.journal {
 		log = e.logger.Error
 	}
-	log("notify: delivery failed", zap.String("key", p.key), zap.Int("attempts", p.attempt), zap.Error(err))
+	log("monitor: delivery failed", zap.String("key", p.key), zap.Int("attempts", p.attempt), zap.Error(err))
 }
 
 // attempt tries the queue's head once. It reports whether to try again
@@ -574,7 +574,7 @@ func (e *engine) attempt(ctx context.Context) (again bool, wait time.Duration) {
 	case ctx.Err() != nil:
 		return false, 0
 	default:
-		e.logger.Debug("notify: Alertmanager unreachable, retrying", zap.String("key", p.key), zap.Int("attempt", p.attempt), zap.Error(err))
+		e.logger.Debug("monitor: Alertmanager unreachable, retrying", zap.String("key", p.key), zap.Int("attempt", p.attempt), zap.Error(err))
 		return false, e.backoff(p.attempt)
 	}
 }
@@ -669,7 +669,7 @@ func (e *engine) configure(a *App, post poster, known []string, logger *zap.Logg
 // setConfig is configure's state, with mu held.
 func (e *engine) setConfig(a *App, post poster, known []string, logger *zap.Logger) {
 	e.active, e.post, e.known, e.logger = a, post, known, logger
-	e.deploySucceeded = a.DeploySucceeded
+	e.deploySucceeded = a.deploySucceeded()
 	e.backupPath, e.diskPaths = a.backupRecord(), a.diskPaths
 	if c, ok := post.(*amClient); ok {
 		e.metrics = c.metrics
@@ -737,7 +737,7 @@ func (e *engine) release(a *App) {
 		l := e.live[n-1]
 		e.setConfig(l.a, l.post, l.known, l.logger)
 		e.mu.Unlock()
-		l.logger.Info("notify: the config serving before a failed reload has the engine again")
+		l.logger.Info("monitor: the config serving before a failed reload has the engine again")
 		if am, ok := l.post.(*amClient); ok && l.a.rendered != nil {
 			l.a.applyRender(am)
 		}

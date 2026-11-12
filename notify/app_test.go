@@ -7,6 +7,7 @@ import (
 	"encoding/pem"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -83,7 +84,7 @@ func TestValidateThroughCaddy(t *testing.T) {
 			}
 		}
 	}
-	notify {
+	monitor {
 		channel ops slack {secret.NOTIFY_OPS_URL}
 		channel alice ntfy {secret.NOTIFY_ALICE_URL}
 		operator ops
@@ -115,7 +116,7 @@ func TestValidateWithoutLiveswap(t *testing.T) {
 	if err := os.WriteFile(secrets, []byte("NOTIFY_OPS_URL=https://ntfy.sh/ops\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	src := "{\n\tadmin off\n\tnotify {\n\t\tchannel ops ntfy {secret.NOTIFY_OPS_URL}\n\t\toperator ops\n\t\tsecrets_file " + secrets + "\n\t}\n}\n:8080 {\n\trespond ok\n}\n"
+	src := "{\n\tadmin off\n\tmonitor {\n\t\tchannel ops ntfy {secret.NOTIFY_OPS_URL}\n\t\toperator ops\n\t\tsecrets_file " + secrets + "\n\t}\n}\n:8080 {\n\trespond ok\n}\n"
 	if err := validate(t, src); err != nil {
 		t.Fatal(err)
 	}
@@ -167,7 +168,7 @@ func TestValidateTakesAPushsSecretsAsHeld(t *testing.T) {
 		if secretsFile != "" {
 			line = "\t\tsecrets_file " + secretsFile + "\n"
 		}
-		return "{\n\tadmin off\n\tnotify {\n\t\tchannel ops ntfy {secret.NOTIFY_OPS_URL}\n\t\toperator ops\n" + line +
+		return "{\n\tadmin off\n\tmonitor {\n\t\tchannel ops ntfy {secret.NOTIFY_OPS_URL}\n\t\toperator ops\n" + line +
 			"\t\tstate_dir " + t.TempDir() + "\n\t}\n}\n:8080 {\n\trespond ok\n}\n"
 	}
 	t.Setenv(PushedSecretsEnv, "NOTIFY_OTHER_URL,NOTIFY_OPS_URL")
@@ -214,7 +215,7 @@ func TestBootDropsAMissingSecret(t *testing.T) {
 	if err := os.WriteFile(secrets, []byte("NOTIFY_OPS_URL=https://ntfy.sh/ops\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	src := "{\n\tadmin off\n\tnotify {\n\t\tchannel ops ntfy {secret.NOTIFY_OPS_URL}\n\t\tchannel spare json {secret.NOTIFY_SPARE_URL}\n\t\toperator ops spare\n\t\tsecrets_file " + secrets +
+	src := "{\n\tadmin off\n\tmonitor {\n\t\tchannel ops ntfy {secret.NOTIFY_OPS_URL}\n\t\tchannel spare json {secret.NOTIFY_SPARE_URL}\n\t\toperator ops spare\n\t\tsecrets_file " + secrets +
 		"\n\t\tstate_dir " + filepath.Join(dir, "state") + "\n\t}\n}\n:8080 {\n\trespond ok\n}\n"
 	for _, c := range []struct {
 		cmd     string
@@ -250,7 +251,7 @@ func TestBootDropsTheChannelsOfAnUnusableSecretsFile(t *testing.T) {
 	if err := os.WriteFile(secrets, []byte("NOTIFY_OPS_URL=https://ntfy.sh/ops\nnot a line\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	src := "{\n\tadmin off\n\tnotify {\n\t\tchannel ops ntfy {secret.NOTIFY_OPS_URL}\n\t\toperator ops\n\t\tsecrets_file " + secrets +
+	src := "{\n\tadmin off\n\tmonitor {\n\t\tchannel ops ntfy {secret.NOTIFY_OPS_URL}\n\t\toperator ops\n\t\tsecrets_file " + secrets +
 		"\n\t\tstate_dir " + filepath.Join(dir, "state") + "\n\t}\n}\n:8080 {\n\trespond ok\n}\n"
 	for _, c := range []struct {
 		cmd     string
@@ -298,8 +299,205 @@ func TestNoHeartbeatIsWarned(t *testing.T) {
 			t.Fatalf("%s: %v", c.name, err)
 		}
 		a.warnAtLoad(r.heartbeat)
-		if n := len(logs.FilterMessageSnippet("notify: no heartbeat in this load").All()); n != c.want {
+		if n := len(logs.FilterMessageSnippet("monitor: no heartbeat in this load").All()); n != c.want {
 			t.Errorf("%s: %d warnings, want %d (%v)", c.name, n, c.want, logs.All())
+		}
+	}
+}
+
+// provision adapts a Caddyfile and provisions it without starting, as
+// validate does, and returns the monitor app it built.
+func provision(t *testing.T, src string) (*App, error) {
+	t.Helper()
+	cfgJSON, _, err := caddyconfig.GetAdapter("caddyfile").Adapt([]byte(src), nil)
+	if err != nil {
+		return nil, err
+	}
+	var cfg caddy.Config
+	if err := caddy.StrictUnmarshalJSON(cfgJSON, &cfg); err != nil {
+		t.Fatalf("unmarshal: %v\n%s", err, cfgJSON)
+	}
+	ctx, err := caddy.ProvisionContext(&cfg)
+	if err != nil {
+		return nil, err
+	}
+	mod, err := ctx.App(appID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return mod.(*App), nil
+}
+
+// The two blocks the monitor block replaced are refused at the adapt,
+// each naming what to write instead.
+func TestTheOldBlocksAreRefused(t *testing.T) {
+	for src, want := range map[string]string{
+		"{\n\tadmin off\n\tnotify {\n\t\tchannel ops ntfy {secret.NOTIFY_OPS_URL}\n\t\toperator ops\n\t}\n}\n": "the notify block is now `monitor { … }`",
+		"{\n\tadmin off\n\tmetrics_store\n}\n":                                              "metrics_store is now a `metrics [<socket path>]` line in the monitor block",
+		"{\n\tadmin off\n\tmetrics_store {\n\t\tstore /run/x/vm.sock\n\t}\n}\n":             "metrics_store is now a `metrics [<socket path>]` line in the monitor block",
+		"{\n\tadmin off\n\tmonitor {\n\t\tmetrics\n\t}\n\tmonitor {\n\t\tmetrics\n\t}\n}\n": "the monitor option is given more than once",
+	} {
+		_, _, err := caddyconfig.GetAdapter("caddyfile").Adapt([]byte(src), nil)
+		if err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("%q: %v, want %q", src, err, want)
+		}
+	}
+}
+
+// A monitor block that is a metrics line alone is the store with no
+// notify: the numbers kept, no rule, and nothing of notify built (no
+// render, so nothing for Alertmanager; no engine at Start). Any other
+// line makes the block notify's, held to its refusals; a block with no
+// line at all is refused for its operator line, as notify's always was.
+func TestAMetricsLineAloneIsTheStoreWithoutNotify(t *testing.T) {
+	block := func(lines ...string) string {
+		return "{\n\tadmin off\n\tmonitor {\n\t\t" + strings.Join(lines, "\n\t\t") + "\n\t}\n}\n:8080 {\n\trespond ok\n}\n"
+	}
+	a, err := provision(t, block("metrics /run/x/vm.sock"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a.notifies || a.cfg != nil || a.rendered != nil || a.Metrics == nil || a.Metrics.store() != "/run/x/vm.sock" {
+		t.Fatalf("notifies %v, cfg %v, rendered %d bytes, metrics %+v; want the store alone", a.notifies, a.cfg, len(a.rendered), a.Metrics)
+	}
+	if strings.Contains(string(a.Metrics.rules), "alert:") {
+		t.Errorf("the store alone renders alerting rules:\n%s", a.Metrics.rules)
+	}
+
+	for _, c := range []struct {
+		name  string
+		lines []string
+		want  string
+	}{
+		{"an empty block", []string{""}, "no operator line"},
+		{"an option alone", []string{"deploy_succeeded on"}, "no operator line"},
+		{"metrics and an option", []string{"metrics", "state_dir /tmp/x"}, "no operator line"},
+		{"metrics and an option at its default", []string{"metrics", "deploy_succeeded off"}, "no operator line"},
+		{"metrics and an empty path", []string{"metrics", `state_dir ""`}, "state_dir takes a path, not an empty string"},
+		{"metrics and an operator line", []string{"metrics", "operator ops"}, "operator names ops, which no channel line defines"},
+		{"metrics and a channel", []string{"metrics", "channel ops ntfy {secret.NOTIFY_OPS_URL}"}, "no operator line"},
+		{"a relative socket in the JSON", nil, "is not an absolute path"},
+	} {
+		src := block(c.lines...)
+		if c.lines == nil {
+			// The Caddyfile refuses it first; JSON is held to it too.
+			a := &App{Metrics: &MetricsStore{Store: "run/vm.sock"}}
+			cfg := caddy.Config{AppsRaw: caddy.ModuleMap{appID: caddyconfig.JSON(a, nil)}, Admin: &caddy.AdminConfig{Disabled: true}}
+			if err := caddy.Validate(&cfg); err == nil || !strings.Contains(err.Error(), c.want) {
+				t.Errorf("%s: %v, want %q", c.name, err, c.want)
+			}
+			continue
+		}
+		if _, err := provision(t, src); err == nil || !strings.Contains(err.Error(), c.want) {
+			t.Errorf("%s: %v, want %q", c.name, err, c.want)
+		}
+	}
+}
+
+// One app, both parts: Start points the engine and the pusher at this
+// config, notify's first; Stop lets go of both. The store alone never
+// takes the engine.
+func TestStartAndStopBothParts(t *testing.T) {
+	// Fresh ones, put back after: Provision and Start reach the
+	// globals, and no other test's state is this one's to read or leave.
+	savedEngine, savedPusher := theEngine, thePusher
+	theEngine = newEngine()
+	thePusher = newPusher(theEngine.report)
+	t.Cleanup(func() {
+		// A failed assertion may leave either running: stop both.
+		thePusher.mu.Lock()
+		m := thePusher.active
+		thePusher.mu.Unlock()
+		if m != nil {
+			thePusher.release(m)
+		}
+		theEngine.mu.Lock()
+		a := theEngine.active
+		theEngine.mu.Unlock()
+		if a != nil {
+			theEngine.release(a)
+		}
+		theEngine, thePusher = savedEngine, savedPusher
+	})
+	dir := t.TempDir()
+	secrets := filepath.Join(dir, "_box.env")
+	if err := os.WriteFile(secrets, []byte("NOTIFY_OPS_URL=https://ntfy.sh/ops\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	both := "{\n\tadmin off\n\tmonitor {\n\t\tchannel ops ntfy {secret.NOTIFY_OPS_URL}\n\t\toperator ops\n\t\tsecrets_file " + secrets +
+		"\n\t\tstate_dir " + filepath.Join(dir, "state") + "\n\t\talertmanager " + filepath.Join(dir, "am.sock") +
+		"\n\t\tbackup_record off\n\t\tmetrics " + filepath.Join(dir, "vm.sock") + "\n\t}\n}\n:8080 {\n\trespond ok\n}\n"
+	alone := "{\n\tadmin off\n\tmonitor {\n\t\tmetrics " + filepath.Join(dir, "vm.sock") + "\n\t}\n}\n:8080 {\n\trespond ok\n}\n"
+	for _, c := range []struct {
+		name, src string
+		engine    bool
+	}{{"both", both, true}, {"the store alone", alone, false}} {
+		a, err := provision(t, c.src)
+		if err != nil {
+			t.Fatalf("%s: %v", c.name, err)
+		}
+		a.Metrics.stateDirOverride = filepath.Join(dir, "metrics")
+		if err := a.Start(); err != nil {
+			t.Fatal(err)
+		}
+		theEngine.mu.Lock()
+		engine := theEngine.active
+		theEngine.mu.Unlock()
+		thePusher.mu.Lock()
+		pusher := thePusher.active
+		thePusher.mu.Unlock()
+		var want *App
+		if c.engine {
+			want = a
+		}
+		if engine != want || pusher != a.Metrics {
+			t.Errorf("%s: after Start the engine serves %p, the pusher %p; want the engine %v, and the pusher this config's", c.name, engine, pusher, c.engine)
+		}
+		if err := a.Stop(); err != nil {
+			t.Fatal(err)
+		}
+		theEngine.mu.Lock()
+		engine = theEngine.active
+		theEngine.mu.Unlock()
+		thePusher.mu.Lock()
+		pusher = thePusher.active
+		thePusher.mu.Unlock()
+		if engine != nil || pusher != nil {
+			t.Errorf("%s: after Stop the engine serves %p, the pusher %p; want neither", c.name, engine, pusher)
+		}
+	}
+}
+
+// Every field of the app but Metrics is a notify line: set to any value
+// a line can give it, the block is notify's. A field added later is
+// held to it with no list to update; one that is not omitempty makes
+// every metrics line alone notify's, which the test above refuses.
+func TestEveryOtherFieldIsANotifyLine(t *testing.T) {
+	if !(&App{Metrics: &MetricsStore{}}).storeAlone() {
+		t.Fatal("a metrics line alone is not the store alone")
+	}
+	typ := reflect.TypeOf(App{})
+	for i := range typ.NumField() {
+		f := typ.Field(i)
+		if !f.IsExported() || f.Name == "Metrics" {
+			continue
+		}
+		a := &App{Metrics: &MetricsStore{}}
+		v := reflect.ValueOf(a).Elem().Field(i)
+		switch v.Kind() {
+		case reflect.Slice:
+			v.Set(reflect.MakeSlice(v.Type(), 1, 1))
+		case reflect.String:
+			v.SetString("x")
+		case reflect.Bool:
+			v.SetBool(true)
+		case reflect.Pointer:
+			v.Set(reflect.New(v.Type().Elem())) // its zero value: deploy_succeeded off
+		default:
+			t.Fatalf("field %s is a %s: give it a value here", f.Name, v.Kind())
+		}
+		if a.storeAlone() {
+			t.Errorf("a metrics line beside %s is taken for the store alone", f.Name)
 		}
 	}
 }

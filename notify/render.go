@@ -54,7 +54,7 @@ const (
 
 // amConfig is the part of Alertmanager's configuration motel writes.
 // Every field is fixed by motel or comes from a checked line of the
-// notify block; nothing the block holds is a template.
+// monitor block; nothing the block holds is a template.
 type amConfig struct {
 	Global       amGlobal    `yaml:"global"`
 	Route        amRoute     `yaml:"route"`
@@ -122,7 +122,7 @@ const (
 	msgText = `{{ range .Alerts }}{{ if eq .Status "resolved" }}[RESOLVED] {{ end }}{{ .Annotations.summary }}{{ "\n" }}{{ end }}`
 )
 
-const configHeader = "# Rendered by motel from the Caddyfile's notify block (notify/DESIGN-notify.md).\n" +
+const configHeader = "# Rendered by motel from the Caddyfile's monitor block (notify/DESIGN-notify.md).\n" +
 	"# Do not edit: motel rewrites this file on every config load and reloads\n" +
 	"# Alertmanager. Every URL is a url_file beside it, never in this file.\n"
 

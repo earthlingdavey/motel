@@ -94,7 +94,7 @@ func (e *engine) scrapeFailed(ctx context.Context, read func(context.Context) ([
 	if err != nil {
 		// No reading this minute: the baseline stays the last good one,
 		// so the next good read is compared with it, not with nothing.
-		e.logger.Debug("notify: reading Alertmanager's metrics", zap.Error(err))
+		e.logger.Debug("monitor: reading Alertmanager's metrics", zap.Error(err))
 		return
 	}
 	if e.active == nil {
@@ -114,7 +114,7 @@ func (e *engine) scrapeFailed(ctx context.Context, read func(context.Context) ([
 		fields := []zap.Field{zap.String("key", key), zap.String("integration", s.integration), zap.String("reason", s.reason),
 			zap.String("receiver", s.receiver), zap.Strings("suspects", sus)}
 		if !e.bucketFor(key).take(now) {
-			e.logger.Warn("notify: channel failed", append(fields, zap.String("suppressed", "more than four an hour for this key"))...)
+			e.logger.Warn("monitor: channel failed", append(fields, zap.String("suppressed", "more than four an hour for this key"))...)
 			continue
 		}
 		var to []string
@@ -123,7 +123,7 @@ func (e *engine) scrapeFailed(ctx context.Context, read func(context.Context) ([
 				to = append(to, ch)
 			}
 		}
-		e.logger.Warn("notify: channel failed", append(fields, zap.Strings("told", to))...)
+		e.logger.Warn("monitor: channel failed", append(fields, zap.Strings("told", to))...)
 		alerts := make([]amAlert, 0, len(to))
 		for _, ch := range to {
 			alerts = append(alerts, amAlert{

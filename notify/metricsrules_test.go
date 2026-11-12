@@ -39,7 +39,7 @@ func parseRules(t *testing.T, b []byte) vmRuleFile {
 	return f
 }
 
-// Without a notify block no rule alerts: Alertmanager would still hold
+// Without notify (a metrics line alone) no rule alerts: Alertmanager would still hold
 // the last config notify rendered, and send the store's alerts to its
 // channels. The groups stay, empty, which vmalert accepts (-dryRun
 // refuses a file with no group at all).
@@ -50,7 +50,7 @@ func TestRenderRulesWithoutNotify(t *testing.T) {
 	}
 	for _, g := range f.Groups {
 		if len(g.Rules) != 0 {
-			t.Errorf("no notify block, yet group %s has rules: %+v", g.Name, g.Rules)
+			t.Errorf("no notify, yet group %s has rules: %+v", g.Name, g.Rules)
 		}
 	}
 	if !strings.HasPrefix(string(renderRules(nil)), rulesHeader) {
@@ -58,7 +58,7 @@ func TestRenderRulesWithoutNotify(t *testing.T) {
 	}
 }
 
-// A reload that drops the notify block and keeps metrics_store: the
+// A reload that drops the channels and keeps the metrics line: the
 // rules file the new config writes holds no alerting rule.
 func TestRulesAfterNotifyIsRemoved(t *testing.T) {
 	dir := t.TempDir()
@@ -73,7 +73,7 @@ func TestRulesAfterNotifyIsRemoved(t *testing.T) {
 	for _, g := range parseRules(t, b).Groups {
 		for _, r := range g.Rules {
 			if r.Alert != "" {
-				t.Errorf("after the notify block went, vmalert still has %s", r.Alert)
+				t.Errorf("after the channels went, vmalert still has %s", r.Alert)
 			}
 		}
 	}

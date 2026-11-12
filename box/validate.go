@@ -55,7 +55,7 @@ const xOK = 0x1
 // start, whether backups are installed could not be told, an adaptation
 // that does not read). boxSecrets are the variables of the push's
 // secrets/_box/: values the box does not hold yet, which root writes
-// into the notify block's secrets file only once the push is installed,
+// into the monitor block's secrets file only once the push is installed,
 // so `motel validate` is told their names (NotifyPushedSecretsEnv) and
 // does not refuse them as missing.
 type validator interface {

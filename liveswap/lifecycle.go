@@ -57,9 +57,9 @@ type Notifier interface {
 }
 
 // SetNotifier installs the notify module's listener on this config;
-// Start hands it to every app it configures. Called from the notify
-// module's Provision, after liveswap's own, so a config without a
-// notify block reports to nobody.
+// Start hands it to every app it configures. Called from the monitor
+// app's Provision, after liveswap's own, so a config without a monitor
+// block with channels reports to nobody.
 func (a *App) SetNotifier(n Notifier) { a.notifier = n }
 
 func (ma *managedApp) setNotifier(n Notifier) {

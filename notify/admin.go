@@ -45,7 +45,7 @@ func (adminAPI) Routes() []caddy.AdminRoute {
 	}
 }
 
-// SendRequest is `motel notify send`'s body.
+// SendRequest is `motel monitor send`'s body.
 type SendRequest struct {
 	// Source is the producer's name; motel stamps it external:<source>.
 	Source  string `json:"source"`
@@ -82,7 +82,7 @@ var reservedNames = []string{
 
 const maxDetails = 2 << 10
 
-// Check is the validation `motel notify send` makes before it posts and
+// Check is the validation `motel monitor send` makes before it posts and
 // the admin route makes again: the route is the gate, the command's
 // check a courtesy that names the mistake first.
 func (r SendRequest) Check() error {
@@ -168,7 +168,7 @@ func serveSend(w http.ResponseWriter, r *http.Request) error {
 	masked := e.clean(req.Name) != req.Name || e.clean(req.Instance) != req.Instance
 	e.mu.Unlock()
 	if active == nil || active.cfg == nil {
-		return caddy.APIError{HTTPStatus: http.StatusServiceUnavailable, Err: errors.New("this box's Caddyfile has no notify block")}
+		return caddy.APIError{HTTPStatus: http.StatusServiceUnavailable, Err: errors.New("this box's Caddyfile has no monitor block with channels")}
 	}
 	if masked {
 		return unprocessable(errors.New("the name or instance holds a value the filter masks (a channel URL, or a secret-shaped token): name the thing, not its credential"))
@@ -189,7 +189,7 @@ func serveSend(w http.ResponseWriter, r *http.Request) error {
 	return json.NewEncoder(w).Encode(map[string]string{"key": ev.key()})
 }
 
-// TestRequest is `motel notify test`'s body.
+// TestRequest is `motel monitor test`'s body.
 type TestRequest struct {
 	Channel string `json:"channel"`
 }
@@ -219,10 +219,10 @@ func serveTest(w http.ResponseWriter, r *http.Request) error {
 	active, post, read, now, logger := e.active, e.post, e.metrics, e.now(), e.logger
 	e.mu.Unlock()
 	if active == nil || active.cfg == nil {
-		return caddy.APIError{HTTPStatus: http.StatusServiceUnavailable, Err: errors.New("this box's Caddyfile has no notify block")}
+		return caddy.APIError{HTTPStatus: http.StatusServiceUnavailable, Err: errors.New("this box's Caddyfile has no monitor block with channels")}
 	}
 	if _, ok := active.cfg.channels[req.Channel]; !ok {
-		return unprocessable(fmt.Errorf("no channel named %q; the notify block's channels are %s", req.Channel, strings.Join(active.cfg.order, ", ")))
+		return unprocessable(fmt.Errorf("no channel named %q; the monitor block's channels are %s", req.Channel, strings.Join(active.cfg.order, ", ")))
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), testWait+amRequestTimeout)
 	defer cancel()
@@ -244,10 +244,10 @@ func serveTest(w http.ResponseWriter, r *http.Request) error {
 	alert := amAlert{
 		Labels: map[string]string{"alertname": alertNotifyTest, labelChannel: req.Channel, "severity": SeverityInfo,
 			"subject": "box", "test": hex.EncodeToString(nonce)},
-		Annotations: map[string]string{"summary": "a test from motel notify test: if you can read this, the channel " + req.Channel + " works"},
+		Annotations: map[string]string{"summary": "a test from motel monitor test: if you can read this, the channel " + req.Channel + " works"},
 		StartsAt:    now, EndsAt: now.Add(oneShotLife),
 	}
-	logger.Info("notify: test", zap.String("channel", req.Channel))
+	logger.Info("monitor: test", zap.String("channel", req.Channel))
 	if err := post.postAlerts(ctx, []amAlert{alert}); err != nil {
 		return caddy.APIError{HTTPStatus: http.StatusBadGateway, Err: fmt.Errorf("posting to Alertmanager: %w", err)}
 	}

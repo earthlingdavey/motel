@@ -22,7 +22,7 @@ const (
 	// bound into no unit.
 	DefaultSecretsFile = "/etc/motel/secrets/_box.env" //nolint:gosec // G101: a path, not a credential
 	// DefaultStateDir holds what motel renders for Alertmanager: the
-	// config and one file per channel URL. Made by `motel notify setup`,
+	// config and one file per channel URL. Made by `motel monitor setup`,
 	// 2750 motel:prometheus, so what motel writes is born group
 	// prometheus and Alertmanager reads it without motel holding that
 	// group. Not under /var/lib/motel, which is 0750 motel:motel: the

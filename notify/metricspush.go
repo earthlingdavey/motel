@@ -90,7 +90,7 @@ func newPusher(report func(Event)) *pusher {
 }
 
 // thePusher reports through notify's engine, which drops what it is
-// told while no config runs a notify block.
+// told while no config runs notify (a monitor block with channels).
 var thePusher = newPusher(theEngine.report)
 
 // registerFailed puts the push's failure counter on a config's
@@ -134,7 +134,7 @@ func (p *pusher) pushOnce(ctx context.Context) {
 	mfs, gerr := g.Gather()
 	if gerr != nil {
 		// A pedantic registry still returns what it could gather.
-		log.Debug("metrics_store: gathering the registry", zap.Error(gerr))
+		log.Debug("monitor metrics: gathering the registry", zap.Error(gerr))
 	}
 	var buf bytes.Buffer
 	enc := expfmt.NewEncoder(&buf, expfmt.NewFormat(expfmt.TypeTextPlain))
@@ -158,9 +158,9 @@ func (p *pusher) pushOnce(ctx context.Context) {
 		p.failed.Inc()
 		if p.failingSince.IsZero() {
 			p.failingSince = now
-			log.Warn("metrics_store: push failed", zap.String("store", a.store()), zap.Error(err))
+			log.Warn("monitor metrics: push failed", zap.String("store", a.store()), zap.Error(err))
 		} else {
-			log.Debug("metrics_store: push failed", zap.String("store", a.store()), zap.Error(err))
+			log.Debug("monitor metrics: push failed", zap.String("store", a.store()), zap.Error(err))
 		}
 		// A read-only store refuses every import: metrics_store_read_only
 		// names that, and a second alert for its consequence would not.
@@ -170,7 +170,7 @@ func (p *pusher) pushOnce(ctx context.Context) {
 		}
 	} else {
 		if !p.failingSince.IsZero() {
-			log.Info("metrics_store: push succeeded again", zap.Duration("failing_for", now.Sub(p.failingSince)))
+			log.Info("monitor metrics: push succeeded again", zap.Duration("failing_for", now.Sub(p.failingSince)))
 		}
 		p.failingSince = time.Time{}
 		if p.storeDown {
@@ -189,7 +189,7 @@ func (p *pusher) pushOnce(ctx context.Context) {
 // its own scrape with every other write, so the flag never reaches a
 // series a rule could read (measured on Debian's 1.112.0). It is told
 // at every read that finds it set, as the other two are: the engine
-// drops what it is told while no notify block runs, and one told only
+// drops what it is told while no config runs notify, and one told only
 // when it changed would then never be told. An ask the store does not
 // answer is no reading: what was told stands, and for readOnlyStale
 // asks so does the hold on the other two events (heldReadOnly).
@@ -210,7 +210,7 @@ func (p *pusher) checkReadOnly(ctx context.Context) bool {
 	}
 	if err != nil {
 		if p.readOnlyMisses == 0 {
-			log.Warn("metrics_store: could not read whether the store is read-only", zap.String("store", a.store()), zap.Error(err))
+			log.Warn("monitor metrics: could not read whether the store is read-only", zap.String("store", a.store()), zap.Error(err))
 		}
 		p.readOnlyMisses++
 		held := p.heldReadOnly()
@@ -329,7 +329,7 @@ func (p *pusher) run(ctx context.Context) {
 }
 
 // configure points the pusher at a config and starts its goroutine
-// the first time. Called from MetricsStore.Start.
+// the first time. Called from MetricsStore.start.
 func (p *pusher) configure(l liveStore) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -353,7 +353,7 @@ func (p *pusher) setLive(l liveStore) {
 	p.active, p.store, p.gather, p.logger = l.m, l.store, l.gather, l.logger
 }
 
-// release is MetricsStore.Stop: as notify's engine, it goes back to an
+// release is the monitor app's Stop: as notify's engine, it goes back to an
 // older config still live (a reload that failed after Start), and with
 // none it stops, reporting the chain keys cleared, since nothing can
 // clear them any more.
@@ -399,8 +399,8 @@ func (p *pusher) release(m *MetricsStore) {
 	for _, ev := range evs {
 		p.report(ev)
 	}
-	// A config serving on with no metrics_store block took the block
-	// away: vmalert and the store still run (setup's units), and the
+	// A config serving on with no metrics line took the line away:
+	// vmalert and the store still run (setup's units), and the
 	// stopped config's rules would go on reaching the channels. motel's
 	// own shutdown leaves them, so the store's alerts reach the operator
 	// while motel is down: Caddy empties its running context before it

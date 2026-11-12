@@ -1,4 +1,4 @@
-# Rendered by motel from the Caddyfile's notify block (notify/DESIGN-notify.md).
+# Rendered by motel from the Caddyfile's monitor block (notify/DESIGN-notify.md).
 # Do not edit: motel rewrites this file on every config load and reloads
 # Alertmanager. Every URL is a url_file beside it, never in this file.
 global:

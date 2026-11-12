@@ -321,19 +321,19 @@ func TestBoxSecretSet(t *testing.T) {
 	}
 	r.write(boxFile, f)
 
-	// The box's own slot: a notify channel's URL, which the notify
+	// The box's own slot: a notify channel's URL, which the monitor
 	// block reads by name; no env_file hint, and the notify hint once
 	// the name is read.
 	notifyFile := "deploy.example.com/secrets/_box/NOTIFY_OPS_URL.age"
 	if out, code := r.secrets("", "https://ntfy.sh/ops-topic", "set", "APP=_box", "VAR=NOTIFY_OPS_URL"); code != 0 ||
 		!strings.Contains(out, "secret: "+notifyFile+", encrypted to 3 keys, added to the commit\n") ||
-		!strings.Contains(out, "secret: no line of "+boxFile+"'s notify block reads NOTIFY_OPS_URL yet: a channel reads it as  channel <name> json|ntfy|slack|discord {secret.NOTIFY_OPS_URL}") ||
+		!strings.Contains(out, "secret: no line of "+boxFile+"'s monitor block reads NOTIFY_OPS_URL yet: a channel reads it as  channel <name> json|ntfy|slack|discord {secret.NOTIFY_OPS_URL}") ||
 		strings.Contains(out, "env_file") {
 		t.Errorf("APP=_box: exit %d\n%s", code, out)
 	}
 	r.mustDecrypt(boxID, notifyFile, "https://ntfy.sh/ops-topic")
-	r.write(boxFile, strings.Replace(f, "{\n", "{\n\tnotify {\n\t\tchannel ops ntfy {secret.NOTIFY_OPS_URL}\n\t\toperator ops\n\t}\n", 1))
-	if out, code := r.secrets("", "https://ntfy.sh/ops-2", "set", "APP=_box", "VAR=NOTIFY_OPS_URL"); code != 0 || strings.Contains(out, "notify block reads") {
+	r.write(boxFile, strings.Replace(f, "{\n", "{\n\tmonitor {\n\t\tchannel ops ntfy {secret.NOTIFY_OPS_URL}\n\t\toperator ops\n\t}\n", 1))
+	if out, code := r.secrets("", "https://ntfy.sh/ops-2", "set", "APP=_box", "VAR=NOTIFY_OPS_URL"); code != 0 || strings.Contains(out, "monitor block reads") {
 		t.Errorf("APP=_box, read by a channel line: exit %d\n%s", code, out)
 	}
 	r.write(boxFile, f)
@@ -1157,15 +1157,15 @@ func TestBoxCheckSecrets(t *testing.T) {
 	if out, code := check(); code != 0 || out != "deploy.example.com/Caddyfile → https://deploy.example.com/ (1 app, 1 signer, 1 secret)\n" {
 		t.Fatalf("one secret: exit %d\n%s", code, out)
 	}
-	// A notify block reading the box's own secret, which is not on this
+	// A monitor block reading the box's own secret, which is not on this
 	// machine: validate is told it is the push's.
 	withoutNotify := r.read(boxFile)
-	r.write(boxFile, strings.Replace(withoutNotify, "{\n", "{\n\tnotify {\n\t\tchannel ops ntfy {secret.NOTIFY_OPS_URL}\n\t\toperator ops\n\t}\n", 1))
+	r.write(boxFile, strings.Replace(withoutNotify, "{\n", "{\n\tmonitor {\n\t\tchannel ops ntfy {secret.NOTIFY_OPS_URL}\n\t\toperator ops\n\t}\n", 1))
 	if out, code := r.secrets("", "https://ntfy.sh/ops-topic", "set", "APP=_box", "VAR=NOTIFY_OPS_URL"); code != 0 {
 		t.Fatalf("make secret APP=_box: exit %d\n%s", code, out)
 	}
 	if out, code := check(); code != 0 || !strings.Contains(out, "(1 app, 1 signer, 2 secrets)") {
-		t.Fatalf("a notify block and its secret in _box/: exit %d\n%s", code, out)
+		t.Fatalf("a monitor block and its secret in _box/: exit %d\n%s", code, out)
 	}
 	r.remove("deploy.example.com/secrets/_box")
 	r.write(boxFile, withoutNotify)

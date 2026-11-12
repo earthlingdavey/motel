@@ -62,7 +62,7 @@ func TestScrapeFailedTellsTheOtherOperatorChannels(t *testing.T) {
 	if len(got) != 1 || got[0].Labels[labelChannel] != "pager" || got[0].Labels["suspects"] != "ops" || got[0].Labels["alertname"] != "ChannelFailed" {
 		t.Fatalf("posts = %+v", got)
 	}
-	lines := te.lines("notify: channel failed")
+	lines := te.lines("monitor: channel failed")
 	if len(lines) != 1 {
 		t.Fatalf("lines = %+v", lines)
 	}

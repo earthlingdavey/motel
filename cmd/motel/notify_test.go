@@ -2,7 +2,11 @@ package main
 
 import (
 	"path/filepath"
+	"strings"
 	"testing"
+
+	caddycmd "github.com/caddyserver/caddy/v2/cmd"
+	"github.com/spf13/cobra"
 
 	"github.com/smallhoursorg/motel/box"
 	"github.com/smallhoursorg/motel/liveswap"
@@ -30,5 +34,51 @@ func TestBoxSecretsPathsAgree(t *testing.T) {
 	}
 	if filepath.Dir(notify.DefaultSecretsFile) != liveswap.BoxSecretsDir {
 		t.Errorf("notify's file %q is outside %q", notify.DefaultSecretsFile, liveswap.BoxSecretsDir)
+	}
+}
+
+// motel notify and motel metrics are hidden, run nothing, and fail
+// with the new spelling; motel monitor holds the commands.
+func TestTheOldCommandsSayTheNewSpelling(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		args []string
+		want string
+	}{
+		{"notify", []string{"setup"}, "motel notify is now motel monitor: motel monitor setup"},
+		{"notify", []string{"send", "--source", "cron"}, "motel monitor send --source cron"},
+		{"notify", []string{"send", "--summary", "the nightly job failed", "--detail", "who=it's"}, `motel monitor send --summary 'the nightly job failed' --detail 'who=it'\''s'`},
+		{"notify", []string{"send", "--summary", ""}, "motel monitor send --summary ''"},
+		{"metrics", []string{"setup"}, "motel metrics setup is now motel monitor setup --metrics"},
+	} {
+		def, ok := caddycmd.Commands()[c.name]
+		if !ok {
+			t.Fatalf("%s is not registered", c.name)
+		}
+		cmd := &cobra.Command{Use: c.name}
+		def.CobraFunc(cmd)
+		if !cmd.Hidden {
+			t.Errorf("%s is listed in the help", c.name)
+		}
+		if err := cmd.RunE(cmd, c.args); err == nil || !strings.Contains(err.Error(), c.want) {
+			t.Errorf("motel %s %v: %v, want %q", c.name, c.args, err, c.want)
+		}
+	}
+	def, ok := caddycmd.Commands()["monitor"]
+	if !ok {
+		t.Fatal("monitor is not registered")
+	}
+	cmd := &cobra.Command{Use: "monitor"}
+	def.CobraFunc(cmd)
+	var names []string
+	for _, sub := range cmd.Commands() {
+		names = append(names, sub.Name())
+	}
+	if strings.Join(names, " ") != "send setup test" {
+		t.Errorf("motel monitor has %v", names)
+	}
+	setup, _, err := cmd.Find([]string{"setup"})
+	if err != nil || setup.Flags().Lookup("metrics") == nil {
+		t.Errorf("motel monitor setup has no --metrics: %v", err)
 	}
 }

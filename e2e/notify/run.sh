@@ -2,20 +2,20 @@
 # The notify suite (make e2e-notify), run inside e2e-notify-box as root.
 #
 # The box is e2e-motel's image with Debian's prometheus-alertmanager
-# installed and masked; motel runs the notify block in
+# installed and masked; motel runs the monitor block in
 # e2e/notify/Caddyfile, whose channels are paths on e2e-sink, a stub
 # that logs every delivery with its time (e2e/notify/sink.py). The suite
-# runs `motel notify setup`, then reproduces the timeline measured on
+# runs `motel monitor setup`, then reproduces the timeline measured on
 # hotserve-1 against the corrected route tree
 # (research: alertmanager_edge_tests.md, its addendum), through motel:
 #
 #   Watchdog                      → /deadman, at once
 #   deploy_failed (a real deploy) → /ops and /blog, the same second
-#   a box one-shot (notify send)  → /ops only, at once
+#   a box one-shot (monitor send) → /ops only, at once
 #   four distinct one-shots       → four deliveries, none lost
 #   watchdog_throttled blog       → nothing: inhibited by deploy_in_progress
 #   watchdog_throttled shop       → /ops, after the 30 s group_wait
-#   a box state (notify send)     → /ops at +30 s; its recovery within a minute of motel's hold
+#   a box state (monitor send)    → /ops at +30 s; its recovery within a minute of motel's hold
 #   oncall (answers 400)          → ChannelFailed to /ops, naming oncall
 #
 # and the socket's reach: no TCP listener, root and motel admitted,
@@ -68,7 +68,7 @@ post_alert() { # <labels JSON>: as root, as an admin's own tool would
 	am -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' \
 		http://am/api/v2/alerts -d "[{\"labels\":$1,\"annotations\":{\"summary\":\"e2e: posted to the socket by root\"}}]"
 }
-send() { motel notify send --source e2e "$@" >/tmp/send.out 2>&1; }
+send() { motel monitor send --source e2e "$@" >/tmp/send.out 2>&1; }
 
 echo "=== notify 0: the box ==="
 i=0
@@ -81,9 +81,9 @@ journalctl -u motel -o cat --no-pager | grep -q 'Alertmanager is not set up on t
 	&& pass "before setup, motel says Alertmanager is not set up, and serves" \
 	|| fail "no 'not set up' line before setup"
 
-echo "=== notify 1: motel notify setup ==="
+echo "=== notify 1: motel monitor setup ==="
 t_setup=$(now_ms)
-if motel notify setup >/tmp/setup.out 2>&1; then
+if motel monitor setup >/tmp/setup.out 2>&1; then
 	pass "setup ran: $(tr '\n' ';' </tmp/setup.out | cut -c1-200)"
 else
 	fail "setup: $(cat /tmp/setup.out)"
@@ -106,7 +106,7 @@ until grep -q 'Rendered by motel' "$STATE/alertmanager.yml" 2>/dev/null; do
 	i=$((i + 1)); [ "$i" -ge 40 ] && break; sleep 0.25
 done
 grep -q 'Rendered by motel' "$STATE/alertmanager.yml" \
-	&& pass "motel rendered the notify block into $STATE/alertmanager.yml" || fail "the config is not motel's: $(head -3 "$STATE/alertmanager.yml")"
+	&& pass "motel rendered the monitor block into $STATE/alertmanager.yml" || fail "the config is not motel's: $(head -3 "$STATE/alertmanager.yml")"
 bad=$(find "$STATE" -name 'url-*' ! -perm 0640 -o -name 'url-*' ! -group prometheus | head -1)
 [ -z "$bad" ] && [ -n "$(find "$STATE" -name 'url-*')" ] && pass "the URL files are 0640, group prometheus" || fail "a URL file: $bad"
 amtool check-config "$STATE/alertmanager.yml" 2>&1 | grep -q SUCCESS \
@@ -142,13 +142,13 @@ within "deploy_failed to blog's deployer" "$t2" "$t_v3" -2 3
 none "deploy_succeeded is off by default" /ops deploy_succeeded "$t_v1"
 none "deploy_in_progress reaches nobody (operator)" /ops deploy_in_progress 0
 none "deploy_in_progress reaches nobody (deployer)" /blog deploy_in_progress 0
-journalctl -u motel -o cat --no-pager | grep 'notify: event' | grep -q 'liveswap/app:blog/deploy_failed' \
-	&& pass "journal: notify: event liveswap/app:blog/deploy_failed" || fail "no notify: event line for the failed deploy"
+journalctl -u motel -o cat --no-pager | grep 'monitor: event' | grep -q 'liveswap/app:blog/deploy_failed' \
+	&& pass "journal: monitor: event liveswap/app:blog/deploy_failed" || fail "no monitor: event line for the failed deploy"
 
 echo "=== notify 4: one-shots from outside ==="
 t_box=$(now_ms)
 send --name nightly_job_failed --severity warning --summary "e2e: the nightly job failed" \
-	&& pass "notify send: $(cat /tmp/send.out)" || fail "notify send: $(cat /tmp/send.out)"
+	&& pass "monitor send: $(cat /tmp/send.out)" || fail "monitor send: $(cat /tmp/send.out)"
 t=$(first_arrival /ops nightly_job_failed "$t_box" 10)
 within "a box one-shot to the operator" "$t" "$t_box" 0 2
 sleep 1
@@ -161,7 +161,7 @@ n=$(arrivals /ops batch_item_failed "$t_four" | wc -l)
 send --subject app:nosuch --name x_failed --summary "e2e" && fail "a subject naming no app was accepted" || pass "refused: $(tail -1 /tmp/send.out)"
 send --name deploy_in_progress --subject app:blog --summary "e2e" && fail "the mute's name was accepted" || pass "refused: $(tail -1 /tmp/send.out)"
 send --name watchdog_throttled --subject app:blog --summary "e2e" && fail "a watchdog name was accepted" || pass "refused: $(tail -1 /tmp/send.out)"
-if runuser -u nobody -- motel notify send --source e2e --name x_failed --summary e2e >/tmp/nobody.out 2>&1; then
+if runuser -u nobody -- motel monitor send --source e2e --name x_failed --summary e2e >/tmp/nobody.out 2>&1; then
 	fail "nobody posted through the admin socket"
 else
 	pass "nobody cannot reach motel's admin socket to send"
@@ -185,8 +185,8 @@ t_res=$(now_ms)
 send --name disk_check --state resolved --severity warning --summary "e2e: a state from outside" || fail "send resolved: $(cat /tmp/send.out)"
 t=$(first_arrival /ops disk_check "$t_res" 120 resolved)
 within "the recovery, after motel's 30 s hold and a one-minute tick" "$t" "$t_res" 29 100
-journalctl -u motel -o cat --no-pager | grep 'notify: event' | grep 'external:e2e/box/disk_check' | grep -q '"state":"resolved"' \
-	&& pass "journal: the resolve's notify: event line" || fail "no resolved line for disk_check"
+journalctl -u motel -o cat --no-pager | grep 'monitor: event' | grep 'external:e2e/box/disk_check' | grep -q '"state":"resolved"' \
+	&& pass "journal: the resolve's monitor: event line" || fail "no resolved line for disk_check"
 
 echo "=== notify 6: a failing channel ==="
 n=$(arrivals /broken - 0 | wc -l)
@@ -198,13 +198,13 @@ if [ -n "$t" ]; then
 else
 	fail "no ChannelFailed within 90 s"
 fi
-journalctl -u motel -o cat --no-pager | grep 'notify: channel failed' | grep -q 'oncall' \
-	&& pass "journal: notify: channel failed names oncall" || fail "no channel failed line naming oncall"
+journalctl -u motel -o cat --no-pager | grep 'monitor: channel failed' | grep -q 'oncall' \
+	&& pass "journal: monitor: channel failed names oncall" || fail "no channel failed line naming oncall"
 
-echo "=== notify 7: motel notify test ==="
-out=$(motel notify test ops 2>&1) && echo "$out" | grep -q 'delivered to ops' \
-	&& pass "notify test ops: $out" || fail "notify test ops: $out"
-out=$(motel notify test oncall 2>&1) && fail "notify test oncall succeeded: $out" || pass "notify test oncall fails: $(echo "$out" | tail -1)"
+echo "=== notify 7: motel monitor test ==="
+out=$(motel monitor test ops 2>&1) && echo "$out" | grep -q 'delivered to ops' \
+	&& pass "monitor test ops: $out" || fail "monitor test ops: $out"
+out=$(motel monitor test oncall 2>&1) && fail "monitor test oncall succeeded: $out" || pass "monitor test oncall fails: $(echo "$out" | tail -1)"
 
 echo "=== notify 8: an app's sandbox has none of it in view ==="
 code=$(deploy demo-probe.tar.gz sb1)
@@ -237,7 +237,7 @@ echo "=== notify 10a: no heartbeat line, warned ==="
 sed '/^[[:space:]]*heartbeat /d' /etc/motel/Caddyfile >/tmp/Caddyfile.nohb
 grep -q 'heartbeat ' /tmp/Caddyfile.nohb && fail "fixture: could not cut the heartbeat line"
 motel validate --adapter caddyfile --config /tmp/Caddyfile.nohb >/tmp/validate-nohb.out 2>&1 \
-	&& grep -q 'notify: no heartbeat in this load' /tmp/validate-nohb.out \
+	&& grep -q 'monitor: no heartbeat in this load' /tmp/validate-nohb.out \
 	&& pass "motel validate takes a block with no heartbeat line, and warns" \
 	|| fail "validate without a heartbeat: $(tail -3 /tmp/validate-nohb.out)"
 motel validate --adapter caddyfile --config /etc/motel/Caddyfile >/tmp/validate-hb.out 2>&1
@@ -269,10 +269,10 @@ until systemctl is-active -q motel && [ -S /run/motel/admin.sock ]; do
 	i=$((i + 1)); [ "$i" -ge 120 ] && break; sleep 0.5
 done
 systemctl is-active -q motel && pass "motel starts on it: the boot is not refused" || fail "motel did not start: $(journalctl -u motel -o cat --no-pager -n 5)"
-journalctl -u motel --since "@$t_boot" -o cat --no-pager | grep 'notify: a channel is dropped from this load' | grep -q 'channel spare: secret NOTIFY_SPARE_URL' \
+journalctl -u motel --since "@$t_boot" -o cat --no-pager | grep 'monitor: a channel is dropped from this load' | grep -q 'channel spare: secret NOTIFY_SPARE_URL' \
 	&& pass "journal: the dropped channel, by line and key" || fail "no journal line names the dropped channel"
-out=$(motel notify test ops 2>&1) && echo "$out" | grep -q 'delivered to ops' \
-	&& pass "the other channels deliver: $out" || fail "notify test ops after the boot: $out"
+out=$(motel monitor test ops 2>&1) && echo "$out" | grep -q 'delivered to ops' \
+	&& pass "the other channels deliver: $out" || fail "monitor test ops after the boot: $out"
 cp /tmp/Caddyfile.before /etc/motel/Caddyfile
 systemctl restart motel
 i=0
@@ -297,10 +297,10 @@ t_rr=$(now_ms)
 rm "$REL/server"
 [ -n "$pid" ] && kill -9 "$pid"
 i=0
-until journalctl -u motel -o cat --no-pager | grep 'notify: event' | grep 'liveswap/app:blog/relaunch_refused' | grep -q '"state":"firing"'; do
+until journalctl -u motel -o cat --no-pager | grep 'monitor: event' | grep 'liveswap/app:blog/relaunch_refused' | grep -q '"state":"firing"'; do
 	i=$((i + 1)); [ "$i" -ge 120 ] && break; sleep 0.5
 done
-journalctl -u motel -o cat --no-pager | grep 'notify: event' | grep 'liveswap/app:blog/relaunch_refused' | grep -q '"state":"firing"' \
+journalctl -u motel -o cat --no-pager | grep 'monitor: event' | grep 'liveswap/app:blog/relaunch_refused' | grep -q '"state":"firing"' \
 	&& pass "the refused relaunch fires relaunch_refused" || fail "no relaunch_refused after the kill (pid '$pid')"
 grep -q '"refused":true' /var/lib/liveswap/blog/alerts.json 2>/dev/null \
 	&& pass "alerts.json keeps it for a restart" || fail "alerts.json: $(cat /var/lib/liveswap/blog/alerts.json 2>&1)"
@@ -314,10 +314,10 @@ until systemctl is-active -q motel && [ -S /run/motel/admin.sock ]; do
 	i=$((i + 1)); [ "$i" -ge 120 ] && break; sleep 0.5
 done
 i=0
-until journalctl -u motel --since "@$t_restart" -o cat --no-pager | grep 'notify: event' | grep 'liveswap/app:blog/relaunch_refused' | grep -q '"standing":true'; do
+until journalctl -u motel --since "@$t_restart" -o cat --no-pager | grep 'monitor: event' | grep 'liveswap/app:blog/relaunch_refused' | grep -q '"standing":true'; do
 	i=$((i + 1)); [ "$i" -ge 40 ] && break; sleep 0.5
 done
-journalctl -u motel --since "@$t_restart" -o cat --no-pager | grep 'notify: event' | grep 'liveswap/app:blog/relaunch_refused' | grep -q '"standing":true' \
+journalctl -u motel --since "@$t_restart" -o cat --no-pager | grep 'monitor: event' | grep 'liveswap/app:blog/relaunch_refused' | grep -q '"standing":true' \
 	&& pass "after the restart, motel tells it again, standing" || fail "no standing relaunch_refused after the restart"
 i=0
 until [ -n "$e0" ] && [ -n "$(rr_ends)" ] && expr "$(rr_ends)" \> "$e0" >/dev/null; do
@@ -338,6 +338,22 @@ systemctl reload motel || fail "the reload after the mend"
 t=$(first_arrival /ops relaunch_refused "$t_fix" 150 resolved blog)
 within "the recovery once an instance runs again (hold, then a tick)" "$t" "$t_fix" 25 150
 [ ! -e /var/lib/liveswap/blog/alerts.json ] && pass "alerts.json is gone once nothing stands" || fail "alerts.json: $(cat /var/lib/liveswap/blog/alerts.json 2>&1)"
+
+echo "=== notify 13: the old spellings are refused, naming the new ==="
+sed 's/^\tmonitor {$/\tnotify {/' /etc/motel/Caddyfile >/tmp/Caddyfile.old
+grep -q '^	notify {$' /tmp/Caddyfile.old || fail "fixture: could not rename the monitor block"
+if motel validate --adapter caddyfile --config /tmp/Caddyfile.old >/tmp/validate-old.out 2>&1; then
+	fail "motel validate took a notify block"
+else
+	grep -qF 'the notify block is now `monitor { … }`' /tmp/validate-old.out \
+		&& pass "motel validate refuses the notify block, naming monitor" || fail "validate of a notify block: $(tail -2 /tmp/validate-old.out)"
+fi
+if motel notify setup >/tmp/old.out 2>&1; then
+	fail "motel notify setup ran"
+else
+	grep -qF 'motel notify is now motel monitor: motel monitor setup' /tmp/old.out \
+		&& pass "motel notify setup exits non-zero, naming motel monitor setup" || fail "motel notify setup: $(cat /tmp/old.out)"
+fi
 
 echo
 if [ "$FAILURES" -ne 0 ]; then

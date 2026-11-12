@@ -155,7 +155,7 @@ func (v *metricsView) AppMetrics(ctx context.Context, app, window string) any {
 	defer cancel()
 	val, err := v.ask(qctx, app, window, w, now)
 	if err != nil {
-		v.logger.Debug("metrics_store: GET /<app>'s metrics", zap.String("app", app), zap.Error(err))
+		v.logger.Debug("monitor metrics: GET /<app>'s metrics", zap.String("app", app), zap.Error(err))
 		val = AppMetrics{Error: errViewStore}
 	}
 	e.val = val

@@ -118,7 +118,7 @@ func TestServeSend(t *testing.T) {
 	if len(got) != 1 || got[0].Labels["source"] != "external:smartd" || got[0].Labels["kind"] != "event" {
 		t.Fatalf("posts = %+v", got)
 	}
-	if lines := te.lines("notify: event"); len(lines) != 1 {
+	if lines := te.lines("monitor: event"); len(lines) != 1 {
 		t.Fatalf("no journal line: %+v", lines)
 	}
 	// A state alert to an app's channels.
@@ -153,7 +153,7 @@ func TestServeSendRefusals(t *testing.T) {
 	}
 	theEngine.active = nil
 	if _, err := callAdmin(t, serveSend, http.MethodPost, goodSend()); apiStatus(err) != http.StatusServiceUnavailable {
-		t.Fatalf("no notify block: %v", err)
+		t.Fatalf("no notify: %v", err)
 	}
 }
 
@@ -257,7 +257,7 @@ func TestServeSendRefusesAMaskedInstance(t *testing.T) {
 	if apiStatus(err) != http.StatusUnprocessableEntity || strings.Contains(err.Error(), "secretpart") {
 		t.Fatalf("a channel URL as the instance: %v", err)
 	}
-	if len(te.queue) != 0 || len(te.lines("notify: event")) != 0 {
+	if len(te.queue) != 0 || len(te.lines("monitor: event")) != 0 {
 		t.Fatal("a refused event was journalled or queued")
 	}
 }
@@ -364,7 +364,7 @@ func TestSetupOrderAndFiles(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if !bytes.HasPrefix(b, []byte("# Written by `motel notify setup`")) {
+		if !bytes.HasPrefix(b, []byte("# Written by `motel monitor setup`")) {
 			t.Errorf("%s = %q", p, b[:40])
 		}
 	}
