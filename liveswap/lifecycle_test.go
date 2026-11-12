@@ -121,7 +121,9 @@ func TestLifecycleDeployNamesTheReleaseItReplaced(t *testing.T) {
 // The cutover is when the traffic moved, not when the publication
 // returned: the caps' sync after the swap can wait on the manager.
 func TestLifecycleCutoverIsTheSwap(t *testing.T) {
-	rig, n := notifiedRig(t)
+	rig := newTestRig(t)
+	n := &clockedNotifier{clock: rig.clock, at: map[string]time.Time{}}
+	rig.ma.setNotifier(n)
 	held, release := rig.holdFetch(t)
 	done := make(chan error, 1)
 	go func() {
@@ -144,6 +146,14 @@ func TestLifecycleCutoverIsTheSwap(t *testing.T) {
 	ev, ok := n.find(EventCutover)
 	if !ok || applied.IsZero() || !ev.Cutover.Equal(applied) {
 		t.Fatalf("cutover %v; the caps were applied at %v, ten seconds before the publication returned", ev.Cutover, applied)
+	}
+	// Told then too, not once the sync returned (Copilot round 2 on
+	// #429).
+	n.mu.Lock()
+	toldAt := n.at[EventCutover]
+	n.mu.Unlock()
+	if !toldAt.Equal(applied) {
+		t.Fatalf("the cutover was told at %v, after the caps' sync (%v)", toldAt, applied)
 	}
 }
 
