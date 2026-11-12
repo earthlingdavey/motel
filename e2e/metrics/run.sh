@@ -119,7 +119,7 @@ vmalert -dryRun -rule="$STATE/rules.yml" >/tmp/dry.out 2>&1 \
 # notify's tests over vmalert and vmalert-tool, which `make test` skips
 # for want of them: each must run here, none skip. The list is every
 # test that calls vmTool (TestE2EMetricsListsEveryVMAlertTest).
-vmtests='^(TestRenderedRulesPassVMAlertDryRun|TestRenderedRulesFireAsMotelsAlerts|TestOperatorRulesPassVMAlertDryRun|TestOperatorRulesFire|TestOperatorRulesCountAfterAGap|TestOperatorRulesHistogramIsReadWhole|TestDiskFillHistoryOverAGap|TestDiskFillStepIsNoTrend)$'
+vmtests='^(TestRenderedRulesPassVMAlertDryRun|TestRenderedRulesFireAsMotelsAlerts|TestOperatorRulesPassVMAlertDryRun|TestOperatorRulesFire|TestOperatorRulesCountAfterAGap|TestOperatorRulesHistogramIsReadWhole|TestDiskFillHistoryOverAGap|TestDiskFillStepIsNoTrend|TestOperatorRulesCountOnAFreshStore|TestMetricsViewCountsOverTheStore|TestPostDeployARelaunchReadsPastTheStoppedInstance)$'
 nvm=$(printf '%s\n' "$vmtests" | tr '|' '\n' | wc -l)
 (cd /tmp && notify.test -test.run "$vmtests" -test.v -test.count=1) >/tmp/vmtests.out 2>&1
 [ $? -eq 0 ] && [ "$(grep -c '^--- PASS' /tmp/vmtests.out)" = "$nvm" ] && ! grep -q -- '--- SKIP' /tmp/vmtests.out \
@@ -127,13 +127,15 @@ nvm=$(printf '%s\n' "$vmtests" | tr '|' '\n' | wc -l)
 	|| fail "notify's vmalert tests: $(grep -E -- '^(--- |FAIL|ok)|SKIP' /tmp/vmtests.out | head -10)"
 # The operator's group: the threshold and disk_fill lines, motel's own
 # expressions, each counter through the guard (increase_pure for a
-# series new to the store, else increase); post_deploy is motel's.
+# series new to the store since the push's first sample, else
+# increase); post_deploy is motel's.
 op=$(sed -n '/name: motel-operator/,$p' "$STATE/rules.yml")
 for r in errors_high blog_slow disk_filling; do
 	printf '%s' "$op" | grep -q "alert: $r\$" || fail "the motel-operator group has no $r: $(printf '%s' "$op" | head -c 300)"
 done
 printf '%s' "$op" | grep -q 'increase_pure(motel_app_requests_total' \
 	&& printf '%s' "$op" | grep -q 'unless (present_over_time(motel_app_requests_total' \
+	&& printf '%s' "$op" | grep -q 'and (tfirst_over_time(motel_app_requests_total' \
 	&& printf '%s' "$op" | grep -q 'or increase(motel_app_requests_total' \
 	&& ! grep -q 'blog_regressed' "$STATE/rules.yml" && printf '%s' "$op" | grep -q 'key: rules/app:blog/blog_slow' \
 	&& pass "the motel-operator group holds the threshold and disk_fill rules, through the counter guard, keyed rules/<subject>/<name>" \
@@ -236,6 +238,27 @@ printf '%s' "$m" | grep -q '"window":"24h"' && printf '%s' "$m" | grep -q '"requ
 	&& printf '%s' "$m" | grep -q '"cache_hit_share":0\.[0-9]' \
 	&& pass "GET /blog?range=24h carries requests: $(printf '%s' "$m" | grep -o '"requests":{[^}]*}[^}]*}' | cut -c1-240)" \
 	|| fail "GET /blog?range=24h's requests: $(printf '%s' "$m" | grep -o '"metrics":.*' | cut -c1-400)"
+# The store is minutes old, so either window holds every count: the
+# view reads the store's own 2xx count, and the misses (a series that
+# came after the push's first sample, at 21) are counted from zero, a
+# hit share near 0.05; the store's increase alone dropped them, a share
+# of 1 (DESIGN-metrics, "metrics in GET /<app>"). The store's count is
+# read again beside each view, over the view's window, so a response
+# that arrives meanwhile or a series gone stale moves both.
+val() { q "$1" | sed -n 's/.*"value":\[[^,]*,"\([0-9]*\)"\].*/\1/p'; }
+for r in 1h 24h; do
+	m="" raw2xx=""
+	end=$(( $(date +%s) + 60 ))
+	while [ "$(date +%s)" -lt "$end" ]; do
+		raw2xx=$(val "sum(last_over_time(motel_app_requests_total{app=\"blog\",class=\"2xx\"}[$r]))")
+		m=$(curl -s --max-time 5 -H "Authorization: Bearer $TOKEN" "$HOOK?range=$r")
+		[ -n "$raw2xx" ] && printf '%s' "$m" | grep -q "\"by_class\":{\"2xx\":$raw2xx[,}]" && printf '%s' "$m" | grep -q '"cache_hit_share":0\.0[0-9]*[,}]' && break
+		sleep 5
+	done
+	[ -n "$raw2xx" ] && printf '%s' "$m" | grep -q "\"by_class\":{\"2xx\":$raw2xx[,}]" && printf '%s' "$m" | grep -q '"cache_hit_share":0\.0[0-9]*[,}]' \
+		&& pass "GET /blog?range=$r on a fresh store reads the store's $raw2xx 2xx and counts the misses: $(printf '%s' "$m" | grep -o '"cache_hit_share":[0-9.]*')" \
+		|| fail "GET /blog?range=$r on a fresh store (the store's 2xx: $raw2xx): $(printf '%s' "$m" | grep -o '"requests":{[^}]*}[^}]*}' | cut -c1-300)"
+done
 code=$(curl -s -o /tmp/range7d -w '%{http_code}' --max-time 5 -H "Authorization: Bearer $TOKEN" "$HOOK?range=7d")
 [ "$code" = 422 ] && pass "?range=7d is a 422" || fail "?range=7d: $code $(cat /tmp/range7d)"
 

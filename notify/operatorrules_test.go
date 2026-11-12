@@ -2,6 +2,7 @@ package notify
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -294,19 +295,22 @@ func TestOperatorRulesRender(t *testing.T) {
 		}
 	}
 	// The guard itself, whole: increase_pure for a series new to the
-	// store, or back below its last value, with the push coming up to
-	// the window; increase otherwise. A histogram's buckets are told by
+	// store, or back below its last value, first seen over half a push
+	// after the push's first sample in the window and the four pushes
+	// before it; increase otherwise. A histogram's buckets are told by
 	// its count.
 	if got, want := counterIncrease(`m{app="a"}`, 150*time.Second, 90*time.Second),
 		`((increase_pure(m{app="a"}[150s] offset 90s) unless (present_over_time(m{app="a"}[1d] offset 4m)`+
 			` unless (last_over_time(m{app="a"}[1d] offset 4m) > first_over_time(m{app="a"}[150s] offset 90s))))`+
-			` and on() present_over_time(process_start_time_seconds{job="motel"}[2m] offset 4m)) or increase(m{app="a"}[150s] offset 90s)`; got != want {
+			` and (tfirst_over_time(m{app="a"}[150s] offset 90s) > scalar(min(tfirst_over_time(process_start_time_seconds{job="motel"}[270s] offset 90s))) + 15))`+
+			` or increase(m{app="a"}[150s] offset 90s)`; got != want {
 		t.Errorf("counterIncrease =\n%s\nwant\n%s", got, want)
 	}
 	if got, want := histogramIncrease("h", `{app="a"}`, 5*time.Minute, 0),
 		`((increase_pure(h_bucket{app="a"}[5m]) unless ignoring(le) (present_over_time(h_count{app="a"}[1d] offset 5m)`+
 			` unless (last_over_time(h_count{app="a"}[1d] offset 5m) > first_over_time(h_count{app="a"}[5m]))))`+
-			` and on() present_over_time(process_start_time_seconds{job="motel"}[2m] offset 5m)) or increase(h_bucket{app="a"}[5m])`; got != want {
+			` and ignoring(le) (tfirst_over_time(h_count{app="a"}[5m]) > scalar(min(tfirst_over_time(process_start_time_seconds{job="motel"}[7m]))) + 15))`+
+			` or increase(h_bucket{app="a"}[5m])`; got != want {
 		t.Errorf("histogramIncrease =\n%s\nwant\n%s", got, want)
 	}
 	for name, want := range map[string]map[string]string{
@@ -436,8 +440,18 @@ tests:
 }
 
 // runUnittest runs vmalert-tool's unittest over test, in dir beside
-// its rules.yml.
+// its rules.yml, and fails the test unless every case read as wanted.
 func runUnittest(t *testing.T, tool, dir, test string) {
+	t.Helper()
+	if out, ok := vmUnittest(t, tool, dir, test); !ok {
+		t.Fatalf("vmalert-tool unittest:\n%s", out)
+	}
+}
+
+// vmUnittest runs vmalert-tool's unittest over test, in dir beside its
+// rules.yml, and says whether every case read as wanted, with the
+// tool's output.
+func vmUnittest(t *testing.T, tool, dir, test string) (string, bool) {
 	t.Helper()
 	if err := os.WriteFile(filepath.Join(dir, "test.yml"), []byte(test), 0o600); err != nil {
 		t.Fatal(err)
@@ -445,9 +459,10 @@ func runUnittest(t *testing.T, tool, dir, test string) {
 	cmd := exec.Command(tool, "unittest", "-files", "test.yml")
 	cmd.Dir = dir
 	out, err := cmd.CombinedOutput()
-	if err != nil || !strings.Contains(string(out), "SUCCESS") {
-		t.Fatalf("vmalert-tool unittest: %v\n%s", err, out)
+	if err != nil {
+		return fmt.Sprintf("%v\n%s", err, out), false
 	}
+	return string(out), strings.Contains(string(out), "SUCCESS")
 }
 
 // A request counter over the store's own MetricsQL: a series new to the
@@ -528,6 +543,48 @@ tests:
         exp_alerts:
           - exp_labels: {app: after, kind: state, severity: warning, subject: "app:after", source: rules, key: "rules/app:after/busy"}
             exp_annotations: {summary: "after: its requests a second over 5 minutes has been above 1 for 2m (rule busy); now 1.333"}
+`
+	runUnittest(t, tool, dir, test)
+}
+
+// On a store younger than the window (here a minute old), a series
+// that comes after the push's first sample is new since and counts from
+// zero: fresh's 22 responses (e2e metrics 3a's), which increase would
+// drop, fire a rate of 22 over 5 minutes; with no push in the store at
+// all the guard is increase, which drops them, and nothing fires or
+// fails.
+func TestOperatorRulesCountOnAFreshStore(t *testing.T) {
+	tool := vmTool(t, "vmalert-tool")
+	dir := t.TempDir()
+	a := rulesApp(t, "rule busy threshold request_rate > 0.05 for 2m")
+	if err := os.WriteFile(filepath.Join(dir, RulesName), renderRules(a), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	test := `rule_files: [rules.yml]
+evaluation_interval: 1m
+tests:
+  - interval: 1m
+    input_series:
+      - series: 'process_start_time_seconds{job="motel"}'
+        values: '_x30 1x30'
+      - series: 'motel_app_requests_total{app="fresh",release="v1",class="2xx",job="motel"}'
+        values: '_x31 22x29'
+    alert_rule_test:
+      - eval_time: 34m
+        groupname: motel-operator
+        alertname: busy
+        exp_alerts:
+          - exp_labels: {app: fresh, kind: state, severity: warning, subject: "app:fresh", source: rules, key: "rules/app:fresh/busy"}
+            exp_annotations: {summary: "fresh: its requests a second over 5 minutes has been above 0.05 for 2m (rule busy); now 73.33m"}
+  - interval: 1m
+    input_series:
+      - series: 'motel_app_requests_total{app="nopush",release="v1",class="2xx",job="motel"}'
+        values: '_x31 22x29'
+    alert_rule_test:
+      - eval_time: 34m
+        groupname: motel-operator
+        alertname: busy
+        exp_alerts: []
 `
 	runUnittest(t, tool, dir, test)
 }

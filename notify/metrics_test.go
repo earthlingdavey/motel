@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"math"
 	"net"
@@ -11,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -1013,10 +1015,18 @@ func TestMetricsViewRequests(t *testing.T) {
 	if len(asked) != 4 {
 		t.Fatalf("%d request queries, want 4: %v", len(asked), asked)
 	}
-	for _, q := range asked {
-		if !strings.Contains(q, `{app="blog"}[24h]`) {
-			t.Errorf("a query not scoped to the app and window: %s", q)
-		}
+	// Each through the operator rules' guard, over the window: a
+	// series new to the store since the push's first sample counts from
+	// zero, one that came with it or back after a gap does not.
+	day := func(sel string) string { return counterIncrease(sel, 24*time.Hour, 0) }
+	dayHist := histogramIncrease("motel_app_response_seconds", `{app="blog"}`, 24*time.Hour, 0)
+	if want := []string{
+		`sum by (class) (` + day(`motel_app_requests_total{app="blog"}`) + `)`,
+		`histogram_quantile(0.5, sum by (le) (` + dayHist + `))`,
+		`histogram_quantile(0.95, sum by (le) (` + dayHist + `))`,
+		`sum by (result) (` + day(`motel_app_cache_responses_total{app="blog"}`) + `)`,
+	}; !slices.Equal(slices.Sorted(slices.Values(asked)), slices.Sorted(slices.Values(want))) {
+		t.Errorf("the day's request queries =\n%s\nwant\n%s", strings.Join(asked, "\n"), strings.Join(want, "\n"))
 	}
 	if regexp.MustCompile(`[A-Za-z0-9+=_-]{20,}`).Match(got) {
 		t.Fatalf("a run the response filter's entropy layer would read: %s", got)
@@ -1025,9 +1035,25 @@ func TestMetricsViewRequests(t *testing.T) {
 	if f.calls != 2 {
 		t.Fatalf("%d range queries", f.calls)
 	}
+	asked = nil
 	v.AppMetrics(context.Background(), "blog", "1h")
 	if f.calls != 4 {
 		t.Fatalf("%d range queries after asking the hour too, want 4", f.calls)
+	}
+	// The hour's, whole.
+	hour := `((increase_pure(%[1]s{app="blog"}[1h]) unless%[3]s (present_over_time(%[2]s{app="blog"}[1d] offset 1h)` +
+		` unless (last_over_time(%[2]s{app="blog"}[1d] offset 1h) > first_over_time(%[2]s{app="blog"}[1h]))))` +
+		` and%[3]s (tfirst_over_time(%[2]s{app="blog"}[1h]) > scalar(min(tfirst_over_time(process_start_time_seconds{job="motel"}[62m]))) + 15))` +
+		` or increase(%[1]s{app="blog"}[1h])`
+	reqs := fmt.Sprintf(hour, "motel_app_requests_total", "motel_app_requests_total", "")
+	hist := fmt.Sprintf(hour, "motel_app_response_seconds_bucket", "motel_app_response_seconds_count", " ignoring(le)")
+	if want := []string{
+		`sum by (class) (` + reqs + `)`,
+		`histogram_quantile(0.5, sum by (le) (` + hist + `))`,
+		`histogram_quantile(0.95, sum by (le) (` + hist + `))`,
+		`sum by (result) (` + fmt.Sprintf(hour, "motel_app_cache_responses_total", "motel_app_cache_responses_total", "") + `)`,
+	}; !slices.Equal(slices.Sorted(slices.Values(asked)), slices.Sorted(slices.Values(want))) {
+		t.Errorf("the hour's request queries =\n%s\nwant\n%s", strings.Join(asked, "\n"), strings.Join(want, "\n"))
 	}
 }
 

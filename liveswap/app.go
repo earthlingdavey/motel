@@ -877,6 +877,24 @@ func (ma *managedApp) deployLocked(ctx context.Context, req deployRequest, c col
 		return err
 	}
 	old := ma.currentInstance()
+	// lastRan is the release the app last ran: the instance this deploy
+	// replaces, alive or not, else the one state.json names when no
+	// instance is in memory (dropped after a refused relaunch, or a
+	// recovery that failed). A cutover to it is a relaunch to the
+	// post-deploy comparison (LifecycleEvent.Relaunch), whether or not
+	// the instance still served; the relaunch flag, set below, is the
+	// narrower fact of the version serving, which decides the record and
+	// the pin. With no instance in memory nothing routes to the app
+	// (activeSocket is nil), and the launch's sweep stops any unit the
+	// manager still holds before the new one starts, so a relaunch named
+	// by state.json alone is one whose instance had stopped.
+	// A state that cannot be read names nothing: this is a label only.
+	lastRan := ""
+	if old != nil {
+		lastRan = old.version
+	} else if st, ok, err := c.store.load(); err == nil && ok {
+		lastRan = st.CurrentVersion
+	}
 	if old != nil && old.version == req.version && c.runner.Alive(old.handle) {
 		// The version that is running, asked for again: relaunched from
 		// its release on disk — the normal pipeline minus fetch and
@@ -1112,9 +1130,11 @@ func (ma *managedApp) deployLocked(ctx context.Context, req deployRequest, c col
 	// stop and GC, so what compares the release that serves starts with
 	// its traffic. What it replaced is what served at that moment: an
 	// instance that had died (a crash loop, unrouted) is no release's
-	// baseline. Nothing after the swap fails the deploy.
+	// baseline, and a relaunch taken while it served, whose instance died
+	// before the swap, is told as one after a stop, which it then is.
+	// Nothing after the swap fails the deploy.
 	tellCutover := func(swapped time.Time) {
-		cut := LifecycleEvent{Name: EventCutover, Release: req.version, DeployedBy: req.by, Cutover: swapped}
+		cut := LifecycleEvent{Name: EventCutover, Release: req.version, DeployedBy: req.by, Cutover: swapped, Relaunch: lastRan == req.version}
 		if old != nil && c.runner.Alive(old.handle) {
 			cut.Previous = old.version
 		}

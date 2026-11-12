@@ -46,6 +46,19 @@ const (
 	// errs steadily is not told at every deploy.
 	shareMargin = 1.2
 	shareZ      = 2
+	// relaunchSkip is how long after the cutover a relaunch after a
+	// stop's window starts. Its release's counters are the ones the
+	// stopped instance counted into, and its last answers before the
+	// cutover (a crash loop's 503s among them: a request that reached
+	// no upstream counts under the release current when it began) reach
+	// the store with the first push after it, which a window from the
+	// cutover would read as the relaunch's in every check (the windows
+	// are cumulative). That push is gathered within a push of the
+	// cutover and stamped by the store within its request's budget, so
+	// from relaunchSkip on the window's base is a sample that holds
+	// them. The relaunched instance's answers before it are not read: a
+	// first check of 20 s, and every one 40 s short.
+	relaunchSkip = pushEvery + storeRequestTimeout
 	// postDeployGrace is how long past the window's end a check the
 	// store did not answer is asked again before the comparison ends
 	// unfinished.
@@ -61,6 +74,11 @@ type instantQuerier interface {
 type comparison struct {
 	app, release, previous, deployedBy string
 	cutover                            time.Time
+	// relaunch is a cutover to the release the app last ran, whose
+	// instance had stopped (LifecycleEvent.Relaunch with no Previous):
+	// its bound alone counts, over a window from relaunchSkip after the
+	// cutover, and its event says relaunch, not regressed.
+	relaunch bool
 	// next is the next check's number k: over the k minutes from the
 	// cutover, due storeLag after them.
 	next int
@@ -143,7 +161,12 @@ func (c *comparator) deployed(ev liveswap.LifecycleEvent) {
 		// two instances count into the release's one set of counters,
 		// so no window could tell them apart: no comparison starts, and
 		// one in flight for that release goes on, its windows as they
-		// were (Copilot round 2 on #429).
+		// were (Copilot round 2 on #429). liveswap marks it Relaunch,
+		// but the names alone decide here: a cutover to the release
+		// serving without the mark would compare the release with
+		// itself. A relaunch whose instance had stopped (the mark, no
+		// Previous) is compared with the bound alone, as a relaunch
+		// (the operator's decision of 2026-11-12).
 		return
 	}
 	if _, ok := c.runs[ev.App]; ok {
@@ -157,7 +180,7 @@ func (c *comparator) deployed(ev liveswap.LifecycleEvent) {
 	if cut.IsZero() {
 		cut = c.now()
 	}
-	c.runs[ev.App] = &comparison{app: ev.App, release: ev.Release, previous: ev.Previous, deployedBy: ev.DeployedBy, cutover: cut, next: 1}
+	c.runs[ev.App] = &comparison{app: ev.App, release: ev.Release, previous: ev.Previous, deployedBy: ev.DeployedBy, cutover: cut, next: 1, relaunch: ev.Relaunch && ev.Previous == ""}
 }
 
 // due is one check to make: over elapsed from the cutover, read at
@@ -296,7 +319,8 @@ func checkRelease(ctx context.Context, store instantQuerier, r comparison, rule 
 	var v verdict
 	wantP95 := rule.MaxP95 != 0
 	floor := float64(rule.minRequests())
-	if v.newer, v.err = queryRelease(ctx, store, r.app, r.release, r.cutover.Add(elapsed), elapsed, false, wantP95, floor); v.err != nil {
+	at := r.cutover.Add(elapsed)
+	if v.newer, v.err = queryRelease(ctx, store, r.app, r.release, at, newWindow(r, elapsed), 0, wantP95, floor); v.err != nil {
 		return v
 	}
 	if v.newer.sent < floor {
@@ -309,7 +333,10 @@ func checkRelease(ctx context.Context, store instantQuerier, r comparison, rule 
 		return v
 	}
 	if r.previous != "" {
-		if v.old, v.err = queryRelease(ctx, store, r.app, r.previous, r.cutover.Add(elapsed), elapsed, true, wantP95, floor); v.err != nil {
+		// The old release's window ends a push after the cutover: its
+		// answers in the last half minute before it reach the store
+		// with the first push after it.
+		if v.old, v.err = queryRelease(ctx, store, r.app, r.previous, at, elapsed+pushEvery, elapsed-pushEvery, wantP95, floor); v.err != nil {
 			return v
 		}
 		// An old release with fewer responses than the floor is no
@@ -337,9 +364,9 @@ func shareRose(newer, old releaseNumbers) bool {
 }
 
 // queryRelease asks the store, at at, for a release's responses sent,
-// its 5xx and its p95: over the elapsed time up to at (the new
-// release's since its cutover), or the same length before the cutover
-// and a push past it (the old release's). The p95 is asked only once
+// its 5xx and its p95 over win, ending off before at: the new release's
+// since its cutover (newWindow), or the old release's over the same
+// length before the cutover and a push past it. The p95 is asked only once
 // floor responses were timed: min_requests counts the responses sent,
 // cache hits among them, and on a cached site a few misses (one of
 // them a cold start) would otherwise make the quantile, in every
@@ -347,19 +374,12 @@ func shareRose(newer, old releaseNumbers) bool {
 // The counters through counterIncrease, the buckets through
 // histogramIncrease: the new release's series appears with its first
 // push already at that push's count.
-func queryRelease(ctx context.Context, store instantQuerier, app, release string, at time.Time, elapsed time.Duration, old, wantP95 bool, floor float64) (releaseNumbers, error) {
+func queryRelease(ctx context.Context, store instantQuerier, app, release string, at time.Time, win, off time.Duration, wantP95 bool, floor float64) (releaseNumbers, error) {
 	var n releaseNumbers
-	win, off := elapsed, time.Duration(0)
-	if old {
-		// The old release's window ends a push after the cutover: its
-		// answers in the last half minute before it reach the store
-		// with the first push after it.
-		win, off = elapsed+pushEvery, elapsed-pushEvery
-	}
-	sel := "{app=" + strconv.Quote(app) + ",release=" + strconv.Quote(release) + "}"
+	sel := releaseSelector(app, release)
 	inc := func(metric string) string { return counterIncrease(metric+sel, win, off) }
 	buckets := histogramIncrease("motel_app_response_seconds", sel, win, off)
-	classes, err := store.queryAt(ctx, "sum by (class) ("+inc("motel_app_requests_total")+")", at)
+	classes, err := store.queryAt(ctx, classesQuery(sel, win, off), at)
 	if err != nil {
 		return n, err
 	}
@@ -407,11 +427,35 @@ func queryRelease(ctx context.Context, store instantQuerier, app, release string
 	return n, nil
 }
 
+// newWindow is the window a check over elapsed reads of the new
+// release, up to the check: from the cutover, and for a relaunch after
+// a stop from relaunchSkip after it.
+func newWindow(r comparison, elapsed time.Duration) time.Duration {
+	if r.relaunch {
+		return elapsed - relaunchSkip
+	}
+	return elapsed
+}
+
+// releaseSelector is a release's series of an app.
+func releaseSelector(app, release string) string {
+	return "{app=" + strconv.Quote(app) + ",release=" + strconv.Quote(release) + "}"
+}
+
+// classesQuery is a release's responses by class (sel: its selector)
+// over win, ending off before the query's time.
+func classesQuery(sel string, win, off time.Duration) string {
+	return "sum by (class) (" + counterIncrease("motel_app_requests_total"+sel, win, off) + ")"
+}
+
 // regressedEvent is the one event a comparison tells: the app's, so it
 // reaches the operator and the app's bound channels, with both
 // releases' numbers. The release before is not named in the summary:
 // the filter keeps the event's own release whole, and would mask
-// another git sha.
+// another git sha. A relaunch of a release whose instance had stopped
+// is said as one: over its bound after its relaunch, not regressed
+// after its deploy, and the parenthesis is why there is no baseline
+// (the operator's decision of 2026-11-12).
 func regressedEvent(r comparison, rule Rule, elapsed time.Duration, v verdict, failed int) Event {
 	var parts []string
 	if rule.Max5xxShare != nil {
@@ -434,6 +478,7 @@ func regressedEvent(r comparison, rule Rule, elapsed time.Duration, v verdict, f
 	overP95 := rule.MaxP95 != 0 && v.newer.hasP95 && v.newer.p95 > time.Duration(rule.MaxP95).Seconds()
 	baseline := ""
 	switch {
+	case r.relaunch: // said by the parenthesis below
 	case r.previous == "":
 		baseline = "; no release before it to compare"
 	case !v.hasOld: // under the floor: no baseline
@@ -447,8 +492,12 @@ func regressedEvent(r comparison, rule Rule, elapsed time.Duration, v verdict, f
 	if failed > 1 {
 		checks = "checks in a row"
 	}
-	summary := fmt.Sprintf("%s %s regressed %s after its deploy, over %d responses: %s%s; %d failing %s (rule %s)",
-		r.app, r.release, promDuration(elapsed), int(v.newer.sent), strings.Join(parts, ", "), baseline, failed, checks, rule.Name)
+	what := "regressed " + promDuration(elapsed) + " after its deploy"
+	if r.relaunch {
+		what = "is over its bound " + promDuration(elapsed) + " after its relaunch (its earlier instance had stopped)"
+	}
+	summary := fmt.Sprintf("%s %s %s, over %d responses: %s%s; %d failing %s (rule %s)",
+		r.app, r.release, what, int(v.newer.sent), strings.Join(parts, ", "), baseline, failed, checks, rule.Name)
 	return Event{
 		Name: eventPostDeployRegressed, Kind: kindEvent, Severity: SeverityWarning, App: r.app, Source: sourceRules,
 		Release: r.release, DeployedBy: r.deployedBy, Summary: summary,

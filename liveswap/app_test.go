@@ -170,9 +170,16 @@ type fakeRunner struct {
 	// recorded and before the handle takes the caps, outside the
 	// runner's lock: a test's chance to overlap another sync with it.
 	setCapsHook func(resourceCaps)
+	// startHook, when set, runs at the start of Start, outside the
+	// runner's lock: a test's chance to change what runs while a deploy
+	// launches.
+	startHook func()
 }
 
 func (r *fakeRunner) Start(spec startSpec) (handle, error) {
+	if r.startHook != nil {
+		r.startHook()
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.startErr != nil {

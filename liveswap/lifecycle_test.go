@@ -118,6 +118,117 @@ func TestLifecycleDeployNamesTheReleaseItReplaced(t *testing.T) {
 	}
 }
 
+// A cutover to the release the app last ran is a relaunch, whether its
+// instance still served (Previous is the release) or had stopped
+// (Previous empty): crashed, or dropped and named by state.json alone.
+// A new release, or a rollback to another, is not one, dead instance or
+// not (the operator's decision of 2026-11-12).
+func TestLifecycleCutoverMarksARelaunch(t *testing.T) {
+	rig, n := notifiedRig(t)
+	cutover := func(desc, release, previous string, relaunch bool) {
+		t.Helper()
+		ev, ok := n.find(EventCutover)
+		if !ok || ev.Release != release || ev.Previous != previous || ev.Relaunch != relaunch {
+			t.Fatalf("%s: cutover %+v, want release %q, previous %q, relaunch %v", desc, ev, release, previous, relaunch)
+		}
+		n.reset()
+	}
+	must(t, deployV1Pinned(t, rig, pinA))
+	cutover("a first deploy", "v1", "", false)
+	must(t, deployV1Pinned(t, rig, pinA))
+	cutover("v1 deployed again while it serves", "v1", "v1", true)
+	must(t, rig.ma.Deploy(context.Background(), deployRequest{version: "v1", rollback: true}))
+	cutover("a rollback to v1 while it serves", "v1", "v1", true)
+	must(t, rig.ma.Deploy(context.Background(), deployRequest{url: "https://x/2", version: "v2"}))
+	cutover("a new release", "v2", "v1", false)
+	// v2 crashes and is not restarted (no watchdog here): a rollback to
+	// it relaunches it, with nothing serving before; deploying it again
+	// is refused as a version that exists.
+	rig.runner.handleAt(len(rig.runner.handles) - 1).dieQuietly()
+	if err := rig.ma.Deploy(context.Background(), deployRequest{url: "https://x/2", version: "v2"}); err == nil || !strings.Contains(err.Error(), "already exists") {
+		t.Fatalf("deploying the crashed v2 again: %v", err)
+	}
+	n.reset()
+	must(t, rig.ma.Deploy(context.Background(), deployRequest{version: "v2", rollback: true}))
+	cutover("a rollback to the crashed v2", "v2", "", true)
+	rig.runner.handleAt(len(rig.runner.handles) - 1).dieQuietly()
+	must(t, rig.ma.Deploy(context.Background(), deployRequest{version: "v1", rollback: true}))
+	cutover("a rollback to v1 after v2 crashed", "v1", "", false)
+	// Dropped after a refused relaunch: no instance in memory, state.json
+	// still names v1.
+	dead := rig.ma.currentInstance()
+	rig.runner.handleAt(len(rig.runner.handles) - 1).dieQuietly()
+	rig.ma.dropIf(dead)
+	must(t, rig.ma.Deploy(context.Background(), deployRequest{version: "v1", rollback: true}))
+	cutover("a rollback to v1 with nothing in memory", "v1", "", true)
+	// The deploy events carry no mark: the cutover is the comparison's.
+	must(t, deployV1Pinned(t, rig, pinA))
+	for _, name := range []string{EventDeployStarted, EventDeploySucceeded, EventDeployEnded} {
+		if ev, _ := n.find(name); ev.Relaunch {
+			t.Errorf("%s carries the relaunch mark", name)
+		}
+	}
+}
+
+// The cutover is told from what holds at the swap: a relaunch taken
+// while v1 served (no record, the same pin), whose instance died before
+// the swap, is a relaunch after a stop (no Previous), which it then is;
+// notify's window for one starts past the dead instance's last push.
+// With no instance in memory, nothing routes to the app and the
+// launch's sweep stops any unit the manager holds, so a relaunch named
+// by state.json alone had stopped too (/code-review of the relaunch
+// mark).
+func TestLifecycleCutoverIsToldFromTheSwap(t *testing.T) {
+	rig, n := notifiedRig(t)
+	must(t, deployV1Pinned(t, rig, pinA))
+	n.reset()
+	served := rig.runner.handleAt(0)
+	rig.runner.startHook = func() { served.dieQuietly() }
+	must(t, deployV1Pinned(t, rig, pinA))
+	rig.runner.startHook = nil
+	if ev, ok := n.find(EventCutover); !ok || ev.Release != "v1" || ev.Previous != "" || !ev.Relaunch {
+		t.Fatalf("a relaunch whose instance died before the swap: cutover %+v", ev)
+	}
+	if last := rig.ma.status().LastDeploy; last.Status != "succeeded" || last.Note != "relaunched v1 (same artifact)" {
+		t.Fatalf("the deploy was not the relaunch it began as: %+v", last)
+	}
+}
+
+// The watchdog's restart of a crashed instance, and a restart's
+// recovery, publish no cutover: neither starts a post-deploy
+// comparison.
+func TestLifecycleRestartsTellNoCutover(t *testing.T) {
+	rig, n := notifiedRig(t)
+	deployV1(t, rig)
+	rig.startWatchdogT(t)
+	waitUntil(t, "watchdog to arm", func() bool {
+		s := rig.ma.wd.currentState()
+		return s == wdStateGrace || s == wdStateWatching
+	})
+	n.reset()
+	rig.runner.handleAt(0).kill()
+	advanceUntil(t, rig, time.Second, "the watchdog's restart", func() bool { return rig.runner.startCount() == 2 })
+	waitUntil(t, "the restarted instance published", func() bool {
+		cur := rig.ma.currentInstance()
+		return cur != nil && cur.handle == rig.runner.handleAt(1)
+	})
+	if _, ok := n.find(EventCutover); ok {
+		t.Fatalf("the watchdog's restart told a cutover: %v", n.names())
+	}
+
+	rec, rn := notifiedRig(t)
+	rec.store.state = appState{CurrentVersion: "v7", Nonce: recordedNonce, Handle: handleState{PID: 1}}
+	rec.store.ok = true
+	must(t, os.MkdirAll(rec.spec.dirs.release("v7"), 0o755))
+	must(t, rec.ma.ensureRunning())
+	if rec.ma.activeSocket.Load() == nil {
+		t.Fatal("recovery published nothing")
+	}
+	if _, ok := rn.find(EventCutover); ok {
+		t.Fatalf("recovery told a cutover: %v", rn.names())
+	}
+}
+
 // The cutover is when the traffic moved, not when the publication
 // returned: the caps' sync after the swap can wait on the manager.
 func TestLifecycleCutoverIsTheSwap(t *testing.T) {
