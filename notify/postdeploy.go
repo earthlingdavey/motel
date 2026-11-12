@@ -3,6 +3,7 @@ package notify
 import (
 	"context"
 	"fmt"
+	"maps"
 	"math"
 	"slices"
 	"strconv"
@@ -177,7 +178,7 @@ func (c *comparator) tick(ctx context.Context) {
 	}
 	now := c.now()
 	var dues []due
-	for _, app := range sortedKeys(c.runs) {
+	for _, app := range slices.Sorted(maps.Keys(c.runs)) {
 		r := c.runs[app]
 		rule, ok := c.ruleFor(app)
 		if !ok {
@@ -258,15 +259,6 @@ func (c *comparator) check(ctx context.Context, store instantQuerier, logger *za
 	if ev != nil {
 		c.report(*ev)
 	}
-}
-
-func sortedKeys(m map[string]*comparison) []string {
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
-	}
-	slices.Sort(keys)
-	return keys
 }
 
 // releaseNumbers are one release's over a window.

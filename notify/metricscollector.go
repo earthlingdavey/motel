@@ -351,4 +351,3 @@ func (n *diskNames) name(dev uint64, p string, paths []string, devOf map[string]
 	n.byDev[dev] = p
 	return p
 }
-

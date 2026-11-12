@@ -3,6 +3,7 @@ package notify
 import (
 	"errors"
 	"fmt"
+	"maps"
 	"math"
 	"regexp"
 	"slices"
@@ -258,12 +259,7 @@ func parseOptions(args []string, set map[string]func(string) error) error {
 		key := args[0]
 		f, ok := set[key]
 		if !ok {
-			keys := make([]string, 0, len(set))
-			for k := range set {
-				keys = append(keys, k)
-			}
-			slices.Sort(keys)
-			return fmt.Errorf("unknown option %q; it takes %s", key, strings.Join(keys, ", "))
+			return fmt.Errorf("unknown option %q; it takes %s", key, strings.Join(slices.Sorted(maps.Keys(set)), ", "))
 		}
 		if len(args) < 2 {
 			return fmt.Errorf("%s takes a value", key)
