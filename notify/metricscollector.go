@@ -102,11 +102,11 @@ func (c appCollector) Collect(ch chan<- prometheus.Metric) {
 // rule's `<` holds for an app that has had no request since motel
 // started (the counts start from zero), as it does once its series is
 // in the store. An app with no observer pushes nothing, whatever it
-// counted while one named it: its counters live on in the pool (an
-// observe line put back resumes them), but pushed unchanged they would
-// read as an app with no request at all, which an every-app
-// `request_rate <` rule takes for a fact; unpushed, its series go stale
-// in the store, and nothing reads them.
+// counted while one named it: pushed unchanged, its counts would read
+// as an app with no request at all, which an every-app `request_rate <`
+// rule takes for a fact; unpushed, its series go stale in the store,
+// and nothing reads them. An observe line put back starts them from
+// zero (liveswap's Observe.observe), as a restart does.
 func collectRequests(ch chan<- prometheus.Metric, s liveswap.AppSample) {
 	if !s.Observed {
 		return

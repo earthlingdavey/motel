@@ -175,7 +175,7 @@ request, and costs about 0.4 µs on one (liveswap/DESIGN-liveswap.md,
 "The response observer"). In a `route`, write it first; in a site with
 no `route`, anywhere among the site's lines, since Caddy orders it
 before `cache` and `hint_penaltybox` by itself. Taken out, the app's
-numbers stop being pushed.
+numbers stop being pushed; put back, they start from zero.
 
 ```
 blog.example.com {

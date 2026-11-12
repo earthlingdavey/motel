@@ -69,10 +69,19 @@ func (o *Observe) Provision(ctx caddy.Context) error {
 	return nil
 }
 
-// observe makes ma the app observed, by one handler more.
+// observe makes ma the app observed, by one handler more. The first
+// handler after none starts the counts from zero, as a motel restart
+// does: while none named the app its counts were not pushed
+// (notify's collector), and, resumed where they stopped, their first
+// push after the gap would be read as every response the app had
+// counted since motel started, in one window. A reload provisions the
+// new config's handlers before it cleans up the old's, so an app
+// observed by both is never at none and keeps its counts.
 func (o *Observe) observe(ma *managedApp) {
 	o.ma = ma
-	ma.observers.Add(1)
+	if ma.observers.Add(1) == 1 {
+		ma.requests.zero()
+	}
 	o.counted = true
 }
 
@@ -368,7 +377,7 @@ var CacheResults = [4]string{"hit", "stale", "miss", "bypass"}
 // 10 s) with three below them, 0.5, 1 and 2.5 ms: an app that answers
 // in under 5 ms, as one behind a socket on the same box does
 // (hotserve-1's example: 99.3 % of its responses), would otherwise read
-// a p50 of 2.5 ms and a p95 of 4.75 ms whatever its own times, and a
+// a p50 of 2.5 ms and a p95 of 4.8 ms whatever its own times, and a
 // regression inside those 5 ms would be invisible to post_deploy.
 var ResponseBuckets = [...]float64{.0005, .001, .0025, .005, .01, .025, .05, .1, .25, .5, 1, 2.5, 5, 10}
 
@@ -519,6 +528,28 @@ func (r *requestCounts) setRelease(version string) *releaseCounts {
 	rc := &releaseCounts{release: version}
 	r.cur.Store(rc)
 	return rc
+}
+
+// zero sets both releases' counts to zero, in place: the instances'
+// sockets keep the counters they were given.
+func (r *requestCounts) zero() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, rc := range []*releaseCounts{r.cur.Load(), r.prev} {
+		if rc == nil {
+			continue
+		}
+		for i := range rc.classes {
+			rc.classes[i].Store(0)
+		}
+		for i := range rc.buckets {
+			rc.buckets[i].Store(0)
+		}
+		for i := range rc.cache {
+			rc.cache[i].Store(0)
+		}
+		rc.sumNanos.Store(0)
+	}
 }
 
 // samples is both releases' counts, current first.

@@ -315,13 +315,17 @@ func TestObserveLatencyBuckets(t *testing.T) {
 	// 2, ≤25 ms 4, ≤5 s 5; a minute is +Inf only. Under 5 ms, an app's
 	// times are told apart (hotserve-1's example answered in 0.5 ms).
 	want := map[float64]uint64{.0005: 1, .001: 2, .0025: 2, .005: 2, .01: 2, .025: 4, 2.5: 4, 5: 5, 10: 5}
+	matched := 0
 	for i, b := range ResponseBuckets {
-		if n, ok := want[b]; ok && s.Buckets[i] != n {
-			t.Errorf("bucket le=%v: %d, want %d", b, s.Buckets[i], n)
+		if n, ok := want[b]; ok {
+			matched++
+			if s.Buckets[i] != n {
+				t.Errorf("bucket le=%v: %d, want %d", b, s.Buckets[i], n)
+			}
 		}
 	}
-	if len(want) != 9 || ResponseBuckets[0] != .0005 || ResponseBuckets[len(ResponseBuckets)-1] != 10 {
-		t.Errorf("buckets %v", ResponseBuckets)
+	if matched != len(want) {
+		t.Errorf("%d of the %d bounds checked are buckets: %v", matched, len(want), ResponseBuckets)
 	}
 	if s.SumSeconds < 63.0412 || s.SumSeconds > 63.0414 {
 		t.Errorf("sum %v s, want 63.0413", s.SumSeconds)
@@ -477,6 +481,44 @@ func TestObserveCountsItsHandlers(t *testing.T) {
 	if observed() {
 		t.Fatal("observed after the last handler's Cleanup")
 	}
+}
+
+// TestObserveAfterNoneStartsFromZero: while no handler names the app its
+// counts are not pushed, so the first handler after none starts them
+// from zero, as a restart does; resumed, their first push after the gap
+// would read as every response since motel started, in one window. A
+// reload's handlers, provisioned before the old ones' Cleanup, keep the
+// counts, and so does the instance's socket its counters.
+func TestObserveAfterNoneStartsFromZero(t *testing.T) {
+	h, _ := newTestHandler(t)
+	ma := h.app.managedApp("demo")
+	first := &Observe{App: "demo"}
+	first.observe(ma)
+	rc := ma.requests.setRelease("v1")
+	for range 3 {
+		rc.record(&observeWriter{start: time.Unix(0, 0), at: time.Unix(0, int64(time.Millisecond)), seen: true, status: http.StatusOK}, true)
+	}
+	count := func() uint64 { return ma.requests.samples()[0].Count }
+	reload := &Observe{App: "demo"}
+	reload.observe(ma)
+	must(t, first.Cleanup())
+	if count() != 3 {
+		t.Fatalf("a reload's handler reset the counts: %d", count())
+	}
+	must(t, reload.Cleanup()) // the line taken out: none observes it
+	if count() != 3 {
+		t.Fatalf("Cleanup reset the counts: %d", count())
+	}
+	back := &Observe{App: "demo"}
+	back.observe(ma)
+	if s := ma.requests.samples()[0]; s.Count != 0 || s.ByClass[class2xx] != 0 || s.SumSeconds != 0 || s.Release != "v1" {
+		t.Fatalf("the line put back resumed the counts: %+v", s)
+	}
+	rc.record(&observeWriter{start: time.Unix(0, 0), at: time.Unix(0, int64(time.Millisecond)), seen: true, status: http.StatusOK}, true)
+	if count() != 1 {
+		t.Fatalf("the socket's counters are no longer the release's: %d", count())
+	}
+	must(t, back.Cleanup())
 }
 
 func TestObserveCaddyfile(t *testing.T) {

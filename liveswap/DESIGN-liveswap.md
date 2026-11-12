@@ -375,9 +375,11 @@ there would defeat the pool.
   (Provision adds one, Cleanup takes it back): while one does, the
   current release's counts are pushed even at zero (`AppSample.Observed`);
   while none does (its `observe` line taken out), nothing of its counts
-  is pushed, though they live on in the pool and resume if a line names
-  it again: pushed unchanged, they would read as an app no request
-  reaches.
+  is pushed: pushed unchanged, they would read as an app no request
+  reaches. The first handler after none zeroes them in place (the
+  instances' sockets keep their counters), as a motel restart starts
+  them from zero: resumed, their first push after the gap would be every
+  response since motel started, read as one window's.
 - `ownerLock(app)` (one mutex per app name) makes "stop what nobody
   owns, then prune its socket dirs" one step with respect to recovery:
   the start-time sweep of unconfigured apps holds it across the manager
@@ -676,10 +678,13 @@ plugin's handler can take its ID.
   handler existed (9228935): 5 127 and 51 786 req/s, within the runs'
   spread. The three buckets under 5 ms (0.5, 1 and 2.5 ms, added after
   hotserve-1's example read p50 2.5 ms and p95 4.8 ms for responses of
-  about 0.5 ms) cost nothing measurable: 441 ns against 441 ns, five
-  allocations each, the median of five runs of each on the dev VM on
-  2026-11-12; a response under 0.5 ms finds its bucket at the first
-  comparison, as one under 5 ms did before.
+  about 0.5 ms) leave the benchmark as it was: 441 ns against 441 ns,
+  five allocations each, the median of five runs of each on the dev VM
+  on 2026-11-12. The benchmark's handler answers at once, so its
+  response finds its bucket at the first comparison, as one under 5 ms
+  did before; one over 5 ms makes three comparisons more than it did,
+  which the benchmark does not measure (a float comparison each, beside
+  a response that took 5 ms).
 - **What it never does.** Write, buffer or change a byte, or fail a
   request: an error from the handlers after it is returned as it came.
 
