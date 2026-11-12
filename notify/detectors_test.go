@@ -444,16 +444,24 @@ func TestDiskPollerStatThatHangs(t *testing.T) {
 	}
 	hang.Store(false)
 	close(release)
+	// The two released statfs come back each in its own time, and a poll
+	// between them would see one path measured and the other not: wait
+	// until neither is out, then one poll measures both.
 	deadline := time.Now().Add(5 * time.Second)
 	for {
-		got := state(poll())
-		if got == "/srv/hang-fired=resolved /srv/hang-quiet=critical" {
+		diskPollStats.mu.Lock()
+		out := diskPollStats.busy["/srv/hang-fired"] || diskPollStats.busy["/srv/hang-quiet"]
+		diskPollStats.mu.Unlock()
+		if !out {
 			break
 		}
-		if got != "/srv/hang-fired=critical" || time.Now().After(deadline) {
-			t.Fatalf("after it came back: %s", got)
+		if time.Now().After(deadline) {
+			t.Fatal("the released statfs did not come back")
 		}
-		time.Sleep(10 * time.Millisecond)
+		time.Sleep(time.Millisecond)
+	}
+	if got := state(poll()); got != "/srv/hang-fired=resolved /srv/hang-quiet=critical" {
+		t.Fatalf("after it came back: %s", got)
 	}
 }
 
