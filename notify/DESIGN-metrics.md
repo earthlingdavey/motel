@@ -491,7 +491,13 @@ The checks due at a tick run at once, each within the store's 10 s
 budget, so a slow store does not stretch the minute between them.
 A check is **skipped**, neither a pass nor a failure, while the new
 release has fewer than `min_requests` responses sent (aborted left
-out). One the store does not answer is **asked again** at the next tick
+out). The p95 is of the responses timed, the histogram's count (a cache
+hit is sent and never timed), and a release has one only with
+`min_requests` of them: on a cached site, a few misses after a deploy,
+one of them a cold start, would otherwise make the quantile, and the
+windows are cumulative, so the same slow request would fail every
+check after it (/code-review pass 4 on operator rules). An old release
+with fewer timed is no p95 baseline. One the store does not answer is **asked again** at the next tick
 (a debug line, `the post-deploy check is asked again`), and the minutes
 it held up after it in turn, one a tick, each read at its own time, so a
 late answer is the one it would have been and failures equal to the

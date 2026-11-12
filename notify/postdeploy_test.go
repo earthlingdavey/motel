@@ -22,6 +22,7 @@ import (
 type relStore struct {
 	mu      sync.Mutex
 	nums    map[string]releaseNumbers // "<release>" or "<release> old"
+	timed   map[string]float64        // the histogram's count, the same keys
 	err     error
 	queries []string
 	at      []time.Time
@@ -36,6 +37,15 @@ func (s *relStore) set(key string, sent, errs float64, p95 float64) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.nums[key] = releaseNumbers{sent: sent, errors: errs, p95: p95, hasP95: p95 > 0}
+	s.timed[key] = sent
+}
+
+// setTimed is how many of a release's responses were timed: all it
+// sent, unless set.
+func (s *relStore) setTimed(key string, timed float64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.timed[key] = timed
 }
 
 var releaseRe = regexp.MustCompile(`release="([^"]*)"`)
@@ -77,6 +87,9 @@ func (s *relStore) queryAt(_ context.Context, q string, t time.Time) ([]series, 
 		return nil, nil // no series
 	}
 	pt := func(v float64) []point { return []point{{t: time.Unix(0, 0), v: v}} }
+	if strings.Contains(q, "motel_app_response_seconds_count") {
+		return []series{{labels: map[string]string{}, points: pt(s.timed[key])}}, nil
+	}
 	if strings.HasPrefix(q, "histogram_quantile") {
 		if !n.hasP95 {
 			return nil, nil
@@ -101,7 +114,7 @@ type testComparator struct {
 
 func newTestComparator(t *testing.T, rules ...Rule) *testComparator {
 	t.Helper()
-	tc := &testComparator{at: time.Date(2026, 11, 11, 12, 0, 0, 0, time.UTC), store: &relStore{nums: map[string]releaseNumbers{}}, m: &MetricsStore{Rules: rules}}
+	tc := &testComparator{at: time.Date(2026, 11, 11, 12, 0, 0, 0, time.UTC), store: &relStore{nums: map[string]releaseNumbers{}, timed: map[string]float64{}}, m: &MetricsStore{Rules: rules}}
 	var mu sync.Mutex
 	tc.comparator = newComparator(func(ev Event) { mu.Lock(); tc.evs = append(tc.evs, ev); mu.Unlock() })
 	tc.now = func() time.Time { return tc.at }
@@ -206,6 +219,44 @@ func TestPostDeploySkipsBelowTheFloor(t *testing.T) {
 	tc.minute()
 	if len(tc.evs) != 1 {
 		t.Fatalf("at the floor, all 5xx: %d events", len(tc.evs))
+	}
+}
+
+// The p95 needs min_requests responses timed, not only sent: on a
+// cached site, 300 sent of which 6 went to the app, one of them a cold
+// start of 3 s, is no regression; with 100 timed it is.
+func TestPostDeployP95NeedsItsFloorTimed(t *testing.T) {
+	r := regressRule
+	r.Failures, r.Max5xxShare = 1, nil
+	tc := newTestComparator(t, r)
+	tc.deploy("blog", "v2", "v1")
+	tc.store.set("v1 old", 300, 0, 0.1)
+	tc.store.set("v2", 300, 0, 3)
+	tc.store.setTimed("v2", 6)
+	tc.minute()
+	if len(tc.evs) != 0 {
+		t.Fatalf("told over 6 timed responses: %+v", tc.evs)
+	}
+	for _, q := range tc.store.queries {
+		if strings.HasPrefix(q, "histogram_quantile") {
+			t.Errorf("the p95 asked under the floor: %s", q)
+		}
+	}
+	tc.store.setTimed("v2", 100)
+	tc.minute()
+	if len(tc.evs) != 1 || !strings.Contains(tc.evs[0].Summary, "p95 3000ms against 100ms before it") {
+		t.Fatalf("with 100 timed: %+v", tc.evs)
+	}
+	// An old release with too few timed is no p95 baseline: the bound
+	// alone counts.
+	tc2 := newTestComparator(t, r)
+	tc2.deploy("blog", "v2", "v1")
+	tc2.store.set("v1 old", 300, 0, 5)
+	tc2.store.setTimed("v1 old", 6)
+	tc2.store.set("v2", 300, 0, 3)
+	tc2.minute()
+	if len(tc2.evs) != 1 || strings.Contains(tc2.evs[0].Summary, "before it") {
+		t.Fatalf("an old release with 6 timed as the p95 baseline: %+v", tc2.evs)
 	}
 }
 
@@ -379,7 +430,7 @@ func TestPostDeployFollowsTheRules(t *testing.T) {
 func TestPostDeployRelease(t *testing.T) {
 	c := newComparator(func(Event) {})
 	m := &MetricsStore{Rules: []Rule{regressRule}}
-	c.configure(liveRules{m: m, store: &relStore{nums: map[string]releaseNumbers{}}, logger: zap.NewNop()})
+	c.configure(liveRules{m: m, store: &relStore{nums: map[string]releaseNumbers{}, timed: map[string]float64{}}, logger: zap.NewNop()})
 	c.deployed(liveswap.LifecycleEvent{Name: liveswap.EventCutover, App: "blog", Release: "v2"})
 	if !c.running || len(c.runs) != 1 {
 		t.Fatalf("running %v, in flight %d", c.running, len(c.runs))
@@ -551,7 +602,7 @@ func TestPostDeployAsksAgainWhatTheStoreDidNotAnswer(t *testing.T) {
 	// Each check read at its own minute, whenever it was made.
 	var mins []time.Duration
 	for i, at := range tc.store.at {
-		if !strings.HasPrefix(tc.store.queries[i], "histogram_quantile") {
+		if q := tc.store.queries[i]; !strings.HasPrefix(q, "histogram_quantile") && !strings.Contains(q, "motel_app_response_seconds_count") {
 			mins = append(mins, at.Sub(cutover))
 		}
 	}

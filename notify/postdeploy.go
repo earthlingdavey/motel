@@ -261,7 +261,9 @@ func (c *comparator) check(ctx context.Context, store instantQuerier, logger *za
 	}
 }
 
-// releaseNumbers are one release's over a window.
+// releaseNumbers are one release's over a window. The p95 is of the
+// responses timed (the histogram's count: a cache hit is sent and never
+// timed), and there is one only with min_requests of them.
 type releaseNumbers struct {
 	sent, errors float64
 	p95          float64
@@ -292,7 +294,7 @@ func checkRelease(ctx context.Context, store instantQuerier, r comparison, rule 
 	var v verdict
 	wantP95 := rule.MaxP95 != 0
 	floor := float64(rule.minRequests())
-	if v.newer, v.err = queryRelease(ctx, store, r.app, r.release, r.cutover.Add(elapsed), elapsed, false, wantP95); v.err != nil {
+	if v.newer, v.err = queryRelease(ctx, store, r.app, r.release, r.cutover.Add(elapsed), elapsed, false, wantP95, floor); v.err != nil {
 		return v
 	}
 	if v.newer.sent < floor {
@@ -305,7 +307,7 @@ func checkRelease(ctx context.Context, store instantQuerier, r comparison, rule 
 		return v
 	}
 	if r.previous != "" {
-		if v.old, v.err = queryRelease(ctx, store, r.app, r.previous, r.cutover.Add(elapsed), elapsed, true, wantP95); v.err != nil {
+		if v.old, v.err = queryRelease(ctx, store, r.app, r.previous, r.cutover.Add(elapsed), elapsed, true, wantP95, floor); v.err != nil {
 			return v
 		}
 		// An old release with fewer responses than the floor is no
@@ -335,10 +337,14 @@ func shareRose(newer, old releaseNumbers) bool {
 // queryRelease asks the store, at at, for a release's responses sent,
 // its 5xx and its p95: over the elapsed time up to at (the new
 // release's since its cutover), or the same length before the cutover
-// and a push past it (the old release's).
+// and a push past it (the old release's). The p95 is asked only once
+// floor responses were timed: min_requests counts the responses sent,
+// cache hits among them, and on a cached site a few misses (one of
+// them a cold start) would otherwise make the quantile, in every
+// check of the cumulative window after it.
 // The counters through counterIncrease: the new release's series
 // appears with its first push already at that push's count.
-func queryRelease(ctx context.Context, store instantQuerier, app, release string, at time.Time, elapsed time.Duration, old, wantP95 bool) (releaseNumbers, error) {
+func queryRelease(ctx context.Context, store instantQuerier, app, release string, at time.Time, elapsed time.Duration, old, wantP95 bool, floor float64) (releaseNumbers, error) {
 	var n releaseNumbers
 	win, off := elapsed, time.Duration(0)
 	if old {
@@ -368,6 +374,16 @@ func queryRelease(ctx context.Context, store instantQuerier, app, release string
 		}
 	}
 	if !wantP95 || n.sent == 0 {
+		return n, nil
+	}
+	timed, err := store.queryAt(ctx, "sum("+inc("motel_app_response_seconds_count")+")", at)
+	if err != nil {
+		return n, err
+	}
+	if len(timed) == 0 {
+		return n, nil
+	}
+	if val, ok := instantValue(timed[0]); !ok || val < floor {
 		return n, nil
 	}
 	q, err := store.queryAt(ctx, "histogram_quantile(0.95, sum by (le) ("+inc("motel_app_response_seconds_bucket")+"))", at)
