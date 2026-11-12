@@ -588,11 +588,20 @@ const pushSeries = `process_start_time_seconds{job="motel"}`
 const counterLookback = "1d"
 
 // pushLookback is how far before the window counterIncrease looks for
-// the push: four pushes, so that one lost is no gap. With a push in it
-// the pushes ran up to the window, and a series with no sample before
-// the window was born since; one born in a gap in the pushes (the store
-// down, or read-only) is first seen with every count since its birth.
+// the push's first sample: four pushes, so that one lost is no gap.
+// With a push in it the pushes ran up to the window, and a series with
+// no sample before the window was born since; one born in a gap in the
+// pushes (the store down, or read-only) is first seen with every count
+// since its birth, in the push's first sample after the gap.
 const pushLookback = 4 * pushEvery
+
+// pushApart is how much later than the push's first sample a series'
+// own first sample must be for it to have been born since: half a push
+// (15 s at pushEvery's 30 s). One push is one import, but the store
+// stamps each chunk it parses of a body with that chunk's own time, so
+// one push's samples can differ by milliseconds; the push after it
+// comes a whole pushEvery later.
+const pushApart = pushEvery / 2
 
 // counterIncrease is a request counter's increase (sel: the metric and
 // its selector) over win, ending off before the query's time.
@@ -602,19 +611,23 @@ const pushLookback = 4 * pushEvery
 // value that is large beside the next step (measured on 1.112.0). A
 // series new to the store, or back below its last value (a fresh
 // counter: a release name the store saw within the day, rolled back
-// to), with the push coming up to the window, is a new one of motel's
-// (a release's first push after its cutover, a class's first
-// response), counted from zero since it was: through increase_pure,
-// whose first value its increase would drop (22 responses read as 0,
-// e2e metrics 3a). Any other series the window reads through increase:
-// one back at or above its last value came back after a gap in the
-// pushes (the store down, or read-only); one first seen, or back below
-// its last value, after a gap was born or restarted in it; and one
-// that came with the push itself (the metrics line first loaded on a
-// box whose observer had counted for hours) holds every count since
-// motel began; increase_pure would read each one's first value as the
-// window's own. Where a sample comes just before the window the two
-// agree.
+// to), first seen over half a push (pushApart) after the push's first
+// sample in the window and the pushLookback before it, is a new one of
+// motel's (a release's first push after its cutover, a class's first
+// response, a cache result's first), counted from zero since it was: through
+// increase_pure, whose first value its increase would drop (22
+// responses read as 0, e2e metrics 3a). The push's first sample is
+// before the window when the pushes ran up to it, and inside it on a
+// store younger than the window or after a gap in the pushes (the
+// store down, or read-only). Any other series the window reads through
+// increase: one back at or above its last value came back after a gap;
+// one that came with the push's first sample (the metrics line first
+// loaded on a box whose observer had counted for hours, or one born or
+// restarted in a gap) holds every count since motel began, or since it
+// was born, which increase_pure would read as the window's own. With
+// no push in the store at all, scalar is NaN, nothing compares above
+// it, and every series goes through increase. Where a sample comes
+// just before the window the two agree.
 func counterIncrease(sel string, win, off time.Duration) string {
 	return guardedIncrease(sel, sel, "", win, off)
 }
@@ -631,9 +644,9 @@ func histogramIncrease(metric, matchers string, win, off time.Duration) string {
 }
 
 // guardedIncrease is sel's increase through increase_pure where by
-// (sel itself, or a histogram's count) is new or fresh and the push
-// came up to the window, matched on its labels but those match leaves
-// out; through increase otherwise.
+// (sel itself, or a histogram's count) is new or fresh and was first
+// seen pushApart after the push's first sample, matched on its labels
+// but those match leaves out; through increase otherwise.
 func guardedIncrease(sel, by, match string, win, off time.Duration) string {
 	offset, back := "", promDuration(win+off)
 	if off > 0 {
@@ -641,9 +654,10 @@ func guardedIncrease(sel, by, match string, win, off time.Duration) string {
 	}
 	w := "[" + promDuration(win) + "]" + offset
 	before := "[" + counterLookback + "] offset " + back
+	push := "scalar(min(tfirst_over_time(" + pushSeries + "[" + promDuration(win+pushLookback) + "]" + offset + ")))"
 	return "((increase_pure(" + sel + w + ") unless" + match + " (present_over_time(" + by + before + ")" +
 		" unless (last_over_time(" + by + before + ") > first_over_time(" + by + w + "))))" +
-		" and on() present_over_time(" + pushSeries + "[" + promDuration(pushLookback) + "] offset " + back + "))" +
+		" and" + match + " (tfirst_over_time(" + by + w + ") > " + push + " + " + strconv.Itoa(int(pushApart.Seconds())) + "))" +
 		" or increase(" + sel + w + ")"
 }
 

@@ -168,10 +168,33 @@ type viewAnswers struct {
 	mem, cpu, peak, classes, p50, p95, cache []series
 }
 
+// viewRequests is the view's four request queries over a window.
+type viewRequests struct{ classes, p50, p95, cache string }
+
+// requestQueries is the request queries of the app sel names over
+// span. The counters through counterIncrease, the buckets through
+// histogramIncrease, over the window, as the operator's rules read
+// them: an app's series appears with its first push, already at that
+// push's count, which the store's increase drops when it is large (22
+// responses read as 0, e2e metrics 3a), and increase_pure alone would
+// read a series' every count since motel began as the window's own
+// after a gap in the pushes or when the metrics line is first loaded
+// on a box whose observer has counted.
+func requestQueries(sel string, span time.Duration) viewRequests {
+	hist := histogramIncrease("motel_app_response_seconds", "{"+sel+"}", span, 0)
+	return viewRequests{
+		classes: "sum by (class) (" + counterIncrease("motel_app_requests_total{"+sel+"}", span, 0) + ")",
+		p50:     "histogram_quantile(0.5, sum by (le) (" + hist + "))",
+		p95:     "histogram_quantile(0.95, sum by (le) (" + hist + "))",
+		cache:   "sum by (result) (" + counterIncrease("motel_app_cache_responses_total{"+sel+"}", span, 0) + ")",
+	}
+}
+
 func (v *metricsView) ask(ctx context.Context, app, window string, w viewWindow, now time.Time) (AppMetrics, error) {
 	start, end := now.Add(-w.span), now
 	sel := fmt.Sprintf(`app=%q`, app)
 	var a viewAnswers
+	rq := requestQueries(sel, w.span)
 	type job struct {
 		dst *[]series
 		run func() ([]series, error)
@@ -190,18 +213,11 @@ func (v *metricsView) ask(ctx context.Context, app, window string, w viewWindow,
 		// every 30 s: the range above holds one sample a step, and a peak
 		// between two steps would be lost.
 		{&a.peak, instant(`max_over_time(motel_app_memory_bytes{` + sel + `}[` + window + `])`)},
-		{&a.classes, instant(`sum by (class) (increase_pure(motel_app_requests_total{` + sel + `}[` + window + `]))`)},
-		{&a.p50, instant(`histogram_quantile(0.5, sum by (le) (increase_pure(motel_app_response_seconds_bucket{` + sel + `}[` + window + `])))`)},
-		{&a.p95, instant(`histogram_quantile(0.95, sum by (le) (increase_pure(motel_app_response_seconds_bucket{` + sel + `}[` + window + `])))`)},
-		{&a.cache, instant(`sum by (result) (increase_pure(motel_app_cache_responses_total{` + sel + `}[` + window + `]))`)},
+		{&a.classes, instant(rq.classes)},
+		{&a.p50, instant(rq.p50)},
+		{&a.p95, instant(rq.p95)},
+		{&a.cache, instant(rq.cache)},
 	}
-	// The request counters through increase_pure, not increase: an
-	// app's series appears with its first push, already at the count
-	// that push carried, and the store's increase drops a series' first
-	// value when it is large (measured on 1.112.0: 22 responses read as
-	// 0, one as 1); increase_pure counts from zero when nothing comes
-	// before.
-	//
 	// At once: seven one after another would not fit the budget on a
 	// slow store. Each writes its own answer; the first error is the
 	// answer's.
