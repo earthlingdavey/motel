@@ -77,6 +77,7 @@ func withEngine(t *testing.T) *testEngine {
 		t.Fatal(err)
 	}
 	a.cfg = r
+	a.StateDir = t.TempDir() // set up: setup made the state directory
 	te.active = a
 	saved := theEngine
 	theEngine = te.engine
@@ -247,6 +248,75 @@ func TestServeTest(t *testing.T) {
 	}
 }
 
+// TestSendAndTestSayWhatTheJournalSays: what was said in the journal
+// alone is said by the commands too. On a box setup has not run on, a
+// sent event goes nowhere but the journal, and send exits 1 naming
+// setup; test names setup instead of a socket error. A resolve that
+// finds nothing firing under its key says so. A channel a boot dropped
+// is named as dropped, not as unknown among no channels.
+func TestSendAndTestSayWhatTheJournalSays(t *testing.T) {
+	te := withEngine(t)
+	var out bytes.Buffer
+
+	// A resolve with nothing firing under its key (another subject).
+	r := goodSend()
+	r.State = "firing"
+	if _, err := callAdmin(t, serveSend, http.MethodPost, r); err != nil {
+		t.Fatal(err)
+	}
+	r.State, r.Instance = "resolved", "/dev/sdb"
+	w, err := callAdmin(t, serveSend, http.MethodPost, r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var res SendResult
+	if err := json.Unmarshal(w.Body.Bytes(), &res); err != nil || !res.ResolvedNothing || res.Undelivered != "" {
+		t.Fatalf("a resolve of another instance: %s", w.Body.String())
+	}
+	if err := sendAnswer(&out, res); err != nil || !strings.HasPrefix(out.String(), "resolved nothing: no state fires under external:smartd/box/disk_failing//dev/sdb") {
+		t.Fatalf("send said %q, %v", out.String(), err)
+	}
+	// The one that fires: an ordinary answer.
+	r.Instance = "/dev/sda"
+	w, _ = callAdmin(t, serveSend, http.MethodPost, r)
+	res = SendResult{}
+	_ = json.Unmarshal(w.Body.Bytes(), &res)
+	out.Reset()
+	if err := sendAnswer(&out, res); err != nil || res.ResolvedNothing || out.String() != "sent external:smartd/box/disk_failing//dev/sda\n" {
+		t.Fatalf("the matching resolve: %s; said %q, %v", w.Body.String(), out.String(), err)
+	}
+
+	// A dropped channel, and none left.
+	cfg := te.active.cfg
+	te.active.cfg = &resolved{channels: map[string]Channel{}, apps: cfg.apps}
+	if _, err := callAdmin(t, serveTest, http.MethodPost, TestRequest{Channel: "ops"}); apiStatus(err) != http.StatusUnprocessableEntity ||
+		!strings.Contains(err.Error(), "channel ops was dropped from this load") || !strings.Contains(err.Error(), "systemctl reload motel") {
+		t.Fatalf("a dropped channel: %v", err)
+	}
+	if _, err := callAdmin(t, serveTest, http.MethodPost, TestRequest{Channel: "nosuch"}); err == nil || !strings.Contains(err.Error(), "channels are none in this load") {
+		t.Fatalf("an unknown channel with none left: %v", err)
+	}
+	te.active.cfg = cfg
+
+	// Not set up.
+	te.active.StateDir = filepath.Join(t.TempDir(), "absent")
+	w, err = callAdmin(t, serveSend, http.MethodPost, goodSend())
+	if err != nil {
+		t.Fatal(err)
+	}
+	res = SendResult{}
+	_ = json.Unmarshal(w.Body.Bytes(), &res)
+	if err := sendAnswer(&out, res); err == nil || !strings.Contains(err.Error(), "delivered nowhere") || !strings.Contains(err.Error(), "run motel monitor setup as root") {
+		t.Fatalf("send before setup: %s; %v", w.Body.String(), err)
+	}
+	if lines := te.lines("monitor: event"); len(lines) == 0 {
+		t.Fatal("the event was not journalled")
+	}
+	if _, err := callAdmin(t, serveTest, http.MethodPost, TestRequest{Channel: "ops"}); apiStatus(err) != http.StatusServiceUnavailable || !strings.Contains(err.Error(), "run motel monitor setup as root") {
+		t.Fatalf("test before setup: %v", err)
+	}
+}
+
 // TestServeSendRefusesAMaskedInstance: the instance is in the key, the
 // labels and the answer, which the filter does not rewrite.
 func TestServeSendRefusesAMaskedInstance(t *testing.T) {
@@ -283,6 +353,10 @@ type fakeSystem struct {
 	// |-separated prefixes.
 	failOn string
 	owners map[string][2]int
+	// monitor is the running config's monitor app ("" for none), or
+	// monitorErr motel's silence.
+	monitor    string
+	monitorErr error
 }
 
 func (f *fakeSystem) run(name string, args ...string) error {
@@ -307,6 +381,40 @@ func (f *fakeSystem) lookupUser(name string) (int, int, error) {
 	return 103, 103, nil
 }
 func (f *fakeSystem) lookupGroup(string) (int, error) { return 103, nil }
+func (f *fakeSystem) loadedMonitor() ([]byte, error) {
+	if f.monitorErr != nil {
+		return nil, f.monitorErr
+	}
+	if f.monitor == "" {
+		return nil, nil
+	}
+	return []byte(f.monitor), nil
+}
+
+// TestSetupSaysWhatTheLoadedConfigDoes: setup's last line is what the
+// running config does with what it set up, never a promise of a render
+// or a push its config has no line for.
+func TestSetupSaysWhatTheLoadedConfigDoes(t *testing.T) {
+	const channels = `{"channels":[{"name":"ops","kind":"ntfy","secret":"NOTIFY_OPS_URL"}],"operator":["ops"]}`
+	for _, c := range []struct {
+		monitor string
+		err     error
+		metrics bool
+		want    string
+	}{
+		{channels, nil, false, "reloaded motel, which renders the monitor block's channels into /var/lib/motel-notify/alertmanager.yml"},
+		{"", nil, false, "whose config has no monitor block with channels: Alertmanager sends nothing until there is one"},
+		{`{"metrics":{}}`, nil, false, "whose config has no monitor block with channels"},
+		{`{"metrics":{}}`, nil, true, "reloaded motel, which renders the store's rules into /var/lib/motel-metrics/rules.yml and pushes"},
+		{channels, nil, true, "whose config has no monitor block with a metrics line: nothing is pushed until there is one"},
+		{"", errors.New("dial unix /run/motel/admin.sock: connect: no such file or directory"), false, "motel did not answer on its admin socket (is it running?)"},
+	} {
+		got := loadedSays(&fakeSystem{monitor: c.monitor, monitorErr: c.err}, c.metrics)
+		if !strings.Contains(got, c.want) {
+			t.Errorf("%s (metrics %v): %q, want %q", c.monitor, c.metrics, got, c.want)
+		}
+	}
+}
 
 // A re-run that fails after the mask must not leave Alertmanager
 // masked: its socket could then start nothing. It is not started here;

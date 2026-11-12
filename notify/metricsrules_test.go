@@ -175,6 +175,10 @@ func TestChannelFailedRulesShareReceivers(t *testing.T) {
 			t.Errorf("two rules for %s: receivers sharing all three are one", k)
 		}
 		seen[k] = true
+		if r.Labels[labelChannel] == "pager" {
+			// pager takes criticals alone, and ChannelFailed is a warning.
+			t.Errorf("a rule tells pager, below its floor: %+v", r.Labels)
+		}
 		if strings.Contains(r.Expr, `"heartbeat"`) || strings.Contains(r.Expr, "|heartbeat") || strings.Contains(r.Expr, "heartbeat|") {
 			t.Errorf("the heartbeat's receiver is motel's alone: %s", r.Expr)
 		}

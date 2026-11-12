@@ -130,6 +130,49 @@ func TestValidateWithoutLiveswap(t *testing.T) {
 	}
 }
 
+// TestValidateRefusesASecretsFileMotelCannotRead: validate runs as root,
+// who reads anything; motel serves as its own uid. A file moved in with
+// mv keeps root:root 0600, which a reload refuses and a restart drops
+// every channel over, so validate refuses it, naming the mend. Only
+// validate: a load reads the file as motel, which is the judgement.
+func TestValidateRefusesASecretsFileMotelCannotRead(t *testing.T) {
+	origUser := motelUser
+	t.Cleanup(func() { motelUser = origUser; SetCommand("") })
+	const motelUID = 4242
+	group := os.Getegid()
+	motelUser = func() (int, []int, bool) { return motelUID, []int{group + 1}, true }
+	dir := t.TempDir()
+	secrets := filepath.Join(dir, "_box.env")
+	if err := os.WriteFile(secrets, []byte("NOTIFY_OPS_URL=https://ntfy.sh/ops\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	src := "{\n\tadmin off\n\tmonitor {\n\t\tchannel ops ntfy {secret.NOTIFY_OPS_URL}\n\t\toperator ops\n\t\tsecrets_file " + secrets + "\n\t}\n}\n:8080 {\n\trespond ok\n}\n"
+	SetCommand("validate")
+	err := validate(t, src)
+	if err == nil || !strings.Contains(err.Error(), "the motel user cannot read the box's secrets file "+secrets) ||
+		!strings.Contains(err.Error(), " 0600)") || !strings.Contains(err.Error(), "chmod 0640") {
+		t.Fatalf("0600, owned by another: err = %v", err)
+	}
+	// Group-readable, the group motel's: taken.
+	motelUser = func() (int, []int, bool) { return motelUID, []int{group}, true }
+	if err := os.Chmod(secrets, 0o640); err != nil {
+		t.Fatal(err)
+	}
+	if err := validate(t, src); err != nil {
+		t.Fatalf("0640 in motel's group: %v", err)
+	}
+	// Group-readable, another group's: refused.
+	motelUser = func() (int, []int, bool) { return motelUID, []int{group + 1}, true }
+	if err := validate(t, src); err == nil {
+		t.Fatal("0640 in a group motel is not in was taken")
+	}
+	// Not validate: the load's own read judges.
+	SetCommand("")
+	if err := validate(t, src); err != nil {
+		t.Fatalf("a load: %v", err)
+	}
+}
+
 // TestEverySecretIsAKnownValue: a value no channel line names is still
 // masked in what motel sends.
 func TestEverySecretIsAKnownValue(t *testing.T) {

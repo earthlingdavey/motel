@@ -111,7 +111,7 @@ func channelFailedRules(n *App) vmGroup {
 		}
 		for _, in := range ints {
 			sus := w.suspects(failedSample{integration: in, receiver: name})
-			for _, op := range n.cfg.operator {
+			for _, op := range failureAudience(n.cfg) {
 				if !slices.Contains(sus, op) {
 					k := told{op, in, strings.Join(sus, ",")}
 					receivers[k] = append(receivers[k], name)

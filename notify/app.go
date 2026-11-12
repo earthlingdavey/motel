@@ -8,8 +8,12 @@ import (
 	"io"
 	"io/fs"
 	"os"
+	"os/user"
 	"path/filepath"
+	"slices"
+	"strconv"
 	"strings"
+	"syscall"
 
 	"github.com/caddyserver/caddy/v2"
 	"github.com/caddyserver/caddy/v2/modules/caddyevents"
@@ -139,6 +143,12 @@ func (a *App) provisionNotify(ctx caddy.Context, ls *liveswap.App) error {
 	trust := appTrust(ls)
 	drop := dropsChannels()
 	secrets, unusable := readSecrets(a.secretsFile())
+	if unusable == nil && runningCommand() == "validate" {
+		// validate runs as root, who reads any file; the server runs as
+		// motel, and a file motel cannot read is refused at a reload and
+		// drops every channel at a boot. So validate refuses it too.
+		unusable = motelCannotRead(a.secretsFile())
+	}
 	switch {
 	case unusable != nil && !drop:
 		return fmt.Errorf("monitor: %w", unusable)
@@ -284,6 +294,70 @@ func readSecrets(path string) (map[string]string, error) {
 	return out, nil
 }
 
+// motelUser is the uid motel serves as, and its groups; ok false on a
+// host with no motel user (a test, a build host), where nothing is
+// checked. A variable, so a test can stand one in.
+var motelUser = func() (uid int, gids []int, ok bool) {
+	u, err := user.Lookup("motel")
+	if err != nil {
+		return 0, nil, false
+	}
+	uid, err = strconv.Atoi(u.Uid)
+	if err != nil {
+		return 0, nil, false
+	}
+	ids, err := u.GroupIds()
+	if err != nil {
+		ids = []string{u.Gid}
+	}
+	for _, s := range ids {
+		if g, err := strconv.Atoi(s); err == nil {
+			gids = append(gids, g)
+		}
+	}
+	return uid, gids, true
+}
+
+// motelCannotRead is why the motel user could not read the secrets
+// file at path, or nil: by its owner, group and mode, as the kernel
+// would judge an open by that uid. A missing file is resolve's to name,
+// key by key; one validate cannot stat is left to the server's own read.
+func motelCannotRead(path string) error {
+	uid, gids, ok := motelUser()
+	if !ok || os.Geteuid() == uid {
+		return nil // motel's own read above has judged it
+	}
+	fi, err := os.Stat(path)
+	if err != nil {
+		return nil
+	}
+	st, ok := fi.Sys().(*syscall.Stat_t)
+	if !ok {
+		return nil
+	}
+	perm := fi.Mode().Perm()
+	switch {
+	case int(st.Uid) == uid:
+		if perm&0o400 != 0 {
+			return nil
+		}
+	case slices.Contains(gids, int(st.Gid)):
+		if perm&0o040 != 0 {
+			return nil
+		}
+	case perm&0o004 != 0:
+		return nil
+	}
+	owner, group := strconv.Itoa(int(st.Uid)), strconv.Itoa(int(st.Gid))
+	if u, err := user.LookupId(owner); err == nil {
+		owner = u.Username
+	}
+	if g, err := user.LookupGroupId(group); err == nil {
+		group = g.Name
+	}
+	return fmt.Errorf("the motel user cannot read the box's secrets file %s (%s:%s %04o): a reload would be refused and a restart would drop every channel; chown root:motel %s && chmod 0640 %s", path, owner, group, perm, path, path)
+}
+
 // Start writes the rendered config into the state directory and has
 // Alertmanager load it, then writes the store's rules and points the
 // push at this config. Nothing here fails the config load: serving
@@ -334,6 +408,23 @@ func (a *App) applyRender(am *amClient) {
 		a.logger.Error("monitor: Alertmanager's config was not updated", zap.String("state_dir", a.stateDir()), zap.Error(err))
 	case reloaded:
 		a.logger.Info("monitor: Alertmanager reloaded the rendered config", zap.String("config", filepath.Join(a.stateDir(), ConfigName)))
+	}
+}
+
+// applyNothing writes the config that sends nothing, setup's own, into
+// this config's state directory, removes the URL files, and has
+// Alertmanager load it: a reload left no config that runs notify
+// (engine.release).
+func (a *App) applyNothing() {
+	ctx, cancel := context.WithTimeout(context.Background(), amRequestTimeout)
+	defer cancel()
+	_, err := apply(ctx, a.stateDir(), defaultConfig, map[string]string{}, newAMClient(a.socket()))
+	switch {
+	case errors.Is(err, errNotSetUp):
+	case err != nil:
+		a.logger.Error("monitor: no loaded config has the monitor block's channels, and Alertmanager was not given the config that sends nothing: what it holds may reach the channels as a recovery that did not happen", zap.String("state_dir", a.stateDir()), zap.Error(err))
+	default:
+		a.logger.Info("monitor: no loaded config has the monitor block's channels: Alertmanager was given the config that sends nothing, so what it held ends without a message", zap.String("config", filepath.Join(a.stateDir(), ConfigName)))
 	}
 }
 

@@ -8,7 +8,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"net/http"
+	"os"
 	"regexp"
 	"slices"
 	"strings"
@@ -186,9 +188,36 @@ func serveSend(w http.ResponseWriter, r *http.Request) error {
 	if req.State != "" {
 		ev.Kind, ev.Firing = kindState, req.State == "firing"
 	}
+	res := SendResult{Key: ev.key()}
+	if req.State == "resolved" {
+		// A resolve that differs from its firing in any part of the key,
+		// or one after a restart of motel, finds nothing to end.
+		e.mu.Lock()
+		res.ResolvedNothing = e.states[res.Key] == nil
+		e.mu.Unlock()
+	}
 	e.report(ev)
-	w.Header().Set("Content-Type", "application/json")
-	return json.NewEncoder(w).Encode(map[string]string{"key": ev.key()})
+	if !active.setUp() {
+		res.Undelivered = errNotSetUp.Error()
+	}
+	return writeJSON(w, res)
+}
+
+// SendResult is `motel monitor send`'s answer: the event's key; whether
+// a resolve found no state under it; and, when the event goes nowhere
+// but the journal, why.
+type SendResult struct {
+	Key             string `json:"key"`
+	ResolvedNothing bool   `json:"resolved_nothing,omitempty"`
+	Undelivered     string `json:"undelivered,omitempty"`
+}
+
+// setUp reports whether `motel monitor setup` has made the state
+// directory: without it there is no Alertmanager to post to, and every
+// event is a journal line only (errNotSetUp).
+func (a *App) setUp() bool {
+	_, err := os.Stat(a.stateDir())
+	return !errors.Is(err, fs.ErrNotExist)
 }
 
 // TestRequest is `motel monitor test`'s body.
@@ -224,7 +253,18 @@ func serveTest(w http.ResponseWriter, r *http.Request) error {
 		return caddy.APIError{HTTPStatus: http.StatusServiceUnavailable, Err: errors.New("this box's Caddyfile has no monitor block with channels")}
 	}
 	if _, ok := active.cfg.channels[req.Channel]; !ok {
-		return unprocessable(fmt.Errorf("no channel named %q; the monitor block's channels are %s", req.Channel, strings.Join(active.cfg.order, ", ")))
+		if slices.ContainsFunc(active.Channels, func(c Channel) bool { return c.Name == req.Channel }) {
+			// A boot drops a channel whose secret it cannot use, and serves.
+			return unprocessable(fmt.Errorf("channel %s was dropped from this load: its secret could not be used, and motel's journal says why (monitor: a channel is dropped from this load); mend the box's secrets file (%s), then systemctl reload motel", req.Channel, active.secretsFile()))
+		}
+		names := strings.Join(active.cfg.order, ", ")
+		if names == "" {
+			names = "none in this load"
+		}
+		return unprocessable(fmt.Errorf("no channel named %q; the monitor block's channels are %s", req.Channel, names))
+	}
+	if !active.setUp() {
+		return caddy.APIError{HTTPStatus: http.StatusServiceUnavailable, Err: errNotSetUp}
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), testWait+amRequestTimeout)
 	defer cancel()

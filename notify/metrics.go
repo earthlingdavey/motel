@@ -173,7 +173,7 @@ const (
 	RulesNotRetiredMessage = "monitor metrics: the metrics line is gone, and its rules were not retired: vmalert still evaluates them"
 )
 
-// RetireRules writes the rules of no notify, the two groups empty, into
+// RetireRules writes the rules of no notify, every group empty, into
 // dir, the state directory setup made: what vmalert must read once no
 // config has a metrics line. It reports whether the file changed; a box
 // the store is not set up on has nothing to retire, and is no error.

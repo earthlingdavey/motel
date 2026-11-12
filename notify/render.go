@@ -94,15 +94,40 @@ type amRecv struct {
 // (measured: alertmanager_delivery_test.md). send_resolved is never
 // omitted: its default differs by integration.
 type amWebhook struct {
-	URLFile      string `yaml:"url_file"`
-	SendResolved bool   `yaml:"send_resolved"`
+	URLFile      string        `yaml:"url_file"`
+	SendResolved bool          `yaml:"send_resolved"`
+	HTTPConfig   *amHTTPConfig `yaml:"http_config,omitempty"`
 }
 
+// amHTTPConfig carries the fixed headers an ntfy channel's receiver
+// sends: ntfy reads a message's priority from X-Priority.
+type amHTTPConfig struct {
+	Headers map[string]amHeader `yaml:"http_headers"`
+}
+
+type amHeader struct {
+	Values []string `yaml:"values,flow"`
+}
+
+// ntfyPriority is the X-Priority an ntfy channel's message carries, by
+// the receiver's severity: a critical is urgent (ntfy's 5: long
+// vibration bursts and a pop-over), a warning high (4); info is ntfy's
+// default, and so is a receiver of mixed severities. A header is fixed
+// per receiver, so a state's recovery carries its alert's priority.
+var ntfyPriority = map[string]string{SeverityCritical: "5", SeverityWarning: "4"}
+
+// title_link and fallback are never omitted: Alertmanager's defaults
+// link to its own web UI at its external URL, http://<hostname>:9093,
+// where nothing listens (the socket is its only listener, and Debian's
+// package ships no UI). An empty title_link is no link.
 type amSlack struct {
 	APIURLFile   string `yaml:"api_url_file"`
 	SendResolved bool   `yaml:"send_resolved"`
 	Title        string `yaml:"title"`
+	TitleLink    string `yaml:"title_link"`
 	Text         string `yaml:"text"`
+	Fallback     string `yaml:"fallback"`
+	Color        string `yaml:"color"`
 }
 
 type amDiscord struct {
@@ -120,6 +145,13 @@ const (
 	// Each alert's own status, where it differs from the group's: a
 	// grouped notification names which of its alerts has resolved.
 	msgText = `{{ range .Alerts }}{{ if eq .Status "resolved" }}[RESOLVED] {{ end }}{{ .Annotations.summary }}{{ "\n" }}{{ end }}`
+	// Slack's attachment colour by severity, where Alertmanager's default
+	// is danger for anything firing: red for a critical, Slack's yellow
+	// for a warning, blue for info (and for a group of mixed severities,
+	// which only the fallback receiver can hold), green once resolved.
+	// Discord's colour is fixed by Alertmanager (0.28 has no field for
+	// it): dark red for anything firing.
+	slackColor = `{{ if eq .Status "resolved" }}good{{ else if eq .CommonLabels.severity "critical" }}danger{{ else if eq .CommonLabels.severity "warning" }}warning{{ else }}#439FE0{{ end }}`
 )
 
 const configHeader = "# Rendered by motel from the Caddyfile's monitor block (notify/DESIGN-notify.md).\n" +
@@ -146,18 +178,25 @@ func render(r *resolved, stateDir string) ([]byte, map[string]string, map[string
 
 	cfg := amConfig{Global: amGlobal{ResolveTimeout: "5m"}}
 	receivers := map[string][]string{}
-	recv := func(name string, channels []string, resolved bool) amRecv {
+	// sev is the one severity every alert the receiver gets carries, ""
+	// for a receiver that gets several (the fallback, a channel's own).
+	recv := func(name string, channels []string, resolved bool, sev string) amRecv {
 		rc := amRecv{Name: name}
 		receivers[name] = slices.Clone(channels)
 		for _, n := range channels {
 			ch := r.channels[n]
 			switch channelKinds[ch.Kind] {
 			case "slack":
-				rc.SlackConfigs = append(rc.SlackConfigs, amSlack{APIURLFile: file(ch.Secret), SendResolved: resolved, Title: msgTitle, Text: msgText})
+				rc.SlackConfigs = append(rc.SlackConfigs, amSlack{APIURLFile: file(ch.Secret), SendResolved: resolved,
+					Title: msgTitle, Text: msgText, Fallback: msgTitle, Color: slackColor})
 			case "discord":
 				rc.DiscordConfigs = append(rc.DiscordConfigs, amDiscord{WebhookURLFile: file(ch.Secret), SendResolved: resolved, Title: msgTitle, Message: msgText})
 			default:
-				rc.WebhookConfigs = append(rc.WebhookConfigs, amWebhook{URLFile: file(ch.Secret), SendResolved: resolved})
+				w := amWebhook{URLFile: file(ch.Secret), SendResolved: resolved}
+				if p := ntfyPriority[sev]; ch.Kind == "ntfy" && p != "" {
+					w.HTTPConfig = &amHTTPConfig{Headers: map[string]amHeader{"X-Priority": {Values: []string{p}}}}
+				}
+				rc.WebhookConfigs = append(rc.WebhookConfigs, w)
 			}
 		}
 		return rc
@@ -170,7 +209,7 @@ func render(r *resolved, stateDir string) ([]byte, map[string]string, map[string
 	// The root's receiver is the operator's, and no alert should reach
 	// it: every alert motel posts matches a route below.
 	cfg.Route = amRoute{
-		Receiver:       add(recv("fallback", r.operator, true)),
+		Receiver:       add(recv("fallback", r.operator, true, "")),
 		GroupBy:        []string{"alertname", "app", "subject"},
 		GroupWait:      stateGroupWait,
 		GroupInterval:  stateGroupInterval,
@@ -195,7 +234,7 @@ func render(r *resolved, stateDir string) ([]byte, map[string]string, map[string
 	for _, n := range r.order {
 		direct.Routes = append(direct.Routes, amRoute{
 			Matchers: []string{fmt.Sprintf("%s=%q", labelChannel, n)},
-			Receiver: add(recv("ch-"+n, []string{n}, false)),
+			Receiver: add(recv("ch-"+n, []string{n}, false, "")),
 		})
 	}
 	cfg.Route.Routes = append(cfg.Route.Routes,
@@ -229,11 +268,11 @@ func render(r *resolved, stateDir string) ([]byte, map[string]string, map[string
 		}
 		name := func(sev string) string { return kind + "-" + who + "-" + sev }
 		resolved := kind == kindState
-		rt := amRoute{Receiver: add(recv(name(SeverityInfo), chans(SeverityInfo), resolved))}
+		rt := amRoute{Receiver: add(recv(name(SeverityInfo), chans(SeverityInfo), resolved, SeverityInfo))}
 		for _, sev := range []string{SeverityCritical, SeverityWarning} {
 			rt.Routes = append(rt.Routes, amRoute{
 				Matchers: []string{fmt.Sprintf("severity=%q", sev)},
-				Receiver: add(recv(name(sev), chans(sev), resolved)),
+				Receiver: add(recv(name(sev), chans(sev), resolved, sev)),
 			})
 		}
 		return rt
