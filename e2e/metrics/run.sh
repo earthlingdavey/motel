@@ -520,7 +520,8 @@ PROXY=http://localhost:8080
 t10=$(date +%s)
 i=1
 while [ "$i" -le 30 ]; do curl -s -o /dev/null --max-time 5 "$PROXY/?pd=$i"; i=$((i + 1)); done
-sleep 31 # one push carries the probe release's answers before the cutover
+# No wait for a push: the old release's window ends a push past the
+# cutover, so the first push after it carries these answers in time.
 code=$(deploy demo-errors.tar.gz errs1)
 [ "$code" = 200 ] && pass "deploy errs1, a release whose pages answer 500" || fail "deploy errs1 returned $code: $(cat /tmp/deploy-body)"
 c=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 "$PROXY/?pe=0")

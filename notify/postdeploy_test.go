@@ -161,8 +161,8 @@ func TestPostDeployFailsAfterItsCountInARow(t *testing.T) {
 		t.Fatalf("after the event: %d events, %d in flight", len(tc.evs), len(tc.runs))
 	}
 	// The windows: the new release's since the cutover, the old one's
-	// the same length before it, in whole minutes, through
-	// increase_pure, read at their end, which the store has.
+	// the same length before it and a push past it, in whole minutes,
+	// through increase_pure, read at their end, which the store has.
 	for i, at := range tc.store.at {
 		if k := at.Sub(cutover); k%time.Minute != 0 || k < time.Minute || at.After(tc.at.Add(-storeLag)) {
 			t.Errorf("query %d read at cutover + %s (now cutover + %s)", i, k, tc.at.Sub(cutover))
@@ -174,7 +174,7 @@ func TestPostDeployFailsAfterItsCountInARow(t *testing.T) {
 			t.Errorf("a query not through increase_pure: %s", q)
 		}
 		sawNew = sawNew || strings.Contains(q, `{app="blog",release="v2"}[120s])`)
-		sawOld = sawOld || strings.Contains(q, `{app="blog",release="v1"}[120s] offset 120s)`)
+		sawOld = sawOld || strings.Contains(q, `{app="blog",release="v1"}[150s] offset 90s)`)
 	}
 	if !sawNew || !sawOld {
 		t.Errorf("queries = %q", tc.store.queries)
@@ -222,6 +222,12 @@ func TestPostDeployTheOldIsWorseGuard(t *testing.T) {
 		{"5xx over the bound, old the same", 200, 20, 0.1, 200, 20, 0.1, "v1", false, "", ""},
 		{"5xx over the bound, old better", 200, 20, 0.1, 200, 2, 0.1, "v1", true, "5xx share 0.1 against 0.01 before it", ""},
 		{"5xx under the bound, old far better", 200, 3, 0.1, 200, 0, 0.1, "v1", false, "", ""},
+		// An old release within the bound: crossing it is the regression.
+		{"5xx over the bound, old within it", 200, 6, 0.1, 200, 2, 0.1, "v1", true, "5xx share 0.03 against 0.01 before it", ""},
+		// An old release already over it: a rise beyond chance and 1.2 times.
+		{"5xx over the bound, old over it, a rise by chance", 200, 11, 0.1, 200, 8, 0.1, "v1", false, "", ""},
+		{"5xx over the bound, old over it, a rise beyond chance", 400, 40, 0.1, 400, 12, 0.1, "v1", true, "5xx share 0.1 against 0.03 before it", ""},
+		{"5xx over the bound, old over it, a rise under 1.2 times", 100000, 5500, 0.1, 100000, 5000, 0.1, "v1", false, "", ""},
 		{"p95 over the bound, under old × 1.2", 200, 0, 1.0, 200, 0, 0.9, "v1", false, "", ""},
 		{"p95 over the bound, over old × 1.2", 200, 0, 1.2, 200, 0, 0.9, "v1", true, "p95 1200ms against 900ms before it", ""},
 		{"p95 over the bound, old has none", 200, 0, 1.2, 200, 0, 0, "v1", true, "p95 1200ms;", "p95 1200ms against"},
@@ -420,5 +426,34 @@ func TestPostDeployChecksAtOnce(t *testing.T) {
 	tc.minute()
 	if len(tc.evs) != 2 {
 		t.Fatalf("two apps due at once: %d events, want both", len(tc.evs))
+	}
+}
+
+// A tick late past the window's end makes the window's last check: with
+// failures equal to the window's minutes, the event needs it.
+func TestPostDeployALateTickMakesTheLastCheck(t *testing.T) {
+	r := regressRule
+	r.Window, r.Failures = caddyMinutes(3), 3
+	tc := newTestComparator(t, r)
+	tc.deploy("blog", "v2", "")
+	tc.store.set("v2", 200, 20, 0.1)
+	tc.minute()
+	tc.minute()
+	tc.at = tc.at.Add(5 * time.Minute) // a stall: minute 3 is long past
+	tc.tick(context.Background())
+	if len(tc.evs) != 1 || !strings.Contains(tc.evs[0].Summary, "regressed 3m after") {
+		t.Fatalf("after a stall past the window: %+v", tc.evs)
+	}
+	tc.deploy("blog", "v3", "v2")
+	tc.minute()
+	tc.minute()
+	tc.at = tc.at.Add(5 * time.Minute)
+	tc.store.set("v3", 200, 0, 0.1)
+	tc.tick(context.Background())
+	n := len(tc.store.queries)
+	tc.at = tc.at.Add(time.Minute)
+	tc.tick(context.Background())
+	if len(tc.runs) != 0 || len(tc.store.queries) != n {
+		t.Fatalf("after the last check: %d in flight, %d more queries", len(tc.runs), len(tc.store.queries)-n)
 	}
 }

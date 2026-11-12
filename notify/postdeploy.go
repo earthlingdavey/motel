@@ -38,6 +38,13 @@ const (
 	// p95 must be, over its bound, to fail a check: a quantile is an
 	// estimate inside a bucket.
 	p95Margin = 1.2
+	// shareMargin and shareZ are how much higher than an old release
+	// already over max_5xx_share the new one's share must be: 1.2 times
+	// it, as for p95, and further from it than two samples of one rate
+	// fall by chance (a two-proportion z-score of 2), so an app that
+	// errs steadily is not told at every deploy.
+	shareMargin = 1.2
+	shareZ      = 2
 )
 
 // instantQuerier is the store's instant query at a time.
@@ -170,12 +177,18 @@ func (c *comparator) tick(ctx context.Context) {
 		if k < r.next {
 			continue
 		}
-		elapsed := time.Duration(k) * postDeployEvery
-		if elapsed > rule.window() {
-			delete(c.runs, app) // the window is over: the release held
-			c.logger.Debug("monitor rules: the post-deploy comparison ended with its window", zap.String("app", app), zap.String("release", r.release))
-			continue
+		if last := int(rule.window() / postDeployEvery); k > last {
+			if r.next > last {
+				delete(c.runs, app) // the window is over: the release held
+				c.logger.Debug("monitor rules: the post-deploy comparison ended with its window", zap.String("app", app), zap.String("release", r.release))
+				continue
+			}
+			// A tick late past the window's end still makes its last
+			// check: with failures equal to the window's minutes, the
+			// regression's count needs it.
+			k = last
 		}
+		elapsed := time.Duration(k) * postDeployEvery
 		r.next = k + 1
 		dues = append(dues, due{run: r, cmp: *r, rule: rule, elapsed: elapsed})
 	}
@@ -288,23 +301,41 @@ func checkRelease(ctx context.Context, store instantQuerier, r comparison, rule 
 		// baseline: only the bounds count.
 		v.hasOld = v.old.sent >= floor
 	}
-	fail5xx := over5xx && (!v.hasOld || v.newer.share() > v.old.share())
+	// An old release within the bound makes crossing it the regression;
+	// one already over it, a rise beyond chance.
+	fail5xx := over5xx && (!v.hasOld || v.old.share() <= *rule.Max5xxShare || shareRose(v.newer, v.old))
 	failP95 := overP95 && (!v.hasOld || !v.old.hasP95 || v.newer.p95 > v.old.p95*p95Margin)
 	v.failed = fail5xx || failP95
 	return v
 }
 
+// shareRose is whether the new release's 5xx share rose from the old
+// one's by more than shareMargin and more than chance (shareZ).
+func shareRose(newer, old releaseNumbers) bool {
+	pn, po := newer.share(), old.share()
+	if pn <= po*shareMargin {
+		return false
+	}
+	p := (newer.errors + old.errors) / (newer.sent + old.sent)
+	se := math.Sqrt(p * (1 - p) * (1/newer.sent + 1/old.sent))
+	return se == 0 || (pn-po)/se >= shareZ
+}
+
 // queryRelease asks the store, at at, for a release's responses sent,
-// its 5xx and its p95 over the elapsed time: up to at (the new
-// release's since its cutover) or up to the cutover (old: offset by the
-// same length).
+// its 5xx and its p95: over the elapsed time up to at (the new
+// release's since its cutover), or the same length before the cutover
+// and a push past it (the old release's).
 // increase_pure, never increase: the new release's series appears with
 // its first push already at that push's count.
 func queryRelease(ctx context.Context, store instantQuerier, app, release string, at time.Time, elapsed time.Duration, old, wantP95 bool) (releaseNumbers, error) {
 	var n releaseNumbers
-	win := "[" + strconv.Itoa(int(elapsed.Seconds())) + "s]"
+	secs := func(d time.Duration) string { return strconv.Itoa(int(d.Seconds())) + "s" }
+	win := "[" + secs(elapsed) + "]"
 	if old {
-		win += " offset " + strconv.Itoa(int(elapsed.Seconds())) + "s"
+		// The old release's window ends a push after the cutover: its
+		// answers in the last half minute before it reach the store
+		// with the first push after it.
+		win = "[" + secs(elapsed+pushEvery) + "] offset " + secs(elapsed-pushEvery)
 	}
 	sel := "{app=" + strconv.Quote(app) + ",release=" + strconv.Quote(release) + "}"
 	classes, err := store.queryAt(ctx, "sum by (class) (increase_pure(motel_app_requests_total"+sel+win+"))", at)
