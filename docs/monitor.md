@@ -129,11 +129,12 @@ wrote /etc/systemd/system/victoria-metrics.service.d/10-motel.conf
 wrote /etc/systemd/system/motel-metrics-netns.service
 wrote /etc/systemd/system/motel-vm.socket
 wrote /etc/systemd/system/motel-vm.service
-wrote /etc/systemd/system/motel-am-proxy.socket
-wrote /etc/systemd/system/motel-am-proxy.service
+wrote /etc/systemd/system/motel-am-metrics.socket
+wrote /etc/systemd/system/prometheus-alertmanager.service.d/20-motel-metrics.conf
 wrote /etc/systemd/system/motel-vmalert.service
 wrote /var/lib/motel-metrics/scrape.yml
 wrote /var/lib/motel-metrics/rules.yml
+restarted Alertmanager, once, so that it listens in the namespace (motel-am-metrics.socket) beside its unix socket
 the store listens on /run/motel-metrics/vm.sock only, its TCP in the motel-metrics namespace
 reloaded motel, which renders the store's rules into /var/lib/motel-metrics/rules.yml and pushes
 ```
@@ -144,7 +145,11 @@ nothing is pushed until step 4 loads one. Run again later, setup puts
 its units back as the binary ships them. `motel monitor setup` (without
 `--metrics`) restarts Alertmanager, which forgets the alerts it holds,
 so run it at a quiet moment. `--metrics` on a box where Alertmanager is
-already set up leaves Alertmanager alone and redoes only the store.
+already set up redoes only the store. The first time, and after an
+upgrade from a build whose store reached Alertmanager through a proxy
+(setup says `retired motel-am-proxy.socket …`), it restarts
+Alertmanager once, so that Alertmanager holds its own listener in the
+store's namespace; later runs leave it running.
 
 Each test answers within about 15 seconds:
 
@@ -600,17 +605,19 @@ that nothing more goes out. As root:
 
 ```sh
 # 1. Pause the heartbeat's check off the box: from here on the pings stop.
-# 2. Stop Alertmanager, so that it sends nothing more. On a box set up
-#    with --metrics, vmalert and its proxy's socket go first: a
-#    connection from vmalert to that socket starts Alertmanager again.
-systemctl disable --now motel-vmalert.service motel-am-proxy.socket   # --metrics only
-systemctl disable --now motel-am.socket prometheus-alertmanager.service
+# 2. Stop Alertmanager, so that it sends nothing more. A connection to
+#    either of its sockets starts it again, so they go in one command;
+#    on a box set up with --metrics, vmalert and the socket in the
+#    store's namespace with them (that socket's stop alone stops
+#    Alertmanager, and its start comes with Alertmanager's):
+systemctl disable --now motel-vmalert.service motel-am-metrics.socket motel-am.socket prometheus-alertmanager.service   # --metrics
+systemctl disable --now motel-am.socket prometheus-alertmanager.service   # without --metrics
 # 3. Take the monitor block out of the Caddyfile (with a box repo: push
 #    it without the block and without secrets/_box/), then:
 systemctl reload motel
 # 4. The rest of the store, if setup --metrics ran:
 systemctl disable --now motel-vm.socket victoria-metrics.service motel-metrics-netns.service
-systemctl stop motel-vm.service motel-am-proxy.service
+systemctl stop motel-vm.service
 ```
 
 To stop here is to turn it off. The packages stay installed, and so do
@@ -631,8 +638,7 @@ apt purge prometheus-alertmanager victoria-metrics
 # 6. What setup wrote, which no package owns:
 rm -f /etc/systemd/system/motel-am.socket /etc/systemd/system/motel-metrics-netns.service \
   /etc/systemd/system/motel-vm.socket /etc/systemd/system/motel-vm.service \
-  /etc/systemd/system/motel-am-proxy.socket /etc/systemd/system/motel-am-proxy.service \
-  /etc/systemd/system/motel-vmalert.service
+  /etc/systemd/system/motel-am-metrics.socket /etc/systemd/system/motel-vmalert.service
 rm -rf /etc/systemd/system/prometheus-alertmanager.service.d /etc/systemd/system/victoria-metrics.service.d
 systemctl daemon-reload
 systemctl reset-failed
@@ -652,8 +658,8 @@ systemctl daemon-reload
 
 `apt purge` removes `/var/lib/prometheus`, `/var/lib/victoria-metrics`
 (the stored numbers), `/etc/prometheus` and both files in
-`/etc/default`. It does not remove what setup wrote: the seven units
-and the two drop-ins in step 6, and the state in step 7. It also
+`/etc/default`. It does not remove what setup wrote: the six units
+and the three drop-ins in step 6, and the state in step 7. It also
 leaves the `prometheus` and `_victoria-metrics` system users and their
 groups, which `userdel prometheus` and `userdel _victoria-metrics`
 remove. Purging before steps 2 and 4 leaves five of setup's units
@@ -684,3 +690,4 @@ the sites: v0.6.1 refuses those too.
 | A `--state firing` across a restart of motel | the same image at c979404 | `[RESOLVED]` five minutes after the restart, nothing having resolved it |
 | A reboot after going back to v0.6.1 | the same image, the container restarted | the store and vmalert come back, Alertmanager and both its sockets stay down, nothing is sent |
 | A reboot with monitor set up | hotserve-1 (Debian 13, at 9228935), three cold boots | the store and its sockets come back. Not checked here at 01b2fd5 |
+| Setup's output with Alertmanager's socket in the store's namespace (first run, second run, upgrade from the proxy), and step 2's `--metrics` line | the metrics e2e box, 2026-11-12, with the change that replaced the proxy | as shown; after step 2, Alertmanager, both its sockets and vmalert stay down for 70 s while the store scrapes 9093 and motel reads `am.sock`. A cold boot with these units is not yet measured |

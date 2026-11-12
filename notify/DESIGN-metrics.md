@@ -32,7 +32,7 @@ Alertmanager delivers.** motel pushes its metrics registry to a store
 that listens on TCP only inside a private network namespace, reached
 from the host through one unix socket; vmalert, in the same namespace,
 evaluates a rule file motel renders and posts to motel's Alertmanager
-through an in-namespace proxy; `GET /<app>` gains a `metrics` object
+at a listener Alertmanager holds in the namespace; `GET /<app>` gains a `metrics` object
 from fixed queries over the socket.
 
 ## The requirements
@@ -60,7 +60,7 @@ their solutions:
 | The store | Debian 13's `victoria-metrics` 1.112.0: storage, MetricsQL, its own scrapes (no vmui: Debian builds it without, "Viewing") | Debian's unit with motel's drop-in (`notify/units/metrics/10-motel.conf`): `NetworkNamespacePath=`, `-httpListenAddr=127.0.0.1:8428` inside it, `-retentionPeriod=14d`, `MemoryMax=256M`, `-memory.allowedBytes=96MiB` |
 | Its listener | `/run/motel-metrics/vm.sock`, 0660 root:motel (`motel-vm.socket`) → `systemd-socket-proxyd` in the namespace (`DynamicUser=yes`, no capability) → `127.0.0.1:8428` | no TCP port in the host namespace |
 | vmalert | from the same package (Debian 13 has no `vmalert` package): evaluates `rules.yml` every minute, keeps its alert state in the store | `motel-vmalert.service`, `User=_victoria-metrics`, in the namespace, `MemoryMax=128M` |
-| Its outlet | `127.0.0.1:9093` bound **inside** the namespace (`motel-am-proxy.socket`) → `systemd-socket-proxyd` (`_victoria-metrics` with motel as its group, no capability, a view of the socket's directory alone) → `/run/motel-notify/am.sock` | vmalert speaks TCP only, to its datasource and its notifier (unix_socket_test.md) |
+| Its outlet | `127.0.0.1:9093` bound **inside** the namespace (`motel-am-metrics.socket`) and handed to Alertmanager itself, beside `/run/motel-notify/am.sock`; Alertmanager's drop-in `20-motel-metrics.conf` has `Wants=`, `After=` and `PartOf=` it | vmalert speaks TCP only, to its datasource and its notifier (unix_socket_test.md); Debian's Alertmanager 0.28.1 serves every listener systemd passes it (exporter-toolkit's `ServeMultiple`) |
 | Its config | `rules.yml` (rendered by motel at every config load) and `scrape.yml` (written by setup), 0640 | `/var/lib/motel-metrics`, 2750 motel:_victoria-metrics (setup makes it) |
 | motel's part | the monitor block's `metrics` line, the push, the per-app collector, the rules render, the watch of the chain, `metrics` in `GET /<app>`, `motel monitor setup --metrics` | `notify/metrics*.go`; liveswap's `AppSamples` and `MetricsSource` (liveswap/appmetrics.go) |
 | The response observer | `observe <app>`, a handler the operator writes first in an app's site or route: its responses by class, time to headers and cache verdict, per release | liveswap/observe.go ("The response observer") |
@@ -80,33 +80,66 @@ first connection, nine seconds later), with no failed unit, no
 ordering cycle and no listener in the host namespace; vmalert loaded
 motel's rules, and the store scraped itself, vmalert and Alertmanager.
 
-**The proxies run as no root.** Each passes bytes it does not parse, and
-motel shapes some of them (its own reads through `vm.sock`, and what
-vmalert posts from the rules motel renders), so a proxy as root would
-make a bug in it T5's way to root. `motel-vm.service` needs nothing: its
-listener comes by socket activation and it connects to the namespace's
-loopback, so it is `DynamicUser=yes` with an empty
-`CapabilityBoundingSet=`. `motel-am-proxy.service` must connect to
-Alertmanager's socket, 0660 root:motel, so it holds the motel group,
-which also reads the env files and the box's exchange tree; its view is
-deny-by-default as an app's is (`TemporaryFileSystem=/:ro`, then `/usr`,
-the linker's cache, `/run/motel-notify` and systemd's notify socket bound
-back read-only). That needs a static uid, since `DynamicUser=` implies
-`ProtectSystem=strict`, under which systemd keeps the host's root
-(measured): the uid is `_victoria-metrics`, the namespace daemons' own,
-whose processes are the proxy's only clients. A bug in it gives them the
-uid they hold, and a group whose one path in that view is the socket
-they reach through it anyway. motel is the proxy's primary group, not a
-supplementary one: the kernel lets a process attach to, or read the
-`/proc` of, one whose uid and gids all match its own, whatever their
-supplementary groups, so with the store's gid the store could have
-attached to the proxy and used its group past its view (Debian leaves
-`ptrace_scope` at 0; measured, Copilot on #426). With motel's gid the
-store's uid is refused both. `PrivateUsers=` would refuse them too; it
-failed (217/USER, with `yes` and with `identity`) beside a supplementary
-group, and with motel as the primary group it is untried. A signal checks
-the uid alone, so the store's processes can still stop or kill the
-proxy, which stops nothing they could not stop by stopping vmalert.
+**The store's proxy runs as no root.** It passes bytes it does not
+parse, and motel shapes some of them (its own reads through `vm.sock`),
+so a proxy as root would make a bug in it T5's way to root. It needs
+nothing: its listener comes by socket activation and it connects to the
+namespace's loopback, so `motel-vm.service` is `DynamicUser=yes` with an
+empty `CapabilityBoundingSet=`. Alertmanager's outlet had a proxy of its
+own until 2026-11-12, which held the motel group in a deny-by-default
+view; Alertmanager now holds that listener itself (below, and
+"History").
+
+**Alertmanager listens in the namespace itself.**
+`motel-am-metrics.socket` binds `127.0.0.1:9093` inside the namespace
+(`NetworkNamespacePath=`), names `Service=prometheus-alertmanager.service`,
+and is handed to Alertmanager when it starts, beside `am.sock`.
+Alertmanager 0.28.1 serves every listener it is passed, in whatever
+order the fds come, and reads no name, so the unit sets no
+`FileDescriptorName=` (measured in the e2e box, 2026-11-12). It takes
+its sockets only when it starts, and systemd refuses to start a socket
+whose service already runs, so:
+
+- Alertmanager's drop-in `20-motel-metrics.conf`, which `--metrics`
+  writes beside notify's `10-motel.conf`, has `After=` the socket, so
+  that it listens before Alertmanager starts, whatever starts it (either
+  socket's first connection, a restart, a boot, Debian's postinst);
+  `Wants=`, not `Requires=` or `BindsTo=`, so that a namespace that
+  fails leaves Alertmanager on `am.sock` and notify working (with
+  `BindsTo=`, a namespace that failed failed `motel-am.socket` at its
+  trigger limit: measured); and `PartOf=`, so that a stop or restart of
+  the socket, which the namespace's stop or restart brings (its
+  `Requires=`), stops or restarts Alertmanager, which would otherwise
+  keep a listener in a namespace that is gone while the socket could not
+  start again. A stop of the namespace stops Alertmanager; `am.sock`
+  still listens, so motel's next post, or its read of Alertmanager's
+  counters a minute on, starts it again, and its start brings the socket
+  and the namespace back.
+- Setup restarts Alertmanager once when the socket is not active (a
+  first run, an upgrade from the proxy, an Alertmanager left with no
+  listener here), with one `systemctl restart`, whose transaction starts
+  the namespace and the socket before Alertmanager. A re-run with the
+  socket listening leaves Alertmanager as it runs.
+- An Alertmanager that started while the namespace could not (the
+  socket's start then fails, and `Wants=` lets Alertmanager start on
+  `am.sock` alone) holds no listener in the namespace, and no later start
+  of the socket can hand it one: vmalert's posts and the store's scrape
+  of Alertmanager would fail from then on, and nothing reads
+  `up{job="alertmanager"}`. So the namespace unit restarts a running
+  Alertmanager whenever the namespace comes up
+  (`ExecStartPost=-/usr/bin/systemctl --no-block try-restart prometheus-alertmanager.service`),
+  which motel's next push brings about through the store. One not
+  running, or starting in the same transaction, is left as it is.
+  `TimeoutStartSec=30` bounds the namespace's start: a oneshot waits
+  with no limit by default, and Alertmanager's start waits for it.
+
+These two units and the namespace unit's two lines are measured in the
+e2e box alone (systemd 257), with Debian's postinst restart, a
+`daemon-reload` and `daemon-reexec`, a SIGKILL of Alertmanager, a
+namespace restart and a stop and return, and an upgrade from the proxy
+(the spike and a second opinion, 2026-11-12, and e2e metrics 1, 4d and 11);
+a cold boot on hotserve-1 is owed ("Owed").
+
 
 **Who reaches the socket, and why.** As for notify's: every app runs as
 the motel uid, so the socket's group is not what keeps apps out; their
@@ -285,7 +318,7 @@ the rule's and the expression's only.
 **The disk rule reads two windows.** Free space is the whole filesystem's, and one write of D bytes tilts the six-hour line below zero for hours on any disk with under about 7 × D free (computed at 30 s samples: 70 minutes at 6 × D, 286 at 2 × D). The hour's line is flat again once the write is an hour old, so with both and the 30 minutes' `for:` a single write fires only when it took half of what was free.
 
 **ChannelFailed, a second source.** The store scrapes Alertmanager's
-`/metrics` through the in-namespace proxy, every 30 s. For each
+`/metrics` at its listener in the namespace, every 30 s. For each
 receiver of the notify render, each integration among its channels, and
 each operator channel that is not one of that receiver's channels of
 that integration (notify's `suspects`), the render writes a rule whose
@@ -779,19 +812,23 @@ not run to its end (`motel-am.socket` not installed, not enabled or not
 listening, or the service still masked: a first run that failed after
 writing the socket unit), Alertmanager's runs first, as its recovery,
 (DESIGN-notify.md, "Packaging and setup") and the store's only once it
-has succeeded; where it has, Alertmanager is left as it runs, since its
-setup masks and stops it, which loses the alerts it holds in memory
-and what waits in a group. `motel monitor setup` alone is
+has succeeded; where it has, Alertmanager's setup is not run, since it
+masks and stops Alertmanager, which loses the alerts it holds in memory
+and what waits in a group. The store's restarts it once, the first
+time, so that it takes up its socket in the namespace (step 6), and not
+again while that socket listens. `motel monitor setup` alone is
 Alertmanager's. The store's:
 
 1. refuses unless Alertmanager's setup has run (`motel-am.socket` is
-   installed): vmalert's outlet is Alertmanager's socket;
+   installed): vmalert's outlet is Alertmanager;
 2. `systemctl mask victoria-metrics.service`, then `stop` it;
 3. `apt-get install -y --no-install-recommends victoria-metrics` unless
    installed, with `iproute2` when it is not (it is on every Debian
    install: `ip` makes the namespace);
-4. writes the drop-in, the namespace unit, both sockets and their
-   proxies, and `motel-vmalert.service` (all in the binary,
+4. writes the drop-in, the namespace unit, the store's socket and its
+   proxy, Alertmanager's socket in the namespace and its drop-in
+   `prometheus-alertmanager.service.d/20-motel-metrics.conf`, and
+   `motel-vmalert.service` (all in the binary,
    `notify/units/metrics/`), and `/var/lib/motel-metrics` 2750
    motel:_victoria-metrics with `scrape.yml` and, unless motel has
    rendered one, a `rules.yml` of empty groups, which vmalert starts
@@ -804,23 +841,43 @@ Alertmanager's. The store's:
    bring vmalert: a `systemctl stop victoria-metrics` stops vmalert too,
    and motel's next push starts the store again through the socket. To
    keep the store stopped, stop `motel-vm.socket` as well;
-5. `daemon-reload`, `unmask`, `enable --now` the namespace, the store,
-   both sockets and vmalert, then `restart` vmalert and `try-restart`
-   both proxies, so a re-run's units are the ones running (the store was
-   stopped in step 2, so its start takes the drop-in);
-6. `try-reload-or-restart motel.service`, which renders.
+5. on a box set up before Alertmanager held its own listener in the
+   namespace, retires the proxy shape: `disable --now
+   motel-am-proxy.socket motel-am-proxy.service` and removes both
+   files, so that `127.0.0.1:9093` is free for Alertmanager's socket,
+   and says so;
+6. `daemon-reload`, `unmask`; then, unless `motel-am-metrics.socket` is
+   active, one `systemctl restart prometheus-alertmanager.service`
+   (its transaction starts the namespace and the socket first), and
+   says which it did;
+7. `enable --now` the namespace, the store, both sockets and vmalert,
+   then `restart` vmalert and `try-restart` the store's proxy, so a
+   re-run's units are the ones running (the store was stopped in step
+   2, so its start takes the drop-in);
+8. `try-reload-or-restart motel.service`, which renders.
 
 Run again, it puts the store's units back as the binary ships them,
-and touches nothing of Alertmanager's; `motel monitor setup` does that
-for Alertmanager's. A re-run
+and Alertmanager's second socket and drop-in, and runs nothing of
+Alertmanager's setup; `motel monitor setup` puts Alertmanager's own
+back. A re-run
 that fails after the mask (an install, a unit written to a full disk, a
 reload) unmasks the store on its way out, starts `motel-vm.socket` (a
 connection that arrived while the store was masked fails the socket),
 and starts the store and vmalert again if the store was running, so a stack that worked is not left
-masked and stopped; a first run that fails before step 5's `unmask`
+masked and stopped; one that fails from step 5 on also restarts
+Alertmanager if its socket in the namespace is not active, so vmalert
+is not left with no outlet. A first run that fails before step 6's `unmask`
 stays masked, since Debian's unit without the drop-in listens on
 `0.0.0.0`, and one that fails after it is left as far as it got, every
-unit already written ("Accepted residuals"). The drop-in
+unit already written ("Accepted residuals"). Going back to a build
+whose store reached Alertmanager through the proxy, that build's
+`setup --metrics` fails to start its proxy's socket, since
+Alertmanager holds `127.0.0.1:9093` in the namespace, until root runs
+`systemctl disable --now motel-am-metrics.socket` (which stops
+Alertmanager), removes it and
+`prometheus-alertmanager.service.d/20-motel-metrics.conf`, and runs
+`systemctl daemon-reload` (measured by the second opinion,
+2026-11-12). The drop-in
 replaces Debian's `ExecStart=`, so `/etc/default/victoria-metrics` (a
 conffile) stays as shipped and an upgrade never prompts. One unit fact
 was measured on hotserve-1 and is in the files: a socket unit bound
@@ -837,7 +894,7 @@ after the namespace by hand (the first boot's ordering cycle).
 | `…/scrape.yml` | 0640 | motel:_victoria-metrics | setup | the store |
 | `/var/lib/victoria-metrics/` | 0750 (the drop-in, at every start; Debian ships 0755) | _victoria-metrics | the store, vmalert's state through it | the store |
 | `/run/netns/motel-metrics` | — | root | the namespace unit | systemd |
-| `/etc/systemd/system/motel-metrics-netns.service`, `motel-vm.socket`, `motel-vm.service`, `motel-am-proxy.socket`, `motel-am-proxy.service`, `motel-vmalert.service`, `victoria-metrics.service.d/10-motel.conf` | 0644 | root | setup | systemd |
+| `/etc/systemd/system/motel-metrics-netns.service`, `motel-vm.socket`, `motel-vm.service`, `motel-am-metrics.socket`, `motel-vmalert.service`, `victoria-metrics.service.d/10-motel.conf`, `prometheus-alertmanager.service.d/20-motel-metrics.conf` | 0644 | root | setup | systemd |
 
 ## Threat model
 
@@ -863,8 +920,9 @@ handler on every observed app's request path.
   itself. scrape.yml is setup's, but motel's uid owns the directory and
   could rewrite it to scrape anything the namespace reaches, which is
   the namespace's own loopback and Alertmanager: nothing T5 lacks. The
-  bytes it sends through either proxy reach no root process ("The
-  shape").
+  bytes it sends through the store's proxy reach no root process ("The
+  shape"), and what vmalert posts from the rules it renders reaches
+  Alertmanager, as motel's own posts do.
 - **T6** (a compromised config repository): can add or remove the line
   and move its socket path, and add or remove rules of motel's fixed
   kinds with their parameters, no more; no expression, query, selector
@@ -874,14 +932,15 @@ handler on every observed app's request path.
   author's in a label, is held to one grammar and kept off motel's own
   names, so it cannot pose as one of them.
 - **The namespace's daemons** (`_victoria-metrics`, Debian's packages):
-  the proxy gives whatever runs in the namespace Alertmanager's whole
-  API, silences included. Only the store and vmalert run there; a
-  compromise of either is a compromise of a root-installed Debian
-  package, outside what motel defends. motel's own units give it no
-  more: neither proxy runs as root ("The shape"), and the am proxy, the
-  one they reach, holds their uid with motel's gid, so they cannot attach
-  to it or read its `/proc`, and the group reaches only the socket in its
-  view.
+  Alertmanager holds a listener in the namespace (`127.0.0.1:9093`,
+  `motel-am-metrics.socket`), which gives whatever runs there
+  Alertmanager's whole API, silences included, as the proxy it replaced
+  did. Accepted: only the store and vmalert run there, and a compromise
+  of either is a compromise of a root-installed Debian package, outside
+  what motel defends. motel's own units give them no more: the store's
+  proxy runs as no root ("The shape"), and nothing in the namespace
+  holds the motel group, so the paths that group reads (the env files,
+  the box's exchange tree) are not one step from them.
 - The store holds label values motel chose (app, release, Caddy's
   server and handler names). A leak of it is low-sensitivity by
   construction; `GET /<app>` is app-scoped anyway, so a deployer never
@@ -958,8 +1017,11 @@ or a line of theirs the facts overturned:
 | The code is in the notify module | its rules are rendered from notify's receivers and its chain events go through notify's engine (the opening section) |
 | No second package (`motel-metrics`); the units ship in the binary | slice one's precedent: the package installs nothing of the stack until root runs setup, so a second `.deb` would hold six unit files and a command |
 | vmalert comes from `victoria-metrics` | Debian 13 ships `/usr/bin/vmalert` in it and has no `vmalert` package (`apt-cache search vmalert`, 2026-11-10) |
-| The store's setup is `--metrics` on `motel monitor setup`, after Alertmanager's | vmalert's only outlet is Alertmanager's socket, and its proxy's unit requires `motel-am.socket` |
+| The store's setup is `--metrics` on `motel monitor setup`, after Alertmanager's | vmalert's only outlet is Alertmanager, whose socket in the namespace is handed to the service Alertmanager's setup installs |
 | `--metrics` runs Alertmanager's setup only where it has not run to its end | Alertmanager's setup masks and stops a running Alertmanager, which loses the alerts it holds in memory and what waits in a group: the store is added, or its units put back, without that; `motel monitor setup` puts Alertmanager's back when they need it. Its end is the socket enabled and listening and the service unmasked, not the socket unit's file, which a first run writes before it unmasks (Copilot round 1 on #428). /code-review pass 2 on the monitor block, reversing pass 1's every-time rule |
+| `--metrics` restarts Alertmanager once, when its socket in the namespace is not active; it no longer leaves it as it runs | **Reversed on 2026-11-12** ("Alertmanager is left as it runs", with the proxy): Alertmanager takes its sockets only when it starts, and systemd refuses to start a socket whose service runs, so the listener in the namespace needs one restart. One `systemctl restart`, in one transaction, at a first run, an upgrade from the proxy, or an Alertmanager left with no listener there; a re-run with the socket active leaves it. The loss is the restart's, once per box, and setup says so |
+| Alertmanager listens in the namespace itself (`motel-am-metrics.socket`), not through `systemd-socket-proxyd` | the proxy was a process of its own that held the motel group, and so needed a view built by hand (a static uid, motel as its primary group against the store's ptrace, `TemporaryFileSystem=/`) to keep that group's reach to one socket; and its socket, which only `multi-user.target` wanted, stayed down after a stop and return of the namespace, so vmalert's posts and the store's scrape of Alertmanager went nowhere, silently (S3 O4 D5 = 60, measured on 01b2fd5 and 09d2ed0). Alertmanager 0.28.1 serves every listener systemd passes; the cost is a restart of Alertmanager at setup's first run and at each restart of the namespace (an accepted row). The spike and a second opinion of 2026-11-12, then this PR's e2e rows |
+| A start of the namespace restarts a running Alertmanager (`ExecStartPost=` `try-restart`), not a chain event on `up{job="alertmanager"}` | an Alertmanager that started while the namespace failed holds no listener there until it restarts (S3 O3 D5 = 45, fixed under the single-fault rule). The line ends it correct with no one acting, at the namespace's next start, which motel's push brings (size 2, risk 2: one line; the normal path's namespace start runs it as a no-op, with Alertmanager not running or starting in the same transaction, which e2e metrics 1 and 4d measure). Measured: with the line, 9093 answered 16 s after the fault went; with it cleared, 9093 was still dead 119 s on. A chain event (size 3: a new state in the chain's reads) would tell the operator and leave the fix to them; it would also tell a listener lost some other way, which no fault measured here produces |
 | No vmalert `Watchdog` | the merge hazard above; motel watches the chain instead |
 | `ChannelFailed` from vmalert is rendered per told channel with motel's labels | the only form in which Alertmanager deduplicates the two sources |
 | `MemoryMax=256M`, `-memory.allowedBytes=96MiB`, 14 days | the measured working set above; both caps mandatory, since the store sizes its caches from what it can see |
@@ -1016,8 +1078,9 @@ on its general scales. metrics' examples:
 | `motel monitor setup --metrics` on a box where Alertmanager is not set up yet reloads motel twice, Alertmanager's setup's first, before the store is installed: a `metrics` line that this reload loads for the first time (written, never reloaded) starts the push's failure count then, so an install of the store slower than five minutes fires `metrics_store_down`, and the journal has a `not set up` and a `push failed` line, until the first push after the store's setup clears it | notify/cmd.go (`runSetup`) | 2 | 2 | 1 | 4; it needs Alertmanager not set up, the line unloaded before setup and a slow install; the alert names its cause and clears itself, and the two setups run as two commands had the same order; skipping Alertmanager's reload under `--metrics` is a flag through its setup (size 2, risk 2). /code-review pass 1 on the monitor block |
 | A rule refused at Provision (an `app` the liveswap block does not configure, `memory_share` of an uncapped app, rules in a block with no channel, a rule naming an app with no liveswap block) names the rule, not its Caddyfile file and line: Provision reads the adapted JSON, which carries no position | notify/metrics.go (`provision`) | 2 | 5 | 1 | 10; the rule's name is unique in the block, so the refusal points at one line, and notify's own Provision refusals (an `operator` or `bind` naming no channel) name keys, not lines, alike; a position in each rule's JSON, set by the adapter alone, is a field every config carries (size 3, risk 2), and moving the no-channel check into the parse fixes one refusal of four (size 2). Copilot round 3 on #429 |
 | e2e metrics 4 reads vmalert's send counters, `vmalert_alerts_sent_total` and `vmalert_alerts_send_errors_total`, which are per notifier and so every group's, not the ChannelFailed group's: a send error of another group's alert (an operator rule firing in the wait) fails the check, and another group's send raises the sent count | e2e/metrics/run.sh | 2 | 2 | 1 | 4; it needs another alert firing and Alertmanager refusing its post, which is a failure of the outlet the check exists to catch, and the fail line names the counters; vmalert 1.112.0 has no per-group send counter. The group's own evaluation count is the gate, and the sent count only corroborates. /code-review passes 1 and 2 on #430 |
-| e2e metrics 4 no longer sees vmalert's post inside Alertmanager: it proves a send vmalert counted as accepted and one alert held, so a notifier pointed at another Alertmanager that answers 2xx would pass it | e2e/metrics/run.sh | 3 | 1 | 1 | 3; metrics 10 fails on it, naming it: it reads `errors_high`, which vmalert alone posts, in Alertmanager with vmalert's `generatorURL`. The outlet is `motel-am-proxy.socket` to `/run/motel-notify/am.sock`, pinned by `TestMetricsUnitsAreTheMeasuredOnes`, and the store's scrape of Alertmanager (metrics 4's `up{job="alertmanager"}`) goes through the same proxy; reading the post in Alertmanager without the phase race needs motel's post held off or both phases timed (size 3, risk 2). The merged alert's latest poster is still printed. /code-review pass 2 on #430; rescored from 15 by the review of the rebased tree |
+| e2e metrics 4 no longer sees vmalert's post inside Alertmanager: it proves a send vmalert counted as accepted and one alert held, so a notifier pointed at another Alertmanager that answers 2xx would pass it | e2e/metrics/run.sh | 3 | 1 | 1 | 3; metrics 10 fails on it, naming it: it reads `errors_high`, which vmalert alone posts, in Alertmanager with vmalert's `generatorURL`. The outlet is `motel-am-metrics.socket`, handed to the Alertmanager that holds `/run/motel-notify/am.sock` (metrics 4d sees both in its one process), pinned by `TestMetricsUnitsAreTheMeasuredOnes`, and the store's scrape of Alertmanager (metrics 4's `up{job="alertmanager"}`) reaches the same listener; reading the post in Alertmanager without the phase race needs motel's post held off or both phases timed (size 3, risk 2). The merged alert's latest poster is still printed. /code-review pass 2 on #430; rescored from 15 by the review of the rebased tree |
 | e2e metrics 4 takes vmalert's counters from one scrape, which is not one instant: vmalert writes the send-error counter earlier in the page than the group's evaluation count, so a second evaluation whose send fails between the two lines is counted with its error unseen, and a refused post passes | e2e/metrics/run.sh | 3 | 1 | 5 | 15; it needs Alertmanager refusing vmalert's post, the first evaluation's send having succeeded, and the failure landing in the microseconds between two lines of one page; one more scrape after the gate closes it (size 1, risk 2). /code-review of the rebased tree on #430 |
+| A restart of the namespace restarts Alertmanager (its socket there is `PartOf=` it, and the socket the namespace's): what it holds in memory goes, a one-shot waiting in a group among it | notify/units/metrics/20-motel-metrics.conf | 3 | 2 | 5 | 30, accepted under the skill's rule 4: inherent to the design, since Alertmanager takes a socket only when it starts and a new namespace is a new socket; keeping it running needs the proxy back, whose own socket was the bug this replaced. The namespace is restarted by hand, never by setup or a push; the journal has the restart, and motel posts each firing state again within a minute. The second opinion on the namespace socket, 2026-11-12 |
 
 ### Owed
 
@@ -1027,6 +1090,7 @@ on its general scales. metrics' examples:
 | On a booted Debian host: a connection made while setup has the store masked, and a failed setup re-run's put-back (Copilot round 2 on #425); the two proxies' users and the am proxy's view (#426), and the namespace unit's test for a leftover, measured so far in the e2e box only (hotserve-1 runs the units of 9228935), and a cold boot of these units: setup's re-run does not restart the namespace unit, which is active, so its new `ExecStartPre` first runs at a reboot. The cold boot with motel rendering and pushing is measured with the units of 9228935 ("The shape") | — | — | — | the next deploy to hotserve-1, and a reboot after it |
 | motel says nothing when setup's units on disk are older than the binary's: a box upgraded past a change to them (this one: the proxies' users, the chmods) keeps the old units until root re-runs both setups (`motel monitor setup`, then `motel monitor setup --metrics`). A load could compare the installed files with the embedded ones and warn | 3 | 5 | 5 | the next PR on the feature branch, before it merges to main (/code-review of #426) |
 | Debian's security support for `victoria-metrics` 1.112.0 and `prometheus-alertmanager` 0.28.1 on trixie, whose binaries are built with Go 1.24.2 (the store, vmalert) and 1.24.1 (Alertmanager), and a dist-upgrade check of both drop-ins' flags | — | — | — | before any release |
+| A cold boot on hotserve-1 with Alertmanager's socket in the namespace, its drop-in and the namespace unit's `TimeoutStartSec=` and `ExecStartPost=`, and the upgrade from the proxy shape there (measured in the e2e box alone: "The shape") | — | — | — | the next deploy to hotserve-1, `motel monitor setup --metrics` after it, and a reboot |
 
 ## e2e rows
 
@@ -1035,8 +1099,10 @@ image with Debian's `victoria-metrics` installed and masked
 (e2e/Dockerfile, `metrics-box`), and the same stub receiver. The suite
 runs `motel monitor setup` and then `motel monitor setup --metrics`
 itself and asserts: nothing of the store set up without `--metrics`,
-and with it the store's setup alone, the running Alertmanager left as
-it was (the same invocation, not masked);
+and with it the store's setup alone (Alertmanager not masked), the
+first run restarting Alertmanager once (one start in its journal, 9093
+answering in the namespace after) and saying so, a second run leaving
+it as it runs (the same invocation, no start) and saying so;
 no TCP listener on 8428, 8880 or 9093 in the host namespace, all three
 in the namespace; the socket `srw-rw---- root motel` and the state
 directory `drwxr-s--- motel _victoria-metrics`; the store's data
@@ -1062,13 +1128,18 @@ store's own 2xx count and the cache misses counted (a hit share under
 0.1, where `increase` alone read 1); and `?range=7d` a 422; vmalert's
 rules loaded, and its `ChannelFailed` for the failing channel firing
 with motel's labels while Alertmanager holds one such alert, not two;
-both proxies running as a uid not root with no capability, the am proxy
-as `_victoria-metrics` with gid motel and no other group, with
-Alertmanager's socket in its view and none of `/etc/motel`,
-`/var/lib/liveswap` or any other path an app's view hides, and the
-store's uid refused its `/proc` and an attach (with a control: the same
-uid attaching to a sleeper of its own; a host that refuses that too has
-the `/proc` check stand for it);
+the store's proxy running as a uid not root with no capability;
+one Alertmanager process holding `am.sock` and the namespace's
+`127.0.0.1:9093` and answering on both (metrics 4d); after a SIGKILL,
+started again on both by the next connection; a restart of the
+namespace restarting Alertmanager once, 9093 answering in the new
+namespace; a stop of the namespace stopping Alertmanager and its socket
+there with `am.sock` listening on, then the namespace and 9093 back with
+nothing done by hand and the store scraping Alertmanager again (the
+proxy's socket stayed down here: 22 s for the namespace, 9093 still dead
+75 s on, measured at 09d2ed0); the namespace failing to start,
+Alertmanager started on `am.sock` alone, and once the fault is gone the
+namespace's start restarting it onto 9093;
 the store stopped by hand, started again by motel's next push with vmalert beside it;
 the store made read-only (its free-space floor set above any disk): no series carries the flag, and motel's `metrics_store_read_only` is in Alertmanager, critical;
 a reload to a monitor block that is a `metrics` line alone writing no
@@ -1089,7 +1160,10 @@ and blog's deployer's;
 the view probe's three metrics keys closed from inside a sandboxed app;
 the store's socket stopped, `GET /<app>` answering at once (13 ms
 measured) with the error and the rest of the status whole, and the
-`push failed` line. First run 2026-11-10 on the lima arm64 VM: the
+`push failed` line; an upgrade from the proxy shape (its two units
+planted, Alertmanager on `am.sock` alone): `--metrics` retiring both
+(stopped, disabled, removed) and saying so, then restarting
+Alertmanager once, which holds 9093 itself (metrics 11). First run 2026-11-10 on the lima arm64 VM: the
 two sources' `ChannelFailed` held by Alertmanager as one alert, with
 vmalert's `generatorURL`.
 Not in e2e (unit-tested only): `metrics_store_down`'s five minutes and
@@ -1251,3 +1325,13 @@ Dated one-liners; the full text of each is in git.
   the new `ExecStartPre` needs. Accepted: a send error between two
   lines of one scrape (15); the other-Alertmanager row rescored to 3,
   since metrics 10 sees vmalert's post in Alertmanager.
+- 2026-11-12 — **The am proxy is gone**: Alertmanager holds
+  `127.0.0.1:9093` in the namespace itself (`motel-am-metrics.socket`,
+  its drop-in `20-motel-metrics.conf`), after a spike and a second
+  opinion. It fixes the proxy's socket staying down after a stop and
+  return of the namespace (S3 O4 D5 = 60). Setup restarts Alertmanager
+  once, retiring the proxy on an upgrade; the namespace's start restarts
+  an Alertmanager left without its socket there (45), and its start is
+  bounded to 30 s. "Alertmanager is left as it runs" reversed; the
+  proxy's sandbox (its uid, primary group and view), its e2e checks and
+  `TestE2EProxyViewHidesTheMotelPaths` go with it.

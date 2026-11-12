@@ -1,0 +1,33 @@
+# Written by `motel monitor setup --metrics` (notify/DESIGN-metrics.md, "The shape").
+# Alertmanager's second listener: 127.0.0.1:9093 bound inside the
+# motel-metrics namespace, where vmalert posts its alerts and the store
+# scrapes Alertmanager's /metrics (both speak TCP only). systemd passes
+# it to Alertmanager itself, beside motel-am.socket's unix socket, and
+# Alertmanager serves both. Nothing in the host's namespace listens.
+[Unit]
+Description=Alertmanager for vmalert and the store: 127.0.0.1:9093 in the metrics namespace (motel monitor setup --metrics)
+# Every socket unit is implicitly Before=sockets.target, and the namespace
+# service runs after basic.target, which is after sockets.target: an
+# ordering cycle systemd breaks by dropping this socket's start (measured
+# at a cold boot on hotserve-1). So: no default dependencies, and the
+# order after the namespace by hand. A stop or restart of the namespace
+# stops or restarts this socket, and so Alertmanager (its drop-in,
+# 20-motel-metrics.conf, is PartOf= this socket).
+DefaultDependencies=no
+Requires=motel-metrics-netns.service
+After=sysinit.target motel-metrics-netns.service
+Conflicts=shutdown.target
+Before=shutdown.target
+
+[Socket]
+# The service is not named after the socket. Alertmanager is handed its
+# sockets only when it starts, and systemd refuses to start a socket
+# whose service already runs: setup restarts Alertmanager once to take
+# this one up.
+Service=prometheus-alertmanager.service
+ListenStream=127.0.0.1:9093
+NetworkNamespacePath=/run/netns/motel-metrics
+
+[Install]
+# Not sockets.target, for the same cycle.
+WantedBy=multi-user.target

@@ -21,10 +21,10 @@ var (
 	unitVMSocket []byte
 	//go:embed units/metrics/motel-vm.service
 	unitVMProxy []byte
-	//go:embed units/metrics/motel-am-proxy.socket
-	unitAMProxySocket []byte
-	//go:embed units/metrics/motel-am-proxy.service
-	unitAMProxy []byte
+	//go:embed units/metrics/motel-am-metrics.socket
+	unitAMMetricsSocket []byte
+	//go:embed units/metrics/20-motel-metrics.conf
+	unitAMMetricsDropIn []byte
 	//go:embed units/metrics/motel-vmalert.service
 	unitVMAlert []byte
 	//go:embed units/metrics/scrape.yml
@@ -39,10 +39,15 @@ const (
 	unitDir     = "/etc/systemd/system"
 	netnsUnit   = "motel-metrics-netns.service"
 	vmSocket    = "motel-vm.socket"
-	amProxySock = "motel-am-proxy.socket"
+	amNSSocket  = "motel-am-metrics.socket"
 	vmalertUnit = "motel-vmalert.service"
 	scrapeName  = "scrape.yml"
 )
+
+// The units of the shape before Alertmanager held its own listener in
+// the namespace: a socket on 127.0.0.1:9093 there, and a proxy from it to
+// Alertmanager's unix socket. Setup retires them.
+var oldAMProxy = []string{"motel-am-proxy.socket", "motel-am-proxy.service"}
 
 // metricsUnits are setup's unit files, each at its path under unitDir.
 func metricsUnits() []struct {
@@ -57,8 +62,8 @@ func metricsUnits() []struct {
 		{filepath.Join(unitDir, netnsUnit), unitNetns},
 		{filepath.Join(unitDir, vmSocket), unitVMSocket},
 		{filepath.Join(unitDir, "motel-vm.service"), unitVMProxy},
-		{filepath.Join(unitDir, amProxySock), unitAMProxySocket},
-		{filepath.Join(unitDir, "motel-am-proxy.service"), unitAMProxy},
+		{filepath.Join(unitDir, amNSSocket), unitAMMetricsSocket},
+		{filepath.Join(unitDir, amService+".d", "20-motel-metrics.conf"), unitAMMetricsDropIn},
 		{filepath.Join(unitDir, vmalertUnit), unitVMAlert},
 	}
 }
@@ -68,10 +73,11 @@ func metricsUnits() []struct {
 // so that it never listens in the host's namespace, even for a moment. Debian's unit starts on install on 0.0.0.0:8428 with no
 // authentication (DESIGN-metrics.md, "Packaging and setup"), so the
 // order is root's, as for notify's: mask, install, write the units and
-// the state directory, unmask, start the namespace, the store, both
-// sockets and vmalert, and have motel render. It refuses unless
-// Alertmanager's setup has run: vmalert's outlet is Alertmanager's
-// socket.
+// the state directory, retire the proxy shape's units, unmask, restart
+// Alertmanager once unless its socket in the namespace already listens,
+// start the namespace, the store, both sockets and vmalert, and have
+// motel render. It refuses unless Alertmanager's setup has run:
+// vmalert's outlet is Alertmanager.
 //
 // root is a prefix for every path written (tests); the commands run as
 // given. Each step says what it did on out.
@@ -93,7 +99,16 @@ func metricsSetup(sys system, root string, out io.Writer) (err error) {
 		return err
 	}
 	say("masked %s, so the install starts nothing", vmService)
-	defer putBackOnFailure(sys, say, rerun, vmService, []string{vmSocket}, []string{vmService, vmalertUnit}, &err)()
+	// Set when setup reaches the proxy shape's retirement (every unit is
+	// written by then): from there on a failure may leave vmalert no
+	// outlet unless Alertmanager takes up its socket in the namespace.
+	retired := false
+	defer putBackOnFailure(sys, say, rerun, vmService, []string{vmSocket}, []string{vmService, vmalertUnit}, func() error {
+		if !retired {
+			return nil
+		}
+		return amListenInNamespace(sys, say)
+	}, &err)()
 	// One installed by hand before setup runs on Debian's 0.0.0.0:8428,
 	// and the mask does not stop it. Stopped here, it next starts in the
 	// namespace, with the drop-in.
@@ -164,16 +179,42 @@ func metricsSetup(sys system, root string, out io.Writer) (err error) {
 		say("wrote %s", filepath.Join(DefaultMetricsStateDir, f.name))
 	}
 
+	// The proxy shape's socket holds 127.0.0.1:9093 in the namespace,
+	// which Alertmanager's own socket binds next: it goes first, before
+	// the reload, with its proxy.
+	retired = true
+	if isFile(at(filepath.Join(unitDir, oldAMProxy[0]))) {
+		if err := sys.run("systemctl", append([]string{"disable", "--now"}, oldAMProxy...)...); err != nil {
+			return err
+		}
+		for _, u := range oldAMProxy {
+			if err := os.Remove(at(filepath.Join(unitDir, u))); err != nil && !errors.Is(err, fs.ErrNotExist) {
+				return err
+			}
+		}
+		say("retired %s and %s: Alertmanager listens in the namespace itself", oldAMProxy[0], oldAMProxy[1])
+	}
 	for _, step := range [][]string{
 		{"systemctl", "daemon-reload"},
 		{"systemctl", "unmask", vmService},
-		{"systemctl", "enable", "--now", netnsUnit, vmService, vmSocket, amProxySock, vmalertUnit},
+	} {
+		if err := sys.run(step[0], step[1:]...); err != nil {
+			return err
+		}
+	}
+	// Before the namespace's own start: a first run starts it within
+	// Alertmanager's restart, whose start waits for it.
+	if err := amListenInNamespace(sys, say); err != nil {
+		return err
+	}
+	for _, step := range [][]string{
+		{"systemctl", "enable", "--now", netnsUnit, vmService, vmSocket, amNSSocket, vmalertUnit},
 		// A re-run's units are the ones just written: the store was
 		// stopped above, so its start took the drop-in; vmalert and the
-		// two proxies, which a push keeps alive, are restarted (the
-		// proxies' sockets hold their listeners meanwhile).
+		// store's proxy, which a push keeps alive, are restarted (the
+		// proxy's socket holds its listener meanwhile).
 		{"systemctl", "restart", vmalertUnit},
-		{"systemctl", "try-restart", "motel-vm.service", "motel-am-proxy.service"},
+		{"systemctl", "try-restart", "motel-vm.service"},
 	} {
 		if err := sys.run(step[0], step[1:]...); err != nil {
 			return err
@@ -184,5 +225,27 @@ func metricsSetup(sys system, root string, out io.Writer) (err error) {
 		return err
 	}
 	say("reloaded motel, which renders the store's rules into %s and pushes", filepath.Join(DefaultMetricsStateDir, RulesName))
+	return nil
+}
+
+// amListenInNamespace restarts Alertmanager, once, unless its socket in
+// the metrics namespace (amNSSocket) is active. Alertmanager is handed
+// its sockets only when it starts, and systemd refuses to start a socket
+// whose service runs, so a running Alertmanager takes the socket up only
+// by a restart: one `systemctl restart`, whose transaction starts the
+// socket (and the namespace) before Alertmanager (the drop-in's Wants=
+// and After=). That is a first run, an upgrade from the proxy shape, and
+// an Alertmanager left on its unix socket alone; a re-run with the socket
+// listening leaves it as it runs. A restart loses what it holds in
+// memory: motel posts each firing state again within a minute.
+func amListenInNamespace(sys system, say func(string, ...any)) error {
+	if sys.run("systemctl", "is-active", "--quiet", amNSSocket) == nil {
+		say("Alertmanager listens in the namespace already (%s): left as it runs", amNSSocket)
+		return nil
+	}
+	if err := sys.run("systemctl", "restart", amService); err != nil {
+		return err
+	}
+	say("restarted Alertmanager, once, so that it listens in the namespace (%s) beside its unix socket", amNSSocket)
 	return nil
 }

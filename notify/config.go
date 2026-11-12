@@ -28,10 +28,11 @@ const (
 	// group. Not under /var/lib/motel, which is 0750 motel:motel: the
 	// prometheus uid could not traverse it.
 	DefaultStateDir = "/var/lib/motel-notify"
-	// DefaultSocket is Alertmanager's only listener, a systemd socket
-	// unit (motel-am.socket), 0660 root:motel, in a runtime directory of
-	// its own: /run/motel is motel.service's RuntimeDirectory, removed
-	// whenever motel stops.
+	// DefaultSocket is Alertmanager's listener in the host's namespace, a
+	// systemd socket unit (motel-am.socket), 0660 root:motel, in a
+	// runtime directory of its own: /run/motel is motel.service's
+	// RuntimeDirectory, removed whenever motel stops. Its one other, with
+	// the store, is inside the metrics namespace (motel-am-metrics.socket).
 	DefaultSocket = "/run/motel-notify/am.sock"
 )
 
