@@ -273,7 +273,7 @@ evaluation_interval: 1m
 tests:
   - interval: 1m
     input_series:
-      - series: 'alertmanager_notifications_failed_total{integration="slack",receiver_name="event-app-blog-warning",reason="clientError",job="alertmanager"}'
+      - series: 'alertmanager_notifications_failed_total{integration="discord",receiver_name="event-app-blog-warning",reason="clientError",job="alertmanager"}'
         values: '0 0 1 1 1'
       - series: 'motel_app_memory_bytes{app="blog",job="motel"}'
         values: '95x20'
@@ -284,8 +284,8 @@ tests:
         groupname: motel-channel-failed
         alertname: ChannelFailed
         exp_alerts:
-          - exp_labels: {notify_channel: pager, severity: warning, subject: box, integration: slack, suspects: ops}
-            exp_annotations: {summary: "Alertmanager could not deliver through slack; failing channel: ops (seen by the metrics store)"}
+          - exp_labels: {notify_channel: ops, severity: warning, subject: box, integration: discord, suspects: alice}
+            exp_annotations: {summary: "Alertmanager could not deliver through discord; failing channel: alice (seen by the metrics store)"}
       - eval_time: 15m
         groupname: motel-store
         alertname: app_memory_high
