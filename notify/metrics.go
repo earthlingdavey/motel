@@ -91,6 +91,11 @@ func (m *MetricsStore) provision(ctx caddy.Context, ls *liveswap.App, n *App, lo
 	if ls == nil && slices.ContainsFunc(m.Rules, func(r Rule) bool { return r.App != "" }) {
 		return errors.New("monitor: a rule names an app, and the config has no liveswap block")
 	}
+	if ls != nil {
+		if err := checkMemoryCapped(m.Rules, ls.MemoryCapped()); err != nil {
+			return fmt.Errorf("monitor: %w", err)
+		}
+	}
 	// A rule in a block with no channel would reach no one: no notify
 	// renders it, or hears a deploy for post_deploy.
 	if n == nil && len(m.Rules) > 0 {

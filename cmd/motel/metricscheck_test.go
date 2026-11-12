@@ -113,3 +113,50 @@ func TestTheGateReadsTheMetricsLineFromTheJSON(t *testing.T) {
 		}
 	}
 }
+
+// A monitor rule that names an app and reads its responses needs a
+// route observing that app, at any depth; memory and CPU need none, nor
+// does an every-app rule.
+func TestARuleOnAnAppNoRouteObservesIsRefused(t *testing.T) {
+	rules := func(r string) string { return `{"apps":{"monitor":{"metrics":{"rules":[` + r + `]}}` }
+	observed := `,"http":{"servers":{"s":{"routes":[{"handle":[{"handler":"subroute","routes":[{"handle":[{"handler":"liveswap_observe","app":"blog"}]}]}]}]}}}}}`
+	for name, c := range map[string]struct{ cfg, want string }{
+		"a threshold, unobserved": {rules(`{"name":"slow","kind":"threshold","metric":"p95","op":">","value":1,"for":"10m","app":"blog"}`) + `}}`,
+			"rule slow reads app blog's responses, and no route has `observe blog`"},
+		"a post_deploy, unobserved": {rules(`{"name":"regress","kind":"post_deploy","app":"blog","max_p95":"1s"}`) + `}}`,
+			"rule regress reads app blog's responses"},
+		"observed in a subroute": {rules(`{"name":"slow","kind":"threshold","metric":"p95","op":">","value":1,"for":"10m","app":"blog"}`) + observed, ""},
+		"another app observed":   {rules(`{"name":"slow","kind":"threshold","metric":"p95","op":">","value":1,"for":"10m","app":"shop"}`) + observed, "app shop's responses"},
+		"memory_share":           {rules(`{"name":"mem","kind":"threshold","metric":"memory_share","op":">","value":0.8,"for":"5m","app":"blog"}`) + `}}`, ""},
+		"cpu_cores":              {rules(`{"name":"cpu","kind":"threshold","metric":"cpu_cores","op":">","value":1,"for":"5m","app":"blog"}`) + `}}`, ""},
+		"every app":              {rules(`{"name":"slow","kind":"threshold","metric":"p95","op":">","value":1,"for":"10m"}`) + `}}`, ""},
+		"no metrics line":        {`{"apps":{"monitor":{}}}`, ""},
+		"not JSON":               {`{`, ""},
+	} {
+		err := checkObserved([]byte(c.cfg))
+		switch {
+		case c.want == "" && err != nil:
+			t.Errorf("%s: %v", name, err)
+		case c.want != "" && (err == nil || !strings.Contains(err.Error(), c.want)):
+			t.Errorf("%s: %v, want %q", name, err, c.want)
+		}
+	}
+	// Through the gate, from a Caddyfile: validate and reload refuse it,
+	// run serves it saying why.
+	config, _ := dirs(t)
+	caddyfile := func(site string) string {
+		return "{\n\tadmin off\n\tliveswap {\n\t\tapp blog {\n\t\t\tcommand /bin/true\n\t\t}\n\t}\n" +
+			"\tmonitor {\n\t\tmetrics\n\t\trule slow threshold p95 > 1s for 10m app blog\n\t}\n}\n:8080 {\n" + site + "\treverse_proxy {\n\t\tdynamic liveswap blog\n\t}\n}\n"
+	}
+	write(t, config+"/Caddyfile", caddyfile("\tobserve blog\n"), 0o644)
+	if _, err := checkConfig("validate", []string{"--config", config + "/Caddyfile"}); err != nil {
+		t.Errorf("an observed app: %v", err)
+	}
+	write(t, config+"/Caddyfile", caddyfile(""), 0o644)
+	for cmd, stops := range map[string]bool{"validate": true, "reload": true, "run": false} {
+		var stderr bytes.Buffer
+		if got := gate([]string{cmd, "--config", config + "/Caddyfile"}, &stderr); got != stops || !strings.Contains(stderr.String(), "no route has `observe blog`") {
+			t.Errorf("%s: stop = %v, want %v; said %q", cmd, got, stops, stderr.String())
+		}
+	}
+}

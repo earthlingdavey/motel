@@ -204,6 +204,18 @@ func TestRuleRefusalsAtProvision(t *testing.T) {
 		!strings.Contains(err.Error(), "names app shop") {
 		t.Errorf("a post_deploy on an unknown app: %v", err)
 	}
+	// memory_share of an app with no memory_max: nothing to divide by.
+	if _, err := provision(t, block("rule blog_mem threshold memory_share > 0.8 for 5m app blog")); err == nil ||
+		!strings.Contains(err.Error(), "rule blog_mem: app blog has no memory_max, so its memory_share has nothing to divide by") {
+		t.Errorf("memory_share of an uncapped app: %v", err)
+	}
+	capped := strings.Replace(block("rule blog_mem threshold memory_share > 0.8 for 5m app blog"), "command ./server\n", "command ./server\n\t\t\tmemory_max 512MB\n", 1)
+	if _, err := provision(t, capped); err != nil {
+		t.Errorf("memory_share of a capped app: %v", err)
+	}
+	if _, err := provision(t, block("rule mem threshold memory_share > 0.8 for 5m")); err != nil {
+		t.Errorf("an every-app memory_share: %v", err)
+	}
 	// A block with no channel: the rules would reach no one.
 	alone := "{\n\tadmin off\n\tmonitor {\n\t\tmetrics /run/x/vm.sock\n\t\trule e threshold 5xx_share > 0.05 for 10m\n\t}\n}\n:8080 {\n\trespond ok\n}\n"
 	if _, err := provision(t, alone); err == nil || !strings.Contains(err.Error(), "rule e reaches no one: the monitor block has no channel") {

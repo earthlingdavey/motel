@@ -503,6 +503,33 @@ func checkRules(rules []Rule, apps map[string]bool) error {
 	return nil
 }
 
+// ReadsResponses is whether the rule reads an app's response series,
+// which only an `observe` handler in the app's route counts: a request
+// threshold, or post_deploy. cmd/motel's gate refuses one naming an app
+// that no route observes, which only the whole config can tell.
+func (r Rule) ReadsResponses() bool {
+	switch r.Kind {
+	case rulePostDeploy:
+		return true
+	case ruleThreshold:
+		return r.Metric != "memory_share" && r.Metric != "cpu_cores"
+	}
+	return false
+}
+
+// checkMemoryCapped refuses a memory_share rule naming an app with no
+// memory_max: the collector pushes motel_app_memory_max_bytes only for
+// a capped app, so the share is empty and the rule never fires. An
+// every-app rule is every capped app's.
+func checkMemoryCapped(rules []Rule, capped map[string]bool) error {
+	for _, r := range rules {
+		if r.Kind == ruleThreshold && r.Metric == "memory_share" && r.App != "" && !capped[r.App] {
+			return fmt.Errorf("rule %s: app %s has no memory_max, so its memory_share has nothing to divide by and the rule would never fire; give the app a memory_max", r.Name, r.App)
+		}
+	}
+	return nil
+}
+
 // operatorRules is the motel-operator group: the threshold and
 // disk_fill lines, rendered as motel's own expressions. Empty with no
 // notify (n nil), as the fixed groups are.

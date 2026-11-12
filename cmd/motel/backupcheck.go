@@ -18,10 +18,12 @@ import (
 	"github.com/smallhoursorg/motel/liveswap"
 )
 
-// gate holds a config to two rules before Caddy's own command runs
+// gate holds a config to three rules before Caddy's own command runs
 // (checkConfig): that the admin API is off TCP where apps run
-// (checkAdmin), and that what a Caddyfile declares as a backup is what
-// a backup run can read of it (checkBackups). A run (motel-backup)
+// (checkAdmin), that a monitor rule naming an app reads responses some
+// route observes (checkObserved, metricscheck.go), and that what a
+// Caddyfile declares as a backup is what a backup run can read of it
+// (checkBackups). A run (motel-backup)
 // adapts the Caddyfile inside a view that holds the Caddyfile's own
 // directory and nothing else, as an account that owns nothing there: a
 // backup declared in a file outside that directory, or in one that
@@ -89,8 +91,8 @@ func commandFlags(name string, args []string) (*pflag.FlagSet, bool) {
 }
 
 // checkConfig holds the config the command's flags name to the gate's
-// two rules, each on its own, and joins what they refuse: neither
-// rule's early returns can drop the other's.
+// three rules, each on its own, and joins what they refuse: no rule's
+// early returns can drop another's.
 func checkConfig(cmd string, args []string) (warning string, err error) {
 	_, warning, err = checkAndLoad(cmd, args)
 	return warning, err
@@ -106,15 +108,18 @@ func checkAndLoad(cmd string, args []string) (cfg []byte, warning string, err er
 	if err != nil {
 		return nil, "", err
 	}
-	adminErr := checkAdmin(cfg)
+	adminErr, observedErr := checkAdmin(cfg), checkObserved(cfg)
 	warning, err = checkBackups(cmd, file, adapter)
-	switch {
-	case adminErr == nil:
-		return cfg, warning, err
-	case err == nil:
-		return cfg, warning, adminErr
+	var said []string
+	for _, e := range []error{adminErr, observedErr, err} {
+		if e != nil {
+			said = append(said, e.Error())
+		}
 	}
-	return cfg, warning, errors.New(adminErr.Error() + "; and " + err.Error())
+	if len(said) == 0 {
+		return cfg, warning, nil
+	}
+	return cfg, warning, errors.New(strings.Join(said, "; and "))
 }
 
 // errCaddysToSay is loadConfig's answer for a config that does not load:

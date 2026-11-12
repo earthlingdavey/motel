@@ -584,6 +584,21 @@ func (a *App) TrustSources() map[string][]deploytrust.Source {
 	return out
 }
 
+// MemoryCapped is whether each app has a memory_max, as this config
+// built it: for the notify module, which refuses a memory_share rule
+// naming an app with none (its share has nothing to divide by). Nil
+// before Provision.
+func (a *App) MemoryCapped() map[string]bool {
+	if a.specs == nil {
+		return nil
+	}
+	out := make(map[string]bool, len(a.specs))
+	for name, spec := range a.specs {
+		out[name] = spec.caps.memoryMax > 0
+	}
+	return out
+}
+
 // Validate enforces semantic invariants (runs after Provision has
 // applied defaults, for JSON and Caddyfile config alike).
 func (a *App) Validate() error {
