@@ -336,20 +336,20 @@ func shareRose(newer, old releaseNumbers) bool {
 // its 5xx and its p95: over the elapsed time up to at (the new
 // release's since its cutover), or the same length before the cutover
 // and a push past it (the old release's).
-// increase_pure, never increase: the new release's series appears with
-// its first push already at that push's count.
+// The counters through counterIncrease: the new release's series
+// appears with its first push already at that push's count.
 func queryRelease(ctx context.Context, store instantQuerier, app, release string, at time.Time, elapsed time.Duration, old, wantP95 bool) (releaseNumbers, error) {
 	var n releaseNumbers
-	secs := func(d time.Duration) string { return strconv.Itoa(int(d.Seconds())) + "s" }
-	win := "[" + secs(elapsed) + "]"
+	win, off := elapsed, time.Duration(0)
 	if old {
 		// The old release's window ends a push after the cutover: its
 		// answers in the last half minute before it reach the store
 		// with the first push after it.
-		win = "[" + secs(elapsed+pushEvery) + "] offset " + secs(elapsed-pushEvery)
+		win, off = elapsed+pushEvery, elapsed-pushEvery
 	}
 	sel := "{app=" + strconv.Quote(app) + ",release=" + strconv.Quote(release) + "}"
-	classes, err := store.queryAt(ctx, "sum by (class) (increase_pure(motel_app_requests_total"+sel+win+"))", at)
+	inc := func(metric string) string { return counterIncrease(metric+sel, win, off) }
+	classes, err := store.queryAt(ctx, "sum by (class) ("+inc("motel_app_requests_total")+")", at)
 	if err != nil {
 		return n, err
 	}
@@ -370,7 +370,7 @@ func queryRelease(ctx context.Context, store instantQuerier, app, release string
 	if !wantP95 || n.sent == 0 {
 		return n, nil
 	}
-	q, err := store.queryAt(ctx, "histogram_quantile(0.95, sum by (le) (increase_pure(motel_app_response_seconds_bucket"+sel+win+")))", at)
+	q, err := store.queryAt(ctx, "histogram_quantile(0.95, sum by (le) ("+inc("motel_app_response_seconds_bucket")+"))", at)
 	if err != nil {
 		return n, err
 	}

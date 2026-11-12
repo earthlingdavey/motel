@@ -257,31 +257,34 @@ func TestOperatorRulesRender(t *testing.T) {
 	if len(rules) != 8 {
 		t.Fatalf("operator rules = %+v; want the threshold and disk_fill lines, no post_deploy", f.Groups[2].Rules)
 	}
-	every := func(r string) string { return `sum by (app) (increase_pure(motel_app_requests_total{` + r + `}[5m]))` }
+	inc := func(sel string) string { return counterIncrease(sel, 5*time.Minute, 0) }
+	every := func(r string) string { return `sum by (app) (` + inc(`motel_app_requests_total{`+r+`}`) + `)` }
 	shop := func(metric, extra string) string {
-		return `sum by (app) (increase_pure(` + metric + `{app="shop"` + extra + `}[5m]))`
+		return `sum by (app) (` + inc(metric+`{app="shop"`+extra+`}`) + `)`
 	}
 	for name, want := range map[string]string{
 		"errors_high": "(" + every(`class="5xx"`) + " / " + every(`class!="aborted"`) + ") > 0.05 and " + every(`class!="aborted"`) + " >= 20",
-		"shop_slow": `histogram_quantile(0.95, sum by (app, le) (increase_pure(motel_app_response_seconds_bucket{app="shop"}[5m]))) > 1.5 and ` +
+		"shop_slow": `histogram_quantile(0.95, sum by (app, le) (` + inc(`motel_app_response_seconds_bucket{app="shop"}`) + `)) > 1.5 and ` +
 			shop("motel_app_response_seconds_count", "") + " >= 50",
-		"blog_quiet": `sum by (app) (increase_pure(motel_app_requests_total{app="blog"}[5m])) / 300 < 0.1`,
-		"hits_low": `(sum by (app) (increase_pure(motel_app_cache_responses_total{result=~"hit|stale"}[5m])) or sum by (app) (increase_pure(motel_app_cache_responses_total[5m])) * 0)` +
-			` / sum by (app) (increase_pure(motel_app_cache_responses_total[5m])) < 0.5 and sum by (app) (increase_pure(motel_app_cache_responses_total[5m])) >= 20`,
+		"blog_quiet": `sum by (app) (` + inc(`motel_app_requests_total{app="blog"}`) + `) / 300 < 0.1`,
+		"hits_low": `(sum by (app) (` + inc(`motel_app_cache_responses_total{result=~"hit|stale"}`) + `) or sum by (app) (` + inc(`motel_app_cache_responses_total`) + `) * 0)` +
+			` / sum by (app) (` + inc(`motel_app_cache_responses_total`) + `) < 0.5 and sum by (app) (` + inc(`motel_app_cache_responses_total`) + `) >= 20`,
 		"mem":          `max by (app) (motel_app_memory_bytes / motel_app_memory_max_bytes) > 0.8`,
 		"busy":         `sum by (app) (rate(motel_app_cpu_seconds_total{app="shop"}[5m])) > 1.5`,
-		"median":       `histogram_quantile(0.5, sum by (app, le) (increase_pure(motel_app_response_seconds_bucket[5m]))) > 0.2 and sum by (app) (increase_pure(motel_app_response_seconds_count[5m])) >= 20`,
+		"median":       `histogram_quantile(0.5, sum by (app, le) (` + inc(`motel_app_response_seconds_bucket`) + `)) > 0.2 and sum by (app) (` + inc(`motel_app_response_seconds_count`) + `) >= 20`,
 		"disk_filling": `min by (path) (predict_linear(motel_disk_avail_bytes[6h], 604800)) < 0 and min by (path) (predict_linear(motel_disk_avail_bytes[1h], 604800)) < 0`,
 	} {
 		r := rules[name]
 		if r.Expr != want {
 			t.Errorf("%s: expr =\n%s\nwant\n%s", name, r.Expr, want)
 		}
-		// The request counters through increase_pure: the store's
-		// increase drops a new series' first value.
-		if strings.Contains(r.Expr, "increase(") {
-			t.Errorf("%s reads a counter through increase: %s", name, r.Expr)
-		}
+	}
+	// The guard itself, whole: increase_pure for a series new to the
+	// store once the push is older than the window, increase otherwise.
+	if got, want := counterIncrease(`m{app="a"}`, 150*time.Second, 90*time.Second),
+		`((increase_pure(m{app="a"}[150s] offset 90s) unless present_over_time(m{app="a"}[1d] offset 4m))`+
+			` and on() present_over_time(process_start_time_seconds{job="motel"}[1d] offset 4m)) or increase(m{app="a"}[150s] offset 90s)`; got != want {
+		t.Errorf("counterIncrease =\n%s\nwant\n%s", got, want)
 	}
 	for name, want := range map[string]map[string]string{
 		"errors_high":  {"kind": "state", "severity": "warning", "subject": "app:{{ $labels.app }}", "source": "rules", "key": "rules/app:{{ $labels.app }}/errors_high"},
@@ -366,6 +369,8 @@ evaluation_interval: 1m
 tests:
   - interval: 1m
     input_series:
+      - series: 'process_start_time_seconds{job="motel"}'
+        values: '1x480'
       - series: 'motel_app_requests_total{app="shop",release="",class="5xx",job="motel"}'
         values: '30+30x20'
       - series: 'motel_app_requests_total{app="shop",release="",class="2xx",job="motel"}'
@@ -404,6 +409,13 @@ tests:
           - exp_labels: {path: /var/lib/liveswap, kind: state, severity: warning, subject: box, source: rules, key: "rules/box/disk_filling//var/lib/liveswap"}
             exp_annotations: {summary: "the filesystem holding /var/lib/liveswap is predicted to fill within 1d (rule disk_filling)"}
 `
+	runUnittest(t, tool, dir, test)
+}
+
+// runUnittest runs vmalert-tool's unittest over test, in dir beside
+// its rules.yml.
+func runUnittest(t *testing.T, tool, dir, test string) {
+	t.Helper()
 	if err := os.WriteFile(filepath.Join(dir, "test.yml"), []byte(test), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -413,4 +425,55 @@ tests:
 	if err != nil || !strings.Contains(string(out), "SUCCESS") {
 		t.Fatalf("vmalert-tool unittest: %v\n%s", err, out)
 	}
+}
+
+// A request counter over the store's own MetricsQL: a series new to the
+// store once the push is older than the window counts from zero (fresh
+// answers a burst of 400 and nothing after, which increase would drop);
+// one back after a 20-minute gap in the pushes is not read as its
+// lifetime (gapped counts 10 a minute throughout, 500 by its return);
+// nor is one that came with the push itself (the metrics line first
+// loaded on a box whose observer had counted 5000).
+func TestOperatorRulesCountAfterAGap(t *testing.T) {
+	tool := vmTool(t, "vmalert-tool")
+	dir := t.TempDir()
+	a := rulesApp(t, "rule busy threshold request_rate > 1 for 2m")
+	if err := os.WriteFile(filepath.Join(dir, RulesName), renderRules(a), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	test := `rule_files: [rules.yml]
+evaluation_interval: 1m
+tests:
+  - interval: 1m
+    input_series:
+      - series: 'process_start_time_seconds{job="motel"}'
+        values: '1x90'
+      - series: 'motel_app_requests_total{app="fresh",release="v2",class="2xx",job="motel"}'
+        values: '_x30 400x60'
+      - series: 'motel_app_requests_total{app="gapped",release="v1",class="2xx",job="motel"}'
+        values: '0+10x30 _x20 500+10x40'
+    alert_rule_test:
+      - eval_time: 33m
+        groupname: motel-operator
+        alertname: busy
+        exp_alerts:
+          - exp_labels: {app: fresh, kind: state, severity: warning, subject: "app:fresh", source: rules, key: "rules/app:fresh/busy"}
+            exp_annotations: {summary: "fresh: its requests a second over 5 minutes has been above 1 for 2m (rule busy); now 1.333"}
+      - eval_time: 54m
+        groupname: motel-operator
+        alertname: busy
+        exp_alerts: []
+  - interval: 1m
+    input_series:
+      - series: 'process_start_time_seconds{job="motel"}'
+        values: '_x30 1x60'
+      - series: 'motel_app_requests_total{app="old",release="v1",class="2xx",job="motel"}'
+        values: '_x30 5000+10x60'
+    alert_rule_test:
+      - eval_time: 34m
+        groupname: motel-operator
+        alertname: busy
+        exp_alerts: []
+`
+	runUnittest(t, tool, dir, test)
 }

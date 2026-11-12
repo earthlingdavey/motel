@@ -548,13 +548,48 @@ func thresholdRule(r Rule) vmRule {
 	}
 }
 
+// pushSeries is a series every push carries: the store had motel's
+// push before a time when this series has a sample before it.
+const pushSeries = `process_start_time_seconds{job="motel"}`
+
+// counterLookback is how far back counterIncrease looks for a series'
+// earlier sample, and for the push's: a gap in the pushes up to it is
+// read as a gap.
+const counterLookback = "1d"
+
+// counterIncrease is a request counter's increase (sel: the metric and
+// its selector) over win, ending off before the query's time.
+//
+// The store's increase_pure counts from zero whenever no sample comes
+// within about the window before it, and its increase drops a first
+// value that is large beside the next step (measured on 1.112.0). A
+// series new to the store with the push already older than the window
+// is a new one of motel's (a release's first push after its cutover, a
+// class's first response), counted from zero since it was: through
+// increase_pure, whose first value its increase would drop (22
+// responses read as 0, e2e metrics 3a). Any other series the window
+// reads through increase: one with an earlier sample came back after a
+// gap in the pushes (the store down, or read-only), and one that came
+// with the push itself (the metrics line first loaded on a box whose
+// observer had counted for hours) holds every count since motel began;
+// increase_pure would read either's first value as the window's own.
+// Where a sample comes just before the window the two agree.
+func counterIncrease(sel string, win, off time.Duration) string {
+	offset, back := "", promDuration(win+off)
+	if off > 0 {
+		offset = " offset " + promDuration(off)
+	}
+	w := "[" + promDuration(win) + "]" + offset
+	return "((increase_pure(" + sel + w + ") unless present_over_time(" + sel + "[" + counterLookback + "] offset " + back + "))" +
+		" and on() present_over_time(" + pushSeries + "[" + counterLookback + "] offset " + back + "))" +
+		" or increase(" + sel + w + ")"
+}
+
 // thresholdExpr is a threshold's expression: the metric's, per app (by
 // (app), which carries the label notify's route tree sends to the
 // app's channels by), over the request window, with the sample floor
 // for a share or a quantile. The request counters are read through
-// increase_pure, never increase: an app's series appears with its first
-// push already at that push's count, and the store's increase drops it
-// (DESIGN-metrics.md, "metrics in GET /<app>").
+// counterIncrease.
 func thresholdExpr(r Rule) string {
 	app := ""
 	if r.App != "" {
@@ -570,9 +605,8 @@ func thresholdExpr(r Rule) string {
 		}
 		return "{" + strings.Join(parts, ",") + "}"
 	}
-	win := "[" + promDuration(requestWindow) + "]"
 	sum := func(metric string, extra ...string) string {
-		return "sum by (app) (increase_pure(" + metric + sel(extra...) + win + "))"
+		return "sum by (app) (" + counterIncrease(metric+sel(extra...), requestWindow, 0) + ")"
 	}
 	cmp := " " + r.Op + " " + numberText(r.Value)
 	floor := " >= " + strconv.Itoa(r.minRequests())
@@ -587,7 +621,7 @@ func thresholdExpr(r Rule) string {
 		if r.Metric == "p95" {
 			q = "0.95"
 		}
-		return "histogram_quantile(" + q + ", sum by (app, le) (increase_pure(motel_app_response_seconds_bucket" + sel() + win + ")))" +
+		return "histogram_quantile(" + q + ", sum by (app, le) (" + counterIncrease("motel_app_response_seconds_bucket"+sel(), requestWindow, 0) + "))" +
 			cmp + " and " + sum("motel_app_response_seconds_count") + floor
 	case "request_rate":
 		return sum("motel_app_requests_total") + " / " + strconv.Itoa(int(requestWindow.Seconds())) + cmp
@@ -599,10 +633,10 @@ func thresholdExpr(r Rule) string {
 	case "memory_share":
 		return "max by (app) (motel_app_memory_bytes" + sel() + " / motel_app_memory_max_bytes" + sel() + ")" + cmp
 	case "cpu_cores":
-		// rate, not increase_pure: each unit's counter starts at zero
+		// rate, not counterIncrease: each unit's counter starts at zero
 		// when the unit does, and its first value is the CPU it used
 		// before the window.
-		return "sum by (app) (rate(motel_app_cpu_seconds_total" + sel() + win + "))" + cmp
+		return "sum by (app) (rate(motel_app_cpu_seconds_total" + sel() + "[" + promDuration(requestWindow) + "]))" + cmp
 	}
 	panic("thresholdExpr: unchecked metric " + r.Metric)
 }

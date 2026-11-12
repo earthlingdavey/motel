@@ -40,6 +40,10 @@ func (s *relStore) set(key string, sent, errs float64, p95 float64) {
 
 var releaseRe = regexp.MustCompile(`release="([^"]*)"`)
 
+// oldWindow is a query over the old release's window: its increase is
+// offset (counterIncrease's guard has an offset in either).
+var oldWindow = regexp.MustCompile(`increase\([^)]*\] offset `)
+
 func (s *relStore) queryAt(_ context.Context, q string, t time.Time) ([]series, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -65,7 +69,7 @@ func (s *relStore) queryAt(_ context.Context, q string, t time.Time) ([]series, 
 		return nil, s.err
 	}
 	key := releaseRe.FindStringSubmatch(q)[1]
-	if strings.Contains(q, " offset ") {
+	if oldWindow.MatchString(q) {
 		key += " old"
 	}
 	n, ok := s.nums[key]
@@ -163,7 +167,7 @@ func TestPostDeployFailsAfterItsCountInARow(t *testing.T) {
 	}
 	// The windows: the new release's since the cutover, the old one's
 	// the same length before it and a push past it, in whole minutes,
-	// through increase_pure, read at their end, which the store has.
+	// through counterIncrease, read at their end, which the store has.
 	for i, at := range tc.store.at {
 		if k := at.Sub(cutover); k%time.Minute != 0 || k < time.Minute || at.After(tc.at.Add(-storeLag)) {
 			t.Errorf("query %d read at cutover + %s (now cutover + %s)", i, k, tc.at.Sub(cutover))
@@ -171,11 +175,12 @@ func TestPostDeployFailsAfterItsCountInARow(t *testing.T) {
 	}
 	var sawNew, sawOld bool
 	for _, q := range tc.store.queries {
-		if strings.Contains(q, "increase(") || !strings.Contains(q, "increase_pure(") {
-			t.Errorf("a query not through increase_pure: %s", q)
+		if !strings.Contains(q, "unless present_over_time(") || !strings.Contains(q, ") or increase(") {
+			t.Errorf("a query not through counterIncrease: %s", q)
 		}
-		sawNew = sawNew || strings.Contains(q, `{app="blog",release="v2"}[120s])`)
-		sawOld = sawOld || strings.Contains(q, `{app="blog",release="v1"}[150s] offset 90s)`)
+		sawNew = sawNew || strings.Contains(q, counterIncrease(`motel_app_requests_total{app="blog",release="v2"}`, 2*time.Minute, 0))
+		sawOld = sawOld || strings.Contains(q, `{app="blog",release="v1"}[150s] offset 90s)`) &&
+			strings.Contains(q, `present_over_time(motel_app_requests_total{app="blog",release="v1"}[1d] offset 4m)`)
 	}
 	if !sawNew || !sawOld {
 		t.Errorf("queries = %q", tc.store.queries)
@@ -193,7 +198,7 @@ func TestPostDeploySkipsBelowTheFloor(t *testing.T) {
 		t.Fatalf("told below the floor: %+v", tc.evs)
 	}
 	for _, q := range tc.store.queries {
-		if strings.Contains(q, "offset") {
+		if oldWindow.MatchString(q) {
 			t.Errorf("the old release asked about under the floor: %s", q)
 		}
 	}

@@ -364,10 +364,10 @@ parse, a JSON config's at Provision, both by `motel validate`):
 
 | Kind | Expression | For | Labels | Reaches |
 |---|---|---|---|---|
-| `threshold 5xx_share` | `(sum by (app) (increase_pure(motel_app_requests_total{class="5xx"}[5m])) / SENT) > v and SENT >= floor`, SENT the same over `class!="aborted"` | `for` | `app`, `subject="app:<app>"`, `kind="state"`, `severity`, `source="rules"`, `key="rules/app:<app>/<name>"` | the operator and the app's bound channels |
-| `threshold p50`, `p95` | `histogram_quantile(q, sum by (app, le) (increase_pure(motel_app_response_seconds_bucket[5m]))) > v and sum by (app) (increase_pure(motel_app_response_seconds_count[5m])) >= floor`, v in seconds | `for` | as above | as above |
-| `threshold request_rate` | `sum by (app) (increase_pure(motel_app_requests_total[5m])) / 300 > v` | `for` | as above | as above |
-| `threshold cache_hit_share` | `(HITS or SPOKE * 0) / SPOKE > v and SPOKE >= floor`, both `sum by (app) (increase_pure(motel_app_cache_responses_total[5m]))`, HITS over `result=~"hit\|stale"` | `for` | as above | as above |
+| `threshold 5xx_share` | `(sum by (app) (inc(motel_app_requests_total{class="5xx"})) / SENT) > v and SENT >= floor`, SENT the same over `class!="aborted"` | `for` | `app`, `subject="app:<app>"`, `kind="state"`, `severity`, `source="rules"`, `key="rules/app:<app>/<name>"` | the operator and the app's bound channels |
+| `threshold p50`, `p95` | `histogram_quantile(q, sum by (app, le) (inc(motel_app_response_seconds_bucket))) > v and sum by (app) (inc(motel_app_response_seconds_count)) >= floor`, v in seconds | `for` | as above | as above |
+| `threshold request_rate` | `sum by (app) (inc(motel_app_requests_total)) / 300 > v` | `for` | as above | as above |
+| `threshold cache_hit_share` | `(HITS or SPOKE * 0) / SPOKE > v and SPOKE >= floor`, both `sum by (app) (inc(motel_app_cache_responses_total))`, HITS over `result=~"hit\|stale"` | `for` | as above | as above |
 | `threshold memory_share` | `max by (app) (motel_app_memory_bytes / motel_app_memory_max_bytes) > v` | `for` | as above | as above |
 | `threshold cpu_cores` | `sum by (app) (rate(motel_app_cpu_seconds_total[5m])) > v` | `for` | as above | as above |
 | `disk_fill` | `min by (path) (predict_linear(motel_disk_avail_bytes[6h], H)) < 0 and min by (path) (predict_linear(motel_disk_avail_bytes[1h], H)) < 0`, H `within` in seconds | 30 m | `path`, `subject="box"`, `kind="state"`, `severity`, `source="rules"`, `key="rules/box/<name>/<path>"`, each filesystem's alert its own key, as `disk_low`'s | the operator |
@@ -377,10 +377,35 @@ With `app`, every selector carries `app="<name>"`, quoted (a name of
 liveswap's own grammar); without, the expression is per app
 (`by (app)`), and the `app` label it carries is what route 6 sends to
 the app's channels, as for `app_memory_high`. The request metrics are
-over a fixed five minutes, through `increase_pure`, never `increase`
-(the store's `increase` drops a new series' first value: "metrics in
-GET /<app>"), and the 5xx share is of the responses sent, as
-`GET /<app>`'s is; CPU is `rate` over the per-unit counters, each from
+over a fixed five minutes, and the 5xx share is of the responses sent, as
+`GET /<app>`'s is. `inc(X)` is a counter's increase over the window
+(notify/operatorrules.go, `counterIncrease`):
+
+```
+((increase_pure(X[5m]) unless present_over_time(X[1d] offset 5m))
+  and on() present_over_time(process_start_time_seconds{job="motel"}[1d] offset 5m))
+or increase(X[5m])
+```
+
+The store's `increase_pure` counts from zero whenever no sample comes
+within about the window before it, and its `increase` drops a first
+value that is large beside the next step (both measured on 1.112.0).
+Neither alone is right: a series new to the store, with the push
+already older than the window, is one of motel's new ones (a release's
+first push after its cutover, a class's first response), counted from
+zero, whose first value `increase` would drop (22 responses read as 0,
+e2e metrics 3a); a series back after a gap in the pushes of over five
+minutes (the store down, or read-only), or one that came with the push
+itself (the metrics line first loaded on a box whose observer had
+counted for hours), holds every count since motel began, which
+`increase_pure` read as the window's own for five minutes (a 20-minute
+gap at 10 a push: 1 730 where 10 was due; /code-review pass 4 on
+operator rules). Where a sample comes just before the window the two
+agree. What is left: a gap of over a day reads as a new series, and a
+release name the store saw within the day, back with a fresh counter
+(a rollback past the two releases the observer keeps), is read through
+`increase`, which drops a first push that is large beside the next.
+CPU is `rate` over the per-unit counters, each from
 zero when its unit starts. The summary says the bound and the value in
 plain words: `shop: the 5xx share of its responses over 5 minutes has
 been above 0.05 for 10m (rule errors_high); now 12.5%`. The threshold
@@ -434,8 +459,9 @@ which moved both windows back off the cutover (measured in e2e metrics
 10: the old release's last half minute read as nothing), so the time
 is given, past the offset:
 
-- **the new release**: `sum by (class) (increase_pure(motel_app_requests_total{app="A",release="NEW"}[<e>s]))`,
-  and with `max_p95`, `histogram_quantile(0.95, sum by (le) (increase_pure(motel_app_response_seconds_bucket{app="A",release="NEW"}[<e>s])))`;
+- **the new release**: `sum by (class) (inc(motel_app_requests_total{app="A",release="NEW"}))`,
+  and with `max_p95`, `histogram_quantile(0.95, sum by (le) (inc(motel_app_response_seconds_bucket{app="A",release="NEW"})))`,
+  `inc` the threshold rules' over `[<e>m]` (its guards' offsets moved by the window and any offset);
 - **the old**, asked only once the new is over a bound: the same over
   `release="OLD"` with `[<e+30>s] offset <e−30>s`, its last e before
   the cutover and one push past it: its answers in the last half minute
@@ -838,7 +864,7 @@ motel's shutdown leaving `rules.yml`'s alerting rules, and a reload
 without the `metrics` line (and its rule lines) writing none; a restart without it
 writing none too, and vmalert loading zero alerting rules after;
 the operator's rules (e2e/metrics/Caddyfile's four `rule` lines): the
-`motel-operator` group in `rules.yml` through `increase_pure`, keyed
+`motel-operator` group in `rules.yml` through the counter guard (`inc`), keyed
 `rules/<subject>/<name>`, with no post_deploy in it, vmalert loading
 it, an every-app `5xx_share` threshold firing for shop (whose site
 answers 503) and reaching Alertmanager with `app="shop"`,
