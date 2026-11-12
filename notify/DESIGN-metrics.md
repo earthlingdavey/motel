@@ -847,7 +847,8 @@ Alertmanager's. The store's:
    files, so that `127.0.0.1:9093` is free for Alertmanager's socket,
    and says so;
 6. `daemon-reload`, `unmask`; then, unless `motel-am-metrics.socket` is
-   active, one `systemctl restart prometheus-alertmanager.service`
+   active, one `systemctl restart prometheus-alertmanager.service` (a
+   start, and said so, when it was not running)
    (its transaction starts the namespace and the socket first), and
    says which it did;
 7. `enable --now` the namespace, the store, both sockets and vmalert,
@@ -1085,6 +1086,7 @@ on its general scales. metrics' examples:
 | `--metrics` now restarts a running Alertmanager once: one that runs on a config it could not load again (a render it refused at its reload, a storage path gone unwritable) does not come back, and notify is down until the console | notify/metricssetup.go (`amListenInNamespace`) | 4 | 2 | 1 | 8; two faults, an Alertmanager whose next start would fail and a setup run meanwhile; setup ends on the restart's error with systemd's words, and Alertmanager's own journal names the cause. Checking its config first (`amtool check-config`) is a probe of a state motel's own renders already hold to (size 2, risk 2). /code-review pass 1 on #435 |
 | A failed re-run whose own restart of Alertmanager failed restarts it once more in the put-back, and says the failure twice | notify/metricssetup.go (`then`) | 2 | 2 | 1 | 4; the second try is a retry of the step that failed, and setup ends on the error either way; remembering that the restart ran is a state carried into the put-back (size 2). /code-review pass 1 on #435 |
 | A re-run over the proxy shape that fails after the new units are written but before the proxy is retired (a full disk at the state directory) leaves both shapes on disk: the put-back's reload gives Alertmanager the drop-in, whose socket then fails at its next start (the proxy holds 9093), and the proxy carries vmalert's posts as before | notify/metricssetup.go | 2 | 3 | 1 | 6; setup ends on the error, and its next run finishes the upgrade; vmalert keeps its outlet throughout. Retiring the proxy before the writes instead leaves no outlet after the same failure. /code-review pass 1 on #435 |
+| A re-run rewrites `motel-am-metrics.socket` but, with it active, restarts neither it nor Alertmanager: a socket whose `ListenStream=` or namespace a later binary changed keeps the old listener until the namespace restarts or the box reboots, while setup says Alertmanager was left as it runs | notify/metricssetup.go (`amListenInNamespace`) | 2 | 2 | 3 | 12; no binary has changed it, and `motel-vm.socket` and the namespace unit are alike (a re-run leaves them running too: the Owed row's `ExecStartPre`); a restart of the socket when its file changed is a comparison and a new step, to measure (size 2, risk 2). /code-review pass 2 on #435 |
 
 ### Owed
 

@@ -91,7 +91,7 @@ func metricsSetup(sys system, root string, out io.Writer) (err error) {
 	rerun := isFile(at(filepath.Join(unitDir, vmService+".d", "10-motel.conf")))
 
 	if _, err := os.Stat(at(socketPath)); errors.Is(err, fs.ErrNotExist) {
-		return fmt.Errorf("%s is missing: Alertmanager's setup has not run, and vmalert posts to its socket", socketPath)
+		return fmt.Errorf("%s is missing: Alertmanager's setup has not run, and vmalert's outlet is Alertmanager", socketPath)
 	} else if err != nil {
 		return err
 	}
@@ -103,9 +103,9 @@ func metricsSetup(sys system, root string, out io.Writer) (err error) {
 		return err
 	}
 	say("masked %s, so the install starts nothing", vmService)
-	// Set when setup reaches the proxy shape's retirement (every unit is
-	// written by then): from there on a failure may leave vmalert no
-	// outlet unless Alertmanager takes up its socket in the namespace.
+	// Set when the proxy shape's port is free (every unit is written by
+	// then): from there on a failure may leave vmalert no outlet unless
+	// Alertmanager takes up its socket in the namespace.
 	retired := false
 	defer putBackOnFailure(sys, say, rerun, vmService, []string{vmSocket}, []string{vmService, vmalertUnit}, func() error {
 		if !retired {
@@ -186,9 +186,11 @@ func metricsSetup(sys system, root string, out io.Writer) (err error) {
 	// The proxy shape's socket holds 127.0.0.1:9093 in the namespace,
 	// which Alertmanager's own socket binds next: it goes first, before
 	// the reload, with its proxy.
-	retired = true
 	// Each by its own file, so a retirement cut short (a remove that
-	// failed) is finished by the next run.
+	// failed) is finished by the next run. The put-back's restart is
+	// armed once the port is free: with no proxy socket, or once it is
+	// stopped, not while it still carries vmalert's posts.
+	retired = !isFile(at(filepath.Join(unitDir, oldAMProxySocket)))
 	var gone []string
 	for _, u := range []string{oldAMProxySocket, oldAMProxyService} {
 		if !isFile(at(filepath.Join(unitDir, u))) {
@@ -197,6 +199,7 @@ func metricsSetup(sys system, root string, out io.Writer) (err error) {
 		if err := sys.run("systemctl", "disable", "--now", u); err != nil {
 			return err
 		}
+		retired = true
 		if err := os.Remove(at(filepath.Join(unitDir, u))); err != nil && !errors.Is(err, fs.ErrNotExist) {
 			return err
 		}
@@ -254,9 +257,15 @@ func amListenInNamespace(sys system, say func(string, ...any)) error {
 		say("Alertmanager listens in the namespace already (%s): left as it runs", amNSSocket)
 		return nil
 	}
+	// Not running (its socket starts it at the first connection), the
+	// restart is a start, and nothing it held is lost: said so.
+	did := "restarted"
+	if sys.run("systemctl", "is-active", "--quiet", amService) != nil {
+		did = "started"
+	}
 	if err := sys.run("systemctl", "restart", amService); err != nil {
 		return err
 	}
-	say("restarted Alertmanager, once, so that it listens in the namespace (%s) beside its unix socket", amNSSocket)
+	say("%s Alertmanager, once, so that it listens in the namespace (%s) beside its unix socket", did, amNSSocket)
 	return nil
 }

@@ -134,7 +134,7 @@ wrote /etc/systemd/system/prometheus-alertmanager.service.d/20-motel-metrics.con
 wrote /etc/systemd/system/motel-vmalert.service
 wrote /var/lib/motel-metrics/scrape.yml
 wrote /var/lib/motel-metrics/rules.yml
-restarted Alertmanager, once, so that it listens in the namespace (motel-am-metrics.socket) beside its unix socket
+started Alertmanager, once, so that it listens in the namespace (motel-am-metrics.socket) beside its unix socket
 the store listens on /run/motel-metrics/vm.sock only, its TCP in the motel-metrics namespace
 reloaded motel, which renders the store's rules into /var/lib/motel-metrics/rules.yml and pushes
 ```
@@ -148,7 +148,7 @@ so run it at a quiet moment. `--metrics` on a box where Alertmanager is
 already set up redoes only the store. The first time, and after an
 upgrade from a build whose store reached Alertmanager through a proxy
 (setup says `retired motel-am-proxy.socket …`), it restarts
-Alertmanager once, so that Alertmanager holds its own listener in the
+Alertmanager once (`started`, here, where nothing had started it yet), so that Alertmanager holds its own listener in the
 store's namespace; later runs leave it running.
 
 Each test answers within about 15 seconds:

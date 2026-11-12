@@ -103,14 +103,14 @@ for a in 127.0.0.1:8428 127.0.0.1:8880 127.0.0.1:9093; do
 	case " $inside" in *" $a "*) pass "in the namespace: $a" ;; *) fail "not in the namespace: $a (it holds: $inside)" ;; esac
 done
 # With no namespace before setup, the unit's first start takes the path a
-# cold boot takes: its delete of a leftover exits 0, not as an error the
-# `-` ignores (`ip netns delete` of none exits 1 and logs it).
-pre=$(systemctl show -p ExecStartPre --value motel-metrics-netns)
-case "$ns_before:$pre" in :*"code=exited ; status=0 }"*)
-	pass "the namespace's first start, with none before: its leftover's delete exited 0" ;;
-*) fail "the namespace's ExecStartPre, with '$ns_before' there before setup: $pre" ;; esac
-# Run again: after the check above, which reads the namespace unit's
-# first start, since a daemon-reload drops what systemd recorded of it.
+# cold boot takes: no delete of a leftover, so no error the `-` ignores
+# (`ip netns delete` of none exits 1 and logs it). Read in the journal:
+# setup's `enable`, after the start, reloads systemd, which drops the
+# ExecStartPre status it recorded.
+nsj=$(journalctl -u motel-metrics-netns -o cat --no-pager)
+[ -z "$ns_before" ] && printf '%s\n' "$nsj" | grep -q '^Finished motel-metrics-netns' && ! printf '%s\n' "$nsj" | grep -qi 'cannot remove namespace' \
+	&& pass "the namespace's first start, with none before: no leftover's delete, no error logged" \
+	|| fail "the namespace's first start, with '$ns_before' there before setup: $(printf '%s' "$nsj" | tail -5 | tr '\n' ';')"
 am_run=$(aminv)
 sleep 1
 since=$(date '+%Y-%m-%d %H:%M:%S')

@@ -94,7 +94,7 @@ func putBackOnFailure(sys system, say func(string, ...any), rerun bool, service 
 			}
 		}
 		if len(failed) > 0 {
-			say("setup failed, and so did putting %s back as it was (%s): check that it is unmasked and running", service, strings.Join(failed, "; "))
+			say("setup failed, and so did putting %s back as it was (%s): check that it is unmasked and running, and each unit named there", service, strings.Join(failed, "; "))
 			return
 		}
 		say("setup failed; %s is unmasked again, and %s started", service, strings.Join(start, " and "))

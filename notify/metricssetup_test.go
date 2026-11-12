@@ -52,6 +52,7 @@ func TestMetricsSetupOrderAndFiles(t *testing.T) {
 		"systemctl daemon-reload",
 		"systemctl unmask victoria-metrics.service",
 		"systemctl is-active --quiet motel-am-metrics.socket",
+		"systemctl is-active --quiet prometheus-alertmanager.service",
 		"systemctl restart prometheus-alertmanager.service",
 		"systemctl enable --now motel-metrics-netns.service victoria-metrics.service motel-vm.socket motel-am-metrics.socket motel-vmalert.service",
 		"systemctl restart motel-vmalert.service",
@@ -226,7 +227,7 @@ func TestMetricsSetupRetiresTheProxyShape(t *testing.T) {
 		t.Fatalf("commands: %v; want the proxy's units disabled, then the reload, Alertmanager's restart and the enable", f.cmds)
 	}
 	n := 0
-	for _, c := range f.cmds {
+	for _, c := range acts(f.cmds) {
 		if strings.Contains(c, amService) {
 			n++
 		}
@@ -253,7 +254,7 @@ func TestMetricsSetupRetiresTheProxyShape(t *testing.T) {
 	}
 	n = len(f.cmds)
 	if want := []string{"systemctl unmask victoria-metrics.service", "systemctl start motel-vm.socket victoria-metrics.service motel-vmalert.service",
-		notListening, "systemctl restart " + amService}; n < 4 || !slices.Equal(f.cmds[n-4:], want) {
+		notListening, "systemctl is-active --quiet " + amService, "systemctl restart " + amService}; n < 5 || !slices.Equal(f.cmds[n-5:], want) {
 		t.Errorf("put-back: %v; want it to end %v", f.cmds, want)
 	}
 	if !strings.Contains(out.String(), "victoria-metrics.service is unmasked again") {
@@ -498,5 +499,31 @@ func TestMetricsSetupFinishesAnUnfinishedAlertmanagerSetup(t *testing.T) {
 		if am != 0 || unmask < 0 || vm <= unmask {
 			t.Errorf("%s: --metrics after a failed first setup: %v; want Alertmanager's setup, whole, then the store's", c.name, done)
 		}
+	}
+}
+
+// /code-review pass 2 on #435. With notify's drop-in gone, Alertmanager
+// would run Debian's command (:9093, 0.0.0.0:9094): --metrics runs
+// Alertmanager's setup first, which writes it again, rather than the
+// store's alone, which may restart Alertmanager. And an Alertmanager
+// that is not running is started, not restarted, and setup says so.
+func TestMetricsSetupNeedsNotifysDropIn(t *testing.T) {
+	root := t.TempDir()
+	if err := runSetup(&fakeSystem{}, root, &bytes.Buffer{}, false); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(root, dropInPath)); err != nil {
+		t.Fatal(err)
+	}
+	f := &fakeSystem{isInstalled: true, failOn: "systemctl is-active --quiet " + amNSSocket + "|systemctl is-active --quiet " + amService}
+	var out bytes.Buffer
+	if err := runSetup(f, root, &out, true); err != nil {
+		t.Fatal(err)
+	}
+	if acts(f.cmds)[0] != "systemctl mask "+amService || !isFile(filepath.Join(root, dropInPath)) {
+		t.Fatalf("--metrics with notify's drop-in gone: %v; want Alertmanager's setup first, the drop-in written again", f.cmds)
+	}
+	if !strings.Contains(out.String(), "started Alertmanager, once, so that it listens in the namespace") || strings.Contains(out.String(), "restarted Alertmanager") {
+		t.Errorf("Alertmanager not running: setup said\n%s\nwant it started, not restarted", out.String())
 	}
 }

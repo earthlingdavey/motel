@@ -336,7 +336,7 @@ alert again within a minute, and a one-shot waiting in a group is
 lost. On a box built at b7754fc or later whose store still reaches
 Alertmanager through a proxy (`/etc/systemd/system/motel-am-proxy.socket`
 is there), `motel monitor setup --metrics` is due, as above, and
-`motel monitor setup` is not. Otherwise, on a box built at b7754fc or later, the units differ from the
+`motel monitor setup` is not. Going back to such a build later, root first runs `systemctl disable --now motel-am-metrics.socket`, removes it and `prometheus-alertmanager.service.d/20-motel-metrics.conf` from `/etc/systemd/system`, and runs `systemctl daemon-reload`: that build's `setup --metrics` cannot otherwise bind its proxy's 9093. Otherwise, on a box built at b7754fc or later, the units differ from the
 old setups' only in their comments and in the `Description=` lines,
 which name the old commands (`systemctl status` shows
 `(motel notify setup)` until they are rewritten). Running both setups

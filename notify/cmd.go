@@ -278,14 +278,17 @@ func runSetup(sys system, root string, out io.Writer, metrics bool) error {
 }
 
 // amSetUp reports an Alertmanager setup that ran to its end: the socket
-// unit written, the service not masked, and the socket enabled and
+// unit and the drop-in written, the service not masked, and the socket enabled and
 // active. A first setup writes the socket unit before it unmasks the
 // service and enables the socket, so the file alone would take one that
 // failed between for a working Alertmanager, masked and deaf (Copilot
 // round 1 on #428); then Alertmanager's setup runs again, which is its
 // recovery, and touches nothing that works.
 func amSetUp(sys system, root string) bool {
-	if !isFile(filepath.Join(root, socketPath)) {
+	// The drop-in too: without it Alertmanager runs Debian's command,
+	// on :9093 and 0.0.0.0:9094, and the store's setup may restart it
+	// (/code-review pass 2 on #435).
+	if !isFile(filepath.Join(root, socketPath)) || !isFile(filepath.Join(root, dropInPath)) {
 		return false
 	}
 	// `systemctl mask` is a link to /dev/null where the unit would be.
