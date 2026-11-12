@@ -407,7 +407,7 @@ func TestSetupSaysWhatTheLoadedConfigDoes(t *testing.T) {
 		{`{"metrics":{}}`, nil, false, "whose config has no monitor block with channels"},
 		{`{"metrics":{}}`, nil, true, "reloaded motel, which renders the store's rules into /var/lib/motel-metrics/rules.yml and pushes"},
 		{channels, nil, true, "whose config has no monitor block with a metrics line: nothing is pushed until there is one"},
-		{"", errors.New("dial unix /run/motel/admin.sock: connect: no such file or directory"), false, "motel did not answer on its admin socket (is it running?)"},
+		{"", errors.New("dial unix /run/motel/admin.sock: connect: no such file or directory"), false, "motel did not answer on its admin socket, unix//run/motel/admin.sock (dial unix /run/motel/admin.sock: connect: no such file or directory): it is not running, or its Caddyfile sets another admin address or none"},
 	} {
 		got := loadedSays(&fakeSystem{monitor: c.monitor, monitorErr: c.err}, c.metrics)
 		if !strings.Contains(got, c.want) {

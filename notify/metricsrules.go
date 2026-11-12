@@ -102,6 +102,7 @@ func channelFailedRules(n *App) vmGroup {
 	}
 	type told struct{ channel, integration, suspects string }
 	receivers := map[told][]string{}
+	audience := failureAudience(n.cfg)
 	for name, chans := range n.receivers {
 		var ints []string
 		for _, ch := range chans {
@@ -111,7 +112,7 @@ func channelFailedRules(n *App) vmGroup {
 		}
 		for _, in := range ints {
 			sus := w.suspects(failedSample{integration: in, receiver: name})
-			for _, op := range failureAudience(n.cfg) {
+			for _, op := range audience {
 				if !slices.Contains(sus, op) {
 					k := told{op, in, strings.Join(sus, ",")}
 					receivers[k] = append(receivers[k], name)

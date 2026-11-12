@@ -2,9 +2,13 @@ package main
 
 import (
 	"bytes"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/smallhoursorg/motel/notify"
 )
 
 // A Caddyfile with a monitor block on a box setup has not run on: what
@@ -24,6 +28,53 @@ func TestTheGateSaysMonitorIsNotSetUp(t *testing.T) {
 		if said != (cmd != "run") {
 			t.Errorf("%s: said %v: %s", cmd, said, stderr.String())
 		}
+	}
+}
+
+// A restart or a boot into a config with no monitor block with channels
+// gives Alertmanager the config that sends nothing: no notify App would
+// take back the last render, and Alertmanager would end what it holds
+// with a recovery that did not happen. A config with channels renders
+// its own at Start and is left alone, and a state directory already
+// holding the config that sends nothing is not touched again.
+func TestTheGateSendsNothingAtABootWithoutChannels(t *testing.T) {
+	config, _ := dirs(t)
+	noBlock := config + "/Caddyfile"
+	write(t, noBlock, "{\n\tadmin off\n}\n", 0o644)
+	withBlock := config + "/Caddyfile.notify"
+	write(t, withBlock, "{\n\tadmin off\n\tmonitor {\n\t\tchannel ops ntfy {secret.NOTIFY_OPS_URL}\n\t\toperator ops\n\t}\n}\n", 0o644)
+	state := t.TempDir()
+	wasDir, wasSock := notifyStateDir, notifySocket
+	notifyStateDir, notifySocket = state, filepath.Join(t.TempDir(), "absent.sock")
+	t.Cleanup(func() { notifyStateDir, notifySocket = wasDir, wasSock })
+	rendered := func() {
+		write(t, filepath.Join(state, notify.ConfigName), "# Rendered by motel\nreceivers: [ops]\n", 0o640)
+		write(t, filepath.Join(state, "url-NOTIFY_OPS_URL"), "https://ntfy.sh/ops\n", 0o640)
+	}
+	rendered()
+	var stderr bytes.Buffer
+	gate([]string{"run", "--config", withBlock}, &stderr)
+	if b, _ := os.ReadFile(filepath.Join(state, notify.ConfigName)); !strings.Contains(string(b), "Rendered by motel") || strings.Contains(stderr.String(), notify.SendNothingMessage) {
+		t.Fatalf("a config with channels: %q, said %q", b, stderr.String())
+	}
+	for _, cmd := range []string{"validate", "reload"} {
+		stderr.Reset()
+		gate([]string{cmd, "--config", noBlock}, &stderr)
+		if strings.Contains(stderr.String(), notify.SendNothingMessage) {
+			t.Fatalf("%s wrote: %s", cmd, stderr.String())
+		}
+	}
+	stderr.Reset()
+	gate([]string{"run", "--config", noBlock}, &stderr)
+	b, _ := os.ReadFile(filepath.Join(state, notify.ConfigName))
+	_, urlErr := os.Stat(filepath.Join(state, "url-NOTIFY_OPS_URL"))
+	if !strings.Contains(string(b), "receiver: blackhole") || !os.IsNotExist(urlErr) || !strings.Contains(stderr.String(), notify.SendNothingMessage) {
+		t.Fatalf("a boot without the block: %q, url file %v, said %q", b, urlErr, stderr.String())
+	}
+	stderr.Reset()
+	gate([]string{"run", "--config", noBlock}, &stderr)
+	if strings.Contains(stderr.String(), notify.SendNothingMessage) {
+		t.Fatalf("the config that sends nothing was written again: %s", stderr.String())
 	}
 }
 

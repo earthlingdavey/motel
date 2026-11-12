@@ -430,6 +430,7 @@ else
 	fail "Alertmanager holds no removal_probe to end"
 fi
 cp /tmp/Caddyfile.before /etc/motel/Caddyfile
+systemctl reload motel || fail "the reload that puts the block back"
 
 echo
 if [ "$FAILURES" -ne 0 ]; then

@@ -2,12 +2,14 @@ package notify
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 )
 
 // What cmd/motel's gate says of a config's monitor block before Caddy's
@@ -62,6 +64,39 @@ func ReadsSecrets(monitor []byte) bool {
 	}
 	return !a.storeAlone()
 }
+
+// SendNothing is the gate's at `motel run` with a config that runs no
+// notify (no monitor block, or a metrics line alone): such a config
+// starts no notify App, so nothing in it would take back the render a
+// config with channels left in the state directory, and Alertmanager,
+// still running it across motel's restart, would end what it holds at
+// resolve_timeout with a recovery that did not happen on every channel
+// (the reload's case is engine.release's). It writes setup's config
+// that sends nothing into dir, setup's state directory, removes the URL
+// files, and has Alertmanager on socket reload only when that changed anything: a
+// box whose block never had channels starts no Alertmanager for it. It
+// reports whether it changed anything; a box Alertmanager is not set up
+// on has nothing to change, and is no error.
+func SendNothing(dir, socket string) (bool, error) {
+	changed, _, err := writeState(dir, defaultConfig, map[string]string{})
+	if errors.Is(err, errNotSetUp) || err == nil && !changed {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), amRequestTimeout)
+	defer cancel()
+	err = newAMClient(socket).reload(ctx)
+	if errors.Is(err, fs.ErrNotExist) || errors.Is(err, syscall.ECONNREFUSED) {
+		return true, nil // not running: it reads the file when it starts
+	}
+	return true, err
+}
+
+// SendNothingMessage is what the gate says when SendNothing changed the
+// state directory.
+const SendNothingMessage = "monitor: this config has no monitor block with channels: Alertmanager was given the config that sends nothing, so what it held ends without a message"
 
 // missing reports a state directory setup has not made.
 func missing(dir string) bool {

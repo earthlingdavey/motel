@@ -145,20 +145,41 @@ func (hostSystem) lookupGroup(name string) (int, error) {
 	return strconv.Atoi(g.Gid)
 }
 
+// loadedWait bounds setup's read of the running config: Caddy's admin
+// client has no deadline of its own, and a motel holding a load would
+// otherwise keep setup waiting after its work is done.
+const loadedWait = 10 * time.Second
+
 func (hostSystem) loadedMonitor() ([]byte, error) {
-	resp, err := caddycmd.AdminAPIRequest(defaultAdmin, http.MethodGet, "/config/apps", nil, nil)
-	if err != nil {
-		return nil, err
+	type answer struct {
+		monitor []byte
+		err     error
 	}
-	defer func() { _ = resp.Body.Close() }()
-	var apps map[string]json.RawMessage
-	if err := json.NewDecoder(io.LimitReader(resp.Body, 16<<20)).Decode(&apps); err != nil {
-		return nil, err
+	done := make(chan answer, 1)
+	go func() {
+		resp, err := caddycmd.AdminAPIRequest(defaultAdmin, http.MethodGet, "/config/apps", nil, nil)
+		if err != nil {
+			done <- answer{nil, err}
+			return
+		}
+		defer func() { _ = resp.Body.Close() }()
+		var apps map[string]json.RawMessage
+		if err := json.NewDecoder(io.LimitReader(resp.Body, 16<<20)).Decode(&apps); err != nil {
+			done <- answer{nil, err}
+			return
+		}
+		if m := apps[appID]; len(m) > 0 && string(m) != "null" {
+			done <- answer{m, nil}
+			return
+		}
+		done <- answer{nil, nil}
+	}()
+	select {
+	case a := <-done:
+		return a.monitor, a.err
+	case <-time.After(loadedWait):
+		return nil, fmt.Errorf("no answer within %s", loadedWait)
 	}
-	if m := apps[appID]; len(m) > 0 && string(m) != "null" {
-		return m, nil
-	}
-	return nil, nil
 }
 
 // loadedSays is what setup says once it has reloaded motel, by what the
@@ -169,9 +190,9 @@ func loadedSays(sys system, metrics bool) string {
 	raw, err := sys.loadedMonitor()
 	if err != nil {
 		if metrics {
-			return "motel did not answer on its admin socket (is it running?): once it runs a monitor block with a metrics line, it renders the store's rules and pushes"
+			return "motel did not answer on its admin socket, " + defaultAdmin + " (" + err.Error() + "): it is not running, or its Caddyfile sets another admin address or none; once it runs a monitor block with a metrics line, it renders the store's rules and pushes"
 		}
-		return "motel did not answer on its admin socket (is it running?): once it runs a monitor block with channels, it renders them into " + filepath.Join(DefaultStateDir, ConfigName)
+		return "motel did not answer on its admin socket, " + defaultAdmin + " (" + err.Error() + "): it is not running, or its Caddyfile sets another admin address or none; once it runs a monitor block with channels, it renders them into " + filepath.Join(DefaultStateDir, ConfigName)
 	}
 	var a App
 	has := raw != nil && json.Unmarshal(raw, &a) == nil

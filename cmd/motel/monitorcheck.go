@@ -32,6 +32,33 @@ func warnMonitor(cmd string, monitor []byte, stderr io.Writer) {
 	}
 }
 
+// notifyStateDir and notifySocket are setup's state directory and
+// Alertmanager's socket (notify's defaults): a config with no monitor
+// block names neither. Variables only so a test can stand others in.
+var (
+	notifyStateDir = notify.DefaultStateDir
+	notifySocket   = notify.DefaultSocket
+)
+
+// sendNothing is the gate's at `motel run` alone, for a config whose
+// monitor block runs no notify (none, or a metrics line alone): it
+// starts no notify App, so nothing would take back the render a config
+// with channels left, and Alertmanager would end what it holds at
+// resolve_timeout with a recovery that did not happen
+// (notify.SendNothing). A reload's case is notify's own
+// (engine.release); a config that runs notify renders its own at Start.
+func sendNothing(monitor []byte, stderr io.Writer) {
+	if notify.ReadsSecrets(monitor) {
+		return
+	}
+	switch changed, err := notify.SendNothing(notifyStateDir, notifySocket); {
+	case err != nil:
+		_, _ = fmt.Fprintf(stderr, "ERROR: monitor: this config has no monitor block with channels, and Alertmanager was not given the config that sends nothing: what it holds may reach the channels as a recovery that did not happen: %v\n", err)
+	case changed:
+		_, _ = fmt.Fprintln(stderr, notify.SendNothingMessage)
+	}
+}
+
 // reloadForces reports whether `motel reload` must load the config even
 // when it is unchanged: a monitor block with channels reads the box's
 // secrets file at every load, which the config does not hold, so a
