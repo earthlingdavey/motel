@@ -120,7 +120,7 @@ vmalert -dryRun -rule="$STATE/rules.yml" >/tmp/dry.out 2>&1 \
 # for want of them: each must run here, none skip. The list is every
 # test that calls vmTool (TestE2EMetricsListsEveryVMAlertTest).
 vmtests='^(TestRenderedRulesPassVMAlertDryRun|TestRenderedRulesFireAsMotelsAlerts|TestOperatorRulesPassVMAlertDryRun|TestOperatorRulesFire|TestOperatorRulesCountAfterAGap|TestOperatorRulesHistogramIsReadWhole|TestDiskFillHistoryOverAGap|TestDiskFillStepIsNoTrend)$'
-nvm=$(printf '%s' "$vmtests" | tr '|' '\n' | wc -l)
+nvm=$(printf '%s\n' "$vmtests" | tr '|' '\n' | wc -l)
 (cd /tmp && notify.test -test.run "$vmtests" -test.v -test.count=1) >/tmp/vmtests.out 2>&1
 [ $? -eq 0 ] && [ "$(grep -c '^--- PASS' /tmp/vmtests.out)" = "$nvm" ] && ! grep -q -- '--- SKIP' /tmp/vmtests.out \
 	&& pass "notify's $nvm vmalert tests run and pass against the box's vmalert and vmalert-tool" \
