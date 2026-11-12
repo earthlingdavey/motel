@@ -272,7 +272,8 @@ func TestOperatorRulesRender(t *testing.T) {
 		"mem":          `max by (app) (motel_app_memory_bytes / motel_app_memory_max_bytes) > 0.8`,
 		"busy":         `sum by (app) (rate(motel_app_cpu_seconds_total{app="shop"}[5m])) > 1.5`,
 		"median":       `histogram_quantile(0.5, sum by (app, le) (` + inc(`motel_app_response_seconds_bucket`) + `)) > 0.2 and sum by (app) (` + inc(`motel_app_response_seconds_count`) + `) >= 20`,
-		"disk_filling": `min by (path) (predict_linear(motel_disk_avail_bytes[6h], 604800)) < 0 and min by (path) (predict_linear(motel_disk_avail_bytes[1h], 604800)) < 0`,
+		"disk_filling": `min by (path) (predict_linear(motel_disk_avail_bytes[42h], 604800)) < 0 and min by (path) (predict_linear(motel_disk_avail_bytes[7h], 604800)) < 0` +
+			` and max by (path) (present_over_time(motel_disk_avail_bytes[7h] offset 35h))`,
 	} {
 		r := rules[name]
 		if r.Expr != want {
@@ -305,7 +306,7 @@ func TestOperatorRulesRender(t *testing.T) {
 		"errors_high":  {"10m", "{{ $labels.app }}: the 5xx share of its responses over 5 minutes has been above 0.05 for 10m (rule errors_high); now {{ $value | humanizePercentage }}"},
 		"shop_slow":    {"15m", "shop: its p95 time to headers over 5 minutes has been above 1.5s for 15m (rule shop_slow); now {{ $value | humanizeDuration }}"},
 		"blog_quiet":   {"1h", "blog: its requests a second over 5 minutes has been below 0.1 for 1h (rule blog_quiet); now {{ $value | humanize }}"},
-		"disk_filling": {"30m", "the filesystem holding {{ $labels.path }} is predicted to fill within 7d (rule disk_filling)"},
+		"disk_filling": {"210m", "the filesystem holding {{ $labels.path }} is predicted to fill within 7d (rule disk_filling)"},
 	} {
 		if r := rules[name]; r.For != want[0] || r.Annotations["summary"] != want[1] {
 			t.Errorf("%s: for %q, summary %q; want %q, %q", name, r.For, r.Annotations["summary"], want[0], want[1])
@@ -474,6 +475,62 @@ tests:
         groupname: motel-operator
         alertname: busy
         exp_alerts: []
+`
+	runUnittest(t, tool, dir, test)
+}
+
+// disk_fill's shape is the store's own rule's up to a day, and scaled
+// to the horizon beyond it.
+func TestDiskFillShape(t *testing.T) {
+	for _, c := range []struct {
+		within, long, short, hold time.Duration
+	}{
+		{time.Hour, 6 * time.Hour, time.Hour, 30 * time.Minute},
+		{24 * time.Hour, 6 * time.Hour, time.Hour, 30 * time.Minute},
+		{36 * time.Hour, 9 * time.Hour, 90 * time.Minute, 45 * time.Minute},
+		{7 * 24 * time.Hour, 42 * time.Hour, 7 * time.Hour, 210 * time.Minute},
+		{30 * 24 * time.Hour, 180 * time.Hour, 30 * time.Hour, 15 * time.Hour},
+		{25*time.Hour + 7*time.Second, 6*time.Hour + 15*time.Minute, 62 * time.Minute, 31 * time.Minute},
+	} {
+		if l, s, h := diskFillShape(c.within); l != c.long || s != c.short || h != c.hold {
+			t.Errorf("within %s: %s, %s, %s; want %s, %s, %s", c.within, l, s, h, c.long, c.short, c.hold)
+		}
+	}
+}
+
+// A one-off step of a fifth of the free space (a deploy's extraction, a
+// staged backup) is no trend at 7d, whose 6 h and 1 h windows fired on
+// it within the hour; a disk that fills in three and a half days does
+// fire.
+func TestDiskFillStepIsNoTrend(t *testing.T) {
+	tool := vmTool(t, "vmalert-tool")
+	dir := t.TempDir()
+	a := rulesApp(t, "rule disk_week disk_fill within 7d")
+	if err := os.WriteFile(filepath.Join(dir, RulesName), renderRules(a), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	test := `rule_files: [rules.yml]
+evaluation_interval: 1m
+tests:
+  - interval: 1m
+    input_series:
+      - series: 'motel_disk_avail_bytes{path="/var/lib/liveswap",job="motel"}'
+        values: '20000000000x3000 16000000000x600'
+      - series: 'motel_disk_avail_bytes{path="/var/lib/caddy",job="motel"}'
+        values: '100000000000-20000000x3600'
+    alert_rule_test:
+      - eval_time: 50h55m
+        groupname: motel-operator
+        alertname: disk_week
+        exp_alerts:
+          - exp_labels: {path: /var/lib/caddy, kind: state, severity: warning, subject: box, source: rules, key: "rules/box/disk_week//var/lib/caddy"}
+            exp_annotations: {summary: "the filesystem holding /var/lib/caddy is predicted to fill within 7d (rule disk_week)"}
+      - eval_time: 53h
+        groupname: motel-operator
+        alertname: disk_week
+        exp_alerts:
+          - exp_labels: {path: /var/lib/caddy, kind: state, severity: warning, subject: box, source: rules, key: "rules/box/disk_week//var/lib/caddy"}
+            exp_annotations: {summary: "the filesystem holding /var/lib/caddy is predicted to fill within 7d (rule disk_week)"}
 `
 	runUnittest(t, tool, dir, test)
 }

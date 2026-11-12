@@ -118,7 +118,10 @@ const (
 	defaultPostDeployMin = 100
 	defaultWindow        = 30 * time.Minute
 	defaultFailures      = 3
-	diskFillFor          = 30 * time.Minute
+	// diskFillWindow is disk_fill's long window up to a within of
+	// diskFillScale: the store's own rule's shape (diskFillShape).
+	diskFillWindow = 6 * time.Hour
+	diskFillScale  = 24 * time.Hour
 )
 
 var (
@@ -644,20 +647,41 @@ func thresholdExpr(r Rule) string {
 // diskFillRule is the store's disk rule's shape over motel's own disk
 // series, one alert per filesystem, with the horizon from within.
 func diskFillRule(r Rule) vmRule {
-	h := strconv.Itoa(int(time.Duration(r.Within).Seconds()))
+	within := time.Duration(r.Within)
+	long, short, hold := diskFillShape(within)
+	h := strconv.Itoa(int(within.Seconds()))
 	// Each filesystem's alert its own key, as disk_low's: the path is
 	// the instance (<source>/<subject>/<name>/<instance>).
 	labels := ruleLabels(r.Name, r.severity(), "box")
 	labels["key"] += "/{{ $labels.path }}"
 	return vmRule{
 		Alert: r.Name,
-		Expr: "min by (path) (predict_linear(" + diskAvailMetric + "[6h], " + h + ")) < 0" +
-			" and min by (path) (predict_linear(" + diskAvailMetric + "[1h], " + h + ")) < 0",
-		For:    promDuration(diskFillFor),
+		Expr: "min by (path) (predict_linear(" + diskAvailMetric + "[" + promDuration(long) + "], " + h + ")) < 0" +
+			" and min by (path) (predict_linear(" + diskAvailMetric + "[" + promDuration(short) + "], " + h + ")) < 0" +
+			" and max by (path) (present_over_time(" + diskAvailMetric + "[" + promDuration(short) + "] offset " + promDuration(long-short) + "))",
+		For:    promDuration(hold),
 		Labels: labels,
 		Annotations: map[string]string{"summary": fmt.Sprintf("the filesystem holding {{ $labels.path }} is predicted to fill within %s (rule %s)",
-			promDuration(time.Duration(r.Within)), r.Name)},
+			promDuration(within), r.Name)},
 	}
+}
+
+// diskFillShape is disk_fill's two regression windows and its for: the
+// store's own rule's (metrics_store_disk_fill: a day ahead over 6 h and
+// 1 h, held 30 m) up to a within of a day, and beyond it the same shape
+// scaled to the horizon (a quarter, a 24th, a 48th of it), whole
+// minutes. A regression is scale-free, so a one-off step in free space
+// must then be as large a share of it to fire at 30 days as at one
+// (about half); over 6 h, a 30-day horizon fired on a step of 2 %
+// (/code-review pass 4 on operator rules). The rule's third term wants
+// a sample in the long window's first sixth: over less history the
+// windows are shorter than their shape, and a step fires again.
+func diskFillShape(within time.Duration) (long, short, hold time.Duration) {
+	long = diskFillWindow
+	if within > diskFillScale {
+		long = (diskFillWindow * time.Duration(within/time.Minute) / time.Duration(diskFillScale/time.Minute)).Truncate(time.Minute)
+	}
+	return long, (long / 6).Truncate(time.Minute), (long / 12).Truncate(time.Minute)
 }
 
 // promDuration writes d as the store reads a duration: its largest

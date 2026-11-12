@@ -370,7 +370,7 @@ parse, a JSON config's at Provision, both by `motel validate`):
 | `threshold cache_hit_share` | `(HITS or SPOKE * 0) / SPOKE > v and SPOKE >= floor`, both `sum by (app) (inc(motel_app_cache_responses_total))`, HITS over `result=~"hit\|stale"` | `for` | as above | as above |
 | `threshold memory_share` | `max by (app) (motel_app_memory_bytes / motel_app_memory_max_bytes) > v` | `for` | as above | as above |
 | `threshold cpu_cores` | `sum by (app) (rate(motel_app_cpu_seconds_total[5m])) > v` | `for` | as above | as above |
-| `disk_fill` | `min by (path) (predict_linear(motel_disk_avail_bytes[6h], H)) < 0 and min by (path) (predict_linear(motel_disk_avail_bytes[1h], H)) < 0`, H `within` in seconds | 30 m | `path`, `subject="box"`, `kind="state"`, `severity`, `source="rules"`, `key="rules/box/<name>/<path>"`, each filesystem's alert its own key, as `disk_low`'s | the operator |
+| `disk_fill` | `min by (path) (predict_linear(motel_disk_avail_bytes[L], H)) < 0 and min by (path) (predict_linear(motel_disk_avail_bytes[L/6], H)) < 0 and max by (path) (present_over_time(motel_disk_avail_bytes[L/6] offset 5L/6))`, H `within` in seconds, L 6 h up to a `within` of a day and `within`/4 beyond it, in whole minutes | L/12: 30 m up to a day | `path`, `subject="box"`, `kind="state"`, `severity`, `source="rules"`, `key="rules/box/<name>/<path>"`, each filesystem's alert its own key, as `disk_low`'s | the operator |
 | `post_deploy` | motel's queries, below | — | the event `post_deploy_regressed`: `app`, `subject="app:<app>"`, `kind="event"`, `severity="warning"`, `source="rules"`, `key="rules/app:<app>/post_deploy_regressed"`, `release`, `deployed_by`; the rule's name as `detail_rule` | the operator and the app's bound channels |
 
 With `app`, every selector carries `app="<name>"`, quoted (a name of
@@ -411,6 +411,26 @@ plain words: `shop: the 5xx share of its responses over 5 minutes has
 been above 0.05 for 10m (rule errors_high); now 12.5%`. The threshold
 and disk_fill rules are `rules.yml`'s third group, `motel-operator`;
 post_deploy is motel's.
+
+**disk_fill's shape** is the store's own rule's (`metrics_store_disk_fill`:
+a day ahead over 6 h and 1 h, held 30 m) up to a `within` of a day, and
+beyond it the same shape scaled to the horizon: windows of a quarter and
+a 24th of it, held for a 48th (7d: 42 h, 7 h, 3 h 30 m; 30d: 180 h,
+30 h, 15 h), all inside the store's 14 days. A regression is scale-free,
+so a one-off step in free space (a deploy's extraction, a staged backup,
+an image pulled) must then be as large a share of it to fire at 30 days
+as at one, about half of what is free; over 6 h and 1 h, a 30-day
+horizon fired on a step of 2 % and a 7-day one on 8 % (simulated at the
+push's 30 s, and the 7-day case in vmalert-tool; /code-review pass 4 on
+operator rules). The third term wants a sample in the long window's
+first sixth: over less history the windows are shorter than their shape
+and a step fires again, so a rule waits for its history (5 h at a day
+or less, 150 h at 30d) after the store's setup or a filesystem's first
+series. A bound on `within` was the other way: it would refuse the
+week and month horizons a disk is watched over. The `for` kept at 30 m
+would still let a step of a quarter of the free space fire at 30d; a
+`for` longer than the short window would stop any step, but a horizon
+of an hour would wait longer than itself.
 
 **`motel_disk_avail_bytes{path}`** is the box series `disk_fill`
 reads: statfs's available bytes (df's Avail: available blocks of
@@ -771,6 +791,7 @@ or a line of theirs the facts overturned:
 | `ChannelFailed` from vmalert is rendered per told channel with motel's labels | the only form in which Alertmanager deduplicates the two sources |
 | `MemoryMax=256M`, `-memory.allowedBytes=96MiB`, 14 days | the measured working set above; both caps mandatory, since the store sizes its caches from what it can see |
 | The operator's rules are a grammar of fixed kinds with parameters (`threshold`, `disk_fill`, `post_deploy`), never an expression or a template | the review's finding 17: a rule or template a config author writes could pull any app's series, or the box's, into a notification that reaches an app's deployers (T6); a kind reads only motel's own expression, of the app named or each app for itself, so a config author chooses a bound and a duration, never what is read |
+| disk_fill's windows and `for` scale with `within` beyond a day, and wait for their history | a regression extrapolated a hundred times past its window fires on a step; scaled, a step must be the same share of free space at every horizon ("Operator rules", disk_fill's shape). Not a bound on `within`, which would refuse the horizons a disk is watched over. /code-review pass 4 on operator rules |
 | A request metric is over a fixed five minutes, with a floor of 20 by default | long enough for a small app to reach a floor, short enough that a rule fires within its `for` and five minutes; one window keeps the expression motel's. The floor keeps two requests, one of them a 5xx, from being a 50 % share |
 | A relaunch of the release serving starts no post-deploy comparison | it is no new release; the observer's counters are per release, so the old and new instance share them, and a comparison would need the counters split at the cutover (a new state in the observer) to keep the new instance's answers out of the baseline. A relaunch that regresses is told by the threshold rules (Copilot round 2 on #429) |
 | The post-deploy comparison is motel's, not vmalert's, and only tells | vmalert knows neither the cutover nor the release before; #418 and requirement 4: motel never refuses a cutover or rolls back over a number |
