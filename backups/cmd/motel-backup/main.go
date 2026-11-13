@@ -417,9 +417,10 @@ func report(st *record.Status) {
 func showStatus(ctx context.Context, asJSON bool) error {
 	cfg := config()
 	now := time.Now()
-	// A stdout that takes none of it (a full disk) is said, on stderr:
-	// could not tell is still 3, and a report is not 0 that its reader
-	// never got. (A closed pipe is SIGPIPE, as for any command.)
+	// A stdout that takes none of it (a full disk; a closed pipe where
+	// SIGPIPE is ignored, which otherwise ends the command) is said, on
+	// stderr: could not tell is still 3, and a report is not 0 that its
+	// reader never got, but 1.
 	cannot := func(warnings []string, err error) error {
 		if werr := printStatus(os.Stdout, status.CouldNotTell(now, warnings, err.Error()), asJSON); werr != nil {
 			err = fmt.Errorf("%w; and it could not be printed: %w", err, werr)

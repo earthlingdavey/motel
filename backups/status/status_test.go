@@ -521,16 +521,20 @@ func sameTime(a, b *time.Time) bool {
 	return a.Equal(*b)
 }
 
-// An age read off the JSON — at less the time — is the one the verdict
-// judged: no time is cut to the second while the verdict is not.
-func TestAnAgeReadOffTheResultIsTheVerdicts(t *testing.T) {
+// The verdict is the true age's, to the nanosecond, as the text's
+// always was: half a second past stale is stale, though the seconds the
+// JSON gives read exactly StaleAfter.
+func TestTheVerdictIsTheTrueAgesNotTheSeconds(t *testing.T) {
 	when := now.Add(900 * time.Millisecond)
 	st := with(func(a *record.App) {
 		a.LastOK = &record.Snapshot{ID: idA, Time: when.Add(-StaleAfter - 500*time.Millisecond), Seen: at(9 * time.Minute)}
 	})
 	r := Report(Input{Record: st, Now: when})
-	a := r.Apps[0]
-	if age := r.At.Sub(*a.LastCompleteBackup); a.Fresh != (age <= StaleAfter) {
-		t.Errorf("fresh = %v, and the age read off it %v", a.Fresh, age)
+	sameVerdict(t, r)
+	if a := r.Apps[0]; a.Fresh || a.Healthy || !strings.Contains(strings.Join(r.Text(), "\n"), "blog: stale") {
+		t.Errorf("half a second past stale: fresh %v, healthy %v:\n%s", a.Fresh, a.Healthy, strings.Join(r.Text(), "\n"))
+	}
+	if age := r.At.Sub(*r.Apps[0].LastCompleteBackup); age != StaleAfter {
+		t.Errorf("the seconds read %v", age)
 	}
 }
