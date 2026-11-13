@@ -310,7 +310,7 @@ func serveSilence(w http.ResponseWriter, r *http.Request) error {
 	known := append(slices.Clone(active.known), theEngine.known...)
 	theEngine.mu.Unlock()
 	comment := cleanText(known, req.Comment, req.Release)
-	now = now.UTC().Truncate(time.Second)
+	now = now.UTC()
 	s := amSilence{Matchers: req.matchers(), StartsAt: now, EndsAt: now.Add(d), CreatedBy: createdBy(req.By), Comment: comment}
 	id, err := am.postSilence(r.Context(), s)
 	if err != nil {

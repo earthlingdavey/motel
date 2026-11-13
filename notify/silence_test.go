@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/caddyserver/caddy/v2"
 )
@@ -156,6 +157,28 @@ func withFakeAM(t *testing.T) (*testEngine, *silenceAM) {
 	}
 	t.Cleanup(func() { releasesOf = saved })
 	return te, f
+}
+
+// TestSilenceKeepsTheRequestInstant: a request at .9 of a second starts
+// then, not at the whole second before it, so a 1m silence lasts 1m.
+func TestSilenceKeepsTheRequestInstant(t *testing.T) {
+	te, f := withFakeAM(t)
+	te.at = te.at.Truncate(time.Second).Add(900 * time.Millisecond)
+	req := SilenceRequest{Alert: "rollback", App: "shop", Duration: "1m", By: "alice", Comment: "noisy"}
+	if _, err := callAdmin(t, serveSilence, http.MethodPost, req); err != nil {
+		t.Fatal(err)
+	}
+	reqs := f.take()
+	if len(reqs) != 1 {
+		t.Fatalf("Alertmanager got %q", reqs)
+	}
+	var sent amSilence
+	if err := json.Unmarshal([]byte(strings.TrimPrefix(reqs[0], "POST /api/v2/silences ")), &sent); err != nil {
+		t.Fatal(err)
+	}
+	if !sent.StartsAt.Equal(te.at) || sent.EndsAt.Sub(sent.StartsAt) != time.Minute {
+		t.Fatalf("starts %s ends %s, the request at %s", sent.StartsAt, sent.EndsAt, te.at)
+	}
 }
 
 // TestServeSilence pins the request Alertmanager is sent, the answer
