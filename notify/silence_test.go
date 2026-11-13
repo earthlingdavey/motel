@@ -135,7 +135,7 @@ func withFakeAM(t *testing.T) (*testEngine, *silenceAM) {
 	t.Helper()
 	te := withEngine(t)
 	f := &silenceAM{status: http.StatusOK, answer: `{"silenceID":"` + testSilenceID + `"}`, state: "active"}
-	te.active.Socket = unixServe(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	useSocket(t, unixServe(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		b, _ := io.ReadAll(r.Body)
 		f.mu.Lock()
 		f.reqs = append(f.reqs, r.Method+" "+r.URL.Path+" "+string(b))
@@ -146,7 +146,7 @@ func withFakeAM(t *testing.T) (*testEngine, *silenceAM) {
 		f.mu.Unlock()
 		w.WriteHeader(status)
 		_, _ = io.WriteString(w, answer)
-	}))
+	})))
 	te.active.known = te.known // as Provision sets it
 	saved := releasesOf
 	releasesOf = func(_ *App, app string) []string {
@@ -288,7 +288,7 @@ func TestServeSilence(t *testing.T) {
 	}
 
 	// Not set up: 503 naming setup, Alertmanager untouched.
-	te.active.StateDir = filepath.Join(t.TempDir(), "absent")
+	useStateDir(t, filepath.Join(t.TempDir(), "absent"))
 	_ = f.take()
 	if _, err := callAdmin(t, serveSilence, http.MethodPost, goodSilence()); apiStatus(err) != http.StatusServiceUnavailable || !strings.Contains(err.Error(), errNotSetUp.Error()) {
 		t.Fatalf("not set up: %v", err)

@@ -274,7 +274,7 @@ func silenceTarget() (*App, *amClient, *zap.Logger, time.Time, error) {
 	if !active.setUp() {
 		return nil, nil, nil, now, caddy.APIError{HTTPStatus: http.StatusServiceUnavailable, Err: errNotSetUp}
 	}
-	return active, newAMClient(active.socket()), logger, now, nil
+	return active, newAMClient(theSocket), logger, now, nil
 }
 
 func badGateway(err error) error {
