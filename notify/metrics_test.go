@@ -1101,3 +1101,30 @@ func TestMetricsViewRequestsAbsent(t *testing.T) {
 		t.Fatalf("an unknown window: %+v", a)
 	}
 }
+
+// The metrics object with every field set: each key's name and place,
+// as GET /<app> carries it (liveswap's testdata/wire holds the same
+// object inside a status).
+func TestMetricsObjectEveryField(t *testing.T) {
+	at := time.Date(2026, 11, 13, 9, 30, 0, 0, time.UTC)
+	f := func(v float64) *float64 { return &v }
+	m := AppMetrics{
+		Window: "24h", At: &at,
+		Memory:    &memorySumm{Now: f(30), Max: f(40)},
+		MemoryMax: f(100),
+		CPU:       &cpuSummary{Avg5m: f(0.5), Avg: 0.25},
+		Requests: &requestSummary{
+			Total: 10, PerSecond: 0.000116, ByClass: map[string]uint64{"5xx": 1, "2xx": 9},
+			Share5xx: f(0.1), P50: f(1.5), P95: f(20), CacheHitShare: f(0.5),
+		},
+		Error: errViewStore,
+	}
+	got, err := json.Marshal(m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `{"window":"24h","at":"2026-11-13T09:30:00Z","memory_bytes":{"now":30,"max":40},"memory_max_bytes":100,"cpu_cores":{"avg_5m":0.5,"avg":0.25},"requests":{"total":10,"per_second":0.000116,"by_class":{"2xx":9,"5xx":1},"5xx_share":0.1,"p50_ms":1.5,"p95_ms":20,"cache_hit_share":0.5},"error":"the metrics store did not answer"}`
+	if string(got) != want {
+		t.Fatalf("metrics object:\n got %s\nwant %s", got, want)
+	}
+}
