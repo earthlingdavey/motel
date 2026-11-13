@@ -158,7 +158,8 @@ type series struct {
 }
 
 // query is an instant query at the store's present (which is
-// -search.latencyOffset behind the wall clock).
+// -search.latencyOffset behind the wall clock: 5 s as setup writes it,
+// 30 s on a store set up before).
 func (c *storeClient) query(ctx context.Context, q string) ([]series, error) {
 	data, err := c.do(ctx, http.MethodGet, "/api/v1/query?"+url.Values{"query": {q}}.Encode(), nil, "")
 	if err != nil {
@@ -167,11 +168,18 @@ func (c *storeClient) query(ctx context.Context, q string) ([]series, error) {
 	return parseQueryAnswer(data)
 }
 
+// storeLatencyOffset is the store's -search.latencyOffset as setup's
+// drop-in sets it (10-motel.conf), and what queryAt asks for itself.
+const storeLatencyOffset = 5 * time.Second
+
 // queryAt is an instant query at t, to the millisecond, which the
-// store takes as given when it is more than -search.latencyOffset in
-// the past.
+// store takes as given when it is more than its latency offset in the
+// past. The offset is asked for (latency_offset), not taken from the
+// unit: a store set up before setup's 5 s keeps the 30 s default until
+// setup runs again, and post-deploy's storeLag reads past 5 s only.
 func (c *storeClient) queryAt(ctx context.Context, q string, t time.Time) ([]series, error) {
-	v := url.Values{"query": {q}, "time": {strconv.FormatFloat(float64(t.UnixMilli())/1000, 'f', 3, 64)}}
+	v := url.Values{"query": {q}, "time": {strconv.FormatFloat(float64(t.UnixMilli())/1000, 'f', 3, 64)},
+		"latency_offset": {promDuration(storeLatencyOffset)}}
 	data, err := c.do(ctx, http.MethodGet, "/api/v1/query?"+v.Encode(), nil, "")
 	if err != nil {
 		return nil, err

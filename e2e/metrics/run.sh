@@ -304,8 +304,7 @@ code=$(curl -s -o /tmp/range7d -w '%{http_code}' --max-time 5 -H "Authorization:
 
 echo "=== metrics 4: vmalert ==="
 # Setup's first rules.yml is the empty groups and motel writes the real
-# one right after; vmalert re-reads the file once a minute
-# (-configCheckInterval), so wait out one re-read.
+# one right after, which vmalert re-reads within 5 s (-configCheckInterval).
 i=0
 until rules=$(inns curl -s --max-time 5 http://127.0.0.1:8880/api/v1/rules) \
 	&& printf '%s' "$rules" | grep -q '"name":"ChannelFailed"'; do
@@ -595,11 +594,14 @@ i=0
 until ! grep -q 'alert:' "$STATE/rules.yml"; do i=$((i + 1)); [ "$i" -ge 40 ] && break; sleep 0.5; done
 grep -q 'alert:' "$STATE/rules.yml" && fail "rules.yml still has alerting rules: $(grep -c 'alert:' "$STATE/rules.yml")" \
 	|| pass "motel rendered rules.yml with no alerting rule"
-end=$(( $(date +%s) + 100 ))
+# vmalert re-reads a new rules.yml within RELOAD_WAIT: its 5 s
+# -configCheckInterval, where a minute's would mostly miss it.
+RELOAD_WAIT=15
+end=$(( $(date +%s) + RELOAD_WAIT ))
 while [ "$(date +%s)" -lt "$end" ]; do
 	rules=$(inns curl -s --max-time 5 http://127.0.0.1:8880/api/v1/rules)
 	printf '%s' "$rules" | grep -q '"status":"success"' && ! printf '%s' "$rules" | grep -q '"type":"alerting"' && break
-	sleep 5
+	sleep 1
 done
 printf '%s' "$rules" | grep -q '"status":"success"' && ! printf '%s' "$rules" | grep -q '"type":"alerting"' \
 	&& pass "vmalert re-read the rules: zero alerting rules loaded" \
@@ -645,11 +647,11 @@ until grep -q 'alert:' "$STATE/rules.yml"; do i=$((i + 1)); [ "$i" -ge 40 ] && b
 grep -q 'alert:' "$STATE/rules.yml" && pass "the whole block again: rules.yml has alerting rules" || fail "rules.yml has no alerting rule with the whole block"
 # vmalert loads them before the restart, so the zero after it is its
 # re-read of the retired file, not a load it never made.
-end=$(( $(date +%s) + 100 ))
+end=$(( $(date +%s) + RELOAD_WAIT ))
 while [ "$(date +%s)" -lt "$end" ]; do
 	rules=$(inns curl -s --max-time 5 http://127.0.0.1:8880/api/v1/rules)
 	printf '%s' "$rules" | grep -q '"type":"alerting"' && break
-	sleep 5
+	sleep 1
 done
 printf '%s' "$rules" | grep -q '"type":"alerting"' && pass "vmalert loads alerting rules again" || fail "vmalert never loaded the rules again: $(printf '%s' "$rules" | cut -c1-300)"
 cp /tmp/Caddyfile.nostore /etc/motel/Caddyfile
@@ -659,17 +661,23 @@ grep -q 'alert:' "$STATE/rules.yml" && fail "restarted with no metrics line, yet
 	|| pass "restarted with no metrics line: rules.yml has no alerting rule"
 journalctl -u motel --since "$since" -o cat --no-pager | grep -q 'monitor metrics: the metrics line is gone: vmalert is given no rule' \
 	&& pass "journal: the boot retired the rules" || fail "no 'the metrics line is gone' line at the boot"
-end=$(( $(date +%s) + 100 ))
+end=$(( $(date +%s) + RELOAD_WAIT ))
 while [ "$(date +%s)" -lt "$end" ]; do
 	rules=$(inns curl -s --max-time 5 http://127.0.0.1:8880/api/v1/rules)
 	printf '%s' "$rules" | grep -q '"status":"success"' && ! printf '%s' "$rules" | grep -q '"type":"alerting"' && break
-	sleep 5
+	sleep 1
 done
 printf '%s' "$rules" | grep -q '"status":"success"' && ! printf '%s' "$rules" | grep -q '"type":"alerting"' \
 	&& pass "vmalert re-read the rules after the restart: zero alerting rules loaded" \
 	|| fail "vmalert still loads alerting rules after the restart: $(printf '%s' "$rules" | grep -o '"name":"[^"]*","type":"alerting"' | head -5 | tr '\n' ' ')"
 cp /tmp/Caddyfile.both /etc/motel/Caddyfile
 systemctl restart motel && pass "restored: the whole monitor block, restarted" || fail "the restart with the whole monitor block failed"
+# Post-deploy's queryAt asks for its own offset (latency_offset): a time
+# 3 s back is answered as given at 1 s, where the unit's 5 s would move it.
+t3=$(( $(date +%s) - 3 ))
+a=$(vm -G --data-urlencode 'query=time()' --data-urlencode "time=$t3" --data-urlencode 'latency_offset=1s' http://vm/api/v1/query)
+printf '%s' "$a" | grep -q "\"value\":\[$t3," && pass "the store takes a query's own latency_offset" \
+	|| fail "latency_offset=1s at $t3 was not answered as given: $a"
 i=0
 until grep -q 'alert:' "$STATE/rules.yml"; do i=$((i + 1)); [ "$i" -ge 40 ] && break; sleep 0.5; done
 grep -q 'alert:' "$STATE/rules.yml" && pass "a boot with the metrics line writes its rules" || fail "a boot with the metrics line wrote no alerting rule"

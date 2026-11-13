@@ -161,7 +161,7 @@ func (m *MetricsStore) applyRules() {
 	case err != nil:
 		m.logger.Error("monitor metrics: the rules were not written", zap.String("rules", path), zap.Error(err))
 	case changed:
-		m.logger.Info("monitor metrics: wrote the rules; vmalert reads them within a minute", zap.String("rules", path))
+		m.logger.Info("monitor metrics: wrote the rules; vmalert re-reads them within 5 s", zap.String("rules", path))
 	}
 }
 

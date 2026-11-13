@@ -17,7 +17,7 @@ const RulesName = "rules.yml"
 
 const rulesHeader = "# Rendered by motel (notify/DESIGN-metrics.md, \"Rules\").\n" +
 	"# Do not edit: motel rewrites this file on every config load, and vmalert\n" +
-	"# re-reads it within a minute (-configCheckInterval).\n"
+	"# re-reads it within 5 s (-configCheckInterval).\n"
 
 // Label values the store's rules set, beside the kind and severity
 // notify's route tree reads.

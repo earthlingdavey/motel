@@ -30,11 +30,11 @@ const (
 	// postDeployTick is how often the comparator looks for a check due.
 	postDeployTick = 10 * time.Second
 	// storeLag is how far behind the present a check reads the store:
-	// past its -search.latencyOffset (30 s), within which the store
+	// past its latency offset (storeLatencyOffset, which queryAt asks for), within which the store
 	// shifts an instant query's time back by the offset, and so both
 	// windows away from the cutover (measured in e2e metrics 10: the
 	// old release's last half minute read as nothing).
-	storeLag = 35 * time.Second
+	storeLag = 10 * time.Second
 	// p95Margin is how much slower than the old release the new one's
 	// p95 must be, over its bound, to fail a check: a quantile is an
 	// estimate inside a bucket.

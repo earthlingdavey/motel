@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 )
 
 // notifySetUp makes root look like a box where Alertmanager's setup ran.
@@ -363,7 +364,7 @@ func TestMetricsUnitsAreTheMeasuredOnes(t *testing.T) {
 		"Requires=": "keeps Alertmanager from starting while the namespace fails",
 	})
 	has("motel-vmalert.service", unitVMAlert, "User=_victoria-metrics", "NetworkNamespacePath=/run/netns/motel-metrics",
-		"-rule="+DefaultMetricsStateDir+"/"+RulesName+" ", "-configCheckInterval=1m", "-disableAlertgroupLabel",
+		"-rule="+DefaultMetricsStateDir+"/"+RulesName+" ", "-configCheckInterval=5s", "-rule.evalDelay=5s", "-disableAlertgroupLabel",
 		"-notifier.url=http://127.0.0.1:9093", "-remoteWrite.url=http://127.0.0.1:8428", "-remoteRead.url=http://127.0.0.1:8428", "MemoryMax=128M",
 		"After=motel-metrics-netns.service victoria-metrics.service motel-am-metrics.socket\n",
 		// The namespace's start does not start Alertmanager's socket in
@@ -532,5 +533,43 @@ func TestMetricsSetupNeedsNotifysDropIn(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "started Alertmanager, once, so that it listens in the namespace") || strings.Contains(out.String(), "restarted Alertmanager") {
 		t.Errorf("Alertmanager not running: setup said\n%s\nwant it started, not restarted", out.String())
+	}
+}
+
+// unitFlag is the value of flag on the one ExecStart= line of unit that
+// runs exec.
+func unitFlag(t *testing.T, unit []byte, exec, flag string) string {
+	t.Helper()
+	var vals []string
+	for _, l := range strings.Split(string(unit), "\n") {
+		if !strings.HasPrefix(l, "ExecStart="+exec+" ") {
+			continue
+		}
+		for _, f := range strings.Fields(l) {
+			if v, ok := strings.CutPrefix(f, flag+"="); ok {
+				vals = append(vals, v)
+			}
+		}
+	}
+	if len(vals) != 1 {
+		t.Fatalf("%s: %d %s flags, want 1", exec, len(vals), flag)
+	}
+	return vals[0]
+}
+
+// The store's offset, vmalert's evaluation delay, queryAt's own offset
+// and the post-deploy check's lag are one clock: vmalert's help asks the
+// delay to equal the offset, and a check must read past the offset, or
+// the windows move off the cutover.
+func TestStoreClocksAgree(t *testing.T) {
+	offset := unitFlag(t, unitVMDropIn, "/usr/bin/victoria-metrics", "-search.latencyOffset")
+	if delay := unitFlag(t, unitVMAlert, "/usr/bin/vmalert", "-rule.evalDelay"); offset != delay {
+		t.Errorf("-search.latencyOffset %s and -rule.evalDelay %s differ", offset, delay)
+	}
+	if d, err := time.ParseDuration(offset); err != nil || d != storeLatencyOffset {
+		t.Errorf("the drop-in's -search.latencyOffset %s is not queryAt's %s (%v)", offset, storeLatencyOffset, err)
+	}
+	if storeLag <= storeLatencyOffset {
+		t.Errorf("storeLag %s does not read past the latency offset %s", storeLag, storeLatencyOffset)
 	}
 }
