@@ -17,24 +17,17 @@ import (
 )
 
 func goodSilence() SilenceRequest {
-	return SilenceRequest{Matchers: []string{"alertname=disk_low"}, Comment: "resizing the volume", Duration: "2h", By: "alice"}
+	return SilenceRequest{Alert: "disk_low", Comment: "resizing the volume", Duration: "2h", By: "alice"}
 }
 
 func TestSilenceCheck(t *testing.T) {
-	goods := [][]string{
-		{"alertname=disk_low"},
-		{"app=blog", "alertname=~watchdog_.*"},
-		{"alertname=disk_failing", "instance!=/dev/sdb"},
-		{"subject=box", "severity!~critical|warning"},
-		// Watchdog named, and something it does not have: not the heartbeat.
-		{"alertname=Watchdog", "app=blog"},
-		{"severity=none", "alertname!=Watchdog"},
-	}
-	for _, m := range goods {
-		r := goodSilence()
-		r.Matchers = m
+	for _, r := range []SilenceRequest{
+		goodSilence(),
+		{App: "blog", Comment: "c", By: "alice"},
+		{Alert: "deploy_failed", App: "shop", Release: "3f9c2a1be0d4c5f6a7b8c9d0e1f2a3b4c5d6e7f8", Comment: "c", By: "alice"},
+	} {
 		if err := r.Check(); err != nil {
-			t.Errorf("%q: %v", m, err)
+			t.Errorf("%+v: %v", r, err)
 		}
 	}
 	cases := []struct {
@@ -42,25 +35,12 @@ func TestSilenceCheck(t *testing.T) {
 		mod  func(*SilenceRequest)
 		want string
 	}{
-		{"no matcher", func(r *SilenceRequest) { r.Matchers = nil }, "at least one matcher"},
-		{"match everything", func(r *SilenceRequest) { r.Matchers = []string{"alertname=~.*"} }, "label=value with a value"},
-		{"negations alone", func(r *SilenceRequest) { r.Matchers = []string{"alertname!=x", "app!~y"} }, "label=value with a value"},
-		{"empty equality", func(r *SilenceRequest) { r.Matchers = []string{"app="} }, "label=value with a value"},
-		{"empty equality beside a regex", func(r *SilenceRequest) { r.Matchers = []string{"app=", "alertname=~.+"} }, "label=value with a value"},
-		{"Watchdog", func(r *SilenceRequest) { r.Matchers = []string{"alertname=Watchdog"} }, "silence Watchdog"},
-		{"Watchdog by severity", func(r *SilenceRequest) { r.Matchers = []string{"severity=none"} }, "silence Watchdog"},
-		{"Watchdog among", func(r *SilenceRequest) { r.Matchers = []string{"alertname=~Watchdog|disk_low", "severity=none"} }, "silence Watchdog"},
-		{"quoted", func(r *SilenceRequest) { r.Matchers = []string{`alertname="disk_low"`} }, "no quotes"},
-		{"single quoted", func(r *SilenceRequest) { r.Matchers = []string{`alertname='disk_low'`} }, "no quotes"},
-		{"no operator", func(r *SilenceRequest) { r.Matchers = []string{"alertname"} }, "label=value, label!=value"},
-		{"bad name", func(r *SilenceRequest) { r.Matchers = []string{"1app=blog"} }, "label name"},
-		{"spaced", func(r *SilenceRequest) { r.Matchers = []string{"alertname= disk_low"} }, "a space at an end"},
-		{"control", func(r *SilenceRequest) { r.Matchers = []string{"alertname=a\tb"} }, "control character"},
-		{"bad regex", func(r *SilenceRequest) { r.Matchers = []string{"app=blog", "alertname=~(x"} }, "missing closing"},
-		{"long matcher", func(r *SilenceRequest) { r.Matchers = []string{"app=" + strings.Repeat("x", 200)} }, "at most 200 bytes"},
-		{"many", func(r *SilenceRequest) { r.Matchers = make([]string, 17) }, "at most 16"},
-		{"no comment", func(r *SilenceRequest) { r.Comment = " " }, "comment is one line"},
-		{"two lines", func(r *SilenceRequest) { r.Comment = "a\nb" }, "comment is one line"},
+		{"no alert nor app", func(r *SilenceRequest) { r.Alert = "" }, "name --alert, --app or both"},
+		{"a release alone", func(r *SilenceRequest) { r.Alert, r.Release = "", "v3" }, "name --alert, --app or both"},
+		{"a release with a slash", func(r *SilenceRequest) { r.Release = "a/b" }, "--release is a release's name"},
+		{"a release with a dot first", func(r *SilenceRequest) { r.Release = ".x" }, "--release is a release's name"},
+		{"no comment", func(r *SilenceRequest) { r.Comment = " " }, "--comment is one line"},
+		{"two lines", func(r *SilenceRequest) { r.Comment = "a\nb" }, "--comment is one line"},
 		{"long comment", func(r *SilenceRequest) { r.Comment = strings.Repeat("é", 201) }, "201 characters"},
 		{"duration", func(r *SilenceRequest) { r.Duration = "2 hours" }, "a Go duration"},
 		{"too short", func(r *SilenceRequest) { r.Duration = "59s" }, "from 1m to 24h"},
@@ -76,28 +56,26 @@ func TestSilenceCheck(t *testing.T) {
 			if err == nil || !strings.Contains(err.Error(), c.want) {
 				t.Fatalf("err = %v, want %q", err, c.want)
 			}
+			// No refusal echoes a value: Caddy journals a route's refusal.
+			for _, v := range []string{r.Release, r.Duration} {
+				if len(v) > 2 && strings.Contains(err.Error(), v) {
+					t.Fatalf("the refusal echoes %q: %v", v, err)
+				}
+			}
 		})
 	}
-	// A refusal names the matcher, never its value: Caddy journals it.
 	r := goodSilence()
-	for _, m := range []string{`url="https://ntfy.sh/ops-alerts"`, "y=~(x"} {
-		r.Matchers = []string{"alertname=x", m}
-		if err := r.Check(); err == nil || strings.Contains(err.Error(), "ntfy") || strings.Contains(err.Error(), "(x") {
-			t.Fatalf("a refusal echoing its value: %v", err)
-		}
-	}
-	r = goodSilence()
 	r.Duration = ""
-	if _, d, err := r.parse(); err != nil || d != defaultSilence {
+	if d, err := r.parse(); err != nil || d != defaultSilence {
 		t.Fatalf("no duration: %s, %v", d, err)
 	}
-	for _, d := range []string{"1m", "24h"} {
+	for _, d := range []string{"1m", "24h", "60.5s"} {
 		r.Duration = d
 		if err := r.Check(); err != nil {
 			t.Fatalf("%s: %v", d, err)
 		}
 	}
-	if err := (ExpireRequest{ID: "not-an-id", By: "alice"}).Check(); err == nil || !strings.Contains(err.Error(), "not a silence id") {
+	if err := (ExpireRequest{ID: "not-an-id", By: "alice"}).Check(); err == nil || !strings.Contains(err.Error(), "not a silence id") || strings.Contains(err.Error(), "not-an-id") {
 		t.Fatalf("expire of a bad id: %v", err)
 	}
 }
@@ -172,57 +150,76 @@ func withFakeAM(t *testing.T) (*testEngine, *silenceAM) {
 // and the journal line.
 func TestServeSilence(t *testing.T) {
 	te, f := withFakeAM(t)
-	req := goodSilence()
-	req.Matchers = []string{"alertname=disk_low", "app!~blog|shop", "instance=~/var/.*"}
+	req := SilenceRequest{Alert: "deploy_failed", App: "shop", Release: testSha, Duration: "60.5s", By: "alice",
+		Comment: "rolling back " + testSha + ", see https://hooks.slack.com/services/T0/B0/secretpart"} // gitleaks:allow — made up for this test
 	w, err := callAdmin(t, serveSilence, http.MethodPost, req)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got, want := w.Body.String(), `{"id":"`+testSilenceID+`","ends_at":"2026-11-10T14:00:00Z"}`+"\n"; got != want {
+	if got, want := w.Body.String(), `{"id":"`+testSilenceID+`","ends_at":"2026-11-10T12:01:00.5Z"}`+"\n"; got != want {
 		t.Fatalf("answer:\n got %s\nwant %s", got, want)
 	}
+	reqs := f.take()
+	if len(reqs) != 1 {
+		t.Fatalf("Alertmanager got %q", reqs)
+	}
+	// The comment masked as a summary is, the release kept.
+	var sent amSilence
+	if err := json.Unmarshal([]byte(strings.TrimPrefix(reqs[0], "POST /api/v2/silences ")), &sent); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(sent.Comment, "secretpart") || !strings.Contains(sent.Comment, "rolling back "+testSha) {
+		t.Fatalf("the comment sent: %q", sent.Comment)
+	}
 	want := `POST /api/v2/silences {"matchers":[` +
-		`{"name":"alertname","value":"disk_low","isRegex":false,"isEqual":true},` +
-		`{"name":"app","value":"blog|shop","isRegex":true,"isEqual":false},` +
-		`{"name":"instance","value":"/var/.*","isRegex":true,"isEqual":true}],` +
-		`"startsAt":"2026-11-10T12:00:00Z","endsAt":"2026-11-10T14:00:00Z",` +
-		`"createdBy":"motel monitor: alice","comment":"resizing the volume"}`
-	if got := f.take(); len(got) != 1 || got[0] != want {
-		t.Fatalf("Alertmanager got:\n %q\nwant %q", got, want)
+		`{"name":"alertname","value":"deploy_failed","isRegex":false,"isEqual":true},` +
+		`{"name":"app","value":"shop","isRegex":false,"isEqual":true},` +
+		`{"name":"release","value":"` + testSha + `","isRegex":false,"isEqual":true}],` +
+		`"startsAt":"2026-11-10T12:00:00Z","endsAt":"2026-11-10T12:01:00.5Z",` +
+		`"createdBy":"motel monitor: alice","comment":` + string(must(json.Marshal(sent.Comment))) + `}`
+	if reqs[0] != want {
+		t.Fatalf("Alertmanager got:\n %s\nwant %s", reqs[0], want)
 	}
 	lines := te.lines("monitor: silence added")
 	if len(lines) != 1 {
 		t.Fatalf("journal lines: %d", len(lines))
 	}
 	fields := lines[0].ContextMap()
-	if fields["id"] != testSilenceID || fields["ends_at"] != "2026-11-10T14:00:00Z" ||
-		fields["created_by"] != "motel monitor: alice" || fields["comment"] != "resizing the volume" {
+	if fields["id"] != testSilenceID || fields["ends_at"] != "2026-11-10T12:01:00.5Z" || fields["alert"] != "deploy_failed" ||
+		fields["app"] != "shop" || fields["release"] != testSha ||
+		fields["created_by"] != "motel monitor: alice" || fields["comment"] != sent.Comment {
 		t.Fatalf("journal fields: %v", fields)
 	}
-	if m, _ := fields["matchers"].([]any); len(m) != 3 || m[1] != "app!~blog|shop" {
-		t.Fatalf("journal matchers: %#v", fields["matchers"])
-	}
 
-	// Refused before Alertmanager hears of it.
-	bad := goodSilence()
-	bad.Matchers = []string{"alertname=Watchdog"}
-	if _, err := callAdmin(t, serveSilence, http.MethodPost, bad); apiStatus(err) != http.StatusUnprocessableEntity {
-		t.Fatalf("Watchdog: %v", err)
+	// Refused before Alertmanager hears of it, naming motel's own names
+	// and never the value given.
+	for _, c := range []struct {
+		name string
+		req  SilenceRequest
+		want string
+	}{
+		{"Watchdog", SilenceRequest{Alert: "Watchdog"}, "--alert names none of the alerts motel raises on this box; they are "},
+		{"NotifyTest", SilenceRequest{Alert: "NotifyTest"}, "--alert names none"},
+		{"the mute", SilenceRequest{Alert: "deploy_in_progress"}, "--alert names none"},
+		{"an unknown alert", SilenceRequest{Alert: "https://ntfy.sh/ops-alerts"}, "--alert names none"},
+		{"an external name", SilenceRequest{Alert: "disk_failing"}, "--alert names none"},
+		{"an unknown app", SilenceRequest{App: "secret-topic"}, "--app names no app this box runs; they are blog, shop, wiki"},
+	} {
+		r := c.req
+		r.Comment, r.By = "c", "alice"
+		_, err := callAdmin(t, serveSilence, http.MethodPost, r)
+		if apiStatus(err) != http.StatusUnprocessableEntity || !strings.Contains(err.Error(), c.want) {
+			t.Fatalf("%s: %v", c.name, err)
+		}
+		if v := r.Alert + r.App; strings.Contains(err.Error(), v) && v != "deploy_in_progress" {
+			t.Fatalf("%s: the refusal echoes the value: %v", c.name, err)
+		}
+		if strings.Contains(err.Error(), "Watchdog") {
+			t.Fatalf("%s: Watchdog listed as silenceable: %v", c.name, err)
+		}
 	}
-	bad = goodSilence()
-	bad.Comment = "see https://hooks.slack.com/services/T0/B0/secretpart" // gitleaks:allow — made up for this test
-	if _, err := callAdmin(t, serveSilence, http.MethodPost, bad); apiStatus(err) != http.StatusUnprocessableEntity || !strings.Contains(err.Error(), "filter masks") {
-		t.Fatalf("a URL in the comment: %v", err)
-	}
-	bad = goodSilence()
-	// A channel URL in a regex, escaped so that no form of it is in the
-	// text: refused by what the regex matches, before Alertmanager.
-	bad.Matchers = []string{"alertname=x", `notify_channel=~https://hooks\.slack\.com/services/T0/B0/secretpart`} // gitleaks:allow — made up for this test
-	if _, err := callAdmin(t, serveSilence, http.MethodPost, bad); apiStatus(err) != http.StatusUnprocessableEntity || !strings.Contains(err.Error(), "matcher 2 (notify_channel) matches a value of the box's secrets file") {
-		t.Fatalf("an escaped URL in a matcher: %v", err)
-	}
-	if _, err := callAdmin(t, serveSilence, http.MethodPost, `{"matchers":["alertname=x"],"comment":"c","by":"a","labels":{}}`); apiStatus(err) != http.StatusBadRequest {
-		t.Fatalf("an unknown field: %v", err)
+	if _, err := callAdmin(t, serveSilence, http.MethodPost, `{"alert":"disk_low","comment":"c","by":"a","matchers":["x=y"]}`); apiStatus(err) != http.StatusBadRequest {
+		t.Fatalf("a matchers field: %v", err)
 	}
 	if got := f.take(); len(got) != 0 {
 		t.Fatalf("Alertmanager heard of a refused silence: %q", got)
@@ -246,6 +243,13 @@ func TestServeSilence(t *testing.T) {
 	if got := f.take(); len(got) != 0 {
 		t.Fatalf("Alertmanager heard: %q", got)
 	}
+}
+
+func must[T any](v T, err error) T {
+	if err != nil {
+		panic(err)
+	}
+	return v
 }
 
 func TestServeExpire(t *testing.T) {
@@ -328,7 +332,7 @@ func TestSilenceCommandOutput(t *testing.T) {
 	_, f := withFakeAM(t)
 	addr := adminServe(t)
 	t.Setenv("SUDO_USER", "alice")
-	add := []string{"add", "--comment", "resizing the volume", "alertname=disk_low"}
+	add := []string{"add", "--comment", "resizing the volume", "--alert", "disk_low"}
 	cases := []struct {
 		name string
 		args []string
@@ -339,12 +343,13 @@ func TestSilenceCommandOutput(t *testing.T) {
 		{"add json", append(add, "--json"), `{"id":"` + testSilenceID + `","ends_at":"2026-11-10T14:00:00Z"}` + "\n", false},
 		{"expire", []string{"expire", testSilenceID}, "silence " + testSilenceID + " expired\n", false},
 		{"expire json", []string{"expire", testSilenceID, "--json"}, `{"id":"` + testSilenceID + `"}` + "\n", false},
-		{"refused json", []string{"add", "--comment", "x", "--json", "alertname=Watchdog"},
-			`{"error":"these matchers silence Watchdog, the heartbeat: its pings would stop and the check off the box would report the box down; pause that check instead"}` + "\n", true},
-		{"no comment json", []string{"add", "--json", "alertname=disk_low"},
-			`{"error":"comment is one line, not empty: say why, for whoever finds the silence"}` + "\n", true},
+		{"refused json", []string{"add", "--comment", "x", "--json", "--alert", "Watchdog"},
+			`{"error":"--alert names none of the alerts motel raises on this box; they are ` + strings.Join(silenceableAlerts(theEngine.active), ", ") + `"}` + "\n", true},
+		{"no comment json", []string{"add", "--json", "--alert", "disk_low"},
+			`{"error":"--comment is one line, not empty: say why, for whoever finds the silence"}` + "\n", true},
+		{"an argument", []string{"add", "--comment", "x", "--alert", "disk_low", "alertname=disk_low"}, "", true},
 		{"bad id json", []string{"expire", "--json", "x"}, `{"error":"that is not a silence id (Alertmanager's are UUIDs, as silence add prints them)"}` + "\n", true},
-		{"refused text", []string{"add", "--comment", "x", "severity=none"}, "", true},
+		{"refused text", []string{"add", "--comment", "x", "--app", "nosuch"}, "", true},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -365,7 +370,7 @@ func TestSilenceCommandOutput(t *testing.T) {
 	// A route's 502 that says permission denied (motel refused
 	// Alertmanager's socket) is passed on, not taken for the caller's.
 	f.set(http.StatusForbidden, `"connect: permission denied"`)
-	out, err := runSilence(t, addr, "add", "--comment", "x", "alertname=disk_low")
+	out, err := runSilence(t, addr, "add", "--comment", "x", "--alert", "disk_low")
 	if err == nil || !strings.Contains(err.Error(), "silencing in Alertmanager") || strings.Contains(err.Error(), "run motel monitor silence as root") {
 		t.Fatalf("a 502 naming permission: %q, %v", out, err)
 	}
@@ -396,7 +401,7 @@ func TestSilenceCommandNotAdmitted(t *testing.T) {
 	if err := os.Chmod(path, 0); err != nil {
 		t.Fatal(err)
 	}
-	_, err = runSilence(t, "unix/"+path, "add", "--comment", "x", "alertname=disk_low")
+	_, err = runSilence(t, "unix/"+path, "add", "--comment", "x", "--alert", "disk_low")
 	if err == nil || !strings.Contains(err.Error(), "admits root and the motel user: run motel monitor silence as root") {
 		t.Fatalf("err = %v", err)
 	}
@@ -418,66 +423,4 @@ func TestInvokingUser(t *testing.T) {
 	}
 }
 
-// filterKnown are a box's secrets as the filter holds them: a Slack
-// webhook with its 24-character secret, and an ntfy topic too short
-// and too plain for the entropy layer.
-var filterKnown = []string{
-	// Split so that GitHub's push protection, which knows Slack's URL
-	// shape, does not refuse a made-up one.
-	"NOTIFY_OPS_URL=https://hooks.slack" + ".com/services/T0A1B2C3D/B0E4F5G6H/q8Rm2vTx9Lk4Wp7Zn3Hc6Yd1", // gitleaks:allow — made up for this test
-	"NOTIFY_PAGER_URL=https://ntfy.sh/ops-alerts",
-}
-
 const testSha = "3f9c2a1be0d4c5f6a7b8c9d0e1f2a3b4c5d6e7f8"
-
-func TestSilenceFilter(t *testing.T) {
-	cases := []struct {
-		name     string
-		matchers []string
-		comment  string
-		want     string // "" for taken
-	}{
-		{"slack escaped", []string{"alertname=x", `notify_channel=~https://hooks\.slack\.com/services/T0A1B2C3D/B0E4F5G6H/q8Rm2vTx9Lk4Wp7Zn3Hc6Yd1`}, "", "matcher 2 (notify_channel) matches a value"}, // gitleaks:allow — made up for this test
-		{"ntfy escaped", []string{"alertname=x", `notify_channel=~https://ntfy\.sh/ops-alerts`}, "", "matcher 2 (notify_channel) matches a value"},
-		{"ntfy by a wildcard", []string{"alertname=x", `notify_channel=~.*ntfy\.sh/ops-alerts`}, "", "matcher 2 (notify_channel) matches a value"},
-		{"ntfy negated", []string{"alertname=x", `notify_channel!~https://ntfy\.sh/ops-alerts`}, "", "matcher 2 (notify_channel) matches a value"},
-		{"ntfy literal in a regex that misses it", []string{"alertname=x", `x=~(https://ntfy\.sh/ops-alerts)?zzz`}, "", "matcher 2 (x) holds what the filter masks"},
-		{"ntfy plain", []string{"alertname=x", "url=https://ntfy.sh/ops-alerts"}, "", "matcher 2 (url) holds what the filter masks"},
-		{"a sha outside release", []string{"alertname=x", "app=" + testSha}, "", "matcher 2 (app) holds what the filter masks"},
-		{"a sha in a regex release", []string{"alertname=x", "release=~" + testSha}, "", "matcher 2 (release) holds what the filter masks"},
-		{"a URL in the comment", []string{"alertname=x"}, "see https://ntfy.sh/ops-alerts", "the comment holds what the filter masks"},
-		{"a sha in the comment, no release", []string{"alertname=x"}, "rolling back " + testSha, "the comment holds"},
-		{"a release by its sha", []string{"alertname=deploy_failed", "release=" + testSha}, "rolling back " + testSha, ""},
-		{"a URL-shaped regex", []string{"alertname=x", `instance=~https?://example\.com/.*`}, "", ""},
-		{"a topic word alone", []string{"alertname=x", "instance=ops-alerts"}, "", ""},
-	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			req := goodSilence()
-			req.Matchers = c.matchers
-			if c.comment != "" {
-				req.Comment = c.comment
-			}
-			ms, _, err := req.parse()
-			if err != nil {
-				t.Fatal(err)
-			}
-			err = checkFiltered(filterKnown, req, ms)
-			if c.want == "" {
-				if err != nil {
-					t.Fatalf("refused: %v", err)
-				}
-				return
-			}
-			if err == nil || !strings.Contains(err.Error(), c.want) {
-				t.Fatalf("err = %v, want %q", err, c.want)
-			}
-			// The refusal is journalled by Caddy: it names no value.
-			for _, v := range append(c.matchers, c.comment) {
-				if _, val, ok := strings.Cut(v, "="); ok && len(val) > 3 && strings.Contains(err.Error(), strings.TrimPrefix(val, "~")) {
-					t.Fatalf("the refusal echoes a value: %v", err)
-				}
-			}
-		})
-	}
-}

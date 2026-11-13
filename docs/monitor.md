@@ -574,11 +574,16 @@ directory only you can open, and ask that:
 
 ```sh
 mkdir -m 700 -p ~/.motel
-ssh -N -o StreamLocalBindMask=0177 -o StreamLocalBindUnlink=yes \
-  -o ExitOnForwardFailure=yes \
-  -L ~/.motel/am.sock:/run/motel-notify/am.sock root@box.example.com &
+ssh -fN -o ExitOnForwardFailure=yes \
+  -o StreamLocalBindMask=0177 -o StreamLocalBindUnlink=yes \
+  -L ~/.motel/am.sock:/run/motel-notify/am.sock root@box.example.com
 curl -s --unix-socket ~/.motel/am.sock http://am/api/v2/alerts
 ```
+
+`-f` puts ssh in the background only once the forward is listening
+(with `ExitOnForwardFailure=yes`; measured), so the `curl` after it
+finds the socket; a failed forward is ssh's exit status, not a
+background job's. End it with `pkill -f motel/am.sock`.
 
 Do not forward it to a TCP port (`ssh -L 9093:…`). Alertmanager's API
 has no login, so a port on your laptop's loopback gives it, silences
@@ -598,55 +603,56 @@ While you fix something you already know about, silence its alert so
 that the channels stop repeating it. Run it as root:
 
 ```
-$ motel monitor silence add --comment "resizing the volume" --duration 4h alertname=disk_low
+$ motel monitor silence add --comment "resizing the volume" --duration 4h --alert disk_low
 silence 22e1715e-25d1-4986-bec3-1ecf8bdb376f added; it ends at 2026-11-13T21:37:22Z
 $ motel monitor silence expire 22e1715e-25d1-4986-bec3-1ecf8bdb376f
 silence 22e1715e-25d1-4986-bec3-1ecf8bdb376f expired
 ```
 
-(The output's shape is the notify e2e box's, at the commit that added
-the command; that run's silence was 10 minutes.)
+(The output's shape is the notify e2e box's; that run's silence was 10
+minutes.)
 
-Each matcher is one argument: `label=value`, `label!=value`,
-`label=~regex` or `label!~regex`, the regex matching the whole value,
-and no quotes inside the argument (`alertname=disk_low`, not
-`alertname="disk_low"`). The labels are the ones `amtool alert` and the
-API show: `alertname`, `severity`, `subject` (`box` or `app:<name>`),
-`app`, `instance`, `source` (`external:<name>` for your own events),
-`kind`, `key`, and on a deploy's events `release` and `deployed_by`;
-`ChannelFailed` names the channels that may have failed in `suspects`
-and the channel it is told to in `notify_channel`. A
-silence matches an alert when every matcher does.
+You name what to silence with up to three flags, and motel builds the
+silence from them:
 
-motel refuses:
+- `--alert <name>`: one of the alerts motel raises on this box, such as
+  `disk_low`, `deploy_failed`, `watchdog_throttled`, `cert_failed`,
+  `backup_stale`, `ChannelFailed`, or one of your `rule` lines' names;
+- `--app <name>`: one of the apps the box runs: every alert about it;
+- `--release <version>`: one release of it, by its name or git sha, so
+  that the next release's alerts still reach you.
 
-- a silence with no `label=value` matcher, so that a regex such as
-  `alertname=~.*` cannot silence everything;
-- one that would silence `Watchdog`, the heartbeat: the pings would
-  stop and your check off the box would report the box down. To quiet
-  the heartbeat, pause that check instead;
-- a comment that is empty, on two lines or over 200 characters;
-- a duration under `1m` or over `24h`. The default is `2h`, from now;
-- a comment or matcher holding a value from the box's secrets file
-  (a channel URL, escaped in a regex or not) or a token that looks like
-  a secret, such as a long hex or random string. A release is the
-  exception: `release=<its name or git sha>` silences that one release,
-  and the comment may quote it. The refusal names the matcher by its
-  place and label, never its value.
+Give `--alert`, `--app` or both. Each is an exact match. A name motel
+does not know is refused with the list of the names it takes:
+
+```
+$ motel monitor silence add --comment x --alert disk_lo
+Error: --alert names none of the alerts motel raises on this box; they are ChannelFailed, backup_run_failed, …
+```
+
+`Watchdog`, the heartbeat, is not in that list: silencing it would stop
+the pings, and your check off the box would report the box down. To
+quiet the heartbeat, pause that check instead. Your own events from
+`motel monitor send` cannot be silenced this way yet.
+
+The comment is required, one line, at most 200 characters; anything in
+it that looks like a secret is masked, as in a notification's summary.
+The duration is from `1m` to `24h`, `2h` if you leave it out, from now.
 
 Each silence added or expired is a line in motel's journal
-(`monitor: silence added` with its id, matchers, end, comment and
-`created_by`, which is `motel monitor: <your user>`; `monitor: silence
-expired` with its id and `expired_by`). With `--json`, `add` prints `{"id":"…","ends_at":"…"}`,
-`expire` prints `{"id":"…"}`, and an error is `{"error":"…"}` with exit
-1; a second expire of one silence is `silence <id> has already
-expired`. Another user than root is told `the admin socket … admits root and
-the motel user: run motel monitor silence as root`.
+(`monitor: silence added` with its id, alert, app, release, end,
+comment and `created_by`, which is `motel monitor: <your user>`;
+`monitor: silence expired` with its id and `expired_by`). With
+`--json`, `add` prints `{"id":"…","ends_at":"…"}`, `expire` prints
+`{"id":"…"}`, and an error is `{"error":"…"}` with exit 1; a second
+expire of one silence is `silence <id> has already expired`. Another
+user than root is told `the admin socket … admits root and the motel
+user: run motel monitor silence as root`.
 
 There is no `motel monitor silence list`. Ask Alertmanager:
 `curl -s --unix-socket /run/motel-notify/am.sock http://am/api/v2/silences`.
-Silences you post to the socket yourself work too, but leave no line in
-motel's journal.
+Silences you post to the socket yourself work too, but motel checks
+nothing of them and leaves no line in its journal.
 
 ## Your own alerts: `rule` lines
 

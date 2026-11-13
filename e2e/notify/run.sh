@@ -224,25 +224,33 @@ out=$(motel monitor test ops 2>&1) && echo "$out" | grep -q 'delivered to ops' \
 out=$(motel monitor test oncall 2>&1) && fail "monitor test oncall succeeded: $out" || pass "monitor test oncall fails: $(echo "$out" | tail -1)"
 
 echo "=== notify 7a: motel monitor silence ==="
+# rollback for blog, as liveswap's one-shot carries it, posted by root
+# so that the suite need not roll a release back.
+rollback() { post_alert "{\"alertname\":\"rollback\",\"kind\":\"event\",\"app\":\"blog\",\"subject\":\"app:blog\",\"severity\":\"warning\",\"source\":\"liveswap\",\"key\":\"liveswap/app:blog/rollback/$1\"}" >/dev/null; }
 t_sil=$(date +%s)
-out=$(motel monitor silence add --json --comment "e2e: a silence through motel" --duration 10m alertname=silence_probe 2>&1)
-id=$(echo "$out" | sed -n 's/^{"id":"\([0-9a-f-]\{36\}\)","ends_at":"[0-9T:Z-]*"}$/\1/p')
+out=$(motel monitor silence add --json --comment "e2e: a silence through motel" --duration 10m --alert rollback --app blog 2>&1)
+id=$(echo "$out" | sed -n 's/^{"id":"\([0-9a-f-]\{36\}\)","ends_at":"[0-9T:.Z-]*"}$/\1/p')
 [ -n "$id" ] && pass "silence add --json: $out" || fail "silence add --json: $out"
 sil=$(am "http://am/api/v2/silence/$id")
 echo "$sil" | grep -q '"state":"active"' && echo "$sil" | grep -q '"createdBy":"motel monitor: root"' \
-	&& echo "$sil" | grep -q '"name":"alertname","value":"silence_probe"' \
-	&& pass "Alertmanager holds it active, created by motel monitor: root" || fail "Alertmanager's silence: $sil"
+	&& echo "$sil" | grep -q '"name":"alertname","value":"rollback"' && echo "$sil" | grep -q '"name":"app","value":"blog"' \
+	&& pass "Alertmanager holds it active, alertname=rollback app=blog, created by motel monitor: root" || fail "Alertmanager's silence: $sil"
 am http://am/api/v2/silences | grep -q "\"id\":\"$id\"" && pass "and lists it in /api/v2/silences" || fail "not in /api/v2/silences"
 journalctl -u motel --since "@$t_sil" -o cat --no-pager | grep 'monitor: silence added' | grep -qF "$id" \
 	&& pass "journal: monitor: silence added, with its id" || fail "no silence added line for $id"
 t=$(now_ms)
-send --name silence_probe --summary "e2e: sent under a silence" || fail "send under the silence: $(cat /tmp/send.out)"
+rollback e2e-silenced
 sleep 10
-none "a one-shot it matches reaches no channel" /ops silence_probe "$t"
-out=$(motel monitor silence add --comment "e2e: the heartbeat" alertname=Watchdog 2>&1) \
+none "blog's rollback under the silence reaches no channel" /ops rollback "$t" blog
+out=$(motel monitor silence add --comment "e2e: the heartbeat" --alert Watchdog 2>&1) \
 	&& fail "a silence of Watchdog was added: $out" \
-	|| { echo "$out" | grep -q 'silence Watchdog, the heartbeat' && pass "a silence of Watchdog is refused" || fail "Watchdog: $out"; }
-out=$(runuser -u nobody -- motel monitor silence add --comment x alertname=disk_low 2>&1) \
+	|| { echo "$out" | grep -q -- '--alert names none of the alerts motel raises on this box; they are .*disk_low' \
+		&& ! echo "$out" | grep -q 'Watchdog' && pass "a silence of Watchdog is refused, the valid names listed" || fail "Watchdog: $out"; }
+out=$(motel monitor silence add --comment "e2e: unknown" --alert no_such_alert 2>&1) \
+	&& fail "an unknown alert was silenced: $out" \
+	|| { echo "$out" | grep -q -- '--alert names none' && ! echo "$out" | grep -q no_such_alert \
+		&& pass "an unknown alert is refused, its name not echoed" || fail "unknown alert: $out"; }
+out=$(runuser -u nobody -- motel monitor silence add --comment x --alert disk_low 2>&1) \
 	&& fail "nobody added a silence: $out" \
 	|| { echo "$out" | grep -q 'admits root and the motel user' && pass "nobody is refused, told to run it as root" || fail "nobody: $out"; }
 out=$(motel monitor silence expire "$id" 2>&1)
@@ -250,6 +258,10 @@ out=$(motel monitor silence expire "$id" 2>&1)
 am "http://am/api/v2/silence/$id" | grep -q '"state":"expired"' && pass "Alertmanager has it expired" || fail "after expire: $(am "http://am/api/v2/silence/$id")"
 journalctl -u motel --since "@$t_sil" -o cat --no-pager | grep 'monitor: silence expired' | grep -qF "$id" \
 	&& pass "journal: monitor: silence expired, with its id" || fail "no silence expired line for $id"
+t=$(now_ms)
+rollback e2e-after
+t_arr=$(first_arrival /ops rollback "$t" 30 "" blog)
+[ -n "$t_arr" ] && pass "after expire, blog's rollback reaches the operator again" || fail "no rollback after the expire"
 out=$(motel monitor silence expire --json "$id" 2>&1) && fail "a second expire succeeded: $out" \
 	|| { echo "$out" | grep -qF '{"error":"silence '"$id"' has already expired"}' && pass "a second expire exits 1: $out" || fail "a second expire: $out"; }
 

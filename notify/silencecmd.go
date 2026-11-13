@@ -29,27 +29,28 @@ func silenceAddCommand() *cobra.Command {
 	var req SilenceRequest
 	var asJSON bool
 	c := &cobra.Command{
-		Use:   "add --comment <text> [--duration 2h] <matcher>...",
-		Short: "Silence the alerts the matchers select, from now, for a while",
-		Long: `Each matcher is one argument, amtool's grammar without quotes:
-label=value, label!=value, label=~regex or label!~regex (a regex
-matches the whole value). At least one is label=value with a value.
+		Use:   "add [--alert <name>] [--app <name>] [--release <version>] --comment <text> [--duration 2h]",
+		Short: "Silence one of motel's alerts, an app's, or both, from now, for a while",
+		Long: `motel builds the silence from names it knows: --alert is one of the
+alerts motel raises on this box, --app one of the apps it runs,
+--release a release's name. Each is an exact match; give --alert,
+--app or both, and --release narrows either to one release.
 
-    motel monitor silence add --comment "replacing the disk" --duration 4h \
-        alertname=disk_failing instance=/dev/sda
+    motel monitor silence add --comment "resizing the volume" --duration 4h \
+        --alert disk_low
+    motel monitor silence add --comment "known bad, rolling back" \
+        --alert deploy_failed --app shop --release 3f9c2a1
 
-Refused: no matcher, or none of the label=value kind; matchers that
-would select Watchdog, the heartbeat (pause the check off the box
-instead); quotes around a value; a comment empty, on two lines or over
-200 characters; a comment or matcher the filter would mask (a value
-from the box's secrets file, or a regex matching one, or a
-secret-shaped token; a release=<name> matcher's release is no token);
-a duration under 1m or over 24h. The silence's
-createdBy is "motel monitor: <user>", the user from SUDO_USER, else
-USER.`,
-		Args: cobra.ArbitraryArgs,
-		RunE: func(c *cobra.Command, args []string) error {
-			req.Matchers, req.By = args, invokingUser()
+Refused: neither --alert nor --app; an alert motel does not raise here
+(Watchdog, the heartbeat, among them: pause the check off the box
+instead) or an app the box does not run, each answered with the names
+it takes; a comment empty, on two lines or over 200 characters; a
+duration under 1m or over 24h. The comment is masked as a summary is.
+The silence's createdBy is "motel monitor: <user>", the user from
+SUDO_USER, else USER.`,
+		Args: cobra.NoArgs,
+		RunE: func(c *cobra.Command, _ []string) error {
+			req.By = invokingUser()
 			return silenceRun(c, asJSON, func() (SilenceResult, error) {
 				if err := req.Check(); err != nil {
 					return SilenceResult{}, err
@@ -62,6 +63,9 @@ USER.`,
 		},
 	}
 	f := c.Flags()
+	f.StringVar(&req.Alert, "alert", "", "one of the alerts motel raises on this box, such as disk_low")
+	f.StringVar(&req.App, "app", "", "one of the apps this box runs")
+	f.StringVar(&req.Release, "release", "", "one release of the app, by its name (with --alert or --app)")
 	f.StringVar(&req.Comment, "comment", "", "why, in one line: whoever finds the silence reads it")
 	f.StringVar(&req.Duration, "duration", defaultSilence.String(), "how long, from 1m to 24h")
 	f.BoolVar(&asJSON, "json", false, `print {"id":…,"ends_at":…}, or {"error":…}`)
