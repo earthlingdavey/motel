@@ -76,29 +76,29 @@ func (ev Event) key() string {
 const (
 	// repostEvery keeps a firing state alert alive in Alertmanager,
 	// whose resolve_timeout (5 m) would otherwise resolve it.
-	repostEvery = time.Minute
+	repostEvery = time.Minute / clockDiv
 	// oneShotLife is a one-shot's endsAt: long enough that it cannot
 	// expire inside any group_interval tick (alertmanager_edge_tests.md).
-	oneShotLife = 5 * time.Minute
+	oneShotLife = 5 * time.Minute / clockDiv
 	// minHold is the least a recovery waits: #418's watchdog rule,
 	// max(30s, watchdog_grace), with 30 s for every other state.
-	minHold = 30 * time.Second
+	minHold = 30 * time.Second / clockDiv
 	// bucketSize transitions per key at once, refilled one per
 	// bucketRefill: a flapping key sends four, then one a quarter-hour
 	// (up to about eight in its first hour, four an hour after).
 	bucketSize   = 4
-	bucketRefill = 15 * time.Minute
+	bucketRefill = 15 * time.Minute / clockDiv
 	// retryFor is how long a post is retried before it is given up,
 	// as a journal line and a counter.
-	retryFor = 5 * time.Minute
+	retryFor = 5 * time.Minute / clockDiv
 	// queueMax bounds what waits for Alertmanager.
 	queueMax = 512
 	// maxSummary is the summary's length, in runes.
 	maxSummary = 200
 	// heartbeatEvery and heartbeatLife are the Watchdog's: posted every
 	// minute, alive four, so one missed post is no gap.
-	heartbeatEvery = time.Minute
-	heartbeatLife  = 4 * time.Minute
+	heartbeatEvery = time.Minute / clockDiv
+	heartbeatLife  = 4 * time.Minute / clockDiv
 )
 
 // poster is Alertmanager's alert API.
@@ -590,7 +590,7 @@ func (e *engine) poll(ctx context.Context) {
 	}
 	now := e.now()
 	path, paths := e.backupPath, slices.Clone(e.diskPaths)
-	diskDue := now.Sub(e.lastDisk) >= time.Minute
+	diskDue := now.Sub(e.lastDisk) >= time.Minute/clockDiv
 	if diskDue {
 		e.lastDisk = now
 	}
@@ -663,7 +663,7 @@ func (e *engine) configure(a *App, post poster, known []string, logger *zap.Logg
 	if !e.running {
 		ctx, cancel := context.WithCancel(context.Background())
 		e.running, e.cancel, e.done = true, cancel, make(chan struct{})
-		go e.run(ctx, 5*time.Second)
+		go e.run(ctx, 5*time.Second/clockDiv)
 	}
 }
 

@@ -26,15 +26,15 @@ import (
 const (
 	eventPostDeployRegressed = "post_deploy_regressed"
 	// postDeployEvery is a check's spacing, from the cutover.
-	postDeployEvery = time.Minute
+	postDeployEvery = time.Minute / clockDiv
 	// postDeployTick is how often the comparator looks for a check due.
-	postDeployTick = 10 * time.Second
+	postDeployTick = 10 * time.Second / clockDiv
 	// storeLag is how far behind the present a check reads the store:
 	// past its -search.latencyOffset (30 s), within which the store
 	// shifts an instant query's time back by the offset, and so both
 	// windows away from the cutover (measured in e2e metrics 10: the
 	// old release's last half minute read as nothing).
-	storeLag = 35 * time.Second
+	storeLag = 35 * time.Second / clockDiv
 	// p95Margin is how much slower than the old release the new one's
 	// p95 must be, over its bound, to fail a check: a quantile is an
 	// estimate inside a bucket.
@@ -62,7 +62,7 @@ const (
 	// postDeployGrace is how long past the window's end a check the
 	// store did not answer is asked again before the comparison ends
 	// unfinished.
-	postDeployGrace = 10 * time.Minute
+	postDeployGrace = 10 * time.Minute / clockDiv
 )
 
 // instantQuerier is the store's instant query at a time.
@@ -217,7 +217,7 @@ func (c *comparator) tick(ctx context.Context) {
 		if latest < r.next {
 			continue
 		}
-		if last := int(rule.window() / postDeployEvery); r.next > last {
+		if last := int(rule.window() / clockDiv / postDeployEvery); r.next > last {
 			delete(c.runs, app) // the window is over: the release held
 			c.logger.Debug("monitor rules: the post-deploy comparison ended with its window", zap.String("app", app), zap.String("release", r.release))
 			continue
@@ -257,7 +257,7 @@ func (c *comparator) check(ctx context.Context, store instantQuerier, logger *za
 			// Asked again at the next tick: a check skipped would leave
 			// the count short of failures equal to the window's minutes.
 			// Past the grace the comparison ends, said where it is seen.
-			if c.now().Sub(d.cmp.cutover.Add(d.rule.window()+storeLag)) > postDeployGrace {
+			if c.now().Sub(d.cmp.cutover.Add(d.rule.window()/clockDiv+storeLag)) > postDeployGrace {
 				delete(c.runs, d.cmp.app)
 				logger.Warn("monitor rules: the post-deploy comparison ended unfinished: the metrics store did not answer its checks",
 					zap.String("app", d.cmp.app), zap.String("release", d.cmp.release), zap.Int("failing_in_a_row", d.run.failed), zap.Error(v.err))

@@ -17,10 +17,10 @@ import (
 // pushes", "The chain"): one per process, as notify's engine is, and
 // pointed by each config's Start at its own registry and store.
 const (
-	pushEvery = 30 * time.Second
+	pushEvery = 30 * time.Second / clockDiv
 	// storeDownAfter is how long every push must have failed before
 	// metrics_store_down fires.
-	storeDownAfter = 5 * time.Minute
+	storeDownAfter = 5 * time.Minute / clockDiv
 	// rulesDownReads is how many reads in a row, a minute apart, must
 	// find vmalert not up before metrics_rules_down fires: a fresh
 	// store has not scraped it yet.

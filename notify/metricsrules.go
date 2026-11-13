@@ -63,18 +63,18 @@ func stateLabels(name, severity, subject string) map[string]string {
 // (metricspush.go, checkReadOnly).
 func fixedRules() vmGroup {
 	app := stateLabels(ruleAppMemoryHigh, SeverityWarning, "app:{{ $labels.app }}")
-	return vmGroup{Name: "motel-store", Interval: "1m", Rules: []vmRule{
+	return vmGroup{Name: "motel-store", Interval: clockText("1m"), Rules: []vmRule{
 		{
 			// Both windows: free space is the whole filesystem's, and one
 			// large write (a release, an upgrade) tilts the six-hour line
 			// below zero for hours. The hour's line is flat again once the
 			// write is an hour old.
-			Alert: ruleStoreDiskFill, Expr: storeDiskFillExpr, For: "30m",
+			Alert: ruleStoreDiskFill, Expr: storeDiskFillExpr, For: clockText("30m"),
 			Labels:      stateLabels(ruleStoreDiskFill, SeverityWarning, "box"),
 			Annotations: map[string]string{"summary": "the metrics store's disk is predicted to fill within a day"},
 		},
 		{
-			Alert: ruleAppMemoryHigh, Expr: "max by (app) (motel_app_memory_bytes / motel_app_memory_max_bytes) > 0.9", For: "10m",
+			Alert: ruleAppMemoryHigh, Expr: "max by (app) (motel_app_memory_bytes / motel_app_memory_max_bytes) > 0.9", For: clockText("10m"),
 			Labels:      app,
 			Annotations: map[string]string{"summary": "{{ $labels.app }} has used over 90 % of its memory cap for ten minutes"},
 		},
@@ -90,7 +90,7 @@ func fixedRules() vmGroup {
 // alert. Receivers sharing all three are one rule. The heartbeat's
 // receiver has no channel, and is motel's alone.
 func channelFailedRules(n *App) vmGroup {
-	g := vmGroup{Name: "motel-channel-failed", Interval: "1m", Rules: []vmRule{}}
+	g := vmGroup{Name: "motel-channel-failed", Interval: clockText("1m"), Rules: []vmRule{}}
 	if n == nil || n.cfg == nil {
 		return g
 	}

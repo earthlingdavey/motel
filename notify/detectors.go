@@ -137,7 +137,7 @@ func (s *stateSet) diff(now []Event) []Event {
 const DefaultBackupRecord = "/var/lib/motel-backup/status.json"
 
 // backupEvery is how often the record is read (#418).
-const backupEvery = 5 * time.Minute
+const backupEvery = 5 * time.Minute / clockDiv
 
 // backupPoller is #418's backup source. A box with no record has no
 // backups set up, and nothing to say. It is the engine's, and outlives

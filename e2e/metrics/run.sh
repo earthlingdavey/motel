@@ -15,6 +15,13 @@
 #   the operator's rules: a threshold through vmalert, the post-deploy comparison
 #   nothing of the store in an app's sandbox view
 #   the store's socket gone: GET /<app> answers at once, with the error
+#
+# The box's motel is built with -tags e2e (e2e/Dockerfile,
+# metrics-builder): notify's clocks, and those it writes into the rules,
+# Alertmanager's config and the store's units, are divided by six
+# (notify/clock_e2e.go), so a minute below is ten seconds. metrics 1 reads
+# the divisor D back from the rendered rules; the waits that are a clock's
+# length, not a bound, are clk of their shipped seconds.
 . /lib.sh
 
 HOOK=http://localhost:8081/blog
@@ -122,6 +129,13 @@ until grep -q 'motel-channel-failed' "$STATE/rules.yml" 2>/dev/null && grep -q '
 done
 grep -q 'notify_channel: ops' "$STATE/rules.yml" \
 	&& pass "motel rendered the rules, with ChannelFailed for the operator's channels" || fail "rules.yml: $(head -c 400 "$STATE/rules.yml")"
+iv=$(sed -n 's/^ *interval: //p' "$STATE/rules.yml" | head -1)
+case "$iv" in 1m) D=1 ;; [0-9]*s) D=$((60 / ${iv%s})) ;; *) D=0 ;; esac
+[ "$D" = 6 ] && pass "the box's motel divides its clocks by 6: the rules' groups run every $iv" \
+	|| fail "the rules' groups run every '$iv', not 10s: the box's motel is not the -tags e2e build (notify/clock_e2e.go)"
+[ "$D" -ge 1 ] || D=1
+# clk <seconds>: a shipped clock's length on this box, rounded up.
+clk() { echo $((($1 + D - 1) / D)); }
 vmalert -dryRun -rule="$STATE/rules.yml" >/tmp/dry.out 2>&1 \
 	&& pass "vmalert -dryRun passes the rendered rules" || fail "vmalert -dryRun: $(tail -3 /tmp/dry.out)"
 # notify's tests over vmalert and vmalert-tool, which `make test` skips
@@ -378,10 +392,11 @@ until am "http://am/api/v2/alerts?$roq" | grep -q '"severity":"critical"'; do i=
 	|| fail "no metrics_store_read_only in Alertmanager after 120 s: $(am "http://am/api/v2/alerts?$roq" | cut -c1-300)"
 # Two of the store's 30 s self-scrapes have come and gone by now: had it
 # kept one, a rule would see the flag.
-while [ $(( $(date +%s) - ro_at )) -lt 75 ]; do sleep 2; done
+ro_for=$(clk 75)
+while [ $(( $(date +%s) - ro_at )) -lt "$ro_for" ]; do sleep 1; done
 a=$(q 'max(max_over_time(vm_storage_is_read_only[5m])) > 0')
 printf '%s' "$a" | grep -q '"status":"success"' && ! has_result "$a" \
-	&& pass "75 s read-only and no series carries the flag: the store refused its own scrapes" \
+	&& pass "$ro_for s read-only and no series carries the flag: the store refused its own scrapes" \
 	|| fail "a rule could have seen the flag after all, or the store did not answer: $(printf '%s' "$a" | cut -c1-200)"
 rm "$dropin/20-e2e-read-only.conf"
 systemctl daemon-reload && systemctl restart victoria-metrics
@@ -475,7 +490,7 @@ done
 
 echo "=== metrics 6: the store's socket gone ==="
 systemctl stop motel-vm.socket motel-vm.service
-sleep 31 # past the view's cache
+sleep $(($(clk 30) + 1)) # past the view's cache
 t0=$(date +%s%3N)
 m=$(status)
 t1=$(date +%s%3N)
@@ -619,7 +634,7 @@ done
 for l in '"source":"rules"' '"kind":"event"' '"subject":"app:blog"' '"key":"rules/app:blog/post_deploy_regressed"' '"release":"errs1"' '"severity":"warning"'; do
 	printf '%s' "$reg" | grep -q "$l" || { fail "post_deploy_regressed in Alertmanager lacks $l: $(printf '%s' "$reg" | cut -c1-500)"; reg=bad; break; }
 done
-[ -n "$reg" ] && [ "$reg" != bad ] && printf '%s' "$reg" | grep -q '"summary":"blog errs1 regressed [0-9]*m after its deploy, over [0-9]* responses: 5xx share 1 against 0 before it' \
+[ -n "$reg" ] && [ "$reg" != bad ] && printf '%s' "$reg" | grep -q '"summary":"blog errs1 regressed [0-9]*[ms] after its deploy, over [0-9]* responses: 5xx share 1 against 0 before it' \
 	&& pass "post_deploy_regressed reached Alertmanager in $(( $(date +%s) - t10 )) s, the app's, source rules, both releases' numbers: $(printf '%s' "$reg" | grep -o '"summary":"[^"]*"')" \
 	|| fail "no post_deploy_regressed for blog as wanted: $(printf '%s' "$reg" | cut -c1-500)"
 for l in '"source":"rules"' '"kind":"state"' '"subject":"app:shop"' '"key":"rules/app:shop/errors_high"' '"generatorURL":"http'; do

@@ -23,7 +23,7 @@ import (
 
 // channelFailedLife is the alert's endsAt: re-posted while the counter
 // keeps rising, gone a quarter-hour after it stops.
-const channelFailedLife = 15 * time.Minute
+const channelFailedLife = 15 * time.Minute / clockDiv
 
 // failWatch is the engine's memory of the counter, and the config it
 // reads the counter against.

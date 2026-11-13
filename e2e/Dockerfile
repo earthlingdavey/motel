@@ -25,6 +25,14 @@ RUN CGO_ENABLED=0 GOFLAGS=-buildvcs=false go build -trimpath -o /motel ./cmd/mot
 FROM builder AS notify-tests
 RUN cd notify && CGO_ENABLED=0 GOFLAGS=-buildvcs=false go test -c -o /notify.test .
 
+# motel for the metrics box alone, with -tags e2e: notify's clocks
+# divided by six (notify/clock_e2e.go), so the metrics suite waits out a
+# ten-second minute. From builder, whose build cache holds the plain
+# build: only what the tag changes is compiled again. The notify box and
+# the main e2e boxes keep builder's motel, at the shipped timings.
+FROM builder AS metrics-builder
+RUN CGO_ENABLED=0 GOFLAGS=-buildvcs=false go build -trimpath -tags e2e -o /motel ./cmd/motel
+
 # The box. A named stage, because the notify suite's box below builds on
 # it: docker-compose.yml names this one as e2e-motel's and e2e-upstream's
 # target, or they would get the last stage.
@@ -159,4 +167,5 @@ RUN systemctl mask victoria-metrics.service \
 	&& apt-get install -y --no-install-recommends victoria-metrics \
 	&& rm -rf /var/lib/apt/lists/*
 COPY --from=notify-tests /notify.test /usr/local/bin/notify.test
+COPY --from=metrics-builder /motel /usr/bin/motel
 COPY e2e/metrics/Caddyfile /etc/motel/Caddyfile

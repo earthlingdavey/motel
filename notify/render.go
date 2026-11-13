@@ -10,21 +10,22 @@ import (
 )
 
 // The timings the route tree carries (DESIGN-notify.md, "The route
-// tree"), each measured on hotserve-1 (alertmanager_edge_tests.md):
-const (
+// tree"), each measured on hotserve-1 (alertmanager_edge_tests.md),
+// divided by clockDiv (clock.go):
+var (
 	// One-shots: every event its own group (group_by ['...']) and no
 	// wait, so a second distinct one-shot is never held for a tick and
 	// lost once its endsAt passes, as it was under a shared group.
-	eventGroupWait      = "0s"
-	eventGroupInterval  = "1m"
-	eventRepeatInterval = "1h"
+	eventGroupWait      = clockText("0s")
+	eventGroupInterval  = clockText("1m")
+	eventRepeatInterval = clockText("1h")
 	// State alerts: 30 s to batch a burst, a recovery within a minute of
 	// motel's resolve (50 s measured, against 290 s on the 5 m default),
 	// a reminder every 4 h while something stays wrong, 24 h for disk.
-	stateGroupWait      = "30s"
-	stateGroupInterval  = "1m"
-	stateRepeatInterval = "4h"
-	diskRepeatInterval  = "24h"
+	stateGroupWait      = clockText("30s")
+	stateGroupInterval  = clockText("1m")
+	stateRepeatInterval = clockText("4h")
+	diskRepeatInterval  = clockText("24h")
 	// The heartbeat: Alertmanager re-sends the firing Watchdog every
 	// five minutes, which is Healthchecks' period. The repeat is under
 	// the group interval on purpose: Alertmanager re-sends at a flush
@@ -32,8 +33,8 @@ const (
 	// and that entry is stamped after the send returns, so a repeat
 	// equal to the interval is a few milliseconds short at the next
 	// flush and the ping goes out every other one, every ten minutes.
-	heartbeatInterval = "5m"
-	heartbeatRepeat   = "4m"
+	heartbeatInterval = clockText("5m")
+	heartbeatRepeat   = clockText("4m")
 )
 
 // Label values motel sets, which routing reads.
@@ -144,7 +145,7 @@ func render(r *resolved, stateDir string) ([]byte, map[string]string, map[string
 	}
 	file := func(key string) string { return filepath.Join(stateDir, urlFileName(key)) }
 
-	cfg := amConfig{Global: amGlobal{ResolveTimeout: "5m"}}
+	cfg := amConfig{Global: amGlobal{ResolveTimeout: clockText("5m")}}
 	receivers := map[string][]string{}
 	recv := func(name string, channels []string, resolved bool) amRecv {
 		rc := amRecv{Name: name}

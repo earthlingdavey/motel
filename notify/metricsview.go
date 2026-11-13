@@ -30,7 +30,7 @@ const (
 	// viewCache is how long an answer, or a failure, is reused: a
 	// token, stolen or not, drives at most one set of queries per app
 	// and window per viewCache.
-	viewCache = 30 * time.Second
+	viewCache = 30 * time.Second / clockDiv
 )
 
 // viewWindow is one `?range=`: its span, the range queries' step, and

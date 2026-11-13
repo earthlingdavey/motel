@@ -53,13 +53,13 @@ func metricsUnits() []struct {
 		path string
 		data []byte
 	}{
-		{filepath.Join(unitDir, vmService+".d", "10-motel.conf"), unitVMDropIn},
+		{filepath.Join(unitDir, vmService+".d", "10-motel.conf"), clockUnit(unitVMDropIn)},
 		{filepath.Join(unitDir, netnsUnit), unitNetns},
 		{filepath.Join(unitDir, vmSocket), unitVMSocket},
 		{filepath.Join(unitDir, "motel-vm.service"), unitVMProxy},
 		{filepath.Join(unitDir, amProxySock), unitAMProxySocket},
 		{filepath.Join(unitDir, "motel-am-proxy.service"), unitAMProxy},
-		{filepath.Join(unitDir, vmalertUnit), unitVMAlert},
+		{filepath.Join(unitDir, vmalertUnit), clockUnit(unitVMAlert)},
 	}
 }
 
@@ -149,7 +149,7 @@ func metricsSetup(sys system, root string, out io.Writer) (err error) {
 		name string
 		data []byte
 		keep bool // kept if there: motel's own render
-	}{{scrapeName, scrapeConfig, false}, {RulesName, renderRules(nil), true}}
+	}{{scrapeName, clockUnit(scrapeConfig), false}, {RulesName, renderRules(nil), true}}
 	for _, f := range files {
 		p := filepath.Join(dir, f.name)
 		if _, err := os.Lstat(p); f.keep && err == nil {

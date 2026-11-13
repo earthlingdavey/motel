@@ -534,7 +534,7 @@ func checkMemoryCapped(rules []Rule, capped map[string]bool) error {
 // disk_fill lines, rendered as motel's own expressions. Empty with no
 // notify (n nil), as the fixed groups are.
 func operatorRules(n *App) vmGroup {
-	g := vmGroup{Name: operatorGroup, Interval: "1m", Rules: []vmRule{}}
+	g := vmGroup{Name: operatorGroup, Interval: clockText("1m"), Rules: []vmRule{}}
 	if n == nil || n.Metrics == nil {
 		return g
 	}
@@ -571,7 +571,7 @@ func thresholdRule(r Rule) vmRule {
 	return vmRule{
 		Alert:  r.Name,
 		Expr:   thresholdExpr(r),
-		For:    promDuration(time.Duration(r.For)),
+		For:    promDuration(time.Duration(r.For) / clockDiv),
 		Labels: ruleLabels(r.Name, r.severity(), subject),
 		Annotations: map[string]string{"summary": fmt.Sprintf("%s: %s has been %s %s for %s (rule %s); now {{ $value | %s }}",
 			who, m.words, above, valueText(m.unit, r.Value), promDuration(time.Duration(r.For)), r.Name, m.humanize)},

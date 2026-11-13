@@ -1032,7 +1032,21 @@ on its general scales. metrics' examples:
 
 `make e2e-metrics` (e2e/metrics/run.sh): a box built from notify-box's
 image with Debian's `victoria-metrics` installed and masked
-(e2e/Dockerfile, `metrics-box`), and the same stub receiver. The suite
+(e2e/Dockerfile, `metrics-box`), and the same stub receiver. Its
+motel is built with `-tags e2e` (`metrics-builder`), which divides
+notify's clocks by six (notify/clock_e2e.go): every wait motel keeps
+(the push, the re-post, the heartbeat, the post-deploy checks and their
+lag, the view's cache) and every clock it writes (the rule groups'
+interval and a rule's `for`, Alertmanager's waits, intervals, repeats
+and resolve_timeout, vmalert's `-evaluationInterval` and
+`-configCheckInterval`, the scrape interval, and the store's
+`-search.latencyOffset`, which the drop-in otherwise leaves at its
+30 s). The windows a rule or a view reads over are not divided: they
+are history, not a wait. The suite reads the divisor back from
+`rules.yml` and fails unless it is six, and its waits that are a
+clock's length are divided with it; at a divisor of one the rendered
+files are the embedded ones byte for byte (`TestClockDivision`). The
+notify suite's box and the main e2e boxes run the shipped clocks. The suite
 runs `motel monitor setup` and then `motel monitor setup --metrics`
 itself and asserts: nothing of the store set up without `--metrics`,
 and with it the store's setup alone, the running Alertmanager left as
