@@ -703,7 +703,7 @@ they hold the database's path, and `busy.db` is not busy.
 
 ## Status
 
-`motel-backup status`, as anyone: `status.json` is world-readable
+`motel-backup status [--json]`, as anyone: `status.json` is world-readable
 and holds no secret, and the manager tells any user which units are
 running. It prints when the last run started — and that no run has
 finished for more than 3 hours, where that is so: the run itself is
@@ -776,6 +776,79 @@ in a comment does not [M91]), where `RESTIC_REPOSITORY` or `RESTIC_PASSWORD` is 
 set to nothing, where the repository is one the box cannot use or a
 value setup would refuse, and where the file is there and cannot be
 read at all; its exit status does not change for it.
+
+### As JSON
+
+`motel-backup status --json` says the same as one JSON object on
+stdout, for a program to read — a client over `ssh box motel-backup
+status --json` — and leaves with the same exit status. Nothing else
+goes to stdout, and what goes to stderr is what goes there without the
+flag. The text and the JSON are printed from one `status.Result`
+(`backups/status/status.go`): the text is its `lines`, one per line.
+This object is the contract; `status.json`, the record it is read
+from, is not, and its fields may change in any release. The shape is
+pinned whole by `backups/cmd/motel-backup/testdata/status-*.json`:
+a field may be added; one removed, renamed or changed in meaning breaks
+its readers.
+
+```json
+{
+  "at": "2026-09-20T15:00:00Z",
+  "healthy": false,
+  "apps": [
+    {
+      "name": "shop",
+      "healthy": false,
+      "result": "failed",
+      "last_complete_backup": "2026-09-19T09:00:00Z",
+      "fresh": false,
+      "restore_proven": "2026-09-18T15:00:00Z",
+      "restore_proven_lately": false
+    }
+  ],
+  "running": [
+    {"role": "upload", "app": "blog", "state": "activating", "since": "2026-09-20T14:58:00Z"}
+  ],
+  "unrecognised_units": ["motel_backup_zzz.service"],
+  "lines": [
+    {"level": "warning", "text": "warning: /etc/motel-backup/repository.env: …"},
+    {"app": "shop", "level": "problem", "text": "shop: stale: the last complete backup is from …"}
+  ]
+}
+```
+
+- `at`: when status looked, which every age is reckoned from (an age
+  is `at` less the time, not the reader's clock less it). Every time is
+  RFC 3339, in UTC, to the second.
+- `healthy`: exit 0. `could_not_tell`, present only on exit 3, is why
+  it could not look (the same words as on stderr); `apps`, `running`
+  and `unrecognised_units` are then empty, and `lines` holds only the
+  `warning:` lines found before it stopped.
+- `apps`, sorted by name: `result` is how the last run ended for it
+  (the classes under [What a run says](#what-a-run-says); empty where
+  the record holds no result for it); `last_complete_backup` (null:
+  none), and `fresh`: no more than 3 hours old and missed by no listing
+  since; `restore_proven` (null: never), and `restore_proven_lately`:
+  no more than 8 days ago with no failed drill since; `healthy`: no
+  line of the app is a problem. A `pending` app is healthy and neither
+  fresh nor proven.
+- `running`: each unit of a run, a restore, a drill or a setup the
+  manager holds — `role` (`upload`, `fetch`, …), `app` (absent for a
+  unit of the whole run), systemd's `state`, `since` (absent when the
+  unit ended while the manager was asked). `unrecognised_units`: the
+  `motel_backup_*` units whose name says nothing here.
+- `lines`: the text, in its order: `app` (absent for the run, the
+  repository and a unit of no app), `level` — `problem` for a line that
+  makes status unhealthy, `warning` for a `warning:` line (the
+  credential file's, as root, and the last run's), `info` for any
+  other — and `text`, as printed.
+
+It holds what the text holds and nothing more: no value of the
+credential file, the repository only as a warning names it, and every
+string through `record.Text` or `record.Clean` as the text's are (a
+test feeds the credential file's checks a password, a key id and a
+secret, in well-formed and hand-edited lines and in the URL, and finds
+none of them in either output).
 
 ## Before a Caddyfile goes live
 

@@ -1,0 +1,132 @@
+{
+  "at": "2026-09-20T15:00:00Z",
+  "healthy": false,
+  "apps": [
+    {
+      "name": "blog",
+      "healthy": true,
+      "result": "ok",
+      "last_complete_backup": "2026-09-20T14:50:00Z",
+      "fresh": true,
+      "restore_proven": "2026-09-18T15:00:00Z",
+      "restore_proven_lately": true
+    },
+    {
+      "name": "gone",
+      "healthy": false,
+      "result": "",
+      "last_complete_backup": null,
+      "fresh": false,
+      "restore_proven": null,
+      "restore_proven_lately": false
+    },
+    {
+      "name": "shop",
+      "healthy": false,
+      "result": "failed",
+      "last_complete_backup": "2026-09-19T09:00:00Z",
+      "fresh": false,
+      "restore_proven": "2026-09-18T15:00:00Z",
+      "restore_proven_lately": false
+    },
+    {
+      "name": "wiki",
+      "healthy": true,
+      "result": "pending",
+      "last_complete_backup": null,
+      "fresh": false,
+      "restore_proven": null,
+      "restore_proven_lately": false
+    }
+  ],
+  "running": [
+    {
+      "role": "upload",
+      "app": "blog",
+      "state": "activating",
+      "since": "2026-09-20T14:58:00Z"
+    },
+    {
+      "role": "run",
+      "state": "deactivating"
+    }
+  ],
+  "unrecognised_units": [
+    "motel_backup_zzz.service"
+  ],
+  "lines": [
+    {
+      "level": "warning",
+      "text": "warning: /etc/motel-backup/repository.env: AWS_DEFAULT_REGION is set twice: the last wins"
+    },
+    {
+      "level": "info",
+      "text": "last run 2026-09-20 14:49 UTC"
+    },
+    {
+      "level": "info",
+      "text": "last drill 2026-09-18 15:00 UTC"
+    },
+    {
+      "level": "info",
+      "text": "repository last checked 2026-09-18 15:00 UTC: its structure, and data group 38/52: clean"
+    },
+    {
+      "level": "warning",
+      "text": "warning: shop: a database was busy"
+    },
+    {
+      "app": "blog",
+      "level": "info",
+      "text": "blog: ok: last complete backup 2026-09-20 14:50 UTC, snapshot aaaaaaaa (data at /var/lib/liveswap/blog/shared)"
+    },
+    {
+      "app": "blog",
+      "level": "info",
+      "text": "blog: restore last proven: 2026-09-18 15:00 UTC, snapshot bbbbbbbb"
+    },
+    {
+      "app": "gone",
+      "level": "problem",
+      "text": "gone: no result on record, until the next run writes the record again"
+    },
+    {
+      "app": "shop",
+      "level": "problem",
+      "text": "shop: failed: the storage could not be reached (exit 1) (data at /var/lib/liveswap/shop/shared)"
+    },
+    {
+      "app": "shop",
+      "level": "problem",
+      "text": "shop: stale: the last complete backup is from 2026-09-19 09:00 UTC, more than 3 hours ago, snapshot bbbbbbbb"
+    },
+    {
+      "app": "shop",
+      "level": "info",
+      "text": "shop: restore last proven: 2026-09-18 15:00 UTC, snapshot bbbbbbbb"
+    },
+    {
+      "app": "shop",
+      "level": "problem",
+      "text": "shop: restore not proven: no room to fetch it (snapshot bbbbbbbb, 2026-09-20 14:00 UTC); `motel-backup drill`, as root, tries again"
+    },
+    {
+      "app": "wiki",
+      "level": "info",
+      "text": "wiki: pending first run: no data at /var/lib/liveswap/wiki/shared yet"
+    },
+    {
+      "app": "blog",
+      "level": "info",
+      "text": "running: upload of blog, since 2026-09-20 14:58 UTC"
+    },
+    {
+      "level": "info",
+      "text": "running: run (deactivating)"
+    },
+    {
+      "level": "info",
+      "text": "running: motel_backup_zzz.service"
+    }
+  ]
+}

@@ -1,0 +1,14 @@
+{
+  "at": "2026-09-20T15:00:00Z",
+  "healthy": false,
+  "could_not_tell": "the record of the last run could not be read: unexpected end of JSON input",
+  "apps": [],
+  "running": [],
+  "unrecognised_units": [],
+  "lines": [
+    {
+      "level": "warning",
+      "text": "warning: /etc/motel-backup/repository.env: AWS_DEFAULT_REGION is set twice: the last wins"
+    }
+  ]
+}
