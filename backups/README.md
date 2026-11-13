@@ -819,8 +819,8 @@ its readers.
 
 - `at`: when status looked, which every age is reckoned from (an age
   is `at` less the time, not the reader's clock less it). Every time is
-  RFC 3339, in UTC, as precise as the verdicts reckoned with it (a
-  fraction of a second where the time has one).
+  RFC 3339, in UTC, to the second, and `fresh` and
+  `restore_proven_lately` are reckoned from those same seconds.
 - `healthy`: exit 0. `could_not_tell`, present only on exit 3, is why
   it could not look (the same words as on stderr); `apps`, `running`
   and `unrecognised_units` are then empty, and `lines` holds only the

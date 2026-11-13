@@ -1,5 +1,5 @@
 {
-  "at": "2026-09-20T15:00:00.123456789Z",
+  "at": "2026-09-20T15:00:00Z",
   "healthy": false,
   "could_not_tell": "the record of the last run could not be read: unexpected end of JSON input",
   "apps": [],

@@ -1,14 +1,14 @@
 {
-  "at": "2026-09-20T15:00:00.123456789Z",
+  "at": "2026-09-20T15:00:00Z",
   "healthy": false,
   "apps": [
     {
       "name": "blog",
       "healthy": true,
       "result": "ok",
-      "last_complete_backup": "2026-09-20T14:50:00.123456789Z",
+      "last_complete_backup": "2026-09-20T14:50:00Z",
       "fresh": true,
-      "restore_proven": "2026-09-18T15:00:00.123456789Z",
+      "restore_proven": "2026-09-18T15:00:00Z",
       "restore_proven_lately": true
     },
     {
@@ -24,9 +24,9 @@
       "name": "shop",
       "healthy": false,
       "result": "failed",
-      "last_complete_backup": "2026-09-19T09:00:00.123456789Z",
+      "last_complete_backup": "2026-09-19T09:00:00Z",
       "fresh": false,
-      "restore_proven": "2026-09-18T15:00:00.123456789Z",
+      "restore_proven": "2026-09-18T15:00:00Z",
       "restore_proven_lately": false
     },
     {
@@ -44,7 +44,7 @@
       "role": "upload",
       "app": "blog",
       "state": "activating",
-      "since": "2026-09-20T14:58:00.123456789Z"
+      "since": "2026-09-20T14:58:00Z"
     },
     {
       "role": "run",

@@ -417,11 +417,13 @@ func report(st *record.Status) {
 func showStatus(ctx context.Context, asJSON bool) error {
 	cfg := config()
 	now := time.Now()
-	// What is printed does not change the exit status: a stdout that
-	// takes none of it (a full disk, a closed pipe) leaves the reader with
-	// nothing to parse, and the status as it is.
+	// A stdout that takes none of it (a full disk) is said, on stderr:
+	// could not tell is still 3, and a report is not 0 that its reader
+	// never got. (A closed pipe is SIGPIPE, as for any command.)
 	cannot := func(warnings []string, err error) error {
-		_ = printStatus(os.Stdout, status.CouldNotTell(now, warnings, err.Error()), asJSON)
+		if werr := printStatus(os.Stdout, status.CouldNotTell(now, warnings, err.Error()), asJSON); werr != nil {
+			err = fmt.Errorf("%w; and it could not be printed: %w", err, werr)
+		}
 		return couldNotTell{err}
 	}
 	// Only a file that is not there says so. Any other answer — a
@@ -456,7 +458,9 @@ func showStatus(ctx context.Context, asJSON bool) error {
 		}
 	}
 	r := status.Report(in)
-	_ = printStatus(os.Stdout, r, asJSON)
+	if err := printStatus(os.Stdout, r, asJSON); err != nil {
+		return fmt.Errorf("the report could not be printed: %w", err)
+	}
 	if !r.Healthy {
 		return errors.New("not every app has a fresh backup and a restore proven lately")
 	}

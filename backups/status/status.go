@@ -147,10 +147,10 @@ func newResult(now time.Time, warnings []string) Result {
 	return r
 }
 
-// stamp is a time as the JSON gives it: in UTC, and as precise as the
-// verdicts reckoned with it, so that an age read off the JSON is the
-// one they judged.
-func stamp(t time.Time) time.Time { return t.UTC().Round(0) }
+// stamp is a time as the JSON gives it: in UTC, to the second. Fresh
+// and proven lately are reckoned from the stamped times, so that an age
+// read off the JSON is the one they judged.
+func stamp(t time.Time) time.Time { return t.UTC().Truncate(time.Second) }
 
 func stampOf(t time.Time) *time.Time { s := stamp(t); return &s }
 
@@ -272,13 +272,13 @@ func Report(in Input) Result {
 		facts.Result = record.Text(string(app.Class))
 		if app.LastOK != nil {
 			facts.LastCompleteBackup = stampOf(app.LastOK.Time)
-			facts.Fresh = !gone(app.LastOK) && now.Sub(app.LastOK.Time) <= StaleAfter
+			facts.Fresh = !gone(app.LastOK) && r.At.Sub(*facts.LastCompleteBackup) <= StaleAfter
 		}
 		// Decided once, here: the lines below say what these are.
 		provenRecently := false
 		if p := app.RestoreProven; p != nil {
-			provenRecently = now.Sub(p.Time) <= ProvenOldAfter
 			facts.RestoreProven = stampOf(p.Time)
+			provenRecently = r.At.Sub(*facts.RestoreProven) <= ProvenOldAfter
 			facts.RestoreProvenLately = provenRecently && app.RestoreDrill == nil
 		}
 		at := record.Text(app.Looked)

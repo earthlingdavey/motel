@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"flag"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -19,7 +20,7 @@ import (
 var update = flag.Bool("update", false, "rewrite testdata/status-*.json from what status prints now")
 
 // statusNow is when the golden reports were decided, with a fraction of
-// a second and in a zone not UTC, which the JSON gives neither of.
+// a second and in a zone not UTC: the JSON gives the second, in UTC.
 var statusNow = time.Date(2026, 9, 20, 17, 0, 0, 123456789, time.FixedZone("", 2*60*60))
 
 func statusAgo(d time.Duration) time.Time { return statusNow.Add(-d) }
@@ -172,8 +173,8 @@ func TestStatusTakesJSONAlone(t *testing.T) {
 	}
 }
 
-// A stdout that takes nothing does not change the exit status: no
-// setup here is still could not tell, 3.
+// A stdout that takes nothing does not change could not tell: no setup
+// here is still 3, and the failed print is said with it.
 func TestStatusLeavesWithItsStatusWhateverStdoutTakes(t *testing.T) {
 	if _, err := os.Lstat(config().EnvFile); err == nil {
 		t.Skip("backups are set up on this machine")
@@ -186,8 +187,10 @@ func TestStatusLeavesWithItsStatusWhateverStdoutTakes(t *testing.T) {
 	os.Stdout = w
 	defer func() { os.Stdout = old }()
 	for _, asJSON := range []bool{false, true} {
-		if err := showStatus(context.Background(), asJSON); exitStatus(err) != 3 {
-			t.Errorf("json %v: exits %d (%v), want 3", asJSON, exitStatus(err), err)
+		err := showStatus(context.Background(), asJSON)
+		// The text of this look is no line at all: nothing to fail.
+		if exitStatus(err) != 3 || asJSON != strings.Contains(fmt.Sprint(err), "could not be printed") {
+			t.Errorf("json %v: exits %d (%v), want 3 and the print named", asJSON, exitStatus(err), err)
 		}
 	}
 }
