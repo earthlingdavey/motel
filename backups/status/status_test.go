@@ -397,8 +397,9 @@ func TestWhatStatusSays(t *testing.T) {
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
-			lines, healthy := Report(Input{Record: tc.st, Now: now, SetUp: tc.setUp, Running: tc.running, Unrecognised: tc.unknown, RunningErr: tc.runningErr})
-			out := strings.Join(lines, "\n")
+			r := Report(Input{Record: tc.st, Now: now, SetUp: tc.setUp, Running: tc.running, Unrecognised: tc.unknown, RunningErr: tc.runningErr})
+			out, healthy := strings.Join(r.Text(), "\n"), r.Healthy
+			sameVerdict(t, r)
 			if healthy != tc.healthy {
 				t.Errorf("healthy = %v, want %v:\n%s", healthy, tc.healthy, out)
 			}
@@ -427,7 +428,7 @@ func TestAReportHoldsNoControlCharacters(t *testing.T) {
 	})
 	st.Apps["sh\x1bop"] = sound()
 	st.LastCheck = &record.Check{Time: ago(time.Hour), Group: "3\x1b[2J8/52", Class: "dam\x1b[2Jaged", Detail: "\x1b]0;x\x07found"}
-	lines, _ := Report(Input{Record: st, Now: now})
+	lines := Report(Input{Record: st, Now: now}).Text()
 	if len(lines) == 0 {
 		t.Fatal("nothing was said")
 	}
@@ -435,5 +436,105 @@ func TestAReportHoldsNoControlCharacters(t *testing.T) {
 		if strings.ContainsAny(l, "\x1b\x07\n") {
 			t.Fatalf("a control character reached the terminal: %q", l)
 		}
+	}
+}
+
+// sameVerdict is that the verdicts are the lines': healthy where no line
+// is a problem, and an app healthy where no line of it is.
+func sameVerdict(t *testing.T, r Result) {
+	t.Helper()
+	problem := map[string]bool{}
+	for _, l := range r.Lines {
+		if l.Level == Problem {
+			problem[l.App] = true
+		}
+	}
+	if r.Healthy == (len(problem) > 0) {
+		t.Errorf("healthy = %v, with problems of %v", r.Healthy, problem)
+	}
+	for _, a := range r.Apps {
+		if a.Healthy == problem[a.Name] {
+			t.Errorf("%s: healthy = %v, and a line of it a problem: %v", a.Name, a.Healthy, problem[a.Name])
+		}
+	}
+}
+
+// What a status screen shows of an app, beside its lines.
+func TestWhatStatusDecidesOfAnApp(t *testing.T) {
+	for name, tc := range map[string]struct {
+		st                     *record.Status
+		fresh, provenLately    bool
+		lastComplete, provenAt *time.Time
+	}{
+		"fresh and proven": {
+			st: with(func(*record.App) {}), fresh: true, provenLately: true,
+			lastComplete: at(10 * time.Minute), provenAt: at(48 * time.Hour),
+		},
+		"stale": {
+			st:    with(func(a *record.App) { a.LastOK = snap(idA, StaleAfter+time.Minute, at(9*time.Minute)) }),
+			fresh: false, provenLately: true, lastComplete: at(StaleAfter + time.Minute), provenAt: at(48 * time.Hour),
+		},
+		"gone from the repository": {
+			st:    with(func(a *record.App) { a.LastOK = snap(idA, 10*time.Minute, at(time.Hour)) }),
+			fresh: false, provenLately: true, lastComplete: at(10 * time.Minute), provenAt: at(48 * time.Hour),
+		},
+		"proven too long ago": {
+			st: with(func(a *record.App) {
+				a.RestoreProven.Time = ago(ProvenOldAfter + time.Minute)
+			}), fresh: true, provenLately: false, lastComplete: at(10 * time.Minute), provenAt: at(ProvenOldAfter + time.Minute),
+		},
+		"a drill since failed": {
+			st: with(func(a *record.App) {
+				a.RestoreDrill = &record.Drill{Snapshot: *a.LastOK, Time: ago(time.Hour), Detail: "no room"}
+			}), fresh: true, provenLately: false, lastComplete: at(10 * time.Minute), provenAt: at(48 * time.Hour),
+		},
+		"never backed up, never proven": {
+			st: with(func(a *record.App) {
+				a.Class, a.Snapshot, a.LastOK, a.LastSnapshot, a.RestoreProven = record.Failed, nil, nil, nil, nil
+			}),
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			r := Report(Input{Record: tc.st, Now: now})
+			sameVerdict(t, r)
+			if len(r.Apps) != 2 || r.Apps[0].Name != "blog" || r.Apps[1].Name != "shop" {
+				t.Fatalf("apps = %+v", r.Apps)
+			}
+			a := r.Apps[0]
+			if a.Fresh != tc.fresh || a.RestoreProvenLately != tc.provenLately {
+				t.Errorf("fresh = %v, proven lately = %v; want %v, %v", a.Fresh, a.RestoreProvenLately, tc.fresh, tc.provenLately)
+			}
+			if !sameTime(a.LastCompleteBackup, tc.lastComplete) || !sameTime(a.RestoreProven, tc.provenAt) {
+				t.Errorf("last complete backup %v, proven %v; want %v, %v", a.LastCompleteBackup, a.RestoreProven, tc.lastComplete, tc.provenAt)
+			}
+			if a.LastCompleteBackup != nil && a.LastCompleteBackup.Location() != time.UTC {
+				t.Errorf("a time not in UTC: %v", a.LastCompleteBackup)
+			}
+		})
+	}
+}
+
+func sameTime(a, b *time.Time) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	return a.Equal(*b)
+}
+
+// The verdict is the true age's, to the nanosecond, as the text's
+// always was: half a second past stale is stale, though the seconds the
+// JSON gives read exactly StaleAfter.
+func TestTheVerdictIsTheTrueAgesNotTheSeconds(t *testing.T) {
+	when := now.Add(900 * time.Millisecond)
+	st := with(func(a *record.App) {
+		a.LastOK = &record.Snapshot{ID: idA, Time: when.Add(-StaleAfter - 500*time.Millisecond), Seen: at(9 * time.Minute)}
+	})
+	r := Report(Input{Record: st, Now: when})
+	sameVerdict(t, r)
+	if a := r.Apps[0]; a.Fresh || a.Healthy || !strings.Contains(strings.Join(r.Text(), "\n"), "blog: stale") {
+		t.Errorf("half a second past stale: fresh %v, healthy %v:\n%s", a.Fresh, a.Healthy, strings.Join(r.Text(), "\n"))
+	}
+	if age := r.At.Sub(*r.Apps[0].LastCompleteBackup); age != StaleAfter {
+		t.Errorf("the seconds read %v", age)
 	}
 }
