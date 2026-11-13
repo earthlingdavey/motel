@@ -177,7 +177,9 @@ Caddyfile is not secret. motel reads the file and no app is given it.
 Every value in it is masked in what motel sends and journals
 (`[redacted:NOTIFY_<NAME>]`), and so is the credential of an ntfy,
 Slack or Discord URL on its own (the topic, the hook's token, ntfy's
-`auth` parameter as a whole) and a heartbeat's check UUID, as
+`auth` parameter as a whole) and of a heartbeat's ping URL (its last
+path segment, past Healthchecks' `/start`, `/fail`, `/log` or exit
+status: Healthchecks' check UUID), as
 `[redacted:partial:NOTIFY_<NAME>]`, when it is 8 characters or more.
 A shorter topic is not masked; a topic that is an ordinary word is
 masked wherever that word appears.
@@ -282,7 +284,10 @@ measured, and about nine is the most. The Grace below covers it.
 2. Put its ping URL in the secrets file as `NOTIFY_HC_URL`: the UUID
    form, `https://hc-ping.com/<uuid>` (Healthchecks' default), not the
    slug form `https://hc-ping.com/<ping-key>/<slug>`. motel masks the
-   UUID on its own too, and in the slug form it can mask only the slug.
+   UUID on its own too; in the slug form it can mask only the slug,
+   which is then masked wherever it appears, your box's name if the
+   check is named after it, and `motel monitor send` refuses it as an
+   instance.
    Treat the URL as a password: anyone who has it can keep the check
    green while the box is down. Add the
    line `heartbeat {secret.NOTIFY_HC_URL}` to the block. With a box

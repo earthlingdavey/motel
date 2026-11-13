@@ -457,7 +457,7 @@ func isSuffix(kind, seg string) bool {
 	if slices.Contains(pathSuffixes[kind], seg) {
 		return true
 	}
-	if kind != heartbeatKind || seg == "" || len(seg) > 3 || strings.Trim(seg, "0123456789") != "" {
+	if kind != heartbeatKind || len(seg) > 3 || strings.Trim(seg, "0123456789") != "" {
 		return false
 	}
 	n, _ := strconv.Atoi(seg)
