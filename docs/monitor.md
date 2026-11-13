@@ -523,8 +523,8 @@ curl -s --unix-socket /run/motel-metrics/vm.sock -G \
 
 The series motel pushes are `motel_app_up`, `motel_app_release_info`,
 `motel_app_memory_bytes` (and `motel_app_memory_max_bytes` for a capped
-app), `motel_app_cpu_seconds_total`, `motel_app_requests_total` (by
-`class`, with `observe`), `motel_app_response_seconds` (a histogram),
+app), `motel_app_cpu_seconds_total`, `motel_app_observed` (an app with
+`observe`), `motel_app_requests_total` (by `class`, with `observe`), `motel_app_response_seconds` (a histogram),
 `motel_app_cache_responses_total`, `motel_disk_avail_bytes`,
 `motel_metrics_push_failed_total` and `motel_notify_delivery_failed_total`,
 along with Caddy's own `go_*`, `process_*` and `caddy_*`. To list what
@@ -600,10 +600,12 @@ monitor {
   `post_deploy_regressed` once, and it never rolls back.
 
 The request metrics need `observe <app>` in the app's site, and a rule
-on them reads only the apps in motel's last push: an app whose
-`observe` line is taken out drops out at the next push, and every app
-does while no push reaches the store for over 75 s (motel down, or
-`metrics_store_down`), so a firing alert resolves then. The rule
+on them reads only the apps motel's last push says are observed: an
+app whose `observe` line is taken out drops out at the next push, and
+every app does while no push reaches the store for over 75 s (motel
+down, or the store refusing the pushes, which `metrics_store_down`
+says once they have failed for five minutes), so an alert firing then
+resolves. The rule
 goes to the operator's channels, and to the app's bound channels when
 it is about one app. Every parameter and every refusal is in
 DESIGN-metrics.md's [Operator rules](../notify/DESIGN-metrics.md#operator-rules).

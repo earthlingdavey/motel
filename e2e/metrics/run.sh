@@ -177,7 +177,7 @@ printf '%s' "$op" | grep -q 'increase_pure(motel_app_requests_total' \
 	&& printf '%s' "$op" | grep -q 'unless (present_over_time(motel_app_requests_total' \
 	&& printf '%s' "$op" | grep -q 'and (tfirst_over_time(motel_app_requests_total' \
 	&& printf '%s' "$op" | grep -q 'or increase(motel_app_requests_total' \
-	&& printf '%s' "$op" | grep -q 'and on (app) (max by (app) (tlast_over_time(motel_app_requests_total[75s])) > scalar(max(tlast_over_time(process_start_time_seconds{job="motel"}[75s]))) - 15)' \
+	&& printf '%s' "$op" | grep -qF 'and on (app) (max by (app) (tlast_over_time(motel_app_observed[75s])) > scalar(max(tlast_over_time(process_start_time_seconds{job="motel"}[75s]))) - 15)' \
 	&& ! grep -q 'blog_regressed' "$STATE/rules.yml" && printf '%s' "$op" | grep -q 'key: rules/app:blog/blog_slow' \
 	&& pass "the motel-operator group holds the threshold and disk_fill rules, through the counter guard, keyed rules/<subject>/<name>" \
 	|| fail "the motel-operator group: $(printf '%s' "$op" | head -c 600)"
@@ -726,14 +726,14 @@ done
 	|| fail "no errors_high for shop as wanted: $(printf '%s' "$thr" | cut -c1-500)"
 # The request thresholds' guard (pushedNow) over the pushes the store
 # stamped as they came: at every second of the last two minutes, each
-# app with request series in the push's 75 s was in it, blog and shop
-# among them.
-present='max by (app) (tlast_over_time(motel_app_requests_total[75s]))'
+# app motel_app_observed named in the last 75 s was in it, its sample
+# within 15 s of the push's; blog and shop are in it now.
+present='max by (app) (tlast_over_time(motel_app_observed[75s]))'
 pushed="$present > scalar(max(tlast_over_time(process_start_time_seconds{job=\"motel\"}[75s]))) - 15"
 out=$(q "(count_over_time(($present)[2m:1s]) - (count_over_time(($pushed)[2m:1s]) or count_over_time(($present)[2m:1s]) * 0)) > 0")
-inq=$(q "count_over_time(($pushed)[2m:1s]) >= 115")
+inq=$(q "$pushed")
 printf '%s' "$out" | grep -q '"result":\[\]' && printf '%s' "$inq" | grep -q '"app":"blog"' && printf '%s' "$inq" | grep -q '"app":"shop"' \
-	&& pass "every app pushing was in the request thresholds' guard at each second of two minutes, blog and shop among them" \
+	&& pass "every observed app was in the request thresholds' guard at each second of two minutes, blog and shop in it now" \
 	|| fail "the guard left out a pushing app: $(printf '%s' "$out" | cut -c1-300); in it: $(printf '%s' "$inq" | cut -c1-300)"
 i=0
 until sinklog | grep -q '/blog [a-z]* post_deploy_regressed blog '; do

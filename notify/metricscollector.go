@@ -34,6 +34,11 @@ var (
 		"The running unit's MemoryMax=, when it has one.", []string{"app"}, nil)
 	appCPUDesc = prometheus.NewDesc("motel_app_cpu_seconds_total",
 		"CPU the running unit has used, from its cgroup's cpu.stat: one series per unit, since each new unit counts from zero.", []string{"app", "unit"}, nil)
+	// 1 for an app the running config observes, whatever its release:
+	// the request thresholds read the apps in the last push alone
+	// (operatorrules.go, pushedNow).
+	appObservedDesc = prometheus.NewDesc("motel_app_observed",
+		"1 for an app a route of the running config observes; absent otherwise.", []string{"app"}, nil)
 	// observe's counts, per release: the current one and the
 	// one before.
 	appRequestsDesc = prometheus.NewDesc("motel_app_requests_total",
@@ -59,7 +64,7 @@ type appCollector struct {
 
 func (c appCollector) Describe(ch chan<- *prometheus.Desc) {
 	for _, d := range []*prometheus.Desc{appUpDesc, appReleaseDesc, appMemoryDesc, appMemoryMaxDesc, appCPUDesc,
-		appRequestsDesc, appResponseDesc, appCacheDesc} {
+		appObservedDesc, appRequestsDesc, appResponseDesc, appCacheDesc} {
 		ch <- d
 	}
 }
@@ -106,12 +111,17 @@ func (c appCollector) Collect(ch chan<- prometheus.Metric) {
 // as an app with no request at all, which an every-app `request_rate <`
 // rule takes for a fact; unpushed, its series go stale in the store,
 // and nothing reads them. An observe line put back starts them from
-// zero (liveswap's Observe.observe), as a restart does.
+// zero (liveswap's Observe.observe), as a restart does. An observed
+// app's motel_app_observed is pushed from the config's first push,
+// before liveswap has reattached its release after a restart and with
+// none deployed: the request thresholds' guard, whose app a push
+// without its counts must not leave out.
 func collectRequests(ch chan<- prometheus.Metric, s liveswap.AppSample) {
 	if !s.Observed {
 		return
 	}
 	app := s.App
+	ch <- prometheus.MustNewConstMetric(appObservedDesc, prometheus.GaugeValue, 1, app)
 	for _, r := range s.Requests {
 		var total uint64
 		for _, n := range r.ByClass {

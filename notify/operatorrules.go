@@ -669,27 +669,27 @@ func guardedIncrease(sel, by, match string, win, off time.Duration) string {
 // pushes and a half, so one push lost leaves every app in.
 const pushFresh = 2*pushEvery + pushApart
 
-// pushedNow is the apps (sel: the rule's selector) whose request
-// series came with motel's last push, for a request threshold to be
-// read over them alone. A series no push carries any more keeps its
-// last value, and increase over the window loses one push's worth at
-// each push after it (measured on 1.112.0: 2 a second read as 1.8 from
-// the first push without it, 0.2 by 300 s, nothing from 305 s), so an
-// app whose observe line is taken out reads as its traffic falling and
-// fires a `request_rate <`. Every observed app's current release is
-// pushed, at zero before its first response (collectRequests), so the
-// app is in the push its series stops coming with, and out from the
-// first push without it, the push that begins the fall. Its last
-// sample is held to the push's last less pushApart, since one push's
-// samples are milliseconds apart. With no push in pushFresh (motel down,
-// or every push failing) scalar is NaN and every app is out: the
-// readings fall alike then, and motel's heartbeat and
-// metrics_store_down tell it; the 45 s of the fall inside pushFresh
-// holds for one of vmalert's minutely evaluations at most, and no
-// rule's for is under a minute.
+// pushedNow is the apps (sel: the rule's selector) that motel's last
+// push said the running config observes (motel_app_observed), for a
+// request threshold to be read over them alone. A series no push
+// carries any more keeps its last value, and increase over the window
+// loses one push's worth at each push after it (measured on 1.112.0: 2
+// a second read as 1.8 from the first push without it, 0.2 by 300 s,
+// nothing from 305 s), so an app whose observe line is taken out read
+// as its traffic falling and fired a `request_rate <`. The app is out
+// from the first push without it, the push that begins the fall. Not
+// its request counts: a restart's first pushes can come before
+// liveswap has reattached the release they count under, and would
+// leave out an app no one reaches, resolving its `request_rate <`. Its
+// last sample is held to the push's last less pushApart, since one
+// push's samples are milliseconds apart. With no push in pushFresh
+// (motel down, or every push failing) scalar is NaN and every app is
+// out: the readings fall alike then. The 45 s of the fall inside
+// pushFresh holds for one of vmalert's minutely evaluations at most,
+// and no rule's for is under a minute.
 func pushedNow(sel string) string {
 	w := "[" + promDuration(pushFresh) + "]"
-	return "max by (app) (tlast_over_time(motel_app_requests_total" + sel + w + "))" +
+	return "max by (app) (tlast_over_time(motel_app_observed" + sel + w + "))" +
 		" > scalar(max(tlast_over_time(" + pushSeries + w + "))) - " + strconv.Itoa(int(pushApart.Seconds()))
 }
 

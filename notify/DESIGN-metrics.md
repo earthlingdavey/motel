@@ -227,6 +227,7 @@ Go module; no metrics state in motel. The registry holds:
 | `caddy_http_*` | Caddy, when the Caddyfile has Caddy's `metrics` option; per server and handler, never per app |
 | `motel_notify_delivery_failed_total` | notify's engine |
 | `motel_metrics_push_failed_total` | the push, below |
+| `motel_app_observed{app}` | 1 for an app a route of the running config observes (`observe <app>`), from the config's first push, whatever its release; the request thresholds' guard (`PUSHED`, "Operator rules") |
 | `motel_app_up{app}`, `motel_app_release_info{app,release}` | liveswap's `AppSamples`: 1 while an instance runs; the current release, running or not (`motel_app_up` says which) |
 | `motel_app_requests_total{app,release,class}`, `motel_app_response_seconds{app,release}` (a histogram), `motel_app_cache_responses_total{app,release,result}` | the response observer, below: the current release's counts and the one before's, for an app whose route has `observe` and that has answered at least once |
 | `motel_disk_avail_bytes{path}` | statfs of the directories notify's disk source measures, one series per filesystem, which an operator's `disk_fill` rule reads ("Operator rules") |
@@ -536,11 +537,11 @@ Told per bucket, a fresh counter under a name the store saw had some
 buckets above their last values and some below, and a p95 of 0.1 s
 read 0.97 s (/code-review pass 5 on operator rules).
 
-`PUSHED` (`pushedNow`) is the apps whose request series came with
-motel's last push:
+`PUSHED` (`pushedNow`) is the apps motel's last push says the running
+config observes:
 
 ```
-max by (app) (tlast_over_time(motel_app_requests_total[75s]))
+max by (app) (tlast_over_time(motel_app_observed[75s]))
   > scalar(max(tlast_over_time(process_start_time_seconds{job="motel"}[75s]))) - 15
 ```
 
@@ -551,18 +552,23 @@ traffic falling, and an every-app `request_rate <` fired for it (owed
 by #434, measured then on the live store at 2 requests a second: 1.8,
 1.6 … 0.2 over the five minutes, nothing after; a `for: 1m` fired from
 a bound of 0.5 R). A share or a quantile was read over the part of the
-window left, though its summary says five minutes. Every observed app's current
-release is pushed, at zero before its first response, so an app is in
-the push its series stops coming with and out from the first push
-without it, the push that begins the fall: measured on 1.112.0 over
-imported pushes 30 s apart, the app's 2.0 reads 1.8 from 30 s after its
-last push and the guard holds it out from the same instant, a live app
-in it at every second. Its last sample is held to the push's last less
-`pushApart`, since one push's samples are milliseconds apart (and
-`motel_app_` sorts before `process_` in the push). With no push in
-75 s (two pushes and a half: one lost leaves every app in), `scalar`
-is NaN and every app is out: motel down, or every push failing, which
-motel's heartbeat and `metrics_store_down` tell. Inside the 75 s the
+window left, though its summary says five minutes. An app is out
+from the first push without its `motel_app_observed`, the push that
+begins the fall: measured on 1.112.0 over imported pushes 30 s apart,
+the app's 2.0 reads 1.8 from 30 s after its last push and the guard
+holds it out from the same instant, a live app in it at every second.
+Not the request counts themselves, which every observed app's current
+release has, at zero before its first response: a restart's first
+pushes can come before liveswap has reattached the release they count
+under, and an app no one reaches would drop out, resolving its
+`request_rate <` (/code-review of the guard). Its last sample is held
+to the push's last less `pushApart`, since one push's samples are
+milliseconds apart (and `motel_app_` sorts before `process_` in the
+push). With no push in 75 s (two pushes and a half: one lost leaves
+every app in), `scalar` is NaN and every app is out: motel down, which
+motel's heartbeat tells, or every push failing, which
+`metrics_store_down` tells once they have failed for five minutes.
+Inside the 75 s the
 readings fall for 45 s at most (from the first push missed), which
 holds for one of vmalert's minutely evaluations, and a `for` is a
 minute or more ("Accepted residuals" for what the gap does to an alert
@@ -1150,7 +1156,7 @@ on its general scales. metrics' examples:
 | With no cache in front, an app's own `Cache-Status` is read as a cache's verdict: its own hits are counted in `cache_hit_share` and left out of the latency, so an app that marks every response a hit leaves its own latency out of its numbers | liveswap/observe.go (`parseCacheStatus`) | 2 | 5 | 3 | 30, accepted under the skill's rule 4: telling Souin's entry from an app's needs Souin's `cache_name` (the observer would read the cache app's configuration, a dependency liveswap does not have) or the request's path through the cache, which a stale hit's background revalidation shares (it runs on a clone of the request, vars and all); size 3, risk 2. The app's own cache is a cache that spoke, and an app moves only its own numbers (T1); the post-deploy comparison reads latency through it too, for both releases alike. /code-review pass 2 on slice three. The operator accepted it on 2026-11-12 |
 | The counts a motel restart (or a crash) ends within the last 30 s were never pushed, and are lost | liveswap/observe.go | 1 | 3 | 4 | 12; at most one push's worth, and the store reads the restart as a reset |
 | A fresh counter is read through `increase`, which drops a first push that is large beside the next (a burst, then a lull), in two cases the store cannot tell from a gap or from a lifetime: one that comes with the push's first sample after the store's start or after a gap in the pushes of over two minutes (a new release deployed in the gap, a class's first response in it: the series' first sample is the push's), and under a release name the store saw within the day whose fresh count is above the last it had (a rollback past the two releases the observer keeps). The window under-reads that push for its length: five minutes for a rule, an hour or a day for `GET /<app>` | notify/operatorrules.go (`counterIncrease`), notify/metricsview.go | 2 | 5 | 3 | 30, accepted under the skill's rule 4: both read the same as a series that holds counts from before the window, which `increase_pure` would count whole; telling them apart needs the series' age from motel (a label or a series per process and release on every request series: size 3, risk 3). An under-read of one push, against a lifetime read in its place. /code-review pass 4 on operator rules; the gap case pass 5's, the push term narrowed from a day to two minutes; narrowed 2026-11-12 from the first five minutes after the push first came, or came back, to the series that came with that push, so that a series born after it counts from zero on a store younger than the window (`GET /<app>`'s Owed row) |
-| A gap in every push over 75 s (motel down, or the store refusing every push) takes every app out of the request thresholds: one pending starts again after it, one firing resolves (a recovery the traffic did not make) and, still over its bound, fires again after its `for` once the pushes are back | notify/operatorrules.go (`pushedNow`) | 2 | 3 | 3 | 18; the cause is told beside it, by motel's heartbeat with motel down and by `metrics_store_down` after five minutes of failed pushes; read through the gap, every app's readings fell a push's worth a push instead, and each `<` fired falsely for every app (the unscored note on #434's Owed row, 18 and fixed here as a cheap fix: the guard's push window, size 1, risk 1). Holding a firing alert through a gap is vmalert's `keep_firing_for`, a field per rule whose length no gap bounds. Scored with the guard (#434's Owed row) |
+| A gap in every push over 75 s (motel down, or the store refusing every push) takes every app out of the request thresholds, the shares and quantiles too: one pending starts again after it, one firing resolves (a recovery the traffic did not make) and, still over its bound, fires again after its `for` once the pushes are back | notify/operatorrules.go (`pushedNow`) | 2 | 3 | 3 | 18; it ends correct once the pushes are back (rule 2), and the cause is told by motel's heartbeat with motel down, by `metrics_store_down` once the pushes have failed for five minutes (a gap of 75 s to five minutes is told by nothing but the resolve); read through the gap, every app's readings fell a push's worth a push instead, and each `<` fired falsely for every app, while a share or a quantile was read over the part of the window left, whose summary says five minutes, and one guard holds for every request kind (/code-review of the guard, for the shares and quantiles) (the unscored note on #434's Owed row, 18 and fixed here as a cheap fix: the guard's push window, size 1, risk 1). Holding a firing alert through a gap is vmalert's `keep_firing_for`, a field per rule whose length no gap bounds. Scored with the guard (#434's Owed row) |
 | A motel restart (or a crash) inside a post-deploy window loses the comparison: nothing compares that deploy again, and a regression is told only by a threshold rule | notify/postdeploy.go | 2 | 2 | 3 | 12; the comparison is in memory, and keeping it across a restart is state on disk for a notification (size 2, risk 2); a restart rarely falls in the half hour after a deploy, and the numbers stay in `GET /<app>` |
 | A relaunch after a stop is compared from 40 s after its cutover (`relaunchSkip`): the relaunched instance's answers before then are in none of its checks, so a regression over by then is not told by the comparison | notify/postdeploy.go (`newWindow`) | 2 | 5 | 3 | 30, accepted under the skill's rule 4: those answers come in the first push after the cutover with the stopped instance's last ones, under the release's one set of counters, and only counters split at the cutover (a new state in the observer, size 3, risk 3) tell the two apart; read from the cutover, a crash loop's last 503s were the relaunch's in every check. The threshold rules and `GET /<app>` count them. /code-review of the relaunch mark; the operator accepted it on 2026-11-12 |
 | A relaunch after a stop whose first push after the cutover the store did not take within 40 s of the cutover (an import that failed, or a push gathered late behind a slow chain check) reads the stopped instance's last push as its own: a crash loop's last 503s in every check | notify/postdeploy.go (`relaunchSkip`) | 2 | 2 | 3 | 12; it needs the release's instance to have failed before (the crash loop) and the store to fail that one import; starting the window at the pusher's first import taken after the cutover is a state shared between the pusher and the comparator (size 3, risk 2). /code-review of the relaunch mark |
@@ -1254,9 +1260,9 @@ the operator's rules (e2e/metrics/Caddyfile's four `rule` lines): the
 it, an every-app `5xx_share` threshold firing for shop (whose site
 answers 503) and reaching Alertmanager with `app="shop"`,
 `source="rules"`, its key and vmalert's `generatorURL`; every app
-with request series in the last 75 s in `PUSHED` at each second of two
-minutes of the pushes as the store stamped them, blog and shop among
-them; and a deploy of
+`motel_app_observed` named in the last 75 s in `PUSHED` at each second
+of two minutes of the pushes as the store stamped them, and blog and
+shop in it; and a deploy of
 `demo-errors` (healthy, every page a 500) after the probe release
 producing one `post_deploy_regressed` for blog, release `errs1`, with
 `5xx share 1 against 0 before it`, delivered to the operator's channel
@@ -1446,9 +1452,12 @@ Dated one-liners; the full text of each is in git.
   Its round 2, accepted (12): a `daemon-reload` refused after the
   proxy's retirement can leave vmalert no outlet, red and named.
 - 2026-11-13 — #434's Owed row closed: the request thresholds read the
-  apps in motel's last push alone (`PUSHED`, `pushedNow`), so an app
-  whose `observe` line is taken out is out from the first push without
-  it, as its readings first fall, and no `request_rate <` fires for it;
+  apps motel's last push says are observed (`PUSHED`, `pushedNow`,
+  over a new `motel_app_observed`, pushed for every observed app from
+  the config's first push, since a restart's first pushes can come
+  before liveswap reattaches the release the counts are under), so an
+  app whose `observe` line is taken out is out from the first push
+  without it, as its readings first fall, and no `request_rate <` fires for it;
   the shares and quantiles too, which read the part of the window left.
   The row's unscored note, every push stopped, scored 18 and fixed as a
   cheap fix (the guard's push window 75 s): every app is out then, and
