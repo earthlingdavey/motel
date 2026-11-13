@@ -99,9 +99,12 @@ type App struct {
 	logger  *zap.Logger
 	managed map[string]*managedApp
 	// observed names the apps an observe handler of this config names
-	// (Observe.observe): AppSample.Observed. Written while the config
-	// provisions, read once it runs.
-	observed map[string]bool
+	// (Observe.observe), as keys: AppSample.Observed. Written while the
+	// config provisions, and read meanwhile too: Caddy starts a load's
+	// admin server before its apps, and its /metrics gathers this
+	// config's registry, which notify's collector may join before the
+	// HTTP app provisions its handlers. Hence a sync.Map, made at Provision.
+	observed *sync.Map
 	// notifier is the notify module's listener (SetNotifier), handed
 	// to every app at Start; nil reports to nobody.
 	notifier Notifier
@@ -358,6 +361,7 @@ func (a *App) Provision(ctx caddy.Context) error {
 	// deploy-auth verifiers included) would already be live on the pooled
 	// object. Validate-before-commit keeps a bad reload from taking effect.
 	a.managed = make(map[string]*managedApp, len(a.Apps))
+	a.observed = new(sync.Map)
 	specs := make(map[string]*appSpec, len(a.Apps))
 	// One pass: a spec is built from its own app's config alone. This
 	// used to need two — the sandbox's hidden set was derived from

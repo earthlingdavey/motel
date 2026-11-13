@@ -92,10 +92,7 @@ func (o *Observe) observe(a *App, ma *managedApp) {
 	}
 	ma.observers.Add(1)
 	o.counted = true
-	if a.observed == nil {
-		a.observed = make(map[string]bool)
-	}
-	a.observed[ma.name] = true
+	a.observed.Store(ma.name, true)
 }
 
 // Cleanup is the config's unload (or its load failing): the app is

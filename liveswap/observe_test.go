@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -464,7 +465,7 @@ func TestObserveFollowsTheDeploy(t *testing.T) {
 func TestObserveCountsItsHandlers(t *testing.T) {
 	h, _ := newTestHandler(t)
 	ma := h.app.managedApp("demo")
-	reloaded := &App{managed: h.app.managed}
+	reloaded := &App{managed: h.app.managed, observed: new(sync.Map)}
 	old, next := &Observe{App: "demo"}, &Observe{App: "demo"}
 	old.observe(h.app, ma)
 	next.observe(reloaded, ma)
@@ -497,11 +498,11 @@ func TestObservedIsTheConfigs(t *testing.T) {
 	if !h.app.AppSamples()[0].Observed {
 		t.Error("the config with the line does not observe the app")
 	}
-	without := &App{managed: h.app.managed}
+	without := &App{managed: h.app.managed, observed: new(sync.Map)}
 	if without.AppSamples()[0].Observed {
 		t.Error("the reload that takes the line out observes the app while the old config's handler is counted")
 	}
-	with := &App{managed: h.app.managed}
+	with := &App{managed: h.app.managed, observed: new(sync.Map)}
 	next := &Observe{App: "demo"}
 	next.observe(with, ma)
 	must(t, old.Cleanup())
@@ -509,6 +510,30 @@ func TestObservedIsTheConfigs(t *testing.T) {
 		t.Error("the reload that keeps the line does not observe the app")
 	}
 	must(t, next.Cleanup())
+}
+
+// TestObservedWhileItProvisions: a config's set is read while its observe
+// handlers still provision. Caddy starts a load's admin server before
+// it provisions the apps, and its /metrics gathers that config's
+// registry, where notify's collector is once notify has provisioned,
+// which may be before the HTTP app and its handlers. Run with -race.
+func TestObservedWhileItProvisions(t *testing.T) {
+	h, _ := newTestHandler(t)
+	ma := h.app.managedApp("demo")
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for range 200 {
+			h.app.AppSamples()
+		}
+	}()
+	for range 200 {
+		(&Observe{App: "demo"}).observe(h.app, ma)
+	}
+	<-done
+	if !h.app.AppSamples()[0].Observed {
+		t.Fatal("the config's handlers do not observe the app")
+	}
 }
 
 // TestObserveAfterNoneStartsFromZero: while no handler names the app its

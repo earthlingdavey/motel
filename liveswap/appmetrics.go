@@ -47,7 +47,8 @@ type AppSample struct {
 func (a *App) AppSamples() []AppSample {
 	out := make([]AppSample, 0, len(a.managed))
 	for _, name := range slices.Sorted(maps.Keys(a.managed)) {
-		out = append(out, a.managed[name].sample(a.observed[name]))
+		_, observed := a.observed.Load(name)
+		out = append(out, a.managed[name].sample(observed))
 	}
 	return out
 }
