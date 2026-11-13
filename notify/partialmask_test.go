@@ -244,6 +244,25 @@ func TestHeartbeatPartialMask(t *testing.T) {
 // TestHeartbeatURLCredentials: Healthchecks' ping endpoints past the
 // UUID are suffixes, an exit status 0 to 255 included; a number over
 // 255 or a channel kind's suffix is not.
+// TestServeSendRefusesTheHeartbeatsUUID: the heartbeat's check UUID as
+// a name, instance or source is refused, as a channel's topic is.
+func TestServeSendRefusesTheHeartbeatsUUID(t *testing.T) {
+	withEngine(t)
+	theEngine.known = knownValues(map[string]string{"NOTIFY_HC_URL": pmHC}, nil, "NOTIFY_HC_URL")
+	r := goodSend()
+	r.Instance = pmHCUUID
+	if _, err := callAdmin(t, serveSend, http.MethodPost, r); apiStatus(err) != http.StatusUnprocessableEntity || !strings.Contains(err.Error(), "filter masks") {
+		t.Fatalf("the heartbeat's UUID as the instance: %v", err)
+	}
+}
+
+// TestIsSuffixEmpty: an empty segment is no exit status.
+func TestIsSuffixEmpty(t *testing.T) {
+	if isSuffix(heartbeatKind, "") {
+		t.Fatal(`isSuffix(heartbeat, "") is true`)
+	}
+}
+
 func TestHeartbeatURLCredentials(t *testing.T) {
 	cases := []struct {
 		in   string

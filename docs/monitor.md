@@ -178,11 +178,12 @@ Every value in it is masked in what motel sends and journals
 (`[redacted:NOTIFY_<NAME>]`), and so is the credential of an ntfy,
 Slack or Discord URL on its own (the topic, the hook's token, ntfy's
 `auth` parameter as a whole) and of a heartbeat's ping URL (its last
-path segment, past Healthchecks' `/start`, `/fail`, `/log` or exit
-status: Healthchecks' check UUID), as
-`[redacted:partial:NOTIFY_<NAME>]`, when it is 8 characters or more.
-A shorter topic is not masked; a topic that is an ordinary word is
-masked wherever that word appears.
+path segment, past a `/start`, `/fail` or `/log` and past a number
+from 0 to 255, on any host: Healthchecks' ping endpoints, so its check
+UUID), as `[redacted:partial:NOTIFY_<NAME>]`, when it is 8 characters
+or more. A shorter one is not masked; one that is an ordinary word (a
+topic like `monitoring`, a ping URL ending `/api/heartbeat`) is masked
+wherever that word appears.
 It must be **root:motel 0640**. A file made elsewhere and moved in with
 `mv` keeps its owner, group and mode: one made in `/root` with
 `install -m 600`, or by an editor under umask 077, is root:root 0600.
@@ -286,8 +287,8 @@ measured, and about nine is the most. The Grace below covers it.
    slug form `https://hc-ping.com/<ping-key>/<slug>`. motel masks the
    UUID on its own too; in the slug form it can mask only the slug,
    which is then masked wherever it appears, your box's name if the
-   check is named after it, and `motel monitor send` refuses it as an
-   instance.
+   check is named after it, and `motel monitor send` refuses a name,
+   instance or source that contains it.
    Treat the URL as a password: anyone who has it can keep the check
    green while the box is down. Add the
    line `heartbeat {secret.NOTIFY_HC_URL}` to the block. With a box

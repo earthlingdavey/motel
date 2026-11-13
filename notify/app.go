@@ -460,8 +460,8 @@ func isSuffix(kind, seg string) bool {
 	if kind != heartbeatKind || len(seg) > 3 || strings.Trim(seg, "0123456789") != "" {
 		return false
 	}
-	n, _ := strconv.Atoi(seg)
-	return n <= 255
+	n, err := strconv.Atoi(seg)
+	return err == nil && n <= 255
 }
 
 // unescaped is seg decoded, or seg as it is when it does not decode.
