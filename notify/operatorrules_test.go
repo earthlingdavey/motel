@@ -627,7 +627,11 @@ tests:
 // leaves at an evaluation before the next). reattached's push at 9m
 // carries it as observed but not its counts, as a restart's first
 // push before liveswap has reattached its release: it stays firing.
-// With every push stopped at 12m, all's fall fires nothing either.
+// With every push stopped at 12m, all's fall fires nothing either. A
+// restart at 10m15s: no push at 10m30s, the new process's from 11m,
+// its counts from 12m once liveswap has reattached the release, from
+// zero; idle, observed throughout, stays firing (0.1 a second read
+// as 0.08 and 0.06 meanwhile: the reattach row).
 func TestOperatorRulesReadThePushedApps(t *testing.T) {
 	tool := vmTool(t, "vmalert-tool")
 	dir := t.TempDir()
@@ -707,6 +711,39 @@ tests:
         groupname: motel-operator
         alertname: low
         exp_alerts: []
+  - interval: 30s
+    input_series:
+      - series: 'process_start_time_seconds{job="motel"}'
+        values: '1x20 _ 650x20'
+      - series: 'motel_app_observed{app="idle",job="motel"}'
+        values: '1x20 _ 1x20'
+      - series: 'motel_app_requests_total{app="idle",release="v1",class="4xx",job="motel"}'
+        values: '0+3x20 _ _ _ 0+3x18'
+    alert_rule_test:
+      - eval_time: 10m
+        groupname: motel-operator
+        alertname: low
+        exp_alerts:
+          - exp_labels: {app: idle, kind: state, severity: warning, subject: "app:idle", source: rules, key: "rules/app:idle/low"}
+            exp_annotations: {summary: "idle: its requests a second over 5 minutes has been below 1.5 for 1m (rule low); now 100m"}
+      - eval_time: 11m
+        groupname: motel-operator
+        alertname: low
+        exp_alerts:
+          - exp_labels: {app: idle, kind: state, severity: warning, subject: "app:idle", source: rules, key: "rules/app:idle/low"}
+            exp_annotations: {summary: "idle: its requests a second over 5 minutes has been below 1.5 for 1m (rule low); now 80m"}
+      - eval_time: 12m
+        groupname: motel-operator
+        alertname: low
+        exp_alerts:
+          - exp_labels: {app: idle, kind: state, severity: warning, subject: "app:idle", source: rules, key: "rules/app:idle/low"}
+            exp_annotations: {summary: "idle: its requests a second over 5 minutes has been below 1.5 for 1m (rule low); now 60m"}
+      - eval_time: 13m
+        groupname: motel-operator
+        alertname: low
+        exp_alerts:
+          - exp_labels: {app: idle, kind: state, severity: warning, subject: "app:idle", source: rules, key: "rules/app:idle/low"}
+            exp_annotations: {summary: "idle: its requests a second over 5 minutes has been below 1.5 for 1m (rule low); now 60m"}
 `
 	runUnittest(t, tool, dir, test)
 }

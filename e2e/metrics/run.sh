@@ -727,13 +727,14 @@ done
 # The request thresholds' guard (pushedNow) over the pushes the store
 # stamped as they came: at every second of the last two minutes, each
 # app motel_app_observed named in the last 75 s was in it, its sample
-# within 15 s of the push's; blog and shop are in it now.
+# within 15 s of the push's, and blog and shop were in it throughout
+# (115 of the 120 seconds, the subquery's edges aside).
 present='max by (app) (tlast_over_time(motel_app_observed[75s]))'
 pushed="$present > scalar(max(tlast_over_time(process_start_time_seconds{job=\"motel\"}[75s]))) - 15"
 out=$(q "(count_over_time(($present)[2m:1s]) - (count_over_time(($pushed)[2m:1s]) or count_over_time(($present)[2m:1s]) * 0)) > 0")
-inq=$(q "$pushed")
+inq=$(q "count_over_time(($pushed)[2m:1s]) >= 115")
 printf '%s' "$out" | grep -q '"result":\[\]' && printf '%s' "$inq" | grep -q '"app":"blog"' && printf '%s' "$inq" | grep -q '"app":"shop"' \
-	&& pass "every observed app was in the request thresholds' guard at each second of two minutes, blog and shop in it now" \
+	&& pass "every observed app was in the request thresholds' guard at each second of two minutes, blog and shop throughout" \
 	|| fail "the guard left out a pushing app: $(printf '%s' "$out" | cut -c1-300); in it: $(printf '%s' "$inq" | cut -c1-300)"
 i=0
 until sinklog | grep -q '/blog [a-z]* post_deploy_regressed blog '; do

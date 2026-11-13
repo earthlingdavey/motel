@@ -940,7 +940,8 @@ func TestLatencyBoundsAreTheBuckets(t *testing.T) {
 // current release of an observed app, at zero. An app the running
 // config no longer observes pushes nothing of what it counted: unchanged
 // counters would read as an app with no request. Every observed app,
-// one with no release among them, is motel_app_observed.
+// one with no release or no counts yet among them, is
+// motel_app_observed.
 func TestAppCollectorRequests(t *testing.T) {
 	var cur liveswap.ReleaseRequests
 	cur.Release = "v2"
@@ -956,6 +957,7 @@ func TestAppCollectorRequests(t *testing.T) {
 		{App: "shop", Release: "s2", Observed: true, Requests: []liveswap.ReleaseRequests{{Release: "s2"}, {Release: "s1"}}},
 		{App: "idle", Release: "i1", Requests: []liveswap.ReleaseRequests{{Release: "i1"}}},
 		{App: "new", Observed: true, Requests: []liveswap.ReleaseRequests{{}}},
+		{App: "booting", Observed: true}, // a restart's first push, before liveswap reattaches its release
 	}}); err != nil {
 		t.Fatal(err)
 	}
@@ -984,7 +986,7 @@ func TestAppCollectorRequests(t *testing.T) {
 		`motel_app_cache_responses_total{app="blog",release="v2",result="miss"} 60`,
 		`motel_app_requests_total{app="shop",class="2xx",release="s2"} 0`,
 		`motel_app_response_seconds_count{app="shop",release="s2"} 0`,
-		`motel_app_observed{app="blog"} 1`, `motel_app_observed{app="shop"} 1`, `motel_app_observed{app="new"} 1`,
+		`motel_app_observed{app="blog"} 1`, `motel_app_observed{app="shop"} 1`, `motel_app_observed{app="new"} 1`, `motel_app_observed{app="booting"} 1`,
 	} {
 		if !strings.Contains(text, line+"\n") {
 			t.Errorf("missing %s", line)
