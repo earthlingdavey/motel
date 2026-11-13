@@ -102,19 +102,64 @@ func TestPartialKnownValuesNameNoSecret(t *testing.T) {
 	}
 }
 
-func TestLastPathSegment(t *testing.T) {
+// TestURLCredentials: the part of each kind's URL that is its
+// credential on its own, past a fixed suffix, as written and decoded,
+// and ntfy's auth parameter; nothing of a json URL.
+func TestURLCredentials(t *testing.T) {
+	cases := []struct {
+		kind, in string
+		want     []string
+	}{
+		{"ntfy", "https://ntfy.sh/topic-abc", []string{"topic-abc"}},
+		{"ntfy", "https://ntfy.sh/topic-abc/", []string{"topic-abc"}},
+		{"ntfy", "https://ntfy.sh/topic-abc#frag", []string{"topic-abc"}},
+		{"ntfy", "https://ntfy.sh/topic-abc/publish", []string{"topic-abc"}},
+		{"ntfy", "https://ntfy.sh/topic-abc/trigger", []string{"topic-abc"}},
+		{"ntfy", "https://ntfy.sh/publish", []string{"publish"}}, // a topic named publish
+		{"ntfy", "https://ntfy.sh/alerts%5Fops", []string{"alerts%5Fops", "alerts_ops"}},
+		{"ntfy", "https://ntfy.example.com/ops?auth=QmVhcmVyIHRrX2FiYw", []string{"ops", "QmVhcmVyIHRrX2FiYw"}}, // gitleaks:allow — made up for this test
+		{"slack", "https://hooks.slack.com/services/T0/B0/tok", []string{"tok"}},
+		{"slack", "https://hooks.slack.com/services/T0/B0/tok?auth=x", []string{"tok"}},
+		{"discord", "https://discord.com/api/webhooks/123/tok", []string{"tok"}},
+		{"discord", "https://discord.com/api/webhooks/123/tok/slack", []string{"tok"}},
+		{"slack", "https://hooks.example.com/hook/slack", []string{"slack"}}, // Slack's own URL has no suffix
+		{"json", "https://alerts.example.com/hooks/endpoint", nil},
+		{"ntfy", "https://ntfy.sh/", nil},
+		{"ntfy", "https://ntfy.sh", nil},
+		{"ntfy", "not a url", nil},
+		{"ntfy", "", nil},
+	}
+	for _, c := range cases {
+		if got := urlCredentials(c.kind, c.in); !slices.Equal(got, c.want) {
+			t.Errorf("urlCredentials(%s, %q) = %q, want %q", c.kind, c.in, got, c.want)
+		}
+	}
+}
+
+// TestPartialMaskPastASuffix: a topic before ntfy's /publish, and one
+// written escaped in the file, are masked alone; two channels on one
+// secret give one entry.
+func TestPartialMaskPastASuffix(t *testing.T) {
+	secrets := map[string]string{
+		"NOTIFY_OPS_URL": "https://ntfy.sh/" + pmTopic + "/publish",
+		"NOTIFY_ESC_URL": "https://ntfy.sh/alerts%5Fops%5F7f3a",
+	}
+	channels := []Channel{
+		{Name: "ops", Kind: "ntfy", Secret: "NOTIFY_OPS_URL"},
+		{Name: "ops-crit", Kind: "ntfy", Secret: "NOTIFY_OPS_URL", Severity: SeverityCritical},
+		{Name: "esc", Kind: "ntfy", Secret: "NOTIFY_ESC_URL"},
+	}
+	te := newTestEngine(t)
+	te.known = knownValues(secrets, channels)
+	if n := len(te.known); n != 2+1+2 {
+		t.Fatalf("known = %q", te.known)
+	}
 	for in, want := range map[string]string{
-		"https://ntfy.sh/topic-abc":                "topic-abc",
-		"https://ntfy.sh/topic-abc/":               "topic-abc",
-		"https://ntfy.sh/topic-abc?auth=x#frag":    "topic-abc",
-		"https://discord.com/api/webhooks/123/tok": "tok",
-		"https://ntfy.sh/":                         "",
-		"https://ntfy.sh":                          "",
-		"not a url":                                "",
-		"":                                         "",
+		"check " + pmTopic:    "check [redacted:partial:NOTIFY_OPS_URL]",
+		"see alerts_ops_7f3a": "see [redacted:partial:NOTIFY_ESC_URL]",
 	} {
-		if got := lastPathSegment(in); got != want {
-			t.Errorf("lastPathSegment(%q) = %q, want %q", in, got, want)
+		if got := te.clean(in); got != want {
+			t.Errorf("clean(%q) = %q, want %q", in, got, want)
 		}
 	}
 }

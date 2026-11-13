@@ -175,9 +175,10 @@ URL. The block names each value as `{secret.NOTIFY_<NAME>}`, because a
 Slack or Discord hook URL works as a password by itself and the
 Caddyfile is not secret. motel reads the file and no app is given it.
 Every value in it is masked in what motel sends and journals
-(`[redacted:NOTIFY_<NAME>]`), and so is the last part of an ntfy, Slack
-or Discord URL's path on its own (the topic, the hook's token), as
-`[redacted:partial:NOTIFY_<NAME>]`, when it is 8 characters or more.
+(`[redacted:NOTIFY_<NAME>]`), and so is the credential of an ntfy,
+Slack or Discord URL on its own (the topic, the hook's token, ntfy's
+`auth` parameter), as `[redacted:partial:NOTIFY_<NAME>]`, when it is 8
+characters or more. A heartbeat's ping URL is masked whole only.
 A shorter topic is not masked; a topic that is an ordinary word is
 masked wherever that word appears.
 It must be **root:motel 0640**. A file made elsewhere and moved in with

@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/caddyserver/caddy/v2"
@@ -399,25 +400,28 @@ func (a *App) backupRecord() string {
 }
 
 // knownValues is the filter's known values: every KEY=value of the
-// secrets file, and for each channel line of a kind whose URL ends in
-// its credential (ntfy's topic, a Slack or Discord hook's token) that
-// last path segment as partial:KEY=segment, so that the segment alone
-// is masked too, as [redacted:partial:KEY]; the whole URL, a longer
-// form, is masked first and keeps [redacted:KEY]. A json channel's
-// path is an arbitrary endpoint's, and is not taken. A segment under
-// the filter's 8 characters is skipped by the filter itself. Every
-// place notify primes a filter takes its known values from here.
+// secrets file, and for each channel line of a kind whose URL carries
+// its credential in a known place (ntfy's topic and auth parameter, a
+// Slack or Discord hook's token) that part as partial:KEY=part, so
+// that it is masked alone too, as [redacted:partial:KEY]; the whole
+// URL, a longer form, is masked first and keeps [redacted:KEY]. A
+// json channel's path is an arbitrary endpoint's, and is not taken. A
+// part under the filter's 8 characters is skipped by the filter
+// itself. Every place notify primes a filter takes its known values
+// from here.
 func knownValues(secrets map[string]string, channels []Channel) []string {
 	out := make([]string, 0, len(secrets)+len(channels))
 	for k, v := range secrets {
 		out = append(out, k+"="+v)
 	}
+	done := map[string]bool{}
 	for _, ch := range channels {
-		if ch.Kind == "json" {
+		if done[ch.Secret] {
 			continue
 		}
-		if seg := lastPathSegment(secrets[ch.Secret]); seg != "" {
-			out = append(out, partialKeyPrefix+ch.Secret+"="+seg)
+		done[ch.Secret] = true
+		for _, part := range urlCredentials(ch.Kind, secrets[ch.Secret]) {
+			out = append(out, partialKeyPrefix+ch.Secret+"="+part)
 		}
 	}
 	return out
@@ -427,19 +431,40 @@ func knownValues(secrets map[string]string, channels []Channel) []string {
 // secret of the file: it is a marker's label, never a key to look up.
 const partialKeyPrefix = "partial:"
 
-// lastPathSegment is a URL's last non-empty path segment, as written
-// (escaped), without its query or fragment; "" when the value is not
-// a URL with a path.
-func lastPathSegment(v string) string {
+// pathSuffixes are the fixed words a kind's URL may end in after its
+// credential: ntfy's publish aliases, Discord's compatible endpoints.
+var pathSuffixes = map[string][]string{
+	"ntfy":    {"publish", "send", "trigger"},
+	"discord": {"slack", "github"},
+}
+
+// urlCredentials is the credential parts of a channel URL of kind:
+// its last non-empty path segment before any of the kind's fixed
+// suffixes, as written and decoded, and an ntfy URL's auth parameter.
+// None for a json channel or a value that is not a URL with a host.
+func urlCredentials(kind, v string) []string {
+	if kind == "json" {
+		return nil
+	}
 	u, err := url.Parse(v)
 	if err != nil || u.Host == "" {
-		return ""
+		return nil
 	}
-	segs := strings.Split(u.EscapedPath(), "/")
-	for i := len(segs) - 1; i >= 0; i-- {
-		if segs[i] != "" {
-			return segs[i]
+	var out []string
+	segs := strings.FieldsFunc(u.EscapedPath(), func(r rune) bool { return r == '/' })
+	if n := len(segs); n > 1 && slices.Contains(pathSuffixes[kind], segs[n-1]) {
+		segs = segs[:n-1]
+	}
+	if n := len(segs); n > 0 {
+		out = append(out, segs[n-1])
+		if dec, err := url.PathUnescape(segs[n-1]); err == nil && dec != segs[n-1] {
+			out = append(out, dec)
 		}
 	}
-	return ""
+	if kind == "ntfy" {
+		if auth := u.Query().Get("auth"); auth != "" {
+			out = append(out, auth)
+		}
+	}
+	return out
 }
