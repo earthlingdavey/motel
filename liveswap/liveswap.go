@@ -620,10 +620,12 @@ func (a *App) Releases(app string) []string {
 }
 
 // RecordedVersions are the versions in app's deploy records, newest
-// first (listDeploySummaries): every version on disk and the newest
-// keep others, a failed deploy's among them, whose release is removed
-// at once. What notify's silence --release takes beside Releases. Nil
-// for an app this config does not run, or with no records to read.
+// first (listDeploySummaries): the store keeps one for each version on
+// disk that has one (a release deployed before records existed, or
+// whose record write failed, has none) and the newest keep others, a
+// failed deploy's among them, whose release is removed at once. What
+// notify's silence --release takes beside Releases. Nil for an app
+// this config does not run, or with no records to read.
 func (a *App) RecordedVersions(app string) []string {
 	if _, ok := a.specs[app]; !ok {
 		return nil

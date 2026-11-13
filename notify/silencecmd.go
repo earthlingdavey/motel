@@ -47,8 +47,8 @@ deploy_refused by --alert and --app).
 
 Refused: neither --alert nor --app; an alert motel does not raise here
 (Watchdog, the heartbeat, among them: pause the check off the box
-instead), an app the box does not run or a release motel has not
-on disk or recorded, each
+instead), an app the box does not run or a release neither on disk
+nor recorded, each
 answered with the names it takes; a pair that would match nothing (a
 box alert with --app); a comment empty, over 200 characters or with a
 control character; a duration under 1m or over 24h. The comment is masked as a summary is.

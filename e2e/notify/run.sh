@@ -273,6 +273,11 @@ out=$(motel monitor silence add --json --comment "e2e: v3 is known broken" --dur
 fid=$(echo "$out" | sed -n 's/^{"id":"\([0-9a-f-]\{36\}\)","ends_at":"[0-9T:.Z-]*"}$/\1/p')
 [ -n "$fid" ] && am "http://am/api/v2/silence/$fid" | grep -q '"name":"release","value":"v3"' \
 	&& pass "a failed deploy's recorded release is silenced by --release v3" || fail "deploy_failed --release v3: $out"
+# blog's deploy_failed for v3, as liveswap's one-shot carries it.
+t=$(now_ms)
+post_alert '{"alertname":"deploy_failed","kind":"event","app":"blog","release":"v3","subject":"app:blog","severity":"warning","source":"liveswap","key":"liveswap/app:blog/deploy_failed/e2e-silenced"}' >/dev/null
+sleep 10
+none "blog's deploy_failed of v3 under the silence reaches no channel" /ops deploy_failed "$t" blog
 [ -n "$fid" ] && motel monitor silence expire "$fid" >/dev/null 2>&1
 out=$(motel monitor silence add --comment "e2e: refused" --alert deploy_refused --app blog --release v3 2>&1) \
 	&& fail "deploy_refused was silenced by --release: $out" \
