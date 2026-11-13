@@ -280,19 +280,6 @@ func silenceTarget() (*amClient, *zap.Logger, time.Time, []string, error) {
 	return newAMClient(active.socket()), logger, now, known, nil
 }
 
-// masked reports s changed by the filter, whose known values are the
-// channel URLs: a comment wholly, so a secret-shaped token is refused
-// too; a matcher with itself safe, so only a channel URL is, since a
-// matcher names a label motel set, a release's git sha among them.
-func masked(known []string, s string, asSafe bool) bool {
-	var safe []string
-	if asSafe {
-		safe = []string{s}
-	}
-	out, _ := liveswap.NewRedactor(known, safe).Redact(s)
-	return out != s
-}
-
 func badGateway(err error) error {
 	return caddy.APIError{HTTPStatus: http.StatusBadGateway, Err: err}
 }
@@ -315,11 +302,12 @@ func serveSilence(w http.ResponseWriter, r *http.Request) error {
 	// The comment and the matchers are stored by Alertmanager and
 	// written to the journal as they are: one that holds what the
 	// filter would mask is refused, as send's instance is.
-	if masked(known, req.Comment, false) {
-		return unprocessable(errors.New("the comment holds a value the filter masks (a channel URL, or a secret-shaped token): name the thing, not its credential"))
-	}
-	if slices.ContainsFunc(req.Matchers, func(m string) bool { return masked(known, m, true) }) {
-		return unprocessable(errors.New("a matcher holds a channel URL: name the channel, not its URL"))
+	filter := liveswap.NewRedactor(known, nil)
+	if slices.ContainsFunc(append([]string{req.Comment}, req.Matchers...), func(v string) bool {
+		out, _ := filter.Redact(v)
+		return out != v
+	}) {
+		return unprocessable(errors.New("the comment or a matcher holds what the filter masks (a value from the box's secrets file, such as a channel URL, or a secret-shaped token such as a long hex or random string): name the thing, not its credential"))
 	}
 	now = now.UTC().Truncate(time.Second)
 	s := amSilence{Matchers: ms, StartsAt: now, EndsAt: now.Add(d), CreatedBy: createdBy(req.By), Comment: req.Comment}

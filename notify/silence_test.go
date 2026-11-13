@@ -195,16 +195,13 @@ func TestServeSilence(t *testing.T) {
 		t.Fatalf("journal matchers: %#v", fields["matchers"])
 	}
 
-	// A release's git sha, a label motel sets, is no secret in a matcher.
+	// A release's git sha is refused, as the filter masks it (accepted:
+	// DESIGN-notify.md, "Accepted residuals").
 	sha := goodSilence()
 	sha.Matchers = []string{"alertname=deploy_failed", "release=3f9c2a1be0d4c5f6a7b8c9d0e1f2a3b4c5d6e7f8"}
-	if _, err := callAdmin(t, serveSilence, http.MethodPost, sha); err != nil {
+	if _, err := callAdmin(t, serveSilence, http.MethodPost, sha); apiStatus(err) != http.StatusUnprocessableEntity {
 		t.Fatalf("a sha in a matcher: %v", err)
 	}
-	if got := f.take(); len(got) != 1 {
-		t.Fatalf("Alertmanager got %q", got)
-	}
-	_ = te.lines("monitor: silence added")
 
 	// Refused before Alertmanager hears of it.
 	bad := goodSilence()
@@ -218,9 +215,11 @@ func TestServeSilence(t *testing.T) {
 		t.Fatalf("a URL in the comment: %v", err)
 	}
 	bad = goodSilence()
-	bad.Matchers = []string{"alertname=x", "url=https://hooks.slack.com/services/T0/B0/secretpart"} // gitleaks:allow — made up for this test
-	if _, err := callAdmin(t, serveSilence, http.MethodPost, bad); apiStatus(err) != http.StatusUnprocessableEntity || !strings.Contains(err.Error(), "a matcher holds a channel URL") {
-		t.Fatalf("a URL in a matcher: %v", err)
+	// A matcher goes through the whole filter: a webhook's random part,
+	// regex-escaped so that no known form matches, is masked as a token.
+	bad.Matchers = []string{"alertname=x", `notify_channel=~https://hooks\.slack\.com/services/T0/B0/Zx9Kq2Lm8Vb4Nw7Rt5Yp3Hs6Jd1F`} // gitleaks:allow — made up for this test
+	if _, err := callAdmin(t, serveSilence, http.MethodPost, bad); apiStatus(err) != http.StatusUnprocessableEntity || !strings.Contains(err.Error(), "filter masks") {
+		t.Fatalf("a token in a matcher: %v", err)
 	}
 	if _, err := callAdmin(t, serveSilence, http.MethodPost, `{"matchers":["alertname=x"],"comment":"c","by":"a","labels":{}}`); apiStatus(err) != http.StatusBadRequest {
 		t.Fatalf("an unknown field: %v", err)
@@ -234,7 +233,7 @@ func TestServeSilence(t *testing.T) {
 	if _, err := callAdmin(t, serveSilence, http.MethodPost, goodSilence()); apiStatus(err) != http.StatusBadGateway || !strings.Contains(err.Error(), "silence invalid") {
 		t.Fatalf("Alertmanager refusing: %v", err)
 	}
-	if n := len(te.lines("monitor: silence added")); n != 2 {
+	if n := len(te.lines("monitor: silence added")); n != 1 {
 		t.Fatalf("a refused silence journalled: %d lines in all", n)
 	}
 

@@ -41,7 +41,9 @@ matches the whole value). At least one is label=value with a value.
 Refused: no matcher, or none of the label=value kind; matchers that
 would select Watchdog, the heartbeat (pause the check off the box
 instead); quotes around a value; a comment empty, on two lines or over
-200 characters; a duration under 1m or over 24h. The silence's
+200 characters; a comment or matcher the filter would mask (a value
+from the box's secrets file, or a secret-shaped token, a git sha among
+them); a duration under 1m or over 24h. The silence's
 createdBy is "motel monitor: <user>", the user from SUDO_USER, else
 USER.`,
 		Args: cobra.ArbitraryArgs,

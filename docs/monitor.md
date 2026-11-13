@@ -626,14 +626,17 @@ motel refuses:
   stop and your check off the box would report the box down. To quiet
   the heartbeat, pause that check instead;
 - a comment that is empty, on two lines or over 200 characters;
-- a duration under `1m` or over `24h`. The default is `2h`, from now.
+- a duration under `1m` or over `24h`. The default is `2h`, from now;
+- a comment or matcher holding a value from the box's secrets file
+  (a channel URL) or a token that looks like a secret, such as a long
+  hex or random string. A release's git sha is refused too, so silence
+  a deploy's events by `alertname` and `app`, and name the ticket, not
+  a hash.
 
 Each silence added or expired is a line in motel's journal
 (`monitor: silence added` with its id, matchers, end, comment and
 `created_by`, which is `motel monitor: <your user>`; `monitor: silence
-expired` with its id and `expired_by`). A comment with a token in it
-that looks like a secret (a long hex or random string) is refused, so
-write the ticket's name, not a hash. With `--json`, `add` prints `{"id":"…","ends_at":"…"}`,
+expired` with its id and `expired_by`). With `--json`, `add` prints `{"id":"…","ends_at":"…"}`,
 `expire` prints `{"id":"…"}`, and an error is `{"error":"…"}` with exit
 1; a second expire of one silence is `silence <id> has already
 expired`. Another user than root is told `the admin socket … admits root and
