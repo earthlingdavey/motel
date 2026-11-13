@@ -28,8 +28,9 @@ func init() {
 // adminAPI is notify's routes on the admin API, which listens on
 // /run/motel/admin.sock: root and the motel uid reach it, and no app
 // does (the path is not in any app's view). They are how a producer
-// outside motel emits an event, how an operator proves a channel, and
-// how the operator silences an alert (silence.go).
+// outside motel emits an event, how an operator proves a channel, how
+// the operator silences an alert (silence.go), and how a screen learns
+// what each alert fires on (ruleslist.go).
 type adminAPI struct{}
 
 func (adminAPI) CaddyModule() caddy.ModuleInfo {
@@ -45,6 +46,7 @@ func (adminAPI) Routes() []caddy.AdminRoute {
 		{Pattern: "/notify/test", Handler: caddy.AdminHandlerFunc(serveTest)},
 		{Pattern: "/notify/silences", Handler: caddy.AdminHandlerFunc(serveSilence)},
 		{Pattern: "/notify/silences/expire", Handler: caddy.AdminHandlerFunc(serveExpire)},
+		{Pattern: "/notify/rules", Handler: caddy.AdminHandlerFunc(serveRules)},
 	}
 }
 

@@ -28,8 +28,13 @@ const (
 	ruleAppMemoryHigh = "app_memory_high"
 )
 
-const storeDiskFillExpr = "min(predict_linear(vm_free_disk_space_bytes[6h], 86400)) < 0" +
-	" and min(predict_linear(vm_free_disk_space_bytes[1h], 86400)) < 0"
+// The fixed rules' terms (ruleTerm, operatorrules.go).
+var (
+	storeDiskFill = ruleTerm{value: "min(predict_linear(vm_free_disk_space_bytes[6h], 86400))", op: "<",
+		guards: []ruleTerm{{value: "min(predict_linear(vm_free_disk_space_bytes[1h], 86400))", op: "<",
+			meaning: "the 1h line predicts it full too: a one-off write tilts the 6h line alone"}}}
+	appMemoryHigh = ruleTerm{value: "max by (app) (motel_app_memory_bytes / motel_app_memory_max_bytes)", op: ">", threshold: 0.9}
+)
 
 type vmRuleFile struct {
 	Groups []vmGroup `yaml:"groups"`
@@ -47,6 +52,12 @@ type vmRule struct {
 	For         string            `yaml:"for,omitempty"`
 	Labels      map[string]string `yaml:"labels"`
 	Annotations map[string]string `yaml:"annotations"`
+
+	// term is Expr in parts, and unit its value's: what `motel monitor
+	// rules` lists (ruleslist.go). Not in the file; nil for a rule with
+	// no closeness (ChannelFailed).
+	term *ruleTerm
+	unit string
 }
 
 // stateLabels are what notify's route tree routes a store rule by, as
@@ -69,14 +80,16 @@ func fixedRules() vmGroup {
 			// large write (a release, an upgrade) tilts the six-hour line
 			// below zero for hours. The hour's line is flat again once the
 			// write is an hour old.
-			Alert: ruleStoreDiskFill, Expr: storeDiskFillExpr, For: "30m",
+			Alert: ruleStoreDiskFill, Expr: storeDiskFill.expr(), For: "30m",
 			Labels:      stateLabels(ruleStoreDiskFill, SeverityWarning, "box"),
 			Annotations: map[string]string{"summary": "the metrics store's disk is predicted to fill within a day"},
+			term:        &storeDiskFill, unit: unitBytes,
 		},
 		{
-			Alert: ruleAppMemoryHigh, Expr: "max by (app) (motel_app_memory_bytes / motel_app_memory_max_bytes) > 0.9", For: "10m",
+			Alert: ruleAppMemoryHigh, Expr: appMemoryHigh.expr(), For: "10m",
 			Labels:      app,
 			Annotations: map[string]string{"summary": "{{ $labels.app }} has used over 90 % of its memory cap for ten minutes"},
+			term:        &appMemoryHigh, unit: unitShare,
 		},
 	}}
 }

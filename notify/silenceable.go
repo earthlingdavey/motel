@@ -7,7 +7,53 @@ import (
 	"github.com/smallhoursorg/motel/liveswap"
 )
 
-// lifecycleAlerts are liveswap's, about one app; releaseAlerts those
+// motelAlert is one alert motel's own detectors raise: the severity it
+// is first raised at (disk_low and cert_failed go on to critical), and
+// whether a number the detector already holds stands behind it, which
+// `motel monitor rules` lists as a threshold with that number
+// (ruleslist.go). Every other is an event: a happening, or a state with
+// no number to be close to.
+type motelAlert struct {
+	name     string
+	severity string
+	measured bool
+}
+
+// The alerts motel's detectors raise, by where they come from.
+// lifecycle are liveswap's, about one app (detectors.go, lifecycleSink:
+// a recovery resolves its firing's name); box the tls, backup and disk
+// pollers' and channel_failed's; store the metrics store's chain
+// (metricspush.go), which a block raises only with a metrics line.
+// postDeploy is the operator's post_deploy rules' event (postdeploy.go).
+var (
+	lifecycleRaised = []motelAlert{
+		{liveswap.EventWatchdogThrottled, SeverityCritical, true}, {liveswap.EventRelaunchRefused, SeverityCritical, false},
+		{liveswap.EventDeployFailed, SeverityWarning, false}, {liveswap.EventDeployRefused, SeverityWarning, false},
+		{liveswap.EventRollback, SeverityWarning, false}, {liveswap.EventDeploySucceeded, SeverityInfo, false},
+	}
+	boxRaised = []motelAlert{
+		{"cert_failed", SeverityWarning, false}, {alertDiskLow, SeverityWarning, true},
+		{"backup_unreadable", SeverityWarning, false}, {"backup_stale", SeverityCritical, true},
+		{"backup_run_failed", SeverityWarning, false}, {"drill_failed", SeverityCritical, false},
+		{alertChannelFailed, SeverityWarning, false},
+	}
+	storeRaised = []motelAlert{
+		{eventStoreDown, SeverityWarning, true}, {eventRulesDown, SeverityWarning, true}, {eventStoreReadOnly, SeverityCritical, false},
+	}
+	postDeployRaised = motelAlert{eventPostDeployRegressed, SeverityWarning, false}
+)
+
+func alertNames(as ...[]motelAlert) []string {
+	var out []string
+	for _, l := range as {
+		for _, a := range l {
+			out = append(out, a.name)
+		}
+	}
+	return out
+}
+
+// lifecycleAlerts are lifecycleRaised's names; releaseAlerts those
 // among them, with post_deploy_regressed, whose release label names a
 // release motel knows when it fires: on disk (a rollback's target, a
 // deploy's success, a regression after it) or in the app's deploy
@@ -17,30 +63,32 @@ import (
 // carries the release too, but a refusal writes no record and its
 // release may be any name a deployer sent, so it is kept out.
 var (
-	lifecycleAlerts = []string{
-		liveswap.EventWatchdogThrottled, liveswap.EventRelaunchRefused,
-		liveswap.EventDeployFailed, liveswap.EventDeployRefused, liveswap.EventRollback, liveswap.EventDeploySucceeded,
-	}
-	releaseAlerts = []string{liveswap.EventRollback, liveswap.EventDeploySucceeded, liveswap.EventDeployFailed, eventPostDeployRegressed}
+	lifecycleAlerts = alertNames(lifecycleRaised)
+	releaseAlerts   = []string{liveswap.EventRollback, liveswap.EventDeploySucceeded, liveswap.EventDeployFailed, eventPostDeployRegressed}
 )
 
 // raisedAlerts are the alert names motel's own detectors raise on any
-// box with a monitor block: liveswap's lifecycle (detectors.go,
-// lifecycleSink: a recovery resolves its firing's name), the tls,
-// backup and disk pollers, and channel_failed.
+// box with a monitor block: lifecycleRaised's and boxRaised's.
 // TestSilenceableAlertsAreWhatMotelRaises holds this list to the names
 // the package's emitters spell out, both ways.
-var raisedAlerts = append(slices.Clone(lifecycleAlerts),
-	"cert_failed", alertDiskLow,
-	"backup_unreadable", "backup_stale", "backup_run_failed", "drill_failed",
-	alertChannelFailed,
-)
+var raisedAlerts = alertNames(lifecycleRaised, boxRaised)
 
 // storeAlerts are what a block with a metrics line adds: the store's
-// chain (metricspush.go), beside the vmalert rules rendered for this
-// config (fixedRules, operatorRules) and, with a post_deploy rule, its
-// event.
-var storeAlerts = []string{eventStoreDown, eventRulesDown, eventStoreReadOnly}
+// chain, beside the vmalert rules rendered for this config (fixedRules,
+// operatorRules) and, with a post_deploy rule, its event.
+var storeAlerts = alertNames(storeRaised)
+
+// raisedBy is the motelAlert of a name motel's detectors raise.
+func raisedBy(name string) (motelAlert, bool) {
+	for _, l := range [][]motelAlert{lifecycleRaised, boxRaised, storeRaised, {postDeployRaised}} {
+		for _, a := range l {
+			if a.name == name {
+				return a, true
+			}
+		}
+	}
+	return motelAlert{}, false
+}
 
 // notSilenceable are names motel posts that no silence may take:
 // Watchdog is the heartbeat, whose silence would make the check off the

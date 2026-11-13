@@ -206,6 +206,9 @@ type engine struct {
 	backupPath string
 	diskPaths  []string
 	lastDisk   time.Time
+	// seen is what the pollers measured last, copied under mu for
+	// `motel monitor rules` (ruleslist.go).
+	seen polled
 
 	// channel_failed's memory of Alertmanager's counter, and the read.
 	fail    failWatch
@@ -611,6 +614,12 @@ func (e *engine) poll(ctx context.Context) {
 	if diskDue {
 		evs = append(evs, e.disk.poll(paths)...)
 	}
+	e.mu.Lock()
+	e.seen.backups, e.seen.backupsAt = e.backup.read, e.backup.readAt
+	if diskDue {
+		e.seen.disks, e.seen.disksAt = e.disk.read, now
+	}
+	e.mu.Unlock()
 	for _, ev := range evs {
 		e.report(ev)
 	}

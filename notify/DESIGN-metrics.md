@@ -821,6 +821,111 @@ serving at each check (a rule taken away ends it, a changed one applies
 from the next check), and the last config's Stop drops what is in
 flight. A motel restart mid-window loses it ("Accepted residuals").
 
+## How close each alert is
+
+`motel monitor rules [--json]` (notify/ruleslist.go, notify/rulescmd.go)
+lists every alert motel can raise on the loaded config, so that a
+screen, the laptop client of #212 later, can show how close each one is
+to firing. It reads `GET /notify/rules` on the admin socket, root and
+the motel uid only, as `motel monitor silence` does, and is refused to
+another user with the same words. The names are silence's closed set
+(notify/silenceable.go, `silenceableAlerts`), which its source-reading
+test holds to what motel emits; the table there carries each detector
+alert's first severity and whether a number stands behind it. One list,
+so a listed name is a silenceable one and back (a test).
+
+**The split.** Each store rule motel renders is a `ruleTerm`: `value`
+(the MetricsQL whose series are the number compared, one per subject),
+`op`, `threshold`, and `guards`, further terms joined with `and`.
+`expr()` is the one join, and `rules.yml` holds its output: the file was
+byte-identical before and after the split for a config with every kind
+of line (15,937 B), and a test joins each listed rule's parts back
+together and compares them with the rendered `expr`, for every rule of
+`motel-store` and `motel-operator`. The guards are:
+
+- the sample floor of `5xx_share`, `p50`, `p95` and `cache_hit_share`
+  (`count >= min_requests`), which a screen shows as "too few to judge"
+  rather than as distance: vmalert cannot tell that from "under the
+  threshold";
+- a request threshold's `pushedNow` (`and on (app) (…)`, listed with
+  its `match`), which has no op: the app is one motel's last push says
+  is observed, so one whose `observe` line is gone is not read;
+- disk_fill's short window (`< 0`) and its history term, which has no
+  op: it holds when its value has a series at all;
+- `metrics_store_disk_fill`'s hour window.
+
+The seven threshold metrics and `app_memory_high` split with no guard
+of their own beyond the floor. `ChannelFailed`'s vmalert rule is listed
+as an event: its threshold is 0 on a counter, nothing to be close to.
+
+**What a store rule lists.** `value_query`, `op`, `threshold`, `unit`
+(share, seconds, requests/s, cores, bytes), `for_seconds` and `guards`
+(`query`, `op`, `value`, `match`, `meaning`). The client runs the query on
+`vm.sock` (0660 root:motel). The listing's `store` says how:
+`query_offset_seconds` is vmalert's `-evaluationInterval` plus its
+`-rule.evalDelay`, read from the unit setup writes (65 s): each
+evaluation is stamped (now − evalDelay) truncated to the interval, so
+rules evaluate data up to about 65 s old (measured on Debian's 1.112.0,
+the spike of 2026-11-13). A test holds every group's `interval` to the
+flag. Pending and firing are vmalert's `ALERTS` and `ALERTS_FOR_STATE`
+(whose value is `activeAt`): both are written, pending included, with a
+gap around each evaluation, so the listed queries look back two
+intervals; 90 s found neither series once a minute. Pending to firing
+took `for` plus about a minute.
+
+**What a check lists.** For motel's own detectors, the number each
+already holds, with `measured_at`: nothing is polled for the listing.
+`disk_low`: each filesystem's used percent at the last minute's statfs,
+its `levels` (80 warning, 90 critical, each clearing 5 points under),
+and the `level` it fires at now, which the gap makes a state.
+`backup_stale`: each app's age of its last complete backup at the last
+record read, against `status.StaleAfter` (3 h). `watchdog_throttled`:
+each app's restarts in its window against its budget, read from the
+watchdog's memory when asked (liveswap's `WatchdogBudgets`).
+`metrics_store_down`: how long every push has failed, as of the last
+push, against 5 m. `metrics_rules_down`: the reads in a row without
+vmalert up, against 3. Everything else is an event: deploys, rollbacks,
+`relaunch_refused`, `cert_failed` (motel computes no certificate
+expiry; it grades a failure only), the backup record's classes,
+`metrics_store_read_only`, `ChannelFailed`, `post_deploy_regressed`.
+The heartbeat, `NotifyTest` and the deploy mute are not listed, as they
+are not silenceable: they are not about the box.
+
+**No metrics line.** The store's rules and chain are absent, and so is
+`store`: the list is what the config can raise (silence's rule), and a
+rule absent says the same as one marked unavailable, with one shape
+fewer.
+
+**Why not annotations.** The parts could ride in each rule's
+annotations (and a client read `rules.yml` or vmalert's API). They are
+sent with the alert to Alertmanager, and the `json` and `ntfy` channels
+are webhooks whose payload carries every annotation: a deployer's
+channel would receive the box's query text. The file is vmalert's
+input, root-readable, and would become an interface. The listing carries
+no annotation either: an operator's words and the summaries stay with
+the notifications. What it carries is motel's own query text, rule and
+app names, filesystem paths, already readable in `rules.yml` (0640
+`motel:_victoria-metrics`) by the same users. A test checks that no
+channel URL, secret name or annotation text is in it.
+
+**Deferred: recording rules (C).** One recording rule per value and
+guard would give history (sparklines). Measured by `vmalert -replay`
+over a day of 10 apps: about 90 concurrent series, 119 to 130 KB a day
+(about 5 to 6 % of the box's 2.2 MB a day), and since each record runs
+its alert's subqueries a second time, vmalert's query load about
+doubles (65 ms an iteration for 83 records against 31 ms for the
+operator group). Alerts reading the records instead would remove the
+double work and lag each alert a minute. Not read by anything today.
+
+**Deferred: pushed Go series (E).** The checks' numbers as series:
+disk used ratio, backup last-OK time, watchdog restarts, certificate
+NotAfter (new code): about 35 series for 10 apps and 12 certificates,
+history of numbers the listing already reports live.
+
+Not here: `-vmalert.proxyURL` on the store (vmalert's own API over
+`vm.sock`, an open question of its own), certificate expiry, recording
+rules, new series.
+
 ## The chain
 
 | Event | Source | Kind | Severity | Fires | Resolves |
@@ -1579,3 +1684,8 @@ Dated one-liners; the full text of each is in git.
   branch alone. Setup's mask no longer says it is for an install on a
   run that installs nothing, the drift warning names the proxy setup
   will retire, and the help names `motel`, not `caddy`.
+- 2026-11-13 — `motel monitor rules [--json]` ("How close each alert
+  is"): each store rule's expression split into value, op, threshold and
+  guards, `rules.yml` byte-identical; the detectors' last numbers listed
+  beside their thresholds. Recording rules and pushed Go series deferred
+  with the spike's measured costs.

@@ -1,0 +1,487 @@
+package notify
+
+import (
+	"bytes"
+	"encoding/json"
+	"net"
+	"net/http"
+	"os"
+	"path/filepath"
+	"slices"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/smallhoursorg/motel/backups/record"
+	"github.com/smallhoursorg/motel/liveswap"
+)
+
+// listingLines are a config with every kind of rule line: each
+// threshold metric, every-app and pinned, a floor raised, a severity
+// raised, two disk_fill horizons and a post_deploy.
+var listingLines = []string{
+	"rule errors_high threshold 5xx_share > 0.05 for 10m",
+	"rule shop_slow threshold p95 > 1.5s for 15m app shop min_requests 50 severity critical",
+	"rule blog_quiet threshold request_rate < 0.1 for 1h app blog",
+	"rule hits_low threshold cache_hit_share < 0.5 for 30m",
+	"rule mem threshold memory_share > 0.8 for 5m",
+	"rule busy threshold cpu_cores > 1.5 for 10m app shop",
+	"rule median threshold p50 > 200ms for 10m",
+	"rule disk_filling disk_fill within 7d severity critical",
+	"rule disk_soon disk_fill within 2h",
+	"rule regress post_deploy {\n\t\tmax_5xx_share 0.02\n\t}",
+}
+
+var listingAt = time.Date(2026, 11, 13, 12, 0, 0, 0, time.UTC)
+
+// listingReads are numbers as the detectors would hold them.
+func listingReads() (polled, chainRead, []liveswap.WatchdogBudget) {
+	seen := polled{
+		disks:   []diskReading{{path: "/srv/motel", usedPct: 83.04, level: SeverityWarning}, {path: "/var/lib/caddy", usedPct: 41.26}},
+		disksAt: listingAt.Add(-20 * time.Second),
+		backups: map[string]time.Time{"shop": listingAt.Add(-4*time.Hour - 90*time.Second), "blog": listingAt.Add(-time.Hour)},
+		// The record read a while ago: its age is as of that read.
+		backupsAt: listingAt.Add(-2 * time.Minute),
+	}
+	chain := chainRead{failingFor: 90 * time.Second, pushedAt: listingAt.Add(-10 * time.Second), rulesBad: 1, rulesAt: listingAt.Add(-40 * time.Second)}
+	budgets := []liveswap.WatchdogBudget{{App: "shop", Restarts: 2, Budget: 5, Window: 10 * time.Minute, At: listingAt}}
+	return seen, chain, budgets
+}
+
+func listingJSON(t *testing.T, l RulesListing) []byte {
+	t.Helper()
+	var b bytes.Buffer
+	enc := json.NewEncoder(&b)
+	enc.SetIndent("", "  ")
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(l); err != nil {
+		t.Fatal(err)
+	}
+	return b.Bytes()
+}
+
+// TestRulesListingGolden pins the listing's JSON, every field, for a
+// config with every kind of rule and every check read.
+func TestRulesListingGolden(t *testing.T) {
+	seen, chain, budgets := listingReads()
+	l, err := listRules(rulesApp(t, listingLines...), seen, chain, budgets)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := listingJSON(t, l)
+	golden := filepath.Join("testdata", "rules-listing.golden.json")
+	if *update {
+		if err := os.WriteFile(golden, got, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	want, err := os.ReadFile(golden)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got, want) {
+		t.Fatalf("the listing differs from %s (run with -update and read the diff):\n%s", golden, got)
+	}
+}
+
+// TestRulesListingWithoutMetrics: with no metrics line there is no
+// store, and none of its rules or its chain: the listing is motel's
+// own checks, exactly.
+func TestRulesListingWithoutMetrics(t *testing.T) {
+	a := withEngine(t).active
+	seen, chain, budgets := listingReads()
+	l, err := listRules(a, seen, chain, budgets)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if l.Store != nil {
+		t.Fatalf("a store with no metrics line: %+v", l.Store)
+	}
+	var names []string
+	for _, e := range l.Alerts {
+		names = append(names, e.Name)
+		if e.Source != sourceCheck || e.ValueQuery != "" {
+			t.Errorf("%s: %+v", e.Name, e)
+		}
+	}
+	want := "backup_run_failed backup_stale backup_unreadable cert_failed ChannelFailed deploy_failed deploy_refused deploy_succeeded disk_low drill_failed relaunch_refused rollback watchdog_throttled"
+	slices.SortFunc(names, func(x, y string) int { return strings.Compare(strings.ToLower(x), strings.ToLower(y)) })
+	if got := strings.Join(names, " "); got != want {
+		t.Fatalf("names:\n got %s\nwant %s", got, want)
+	}
+}
+
+// TestRulesListingNamesAreSilenceable: the listing is silence's closed
+// set, name for name, with the metrics line and without.
+func TestRulesListingNamesAreSilenceable(t *testing.T) {
+	for _, a := range []*App{withEngine(t).active, rulesApp(t, listingLines...)} {
+		l, err := listRules(a, polled{}, chainRead{}, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var names []string
+		for _, e := range l.Alerts {
+			names = append(names, e.Name)
+		}
+		if want := silenceableAlerts(a); !slices.Equal(names, want) {
+			t.Fatalf("listed %v\nsilenceable %v", names, want)
+		}
+	}
+}
+
+// joined is a listed rule's condition as a client would put it back
+// together from the listing alone.
+func joined(e AlertListing) string {
+	s := e.ValueQuery + " " + e.Op + " " + numberText(*e.Threshold)
+	for _, g := range e.Guards {
+		s += " and "
+		if g.Match != "" {
+			s += g.Match + " "
+		}
+		s += g.Query
+		if g.Op != "" {
+			s += " " + g.Op + " " + numberText(*g.Value)
+		}
+	}
+	return s
+}
+
+// TestListedRulesAreTheRenderedOnes: each rule rules.yml holds in the
+// store's and the operator's groups is listed, and its listed parts,
+// joined, are its expr byte for byte, with its for and severity; so
+// what a screen shows and what vmalert fires on cannot drift apart.
+func TestListedRulesAreTheRenderedOnes(t *testing.T) {
+	a := rulesApp(t, listingLines...)
+	l, err := listRules(a, polled{}, chainRead{}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	listed := map[string]AlertListing{}
+	for _, e := range l.Alerts {
+		listed[e.Name] = e
+	}
+	n := 0
+	for _, g := range parseRules(t, renderRules(a)).Groups {
+		if g.Name == "motel-channel-failed" {
+			continue
+		}
+		for _, r := range g.Rules {
+			e, ok := listed[r.Alert]
+			if !ok || e.ValueQuery == "" {
+				t.Errorf("%s is rendered but not listed with its value: %+v", r.Alert, e)
+				continue
+			}
+			n++
+			if got := joined(e); got != r.Expr {
+				t.Errorf("%s:\n listed   %s\n rendered %s", r.Alert, got, r.Expr)
+			}
+			if promSeconds(r.For) != e.ForSeconds || e.ForSeconds == 0 || r.Labels["severity"] != e.Severity {
+				t.Errorf("%s: for %s severity %s, listed %d %s", r.Alert, r.For, r.Labels["severity"], e.ForSeconds, e.Severity)
+			}
+		}
+	}
+	if n != 11 {
+		t.Fatalf("checked %d rules, want the 2 fixed and the 9 lines'", n)
+	}
+}
+
+// TestRulesListingHoldsNoSecret: no channel URL or secret, and no
+// annotation text (an operator's words, which go to the channels), is
+// in the listing: only motel's own query text and names.
+func TestRulesListingHoldsNoSecret(t *testing.T) {
+	a := rulesApp(t, listingLines...)
+	seen, chain, budgets := listingReads()
+	l, err := listRules(a, seen, chain, budgets)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(listingJSON(t, l)) + string(rulesText(l))
+	for k, v := range testSecrets() {
+		if strings.Contains(got, v) || strings.Contains(got, k) {
+			t.Errorf("the listing holds %s", k)
+		}
+	}
+	for _, g := range []vmGroup{fixedRules(), operatorRules(a), channelFailedRules(a)} {
+		for _, r := range g.Rules {
+			for _, v := range r.Annotations {
+				if strings.Contains(got, v) {
+					t.Errorf("the listing holds %s's annotation %q", r.Alert, v)
+				}
+			}
+		}
+	}
+	for _, s := range []string{"annotation", "summary", "{{", "http", "hooks"} {
+		if strings.Contains(got, s) {
+			t.Errorf("the listing holds %q", s)
+		}
+	}
+}
+
+// TestVMAlertTiming: the offset is read from the unit setup writes,
+// and every group evaluates at its -evaluationInterval, which the
+// offset assumes.
+func TestVMAlertTiming(t *testing.T) {
+	interval, delay, err := vmalertTiming()
+	if err != nil || interval != time.Minute || delay != 5*time.Second {
+		t.Fatalf("%s %s %v", interval, delay, err)
+	}
+	for _, g := range parseRules(t, renderRules(rulesApp(t, listingLines...))).Groups {
+		if g.Interval != promDuration(interval) {
+			t.Errorf("group %s evaluates every %s, not vmalert's %s", g.Name, g.Interval, interval)
+		}
+	}
+	q, err := storeQueries(&MetricsStore{})
+	if err != nil || q.QueryOffsetSeconds != 65 || q.StateQuery != "last_over_time(ALERTS[2m])" || q.Socket != DefaultStoreSocket {
+		t.Fatalf("%+v %v", q, err)
+	}
+}
+
+func TestPromSeconds(t *testing.T) {
+	for _, d := range []time.Duration{time.Second, 90 * time.Second, 10 * time.Minute, 6 * time.Hour, 24 * time.Hour, 7 * 24 * time.Hour} {
+		if got := promSeconds(promDuration(d)); got != int(d.Seconds()) {
+			t.Errorf("%s: %d", promDuration(d), got)
+		}
+	}
+	if promSeconds("") != 0 || promSeconds("xm") != 0 {
+		t.Error("not a duration")
+	}
+}
+
+// TestListedSeveritiesAreRaised: the severity listed for a detector's
+// alert is the one its emitter raises it at first.
+func TestListedSeveritiesAreRaised(t *testing.T) {
+	te := newTestEngine(t)
+	te.deploySucceeded = true
+	s := lifecycleSink{e: te.engine}
+	for _, m := range lifecycleRaised {
+		s.Lifecycle(liveswap.LifecycleEvent{Name: m.name, App: "blog", Release: "v1", Summary: "x"})
+	}
+	got := map[string]string{}
+	for _, a := range te.drain() {
+		got[a.Labels["alertname"]] = a.Labels["severity"]
+	}
+	for _, m := range lifecycleRaised {
+		if got[m.name] != m.severity {
+			t.Errorf("%s: raised %q, listed %s", m.name, got[m.name], m.severity)
+		}
+	}
+	for _, m := range storeRaised {
+		if sev := storeEvent(m.name, true).Severity; sev != m.severity {
+			t.Errorf("%s: raised %s, listed %s", m.name, sev, m.severity)
+		}
+	}
+	// The backup record's three that one record raises, and disk_low.
+	path := filepath.Join(t.TempDir(), "status.json")
+	writeRecord(t, path, &record.Status{Error: "x", Apps: map[string]*record.App{
+		"blog": {Class: record.OK, LastOK: &record.Snapshot{ID: "a", Time: listingAt.Add(-4 * time.Hour)}},
+	}, LastDrill: &record.Drill{Time: listingAt, Detail: "could not begin"}})
+	var b backupPoller
+	evs := b.poll(listingAt, path)
+	d := diskPoller{stat: func(string) (diskNumbers, error) { return diskNumbers{usedPct: 81, dev: 1}, nil }}
+	evs = append(evs, d.poll([]string{"/srv"})...)
+	if err := os.WriteFile(path, []byte("{"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	evs = append(evs, (&backupPoller{}).poll(listingAt, path)...)
+	evs = append(evs, postDeployEvent(t))
+	n := 0
+	for _, ev := range evs {
+		m, ok := raisedBy(ev.Name)
+		if !ok || !ev.Firing && ev.Kind == kindState {
+			continue
+		}
+		n++
+		if ev.Severity != m.severity {
+			t.Errorf("%s: raised %s, listed %s", ev.Name, ev.Severity, m.severity)
+		}
+	}
+	if n != 6 {
+		t.Fatalf("checked %d of the record's, the disk's and post_deploy's", n)
+	}
+}
+
+// postDeployEvent is a regression's event, as the comparator makes it.
+func postDeployEvent(t *testing.T) Event {
+	t.Helper()
+	return regressedEvent(comparison{app: "blog", release: "v2"}, Rule{Name: "regress"}, time.Minute, verdict{}, 1)
+}
+
+// TestPollersKeepWhatTheyRead: each poll leaves its numbers for the
+// listing, and the engine copies them under its lock.
+func TestPollersKeepWhatTheyRead(t *testing.T) {
+	te := newTestEngine(t)
+	path := filepath.Join(t.TempDir(), "status.json")
+	writeRecord(t, path, &record.Status{Apps: map[string]*record.App{
+		"blog": {Class: record.OK, LastOK: &record.Snapshot{ID: "a", Time: te.at.Add(-time.Hour)}},
+		"wiki": {Class: record.Pending},
+	}})
+	te.backupPath, te.diskPaths = path, []string{"/srv", "/srv/b"}
+	te.disk.stat = func(p string) (diskNumbers, error) { return diskNumbers{usedPct: 91, dev: 7}, nil }
+	te.poll(t.Context())
+	te.mu.Lock()
+	seen := te.seen
+	te.mu.Unlock()
+	if len(seen.disks) != 1 || seen.disks[0] != (diskReading{path: "/srv", usedPct: 91, level: SeverityCritical}) || !seen.disksAt.Equal(te.at) {
+		t.Errorf("disks: %+v at %s", seen.disks, seen.disksAt)
+	}
+	if len(seen.backups) != 1 || !seen.backups["blog"].Equal(te.at.Add(-time.Hour)) || !seen.backupsAt.Equal(te.at) {
+		t.Errorf("backups: %+v at %s", seen.backups, seen.backupsAt)
+	}
+	// The record taken off: nothing of it is listed any more.
+	te.backupPath = ""
+	te.advance(time.Minute)
+	te.poll(t.Context())
+	te.mu.Lock()
+	seen = te.seen
+	te.mu.Unlock()
+	if seen.backups != nil {
+		t.Errorf("the record off: %+v", seen.backups)
+	}
+}
+
+// TestPusherRead: how long the pushes have failed as of the last, and
+// the reads without vmalert; nothing for another config's store.
+func TestPusherRead(t *testing.T) {
+	m := &MetricsStore{}
+	p := newPusher(func(Event) {})
+	p.active, p.failingSince, p.pushedAt, p.rulesBad, p.rulesReadAt = m, listingAt, listingAt.Add(2*time.Minute), 2, listingAt
+	if got := p.read(m); got != (chainRead{failingFor: 2 * time.Minute, pushedAt: listingAt.Add(2 * time.Minute), rulesBad: 2, rulesAt: listingAt}) {
+		t.Fatalf("%+v", got)
+	}
+	if got := p.read(&MetricsStore{}); got != (chainRead{}) {
+		t.Fatalf("another store: %+v", got)
+	}
+}
+
+// TestServeRules: GET only, the listing of the active config, and the
+// refusal with no monitor block.
+func TestServeRules(t *testing.T) {
+	te := withEngine(t)
+	saved := watchdogBudgets
+	watchdogBudgets = func(*App) []liveswap.WatchdogBudget {
+		return []liveswap.WatchdogBudget{{App: "shop", Restarts: 1, Budget: 5, Window: time.Minute, At: listingAt}}
+	}
+	t.Cleanup(func() { watchdogBudgets = saved })
+	te.seen = polled{disks: []diskReading{{path: "/srv", usedPct: 12}}, disksAt: listingAt}
+	w, err := callAdmin(t, serveRules, http.MethodGet, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var l RulesListing
+	if err := json.Unmarshal(w.Body.Bytes(), &l); err != nil {
+		t.Fatal(err)
+	}
+	i := slices.IndexFunc(l.Alerts, func(e AlertListing) bool { return e.Name == alertDiskLow })
+	j := slices.IndexFunc(l.Alerts, func(e AlertListing) bool { return e.Name == liveswap.EventWatchdogThrottled })
+	if l.Store != nil || i < 0 || len(l.Alerts[i].Readings) != 1 || l.Alerts[i].Readings[0].Value != 12 || j < 0 || len(l.Alerts[j].Readings) != 1 {
+		t.Fatalf("%s", w.Body.String())
+	}
+	if _, err := callAdmin(t, serveRules, http.MethodPost, ""); apiStatus(err) != http.StatusMethodNotAllowed {
+		t.Errorf("POST: %v", err)
+	}
+	te.active = nil
+	if _, err := callAdmin(t, serveRules, http.MethodGet, ""); apiStatus(err) != http.StatusServiceUnavailable {
+		t.Errorf("no monitor block: %v", err)
+	}
+}
+
+func runRules(t *testing.T, addr string, args ...string) (string, error) {
+	t.Helper()
+	c := rulesCommand()
+	c.SilenceUsage = true
+	var out, errOut bytes.Buffer
+	c.SetOut(&out)
+	c.SetErr(&errOut)
+	c.SetArgs(append(args, "--address", addr))
+	err := c.Execute()
+	return out.String(), err
+}
+
+// TestRulesCommandOutput pins the table, and --json is the route's
+// listing as it is.
+func TestRulesCommandOutput(t *testing.T) {
+	te := withEngine(t)
+	te.active.Metrics = rulesApp(t, listingLines...).Metrics
+	saved := watchdogBudgets
+	_, _, budgets := listingReads()
+	watchdogBudgets = func(*App) []liveswap.WatchdogBudget { return budgets }
+	t.Cleanup(func() { watchdogBudgets = saved })
+	te.seen, _, _ = listingReads()
+	addr := adminServe(t)
+	out, err := runRules(t, addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `NAME                     SOURCE       KIND       SEVERITY  SCOPE      CONDITION                                                    NOW
+ChannelFailed            motel check  event      warning   box        -                                                            -
+app_memory_high          builtin      threshold  warning   every app  > 0.9 share for 10m                                          (the store)
+backup_run_failed        motel check  event      warning   box        -                                                            -
+backup_stale             motel check  threshold  critical  box        > 3h                                                         blog 58m, shop 4h
+backup_unreadable        motel check  event      warning   box        -                                                            -
+blog_quiet               operator     guarded    warning   app blog   < 0.1 requests/s for 1h, 1 guard                             (the store)
+busy                     operator     threshold  warning   app shop   > 1.5 cores for 10m                                          (the store)
+cert_failed              motel check  event      warning   box        -                                                            -
+deploy_failed            motel check  event      warning   every app  -                                                            -
+deploy_refused           motel check  event      warning   every app  -                                                            -
+deploy_succeeded         motel check  event      info      every app  -                                                            -
+disk_filling             operator     guarded    critical  box        < 0 bytes for 3h30m, 2 guards                                (the store)
+disk_low                 motel check  threshold  warning   box        >= 80% warning, >= 90% critical, each clears 5 points under  /srv/motel 83% (warning), /var/lib/caddy 41.3%
+disk_soon                operator     guarded    warning   box        < 0 bytes for 30m, 2 guards                                  (the store)
+drill_failed             motel check  event      critical  box        -                                                            -
+errors_high              operator     guarded    warning   every app  > 0.05 share for 10m, 2 guards                               (the store)
+hits_low                 operator     guarded    warning   every app  < 0.5 share for 30m, 2 guards                                (the store)
+median                   operator     guarded    warning   every app  > 200ms for 10m, 2 guards                                    (the store)
+mem                      operator     threshold  warning   every app  > 0.8 share for 5m                                           (the store)
+metrics_rules_down       motel check  threshold  warning   box        >= 3 reads                                                   not read yet
+metrics_store_disk_fill  builtin      guarded    warning   box        < 0 bytes for 30m, 1 guard                                   (the store)
+metrics_store_down       motel check  threshold  warning   box        >= 5m                                                        not read yet
+metrics_store_read_only  motel check  event      critical  box        -                                                            -
+post_deploy_regressed    operator     event      warning   every app  -                                                            -
+relaunch_refused         motel check  event      critical  every app  -                                                            -
+rollback                 motel check  event      warning   every app  -                                                            -
+shop_slow                operator     guarded    critical  app shop   > 1.5s for 15m, 2 guards                                     (the store)
+watchdog_throttled       motel check  threshold  critical  every app  >= its budget in its window                                  shop 2 of 5 in 10m
+
+NOW for the store's rules: run each value_query (--json) on /run/motel-metrics/vm.sock at now - 65s;
+pending and firing are last_over_time(ALERTS[2m]).
+`
+	if out != want {
+		t.Fatalf("text:\n%s\nwant\n%s", out, want)
+	}
+	out, err = runRules(t, addr, "--json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var l RulesListing
+	if err := json.Unmarshal([]byte(out), &l); err != nil || len(l.Alerts) != 28 || l.Store == nil {
+		t.Fatalf("--json: %v %s", err, out)
+	}
+	te.active = nil
+	if out, err := runRules(t, addr, "--json"); err == nil || !strings.Contains(out, `{"error":"this box's Caddyfile has no monitor block with channels"}`) {
+		t.Fatalf("--json refused: %v %s", err, out)
+	}
+}
+
+func TestRulesCommandNotAdmitted(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root reaches any socket")
+	}
+	dir, err := os.MkdirTemp("", "rules")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	path := filepath.Join(dir, "admin.sock")
+	l, err := net.Listen("unix", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = l.Close() })
+	if err := os.Chmod(path, 0); err != nil {
+		t.Fatal(err)
+	}
+	_, err = runRules(t, "unix/"+path)
+	if err == nil || !strings.Contains(err.Error(), "admits root and the motel user: run motel monitor rules as root") {
+		t.Fatalf("err = %v", err)
+	}
+}

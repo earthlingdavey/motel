@@ -146,9 +146,17 @@ const backupEvery = 5 * time.Minute
 type backupPoller struct {
 	last time.Time
 	set  stateSet
+	// read is each app's last complete backup as the last record read
+	// that could be read held it, and readAt when: what `motel monitor
+	// rules` lists beside backup_stale. A new map at each read.
+	read   map[string]time.Time
+	readAt time.Time
 }
 
 func (b *backupPoller) poll(now time.Time, path string) []Event {
+	if path == "" {
+		b.read = nil
+	}
 	if path == "" || (!b.last.IsZero() && now.Sub(b.last) < backupEvery) {
 		return nil
 	}
@@ -176,6 +184,7 @@ func (b *backupPoller) poll(now time.Time, path string) []Event {
 		apps = append(apps, name)
 	}
 	slices.Sort(apps)
+	b.read, b.readAt = map[string]time.Time{}, now
 	for _, name := range apps {
 		a := st.Apps[name]
 		if a == nil {
@@ -193,6 +202,9 @@ func (b *backupPoller) poll(now time.Time, path string) []Event {
 		}
 		// A box event about an app: the app is the instance, never
 		// the app label, so it reaches the operator alone.
+		if a.LastOK != nil {
+			b.read[name] = a.LastOK.Time
+		}
 		if a.LastOK != nil && now.Sub(a.LastOK.Time) > status.StaleAfter {
 			fire = append(fire, ev("backup_stale", SeverityCritical, name,
 				fmt.Sprintf("the backup of %s is stale: the last complete one is from %s", name, record.When(a.LastOK.Time))))
@@ -218,6 +230,18 @@ type diskPoller struct {
 	level map[uint64]string // device → the severity it fires at: the
 	// filesystem's, whichever path stands for it as the path list changes
 	stat func(path string) (diskNumbers, error)
+	// read is the last poll's measure of each filesystem, under the
+	// path that stood for it: what `motel monitor rules` lists beside
+	// disk_low. A new slice at each poll.
+	read []diskReading
+}
+
+// diskReading is one filesystem's used share and the severity it fires
+// at (none, warning or critical), at a poll.
+type diskReading struct {
+	path    string
+	usedPct float64
+	level   string
 }
 
 // The thresholds: warning at 80 % used, critical at 90; each clears 5
@@ -280,6 +304,7 @@ func (d *diskPoller) poll(paths []string) []Event {
 	results := diskPollStats.statAll(paths, stat)
 	seen := map[uint64]bool{}
 	var fire []Event
+	read := []diskReading{}
 	for i, p := range paths {
 		n, err := results[i].n, results[i].err
 		if err != nil {
@@ -299,12 +324,14 @@ func (d *diskPoller) poll(paths []string) []Event {
 		seen[dev] = true
 		level := diskLevel(d.level[dev], used)
 		d.level[dev] = level
+		read = append(read, diskReading{path: p, usedPct: used, level: level})
 		if level == "" {
 			continue
 		}
 		fire = append(fire, Event{Name: alertDiskLow, Kind: kindState, Severity: level, Source: "disk", Instance: p,
 			Summary: fmt.Sprintf("the filesystem holding %s is %.0f%% full", p, used)})
 	}
+	d.read = read
 	return d.set.diff(fire)
 }
 

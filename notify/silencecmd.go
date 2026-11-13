@@ -106,8 +106,8 @@ func silenceExpireCommand() *cobra.Command {
 
 // silenceRun prints run's answer as text, or as JSON with --json. An
 // error with --json is {"error":…} on stdout and exit 1, with cobra's
-// own line silenced.
-func silenceRun(c *cobra.Command, asJSON bool, run func() (SilenceResult, error), text func(io.Writer, SilenceResult) error) error {
+// own line silenced. `motel monitor rules` prints the same way.
+func silenceRun[T any](c *cobra.Command, asJSON bool, run func() (T, error), text func(io.Writer, T) error) error {
 	res, err := run()
 	w := c.OutOrStdout()
 	if !asJSON {
@@ -129,14 +129,7 @@ func silenceRun(c *cobra.Command, asJSON bool, run func() (SilenceResult, error)
 func silencePost(c *cobra.Command, uri string, body any, add bool) (SilenceResult, error) {
 	out, err := adminPost(c, uri, body)
 	if err != nil {
-		// The dial's refusal alone, which AdminAPIRequest words
-		// `performing request: …`; a route's own answer (its 502 from
-		// Alertmanager's socket) is passed on as it is.
-		if msg := err.Error(); strings.HasPrefix(msg, "performing request:") && strings.Contains(msg, "permission denied") {
-			addr, _ := adminAddr(c)
-			return SilenceResult{}, fmt.Errorf("the admin socket (%s) admits root and the motel user: run motel monitor silence as root", addr)
-		}
-		return SilenceResult{}, err
+		return SilenceResult{}, notAdmitted(c, err, "motel monitor silence")
 	}
 	var res SilenceResult
 	if json.Unmarshal(out, &res) != nil || res.ID == "" || add && res.EndsAt == "" {

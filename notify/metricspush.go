@@ -67,6 +67,11 @@ type pusher struct {
 	storeDown    bool
 	rulesBad     int
 	rulesDown    bool
+	// pushedAt and rulesReadAt are when the last push ended and the
+	// last read of vmalert's up was answered: `motel monitor rules`
+	// lists failingSince and rulesBad as of them.
+	pushedAt    time.Time
+	rulesReadAt time.Time
 	// readOnly is the last answer the store gave, and what was told;
 	// readOnlyMisses counts the asks it has not answered since.
 	readOnly       bool
@@ -154,6 +159,7 @@ func (p *pusher) pushOnce(ctx context.Context) {
 		p.mu.Unlock()
 		return // another config took the pusher while this one pushed
 	}
+	p.pushedAt = now
 	if err != nil {
 		p.failed.Inc()
 		if p.failingSince.IsZero() {
@@ -287,6 +293,7 @@ func (p *pusher) checkRules(ctx context.Context) {
 		p.mu.Unlock()
 		return
 	}
+	p.rulesReadAt = p.now()
 	if up {
 		p.rulesBad = 0
 		if p.rulesDown {
@@ -349,6 +356,7 @@ func (p *pusher) setLive(l liveStore) {
 		// must not count toward its alerts. What is firing stays told,
 		// until a read of this store clears it or bears it out.
 		p.failingSince, p.rulesBad, p.readOnlyMisses = time.Time{}, 0, 0
+		p.pushedAt, p.rulesReadAt = time.Time{}, time.Time{}
 	}
 	p.active, p.store, p.gather, p.logger = l.m, l.store, l.gather, l.logger
 }
@@ -388,6 +396,7 @@ func (p *pusher) release(m *MetricsStore) {
 		evs = append(evs, storeEvent(eventStoreReadOnly, false))
 	}
 	p.failingSince, p.storeDown, p.rulesBad, p.rulesDown = time.Time{}, false, 0, false
+	p.pushedAt, p.rulesReadAt = time.Time{}, time.Time{}
 	p.readOnly, p.readOnlyMisses = false, 0
 	cancel, done, running := p.cancel, p.done, p.running
 	p.running = false
