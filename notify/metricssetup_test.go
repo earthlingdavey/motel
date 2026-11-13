@@ -55,6 +55,10 @@ func TestMetricsSetupOrderAndFiles(t *testing.T) {
 	if !slices.Equal(f.cmds, want) {
 		t.Fatalf("commands:\n%s\nwant\n%s", strings.Join(f.cmds, "\n"), strings.Join(want, "\n"))
 	}
+	// The packages it installed by name, not as a Go slice.
+	if !strings.Contains(out.String(), "installed victoria-metrics iproute2\n") {
+		t.Errorf("setup said:\n%s", out.String())
+	}
 	for _, u := range metricsUnits() {
 		b, err := os.ReadFile(filepath.Join(root, u.path))
 		if err != nil {

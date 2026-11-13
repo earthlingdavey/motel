@@ -294,10 +294,16 @@ and the site answered throughout (2026-11-12).
 **No alert is delivered between step 1's reload and step 3's.** motel
 posts nothing to Alertmanager: no event, no `Watchdog`, so the
 heartbeat stops pinging and the dead-man check pages once its own
-period is out (pause it first, or expect it). Alertmanager keeps the
-last config motel rendered and ends what was firing at its
-`resolve_timeout`, five minutes on, with a recovery to the channels
-that did not happen. Step 1's reload also retires the store's rules:
+period is out (pause it first, or expect it). The old binary's reload
+at step 1 leaves Alertmanager the last config motel rendered, which
+would end what was firing at its `resolve_timeout`, five minutes on,
+with a recovery to the channels that did not happen. The install's
+restart onto step 1's file prevents that: the new binary, starting a
+config with no monitor block, gives Alertmanager the config that sends
+nothing (`monitor: this config has no monitor block with channels: …`
+on stderr, in the journal), so what was firing ends without a message,
+unless more than five minutes pass between step 1 and the install.
+Step 1's reload also retires the store's rules:
 the reload to a config with no `metrics_store` block writes
 `/var/lib/motel-metrics/rules.yml` with its groups empty
 (`grep -c 'alert:'` on it says 0), so vmalert evaluates nothing, and
@@ -332,7 +338,12 @@ lost. On a box built at b7754fc or later, the units differ from the
 old setups' only in their comments and in the `Description=` lines,
 which name the old commands (`systemctl status` shows
 `(motel notify setup)` until they are rewritten). Running both setups
-again is then optional, and only renames them.
+again then only renames them. Either way, motel says when it is due:
+from this version, every load (`motel validate`, `motel reload`, and
+the restart onto the new binary, in the journal) warns `monitor: the
+units motel monitor setup wrote differ from this motel's (…)` for as
+long as a unit differs from the one this binary would write, comments
+aside, and names the setup to run.
 
 ## Patching the host
 

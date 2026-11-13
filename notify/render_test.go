@@ -14,6 +14,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"text/template"
 	"time"
 
 	"go.yaml.in/yaml/v3"
@@ -161,6 +162,96 @@ func TestRenderMarksResolvedAlertsInText(t *testing.T) {
 	cfg, _, _ := renderFull(t)
 	if !bytes.Contains(cfg, []byte("[RESOLVED]")) {
 		t.Fatal("the rendered config does not carry it")
+	}
+}
+
+// TestRenderSlackColourAndNoDeadLink: Slack's colour follows the
+// severity, not danger for everything firing; neither its title nor
+// its fallback links to Alertmanager's external URL, where nothing
+// listens.
+func TestRenderSlackColourAndNoDeadLink(t *testing.T) {
+	tmpl := template.Must(template.New("c").Parse(slackColor))
+	for _, c := range []struct{ status, sev, want string }{
+		{"firing", SeverityCritical, "danger"},
+		{"firing", SeverityWarning, "warning"},
+		{"firing", SeverityInfo, "#439FE0"},
+		{"firing", "", "#439FE0"},
+		{"resolved", SeverityCritical, "good"},
+	} {
+		var b strings.Builder
+		data := struct {
+			Status       string
+			CommonLabels map[string]string
+		}{c.status, map[string]string{"severity": c.sev}}
+		if err := tmpl.Execute(&b, data); err != nil || b.String() != c.want {
+			t.Errorf("%s %s: %q, %v; want %q", c.status, c.sev, b.String(), err, c.want)
+		}
+	}
+	cfg, _, _ := renderFull(t)
+	var c amConfig
+	if err := yaml.Unmarshal(cfg, &c); err != nil {
+		t.Fatal(err)
+	}
+	n := 0
+	for _, r := range c.Receivers {
+		for _, s := range r.SlackConfigs {
+			n++
+			if s.TitleLink != "" || s.Fallback != msgTitle || s.Color != slackColor {
+				t.Errorf("%s: %+v", r.Name, s)
+			}
+		}
+	}
+	if n == 0 || !bytes.Contains(cfg, []byte(`title_link: ""`)) {
+		t.Fatal("no slack config with an empty title_link: Alertmanager's default would link to :9093")
+	}
+}
+
+// TestRenderNtfyPriority: an ntfy channel's message carries the
+// receiver's severity as ntfy's priority, so a critical pages; json
+// channels, the same integration, carry no header.
+func TestRenderNtfyPriority(t *testing.T) {
+	cfg, _, _ := renderFull(t)
+	var c amConfig
+	if err := yaml.Unmarshal(cfg, &c); err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]string{
+		// pager is ntfy, critical alone; bob is json.
+		"event-box-critical":          "5",
+		"state-disk-box-critical":     "5",
+		"state-app-shop-critical":     "5",
+		"ch-pager":                    "4", // ChannelFailed's warning, and a test at it
+		"fallback":                    "",
+		"event-app-shop-critical/bob": "",
+		"state-app-shop-critical/bob": "",
+		"state-app-shop-warning/bob":  "",
+	}
+	got := map[string]string{}
+	for _, r := range c.Receivers {
+		for _, w := range r.WebhookConfigs {
+			p := ""
+			if w.HTTPConfig != nil {
+				p = strings.Join(w.HTTPConfig.Headers["X-Priority"].Values, ",")
+			}
+			k := r.Name
+			if strings.HasSuffix(w.URLFile, "NOTIFY_BOB_URL") {
+				k += "/bob"
+			}
+			got[k] = p
+		}
+	}
+	for k, p := range want {
+		if g, ok := got[k]; !ok || g != p {
+			t.Errorf("%s: X-Priority %q (present %v), want %q", k, g, ok, p)
+		}
+	}
+	for k, p := range got {
+		if strings.HasSuffix(k, "/bob") && p != "" {
+			t.Errorf("a json channel carries X-Priority %q (%s)", p, k)
+		}
+	}
+	if ntfyPriority[SeverityWarning] != "4" || ntfyPriority[SeverityInfo] != "" {
+		t.Errorf("priorities = %v", ntfyPriority)
 	}
 }
 

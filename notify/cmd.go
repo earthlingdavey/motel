@@ -149,14 +149,11 @@ over 200 characters or on more than one line, details over 2 KiB.`,
 			if err != nil {
 				return err
 			}
-			var res struct {
-				Key string `json:"key"`
-			}
+			var res SendResult
 			if err := json.Unmarshal(out, &res); err != nil || res.Key == "" {
 				return fmt.Errorf("motel answered %q", strings.TrimSpace(string(out)))
 			}
-			_, err = fmt.Fprintf(c.OutOrStdout(), "sent %s\n", res.Key)
-			return err
+			return sendAnswer(c.OutOrStdout(), res)
 		},
 	}
 	f := c.Flags()
@@ -170,6 +167,22 @@ over 200 characters or on more than one line, details over 2 KiB.`,
 	f.StringArrayVar(&details, "detail", nil, "key=value, repeatable, 2 KiB in all")
 	adminFlags(c)
 	return c
+}
+
+// sendAnswer is what `motel monitor send` says of motel's answer. An
+// event that goes nowhere but the journal is an error (exit 1), naming
+// setup; a resolve that found nothing firing under its key is not one
+// (a producer may resolve whatever it last said), but it says so.
+func sendAnswer(w io.Writer, res SendResult) error {
+	if res.Undelivered != "" {
+		return fmt.Errorf("journalled as %s, and delivered nowhere: %s", res.Key, res.Undelivered)
+	}
+	if res.ResolvedNothing {
+		_, err := fmt.Fprintf(w, "resolved nothing: no state fires under %s (a resolve matches the firing's --source, --subject, --name and --instance, and a restart of motel forgets the state)\n", res.Key)
+		return err
+	}
+	_, err := fmt.Fprintf(w, "sent %s\n", res.Key)
+	return err
 }
 
 func testCommand() *cobra.Command {

@@ -55,20 +55,37 @@ func TestScrapeFailedTellsTheOtherOperatorChannels(t *testing.T) {
 		t.Fatal("the baseline posted")
 	}
 	// The blog receiver's slack config failed: ops is the only slack
-	// channel in it, so pager (the other operator channel) is told.
+	// channel in it, and pager, the other operator channel, takes
+	// criticals alone: a ChannelFailed is a warning, so nobody is told,
+	// and the journal says so.
 	body = metricsHead + failedLine("slack", "event-app-blog-warning", "clientError", 1) + failedLine("webhook", "", "other", 0)
+	te.scrapeFailed(context.Background(), read)
+	if got := te.drain(); len(got) != 0 {
+		t.Fatalf("a critical-only channel was told a warning: %+v", got)
+	}
+	lines := te.lines("monitor: channel failed")
+	if len(lines) != 1 || lines[0].ContextMap()["suspects"] == nil {
+		t.Fatalf("lines = %+v", lines)
+	}
+	// With pager's floor at warning, it is told.
+	for i := range a.Channels {
+		if a.Channels[i].Name == "pager" {
+			a.Channels[i].Severity = SeverityWarning
+		}
+	}
+	if a.cfg, err = a.resolve(testTrust(), testSecrets()); err != nil {
+		t.Fatal(err)
+	}
+	te.setConfig(a, te.p, te.known, te.logger)
+	body = metricsHead + failedLine("slack", "event-app-blog-warning", "clientError", 2) + failedLine("webhook", "", "other", 0)
 	te.scrapeFailed(context.Background(), read)
 	got := te.drain()
 	if len(got) != 1 || got[0].Labels[labelChannel] != "pager" || got[0].Labels["suspects"] != "ops" || got[0].Labels["alertname"] != "ChannelFailed" {
 		t.Fatalf("posts = %+v", got)
 	}
-	lines := te.lines("monitor: channel failed")
-	if len(lines) != 1 {
-		t.Fatalf("lines = %+v", lines)
-	}
 	// Without receiver_name, every webhook channel is a suspect (pager,
 	// bob): ops is told.
-	body = metricsHead + failedLine("slack", "event-app-blog-warning", "clientError", 1) + failedLine("webhook", "", "other", 4)
+	body = metricsHead + failedLine("slack", "event-app-blog-warning", "clientError", 2) + failedLine("webhook", "", "other", 4)
 	te.scrapeFailed(context.Background(), read)
 	got = te.drain()
 	if len(got) != 1 || got[0].Labels[labelChannel] != "ops" || !strings.Contains(got[0].Labels["suspects"], "pager") {
