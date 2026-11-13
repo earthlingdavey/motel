@@ -80,6 +80,20 @@ wait_for_token
 journalctl -u motel -o cat --no-pager | grep -q 'Alertmanager is not set up on this box' \
 	&& pass "before setup, motel says Alertmanager is not set up, and serves" \
 	|| fail "no 'not set up' line before setup"
+# What the journal says, the commands say too.
+motel validate --adapter caddyfile --config /etc/motel/Caddyfile >/tmp/validate-0.out 2>&1
+grep -q 'WARNING: monitor: Alertmanager is not set up on this box' /tmp/validate-0.out \
+	&& pass "before setup, motel validate warns that Alertmanager is not set up" || fail "validate before setup: $(tail -3 /tmp/validate-0.out)"
+if send --name before_setup_probe --summary "e2e: sent before setup"; then
+	fail "monitor send before setup exits 0: $(cat /tmp/send.out)"
+else
+	grep -q 'delivered nowhere.*run motel monitor setup as root' /tmp/send.out \
+		&& pass "monitor send before setup exits 1, naming setup" || fail "monitor send before setup: $(cat /tmp/send.out)"
+fi
+out=$(motel monitor test ops 2>&1) && fail "monitor test before setup succeeded: $out" || {
+	echo "$out" | grep -q 'run motel monitor setup as root' \
+		&& pass "monitor test before setup names setup" || fail "monitor test before setup: $out"
+}
 
 echo "=== notify 1: motel monitor setup ==="
 t_setup=$(now_ms)
@@ -139,6 +153,9 @@ t1=$(first_arrival /ops deploy_failed "$t_v1" 15 "" blog)
 t2=$(first_arrival /blog deploy_failed "$t_v1" 15 "" blog)
 within "deploy_failed to the operator" "$t1" "$t_v3" -2 3
 within "deploy_failed to blog's deployer" "$t2" "$t_v3" -2 3
+arrivals /blog deploy_failed "$t_v1" | head -1 | grep -q ' 4$' \
+	&& pass "to the deployer's ntfy channel at ntfy's high priority (a warning)" \
+	|| fail "deploy_failed to ntfy without X-Priority 4: $(arrivals /blog deploy_failed "$t_v1" | head -1)"
 none "deploy_succeeded is off by default" /ops deploy_succeeded "$t_v1"
 none "deploy_in_progress reaches nobody (operator)" /ops deploy_in_progress 0
 none "deploy_in_progress reaches nobody (deployer)" /blog deploy_in_progress 0
@@ -273,6 +290,28 @@ journalctl -u motel --since "@$t_boot" -o cat --no-pager | grep 'monitor: a chan
 	&& pass "journal: the dropped channel, by line and key" || fail "no journal line names the dropped channel"
 out=$(motel monitor test ops 2>&1) && echo "$out" | grep -q 'delivered to ops' \
 	&& pass "the other channels deliver: $out" || fail "monitor test ops after the boot: $out"
+out=$(motel monitor test spare 2>&1) && fail "monitor test of the dropped channel succeeded: $out" || {
+	echo "$out" | grep -q 'channel spare was dropped from this load' \
+		&& pass "monitor test names the channel as dropped, and the mend" || fail "monitor test spare: $out"
+}
+# A file motel cannot read: root's validate refuses it, as the reload would.
+cp -p /etc/motel/secrets/_box.env /tmp/_box.env.keep
+chown root:root /etc/motel/secrets/_box.env && chmod 0600 /etc/motel/secrets/_box.env
+if motel validate --adapter caddyfile --config /tmp/Caddyfile.before >/tmp/validate-0600.out 2>&1; then
+	fail "motel validate, as root, took a secrets file motel cannot read"
+else
+	grep -q 'the motel user cannot read the box.s secrets file /etc/motel/secrets/_box.env (root:root 0600)' /tmp/validate-0600.out \
+		&& pass "motel validate refuses a root:root 0600 secrets file, naming the mend" || fail "validate of 0600: $(tail -2 /tmp/validate-0600.out)"
+fi
+cp -p /tmp/_box.env.keep /etc/motel/secrets/_box.env
+# The mend: the key added to the secrets file, the Caddyfile unchanged.
+# A plain motel reload (no --force) loads it, as systemctl reload does.
+printf '%s\n' 'NOTIFY_SPARE_URL="http://e2e-sink:8080/spare"' >>/etc/motel/secrets/_box.env
+motel reload --config /etc/motel/Caddyfile >/tmp/reload-mend.out 2>&1 || fail "motel reload after the mend: $(tail -3 /tmp/reload-mend.out)"
+out=$(motel monitor test spare 2>&1) && echo "$out" | grep -q 'delivered to spare' \
+	&& pass "after the mend, a plain motel reload of the unchanged Caddyfile brings the channel back: $out" \
+	|| fail "monitor test spare after motel reload: $out"
+cp -p /tmp/_box.env.keep /etc/motel/secrets/_box.env
 cp /tmp/Caddyfile.before /etc/motel/Caddyfile
 systemctl restart motel
 i=0
@@ -354,6 +393,44 @@ else
 	grep -qF 'motel notify is now motel monitor: motel monitor setup' /tmp/old.out \
 		&& pass "motel notify setup exits non-zero, naming motel monitor setup" || fail "motel notify setup: $(cat /tmp/old.out)"
 fi
+
+echo "=== notify 14: the block taken out by a reload: Alertmanager sends nothing ==="
+# Alertmanager keeps the last config it loaded, and would end what it
+# holds at resolve_timeout through it: a recovery that did not happen,
+# on every channel. The reload gives it the config that sends nothing.
+send --name removal_probe --state firing --summary "e2e: firing when the block goes" || fail "send firing: $(cat /tmp/send.out)"
+t_rm=$(now_ms)
+t=$(first_arrival /ops removal_probe "$t_rm" 60 firing)
+[ -n "$t" ] && pass "a state fires before the block goes" || fail "removal_probe never fired"
+awk 'BEGIN{skip=0} /^\tmonitor \{$/{skip=1} skip&&/^\t\}$/{skip=0; next} !skip' /etc/motel/Caddyfile >/tmp/Caddyfile.noblock
+grep -q 'monitor {' /tmp/Caddyfile.noblock && fail "fixture: could not cut the monitor block"
+cp /tmp/Caddyfile.noblock /etc/motel/Caddyfile
+t_reload=$(date +%s)
+systemctl reload motel || fail "the reload without the block"
+grep -q '^# Written by `motel monitor setup`' "$STATE/alertmanager.yml" && grep -q '^  receiver: blackhole$' "$STATE/alertmanager.yml" \
+	&& ! grep -q 'Rendered by motel' "$STATE/alertmanager.yml" \
+	&& pass "the state directory holds the config that sends nothing" || fail "after the reload: $(head -5 "$STATE/alertmanager.yml")"
+[ -z "$(find "$STATE" -name 'url-*')" ] && pass "and no URL file" || fail "URL files left: $(find "$STATE" -name 'url-*')"
+am http://am/api/v2/status | grep -q 'e2e-sink\|receiver: ops\|ch-ops' && fail "Alertmanager still runs a config with channels" \
+	|| pass "Alertmanager runs it: no receiver of motel's channels"
+journalctl -u motel --since "@$t_reload" -o cat --no-pager | grep -q 'Alertmanager was given the config that sends nothing' \
+	&& pass "journal: Alertmanager was given the config that sends nothing" || fail "no journal line for the removal"
+# The end Alertmanager would reach at resolve_timeout, brought forward:
+# root posts the alert's own labels with endsAt now. Under the last
+# render that is a [RESOLVED] to ops at the group's next tick; under the
+# config that sends nothing, nothing.
+labels=$(am 'http://am/api/v2/alerts?filter=alertname%3D%22removal_probe%22' | sed -n 's/.*"labels":\({[^}]*}\).*/\1/p' | head -1)
+t_end=$(now_ms)
+if [ -n "$labels" ]; then
+	am -o /dev/null -X POST -H 'Content-Type: application/json' http://am/api/v2/alerts \
+		-d "[{\"labels\":$labels,\"annotations\":{\"summary\":\"e2e: firing when the block goes\"},\"endsAt\":\"$(date -u +%Y-%m-%dT%H:%M:%S.000Z)\"}]"
+	sleep 75
+	none "its end reaches no channel: no recovery that did not happen" /ops removal_probe "$t_end"
+else
+	fail "Alertmanager holds no removal_probe to end"
+fi
+cp /tmp/Caddyfile.before /etc/motel/Caddyfile
+systemctl reload motel || fail "the reload that puts the block back"
 
 echo
 if [ "$FAILURES" -ne 0 ]; then

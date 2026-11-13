@@ -150,7 +150,7 @@ func TestScrapeFailedKeepsTheBaselineOverABadRead(t *testing.T) {
 	_, _, a.receivers = render(r, testStateDir)
 	te.setConfig(a, te.p, te.known, te.logger)
 	line := func(v string) string {
-		return failedMetric + `{integration="slack",receiver_name="event-app-blog-warning",reason="clientError"} ` + v + "\n"
+		return failedMetric + `{integration="discord",receiver_name="event-app-blog-warning",reason="clientError"} ` + v + "\n"
 	}
 	bodies := []string{
 		line("2"),      // baseline: two failures before motel looked
@@ -168,7 +168,7 @@ func TestScrapeFailedKeepsTheBaselineOverABadRead(t *testing.T) {
 				t.Fatalf("read %d posted %+v", i, got)
 			}
 		case 3:
-			if len(got) != 1 || got[0].Labels["alertname"] != alertChannelFailed || got[0].Labels["suspects"] != "ops" {
+			if len(got) != 1 || got[0].Labels["alertname"] != alertChannelFailed || got[0].Labels["suspects"] != "alice" || got[0].Labels[labelChannel] != "ops" {
 				t.Fatalf("the rise across the bad reads: %+v", got)
 			}
 		}

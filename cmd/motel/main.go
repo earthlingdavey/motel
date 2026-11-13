@@ -35,9 +35,11 @@ func main() {
 	// Before Caddy's own validate and reload, whether a backup run would
 	// see what the Caddyfile declares (backupcheck.go). Caddy's commands
 	// cannot be registered twice, so this comes first.
-	if gate(os.Args[1:], os.Stderr) {
+	stop, args := gateArgs(os.Args[1:], os.Stderr)
+	if stop {
 		os.Exit(1)
 	}
+	os.Args = append(os.Args[:1], args...)
 	// Provisioning cannot tell `motel validate` from a load; notify's
 	// refusals of the box's secrets differ between the two
 	// (notify/DESIGN-notify.md, "Secrets at load").

@@ -167,6 +167,41 @@ func (id identity) matches(s TrustSource) bool {
 	return true
 }
 
+// unpinnedClaims is, for an identity no source matches, the claims it
+// names that keep a source of its label from matching: those that
+// source does not pin at all, sorted. Empty unless some source of the
+// label pins every other claim the identity names to the same value,
+// so it is the reason alone, never a guess among sources.
+func unpinnedClaims(id identity, apps []string, trust map[string][]TrustSource) []string {
+	for _, app := range apps {
+		for _, s := range trust[app] {
+			if s.Label() != id.label {
+				continue
+			}
+			var extra []string
+			matches := true
+			for k, v := range id.claims {
+				got, ok := s.PinnedClaim(k)
+				switch {
+				case !ok:
+					extra = append(extra, k)
+				case got != v:
+					matches = false
+				}
+			}
+			// The line without them must still be an identity: an oidc
+			// one names at least one claim (parseIdentity), so some claim
+			// it names must be pinned, and match.
+			kept := len(extra) < len(id.claims) || strings.HasPrefix(id.label, "local:")
+			if matches && len(extra) > 0 && kept {
+				sort.Strings(extra)
+				return extra
+			}
+		}
+	}
+	return nil
+}
+
 // resolved is the configuration once checked against the apps and the
 // secrets: what the renderer and the poster read.
 type resolved struct {
@@ -266,7 +301,12 @@ func (a *App) resolveWith(trust map[string][]TrustSource, secrets map[string]str
 			// A revoked key or a repository taken out of deploy_trust:
 			// the binding would reach nobody's events, or, once the
 			// identity is trusted again, reach them without the operator
-			// having said so again.
+			// having said so again. A source of the label that pins every
+			// other claim is a deployed_by pasted whole: its ref=, actor=
+			// or sub= is a token's, which no source pins.
+			if extra := unpinnedClaims(id, r.apps, trust); len(extra) > 0 {
+				return nil, nil, fmt.Errorf("bind %q: no deploy_trust source of %s pins %s: a binding names what a source pins, not a token's every claim (deployed_by shows them all); remove %s from the line", b.Identity, id.label, strings.Join(extra, ", "), strings.Join(extra, " and "))
+			}
 			return nil, nil, fmt.Errorf("bind %q: no app's deploy_trust trusts this identity; remove the line, or trust it", b.Identity)
 		}
 	}
@@ -295,8 +335,10 @@ func (a *App) resolveWith(trust map[string][]TrustSource, secrets map[string]str
 		switch {
 		case unusable != nil:
 			why = fmt.Errorf("%s: secret %s cannot be read: %w", who, key, unusable)
-		case !ok || v == "":
+		case !ok:
 			why = fmt.Errorf("%s: secret %s is not in the box's secrets (%s)", who, key, a.secretsFile())
+		case v == "":
+			why = fmt.Errorf("%s: secret %s is empty in the box's secrets (%s): give it the channel's URL", who, key, a.secretsFile())
 		default:
 			if err := checkURL(v, a.AllowInsecureChannels); err != nil {
 				why = fmt.Errorf("%s: the value of %s %w", who, key, err)

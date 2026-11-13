@@ -139,6 +139,12 @@ func (a *App) provisionNotify(ctx caddy.Context, ls *liveswap.App) error {
 	trust := appTrust(ls)
 	drop := dropsChannels()
 	secrets, unusable := readSecrets(a.secretsFile())
+	if unusable == nil && runningCommand() == "validate" {
+		// validate runs as root, who reads any file; the server runs as
+		// motel, and a file motel cannot read is refused at a reload and
+		// drops every channel at a boot. So validate refuses it too.
+		unusable = motelCannotRead(a.secretsFile())
+	}
 	switch {
 	case unusable != nil && !drop:
 		return fmt.Errorf("monitor: %w", unusable)
@@ -334,6 +340,32 @@ func (a *App) applyRender(am *amClient) {
 		a.logger.Error("monitor: Alertmanager's config was not updated", zap.String("state_dir", a.stateDir()), zap.Error(err))
 	case reloaded:
 		a.logger.Info("monitor: Alertmanager reloaded the rendered config", zap.String("config", filepath.Join(a.stateDir(), ConfigName)))
+	}
+}
+
+// applyNothing writes the config that sends nothing, setup's own, into
+// this config's state directory, removes the URL files, and has
+// Alertmanager load it: a reload left no config that runs notify
+// (engine.release).
+func (a *App) applyNothing() {
+	ctx, cancel := context.WithTimeout(context.Background(), amRequestTimeout)
+	defer cancel()
+	reloaded, err := apply(ctx, a.stateDir(), defaultConfig, map[string]string{}, newAMClient(a.socket()))
+	config := zap.String("config", filepath.Join(a.stateDir(), ConfigName))
+	switch {
+	case errors.Is(err, errNotSetUp):
+	case errors.Is(err, errUnanswered):
+		// The file is written: Alertmanager reads it at its next start,
+		// and motel's next load asks again; until then it runs the last
+		// render.
+		a.logger.Warn("monitor: no loaded config has the monitor block's channels, and Alertmanager did not answer the reload of the config that sends nothing: until it loads it, what it holds may reach the channels as a recovery that did not happen", config, zap.Error(err))
+	case err != nil:
+		a.logger.Error("monitor: no loaded config has the monitor block's channels, and Alertmanager was not given the config that sends nothing: what it holds may reach the channels as a recovery that did not happen", zap.String("state_dir", a.stateDir()), zap.Error(err))
+	case reloaded:
+		a.logger.Info("monitor: no loaded config has the monitor block's channels: Alertmanager was given the config that sends nothing, so what it held ends without a message", config)
+	default:
+		// Not running (it reads the file when it starts), or already on it.
+		a.logger.Info("monitor: no loaded config has the monitor block's channels: the config that sends nothing is in place for Alertmanager", config)
 	}
 }
 

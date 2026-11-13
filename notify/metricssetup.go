@@ -131,7 +131,7 @@ func metricsSetup(sys system, root string, out io.Writer) (err error) {
 		if err := sys.run("apt-get", append([]string{"install", "-y", "--no-install-recommends"}, pkgs...)...); err != nil {
 			return err
 		}
-		say("installed %v", pkgs)
+		say("installed %s", strings.Join(pkgs, " "))
 	}
 	vmGID, err := sys.lookupGroup(vmUser)
 	if err != nil {
@@ -238,7 +238,7 @@ func metricsSetup(sys system, root string, out io.Writer) (err error) {
 	if err := sys.run("systemctl", "try-reload-or-restart", "motel.service"); err != nil {
 		return err
 	}
-	say("reloaded motel, which renders the store's rules into %s and pushes", filepath.Join(DefaultMetricsStateDir, RulesName))
+	say("%s", loadedSays(sys, true))
 	return nil
 }
 

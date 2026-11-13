@@ -65,6 +65,10 @@ func TestMetricsSetupOrderAndFiles(t *testing.T) {
 	if !strings.Contains(out.String(), "restarted Alertmanager, once, so that it listens in the namespace (motel-am-metrics.socket)") {
 		t.Errorf("setup did not say it restarted Alertmanager:\n%s", out.String())
 	}
+	// The packages it installed by name, not as a Go slice.
+	if !strings.Contains(out.String(), "installed victoria-metrics iproute2\n") {
+		t.Errorf("setup said:\n%s", out.String())
+	}
 	for _, u := range metricsUnits() {
 		b, err := os.ReadFile(filepath.Join(root, u.path))
 		if err != nil {

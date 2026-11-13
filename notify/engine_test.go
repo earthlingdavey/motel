@@ -528,6 +528,46 @@ func TestReleaseReappliesTheServingRender(t *testing.T) {
 	e.release(old)
 }
 
+// TestReleaseAtAReloadSendsNothing: a reload that leaves no config
+// running notify (the block taken out) gives Alertmanager the config
+// that sends nothing and removes the URL files, so what it holds ends
+// at resolve_timeout with no recovery on any channel; motel's own
+// shutdown (no config running after it) leaves the render, which keeps
+// what fired alive across a restart.
+func TestReleaseAtAReloadSendsNothing(t *testing.T) {
+	orig := configRunning
+	t.Cleanup(func() { configRunning = orig })
+	for _, reload := range []bool{true, false} {
+		f, sock := startFakeAM(t)
+		dir := t.TempDir()
+		a := &App{StateDir: dir, Socket: sock, rendered: []byte("rendered\n"),
+			files: map[string]string{urlFileName("NOTIFY_OPS_URL"): "https://ntfy.sh/ops"}, logger: zap.NewNop()}
+		am := newAMClient(sock)
+		a.applyRender(am)
+		e := newEngine()
+		e.configure(a, am, nil, zap.NewNop())
+		f.mu.Lock()
+		before := f.reloads
+		f.mu.Unlock()
+		configRunning = func() bool { return reload }
+		e.release(a)
+		cfg, _ := os.ReadFile(filepath.Join(dir, ConfigName))
+		_, urlErr := os.Stat(filepath.Join(dir, urlFileName("NOTIFY_OPS_URL")))
+		f.mu.Lock()
+		after := f.reloads
+		f.mu.Unlock()
+		if reload {
+			if string(cfg) != string(defaultConfig) || !os.IsNotExist(urlErr) || after != before+1 {
+				t.Errorf("a reload without the block: config %q, url file %v, reloads %d → %d", cfg, urlErr, before, after)
+			}
+			continue
+		}
+		if string(cfg) != "rendered\n" || urlErr != nil || after != before {
+			t.Errorf("a shutdown: config %q, url file %v, reloads %d → %d", cfg, urlErr, before, after)
+		}
+	}
+}
+
 // TestReleaseOfTheLastConfigClearsTheTable: with no config running
 // notify, nothing can clear what the table holds, and a block added
 // back later must not fire it again.
