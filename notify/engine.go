@@ -249,7 +249,13 @@ func (e *engine) bucketFor(key string) *bucket {
 // One filter per event: events are rare, and a filter holds its safe
 // names.
 func (e *engine) clean(s string, safe ...string) string {
-	s, _ = liveswap.NewRedactor(e.known, safe).Redact(s)
+	return cleanText(e.known, s, safe...)
+}
+
+// cleanText is clean with the known values given: a silence's comment
+// is masked with the known values of the config its route checked.
+func cleanText(known []string, s string, safe ...string) string {
+	s, _ = liveswap.NewRedactor(known, safe).Redact(s)
 	return deploytrust.CutRunes(s, maxSummary)
 }
 

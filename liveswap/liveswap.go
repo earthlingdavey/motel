@@ -607,6 +607,18 @@ func (a *App) MemoryCapped() map[string]bool {
 	return out
 }
 
+// Releases are the release versions on disk for app, newest first
+// (listReleases): what notify's `motel monitor silence add --release`
+// takes. Nil for an app this config does not run, or when the
+// directory cannot be read.
+func (a *App) Releases(app string) []string {
+	if _, ok := a.specs[app]; !ok {
+		return nil
+	}
+	versions, _ := listReleases(newAppDirs(a.Root, app))
+	return versions
+}
+
 // Validate enforces semantic invariants (runs after Provision has
 // applied defaults, for JSON and Caddyfile config alike).
 func (a *App) Validate() error {

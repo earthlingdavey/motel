@@ -124,11 +124,18 @@ var theComparator = newComparator(theEngine.report)
 // ruleFor is the post_deploy rule for app in the active config: its
 // own, else the one for every app. Called with mu held.
 func (c *comparator) ruleFor(app string) (Rule, bool) {
-	if c.active == nil {
+	return postDeployRuleFor(c.active, app)
+}
+
+// postDeployRuleFor is the post_deploy rule of m that judges app's
+// deploys: the app's own, else the every-app one. Also what `motel
+// monitor silence add --alert post_deploy_regressed --app` holds to.
+func postDeployRuleFor(m *MetricsStore, app string) (Rule, bool) {
+	if m == nil {
 		return Rule{}, false
 	}
 	var every *Rule
-	for i, r := range c.active.Rules {
+	for i, r := range m.Rules {
 		if r.Kind != rulePostDeploy {
 			continue
 		}
@@ -136,7 +143,7 @@ func (c *comparator) ruleFor(app string) (Rule, bool) {
 			return r, true
 		}
 		if r.App == "" {
-			every = &c.active.Rules[i]
+			every = &m.Rules[i]
 		}
 	}
 	if every != nil {

@@ -25,10 +25,11 @@ func init() {
 	caddy.RegisterModule(adminAPI{})
 }
 
-// adminAPI is notify's two routes on the admin API, which listens on
+// adminAPI is notify's routes on the admin API, which listens on
 // /run/motel/admin.sock: root and the motel uid reach it, and no app
 // does (the path is not in any app's view). They are how a producer
-// outside motel emits an event, and how an operator proves a channel.
+// outside motel emits an event, how an operator proves a channel, and
+// how the operator silences an alert (silence.go).
 type adminAPI struct{}
 
 func (adminAPI) CaddyModule() caddy.ModuleInfo {
@@ -42,6 +43,8 @@ func (adminAPI) Routes() []caddy.AdminRoute {
 	return []caddy.AdminRoute{
 		{Pattern: "/notify/events", Handler: caddy.AdminHandlerFunc(serveSend)},
 		{Pattern: "/notify/test", Handler: caddy.AdminHandlerFunc(serveTest)},
+		{Pattern: "/notify/silences", Handler: caddy.AdminHandlerFunc(serveSilence)},
+		{Pattern: "/notify/silences/expire", Handler: caddy.AdminHandlerFunc(serveExpire)},
 	}
 }
 
@@ -133,14 +136,19 @@ func (r SendRequest) Check() error {
 	return nil
 }
 
+// errBadBody is readJSON's one answer to a body it cannot take: fixed,
+// since Go's decoder names an unknown field or a mistyped one, and
+// Caddy journals a route's refusal (`admin.api` `request error`).
+var errBadBody = errors.New("the body is not this route's JSON request")
+
 func readJSON(r *http.Request, v any) error {
 	if r.Method != http.MethodPost {
 		return caddy.APIError{HTTPStatus: http.StatusMethodNotAllowed, Err: errors.New("POST only")}
 	}
 	dec := json.NewDecoder(io.LimitReader(r.Body, 16<<10))
 	dec.DisallowUnknownFields()
-	if err := dec.Decode(v); err != nil {
-		return caddy.APIError{HTTPStatus: http.StatusBadRequest, Err: fmt.Errorf("the body: %w", err)}
+	if dec.Decode(v) != nil {
+		return caddy.APIError{HTTPStatus: http.StatusBadRequest, Err: errBadBody}
 	}
 	return nil
 }

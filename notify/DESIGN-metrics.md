@@ -1113,12 +1113,17 @@ Alertmanager, and no UI: Debian's package is built without vmui, so
 `/` still links it (measured on 1.112.0 in the e2e box, 2026-11-12).
 On the box, `curl --unix-socket /run/motel-metrics/vm.sock
 http://vm/api/v1/query?...` (docs/monitor.md, "Look at the numbers",
-has the queries). root, on a laptop: `ssh -L
-/run/user/$UID/vm.sock:/run/motel-metrics/vm.sock root@box` for
-command-line clients, or a short-lived `ssh -L 8428:/run/motel-metrics/vm.sock`
-for a client that speaks only TCP, such as a laptop's own Grafana,
-closed after (a TCP forward is an unauthenticated full-power API for
-every process on the laptop). Neither forward is measured. A deployer
+has the queries). root, on a laptop: `mkdir -m 700 -p ~/.motel && ssh
+-N -o StreamLocalBindMask=0177 -o StreamLocalBindUnlink=yes -o
+ExitOnForwardFailure=yes -L ~/.motel/vm.sock:/run/motel-metrics/vm.sock
+root@box` for command-line clients (`curl --unix-socket
+~/.motel/vm.sock`), the unix-to-unix forward DESIGN-notify.md's
+"Viewing" measured for `am.sock` (not measured for `vm.sock` itself);
+or a short-lived `ssh -L 8428:/run/motel-metrics/vm.sock` for a client
+that speaks only TCP, such as a laptop's own Grafana, closed after (a
+TCP forward is an unauthenticated full-power API for every process on
+the laptop, and for a browser page through DNS rebinding; not
+measured). A deployer
 reads `GET /<app>`'s `metrics`; not the store, not the rules, not
 other apps.
 

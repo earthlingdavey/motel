@@ -500,6 +500,100 @@ mend. Every load's gate, `run`'s among them, warns when a unit setup
 wrote differs from the one this binary would write, naming the setup
 to run again: an upgraded box keeps the old units until root does.
 
+## Silences
+
+`motel monitor silence add [--alert <name>] [--app <name>] [--release
+<version>] --comment <text> [--duration 2h]` posts to `POST
+/notify/silences`, and `motel monitor silence expire <id>` to `POST
+/notify/silences/expire`, two more `admin.api.notify` routes. The route
+checks the request again (the command's check names a mistake of shape
+first, as `send`'s does), holds each name to a closed set of the loaded
+config, builds the matchers itself, writes the silence to
+Alertmanager's v2 API (`POST /api/v2/silences`, `DELETE
+/api/v2/silence/{id}`) over the socket, and once Alertmanager has taken
+it writes one line in motel's journal: `monitor: silence added` (`id`,
+`alert`, `app`, `release`, `ends_at`, `created_by`, `comment`) or
+`monitor: silence expired` (`id`, `expired_by`, in `created_by`'s
+form). A refused or failed write leaves no line; the command says why
+and exits 1.
+
+Through the route, not from the command to the socket, because that is
+how `send` and `test` write, and so one code path holds every write
+motel documents: the line is motel's, in its unit's journal beside the
+events, written by the process that holds the filter's known values and
+the loaded config. A command that posted to `am.sock` itself would log
+to its own stderr, which over `ssh root@box motel monitor silence …` is
+the laptop's terminal, not the box's journal. A later laptop client
+runs these commands over ssh with `--json`, so it gets the same checks
+and the same line, and never Alertmanager's raw API. root can still
+post to the socket, as root can do anything; such a silence leaves no
+motel line.
+
+**No free-form matchers.** The first shape took amtool's matchers
+(`label=value`, `=~`, `!~`) and held them to the output filter, which
+is best effort by design: four review rounds and Copilot found ways a
+channel URL or its token could pass in a regex or an arbitrary label
+(escaped dots, a fragment, a label the filter never sees as a URL).
+The cause was the filter used as an input validator over a regex
+language. Now each value is checked against a closed set motel owns,
+and motel builds only equality matchers, on the labels its own alerts
+carry (`labelsFor`, `oneShotAlert`):
+
+| Flag | Matcher | Taken |
+|---|---|---|
+| `--alert` | `alertname=` | one of `silenceableAlerts`: the names motel's detectors raise on any box (`raisedAlerts`: liveswap's lifecycle, cert, disk, backup, `ChannelFailed`), and with the metrics line the store's chain events, the vmalert rules rendered for this config (`fixedRules`, the operator's `threshold` and `disk_fill` rule names) and, with a `post_deploy` rule, `post_deploy_regressed`. `TestSilenceableAlertsAreWhatMotelRaises` reads the package's emitters from its source and holds the set to them both ways |
+| `--app` | `app=` | one of the apps the loaded config runs; with `--alert`, only an alert about an app, and for a rule of one app's (a `threshold` line with `app`) that app, and `post_deploy_regressed` only for an app a `post_deploy` rule judges (its own, else the every-app one: `postDeployRuleFor`, the comparator's) (`alertScope`: liveswap's, `post_deploy_regressed`, and the vmalert rules whose subject is an app's), since a box alert has no `app` label and the silence would match nothing. Alone, it silences every alert with that `app` label, an external producer's `--subject app:<name>` events among them, but the deploy mute: motel adds `alertname!=deploy_in_progress`, so that what the mute inhibits stays inhibited whatever Alertmanager does with a silenced source |
+| `--release` | `release=` | one of the app's releases on disk (`liveswap.App.Releases`, newest first, listed in the refusal), with `--app` and an `--alert` whose release label names a release on disk (`onDiskReleases`: `rollback`, `deploy_succeeded`, `post_deploy_regressed`). A state alert (`watchdog_throttled`) carries its release as an annotation only, and `deploy_failed`'s or `deploy_refused`'s release never stays on disk (a refused deploy never lands, a failed one's directory is removed), so a `--release` there is refused rather than stored to match nothing; they are silenced by `--alert` and `--app` |
+
+| Refused | Why |
+|---|---|
+| neither `--alert` nor `--app` | a silence of a release alone, or of nothing, is too wide |
+| a pair that would match nothing: a box alert with `--app`, `--release` without `--app` or with an alert that carries no release | Alertmanager takes a silence that matches nothing, and the operator would believe the alert quiet |
+| an alert motel does not raise here, or an app the box does not run: the refusal lists the names taken, never the value given | the names listed are motel's own, safe to print; the value may be anything, and Caddy journals a route's refusal (`admin.api` `request error`), so no refusal of this route echoes input |
+| `Watchdog`, `NotifyTest`, `deploy_in_progress` (`notSilenceable`) | a silenced Watchdog stops the heartbeat's pings, and the check off the box then reports the box down: the place to quiet it is that check's pause (docs/monitor.md, "Turn it off"); the other two are a test alert and the deploy mute, which reach no channel |
+| a comment empty, over 200 characters, or with a control character (a newline, a tab, an escape sequence, U+2028 or U+2029) | whoever finds the silence reads why, in a terminal among others |
+| a duration under 1m or over 24h (default 2h, from now; a fraction is kept, `ends_at` is RFC 3339 with nanoseconds) | a silence that outlives the incident hides the next one |
+| an id that is not a UUID; an id Alertmanager does not hold (422, `no silence <id> in Alertmanager`); one already expired (422, `silence <id> has already expired`) | Alertmanager 0.28.1 answers 200 to the expiry of an expired silence (measured in the e2e box), so the route asks its state first (`GET /api/v2/silence/{id}`) rather than journal an end that was not |
+| a body with unknown fields (a `matchers` list among them), a field of the wrong type, or not JSON: one fixed 400, `the body is not this route's JSON request` (`readJSON`, which every notify route uses, `send`'s and `test`'s too) | the route takes the request, never Alertmanager's shape; Go's decoder names an unknown or mistyped field, which the journalled refusal must not carry |
+
+Not taken yet, and adding them later breaks nothing: an external
+producer's own names (`motel monitor send --name`), which no config
+lists; regexes; other labels.
+
+The comment is the one free text, and it is **masked, not refused**:
+`cleanText(known, comment, release)`, the filter and the 200-character
+cut a summary gets (the engine's `clean` is the same function over its
+own known values), with the release safe as the engine takes it, and
+`known` the union of the checked config's known values and the
+engine's at that instant: a reload between the route's check and the
+mask neither unmasks a secret the checked config knew nor misses one
+the new config added. A refusal would echo nothing useful (it cannot
+say which part without printing it) and would send the operator to
+guess; a masked comment in Alertmanager shows the filter's marker where
+the secret was, which reads as what it is. The bare-ntfy-topic limit of
+the filter ("Owed") applies to it as to every summary.
+
+`createdBy` is `motel monitor: <user>`, the user being `SUDO_USER`, else
+`USER`, else the uid's name: what the caller's environment says, from a
+caller the admin socket already admits as root or motel, so a label for
+whoever reads the silence, not an identity checked. Over `ssh root@box`
+it is `root`.
+
+`--json` prints `{"id":"…","ends_at":"…"}` for an add and `{"id":"…"}`
+for an expire, and `{"error":"…"}` with exit 1 for any refusal or
+failure the command reaches (cobra's own errors, an unknown flag or an
+argument, stay text). Without it: `silence <id> added; it ends at
+<ends_at>` and `silence <id> expired`. Both shapes are pinned by
+`TestSilenceCommandOutput`, and the request Alertmanager is sent by
+`TestServeSilence`.
+
+There is no `list`: reads go to Alertmanager's own v2 API (`GET
+/api/v2/silences`, `GET /api/v2/silence/{id}`), whose shape motel would
+only copy ("Viewing"). Who runs them: root (and the motel uid, which
+the admin socket admits); any other user is told `the admin socket
+(unix//run/motel/admin.sock) admits root and the motel user: run motel
+monitor silence as root`.
+
 ## Packaging and setup
 
 The `.deb` **Suggests** `prometheus-alertmanager`. A `Depends` cannot
@@ -578,7 +672,9 @@ Alertmanager answering on both (measured in the e2e box, 2026-11-12).
 
 New: a resident daemon motel did not write, reachable by unix-socket
 permission alone, holding outbound credentials in files only it and
-motel read; and two admin routes.
+motel read; and four admin routes (the silence routes give the admin
+socket's callers, root and motel, nothing the Alertmanager socket did
+not already give them).
 
 - **T1** (a poisoned dependency in an app): the socket, the state
   directory and the admin socket are not in its view; it runs as the
@@ -618,9 +714,22 @@ commands or `curl --unix-socket /run/motel-notify/am.sock
 http://am/api/v2/alerts`. `amtool`, which the package ships, speaks TCP
 only: on a box with the store it runs inside the store's namespace,
 against Alertmanager's listener there (`ip netns exec motel-metrics amtool
---alertmanager.url=http://127.0.0.1:9093 alert`, measured), and from
-root's laptop through `ssh -L 9093:/run/motel-notify/am.sock root@box`
-(OpenSSH forwards to a remote unix socket since 6.7; not measured).
+--alertmanager.url=http://127.0.0.1:9093 alert`, measured). From root's
+laptop, a unix-to-unix forward into an owner-only directory, `mkdir -m
+700 -p ~/.motel && ssh -N -o StreamLocalBindMask=0177 -o
+StreamLocalBindUnlink=yes -o ExitOnForwardFailure=yes -L
+~/.motel/am.sock:/run/motel-notify/am.sock root@box`, then `curl
+--unix-socket ~/.motel/am.sock http://am/api/v2/alerts`. Not a TCP
+forward (`-L 9093:…`): that puts the unauthenticated API, silences
+included, on the laptop's loopback, for any local process and for a
+browser page through DNS rebinding. Measured with OpenSSH 10.0p2 (sshd
+on localhost in a Debian 13 container, 2026-11-13): the socket is born
+`srw-------` (0177 is OpenSSH's default mask; the option keeps it so
+whatever the user's config says), another user's `curl` is refused,
+and a socket file left by an ended ssh makes the next forward fail
+`Address already in use` unless `StreamLocalBindUnlink=yes`. Not
+measured against a real box. Writes from the laptop go through `ssh
+root@box motel monitor silence …` ("Silences"), not this forward.
 Slack's title link, which Alertmanager's defaults point at its external
 URL (`http://<hostname>:9093/#/alerts…`, where nothing answers), is
 rendered empty, and its fallback is motel's title. A deployer
@@ -650,6 +759,12 @@ on its general scales. notify's examples:
 
 | Residual | Where | S | O | D | Why accepted |
 |---|---|---|---|---|---|
+| A silence's comment may hold Unicode format characters (bidi overrides U+202A–U+202E and U+2066–U+2069, zero-width ones, U+FEFF), which a terminal shows reordered: the comment misstates why the silence exists to whoever reads it raw | notify/silence.go (`checkComment`) | 2 | 5 | 3 | 30 by product, but second-pass hardening (the review rule stops at two passes): the comment comes from root, and the silence's matchers, which decide what is quiet, are motel's own; refusing `unicode.Cf` is size 1, risk 1 for the next change. /code-review pass 2 of the closed-set shape |
+| `onDiskReleases` and `lifecycleAlerts` copy lifecycleSink's cases by hand: a new liveswap one-shot added there and not here is silenceable only once `raisedAlerts` names it (`TestSilenceableAlertsAreWhatMotelRaises` fails until it does), and never by `--release` until `onDiskReleases` does | notify/silenceable.go | 2 | 5 | 1 | 10; the scan names the missing alert loudly; `--release` refused for it is a refusal, not a silent miss. /code-review pass 2 of the closed-set shape |
+| `liveswap.App.Releases` derives the app's directories from `Root` and the name again (`newAppDirs`) rather than the spec's own `dirs`; the same today, and apart only if an app's directories ever stop being `Root/<name>` | liveswap/liveswap.go (`Releases`) | 2 | 1 | 1 | 2; no such override exists. /code-review pass 2 of the closed-set shape |
+| A refused admin body names no field: after an upgrade, a new `motel monitor` command posting to a motel not yet restarted (a field the old binary does not know) reads as a plain `the body is not this route's JSON request` rather than naming the version skew | notify/admin.go (`readJSON`) | 2 | 3 | 1 | 6; refused loudly, and `systemctl restart motel` mends it; naming the field safely would mean listing the struct's fields by reflection to tell a known name from input (size 2, risk 1). /code-review of the Copilot round 2 fixes on #444 |
+| `created_by` and `expired_by` in the journal are what the caller's environment says (`SUDO_USER`, `USER`): root can name anyone | notify/silencecmd.go (`invokingUser`) | 1 | 5 | 5 | a label for whoever reads the silence, from a caller already root or motel, who could write the journal or Alertmanager directly; no identity is checked, and the doc says so. /code-review of the closed-set shape |
+| Two `motel monitor silence expire` of one silence at once, or one as the silence reaches its end: both pass the route's state check (`GET`) before either `DELETE`, which Alertmanager 0.28.1 answers 200 for an expired silence, so the journal has two `monitor: silence expired` lines, or one for a silence that ended on its own | notify/silence.go (`serveExpire`) | 2 | 3 | 3 | 18; the silence ends expired either way; only the journal's count is off, and Alertmanager's own `endsAt` says when it ended. A lock across both requests would hold the engine's lock over Alertmanager's answer, or add a lock of its own (size 3). /code-review pass 1 on monitor/silence |
 | A public host name that resolves, or rebinds, to a private address is posted to: the check is on the URL as written | notify/config.go (`checkURL`) | 1 | 5 | 5 | a channel URL is a signer's line today, and a signer can already run any code as an app that reaches the same addresses; scored by what T6 gains (nothing). Rescore when #417 lets a deployer choose a URL |
 | motel stopped for more than five minutes: Alertmanager resolves each firing state alert at `resolve_timeout`, and the channels get a recovery that did not happen (at motel's start the watchdog's standing reports fire its alerts again, and the pollers theirs) | notify/engine.go (no `endsAt` on re-posts) | 2 | 3 | 3 | 18; a stop that long is itself a fault the heartbeat reports (Watchdog's silence pages first); keeping Alertmanager's alerts alive across a stop would need a poster outside motel; a restart (seconds) is "Behaviour"'s, and keeps them |
 | A box on the feature branch's `notify` or `metrics_store` block cannot move to the `monitor` block in one load: the new binary refuses the old blocks and the old binary the new one, so the upgrade runs with no notify between two pushes (docs/upgrading.md, "From the notify and metrics_store blocks"): no event is delivered, the heartbeat stops (the dead-man check pages), Alertmanager ends what fired at `resolve_timeout` with a recovery that did not happen, and the store's rules are retired at the first push's reload | notify/caddyfile.go (`refusedOption`) | 3 | 5 | 1 | 15; once per box, only for boxes that ran the unreleased feature branch, in an order the doc names and the refusal points at, and the dead-man check reports the gap; a transitional alias (the old names loading, warned, for one release) is a second grammar and a new state to retire (size 3, risk 2). /code-review pass 1 on the monitor block, finding 1; the user chose the documented order over a transitional alias |
@@ -671,6 +786,7 @@ on its general scales. notify's examples:
 
 | Owed | S | O | D | Lands in |
 |---|---|---|---|---|
+| A fragment of a secret that is not a whole value, nor one of its forms, nor shaped like a secret, passes the filter: an ntfy topic alone (in `send --instance ops-alerts` or a summary, or a silence's comment, where the topic is the credential) is journalled, and a silence stores its comment in Alertmanager. Pre-existing in the filter's known-value layer (whole values and their forms), which every summary goes through; found by /code-review pass 3 on monitor/silence | 3 | 5 | 5 | the filter's own change (liveswap/redact.go: a channel URL's path part as a form of its value, as a URL's password is; size 2, risk 2), not this branch: it reaches every summary motel sends. Flagged for the owner |
 | ntfy and json share the webhook integration, and so do any two channels of one kind in one receiver: a failure of one names every such channel as a suspect, a working one among them, and none of them is told (`ChannelFailed` goes only to the operator channels that are not suspects). Moved from Accepted: its product is 30, over the bar of 20 (the operator/deployer review of 2026-11-11, rechecked at 01b2fd5 and at 04e52a9) | 2 | 5 | 3 | its own PR, "monitor: one receiver per channel" (notify/render.go, channelfailed.go `suspects`, metricsrules.go: each channel its own receiver under `continue` routes, so that a failure names one channel; size 3, risk 2). Independent of #433, and it reshapes every route. It carries the heartbeat's hold too (the next row) |
 | An operator with no channel to hear a failure (a single channel, or the others taking criticals alone, `failureAudience`): `ChannelFailed` is told nowhere and the heartbeat goes on pinging, so a dead channel delivers no alert while the dead-man check stays green (hotserve-1: one ntfy channel, `ops`, and a Healthchecks heartbeat). The `monitor: channel failed` line names the cause, in the journal alone. Moved from Accepted (2 5 1) at the rescore of 2026-11-13: S 3, not 2, since the green check is a verdict the operator trusts (not 5: the journal line keeps it from "lost silently", and not 4: delivery resumes with the channel); O 4, not 5, since the block is operator input but the dead channel is one common fault; D 3, not 1, since the green check and a quiet channel are a plausible answer and nothing sends the operator to the journal. A single fault that ends green (rule 2); its product is 36 | 3 | 4 | 3 | the PR "monitor: one receiver per channel", after its receivers, so that a hold never stands while a working channel is among the suspects (notify/engine.go `tick`, channelfailed.go `scrapeFailed`). While a failure is told to no channel, motel stops posting `Watchdog`; it ends within its 4 m life and the dead-man service alerts through its own channels. Any service that takes a ping URL works; there is no new endpoint and no new Caddyfile line. An Alertmanager inhibit rule was not taken: it needs a source alert and a render change. The hold comes only once the untold failure has stood 5 m with no delivery through a suspect's receiver since (the requests counters motel reads already). The pings resume at the next such delivery (`motel monitor test` makes one), or at a restart of motel (the hold is in memory, as the baseline is). The heartbeat receiver renders `send_resolved: false`, so Watchdog's end sends nothing. `monitor: heartbeat held` says why, naming the suspects, and `monitor: heartbeat resumed` follows. Size 3 (a new state), risk 2 (the minute's heartbeat changes under its tests and a new one). **Wide**: it changes what the dead-man check off the box reports for every box with a heartbeat, and a wrong hold pages. A pulled health endpoint was not taken: a public route, a token, and the box's state exposed. Later, additive: Healthchecks' `<ping-url>/fail` with the reason in the body, and a load that leaves no channel |
 | An external producer's state (`motel monitor send --state firing`) does not outlive a restart of motel: the engine's table is emptied and nothing reports the key again, as liveswap's standing reports and the pollers do for motel's own, so Alertmanager ends the alert at `resolve_timeout` and the channels get a recovery that did not happen; the producer's later `resolved` finds no state. Measured in the metrics e2e box at c979404: restart at 19:36:55, `[RESOLVED]` for both states at 19:41:55. docs/monitor.md tells a producer to send `firing` again every few minutes meanwhile (the second-model review of #432) | 3 | 4 | 5 | the next code PR on feature/notify-and-metrics (notify/engine.go: keep external states across a restart, as liveswap keeps `alerts.json`; size 3, risk 2) |
@@ -718,6 +834,16 @@ URL file, the journal says so, and the alert's end, posted by root at
 once rather than awaited at `resolve_timeout`, reaches no channel. Not
 in e2e (unit-tested only): the
 five-minute give-up of an undeliverable post, the bucket's hour.
+Section 7a: `motel monitor silence add --json --alert rollback --app
+blog` answers its id and end, Alertmanager holds the silence active
+(`alertname=rollback`, `app=blog`, `createdBy` `motel monitor: root`)
+and lists it, the journal has `monitor: silence added` with the id,
+blog's rollback (posted by root with liveswap's labels) reaches no
+channel, `--alert Watchdog` and an unknown alert are refused with the
+names listed and the value not echoed, nobody is refused and told to
+run it as root, `expire` leaves it expired with its journal line, the
+next rollback reaches the operator, and a second `expire --json` exits
+1 with `{"error":"silence <id> has already expired"}`.
 
 ## Later slices
 
