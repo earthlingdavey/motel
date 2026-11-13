@@ -1412,7 +1412,12 @@ from a test binary built for the box (e2e/Dockerfile's `notify-tests`), none ski
 (`job="motel"`), with a deployed app's `motel_app_up`, release and CPU,
 and its memory where the host's memory controller reaches the user
 manager's units (Debian 13 delegates it; a CI container's host may not,
-and the suite then asserts the series absent); `GET /<app>` with the
+and the suite then asserts the series absent); `motel monitor rules
+--json` lists the store's rules with their queries (the offset 65 s, a
+guarded rule, a pinned one) and `disk_low` with its readings, no
+`Watchdog`, no summary and no URL, and a listed guard's query run on
+`vm.sock` at that offset has the app's series, and the text table
+prints; `GET /<app>` with the
 deploy token carries `metrics`, and without one is a 401; an observed, cached site's
 responses counted by class, cache result and latency, and a site of an
 app with nothing running counted as 5xx; `GET /<app>?range=24h` carrying
