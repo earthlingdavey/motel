@@ -149,9 +149,11 @@ func withFakeAM(t *testing.T) (*testEngine, *silenceAM) {
 	})))
 	te.active.known = te.known // as Provision sets it
 	saved := releasesOf
+	// shop: two releases on disk, and records of those, of a failed
+	// deploy (f1) and of a release GC pruned (v0).
 	releasesOf = func(_ *App, app string) []string {
 		if app == "shop" {
-			return []string{testSha, "v2"}
+			return knownReleases([]string{testSha, "v2"}, []string{"f1", "v2", testSha, "v0"})
 		}
 		return nil
 	}
@@ -241,12 +243,13 @@ func TestServeSilence(t *testing.T) {
 		{"an unknown app", SilenceRequest{App: "secret-topic"}, "--app names no app this box runs; they are blog, shop, wiki"},
 		{"a box alert with --app", SilenceRequest{Alert: "disk_low", App: "shop"}, "disk_low is about the box, not an app"},
 		{"ChannelFailed with --app", SilenceRequest{Alert: "ChannelFailed", App: "shop"}, "is about the box, not an app"},
-		{"a release without --app", SilenceRequest{Alert: "rollback", Release: "v2"}, "--release narrows one app's alerts whose release is on disk, so it needs --app and --alert one of rollback, deploy_succeeded, post_deploy_regressed"},
-		{"a failed deploy's release", SilenceRequest{Alert: "deploy_failed", App: "shop", Release: "v2"}, "a failed or refused deploy's release never stays on disk"},
+		{"a release without --app", SilenceRequest{Alert: "rollback", Release: "v2"}, "--release narrows one app's alerts whose release motel knows, so it needs --app and --alert one of rollback, deploy_succeeded, deploy_failed, post_deploy_regressed"},
+		{"a refused deploy's release", SilenceRequest{Alert: "deploy_refused", App: "shop", Release: "f1"}, "a refusal writes no record"},
 		{"a release of a state alert", SilenceRequest{Alert: "watchdog_throttled", App: "shop", Release: "v2"}, "--release narrows"},
 		{"a release with --app alone", SilenceRequest{App: "shop", Release: "v2"}, "--release narrows"},
-		{"a release not on disk", SilenceRequest{Alert: "rollback", App: "shop", Release: "3f9c2a1"}, "--release names no release of shop on this box; they are " + testSha + ", v2"},
-		{"a release of an app with none", SilenceRequest{Alert: "rollback", App: "blog", Release: "v1"}, "--release names no release of blog on this box; they are none on disk"},
+		{"a release neither on disk nor recorded", SilenceRequest{Alert: "rollback", App: "shop", Release: "3f9c2a1"}, "--release names no release of shop on this box; they are " + testSha + ", v2, f1, v0"},
+		{"a failure neither on disk nor recorded", SilenceRequest{Alert: "deploy_failed", App: "shop", Release: "3f9c2a1"}, "--release names no release of shop on this box"},
+		{"a release of an app with none", SilenceRequest{Alert: "rollback", App: "blog", Release: "v1"}, "--release names no release of blog on this box; they are none on disk or recorded"},
 	} {
 		r := c.req
 		r.Comment, r.By = "c", "alice"
@@ -295,6 +298,43 @@ func TestServeSilence(t *testing.T) {
 	}
 	if got := f.take(); len(got) != 0 {
 		t.Fatalf("Alertmanager heard: %q", got)
+	}
+}
+
+// TestSilenceReleaseFromTheRecords: --release takes a version in the
+// app's deploy records as it takes one on disk: a failed deploy's,
+// whose release is removed at once, with deploy_failed, and one release
+// GC pruned with an alert that names a release on disk when it fires
+// (any recorded version is a release name motel wrote itself).
+func TestSilenceReleaseFromTheRecords(t *testing.T) {
+	te, f := withFakeAM(t)
+	for _, c := range []struct{ alert, release string }{
+		{"deploy_failed", "f1"},
+		{"deploy_failed", "v2"},
+		{"rollback", "v0"},
+	} {
+		req := SilenceRequest{Alert: c.alert, App: "shop", Release: c.release, By: "alice", Comment: "known"}
+		if _, err := callAdmin(t, serveSilence, http.MethodPost, req); err != nil {
+			t.Fatalf("%s --release %s: %v", c.alert, c.release, err)
+		}
+		reqs := f.take()
+		if len(reqs) != 1 || !strings.Contains(reqs[0], `{"name":"alertname","value":"`+c.alert+`","isRegex":false,"isEqual":true},`+
+			`{"name":"app","value":"shop","isRegex":false,"isEqual":true},`+
+			`{"name":"release","value":"`+c.release+`","isRegex":false,"isEqual":true}],`) {
+			t.Fatalf("%s --release %s: Alertmanager got %q", c.alert, c.release, reqs)
+		}
+	}
+	if n := len(te.lines("monitor: silence added")); n != 3 {
+		t.Fatalf("journal lines: %d", n)
+	}
+}
+
+func TestKnownReleases(t *testing.T) {
+	if got := strings.Join(knownReleases([]string{"v3", "v2"}, []string{"f1", "v3", "v2", "v1"}), ","); got != "v3,v2,f1,v1" {
+		t.Fatalf("on disk, then recorded: %s", got)
+	}
+	if got := knownReleases(nil, nil); len(got) != 0 {
+		t.Fatalf("none: %v", got)
 	}
 }
 

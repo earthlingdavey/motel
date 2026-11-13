@@ -659,11 +659,18 @@ silence from them:
 - `--app <name>`: one of the apps the box runs: every alert about it,
   your own `motel monitor send --subject app:<name>` events among them;
 - `--release <version>`: one release of the app, as its directory under
-  `/var/lib/liveswap/<app>/releases/` names it, so that the next
-  release's alerts still reach you. It needs `--app` and one of the
-  alerts whose release is on disk: `rollback`, `deploy_succeeded` or
-  `post_deploy_regressed`. A failed or refused deploy's release is not
-  kept, so silence `deploy_failed` by `--alert` and `--app`.
+  `/var/lib/liveswap/<app>/releases/` names it or as the app's deploy
+  records do (the `deploys` list of `GET /<app>`, a failed deploy's
+  version among them), so that the next release's alerts still reach
+  you. It needs `--app` and one of the alerts that carry a release:
+  `rollback`, `deploy_succeeded`, `deploy_failed` or
+  `post_deploy_regressed`. A refused deploy writes no record, so
+  silence `deploy_refused` by `--alert` and `--app`; so too a failed
+  deploy with no record: one that failed before it began (`GET
+  /<app>?deploy=<version>` answers `404`), one whose record could not
+  be written (motel's journal says `deploy record: not written`), and
+  one whose record has been pruned (the newest `keep` versions not on
+  disk keep theirs).
 
 Give `--alert`, `--app` or both. Each is an exact match. A name motel
 does not know is refused with the list of the names it takes, and so

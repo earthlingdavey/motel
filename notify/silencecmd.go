@@ -33,11 +33,13 @@ func silenceAddCommand() *cobra.Command {
 		Short: "Silence one of motel's alerts, an app's, or both, from now, for a while",
 		Long: `motel builds the silence from names it knows: --alert is one of the
 alerts motel raises on this box, --app one of the apps it runs,
---release one of the app's releases on disk. Each is an exact match;
-give --alert, --app or both. --release needs --app and an alert whose
-release is on disk: rollback, deploy_succeeded or
-post_deploy_regressed (a failed or refused deploy's release is not:
-silence deploy_failed by --alert and --app).
+--release one of the app's releases on disk or in its deploy records
+(a failed deploy's among them). Each is an exact match; give --alert,
+--app or both. --release needs --app and an alert that carries the
+release: rollback, deploy_succeeded, deploy_failed or
+post_deploy_regressed. A refused deploy, or one that failed with no
+record written (before it began, or the write failed), is silenced by
+--alert and --app.
 
     motel monitor silence add --comment "resizing the volume" --duration 4h \
         --alert disk_low
@@ -46,7 +48,8 @@ silence deploy_failed by --alert and --app).
 
 Refused: neither --alert nor --app; an alert motel does not raise here
 (Watchdog, the heartbeat, among them: pause the check off the box
-instead), an app the box does not run or a release not on disk, each
+instead), an app the box does not run or a release neither on disk
+nor recorded, each
 answered with the names it takes; a pair that would match nothing (a
 box alert with --app); a comment empty, over 200 characters or with a
 control character; a duration under 1m or over 24h. The comment is masked as a summary is.
@@ -69,7 +72,7 @@ SUDO_USER, else USER.`,
 	f := c.Flags()
 	f.StringVar(&req.Alert, "alert", "", "one of the alerts motel raises on this box, such as disk_low")
 	f.StringVar(&req.App, "app", "", "one of the apps this box runs")
-	f.StringVar(&req.Release, "release", "", "one release of the app on disk (with --app and --alert rollback, deploy_succeeded or post_deploy_regressed)")
+	f.StringVar(&req.Release, "release", "", "one release of the app, on disk or recorded (with --app and --alert rollback, deploy_succeeded, deploy_failed or post_deploy_regressed)")
 	f.StringVar(&req.Comment, "comment", "", "why, in one line: whoever finds the silence reads it")
 	f.StringVar(&req.Duration, "duration", defaultSilence.String(), "how long, from 1m to 24h")
 	f.BoolVar(&asJSON, "json", false, `print {"id":…,"ends_at":…}, or {"error":…}`)

@@ -128,18 +128,31 @@ func (r SilenceRequest) matchers() []amMatcher {
 	return ms
 }
 
-// releasesOf are the app's releases on disk, newest first: a var so
-// that a test needs no liveswap.
+// releasesOf are the release names motel knows for the app: its
+// releases on disk, newest first, then the versions in its deploy
+// records that are not on disk, newest first (a failed deploy's, and
+// those release GC pruned). A var so that a test needs no liveswap.
 var releasesOf = func(a *App, app string) []string {
 	if a.ls == nil {
 		return nil
 	}
-	return a.ls.Releases(app)
+	return knownReleases(a.ls.Releases(app), a.ls.RecordedVersions(app))
+}
+
+// knownReleases is onDisk, then each of recorded not in it, in order.
+func knownReleases(onDisk, recorded []string) []string {
+	rels := slices.Clone(onDisk)
+	for _, v := range recorded {
+		if !slices.Contains(rels, v) {
+			rels = append(rels, v)
+		}
+	}
+	return rels
 }
 
 // checkSets holds the request's names to the loaded config's: the
 // alerts motel raises here, the apps it runs, an app's releases on
-// disk; and the pair to what can match: --app only with an alert about
+// disk or in its deploy records; and the pair to what can match: --app only with an alert about
 // an app, --release only with --app and an alert that carries the
 // release. A refusal lists motel's own names, which are safe to print,
 // and never a value given that is not one of them.
@@ -173,13 +186,13 @@ func (r SilenceRequest) checkSets(a *App) error {
 	}
 	if r.Release != "" {
 		if _, _, release := alertScope(a, r.Alert); r.App == "" || !release {
-			return fmt.Errorf("--release narrows one app's alerts whose release is on disk, so it needs --app and --alert one of %s (a failed or refused deploy's release never stays on disk: silence its --alert and --app)", strings.Join(onDiskReleases, ", "))
+			return fmt.Errorf("--release narrows one app's alerts whose release motel knows, so it needs --app and --alert one of %s (a refusal writes no record, and its release may be any name a deployer sent: silence deploy_refused by --alert and --app)", strings.Join(releaseAlerts, ", "))
 		}
 		rels := releasesOf(a, r.App)
 		if !slices.Contains(rels, r.Release) {
 			list := strings.Join(rels, ", ")
 			if list == "" {
-				list = "none on disk"
+				list = "none on disk or recorded"
 			}
 			return fmt.Errorf("--release names no release of %s on this box; they are %s", r.App, list)
 		}
