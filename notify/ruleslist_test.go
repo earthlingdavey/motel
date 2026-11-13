@@ -37,8 +37,10 @@ var listingAt = time.Date(2026, 11, 13, 12, 0, 0, 0, time.UTC)
 // listingReads are numbers as the detectors would hold them.
 func listingReads() (polled, chainRead, []liveswap.WatchdogBudget) {
 	seen := polled{
-		disks:   []diskReading{{path: "/srv/motel", usedPct: 83.04, level: SeverityWarning}, {path: "/var/lib/caddy", usedPct: 41.26}},
-		disksAt: listingAt.Add(-20 * time.Second),
+		// /var/lib/caddy's statfs did not come back this poll: its
+		// reading is the last one's. 79.96 is under 80, and reads so.
+		disks: []diskReading{{path: "/srv/motel", usedPct: 79.96, level: SeverityWarning, at: listingAt.Add(-20 * time.Second)},
+			{path: "/var/lib/caddy", usedPct: 41.26, at: listingAt.Add(-80 * time.Second)}},
 		backups: map[string]time.Time{"shop": listingAt.Add(-4*time.Hour - 90*time.Second), "blog": listingAt.Add(-time.Hour)},
 		// The record read a while ago: its age is as of that read.
 		backupsAt: listingAt.Add(-2 * time.Minute),
@@ -321,8 +323,8 @@ func TestPollersKeepWhatTheyRead(t *testing.T) {
 	te.mu.Lock()
 	seen := te.seen
 	te.mu.Unlock()
-	if len(seen.disks) != 1 || seen.disks[0] != (diskReading{path: "/srv", usedPct: 91, level: SeverityCritical}) || !seen.disksAt.Equal(te.at) {
-		t.Errorf("disks: %+v at %s", seen.disks, seen.disksAt)
+	if len(seen.disks) != 1 || seen.disks[0] != (diskReading{path: "/srv", usedPct: 91, level: SeverityCritical, at: te.at}) {
+		t.Errorf("disks: %+v", seen.disks)
 	}
 	if len(seen.backups) != 1 || !seen.backups["blog"].Equal(te.at.Add(-time.Hour)) || !seen.backupsAt.Equal(te.at) {
 		t.Errorf("backups: %+v at %s", seen.backups, seen.backupsAt)
@@ -362,7 +364,7 @@ func TestServeRules(t *testing.T) {
 		return []liveswap.WatchdogBudget{{App: "shop", Restarts: 1, Budget: 5, Window: time.Minute, At: listingAt}}
 	}
 	t.Cleanup(func() { watchdogBudgets = saved })
-	te.seen = polled{disks: []diskReading{{path: "/srv", usedPct: 12}}, disksAt: listingAt}
+	te.seen = polled{disks: []diskReading{{path: "/srv", usedPct: 12, at: listingAt}}}
 	w, err := callAdmin(t, serveRules, http.MethodGet, "")
 	if err != nil {
 		t.Fatal(err)
@@ -416,7 +418,7 @@ func TestRulesCommandOutput(t *testing.T) {
 ChannelFailed            motel check  event      warning   box        -                                                            -
 app_memory_high          builtin      threshold  warning   every app  > 0.9 share for 10m                                          (the store)
 backup_run_failed        motel check  event      warning   box        -                                                            -
-backup_stale             motel check  threshold  critical  box        > 3h                                                         blog 58m, shop 4h
+backup_stale             motel check  threshold  critical  box        > 3h                                                         blog 58m, shop 3h59m
 backup_unreadable        motel check  event      warning   box        -                                                            -
 blog_quiet               operator     guarded    warning   app blog   < 0.1 requests/s for 1h, 1 guard                             (the store)
 busy                     operator     threshold  warning   app shop   > 1.5 cores for 10m                                          (the store)
@@ -425,16 +427,16 @@ deploy_failed            motel check  event      warning   every app  -         
 deploy_refused           motel check  event      warning   every app  -                                                            -
 deploy_succeeded         motel check  event      info      every app  -                                                            -
 disk_filling             operator     guarded    critical  box        < 0 bytes for 3h30m, 2 guards                                (the store)
-disk_low                 motel check  threshold  warning   box        >= 80% warning, >= 90% critical, each clears 5 points under  /srv/motel 83% (warning), /var/lib/caddy 41.3%
+disk_low                 motel check  threshold  warning   box        >= 80% warning, >= 90% critical, each clears 5 points under  /srv/motel 79.9% (warning), /var/lib/caddy 41.2%
 disk_soon                operator     guarded    warning   box        < 0 bytes for 30m, 2 guards                                  (the store)
 drill_failed             motel check  event      critical  box        -                                                            -
 errors_high              operator     guarded    warning   every app  > 0.05 share for 10m, 2 guards                               (the store)
 hits_low                 operator     guarded    warning   every app  < 0.5 share for 30m, 2 guards                                (the store)
 median                   operator     guarded    warning   every app  > 200ms for 10m, 2 guards                                    (the store)
 mem                      operator     threshold  warning   every app  > 0.8 share for 5m                                           (the store)
-metrics_rules_down       motel check  threshold  warning   box        >= 3 reads                                                   not read yet
+metrics_rules_down       motel check  threshold  warning   box        >= 3 reads                                                   nothing read
 metrics_store_disk_fill  builtin      guarded    warning   box        < 0 bytes for 30m, 1 guard                                   (the store)
-metrics_store_down       motel check  threshold  warning   box        >= 5m                                                        not read yet
+metrics_store_down       motel check  threshold  warning   box        >= 5m                                                        nothing read
 metrics_store_read_only  motel check  event      critical  box        -                                                            -
 post_deploy_regressed    operator     event      warning   every app  -                                                            -
 relaunch_refused         motel check  event      critical  every app  -                                                            -
@@ -483,5 +485,64 @@ func TestRulesCommandNotAdmitted(t *testing.T) {
 	_, err = runRules(t, "unix/"+path)
 	if err == nil || !strings.Contains(err.Error(), "admits root and the motel user: run motel monitor rules as root") {
 		t.Fatalf("err = %v", err)
+	}
+}
+
+// TestDiskReadingOfAPathNotMeasured: a filesystem whose statfs fails
+// keeps its last reading, with that reading's own time, as its alert
+// keeps firing; a reload that stops measuring a path drops it.
+func TestDiskReadingOfAPathNotMeasured(t *testing.T) {
+	te := newTestEngine(t)
+	fail := false
+	te.diskPaths = []string{"/srv", "/var"}
+	te.disk.stat = func(p string) (diskNumbers, error) {
+		if fail && p == "/srv" {
+			return diskNumbers{}, os.ErrPermission
+		}
+		if p == "/srv" {
+			return diskNumbers{usedPct: 92, dev: 1}, nil
+		}
+		return diskNumbers{usedPct: 10, dev: 2}, nil
+	}
+	te.poll(t.Context())
+	first := te.at
+	fail = true
+	te.advance(time.Minute)
+	te.poll(t.Context())
+	want := []diskReading{{path: "/srv", usedPct: 92, level: SeverityCritical, at: first}, {path: "/var", usedPct: 10, at: te.at}}
+	if !slices.Equal(te.seen.disks, want) {
+		t.Fatalf("after a failed statfs: %+v", te.seen.disks)
+	}
+	a := &App{diskPaths: []string{"/var"}}
+	te.setConfig(a, te.p, nil, te.logger)
+	if !slices.Equal(te.seen.disks, want[1:]) {
+		t.Fatalf("after a reload without /srv: %+v", te.seen.disks)
+	}
+}
+
+// TestShortDurationRoundsDown: a value under its threshold never reads
+// as it.
+func TestShortDurationRoundsDown(t *testing.T) {
+	for d, want := range map[time.Duration]string{
+		4*time.Minute + 31*time.Second: "4m", 59600 * time.Millisecond: "59s", 3*time.Hour + 59*time.Minute + 59*time.Second: "3h59m",
+		26 * time.Hour: "1d2h",
+	} {
+		if got := shortDuration(d); got != want {
+			t.Errorf("%s: %s, want %s", d, got, want)
+		}
+	}
+}
+
+// TestRulesReadAtAReadOnlyStore: the read-only answer that starts the
+// count again is the count's time.
+func TestRulesReadAtAReadOnlyStore(t *testing.T) {
+	m := &MetricsStore{}
+	st := &fakeStore{ro: true}
+	p := newPusher(func(Event) {})
+	p.now = func() time.Time { return listingAt }
+	p.active, p.store, p.rulesBad, p.rulesReadAt = m, st, 2, listingAt.Add(-5*time.Minute)
+	p.checkReadOnly(t.Context())
+	if got := p.read(m); got.rulesBad != 0 || !got.rulesAt.Equal(listingAt) {
+		t.Fatalf("%+v", got)
 	}
 }

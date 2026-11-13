@@ -228,7 +228,7 @@ func (p *pusher) checkReadOnly(ctx context.Context) bool {
 	case ro:
 		// What the store kept of vmalert is as old as the floor: the
 		// count of reads without it starts again when it writes.
-		p.rulesBad = 0
+		p.rulesBad, p.rulesReadAt = 0, p.now()
 		p.readOnly = true
 		evs = append(evs, storeEvent(eventStoreReadOnly, true))
 	case p.readOnly:

@@ -33,7 +33,7 @@ is each alert", has an example.
     motel monitor rules --json`,
 		Args: cobra.NoArgs,
 		RunE: func(c *cobra.Command, _ []string) error {
-			return silenceRun(c, asJSON, func() (RulesListing, error) {
+			return printAnswer(c, asJSON, func() (RulesListing, error) {
 				out, err := adminRequest(c, http.MethodGet, "/notify/rules", nil, 1<<20)
 				if err != nil {
 					return RulesListing{}, notAdmitted(c, err, "motel monitor rules")

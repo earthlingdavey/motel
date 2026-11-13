@@ -58,7 +58,7 @@ SUDO_USER, else USER.`,
 		Args: cobra.NoArgs,
 		RunE: func(c *cobra.Command, _ []string) error {
 			req.By = invokingUser()
-			return silenceRun(c, asJSON, func() (SilenceResult, error) {
+			return printAnswer(c, asJSON, func() (SilenceResult, error) {
 				if err := req.Check(); err != nil {
 					return SilenceResult{}, err
 				}
@@ -88,7 +88,7 @@ func silenceExpireCommand() *cobra.Command {
 		Args:  cobra.ExactArgs(1),
 		RunE: func(c *cobra.Command, args []string) error {
 			req := ExpireRequest{ID: args[0], By: invokingUser()}
-			return silenceRun(c, asJSON, func() (SilenceResult, error) {
+			return printAnswer(c, asJSON, func() (SilenceResult, error) {
 				if err := req.Check(); err != nil {
 					return SilenceResult{}, err
 				}
@@ -104,10 +104,10 @@ func silenceExpireCommand() *cobra.Command {
 	return c
 }
 
-// silenceRun prints run's answer as text, or as JSON with --json. An
+// printAnswer prints run's answer as text, or as JSON with --json. An
 // error with --json is {"error":…} on stdout and exit 1, with cobra's
 // own line silenced. `motel monitor rules` prints the same way.
-func silenceRun[T any](c *cobra.Command, asJSON bool, run func() (T, error), text func(io.Writer, T) error) error {
+func printAnswer[T any](c *cobra.Command, asJSON bool, run func() (T, error), text func(io.Writer, T) error) error {
 	res, err := run()
 	w := c.OutOrStdout()
 	if !asJSON {

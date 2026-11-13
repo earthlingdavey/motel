@@ -871,13 +871,18 @@ flag. Pending and firing are vmalert's `ALERTS` and `ALERTS_FOR_STATE`
 (whose value is `activeAt`): both are written, pending included, with a
 gap around each evaluation, so the listed queries look back two
 intervals; 90 s found neither series once a minute. Pending to firing
-took `for` plus about a minute.
+took `for` plus about a minute. The price of the lookback: a resolved
+alert shows for up to two minutes, and at the change both its pending
+and firing series show (docs/monitor.md says how to read them).
 
 **What a check lists.** For motel's own detectors, the number each
 already holds, with `measured_at`: nothing is polled for the listing.
 `disk_low`: each filesystem's used percent at the last minute's statfs,
 its `levels` (80 warning, 90 critical, each clearing 5 points under),
-and the `level` it fires at now, which the gap makes a state.
+and the `level` it fires at now, which the gap makes a state; one whose
+statfs did not come back keeps its last reading, and its time, as its
+alert keeps firing. Each is shown rounded down, so a number under its
+threshold never reads as the threshold.
 `backup_stale`: each app's age of its last complete backup at the last
 record read, against `status.StaleAfter` (3 h). `watchdog_throttled`:
 each app's restarts in its window against its budget, read from the
@@ -1374,6 +1379,7 @@ on its general scales. metrics' examples:
 | A re-run rewrites `motel-am-metrics.socket` but, with it active, restarts neither it nor Alertmanager: a socket whose `ListenStream=` or namespace a later binary changed keeps the old listener until the namespace restarts or the box reboots, while setup says Alertmanager was left as it runs | notify/metricssetup.go (`amListenInNamespace`) | 2 | 2 | 3 | 12; no binary has changed it, and `motel-vm.socket` and the namespace unit are alike (a re-run leaves them running too: the Owed row's `ExecStartPre`); a restart of the socket when its file changed is a comparison and a new step, to measure (size 2, risk 2). /code-review pass 2 on #435 |
 | `metrics_store_disk_fill` reads `vm_free_disk_space_bytes` with no `job` matcher, and `TestScrapeKeepsWhatMotelReads` gives a read with no job to the job its prefix names (`vm_` to `victoria-metrics`): a second source of a `vm_*` series would join the rule's `min` and pass the test | notify/metricsrules.go, notify/metricssetup_test.go (`readJob`) | 2 | 2 | 3 | 12; the store's one other writer is motel's push (`job="motel"`, `motel_*` names) and vmalert's remote write (`ALERTS*`), so it takes a change that adds a source and a series of that name. `{job="victoria-metrics"}` on the rule changes an expression the vmalert-tool tests pin (size 1, risk 2). /code-review pass 1 on the keep list |
 | `TestScrapeKeepsWhatMotelReads`'s scan refuses a selector with a single-quoted matcher (`x{job='motel'}`), which MetricsQL accepts: the test fails on a valid query of motel's until it is written with double quotes | notify/metricssetup_test.go (`storeReads`) | 2 | 5 | 1 | 10; red and named (`matcher "job='motel'"`), never a false pass, and every query motel writes uses Go's `%q` or literal double quotes; single quotes in the matchers' split and unquote are a second quoting path to test (size 2, risk 1). /code-review pass 2 on the keep list |
+| While the store is read-only, `motel monitor rules` lists `metrics_store_down`'s failing time past its 5 m with nothing firing: the read-only hold keeps the alert back | notify/ruleslist.go | 2 | 3 | 3 | 18; `metrics_store_read_only`, critical, fires and names the cause beside it, and a reading that changes meaning under the hold would be a second state to explain |
 
 ### Owed
 

@@ -617,7 +617,12 @@ func (e *engine) poll(ctx context.Context) {
 	e.mu.Lock()
 	e.seen.backups, e.seen.backupsAt = e.backup.read, e.backup.readAt
 	if diskDue {
-		e.seen.disks, e.seen.disksAt = e.disk.read, now
+		for i := range e.disk.read {
+			if e.disk.read[i].at.IsZero() {
+				e.disk.read[i].at = now
+			}
+		}
+		e.seen.disks = e.disk.read
 	}
 	e.mu.Unlock()
 	for _, ev := range evs {
@@ -687,6 +692,10 @@ func (e *engine) setConfig(a *App, post poster, known []string, logger *zap.Logg
 	e.active, e.post, e.known, e.logger = a, post, known, logger
 	e.deploySucceeded = a.deploySucceeded()
 	e.backupPath, e.diskPaths = a.backupRecord(), a.diskPaths
+	// A filesystem the new config does not measure is not listed (its
+	// alert is pruned below); the rest keep their reading until the
+	// next poll's.
+	e.seen.disks = slices.DeleteFunc(slices.Clone(e.seen.disks), func(r diskReading) bool { return !slices.Contains(a.diskPaths, r.path) })
 	if c, ok := post.(*amClient); ok {
 		e.metrics = c.metrics
 	}

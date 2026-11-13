@@ -734,9 +734,6 @@ func (t ruleTerm) expr() string {
 	return e
 }
 
-// thresholdExpr is a threshold's expression, thresholdTerm joined.
-func thresholdExpr(r Rule) string { return thresholdTerm(r).expr() }
-
 // thresholdTerm is a threshold's ruleTerm: the metric's value, per app
 // (by (app), which carries the label notify's route tree sends to the
 // app's channels by), over the request window, with the sample floor

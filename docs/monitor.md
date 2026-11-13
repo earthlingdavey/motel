@@ -760,8 +760,8 @@ the number it last read:
 $ motel monitor rules
 NAME                     SOURCE       KIND       SEVERITY  SCOPE      CONDITION                                                    NOW
 app_memory_high          builtin      threshold  warning   every app  > 0.9 share for 10m                                          (the store)
-backup_stale             motel check  threshold  critical  box        > 3h                                                         blog 58m, shop 4h
-disk_low                 motel check  threshold  warning   box        >= 80% warning, >= 90% critical, each clears 5 points under  /srv/motel 83% (warning), /var/lib/caddy 41.3%
+backup_stale             motel check  threshold  critical  box        > 3h                                                         blog 58m, shop 3h59m
+disk_low                 motel check  threshold  warning   box        >= 80% warning, >= 90% critical, each clears 5 points under  /srv/motel 79.9% (warning), /var/lib/caddy 41.2%
 errors_high              operator     guarded    warning   every app  > 0.05 share for 10m, 1 guard                                (the store)
 watchdog_throttled       motel check  threshold  critical  every app  >= its budget in its window                                  shop 2 of 5 in 10m
 …
@@ -796,7 +796,10 @@ and `active_since_query`; the value of the second is when it became
 pending, so pending turns firing at that plus `for_seconds`, about a
 minute later in practice). Look back two minutes, not less: vmalert
 writes both once a minute, and a shorter lookback misses them now and
-then.
+then. The lookback has a price: an alert that resolved within it still
+shows, and at the minute it turns firing both its `pending` and its
+`firing` series show; take firing over pending, and the newest sample
+(`tlast_over_time`) over an older one.
 
 The listing holds motel's own query text, rule, app and path names:
 no channel URL, no secret, no summary. Another user than root is told

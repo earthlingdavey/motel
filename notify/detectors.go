@@ -237,11 +237,14 @@ type diskPoller struct {
 }
 
 // diskReading is one filesystem's used share and the severity it fires
-// at (none, warning or critical), at a poll.
+// at (none, warning or critical), and when it was measured: the
+// engine stamps a poll's own (zero here) with the poll's time, and one
+// carried over from an earlier poll keeps its own.
 type diskReading struct {
 	path    string
 	usedPct float64
 	level   string
+	at      time.Time
 }
 
 // The thresholds: warning at 80 % used, critical at 90; each clears 5
@@ -314,6 +317,10 @@ func (d *diskPoller) poll(paths []string) []Event {
 			k := Event{Name: alertDiskLow, Source: "disk", Instance: p}.key()
 			if prev, ok := d.set.prev[k]; ok {
 				fire = append(fire, prev)
+			}
+			// And its last reading stays listed, with its own time.
+			if i := slices.IndexFunc(d.read, func(r diskReading) bool { return r.path == p }); i >= 0 {
+				read = append(read, d.read[i])
 			}
 			continue
 		}

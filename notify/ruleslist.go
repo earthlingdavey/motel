@@ -132,7 +132,6 @@ var listUnits = map[string]string{
 // polled is what the engine's pollers measured last (engine.poll).
 type polled struct {
 	disks     []diskReading
-	disksAt   time.Time
 	backups   map[string]time.Time // app → its last complete backup
 	backupsAt time.Time
 }
@@ -278,7 +277,7 @@ func checkListing(e *AlertListing, seen polled, chain chainRead, budgets []lives
 			{Severity: SeverityCritical, Threshold: diskCrit, ClearsBelow: diskCrit - diskGap},
 		}
 		for _, d := range seen.disks {
-			e.Readings = append(e.Readings, Reading{Instance: d.path, Value: math.Round(d.usedPct*10) / 10, Level: d.level, MeasuredAt: seen.disksAt})
+			e.Readings = append(e.Readings, Reading{Instance: d.path, Value: math.Floor(d.usedPct*10) / 10, Level: d.level, MeasuredAt: d.at})
 		}
 	case "backup_stale":
 		e.Op, e.Threshold, e.Unit = ">", ptr(status.StaleAfter.Seconds()), "seconds"
@@ -442,16 +441,17 @@ func readings(e AlertListing) string {
 	case e.Kind == kindEvent:
 		return "-"
 	}
-	return "not read yet"
+	return "nothing read"
 }
 
-// shortDuration is d to the minute, its zero parts left out: 3h59m,
-// 10m, 2d; under a minute, to the second.
+// shortDuration is d down to the minute, its zero parts left out:
+// 3h59m, 10m, 2d; under a minute, down to the second. Down, so that a
+// value under its threshold never reads as the threshold.
 func shortDuration(d time.Duration) string {
 	if d < time.Minute {
-		return d.Round(time.Second).String()
+		return d.Truncate(time.Second).String()
 	}
-	d = d.Round(time.Minute)
+	d = d.Truncate(time.Minute)
 	var b strings.Builder
 	for _, u := range []struct {
 		d time.Duration

@@ -352,7 +352,7 @@ func TestOperatorRulesRender(t *testing.T) {
 // A name an app or a release could hold is quoted in, never spliced.
 func TestThresholdQuotesTheApp(t *testing.T) {
 	r := Rule{Name: "x", Kind: ruleThreshold, App: "a-b", Metric: "memory_share", Op: ">", Value: 0.5, For: 600e9}
-	if got := thresholdExpr(r); got != `max by (app) (motel_app_memory_bytes{app="a-b"} / motel_app_memory_max_bytes{app="a-b"}) > 0.5` {
+	if got := thresholdTerm(r).expr(); got != `max by (app) (motel_app_memory_bytes{app="a-b"} / motel_app_memory_max_bytes{app="a-b"}) > 0.5` {
 		t.Fatal(got)
 	}
 }
@@ -639,7 +639,7 @@ func TestOperatorRulesReadThePushedApps(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, RulesName), renderRules(a), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	near := thresholdExpr(Rule{Name: "near", Kind: ruleThreshold, Metric: "request_rate", Op: "<", Value: 1.9, For: 60e9})
+	near := thresholdTerm(Rule{Name: "near", Kind: ruleThreshold, Metric: "request_rate", Op: "<", Value: 1.9, For: 60e9}).expr()
 	firing := ""
 	for _, app := range []string{"quiet", "reattached"} {
 		firing += `
