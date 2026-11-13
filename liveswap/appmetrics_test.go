@@ -7,6 +7,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/smallhoursorg/motel/liveswap/wire"
 )
@@ -130,5 +131,38 @@ func TestStatusMetricsRange(t *testing.T) {
 	}
 	if strings.Join(src.windows, " ") != "1h 24h 1h" {
 		t.Fatalf("the source was asked for %v", src.windows)
+	}
+}
+
+// TestWatchdogBudgetsCountTheWindow: the restarts inside the window
+// against the budget, for an armed watchdog; nothing for one never
+// armed, turned off, or disabled by a reload.
+func TestWatchdogBudgetsCountTheWindow(t *testing.T) {
+	rig := newTestRig(t)
+	a := &App{managed: map[string]*managedApp{"demo": rig.ma}}
+	if got := a.WatchdogBudgets(); got != nil {
+		t.Fatalf("never armed: %+v", got)
+	}
+	now := rig.clock.Now()
+	rig.ma.wd.mu.Lock()
+	rig.ma.wd.state = wdStateWatching
+	rig.ma.wd.restarts = []time.Time{now.Add(-time.Hour), now.Add(-time.Minute), now.Add(-time.Second)}
+	rig.ma.wd.mu.Unlock()
+	want := []WatchdogBudget{{App: "demo", Restarts: 2, Budget: 5, Window: 10 * time.Minute, At: now}}
+	if got := a.WatchdogBudgets(); !reflect.DeepEqual(got, want) {
+		t.Fatalf("armed: %+v, want %+v", got, want)
+	}
+	rig.ma.wd.setState(wdStateDisabled)
+	if got := a.WatchdogBudgets(); got != nil {
+		t.Fatalf("disabled: %+v", got)
+	}
+	rig.ma.wd.setState(wdStateWatching)
+	off := *rig.spec
+	off.watchdogOn = false
+	rig.ma.specMu.Lock()
+	rig.ma.spec = &off
+	rig.ma.specMu.Unlock()
+	if got := a.WatchdogBudgets(); got != nil {
+		t.Fatalf("watchdog off: %+v", got)
 	}
 }

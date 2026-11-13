@@ -72,6 +72,8 @@ const (
 	unitLatency = "latency" // 800ms, 1.5s
 	unitRate    = "rate"    // 2.5, a second
 	unitCores   = "cores"   // 0.5
+	// unitBytes is no threshold's: the disk rules' predicted free space.
+	unitBytes = "bytes"
 )
 
 // thresholdMetric is one metric a threshold may name: its unit, the
@@ -568,13 +570,16 @@ func thresholdRule(r Rule) vmRule {
 	if r.Op == "<" {
 		above = "below"
 	}
+	term := thresholdTerm(r)
 	return vmRule{
 		Alert:  r.Name,
-		Expr:   thresholdExpr(r),
+		Expr:   term.expr(),
 		For:    promDuration(time.Duration(r.For)),
 		Labels: ruleLabels(r.Name, r.severity(), subject),
 		Annotations: map[string]string{"summary": fmt.Sprintf("%s: %s has been %s %s for %s (rule %s); now {{ $value | %s }}",
 			who, m.words, above, valueText(m.unit, r.Value), promDuration(time.Duration(r.For)), r.Name, m.humanize)},
+		term: &term,
+		unit: m.unit,
 	}
 }
 
@@ -693,13 +698,50 @@ func pushedNow(sel string) string {
 		" > scalar(max(tlast_over_time(" + pushSeries + w + "))) - " + strconv.Itoa(int(pushApart.Seconds()))
 }
 
-// thresholdExpr is a threshold's expression: the metric's, per app (by
-// (app), which carries the label notify's route tree sends to the
+// ruleTerm is a store rule's expression in parts (DESIGN-metrics.md,
+// "How close each rule is"): value, the MetricsQL whose series are the
+// number compared (one per subject), op and threshold, and guards, the
+// further terms joined with "and". A guard is a condition that is not
+// the closeness (a sample floor: too few requests to judge), and one
+// with no op holds when its value has a series at all (disk_fill's
+// history). expr is the one join: what `motel monitor rules` lists and
+// what rules.yml holds are the same text.
+type ruleTerm struct {
+	value     string
+	op        string
+	threshold float64
+	// meaning is a guard's, in words, for a screen to say why the rule
+	// cannot fire.
+	meaning string
+	// match is a guard's matching, "on (app)", or none: what follows
+	// its "and".
+	match  string
+	guards []ruleTerm
+}
+
+func (t ruleTerm) expr() string {
+	e := t.value
+	if t.op != "" {
+		e += " " + t.op + " " + numberText(t.threshold)
+	}
+	for _, g := range t.guards {
+		e += " and "
+		if g.match != "" {
+			e += g.match + " "
+		}
+		e += g.expr()
+	}
+	return e
+}
+
+// thresholdTerm is a threshold's ruleTerm: the metric's value, per app
+// (by (app), which carries the label notify's route tree sends to the
 // app's channels by), over the request window, with the sample floor
-// for a share or a quantile. The request counters are read through
-// counterIncrease, the response histogram through histogramIncrease,
-// and a request threshold holds for an app pushedNow alone.
-func thresholdExpr(r Rule) string {
+// for a share or a quantile as its guard. The request counters are read
+// through counterIncrease, the response histogram through
+// histogramIncrease, and a request threshold holds for an app pushedNow
+// alone, its last guard.
+func thresholdTerm(r Rule) ruleTerm {
 	app := ""
 	if r.App != "" {
 		app = "app=" + strconv.Quote(r.App)
@@ -717,38 +759,47 @@ func thresholdExpr(r Rule) string {
 	sum := func(metric string, extra ...string) string {
 		return "sum by (app) (" + counterIncrease(metric+sel(extra...), requestWindow, 0) + ")"
 	}
-	cmp := " " + r.Op + " " + numberText(r.Value)
-	floor := " >= " + strconv.Itoa(r.minRequests())
-	pushed := " and on (app) (" + pushedNow(sel()) + ")"
+	t := ruleTerm{op: r.Op, threshold: r.Value}
+	floor := func(count, what string) []ruleTerm {
+		n := r.minRequests()
+		return []ruleTerm{{value: count, op: ">=", threshold: float64(n),
+			meaning: fmt.Sprintf("at least %d %s over %s: under it, too few to judge", n, what, promDuration(requestWindow))}}
+	}
+	pushed := ruleTerm{match: "on (app)", value: "(" + pushedNow(sel()) + ")",
+		meaning: "motel's last push says this config observes the app: one whose observe line is gone is not read"}
 	switch r.Metric {
 	case "5xx_share":
 		// Of the responses sent: a client gone first is in the total,
 		// never in the share (GET /<app>'s 5xx_share).
 		sent := sum("motel_app_requests_total", `class!="aborted"`)
-		return "(" + sum("motel_app_requests_total", `class="5xx"`) + " / " + sent + ")" + cmp + " and " + sent + floor + pushed
+		t.value, t.guards = "("+sum("motel_app_requests_total", `class="5xx"`)+" / "+sent+")", append(floor(sent, "responses sent"), pushed)
 	case "p50", "p95":
 		q := "0.5"
 		if r.Metric == "p95" {
 			q = "0.95"
 		}
-		return "histogram_quantile(" + q + ", sum by (app, le) (" + histogramIncrease("motel_app_response_seconds", sel(), requestWindow, 0) + "))" +
-			cmp + " and " + sum("motel_app_response_seconds_count") + floor + pushed
+		t.value = "histogram_quantile(" + q + ", sum by (app, le) (" + histogramIncrease("motel_app_response_seconds", sel(), requestWindow, 0) + "))"
+		t.guards = append(floor(sum("motel_app_response_seconds_count"), "timed responses"), pushed)
 	case "request_rate":
-		return sum("motel_app_requests_total") + " / " + strconv.Itoa(int(requestWindow.Seconds())) + cmp + pushed
+		t.value = sum("motel_app_requests_total") + " / " + strconv.Itoa(int(requestWindow.Seconds()))
+		t.guards = []ruleTerm{pushed}
 	case "cache_hit_share":
 		// A hit result's series exists once there is one: an app whose
 		// cache spoke and never hit has a share of 0, not none.
 		spoke := sum("motel_app_cache_responses_total")
-		return "(" + sum("motel_app_cache_responses_total", `result=~"hit|stale"`) + " or " + spoke + " * 0) / " + spoke + cmp + " and " + spoke + floor + pushed
+		t.value = "(" + sum("motel_app_cache_responses_total", `result=~"hit|stale"`) + " or " + spoke + " * 0) / " + spoke
+		t.guards = append(floor(spoke, "responses its cache spoke for"), pushed)
 	case "memory_share":
-		return "max by (app) (motel_app_memory_bytes" + sel() + " / motel_app_memory_max_bytes" + sel() + ")" + cmp
+		t.value = "max by (app) (motel_app_memory_bytes" + sel() + " / motel_app_memory_max_bytes" + sel() + ")"
 	case "cpu_cores":
 		// rate, not counterIncrease: each unit's counter starts at zero
 		// when the unit does, and its first value is the CPU it used
 		// before the window.
-		return "sum by (app) (rate(motel_app_cpu_seconds_total" + sel() + "[" + promDuration(requestWindow) + "]))" + cmp
+		t.value = "sum by (app) (rate(motel_app_cpu_seconds_total" + sel() + "[" + promDuration(requestWindow) + "]))"
+	default:
+		panic("thresholdTerm: unchecked metric " + r.Metric)
 	}
-	panic("thresholdExpr: unchecked metric " + r.Metric)
+	return t
 }
 
 // diskFillRule is the store's disk rule's shape over motel's own disk
@@ -761,15 +812,24 @@ func diskFillRule(r Rule) vmRule {
 	// the instance (<source>/<subject>/<name>/<instance>).
 	labels := ruleLabels(r.Name, r.severity(), "box")
 	labels["key"] += "/{{ $labels.path }}"
+	term := ruleTerm{
+		value: "min by (path) (predict_linear(" + diskAvailMetric + "[" + promDuration(long) + "], " + h + "))", op: "<",
+		guards: []ruleTerm{
+			{value: "min by (path) (predict_linear(" + diskAvailMetric + "[" + promDuration(short) + "], " + h + "))", op: "<",
+				meaning: "the " + promDuration(short) + " line predicts it full too: a one-off write tilts the long line alone"},
+			{value: "max by (path) (present_over_time(" + diskAvailMetric + "[" + promDuration(long) + "] offset " + promDuration(long-short) + "))",
+				meaning: "the store holds a sample older than " + promDuration(long-short) + ": over less history the lines are too short to judge"},
+		},
+	}
 	return vmRule{
-		Alert: r.Name,
-		Expr: "min by (path) (predict_linear(" + diskAvailMetric + "[" + promDuration(long) + "], " + h + ")) < 0" +
-			" and min by (path) (predict_linear(" + diskAvailMetric + "[" + promDuration(short) + "], " + h + ")) < 0" +
-			" and max by (path) (present_over_time(" + diskAvailMetric + "[" + promDuration(long) + "] offset " + promDuration(long-short) + "))",
+		Alert:  r.Name,
+		Expr:   term.expr(),
 		For:    promDuration(hold),
 		Labels: labels,
 		Annotations: map[string]string{"summary": fmt.Sprintf("the filesystem holding {{ $labels.path }} is predicted to fill within %s (rule %s)",
 			promDuration(within), r.Name)},
+		term: &term,
+		unit: unitBytes,
 	}
 }
 

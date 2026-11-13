@@ -546,6 +546,12 @@ state, and a render change. The state is one map in the engine
 
 ## External producers and tests
 
+(`motel monitor rules`, on the same admin socket, lists
+every alert this file's detectors raise beside the store's rules, with
+the number each detector last read: DESIGN-metrics.md, "How close each
+alert is". The alert names and their first severities are one table,
+notify/silenceable.go, which silence and the listing share.)
+
 `motel monitor send` posts to `POST /notify/events`, and `motel monitor
 test <channel>` to `POST /notify/test`, both `admin.api.notify` routes
 on the admin socket: root and the motel uid reach it, no app does.

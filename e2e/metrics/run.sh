@@ -13,6 +13,7 @@
 #   stopped and back, failing once, stopped and started by hand with motel
 #   down; an upgrade from the proxy shape
 #   motel's push (job="motel"), with a deployed app's motel_app_*
+#   motel monitor rules: the listing, and a listed query over vm.sock
 #   GET /<app> with the deploy token carries the app's metrics
 #   observe's counts in the store and in GET /<app>?range=
 #   vmalert's rules loaded; its ChannelFailed and motel's one alert
@@ -74,8 +75,8 @@ RELOAD_WAIT=15
 # so a part that moves the store, Alertmanager or the Caddyfile moves
 # them for its own split alone. The shared sink is read by 10 alone, for
 # lines only the rules split's deploy can make.
-split_all="vm 3 3a 4 4a 4b 4c 4d 5 6 7 8 9 10 11"
-split_view="vm 3 3a" split_vmalert="4 4a" split_store="4b 4c 4d 5 6" split_rules="5 7 8 9 10 11"
+split_all="vm 2b 3 3a 4 4a 4b 4c 4d 5 6 7 8 9 10 11"
+split_view="vm 2b 3 3a" split_vmalert="4 4a" split_store="4b 4c 4d 5 6" split_rules="5 7 8 9 10 11"
 case "${SPLIT:=all}" in
 all) parts=$split_all ;;
 view) parts=$split_view ;;
@@ -272,6 +273,41 @@ else
 	has_result "$n" && fail "memory for blog with no memory.current to read: $n" \
 		|| pass "no memory controller in this host's user units (no $cg/memory.current): motel_app_memory_bytes absent, as designed"
 fi
+
+m2b() {
+echo "=== metrics 2b: motel monitor rules ==="
+# The listing a screen reads: the store's rules with their value's
+# MetricsQL, which runs on the store's socket at the listed offset; the
+# checks with the number each last read. deno parses the JSON (the box
+# has no jq).
+pick() { deno eval --quiet "const l = JSON.parse(await new Response(Deno.stdin.readable).text()); $1"; }
+if motel monitor rules --json >/tmp/rules.json 2>/tmp/rules.err; then
+	got=$(pick 'const by = Object.fromEntries(l.alerts.map((a) => [a.name, a]));
+		const ok = l.store?.query_offset_seconds === 65 && by.errors_high?.kind === "guarded" && by.blog_slow?.app === "blog"
+			&& by.app_memory_high?.value_query && by.disk_low?.readings?.length > 0 && by.Watchdog === undefined
+			&& !JSON.stringify(l).includes("summary") && !JSON.stringify(l).includes("http");
+		console.log(ok ? "ok" : JSON.stringify(l).slice(0, 400));' </tmp/rules.json)
+	[ "$got" = ok ] && pass "motel monitor rules --json lists the store's rules with their queries and the checks with their readings, no summary, no URL" \
+		|| fail "motel monitor rules --json: $got"
+	# errors_high's floor counts blog's responses sent, pushed at zero
+	# since metrics 2: its query at now - offset has blog's series.
+	gq=$(pick 'console.log(l.alerts.find((a) => a.name === "errors_high").guards[0].query)' </tmp/rules.json)
+	end=$(( $(date +%s) + 90 ))
+	a=""
+	while [ "$(date +%s)" -lt "$end" ]; do
+		a=$(vm -G --data-urlencode "query=$gq" --data-urlencode "time=$(( $(date +%s) - 65 ))" http://vm/api/v1/query)
+		printf '%s' "$a" | grep -q '"app":"blog"' && break
+		sleep 5
+	done
+	printf '%s' "$a" | grep -q '"app":"blog"' && pass "a listed guard's query runs on vm.sock at the listed offset: $(printf '%s' "$a" | cut -c1-160)" \
+		|| fail "the listed guard's query on vm.sock: $(printf '%s' "$a" | cut -c1-300)"
+else
+	fail "motel monitor rules --json: $(cat /tmp/rules.json /tmp/rules.err | head -c 300)"
+fi
+motel monitor rules >/tmp/rules.txt 2>&1 && head -1 /tmp/rules.txt | grep -q '^NAME *SOURCE *KIND *SEVERITY *SCOPE *CONDITION *NOW$' \
+	&& grep -q '^disk_low  *motel check  *threshold' /tmp/rules.txt \
+	&& pass "motel monitor rules prints the table" || fail "motel monitor rules: $(head -c 400 /tmp/rules.txt)"
+}
 
 m3() {
 echo "=== metrics 3: GET /<app> ==="

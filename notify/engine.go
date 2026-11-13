@@ -206,6 +206,9 @@ type engine struct {
 	backupPath string
 	diskPaths  []string
 	lastDisk   time.Time
+	// seen is what the pollers measured last, copied under mu for
+	// `motel monitor rules` (ruleslist.go).
+	seen polled
 
 	// channel_failed's memory of Alertmanager's counter, and the read.
 	fail failWatch
@@ -617,6 +620,17 @@ func (e *engine) poll(ctx context.Context) {
 	if diskDue {
 		evs = append(evs, e.disk.poll(paths)...)
 	}
+	e.mu.Lock()
+	e.seen.backups, e.seen.backupsAt = e.backup.read, e.backup.readAt
+	if diskDue {
+		for i := range e.disk.read {
+			if e.disk.read[i].at.IsZero() {
+				e.disk.read[i].at = now
+			}
+		}
+		e.seen.disks = e.disk.read
+	}
+	e.mu.Unlock()
 	for _, ev := range evs {
 		e.report(ev)
 	}
@@ -683,7 +697,14 @@ func (e *engine) configure(a *App, post poster, known []string, logger *zap.Logg
 func (e *engine) setConfig(a *App, post poster, known []string, logger *zap.Logger) {
 	e.active, e.post, e.known, e.logger = a, post, known, logger
 	e.deploySucceeded = a.deploySucceeded()
+	if a.backupRecord() != e.backupPath {
+		e.seen.backups = nil // another record's ages are not this one's
+	}
 	e.backupPath, e.diskPaths = a.backupRecord(), a.diskPaths
+	// A filesystem the new config does not measure is not listed (its
+	// alert is pruned below); the rest keep their reading until the
+	// next poll's.
+	e.seen.disks = slices.DeleteFunc(slices.Clone(e.seen.disks), func(r diskReading) bool { return !slices.Contains(a.diskPaths, r.path) })
 	if c, ok := post.(*amClient); ok {
 		e.metrics = c.metrics
 	}

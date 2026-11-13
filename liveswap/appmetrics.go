@@ -4,6 +4,7 @@ import (
 	"context"
 	"maps"
 	"slices"
+	"time"
 
 	"github.com/smallhoursorg/motel/liveswap/wire"
 )
@@ -51,6 +52,39 @@ func (a *App) AppSamples() []AppSample {
 	for _, name := range slices.Sorted(maps.Keys(a.managed)) {
 		_, observed := a.observed.Load(name)
 		out = append(out, a.managed[name].sample(observed))
+	}
+	return out
+}
+
+// WatchdogBudget is one app's restart budget as its watchdog holds it
+// now: the restarts inside the sliding window, against the budget a
+// restart loop (watchdog_throttled) spends. notify's `motel monitor
+// rules` lists it, read when asked: nothing is polled for it.
+type WatchdogBudget struct {
+	App      string
+	Restarts int
+	Budget   int
+	Window   time.Duration
+	// At is the app's clock when the restarts were counted.
+	At time.Time
+}
+
+// WatchdogBudgets is every app of this config whose watchdog is on and
+// has armed, sorted by name.
+func (a *App) WatchdogBudgets() []WatchdogBudget {
+	var out []WatchdogBudget
+	for _, name := range slices.Sorted(maps.Keys(a.managed)) {
+		ma := a.managed[name]
+		c := ma.snapshot()
+		if c.spec == nil || !c.spec.watchdogOn || c.clock == nil {
+			continue
+		}
+		now := c.clock.Now()
+		s := ma.wd.statusSnapshot(now, c.spec.wdWindow)
+		if s == nil || s.State == wdStateDisabled {
+			continue
+		}
+		out = append(out, WatchdogBudget{App: name, Restarts: s.RestartsInWindow, Budget: c.spec.wdRestarts, Window: c.spec.wdWindow, At: now})
 	}
 	return out
 }

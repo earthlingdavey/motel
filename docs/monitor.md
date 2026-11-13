@@ -769,6 +769,64 @@ rule goes to the operator's channels, and to the app's bound channels
 when it is about one app. Every parameter and every refusal is in
 DESIGN-metrics.md's [Operator rules](../notify/DESIGN-metrics.md#operator-rules).
 
+## How close is each alert
+
+`motel monitor rules`, as root, lists every alert motel can raise on
+this box: motel's own checks, the store's rules and your `rule` lines.
+For each it shows what it fires on and, for a check motel makes itself,
+the number it last read:
+
+```
+$ motel monitor rules
+NAME                     SOURCE       KIND       SEVERITY  SCOPE      CONDITION                                                            NOW
+app_memory_high          builtin      threshold  warning   every app  > 0.9 share for 10m                                                  (the store)
+backup_stale             motel check  threshold  critical  box        > 3h                                                                 blog 58m, shop 3h59m30s
+disk_low                 motel check  threshold  warning   box        >= 80% warning, >= 90% critical, each clears 5 points under          /srv/motel 79.9% (warning), /var/lib/caddy 41.2%
+errors_high              operator     guarded    warning   every app  > 0.05 share for 10m, 2 guards                                       (the store)
+watchdog_throttled       motel check  threshold  critical  every app  a further restart needed while >= its budget in its window is spent  shop 2 of 5 in 10m
+…
+```
+
+(The shape is a test's, not a box's; the full table has every alert,
+deploys and other events among them, whose condition is `-`.)
+
+`KIND` is `threshold`, `guarded` (a threshold that also needs its
+guards: a share or a latency needs at least `min_requests` responses
+in five minutes, and below that it cannot fire whatever the share is) or
+`event` (a deploy, a failure, a state: nothing to be close to).
+Without the `metrics` line only motel's own checks are listed.
+
+With `--json` each store rule comes with the MetricsQL of its value,
+`value_query`, beside `op`, `threshold`, `unit`, `for_seconds` and
+`guards`; you run it on the store's socket yourself. vmalert evaluates
+data up to `query_offset_seconds` (65 s) old, so query at that offset
+to see about what it compared:
+
+```sh
+q=$(motel monitor rules --json | jq -r '.alerts[] | select(.name=="app_memory_high") | .value_query')
+curl -s --unix-socket /run/motel-metrics/vm.sock -G --data-urlencode "query=$q" \
+  --data-urlencode "time=$(( $(date +%s) - 65 ))" http://vm/api/v1/query
+```
+
+(`jq` is not part of motel; `apt install jq`, or copy the query by
+hand.) Whether an alert is pending or firing, and since when, is in the
+store too: `last_over_time(ALERTS[2m])` and
+`last_over_time(ALERTS_FOR_STATE[2m])` (the listing's `state_query`
+and `active_since_query`; the value of the second is when it became
+pending, so pending turns firing at that plus `for_seconds`, about a
+minute later in practice). Look back two minutes, not less: vmalert
+writes both once a minute, and a shorter lookback misses them now and
+then. The lookback has a price: an alert that resolved within it still
+shows, and at the minute it turns firing both its `pending` and its
+`firing` series show; take firing over pending, and the newest sample
+(`tlast_over_time`) over an older one.
+
+The listing holds motel's own query text, rule, app and path names:
+no channel URL, no secret, no summary. Another user than root is told
+`the admin socket … admits root and the motel user: run motel monitor
+rules as root`. What each field means is in DESIGN-metrics.md's
+[How close each alert is](../notify/DESIGN-metrics.md#how-close-each-alert-is).
+
 ## Turn it off, and remove it
 
 A reload that takes the block out gives Alertmanager the config that

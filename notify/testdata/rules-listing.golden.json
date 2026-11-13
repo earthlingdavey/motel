@@ -1,0 +1,426 @@
+{
+  "store": {
+    "socket": "/run/motel-metrics/vm.sock",
+    "query_offset_seconds": 65,
+    "state_query": "last_over_time(ALERTS[2m])",
+    "active_since_query": "last_over_time(ALERTS_FOR_STATE[2m])"
+  },
+  "alerts": [
+    {
+      "name": "ChannelFailed",
+      "source": "motel check",
+      "severity": "warning",
+      "subject": "box",
+      "kind": "event"
+    },
+    {
+      "name": "app_memory_high",
+      "source": "builtin",
+      "severity": "warning",
+      "subject": "app",
+      "kind": "threshold",
+      "value_query": "max by (app) (motel_app_memory_bytes / motel_app_memory_max_bytes)",
+      "op": ">",
+      "threshold": 0.9,
+      "unit": "share",
+      "for_seconds": 600
+    },
+    {
+      "name": "backup_run_failed",
+      "source": "motel check",
+      "severity": "warning",
+      "subject": "box",
+      "kind": "event"
+    },
+    {
+      "name": "backup_stale",
+      "source": "motel check",
+      "severity": "critical",
+      "subject": "box",
+      "kind": "threshold",
+      "op": ">",
+      "threshold": 10800,
+      "unit": "seconds",
+      "readings": [
+        {
+          "instance": "blog",
+          "value": 3480,
+          "measured_at": "2026-11-13T11:58:00Z"
+        },
+        {
+          "instance": "shop",
+          "value": 14370,
+          "measured_at": "2026-11-13T11:58:00Z"
+        }
+      ]
+    },
+    {
+      "name": "backup_unreadable",
+      "source": "motel check",
+      "severity": "warning",
+      "subject": "box",
+      "kind": "event"
+    },
+    {
+      "name": "blog_quiet",
+      "source": "operator",
+      "severity": "warning",
+      "subject": "app",
+      "app": "blog",
+      "kind": "guarded",
+      "value_query": "sum by (app) (((increase_pure(motel_app_requests_total{app=\"blog\"}[5m]) unless (present_over_time(motel_app_requests_total{app=\"blog\"}[1d] offset 5m) unless (last_over_time(motel_app_requests_total{app=\"blog\"}[1d] offset 5m) > first_over_time(motel_app_requests_total{app=\"blog\"}[5m])))) and (tfirst_over_time(motel_app_requests_total{app=\"blog\"}[5m]) > scalar(min(tfirst_over_time(process_start_time_seconds{job=\"motel\"}[7m]))) + 15)) or increase(motel_app_requests_total{app=\"blog\"}[5m])) / 300",
+      "op": "<",
+      "threshold": 0.1,
+      "unit": "requests/s",
+      "for_seconds": 3600,
+      "guards": [
+        {
+          "query": "(max by (app) (tlast_over_time(motel_app_observed{app=\"blog\"}[75s])) > scalar(max(tlast_over_time(process_start_time_seconds{job=\"motel\"}[75s]))) - 15)",
+          "match": "on (app)",
+          "meaning": "motel's last push says this config observes the app: one whose observe line is gone is not read"
+        }
+      ]
+    },
+    {
+      "name": "busy",
+      "source": "operator",
+      "severity": "warning",
+      "subject": "app",
+      "app": "shop",
+      "kind": "threshold",
+      "value_query": "sum by (app) (rate(motel_app_cpu_seconds_total{app=\"shop\"}[5m]))",
+      "op": ">",
+      "threshold": 1.5,
+      "unit": "cores",
+      "for_seconds": 600
+    },
+    {
+      "name": "cert_failed",
+      "source": "motel check",
+      "severity": "warning",
+      "subject": "box",
+      "kind": "event"
+    },
+    {
+      "name": "deploy_failed",
+      "source": "motel check",
+      "severity": "warning",
+      "subject": "app",
+      "kind": "event"
+    },
+    {
+      "name": "deploy_refused",
+      "source": "motel check",
+      "severity": "warning",
+      "subject": "app",
+      "kind": "event"
+    },
+    {
+      "name": "deploy_succeeded",
+      "source": "motel check",
+      "severity": "info",
+      "subject": "app",
+      "kind": "event"
+    },
+    {
+      "name": "disk_filling",
+      "source": "operator",
+      "severity": "critical",
+      "subject": "box",
+      "kind": "guarded",
+      "value_query": "min by (path) (predict_linear(motel_disk_avail_bytes[42h], 604800))",
+      "op": "<",
+      "threshold": 0,
+      "unit": "bytes",
+      "for_seconds": 12600,
+      "guards": [
+        {
+          "query": "min by (path) (predict_linear(motel_disk_avail_bytes[7h], 604800))",
+          "op": "<",
+          "value": 0,
+          "meaning": "the 7h line predicts it full too: a one-off write tilts the long line alone"
+        },
+        {
+          "query": "max by (path) (present_over_time(motel_disk_avail_bytes[42h] offset 35h))",
+          "meaning": "the store holds a sample older than 35h: over less history the lines are too short to judge"
+        }
+      ]
+    },
+    {
+      "name": "disk_low",
+      "source": "motel check",
+      "severity": "warning",
+      "subject": "box",
+      "kind": "threshold",
+      "op": ">=",
+      "unit": "percent",
+      "levels": [
+        {
+          "severity": "warning",
+          "threshold": 80,
+          "clears_below": 75
+        },
+        {
+          "severity": "critical",
+          "threshold": 90,
+          "clears_below": 85
+        }
+      ],
+      "readings": [
+        {
+          "instance": "/srv/motel",
+          "value": 79.96,
+          "level": "warning",
+          "measured_at": "2026-11-13T11:59:40Z"
+        },
+        {
+          "instance": "/var/lib/caddy",
+          "value": 41.26,
+          "measured_at": "2026-11-13T11:58:40Z"
+        }
+      ]
+    },
+    {
+      "name": "disk_soon",
+      "source": "operator",
+      "severity": "warning",
+      "subject": "box",
+      "kind": "guarded",
+      "value_query": "min by (path) (predict_linear(motel_disk_avail_bytes[6h], 7200))",
+      "op": "<",
+      "threshold": 0,
+      "unit": "bytes",
+      "for_seconds": 1800,
+      "guards": [
+        {
+          "query": "min by (path) (predict_linear(motel_disk_avail_bytes[1h], 7200))",
+          "op": "<",
+          "value": 0,
+          "meaning": "the 1h line predicts it full too: a one-off write tilts the long line alone"
+        },
+        {
+          "query": "max by (path) (present_over_time(motel_disk_avail_bytes[6h] offset 5h))",
+          "meaning": "the store holds a sample older than 5h: over less history the lines are too short to judge"
+        }
+      ]
+    },
+    {
+      "name": "drill_failed",
+      "source": "motel check",
+      "severity": "critical",
+      "subject": "box",
+      "kind": "event"
+    },
+    {
+      "name": "errors_high",
+      "source": "operator",
+      "severity": "warning",
+      "subject": "app",
+      "kind": "guarded",
+      "value_query": "(sum by (app) (((increase_pure(motel_app_requests_total{class=\"5xx\"}[5m]) unless (present_over_time(motel_app_requests_total{class=\"5xx\"}[1d] offset 5m) unless (last_over_time(motel_app_requests_total{class=\"5xx\"}[1d] offset 5m) > first_over_time(motel_app_requests_total{class=\"5xx\"}[5m])))) and (tfirst_over_time(motel_app_requests_total{class=\"5xx\"}[5m]) > scalar(min(tfirst_over_time(process_start_time_seconds{job=\"motel\"}[7m]))) + 15)) or increase(motel_app_requests_total{class=\"5xx\"}[5m])) / sum by (app) (((increase_pure(motel_app_requests_total{class!=\"aborted\"}[5m]) unless (present_over_time(motel_app_requests_total{class!=\"aborted\"}[1d] offset 5m) unless (last_over_time(motel_app_requests_total{class!=\"aborted\"}[1d] offset 5m) > first_over_time(motel_app_requests_total{class!=\"aborted\"}[5m])))) and (tfirst_over_time(motel_app_requests_total{class!=\"aborted\"}[5m]) > scalar(min(tfirst_over_time(process_start_time_seconds{job=\"motel\"}[7m]))) + 15)) or increase(motel_app_requests_total{class!=\"aborted\"}[5m])))",
+      "op": ">",
+      "threshold": 0.05,
+      "unit": "share",
+      "for_seconds": 600,
+      "guards": [
+        {
+          "query": "sum by (app) (((increase_pure(motel_app_requests_total{class!=\"aborted\"}[5m]) unless (present_over_time(motel_app_requests_total{class!=\"aborted\"}[1d] offset 5m) unless (last_over_time(motel_app_requests_total{class!=\"aborted\"}[1d] offset 5m) > first_over_time(motel_app_requests_total{class!=\"aborted\"}[5m])))) and (tfirst_over_time(motel_app_requests_total{class!=\"aborted\"}[5m]) > scalar(min(tfirst_over_time(process_start_time_seconds{job=\"motel\"}[7m]))) + 15)) or increase(motel_app_requests_total{class!=\"aborted\"}[5m]))",
+          "op": ">=",
+          "value": 20,
+          "meaning": "at least 20 responses sent over 5m: under it, too few to judge"
+        },
+        {
+          "query": "(max by (app) (tlast_over_time(motel_app_observed[75s])) > scalar(max(tlast_over_time(process_start_time_seconds{job=\"motel\"}[75s]))) - 15)",
+          "match": "on (app)",
+          "meaning": "motel's last push says this config observes the app: one whose observe line is gone is not read"
+        }
+      ]
+    },
+    {
+      "name": "hits_low",
+      "source": "operator",
+      "severity": "warning",
+      "subject": "app",
+      "kind": "guarded",
+      "value_query": "(sum by (app) (((increase_pure(motel_app_cache_responses_total{result=~\"hit|stale\"}[5m]) unless (present_over_time(motel_app_cache_responses_total{result=~\"hit|stale\"}[1d] offset 5m) unless (last_over_time(motel_app_cache_responses_total{result=~\"hit|stale\"}[1d] offset 5m) > first_over_time(motel_app_cache_responses_total{result=~\"hit|stale\"}[5m])))) and (tfirst_over_time(motel_app_cache_responses_total{result=~\"hit|stale\"}[5m]) > scalar(min(tfirst_over_time(process_start_time_seconds{job=\"motel\"}[7m]))) + 15)) or increase(motel_app_cache_responses_total{result=~\"hit|stale\"}[5m])) or sum by (app) (((increase_pure(motel_app_cache_responses_total[5m]) unless (present_over_time(motel_app_cache_responses_total[1d] offset 5m) unless (last_over_time(motel_app_cache_responses_total[1d] offset 5m) > first_over_time(motel_app_cache_responses_total[5m])))) and (tfirst_over_time(motel_app_cache_responses_total[5m]) > scalar(min(tfirst_over_time(process_start_time_seconds{job=\"motel\"}[7m]))) + 15)) or increase(motel_app_cache_responses_total[5m])) * 0) / sum by (app) (((increase_pure(motel_app_cache_responses_total[5m]) unless (present_over_time(motel_app_cache_responses_total[1d] offset 5m) unless (last_over_time(motel_app_cache_responses_total[1d] offset 5m) > first_over_time(motel_app_cache_responses_total[5m])))) and (tfirst_over_time(motel_app_cache_responses_total[5m]) > scalar(min(tfirst_over_time(process_start_time_seconds{job=\"motel\"}[7m]))) + 15)) or increase(motel_app_cache_responses_total[5m]))",
+      "op": "<",
+      "threshold": 0.5,
+      "unit": "share",
+      "for_seconds": 1800,
+      "guards": [
+        {
+          "query": "sum by (app) (((increase_pure(motel_app_cache_responses_total[5m]) unless (present_over_time(motel_app_cache_responses_total[1d] offset 5m) unless (last_over_time(motel_app_cache_responses_total[1d] offset 5m) > first_over_time(motel_app_cache_responses_total[5m])))) and (tfirst_over_time(motel_app_cache_responses_total[5m]) > scalar(min(tfirst_over_time(process_start_time_seconds{job=\"motel\"}[7m]))) + 15)) or increase(motel_app_cache_responses_total[5m]))",
+          "op": ">=",
+          "value": 20,
+          "meaning": "at least 20 responses its cache spoke for over 5m: under it, too few to judge"
+        },
+        {
+          "query": "(max by (app) (tlast_over_time(motel_app_observed[75s])) > scalar(max(tlast_over_time(process_start_time_seconds{job=\"motel\"}[75s]))) - 15)",
+          "match": "on (app)",
+          "meaning": "motel's last push says this config observes the app: one whose observe line is gone is not read"
+        }
+      ]
+    },
+    {
+      "name": "median",
+      "source": "operator",
+      "severity": "warning",
+      "subject": "app",
+      "kind": "guarded",
+      "value_query": "histogram_quantile(0.5, sum by (app, le) (((increase_pure(motel_app_response_seconds_bucket[5m]) unless ignoring(le) (present_over_time(motel_app_response_seconds_count[1d] offset 5m) unless (last_over_time(motel_app_response_seconds_count[1d] offset 5m) > first_over_time(motel_app_response_seconds_count[5m])))) and ignoring(le) (tfirst_over_time(motel_app_response_seconds_count[5m]) > scalar(min(tfirst_over_time(process_start_time_seconds{job=\"motel\"}[7m]))) + 15)) or increase(motel_app_response_seconds_bucket[5m])))",
+      "op": ">",
+      "threshold": 0.2,
+      "unit": "seconds",
+      "for_seconds": 600,
+      "guards": [
+        {
+          "query": "sum by (app) (((increase_pure(motel_app_response_seconds_count[5m]) unless (present_over_time(motel_app_response_seconds_count[1d] offset 5m) unless (last_over_time(motel_app_response_seconds_count[1d] offset 5m) > first_over_time(motel_app_response_seconds_count[5m])))) and (tfirst_over_time(motel_app_response_seconds_count[5m]) > scalar(min(tfirst_over_time(process_start_time_seconds{job=\"motel\"}[7m]))) + 15)) or increase(motel_app_response_seconds_count[5m]))",
+          "op": ">=",
+          "value": 20,
+          "meaning": "at least 20 timed responses over 5m: under it, too few to judge"
+        },
+        {
+          "query": "(max by (app) (tlast_over_time(motel_app_observed[75s])) > scalar(max(tlast_over_time(process_start_time_seconds{job=\"motel\"}[75s]))) - 15)",
+          "match": "on (app)",
+          "meaning": "motel's last push says this config observes the app: one whose observe line is gone is not read"
+        }
+      ]
+    },
+    {
+      "name": "mem",
+      "source": "operator",
+      "severity": "warning",
+      "subject": "app",
+      "kind": "threshold",
+      "value_query": "max by (app) (motel_app_memory_bytes / motel_app_memory_max_bytes)",
+      "op": ">",
+      "threshold": 0.8,
+      "unit": "share",
+      "for_seconds": 300
+    },
+    {
+      "name": "metrics_rules_down",
+      "source": "motel check",
+      "severity": "warning",
+      "subject": "box",
+      "kind": "threshold",
+      "op": ">=",
+      "threshold": 3,
+      "unit": "reads",
+      "readings": [
+        {
+          "value": 1,
+          "measured_at": "2026-11-13T11:59:20Z"
+        }
+      ]
+    },
+    {
+      "name": "metrics_store_disk_fill",
+      "source": "builtin",
+      "severity": "warning",
+      "subject": "box",
+      "kind": "guarded",
+      "value_query": "min(predict_linear(vm_free_disk_space_bytes[6h], 86400))",
+      "op": "<",
+      "threshold": 0,
+      "unit": "bytes",
+      "for_seconds": 1800,
+      "guards": [
+        {
+          "query": "min(predict_linear(vm_free_disk_space_bytes[1h], 86400))",
+          "op": "<",
+          "value": 0,
+          "meaning": "the 1h line predicts it full too: a one-off write tilts the 6h line alone"
+        }
+      ]
+    },
+    {
+      "name": "metrics_store_down",
+      "source": "motel check",
+      "severity": "warning",
+      "subject": "box",
+      "kind": "threshold",
+      "op": ">=",
+      "threshold": 300,
+      "unit": "seconds",
+      "readings": [
+        {
+          "value": 90,
+          "measured_at": "2026-11-13T11:59:50Z"
+        }
+      ]
+    },
+    {
+      "name": "metrics_store_read_only",
+      "source": "motel check",
+      "severity": "critical",
+      "subject": "box",
+      "kind": "event"
+    },
+    {
+      "name": "post_deploy_regressed",
+      "source": "operator",
+      "severity": "warning",
+      "subject": "app",
+      "kind": "event"
+    },
+    {
+      "name": "relaunch_refused",
+      "source": "motel check",
+      "severity": "critical",
+      "subject": "app",
+      "kind": "event"
+    },
+    {
+      "name": "rollback",
+      "source": "motel check",
+      "severity": "warning",
+      "subject": "app",
+      "kind": "event"
+    },
+    {
+      "name": "shop_slow",
+      "source": "operator",
+      "severity": "critical",
+      "subject": "app",
+      "app": "shop",
+      "kind": "guarded",
+      "value_query": "histogram_quantile(0.95, sum by (app, le) (((increase_pure(motel_app_response_seconds_bucket{app=\"shop\"}[5m]) unless ignoring(le) (present_over_time(motel_app_response_seconds_count{app=\"shop\"}[1d] offset 5m) unless (last_over_time(motel_app_response_seconds_count{app=\"shop\"}[1d] offset 5m) > first_over_time(motel_app_response_seconds_count{app=\"shop\"}[5m])))) and ignoring(le) (tfirst_over_time(motel_app_response_seconds_count{app=\"shop\"}[5m]) > scalar(min(tfirst_over_time(process_start_time_seconds{job=\"motel\"}[7m]))) + 15)) or increase(motel_app_response_seconds_bucket{app=\"shop\"}[5m])))",
+      "op": ">",
+      "threshold": 1.5,
+      "unit": "seconds",
+      "for_seconds": 900,
+      "guards": [
+        {
+          "query": "sum by (app) (((increase_pure(motel_app_response_seconds_count{app=\"shop\"}[5m]) unless (present_over_time(motel_app_response_seconds_count{app=\"shop\"}[1d] offset 5m) unless (last_over_time(motel_app_response_seconds_count{app=\"shop\"}[1d] offset 5m) > first_over_time(motel_app_response_seconds_count{app=\"shop\"}[5m])))) and (tfirst_over_time(motel_app_response_seconds_count{app=\"shop\"}[5m]) > scalar(min(tfirst_over_time(process_start_time_seconds{job=\"motel\"}[7m]))) + 15)) or increase(motel_app_response_seconds_count{app=\"shop\"}[5m]))",
+          "op": ">=",
+          "value": 50,
+          "meaning": "at least 50 timed responses over 5m: under it, too few to judge"
+        },
+        {
+          "query": "(max by (app) (tlast_over_time(motel_app_observed{app=\"shop\"}[75s])) > scalar(max(tlast_over_time(process_start_time_seconds{job=\"motel\"}[75s]))) - 15)",
+          "match": "on (app)",
+          "meaning": "motel's last push says this config observes the app: one whose observe line is gone is not read"
+        }
+      ]
+    },
+    {
+      "name": "watchdog_throttled",
+      "source": "motel check",
+      "severity": "critical",
+      "subject": "app",
+      "kind": "threshold",
+      "op": ">=",
+      "unit": "restarts",
+      "readings": [
+        {
+          "app": "shop",
+          "value": 2,
+          "threshold": 5,
+          "window_seconds": 600,
+          "measured_at": "2026-11-13T12:00:00Z"
+        }
+      ]
+    }
+  ]
+}

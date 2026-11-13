@@ -19,7 +19,7 @@ func init() {
 	caddycmd.RegisterCommand(caddycmd.Command{
 		Name:  "monitor",
 		Usage: "<command>",
-		Short: "Who motel tells, and the numbers: send an event, test a channel, silence an alert, set up Alertmanager and the store",
+		Short: "Who motel tells, and the numbers: send an event, test a channel, silence an alert, list the rules, set up Alertmanager and the store",
 		Long: `Commands of the monitor block (notify/DESIGN-notify.md and
 notify/DESIGN-metrics.md in the motel repository). motel detects;
 Debian's Alertmanager, on a unix socket motel renders its config for,
@@ -27,7 +27,7 @@ delivers. With the block's metrics line, motel pushes its numbers to
 Debian's VictoriaMetrics, whose vmalert evaluates the rules motel
 renders.`,
 		CobraFunc: func(cmd *cobra.Command) {
-			cmd.AddCommand(sendCommand(), testCommand(), setupCommand(), silenceCommand())
+			cmd.AddCommand(sendCommand(), testCommand(), setupCommand(), silenceCommand(), rulesCommand())
 		},
 	})
 	// The commands monitor replaced: hidden, and refused with the new
@@ -94,21 +94,41 @@ func adminAddr(c *cobra.Command) (string, error) {
 }
 
 func adminPost(c *cobra.Command, uri string, body any) ([]byte, error) {
-	addr, err := adminAddr(c)
-	if err != nil {
-		return nil, err
-	}
 	b, err := json.Marshal(body)
 	if err != nil {
 		return nil, err
 	}
-	h := http.Header{"Content-Type": {"application/json"}}
-	resp, err := caddycmd.AdminAPIRequest(addr, http.MethodPost, uri, h, bytes.NewReader(b))
+	return adminRequest(c, http.MethodPost, uri, b, 64<<10)
+}
+
+func adminRequest(c *cobra.Command, method, uri string, body []byte, limit int64) ([]byte, error) {
+	addr, err := adminAddr(c)
+	if err != nil {
+		return nil, err
+	}
+	h := http.Header{}
+	var rd io.Reader
+	if body != nil {
+		h.Set("Content-Type", "application/json")
+		rd = bytes.NewReader(body)
+	}
+	resp, err := caddycmd.AdminAPIRequest(addr, method, uri, h, rd)
 	if err != nil {
 		return nil, apiRefusal(err)
 	}
 	defer func() { _ = resp.Body.Close() }()
-	return io.ReadAll(io.LimitReader(resp.Body, 64<<10))
+	return io.ReadAll(io.LimitReader(resp.Body, limit))
+}
+
+// notAdmitted words the dial's refusal of a caller the admin socket
+// does not admit, which AdminAPIRequest words `performing request: …`;
+// a route's own answer is passed on as it is.
+func notAdmitted(c *cobra.Command, err error, command string) error {
+	if msg := err.Error(); strings.HasPrefix(msg, "performing request:") && strings.Contains(msg, "permission denied") {
+		addr, _ := adminAddr(c)
+		return fmt.Errorf("the admin socket (%s) admits root and the motel user: run %s as root", addr, command)
+	}
+	return err
 }
 
 func sendCommand() *cobra.Command {
