@@ -244,7 +244,7 @@ func TestServeSilence(t *testing.T) {
 		{"a box alert with --app", SilenceRequest{Alert: "disk_low", App: "shop"}, "disk_low is about the box, not an app"},
 		{"ChannelFailed with --app", SilenceRequest{Alert: "ChannelFailed", App: "shop"}, "is about the box, not an app"},
 		{"a release without --app", SilenceRequest{Alert: "rollback", Release: "v2"}, "--release narrows one app's alerts whose release motel knows, so it needs --app and --alert one of rollback, deploy_succeeded, deploy_failed, post_deploy_regressed"},
-		{"a refused deploy's release", SilenceRequest{Alert: "deploy_refused", App: "shop", Release: "f1"}, "a refused deploy's release is never recorded"},
+		{"a refused deploy's release", SilenceRequest{Alert: "deploy_refused", App: "shop", Release: "f1"}, "a refusal writes no record"},
 		{"a release of a state alert", SilenceRequest{Alert: "watchdog_throttled", App: "shop", Release: "v2"}, "--release narrows"},
 		{"a release with --app alone", SilenceRequest{App: "shop", Release: "v2"}, "--release narrows"},
 		{"a release neither on disk nor recorded", SilenceRequest{Alert: "rollback", App: "shop", Release: "3f9c2a1"}, "--release names no release of shop on this box; they are " + testSha + ", v2, f1, v0"},

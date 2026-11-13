@@ -656,11 +656,12 @@ silence from them:
   you. It needs `--app` and one of the alerts that carry a release:
   `rollback`, `deploy_succeeded`, `deploy_failed` or
   `post_deploy_regressed`. A refused deploy writes no record, so
-  silence `deploy_refused` by `--alert` and `--app`; so too a deploy
-  that failed before it began (its directories, or a push's upload,
-  could not be readied: no record either), and a failed deploy whose
-  record has been pruned (the newest `keep` versions not on disk keep
-  theirs).
+  silence `deploy_refused` by `--alert` and `--app`; so too a failed
+  deploy with no record: one that failed before it began (`GET
+  /<app>?deploy=<version>` answers `404`), one whose record could not
+  be written (motel's journal says `deploy record: not written`), and
+  one whose record has been pruned (the newest `keep` versions not on
+  disk keep theirs).
 
 Give `--alert`, `--app` or both. Each is an exact match. A name motel
 does not know is refused with the list of the names it takes, and so

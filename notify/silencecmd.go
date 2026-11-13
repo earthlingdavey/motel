@@ -37,8 +37,9 @@ alerts motel raises on this box, --app one of the apps it runs,
 (a failed deploy's among them). Each is an exact match; give --alert,
 --app or both. --release needs --app and an alert that carries the
 release: rollback, deploy_succeeded, deploy_failed or
-post_deploy_regressed (a refused deploy writes no record: silence
-deploy_refused by --alert and --app).
+post_deploy_regressed. A refused deploy, or one that failed with no
+record written (before it began, or the write failed), is silenced by
+--alert and --app.
 
     motel monitor silence add --comment "resizing the volume" --duration 4h \
         --alert disk_low

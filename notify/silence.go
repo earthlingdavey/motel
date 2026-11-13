@@ -186,7 +186,7 @@ func (r SilenceRequest) checkSets(a *App) error {
 	}
 	if r.Release != "" {
 		if _, _, release := alertScope(a, r.Alert); r.App == "" || !release {
-			return fmt.Errorf("--release narrows one app's alerts whose release motel knows, so it needs --app and --alert one of %s (a refused deploy's release is never recorded: silence its --alert and --app)", strings.Join(releaseAlerts, ", "))
+			return fmt.Errorf("--release narrows one app's alerts whose release motel knows, so it needs --app and --alert one of %s (a refusal writes no record, and its release may be any name a deployer sent: silence deploy_refused by --alert and --app)", strings.Join(releaseAlerts, ", "))
 		}
 		rels := releasesOf(a, r.App)
 		if !slices.Contains(rels, r.Release) {

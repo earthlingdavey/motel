@@ -12,9 +12,10 @@ import (
 // release motel knows when it fires: on disk (a rollback's target, a
 // deploy's success, a regression after it) or in the app's deploy
 // records (a failed deploy, whose directory is removed at once but
-// whose outcome is recorded: liveswap/deploys.go). deploy_refused
-// carries the release too, but a refusal comes before any phase and
-// writes no record, so the closed set cannot hold its release.
+// whose outcome is recorded once the deploy was accepted, and if the
+// record write did not fail: liveswap/deploys.go). deploy_refused
+// carries the release too, but a refusal writes no record and its
+// release may be any name a deployer sent, so it is kept out.
 var (
 	lifecycleAlerts = []string{
 		liveswap.EventWatchdogThrottled, liveswap.EventRelaunchRefused,
