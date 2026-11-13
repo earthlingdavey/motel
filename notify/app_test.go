@@ -223,7 +223,7 @@ func TestEverySecretIsAKnownValue(t *testing.T) {
 		t.Fatalf("secrets = %v", secrets)
 	}
 	te := newTestEngine(t)
-	te.known = knownValues(secrets)
+	te.known = knownValues(secrets, nil)
 	ev := deployFailed()
 	ev.Summary = "posting to https://ntfy.sh/spare-topic-7f3a failed"
 	te.report(ev)

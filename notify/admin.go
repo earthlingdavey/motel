@@ -171,17 +171,18 @@ func serveSend(w http.ResponseWriter, r *http.Request) error {
 	e := theEngine
 	e.mu.Lock()
 	active := e.active
-	// The name and the instance become the key, the labels and this
-	// answer, which the filter does not rewrite (a key must match its
-	// resolve): one that holds what the filter would mask, a channel URL
-	// or a secret-shaped token, is refused rather than carried.
-	masked := e.clean(req.Name) != req.Name || e.clean(req.Instance) != req.Instance
+	// The name, the instance and the source become the key, the labels
+	// and this answer, which the filter does not rewrite (a key must
+	// match its resolve): one that holds what the filter would mask, a
+	// channel URL or a secret-shaped token, is refused rather than
+	// carried.
+	masked := e.clean(req.Name) != req.Name || e.clean(req.Instance) != req.Instance || e.clean(req.Source) != req.Source
 	e.mu.Unlock()
 	if active == nil || active.cfg == nil {
 		return caddy.APIError{HTTPStatus: http.StatusServiceUnavailable, Err: errors.New("this box's Caddyfile has no monitor block with channels")}
 	}
 	if masked {
-		return unprocessable(errors.New("the name or instance holds a value the filter masks (a channel URL, or a secret-shaped token): name the thing, not its credential"))
+		return unprocessable(errors.New("the name, instance or source holds a value the filter masks (a channel URL or its topic or token, or a secret-shaped token): name the thing, not its credential"))
 	}
 	ev := Event{Name: req.Name, Severity: req.Severity, Instance: req.Instance, Source: "external:" + req.Source,
 		Summary: req.Summary, Kind: kindEvent, Details: req.Details}
