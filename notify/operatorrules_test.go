@@ -276,16 +276,21 @@ func TestOperatorRulesRender(t *testing.T) {
 	shop := func(metric, extra string) string {
 		return `sum by (app) (` + inc(metric+`{app="shop"`+extra+`}`) + `)`
 	}
+	// The request thresholds hold for the apps in motel's last push.
+	pushed := func(sel string) string {
+		return ` and on (app) (max by (app) (tlast_over_time(motel_app_observed` + sel + `[75s]))` +
+			` > scalar(max(tlast_over_time(process_start_time_seconds{job="motel"}[75s]))) - 15)`
+	}
 	for name, want := range map[string]string{
-		"errors_high": "(" + every(`class="5xx"`) + " / " + every(`class!="aborted"`) + ") > 0.05 and " + every(`class!="aborted"`) + " >= 20",
+		"errors_high": "(" + every(`class="5xx"`) + " / " + every(`class!="aborted"`) + ") > 0.05 and " + every(`class!="aborted"`) + " >= 20" + pushed(""),
 		"shop_slow": `histogram_quantile(0.95, sum by (app, le) (` + hist(`{app="shop"}`) + `)) > 1.5 and ` +
-			shop("motel_app_response_seconds_count", "") + " >= 50",
-		"blog_quiet": `sum by (app) (` + inc(`motel_app_requests_total{app="blog"}`) + `) / 300 < 0.1`,
+			shop("motel_app_response_seconds_count", "") + " >= 50" + pushed(`{app="shop"}`),
+		"blog_quiet": `sum by (app) (` + inc(`motel_app_requests_total{app="blog"}`) + `) / 300 < 0.1` + pushed(`{app="blog"}`),
 		"hits_low": `(sum by (app) (` + inc(`motel_app_cache_responses_total{result=~"hit|stale"}`) + `) or sum by (app) (` + inc(`motel_app_cache_responses_total`) + `) * 0)` +
-			` / sum by (app) (` + inc(`motel_app_cache_responses_total`) + `) < 0.5 and sum by (app) (` + inc(`motel_app_cache_responses_total`) + `) >= 20`,
+			` / sum by (app) (` + inc(`motel_app_cache_responses_total`) + `) < 0.5 and sum by (app) (` + inc(`motel_app_cache_responses_total`) + `) >= 20` + pushed(""),
 		"mem":    `max by (app) (motel_app_memory_bytes / motel_app_memory_max_bytes) > 0.8`,
 		"busy":   `sum by (app) (rate(motel_app_cpu_seconds_total{app="shop"}[5m])) > 1.5`,
-		"median": `histogram_quantile(0.5, sum by (app, le) (` + hist(``) + `)) > 0.2 and sum by (app) (` + inc(`motel_app_response_seconds_count`) + `) >= 20`,
+		"median": `histogram_quantile(0.5, sum by (app, le) (` + hist(``) + `)) > 0.2 and sum by (app) (` + inc(`motel_app_response_seconds_count`) + `) >= 20` + pushed(""),
 		"disk_filling": `min by (path) (predict_linear(motel_disk_avail_bytes[42h], 604800)) < 0 and min by (path) (predict_linear(motel_disk_avail_bytes[7h], 604800)) < 0` +
 			` and max by (path) (present_over_time(motel_disk_avail_bytes[42h] offset 35h))`,
 	} {
@@ -408,6 +413,10 @@ tests:
         values: '2x20'
       - series: 'motel_app_requests_total{app="blog",release="v1",class="2xx",job="motel"}'
         values: '1x20'
+      - series: 'motel_app_observed{app="shop",job="motel"}'
+        values: '1x20'
+      - series: 'motel_app_observed{app="blog",job="motel"}'
+        values: '1x20'
       - series: 'motel_app_cache_responses_total{app="shop",release="",result="miss",job="motel"}'
         values: '10+10x20'
       - series: 'motel_disk_avail_bytes{path="/var/lib/liveswap",job="motel"}'
@@ -494,6 +503,12 @@ tests:
         values: '0+10x30 _x20 500+10x40'
       - series: 'motel_app_requests_total{app="reused",release="v1",class="2xx",job="motel"}'
         values: '0+100x10 _x30 400x50'
+      - series: 'motel_app_observed{app="fresh",job="motel"}'
+        values: '_x30 1x60'
+      - series: 'motel_app_observed{app="gapped",job="motel"}'
+        values: '1x30 _x20 1x40'
+      - series: 'motel_app_observed{app="reused",job="motel"}'
+        values: '1x10 _x30 1x50'
     alert_rule_test:
       - eval_time: 33m
         groupname: motel-operator
@@ -517,6 +532,8 @@ tests:
         values: '_x30 1x60'
       - series: 'motel_app_requests_total{app="old",release="v1",class="2xx",job="motel"}'
         values: '_x30 5000+10x60'
+      - series: 'motel_app_observed{app="old",job="motel"}'
+        values: '_x30 1x60'
     alert_rule_test:
       - eval_time: 34m
         groupname: motel-operator
@@ -532,6 +549,12 @@ tests:
         values: '0+50x59 _x20 750+50x40'
       - series: 'motel_app_requests_total{app="after",release="v3",class="2xx",job="motel"}'
         values: '_x90 400x30'
+      - series: 'motel_app_observed{app="born",job="motel"}'
+        values: '_x80 1x40'
+      - series: 'motel_app_observed{app="restarted",job="motel"}'
+        values: '1x59 _x20 1x40'
+      - series: 'motel_app_observed{app="after",job="motel"}'
+        values: '_x90 1x30'
     alert_rule_test:
       - eval_time: 84m
         groupname: motel-operator
@@ -569,6 +592,8 @@ tests:
         values: '_x30 1x30'
       - series: 'motel_app_requests_total{app="fresh",release="v1",class="2xx",job="motel"}'
         values: '_x31 22x29'
+      - series: 'motel_app_observed{app="fresh",job="motel"}'
+        values: '_x31 1x29'
     alert_rule_test:
       - eval_time: 34m
         groupname: motel-operator
@@ -580,11 +605,145 @@ tests:
     input_series:
       - series: 'motel_app_requests_total{app="nopush",release="v1",class="2xx",job="motel"}'
         values: '_x31 22x29'
+      - series: 'motel_app_observed{app="nopush",job="motel"}'
+        values: '_x31 1x29'
     alert_rule_test:
       - eval_time: 34m
         groupname: motel-operator
         alertname: busy
         exp_alerts: []
+`
+	runUnittest(t, tool, dir, test)
+}
+
+// A request threshold reads the apps motel's last push says are
+// observed, at pushEvery's 30 s. gone's observe line is taken out at
+// 12m30s while the pushes go on: its 2 a second falls a push's worth at
+// each push after, and it is out from the first, so at 13m10s a
+// `request_rate < 1.9` reads quiet and reattached alone (gone's 1.8
+// was the bound's) and `request_rate < 1.5` never fires for it. quiet,
+// observed and never reached, fires and stays firing at 6m, a minute
+// after the last push before two lost ones (the most one lost push
+// leaves at an evaluation before the next). reattached's push at 9m
+// carries it as observed but not its counts, as a restart's first
+// push before liveswap has reattached its release: it stays firing.
+// With every push stopped at 12m, all's fall fires nothing either. A
+// restart at 10m15s: no push at 10m30s, the new process's from 11m,
+// its counts from 12m once liveswap has reattached the release, from
+// zero; idle, observed throughout, stays firing (0.1 a second read
+// as 0.08 and 0.06 meanwhile: the reattach row).
+func TestOperatorRulesReadThePushedApps(t *testing.T) {
+	tool := vmTool(t, "vmalert-tool")
+	dir := t.TempDir()
+	a := rulesApp(t, "rule low threshold request_rate < 1.5 for 1m")
+	if err := os.WriteFile(filepath.Join(dir, RulesName), renderRules(a), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	near := thresholdExpr(Rule{Name: "near", Kind: ruleThreshold, Metric: "request_rate", Op: "<", Value: 1.9, For: 60e9})
+	firing := ""
+	for _, app := range []string{"quiet", "reattached"} {
+		firing += `
+          - exp_labels: {app: ` + app + `, kind: state, severity: warning, subject: "app:` + app + `", source: rules, key: "rules/app:` + app + `/low"}
+            exp_annotations: {summary: "` + app + `: its requests a second over 5 minutes has been below 1.5 for 1m (rule low); now 0"}`
+	}
+	test := `rule_files: [rules.yml]
+evaluation_interval: 1m
+tests:
+  - interval: 30s
+    input_series:
+      - series: 'process_start_time_seconds{job="motel"}'
+        values: '1x10 _ _ 1x40'
+      - series: 'motel_app_observed{app="live",job="motel"}'
+        values: '1x10 _ _ 1x40'
+      - series: 'motel_app_requests_total{app="live",release="v1",class="2xx",job="motel"}'
+        values: '0+60x10 _ _ 780+60x40'
+      - series: 'motel_app_observed{app="quiet",job="motel"}'
+        values: '1x10 _ _ 1x40'
+      - series: 'motel_app_requests_total{app="quiet",release="v1",class="2xx",job="motel"}'
+        values: '0x10 _ _ 0x40'
+      - series: 'motel_app_observed{app="reattached",job="motel"}'
+        values: '1x10 _ _ 1x40'
+      - series: 'motel_app_requests_total{app="reattached",release="v1",class="2xx",job="motel"}'
+        values: '0x10 _ _ 0x4 _ 0x34'
+      - series: 'motel_app_observed{app="gone",job="motel"}'
+        values: '1x25'
+      - series: 'motel_app_requests_total{app="gone",release="v1",class="2xx",job="motel"}'
+        values: '0+60x25'
+    metricsql_expr_test:
+      - expr: '` + near + `'
+        eval_time: 13m10s
+        exp_samples:
+          - labels: '{app="quiet"}'
+            value: 0
+          - labels: '{app="reattached"}'
+            value: 0
+    alert_rule_test:
+      - eval_time: 6m
+        groupname: motel-operator
+        alertname: low
+        exp_alerts:` + firing + `
+      - eval_time: 9m
+        groupname: motel-operator
+        alertname: low
+        exp_alerts:` + firing + `
+      - eval_time: 15m
+        groupname: motel-operator
+        alertname: low
+        exp_alerts:` + firing + `
+      - eval_time: 17m
+        groupname: motel-operator
+        alertname: low
+        exp_alerts:` + firing + `
+  - interval: 30s
+    input_series:
+      - series: 'process_start_time_seconds{job="motel"}'
+        values: '1x24'
+      - series: 'motel_app_observed{app="all",job="motel"}'
+        values: '1x24'
+      - series: 'motel_app_requests_total{app="all",release="v1",class="2xx",job="motel"}'
+        values: '0+60x24'
+    alert_rule_test:
+      - eval_time: 15m
+        groupname: motel-operator
+        alertname: low
+        exp_alerts: []
+      - eval_time: 17m
+        groupname: motel-operator
+        alertname: low
+        exp_alerts: []
+  - interval: 30s
+    input_series:
+      - series: 'process_start_time_seconds{job="motel"}'
+        values: '1x20 _ 650x20'
+      - series: 'motel_app_observed{app="idle",job="motel"}'
+        values: '1x20 _ 1x20'
+      - series: 'motel_app_requests_total{app="idle",release="v1",class="4xx",job="motel"}'
+        values: '0+3x20 _ _ _ 0+3x18'
+    alert_rule_test:
+      - eval_time: 10m
+        groupname: motel-operator
+        alertname: low
+        exp_alerts:
+          - exp_labels: {app: idle, kind: state, severity: warning, subject: "app:idle", source: rules, key: "rules/app:idle/low"}
+            exp_annotations: {summary: "idle: its requests a second over 5 minutes has been below 1.5 for 1m (rule low); now 100m"}
+      - eval_time: 11m
+        groupname: motel-operator
+        alertname: low
+        exp_alerts:
+          - exp_labels: {app: idle, kind: state, severity: warning, subject: "app:idle", source: rules, key: "rules/app:idle/low"}
+            exp_annotations: {summary: "idle: its requests a second over 5 minutes has been below 1.5 for 1m (rule low); now 80m"}
+      - eval_time: 12m
+        groupname: motel-operator
+        alertname: low
+        exp_alerts:
+          - exp_labels: {app: idle, kind: state, severity: warning, subject: "app:idle", source: rules, key: "rules/app:idle/low"}
+            exp_annotations: {summary: "idle: its requests a second over 5 minutes has been below 1.5 for 1m (rule low); now 60m"}
+      - eval_time: 13m
+        groupname: motel-operator
+        alertname: low
+        exp_alerts:
+          - exp_labels: {app: idle, kind: state, severity: warning, subject: "app:idle", source: rules, key: "rules/app:idle/low"}
+            exp_annotations: {summary: "idle: its requests a second over 5 minutes has been below 1.5 for 1m (rule low); now 60m"}
 `
 	runUnittest(t, tool, dir, test)
 }
@@ -596,6 +755,8 @@ tests:
 // increase (0.1 s read as 0, a p95 of 0.97 s). slow is new to the store
 // (all in increase_pure); kept came back after a gap at its last values,
 // its history slow and its new answers fast, all through increase.
+// Each app is motel_app_observed while its histogram is pushed, as in
+// motel's push, for the rule reads the apps the push says are observed.
 func TestOperatorRulesHistogramIsReadWhole(t *testing.T) {
 	tool := vmTool(t, "vmalert-tool")
 	dir := t.TempDir()
@@ -618,6 +779,8 @@ tests:
         values: '0+100x10 _x30 400x50'
       - series: 'motel_app_response_seconds_count{app="reused",release="v1",job="motel"}'
         values: '0+100x10 _x30 400x50'
+      - series: 'motel_app_observed{app="reused",job="motel"}'
+        values: '1x10 _x30 1x50'
       - series: 'motel_app_response_seconds_bucket{app="slow",release="v1",le="0.1",job="motel"}'
         values: '_x40 0x50'
       - series: 'motel_app_response_seconds_bucket{app="slow",release="v1",le="1",job="motel"}'
@@ -626,6 +789,8 @@ tests:
         values: '_x40 50x50'
       - series: 'motel_app_response_seconds_count{app="slow",release="v1",job="motel"}'
         values: '_x40 50x50'
+      - series: 'motel_app_observed{app="slow",job="motel"}'
+        values: '_x40 1x50'
       - series: 'motel_app_response_seconds_bucket{app="kept",release="v1",le="0.1",job="motel"}'
         values: '0x10 _x30 0+10x50'
       - series: 'motel_app_response_seconds_bucket{app="kept",release="v1",le="1",job="motel"}'
@@ -634,6 +799,8 @@ tests:
         values: '0+100x10 _x30 1000+10x50'
       - series: 'motel_app_response_seconds_count{app="kept",release="v1",job="motel"}'
         values: '0+100x10 _x30 1000+10x50'
+      - series: 'motel_app_observed{app="kept",job="motel"}'
+        values: '1x10 _x30 1x50'
     alert_rule_test:
       - eval_time: 44m
         groupname: motel-operator

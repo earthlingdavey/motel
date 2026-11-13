@@ -523,8 +523,9 @@ curl -s --unix-socket /run/motel-metrics/vm.sock -G \
 
 The series motel pushes are `motel_app_up`, `motel_app_release_info`,
 `motel_app_memory_bytes` (and `motel_app_memory_max_bytes` for a capped
-app), `motel_app_cpu_seconds_total`, `motel_app_requests_total` (by
-`class`, with `observe`), `motel_app_response_seconds` (a histogram),
+app), `motel_app_cpu_seconds_total`, `motel_app_observed` (an app
+with `observe`), `motel_app_requests_total` (by `class`, with
+`observe`), `motel_app_response_seconds` (a histogram),
 `motel_app_cache_responses_total`, `motel_disk_avail_bytes`,
 `motel_metrics_push_failed_total` and `motel_notify_delivery_failed_total`,
 along with Caddy's own `go_*`, `process_*` and `caddy_*`. To list what
@@ -599,9 +600,15 @@ monitor {
   release compared with the one it replaced. It sends
   `post_deploy_regressed` once, and it never rolls back.
 
-The request metrics need `observe <app>` in the app's site. The rule
-goes to the operator's channels, and to the app's bound channels when
-it is about one app. Every parameter and every refusal is in
+The request metrics need `observe <app>` in the app's site, and a rule
+on them reads only the apps motel's last push says are observed: an
+app whose `observe` line is taken out drops out at the next push, and
+every app does while no push reaches the store for over 75 s, so an
+alert firing then resolves. That is motel down, or the store refusing
+the pushes: `metrics_store_read_only` says so for a read-only store,
+and `metrics_store_down` once they have failed for five minutes. The
+rule goes to the operator's channels, and to the app's bound channels
+when it is about one app. Every parameter and every refusal is in
 DESIGN-metrics.md's [Operator rules](../notify/DESIGN-metrics.md#operator-rules).
 
 ## Turn it off, and remove it

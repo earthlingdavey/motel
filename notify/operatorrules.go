@@ -665,11 +665,40 @@ func guardedIncrease(sel, by, match string, win, off time.Duration) string {
 		" or increase(" + sel + w + ")"
 }
 
+// pushFresh is how far back pushedNow looks for motel's last push: two
+// pushes and a half, so one push lost leaves every app in.
+const pushFresh = 2*pushEvery + pushApart
+
+// pushedNow is the apps (sel: the rule's selector) that motel's last
+// push said the running config observes (motel_app_observed), for a
+// request threshold to be read over them alone. A series no push
+// carries any more keeps its last value, and increase over the window
+// loses one push's worth at each push after it (measured on 1.112.0: 2
+// a second read as 1.8 from the first push without it, 0.2 by 300 s,
+// nothing from 305 s), so an app whose observe line is taken out read
+// as its traffic falling and fired a `request_rate <`. The app is out
+// from the first push without it, the push that begins the fall. Not
+// its request counts: a restart's first pushes can come before
+// liveswap has reattached the release they count under, and would
+// leave out an app no one reaches, resolving its `request_rate <`. Its
+// last sample is held to the push's last less pushApart, since one
+// push's samples are milliseconds apart. With no push in pushFresh
+// (motel down, or every push failing) scalar is NaN and every app is
+// out: the readings fall alike then. The 45 s of the fall inside
+// pushFresh holds for one of vmalert's minutely evaluations at most,
+// and no rule's for is under a minute.
+func pushedNow(sel string) string {
+	w := "[" + promDuration(pushFresh) + "]"
+	return "max by (app) (tlast_over_time(motel_app_observed" + sel + w + "))" +
+		" > scalar(max(tlast_over_time(" + pushSeries + w + "))) - " + strconv.Itoa(int(pushApart.Seconds()))
+}
+
 // thresholdExpr is a threshold's expression: the metric's, per app (by
 // (app), which carries the label notify's route tree sends to the
 // app's channels by), over the request window, with the sample floor
 // for a share or a quantile. The request counters are read through
-// counterIncrease, the response histogram through histogramIncrease.
+// counterIncrease, the response histogram through histogramIncrease,
+// and a request threshold holds for an app pushedNow alone.
 func thresholdExpr(r Rule) string {
 	app := ""
 	if r.App != "" {
@@ -690,26 +719,27 @@ func thresholdExpr(r Rule) string {
 	}
 	cmp := " " + r.Op + " " + numberText(r.Value)
 	floor := " >= " + strconv.Itoa(r.minRequests())
+	pushed := " and on (app) (" + pushedNow(sel()) + ")"
 	switch r.Metric {
 	case "5xx_share":
 		// Of the responses sent: a client gone first is in the total,
 		// never in the share (GET /<app>'s 5xx_share).
 		sent := sum("motel_app_requests_total", `class!="aborted"`)
-		return "(" + sum("motel_app_requests_total", `class="5xx"`) + " / " + sent + ")" + cmp + " and " + sent + floor
+		return "(" + sum("motel_app_requests_total", `class="5xx"`) + " / " + sent + ")" + cmp + " and " + sent + floor + pushed
 	case "p50", "p95":
 		q := "0.5"
 		if r.Metric == "p95" {
 			q = "0.95"
 		}
 		return "histogram_quantile(" + q + ", sum by (app, le) (" + histogramIncrease("motel_app_response_seconds", sel(), requestWindow, 0) + "))" +
-			cmp + " and " + sum("motel_app_response_seconds_count") + floor
+			cmp + " and " + sum("motel_app_response_seconds_count") + floor + pushed
 	case "request_rate":
-		return sum("motel_app_requests_total") + " / " + strconv.Itoa(int(requestWindow.Seconds())) + cmp
+		return sum("motel_app_requests_total") + " / " + strconv.Itoa(int(requestWindow.Seconds())) + cmp + pushed
 	case "cache_hit_share":
 		// A hit result's series exists once there is one: an app whose
 		// cache spoke and never hit has a share of 0, not none.
 		spoke := sum("motel_app_cache_responses_total")
-		return "(" + sum("motel_app_cache_responses_total", `result=~"hit|stale"`) + " or " + spoke + " * 0) / " + spoke + cmp + " and " + spoke + floor
+		return "(" + sum("motel_app_cache_responses_total", `result=~"hit|stale"`) + " or " + spoke + " * 0) / " + spoke + cmp + " and " + spoke + floor + pushed
 	case "memory_share":
 		return "max by (app) (motel_app_memory_bytes" + sel() + " / motel_app_memory_max_bytes" + sel() + ")" + cmp
 	case "cpu_cores":
