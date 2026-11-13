@@ -761,7 +761,7 @@ The deployer's route and credential, unchanged (the fresh-slate draft,
 ```
 
 The window is `?range=`: `1h`, the default, or `24h`, a fixed set
-(liveswap's `MetricsRanges`); any other is a 422, on a box with no
+(`MetricsRanges` in liveswap/wire, beside the object's type, `Metrics`); any other is a 422, on a box with no
 store too. Seven fixed queries over the socket, scoped to `app="<name>"`
 and run at once. Two `query_range` templates over the window, at a 60 s
 step for the hour and 5 m for the day, the memory

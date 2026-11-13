@@ -4,6 +4,8 @@ import (
 	"context"
 	"maps"
 	"slices"
+
+	"github.com/smallhoursorg/motel/liveswap/wire"
 )
 
 // What the metrics store (the monitor block's metrics line) reads of
@@ -80,18 +82,14 @@ func sampleMemoryMax(hs handleState) uint64 {
 }
 
 // MetricsSource answers the `metrics` object of GET /<app>, over the
-// window `?range=` named (one of MetricsRanges). It must answer within
-// its own short budget whatever the store does, and is called with the
-// request's context; what it returns is marshalled into the status and
-// passes the app's response filter with the rest.
+// window `?range=` named (one of wire.MetricsRanges). It must answer
+// within its own short budget whatever the store does, and is called
+// with the request's context; what it returns is marshalled into the
+// status and passes the app's response filter with the rest. nil
+// leaves the object out.
 type MetricsSource interface {
-	AppMetrics(ctx context.Context, app, window string) any
+	AppMetrics(ctx context.Context, app, window string) *wire.Metrics
 }
-
-// MetricsRanges are the windows `?range=` takes, the first the default:
-// a fixed set, so that a token cannot ask the store for any span it
-// likes.
-var MetricsRanges = []string{"1h", "24h"}
 
 // SetMetricsSource installs the metrics store's source on this config.
 // Called from the monitor app's Provision, after liveswap's own, so a

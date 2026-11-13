@@ -1,0 +1,69 @@
+# GET, no token
+application/json Unauthorized
+{"error":"invalid or missing deploy token (Authorization: Bearer \u003cjwt\u003e)"}
+# GET an unknown app
+application/json Not Found
+{"error":"unknown app \"nope\""}
+# GET before any deploy
+application/json OK
+{"app":"demo","phase":"idle","running":false,"available_versions":[]}
+# GET a range not offered
+application/json Unprocessable Entity
+{"error":"range must be one of 1h, 24h"}
+# GET a malformed query
+application/json Unprocessable Entity
+{"error":"malformed query: invalid URL escape \"%ZZ\""}
+# PUT
+application/json Method Not Allowed
+{"error":"method not allowed"}
+# POST a body that is not JSON
+application/json Bad Request
+{"error":"invalid JSON payload: unexpected end of JSON input"}
+# POST v1
+application/json OK
+{"app":"demo","phase":"idle","current_version":"v1","socket":"<root>/demo/run/<nonce>/app.sock","pid":4242,"command":["./server","--version","v1"],"running":true,"deploys":[{"version":"v1","status":"succeeded","deployed_by":"local:<key>","started_at":"<time>","finished_at":"<time>"}],"last_deploy":{"version":"v1","status":"succeeded","deployed_by":"local:<key>","started_at":"<time>","finished_at":"<time>","artifact_entries":0,"artifact_bytes":0,"phases":[{"name":"downloading","started_at":"<time>","seconds":<s>},{"name":"extracting","started_at":"<time>","seconds":<s>},{"name":"preparing","started_at":"<time>","seconds":<s>},{"name":"starting","started_at":"<time>","seconds":<s>},{"name":"soaking","started_at":"<time>","seconds":<s>},{"name":"promoting","started_at":"<time>","seconds":<s>}]},"available_versions":["v1"]}
+# POST v1 again
+application/json Unprocessable Entity
+{"error":"version v1 is already running and the request carries no sha256 to match its artifact by; a rollback to v1 relaunches it (that, or a new version, is also how a new secret reaches the app)"}
+# GET after v1
+application/json OK
+{"app":"demo","phase":"idle","current_version":"v1","socket":"<root>/demo/run/<nonce>/app.sock","pid":4242,"command":["./server","--version","v1"],"running":true,"deploys":[{"version":"v1","status":"succeeded","deployed_by":"local:<key>","started_at":"<time>","finished_at":"<time>"}],"last_deploy":{"version":"v1","status":"failed","error":"version v1 is already running and the request carries no sha256 to match its artifact by; a rollback to v1 relaunches it (that, or a new version, is also how a new secret reaches the app)","deployed_by":"local:<key>","started_at":"<time>","finished_at":"<time>","artifact_entries":0,"artifact_bytes":0},"available_versions":["v1"]}
+# GET ?deploy=v1
+application/json OK
+{"version":"v1","status":"succeeded","deployed_by":"local:<key>","started_at":"<time>","finished_at":"<time>","artifact_entries":0,"artifact_bytes":0,"phases":[{"name":"downloading","started_at":"<time>","seconds":<s>},{"name":"extracting","started_at":"<time>","seconds":<s>},{"name":"preparing","started_at":"<time>","seconds":<s>},{"name":"starting","started_at":"<time>","seconds":<s>},{"name":"soaking","started_at":"<time>","seconds":<s>},{"name":"promoting","started_at":"<time>","seconds":<s>}]}
+
+# GET ?deploy=v9
+application/json Not Found
+{"error":"no deploy recorded for version v9"}
+# GET ?deploy=bad/version
+application/json Unprocessable Entity
+{"error":"deploy query param must match ^[A-Za-z0-9_-][A-Za-z0-9._-]{0,63}$"}
+# POST v2, which fails to start
+application/json Internal Server Error
+{"error":"start failed: boom","status":{"app":"demo","phase":"idle","current_version":"v1","socket":"<root>/demo/run/<nonce>/app.sock","pid":4242,"command":["./server","--version","v1"],"running":true,"deploys":[{"version":"v2","status":"failed","phase":"starting","deployed_by":"local:<key>","started_at":"<time>","finished_at":"<time>"},{"version":"v1","status":"succeeded","deployed_by":"local:<key>","started_at":"<time>","finished_at":"<time>"}],"last_deploy":{"version":"v2","status":"failed","error":"start failed: boom","phase":"starting","deployed_by":"local:<key>","started_at":"<time>","finished_at":"<time>","artifact_entries":0,"artifact_bytes":0,"phases":[{"name":"downloading","started_at":"<time>","seconds":<s>},{"name":"extracting","started_at":"<time>","seconds":<s>},{"name":"preparing","started_at":"<time>","seconds":<s>},{"name":"starting","started_at":"<time>","seconds":<s>}]},"available_versions":["v1"]}}
+# POST v3, streamed
+application/x-ndjson OK
+{"at":"<time>","event":"phase","phase":"downloading"}
+{"at":"<time>","event":"phase","phase":"extracting"}
+{"at":"<time>","event":"phase","phase":"preparing"}
+{"at":"<time>","event":"phase","phase":"starting"}
+{"at":"<time>","event":"phase","phase":"soaking"}
+{"at":"<time>","event":"phase","phase":"promoting"}
+{"at":"<time>","event":"phase","phase":"draining"}
+{"at":"<time>","event":"phase","phase":"stopping_old"}
+{"app":"demo","phase":"idle","current_version":"v3","socket":"<root>/demo/run/<nonce>/app.sock","pid":4242,"command":["./server","--version","v3"],"running":true,"deploys":[{"version":"v3","status":"succeeded","deployed_by":"local:<key>","started_at":"<time>","finished_at":"<time>"},{"version":"v2","status":"failed","phase":"starting","deployed_by":"local:<key>","started_at":"<time>","finished_at":"<time>"},{"version":"v1","status":"succeeded","deployed_by":"local:<key>","started_at":"<time>","finished_at":"<time>"}],"last_deploy":{"version":"v3","status":"succeeded","deployed_by":"local:<key>","started_at":"<time>","finished_at":"<time>","artifact_entries":0,"artifact_bytes":0,"phases":[{"name":"downloading","started_at":"<time>","seconds":<s>},{"name":"extracting","started_at":"<time>","seconds":<s>},{"name":"preparing","started_at":"<time>","seconds":<s>},{"name":"starting","started_at":"<time>","seconds":<s>},{"name":"soaking","started_at":"<time>","seconds":<s>},{"name":"promoting","started_at":"<time>","seconds":<s>},{"name":"draining","started_at":"<time>","seconds":<s>},{"name":"stopping_old","started_at":"<time>","seconds":<s>}]},"available_versions":["v3","v1"],"event":"done","http_status":200}
+# GET with metrics, ?range=24h
+application/json OK
+{"app":"demo","phase":"idle","current_version":"v3","socket":"<root>/demo/run/<nonce>/app.sock","pid":4242,"command":["./server","--version","v3"],"running":true,"deploys":[{"version":"v3","status":"succeeded","deployed_by":"local:<key>","started_at":"<time>","finished_at":"<time>"},{"version":"v2","status":"failed","phase":"starting","deployed_by":"local:<key>","started_at":"<time>","finished_at":"<time>"},{"version":"v1","status":"succeeded","deployed_by":"local:<key>","started_at":"<time>","finished_at":"<time>"}],"last_deploy":{"version":"v3","status":"succeeded","deployed_by":"local:<key>","started_at":"<time>","finished_at":"<time>","artifact_entries":0,"artifact_bytes":0,"phases":[{"name":"downloading","started_at":"<time>","seconds":<s>},{"name":"extracting","started_at":"<time>","seconds":<s>},{"name":"preparing","started_at":"<time>","seconds":<s>},{"name":"starting","started_at":"<time>","seconds":<s>},{"name":"soaking","started_at":"<time>","seconds":<s>},{"name":"promoting","started_at":"<time>","seconds":<s>},{"name":"draining","started_at":"<time>","seconds":<s>},{"name":"stopping_old","started_at":"<time>","seconds":<s>}]},"available_versions":["v3","v1"],"metrics":{"window":"24h","at":"<time>","memory_bytes":{"now":30,"max":40},"memory_max_bytes":100,"cpu_cores":{"avg_5m":0.5,"avg":0.25},"requests":{"total":10,"per_second":0.000116,"by_class":{"2xx":9,"5xx":1},"5xx_share":0.1,"p50_ms":1.5,"p95_ms":20,"cache_hit_share":0.5},"error":"the metrics store did not answer"}}
+# POST v4, streamed, which fails to start
+application/x-ndjson OK
+{"at":"<time>","event":"phase","phase":"downloading"}
+{"at":"<time>","event":"phase","phase":"extracting"}
+{"at":"<time>","event":"phase","phase":"preparing"}
+{"at":"<time>","event":"phase","phase":"starting"}
+{"error":"start failed: boom","status":{"app":"demo","phase":"idle","current_version":"v3","socket":"<root>/demo/run/<nonce>/app.sock","pid":4242,"command":["./server","--version","v3"],"running":true,"deploys":[{"version":"v4","status":"failed","phase":"starting","deployed_by":"local:<key>","started_at":"<time>","finished_at":"<time>"},{"version":"v3","status":"succeeded","deployed_by":"local:<key>","started_at":"<time>","finished_at":"<time>"},{"version":"v2","status":"failed","phase":"starting","deployed_by":"local:<key>","started_at":"<time>","finished_at":"<time>"},{"version":"v1","status":"succeeded","deployed_by":"local:<key>","started_at":"<time>","finished_at":"<time>"}],"last_deploy":{"version":"v4","status":"failed","error":"start failed: boom","phase":"starting","deployed_by":"local:<key>","started_at":"<time>","finished_at":"<time>","artifact_entries":0,"artifact_bytes":0,"phases":[{"name":"downloading","started_at":"<time>","seconds":<s>},{"name":"extracting","started_at":"<time>","seconds":<s>},{"name":"preparing","started_at":"<time>","seconds":<s>},{"name":"starting","started_at":"<time>","seconds":<s>}]},"available_versions":["v3","v1"]},"event":"done","http_status":500}
+# POST v5, streamed, the env_file unreadable
+application/x-ndjson OK
+{"error":"response withheld: the app's env_file could not be read, so its values are unknown to the filter (open <root>/missing.env: no such file or directory)","event":"phase","phase":"downloading"}
+{"error":"response withheld: the app's env_file could not be read, so its values are unknown to the filter (open <root>/missing.env: no such file or directory)","event":"phase","phase":"extracting"}
+{"error":"response withheld: the app's env_file could not be read, so its values are unknown to the filter (open <root>/missing.env: no such file or directory)","event":"done","http_status":500}
