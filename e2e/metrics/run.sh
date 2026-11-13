@@ -16,6 +16,7 @@
 #   GET /<app> with the deploy token carries the app's metrics
 #   observe's counts in the store and in GET /<app>?range=
 #   vmalert's rules loaded; its ChannelFailed and motel's one alert
+#   the store keeping of each job only what motel reads
 #   the operator's rules: a threshold through vmalert, the post-deploy comparison
 #   nothing of the store in an app's sandbox view
 #   the store's socket gone: GET /<app> answers at once, with the error
@@ -51,6 +52,48 @@ nsready() { [ "$(inns curl -s -o /dev/null -w '%{http_code}' --max-time 5 http:/
 # amstarts <since>: how many times systemd started Alertmanager since then.
 amstarts() { journalctl -u prometheus-alertmanager --since "$1" -o cat --no-pager | grep -c '^Started prometheus-alertmanager'; }
 aminv() { systemctl show -p InvocationID --value prometheus-alertmanager; }
+# val <query>: an instant query's one value.
+val() { q "$1" | sed -n 's/.*"value":\[[^,]*,"\([0-9]*\)"\].*/\1/p'; }
+amready() { [ "$(am -o /dev/null -w '%{http_code}' http://am/-/ready)" = 200 ]; }
+ampid() { systemctl show -p MainPID --value prometheus-alertmanager; }
+# held <pid>: that process holds both listeners.
+held() {
+	[ "$1" != 0 ] && inns ss -ltnpH 2>/dev/null | grep '127.0.0.1:9093 ' | grep -q "pid=$1," \
+		&& ss -lxpH 2>/dev/null | grep -F "$AMS " | grep -q "pid=$1,"
+}
+PROXY=http://localhost:8080
+# vmalert re-reads a new rules.yml within RELOAD_WAIT: its 5 s
+# -configCheckInterval, where a minute's would mostly miss it.
+RELOAD_WAIT=15
+
+# SPLIT: which parts run after the prelude (metrics 0-2, on every box).
+# `make e2e-metrics` runs each split on a box of its own, at once; unset,
+# every part runs, in order, on one box. A split holds parts that share
+# state: 4c reads 4b's restart of the store, 6 the probe release 5
+# deploys, 8 and 9 the Caddyfiles 7 and 8 cut. Each split's box is fresh,
+# so a part that moves the store, Alertmanager or the Caddyfile moves
+# them for its own split alone. The shared sink is read by 10 alone, for
+# lines only the rules split's deploy can make.
+split_all="vm 3 3a 4 4a 4b 4c 4d 5 6 7 8 9 10 11"
+split_view="vm 3 3a" split_vmalert="4 4a" split_store="4b 4c 4d 5 6" split_rules="5 7 8 9 10 11"
+case "${SPLIT:=all}" in
+all) parts=$split_all ;;
+view) parts=$split_view ;;
+vmalert) parts=$split_vmalert ;;
+store) parts=$split_store ;;
+rules) parts=$split_rules ;;
+*) echo "FATAL: SPLIT=$SPLIT: all, view, vmalert, store or rules"; exit 1 ;;
+esac
+# Every part is in all and in some split, and every name in them is a
+# part: `make e2e-metrics` runs the splits, so a part in all alone would
+# never run there. Refused here, by name, on every box.
+for d in $(sed -n 's/^m\([0-9a-z]*\)() {$/\1/p' "$0"); do
+	case " $split_all " in *" $d "*) ;; *) echo "FATAL: part $d is not in all"; exit 1 ;; esac
+	case " $split_view $split_vmalert $split_store $split_rules " in *" $d "*) ;; *) echo "FATAL: part $d is in no split"; exit 1 ;; esac
+done
+for d in $split_all $split_view $split_vmalert $split_store $split_rules; do
+	grep -q "^m$d() {$" "$0" || { echo "FATAL: $d names no part (no function m$d)"; exit 1; }
+done
 
 echo "=== metrics 0: the box ==="
 i=0
@@ -156,15 +199,19 @@ grep -q 'notify_channel: ops' "$STATE/rules.yml" \
 	&& pass "motel rendered the rules, with ChannelFailed for the operator's channels" || fail "rules.yml: $(head -c 400 "$STATE/rules.yml")"
 vmalert -dryRun -rule="$STATE/rules.yml" >/tmp/dry.out 2>&1 \
 	&& pass "vmalert -dryRun passes the rendered rules" || fail "vmalert -dryRun: $(tail -3 /tmp/dry.out)"
-# notify's tests over vmalert and vmalert-tool, which `make test` skips
+# notify's tests over vmalert, vmalert-tool and the store's binary, which `make test` skips
 # for want of them: each must run here, none skip. The list is every
 # test that calls vmTool (TestE2EMetricsListsEveryVMAlertTest).
-vmtests='^(TestRenderedRulesPassVMAlertDryRun|TestRenderedRulesFireAsMotelsAlerts|TestOperatorRulesPassVMAlertDryRun|TestOperatorRulesFire|TestOperatorRulesCountAfterAGap|TestOperatorRulesHistogramIsReadWhole|TestDiskFillHistoryOverAGap|TestDiskFillStepIsNoTrend|TestOperatorRulesCountOnAFreshStore|TestMetricsViewCountsOverTheStore|TestPostDeployARelaunchReadsPastTheStoppedInstance)$'
+mvm() {
+echo "=== metrics 1 (vm): notify's vmalert tests ==="
+vmtests='^(TestRenderedRulesPassVMAlertDryRun|TestRenderedRulesFireAsMotelsAlerts|TestOperatorRulesPassVMAlertDryRun|TestOperatorRulesFire|TestOperatorRulesCountAfterAGap|TestOperatorRulesHistogramIsReadWhole|TestDiskFillHistoryOverAGap|TestDiskFillStepIsNoTrend|TestOperatorRulesCountOnAFreshStore|TestOperatorRulesReadThePushedApps|TestMetricsViewCountsOverTheStore|TestPostDeployARelaunchReadsPastTheStoppedInstance|TestScrapeConfigPassesTheStoresCheck)$'
 nvm=$(printf '%s\n' "$vmtests" | tr '|' '\n' | wc -l)
 (cd /tmp && notify.test -test.run "$vmtests" -test.v -test.count=1) >/tmp/vmtests.out 2>&1
 [ $? -eq 0 ] && [ "$(grep -c '^--- PASS' /tmp/vmtests.out)" = "$nvm" ] && ! grep -q -- '--- SKIP' /tmp/vmtests.out \
-	&& pass "notify's $nvm vmalert tests run and pass against the box's vmalert and vmalert-tool" \
+	&& pass "notify's $nvm vmalert tests run and pass against the box's vmalert, vmalert-tool and victoria-metrics" \
 	|| fail "notify's vmalert tests: $(grep -E -- '^(--- |FAIL|ok)|SKIP' /tmp/vmtests.out | head -10)"
+}
+case " $parts " in *" vm "*) mvm ;; esac
 # The operator's group: the threshold and disk_fill lines, motel's own
 # expressions, each counter through the guard (increase_pure for a
 # series new to the store since the push's first sample, else
@@ -177,6 +224,7 @@ printf '%s' "$op" | grep -q 'increase_pure(motel_app_requests_total' \
 	&& printf '%s' "$op" | grep -q 'unless (present_over_time(motel_app_requests_total' \
 	&& printf '%s' "$op" | grep -q 'and (tfirst_over_time(motel_app_requests_total' \
 	&& printf '%s' "$op" | grep -q 'or increase(motel_app_requests_total' \
+	&& printf '%s' "$op" | grep -qF 'and on (app) (max by (app) (tlast_over_time(motel_app_observed[75s])) > scalar(max(tlast_over_time(process_start_time_seconds{job="motel"}[75s]))) - 15)' \
 	&& ! grep -q 'blog_regressed' "$STATE/rules.yml" && printf '%s' "$op" | grep -q 'key: rules/app:blog/blog_slow' \
 	&& pass "the motel-operator group holds the threshold and disk_fill rules, through the counter guard, keyed rules/<subject>/<name>" \
 	|| fail "the motel-operator group: $(printf '%s' "$op" | head -c 600)"
@@ -215,28 +263,56 @@ else
 		|| pass "no memory controller in this host's user units (no $cg/memory.current): motel_app_memory_bytes absent, as designed"
 fi
 
+m3() {
 echo "=== metrics 3: GET /<app> ==="
-m=""
-end=$(( $(date +%s) + 90 ))
+# The view's field shows once the store answers the view's own range
+# query (notify/metricsview.go: start now-1h, end now, step 60 s), and
+# then once the view's 30 s cache of its last answer, empty or not, has
+# passed. The store aligns the range's end down to a whole minute, so a
+# rate's first point is the minute after the second push: up to 89 s
+# after the first push, measured on 1.112.0 (PR #445). The suite waits
+# for that point in the store (a cap, not a timing), then gives the view
+# its cache and a margin.
+rq='sum(rate(motel_app_cpu_seconds_total{app="blog"}[2m]))'
+[ "$MEMORY" = 1 ] && rq='{__name__=~"motel_app_memory_bytes|motel_app_memory_max_bytes",app="blog"}'
+end=$(( $(date +%s) + 180 ))
 while [ "$(date +%s)" -lt "$end" ]; do
-	m=$(status)
-	if [ "$MEMORY" = 1 ]; then
-		printf '%s' "$m" | grep -q '"metrics":{[^}]*"memory_bytes":{"now":[1-9]' && break
-	else
-		printf '%s' "$m" | grep -q '"metrics":{[^}]*"cpu_cores":{"avg_5m":' && break
-	fi
-	sleep 3
+	now=$(date +%s)
+	r=$(vm -G --data-urlencode "query=$rq" --data-urlencode "start=$((now - 3600))" --data-urlencode "end=$now" \
+		--data-urlencode step=60 http://vm/api/v1/query_range)
+	has_result "$r" && break
+	sleep 2
 done
-want='"cpu_cores":{"avg_5m":'
-[ "$MEMORY" = 1 ] && want='"memory_bytes":{"now":[1-9]'
-printf '%s' "$m" | grep -q '"metrics":{"window":"1h","at":"' && printf '%s' "$m" | grep -q "$want" \
-	&& pass "GET /blog with the deploy token carries its metrics: $(printf '%s' "$m" | grep -o '"metrics":{.*' | cut -c1-200)" \
-	|| fail "GET /blog's metrics: $(printf '%s' "$m" | grep -o '"metrics":.*' | cut -c1-300)"
+# The view is checked only once the store has the point: with none,
+# the store's failure is the one to read.
+if has_result "$r"; then
+	pass "the store answers the view's range query with a point"
+	m=""
+	end=$(( $(date +%s) + 40 ))
+	while [ "$(date +%s)" -lt "$end" ]; do
+		m=$(status)
+		if [ "$MEMORY" = 1 ]; then
+			printf '%s' "$m" | grep -q '"metrics":{[^}]*"memory_bytes":{"now":[1-9]' && break
+		else
+			printf '%s' "$m" | grep -q '"metrics":{[^}]*"cpu_cores":{"avg_5m":' && break
+		fi
+		sleep 3
+	done
+	want='"cpu_cores":{"avg_5m":'
+	[ "$MEMORY" = 1 ] && want='"memory_bytes":{"now":[1-9]'
+	printf '%s' "$m" | grep -q '"metrics":{"window":"1h","at":"' && printf '%s' "$m" | grep -q "$want" \
+		&& pass "GET /blog with the deploy token carries its metrics: $(printf '%s' "$m" | grep -o '"metrics":{.*' | cut -c1-200)" \
+		|| fail "GET /blog's metrics, 40 s after the store had the point: $(printf '%s' "$m" | grep -o '"metrics":.*' | cut -c1-300)"
+else
+	fail "the store has no point for the view's range query after 180 s (GET /blog's metrics not checked): $(printf '%s' "$r" | head -c 300)"
+fi
 code=$(curl -s -o /tmp/get-noauth -w '%{http_code}' --max-time 5 "$HOOK")
 [ "$code" = 401 ] && ! grep -q metrics /tmp/get-noauth && pass "GET /blog without a token: 401, no metrics" || fail "GET /blog without a token: $code"
 
+}
+
+m3a() {
 echo "=== metrics 3a: the response observer ==="
-PROXY=http://localhost:8080
 # Twenty misses (the query is in the cache's key), then the same path
 # twice: the second is a hit. shop has no release: its 503s are 5xx.
 i=1
@@ -285,7 +361,6 @@ printf '%s' "$m" | grep -q '"window":"24h"' && printf '%s' "$m" | grep -q '"requ
 # of 1 (DESIGN-metrics, "metrics in GET /<app>"). The store's count is
 # read again beside each view, over the view's window, so a response
 # that arrives meanwhile or a series gone stale moves both.
-val() { q "$1" | sed -n 's/.*"value":\[[^,]*,"\([0-9]*\)"\].*/\1/p'; }
 for r in 1h 24h; do
 	m="" raw2xx=""
 	end=$(( $(date +%s) + 60 ))
@@ -302,6 +377,9 @@ done
 code=$(curl -s -o /tmp/range7d -w '%{http_code}' --max-time 5 -H "Authorization: Bearer $TOKEN" "$HOOK?range=7d")
 [ "$code" = 422 ] && pass "?range=7d is a 422" || fail "?range=7d: $code $(cat /tmp/range7d)"
 
+}
+
+m4() {
 echo "=== metrics 4: vmalert ==="
 # Setup's first rules.yml is the empty groups and motel writes the real
 # one right after, which vmalert re-reads within 5 s (-configCheckInterval).
@@ -334,6 +412,22 @@ amq='filter=alertname%3D%22ChannelFailed%22&filter=notify_channel%3D%22ops%22&fi
 n=$(am "http://am/api/v2/alerts?$amq" | grep -o '"fingerprint"' | wc -l)
 [ "$n" -eq 1 ] && pass "Alertmanager holds one ChannelFailed for ops naming oncall: the two sources are one alert" \
 	|| fail "Alertmanager holds $n such alerts: $(am "http://am/api/v2/alerts?$amq" | cut -c1-400)"
+# The store keeps of each job only what motel reads (scrape.yml): the
+# disk rule's free space, the counter vmalert's ChannelFailed just read,
+# and of vmalert nothing but `up`. up and scrape_* are the scraper's own,
+# which every job keeps; scrape_* is left out here.
+kept() {
+	vm -G --data-urlencode "match[]={job=\"$1\"}" http://vm/api/v1/label/__name__/values \
+		| sed -n 's/.*"data":\[\([^]]*\)\].*/\1/p' | tr -d '"' | tr ',' '\n' | grep -v '^scrape_' | sort | tr '\n' ' '
+}
+for jk in 'victoria-metrics:up vm_free_disk_space_bytes ' 'vmalert:up ' 'alertmanager:alertmanager_notifications_failed_total up '; do
+	j=${jk%%:*} want=${jk#*:}
+	got=$(kept "$j")
+	[ "$got" = "$want" ] && pass "the store keeps of job $j: ${want% }" || fail "the store keeps of job $j: '$got', not '$want'"
+done
+a=$(q 'vm_free_disk_space_bytes{job="victoria-metrics"} > 0')
+has_result "$a" && pass "the store reads its own free space live, which metrics_store_disk_fill reads" \
+	|| fail "no live vm_free_disk_space_bytes: $(printf '%s' "$a" | cut -c1-200)"
 # vmalert's post is counted where it is sent, not read from the merged
 # alert: that carries the generatorURL of whichever source posted last,
 # and each posts once a minute at a phase of its own (motel after its read
@@ -372,6 +466,9 @@ printf '%s' "$body" | grep -q '"generatorURL":"http' && last=vmalert
 	&& pass "vmalert posted its ChannelFailed and Alertmanager still holds one alert (the latest post: $last's)" \
 	|| fail "vmalert's post into the one alert is not shown (the first reading: try $ok0, 5 is none; two evaluations: poll $i, 68 is 135 s and none): evaluations $ev0 -> $ev, sent $sent0 -> $sent, errors $err0 -> $err, firing $firing, $n alerts: $(printf '%s' "$body" | cut -c1-400)"
 
+}
+
+m4a() {
 echo "=== metrics 4a: the store stopped by hand comes back with vmalert ==="
 # A stop of the store stops vmalert and the proxy (both Require it).
 # motel's next push connects to the socket, whose proxy starts the store
@@ -386,10 +483,18 @@ done
 	|| fail "after 90 s: the store $(systemctl is-active victoria-metrics), vmalert $(systemctl is-active motel-vmalert)"
 a=$(wait_result vmalert-up-again 'up{job="vmalert"} == 1' 90) && pass "the store scrapes vmalert again" || fail "no up{job=\"vmalert\"} after the restart"
 
+}
+
+m4b() {
 echo "=== metrics 4b: a read-only store is told by motel, as itself ==="
 # The store's free-space floor set above any disk: it is read-only from
 # its start, refuses motel's imports and its own scrapes, and no rule
 # can see the flag. motel reads it from the store's /metrics.
+# The check below reads a sample of the store's free space from before
+# the floor: the store split comes here straight from the prelude, which
+# may end before the store's first self-scrape.
+a=$(wait_result free-space 'vm_free_disk_space_bytes{job="victoria-metrics"}' 60) \
+	|| fail "no sample of the store's free space in 60 s, before its read-only start"
 dropin=/etc/systemd/system/victoria-metrics.service.d
 {
 	echo '[Service]'
@@ -407,13 +512,15 @@ i=0
 until am "http://am/api/v2/alerts?$roq" | grep -q '"severity":"critical"'; do i=$((i + 1)); [ "$i" -ge 60 ] && break; sleep 2; done
 [ "$i" -lt 60 ] && pass "motel posted metrics_store_read_only, critical" \
 	|| fail "no metrics_store_read_only in Alertmanager after 120 s: $(am "http://am/api/v2/alerts?$roq" | cut -c1-300)"
-# Two of the store's 30 s self-scrapes have come and gone by now: had it
-# kept one, a rule would see the flag.
+# Two of the store's 30 s self-scrapes have come and gone by now, and
+# neither was kept: the free space the disk rule reads stops with every
+# other write. (The flag itself is no series the store keeps, scrape.yml.)
 while [ $(( $(date +%s) - ro_at )) -lt 75 ]; do sleep 2; done
-a=$(q 'max(max_over_time(vm_storage_is_read_only[5m])) > 0')
-printf '%s' "$a" | grep -q '"status":"success"' && ! has_result "$a" \
-	&& pass "75 s read-only and no series carries the flag: the store refused its own scrapes" \
-	|| fail "a rule could have seen the flag after all, or the store did not answer: $(printf '%s' "$a" | cut -c1-200)"
+before=$(q 'tlast_over_time(vm_free_disk_space_bytes[15m])')
+a=$(q "tlast_over_time(vm_free_disk_space_bytes[15m]) > $ro_at")
+has_result "$before" && printf '%s' "$a" | grep -q '"status":"success"' && ! has_result "$a" \
+	&& pass "75 s read-only and no sample of the store's free space since, only before: the store refused its own scrapes" \
+	|| fail "a scrape was kept while read-only, or none before it, or the store did not answer: $(printf '%s' "$before" | cut -c1-200) / $(printf '%s' "$a" | cut -c1-200)"
 rm "$dropin/20-e2e-read-only.conf"
 systemctl daemon-reload && systemctl restart victoria-metrics
 back_at=$(date +%s)
@@ -424,6 +531,9 @@ until vm http://vm/metrics | grep -q '^vm_storage_is_read_only.* 0$'; do i=$((i 
 a=$(wait_result vmalert-up-writable "(timestamp(up{job=\"vmalert\"}) > $back_at) and (up{job=\"vmalert\"} == 1)" 120) && pass "and scrapes vmalert again" \
 	|| fail "no fresh up{job=\"vmalert\"} after the store came back: $(q 'timestamp(up{job="vmalert"})')"
 
+}
+
+m4c() {
 echo "=== metrics 4c: the store's proxy runs as no root ==="
 # It runs while it carries traffic (motel's push through vm.sock every
 # 30 s); 4b restarted the store, which stops it until the next push.
@@ -437,16 +547,12 @@ bnd=$(sed -n 's/^CapBnd:[[:space:]]*//p' "/proc/$pid/status" 2>/dev/null)
 	&& pass "$u runs as uid $uid ($(ps -o user= -p "$pid")), no capability" \
 	|| fail "$u: pid $pid, uid '$uid', CapBnd '$bnd'"
 
+}
+
+m4d() {
 echo "=== metrics 4d: Alertmanager's own listener in the namespace ==="
 # One Alertmanager holds both: am.sock in the host's namespace and
 # 127.0.0.1:9093 in the store's, each passed by systemd at its start.
-amready() { [ "$(am -o /dev/null -w '%{http_code}' http://am/-/ready)" = 200 ]; }
-ampid() { systemctl show -p MainPID --value prometheus-alertmanager; }
-# held <pid>: that process holds both listeners.
-held() {
-	[ "$1" != 0 ] && inns ss -ltnpH 2>/dev/null | grep '127.0.0.1:9093 ' | grep -q "pid=$1," \
-		&& ss -lxpH 2>/dev/null | grep -F "$AMS " | grep -q "pid=$1,"
-}
 amready
 pid=$(ampid)
 nsready && held "$pid" && pass "one Alertmanager (pid $pid) holds am.sock and the namespace's 127.0.0.1:9093, and answers on both" \
@@ -547,6 +653,9 @@ i=0
 until systemctl is-active -q motel && [ -S /run/motel/admin.sock ]; do i=$((i + 1)); [ "$i" -ge 120 ] && break; sleep 0.5; done
 systemctl is-active -q motel || fail "motel did not start again: $(systemctl is-active motel)"
 
+}
+
+m5() {
 echo "=== metrics 5: an app's sandbox has none of it in view ==="
 code=$(deploy demo-probe.tar.gz sb1)
 [ "$code" = 200 ] || fail "deploy of the probe release returned $code: $(cat /tmp/deploy-body)"
@@ -559,6 +668,9 @@ for k in metrics_run metrics_socket metrics_state; do
 	[ "$v" = closed ] && pass "inside the sandbox: $k=closed" || fail "inside the sandbox: $k=$v"
 done
 
+}
+
+m6() {
 echo "=== metrics 6: the store's socket gone ==="
 systemctl stop motel-vm.socket motel-vm.service
 sleep 31 # past the view's cache
@@ -577,10 +689,21 @@ journalctl -u motel -o cat --no-pager | grep -q 'monitor metrics: push failed' \
 	&& pass "journal: monitor metrics: push failed" || fail "no push failed line"
 systemctl start motel-vm.socket
 
+}
+
+m7() {
 echo "=== metrics 7: the channels removed, the metrics line kept ==="
 # Alertmanager keeps the last config notify rendered, so vmalert must be
 # given no rule that could still reach those channels. Every line of the
 # monitor block but metrics is cut: a metrics line alone runs no notify.
+# vmalert has loaded the alerting rules (at once after metrics 4; a split
+# without it can come here first), so their zero below is a re-read.
+i=0
+until inns curl -s --max-time 5 http://127.0.0.1:8880/api/v1/rules | grep -q '"type":"alerting"'; do
+	i=$((i + 1)); [ "$i" -ge 45 ] && break; sleep 2
+done
+[ "$i" -lt 45 ] && pass "vmalert has loaded the alerting rules before they are cut" \
+	|| fail "vmalert loaded no alerting rule in 90 s, so a zero after the cut would prove nothing"
 cp /etc/motel/Caddyfile /tmp/Caddyfile.both
 awk '/^\tmonitor \{$/ { inb = 1; print; next } inb && /^\t\}$/ { inb = 0; print; next } inb && !/^\t\tmetrics( |$)/ { next } { print }' \
 	/etc/motel/Caddyfile >/tmp/Caddyfile.nonotify
@@ -594,9 +717,6 @@ i=0
 until ! grep -q 'alert:' "$STATE/rules.yml"; do i=$((i + 1)); [ "$i" -ge 40 ] && break; sleep 0.5; done
 grep -q 'alert:' "$STATE/rules.yml" && fail "rules.yml still has alerting rules: $(grep -c 'alert:' "$STATE/rules.yml")" \
 	|| pass "motel rendered rules.yml with no alerting rule"
-# vmalert re-reads a new rules.yml within RELOAD_WAIT: its 5 s
-# -configCheckInterval, where a minute's would mostly miss it.
-RELOAD_WAIT=15
 end=$(( $(date +%s) + RELOAD_WAIT ))
 while [ "$(date +%s)" -lt "$end" ]; do
 	rules=$(inns curl -s --max-time 5 http://127.0.0.1:8880/api/v1/rules)
@@ -609,6 +729,9 @@ printf '%s' "$rules" | grep -q '"status":"success"' && ! printf '%s' "$rules" | 
 journalctl -u motel -o cat --no-pager | grep -q 'monitor metrics: the monitor block has no channel, only its metrics line: vmalert is given no rule' \
 	&& pass "journal: no channel, no rule" || fail "no 'the monitor block has no channel' line"
 
+}
+
+m8() {
 echo "=== metrics 8: motel's shutdown keeps the rules; the metrics line removed retires them ==="
 # A shutdown leaves the rules, so the store's alerts reach the operator
 # while motel is down; a reload to a config with no metrics line writes
@@ -637,6 +760,9 @@ grep -q 'alert:' "$STATE/rules.yml" && fail "the metrics line is gone, yet rules
 journalctl -u motel -o cat --no-pager | grep -q 'monitor metrics: the metrics line is gone: vmalert is given no rule' \
 	&& pass "journal: the metrics line is gone, no rule" || fail "no 'the metrics line is gone' line"
 
+}
+
+m9() {
 echo "=== metrics 9: the metrics line removed, then a restart, not a reload ==="
 # A config with no metrics line builds no MetricsStore, so the boot's
 # gate retires the rules a config with one wrote.
@@ -682,13 +808,15 @@ i=0
 until grep -q 'alert:' "$STATE/rules.yml"; do i=$((i + 1)); [ "$i" -ge 40 ] && break; sleep 0.5; done
 grep -q 'alert:' "$STATE/rules.yml" && pass "a boot with the metrics line writes its rules" || fail "a boot with the metrics line wrote no alerting rule"
 
+}
+
+m10() {
 echo "=== metrics 10: the operator's rules ==="
 # errors_high, a threshold over every app, fires for shop, whose site
 # answers 503 with no release; blog_regressed compares blog's next
 # release, whose every page answers 500, with the probe release before
 # it. Both reach Alertmanager as the operator's rules: source rules,
 # the app's label, so route 6 sends them to the app's channels too.
-PROXY=http://localhost:8080
 t10=$(date +%s)
 i=1
 while [ "$i" -le 30 ]; do curl -s -o /dev/null --max-time 5 "$PROXY/?pd=$i"; i=$((i + 1)); done
@@ -723,6 +851,18 @@ done
 [ -n "$thr" ] && [ "$thr" != bad ] \
 	&& pass "vmalert's errors_high fired for shop and reached Alertmanager: source rules, app shop, its key" \
 	|| fail "no errors_high for shop as wanted: $(printf '%s' "$thr" | cut -c1-500)"
+# The request thresholds' guard (pushedNow) over the pushes the store
+# stamped as they came: at every second of the last two minutes, each
+# app motel_app_observed named in the last 75 s was in it, its sample
+# within 15 s of the push's, and blog and shop were in it throughout
+# (115 of the 120 seconds, the subquery's edges aside).
+present='max by (app) (tlast_over_time(motel_app_observed[75s]))'
+pushed="$present > scalar(max(tlast_over_time(process_start_time_seconds{job=\"motel\"}[75s]))) - 15"
+out=$(q "(count_over_time(($present)[2m:1s]) - (count_over_time(($pushed)[2m:1s]) or count_over_time(($present)[2m:1s]) * 0)) > 0")
+inq=$(q "count_over_time(($pushed)[2m:1s]) >= 115")
+printf '%s' "$out" | grep -q '"result":\[\]' && printf '%s' "$inq" | grep -q '"app":"blog"' && printf '%s' "$inq" | grep -q '"app":"shop"' \
+	&& pass "every observed app was in the request thresholds' guard at each second of two minutes, blog and shop throughout" \
+	|| fail "the guard left out a pushing app: $(printf '%s' "$out" | cut -c1-300); in it: $(printf '%s' "$inq" | cut -c1-300)"
 i=0
 until sinklog | grep -q '/blog [a-z]* post_deploy_regressed blog '; do
 	i=$((i + 1)); [ "$i" -ge 20 ] && break; sleep 1
@@ -733,6 +873,9 @@ sinklog | grep -q '/blog [a-z]* post_deploy_regressed blog ' && sinklog | grep -
 n=$(journalctl -u motel -o cat --no-pager | grep -c 'rules/app:blog/post_deploy_regressed' || true)
 [ "$n" -eq 1 ] && pass "one post_deploy_regressed, journalled once" || fail "post_deploy_regressed journalled $n times"
 
+}
+
+m11() {
 echo "=== metrics 11: an upgrade from the proxy shape ==="
 # What an earlier setup left: a socket on the namespace's 9093 and a
 # proxy from it to Alertmanager's unix socket (their lines that matter
@@ -767,13 +910,16 @@ sleep 3
 [ "$(aminv)" != "$inv" ] && [ "$(amstarts "$since")" = 1 ] && nsready && held "$(ampid)" && grep -q '^restarted Alertmanager, once' /tmp/msetup3.out \
 	&& pass "and restarted Alertmanager once, which holds 9093 in the namespace itself" \
 	|| fail "after the upgrade: $(amstarts "$since") start(s) of Alertmanager, 9093 $(nsready && echo answers || echo 'does not answer'): $(inns ss -ltnpH | grep 9093)"
+}
+
+for p in $parts; do [ "$p" = vm ] || "m$p"; done
 
 echo
 if [ "$FAILURES" -ne 0 ]; then
-	echo "metrics suite: $FAILURES failure(s)"
+	echo "metrics suite ($SPLIT): $FAILURES failure(s)"
 	echo "--- vmalert"; journalctl -u motel-vmalert -o cat --no-pager | tail -30
 	echo "--- store"; journalctl -u victoria-metrics -o cat --no-pager | tail -20
 	echo "--- Alertmanager and its sockets"; journalctl -u prometheus-alertmanager -u motel-am-metrics.socket -u motel-am.socket -u motel-metrics-netns --no-pager | tail -40
 	exit 1
 fi
-echo "metrics suite: all passed"
+echo "metrics suite ($SPLIT): all passed"

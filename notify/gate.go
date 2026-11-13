@@ -5,11 +5,15 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"syscall"
+
+	"go.yaml.in/yaml/v3"
 )
 
 // What cmd/motel's gate says of a config's monitor block before Caddy's
@@ -47,8 +51,24 @@ func LoadWarnings(cmd string, monitor []byte) []string {
 		}
 	}
 	if a.Metrics != nil {
-		if stale := staleUnits(metricsUnits()); len(stale) > 0 {
-			out = append(out, "monitor: the units motel monitor setup --metrics wrote differ from this motel's ("+strings.Join(stale, ", ")+"): run motel monitor setup --metrics as root to put this version's in place")
+		stale := staleUnits(metricsUnits())
+		// With scrape.yml, which only setup writes: a box set up before
+		// it changed scrapes as it did until setup runs again.
+		scrape := filepath.Join(DefaultMetricsStateDir, scrapeName)
+		switch same, err := sameYAML(filepath.Join(unitRoot, scrape), scrapeConfig); {
+		case errors.Is(err, fs.ErrNotExist):
+		case err != nil:
+			// The reason alone: a read's error names the path again.
+			var pe *fs.PathError
+			if errors.As(err, &pe) {
+				err = pe.Err
+			}
+			out = append(out, "monitor: "+scrape+" could not be compared with this motel's ("+err.Error()+"): whether motel monitor setup --metrics is due is not known")
+		case !same:
+			stale = append(stale, scrape)
+		}
+		if len(stale) > 0 {
+			out = append(out, "monitor: the files motel monitor setup --metrics wrote differ from this motel's ("+strings.Join(stale, ", ")+"): run motel monitor setup --metrics as root to put this version's in place")
 		}
 	}
 	return out
@@ -133,6 +153,26 @@ func staleUnits(units []struct {
 		}
 	}
 	return out
+}
+
+// sameYAML reports whether the YAML file at path holds the same document
+// as want, comments and layout aside: indentation is structure in YAML,
+// so uncommented's trim would hide a change. A file that is not YAML is
+// not the same; a read error is returned.
+func sameYAML(path string, want []byte) (bool, error) {
+	b, err := os.ReadFile(path) //nolint:gosec // G304: setup's own path, under unitRoot
+	if err != nil {
+		return false, err
+	}
+	var got, exp any
+	if yaml.Unmarshal(b, &got) != nil {
+		return false, nil
+	}
+	if err := yaml.Unmarshal(want, &exp); err != nil {
+		// Tests parse the embedded file; a load warns, never panics.
+		return false, fmt.Errorf("this motel's own copy is not YAML: %w", err)
+	}
+	return reflect.DeepEqual(got, exp), nil
 }
 
 // uncommented is a unit file as systemd reads it: each line trimmed,

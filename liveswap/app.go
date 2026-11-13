@@ -158,54 +158,6 @@ func (r deployRequest) source() string {
 	}
 }
 
-// deployResult records the outcome of the most recent deploy attempt
-// for the status endpoint and webhook responses.
-type deployResult struct {
-	Version    string    `json:"version"`
-	Status     string    `json:"status"` // "succeeded" | "failed"
-	Error      string    `json:"error,omitempty"`
-	Phase      string    `json:"phase,omitempty"`       // phase reached when it failed
-	By         string    `json:"deployed_by,omitempty"` // the trust source that authorized it, and the token's attribution claims
-	SHA256     string    `json:"sha256,omitempty"`      // the pin the deployer asserted, the digest of the bytes a push uploaded, or a rollback's carried from the record it replaces (recordedPin); never a hash of an unpinned download
-	StartedAt  time.Time `json:"started_at"`
-	FinishedAt time.Time `json:"finished_at"`
-	// Note says what the deploy did that its outcome words do not: a
-	// deploy or rollback naming the running version relaunched it from
-	// the release already on disk (relaunchNote). Empty otherwise. It
-	// is in last_deploy and the response only — a relaunch writes no
-	// record, so the version's record keeps the deploy that put it
-	// there, its pin and its times.
-	Note string `json:"note,omitempty"`
-	// What the artifact cost against max_artifact_entries and the
-	// decompressed byte cap — the files, directories and links
-	// extraction created, and its bytes — so an app growing toward
-	// either is visible from the status endpoint before a deploy fails
-	// on it. Zero for a rollback (nothing is extracted) and for a
-	// deploy that failed before extraction.
-	ArtifactEntries int   `json:"artifact_entries"`
-	ArtifactBytes   int64 `json:"artifact_bytes"`
-	// Phases is each phase the deploy passed through, in order, with
-	// how long it took: where the time went, and where it stopped.
-	Phases []phaseTiming `json:"phases,omitempty"`
-	// Detail is why a failed deploy failed, from the app's side: how
-	// its process ended, what its health endpoint answered, the last
-	// lines it wrote. Nil for a success, and for a failure before a
-	// launch (nothing of the app's ran).
-	Detail *deployDetail `json:"detail,omitempty"`
-	// RedactedEnv is the env keys whose values the detail's early
-	// replacement found (failureDetail): by the time the response
-	// filter runs they are markers already, so it reports them from
-	// here — this field, wherever the result sits in a body, is hoisted
-	// into the body's own `redacted_env` (withField, redact.go).
-	RedactedEnv []string `json:"redacted_env,omitempty"`
-}
-
-type phaseTiming struct {
-	Name      string    `json:"name"`
-	StartedAt time.Time `json:"started_at"`
-	Seconds   float64   `json:"seconds"`
-}
-
 // The outcome vocabulary: what a deploy's status and phase may say.
 // A record's status is one of these and its phase one of these or
 // absent (recordHead, deploys.go); the response filter holds the
@@ -216,37 +168,6 @@ var (
 	outcomeStatuses = map[string]bool{"succeeded": true, "failed": true}
 	outcomePhases   = map[string]bool{"downloading": true, "extracting": true, "preparing": true, "starting": true, "soaking": true, "promoting": true, "draining": true, "stopping_old": true}
 )
-
-// deployDetail is the app's side of a failed deploy. Every string in
-// it passes the response filter before it is written (redact.go), and
-// the known values are replaced as it is built, before the tail and
-// body caps cut, so a cap never leaves a fragment of one.
-type deployDetail struct {
-	// Exit is how the process ended, from the runner: "exit status 3",
-	// "killed by signal 9 (killed)". The pre_start's when that failed,
-	// otherwise the app's, when it died before becoming healthy.
-	Exit string `json:"exit,omitempty"`
-	// Probe is the last health probe that completed with a non-2xx
-	// answer: the status, a redirect's target, the first bytes of the
-	// body — where "Invalid HTTP_HOST header" or "no such table" is.
-	// The body is the app's output and deploy_log_lines 0 leaves it
-	// out, as it does the tail; the status and location stay.
-	Probe *probeDetail `json:"probe,omitempty"`
-	// LogTail is the last lines the app's units wrote to the journal
-	// since the deploy began — pre_start and app alike — bounded by
-	// deploy_log_lines and 8 KiB; LogTailTruncated says when a cap
-	// dropped lines. LogTailError says why there is no tail when there
-	// should have been one (journalctl missing, the journal unreadable).
-	LogTail          []string `json:"log_tail,omitempty"`
-	LogTailTruncated bool     `json:"log_tail_truncated,omitempty"`
-	LogTailError     string   `json:"log_tail_error,omitempty"`
-}
-
-type probeDetail struct {
-	Status   int    `json:"status"`
-	Location string `json:"location,omitempty"`
-	Body     string `json:"body,omitempty"`
-}
 
 // instance is one running version of an app.
 type instance struct {
@@ -424,7 +345,7 @@ func (ma *managedApp) redactorFor(s statusSnapshot, names ...string) *Redactor {
 		safe = append(safe, s.LastDeploy.Version, s.LastDeploy.SHA256)
 	}
 	for _, d := range s.Deploys {
-		safe = append(safe, d.Version, d.pin())
+		safe = append(safe, d.Version, summaryPin(d))
 	}
 	if spec != nil {
 		safe = append(safe, spec.dirs.root, spec.dirs.app, spec.dirs.releases, spec.dirs.shared, spec.dirs.run)
@@ -1757,77 +1678,6 @@ func (ma *managedApp) currentInstance() *instance {
 	ma.mu.Lock()
 	defer ma.mu.Unlock()
 	return ma.current
-}
-
-// statusSnapshot backs the webhook's GET endpoint.
-type statusSnapshot struct {
-	App            string `json:"app"`
-	Phase          string `json:"phase"`
-	CurrentVersion string `json:"current_version,omitempty"`
-	// Socket is the unix socket the instance listens on, under its
-	// run/ dir. It is what the app bound, not what motel dials:
-	// that is a hard link to the same inode under proxy/, outside
-	// the app's reach. Reachable by the motel user (run/ is 0750).
-	Socket string `json:"socket,omitempty"`
-	PID    int    `json:"pid,omitempty"`
-	// Command is the argv the manager reports for the running unit —
-	// rendered, so an absolute path with placeholders substituted, and
-	// not what the config says now (a reload does not restart an app).
-	// Env is not reported: see DESIGN-threat-model.md.
-	Command []string `json:"command,omitempty"`
-	// Unit is the systemd unit running the instance — what to pass to
-	// journalctl for the app's own output.
-	Unit    string `json:"unit,omitempty"`
-	Running bool   `json:"running"`
-	// Caps is what the running unit is bounded to, as the manager last
-	// applied them: set at the unit's start, changed live by a reload
-	// (syncCaps), or read back at reattach. Absent when none is set,
-	// and without any cap the host does not enforce.
-	Caps *capsSnapshot `json:"caps,omitempty"`
-	// CapsUnenforced names the configured caps the host does not
-	// enforce: the user manager does not delegate their controller to
-	// the unit's cgroup, so the manager holds the value and the kernel
-	// bounds nothing (not the case on Debian 13). Absent when every
-	// cap is enforced.
-	CapsUnenforced []string `json:"caps_unenforced,omitempty"`
-	// Deploys is the outcome of the latest deploy of each version a
-	// record is kept for (deploys.go), newest first; the whole record
-	// is GET /<app>?deploy=<version>. Serialized before last_deploy:
-	// the examples' deploy.sh reads the failing phase as the last
-	// "phase" in a failure body, which must stay last_deploy's. That
-	// body carries the snapshot under "status", whose keys' order the
-	// filter keeps (withField sorts only the top level).
-	Deploys    []deploySummary   `json:"deploys,omitempty"`
-	LastDeploy *deployResult     `json:"last_deploy,omitempty"`
-	Watchdog   *watchdogSnapshot `json:"watchdog,omitempty"`
-	// AvailableVersions lists the on-disk releases, the running version
-	// first, then most recently deployed first (state.go, "Release
-	// order") — the versions
-	// `?rollback=<version>` can relaunch. Always serialized (a healthy
-	// app with no releases reports []), so an empty set is
-	// distinguishable from a server that doesn't report the field.
-	AvailableVersions []string `json:"available_versions"`
-	// OrderedByMtime names the entries of AvailableVersions placed by
-	// their release dir's mtime, which the app can set: those with no
-	// deploy record (deployed before records, a record write that
-	// failed, or a first deploy still in flight) and those whose record
-	// is there but cannot be read. Each comes after every recorded
-	// release unless it is the running version, which the list puts
-	// first; absent when there are none.
-	OrderedByMtime []string `json:"ordered_by_mtime,omitempty"`
-	// Metrics is the metrics store's summary of the app's numbers
-	// (notify/DESIGN-metrics.md, "metrics in GET /<app>"): set by
-	// GET /<app> alone, and only when the monitor block's metrics line is
-	// loaded.
-	Metrics any `json:"metrics,omitempty"`
-}
-
-// capsSnapshot is resourceCaps on the wire, in the directives' own
-// names and units (bytes, a count, a percentage of one CPU).
-type capsSnapshot struct {
-	MemoryMax uint64 `json:"memory_max,omitempty"`
-	TasksMax  int    `json:"tasks_max,omitempty"`
-	CPUQuota  int    `json:"cpu_quota,omitempty"`
 }
 
 // capsForStatus splits the unit's caps into the ones in effect and the

@@ -244,6 +244,23 @@ There is no APT repository yet, so nothing upgrades motel behind
 your back; the hosted repository on the [roadmap](../README.md#roadmap) is what
 will change that.
 
+## From a state_dir or alertmanager line
+
+A box built from the notify-and-metrics feature branch (no release
+has either line) may have a `state_dir` or an `alertmanager` line in
+its `monitor` block, or in the older `notify` block. The new binary
+refuses both, naming the line and the path it fixes, so the install's
+restart onto a file that still has one stops every site. **Take the
+line out before the install.** Setup only ever made
+`/var/lib/motel-notify` and `/run/motel-notify/am.sock`, so a line
+naming either changed nothing, and one naming another path never
+reached Alertmanager. Push the file without it, or on a box with no
+push channel edit it out and run `systemctl reload motel`: the old
+binary takes it. Then upgrade. The new binary's `motel validate`,
+from the `.deb` as above, names any line left. On a box with a
+`notify` block, the next section's steps leave these lines out of
+step 3's `monitor` block.
+
 ## From the notify and metrics_store blocks
 
 A box built from the notify-and-metrics feature branch before the
@@ -271,7 +288,9 @@ file. Do it in this order:
 2. **Upgrade the package**, as above. The new motel starts on that
    Caddyfile, which has nothing for it to refuse.
 3. **Push the Caddyfile with `monitor { … }`**: the notify block's
-   lines unchanged under the new name, and a `metrics` line inside it
+   lines unchanged under the new name (less any `state_dir` or
+   `alertmanager` line, whose paths are fixed: the section above), and
+   a `metrics` line inside it
    in place of the `metrics_store` block: `metrics` for a bare
    `metrics_store`, `metrics <path>` for one whose `store <path>` named
    a socket. Put `secrets/_box/` back, restored from the commit before
@@ -349,7 +368,7 @@ which name the old commands (`systemctl status` shows
 again then renames them and sets the store's clocks. Either way, motel says when it is due:
 from this version, every load (`motel validate`, `motel reload`, and
 the restart onto the new binary, in the journal) warns `monitor: the
-units motel monitor setup wrote differ from this motel's (…)` for as
+units motel monitor setup wrote differ from this motel's (…)` (for the store's, `monitor: the files motel monitor setup --metrics wrote differ …`) for as
 long as a unit differs from the one this binary would write, comments
 aside, and names the setup to run.
 
@@ -362,6 +381,19 @@ VictoriaMetrics' 30 s `-search.latencyOffset`, so every alert and
 either way: they ask the store for the 5 s themselves. The re-run
 rewrites the units and restarts the store and vmalert; a push or two
 fails meanwhile.
+
+**The same re-run trims what the store keeps of its own scrapes.** From
+this version the store keeps, of its scrapes of itself, vmalert and
+Alertmanager, only the series motel reads ([Monitor](monitor.md#promql-over-the-socket-as-root)):
+about 80 where it kept over 2,000. Only setup writes
+`/var/lib/motel-metrics/scrape.yml`, so a store set up before goes on
+keeping every series, and each load's warning names `scrape.yml`, until
+root runs `motel monitor setup --metrics` (the re-run above does it).
+The store is restarted onto the new file; the series it no longer
+keeps stop there and age out over the 14 days' retention. Nothing
+motel runs reads them, so no rule, check or `GET /<app>` changes. A
+query of your own over one of them finds its samples from before the
+re-run until the retention ends them, and none after.
 
 ## Patching the host
 

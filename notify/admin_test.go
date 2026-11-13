@@ -77,7 +77,7 @@ func withEngine(t *testing.T) *testEngine {
 		t.Fatal(err)
 	}
 	a.cfg = r
-	a.StateDir = t.TempDir() // set up: setup made the state directory
+	useStateDir(t, t.TempDir()) // set up: setup made the state directory
 	te.active = a
 	saved := theEngine
 	theEngine = te.engine
@@ -299,7 +299,7 @@ func TestSendAndTestSayWhatTheJournalSays(t *testing.T) {
 	te.active.cfg = cfg
 
 	// Not set up.
-	te.active.StateDir = filepath.Join(t.TempDir(), "absent")
+	useStateDir(t, filepath.Join(t.TempDir(), "absent"))
 	w, err = callAdmin(t, serveSend, http.MethodPost, goodSend())
 	if err != nil {
 		t.Fatal(err)
@@ -403,8 +403,6 @@ func TestSetupSaysWhatTheLoadedConfigDoes(t *testing.T) {
 		want    string
 	}{
 		{channels, nil, false, "reloaded motel, which renders the monitor block's channels into /var/lib/motel-notify/alertmanager.yml"},
-		// A state_dir line: the path the loaded config renders into.
-		{`{"channels":[{"name":"ops","kind":"ntfy","secret":"NOTIFY_OPS_URL"}],"operator":["ops"],"state_dir":"/srv/notify"}`, nil, false, "reloaded motel, which renders the monitor block's channels into /srv/notify/alertmanager.yml"},
 		{"", nil, false, "whose config has no monitor block with channels: Alertmanager sends nothing until there is one"},
 		{`{"metrics":{}}`, nil, false, "whose config has no monitor block with channels"},
 		{`{"metrics":{}}`, nil, true, "reloaded motel, which renders the store's rules into /var/lib/motel-metrics/rules.yml and pushes"},

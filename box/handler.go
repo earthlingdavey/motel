@@ -19,6 +19,7 @@ import (
 	"github.com/smallhoursorg/motel/box/proof"
 	"github.com/smallhoursorg/motel/liveswap"
 	"github.com/smallhoursorg/motel/liveswap/deploytrust"
+	"github.com/smallhoursorg/motel/liveswap/wire"
 )
 
 func init() {
@@ -128,15 +129,6 @@ func (h *Handler) authenticate(w http.ResponseWriter, r *http.Request, route str
 	return ident, true, nil
 }
 
-type statusBody struct {
-	Commit     string `json:"commit"`
-	BoxWebhook string `json:"box_webhook"`
-	SHA256     string `json:"sha256"`
-	// Recipient is the box's key for secrets, which the workflow
-	// compares with the first line of recipients ("The box's key").
-	Recipient string `json:"recipient,omitempty"`
-}
-
 // status is `GET /`: the commit the box runs, from applied.json, and
 // the host and digest of the file it runs, read now — the digest a
 // push's no_change fast path compares (step 4) — so a console edit since the
@@ -165,7 +157,7 @@ func (h *Handler) status(w http.ResponseWriter, r *http.Request) error {
 		return respond(w, http.StatusConflict, errorBody(runningRefused(ref).Error()))
 	}
 	sum := digest(file) // what the fast path compares
-	body := statusBody{Commit: base.SHA, BoxWebhook: shape.Host, SHA256: sum, Recipient: h.recipient()}
+	body := wire.BoxStatus{Commit: base.SHA, BoxWebhook: shape.Host, SHA256: sum, Recipient: h.recipient()}
 	safe := []string{base.SHA, shape.Host, sum}
 	if body.Recipient != "" { // a bech32 key is what the entropy layer catches
 		safe = append(safe, body.Recipient)
@@ -265,7 +257,7 @@ func (h *Handler) logStateError(what string, err error) {
 	h.logger.Error("box webhook could not read its state", zap.String("reading", what), zap.String("error", proof.Bound(err.Error())))
 }
 
-func errorBody(msg string) map[string]string { return map[string]string{"error": msg} }
+func errorBody(msg string) wire.Error { return wire.Error{Error: msg} }
 
 // respond writes body through liveswap's response filter: the shape
 // and entropy layers, with safe — the protocol's own commit, digest and

@@ -26,6 +26,7 @@ import (
 	"go.uber.org/zap/zaptest/observer"
 
 	"github.com/smallhoursorg/motel/liveswap"
+	"github.com/smallhoursorg/motel/liveswap/wire"
 )
 
 func parseStore(src string) (*MetricsStore, error) {
@@ -866,7 +867,7 @@ func TestMetricsViewBudgetAndOneQueryInFlight(t *testing.T) {
 	v := newMetricsView(f, zap.NewNop())
 	start := time.Now()
 	var wg sync.WaitGroup
-	answers := make([]any, 3)
+	answers := make([]*wire.Metrics, 3)
 	for i := range answers {
 		wg.Add(1)
 		go func() {
@@ -879,7 +880,7 @@ func TestMetricsViewBudgetAndOneQueryInFlight(t *testing.T) {
 		t.Fatalf("a store that never answers held the route %v", d)
 	}
 	for _, a := range answers {
-		if a.(AppMetrics).Error != errViewStore {
+		if a.Error != errViewStore {
 			t.Fatalf("answers = %+v", answers)
 		}
 	}
@@ -894,7 +895,7 @@ func TestMetricsViewBudgetAndOneQueryInFlight(t *testing.T) {
 	time.Sleep(50 * time.Millisecond)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if a := v2.AppMetrics(ctx, "blog", "1h").(AppMetrics); a.Error != errViewStore {
+	if a := v2.AppMetrics(ctx, "blog", "1h"); a.Error != errViewStore {
 		t.Fatalf("a cancelled request: %+v", a)
 	}
 }
@@ -939,7 +940,9 @@ func TestLatencyBoundsAreTheBuckets(t *testing.T) {
 // app's among them; a release with no response pushes nothing, but the
 // current release of an observed app, at zero. An app the running
 // config no longer observes pushes nothing of what it counted: unchanged
-// counters would read as an app with no request.
+// counters would read as an app with no request. Every observed app,
+// one with no release or no counts yet among them, is
+// motel_app_observed.
 func TestAppCollectorRequests(t *testing.T) {
 	var cur liveswap.ReleaseRequests
 	cur.Release = "v2"
@@ -955,6 +958,7 @@ func TestAppCollectorRequests(t *testing.T) {
 		{App: "shop", Release: "s2", Observed: true, Requests: []liveswap.ReleaseRequests{{Release: "s2"}, {Release: "s1"}}},
 		{App: "idle", Release: "i1", Requests: []liveswap.ReleaseRequests{{Release: "i1"}}},
 		{App: "new", Observed: true, Requests: []liveswap.ReleaseRequests{{}}},
+		{App: "booting", Observed: true}, // a restart's first push, before liveswap reattaches its release
 	}}); err != nil {
 		t.Fatal(err)
 	}
@@ -983,12 +987,14 @@ func TestAppCollectorRequests(t *testing.T) {
 		`motel_app_cache_responses_total{app="blog",release="v2",result="miss"} 60`,
 		`motel_app_requests_total{app="shop",class="2xx",release="s2"} 0`,
 		`motel_app_response_seconds_count{app="shop",release="s2"} 0`,
+		`motel_app_observed{app="blog"} 1`, `motel_app_observed{app="shop"} 1`, `motel_app_observed{app="new"} 1`, `motel_app_observed{app="booting"} 1`,
 	} {
 		if !strings.Contains(text, line+"\n") {
 			t.Errorf("missing %s", line)
 		}
 	}
-	for _, absent := range []string{`release="v1"`, `result="stale"`, `release="s1"`, `app="idle",class`, `motel_app_response_seconds_count{app="idle"`, `release=""`, `motel_app_requests_total{app="gone"`, `motel_app_response_seconds_count{app="gone"`} {
+	for _, absent := range []string{`release="v1"`, `result="stale"`, `release="s1"`, `app="idle",class`, `motel_app_response_seconds_count{app="idle"`, `release=""`, `motel_app_requests_total{app="gone"`, `motel_app_response_seconds_count{app="gone"`,
+		`motel_app_observed{app="gone"`, `motel_app_observed{app="idle"`} {
 		if strings.Contains(text, absent) {
 			t.Errorf("%s pushed: %s", absent, text)
 		}
@@ -1097,7 +1103,34 @@ func TestMetricsViewRequestsAbsent(t *testing.T) {
 	if string(got) != `{"window":"1h","requests":{"total":0,"per_second":0}}` {
 		t.Fatalf("an idle window: %s", got)
 	}
-	if a := v.AppMetrics(context.Background(), "blog", "7d").(AppMetrics); a.Error != errViewStore {
+	if a := v.AppMetrics(context.Background(), "blog", "7d"); a.Error != errViewStore {
 		t.Fatalf("an unknown window: %+v", a)
+	}
+}
+
+// The metrics object with every field set: each key's name and place,
+// as GET /<app> carries it (liveswap's testdata/wire holds the same
+// object inside a status).
+func TestMetricsObjectEveryField(t *testing.T) {
+	at := time.Date(2026, 11, 13, 9, 30, 0, 0, time.UTC)
+	f := func(v float64) *float64 { return &v }
+	m := wire.Metrics{
+		Window: "24h", At: &at,
+		Memory:    &wire.MemorySummary{Now: f(30), Max: f(40)},
+		MemoryMax: f(100),
+		CPU:       &wire.CPUSummary{Avg5m: f(0.5), Avg: 0.25},
+		Requests: &wire.RequestSummary{
+			Total: 10, PerSecond: 0.000116, ByClass: map[string]uint64{"5xx": 1, "2xx": 9},
+			Share5xx: f(0.1), P50: f(1.5), P95: f(20), CacheHitShare: f(0.5),
+		},
+		Error: errViewStore,
+	}
+	got, err := json.Marshal(m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `{"window":"24h","at":"2026-11-13T09:30:00Z","memory_bytes":{"now":30,"max":40},"memory_max_bytes":100,"cpu_cores":{"avg_5m":0.5,"avg":0.25},"requests":{"total":10,"per_second":0.000116,"by_class":{"2xx":9,"5xx":1},"5xx_share":0.1,"p50_ms":1.5,"p95_ms":20,"cache_hit_share":0.5},"error":"the metrics store did not answer"}`
+	if string(got) != want {
+		t.Fatalf("metrics object:\n got %s\nwant %s", got, want)
 	}
 }

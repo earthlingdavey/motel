@@ -2,6 +2,8 @@ package box
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -51,6 +53,16 @@ func TestHandlerStatusRecipient(t *testing.T) {
 			}
 			if rec, ok := got["recipient"]; c.want == "" && ok || c.want != "" && rec != c.want {
 				t.Errorf("recipient %v, want %q", got["recipient"], c.want)
+			}
+			// The body byte for byte, as a client reads it: the keys in
+			// their order, the recipient last and only when there is one.
+			sum := sha256.Sum256(file(good))
+			want := fmt.Sprintf(`{"commit":%q,"box_webhook":"deploy.example.com","sha256":%q`, sha, hex.EncodeToString(sum[:]))
+			if c.want != "" {
+				want += fmt.Sprintf(`,"recipient":%q`, c.want)
+			}
+			if want += "}\n"; w.Body.String() != want {
+				t.Errorf("body\n got %s\nwant %s", w.Body, want)
 			}
 			if logged := len(r.logs.FilterMessage("box webhook could not read its state").All()) > before; logged != c.log {
 				t.Errorf("journaled %v, want %v", logged, c.log)

@@ -199,7 +199,7 @@ func vmTool(t *testing.T, name string) string {
 }
 
 // The e2e metrics box runs, by name, every test of notify's that needs
-// vmalert or vmalert-tool (`make test` skips them): a test added here
+// vmalert, vmalert-tool or the store's binary (`make test` skips them): a test added here
 // and not to e2e/metrics/run.sh's list would run nowhere.
 func TestE2EMetricsListsEveryVMAlertTest(t *testing.T) {
 	files, err := filepath.Glob("*_test.go")

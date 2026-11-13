@@ -282,7 +282,9 @@ motel-backup[9377]: demo: restore proven: snapshot c4f0d7c1 was fetched and chec
 ```
 
 What every line of `status` means is under
-[Status](../backups/README.md#status).
+[Status](../backups/README.md#status). `motel-backup status --json` says the
+same as one JSON object, with the same exit status, for a program to
+read ([As JSON](../backups/README.md#as-json)).
 
 ### Look from your own machine
 

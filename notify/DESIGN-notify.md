@@ -89,8 +89,6 @@ monitor {
     deploy_succeeded on|off          # off by default (#418's table)
     allow_insecure_channels          # test rigs only; warned at every load
     secrets_file <path>              # default /etc/motel/secrets/_box.env
-    state_dir <path>                 # default /var/lib/motel-notify
-    alertmanager <socket path>       # default /run/motel-notify/am.sock
     backup_record <path>|off         # default /var/lib/motel-backup/status.json
     metrics [<socket path>]          # the metrics store (DESIGN-metrics.md, "The metrics line")
     rule <name> <kind> …             # the operator's rules; needs metrics (DESIGN-metrics.md, "Operator rules")
@@ -114,6 +112,17 @@ adapted, naming the block and the line to write instead, and the
 upgrade order for a box that has them (docs/upgrading.md, "From the
 notify and metrics_store blocks").
 
+There is no `state_dir` and no `alertmanager` line: motel renders into
+`/var/lib/motel-notify`, the directory setup makes and the drop-in's
+`--config.file` names, and posts to `/run/motel-notify/am.sock`, where
+setup's `motel-am.socket` listens. A directory of a line's own would
+be written and never read while the load said it worked, and a socket
+of its own would reach nothing ("History", 2026-11-13). In a
+Caddyfile either line is refused by name, at its line, saying where
+the path is fixed; in a JSON config the field is Caddy's `unknown
+field`. A box that has either line takes it out before the install
+(docs/upgrading.md, "From a state_dir or alertmanager line").
+
 A URL is only ever `{secret.NOTIFY_<NAME>}`: a Slack or Discord hook is
 a credential by itself, and the Caddyfile is a commit anyone who reads
 the repository reads. The value is in the box tier's env file. An
@@ -130,7 +139,9 @@ connects to nothing), each naming keys and channels, never a value:
 
 | Condition | Refused as |
 |---|---|
-| a `notify` global option (refused at the adapt, before Provision) | ``the notify block is now `monitor { … }`, with the same lines; to move a box onto it, docs/upgrading.md, "From the notify and metrics_store blocks"`` |
+| a `notify` global option (refused at the adapt, before Provision) | ``the notify block is now `monitor { … }`, with the same lines but state_dir and alertmanager, whose paths are fixed; to move a box onto it, docs/upgrading.md, "From the notify and metrics_store blocks"`` |
+| a `state_dir` line (at the adapt, naming its line) | `state_dir is not a monitor line: the state directory is fixed at /var/lib/motel-notify, the one motel monitor setup makes and Alertmanager reads; remove the line` |
+| an `alertmanager` line (at the adapt, naming its line) | `alertmanager is not a monitor line: Alertmanager's socket is fixed at /run/motel-notify/am.sock, the one motel monitor setup's motel-am.socket listens on; remove the line` |
 | a literal URL, or `{env.*}` | `a channel URL is written {secret.NOTIFY_<NAME>}, its value in the box's secrets, never in the Caddyfile` |
 | a secret not named `NOTIFY_…` | `the secret's name is NOTIFY_ followed by capitals, digits and underscores` |
 | no `operator` line | `no operator line: name the channels that receive every event with operator <channel>` |
@@ -767,6 +778,9 @@ on its general scales. notify's examples:
 | A failed write of `alerts.json` (EIO, a read-only remount) leaves the old file until the next change, and a restart before it reports what the file still says | liveswap/watchdog.go (`alertsChanged`) | 3 | 3 | 1 | 9; the warning at the failure names the file and the consequence; a retry needs a timer outside the transitions (size 2, risk 2). /code-review of the Owed rows |
 | An app that read a `NOTIFY_` variable from an env file in `/etc/motel/secrets/` — the box's `secrets/<app>/`, or an operator's own file kept in that directory — loses it from the app's environment at the next launch after the upgrade | liveswap/app.go (`notifyOwnedEnvKey`, `boxWritten`: a test of the directory) | 3 | 5 | 1 | 15; each launch names the withheld keys and the directory in the journal, and `make check` warns before a push; the prefix is what keeps a channel URL from an app. /code-review of the Owed rows, widened by /code-review xhigh on #424 |
 | Alertmanager refuses a reload: motel puts the previous config back, but the URL files are already the new ones (a changed value rewritten, a dropped channel's removed), so the old config in memory sends a changed channel to its new URL, and Alertmanager's next start fails on a removed file until motel's next load | notify/state.go (`apply`) | 4 | 2 | 1 | 8; two faults (a render Alertmanager refuses, which the amtool tests rule out for every shape, then a restart before the next load), and Alertmanager names the missing file; a new URL is the one the signer committed; keeping the old files until a reload succeeds adds state to the write (size 2, risk 2). /code-review of slice one, passes 1 and 2 |
+| A JSON config (or a `/load`) with `"state_dir"` or `"alertmanager"` is refused as Caddy's `json: unknown field "state_dir"`, not with the Caddyfile's sentence that names the fixed path | notify/app.go (no field; Caddy's `StrictUnmarshalJSON`) | 2 | 5 | 1 | 10; refused, naming the field, and the Caddyfile is what a box loads; the sentence in JSON needs a field kept only to refuse it, or an `UnmarshalJSON` (size 2, risk 2). /code-review of #438 |
+| `motel monitor setup` from a new binary while an old motel still serves a config with a `state_dir` line names `/var/lib/motel-notify/alertmanager.yml`, where that motel does not render | notify/setup.go (`loadedSays`) | 3 | 2 | 3 | 18; the install restarts motel onto the new binary, which refuses the line, so this needs setup run from an unpacked `.deb` before the install (docs/upgrading.md suggests only `validate` there) on a box that kept the line the upgrade note says to remove; saying so needs a branch on the raw JSON (size 2, risk 2). /code-review of #438 |
+| The journal lines of `applyRender` and `applyNothing`, and the metrics store's not-set-up warning, name their directory under the key `state_dir`, a line this version refuses: an operator who adds one to move it is refused at the next load | notify/app.go, metrics.go (`zap.String("state_dir", …)`) | 2 | 5 | 1 | 10; the refusal names the fixed path and says to remove the line; renaming the key changes what a journal search for it finds, and no test reads it (size 1, risk 2). /code-review of #438 |
 
 ### Owed
 
@@ -776,7 +790,6 @@ on its general scales. notify's examples:
 | ntfy and json share the webhook integration, and so do any two channels of one kind in one receiver: a failure of one names every such channel as a suspect, a working one among them, and none of them is told (`ChannelFailed` goes only to the operator channels that are not suspects). Moved from Accepted: its product is 30, over the bar of 20 (the operator/deployer review of 2026-11-11, rechecked at 01b2fd5 and at 04e52a9) | 2 | 5 | 3 | its own PR, "monitor: one receiver per channel" (notify/render.go, channelfailed.go `suspects`, metricsrules.go: each channel its own receiver under `continue` routes, so that a failure names one channel; size 3, risk 2). Independent of #433, and it reshapes every route. It carries the heartbeat's hold too (the next row) |
 | An operator with no channel to hear a failure (a single channel, or the others taking criticals alone, `failureAudience`): `ChannelFailed` is told nowhere and the heartbeat goes on pinging, so a dead channel delivers no alert while the dead-man check stays green (hotserve-1: one ntfy channel, `ops`, and a Healthchecks heartbeat). The `monitor: channel failed` line names the cause, in the journal alone. Moved from Accepted (2 5 1) at the rescore of 2026-11-13: S 3, not 2, since the green check is a verdict the operator trusts (not 5: the journal line keeps it from "lost silently", and not 4: delivery resumes with the channel); O 4, not 5, since the block is operator input but the dead channel is one common fault; D 3, not 1, since the green check and a quiet channel are a plausible answer and nothing sends the operator to the journal. A single fault that ends green (rule 2); its product is 36 | 3 | 4 | 3 | the PR "monitor: one receiver per channel", after its receivers, so that a hold never stands while a working channel is among the suspects (notify/engine.go `tick`, channelfailed.go `scrapeFailed`). While a failure is told to no channel, motel stops posting `Watchdog`; it ends within its 4 m life and the dead-man service alerts through its own channels. Any service that takes a ping URL works; there is no new endpoint and no new Caddyfile line. An Alertmanager inhibit rule was not taken: it needs a source alert and a render change. The hold comes only once the untold failure has stood 5 m with no delivery through a suspect's receiver since (the requests counters motel reads already). The pings resume at the next such delivery (`motel monitor test` makes one), or at a restart of motel (the hold is in memory, as the baseline is). The heartbeat receiver renders `send_resolved: false`, so Watchdog's end sends nothing. `monitor: heartbeat held` says why, naming the suspects, and `monitor: heartbeat resumed` follows. Size 3 (a new state), risk 2 (the minute's heartbeat changes under its tests and a new one). **Wide**: it changes what the dead-man check off the box reports for every box with a heartbeat, and a wrong hold pages. A pulled health endpoint was not taken: a public route, a token, and the box's state exposed. Later, additive: Healthchecks' `<ping-url>/fail` with the reason in the body, and a load that leaves no channel |
 | An external producer's state (`motel monitor send --state firing`) does not outlive a restart of motel: the engine's table is emptied and nothing reports the key again, as liveswap's standing reports and the pollers do for motel's own, so Alertmanager ends the alert at `resolve_timeout` and the channels get a recovery that did not happen; the producer's later `resolved` finds no state. Measured in the metrics e2e box at c979404: restart at 19:36:55, `[RESOLVED]` for both states at 19:41:55. docs/monitor.md tells a producer to send `firing` again every few minutes meanwhile (the second-model review of #432) | 3 | 4 | 5 | the next code PR on feature/notify-and-metrics (notify/engine.go: keep external states across a restart, as liveswap keeps `alerts.json`; size 3, risk 2) |
-| A `state_dir` line renders where setup's Alertmanager never reads: the drop-in (notify/units/10-motel.conf) names `--config.file=/var/lib/motel-notify/alertmanager.yml`, and setup makes that directory alone. A directory that is not there journals "not set up (run motel monitor setup as root)", which setup does not mend. One the operator makes is written, Alertmanager answers `/-/reload` with 200 from its own file, and motel journals `Alertmanager reloaded the rendered config` with the new path (notify/app.go `applyRender`; nothing compares what Alertmanager loaded with the render). Alertmanager keeps the config that sends nothing, or, on a box that ran without the line, its last render (the old channels and heartbeat), so no event and no change to the block reaches the channels until the console. setup's last line names the new path too (aa097e8), and `motel monitor test` says only "neither a delivery nor a failure", a slow receiver's answer. S 4, not 5: each event keeps its `monitor: event` line; O 5: operator input; D 5: the load says it worked. A single fault that ends neither correct nor red (rule 2); its product is 100. A late finding on #433 at aa097e8, after its review loop | 4 | 5 | 5 | its own small PR after #433 on feature/notify-and-metrics, "monitor: no state_dir line" (notify/caddyfile.go, app.go: the line refused by name, as the metrics line's was, DESIGN-metrics.md "There is no `state_dir`"; the tests' directory an unexported override, as `MetricsStore.stateDirOverride`; setup's last line back to `DefaultStateDir`, undoing aa097e8; the block above and docs/monitor.md drop it; size 1, risk 2). Not taken: refusing at validate unless the drop-in names the directory (size 2, risk 2, and it keeps a line whose one working use is an Alertmanager setup did not write); setup writing the path into the drop-in (size 3, risk 2: setup runs before a block names one, and the stale-units check compares the shipped bytes). The same PR weighs `alertmanager <socket path>`, which `motel-am.socket` likewise fixes at `/run/motel-notify/am.sock` (unscored) |
 | Slack and Discord with real hooks; ntfy's formatting of Alertmanager's payload (the hotserve-1 test delivered the JSON body as the message) and its title, which needs ntfy's message templating, a server feature; Discord's colour, dark red for anything firing whatever the severity (2 5 3 = 30): Alertmanager 0.28.1's `discord_config` has no colour field (amtool refuses `color`, measured 2026-11-12), and the way round it, Discord's Slack-compatible endpoint, is untried without a real hook | — | — | — | needs the owner's hooks |
 | Per-app notify lines (`deploy_succeeded on` per app, app-scoped channels, reading the app's own withheld `NOTIFY_` values); the pull API and the later channel kinds, for which the `monitor: event` line is the record | — | — | — | later slices |
 
@@ -918,3 +931,21 @@ Dated one-liners; the full text of each is in git.
   it runs as the disk series' does, each path on its own goroutine
   within 2 s, a path not back not measured, and none started again
   while one is out.
+- 2026-11-13 — The Owed row "a `state_dir` line renders where setup's
+  Alertmanager never reads" (4 5 5 = 100, a late finding on #433)
+  landed (#438): the line is refused at the adapt, by name and at its
+  line, saying the directory is fixed at
+  `/var/lib/motel-notify`, the one setup makes and the drop-in's
+  `--config.file` names; tests stand a directory in through an
+  unexported variable, and setup's last line names the fixed path
+  again (undoing aa097e8). Not taken: refusing only a path the drop-in
+  does not name, and setup writing the path into the drop-in (the row's
+  reasons, in git).
+- 2026-11-13 — The `alertmanager <socket path>` line, which the row
+  above left to the same PR to weigh, went with it (#438): setup's
+  `motel-am.socket` fixes the socket at `/run/motel-notify/am.sock`, a
+  path with no listener reads as "Alertmanager loads the file when it
+  starts" (notify/state.go `apply`), and each post then fails in the
+  journal (4 5 3 = 60, size 1, risk 2). The line is refused the same
+  way, saying where the socket is fixed; tests stand a socket in
+  through a second unexported variable.

@@ -1,15 +1,32 @@
 # Written by `motel monitor setup --metrics` (notify/DESIGN-metrics.md, "Rules"),
 # as /var/lib/motel-metrics/scrape.yml. What the store scrapes inside its
-# namespace: itself, vmalert (whose `up` motel reads for
-# metrics_rules_down), and Alertmanager's /metrics at its own listener in
-# the namespace (the second ChannelFailed). motel pushes; it is not
-# scraped.
+# namespace: itself, vmalert, and Alertmanager's /metrics at its own
+# listener in the namespace. motel pushes; it is not scraped.
+#
+# Each job keeps only the series motel reads from the store: the disk
+# rule's free space, the second ChannelFailed's counter, and `up` (vmalert's
+# for metrics_rules_down). `up` and the scrape_* series are the scraper's
+# own, added after relabelling, so every job keeps them. A series kept
+# later is a line added here; one dropped later loses its history.
+# TestScrapeKeepsWhatMotelReads holds this list to motel's readers.
 global:
   scrape_interval: 30s
 scrape_configs:
   - job_name: victoria-metrics
     static_configs: [{targets: ["127.0.0.1:8428"]}]
+    metric_relabel_configs:
+      - action: keep
+        source_labels: [__name__]
+        regex: vm_free_disk_space_bytes
   - job_name: vmalert
     static_configs: [{targets: ["127.0.0.1:8880"]}]
+    metric_relabel_configs:
+      - action: drop
+        source_labels: [__name__]
+        regex: .+
   - job_name: alertmanager
     static_configs: [{targets: ["127.0.0.1:9093"]}]
+    metric_relabel_configs:
+      - action: keep
+        source_labels: [__name__]
+        regex: alertmanager_notifications_failed_total

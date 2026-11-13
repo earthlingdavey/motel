@@ -76,29 +76,12 @@ import (
 // is removed at once, and versions release GC has pruned — so the
 // directory is bounded by 2×keep whatever the deploy rate.
 
-// deploySummary is a record's outcome as the status lists it. The
-// times are carried as the record has them, not parsed: a record is
-// the filter's output, and a filter that replaced a value the shape
-// of a timestamp must not make the record vanish from the list. The
-// list is ordered by the record's write time instead. The pin is
-// carried the same way, for the same reason: a digest equal to an
-// env_file value is redacted in the record like any other.
-type deploySummary struct {
-	Version    string          `json:"version"`
-	Status     string          `json:"status"`
-	Phase      string          `json:"phase,omitempty"` // where it failed
-	By         string          `json:"deployed_by,omitempty"`
-	SHA256     json.RawMessage `json:"sha256,omitempty"` // the pin; absent when there was none
-	StartedAt  json.RawMessage `json:"started_at,omitempty"`
-	FinishedAt json.RawMessage `json:"finished_at,omitempty"`
-}
-
-// pin is the summary's digest when it has the shape the writer records
+// summaryPin is the summary's digest when it has the shape the writer records
 // (lowercase hex); "" otherwise. A record is read off disk, so a
 // string in the field names nothing until it is a digest, as a
 // version names nothing until it is valid (recordHead) — and the safe
 // string is the text the body carries, never a respelling of it.
-func (s deploySummary) pin() string {
+func summaryPin(s deploySummary) string {
 	var d string
 	if json.Unmarshal(s.SHA256, &d) != nil || !sha256Re.MatchString(d) || d != strings.ToLower(d) {
 		return ""
@@ -360,7 +343,7 @@ func recordedPin(d appDirs, version string) string {
 	if !ok {
 		return ""
 	}
-	return s.pin()
+	return summaryPin(s)
 }
 
 // recordedDeploy is when motel last wrote version's record in

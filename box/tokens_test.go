@@ -432,7 +432,7 @@ func TestWalkNotify(t *testing.T) {
 	// The old blocks are refused by name, pointing at the upgrade's
 	// order, before the slot's check could refuse them as no block.
 	for old, want := range map[string]string{
-		"\tnotify {\n\t\tchannel ops ntfy {secret.NOTIFY_OPS_URL}\n\t\toperator ops\n\t}\n": "the Caddyfile has a notify block, which is now `monitor { … }`, with the same lines; to move a box onto it, docs/upgrading.md",
+		"\tnotify {\n\t\tchannel ops ntfy {secret.NOTIFY_OPS_URL}\n\t\toperator ops\n\t}\n": "the Caddyfile has a notify block, which is now `monitor { … }`, with the same lines but state_dir and alertmanager, whose paths are fixed; to move a box onto it, docs/upgrading.md",
 		"\tmetrics_store\n": "the Caddyfile has a metrics_store block, which is now a `metrics [<socket path>]` line in the monitor block",
 		"\tmetrics_store {\n\t\tstore /run/x/vm.sock\n\t}\n": "has a metrics_store block",
 	} {

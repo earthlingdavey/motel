@@ -249,9 +249,12 @@ monitor {
   in this load: nothing outside the box hears that it, motel or
   Alertmanager stopped`.
 
-Every line, and the less common ones (`secrets_file`, `state_dir`,
-`alertmanager`, `backup_record`), is in DESIGN-notify.md's [The monitor
-block](../notify/DESIGN-notify.md#the-monitor-block).
+Every line, and the less common ones (`secrets_file`,
+`backup_record`), is in DESIGN-notify.md's [The monitor
+block](../notify/DESIGN-notify.md#the-monitor-block). Alertmanager's
+paths are not lines: its state directory is fixed at
+`/var/lib/motel-notify` and its socket at `/run/motel-notify/am.sock`,
+the ones setup makes.
 
 ## A heartbeat: hear that the box stopped
 
@@ -444,7 +447,7 @@ or an error says what to do). If the block was loaded before setup ran,
 you will see
 `monitor: Alertmanager is not set up on this box (run motel monitor setup as root); events are journal lines only until it is`,
 and `motel validate` and `motel reload` say it too, as a `WARNING:`
-line. They also warn when the units a setup wrote differ from the ones
+line. They also warn when the units a setup wrote (or the store's `scrape.yml`) differ from the ones
 this motel would write (after an upgrade that changed them), and name
 the setup to run again.
 When Alertmanager cannot deliver, `journalctl -u prometheus-alertmanager`
@@ -523,8 +526,9 @@ curl -s --unix-socket /run/motel-metrics/vm.sock -G \
 
 The series motel pushes are `motel_app_up`, `motel_app_release_info`,
 `motel_app_memory_bytes` (and `motel_app_memory_max_bytes` for a capped
-app), `motel_app_cpu_seconds_total`, `motel_app_requests_total` (by
-`class`, with `observe`), `motel_app_response_seconds` (a histogram),
+app), `motel_app_cpu_seconds_total`, `motel_app_observed` (an app
+with `observe`), `motel_app_requests_total` (by `class`, with
+`observe`), `motel_app_response_seconds` (a histogram),
 `motel_app_cache_responses_total`, `motel_disk_avail_bytes`,
 `motel_metrics_push_failed_total` and `motel_notify_delivery_failed_total`,
 along with Caddy's own `go_*`, `process_*` and `caddy_*`. To list what
@@ -538,6 +542,30 @@ curl -s --unix-socket /run/motel-metrics/vm.sock -G \
 `query_range` (`/api/v1/query_range` with `start`, `end` and `step`)
 works the same way. What each series means is in DESIGN-metrics.md's
 [What motel pushes](../notify/DESIGN-metrics.md#what-motel-pushes).
+
+The store also scrapes itself, vmalert and Alertmanager, and keeps
+only the series motel reads (`/var/lib/motel-metrics/scrape.yml`):
+`vm_free_disk_space_bytes`, which the store's disk rule reads,
+`alertmanager_notifications_failed_total`, which vmalert's
+`ChannelFailed` reads, and each job's `up` and `scrape_*` (motel reads
+`up{job="vmalert"}` to tell vmalert down). The rest would cost disk
+and memory with nothing reading it, and a series motel comes to read
+later is added to the list then, which breaks nothing
+([What the store scrapes](../notify/DESIGN-metrics.md#what-the-store-scrapes)).
+Each one's whole page is still there to read live, the store's over
+its socket and the other two inside its namespace:
+
+```sh
+curl -s --unix-socket /run/motel-metrics/vm.sock http://vm/metrics
+ip netns exec motel-metrics curl -s http://127.0.0.1:8880/metrics
+ip netns exec motel-metrics curl -s http://127.0.0.1:9093/metrics
+```
+
+A box whose store was set up before motel kept only these goes on
+keeping every series until root runs `motel monitor setup --metrics`
+again (each load warns that `scrape.yml` differs). After that, the
+series it no longer keeps age out over the 14 days, and nothing that
+reads the store reads them.
 
 ### What is firing, with `amtool`
 
@@ -693,9 +721,15 @@ monitor {
   release compared with the one it replaced. It sends
   `post_deploy_regressed` once, and it never rolls back.
 
-The request metrics need `observe <app>` in the app's site. The rule
-goes to the operator's channels, and to the app's bound channels when
-it is about one app. Every parameter and every refusal is in
+The request metrics need `observe <app>` in the app's site, and a rule
+on them reads only the apps motel's last push says are observed: an
+app whose `observe` line is taken out drops out at the next push, and
+every app does while no push reaches the store for over 75 s, so an
+alert firing then resolves. That is motel down, or the store refusing
+the pushes: `metrics_store_read_only` says so for a read-only store,
+and `metrics_store_down` once they have failed for five minutes. The
+rule goes to the operator's channels, and to the app's bound channels
+when it is about one app. Every parameter and every refusal is in
 DESIGN-metrics.md's [Operator rules](../notify/DESIGN-metrics.md#operator-rules).
 
 ## Turn it off, and remove it
@@ -800,3 +834,4 @@ the sites: v0.6.1 refuses those too.
 | A reboot after going back to v0.6.1 | the same image, the container restarted | the store and vmalert come back, Alertmanager and both its sockets stay down, nothing is sent |
 | A reboot with monitor set up | hotserve-1 (Debian 13, at 9228935), three cold boots | the store and its sockets come back. Not checked here at 01b2fd5 |
 | Setup's output with Alertmanager's socket in the store's namespace (first run, second run, upgrade from the proxy), and step 2's `--metrics` line | the metrics e2e box, 2026-11-12, with the change that replaced the proxy | as shown; after step 2, Alertmanager, both its sockets and vmalert stay down for 70 s while the store scrapes 9093 and motel reads `am.sock`. A cold boot with these units is not yet measured |
+| What the store keeps of its own scrapes, and the store's and vmalert's pages read live | the metrics e2e box at 59df185, 2026-11-13 (metrics 4) | of `victoria-metrics` `up` and `vm_free_disk_space_bytes`, of `vmalert` `up`, of `alertmanager` `up` and `alertmanager_notifications_failed_total`, each with `scrape_*`; Alertmanager's page is the store's scrape of it |
