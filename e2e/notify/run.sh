@@ -223,6 +223,36 @@ out=$(motel monitor test ops 2>&1) && echo "$out" | grep -q 'delivered to ops' \
 	&& pass "monitor test ops: $out" || fail "monitor test ops: $out"
 out=$(motel monitor test oncall 2>&1) && fail "monitor test oncall succeeded: $out" || pass "monitor test oncall fails: $(echo "$out" | tail -1)"
 
+echo "=== notify 7a: motel monitor silence ==="
+t_sil=$(date +%s)
+out=$(motel monitor silence add --json --comment "e2e: a silence through motel" --duration 10m alertname=silence_probe 2>&1)
+id=$(echo "$out" | sed -n 's/^{"id":"\([0-9a-f-]\{36\}\)","ends_at":"[0-9T:Z-]*"}$/\1/p')
+[ -n "$id" ] && pass "silence add --json: $out" || fail "silence add --json: $out"
+sil=$(am "http://am/api/v2/silence/$id")
+echo "$sil" | grep -q '"state":"active"' && echo "$sil" | grep -q '"createdBy":"motel monitor: root"' \
+	&& echo "$sil" | grep -q '"name":"alertname","value":"silence_probe"' \
+	&& pass "Alertmanager holds it active, created by motel monitor: root" || fail "Alertmanager's silence: $sil"
+am http://am/api/v2/silences | grep -q "\"id\":\"$id\"" && pass "and lists it in /api/v2/silences" || fail "not in /api/v2/silences"
+journalctl -u motel --since "@$t_sil" -o cat --no-pager | grep 'monitor: silence added' | grep -qF "$id" \
+	&& pass "journal: monitor: silence added, with its id" || fail "no silence added line for $id"
+t=$(now_ms)
+send --name silence_probe --summary "e2e: sent under a silence" || fail "send under the silence: $(cat /tmp/send.out)"
+sleep 10
+none "a one-shot it matches reaches no channel" /ops silence_probe "$t"
+out=$(motel monitor silence add --comment "e2e: the heartbeat" alertname=Watchdog 2>&1) \
+	&& fail "a silence of Watchdog was added: $out" \
+	|| { echo "$out" | grep -q 'silence Watchdog, the heartbeat' && pass "a silence of Watchdog is refused" || fail "Watchdog: $out"; }
+out=$(runuser -u nobody -- motel monitor silence add --comment x alertname=disk_low 2>&1) \
+	&& fail "nobody added a silence: $out" \
+	|| { echo "$out" | grep -q 'admits root and the motel user' && pass "nobody is refused, told to run it as root" || fail "nobody: $out"; }
+out=$(motel monitor silence expire "$id" 2>&1)
+[ "$out" = "silence $id expired" ] && pass "silence expire: $out" || fail "silence expire: $out"
+am "http://am/api/v2/silence/$id" | grep -q '"state":"expired"' && pass "Alertmanager has it expired" || fail "after expire: $(am "http://am/api/v2/silence/$id")"
+journalctl -u motel --since "@$t_sil" -o cat --no-pager | grep 'monitor: silence expired' | grep -qF "$id" \
+	&& pass "journal: monitor: silence expired, with its id" || fail "no silence expired line for $id"
+out=$(motel monitor silence expire --json "$id" 2>&1) && fail "a second expire succeeded: $out" \
+	|| { echo "$out" | grep -qF '{"error":"silence '"$id"' has already expired"}' && pass "a second expire exits 1: $out" || fail "a second expire: $out"; }
+
 echo "=== notify 8: an app's sandbox has none of it in view ==="
 code=$(deploy demo-probe.tar.gz sb1)
 [ "$code" = 200 ] || fail "deploy of the probe release returned $code: $(cat /tmp/deploy-body)"

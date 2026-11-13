@@ -489,6 +489,64 @@ mend. Every load's gate, `run`'s among them, warns when a unit setup
 wrote differs from the one this binary would write, naming the setup
 to run again: an upgraded box keeps the old units until root does.
 
+## Silences
+
+`motel monitor silence add --comment <text> [--duration 2h]
+<matcher>...` posts to `POST /notify/silences`, and `motel monitor
+silence expire <id>` to `POST /notify/silences/expire`, two more
+`admin.api.notify` routes. The route checks the request again (the
+command's check names the mistake first, as `send`'s does), writes it
+to Alertmanager's v2 API (`POST /api/v2/silences`, `DELETE
+/api/v2/silence/{id}`) over the socket, and once Alertmanager has taken
+it writes one line in motel's journal: `monitor: silence added` (`id`,
+`matchers`, `ends_at`, `created_by`, `comment`) or `monitor: silence
+expired` (`id`, `by`). A refused or failed write leaves no line; the
+command says why and exits 1.
+
+Through the route, not from the command to the socket, because that is
+how `send` and `test` write, and so one code path holds every write
+motel documents: the line is motel's, in its unit's journal beside the
+events, written by the process that holds the filter's known values (a
+comment or matcher the filter would mask is refused, as `send`'s
+instance is). A command that posted to `am.sock` itself would log to its
+own stderr, which over `ssh root@box motel monitor silence …` is the
+laptop's terminal, not the box's journal. A later laptop client runs
+these commands over ssh with `--json`, so it gets the same checks and
+the same line, and never Alertmanager's raw API. root can still post to
+the socket, as root can do anything; such a silence leaves no motel
+line.
+
+| Refused | Why |
+|---|---|
+| no matcher, or none that is `label=value` with a value | regexes and negations alone can match everything (`alertname=~.*`); one exact label is a rule a reader can check, and Alertmanager itself refuses a set that matches the empty string. A regex-only silence is not offered: adding it later breaks nothing |
+| matchers that all match Watchdog's labels (`alertname=Watchdog`, `severity=none`) | a silenced Watchdog stops the heartbeat's pings, and the check off the box then reports the box down; the place to quiet the heartbeat is that check's pause (docs/monitor.md, "Turn it off"). Refused outright, with no override: none is needed yet |
+| a matcher not `label=value`, `label!=value`, `label=~regex` or `label!~regex`; a value in quotes, with a space at an end or a control character; a regex Go cannot compile (Alertmanager's own anchoring, `^(?:…)$`); over 200 bytes; more than 16 | strict: the shell's quoting is the only quoting, so `alertname="x"` is not read as a value with quotes in it |
+| a comment empty, on two lines, or over 200 characters | whoever finds the silence reads why |
+| a duration under 1m or over 24h (default 2h, from now) | a silence that outlives the incident hides the next one |
+| an id that is not a UUID; an id Alertmanager does not hold (422, `no silence <id> in Alertmanager`); one already expired (422, `silence <id> has already expired`) | Alertmanager 0.28.1 answers 200 to the expiry of an expired silence (measured in the e2e box), so the route asks its state first (`GET /api/v2/silence/{id}`) rather than journal an end that was not |
+| a body with unknown fields | the route takes the request, never Alertmanager's shape |
+
+`createdBy` is `motel monitor: <user>`, the user being `SUDO_USER`, else
+`USER`, else the uid's name: what the caller's environment says, from a
+caller the admin socket already admits as root or motel, so a label for
+whoever reads the silence, not an identity checked. Over `ssh root@box`
+it is `root`.
+
+`--json` prints `{"id":"…","ends_at":"…"}` for an add and `{"id":"…"}`
+for an expire, and `{"error":"…"}` with exit 1 for any refusal or
+failure the command reaches (cobra's own errors, an unknown flag, stay
+text). Without it: `silence <id> added; it ends at <ends_at>` and
+`silence <id> expired`. Both shapes are pinned by
+`TestSilenceCommandOutput`, and the request Alertmanager is sent by
+`TestServeSilence`.
+
+There is no `list`: reads go to Alertmanager's own v2 API (`GET
+/api/v2/silences`, `GET /api/v2/silence/{id}`), whose shape motel would
+only copy ("Viewing"). Who runs them: root (and the motel uid, which
+the admin socket admits); any other user is told `the admin socket
+(unix//run/motel/admin.sock) admits root and the motel user: run motel
+monitor silence as root`.
+
 ## Packaging and setup
 
 The `.deb` **Suggests** `prometheus-alertmanager`. A `Depends` cannot
@@ -567,7 +625,9 @@ Alertmanager answering on both (measured in the e2e box, 2026-11-12).
 
 New: a resident daemon motel did not write, reachable by unix-socket
 permission alone, holding outbound credentials in files only it and
-motel read; and two admin routes.
+motel read; and four admin routes (the silence routes give the admin
+socket's callers, root and motel, nothing the Alertmanager socket did
+not already give them).
 
 - **T1** (a poisoned dependency in an app): the socket, the state
   directory and the admin socket are not in its view; it runs as the
@@ -607,9 +667,22 @@ commands or `curl --unix-socket /run/motel-notify/am.sock
 http://am/api/v2/alerts`. `amtool`, which the package ships, speaks TCP
 only: on a box with the store it runs inside the store's namespace,
 against Alertmanager's listener there (`ip netns exec motel-metrics amtool
---alertmanager.url=http://127.0.0.1:9093 alert`, measured), and from
-root's laptop through `ssh -L 9093:/run/motel-notify/am.sock root@box`
-(OpenSSH forwards to a remote unix socket since 6.7; not measured).
+--alertmanager.url=http://127.0.0.1:9093 alert`, measured). From root's
+laptop, a unix-to-unix forward into an owner-only directory, `mkdir -m
+700 -p ~/.motel && ssh -N -o StreamLocalBindMask=0177 -o
+StreamLocalBindUnlink=yes -o ExitOnForwardFailure=yes -L
+~/.motel/am.sock:/run/motel-notify/am.sock root@box`, then `curl
+--unix-socket ~/.motel/am.sock http://am/api/v2/alerts`. Not a TCP
+forward (`-L 9093:…`): that puts the unauthenticated API, silences
+included, on the laptop's loopback, for any local process and for a
+browser page through DNS rebinding. Measured with OpenSSH 10.0p2 (sshd
+on localhost in a Debian 13 container, 2026-11-13): the socket is born
+`srw-------` (0177 is OpenSSH's default mask; the option keeps it so
+whatever the user's config says), another user's `curl` is refused,
+and a socket file left by an ended ssh makes the next forward fail
+`Address already in use` unless `StreamLocalBindUnlink=yes`. Not
+measured against a real box. Writes from the laptop go through `ssh
+root@box motel monitor silence …` ("Silences"), not this forward.
 Slack's title link, which Alertmanager's defaults point at its external
 URL (`http://<hostname>:9093/#/alerts…`, where nothing answers), is
 rendered empty, and its fallback is motel's title. A deployer
@@ -705,6 +778,13 @@ URL file, the journal says so, and the alert's end, posted by root at
 once rather than awaited at `resolve_timeout`, reaches no channel. Not
 in e2e (unit-tested only): the
 five-minute give-up of an undeliverable post, the bucket's hour.
+Section 7a: `motel monitor silence add --json` answers its id and end,
+Alertmanager holds the silence active with `createdBy` `motel monitor:
+root` and lists it, the journal has `monitor: silence added` with the
+id, a one-shot it matches reaches no channel, a silence of Watchdog is
+refused, nobody is refused and told to run it as root, `expire` leaves
+it expired with its journal line, and a second `expire --json` exits 1
+with `{"error":"silence <id> has already expired"}`.
 
 ## Later slices
 

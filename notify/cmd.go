@@ -19,7 +19,7 @@ func init() {
 	caddycmd.RegisterCommand(caddycmd.Command{
 		Name:  "monitor",
 		Usage: "<command>",
-		Short: "Who motel tells, and the numbers: send an event, test a channel, set up Alertmanager and the store",
+		Short: "Who motel tells, and the numbers: send an event, test a channel, silence an alert, set up Alertmanager and the store",
 		Long: `Commands of the monitor block (notify/DESIGN-notify.md and
 notify/DESIGN-metrics.md in the motel repository). motel detects;
 Debian's Alertmanager, on a unix socket motel renders its config for,
@@ -27,7 +27,7 @@ delivers. With the block's metrics line, motel pushes its numbers to
 Debian's VictoriaMetrics, whose vmalert evaluates the rules motel
 renders.`,
 		CobraFunc: func(cmd *cobra.Command) {
-			cmd.AddCommand(sendCommand(), testCommand(), setupCommand())
+			cmd.AddCommand(sendCommand(), testCommand(), setupCommand(), silenceCommand())
 		},
 	})
 	// The commands monitor replaced: hidden, and refused with the new

@@ -51,9 +51,9 @@ numbers](#look-at-the-numbers)).
 Setup, every `systemctl` line, and edits under `/etc/motel` and
 `/etc/systemd` are root's: run them over SSH as root
 (`ssh root@box.example.com`), or with `sudo` in front if your
-administrator's `sudo` is root's. `motel monitor send` and
-`motel monitor test` talk to motel's admin socket, which root and the
-`motel` user can reach and no app can. The journal is readable by the
+administrator's `sudo` is root's. `motel monitor send`,
+`motel monitor test` and `motel monitor silence` talk to motel's admin
+socket, which root and the `motel` user can reach and no app can. The journal is readable by the
 `adm` group.
 
 ## Set it up
@@ -569,6 +569,76 @@ nothing to evaluate.
 On a box with notifications only, ask the API over its socket:
 `curl -s --unix-socket /run/motel-notify/am.sock http://am/api/v2/alerts`.
 
+From your laptop, forward the socket to a socket of your own, in a
+directory only you can open, and ask that:
+
+```sh
+mkdir -m 700 -p ~/.motel
+ssh -N -o StreamLocalBindMask=0177 -o StreamLocalBindUnlink=yes \
+  -o ExitOnForwardFailure=yes \
+  -L ~/.motel/am.sock:/run/motel-notify/am.sock root@box.example.com &
+curl -s --unix-socket ~/.motel/am.sock http://am/api/v2/alerts
+```
+
+Do not forward it to a TCP port (`ssh -L 9093:…`). Alertmanager's API
+has no login, so a port on your laptop's loopback gives it, silences
+included, to every program on the laptop and to any web page that
+rebinds a DNS name to 127.0.0.1. The socket file is created
+`srw-------`, and `StreamLocalBindUnlink=yes` replaces the file an
+earlier ssh left, which otherwise fails the forward with `Address
+already in use`. This was measured with OpenSSH 10.0 against an sshd on
+localhost, not against a real box. `amtool` cannot use a socket, so run
+it on the box (`ssh root@box.example.com ip netns exec motel-metrics
+amtool …`, on a box set up with `--metrics`). The store's socket
+forwards the same way (`~/.motel/vm.sock:/run/motel-metrics/vm.sock`).
+
+## Silence an alert
+
+While you fix something you already know about, silence its alert so
+that the channels stop repeating it. Run it as root:
+
+```
+$ motel monitor silence add --comment "resizing the volume" --duration 4h alertname=disk_low
+silence 22e1715e-25d1-4986-bec3-1ecf8bdb376f added; it ends at 2026-11-13T21:37:22Z
+$ motel monitor silence expire 22e1715e-25d1-4986-bec3-1ecf8bdb376f
+silence 22e1715e-25d1-4986-bec3-1ecf8bdb376f expired
+```
+
+(The output's shape is the notify e2e box's, at the commit that added
+the command; that run's silence was 10 minutes.)
+
+Each matcher is one argument: `label=value`, `label!=value`,
+`label=~regex` or `label!~regex`, the regex matching the whole value,
+and no quotes inside the argument (`alertname=disk_low`, not
+`alertname="disk_low"`). The labels are the ones `amtool alert` and the
+API show: `alertname`, `severity`, `subject` (`box` or `app:<name>`),
+`app`, `instance`, `source` (`external:<name>` for your own events). A
+silence matches an alert when every matcher does.
+
+motel refuses:
+
+- a silence with no `label=value` matcher, so that a regex such as
+  `alertname=~.*` cannot silence everything;
+- one that would silence `Watchdog`, the heartbeat: the pings would
+  stop and your check off the box would report the box down. To quiet
+  the heartbeat, pause that check instead;
+- a comment that is empty, on two lines or over 200 characters;
+- a duration under `1m` or over `24h`. The default is `2h`, from now.
+
+Each silence added or expired is a line in motel's journal
+(`monitor: silence added` with its id, matchers, end, comment and
+`created_by`, which is `motel monitor: <your user>`; `monitor: silence
+expired`). With `--json`, `add` prints `{"id":"…","ends_at":"…"}`,
+`expire` prints `{"id":"…"}`, and an error is `{"error":"…"}` with exit
+1; a second expire of one silence is `silence <id> has already
+expired`. Another user than root is told `the admin socket … admits root and
+the motel user: run motel monitor silence as root`.
+
+There is no `motel monitor silence list`. Ask Alertmanager:
+`curl -s --unix-socket /run/motel-notify/am.sock http://am/api/v2/silences`.
+Silences you post to the socket yourself work too, but leave no line in
+motel's journal.
+
 ## Your own alerts: `rule` lines
 
 With `metrics`, the block also takes rules of your own. Each is one of
@@ -698,6 +768,8 @@ the sites: v0.6.1 refuses those too.
 | `apt purge` with nothing disabled first | the same box. Its `policy-rc.d` refuses the packages' own stop at removal, as Docker images do, so a real box's prerm may stop more | five units left enabled, as above |
 | The removal, with Alertmanager stopped before the block went (this page's order before the reload sent nothing), and `apt purge` first, where the packages' own stops run | the same image at c979404 with `policy-rc.d` removed, 2026-11-12 | steps 2 to 9 leave nothing but the two system users. Purged first, the same five units stay enabled, both unix sockets fail at their next connection, and steps 2, 4, 6 and 7 clear them |
 | Going back to v0.6.1 | the same box, with v0.6.1's arm64 `.deb` | refuses `monitor` and `observe`, and starts once both are out, with `_box.env` still there |
+| `motel monitor silence add` and `expire`, and a one-shot under the silence reaching no channel | motel's notify e2e box (`make e2e-notify`, section 7a), Debian 13, 2026-11-13 | as shown; not tried on a real box |
+| The laptop's unix-socket forward | OpenSSH 10.0p2, ssh to an sshd on localhost in a Debian 13 container, 2026-11-13 | the socket `srw-------`, another user refused, a stale file failing the forward without `StreamLocalBindUnlink=yes`; not tried against a real box |
 | Real Slack, Discord and ntfy servers | not tried. On hotserve-1, an ntfy topic showed the JSON body as the message | owed (DESIGN-notify.md, "Owed") |
 | The heartbeat's pings | the same image at c979404, at the stub receiver | 299 s and 300 s apart undisturbed; 439 s across a restart of motel 140 s after a ping |
 | A `--state firing` across a restart of motel | the same image at c979404 | `[RESOLVED]` five minutes after the restart, nothing having resolved it |
