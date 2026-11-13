@@ -370,7 +370,12 @@ from this version, every load (`motel validate`, `motel reload`, and
 the restart onto the new binary, in the journal) warns `monitor: the
 units motel monitor setup wrote differ from this motel's (…)` (for the store's, `monitor: the files motel monitor setup --metrics wrote differ …`) for as
 long as a unit differs from the one this binary would write, comments
-aside, and names the setup to run.
+aside, and names the setup to run. While the proxy's units are there,
+the store's warning says `the proxy an older setup wrote for
+Alertmanager (…) is still in place` (after the files that differ, or
+alone when none does), and that setup retires it and, unless
+Alertmanager listens in the store's namespace already, restarts (or
+starts) it once.
 
 **Run `motel monitor setup --metrics` again on a box whose store was set
 up before the 5 s clocks** (the warning above names `10-motel.conf` and

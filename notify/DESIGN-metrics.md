@@ -74,13 +74,30 @@ as root and the data world-readable: measured in the e2e box (systemd
 257), then on hotserve-1 with the deploy of 01b2fd5 on 2026-11-12,
 whose reboot at about 17:53 UTC brought both proxies up as no root.
 The namespace unit's test for a leftover before its delete (#430,
-2026-11-12) is measured in the e2e box alone. A fourth cold boot, on
+2026-11-12) has met a leftover in the e2e box alone: a cold boot has an
+empty `/run`, so hotserve-1's cold boot took the nothing-to-delete branch.
 2026-11-11 at 15:04 UTC with motel (9228935) rendering `rules.yml` and
 pushing, brought every
 unit up within a second of the namespace (the am proxy's service at its
 first connection, nine seconds later), with no failed unit, no
 ordering cycle and no listener in the host namespace; vmalert loaded
 motel's rules, and the store scraped itself, vmalert and Alertmanager.
+A fifth, on 2026-11-13 at 16:51 UTC, came after the deploy of a8038b4
+(#435) and `motel monitor setup --metrics`, which retired the proxy and
+restarted Alertmanager once in 6 s: 2.8 s of kernel and 10.9 s of
+userspace, and every unit of the stack active within about a second of
+`sysinit.target` (seconds after the kernel's start: both unix sockets
+12.42, the namespace 12.64, Alertmanager's socket in it 12.67, the store
+12.72, vmalert 12.73, Alertmanager 13.30, the store's proxy 13.53, motel
+13.58). Nothing was started by hand, no unit restarted
+(`NRestarts=0`) and none failed. Alertmanager started once, by socket
+activation (its start began at 13.27, after motel's began at 13.00
+and before motel was active at 13.58; which socket's connection
+started it is not recorded); the namespace's `try-restart` at
+12.64 found it stopped and did nothing. The heartbeat pinged 6 min 50 s
+after its last ping before the reboot, the boot's downtime included,
+and every 5 minutes after; the
+response observer counted 10 requests after the boot as 10.
 
 **The store's proxy runs as no root.** It passes bytes it does not
 parse, and motel shapes some of them (its own reads through `vm.sock`),
@@ -146,12 +163,15 @@ whose service already runs, so:
   refused until motel came back.
 
 These two units and the namespace unit's two lines are measured in the
-e2e box alone (systemd 257), with Debian's postinst restart, a
+e2e box (systemd 257), with Debian's postinst restart, a
 `daemon-reload` and `daemon-reexec`, a SIGKILL of Alertmanager, a
 namespace restart, a stop and return, a stop and start by hand with
 motel down, and an upgrade from the proxy
-(the spike and a second opinion, 2026-11-12, and e2e metrics 1, 4d and 11);
-a cold boot on hotserve-1 is owed ("Owed").
+(the spike and a second opinion, 2026-11-12, and e2e metrics 1, 4d and 11).
+On hotserve-1 they are measured through the upgrade from the proxy and a
+cold boot, on 2026-11-13 at a8038b4 (above): after each, Alertmanager
+was one process on both sockets, `up` was 1 for Alertmanager, vmalert
+and the store, and `motel monitor test` delivered.
 
 
 **Who reaches the socket, and why.** As for notify's: every app runs as
@@ -981,7 +1001,9 @@ Alertmanager's. The store's:
    namespace, retires the proxy shape: `disable --now
    motel-am-proxy.socket motel-am-proxy.service` and removes both
    files, so that `127.0.0.1:9093` is free for Alertmanager's socket,
-   and says so;
+   and says so. Until it runs, each load's warning names the proxy's files
+   still there and says that setup retires them and restarts (or starts)
+   Alertmanager once unless it listens in the namespace already;
 6. `daemon-reload`, `unmask`; then, unless `motel-am-metrics.socket` is
    active, one `systemctl restart prometheus-alertmanager.service` (a
    start, and said so, when it was not running)
@@ -1148,7 +1170,9 @@ measurement since has taken.
 
 Both days scraped the stack whole: over 2,000 of those series were its
 own, which `scrape.yml` now drops ("What the store scrapes"); the store
-under the kept list is not yet measured on hotserve-1. The caches'
+under the kept list is not yet measured on hotserve-1, whose deploy of
+2026-11-13 (a8038b4) came before it and kept 2,090 series of the stack
+after its cold boot. The caches'
 `vm_cache_size_bytes` is no longer a series the store keeps: a later
 measurement reads it from the store's `/metrics`.
 
@@ -1246,9 +1270,8 @@ on its general scales. metrics' examples:
 | Owed | S | O | D | Lands in |
 |---|---|---|---|---|
 | The store's RSS on a 1 or 2 GB box (a day on hotserve-1's 3.8 GB is in "Footprint") | — | — | — | a deploy to a box of that size |
-| On a booted Debian host, the namespace unit's test for a leftover before its delete (#430's `ExecStartPre`): setup's re-run does not restart the namespace unit, which is active, so it first runs at a reboot; measured in the e2e box alone. #426's proxies have had their cold boot: the deploy of 01b2fd5 to hotserve-1 rebooted it at about 17:53 UTC on 2026-11-12, and both came back as no root; the am proxy is gone since #435, and the cold boot of the units that replaced it is the last dashed row | — | — | — | the next reboot of hotserve-1 after a deploy that carries #430 |
+| On a booted Debian host, the delete-a-leftover branch of the namespace unit's test before its delete (#430's `ExecStartPre`), measured in the e2e box alone. A reboot cannot reach it: a cold boot has an empty `/run`, so hotserve-1's of 2026-11-13 at a8038b4 took the nothing-to-delete branch alone (the unit's start took 165 ms, with no `Cannot remove namespace` line), and setup's re-run does not restart the namespace unit, which is active. #426's proxies have had their cold boot: the deploy of 01b2fd5 to hotserve-1 rebooted it at about 17:53 UTC on 2026-11-12, and both came back as no root | — | — | — | a start of the namespace unit on hotserve-1 with `/run/netns/motel-metrics` already there (a start after one that failed past its `ip netns add`), not a reboot |
 | Debian's security support for `victoria-metrics` 1.112.0 and `prometheus-alertmanager` 0.28.1 on trixie, whose binaries are built with Go 1.24.2 (the store, vmalert) and 1.24.1 (Alertmanager), and a dist-upgrade check of both drop-ins' flags | — | — | — | before any release |
-| A cold boot on hotserve-1 with Alertmanager's socket in the namespace, its drop-in and the namespace unit's `TimeoutStartSec=` and `ExecStartPost=`, and the upgrade from the proxy shape there (measured in the e2e box alone: "The shape") | — | — | — | the next deploy to hotserve-1, `motel monitor setup --metrics` after it, and a reboot |
 
 ## e2e rows
 
@@ -1541,3 +1564,13 @@ Dated one-liners; the full text of each is in git.
   counter, `up`; 82 of over 2,000 series on hotserve-1. A test holds
   the list to motel's queries, and each load warns of a `scrape.yml`
   setup wrote before.
+- 2026-11-13 — The deploy of a8038b4 (#435) to hotserve-1 and a cold
+  boot ("The shape"): `setup --metrics` retired the proxy and restarted
+  Alertmanager once, and after the boot every unit of the stack was up
+  within about a second of `sysinit.target`, Alertmanager started once
+  by its sockets, with no manual start, restart or failed unit; the
+  heartbeat's gap was 6 min 50 s. The cold-boot Owed row closes; the
+  leftover row stays, since a cold boot takes the nothing-to-delete
+  branch alone. Setup's mask no longer says it is for an install on a
+  run that installs nothing, the drift warning names the proxy setup
+  will retire, and the help names `motel`, not `caddy`.

@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 )
 
@@ -52,6 +53,10 @@ const (
 	oldAMProxySocket  = "motel-am-proxy.socket"
 	oldAMProxyService = "motel-am-proxy.service"
 )
+
+// oldAMProxyUnits are both, in the order setup retires them; the load's
+// warning (LoadWarnings) names those still there from the same list.
+var oldAMProxyUnits = []string{oldAMProxySocket, oldAMProxyService}
 
 // metricsUnits are setup's unit files, each at its path under unitDir.
 func metricsUnits() []struct {
@@ -99,10 +104,21 @@ func metricsSetup(sys system, root string, out io.Writer) (err error) {
 	if err != nil {
 		return fmt.Errorf("the motel user: %w (is motel installed?)", err)
 	}
+	// Which packages are there, asked before the mask, so that the mask's
+	// line names its reason: the store's install, or none (a re-run, or
+	// iproute2 alone missing).
+	var pkgs, have []string
+	for _, p := range []string{vmPackage, ipPackage} {
+		if sys.installed(p) {
+			have = append(have, p)
+		} else {
+			pkgs = append(pkgs, p)
+		}
+	}
 	if err := sys.run("systemctl", "mask", vmService); err != nil {
 		return err
 	}
-	say("masked %s, so the install starts nothing", vmService)
+	say("%s", maskSaid(vmService, slices.Contains(pkgs, vmPackage)))
 	// Set when the proxy shape's port is free (every unit is written by
 	// then): from there on a failure may leave vmalert no outlet unless
 	// Alertmanager takes up its socket in the namespace.
@@ -119,13 +135,8 @@ func metricsSetup(sys system, root string, out io.Writer) (err error) {
 	if err := sys.run("systemctl", "stop", vmService); err != nil {
 		return err
 	}
-	var pkgs []string
-	for _, p := range []string{vmPackage, ipPackage} {
-		if sys.installed(p) {
-			say("%s is installed", p)
-		} else {
-			pkgs = append(pkgs, p)
-		}
+	for _, p := range have {
+		say("%s is installed", p)
 	}
 	if len(pkgs) > 0 {
 		if err := sys.run("apt-get", append([]string{"install", "-y", "--no-install-recommends"}, pkgs...)...); err != nil {
@@ -192,7 +203,7 @@ func metricsSetup(sys system, root string, out io.Writer) (err error) {
 	// stopped, not while it still carries vmalert's posts.
 	retired = !isFile(at(filepath.Join(unitDir, oldAMProxySocket)))
 	var gone []string
-	for _, u := range []string{oldAMProxySocket, oldAMProxyService} {
+	for _, u := range oldAMProxyUnits {
 		if !isFile(at(filepath.Join(unitDir, u))) {
 			continue
 		}

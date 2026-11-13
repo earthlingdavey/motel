@@ -108,3 +108,57 @@ func TestLoadWarningsSayStaleUnits(t *testing.T) {
 		t.Fatalf("no block: %v", w)
 	}
 }
+
+// TestLoadWarningsSayTheProxyGoes: a box set up before Alertmanager held
+// its own socket in the namespace (#435) has the proxy's units, which
+// setup retires, restarting Alertmanager once. The warning before setup
+// says so (the deploy of a8038b4 to hotserve-1 said only which files
+// differ), and says it with no file stale too: the new socket and drop-in
+// are missing there, which no comparison sees.
+func TestLoadWarningsSayTheProxyGoes(t *testing.T) {
+	root := t.TempDir()
+	was := unitRoot
+	unitRoot = root
+	t.Cleanup(func() { unitRoot = was })
+	put := func(path string, data []byte) {
+		t.Helper()
+		p := filepath.Join(root, path)
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, data, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, u := range metricsUnits() {
+		put(u.path, u.data)
+	}
+	store := []byte(`{"metrics":{}}`)
+	if w := LoadWarnings("run", store); len(w) != 0 {
+		t.Fatalf("this binary's units, no proxy: %v", w)
+	}
+	sock, svc := filepath.Join(unitDir, oldAMProxySocket), filepath.Join(unitDir, oldAMProxyService)
+	put(sock, []byte("[Socket]\nListenStream=127.0.0.1:9093\n"))
+	put(svc, []byte("[Service]\nExecStart=/usr/lib/systemd/systemd-socket-proxyd /run/motel-notify/am.sock\n"))
+	// Setup restarts Alertmanager only when it does not listen in the
+	// namespace yet (a retirement cut short may have left it listening).
+	const restarts = " and, unless Alertmanager listens in the store's namespace already, restarts (or starts) Alertmanager once so that it does"
+	want := "monitor: the proxy an older setup wrote for Alertmanager (" + sock + ", " + svc + ") is still in place: run motel monitor setup --metrics as root, which retires it" + restarts
+	if w := LoadWarnings("run", store); len(w) != 1 || w[0] != want {
+		t.Fatalf("the proxy alone:\n%v\nwant\n%s", w, want)
+	}
+	put(metricsUnits()[1].path, []byte("[Service]\nType=oneshot\n"))
+	want = "monitor: the files motel monitor setup --metrics wrote differ from this motel's (" + metricsUnits()[1].path + "), and the proxy an older setup wrote for Alertmanager (" + sock + ", " + svc + ") is still in place: run motel monitor setup --metrics as root to put this version's in place; it retires the proxy" + restarts
+	if w := LoadWarnings("run", store); len(w) != 1 || w[0] != want {
+		t.Fatalf("a stale unit and the proxy:\n%v\nwant\n%s", w, want)
+	}
+	// A retirement cut short after the socket: the service alone named.
+	put(metricsUnits()[1].path, metricsUnits()[1].data)
+	if err := os.Remove(filepath.Join(root, sock)); err != nil {
+		t.Fatal(err)
+	}
+	want = "monitor: the proxy an older setup wrote for Alertmanager (" + svc + ") is still in place: run motel monitor setup --metrics as root, which retires it" + restarts
+	if w := LoadWarnings("run", store); len(w) != 1 || w[0] != want {
+		t.Fatalf("the proxy's service alone:\n%v\nwant\n%s", w, want)
+	}
+}

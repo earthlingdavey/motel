@@ -61,6 +61,16 @@ func isFile(p string) bool {
 	return err == nil && fi.Mode().IsRegular()
 }
 
+// maskSaid is a setup's line for its mask of service: the install's sake
+// when it installs, and on a run that installs nothing (a re-run) the
+// units it rewrites, which the service is stopped for until the unmask.
+func maskSaid(service string, installs bool) string {
+	if installs {
+		return "masked " + service + ", so the install starts nothing"
+	}
+	return "masked " + service + ", so nothing starts it while its units are written"
+}
+
 // putBackOnFailure is deferred by a setup right after it masks service,
 // before the stop. A setup masks and stops the daemon before any step
 // that can fail (an install, a unit written to a full disk), and an
@@ -236,10 +246,12 @@ func setup(sys system, root string, out io.Writer) (err error) {
 	if err != nil {
 		return fmt.Errorf("the motel user: %w (is motel installed?)", err)
 	}
+	// Asked before the mask, so that the mask's line names its reason.
+	installs := !sys.installed(amPackage)
 	if err := sys.run("systemctl", "mask", amService); err != nil {
 		return err
 	}
-	say("masked %s, so the install starts nothing", amService)
+	say("%s", maskSaid(amService, installs))
 	// Its socket starts it again at the next connection, once unmasked.
 	defer putBackOnFailure(sys, say, rerun, amService, []string{amSocket}, nil, nil, &err)()
 	// One installed by hand before setup runs on Debian's :9093 and
@@ -249,7 +261,7 @@ func setup(sys system, root string, out io.Writer) (err error) {
 	if err := sys.run("systemctl", "stop", amService); err != nil {
 		return err
 	}
-	if sys.installed(amPackage) {
+	if !installs {
 		say("%s is installed", amPackage)
 	} else {
 		if err := sys.run("apt-get", "install", "-y", "--no-install-recommends", amPackage); err != nil {

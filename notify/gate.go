@@ -67,8 +67,37 @@ func LoadWarnings(cmd string, monitor []byte) []string {
 		case !same:
 			stale = append(stale, scrape)
 		}
+		// The proxy shape's units, which setup retires: a box upgraded
+		// from it is told what the run will do beyond rewriting files.
+		var proxy []string
+		for _, u := range oldAMProxyUnits {
+			if p := filepath.Join(unitDir, u); isFile(filepath.Join(unitRoot, p)) {
+				proxy = append(proxy, p)
+			}
+		}
+		var what []string
 		if len(stale) > 0 {
-			out = append(out, "monitor: the files motel monitor setup --metrics wrote differ from this motel's ("+strings.Join(stale, ", ")+"): run motel monitor setup --metrics as root to put this version's in place")
+			what = append(what, "the files motel monitor setup --metrics wrote differ from this motel's ("+strings.Join(stale, ", ")+")")
+		}
+		if len(proxy) > 0 {
+			what = append(what, "the proxy an older setup wrote for Alertmanager ("+strings.Join(proxy, ", ")+") is still in place")
+		}
+		if len(what) > 0 {
+			msg := "monitor: " + strings.Join(what, ", and ") + ": run motel monitor setup --metrics as root"
+			switch {
+			case len(proxy) == 0:
+				msg += " to put this version's in place"
+			case len(stale) > 0:
+				msg += " to put this version's in place; it retires the proxy"
+			default:
+				msg += ", which retires it"
+			}
+			if len(proxy) > 0 {
+				// Setup's own test (amListenInNamespace): a box whose
+				// retirement was cut short may listen there already.
+				msg += " and, unless Alertmanager listens in the store's namespace already, restarts (or starts) Alertmanager once so that it does"
+			}
+			out = append(out, msg)
 		}
 	}
 	return out

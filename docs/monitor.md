@@ -571,7 +571,8 @@ reads the store reads them.
 
 Debian's Alertmanager package includes `amtool`. It speaks TCP only, so
 on a box set up with `--metrics` you run it inside the store's
-namespace, where vmalert's proxy listens:
+namespace, where Alertmanager itself listens on `127.0.0.1:9093`
+(`motel-am-metrics.socket`, beside its unix socket):
 
 ```
 $ ip netns exec motel-metrics amtool --alertmanager.url=http://127.0.0.1:9093 alert
@@ -736,6 +737,6 @@ the sites: v0.6.1 refuses those too.
 | The heartbeat's pings | the same image at c979404, at the stub receiver | 299 s and 300 s apart undisturbed; 439 s across a restart of motel 140 s after a ping |
 | A `--state firing` across a restart of motel | the same image at c979404 | `[RESOLVED]` five minutes after the restart, nothing having resolved it |
 | A reboot after going back to v0.6.1 | the same image, the container restarted | the store and vmalert come back, Alertmanager and both its sockets stay down, nothing is sent |
-| A reboot with monitor set up | hotserve-1 (Debian 13, at 9228935), three cold boots | the store and its sockets come back. Not checked here at 01b2fd5 |
-| Setup's output with Alertmanager's socket in the store's namespace (first run, second run, upgrade from the proxy), and step 2's `--metrics` line | the metrics e2e box, 2026-11-12, with the change that replaced the proxy | as shown; after step 2, Alertmanager, both its sockets and vmalert stay down for 70 s while the store scrapes 9093 and motel reads `am.sock`. A cold boot with these units is not yet measured |
+| A reboot with monitor set up | hotserve-1 (Debian 13, at 9228935), three cold boots; again at a8038b4, with Alertmanager's own socket in the store's namespace, 2026-11-13 | the store and its sockets come back. At a8038b4 every unit of the stack is up within about a second of `sysinit.target`, Alertmanager starts once, by socket activation, nothing is started by hand and nothing fails; the heartbeat's next ping comes 6 min 50 s after its last before the reboot, the downtime included |
+| Setup's output with Alertmanager's socket in the store's namespace (first run, second run, upgrade from the proxy), and step 2's `--metrics` line | the metrics e2e box, 2026-11-12, with the change that replaced the proxy; the upgrade from the proxy again on hotserve-1 at a8038b4, 2026-11-13 | as shown; after step 2, Alertmanager, both its sockets and vmalert stay down for 70 s while the store scrapes 9093 and motel reads `am.sock`. On hotserve-1 the upgrade took 6 s, with the site answering throughout; its cold boot is the row above |
 | What the store keeps of its own scrapes, and the store's and vmalert's pages read live | the metrics e2e box at 59df185, 2026-11-13 (metrics 4) | of `victoria-metrics` `up` and `vm_free_disk_space_bytes`, of `vmalert` `up`, of `alertmanager` `up` and `alertmanager_notifications_failed_total`, each with `scrape_*`; Alertmanager's page is the store's scrape of it |

@@ -349,6 +349,9 @@ func TestServeSendCarriesDetails(t *testing.T) {
 type fakeSystem struct {
 	cmds        []string
 	isInstalled bool
+	// missing, when set, are the packages not installed, every other
+	// one installed (isInstalled aside).
+	missing []string
 	// failOn fails every command that begins with one of its
 	// |-separated prefixes.
 	failOn string
@@ -366,7 +369,12 @@ func (f *fakeSystem) run(name string, args ...string) error {
 	}
 	return nil
 }
-func (f *fakeSystem) installed(string) bool { return f.isInstalled }
+func (f *fakeSystem) installed(p string) bool {
+	if f.missing != nil {
+		return !slices.Contains(f.missing, p)
+	}
+	return f.isInstalled
+}
 func (f *fakeSystem) chown(p string, uid, gid int) error {
 	if f.owners == nil {
 		f.owners = map[string][2]int{}
@@ -491,6 +499,10 @@ func TestSetupOrderAndFiles(t *testing.T) {
 	if err != nil || !bytes.Contains(cfg, []byte("receiver: blackhole")) {
 		t.Fatalf("default config = %q, %v", cfg, err)
 	}
+	if !strings.HasPrefix(out.String(), "masked prometheus-alertmanager.service, so the install starts nothing\ninstalled prometheus-alertmanager\n") {
+		t.Errorf("a first run's mask: setup said\n%s", out.String())
+	}
+	out.Reset()
 	// Run again on a box already set up: the package is not installed
 	// again, and the config motel rendered since is not replaced.
 	if err := os.WriteFile(filepath.Join(dir, ConfigName), []byte("rendered\n"), 0o640); err != nil {
@@ -507,6 +519,11 @@ func TestSetupOrderAndFiles(t *testing.T) {
 	}
 	if fs1.cmds[0] != "systemctl mask prometheus-alertmanager.service" {
 		t.Fatalf("not masked first: %v", fs1.cmds)
+	}
+	// It installs nothing, so its mask is not said to be for an install.
+	if !strings.HasPrefix(out.String(), "masked prometheus-alertmanager.service, so nothing starts it while its units are written\nprometheus-alertmanager is installed\n") ||
+		strings.Contains(out.String(), "install starts nothing") {
+		t.Errorf("a re-run's mask: setup said\n%s", out.String())
 	}
 	if b, _ := os.ReadFile(filepath.Join(dir, ConfigName)); string(b) != "rendered\n" {
 		t.Fatalf("setup replaced motel's rendered config: %q", b)

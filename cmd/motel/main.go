@@ -12,6 +12,7 @@ package main
 import (
 	"os"
 
+	"github.com/caddyserver/caddy/v2"
 	caddycmd "github.com/caddyserver/caddy/v2/cmd"
 
 	// Standard Caddy modules — this is what makes the binary equivalent
@@ -31,6 +32,25 @@ import (
 	_ "github.com/darkweak/storages/otter/caddy"
 )
 
+// longDescription is `motel --help`'s text above the commands.
+const longDescription = `motel is the smallhours app server: Caddy with zero-downtime app
+deploys (liveswap), rate-limit hint enforcement (penaltybox), backups,
+the box's config channel, monitor (who motel tells, and the numbers)
+and HTTP caching compiled in. Its commands, Caddyfile and admin API are
+Caddy's, under the name motel.
+
+On a box, motel runs as motel.service from /etc/motel/Caddyfile, and
+systemctl starts, stops and reloads it. With a box repository, change
+the Caddyfile by a push: the next push replaces an edit made here.
+Without one, after an edit:
+
+	motel validate --config /etc/motel/Caddyfile
+	systemctl reload motel
+
+motel's own commands are listed below beside Caddy's; the motel
+repository's README and docs/ describe them. The examples are Caddy's.
+`
+
 func main() {
 	// Before Caddy's own validate and reload, whether a backup run would
 	// see what the Caddyfile declares (backupcheck.go). Caddy's commands
@@ -46,5 +66,12 @@ func main() {
 	if len(os.Args) > 1 {
 		notify.SetCommand(os.Args[1])
 	}
+	// The binary's name in every usage line Caddy's CLI prints
+	// (`motel monitor setup [--metrics]`, not `caddy monitor …`), and
+	// motel's own description at the root's help in place of Caddy's,
+	// which tells the reader to run `caddy run`. The root's examples are
+	// Caddy's, fixed in its command, and still say `caddy`.
+	caddy.CustomBinaryName = "motel"
+	caddy.CustomLongDescription = longDescription
 	caddycmd.Main()
 }
