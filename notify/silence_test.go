@@ -78,7 +78,15 @@ func TestSilenceCheck(t *testing.T) {
 			}
 		})
 	}
+	// A refusal names the matcher, never its value: Caddy journals it.
 	r := goodSilence()
+	for _, m := range []string{`url="https://ntfy.sh/ops-alerts"`, "y=~(x"} {
+		r.Matchers = []string{"alertname=x", m}
+		if err := r.Check(); err == nil || strings.Contains(err.Error(), "ntfy") || strings.Contains(err.Error(), "(x") {
+			t.Fatalf("a refusal echoing its value: %v", err)
+		}
+	}
+	r = goodSilence()
 	r.Duration = ""
 	if _, d, err := r.parse(); err != nil || d != defaultSilence {
 		t.Fatalf("no duration: %s, %v", d, err)
@@ -195,14 +203,6 @@ func TestServeSilence(t *testing.T) {
 		t.Fatalf("journal matchers: %#v", fields["matchers"])
 	}
 
-	// A release's git sha is refused, as the filter masks it (accepted:
-	// DESIGN-notify.md, "Accepted residuals").
-	sha := goodSilence()
-	sha.Matchers = []string{"alertname=deploy_failed", "release=3f9c2a1be0d4c5f6a7b8c9d0e1f2a3b4c5d6e7f8"}
-	if _, err := callAdmin(t, serveSilence, http.MethodPost, sha); apiStatus(err) != http.StatusUnprocessableEntity {
-		t.Fatalf("a sha in a matcher: %v", err)
-	}
-
 	// Refused before Alertmanager hears of it.
 	bad := goodSilence()
 	bad.Matchers = []string{"alertname=Watchdog"}
@@ -215,11 +215,11 @@ func TestServeSilence(t *testing.T) {
 		t.Fatalf("a URL in the comment: %v", err)
 	}
 	bad = goodSilence()
-	// A matcher goes through the whole filter: a webhook's random part,
-	// regex-escaped so that no known form matches, is masked as a token.
-	bad.Matchers = []string{"alertname=x", `notify_channel=~https://hooks\.slack\.com/services/T0/B0/Zx9Kq2Lm8Vb4Nw7Rt5Yp3Hs6Jd1F`} // gitleaks:allow — made up for this test
-	if _, err := callAdmin(t, serveSilence, http.MethodPost, bad); apiStatus(err) != http.StatusUnprocessableEntity || !strings.Contains(err.Error(), "filter masks") {
-		t.Fatalf("a token in a matcher: %v", err)
+	// A channel URL in a regex, escaped so that no form of it is in the
+	// text: refused by what the regex matches, before Alertmanager.
+	bad.Matchers = []string{"alertname=x", `notify_channel=~https://hooks\.slack\.com/services/T0/B0/secretpart`} // gitleaks:allow — made up for this test
+	if _, err := callAdmin(t, serveSilence, http.MethodPost, bad); apiStatus(err) != http.StatusUnprocessableEntity || !strings.Contains(err.Error(), "matcher 2 (notify_channel) matches a value of the box's secrets file") {
+		t.Fatalf("an escaped URL in a matcher: %v", err)
 	}
 	if _, err := callAdmin(t, serveSilence, http.MethodPost, `{"matchers":["alertname=x"],"comment":"c","by":"a","labels":{}}`); apiStatus(err) != http.StatusBadRequest {
 		t.Fatalf("an unknown field: %v", err)
@@ -343,7 +343,7 @@ func TestSilenceCommandOutput(t *testing.T) {
 			`{"error":"these matchers silence Watchdog, the heartbeat: its pings would stop and the check off the box would report the box down; pause that check instead"}` + "\n", true},
 		{"no comment json", []string{"add", "--json", "alertname=disk_low"},
 			`{"error":"comment is one line, not empty: say why, for whoever finds the silence"}` + "\n", true},
-		{"bad id json", []string{"expire", "--json", "x"}, `{"error":"\"x\" is not a silence id (Alertmanager's are UUIDs, as silence add prints them)"}` + "\n", true},
+		{"bad id json", []string{"expire", "--json", "x"}, `{"error":"that is not a silence id (Alertmanager's are UUIDs, as silence add prints them)"}` + "\n", true},
 		{"refused text", []string{"add", "--comment", "x", "severity=none"}, "", true},
 	}
 	for _, c := range cases {
@@ -415,5 +415,69 @@ func TestInvokingUser(t *testing.T) {
 	t.Setenv("USER", "a b")
 	if got := invokingUser(); !byRe.MatchString(got) {
 		t.Fatalf("a bad USER: %q", got)
+	}
+}
+
+// filterKnown are a box's secrets as the filter holds them: a Slack
+// webhook with its 24-character secret, and an ntfy topic too short
+// and too plain for the entropy layer.
+var filterKnown = []string{
+	// Split so that GitHub's push protection, which knows Slack's URL
+	// shape, does not refuse a made-up one.
+	"NOTIFY_OPS_URL=https://hooks.slack" + ".com/services/T0A1B2C3D/B0E4F5G6H/q8Rm2vTx9Lk4Wp7Zn3Hc6Yd1", // gitleaks:allow — made up for this test
+	"NOTIFY_PAGER_URL=https://ntfy.sh/ops-alerts",
+}
+
+const testSha = "3f9c2a1be0d4c5f6a7b8c9d0e1f2a3b4c5d6e7f8"
+
+func TestSilenceFilter(t *testing.T) {
+	cases := []struct {
+		name     string
+		matchers []string
+		comment  string
+		want     string // "" for taken
+	}{
+		{"slack escaped", []string{"alertname=x", `notify_channel=~https://hooks\.slack\.com/services/T0A1B2C3D/B0E4F5G6H/q8Rm2vTx9Lk4Wp7Zn3Hc6Yd1`}, "", "matcher 2 (notify_channel) matches a value"}, // gitleaks:allow — made up for this test
+		{"ntfy escaped", []string{"alertname=x", `notify_channel=~https://ntfy\.sh/ops-alerts`}, "", "matcher 2 (notify_channel) matches a value"},
+		{"ntfy by a wildcard", []string{"alertname=x", `notify_channel=~.*ntfy\.sh/ops-alerts`}, "", "matcher 2 (notify_channel) matches a value"},
+		{"ntfy negated", []string{"alertname=x", `notify_channel!~https://ntfy\.sh/ops-alerts`}, "", "matcher 2 (notify_channel) matches a value"},
+		{"ntfy literal in a regex that misses it", []string{"alertname=x", `x=~(https://ntfy\.sh/ops-alerts)?zzz`}, "", "matcher 2 (x) holds what the filter masks"},
+		{"ntfy plain", []string{"alertname=x", "url=https://ntfy.sh/ops-alerts"}, "", "matcher 2 (url) holds what the filter masks"},
+		{"a sha outside release", []string{"alertname=x", "app=" + testSha}, "", "matcher 2 (app) holds what the filter masks"},
+		{"a sha in a regex release", []string{"alertname=x", "release=~" + testSha}, "", "matcher 2 (release) holds what the filter masks"},
+		{"a URL in the comment", []string{"alertname=x"}, "see https://ntfy.sh/ops-alerts", "the comment holds what the filter masks"},
+		{"a sha in the comment, no release", []string{"alertname=x"}, "rolling back " + testSha, "the comment holds"},
+		{"a release by its sha", []string{"alertname=deploy_failed", "release=" + testSha}, "rolling back " + testSha, ""},
+		{"a URL-shaped regex", []string{"alertname=x", `instance=~https?://example\.com/.*`}, "", ""},
+		{"a topic word alone", []string{"alertname=x", "instance=ops-alerts"}, "", ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			req := goodSilence()
+			req.Matchers = c.matchers
+			if c.comment != "" {
+				req.Comment = c.comment
+			}
+			ms, _, err := req.parse()
+			if err != nil {
+				t.Fatal(err)
+			}
+			err = checkFiltered(filterKnown, req, ms)
+			if c.want == "" {
+				if err != nil {
+					t.Fatalf("refused: %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), c.want) {
+				t.Fatalf("err = %v, want %q", err, c.want)
+			}
+			// The refusal is journalled by Caddy: it names no value.
+			for _, v := range append(c.matchers, c.comment) {
+				if _, val, ok := strings.Cut(v, "="); ok && len(val) > 3 && strings.Contains(err.Error(), strings.TrimPrefix(val, "~")) {
+					t.Fatalf("the refusal echoes a value: %v", err)
+				}
+			}
+		})
 	}
 }

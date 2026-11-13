@@ -628,10 +628,11 @@ motel refuses:
 - a comment that is empty, on two lines or over 200 characters;
 - a duration under `1m` or over `24h`. The default is `2h`, from now;
 - a comment or matcher holding a value from the box's secrets file
-  (a channel URL) or a token that looks like a secret, such as a long
-  hex or random string. A release's git sha is refused too, so silence
-  a deploy's events by `alertname` and `app`, and name the ticket, not
-  a hash.
+  (a channel URL, escaped in a regex or not) or a token that looks like
+  a secret, such as a long hex or random string. A release is the
+  exception: `release=<its name or git sha>` silences that one release,
+  and the comment may quote it. The refusal names the matcher by its
+  place and label, never its value.
 
 Each silence added or expired is a line in motel's journal
 (`monitor: silence added` with its id, matchers, end, comment and

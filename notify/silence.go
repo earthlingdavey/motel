@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"regexp"
+	"regexp/syntax"
 	"slices"
 	"strings"
 	"time"
@@ -84,18 +85,23 @@ func (m amMatcher) matches(labels map[string]string) bool {
 	return hit == m.IsEqual
 }
 
-// parseMatcher reads one matcher strictly: a label name, one of the
-// four operators, and the rest as the value. No quotes: the shell's
+// parseMatcher reads the i-th matcher strictly: a label name, one of
+// the four operators, and the rest as the value. No quotes: the shell's
 // quoting is the only quoting, so `alertname="x"` is refused rather
-// than read as a value with quotes in it.
-func parseMatcher(s string) (amMatcher, error) {
+// than read as a value with quotes in it. A refusal names the matcher
+// by its place and label, never its value: the admin API journals a
+// route's refusal (Caddy's `request error` line), and a value may be
+// a secret pasted by mistake.
+func parseMatcher(i int, s string) (amMatcher, error) {
+	which := fmt.Sprintf("matcher %d", i+1)
 	if len(s) > maxMatcherLen {
-		return amMatcher{}, fmt.Errorf("matcher %.40q…: at most %d bytes", s, maxMatcherLen)
+		return amMatcher{}, fmt.Errorf("%s: at most %d bytes", which, maxMatcherLen)
 	}
 	name := labelNameRe.FindString(s)
 	if name == "" {
-		return amMatcher{}, fmt.Errorf("matcher %q: begins with a label name ([a-zA-Z_][a-zA-Z0-9_]*)", s)
+		return amMatcher{}, fmt.Errorf("%s: begins with a label name ([a-zA-Z_][a-zA-Z0-9_]*)", which)
 	}
+	which += " (" + name + ")"
 	rest := s[len(name):]
 	m := amMatcher{Name: name}
 	switch {
@@ -108,18 +114,23 @@ func parseMatcher(s string) (amMatcher, error) {
 	case strings.HasPrefix(rest, "="):
 		m.IsEqual, m.Value = true, rest[1:]
 	default:
-		return amMatcher{}, fmt.Errorf("matcher %q: label=value, label!=value, label=~regex or label!~regex", s)
+		return amMatcher{}, fmt.Errorf("%s: label=value, label!=value, label=~regex or label!~regex", which)
 	}
 	if strings.HasPrefix(m.Value, `"`) || strings.HasPrefix(m.Value, "'") {
-		return amMatcher{}, fmt.Errorf("matcher %q: no quotes around the value; the shell's quoting is enough", s)
+		return amMatcher{}, fmt.Errorf("%s: no quotes around the value; the shell's quoting is enough", which)
 	}
 	if strings.TrimSpace(m.Value) != m.Value || strings.ContainsFunc(m.Value, func(r rune) bool { return r < 0x20 || r == 0x7f }) {
-		return amMatcher{}, fmt.Errorf("matcher %q: the value has a space at an end or a control character", s)
+		return amMatcher{}, fmt.Errorf("%s: the value has a space at an end or a control character", which)
 	}
 	if m.IsRegex {
 		re, err := regexp.Compile("^(?:" + m.Value + ")$")
 		if err != nil {
-			return amMatcher{}, fmt.Errorf("matcher %q: %w", s, err)
+			code := "not a regex"
+			var se *syntax.Error
+			if errors.As(err, &se) {
+				code = se.Code.String()
+			}
+			return amMatcher{}, fmt.Errorf("%s: %s", which, code)
 		}
 		m.re = re
 	}
@@ -144,8 +155,8 @@ func (r SilenceRequest) parse() ([]amMatcher, time.Duration, error) {
 	}
 	ms := make([]amMatcher, 0, len(r.Matchers))
 	equal := false
-	for _, s := range r.Matchers {
-		m, err := parseMatcher(s)
+	for i, s := range r.Matchers {
+		m, err := parseMatcher(i, s)
 		if err != nil {
 			return nil, 0, err
 		}
@@ -168,7 +179,7 @@ func (r SilenceRequest) parse() ([]amMatcher, time.Duration, error) {
 	if r.Duration != "" {
 		var err error
 		if d, err = time.ParseDuration(r.Duration); err != nil {
-			return nil, 0, fmt.Errorf("duration %q: a Go duration such as 30m or 2h", r.Duration)
+			return nil, 0, errors.New("duration: a Go duration such as 30m or 2h")
 		}
 	}
 	if d < minSilence || d > maxSilence {
@@ -202,7 +213,7 @@ func checkComment(c string) error {
 // Check is the expire request's validation.
 func (r ExpireRequest) Check() error {
 	if !silenceIDRe.MatchString(r.ID) {
-		return fmt.Errorf("%q is not a silence id (Alertmanager's are UUIDs, as silence add prints them)", r.ID)
+		return errors.New("that is not a silence id (Alertmanager's are UUIDs, as silence add prints them)")
 	}
 	if !byRe.MatchString(r.By) {
 		return errors.New("by is the invoking user's name: letters, digits and _.@-, at most 64")
@@ -280,6 +291,79 @@ func silenceTarget() (*amClient, *zap.Logger, time.Time, []string, error) {
 	return newAMClient(active.socket()), logger, now, known, nil
 }
 
+// releaseNameRe is liveswap's version alphabet (liveswap/names.go,
+// versionRe): a release= matcher's value that holds to it is a release
+// name, safe to the filter as the engine's summaries take ev.Release.
+var releaseNameRe = regexp.MustCompile(`^[A-Za-z0-9_-][A-Za-z0-9._-]{0,63}$`)
+
+const masksWhat = "what the filter masks (a value from the box's secrets file, such as a channel URL, or a secret-shaped token such as a long random string)"
+
+// checkFiltered refuses a comment or matcher that holds what the filter
+// would mask: both are stored by Alertmanager and written to the
+// journal as they are, as send's instance is. A literal release=
+// matcher's value is safe, as a release is in the engine's summaries,
+// so a silence can name one release by its git sha (and the comment
+// quote it); a value of the secrets file is masked whatever is safe. A
+// regex is judged by what it means, not its text: one that matches a
+// value of the secrets file is refused (an escaped channel URL, which
+// no form of the value equals), and so is a literal run in it that the
+// filter masks; its own syntax (`?`, `.*`) is not shown to the filter.
+func checkFiltered(known []string, req SilenceRequest, ms []amMatcher) error {
+	var safe []string
+	for _, m := range ms {
+		if m.Name == "release" && m.IsEqual && !m.IsRegex && releaseNameRe.MatchString(m.Value) {
+			safe = append(safe, m.Value)
+		}
+	}
+	filter := liveswap.NewRedactor(known, safe)
+	masks := func(v string) bool {
+		out, _ := filter.Redact(v)
+		return out != v
+	}
+	if masks(req.Comment) {
+		return errors.New("the comment holds " + masksWhat + ": name the thing, not its credential")
+	}
+	for i, m := range ms {
+		which := fmt.Sprintf("matcher %d (%s)", i+1, m.Name)
+		if !m.IsRegex {
+			if masks(req.Matchers[i]) {
+				return fmt.Errorf("%s holds %s", which, masksWhat)
+			}
+			continue
+		}
+		for _, kv := range known {
+			if _, v, ok := strings.Cut(kv, "="); ok && v != "" && m.re.MatchString(v) {
+				return fmt.Errorf("%s matches a value of the box's secrets file: name the channel, not its URL", which)
+			}
+		}
+		if slices.ContainsFunc(regexLiterals(m.Value), masks) {
+			return fmt.Errorf("%s holds %s", which, masksWhat)
+		}
+	}
+	return nil
+}
+
+// regexLiterals are the literal runs of a regex, unescaped: the text it
+// spells out, as the filter would read it.
+func regexLiterals(expr string) []string {
+	re, err := syntax.Parse(expr, syntax.Perl)
+	if err != nil {
+		return []string{expr}
+	}
+	var out []string
+	var walk func(*syntax.Regexp)
+	walk = func(r *syntax.Regexp) {
+		if r.Op == syntax.OpLiteral {
+			out = append(out, string(r.Rune))
+		}
+		for _, sub := range r.Sub {
+			walk(sub)
+		}
+	}
+	walk(re)
+	return out
+}
+
 func badGateway(err error) error {
 	return caddy.APIError{HTTPStatus: http.StatusBadGateway, Err: err}
 }
@@ -299,15 +383,8 @@ func serveSilence(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	// The comment and the matchers are stored by Alertmanager and
-	// written to the journal as they are: one that holds what the
-	// filter would mask is refused, as send's instance is.
-	filter := liveswap.NewRedactor(known, nil)
-	if slices.ContainsFunc(append([]string{req.Comment}, req.Matchers...), func(v string) bool {
-		out, _ := filter.Redact(v)
-		return out != v
-	}) {
-		return unprocessable(errors.New("the comment or a matcher holds what the filter masks (a value from the box's secrets file, such as a channel URL, or a secret-shaped token such as a long hex or random string): name the thing, not its credential"))
+	if err := checkFiltered(known, req, ms); err != nil {
+		return unprocessable(err)
 	}
 	now = now.UTC().Truncate(time.Second)
 	s := amSilence{Matchers: ms, StartsAt: now, EndsAt: now.Add(d), CreatedBy: createdBy(req.By), Comment: req.Comment}
