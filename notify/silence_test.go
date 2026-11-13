@@ -470,24 +470,53 @@ func TestSilenceOfARuleOfOneApp(t *testing.T) {
 	}
 }
 
-// TestSilenceCommentMaskedWithTheCheckedConfig: the comment is masked
-// with the known values of the config the route checked, not with the
-// engine's after a reload that swapped it (Copilot round 2 on #444).
-func TestSilenceCommentMaskedWithTheCheckedConfig(t *testing.T) {
-	te, f := withFakeAM(t)
-	// The engine already points at a reloaded config's known values,
-	// which no longer hold the old secret; the config checked does.
-	te.active.known = []string{"NOTIFY_OLD_URL=https://hooks.slack.com/services/T0/B0/oldsecretpart"} // gitleaks:allow — made up for this test
-	te.known = nil
+// TestSilenceCommentMaskedAcrossAReload: the comment is masked with
+// the known values of the config the route checked and the engine's
+// now, so that a reload between the two neither unmasks a secret the
+// checked config knew nor misses one the new config added (Copilot
+// round 2 on #444, and its self-review). The journal line carries the
+// same masked text; the marker and the rest of the comment survive.
+func TestSilenceCommentMaskedAcrossAReload(t *testing.T) {
+	const (
+		oldURL = "https://hooks.slack.com/services/T0/B0/oldsecretpart" // gitleaks:allow — made up for this test
+		newURL = "https://hooks.slack.com/services/T0/B0/newsecretpart" // gitleaks:allow — made up for this test
+	)
+	for _, c := range []struct {
+		name         string
+		checked, now []string
+		url, key     string
+	}{
+		{"a secret the checked config knew", []string{"NOTIFY_OLD_URL=" + oldURL}, nil, oldURL, "NOTIFY_OLD_URL"},
+		{"a secret the reload added", nil, []string{"NOTIFY_NEW_URL=" + newURL}, newURL, "NOTIFY_NEW_URL"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			te, f := withFakeAM(t)
+			te.active.known, te.known = c.checked, c.now
+			req := goodSilence()
+			req.Comment = "resizing, see " + c.url + " for the thread"
+			if _, err := callAdmin(t, serveSilence, http.MethodPost, req); err != nil {
+				t.Fatal(err)
+			}
+			got := f.take()
+			if len(got) != 1 {
+				t.Fatalf("Alertmanager got %q", got)
+			}
+			var sent amSilence
+			if err := json.Unmarshal([]byte(strings.TrimPrefix(got[0], "POST /api/v2/silences ")), &sent); err != nil {
+				t.Fatal(err)
+			}
+			want := "resizing, see [redacted:" + c.key + "] for the thread"
+			if sent.Comment != want {
+				t.Fatalf("comment sent = %q, want %q", sent.Comment, want)
+			}
+			lines := te.lines("monitor: silence added")
+			if len(lines) != 1 || lines[0].ContextMap()["comment"] != want {
+				t.Fatalf("journal: %+v", lines)
+			}
+		})
+	}
+	_, f := withFakeAM(t)
 	req := goodSilence()
-	req.Comment = "see https://hooks.slack.com/services/T0/B0/oldsecretpart" // gitleaks:allow — made up for this test
-	if _, err := callAdmin(t, serveSilence, http.MethodPost, req); err != nil {
-		t.Fatal(err)
-	}
-	got := f.take()
-	if len(got) != 1 || strings.Contains(got[0], "oldsecretpart") {
-		t.Fatalf("Alertmanager got %q", got)
-	}
 	req.Comment = strings.Repeat("x", 200)
 	if _, err := callAdmin(t, serveSilence, http.MethodPost, req); err != nil {
 		t.Fatal(err)
@@ -497,20 +526,25 @@ func TestSilenceCommentMaskedWithTheCheckedConfig(t *testing.T) {
 	}
 }
 
-// TestSilenceBodyRefusalEchoesNothing: a body the decoder refuses (an
-// unknown field named like a secret, a broken JSON) is answered with a
-// fixed 400 that holds nothing of it; a GET is still 405.
-func TestSilenceBodyRefusalEchoesNothing(t *testing.T) {
+// TestAdminBodyRefusalEchoesNothing: a body the decoder refuses (an
+// unknown field named like a secret, a field of the wrong type, broken
+// JSON) is answered by every notify route with one fixed 400 that holds
+// nothing of it, since Caddy journals the refusal; a GET is still 405.
+func TestAdminBodyRefusalEchoesNothing(t *testing.T) {
 	withFakeAM(t)
-	for _, h := range []caddy.AdminHandlerFunc{serveSilence, serveExpire} {
-		for _, body := range []string{`{"hunter2_token_q8Rm2vTx9Lk4":1}`, `{"id":"hunter2_token_q8Rm2vTx9Lk4"`} {
+	for name, h := range map[string]caddy.AdminHandlerFunc{
+		"events": serveSend, "test": serveTest, "silences": serveSilence, "expire": serveExpire,
+	} {
+		for _, body := range []string{
+			`{"hunter2_token_q8Rm2vTx9Lk4":1}`, `{"comment":5}`, `{"summary":5}`, `{"channel":5}`, `{"id":5}`, `{"id":"hunter2_token_q8Rm2vTx9Lk4"`,
+		} {
 			_, err := callAdmin(t, h, http.MethodPost, body)
-			if apiStatus(err) != http.StatusBadRequest || strings.Contains(err.Error(), "hunter2") || !strings.Contains(err.Error(), "the body is not this route's JSON request") {
-				t.Fatalf("%s: %v", body, err)
+			if apiStatus(err) != http.StatusBadRequest || err.Error() != errBadBody.Error() {
+				t.Fatalf("%s %s: %v", name, body, err)
 			}
 		}
 		if _, err := callAdmin(t, h, http.MethodGet, ""); apiStatus(err) != http.StatusMethodNotAllowed {
-			t.Fatalf("a GET: %v", err)
+			t.Fatalf("%s a GET: %v", name, err)
 		}
 	}
 }

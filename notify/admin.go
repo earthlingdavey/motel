@@ -136,14 +136,19 @@ func (r SendRequest) Check() error {
 	return nil
 }
 
+// errBadBody is readJSON's one answer to a body it cannot take: fixed,
+// since Go's decoder names an unknown field or a mistyped one, and
+// Caddy journals a route's refusal (`admin.api` `request error`).
+var errBadBody = errors.New("the body is not this route's JSON request")
+
 func readJSON(r *http.Request, v any) error {
 	if r.Method != http.MethodPost {
 		return caddy.APIError{HTTPStatus: http.StatusMethodNotAllowed, Err: errors.New("POST only")}
 	}
 	dec := json.NewDecoder(io.LimitReader(r.Body, 16<<10))
 	dec.DisallowUnknownFields()
-	if err := dec.Decode(v); err != nil {
-		return caddy.APIError{HTTPStatus: http.StatusBadRequest, Err: fmt.Errorf("the body: %w", err)}
+	if dec.Decode(v) != nil {
+		return caddy.APIError{HTTPStatus: http.StatusBadRequest, Err: errBadBody}
 	}
 	return nil
 }

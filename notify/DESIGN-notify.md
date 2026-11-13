@@ -543,17 +543,20 @@ carry (`labelsFor`, `oneShotAlert`):
 | a comment empty, over 200 characters, or with a control character (a newline, a tab, an escape sequence, U+2028 or U+2029) | whoever finds the silence reads why, in a terminal among others |
 | a duration under 1m or over 24h (default 2h, from now; a fraction is kept, `ends_at` is RFC 3339 with nanoseconds) | a silence that outlives the incident hides the next one |
 | an id that is not a UUID; an id Alertmanager does not hold (422, `no silence <id> in Alertmanager`); one already expired (422, `silence <id> has already expired`) | Alertmanager 0.28.1 answers 200 to the expiry of an expired silence (measured in the e2e box), so the route asks its state first (`GET /api/v2/silence/{id}`) rather than journal an end that was not |
-| a body with unknown fields (a `matchers` list among them), or not JSON: one fixed 400, `the body is not this route's JSON request` | the route takes the request, never Alertmanager's shape; Go's decoder names an unknown field, which the journalled refusal must not carry |
+| a body with unknown fields (a `matchers` list among them), a field of the wrong type, or not JSON: one fixed 400, `the body is not this route's JSON request` (`readJSON`, which every notify route uses, `send`'s and `test`'s too) | the route takes the request, never Alertmanager's shape; Go's decoder names an unknown or mistyped field, which the journalled refusal must not carry |
 
 Not taken yet, and adding them later breaks nothing: an external
 producer's own names (`motel monitor send --name`), which no config
 lists; regexes; other labels.
 
 The comment is the one free text, and it is **masked, not refused**:
-`clean(comment, release)`, as a summary is, with the release safe as
-the engine takes it, and with the known values of the config the route
-checked, not the engine's at that instant (a reload between the two
-would mask with another file's). A refusal would echo nothing useful (it cannot
+`cleanText(known, comment, release)`, the filter and the 200-character
+cut a summary gets (the engine's `clean` is the same function over its
+own known values), with the release safe as the engine takes it, and
+`known` the union of the checked config's known values and the
+engine's at that instant: a reload between the route's check and the
+mask neither unmasks a secret the checked config knew nor misses one
+the new config added. A refusal would echo nothing useful (it cannot
 say which part without printing it) and would send the operator to
 guess; a masked comment in Alertmanager shows the filter's marker where
 the secret was, which reads as what it is. The bare-ntfy-topic limit of
@@ -748,6 +751,7 @@ on its general scales. notify's examples:
 | A silence's comment may hold Unicode format characters (bidi overrides U+202A–U+202E and U+2066–U+2069, zero-width ones, U+FEFF), which a terminal shows reordered: the comment misstates why the silence exists to whoever reads it raw | notify/silence.go (`checkComment`) | 2 | 5 | 3 | 30 by product, but second-pass hardening (the review rule stops at two passes): the comment comes from root, and the silence's matchers, which decide what is quiet, are motel's own; refusing `unicode.Cf` is size 1, risk 1 for the next change. /code-review pass 2 of the closed-set shape |
 | `onDiskReleases` and `lifecycleAlerts` copy lifecycleSink's cases by hand: a new liveswap one-shot added there and not here is silenceable only once `raisedAlerts` names it (`TestSilenceableAlertsAreWhatMotelRaises` fails until it does), and never by `--release` until `onDiskReleases` does | notify/silenceable.go | 2 | 5 | 1 | 10; the scan names the missing alert loudly; `--release` refused for it is a refusal, not a silent miss. /code-review pass 2 of the closed-set shape |
 | `liveswap.App.Releases` derives the app's directories from `Root` and the name again (`newAppDirs`) rather than the spec's own `dirs`; the same today, and apart only if an app's directories ever stop being `Root/<name>` | liveswap/liveswap.go (`Releases`) | 2 | 1 | 1 | 2; no such override exists. /code-review pass 2 of the closed-set shape |
+| A refused admin body names no field: after an upgrade, a new `motel monitor` command posting to a motel not yet restarted (a field the old binary does not know) reads as a plain `the body is not this route's JSON request` rather than naming the version skew | notify/admin.go (`readJSON`) | 2 | 3 | 1 | 6; refused loudly, and `systemctl restart motel` mends it; naming the field safely would mean listing the struct's fields by reflection to tell a known name from input (size 2, risk 1). /code-review of the Copilot round 2 fixes on #444 |
 | `created_by` and `expired_by` in the journal are what the caller's environment says (`SUDO_USER`, `USER`): root can name anyone | notify/silencecmd.go (`invokingUser`) | 1 | 5 | 5 | a label for whoever reads the silence, from a caller already root or motel, who could write the journal or Alertmanager directly; no identity is checked, and the doc says so. /code-review of the closed-set shape |
 | Two `motel monitor silence expire` of one silence at once, or one as the silence reaches its end: both pass the route's state check (`GET`) before either `DELETE`, which Alertmanager 0.28.1 answers 200 for an expired silence, so the journal has two `monitor: silence expired` lines, or one for a silence that ended on its own | notify/silence.go (`serveExpire`) | 2 | 3 | 3 | 18; the silence ends expired either way; only the journal's count is off, and Alertmanager's own `endsAt` says when it ended. A lock across both requests would hold the engine's lock over Alertmanager's answer, or add a lock of its own (size 3). /code-review pass 1 on monitor/silence |
 | A public host name that resolves, or rebinds, to a private address is posted to: the check is on the URL as written | notify/config.go (`checkURL`) | 1 | 5 | 5 | a channel URL is a signer's line today, and a signer can already run any code as an app that reaches the same addresses; scored by what T6 gains (nothing). Rescore when #417 lets a deployer choose a URL |

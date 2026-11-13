@@ -165,8 +165,10 @@ func (r SilenceRequest) checkSets(a *App) error {
 		if pinned != "" && pinned != r.App {
 			return fmt.Errorf("%s is a rule about %s alone, so a silence with another --app would match nothing", r.Alert, pinned)
 		}
-		if _, ok := postDeployRuleFor(a.Metrics, r.App); r.Alert == eventPostDeployRegressed && !ok {
-			return fmt.Errorf("no post_deploy rule judges %s's deploys, so %s never fires for it", r.App, eventPostDeployRegressed)
+		if r.Alert == eventPostDeployRegressed {
+			if _, ok := postDeployRuleFor(a.Metrics, r.App); !ok {
+				return fmt.Errorf("no post_deploy rule judges %s's deploys, so %s never fires for it", r.App, eventPostDeployRegressed)
+			}
 		}
 	}
 	if r.Release != "" {
@@ -275,18 +277,6 @@ func silenceTarget() (*App, *amClient, *zap.Logger, time.Time, error) {
 	return active, newAMClient(active.socket()), logger, now, nil
 }
 
-// readSilenceJSON is readJSON with a refusal that holds nothing of the
-// body: Go's decoder names an unknown field, and Caddy journals a
-// route's refusal (`admin.api` `request error`).
-func readSilenceJSON(r *http.Request, v any) error {
-	err := readJSON(r, v)
-	var ae caddy.APIError
-	if errors.As(err, &ae) && ae.HTTPStatus == http.StatusBadRequest {
-		return caddy.APIError{HTTPStatus: http.StatusBadRequest, Err: errors.New("the body is not this route's JSON request")}
-	}
-	return err
-}
-
 func badGateway(err error) error {
 	return caddy.APIError{HTTPStatus: http.StatusBadGateway, Err: err}
 }
@@ -296,7 +286,7 @@ func badGateway(err error) error {
 // `monitor: silence added` line.
 func serveSilence(w http.ResponseWriter, r *http.Request) error {
 	var req SilenceRequest
-	if err := readSilenceJSON(r, &req); err != nil {
+	if err := readJSON(r, &req); err != nil {
 		return err
 	}
 	d, err := req.parse()
@@ -313,9 +303,13 @@ func serveSilence(w http.ResponseWriter, r *http.Request) error {
 	// The comment is the one free text: masked as a summary is, the
 	// release safe as the engine takes it, rather than refused
 	// (DESIGN-notify.md, "Silences").
-	// The known values of the config checked above, not the engine's
-	// now: a reload between the two would mask with another file's.
-	comment := cleanText(active.known, req.Comment, req.Release)
+	// The known values of the config checked above and the engine's
+	// now: a reload between the two must neither unmask what the checked
+	// config knew nor miss what the new one added.
+	theEngine.mu.Lock()
+	known := append(slices.Clone(active.known), theEngine.known...)
+	theEngine.mu.Unlock()
+	comment := cleanText(known, req.Comment, req.Release)
 	now = now.UTC().Truncate(time.Second)
 	s := amSilence{Matchers: req.matchers(), StartsAt: now, EndsAt: now.Add(d), CreatedBy: createdBy(req.By), Comment: comment}
 	id, err := am.postSilence(r.Context(), s)
@@ -332,7 +326,7 @@ func serveSilence(w http.ResponseWriter, r *http.Request) error {
 // then the `monitor: silence expired` line.
 func serveExpire(w http.ResponseWriter, r *http.Request) error {
 	var req ExpireRequest
-	if err := readSilenceJSON(r, &req); err != nil {
+	if err := readJSON(r, &req); err != nil {
 		return err
 	}
 	if err := req.Check(); err != nil {
