@@ -417,10 +417,11 @@ func report(st *record.Status) {
 func showStatus(ctx context.Context, asJSON bool) error {
 	cfg := config()
 	now := time.Now()
+	// What is printed does not change the exit status: a stdout that
+	// takes none of it (a full disk, a closed pipe) leaves the reader with
+	// nothing to parse, and the status as it is.
 	cannot := func(warnings []string, err error) error {
-		if err := printStatus(os.Stdout, status.CouldNotTell(now, warnings, err.Error()), asJSON); err != nil {
-			return err
-		}
+		_ = printStatus(os.Stdout, status.CouldNotTell(now, warnings, err.Error()), asJSON)
 		return couldNotTell{err}
 	}
 	// Only a file that is not there says so. Any other answer — a
@@ -455,9 +456,7 @@ func showStatus(ctx context.Context, asJSON bool) error {
 		}
 	}
 	r := status.Report(in)
-	if err := printStatus(os.Stdout, r, asJSON); err != nil {
-		return err
-	}
+	_ = printStatus(os.Stdout, r, asJSON)
 	if !r.Healthy {
 		return errors.New("not every app has a fresh backup and a restore proven lately")
 	}

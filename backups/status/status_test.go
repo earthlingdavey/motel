@@ -520,3 +520,17 @@ func sameTime(a, b *time.Time) bool {
 	}
 	return a.Equal(*b)
 }
+
+// An age read off the JSON — at less the time — is the one the verdict
+// judged: no time is cut to the second while the verdict is not.
+func TestAnAgeReadOffTheResultIsTheVerdicts(t *testing.T) {
+	when := now.Add(900 * time.Millisecond)
+	st := with(func(a *record.App) {
+		a.LastOK = &record.Snapshot{ID: idA, Time: when.Add(-StaleAfter - 500*time.Millisecond), Seen: at(9 * time.Minute)}
+	})
+	r := Report(Input{Record: st, Now: when})
+	a := r.Apps[0]
+	if age := r.At.Sub(*a.LastCompleteBackup); a.Fresh != (age <= StaleAfter) {
+		t.Errorf("fresh = %v, and the age read off it %v", a.Fresh, age)
+	}
+}

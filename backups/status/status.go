@@ -132,15 +132,25 @@ func (r Result) Text() []string {
 // CouldNotTell is the Result of a look that could not be made, and
 // why; the warnings found before it are said.
 func CouldNotTell(now time.Time, warnings []string, why string) Result {
-	r := Result{At: stamp(now), CouldNotTell: record.Clean(why), Apps: []App{}, Running: []Unit{}, UnrecognisedUnits: []string{}, Lines: []Line{}}
+	r := newResult(now, warnings)
+	r.CouldNotTell = record.Clean(why)
+	return r
+}
+
+// newResult is one with nothing decided yet but the warnings, said
+// first.
+func newResult(now time.Time, warnings []string) Result {
+	r := Result{At: stamp(now), Apps: []App{}, Running: []Unit{}, UnrecognisedUnits: []string{}, Lines: []Line{}}
 	for _, w := range warnings {
 		r.Lines = append(r.Lines, Line{Level: Warning, Text: "warning: " + record.Clean(w)})
 	}
 	return r
 }
 
-// stamp is a time as the JSON gives it: UTC, to the second.
-func stamp(t time.Time) time.Time { return t.UTC().Truncate(time.Second) }
+// stamp is a time as the JSON gives it: in UTC, and as precise as the
+// verdicts reckoned with it, so that an age read off the JSON is the
+// one they judged.
+func stamp(t time.Time) time.Time { return t.UTC().Round(0) }
 
 func stampOf(t time.Time) *time.Time { s := stamp(t); return &s }
 
@@ -153,21 +163,21 @@ func stampOf(t time.Time) *time.Time { s := stamp(t); return &s }
 // listing of the repository since did not hold is not a backup.
 func Report(in Input) Result {
 	st, now, running, runningErr := in.Record, in.Now, in.Running, in.RunningErr
-	r := CouldNotTell(now, in.Warnings, "")
+	r := newResult(now, in.Warnings)
 	r.Healthy = true
 	// of is the app the lines said are of, and facts what is decided of
 	// it.
 	of, facts := "", (*App)(nil)
-	line := func(level, format string, a ...any) {
+	add := func(level, format string, a ...any) {
 		r.Lines = append(r.Lines, Line{App: of, Level: level, Text: fmt.Sprintf(format, a...)})
 	}
-	say := func(format string, a ...any) { line(Info, format, a...) }
+	say := func(format string, a ...any) { add(Info, format, a...) }
 	bad := func(format string, a ...any) {
 		r.Healthy = false
 		if facts != nil {
 			facts.Healthy = false
 		}
-		line(Problem, format, a...)
+		add(Problem, format, a...)
 	}
 	when, short := record.When, record.Short
 
@@ -229,7 +239,7 @@ func Report(in Input) Result {
 		bad("the last run ended early: %s", record.Text(st.Error))
 	}
 	if st.Warning != "" {
-		line(Warning, "warning: %s", record.Clean(st.Warning))
+		add(Warning, "warning: %s", record.Clean(st.Warning))
 	}
 
 	// gone: a listing was answered after the snapshot was last seen.
@@ -264,9 +274,12 @@ func Report(in Input) Result {
 			facts.LastCompleteBackup = stampOf(app.LastOK.Time)
 			facts.Fresh = !gone(app.LastOK) && now.Sub(app.LastOK.Time) <= StaleAfter
 		}
+		// Decided once, here: the lines below say what these are.
+		provenRecently := false
 		if p := app.RestoreProven; p != nil {
+			provenRecently = now.Sub(p.Time) <= ProvenOldAfter
 			facts.RestoreProven = stampOf(p.Time)
-			facts.RestoreProvenLately = now.Sub(p.Time) <= ProvenOldAfter && app.RestoreDrill == nil
+			facts.RestoreProvenLately = provenRecently && app.RestoreDrill == nil
 		}
 		at := record.Text(app.Looked)
 		if app.Class == record.Pending {
@@ -294,7 +307,7 @@ func Report(in Input) Result {
 			bad("%s: no complete backup yet", n)
 		case gone(app.LastOK):
 			bad("%s: snapshot %s is no longer in the repository (%s): it was the last complete backup, made %s", n, short(app.LastOK.ID), lastSeen(app.LastOK), when(app.LastOK.Time))
-		case now.Sub(app.LastOK.Time) > StaleAfter:
+		case !facts.Fresh:
 			bad("%s: stale: the last complete backup is from %s, more than %d hours ago, snapshot %s", n, when(app.LastOK.Time), int(StaleAfter.Hours()), short(app.LastOK.ID))
 		case app.Class != record.OK:
 			say("%s: last complete backup %s, snapshot %s", n, when(app.LastOK.Time), short(app.LastOK.ID))
@@ -303,11 +316,11 @@ func Report(in Input) Result {
 			continue // nothing in the repository to prove a restore of
 		}
 		if p := app.RestoreProven; p != nil {
-			line := fmt.Sprintf("%s: restore last proven: %s, snapshot %s", n, when(p.Time), short(p.Snapshot.ID))
-			if now.Sub(p.Time) > ProvenOldAfter {
-				bad("%s: old, more than %d days ago; `motel-backup drill`, as root, proves one now", line, int(ProvenOldAfter.Hours()/24))
+			proven := fmt.Sprintf("%s: restore last proven: %s, snapshot %s", n, when(p.Time), short(p.Snapshot.ID))
+			if !provenRecently {
+				bad("%s: old, more than %d days ago; `motel-backup drill`, as root, proves one now", proven, int(ProvenOldAfter.Hours()/24))
 			} else {
-				say("%s", line)
+				say("%s", proven)
 			}
 			// Pruned since, off the box: what was proven was proven.
 			if gone(&p.Snapshot) {
@@ -318,11 +331,11 @@ func Report(in Input) Result {
 		// it that proved nothing is not made good by an older proof.
 		switch d := app.RestoreDrill; {
 		case d != nil:
-			of := ""
+			snapOf := ""
 			if d.Snapshot.ID != "" { // one it could not ask the repository for has none
-				of = "snapshot " + short(d.Snapshot.ID) + ", "
+				snapOf = "snapshot " + short(d.Snapshot.ID) + ", "
 			}
-			bad("%s: restore not proven: %s (%s%s); `motel-backup drill`, as root, tries again", n, record.Text(d.Detail), of, when(d.Time))
+			bad("%s: restore not proven: %s (%s%s); `motel-backup drill`, as root, tries again", n, record.Text(d.Detail), snapOf, when(d.Time))
 		case app.RestoreProven == nil:
 			bad("%s: restore not proven: no drill of it has run; `motel-backup drill`, as root, proves it", n)
 		}

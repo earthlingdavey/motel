@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -162,11 +163,31 @@ func TestStatusTakesJSONAlone(t *testing.T) {
 		{[]string{"--json=true"}, false, false},
 		{[]string{"--"}, false, false},
 	} {
-		if !arguments("status", tc.args) == tc.ok {
-			t.Errorf("arguments(status, %q) = %v", tc.args, !tc.ok)
+		if got := arguments("status", tc.args); got != tc.ok {
+			t.Errorf("arguments(status, %q) = %v", tc.args, got)
 		}
 		if asJSON, ok := statusArgs(tc.args); ok != tc.ok || asJSON != tc.asJSON {
 			t.Errorf("statusArgs(%q) = %v, %v", tc.args, asJSON, ok)
+		}
+	}
+}
+
+// A stdout that takes nothing does not change the exit status: no
+// setup here is still could not tell, 3.
+func TestStatusLeavesWithItsStatusWhateverStdoutTakes(t *testing.T) {
+	if _, err := os.Lstat(config().EnvFile); err == nil {
+		t.Skip("backups are set up on this machine")
+	}
+	r, w, err := os.Pipe()
+	must(t, err)
+	must(t, r.Close())
+	must(t, w.Close()) // every write to it fails
+	old := os.Stdout
+	os.Stdout = w
+	defer func() { os.Stdout = old }()
+	for _, asJSON := range []bool{false, true} {
+		if err := showStatus(context.Background(), asJSON); exitStatus(err) != 3 {
+			t.Errorf("json %v: exits %d (%v), want 3", asJSON, exitStatus(err), err)
 		}
 	}
 }
