@@ -250,6 +250,9 @@ out=$(motel monitor silence add --comment "e2e: unknown" --alert no_such_alert 2
 	&& fail "an unknown alert was silenced: $out" \
 	|| { echo "$out" | grep -q -- '--alert names none' && ! echo "$out" | grep -q no_such_alert \
 		&& pass "an unknown alert is refused, its name not echoed" || fail "unknown alert: $out"; }
+out=$(motel monitor silence add --comment "e2e: a box alert by app" --alert disk_low --app blog 2>&1) \
+	&& fail "a box alert was silenced by app: $out" \
+	|| { echo "$out" | grep -q 'disk_low is about the box, not an app' && pass "a box alert with --app is refused: it would match nothing" || fail "disk_low --app: $out"; }
 out=$(runuser -u nobody -- motel monitor silence add --comment x --alert disk_low 2>&1) \
 	&& fail "nobody added a silence: $out" \
 	|| { echo "$out" | grep -q 'admits root and the motel user' && pass "nobody is refused, told to run it as root" || fail "nobody: $out"; }

@@ -208,3 +208,27 @@ func TestSilenceableAlertsFollowTheConfig(t *testing.T) {
 		}
 	}
 }
+
+// TestAlertScope: what --app and --release can narrow, from the labels
+// motel's emitters and rendered rules carry.
+func TestAlertScope(t *testing.T) {
+	a := &App{Metrics: &MetricsStore{Rules: []Rule{
+		{Name: "shop_slow", Kind: ruleThreshold, Metric: "p95", Op: ">", Value: 500, For: caddy.Duration(5 * 60e9)},
+		{Name: "disk_soon", Kind: ruleDiskFill, Within: caddy.Duration(3600e9)},
+	}}}
+	for name, want := range map[string][2]bool{
+		"deploy_failed": {true, true}, "rollback": {true, true}, eventPostDeployRegressed: {true, true},
+		"watchdog_throttled": {true, false}, ruleAppMemoryHigh: {true, false}, "shop_slow": {true, false},
+		"disk_low": {false, false}, "disk_soon": {false, false}, ruleStoreDiskFill: {false, false},
+		alertChannelFailed: {false, false}, "cert_failed": {false, false}, eventStoreDown: {false, false},
+	} {
+		if app, rel := alertScope(a, name); app != want[0] || rel != want[1] {
+			t.Errorf("%s: app %v release %v, want %v", name, app, rel, want)
+		}
+	}
+	for _, n := range releaseAlerts() {
+		if !slices.Contains(silenceableAlerts(&App{Metrics: &MetricsStore{Rules: []Rule{{Name: "x", Kind: rulePostDeploy}}}}), n) {
+			t.Errorf("%s carries a release but is not silenceable", n)
+		}
+	}
+}

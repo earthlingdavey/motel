@@ -34,6 +34,21 @@ func TestListReleasesSkipsNamesThatAreNotVersions(t *testing.T) {
 	}
 }
 
+// TestReleasesIsListReleasesForAConfiguredApp: what notify's silence
+// --release takes; nothing for an app the config does not run.
+func TestReleasesIsListReleasesForAConfiguredApp(t *testing.T) {
+	root := t.TempDir()
+	d := newAppDirs(root, "demo")
+	must(t, os.MkdirAll(filepath.Join(d.releases, "v1"), 0o755))
+	a := &App{Root: root, specs: map[string]*appSpec{"demo": {}}}
+	if got := a.Releases("demo"); strings.Join(got, ",") != "v1" {
+		t.Fatalf("Releases(demo) = %v", got)
+	}
+	if got := a.Releases("other"); got != nil {
+		t.Fatalf("Releases(other) = %v", got)
+	}
+}
+
 func TestFileStateStoreRoundTrip(t *testing.T) {
 	store := &fileStateStore{path: filepath.Join(t.TempDir(), "app", "state.json")}
 

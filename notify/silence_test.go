@@ -41,6 +41,9 @@ func TestSilenceCheck(t *testing.T) {
 		{"a release with a dot first", func(r *SilenceRequest) { r.Release = ".x" }, "--release is a release's name"},
 		{"no comment", func(r *SilenceRequest) { r.Comment = " " }, "--comment is one line"},
 		{"two lines", func(r *SilenceRequest) { r.Comment = "a\nb" }, "--comment is one line"},
+		{"an escape", func(r *SilenceRequest) { r.Comment = "fix\x1b[2Jdone" }, "no control character"},
+		{"a tab", func(r *SilenceRequest) { r.Comment = "a\tb" }, "no control character"},
+		{"a line separator", func(r *SilenceRequest) { r.Comment = "a\u2028b" }, "no control character"},
 		{"long comment", func(r *SilenceRequest) { r.Comment = strings.Repeat("é", 201) }, "201 characters"},
 		{"duration", func(r *SilenceRequest) { r.Duration = "2 hours" }, "a Go duration"},
 		{"too short", func(r *SilenceRequest) { r.Duration = "59s" }, "from 1m to 24h"},
@@ -143,6 +146,14 @@ func withFakeAM(t *testing.T) (*testEngine, *silenceAM) {
 		w.WriteHeader(status)
 		_, _ = io.WriteString(w, answer)
 	}))
+	saved := releasesOf
+	releasesOf = func(_ *App, app string) []string {
+		if app == "shop" {
+			return []string{testSha, "v2"}
+		}
+		return nil
+	}
+	t.Cleanup(func() { releasesOf = saved })
 	return te, f
 }
 
@@ -204,6 +215,13 @@ func TestServeSilence(t *testing.T) {
 		{"an unknown alert", SilenceRequest{Alert: "https://ntfy.sh/ops-alerts"}, "--alert names none"},
 		{"an external name", SilenceRequest{Alert: "disk_failing"}, "--alert names none"},
 		{"an unknown app", SilenceRequest{App: "secret-topic"}, "--app names no app this box runs; they are blog, shop, wiki"},
+		{"a box alert with --app", SilenceRequest{Alert: "disk_low", App: "shop"}, "disk_low is about the box, not an app"},
+		{"ChannelFailed with --app", SilenceRequest{Alert: "ChannelFailed", App: "shop"}, "is about the box, not an app"},
+		{"a release without --app", SilenceRequest{Alert: "deploy_failed", Release: "v2"}, "--release narrows one app's alerts that carry a release, so it needs --app and --alert one of deploy_failed, deploy_refused, rollback, deploy_succeeded, post_deploy_regressed"},
+		{"a release of a state alert", SilenceRequest{Alert: "watchdog_throttled", App: "shop", Release: "v2"}, "--release narrows"},
+		{"a release with --app alone", SilenceRequest{App: "shop", Release: "v2"}, "--release narrows"},
+		{"a release not on disk", SilenceRequest{Alert: "deploy_failed", App: "shop", Release: "3f9c2a1"}, "--release names no release of shop on this box; they are " + testSha + ", v2"},
+		{"a release of an app with none", SilenceRequest{Alert: "rollback", App: "blog", Release: "v1"}, "--release names no release of blog on this box; they are none on disk"},
 	} {
 		r := c.req
 		r.Comment, r.By = "c", "alice"
@@ -211,12 +229,22 @@ func TestServeSilence(t *testing.T) {
 		if apiStatus(err) != http.StatusUnprocessableEntity || !strings.Contains(err.Error(), c.want) {
 			t.Fatalf("%s: %v", c.name, err)
 		}
-		if v := r.Alert + r.App; strings.Contains(err.Error(), v) && v != "deploy_in_progress" {
-			t.Fatalf("%s: the refusal echoes the value: %v", c.name, err)
+		// A value not in its set is never echoed.
+		for _, v := range []string{"https://ntfy.sh/ops-alerts", "secret-topic", "disk_failing", "3f9c2a1, ", "v1"} {
+			if strings.Contains(err.Error(), v) {
+				t.Fatalf("%s: the refusal echoes %q: %v", c.name, v, err)
+			}
 		}
 		if strings.Contains(err.Error(), "Watchdog") {
 			t.Fatalf("%s: Watchdog listed as silenceable: %v", c.name, err)
 		}
+	}
+	// An app alone: the deploy mute left alone.
+	if _, err := callAdmin(t, serveSilence, http.MethodPost, SilenceRequest{App: "blog", Comment: "c", By: "alice"}); err != nil {
+		t.Fatal(err)
+	}
+	if got := f.take(); len(got) != 1 || !strings.Contains(got[0], `"matchers":[{"name":"app","value":"blog","isRegex":false,"isEqual":true},{"name":"alertname","value":"deploy_in_progress","isRegex":false,"isEqual":false}]`) {
+		t.Fatalf("an app's silence: %q", got)
 	}
 	if _, err := callAdmin(t, serveSilence, http.MethodPost, `{"alert":"disk_low","comment":"c","by":"a","matchers":["x=y"]}`); apiStatus(err) != http.StatusBadRequest {
 		t.Fatalf("a matchers field: %v", err)
@@ -230,7 +258,7 @@ func TestServeSilence(t *testing.T) {
 	if _, err := callAdmin(t, serveSilence, http.MethodPost, goodSilence()); apiStatus(err) != http.StatusBadGateway || !strings.Contains(err.Error(), "silence invalid") {
 		t.Fatalf("Alertmanager refusing: %v", err)
 	}
-	if n := len(te.lines("monitor: silence added")); n != 1 {
+	if n := len(te.lines("monitor: silence added")); n != 2 {
 		t.Fatalf("a refused silence journalled: %d lines in all", n)
 	}
 
@@ -346,7 +374,7 @@ func TestSilenceCommandOutput(t *testing.T) {
 		{"refused json", []string{"add", "--comment", "x", "--json", "--alert", "Watchdog"},
 			`{"error":"--alert names none of the alerts motel raises on this box; they are ` + strings.Join(silenceableAlerts(theEngine.active), ", ") + `"}` + "\n", true},
 		{"no comment json", []string{"add", "--json", "--alert", "disk_low"},
-			`{"error":"--comment is one line, not empty: say why, for whoever finds the silence"}` + "\n", true},
+			`{"error":"--comment is one line of text, not empty and with no control character: say why, for whoever finds the silence"}` + "\n", true},
 		{"an argument", []string{"add", "--comment", "x", "--alert", "disk_low", "alertname=disk_low"}, "", true},
 		{"bad id json", []string{"expire", "--json", "x"}, `{"error":"that is not a silence id (Alertmanager's are UUIDs, as silence add prints them)"}` + "\n", true},
 		{"refused text", []string{"add", "--comment", "x", "--app", "nosuch"}, "", true},

@@ -33,19 +33,22 @@ func silenceAddCommand() *cobra.Command {
 		Short: "Silence one of motel's alerts, an app's, or both, from now, for a while",
 		Long: `motel builds the silence from names it knows: --alert is one of the
 alerts motel raises on this box, --app one of the apps it runs,
---release a release's name. Each is an exact match; give --alert,
---app or both, and --release narrows either to one release.
+--release one of the app's releases on disk. Each is an exact match;
+give --alert, --app or both. --release needs --app and an alert that
+carries a release (deploy_failed, deploy_refused, rollback,
+deploy_succeeded, post_deploy_regressed).
 
     motel monitor silence add --comment "resizing the volume" --duration 4h \
         --alert disk_low
     motel monitor silence add --comment "known bad, rolling back" \
-        --alert deploy_failed --app shop --release 3f9c2a1
+        --alert deploy_failed --app shop --release v42
 
 Refused: neither --alert nor --app; an alert motel does not raise here
 (Watchdog, the heartbeat, among them: pause the check off the box
-instead) or an app the box does not run, each answered with the names
-it takes; a comment empty, on two lines or over 200 characters; a
-duration under 1m or over 24h. The comment is masked as a summary is.
+instead), an app the box does not run or a release not on disk, each
+answered with the names it takes; a pair that would match nothing (a
+box alert with --app); a comment empty, over 200 characters or with a
+control character; a duration under 1m or over 24h. The comment is masked as a summary is.
 The silence's createdBy is "motel monitor: <user>", the user from
 SUDO_USER, else USER.`,
 		Args: cobra.NoArgs,

@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/caddyserver/caddy/v2"
 	"go.uber.org/zap"
@@ -119,12 +120,29 @@ func (r SilenceRequest) matchers() []amMatcher {
 			ms = append(ms, amMatcher{Name: m[0], Value: m[1], IsEqual: true})
 		}
 	}
+	// An app's silence leaves its deploy mute alone: the mute reaches
+	// no channel, and what it inhibits must stay inhibited.
+	if r.Alert == "" {
+		ms = append(ms, amMatcher{Name: "alertname", Value: alertDeployMute})
+	}
 	return ms
 }
 
+// releasesOf are the app's releases on disk, newest first: a var so
+// that a test needs no liveswap.
+var releasesOf = func(a *App, app string) []string {
+	if a.ls == nil {
+		return nil
+	}
+	return a.ls.Releases(app)
+}
+
 // checkSets holds the request's names to the loaded config's: the
-// alerts motel raises here, the apps it runs. A refusal lists motel's
-// own names, which are safe to print, and never the value given.
+// alerts motel raises here, the apps it runs, an app's releases on
+// disk; and the pair to what can match: --app only with an alert about
+// an app, --release only with --app and an alert that carries the
+// release. A refusal lists motel's own names, which are safe to print,
+// and never a value given that is not one of them.
 func (r SilenceRequest) checkSets(a *App) error {
 	if r.Alert != "" {
 		names := silenceableAlerts(a)
@@ -139,12 +157,31 @@ func (r SilenceRequest) checkSets(a *App) error {
 		}
 		return fmt.Errorf("--app names no app this box runs; they are %s", apps)
 	}
+	if r.Alert != "" && r.App != "" {
+		if app, _ := alertScope(a, r.Alert); !app {
+			return fmt.Errorf("%s is about the box, not an app, so a silence with --app would match nothing: leave --app out", r.Alert)
+		}
+	}
+	if r.Release != "" {
+		withRelease := releaseAlerts()
+		if r.App == "" || !slices.Contains(withRelease, r.Alert) {
+			return fmt.Errorf("--release narrows one app's alerts that carry a release, so it needs --app and --alert one of %s", strings.Join(withRelease, ", "))
+		}
+		rels := releasesOf(a, r.App)
+		if !slices.Contains(rels, r.Release) {
+			list := strings.Join(rels, ", ")
+			if list == "" {
+				list = "none on disk"
+			}
+			return fmt.Errorf("--release names no release of %s on this box; they are %s", r.App, list)
+		}
+	}
 	return nil
 }
 
 func checkComment(c string) error {
-	if strings.TrimSpace(c) == "" || strings.ContainsAny(c, "\r\n") {
-		return errors.New("--comment is one line, not empty: say why, for whoever finds the silence")
+	if strings.TrimSpace(c) == "" || strings.ContainsFunc(c, func(r rune) bool { return unicode.IsControl(r) || r == '\u2028' || r == '\u2029' }) {
+		return errors.New("--comment is one line of text, not empty and with no control character: say why, for whoever finds the silence")
 	}
 	if n := len([]rune(c)); n > maxSummary {
 		return fmt.Errorf("--comment is %d characters; at most %d", n, maxSummary)
@@ -290,16 +327,21 @@ func serveExpire(w http.ResponseWriter, r *http.Request) error {
 	// Alertmanager 0.28.1 answers 200 to the expiry of a silence already
 	// expired (measured in the notify e2e box): asked first, so that a
 	// second expire says so rather than journalling an end that was not.
+	notFound := func(err error) bool {
+		var se *amStatusError
+		return errors.As(err, &se) && se.code == http.StatusNotFound
+	}
 	state, err := am.silenceState(r.Context(), req.ID)
-	if err == nil && state == "expired" {
+	switch {
+	case notFound(err):
+		return unprocessable(fmt.Errorf("no silence %s in Alertmanager", req.ID))
+	case err != nil:
+		return badGateway(fmt.Errorf("reading the silence from Alertmanager: %w", err))
+	case state == "expired":
 		return unprocessable(fmt.Errorf("silence %s has already expired", req.ID))
 	}
-	if err == nil {
-		err = am.expireSilence(r.Context(), req.ID)
-	}
-	if err != nil {
-		var se *amStatusError
-		if errors.As(err, &se) && se.code == http.StatusNotFound {
+	if err := am.expireSilence(r.Context(), req.ID); err != nil {
+		if notFound(err) {
 			return unprocessable(fmt.Errorf("no silence %s in Alertmanager", req.ID))
 		}
 		return badGateway(fmt.Errorf("expiring in Alertmanager: %w", err))

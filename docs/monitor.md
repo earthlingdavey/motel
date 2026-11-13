@@ -618,12 +618,18 @@ silence from them:
 - `--alert <name>`: one of the alerts motel raises on this box, such as
   `disk_low`, `deploy_failed`, `watchdog_throttled`, `cert_failed`,
   `backup_stale`, `ChannelFailed`, or one of your `rule` lines' names;
-- `--app <name>`: one of the apps the box runs: every alert about it;
-- `--release <version>`: one release of it, by its name or git sha, so
-  that the next release's alerts still reach you.
+- `--app <name>`: one of the apps the box runs: every alert about it,
+  your own `motel monitor send --subject app:<name>` events among them;
+- `--release <version>`: one release of the app, as its directory under
+  `/var/lib/liveswap/<app>/releases/` names it, so that the next
+  release's deploy events still reach you. It needs `--app` and an
+  `--alert` that carries a release: `deploy_failed`, `deploy_refused`,
+  `rollback`, `deploy_succeeded` or `post_deploy_regressed`.
 
 Give `--alert`, `--app` or both. Each is an exact match. A name motel
-does not know is refused with the list of the names it takes:
+does not know is refused with the list of the names it takes, and so
+is a pair that would match nothing, such as `--alert disk_low --app
+shop` (`disk_low` is about the box, not an app):
 
 ```
 $ motel monitor silence add --comment x --alert disk_lo
@@ -633,10 +639,12 @@ Error: --alert names none of the alerts motel raises on this box; they are Chann
 `Watchdog`, the heartbeat, is not in that list: silencing it would stop
 the pings, and your check off the box would report the box down. To
 quiet the heartbeat, pause that check instead. Your own events from
-`motel monitor send` cannot be silenced this way yet.
+`motel monitor send` cannot be silenced by their name yet, only by
+`--app` for an app's.
 
-The comment is required, one line, at most 200 characters; anything in
-it that looks like a secret is masked, as in a notification's summary.
+The comment is required, one line of plain text (no tab or escape
+sequence), at most 200 characters; anything in it that looks like a
+secret is masked, as in a notification's summary.
 The duration is from `1m` to `24h`, `2h` if you leave it out, from now.
 
 Each silence added or expired is a line in motel's journal
