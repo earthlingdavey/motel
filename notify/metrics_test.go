@@ -919,11 +919,14 @@ func TestWriteRules(t *testing.T) {
 
 // TestLatencyBoundsAreTheBuckets: a p50 or p95 rule's bound is told
 // apart by the histogram only within its buckets: the lowest bound a
-// rule takes is at or above the first bucket, so it is not inside one
-// that reads every response under it as half of it; the highest is the
-// last bucket.
+// rule takes is a bucket's edge, at or above the first, so it is not
+// inside one that reads every response under it as half of it; the
+// highest is the last bucket.
 func TestLatencyBoundsAreTheBuckets(t *testing.T) {
 	b := liveswap.ResponseBuckets
+	if !slices.Contains(b[:], minLatency.Seconds()) {
+		t.Errorf("the least bound a rule takes (%v) is no bucket's edge: %v", minLatency, b)
+	}
 	if first := time.Duration(b[0] * float64(time.Second)); first > minLatency {
 		t.Errorf("the first bucket is %v, above the least bound a rule takes (%v)", first, minLatency)
 	}
