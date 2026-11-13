@@ -315,9 +315,9 @@ type managedApp struct {
 	// set to the new release wherever current gets a new instance.
 	requests requestCounts
 	// observers is how many observe handlers of the loaded configs name
-	// the app (Provision adds one, Cleanup takes it away): while one
-	// does, its current release's counts are the app's numbers even at
-	// zero (AppSample.Observed).
+	// the app (Provision adds one, Cleanup takes it away): the first
+	// after none zeroes the counts (Observe.observe). Whether a push
+	// carries them is the running config's own (App.observed).
 	observers atomic.Int32
 
 	// Watchdog plumbing. The goroutine is pool-scoped like everything

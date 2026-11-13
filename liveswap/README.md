@@ -171,8 +171,11 @@ site or route: per release, it counts each response's status class,
 times it to its headers, and reads a cache's `Cache-Status` verdict, and
 `GET /<app>` with the deploy token gains `metrics.requests`
 (`?range=1h`, the default, or `?range=24h`). It keeps nothing of a
-request, and costs about 0.3 µs on one (liveswap/DESIGN-liveswap.md,
-"The response observer").
+request, and costs about 0.4 µs on one (liveswap/DESIGN-liveswap.md,
+"The response observer"). In a `route`, write it first; in a site with
+no `route`, anywhere among the site's lines, since Caddy orders it
+before `cache` and `hint_penaltybox` by itself. Taken out, the app's
+numbers stop being pushed; put back, they start from zero.
 
 ```
 blog.example.com {
