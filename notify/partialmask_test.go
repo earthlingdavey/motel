@@ -42,7 +42,7 @@ func pmChannels() ([]Channel, map[string]string) {
 func TestPartialMask(t *testing.T) {
 	channels, secrets := pmChannels()
 	te := newTestEngine(t)
-	te.known = knownValues(secrets, channels)
+	te.known = knownValues(secrets, channels, "")
 	cases := []struct{ in, want string }{
 		{"disk on " + pmTopic + " is full", "disk on [redacted:partial:NOTIFY_OPS_URL] is full"},
 		{"posting to " + pmNtfy + " failed", "posting to [redacted:NOTIFY_OPS_URL] failed"},
@@ -75,7 +75,7 @@ func TestPartialMask(t *testing.T) {
 // entry knownValues adds beyond the file's is one of them.
 func TestPartialKnownValuesNameNoSecret(t *testing.T) {
 	channels, secrets := pmChannels()
-	known := knownValues(secrets, channels)
+	known := knownValues(secrets, channels, "")
 	var partial []string
 	for _, kv := range known {
 		k, _, _ := strings.Cut(kv, "=")
@@ -97,7 +97,7 @@ func TestPartialKnownValuesNameNoSecret(t *testing.T) {
 		t.Fatalf("partial = %q, want %q", partial, want)
 	}
 	// A channel whose secret the file does not hold adds nothing.
-	if got := knownValues(nil, channels); len(got) != 0 {
+	if got := knownValues(nil, channels, ""); len(got) != 0 {
 		t.Fatalf("no secrets: %q", got)
 	}
 }
@@ -153,7 +153,7 @@ func TestPartialMaskPastASuffix(t *testing.T) {
 		{Name: "esc", Kind: "ntfy", Secret: "NOTIFY_ESC_URL"},
 	}
 	te := newTestEngine(t)
-	te.known = knownValues(secrets, channels)
+	te.known = knownValues(secrets, channels, "")
 	for in, want := range map[string]string{
 		"check " + pmTopic:    "check [redacted:partial:NOTIFY_OPS_URL]",
 		"see alerts_ops_7f3a": "see [redacted:partial:NOTIFY_ESC_URL]",
@@ -170,7 +170,7 @@ func TestPartialMaskPastASuffix(t *testing.T) {
 func TestServeSendRefusesATopicAsName(t *testing.T) {
 	withEngine(t)
 	channels, secrets := pmChannels()
-	theEngine.known = knownValues(secrets, channels)
+	theEngine.known = knownValues(secrets, channels, "")
 	r := goodSend()
 	r.Instance = pmTopic
 	if _, err := callAdmin(t, serveSend, http.MethodPost, r); apiStatus(err) != http.StatusUnprocessableEntity || !strings.Contains(err.Error(), "filter masks") {
@@ -180,5 +180,97 @@ func TestServeSendRefusesATopicAsName(t *testing.T) {
 	r.Source = pmTopic
 	if _, err := callAdmin(t, serveSend, http.MethodPost, r); apiStatus(err) != http.StatusUnprocessableEntity || !strings.Contains(err.Error(), "filter masks") {
 		t.Fatalf("a topic as the source: %v", err)
+	}
+}
+
+// The heartbeat's check UUID below is made up for these tests.
+const (
+	pmHCUUID = "5b7a3c1e-9d2f-4e8a-b6c0-1f2e3d4c5b6a" // gitleaks:allow — made up for this test
+	pmHC     = "https://hc-ping.com/" + pmHCUUID      // gitleaks:allow — made up for this test
+)
+
+// TestHeartbeatPartialMask: the heartbeat's ping URL contributes its
+// UUID, past Healthchecks' /start, /fail, /log or exit status, so the
+// UUID alone is masked as [redacted:partial:KEY] and the whole URL keeps
+// [redacted:KEY]; a part under 8 characters is skipped by the filter;
+// with no heartbeat line nothing is added.
+func TestHeartbeatPartialMask(t *testing.T) {
+	const key = "NOTIFY_HC_URL"
+	for _, u := range []string{pmHC, pmHC + "/fail", pmHC + "/start", pmHC + "/log", pmHC + "/1", pmHC + "/"} {
+		secrets := map[string]string{key: u}
+		te := newTestEngine(t)
+		te.known = knownValues(secrets, nil, key)
+		for in, want := range map[string]string{
+			"ping " + pmHCUUID + " here": "ping [redacted:partial:" + key + "] here",
+			"ping " + u + " failed":      "ping [redacted:" + key + "] failed",
+		} {
+			if got := te.clean(in); got != want {
+				t.Errorf("%s: clean(%q) = %q, want %q", u, in, got, want)
+			}
+		}
+	}
+
+	// Through the engine to the post, as an external producer's summary.
+	te := newTestEngine(t)
+	te.known = knownValues(map[string]string{key: pmHC}, nil, key)
+	ev := deployFailed()
+	ev.Summary = "check " + pmHCUUID
+	te.report(ev)
+	if got := te.drain(); len(got) != 1 || got[0].Annotations["summary"] != "check [redacted:partial:"+key+"]" {
+		t.Fatalf("posts = %+v", got)
+	}
+
+	// Under 8 characters: added, and the filter skips it.
+	te = newTestEngine(t)
+	te.known = knownValues(map[string]string{key: "https://hc.example.com/abc1234"}, nil, key)
+	if got := te.clean("ping abc1234 here"); got != "ping abc1234 here" {
+		t.Errorf("a short heartbeat part: %q", got)
+	}
+
+	// No heartbeat line: the file's entry alone.
+	secrets := map[string]string{key: pmHC}
+	if got := knownValues(secrets, nil, ""); !slices.Equal(got, []string{key + "=" + pmHC}) {
+		t.Fatalf("no heartbeat line: %q", got)
+	}
+	// A heartbeat line whose secret the file does not hold adds nothing.
+	if got := knownValues(nil, nil, key); len(got) != 0 {
+		t.Fatalf("no heartbeat secret: %q", got)
+	}
+	if got := knownValues(secrets, nil, key); !slices.Equal(got, []string{key + "=" + pmHC, "partial:" + key + "=" + pmHCUUID}) {
+		t.Fatalf("known = %q", got)
+	}
+}
+
+// TestHeartbeatURLCredentials: Healthchecks' ping endpoints past the
+// UUID are suffixes, an exit status 0 to 255 included; a number over
+// 255 or a channel kind's suffix is not.
+func TestHeartbeatURLCredentials(t *testing.T) {
+	cases := []struct {
+		in   string
+		want []string
+	}{
+		{"https://hc-ping.com/uuid-abc", []string{"uuid-abc"}},
+		{"https://hc-ping.com/uuid-abc/start", []string{"uuid-abc"}},
+		{"https://hc-ping.com/uuid-abc/fail", []string{"uuid-abc"}},
+		{"https://hc-ping.com/uuid-abc/log", []string{"uuid-abc"}},
+		{"https://hc-ping.com/uuid-abc/%66ail", []string{"uuid-abc"}},
+		{"https://hc-ping.com/uuid-abc/0", []string{"uuid-abc"}},
+		{"https://hc-ping.com/uuid-abc/255", []string{"uuid-abc"}},
+		{"https://hc-ping.com/uuid-abc/256", []string{"256"}},
+		{"https://hc-ping.com/uuid-abc/publish", []string{"publish"}},
+		{"https://hc-ping.com/uuid-abc?rid=x", []string{"uuid-abc"}},
+		{"https://hc-ping.com/ping-key/my-slug/fail", []string{"my-slug"}}, // the slug form: the slug, not the key
+		{"https://hc-ping.com/fail", []string{"fail"}},
+		{"https://hc-ping.com/", nil},
+	}
+	for _, c := range cases {
+		if got := urlCredentials(heartbeatKind, c.in); !slices.Equal(got, c.want) {
+			t.Errorf("urlCredentials(heartbeat, %q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+	// The heartbeat's suffixes are its own: an ntfy topic named fail is
+	// the topic.
+	if got := urlCredentials("ntfy", "https://ntfy.sh/ops-alerts/fail"); !slices.Equal(got, []string{"fail"}) {
+		t.Errorf("ntfy /fail: %q", got)
 	}
 }
