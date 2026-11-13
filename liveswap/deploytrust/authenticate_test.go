@@ -13,6 +13,7 @@ import (
 	"go.uber.org/zap/zaptest/observer"
 
 	"github.com/smallhoursorg/motel/liveswap/deploytrust/trusttest"
+	"github.com/smallhoursorg/motel/liveswap/wire"
 )
 
 // forgetTestAddress is the cleanup for a test that charged the shared
@@ -57,11 +58,11 @@ func request(addr, token string) *http.Request {
 
 // answered is what a Refusal writes: the status and body it hands the
 // caller's writer.
-func answered(t *testing.T, ref *Refusal) (code int, body map[string]string) {
+func answered(t *testing.T, ref *Refusal) (code int, body wire.Error) {
 	t.Helper()
 	if err := ref.Write(func(c int, b any) error {
 		code = c
-		body, _ = b.(map[string]string)
+		body, _ = b.(wire.Error)
 		return nil
 	}); err != nil {
 		t.Fatal(err)
@@ -88,7 +89,7 @@ func TestAuthenticateOnTheSharedLimiter(t *testing.T) {
 	if ref == nil || who.By != "" {
 		t.Fatalf("refused token: who = %+v, refusal = %+v; want a refusal and nobody", who, ref)
 	}
-	if code, body := answered(t, ref); code != http.StatusUnauthorized || body["error"] != unauthorizedMessage {
+	if code, body := answered(t, ref); code != http.StatusUnauthorized || body.Error != unauthorizedMessage {
 		t.Fatalf("a refusal writes %d %v; want the flat 401", code, body)
 	}
 	if !charged(key) {
@@ -163,7 +164,7 @@ func TestAuthenticateBudgetAndBound(t *testing.T) {
 	if ref == nil || *ref != *first {
 		t.Fatalf("past the budget: refusal = %+v; want %+v, the first one's", ref, first)
 	}
-	if code, body := answered(t, ref); code != http.StatusUnauthorized || body["error"] != unauthorizedMessage {
+	if code, body := answered(t, ref); code != http.StatusUnauthorized || body.Error != unauthorizedMessage {
 		t.Errorf("past the budget a refusal writes %d %v; want the flat 401", code, body)
 	}
 	if logs.Len() != 0 {

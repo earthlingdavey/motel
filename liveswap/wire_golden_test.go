@@ -14,6 +14,8 @@ import (
 	"time"
 
 	"github.com/caddyserver/caddy/v2/modules/caddyhttp"
+
+	"github.com/smallhoursorg/motel/liveswap/wire"
 )
 
 // The deploy route's bodies, byte for byte (testdata/wire): what a
@@ -80,7 +82,7 @@ func TestWireStatusEveryField(t *testing.T) {
 		},
 		AvailableVersions: []string{"v2", "v1"},
 		OrderedByMtime:    []string{"v1"},
-		Metrics:           json.RawMessage(`{"window":"1h"}`),
+		Metrics:           &wire.Metrics{Window: "1h"},
 	}
 	raw, err := json.Marshal(s)
 	if err != nil {
@@ -91,7 +93,21 @@ func TestWireStatusEveryField(t *testing.T) {
 
 // wireMetrics is a metrics object with every field set, in the order
 // the metrics view writes it (notify, TestMetricsObjectEveryField).
-var wireMetrics = json.RawMessage(`{"window":"24h","at":"2026-11-13T09:30:00Z","memory_bytes":{"now":30,"max":40},"memory_max_bytes":100,"cpu_cores":{"avg_5m":0.5,"avg":0.25},"requests":{"total":10,"per_second":0.000116,"by_class":{"2xx":9,"5xx":1},"5xx_share":0.1,"p50_ms":1.5,"p95_ms":20,"cache_hit_share":0.5},"error":"the metrics store did not answer"}`)
+var wireMetrics = func() *wire.Metrics {
+	at := time.Date(2026, 11, 13, 9, 30, 0, 0, time.UTC)
+	f := func(v float64) *float64 { return &v }
+	return &wire.Metrics{
+		Window: "24h", At: &at,
+		Memory:    &wire.MemorySummary{Now: f(30), Max: f(40)},
+		MemoryMax: f(100),
+		CPU:       &wire.CPUSummary{Avg5m: f(0.5), Avg: 0.25},
+		Requests: &wire.RequestSummary{
+			Total: 10, PerSecond: 0.000116, ByClass: map[string]uint64{"5xx": 1, "2xx": 9},
+			Share5xx: f(0.1), P50: f(1.5), P95: f(20), CacheHitShare: f(0.5),
+		},
+		Error: "the metrics store did not answer",
+	}
+}()
 
 // wireNoise is what varies from run to run in a handler's body: the
 // times, the phases' durations, the rig's temp dirs. Replaced, not
@@ -115,6 +131,50 @@ func wireBody(t *testing.T, rig *testRig, w *httptest.ResponseRecorder) string {
 	return strings.ReplaceAll(body, rig.spec.dirs.root, "<root>")
 }
 
+// decodesAsWire holds a body to package wire's type for it: decoded
+// with no field left over and marshalled again, it is the same bytes,
+// so a client decoding into the type reads everything the handler
+// sent.
+func decodesAsWire(t *testing.T, what string, w *httptest.ResponseRecorder) {
+	t.Helper()
+	type done struct {
+		wire.Status
+		wire.DoneEvent
+	}
+	check := func(line string, v any) {
+		t.Helper()
+		dec := json.NewDecoder(strings.NewReader(line))
+		dec.DisallowUnknownFields()
+		if err := dec.Decode(v); err != nil {
+			t.Fatalf("%s: %T does not decode %s: %v", what, v, line, err)
+		}
+		got, err := json.Marshal(v)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(got) != line {
+			t.Errorf("%s: %T loses something:\n got %s\nwant %s", what, v, got, line)
+		}
+	}
+	body := strings.TrimRight(w.Body.String(), "\n")
+	switch {
+	case w.Header().Get("Content-Type") == "application/x-ndjson":
+		lines := strings.Split(body, "\n")
+		for _, l := range lines[:len(lines)-1] {
+			check(l, new(wire.PhaseEvent))
+		}
+		check(lines[len(lines)-1], new(done))
+	case w.Code == http.StatusOK && strings.Contains(what, "?deploy="):
+		check(body, new(wire.DeployResult))
+	case w.Code == http.StatusOK:
+		check(body, new(wire.Status))
+	case strings.Contains(body, `"status":{`):
+		check(body, new(wire.Failure))
+	default:
+		check(body, new(wire.Error))
+	}
+}
+
 // The handler's own bodies, through the response filter: each
 // refusal, the status before and after a deploy, the 500 that carries
 // the status, a record, and a streamed deploy's lines.
@@ -126,6 +186,7 @@ func TestWireHandlerBodies(t *testing.T) {
 		out.WriteString("# " + what + "\n")
 		out.WriteString(w.Header().Get("Content-Type") + " " + http.StatusText(w.Code) + "\n")
 		out.WriteString(wireBody(t, rig, w))
+		decodesAsWire(t, what, w)
 	}
 	add("GET, no token", do(t, h, http.MethodGet, "/demo", "", ""))
 	add("GET an unknown app", do(t, h, http.MethodGet, "/nope", globalToken(t), ""))

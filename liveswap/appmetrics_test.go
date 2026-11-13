@@ -7,15 +7,17 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/smallhoursorg/motel/liveswap/wire"
 )
 
 type fakeMetricsSource struct {
 	asked   []string
 	windows []string
-	reply   any
+	reply   *wire.Metrics
 }
 
-func (f *fakeMetricsSource) AppMetrics(_ context.Context, app, window string) any {
+func (f *fakeMetricsSource) AppMetrics(_ context.Context, app, window string) *wire.Metrics {
 	f.asked = append(f.asked, app)
 	f.windows = append(f.windows, window)
 	return f.reply
@@ -42,7 +44,8 @@ func TestStatusMetricsOnlyWithASource(t *testing.T) {
 		t.Fatalf("no source, yet the status has metrics: %s", w.Body.String())
 	}
 
-	src := &fakeMetricsSource{reply: map[string]any{"window": "1h", "memory_bytes": map[string]float64{"now": 42}}}
+	now := 42.0
+	src := &fakeMetricsSource{reply: &wire.Metrics{Window: "1h", Memory: &wire.MemorySummary{Now: &now}}}
 	h.app.SetMetricsSource(src)
 	w = do(t, h, http.MethodGet, "/demo", appToken(t), "")
 	var body struct {
@@ -117,7 +120,7 @@ func TestStatusMetricsRange(t *testing.T) {
 		!strings.Contains(w.Body.String(), "range must be one of 1h, 24h") {
 		t.Fatalf("?range=7d with no source: %d %s", w.Code, w.Body.String())
 	}
-	src := &fakeMetricsSource{reply: map[string]any{"window": "x"}}
+	src := &fakeMetricsSource{reply: &wire.Metrics{Window: "x"}}
 	h.app.SetMetricsSource(src)
 	do(t, h, http.MethodGet, "/demo", appToken(t), "")
 	do(t, h, http.MethodGet, "/demo?range=24h", appToken(t), "")

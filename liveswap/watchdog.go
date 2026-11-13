@@ -343,16 +343,6 @@ func (w *watchdogState) restoreAlerts(load func() (reportedAlerts, error), save 
 	return nil
 }
 
-// watchdogSnapshot is the status-endpoint view.
-type watchdogSnapshot struct {
-	State            string    `json:"state"`
-	Failures         int       `json:"consecutive_failures,omitempty"`
-	RestartsInWindow int       `json:"restarts_in_window,omitempty"`
-	LastRestartAt    time.Time `json:"last_restart_at,omitzero"`
-	LastRestartCause string    `json:"last_restart_cause,omitempty"`
-	LastFailure      string    `json:"last_failure,omitempty"`
-}
-
 func (w *watchdogState) setState(s string) {
 	w.mu.Lock()
 	w.state = s

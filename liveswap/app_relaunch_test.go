@@ -109,7 +109,7 @@ func TestRelaunchOnMatchingPin(t *testing.T) {
 	if string(after) != string(record) {
 		t.Fatalf("the relaunch rewrote v1's record:\n%s\n%s", record, after)
 	}
-	if len(st.Deploys) != 1 || st.Deploys[0].Version != "v1" || st.Deploys[0].pin() != pinA {
+	if len(st.Deploys) != 1 || st.Deploys[0].Version != "v1" || summaryPin(st.Deploys[0]) != pinA {
 		t.Fatalf("deploys = %+v, want v1's one record with its pin", st.Deploys)
 	}
 }

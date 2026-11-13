@@ -5,6 +5,8 @@ import (
 	"strings"
 
 	"go.uber.org/zap"
+
+	"github.com/smallhoursorg/motel/liveswap/wire"
 )
 
 // Refusal is what the preamble answers a refused request with, for the
@@ -23,7 +25,7 @@ type Refusal struct {
 // — the caller's filtered writer, so every body a webhook sends passes
 // its filter.
 func (ref *Refusal) Write(write func(code int, body any) error) error {
-	return write(ref.Status, map[string]string{"error": ref.Message})
+	return write(ref.Status, wire.Error{Error: ref.Message})
 }
 
 // unauthorizedMessage is the flat 401: the same sentence whatever the

@@ -26,6 +26,7 @@ import (
 	"go.uber.org/zap/zaptest/observer"
 
 	"github.com/smallhoursorg/motel/liveswap"
+	"github.com/smallhoursorg/motel/liveswap/wire"
 )
 
 func parseStore(src string) (*MetricsStore, error) {
@@ -866,7 +867,7 @@ func TestMetricsViewBudgetAndOneQueryInFlight(t *testing.T) {
 	v := newMetricsView(f, zap.NewNop())
 	start := time.Now()
 	var wg sync.WaitGroup
-	answers := make([]any, 3)
+	answers := make([]*wire.Metrics, 3)
 	for i := range answers {
 		wg.Add(1)
 		go func() {
@@ -879,7 +880,7 @@ func TestMetricsViewBudgetAndOneQueryInFlight(t *testing.T) {
 		t.Fatalf("a store that never answers held the route %v", d)
 	}
 	for _, a := range answers {
-		if a.(AppMetrics).Error != errViewStore {
+		if a.Error != errViewStore {
 			t.Fatalf("answers = %+v", answers)
 		}
 	}
@@ -894,7 +895,7 @@ func TestMetricsViewBudgetAndOneQueryInFlight(t *testing.T) {
 	time.Sleep(50 * time.Millisecond)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if a := v2.AppMetrics(ctx, "blog", "1h").(AppMetrics); a.Error != errViewStore {
+	if a := v2.AppMetrics(ctx, "blog", "1h"); a.Error != errViewStore {
 		t.Fatalf("a cancelled request: %+v", a)
 	}
 }
@@ -1097,7 +1098,7 @@ func TestMetricsViewRequestsAbsent(t *testing.T) {
 	if string(got) != `{"window":"1h","requests":{"total":0,"per_second":0}}` {
 		t.Fatalf("an idle window: %s", got)
 	}
-	if a := v.AppMetrics(context.Background(), "blog", "7d").(AppMetrics); a.Error != errViewStore {
+	if a := v.AppMetrics(context.Background(), "blog", "7d"); a.Error != errViewStore {
 		t.Fatalf("an unknown window: %+v", a)
 	}
 }
@@ -1108,12 +1109,12 @@ func TestMetricsViewRequestsAbsent(t *testing.T) {
 func TestMetricsObjectEveryField(t *testing.T) {
 	at := time.Date(2026, 11, 13, 9, 30, 0, 0, time.UTC)
 	f := func(v float64) *float64 { return &v }
-	m := AppMetrics{
+	m := wire.Metrics{
 		Window: "24h", At: &at,
-		Memory:    &memorySumm{Now: f(30), Max: f(40)},
+		Memory:    &wire.MemorySummary{Now: f(30), Max: f(40)},
 		MemoryMax: f(100),
-		CPU:       &cpuSummary{Avg5m: f(0.5), Avg: 0.25},
-		Requests: &requestSummary{
+		CPU:       &wire.CPUSummary{Avg5m: f(0.5), Avg: 0.25},
+		Requests: &wire.RequestSummary{
 			Total: 10, PerSecond: 0.000116, ByClass: map[string]uint64{"5xx": 1, "2xx": 9},
 			Share5xx: f(0.1), P50: f(1.5), P95: f(20), CacheHitShare: f(0.5),
 		},
