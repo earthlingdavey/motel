@@ -84,14 +84,19 @@ func adminFlags(c *cobra.Command) {
 	c.Flags().String("config", "", "a Caddyfile whose admin address to use instead")
 }
 
-func adminPost(c *cobra.Command, uri string, body any) ([]byte, error) {
+// adminAddr is the admin API's address the flags name.
+func adminAddr(c *cobra.Command) (string, error) {
 	addr, _ := c.Flags().GetString("address")
 	if cfgFile, _ := c.Flags().GetString("config"); cfgFile != "" {
-		a, err := caddycmd.DetermineAdminAPIAddress("", nil, cfgFile, "caddyfile")
-		if err != nil {
-			return nil, err
-		}
-		addr = a
+		return caddycmd.DetermineAdminAPIAddress("", nil, cfgFile, "caddyfile")
+	}
+	return addr, nil
+}
+
+func adminPost(c *cobra.Command, uri string, body any) ([]byte, error) {
+	addr, err := adminAddr(c)
+	if err != nil {
+		return nil, err
 	}
 	b, err := json.Marshal(body)
 	if err != nil {

@@ -415,7 +415,7 @@ func (e *engine) tick() {
 	if now.Sub(e.lastHeartbeat) >= heartbeatEvery {
 		e.lastHeartbeat = now
 		e.enqueue(&pending{key: "heartbeat", alerts: []amAlert{{
-			Labels:      map[string]string{"alertname": alertWatchdog, "severity": "none"},
+			Labels:      watchdogLabels(),
 			Annotations: map[string]string{"summary": "motel is running and can reach Alertmanager"},
 			StartsAt:    now, EndsAt: now.Add(heartbeatLife),
 		}}, first: now})

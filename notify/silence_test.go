@@ -195,6 +195,17 @@ func TestServeSilence(t *testing.T) {
 		t.Fatalf("journal matchers: %#v", fields["matchers"])
 	}
 
+	// A release's git sha, a label motel sets, is no secret in a matcher.
+	sha := goodSilence()
+	sha.Matchers = []string{"alertname=deploy_failed", "release=3f9c2a1be0d4c5f6a7b8c9d0e1f2a3b4c5d6e7f8"}
+	if _, err := callAdmin(t, serveSilence, http.MethodPost, sha); err != nil {
+		t.Fatalf("a sha in a matcher: %v", err)
+	}
+	if got := f.take(); len(got) != 1 {
+		t.Fatalf("Alertmanager got %q", got)
+	}
+	_ = te.lines("monitor: silence added")
+
 	// Refused before Alertmanager hears of it.
 	bad := goodSilence()
 	bad.Matchers = []string{"alertname=Watchdog"}
@@ -205,6 +216,11 @@ func TestServeSilence(t *testing.T) {
 	bad.Comment = "see https://hooks.slack.com/services/T0/B0/secretpart" // gitleaks:allow — made up for this test
 	if _, err := callAdmin(t, serveSilence, http.MethodPost, bad); apiStatus(err) != http.StatusUnprocessableEntity || !strings.Contains(err.Error(), "filter masks") {
 		t.Fatalf("a URL in the comment: %v", err)
+	}
+	bad = goodSilence()
+	bad.Matchers = []string{"alertname=x", "url=https://hooks.slack.com/services/T0/B0/secretpart"} // gitleaks:allow — made up for this test
+	if _, err := callAdmin(t, serveSilence, http.MethodPost, bad); apiStatus(err) != http.StatusUnprocessableEntity || !strings.Contains(err.Error(), "a matcher holds a channel URL") {
+		t.Fatalf("a URL in a matcher: %v", err)
 	}
 	if _, err := callAdmin(t, serveSilence, http.MethodPost, `{"matchers":["alertname=x"],"comment":"c","by":"a","labels":{}}`); apiStatus(err) != http.StatusBadRequest {
 		t.Fatalf("an unknown field: %v", err)
@@ -218,7 +234,7 @@ func TestServeSilence(t *testing.T) {
 	if _, err := callAdmin(t, serveSilence, http.MethodPost, goodSilence()); apiStatus(err) != http.StatusBadGateway || !strings.Contains(err.Error(), "silence invalid") {
 		t.Fatalf("Alertmanager refusing: %v", err)
 	}
-	if n := len(te.lines("monitor: silence added")); n != 1 {
+	if n := len(te.lines("monitor: silence added")); n != 2 {
 		t.Fatalf("a refused silence journalled: %d lines in all", n)
 	}
 
@@ -246,7 +262,7 @@ func TestServeExpire(t *testing.T) {
 		t.Fatalf("Alertmanager got %q", got)
 	}
 	lines := te.lines("monitor: silence expired")
-	if len(lines) != 1 || lines[0].ContextMap()["id"] != testSilenceID || lines[0].ContextMap()["by"] != "motel monitor: alice" {
+	if len(lines) != 1 || lines[0].ContextMap()["id"] != testSilenceID || lines[0].ContextMap()["expired_by"] != "motel monitor: alice" {
 		t.Fatalf("journal: %+v", lines)
 	}
 	// Already expired: Alertmanager would answer 200 to the DELETE.
@@ -347,9 +363,17 @@ func TestSilenceCommandOutput(t *testing.T) {
 		t.Fatalf("Alertmanager got %q", reqs)
 	}
 
+	// A route's 502 that says permission denied (motel refused
+	// Alertmanager's socket) is passed on, not taken for the caller's.
+	f.set(http.StatusForbidden, `"connect: permission denied"`)
+	out, err := runSilence(t, addr, "add", "--comment", "x", "alertname=disk_low")
+	if err == nil || !strings.Contains(err.Error(), "silencing in Alertmanager") || strings.Contains(err.Error(), "run motel monitor silence as root") {
+		t.Fatalf("a 502 naming permission: %q, %v", out, err)
+	}
+
 	// The route's refusal, not the command's: Alertmanager's 404.
 	f.set(http.StatusNotFound, `"silence not found"`)
-	out, err := runSilence(t, addr, "expire", "--json", testSilenceID)
+	out, err = runSilence(t, addr, "expire", "--json", testSilenceID)
 	if err == nil || out != `{"error":"no silence `+testSilenceID+` in Alertmanager"}`+"\n" {
 		t.Fatalf("a 404 with --json: %q, %v", out, err)
 	}

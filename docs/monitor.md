@@ -612,7 +612,10 @@ Each matcher is one argument: `label=value`, `label!=value`,
 and no quotes inside the argument (`alertname=disk_low`, not
 `alertname="disk_low"`). The labels are the ones `amtool alert` and the
 API show: `alertname`, `severity`, `subject` (`box` or `app:<name>`),
-`app`, `instance`, `source` (`external:<name>` for your own events). A
+`app`, `instance`, `source` (`external:<name>` for your own events),
+`kind`, `key`, and on a deploy's events `release` and `deployed_by`;
+`ChannelFailed` names the channels that may have failed in `suspects`
+and the channel it is told to in `notify_channel`. A
 silence matches an alert when every matcher does.
 
 motel refuses:
@@ -628,7 +631,9 @@ motel refuses:
 Each silence added or expired is a line in motel's journal
 (`monitor: silence added` with its id, matchers, end, comment and
 `created_by`, which is `motel monitor: <your user>`; `monitor: silence
-expired`). With `--json`, `add` prints `{"id":"…","ends_at":"…"}`,
+expired` with its id and `expired_by`). A comment with a token in it
+that looks like a secret (a long hex or random string) is refused, so
+write the ticket's name, not a hash. With `--json`, `add` prints `{"id":"…","ends_at":"…"}`,
 `expire` prints `{"id":"…"}`, and an error is `{"error":"…"}` with exit
 1; a second expire of one silence is `silence <id> has already
 expired`. Another user than root is told `the admin socket … admits root and

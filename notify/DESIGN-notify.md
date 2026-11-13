@@ -500,15 +500,17 @@ to Alertmanager's v2 API (`POST /api/v2/silences`, `DELETE
 /api/v2/silence/{id}`) over the socket, and once Alertmanager has taken
 it writes one line in motel's journal: `monitor: silence added` (`id`,
 `matchers`, `ends_at`, `created_by`, `comment`) or `monitor: silence
-expired` (`id`, `by`). A refused or failed write leaves no line; the
+expired` (`id`, `expired_by`, in `created_by`'s form). A refused or failed write leaves no line; the
 command says why and exits 1.
 
 Through the route, not from the command to the socket, because that is
 how `send` and `test` write, and so one code path holds every write
 motel documents: the line is motel's, in its unit's journal beside the
-events, written by the process that holds the filter's known values (a
-comment or matcher the filter would mask is refused, as `send`'s
-instance is). A command that posted to `am.sock` itself would log to its
+events, written by the process that holds the filter's known values: a
+comment the filter would mask (a channel URL, a secret-shaped token) is
+refused, as `send`'s instance is, and a matcher holding a channel URL
+(a matcher is otherwise taken as safe: it names a label motel set, a
+release's git sha among them, which the entropy layer would mask). A command that posted to `am.sock` itself would log to its
 own stderr, which over `ssh root@box motel monitor silence …` is the
 laptop's terminal, not the box's journal. A later laptop client runs
 these commands over ssh with `--json`, so it gets the same checks and
@@ -712,6 +714,7 @@ on its general scales. notify's examples:
 
 | Residual | Where | S | O | D | Why accepted |
 |---|---|---|---|---|---|
+| Two `motel monitor silence expire` of one silence at once, or one as the silence reaches its end: both pass the route's state check (`GET`) before either `DELETE`, which Alertmanager 0.28.1 answers 200 for an expired silence, so the journal has two `monitor: silence expired` lines, or one for a silence that ended on its own | notify/silence.go (`serveExpire`) | 2 | 3 | 3 | 18; the silence ends expired either way; only the journal's count is off, and Alertmanager's own `endsAt` says when it ended. A lock across both requests would hold the engine's lock over Alertmanager's answer, or add a lock of its own (size 3). /code-review pass 1 on monitor/silence |
 | A public host name that resolves, or rebinds, to a private address is posted to: the check is on the URL as written | notify/config.go (`checkURL`) | 1 | 5 | 5 | a channel URL is a signer's line today, and a signer can already run any code as an app that reaches the same addresses; scored by what T6 gains (nothing). Rescore when #417 lets a deployer choose a URL |
 | motel stopped for more than five minutes: Alertmanager resolves each firing state alert at `resolve_timeout`, and the channels get a recovery that did not happen (at motel's start the watchdog's standing reports fire its alerts again, and the pollers theirs) | notify/engine.go (no `endsAt` on re-posts) | 2 | 3 | 3 | 18; a stop that long is itself a fault the heartbeat reports (Watchdog's silence pages first); keeping Alertmanager's alerts alive across a stop would need a poster outside motel; a restart (seconds) is "Behaviour"'s, and keeps them |
 | A box on the feature branch's `notify` or `metrics_store` block cannot move to the `monitor` block in one load: the new binary refuses the old blocks and the old binary the new one, so the upgrade runs with no notify between two pushes (docs/upgrading.md, "From the notify and metrics_store blocks"): no event is delivered, the heartbeat stops (the dead-man check pages), Alertmanager ends what fired at `resolve_timeout` with a recovery that did not happen, and the store's rules are retired at the first push's reload | notify/caddyfile.go (`refusedOption`) | 3 | 5 | 1 | 15; once per box, only for boxes that ran the unreleased feature branch, in an order the doc names and the refusal points at, and the dead-man check reports the gap; a transitional alias (the old names loading, warned, for one release) is a second grammar and a new state to retire (size 3, risk 2). /code-review pass 1 on the monitor block, finding 1; the user chose the documented order over a transitional alias |

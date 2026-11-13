@@ -115,8 +115,11 @@ func silenceRun(c *cobra.Command, asJSON bool, run func() (SilenceResult, error)
 func silencePost(c *cobra.Command, uri string, body any, add bool) (SilenceResult, error) {
 	out, err := adminPost(c, uri, body)
 	if err != nil {
-		if strings.Contains(err.Error(), "permission denied") {
-			addr, _ := c.Flags().GetString("address")
+		// The dial's refusal alone, which AdminAPIRequest words
+		// `performing request: …`; a route's own answer (its 502 from
+		// Alertmanager's socket) is passed on as it is.
+		if msg := err.Error(); strings.HasPrefix(msg, "performing request:") && strings.Contains(msg, "permission denied") {
+			addr, _ := adminAddr(c)
 			return SilenceResult{}, fmt.Errorf("the admin socket (%s) admits root and the motel user: run motel monitor silence as root", addr)
 		}
 		return SilenceResult{}, err

@@ -13,6 +13,8 @@ import (
 
 	"github.com/caddyserver/caddy/v2"
 	"go.uber.org/zap"
+
+	"github.com/smallhoursorg/motel/liveswap"
 )
 
 // Silences: `motel monitor silence add` and `expire` post to
@@ -124,8 +126,11 @@ func parseMatcher(s string) (amMatcher, error) {
 	return m, nil
 }
 
-// watchdogLabels are the heartbeat's, as the engine posts them (tick).
-var watchdogLabels = map[string]string{"alertname": alertWatchdog, "severity": "none"}
+// watchdogLabels are the heartbeat's: the engine posts them (tick), and
+// a silence that matches them all is refused.
+func watchdogLabels() map[string]string {
+	return map[string]string{"alertname": alertWatchdog, "severity": "none"}
+}
 
 // parse is the validation the command makes before it posts and the
 // route makes again: the matchers, the duration, the comment and the
@@ -152,9 +157,9 @@ func (r SilenceRequest) parse() ([]amMatcher, time.Duration, error) {
 	if !equal {
 		return nil, 0, errors.New("at least one matcher must be label=value with a value, such as alertname=disk_low: regexes and negations alone could silence everything")
 	}
-	allWatchdog := true
+	allWatchdog, heartbeat := true, watchdogLabels()
 	for _, m := range ms {
-		allWatchdog = allWatchdog && m.matches(watchdogLabels)
+		allWatchdog = allWatchdog && m.matches(heartbeat)
 	}
 	if allWatchdog {
 		return nil, 0, errors.New("these matchers silence Watchdog, the heartbeat: its pings would stop and the check off the box would report the box down; pause that check instead")
@@ -258,25 +263,34 @@ func (c *amClient) expireSilence(ctx context.Context, id string) error {
 	return err
 }
 
-// silenceTarget is the Alertmanager a silence route writes to, and the
-// engine's logger and filter: the config notify's Start configured.
-func silenceTarget() (*amClient, *zap.Logger, func(string) bool, error) {
+// silenceTarget is the Alertmanager a silence route writes to, the
+// engine's logger and clock, and its filter's known values: the config
+// notify's Start configured.
+func silenceTarget() (*amClient, *zap.Logger, time.Time, []string, error) {
 	e := theEngine
 	e.mu.Lock()
-	active, logger := e.active, e.logger
+	active, logger, now, known := e.active, e.logger, e.now(), e.known
 	e.mu.Unlock()
 	if active == nil || active.cfg == nil {
-		return nil, nil, nil, caddy.APIError{HTTPStatus: http.StatusServiceUnavailable, Err: errors.New("this box's Caddyfile has no monitor block with channels")}
+		return nil, nil, now, nil, caddy.APIError{HTTPStatus: http.StatusServiceUnavailable, Err: errors.New("this box's Caddyfile has no monitor block with channels")}
 	}
 	if !active.setUp() {
-		return nil, nil, nil, caddy.APIError{HTTPStatus: http.StatusServiceUnavailable, Err: errNotSetUp}
+		return nil, nil, now, nil, caddy.APIError{HTTPStatus: http.StatusServiceUnavailable, Err: errNotSetUp}
 	}
-	masked := func(s string) bool {
-		e.mu.Lock()
-		defer e.mu.Unlock()
-		return e.clean(s) != s
+	return newAMClient(active.socket()), logger, now, known, nil
+}
+
+// masked reports s changed by the filter, whose known values are the
+// channel URLs: a comment wholly, so a secret-shaped token is refused
+// too; a matcher with itself safe, so only a channel URL is, since a
+// matcher names a label motel set, a release's git sha among them.
+func masked(known []string, s string, asSafe bool) bool {
+	var safe []string
+	if asSafe {
+		safe = []string{s}
 	}
-	return newAMClient(active.socket()), logger, masked, nil
+	out, _ := liveswap.NewRedactor(known, safe).Redact(s)
+	return out != s
 }
 
 func badGateway(err error) error {
@@ -294,19 +308,20 @@ func serveSilence(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return unprocessable(err)
 	}
-	am, logger, masked, err := silenceTarget()
+	am, logger, now, known, err := silenceTarget()
 	if err != nil {
 		return err
 	}
 	// The comment and the matchers are stored by Alertmanager and
 	// written to the journal as they are: one that holds what the
 	// filter would mask is refused, as send's instance is.
-	if masked(req.Comment) || slices.ContainsFunc(req.Matchers, masked) {
-		return unprocessable(errors.New("the comment or a matcher holds a value the filter masks (a channel URL, or a secret-shaped token): name the thing, not its credential"))
+	if masked(known, req.Comment, false) {
+		return unprocessable(errors.New("the comment holds a value the filter masks (a channel URL, or a secret-shaped token): name the thing, not its credential"))
 	}
-	theEngine.mu.Lock()
-	now := theEngine.now().UTC().Truncate(time.Second)
-	theEngine.mu.Unlock()
+	if slices.ContainsFunc(req.Matchers, func(m string) bool { return masked(known, m, true) }) {
+		return unprocessable(errors.New("a matcher holds a channel URL: name the channel, not its URL"))
+	}
+	now = now.UTC().Truncate(time.Second)
 	s := amSilence{Matchers: ms, StartsAt: now, EndsAt: now.Add(d), CreatedBy: createdBy(req.By), Comment: req.Comment}
 	id, err := am.postSilence(r.Context(), s)
 	if err != nil {
@@ -328,7 +343,7 @@ func serveExpire(w http.ResponseWriter, r *http.Request) error {
 	if err := req.Check(); err != nil {
 		return unprocessable(err)
 	}
-	am, logger, _, err := silenceTarget()
+	am, logger, _, _, err := silenceTarget()
 	if err != nil {
 		return err
 	}
@@ -349,6 +364,6 @@ func serveExpire(w http.ResponseWriter, r *http.Request) error {
 		}
 		return badGateway(fmt.Errorf("expiring in Alertmanager: %w", err))
 	}
-	logger.Info("monitor: silence expired", zap.String("id", req.ID), zap.String("by", createdBy(req.By)))
+	logger.Info("monitor: silence expired", zap.String("id", req.ID), zap.String("expired_by", createdBy(req.By)))
 	return writeJSON(w, SilenceResult{ID: req.ID})
 }
