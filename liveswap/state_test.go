@@ -49,6 +49,31 @@ func TestReleasesIsListReleasesForAConfiguredApp(t *testing.T) {
 	}
 }
 
+// TestRecordedVersionsAreTheDeployRecords: a failed deploy's version,
+// whose release is not on disk, is recorded; a file that does not
+// prove itself a record is not listed; nothing for an app the config
+// does not run, or one with no records yet.
+func TestRecordedVersionsAreTheDeployRecords(t *testing.T) {
+	root := t.TempDir()
+	d := newAppDirs(root, "demo")
+	base := time.Now().Add(-time.Hour)
+	for i, r := range [][2]string{{"v1", "succeeded"}, {"f1", "failed"}} {
+		must(t, writeDeployRecord(d, r[0], []byte(`{"version":"`+r[0]+`","status":"`+r[1]+`"}`)))
+		stampRecord(t, d, r[0], base.Add(time.Duration(i)*time.Minute))
+	}
+	must(t, os.WriteFile(filepath.Join(d.deploys, "wrong.json"), []byte(`{"version":"other","status":"failed"}`), 0o600))
+	a := &App{Root: root, specs: map[string]*appSpec{"demo": {}, "empty": {}}}
+	if got := a.RecordedVersions("demo"); strings.Join(got, ",") != "f1,v1" {
+		t.Fatalf("RecordedVersions(demo) = %v", got)
+	}
+	if got := a.RecordedVersions("empty"); got != nil {
+		t.Fatalf("RecordedVersions(empty) = %v", got)
+	}
+	if got := a.RecordedVersions("other"); got != nil {
+		t.Fatalf("RecordedVersions(other) = %v", got)
+	}
+}
+
 func TestFileStateStoreRoundTrip(t *testing.T) {
 	store := &fileStateStore{path: filepath.Join(t.TempDir(), "app", "state.json")}
 

@@ -7,19 +7,20 @@ import (
 	"github.com/smallhoursorg/motel/liveswap"
 )
 
-// lifecycleAlerts are liveswap's, about one app; onDiskReleases those
+// lifecycleAlerts are liveswap's, about one app; releaseAlerts those
 // among them, with post_deploy_regressed, whose release label names a
-// release that is on disk when it fires: a rollback's target, a
-// deploy's success, a regression after it. deploy_failed and
-// deploy_refused carry the release too, but a refused one never lands
-// and a failed one's directory is removed (liveswap/app.go), so the
-// closed set of releases on disk cannot hold theirs.
+// release motel knows when it fires: on disk (a rollback's target, a
+// deploy's success, a regression after it) or in the app's deploy
+// records (a failed deploy, whose directory is removed at once but
+// whose outcome is recorded: liveswap/deploys.go). deploy_refused
+// carries the release too, but a refusal comes before any phase and
+// writes no record, so the closed set cannot hold its release.
 var (
 	lifecycleAlerts = []string{
 		liveswap.EventWatchdogThrottled, liveswap.EventRelaunchRefused,
 		liveswap.EventDeployFailed, liveswap.EventDeployRefused, liveswap.EventRollback, liveswap.EventDeploySucceeded,
 	}
-	onDiskReleases = []string{liveswap.EventRollback, liveswap.EventDeploySucceeded, eventPostDeployRegressed}
+	releaseAlerts = []string{liveswap.EventRollback, liveswap.EventDeploySucceeded, liveswap.EventDeployFailed, eventPostDeployRegressed}
 )
 
 // raisedAlerts are the alert names motel's own detectors raise on any
@@ -69,9 +70,10 @@ func silenceableAlerts(a *App) []string {
 // config a: app reports an alert about an app (an app label:
 // liveswap's, post_deploy_regressed, and the vmalert rules whose
 // subject is an app's), pinned the one app a rule of one app's is
-// about, and release one whose release label names a release on disk.
+// about, and release one whose release label names a release motel
+// knows (releaseAlerts).
 func alertScope(a *App, name string) (app bool, pinned string, release bool) {
-	if slices.Contains(onDiskReleases, name) {
+	if slices.Contains(releaseAlerts, name) {
 		return true, "", true
 	}
 	if slices.Contains(lifecycleAlerts, name) {

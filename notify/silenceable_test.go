@@ -224,7 +224,7 @@ func TestAlertScope(t *testing.T) {
 	}
 	for name, want := range map[string]scope{
 		"rollback": {true, "", true}, "deploy_succeeded": {true, "", true}, eventPostDeployRegressed: {true, "", true},
-		"deploy_failed": {true, "", false}, "deploy_refused": {true, "", false},
+		"deploy_failed": {true, "", true}, "deploy_refused": {true, "", false},
 		"watchdog_throttled": {true, "", false}, ruleAppMemoryHigh: {true, "", false}, "slow": {true, "", false},
 		"shop_slow": {true, "shop", false},
 		"disk_low":  {}, "disk_soon": {}, ruleStoreDiskFill: {},
@@ -236,7 +236,7 @@ func TestAlertScope(t *testing.T) {
 		}
 	}
 	all := silenceableAlerts(&App{Metrics: &MetricsStore{Rules: []Rule{{Name: "x", Kind: rulePostDeploy}}}})
-	for _, n := range onDiskReleases {
+	for _, n := range releaseAlerts {
 		if !slices.Contains(all, n) {
 			t.Errorf("%s carries a release but is not silenceable", n)
 		}

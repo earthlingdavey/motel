@@ -267,6 +267,20 @@ t_arr=$(first_arrival /ops rollback "$t" 30 "" blog)
 [ -n "$t_arr" ] && pass "after expire, blog's rollback reaches the operator again" || fail "no rollback after the expire"
 out=$(motel monitor silence expire --json "$id" 2>&1) && fail "a second expire succeeded: $out" \
 	|| { echo "$out" | grep -qF '{"error":"silence '"$id"' has already expired"}' && pass "a second expire exits 1: $out" || fail "a second expire: $out"; }
+# v3's deploy failed in notify 3: its release was removed, its record
+# kept, so --release takes it with deploy_failed.
+out=$(motel monitor silence add --json --comment "e2e: v3 is known broken" --duration 5m --alert deploy_failed --app blog --release v3 2>&1)
+fid=$(echo "$out" | sed -n 's/^{"id":"\([0-9a-f-]\{36\}\)","ends_at":"[0-9T:.Z-]*"}$/\1/p')
+[ -n "$fid" ] && am "http://am/api/v2/silence/$fid" | grep -q '"name":"release","value":"v3"' \
+	&& pass "a failed deploy's recorded release is silenced by --release v3" || fail "deploy_failed --release v3: $out"
+[ -n "$fid" ] && motel monitor silence expire "$fid" >/dev/null 2>&1
+out=$(motel monitor silence add --comment "e2e: refused" --alert deploy_refused --app blog --release v3 2>&1) \
+	&& fail "deploy_refused was silenced by --release: $out" \
+	|| { echo "$out" | grep -q "a refused deploy's release is never recorded" && pass "deploy_refused with --release is refused" || fail "deploy_refused --release: $out"; }
+out=$(motel monitor silence add --comment "e2e: unknown" --alert deploy_failed --app blog --release v9 2>&1) \
+	&& fail "a release neither on disk nor recorded was silenced: $out" \
+	|| { echo "$out" | grep -q -- '--release names no release of blog on this box; they are .*v3' && ! echo "$out" | grep -q v9 \
+		&& pass "a release neither on disk nor recorded is refused, the known ones listed" || fail "--release v9: $out"; }
 
 echo "=== notify 8: an app's sandbox has none of it in view ==="
 code=$(deploy demo-probe.tar.gz sb1)

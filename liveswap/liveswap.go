@@ -608,14 +608,30 @@ func (a *App) MemoryCapped() map[string]bool {
 }
 
 // Releases are the release versions on disk for app, newest first
-// (listReleases): what notify's `motel monitor silence add --release`
-// takes. Nil for an app this config does not run, or when the
+// (listReleases): with RecordedVersions, what notify's `motel monitor
+// silence add --release` takes. Nil for an app this config does not run, or when the
 // directory cannot be read.
 func (a *App) Releases(app string) []string {
 	if _, ok := a.specs[app]; !ok {
 		return nil
 	}
 	versions, _ := listReleases(newAppDirs(a.Root, app))
+	return versions
+}
+
+// RecordedVersions are the versions in app's deploy records, newest
+// first (listDeploySummaries): every version on disk and the newest
+// keep others, a failed deploy's among them, whose release is removed
+// at once. What notify's silence --release takes beside Releases. Nil
+// for an app this config does not run, or with no records to read.
+func (a *App) RecordedVersions(app string) []string {
+	if _, ok := a.specs[app]; !ok {
+		return nil
+	}
+	var versions []string
+	for _, s := range listDeploySummaries(newAppDirs(a.Root, app)) {
+		versions = append(versions, s.Version)
+	}
 	return versions
 }
 
