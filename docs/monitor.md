@@ -454,7 +454,8 @@ motel reads Alertmanager's failure counters, and tells the operator's
 other channels about a failure as `ChannelFailed` (DESIGN-notify.md,
 "Failed delivery"). `ChannelFailed` is a warning, so a channel with
 `severity critical` never hears it. That goes wrong in two cases.
-With a single operator channel there is no other channel to tell. And
+With a single operator channel there is no other channel to tell, and
+the heartbeat goes on pinging, so nothing off the box hears it either. And
 two channels of one integration count as one, so a failure points at
 both as suspects, and neither hears it: ntfy and json are both
 Alertmanager's webhook integration. Give the operator two channels of
