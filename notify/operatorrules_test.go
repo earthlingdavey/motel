@@ -276,16 +276,21 @@ func TestOperatorRulesRender(t *testing.T) {
 	shop := func(metric, extra string) string {
 		return `sum by (app) (` + inc(metric+`{app="shop"`+extra+`}`) + `)`
 	}
+	// The request thresholds hold for the apps in motel's last push.
+	pushed := func(sel string) string {
+		return ` and on (app) (max by (app) (tlast_over_time(motel_app_requests_total` + sel + `[75s]))` +
+			` > scalar(max(tlast_over_time(process_start_time_seconds{job="motel"}[75s]))) - 15)`
+	}
 	for name, want := range map[string]string{
-		"errors_high": "(" + every(`class="5xx"`) + " / " + every(`class!="aborted"`) + ") > 0.05 and " + every(`class!="aborted"`) + " >= 20",
+		"errors_high": "(" + every(`class="5xx"`) + " / " + every(`class!="aborted"`) + ") > 0.05 and " + every(`class!="aborted"`) + " >= 20" + pushed(""),
 		"shop_slow": `histogram_quantile(0.95, sum by (app, le) (` + hist(`{app="shop"}`) + `)) > 1.5 and ` +
-			shop("motel_app_response_seconds_count", "") + " >= 50",
-		"blog_quiet": `sum by (app) (` + inc(`motel_app_requests_total{app="blog"}`) + `) / 300 < 0.1`,
+			shop("motel_app_response_seconds_count", "") + " >= 50" + pushed(`{app="shop"}`),
+		"blog_quiet": `sum by (app) (` + inc(`motel_app_requests_total{app="blog"}`) + `) / 300 < 0.1` + pushed(`{app="blog"}`),
 		"hits_low": `(sum by (app) (` + inc(`motel_app_cache_responses_total{result=~"hit|stale"}`) + `) or sum by (app) (` + inc(`motel_app_cache_responses_total`) + `) * 0)` +
-			` / sum by (app) (` + inc(`motel_app_cache_responses_total`) + `) < 0.5 and sum by (app) (` + inc(`motel_app_cache_responses_total`) + `) >= 20`,
+			` / sum by (app) (` + inc(`motel_app_cache_responses_total`) + `) < 0.5 and sum by (app) (` + inc(`motel_app_cache_responses_total`) + `) >= 20` + pushed(""),
 		"mem":    `max by (app) (motel_app_memory_bytes / motel_app_memory_max_bytes) > 0.8`,
 		"busy":   `sum by (app) (rate(motel_app_cpu_seconds_total{app="shop"}[5m])) > 1.5`,
-		"median": `histogram_quantile(0.5, sum by (app, le) (` + hist(``) + `)) > 0.2 and sum by (app) (` + inc(`motel_app_response_seconds_count`) + `) >= 20`,
+		"median": `histogram_quantile(0.5, sum by (app, le) (` + hist(``) + `)) > 0.2 and sum by (app) (` + inc(`motel_app_response_seconds_count`) + `) >= 20` + pushed(""),
 		"disk_filling": `min by (path) (predict_linear(motel_disk_avail_bytes[42h], 604800)) < 0 and min by (path) (predict_linear(motel_disk_avail_bytes[7h], 604800)) < 0` +
 			` and max by (path) (present_over_time(motel_disk_avail_bytes[42h] offset 35h))`,
 	} {
@@ -589,6 +594,69 @@ tests:
 	runUnittest(t, tool, dir, test)
 }
 
+// A request threshold reads the apps in motel's last push alone, at
+// pushEvery's 30 s: gone's series stop at 12m (its observe line taken
+// out) while the pushes go on, and its 2 a second, falling a push's
+// worth at each push after (1.4 by 13m30s), never fires a
+// `request_rate < 1.5`; quiet, observed and never reached, fires and
+// stays firing over two pushes lost (5m30s and 6m: the last push a
+// minute old at 6m, as one lost push leaves it before the next). With
+// every push stopped at 12m, all's fall fires nothing either.
+func TestOperatorRulesReadThePushedApps(t *testing.T) {
+	tool := vmTool(t, "vmalert-tool")
+	dir := t.TempDir()
+	a := rulesApp(t, "rule low threshold request_rate < 1.5 for 1m")
+	if err := os.WriteFile(filepath.Join(dir, RulesName), renderRules(a), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	quiet := `
+          - exp_labels: {app: quiet, kind: state, severity: warning, subject: "app:quiet", source: rules, key: "rules/app:quiet/low"}
+            exp_annotations: {summary: "quiet: its requests a second over 5 minutes has been below 1.5 for 1m (rule low); now 0"}`
+	test := `rule_files: [rules.yml]
+evaluation_interval: 1m
+tests:
+  - interval: 30s
+    input_series:
+      - series: 'process_start_time_seconds{job="motel"}'
+        values: '1x10 _ _ 1x39'
+      - series: 'motel_app_requests_total{app="live",release="v1",class="2xx",job="motel"}'
+        values: '0+60x10 _ _ 780+60x39'
+      - series: 'motel_app_requests_total{app="quiet",release="v1",class="2xx",job="motel"}'
+        values: '0x10 _ _ 0x39'
+      - series: 'motel_app_requests_total{app="gone",release="v1",class="2xx",job="motel"}'
+        values: '0+60x24'
+    alert_rule_test:
+      - eval_time: 6m
+        groupname: motel-operator
+        alertname: low
+        exp_alerts:` + quiet + `
+      - eval_time: 15m
+        groupname: motel-operator
+        alertname: low
+        exp_alerts:` + quiet + `
+      - eval_time: 17m
+        groupname: motel-operator
+        alertname: low
+        exp_alerts:` + quiet + `
+  - interval: 30s
+    input_series:
+      - series: 'process_start_time_seconds{job="motel"}'
+        values: '1x24'
+      - series: 'motel_app_requests_total{app="all",release="v1",class="2xx",job="motel"}'
+        values: '0+60x24'
+    alert_rule_test:
+      - eval_time: 15m
+        groupname: motel-operator
+        alertname: low
+        exp_alerts: []
+      - eval_time: 17m
+        groupname: motel-operator
+        alertname: low
+        exp_alerts: []
+`
+	runUnittest(t, tool, dir, test)
+}
+
 // A histogram is read whole, by its count: under a release name rolled
 // back to with a fresh counter, reused's buckets that came back below
 // their last values and the one above it are all counted from zero (380
@@ -596,6 +664,8 @@ tests:
 // increase (0.1 s read as 0, a p95 of 0.97 s). slow is new to the store
 // (all in increase_pure); kept came back after a gap at its last values,
 // its history slow and its new answers fast, all through increase.
+// Each app's request counter comes with its histogram, as in motel's
+// push, for the rule reads the apps in the push alone.
 func TestOperatorRulesHistogramIsReadWhole(t *testing.T) {
 	tool := vmTool(t, "vmalert-tool")
 	dir := t.TempDir()
@@ -618,6 +688,8 @@ tests:
         values: '0+100x10 _x30 400x50'
       - series: 'motel_app_response_seconds_count{app="reused",release="v1",job="motel"}'
         values: '0+100x10 _x30 400x50'
+      - series: 'motel_app_requests_total{app="reused",release="v1",class="2xx",job="motel"}'
+        values: '0+100x10 _x30 400x50'
       - series: 'motel_app_response_seconds_bucket{app="slow",release="v1",le="0.1",job="motel"}'
         values: '_x40 0x50'
       - series: 'motel_app_response_seconds_bucket{app="slow",release="v1",le="1",job="motel"}'
@@ -626,6 +698,8 @@ tests:
         values: '_x40 50x50'
       - series: 'motel_app_response_seconds_count{app="slow",release="v1",job="motel"}'
         values: '_x40 50x50'
+      - series: 'motel_app_requests_total{app="slow",release="v1",class="2xx",job="motel"}'
+        values: '_x40 50x50'
       - series: 'motel_app_response_seconds_bucket{app="kept",release="v1",le="0.1",job="motel"}'
         values: '0x10 _x30 0+10x50'
       - series: 'motel_app_response_seconds_bucket{app="kept",release="v1",le="1",job="motel"}'
@@ -633,6 +707,8 @@ tests:
       - series: 'motel_app_response_seconds_bucket{app="kept",release="v1",le="+Inf",job="motel"}'
         values: '0+100x10 _x30 1000+10x50'
       - series: 'motel_app_response_seconds_count{app="kept",release="v1",job="motel"}'
+        values: '0+100x10 _x30 1000+10x50'
+      - series: 'motel_app_requests_total{app="kept",release="v1",class="2xx",job="motel"}'
         values: '0+100x10 _x30 1000+10x50'
     alert_rule_test:
       - eval_time: 44m

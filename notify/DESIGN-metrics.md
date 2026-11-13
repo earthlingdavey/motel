@@ -307,7 +307,9 @@ they would read as an app no request reaches. That is from the
 reload's first push, though the old config's handler counts its
 requests in flight until they end (a stream, for as long as it lasts).
 Its series go stale in the store,
-and an every-app `request_rate <` alert firing for it resolves. The
+and the request thresholds leave it out from the first push without
+them (`PUSHED`, "Operator rules"), so an every-app `request_rate <`
+alert firing for it resolves. The
 first observer after none zeroes them in place, so the line put back
 counts from zero, as after a restart: resumed, their first push after
 the gap would be read as every response since motel started, in one
@@ -462,10 +464,10 @@ parse, a JSON config's at Provision, both by `motel validate`):
 
 | Kind | Expression | For | Labels | Reaches |
 |---|---|---|---|---|
-| `threshold 5xx_share` | `(sum by (app) (inc(motel_app_requests_total{class="5xx"})) / SENT) > v and SENT >= floor`, SENT the same over `class!="aborted"` | `for` | `app`, `subject="app:<app>"`, `kind="state"`, `severity`, `source="rules"`, `key="rules/app:<app>/<name>"` | the operator and the app's bound channels |
-| `threshold p50`, `p95` | `histogram_quantile(q, sum by (app, le) (hinc(motel_app_response_seconds))) > v and sum by (app) (inc(motel_app_response_seconds_count)) >= floor`, v in seconds | `for` | as above | as above |
-| `threshold request_rate` | `sum by (app) (inc(motel_app_requests_total)) / 300 > v` | `for` | as above | as above |
-| `threshold cache_hit_share` | `(HITS or SPOKE * 0) / SPOKE > v and SPOKE >= floor`, both `sum by (app) (inc(motel_app_cache_responses_total))`, HITS over `result=~"hit\|stale"` | `for` | as above | as above |
+| `threshold 5xx_share` | `(sum by (app) (inc(motel_app_requests_total{class="5xx"})) / SENT) > v and SENT >= floor and on (app) PUSHED`, SENT the same over `class!="aborted"` | `for` | `app`, `subject="app:<app>"`, `kind="state"`, `severity`, `source="rules"`, `key="rules/app:<app>/<name>"` | the operator and the app's bound channels |
+| `threshold p50`, `p95` | `histogram_quantile(q, sum by (app, le) (hinc(motel_app_response_seconds))) > v and sum by (app) (inc(motel_app_response_seconds_count)) >= floor and on (app) PUSHED`, v in seconds | `for` | as above | as above |
+| `threshold request_rate` | `sum by (app) (inc(motel_app_requests_total)) / 300 > v and on (app) PUSHED` | `for` | as above | as above |
+| `threshold cache_hit_share` | `(HITS or SPOKE * 0) / SPOKE > v and SPOKE >= floor and on (app) PUSHED`, both `sum by (app) (inc(motel_app_cache_responses_total))`, HITS over `result=~"hit\|stale"` | `for` | as above | as above |
 | `threshold memory_share` | `max by (app) (motel_app_memory_bytes / motel_app_memory_max_bytes) > v` | `for` | as above | as above |
 | `threshold cpu_cores` | `sum by (app) (rate(motel_app_cpu_seconds_total[5m])) > v` | `for` | as above | as above |
 | `disk_fill` | `min by (path) (predict_linear(motel_disk_avail_bytes[L], H)) < 0 and min by (path) (predict_linear(motel_disk_avail_bytes[L/6], H)) < 0 and max by (path) (present_over_time(motel_disk_avail_bytes[L] offset 5L/6))`, H `within` in seconds, L 6 h up to a `within` of a day and `within`/4 beyond it, in whole minutes | L/12: 30 m up to a day | `path`, `subject="box"`, `kind="state"`, `severity`, `source="rules"`, `key="rules/box/<name>/<path>"`, each filesystem's alert its own key, as `disk_low`'s | the operator |
@@ -533,6 +535,39 @@ over `H_bucket` with its tests asked of `H_count` and matched
 Told per bucket, a fresh counter under a name the store saw had some
 buckets above their last values and some below, and a p95 of 0.1 s
 read 0.97 s (/code-review pass 5 on operator rules).
+
+`PUSHED` (`pushedNow`) is the apps whose request series came with
+motel's last push:
+
+```
+max by (app) (tlast_over_time(motel_app_requests_total[75s]))
+  > scalar(max(tlast_over_time(process_start_time_seconds{job="motel"}[75s]))) - 15
+```
+
+A series no push carries any more keeps its last value, and `increase`
+over the window loses one push's worth at each push after it, so
+without `PUSHED` an app whose `observe` line is taken out read as its
+traffic falling, and an every-app `request_rate <` fired for it (owed
+by #434, measured then on the live store at 2 requests a second: 1.8,
+1.6 … 0.2 over the five minutes, nothing after; a `for: 1m` fired from
+a bound of 0.5 R). A share or a quantile was read over the part of the
+window left, though its summary says five minutes. Every observed app's current
+release is pushed, at zero before its first response, so an app is in
+the push its series stops coming with and out from the first push
+without it, the push that begins the fall: measured on 1.112.0 over
+imported pushes 30 s apart, the app's 2.0 reads 1.8 from 30 s after its
+last push and the guard holds it out from the same instant, a live app
+in it at every second. Its last sample is held to the push's last less
+`pushApart`, since one push's samples are milliseconds apart (and
+`motel_app_` sorts before `process_` in the push). With no push in
+75 s (two pushes and a half: one lost leaves every app in), `scalar`
+is NaN and every app is out: motel down, or every push failing, which
+motel's heartbeat and `metrics_store_down` tell. Inside the 75 s the
+readings fall for 45 s at most (from the first push missed), which
+holds for one of vmalert's minutely evaluations, and a `for` is a
+minute or more ("Accepted residuals" for what the gap does to an alert
+already firing). `memory_share` and `cpu_cores` read the unit's
+series, pushed while it runs whatever the routes observe.
 CPU is `rate` over the per-unit counters, each from
 zero when its unit starts. The summary says the bound and the value in
 plain words: `shop: the 5xx share of its responses over 5 minutes has
@@ -1108,13 +1143,14 @@ on its general scales. metrics' examples:
 | A cache hit after a cutover counts under the new release though the page was the old one's: the new release's 5xx and hit shares carry the old's cached answers until they expire | liveswap/observe.go | 2 | 3 | 3 | 18; latency leaves hits out, and a cache's TTL bounds the mix (30 s in the starter); telling a stored page's release needs a header the cache would store, a change to every app's responses |
 | An app's threshold beside an every-app one on the same metric both fire for that app: the app's line adds a rule and cannot loosen or silence the every-app one, so when both hold its channels get two alerts | notify/operatorrules.go | 2 | 5 | 1 | 10; each alert is true and names its own rule; replacement (an app's rule taking the app out of the every-app one's selectors) is a feature for the operator to weigh, an explicit `replaces <rule>` the shape that neither breaks layered severities nor drops coverage silently; not built here (Copilot round 3 on #429) |
 | An app whose route has no `observe` has no request numbers, and nothing says so at load | liveswap/observe.go | 2 | 3 | 2 | 12; `metrics` then has no `requests`, which a deployer sees; a load-time check needs the HTTP app's routes, which the liveswap app cannot read. A rule naming such an app is refused by cmd/motel's gate ("Operator rules") |
-| An every-app `request_rate <` alert firing for an app whose `observe` line is taken out resolves once its series go stale, a recovery the traffic did not make | notify/metricscollector.go (`collectRequests`) | 2 | 5 | 3 | 30, accepted under the skill's rule 4: the rule no longer covers the app, and the alert ends rather than firing on numbers nobody measures any more, which it did before #434; telling the two apart needs a rule per app for an absent series (size 3, risk 2). /code-review pass 2 on #434 |
+| An every-app `request_rate <` alert firing for an app whose `observe` line is taken out resolves at the first push without its series (`PUSHED`), a recovery the traffic did not make | notify/metricscollector.go (`collectRequests`), notify/operatorrules.go (`pushedNow`) | 2 | 5 | 3 | 30, accepted under the skill's rule 4: the rule no longer covers the app, and the alert ends rather than firing on numbers nobody measures any more, which it did before #434; telling the two apart needs a rule per app for an absent series (size 3, risk 2). /code-review pass 2 on #434 |
 | The upgrade to the buckets under 5 ms (#434): a window that spans it holds the responses before it in the 5 ms bucket alone, so for up to a day `GET /<app>`'s p50 and p95 of a fast app read between 2.5 and 5 ms, and a post_deploy baseline read across the restart is high, so a regression right after the upgrade can read as no worse | liveswap/observe.go (`ResponseBuckets`) | 3 | 4 | 3 | 36, accepted under the skill's rule 4: once per box, at this upgrade, for at most the 24 h range; leaving the earlier samples out needs the store to know when a series' bucket set began (size 3, risk 2). /code-review pass 1 on #434 |
 | `requests.per_second` is the window's total over the window's whole length, so in the first window after the observer begins counting an app's responses (`observe` added to its route, a new app) it reads low by the share of the window before; `total` counts the same responses | notify/metricsview.go (`summarizeRequests`) | 2 | 5 | 3 | 30, accepted under the skill's rule 4: the covered span needs the series' first sample (an eighth query, `tfirst_over_time`; size 3, risk 2), and that sample holds every count since motel began counting, an unknown span (hours, when the store is set up on a running box), so a rate over the covered span reads high where this one reads low. It ends correct once the series is a window old, and a deploy starts no new span: every release in the window is summed. /code-review pass 1 on slice three. The operator accepted it on 2026-11-12 |
 | A miss Souin coalesced onto another request's upstream call counts under the release current when it began, not the one the call went to: across a cutover, the waiters of a call in flight at that instant can be counted under the other release | liveswap/observe.go (`markUpstream`) | 2 | 5 | 3 | 30, accepted under the skill's rule 4: only the first request's selection is made, inside Souin's singleflight, and the waiters learn nothing of it but the shared response; carrying it to them needs a change to Souin (size 3, risk 3). It is bounded to the misses on one URL waiting at the cutover instant, the same mix the cached-page row above accepts, and their latency is counted. /code-review pass 2 on slice three. The operator accepted it on 2026-11-12 |
 | With no cache in front, an app's own `Cache-Status` is read as a cache's verdict: its own hits are counted in `cache_hit_share` and left out of the latency, so an app that marks every response a hit leaves its own latency out of its numbers | liveswap/observe.go (`parseCacheStatus`) | 2 | 5 | 3 | 30, accepted under the skill's rule 4: telling Souin's entry from an app's needs Souin's `cache_name` (the observer would read the cache app's configuration, a dependency liveswap does not have) or the request's path through the cache, which a stale hit's background revalidation shares (it runs on a clone of the request, vars and all); size 3, risk 2. The app's own cache is a cache that spoke, and an app moves only its own numbers (T1); the post-deploy comparison reads latency through it too, for both releases alike. /code-review pass 2 on slice three. The operator accepted it on 2026-11-12 |
 | The counts a motel restart (or a crash) ends within the last 30 s were never pushed, and are lost | liveswap/observe.go | 1 | 3 | 4 | 12; at most one push's worth, and the store reads the restart as a reset |
 | A fresh counter is read through `increase`, which drops a first push that is large beside the next (a burst, then a lull), in two cases the store cannot tell from a gap or from a lifetime: one that comes with the push's first sample after the store's start or after a gap in the pushes of over two minutes (a new release deployed in the gap, a class's first response in it: the series' first sample is the push's), and under a release name the store saw within the day whose fresh count is above the last it had (a rollback past the two releases the observer keeps). The window under-reads that push for its length: five minutes for a rule, an hour or a day for `GET /<app>` | notify/operatorrules.go (`counterIncrease`), notify/metricsview.go | 2 | 5 | 3 | 30, accepted under the skill's rule 4: both read the same as a series that holds counts from before the window, which `increase_pure` would count whole; telling them apart needs the series' age from motel (a label or a series per process and release on every request series: size 3, risk 3). An under-read of one push, against a lifetime read in its place. /code-review pass 4 on operator rules; the gap case pass 5's, the push term narrowed from a day to two minutes; narrowed 2026-11-12 from the first five minutes after the push first came, or came back, to the series that came with that push, so that a series born after it counts from zero on a store younger than the window (`GET /<app>`'s Owed row) |
+| A gap in every push over 75 s (motel down, or the store refusing every push) takes every app out of the request thresholds: one pending starts again after it, one firing resolves (a recovery the traffic did not make) and, still over its bound, fires again after its `for` once the pushes are back | notify/operatorrules.go (`pushedNow`) | 2 | 3 | 3 | 18; the cause is told beside it, by motel's heartbeat with motel down and by `metrics_store_down` after five minutes of failed pushes; read through the gap, every app's readings fell a push's worth a push instead, and each `<` fired falsely for every app (the unscored note on #434's Owed row, 18 and fixed here as a cheap fix: the guard's push window, size 1, risk 1). Holding a firing alert through a gap is vmalert's `keep_firing_for`, a field per rule whose length no gap bounds. Scored with the guard (#434's Owed row) |
 | A motel restart (or a crash) inside a post-deploy window loses the comparison: nothing compares that deploy again, and a regression is told only by a threshold rule | notify/postdeploy.go | 2 | 2 | 3 | 12; the comparison is in memory, and keeping it across a restart is state on disk for a notification (size 2, risk 2); a restart rarely falls in the half hour after a deploy, and the numbers stay in `GET /<app>` |
 | A relaunch after a stop is compared from 40 s after its cutover (`relaunchSkip`): the relaunched instance's answers before then are in none of its checks, so a regression over by then is not told by the comparison | notify/postdeploy.go (`newWindow`) | 2 | 5 | 3 | 30, accepted under the skill's rule 4: those answers come in the first push after the cutover with the stopped instance's last ones, under the release's one set of counters, and only counters split at the cutover (a new state in the observer, size 3, risk 3) tell the two apart; read from the cutover, a crash loop's last 503s were the relaunch's in every check. The threshold rules and `GET /<app>` count them. /code-review of the relaunch mark; the operator accepted it on 2026-11-12 |
 | A relaunch after a stop whose first push after the cutover the store did not take within 40 s of the cutover (an import that failed, or a push gathered late behind a slow chain check) reads the stopped instance's last push as its own: a crash loop's last 503s in every check | notify/postdeploy.go (`relaunchSkip`) | 2 | 2 | 3 | 12; it needs the release's instance to have failed before (the crash loop) and the store to fail that one import; starting the window at the pusher's first import taken after the cutover is a state shared between the pusher and the comparator (size 3, risk 2). /code-review of the relaunch mark |
@@ -1148,7 +1184,6 @@ on its general scales. metrics' examples:
 | On a booted Debian host, the namespace unit's test for a leftover before its delete (#430's `ExecStartPre`): setup's re-run does not restart the namespace unit, which is active, so it first runs at a reboot; measured in the e2e box alone. #426's proxies have had their cold boot: the deploy of 01b2fd5 to hotserve-1 rebooted it at about 17:53 UTC on 2026-11-12, and both came back as no root; the am proxy is gone since #435, and the cold boot of the units that replaced it is the last dashed row | — | — | — | the next reboot of hotserve-1 after a deploy that carries #430 |
 | Debian's security support for `victoria-metrics` 1.112.0 and `prometheus-alertmanager` 0.28.1 on trixie, whose binaries are built with Go 1.24.2 (the store, vmalert) and 1.24.1 (Alertmanager), and a dist-upgrade check of both drop-ins' flags | — | — | — | before any release |
 | A cold boot on hotserve-1 with Alertmanager's socket in the namespace, its drop-in and the namespace unit's `TimeoutStartSec=` and `ExecStartPost=`, and the upgrade from the proxy shape there (measured in the e2e box alone: "The shape") | — | — | — | the next deploy to hotserve-1, `motel monitor setup --metrics` after it, and a reboot |
-| An every-app `request_rate <` rule can fire for an app whose `observe` line is taken out, before its series drop out: with no new sample, the store's `increase` over the 5 m window loses one push's worth a push. Measured 2026-11-13 on Debian's 1.112.0 with the drop-in's flags, the rendered expression at 2 requests a second: 2.0 up to 50 s after the app's last push, then 1.8, 1.6 … down to 0.2 at 305 to 320 s, nothing from 335 s; the same at vmalert's time (30 s earlier, `step` 5m) and for the per-app rule. It reads below a threshold X for about 300 s × X/R − 30 s (R the app's rate), so a `for: 1m` can fire from X ≈ 0.3 R and does from 0.5 R, a `for: 4m` only near R, a `for:` of 5 m or more never: one false alert to the app's channels and the operator's, resolved by 335 s (that resolve is the accepted row on the `observe` line taken out). A per-app rule cannot reach it, since cmd/motel's gate refuses the reload that leaves its app unobserved. 30 by rule 3, fix size 1, risk 2: the request_rate expression `and on (app)` the app being in motel's last push, `max by (app) (tlast_over_time(motel_app_requests_total[5m])) > scalar(max(tlast_over_time(process_start_time_seconds{job="motel"}[5m]))) - 15`, so it drops out at the first push without the app, when the value first falls, and no `for:` reaches it; pushes that stop whole (a store gap) leave it as it is. Not yet run against the store | 2 | 5 | 3 | the next PR on the feature branch, after #434, with an e2e metrics case past the 5 m window (triage on #434 after its review loop closed) |
 
 ## e2e rows
 
@@ -1166,12 +1201,14 @@ in the namespace; the socket `srw-rw---- root motel` and the state
 directory `drwxr-s--- motel _victoria-metrics`; the store's data
 `drwxr-x--- _victoria-metrics _victoria-metrics`; root and motel reach the
 store and nobody does; the store's and vmalert's `MemoryMax`; the
-rendered `rules.yml` passes `vmalert -dryRun`; notify's ten tests
+rendered `rules.yml` passes `vmalert -dryRun`; notify's twelve tests
 over vmalert and vmalert-tool, which `make test` skips for want of them
 (the dry runs, the fixed rules firing, the threshold and disk_fill
-rules firing, a counter after a push gap, a counter on a fresh store, a
-histogram read whole, disk history over a gap, a disk step, and
-`GET /<app>`'s request queries over the store), every test that calls `vmTool`
+rules firing, a counter after a push gap, a counter on a fresh store,
+the request thresholds over the pushed apps alone, a histogram read
+whole, disk history over a gap, a disk step, `GET /<app>`'s request
+queries over the store, and a relaunch read past its stopped
+instance), every test that calls `vmTool`
 (`TestE2EMetricsListsEveryVMAlertTest` holds the list to them), run
 from a test binary built for the box (e2e/Dockerfile's `notify-tests`), none skipped; motel's push arrives
 (`job="motel"`), with a deployed app's `motel_app_up`, release and CPU,
@@ -1216,7 +1253,10 @@ the operator's rules (e2e/metrics/Caddyfile's four `rule` lines): the
 `rules/<subject>/<name>`, with no post_deploy in it, vmalert loading
 it, an every-app `5xx_share` threshold firing for shop (whose site
 answers 503) and reaching Alertmanager with `app="shop"`,
-`source="rules"`, its key and vmalert's `generatorURL`; and a deploy of
+`source="rules"`, its key and vmalert's `generatorURL`; every app
+with request series in the last 75 s in `PUSHED` at each second of two
+minutes of the pushes as the store stamped them, blog and shop among
+them; and a deploy of
 `demo-errors` (healthy, every page a 500) after the probe release
 producing one `post_deploy_regressed` for blog, release `errs1`, with
 `5xx share 1 against 0 before it`, delivered to the operator's channel
@@ -1405,3 +1445,14 @@ Dated one-liners; the full text of each is in git.
   A restart was measured to reach it (`Requires=`), as e2e 4d had it.
   Its round 2, accepted (12): a `daemon-reload` refused after the
   proxy's retirement can leave vmalert no outlet, red and named.
+- 2026-11-13 — #434's Owed row closed: the request thresholds read the
+  apps in motel's last push alone (`PUSHED`, `pushedNow`), so an app
+  whose `observe` line is taken out is out from the first push without
+  it, as its readings first fall, and no `request_rate <` fires for it;
+  the shares and quantiles too, which read the part of the window left.
+  The row's unscored note, every push stopped, scored 18 and fixed as a
+  cheap fix (the guard's push window 75 s): every app is out then, and
+  what that does to a firing alert is a row (18). Measured over imported
+  pushes on 1.112.0 and in `TestOperatorRulesReadThePushedApps`, in the
+  e2e list; e2e metrics 10 holds every pushing app in the guard at each
+  second of two minutes.

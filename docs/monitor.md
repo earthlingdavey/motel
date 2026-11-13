@@ -599,7 +599,11 @@ monitor {
   release compared with the one it replaced. It sends
   `post_deploy_regressed` once, and it never rolls back.
 
-The request metrics need `observe <app>` in the app's site. The rule
+The request metrics need `observe <app>` in the app's site, and a rule
+on them reads only the apps in motel's last push: an app whose
+`observe` line is taken out drops out at the next push, and every app
+does while no push reaches the store for over 75 s (motel down, or
+`metrics_store_down`), so a firing alert resolves then. The rule
 goes to the operator's channels, and to the app's bound channels when
 it is about one app. Every parameter and every refusal is in
 DESIGN-metrics.md's [Operator rules](../notify/DESIGN-metrics.md#operator-rules).
