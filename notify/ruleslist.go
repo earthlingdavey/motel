@@ -277,7 +277,7 @@ func checkListing(e *AlertListing, seen polled, chain chainRead, budgets []lives
 			{Severity: SeverityCritical, Threshold: diskCrit, ClearsBelow: diskCrit - diskGap},
 		}
 		for _, d := range seen.disks {
-			e.Readings = append(e.Readings, Reading{Instance: d.path, Value: math.Floor(d.usedPct*10) / 10, Level: d.level, MeasuredAt: d.at})
+			e.Readings = append(e.Readings, Reading{Instance: d.path, Value: d.usedPct, Level: d.level, MeasuredAt: d.at})
 		}
 	case "backup_stale":
 		e.Op, e.Threshold, e.Unit = ">", ptr(status.StaleAfter.Seconds()), "seconds"
@@ -368,7 +368,7 @@ func rulesText(l RulesListing) []byte {
 	}
 	_ = tw.Flush()
 	if l.Store != nil {
-		_, _ = fmt.Fprintf(&b, "\nNOW for the store's rules: run each value_query (--json) on %s at now - %ds;\npending and firing are %s.\n",
+		_, _ = fmt.Fprintf(&b, "\nNOW for the store's rules: run each value_query (--json) on %s at now - %ds;\npending and firing are %s (firing over pending; a resolved alert shows within the lookback).\n",
 			l.Store.Socket, l.Store.QueryOffsetSeconds, l.Store.StateQuery)
 	}
 	return b.Bytes()
@@ -383,7 +383,8 @@ func amount(v float64, unit string) string {
 		}
 		return secondsText(v)
 	case "percent":
-		return numberText(v) + "%"
+		// Down, so that 79.96 is not read as the 80 it is under.
+		return numberText(math.Floor(v*10)/10) + "%"
 	case "":
 		return numberText(v)
 	}
@@ -444,19 +445,19 @@ func readings(e AlertListing) string {
 	return "nothing read"
 }
 
-// shortDuration is d down to the minute, its zero parts left out:
-// 3h59m, 10m, 2d; under a minute, down to the second. Down, so that a
-// value under its threshold never reads as the threshold.
+// shortDuration is d to the second, its zero parts left out: 3h59m30s,
+// 10m, 1d2h. To the second, as the thresholds are, so that a value is
+// read on its side of a threshold, under `>` or `>=` alike.
 func shortDuration(d time.Duration) string {
-	if d < time.Minute {
-		return d.Truncate(time.Second).String()
+	d = d.Truncate(time.Second)
+	if d == 0 {
+		return "0s"
 	}
-	d = d.Truncate(time.Minute)
 	var b strings.Builder
 	for _, u := range []struct {
 		d time.Duration
 		s string
-	}{{24 * time.Hour, "d"}, {time.Hour, "h"}, {time.Minute, "m"}} {
+	}{{24 * time.Hour, "d"}, {time.Hour, "h"}, {time.Minute, "m"}, {time.Second, "s"}} {
 		if n := d / u.d; n > 0 {
 			b.WriteString(strconv.Itoa(int(n)) + u.s)
 			d -= n * u.d

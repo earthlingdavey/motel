@@ -881,8 +881,10 @@ already holds, with `measured_at`: nothing is polled for the listing.
 its `levels` (80 warning, 90 critical, each clearing 5 points under),
 and the `level` it fires at now, which the gap makes a state; one whose
 statfs did not come back keeps its last reading, and its time, as its
-alert keeps firing. Each is shown rounded down, so a number under its
-threshold never reads as the threshold.
+alert keeps firing, unless another path measures its filesystem now.
+The table shows durations to the second and percents rounded down, so
+a number is read on its side of its threshold; the JSON has them as
+measured.
 `backup_stale`: each app's age of its last complete backup at the last
 record read, against `status.StaleAfter` (3 h). `watchdog_throttled`:
 each app's restarts in its window against its budget, read from the
@@ -1380,6 +1382,8 @@ on its general scales. metrics' examples:
 | `metrics_store_disk_fill` reads `vm_free_disk_space_bytes` with no `job` matcher, and `TestScrapeKeepsWhatMotelReads` gives a read with no job to the job its prefix names (`vm_` to `victoria-metrics`): a second source of a `vm_*` series would join the rule's `min` and pass the test | notify/metricsrules.go, notify/metricssetup_test.go (`readJob`) | 2 | 2 | 3 | 12; the store's one other writer is motel's push (`job="motel"`, `motel_*` names) and vmalert's remote write (`ALERTS*`), so it takes a change that adds a source and a series of that name. `{job="victoria-metrics"}` on the rule changes an expression the vmalert-tool tests pin (size 1, risk 2). /code-review pass 1 on the keep list |
 | `TestScrapeKeepsWhatMotelReads`'s scan refuses a selector with a single-quoted matcher (`x{job='motel'}`), which MetricsQL accepts: the test fails on a valid query of motel's until it is written with double quotes | notify/metricssetup_test.go (`storeReads`) | 2 | 5 | 1 | 10; red and named (`matcher "job='motel'"`), never a false pass, and every query motel writes uses Go's `%q` or literal double quotes; single quotes in the matchers' split and unquote are a second quoting path to test (size 2, risk 1). /code-review pass 2 on the keep list |
 | While the store is read-only, `motel monitor rules` lists `metrics_store_down`'s failing time past its 5 m with nothing firing: the read-only hold keeps the alert back | notify/ruleslist.go | 2 | 3 | 3 | 18; `metrics_store_read_only`, critical, fires and names the cause beside it, and a reading that changes meaning under the hold would be a second state to explain |
+| A disk poll already running when a reload drops a path writes that path's reading back after the reload dropped it: `motel monitor rules` lists it for up to a minute, until the next poll | notify/engine.go (`poll`, `setConfig`) | 2 | 3 | 3 | 18; the next poll, a minute later at most, measures the new paths only, and the alert itself was pruned |
+| While the store is read-only, each minute's read-only answer resets the rules count to 0 and stamps it, so `metrics_rules_down` lists 0 reads, just read, while an alert raised before the hold still fires | notify/metricspush.go (`checkReadOnly`) | 2 | 3 | 3 | 18; the read-only alert, critical, names the cause, and the firing one is the accepted residual above it |
 
 ### Owed
 

@@ -169,13 +169,13 @@
       "readings": [
         {
           "instance": "/srv/motel",
-          "value": 79.9,
+          "value": 79.96,
           "level": "warning",
           "measured_at": "2026-11-13T11:59:40Z"
         },
         {
           "instance": "/var/lib/caddy",
-          "value": 41.2,
+          "value": 41.26,
           "measured_at": "2026-11-13T11:58:40Z"
         }
       ]

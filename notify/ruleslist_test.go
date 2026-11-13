@@ -323,7 +323,7 @@ func TestPollersKeepWhatTheyRead(t *testing.T) {
 	te.mu.Lock()
 	seen := te.seen
 	te.mu.Unlock()
-	if len(seen.disks) != 1 || seen.disks[0] != (diskReading{path: "/srv", usedPct: 91, level: SeverityCritical, at: te.at}) {
+	if len(seen.disks) != 1 || seen.disks[0] != (diskReading{path: "/srv", usedPct: 91, level: SeverityCritical, at: te.at, dev: 7}) {
 		t.Errorf("disks: %+v", seen.disks)
 	}
 	if len(seen.backups) != 1 || !seen.backups["blog"].Equal(te.at.Add(-time.Hour)) || !seen.backupsAt.Equal(te.at) {
@@ -418,7 +418,7 @@ func TestRulesCommandOutput(t *testing.T) {
 ChannelFailed            motel check  event      warning   box        -                                                            -
 app_memory_high          builtin      threshold  warning   every app  > 0.9 share for 10m                                          (the store)
 backup_run_failed        motel check  event      warning   box        -                                                            -
-backup_stale             motel check  threshold  critical  box        > 3h                                                         blog 58m, shop 3h59m
+backup_stale             motel check  threshold  critical  box        > 3h                                                         blog 58m, shop 3h59m30s
 backup_unreadable        motel check  event      warning   box        -                                                            -
 blog_quiet               operator     guarded    warning   app blog   < 0.1 requests/s for 1h, 1 guard                             (the store)
 busy                     operator     threshold  warning   app shop   > 1.5 cores for 10m                                          (the store)
@@ -445,7 +445,7 @@ shop_slow                operator     guarded    critical  app shop   > 1.5s for
 watchdog_throttled       motel check  threshold  critical  every app  >= its budget in its window                                  shop 2 of 5 in 10m
 
 NOW for the store's rules: run each value_query (--json) on /run/motel-metrics/vm.sock at now - 65s;
-pending and firing are last_over_time(ALERTS[2m]).
+pending and firing are last_over_time(ALERTS[2m]) (firing over pending; a resolved alert shows within the lookback).
 `
 	if out != want {
 		t.Fatalf("text:\n%s\nwant\n%s", out, want)
@@ -509,23 +509,41 @@ func TestDiskReadingOfAPathNotMeasured(t *testing.T) {
 	fail = true
 	te.advance(time.Minute)
 	te.poll(t.Context())
-	want := []diskReading{{path: "/srv", usedPct: 92, level: SeverityCritical, at: first}, {path: "/var", usedPct: 10, at: te.at}}
+	want := []diskReading{{path: "/srv", usedPct: 92, level: SeverityCritical, at: first, dev: 1}, {path: "/var", usedPct: 10, at: te.at, dev: 2}}
 	if !slices.Equal(te.seen.disks, want) {
 		t.Fatalf("after a failed statfs: %+v", te.seen.disks)
 	}
+	// A path of /srv's filesystem measured now: /srv's carried reading
+	// gives way, so the filesystem is listed once.
+	te.diskPaths = []string{"/srv", "/srv/b", "/var"}
+	te.disk.stat = func(p string) (diskNumbers, error) {
+		switch p {
+		case "/srv":
+			return diskNumbers{}, os.ErrPermission
+		case "/srv/b":
+			return diskNumbers{usedPct: 93, dev: 1}, nil
+		}
+		return diskNumbers{usedPct: 10, dev: 2}, nil
+	}
+	te.advance(time.Minute)
+	te.poll(t.Context())
+	if len(te.seen.disks) != 2 || te.seen.disks[0].path != "/srv/b" || te.seen.disks[1].path != "/var" {
+		t.Fatalf("a filesystem measured through another path: %+v", te.seen.disks)
+	}
+	want = te.seen.disks[1:]
 	a := &App{diskPaths: []string{"/var"}}
 	te.setConfig(a, te.p, nil, te.logger)
-	if !slices.Equal(te.seen.disks, want[1:]) {
+	if !slices.Equal(te.seen.disks, want) {
 		t.Fatalf("after a reload without /srv: %+v", te.seen.disks)
 	}
 }
 
-// TestShortDurationRoundsDown: a value under its threshold never reads
-// as it.
+// TestShortDurationRoundsDown: to the second, so a value under its
+// threshold, or over it, reads on its side.
 func TestShortDurationRoundsDown(t *testing.T) {
 	for d, want := range map[time.Duration]string{
-		4*time.Minute + 31*time.Second: "4m", 59600 * time.Millisecond: "59s", 3*time.Hour + 59*time.Minute + 59*time.Second: "3h59m",
-		26 * time.Hour: "1d2h",
+		4*time.Minute + 31*time.Second: "4m31s", 59600 * time.Millisecond: "59s", 3*time.Hour + 59*time.Minute + 59*time.Second: "3h59m59s",
+		3*time.Hour + 40*time.Second: "3h40s", 26 * time.Hour: "1d2h", 0: "0s",
 	} {
 		if got := shortDuration(d); got != want {
 			t.Errorf("%s: %s, want %s", d, got, want)

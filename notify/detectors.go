@@ -245,6 +245,7 @@ type diskReading struct {
 	usedPct float64
 	level   string
 	at      time.Time
+	dev     uint64
 }
 
 // The thresholds: warning at 80 % used, critical at 90; each clears 5
@@ -318,9 +319,10 @@ func (d *diskPoller) poll(paths []string) []Event {
 			if prev, ok := d.set.prev[k]; ok {
 				fire = append(fire, prev)
 			}
-			// And its last reading stays listed, with its own time.
-			if i := slices.IndexFunc(d.read, func(r diskReading) bool { return r.path == p }); i >= 0 {
-				read = append(read, d.read[i])
+			// And its last reading stays listed, with its own time,
+			// unless another path measures its filesystem now (below).
+			if j := slices.IndexFunc(d.read, func(r diskReading) bool { return r.path == p }); j >= 0 {
+				read = append(read, d.read[j])
 			}
 			continue
 		}
@@ -331,14 +333,14 @@ func (d *diskPoller) poll(paths []string) []Event {
 		seen[dev] = true
 		level := diskLevel(d.level[dev], used)
 		d.level[dev] = level
-		read = append(read, diskReading{path: p, usedPct: used, level: level})
+		read = append(read, diskReading{path: p, usedPct: used, level: level, dev: dev})
 		if level == "" {
 			continue
 		}
 		fire = append(fire, Event{Name: alertDiskLow, Kind: kindState, Severity: level, Source: "disk", Instance: p,
 			Summary: fmt.Sprintf("the filesystem holding %s is %.0f%% full", p, used)})
 	}
-	d.read = read
+	d.read = slices.DeleteFunc(read, func(r diskReading) bool { return !r.at.IsZero() && seen[r.dev] })
 	return d.set.diff(fire)
 }
 

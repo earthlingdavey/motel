@@ -760,7 +760,7 @@ the number it last read:
 $ motel monitor rules
 NAME                     SOURCE       KIND       SEVERITY  SCOPE      CONDITION                                                    NOW
 app_memory_high          builtin      threshold  warning   every app  > 0.9 share for 10m                                          (the store)
-backup_stale             motel check  threshold  critical  box        > 3h                                                         blog 58m, shop 3h59m
+backup_stale             motel check  threshold  critical  box        > 3h                                                         blog 58m, shop 3h59m30s
 disk_low                 motel check  threshold  warning   box        >= 80% warning, >= 90% critical, each clears 5 points under  /srv/motel 79.9% (warning), /var/lib/caddy 41.2%
 errors_high              operator     guarded    warning   every app  > 0.05 share for 10m, 1 guard                                (the store)
 watchdog_throttled       motel check  threshold  critical  every app  >= its budget in its window                                  shop 2 of 5 in 10m
