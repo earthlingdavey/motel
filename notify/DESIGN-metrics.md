@@ -839,7 +839,7 @@ so a listed name is a silenceable one and back (a test).
 `op`, `threshold`, and `guards`, further terms joined with `and`.
 `expr()` is the one join, and `rules.yml` holds its output: the file was
 byte-identical before and after the split for a config with every kind
-of line (15,937 B), and a test joins each listed rule's parts back
+of line (16,891 B, with the request guard of #442), and a test joins each listed rule's parts back
 together and compares them with the rendered `expr`, for every rule of
 `motel-store` and `motel-operator`. The guards are:
 
