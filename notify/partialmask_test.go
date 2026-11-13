@@ -117,6 +117,8 @@ func TestURLCredentials(t *testing.T) {
 		{"ntfy", "https://ntfy.sh/topic-abc/trigger", []string{"topic-abc"}},
 		{"ntfy", "https://ntfy.sh/publish", []string{"publish"}}, // a topic named publish
 		{"ntfy", "https://ntfy.sh/alerts%5Fops", []string{"alerts%5Fops", "alerts_ops"}},
+		{"ntfy", "https://ntfy.sh/operator-alerts/%70ublish", []string{"operator-alerts"}}, // an escaped suffix is the suffix
+		{"discord", "https://discord.com/api/webhooks/123/tok/%73lack", []string{"tok"}},
 		{"ntfy", "https://ntfy.example.com/ops?auth=QmVhcmVyIHRrX2FiYw", []string{"ops", "QmVhcmVyIHRrX2FiYw"}}, // gitleaks:allow — made up for this test
 		{"slack", "https://hooks.slack.com/services/T0/B0/tok", []string{"tok"}},
 		{"slack", "https://hooks.slack.com/services/T0/B0/tok?auth=x", []string{"tok"}},
@@ -162,9 +164,9 @@ func TestPartialMaskPastASuffix(t *testing.T) {
 	}
 }
 
-// TestServeSendRefusesATopicAsName: a name or instance is the key and
-// is not rewritten, so one holding a channel's topic is refused, as one
-// holding its URL is.
+// TestServeSendRefusesATopicAsName: a name, instance or source is the
+// key and is not rewritten, so one holding a channel's topic is
+// refused, as one holding its URL is.
 func TestServeSendRefusesATopicAsName(t *testing.T) {
 	withEngine(t)
 	channels, secrets := pmChannels()
@@ -173,5 +175,10 @@ func TestServeSendRefusesATopicAsName(t *testing.T) {
 	r.Instance = pmTopic
 	if _, err := callAdmin(t, serveSend, http.MethodPost, r); apiStatus(err) != http.StatusUnprocessableEntity || !strings.Contains(err.Error(), "filter masks") {
 		t.Fatalf("a topic as the instance: %v", err)
+	}
+	r = goodSend()
+	r.Source = pmTopic
+	if _, err := callAdmin(t, serveSend, http.MethodPost, r); apiStatus(err) != http.StatusUnprocessableEntity || !strings.Contains(err.Error(), "filter masks") {
+		t.Fatalf("a topic as the source: %v", err)
 	}
 }

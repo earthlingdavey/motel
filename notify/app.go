@@ -436,6 +436,14 @@ var pathSuffixes = map[string][]string{
 	"discord": {"slack", "github"},
 }
 
+// unescaped is seg decoded, or seg as it is when it does not decode.
+func unescaped(seg string) string {
+	if dec, err := url.PathUnescape(seg); err == nil {
+		return dec
+	}
+	return seg
+}
+
 // urlCredentials is the credential parts of a channel URL of kind:
 // its last non-empty path segment before any of the kind's fixed
 // suffixes, as written and decoded, and an ntfy URL's auth parameter.
@@ -450,7 +458,8 @@ func urlCredentials(kind, v string) []string {
 	}
 	var out []string
 	segs := strings.FieldsFunc(u.EscapedPath(), func(r rune) bool { return r == '/' })
-	if n := len(segs); n > 1 && slices.Contains(pathSuffixes[kind], segs[n-1]) {
+	// The suffix compared decoded: /%70ublish is /publish.
+	if n := len(segs); n > 1 && slices.Contains(pathSuffixes[kind], unescaped(segs[n-1])) {
 		segs = segs[:n-1]
 	}
 	if n := len(segs); n > 0 {
