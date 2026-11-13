@@ -2,14 +2,24 @@ package notify
 
 import (
 	"bytes"
+	"context"
 	"errors"
+	"fmt"
 	"io/fs"
+	"maps"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"regexp"
 	"slices"
+	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
+
+	"go.uber.org/zap"
+	"go.yaml.in/yaml/v3"
 )
 
 // notifySetUp makes root look like a box where Alertmanager's setup ran.
@@ -571,5 +581,454 @@ func TestStoreClocksAgree(t *testing.T) {
 	}
 	if storeLag <= storeLatencyOffset {
 		t.Errorf("storeLag %s does not read past the latency offset %s", storeLag, storeLatencyOffset)
+	}
+}
+
+// scrapeJob is a job of scrape.yml, as the test reads it.
+type scrapeJob struct {
+	Name     string `yaml:"job_name"`
+	Relabels []struct {
+		Action       string   `yaml:"action"`
+		SourceLabels []string `yaml:"source_labels"`
+		Regex        string   `yaml:"regex"`
+	} `yaml:"metric_relabel_configs"`
+}
+
+var plainName = regexp.MustCompile(`^[a-zA-Z_:][a-zA-Z0-9_:]*$`)
+
+// scrapeKept is each job's names that scrape.yml keeps: a keep of a
+// literal alternation of names, or a drop of every name (`.+`). Any
+// other shape is an error: the test cannot tell what it keeps.
+func scrapeKept(conf []byte) (map[string][]string, error) {
+	var f struct {
+		Jobs []scrapeJob `yaml:"scrape_configs"`
+	}
+	if err := yaml.Unmarshal(conf, &f); err != nil {
+		return nil, err
+	}
+	kept := map[string][]string{}
+	for _, j := range f.Jobs {
+		if len(j.Relabels) != 1 || !slices.Equal(j.Relabels[0].SourceLabels, []string{"__name__"}) {
+			return nil, fmt.Errorf("job %s: want one metric_relabel_configs entry on [__name__], have %+v", j.Name, j.Relabels)
+		}
+		switch r := j.Relabels[0]; {
+		case r.Action == "drop" && r.Regex == ".+":
+			kept[j.Name] = []string{}
+		case r.Action == "keep":
+			names := strings.Split(r.Regex, "|")
+			for _, n := range names {
+				if !plainName.MatchString(n) {
+					return nil, fmt.Errorf("job %s: keep's regex %q is not an alternation of names", j.Name, r.Regex)
+				}
+			}
+			slices.Sort(names)
+			kept[j.Name] = names
+		default:
+			return nil, fmt.Errorf("job %s: %s of %q is neither a keep of names nor a drop of .+", j.Name, r.Action, r.Regex)
+		}
+	}
+	return kept, nil
+}
+
+// storeRead is a series an expression reads: its name, and the job its
+// selector names ("" for none).
+type storeRead struct{ name, job string }
+
+// labelLists take a parenthesised list of label names, not series.
+var labelLists = map[string]bool{"by": true, "without": true, "on": true, "ignoring": true, "group_left": true, "group_right": true}
+
+var promWords = map[string]bool{"and": true, "or": true, "unless": true, "atan2": true, "default": true, "if": true, "ifnot": true, "offset": true, "bool": true, "keep_metric_names": true, "limit": true, "inf": true, "nan": true}
+
+var matcherRe = regexp.MustCompile(`^\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*(=~|!~|!=|=)\s*("(?:[^"\\]|\\.)*")\s*$`)
+
+// storeReads is every series name expr reads, by a scan of its tokens:
+// a word followed by "(" is a function, one followed by by or without an
+// aggregation, the lists after by, on and their kin are labels, and the
+// rest are series, each with its selector's job. A bare selector names
+// its series by __name__. What the scan cannot read is an error.
+func storeReads(expr string) ([]storeRead, error) {
+	isStart := func(c byte) bool { return c == '_' || c == ':' || 'a' <= c && c <= 'z' || 'A' <= c && c <= 'Z' }
+	isPart := func(c byte) bool { return isStart(c) || '0' <= c && c <= '9' }
+	word := func(i int) (string, int) {
+		j := i
+		for j < len(expr) && isPart(expr[j]) {
+			j++
+		}
+		return expr[i:j], j
+	}
+	space := func(i int) int {
+		for i < len(expr) && strings.IndexByte(" \t\n", expr[i]) >= 0 {
+			i++
+		}
+		return i
+	}
+	// selector reads the matchers from the "{" at i: the names __name__
+	// gives (none: the word before it), the job, and the index past "}".
+	selector := func(i int) (names []string, job string, end int, err error) {
+		var parts []string
+		start, quoted := i+1, false
+		for end = i + 1; end < len(expr); end++ {
+			switch c := expr[end]; {
+			case quoted && c == '\\':
+				end++
+			case c == '"':
+				quoted = !quoted
+			case !quoted && (c == ',' || c == '}'):
+				if p := strings.TrimSpace(expr[start:end]); p != "" {
+					parts = append(parts, p)
+				}
+				start = end + 1
+			}
+			if !quoted && expr[end] == '}' {
+				break
+			}
+		}
+		if end >= len(expr) {
+			return nil, "", 0, fmt.Errorf("%q: a selector does not close", expr)
+		}
+		for _, p := range parts {
+			m := matcherRe.FindStringSubmatch(p)
+			if m == nil {
+				return nil, "", 0, fmt.Errorf("%q: matcher %q", expr, p)
+			}
+			val, err := strconv.Unquote(m[3])
+			if err != nil {
+				return nil, "", 0, fmt.Errorf("%q: matcher %q: %w", expr, p, err)
+			}
+			switch {
+			case m[1] == "job" && m[2] == "=":
+				job = val
+			case m[1] == "job":
+				return nil, "", 0, fmt.Errorf("%q: %s names no one job", expr, p)
+			case m[1] == "__name__" && (m[2] == "=" || m[2] == "=~"):
+				names = strings.Split(val, "|")
+				for _, n := range names {
+					if !plainName.MatchString(n) {
+						return nil, "", 0, fmt.Errorf("%q: %s is not an alternation of names", expr, p)
+					}
+				}
+			case m[1] == "__name__":
+				return nil, "", 0, fmt.Errorf("%q: %s names no series", expr, p)
+			}
+		}
+		return names, job, end + 1, nil
+	}
+	var out []storeRead
+	for i := 0; i < len(expr); {
+		switch c := expr[i]; {
+		case c == '"' || c == '\'' || c == '`':
+			j := i + 1
+			for ; j < len(expr) && expr[j] != c; j++ {
+				if expr[j] == '\\' && c != '`' {
+					j++
+				}
+			}
+			if j >= len(expr) {
+				return nil, fmt.Errorf("%q: a string does not close", expr)
+			}
+			i = j + 1
+		case c == '#':
+			return nil, fmt.Errorf("%q: a comment, which the scan does not read", expr)
+		case c == '[':
+			j := strings.IndexByte(expr[i:], ']')
+			if j < 0 {
+				return nil, fmt.Errorf("%q: a range does not close", expr)
+			}
+			i += j + 1
+		case '0' <= c && c <= '9' || c == '.':
+			for i < len(expr) && (isPart(expr[i]) || expr[i] == '.') {
+				i++
+			}
+		case c == '{':
+			names, job, end, err := selector(i)
+			if err != nil {
+				return nil, err
+			}
+			if len(names) == 0 {
+				return nil, fmt.Errorf("%q: a selector with no name", expr)
+			}
+			for _, n := range names {
+				out = append(out, storeRead{n, job})
+			}
+			i = end
+		case isStart(c):
+			w, j := word(i)
+			k := space(j)
+			next, _ := word(k)
+			switch {
+			case labelLists[w]:
+				if k < len(expr) && expr[k] == '(' {
+					e := strings.IndexByte(expr[k:], ')')
+					if e < 0 {
+						return nil, fmt.Errorf("%q: %s's list does not close", expr, w)
+					}
+					j = k + e + 1
+				}
+			case promWords[w], k < len(expr) && expr[k] == '(', next == "by" || next == "without":
+			default:
+				job := ""
+				if j < len(expr) && expr[j] == '{' {
+					names, sjob, end, err := selector(j)
+					if err != nil {
+						return nil, err
+					}
+					if len(names) > 0 {
+						return nil, fmt.Errorf("%q: %s has a __name__ matcher too", expr, w)
+					}
+					job, j = sjob, end
+				}
+				out = append(out, storeRead{w, job})
+			}
+			i = j
+		default:
+			i++
+		}
+	}
+	return out, nil
+}
+
+// readJob is the job a read reads from: the one its selector names, or
+// the one its name's prefix belongs to. motel's push is job="motel".
+func readJob(r storeRead) (string, error) {
+	if r.job != "" {
+		return r.job, nil
+	}
+	for prefix, job := range map[string]string{"vm_": "victoria-metrics", "vmalert_": "vmalert", "alertmanager_": "alertmanager", "motel_": "motel"} {
+		if strings.HasPrefix(r.name, prefix) {
+			return job, nil
+		}
+	}
+	return "", fmt.Errorf("%s names no job, and no prefix tells it", r.name)
+}
+
+// queryRecorder is the store, answering every query with one series at
+// 1, so that each reader runs its every query; it keeps the queries.
+type queryRecorder struct {
+	mu sync.Mutex
+	qs []string
+}
+
+func (r *queryRecorder) answer(q string) []series {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.qs = append(r.qs, q)
+	return []series{{labels: map[string]string{"class": "2xx"}, points: []point{{t: time.Now(), v: 1}}}}
+}
+
+func (r *queryRecorder) query(_ context.Context, q string) ([]series, error) { return r.answer(q), nil }
+func (r *queryRecorder) queryAt(_ context.Context, q string, _ time.Time) ([]series, error) {
+	return r.answer(q), nil
+}
+
+func (r *queryRecorder) queryRange(_ context.Context, q string, _, _ time.Time, _ time.Duration) ([]series, error) {
+	return r.answer(q), nil
+}
+
+// motelsStoreQueries is every expression motel has the store evaluate:
+// the rendered rules of a config with every kind of rule and ChannelFailed
+// rules, the chain's check of vmalert, GET /<app>'s view over each range,
+// and a post-deploy comparison.
+func motelsStoreQueries(t *testing.T) []string {
+	t.Helper()
+	lines := []string{
+		"rule errors_high threshold 5xx_share > 0.05 for 10m",
+		"rule shop_slow threshold p95 > 1.5s for 15m app shop",
+		"rule median threshold p50 > 200ms for 10m",
+		"rule blog_quiet threshold request_rate < 0.1 for 1h app blog",
+		"rule hits_low threshold cache_hit_share < 0.5 for 30m",
+		"rule mem threshold memory_share > 0.8 for 5m",
+		"rule busy threshold cpu_cores > 1.5 for 10m",
+		"rule disk_filling disk_fill within 7d",
+		"rule regress post_deploy {\n\t\tmax_5xx_share 0.02\n\t}",
+	}
+	for _, m := range thresholdMetricNames {
+		if !slices.ContainsFunc(lines, func(l string) bool { return strings.Contains(l, " threshold "+m+" ") }) {
+			t.Fatalf("no rule line here reads threshold %s: add one", m)
+		}
+	}
+	var qs []string
+	f := parseRules(t, renderRules(rulesApp(t, lines...)))
+	for _, g := range f.Groups {
+		if len(g.Rules) == 0 {
+			t.Fatalf("group %s renders no rule here: its reads would go unseen", g.Name)
+		}
+		for _, r := range g.Rules {
+			qs = append(qs, r.Expr)
+		}
+	}
+	qs = append(qs, rulesQuery)
+	rec := &queryRecorder{}
+	v := newMetricsView(rec, zap.NewNop())
+	for name, w := range viewWindows {
+		if _, err := v.ask(context.Background(), "blog", name, w, time.Now()); err != nil {
+			t.Fatalf("the view over %s: %v", name, err)
+		}
+	}
+	if _, err := queryRelease(context.Background(), rec, "blog", "r2", time.Now(), 5*time.Minute, time.Minute, true, 0); err != nil {
+		t.Fatal(err)
+	}
+	if len(rec.qs) < 3+2*7 {
+		t.Fatalf("the view and the comparison asked %d queries: %q", len(rec.qs), rec.qs)
+	}
+	return append(qs, rec.qs...)
+}
+
+// keepDiff says how kept (scrape.yml's) and read (motel's readers')
+// differ, job by job; "" when they are the same. `up` and scrape_* are
+// the scraper's own, kept whatever the relabelling, and are not compared;
+// a job nothing reads at all is said too.
+func keepDiff(kept map[string][]string, reads []storeRead) (string, error) {
+	read := map[string]map[string]bool{}
+	for job := range kept {
+		read[job] = nil
+	}
+	for _, r := range reads {
+		job, err := readJob(r)
+		if err != nil {
+			return "", err
+		}
+		if job == "motel" {
+			continue
+		}
+		if _, ok := kept[job]; !ok {
+			return "", fmt.Errorf("%s is read from job %s, which scrape.yml does not scrape", r.name, job)
+		}
+		if read[job] == nil {
+			read[job] = map[string]bool{}
+		}
+		if r.name != "up" && !strings.HasPrefix(r.name, "scrape_") {
+			read[job][r.name] = true
+		}
+	}
+	var b strings.Builder
+	for _, job := range slices.Sorted(maps.Keys(kept)) {
+		if read[job] == nil {
+			fmt.Fprintf(&b, "job %s: scraped, and nothing motel runs reads it\n", job)
+			continue
+		}
+		var unread, dropped []string
+		for _, n := range kept[job] {
+			if !read[job][n] {
+				unread = append(unread, n)
+			}
+		}
+		for _, n := range slices.Sorted(maps.Keys(read[job])) {
+			if !slices.Contains(kept[job], n) {
+				dropped = append(dropped, n)
+			}
+		}
+		if len(unread) > 0 {
+			fmt.Fprintf(&b, "job %s: kept, and nothing motel runs reads it: %s\n", job, strings.Join(unread, " "))
+		}
+		if len(dropped) > 0 {
+			fmt.Fprintf(&b, "job %s: read, and dropped by scrape.yml: %s\n", job, strings.Join(dropped, " "))
+		}
+	}
+	return b.String(), nil
+}
+
+// The store keeps only what motel reads from it (DESIGN-metrics.md,
+// "What the store scrapes"): each job's kept names in the scrape.yml
+// setup writes are exactly the names motel's own queries read from that
+// job. A rule that comes to read a stack series fails this until
+// scrape.yml keeps it; a series kept that no query reads fails it too.
+func TestScrapeKeepsWhatMotelReads(t *testing.T) {
+	kept, err := scrapeKept(scrapeConfig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var reads []storeRead
+	for _, q := range motelsStoreQueries(t) {
+		r, err := storeReads(q)
+		if err != nil {
+			t.Fatal(err)
+		}
+		reads = append(reads, r...)
+	}
+	diff, err := keepDiff(kept, reads)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if diff != "" {
+		t.Errorf("scrape.yml keeps what motel does not read, or drops what it does:\n%s"+
+			"keep in notify/units/metrics/scrape.yml exactly what motel's queries read", diff)
+	}
+	// Either side changed alone is told, by name.
+	for name, c := range map[string]struct {
+		kept  map[string][]string
+		reads []storeRead
+		want  string
+	}{
+		"a series kept that nothing reads": {
+			map[string][]string{"victoria-metrics": {"vm_free_disk_space_bytes", "vm_rows"}},
+			[]storeRead{{"vm_free_disk_space_bytes", ""}},
+			"job victoria-metrics: kept, and nothing motel runs reads it: vm_rows",
+		},
+		"a series read that is dropped": {
+			map[string][]string{"vmalert": {}},
+			[]storeRead{{"up", "vmalert"}, {"vmalert_alerts_sent_total", ""}},
+			"job vmalert: read, and dropped by scrape.yml: vmalert_alerts_sent_total",
+		},
+		"a job nothing reads": {
+			map[string][]string{"vmalert": {}},
+			[]storeRead{{"motel_app_up", ""}},
+			"job vmalert: scraped, and nothing motel runs reads it",
+		},
+	} {
+		got, err := keepDiff(c.kept, c.reads)
+		if err != nil || !strings.Contains(got, c.want) {
+			t.Errorf("%s: keepDiff = %q, %v; want it to say %q", name, got, err, c.want)
+		}
+	}
+}
+
+// The scan of motel's expressions: every series, its job when its
+// selector names one, nothing of a function, a label list or a string.
+func TestStoreReads(t *testing.T) {
+	for _, c := range []struct {
+		expr string
+		want []storeRead
+	}{
+		{`max(max_over_time(up{job="vmalert"}[3m]))`, []storeRead{{"up", "vmalert"}}},
+		{`sum by (app, le) (increase(a_total{app="x",class=~"5xx|4xx"}[5m] offset 1d)) / b > bool 0.5 and on (app) group_left c`,
+			[]storeRead{{"a_total", ""}, {"b", ""}, {"c", ""}}},
+		{`{__name__=~"m1|m2",app="blog"}`, []storeRead{{"m1", ""}, {"m2", ""}}},
+		{"label_replace(x, 'dst', '$1', \"src\", `(.*)`) atan2 y", []storeRead{{"x", ""}, {"y", ""}}},
+		{"sum(x) keep_metric_names default 0 or y limit 5", []storeRead{{"x", ""}, {"y", ""}}},
+		{`sum(increase(alertmanager_notifications_failed_total{integration="discord",receiver_name=~"a\\.b|c"}[5m])) > 0`,
+			[]storeRead{{"alertmanager_notifications_failed_total", ""}}},
+		// The request thresholds' guard (#442), as rendered: both series
+		// are motel's push, neither a scraped job's.
+		{"x and on (app) (" + pushedNow(`{app="blog"}`) + ")",
+			[]storeRead{{"x", ""}, {"motel_app_observed", ""}, {"process_start_time_seconds", "motel"}}},
+		{`scalar(min(tfirst_over_time(process_start_time_seconds{job="motel"}[7m]))) + 15`,
+			[]storeRead{{"process_start_time_seconds", "motel"}}},
+	} {
+		got, err := storeReads(c.expr)
+		if err != nil || !slices.Equal(got, c.want) {
+			t.Errorf("storeReads(%s) = %v, %v; want %v", c.expr, got, err, c.want)
+		}
+	}
+	for _, expr := range []string{`up{job=~"a|b"}`, `{__name__=~"vm_.*"}`, `{app="x"}`, `x{y="z"`, `x + 'open`, "x # a comment"} {
+		if got, err := storeReads(expr); err == nil {
+			t.Errorf("storeReads(%s) = %v; want an error", expr, got)
+		}
+	}
+	if _, err := readJob(storeRead{"up", ""}); err == nil {
+		t.Error(`readJob of up with no job: want an error`)
+	}
+}
+
+// Debian's VictoriaMetrics accepts scrape.yml as setup writes it, with
+// unknown fields refused (-promscrape.config.strictParse, its default).
+func TestScrapeConfigPassesTheStoresCheck(t *testing.T) {
+	vm := vmTool(t, "victoria-metrics")
+	path := filepath.Join(t.TempDir(), scrapeName)
+	if err := os.WriteFile(path, scrapeConfig, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	out, err := exec.Command(vm, "-promscrape.config="+path, "-promscrape.config.dryRun", "-promscrape.config.strictParse", "-loggerLevel=ERROR").CombinedOutput()
+	if err != nil {
+		t.Errorf("victoria-metrics -promscrape.config.dryRun: %v\n%s", err, out)
 	}
 }

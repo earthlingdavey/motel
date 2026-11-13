@@ -349,7 +349,7 @@ which name the old commands (`systemctl status` shows
 again then renames them and sets the store's clocks. Either way, motel says when it is due:
 from this version, every load (`motel validate`, `motel reload`, and
 the restart onto the new binary, in the journal) warns `monitor: the
-units motel monitor setup wrote differ from this motel's (…)` for as
+units motel monitor setup wrote differ from this motel's (…)` (for the store's, `monitor: the files motel monitor setup --metrics wrote differ …`) for as
 long as a unit differs from the one this binary would write, comments
 aside, and names the setup to run.
 
@@ -362,6 +362,19 @@ VictoriaMetrics' 30 s `-search.latencyOffset`, so every alert and
 either way: they ask the store for the 5 s themselves. The re-run
 rewrites the units and restarts the store and vmalert; a push or two
 fails meanwhile.
+
+**The same re-run trims what the store keeps of its own scrapes.** From
+this version the store keeps, of its scrapes of itself, vmalert and
+Alertmanager, only the series motel reads ([Monitor](monitor.md#promql-over-the-socket-as-root)):
+about 80 where it kept over 2,000. Only setup writes
+`/var/lib/motel-metrics/scrape.yml`, so a store set up before goes on
+keeping every series, and each load's warning names `scrape.yml`, until
+root runs `motel monitor setup --metrics` (the re-run above does it).
+The store is restarted onto the new file; the series it no longer
+keeps stop there and age out over the 14 days' retention. Nothing
+motel runs reads them, so no rule, check or `GET /<app>` changes. A
+query of your own over one of them finds its samples from before the
+re-run until the retention ends them, and none after.
 
 ## Patching the host
 

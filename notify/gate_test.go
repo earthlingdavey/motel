@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -68,6 +69,40 @@ func TestLoadWarningsSayStaleUnits(t *testing.T) {
 	// The store alone, of the store's alone.
 	if w := LoadWarnings("run", []byte(`{"metrics":{}}`)); len(w) != 1 || !strings.Contains(w[0], "--metrics") {
 		t.Fatalf("the store alone: %v", w)
+	}
+	// scrape.yml as setup wrote it before the store kept only what motel
+	// reads: the store scrapes every series until setup runs again.
+	put(metricsUnits()[5].path, metricsUnits()[5].data)
+	scrape := filepath.Join(DefaultMetricsStateDir, scrapeName)
+	put(scrape, []byte("global:\n  scrape_interval: 30s\nscrape_configs:\n  - job_name: vmalert\n    static_configs: [{targets: [\"127.0.0.1:8880\"]}]\n"))
+	if got := stale("run"); !strings.Contains(got, "("+scrape+"): run motel monitor setup --metrics as root") {
+		t.Fatalf("an old scrape.yml: %s", got)
+	}
+	put(scrape, append([]byte("# a comment of an older setup\n"), scrapeConfig...))
+	if got := stale("run"); strings.Contains(got, scrape) {
+		t.Fatalf("scrape.yml with a comment changed: %s", got)
+	}
+	// Indentation is YAML's structure: a key moved out of its parent
+	// differs, though each line trims to the same text.
+	moved := bytes.Replace(scrapeConfig, []byte("\n  scrape_interval: 30s"), []byte("\nscrape_interval: 30s"), 1)
+	if bytes.Equal(moved, scrapeConfig) || !bytes.Equal(uncommented(moved), uncommented(scrapeConfig)) {
+		t.Fatal("the re-indented scrape.yml is not the case it should be")
+	}
+	put(scrape, moved)
+	if got := stale("run"); !strings.Contains(got, scrape) {
+		t.Fatalf("scrape.yml re-indented: %s", got)
+	}
+	// One this uid cannot read is said so, not passed as the same.
+	if err := os.Remove(filepath.Join(root, scrape)); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(root, scrape), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if w := LoadWarnings("run", both); !slices.ContainsFunc(w, func(s string) bool {
+		return strings.Contains(s, scrape+" could not be compared with this motel's (is a directory)") && strings.Count(s, scrape) == 1
+	}) {
+		t.Fatalf("an unreadable scrape.yml: %v", w)
 	}
 	if w := LoadWarnings("run", nil); len(w) != 0 {
 		t.Fatalf("no block: %v", w)

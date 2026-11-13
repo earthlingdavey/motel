@@ -16,6 +16,7 @@
 #   GET /<app> with the deploy token carries the app's metrics
 #   observe's counts in the store and in GET /<app>?range=
 #   vmalert's rules loaded; its ChannelFailed and motel's one alert
+#   the store keeping of each job only what motel reads
 #   the operator's rules: a threshold through vmalert, the post-deploy comparison
 #   nothing of the store in an app's sandbox view
 #   the store's socket gone: GET /<app> answers at once, with the error
@@ -156,14 +157,14 @@ grep -q 'notify_channel: ops' "$STATE/rules.yml" \
 	&& pass "motel rendered the rules, with ChannelFailed for the operator's channels" || fail "rules.yml: $(head -c 400 "$STATE/rules.yml")"
 vmalert -dryRun -rule="$STATE/rules.yml" >/tmp/dry.out 2>&1 \
 	&& pass "vmalert -dryRun passes the rendered rules" || fail "vmalert -dryRun: $(tail -3 /tmp/dry.out)"
-# notify's tests over vmalert and vmalert-tool, which `make test` skips
+# notify's tests over vmalert, vmalert-tool and the store's binary, which `make test` skips
 # for want of them: each must run here, none skip. The list is every
 # test that calls vmTool (TestE2EMetricsListsEveryVMAlertTest).
-vmtests='^(TestRenderedRulesPassVMAlertDryRun|TestRenderedRulesFireAsMotelsAlerts|TestOperatorRulesPassVMAlertDryRun|TestOperatorRulesFire|TestOperatorRulesCountAfterAGap|TestOperatorRulesHistogramIsReadWhole|TestDiskFillHistoryOverAGap|TestDiskFillStepIsNoTrend|TestOperatorRulesCountOnAFreshStore|TestOperatorRulesReadThePushedApps|TestMetricsViewCountsOverTheStore|TestPostDeployARelaunchReadsPastTheStoppedInstance)$'
+vmtests='^(TestRenderedRulesPassVMAlertDryRun|TestRenderedRulesFireAsMotelsAlerts|TestOperatorRulesPassVMAlertDryRun|TestOperatorRulesFire|TestOperatorRulesCountAfterAGap|TestOperatorRulesHistogramIsReadWhole|TestDiskFillHistoryOverAGap|TestDiskFillStepIsNoTrend|TestOperatorRulesCountOnAFreshStore|TestOperatorRulesReadThePushedApps|TestMetricsViewCountsOverTheStore|TestPostDeployARelaunchReadsPastTheStoppedInstance|TestScrapeConfigPassesTheStoresCheck)$'
 nvm=$(printf '%s\n' "$vmtests" | tr '|' '\n' | wc -l)
 (cd /tmp && notify.test -test.run "$vmtests" -test.v -test.count=1) >/tmp/vmtests.out 2>&1
 [ $? -eq 0 ] && [ "$(grep -c '^--- PASS' /tmp/vmtests.out)" = "$nvm" ] && ! grep -q -- '--- SKIP' /tmp/vmtests.out \
-	&& pass "notify's $nvm vmalert tests run and pass against the box's vmalert and vmalert-tool" \
+	&& pass "notify's $nvm vmalert tests run and pass against the box's vmalert, vmalert-tool and victoria-metrics" \
 	|| fail "notify's vmalert tests: $(grep -E -- '^(--- |FAIL|ok)|SKIP' /tmp/vmtests.out | head -10)"
 # The operator's group: the threshold and disk_fill lines, motel's own
 # expressions, each counter through the guard (increase_pure for a
@@ -335,6 +336,22 @@ amq='filter=alertname%3D%22ChannelFailed%22&filter=notify_channel%3D%22ops%22&fi
 n=$(am "http://am/api/v2/alerts?$amq" | grep -o '"fingerprint"' | wc -l)
 [ "$n" -eq 1 ] && pass "Alertmanager holds one ChannelFailed for ops naming oncall: the two sources are one alert" \
 	|| fail "Alertmanager holds $n such alerts: $(am "http://am/api/v2/alerts?$amq" | cut -c1-400)"
+# The store keeps of each job only what motel reads (scrape.yml): the
+# disk rule's free space, the counter vmalert's ChannelFailed just read,
+# and of vmalert nothing but `up`. up and scrape_* are the scraper's own,
+# which every job keeps; scrape_* is left out here.
+kept() {
+	vm -G --data-urlencode "match[]={job=\"$1\"}" http://vm/api/v1/label/__name__/values \
+		| sed -n 's/.*"data":\[\([^]]*\)\].*/\1/p' | tr -d '"' | tr ',' '\n' | grep -v '^scrape_' | sort | tr '\n' ' '
+}
+for jk in 'victoria-metrics:up vm_free_disk_space_bytes ' 'vmalert:up ' 'alertmanager:alertmanager_notifications_failed_total up '; do
+	j=${jk%%:*} want=${jk#*:}
+	got=$(kept "$j")
+	[ "$got" = "$want" ] && pass "the store keeps of job $j: ${want% }" || fail "the store keeps of job $j: '$got', not '$want'"
+done
+a=$(q 'vm_free_disk_space_bytes{job="victoria-metrics"} > 0')
+has_result "$a" && pass "the store reads its own free space live, which metrics_store_disk_fill reads" \
+	|| fail "no live vm_free_disk_space_bytes: $(printf '%s' "$a" | cut -c1-200)"
 # vmalert's post is counted where it is sent, not read from the merged
 # alert: that carries the generatorURL of whichever source posted last,
 # and each posts once a minute at a phase of its own (motel after its read
@@ -408,13 +425,15 @@ i=0
 until am "http://am/api/v2/alerts?$roq" | grep -q '"severity":"critical"'; do i=$((i + 1)); [ "$i" -ge 60 ] && break; sleep 2; done
 [ "$i" -lt 60 ] && pass "motel posted metrics_store_read_only, critical" \
 	|| fail "no metrics_store_read_only in Alertmanager after 120 s: $(am "http://am/api/v2/alerts?$roq" | cut -c1-300)"
-# Two of the store's 30 s self-scrapes have come and gone by now: had it
-# kept one, a rule would see the flag.
+# Two of the store's 30 s self-scrapes have come and gone by now, and
+# neither was kept: the free space the disk rule reads stops with every
+# other write. (The flag itself is no series the store keeps, scrape.yml.)
 while [ $(( $(date +%s) - ro_at )) -lt 75 ]; do sleep 2; done
-a=$(q 'max(max_over_time(vm_storage_is_read_only[5m])) > 0')
-printf '%s' "$a" | grep -q '"status":"success"' && ! has_result "$a" \
-	&& pass "75 s read-only and no series carries the flag: the store refused its own scrapes" \
-	|| fail "a rule could have seen the flag after all, or the store did not answer: $(printf '%s' "$a" | cut -c1-200)"
+before=$(q 'tlast_over_time(vm_free_disk_space_bytes[15m])')
+a=$(q "tlast_over_time(vm_free_disk_space_bytes[15m]) > $ro_at")
+has_result "$before" && printf '%s' "$a" | grep -q '"status":"success"' && ! has_result "$a" \
+	&& pass "75 s read-only and no sample of the store's free space since, only before: the store refused its own scrapes" \
+	|| fail "a scrape was kept while read-only, or none before it, or the store did not answer: $(printf '%s' "$before" | cut -c1-200) / $(printf '%s' "$a" | cut -c1-200)"
 rm "$dropin/20-e2e-read-only.conf"
 systemctl daemon-reload && systemctl restart victoria-metrics
 back_at=$(date +%s)

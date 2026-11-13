@@ -394,6 +394,52 @@ the younger resolved alert wins the merge), so the ping skips while
 motel is fine. So the heartbeat stays motel's alone, and motel watches
 the chain instead (below).
 
+### What the store scrapes
+
+The store scrapes itself, vmalert and Alertmanager every 30 s
+(`scrape.yml`, which setup writes), and each job keeps only the series
+motel reads from the store (`metric_relabel_configs`):
+
+| Job | Keeps | Read by |
+|---|---|---|
+| `victoria-metrics` | `vm_free_disk_space_bytes` | `metrics_store_disk_fill` |
+| `vmalert` | nothing (`drop` of `.+`) | — |
+| `alertmanager` | `alertmanager_notifications_failed_total` | the second `ChannelFailed` |
+
+The scraper adds `up` and its six `scrape_*` series after the
+relabelling, so every job keeps those: `up{job="vmalert"}` is what
+`metrics_rules_down` reads. The store's read-only flag is read from its
+`/metrics` and never from a series ("The chain"), and the e2e suite reads
+vmalert's counters from its own `/metrics` too. Alertmanager's counter is
+kept on a box with one operator channel as well, which renders no
+`ChannelFailed` rule: setup writes `scrape.yml` and the render does not,
+so it cannot follow the channels.
+
+Unrelabelled, the three jobs were over 2,000 series on hotserve-1;
+this list keeps 82 of them. Measured on 2026-11-13 with two stores side
+by side on a dev VM, each scraping itself, one vmalert and one
+Alertmanager with hotserve-1's twelve receivers, every second for
+2,880 s (a day's samples at the box's 30 s): the store's samples went
+from 1.006 MB a day to 0.022, its index from 0.26 MB to 0.007, its RSS
+from 84 to 72 MiB, and `ChannelFailed` and the disk rule still fired on
+the kept data. Trimmed eagerly, since the two directions
+differ: a series kept later is a line in `scrape.yml` and costs nothing
+that reads the store, and one dropped later loses its history.
+`TestScrapeKeepsWhatMotelReads` holds the list to motel's own queries
+(every rule kind rendered, the chain's check of vmalert, `GET /<app>`'s
+view and a post-deploy comparison, scanned for the series and job each
+reads): a series kept that nothing reads fails it, and so does one read
+that is dropped. `TestScrapeConfigPassesTheStoresCheck` has Debian's
+`victoria-metrics` check the file with unknown fields refused
+(`-promscrape.config.dryRun`, strict by default).
+
+`motel monitor setup --metrics` writes the file at every run and
+restarts the store, which re-reads it. A box set up before this list
+keeps every series until setup runs again, and each load says so (the
+`files … differ` warning names `scrape.yml`, and one that cannot read it says so); after it, the dropped
+series age out over the 14 days' retention, and nothing that reads the
+store reads them.
+
 ### Operator rules
 
 The operator's own rules are lines of the monitor block beside its
@@ -1099,6 +1145,12 @@ the day above was measured; the three buckets under 5 ms (#434) are
 three series more per app and release, about 60 for ten apps, which no
 measurement since has taken.
 
+Both days scraped the stack whole: over 2,000 of those series were its
+own, which `scrape.yml` now drops ("What the store scrapes"); the store
+under the kept list is not yet measured on hotserve-1. The caches'
+`vm_cache_size_bytes` is no longer a series the store keeps: a later
+measurement reads it from the store's `/metrics`.
+
 ## Decisions
 
 Each is a choice the fresh-slate draft or DESIGN-notify.md left open,
@@ -1117,6 +1169,7 @@ or a line of theirs the facts overturned:
 | A start of the namespace restarts a running Alertmanager (`ExecStartPost=` `try-restart`), not a chain event on `up{job="alertmanager"}` | an Alertmanager that started while the namespace failed holds no listener there until it restarts (S3 O3 D5 = 45, fixed under the single-fault rule). The line ends it correct with no one acting, at the namespace's next start, which motel's push brings (size 2, risk 2: one line; the normal path's namespace start runs it as a no-op, with Alertmanager not running or starting in the same transaction, which e2e metrics 1 and 4d measure). Measured: with the line, 9093 answered 16 s after the fault went; with it cleared, 9093 was still dead 119 s on. A chain event (size 3: a new state in the chain's reads) would tell the operator and leave the fix to them; it would also tell a listener lost some other way, which no fault measured here produces |
 | No vmalert `Watchdog` | the merge hazard above; motel watches the chain instead |
 | `ChannelFailed` from vmalert is rendered per told channel with motel's labels | the only form in which Alertmanager deduplicates the two sources |
+| The store keeps of its own scrapes only what motel reads (`scrape.yml`'s `metric_relabel_configs`), not the stack whole | a series kept later is a line added and breaks nothing; one dropped later loses its history. The kept list is held to motel's queries by a test ("What the store scrapes") |
 | `MemoryMax=256M`, `-memory.allowedBytes=96MiB`, 14 days | the measured working set above; both caps mandatory, since the store sizes its caches from what it can see |
 | The operator's rules are a grammar of fixed kinds with parameters (`threshold`, `disk_fill`, `post_deploy`), never an expression or a template | the review's finding 17: a rule or template a config author writes could pull any app's series, or the box's, into a notification that reaches an app's deployers (T6); a kind reads only motel's own expression, of the app named or each app for itself, so a config author chooses a bound and a duration, never what is read |
 | disk_fill's windows and `for` scale with `within` beyond a day, and wait for their history | a regression extrapolated a hundred times past its window fires on a step; scaled, a step must be the same share of free space at every horizon ("Operator rules", disk_fill's shape). Not a bound on `within`, which would refuse the horizons a disk is watched over. /code-review pass 4 on operator rules |
@@ -1184,6 +1237,8 @@ on its general scales. metrics' examples:
 | A re-run over the proxy shape that fails after the new units are written but before the proxy is retired (a full disk at the state directory) leaves both shapes on disk: the put-back's reload gives Alertmanager the drop-in, whose socket then fails at its next start (the proxy holds 9093), and the proxy carries vmalert's posts as before | notify/metricssetup.go | 2 | 3 | 1 | 6; setup ends on the error, and its next run finishes the upgrade; vmalert keeps its outlet throughout. Retiring the proxy before the writes instead leaves no outlet after the same failure. /code-review pass 1 on #435 |
 | A re-run over the proxy shape whose `daemon-reload` is refused after the proxy is retired (systemd refuses one with `/run` nearly full, or past `ReloadLimitBurst=`) leaves the manager on the units it had: the put-back's own reload is refused too, and its restart of Alertmanager takes the definition without `20-motel-metrics.conf`, so at worst Alertmanager comes back on `motel-am.socket` alone and vmalert's posts to 9093 have nowhere to go until the next run | notify/metricssetup.go | 4 | 3 | 1 | 12; setup ends on the reload's error, and the put-back says it failed too, naming `systemctl daemon-reload`: "put back" is said only when the put-back's reload got through, and then the new units are loaded and its restart gives Alertmanager its socket in the namespace. The next run once reloads work finishes the upgrade. Not measured: the fault persists, so the put-back's message is the same whatever systemd starts from memory (vmalert's put-back start on its old definition may bring the proxy's socket back). The reload before the retirement keeps the proxy through the same failure (size 1, risk 2: the upgrade's order changes under its test). Copilot round 2 on #435 |
 | A re-run rewrites `motel-am-metrics.socket` but, with it active, restarts neither it nor Alertmanager: a socket whose `ListenStream=` or namespace a later binary changed keeps the old listener until the namespace restarts or the box reboots, while setup says Alertmanager was left as it runs | notify/metricssetup.go (`amListenInNamespace`) | 2 | 2 | 3 | 12; no binary has changed it, and `motel-vm.socket` and the namespace unit are alike (a re-run leaves them running too: the Owed row's `ExecStartPre`); a restart of the socket when its file changed is a comparison and a new step, to measure (size 2, risk 2). /code-review pass 2 on #435 |
+| `metrics_store_disk_fill` reads `vm_free_disk_space_bytes` with no `job` matcher, and `TestScrapeKeepsWhatMotelReads` gives a read with no job to the job its prefix names (`vm_` to `victoria-metrics`): a second source of a `vm_*` series would join the rule's `min` and pass the test | notify/metricsrules.go, notify/metricssetup_test.go (`readJob`) | 2 | 2 | 3 | 12; the store's one other writer is motel's push (`job="motel"`, `motel_*` names) and vmalert's remote write (`ALERTS*`), so it takes a change that adds a source and a series of that name. `{job="victoria-metrics"}` on the rule changes an expression the vmalert-tool tests pin (size 1, risk 2). /code-review pass 1 on the keep list |
+| `TestScrapeKeepsWhatMotelReads`'s scan refuses a selector with a single-quoted matcher (`x{job='motel'}`), which MetricsQL accepts: the test fails on a valid query of motel's until it is written with double quotes | notify/metricssetup_test.go (`storeReads`) | 2 | 5 | 1 | 10; red and named (`matcher "job='motel'"`), never a false pass, and every query motel writes uses Go's `%q` or literal double quotes; single quotes in the matchers' split and unquote are a second quoting path to test (size 2, risk 1). /code-review pass 2 on the keep list |
 
 ### Owed
 
@@ -1210,14 +1265,14 @@ in the namespace; the socket `srw-rw---- root motel` and the state
 directory `drwxr-s--- motel _victoria-metrics`; the store's data
 `drwxr-x--- _victoria-metrics _victoria-metrics`; root and motel reach the
 store and nobody does; the store's and vmalert's `MemoryMax`; the
-rendered `rules.yml` passes `vmalert -dryRun`; notify's twelve tests
-over vmalert and vmalert-tool, which `make test` skips for want of them
+rendered `rules.yml` passes `vmalert -dryRun`; notify's thirteen tests
+over vmalert, vmalert-tool and the store's own binary, which `make test` skips for want of them
 (the dry runs, the fixed rules firing, the threshold and disk_fill
 rules firing, a counter after a push gap, a counter on a fresh store,
 the request thresholds over the pushed apps alone, a histogram read
 whole, disk history over a gap, a disk step, `GET /<app>`'s request
-queries over the store, and a relaunch read past its stopped
-instance), every test that calls `vmTool`
+queries over the store, a relaunch read past its stopped
+instance, and `scrape.yml` checked by `victoria-metrics` with unknown fields refused), every test that calls `vmTool`
 (`TestE2EMetricsListsEveryVMAlertTest` holds the list to them), run
 from a test binary built for the box (e2e/Dockerfile's `notify-tests`), none skipped; motel's push arrives
 (`job="motel"`), with a deployed app's `motel_app_up`, release and CPU,
@@ -1231,7 +1286,7 @@ app with nothing running counted as 5xx; `GET /<app>?range=24h` carrying
 store's own 2xx count and the cache misses counted (a hit share under
 0.1, where `increase` alone read 1); and `?range=7d` a 422; vmalert's
 rules loaded, and its `ChannelFailed` for the failing channel firing
-with motel's labels while Alertmanager holds one such alert, not two;
+with motel's labels while Alertmanager holds one such alert, not two; the store keeping of each job only `up` and what motel reads (its free space, Alertmanager's failed-notification counter, nothing of vmalert's), and its free space read live;
 the store's proxy running as a uid not root with no capability;
 one Alertmanager process holding `am.sock` and the namespace's
 `127.0.0.1:9093` and answering on both (metrics 4d); after a SIGKILL,
@@ -1251,7 +1306,7 @@ Alertmanager inactive 150 s on, two of vmalert's sends refused, back
 only at motel's start); the store scraping Alertmanager again after the
 namespace's restart;
 the store stopped by hand, started again by motel's next push with vmalert beside it;
-the store made read-only (its free-space floor set above any disk): no series carries the flag, and motel's `metrics_store_read_only` is in Alertmanager, critical;
+the store made read-only (its free-space floor set above any disk): no sample of its free space kept from then while one from before is (the flag itself is no series it keeps), and motel's `metrics_store_read_only` is in Alertmanager, critical;
 a reload to a monitor block that is a `metrics` line alone writing no
 alerting rule, vmalert loading none, and its warning;
 motel's shutdown leaving `rules.yml`'s alerting rules, and a reload
@@ -1468,3 +1523,8 @@ Dated one-liners; the full text of each is in git.
   a row (18). Measured over imported pushes on 1.112.0 and in
   `TestOperatorRulesReadThePushedApps`, in the e2e list; e2e metrics 10
   holds every pushing app in the guard at each second of two minutes.
+- 2026-11-13 — The store keeps of its scrapes only what motel reads
+  ("What the store scrapes"): its free space, Alertmanager's failed
+  counter, `up`; 82 of over 2,000 series on hotserve-1. A test holds
+  the list to motel's queries, and each load warns of a `scrape.yml`
+  setup wrote before.
