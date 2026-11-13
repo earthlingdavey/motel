@@ -71,8 +71,10 @@ both directions verified), with the paths and flags of this section,
 except the two proxies' users and the drop-in's chmod of the store's
 data, set after the box's audit of 2026-11-11 found both proxies running
 as root and the data world-readable: measured in the e2e box (systemd
-257), not yet on hotserve-1; so is the namespace unit's test for a
-leftover before its delete (2026-11-12). A fourth cold boot, on
+257), then on hotserve-1 with the deploy of 01b2fd5 on 2026-11-12,
+whose reboot at about 17:53 UTC brought both proxies up as no root.
+The namespace unit's test for a leftover before its delete (#430,
+2026-11-12) is measured in the e2e box alone. A fourth cold boot, on
 2026-11-11 at 15:04 UTC with motel (9228935) rendering `rules.yml` and
 pushing, brought every
 unit up within a second of the namespace (the am proxy's service at its
@@ -303,7 +305,8 @@ the rule's and the expression's only.
 `/metrics` through the in-namespace proxy, every 30 s. For each
 receiver of the notify render, each integration among its channels, and
 each operator channel that is not one of that receiver's channels of
-that integration (notify's `suspects`), the render writes a rule whose
+that integration (notify's `suspects`) and whose `severity` floor takes
+a warning (notify's `failureAudience`), the render writes a rule whose
 labels are exactly those motel's own `ChannelFailed` posts for that
 failure: `alertname`, `notify_channel`, `severity="warning"`,
 `subject="box"`, `integration`, `suspects`. Receivers that share all
@@ -1044,10 +1047,9 @@ on its general scales. metrics' examples:
 | Owed | S | O | D | Lands in |
 |---|---|---|---|---|
 | The store's RSS on a 1 or 2 GB box (a day on hotserve-1's 3.8 GB is in "Footprint") | — | — | — | a deploy to a box of that size |
-| On a booted Debian host: a connection made while setup has the store masked, and a failed setup re-run's put-back (Copilot round 2 on #425); the two proxies' users and the am proxy's view (#426), and the namespace unit's test for a leftover, measured so far in the e2e box only (hotserve-1 runs the units of 9228935), and a cold boot of these units: setup's re-run does not restart the namespace unit, which is active, so its new `ExecStartPre` first runs at a reboot. The cold boot with motel rendering and pushing is measured with the units of 9228935 ("The shape") | — | — | — | the next deploy to hotserve-1, and a reboot after it |
-| motel says nothing when setup's units on disk are older than the binary's: a box upgraded past a change to them (this one: the proxies' users, the chmods) keeps the old units until root re-runs both setups (`motel monitor setup`, then `motel monitor setup --metrics`). A load could compare the installed files with the embedded ones and warn | 3 | 5 | 5 | the next PR on the feature branch, before it merges to main (/code-review of #426) |
-| An every-app `request_rate <` rule can fire for an app whose `observe` line is taken out, before its series drop out: with no new sample, the store's `increase` over the 5 m window loses one push's worth a push. Measured 2026-11-13 on Debian's 1.112.0 with the drop-in's flags, the rendered expression at 2 requests a second: 2.0 up to 50 s after the app's last push, then 1.8, 1.6 … down to 0.2 at 305 to 320 s, nothing from 335 s; the same at vmalert's time (30 s earlier, `step` 5m) and for the per-app rule. It reads below a threshold X for about 300 s × X/R − 30 s (R the app's rate), so a `for: 1m` can fire from X ≈ 0.3 R and does from 0.5 R, a `for: 4m` only near R, a `for:` of 5 m or more never: one false alert to the app's channels and the operator's, resolved by 335 s (that resolve is the accepted row on the `observe` line taken out). A per-app rule cannot reach it, since cmd/motel's gate refuses the reload that leaves its app unobserved. 30 by rule 3, fix size 1, risk 2: the request_rate expression `and on (app)` the app being in motel's last push, `max by (app) (tlast_over_time(motel_app_requests_total[5m])) > scalar(max(tlast_over_time(process_start_time_seconds{job="motel"}[5m]))) - 15`, so it drops out at the first push without the app, when the value first falls, and no `for:` reaches it; pushes that stop whole (a store gap) leave it as it is. Not yet run against the store | 2 | 5 | 3 | the next PR on the feature branch, after #434, with an e2e metrics case past the 5 m window (triage on #434 after its review loop closed) |
+| On a booted Debian host, the namespace unit's test for a leftover before its delete (#430's `ExecStartPre`): setup's re-run does not restart the namespace unit, which is active, so it first runs at a reboot; measured in the e2e box alone. #426's proxies have had their cold boot: the deploy of 01b2fd5 to hotserve-1 rebooted it at about 17:53 UTC on 2026-11-12, and both came back as no root | — | — | — | the next reboot of hotserve-1 after a deploy that carries #430 |
 | Debian's security support for `victoria-metrics` 1.112.0 and `prometheus-alertmanager` 0.28.1 on trixie, whose binaries are built with Go 1.24.2 (the store, vmalert) and 1.24.1 (Alertmanager), and a dist-upgrade check of both drop-ins' flags | — | — | — | before any release |
+| An every-app `request_rate <` rule can fire for an app whose `observe` line is taken out, before its series drop out: with no new sample, the store's `increase` over the 5 m window loses one push's worth a push. Measured 2026-11-13 on Debian's 1.112.0 with the drop-in's flags, the rendered expression at 2 requests a second: 2.0 up to 50 s after the app's last push, then 1.8, 1.6 … down to 0.2 at 305 to 320 s, nothing from 335 s; the same at vmalert's time (30 s earlier, `step` 5m) and for the per-app rule. It reads below a threshold X for about 300 s × X/R − 30 s (R the app's rate), so a `for: 1m` can fire from X ≈ 0.3 R and does from 0.5 R, a `for: 4m` only near R, a `for:` of 5 m or more never: one false alert to the app's channels and the operator's, resolved by 335 s (that resolve is the accepted row on the `observe` line taken out). A per-app rule cannot reach it, since cmd/motel's gate refuses the reload that leaves its app unobserved. 30 by rule 3, fix size 1, risk 2: the request_rate expression `and on (app)` the app being in motel's last push, `max by (app) (tlast_over_time(motel_app_requests_total[5m])) > scalar(max(tlast_over_time(process_start_time_seconds{job="motel"}[5m]))) - 15`, so it drops out at the first push without the app, when the value first falls, and no `for:` reaches it; pushes that stop whole (a store gap) leave it as it is. Not yet run against the store | 2 | 5 | 3 | the next PR on the feature branch, after #434, with an e2e metrics case past the 5 m window (triage on #434 after its review loop closed) |
 
 ## e2e rows
 

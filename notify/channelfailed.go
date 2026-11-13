@@ -34,6 +34,20 @@ type failWatch struct {
 	channels map[string][]string // receiver → channels
 }
 
+// failureAudience is the operator's channels a ChannelFailed may go
+// to: those whose severity floor takes a warning, which it is. A
+// channel kept for criticals hears no failure of another, from motel
+// or from vmalert.
+func failureAudience(r *resolved) []string {
+	var out []string
+	for _, n := range r.operator {
+		if r.channels[n].receives(SeverityWarning) {
+			out = append(out, n)
+		}
+	}
+	return out
+}
+
 func sampleKey(s failedSample) string { return s.integration + "/" + s.receiver + "/" + s.reason }
 
 // rises compares a read of the counter with the last and returns the

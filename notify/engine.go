@@ -678,7 +678,7 @@ func (e *engine) setConfig(a *App, post poster, known []string, logger *zap.Logg
 	e.fail.operator, e.fail.channels = nil, a.receivers
 	e.fail.kinds = map[string]string{}
 	if a.cfg != nil {
-		e.fail.operator = slices.Clone(a.cfg.operator)
+		e.fail.operator = failureAudience(a.cfg)
 		for name, ch := range a.cfg.channels {
 			e.fail.kinds[name] = channelKinds[ch.Kind]
 		}
@@ -756,6 +756,18 @@ func (e *engine) release(a *App) {
 	if running {
 		cancel()
 		<-done
+	}
+	// A config serves on without notify: a reload took the block (or its
+	// channels) away. Alertmanager would end what it holds at
+	// resolve_timeout through the last render's receivers, a recovery
+	// that did not happen on every channel, so it is given the config
+	// that sends nothing, and the URL files go. motel's own shutdown
+	// leaves the render, so that what fired is kept alive across a
+	// restart: Caddy empties its running context before it stops the
+	// last config's apps (caddy.Stop), so configRunning (load.go) is a
+	// reload's alone here, as for the store's rules (pusher.release).
+	if configRunning() {
+		a.applyNothing()
 	}
 }
 

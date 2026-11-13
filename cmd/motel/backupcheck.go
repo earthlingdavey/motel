@@ -37,16 +37,32 @@ import (
 // over an admin API that the starter's own line keeps off TCP. It
 // returns whether the command is to go no further.
 func gate(args []string, stderr io.Writer) (stop bool) {
+	stop, _ = gateArgs(args, stderr)
+	return stop
+}
+
+// gateArgs is gate, and the arguments Caddy's own command is to run
+// with: args, with --force added to a `motel reload` of a config with a
+// monitor block (reloadForces, monitorcheck.go).
+func gateArgs(args []string, stderr io.Writer) (stop bool, run []string) {
 	if len(args) == 0 {
-		return false
+		return false, args
 	}
 	cmd := args[0]
 	if cmd != "validate" && cmd != "reload" && cmd != "run" {
-		return false
+		return false, args
 	}
+	run = args
 	cfg, warning, err := checkAndLoad(cmd, args[1:])
 	if cmd == "run" && cfg != nil {
 		retireMetricsRules(cfg, stderr)
+		sendNothing(monitorJSON(cfg), stderr)
+	}
+	if monitor := monitorJSON(cfg); monitor != nil {
+		warnMonitor(cmd, monitor, stderr)
+		if cmd == "reload" && reloadForces(args[1:], monitor) {
+			run = append(append([]string{}, args...), "--force")
+		}
 	}
 	switch {
 	case err != nil && cmd == "run":
@@ -58,7 +74,7 @@ func gate(args []string, stderr io.Writer) (stop bool) {
 	if warning != "" {
 		_, _ = fmt.Fprintf(stderr, "WARNING: %s\n", warning)
 	}
-	return stop
+	return stop, run
 }
 
 // backupCaddyfile is the Caddyfile motel-backup reads, and
