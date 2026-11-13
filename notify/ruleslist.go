@@ -7,6 +7,8 @@ import (
 	"maps"
 	"math"
 	"net/http"
+	"os"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -169,11 +171,20 @@ var watchdogBudgets = func(a *App) []liveswap.WatchdogBudget {
 	return a.ls.WatchdogBudgets()
 }
 
+// installedVMAlert is where setup writes vmalert's unit: the one that
+// runs, which a binary newer than the last setup may differ from.
+var installedVMAlert = filepath.Join(unitDir, vmalertUnit)
+
 // vmalertTiming is the -evaluationInterval and -rule.evalDelay of the
-// vmalert unit setup writes (units/metrics/motel-vmalert.service).
+// vmalert unit setup wrote (installedVMAlert), or of the one it writes
+// (units/metrics/motel-vmalert.service) on a box with none yet.
 func vmalertTiming() (interval, delay time.Duration, err error) {
+	unit, rerr := os.ReadFile(installedVMAlert) //nolint:gosec // setup's unit path, fixed
+	if rerr != nil {
+		unit = unitVMAlert
+	}
 	flag := func(name string) (time.Duration, error) {
-		for _, f := range strings.Fields(string(unitVMAlert)) {
+		for _, f := range strings.Fields(string(unit)) {
 			if v, ok := strings.CutPrefix(f, "-"+name+"="); ok {
 				return time.ParseDuration(v)
 			}
@@ -219,14 +230,21 @@ func listRules(a *App, seen polled, chain chainRead, budgets []liveswap.Watchdog
 		}
 	}
 	for _, name := range silenceableAlerts(a) {
-		app, pinned, _ := alertScope(a, name)
-		e := AlertListing{Name: name, Subject: "box", App: pinned}
-		if app {
-			e.Subject = "app"
-		}
+		e := AlertListing{Name: name, Subject: "box"}
 		if r, ok := rules[name]; ok {
+			// The rule's subject label, as alertScope reads it, from
+			// the render in hand.
+			if subject, ok := strings.CutPrefix(r.Labels["subject"], "app:"); ok {
+				e.Subject = "app"
+				if !strings.Contains(subject, "{{") {
+					e.App = subject
+				}
+			}
 			storeRuleListing(&e, r)
 		} else if m, ok := raisedBy(name); ok {
+			if app, _, _ := alertScope(a, name); app {
+				e.Subject = "app"
+			}
 			e.Source, e.Severity, e.Kind = sourceCheck, m.severity, kindEvent
 			if name == eventPostDeployRegressed {
 				e.Source = sourceOperator
@@ -282,7 +300,7 @@ func checkListing(e *AlertListing, seen polled, chain chainRead, budgets []lives
 	case "backup_stale":
 		e.Op, e.Threshold, e.Unit = ">", ptr(status.StaleAfter.Seconds()), "seconds"
 		for _, app := range slices.Sorted(maps.Keys(seen.backups)) {
-			age := seen.backupsAt.Sub(seen.backups[app]).Truncate(time.Second)
+			age := seen.backupsAt.Sub(seen.backups[app])
 			e.Readings = append(e.Readings, Reading{Instance: app, Value: age.Seconds(), MeasuredAt: seen.backupsAt})
 		}
 	case liveswap.EventWatchdogThrottled:
@@ -294,7 +312,7 @@ func checkListing(e *AlertListing, seen polled, chain chainRead, budgets []lives
 	case eventStoreDown:
 		e.Op, e.Threshold, e.Unit = ">=", ptr(storeDownAfter.Seconds()), "seconds"
 		if !chain.pushedAt.IsZero() {
-			e.Readings = []Reading{{Value: chain.failingFor.Truncate(time.Second).Seconds(), MeasuredAt: chain.pushedAt}}
+			e.Readings = []Reading{{Value: chain.failingFor.Seconds(), MeasuredAt: chain.pushedAt}}
 		}
 	case eventRulesDown:
 		e.Op, e.Threshold, e.Unit = ">=", ptr(float64(rulesDownReads)), "reads"
@@ -353,7 +371,7 @@ func serveRules(w http.ResponseWriter, r *http.Request) error {
 
 // rulesText is the listing as a table: one line an alert, its
 // condition, and a check's readings.
-func rulesText(l RulesListing) []byte {
+func rulesText(l RulesListing, now time.Time) []byte {
 	var b bytes.Buffer
 	tw := tabwriter.NewWriter(&b, 0, 0, 2, ' ', 0)
 	_, _ = fmt.Fprintln(tw, "NAME\tSOURCE\tKIND\tSEVERITY\tSCOPE\tCONDITION\tNOW")
@@ -364,7 +382,7 @@ func rulesText(l RulesListing) []byte {
 		} else if e.Subject == "app" {
 			scope = "every app"
 		}
-		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", e.Name, e.Source, e.Kind, e.Severity, scope, condition(e), readings(e))
+		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", e.Name, e.Source, e.Kind, e.Severity, scope, condition(e), readings(e, now))
 	}
 	_ = tw.Flush()
 	if l.Store != nil {
@@ -402,8 +420,8 @@ func condition(e AlertListing) string {
 		c = strings.Join(ls, ", ") + fmt.Sprintf(", each clears %s points under", numberText(e.Levels[0].Threshold-e.Levels[0].ClearsBelow))
 	case e.Threshold != nil:
 		c = e.Op + " " + amount(*e.Threshold, e.Unit)
-	case e.Kind == kindThreshold:
-		c = e.Op + " its budget in its window" // the watchdog's, each app's own
+	case e.Name == liveswap.EventWatchdogThrottled:
+		c = e.Op + " its budget in its window" // each app's own
 	default:
 		return "-"
 	}
@@ -418,7 +436,15 @@ func condition(e AlertListing) string {
 	return c
 }
 
-func readings(e AlertListing) string {
+// staleAfter is how old a check's reading may be before the table
+// says how old it is: twice its detector's cadence (a statfs that
+// hangs, an unreadable record, no push).
+var staleAfter = map[string]time.Duration{
+	alertDiskLow: 2 * time.Minute, "backup_stale": 2 * backupEvery,
+	eventStoreDown: 2 * pushEvery, eventRulesDown: 4 * pushEvery, liveswap.EventWatchdogThrottled: time.Minute,
+}
+
+func readings(e AlertListing, now time.Time) string {
 	if e.ValueQuery != "" {
 		return "(the store)"
 	}
@@ -433,6 +459,9 @@ func readings(e AlertListing) string {
 		}
 		if r.Level != "" {
 			v += " (" + r.Level + ")"
+		}
+		if old := now.Sub(r.MeasuredAt); old > staleAfter[e.Name] {
+			v += " (as of " + shortDuration(old) + " ago)"
 		}
 		rs = append(rs, v)
 	}

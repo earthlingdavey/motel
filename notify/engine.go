@@ -691,6 +691,9 @@ func (e *engine) configure(a *App, post poster, known []string, logger *zap.Logg
 func (e *engine) setConfig(a *App, post poster, known []string, logger *zap.Logger) {
 	e.active, e.post, e.known, e.logger = a, post, known, logger
 	e.deploySucceeded = a.deploySucceeded()
+	if a.backupRecord() != e.backupPath {
+		e.seen.backups = nil // another record's ages are not this one's
+	}
 	e.backupPath, e.diskPaths = a.backupRecord(), a.diskPaths
 	// A filesystem the new config does not measure is not listed (its
 	// alert is pruned below); the rest keep their reading until the

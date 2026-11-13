@@ -863,7 +863,8 @@ as an event: its threshold is 0 on a counter, nothing to be close to.
 (`query`, `op`, `value`, `match`, `meaning`). The client runs the query on
 `vm.sock` (0660 root:motel). The listing's `store` says how:
 `query_offset_seconds` is vmalert's `-evaluationInterval` plus its
-`-rule.evalDelay`, read from the unit setup writes (65 s): each
+`-rule.evalDelay`, read from the unit setup installed, or the one it
+writes on a box with none yet (65 s): each
 evaluation is stamped (now − evalDelay) truncated to the interval, so
 rules evaluate data up to about 65 s old (measured on Debian's 1.112.0,
 the spike of 2026-11-13). A test holds every group's `interval` to the
@@ -883,8 +884,11 @@ and the `level` it fires at now, which the gap makes a state; one whose
 statfs did not come back keeps its last reading, and its time, as its
 alert keeps firing, unless another path measures its filesystem now.
 The table shows durations to the second and percents rounded down, so
-a number is read on its side of its threshold; the JSON has them as
-measured.
+a number is read on its side of its threshold, and says how old a
+reading is past twice its check's cadence (a statfs that hangs, an
+unreadable record); the JSON has them as measured, with `measured_at`.
+A reload that points at another backup record drops the first one's
+ages.
 `backup_stale`: each app's age of its last complete backup at the last
 record read, against `status.StaleAfter` (3 h). `watchdog_throttled`:
 each app's restarts in its window against its budget, read from the

@@ -151,11 +151,13 @@ type backupPoller struct {
 	// rules` lists beside backup_stale. A new map at each read.
 	read   map[string]time.Time
 	readAt time.Time
+	// readPath is the record read is from: another path's is dropped.
+	readPath string
 }
 
 func (b *backupPoller) poll(now time.Time, path string) []Event {
-	if path == "" {
-		b.read = nil
+	if path != b.readPath {
+		b.read, b.readPath = nil, path
 	}
 	if path == "" || (!b.last.IsZero() && now.Sub(b.last) < backupEvery) {
 		return nil
@@ -200,11 +202,11 @@ func (b *backupPoller) poll(now time.Time, path string) []Event {
 		if a.RestoreDrill != nil {
 			unproven = append(unproven, name)
 		}
-		// A box event about an app: the app is the instance, never
-		// the app label, so it reaches the operator alone.
 		if a.LastOK != nil {
 			b.read[name] = a.LastOK.Time
 		}
+		// A box event about an app: the app is the instance, never
+		// the app label, so it reaches the operator alone.
 		if a.LastOK != nil && now.Sub(a.LastOK.Time) > status.StaleAfter {
 			fire = append(fire, ev("backup_stale", SeverityCritical, name,
 				fmt.Sprintf("the backup of %s is stale: the last complete one is from %s", name, record.When(a.LastOK.Time))))

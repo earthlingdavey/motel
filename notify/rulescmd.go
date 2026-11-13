@@ -6,9 +6,16 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 )
+
+// rulesNow is the command's clock, for how old a reading is.
+var rulesNow = time.Now
+
+// rulesLimit is how much of the route's answer the command reads.
+const rulesLimit = 1 << 20
 
 func rulesCommand() *cobra.Command {
 	var asJSON bool
@@ -34,17 +41,20 @@ is each alert", has an example.
 		Args: cobra.NoArgs,
 		RunE: func(c *cobra.Command, _ []string) error {
 			return printAnswer(c, asJSON, func() (RulesListing, error) {
-				out, err := adminRequest(c, http.MethodGet, "/notify/rules", nil, 1<<20)
+				out, err := adminRequest(c, http.MethodGet, "/notify/rules", nil, rulesLimit)
 				if err != nil {
 					return RulesListing{}, notAdmitted(c, err, "motel monitor rules")
 				}
 				var l RulesListing
 				if json.Unmarshal(out, &l) != nil || l.Alerts == nil {
+					if len(out) >= rulesLimit {
+						return RulesListing{}, fmt.Errorf("motel's listing is over %d bytes, more than this command reads", rulesLimit)
+					}
 					return RulesListing{}, fmt.Errorf("motel answered %q", strings.TrimSpace(string(out)))
 				}
 				return l, nil
 			}, func(w io.Writer, l RulesListing) error {
-				_, err := w.Write(rulesText(l))
+				_, err := w.Write(rulesText(l, rulesNow()))
 				return err
 			})
 		},

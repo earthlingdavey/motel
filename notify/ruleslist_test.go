@@ -197,7 +197,7 @@ func TestRulesListingHoldsNoSecret(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got := string(listingJSON(t, l)) + string(rulesText(l))
+	got := string(listingJSON(t, l)) + string(rulesText(l, listingAt))
 	for k, v := range testSecrets() {
 		if strings.Contains(got, v) || strings.Contains(got, k) {
 			t.Errorf("the listing holds %s", k)
@@ -223,6 +223,9 @@ func TestRulesListingHoldsNoSecret(t *testing.T) {
 // and every group evaluates at its -evaluationInterval, which the
 // offset assumes.
 func TestVMAlertTiming(t *testing.T) {
+	saved := installedVMAlert
+	installedVMAlert = filepath.Join(t.TempDir(), "none")
+	t.Cleanup(func() { installedVMAlert = saved })
 	interval, delay, err := vmalertTiming()
 	if err != nil || interval != time.Minute || delay != 5*time.Second {
 		t.Fatalf("%s %s %v", interval, delay, err)
@@ -409,6 +412,9 @@ func TestRulesCommandOutput(t *testing.T) {
 	watchdogBudgets = func(*App) []liveswap.WatchdogBudget { return budgets }
 	t.Cleanup(func() { watchdogBudgets = saved })
 	te.seen, _, _ = listingReads()
+	savedNow := rulesNow
+	rulesNow = func() time.Time { return listingAt.Add(5 * time.Minute) }
+	t.Cleanup(func() { rulesNow = savedNow })
 	addr := adminServe(t)
 	out, err := runRules(t, addr)
 	if err != nil {
@@ -427,7 +433,7 @@ deploy_failed            motel check  event      warning   every app  -         
 deploy_refused           motel check  event      warning   every app  -                                                            -
 deploy_succeeded         motel check  event      info      every app  -                                                            -
 disk_filling             operator     guarded    critical  box        < 0 bytes for 3h30m, 2 guards                                (the store)
-disk_low                 motel check  threshold  warning   box        >= 80% warning, >= 90% critical, each clears 5 points under  /srv/motel 79.9% (warning), /var/lib/caddy 41.2%
+disk_low                 motel check  threshold  warning   box        >= 80% warning, >= 90% critical, each clears 5 points under  /srv/motel 79.9% (warning) (as of 5m20s ago), /var/lib/caddy 41.2% (as of 6m20s ago)
 disk_soon                operator     guarded    warning   box        < 0 bytes for 30m, 2 guards                                  (the store)
 drill_failed             motel check  event      critical  box        -                                                            -
 errors_high              operator     guarded    warning   every app  > 0.05 share for 10m, 2 guards                               (the store)
@@ -442,7 +448,7 @@ post_deploy_regressed    operator     event      warning   every app  -         
 relaunch_refused         motel check  event      critical  every app  -                                                            -
 rollback                 motel check  event      warning   every app  -                                                            -
 shop_slow                operator     guarded    critical  app shop   > 1.5s for 15m, 2 guards                                     (the store)
-watchdog_throttled       motel check  threshold  critical  every app  >= its budget in its window                                  shop 2 of 5 in 10m
+watchdog_throttled       motel check  threshold  critical  every app  >= its budget in its window                                  shop 2 of 5 in 10m (as of 5m ago)
 
 NOW for the store's rules: run each value_query (--json) on /run/motel-metrics/vm.sock at now - 65s;
 pending and firing are last_over_time(ALERTS[2m]) (firing over pending; a resolved alert shows within the lookback).
@@ -562,5 +568,81 @@ func TestRulesReadAtAReadOnlyStore(t *testing.T) {
 	p.checkReadOnly(t.Context())
 	if got := p.read(m); got.rulesBad != 0 || !got.rulesAt.Equal(listingAt) {
 		t.Fatalf("%+v", got)
+	}
+}
+
+// TestVMAlertTimingOfTheInstalledUnit: the unit that runs, not the one
+// this binary would write, which a later setup installs.
+func TestVMAlertTimingOfTheInstalledUnit(t *testing.T) {
+	saved := installedVMAlert
+	installedVMAlert = filepath.Join(t.TempDir(), "motel-vmalert.service")
+	t.Cleanup(func() { installedVMAlert = saved })
+	if err := os.WriteFile(installedVMAlert, []byte("ExecStart=/usr/bin/vmalert -evaluationInterval=2m -rule.evalDelay=30s\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	q, err := storeQueries(&MetricsStore{})
+	if err != nil || q.QueryOffsetSeconds != 150 || q.StateQuery != "last_over_time(ALERTS[4m])" {
+		t.Fatalf("%+v %v", q, err)
+	}
+}
+
+// TestEveryMeasuredAlertIsListedAsOne: each alert the table marks
+// measured comes with its op, unit and threshold (or levels, or the
+// watchdog's per app), so none falls to an empty condition.
+func TestEveryMeasuredAlertIsListedAsOne(t *testing.T) {
+	seen, chain, budgets := listingReads()
+	l, err := listRules(rulesApp(t, listingLines...), seen, chain, budgets)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range l.Alerts {
+		m, ok := raisedBy(e.Name)
+		if !ok || !m.measured {
+			continue
+		}
+		if e.Kind != kindThreshold || e.Op == "" || e.Unit == "" || e.Threshold == nil && e.Levels == nil && e.Name != liveswap.EventWatchdogThrottled {
+			t.Errorf("%s: %+v", e.Name, e)
+		}
+		if strings.HasPrefix(condition(e), " ") || len(e.Readings) == 0 {
+			t.Errorf("%s: condition %q, readings %+v", e.Name, condition(e), e.Readings)
+		}
+	}
+}
+
+// TestBackupReadingsFollowTheRecord: a reload that points at another
+// record drops the first one's ages.
+func TestBackupReadingsFollowTheRecord(t *testing.T) {
+	te := newTestEngine(t)
+	dir := t.TempDir()
+	first := filepath.Join(dir, "a.json")
+	writeRecord(t, first, &record.Status{Apps: map[string]*record.App{
+		"blog": {Class: record.OK, LastOK: &record.Snapshot{ID: "a", Time: te.at.Add(-time.Hour)}},
+	}})
+	te.backupPath = first
+	te.poll(t.Context())
+	if len(te.seen.backups) != 1 {
+		t.Fatalf("first record: %+v", te.seen.backups)
+	}
+	te.setConfig(&App{BackupRecord: filepath.Join(dir, "b.json")}, te.p, nil, te.logger)
+	if te.seen.backups != nil {
+		t.Fatalf("after the reload: %+v", te.seen.backups)
+	}
+	te.advance(time.Minute) // inside backupEvery: b.json is not read yet
+	te.poll(t.Context())
+	if te.seen.backups != nil {
+		t.Fatalf("the poll after the reload: %+v", te.seen.backups)
+	}
+}
+
+// TestTableSaysHowOldAReadingIs: a reading older than twice its
+// check's cadence says so; a fresh one does not.
+func TestTableSaysHowOldAReadingIs(t *testing.T) {
+	e := AlertListing{Name: alertDiskLow, Kind: kindThreshold, Unit: "percent",
+		Readings: []Reading{{Instance: "/srv", Value: 50, MeasuredAt: listingAt}}}
+	if got := readings(e, listingAt.Add(time.Minute)); got != "/srv 50%" {
+		t.Errorf("fresh: %q", got)
+	}
+	if got := readings(e, listingAt.Add(7*time.Minute)); got != "/srv 50% (as of 7m ago)" {
+		t.Errorf("old: %q", got)
 	}
 }
