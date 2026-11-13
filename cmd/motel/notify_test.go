@@ -74,7 +74,7 @@ func TestTheOldCommandsSayTheNewSpelling(t *testing.T) {
 	for _, sub := range cmd.Commands() {
 		names = append(names, sub.Name())
 	}
-	if strings.Join(names, " ") != "send setup test" {
+	if strings.Join(names, " ") != "send setup silence test" {
 		t.Errorf("motel monitor has %v", names)
 	}
 	setup, _, err := cmd.Find([]string{"setup"})
