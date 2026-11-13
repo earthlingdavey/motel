@@ -1348,6 +1348,22 @@ instead (see **3. Roll back** above).
 The tarball's contents must sit at the archive root (`tar -czf
 app.tar.gz -C dist .`), with versions matching `[A-Za-z0-9._-]{1,64}` and not starting with a dot.
 
+**The bodies as Go types.** Every body this section describes is a
+type in [`liveswap/wire`](wire/), which imports only the standard
+library, so a client decodes them without linking Caddy: `Status`
+(`GET /<app>`, and a deploy's 200), `Failure` (a failed deploy's 5xx:
+`error`, and the `status` after it), `Error` (every other refusal,
+`{"error": …}`), `DeployResult` (`last_deploy`, and
+`GET /<app>?deploy=<version>`), `PhaseEvent` and `DoneEvent` (a
+streamed deploy's lines, below), `Metrics` (the status's `metrics`,
+over one of `MetricsRanges`) and `BoxStatus` (the box webhook's
+`GET /`). The handlers marshal these types (a streamed line is the
+filtered body with the event's fields appended); the order of their
+keys is part of the shape, and `liveswap/testdata/wire` pins every body byte
+for byte. A body the filter changed gains a top-level `redacted_env`
+(see [Secrets and logs](#secrets-and-logs)), which only `DeployResult`
+has a field for.
+
 ### Streaming the deploy
 
 Send `Accept: application/x-ndjson` on any deploy or rollback POST and
