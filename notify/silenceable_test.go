@@ -213,21 +213,31 @@ func TestSilenceableAlertsFollowTheConfig(t *testing.T) {
 // motel's emitters and rendered rules carry.
 func TestAlertScope(t *testing.T) {
 	a := &App{Metrics: &MetricsStore{Rules: []Rule{
-		{Name: "shop_slow", Kind: ruleThreshold, Metric: "p95", Op: ">", Value: 500, For: caddy.Duration(5 * 60e9)},
+		{Name: "slow", Kind: ruleThreshold, Metric: "p95", Op: ">", Value: 500, For: caddy.Duration(5 * 60e9)},
+		{Name: "shop_slow", Kind: ruleThreshold, App: "shop", Metric: "p95", Op: ">", Value: 500, For: caddy.Duration(5 * 60e9)},
 		{Name: "disk_soon", Kind: ruleDiskFill, Within: caddy.Duration(3600e9)},
 	}}}
-	for name, want := range map[string][2]bool{
-		"deploy_failed": {true, true}, "rollback": {true, true}, eventPostDeployRegressed: {true, true},
-		"watchdog_throttled": {true, false}, ruleAppMemoryHigh: {true, false}, "shop_slow": {true, false},
-		"disk_low": {false, false}, "disk_soon": {false, false}, ruleStoreDiskFill: {false, false},
-		alertChannelFailed: {false, false}, "cert_failed": {false, false}, eventStoreDown: {false, false},
+	type scope struct {
+		app     bool
+		pinned  string
+		release bool
+	}
+	for name, want := range map[string]scope{
+		"rollback": {true, "", true}, "deploy_succeeded": {true, "", true}, eventPostDeployRegressed: {true, "", true},
+		"deploy_failed": {true, "", false}, "deploy_refused": {true, "", false},
+		"watchdog_throttled": {true, "", false}, ruleAppMemoryHigh: {true, "", false}, "slow": {true, "", false},
+		"shop_slow": {true, "shop", false},
+		"disk_low":  {}, "disk_soon": {}, ruleStoreDiskFill: {},
+		alertChannelFailed: {}, "cert_failed": {}, eventStoreDown: {},
 	} {
-		if app, rel := alertScope(a, name); app != want[0] || rel != want[1] {
-			t.Errorf("%s: app %v release %v, want %v", name, app, rel, want)
+		app, pinned, rel := alertScope(a, name)
+		if got := (scope{app, pinned, rel}); got != want {
+			t.Errorf("%s: %+v, want %+v", name, got, want)
 		}
 	}
-	for _, n := range releaseAlerts() {
-		if !slices.Contains(silenceableAlerts(&App{Metrics: &MetricsStore{Rules: []Rule{{Name: "x", Kind: rulePostDeploy}}}}), n) {
+	all := silenceableAlerts(&App{Metrics: &MetricsStore{Rules: []Rule{{Name: "x", Kind: rulePostDeploy}}}})
+	for _, n := range onDiskReleases {
+		if !slices.Contains(all, n) {
 			t.Errorf("%s carries a release but is not silenceable", n)
 		}
 	}

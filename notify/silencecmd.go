@@ -34,14 +34,15 @@ func silenceAddCommand() *cobra.Command {
 		Long: `motel builds the silence from names it knows: --alert is one of the
 alerts motel raises on this box, --app one of the apps it runs,
 --release one of the app's releases on disk. Each is an exact match;
-give --alert, --app or both. --release needs --app and an alert that
-carries a release (deploy_failed, deploy_refused, rollback,
-deploy_succeeded, post_deploy_regressed).
+give --alert, --app or both. --release needs --app and an alert whose
+release is on disk: rollback, deploy_succeeded or
+post_deploy_regressed (a failed or refused deploy's release is not:
+silence deploy_failed by --alert and --app).
 
     motel monitor silence add --comment "resizing the volume" --duration 4h \
         --alert disk_low
-    motel monitor silence add --comment "known bad, rolling back" \
-        --alert deploy_failed --app shop --release v42
+    motel monitor silence add --comment "v42 is slow, a fix is coming" \
+        --alert post_deploy_regressed --app shop --release v42
 
 Refused: neither --alert nor --app; an alert motel does not raise here
 (Watchdog, the heartbeat, among them: pause the check off the box
@@ -68,7 +69,7 @@ SUDO_USER, else USER.`,
 	f := c.Flags()
 	f.StringVar(&req.Alert, "alert", "", "one of the alerts motel raises on this box, such as disk_low")
 	f.StringVar(&req.App, "app", "", "one of the apps this box runs")
-	f.StringVar(&req.Release, "release", "", "one release of the app, by its name (with --alert or --app)")
+	f.StringVar(&req.Release, "release", "", "one release of the app on disk (with --app and --alert rollback, deploy_succeeded or post_deploy_regressed)")
 	f.StringVar(&req.Comment, "comment", "", "why, in one line: whoever finds the silence reads it")
 	f.StringVar(&req.Duration, "duration", defaultSilence.String(), "how long, from 1m to 24h")
 	f.BoolVar(&asJSON, "json", false, `print {"id":…,"ends_at":…}, or {"error":…}`)

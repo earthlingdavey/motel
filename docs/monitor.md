@@ -622,9 +622,10 @@ silence from them:
   your own `motel monitor send --subject app:<name>` events among them;
 - `--release <version>`: one release of the app, as its directory under
   `/var/lib/liveswap/<app>/releases/` names it, so that the next
-  release's deploy events still reach you. It needs `--app` and an
-  `--alert` that carries a release: `deploy_failed`, `deploy_refused`,
-  `rollback`, `deploy_succeeded` or `post_deploy_regressed`.
+  release's alerts still reach you. It needs `--app` and one of the
+  alerts whose release is on disk: `rollback`, `deploy_succeeded` or
+  `post_deploy_regressed`. A failed or refused deploy's release is not
+  kept, so silence `deploy_failed` by `--alert` and `--app`.
 
 Give `--alert`, `--app` or both. Each is an exact match. A name motel
 does not know is refused with the list of the names it takes, and so

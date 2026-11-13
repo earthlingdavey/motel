@@ -161,7 +161,7 @@ func withFakeAM(t *testing.T) (*testEngine, *silenceAM) {
 // and the journal line.
 func TestServeSilence(t *testing.T) {
 	te, f := withFakeAM(t)
-	req := SilenceRequest{Alert: "deploy_failed", App: "shop", Release: testSha, Duration: "60.5s", By: "alice",
+	req := SilenceRequest{Alert: "rollback", App: "shop", Release: testSha, Duration: "60.5s", By: "alice",
 		Comment: "rolling back " + testSha + ", see https://hooks.slack.com/services/T0/B0/secretpart"} // gitleaks:allow — made up for this test
 	w, err := callAdmin(t, serveSilence, http.MethodPost, req)
 	if err != nil {
@@ -183,7 +183,7 @@ func TestServeSilence(t *testing.T) {
 		t.Fatalf("the comment sent: %q", sent.Comment)
 	}
 	want := `POST /api/v2/silences {"matchers":[` +
-		`{"name":"alertname","value":"deploy_failed","isRegex":false,"isEqual":true},` +
+		`{"name":"alertname","value":"rollback","isRegex":false,"isEqual":true},` +
 		`{"name":"app","value":"shop","isRegex":false,"isEqual":true},` +
 		`{"name":"release","value":"` + testSha + `","isRegex":false,"isEqual":true}],` +
 		`"startsAt":"2026-11-10T12:00:00Z","endsAt":"2026-11-10T12:01:00.5Z",` +
@@ -196,7 +196,7 @@ func TestServeSilence(t *testing.T) {
 		t.Fatalf("journal lines: %d", len(lines))
 	}
 	fields := lines[0].ContextMap()
-	if fields["id"] != testSilenceID || fields["ends_at"] != "2026-11-10T12:01:00.5Z" || fields["alert"] != "deploy_failed" ||
+	if fields["id"] != testSilenceID || fields["ends_at"] != "2026-11-10T12:01:00.5Z" || fields["alert"] != "rollback" ||
 		fields["app"] != "shop" || fields["release"] != testSha ||
 		fields["created_by"] != "motel monitor: alice" || fields["comment"] != sent.Comment {
 		t.Fatalf("journal fields: %v", fields)
@@ -217,10 +217,11 @@ func TestServeSilence(t *testing.T) {
 		{"an unknown app", SilenceRequest{App: "secret-topic"}, "--app names no app this box runs; they are blog, shop, wiki"},
 		{"a box alert with --app", SilenceRequest{Alert: "disk_low", App: "shop"}, "disk_low is about the box, not an app"},
 		{"ChannelFailed with --app", SilenceRequest{Alert: "ChannelFailed", App: "shop"}, "is about the box, not an app"},
-		{"a release without --app", SilenceRequest{Alert: "deploy_failed", Release: "v2"}, "--release narrows one app's alerts that carry a release, so it needs --app and --alert one of deploy_failed, deploy_refused, rollback, deploy_succeeded, post_deploy_regressed"},
+		{"a release without --app", SilenceRequest{Alert: "rollback", Release: "v2"}, "--release narrows one app's alerts whose release is on disk, so it needs --app and --alert one of rollback, deploy_succeeded, post_deploy_regressed"},
+		{"a failed deploy's release", SilenceRequest{Alert: "deploy_failed", App: "shop", Release: "v2"}, "a failed or refused deploy's release never stays on disk"},
 		{"a release of a state alert", SilenceRequest{Alert: "watchdog_throttled", App: "shop", Release: "v2"}, "--release narrows"},
 		{"a release with --app alone", SilenceRequest{App: "shop", Release: "v2"}, "--release narrows"},
-		{"a release not on disk", SilenceRequest{Alert: "deploy_failed", App: "shop", Release: "3f9c2a1"}, "--release names no release of shop on this box; they are " + testSha + ", v2"},
+		{"a release not on disk", SilenceRequest{Alert: "rollback", App: "shop", Release: "3f9c2a1"}, "--release names no release of shop on this box; they are " + testSha + ", v2"},
 		{"a release of an app with none", SilenceRequest{Alert: "rollback", App: "blog", Release: "v1"}, "--release names no release of blog on this box; they are none on disk"},
 	} {
 		r := c.req
@@ -452,3 +453,18 @@ func TestInvokingUser(t *testing.T) {
 }
 
 const testSha = "3f9c2a1be0d4c5f6a7b8c9d0e1f2a3b4c5d6e7f8"
+
+// TestSilenceOfARuleOfOneApp: a threshold line pinned to one app is
+// silenced with that --app, or none, and refused with another.
+func TestSilenceOfARuleOfOneApp(t *testing.T) {
+	te, _ := withFakeAM(t)
+	te.active.Metrics = &MetricsStore{Rules: []Rule{
+		{Name: "shop_slow", Kind: ruleThreshold, App: "shop", Metric: "p95", Op: ">", Value: 500, For: caddy.Duration(5 * 60e9)},
+	}}
+	for app, ok := range map[string]bool{"shop": true, "": true, "blog": false} {
+		_, err := callAdmin(t, serveSilence, http.MethodPost, SilenceRequest{Alert: "shop_slow", App: app, Comment: "c", By: "alice"})
+		if ok != (err == nil) || !ok && !strings.Contains(err.Error(), "shop_slow is a rule about shop alone") {
+			t.Fatalf("--app %q: %v", app, err)
+		}
+	}
+}

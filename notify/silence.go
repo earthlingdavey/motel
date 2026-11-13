@@ -158,14 +158,17 @@ func (r SilenceRequest) checkSets(a *App) error {
 		return fmt.Errorf("--app names no app this box runs; they are %s", apps)
 	}
 	if r.Alert != "" && r.App != "" {
-		if app, _ := alertScope(a, r.Alert); !app {
+		app, pinned, _ := alertScope(a, r.Alert)
+		if !app {
 			return fmt.Errorf("%s is about the box, not an app, so a silence with --app would match nothing: leave --app out", r.Alert)
+		}
+		if pinned != "" && pinned != r.App {
+			return fmt.Errorf("%s is a rule about %s alone, so a silence with another --app would match nothing", r.Alert, pinned)
 		}
 	}
 	if r.Release != "" {
-		withRelease := releaseAlerts()
-		if r.App == "" || !slices.Contains(withRelease, r.Alert) {
-			return fmt.Errorf("--release narrows one app's alerts that carry a release, so it needs --app and --alert one of %s", strings.Join(withRelease, ", "))
+		if _, _, release := alertScope(a, r.Alert); r.App == "" || !release {
+			return fmt.Errorf("--release narrows one app's alerts whose release is on disk, so it needs --app and --alert one of %s (a failed or refused deploy's release never stays on disk: silence its --alert and --app)", strings.Join(onDiskReleases, ", "))
 		}
 		rels := releasesOf(a, r.App)
 		if !slices.Contains(rels, r.Release) {

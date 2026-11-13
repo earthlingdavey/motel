@@ -7,15 +7,19 @@ import (
 	"github.com/smallhoursorg/motel/liveswap"
 )
 
-// lifecycleAlerts are liveswap's, about one app; lifecycleOneShots
-// those among them posted as one-shots, which carry the release label
-// (oneShotAlert), as post_deploy_regressed does.
+// lifecycleAlerts are liveswap's, about one app; onDiskReleases those
+// among them, with post_deploy_regressed, whose release label names a
+// release that is on disk when it fires: a rollback's target, a
+// deploy's success, a regression after it. deploy_failed and
+// deploy_refused carry the release too, but a refused one never lands
+// and a failed one's directory is removed (liveswap/app.go), so the
+// closed set of releases on disk cannot hold theirs.
 var (
 	lifecycleAlerts = []string{
 		liveswap.EventWatchdogThrottled, liveswap.EventRelaunchRefused,
 		liveswap.EventDeployFailed, liveswap.EventDeployRefused, liveswap.EventRollback, liveswap.EventDeploySucceeded,
 	}
-	lifecycleOneShots = []string{liveswap.EventDeployFailed, liveswap.EventDeployRefused, liveswap.EventRollback, liveswap.EventDeploySucceeded}
+	onDiskReleases = []string{liveswap.EventRollback, liveswap.EventDeploySucceeded, eventPostDeployRegressed}
 )
 
 // raisedAlerts are the alert names motel's own detectors raise on any
@@ -62,30 +66,30 @@ func silenceableAlerts(a *App) []string {
 }
 
 // alertScope is what an alert name's labels can be narrowed by on the
-// config a: app reports an alert about one app (an app label: liveswap's,
-// post_deploy_regressed, and the vmalert rules whose subject is an
-// app's); release, one that also carries the release label.
-func alertScope(a *App, name string) (app, release bool) {
-	if slices.Contains(lifecycleOneShots, name) || name == eventPostDeployRegressed {
-		return true, true
+// config a: app reports an alert about an app (an app label:
+// liveswap's, post_deploy_regressed, and the vmalert rules whose
+// subject is an app's), pinned the one app a rule of one app's is
+// about, and release one whose release label names a release on disk.
+func alertScope(a *App, name string) (app bool, pinned string, release bool) {
+	if slices.Contains(onDiskReleases, name) {
+		return true, "", true
 	}
 	if slices.Contains(lifecycleAlerts, name) {
-		return true, false
+		return true, "", false
 	}
 	if a != nil && a.Metrics != nil {
 		for _, g := range []vmGroup{fixedRules(), operatorRules(a)} {
 			for _, r := range g.Rules {
-				if r.Alert == name && strings.HasPrefix(r.Labels["subject"], "app:") {
-					return true, false
+				subject, ok := strings.CutPrefix(r.Labels["subject"], "app:")
+				if r.Alert != name || !ok {
+					continue
 				}
+				if strings.Contains(subject, "{{") {
+					subject = ""
+				}
+				return true, subject, false
 			}
 		}
 	}
-	return false, false
-}
-
-// releaseAlerts are the names alertScope gives a release: what
-// --release narrows.
-func releaseAlerts() []string {
-	return append(slices.Clone(lifecycleOneShots), eventPostDeployRegressed)
+	return false, "", false
 }
