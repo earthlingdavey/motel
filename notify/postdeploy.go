@@ -58,7 +58,10 @@ const (
 	// from relaunchSkip on the window's base is a sample that holds
 	// them. The relaunched instance's answers before it are not read: a
 	// first check of 20 s, and every one 40 s short.
-	relaunchSkip = pushEvery + storeRequestTimeout
+	// The request's budget is divided with the clocks, so that under
+	// clock_e2e.go's divisor the skip stays inside a check's spacing
+	// (TestClockInvariants), as the shipped 40 s is inside 60.
+	relaunchSkip = pushEvery + storeRequestTimeout/clockDiv
 	// postDeployGrace is how long past the window's end a check the
 	// store did not answer is asked again before the comparison ends
 	// unfinished.
@@ -217,7 +220,7 @@ func (c *comparator) tick(ctx context.Context) {
 		if latest < r.next {
 			continue
 		}
-		if last := int(rule.window() / clockDiv / postDeployEvery); r.next > last {
+		if last := int(rule.checkSpan() / postDeployEvery); r.next > last {
 			delete(c.runs, app) // the window is over: the release held
 			c.logger.Debug("monitor rules: the post-deploy comparison ended with its window", zap.String("app", app), zap.String("release", r.release))
 			continue
@@ -257,7 +260,7 @@ func (c *comparator) check(ctx context.Context, store instantQuerier, logger *za
 			// Asked again at the next tick: a check skipped would leave
 			// the count short of failures equal to the window's minutes.
 			// Past the grace the comparison ends, said where it is seen.
-			if c.now().Sub(d.cmp.cutover.Add(d.rule.window()/clockDiv+storeLag)) > postDeployGrace {
+			if c.now().Sub(d.cmp.cutover.Add(d.rule.checkSpan()+storeLag)) > postDeployGrace {
 				delete(c.runs, d.cmp.app)
 				logger.Warn("monitor rules: the post-deploy comparison ended unfinished: the metrics store did not answer its checks",
 					zap.String("app", d.cmp.app), zap.String("release", d.cmp.release), zap.Int("failing_in_a_row", d.run.failed), zap.Error(v.err))

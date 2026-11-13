@@ -287,7 +287,7 @@ code=$(curl -s -o /tmp/range7d -w '%{http_code}' --max-time 5 -H "Authorization:
 echo "=== metrics 4: vmalert ==="
 # Setup's first rules.yml is the empty groups and motel writes the real
 # one right after; vmalert re-reads the file once a minute
-# (-configCheckInterval), so wait out one re-read.
+# (-configCheckInterval, ten seconds here), so wait out one re-read.
 i=0
 until rules=$(inns curl -s --max-time 5 http://127.0.0.1:8880/api/v1/rules) \
 	&& printf '%s' "$rules" | grep -q '"name":"ChannelFailed"'; do
@@ -390,7 +390,7 @@ i=0
 until am "http://am/api/v2/alerts?$roq" | grep -q '"severity":"critical"'; do i=$((i + 1)); [ "$i" -ge 60 ] && break; sleep 2; done
 [ "$i" -lt 60 ] && pass "motel posted metrics_store_read_only, critical" \
 	|| fail "no metrics_store_read_only in Alertmanager after 120 s: $(am "http://am/api/v2/alerts?$roq" | cut -c1-300)"
-# Two of the store's 30 s self-scrapes have come and gone by now: had it
+# Two of the store's 30 s self-scrapes (5 s here) have come and gone: had it
 # kept one, a rule would see the flag.
 ro_for=$(clk 75)
 while [ $(( $(date +%s) - ro_at )) -lt "$ro_for" ]; do sleep 1; done
@@ -410,7 +410,7 @@ a=$(wait_result vmalert-up-writable "(timestamp(up{job=\"vmalert\"}) > $back_at)
 
 echo "=== metrics 4c: the two proxies run as no root ==="
 # Each runs while it carries traffic (motel's push through vm.sock every
-# 30 s, the store's scrape of Alertmanager through the in-namespace port);
+# 30 s, 5 s here, the store's scrape of Alertmanager through the in-namespace port);
 # 4b restarted the store, which stops the vm proxy until the next push.
 for u in motel-vm.service motel-am-proxy.service; do
 	i=0
@@ -614,7 +614,13 @@ i=1
 while [ "$i" -le 30 ]; do curl -s -o /dev/null --max-time 5 "$PROXY/?pd=$i"; i=$((i + 1)); done
 # No wait for a push: the old release's window ends a push past the
 # cutover, so the first push after it carries these answers in time.
+# The first check reads the old release over the check's spacing before
+# the cutover, ten seconds on this box, which a slow deploy outlasts:
+# the old release is asked on meanwhile, until the deploy returns.
+( j=1; while :; do curl -s -o /dev/null --max-time 5 "$PROXY/?pd=d$j"; j=$((j + 1)); sleep 0.2; done ) &
+during=$!
 code=$(deploy demo-errors.tar.gz errs1)
+kill "$during" 2>/dev/null; wait "$during" 2>/dev/null
 [ "$code" = 200 ] && pass "deploy errs1, a release whose pages answer 500" || fail "deploy errs1 returned $code: $(cat /tmp/deploy-body)"
 c=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 "$PROXY/?pe=0")
 [ "$c" = 500 ] || fail "fixture: errs1 answers $c, not 500"

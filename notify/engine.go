@@ -99,6 +99,9 @@ const (
 	// minute, alive four, so one missed post is no gap.
 	heartbeatEvery = time.Minute / clockDiv
 	heartbeatLife  = 4 * time.Minute / clockDiv
+	// diskEvery is how often the disks are read, and Alertmanager's
+	// failed-notification counter with them (channelfailed.go).
+	diskEvery = time.Minute / clockDiv
 )
 
 // poster is Alertmanager's alert API.
@@ -224,8 +227,8 @@ func newEngine() *engine {
 		wake:     make(chan struct{}, 1),
 		retryFor: retryFor,
 		backoff: func(attempt int) time.Duration {
-			d := time.Second << min(attempt, 5)
-			return min(d, 30*time.Second)
+			d := (time.Second << min(attempt, 5)) / clockDiv
+			return min(d, 30*time.Second/clockDiv)
 		},
 		failures: newFailCounter(),
 	}
@@ -590,7 +593,7 @@ func (e *engine) poll(ctx context.Context) {
 	}
 	now := e.now()
 	path, paths := e.backupPath, slices.Clone(e.diskPaths)
-	diskDue := now.Sub(e.lastDisk) >= time.Minute/clockDiv
+	diskDue := now.Sub(e.lastDisk) >= diskEvery
 	if diskDue {
 		e.lastDisk = now
 	}

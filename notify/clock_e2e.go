@@ -5,8 +5,10 @@ package notify
 // clockDiv, in the motel built for the metrics suite's box alone
 // (e2e/Dockerfile, metrics-builder): its minutes are ten seconds, so the
 // suite waits out each push, evaluation, re-read and group_wait in a
-// sixth of the time (DESIGN-metrics.md, "e2e rows"). Six keeps every
-// ratio between the clocks, and two samples in each window as the
-// shipped timings have: a minute's window over a 30 s push or scrape is
-// ten seconds over five. No package build carries this tag.
+// sixth of the time (DESIGN-metrics.md, "e2e rows"). Six keeps the
+// ratios between the waits, and two samples in a minute's wait as the
+// shipped timings have: ten seconds over a five-second push or scrape.
+// The windows a rule or a view reads history over are not divided, so
+// their ratios to the waits are not kept. `make build` refuses a motel
+// built with it.
 const clockDiv = 6

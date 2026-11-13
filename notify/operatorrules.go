@@ -460,6 +460,11 @@ func (r Rule) window() time.Duration {
 	return time.Duration(r.Window)
 }
 
+// checkSpan is how long a post_deploy rule's checks run after the
+// cutover: its window, divided by clockDiv (clock.go) as the checks'
+// spacing is, so that it holds as many checks in every build.
+func (r Rule) checkSpan() time.Duration { return r.window() / clockDiv }
+
 func (r Rule) failures() int {
 	if r.Failures == 0 {
 		return defaultFailures
@@ -574,7 +579,7 @@ func thresholdRule(r Rule) vmRule {
 		For:    promDuration(time.Duration(r.For) / clockDiv),
 		Labels: ruleLabels(r.Name, r.severity(), subject),
 		Annotations: map[string]string{"summary": fmt.Sprintf("%s: %s has been %s %s for %s (rule %s); now {{ $value | %s }}",
-			who, m.words, above, valueText(m.unit, r.Value), promDuration(time.Duration(r.For)), r.Name, m.humanize)},
+			who, m.words, above, valueText(m.unit, r.Value), promDuration(time.Duration(r.For)/clockDiv), r.Name, m.humanize)},
 	}
 }
 
@@ -661,7 +666,7 @@ func guardedIncrease(sel, by, match string, win, off time.Duration) string {
 	push := "scalar(min(tfirst_over_time(" + pushSeries + "[" + promDuration(win+pushLookback) + "]" + offset + ")))"
 	return "((increase_pure(" + sel + w + ") unless" + match + " (present_over_time(" + by + before + ")" +
 		" unless (last_over_time(" + by + before + ") > first_over_time(" + by + w + "))))" +
-		" and" + match + " (tfirst_over_time(" + by + w + ") > " + push + " + " + strconv.Itoa(int(pushApart.Seconds())) + "))" +
+		" and" + match + " (tfirst_over_time(" + by + w + ") > " + push + " + " + numberText(pushApart.Seconds()) + "))" +
 		" or increase(" + sel + w + ")"
 }
 
@@ -736,7 +741,7 @@ func diskFillRule(r Rule) vmRule {
 		Expr: "min by (path) (predict_linear(" + diskAvailMetric + "[" + promDuration(long) + "], " + h + ")) < 0" +
 			" and min by (path) (predict_linear(" + diskAvailMetric + "[" + promDuration(short) + "], " + h + ")) < 0" +
 			" and max by (path) (present_over_time(" + diskAvailMetric + "[" + promDuration(long) + "] offset " + promDuration(long-short) + "))",
-		For:    promDuration(hold),
+		For:    promDuration(hold / clockDiv),
 		Labels: labels,
 		Annotations: map[string]string{"summary": fmt.Sprintf("the filesystem holding {{ $labels.path }} is predicted to fill within %s (rule %s)",
 			promDuration(within), r.Name)},
@@ -774,6 +779,10 @@ func promDuration(d time.Duration) string {
 		return strconv.Itoa(int(d/time.Hour)) + "h"
 	case d%time.Minute == 0:
 		return strconv.Itoa(int(d/time.Minute)) + "m"
+	case d%time.Second != 0:
+		// Only a duration divided by clockDiv (clock_e2e.go) has a part
+		// of a second: whatever the shipped build writes is whole.
+		return strconv.Itoa(int(d/time.Millisecond)) + "ms"
 	}
 	return strconv.Itoa(int(d/time.Second)) + "s"
 }

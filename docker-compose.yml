@@ -179,7 +179,9 @@ services:
   # Debian's victoria-metrics installed and masked (e2e/Dockerfile,
   # metrics-box), and the same stub receiver. Its own, as notify's is:
   # its waits are the store's and vmalert's (a 30 s scrape, a minute's
-  # evaluation, the store's 30 s latency offset).
+  # evaluation, the store's 30 s latency offset), each a sixth of that
+  # here: the box's motel is built with -tags e2e, which divides notify's
+  # clocks and those it writes (e2e/Dockerfile, metrics-builder).
   e2e-metrics-box:
     build:
       context: .

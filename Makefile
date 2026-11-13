@@ -250,6 +250,9 @@ build:
 		if go version -m build/motel-backup-linux-amd64 build/motel-backup-linux-arm64 | grep -q -- "-tags=.*e2e"; then \
 			echo "build/motel-backup-linux-*: built with -tags e2e, which shortens the setup clock for the e2e box: not a binary to ship"; exit 1; \
 		fi; \
+		if go version -m build/motel-linux-amd64 build/motel-linux-arm64 | grep -q -- "-tags=.*e2e"; then \
+			echo "build/motel-linux-*: built with -tags e2e, which divides the notify clocks for the metrics box: not a binary to ship"; exit 1; \
+		fi; \
 		chmod -R a+rwX build'
 
 # Builds .deb for both arches into dist/. .deb only, and no .apk

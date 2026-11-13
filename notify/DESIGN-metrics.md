@@ -1040,9 +1040,14 @@ lag, the view's cache) and every clock it writes (the rule groups'
 interval and a rule's `for`, Alertmanager's waits, intervals, repeats
 and resolve_timeout, vmalert's `-evaluationInterval` and
 `-configCheckInterval`, the scrape interval, and the store's
-`-search.latencyOffset`, which the drop-in otherwise leaves at its
-30 s). The windows a rule or a view reads over are not divided: they
-are history, not a wait. The suite reads the divisor back from
+`-search.latencyOffset` and vmalert's `-rule.evalDelay`, which the
+units otherwise leave at their 30 s; the post backoff; and a
+post_deploy rule's window, which is how long its checks run). The
+windows a rule or a view reads history over (a rate's, an increase's,
+the counter guard's, metrics_rules_down's three minutes, ChannelFailed's
+five) are not divided, so their ratios to the waits are not kept; the
+clocks' own invariants are tested at the divisor
+(`TestClockInvariants`, run by `metrics-builder`). The suite reads the divisor back from
 `rules.yml` and fails unless it is six, and its waits that are a
 clock's length are divided with it; at a divisor of one the rendered
 files are the embedded ones byte for byte (`TestClockDivision`). The

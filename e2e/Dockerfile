@@ -29,9 +29,11 @@ RUN cd notify && CGO_ENABLED=0 GOFLAGS=-buildvcs=false go test -c -o /notify.tes
 # divided by six (notify/clock_e2e.go), so the metrics suite waits out a
 # ten-second minute. From builder, whose build cache holds the plain
 # build: only what the tag changes is compiled again. The notify box and
-# the main e2e boxes keep builder's motel, at the shipped timings.
+# the main e2e boxes keep builder's motel, at the shipped timings. The
+# clocks' invariants first, at the divisor (TestClockInvariants).
 FROM builder AS metrics-builder
-RUN CGO_ENABLED=0 GOFLAGS=-buildvcs=false go build -trimpath -tags e2e -o /motel ./cmd/motel
+RUN cd notify && CGO_ENABLED=0 GOFLAGS=-buildvcs=false go test -tags e2e -count=1 -run '^TestClock' . \
+	&& cd .. && CGO_ENABLED=0 GOFLAGS=-buildvcs=false go build -trimpath -tags e2e -o /motel ./cmd/motel
 
 # The box. A named stage, because the notify suite's box below builds on
 # it: docker-compose.yml names this one as e2e-motel's and e2e-upstream's
