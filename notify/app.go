@@ -414,12 +414,10 @@ func knownValues(secrets map[string]string, channels []Channel) []string {
 	for k, v := range secrets {
 		out = append(out, k+"="+v)
 	}
-	done := map[string]bool{}
+	// Two channels on one secret add the same entries; the filter
+	// merges them. Each channel is taken by its own kind: a json line
+	// on a secret an ntfy line reads too takes nothing from the ntfy's.
 	for _, ch := range channels {
-		if done[ch.Secret] {
-			continue
-		}
-		done[ch.Secret] = true
 		for _, part := range urlCredentials(ch.Kind, secrets[ch.Secret]) {
 			out = append(out, partialKeyPrefix+ch.Secret+"="+part)
 		}

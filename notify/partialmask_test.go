@@ -137,23 +137,21 @@ func TestURLCredentials(t *testing.T) {
 }
 
 // TestPartialMaskPastASuffix: a topic before ntfy's /publish, and one
-// written escaped in the file, are masked alone; two channels on one
-// secret give one entry.
+// written escaped in the file, are masked alone; a json line on the
+// secret an ntfy line reads, listed first, takes nothing from it.
 func TestPartialMaskPastASuffix(t *testing.T) {
 	secrets := map[string]string{
 		"NOTIFY_OPS_URL": "https://ntfy.sh/" + pmTopic + "/publish",
 		"NOTIFY_ESC_URL": "https://ntfy.sh/alerts%5Fops%5F7f3a",
 	}
 	channels := []Channel{
+		{Name: "raw", Kind: "json", Secret: "NOTIFY_OPS_URL"},
 		{Name: "ops", Kind: "ntfy", Secret: "NOTIFY_OPS_URL"},
 		{Name: "ops-crit", Kind: "ntfy", Secret: "NOTIFY_OPS_URL", Severity: SeverityCritical},
 		{Name: "esc", Kind: "ntfy", Secret: "NOTIFY_ESC_URL"},
 	}
 	te := newTestEngine(t)
 	te.known = knownValues(secrets, channels)
-	if n := len(te.known); n != 2+1+2 {
-		t.Fatalf("known = %q", te.known)
-	}
 	for in, want := range map[string]string{
 		"check " + pmTopic:    "check [redacted:partial:NOTIFY_OPS_URL]",
 		"see alerts_ops_7f3a": "see [redacted:partial:NOTIFY_ESC_URL]",
