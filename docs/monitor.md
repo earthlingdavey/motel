@@ -71,7 +71,9 @@ motel monitor setup --metrics
 #        make secret APP=_box VAR=NOTIFY_OPS_URL
 #    and push it with step 3: the box writes the file. Without one,
 #    make the file (once: install empties a file that is there) and add
-#    a line per URL:
+#    a line per URL. On public ntfy.sh the topic is the password: pick
+#    a long random one (openssl rand -hex 16), and in a summary name
+#    the channel (ops), never its topic.
 install -m 0640 -o root -g motel /dev/null /etc/motel/secrets/_box.env
 printf '%s\n' 'NOTIFY_OPS_URL=https://ntfy.sh/<a topic of your own>' >>/etc/motel/secrets/_box.env
 # 3. The monitor block, in the Caddyfile's global options (below). With
@@ -172,6 +174,12 @@ floor is.
 URL. The block names each value as `{secret.NOTIFY_<NAME>}`, because a
 Slack or Discord hook URL works as a password by itself and the
 Caddyfile is not secret. motel reads the file and no app is given it.
+Every value in it is masked in what motel sends and journals
+(`[redacted:NOTIFY_<NAME>]`), and so is the last part of an ntfy, Slack
+or Discord URL's path on its own (the topic, the hook's token), as
+`[redacted:partial:NOTIFY_<NAME>]`, when it is 8 characters or more.
+A shorter topic is not masked; a topic that is an ordinary word is
+masked wherever that word appears.
 It must be **root:motel 0640**. A file made elsewhere and moved in with
 `mv` keeps its owner, group and mode: one made in `/root` with
 `install -m 600`, or by an editor under umask 077, is root:root 0600.

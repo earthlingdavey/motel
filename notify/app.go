@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -170,7 +171,7 @@ func (a *App) provisionNotify(ctx caddy.Context, ls *liveswap.App) error {
 	}
 	// Every value the file holds is a known value to the filter, named
 	// by a channel line or not: a spare URL is as much a credential.
-	a.known = knownValues(secrets)
+	a.known = knownValues(secrets, a.Channels)
 	a.rendered, a.files, a.receivers = render(a.cfg, theStateDir)
 	theEngine.failures.register(ctx.GetMetricsRegistry())
 
@@ -398,11 +399,47 @@ func (a *App) backupRecord() string {
 }
 
 // knownValues is the filter's known values: every KEY=value of the
-// secrets file.
-func knownValues(secrets map[string]string) []string {
-	out := make([]string, 0, len(secrets))
+// secrets file, and for each channel line of a kind whose URL ends in
+// its credential (ntfy's topic, a Slack or Discord hook's token) that
+// last path segment as partial:KEY=segment, so that the segment alone
+// is masked too, as [redacted:partial:KEY]; the whole URL, a longer
+// form, is masked first and keeps [redacted:KEY]. A json channel's
+// path is an arbitrary endpoint's, and is not taken. A segment under
+// the filter's 8 characters is skipped by the filter itself. Every
+// place notify primes a filter takes its known values from here.
+func knownValues(secrets map[string]string, channels []Channel) []string {
+	out := make([]string, 0, len(secrets)+len(channels))
 	for k, v := range secrets {
 		out = append(out, k+"="+v)
 	}
+	for _, ch := range channels {
+		if ch.Kind == "json" {
+			continue
+		}
+		if seg := lastPathSegment(secrets[ch.Secret]); seg != "" {
+			out = append(out, partialKeyPrefix+ch.Secret+"="+seg)
+		}
+	}
 	return out
+}
+
+// partialKeyPrefix names a known value that is part of a secret, not a
+// secret of the file: it is a marker's label, never a key to look up.
+const partialKeyPrefix = "partial:"
+
+// lastPathSegment is a URL's last non-empty path segment, as written
+// (escaped), without its query or fragment; "" when the value is not
+// a URL with a path.
+func lastPathSegment(v string) string {
+	u, err := url.Parse(v)
+	if err != nil || u.Host == "" {
+		return ""
+	}
+	segs := strings.Split(u.EscapedPath(), "/")
+	for i := len(segs) - 1; i >= 0; i-- {
+		if segs[i] != "" {
+			return segs[i]
+		}
+	}
+	return ""
 }

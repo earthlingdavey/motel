@@ -173,7 +173,7 @@ func serveSend(w http.ResponseWriter, r *http.Request) error {
 		return caddy.APIError{HTTPStatus: http.StatusServiceUnavailable, Err: errors.New("this box's Caddyfile has no monitor block with channels")}
 	}
 	if masked {
-		return unprocessable(errors.New("the name or instance holds a value the filter masks (a channel URL, or a secret-shaped token): name the thing, not its credential"))
+		return unprocessable(errors.New("the name or instance holds a value the filter masks (a channel URL or its topic or token, or a secret-shaped token): name the thing, not its credential"))
 	}
 	ev := Event{Name: req.Name, Severity: req.Severity, Instance: req.Instance, Source: "external:" + req.Source,
 		Summary: req.Summary, Kind: kindEvent, Details: req.Details}

@@ -188,7 +188,19 @@ The values are read from `/etc/motel/secrets/_box.env` (`KEY="value"`
 lines, liveswap's env-file format; channel lines name `NOTIFY_` keys),
 0640 root:motel, bound into no unit. Every value in the file, named by
 a channel line or not, is a known value to liveswap's filter, which
-every summary passes through. motel writes
+every summary passes through. So is the last non-empty path segment of
+each ntfy, Slack or Discord channel's URL (its query and fragment left
+out), the credential on its own (a topic on public ntfy.sh, a hook's
+token), as `partial:<KEY>=<segment>`: typed alone in a `motel monitor
+send` summary or a detail it is masked as
+`[redacted:partial:<KEY>]`, and the whole URL, a longer form taken
+first, still as `[redacted:<KEY>]` (notify/app.go, `knownValues`, the
+one place notify builds the filter's values). The `partial:` name is a
+marker's label, never a key: what checks the secrets reads the file's
+map. A json channel's path is an arbitrary endpoint's and is not taken.
+The limits are the filter's: a segment under 8 characters is not
+masked, and a topic that is an ordinary word of 8 or more is masked
+wherever that word appears. motel writes
 each value once more, to its `url-<KEY>` file in the state directory,
 because Alertmanager's `*_file` fields read a file: that is the copy
 the prometheus uid reads, and the config itself holds paths only.
@@ -474,7 +486,7 @@ and the route check (`SendRequest.Check`):
 | motel's own names: `Watchdog`, `ChannelFailed`, `NotifyTest`, `deploy_in_progress`, `watchdog_*`, the deploy events, `disk_low`, `cert_failed`, `backup_*`, `drill_failed`, and the metrics store's (`metrics_store_down`, `metrics_rules_down`, `metrics_store_read_only`, `metrics_store_disk_fill`, `app_memory_high`) and the operator's rules' `post_deploy_regressed` | a producer that could post them could mute an app, fake the heartbeat, or speak as a detector |
 | a summary empty, on two lines, or over 200 characters; details over 2 KiB or with names not `[a-z][a-z0-9_]*` | #418's limits |
 | a body with unknown fields (a raw Alertmanager label set) | the route takes the request, never labels |
-| a name or instance the filter would mask (a channel URL, a secret-shaped token) | both are the key, the labels and the answer, which the filter does not rewrite |
+| a name or instance the filter would mask (a channel URL or its topic or token, a secret-shaped token) | both are the key, the labels and the answer, which the filter does not rewrite |
 
 Accepted, an external event is one like motel's own: the filter, the
 bucket, the journal line, the queue. `motel monitor test` posts one
