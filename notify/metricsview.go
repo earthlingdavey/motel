@@ -324,8 +324,8 @@ func quantileMs(ss []series) *float64 {
 	return nil
 }
 
-// roundTo keeps v to 1/per; every float in the object is rounded (a CPU
-// average to a millionth of a core). An unrounded one marshals as a run
+// roundTo keeps v to 1/per; every fraction in the object is rounded (a
+// CPU average to a millionth of a core; the memory values are bytes). An unrounded one marshals as a run
 // of twenty or more digits (5.740305648246404e-05 is
 // 0.00005740305648246404 in JSON), which the app's response filter
 // reads as a generated secret and masks inside the number; the body is

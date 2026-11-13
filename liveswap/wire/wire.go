@@ -235,8 +235,9 @@ const (
 )
 
 // PhaseEvent is a streamed deploy's line for one phase entered. A line
-// whose body the filter withheld (an env_file it could not read) has
-// Error, why, in place of At.
+// whose body the filter withheld (an env_file it could not read, a
+// known value overlapping the line's own structure) has Error, why, in
+// place of At, and may have a top-level "redacted_env" beside it.
 type PhaseEvent struct {
 	Error string    `json:"error,omitempty"`
 	At    time.Time `json:"at,omitzero"`
@@ -247,7 +248,10 @@ type PhaseEvent struct {
 // DoneEvent is the fields the last line adds to the single response's
 // body: the event, and the status code that response would have had.
 // The handler appends them to the filtered body, so they are there
-// when the filter withheld the rest.
+// when the filter withheld the rest — and then the body is an Error
+// whatever HTTPStatus says, a 200 included: which body a line carries
+// is told by its keys ("error" alone, or "error" and "status", or
+// neither), never by its code.
 type DoneEvent struct {
 	Event      string `json:"event"` // EventDone
 	HTTPStatus int    `json:"http_status"`

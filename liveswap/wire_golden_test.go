@@ -244,6 +244,7 @@ func TestWireHandlerBodies(t *testing.T) {
 	add("POST v4, streamed, which fails to start", stream("v4"))
 	// An env_file that cannot be read withholds every body: each line
 	// is the filter's diagnostic with the event's fields after it.
+	rig.runner.startErr = nil
 	rig.spec.envFile = filepath.Join(rig.spec.dirs.root, "missing.env")
 	add("POST v5, streamed, the env_file unreadable", stream("v5"))
 	rig.runner.startErr = nil
