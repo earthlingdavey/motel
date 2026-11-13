@@ -703,7 +703,7 @@ they hold the database's path, and `busy.db` is not busy.
 
 ## Status
 
-`motel-backup status`, as anyone: `status.json` is world-readable
+`motel-backup status [--json]`, as anyone: `status.json` is world-readable
 and holds no secret, and the manager tells any user which units are
 running. It prints when the last run started — and that no run has
 finished for more than 3 hours, where that is so: the run itself is
@@ -776,6 +776,84 @@ in a comment does not [M91]), where `RESTIC_REPOSITORY` or `RESTIC_PASSWORD` is 
 set to nothing, where the repository is one the box cannot use or a
 value setup would refuse, and where the file is there and cannot be
 read at all; its exit status does not change for it.
+
+### As JSON
+
+`motel-backup status --json` says the same as one JSON object on
+stdout, for a program to read — a client over `ssh box motel-backup
+status --json` — and leaves with the same exit status. Nothing else
+goes to stdout, and what goes to stderr is what goes there without the
+flag. A stdout that takes none of it (a full disk) is named on stderr,
+with or without the flag: a report its reader never got exits 1, not
+0, and could not tell stays 3. The text and the JSON are printed from one `status.Result`
+(`backups/status/status.go`): the text is its `lines`, one per line.
+This object is the contract; `status.json`, the record it is read
+from, is not, and its fields may change in any release. The shape is
+pinned whole by `backups/cmd/motel-backup/testdata/status-*.json`:
+a field may be added; one removed, renamed or changed in meaning breaks
+its readers.
+
+```json
+{
+  "at": "2026-09-20T15:00:00Z",
+  "healthy": false,
+  "apps": [
+    {
+      "name": "shop",
+      "healthy": false,
+      "result": "failed",
+      "last_complete_backup": "2026-09-19T09:00:00Z",
+      "fresh": false,
+      "restore_proven": "2026-09-18T15:00:00Z",
+      "restore_proven_lately": false
+    }
+  ],
+  "running": [
+    {"role": "upload", "app": "blog", "state": "activating", "since": "2026-09-20T14:58:00Z"}
+  ],
+  "unrecognised_units": ["motel_backup_zzz.service"],
+  "lines": [
+    {"level": "warning", "text": "warning: /etc/motel-backup/repository.env: …"},
+    {"app": "shop", "level": "problem", "text": "shop: stale: the last complete backup is from …"}
+  ]
+}
+```
+
+- `at`: when status looked, which every age is reckoned from (an age
+  is `at` less the time, not the reader's clock less it). Every time is
+  RFC 3339, in UTC, to the second; `fresh` and
+  `restore_proven_lately` are reckoned from the times as the record
+  holds them, so at the boundary an age read off the seconds may
+  differ from them by under a second, and they are the verdict.
+- `healthy`: exit 0. `could_not_tell`, present only on exit 3, is why
+  it could not look (the words stderr begins with); `apps`, `running`
+  and `unrecognised_units` are then empty, and `lines` holds only the
+  `warning:` lines found before it stopped.
+- `apps`, sorted by name: `result` is how the last run ended for it
+  (the classes under [What a run says](#what-a-run-says); empty where
+  the record holds no result for it); `last_complete_backup` (null:
+  none), and `fresh`: no more than 3 hours old and missed by no listing
+  since; `restore_proven` (null: never), and `restore_proven_lately`:
+  no more than 8 days ago with no failed drill since; `healthy`: no
+  line of the app is a problem. A `pending` app is healthy and neither
+  fresh nor proven.
+- `running`: each unit of a run, a restore, a drill or a setup the
+  manager holds — `role` (`upload`, `fetch`, …), `app` (absent for a
+  unit of the whole run), systemd's `state`, `since` (absent when the
+  unit ended while the manager was asked). `unrecognised_units`: the
+  `motel_backup_*` units whose name says nothing here.
+- `lines`: the text, in its order: `app` (absent for the run, the
+  repository and a unit of no app), `level` — `problem` for a line that
+  makes status unhealthy, `warning` for a `warning:` line (the
+  credential file's, as root, and the last run's), `info` for any
+  other — and `text`, as printed.
+
+It holds what the text holds and nothing more: no value of the
+credential file, the repository only as a warning names it, and every
+string through `record.Text` or `record.Clean` as the text's are (a
+test feeds the credential file's checks a password, a key id and a
+secret, in well-formed and hand-edited lines and in the URL, and finds
+none of them in either output).
 
 ## Before a Caddyfile goes live
 
@@ -1544,6 +1622,7 @@ severity × occurrence × detection, then the fix's size and risk.
 
 | Failure | Where | S | O | D | Product | Fix | Why accepted |
 |---|---|---|---|---|---|---|---|
+| `status` whose report could not be printed (stdout on a full disk; a closed pipe where SIGPIPE is ignored) exits 1, the code of unhealthy backups, so a caller cannot tell the two apart by the code; and an unhealthy box's own error is replaced by the print's. | `showStatus` (`cmd/motel-backup/main.go`) | 2 | 3 | 1 | 6 | size 2, risk 2 (an exit status of its own, documented, for a print that failed) | Rule 2 holds: the command ends red and names the cause on stderr ("the report could not be printed"), and a reader got no report to trust (2026-11-13, from the self-review of `--json`). Exit 0 there would be green with nothing behind it, which the first fix did and the second pass found. Could not tell stays 3. No test reaches the report path's print failure: the paths are the box's own, and on a dev machine with none `status` never gets past could not tell. |
 | With `--existing`, a host that does not resolve, or a bucket not there on an S3 server that retries it, is waited for to setup's two-minute clock, up to three times with the key asked for again between, though restic's retry line, which the clock's message quotes, names the cause ("no such host"; "The specified bucket does not exist"). | `Setup`, `look` (`engine/setup.go`) | 2 | 5 | 1 | 10 | size 2, risk 2 (a reading of the retry line's words, as `backendRefused` reads init's, to end the look at once) | Under rule 3 the product is under 20 and the fix is a branch on restic's wording (2026-11-06, from the self-review of #389's fix). The message is right and names the cause; the cost is the wait, bounded, with Ctrl-C said safe after 20 s. The plain path meets the same two cases at once, through init. |
 | A look that exits 0 — the throwaway password opened the repository, or restic printed a config it does not read — is said as "no repository answered within <the look's clock>" — 10s, or 2m0s with `--existing`, where the key is then asked for again — when restic answered at once. | `look`, `Setup` (`engine/setup.go`) | 2 | 1 | 3 | 6 | size 2, risk 1 (a word of its own for exit 0) | Under rule 3 the product is under 20 and the fix is a branch (2026-11-06, from the self-review of #389's fix). A 52-character random password opening a repository, or restic 0.18.0 printing a config without an `id`, is nothing measured; and what follows is right either way: init, or with the flag the opening, answers, or with the flag setup ends as at the clock). |
 | A candidate validated in a directory others may not enter, which imports a file beside it, is refused at `validate` for that directory ("which others may not enter"), though a run reads the file installed at `/etc/motel/Caddyfile`. | `checkBackups` (`cmd/motel/backupcheck.go`) | 2 | 5 | 1 | 10 | size 2, risk 1 (stop a candidate's walk at its own directory) | Rule 2 holds (refused, the directory named); under rule 3 the product is under 20 and the fix is not size 1, risk 1 (2026-10-18). A box push carries no import, so step 6 never meets it; and a candidate's relative imports resolve beside the candidate, not where it will be installed, so a candidate validated away from `/etc/motel` is asked about other files than a run would read anyway. |

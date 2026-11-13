@@ -9,8 +9,9 @@
 //	motel-backup drill   fetch and check the newest snapshot of every app, installing nothing,
 //	                        then check the repository itself and one fifty-second of its
 //	                        data; root
-//	motel-backup status  whether each app's backup is fresh and a restore of it proven; anyone.
-//	                        Exits 0 healthy, 1 not, 3 when it could not tell
+//	motel-backup status [--json]
+//	                        whether each app's backup is fresh and a restore of it proven; anyone.
+//	                        Exits 0 healthy, 1 not, 3 when it could not tell; --json: the same, as JSON
 //	motel-backup validate <Caddyfile>
 //	                        whether a run could plan from that Caddyfile, before it goes live; anyone
 //	motel-backup account whether the account restic runs as is one setup and a run accept; anyone;
@@ -74,14 +75,14 @@ const usage = `usage: motel-backup setup [--existing] <repository>
        motel-backup run
        motel-backup restore <app> [--snapshot <id>] [--to <dir>] [--no-pre-backup] [--yes]
        motel-backup drill
-       motel-backup status
+       motel-backup status [--json]
        motel-backup validate <Caddyfile>
        motel-backup account
        motel-backup sweep`
 
 // arguments says whether a command takes those: restore reads its
 // own, validate takes one file, setup one repository and its flag
-// (setupArgs), and nothing else takes any — least of all the commands
+// (setupArgs), status its one flag (statusArgs), and nothing else takes any — least of all the commands
 // of units.
 func arguments(name string, args []string) bool {
 	switch name {
@@ -92,8 +93,22 @@ func arguments(name string, args []string) bool {
 	case "setup":
 		_, _, err := setupArgs(args)
 		return err == nil
+	case "status":
+		_, ok := statusArgs(args)
+		return ok
 	}
 	return len(args) == 0
+}
+
+// statusArgs reads status's: nothing, or --json (or -json) alone.
+func statusArgs(args []string) (asJSON, ok bool) {
+	switch {
+	case len(args) == 0:
+		return false, true
+	case len(args) == 1 && (args[0] == "--json" || args[0] == "-json"):
+		return true, true
+	}
+	return false, false
 }
 
 // setupArgs reads setup's: one repository, and --existing (or
@@ -204,7 +219,8 @@ func command(name string, args []string) error {
 	case "drill":
 		return drill(ctx)
 	case "status":
-		return showStatus(ctx)
+		asJSON, _ := statusArgs(args)
+		return showStatus(ctx, asJSON)
 	case "validate":
 		return validate(ctx, args[0])
 	case "account":
@@ -395,47 +411,44 @@ func report(st *record.Status) {
 }
 
 // showStatus needs no root: the record is for everyone to read, and
-// the manager tells anyone what is running.
-func showStatus(ctx context.Context) error {
+// the manager tells anyone what is running. asJSON changes what is on
+// stdout and nothing else: the same Result, as JSON, and the same exit
+// status.
+func showStatus(ctx context.Context, asJSON bool) error {
 	cfg := config()
+	now := time.Now()
+	// A stdout that takes none of it (a full disk; a closed pipe where
+	// SIGPIPE is ignored, which otherwise ends the command) is said, on
+	// stderr: could not tell is still 3, and a report is not 0 that its
+	// reader never got, but 1.
+	cannot := func(warnings []string, err error) error {
+		if werr := printStatus(os.Stdout, status.CouldNotTell(now, warnings, err.Error()), asJSON); werr != nil {
+			err = fmt.Errorf("%w; and it could not be printed: %w", err, werr)
+		}
+		return couldNotTell{err}
+	}
 	// Only a file that is not there says so. Any other answer — a
 	// directory this user may not search — is not "not set up".
 	env, err := os.Lstat(cfg.EnvFile)
 	if errors.Is(err, fs.ErrNotExist) {
-		return couldNotTell{fmt.Errorf("backups are not set up: %s is not there%s", cfg.EnvFile, engine.OldEnvFileNote(cfg))}
+		return cannot(nil, fmt.Errorf("backups are not set up: %s is not there%s", cfg.EnvFile, engine.OldEnvFileNote(cfg)))
 	} else if err != nil {
-		return couldNotTell{fmt.Errorf("whether backups are set up cannot be told from here: %w", err)}
+		return cannot(nil, fmt.Errorf("whether backups are set up cannot be told from here: %w", err))
 	}
 	// As root, the file itself, before anything else can end the look:
 	// where a line of it is not read as it was written, the manager's
 	// rules being what they are. Said, and nothing more: what the run
 	// makes of the file the run says.
+	var warnings []string
 	if os.Geteuid() == 0 {
-		if raw, err := os.ReadFile(cfg.EnvFile); err != nil {
-			// There (Lstat said so) and not readable — a directory in
-			// its place, a file root itself cannot open: nothing the
-			// manager could give a unit either.
-			fmt.Printf("warning: %s: could not be read: %v\n", cfg.EnvFile, err)
-		} else {
-			v, findings := envfile.Parse(raw)
-			for _, l := range envfile.Lint(v, findings) {
-				fmt.Printf("warning: %s: %s\n", cfg.EnvFile, l)
-			}
-			if repo, ok := v["RESTIC_REPOSITORY"]; ok && repo != "" {
-				if err := engine.RepositoryUsable(repo, cfg.EnvFile); err != nil {
-					fmt.Printf("warning: %s: RESTIC_REPOSITORY: %v\n", cfg.EnvFile, err)
-				}
-				if a := engine.RegionAdvice(repo, v["AWS_DEFAULT_REGION"]); a != "" {
-					fmt.Printf("warning: %s: %s\n", cfg.EnvFile, a)
-				}
-			}
-		}
+		raw, err := os.ReadFile(cfg.EnvFile)
+		warnings = envWarnings(cfg.EnvFile, raw, err)
 	}
 	st, err := record.Read(filepath.Join(cfg.StateDir, "status.json"))
 	if err != nil {
-		return couldNotTell{fmt.Errorf("the record of the last run could not be read: %w", err)}
+		return cannot(warnings, fmt.Errorf("the record of the last run could not be read: %w", err))
 	}
-	in := status.Input{Record: st, Now: time.Now(), SetUp: env.ModTime()}
+	in := status.Input{Record: st, Now: now, SetUp: env.ModTime(), Warnings: warnings}
 	var active []unit.Active
 	active, in.RunningErr = unit.ListActive(ctx, engine.UnitPattern)
 	for _, a := range active {
@@ -445,12 +458,56 @@ func showStatus(ctx context.Context) error {
 			in.Unrecognised = append(in.Unrecognised, a.Name)
 		}
 	}
-	lines, healthy := status.Report(in)
-	for _, l := range lines {
-		fmt.Println(l)
+	r := status.Report(in)
+	if err := printStatus(os.Stdout, r, asJSON); err != nil {
+		return fmt.Errorf("the report could not be printed: %w", err)
 	}
-	if !healthy {
+	if !r.Healthy {
 		return errors.New("not every app has a fresh backup and a restore proven lately")
+	}
+	return nil
+}
+
+// envWarnings is what status, as root, says of the credential file at
+// path, whose bytes are raw or which could not be read (err): never a
+// value of it, only where a line is not what the manager reads, what is
+// not set, and what of the repository the box cannot use.
+func envWarnings(path string, raw []byte, err error) []string {
+	if err != nil {
+		// There (Lstat said so) and not readable — a directory in its
+		// place, a file root itself cannot open: nothing the manager
+		// could give a unit either.
+		return []string{fmt.Sprintf("%s: could not be read: %v", path, err)}
+	}
+	var out []string
+	v, findings := envfile.Parse(raw)
+	for _, l := range envfile.Lint(v, findings) {
+		out = append(out, fmt.Sprintf("%s: %s", path, l))
+	}
+	if repo, ok := v["RESTIC_REPOSITORY"]; ok && repo != "" {
+		if err := engine.RepositoryUsable(repo, path); err != nil {
+			out = append(out, fmt.Sprintf("%s: RESTIC_REPOSITORY: %v", path, err))
+		}
+		if a := engine.RegionAdvice(repo, v["AWS_DEFAULT_REGION"]); a != "" {
+			out = append(out, fmt.Sprintf("%s: %s", path, a))
+		}
+	}
+	return out
+}
+
+// printStatus writes r as status prints it: its lines, or, asJSON, the
+// whole of it as one JSON object (backups/README.md "Status").
+func printStatus(w io.Writer, r status.Result, asJSON bool) error {
+	if asJSON {
+		enc := json.NewEncoder(w)
+		enc.SetEscapeHTML(false)
+		enc.SetIndent("", "  ")
+		return enc.Encode(r)
+	}
+	for _, l := range r.Text() {
+		if _, err := fmt.Fprintln(w, l); err != nil {
+			return err
+		}
 	}
 	return nil
 }
