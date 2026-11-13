@@ -241,6 +241,20 @@ func TestVMAlertTiming(t *testing.T) {
 	}
 }
 
+// TestVMAlertTimingUnreadable: an installed unit that cannot be read is
+// an error, not the embedded unit's timing in its place.
+func TestVMAlertTimingUnreadable(t *testing.T) {
+	saved := installedVMAlert
+	installedVMAlert = t.TempDir() // a directory: read fails, and not as absent
+	t.Cleanup(func() { installedVMAlert = saved })
+	if _, _, err := vmalertTiming(); err == nil || !strings.Contains(err.Error(), "reading vmalert's unit") {
+		t.Fatalf("an unreadable unit: %v", err)
+	}
+	if _, err := storeQueries(&MetricsStore{}); err == nil {
+		t.Fatal("storeQueries hid the unreadable unit")
+	}
+}
+
 func TestPromSeconds(t *testing.T) {
 	for _, d := range []time.Duration{time.Second, 90 * time.Second, 10 * time.Minute, 6 * time.Hour, 24 * time.Hour, 7 * 24 * time.Hour} {
 		if got := promSeconds(promDuration(d)); got != int(d.Seconds()) {

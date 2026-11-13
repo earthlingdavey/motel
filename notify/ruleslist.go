@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"io/fs"
 	"maps"
 	"math"
 	"net/http"
@@ -180,8 +181,13 @@ var installedVMAlert = filepath.Join(unitDir, vmalertUnit)
 // (units/metrics/motel-vmalert.service) on a box with none yet.
 func vmalertTiming() (interval, delay time.Duration, err error) {
 	unit, rerr := os.ReadFile(installedVMAlert) //nolint:gosec // setup's unit path, fixed
-	if rerr != nil {
-		unit = unitVMAlert
+	switch {
+	case errors.Is(rerr, fs.ErrNotExist):
+		unit = unitVMAlert // no setup yet: the unit it would write
+	case rerr != nil:
+		// Not the embedded unit's timing in its place: the running
+		// vmalert may differ, and a plausible offset would hide that.
+		return 0, 0, fmt.Errorf("reading vmalert's unit: %w", rerr)
 	}
 	flag := func(name string) (time.Duration, error) {
 		for _, f := range strings.Fields(string(unit)) {
