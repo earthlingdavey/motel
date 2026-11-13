@@ -12,7 +12,9 @@ Description=Alertmanager for vmalert and the store: 127.0.0.1:9093 in the metric
 # at a cold boot on hotserve-1). So: no default dependencies, and the
 # order after the namespace by hand. A stop or restart of the namespace
 # stops or restarts this socket, and so Alertmanager (its drop-in,
-# 20-motel-metrics.conf, is PartOf= this socket).
+# 20-motel-metrics.conf, is PartOf= this socket). A start of the
+# namespace alone does not start it: vmalert's start does
+# (motel-vmalert.service's Wants=), and Alertmanager's (its drop-in's).
 DefaultDependencies=no
 Requires=motel-metrics-netns.service
 After=sysinit.target motel-metrics-netns.service

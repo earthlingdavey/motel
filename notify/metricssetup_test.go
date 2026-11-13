@@ -361,7 +361,10 @@ func TestMetricsUnitsAreTheMeasuredOnes(t *testing.T) {
 	has("motel-vmalert.service", unitVMAlert, "User=_victoria-metrics", "NetworkNamespacePath=/run/netns/motel-metrics",
 		"-rule="+DefaultMetricsStateDir+"/"+RulesName+" ", "-configCheckInterval=1m", "-disableAlertgroupLabel",
 		"-notifier.url=http://127.0.0.1:9093", "-remoteWrite.url=http://127.0.0.1:8428", "-remoteRead.url=http://127.0.0.1:8428", "MemoryMax=128M",
-		"After=motel-metrics-netns.service victoria-metrics.service motel-am-metrics.socket\n")
+		"After=motel-metrics-netns.service victoria-metrics.service motel-am-metrics.socket\n",
+		// The namespace's start does not start Alertmanager's socket in
+		// it again: vmalert's start does (measured, Copilot on #435).
+		"Wants=motel-am-metrics.socket\n")
 	if strings.Contains(string(unitVMDropIn), "0.0.0.0") || strings.Contains(string(unitVMDropIn), "-httpListenAddr=:") {
 		t.Error("the drop-in listens beyond the namespace's loopback")
 	}

@@ -132,11 +132,22 @@ whose service already runs, so:
   running, or starting in the same transaction, is left as it is.
   `TimeoutStartSec=30` bounds the namespace's start: a oneshot waits
   with no limit by default, and Alertmanager's start waits for it.
+- A stop of the namespace stops the socket (its `Requires=`), and so
+  Alertmanager (`PartOf=`); a restart restarts both, since systemd
+  restarts a unit that requires one restarted. A start of the namespace
+  alone starts neither: `Requires=` starts nothing back. So vmalert,
+  whose posts are the socket's traffic, `Wants=` it: the store's start,
+  which brings vmalert, brings the socket, and vmalert's post or the
+  store's scrape starts Alertmanager through it. Without that line only
+  Alertmanager's own start (motel's read of `am.sock`, a minute apart)
+  brought the socket back, so with motel down vmalert's posts were
+  refused until motel came back.
 
 These two units and the namespace unit's two lines are measured in the
 e2e box alone (systemd 257), with Debian's postinst restart, a
 `daemon-reload` and `daemon-reexec`, a SIGKILL of Alertmanager, a
-namespace restart and a stop and return, and an upgrade from the proxy
+namespace restart, a stop and return, a stop and start by hand with
+motel down, and an upgrade from the proxy
 (the spike and a second opinion, 2026-11-12, and e2e metrics 1, 4d and 11);
 a cold boot on hotserve-1 is owed ("Owed").
 
@@ -1145,7 +1156,13 @@ nothing done by hand and the store scraping Alertmanager again (the
 proxy's socket stayed down here: 22 s for the namespace, 9093 still dead
 75 s on, measured at 09d2ed0); the namespace failing to start,
 Alertmanager started on `am.sock` alone, and once the fault is gone the
-namespace's start restarting it onto 9093;
+namespace's start restarting it onto 9093; with motel down, the
+namespace stopped and started by hand and the store started, vmalert's
+start starting the socket and the store's scrape Alertmanager through
+it (without vmalert's `Wants=`, measured on 6471dee: the socket and
+Alertmanager inactive 150 s on, two of vmalert's sends refused, back
+only at motel's start); the store scraping Alertmanager again after the
+namespace's restart;
 the store stopped by hand, started again by motel's next push with vmalert beside it;
 the store made read-only (its free-space floor set above any disk): no series carries the flag, and motel's `metrics_store_read_only` is in Alertmanager, critical;
 a reload to a monitor block that is a `metrics` line alone writing no
@@ -1341,3 +1358,7 @@ Dated one-liners; the full text of each is in git.
   bounded to 30 s. "Alertmanager is left as it runs" reversed; the
   proxy's sandbox (its uid, primary group and view), its e2e checks and
   `TestE2EProxyViewHidesTheMotelPaths` go with it.
+- 2026-11-13 — Copilot on #435: a start of the namespace alone does not
+  start Alertmanager's socket in it (measured: with motel down, both
+  stayed inactive until motel came back); vmalert `Wants=` the socket.
+  A restart was measured to reach it (`Requires=`), as e2e 4d had it.

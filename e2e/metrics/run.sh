@@ -10,7 +10,8 @@
 #   the first --metrics restarting Alertmanager once, the second not
 #   the store's TCP in its namespace only; its socket's mode and reach
 #   Alertmanager's own listener there: a SIGKILL, the namespace restarted,
-#   stopped and back, failing once; an upgrade from the proxy shape
+#   stopped and back, failing once, stopped and started by hand with motel
+#   down; an upgrade from the proxy shape
 #   motel's push (job="motel"), with a deployed app's motel_app_*
 #   GET /<app> with the deploy token carries the app's metrics
 #   observe's counts in the store and in GET /<app>?range=
@@ -474,6 +475,12 @@ sleep 3
 [ "$(aminv)" != "$inv" ] && [ "$(amstarts "$since")" = 1 ] && nsready && held "$(ampid)" \
 	&& pass "a restart of the namespace restarts Alertmanager once, which answers on 9093 in the new namespace" \
 	|| fail "after a restart of the namespace: $(amstarts "$since") start(s) of Alertmanager, 9093 $(nsready && echo answers || echo 'does not answer'), $(systemctl is-active motel-metrics-netns motel-am-metrics.socket prometheus-alertmanager | tr '\n' ' ')"
+# The restart reaches the socket through its Requires= (systemd restarts
+# a unit that requires one restarted), not left in the old namespace.
+r_at=$(date +%s)
+a=$(wait_result am-up-restart "(timestamp(up{job=\"alertmanager\"}) > $r_at) and (up{job=\"alertmanager\"} == 1)" 90) \
+	&& pass "and the store, restarted with it, scrapes Alertmanager in the new namespace" \
+	|| fail "no fresh up{job=\"alertmanager\"} after the namespace's restart: $(q 'up{job="alertmanager"}')"
 # Stopped, the namespace takes Alertmanager down with its socket there;
 # am.sock listens on. motel's push brings the store and the namespace
 # back, and its read of Alertmanager's counters (a minute) or a post
@@ -517,6 +524,29 @@ until nsready; do i=$((i + 1)); [ "$i" -ge 60 ] && break; sleep 2; done
 [ "$i" -lt 60 ] && [ "$(aminv)" != "$inv" ] && held "$(ampid)" \
 	&& pass "the fault gone, the namespace's start (motel's push) restarted Alertmanager, which answers on 9093 again after $(( $(date +%s) - t0 )) s" \
 	|| fail "120 s after the namespace's fault went: $(systemctl is-active motel-metrics-netns victoria-metrics motel-vm.socket prometheus-alertmanager motel-am-metrics.socket | tr '\n' ' '), the same Alertmanager: $([ "$(aminv)" = "$inv" ] && echo yes || echo no)"
+# With motel down, the namespace stopped and started by hand, then the
+# store: nothing reads am.sock, so only vmalert's start (its Wants=)
+# starts the socket in the namespace again, and the store's scrape
+# starts Alertmanager through it. Without that line the socket and
+# Alertmanager stayed inactive until motel came back (150 s measured),
+# and vmalert's posts were refused.
+systemctl stop motel
+systemctl stop motel-metrics-netns
+systemctl start motel-metrics-netns victoria-metrics
+t0=$(date +%s)
+i=0
+until systemctl is-active -q motel-am-metrics.socket; do i=$((i + 1)); [ "$i" -ge 20 ] && break; sleep 0.5; done
+systemctl is-active -q motel-vmalert && systemctl is-active -q motel-am-metrics.socket \
+	&& pass "motel down, the namespace stopped and started by hand, the store started: vmalert's start started Alertmanager's socket there" \
+	|| fail "motel down, the namespace and the store started by hand: $(systemctl is-active motel-vmalert motel-am-metrics.socket prometheus-alertmanager | tr '\n' ' ')"
+a=$(wait_result am-up-nomotel "(timestamp(up{job=\"alertmanager\"}) > $t0) and (up{job=\"alertmanager\"} == 1)" 90) \
+	&& systemctl is-active -q prometheus-alertmanager && held "$(ampid)" \
+	&& pass "and the store's scrape started Alertmanager through it, with motel still down, on both listeners" \
+	|| fail "motel down: no fresh up{job=\"alertmanager\"}, or Alertmanager not on both listeners: $(systemctl is-active motel-am-metrics.socket prometheus-alertmanager | tr '\n' ' '), $(q 'up{job="alertmanager"}')"
+systemctl start motel
+i=0
+until systemctl is-active -q motel && [ -S /run/motel/admin.sock ]; do i=$((i + 1)); [ "$i" -ge 120 ] && break; sleep 0.5; done
+systemctl is-active -q motel || fail "motel did not start again: $(systemctl is-active motel)"
 
 echo "=== metrics 5: an app's sandbox has none of it in view ==="
 code=$(deploy demo-probe.tar.gz sb1)
