@@ -1357,8 +1357,9 @@ library, so a client decodes them without linking Caddy: `Status`
 `GET /<app>?deploy=<version>`), `PhaseEvent` and `DoneEvent` (a
 streamed deploy's lines, below), `Metrics` (the status's `metrics`,
 over one of `MetricsRanges`) and `BoxStatus` (the box webhook's
-`GET /`). The handlers marshal these types; the order of their keys is
-part of the shape, and `liveswap/testdata/wire` pins every body byte
+`GET /`). The handlers marshal these types (a streamed line is the
+filtered body with the event's fields appended); the order of their
+keys is part of the shape, and `liveswap/testdata/wire` pins every body byte
 for byte. A body the filter changed gains a top-level `redacted_env`
 (see [Secrets and logs](#secrets-and-logs)), which only `DeployResult`
 has a field for.

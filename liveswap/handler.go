@@ -489,7 +489,7 @@ func (s *deployStream) phase(phase string) {
 		return
 	}
 	filtered := s.ma.redactorFor(statusSnapshot{}).redactJSON(raw)
-	_ = s.write(fmt.Sprintf(`%s,"event":"phase","phase":%q}`, filtered[:len(filtered)-1], phase))
+	_ = s.write(fmt.Sprintf(`%s,"event":%q,"phase":%q}`, filtered[:len(filtered)-1], wire.EventPhase, phase))
 }
 
 // finish writes the outcome as the last line: the single response's
@@ -520,7 +520,7 @@ func (s *deployStream) finish(ma *managedApp, err error) error {
 		return mErr
 	}
 	filtered := rd.redactJSON(raw)
-	return s.write(fmt.Sprintf(`%s,"event":"done","http_status":%d}`, filtered[:len(filtered)-1], code))
+	return s.write(fmt.Sprintf(`%s,"event":%q,"http_status":%d}`, filtered[:len(filtered)-1], wire.EventDone, code))
 }
 
 // isGzipUpload reports whether the request body is a pushed artifact.

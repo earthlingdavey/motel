@@ -118,8 +118,9 @@ type DeploySummary struct {
 // DeployResult is one deploy attempt's outcome: the status's
 // last_deploy, and GET /<app>?deploy=<v>'s body (the record, as the
 // filter left it). A record the filter could not keep whole is an
-// envelope of the same fields — version, status, phase, sha256, the
-// times — whose error says why the rest is withheld.
+// envelope of some of the same fields — version, status, phase,
+// sha256, the times — in sorted order, whose error says why the rest
+// is withheld.
 type DeployResult struct {
 	Version    string    `json:"version"`
 	Status     string    `json:"status"` // "succeeded" | "failed"
@@ -233,15 +234,20 @@ const (
 	EventDone  = "done"
 )
 
-// PhaseEvent is a streamed deploy's line for one phase entered.
+// PhaseEvent is a streamed deploy's line for one phase entered. A line
+// whose body the filter withheld (an env_file it could not read) has
+// Error, why, in place of At.
 type PhaseEvent struct {
-	At    time.Time `json:"at"`
+	Error string    `json:"error,omitempty"`
+	At    time.Time `json:"at,omitzero"`
 	Event string    `json:"event"` // EventPhase
 	Phase string    `json:"phase"`
 }
 
 // DoneEvent is the fields the last line adds to the single response's
 // body: the event, and the status code that response would have had.
+// The handler appends them to the filtered body, so they are there
+// when the filter withheld the rest.
 type DoneEvent struct {
 	Event      string `json:"event"` // EventDone
 	HTTPStatus int    `json:"http_status"`

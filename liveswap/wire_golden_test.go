@@ -137,10 +137,20 @@ func wireBody(t *testing.T, rig *testRig, w *httptest.ResponseRecorder) string {
 // sent.
 func decodesAsWire(t *testing.T, what string, w *httptest.ResponseRecorder) {
 	t.Helper()
-	type done struct {
-		wire.Status
-		wire.DoneEvent
-	}
+	type (
+		done struct {
+			wire.Status
+			wire.DoneEvent
+		}
+		doneFailed struct {
+			wire.Failure
+			wire.DoneEvent
+		}
+		doneRefused struct {
+			wire.Error
+			wire.DoneEvent
+		}
+	)
 	check := func(line string, v any) {
 		t.Helper()
 		dec := json.NewDecoder(strings.NewReader(line))
@@ -163,7 +173,14 @@ func decodesAsWire(t *testing.T, what string, w *httptest.ResponseRecorder) {
 		for _, l := range lines[:len(lines)-1] {
 			check(l, new(wire.PhaseEvent))
 		}
-		check(lines[len(lines)-1], new(done))
+		switch last := lines[len(lines)-1]; {
+		case strings.Contains(last, `"status":{`):
+			check(last, new(doneFailed))
+		case strings.HasPrefix(last, `{"error":`):
+			check(last, new(doneRefused))
+		default:
+			check(last, new(done))
+		}
 	case w.Code == http.StatusOK && strings.Contains(what, "?deploy="):
 		check(body, new(wire.DeployResult))
 	case w.Code == http.StatusOK:
@@ -205,19 +222,32 @@ func TestWireHandlerBodies(t *testing.T) {
 	add("POST v2, which fails to start", do(t, h, http.MethodPost, "/demo", appToken(t), `{"url":"https://x/2.tgz","version":"v2"}`))
 	rig.runner.startErr = nil
 
-	req := httptest.NewRequest(http.MethodPost, "/demo", strings.NewReader(`{"url":"https://x/3.tgz","version":"v3"}`))
-	req.Header.Set("Authorization", "Bearer "+appToken(t))
-	req.Header.Set("Accept", "application/x-ndjson")
-	w := httptest.NewRecorder()
-	var next caddyhttp.Handler = caddyhttp.HandlerFunc(func(http.ResponseWriter, *http.Request) error { return nil })
-	if err := h.ServeHTTP(w, req, next); err != nil {
-		t.Fatal(err)
+	stream := func(version string) *httptest.ResponseRecorder {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodPost, "/demo", strings.NewReader(`{"url":"https://x/`+version+`.tgz","version":"`+version+`"}`))
+		req.Header.Set("Authorization", "Bearer "+appToken(t))
+		req.Header.Set("Accept", "application/x-ndjson")
+		w := httptest.NewRecorder()
+		var next caddyhttp.Handler = caddyhttp.HandlerFunc(func(http.ResponseWriter, *http.Request) error { return nil })
+		if err := h.ServeHTTP(w, req, next); err != nil {
+			t.Fatal(err)
+		}
+		return w
 	}
-	add("POST v3, streamed", w)
+	add("POST v3, streamed", stream("v3"))
 
 	// The metrics object sits last, as the source gave it.
 	h.app.SetMetricsSource(&fakeMetricsSource{reply: wireMetrics})
 	add("GET with metrics, ?range=24h", do(t, h, http.MethodGet, "/demo?range=24h", appToken(t), ""))
+
+	rig.runner.startErr = errors.New("boom")
+	add("POST v4, streamed, which fails to start", stream("v4"))
+	// An env_file that cannot be read withholds every body: each line
+	// is the filter's diagnostic with the event's fields after it.
+	rig.spec.envFile = filepath.Join(rig.spec.dirs.root, "missing.env")
+	add("POST v5, streamed, the env_file unreadable", stream("v5"))
+	rig.runner.startErr = nil
+	rig.spec.envFile = ""
 
 	checkWireGolden(t, "handler-bodies.txt", out.String())
 }

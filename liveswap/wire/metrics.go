@@ -10,9 +10,10 @@ var MetricsRanges = []string{"1h", "24h"}
 
 // Metrics is the status's `metrics` object: the metrics store's
 // summary of the app over one of MetricsRanges (notify/DESIGN-metrics.md,
-// "metrics in GET /<app>"). Every float is rounded, so none marshals as
-// the run of digits the response filter would read as a secret. A store
-// that did not answer is the object with Error alone.
+// "metrics in GET /<app>"). Every fraction is rounded (the memory
+// values are bytes as pushed), so none marshals as the run of digits
+// the response filter would read as a secret. A store that did not
+// answer is the object with Error alone.
 type Metrics struct {
 	Window string `json:"window,omitempty"`
 	// At is the newest point in the window, of memory or CPU; absent
