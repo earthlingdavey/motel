@@ -2,8 +2,11 @@
 # vmalert from Debian's victoria-metrics package, in the store's
 # namespace: it queries the store, keeps its alert state in it (so a
 # restart keeps its `for:` timers), and posts to Alertmanager's listener
-# in the namespace, motel-am-metrics.socket. It re-reads the rules motel renders every minute;
-# its own listener is inside the namespace, so there is no reload to call.
+# in the namespace, motel-am-metrics.socket. Its own listener is inside the namespace, so
+# motel has no reload to call: it re-reads the rules motel renders every
+# 5 s (-configCheckInterval), a few KB, applied only when they changed.
+# Its -rule.evalDelay is the store's -search.latencyOffset
+# (10-motel.conf), as vmalert's help asks.
 # No alertgroup label: an alert's labels are the rule's and its
 # expression's, which is what lets its ChannelFailed and motel's be one.
 [Unit]
@@ -23,7 +26,7 @@ After=motel-metrics-netns.service victoria-metrics.service motel-am-metrics.sock
 Type=simple
 User=_victoria-metrics
 NetworkNamespacePath=/run/netns/motel-metrics
-ExecStart=/usr/bin/vmalert -datasource.url=http://127.0.0.1:8428 -remoteWrite.url=http://127.0.0.1:8428 -remoteRead.url=http://127.0.0.1:8428 -notifier.url=http://127.0.0.1:9093 -rule=/var/lib/motel-metrics/rules.yml -configCheckInterval=1m -disableAlertgroupLabel -evaluationInterval=1m -httpListenAddr=127.0.0.1:8880
+ExecStart=/usr/bin/vmalert -datasource.url=http://127.0.0.1:8428 -remoteWrite.url=http://127.0.0.1:8428 -remoteRead.url=http://127.0.0.1:8428 -notifier.url=http://127.0.0.1:9093 -rule=/var/lib/motel-metrics/rules.yml -configCheckInterval=5s -disableAlertgroupLabel -evaluationInterval=1m -httpListenAddr=127.0.0.1:8880 -rule.evalDelay=5s
 Restart=on-failure
 RestartSec=2
 MemoryMax=128M

@@ -343,15 +343,25 @@ lost. On a box built at b7754fc or later whose store still reaches
 Alertmanager through a proxy (`/etc/systemd/system/motel-am-proxy.socket`
 is there), `motel monitor setup --metrics` is due, as above, and
 `motel monitor setup` is not. Going back to such a build later, root first runs `systemctl disable --now motel-am-metrics.socket`, removes it and `prometheus-alertmanager.service.d/20-motel-metrics.conf` from `/etc/systemd/system`, and runs `systemctl daemon-reload`: that build's `setup --metrics` cannot otherwise bind its proxy's 9093. Otherwise, on a box built at b7754fc or later, the units differ from the
-old setups' only in their comments and in the `Description=` lines,
+old setups' in their comments, in the store's clocks (below), and in the `Description=` lines,
 which name the old commands (`systemctl status` shows
 `(motel notify setup)` until they are rewritten). Running both setups
-again then only renames them. Either way, motel says when it is due:
+again then renames them and sets the store's clocks. Either way, motel says when it is due:
 from this version, every load (`motel validate`, `motel reload`, and
 the restart onto the new binary, in the journal) warns `monitor: the
 units motel monitor setup wrote differ from this motel's (…)` for as
 long as a unit differs from the one this binary would write, comments
 aside, and names the setup to run.
+
+**Run `motel monitor setup --metrics` again on a box whose store was set
+up before the 5 s clocks** (the warning above names `10-motel.conf` and
+`motel-vmalert.service`). Until it is, vmalert re-reads a new
+`rules.yml` only once a minute, and the store keeps
+VictoriaMetrics' 30 s `-search.latencyOffset`, so every alert and
+`GET /<app>` waits the 30 s as before. Post-deploy checks are right
+either way: they ask the store for the 5 s themselves. The re-run
+rewrites the units and restarts the store and vmalert; a push or two
+fails meanwhile.
 
 ## Patching the host
 

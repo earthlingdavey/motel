@@ -171,8 +171,8 @@ func TestStoreClient(t *testing.T) {
 			gotPath, gotBody = r.URL.RequestURI(), string(b)
 			w.WriteHeader(http.StatusNoContent)
 		case "/api/v1/query":
-			if tm := r.URL.Query().Get("time"); tm != "" && tm != "1762776000.250" {
-				http.Error(w, "bad time", http.StatusBadRequest)
+			if tm := r.URL.Query().Get("time"); tm != "" && (tm != "1762776000.250" || r.URL.Query().Get("latency_offset") != "5s") {
+				http.Error(w, "bad time or offset", http.StatusBadRequest)
 				return
 			}
 			_, _ = io.WriteString(w, `{"status":"success","data":{"resultType":"vector","result":[{"metric":{"job":"vmalert"},"value":[1762776000,"1"]}]}}`)

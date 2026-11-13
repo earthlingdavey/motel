@@ -321,9 +321,25 @@ release before is pushed once it has a response.
 
 ## Rules
 
-vmalert reads `rules.yml`, which motel renders at every config load
-(`-configCheckInterval=1m` re-reads it: vmalert's HTTP listener is in
-the namespace, so motel has no reload to call). setup writes the three
+vmalert reads `rules.yml`, which motel renders at every config load.
+vmalert's HTTP listener is in the namespace, so motel has no reload to
+call: `-configCheckInterval=5s` re-reads the file, a few KB, and
+vmalert applies it only when it changed. (A path unit sending SIGHUP
+was measured and dropped: a SIGHUP before vmalert installs its handler
+ends it with a clean exit, which `Restart=on-failure` leaves dead, and
+a rename while the path's oneshot runs is never seen.) The store's
+`-search.latencyOffset` is 5 s, not VictoriaMetrics' 30 s default,
+and vmalert's `-rule.evalDelay` matches it: the default waits out
+scrapes arriving from many sources, and motel is the store's one
+pusher, so the 30 s was a wait in every alert and every read. A
+post-deploy check asks for the 5 s itself (`latency_offset`), so on a
+store set up before, whose unit keeps the 30 s until setup runs again,
+its windows are still right; `GET /<app>` and the chain's check read
+30 s behind there meanwhile. Measured: the metrics suite 958 s to
+about 460 s. A push at a deploy's cutover was measured too (about
+15 s more) and dropped: it can follow the last push by milliseconds,
+where the counter guard (`pushApart`) takes a whole `pushEvery`
+between pushes. setup writes the three
 groups (`motel-store`, `motel-channel-failed`, `motel-operator`) empty
 first, so vmalert starts before motel's first render. Every rule
 is motel's text; nothing in the Caddyfile is an expression or a
@@ -628,8 +644,8 @@ and `Previous`, not by comparing names (the operator's decision of
 
 For an app with a rule (its own, else the every-app one),
 for each whole minute e since the cutover up to `window`, both read at
-cutover + e, 35 s after it: the store answers an instant query within
-its `-search.latencyOffset` (30 s) of the present as of 30 s earlier,
+cutover + e, 10 s after it: the store answers an instant query within
+its `-search.latencyOffset` (5 s) of the present as of 5 s earlier,
 which moved both windows back off the cutover (measured in e2e metrics
 10: the old release's last half minute read as nothing), so the time
 is given, past the offset:
@@ -814,7 +830,8 @@ millionth, so that a day's few requests are not 0, milliseconds to a
 tenth), for the CPU averages' reason. A
 share or quantile with no response under it is absent, and so is
 `requests` when the store holds no request series for the app.
-The store answers 30 s behind the present
+The store answers 5 s behind the present (30 s on a store set up
+before the 5 s, until setup runs again)
 (`-search.latencyOffset`). No free-form query, no label enumeration, no
 box series, no other app: the name is the configured app the route
 already resolved.
