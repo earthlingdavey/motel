@@ -643,6 +643,7 @@ func TestDeployRecordTimesMustBeStrings(t *testing.T) {
 // A record the filter leaves larger than a reader accepts is written
 // as an envelope, readable, rather than as a file every reader refuses.
 func TestDeployRecordTooLargeIsAnEnvelope(t *testing.T) {
+	t.Parallel()
 	rig := newTestRig(t)
 	rig.runner.startErr = errors.New("boom: " + strings.Repeat("x", 2*deployRecordMaxBytes))
 	if err := deployOnceV1(t, rig); err == nil {
@@ -707,6 +708,7 @@ func TestDeployRecordOfAPrePhaseFailureHasNoPhase(t *testing.T) {
 // record of exactly the bound is an envelope, not a file one byte too
 // long for every reader.
 func TestDeployRecordSizeBoundCountsTheNewline(t *testing.T) {
+	t.Parallel()
 	rig := newTestRig(t)
 	// Pad the error so the filtered JSON lands on the bound exactly.
 	probe := deployResult{Version: "v1", Status: "failed", By: "test", Error: ""}
@@ -764,6 +766,7 @@ func TestDeployRecordEnvelopeDropsThePinWhenValuesAreUnknown(t *testing.T) {
 // equals a known value or holds one, which no envelope names
 // (redact.go, rule 1).
 func TestDeployRecordEnvelopeKeepsThePin(t *testing.T) {
+	t.Parallel()
 	sum := sha256.Sum256([]byte("what CI built"))
 	pin := hex.EncodeToString(sum[:])
 	for _, tc := range []struct {
@@ -775,6 +778,7 @@ func TestDeployRecordEnvelopeKeepsThePin(t *testing.T) {
 		{"pin holds a known value", "TOKEN=" + pin[10:40] + "\n", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			rig := newTestRig(t)
 			rig.spec.envFile = filepath.Join(t.TempDir(), "app.env")
 			must(t, os.WriteFile(rig.spec.envFile, []byte(tc.env), 0o600))

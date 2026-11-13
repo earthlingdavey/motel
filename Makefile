@@ -37,8 +37,15 @@ endef
 # manager started by test/systemd/ready.sh): liveswap's runner creates
 # real transient units, and the caddytest scenarios deploy a real app
 # through them; the box applier asks the real systemctl. -p 1: the
-# modules' caddytest suites all pin admin :2999 / http :9080, so their
-# test binaries must not run in parallel.
+# modules' caddytest suites (liveswap's and penaltybox's) all pin admin
+# :2999 / http :9080, so their test binaries must not run in parallel;
+# and backups' tests add users and run transient units one after
+# another. Two groups, each -p 1, run at once: the caddytest pair, and
+# backups, box and notify, which hold none of those ports, add no user
+# liveswap reads, and reload only the system manager, not root's user
+# manager, where liveswap's units run. Each group's output is held and
+# printed after, a group at a time; go test's own -timeout (10 m a
+# package) bounds a wedged one.
 # -count=1: these tests hold what systemd, restic and sqlite3 do, and
 # Go's test cache knows none of them — given the same test binary and
 # flags it replays the last result, a pass included, after the program
@@ -51,8 +58,14 @@ test-integration:
 	status=0; \
 	$(COMPOSE) exec -T dev-systemd /bin/sh /src/test/systemd/ready.sh || status=1; \
 	if [ $$status -eq 0 ]; then \
-		$(COMPOSE) exec -T -e XDG_RUNTIME_DIR=/run/user/0 dev-systemd \
-			go test -count=1 -race -tags integration -v -run Integration -p 1 ./backups/... ./box/... ./liveswap/... ./notify/... ./penaltybox/... || status=1; \
+		$(COMPOSE) exec -T -e XDG_RUNTIME_DIR=/run/user/0 dev-systemd sh -c '\
+			it="go test -count=1 -race -tags integration -v -run Integration -p 1"; \
+			$$it ./liveswap/... ./penaltybox/... >/tmp/it-caddytest.log 2>&1 & a=$$!; \
+			$$it ./backups/... ./box/... ./notify/... >/tmp/it-rest.log 2>&1 & b=$$!; \
+			wait $$a; ra=$$?; wait $$b; rb=$$?; \
+			echo "════ liveswap, penaltybox (the caddytest group) ════"; cat /tmp/it-caddytest.log; \
+			echo "════ backups, box, notify ════"; cat /tmp/it-rest.log; \
+			[ $$ra -eq 0 ] && [ $$rb -eq 0 ]' || status=1; \
 	fi; \
 	if [ $$status -ne 0 ]; then $(COMPOSE) exec -T dev-systemd journalctl --no-pager -n 100 || true; fi; \
 	$(COMPOSE) rm -sf dev-systemd >/dev/null; \

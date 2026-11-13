@@ -180,6 +180,7 @@ func readersRepo(t *testing.T) (r *boxRepo, alice, carol string) {
 }
 
 func TestBoxSecretSet(t *testing.T) {
+	t.Parallel()
 	r, alice, carol := readersRepo(t)
 	app := []string{"APP=example", "VAR=DATABASE_URL"}
 
@@ -392,6 +393,7 @@ func TestBoxSecretSet(t *testing.T) {
 // The shells it runs under: the container's /bin/sh is dash; a Mac's is
 // bash 3.2 in POSIX mode.
 func TestBoxSecretSetUnderBash(t *testing.T) {
+	t.Parallel()
 	if _, err := exec.LookPath("bash"); err != nil {
 		t.Skip("no bash here")
 	}
@@ -421,6 +423,7 @@ func firstKey(recipients string) string {
 }
 
 func TestBoxSecretsListShowRekey(t *testing.T) {
+	t.Parallel()
 	r, alice, carol := readersRepo(t)
 	boxID, box := r.boxKey("box")
 	if out, code := r.secrets("", "one", "set", "APP=example", "VAR=DATABASE_URL", "BOX_KEY="+box); code != 0 {
@@ -536,6 +539,7 @@ func TestBoxSecretsListShowRekey(t *testing.T) {
 // A NOTIFY_ name in an app's directory is warned of on stderr: what show
 // prints on stdout is the value alone, so a capture of it is too.
 func TestBoxSecretShowOfANotifyNameIsTheValueAlone(t *testing.T) {
+	t.Parallel()
 	r, _, _ := readersRepo(t)
 	_, box := r.boxKey("box")
 	if out, code := r.secrets("", "three", "set", "APP=example", "VAR=NOTIFY_LEGACY", "BOX_KEY="+box); code != 0 {
@@ -552,6 +556,7 @@ func TestBoxSecretShowOfANotifyNameIsTheValueAlone(t *testing.T) {
 }
 
 func TestBoxSignerAddsAReader(t *testing.T) {
+	t.Parallel()
 	r := secretsRepo(t)
 	r.key("id_ed25519")
 	if out, code := r.run("signer"); code != 0 {
@@ -642,6 +647,7 @@ func TestBoxSignerAddsAReader(t *testing.T) {
 // An agent holds the key, with no file beside the .pub: still a
 // reader in the file, and told that age cannot read through an agent.
 func TestBoxSignerAgentHeldReader(t *testing.T) {
+	t.Parallel()
 	r := secretsRepo(t)
 	r.key("id_ed25519")
 	if out, code := r.run("signer"); code != 0 {
@@ -669,6 +675,7 @@ func TestBoxSignerAgentHeldReader(t *testing.T) {
 // anything is written through it: the box takes none, and through one
 // a write could reach outside the repository.
 func TestBoxSecretsRefuseLinks(t *testing.T) {
+	t.Parallel()
 	r := secretsRepo(t)
 	r.key("id_ed25519")
 	if out, code := r.run("signer"); code != 0 {
@@ -797,6 +804,7 @@ func TestBoxSecretsRefuseLinks(t *testing.T) {
 // make signer with more than one box: a box whose recipients file it
 // may not write stops it before any box is written, the good one too.
 func TestBoxSignerChecksEveryBoxFirst(t *testing.T) {
+	t.Parallel()
 	r := secretsRepo(t)
 	r.key("id_ed25519")
 	if out, code := r.run("signer"); code != 0 {
@@ -869,6 +877,7 @@ func snapshot(t *testing.T, dir string) map[string]string {
 // have every command work on files outside it. git's index is asked
 // too, for a link the checkout has not made yet.
 func TestBoxSecretsNeverReadThroughALink(t *testing.T) {
+	t.Parallel()
 	r := secretsRepo(t)
 	alicePub := r.key("id_ed25519")
 	alice := strings.TrimSuffix(alicePub, ".pub")
@@ -1014,6 +1023,7 @@ func mapsEqual(a, b map[string]string) bool {
 }
 
 func TestBoxSecretsNeedAge(t *testing.T) {
+	t.Parallel()
 	r := newBoxRepo(t) // the age CLI not on PATH
 	if _, err := exec.LookPath("age"); err == nil {
 		t.Skip("age is installed here")
@@ -1026,6 +1036,7 @@ func TestBoxSecretsNeedAge(t *testing.T) {
 }
 
 func TestBoxSecretsImport(t *testing.T) {
+	t.Parallel()
 	r := secretsRepo(t)
 	r.key("id_ed25519")
 	if out, code := r.run("signer"); code != 0 {
@@ -1136,6 +1147,7 @@ func TestBoxSecretsImport(t *testing.T) {
 // what make secret leaves to it checked, and a motel too old to read
 // secrets named.
 func TestBoxCheckSecrets(t *testing.T) {
+	t.Parallel()
 	bin := motelBinary(t)
 	r := secretsRepo(t)
 	r.key("id_ed25519")

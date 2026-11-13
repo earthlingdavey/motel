@@ -52,8 +52,42 @@ var (
 	buildErr  error
 )
 
+// TestMain puts a `sleep` first on PATH that waits a twentieth of what
+// it is asked: the scripts under test (bin/apply's poll backoff and
+// resends, deploy.sh's resend) wait on the box's answers, which here
+// are a test server's, there at once. Their waits are counted by the
+// tests, never timed, so a twentieth of the time leaves every answer
+// the same [measured: TestBoxApply 74 s to 9.7 s, the package's results
+// unchanged]. A duration that is not a plain number goes to the real
+// sleep.
 func TestMain(m *testing.M) {
+	shim, err := os.MkdirTemp("", "sleep-shim")
+	if err != nil {
+		panic(err)
+	}
+	realSleep, err := exec.LookPath("sleep")
+	if err != nil {
+		panic(err)
+	}
+	// Whole seconds alone are scaled, in the shell's integer arithmetic
+	// (no awk, whose decimal point is the locale's), their leading zeros
+	// dropped (a 0 would make them octal); anything else, nine digits or
+	// more among it, goes to the real sleep as asked.
+	q := "'" + strings.ReplaceAll(realSleep, "'", `'\''`) + "'"
+	script := "#!/bin/sh\n" +
+		"[ $# -eq 1 ] || exec " + q + " \"$@\"\n" +
+		"case $1 in ''|*[!0-9]*|?????????*) exec " + q + " \"$@\" ;; esac\n" +
+		"n=${1#\"${1%%[!0]*}\"}\n" +
+		"ms=$((${n:-0} * 50))\n" +
+		"exec " + q + " \"$((ms / 1000)).$(printf %03d $((ms % 1000)))\"\n"
+	if err := os.WriteFile(filepath.Join(shim, "sleep"), []byte(script), 0o755); err != nil {
+		panic(err)
+	}
+	if err := os.Setenv("PATH", shim+string(os.PathListSeparator)+os.Getenv("PATH")); err != nil {
+		panic(err)
+	}
 	code := m.Run()
+	_ = os.RemoveAll(shim)
 	if builtBin != "" {
 		_ = os.RemoveAll(filepath.Dir(builtBin))
 	}
@@ -68,6 +102,9 @@ func TestMain(m *testing.M) {
 func motelBinary(t *testing.T) string {
 	t.Helper()
 	buildOnce.Do(func() {
+		if buildErr = statMotelSources(); buildErr != nil {
+			return
+		}
 		dir, err := os.MkdirTemp("", "motel-bin")
 		if err != nil {
 			buildErr = err
@@ -83,6 +120,56 @@ func motelBinary(t *testing.T) string {
 		t.Fatal(buildErr)
 	}
 	return builtBin
+}
+
+// statMotelSources stats every file of this workspace the motel binary
+// is built from, with go.work and each module's go.mod and go.sum. Go's
+// test cache keys a package's results on its imports and on the files
+// its tests open or stat; motelBinary builds the binary in a
+// subprocess, which the cache cannot see, so a change to cmd/motel, or
+// to a package of another module that only it imports, left this
+// package's results "(cached)" [measured: a line added to
+// cmd/motel/main.go, and a test that runs the binary answered
+// (cached)]. Each package's directory is stated too, whose time moves
+// when a file is added to it or taken out. A module-cache package is
+// fixed by its version, which go.sum holds.
+func statMotelSources() error {
+	const files = `{{if and .Module .Module.Main}}{{$d := .Dir}}{{$d}}{{"\n"}}` +
+		`{{range .GoFiles}}{{$d}}/{{.}}{{"\n"}}{{end}}{{range .CgoFiles}}{{$d}}/{{.}}{{"\n"}}{{end}}` +
+		`{{range .SFiles}}{{$d}}/{{.}}{{"\n"}}{{end}}{{range .EmbedFiles}}{{$d}}/{{.}}{{"\n"}}{{end}}` +
+		`{{.Module.GoMod}}{{"\n"}}{{end}}`
+	var stderr bytes.Buffer
+	list := exec.Command("go", "list", "-deps", "-f", files, "github.com/smallhoursorg/motel/cmd/motel")
+	list.Stderr = &stderr
+	out, err := list.Output()
+	if err != nil {
+		return fmt.Errorf("go list motel's sources: %w\n%s", err, stderr.Bytes())
+	}
+	// The workspace's files are at the root, the parent of this package's.
+	paths := []string{filepath.Join("..", "go.work"), filepath.Join("..", "go.work.sum")}
+	for _, p := range strings.Split(string(out), "\n") {
+		if p == "" {
+			continue
+		}
+		paths = append(paths, p)
+		if strings.HasSuffix(p, "/go.mod") {
+			paths = append(paths, strings.TrimSuffix(p, "mod")+"sum")
+		}
+	}
+	seen := map[string]bool{}
+	for _, p := range paths {
+		if seen[p] {
+			continue
+		}
+		seen[p] = true
+		// The stat is what the cache records; a go.sum or go.work.sum
+		// that is not there is recorded as absent, which is as much.
+		_, _ = os.Stat(p)
+	}
+	if len(seen) < 10 {
+		return fmt.Errorf("go list named %d of motel's files, too few to be all of them: %q", len(seen), paths)
+	}
+	return nil
 }
 
 // boxRepo is a clone of a repository made from the template: its first
@@ -241,6 +328,7 @@ func (r *boxRepo) commit(msg string, extra ...string) string {
 const boxFile = "deploy.example.com/Caddyfile"
 
 func TestBoxSigner(t *testing.T) {
+	t.Parallel()
 	r := newBoxRepo(t)
 	if out, code := r.run("signer"); code != 1 || !strings.Contains(out, "no key at "+filepath.Join(r.home, ".ssh", "id_ed25519.pub")) {
 		t.Fatalf("no key: exit %d\n%s", code, out)
@@ -344,6 +432,7 @@ func TestBoxSigner(t *testing.T) {
 }
 
 func TestBoxCheck(t *testing.T) {
+	t.Parallel()
 	bin := motelBinary(t)
 	r := newBoxRepo(t)
 	check := func() (string, int) { return r.run("check", "MOTEL="+bin) }
@@ -879,6 +968,7 @@ func (g *applyRig) change(msg string, extra ...string) string {
 }
 
 func TestBoxApply(t *testing.T) {
+	t.Parallel()
 	t.Run("the commit the box runs", func(t *testing.T) {
 		g := newApplyRig(t)
 		out, code := g.apply()
@@ -1369,6 +1459,7 @@ func recorder(t *testing.T, path, tag, bin string) {
 // with $MOTEL-<version>; one without, with $MOTEL; a file that
 // names no release is refused and named, never read as the latest.
 func TestBoxCheckVersionFile(t *testing.T) {
+	t.Parallel()
 	bin := motelBinary(t)
 	r := newBoxRepo(t)
 	r.key("id_ed25519")
@@ -1589,6 +1680,7 @@ func (g *releases) reset() {
 // once, verified, as motel-<version>; the default as motel too;
 // and bin/check then picks each box's.
 func TestBoxInstallMotel(t *testing.T) {
+	t.Parallel()
 	if runtime.GOOS != "linux" {
 		t.Skip("bin/install-motel installs Linux binaries, and refuses elsewhere")
 	}
