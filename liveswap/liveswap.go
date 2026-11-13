@@ -98,6 +98,10 @@ type App struct {
 
 	logger  *zap.Logger
 	managed map[string]*managedApp
+	// observed names the apps an observe handler of this config names
+	// (Observe.observe): AppSample.Observed. Written while the config
+	// provisions, read once it runs.
+	observed map[string]bool
 	// notifier is the notify module's listener (SetNotifier), handed
 	// to every app at Start; nil reports to nobody.
 	notifier Notifier

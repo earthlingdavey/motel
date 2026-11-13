@@ -457,30 +457,58 @@ func TestObserveFollowsTheDeploy(t *testing.T) {
 	}
 }
 
-// An app is observed while a loaded config's observe names it: a
-// reload provisions the new config's handler before it cleans up the
-// old's, and a Cleanup after a failed Provision (counted nothing) or a
-// second one takes nothing away.
+// The loaded configs' observe handlers of an app are counted: a reload
+// provisions the new config's handler before it cleans up the old's,
+// and a Cleanup after a failed Provision (counted nothing) or a second
+// one takes nothing away.
 func TestObserveCountsItsHandlers(t *testing.T) {
 	h, _ := newTestHandler(t)
 	ma := h.app.managedApp("demo")
-	observed := func() bool { return h.app.AppSamples()[0].Observed }
-	if observed() {
-		t.Fatal("observed with no handler")
-	}
+	reloaded := &App{managed: h.app.managed}
 	old, next := &Observe{App: "demo"}, &Observe{App: "demo"}
-	old.observe(ma)
-	next.observe(ma)
+	old.observe(h.app, ma)
+	next.observe(reloaded, ma)
 	must(t, old.Cleanup())
 	must(t, old.Cleanup())
 	must(t, (&Observe{App: "demo"}).Cleanup()) // its Provision failed
-	if !observed() {
-		t.Fatal("the reload's handler does not observe the app")
+	if n := ma.observers.Load(); n != 1 {
+		t.Fatalf("%d handlers counted after the old config's Cleanup, want the reload's one", n)
 	}
 	must(t, next.Cleanup())
-	if observed() {
-		t.Fatal("observed after the last handler's Cleanup")
+	if n := ma.observers.Load(); n != 0 {
+		t.Fatalf("%d handlers counted after the last Cleanup", n)
 	}
+}
+
+// TestObservedIsTheConfigs: a sample is observed when its own config
+// observes the app. A reload that takes the line out is not, from its
+// first push, though the old config's handler is still counted: the old
+// config's Cleanup waits for its requests in flight to end, and the
+// counts meanwhile grow by those alone, which pushed would read as an
+// app no request reaches.
+func TestObservedIsTheConfigs(t *testing.T) {
+	h, _ := newTestHandler(t)
+	ma := h.app.managedApp("demo")
+	if h.app.AppSamples()[0].Observed {
+		t.Fatal("observed with no handler")
+	}
+	old := &Observe{App: "demo"}
+	old.observe(h.app, ma)
+	if !h.app.AppSamples()[0].Observed {
+		t.Error("the config with the line does not observe the app")
+	}
+	without := &App{managed: h.app.managed}
+	if without.AppSamples()[0].Observed {
+		t.Error("the reload that takes the line out observes the app while the old config's handler is counted")
+	}
+	with := &App{managed: h.app.managed}
+	next := &Observe{App: "demo"}
+	next.observe(with, ma)
+	must(t, old.Cleanup())
+	if !with.AppSamples()[0].Observed {
+		t.Error("the reload that keeps the line does not observe the app")
+	}
+	must(t, next.Cleanup())
 }
 
 // TestObserveAfterNoneStartsFromZero: while no handler names the app its
@@ -493,7 +521,7 @@ func TestObserveAfterNoneStartsFromZero(t *testing.T) {
 	h, _ := newTestHandler(t)
 	ma := h.app.managedApp("demo")
 	first := &Observe{App: "demo"}
-	first.observe(ma)
+	first.observe(h.app, ma)
 	// The release before too, with a cache's verdict.
 	old := ma.requests.setRelease("v0")
 	old.record(&observeWriter{start: time.Unix(0, 0), at: time.Unix(0, int64(time.Second)), seen: true, status: http.StatusOK, cache: cacheMiss}, false)
@@ -503,7 +531,7 @@ func TestObserveAfterNoneStartsFromZero(t *testing.T) {
 	}
 	count := func() uint64 { return ma.requests.samples()[0].Count }
 	reload := &Observe{App: "demo"}
-	reload.observe(ma)
+	reload.observe(h.app, ma)
 	must(t, first.Cleanup())
 	if count() != 3 {
 		t.Fatalf("a reload's handler reset the counts: %d", count())
@@ -513,7 +541,7 @@ func TestObserveAfterNoneStartsFromZero(t *testing.T) {
 		t.Fatalf("Cleanup reset the counts: %d", count())
 	}
 	back := &Observe{App: "demo"}
-	back.observe(ma)
+	back.observe(h.app, ma)
 	samples := ma.requests.samples()
 	if len(samples) != 2 || samples[0].Release != "v1" || samples[1].Release != "v0" {
 		t.Fatalf("releases after the zero: %+v", samples)

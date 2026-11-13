@@ -32,9 +32,14 @@ type AppSample struct {
 	// first and the one before's after it; empty when no observer has
 	// seen a response for the app.
 	Requests []ReleaseRequests
-	// Observed is whether an observe handler of a loaded config names
-	// the app: its current release's counts are then its numbers even
+	// Observed is whether an observe handler of this config names the
+	// app: its current release's counts are then its numbers even
 	// before its first response, where an app with none has no numbers.
+	// This config's, not every loaded one's (managedApp.observers): a
+	// reload that takes the line out still has the old config's handler
+	// until the old config's requests in flight end and its Cleanup
+	// runs, and the counts its pushes read meanwhile would grow by
+	// those alone, read as an app no request reaches.
 	Observed bool
 }
 
@@ -42,20 +47,15 @@ type AppSample struct {
 func (a *App) AppSamples() []AppSample {
 	out := make([]AppSample, 0, len(a.managed))
 	for _, name := range slices.Sorted(maps.Keys(a.managed)) {
-		out = append(out, a.managed[name].sample())
+		out = append(out, a.managed[name].sample(a.observed[name]))
 	}
 	return out
 }
 
-func (ma *managedApp) sample() AppSample {
+func (ma *managedApp) sample(observed bool) AppSample {
 	c := ma.snapshot()
 	ma.mu.Lock()
 	defer ma.mu.Unlock()
-	// Whether observed before the counts: the first observer after none
-	// zeroes them before it is counted (Observe.observe), so a sample
-	// that sees it sees the zeroed counts, and one that does not is
-	// pushed nothing.
-	observed := ma.observers.Load() > 0
 	s := AppSample{App: ma.name, Requests: ma.requests.samples(), Observed: observed}
 	if ma.current == nil {
 		return s

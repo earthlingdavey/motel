@@ -61,35 +61,41 @@ func (o *Observe) Provision(ctx caddy.Context) error {
 	if err != nil {
 		return err
 	}
-	ma := appModule.(*App).managedApp(o.App)
+	a := appModule.(*App)
+	ma := a.managedApp(o.App)
 	if ma == nil {
 		return fmt.Errorf("unknown liveswap app %q (define it in the liveswap global options)", o.App)
 	}
-	o.observe(ma)
+	o.observe(a, ma)
 	return nil
 }
 
-// observe makes ma the app observed, by one handler more. The first
-// handler after none starts the counts from zero, as a motel restart
-// does: while none named the app its counts were not pushed
-// (notify's collector), and, resumed where they stopped, their first
-// push after the gap would be read as every response the app had
-// counted since motel started, in one window. A reload provisions the
-// new config's handlers before it cleans up the old's, so an app
-// observed by both is never at none and keeps its counts.
+// observe makes ma the app observed, by one handler more, and by a's
+// config (App.observed, what its pushes read). The first handler after
+// none starts the counts from zero, as a motel restart does: while none
+// named the app its counts were not pushed (notify's collector), and,
+// resumed where they stopped, their first push after the gap would be
+// read as every response the app had counted since motel started, in
+// one window. A reload provisions the new config's handlers before it
+// cleans up the old's, so an app observed by both is never at none and
+// keeps its counts.
 //
-// The counts are zeroed before the handler is counted, and a sample
-// reads the count of handlers before the counts (managedApp.sample): a
-// push gathered meanwhile sees no observer and sends nothing, never the
-// old counts as an observed app's. Provisions run one at a time (config
-// loads are serialized), so the test at none is not raced by another.
-func (o *Observe) observe(ma *managedApp) {
+// The zero is made while a's config provisions, before its Start points
+// the push at it, so no push of a config that observes the app reads
+// the counts before it. Provisions run one at a time (config loads are
+// serialized, the old config's Stop and Cleanup among them), so the
+// test at none is not raced by another.
+func (o *Observe) observe(a *App, ma *managedApp) {
 	o.ma = ma
 	if ma.observers.Load() == 0 {
 		ma.requests.zero()
 	}
 	ma.observers.Add(1)
 	o.counted = true
+	if a.observed == nil {
+		a.observed = make(map[string]bool)
+	}
+	a.observed[ma.name] = true
 }
 
 // Cleanup is the config's unload (or its load failing): the app is

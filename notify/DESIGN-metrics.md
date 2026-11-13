@@ -256,16 +256,19 @@ mechanics, its order and its measured cost are DESIGN-liveswap.md's
 An app with no `observe` in its route pushes no request series,
 and its `metrics` has no `requests`. That holds for an app whose line
 is taken out too: its counts live on in the pool, but none is pushed
-while no loaded config observes it, since pushed unchanged they would
-read as an app no request reaches. Its series go stale in the store,
+while the running config does not observe it, since pushed unchanged
+they would read as an app no request reaches. That is from the
+reload's first push, though the old config's handler counts its
+requests in flight until they end (a stream, for as long as it lasts).
+Its series go stale in the store,
 and an every-app `request_rate <` alert firing for it resolves. The
 first observer after none zeroes them in place, so the line put back
 counts from zero, as after a restart: resumed, their first push after
 the gap would be read as every response since motel started, in one
 window. An observed app's current release
 is pushed from the first push, at zero before its first response
-(liveswap counts the loaded configs' observers of each app: a reload
-provisions the new config's before it cleans up the old's): with no
+(the config's observe handlers say which apps it observes, from its
+Provision): with no
 series, a `request_rate <` rule could never hold for an app no one has
 reached since motel started, the stopped traffic it exists to tell. The
 release before is pushed once it has a response.

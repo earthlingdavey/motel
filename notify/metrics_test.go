@@ -934,8 +934,8 @@ func TestLatencyBoundsAreTheBuckets(t *testing.T) {
 
 // observe's counts reach the registry per release, a stopped
 // app's among them; a release with no response pushes nothing, but the
-// current release of an observed app, at zero. An app no loaded config
-// observes any more pushes nothing of what it counted: unchanged
+// current release of an observed app, at zero. An app the running
+// config no longer observes pushes nothing of what it counted: unchanged
 // counters would read as an app with no request.
 func TestAppCollectorRequests(t *testing.T) {
 	var cur liveswap.ReleaseRequests

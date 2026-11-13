@@ -370,16 +370,21 @@ there would defeat the pool.
 - `requests` is the response observer's counters ("The response
   observer"): an atomic pointer to the current release's, read on
   every observed request, and the release before's under its own
-  mutex, which only a release change and a gather take. `observers`
-  counts the loaded configs' observe handlers naming the app
-  (Provision adds one, Cleanup takes it back): while one does, the
+  mutex, which only a release change and a gather take. Whether they
+  are pushed is the running config's: while one of its observe
+  handlers names the app (`App.observed`, set at Provision), the
   current release's counts are pushed even at zero (`AppSample.Observed`);
   while none does (its `observe` line taken out), nothing of its counts
   is pushed: pushed unchanged, they would read as an app no request
-  reaches. The first handler after none zeroes them in place (the
-  instances' sockets keep their counters), as a motel restart starts
-  them from zero: resumed, their first push after the gap would be every
-  response since motel started, read as one window's.
+  reaches. The running config's and not every loaded one's, since the
+  old config's handler stays until its requests in flight end and its
+  Cleanup runs, and meanwhile the counts grow by those alone.
+  `observers` counts the loaded configs' handlers naming the app
+  (Provision adds one, Cleanup takes it back): the first after none
+  zeroes the counts in place (the instances' sockets keep their
+  counters), as a motel restart starts them from zero: resumed, their
+  first push after the gap would be every response since motel
+  started, read as one window's.
 - `ownerLock(app)` (one mutex per app name) makes "stop what nobody
   owns, then prune its socket dirs" one step with respect to recovery:
   the start-time sweep of unconfigured apps holds it across the manager
