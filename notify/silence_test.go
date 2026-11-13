@@ -146,6 +146,7 @@ func withFakeAM(t *testing.T) (*testEngine, *silenceAM) {
 		w.WriteHeader(status)
 		_, _ = io.WriteString(w, answer)
 	}))
+	te.active.known = te.known // as Provision sets it
 	saved := releasesOf
 	releasesOf = func(_ *App, app string) []string {
 		if app == "shop" {
@@ -466,5 +467,79 @@ func TestSilenceOfARuleOfOneApp(t *testing.T) {
 		if ok != (err == nil) || !ok && !strings.Contains(err.Error(), "shop_slow is a rule about shop alone") {
 			t.Fatalf("--app %q: %v", app, err)
 		}
+	}
+}
+
+// TestSilenceCommentMaskedWithTheCheckedConfig: the comment is masked
+// with the known values of the config the route checked, not with the
+// engine's after a reload that swapped it (Copilot round 2 on #444).
+func TestSilenceCommentMaskedWithTheCheckedConfig(t *testing.T) {
+	te, f := withFakeAM(t)
+	// The engine already points at a reloaded config's known values,
+	// which no longer hold the old secret; the config checked does.
+	te.active.known = []string{"NOTIFY_OLD_URL=https://hooks.slack.com/services/T0/B0/oldsecretpart"} // gitleaks:allow — made up for this test
+	te.known = nil
+	req := goodSilence()
+	req.Comment = "see https://hooks.slack.com/services/T0/B0/oldsecretpart" // gitleaks:allow — made up for this test
+	if _, err := callAdmin(t, serveSilence, http.MethodPost, req); err != nil {
+		t.Fatal(err)
+	}
+	got := f.take()
+	if len(got) != 1 || strings.Contains(got[0], "oldsecretpart") {
+		t.Fatalf("Alertmanager got %q", got)
+	}
+	req.Comment = strings.Repeat("x", 200)
+	if _, err := callAdmin(t, serveSilence, http.MethodPost, req); err != nil {
+		t.Fatal(err)
+	}
+	if got := f.take(); len(got) != 1 || !strings.Contains(got[0], `"comment":"`+strings.Repeat("x", 200)+`"`) {
+		t.Fatalf("a 200-character comment: %q", got)
+	}
+}
+
+// TestSilenceBodyRefusalEchoesNothing: a body the decoder refuses (an
+// unknown field named like a secret, a broken JSON) is answered with a
+// fixed 400 that holds nothing of it; a GET is still 405.
+func TestSilenceBodyRefusalEchoesNothing(t *testing.T) {
+	withFakeAM(t)
+	for _, h := range []caddy.AdminHandlerFunc{serveSilence, serveExpire} {
+		for _, body := range []string{`{"hunter2_token_q8Rm2vTx9Lk4":1}`, `{"id":"hunter2_token_q8Rm2vTx9Lk4"`} {
+			_, err := callAdmin(t, h, http.MethodPost, body)
+			if apiStatus(err) != http.StatusBadRequest || strings.Contains(err.Error(), "hunter2") || !strings.Contains(err.Error(), "the body is not this route's JSON request") {
+				t.Fatalf("%s: %v", body, err)
+			}
+		}
+		if _, err := callAdmin(t, h, http.MethodGet, ""); apiStatus(err) != http.StatusMethodNotAllowed {
+			t.Fatalf("a GET: %v", err)
+		}
+	}
+}
+
+// TestSilenceOfPostDeployRegressedNeedsTheAppsRule: post_deploy_regressed
+// with --app only for an app a post_deploy rule judges: its own, or the
+// every-app one (postDeployRuleFor, the comparator's).
+func TestSilenceOfPostDeployRegressedNeedsTheAppsRule(t *testing.T) {
+	te, _ := withFakeAM(t)
+	try := func(rules []Rule, app string) error {
+		te.active.Metrics = &MetricsStore{Rules: rules}
+		_, err := callAdmin(t, serveSilence, http.MethodPost, SilenceRequest{Alert: eventPostDeployRegressed, App: app, Comment: "c", By: "alice"})
+		return err
+	}
+	shop := Rule{Name: "shop_regress", Kind: rulePostDeploy, App: "shop"}
+	wiki := Rule{Name: "wiki_regress", Kind: rulePostDeploy, App: "wiki"}
+	every := Rule{Name: "regress", Kind: rulePostDeploy}
+	if err := try([]Rule{shop}, "blog"); err == nil || !strings.Contains(err.Error(), "no post_deploy rule judges blog's deploys") {
+		t.Fatalf("blog with shop's rule alone: %v", err)
+	}
+	for _, app := range []string{"shop", "wiki"} {
+		if err := try([]Rule{shop, wiki}, app); err != nil {
+			t.Fatalf("%s among two app rules: %v", app, err)
+		}
+	}
+	if err := try([]Rule{shop, wiki}, "blog"); err == nil {
+		t.Fatal("blog among two other apps' rules was taken")
+	}
+	if err := try([]Rule{shop, every}, "blog"); err != nil {
+		t.Fatalf("blog under the every-app rule: %v", err)
 	}
 }

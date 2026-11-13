@@ -531,7 +531,7 @@ carry (`labelsFor`, `oneShotAlert`):
 | Flag | Matcher | Taken |
 |---|---|---|
 | `--alert` | `alertname=` | one of `silenceableAlerts`: the names motel's detectors raise on any box (`raisedAlerts`: liveswap's lifecycle, cert, disk, backup, `ChannelFailed`), and with the metrics line the store's chain events, the vmalert rules rendered for this config (`fixedRules`, the operator's `threshold` and `disk_fill` rule names) and, with a `post_deploy` rule, `post_deploy_regressed`. `TestSilenceableAlertsAreWhatMotelRaises` reads the package's emitters from its source and holds the set to them both ways |
-| `--app` | `app=` | one of the apps the loaded config runs; with `--alert`, only an alert about an app, and for a rule of one app's (a `threshold` line with `app`) that app (`alertScope`: liveswap's, `post_deploy_regressed`, and the vmalert rules whose subject is an app's), since a box alert has no `app` label and the silence would match nothing. Alone, it silences every alert with that `app` label, an external producer's `--subject app:<name>` events among them, but the deploy mute: motel adds `alertname!=deploy_in_progress`, so that what the mute inhibits stays inhibited whatever Alertmanager does with a silenced source |
+| `--app` | `app=` | one of the apps the loaded config runs; with `--alert`, only an alert about an app, and for a rule of one app's (a `threshold` line with `app`) that app, and `post_deploy_regressed` only for an app a `post_deploy` rule judges (its own, else the every-app one: `postDeployRuleFor`, the comparator's) (`alertScope`: liveswap's, `post_deploy_regressed`, and the vmalert rules whose subject is an app's), since a box alert has no `app` label and the silence would match nothing. Alone, it silences every alert with that `app` label, an external producer's `--subject app:<name>` events among them, but the deploy mute: motel adds `alertname!=deploy_in_progress`, so that what the mute inhibits stays inhibited whatever Alertmanager does with a silenced source |
 | `--release` | `release=` | one of the app's releases on disk (`liveswap.App.Releases`, newest first, listed in the refusal), with `--app` and an `--alert` whose release label names a release on disk (`onDiskReleases`: `rollback`, `deploy_succeeded`, `post_deploy_regressed`). A state alert (`watchdog_throttled`) carries its release as an annotation only, and `deploy_failed`'s or `deploy_refused`'s release never stays on disk (a refused deploy never lands, a failed one's directory is removed), so a `--release` there is refused rather than stored to match nothing; they are silenced by `--alert` and `--app` |
 
 | Refused | Why |
@@ -543,7 +543,7 @@ carry (`labelsFor`, `oneShotAlert`):
 | a comment empty, over 200 characters, or with a control character (a newline, a tab, an escape sequence, U+2028 or U+2029) | whoever finds the silence reads why, in a terminal among others |
 | a duration under 1m or over 24h (default 2h, from now; a fraction is kept, `ends_at` is RFC 3339 with nanoseconds) | a silence that outlives the incident hides the next one |
 | an id that is not a UUID; an id Alertmanager does not hold (422, `no silence <id> in Alertmanager`); one already expired (422, `silence <id> has already expired`) | Alertmanager 0.28.1 answers 200 to the expiry of an expired silence (measured in the e2e box), so the route asks its state first (`GET /api/v2/silence/{id}`) rather than journal an end that was not |
-| a body with unknown fields (a `matchers` list among them) | the route takes the request, never Alertmanager's shape |
+| a body with unknown fields (a `matchers` list among them), or not JSON: one fixed 400, `the body is not this route's JSON request` | the route takes the request, never Alertmanager's shape; Go's decoder names an unknown field, which the journalled refusal must not carry |
 
 Not taken yet, and adding them later breaks nothing: an external
 producer's own names (`motel monitor send --name`), which no config
@@ -551,7 +551,9 @@ lists; regexes; other labels.
 
 The comment is the one free text, and it is **masked, not refused**:
 `clean(comment, release)`, as a summary is, with the release safe as
-the engine takes it. A refusal would echo nothing useful (it cannot
+the engine takes it, and with the known values of the config the route
+checked, not the engine's at that instant (a reload between the two
+would mask with another file's). A refusal would echo nothing useful (it cannot
 say which part without printing it) and would send the operator to
 guess; a masked comment in Alertmanager shows the filter's marker where
 the secret was, which reads as what it is. The bare-ntfy-topic limit of
