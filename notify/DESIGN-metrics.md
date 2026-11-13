@@ -892,7 +892,9 @@ ages.
 `backup_stale`: each app's age of its last complete backup at the last
 record read, against `status.StaleAfter` (3 h). `watchdog_throttled`:
 each app's restarts in its window against its budget, read from the
-watchdog's memory when asked (liveswap's `WatchdogBudgets`).
+watchdog's memory when asked (liveswap's `WatchdogBudgets`); it fires
+when a further restart is needed while the budget is spent, so a
+spent budget with a healthy instance is close, not firing.
 `metrics_store_down`: how long every push has failed, as of the last
 push, against 5 m. `metrics_rules_down`: the reads in a row without
 vmalert up, against 3. Everything else is an event: deploys, rollbacks,

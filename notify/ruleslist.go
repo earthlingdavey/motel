@@ -111,7 +111,7 @@ type Reading struct {
 	Value    float64 `json:"value"`
 	// Threshold and WindowSeconds are the watchdog's, which differ by app.
 	Threshold     *float64 `json:"threshold,omitempty"`
-	WindowSeconds int      `json:"window_seconds,omitempty"`
+	WindowSeconds float64  `json:"window_seconds,omitempty"`
 	// Level is disk_low's severity firing now, which its gap decides.
 	Level      string    `json:"level,omitempty"`
 	MeasuredAt time.Time `json:"measured_at"`
@@ -307,7 +307,7 @@ func checkListing(e *AlertListing, seen polled, chain chainRead, budgets []lives
 		e.Op, e.Unit = ">=", "restarts"
 		for _, b := range budgets {
 			e.Readings = append(e.Readings, Reading{App: b.App, Value: float64(b.Restarts), Threshold: ptr(float64(b.Budget)),
-				WindowSeconds: int(b.Window.Seconds()), MeasuredAt: b.At})
+				WindowSeconds: b.Window.Seconds(), MeasuredAt: b.At})
 		}
 	case eventStoreDown:
 		e.Op, e.Threshold, e.Unit = ">=", ptr(storeDownAfter.Seconds()), "seconds"
@@ -421,7 +421,11 @@ func condition(e AlertListing) string {
 	case e.Threshold != nil:
 		c = e.Op + " " + amount(*e.Threshold, e.Unit)
 	case e.Name == liveswap.EventWatchdogThrottled:
-		c = e.Op + " its budget in its window" // each app's own
+		// Each app's own budget; spent is not firing: it fires when a
+		// further restart is needed and the spent budget refuses it
+		// (liveswap/watchdog.go), so a healthy instance after the last
+		// restart the budget allowed is not throttled.
+		c = "a further restart needed while " + e.Op + " its budget in its window is spent"
 	default:
 		return "-"
 	}
@@ -452,7 +456,7 @@ func readings(e AlertListing, now time.Time) string {
 	for _, r := range e.Readings {
 		v := amount(r.Value, e.Unit)
 		if r.Threshold != nil {
-			v = numberText(r.Value) + " of " + numberText(*r.Threshold) + " in " + shortDuration(time.Duration(r.WindowSeconds)*time.Second)
+			v = numberText(r.Value) + " of " + numberText(*r.Threshold) + " in " + shortDuration(time.Duration(r.WindowSeconds*float64(time.Second)))
 		}
 		if who := r.Instance + r.App; who != "" {
 			v = who + " " + v
@@ -474,23 +478,27 @@ func readings(e AlertListing, now time.Time) string {
 	return "nothing read"
 }
 
-// shortDuration is d to the second, its zero parts left out: 3h59m30s,
-// 10m, 1d2h. To the second, as the thresholds are, so that a value is
-// read on its side of a threshold, under `>` or `>=` alike.
+// shortDuration is d to the millisecond, its zero parts left out:
+// 3h59m30s, 10m, 1d2h, 3h0.5s, 500ms. Cut down to the millisecond, never
+// rounded up, so that a value is read on its side of a threshold, under
+// `>` or `>=` alike: 3h and half a second past `> 3h` is not "3h".
 func shortDuration(d time.Duration) string {
-	d = d.Truncate(time.Second)
-	if d == 0 {
-		return "0s"
+	d = d.Truncate(time.Millisecond)
+	if d < time.Second {
+		return d.String() // 0s, 500ms
 	}
 	var b strings.Builder
 	for _, u := range []struct {
 		d time.Duration
 		s string
-	}{{24 * time.Hour, "d"}, {time.Hour, "h"}, {time.Minute, "m"}, {time.Second, "s"}} {
+	}{{24 * time.Hour, "d"}, {time.Hour, "h"}, {time.Minute, "m"}} {
 		if n := d / u.d; n > 0 {
 			b.WriteString(strconv.Itoa(int(n)) + u.s)
 			d -= n * u.d
 		}
+	}
+	if d > 0 {
+		b.WriteString(strconv.FormatFloat(d.Seconds(), 'f', -1, 64) + "s")
 	}
 	return b.String()
 }
