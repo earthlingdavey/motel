@@ -294,6 +294,11 @@ to the URL: `"summary":"motel is running and can reach Alertmanager"`.
 Healthchecks treats any request to the URL as a ping. **Pause the check
 before you stop motel or Alertmanager on purpose**, or it will page you.
 
+The check also pages when a channel failed and no other channel could
+be told: motel stops the pings then, so a dead channel is not hidden
+behind a green check. If it pages while the box is up, look for
+`monitor: heartbeat held` in the journal (below, "In the journal").
+
 ## Uptime: hear that a site stopped answering
 
 The heartbeat tells you motel runs. It does not tell you that a site
@@ -464,20 +469,35 @@ gives its reason, with the receiver and the channel's kind but never
 the URL:
 
 ```
-time=2026-11-12T17:45:33.575Z level=ERROR source=dispatch.go:360 msg="Notify for alerts failed" component=dispatcher num_alerts=1 err="state-disk-box-warning/discord[0]: notify retry canceled due to unrecoverable error after 1 attempts: unexpected status code 400"
+time=2026-11-12T17:45:33.575Z level=ERROR source=dispatch.go:360 msg="Notify for alerts failed" component=dispatcher num_alerts=1 err="state-warning-oncall/discord[0]: notify retry canceled due to unrecoverable error after 1 attempts: unexpected status code 400"
 ```
 
 motel reads Alertmanager's failure counters, and tells the operator's
 other channels about a failure as `ChannelFailed` (DESIGN-notify.md,
 "Failed delivery"). `ChannelFailed` is a warning, so a channel with
-`severity critical` never hears it. That goes wrong in two cases.
-With a single operator channel there is no other channel to tell, and
-the heartbeat goes on pinging, so nothing off the box hears it either. And
-two channels of one integration count as one, so a failure points at
-both as suspects, and neither hears it: ntfy and json are both
-Alertmanager's webhook integration. Give the operator two channels of
-different integrations, such as ntfy and Slack, and let one of them
-take warnings. ntfy with json is one integration.
+`severity critical` never hears it. Each channel has receivers of its
+own in Alertmanager's config (`ch-ops`, `event-warning-ops`,
+`state-critical-ops`, `fallback-ops`, …), so a failure names the one
+channel that failed, and every other operator channel that takes
+warnings hears it, whatever its kind.
+
+With no other channel to tell (a single operator channel, or the
+others set to `severity critical`), motel **holds the heartbeat**
+instead: once the failure has stood 5 minutes with nothing delivered
+through that channel since, it stops pinging, and the heartbeat's
+check off the box reports the box down through its own channels (its
+email, say). The journal says why:
+
+```
+{"level":"warn","logger":"monitor","msg":"monitor: heartbeat held: a failed delivery no channel was told of; the heartbeat's check off the box will report this box down","suspects":["ops"],"failed_at":"…","resumes":"at the next delivery through the channel: mend it, then motel monitor test ops"}
+```
+
+Mend the channel, then `motel monitor test ops`: the pings start again
+within a minute (`monitor: heartbeat resumed`). A reload that takes the
+channel out, or a restart of motel, resumes them too. A second
+operator channel that takes warnings is still the better answer: it
+names the failure, where the dead-man check can only say the box is
+down.
 
 A state is told twice: once when it fires (after 30 seconds, so a burst
 arrives as one message) and once when it resolves. While it holds, a

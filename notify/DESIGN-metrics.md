@@ -395,10 +395,13 @@ that integration (notify's `suspects`) and whose `severity` floor takes
 a warning (notify's `failureAudience`), the render writes a rule whose
 labels are exactly those motel's own `ChannelFailed` posts for that
 failure: `alertname`, `notify_channel`, `severity="warning"`,
-`subject="box"`, `integration`, `suspects`. Receivers that share all
-three are one rule (`receiver_name=~"a|b"`). Two posts with the same labels
+`subject="box"`, `integration`, `suspects`. Each receiver holds one
+channel (DESIGN-notify.md, "The route tree"), so a channel's receivers
+share all three, and are one rule (`receiver_name=~"ch-ops|event-info-ops|…"`). Two posts with the same labels
 are one alert in Alertmanager, so the two sources deduplicate; the
-heartbeat receiver (no channel, so no suspect) is left to motel's own.
+heartbeat receiver (no channel, so no suspect) is left to motel's own,
+and so is a failure no channel can be told of, which holds the
+heartbeat (DESIGN-notify.md, "Dead-man and uptime"): no rule tells no one.
 With no channel (a `metrics` line alone) every group is empty
 (vmalert refuses a rule file with no group at all); so are they after a
 reload takes the `metrics` line away ("The metrics line").
@@ -1302,7 +1305,7 @@ the request thresholds over the pushed apps alone, a histogram read
 whole, disk history over a gap, a disk step, `GET /<app>`'s request
 queries over the store, a relaunch read past its stopped
 instance, and `scrape.yml` checked by `victoria-metrics` with unknown fields refused), every test that calls `vmTool`
-(`TestE2EMetricsListsEveryVMAlertTest` holds the list to them), run
+(`TestE2EMetricsListsEveryVMAlertTest` holds the list to them), and notify's two over `amtool` (Alertmanager's router over the rendered tree; that test holds their list too), run
 from a test binary built for the box (e2e/Dockerfile's `notify-tests`), none skipped; motel's push arrives
 (`job="motel"`), with a deployed app's `motel_app_up`, release and CPU,
 and its memory where the host's memory controller reaches the user

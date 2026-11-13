@@ -199,15 +199,16 @@ func vmTool(t *testing.T, name string) string {
 }
 
 // The e2e metrics box runs, by name, every test of notify's that needs
-// vmalert, vmalert-tool or the store's binary (`make test` skips them): a test added here
-// and not to e2e/metrics/run.sh's list would run nowhere.
+// vmalert, vmalert-tool or the store's binary, and every one that needs
+// amtool (`make test` skips them): a test added here and not to
+// e2e/metrics/run.sh's lists would run nowhere.
 func TestE2EMetricsListsEveryVMAlertTest(t *testing.T) {
 	files, err := filepath.Glob("*_test.go")
 	if err != nil {
 		t.Fatal(err)
 	}
 	fset := token.NewFileSet()
-	var need []string
+	need := map[string][]string{} // the helper a test calls → the tests
 	for _, name := range files {
 		f, err := parser.ParseFile(fset, name, nil, 0)
 		if err != nil {
@@ -220,8 +221,8 @@ func TestE2EMetricsListsEveryVMAlertTest(t *testing.T) {
 			}
 			ast.Inspect(fn.Body, func(n ast.Node) bool {
 				if c, ok := n.(*ast.CallExpr); ok {
-					if id, ok := c.Fun.(*ast.Ident); ok && id.Name == "vmTool" && !slices.Contains(need, fn.Name.Name) {
-						need = append(need, fn.Name.Name)
+					if id, ok := c.Fun.(*ast.Ident); ok && (id.Name == "vmTool" || id.Name == "amtool") && !slices.Contains(need[id.Name], fn.Name.Name) {
+						need[id.Name] = append(need[id.Name], fn.Name.Name)
 					}
 				}
 				return true
@@ -232,15 +233,17 @@ func TestE2EMetricsListsEveryVMAlertTest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	m := regexp.MustCompile(`(?m)^vmtests='\^\(([^)]*)\)\$'$`).FindSubmatch(run)
-	if m == nil {
-		t.Fatal("e2e/metrics/run.sh has no vmtests='^(...)$' line")
-	}
-	listed := strings.Split(string(m[1]), "|")
-	slices.Sort(need)
-	slices.Sort(listed)
-	if len(need) == 0 || !slices.Equal(need, listed) {
-		t.Errorf("e2e/metrics/run.sh's vmtests = %v; the tests that call vmTool are %v", listed, need)
+	for helper, list := range map[string]string{"vmTool": "vmtests", "amtool": "amtests"} {
+		m := regexp.MustCompile(`(?m)^` + list + `='\^\(([^)]*)\)\$'$`).FindSubmatch(run)
+		if m == nil {
+			t.Fatalf("e2e/metrics/run.sh has no %s='^(...)$' line", list)
+		}
+		listed := strings.Split(string(m[1]), "|")
+		slices.Sort(need[helper])
+		slices.Sort(listed)
+		if len(need[helper]) == 0 || !slices.Equal(need[helper], listed) {
+			t.Errorf("e2e/metrics/run.sh's %s = %v; the tests that call %s are %v", list, listed, helper, need[helper])
+		}
 	}
 }
 
@@ -273,8 +276,14 @@ evaluation_interval: 1m
 tests:
   - interval: 1m
     input_series:
-      - series: 'alertmanager_notifications_failed_total{integration="discord",receiver_name="event-app-blog-warning",reason="clientError",job="alertmanager"}'
+      - series: 'alertmanager_notifications_failed_total{integration="discord",receiver_name="event-warning-alice",reason="clientError",job="alertmanager"}'
         values: '0 0 1 1 1'
+      # bob (json) fails, pager (ntfy) beside it delivers: one integration,
+      # webhook, and a receiver each, so the rule names bob alone.
+      - series: 'alertmanager_notifications_failed_total{integration="webhook",receiver_name="event-critical-bob",reason="clientError",job="alertmanager"}'
+        values: '0 0 1 1 1'
+      - series: 'alertmanager_notifications_failed_total{integration="webhook",receiver_name="event-critical-pager",reason="clientError",job="alertmanager"}'
+        values: '0 0 0 0 0'
       - series: 'motel_app_memory_bytes{app="blog",job="motel"}'
         values: '95x20'
       - series: 'motel_app_memory_max_bytes{app="blog",job="motel"}'
@@ -286,6 +295,8 @@ tests:
         exp_alerts:
           - exp_labels: {notify_channel: ops, severity: warning, subject: box, integration: discord, suspects: alice}
             exp_annotations: {summary: "Alertmanager could not deliver through discord; failing channel: alice (seen by the metrics store)"}
+          - exp_labels: {notify_channel: ops, severity: warning, subject: box, integration: webhook, suspects: bob}
+            exp_annotations: {summary: "Alertmanager could not deliver through webhook; failing channel: bob (seen by the metrics store)"}
       - eval_time: 15m
         groupname: motel-store
         alertname: app_memory_high

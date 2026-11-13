@@ -102,53 +102,170 @@ func receiverChannels(t *testing.T, cfg []byte) map[string][]string {
 	return out
 }
 
-// TestRenderComposesReceivers reads the receivers back: the operator's
-// channels plus the app's, each channel only at or above its floor.
-func TestRenderComposesReceivers(t *testing.T) {
-	cfg, _, _ := renderFull(t)
-	got := receiverChannels(t, cfg)
-	const ops, pager, alice, bob = "NOTIFY_OPS_URL", "NOTIFY_PAGER_URL", "NOTIFY_ALICE_URL", "NOTIFY_BOB_URL"
-	want := map[string][]string{
-		"fallback":                {ops, pager},
-		"blackhole":               nil,
-		"heartbeat":               {"NOTIFY_HC_URL"},
-		"ch-ops":                  {ops},
-		"ch-bob":                  {bob},
-		"event-box-info":          {ops},
-		"event-box-warning":       {ops},
-		"event-box-critical":      {ops, pager},
-		"event-app-blog-info":     {alice, ops},
-		"event-app-blog-critical": {alice, ops, pager},
-		"event-app-shop-info":     {ops},
-		"event-app-shop-warning":  {bob, ops},
-		"event-app-shop-critical": {bob, ops, pager},
-		"state-app-wiki-warning":  {alice, ops},
-		"state-disk-box-critical": {ops, pager},
-	}
-	for name, w := range want {
-		g, ok := got[name]
-		if !ok {
-			t.Errorf("no receiver %s", name)
+// reach is where Alertmanager's router sends an alert in a rendered
+// tree: each route's children in order, the first match ending the walk
+// unless it has continue, the route itself when no child matches. Only
+// the matchers motel writes: k="v" and k=~".+". amtool says the same
+// (TestRenderRoutesWithAmtool) where it is installed.
+func reach(rt amRoute, labels map[string]string, inherited string) []string {
+	for _, m := range rt.Matchers {
+		if k, v, ok := strings.Cut(m, `=~`); ok {
+			if v != `".+"` {
+				panic("reach: matcher " + m)
+			}
+			if labels[k] == "" {
+				return nil
+			}
 			continue
 		}
-		if !slices.Equal(g, w) {
-			t.Errorf("receiver %s = %v, want %v", name, g, w)
+		k, v, _ := strings.Cut(m, "=")
+		if labels[k] != strings.Trim(v, `"`) {
+			return nil
 		}
 	}
-	if _, ok := got["state-disk-app-blog-info"]; ok {
-		t.Error("disk_low has per-app receivers; it is the box's alone")
+	if rt.Receiver != "" {
+		inherited = rt.Receiver
 	}
-	// send_resolved: state receivers announce the recovery, events and
-	// direct ones never do.
+	var out []string
+	for _, c := range rt.Routes {
+		got := reach(c, labels, inherited)
+		out = append(out, got...)
+		if got != nil && !c.Continue {
+			break
+		}
+	}
+	if len(out) == 0 {
+		out = []string{inherited}
+	}
+	return out
+}
+
+func labelSet(kv ...string) map[string]string {
+	m := map[string]string{}
+	for _, s := range kv {
+		k, v, _ := strings.Cut(s, "=")
+		m[k] = v
+	}
+	return m
+}
+
+// TestRenderOneChannelPerReceiver: every receiver holds one channel, so
+// that a failure counted by receiver names it alone; an audience is a
+// leaf per channel under continue: the operator's channels plus the
+// app's, each only at or above its floor.
+func TestRenderOneChannelPerReceiver(t *testing.T) {
+	cfg, _, recv := renderFull(t)
+	got := receiverChannels(t, cfg)
+	const ops, pager, alice, bob = "NOTIFY_OPS_URL", "NOTIFY_PAGER_URL", "NOTIFY_ALICE_URL", "NOTIFY_BOB_URL"
+	secret := map[string]string{"ops": ops, "pager": pager, "alice": alice, "bob": bob}
+	for name, keys := range got {
+		switch name {
+		case "blackhole":
+			if len(keys) != 0 {
+				t.Errorf("blackhole sends to %v", keys)
+			}
+		case "heartbeat":
+			if !slices.Equal(keys, []string{"NOTIFY_HC_URL"}) || len(recv[name]) != 0 {
+				t.Errorf("heartbeat = %v, channels %v", keys, recv[name])
+			}
+		default:
+			if len(keys) != 1 || len(recv[name]) != 1 || secret[recv[name][0]] != keys[0] {
+				t.Errorf("receiver %s sends to %v, render says channels %v", name, keys, recv[name])
+			}
+		}
+	}
+	if len(recv) != len(got)-1 { // the blackhole names no channel
+		t.Errorf("render's receivers %v, the config's %v", recv, got)
+	}
+	// Each channel's receivers: pager takes criticals alone, bob
+	// warnings and up, and neither alice nor bob, a deployer's, is an
+	// operator's (no fallback).
+	want := map[string][]string{
+		"pager": {"ch-pager", "event-critical-pager", "fallback-pager", "state-critical-pager"},
+		"bob":   {"ch-bob", "event-critical-bob", "event-warning-bob", "state-critical-bob", "state-warning-bob"},
+		"alice": {"ch-alice", "event-critical-alice", "event-info-alice", "event-warning-alice",
+			"state-critical-alice", "state-info-alice", "state-warning-alice"},
+	}
+	w := failWatch{channels: recv}
+	for ch, names := range want {
+		if g := w.receiversOf([]string{ch}); !slices.Equal(g, names) {
+			t.Errorf("%s's receivers = %v, want %v", ch, g, names)
+		}
+	}
+
 	var c amConfig
-	_ = yaml.Unmarshal(cfg, &c)
+	if err := yaml.Unmarshal(cfg, &c); err != nil {
+		t.Fatal(err)
+	}
+	routes := []struct {
+		labels map[string]string
+		want   []string
+	}{
+		{labelSet("alertname=Watchdog"), []string{"heartbeat"}},
+		{labelSet("alertname=ChannelFailed", "notify_channel=pager", "severity=warning"), []string{"ch-pager"}},
+		{labelSet("alertname=deploy_in_progress", "kind=mute", "app=blog"), []string{"blackhole"}},
+		{labelSet("alertname=deploy_failed", "kind=event", "app=blog", "severity=warning"), []string{"event-warning-ops", "event-warning-alice"}},
+		{labelSet("alertname=deploy_succeeded", "kind=event", "app=shop", "severity=info"), []string{"event-info-ops"}},
+		{labelSet("alertname=x_failed", "kind=event", "app=shop", "severity=critical"), []string{"event-critical-ops", "event-critical-pager", "event-critical-bob"}},
+		{labelSet("alertname=backup_stale", "kind=event", "subject=box", "severity=critical"), []string{"event-critical-ops", "event-critical-pager"}},
+		{labelSet("alertname=relaunch_refused", "kind=state", "app=wiki", "severity=critical"), []string{"state-critical-ops", "state-critical-pager", "state-critical-alice"}},
+		{labelSet("alertname=disk_low", "kind=state", "subject=box", "severity=warning"), []string{"state-warning-ops"}},
+		{labelSet("alertname=watchdog_throttled", "kind=state", "app=nobody", "severity=critical"), []string{"state-critical-ops", "state-critical-pager"}},
+		{labelSet("alertname=x"), []string{"fallback-ops", "fallback-pager"}},
+	}
+	for _, r := range routes {
+		if g := reach(c.Route, r.labels, ""); !slices.Equal(g, r.want) {
+			t.Errorf("%v → %v, want %v", r.labels, g, r.want)
+		}
+	}
+
+	// send_resolved: state receivers announce the recovery, and the
+	// fallback's; events and direct ones never do.
 	for _, r := range c.Receivers {
+		want := strings.HasPrefix(r.Name, "state-") || strings.HasPrefix(r.Name, "fallback-")
 		for _, w := range r.WebhookConfigs {
-			wantResolved := strings.HasPrefix(r.Name, "state-") || r.Name == "fallback"
-			if w.SendResolved != wantResolved {
+			if w.SendResolved != want {
 				t.Errorf("receiver %s send_resolved = %v", r.Name, w.SendResolved)
 			}
 		}
+		for _, s := range r.SlackConfigs {
+			if s.SendResolved != want {
+				t.Errorf("receiver %s send_resolved = %v", r.Name, s.SendResolved)
+			}
+		}
+		for _, d := range r.DiscordConfigs {
+			if d.SendResolved != want {
+				t.Errorf("receiver %s send_resolved = %v", r.Name, d.SendResolved)
+			}
+		}
+	}
+}
+
+// TestRenderSeverityNoChannelTakesEndsThere: a severity no channel of
+// the audience takes ends at the blackhole, and does not fall through
+// to the info route's channels.
+func TestRenderSeverityNoChannelTakesEndsThere(t *testing.T) {
+	a := mustParse(t, `monitor {
+	channel ops ntfy {secret.NOTIFY_OPS_URL} severity critical
+	operator ops
+	heartbeat {secret.NOTIFY_HC_URL}
+}`)
+	r, err := a.resolve(testTrust(), testSecrets())
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg, _, _ := render(r, testStateDir)
+	var c amConfig
+	if err := yaml.Unmarshal(cfg, &c); err != nil {
+		t.Fatal(err)
+	}
+	for _, sev := range []string{SeverityWarning, SeverityInfo} {
+		if g := reach(c.Route, labelSet("alertname=x_failed", "kind=event", "severity="+sev), ""); !slices.Equal(g, []string{"blackhole"}) {
+			t.Errorf("a %s → %v", sev, g)
+		}
+	}
+	if g := reach(c.Route, labelSet("alertname=x_failed", "kind=event", "severity=critical"), ""); !slices.Equal(g, []string{"event-critical-ops"}) {
+		t.Errorf("a critical → %v", g)
 	}
 }
 
@@ -217,14 +334,13 @@ func TestRenderNtfyPriority(t *testing.T) {
 	}
 	want := map[string]string{
 		// pager is ntfy, critical alone; bob is json.
-		"event-box-critical":          "5",
-		"state-disk-box-critical":     "5",
-		"state-app-shop-critical":     "5",
-		"ch-pager":                    "4", // ChannelFailed's warning, and a test at it
-		"fallback":                    "",
-		"event-app-shop-critical/bob": "",
-		"state-app-shop-critical/bob": "",
-		"state-app-shop-warning/bob":  "",
+		"event-critical-pager": "5",
+		"state-critical-pager": "5",
+		"ch-pager":             "4", // ChannelFailed's warning, and a test at it
+		"fallback-pager":       "",
+		"event-critical-bob":   "",
+		"state-critical-bob":   "",
+		"state-warning-bob":    "",
 	}
 	got := map[string]string{}
 	for _, r := range c.Receivers {
@@ -233,11 +349,7 @@ func TestRenderNtfyPriority(t *testing.T) {
 			if w.HTTPConfig != nil {
 				p = strings.Join(w.HTTPConfig.Headers["X-Priority"].Values, ",")
 			}
-			k := r.Name
-			if strings.HasSuffix(w.URLFile, "NOTIFY_BOB_URL") {
-				k += "/bob"
-			}
-			got[k] = p
+			got[r.Name] = p
 		}
 	}
 	for k, p := range want {
@@ -246,7 +358,7 @@ func TestRenderNtfyPriority(t *testing.T) {
 		}
 	}
 	for k, p := range got {
-		if strings.HasSuffix(k, "/bob") && p != "" {
+		if strings.HasSuffix(k, "-bob") && p != "" {
 			t.Errorf("a json channel carries X-Priority %q (%s)", p, k)
 		}
 	}
@@ -266,9 +378,24 @@ func TestRenderPlumbingFirstAndInhibition(t *testing.T) {
 		first = append(first, strings.Join(r.Matchers, ","))
 	}
 	want := []string{`alertname="Watchdog"`, `notify_channel=~".+"`, `alertname="deploy_in_progress"`,
-		`kind="state",alertname="disk_low"`, `kind="event"`, `kind="state"`}
+		`kind="state",alertname="disk_low"`, `kind="event"`, `kind="state"`, ``}
 	if !slices.Equal(first, want) {
 		t.Fatalf("top-level routes = %q\nwant %q", first, want)
+	}
+	// continue is a channel's leaf's alone: on any other route an alert
+	// would reach two audiences.
+	var walk func(rt amRoute, depth int)
+	walk = func(rt amRoute, depth int) {
+		if rt.Continue && (len(rt.Routes) > 0 || len(rt.Matchers) > 0 || rt.Receiver == "") {
+			t.Errorf("continue on a route that is not a channel's leaf: %+v", rt)
+		}
+		for _, c := range rt.Routes {
+			walk(c, depth+1)
+		}
+	}
+	walk(c.Route, 0)
+	if c.Route.Receiver != "blackhole" {
+		t.Errorf("root receiver %q", c.Route.Receiver)
 	}
 	ev := c.Route.Routes[4]
 	if !slices.Equal(ev.GroupBy, []string{"..."}) || ev.GroupWait != "0s" {
@@ -321,8 +448,9 @@ func TestRenderPassesAmtoolCheckConfig(t *testing.T) {
 
 // TestRenderRoutesWithAmtool asks Alertmanager's own router where each
 // alert motel posts goes, which is the route tree's whole contract:
-// plumbing to its own receivers, app alerts to the composed ones, box
-// alerts to the operator's, nothing to the fallback.
+// plumbing to its own receivers, an app alert to one receiver for each
+// channel of the operator's and the app's, a box alert to one for each
+// of the operator's, nothing to the fallback.
 func TestRenderRoutesWithAmtool(t *testing.T) {
 	tool := amtool(t)
 	cfg := writeRendered(t)
@@ -334,17 +462,20 @@ func TestRenderRoutesWithAmtool(t *testing.T) {
 		{[]string{"alertname=ChannelFailed", "notify_channel=pager", "severity=warning"}, "ch-pager"},
 		{[]string{"alertname=NotifyTest", "notify_channel=alice", "severity=info"}, "ch-alice"},
 		{[]string{"alertname=deploy_in_progress", "kind=mute", "app=blog", "severity=none"}, "blackhole"},
-		{[]string{"alertname=deploy_failed", "kind=event", "app=blog", "severity=warning"}, "event-app-blog-warning"},
-		{[]string{"alertname=deploy_succeeded", "kind=event", "app=shop", "severity=info"}, "event-app-shop-info"},
-		{[]string{"alertname=backup_stale", "kind=event", "subject=box", "severity=critical"}, "event-box-critical"},
-		{[]string{"alertname=watchdog_throttled", "kind=state", "app=blog", "severity=critical"}, "state-app-blog-critical"},
-		{[]string{"alertname=relaunch_refused", "kind=state", "app=wiki", "severity=critical"}, "state-app-wiki-critical"},
-		{[]string{"alertname=disk_low", "kind=state", "subject=box", "severity=warning"}, "state-disk-box-warning"},
-		{[]string{"alertname=cert_failed", "kind=state", "subject=box", "severity=warning"}, "state-box-warning"},
+		{[]string{"alertname=deploy_failed", "kind=event", "app=blog", "severity=warning"}, "event-warning-ops,event-warning-alice"},
+		{[]string{"alertname=deploy_succeeded", "kind=event", "app=shop", "severity=info"}, "event-info-ops"},
+		{[]string{"alertname=backup_stale", "kind=event", "subject=box", "severity=critical"}, "event-critical-ops,event-critical-pager"},
+		{[]string{"alertname=watchdog_throttled", "kind=state", "app=blog", "severity=critical"}, "state-critical-ops,state-critical-pager,state-critical-alice"},
+		{[]string{"alertname=relaunch_refused", "kind=state", "app=wiki", "severity=critical"}, "state-critical-ops,state-critical-pager,state-critical-alice"},
+		{[]string{"alertname=disk_low", "kind=state", "subject=box", "severity=warning"}, "state-warning-ops"},
+		{[]string{"alertname=cert_failed", "kind=state", "subject=box", "severity=warning"}, "state-warning-ops"},
+		{[]string{"alertname=x_failed", "kind=event", "app=shop", "severity=critical"}, "event-critical-ops,event-critical-pager,event-critical-bob"},
+		// bob, shop's, takes warnings and up: shop's info is ops' alone.
+		{[]string{"alertname=x_done", "kind=state", "app=shop", "severity=info"}, "state-info-ops"},
 		// An app with no bindings of its own (none here) or a name no
 		// route knows: the operator's, on the kind's own receivers.
-		{[]string{"alertname=watchdog_throttled", "kind=state", "app=nobody", "severity=critical"}, "state-box-critical"},
-		{[]string{"alertname=x"}, "fallback"},
+		{[]string{"alertname=watchdog_throttled", "kind=state", "app=nobody", "severity=critical"}, "state-critical-ops,state-critical-pager"},
+		{[]string{"alertname=x"}, "fallback-ops,fallback-pager"},
 	}
 	for _, c := range cases {
 		args := append([]string{"config", "routes", "test", "--config.file=" + cfg}, c.labels...)

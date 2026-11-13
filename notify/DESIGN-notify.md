@@ -252,22 +252,50 @@ Rendered by `render` (notify/render.go); the golden file is
 | 1 | `alertname="Watchdog"` | `heartbeat` (the heartbeat's `url_file`), or a blackhole | `group_by [alertname]`, wait 0 s, interval 5 m, repeat 4 m (under the interval, so each 5 m flush re-sends) |
 | 2 | `notify_channel=~".+"` (ChannelFailed, NotifyTest), one child per channel | `ch-<channel>` | `group_by ['...']`, wait 0 s, interval 1 m |
 | 3 | `alertname="deploy_in_progress"` | blackhole: it exists to inhibit | — |
-| 4 | `kind="state", alertname="disk_low"` | the operator's, by severity | wait 30 s, interval 1 m, repeat 24 h |
-| 5 | `kind="event"`, a child per app with channels of its own, each with `severity` children | `event-<box\|app-a>-<severity>` | `group_by ['...']`, wait 0 s, interval 1 m |
-| 6 | `kind="state"`, the same children | `state-<box\|app-a>-<severity>` | wait 30 s, interval 1 m, repeat 4 h |
-| root | anything else (nothing motel posts) | `fallback`, the operator's | — |
+| 4 | `kind="state", alertname="disk_low"`, the operator's audience | `state-<severity>-<channel>` | wait 30 s, interval 1 m, repeat 24 h |
+| 5 | `kind="event"`, an audience per app with channels of its own, then the operator's | `event-<severity>-<channel>` | `group_by ['...']`, wait 0 s, interval 1 m |
+| 6 | `kind="state"`, the same audiences | `state-<severity>-<channel>` | wait 30 s, interval 1 m, repeat 4 h |
+| 7 | anything else (nothing motel posts), the operator's channels | `fallback-<channel>` | the root's |
+| root | — | blackhole, which every route without a receiver inherits | `group_by [alertname, app, subject]`, the state timings |
 
-Plumbing first, so nothing below can swallow it; no `continue:`
-anywhere. An app's receiver is **composed**: the operator's channels
-plus every channel bound to an identity the app trusts, each only at
-or above its floor; an app with no binding has no child and its events
-take the kind's own receivers, the operator's. State receivers
-`send_resolved`; event and direct ones never do. The inhibit rule:
+Plumbing first, so nothing below can swallow it. **Every receiver
+holds one channel** (and the heartbeat's its URL), so that
+Alertmanager's `alertmanager_notifications_failed_total{receiver_name=…}`
+names the one channel that failed ("Failed delivery"). An audience is
+a route with three children, `severity="critical"`, `severity="warning"`
+and one with no matcher (info, and any other severity), each with one
+leaf per channel that takes that severity, every leaf under
+`continue: true`; `continue` is on those leaves alone, so an alert
+reaches every channel of one audience and no other audience. A
+severity no channel of the audience takes keeps its route with no
+leaf, and ends at the blackhole there rather than falling through to
+the info channels. An app's audience is the operator's channels plus
+every channel bound to an identity the app trusts, each only at or
+above its floor; an app with no binding has no audience of its own
+and its alerts take the kind's, the operator's. A receiver is one
+channel's for one use and shared by every route that sends that use
+to it (`state-warning-ops` serves the box's and every app's state
+warnings, and disk_low's): a channel has at most eight (`ch-`,
+`fallback-`, three `event-` and three `state-`). State and fallback
+receivers `send_resolved`; event and direct ones never do. The
+inhibit rule:
 `source_matchers [alertname="deploy_in_progress"]`, `target_matchers
 [alertname=~"watchdog_.*"]`, `equal [app]`, with no severity matcher
 (#418's watchdog events are critical). Slack and Discord get a fixed
 title and text built from motel's summary; json and ntfy the payload
 whole; in a grouped Slack or Discord message each alert that has resolved is marked `[RESOLVED]`. Nothing in the block is a template.
+
+Sibling leaves have the same matchers (none), so their groups share
+one group key; Alertmanager's notification log keys an entry by the
+group key and the receiver, so the log keeps them apart (the e2e
+suite's "what was delivered once stays delivered once" holds with
+them). The split is smaller than the composed receivers were, since
+each channel's integration block (Slack's templates among them) is
+written once per use rather than once per audience, and has more
+routes (measured 2026-11-13: hotserve-1's one ntfy channel, 13 → 10
+receivers, 14 → 28 routes, 4327 → 4245 bytes; three channels, two the
+operator's and a deployer's bound to two apps, 27 → 23 receivers, 28 →
+85 routes, 20844 → 13735 bytes).
 
 The timings are measured (2026-11-10, hotserve-1, Debian 13 arm64):
 
@@ -447,12 +475,16 @@ counted from zero) is a `monitor: channel failed` line, and one
 `ChannelFailed` alert to each operator channel that is not a suspect
 and whose `severity` floor takes a warning, which `ChannelFailed` is
 (`failureAudience`, vmalert's rules' too), each routed to that channel
-alone (`notify_channel=`). The suspects are
-the failing integration's channels in that receiver (`render` returns
-each receiver's channels), or in every receiver when the counter names
-none. A key's bucket bounds the storm. This needs no metrics package:
-the review's point that a notify-only box would otherwise have no
-`channel_failed`.
+alone (`notify_channel=`). The suspect is
+the failing receiver's one channel (`render` returns each receiver's
+channel; "The route tree"), so a working channel of the same
+integration beside it (ntfy and json are both the webhook) is told,
+not blamed; when the counter names no receiver (a drop-in without
+`receiver-name-in-metrics`) the suspects are every channel of the
+integration. A key's bucket bounds the storm. A failure with no
+channel left to tell holds the heartbeat ("Dead-man and uptime"). This
+needs no metrics package: the review's point that a notify-only box
+would otherwise have no `channel_failed`.
 
 ## Dead-man and uptime
 
@@ -471,6 +503,46 @@ the blackhole receiver, and every load (`motel validate` too) warns
 `monitor: no heartbeat in this load`, as for `allow_insecure_channels`:
 nothing outside the box would hear that it stopped. A boot that drops
 the line for its secret ("Secrets at load") warns the same.
+
+**The heartbeat's hold.** A failure no channel can be told of
+(`failureAudience` holds no channel but the suspects: a single
+operator channel, the others taking criticals alone, or a deployer's
+channel failing when no operator channel takes warnings) would be heard
+nowhere while the check off the box stays green. So once such a
+failure has stood 5 minutes (`heartbeatHoldAfter`) with no delivery
+through the suspect's receivers since, motel stops posting `Watchdog`:
+it ends within its 4 m life, the heartbeat receiver renders
+`send_resolved: false` so its end sends nothing, and the dead-man
+service alerts through its own channels (any service that takes a
+ping URL; no new endpoint, no new line). The 5 minutes are for a
+passing fault: Alertmanager logs no failed notification, so it sends
+it again at the group's next flushes (one delivered before motel's read
+of the failure is not counted: "Accepted residuals"). A delivery is an attempt that did
+not fail, read from `alertmanager_notification_requests_total` and
+`…_requests_failed_total` by receiver, which motel reads from
+Alertmanager's own `/metrics` over the socket with the failed counter
+(not from the store). The pings resume at the next delivery through
+the suspect's receivers (`motel monitor test <channel>` makes one), at
+a load whose config no longer has the channel, or at a restart of
+motel: the hold is in memory, as the counter's baseline is.
+`monitor: heartbeat held: …` (warn) names the suspect, when it failed
+and what resumes it, and `monitor: heartbeat resumed` says through
+which receiver, or why. A failure with no suspect is the heartbeat's
+own receiver's, which its check hears already, and holds nothing; so
+does one whose receiver is not this config's (the counter names none,
+or a name from before a reload): its suspects are a guess, and no
+delivery is counted by channel to end a hold. In a block with no
+`heartbeat` line, where no check off the box would hear a hold, a
+failure is recorded but nothing is held; a load that adds the line
+holds what stands at the next read, and one that takes it away ends
+the hold (self-review of #449).
+Runtime state, not a rendered inhibition: "a rise told to no one, and
+no delivery since" is a reading of Alertmanager's counters over time,
+which only motel's minute read sees on a notify-only box (Alertmanager
+has no rule over its own metrics, and vmalert is optional); an inhibit
+rule would still need motel to post a source alert from that same
+state, and a render change. The state is one map in the engine
+(`untold`, notify/channelfailed.go).
 
 ## External producers and tests
 
@@ -798,14 +870,18 @@ on its general scales. notify's examples:
 | A JSON config (or a `/load`) with `"state_dir"` or `"alertmanager"` is refused as Caddy's `json: unknown field "state_dir"`, not with the Caddyfile's sentence that names the fixed path | notify/app.go (no field; Caddy's `StrictUnmarshalJSON`) | 2 | 5 | 1 | 10; refused, naming the field, and the Caddyfile is what a box loads; the sentence in JSON needs a field kept only to refuse it, or an `UnmarshalJSON` (size 2, risk 2). /code-review of #438 |
 | `motel monitor setup` from a new binary while an old motel still serves a config with a `state_dir` line names `/var/lib/motel-notify/alertmanager.yml`, where that motel does not render | notify/setup.go (`loadedSays`) | 3 | 2 | 3 | 18; the install restarts motel onto the new binary, which refuses the line, so this needs setup run from an unpacked `.deb` before the install (docs/upgrading.md suggests only `validate` there) on a box that kept the line the upgrade note says to remove; saying so needs a branch on the raw JSON (size 2, risk 2). /code-review of #438 |
 | The journal lines of `applyRender` and `applyNothing`, and the metrics store's not-set-up warning, name their directory under the key `state_dir`, a line this version refuses: an operator who adds one to move it is refused at the next load | notify/app.go, metrics.go (`zap.String("state_dir", …)`) | 2 | 5 | 1 | 10; the refusal names the fixed path and says to remove the line; renaming the key changes what a journal search for it finds, and no test reads it (size 1, risk 2). /code-review of #438 |
+| The first load on a release with a receiver per channel (the upgrade, and a downgrade back) gives every alert Alertmanager holds a new route and receiver, so no notification-log entry matches it: each state still firing, and each one-shot inside its 5 m life, is sent once more to each of its channels as `[FIRING]`, about 30 s after (0 s for an event). Resolved alerts are not re-sent (a group with no entry and nothing firing sends nothing); `ChannelFailed`, `NotifyTest` and the heartbeat keep their routes and receivers, and are not | notify/render.go (receiver names and routes); Alertmanager's nflog (group key and receiver) | 2 | 5 | 1 | 10; a duplicate the operator sees once per standing alert, named in docs/upgrading.md; the log's key is the receiver, so no rename keeps it (none to make). Scored before the build of #449 |
+| A passing fault (one 5xx from ntfy.sh) on the only channel that `failureAudience` holds stops the heartbeat when no delivery through that channel follows motel's read of the failure within 5 minutes: no other alert to it, or the retry that delivered came before that read (Alertmanager gives a notification up at the flush's deadline and the next flush follows at once, and the read that sees the rise takes that delivery into its baseline). The dead-man check reports the box down while it runs, and stays red until the operator runs `motel monitor test` or the next alert is delivered | notify/channelfailed.go (`untoldFor`, `watchUntold`) | 2 | 3 | 1 | 6; the page names nothing wrong with the box, but the `monitor: heartbeat held` line names the channel and the test that resumes it. Probing the channel unasked would post to it (size 3, risk 2); taking the baseline from the read before the rise keeps every receiver's last count (a new state, size 3, risk 2). Scored before the build of #449; the retry before the read, /code-review of #449 |
+| Every operator channel that takes warnings fails at once (two webhooks revoked): each one's `ChannelFailed` goes to another that fails too, so each rise has someone to tell, no hold comes, and the heartbeat stays green while nothing is heard | notify/channelfailed.go (`scrapeFailed`: a hold only when no one is told) | 3 | 2 | 3 | 18; two faults, or one cause that takes the box's egress with it, when the heartbeat's own pings fail too and the check pages; holding when every told channel is itself failing reads the told channels' receivers too (size 3, risk 2). /code-review of #449 |
+| A channel that refuses one message (a Slack or Discord 400 for one alert's text) and delivers the rest: each delivery ends the hold, the failing message's next retry starts another, so the heartbeat flaps between held and pinging and the dead-man check between down and up | notify/channelfailed.go (`watchUntold`: any delivery through the channel) | 2 | 3 | 1 | 6; red, though flapping, and each hold's line names the channel; telling a refused message from a refused channel needs the failing notification's own outcome, which Alertmanager's counters do not give. /code-review of #449 |
+| A reload that adds an operator channel taking warnings, while a hold stands, leaves the hold until a delivery through the failed channel, and the new channel hears of the failure only at its next rise (Alertmanager's next failing re-send, while the alert lives), not at the load | notify/channelfailed.go (`keepUntold`: drops only a hold whose channel went) | 2 | 5 | 1 | 10; the check stays red and the `heartbeat held` line still names the channel; ending the hold at a rise told to someone, or posting `ChannelFailed` to the new audience at the load, is a branch (size 2, risk 2). /code-review of #449 |
+| Alertmanager without `--enable-feature=receiver-name-in-metrics` (the drop-in's flag gone): a failure names no receiver, its suspects are every channel of the integration, and a failure no channel can be told of holds nothing, so with a single operator channel the heartbeat stays green while its alerts fail | notify/channelfailed.go (`untoldFor`: a receiver this config knows) | 3 | 1 | 3 | 9; the drop-in is setup's file, which only root writes, and `motel validate` warns when it differs from the one this motel would write; a hold on a guessed suspect could only end at a reload or a restart, since requests are then counted under no receiver (summing them by integration is size 2, risk 2). /code-review of #449, pass 2 |
 
 ### Owed
 
 | Owed | S | O | D | Lands in |
 |---|---|---|---|---|
 | A fragment of a secret that is not a whole value, nor one of its forms, nor shaped like a secret, passes the filter: an ntfy topic alone (in `send --instance ops-alerts` or a summary, or a silence's comment, where the topic is the credential) is journalled, and a silence stores its comment in Alertmanager. Pre-existing in the filter's known-value layer (whole values and their forms), which every summary goes through; found by /code-review pass 3 on monitor/silence | 3 | 5 | 5 | the filter's own change (liveswap/redact.go: a channel URL's path part as a form of its value, as a URL's password is; size 2, risk 2), not this branch: it reaches every summary motel sends. Flagged for the owner |
-| ntfy and json share the webhook integration, and so do any two channels of one kind in one receiver: a failure of one names every such channel as a suspect, a working one among them, and none of them is told (`ChannelFailed` goes only to the operator channels that are not suspects). Moved from Accepted: its product is 30, over the bar of 20 (the operator/deployer review of 2026-11-11, rechecked at 01b2fd5 and at 04e52a9) | 2 | 5 | 3 | its own PR, "monitor: one receiver per channel" (notify/render.go, channelfailed.go `suspects`, metricsrules.go: each channel its own receiver under `continue` routes, so that a failure names one channel; size 3, risk 2). Independent of #433, and it reshapes every route. It carries the heartbeat's hold too (the next row) |
-| An operator with no channel to hear a failure (a single channel, or the others taking criticals alone, `failureAudience`): `ChannelFailed` is told nowhere and the heartbeat goes on pinging, so a dead channel delivers no alert while the dead-man check stays green (hotserve-1: one ntfy channel, `ops`, and a Healthchecks heartbeat). The `monitor: channel failed` line names the cause, in the journal alone. Moved from Accepted (2 5 1) at the rescore of 2026-11-13: S 3, not 2, since the green check is a verdict the operator trusts (not 5: the journal line keeps it from "lost silently", and not 4: delivery resumes with the channel); O 4, not 5, since the block is operator input but the dead channel is one common fault; D 3, not 1, since the green check and a quiet channel are a plausible answer and nothing sends the operator to the journal. A single fault that ends green (rule 2); its product is 36 | 3 | 4 | 3 | the PR "monitor: one receiver per channel", after its receivers, so that a hold never stands while a working channel is among the suspects (notify/engine.go `tick`, channelfailed.go `scrapeFailed`). While a failure is told to no channel, motel stops posting `Watchdog`; it ends within its 4 m life and the dead-man service alerts through its own channels. Any service that takes a ping URL works; there is no new endpoint and no new Caddyfile line. An Alertmanager inhibit rule was not taken: it needs a source alert and a render change. The hold comes only once the untold failure has stood 5 m with no delivery through a suspect's receiver since (the requests counters motel reads already). The pings resume at the next such delivery (`motel monitor test` makes one), or at a restart of motel (the hold is in memory, as the baseline is). The heartbeat receiver renders `send_resolved: false`, so Watchdog's end sends nothing. `monitor: heartbeat held` says why, naming the suspects, and `monitor: heartbeat resumed` follows. Size 3 (a new state), risk 2 (the minute's heartbeat changes under its tests and a new one). **Wide**: it changes what the dead-man check off the box reports for every box with a heartbeat, and a wrong hold pages. A pulled health endpoint was not taken: a public route, a token, and the box's state exposed. Later, additive: Healthchecks' `<ping-url>/fail` with the reason in the body, and a load that leaves no channel |
 | An external producer's state (`motel monitor send --state firing`) does not outlive a restart of motel: the engine's table is emptied and nothing reports the key again, as liveswap's standing reports and the pollers do for motel's own, so Alertmanager ends the alert at `resolve_timeout` and the channels get a recovery that did not happen; the producer's later `resolved` finds no state. Measured in the metrics e2e box at c979404: restart at 19:36:55, `[RESOLVED]` for both states at 19:41:55. docs/monitor.md tells a producer to send `firing` again every few minutes meanwhile (the second-model review of #432) | 3 | 4 | 5 | the next code PR on feature/notify-and-metrics (notify/engine.go: keep external states across a restart, as liveswap keeps `alerts.json`; size 3, risk 2) |
 | A heartbeat's ping URL is masked whole only: its credential alone (Healthchecks' UUID in `hc-ping.com/<uuid>`, or the ping key in `hc-ping.com/<key>/<slug>`) passes the filter, a UUID not being secret-shaped (measured), so one typed into a summary lets a reader fake the heartbeat. The heartbeat takes any service's URL, so where its credential sits is not a kind's fixed place, as for json channels | 3 | 5 | 5 | a follow-up once the owner picks the forms to take (Healthchecks' UUID and ping-key forms by host, or every UUID-shaped segment); in `knownValues`/`urlCredentials` (notify/app.go), size 2, risk 1. /code-review of the partial mask, finding 5 |
 | ntfy's `auth` parameter is taken as a whole and form-decoded: the access token or password inside it (base64 of `Bearer tk_…` or `Basic …`) is not masked alone, and a raw `+` in it is read as a space, so the value as written is masked within the whole URL only. And a self-hosted ntfy under a sub-path with a topic named `publish`, `send` or `trigger` has its base path taken as the topic (the real topic, 7 characters or less, is under the filter's 8 anyway): that path is masked in summaries. /code-review pass 2 of the partial mask, findings 2 to 4 (second-pass hardening, rows by the review rule) | 3 | 5 | 5 | the heartbeat follow-up above (notify/app.go `urlCredentials`: the auth value from `RawQuery` as written, its base64 decoded and the scheme word cut, the suffix strip only on the public ntfy.sh host or for a topic that is a suffix word; size 2, risk 1) |
@@ -834,7 +910,10 @@ refusals, and nobody unable to send; the inhibition of the deploying
 app's `watchdog_throttled` while another app's arrives after the
 `group_wait`; a state from outside at +30 s and its recovery after
 motel's hold and one tick; a channel answering 400 named in
-`ChannelFailed` to the other operator channel; `motel monitor test`
+`ChannelFailed` to the other operator channel, Alertmanager's failed
+counter naming that channel's receivers alone; the deployer's ntfy
+channel failing beside the operator's json (one integration, the
+webhook) named alone and told to both operator channels; `motel monitor test`
 delivered and failed; the view probe's three keys closed from inside a
 sandboxed app; no URL in either journal; a channel whose secret is
 missing refused by `motel validate` and `systemctl reload`, dropped at
@@ -850,7 +929,13 @@ validate` naming `monitor`, and `motel notify setup` exiting 1 with
 `motel monitor setup`; the block taken out by a reload while a state
 fires: the state directory holds the config that sends nothing and no
 URL file, the journal says so, and the alert's end, posted by root at
-once rather than awaited at `resolve_timeout`, reaches no channel. Not
+once rather than awaited at `resolve_timeout`, reaches no channel; and
+with the failing channel the operator's only one, the heartbeat held
+about six minutes after the failure (`monitor: heartbeat held` naming
+it, `ChannelFailed` told to no channel, no `Watchdog` posted after),
+and resumed once the channel is mended and `motel monitor test`
+delivers through it. The metrics suite runs the two `amtool` tests
+(the rendered tree through Alertmanager's own router). Not
 in e2e (unit-tested only): the
 five-minute give-up of an undeliverable post, the bucket's hour.
 Section 7a: `motel monitor silence add --json --alert rollback --app
@@ -968,3 +1053,14 @@ Dated one-liners; the full text of each is in git.
   journal (4 5 3 = 60, size 1, risk 2). The line is refused the same
   way, saying where the socket is fixed; tests stand a socket in
   through a second unexported variable.
+- 2026-11-13 — The two Owed rows "ntfy and json share the webhook
+  integration" (2 5 3 = 30) and "an operator with no channel to hear a
+  failure" (3 4 3 = 36) landed (#449): every receiver holds one channel,
+  an audience being a leaf per channel under `continue` ("The route
+  tree"), so a failure names the channel that failed and a working one
+  of the same integration is told; and a failure no channel can be
+  told of holds the heartbeat once it has stood 5 minutes with no
+  delivery through the channel, until the next one ("Dead-man and
+  uptime"). Runtime state, not an inhibit rule (the reasons there).
+  The first load after the upgrade re-sends what fires once (an
+  accepted row; docs/upgrading.md, "A receiver per channel").

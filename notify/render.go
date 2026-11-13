@@ -74,6 +74,9 @@ type amRoute struct {
 	GroupInterval  string    `yaml:"group_interval,omitempty"`
 	RepeatInterval string    `yaml:"repeat_interval,omitempty"`
 	Routes         []amRoute `yaml:"routes,omitempty"`
+	// Continue is set on a channel's leaf alone: its siblings, the
+	// audience's other channels, are matched too.
+	Continue bool `yaml:"continue,omitempty"`
 }
 
 type amInhibit struct {
@@ -169,6 +172,13 @@ func urlFileName(key string) string { return "url-" + key }
 // URL files it names (file name → value), and each receiver's channels,
 // which channel_failed reads a failing receiver against. stateDir is
 // where the files will be written, which the url_file paths name.
+//
+// Every receiver holds one channel (DESIGN-notify.md, "The route
+// tree"): an audience is a route whose children are one leaf per
+// channel, each under continue, so that Alertmanager's
+// alertmanager_notifications_failed_total{receiver_name=…} names the
+// one channel that failed, never a working one of the same integration
+// beside it.
 func render(r *resolved, stateDir string) ([]byte, map[string]string, map[string][]string) {
 	files := make(map[string]string, len(r.urls))
 	for key, v := range r.urls {
@@ -178,46 +188,62 @@ func render(r *resolved, stateDir string) ([]byte, map[string]string, map[string
 
 	cfg := amConfig{Global: amGlobal{ResolveTimeout: "5m"}}
 	receivers := map[string][]string{}
-	// sev is the severity the receiver's alerts carry, "" for the
-	// fallback, whose may be any. A channel's own receiver carries
-	// ChannelFailed's warning, and a test at it too, so that a test proves
-	// the priority the failure would arrive at.
-	recv := func(name string, channels []string, resolved bool, sev string) amRecv {
-		rc := amRecv{Name: name}
-		receivers[name] = slices.Clone(channels)
-		for _, n := range channels {
-			ch := r.channels[n]
-			switch channelKinds[ch.Kind] {
-			case "slack":
-				rc.SlackConfigs = append(rc.SlackConfigs, amSlack{APIURLFile: file(ch.Secret), SendResolved: resolved,
-					Title: msgTitle, Text: msgText, Fallback: msgTitle, Color: slackColor})
-			case "discord":
-				rc.DiscordConfigs = append(rc.DiscordConfigs, amDiscord{WebhookURLFile: file(ch.Secret), SendResolved: resolved, Title: msgTitle, Message: msgText})
-			default:
-				w := amWebhook{URLFile: file(ch.Secret), SendResolved: resolved}
-				if p := ntfyPriority[sev]; ch.Kind == "ntfy" && p != "" {
-					w.HTTPConfig = &amHTTPConfig{Headers: map[string]amHeader{"X-Priority": {Values: []string{p}}}}
-				}
-				rc.WebhookConfigs = append(rc.WebhookConfigs, w)
-			}
-		}
-		return rc
-	}
 	add := func(rc amRecv) string {
 		cfg.Receivers = append(cfg.Receivers, rc)
 		return rc.Name
 	}
+	// recv is channel n's receiver for one use ("ch", "fallback",
+	// "event-<severity>", "state-<severity>"), made at its first use
+	// and shared by every route that sends that use to n. sev is the
+	// severity its alerts carry, "" for the fallback, whose may be any.
+	// A channel's own receiver (ch-) carries ChannelFailed's warning,
+	// and a test at it too, so that a test proves the priority the
+	// failure would arrive at.
+	recv := func(use, n string, resolved bool, sev string) string {
+		name := use + "-" + n
+		if _, ok := receivers[name]; ok {
+			return name
+		}
+		receivers[name] = []string{n}
+		rc := amRecv{Name: name}
+		ch := r.channels[n]
+		switch channelKinds[ch.Kind] {
+		case "slack":
+			rc.SlackConfigs = []amSlack{{APIURLFile: file(ch.Secret), SendResolved: resolved,
+				Title: msgTitle, Text: msgText, Fallback: msgTitle, Color: slackColor}}
+		case "discord":
+			rc.DiscordConfigs = []amDiscord{{WebhookURLFile: file(ch.Secret), SendResolved: resolved, Title: msgTitle, Message: msgText}}
+		default:
+			w := amWebhook{URLFile: file(ch.Secret), SendResolved: resolved}
+			if p := ntfyPriority[sev]; ch.Kind == "ntfy" && p != "" {
+				w.HTTPConfig = &amHTTPConfig{Headers: map[string]amHeader{"X-Priority": {Values: []string{p}}}}
+			}
+			rc.WebhookConfigs = []amWebhook{w}
+		}
+		return add(rc)
+	}
+	// fanout is one leaf per channel, each matching everything its
+	// parent does and going on to the next.
+	fanout := func(use string, channels []string, resolved bool, sev string) []amRoute {
+		var out []amRoute
+		for _, n := range channels {
+			out = append(out, amRoute{Receiver: recv(use, n, resolved, sev), Continue: true})
+		}
+		return out
+	}
 
-	// The root's receiver is the operator's, and no alert should reach
-	// it: every alert motel posts matches a route below.
+	// The root's receiver is the blackhole, which every route without
+	// a receiver of its own inherits: a severity no channel takes, for
+	// one. Every alert motel posts matches a route below, the last of
+	// which is the fallback, the operator's.
+	blackhole := add(amRecv{Name: "blackhole"})
 	cfg.Route = amRoute{
-		Receiver:       add(recv("fallback", r.operator, true, "")),
+		Receiver:       blackhole,
 		GroupBy:        []string{"alertname", "app", "subject"},
 		GroupWait:      stateGroupWait,
 		GroupInterval:  stateGroupInterval,
 		RepeatInterval: stateRepeatInterval,
 	}
-	blackhole := add(amRecv{Name: "blackhole"})
 
 	// 1. Plumbing first, so nothing below can swallow it.
 	heartbeat := blackhole
@@ -236,7 +262,7 @@ func render(r *resolved, stateDir string) ([]byte, map[string]string, map[string
 	for _, n := range r.order {
 		direct.Routes = append(direct.Routes, amRoute{
 			Matchers: []string{fmt.Sprintf("%s=%q", labelChannel, n)},
-			Receiver: add(recv("ch-"+n, []string{n}, false, SeverityWarning)),
+			Receiver: recv("ch", n, false, SeverityWarning),
 		})
 	}
 	cfg.Route.Routes = append(cfg.Route.Routes,
@@ -254,11 +280,10 @@ func render(r *resolved, stateDir string) ([]byte, map[string]string, map[string
 	)
 
 	// 2. One route per kind, carrying the timing; under it a route per
-	// app that has channels of its own, each with a receiver composed
-	// of the operator's channels and the app's, by severity. A box
-	// event (no app label) stays on the kind's own receivers, which
-	// are the operator's.
-	audience := func(kind, who string, extra []string) amRoute {
+	// app that has channels of its own, each fanned out to the
+	// operator's channels and the app's, by severity. A box event (no
+	// app label) stays on the kind's own audience, the operator's.
+	audience := func(kind string, extra []string) amRoute {
 		chans := func(sev string) []string {
 			var out []string
 			for _, n := range append(slices.Clone(r.operator), extra...) {
@@ -268,31 +293,32 @@ func render(r *resolved, stateDir string) ([]byte, map[string]string, map[string
 			}
 			return out
 		}
-		name := func(sev string) string { return kind + "-" + who + "-" + sev }
 		resolved := kind == kindState
-		rt := amRoute{Receiver: add(recv(name(SeverityInfo), chans(SeverityInfo), resolved, SeverityInfo))}
+		// A severity route stays when no channel takes it, its leaves
+		// none: the alert ends at the blackhole there, and does not fall
+		// through to the next.
+		var rt amRoute
 		for _, sev := range []string{SeverityCritical, SeverityWarning} {
 			rt.Routes = append(rt.Routes, amRoute{
 				Matchers: []string{fmt.Sprintf("severity=%q", sev)},
-				Receiver: add(recv(name(sev), chans(sev), resolved, sev)),
+				Routes:   fanout(kind+"-"+sev, chans(sev), resolved, sev),
 			})
 		}
+		// Info, and any other severity.
+		rt.Routes = append(rt.Routes, amRoute{Routes: fanout(kind+"-"+SeverityInfo, chans(SeverityInfo), resolved, SeverityInfo)})
 		return rt
 	}
-	kindRoute := func(kind string, matchers []string, groupBy []string, wait, interval, repeat, tag string) amRoute {
-		rt := audience(kind, tag+"box", nil)
+	kindRoute := func(kind string, matchers []string, groupBy []string, wait, interval, repeat string, perApp bool) amRoute {
+		rt := audience(kind, nil)
 		rt.Matchers = matchers
 		rt.GroupBy, rt.GroupWait, rt.GroupInterval, rt.RepeatInterval = groupBy, wait, interval, repeat
 		var apps []amRoute
 		for _, app := range r.apps {
-			if tag == "disk-" {
-				break // disk_low is the box's alone
-			}
 			extra := r.appChannels[app]
-			if len(extra) == 0 {
+			if !perApp || len(extra) == 0 {
 				continue
 			}
-			ar := audience(kind, tag+"app-"+app, extra)
+			ar := audience(kind, extra)
 			ar.Matchers = []string{fmt.Sprintf("app=%q", app)}
 			apps = append(apps, ar)
 		}
@@ -300,12 +326,15 @@ func render(r *resolved, stateDir string) ([]byte, map[string]string, map[string
 		return rt
 	}
 	cfg.Route.Routes = append(cfg.Route.Routes,
+		// disk_low is the box's alone.
 		kindRoute(kindState, []string{fmt.Sprintf("kind=%q", kindState), fmt.Sprintf("alertname=%q", alertDiskLow)},
-			nil, stateGroupWait, stateGroupInterval, diskRepeatInterval, "disk-"),
+			nil, stateGroupWait, stateGroupInterval, diskRepeatInterval, false),
 		kindRoute(kindEvent, []string{fmt.Sprintf("kind=%q", kindEvent)},
-			[]string{"..."}, eventGroupWait, eventGroupInterval, eventRepeatInterval, ""),
+			[]string{"..."}, eventGroupWait, eventGroupInterval, eventRepeatInterval, true),
 		kindRoute(kindState, []string{fmt.Sprintf("kind=%q", kindState)},
-			nil, stateGroupWait, stateGroupInterval, stateRepeatInterval, ""),
+			nil, stateGroupWait, stateGroupInterval, stateRepeatInterval, true),
+		// 3. Anything else (nothing motel posts): the operator's.
+		amRoute{Routes: fanout("fallback", r.operator, true, "")},
 	)
 
 	// The deploy mute: an app's deploy in progress silences its own

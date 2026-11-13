@@ -208,7 +208,10 @@ type engine struct {
 	lastDisk   time.Time
 
 	// channel_failed's memory of Alertmanager's counter, and the read.
-	fail    failWatch
+	fail failWatch
+	// untold is each failure no channel was told of, by its key: the
+	// heartbeat's hold (channelfailed.go).
+	untold  map[string]*untold
 	metrics func(context.Context) ([]byte, error)
 
 	failures *failCounter
@@ -221,6 +224,7 @@ func newEngine() *engine {
 		states:   map[string]*stateAlert{},
 		mutes:    map[string]time.Time{},
 		buckets:  map[string]*bucket{},
+		untold:   map[string]*untold{},
 		wake:     make(chan struct{}, 1),
 		retryFor: retryFor,
 		backoff: func(attempt int) time.Duration {
@@ -418,7 +422,9 @@ func (e *engine) tick() {
 		return
 	}
 	now := e.now()
-	if now.Sub(e.lastHeartbeat) >= heartbeatEvery {
+	// Held while a failure no channel was told of stands: the check off
+	// the box is what reports it.
+	if now.Sub(e.lastHeartbeat) >= heartbeatEvery && !e.heartbeatHeld() {
 		e.lastHeartbeat = now
 		e.enqueue(&pending{key: "heartbeat", alerts: []amAlert{{
 			Labels:      map[string]string{"alertname": alertWatchdog, "severity": "none"},
@@ -689,6 +695,7 @@ func (e *engine) setConfig(a *App, post poster, known []string, logger *zap.Logg
 			e.fail.kinds[name] = channelKinds[ch.Kind]
 		}
 		e.prune(a.cfg.apps)
+		e.keepUntold(a.cfg.channels)
 	}
 }
 
@@ -756,6 +763,7 @@ func (e *engine) release(a *App) {
 	// brings the block back. Alertmanager ends what it was told at
 	// resolve_timeout.
 	e.states, e.mutes, e.buckets = map[string]*stateAlert{}, map[string]time.Time{}, map[string]*bucket{}
+	e.untold = map[string]*untold{}
 	cancel, done, running := e.cancel, e.done, e.running
 	e.running = false
 	e.mu.Unlock()

@@ -17,6 +17,8 @@
 #   watchdog_throttled shop       → /ops, after the 30 s group_wait
 #   a box state (monitor send)    → /ops at +30 s; its recovery within a minute of motel's hold
 #   oncall (answers 400)          → ChannelFailed to /ops, naming oncall
+#   blog-deployer failing         → ChannelFailed to /ops (json beside its ntfy), naming it alone
+#   oncall the only operator      → the heartbeat held after 5 m, resumed by a delivery
 #
 # and the socket's reach: no TCP listener, root and motel admitted,
 # nobody refused, nothing of it in an app's sandbox view; the journal
@@ -217,6 +219,49 @@ else
 fi
 journalctl -u motel -o cat --no-pager | grep 'monitor: channel failed' | grep -q 'oncall' \
 	&& pass "journal: monitor: channel failed names oncall" || fail "no channel failed line naming oncall"
+# A receiver per channel: Alertmanager's failed counter names oncall's
+# receivers alone, and the alert names oncall alone.
+failing_receivers() {
+	am http://am/metrics | awk '/^alertmanager_notifications_failed_total\{/ && $NF+0 > 0 {
+		if (match($0, /receiver_name="[^"]*"/)) print substr($0, RSTART+15, RLENGTH-16) }' | sort -u
+}
+r=$(failing_receivers)
+[ -n "$r" ] && ! printf '%s\n' "$r" | grep -qv -- '-oncall$' \
+	&& pass "the failed counter names oncall's receivers alone: $(echo $r)" || fail "failing receivers: $(echo $r)"
+am 'http://am/api/v2/alerts?filter=alertname%3D%22ChannelFailed%22&filter=notify_channel%3D%22ops%22' | grep -q '"suspects":"oncall"' \
+	&& pass "ChannelFailed to ops names oncall alone (suspects=oncall)" || fail "ChannelFailed: $(am 'http://am/api/v2/alerts?filter=alertname%3D%22ChannelFailed%22' | head -c 400)"
+
+echo "=== notify 6b: two channels of one integration: the failing one alone is named ==="
+# ops (json) and blog-deployer (ntfy) are both Alertmanager's webhook
+# integration, and both hear blog's events. Under a receiver they
+# shared, blog-deployer's failure named both, and only oncall (which
+# fails) was told; with a receiver each it names blog-deployer, and ops
+# hears it.
+cp -p /etc/motel/secrets/_box.env /tmp/_box.env.6b
+sed -i 's#^NOTIFY_BLOG_URL=.*#NOTIFY_BLOG_URL="http://e2e-sink:8080/broken"#' /etc/motel/secrets/_box.env
+motel reload --config /etc/motel/Caddyfile >/tmp/reload-6b.out 2>&1 || fail "the reload with blog-deployer failing: $(tail -3 /tmp/reload-6b.out)"
+t_6b=$(now_ms)
+s_6b=$(date +%s)
+send --subject app:blog --name probe_6b_failed --severity warning --summary "e2e: to ops and blog-deployer" \
+	|| fail "send: $(cat /tmp/send.out)"
+t=$(first_arrival /ops probe_6b_failed "$t_6b" 10)
+[ -n "$t" ] && pass "the event reached ops" || fail "the event never reached ops"
+i=0
+until am 'http://am/api/v2/alerts?filter=alertname%3D%22ChannelFailed%22&filter=suspects%3D%22blog-deployer%22' | grep -q '"notify_channel":"ops"'; do
+	i=$((i + 1)); [ "$i" -ge 100 ] && break; sleep 1
+done
+am 'http://am/api/v2/alerts?filter=alertname%3D%22ChannelFailed%22&filter=suspects%3D%22blog-deployer%22' | grep -q '"notify_channel":"ops"' \
+	&& pass "ChannelFailed to ops names blog-deployer alone, $(( $(date +%s) - s_6b )) s after" \
+	|| fail "no ChannelFailed to ops naming blog-deployer alone: $(am 'http://am/api/v2/alerts?filter=alertname%3D%22ChannelFailed%22' | head -c 600)"
+t=$(first_arrival /ops ChannelFailed "$t_6b" 30)
+[ -n "$t" ] && pass "and ops, the other webhook channel, was delivered it" || fail "no ChannelFailed reached ops after the probe"
+journalctl -u motel --since "@$s_6b" -o cat --no-pager | grep 'monitor: channel failed' | grep '"suspects":\["blog-deployer"\]' | grep -q '"told":\["ops","oncall"\]' \
+	&& pass "journal: monitor: channel failed, suspects [blog-deployer], told [ops oncall]" \
+	|| fail "journal: $(journalctl -u motel --since "@$s_6b" -o cat --no-pager | grep 'monitor: channel failed' | tail -2)"
+printf '%s\n' "$(failing_receivers)" | grep -q '^event-warning-blog-deployer$' \
+	&& pass "the failed counter names event-warning-blog-deployer" || fail "failing receivers: $(echo $(failing_receivers))"
+cp -p /tmp/_box.env.6b /etc/motel/secrets/_box.env
+motel reload --config /etc/motel/Caddyfile >/tmp/reload-6b.out 2>&1 || fail "the reload that mends blog-deployer: $(tail -3 /tmp/reload-6b.out)"
 
 echo "=== notify 7: motel monitor test ==="
 out=$(motel monitor test ops 2>&1) && echo "$out" | grep -q 'delivered to ops' \
@@ -498,6 +543,59 @@ else
 fi
 cp /tmp/Caddyfile.before /etc/motel/Caddyfile
 systemctl reload motel || fail "the reload that puts the block back"
+
+echo "=== notify 15: a failure no channel can hear holds the heartbeat ==="
+# oncall alone is the operator's, and it answers 400: there is no other
+# channel to tell of its failure. Once the failure has stood 5 minutes
+# with no delivery through oncall, motel stops posting Watchdog, so the
+# heartbeat's check off the box reports the box down; a delivery through
+# oncall, once it is mended, resumes it.
+wd_ends() { am 'http://am/api/v2/alerts?filter=alertname%3D%22Watchdog%22' | sed -n 's/.*"endsAt":"\([^"]*\)".*/\1/p' | head -1; }
+sed 's/^\(\t*\)operator ops oncall$/\1operator oncall/' /tmp/Caddyfile.before >/etc/motel/Caddyfile
+grep -q '^[[:space:]]*operator oncall$' /etc/motel/Caddyfile || fail "fixture: could not make oncall the only operator channel"
+systemctl reload motel || fail "the reload with oncall alone"
+s_15=$(date +%s)
+send --name probe_15_failed --severity warning --summary "e2e: to oncall alone" || fail "send: $(cat /tmp/send.out)"
+i=0
+until journalctl -u motel --since "@$s_15" -o cat --no-pager | grep -q 'monitor: heartbeat held'; do
+	i=$((i + 1)); [ "$i" -ge 540 ] && break; sleep 1
+done
+held=$(journalctl -u motel --since "@$s_15" -o cat --no-pager | grep 'monitor: heartbeat held' | head -1)
+if [ -n "$held" ]; then
+	pass "the heartbeat is held $(( $(date +%s) - s_15 )) s after the failure (5 minutes, then the minute's read)"
+	echo "$held" | grep -q '"suspects":\["oncall"\]' && pass "journal: monitor: heartbeat held names oncall" || fail "held: $held"
+else
+	fail "no monitor: heartbeat held within 9 minutes"
+fi
+journalctl -u motel --since "@$s_15" -o cat --no-pager | grep 'monitor: channel failed' | grep '"suspects":\["oncall"\]' | grep -q '"told":\[\]' \
+	&& pass "journal: monitor: channel failed told no channel" || fail "channel failed: $(journalctl -u motel --since "@$s_15" -o cat --no-pager | grep 'monitor: channel failed' | tail -1)"
+e0=$(wd_ends)
+sleep 75
+e1=$(wd_ends)
+[ -z "$e1" ] || [ "$e1" = "$e0" ] \
+	&& pass "no Watchdog posted while held (endsAt '$e0', then '$e1')" || fail "Watchdog posted while held: endsAt $e0 → $e1"
+cp -p /etc/motel/secrets/_box.env /tmp/_box.env.15
+sed -i 's#^NOTIFY_ONCALL_URL=.*#NOTIFY_ONCALL_URL="http://e2e-sink:8080/oncall"#' /etc/motel/secrets/_box.env
+s_mend=$(date +%s)
+motel reload --config /etc/motel/Caddyfile >/tmp/reload-15.out 2>&1 || fail "the reload that mends oncall: $(tail -3 /tmp/reload-15.out)"
+out=$(motel monitor test oncall 2>&1) && echo "$out" | grep -q 'delivered to oncall' \
+	&& pass "mended, monitor test oncall: $out" || fail "monitor test oncall after the mend: $out"
+i=0
+until journalctl -u motel --since "@$s_mend" -o cat --no-pager | grep -q 'monitor: heartbeat resumed'; do
+	i=$((i + 1)); [ "$i" -ge 90 ] && break; sleep 1
+done
+journalctl -u motel --since "@$s_mend" -o cat --no-pager | grep -q 'monitor: heartbeat resumed' \
+	&& pass "journal: monitor: heartbeat resumed, $(( $(date +%s) - s_mend )) s after the mend" || fail "no monitor: heartbeat resumed within 90 s"
+i=0
+until [ -n "$(wd_ends)" ] && { [ -z "$e1" ] || expr "$(wd_ends)" \> "$e1" >/dev/null; }; do
+	i=$((i + 1)); [ "$i" -ge 75 ] && break; sleep 1
+done
+e2=$(wd_ends)
+[ -n "$e2" ] && { [ -z "$e1" ] || expr "$e2" \> "$e1" >/dev/null; } \
+	&& pass "Watchdog is posted again (endsAt $e2)" || fail "no Watchdog after the hold ended: '$e1' → '$e2'"
+cp -p /tmp/_box.env.15 /etc/motel/secrets/_box.env
+cp /tmp/Caddyfile.before /etc/motel/Caddyfile
+systemctl reload motel || fail "the reload that puts the fixture back"
 
 echo
 if [ "$FAILURES" -ne 0 ]; then

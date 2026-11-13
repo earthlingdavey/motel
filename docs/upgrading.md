@@ -244,6 +244,23 @@ There is no APT repository yet, so nothing upgrades motel behind
 your back; the hosted repository on the [roadmap](../README.md#roadmap) is what
 will change that.
 
+## A receiver per channel: one repeat of what fires
+
+A box built from the notify-and-metrics feature branch before each
+channel had its own receivers (no release has the monitor block) gets
+a new Alertmanager config at the first load after the install: every
+alert keeps its channels, under new routes and receiver names. Nothing
+is dropped, and nothing to do; but Alertmanager's notification log is
+keyed by route and receiver, so it has no record of what the old
+receivers sent: **each state still firing, and each one-shot sent in
+the last five minutes, reaches its channels once more as `[FIRING]`**,
+about 30 seconds after the restart. A recovery already told is not
+told again, and the heartbeat, `ChannelFailed` and `motel monitor test`
+keep their receivers. Going back to the older binary does the same
+once in the other direction. What will repeat is what fires before
+the install ([Monitor](monitor.md#what-is-firing-with-amtool) reads
+it).
+
 ## From a state_dir or alertmanager line
 
 A box built from the notify-and-metrics feature branch (no release
