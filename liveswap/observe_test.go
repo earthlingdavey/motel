@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -304,22 +305,31 @@ func TestObserveCache(t *testing.T) {
 func TestObserveLatencyBuckets(t *testing.T) {
 	rc := &releaseCounts{release: "v1"}
 	start := time.Unix(1000, 0)
-	for _, d := range []time.Duration{time.Millisecond, 20 * time.Millisecond, 20 * time.Millisecond, 3 * time.Second, time.Minute} {
+	for _, d := range []time.Duration{300 * time.Microsecond, time.Millisecond, 20 * time.Millisecond, 20 * time.Millisecond, 3 * time.Second, time.Minute} {
 		rc.record(&observeWriter{start: start, at: start.Add(d), seen: true, status: http.StatusOK}, true)
 	}
 	s := rc.snapshot()
-	if s.Count != 5 {
+	if s.Count != 6 {
 		t.Fatalf("count %d", s.Count)
 	}
-	// Cumulative: ≤5 ms holds 1, ≤25 ms 3, ≤5 s 4; a minute is +Inf only.
-	want := map[float64]uint64{.005: 1, .01: 1, .025: 3, 2.5: 3, 5: 4, 10: 4}
+	// Cumulative: ≤0.5 ms holds 1, ≤1 ms 2 (a bound is inclusive), ≤5 ms
+	// 2, ≤25 ms 4, ≤5 s 5; a minute is +Inf only. Under 5 ms, an app's
+	// times are told apart (hotserve-1's example answered in 0.5 ms).
+	want := map[float64]uint64{.0005: 1, .001: 2, .0025: 2, .005: 2, .01: 2, .025: 4, 2.5: 4, 5: 5, 10: 5}
+	matched := 0
 	for i, b := range ResponseBuckets {
-		if n, ok := want[b]; ok && s.Buckets[i] != n {
-			t.Errorf("bucket le=%v: %d, want %d", b, s.Buckets[i], n)
+		if n, ok := want[b]; ok {
+			matched++
+			if s.Buckets[i] != n {
+				t.Errorf("bucket le=%v: %d, want %d", b, s.Buckets[i], n)
+			}
 		}
 	}
-	if s.SumSeconds < 63.04 || s.SumSeconds > 63.05 {
-		t.Errorf("sum %v s, want 63.041", s.SumSeconds)
+	if matched != len(want) {
+		t.Errorf("%d of the %d bounds checked are buckets: %v", matched, len(want), ResponseBuckets)
+	}
+	if s.SumSeconds < 63.0412 || s.SumSeconds > 63.0414 {
+		t.Errorf("sum %v s, want 63.0413", s.SumSeconds)
 	}
 }
 
@@ -448,30 +458,130 @@ func TestObserveFollowsTheDeploy(t *testing.T) {
 	}
 }
 
-// An app is observed while a loaded config's observe names it: a
-// reload provisions the new config's handler before it cleans up the
-// old's, and a Cleanup after a failed Provision (counted nothing) or a
-// second one takes nothing away.
+// The loaded configs' observe handlers of an app are counted: a reload
+// provisions the new config's handler before it cleans up the old's,
+// and a Cleanup after a failed Provision (counted nothing) or a second
+// one takes nothing away.
 func TestObserveCountsItsHandlers(t *testing.T) {
 	h, _ := newTestHandler(t)
 	ma := h.app.managedApp("demo")
-	observed := func() bool { return h.app.AppSamples()[0].Observed }
-	if observed() {
-		t.Fatal("observed with no handler")
-	}
+	reloaded := &App{managed: h.app.managed, observed: new(sync.Map)}
 	old, next := &Observe{App: "demo"}, &Observe{App: "demo"}
-	old.observe(ma)
-	next.observe(ma)
+	old.observe(h.app, ma)
+	next.observe(reloaded, ma)
 	must(t, old.Cleanup())
 	must(t, old.Cleanup())
 	must(t, (&Observe{App: "demo"}).Cleanup()) // its Provision failed
-	if !observed() {
-		t.Fatal("the reload's handler does not observe the app")
+	if n := ma.observers.Load(); n != 1 {
+		t.Fatalf("%d handlers counted after the old config's Cleanup, want the reload's one", n)
 	}
 	must(t, next.Cleanup())
-	if observed() {
-		t.Fatal("observed after the last handler's Cleanup")
+	if n := ma.observers.Load(); n != 0 {
+		t.Fatalf("%d handlers counted after the last Cleanup", n)
 	}
+}
+
+// TestObservedIsTheConfigs: a sample is observed when its own config
+// observes the app. A reload that takes the line out is not, from its
+// first push, though the old config's handler is still counted: the old
+// config's Cleanup waits for its requests in flight to end, and the
+// counts meanwhile grow by those alone, which pushed would read as an
+// app no request reaches.
+func TestObservedIsTheConfigs(t *testing.T) {
+	h, _ := newTestHandler(t)
+	ma := h.app.managedApp("demo")
+	if h.app.AppSamples()[0].Observed {
+		t.Fatal("observed with no handler")
+	}
+	old := &Observe{App: "demo"}
+	old.observe(h.app, ma)
+	if !h.app.AppSamples()[0].Observed {
+		t.Error("the config with the line does not observe the app")
+	}
+	without := &App{managed: h.app.managed, observed: new(sync.Map)}
+	if without.AppSamples()[0].Observed {
+		t.Error("the reload that takes the line out observes the app while the old config's handler is counted")
+	}
+	with := &App{managed: h.app.managed, observed: new(sync.Map)}
+	next := &Observe{App: "demo"}
+	next.observe(with, ma)
+	must(t, old.Cleanup())
+	if !with.AppSamples()[0].Observed {
+		t.Error("the reload that keeps the line does not observe the app")
+	}
+	must(t, next.Cleanup())
+}
+
+// TestObservedWhileItProvisions: a config's set is read while its observe
+// handlers still provision. Caddy starts a load's admin server before
+// it provisions the apps, and its /metrics gathers that config's
+// registry, where notify's collector is once notify has provisioned,
+// which may be before the HTTP app and its handlers. Run with -race.
+func TestObservedWhileItProvisions(t *testing.T) {
+	h, _ := newTestHandler(t)
+	ma := h.app.managedApp("demo")
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for range 200 {
+			h.app.AppSamples()
+		}
+	}()
+	for range 200 {
+		(&Observe{App: "demo"}).observe(h.app, ma)
+	}
+	<-done
+	if !h.app.AppSamples()[0].Observed {
+		t.Fatal("the config's handlers do not observe the app")
+	}
+}
+
+// TestObserveAfterNoneStartsFromZero: while no handler names the app its
+// counts are not pushed, so the first handler after none starts them
+// from zero, as a restart does; resumed, their first push after the gap
+// would read as every response since motel started, in one window. A
+// reload's handlers, provisioned before the old ones' Cleanup, keep the
+// counts, and so does the instance's socket its counters.
+func TestObserveAfterNoneStartsFromZero(t *testing.T) {
+	h, _ := newTestHandler(t)
+	ma := h.app.managedApp("demo")
+	first := &Observe{App: "demo"}
+	first.observe(h.app, ma)
+	// The release before too, with a cache's verdict.
+	old := ma.requests.setRelease("v0")
+	old.record(&observeWriter{start: time.Unix(0, 0), at: time.Unix(0, int64(time.Second)), seen: true, status: http.StatusOK, cache: cacheMiss}, false)
+	rc := ma.requests.setRelease("v1")
+	for range 3 {
+		rc.record(&observeWriter{start: time.Unix(0, 0), at: time.Unix(0, int64(time.Millisecond)), seen: true, status: http.StatusOK}, true)
+	}
+	count := func() uint64 { return ma.requests.samples()[0].Count }
+	reload := &Observe{App: "demo"}
+	reload.observe(h.app, ma)
+	must(t, first.Cleanup())
+	if count() != 3 {
+		t.Fatalf("a reload's handler reset the counts: %d", count())
+	}
+	must(t, reload.Cleanup()) // the line taken out: none observes it
+	if count() != 3 {
+		t.Fatalf("Cleanup reset the counts: %d", count())
+	}
+	back := &Observe{App: "demo"}
+	back.observe(h.app, ma)
+	samples := ma.requests.samples()
+	if len(samples) != 2 || samples[0].Release != "v1" || samples[1].Release != "v0" {
+		t.Fatalf("releases after the zero: %+v", samples)
+	}
+	for _, s := range samples {
+		zero := ReleaseRequests{Release: s.Release}
+		if s != zero {
+			t.Fatalf("the line put back resumed %s's counts: %+v", s.Release, s)
+		}
+	}
+	rc.record(&observeWriter{start: time.Unix(0, 0), at: time.Unix(0, int64(time.Millisecond)), seen: true, status: http.StatusOK}, true)
+	if count() != 1 {
+		t.Fatalf("the socket's counters are no longer the release's: %d", count())
+	}
+	must(t, back.Cleanup())
 }
 
 func TestObserveCaddyfile(t *testing.T) {

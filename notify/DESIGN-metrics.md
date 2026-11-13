@@ -261,7 +261,10 @@ mechanics, its order and its measured cost are DESIGN-liveswap.md's
   its handler error's status; no error and nothing written is the 200
   net/http sends.
 - **Latency.** The time to the response's headers, in Prometheus's
-  default buckets (5 ms to 10 s): of the app's own responses, those that
+  default buckets (5 ms to 10 s) and three below them, 0.5, 1 and
+  2.5 ms (an app behind a socket on the same box answers in under 5 ms,
+  which the defaults read as 2.5 ms at p50 and 4.8 ms at p95 whatever
+  its times): of the app's own responses, those that
   went to its upstream or that the cache fetched from it (a miss or a
   bypass, a miss Souin coalesced onto another request's upstream call
   among them), so a cache hit, penaltybox's refusal, any other handler's
@@ -293,13 +296,25 @@ mechanics, its order and its measured cost are DESIGN-liveswap.md's
   before (which the post-deploy comparison reads), for as long as
   the process runs.
   A motel restart starts them from zero, which the store's `increase()`
-  reads as a counter reset.
+  reads as a counter reset, and so does an `observe` line put back
+  after no loaded config had one for the app (below).
 
 An app with no `observe` in its route pushes no request series,
-and its `metrics` has no `requests`. An observed app's current release
+and its `metrics` has no `requests`. That holds for an app whose line
+is taken out too: its counts live on in the pool, but none is pushed
+while the running config does not observe it, since pushed unchanged
+they would read as an app no request reaches. That is from the
+reload's first push, though the old config's handler counts its
+requests in flight until they end (a stream, for as long as it lasts).
+Its series go stale in the store,
+and an every-app `request_rate <` alert firing for it resolves. The
+first observer after none zeroes them in place, so the line put back
+counts from zero, as after a restart: resumed, their first push after
+the gap would be read as every response since motel started, in one
+window. An observed app's current release
 is pushed from the first push, at zero before its first response
-(liveswap counts the loaded configs' observers of each app: a reload
-provisions the new config's before it cleans up the old's): with no
+(the config's observe handlers say which apps it observes, from its
+Provision): with no
 series, a `request_rate <` rule could never hold for an app no one has
 reached since motel started, the stopped traffic it exists to tell. The
 release before is pushed once it has a response.
@@ -1017,9 +1032,12 @@ the process; why the rest grew is not measured. The disk grew from 5.8 to
 8.0 MB, 2.2 MB a day. No OOM kill, no restart, no failed unit. The
 store's proxy no longer idles out, since motel's push keeps it busy: the
 stack beside motel is about 270 MB. The response observer adds at
-most 24 series per observed app and release (six classes, the
-histogram's 14, four cache results), two releases each: under 500 for
-ten apps, against the 2,600 measured.
+most 27 series per observed app and release (six classes, the
+histogram's 17, four cache results), two releases each: 540 for ten
+apps, against the 2,600 to 3,500 measured. The histogram had 14 when
+the day above was measured; the three buckets under 5 ms (#434) are
+three series more per app and release, about 60 for ten apps, which no
+measurement since has taken.
 
 ## Decisions
 
@@ -1073,6 +1091,8 @@ on its general scales. metrics' examples:
 | A cache hit after a cutover counts under the new release though the page was the old one's: the new release's 5xx and hit shares carry the old's cached answers until they expire | liveswap/observe.go | 2 | 3 | 3 | 18; latency leaves hits out, and a cache's TTL bounds the mix (30 s in the starter); telling a stored page's release needs a header the cache would store, a change to every app's responses |
 | An app's threshold beside an every-app one on the same metric both fire for that app: the app's line adds a rule and cannot loosen or silence the every-app one, so when both hold its channels get two alerts | notify/operatorrules.go | 2 | 5 | 1 | 10; each alert is true and names its own rule; replacement (an app's rule taking the app out of the every-app one's selectors) is a feature for the operator to weigh, an explicit `replaces <rule>` the shape that neither breaks layered severities nor drops coverage silently; not built here (Copilot round 3 on #429) |
 | An app whose route has no `observe` has no request numbers, and nothing says so at load | liveswap/observe.go | 2 | 3 | 2 | 12; `metrics` then has no `requests`, which a deployer sees; a load-time check needs the HTTP app's routes, which the liveswap app cannot read. A rule naming such an app is refused by cmd/motel's gate ("Operator rules") |
+| An every-app `request_rate <` alert firing for an app whose `observe` line is taken out resolves once its series go stale, a recovery the traffic did not make | notify/metricscollector.go (`collectRequests`) | 2 | 5 | 3 | 30, accepted under the skill's rule 4: the rule no longer covers the app, and the alert ends rather than firing on numbers nobody measures any more, which it did before #434; telling the two apart needs a rule per app for an absent series (size 3, risk 2). /code-review pass 2 on #434 |
+| The upgrade to the buckets under 5 ms (#434): a window that spans it holds the responses before it in the 5 ms bucket alone, so for up to a day `GET /<app>`'s p50 and p95 of a fast app read between 2.5 and 5 ms, and a post_deploy baseline read across the restart is high, so a regression right after the upgrade can read as no worse | liveswap/observe.go (`ResponseBuckets`) | 3 | 4 | 3 | 36, accepted under the skill's rule 4: once per box, at this upgrade, for at most the 24 h range; leaving the earlier samples out needs the store to know when a series' bucket set began (size 3, risk 2). /code-review pass 1 on #434 |
 | `requests.per_second` is the window's total over the window's whole length, so in the first window after the observer begins counting an app's responses (`observe` added to its route, a new app) it reads low by the share of the window before; `total` counts the same responses | notify/metricsview.go (`summarizeRequests`) | 2 | 5 | 3 | 30, accepted under the skill's rule 4: the covered span needs the series' first sample (an eighth query, `tfirst_over_time`; size 3, risk 2), and that sample holds every count since motel began counting, an unknown span (hours, when the store is set up on a running box), so a rate over the covered span reads high where this one reads low. It ends correct once the series is a window old, and a deploy starts no new span: every release in the window is summed. /code-review pass 1 on slice three. The operator accepted it on 2026-11-12 |
 | A miss Souin coalesced onto another request's upstream call counts under the release current when it began, not the one the call went to: across a cutover, the waiters of a call in flight at that instant can be counted under the other release | liveswap/observe.go (`markUpstream`) | 2 | 5 | 3 | 30, accepted under the skill's rule 4: only the first request's selection is made, inside Souin's singleflight, and the waiters learn nothing of it but the shared response; carrying it to them needs a change to Souin (size 3, risk 3). It is bounded to the misses on one URL waiting at the cutover instant, the same mix the cached-page row above accepts, and their latency is counted. /code-review pass 2 on slice three. The operator accepted it on 2026-11-12 |
 | With no cache in front, an app's own `Cache-Status` is read as a cache's verdict: its own hits are counted in `cache_hit_share` and left out of the latency, so an app that marks every response a hit leaves its own latency out of its numbers | liveswap/observe.go (`parseCacheStatus`) | 2 | 5 | 3 | 30, accepted under the skill's rule 4: telling Souin's entry from an app's needs Souin's `cache_name` (the observer would read the cache app's configuration, a dependency liveswap does not have) or the request's path through the cache, which a stale hit's background revalidation shares (it runs on a clone of the request, vars and all); size 3, risk 2. The app's own cache is a cache that spoke, and an app moves only its own numbers (T1); the post-deploy comparison reads latency through it too, for both releases alike. /code-review pass 2 on slice three. The operator accepted it on 2026-11-12 |
@@ -1108,9 +1128,10 @@ on its general scales. metrics' examples:
 | Owed | S | O | D | Lands in |
 |---|---|---|---|---|
 | The store's RSS on a 1 or 2 GB box (a day on hotserve-1's 3.8 GB is in "Footprint") | — | — | — | a deploy to a box of that size |
-| On a booted Debian host, the namespace unit's test for a leftover before its delete (#430's `ExecStartPre`): setup's re-run does not restart the namespace unit, which is active, so it first runs at a reboot; measured in the e2e box alone. #426's proxies have had their cold boot: the deploy of 01b2fd5 to hotserve-1 rebooted it at about 17:53 UTC on 2026-11-12, and both came back as no root; the am proxy is gone since #435, and the cold boot of the units that replaced it is the last row | — | — | — | the next reboot of hotserve-1 after a deploy that carries #430 |
+| On a booted Debian host, the namespace unit's test for a leftover before its delete (#430's `ExecStartPre`): setup's re-run does not restart the namespace unit, which is active, so it first runs at a reboot; measured in the e2e box alone. #426's proxies have had their cold boot: the deploy of 01b2fd5 to hotserve-1 rebooted it at about 17:53 UTC on 2026-11-12, and both came back as no root; the am proxy is gone since #435, and the cold boot of the units that replaced it is the last dashed row | — | — | — | the next reboot of hotserve-1 after a deploy that carries #430 |
 | Debian's security support for `victoria-metrics` 1.112.0 and `prometheus-alertmanager` 0.28.1 on trixie, whose binaries are built with Go 1.24.2 (the store, vmalert) and 1.24.1 (Alertmanager), and a dist-upgrade check of both drop-ins' flags | — | — | — | before any release |
 | A cold boot on hotserve-1 with Alertmanager's socket in the namespace, its drop-in and the namespace unit's `TimeoutStartSec=` and `ExecStartPost=`, and the upgrade from the proxy shape there (measured in the e2e box alone: "The shape") | — | — | — | the next deploy to hotserve-1, `motel monitor setup --metrics` after it, and a reboot |
+| An every-app `request_rate <` rule can fire for an app whose `observe` line is taken out, before its series drop out: with no new sample, the store's `increase` over the 5 m window loses one push's worth a push. Measured 2026-11-13 on Debian's 1.112.0 with the drop-in's flags, the rendered expression at 2 requests a second: 2.0 up to 50 s after the app's last push, then 1.8, 1.6 … down to 0.2 at 305 to 320 s, nothing from 335 s; the same at vmalert's time (30 s earlier, `step` 5m) and for the per-app rule. It reads below a threshold X for about 300 s × X/R − 30 s (R the app's rate), so a `for: 1m` can fire from X ≈ 0.3 R and does from 0.5 R, a `for: 4m` only near R, a `for:` of 5 m or more never: one false alert to the app's channels and the operator's, resolved by 335 s (that resolve is the accepted row on the `observe` line taken out). A per-app rule cannot reach it, since cmd/motel's gate refuses the reload that leaves its app unobserved. 30 by rule 3, fix size 1, risk 2: the request_rate expression `and on (app)` the app being in motel's last push, `max by (app) (tlast_over_time(motel_app_requests_total[5m])) > scalar(max(tlast_over_time(process_start_time_seconds{job="motel"}[5m]))) - 15`, so it drops out at the first push without the app, when the value first falls, and no `for:` reaches it; pushes that stop whole (a store gap) leave it as it is. Not yet run against the store | 2 | 5 | 3 | the next PR on the feature branch, after #434, with an e2e metrics case past the 5 m window (triage on #434 after its review loop closed) |
 
 ## e2e rows
 

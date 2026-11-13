@@ -370,10 +370,21 @@ there would defeat the pool.
 - `requests` is the response observer's counters ("The response
   observer"): an atomic pointer to the current release's, read on
   every observed request, and the release before's under its own
-  mutex, which only a release change and a gather take. `observers`
-  counts the loaded configs' observe handlers naming the app
-  (Provision adds one, Cleanup takes it back): while one does, the
-  current release's counts are pushed even at zero (`AppSample.Observed`).
+  mutex, which only a release change and a gather take. Whether they
+  are pushed is the running config's: while one of its observe
+  handlers names the app (`App.observed`, set at Provision), the
+  current release's counts are pushed even at zero (`AppSample.Observed`);
+  while none does (its `observe` line taken out), nothing of its counts
+  is pushed: pushed unchanged, they would read as an app no request
+  reaches. The running config's and not every loaded one's, since the
+  old config's handler stays until its requests in flight end and its
+  Cleanup runs, and meanwhile the counts grow by those alone.
+  `observers` counts the loaded configs' handlers naming the app
+  (Provision adds one, Cleanup takes it back): the first after none
+  zeroes the counts in place (the instances' sockets keep their
+  counters), as a motel restart starts them from zero: resumed, their
+  first push after the gap would be every response since motel
+  started, read as one window's.
 - `ownerLock(app)` (one mutex per app name) makes "stop what nobody
   owns, then prune its socket dirs" one step with respect to recovery:
   the start-time sweep of unconfigured apps holds it across the manager
@@ -670,7 +681,15 @@ plugin's handler can take its ID.
   0.772 against 0.699. Behind the cache, 10 830 against 10 951 at c=1,
   122 105 against 122 190 at c=16. The bare site measured before the
   handler existed (9228935): 5 127 and 51 786 req/s, within the runs'
-  spread.
+  spread. The three buckets under 5 ms (0.5, 1 and 2.5 ms, added after
+  hotserve-1's example read p50 2.5 ms and p95 4.8 ms for responses of
+  about 0.5 ms) leave the benchmark as it was: 441 ns against 441 ns,
+  five allocations each, the median of five runs of each on the dev VM
+  on 2026-11-12. The benchmark's handler answers at once, so its
+  response finds its bucket at the first comparison, as one under 5 ms
+  did before; one over 5 ms makes three comparisons more than it did,
+  which the benchmark does not measure (a float comparison each, beside
+  a response that took 5 ms).
 - **What it never does.** Write, buffer or change a byte, or fail a
   request: an error from the handlers after it is returned as it came.
 
@@ -949,6 +968,7 @@ severity × occurrence × detection, then the fix's size and risk.
 | Layer 4 of the response filter misses a short generated token: its bar follows the token's length (`looksGenerated`, `log2(len) − 0.3` bits a character up to 4.5), which masks about 55% of random 20- and 22-character url-safe tokens, 41% at 24, 29% at 26 and all that the fixed bar masked above; the rest of a runtime secret an app prints bare (`secrets.token_urlsafe(16)`'s 22 characters, half the time) reaches the CI log. | `looksGenerated`, `maskGenerated` (redact.go) | 3 | 5 | 5 | 75 | size 1, risk 2: a bar of `0.9·log2(len)`, as first proposed, masks 80% of each short length but also nine of the 148 mixed-case tokens in this repository's own text — identifiers with a digit (`loadEd25519PrivateKey`), unit settings (`RandomizedDelaySec=40s`) — in the failed-deploy bodies the filter exists to keep readable; the bar taken masks one (an e-mail's local part). Measured 2026-11-07 | The known values are not at stake: `env_file` values are replaced whole, and now before the caps cut (`failureDetail`), so no fragment of one leaks. What remains is a secret the app fetched at runtime and printed bare, under 26 characters, on a failed deploy; `deploy_log_lines 0` keeps the app's output on the box, as the README says for a public repository. An assignment is judged by its parts, so `KEY=<secret>` keeps its key and masks its value whatever the key's letters add. |
 | A read bound — the journal tail's 16 KiB, the probe body's 4 KiB — that falls inside an `env_file` value holding whitespace leaves the part of it before (journal) or after (probe) the nearest space as a fragment the filter cannot match, when the replacement of other values shrinks the text enough for the kept cap to reach it. `dropUnfinished` removes the unfinished token up to the nearest whitespace, which is the whole of a value without one. | `dropUnfinished` (journal.go), `probeOnce` (health.go) | 3 | 1 | 5 | 15 | size 2, risk 2: cutting at a line instead of a token drops a diagnosis's first or last line for a case that needs a value with a space, printed at the bound, behind several kilobytes of other known values | Three things must hold at once: a value with whitespace in it (a URL password or a sentence, not a token), printed so that the read bound falls inside it, and enough other known values before (probe) or after (journal) it for their markers to pull the fragment under the kept cap. The fragment is at most one space-delimited piece of the value. `deploy_log_lines 0` keeps the app's output on the box. |
 | `e2e/bench/observe.sh` names the stack's network `<the directory's name>_default`: with `COMPOSE_PROJECT_NAME` set, or a directory name Compose normalises (upper case, a dot), `docker run` refuses the network and the bench stops before measuring | `e2e/bench/observe.sh` | 2 | 5 | 1 | 10 | size 1, risk 2 | under 20, and the fix is not size 1 and risk 1: reading the network off the running `e2e-motel` container (`docker inspect`) is one line, but no test runs the bench, and running it here would bring up the stack beside the running suites. The failure is loud and names the network. /code-review pass 2 on slice three |
+| A response a removed config's observer still holds (a hijacked stream, a long poll open across the reloads) is counted when it ends: into an app no config observes, or into the counts the next first observer has just zeroed, or, ending while `zero` runs, beside it, so one push may carry classes and buckets that disagree by that one response | `observe.go` (`record`, `requestCounts.zero`) | 2 | 2 | 3 | 12 | size 2, risk 2 | under 20: two reloads (the line out, then back) while one response stays open across both, and the cost is that response counted once in the wrong period; holding a generation per handler for every record is a load on the request path the observer is kept free of. /code-review pass 2 on #434 |
 
 **Owed** (over the bar, not yet fixed):
 

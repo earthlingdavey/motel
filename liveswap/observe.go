@@ -61,19 +61,38 @@ func (o *Observe) Provision(ctx caddy.Context) error {
 	if err != nil {
 		return err
 	}
-	ma := appModule.(*App).managedApp(o.App)
+	a := appModule.(*App)
+	ma := a.managedApp(o.App)
 	if ma == nil {
 		return fmt.Errorf("unknown liveswap app %q (define it in the liveswap global options)", o.App)
 	}
-	o.observe(ma)
+	o.observe(a, ma)
 	return nil
 }
 
-// observe makes ma the app observed, by one handler more.
-func (o *Observe) observe(ma *managedApp) {
+// observe makes ma the app observed, by one handler more, and by a's
+// config (App.observed, what its pushes read). The first handler after
+// none starts the counts from zero, as a motel restart does: while none
+// named the app its counts were not pushed (notify's collector), and,
+// resumed where they stopped, their first push after the gap would be
+// read as every response the app had counted since motel started, in
+// one window. A reload provisions the new config's handlers before it
+// cleans up the old's, so an app observed by both is never at none and
+// keeps its counts.
+//
+// The zero is made while a's config provisions, before its Start points
+// the push at it, so no push of a config that observes the app reads
+// the counts before it. Provisions run one at a time (config loads are
+// serialized, the old config's Stop and Cleanup among them), so the
+// test at none is not raced by another.
+func (o *Observe) observe(a *App, ma *managedApp) {
 	o.ma = ma
+	if ma.observers.Load() == 0 {
+		ma.requests.zero()
+	}
 	ma.observers.Add(1)
 	o.counted = true
+	a.observed.Store(ma.name, true)
 }
 
 // Cleanup is the config's unload (or its load failing): the app is
@@ -363,9 +382,14 @@ var RequestClasses = [numClasses]string{"1xx", "2xx", "3xx", "4xx", "5xx", "abor
 // ReleaseRequests.Cache; a response no cache spoke for is not counted.
 var CacheResults = [4]string{"hit", "stale", "miss", "bypass"}
 
-// ResponseBuckets are the latency histogram's upper bounds in seconds
-// (Prometheus's defaults): the time to the response's headers.
-var ResponseBuckets = [...]float64{.005, .01, .025, .05, .1, .25, .5, 1, 2.5, 5, 10}
+// ResponseBuckets are the latency histogram's upper bounds in seconds:
+// the time to the response's headers. Prometheus's defaults (5 ms to
+// 10 s) with three below them, 0.5, 1 and 2.5 ms: an app that answers
+// in under 5 ms, as one behind a socket on the same box does
+// (hotserve-1's example: 99.3 % of its responses), would otherwise read
+// a p50 of 2.5 ms and a p95 of 4.8 ms whatever its own times, and a
+// regression inside those 5 ms would be invisible to post_deploy.
+var ResponseBuckets = [...]float64{.0005, .001, .0025, .005, .01, .025, .05, .1, .25, .5, 1, 2.5, 5, 10}
 
 func classOf(status int) int {
 	switch {
@@ -514,6 +538,28 @@ func (r *requestCounts) setRelease(version string) *releaseCounts {
 	rc := &releaseCounts{release: version}
 	r.cur.Store(rc)
 	return rc
+}
+
+// zero sets both releases' counts to zero, in place: the instances'
+// sockets keep the counters they were given.
+func (r *requestCounts) zero() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, rc := range []*releaseCounts{r.cur.Load(), r.prev} {
+		if rc == nil {
+			continue
+		}
+		for i := range rc.classes {
+			rc.classes[i].Store(0)
+		}
+		for i := range rc.buckets {
+			rc.buckets[i].Store(0)
+		}
+		for i := range rc.cache {
+			rc.cache[i].Store(0)
+		}
+		rc.sumNanos.Store(0)
+	}
 }
 
 // samples is both releases' counts, current first.
