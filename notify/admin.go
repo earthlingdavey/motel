@@ -214,7 +214,7 @@ type SendResult struct {
 // directory: without it there is no Alertmanager to post to, and every
 // event is a journal line only (errNotSetUp).
 func (a *App) setUp() bool {
-	return !missing(a.stateDir())
+	return !missing(theStateDir)
 }
 
 // TestRequest is `motel monitor test`'s body.

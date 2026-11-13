@@ -29,7 +29,7 @@ func TestLoadWarningsSayStaleUnits(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	both := []byte(`{"channels":[{"name":"ops","kind":"ntfy","secret":"NOTIFY_OPS_URL"}],"operator":["ops"],"state_dir":"` + t.TempDir() + `","metrics":{}}`)
+	both := []byte(`{"channels":[{"name":"ops","kind":"ntfy","secret":"NOTIFY_OPS_URL"}],"operator":["ops"],"metrics":{}}`)
 	stale := func(cmd string) string {
 		var out []string
 		for _, w := range LoadWarnings(cmd, both) {

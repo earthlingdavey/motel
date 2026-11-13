@@ -177,9 +177,10 @@ global option `metrics` turns on its HTTP metrics, which the push
 carries when it is set, and one global option yields one Caddy app, so
 the store is a part of the monitor app (`App.Metrics`; "Decisions").
 The path is absolute, the line given once and with no block, or
-refused. There is no `state_dir`: vmalert's unit reads the rules from
-`/var/lib/motel-metrics`, so a directory of the line's own would be
-written and never read (/code-review pass 2). The line takes nothing
+refused. The rules' directory is not a line: vmalert's unit reads them
+from `/var/lib/motel-metrics`, so a directory of the line's own would
+be written and never read (/code-review pass 2); notify's is fixed the
+same way (DESIGN-notify.md, "The monitor block"). The line takes nothing
 else: the push interval, the fixed rules and the queries are motel's;
 the operator's `rule` lines beside it pick among motel's kinds
 ("Operator rules").

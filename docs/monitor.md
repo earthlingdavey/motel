@@ -249,9 +249,12 @@ monitor {
   in this load: nothing outside the box hears that it, motel or
   Alertmanager stopped`.
 
-Every line, and the less common ones (`secrets_file`, `state_dir`,
-`alertmanager`, `backup_record`), is in DESIGN-notify.md's [The monitor
-block](../notify/DESIGN-notify.md#the-monitor-block).
+Every line, and the less common ones (`secrets_file`,
+`backup_record`), is in DESIGN-notify.md's [The monitor
+block](../notify/DESIGN-notify.md#the-monitor-block). Alertmanager's
+paths are not lines: its state directory is fixed at
+`/var/lib/motel-notify` and its socket at `/run/motel-notify/am.sock`,
+the ones setup makes.
 
 ## A heartbeat: hear that the box stopped
 

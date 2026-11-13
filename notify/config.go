@@ -13,8 +13,10 @@ import (
 	"strings"
 )
 
-// Defaults for a packaged box. Each is a Caddyfile line too, for tests
-// and for the e2e image, which run as other users in other trees.
+// Defaults for a packaged box. The secrets file is a Caddyfile line
+// too, for tests and for the e2e image, which run as other users in
+// other trees; the state directory and the socket are fixed, since
+// the units setup writes name them (theStateDir, theSocket).
 const (
 	// DefaultSecretsFile is the box tier's env file: the values of
 	// secrets/_box/NOTIFY_*.age, as root writes an app's
@@ -34,6 +36,16 @@ const (
 	// RuntimeDirectory, removed whenever motel stops. Its one other, with
 	// the store, is inside the metrics namespace (motel-am-metrics.socket).
 	DefaultSocket = "/run/motel-notify/am.sock"
+)
+
+// theStateDir is where motel renders for Alertmanager: DefaultStateDir,
+// the one directory setup makes and the drop-in's --config.file names.
+// theSocket is where motel reaches it: DefaultSocket, motel-am.socket's.
+// No Caddyfile line sets either (a state_dir or an alertmanager line
+// is refused); variables only so that a test can stand its own in.
+var (
+	theStateDir = DefaultStateDir
+	theSocket   = DefaultSocket
 )
 
 // Severities, highest first. A channel's floor is the lowest it

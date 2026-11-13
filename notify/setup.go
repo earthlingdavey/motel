@@ -209,7 +209,7 @@ func loadedSays(sys system, metrics bool) string {
 	case metrics:
 		return "reloaded motel, whose config has no monitor block with a metrics line: nothing is pushed until there is one (docs/monitor.md); add it, then systemctl reload motel"
 	case has && !a.storeAlone():
-		return "reloaded motel, which renders the monitor block's channels into " + filepath.Join(a.stateDir(), ConfigName)
+		return "reloaded motel, which renders the monitor block's channels into " + filepath.Join(DefaultStateDir, ConfigName)
 	}
 	return "reloaded motel, whose config has no monitor block with channels: Alertmanager sends nothing until there is one (docs/monitor.md); add it, then systemctl reload motel"
 }

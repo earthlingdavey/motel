@@ -188,7 +188,7 @@ func TestRuleRefusalsAtProvision(t *testing.T) {
 	if err := os.WriteFile(secrets, []byte("NOTIFY_OPS_URL=https://ntfy.sh/ops\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	notify := "\t\tchannel ops ntfy {secret.NOTIFY_OPS_URL}\n\t\toperator ops\n\t\tsecrets_file " + secrets + "\n\t\tstate_dir " + filepath.Join(dir, "state") + "\n"
+	notify := "\t\tchannel ops ntfy {secret.NOTIFY_OPS_URL}\n\t\toperator ops\n\t\tsecrets_file " + secrets + "\n"
 	block := func(rules string) string {
 		return "{\n\tadmin off\n\tliveswap {\n\t\troot " + filepath.Join(dir, "liveswap") + "\n\t\tartifact_allowlist example.org\n\t\tapp blog {\n\t\t\tcommand ./server\n" +
 			"\t\t\tdeploy_trust local {\n\t\t\t\tpublic_key " + key + "\n\t\t\t\taudience blog\n\t\t\t}\n\t\t}\n\t}\n" +

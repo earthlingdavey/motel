@@ -56,6 +56,22 @@ func validate(t *testing.T, src string) error {
 	return caddy.Validate(&cfg)
 }
 
+// useStateDir stands dir in for the state directory for one test.
+func useStateDir(t *testing.T, dir string) {
+	t.Helper()
+	was := theStateDir
+	theStateDir = dir
+	t.Cleanup(func() { theStateDir = was })
+}
+
+// useSocket stands sock in for Alertmanager's socket for one test.
+func useSocket(t *testing.T, sock string) {
+	t.Helper()
+	was := theSocket
+	theSocket = sock
+	t.Cleanup(func() { theSocket = was })
+}
+
 // TestValidateThroughCaddy holds Provision to its promise: the
 // refusals reach `motel validate`, read the apps as liveswap built
 // them, and touch nothing on disk.
@@ -70,6 +86,7 @@ func TestValidateThroughCaddy(t *testing.T) {
 		t.Fatal(err)
 	}
 	state := filepath.Join(dir, "state")
+	useStateDir(t, state)
 	file := func(binding string) string {
 		return `{
 	admin off
@@ -90,7 +107,6 @@ func TestValidateThroughCaddy(t *testing.T) {
 		operator ops
 		` + binding + `
 		secrets_file ` + secrets + `
-		state_dir ` + state + `
 	}
 }
 :8080 {
@@ -231,7 +247,7 @@ func TestValidateTakesAPushsSecretsAsHeld(t *testing.T) {
 			line = "\t\tsecrets_file " + secretsFile + "\n"
 		}
 		return "{\n\tadmin off\n\tmonitor {\n\t\tchannel ops ntfy {secret.NOTIFY_OPS_URL}\n\t\toperator ops\n" + line +
-			"\t\tstate_dir " + t.TempDir() + "\n\t}\n}\n:8080 {\n\trespond ok\n}\n"
+			"\t}\n}\n:8080 {\n\trespond ok\n}\n"
 	}
 	t.Setenv(PushedSecretsEnv, "NOTIFY_OTHER_URL,NOTIFY_OPS_URL")
 	SetCommand("validate")
@@ -278,7 +294,7 @@ func TestBootDropsAMissingSecret(t *testing.T) {
 		t.Fatal(err)
 	}
 	src := "{\n\tadmin off\n\tmonitor {\n\t\tchannel ops ntfy {secret.NOTIFY_OPS_URL}\n\t\tchannel spare json {secret.NOTIFY_SPARE_URL}\n\t\toperator ops spare\n\t\tsecrets_file " + secrets +
-		"\n\t\tstate_dir " + filepath.Join(dir, "state") + "\n\t}\n}\n:8080 {\n\trespond ok\n}\n"
+		"\n\t}\n}\n:8080 {\n\trespond ok\n}\n"
 	for _, c := range []struct {
 		cmd     string
 		running bool
@@ -314,7 +330,7 @@ func TestBootDropsTheChannelsOfAnUnusableSecretsFile(t *testing.T) {
 		t.Fatal(err)
 	}
 	src := "{\n\tadmin off\n\tmonitor {\n\t\tchannel ops ntfy {secret.NOTIFY_OPS_URL}\n\t\toperator ops\n\t\tsecrets_file " + secrets +
-		"\n\t\tstate_dir " + filepath.Join(dir, "state") + "\n\t}\n}\n:8080 {\n\trespond ok\n}\n"
+		"\n\t}\n}\n:8080 {\n\trespond ok\n}\n"
 	for _, c := range []struct {
 		cmd     string
 		running bool
@@ -394,7 +410,7 @@ func provision(t *testing.T, src string) (*App, error) {
 // each naming what to write instead.
 func TestTheOldBlocksAreRefused(t *testing.T) {
 	for src, want := range map[string]string{
-		"{\n\tadmin off\n\tnotify {\n\t\tchannel ops ntfy {secret.NOTIFY_OPS_URL}\n\t\toperator ops\n\t}\n}\n": "the notify block is now `monitor { … }`",
+		"{\n\tadmin off\n\tnotify {\n\t\tchannel ops ntfy {secret.NOTIFY_OPS_URL}\n\t\toperator ops\n\t}\n}\n": "the notify block is now `monitor { … }`, with the same lines but state_dir and alertmanager, whose paths are fixed",
 		"{\n\tadmin off\n\tmetrics_store\n}\n":                                              "metrics_store is now a `metrics [<socket path>]` line in the monitor block",
 		"{\n\tadmin off\n\tmetrics_store {\n\t\tstore /run/x/vm.sock\n\t}\n}\n":             "metrics_store is now a `metrics [<socket path>]` line in the monitor block",
 		"{\n\tadmin off\n\tmonitor {\n\t\tmetrics\n\t}\n\tmonitor {\n\t\tmetrics\n\t}\n}\n": "the monitor option is given more than once",
@@ -433,9 +449,9 @@ func TestAMetricsLineAloneIsTheStoreWithoutNotify(t *testing.T) {
 	}{
 		{"an empty block", []string{""}, "no operator line"},
 		{"an option alone", []string{"deploy_succeeded on"}, "no operator line"},
-		{"metrics and an option", []string{"metrics", "state_dir /tmp/x"}, "no operator line"},
+		{"metrics and an option", []string{"metrics", "secrets_file /tmp/x"}, "no operator line"},
 		{"metrics and an option at its default", []string{"metrics", "deploy_succeeded off"}, "no operator line"},
-		{"metrics and an empty path", []string{"metrics", `state_dir ""`}, "state_dir takes a path, not an empty string"},
+		{"metrics and an empty path", []string{"metrics", `secrets_file ""`}, "secrets_file takes a path, not an empty string"},
 		{"metrics and an operator line", []string{"metrics", "operator ops"}, "operator names ops, which no channel line defines"},
 		{"metrics and a channel", []string{"metrics", "channel ops ntfy {secret.NOTIFY_OPS_URL}"}, "no operator line"},
 		{"a relative socket in the JSON", nil, "is not an absolute path"},
@@ -460,6 +476,11 @@ func TestAMetricsLineAloneIsTheStoreWithoutNotify(t *testing.T) {
 // config, notify's first; Stop lets go of both. The store alone never
 // takes the engine.
 func TestStartAndStopBothParts(t *testing.T) {
+	// The paths first: the release below may render or reload, and must
+	// reach this test's, not a box's (cleanups run last first).
+	dir := t.TempDir()
+	useStateDir(t, filepath.Join(dir, "state")) // not made: Start finds no Alertmanager set up
+	useSocket(t, filepath.Join(dir, "am.sock"))
 	// Fresh ones, put back after: Provision and Start reach the
 	// globals, and no other test's state is this one's to read or leave.
 	savedEngine, savedPusher := theEngine, thePusher
@@ -481,13 +502,11 @@ func TestStartAndStopBothParts(t *testing.T) {
 		}
 		theEngine, thePusher = savedEngine, savedPusher
 	})
-	dir := t.TempDir()
 	secrets := filepath.Join(dir, "_box.env")
 	if err := os.WriteFile(secrets, []byte("NOTIFY_OPS_URL=https://ntfy.sh/ops\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	both := "{\n\tadmin off\n\tmonitor {\n\t\tchannel ops ntfy {secret.NOTIFY_OPS_URL}\n\t\toperator ops\n\t\tsecrets_file " + secrets +
-		"\n\t\tstate_dir " + filepath.Join(dir, "state") + "\n\t\talertmanager " + filepath.Join(dir, "am.sock") +
 		"\n\t\tbackup_record off\n\t\tmetrics " + filepath.Join(dir, "vm.sock") + "\n\t}\n}\n:8080 {\n\trespond ok\n}\n"
 	alone := "{\n\tadmin off\n\tmonitor {\n\t\tmetrics " + filepath.Join(dir, "vm.sock") + "\n\t}\n}\n:8080 {\n\trespond ok\n}\n"
 	for _, c := range []struct {

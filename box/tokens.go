@@ -353,7 +353,7 @@ func walk(input []byte) (*Shape, error) {
 			// below would refuse the push in words that name neither.
 			switch first.Text {
 			case "notify":
-				return nil, refuse("has a notify block, which is now `monitor { … }`, with the same lines; to move a box onto it, docs/upgrading.md, \"From the notify and metrics_store blocks\"")
+				return nil, refuse("has a notify block, which is now `monitor { … }`, with the same lines but state_dir and alertmanager, whose paths are fixed; to move a box onto it, docs/upgrading.md, \"From the notify and metrics_store blocks\"")
 			case "metrics_store":
 				return nil, refuse("has a metrics_store block, which is now a `metrics [<socket path>]` line in the monitor block; to move a box onto it, docs/upgrading.md, \"From the notify and metrics_store blocks\"")
 			}

@@ -14,7 +14,7 @@ func init() {
 	// The two blocks the monitor block replaced: refused by name, so
 	// that a Caddyfile written for them says what to write instead of
 	// Caddy's "unrecognized global option".
-	httpcaddyfile.RegisterGlobalOption("notify", refusedOption("the notify block is now `monitor { … }`, with the same lines; to move a box onto it, docs/upgrading.md, \"From the notify and metrics_store blocks\""))
+	httpcaddyfile.RegisterGlobalOption("notify", refusedOption("the notify block is now `monitor { … }`, with the same lines but state_dir and alertmanager, whose paths are fixed; to move a box onto it, docs/upgrading.md, \"From the notify and metrics_store blocks\""))
 	httpcaddyfile.RegisterGlobalOption("metrics_store", refusedOption("metrics_store is now a `metrics [<socket path>]` line in the monitor block; to move a box onto it, docs/upgrading.md, \"From the notify and metrics_store blocks\""))
 }
 
@@ -50,8 +50,6 @@ func refusedOption(msg string) func(*caddyfile.Dispenser, any) (any, error) {
 //	    deploy_succeeded on|off
 //	    allow_insecure_channels
 //	    secrets_file <path>
-//	    state_dir <path>
-//	    alertmanager <unix socket path>
 //	    backup_record <path>|off
 //	    metrics [<socket path>]
 //	    rule <name> <kind> <parameters>...
@@ -140,7 +138,17 @@ func (a *App) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
 				return d.ArgErr()
 			}
 			a.AllowInsecureChannels = true
-		case "secrets_file", "state_dir", "alertmanager", "backup_record":
+		case "state_dir":
+			// Not a line: Alertmanager reads the directory its drop-in
+			// names, which setup makes, so a directory of the line's own
+			// would be written and never read.
+			return d.Errf("state_dir is not a monitor line: the state directory is fixed at %s, the one motel monitor setup makes and Alertmanager reads; remove the line", DefaultStateDir)
+		case "alertmanager":
+			// Not a line either: motel-am.socket, which setup writes,
+			// is where Alertmanager listens, so another path reaches
+			// nothing.
+			return d.Errf("alertmanager is not a monitor line: Alertmanager's socket is fixed at %s, the one motel monitor setup's motel-am.socket listens on; remove the line", DefaultSocket)
+		case "secrets_file", "backup_record":
 			name := d.Val()
 			if !d.NextArg() {
 				return d.ArgErr()
@@ -158,12 +166,8 @@ func (a *App) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
 			switch name {
 			case "secrets_file":
 				a.SecretsFile = v
-			case "state_dir":
-				a.StateDir = v
-			case "backup_record":
-				a.BackupRecord = v
 			default:
-				a.Socket = v
+				a.BackupRecord = v
 			}
 		case "metrics":
 			if a.Metrics != nil {

@@ -15,9 +15,12 @@ import (
 // a load journals alone, validate and reload say too; a boot says it in
 // the journal already, and the gate does not repeat it.
 func TestTheGateSaysMonitorIsNotSetUp(t *testing.T) {
+	if _, err := os.Stat(notify.DefaultStateDir); err == nil {
+		t.Skip("this machine has setup's state directory")
+	}
 	config, _ := dirs(t)
 	file := config + "/Caddyfile"
-	write(t, file, "{\n\tadmin off\n\tmonitor {\n\t\tchannel ops ntfy {secret.NOTIFY_OPS_URL}\n\t\toperator ops\n\t\tstate_dir "+config+"/absent\n\t}\n}\n", 0o644)
+	write(t, file, "{\n\tadmin off\n\tmonitor {\n\t\tchannel ops ntfy {secret.NOTIFY_OPS_URL}\n\t\toperator ops\n\t}\n}\n", 0o644)
 	for _, cmd := range []string{"validate", "reload", "run"} {
 		var stderr bytes.Buffer
 		if stop, _ := gateArgs([]string{cmd, "--config", file}, &stderr); stop {

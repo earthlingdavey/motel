@@ -109,8 +109,6 @@ func TestCaddyfileRefusals(t *testing.T) {
 		{"heartbeat literal", `heartbeat https://hc-ping.com/x`, "never in the Caddyfile"},
 		{"deploy_succeeded yes", `deploy_succeeded yes`, "on or off"},
 		{"secrets_file empty", `secrets_file ""`, "secrets_file takes a path, not an empty string"},
-		{"state_dir empty", `state_dir ""`, "state_dir takes a path, not an empty string"},
-		{"alertmanager empty", `alertmanager ""`, "alertmanager takes a path, not an empty string"},
 		{"backup_record empty", `backup_record ""`, "backup_record takes a path, not an empty string"},
 		{"unknown", `quiet_hours 22-07`, "unknown monitor subdirective"},
 		{"block on a line", "operator ops {\n\tx\n}", "take no block"},
@@ -122,6 +120,31 @@ func TestCaddyfileRefusals(t *testing.T) {
 				t.Fatalf("err = %v, want it to contain %q", err, c.want)
 			}
 		})
+	}
+}
+
+// A state_dir line is refused by name, at its line: Alertmanager reads
+// only the directory its drop-in names, so the line's own would be
+// written and never read.
+func TestCaddyfileRefusesStateDir(t *testing.T) {
+	for _, line := range []string{"state_dir /srv/notify", `state_dir ""`, "state_dir " + DefaultStateDir} {
+		_, err := parse(t, "monitor {\n\tchannel ops ntfy {secret.NOTIFY_OPS_URL}\n\toperator ops\n\t"+line+"\n}")
+		if err == nil || !strings.Contains(err.Error(), "Testfile:4") ||
+			!strings.Contains(err.Error(), "state_dir is not a monitor line: the state directory is fixed at /var/lib/motel-notify") {
+			t.Errorf("%s: err = %v", line, err)
+		}
+	}
+}
+
+// So is an alertmanager line: motel-am.socket is where Alertmanager
+// listens, and another path reaches nothing.
+func TestCaddyfileRefusesAlertmanager(t *testing.T) {
+	for _, line := range []string{"alertmanager /run/am.sock", `alertmanager ""`, "alertmanager " + DefaultSocket} {
+		_, err := parse(t, "monitor {\n\tchannel ops ntfy {secret.NOTIFY_OPS_URL}\n\toperator ops\n\t"+line+"\n}")
+		if err == nil || !strings.Contains(err.Error(), "Testfile:4") ||
+			!strings.Contains(err.Error(), "alertmanager is not a monitor line: Alertmanager's socket is fixed at /run/motel-notify/am.sock") {
+			t.Errorf("%s: err = %v", line, err)
+		}
 	}
 }
 

@@ -29,8 +29,9 @@ const appID = "monitor"
 
 // App is the `monitor` global option. Its notify lines are the
 // channels, who the operator is, which identity's channels an app's
-// events also reach, and where Alertmanager is (DESIGN-notify.md); its
-// metrics line is the store (DESIGN-metrics.md).
+// events also reach, and where the box's secrets and the backup record
+// are (DESIGN-notify.md); its metrics line is the store
+// (DESIGN-metrics.md).
 type App struct {
 	Channels        []Channel `json:"channels,omitempty"`
 	Operator        []string  `json:"operator,omitempty"`
@@ -45,8 +46,6 @@ type App struct {
 	// every load.
 	AllowInsecureChannels bool   `json:"allow_insecure_channels,omitempty"`
 	SecretsFile           string `json:"secrets_file,omitempty"`
-	StateDir              string `json:"state_dir,omitempty"`
-	Socket                string `json:"alertmanager,omitempty"`
 	// BackupRecord is the backup record's path; "off" reads none.
 	BackupRecord string `json:"backup_record,omitempty"`
 	// Metrics is the metrics line, nil for none (DESIGN-metrics.md,
@@ -172,14 +171,14 @@ func (a *App) provisionNotify(ctx caddy.Context, ls *liveswap.App) error {
 	// Every value the file holds is a known value to the filter, named
 	// by a channel line or not: a spare URL is as much a credential.
 	a.known = knownValues(secrets)
-	a.rendered, a.files, a.receivers = render(a.cfg, a.stateDir())
+	a.rendered, a.files, a.receivers = render(a.cfg, theStateDir)
 	theEngine.failures.register(ctx.GetMetricsRegistry())
 
 	// The sources. liveswap's events reach the engine through its
 	// Notifier; CertMagic's through Caddy's events app, subscribed by
 	// name (never all events); the backup record and the disks are
 	// polled by the engine.
-	a.diskPaths = []string{caddy.AppDataDir(), a.stateDir()}
+	a.diskPaths = []string{caddy.AppDataDir(), theStateDir}
 	if ls != nil {
 		a.ls = ls
 		ls.SetNotifier(lifecycleSink{e: theEngine, c: theComparator})
@@ -308,7 +307,7 @@ func (a *App) Start() error {
 
 // startNotify is Start's notify part.
 func (a *App) startNotify() {
-	am := newAMClient(a.socket())
+	am := newAMClient(theSocket)
 	a.applyRender(am)
 	// Every value the box's secrets hold is a known value to the
 	// filter, whatever line names it.
@@ -330,16 +329,16 @@ func (a *App) startNotify() {
 func (a *App) applyRender(am *amClient) {
 	ctx, cancel := context.WithTimeout(context.Background(), amRequestTimeout)
 	defer cancel()
-	reloaded, err := apply(ctx, a.stateDir(), a.rendered, a.files, am)
+	reloaded, err := apply(ctx, theStateDir, a.rendered, a.files, am)
 	switch {
 	case errors.Is(err, errNotSetUp):
-		a.logger.Warn("monitor: Alertmanager is not set up on this box (run motel monitor setup as root); events are journal lines only until it is", zap.String("state_dir", a.stateDir()))
+		a.logger.Warn("monitor: Alertmanager is not set up on this box (run motel monitor setup as root); events are journal lines only until it is", zap.String("state_dir", theStateDir))
 	case errors.Is(err, errUnanswered):
-		a.logger.Warn("monitor: "+errUnanswered.Error(), zap.String("state_dir", a.stateDir()), zap.Error(err))
+		a.logger.Warn("monitor: "+errUnanswered.Error(), zap.String("state_dir", theStateDir), zap.Error(err))
 	case err != nil:
-		a.logger.Error("monitor: Alertmanager's config was not updated", zap.String("state_dir", a.stateDir()), zap.Error(err))
+		a.logger.Error("monitor: Alertmanager's config was not updated", zap.String("state_dir", theStateDir), zap.Error(err))
 	case reloaded:
-		a.logger.Info("monitor: Alertmanager reloaded the rendered config", zap.String("config", filepath.Join(a.stateDir(), ConfigName)))
+		a.logger.Info("monitor: Alertmanager reloaded the rendered config", zap.String("config", filepath.Join(theStateDir, ConfigName)))
 	}
 }
 
@@ -350,8 +349,8 @@ func (a *App) applyRender(am *amClient) {
 func (a *App) applyNothing() {
 	ctx, cancel := context.WithTimeout(context.Background(), amRequestTimeout)
 	defer cancel()
-	reloaded, err := apply(ctx, a.stateDir(), defaultConfig, map[string]string{}, newAMClient(a.socket()))
-	config := zap.String("config", filepath.Join(a.stateDir(), ConfigName))
+	reloaded, err := apply(ctx, theStateDir, defaultConfig, map[string]string{}, newAMClient(theSocket))
+	config := zap.String("config", filepath.Join(theStateDir, ConfigName))
 	switch {
 	case errors.Is(err, errNotSetUp):
 	case errors.Is(err, errUnanswered):
@@ -360,7 +359,7 @@ func (a *App) applyNothing() {
 		// render.
 		a.logger.Warn("monitor: no loaded config has the monitor block's channels, and Alertmanager did not answer the reload of the config that sends nothing: until it loads it, what it holds may reach the channels as a recovery that did not happen", config, zap.Error(err))
 	case err != nil:
-		a.logger.Error("monitor: no loaded config has the monitor block's channels, and Alertmanager was not given the config that sends nothing: what it holds may reach the channels as a recovery that did not happen", zap.String("state_dir", a.stateDir()), zap.Error(err))
+		a.logger.Error("monitor: no loaded config has the monitor block's channels, and Alertmanager was not given the config that sends nothing: what it holds may reach the channels as a recovery that did not happen", zap.String("state_dir", theStateDir), zap.Error(err))
 	case reloaded:
 		a.logger.Info("monitor: no loaded config has the monitor block's channels: Alertmanager was given the config that sends nothing, so what it held ends without a message", config)
 	default:
@@ -387,20 +386,6 @@ var (
 	_ caddy.App         = (*App)(nil)
 	_ caddy.Provisioner = (*App)(nil)
 )
-
-func (a *App) stateDir() string {
-	if a.StateDir == "" {
-		return DefaultStateDir
-	}
-	return a.StateDir
-}
-
-func (a *App) socket() string {
-	if a.Socket == "" {
-		return DefaultSocket
-	}
-	return a.Socket
-}
 
 func (a *App) backupRecord() string {
 	switch a.BackupRecord {
