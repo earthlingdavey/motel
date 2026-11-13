@@ -2,6 +2,7 @@ package notify
 
 import (
 	"bytes"
+	"errors"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -36,7 +37,10 @@ func TestMetricsSetupNeedsNotify(t *testing.T) {
 func TestMetricsSetupOrderAndFiles(t *testing.T) {
 	root := t.TempDir()
 	notifySetUp(t, root)
-	f := &fakeSystem{}
+	// A first run: Alertmanager's socket in the namespace does not listen
+	// yet, so Alertmanager is restarted, once, to take it up, before the
+	// namespace's own start (the restart starts it).
+	f := &fakeSystem{failOn: "systemctl is-active --quiet " + amNSSocket}
 	var out bytes.Buffer
 	if err := metricsSetup(f, root, &out); err != nil {
 		t.Fatal(err)
@@ -47,13 +51,19 @@ func TestMetricsSetupOrderAndFiles(t *testing.T) {
 		"apt-get install -y --no-install-recommends victoria-metrics iproute2",
 		"systemctl daemon-reload",
 		"systemctl unmask victoria-metrics.service",
-		"systemctl enable --now motel-metrics-netns.service victoria-metrics.service motel-vm.socket motel-am-proxy.socket motel-vmalert.service",
+		"systemctl is-active --quiet motel-am-metrics.socket",
+		"systemctl is-active --quiet prometheus-alertmanager.service",
+		"systemctl restart prometheus-alertmanager.service",
+		"systemctl enable --now motel-metrics-netns.service victoria-metrics.service motel-vm.socket motel-am-metrics.socket motel-vmalert.service",
 		"systemctl restart motel-vmalert.service",
-		"systemctl try-restart motel-vm.service motel-am-proxy.service",
+		"systemctl try-restart motel-vm.service",
 		"systemctl try-reload-or-restart motel.service",
 	}
 	if !slices.Equal(f.cmds, want) {
 		t.Fatalf("commands:\n%s\nwant\n%s", strings.Join(f.cmds, "\n"), strings.Join(want, "\n"))
+	}
+	if !strings.Contains(out.String(), "restarted Alertmanager, once, so that it listens in the namespace (motel-am-metrics.socket)") {
+		t.Errorf("setup did not say it restarted Alertmanager:\n%s", out.String())
 	}
 	// The packages it installed by name, not as a Go slice.
 	if !strings.Contains(out.String(), "installed victoria-metrics iproute2\n") {
@@ -98,12 +108,18 @@ func TestMetricsSetupOrderAndFiles(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, scrapeName), []byte("edited\n"), 0o640); err != nil {
 		t.Fatal(err)
 	}
+	// Alertmanager listens in the namespace now: left as it runs.
 	f1 := &fakeSystem{isInstalled: true}
+	out.Reset()
 	if err := metricsSetup(f1, root, &out); err != nil {
 		t.Fatal(err)
 	}
 	if f1.cmds[0] != "systemctl mask victoria-metrics.service" || slices.ContainsFunc(f1.cmds, func(c string) bool { return strings.HasPrefix(c, "apt-get") }) {
 		t.Fatalf("re-run: %v", f1.cmds)
+	}
+	if slices.ContainsFunc(f1.cmds, func(c string) bool { return strings.Contains(c, amService) }) ||
+		!strings.Contains(out.String(), "Alertmanager listens in the namespace already (motel-am-metrics.socket): left as it runs") {
+		t.Fatalf("re-run with Alertmanager listening in the namespace: %v\n%s; want it left as it runs", f1.cmds, out.String())
 	}
 	if b, _ := os.ReadFile(filepath.Join(dir, RulesName)); string(b) != "rendered\n" {
 		t.Fatalf("setup replaced motel's rules: %q", b)
@@ -140,6 +156,9 @@ func TestMetricsSetupFailingPutsTheStoreBack(t *testing.T) {
 		"systemctl daemon-reload", // and again: the rest is still tried
 		"systemctl unmask victoria-metrics.service",
 		"systemctl start motel-vm.socket victoria-metrics.service motel-vmalert.service",
+		// Past the retirement of the proxy shape: Alertmanager's socket
+		// in the namespace is checked, here listening.
+		"systemctl is-active --quiet motel-am-metrics.socket",
 	}
 	if !slices.Equal(f.cmds, want) {
 		t.Fatalf("commands:\n%s\nwant\n%s", strings.Join(f.cmds, "\n"), strings.Join(want, "\n"))
@@ -168,17 +187,138 @@ func TestMetricsSetupFailingPutsTheStoreBack(t *testing.T) {
 	}
 }
 
+// A box set up with the proxy shape (motel-am-proxy.socket on the
+// namespace's 9093, its proxy to Alertmanager's unix socket): the
+// re-run disables and removes both before the reload, so the port is
+// free for Alertmanager's own socket, then restarts Alertmanager once.
+// A failure after that gives Alertmanager its socket back in the
+// put-back, so vmalert is not left with no outlet.
+func TestMetricsSetupRetiresTheProxyShape(t *testing.T) {
+	plant := func(t *testing.T) string {
+		t.Helper()
+		root := t.TempDir()
+		notifySetUp(t, root)
+		for _, p := range []string{
+			filepath.Join(unitDir, vmService+".d", "10-motel.conf"),
+			filepath.Join(unitDir, oldAMProxySocket),
+			filepath.Join(unitDir, oldAMProxyService),
+		} {
+			if err := os.MkdirAll(filepath.Dir(filepath.Join(root, p)), 0o750); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(root, p), []byte("# the proxy shape's\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}
+		return root
+	}
+	notListening := "systemctl is-active --quiet " + amNSSocket
+	root := plant(t)
+	f := &fakeSystem{isInstalled: true, failOn: notListening}
+	var out bytes.Buffer
+	if err := metricsSetup(f, root, &out); err != nil {
+		t.Fatal(err)
+	}
+	sock := slices.Index(f.cmds, "systemctl disable --now motel-am-proxy.socket")
+	retire := slices.Index(f.cmds, "systemctl disable --now motel-am-proxy.service")
+	if sock < 0 || retire < sock {
+		t.Fatalf("commands: %v; want the proxy's socket disabled, then its service", f.cmds)
+	}
+	reload := slices.Index(f.cmds, "systemctl daemon-reload")
+	restart := slices.Index(f.cmds, "systemctl restart "+amService)
+	enable := slices.IndexFunc(f.cmds, func(c string) bool { return strings.HasPrefix(c, "systemctl enable --now ") })
+	if retire < 0 || reload < retire || restart < reload || enable < restart {
+		t.Fatalf("commands: %v; want the proxy's units disabled, then the reload, Alertmanager's restart and the enable", f.cmds)
+	}
+	n := 0
+	for _, c := range acts(f.cmds) {
+		if strings.Contains(c, amService) {
+			n++
+		}
+	}
+	if n != 1 {
+		t.Errorf("Alertmanager in %d commands, want its one restart: %v", n, f.cmds)
+	}
+	for _, u := range []string{oldAMProxySocket, oldAMProxyService} {
+		if _, err := os.Lstat(filepath.Join(root, unitDir, u)); !errors.Is(err, fs.ErrNotExist) {
+			t.Errorf("%s is still there: %v", u, err)
+		}
+	}
+	if !strings.Contains(out.String(), "retired motel-am-proxy.socket and motel-am-proxy.service") {
+		t.Errorf("setup said:\n%s", out.String())
+	}
+
+	// The same upgrade failing at the enable: the put-back restarts
+	// Alertmanager, its socket in the namespace not listening.
+	root = plant(t)
+	f = &fakeSystem{isInstalled: true, failOn: notListening + "|systemctl enable --now"}
+	out.Reset()
+	if err := metricsSetup(f, root, &out); err == nil {
+		t.Fatal("the re-run did not fail")
+	}
+	n = len(f.cmds)
+	if want := []string{"systemctl unmask victoria-metrics.service", "systemctl start motel-vm.socket victoria-metrics.service motel-vmalert.service",
+		notListening, "systemctl is-active --quiet " + amService, "systemctl restart " + amService}; n < 5 || !slices.Equal(f.cmds[n-5:], want) {
+		t.Errorf("put-back: %v; want it to end %v", f.cmds, want)
+	}
+	if !strings.Contains(out.String(), "victoria-metrics.service is unmasked again") {
+		t.Errorf("setup said:\n%s", out.String())
+	}
+
+	// Failing before the proxy shape is retired (the install): the
+	// proxy still holds the port, and Alertmanager is left as it runs.
+	root = plant(t)
+	f = &fakeSystem{failOn: notListening + "|apt-get"}
+	if err := metricsSetup(f, root, &bytes.Buffer{}); err == nil {
+		t.Fatal("the re-run did not fail")
+	}
+	if slices.ContainsFunc(f.cmds, func(c string) bool { return strings.Contains(c, amService) || strings.Contains(c, "motel-am-proxy") }) {
+		t.Errorf("a failure before the retirement touched Alertmanager or the proxy: %v", f.cmds)
+	}
+	if !isFile(filepath.Join(root, unitDir, oldAMProxySocket)) {
+		t.Error("a failure before the retirement removed the proxy's socket")
+	}
+
+	// A retirement cut short (the service's file left behind) is
+	// finished by the next run (/code-review pass 1 on #435).
+	root = plant(t)
+	if err := os.Remove(filepath.Join(root, unitDir, oldAMProxySocket)); err != nil {
+		t.Fatal(err)
+	}
+	f = &fakeSystem{isInstalled: true}
+	out.Reset()
+	if err := metricsSetup(f, root, &out); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(f.cmds, "systemctl disable --now motel-am-proxy.service") || slices.Contains(f.cmds, "systemctl disable --now motel-am-proxy.socket") ||
+		isFile(filepath.Join(root, unitDir, oldAMProxyService)) || !strings.Contains(out.String(), "retired motel-am-proxy.service: ") {
+		t.Errorf("the service left alone: %v\n%s; want it disabled and removed", f.cmds, out.String())
+	}
+}
+
 // TestMetricsUnitsAreTheMeasuredOnes holds the shipped units to what ran
 // on hotserve-1 (hotserve1_stack_test.md), with this slice's paths and
-// caps; the proxies' users, the drop-in's chmod and the namespace unit's
-// test for a leftover were measured in the e2e box only
-// (notify/DESIGN-metrics.md, "The shape").
+// caps; the store's proxy's user, the drop-in's chmod, the namespace
+// unit's test for a leftover, its start's limit and its restart of a
+// deaf Alertmanager, and Alertmanager's own socket in the namespace were
+// measured in the e2e box only (notify/DESIGN-metrics.md, "The shape").
 func TestMetricsUnitsAreTheMeasuredOnes(t *testing.T) {
 	has := func(name string, unit []byte, wants ...string) {
 		t.Helper()
 		for _, w := range wants {
 			if !strings.Contains(string(unit), w) {
 				t.Errorf("%s lacks %q", name, w)
+			}
+		}
+	}
+	lacks := func(name string, unit []byte, keys map[string]string) {
+		t.Helper()
+		for _, line := range strings.Split(string(unit), "\n") {
+			line = strings.TrimSpace(line)
+			for key, why := range keys {
+				if strings.HasPrefix(line, key) {
+					t.Errorf("%s has %q, which %s", name, line, why)
+				}
 			}
 		}
 	}
@@ -191,39 +331,44 @@ func TestMetricsUnitsAreTheMeasuredOnes(t *testing.T) {
 		"ExecStartPre=+/usr/bin/chmod 0750 /var/lib/victoria-metrics\n")
 	// A namespace left behind must not fail every later start, and a
 	// cold boot, which has none, must log no error for it.
-	has("the namespace unit", unitNetns, "ExecStartPre=-/bin/sh -c 'test ! -e /run/netns/motel-metrics || exec /usr/sbin/ip netns delete motel-metrics'\nExecStart=/usr/sbin/ip netns add motel-metrics")
+	has("the namespace unit", unitNetns, "ExecStartPre=-/bin/sh -c 'test ! -e /run/netns/motel-metrics || exec /usr/sbin/ip netns delete motel-metrics'\nExecStart=/usr/sbin/ip netns add motel-metrics",
+		// A oneshot has no start limit of its own, and Alertmanager's
+		// start waits for this one.
+		"TimeoutStartSec=30\n",
+		// An Alertmanager that started while the namespace could not
+		// holds no listener in it: the namespace's start restarts it.
+		"ExecStartPost=-/usr/bin/systemctl --no-block try-restart prometheus-alertmanager.service\n",
+		"Before=victoria-metrics.service motel-vmalert.service motel-am-metrics.socket motel-vm.service\n")
 	has("motel-vm.socket", unitVMSocket, "ListenStream="+DefaultStoreSocket+"\n", "SocketGroup=motel", "SocketMode=0660")
 	has("motel-vm.service", unitVMProxy, "NetworkNamespacePath=/run/netns/motel-metrics", "systemd-socket-proxyd --exit-idle-time=5min 127.0.0.1:8428",
 		// Not root (the box audit of 2026-11-11).
 		"DynamicUser=yes", "CapabilityBoundingSet=\n")
-	// The cold-boot ordering cycle's fix.
-	has("motel-am-proxy.socket", unitAMProxySocket, "DefaultDependencies=no", "After=sysinit.target motel-metrics-netns.service",
-		"ListenStream=127.0.0.1:9093", "NetworkNamespacePath=/run/netns/motel-metrics", "WantedBy=multi-user.target")
-	has("motel-am-proxy.service", unitAMProxy, "systemd-socket-proxyd --exit-idle-time=5min "+DefaultSocket, "Requires=motel-am-proxy.socket motel-am.socket",
-		// Not root, and the motel group's files out of its view.
-		// motel as the primary group, so the store's processes (the
-		// same uid, another gid) cannot attach to it.
-		"User=_victoria-metrics", "Group=motel\n", "CapabilityBoundingSet=\n", "TemporaryFileSystem=/:ro",
-		"BindReadOnlyPaths=/usr -/bin -/lib -/lib64 -/etc/ld.so.cache /run/motel-notify /run/systemd/notify\n")
-	forbidden := map[string]string{
-		// Either one has systemd keep the host's root, and the view with
-		// it (measured, systemd 257).
-		"DynamicUser=":   "undoes TemporaryFileSystem=/",
-		"ProtectSystem=": "undoes TemporaryFileSystem=/",
-		// The kernel's ptrace check ignores supplementary groups.
-		"SupplementaryGroups=": "lets the store's processes, the same uid and gid, attach to it",
-	}
-	for _, line := range strings.Split(string(unitAMProxy), "\n") {
-		line = strings.TrimSpace(line)
-		for key, why := range forbidden {
-			if strings.HasPrefix(line, key) {
-				t.Errorf("motel-am-proxy.service has %q, which %s", line, why)
-			}
-		}
-	}
+	// The cold-boot ordering cycle's fix, and the socket handed to
+	// Alertmanager itself.
+	has(amNSSocket, unitAMMetricsSocket, "DefaultDependencies=no", "Requires=motel-metrics-netns.service\n", "After=sysinit.target motel-metrics-netns.service\n",
+		"Service=prometheus-alertmanager.service\n", "ListenStream=127.0.0.1:9093\n", "NetworkNamespacePath=/run/netns/motel-metrics\n", "WantedBy=multi-user.target")
+	lacks(amNSSocket, unitAMMetricsSocket, map[string]string{
+		// Alertmanager serves every listener it is handed and reads no
+		// name; the order of the fds varies (measured, 0.28.1).
+		"FileDescriptorName=": "names a socket Alertmanager does not read",
+	})
+	// After=, so that the socket listens before Alertmanager starts;
+	// Wants=, so that a namespace that fails leaves notify on its unix
+	// socket; PartOf=, so that the namespace's restart restarts it.
+	has("Alertmanager's drop-in for the namespace", unitAMMetricsDropIn, "Wants=motel-am-metrics.socket\n", "After=motel-am-metrics.socket\n", "PartOf=motel-am-metrics.socket\n")
+	lacks("Alertmanager's drop-in for the namespace", unitAMMetricsDropIn, map[string]string{
+		// Measured: with the namespace failing, motel-am.socket hit its
+		// trigger limit and notify stopped.
+		"BindsTo=":  "takes notify down with the namespace",
+		"Requires=": "keeps Alertmanager from starting while the namespace fails",
+	})
 	has("motel-vmalert.service", unitVMAlert, "User=_victoria-metrics", "NetworkNamespacePath=/run/netns/motel-metrics",
 		"-rule="+DefaultMetricsStateDir+"/"+RulesName+" ", "-configCheckInterval=1m", "-disableAlertgroupLabel",
-		"-notifier.url=http://127.0.0.1:9093", "-remoteWrite.url=http://127.0.0.1:8428", "-remoteRead.url=http://127.0.0.1:8428", "MemoryMax=128M")
+		"-notifier.url=http://127.0.0.1:9093", "-remoteWrite.url=http://127.0.0.1:8428", "-remoteRead.url=http://127.0.0.1:8428", "MemoryMax=128M",
+		"After=motel-metrics-netns.service victoria-metrics.service motel-am-metrics.socket\n",
+		// The namespace's start does not start Alertmanager's socket in
+		// it again: vmalert's start does (measured, Copilot on #435).
+		"Wants=motel-am-metrics.socket\n")
 	if strings.Contains(string(unitVMDropIn), "0.0.0.0") || strings.Contains(string(unitVMDropIn), "-httpListenAddr=:") {
 		t.Error("the drop-in listens beyond the namespace's loopback")
 	}
@@ -232,9 +377,10 @@ func TestMetricsUnitsAreTheMeasuredOnes(t *testing.T) {
 
 // `motel monitor setup` is Alertmanager's setup alone. With --metrics
 // on a box where it has not run, Alertmanager's runs first and the
-// store's only once it has succeeded; where it has, Alertmanager is
-// left as it runs (its setup would mask and stop it) and the store's
-// runs alone, a re-run of it with its put-back armed.
+// store's only once it has succeeded; where it has, Alertmanager's setup
+// is not run (it would mask and stop it) and the store's runs alone, a
+// re-run of it with its put-back armed, which restarts Alertmanager
+// once, and only while its socket in the namespace is not listening.
 func TestMonitorSetupRunsAlertmanagerOnlyWhereItIsNotSetUp(t *testing.T) {
 	has := slices.Contains[[]string]
 	root := t.TempDir()
@@ -271,19 +417,37 @@ func TestMonitorSetupRunsAlertmanagerOnlyWhereItIsNotSetUp(t *testing.T) {
 	}
 
 	// Alertmanager set up (root, from the first run above): --metrics
-	// touches nothing of it, first run of the store's or a re-run.
-	var out bytes.Buffer
-	storeOnly := &fakeSystem{isInstalled: true}
-	if err := runSetup(storeOnly, root, &out, true); err != nil {
-		t.Fatal(err)
-	}
-	for _, c := range acts(storeOnly.cmds) {
-		if strings.Contains(c, amService) || strings.Contains(c, amSocket) {
-			t.Fatalf("with Alertmanager set up, --metrics ran %q: %v", c, storeOnly.cmds)
+	// runs nothing of its setup, first run of the store's or a re-run;
+	// the store's restarts it once to hand it its socket in the
+	// namespace, and not when that socket listens.
+	for _, c := range []struct {
+		name      string
+		listening bool
+	}{{"its socket in the namespace not listening", false}, {"listening", true}} {
+		var out bytes.Buffer
+		storeOnly := &fakeSystem{isInstalled: true}
+		if !c.listening {
+			storeOnly.failOn = "systemctl is-active --quiet " + amNSSocket
 		}
-	}
-	if acts(storeOnly.cmds)[0] != "systemctl mask "+vmService || !strings.Contains(out.String(), "Alertmanager is set up") {
-		t.Fatalf("with Alertmanager set up: %v\n%s; want the store's setup alone, and a line saying why", storeOnly.cmds, out.String())
+		if err := runSetup(storeOnly, root, &out, true); err != nil {
+			t.Fatal(err)
+		}
+		var touched []string
+		for _, a := range acts(storeOnly.cmds) {
+			if strings.Contains(a, amService) || strings.Contains(a, amSocket) {
+				touched = append(touched, a)
+			}
+		}
+		want := []string{"systemctl restart " + amService}
+		if c.listening {
+			want = nil
+		}
+		if !slices.Equal(touched, want) {
+			t.Fatalf("%s: with Alertmanager set up, --metrics ran %q of it: %v", c.name, touched, storeOnly.cmds)
+		}
+		if acts(storeOnly.cmds)[0] != "systemctl mask "+vmService || !strings.Contains(out.String(), "Alertmanager is set up") {
+			t.Fatalf("%s: with Alertmanager set up: %v\n%s; want the store's setup alone, and a line saying why", c.name, storeOnly.cmds, out.String())
+		}
 	}
 	again := &fakeSystem{isInstalled: true, failOn: "systemctl restart " + vmalertUnit}
 	if err := runSetup(again, root, &bytes.Buffer{}, true); err == nil {
@@ -342,5 +506,31 @@ func TestMetricsSetupFinishesAnUnfinishedAlertmanagerSetup(t *testing.T) {
 		if am != 0 || unmask < 0 || vm <= unmask {
 			t.Errorf("%s: --metrics after a failed first setup: %v; want Alertmanager's setup, whole, then the store's", c.name, done)
 		}
+	}
+}
+
+// /code-review pass 2 on #435. With notify's drop-in gone, Alertmanager
+// would run Debian's command (:9093, 0.0.0.0:9094): --metrics runs
+// Alertmanager's setup first, which writes it again, rather than the
+// store's alone, which may restart Alertmanager. And an Alertmanager
+// that is not running is started, not restarted, and setup says so.
+func TestMetricsSetupNeedsNotifysDropIn(t *testing.T) {
+	root := t.TempDir()
+	if err := runSetup(&fakeSystem{}, root, &bytes.Buffer{}, false); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(root, dropInPath)); err != nil {
+		t.Fatal(err)
+	}
+	f := &fakeSystem{isInstalled: true, failOn: "systemctl is-active --quiet " + amNSSocket + "|systemctl is-active --quiet " + amService}
+	var out bytes.Buffer
+	if err := runSetup(f, root, &out, true); err != nil {
+		t.Fatal(err)
+	}
+	if acts(f.cmds)[0] != "systemctl mask "+amService || !isFile(filepath.Join(root, dropInPath)) {
+		t.Fatalf("--metrics with notify's drop-in gone: %v; want Alertmanager's setup first, the drop-in written again", f.cmds)
+	}
+	if !strings.Contains(out.String(), "started Alertmanager, once, so that it listens in the namespace") || strings.Contains(out.String(), "restarted Alertmanager") {
+		t.Errorf("Alertmanager not running: setup said\n%s\nwant it started, not restarted", out.String())
 	}
 }

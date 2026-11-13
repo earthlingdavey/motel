@@ -7,7 +7,11 @@
 # setup`, then `motel monitor setup --metrics` (the store's alone), then checks
 # notify/DESIGN-metrics.md's "e2e rows":
 #
+#   the first --metrics restarting Alertmanager once, the second not
 #   the store's TCP in its namespace only; its socket's mode and reach
+#   Alertmanager's own listener there: a SIGKILL, the namespace restarted,
+#   stopped and back, failing once, stopped and started by hand with motel
+#   down; an upgrade from the proxy shape
 #   motel's push (job="motel"), with a deployed app's motel_app_*
 #   GET /<app> with the deploy token carries the app's metrics
 #   observe's counts in the store and in GET /<app>?range=
@@ -42,6 +46,11 @@ wait_result() {
 	return 1
 }
 inns() { ip netns exec "$NS" "$@"; }
+# nsready: Alertmanager answers on 127.0.0.1:9093 in the namespace.
+nsready() { [ "$(inns curl -s -o /dev/null -w '%{http_code}' --max-time 5 http://127.0.0.1:9093/-/ready 2>/dev/null)" = 200 ]; }
+# amstarts <since>: how many times systemd started Alertmanager since then.
+amstarts() { journalctl -u prometheus-alertmanager --since "$1" -o cat --no-pager | grep -c '^Started prometheus-alertmanager'; }
+aminv() { systemctl show -p InvocationID --value prometheus-alertmanager; }
 
 echo "=== metrics 0: the box ==="
 i=0
@@ -62,19 +71,28 @@ motel monitor setup >/tmp/nsetup.out 2>&1 && pass "monitor setup ran" || fail "m
 [ ! -e /etc/systemd/system/motel-vm.socket ] && [ ! -e /etc/systemd/system/victoria-metrics.service.d/10-motel.conf ] \
 	&& pass "without --metrics, nothing of the store is set up" || fail "monitor setup wrote the store's units: $(ls /etc/systemd/system)"
 am -o /dev/null http://am/-/ready # started by its socket, if motel's render has not yet
-am_run=$(systemctl show -p InvocationID --value prometheus-alertmanager)
+am_run=$(aminv)
 ns_before=$(ls -d "/run/netns/$NS" 2>/dev/null)
+sleep 1 # journalctl's --since is to the second
+since=$(date '+%Y-%m-%d %H:%M:%S')
 if motel monitor setup --metrics >/tmp/msetup.out 2>&1; then
 	pass "monitor setup --metrics ran: $(tr '\n' ';' </tmp/msetup.out | cut -c1-240)"
 else
 	fail "monitor setup --metrics: $(cat /tmp/msetup.out)"
 fi
-! grep -q 'prometheus-alertmanager' /tmp/msetup.out && grep -q '^masked victoria-metrics.service' /tmp/msetup.out \
+! grep -q '^masked prometheus-alertmanager' /tmp/msetup.out && grep -q '^masked victoria-metrics.service' /tmp/msetup.out \
 	&& grep -q '^Alertmanager is set up' /tmp/msetup.out \
-	&& pass "--metrics ran the store's setup alone, saying Alertmanager was left as it runs" || fail "--metrics: $(grep -E '^(masked|Alertmanager)' /tmp/msetup.out | tr '\n' ';')"
-[ -n "$am_run" ] && [ "$(systemctl show -p InvocationID --value prometheus-alertmanager)" = "$am_run" ] \
-	&& pass "the running Alertmanager is the same invocation after --metrics" \
-	|| fail "Alertmanager's invocation: '$am_run' before --metrics, '$(systemctl show -p InvocationID --value prometheus-alertmanager)' after"
+	&& pass "--metrics ran the store's setup alone, saying Alertmanager's setup is not run again" || fail "--metrics: $(grep -E '^(masked|Alertmanager)' /tmp/msetup.out | tr '\n' ';')"
+# Alertmanager takes a socket only when it starts: the first run
+# restarts it once, its socket in the namespace with it, and the
+# namespace's own first start (in that restart) restarts nothing more.
+i=0
+until nsready; do i=$((i + 1)); [ "$i" -ge 30 ] && break; sleep 0.5; done
+sleep 3 # a restart the namespace's start queued would be under way by now
+[ -n "$am_run" ] && [ "$(aminv)" != "$am_run" ] \
+	&& [ "$(amstarts "$since")" = 1 ] && grep -q '^restarted Alertmanager, once, so that it listens in the namespace' /tmp/msetup.out && nsready \
+	&& pass "the first --metrics restarted Alertmanager once, and it answers on 9093 in the namespace" \
+	|| fail "the first --metrics: Alertmanager's invocation '$am_run' before, '$(aminv)' after, $(amstarts "$since") start(s), 9093 $(nsready && echo answers || echo 'does not answer'); setup said: $(grep -i alertmanager /tmp/msetup.out | tr '\n' ';')"
 i=0
 until inns ss -ltnH 2>/dev/null | grep -q '127.0.0.1:8880'; do
 	i=$((i + 1)); [ "$i" -ge 60 ] && break; sleep 0.5
@@ -86,12 +104,26 @@ for a in 127.0.0.1:8428 127.0.0.1:8880 127.0.0.1:9093; do
 	case " $inside" in *" $a "*) pass "in the namespace: $a" ;; *) fail "not in the namespace: $a (it holds: $inside)" ;; esac
 done
 # With no namespace before setup, the unit's first start takes the path a
-# cold boot takes: its delete of a leftover exits 0, not as an error the
-# `-` ignores (`ip netns delete` of none exits 1 and logs it).
-pre=$(systemctl show -p ExecStartPre --value motel-metrics-netns)
-case "$ns_before:$pre" in :*"code=exited ; status=0 }"*)
-	pass "the namespace's first start, with none before: its leftover's delete exited 0" ;;
-*) fail "the namespace's ExecStartPre, with '$ns_before' there before setup: $pre" ;; esac
+# cold boot takes: no delete of a leftover, so no error the `-` ignores
+# (`ip netns delete` of none exits 1 and logs it). Read in the journal:
+# setup's `enable`, after the start, reloads systemd, which drops the
+# ExecStartPre status it recorded.
+nsj=$(journalctl -u motel-metrics-netns -o cat --no-pager)
+[ -z "$ns_before" ] && printf '%s\n' "$nsj" | grep -q '^Finished motel-metrics-netns' && ! printf '%s\n' "$nsj" | grep -qi 'cannot remove namespace' \
+	&& pass "the namespace's first start, with none before: no leftover's delete, no error logged" \
+	|| fail "the namespace's first start, with '$ns_before' there before setup: $(printf '%s' "$nsj" | tail -5 | tr '\n' ';')"
+am_run=$(aminv)
+sleep 1
+since=$(date '+%Y-%m-%d %H:%M:%S')
+if motel monitor setup --metrics >/tmp/msetup2.out 2>&1; then
+	sleep 3
+	[ "$(aminv)" = "$am_run" ] && [ "$(amstarts "$since")" = 0 ] \
+		&& grep -q '^Alertmanager listens in the namespace already (motel-am-metrics.socket): left as it runs' /tmp/msetup2.out \
+		&& pass "a second --metrics leaves the running Alertmanager as it is (the same invocation), and says so" \
+		|| fail "the second --metrics: Alertmanager's invocation '$am_run' before, '$(aminv)' after, $(amstarts "$since") start(s); setup said: $(grep -i alertmanager /tmp/msetup2.out | tr '\n' ';')"
+else
+	fail "the second monitor setup --metrics: $(cat /tmp/msetup2.out)"
+fi
 [ "$(stat -c '%A %U %G' "$VM")" = "srw-rw---- root motel" ] \
 	&& pass "the store's socket is srw-rw---- root motel" || fail "the socket is $(stat -c '%A %U %G' "$VM" 2>&1)"
 [ "$(stat -c '%A %U %G' "$STATE")" = "drwxr-s--- motel _victoria-metrics" ] \
@@ -287,7 +319,7 @@ done
 printf '%s' "$rules" | grep -q '"type":"alerting"' && pass "vmalert's API marks its rules \"type\":\"alerting\"" \
 	|| fail "vmalert's API has no \"type\":\"alerting\": $(printf '%s' "$rules" | cut -c1-300)"
 a=$(wait_result vmalert-up 'up{job="vmalert"} == 1' 90) && pass "the store scrapes vmalert" || fail "the store has no up{job=\"vmalert\"}"
-a=$(wait_result am-up 'up{job="alertmanager"} == 1' 90) && pass "the store scrapes Alertmanager through the in-namespace proxy" \
+a=$(wait_result am-up 'up{job="alertmanager"} == 1' 90) && pass "the store scrapes Alertmanager at its listener in the namespace" \
 	|| fail "the store has no up{job=\"alertmanager\"}: $(q 'up')"
 # A box event reaches ops and oncall; oncall answers 400, Alertmanager
 # counts the failure on event-box-warning's discord, and both motel and
@@ -393,73 +425,128 @@ until vm http://vm/metrics | grep -q '^vm_storage_is_read_only.* 0$'; do i=$((i 
 a=$(wait_result vmalert-up-writable "(timestamp(up{job=\"vmalert\"}) > $back_at) and (up{job=\"vmalert\"} == 1)" 120) && pass "and scrapes vmalert again" \
 	|| fail "no fresh up{job=\"vmalert\"} after the store came back: $(q 'timestamp(up{job="vmalert"})')"
 
-echo "=== metrics 4c: the two proxies run as no root ==="
-# Each runs while it carries traffic (motel's push through vm.sock every
-# 30 s, the store's scrape of Alertmanager through the in-namespace port);
-# 4b restarted the store, which stops the vm proxy until the next push.
-for u in motel-vm.service motel-am-proxy.service; do
-	i=0
-	until [ "$(systemctl show -p MainPID --value "$u")" != 0 ]; do i=$((i + 1)); [ "$i" -ge 45 ] && break; sleep 2; done
-	pid=$(systemctl show -p MainPID --value "$u")
-	uid=$(stat -c %u "/proc/$pid" 2>/dev/null)
-	bnd=$(sed -n 's/^CapBnd:[[:space:]]*//p' "/proc/$pid/status" 2>/dev/null)
-	[ "$pid" != 0 ] && [ -n "$uid" ] && [ "$uid" != 0 ] && [ "$bnd" = 0000000000000000 ] \
-		&& pass "$u runs as uid $uid ($(ps -o user= -p "$pid")), no capability" \
-		|| fail "$u: pid $pid, uid '$uid', CapBnd '$bnd'"
-done
-# The am proxy holds the motel group for Alertmanager's socket, so the
-# group's paths must be out of its view, and the socket in it; and the
-# group is its primary one, so the store's uid cannot act as it.
-pid=$(systemctl show -p MainPID --value motel-am-proxy.service)
-motel_gid=$(getent group motel | cut -d: -f3)
-[ "$(ps -o user= -p "$pid")" = _victoria-metrics ] && [ "$(sed -n 's/^Gid:[[:space:]]*\([0-9]*\).*/\1/p' "/proc/$pid/status")" = "$motel_gid" ] \
-	&& [ "$(sed -n 's/^Groups:[[:space:]]*//p' "/proc/$pid/status" | tr -d ' \t')" = "$motel_gid" ] \
-	&& pass "the am proxy is _victoria-metrics, gid motel and no other group" \
-	|| fail "the am proxy: $(ps -o user= -p "$pid"), $(grep -E '^(Gid|Groups)' "/proc/$pid/status" | tr '\n' ' ')"
-# Yama does not gate a /proc read, so this one holds on any host.
-if runuser -u _victoria-metrics -- cat "/proc/$pid/environ" >/dev/null 2>&1; then
-	fail "the store's uid reads the am proxy's /proc: it could attach to it and act with the motel group"
-else
-	pass "the store's uid is refused the am proxy's /proc"
-fi
-# An attach, with a control: the store's uid attaching to a sleeper of
-# its own uid and gid. Where that is refused too (ptrace_scope 1 or more,
-# or a seccomp that denies ptrace), the refusal proves nothing of the
-# unit, and the /proc check above stands for it. An attach that gets
-# through is detached at once, so a stopped proxy cannot fail the
-# sections after this one.
-nr=117; [ "$(uname -m)" = x86_64 ] && nr=101
-attach() {
-	runuser -u _victoria-metrics -- perl -e '$p='"$1"'; $r=syscall('"$nr"',16,$p,0,0); if ($r==0) { waitpid($p,0); syscall('"$nr"',17,$p,0,0); print "attached" } else { print "refused" }'
-}
-runuser -u _victoria-metrics -- sleep 60 &
+echo "=== metrics 4c: the store's proxy runs as no root ==="
+# It runs while it carries traffic (motel's push through vm.sock every
+# 30 s); 4b restarted the store, which stops it until the next push.
+u=motel-vm.service
 i=0
-until sleeper=$(pgrep -u _victoria-metrics -x sleep | head -1) && [ -n "$sleeper" ]; do
-	i=$((i + 1)); [ "$i" -ge 50 ] && break; sleep 0.2
-done
-control=refused
-[ -n "$sleeper" ] && control=$(attach "$sleeper")
-kill "$sleeper" 2>/dev/null
-wait 2>/dev/null
-att=$(attach "$pid")
-[ -n "$sleeper" ] || fail "fixture: no sleeper of the store's uid after 10 s, so no control for the attach"
-case "$control,$att" in
-attached,refused) pass "the store's uid cannot attach to the am proxy (and can attach to a sleeper of its own)" ;;
-refused,refused) pass "this host refuses the store's uid any attach (ptrace_scope $(cat /proc/sys/kernel/yama/ptrace_scope 2>/dev/null)): the /proc check above stands for the unit" ;;
-*) fail "the store's uid attached to the am proxy (control: $control)"; kill -CONT "$pid" 2>/dev/null ;;
-esac
-# Every path an app's view hides (liveswap/sandbox.go, sandboxMotelPaths,
-# which TestE2EProxyViewHidesTheMotelPaths holds this list to) and the
-# apps' root: the motel group reaches them on a packaged box, and only
-# Alertmanager's socket directory is bound back.
-seen=""
-for p in /var/lib/motel /run/motel /etc/motel /etc/liveswap /var/lib/motel-box /var/lib/motel-notify \
-	/run/motel-metrics /var/lib/motel-metrics /var/lib/liveswap; do
-	[ -e "/proc/$pid/root$p" ] && seen="$seen $p"
-done
-[ -z "$seen" ] && pass "the am proxy sees none of motel's paths but Alertmanager's socket directory" \
-	|| fail "the am proxy sees:$seen"
-[ -S "/proc/$pid/root$AMS" ] && pass "and sees Alertmanager's socket" || fail "the am proxy has no $AMS in its view"
+until [ "$(systemctl show -p MainPID --value "$u")" != 0 ]; do i=$((i + 1)); [ "$i" -ge 45 ] && break; sleep 2; done
+pid=$(systemctl show -p MainPID --value "$u")
+uid=$(stat -c %u "/proc/$pid" 2>/dev/null)
+bnd=$(sed -n 's/^CapBnd:[[:space:]]*//p' "/proc/$pid/status" 2>/dev/null)
+[ "$pid" != 0 ] && [ -n "$uid" ] && [ "$uid" != 0 ] && [ "$bnd" = 0000000000000000 ] \
+	&& pass "$u runs as uid $uid ($(ps -o user= -p "$pid")), no capability" \
+	|| fail "$u: pid $pid, uid '$uid', CapBnd '$bnd'"
+
+echo "=== metrics 4d: Alertmanager's own listener in the namespace ==="
+# One Alertmanager holds both: am.sock in the host's namespace and
+# 127.0.0.1:9093 in the store's, each passed by systemd at its start.
+amready() { [ "$(am -o /dev/null -w '%{http_code}' http://am/-/ready)" = 200 ]; }
+ampid() { systemctl show -p MainPID --value prometheus-alertmanager; }
+# held <pid>: that process holds both listeners.
+held() {
+	[ "$1" != 0 ] && inns ss -ltnpH 2>/dev/null | grep '127.0.0.1:9093 ' | grep -q "pid=$1," \
+		&& ss -lxpH 2>/dev/null | grep -F "$AMS " | grep -q "pid=$1,"
+}
+amready
+pid=$(ampid)
+nsready && held "$pid" && pass "one Alertmanager (pid $pid) holds am.sock and the namespace's 127.0.0.1:9093, and answers on both" \
+	|| fail "Alertmanager's listeners (pid $pid): $(inns ss -ltnpH | grep 9093) / $(ss -lxpH | grep -F "$AMS")"
+# Killed, it is started again by the next connection to either socket,
+# both still systemd's.
+systemctl kill -s SIGKILL prometheus-alertmanager
+i=0
+until [ "$(ampid)" != "$pid" ]; do i=$((i + 1)); [ "$i" -ge 20 ] && break; sleep 0.5; done
+i=0
+until nsready; do i=$((i + 1)); [ "$i" -ge 30 ] && break; sleep 1; done
+pid1=$(ampid)
+amready && nsready && [ "$pid1" != "$pid" ] && held "$pid1" \
+	&& pass "a SIGKILL of Alertmanager: the next connection starts it again (pid $pid1), on both listeners" \
+	|| fail "after a SIGKILL of pid $pid: pid '$pid1', 9093 $(nsready && echo answers || echo 'does not answer'), am.sock $(amready && echo answers || echo 'does not answer'), $(systemctl is-active prometheus-alertmanager motel-am-metrics.socket motel-am.socket | tr '\n' ' ')"
+# A restart of the namespace restarts the socket in it and, PartOf=,
+# Alertmanager: once, the namespace's own restart of it folded in.
+inv=$(aminv)
+sleep 1
+since=$(date '+%Y-%m-%d %H:%M:%S')
+systemctl restart motel-metrics-netns
+i=0
+until nsready; do i=$((i + 1)); [ "$i" -ge 30 ] && break; sleep 1; done
+sleep 3
+[ "$(aminv)" != "$inv" ] && [ "$(amstarts "$since")" = 1 ] && nsready && held "$(ampid)" \
+	&& pass "a restart of the namespace restarts Alertmanager once, which answers on 9093 in the new namespace" \
+	|| fail "after a restart of the namespace: $(amstarts "$since") start(s) of Alertmanager, 9093 $(nsready && echo answers || echo 'does not answer'), $(systemctl is-active motel-metrics-netns motel-am-metrics.socket prometheus-alertmanager | tr '\n' ' ')"
+# The restart reaches the socket through its Requires= (systemd restarts
+# a unit that requires one restarted), not left in the old namespace.
+r_at=$(date +%s)
+a=$(wait_result am-up-restart "(timestamp(up{job=\"alertmanager\"}) > $r_at) and (up{job=\"alertmanager\"} == 1)" 90) \
+	&& pass "and the store, restarted with it, scrapes Alertmanager in the new namespace" \
+	|| fail "no fresh up{job=\"alertmanager\"} after the namespace's restart: $(q 'up{job="alertmanager"}')"
+# Stopped, the namespace takes Alertmanager down with its socket there;
+# am.sock listens on. motel's push brings the store and the namespace
+# back, and its read of Alertmanager's counters (a minute) or a post
+# starts Alertmanager, whose start brings its socket: nothing by hand.
+# The proxy's socket this replaced stayed down here, so vmalert's posts
+# and the store's scrape of Alertmanager went nowhere.
+t0=$(date +%s)
+systemctl stop motel-metrics-netns
+! systemctl is-active -q prometheus-alertmanager && ! systemctl is-active -q motel-am-metrics.socket && systemctl is-active -q motel-am.socket \
+	&& pass "a stop of the namespace stops Alertmanager and its socket there; am.sock listens on" \
+	|| fail "after a stop of the namespace: $(systemctl is-active prometheus-alertmanager motel-am-metrics.socket motel-am.socket | tr '\n' ' ')"
+i=0
+until systemctl is-active -q motel-metrics-netns && nsready; do i=$((i + 1)); [ "$i" -ge 75 ] && break; sleep 2; done
+back=$(date +%s)
+[ "$i" -lt 75 ] && pass "the namespace stopped and came back with nothing done by hand: Alertmanager answers on 9093 in it after $((back - t0)) s" \
+	|| fail "150 s after a stop of the namespace: $(systemctl is-active motel-metrics-netns victoria-metrics prometheus-alertmanager motel-am-metrics.socket | tr '\n' ' ')"
+a=$(wait_result am-up-back "(timestamp(up{job=\"alertmanager\"}) > $back) and (up{job=\"alertmanager\"} == 1)" 90) \
+	&& pass "and the store scrapes Alertmanager there again" || fail "no fresh up{job=\"alertmanager\"} after the namespace came back: $(q 'up{job="alertmanager"}')"
+# The namespace fails to start (one fault): Alertmanager, started on
+# am.sock, comes up on it alone, its socket here failed with the
+# namespace, and no later start of that socket could hand it over. The
+# namespace's next start, which motel's push brings once the fault is
+# gone, restarts it (ExecStartPost=).
+NSD=/etc/systemd/system/motel-metrics-netns.service.d
+mkdir -p "$NSD"
+printf '[Service]\nExecStartPre=/bin/false\n' >"$NSD/99-e2e-fail.conf"
+systemctl daemon-reload
+systemctl stop motel-metrics-netns
+amready # what motel's next post or read does
+sleep 1
+systemctl is-active -q prometheus-alertmanager && ! systemctl is-active -q motel-am-metrics.socket && ! systemctl is-active -q motel-metrics-netns && amready \
+	&& pass "the namespace failing: Alertmanager starts on am.sock alone, and notify is unharmed" \
+	|| fail "the namespace failing: $(systemctl is-active prometheus-alertmanager motel-am-metrics.socket motel-metrics-netns | tr '\n' ' '), am.sock $(amready && echo answers || echo 'does not answer')"
+rm -f "$NSD/99-e2e-fail.conf"
+rmdir "$NSD"
+systemctl daemon-reload
+inv=$(aminv)
+t0=$(date +%s)
+i=0
+until nsready; do i=$((i + 1)); [ "$i" -ge 60 ] && break; sleep 2; done
+[ "$i" -lt 60 ] && [ "$(aminv)" != "$inv" ] && held "$(ampid)" \
+	&& pass "the fault gone, the namespace's start (motel's push) restarted Alertmanager, which answers on 9093 again after $(( $(date +%s) - t0 )) s" \
+	|| fail "120 s after the namespace's fault went: $(systemctl is-active motel-metrics-netns victoria-metrics motel-vm.socket prometheus-alertmanager motel-am-metrics.socket | tr '\n' ' '), the same Alertmanager: $([ "$(aminv)" = "$inv" ] && echo yes || echo no)"
+# With motel down, the namespace stopped and started by hand, then the
+# store: nothing reads am.sock, so only vmalert's start (its Wants=)
+# starts the socket in the namespace again, and the store's scrape
+# starts Alertmanager through it. Without that line the socket and
+# Alertmanager stayed inactive until motel came back (150 s measured),
+# and vmalert's posts were refused.
+systemctl stop motel
+systemctl stop motel-metrics-netns
+systemctl start motel-metrics-netns victoria-metrics
+t0=$(date +%s)
+i=0
+until systemctl is-active -q motel-am-metrics.socket; do i=$((i + 1)); [ "$i" -ge 20 ] && break; sleep 0.5; done
+systemctl is-active -q motel-vmalert && systemctl is-active -q motel-am-metrics.socket \
+	&& pass "motel down, the namespace stopped and started by hand, the store started: vmalert's start started Alertmanager's socket there" \
+	|| fail "motel down, the namespace and the store started by hand: $(systemctl is-active motel-vmalert motel-am-metrics.socket prometheus-alertmanager | tr '\n' ' ')"
+a=$(wait_result am-up-nomotel "(timestamp(up{job=\"alertmanager\"}) > $t0) and (up{job=\"alertmanager\"} == 1)" 90) \
+	&& systemctl is-active -q prometheus-alertmanager && held "$(ampid)" \
+	&& pass "and the store's scrape started Alertmanager through it, with motel still down, on both listeners" \
+	|| fail "motel down: no fresh up{job=\"alertmanager\"}, or Alertmanager not on both listeners: $(systemctl is-active motel-am-metrics.socket prometheus-alertmanager | tr '\n' ' '), $(q 'up{job="alertmanager"}')"
+systemctl start motel
+i=0
+until systemctl is-active -q motel && [ -S /run/motel/admin.sock ]; do i=$((i + 1)); [ "$i" -ge 120 ] && break; sleep 0.5; done
+systemctl is-active -q motel || fail "motel did not start again: $(systemctl is-active motel)"
 
 echo "=== metrics 5: an app's sandbox has none of it in view ==="
 code=$(deploy demo-probe.tar.gz sb1)
@@ -638,11 +725,47 @@ sinklog | grep -q '/blog [a-z]* post_deploy_regressed blog ' && sinklog | grep -
 n=$(journalctl -u motel -o cat --no-pager | grep -c 'rules/app:blog/post_deploy_regressed' || true)
 [ "$n" -eq 1 ] && pass "one post_deploy_regressed, journalled once" || fail "post_deploy_regressed journalled $n times"
 
+echo "=== metrics 11: an upgrade from the proxy shape ==="
+# What an earlier setup left: a socket on the namespace's 9093 and a
+# proxy from it to Alertmanager's unix socket (their lines that matter
+# here), and Alertmanager on am.sock alone. The store's setup, run again,
+# retires both and restarts Alertmanager once to take the port.
+U=/etc/systemd/system
+systemctl disable --now motel-am-metrics.socket # stops Alertmanager too (PartOf=)
+rm -f "$U/motel-am-metrics.socket" "$U/prometheus-alertmanager.service.d/20-motel-metrics.conf"
+printf '%s\n' '[Unit]' 'DefaultDependencies=no' 'Requires=motel-metrics-netns.service' 'After=sysinit.target motel-metrics-netns.service' \
+	'Conflicts=shutdown.target' 'Before=shutdown.target' '[Socket]' 'ListenStream=127.0.0.1:9093' 'NetworkNamespacePath=/run/netns/motel-metrics' \
+	'[Install]' 'WantedBy=multi-user.target' >"$U/motel-am-proxy.socket"
+printf '%s\n' '[Unit]' 'Requires=motel-am-proxy.socket motel-am.socket' 'After=motel-am-proxy.socket motel-am.socket' '[Service]' 'Type=notify' \
+	'NetworkNamespacePath=/run/netns/motel-metrics' "ExecStart=/usr/lib/systemd/systemd-socket-proxyd --exit-idle-time=5min $AMS" >"$U/motel-am-proxy.service"
+systemctl daemon-reload
+systemctl enable --now motel-am-proxy.socket
+amready
+nsready && ! held "$(ampid)" && systemctl is-active -q motel-am-proxy.service \
+	|| fail "fixture: the proxy shape does not answer on 9093 through its proxy: $(inns ss -ltnpH | grep 9093)"
+inv=$(aminv)
+sleep 1
+since=$(date '+%Y-%m-%d %H:%M:%S')
+motel monitor setup --metrics >/tmp/msetup3.out 2>&1 || fail "monitor setup --metrics over the proxy shape: $(cat /tmp/msetup3.out)"
+grep -q '^retired motel-am-proxy.socket and motel-am-proxy.service: Alertmanager listens in the namespace itself' /tmp/msetup3.out \
+	&& [ ! -e "$U/motel-am-proxy.socket" ] && [ ! -e "$U/motel-am-proxy.service" ] \
+	&& ! systemctl is-active -q motel-am-proxy.socket && ! systemctl is-active -q motel-am-proxy.service \
+	&& [ ! -e "$U/multi-user.target.wants/motel-am-proxy.socket" ] \
+	&& pass "--metrics retired the proxy's socket and service: stopped, disabled and gone, and said so" \
+	|| fail "the proxy after --metrics: $(ls "$U" | grep am-proxy | tr '\n' ' ') $(systemctl is-active motel-am-proxy.socket motel-am-proxy.service | tr '\n' ' '); setup said: $(grep -E '^(retired|restarted)' /tmp/msetup3.out)"
+i=0
+until nsready; do i=$((i + 1)); [ "$i" -ge 30 ] && break; sleep 0.5; done
+sleep 3
+[ "$(aminv)" != "$inv" ] && [ "$(amstarts "$since")" = 1 ] && nsready && held "$(ampid)" && grep -q '^restarted Alertmanager, once' /tmp/msetup3.out \
+	&& pass "and restarted Alertmanager once, which holds 9093 in the namespace itself" \
+	|| fail "after the upgrade: $(amstarts "$since") start(s) of Alertmanager, 9093 $(nsready && echo answers || echo 'does not answer'): $(inns ss -ltnpH | grep 9093)"
+
 echo
 if [ "$FAILURES" -ne 0 ]; then
 	echo "metrics suite: $FAILURES failure(s)"
 	echo "--- vmalert"; journalctl -u motel-vmalert -o cat --no-pager | tail -30
 	echo "--- store"; journalctl -u victoria-metrics -o cat --no-pager | tail -20
+	echo "--- Alertmanager and its sockets"; journalctl -u prometheus-alertmanager -u motel-am-metrics.socket -u motel-am.socket -u motel-metrics-netns --no-pager | tail -40
 	exit 1
 fi
 echo "metrics suite: all passed"

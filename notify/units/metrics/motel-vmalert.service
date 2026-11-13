@@ -1,15 +1,23 @@
 # Written by `motel monitor setup --metrics` (notify/DESIGN-metrics.md, "Rules").
 # vmalert from Debian's victoria-metrics package, in the store's
 # namespace: it queries the store, keeps its alert state in it (so a
-# restart keeps its `for:` timers), and posts to Alertmanager through
-# motel-am-proxy.socket. It re-reads the rules motel renders every minute;
+# restart keeps its `for:` timers), and posts to Alertmanager's listener
+# in the namespace, motel-am-metrics.socket. It re-reads the rules motel renders every minute;
 # its own listener is inside the namespace, so there is no reload to call.
 # No alertgroup label: an alert's labels are the rule's and its
 # expression's, which is what lets its ChannelFailed and motel's be one.
 [Unit]
 Description=vmalert, the metrics store's rules (motel monitor setup --metrics)
 Requires=motel-metrics-netns.service victoria-metrics.service
-After=motel-metrics-netns.service victoria-metrics.service motel-am-proxy.socket
+# Its outlet, and the store's scrape of Alertmanager: a stop of the
+# namespace stops that socket, and the namespace's start alone does not
+# start it again (its Requires= starts nothing back). So vmalert's start,
+# which the store's brings, starts it, and a post or a scrape starts
+# Alertmanager through it. Wants=, so that a socket refused (Alertmanager
+# running without it, which the namespace's ExecStartPost= restarts)
+# leaves vmalert running.
+Wants=motel-am-metrics.socket
+After=motel-metrics-netns.service victoria-metrics.service motel-am-metrics.socket
 
 [Service]
 Type=simple

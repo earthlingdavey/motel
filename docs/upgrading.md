@@ -178,8 +178,8 @@ Before you upgrade:
   it began. While the box still runs the newer release:
   1. **Pause the heartbeat's check, then stop Alertmanager**, as
      [Monitor](monitor.md#turn-it-off-and-remove-it)'s steps 1 and 2
-     say (on a box set up with `--metrics`, vmalert and its proxy's
-     socket first). Otherwise Alertmanager reports every alert that was
+     say (on a box set up with `--metrics`, vmalert and Alertmanager's
+     socket in the store's namespace with it). Otherwise Alertmanager reports every alert that was
      firing as recovered five minutes after the next step, though
      nothing recovered.
   2. **Take out the `monitor` block and every `observe` line.** On a box
@@ -197,8 +197,9 @@ Before you upgrade:
   vmalert if you skip step 1, as do any of Monitor's recipe units you
   installed (they fail once `motel monitor send` is gone). A reboot
   starts vmalert again with the store, whose unit wants it, though
-  step 1 disabled it; its proxy's socket stays down, so it reaches no
-  Alertmanager and nothing is sent. They are
+  step 1 disabled it; Alertmanager and its socket in the store's
+  namespace stay down, so it reaches no Alertmanager and nothing is
+  sent. They are
   setup's or yours, not the package's, and the older release neither
   uses nor stops them. [Monitor](monitor.md#turn-it-off-and-remove-it)
   stops and removes them. Coming back to a release with monitor later
@@ -329,12 +330,19 @@ Alertmanager's and the store's data directories stay 0755, readable by
 every local user, until both drop-ins are rewritten. After step 3, on
 a box with the store, root runs `motel monitor setup --metrics`. It
 rewrites the store's units and
-restarts vmalert and the store (a push or two fails meanwhile) without
-touching Alertmanager. Then, at a quiet moment, root runs
+restarts vmalert and the store (a push or two fails meanwhile). It
+also retires the proxy that carried vmalert's posts to Alertmanager
+(`retired motel-am-proxy.socket …`) and restarts Alertmanager once,
+which loses what it holds in memory, so that Alertmanager holds that
+listener in the store's namespace itself (`restarted Alertmanager,
+once, …`). Then, at a quiet moment, root runs
 `motel monitor setup`. It rewrites Alertmanager's units and restarts
 it, which loses what it holds in memory: motel posts each firing state
 alert again within a minute, and a one-shot waiting in a group is
-lost. On a box built at b7754fc or later, the units differ from the
+lost. On a box built at b7754fc or later whose store still reaches
+Alertmanager through a proxy (`/etc/systemd/system/motel-am-proxy.socket`
+is there), `motel monitor setup --metrics` is due, as above, and
+`motel monitor setup` is not. Going back to such a build later, root first runs `systemctl disable --now motel-am-metrics.socket`, removes it and `prometheus-alertmanager.service.d/20-motel-metrics.conf` from `/etc/systemd/system`, and runs `systemctl daemon-reload`: that build's `setup --metrics` cannot otherwise bind its proxy's 9093. Otherwise, on a box built at b7754fc or later, the units differ from the
 old setups' only in their comments and in the `Description=` lines,
 which name the old commands (`systemctl status` shows
 `(motel notify setup)` until they are rewritten). Running both setups

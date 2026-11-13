@@ -63,7 +63,7 @@ Alertmanager beside it 42.6 MB RSS (24 MB cgroup).
 | Piece | What | Where |
 |---|---|---|
 | Alertmanager | Debian 13's `prometheus-alertmanager` 0.28.1: routing, grouping, dedupe, repeat, resolved-once, inhibition, retries, the notification log, 18 receiver kinds | Debian's unit with motel's drop-in (`notify/units/10-motel.conf`): socket-activated, `--cluster.listen-address=` (no gossip), `--enable-feature=receiver-name-in-metrics`, `MemoryMax=128M` |
-| Its listener | `/run/motel-notify/am.sock`, 0660 root:motel, a systemd socket unit (`notify/units/motel-am.socket`); no TCP port | its own runtime directory: `/run/motel` is motel.service's `RuntimeDirectory`, removed whenever motel stops |
+| Its listener | `/run/motel-notify/am.sock`, 0660 root:motel, a systemd socket unit (`notify/units/motel-am.socket`); no TCP port in the host's namespace. With the store, a second socket, `127.0.0.1:9093` inside the store's namespace, for vmalert (DESIGN-metrics.md, "The shape") | its own runtime directory: `/run/motel` is motel.service's `RuntimeDirectory`, removed whenever motel stops |
 | Its config | `alertmanager.yml` and one `url-<KEY>` file per channel secret, 0640, rendered by motel at every config load | `/var/lib/motel-notify`, 2750 motel:prometheus (setup makes it); not `/var/lib/motel`, which is 0750 motel:motel and the prometheus uid cannot traverse |
 | motel's part | the `monitor` block's notify lines and their refusals, the renderer, the engine (state table, flapping guard, mute, heartbeat, retry queue), the detectors, `channel_failed`, two admin routes, `motel monitor send`, `test` and `setup` | `notify/` |
 
@@ -544,7 +544,12 @@ cycle, no listener on 9093 or 9094, a heartbeat at once and `motel
 monitor test` delivered. Two unit facts were measured too: `motel-am.socket` must name its service
 (`Service=prometheus-alertmanager.service`), or systemd refuses it; and
 Alertmanager needs Debian's `/usr/share/prometheus` templates, so the
-package is installed rather than a binary fetched.
+package is installed rather than a binary fetched. With the store,
+`--metrics` adds a second socket in the store's namespace and a second
+drop-in, `20-motel-metrics.conf`, which this setup leaves as they are
+(DESIGN-metrics.md, "The shape"); a re-run of this setup with
+connections arriving on that socket throughout left it listening and
+Alertmanager answering on both (measured in the e2e box, 2026-11-12).
 
 ## Paths
 
@@ -581,6 +586,11 @@ motel read; and two admin routes.
   every summary is built to carry no secret and no log tail, and every
   URL must be https to a public address. A signer can already run
   anything as an app.
+- With the store, Alertmanager also listens on `127.0.0.1:9093` inside
+  the store's namespace, which no app and no host process outside it
+  reaches; what runs there (the store and vmalert) has its whole API.
+  DESIGN-metrics.md's threat model accepts it ("The namespace's
+  daemons").
 - Channel URLs are in no config, no API echo and no journal (the
   `*_file` form; measured on hotserve-1 with planted tokens:
   Alertmanager's failure lines print `Post "<redacted>"`; the e2e
@@ -596,7 +606,7 @@ in the e2e box, 2026-11-12). On the box, root uses the `motel monitor`
 commands or `curl --unix-socket /run/motel-notify/am.sock
 http://am/api/v2/alerts`. `amtool`, which the package ships, speaks TCP
 only: on a box with the store it runs inside the store's namespace,
-against vmalert's proxy (`ip netns exec motel-metrics amtool
+against Alertmanager's listener there (`ip netns exec motel-metrics amtool
 --alertmanager.url=http://127.0.0.1:9093 alert`, measured), and from
 root's laptop through `ssh -L 9093:/run/motel-notify/am.sock root@box`
 (OpenSSH forwards to a remote unix socket since 6.7; not measured).

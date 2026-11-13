@@ -1,20 +1,30 @@
 # Written by `motel monitor setup --metrics` (notify/DESIGN-metrics.md, "The shape").
-# A network namespace holding a loopback only, for the metrics store and
-# vmalert, which speak TCP: what listens in here is reachable from no app,
-# since every app shares the host's namespace.
+# A network namespace holding a loopback only, for the metrics store,
+# vmalert and Alertmanager's second listener, which speak TCP: what
+# listens in here is reachable from no app, since every app shares the
+# host's namespace.
 [Unit]
 Description=Private network namespace for the metrics store and vmalert (motel monitor setup --metrics)
-Before=victoria-metrics.service motel-vmalert.service motel-am-proxy.socket motel-vm.service
+Before=victoria-metrics.service motel-vmalert.service motel-am-metrics.socket motel-vm.service
 
 [Service]
 Type=oneshot
 RemainAfterExit=yes
+# A oneshot waits for its start with no limit by default: an `ip` that
+# hangs would hold Alertmanager's start, which waits for this one.
+TimeoutStartSec=30
 # A namespace left by a start that failed half-way, or a stop that did
 # not run, would make the add fail with "File exists" at every start.
 # Tested first, so a cold boot, which has none, logs no error for it.
 ExecStartPre=-/bin/sh -c 'test ! -e /run/netns/motel-metrics || exec /usr/sbin/ip netns delete motel-metrics'
 ExecStart=/usr/sbin/ip netns add motel-metrics
 ExecStart=/usr/sbin/ip -n motel-metrics link set lo up
+# Alertmanager started while this one could not (its socket here then
+# failed, and Wants= let it start on motel-am.socket alone) holds no
+# listener in the namespace, and no later start of the socket can hand
+# it one. Its restart takes the socket up. Not running, or starting
+# with this one, it is left as it is.
+ExecStartPost=-/usr/bin/systemctl --no-block try-restart prometheus-alertmanager.service
 ExecStop=/usr/sbin/ip netns delete motel-metrics
 
 [Install]

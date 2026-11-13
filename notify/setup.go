@@ -75,7 +75,9 @@ func isFile(p string) bool {
 // the box. One that fails after it is left as far as it got, every unit
 // and drop-in already written, so what runs is motel's confined shape;
 // the next run is a re-run (DESIGN-metrics.md, "Accepted residuals").
-func putBackOnFailure(sys system, say func(string, ...any), rerun bool, service string, sockets, daemons []string, err *error) func() {
+// then, if not nil, runs last: the store's setup gives Alertmanager back
+// its listener in the namespace there.
+func putBackOnFailure(sys system, say func(string, ...any), rerun bool, service string, sockets, daemons []string, then func() error, err *error) func() {
 	if !rerun {
 		return func() {}
 	}
@@ -94,8 +96,13 @@ func putBackOnFailure(sys system, say func(string, ...any), rerun bool, service 
 				failed = append(failed, fmt.Sprintf("systemctl %s: %v", strings.Join(s, " "), rerr))
 			}
 		}
+		if then != nil {
+			if rerr := then(); rerr != nil {
+				failed = append(failed, rerr.Error())
+			}
+		}
 		if len(failed) > 0 {
-			say("setup failed, and so did putting %s back as it was (%s): check that it is unmasked and running", service, strings.Join(failed, "; "))
+			say("setup failed, and so did putting %s back as it was (%s): check that it is unmasked and running, and each unit named there", service, strings.Join(failed, "; "))
 			return
 		}
 		say("setup failed; %s is unmasked again, and %s started", service, strings.Join(start, " and "))
@@ -234,7 +241,7 @@ func setup(sys system, root string, out io.Writer) (err error) {
 	}
 	say("masked %s, so the install starts nothing", amService)
 	// Its socket starts it again at the next connection, once unmasked.
-	defer putBackOnFailure(sys, say, rerun, amService, []string{amSocket}, nil, &err)()
+	defer putBackOnFailure(sys, say, rerun, amService, []string{amSocket}, nil, nil, &err)()
 	// One installed by hand before setup runs on Debian's :9093 and
 	// 0.0.0.0:9094, and the mask does not stop it; nor would the socket
 	// be handed to a service already running. Stopped here, it next

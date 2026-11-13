@@ -366,7 +366,7 @@ e2e-metrics:
 	status=0; \
 	$(COMPOSE) exec -T e2e-metrics-box /bin/sh /suite-metrics.sh || status=1; \
 	if [ $$status -ne 0 ]; then \
-		$(COMPOSE) exec -T e2e-metrics-box journalctl --no-pager -n 200 -u motel -u victoria-metrics -u motel-vmalert -u motel-vm.socket -u motel-vm.service -u motel-am-proxy.socket -u motel-am-proxy.service -u motel-metrics-netns || true; \
+		$(COMPOSE) exec -T e2e-metrics-box journalctl --no-pager -n 200 -u motel -u victoria-metrics -u motel-vmalert -u motel-vm.socket -u motel-vm.service -u motel-am-metrics.socket -u prometheus-alertmanager -u motel-metrics-netns || true; \
 	fi; \
 	$(COMPOSE) rm -sf e2e-metrics-box e2e-sink >/dev/null; \
 	exit $$status

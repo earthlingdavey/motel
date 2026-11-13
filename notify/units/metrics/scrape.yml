@@ -1,8 +1,8 @@
 # Written by `motel monitor setup --metrics` (notify/DESIGN-metrics.md, "Rules"),
 # as /var/lib/motel-metrics/scrape.yml. What the store scrapes inside its
 # namespace: itself, vmalert (whose `up` motel reads for
-# metrics_rules_down), and Alertmanager's /metrics through the
-# in-namespace proxy (the second ChannelFailed). motel pushes; it is not
+# metrics_rules_down), and Alertmanager's /metrics at its own listener in
+# the namespace (the second ChannelFailed). motel pushes; it is not
 # scraped.
 global:
   scrape_interval: 30s

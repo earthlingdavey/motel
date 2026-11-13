@@ -233,22 +233,24 @@ gives it motel's config and socket activation, the socket unit
 leaves it to start on its socket's first connection, starts the socket
 and reloads motel, which renders the monitor block's channels.
 
-With --metrics, the store, which posts to Alertmanager's socket: on a
+With --metrics, the store, which posts to Alertmanager: on a
 box where Alertmanager's setup has not run to its end (motel-am.socket
 not enabled and listening, or the service masked), Alertmanager's setup
 above runs first, and the store's only once it
-has succeeded; where it is, Alertmanager is left as it runs, and only
-the store's setup runs. The store's: installs
+has succeeded; where it is, only the store's setup runs. The store's: installs
 victoria-metrics so that it never listens in the host's network
 namespace: masks its unit first, so the install starts nothing
 (Debian's would listen on 0.0.0.0:8428, unauthenticated); installs it
 (and iproute2 if missing); writes the namespace unit, the drop-in that
 moves the store into the namespace with its memory capped, the socket
-/run/motel-metrics/vm.sock (0660 root:motel) and its proxy, the
-in-namespace proxy to Alertmanager and vmalert's unit, and
+/run/motel-metrics/vm.sock (0660 root:motel) and its proxy,
+Alertmanager's second socket (127.0.0.1:9093 inside the namespace) with
+the drop-in that hands it to Alertmanager, and vmalert's unit, and
 /var/lib/motel-metrics with the scrapes and an empty rule file;
-unmasks it, starts them all and reloads motel, which renders the rules
-and pushes.
+retires the proxy an earlier setup put on that port; unmasks the store;
+restarts Alertmanager once, unless that socket already listens (it
+takes a socket up only when it starts: what it holds in memory goes);
+starts them all and reloads motel, which renders the rules and pushes.
 
 Run again, each puts its units back as the binary ships them:
 motel monitor setup Alertmanager's (stopping it for the while: what it
@@ -267,14 +269,16 @@ holds in memory goes), motel monitor setup --metrics the store's.`,
 
 // runSetup is `motel monitor setup`: Alertmanager's setup; with
 // metrics, the store's, after Alertmanager's only where that has not
-// run to its end (amSetUp). A re-run with metrics leaves a working
-// Alertmanager alone: its setup masks and stops it, which loses the
-// alerts it holds in memory and what waits in a group. Each setup keeps
+// run to its end (amSetUp). A re-run with metrics does not run a working
+// Alertmanager's setup: it masks and stops Alertmanager, which loses the
+// alerts it holds in memory and what waits in a group (the store's
+// restarts it once, only to hand it its socket in the namespace, and not
+// again once it has it). Each setup keeps
 // its own refusals and its own put-back on a failed re-run, and the
 // first that fails stops the rest.
 func runSetup(sys system, root string, out io.Writer, metrics bool) error {
 	if metrics && amSetUp(sys, root) {
-		_, _ = fmt.Fprintf(out, "Alertmanager is set up (%s enabled and listening): left as it runs; motel monitor setup re-runs its setup\n", amSocket)
+		_, _ = fmt.Fprintf(out, "Alertmanager is set up (%s enabled and listening): its setup is not run again (motel monitor setup does that)\n", amSocket)
 		return metricsSetup(sys, root, out)
 	}
 	if err := setup(sys, root, out); err != nil {
@@ -287,14 +291,17 @@ func runSetup(sys system, root string, out io.Writer, metrics bool) error {
 }
 
 // amSetUp reports an Alertmanager setup that ran to its end: the socket
-// unit written, the service not masked, and the socket enabled and
+// unit and the drop-in written, the service not masked, and the socket enabled and
 // active. A first setup writes the socket unit before it unmasks the
 // service and enables the socket, so the file alone would take one that
 // failed between for a working Alertmanager, masked and deaf (Copilot
 // round 1 on #428); then Alertmanager's setup runs again, which is its
 // recovery, and touches nothing that works.
 func amSetUp(sys system, root string) bool {
-	if !isFile(filepath.Join(root, socketPath)) {
+	// The drop-in too: without it Alertmanager runs Debian's command,
+	// on :9093 and 0.0.0.0:9094, and the store's setup may restart it
+	// (/code-review pass 2 on #435).
+	if !isFile(filepath.Join(root, socketPath)) || !isFile(filepath.Join(root, dropInPath)) {
 		return false
 	}
 	// `systemctl mask` is a link to /dev/null where the unit would be.
