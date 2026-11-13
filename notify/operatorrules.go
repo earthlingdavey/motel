@@ -539,7 +539,7 @@ func checkMemoryCapped(rules []Rule, capped map[string]bool) error {
 // disk_fill lines, rendered as motel's own expressions. Empty with no
 // notify (n nil), as the fixed groups are.
 func operatorRules(n *App) vmGroup {
-	g := vmGroup{Name: operatorGroup, Interval: clockText("1m"), Rules: []vmRule{}}
+	g := vmGroup{Name: operatorGroup, Interval: ruleGroupInterval, Rules: []vmRule{}}
 	if n == nil || n.Metrics == nil {
 		return g
 	}

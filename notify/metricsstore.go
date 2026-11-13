@@ -27,8 +27,8 @@ type storeClient struct {
 
 // storeRequestTimeout bounds a push or a check. A socket-activated
 // proxy starts on the first connect in milliseconds; the store answers
-// a small import in a few.
-const storeRequestTimeout = 10 * time.Second
+// a small import in a few. Divided as amRequestTimeout is.
+const storeRequestTimeout = max(10*time.Second/clockDiv, requestFloor)
 
 func newStoreClient(socket string) *storeClient {
 	tr := &http.Transport{

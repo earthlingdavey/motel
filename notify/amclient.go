@@ -24,7 +24,9 @@ type amClient struct {
 
 // amRequestTimeout bounds one request. Socket activation starts
 // Alertmanager on the first connect, about a second on hotserve-1.
-const amRequestTimeout = 10 * time.Second
+// Divided with the clocks it sits between (clock.go), down to the
+// requestFloor that start needs.
+const amRequestTimeout = max(10*time.Second/clockDiv, requestFloor)
 
 func newAMClient(socket string) *amClient {
 	tr := &http.Transport{

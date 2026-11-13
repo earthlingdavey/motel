@@ -130,7 +130,7 @@ done
 grep -q 'notify_channel: ops' "$STATE/rules.yml" \
 	&& pass "motel rendered the rules, with ChannelFailed for the operator's channels" || fail "rules.yml: $(head -c 400 "$STATE/rules.yml")"
 iv=$(sed -n 's/^ *interval: //p' "$STATE/rules.yml" | head -1)
-case "$iv" in 1m) D=1 ;; [0-9]*s) D=$((60 / ${iv%s})) ;; *) D=0 ;; esac
+case "$iv" in 1m) D=1 ;; *ms) D=0 ;; [0-9]*s) D=$((60 / ${iv%s})) ;; *) D=0 ;; esac
 [ "$D" = 6 ] && pass "the box's motel divides its clocks by 6: the rules' groups run every $iv" \
 	|| fail "the rules' groups run every '$iv', not 10s: the box's motel is not the -tags e2e build (notify/clock_e2e.go)"
 [ "$D" -ge 1 ] || D=1

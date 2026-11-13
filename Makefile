@@ -247,12 +247,11 @@ build:
 		(cd backups && GOOS=linux GOARCH=amd64 go build -trimpath -ldflags "-s -w" -o ../build/motel-backup-linux-amd64 ./cmd/motel-backup) & p3=$$!; \
 		(cd backups && GOOS=linux GOARCH=arm64 go build -trimpath -ldflags "-s -w" -o ../build/motel-backup-linux-arm64 ./cmd/motel-backup) & p4=$$!; \
 		wait $$p1 || exit 1; wait $$p2 || exit 1; wait $$p3 || exit 1; wait $$p4 || exit 1; \
-		if go version -m build/motel-backup-linux-amd64 build/motel-backup-linux-arm64 | grep -q -- "-tags=.*e2e"; then \
-			echo "build/motel-backup-linux-*: built with -tags e2e, which shortens the setup clock for the e2e box: not a binary to ship"; exit 1; \
-		fi; \
-		if go version -m build/motel-linux-amd64 build/motel-linux-arm64 | grep -q -- "-tags=.*e2e"; then \
-			echo "build/motel-linux-*: built with -tags e2e, which divides the notify clocks for the metrics box: not a binary to ship"; exit 1; \
-		fi; \
+		for b in build/motel-linux-amd64 build/motel-linux-arm64 build/motel-backup-linux-amd64 build/motel-backup-linux-arm64; do \
+			if go version -m $$b | grep -q -- "-tags=.*e2e"; then \
+				echo "$$b: built with -tags e2e, which shortens clocks for an e2e box (setup in motel-backup, notify in motel): not a binary to ship"; exit 1; \
+			fi; \
+		done; \
 		chmod -R a+rwX build'
 
 # Builds .deb for both arches into dist/. .deb only, and no .apk

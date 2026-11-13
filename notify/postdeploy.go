@@ -58,10 +58,10 @@ const (
 	// from relaunchSkip on the window's base is a sample that holds
 	// them. The relaunched instance's answers before it are not read: a
 	// first check of 20 s, and every one 40 s short.
-	// The request's budget is divided with the clocks, so that under
-	// clock_e2e.go's divisor the skip stays inside a check's spacing
+	// Under clock_e2e.go's divisor the request's budget is divided too
+	// (to its floor), so the skip stays inside a check's spacing
 	// (TestClockInvariants), as the shipped 40 s is inside 60.
-	relaunchSkip = pushEvery + storeRequestTimeout/clockDiv
+	relaunchSkip = pushEvery + storeRequestTimeout
 	// postDeployGrace is how long past the window's end a check the
 	// store did not answer is asked again before the comparison ends
 	// unfinished.

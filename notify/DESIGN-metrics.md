@@ -1041,11 +1041,14 @@ interval and a rule's `for`, Alertmanager's waits, intervals, repeats
 and resolve_timeout, vmalert's `-evaluationInterval` and
 `-configCheckInterval`, the scrape interval, and the store's
 `-search.latencyOffset` and vmalert's `-rule.evalDelay`, which the
-units otherwise leave at their 30 s; the post backoff; and a
-post_deploy rule's window, which is how long its checks run). The
+units otherwise leave at their 30 s; the post backoff; a post_deploy
+rule's window, which is how long its checks run; and what is made of
+a push, the counter guard's lookback of four and its half a push). The
+store's and Alertmanager's request budgets are divided down to a 3 s
+floor (`requestFloor`), which a socket-activated start needs. The
 windows a rule or a view reads history over (a rate's, an increase's,
-the counter guard's, metrics_rules_down's three minutes, ChannelFailed's
-five) are not divided, so their ratios to the waits are not kept; the
+metrics_rules_down's three minutes, ChannelFailed's five) are not
+divided, so their ratios to the waits are not kept; the
 clocks' own invariants are tested at the divisor
 (`TestClockInvariants`, run by `metrics-builder`). The suite reads the divisor back from
 `rules.yml` and fails unless it is six, and its waits that are a

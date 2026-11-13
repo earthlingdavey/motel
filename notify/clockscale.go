@@ -8,6 +8,10 @@ import (
 	"github.com/caddyserver/caddy/v2"
 )
 
+// requestFloor is the least a request's budget is divided down to: a
+// socket-activated start, which no divisor shortens.
+const requestFloor = 3 * time.Second
+
 // clockText is a duration as notify writes it into a rendered file
 // (rules.yml, Alertmanager's config), divided by clockDiv: s itself at 1.
 func clockText(s string) string { return scaleText(s, clockDiv) }

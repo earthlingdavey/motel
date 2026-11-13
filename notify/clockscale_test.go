@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/caddyserver/caddy/v2"
 )
 
 // The e2e build's division, run in every build: the shipped binary's
@@ -58,8 +60,12 @@ func TestClockDivision(t *testing.T) {
 
 // What the clocks must hold of one another at any divisor: the
 // metrics-builder stage of e2e/Dockerfile runs this with -tags e2e too,
-// and package init there runs every clockText literal at the divisor.
+// where package init divides the package-level timings (render.go's,
+// ruleGroupInterval) and the two renders below the ones a render
+// writes: a literal clockText cannot read panics here, not on the box.
 func TestClockInvariants(t *testing.T) {
+	_ = renderRules(nil)
+	_, _, _ = render(&resolved{}, t.TempDir())
 	// A relaunch's window starts relaunchSkip after the cutover and its
 	// first check is postDeployEvery after it: past it, the first window
 	// is negative, which the store refuses.
@@ -67,10 +73,9 @@ func TestClockInvariants(t *testing.T) {
 		t.Errorf("relaunchSkip %s is not inside a check's spacing %s", relaunchSkip, postDeployEvery)
 	}
 	// storeLag reads past the store's latency offset as written.
-	offset := 30 * time.Second
-	if clockDiv != 1 {
-		d, _ := time.ParseDuration(scaleText(storeLatencyOffset, clockDiv))
-		offset = d
+	offset, err := caddy.ParseDuration(scaleText(storeLatencyOffset, clockDiv))
+	if err != nil {
+		t.Fatalf("the store's latency offset: %v", err)
 	}
 	if storeLag <= offset {
 		t.Errorf("storeLag %s does not read past the store's -search.latencyOffset %s", storeLag, offset)
