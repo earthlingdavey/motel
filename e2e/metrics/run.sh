@@ -218,22 +218,47 @@ else
 fi
 
 echo "=== metrics 3: GET /<app> ==="
-m=""
-end=$(( $(date +%s) + 90 ))
+# The view's field shows once the store answers the view's own range
+# query (notify/metricsview.go: start now-1h, end now, step 60 s), and
+# then once the view's 30 s cache of its last answer, empty or not, has
+# passed. The store aligns the range's end down to a whole minute, so a
+# rate's first point is the minute after the second push: up to 89 s
+# after the first push, measured on 1.112.0 (PR #445). The suite waits
+# for that point in the store (a cap, not a timing), then gives the view
+# its cache and a margin.
+rq='sum(rate(motel_app_cpu_seconds_total{app="blog"}[2m]))'
+[ "$MEMORY" = 1 ] && rq='{__name__=~"motel_app_memory_bytes|motel_app_memory_max_bytes",app="blog"}'
+end=$(( $(date +%s) + 180 ))
 while [ "$(date +%s)" -lt "$end" ]; do
-	m=$(status)
-	if [ "$MEMORY" = 1 ]; then
-		printf '%s' "$m" | grep -q '"metrics":{[^}]*"memory_bytes":{"now":[1-9]' && break
-	else
-		printf '%s' "$m" | grep -q '"metrics":{[^}]*"cpu_cores":{"avg_5m":' && break
-	fi
-	sleep 3
+	now=$(date +%s)
+	r=$(vm -G --data-urlencode "query=$rq" --data-urlencode "start=$((now - 3600))" --data-urlencode "end=$now" \
+		--data-urlencode step=60 http://vm/api/v1/query_range)
+	has_result "$r" && break
+	sleep 2
 done
-want='"cpu_cores":{"avg_5m":'
-[ "$MEMORY" = 1 ] && want='"memory_bytes":{"now":[1-9]'
-printf '%s' "$m" | grep -q '"metrics":{"window":"1h","at":"' && printf '%s' "$m" | grep -q "$want" \
-	&& pass "GET /blog with the deploy token carries its metrics: $(printf '%s' "$m" | grep -o '"metrics":{.*' | cut -c1-200)" \
-	|| fail "GET /blog's metrics: $(printf '%s' "$m" | grep -o '"metrics":.*' | cut -c1-300)"
+# The view is checked only once the store has the point: with none,
+# the store's failure is the one to read.
+if has_result "$r"; then
+	pass "the store answers the view's range query with a point"
+	m=""
+	end=$(( $(date +%s) + 40 ))
+	while [ "$(date +%s)" -lt "$end" ]; do
+		m=$(status)
+		if [ "$MEMORY" = 1 ]; then
+			printf '%s' "$m" | grep -q '"metrics":{[^}]*"memory_bytes":{"now":[1-9]' && break
+		else
+			printf '%s' "$m" | grep -q '"metrics":{[^}]*"cpu_cores":{"avg_5m":' && break
+		fi
+		sleep 3
+	done
+	want='"cpu_cores":{"avg_5m":'
+	[ "$MEMORY" = 1 ] && want='"memory_bytes":{"now":[1-9]'
+	printf '%s' "$m" | grep -q '"metrics":{"window":"1h","at":"' && printf '%s' "$m" | grep -q "$want" \
+		&& pass "GET /blog with the deploy token carries its metrics: $(printf '%s' "$m" | grep -o '"metrics":{.*' | cut -c1-200)" \
+		|| fail "GET /blog's metrics, 40 s after the store had the point: $(printf '%s' "$m" | grep -o '"metrics":.*' | cut -c1-300)"
+else
+	fail "the store has no point for the view's range query after 180 s (GET /blog's metrics not checked): $(printf '%s' "$r" | head -c 300)"
+fi
 code=$(curl -s -o /tmp/get-noauth -w '%{http_code}' --max-time 5 "$HOOK")
 [ "$code" = 401 ] && ! grep -q metrics /tmp/get-noauth && pass "GET /blog without a token: 401, no metrics" || fail "GET /blog without a token: $code"
 
