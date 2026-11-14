@@ -170,7 +170,10 @@ Error: oncall: Alertmanager could not deliver (discord: other); journalctl -u pr
 ```
 
 It exits 1 unless the message was delivered, and it never prints the
-URL. A test goes to its channel whatever that channel's `severity`
+URL, not even one given in place of the channel's name: a name the
+block does not have is refused with the block's channel names, and
+without the name given, since motel's journal keeps the refusal. A
+test goes to its channel whatever that channel's `severity`
 floor is.
 
 ### The secrets file
@@ -392,7 +395,7 @@ The names motel uses itself are refused:
 
 ```
 $ motel monitor send --source reboot --name watchdog_x --summary x
-Error: watchdog_x is one of motel's own events; name yours something else
+Error: name is one of motel's own events, or starts with watchdog_ as theirs do; name yours something else
 ```
 
 ### A reboot that waits

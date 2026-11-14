@@ -372,15 +372,41 @@ func TestServeExpire(t *testing.T) {
 		t.Fatalf("an expired one was expired again: %q", got)
 	}
 	f.set(http.StatusNotFound, `"silence not found"`)
-	if _, err := callAdmin(t, serveExpire, http.MethodPost, ExpireRequest{ID: testSilenceID, By: "alice"}); apiStatus(err) != http.StatusUnprocessableEntity || !strings.Contains(err.Error(), "no silence "+testSilenceID) {
+	if _, err := callAdmin(t, serveExpire, http.MethodPost, ExpireRequest{ID: testSilenceID, By: "alice"}); apiStatus(err) != http.StatusUnprocessableEntity ||
+		!strings.Contains(err.Error(), "no silence by that id") || strings.Contains(err.Error(), testSilenceID) {
 		t.Fatalf("an unknown id: %v", err)
 	}
+	// Caddy journals the 502 too: the client's error names the path, and
+	// the refusal says <id> in the id's place.
 	f.set(http.StatusInternalServerError, `"internal"`)
-	if _, err := callAdmin(t, serveExpire, http.MethodPost, ExpireRequest{ID: testSilenceID, By: "alice"}); apiStatus(err) != http.StatusBadGateway || !strings.Contains(err.Error(), "internal") {
+	if _, err := callAdmin(t, serveExpire, http.MethodPost, ExpireRequest{ID: testSilenceID, By: "alice"}); apiStatus(err) != http.StatusBadGateway ||
+		!strings.Contains(err.Error(), "internal") || !strings.Contains(err.Error(), "/api/v2/silence/<id>") || strings.Contains(err.Error(), testSilenceID) {
 		t.Fatalf("Alertmanager failing: %v", err)
+	}
+	// The heartbeat's check UUID, pasted for an id: refused unechoed, and
+	// never sent to Alertmanager, which journals an id it cannot find.
+	f.take()
+	te.known = knownValues(testSecrets(), te.active.Channels, te.active.HeartbeatSecret)
+	te.active.known = te.known
+	hc := testSecrets()["NOTIFY_HC_URL"]
+	check := hc[strings.LastIndex(hc, "/")+1:]
+	if _, err := callAdmin(t, serveExpire, http.MethodPost, ExpireRequest{ID: check, By: "alice"}); apiStatus(err) != http.StatusUnprocessableEntity ||
+		!strings.Contains(err.Error(), "a value the filter masks") || strings.Contains(err.Error(), check) {
+		t.Fatalf("the heartbeat's check UUID: %v", err)
+	}
+	if got := f.take(); len(got) != 0 {
+		t.Fatalf("Alertmanager was asked about the heartbeat's check UUID: %q", got)
 	}
 	if n := len(te.lines("monitor: silence expired")); n != 1 {
 		t.Fatalf("a failed expire journalled: %d lines in all", n)
+	}
+	// A silence id is no known value: expired as before.
+	f.set(http.StatusOK, "")
+	f.mu.Lock()
+	f.state = "active"
+	f.mu.Unlock()
+	if _, err := callAdmin(t, serveExpire, http.MethodPost, ExpireRequest{ID: testSilenceID, By: "alice"}); err != nil {
+		t.Fatalf("a silence id with the known values set: %v", err)
 	}
 }
 
@@ -471,7 +497,7 @@ func TestSilenceCommandOutput(t *testing.T) {
 	// The route's refusal, not the command's: Alertmanager's 404.
 	f.set(http.StatusNotFound, `"silence not found"`)
 	out, err = runSilence(t, addr, "expire", "--json", testSilenceID)
-	if err == nil || out != `{"error":"no silence `+testSilenceID+` in Alertmanager"}`+"\n" {
+	if err == nil || out != `{"error":"no silence by that id in Alertmanager"}`+"\n" {
 		t.Fatalf("a 404 with --json: %q, %v", out, err)
 	}
 }

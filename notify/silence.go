@@ -345,9 +345,19 @@ func serveExpire(w http.ResponseWriter, r *http.Request) error {
 	if err := req.Check(); err != nil {
 		return unprocessable(err)
 	}
-	_, am, logger, _, err := silenceTarget()
+	active, am, logger, _, err := silenceTarget()
 	if err != nil {
 		return err
+	}
+	// A UUID the filter masks (the heartbeat's check UUID pasted for a
+	// silence id) goes no further: Alertmanager journals the id of a
+	// silence it cannot find, and Caddy this route's refusal. The known
+	// values are the add route's: the checked config's and the engine's.
+	theEngine.mu.Lock()
+	known := append(slices.Clone(active.known), theEngine.known...)
+	theEngine.mu.Unlock()
+	if cleanText(known, req.ID) != req.ID {
+		return unprocessable(errors.New("that is a value the filter masks (the heartbeat's check UUID, or a secret), not a silence id: silence add prints a silence's id"))
 	}
 	// Alertmanager 0.28.1 answers 200 to the expiry of a silence already
 	// expired (measured in the notify e2e box): asked first, so that a
@@ -356,20 +366,24 @@ func serveExpire(w http.ResponseWriter, r *http.Request) error {
 		var se *amStatusError
 		return errors.As(err, &se) && se.code == http.StatusNotFound
 	}
+	// An error of the client's names the request's path, which holds the
+	// id; the refusal says <id> in its place.
+	noID := func(err error) error { return errors.New(strings.ReplaceAll(err.Error(), req.ID, "<id>")) }
 	state, err := am.silenceState(r.Context(), req.ID)
 	switch {
 	case notFound(err):
-		return unprocessable(fmt.Errorf("no silence %s in Alertmanager", req.ID))
+		return unprocessable(errors.New("no silence by that id in Alertmanager"))
 	case err != nil:
-		return badGateway(fmt.Errorf("reading the silence from Alertmanager: %w", err))
+		return badGateway(fmt.Errorf("reading the silence from Alertmanager: %w", noID(err)))
 	case state == "expired":
+		// Alertmanager holds a silence by this id: the id is its own.
 		return unprocessable(fmt.Errorf("silence %s has already expired", req.ID))
 	}
 	if err := am.expireSilence(r.Context(), req.ID); err != nil {
 		if notFound(err) {
-			return unprocessable(fmt.Errorf("no silence %s in Alertmanager", req.ID))
+			return unprocessable(errors.New("no silence by that id in Alertmanager"))
 		}
-		return badGateway(fmt.Errorf("expiring in Alertmanager: %w", err))
+		return badGateway(fmt.Errorf("expiring in Alertmanager: %w", noID(err)))
 	}
 	logger.Info("monitor: silence expired", zap.String("id", req.ID), zap.String("expired_by", createdBy(req.By)))
 	return writeJSON(w, SilenceResult{ID: req.ID})

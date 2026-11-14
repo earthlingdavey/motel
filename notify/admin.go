@@ -91,7 +91,8 @@ const maxDetails = 2 << 10
 
 // Check is the validation `motel monitor send` makes before it posts and
 // the admin route makes again: the route is the gate, the command's
-// check a courtesy that names the mistake first.
+// check a courtesy that names the mistake first. No refusal echoes a
+// value given: Caddy journals the route's (`admin.api` `request error`).
 func (r SendRequest) Check() error {
 	if !sourceRe.MatchString(r.Source) {
 		return errors.New("source is the producer's name: lowercase letters, digits and dashes, at most 32; motel stamps it external:<name>")
@@ -106,7 +107,7 @@ func (r SendRequest) Check() error {
 		return errors.New("name is lowercase letters, digits and underscores, starting with a letter, at most 64")
 	}
 	if slices.ContainsFunc(reservedNames, func(n string) bool { return strings.EqualFold(n, r.Name) }) || strings.HasPrefix(r.Name, "watchdog_") {
-		return fmt.Errorf("%s is one of motel's own events; name yours something else", r.Name)
+		return errors.New("name is one of motel's own events, or starts with watchdog_ as theirs do; name yours something else")
 	}
 	switch r.State {
 	case "", "firing", "resolved":
@@ -128,7 +129,7 @@ func (r SendRequest) Check() error {
 	size := 0
 	for k, v := range r.Details {
 		if !detailRe.MatchString(k) {
-			return fmt.Errorf("detail %q: a name is lowercase letters, digits and underscores", k)
+			return errors.New("a detail's name is lowercase letters, digits and underscores, starting with a letter, at most 32")
 		}
 		size += len(k) + len(v)
 	}
@@ -190,7 +191,7 @@ func serveSend(w http.ResponseWriter, r *http.Request) error {
 		Summary: req.Summary, Kind: kindEvent, Details: req.Details}
 	if app, ok := strings.CutPrefix(req.Subject, "app:"); ok {
 		if !slices.Contains(active.cfg.apps, app) {
-			return unprocessable(fmt.Errorf("subject %s names no app this box runs", req.Subject))
+			return unprocessable(errors.New("subject names no app this box runs"))
 		}
 		ev.App = app
 	}
@@ -269,7 +270,9 @@ func serveTest(w http.ResponseWriter, r *http.Request) error {
 		if names == "" {
 			names = "none in this load"
 		}
-		return unprocessable(fmt.Errorf("no channel named %q; the monitor block's channels are %s", req.Channel, names))
+		// The block's names, never the one given: Caddy journals the
+		// refusal, and a channel's URL typed for its name would be in it.
+		return unprocessable(fmt.Errorf("the monitor block has no channel by that name; its channels are %s", names))
 	}
 	if !active.setUp() {
 		return caddy.APIError{HTTPStatus: http.StatusServiceUnavailable, Err: errNotSetUp}
