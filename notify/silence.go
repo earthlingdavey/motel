@@ -295,7 +295,9 @@ func silenceTarget() (*App, *amClient, *zap.Logger, time.Time, error) {
 // timeout, the caller's cancel, or Alertmanager closing the connection
 // after it read the request (EOF; one that closes with the request
 // unread resets it): Alertmanager may have taken it. A refused
-// connection or a non-2xx answer is not one; it took nothing.
+// connection or a non-2xx answer is not one; it took nothing. Judged
+// by the error alone, not by whether the request was sent
+// (DESIGN-notify.md, "Accepted residuals").
 func answerLost(err error) bool {
 	return errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) ||
 		errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF)
