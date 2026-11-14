@@ -242,7 +242,7 @@ used …`) and names the mend.
 monitor {
 	channel <name> json|ntfy|slack|discord {secret.NOTIFY_<NAME>} [severity critical|warning|info]
 	operator <channel>...           # who hears every event: the box's, and every app's
-	bind <identity> <channel>       # an app's deployer: hears the events of the apps that trust the identity
+	bind <identity> <channel>       # an app's deployer: hears the alerts labelled with an app that trusts the identity (below)
 	heartbeat {secret.NOTIFY_<NAME>} # a dead-man check's ping URL (below)
 	deploy_succeeded on             # off by default
 	metrics                         # keep the numbers (needs setup --metrics)
@@ -264,7 +264,13 @@ monitor {
   is refused unless the block pins it. A bind to an identity that no
   app trusts is refused in the same words (`no app's deploy_trust
   trusts this identity`), so revoking a key also means removing its
-  bind.
+  bind. A bound channel hears the alerts that carry the app's `app`
+  label: liveswap's events about the app (its deploys and rollbacks,
+  `watchdog_throttled`, `relaunch_refused`), the store's rules and
+  your `rule` lines about it, `post_deploy_regressed`, and
+  `motel monitor send --subject app:<name>`. The box's own alerts
+  about the app, `backup_stale` for its backup and `cert_failed` for
+  its domains, carry no `app` label and go to the operator alone.
 - **`heartbeat`**: without it, every load warns `monitor: no heartbeat
   in this load: nothing outside the box hears that it, motel or
   Alertmanager stopped`.
@@ -868,11 +874,32 @@ monitor {
 - **`threshold`**: a metric (`5xx_share`, `p50`, `p95`, `request_rate`,
   `cache_hit_share`, `memory_share`, `cpu_cores`), `>` or `<` a value,
   held `for` a time, for every app or for `app <name>`.
+  `memory_share` is an app's working set over its `memory_max`, so it
+  exists only for an app whose cap the host enforces: an every-app
+  rule watches the capped apps alone, a rule naming an app with no
+  `memory_max` is refused, and one naming an app whose cap status
+  lists under `caps_unenforced` loads and never fires.
 - **`disk_fill`**: a filesystem that will be full `within` the time
   given, at the rate it is filling.
 - **`post_deploy`**: after each deploy or rollback of the app, the new
   release compared with the one it replaced. It sends
-  `post_deploy_regressed` once, and it never rolls back.
+  `post_deploy_regressed` once, and it never rolls back. Each minute
+  of the `window` (30 m by default), the new release's responses since
+  the cutover are checked, and `failures` (3) failing checks in a row
+  send it. A check fails only when the new release is over
+  `max_5xx_share` or `max_p95` and worse than the old one (a p95 above
+  1.2 times the old one's; a share over the bound where the old one's
+  was within it, or above 1.2 times it and beyond chance where both
+  are over); with no old release that sent `min_requests` responses,
+  the bound alone counts. A check is skipped until the new release has
+  sent `min_requests` (100) responses, so on a quiet app the window
+  can end having judged nothing, which looks the same as a release
+  that held. A deploy or rollback to the release already serving
+  starts no comparison; a relaunch of a release whose instance had
+  stopped (a rollback to one that crashed) is held to the bound alone,
+  from 40 s after the cutover, and told as a relaunch. A restart of
+  motel inside the window ends the comparison, and nothing compares
+  that deploy again.
 
 The request metrics need `observe <app>` in the app's site, and a rule
 on them reads only the apps motel's last push says are observed: an
@@ -889,6 +916,14 @@ after setup, or after a gap of over five minutes in the pushes. The
 rule goes to the operator's channels, and to the app's bound channels
 when it is about one app. Every parameter and every refusal is in
 DESIGN-metrics.md's [Operator rules](../notify/DESIGN-metrics.md#operator-rules).
+
+Editing a `threshold` or `disk_fill` rule can restart its alert.
+vmalert knows a rule by its expression, name and labels, so a new
+metric, value, `within`, `min_requests`, `app`, `severity` or name
+makes it a new rule. An alert the old one was firing is no longer
+sent, and the new one fires only after its `for`, so your channels can
+get a `[RESOLVED]` while the condition still holds, then a new
+`[FIRING]`.
 
 ## How close is each alert
 
