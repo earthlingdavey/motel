@@ -50,6 +50,50 @@ func TestEveryActionHasARoute(t *testing.T) {
 	}
 }
 
+// TestRouteActions pins the action of each route, written out here
+// rather than read from routes: a real request of each shape goes
+// through findRoute, and the row it lands on must carry the action
+// the case names ("" for none: the 405). Every row must be landed on
+// by some case, so a row added is pinned here too.
+func TestRouteActions(t *testing.T) {
+	landed := map[*route]bool{}
+	for _, c := range []struct {
+		method, query string
+		forceQuery    bool
+		want          access.Action
+	}{
+		{"GET", "", false, access.BoxStatus},
+		{"GET", "", true, access.BoxPushResult}, // `GET /?`: a poll with no id
+		{"GET", "result=0123456789abcdef0123456789abcdef", false, access.BoxPushResult},
+		{"GET", "%ZZ", false, access.BoxPushResult},
+		{"POST", "", false, access.BoxPush},
+		{"POST", "result=1", false, access.BoxPush},
+		{"POST", "", true, access.BoxPush},
+		{"PUT", "", false, ""},
+		{"HEAD", "", false, ""},
+		{"get", "", false, ""},
+		{"DELETE", "result=1", false, ""},
+	} {
+		hr := httptest.NewRequest(http.MethodGet, "/", nil)
+		hr.Method = c.method
+		hr.URL.RawQuery = c.query
+		hr.URL.ForceQuery = c.forceQuery
+		var got access.Action
+		if rt := findRoute(hr); rt != nil {
+			got = rt.action
+			landed[rt] = true
+		}
+		if got != c.want {
+			t.Errorf("%s /?%s (ForceQuery %v) lands on action %q, want %q", c.method, c.query, c.forceQuery, got, c.want)
+		}
+	}
+	for i := range routes {
+		if !landed[&routes[i]] {
+			t.Errorf("no case lands on the row %s / (%s): write its action here", routes[i].method, routes[i].journal)
+		}
+	}
+}
+
 // FuzzNoRouteNoAnswer drives the handler with any method, path and
 // query, for each kind of caller: a stranger (a liveswap deploy token
 // is one here) and the box channel's source. The route table's

@@ -17,7 +17,6 @@ func TestDecideTable(t *testing.T) {
 	}{
 		{"none", Principal{}},
 		{"deployer of blog", Principal{Kind: AppDeployer, App: "blog"}},
-		{"global deployer", Principal{Kind: GlobalDeployer}},
 		{"box channel", Principal{Kind: BoxChannel}},
 	}
 	// The resource each action is taken on: the deployer's own app for
@@ -33,10 +32,6 @@ func TestDecideTable(t *testing.T) {
 		},
 		"deployer of blog": {
 			AppStatus: true, AppDeployRecord: true, AppDeploy: true, AppRollback: true,
-			BoxStatus: false, BoxPushResult: false, BoxPush: false,
-		},
-		"global deployer": {
-			AppStatus: false, AppDeployRecord: false, AppDeploy: false, AppRollback: false,
 			BoxStatus: false, BoxPushResult: false, BoxPush: false,
 		},
 		"box channel": {

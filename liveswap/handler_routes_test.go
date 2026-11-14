@@ -47,8 +47,61 @@ func TestEveryActionHasARoute(t *testing.T) {
 	}
 }
 
-// FuzzNoRouteNoAnswer drives the handler with any method, path and
-// query, for each kind of caller: a stranger, a deploy source of the
+// TestRouteActions pins the action of each route, written out here
+// rather than read from routes: a real request of each shape goes
+// through findRoute, and the row it lands on must carry the action
+// the case names ("" for none: the 405). Every row must be landed on
+// by some case, so a row added is pinned here too. Once people may
+// read, a push row labelled app.status would let a reader deploy.
+func TestRouteActions(t *testing.T) {
+	landed := map[*route]bool{}
+	for _, c := range []struct {
+		method, query, contentType string
+		want                       access.Action
+	}{
+		{"GET", "", "", access.AppStatus},
+		{"GET", "range=1h", "", access.AppStatus},
+		{"GET", "deploy=%ZZ", "", access.AppStatus}, // the status route's 422
+		{"GET", "deploy=v1", "", access.AppDeployRecord},
+		{"GET", "range=24h&deploy=v1", "", access.AppDeployRecord},
+		{"GET", "", "application/gzip", access.AppStatus},
+		{"POST", "", "application/gzip", access.AppDeploy},
+		{"POST", "version=v2", "application/x-gzip", access.AppDeploy},
+		{"POST", "rollback=v1", "application/octet-stream", access.AppDeploy}, // a gzip body is a push whatever the query
+		{"POST", "", "Application/GZIP; charset=binary", access.AppDeploy},
+		{"POST", "rollback=v1", "", access.AppRollback},
+		{"POST", "rollback=v1", "application/json", access.AppRollback},
+		{"POST", "", "application/json", access.AppDeploy},
+		{"POST", "rollback=", "", access.AppDeploy},
+		{"DELETE", "", "", ""},
+		{"PUT", "", "application/gzip", ""},
+		{"HEAD", "", "", ""},
+		{"get", "", "", ""},
+	} {
+		req := httptest.NewRequest(http.MethodGet, "/demo", strings.NewReader("{}"))
+		req.Method = c.method
+		req.URL.RawQuery = c.query
+		if c.contentType != "" {
+			req.Header.Set("Content-Type", c.contentType)
+		}
+		var got access.Action
+		if rt := findRoute(req); rt != nil {
+			got = rt.action
+			landed[rt] = true
+		}
+		if got != c.want {
+			t.Errorf("%s /demo?%s (Content-Type %q) lands on action %q, want %q", c.method, c.query, c.contentType, got, c.want)
+		}
+	}
+	for i := range routes {
+		if !landed[&routes[i]] {
+			t.Errorf("no case lands on the row %s %s: write its action here", routes[i].method, routes[i].shape)
+		}
+	}
+}
+
+// FuzzNoRouteNoAnswer drives the handler with any method, path,
+// query, content type and body, for each kind of caller: a stranger, a deploy source of the
 // app demo, and a global source. The route table's functions are
 // swapped for ones that record the call, so the test reads the table
 // and covers a row as it is added. A request reaches a row's function
@@ -59,23 +112,43 @@ func TestEveryActionHasARoute(t *testing.T) {
 // global source on a name that is no app whatever the method, 405 for
 // a deployer of the app with no row.
 func FuzzNoRouteNoAnswer(f *testing.F) {
-	for _, seed := range [][3]string{
-		{"GET", "/demo", ""},
-		{"GET", "/demo", "deploy=v1"},
-		{"GET", "/demo", "deploy=%ZZ"},
-		{"GET", "/demo", "range=24h"},
-		{"POST", "/demo", "rollback=v1"},
-		{"POST", "/x/demo", "version=v2"},
-		{"DELETE", "/demo", ""},
-		{"PUT", "/ghost", ""},
-		{"HEAD", "/demo", ""},
-		{"OPTIONS", "/", ""},
-		{"get", "/demo", ""},
-		{"PATCH", "/_motel/demo", "rollback=v1"},
-		{"GET", "/ghost", "deploy=v1"},
-		{"POST", "/demo/", ""},
-	} {
-		f.Add(seed[0], seed[1], seed[2])
+	// Every row of the table is reached by some seed (checked below,
+	// against the real table): the gzip push only with its content type.
+	seeds := [][5]string{
+		{"GET", "/demo", "", "", ""},
+		{"GET", "/demo", "deploy=v1", "", ""},
+		{"GET", "/demo", "deploy=%ZZ", "", ""},
+		{"GET", "/demo", "range=24h", "application/gzip", ""},
+		{"POST", "/demo", "rollback=v1", "", ""},
+		{"POST", "/x/demo", "version=v2", "application/gzip", "\x1f\x8b"},
+		{"POST", "/demo", "", "application/x-gzip", ""},
+		{"POST", "/demo", "rollback=v1", "application/octet-stream", ""},
+		{"POST", "/demo", "", "Application/X-GZIP; charset=binary", ""},
+		{"POST", "/demo", "", "application/json", `{"url":"https://x/a.tgz","version":"v1"}`},
+		{"POST", "/ghost", "", "application/gzip", ""},
+		{"DELETE", "/demo", "", "", ""},
+		{"PUT", "/ghost", "", "application/gzip", ""},
+		{"HEAD", "/demo", "", "", ""},
+		{"OPTIONS", "/", "", "", ""},
+		{"get", "/demo", "", "", ""},
+		{"PATCH", "/_motel/demo", "rollback=v1", "", ""},
+		{"GET", "/ghost", "deploy=v1", "", ""},
+		{"POST", "/demo/", "", "", ""},
+	}
+	reached := map[*route]bool{}
+	for _, seed := range seeds {
+		f.Add(seed[0], seed[1], seed[2], seed[3], seed[4])
+		req := httptest.NewRequest(http.MethodGet, "/", nil)
+		req.Method, req.URL.Path, req.URL.RawQuery = seed[0], seed[1], seed[2]
+		if seed[3] != "" {
+			req.Header.Set("Content-Type", seed[3])
+		}
+		reached[findRoute(req)] = true
+	}
+	for i := range routes {
+		if !reached[&routes[i]] {
+			f.Fatalf("no seed reaches the row %s %s", routes[i].method, routes[i].shape)
+		}
 	}
 
 	saved := routes
@@ -89,17 +162,20 @@ func FuzzNoRouteNoAnswer(f *testing.F) {
 		}
 	}
 
-	f.Fuzz(func(t *testing.T, method, target, query string) {
+	f.Fuzz(func(t *testing.T, method, target, query, contentType, body string) {
 		if method == "" || strings.ContainsAny(method, " \t\r\n") {
 			return // not a method net/http would hand a handler
 		}
 		h, rig := newTestHandler(t)
 		for _, caller := range []string{"stranger", "deployer of demo", "global source"} {
 			h.limiter = deploytrust.NewLimiter(rig.clock)
-			req := httptest.NewRequest(http.MethodGet, "/", nil)
+			req := httptest.NewRequest(http.MethodGet, "/", strings.NewReader(body))
 			req.Method = method
 			req.URL.Path = target
 			req.URL.RawQuery = query
+			if contentType != "" {
+				req.Header.Set("Content-Type", contentType)
+			}
 			switch caller {
 			case "deployer of demo":
 				req.Header.Set("Authorization", "Bearer "+appToken(t))

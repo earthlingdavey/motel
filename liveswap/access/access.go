@@ -5,9 +5,11 @@
 // stands for may take the row's action. Anything the table below does
 // not list is refused.
 //
-// The principals are the ones a deploy token can be today: a deploy
-// source of one app, a global source, and the box channel's source.
-// What each may do is what it could do before Decide existed, so
+// The principals are the ones a deploy token can be today on a route:
+// a deploy source of one app, and the box channel's source. A token a
+// global source verified names no app, and is answered 404 before the
+// route table. What each may do is what it could do before Decide
+// existed, so
 // Decide refuses nothing that authentication accepted
 // (liveswap/DESIGN-liveswap.md, "Who may take which action").
 package access
@@ -41,10 +43,6 @@ const (
 	// AppDeployer is a deploy source of the app Principal.App: a token
 	// one of that app's deploy_trust sources accepted.
 	AppDeployer Kind = iota + 1
-	// GlobalDeployer is a global liveswap source, which verifies the
-	// token for a name that is no app. It is a deployer of no app here
-	// and holds no action: the handler answers it 404.
-	GlobalDeployer
 	// BoxChannel is a source the box block's deploy_trust accepted:
 	// it may present pushes.
 	BoxChannel

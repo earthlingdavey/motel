@@ -642,10 +642,10 @@ row's function (box/DESIGN-box.md, "Handler contract").
 `app.deploy`, `app.rollback`, `box.status`, `box.push_result`,
 `box.push`), the principal kinds and `Decide`, which refuses every pair
 its table does not list. The principals are what a deploy token can
-be: a deploy source of the app in the path, which may take every app
-action on that app and on no other; a global source, which may take
-none; and the box channel's source, which may take the three box
-actions. Authentication already chose the sources by the path's app,
+be on a route: a deploy source of the app in the path, which may take
+every app action on that app and on no other, and the box channel's
+source, which may take the three box actions; a token a global source
+verified names no app and gets the 404 before the table. Authentication already chose the sources by the path's app,
 so `Decide` refuses nothing it accepted and every answer is the one
 the method switch gave; a refusal, which no principal meets, would be
 a 403 `forbidden`. The tests hold the tables to each other both ways

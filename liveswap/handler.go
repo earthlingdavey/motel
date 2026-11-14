@@ -114,8 +114,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request, _ caddyhttp.
 		return refusal.Write(func(code int, body any) error { return RespondJSON(w, code, body, nil) })
 	}
 	if ma == nil {
-		// A global source verified the token: a deployer of no app here
-		// (access.GlobalDeployer), which may take no action. The name is
+		// A global source verified the token: a deployer of no app
+		// here, which may take no action on this name. The name is
 		// answered 404 whatever the method, before the route table.
 		return RespondJSON(w, http.StatusNotFound, wire.Error{Error: fmt.Sprintf("unknown app %q", name)}, nil)
 	}
