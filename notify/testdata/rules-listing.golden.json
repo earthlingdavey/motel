@@ -68,12 +68,17 @@
       "subject": "app",
       "app": "blog",
       "kind": "guarded",
-      "value_query": "sum by (app) (((increase_pure(motel_app_requests_total{app=\"blog\"}[5m]) unless (present_over_time(motel_app_requests_total{app=\"blog\"}[1d] offset 5m) unless (last_over_time(motel_app_requests_total{app=\"blog\"}[1d] offset 5m) > first_over_time(motel_app_requests_total{app=\"blog\"}[5m])))) and (tfirst_over_time(motel_app_requests_total{app=\"blog\"}[5m]) > scalar(min(tfirst_over_time(process_start_time_seconds{job=\"motel\"}[7m]))) + 15)) or increase(motel_app_requests_total{app=\"blog\"}[5m])) / 300",
+      "value_query": "sum by (app) (((increase_pure(motel_app_requests_total{app=\"blog\"}[5m]) unless (present_over_time(motel_app_requests_total{app=\"blog\"}[1d] offset 5m) unless (last_over_time(motel_app_requests_total{app=\"blog\"}[1d] offset 5m) > first_over_time(motel_app_requests_total{app=\"blog\"}[5m])))) and (tfirst_over_time(motel_app_requests_total{app=\"blog\"}[5m]) > scalar(min(tfirst_over_time(process_start_time_seconds{job=\"motel\"}[7m]))) + 15)) or increase(motel_app_requests_total{app=\"blog\"}[5m])) / scalar(max(tlast_over_time(process_start_time_seconds{job=\"motel\"}[5m])) - max(tlast_over_time(process_start_time_seconds{job=\"motel\"}[5m] offset 5m)))",
       "op": "<",
       "threshold": 0.1,
       "unit": "requests/s",
       "for_seconds": 3600,
       "guards": [
+        {
+          "query": "max(tlast_over_time(process_start_time_seconds{job=\"motel\"}[5m] offset 5m))",
+          "match": "on ()",
+          "meaning": "the store holds a push from the 5m before the window: before it, the span its counts cover is not known"
+        },
         {
           "query": "(max by (app) (tlast_over_time(motel_app_observed{app=\"blog\"}[75s])) > scalar(max(tlast_over_time(process_start_time_seconds{job=\"motel\"}[75s]))) - 15)",
           "match": "on (app)",

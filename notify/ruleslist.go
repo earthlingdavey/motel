@@ -91,7 +91,8 @@ type GuardListing struct {
 	Op    string   `json:"op,omitempty"`
 	Value *float64 `json:"value,omitempty"`
 	// Match is how the guard's series are matched to the value's, such
-	// as "on (app)"; none for all their labels.
+	// as "on (app)", or "on ()" for a guard with no labels, which holds
+	// for every series of the value; none for all their labels.
 	Match   string `json:"match,omitempty"`
 	Meaning string `json:"meaning"`
 }

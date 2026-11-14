@@ -440,7 +440,7 @@ app_memory_high          builtin      threshold  warning   every app  > 0.9 shar
 backup_run_failed        motel check  event      warning   box        -                                                                    -
 backup_stale             motel check  threshold  critical  box        > 3h                                                                 blog 58m, shop 3h59m30s
 backup_unreadable        motel check  event      warning   box        -                                                                    -
-blog_quiet               operator     guarded    warning   app blog   < 0.1 requests/s for 1h, 1 guard                                     (the store)
+blog_quiet               operator     guarded    warning   app blog   < 0.1 requests/s for 1h, 2 guards                                    (the store)
 busy                     operator     threshold  warning   app shop   > 1.5 cores for 10m                                                  (the store)
 cert_failed              motel check  event      warning   box        -                                                                    -
 deploy_failed            motel check  event      warning   every app  -                                                                    -
