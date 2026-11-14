@@ -113,6 +113,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request, _ caddyhttp.
 	if refusal != nil {
 		return refusal.Write(func(code int, body any) error { return RespondJSON(w, code, body, nil) })
 	}
+	StampVersion(w.Header())
 	if ma == nil {
 		// A global source verified the token: a deployer of no app
 		// here, which may take no action on this name. The name is
@@ -132,6 +133,24 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request, _ caddyhttp.
 		return RespondJSON(w, http.StatusForbidden, wire.Error{Error: "forbidden"}, ma.redactorFor(statusSnapshot{}))
 	}
 	return rt.serve(h, w, r, ma, who.By)
+}
+
+// versionHeader carries the release on every answer to a verified
+// token, and on no other: the exact release tells a stranger which
+// known flaws a box has, so no 401 carries it.
+const versionHeader = "Motel-Version"
+
+// StampVersion sets versionHeader to the release this binary was
+// built as, caddy.CustomVersion, which the release build links in
+// (the Makefile's GO_LDFLAGS). Each webhook calls it once, as soon as
+// a token verified, so every answer after that carries it, a deploy
+// stream's included. A build that links none (go build, a test) sends
+// no header: an empty value would be no release, and Caddy's own
+// "(devel)" names no motel release either.
+func StampVersion(h http.Header) {
+	if v := caddy.CustomVersion; v != "" {
+		h.Set(versionHeader, v)
+	}
 }
 
 // decide is access.Decide, a variable so a test can see what the
