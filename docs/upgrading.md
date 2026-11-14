@@ -153,6 +153,25 @@ Before you upgrade:
   motel refuses root's run only when the Caddyfile's liveswap root
   exists and is not root's, as on a packaged box (it is motel's);
   otherwise nothing stops it, so do not rely on the refusal.
+- **Check motel.service runs as the motel user.** That refusal cannot
+  tell root's run by hand from a unit edited to run motel as root, and
+  the install makes `/var/lib/liveswap` motel's again. So such a box,
+  with the liveswap root the package makes, is refused at every start,
+  the install's own included, and serves nothing until someone at the
+  console mends it. `systemctl show -p User --value motel` prints
+  `motel` on a packaged box, and anything else means the unit was
+  edited (`root`, `0` or nothing at all: to run as root), by a drop-in
+  from `systemctl edit motel` or a copy of the unit in
+  `/etc/systemd/system/`. Before the install, run
+  `systemctl revert motel`, which drops every local edit of the unit;
+  a copy also hides every later release's changes to the unit, so
+  revert that one. To keep a drop-in's other lines instead, set
+  `User=motel` and `Group=motel` in it and run
+  `systemctl daemon-reload`. A box that ran motel as root may also
+  hold files of root's where motel writes, Caddy's certificates in
+  `/var/lib/motel/caddy` among them: before the install,
+  `find /var/lib/motel /var/lib/liveswap -user root` lists them, and
+  each one motel wrote wants `chown motel:motel`.
 - **A box with an ECDSA signer rotates it first** (upgrading from
   v0.6.0 or earlier). A `signer` line with an `ecdsa-sha2-nistp256`,
   `-384`, `-521` or `sk-ecdsa-sha2-nistp256@openssh.com` key is refused
@@ -249,9 +268,18 @@ removed when someone had made or edited it by hand, and a secret
 pasted alone on a line of it (base64 ending in `=`) read as a
 variable's name. If a push ever took over such a file, look through
 the box repository's old apply runs (logs and job summaries) and
-`journalctl -u motel-box-apply` for a name after `removed` that is no
+the applier's journal for a name after `removed` that is no
 variable's, and give any value found that way a new one ([Change a
-value](secrets.md#change-a-value)). `make secrets-import` had the same
+value](secrets.md#change-a-value)). What you are looking for may
+hold a secret, so read the old runs only where they are, and never
+paste a line of them or of the journal into a chat, an issue or a bug
+report. The runs name every push's removals; the journal names them
+only for a push whose result could not be written, so count before
+you read it:
+`journalctl -u motel-box-apply -u hotserve-box-apply | grep -c 'secrets_removed": *\["'`
+(`hotserve-box-apply` is the applier's name before v0.6.0) prints 0
+when the journal names no removal, which says nothing of the runs.
+Read any lines it counts on the box itself. `make secrets-import` had the same
 gap: copy this release's `examples/box/bin/secrets` and
 `examples/box/bin/apply` into the box repository's `bin/` (the second
 says a push left a hand-edited file's own variables unnamed), and a
