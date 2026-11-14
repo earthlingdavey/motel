@@ -60,6 +60,36 @@ func TestDecideTable(t *testing.T) {
 	}
 }
 
+// TestAllowedCells pins the table itself, both ways: every allowed
+// (kind, action) pair is written out here, and the package's table
+// holds exactly these. TestDecideTable asks each action on its own
+// resource, where the scope check refuses an app kind on a box action
+// (and the reverse) before the table is read; this sees such a cell.
+func TestAllowedCells(t *testing.T) {
+	want := []cell{
+		{AppDeployer, AppStatus},
+		{AppDeployer, AppDeployRecord},
+		{AppDeployer, AppDeploy},
+		{AppDeployer, AppRollback},
+		{BoxChannel, BoxStatus},
+		{BoxChannel, BoxPushResult},
+		{BoxChannel, BoxPush},
+	}
+	for _, c := range allowed {
+		if !slices.Contains(want, c) {
+			t.Errorf("the table allows kind %d to take %s; the test does not", c.kind, c.action)
+		}
+	}
+	for _, c := range want {
+		if !slices.Contains(allowed, c) {
+			t.Errorf("the table does not allow kind %d to take %s; the test does", c.kind, c.action)
+		}
+	}
+	if len(allowed) != len(want) {
+		t.Errorf("the table has %d cells, want %d: one is listed twice", len(allowed), len(want))
+	}
+}
+
 // TestDecideScope: a deployer is allowed on its own app only, and the
 // box channel on the box only, whatever the action; an action the
 // table does not know is refused to every kind.

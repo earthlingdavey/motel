@@ -128,11 +128,15 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request, _ caddyhttp.
 	// a deployer of this app and Decide allows every app action: it
 	// refuses only if the table and the routes fall apart, and then
 	// refuses rather than serves.
-	if err := access.Decide(access.Principal{Kind: access.AppDeployer, App: name}, rt.action, name); err != nil {
+	if err := decide(access.Principal{Kind: access.AppDeployer, App: name}, rt.action, name); err != nil {
 		return RespondJSON(w, http.StatusForbidden, wire.Error{Error: "forbidden"}, ma.redactorFor(statusSnapshot{}))
 	}
 	return rt.serve(h, w, r, ma, who.By)
 }
+
+// decide is access.Decide, a variable so a test can see what the
+// handler asks it and make it refuse.
+var decide = access.Decide
 
 // route is one row of liveswap_webhook's route table: a method, the
 // shape of the query or body it takes, the action Decide is asked

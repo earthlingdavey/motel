@@ -116,11 +116,15 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddyht
 	// channel's source, which Decide allows every box action: it
 	// refuses only if the table and the routes fall apart, and then
 	// refuses rather than serves.
-	if err := access.Decide(access.Principal{Kind: access.BoxChannel}, rt.action, ""); err != nil {
+	if err := decide(access.Principal{Kind: access.BoxChannel}, rt.action, ""); err != nil {
 		return respond(w, http.StatusForbidden, errorBody("forbidden"))
 	}
 	return rt.serve(h, w, r, ident)
 }
+
+// decide is access.Decide, a variable so a test can see what the
+// handler asks it and make it refuse.
+var decide = access.Decide
 
 // query is the shape of a route's query.
 type query int

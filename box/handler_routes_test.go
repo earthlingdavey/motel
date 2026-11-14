@@ -1,6 +1,7 @@
 package box
 
 import (
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"slices"
@@ -97,35 +98,46 @@ func TestRouteActions(t *testing.T) {
 // FuzzNoRouteNoAnswer drives the handler with any method, path and
 // query, for each kind of caller: a stranger (a liveswap deploy token
 // is one here) and the box channel's source. The route table's
-// functions are swapped for ones that record the call, so the test
+// functions are swapped for ones that record the call (recordRows),
+// so the test
 // reads the table and covers a row as it is added. A request reaches
 // a row's function only when the box channel's source sends it to `/`
 // and a row matches; on `/` every other request is 405 before
 // authentication whoever sends it, or the flat 401 for a stranger; a
 // request to any other path is passed on, answered by nothing here.
 func FuzzNoRouteNoAnswer(f *testing.F) {
-	f.Add("GET", "/", "", false)
-	f.Add("GET", "/", "", true)
-	f.Add("GET", "/", "result=0123456789abcdef0123456789abcdef", false)
-	f.Add("POST", "/", "result=1", false)
-	f.Add("PUT", "/", "", false)
-	f.Add("HEAD", "/", "", false)
-	f.Add("get", "/", "", false)
-	f.Add("DELETE", "/x", "", false)
-	f.Add("GET", "//", "", false)
-	f.Add("GET", "/_motel/whoami", "", false)
-
-	r := newRig(f)
-	saved := routes
-	f.Cleanup(func() { routes = saved })
-	var served *route
-	routes = slices.Clone(saved)
+	// Every row of the table is reached by some seed (checked below,
+	// against the real table).
+	seeds := []struct {
+		method, target, query string
+		forceQuery            bool
+	}{
+		{"GET", "/", "", false},
+		{"GET", "/", "", true},
+		{"GET", "/", "result=0123456789abcdef0123456789abcdef", false},
+		{"POST", "/", "result=1", false},
+		{"PUT", "/", "", false},
+		{"HEAD", "/", "", false},
+		{"get", "/", "", false},
+		{"DELETE", "/x", "", false},
+		{"GET", "//", "", false},
+		{"GET", "/_motel/whoami", "", false},
+	}
+	reached := map[*route]bool{}
+	for _, seed := range seeds {
+		f.Add(seed.method, seed.target, seed.query, seed.forceQuery)
+		hr := httptest.NewRequest(http.MethodGet, "/", nil)
+		hr.Method, hr.URL.Path, hr.URL.RawQuery, hr.URL.ForceQuery = seed.method, seed.target, seed.query, seed.forceQuery
+		reached[findRoute(hr)] = true
+	}
 	for i := range routes {
-		routes[i].serve = func(*Handler, http.ResponseWriter, *http.Request, deploytrust.Identity) error {
-			served = &routes[i]
-			return nil
+		if !reached[&routes[i]] {
+			f.Fatalf("no seed reaches the row %s / (%s)", routes[i].method, routes[i].journal)
 		}
 	}
+
+	r := newRig(f)
+	served := recordRows(f)
 
 	f.Fuzz(func(t *testing.T, method, target, query string, forceQuery bool) {
 		if method == "" || strings.ContainsAny(method, " \t\r\n") {
@@ -141,7 +153,7 @@ func FuzzNoRouteNoAnswer(f *testing.F) {
 			if channel {
 				hr.Header.Set("Authorization", "Bearer "+r.token(t))
 			}
-			served = nil
+			*served = nil
 			passed := false
 			w := httptest.NewRecorder()
 			if err := r.h.ServeHTTP(w, hr, nextFunc(func(http.ResponseWriter, *http.Request) error {
@@ -166,18 +178,97 @@ func FuzzNoRouteNoAnswer(f *testing.F) {
 				who = "the box channel"
 			}
 			switch {
-			case want == 0 && (!passed || served != nil):
+			case want == 0 && (!passed || *served != nil):
 				t.Fatalf("%s: %s %q ?%q: not passed on (answered %d)", who, method, target, query, w.Code)
 			case want == 0:
 			case passed:
 				t.Fatalf("%s: %s %q ?%q: passed on", who, method, target, query)
 			case w.Code != want:
 				t.Fatalf("%s: %s %q ?%q = %d, want %d: %s", who, method, target, query, w.Code, want, w.Body)
-			case want == http.StatusOK && served != row:
-				t.Fatalf("%s: %s %q ?%q was answered by %v, want the row %s", who, method, target, query, served, row.journal)
-			case want != http.StatusOK && served != nil:
-				t.Fatalf("%s: %s %q ?%q reached the row %s and was answered %d", who, method, target, query, served.journal, w.Code)
+			case want == http.StatusOK && *served != row:
+				t.Fatalf("%s: %s %q ?%q was answered by %v, want the row %s", who, method, target, query, *served, row.journal)
+			case want != http.StatusOK && *served != nil:
+				t.Fatalf("%s: %s %q ?%q reached the row %s and was answered %d", who, method, target, query, (*served).journal, w.Code)
 			}
 		}
 	})
+}
+
+// recordRows swaps each row's function for one that records its row
+// in *served, until the test ends, so a test sees which row answered
+// without reading or writing any state.
+func recordRows(tb testing.TB) **route {
+	saved := routes
+	tb.Cleanup(func() { routes = saved })
+	served := new(*route)
+	routes = slices.Clone(saved)
+	for i := range routes {
+		routes[i].serve = func(*Handler, http.ResponseWriter, *http.Request, deploytrust.Identity) error {
+			*served = &routes[i]
+			return nil
+		}
+	}
+	return served
+}
+
+// decideCall is one question the handler put to Decide.
+type decideCall struct {
+	p        access.Principal
+	a        access.Action
+	resource string
+}
+
+// recordDecide swaps decide for one that records each call and answers
+// with refuse's error, until the test ends.
+func recordDecide(tb testing.TB, refuse error) *[]decideCall {
+	saved := decide
+	tb.Cleanup(func() { decide = saved })
+	calls := new([]decideCall)
+	decide = func(p access.Principal, a access.Action, resource string) error {
+		*calls = append(*calls, decideCall{p, a, resource})
+		return refuse
+	}
+	return calls
+}
+
+// TestHandlerAsksDecide: for a request of every row, sent by the box
+// channel's source, the handler asks Decide once, with the box
+// channel, the row's action and the box ("") as the resource; the
+// row's function answers when Decide allows, and when it refuses the
+// function does not run and the answer is the 403.
+func TestHandlerAsksDecide(t *testing.T) {
+	r := newRig(t)
+	served := recordRows(t)
+	landed := map[*route]bool{}
+	for _, c := range []struct{ method, target string }{
+		{"GET", "/"},
+		{"GET", "/?result=0123456789abcdef0123456789abcdef"},
+		{"POST", "/"},
+	} {
+		for _, refuse := range []error{nil, errors.New("refused")} {
+			calls := recordDecide(t, refuse)
+			row := findRoute(httptest.NewRequest(c.method, c.target, nil))
+			landed[row] = true
+			*served = nil
+			w := r.do(t, req{method: c.method, target: c.target, token: r.token(t)})
+
+			want := decideCall{access.Principal{Kind: access.BoxChannel}, row.action, ""}
+			if len(*calls) != 1 || (*calls)[0] != want {
+				t.Errorf("%s %s: Decide asked %+v, want once %+v", c.method, c.target, *calls, want)
+			}
+			switch {
+			case refuse == nil && (w.Code != http.StatusOK || *served != row):
+				t.Errorf("%s %s, allowed: %d, answered by %v, want the row %s", c.method, c.target, w.Code, *served, row.journal)
+			case refuse != nil && (w.Code != http.StatusForbidden || *served != nil):
+				t.Errorf("%s %s, refused: %d %s, answered by %v, want the 403 and no row", c.method, c.target, w.Code, w.Body, *served)
+			case refuse != nil && w.Body.String() != "{\"error\":\"forbidden\"}\n":
+				t.Errorf("%s %s, refused: body %q", c.method, c.target, w.Body)
+			}
+		}
+	}
+	for i := range routes {
+		if !landed[&routes[i]] {
+			t.Errorf("no case reaches the row %s / (%s)", routes[i].method, routes[i].journal)
+		}
+	}
 }
