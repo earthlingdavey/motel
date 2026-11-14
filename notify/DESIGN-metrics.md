@@ -160,6 +160,37 @@ own until 2026-11-12, which held the motel group in a deny-by-default
 view; Alertmanager now holds that listener itself (below, and
 "History").
 
+**The store's restarts.** Debian's unit restarts a store that fails
+(`Restart=on-failure`, `RestartSec=1`) and never gives up
+(`StartLimitInterval=0`). One that failed at its start (a full disk, a
+flag an upgrade dropped) was restarted about 60 times a second, for as
+long as the fault lasted: the drop-in's `Wants=motel-vmalert.service`
+had the store's start bring vmalert, whose start, failing on its
+`Requires=` of the store, asked for the store again at once, past
+`RestartSec=` ("Scheduled restart job immediately on client request").
+Measured in the e2e box (systemd 257) on 2026-11-14, motel stopped, 30
+s: 1,797 restarts and 12,613 journal lines with `ExecStartPre=/bin/false`
+on the store, 725 and 6,575 with `ExecStart=/bin/false` (its process
+exiting at once), about a fifth of a core in PID 1 (#470). So the
+drop-in starts vmalert from `ExecStartPost=-+/usr/bin/systemctl
+--no-block start motel-vmalert.service` in the `Wants=`'s place, and
+`RestartSteps=6` with `RestartMaxDelaySec=60` back the restarts off from
+1 s to a minute, never failing for good. The store is `Type=simple`, so
+`ExecStartPost=` runs once its process has started, not once it serves;
+as root, since the store runs as `_victoria-metrics`, whose `systemctl`
+is refused. Measured, 30 s: 4 restarts and 37 lines with the start
+failing, 4 and 279 with the process exiting at once; with a connection
+to `vm.sock` every 2 s, which starts the store at once (a client's start
+ends the wait), 15 and 109, and 5 and 352. A store stopped and started
+by hand still brings vmalert, and so does a push after a stop. Also
+measured, and not taken: a start limit (5 in 60 s) held the store down
+33 s past the fault; moving the `Wants=` to the store's proxy alone
+left a store started by hand without vmalert, and beside the
+`ExecStartPost=` it changed none of the numbers above; `Upholds=` in
+the `ExecStartPost=`'s place brought the storm back (1,805 restarts in
+30 s). What the backoff costs is two accepted rows. e2e metrics 4f
+counts the restarts of a store that fails at its start.
+
 **Alertmanager listens in the namespace itself.**
 `motel-am-metrics.socket` binds `127.0.0.1:9093` inside the namespace
 (`NetworkNamespacePath=`), names `Service=prometheus-alertmanager.service`,
@@ -207,7 +238,8 @@ whose service already runs, so:
   restarts a unit that requires one restarted. A start of the namespace
   alone starts neither: `Requires=` starts nothing back. So vmalert,
   whose posts are the socket's traffic, `Wants=` it: the store's start,
-  which brings vmalert, brings the socket, and vmalert's post or the
+  which starts vmalert (the drop-in's `ExecStartPost=`), brings the
+  socket, and vmalert's post or the
   store's scrape starts Alertmanager through it. Without that line only
   Alertmanager's own start (motel's read of `am.sock`, a minute apart)
   brought the socket back, so with motel down vmalert's posts were
@@ -1240,10 +1272,12 @@ Alertmanager's. The store's:
    start (`ExecStartPre=+/usr/bin/chmod`): Debian ships it 0755, which
    lets every local uid read every series past the socket's group, and
    a purge and reinstall makes it so again;
-   The drop-in's `Wants=motel-vmalert.service` has the store's start
-   bring vmalert: a `systemctl stop victoria-metrics` stops vmalert too,
-   and motel's next push starts the store again through the socket. To
-   keep the store stopped, stop `motel-vm.socket` as well;
+   The drop-in's `ExecStartPost=` starts vmalert once the store's
+   process has started, by hand or by motel's push: a `systemctl stop
+   victoria-metrics` stops vmalert too, and motel's next push starts the
+   store again through the socket, vmalert with it. To keep the store
+   stopped, stop `motel-vm.socket` as well. The drop-in also backs the
+   store's restarts off ("The store's restarts");
 5. on a box set up before Alertmanager held its own listener in the
    namespace, retires the proxy shape: `disable --now
    motel-am-proxy.socket motel-am-proxy.service` and removes both
@@ -1526,6 +1560,8 @@ on its general scales. metrics' examples:
 | `SPAN`'s base is the push within `prevReach` (5 m) before the window, which is the store's own reach for an instant query only while the step is 5 m: vmalert's `-datasource.queryStep` default, which motel-vmalert.service leaves unset. A vmalert whose default changed, or a step passed by hand to the listing's `value_query`, gives the counters a shorter reach than the push's, and after a gap in the pushes over the window's start `request_rate` reads the gap's span against counts without it, low | notify/operatorrules.go (`prevReach`) | 2 | 2 | 3 | 12; it needs a changed default (Debian's 1.112.0 is pinned, and a dist-upgrade's flag check is Owed) and a gap over the window's start, and it ends correct once the window has passed the gap. Writing `-datasource.queryStep=5m` into the unit is a unit change every box takes through setup's re-run (size 1, risk 2, and upgrading.md's order). Measured: a 150 s gap reads flat at 1.112.0's 5 m. /code-review pass 1 on the divisor |
 | A connection to `vm.sock` queued as the store's proxy exits (five idle minutes, `--exit-idle-time=5min`, or stopped with the store or the namespace) is closed unanswered (`FlushPending=yes`), where it used to start the proxy again: that one push of motel's, or one read (`GET /<app>`'s metrics, `motel monitor rules`), fails | notify/units/metrics/motel-vm.socket | 2 | 4 | 1 | 8; it needs a connection in the instant of the exit: the proxy idles only while motel is down, since motel connects every 30 s (its push), and a stop of the store is by hand or a package's. Measured: 1 of 100 connections timed against the idle exit, with motel stopped and the idle time cut to 2 s, and none while motel runs. motel logs the failed push, and its next one, 30 s on, carries the counters whole; a stopped store is started by that next push as before. Without the flush, one connection while the store's chain cannot start failed the socket for good (#450, S4 O3 D3 = 36); a retry of a failed push in motel is a new branch (size 2, risk 2). The measurements of #450, 2026-11-14; the stop case from /code-review pass 1 on #450's fix |
 | The first connection through `vm.sock` after a cold start of the store is reset: the store is `Type=simple`, so the proxy, started after it, connects before it listens; that one push or read fails | notify/units/metrics/10-motel.conf | 2 | 4 | 1 | 8; once a start of the store (motel's push after a stop, a fault gone), and motel logs the failed push, whose counters its next one carries whole. Waiting for the port in the drop-in (an `ExecStartPost=` loop) is a new branch in the store's start (size 2, risk 2). Seen in the measurements of #450, 2026-11-14; e2e metrics 4d's wait for the store after the fault allows for it |
+| The backoff's step is the store's restart count, which a run that went well does not reset (only a stop by hand does): after six failures in the store's life (an OOM kill at `MemoryMax=` once a week, say), each later one waits a minute before the restart, where it waited a second | notify/units/metrics/10-motel.conf (`RestartSteps=`) | 2 | 4 | 1 | 8; a connection to `vm.sock` that starts the store ends the wait, but one whose process died after its start leaves the proxy running, so motel's pushes fail (logged) until the restart, a minute at most, and their counters come whole with the next. Measured: runs of 4 s, then exit 1, restarted 2, 4, 8 and 16 s apart. Resetting the count after a healthy run is a timer and a state (size 3, risk 2). /code-review pass 1 on #470 |
+| A store whose process exits after its start (`ExecStart=` failing, not `ExecStartPre=`) comes back at the backoff's pace once the fault is gone, not at the next connection: the proxy stays up, so connections do not start it | notify/units/metrics/10-motel.conf (`RestartSteps=`) | 2 | 3 | 1 | 6; measured 30 to 31 s after the fault went, against 1 to 2 s before the backoff; a minute at most, the pushes meanwhile failing and logged. A shorter `RestartMaxDelaySec=` trades it against the restarts of a fault that lasts (size 1, risk 2). The measurements of #470 |
 
 ### Owed
 
@@ -1604,6 +1640,7 @@ Alertmanager inactive 150 s on, two of vmalert's sends refused, back
 only at motel's start); the store scraping Alertmanager again after the
 namespace's restart;
 the store stopped by hand, started again by motel's next push with vmalert beside it;
+the store failing at its start: 6 s after its start no more than 3 restarts (#470: 237 to 384 before), and once the fault is gone the store answering through `vm.sock` with vmalert beside it (metrics 4f);
 the store made read-only (its free-space floor set above any disk): no sample of its free space kept from then while one from before is (the flag itself is no series it keeps), and motel's `metrics_store_read_only` is in Alertmanager, critical;
 a reload to a monitor block that is a `metrics` line alone writing no
 alerting rule, vmalert loading none, and its warning;

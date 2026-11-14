@@ -196,8 +196,8 @@ Before you upgrade:
   The store keeps running after this, and so do Alertmanager and
   vmalert if you skip step 1, as do any of Monitor's recipe units you
   installed (they fail once `motel monitor send` is gone). A reboot
-  starts vmalert again with the store, whose unit wants it, though
-  step 1 disabled it; Alertmanager and its socket in the store's
+  starts vmalert again with the store, whose drop-in starts it
+  (`ExecStartPost=`), though step 1 disabled it; Alertmanager and its socket in the store's
   namespace stay down, so it reaches no Alertmanager and nothing is
   sent. They are
   setup's or yours, not the package's, and the older release neither
@@ -414,6 +414,15 @@ VictoriaMetrics' 30 s `-search.latencyOffset`, so every alert and
 either way: they ask the store for the 5 s themselves. The re-run
 rewrites the units and restarts the store and vmalert; a push or two
 fails meanwhile.
+
+**Run `motel monitor setup --metrics` again on a box whose store was set
+up before its restarts backed off** (each load's warning names
+`10-motel.conf`). Until it is, a store that
+fails at its start (a full disk, say) is restarted about 60 times a
+second for as long as the fault lasts, about a fifth of a core and some
+400 journal lines a second. The re-run writes the drop-in that backs
+the restarts off from 1 s to a minute; it restarts the store and
+vmalert, so a push or two fails meanwhile.
 
 **The same re-run trims what the store keeps of its own scrapes.** From
 this version the store keeps, of its scrapes of itself, vmalert and

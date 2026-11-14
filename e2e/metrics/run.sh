@@ -10,6 +10,7 @@
 #   the first --metrics restarting Alertmanager once, the second not
 #   the store's TCP in its namespace only; its socket's mode and reach
 #   its socket listening on through a namespace or a store that cannot start
+#   a store that fails at its start: its restarts backed off
 #   Alertmanager's own listener there: a SIGKILL, the namespace restarted,
 #   stopped and back, failing once, stopped and started by hand with motel
 #   down; an upgrade from the proxy shape
@@ -77,8 +78,8 @@ RELOAD_WAIT=15
 # so a part that moves the store, Alertmanager or the Caddyfile moves
 # them for its own split alone. The shared sink answers each box with
 # its own deliveries (sinklog).
-split_all="vm 2b 3 3a 4 4a 4b 4c 4d 4e 5 6 7 8 9 10 11"
-split_view="vm 2b 3 3a" split_vmalert="4 4a" split_store="4b 4c 4d 4e 5 6" split_rules="5 7 8 9 10 11"
+split_all="vm 2b 3 3a 4 4a 4b 4c 4d 4e 4f 5 6 7 8 9 10 11"
+split_view="vm 2b 3 3a" split_vmalert="4 4a" split_store="4b 4c 4d 4e 4f 5 6" split_rules="5 7 8 9 10 11"
 case "${SPLIT:=all}" in
 all) parts=$split_all ;;
 view) parts=$split_view ;;
@@ -520,7 +521,8 @@ case_4a() {
 echo "=== metrics 4a: the store stopped by hand comes back with vmalert ==="
 # A stop of the store stops vmalert and the proxy (both Require it).
 # motel's next push connects to the socket, whose proxy starts the store
-# again; the store's Wants= brings vmalert back with it.
+# again; the store's start brings vmalert back with it (its drop-in's
+# ExecStartPost=).
 systemctl stop victoria-metrics
 systemctl is-active -q motel-vmalert && fail "vmalert still runs with the store stopped" || pass "stopping the store stops vmalert"
 i=0
@@ -767,6 +769,48 @@ i=0
 until [ "$(vm http://vm/health)" = OK ] && systemctl is-active -q motel-vmalert; do i=$((i + 1)); [ "$i" -ge 15 ] && break; sleep 2; done
 [ "$i" -lt 15 ] && pass "the fault gone, the store answers through vm.sock again, vmalert beside it" \
 	|| fail "$(( $(date +%s) - t1 )) s after the fault went: $(systemctl is-active motel-vm.socket motel-vm.service victoria-metrics motel-vmalert | tr '\n' ' ')"
+
+}
+
+case_4f() {
+echo "=== metrics 4f: a store that fails at its start backs off ==="
+# Debian's unit restarts a failed store at 1 s, for good. With the
+# drop-in's Wants= of vmalert, vmalert's failed start asked for the
+# store again at once, past RestartSec=: 237 to 384 restarts in 6 s
+# (#470). The drop-in backs off (RestartSteps=) and starts vmalert once
+# the store's process has started (ExecStartPost=). motel is stopped
+# meanwhile, so that no push adds a start of its own to the count.
+systemctl stop motel
+dropin=/etc/systemd/system/victoria-metrics.service.d
+printf '[Service]\nExecStartPre=/bin/false\n' >"$dropin/99-e2e-fail.conf"
+systemctl daemon-reload
+systemctl stop victoria-metrics
+# The count and the backoff's step begin again (4e raised both), so the
+# count 6 s on is the restarts since: the backoff's waits, 1, 2 and 4 s,
+# allow 2, or 3 if one slips; RestartSec= alone allowed 5 or 6, the
+# Wants= 237 to 384. At least one: none would be a store never
+# restarted, which the connections below, each a start, would hide.
+systemctl reset-failed victoria-metrics
+systemctl start --no-block victoria-metrics
+sleep 6
+r=$(systemctl show -p NRestarts --value victoria-metrics)
+[ "$r" -ge 1 ] && [ "$r" -le 3 ] && pass "the store failing at its start: $r restarts in 6 s" \
+	|| fail "the store failing at its start: $r restarts in 6 s, where the backoff makes 1 to 3: $(systemctl show -p ActiveState,Result victoria-metrics | tr '\n' ' ')"
+rm -f "$dropin/99-e2e-fail.conf"
+systemctl daemon-reload
+# The fault gone, a connection starts the store at once (a client's
+# start ends the backoff's wait) and vmalert with it. The first after
+# the store's cold start can be reset (the proxy connects before the
+# store listens): tried a few times.
+t1=$(date +%s)
+i=0
+until [ "$(vm http://vm/health)" = OK ] && systemctl is-active -q motel-vmalert; do i=$((i + 1)); [ "$i" -ge 15 ] && break; sleep 2; done
+[ "$i" -lt 15 ] && pass "the fault gone, the store answers through vm.sock after $(( $(date +%s) - t1 )) s, vmalert beside it" \
+	|| fail "$(( $(date +%s) - t1 )) s after the fault went: $(systemctl is-active motel-vm.socket victoria-metrics motel-vmalert | tr '\n' ' ')"
+systemctl start motel
+i=0
+until systemctl is-active -q motel && [ -S /run/motel/admin.sock ]; do i=$((i + 1)); [ "$i" -ge 120 ] && break; sleep 0.5; done
+systemctl is-active -q motel || fail "motel did not start again: $(systemctl is-active motel)"
 
 }
 
