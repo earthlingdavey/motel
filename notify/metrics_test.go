@@ -246,6 +246,8 @@ type fakeStore struct {
 	queryErr  error
 	ro        bool
 	roErr     error
+	// hang leaves an import unanswered until its context ends.
+	hang bool
 }
 
 func (f *fakeStore) readOnly(context.Context) (bool, error) {
@@ -254,11 +256,25 @@ func (f *fakeStore) readOnly(context.Context) (bool, error) {
 	return f.ro, f.roErr
 }
 
-func (f *fakeStore) importText(_ context.Context, text []byte) error {
+func (f *fakeStore) importText(ctx context.Context, text []byte) error {
+	f.mu.Lock()
+	f.imports = append(f.imports, string(text))
+	hang, err := f.hang, f.importErr
+	f.mu.Unlock()
+	if hang {
+		<-ctx.Done()
+	}
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	return err
+}
+
+// importsNow is a copy of the imports so far.
+func (f *fakeStore) importsNow() []string {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.imports = append(f.imports, string(text))
-	return f.importErr
+	return slices.Clone(f.imports)
 }
 
 func (f *fakeStore) query(context.Context, string) ([]series, error) {
@@ -520,6 +536,151 @@ func TestPusherReleaseClearsWhatFires(t *testing.T) {
 	tp.pushOnce(context.Background())
 	if len(tp.store.imports) != 0 {
 		t.Fatal("pushed with no config")
+	}
+}
+
+// runningPusher is a pusher whose loop runs on a fake store, over a
+// registry with one request counter, once the loop's first push (at
+// its start) is in.
+func runningPusher(t *testing.T) (*pusher, *fakeStore, *MetricsStore, prometheus.Counter, *observer.ObservedLogs) {
+	t.Helper()
+	reg := prometheus.NewRegistry()
+	served := prometheus.NewCounter(prometheus.CounterOpts{Name: "motel_test_requests_total", Help: "requests"})
+	reg.MustRegister(served)
+	p, st, m, logs := startPusher(t, reg)
+	return p, st, m, served, logs
+}
+
+// startPusher runs a pusher's loop over g on a fake store, and returns
+// once the loop's first push has ended (pushedAt set): the test's own
+// changes to the push's state (failingSince, the store's import) then
+// come after that push's. The chain check after it may still run, so a
+// test that changes what it reads must wait for it too.
+func startPusher(t *testing.T, g prometheus.Gatherer) (*pusher, *fakeStore, *MetricsStore, *observer.ObservedLogs) {
+	t.Helper()
+	p := newPusher(func(Event) {})
+	st, m := &fakeStore{}, &MetricsStore{}
+	core, logs := observer.New(zap.DebugLevel)
+	p.configure(liveStore{m: m, store: st, gather: g, logger: zap.New(core)})
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		p.mu.Lock()
+		pushed := !p.pushedAt.IsZero()
+		p.mu.Unlock()
+		if pushed {
+			return p, st, m, logs
+		}
+		if time.Now().After(deadline) {
+			p.release(m)
+			t.Fatal("the loop's first push never came")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
+// A gather that is slow at the stop (a statfs that hangs, up to
+// diskStatWait) does not spend the import's budget: the counts still
+// reach a store that answers.
+func TestPusherReleaseSlowGatherKeepsTheImportsBudget(t *testing.T) {
+	was := finalPushTimeout
+	finalPushTimeout = 50 * time.Millisecond
+	defer func() { finalPushTimeout = was }()
+	reg := prometheus.NewRegistry()
+	reg.MustRegister(prometheus.NewGauge(prometheus.GaugeOpts{Name: "motel_test_gauge", Help: "a gauge"}))
+	var slow sync.Mutex
+	slowGather := false
+	g := prometheus.GathererFunc(func() ([]*dto.MetricFamily, error) {
+		slow.Lock()
+		s := slowGather
+		slow.Unlock()
+		if s {
+			time.Sleep(3 * finalPushTimeout)
+		}
+		return reg.Gather()
+	})
+	p, st, m, logs := startPusher(t, g)
+	slow.Lock()
+	slowGather = true
+	slow.Unlock()
+	p.release(m)
+	if n := len(st.importsNow()); n != 2 {
+		t.Fatalf("%d imports, want the loop's first and the one at stop", n)
+	}
+	if imports := st.importsNow(); !strings.Contains(imports[1], "motel_test_gauge 0\n") {
+		t.Fatalf("the push at stop carried %q, not the registry", imports[1])
+	}
+	if n := logs.FilterLevelExact(zap.WarnLevel).Len(); n != 0 {
+		t.Fatalf("the push at stop failed after a slow gather: %v", logs.All())
+	}
+}
+
+// motel's stop pushes what was counted since the last tick: without it
+// a restart lost up to a push of every app's counts, and request_rate
+// read a tenth low for five minutes (the hotserve-1 deploy of ecb829a).
+func TestPusherReleasePushesTheCountsSinceTheLastTick(t *testing.T) {
+	p, st, m, served, logs := runningPusher(t)
+	served.Add(48) // served after the first push, before the next tick
+	p.release(m)
+	imports := st.importsNow()
+	if len(imports) != 2 {
+		t.Fatalf("%d imports, want the loop's first and the one at stop", len(imports))
+	}
+	if !strings.Contains(imports[0], "motel_test_requests_total 0\n") || !strings.Contains(imports[1], "motel_test_requests_total 48\n") {
+		t.Fatalf("imports = %q; want 0, then the 48 counted since", imports)
+	}
+	if n := logs.FilterLevelExact(zap.WarnLevel).Len(); n != 0 {
+		t.Fatalf("%d warnings for a push the store took", n)
+	}
+	// The pusher holds nothing after: a second release pushes nothing.
+	p.release(m)
+	if n := len(st.importsNow()); n != 2 {
+		t.Fatalf("%d imports after a second release, want 2", n)
+	}
+}
+
+// A store that does not answer cannot hold motel's stop past the
+// push's own budget, and the journal says what was lost.
+func TestPusherReleaseGivesUpOnAStoreThatDoesNotAnswer(t *testing.T) {
+	was := finalPushTimeout
+	finalPushTimeout = 100 * time.Millisecond
+	defer func() { finalPushTimeout = was }()
+	p, st, m, _, logs := runningPusher(t)
+	st.mu.Lock()
+	st.hang = true
+	st.mu.Unlock()
+	start := time.Now()
+	p.release(m)
+	if took := time.Since(start); took < finalPushTimeout || took > finalPushTimeout+2*time.Second {
+		t.Fatalf("release took %v; want the push's budget, %v, and little more", took, finalPushTimeout)
+	}
+	if n := len(st.importsNow()); n != 2 {
+		t.Fatalf("%d imports, want the loop's first and the one at stop", n)
+	}
+	lost := logs.FilterMessage("monitor metrics: the push at stop failed: the counts since the last push are not in the store")
+	if lost.Len() != 1 || lost.All()[0].Level != zap.WarnLevel {
+		t.Fatalf("journal: %v; want one warning", logs.All())
+	}
+}
+
+// With the pushes failing already, the first tick's warning said so:
+// the push at stop failing too is a debug line, not a second warning.
+func TestPusherReleaseFailingAlreadyIsNoSecondWarning(t *testing.T) {
+	p, st, m, _, logs := runningPusher(t)
+	st.mu.Lock()
+	st.importErr = errors.New("connect: no such file or directory")
+	st.mu.Unlock()
+	p.mu.Lock()
+	p.failingSince = time.Now().Add(-time.Minute)
+	p.mu.Unlock()
+	p.release(m)
+	if n := len(st.importsNow()); n != 2 {
+		t.Fatalf("%d imports, want the loop's first and the one at stop", n)
+	}
+	if n := logs.FilterLevelExact(zap.WarnLevel).Len(); n != 0 {
+		t.Fatalf("%d warnings: %v", n, logs.All())
+	}
+	if n := logs.FilterMessage("monitor metrics: the push at stop failed").FilterLevelExact(zap.DebugLevel).Len(); n != 1 {
+		t.Fatalf("%d debug lines for the push at stop, want 1: %v", n, logs.All())
 	}
 }
 

@@ -828,8 +828,28 @@ while [ "$(date +%s)" -lt "$end" ]; do
 done
 printf '%s' "$rules" | grep -q '"type":"alerting"' && pass "vmalert loads alerting rules again" || fail "vmalert never loaded the rules again: $(printf '%s' "$rules" | cut -c1-300)"
 cp /tmp/Caddyfile.nostore /etc/motel/Caddyfile
+# The stop pushes what was counted since the last tick: blog's requests
+# served just before it are in the store after it, which nothing else
+# pushes (the config it starts has no metrics line), in a sample the
+# store took after the stop began: a tick before it is no push at stop.
+i=1
+while [ "$i" -le 7 ]; do curl -s -o /dev/null --max-time 5 "$PROXY/?fp=$i"; i=$((i + 1)); done
+sleep 1 # the observer counts a response as its handler returns
+counted=$(curl -s --max-time 5 --unix-socket /run/motel/admin.sock http://localhost/metrics \
+	| awk '/^motel_app_requests_total\{.*app="blog"/ { s += $NF } END { printf "%d", s }')
 since=$(date '+%Y-%m-%d %H:%M:%S')
+stop_at=$(date +%s.%N)
 systemctl restart motel && pass "restarted without the metrics line" || fail "the restart without the metrics line failed"
+# The sample's time first, then its sum: read the other way round, a
+# sum from before the push at stop could pair with its time.
+if wait_result push-at-stop "max(tlast_over_time(motel_app_requests_total{app=\"blog\"}[1m])) >= $stop_at" "$RELOAD_WAIT" >/dev/null; then
+	stored=$(val 'sum(last_over_time(motel_app_requests_total{app="blog"}[1m]))')
+	[ "$counted" -gt 0 ] 2>/dev/null && [ "${stored:-0}" -ge "$counted" ] \
+		&& pass "the stop pushed what it counted since the last push: $stored of blog's requests in the store, counted $counted" \
+		|| fail "the push at stop carried $stored of blog's requests; motel had counted $counted"
+else
+	fail "no sample of blog's requests taken after the stop began ($stop_at): the last is at $(q 'max(tlast_over_time(motel_app_requests_total{app="blog"}[1m]))' | grep -o '"value":\[[^]]*\]')"
+fi
 grep -q 'alert:' "$STATE/rules.yml" && fail "restarted with no metrics line, yet rules.yml has alerting rules: $(grep -c 'alert:' "$STATE/rules.yml")" \
 	|| pass "restarted with no metrics line: rules.yml has no alerting rule"
 journalctl -u motel --since "$since" -o cat --no-pager | grep -q 'monitor metrics: the metrics line is gone: vmalert is given no rule' \
