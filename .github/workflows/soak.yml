@@ -19,7 +19,8 @@ on:
     # Everything else can change what the soak measures, so this lists
     # only what provably cannot: no build step opens a markdown file
     # (.dockerignore's *.md keeps the root's out of the context; the
-    # nested ones e2e/Dockerfile's COPY . . takes are never read), and a
+    # nested ones are visible to e2e/Dockerfile's build steps, which
+    # bind-mount the context, and never read), and a
     # test file is not in the binary. A push is
     # skipped only when EVERY changed file matches. Deliberately not an
     # allowlist of leak-exposed paths — one would have skipped 2 of the
