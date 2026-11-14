@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"regexp"
 	"slices"
@@ -290,6 +291,18 @@ func silenceTarget() (*App, *amClient, *zap.Logger, time.Time, error) {
 	return active, newAMClient(theSocket), logger, now, nil
 }
 
+// answerLost is a request that ended unanswered, by the client's
+// timeout, the caller's cancel, or Alertmanager closing the connection
+// after it read the request (EOF; one that closes with the request
+// unread resets it): Alertmanager may have taken it. A refused
+// connection or a non-2xx answer is not one; it took nothing. Judged
+// by the error alone, not by whether the request was sent
+// (DESIGN-notify.md, "Accepted residuals").
+func answerLost(err error) bool {
+	return errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) ||
+		errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF)
+}
+
 func badGateway(err error) error {
 	return caddy.APIError{HTTPStatus: http.StatusBadGateway, Err: err}
 }
@@ -326,6 +339,15 @@ func serveSilence(w http.ResponseWriter, r *http.Request) error {
 	now = now.UTC()
 	s := amSilence{Matchers: req.matchers(), StartsAt: now, EndsAt: now.Add(d), CreatedBy: createdBy(req.By), Comment: comment}
 	id, err := am.postSilence(r.Context(), s)
+	if answerLost(err) {
+		// Not `silence added`: it may not be there. The line keeps what
+		// was asked, for whoever finds the silence, as the 502 cannot.
+		logger.Warn("monitor: silence add unanswered: Alertmanager may hold the silence", zap.String("alert", req.Alert), zap.String("app", req.App),
+			zap.String("release", req.Release), zap.String("ends_at", s.EndsAt.Format(time.RFC3339Nano)), zap.String("created_by", s.CreatedBy),
+			zap.String("comment", comment), zap.Error(err))
+		return badGateway(fmt.Errorf("silencing in Alertmanager: %w; Alertmanager may have taken the silence before its answer was lost: "+
+			"list what it holds before you add it again (curl -s --unix-socket %s http://am/api/v2/silences)", err, am.socket))
+	}
 	if err != nil {
 		return badGateway(fmt.Errorf("silencing in Alertmanager: %w", err))
 	}

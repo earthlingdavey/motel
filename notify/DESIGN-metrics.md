@@ -1103,6 +1103,40 @@ are not silenceable: they are not about the box.
 rule absent says the same as one marked unavailable, with one shape
 fewer.
 
+**The file vmalert reads.** The listing is the loaded config's render,
+and vmalert evaluates `rules.yml`: a write that fails at a load
+(`EIO`, a read-only `/var/lib`: `applyRules`) or a retire that fails at
+a reload that takes the `metrics` line out (`retireRules`) leaves
+another config's rules there while the load succeeds, with one Error
+line in the journal. So the listing compares the file with what this
+config's Start writes, byte for byte (`rulesFile`), and `rules_file`
+says when they are not the same: `differs` (with the line, another
+render; with none, not the render of no rule a retire leaves, so
+vmalert may evaluate rules the listing does not show), `missing` (a
+`metrics` line and no file, or no state directory:
+`errMetricsNotSetUp`), or `unreadable` (`EACCES`, `EIO`: said as
+such, never as a difference). With no `metrics` line, no file (or no
+setup) is nothing to say. A reload between two configs with no
+`metrics` line writes nothing there (neither has a `MetricsStore`), so
+a failed retire is mended by a restart, whose gate retires the rules;
+docs/monitor.md says so. The table ends with one line that states it;
+neither shows what the file holds, which is root's and the motel
+user's to read (0640 `motel:_victoria-metrics`), not the listing's to
+print. The command exits 0: the listing was given, and `rules_file` is
+what a script tests. It speaks for the file, not for vmalert: vmalert
+re-reads the file within 5 s of a write (`-configCheckInterval=5s`),
+so for those seconds after a load it may still run the old one
+unmarked, and whether vmalert accepted the file is not read (the Owed
+row on a render vmalert refuses). A listing in the milliseconds of a
+load, between notify's engine taking the config and the write, is
+marked. In a reload that fails at an app's Start after the monitor
+app's ("Accepted residuals"), the engine serves the candidate through
+the gap and the file is the candidate's, so the listing is the
+candidate's, unmarked; once the fallback has written the serving
+config's rules back (`pusher.release`, before the engine goes back),
+both are the old config's again, and a fallback write that failed is
+marked as any other.
+
 **Why not annotations.** The parts could ride in each rule's
 annotations (and a client read `rules.yml` or vmalert's API). They are
 sent with the alert to Alertmanager, and the `json` and `ntfy` channels
@@ -1264,7 +1298,15 @@ T2) cannot drive the store harder than seven queries per app and window
 per 30 s, fourteen with both windows. A store that does not
 answer is `"metrics": {"error": "the metrics store did not answer"}`,
 fixed text, and the status is otherwise the same; the route never waits
-longer or fails for it. The whole body passes the app's response filter,
+longer or fails for it. The cause is a warning in motel's journal
+(`monitor metrics: GET /<app> answered without metrics: the metrics
+store did not answer the view's queries`, with the app, the range and
+the error), cached with the failure, so at most one per app and window
+per 30 s, and again at the first ask after a load (each load's view
+starts with no cache): a store that takes pushes but fails the view's
+queries (the budget, the 4 MB cap, a point it cannot read) leaves
+`metrics_store_down` quiet, and the deployer's fixed text is all
+anyone else sees. The whole body passes the app's response filter,
 as every status does.
 
 ## Packaging and setup
@@ -1595,6 +1637,8 @@ on its general scales. metrics' examples:
 | `TestScrapeKeepsWhatMotelReads`'s scan refuses a selector with a single-quoted matcher (`x{job='motel'}`), which MetricsQL accepts: the test fails on a valid query of motel's until it is written with double quotes | notify/metricssetup_test.go (`storeReads`) | 2 | 5 | 1 | 10; red and named (`matcher "job='motel'"`), never a false pass, and every query motel writes uses Go's `%q` or literal double quotes; single quotes in the matchers' split and unquote are a second quoting path to test (size 2, risk 1). /code-review pass 2 on the keep list |
 | While the store is read-only, `motel monitor rules` lists `metrics_store_down`'s failing time past its 5 m with nothing firing: the read-only hold keeps the alert back | notify/ruleslist.go | 2 | 3 | 3 | 18; `metrics_store_read_only`, critical, fires and names the cause beside it, and a reading that changes meaning under the hold would be a second state to explain |
 | While the store is read-only, each minute's read-only answer resets the rules count to 0 and stamps it, so `metrics_rules_down` lists 0 reads, just read, while an alert raised before the hold still fires | notify/metricspush.go (`checkReadOnly`) | 2 | 3 | 3 | 18; the read-only alert, critical, names the cause, and the firing one is the accepted residual above it |
+| With no `metrics` line, a `rules.yml` that holds another motel version's render of no rule (setup keeps a file that is there, and a motel not run as the state directory's owner retires nothing: `NotOwner`) is listed as `differs`, its line saying vmalert may evaluate rules not listed | notify/ruleslist.go (`rulesFile`) | 2 | 2 | 3 | 12; it needs a version whose render of no rule differs, and the gate's retire at that version's start not run (motel not its owner) or failed (its own journal line); the line says "may", and motel.service's start at the upgrade retires the file. Reading the groups for a rule rather than comparing bytes is a YAML parse of the file (size 2, risk 2). /code-review pass 1 on the listing's `rules_file` |
+| The listing's `differs` line sends the operator to the journal, which has no line for a `rules.yml` changed outside motel (by root's hand, a package) or for the other version's render of the row above | notify/ruleslist.go (`rulesFileText`) | 2 | 1 | 3 | 6; a file only root and the motel user can write, changed by them, or the row above's two faults; the line still says the file is not this config's, which is the fault to mend, and a reload or restart writes it back. Keeping each write's last error for the listing is a state in the store and the pusher (size 3, risk 2). /code-review pass 2 on the listing's `rules_file` |
 | A `request_rate` rule has no value until the store holds a push from before its window: for five minutes after setup, and after a gap in the pushes of over five minutes, a real change of traffic is not judged, so a `>` (or a `<`) over its bound then fires up to five minutes late | notify/operatorrules.go (`windowSpan`) | 2 | 2 | 3 | 12; it needs the traffic to cross the bound in those five minutes, and it ends correct once the window holds the pushes. Over 300 the rate read from nothing up then, and a `<` fired after every setup on a running box; dividing by the span since the store's first push instead reads the counts a series holds from before that push (its first value, counted from zero when it is small) as the window's, up to a division by zero at the first push (size 2, risk 2). Found measuring the divisor |
 | Across a motel restart, an evaluation whose window starts within the milliseconds between one push's samples (the store stamps an import chunk by chunk) at one end and not the other reads that push's counts against the other's span: up to a tenth high or low, at that phase, while the restart sits in the window | notify/operatorrules.go (`windowSpan`) | 2 | 2 | 3 | 12; the phase must fall within those milliseconds of the 30 s cycle (about 1 in 10 000 restarts at a millisecond), and without a restart both ends fall alike. Reading each app's span from its own counters (`max by (app)`) moves the straddle inside an app's series and doubles the term (size 2, risk 2). Found measuring the divisor |
 | `SPAN`'s base is the push within `prevReach` (5 m) before the window, which is the store's own reach for an instant query only while the step is 5 m: vmalert's `-datasource.queryStep` default, which motel-vmalert.service leaves unset. A vmalert whose default changed, or a step passed by hand to the listing's `value_query`, gives the counters a shorter reach than the push's, and after a gap in the pushes over the window's start `request_rate` reads the gap's span against counts without it, low | notify/operatorrules.go (`prevReach`) | 2 | 2 | 3 | 12; it needs a changed default (Debian's 1.112.0 is pinned, and a dist-upgrade's flag check is Owed) and a gap over the window's start, and it ends correct once the window has passed the gap. Writing `-datasource.queryStep=5m` into the unit is a unit change every box takes through setup's re-run (size 1, risk 2, and upgrading.md's order). Measured: a 150 s gap reads flat at 1.112.0's 5 m. /code-review pass 1 on the divisor |
@@ -1608,6 +1652,7 @@ on its general scales. metrics' examples:
 
 | Owed | S | O | D | Lands in |
 |---|---|---|---|---|
+| vmalert refusing a `rules.yml` motel rendered (after a version change, say) keeps its old rules, and `up{job="vmalert"}` stays 1, so `metrics_rules_down` never fires and neither motel nor `motel monitor rules` can tell (30, owed by the owner's decision of 2026-11-14): `scrape.yml` drops every vmalert series but `up`, and the chain (notify/metricspush.go) reads only `up`. The fix keeps `vmalert_config_last_reload_successful` in `scrape.yml` and reads it beside `up` (size 3, risk 2). The listing's `rules_file` speaks for the file, not for this. Read-only review at af7a124 | 3 | 2 | 5 | its own PR, with the `scrape.yml` change and the `motel monitor setup --metrics` re-run on every box that docs/upgrading.md would order |
 | The post-deploy push ask (`checkFresh`) is made at the check's time alone, so the old release's window, which ends a push after the cutover, is read without one: a store down over the cutover (from before the old window's end to after it) and back by the check gives a baseline as it stood at its last push before, a shorter span than the new release's, so the share and p95 the bound is held against are noisier | 2 | 3 | 3 | a follow-up PR: the same ask at the old window's end, `cutover + pushEvery`, once a comparison (out of the push ask's change, which asks once a check; /code-review pass 2 of the push ask) |
 | The store's RSS on a 1 or 2 GB box (a day on hotserve-1's 3.8 GB is in "Footprint") | — | — | — | a deploy to a box of that size |
 | On a booted Debian host, the delete-a-leftover branch of the namespace unit's test before its delete (#430's `ExecStartPre`), measured in the e2e box alone. A reboot cannot reach it: a cold boot has an empty `/run`, so hotserve-1's of 2026-11-13 at a8038b4 took the nothing-to-delete branch alone (the unit's start took 165 ms, with no `Cannot remove namespace` line), and setup's re-run does not restart the namespace unit, which is active. #426's proxies have had their cold boot: the deploy of 01b2fd5 to hotserve-1 rebooted it at about 17:53 UTC on 2026-11-12, and both came back as no root | — | — | — | a start of the namespace unit on hotserve-1 with `/run/netns/motel-metrics` already there (a start after one that failed past its `ip netns add`), not a reboot |

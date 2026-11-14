@@ -110,7 +110,10 @@ func (v *metricsView) AppMetrics(ctx context.Context, app, window string) *wire.
 	defer cancel()
 	val, err := v.ask(qctx, app, window, w, now)
 	if err != nil {
-		v.logger.Debug("monitor metrics: GET /<app>'s metrics", zap.String("app", app), zap.Error(err))
+		// The deployer reads fixed text, so the cause is the operator's:
+		// at most one line per app and window per viewCache, as cached.
+		v.logger.Warn("monitor metrics: GET /<app> answered without metrics: the metrics store did not answer the view's queries",
+			zap.String("app", app), zap.String("range", window), zap.Error(err))
 		val = wire.Metrics{Error: errViewStore}
 	}
 	e.val = val

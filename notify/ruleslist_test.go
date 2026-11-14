@@ -66,7 +66,9 @@ func listingJSON(t *testing.T, l RulesListing) []byte {
 // config with every kind of rule and every check read.
 func TestRulesListingGolden(t *testing.T) {
 	seen, chain, budgets := listingReads()
-	l, err := listRules(rulesApp(t, listingLines...), seen, chain, budgets)
+	a := rulesApp(t, listingLines...)
+	rulesInForce(t, a)
+	l, err := listRules(a, seen, chain, budgets)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -421,6 +423,7 @@ func runRules(t *testing.T, addr string, args ...string) (string, error) {
 func TestRulesCommandOutput(t *testing.T) {
 	te := withEngine(t)
 	te.active.Metrics = rulesApp(t, listingLines...).Metrics
+	rulesInForce(t, te.active)
 	saved := watchdogBudgets
 	_, _, budgets := listingReads()
 	watchdogBudgets = func(*App) []liveswap.WatchdogBudget { return budgets }
@@ -689,6 +692,89 @@ func TestWatchdogListingSaysWhenItFires(t *testing.T) {
 	b, _ := json.Marshal(e.Readings[1])
 	if !strings.Contains(string(b), `"window_seconds":0.5`) {
 		t.Errorf("JSON: %s", b)
+	}
+}
+
+// rulesInForce gives a's metrics line a state directory whose
+// rules.yml is what a's Start wrote there.
+func rulesInForce(t *testing.T, a *App) string {
+	t.Helper()
+	dir := t.TempDir()
+	a.Metrics.stateDirOverride, a.Metrics.rules = dir, renderRules(a)
+	if err := os.WriteFile(filepath.Join(dir, RulesName), a.Metrics.rules, 0o640); err != nil {
+		t.Fatal(err)
+	}
+	return filepath.Join(dir, RulesName)
+}
+
+// TestRulesListingSaysWhenTheFileDiffers: rules.yml, which vmalert
+// reads, holding another render than the config's is marked, in the
+// JSON and in the table, and not shown: a write that failed at a reload
+// that added a rule line (an older render), a retire that failed at
+// one that took the metrics line out (a render with rules), no file,
+// and a file that cannot be read, which is not called different.
+func TestRulesListingSaysWhenTheFileDiffers(t *testing.T) {
+	saved := unlinedRulesDir
+	unlinedRulesDir = t.TempDir()
+	t.Cleanup(func() { unlinedRulesDir = saved })
+	lined := rulesApp(t, listingLines...)
+	path := rulesInForce(t, lined)
+	unlined := withEngine(t).active
+	unlinedPath := filepath.Join(unlinedRulesDir, RulesName)
+	// A rule only the file holds: its name must not reach the listing.
+	other := renderRules(rulesApp(t, "rule only_on_disk threshold cpu_cores > 3 for 10m"))
+	write := func(p string, data []byte) {
+		t.Helper()
+		_ = os.RemoveAll(p)
+		if data == nil {
+			return
+		}
+		if err := os.WriteFile(p, data, 0o640); err != nil {
+			t.Fatal(err)
+		}
+	}
+	unreadable := func(p string) {
+		t.Helper()
+		_ = os.RemoveAll(p)
+		if err := os.Mkdir(p, 0o750); err != nil { // a directory: read fails, and not as absent
+			t.Fatal(err)
+		}
+	}
+	for _, c := range []struct {
+		name  string
+		a     *App
+		setUp func()
+		want  string
+		line  string
+	}{
+		{"in force", lined, func() { write(path, lined.Metrics.rules) }, "", ""},
+		{"an older render", lined, func() { write(path, other) }, rulesFileDiffers, "is not this config's render"},
+		{"no file", lined, func() { write(path, nil) }, rulesFileMissing, "is not there"},
+		{"not set up", lined, func() { _ = os.RemoveAll(filepath.Dir(path)) }, rulesFileMissing, "is not there"},
+		{"unreadable", lined, func() { _ = os.MkdirAll(filepath.Dir(path), 0o750); unreadable(path) }, rulesFileUnreadable, "could not be read"},
+		{"no metrics line, no file", unlined, func() { write(unlinedPath, nil) }, "", ""},
+		{"no metrics line, retired", unlined, func() { write(unlinedPath, renderRules(nil)) }, "", ""},
+		{"no metrics line, not retired", unlined, func() { write(unlinedPath, other) }, rulesFileDiffers, "no metrics line"},
+		{"no metrics line, unreadable", unlined, func() { unreadable(unlinedPath) }, rulesFileUnreadable, "could not be read"},
+	} {
+		c.setUp()
+		l, err := listRules(c.a, polled{}, chainRead{}, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got, text := string(listingJSON(t, l)), string(rulesText(l, listingAt))
+		if l.RulesFile != c.want {
+			t.Errorf("%s: rules_file %q, want %q", c.name, l.RulesFile, c.want)
+		}
+		if c.want == "" && (strings.Contains(got, "rules_file") || strings.Contains(text, "WARNING")) {
+			t.Errorf("%s: marked:\n%s", c.name, text)
+		}
+		if c.line != "" && (!strings.Contains(text, "\nWARNING: /var/lib/motel-metrics/rules.yml, the file vmalert reads, ") || !strings.Contains(text, c.line)) {
+			t.Errorf("%s: the table does not say %q:\n%s", c.name, c.line, text)
+		}
+		if strings.Contains(got+text, "only_on_disk") {
+			t.Errorf("%s: the listing shows the file's rules", c.name)
+		}
 	}
 }
 

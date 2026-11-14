@@ -33,8 +33,10 @@ guards: what a screen runs on the store's socket to show how close it
 is. A check motel makes itself (disk_low, backup_stale,
 watchdog_throttled, metrics_store_down, metrics_rules_down) comes
 with the number it last read. With no metrics line in the monitor
-block, the store's rules are not listed. docs/monitor.md, "How close
-is each alert", has an example.
+block, the store's rules are not listed. When rules.yml, the file
+vmalert reads, is not this config's (a write at a load that failed),
+the table ends with a line that says so, and --json has rules_file.
+docs/monitor.md, "How close is each alert", has an example.
 
     motel monitor rules
     motel monitor rules --json`,

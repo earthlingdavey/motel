@@ -653,7 +653,12 @@ Any other range is refused: `{"error":"range must be one of 1h, 24h"}`
 (HTTP 422). `requests` appears only for an app whose site has
 `observe <app>` in front of it ([liveswap/README.md](../liveswap/README.md)).
 `memory_max_bytes` appears only for an app with a memory cap. A number
-with nothing behind it in the window is left out.
+with nothing behind it in the window is left out. When the store does
+not answer the view's queries, `metrics` is `{"error":"the metrics
+store did not answer"}`, and motel's journal has the cause as a
+warning, `monitor metrics: GET /<app> answered without metrics: the
+metrics store did not answer the view's queries`, with the app, the
+range and the error (at most one per app and range every 30 seconds).
 
 ### PromQL over the socket, as root
 
@@ -835,7 +840,12 @@ comment and `created_by`, which is `motel monitor: <your user>`;
 `monitor: silence expired` with its id and `expired_by`). With
 `--json`, `add` prints `{"id":"…","ends_at":"…"}`, `expire` prints
 `{"id":"…"}`, and an error is `{"error":"…"}` with exit 1; a second
-expire of one silence is `silence <id> has already expired`. Another
+expire of one silence is `silence <id> has already expired`. An add
+that Alertmanager did not answer within 10 seconds says that
+Alertmanager may have taken the silence all the same: list its
+silences (below) before you add it again. The journal then has
+`monitor: silence add unanswered: Alertmanager may hold the silence`,
+with what was asked but no id, and no `silence added` line. Another
 user than root is told `the admin socket … admits root and the motel
 user: run motel monitor silence as root`.
 
@@ -941,6 +951,30 @@ then. The lookback has a price: an alert that resolved within it still
 shows, and at the minute it turns firing both its `pending` and its
 `firing` series show; take firing over pending, and the newest sample
 (`tlast_over_time`) over an older one.
+
+The listing is the loaded config's, and vmalert evaluates
+`/var/lib/motel-metrics/rules.yml`, which motel writes at each load. A
+load whose write failed (`EIO`, a read-only `/var/lib`: the journal
+has `monitor metrics: the rules were not written`), or a reload that
+took the `metrics` line out and could not empty the file (`… its rules
+were not retired: vmalert still evaluates them`), still succeeds, so
+the store's rules listed would not be the ones vmalert runs. The table
+then ends with a line that says so, and never what the file holds:
+
+```
+WARNING: /var/lib/motel-metrics/rules.yml, the file vmalert reads, is not this config's render: the store's rules listed above are not the ones in it (the journal says why).
+```
+
+With `--json` it is `rules_file`: `differs`, `missing` (a `metrics`
+line and no file: `motel monitor setup --metrics` makes it) or
+`unreadable`; absent when the file is this config's, or, without the
+`metrics` line, the empty one this motel's retire leaves, or none. The
+command still exits 0: test `rules_file` in a script. Once the cause is
+mended, `systemctl reload motel` writes the file again for a config
+with the `metrics` line; without it a reload writes nothing there, and
+`systemctl restart motel` empties it. The line speaks for the file
+alone: vmalert re-reads it within 5 s of a write, and whether
+vmalert accepted it is not checked.
 
 The listing holds motel's own query text, rule, app and path names:
 no channel URL, no secret, no summary. Another user than root is told
