@@ -941,14 +941,32 @@ hit is sent and never timed), and a release has one only with
 one of them a cold start, would otherwise make the quantile, and the
 windows are cumulative, so the same slow request would fail every
 check after it (/code-review pass 4 on operator rules). An old release
-with fewer timed is no p95 baseline. One the store does not answer is **asked again** at the next tick
-(a debug line, `the post-deploy check is asked again`), and the minutes
-it held up after it in turn, one a tick, each read at its own time, so a
-late answer is the one it would have been and failures equal to the
-window's minutes stay reachable; a minute a stalled tick left behind is
-made late the same way. A store that has not answered 10 minutes past
-the window's end ends the comparison, with a warning line (`ended
-unfinished`). It **fails** when the new release is over
+with fewer timed is no p95 baseline. A check counts only when the store
+holds a push of motel's from the minute before its time
+(`max(present_over_time(process_start_time_seconds{job="motel"}[1m]))`,
+asked first, once for both windows, and before the floor, so a skip is
+drawn from fresh counts too): the store stamps a push as it takes it
+and back-fills none it missed, so a check read past its last push reads
+the counts as they stood then. Down from minute 1.5 to 5, it answered
+minutes 2 and 3 with one snapshot, and a warning counted three failing
+checks over a minute and a half of responses; down over the window's
+end, the late checks passed on it and the comparison ended as if the
+release held (`TestPostDeployCountsNoSnapshotTwice`,
+`TestPostDeployCountsNoCheckTheStoreTookNoPushFor`). A minute is the
+span between two checks, so no two count one push, and it holds a push
+lost (they are 30 s apart, stamped milliseconds after their gather).
+One the store does not answer, or holds no such push for, is **asked
+again** at the next tick (a debug line, `the post-deploy check is asked
+again`), and the minutes it held up after it in turn, one a tick, each
+read at its own time, so failures equal to the window's minutes stay
+reachable; a minute a stalled tick left behind is made late the same
+way. A late answer is the one it would have been only when the store
+took the pushes meanwhile: a minute it took none for stays without one,
+so a store down or read-only for a minute or more, or a clock stepped
+forward over one, holds the comparison at that minute. A store that has
+not answered, or held no push, 10 minutes past the window's end ends
+the comparison, with a warning line (`ended unfinished`) whose error
+says which. It **fails** when the new release is over
 `max_p95` with a p95 above 1.2 × the old's (a quantile is an estimate
 inside a bucket), or over `max_5xx_share` and worse than the old: an old
 release within the bound makes crossing it the regression; an old one
