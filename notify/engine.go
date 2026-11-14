@@ -526,8 +526,10 @@ func (e *engine) endMute(app string, now time.Time) {
 	for key, t := range e.ends {
 		switch {
 		case t.ev.App != app || !t.muted:
-		case e.states[key] != nil:
-			delete(e.ends, key) // fired since: that alert is the key's now
+		case e.states[key] != nil && e.states[key].posted:
+			// Fired since, and told: that alert is the key's now. One the
+			// flapping guard holds unposted is not, and posts after this.
+			delete(e.ends, key)
 		default:
 			e.enqueue(&pending{key: key, alerts: []amAlert{stateAlertFor(t.ev, t.startsAt, now)}, first: now, end: t})
 			t.queued++

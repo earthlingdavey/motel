@@ -606,8 +606,9 @@ func TestResolveJustBeforeTheMuteIsPostedAgain(t *testing.T) {
 	te.report(watchdog(false))
 	te.advance(31 * time.Second)
 	te.tick()
-	if r := resolves(te.drain()); len(r) != 1 {
-		t.Fatalf("the resolve = %+v", r)
+	first := resolves(te.drain())
+	if len(first) != 1 {
+		t.Fatalf("the resolve = %+v", first)
 	}
 	te.advance(20 * time.Second) // before the group's next flush
 	te.mute("blog", true)
@@ -620,8 +621,9 @@ func TestResolveJustBeforeTheMuteIsPostedAgain(t *testing.T) {
 	}
 	te.mute("blog", false)
 	got := te.drain()
-	if len(got) != 2 || got[0].Labels["alertname"] != "deploy_in_progress" || len(resolves(got[1:])) != 1 || !got[1].EndsAt.Equal(te.at) {
-		t.Fatalf("at the mute's end, want its end and the resolve again: %+v", got)
+	if len(got) != 2 || got[0].Labels["alertname"] != "deploy_in_progress" || len(resolves(got[1:])) != 1 || !got[1].EndsAt.Equal(te.at) ||
+		!got[1].StartsAt.Equal(first[0].StartsAt) {
+		t.Fatalf("at the mute's end, want its end and the resolve again, the alert's startsAt kept: %+v", got)
 	}
 	// Once, and no journal line: the event was told at the first post.
 	if l := te.lines("monitor: event"); len(l) != 2 {
@@ -827,6 +829,85 @@ func TestResolveDroppedWhilePostingIsKept(t *testing.T) {
 	te.mute("blog", false)
 	if r := resolves(te.drain()); len(r) != 1 {
 		t.Fatalf("at the mute's end = %+v", r)
+	}
+}
+
+// A re-fire the flapping guard holds unposted is not the key's alert in
+// Alertmanager: the resolve the mute swallowed is still the last thing
+// it was told, so the mute's end posts it again (independent review of
+// #496, item 1).
+func TestMuteEndPostsAgainOverAnUnpostedRefire(t *testing.T) {
+	te := newTestEngine(t)
+	for range 2 { // F1, R1, F2, R2: the bucket's four
+		te.report(watchdog(true))
+		te.report(watchdog(false))
+		te.advance(31 * time.Second)
+		te.tick()
+	}
+	if r := resolves(te.drain()); len(r) != 2 {
+		t.Fatalf("R1 and R2 = %+v", r)
+	}
+	te.advance(20 * time.Second)
+	te.mute("blog", true)     // its flush swallows R2
+	te.report(watchdog(true)) // F3: held, the bucket is empty
+	if st := te.states[watchdog(true).key()]; st == nil || st.posted {
+		t.Fatalf("F3 = %+v, want held unposted", st)
+	}
+	te.drain()
+	te.advance(time.Minute)
+	te.mute("blog", false) // the deploy failed
+	if r := resolves(te.drain()); len(r) != 1 {
+		t.Fatalf("at the mute's end = %+v, want R2 again", r)
+	}
+	te.report(watchdog(false)) // healthy: the unposted state goes
+	te.advance(31 * time.Second)
+	te.tick()
+	if got := te.drain(); countAlert(got, "watchdog_throttled") != 0 {
+		t.Fatalf("after the unposted state cleared: %+v", got)
+	}
+}
+
+// The window, judged by mute itself: a resolve Alertmanager took longer
+// than endWindow before the mute, with no tick between to sweep it, is
+// not marked, and its end posts nothing.
+func TestMuteMarksNoResolvePastTheWindow(t *testing.T) {
+	te := newTestEngine(t)
+	te.report(watchdog(true))
+	te.report(watchdog(false))
+	te.advance(31 * time.Second)
+	te.tick()
+	te.drain()
+	te.advance(endWindow)
+	te.mute("blog", true)
+	te.mute("blog", false)
+	if r := resolves(te.drain()); len(r) != 0 {
+		t.Fatalf("posted again past the window: %+v", r)
+	}
+}
+
+// An older resolve of the key given up after a newer one replaced its
+// entry leaves the newer entry alone (endPosted's identity check).
+func TestOldResolveGivenUpKeepsTheNewEntry(t *testing.T) {
+	te := newTestEngine(t)
+	te.report(watchdog(true))
+	te.drain()
+	te.p.setErr(&netErr{syscall.ECONNREFUSED})
+	te.report(watchdog(false))
+	te.advance(31 * time.Second)
+	te.tick() // R1 queued
+	te.report(watchdog(true))
+	te.report(watchdog(false))
+	te.advance(31 * time.Second)
+	te.tick() // R2 queued: its entry replaces R1's
+	key := watchdog(true).key()
+	newer := te.ends[key]
+	for range 9 { // R1 given up at five minutes, R2 not yet
+		te.advance(30 * time.Second)
+		te.tick()
+		te.drain()
+	}
+	if got := te.ends[key]; got != newer || got.queued != 1 {
+		t.Fatalf("after R1's give-up: %+v, want R2's entry, still queued", got)
 	}
 }
 
