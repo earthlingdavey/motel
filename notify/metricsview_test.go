@@ -156,3 +156,44 @@ func viewUnittest(t *testing.T, tool, dir string, cases []viewCase, qs func(stri
 	}
 	return vmUnittest(t, tool, dir, b.String())
 }
+
+// The view's CPU over the store's own MetricsQL, at each window's rate,
+// a push every 30 s: a point of the range query is the query at its
+// step. deployed's u1 runs at 0.5 cores to its last push at 10m and u2
+// at 0.5 from 10m30s: read over each series' own span, the stopped u1
+// kept its 0.5 beside u2's for the rate's window, a point of 1.0 after
+// every cutover in avg_5m and avg. stopped runs 1.0 cores and stops at
+// 10m: its last rate had points for the rate's window after it.
+func TestMetricsViewReadsTheRunningUnit(t *testing.T) {
+	tool := vmTool(t, "vmalert-tool")
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, RulesName), renderRules(nil), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	test := `rule_files: [` + RulesName + `]
+evaluation_interval: 30s
+tests:
+  - interval: 30s
+    input_series:
+      - series: 'process_start_time_seconds{job="motel"}'
+        values: '1x60'
+      - series: 'motel_app_cpu_seconds_total{app="deployed",unit="app-deployed-u1.service",job="motel"}'
+        values: '0+15x20'
+      - series: 'motel_app_cpu_seconds_total{app="deployed",unit="app-deployed-u2.service",job="motel"}'
+        values: '_x21 15+15x38'
+      - series: 'motel_app_cpu_seconds_total{app="stopped",unit="app-stopped-s1.service",job="motel"}'
+        values: '0+30x20'
+    metricsql_expr_test:
+`
+	// Steps past the cutover, and past the stop, with the old unit's
+	// samples still in the rate's window.
+	for window, at := range map[string][2]string{"1h": {"11m", "11m30s"}, "24h": {"13m", "13m"}} {
+		w := viewWindows[window]
+		cutover, stop := at[0], at[1]
+		test += fmt.Sprintf("      - expr: '%s'\n        eval_time: %s\n        exp_samples: [{labels: '{}', value: 0.5}]\n",
+			strings.ReplaceAll(cpuQuery(`app="deployed"`, w.rate), "'", "''"), cutover)
+		test += fmt.Sprintf("      - expr: '%s'\n        eval_time: %s\n        exp_samples: []\n",
+			strings.ReplaceAll(cpuQuery(`app="stopped"`, w.rate), "'", "''"), stop)
+	}
+	runUnittest(t, tool, dir, test)
+}
