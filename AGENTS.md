@@ -2,7 +2,8 @@
 
 ## Testing locally
 
-CI is the gate: every pull request runs every lane, on x86 and arm64.
+CI is the gate: every pull request that changes code runs every lane,
+on x86 and arm64.
 Locally, run only what covers your change, and let CI run the rest.
 Everything runs in Docker through the Makefile; no host Go is needed.
 

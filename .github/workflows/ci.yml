@@ -48,10 +48,62 @@ env:
   SSL_CERT_FILE: /etc/ssl/certs/ca-certificates.crt
 
 jobs:
+  # Which jobs this run needs (.github/scripts/ci-changes.py says how
+  # it decides): on a pull request that changes only markdown or usage
+  # ledger files no job reads, heavy=false skips the build-and-test
+  # jobs below, and ci-ok accepts those skipped. Pushes to main and the
+  # release's workflow_call are heavy without asking. A pull request's
+  # checkout is its merge commit, whose first parent is the base
+  # branch: the diff between them is the whole PR as it would merge, so
+  # a docs commit pushed onto a code PR still runs everything. The rule
+  # that judges is the base branch's copy, so a PR that edits it is
+  # judged by the rule before the edit (this step, like all of ci.yml,
+  # is the PR's own: ci-changes.py's residuals). No merge commit to
+  # diff, or no rule on the base, is heavy too. quotePath off: a
+  # non-ASCII name comes out as itself, not C-quoted.
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      heavy: ${{ steps.classify.outputs.heavy }}
+    steps:
+      # Before checkout; floor and why: ci.yml's lint job.
+      - name: CA certificates at least the pinned floor
+        run: |
+          floor=20260816
+          v=$(dpkg-query -W -f='${Version}' ca-certificates)
+          if ! dpkg --compare-versions "$v" ge "$floor"; then
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq --only-upgrade ca-certificates
+            sudo systemctl try-restart docker
+            v=$(dpkg-query -W -f='${Version}' ca-certificates)
+            dpkg --compare-versions "$v" ge "$floor" || { echo "ca-certificates $v is below $floor" >&2; exit 1; }
+          fi
+          echo "ca-certificates $v"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The merge commit and its two parents.
+          fetch-depth: 2
+      - uses: ./.github/actions/runner-sample
+      - id: classify
+        env:
+          EVENT: ${{ github.event_name }}
+        run: |
+          rule="$RUNNER_TEMP/ci-changes.py"
+          if [ "$EVENT" != pull_request ] || ! git rev-parse -q --verify 'HEAD^2^{commit}' >/dev/null \
+            || ! git show 'HEAD^1:.github/scripts/ci-changes.py' > "$rule" 2>/dev/null; then
+            echo "heavy: a $EVENT run, no merge commit to diff, or no rule on the base" >&2
+            echo heavy=true >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          git -c core.quotePath=false diff --name-only --no-renames HEAD^1 HEAD > "$RUNNER_TEMP/changed"
+          python3 -I -B "$rule" < "$RUNNER_TEMP/changed" >> "$GITHUB_OUTPUT"
+
   # One cell per module: the golangci runs share no state, so
   # they parallelize cleanly (serial they were the slowest lane). Cache
   # keys are per-module so each cell restores exactly its own objects.
   lint:
+    needs: [changes]
+    if: needs.changes.outputs.heavy == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -103,6 +155,8 @@ jobs:
   # process-management integration tests are the deepest arch-specific
   # coverage we have.
   test:
+    needs: [changes]
+    if: needs.changes.outputs.heavy == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -143,6 +197,8 @@ jobs:
       - run: make test-integration COMPOSE="$COMPOSE"
 
   govulncheck:
+    needs: [changes]
+    if: needs.changes.outputs.heavy == 'true'
     runs-on: ubuntu-latest
     steps:
       # Before checkout; floor and why: ci.yml's lint job.
@@ -167,14 +223,16 @@ jobs:
           restore-keys: vuln-${{ runner.os }}-
       - run: make vulncheck COMPOSE="$COMPOSE"
 
-  # No needs: e2e shares no artifacts or caches with test (it builds
-  # its own compose stack from source), so it runs in parallel — on
-  # green runs that removes the whole test->e2e serial leg from the
-  # critical path. The trade: a red unit test now burns (free) e2e
-  # minutes alongside, and peak arm-runner demand is higher — if
-  # arm cells start sitting in "queued", restoring `needs: [test]`
+  # No needs but changes: e2e shares no artifacts or caches with test
+  # (it builds its own compose stack from source), so it runs in
+  # parallel — on green runs that removes the whole test->e2e serial
+  # leg from the critical path. The trade: a red unit test now burns
+  # (free) e2e minutes alongside, and peak arm-runner demand is higher
+  # — if arm cells start sitting in "queued", restoring `needs: [test]`
   # here is the first lever.
   e2e:
+    needs: [changes]
+    if: needs.changes.outputs.heavy == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -215,6 +273,8 @@ jobs:
   # The notify suite: its own stack (a box with Debian's Alertmanager and
   # a stub receiver), so its own job, as the backup suite's is.
   e2e-notify:
+    needs: [changes]
+    if: needs.changes.outputs.heavy == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -246,6 +306,8 @@ jobs:
   # The metrics suite: notify's box with Debian's victoria-metrics (the
   # store and vmalert), so its own job, as notify's is.
   e2e-metrics:
+    needs: [changes]
+    if: needs.changes.outputs.heavy == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -280,6 +342,8 @@ jobs:
   # A time limit, because nothing in a backup has one: a wedged restic
   # would otherwise run to the job's six hours.
   e2e-backup:
+    needs: [changes]
+    if: needs.changes.outputs.heavy == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -334,6 +398,8 @@ jobs:
   # Builds the same .deb artifacts a release would, on every
   # commit, and hands them to the install-test matrix below.
   package:
+    needs: [changes]
+    if: needs.changes.outputs.heavy == 'true'
     runs-on: ubuntu-latest
     steps:
       # Before checkout; floor and why: ci.yml's lint job.
@@ -375,7 +441,8 @@ jobs:
   # `dpkg --print-architecture`, which is what makes the arm cells work
   # unchanged.
   install-test:
-    needs: [package]
+    needs: [changes, package]
+    if: needs.changes.outputs.heavy == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -510,11 +577,24 @@ jobs:
 
   ci-ok:
     if: always()
-    needs: [lint, test, govulncheck, e2e, e2e-backup, e2e-notify, e2e-metrics, package, install-test, gitleaks, usage-check]
+    needs: [changes, lint, test, govulncheck, e2e, e2e-backup, e2e-notify, e2e-metrics, package, install-test, gitleaks, usage-check]
     runs-on: ubuntu-latest
     steps:
+      # Skipped passes only for a job the changes job gates, and only
+      # when it said heavy=false: a gated job skipped because a need of
+      # its own failed, or any job skipped on a heavy run, is red. A
+      # newly gated job is added to the list here, or ci-ok goes red on
+      # the first PR that skips it — loud, and on the safe side.
       - name: assert every needed job succeeded
         env:
           NEEDS: ${{ toJSON(needs) }}
         run: |
-          echo "$NEEDS" | jq -e 'to_entries | map(select(.value.result != "success")) | if length == 0 then "all CI jobs green" else error("failed: \(map(.key) | join(", "))") end'
+          echo "$NEEDS" | jq -e '
+            ["lint", "test", "govulncheck", "e2e", "e2e-backup", "e2e-notify", "e2e-metrics", "package", "install-test"] as $gated
+            | (.changes.result == "success" and .changes.outputs.heavy == "false") as $light
+            | to_entries
+            | map(select(.value.result != "success"
+                and ((.key as $k | $light and .value.result == "skipped" and ($gated | any(. == $k))) | not)))
+            | if length > 0 then error("failed: \(map("\(.key) (\(.value.result))") | join(", "))")
+              elif $light then "markdown or usage ledger only: the build-and-test jobs skipped, the rest green"
+              else "all CI jobs green" end'
