@@ -715,27 +715,28 @@ it writes one line in motel's journal: `monitor: silence added` (`id`,
 form). A refused or failed write leaves no line; the command says why
 and exits 1. The add posts without the caller's cancel
 (`context.WithoutCancel`), bounded by the client's 10 s alone, so that
-a caller gone once Alertmanager has the request (Ctrl-C, a dropped
-`ssh`) does not cut it: the route runs to Alertmanager's answer and
-writes `silence added` with the id whether or not anyone reads the
-reply. Caddy cancels no admin request at a reload; at motel's stop it
-stops the apps, then waits up to 10 s for admin requests before it
-exits, and systemd kills it at `TimeoutStopSec=5s`
-(packaging/motel.service): an add Alertmanager has not answered by then
-writes no line ("Accepted residuals"). It is not tied to the engine, which it does not post through:
-the silence is Alertmanager's, which outlives a stop of the engine, and
-a cut at a stop would lose the id this exists to keep. An add whose
-answer never came (the client's 10 s, or the connection closed after
-the request: `answerLost`, which judges by the error alone, so that a
-timeout before the request was sent counts too) writes no `silence
-added` line either, since the silence may not be there, but a
-warning, `monitor: silence add unanswered: Alertmanager may hold the silence`, with the line's
+a caller gone once motel has the request (Ctrl-C, a dropped `ssh`),
+during the dial or while Alertmanager answers, does not cut it: the
+route runs to Alertmanager's answer and writes `silence added` with the
+id whether or not anyone reads the reply. Caddy cancels no admin
+request at a reload; at motel's stop it stops the apps, then waits up
+to 10 s for admin requests before it exits, and systemd kills it at
+`TimeoutStopSec=5s` (packaging/motel.service): an add Alertmanager has
+not answered by then writes no line ("Accepted residuals"). It is not
+tied to the engine, which it does not post through: the silence is
+Alertmanager's, which outlives a stop of the engine, and a cut at a
+stop would lose the id this exists to keep. An add whose answer never
+came (the client's 10 s, or the connection closed after the request:
+`answerLost`, which judges by the error alone, so that a timeout before
+the request was sent counts too) writes no `silence added` line either,
+since the silence may not be there, but a warning, `monitor: silence
+add unanswered: Alertmanager may hold the silence`, with the line's
 fields but the id, so that a silence Alertmanager did take still has
 its record; and its 502 says that Alertmanager may have taken it and
 gives the command that lists what it holds, so that the operator
 neither adds it twice nor believes nothing quiet. Whether Alertmanager
-0.28.1 stores a silence before it answers is not measured, and the
-text is true either way. A refused connection or a non-2xx answer took
+0.28.1 stores a silence before it answers is not measured, and the text
+is true either way. A refused connection or a non-2xx answer took
 nothing, and says only that.
 
 Through the route, not from the command to the socket, because that is
@@ -993,7 +994,7 @@ on its general scales. notify's examples:
 | An add that Alertmanager answers 2xx with a body holding no silence id (not its API's `{"silenceID":…}`) is told as a plain failure, `silencing in Alertmanager: alertmanager answered "…"`, though Alertmanager took the silence: the operator may add it again | notify/silence.go (`postSilence`, `answerLost`) | 2 | 2 | 3 | 12; Alertmanager outside its own API, and a body cut short is a read error, which `answerLost` takes. Telling it apart needs a sentinel error from `postSilence` and a third message (size 2, risk 1). /code-review pass 1 of monitor/two-messages-say-what-happened |
 | An expire whose answer is lost (the client's 10 s, after Alertmanager ended the silence) is a plain 502, `expiring in Alertmanager: … deadline exceeded`, with no `silence expired` line; the retry answers `silence <id> has already expired`, which writes none either | notify/silence.go (`serveExpire`) | 2 | 3 | 1 | 6; ends correct and named under the one fault: the silence is ended, the 502 names the timeout and Caddy journals it, and the retry says the state the operator wanted. The add's `answerLost` branch for expire is a branch and a message (size 2, risk 1). /code-review pass 1 of monitor/two-messages-say-what-happened |
 | `answerLost` judges by the error, not by whether Alertmanager read the request: a deadline before the POST was written (the client's 10 s spent in the dial; the caller's cancel no longer reaches the POST) and a non-2xx answer whose body is cut off or stalls are told as `may have taken the silence`, with the `silence add unanswered` warning, though Alertmanager took nothing; and a reset after Alertmanager read the request and began its answer (killed while it writes) is told as a plain failure | notify/silence.go (`answerLost`), notify/amclient.go (`do` reads the body before it looks at the status) | 2 | 2 | 3 | 12 at most (the reset; the other two say `may` and give the command that lists the silences, which shows none: D1); each is a timeout or a kill inside a window of milliseconds, or a non-2xx with a dropped connection. A `WroteRequest` flag from `httptrace` in `postSilence` and the status read before the body (size 2, risk 2). /code-review pass 2 of monitor/two-messages-say-what-happened: recorded, the review rule stops at two passes |
-| A `systemctl stop` or `restart` of motel while an add waits on Alertmanager (socket activation starting it, or Alertmanager slow up to the client's 10 s): Caddy stops the apps, then waits for admin requests, and systemd kills motel at `TimeoutStopSec=5s`, so an add Alertmanager answers after the kill writes neither `silence added` nor the unanswered warning, though Alertmanager may hold the silence. Likewise a reload that drops a `log` output the old config opened (a file or net sink) closes the logger the route writes its line with | notify/silence.go (`serveSilence`), packaging/motel.service | 2 | 2 | 3 | 12; a stop and a slow Alertmanager at once, or a log output changed in the reload the add spans; the silence, if taken, is in Alertmanager's list, and a caller who stayed sees the connection drop. As before this change for a caller who stays. Holding the stop for the add would be a longer `TimeoutStopSec` for every stop (Wide), or a drain of the silence routes before Caddy stops the apps (size 3). /code-review pass 1 of monitor/silence-add-outlives-its-caller |
+| A `systemctl stop` or `restart` of motel while an add waits on Alertmanager (socket activation starting it, or Alertmanager slow up to the client's 10 s): Caddy stops the apps, then waits for admin requests, and systemd kills motel at `TimeoutStopSec=5s`, so an add Alertmanager answers after the kill writes neither `silence added` nor the unanswered warning, though Alertmanager may hold the silence. Likewise a reload that drops a `log` output the old config opened (a file or net sink) closes the logger the route writes its line with | notify/silence.go (`serveSilence`), packaging/motel.service | 2 | 2 | 3 | 12; a stop and a slow Alertmanager at once, or a log output changed in the reload the add spans; the silence, if taken, is in Alertmanager's list, and a caller who stayed sees the connection drop. As before this change for a caller who stays. Holding the stop for the add would be a longer `TimeoutStopSec` for every stop (Wide), or a drain of the silence routes before Caddy stops the apps (size 3). And an add whose caller left now holds a stop issued within its 10 s the same way, to the 5 s kill, where its cancel ended it at once: systemd names the timeout (S2 O2 D1, 4). /code-review passes 1 and 2 of monitor/silence-add-outlives-its-caller |
 | `TestSilenceAnswerLost` shortens the client's timeout (`silenceTimeout`) to 300 ms, which runs from the dial: a runner too slow to dial a unix socket and write the POST within it fails the test with `Alertmanager never got the request` | notify/silence_test.go | 2 | 1 | 1 | 2; a local dial and write take microseconds. Through the route, whose POST no longer takes the caller's cancel, the client's timeout is the one way to lose an answer, so it cannot start at the stub's `got` as `TestAnswerLost`'s cancel, on a client of its own, does. /code-review pass 2 of monitor/two-messages-say-what-happened: recorded, the review rule stops at two passes |
 | A UUID-shaped secret this box does not hold, pasted for a silence id (another box's heartbeat check UUID, given to `motel monitor silence expire` on this one): the filter does not know it, so it passes the masked check and reaches Alertmanager's per-id `GET`, and Alertmanager 0.28.1 journals it (`Failed to find silence`, with the id, at error level; read in `getSilenceHandler`, not observed on a box) in prometheus-alertmanager's journal, readable by group adm. motel's own refusal does not echo it | notify/silence.go (`serveExpire`) | 3 | 5 | 5 | 75: over 20, so the rule says fix; recorded instead as second-pass hardening (the review rule stops at two passes), outside what the filter promises, which is this box's own known values, and those are refused before Alertmanager is asked. S3 as for the slug-form ping key above: a ping key alone, readable where it should not be. The fix, for the owner to ask for: read `GET /api/v2/silences` and look for the id in the list, so an id Alertmanager does not hold is never sent to a per-id endpoint (a list logs nothing); size 2, risk 2. Second /code-review pass on monitor/test-no-echo |
 | A public host name that resolves, or rebinds, to a private address is posted to: the check is on the URL as written | notify/config.go (`checkURL`) | 1 | 5 | 5 | a channel URL is a signer's line today, and a signer can already run any code as an app that reaches the same addresses; scored by what T6 gains (nothing). Rescore when #417 lets a deployer choose a URL |

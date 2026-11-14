@@ -345,9 +345,9 @@ func serveSilence(w http.ResponseWriter, r *http.Request) error {
 	now = now.UTC()
 	s := amSilence{Matchers: req.matchers(), StartsAt: now, EndsAt: now.Add(d), CreatedBy: createdBy(req.By), Comment: comment}
 	// Without the caller's cancel, bounded by the client's timeout: a
-	// caller gone once Alertmanager has the request (Ctrl-C, a dropped
-	// ssh) would cut the POST, and a silence Alertmanager took would have
-	// no id in the journal.
+	// caller gone during the dial or the answer (Ctrl-C, a dropped ssh)
+	// would cut the POST, and a silence Alertmanager took would have no
+	// id in the journal.
 	id, err := am.postSilence(context.WithoutCancel(r.Context()), s)
 	if answerLost(err) {
 		// Not `silence added`: it may not be there. The line keeps what
