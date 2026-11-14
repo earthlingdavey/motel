@@ -51,13 +51,16 @@ func TestMetricsSetupOrderAndFiles(t *testing.T) {
 	// A first run: Alertmanager's socket in the namespace does not listen
 	// yet, so Alertmanager is restarted, once, to take it up, before the
 	// namespace's own start (the restart starts it).
-	f := &fakeSystem{failOn: "systemctl is-active --quiet " + amNSSocket}
+	// The store and vmalert are not running yet either.
+	f := &fakeSystem{failOn: "systemctl is-active --quiet " + amNSSocket + "|systemctl is-active --quiet " + vmService + "|systemctl is-active --quiet " + vmalertUnit}
 	var out bytes.Buffer
 	if err := metricsSetup(f, root, &out); err != nil {
 		t.Fatal(err)
 	}
 	want := []string{
 		"systemctl mask victoria-metrics.service",
+		"systemctl is-active --quiet victoria-metrics.service",
+		"systemctl is-active --quiet motel-vmalert.service",
 		"systemctl stop victoria-metrics.service",
 		"apt-get install -y --no-install-recommends victoria-metrics iproute2",
 		"systemctl daemon-reload",
@@ -82,6 +85,14 @@ func TestMetricsSetupOrderAndFiles(t *testing.T) {
 	}
 	if !strings.HasPrefix(out.String(), "masked victoria-metrics.service, so the install starts nothing\n") {
 		t.Errorf("a first run's mask: setup said\n%s", out.String())
+	}
+	for _, u := range metricsUnits() {
+		if !strings.Contains(out.String(), "\nwrote "+u.path+"\n") {
+			t.Errorf("a first run did not say it wrote %s:\n%s", u.path, out.String())
+		}
+	}
+	if !strings.Contains(out.String(), "\nstarted the store and vmalert: the store listens on /run/motel-metrics/vm.sock only") {
+		t.Errorf("a first run did not say it started the store and vmalert:\n%s", out.String())
 	}
 	for _, u := range metricsUnits() {
 		b, err := os.ReadFile(filepath.Join(root, u.path))
@@ -147,6 +158,18 @@ func TestMetricsSetupOrderAndFiles(t *testing.T) {
 	if b, _ := os.ReadFile(filepath.Join(dir, scrapeName)); !bytes.Equal(b, scrapeConfig) {
 		t.Fatalf("setup left an edited scrape.yml: %q", b)
 	}
+	// It names what it changed, here scrape.yml alone, and the restarts
+	// (the deploy of ecb829a to hotserve-1 said "wrote" for every file,
+	// and nothing of the store's and vmalert's restarts).
+	for _, u := range metricsUnits() {
+		if !strings.Contains(out.String(), "\n"+u.path+": content unchanged\n") || strings.Contains(out.String(), "wrote "+u.path) {
+			t.Errorf("a re-run with %s as setup wrote it: setup said\n%s\nwant it unchanged", u.path, out.String())
+		}
+	}
+	if !strings.Contains(out.String(), "\nwrote /var/lib/motel-metrics/scrape.yml\n") ||
+		!strings.Contains(out.String(), "\nrestarted the store and vmalert: the store listens on /run/motel-metrics/vm.sock only") {
+		t.Errorf("a re-run with scrape.yml edited: setup said\n%s\nwant it written, and the restarts named", out.String())
+	}
 
 	// iproute2 alone to install: the mask is for the units, not for an
 	// install of the store.
@@ -161,6 +184,29 @@ func TestMetricsSetupOrderAndFiles(t *testing.T) {
 	if i := slices.IndexFunc(fIP.cmds, func(c string) bool { return strings.HasPrefix(c, "apt-get") }); i < 0 ||
 		fIP.cmds[i] != "apt-get install -y --no-install-recommends iproute2" {
 		t.Errorf("iproute2 alone missing: %v; want it installed alone", fIP.cmds)
+	}
+
+	// Restarted or started is each daemon's own state, not the run's: a
+	// re-run over a store that had stopped, vmalert still running, and a
+	// first run over a store installed by hand and running, with no
+	// vmalert yet.
+	for _, c := range []struct {
+		name, root, failOn, want string
+	}{
+		{"a re-run over a stopped store", root, "systemctl is-active --quiet " + vmService, "\nstarted the store and restarted vmalert: "},
+		{"a first run over a running store", t.TempDir(), "systemctl is-active --quiet " + amNSSocket + "|systemctl is-active --quiet " + vmalertUnit, "\nrestarted the store and started vmalert: "},
+	} {
+		if c.root != root {
+			notifySetUp(t, c.root)
+		}
+		fc := &fakeSystem{isInstalled: true, failOn: c.failOn}
+		out.Reset()
+		if err := metricsSetup(fc, c.root, &out); err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(out.String(), c.want) {
+			t.Errorf("%s: setup said\n%s\nwant %q", c.name, out.String(), c.want)
+		}
 	}
 }
 
@@ -186,6 +232,7 @@ func TestMetricsSetupFailingPutsTheStoreBack(t *testing.T) {
 	want := []string{
 		"systemctl mask victoria-metrics.service",
 		"systemctl is-active --quiet victoria-metrics.service",
+		"systemctl is-active --quiet motel-vmalert.service",
 		"systemctl stop victoria-metrics.service",
 		"systemctl daemon-reload", // fails
 		"systemctl daemon-reload", // and again: the rest is still tried

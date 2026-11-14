@@ -502,7 +502,18 @@ func TestSetupOrderAndFiles(t *testing.T) {
 	if !strings.HasPrefix(out.String(), "masked prometheus-alertmanager.service, so the install starts nothing\ninstalled prometheus-alertmanager\n") {
 		t.Errorf("a first run's mask: setup said\n%s", out.String())
 	}
+	for _, u := range amUnits() {
+		if !strings.Contains(out.String(), "\nwrote "+u.path+"\n") {
+			t.Errorf("a first run did not say it wrote %s:\n%s", u.path, out.String())
+		}
+	}
 	out.Reset()
+	// The drop-in edited by hand: the re-run names it as written, and the
+	// socket's unit, as setup wrote it, as unchanged (the deploy of
+	// ecb829a to hotserve-1 said "wrote" for every file).
+	if err := os.WriteFile(filepath.Join(root, dropInPath), []byte("edited\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	// Run again on a box already set up: the package is not installed
 	// again, and the config motel rendered since is not replaced.
 	if err := os.WriteFile(filepath.Join(dir, ConfigName), []byte("rendered\n"), 0o640); err != nil {
@@ -524,6 +535,13 @@ func TestSetupOrderAndFiles(t *testing.T) {
 	if !strings.HasPrefix(out.String(), "masked prometheus-alertmanager.service, so nothing starts it while its units are written\nprometheus-alertmanager is installed\n") ||
 		strings.Contains(out.String(), "install starts nothing") {
 		t.Errorf("a re-run's mask: setup said\n%s", out.String())
+	}
+	if !strings.Contains(out.String(), "\nwrote "+dropInPath+"\n") || !strings.Contains(out.String(), "\n"+socketPath+": content unchanged\n") ||
+		strings.Contains(out.String(), "wrote "+socketPath) {
+		t.Errorf("a re-run with the drop-in edited: setup said\n%s\nwant the drop-in written and the socket unchanged", out.String())
+	}
+	if b, _ := os.ReadFile(filepath.Join(root, dropInPath)); !bytes.Equal(b, unitDropIn) {
+		t.Errorf("the edited drop-in was not put back: %q", b)
 	}
 	if b, _ := os.ReadFile(filepath.Join(dir, ConfigName)); string(b) != "rendered\n" {
 		t.Fatalf("setup replaced motel's rendered config: %q", b)

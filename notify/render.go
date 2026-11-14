@@ -32,6 +32,9 @@ const (
 	// and that entry is stamped after the send returns, so a repeat
 	// equal to the interval is a few milliseconds short at the next
 	// flush and the ping goes out every other one, every ten minutes.
+	// Alertmanager warns of it at every load of a config with this route
+	// ("repeat_interval is less than group_interval"); docs/monitor.md
+	// says it is expected.
 	heartbeatInterval = "5m"
 	heartbeatRepeat   = "4m"
 )
