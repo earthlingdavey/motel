@@ -13,6 +13,17 @@ SocketUser=root
 SocketGroup=motel
 SocketMode=0660
 RemoveOnStop=yes
+# A connection that comes while the store's chain cannot start (the
+# namespace or the store failing at its start) would stay queued here:
+# the proxy's start fails on its Requires=, the queued connection
+# triggers it again at once, and 20 tries in about 40 ms fail the socket
+# for good (trigger-limit-hit), vm.sock removed, with nothing to start it
+# again (#450). Flushed, that connection is refused and the socket
+# listens on, so motel's next push after the fault starts the chain
+# (measured, systemd 257). The cost: a connection that comes as the
+# proxy exits idle is refused, not started again; while motel runs it
+# holds a keep-alive connection here, so the proxy does not idle.
+FlushPending=yes
 
 [Install]
 WantedBy=sockets.target

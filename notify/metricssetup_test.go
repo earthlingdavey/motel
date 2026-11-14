@@ -423,7 +423,11 @@ func TestMetricsUnitsAreTheMeasuredOnes(t *testing.T) {
 		// holds no listener in it: the namespace's start restarts it.
 		"ExecStartPost=-/usr/bin/systemctl --no-block try-restart prometheus-alertmanager.service\n",
 		"Before=victoria-metrics.service motel-vmalert.service motel-am-metrics.socket motel-vm.service\n")
-	has("motel-vm.socket", unitVMSocket, "ListenStream="+DefaultStoreSocket+"\n", "SocketGroup=motel", "SocketMode=0660")
+	has("motel-vm.socket", unitVMSocket, "ListenStream="+DefaultStoreSocket+"\n", "SocketGroup=motel", "SocketMode=0660",
+		// A connection queued while the store's chain cannot start
+		// retriggered its failing start to the trigger limit, and the
+		// socket failed for good (#450, measured).
+		"FlushPending=yes\n")
 	has("motel-vm.service", unitVMProxy, "NetworkNamespacePath=/run/netns/motel-metrics", "systemd-socket-proxyd --exit-idle-time=5min 127.0.0.1:8428",
 		// Not root (the box audit of 2026-11-11).
 		"DynamicUser=yes", "CapabilityBoundingSet=\n")

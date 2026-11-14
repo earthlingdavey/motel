@@ -428,6 +428,16 @@ motel runs reads them, so no rule, check or `GET /<app>` changes. A
 query of your own over one of them finds its samples from before the
 re-run until the retention ends them, and none after.
 
+**The same re-run keeps the store's socket listening when the store
+cannot start.** On a box set up before it, one push that came while
+the store or its namespace failed to start ended
+`/run/motel-metrics/vm.sock` for good (`motel-vm.socket` failed with
+`trigger-limit-hit`), and the store stayed down after the cause was
+gone until root ran `systemctl start motel-vm.socket`. The re-run
+writes `FlushPending=yes` into the socket unit (each load's warning
+names `motel-vm.socket` until then), and its `daemon-reload` applies
+it to the running socket, with no restart.
+
 ## Patching the host
 
 Apps run on the box's own `/usr`, so `apt upgrade` reaches an app at

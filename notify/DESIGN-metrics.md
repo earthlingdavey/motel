@@ -99,6 +99,33 @@ after its last ping before the reboot, the boot's downtime included,
 and every 5 minutes after; the
 response observer counted 10 requests after the boot as 10.
 
+**The store's socket outlives a store that cannot start.**
+`motel-vm.socket` has `FlushPending=yes`. Without it, a connection that
+comes while the proxy's start cannot succeed (the namespace or the
+store failing at its own start) stays queued on the listener: the
+proxy's start fails on its `Requires=` (`dependency`), the queued
+connection triggers it again at once, and 20 tries in about 40 ms end
+the socket at its trigger limit (`trigger-limit-hit`), `vm.sock`
+removed. Nothing started it again, so the store stayed down after the
+fault was gone until root started the socket (#450). Flushed, the
+connection is refused and the socket listens on, and motel's next push
+after the fault starts the chain. Measured in the e2e box (systemd 257)
+on 2026-11-14, the namespace failing at its start: before, 205 journal
+lines for one connection and no recovery; with the line, the socket
+listening through 13 connections (8 of them in 8 s), 12 lines a
+connection, and the store answering 2 s after the fault went; the same
+with the store failing in place of the namespace. A `daemon-reload`
+applies it without a restart of the socket, so setup's re-run fixes a
+box set up before it. Also measured, and not taken: an `OnFailure=`
+unit that resets and starts the socket again recovers, with about 207
+lines a failure, a 30 s outage and a unit more; an `Upholds=` holder
+leaves the socket failing each time; `PollLimit*` changes nothing (the
+retriggers are no poll events); `TriggerLimitIntervalSec=0` has PID 1
+spin; motel cannot start the socket (it runs as `User=motel`); and a
+drop-in cannot remove the proxy's `Requires=`. What the line costs is
+an accepted row. e2e metrics 4d connects to `vm.sock` twice while the
+namespace fails, and asserts the socket listening.
+
 **The store's proxy runs as no root.** It passes bytes it does not
 parse, and motel shapes some of them (its own reads through `vm.sock`),
 so a proxy as root would make a bug in it T5's way to root. It needs
@@ -1473,6 +1500,8 @@ on its general scales. metrics' examples:
 | A `request_rate` rule has no value until the store holds a push from before its window: for five minutes after setup, and after a gap in the pushes of over five minutes, a real change of traffic is not judged, so a `>` (or a `<`) over its bound then fires up to five minutes late | notify/operatorrules.go (`windowSpan`) | 2 | 2 | 3 | 12; it needs the traffic to cross the bound in those five minutes, and it ends correct once the window holds the pushes. Over 300 the rate read from nothing up then, and a `<` fired after every setup on a running box; dividing by the span since the store's first push instead reads the counts a series holds from before that push (its first value, counted from zero when it is small) as the window's, up to a division by zero at the first push (size 2, risk 2). Found measuring the divisor |
 | Across a motel restart, an evaluation whose window starts within the milliseconds between one push's samples (the store stamps an import chunk by chunk) at one end and not the other reads that push's counts against the other's span: up to a tenth high or low, at that phase, while the restart sits in the window | notify/operatorrules.go (`windowSpan`) | 2 | 2 | 3 | 12; the phase must fall within those milliseconds of the 30 s cycle (about 1 in 10 000 restarts at a millisecond), and without a restart both ends fall alike. Reading each app's span from its own counters (`max by (app)`) moves the straddle inside an app's series and doubles the term (size 2, risk 2). Found measuring the divisor |
 | `SPAN`'s base is the push within `prevReach` (5 m) before the window, which is the store's own reach for an instant query only while the step is 5 m: vmalert's `-datasource.queryStep` default, which motel-vmalert.service leaves unset. A vmalert whose default changed, or a step passed by hand to the listing's `value_query`, gives the counters a shorter reach than the push's, and after a gap in the pushes over the window's start `request_rate` reads the gap's span against counts without it, low | notify/operatorrules.go (`prevReach`) | 2 | 2 | 3 | 12; it needs a changed default (Debian's 1.112.0 is pinned, and a dist-upgrade's flag check is Owed) and a gap over the window's start, and it ends correct once the window has passed the gap. Writing `-datasource.queryStep=5m` into the unit is a unit change every box takes through setup's re-run (size 1, risk 2, and upgrading.md's order). Measured: a 150 s gap reads flat at 1.112.0's 5 m. /code-review pass 1 on the divisor |
+| A connection to `vm.sock` that comes as the store's proxy exits idle (`--exit-idle-time=5min`) is refused (`FlushPending=yes`), where it used to start the proxy again: that one push of motel's, or one read (`GET /<app>`'s metrics, `motel monitor rules`), fails | notify/units/metrics/motel-vm.socket | 2 | 4 | 1 | 8; the proxy idles only while motel is down, since motel holds a keep-alive connection on `vm.sock` (seen with `ss -xp`), so it needs a connection at the instant of the exit after a stop of motel: measured 1 of 100 connections timed against the exit, with motel stopped and the idle time cut to 2 s, and none while motel runs. motel logs the failed push and its next one, 30 s on, carries the counters whole. Without the line, one connection while the store's chain cannot start fails the socket for good (#450, S4 O3 D3 = 36); a retry of a refused push in motel is a new branch (size 2, risk 2). The measurements of #450, 2026-11-14 |
+| The first connection through `vm.sock` after a cold start of the store is reset: the store is `Type=simple`, so the proxy, started after it, connects before it listens; that one push or read fails | notify/units/metrics/10-motel.conf | 2 | 4 | 1 | 8; once a start of the store (motel's push after a stop, a fault gone), and motel logs the failed push, whose counters its next one carries whole. Waiting for the port in the drop-in (an `ExecStartPost=` loop) is a new branch in the store's start (size 2, risk 2). Seen in the measurements of #450, 2026-11-14; e2e metrics 4d's wait for the store after the fault allows for it |
 
 ### Owed
 
@@ -1535,8 +1564,11 @@ there with `am.sock` listening on, then the namespace and 9093 back with
 nothing done by hand and the store scraping Alertmanager again (the
 proxy's socket stayed down here: 22 s for the namespace, 9093 still dead
 75 s on, measured at 09d2ed0); the namespace failing to start,
-Alertmanager started on `am.sock` alone, and once the fault is gone the
-namespace's start restarting it onto 9093; with motel down, the
+Alertmanager started on `am.sock` alone, two connections to `vm.sock`
+refused with the socket listening on (without `FlushPending=`, the
+first failed it for good: #450), and once the fault is gone the
+namespace's start restarting Alertmanager onto 9093 and the store
+answering through `vm.sock` again; with motel down, the
 namespace stopped and started by hand and the store started, vmalert's
 start starting the socket and the store's scrape Alertmanager through
 it (without vmalert's `Wants=`, measured on 6471dee: the socket and
