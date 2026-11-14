@@ -1153,7 +1153,8 @@ tests:
 // release built, an image pulled, a backup staged) and kept, and then
 // the disk fills steadily from flat in twice the horizon: the write
 // fires at no minute, and the fill is told at least lead before the disk
-// is full. Over the day's 6 h and 1 h held 30 m, a within of 1h told no
+// is full (measured: 55 m, 5 h 53 m, 11 h 45 m; lead leaves a few
+// minutes of slack). Over the day's 6 h and 1 h held 30 m, a within of 1h told no
 // fill of 1 to 4 hours before the disk was full, and a 6h one told this
 // one at 5h30m; held a minute, the write fired at 1h.
 func TestDiskFillUnderADay(t *testing.T) {
@@ -1162,9 +1163,9 @@ func TestDiskFillUnderADay(t *testing.T) {
 		within string
 		lead   time.Duration
 	}{
-		{"1h", 55 * time.Minute},
+		{"1h", 53 * time.Minute},
 		{"6h", 5*time.Hour + 50*time.Minute},
-		{"12h", 11*time.Hour + 45*time.Minute},
+		{"12h", 11*time.Hour + 40*time.Minute},
 	} {
 		t.Run(c.within, func(t *testing.T) {
 			within, err := time.ParseDuration(c.within)

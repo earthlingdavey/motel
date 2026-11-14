@@ -371,7 +371,8 @@ tests:
 // metrics_store_disk_fill waits for its history, as an operator's
 // disk_fill does: on a store set up half an hour ago, a write of 1 GB at
 // 20 GB free fired within the hour, both lines shorter than their
-// shape. A store with its history fires on a fill as before.
+// shape. A store filling from its first sample fires once it holds 5 h
+// and the rule's 30 m; one with its history fires on a fill as before.
 func TestStoreDiskFillWaitsForItsHistory(t *testing.T) {
 	tool := vmTool(t, "vmalert-tool")
 	dir := t.TempDir()
@@ -380,6 +381,15 @@ func TestStoreDiskFillWaitsForItsHistory(t *testing.T) {
 	}
 	none := func(at string) string {
 		return "      - eval_time: " + at + "\n        groupname: motel-store\n        alertname: metrics_store_disk_fill\n        exp_alerts: []\n"
+	}
+	firing := func(at string) string {
+		return "      - eval_time: " + at + `
+        groupname: motel-store
+        alertname: metrics_store_disk_fill
+        exp_alerts:
+          - exp_labels: {kind: state, severity: warning, subject: box, source: vmalert, key: "vmalert/box/metrics_store_disk_fill"}
+            exp_annotations: {summary: "the metrics store's disk is predicted to fill within a day"}
+`
 	}
 	test := `rule_files: [rules.yml]
 evaluation_interval: 1m
@@ -390,18 +400,19 @@ tests:
         values: '20000000000x29 19000000000x120'
     alert_rule_test:
 ` + none("62m") + none("70m") + none("90m") + `
-  # Flat for 6 h, then 21.6 GB used in 12 h.
+  # 21.6 GB used in 12 h from the store's first sample.
+  - interval: 1m
+    input_series:
+      - series: 'vm_free_disk_space_bytes{job="victoria-metrics"}'
+        values: '21600000000-30000000x719'
+    alert_rule_test:
+` + none("5h25m") + firing("5h35m") + `
+  # Flat for 6 h, then the same fill.
   - interval: 1m
     input_series:
       - series: 'vm_free_disk_space_bytes{job="victoria-metrics"}'
         values: '21600000000x359 21570000000-30000000x719'
     alert_rule_test:
-` + none("7h") + `      - eval_time: 10h
-        groupname: motel-store
-        alertname: metrics_store_disk_fill
-        exp_alerts:
-          - exp_labels: {kind: state, severity: warning, subject: box, source: vmalert, key: "vmalert/box/metrics_store_disk_fill"}
-            exp_annotations: {summary: "the metrics store's disk is predicted to fill within a day"}
-`
+` + none("7h") + firing("10h")
 	runUnittest(t, tool, dir, test)
 }
