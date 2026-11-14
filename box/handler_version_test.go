@@ -42,14 +42,17 @@ func wantRelease(t *testing.T, what string, w *httptest.ResponseRecorder, code i
 
 // TestVersionOnVerifiedAnswers: every answer to the box channel's
 // token carries Motel-Version, the release: `GET /` (200, and 409
-// before a baseline), each phase of a result poll and its 400 and 404,
-// a push's 200, 202, 400, 409, 415, 422 and 504, and the 403 Decide's
+// before a baseline and over a file that does not walk), each phase of a result poll and its 400 and 404,
+// a push's 200, 202, 400, 409, 413, 415, 422 and 504, and the 403 Decide's
 // refusal would give.
 func TestVersionOnVerifiedAnswers(t *testing.T) {
 	linkRelease(t, testRelease)
 
 	r := newRig(t)
 	wantRelease(t, "GET / before a baseline", r.do(t, req{target: "/", token: r.token(t)}), http.StatusConflict)
+	r.applied(t, sha)
+	r.write(t, r.installed, file("{\n}\nx.com {\n}\n")) // no box block: a file the channel cannot speak for
+	wantRelease(t, "GET / over a file that does not walk", r.do(t, req{target: "/", token: r.token(t)}), http.StatusConflict)
 
 	p := newPushRig(t)
 	wantRelease(t, "GET /", p.get(t, "/", p.token(t, "")), http.StatusOK)
@@ -66,6 +69,7 @@ func TestVersionOnVerifiedAnswers(t *testing.T) {
 
 	c2, bundle := p.change()
 	wantRelease(t, "a push with no id", p.post(t, p.h, push{token: p.token(t, c2), body: bytes.NewReader(bundle)}), http.StatusBadRequest)
+	wantRelease(t, "a push too large", p.post(t, p.h, push{id: randomID(t), length: maxBody + 1, token: p.token(t, c2), body: failingReader{t}}), http.StatusRequestEntityTooLarge)
 	wantRelease(t, "a push not gzip", p.post(t, p.h, push{id: randomID(t), ctype: "application/json", token: p.token(t, c2), body: bytes.NewReader(bundle)}), http.StatusUnsupportedMediaType)
 	wantRelease(t, "a push for another commit", p.post(t, p.h, push{id: randomID(t), token: p.token(t, p.base), body: bytes.NewReader(bundle)}), http.StatusUnprocessableEntity)
 	wantRelease(t, "a push of a known id", p.post(t, p.h, push{id: id, token: p.token(t, c2), body: bytes.NewReader(bundle)}), http.StatusConflict)

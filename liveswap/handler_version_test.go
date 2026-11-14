@@ -31,11 +31,12 @@ func sent(w *httptest.ResponseRecorder) http.Header { return w.Result().Header }
 // TestVersionOnVerifiedAnswers: every answer to a token that verified
 // carries Motel-Version, the release: each row of the route table, the
 // 404 for a name that is no app, the 405 after authentication, the
-// 422s, a deploy stream (its headers go out with the first line), and
+// 400, 413 and 422s, a deploy stream (its headers go out with the first line), and
 // the 403 Decide's refusal would give.
 func TestVersionOnVerifiedAnswers(t *testing.T) {
 	linkRelease(t, testRelease)
 	pull := `{"url":"https://x/1.tgz","version":"v1"}`
+	oversized := `{"url":"https://x/1.tgz","version":"v1","pad":"` + strings.Repeat("a", maxPayloadBytes) + `"}`
 	landed := map[*route]bool{}
 	for _, c := range []struct {
 		name, method, target, token, contentType, accept, body string
@@ -47,6 +48,7 @@ func TestVersionOnVerifiedAnswers(t *testing.T) {
 		{"a deploy record", "GET", "/demo?deploy=v1", "app", "", "", "", http.StatusNotFound},
 		{"a pull", "POST", "/demo", "app", "application/json", "", pull, http.StatusOK},
 		{"a payload refused", "POST", "/demo", "app", "application/json", "", "{", http.StatusBadRequest},
+		{"a payload too large", "POST", "/demo", "app", "application/json", "", oversized, http.StatusRequestEntityTooLarge},
 		{"a push", "POST", "/demo?version=v9", "app", "application/gzip", "", "tarball-bytes", http.StatusOK},
 		{"a push without a version", "POST", "/demo", "app", "application/gzip", "", "x", http.StatusUnprocessableEntity},
 		{"a rollback", "POST", "/demo?rollback=v3", "app", "", "", "", http.StatusOK},
@@ -77,6 +79,11 @@ func TestVersionOnVerifiedAnswers(t *testing.T) {
 			}
 			if got := sent(w).Values("Motel-Version"); len(got) != 1 || got[0] != testRelease {
 				t.Fatalf("Motel-Version %q, want %q", got, testRelease)
+			}
+			// The stream's case must have taken the streaming path,
+			// whose headers go out with its first line.
+			if ct := sent(w).Get("Content-Type"); c.accept != "" && ct != c.accept {
+				t.Fatalf("Content-Type %q, want %q: the deploy did not stream", ct, c.accept)
 			}
 		})
 	}
