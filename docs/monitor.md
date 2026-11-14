@@ -952,6 +952,30 @@ shows, and at the minute it turns firing both its `pending` and its
 `firing` series show; take firing over pending, and the newest sample
 (`tlast_over_time`) over an older one.
 
+The listing is the loaded config's, and vmalert evaluates
+`/var/lib/motel-metrics/rules.yml`, which motel writes at each load. A
+load whose write failed (`EIO`, a read-only `/var/lib`: the journal
+has `monitor metrics: the rules were not written`), or a reload that
+took the `metrics` line out and could not empty the file (`… its rules
+were not retired: vmalert still evaluates them`), still succeeds, so
+the store's rules listed would not be the ones vmalert runs. The table
+then ends with a line that says so, and never what the file holds:
+
+```
+WARNING: /var/lib/motel-metrics/rules.yml, the file vmalert reads, is not this config's render: the store's rules listed above are not the ones in it (the journal says why).
+```
+
+With `--json` it is `rules_file`: `differs`, `missing` (a `metrics`
+line and no file: `motel monitor setup --metrics` makes it) or
+`unreadable`; absent when the file is this config's, or, without the
+`metrics` line, the empty one this motel's retire leaves, or none. The
+command still exits 0: test `rules_file` in a script. Once the cause is
+mended, `systemctl reload motel` writes the file again for a config
+with the `metrics` line; without it a reload writes nothing there, and
+`systemctl restart motel` empties it. The line speaks for the file
+alone: vmalert re-reads it within 5 s of a write, and whether
+vmalert accepted it is not checked.
+
 The listing holds motel's own query text, rule, app and path names:
 no channel URL, no secret, no summary. Another user than root is told
 `the admin socket … admits root and the motel user: run motel monitor
