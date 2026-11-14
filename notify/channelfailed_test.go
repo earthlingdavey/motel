@@ -23,18 +23,103 @@ func failedLine(integration, receiver, reason string, v int) string {
 func TestFailWatchRises(t *testing.T) {
 	var w failWatch
 	s := func(r string, v float64) failedSample { return failedSample{"webhook", r, "other", v} }
-	if got := w.rises([]failedSample{s("a", 5), s("b", 0)}); len(got) != 0 {
+	if got := w.rises([]failedSample{s("a", 5), s("b", 0)}, false); len(got) != 0 {
 		t.Fatalf("the first read is a baseline: %+v", got)
 	}
-	if got := w.rises([]failedSample{s("a", 5), s("b", 0)}); len(got) != 0 {
+	if got := w.rises([]failedSample{s("a", 5), s("b", 0)}, false); len(got) != 0 {
 		t.Fatalf("nothing rose: %+v", got)
 	}
-	if got := w.rises([]failedSample{s("a", 6), s("b", 0), s("c", 2)}); len(got) != 2 {
+	if got := w.rises([]failedSample{s("a", 6), s("b", 0), s("c", 2)}, false); len(got) != 2 {
 		t.Fatalf("a rose, c appeared non-zero: %+v", got)
 	}
-	// Alertmanager restarted: its counters start over.
-	if got := w.rises([]failedSample{s("a", 1), s("b", 0), s("c", 0)}); len(got) != 1 || got[0].receiver != "a" {
+	// A load the read gives no stamp of: the counters start over.
+	if got := w.rises([]failedSample{s("a", 1), s("b", 0), s("c", 0)}, false); len(got) != 1 || got[0].receiver != "a" {
 		t.Fatalf("after a restart: %+v", got)
+	}
+	// A load the read's stamp says came since: a's 1 is a failure since
+	// it, though the last read was 1 too.
+	if got := w.rises([]failedSample{s("a", 1), s("b", 0), s("c", 0)}, true); len(got) != 1 || got[0].receiver != "a" {
+		t.Fatalf("after a load back to the same count: %+v", got)
+	}
+	// The first read, of a load after motel started, is no baseline.
+	var fresh failWatch
+	if got := fresh.rises([]failedSample{s("a", 1), s("b", 0)}, true); len(got) != 1 || got[0].receiver != "a" {
+		t.Fatalf("the first read after a load since the start: %+v", got)
+	}
+}
+
+// loadedAt is Alertmanager's last config load as its /metrics has it.
+func loadedAt(stamp float64) string {
+	return fmt.Sprintf("# TYPE %s gauge\n%s %v\n", loadedMetric, loadedMetric, stamp)
+}
+
+// TestLoadSince: a stamp newer than the last read's is a load since,
+// and the first read's is compared with motel's start; a read without
+// a stamp, or an older one, is none.
+func TestLoadSince(t *testing.T) {
+	start := time.Unix(1_794_000_000, 0)
+	w := failWatch{started: start}
+	at := func(stamp float64) amMetrics { return amMetrics{loaded: stamp} }
+	if w.loadSince(at(1_793_999_999)) {
+		t.Fatal("a load before motel started is not the first read's")
+	}
+	if !w.loadSince(at(1_794_000_001)) {
+		t.Fatal("a load after motel started counts from 0 at the first read")
+	}
+	if (&failWatch{}).loadSince(at(1_794_000_001)) {
+		t.Fatal("a watch with no start reads a baseline first")
+	}
+	w.prev, w.loaded = map[string]float64{}, 1_794_000_100
+	for stamp, want := range map[float64]bool{0: false, 1_794_000_050: false, 1_794_000_100: false, 1_794_000_100.5: true} {
+		if got := w.loadSince(at(stamp)); got != want {
+			t.Errorf("last read's load %v, this read's %v: loadSince = %v", w.loaded, stamp, got)
+		}
+	}
+	w.loaded = 0
+	if w.loadSince(at(1_794_000_100)) {
+		t.Fatal("a stamp after a read without one is no load since")
+	}
+}
+
+// TestChannelFailedAcrossAConfigLoad: 1 before a config load, the load
+// (0), and one failure before the next minute's read (1 again) is a
+// rise: the read's load stamp is newer than the last read's. Compared
+// with the last read alone it is none.
+func TestChannelFailedAcrossAConfigLoad(t *testing.T) {
+	te, _, body, read := holdEngine(t, fullBlock)
+	line := func(v int) string { return metricsHead + failedLine("webhook", "event-warning-bob", "clientError", v) }
+	for i, c := range []struct {
+		body  string
+		rises bool
+	}{
+		{line(1) + loadedAt(1_794_000_000), false},   // baseline: a failure before
+		{line(1) + loadedAt(1_794_000_100.25), true}, // a load, then a failure
+		{line(1) + loadedAt(1_794_000_100.25), false},
+		{line(0) + loadedAt(1_794_000_200), false}, // a load, nothing since
+		{line(1) + loadedAt(1_794_000_200), true},
+	} {
+		*body = c.body
+		te.scrapeFailed(context.Background(), read)
+		got := te.drain()
+		if c.rises != (len(got) == 1 && got[0].Labels["suspects"] == "bob") || !c.rises && len(got) != 0 {
+			t.Fatalf("read %d: posts %+v, want a ChannelFailed: %v", i, got, c.rises)
+		}
+	}
+}
+
+// TestFirstReadCountsFromALoadAfterTheStart: Alertmanager started after
+// motel (setup's start, its socket's at motel's first post), and a
+// failure before motel's first read is told; a load from before motel
+// started is a baseline, which an earlier motel may have told of.
+func TestFirstReadCountsFromALoadAfterTheStart(t *testing.T) {
+	for stamp, want := range map[float64]int{1_794_000_030: 1, 1_793_999_000: 0} {
+		te, _, body, read := holdEngine(t, fullBlock)
+		te.fail.started = time.Unix(1_794_000_000, 0)
+		*body = metricsHead + failedLine("webhook", "event-warning-bob", "clientError", 1) + loadedAt(stamp)
+		te.scrapeFailed(context.Background(), read)
+		if got := te.drain(); len(got) != want {
+			t.Errorf("a load at %v, motel started at %v: posts %+v, want %d", stamp, te.fail.started.Unix(), got, want)
+		}
 	}
 }
 
@@ -285,6 +370,55 @@ func TestHeartbeatHeldWhileAFailureIsToldToNoChannel(t *testing.T) {
 	}
 	if heartbeats(te) != 1 {
 		t.Fatal("no heartbeat after the delivery")
+	}
+}
+
+// TestHeartbeatResumesAtADeliveryAfterALoad: the documented mend, the
+// URL mended (a reload of Alertmanager, which starts its counts from 0)
+// and then `motel monitor test`, resumes the heartbeat at the next read
+// though the test's count is no higher than ops's before the load (one
+// earlier test). A read between the load and the test resumes nothing.
+func TestHeartbeatResumesAtADeliveryAfterALoad(t *testing.T) {
+	te, _, body, read := holdEngine(t, oneChannelBlock)
+	const before, after = 1_794_000_000, 1_794_000_900
+	*body = counters(0, 3, 0, 1) + loadedAt(before)
+	te.scrapeFailed(context.Background(), read) // baseline
+	*body = counters(1, 4, 1, 1) + loadedAt(before)
+	te.scrapeFailed(context.Background(), read)
+	for range 6 {
+		te.advance(time.Minute)
+		te.scrapeFailed(context.Background(), read)
+	}
+	if !te.heartbeatHeld() {
+		t.Fatal("not held")
+	}
+	*body = counters(0, 0, 0, 0) + loadedAt(after) // the mend's reload
+	te.advance(time.Minute)
+	te.scrapeFailed(context.Background(), read)
+	if !te.heartbeatHeld() {
+		t.Fatal("resumed by a load with no delivery since")
+	}
+	*body = counters(0, 0, 0, 1) + loadedAt(after) // motel monitor test ops
+	te.advance(time.Minute)
+	te.scrapeFailed(context.Background(), read)
+	if l := te.lines("monitor: heartbeat resumed"); len(l) != 1 || l[0].ContextMap()["delivered_through"] != "ch-ops" {
+		t.Fatalf("resumed lines = %+v", l)
+	}
+	// And when the test is read in the load's own read.
+	te, _, body, read = holdEngine(t, oneChannelBlock)
+	*body = counters(0, 3, 0, 1) + loadedAt(before)
+	te.scrapeFailed(context.Background(), read)
+	*body = counters(1, 4, 1, 1) + loadedAt(before)
+	te.scrapeFailed(context.Background(), read)
+	for range 6 {
+		te.advance(time.Minute)
+		te.scrapeFailed(context.Background(), read)
+	}
+	*body = counters(0, 0, 0, 1) + loadedAt(after)
+	te.advance(time.Minute)
+	te.scrapeFailed(context.Background(), read)
+	if te.heartbeatHeld() || len(te.lines("monitor: heartbeat resumed")) != 1 {
+		t.Fatalf("a test read in the load's own read: held %v", te.heartbeatHeld())
 	}
 }
 

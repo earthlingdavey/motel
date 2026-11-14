@@ -50,6 +50,24 @@ func TestParseAMMetricsRealBody(t *testing.T) {
 	if err != nil || !c.delivered(counts{}) {
 		t.Fatalf("counts = %+v, %v", c, err)
 	}
+	// The last config load, a gauge in unix seconds with a fraction.
+	if m.loaded != 1.7943265802633288e+09 || c.loaded != m.loaded {
+		t.Fatalf("loaded = %v (counts %v)", m.loaded, c.loaded)
+	}
+}
+
+// TestParseAMMetricsLoadWithoutReceiverNames: without
+// receiver-name-in-metrics a reload resets no counter, so its stamp is
+// no load to count from.
+func TestParseAMMetricsLoadWithoutReceiverNames(t *testing.T) {
+	m, err := parseAMMetrics([]byte(metricsHead + failedLine("webhook", "", "other", 4) + loadedAt(1_794_000_000)))
+	if err != nil || m.loaded != 0 {
+		t.Fatalf("loaded = %v, %v", m.loaded, err)
+	}
+	m, err = parseAMMetrics([]byte(metricsHead + failedLine("webhook", "ch-ops", "other", 4) + loadedAt(1_794_000_000)))
+	if err != nil || m.loaded != 1_794_000_000 {
+		t.Fatalf("loaded = %v, %v", m.loaded, err)
+	}
 }
 
 func TestParseAMMetricsFormats(t *testing.T) {

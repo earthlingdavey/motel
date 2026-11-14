@@ -493,8 +493,7 @@ already in the binary through Caddy's metrics). The read is strict: a
 body cut short, a malformed line, or one without the failed counter is
 no reading, and the baseline stays the last good one. `alertmanager_notifications_failed_total` names the integration
 and, with the drop-in's `receiver-name-in-metrics`, the receiver. A
-rise (the first read is a baseline; a lower value is a restart,
-counted from zero) is a `monitor: channel failed` line, and one
+rise is a `monitor: channel failed` line, and one
 `ChannelFailed` alert to each operator channel that is not a suspect
 and whose `severity` floor takes a warning, which `ChannelFailed` is
 (`failureAudience`, vmalert's rules' too), each routed to that channel
@@ -509,7 +508,26 @@ too, under reason `contextCanceled` (the reason only when no attempt
 failed before the cancel), and with `receiver-name-in-metrics` after
 the reload has reset the counters, so it reads as a rise; it is no
 channel's failure, and the new config sends it again wherever it still
-routes it, so neither this read nor vmalert's rules count it. A key's
+routes it, so neither this read nor vmalert's rules count it.
+
+What a rise is rests on when the counters last started from 0.
+With `receiver-name-in-metrics` Alertmanager 0.28.1 resets all three
+at every config load (`notify.Metrics.InitializeFor`), its start's
+included, and then sets
+`alertmanager_config_last_reload_success_timestamp_seconds`; a reload
+that fails does neither. So a read whose stamp is newer than the last
+read's (`loadSince`) has a baseline of 0: every count is since the
+load, and 1, a load, then one failure before the next read (1 again)
+is a rise, where comparing with the last read alone saw none. The
+first read after motel starts is a baseline, unless its stamp is
+after motel's start (setup's start of Alertmanager, or its socket's
+at motel's first post), when it too counts from 0; a load from before
+the start may have been told of by the motel before. Otherwise a
+value lower than the last started again at a load the read gives no
+stamp of (an Alertmanager without `receiver-name-in-metrics`, restarted),
+and counts from 0. The hold's deliveries and `motel monitor test`'s
+baseline read the same stamp, and vmalert's rule reads it beside the
+counter (DESIGN-metrics.md, "Rules"). A key's
 bucket bounds the storm. A failure with no
 channel left to tell holds the heartbeat ("Dead-man and uptime"). This
 needs no metrics package: the review's point that a notify-only box
@@ -918,8 +936,11 @@ on its general scales. notify's examples:
 | Every operator channel that takes warnings fails at once (two webhooks revoked): each one's `ChannelFailed` goes to another that fails too, so each rise has someone to tell, no hold comes, and the heartbeat stays green while nothing is heard | notify/channelfailed.go (`scrapeFailed`: a hold only when no one is told) | 3 | 2 | 3 | 18; two faults, or one cause that takes the box's egress with it, when the heartbeat's own pings fail too and the check pages; holding when every told channel is itself failing reads the told channels' receivers too (size 3, risk 2). /code-review of #449 |
 | A channel that refuses one message (a Slack or Discord 400 for one alert's text) and delivers the rest: each delivery ends the hold, the failing message's next retry starts another, so the heartbeat flaps between held and pinging and the dead-man check between down and up | notify/channelfailed.go (`watchUntold`: any delivery through the channel) | 2 | 3 | 1 | 6; red, though flapping, and each hold's line names the channel; telling a refused message from a refused channel needs the failing notification's own outcome, which Alertmanager's counters do not give. /code-review of #449 |
 | A reload that adds an operator channel taking warnings, while a hold stands, leaves the hold until a delivery through the failed channel, and the new channel hears of the failure only at its next rise (Alertmanager's next failing re-send, while the alert lives), not at the load | notify/channelfailed.go (`keepUntold`: drops only a hold whose channel went) | 2 | 5 | 1 | 10; the check stays red and the `heartbeat held` line still names the channel; ending the hold at a rise told to someone, or posting `ChannelFailed` to the new audience at the load, is a branch (size 2, risk 2). /code-review of #449 |
-| Alertmanager without `--enable-feature=receiver-name-in-metrics` (the drop-in's flag gone): a failure names no receiver, its suspects are every channel of the integration, and a failure no channel can be told of holds nothing, so with a single operator channel the heartbeat stays green while its alerts fail | notify/channelfailed.go (`untoldFor`: a receiver this config knows) | 3 | 1 | 3 | 9; the drop-in is setup's file, which only root writes, and `motel validate` warns when it differs from the one this motel would write; a hold on a guessed suspect could only end at a reload or a restart, since requests are then counted under no receiver (summing them by integration is size 2, risk 2). /code-review of #449, pass 2 |
+| Alertmanager without `--enable-feature=receiver-name-in-metrics` (the drop-in's flag gone): a failure names no receiver, its suspects are every channel of the integration, and a failure no channel can be told of holds nothing, so with a single operator channel the heartbeat stays green while its alerts fail. A reload then resets no counter, so the load's stamp is not read (`parseAMMetrics`), and a restart of Alertmanager that brings a count back to the last read's is missed | notify/channelfailed.go (`untoldFor`: a receiver this config knows) | 3 | 1 | 3 | 9; the drop-in is setup's file, which only root writes, and `motel validate` warns when it differs from the one this motel would write; a hold on a guessed suspect could only end at a reload or a restart, since requests are then counted under no receiver (summing them by integration is size 2, risk 2). /code-review of #449, pass 2 |
 | A channel whose first attempt hangs (it takes the connection and never answers) is named late when config-changing loads come more often than its flush deadline (a minute for events, five for the heartbeat): each load cancels the hung attempt before it fails, which counts as `contextCanceled`, a reason neither motel nor vmalert reads, and the new config's attempt hangs again | notify/ammetrics.go (`parseAMMetrics`), notify/metricsrules.go (`channelFailedRules`) | 2 | 2 | 3 | 12; two faults (a hanging channel and loads that keep coming), and late, not lost: the first flush the loads leave alone ends at its deadline as `contextDeadlineExceeded`, which is read. Counting a cancel only after a failed attempt is what Alertmanager already does; counting every cancel brings back the false `ChannelFailed` of #468 (size 2, risk 2). /code-review pass 1 of the reload cancel (#468) |
+| A failure Alertmanager counts after motel's last read before motel stops is not read: every start of motel has Alertmanager reload (nothing is acknowledged yet in the new process, notify/state.go `apply`), which resets the counter before the new motel's first read. It is told only if Alertmanager still holds the alert, when the new config sends it again and that failure is counted since the load | notify/channelfailed.go (`loadSince`) | 3 | 1 | 4 | 12; a failure inside the minute before a restart of motel, of an alert gone by then (a state is re-posted while it fires; a one-shot lives five minutes); the count before the reset cannot be read after it, so telling it needs a read at motel's stop (size 2, risk 2). What is left of the second miss the removed S5 Owed row named (a failure before motel's first read was its baseline): a first read whose load is after motel's start now counts from 0. The config-load rows' PR |
+| `motel monitor test` across a config load whose new config has not sent the test again by the end of its 15 s: the load's cancelled attempt is counted a failed request after the reset, and a working channel is answered `every attempt failed so far, and Alertmanager is still retrying` | notify/admin.go (`serveTest`) | 2 | 1 | 3 | 6; a load in the test's last moments: the new config sends the test at once (a channel's own route waits 0 s), and its delivery is read as the test's; a failed request carries no reason that would tell the cancel apart (size 2, risk 2). The config-load rows' PR |
+| A read that lands between Alertmanager's reset of its counters and its setting of the load's stamp (within one load, microseconds) takes the reset counts with the old stamp: a failure counted in that instant is told twice, at that read (a value below the last) and at the next (a load since, from 0) | notify/channelfailed.go (`rises`) | 2 | 1 | 1 | 2; a read once a minute against a window of microseconds, and a duplicate `ChannelFailed` is the worst of it. The config-load rows' PR |
 
 ### Owed
 
@@ -927,9 +948,6 @@ on its general scales. notify's examples:
 |---|---|---|---|---|
 | A fragment of a secret that is not a whole value, nor one of its forms, nor shaped like a secret, passes the filter: an ntfy topic alone (in `send --instance ops-alerts` or a summary, or a silence's comment, where the topic is the credential) is journalled, and a silence stores its comment in Alertmanager. Pre-existing in the filter's known-value layer (whole values and their forms), which every summary goes through; found by /code-review pass 3 on monitor/silence | 3 | 5 | 5 | the filter's own change (liveswap/redact.go: a channel URL's path part as a form of its value, as a URL's password is; size 2, risk 2), not this branch: it reaches every summary motel sends. Flagged for the owner |
 | ntfy's `auth` parameter is taken as a whole and form-decoded: the access token or password inside it (base64 of `Bearer tk_…` or `Basic …`) is not masked alone, and a raw `+` in it is read as a space, so the value as written is masked within the whole URL only. And a self-hosted ntfy under a sub-path with a topic named `publish`, `send` or `trigger` has its base path taken as the topic (the real topic, 7 characters or less, is under the filter's 8 anyway): that path is masked in summaries. /code-review pass 2 of the partial mask, findings 2 to 4 (second-pass hardening, rows by the review rule) | 3 | 5 | 5 | its own PR, "monitor: ntfy's auth token masked alone" (notify/app.go `urlCredentials`: the auth value from `RawQuery` as written, its base64 decoded and the scheme word cut, the suffix strip only on the public ntfy.sh host or for a topic that is a suffix word; size 2, risk 1) |
-| A failure counted across an Alertmanager config load is missed when the count after the load equals the one before it: `rises` reads a counter that fell as started again only when it is below the last read, so 1, a load (0), and one failure before the next minute's read (1 again) raises no `ChannelFailed` and records nothing for the hold. A load is any start of Alertmanager (setup's, its socket's, a crash's) and any reload motel asks for (docs/monitor.md, "A heartbeat"). The store's `ChannelFailed` rule has the same blind spot within one 30 s scrape, so a `--metrics` box is not covered either. A failure before motel's first read after it starts is the baseline, and is not told (a different miss, which the fix below does not reach). Pre-existing; found by /code-review passes 1 and 2 of the poc6 doc gaps (#466) | 5 | 2 | 5 | its own PR (notify/channelfailed.go `rises`: the same read's `alertmanager_config_last_reload_success_timestamp_seconds` newer than the last read's says a load came between, and the baseline is then 0; size 2, risk 1). Rule 1, severity 5 |
-| A hold is not released by a delivery made after a config load and before the next minute's read: `watchUntold` counts a delivery only when the count is above the last read, and a load starts it from 0. The documented recovery (mend the URL, which reloads Alertmanager, then `motel monitor test`) delivers, and the hold stays until a later delivery through the channel, while the heartbeat's check reports the box down; docs/monitor.md says to run the test once more. Pre-existing; found by /code-review pass 1 of the poc6 doc gaps (#466) | 3 | 4 | 3 | the same PR as the row above, on the same load signal (a count below the last read alone misses the common case, 1 before the load and 1 after the test): after a load the baseline is 0, so any delivery since it releases; size 1 on top of that row's, risk 1 |
-| `motel monitor test` across an Alertmanager config load (another root's `motel reload`, or setup's, during the test's 15 s): the load resets the request counters, so a delivery after it reads below the count taken before the post, and a working channel is answered `every attempt failed so far, and Alertmanager is still retrying` (the cancelled attempt raised the failed requests) or `neither a delivery nor a failure`. Pre-existing; /code-review pass 1 of the reload cancel (#468) | 2 | 2 | 3 | the same PR as the two rows above, on the same load signal: a load between the test's reads makes its baseline 0; size 1 on top of theirs, risk 1 |
 | Slack and Discord with real hooks; ntfy's formatting of Alertmanager's payload (the hotserve-1 test delivered the JSON body as the message) and its title, which needs ntfy's message templating, a server feature; Discord's colour, dark red for anything firing whatever the severity (2 5 3 = 30): Alertmanager 0.28.1's `discord_config` has no colour field (amtool refuses `color`, measured 2026-11-12), and the way round it, Discord's Slack-compatible endpoint, is untried without a real hook | — | — | — | needs the owner's hooks |
 | Per-app notify lines (`deploy_succeeded on` per app, app-scoped channels, reading the app's own withheld `NOTIFY_` values); the pull API and the later channel kinds, for which the `monitor: event` line is the record | — | — | — | later slices |
 
@@ -1131,3 +1149,13 @@ Dated one-liners; the full text of each is in git.
   them again at notify's first Start as standing reports, as liveswap
   does with `alerts.json` ("Behaviour"); docs/monitor.md no longer asks
   a producer to send `firing` again every few minutes.
+- 2026-11-14 — The three Owed rows of a config load (5 2 5 = 50,
+  3 4 3 = 36, 2 2 3 = 12) landed on one signal: Alertmanager's
+  `alertmanager_config_last_reload_success_timestamp_seconds`, which
+  0.28.1 sets after every load that resets its counters ("Failed
+  delivery"). A read whose stamp is newer than the last read's counts
+  from 0, for `ChannelFailed`, the hold's release and `motel monitor
+  test`; vmalert's rule fires on any count for five minutes after a
+  load (measured in vmalert-tool: the blind spot fires 11m to 15m, a
+  failure before the load does not fire again). docs/monitor.md no
+  longer asks for a second test after a mend.

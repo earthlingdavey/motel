@@ -450,7 +450,7 @@ template, and the operator's `rule` lines choose among motel's kinds
 |---|---|---|---|---|
 | `metrics_store_disk_fill` | `min(predict_linear(vm_free_disk_space_bytes[6h], 86400)) < 0 and min(predict_linear(vm_free_disk_space_bytes[1h], 86400)) < 0` | 30 m | box, state, warning | the operator |
 | `app_memory_high` | `max by (app) (motel_app_memory_bytes / motel_app_memory_max_bytes) > 0.9` | 10 m | `app`, `subject="app:<app>"`, state, warning | the operator and the app's bound channels |
-| `ChannelFailed` (one per told channel) | `sum(increase(alertmanager_notifications_failed_total{integration=…, receiver_name=~…, reason!="contextCanceled"}[5m])) > 0` | — | exactly motel's `ChannelFailed` labels | the told channel alone |
+| `ChannelFailed` (one per told channel) | `(sum(increase(F[5m])) > 0) or (sum(F) > 0 and on () (time() - max(alertmanager_config_last_reload_success_timestamp_seconds)) < 300)`, F being `alertmanager_notifications_failed_total{integration=…, receiver_name=~…, reason!="contextCanceled"}`: for five minutes after a config load, which resets the counter, any count is a failure since it | — | exactly motel's `ChannelFailed` labels | the told channel alone |
 
 Each fixed rule carries `kind="state"`, `severity`, `subject`, `source="vmalert"`
 and `key="vmalert/<subject>/<name>"`, so slice one's route tree routes it
@@ -502,7 +502,7 @@ motel reads from the store (`metric_relabel_configs`):
 |---|---|---|
 | `victoria-metrics` | `vm_free_disk_space_bytes` | `metrics_store_disk_fill` |
 | `vmalert` | nothing (`drop` of `.+`) | — |
-| `alertmanager` | `alertmanager_notifications_failed_total` | the second `ChannelFailed` |
+| `alertmanager` | `alertmanager_notifications_failed_total`, `alertmanager_config_last_reload_success_timestamp_seconds` | the second `ChannelFailed` |
 
 The scraper adds `up` and its six `scrape_*` series after the
 relabelling, so every job keeps those: `up{job="vmalert"}` is what

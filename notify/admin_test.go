@@ -248,6 +248,39 @@ func TestServeTest(t *testing.T) {
 	}
 }
 
+// TestServeTestAcrossAConfigLoad: a config load during the test (another
+// root's reload, setup's) starts the counters again from 0, so a
+// delivery after it reads below the count taken before the post. With
+// the load's stamp newer than the baseline's, the baseline is 0: the
+// load's cancelled attempt is the old config's, and the new config's
+// delivery is the test's.
+func TestServeTestAcrossAConfigLoad(t *testing.T) {
+	te := withEngine(t)
+	saved := testWait
+	testWait = 2 * time.Second
+	t.Cleanup(func() { testWait = saved })
+	var body atomic.Pointer[string]
+	set := func(s string) { body.Store(&s) }
+	te.metrics = func(context.Context) ([]byte, error) { return []byte(*body.Load()), nil }
+
+	set(amCounts(5, 5, 0, 0) + loadedAt(1_794_000_000)) // five deliveries before
+	go func() {
+		time.Sleep(300 * time.Millisecond)
+		set(amCounts(1, 1, 1, 0) + loadedAt(1_794_000_015.5)) // the load, its cancel
+		time.Sleep(300 * time.Millisecond)
+		set(amCounts(2, 2, 1, 0) + loadedAt(1_794_000_015.5)) // the new config's send
+	}()
+	w, err := callAdmin(t, serveTest, http.MethodPost, TestRequest{Channel: "ops"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var res TestResult
+	_ = json.Unmarshal(w.Body.Bytes(), &res)
+	if !res.Delivered {
+		t.Fatalf("a working channel across a load: %s", w.Body.String())
+	}
+}
+
 // TestSendAndTestSayWhatTheJournalSays: what was said in the journal
 // alone is said by the commands too. On a box setup has not run on, a
 // sent event goes nowhere but the journal, and send exits 1 naming

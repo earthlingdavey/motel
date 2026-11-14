@@ -28,7 +28,12 @@ const channelFailedLife = 15 * time.Minute
 // failWatch is the engine's memory of the counter, and the config it
 // reads the counter against.
 type failWatch struct {
-	prev     map[string]float64 // integration/receiver/reason → value
+	prev map[string]float64 // integration/receiver/reason → value
+	// loaded is Alertmanager's last config load as the last read gave it
+	// (amMetrics.loaded), and started is when this process began, which
+	// the first read's load is compared with.
+	loaded   float64
+	started  time.Time
 	operator []string
 	kinds    map[string]string   // channel → integration
 	channels map[string][]string // receiver → channels
@@ -50,11 +55,28 @@ func failureAudience(r *resolved) []string {
 
 func sampleKey(s failedSample) string { return s.integration + "/" + s.receiver + "/" + s.reason }
 
+// loadSince reports whether Alertmanager's counters started again from
+// 0 at a config load since the last read, so that all of a count is
+// new. At the first read since this process started, a load after the
+// start says so too (setup's start of Alertmanager, or its socket's at
+// motel's first post), and a failure before that read is told; a load
+// from before the start leaves the first read a baseline, since an
+// earlier motel may have told of what it counts.
+func (w *failWatch) loadSince(m amMetrics) bool {
+	if w.prev == nil {
+		return !w.started.IsZero() && loadedAfter(m.loaded, float64(w.started.UnixMilli())/1e3)
+	}
+	return loadedAfter(m.loaded, w.loaded)
+}
+
 // rises compares a read of the counter with the last and returns the
-// series that rose. The first read is a baseline; a counter lower than
-// the last is an Alertmanager restart, and counts from zero.
-func (w *failWatch) rises(samples []failedSample) []failedSample {
-	first := w.prev == nil
+// series that rose. load is loadSince's answer for the read: the
+// baseline is then 0. Otherwise the first read is a baseline, and a
+// counter lower than the last started again at a load the read gives
+// no stamp of (a restart of an Alertmanager without
+// receiver-name-in-metrics), and counts from zero.
+func (w *failWatch) rises(samples []failedSample, load bool) []failedSample {
+	first := w.prev == nil && !load
 	next := make(map[string]float64, len(samples))
 	var out []failedSample
 	for _, s := range samples {
@@ -64,6 +86,9 @@ func (w *failWatch) rises(samples []failedSample) []failedSample {
 			continue
 		}
 		prev, seen := w.prev[k]
+		if load {
+			prev, seen = 0, true
+		}
 		if (!seen || s.value < prev) && s.value > 0 || seen && s.value > prev {
 			out = append(out, s)
 		}
@@ -115,11 +140,15 @@ func (e *engine) scrapeFailed(ctx context.Context, read func(context.Context) ([
 		return
 	}
 	now := e.now()
+	load := e.fail.loadSince(m)
+	if m.loaded > 0 {
+		e.fail.loaded = m.loaded
+	}
 	// A hold standing ends at a delivery through its suspects; one that
 	// has stood heartbeatHoldAfter holds the heartbeat. Before this read's
 	// rises, whose own baseline is this read.
-	e.watchUntold(m, now)
-	for _, s := range e.fail.rises(m.failed) {
+	e.watchUntold(m, now, load)
+	for _, s := range e.fail.rises(m.failed, load) {
 		sus := e.fail.suspects(s)
 		key := "notify/box/channel_failed/" + strings.Join(sus, ",")
 		summary := fmt.Sprintf("Alertmanager could not deliver through %s (%s)", s.integration, s.reason)
@@ -235,16 +264,22 @@ func (e *engine) untoldFor(key, receiver string, sus []string, m amMetrics, now 
 
 // watchUntold is one read's part of the hold: a delivery through a
 // suspect's receivers ends what it records, and what has stood
-// heartbeatHoldAfter without one holds the heartbeat. A receiver with
-// no count from an earlier read (a reload renamed it) is counted from
-// this one; a count lower than the last (Alertmanager restarted) too.
-// With mu held.
-func (e *engine) watchUntold(m amMetrics, now time.Time) {
+// heartbeatHoldAfter without one holds the heartbeat. After a config
+// load (load: loadSince's answer) Alertmanager counts from 0, so any
+// delivery counted is since it: the documented mend, a reload, then
+// `motel monitor test`. A receiver with no count from an earlier read
+// (a reload renamed it) is otherwise counted from this one, as is a
+// count lower than the last. With mu held.
+func (e *engine) watchUntold(m amMetrics, now time.Time, load bool) {
 	for key, u := range e.untold {
 		through := ""
 		for _, rc := range e.fail.receiversOf(u.suspects) {
 			d := deliveries(m, rc)
-			if prev, ok := u.seen[rc]; ok && d > prev && through == "" {
+			prev, ok := u.seen[rc]
+			if load {
+				prev, ok = 0, true
+			}
+			if ok && d > prev && through == "" {
 				through = rc
 			}
 			u.seen[rc] = d

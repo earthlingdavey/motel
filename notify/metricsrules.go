@@ -154,10 +154,17 @@ func channelFailedRules(n *App) vmGroup {
 		for i, r := range recv {
 			quoted[i] = regexp.QuoteMeta(r)
 		}
+		sel := fmt.Sprintf(`%s{integration=%q,receiver_name=~%q,reason!=%q}`,
+			failedMetric, k.integration, strings.Join(quoted, "|"), reasonCanceled)
 		g.Rules = append(g.Rules, vmRule{
 			Alert: alertChannelFailed,
-			Expr: fmt.Sprintf(`sum(increase(%s{integration=%q,receiver_name=~%q,reason!=%q}[5m])) > 0`,
-				failedMetric, k.integration, strings.Join(quoted, "|"), reasonCanceled),
+			// A config load resets the counter (loadedMetric), and a
+			// failure before the next scrape can bring it back to the
+			// value the scrape before the load read, which increase reads
+			// as none. For five minutes after a load the counter's value
+			// is all failures since it, so any is one.
+			Expr: fmt.Sprintf(`(sum(increase(%[1]s[5m])) > 0) or (sum(%[1]s) > 0 and on () (time() - max(%[2]s)) < 300)`,
+				sel, loadedMetric),
 			Labels: map[string]string{
 				labelChannel: k.channel, "severity": SeverityWarning, "subject": "box",
 				"integration": k.integration, "suspects": k.suspects,

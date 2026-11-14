@@ -207,7 +207,7 @@ vmalert -dryRun -rule="$STATE/rules.yml" >/tmp/dry.out 2>&1 \
 # test that calls vmTool (TestE2EMetricsListsEveryVMAlertTest).
 case_vm() {
 echo "=== metrics 1 (vm): notify's vmalert and amtool tests ==="
-vmtests='^(TestRenderedRulesPassVMAlertDryRun|TestRenderedRulesFireAsMotelsAlerts|TestOperatorRulesPassVMAlertDryRun|TestOperatorRulesFire|TestOperatorRulesCountAfterAGap|TestOperatorRulesHistogramIsReadWhole|TestDiskFillHistoryOverAGap|TestDiskFillStepIsNoTrend|TestOperatorRulesCountOnAFreshStore|TestOperatorRulesReadThePushedApps|TestOperatorRulesRateAcrossARestart|TestMetricsViewCountsOverTheStore|TestPostDeployARelaunchReadsPastTheStoppedInstance|TestScrapeConfigPassesTheStoresCheck)$'
+vmtests='^(TestRenderedRulesPassVMAlertDryRun|TestRenderedRulesFireAsMotelsAlerts|TestChannelFailedRuleAcrossAConfigLoad|TestOperatorRulesPassVMAlertDryRun|TestOperatorRulesFire|TestOperatorRulesCountAfterAGap|TestOperatorRulesHistogramIsReadWhole|TestDiskFillHistoryOverAGap|TestDiskFillStepIsNoTrend|TestOperatorRulesCountOnAFreshStore|TestOperatorRulesReadThePushedApps|TestOperatorRulesRateAcrossARestart|TestMetricsViewCountsOverTheStore|TestPostDeployARelaunchReadsPastTheStoppedInstance|TestScrapeConfigPassesTheStoresCheck)$'
 nvm=$(printf '%s\n' "$vmtests" | tr '|' '\n' | wc -l)
 (cd /tmp && notify.test -test.run "$vmtests" -test.v -test.count=1) >/tmp/vmtests.out 2>&1
 [ $? -eq 0 ] && [ "$(grep -c '^--- PASS' /tmp/vmtests.out)" = "$nvm" ] && ! grep -q -- '--- SKIP' /tmp/vmtests.out \
@@ -461,14 +461,15 @@ n=$(am "http://am/api/v2/alerts?$amq" | grep -o '"fingerprint"' | wc -l)
 [ "$n" -eq 1 ] && pass "Alertmanager holds one ChannelFailed for ops naming oncall: the two sources are one alert" \
 	|| fail "Alertmanager holds $n such alerts: $(am "http://am/api/v2/alerts?$amq" | cut -c1-400)"
 # The store keeps of each job only what motel reads (scrape.yml): the
-# disk rule's free space, the counter vmalert's ChannelFailed just read,
+# disk rule's free space, the counter vmalert's ChannelFailed just read
+# and the config load it reads beside it,
 # and of vmalert nothing but `up`. up and scrape_* are the scraper's own,
 # which every job keeps; scrape_* is left out here.
 kept() {
 	vm -G --data-urlencode "match[]={job=\"$1\"}" http://vm/api/v1/label/__name__/values \
 		| sed -n 's/.*"data":\[\([^]]*\)\].*/\1/p' | tr -d '"' | tr ',' '\n' | grep -v '^scrape_' | sort | tr '\n' ' '
 }
-for jk in 'victoria-metrics:up vm_free_disk_space_bytes ' 'vmalert:up ' 'alertmanager:alertmanager_notifications_failed_total up '; do
+for jk in 'victoria-metrics:up vm_free_disk_space_bytes ' 'vmalert:up ' 'alertmanager:alertmanager_config_last_reload_success_timestamp_seconds alertmanager_notifications_failed_total up '; do
 	j=${jk%%:*} want=${jk#*:}
 	got=$(kept "$j")
 	[ "$got" = "$want" ] && pass "the store keeps of job $j: ${want% }" || fail "the store keeps of job $j: '$got', not '$want'"

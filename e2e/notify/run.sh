@@ -663,6 +663,18 @@ wd_ends() { am 'http://am/api/v2/alerts?filter=alertname%3D%22Watchdog%22' | sed
 sed 's/^\(\t*\)operator ops oncall$/\1operator oncall/' /tmp/Caddyfile.before >/etc/motel/Caddyfile
 grep -q '^[[:space:]]*operator oncall$' /etc/motel/Caddyfile || fail "fixture: could not make oncall the only operator channel"
 systemctl reload motel || fail "the reload with oncall alone"
+# One delivery through oncall's own receiver first, its URL file pointed
+# at the sink's working path for the test alone (Alertmanager reads the
+# file at each send; no load). The mend below reloads Alertmanager, which
+# counts from 0 again, so the mend's test brings that count back to 1,
+# no higher than before: the hold is released only if motel counts from
+# the load (notify/channelfailed.go, loadSince).
+f15=$STATE/url-NOTIFY_ONCALL_URL
+cp -p "$f15" /tmp/oncall.url.15
+printf '%s' "$SINK/oncall" >"$f15"
+out=$(motel monitor test oncall 2>&1) && echo "$out" | grep -q 'delivered to oncall' \
+	&& pass "oncall delivered once before it fails: $out" || fail "monitor test oncall at the working path: $out"
+cp -p /tmp/oncall.url.15 "$f15"
 s_15=$(date +%s)
 send --name probe_15_failed --severity warning --summary "e2e: to oncall alone" || fail "send: $(cat /tmp/send.out)"
 i=0

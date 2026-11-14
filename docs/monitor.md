@@ -321,8 +321,11 @@ at every start of motel and at every reload of motel that changes what
 motel renders for it (a channel's URL included) or follows one it did
 not answer. Read live, the counts since the last load are
 `curl -s --unix-socket /run/motel-notify/am.sock http://am/metrics | grep 'receiver_name="heartbeat"'`.
-motel and the store's `ChannelFailed` rule read a counter that fell as
-one started again, not as a failure. A delivery in flight when
+motel and the store's `ChannelFailed` rule read the time of that load
+beside the counts (`alertmanager_config_last_reload_success_timestamp_seconds`):
+after a load every count is one since it, so a counter that fell is no
+failure, and a failure or a delivery just after a load is counted even
+when it brings a counter back to where it stood before. A delivery in flight when
 Alertmanager loads its config is cancelled and counted in
 `alertmanager_notifications_failed_total` under
 `reason="contextCanceled"`; the new config sends it again, and neither
@@ -548,11 +551,8 @@ email, say). The journal says why:
 ```
 
 Mend the channel, then `motel monitor test ops`: the pings start again
-within a minute (`monitor: heartbeat resumed`). If mending changed the
-channel's URL, the reload that took it starts Alertmanager's counts
-from 0 (above, "A heartbeat"), and a test within the minute after it
-may not be counted: with no `heartbeat resumed` a minute after the
-test, run it once more. A reload that takes the channel out, or a
+within a minute (`monitor: heartbeat resumed`), whether or not mending
+the URL reloaded Alertmanager. A reload that takes the channel out, or a
 restart of motel, resumes them too. A second
 operator channel that takes warnings is still the better answer: it
 names the failure, where the dead-man check can only say the box is
@@ -634,7 +634,8 @@ works the same way. What each series means is in DESIGN-metrics.md's
 The store also scrapes itself, vmalert and Alertmanager, and keeps
 only the series motel reads (`/var/lib/motel-metrics/scrape.yml`):
 `vm_free_disk_space_bytes`, which the store's disk rule reads,
-`alertmanager_notifications_failed_total`, which vmalert's
+`alertmanager_notifications_failed_total` and
+`alertmanager_config_last_reload_success_timestamp_seconds`, which vmalert's
 `ChannelFailed` reads, and each job's `up` and `scrape_*` (motel reads
 `up{job="vmalert"}` to tell vmalert down). The rest would cost disk
 and memory with nothing reading it, and a series motel comes to read

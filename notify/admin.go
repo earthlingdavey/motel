@@ -322,6 +322,12 @@ func serveTest(w http.ResponseWriter, r *http.Request) error {
 		if err != nil {
 			continue // no reading this time; the next one may be whole
 		}
+		if loadedAfter(after.loaded, before.loaded) {
+			// A config load (another root's reload, setup's) started the
+			// counters again: what they hold now is since it, and an
+			// attempt before it was the old config's.
+			before, attemptFailed = counts{loaded: after.loaded}, false
+		}
 		if after.delivered(before) {
 			res.Delivered = true
 			return writeJSON(w, res)
@@ -353,6 +359,8 @@ func writeJSON(w http.ResponseWriter, v any) error {
 type counts struct {
 	requests, requestsFailed, failed float64
 	reason                           string
+	// loaded is Alertmanager's last config load (amMetrics.loaded).
+	loaded float64
 }
 
 func (c counts) delivered(before counts) bool {
@@ -364,7 +372,7 @@ func countsFor(body []byte, receiver string) (counts, error) {
 	if err != nil {
 		return counts{}, err
 	}
-	c := counts{requests: m.requests[receiver], requestsFailed: m.requestsFailed[receiver]}
+	c := counts{requests: m.requests[receiver], requestsFailed: m.requestsFailed[receiver], loaded: m.loaded}
 	for _, s := range m.failed {
 		if s.receiver == receiver {
 			c.failed += s.value

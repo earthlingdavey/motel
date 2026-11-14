@@ -441,6 +441,15 @@ and `TriggerLimitIntervalSec=0` and the proxy's `StartLimitIntervalSec=0`,
 which its `daemon-reload` applies to the running units with no restart,
 and its `enable --now` starts a socket that had already failed.
 
+**Run `motel monitor setup --metrics` again on a box whose store was set
+up before it kept Alertmanager's last config load** (each load's
+warning names `scrape.yml`). Until it is, the store's `ChannelFailed`
+reads the failed counter alone, and misses a failure counted just after
+a config load that brings the counter back to the value the scrape
+before the load read; motel's own `ChannelFailed` tells of it either
+way. The re-run rewrites `scrape.yml` and restarts the store and
+vmalert; a push or two fails meanwhile.
+
 ## Patching the host
 
 Apps run on the box's own `/usr`, so `apt upgrade` reaches an app at
