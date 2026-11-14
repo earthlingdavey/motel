@@ -12,6 +12,7 @@ import (
 	"github.com/caddyserver/caddy/v2/modules/caddyhttp"
 	"github.com/smallhoursorg/motel/liveswap/access"
 	"github.com/smallhoursorg/motel/liveswap/deploytrust"
+	"go.uber.org/zap"
 )
 
 // TestEveryRouteHasAnAction: each row of the route table names an app
@@ -250,19 +251,28 @@ func recordDecide(tb testing.TB, refuse error) *[]decideCall {
 // source of the app in its path, the handler asks Decide once, with a
 // deployer of that app, the row's action and the app as the resource;
 // the row's function answers when Decide allows, and when it refuses
-// the function does not run and the answer is the 403.
+// the function does not run and the answer is the 403. A second app,
+// blog, holds the principal's app and the resource to the request's
+// app rather than to any one name.
 func TestHandlerAsksDecide(t *testing.T) {
 	served := recordRows(t)
 	landed := map[*route]bool{}
-	for _, c := range []struct{ method, target, contentType string }{
-		{"GET", "/demo", ""},
-		{"GET", "/demo?deploy=v1", ""},
-		{"POST", "/x/demo?version=v2", "application/gzip"},
-		{"POST", "/demo?rollback=v1", ""},
-		{"POST", "/demo", "application/json"},
+	for _, c := range []struct{ method, target, contentType, app string }{
+		{"GET", "/demo", "", "demo"},
+		{"GET", "/demo?deploy=v1", "", "demo"},
+		{"POST", "/x/demo?version=v2", "application/gzip", "demo"},
+		{"POST", "/demo?rollback=v1", "", "demo"},
+		{"POST", "/demo", "application/json", "demo"},
+		{"GET", "/blog", "", "blog"},
+		{"POST", "/x/blog?rollback=v1", "", "blog"},
 	} {
 		for _, refuse := range []error{nil, errors.New("refused")} {
-			h, _ := newTestHandler(t)
+			h, rig := newTestHandler(t)
+			// blog trusts what demo trusts, so the same token is a
+			// deployer of either; nothing of blog's runs (recordRows).
+			blog := newManagedApp("blog")
+			blog.spec, blog.verifiers, blog.logger = rig.spec, rig.ma.verifiers, zap.NewNop()
+			h.app.managed["blog"] = blog
 			calls := recordDecide(t, refuse)
 			req := httptest.NewRequest(c.method, c.target, strings.NewReader("{}"))
 			if c.contentType != "" {
@@ -274,7 +284,7 @@ func TestHandlerAsksDecide(t *testing.T) {
 			*served = nil
 			w := send(t, h, req)
 
-			want := decideCall{access.Principal{Kind: access.AppDeployer, App: "demo"}, row.action, "demo"}
+			want := decideCall{access.Principal{Kind: access.AppDeployer, App: c.app}, row.action, c.app}
 			if len(*calls) != 1 || (*calls)[0] != want {
 				t.Errorf("%s %s: Decide asked %+v, want once %+v", c.method, c.target, *calls, want)
 			}

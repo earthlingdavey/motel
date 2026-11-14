@@ -95,6 +95,29 @@ func TestRouteActions(t *testing.T) {
 	}
 }
 
+// TestJournalNamesEachRoute: a refused request's journal line names
+// the route it matched, the label each row of the table gives the
+// preamble, read through ServeHTTP.
+func TestJournalNamesEachRoute(t *testing.T) {
+	r := newRig(t)
+	for _, c := range []struct{ method, target, want string }{
+		{http.MethodGet, "/", "status"},
+		{http.MethodGet, "/?", "result"},
+		{http.MethodGet, "/?result=" + strings.Repeat("0", 32), "result"},
+		{http.MethodPost, "/", "push"},
+	} {
+		r.h.limiter = deploytrust.NewLimiter(r.clock)
+		r.logs.TakeAll()
+		if w := r.do(t, req{method: c.method, target: c.target}); w.Code != http.StatusUnauthorized {
+			t.Fatalf("%s %s: got %d, want 401", c.method, c.target, w.Code)
+		}
+		got := r.logs.FilterMessage("webhook auth failed").All()
+		if len(got) != 1 || got[0].ContextMap()["box_request"] != c.want {
+			t.Errorf("%s %s: want one line with box_request=%s: %v", c.method, c.target, c.want, r.logs.All())
+		}
+	}
+}
+
 // FuzzNoRouteNoAnswer drives the handler with any method, path and
 // query, for each kind of caller: a stranger (a liveswap deploy token
 // is one here) and the box channel's source. The route table's
@@ -145,6 +168,7 @@ func FuzzNoRouteNoAnswer(f *testing.F) {
 		}
 		for _, channel := range []bool{false, true} {
 			r.h.limiter = deploytrust.NewLimiter(r.clock)
+			r.logs.TakeAll() // the rig lives for the run: its journal must not grow with it
 			hr := httptest.NewRequest(http.MethodGet, "/", nil)
 			hr.Method = method
 			hr.URL.Path = target
