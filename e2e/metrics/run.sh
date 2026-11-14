@@ -38,6 +38,14 @@ am() { curl -s --max-time 10 --unix-socket "$AMS" "$@"; }
 sinklog() { curl -s --max-time 5 "$SINK/log?mine=1"; }
 # q <query>: an instant query's answer, from the store.
 q() { vm -G --data-urlencode "query=$1" http://vm/api/v1/query; }
+# stamp: now, to the millisecond, as the store stamps a sample (and as
+# timestamp() returns it): the floor a fresh sample must pass. A whole
+# second's floor took a sample from earlier in that second, before the
+# event, for one after it: on x86 CI, 4d's old store scraped
+# Alertmanager at :28.45 (its fixed phase, :28.45 and :58.45 on
+# 1.112.0), the stop came at :28.56, and the wait returned on that
+# sample before anything had started Alertmanager again.
+stamp() { date +%s.%3N; }
 # has_result <answer>: the answer holds at least one series.
 has_result() { printf '%s' "$1" | grep -q '"result":\[{'; }
 # wait_result <what> <query> <timeout s>: waits for the query to return a series.
@@ -582,13 +590,13 @@ has_result "$before" && [ "$added" = 0 ] \
 	|| fail "the read-only store added '$added' rows (0 is none, empty no answer), or holds no sample of its free space: $(printf '%s' "$before" | cut -c1-200)"
 rm "$dropin/20-e2e-read-only.conf"
 systemctl daemon-reload && systemctl restart victoria-metrics
-back_at=$(date +%s)
+back_at=$(stamp)
 i=0
 until vm http://vm/metrics | grep -q '^vm_storage_is_read_only.* 0$'; do i=$((i + 1)); [ "$i" -ge 30 ] && break; sleep 2; done
 [ "$i" -lt 30 ] && pass "the store is writable again" || fail "the store is still read-only: $(vm http://vm/metrics | grep '^vm_storage_is_read_only')"
 # A sample from after the restart, not one kept from before the floor.
 a=$(wait_result vmalert-up-writable "(timestamp(up{job=\"vmalert\"}) > $back_at) and (up{job=\"vmalert\"} == 1)" 120) && pass "and scrapes vmalert again" \
-	|| fail "no fresh up{job=\"vmalert\"} after the store came back: $(q 'timestamp(up{job="vmalert"})')"
+	|| fail "no fresh up{job=\"vmalert\"} after the store came back (none stamped after $back_at): $(q 'timestamp(up{job="vmalert"})')"
 
 }
 
@@ -641,10 +649,10 @@ sleep 3
 	|| fail "after a restart of the namespace: $(amstarts "$since") start(s) of Alertmanager, 9093 $(nsready && echo answers || echo 'does not answer'), $(systemctl is-active motel-metrics-netns motel-am-metrics.socket prometheus-alertmanager | tr '\n' ' ')"
 # The restart reaches the socket through its Requires= (systemd restarts
 # a unit that requires one restarted), not left in the old namespace.
-r_at=$(date +%s)
+r_at=$(stamp)
 a=$(wait_result am-up-restart "(timestamp(up{job=\"alertmanager\"}) > $r_at) and (up{job=\"alertmanager\"} == 1)" 90) \
 	&& pass "and the store, restarted with it, scrapes Alertmanager in the new namespace" \
-	|| fail "no fresh up{job=\"alertmanager\"} after the namespace's restart: $(q 'up{job="alertmanager"}')"
+	|| fail "no fresh up{job=\"alertmanager\"} after the namespace's restart (none stamped after $r_at): up $(val 'up{job="alertmanager"}'), stamped $(q 'timestamp(up{job="alertmanager"})' | grep -o '"value":\[[^]]*\]')"
 # Stopped, the namespace takes Alertmanager down with its socket there;
 # am.sock listens on. motel's push brings the store and the namespace
 # back, and its read of Alertmanager's counters (a minute) or a post
@@ -658,11 +666,11 @@ systemctl stop motel-metrics-netns
 	|| fail "after a stop of the namespace: $(systemctl is-active prometheus-alertmanager motel-am-metrics.socket motel-am.socket | tr '\n' ' ')"
 i=0
 until systemctl is-active -q motel-metrics-netns && nsready; do i=$((i + 1)); [ "$i" -ge 75 ] && break; sleep 2; done
-back=$(date +%s)
-[ "$i" -lt 75 ] && pass "the namespace stopped and came back with nothing done by hand: Alertmanager answers on 9093 in it after $((back - t0)) s" \
+back=$(stamp)
+[ "$i" -lt 75 ] && pass "the namespace stopped and came back with nothing done by hand: Alertmanager answers on 9093 in it after $((${back%.*} - t0)) s" \
 	|| fail "150 s after a stop of the namespace: $(systemctl is-active motel-metrics-netns victoria-metrics prometheus-alertmanager motel-am-metrics.socket | tr '\n' ' ')"
 a=$(wait_result am-up-back "(timestamp(up{job=\"alertmanager\"}) > $back) and (up{job=\"alertmanager\"} == 1)" 90) \
-	&& pass "and the store scrapes Alertmanager there again" || fail "no fresh up{job=\"alertmanager\"} after the namespace came back: $(q 'up{job="alertmanager"}')"
+	&& pass "and the store scrapes Alertmanager there again" || fail "no fresh up{job=\"alertmanager\"} after the namespace came back (none stamped after $back): up $(val 'up{job="alertmanager"}'), stamped $(q 'timestamp(up{job="alertmanager"})' | grep -o '"value":\[[^]]*\]')"
 # The namespace fails to start (one fault): Alertmanager, started on
 # am.sock, comes up on it alone, its socket here failed with the
 # namespace, and no later start of that socket could hand it over. The
@@ -722,16 +730,19 @@ until [ "$(vm http://vm/health)" = OK ]; do i=$((i + 1)); [ "$i" -ge 15 ] && bre
 systemctl stop motel
 systemctl stop motel-metrics-netns
 systemctl start motel-metrics-netns victoria-metrics
-t0=$(date +%s)
+t0=$(stamp)
 i=0
 until systemctl is-active -q motel-am-metrics.socket; do i=$((i + 1)); [ "$i" -ge 20 ] && break; sleep 0.5; done
 systemctl is-active -q motel-vmalert && systemctl is-active -q motel-am-metrics.socket \
 	&& pass "motel down, the namespace stopped and started by hand, the store started: vmalert's start started Alertmanager's socket there" \
 	|| fail "motel down, the namespace and the store started by hand: $(systemctl is-active motel-vmalert motel-am-metrics.socket prometheus-alertmanager | tr '\n' ' ')"
+# A fresh up of 1 is a scrape Alertmanager answered after t0, so it is
+# running when the checks after the wait read it; the store's next
+# scrape of it is at most 30 s on.
 a=$(wait_result am-up-nomotel "(timestamp(up{job=\"alertmanager\"}) > $t0) and (up{job=\"alertmanager\"} == 1)" 90) \
 	&& systemctl is-active -q prometheus-alertmanager && held "$(ampid)" \
 	&& pass "and the store's scrape started Alertmanager through it, with motel still down, on both listeners" \
-	|| fail "motel down: no fresh up{job=\"alertmanager\"}, or Alertmanager not on both listeners: $(systemctl is-active motel-am-metrics.socket prometheus-alertmanager | tr '\n' ' '), $(q 'up{job="alertmanager"}')"
+	|| fail "motel down: no fresh up{job=\"alertmanager\"} (after $t0), or Alertmanager not on both listeners: $(systemctl is-active motel-am-metrics.socket prometheus-alertmanager | tr '\n' ' '), up $(val 'up{job="alertmanager"}'), stamped $(q 'timestamp(up{job="alertmanager"})' | grep -o '"value":\[[^]]*\]')"
 systemctl start motel
 i=0
 until systemctl is-active -q motel && [ -S /run/motel/admin.sock ]; do i=$((i + 1)); [ "$i" -ge 120 ] && break; sleep 0.5; done
