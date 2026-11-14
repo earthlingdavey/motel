@@ -591,6 +591,98 @@ func TestMuteEndLeavesOtherStatesToTheTick(t *testing.T) {
 	}
 }
 
+// Alertmanager judges the mute at the group's flush, up to a minute
+// after the post: a resolve posted just before a deploy starts is
+// swallowed as one posted under it, so the mute's end posts it again.
+func TestResolveJustBeforeTheMuteIsPostedAgain(t *testing.T) {
+	te := newTestEngine(t)
+	te.report(watchdog(true))
+	te.report(watchdog(false))
+	te.advance(31 * time.Second)
+	te.tick()
+	if r := resolves(te.drain()); len(r) != 1 {
+		t.Fatalf("the resolve = %+v", r)
+	}
+	te.advance(20 * time.Second) // before the group's next flush
+	te.mute("blog", true)
+	for range 6 {
+		te.advance(31 * time.Second)
+		te.tick()
+		if r := resolves(te.drain()); len(r) != 0 {
+			t.Fatalf("posted again under the mute: %+v", r)
+		}
+	}
+	te.mute("blog", false)
+	got := te.drain()
+	if len(got) != 2 || got[0].Labels["alertname"] != "deploy_in_progress" || len(resolves(got[1:])) != 1 || !got[1].EndsAt.Equal(te.at) {
+		t.Fatalf("at the mute's end, want its end and the resolve again: %+v", got)
+	}
+	// Once, and no journal line: the event was told at the first post.
+	if l := te.lines("monitor: event"); len(l) != 2 {
+		t.Fatalf("journal = %+v", l)
+	}
+	te.advance(endWindow)
+	te.tick()
+	if r := resolves(te.drain()); len(r) != 0 || len(te.ends) != 0 {
+		t.Fatalf("after the window: %+v, ends %v", r, te.ends)
+	}
+}
+
+// Two deploys in a row: the recovery the first held is posted at its
+// end, and the second's mute comes before the group's flush; its end
+// posts the resolve again.
+func TestHeldRecoveryThenASecondDeploy(t *testing.T) {
+	te := newTestEngine(t)
+	te.report(watchdog(true))
+	te.report(watchdog(false))
+	te.mute("blog", true)
+	te.advance(31 * time.Second)
+	te.tick()
+	te.mute("blog", false)
+	if r := resolves(te.drain()); len(r) != 1 {
+		t.Fatalf("the held resolve = %+v", r)
+	}
+	te.advance(10 * time.Second)
+	te.mute("blog", true)
+	te.advance(40 * time.Second)
+	te.mute("blog", false)
+	if r := resolves(te.drain()); len(r) != 1 || !r[0].EndsAt.Equal(te.at) {
+		t.Fatalf("at the second mute's end = %+v", r)
+	}
+}
+
+// What the mute's end does not post again: a resolve whose key fired
+// since (that alert is the key's now), and one posted longer than
+// endWindow before the mute, whose flush has come.
+func TestMuteEndPostsNoStaleResolve(t *testing.T) {
+	te := newTestEngine(t)
+	te.report(watchdog(true))
+	te.report(watchdog(false))
+	te.advance(31 * time.Second)
+	te.tick()
+	te.mute("blog", true)
+	te.report(watchdog(true)) // fired again under the mute
+	te.drain()
+	te.mute("blog", false)
+	if r := resolves(te.drain()); len(r) != 0 {
+		t.Fatalf("an old resolve over the alert firing again: %+v", r)
+	}
+
+	te = newTestEngine(t)
+	te.report(watchdog(true))
+	te.report(watchdog(false))
+	te.advance(31 * time.Second)
+	te.tick()
+	te.drain()
+	te.advance(endWindow)
+	te.tick()
+	te.mute("blog", true)
+	te.mute("blog", false)
+	if r := resolves(te.drain()); len(r) != 0 {
+		t.Fatalf("a resolve its flush had told, posted again: %+v", r)
+	}
+}
+
 // A reload that drops an app whose deploy runs ends its mute before it
 // resolves the app's keys: under the mute the resolve would never be
 // sent.
@@ -627,6 +719,15 @@ func TestFirstConfigureEndsTheLastProcessMutes(t *testing.T) {
 		}
 		p.mu.Unlock()
 		if first != nil {
+			break
+		}
+	}
+	// Wait for the goroutine to have taken the post off the queue.
+	for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); time.Sleep(10 * time.Millisecond) {
+		e.mu.Lock()
+		queued := slices.ContainsFunc(e.queue, func(q *pending) bool { return q.key == "mute/" })
+		e.mu.Unlock()
+		if !queued {
 			break
 		}
 	}
