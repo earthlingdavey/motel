@@ -168,6 +168,24 @@ type pending struct {
 	journal bool
 }
 
+// expired says an alert of the post had an endsAt ahead when it was
+// queued (a one-shot, ChannelFailed, the heartbeat) and it has passed:
+// Alertmanager would take it as resolved and tell no one. An end (a
+// resolve, the mute's end) is queued with endsAt at its queuing, and is
+// not given up for it. Passed is on the wall clock, Alertmanager's (the
+// JSON's endsAt against its own clock): now carries a monotonic reading
+// that a clock step does not move, and Round(0) drops it. endsAt and
+// first come from one reading, so either clock orders them alike.
+func (p *pending) expired(now time.Time) bool {
+	now = now.Round(0)
+	for _, a := range p.alerts {
+		if a.EndsAt.After(p.first) && !now.Before(a.EndsAt) {
+			return true
+		}
+	}
+	return false
+}
+
 // engine is notify's state, which outlives a config load: the firing
 // table, the buckets, the posts waiting on Alertmanager. One per
 // process (theEngine); each config's App points it at its own
@@ -584,6 +602,12 @@ func (e *engine) attempt(ctx context.Context) (again bool, wait time.Duration) {
 		return false, 0
 	}
 	p := e.queue[0]
+	if p.expired(e.now()) {
+		e.queue = e.queue[1:]
+		e.gaveUp(p, errors.New("its endsAt passed before Alertmanager took it, which would take it as resolved and tell no one"))
+		e.mu.Unlock()
+		return true, 0
+	}
 	post := e.post
 	e.mu.Unlock()
 
@@ -819,6 +843,18 @@ func (e *engine) release(a *App) {
 		cancel()
 		<-done
 	}
+	// What waits for Alertmanager must not be posted either, whatever its
+	// age, by a later config that brings the block back. With the
+	// goroutine stopped, no post still queued is known to be delivered
+	// (the cancel may cut one whose body Alertmanager had taken): each is
+	// given up as a full queue's oldest is, at a reload and at motel's
+	// shutdown alike.
+	e.mu.Lock()
+	for _, p := range e.queue {
+		e.gaveUp(p, errors.New("no config runs notify any more"))
+	}
+	e.queue = nil
+	e.mu.Unlock()
 	// A config serves on without notify: a reload took the block (or its
 	// channels) away. Alertmanager would end what it holds at
 	// resolve_timeout through the last render's receivers, a recovery
@@ -845,7 +881,7 @@ type failCounter struct{ c prometheus.Counter }
 func newFailCounter() *failCounter {
 	return &failCounter{c: prometheus.NewCounter(prometheus.CounterOpts{
 		Name: "motel_notify_delivery_failed_total",
-		Help: "Posts to Alertmanager that motel gave up on: refused, or unreachable for five minutes.",
+		Help: "Posts to Alertmanager that motel gave up on: refused, unreachable for five minutes, past their endsAt, or queued when notify stopped.",
 	})}
 }
 

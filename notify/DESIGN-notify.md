@@ -385,7 +385,12 @@ whichever config serves when it clears.
   queue (512), retried with backoff from 2 s to 30 s for five minutes,
   then given up as `monitor: delivery failed` (error level for an
   event) and `motel_notify_delivery_failed_total` on the admin
-  `/metrics`. A refusal (4xx) is given up at once; a 5xx is retried like a refused connect. Socket activation
+  `/metrics`. A refusal (4xx) is given up at once; a 5xx is retried like a refused connect. A post whose own
+  `endsAt` passes while it waits (a one-shot's 5 m, `ChannelFailed`'s
+  15 m, the heartbeat's 4 m; on the wall clock, as Alertmanager reads
+  it) is given up the same way, not posted: Alertmanager would take it
+  as resolved and tell no one. An end (a resolve, the mute's end) is
+  queued with `endsAt` at its queuing and is not given up for it. Socket activation
   restarts Alertmanager in about a second, so the usual outage is one
   failed connect.
 - **The mute** is `deploy_in_progress` for the app, posted at a
@@ -410,8 +415,9 @@ whichever config serves when it clears.
   Start stops the new config while the old one serves on; the engine
   goes back to the old one, and puts the old one's render back in the
   state directory and in Alertmanager. When the last config running
-  notify stops, the engine's table, mutes and buckets are emptied: a
-  block added back later starts clean. When that stop is a reload's
+  notify stops, the engine's table, mutes and buckets are emptied, and
+  each post still queued is given up as above (at motel's shutdown
+  too): a block added back later starts clean. When that stop is a reload's
   (a config serves on without notify: the block or its channels taken
   out), Alertmanager is given setup's config that sends nothing and
   the URL files are removed (`applyNothing`): what it holds ends at
@@ -923,6 +929,7 @@ on its general scales. notify's examples:
 | `motel --help` and its commands' usage say `caddy` and link caddyserver.com's docs | Caddy's root command (binary-wide) | 2 | 5 | 1 | 10; the commands themselves are motel's and work as printed under `motel`; renaming Caddy's root command is a change to every command's help, not monitor's (size 2, risk 2). The deploy of 01b2fd5 to hotserve-1 |
 | `motel monitor test` reads the counters for 15 s; a slow receiver answers "neither yet" | notify/admin.go (`testWait`) | 2 | 2 | 1 | the answer says so; Alertmanager's retries continue |
 | At a boot, an event liveswap reports before notify's Start (Caddy starts the apps in no fixed order) is dropped, the engine serving no config yet: a recovery at that instant ends its alert at `resolve_timeout`, up to five minutes late | notify/engine.go (`report`, `active == nil`) | 2 | 3 | 3 | 18; what stands is told again at notify's Start (`ReportStanding`), and an end told meanwhile is told again after it; holding events for a config not yet started adds a queue with its own lifetime (size 3). /code-review of the Owed rows |
+| The last config running notify stops (a reload that takes the block out, or motel's shutdown) while a post is in flight: the cancel cuts the POST after Alertmanager has taken the body and before its answer, the post is still at the queue's head, and `release` gives it up: a `monitor: delivery failed` line and the counter for a post that was delivered | notify/engine.go (`release`: the queue given up after `cancel`) | 2 | 2 | 3 | 12; a stop that lands inside one POST's answer, and the alert reaches its channels; before, the same post was lost unsaid, or posted again by a later config whatever its age. Letting the last attempt finish before the cancel waits on Alertmanager inside the stop (size 2, risk 2). /code-review pass 1 of monitor/queue-no-stale-posts |
 | A restart after notify has resolved a recovery but before the next healthy probe clears `alerts.json` (with `health_interval 2m` and a 30 s hold, up to about 90 s) replays the recovery: the emptied engine posts the alert held, then resolved, and the operator sees the firing and recovery messages again. A reload does the same when it lengthens the hold (the standing report judges it with the candidate's `watchdog_grace`), and so does a push just after a restart (the watchdog's own `healthySince` is new) | liveswap/watchdog.go (`reportedAlerts` keeps `Recovering`, not when the hold began); liveswap/lifecycle.go (`reportStanding`) | 2 | 2 | 1 | 4; a duplicate the operator sees, only for a restart or reload inside one health interval after a hold ends; persisting the hold's start, and the engine honouring it, is size 3 (risk 2). Copilot round 1 on #424, widened by /code-review xhigh on #424 |
 | A restart inside a recovery's hold, then a relaunch that fails for good (no instance runs after the restart): the persisted `recovering` is re-reported as a held recovery, so the engine resolves the alert of an app that is down, and the flags stay for the next restart | liveswap/lifecycle.go (`reportStanding`) | 3 | 2 | 3 | 18; two faults, a restart inside a hold and then a relaunch that fails; the journal names the failed relaunch and status shows the app down; telling it apart needs a branch on whether an instance runs after recovery (size 2, risk 2). /code-review xhigh on #424 |
 | A failed write of `alerts.json` (EIO, a read-only remount) leaves the old file until the next change, and a restart before it reports what the file still says | liveswap/watchdog.go (`alertsChanged`) | 3 | 3 | 1 | 9; the warning at the failure names the file and the consequence; a retry needs a timer outside the transitions (size 2, risk 2). /code-review of the Owed rows |
