@@ -905,11 +905,12 @@ monitor {
   minutes ahead of a fill that takes two hours or more, 44 ahead of
   one that takes the hour. A single write, even one that takes a few
   minutes, fires only when it took about half of what was free. The
-  rule cannot fire until the store holds five sixths of that quarter
-  of history (13 minutes at `1h`, 5 hours at `1d`, 150 hours at `30d`)
-  after its setup, a wipe of its data, or a filesystem's first
-  measurement; the store's own disk rule, `metrics_store_disk_fill`, waits
-  5 hours the same way. `disk_low` watches the disks meanwhile.
+  rule cannot fire, nor start its `for`, until the store holds most of
+  that quarter of history (10 minutes at `1h`, 5 hours at `1d`, 150
+  hours at `30d`) after its setup, a wipe of its data, or a
+  filesystem's first measurement; the store's own disk rule,
+  `metrics_store_disk_fill`, waits 5 hours the same way. `disk_low`
+  watches the disks meanwhile.
 - **`post_deploy`**: after each deploy or rollback of the app, the new
   release compared with the one it replaced. It sends
   `post_deploy_regressed` once, and it never rolls back. Each minute

@@ -1056,12 +1056,13 @@ tests:
 }
 
 // disk_fill's shape is the store's own rule's at a day, and scaled to the
-// horizon above and below it, held no less than five minutes.
+// horizon above and below it, its short window and hold no less than
+// five minutes.
 func TestDiskFillShape(t *testing.T) {
 	for _, c := range []struct {
 		within, long, short, hold time.Duration
 	}{
-		{time.Hour, 15 * time.Minute, 2 * time.Minute, 5 * time.Minute},
+		{time.Hour, 15 * time.Minute, 5 * time.Minute, 5 * time.Minute},
 		{2 * time.Hour, 30 * time.Minute, 5 * time.Minute, 5 * time.Minute},
 		{6 * time.Hour, 90 * time.Minute, 15 * time.Minute, 7 * time.Minute},
 		{12 * time.Hour, 3 * time.Hour, 30 * time.Minute, 15 * time.Minute},
@@ -1148,7 +1149,7 @@ tests:
 }
 
 // Under a day disk_fill's shape is scaled down as it is scaled up beyond
-// one, its hold no shorter than diskFillMinHold. At the push's 30 s, a
+// one, its short window and hold no shorter than diskFillMin. At the push's 30 s, a
 // disk sits flat, a third of what is free is written in five minutes (a
 // release built, an image pulled, a backup staged) and kept, and then
 // the disk fills steadily from flat in twice the horizon: the write
@@ -1209,4 +1210,45 @@ tests:
 			runUnittest(t, tool, dir, test)
 		})
 	}
+}
+
+// A disk filled in bursts, a gigabyte every five minutes (a job on a
+// five-minute timer), from 24 GB free: within 1h tells it at least 20
+// minutes before the disk is full, and keeps telling it between the
+// bursts. With a 2 m short window under a 5 m hold, a flat stretch
+// between bursts left the short line flat, the hold restarted at each,
+// and the fill was never told.
+func TestDiskFillSeesAFillInBursts(t *testing.T) {
+	tool := vmTool(t, "vmalert-tool")
+	dir := t.TempDir()
+	a := rulesApp(t, "rule disk_soon disk_fill within 1h")
+	if err := os.WriteFile(filepath.Join(dir, RulesName), renderRules(a), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// Flat for 30 minutes, then 1 GB less every 5 minutes (ten 30 s
+	// samples each): none left at 145m.
+	values := []string{"24000000000x59"}
+	for k := 1; k <= 24; k++ {
+		values = append(values, fmt.Sprintf("%dx9", 24_000_000_000-k*1_000_000_000))
+	}
+	var firing strings.Builder
+	for m := 125; m <= 130; m++ {
+		fmt.Fprintf(&firing, `      - eval_time: %dm
+        groupname: motel-operator
+        alertname: disk_soon
+        exp_alerts:
+          - exp_labels: {path: /var/lib/liveswap, kind: state, severity: warning, subject: box, source: rules, key: "rules/box/disk_soon//var/lib/liveswap"}
+            exp_annotations: {summary: "the filesystem holding /var/lib/liveswap is predicted to fill within 1h (rule disk_soon)"}
+`, m)
+	}
+	test := `rule_files: [rules.yml]
+evaluation_interval: 1m
+tests:
+  - interval: 30s
+    input_series:
+      - series: 'motel_disk_avail_bytes{path="/var/lib/liveswap",job="motel"}'
+        values: '` + strings.Join(values, " ") + `'
+    alert_rule_test:
+` + firing.String()
+	runUnittest(t, tool, dir, test)
 }
