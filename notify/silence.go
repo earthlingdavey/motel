@@ -290,6 +290,13 @@ func silenceTarget() (*App, *amClient, *zap.Logger, time.Time, error) {
 	return active, newAMClient(theSocket), logger, now, nil
 }
 
+// answerLost is a request that ended unanswered, by the client's
+// timeout or the caller's cancel: Alertmanager may have taken it. A
+// refused connection or a non-2xx answer is not one; it took nothing.
+func answerLost(err error) bool {
+	return errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled)
+}
+
 func badGateway(err error) error {
 	return caddy.APIError{HTTPStatus: http.StatusBadGateway, Err: err}
 }
@@ -326,6 +333,11 @@ func serveSilence(w http.ResponseWriter, r *http.Request) error {
 	now = now.UTC()
 	s := amSilence{Matchers: req.matchers(), StartsAt: now, EndsAt: now.Add(d), CreatedBy: createdBy(req.By), Comment: comment}
 	id, err := am.postSilence(r.Context(), s)
+	if answerLost(err) {
+		// No line: the silence may not be there either.
+		return badGateway(fmt.Errorf("silencing in Alertmanager: %w; Alertmanager may have taken the silence before its answer was lost: "+
+			"list what it holds before you add it again (curl -s --unix-socket %s http://am/api/v2/silences)", err, am.socket))
+	}
 	if err != nil {
 		return badGateway(fmt.Errorf("silencing in Alertmanager: %w", err))
 	}

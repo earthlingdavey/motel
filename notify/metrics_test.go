@@ -1016,10 +1016,26 @@ func TestMetricsViewNoData(t *testing.T) {
 
 func TestMetricsViewStoreFailing(t *testing.T) {
 	f := &fakeRange{err: errors.New("dial unix /run/motel-metrics/vm.sock: connect: connection refused")}
-	v := newMetricsView(f, zap.NewNop())
+	// The journal at Info, as motel's runs: the deployer reads fixed
+	// text, so the cause is the operator's, a warning.
+	core, logs := observer.New(zap.InfoLevel)
+	v := newMetricsView(f, zap.New(core))
 	got, _ := json.Marshal(v.AppMetrics(context.Background(), "blog", "1h"))
 	if string(got) != `{"error":"the metrics store did not answer"}` {
 		t.Fatalf("a failing store: %s", got)
+	}
+	lines := logs.FilterMessageSnippet("GET /<app>").All()
+	if len(lines) != 1 || lines[0].Level != zap.WarnLevel {
+		t.Fatalf("journal: %v", logs.All())
+	}
+	if fields := lines[0].ContextMap(); fields["app"] != "blog" || fields["range"] != "1h" || fields["error"] != f.err.Error() {
+		t.Fatalf("journal fields: %v", fields)
+	}
+	// The failure is cached as an answer is: one line per app and window
+	// per 30 s, however often the deployer asks.
+	v.AppMetrics(context.Background(), "blog", "1h")
+	if n := logs.FilterMessageSnippet("GET /<app>").Len(); n != 1 {
+		t.Fatalf("%d lines for two asks inside the cache", n)
 	}
 }
 

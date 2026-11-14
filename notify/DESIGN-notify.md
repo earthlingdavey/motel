@@ -713,7 +713,14 @@ it writes one line in motel's journal: `monitor: silence added` (`id`,
 `alert`, `app`, `release`, `ends_at`, `created_by`, `comment`) or
 `monitor: silence expired` (`id`, `expired_by`, in `created_by`'s
 form). A refused or failed write leaves no line; the command says why
-and exits 1.
+and exits 1. A write whose answer never came (the client's 10 s, or the
+caller gone, once the request was sent) leaves none either, since the
+silence may not be there, but its 502 says that Alertmanager may have
+taken it and gives the command that lists what it holds, so that the
+operator neither adds it twice nor believes nothing quiet: whether
+Alertmanager 0.28.1 stores a silence before it answers is not measured,
+and the text is true either way. A refused connection or a non-2xx
+answer took nothing, and says only that.
 
 Through the route, not from the command to the socket, because that is
 how `send` and `test` write, and so one code path holds every write

@@ -653,7 +653,11 @@ Any other range is refused: `{"error":"range must be one of 1h, 24h"}`
 (HTTP 422). `requests` appears only for an app whose site has
 `observe <app>` in front of it ([liveswap/README.md](../liveswap/README.md)).
 `memory_max_bytes` appears only for an app with a memory cap. A number
-with nothing behind it in the window is left out.
+with nothing behind it in the window is left out. When the store does
+not answer the view's queries, `metrics` is `{"error":"the metrics
+store did not answer"}`, and motel's journal has the cause as a
+warning, `monitor metrics: GET /<app> answered without metrics`, with
+the app and the range (at most one per app and range every 30 seconds).
 
 ### PromQL over the socket, as root
 
@@ -835,7 +839,10 @@ comment and `created_by`, which is `motel monitor: <your user>`;
 `monitor: silence expired` with its id and `expired_by`). With
 `--json`, `add` prints `{"id":"…","ends_at":"…"}`, `expire` prints
 `{"id":"…"}`, and an error is `{"error":"…"}` with exit 1; a second
-expire of one silence is `silence <id> has already expired`. Another
+expire of one silence is `silence <id> has already expired`. An add
+that Alertmanager did not answer within 10 seconds says that
+Alertmanager may have taken the silence all the same: list its
+silences (below) before you add it again. Another
 user than root is told `the admin socket … admits root and the motel
 user: run motel monitor silence as root`.
 

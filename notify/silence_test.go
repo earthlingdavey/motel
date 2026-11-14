@@ -2,11 +2,13 @@ package notify
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -327,6 +329,130 @@ func TestSilenceReleaseFromTheRecords(t *testing.T) {
 	if n := len(te.lines("monitor: silence added")); n != 3 {
 		t.Fatalf("journal lines: %d", n)
 	}
+}
+
+// stallingAM takes a POST's whole body, says so on got, then answers
+// nothing until the request's context ends: Alertmanager that stored
+// the silence and whose answer is lost.
+func stallingAM(t *testing.T) (string, chan string) {
+	t.Helper()
+	got := make(chan string, 1)
+	return unixServe(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		got <- r.Method + " " + r.URL.Path + " " + string(b)
+		<-r.Context().Done()
+	})), got
+}
+
+// TestSilenceAnswerLost: a silence posted whose answer never comes (the
+// client's timeout, or the caller gone, after Alertmanager read it) may
+// be in Alertmanager: the 502 says so and how to list what it holds,
+// rather than that the add failed, and echoes nothing of the request.
+func TestSilenceAnswerLost(t *testing.T) {
+	te, _ := withFakeAM(t)
+	sock, got := stallingAM(t)
+	useSocket(t, sock)
+	req := goodSilence()
+	req.Comment = "resizing, see https://hooks.slack.com/services/T0/B0/secretpart" // gitleaks:allow — made up for this test
+	var body bytes.Buffer
+	if err := json.NewEncoder(&body).Encode(req); err != nil {
+		t.Fatal(err)
+	}
+	// The request's context is the seam: the route posts with it, so its
+	// deadline ends the POST as the client's 10 s would.
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	err := serveSilence(httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, "/notify/silences", &body).WithContext(ctx))
+	select {
+	case r := <-got:
+		if !strings.HasPrefix(r, "POST /api/v2/silences ") {
+			t.Fatalf("Alertmanager got %q", r)
+		}
+	default:
+		t.Fatal("Alertmanager never got the POST")
+	}
+	if apiStatus(err) != http.StatusBadGateway {
+		t.Fatalf("an answer lost: %v", err)
+	}
+	msg := err.Error()
+	for _, want := range []string{"silencing in Alertmanager: ", "Alertmanager may have taken the silence",
+		"curl -s --unix-socket " + sock + " http://am/api/v2/silences"} {
+		if !strings.Contains(msg, want) {
+			t.Fatalf("an answer lost: %q lacks %q", msg, want)
+		}
+	}
+	for _, v := range []string{"resizing", "secretpart", "disk_low", "alice"} {
+		if strings.Contains(msg, v) {
+			t.Fatalf("the 502 echoes %q: %s", v, msg)
+		}
+	}
+	// No line says it was added: it may not have been.
+	if n := len(te.lines("monitor: silence added")); n != 0 {
+		t.Fatalf("an answer lost journalled as added: %d lines", n)
+	}
+}
+
+// TestAnswerLost holds the classification to the client's real errors:
+// its own timeout (the 10 s, shortened here on the client) and a
+// cancelled request are answers lost; a refused connection and a non-2xx
+// answer are failures in which Alertmanager took nothing.
+func TestAnswerLost(t *testing.T) {
+	sock, got := stallingAM(t)
+	am := newAMClient(sock)
+	am.http.Timeout = 100 * time.Millisecond
+	_, err := am.postSilence(context.Background(), amSilence{})
+	<-got
+	if !answerLost(err) {
+		t.Fatalf("the client's timeout: %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() { <-got; cancel() }()
+	if _, err := newAMClient(sock).postSilence(ctx, amSilence{}); !answerLost(err) {
+		t.Fatalf("a cancelled request: %v", err)
+	}
+	_, err = newAMClient(refusingSocket(t)).postSilence(context.Background(), amSilence{})
+	if err == nil || answerLost(err) {
+		t.Fatalf("a refused connection: %v", err)
+	}
+	if err := (&amStatusError{path: "/api/v2/silences", code: http.StatusInternalServerError, msg: "x"}); answerLost(err) {
+		t.Fatalf("a 500: %v", err)
+	}
+}
+
+// TestSilenceFailedKeepsItsText: a refused connection and a 500 are
+// failures in which Alertmanager took nothing, and say only that.
+func TestSilenceFailedKeepsItsText(t *testing.T) {
+	_, f := withFakeAM(t)
+	f.set(http.StatusInternalServerError, `"store failed"`)
+	_, err := callAdmin(t, serveSilence, http.MethodPost, goodSilence())
+	if apiStatus(err) != http.StatusBadGateway || err.Error() != `silencing in Alertmanager: alertmanager answered 500 to /api/v2/silences: "store failed"` {
+		t.Fatalf("a 500: %v", err)
+	}
+	sock := refusingSocket(t)
+	useSocket(t, sock)
+	_, err = callAdmin(t, serveSilence, http.MethodPost, goodSilence())
+	if apiStatus(err) != http.StatusBadGateway || err.Error() != "silencing in Alertmanager: alertmanager at "+sock+": dial unix "+sock+": connect: connection refused" {
+		t.Fatalf("a refused connection: %v", err)
+	}
+}
+
+// refusingSocket is a socket file no one listens on: a connect to it is
+// refused.
+func refusingSocket(t *testing.T) string {
+	t.Helper()
+	dir, err := os.MkdirTemp("", "ref")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	path := filepath.Join(dir, "s.sock")
+	l, err := net.Listen("unix", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	l.(*net.UnixListener).SetUnlinkOnClose(false)
+	_ = l.Close()
+	return path
 }
 
 func TestKnownReleases(t *testing.T) {
