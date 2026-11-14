@@ -93,7 +93,7 @@
       "subject": "app",
       "app": "shop",
       "kind": "threshold",
-      "value_query": "sum by (app) (rate(motel_app_cpu_seconds_total{app=\"shop\"}[5m]) and topk by (app) (1, tlast_over_time(motel_app_cpu_seconds_total{app=\"shop\"}[75s]) and rate(motel_app_cpu_seconds_total{app=\"shop\"}[5m])))",
+      "value_query": "sum by (app) (rate(motel_app_cpu_seconds_total{app=\"shop\"}[5m]) and topk by (app) (1, tlast_over_time(motel_app_cpu_seconds_total{app=\"shop\"}[5m]) and rate(motel_app_cpu_seconds_total{app=\"shop\"}[5m])) and on (app) tlast_over_time(motel_app_cpu_seconds_total{app=\"shop\"}[75s]))",
       "op": ">",
       "threshold": 1.5,
       "unit": "cores",

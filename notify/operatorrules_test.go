@@ -293,10 +293,10 @@ func TestOperatorRulesRender(t *testing.T) {
 		"hits_low": `(sum by (app) (` + inc(`motel_app_cache_responses_total{result=~"hit|stale"}`) + `) or sum by (app) (` + inc(`motel_app_cache_responses_total`) + `) * 0)` +
 			` / sum by (app) (` + inc(`motel_app_cache_responses_total`) + `) < 0.5 and sum by (app) (` + inc(`motel_app_cache_responses_total`) + `) >= 20` + pushed(""),
 		// The running unit's: its last push within 75 s, and the newest
-		// unit with a rate.
+		// unit with a rate of an app with a unit pushed within 75 s.
 		"mem": `max by (app) (last_over_time(motel_app_memory_bytes[75s]) / last_over_time(motel_app_memory_max_bytes[75s])) > 0.8`,
-		"busy": `sum by (app) (rate(motel_app_cpu_seconds_total{app="shop"}[5m]) and topk by (app) (1, tlast_over_time(motel_app_cpu_seconds_total{app="shop"}[75s])` +
-			` and rate(motel_app_cpu_seconds_total{app="shop"}[5m]))) > 1.5`,
+		"busy": `sum by (app) (rate(motel_app_cpu_seconds_total{app="shop"}[5m]) and topk by (app) (1, tlast_over_time(motel_app_cpu_seconds_total{app="shop"}[5m])` +
+			` and rate(motel_app_cpu_seconds_total{app="shop"}[5m])) and on (app) tlast_over_time(motel_app_cpu_seconds_total{app="shop"}[75s])) > 1.5`,
 		"median": `histogram_quantile(0.5, sum by (app, le) (` + hist(``) + `)) > 0.2 and sum by (app) (` + inc(`motel_app_response_seconds_count`) + `) >= 20` + pushed(""),
 		"disk_filling": `min by (path) (predict_linear(motel_disk_avail_bytes[42h], 604800)) < 0 and min by (path) (predict_linear(motel_disk_avail_bytes[7h], 604800)) < 0` +
 			` and max by (path) (present_over_time(motel_disk_avail_bytes[42h] offset 35h))`,
@@ -891,7 +891,9 @@ func TestOperatorRulesRateAcrossARestart(t *testing.T) {
 // series' last sample for the query's step (5m), so `hot`, `full` and
 // app_memory_high fired on for five minutes for an app that was not
 // running. lossy runs throughout with one push lost (10m30s), and
-// stays in.
+// stays in; so does redeployed, whose new unit's second push (11m) is
+// lost: its old unit is past 75 s from 11m15s, the new one has no rate
+// until 11m30s, and the app is read meanwhile.
 func TestOperatorRulesReadTheRunningUnit(t *testing.T) {
 	tool := vmTool(t, "vmalert-tool")
 	dir := t.TempDir()
@@ -930,6 +932,10 @@ tests:
         values: '0+15x20'
       - series: 'motel_app_cpu_seconds_total{app="deployed",unit="app-deployed-u2.service",job="motel"}'
         values: '_x21 15+15x38'
+      - series: 'motel_app_cpu_seconds_total{app="redeployed",unit="app-redeployed-r1.service",job="motel"}'
+        values: '0+15x20'
+      - series: 'motel_app_cpu_seconds_total{app="redeployed",unit="app-redeployed-r2.service",job="motel"}'
+        values: '_x21 15 _ 45+15x36'
       - series: 'motel_app_cpu_seconds_total{app="stopped",unit="app-stopped-s1.service",job="motel"}'
         values: '0+30x20'
       - series: 'motel_app_memory_bytes{app="stopped",job="motel"}'
@@ -949,6 +955,10 @@ tests:
         eval_time: ` + at + `
         exp_samples: [{labels: '{app="deployed"}', value: 0.5}]`
 	}
+	test += `
+      - expr: '` + value("cpu_cores", "redeployed") + `'
+        eval_time: 11m20s
+        exp_samples: [{labels: '{app="redeployed"}', value: 0.5}]`
 	for _, m := range []string{"cpu_cores", "memory_share"} {
 		test += `
       - expr: '` + value(m, "stopped") + `'

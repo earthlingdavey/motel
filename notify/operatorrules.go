@@ -860,14 +860,20 @@ func memoryShare(sel string) string {
 // over every unit, the stopped one kept its last rate beside the new
 // one's until its last sample left the window, and an app at a steady
 // 0.5 cores read 1.0 for most of the five minutes after each cutover.
-// So the sum is of one unit an app: the newest with a sample within
-// pushFresh and a rate, which a unit has from its second sample, the one
-// before it meanwhile. One push lost leaves the unit in, as memoryShare
-// does; a unit no push has carried for pushFresh (its app stopped,
-// motel down, every push failing) is not read.
+// So the sum is of one unit an app: the newest with a rate, which a unit
+// has from its second sample, the one before it meanwhile; and only for
+// an app with a unit pushed within pushFresh. That is the app's, not the
+// chosen unit's, so that the new unit's second push lost after a cutover
+// leaves the app in: the old unit is past pushFresh before the new one
+// has a rate (/code-review pass 2 on the unit series). One push lost
+// leaves the app in, as memoryShare does; an app no push has carried a
+// unit of for pushFresh (stopped, motel down, every push failing) is
+// not read.
 func unitCPU(sel, win string) string {
-	rate := "rate(motel_app_cpu_seconds_total" + sel + "[" + win + "])"
-	return rate + " and topk by (app) (1, tlast_over_time(motel_app_cpu_seconds_total" + sel + "[" + promDuration(pushFresh) + "]) and " + rate + ")"
+	series := "motel_app_cpu_seconds_total" + sel
+	rate := "rate(" + series + "[" + win + "])"
+	return rate + " and topk by (app) (1, tlast_over_time(" + series + "[" + win + "]) and " + rate + ")" +
+		" and on (app) tlast_over_time(" + series + "[" + promDuration(pushFresh) + "])"
 }
 
 // diskFillRule is the store's disk rule's shape over motel's own disk

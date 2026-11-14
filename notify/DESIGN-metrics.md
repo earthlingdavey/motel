@@ -830,8 +830,9 @@ evaluation fell between that push and the next. `UNIT_CPU` (`unitCPU`) is the ne
 
 ```
 rate(motel_app_cpu_seconds_total[W])
-  and topk by (app) (1, tlast_over_time(motel_app_cpu_seconds_total[75s])
+  and topk by (app) (1, tlast_over_time(motel_app_cpu_seconds_total[W])
       and rate(motel_app_cpu_seconds_total[W]))
+  and on (app) tlast_over_time(motel_app_cpu_seconds_total[75s])
 ```
 
 The counter is one series per unit, each from zero when its unit
@@ -842,9 +843,12 @@ last rate beside the new one's until its last sample left the window:
 a steady 0.5 cores read 1.0 for most of the five minutes after each
 cutover, and `cpu_cores > 0.8` fired on every deploy (measured on
 1.112.0, `TestOperatorRulesReadTheRunningUnit`). Over the newest unit
-with a sample in 75 s and a rate, which a unit has from its second
-push, the one before it meanwhile, it reads 0.5 throughout, and a
-stopped app drops out 75 s after its last push. Each rule reads the
+with a rate, which a unit has from its second push, the one before it
+meanwhile, it reads 0.5 throughout, and an app none of whose units a
+push has carried for 75 s drops out: a stopped one 75 s after its
+last push. The 75 s is the app's and not the chosen unit's, since the
+old unit is past it before the new one has a rate when the new one's
+second push is lost (/code-review pass 2). Each rule reads the
 unit's own numbers, not the app's across the cutover: the old unit's
 CPU in the window is not added to the new one's. The summary says the bound and the value in
 plain words: `shop: the 5xx share of its responses over 5 minutes has
