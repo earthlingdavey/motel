@@ -899,7 +899,11 @@ monitor {
   for a few minutes after its last push: through them an every-app
   rule still watches the app, and either rule can fire on the old cap.
 - **`disk_fill`**: a filesystem that will be full `within` the time
-  given, at the rate it is filling.
+  given, at the rate it is filling. The rate is read over the last
+  quarter of `within` (15 minutes at `1h`, 6 hours at `1d`), so a
+  steady fill is told a little less than `within` ahead (about 55
+  minutes at `1h`), and a single write, even one that takes a few
+  minutes, fires only when it took about half of what was free.
 - **`post_deploy`**: after each deploy or rollback of the app, the new
   release compared with the one it replaced. It sends
   `post_deploy_regressed` once, and it never rolls back. Each minute

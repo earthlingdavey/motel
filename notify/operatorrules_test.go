@@ -1055,13 +1055,16 @@ tests:
 	runUnittest(t, tool, dir, test)
 }
 
-// disk_fill's shape is the store's own rule's up to a day, and scaled
-// to the horizon beyond it.
+// disk_fill's shape is the store's own rule's at a day, and scaled to the
+// horizon above and below it, held no less than five minutes.
 func TestDiskFillShape(t *testing.T) {
 	for _, c := range []struct {
 		within, long, short, hold time.Duration
 	}{
-		{time.Hour, 6 * time.Hour, time.Hour, 30 * time.Minute},
+		{time.Hour, 15 * time.Minute, 2 * time.Minute, 5 * time.Minute},
+		{2 * time.Hour, 30 * time.Minute, 5 * time.Minute, 5 * time.Minute},
+		{6 * time.Hour, 90 * time.Minute, 15 * time.Minute, 7 * time.Minute},
+		{12 * time.Hour, 3 * time.Hour, 30 * time.Minute, 15 * time.Minute},
 		{24 * time.Hour, 6 * time.Hour, time.Hour, 30 * time.Minute},
 		{36 * time.Hour, 9 * time.Hour, 90 * time.Minute, 45 * time.Minute},
 		{7 * 24 * time.Hour, 42 * time.Hour, 7 * time.Hour, 210 * time.Minute},
@@ -1142,4 +1145,67 @@ tests:
             exp_annotations: {summary: "the filesystem holding /var/lib/caddy is predicted to fill within 7d (rule disk_week)"}
 `
 	runUnittest(t, tool, dir, test)
+}
+
+// Under a day disk_fill's shape is scaled down as it is scaled up beyond
+// one, its hold no shorter than diskFillMinHold. At the push's 30 s, a
+// disk sits flat, a third of what is free is written in five minutes (a
+// release built, an image pulled, a backup staged) and kept, and then
+// the disk fills steadily from flat in twice the horizon: the write
+// fires at no minute, and the fill is told at least lead before the disk
+// is full. Over the day's 6 h and 1 h held 30 m, a within of 1h told no
+// fill of 1 to 4 hours before the disk was full, and a 6h one told this
+// one at 5h30m; held a minute, the write fired at 1h.
+func TestDiskFillUnderADay(t *testing.T) {
+	tool := vmTool(t, "vmalert-tool")
+	for _, c := range []struct {
+		within string
+		lead   time.Duration
+	}{
+		{"1h", 55 * time.Minute},
+		{"6h", 5*time.Hour + 50*time.Minute},
+		{"12h", 11*time.Hour + 45*time.Minute},
+	} {
+		t.Run(c.within, func(t *testing.T) {
+			within, err := time.ParseDuration(c.within)
+			if err != nil {
+				t.Fatal(err)
+			}
+			dir := t.TempDir()
+			a := rulesApp(t, "rule disk_soon disk_fill within "+c.within)
+			if err := os.WriteFile(filepath.Join(dir, RulesName), renderRules(a), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			const step = 30 * time.Second
+			n := func(d time.Duration) int { return int(d / step) }
+			mins := func(d time.Duration) string { return fmt.Sprintf("%dm", int(d/time.Minute)) }
+			// Flat at 43.2 GB until write, 14.4 GB written over five
+			// minutes, flat at 28.8 GB until fill, then to none over
+			// twice the horizon.
+			write, fill, full := within/2, within, 3*within
+			per := 28_800_000_000 / n(full-fill)
+			values := fmt.Sprintf("43200000000x%d 41760000000-1440000000x9 28800000000x%d %d-%dx%d",
+				n(write)-1, n(fill-write-5*time.Minute)-1, 28_800_000_000-per, per, n(full-fill)-1)
+			var none strings.Builder
+			for m := write; m <= fill; m += time.Minute {
+				fmt.Fprintf(&none, "      - eval_time: %s\n        groupname: motel-operator\n        alertname: disk_soon\n        exp_alerts: []\n", mins(m))
+			}
+			test := `rule_files: [rules.yml]
+evaluation_interval: 1m
+tests:
+  - interval: 30s
+    input_series:
+      - series: 'motel_disk_avail_bytes{path="/var/lib/liveswap",job="motel"}'
+        values: '` + values + `'
+    alert_rule_test:
+` + none.String() + `      - eval_time: ` + mins(full-c.lead) + `
+        groupname: motel-operator
+        alertname: disk_soon
+        exp_alerts:
+          - exp_labels: {path: /var/lib/liveswap, kind: state, severity: warning, subject: box, source: rules, key: "rules/box/disk_soon//var/lib/liveswap"}
+            exp_annotations: {summary: "the filesystem holding /var/lib/liveswap is predicted to fill within ` + c.within + ` (rule disk_soon)"}
+`
+			runUnittest(t, tool, dir, test)
+		})
+	}
 }

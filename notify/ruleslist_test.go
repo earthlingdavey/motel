@@ -451,14 +451,14 @@ deploy_refused           motel check  event      warning   every app  -         
 deploy_succeeded         motel check  event      info      every app  -                                                                    -
 disk_filling             operator     guarded    critical  box        < 0 bytes for 3h30m, 2 guards                                        (the store)
 disk_low                 motel check  threshold  warning   box        >= 80% warning, >= 90% critical, each clears 5 points under          /srv/motel 79.9% (warning) (as of 5m20s ago), /var/lib/caddy 41.2% (as of 6m20s ago)
-disk_soon                operator     guarded    warning   box        < 0 bytes for 30m, 2 guards                                          (the store)
+disk_soon                operator     guarded    warning   box        < 0 bytes for 5m, 2 guards                                           (the store)
 drill_failed             motel check  event      critical  box        -                                                                    -
 errors_high              operator     guarded    warning   every app  > 0.05 share for 10m, 2 guards                                       (the store)
 hits_low                 operator     guarded    warning   every app  < 0.5 share for 30m, 2 guards                                        (the store)
 median                   operator     guarded    warning   every app  > 200ms for 10m, 2 guards                                            (the store)
 mem                      operator     threshold  warning   every app  > 0.8 share for 5m                                                   (the store)
 metrics_rules_down       motel check  threshold  warning   box        >= 3 reads                                                           nothing read
-metrics_store_disk_fill  builtin      guarded    warning   box        < 0 bytes for 30m, 1 guard                                           (the store)
+metrics_store_disk_fill  builtin      guarded    warning   box        < 0 bytes for 30m, 2 guards                                          (the store)
 metrics_store_down       motel check  threshold  warning   box        >= 5m                                                                nothing read
 metrics_store_read_only  motel check  event      critical  box        -                                                                    -
 post_deploy_regressed    operator     event      warning   every app  -                                                                    -
