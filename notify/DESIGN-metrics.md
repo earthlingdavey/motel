@@ -635,9 +635,10 @@ parse, a JSON config's at Provision, both by `motel validate`):
   never loosens or silences them (only post_deploy has replacement,
   below; "Accepted residuals"). A rule that names an app and could never fire for it is
   refused: `memory_share` of an app with no `memory_max` (the cap's
-  series is pushed only for a capped app whose cap the host enforces;
-  a cap configured and listed in status under `caps_unenforced` passes
-  the check, and the rule never fires), at Provision; a request
+  series is pushed only while status lists the cap under `caps`; a cap
+  configured that status lists under `caps_unenforced`, or not at all
+  after a caps change that failed, passes the check, and the rule does
+  not fire while it is so), at Provision; a request
   threshold or a post_deploy of an app no route observes (no `observe
   <app>` handler, so no request series), by cmd/motel's gate at
   `motel validate` and `motel reload` (`motel run` serves it, saying

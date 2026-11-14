@@ -798,8 +798,10 @@ silence from them:
 - `--alert <name>`: one of the alerts motel raises on this box, such as
   `disk_low`, `deploy_failed`, `watchdog_throttled`, `cert_failed`,
   `backup_stale`, `ChannelFailed`, or one of your `rule` lines' names;
-- `--app <name>`: one of the apps the box runs: every alert about it,
-  your own `motel monitor send --subject app:<name>` events among them;
+- `--app <name>`: one of the apps the box runs: every alert with its
+  `app` label, your own `motel monitor send --subject app:<name>`
+  events among them, but not the box's `backup_stale` or `cert_failed`
+  about it;
 - `--release <version>`: one release of the app, as its directory under
   `/var/lib/liveswap/<app>/releases/` names it or as the app's deploy
   records do (the `deploys` list of `GET /<app>`, a failed deploy's
@@ -875,10 +877,12 @@ monitor {
   `cache_hit_share`, `memory_share`, `cpu_cores`), `>` or `<` a value,
   held `for` a time, for every app or for `app <name>`.
   `memory_share` is an app's working set over its `memory_max`, so it
-  exists only for an app whose cap the host enforces: an every-app
-  rule watches the capped apps alone, a rule naming an app with no
-  `memory_max` is refused, and one naming an app whose cap status
-  lists under `caps_unenforced` loads and never fires.
+  exists only while the app runs and its status (`GET /<app>`) lists
+  `memory_max` under `caps`, which it does when the host enforces the
+  cap: an every-app rule watches those apps alone, a rule naming an
+  app with no `memory_max` is refused, and one naming an app whose cap
+  status lists under `caps_unenforced`, or not at all, loads and does
+  not fire while it is so.
 - **`disk_fill`**: a filesystem that will be full `within` the time
   given, at the rate it is filling.
 - **`post_deploy`**: after each deploy or rollback of the app, the new
@@ -890,16 +894,22 @@ monitor {
   `max_5xx_share` or `max_p95` and worse than the old one (a p95 above
   1.2 times the old one's; a share over the bound where the old one's
   was within it, or above 1.2 times it and beyond chance where both
-  are over); with no old release that sent `min_requests` responses,
-  the bound alone counts. A check is skipped until the new release has
-  sent `min_requests` (100) responses, so on a quiet app the window
-  can end having judged nothing, which looks the same as a release
-  that held. A deploy or rollback to the release already serving
-  starts no comparison; a relaunch of a release whose instance had
-  stopped (a rollback to one that crashed) is held to the bound alone,
-  from 40 s after the cutover, and told as a relaunch. A restart of
-  motel inside the window ends the comparison, and nothing compares
-  that deploy again.
+  are over). With no baseline the bound alone counts: after a first
+  deploy, when the old release's instance was not running at the
+  cutover, when the old release sent fewer than `min_requests`
+  responses, and for a p95 when it timed fewer (a cache hit is not
+  timed). A check is skipped until the new release has sent
+  `min_requests` (100) responses, so on a quiet app the window can end
+  having judged nothing, which looks the same as a release that held.
+  A deploy or rollback to the release already serving starts no
+  comparison; a relaunch of a release whose instance had stopped (a
+  rollback to one that crashed) is held to the bound alone, from 40 s
+  after the cutover, and told as a relaunch. A restart of motel inside
+  the window ends the comparison, and nothing compares that deploy
+  again; so does a reload whose config has no rule for the app, and a
+  store that has not answered 10 minutes past the window's end
+  (`ended unfinished` in the journal). A newer deploy ends it and
+  starts its own.
 
 The request metrics need `observe <app>` in the app's site, and a rule
 on them reads only the apps motel's last push says are observed: an
@@ -919,11 +929,11 @@ DESIGN-metrics.md's [Operator rules](../notify/DESIGN-metrics.md#operator-rules)
 
 Editing a `threshold` or `disk_fill` rule can restart its alert.
 vmalert knows a rule by its expression, name and labels, so a new
-metric, value, `within`, `min_requests`, `app`, `severity` or name
-makes it a new rule. An alert the old one was firing is no longer
-sent, and the new one fires only after its `for`, so your channels can
-get a `[RESOLVED]` while the condition still holds, then a new
-`[FIRING]`.
+metric, comparison, value, `within`, `min_requests`, `app`,
+`severity` or name makes it a new rule. An alert the old one was
+firing is no longer sent, and the new one fires only after its `for`,
+so your channels can get a `[RESOLVED]` while the condition still
+holds, then a new `[FIRING]`.
 
 ## How close is each alert
 
