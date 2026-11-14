@@ -32,7 +32,8 @@ STATE=/var/lib/motel-metrics
 NS=motel-metrics
 vm() { curl -s --max-time 10 --unix-socket "$VM" "$@"; }
 am() { curl -s --max-time 10 --unix-socket "$AMS" "$@"; }
-sinklog() { curl -s --max-time 5 "$SINK/log"; }
+# This box's deliveries alone: the sink is shared by every split's box.
+sinklog() { curl -s --max-time 5 "$SINK/log?mine=1"; }
 # q <query>: an instant query's answer, from the store.
 q() { vm -G --data-urlencode "query=$1" http://vm/api/v1/query; }
 # has_result <answer>: the answer holds at least one series.
@@ -73,8 +74,8 @@ RELOAD_WAIT=15
 # state: 4c reads 4b's restart of the store, 6 the probe release 5
 # deploys, 8 and 9 the Caddyfiles 7 and 8 cut. Each split's box is fresh,
 # so a part that moves the store, Alertmanager or the Caddyfile moves
-# them for its own split alone. The shared sink is read by 10 alone, for
-# lines only the rules split's deploy can make.
+# them for its own split alone. The shared sink answers each box with
+# its own deliveries (sinklog).
 split_all="vm 2b 3 3a 4 4a 4b 4c 4d 5 6 7 8 9 10 11"
 split_view="vm 2b 3 3a" split_vmalert="4 4a" split_store="4b 4c 4d 5 6" split_rules="5 7 8 9 10 11"
 case "${SPLIT:=all}" in
@@ -88,12 +89,12 @@ esac
 # Every part is in all and in some split, and every name in them is a
 # part: `make e2e-metrics` runs the splits, so a part in all alone would
 # never run there. Refused here, by name, on every box.
-for d in $(sed -n 's/^m\([0-9a-z]*\)() {$/\1/p' "$0"); do
+for d in $(sed -n 's/^case_\([0-9a-z]*\)() {$/\1/p' "$0"); do
 	case " $split_all " in *" $d "*) ;; *) echo "FATAL: part $d is not in all"; exit 1 ;; esac
 	case " $split_view $split_vmalert $split_store $split_rules " in *" $d "*) ;; *) echo "FATAL: part $d is in no split"; exit 1 ;; esac
 done
 for d in $split_all $split_view $split_vmalert $split_store $split_rules; do
-	grep -q "^m$d() {$" "$0" || { echo "FATAL: $d names no part (no function m$d)"; exit 1; }
+	grep -q "^case_$d() {$" "$0" || { echo "FATAL: $d names no part (no function case_$d)"; exit 1; }
 done
 
 echo "=== metrics 0: the box ==="
@@ -203,7 +204,7 @@ vmalert -dryRun -rule="$STATE/rules.yml" >/tmp/dry.out 2>&1 \
 # notify's tests over vmalert, vmalert-tool and the store's binary, which `make test` skips
 # for want of them: each must run here, none skip. The list is every
 # test that calls vmTool (TestE2EMetricsListsEveryVMAlertTest).
-mvm() {
+case_vm() {
 echo "=== metrics 1 (vm): notify's vmalert and amtool tests ==="
 vmtests='^(TestRenderedRulesPassVMAlertDryRun|TestRenderedRulesFireAsMotelsAlerts|TestOperatorRulesPassVMAlertDryRun|TestOperatorRulesFire|TestOperatorRulesCountAfterAGap|TestOperatorRulesHistogramIsReadWhole|TestDiskFillHistoryOverAGap|TestDiskFillStepIsNoTrend|TestOperatorRulesCountOnAFreshStore|TestOperatorRulesReadThePushedApps|TestMetricsViewCountsOverTheStore|TestPostDeployARelaunchReadsPastTheStoppedInstance|TestScrapeConfigPassesTheStoresCheck)$'
 nvm=$(printf '%s\n' "$vmtests" | tr '|' '\n' | wc -l)
@@ -222,7 +223,7 @@ nam=$(printf '%s\n' "$amtests" | tr '|' '\n' | wc -l)
 	&& pass "notify's $nam amtool tests run and pass against the box's amtool" \
 	|| fail "notify's amtool tests: $(grep -E -- '^(--- |FAIL|ok)|SKIP|→' /tmp/amtests.out | head -10)"
 }
-case " $parts " in *" vm "*) mvm ;; esac
+case " $parts " in *" vm "*) case_vm ;; esac
 # The operator's group: the threshold and disk_fill lines, motel's own
 # expressions, each counter through the guard (increase_pure for a
 # series new to the store since the push's first sample, else
@@ -274,7 +275,7 @@ else
 		|| pass "no memory controller in this host's user units (no $cg/memory.current): motel_app_memory_bytes absent, as designed"
 fi
 
-m2b() {
+case_2b() {
 echo "=== metrics 2b: motel monitor rules ==="
 # The listing a screen reads: the store's rules with their value's
 # MetricsQL, which runs on the store's socket at the listed offset; the
@@ -309,7 +310,7 @@ motel monitor rules >/tmp/rules.txt 2>&1 && head -1 /tmp/rules.txt | grep -q '^N
 	&& pass "motel monitor rules prints the table" || fail "motel monitor rules: $(head -c 400 /tmp/rules.txt)"
 }
 
-m3() {
+case_3() {
 echo "=== metrics 3: GET /<app> ==="
 # The view's field shows once the store answers the view's own range
 # query (notify/metricsview.go: start now-1h, end now, step 60 s), and
@@ -357,7 +358,7 @@ code=$(curl -s -o /tmp/get-noauth -w '%{http_code}' --max-time 5 "$HOOK")
 
 }
 
-m3a() {
+case_3a() {
 echo "=== metrics 3a: the response observer ==="
 # Twenty misses (the query is in the cache's key), then the same path
 # twice: the second is a hit. shop has no release: its 503s are 5xx.
@@ -425,7 +426,7 @@ code=$(curl -s -o /tmp/range7d -w '%{http_code}' --max-time 5 -H "Authorization:
 
 }
 
-m4() {
+case_4() {
 echo "=== metrics 4: vmalert ==="
 # Setup's first rules.yml is the empty groups and motel writes the real
 # one right after, which vmalert re-reads within 5 s (-configCheckInterval).
@@ -514,7 +515,7 @@ printf '%s' "$body" | grep -q '"generatorURL":"http' && last=vmalert
 
 }
 
-m4a() {
+case_4a() {
 echo "=== metrics 4a: the store stopped by hand comes back with vmalert ==="
 # A stop of the store stops vmalert and the proxy (both Require it).
 # motel's next push connects to the socket, whose proxy starts the store
@@ -531,7 +532,7 @@ a=$(wait_result vmalert-up-again 'up{job="vmalert"} == 1' 90) && pass "the store
 
 }
 
-m4b() {
+case_4b() {
 echo "=== metrics 4b: a read-only store is told by motel, as itself ==="
 # The store's free-space floor set above any disk: it is read-only from
 # its start, refuses motel's imports and its own scrapes, and no rule
@@ -579,7 +580,7 @@ a=$(wait_result vmalert-up-writable "(timestamp(up{job=\"vmalert\"}) > $back_at)
 
 }
 
-m4c() {
+case_4c() {
 echo "=== metrics 4c: the store's proxy runs as no root ==="
 # It runs while it carries traffic (motel's push through vm.sock every
 # 30 s); 4b restarted the store, which stops it until the next push.
@@ -595,7 +596,7 @@ bnd=$(sed -n 's/^CapBnd:[[:space:]]*//p' "/proc/$pid/status" 2>/dev/null)
 
 }
 
-m4d() {
+case_4d() {
 echo "=== metrics 4d: Alertmanager's own listener in the namespace ==="
 # One Alertmanager holds both: am.sock in the host's namespace and
 # 127.0.0.1:9093 in the store's, each passed by systemd at its start.
@@ -701,7 +702,7 @@ systemctl is-active -q motel || fail "motel did not start again: $(systemctl is-
 
 }
 
-m5() {
+case_5() {
 echo "=== metrics 5: an app's sandbox has none of it in view ==="
 code=$(deploy demo-probe.tar.gz sb1)
 [ "$code" = 200 ] || fail "deploy of the probe release returned $code: $(cat /tmp/deploy-body)"
@@ -716,7 +717,7 @@ done
 
 }
 
-m6() {
+case_6() {
 echo "=== metrics 6: the store's socket gone ==="
 systemctl stop motel-vm.socket motel-vm.service
 sleep 31 # past the view's cache
@@ -737,7 +738,7 @@ systemctl start motel-vm.socket
 
 }
 
-m7() {
+case_7() {
 echo "=== metrics 7: the channels removed, the metrics line kept ==="
 # Alertmanager keeps the last config notify rendered, so vmalert must be
 # given no rule that could still reach those channels. Every line of the
@@ -777,7 +778,7 @@ journalctl -u motel -o cat --no-pager | grep -q 'monitor metrics: the monitor bl
 
 }
 
-m8() {
+case_8() {
 echo "=== metrics 8: motel's shutdown keeps the rules; the metrics line removed retires them ==="
 # A shutdown leaves the rules, so the store's alerts reach the operator
 # while motel is down; a reload to a config with no metrics line writes
@@ -808,7 +809,7 @@ journalctl -u motel -o cat --no-pager | grep -q 'monitor metrics: the metrics li
 
 }
 
-m9() {
+case_9() {
 echo "=== metrics 9: the metrics line removed, then a restart, not a reload ==="
 # A config with no metrics line builds no MetricsStore, so the boot's
 # gate retires the rules a config with one wrote.
@@ -856,7 +857,7 @@ grep -q 'alert:' "$STATE/rules.yml" && pass "a boot with the metrics line writes
 
 }
 
-m10() {
+case_10() {
 echo "=== metrics 10: the operator's rules ==="
 # errors_high, a threshold over every app, fires for shop, whose site
 # answers 503 with no release; blog_regressed compares blog's next
@@ -921,7 +922,7 @@ n=$(journalctl -u motel -o cat --no-pager | grep -c 'rules/app:blog/post_deploy_
 
 }
 
-m11() {
+case_11() {
 echo "=== metrics 11: an upgrade from the proxy shape ==="
 # What an earlier setup left: a socket on the namespace's 9093 and a
 # proxy from it to Alertmanager's unix socket (their lines that matter
@@ -958,7 +959,7 @@ sleep 3
 	|| fail "after the upgrade: $(amstarts "$since") start(s) of Alertmanager, 9093 $(nsready && echo answers || echo 'does not answer'): $(inns ss -ltnpH | grep 9093)"
 }
 
-for p in $parts; do [ "$p" = vm ] || "m$p"; done
+for p in $parts; do [ "$p" = vm ] || "case_$p"; done
 
 echo
 if [ "$FAILURES" -ne 0 ]; then

@@ -957,6 +957,19 @@ run it as root, `expire` leaves it expired with its journal line, the
 next rollback reaches the operator, and a second `expire --json` exits
 1 with `{"error":"silence <id> has already expired"}`.
 
+The suite runs as three splits, a box each, at once (`SPLIT` in
+e2e/notify/run.sh, `NOTIFY_SPLITS` in the Makefile): core (notify 3 to
+10a, which count every delivery since their box began, 7a silencing 3's
+failed v3), reload (11 to 14) and heartbeat (15 alone, five minutes of
+motel's hold and its resume), each after the prelude (notify 0 to 2),
+which keeps the Caddyfile they put back. The boxes share the sink, which keeps
+each delivery with the address it came from and answers a box's
+`GET /log?mine=1` with its own, so a count is of that box's deliveries
+alone. The lane takes its longest split, the heartbeat's: 581 s against
+914 s for the whole suite on one box, the same 115 distinct checks
+passing (2026-11-13, lima arm64 VM). `NOTIFY_SPLITS=all` runs it whole
+on one box; the suite refuses to start when a part is in no split.
+
 ## Later slices
 
 Slice two, the metrics store (Debian's `victoria-metrics` in a private

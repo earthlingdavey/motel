@@ -358,16 +358,41 @@ e2e:
 
 # The notify suite: a box with Debian's Alertmanager and a stub receiver
 # (e2e/notify/run.sh). Its own target, as the backup suite is: its waits
-# are Alertmanager's timings, about four minutes, which no other lane
-# should pay. It takes down only its own services.
+# are Alertmanager's and motel's timers, which no other lane should pay.
+# Its splits (run.sh's SPLIT) run at once, a box each, sharing the sink,
+# which answers each box with its own deliveries; their output is held
+# and printed a split at a time, each ended at NOTIFY_LIMIT inside its
+# box. The heartbeat split, five minutes of motel's hold and its resume,
+# is the lane's length. NOTIFY_SPLITS=core runs one; =all the whole
+# suite on one box. The sink is metrics' too, its paths the same, so
+# e2e-notify and e2e-metrics do not run at once on one host.
+NOTIFY_SPLITS ?= core reload heartbeat
+NOTIFY_LIMIT ?= 1800
 e2e-notify:
 	$(cgroup2_preflight)
-	$(COMPOSE) up --build -d e2e-notify-box e2e-sink e2e-artifacts
-	status=0; \
-	$(COMPOSE) exec -T e2e-notify-box /bin/sh /suite-notify.sh || status=1; \
-	if [ $$status -ne 0 ]; then \
-		$(COMPOSE) exec -T e2e-notify-box journalctl --no-pager -n 200 -u motel -u prometheus-alertmanager -u motel-am.socket || true; \
-	fi; \
+	$(if $(strip $(NOTIFY_SPLITS)),,$(error NOTIFY_SPLITS is empty: name a split, or all))
+	$(COMPOSE) rm -sf e2e-notify-box e2e-sink >/dev/null
+	$(COMPOSE) up --build -d --scale e2e-notify-box=$(words $(NOTIFY_SPLITS)) e2e-notify-box e2e-sink e2e-artifacts
+	logs=$$(mktemp -d); i=0; \
+	for s in $(NOTIFY_SPLITS); do \
+		i=$$((i + 1)); \
+		( t0=$$(date +%s); $(COMPOSE) exec -T --index $$i -e SPLIT=$$s e2e-notify-box timeout $(NOTIFY_LIMIT) /bin/sh /suite-notify.sh >$$logs/$$i.log 2>&1; echo "$$? $$(($$(date +%s) - t0))" >$$logs/$$i.rc ) & \
+	done; \
+	wait; \
+	status=0; i=0; \
+	for s in $(NOTIFY_SPLITS); do \
+		i=$$((i + 1)); \
+		rc=; took=; read rc took <$$logs/$$i.rc || rc=unknown; \
+		echo "════ notify split $$s (box $$i, $${took:-?}s) ════"; \
+		cat $$logs/$$i.log; \
+		if [ "$$rc" = 124 ]; then echo "════ notify split $$s ended at NOTIFY_LIMIT ($(NOTIFY_LIMIT)s) ════"; fi; \
+		if [ "$$rc" != 0 ]; then \
+			status=1; \
+			echo "════ notify split $$s failed: box $$i's journal ════"; \
+			$(COMPOSE) exec -T --index $$i e2e-notify-box journalctl --no-pager -n 200 -u motel -u prometheus-alertmanager -u motel-am.socket || true; \
+		fi; \
+	done; \
+	rm -rf $$logs; \
 	$(COMPOSE) rm -sf e2e-notify-box e2e-sink >/dev/null; \
 	exit $$status
 

@@ -33,7 +33,8 @@ SOCK=/run/motel-notify/am.sock
 STATE=/var/lib/motel-notify
 am() { curl -s --max-time 10 --unix-socket "$SOCK" "$@"; }
 now_ms() { date +%s%3N; }
-sinklog() { curl -s --max-time 5 "$SINK/log"; }
+# This box's deliveries alone: the sink is shared by every split's box.
+sinklog() { curl -s --max-time 5 "$SINK/log?mine=1"; }
 # arrivals <path> <alertname> <since ms> [alert status] [app]: the
 # sink's lines for one alert at one path, from a time on.
 arrivals() {
@@ -71,6 +72,38 @@ post_alert() { # <labels JSON>: as root, as an admin's own tool would
 		http://am/api/v2/alerts -d "[{\"labels\":$1,\"annotations\":{\"summary\":\"e2e: posted to the socket by root\"}}]"
 }
 send() { motel monitor send --source e2e "$@" >/tmp/send.out 2>&1; }
+# failing_receivers: the receivers Alertmanager's failed counter names.
+failing_receivers() {
+	am http://am/metrics | awk '/^alertmanager_notifications_failed_total\{/ && $NF+0 > 0 {
+		if (match($0, /receiver_name="[^"]*"/)) print substr($0, RSTART+15, RLENGTH-16) }' | sort -u
+}
+
+# SPLIT: which parts run after the prelude (notify 0-2, on every box).
+# `make e2e-notify` runs each split on a box of its own, at once, sharing
+# the sink, which answers each box with its own deliveries; unset, every
+# part runs, in order, on one box. A split holds parts that share state:
+# 6 and 9 count every delivery since the box began, 7a silences 3's
+# failed v3. 15, five minutes of a held heartbeat and its resume, is a
+# split alone; 11 to 14 are another, near core's length.
+split_core="3 4 5 6 6b 7 7a 8 9 10 10a" split_reload="11 12 13 14" split_heartbeat="15"
+split_all="$split_core $split_reload $split_heartbeat"
+case "${SPLIT:=all}" in
+all) parts=$split_all ;;
+core) parts=$split_core ;;
+reload) parts=$split_reload ;;
+heartbeat) parts=$split_heartbeat ;;
+*) echo "FATAL: SPLIT=$SPLIT: all, core, reload or heartbeat"; exit 1 ;;
+esac
+# Every part is in all and in some split, and every name in them is a
+# part: `make e2e-notify` runs the splits, so a part in all alone would
+# never run there. Refused here, by name, on every box.
+for d in $(sed -n 's/^case_\([0-9a-z]*\)() {$/\1/p' "$0"); do
+	case " $split_all " in *" $d "*) ;; *) echo "FATAL: part $d is not in all"; exit 1 ;; esac
+	case " $split_core $split_reload $split_heartbeat " in *" $d "*) ;; *) echo "FATAL: part $d is in no split"; exit 1 ;; esac
+done
+for d in $split_all $split_core $split_reload $split_heartbeat; do
+	grep -q "^case_$d() {\$" "$0" || { echo "FATAL: $d names no part (no function case_$d)"; exit 1; }
+done
 
 echo "=== notify 0: the box ==="
 i=0
@@ -140,10 +173,15 @@ for f in "$STATE/alertmanager.yml"; do
 done
 am http://am/api/v2/status | grep -q 'e2e-sink' && fail "Alertmanager's status echoes a channel URL" || pass "Alertmanager's status echoes no channel URL"
 
+# The Caddyfile as the box began, which 11, 14 and 15 put back: kept
+# here, before any part edits it, for every split.
+cp /etc/motel/Caddyfile /tmp/Caddyfile.before
+
 echo "=== notify 2: the heartbeat ==="
 t=$(first_arrival /deadman Watchdog "$t_setup" 90 firing)
 within "Watchdog to the heartbeat" "$t" "$t_setup" 0 90
 
+case_3() {
 echo "=== notify 3: a real deploy fails ==="
 code=$(deploy demo-v1.tar.gz v1)
 [ "$code" = 200 ] && pass "deploy v1" || fail "deploy v1 returned $code: $(cat /tmp/deploy-body)"
@@ -164,6 +202,9 @@ none "deploy_in_progress reaches nobody (deployer)" /blog deploy_in_progress 0
 journalctl -u motel -o cat --no-pager | grep 'monitor: event' | grep -q 'liveswap/app:blog/deploy_failed' \
 	&& pass "journal: monitor: event liveswap/app:blog/deploy_failed" || fail "no monitor: event line for the failed deploy"
 
+}
+
+case_4() {
 echo "=== notify 4: one-shots from outside ==="
 t_box=$(now_ms)
 send --name nightly_job_failed --severity warning --summary "e2e: the nightly job failed" \
@@ -186,6 +227,9 @@ else
 	pass "nobody cannot reach motel's admin socket to send"
 fi
 
+}
+
+case_5() {
 echo "=== notify 5: state alerts, inhibition, recovery ==="
 [ "$(post_alert '{"alertname":"deploy_in_progress","kind":"mute","app":"blog","severity":"none"}')" = 200 ] || fail "posting the mute"
 t_state=$(now_ms)
@@ -207,6 +251,9 @@ within "the recovery, after motel's 30 s hold and a one-minute tick" "$t" "$t_re
 journalctl -u motel -o cat --no-pager | grep 'monitor: event' | grep 'external:e2e/box/disk_check' | grep -q '"state":"resolved"' \
 	&& pass "journal: the resolve's monitor: event line" || fail "no resolved line for disk_check"
 
+}
+
+case_6() {
 echo "=== notify 6: a failing channel ==="
 n=$(arrivals /broken - 0 | wc -l)
 [ "$n" -gt 0 ] && pass "oncall was tried $n times and refused (400)" || fail "oncall was never tried"
@@ -221,16 +268,15 @@ journalctl -u motel -o cat --no-pager | grep 'monitor: channel failed' | grep -q
 	&& pass "journal: monitor: channel failed names oncall" || fail "no channel failed line naming oncall"
 # A receiver per channel: Alertmanager's failed counter names oncall's
 # receivers alone, and the alert names oncall alone.
-failing_receivers() {
-	am http://am/metrics | awk '/^alertmanager_notifications_failed_total\{/ && $NF+0 > 0 {
-		if (match($0, /receiver_name="[^"]*"/)) print substr($0, RSTART+15, RLENGTH-16) }' | sort -u
-}
 r=$(failing_receivers)
 [ -n "$r" ] && ! printf '%s\n' "$r" | grep -qv -- '-oncall$' \
 	&& pass "the failed counter names oncall's receivers alone: $(echo $r)" || fail "failing receivers: $(echo $r)"
 am 'http://am/api/v2/alerts?filter=alertname%3D%22ChannelFailed%22&filter=notify_channel%3D%22ops%22' | grep -q '"suspects":"oncall"' \
 	&& pass "ChannelFailed to ops names oncall alone (suspects=oncall)" || fail "ChannelFailed: $(am 'http://am/api/v2/alerts?filter=alertname%3D%22ChannelFailed%22' | head -c 400)"
 
+}
+
+case_6b() {
 echo "=== notify 6b: two channels of one integration: the failing one alone is named ==="
 # ops (json) and blog-deployer (ntfy) are both Alertmanager's webhook
 # integration, and both hear blog's events. Under a receiver they
@@ -263,11 +309,17 @@ printf '%s\n' "$(failing_receivers)" | grep -q '^event-warning-blog-deployer$' \
 cp -p /tmp/_box.env.6b /etc/motel/secrets/_box.env
 motel reload --config /etc/motel/Caddyfile >/tmp/reload-6b.out 2>&1 || fail "the reload that mends blog-deployer: $(tail -3 /tmp/reload-6b.out)"
 
+}
+
+case_7() {
 echo "=== notify 7: motel monitor test ==="
 out=$(motel monitor test ops 2>&1) && echo "$out" | grep -q 'delivered to ops' \
 	&& pass "monitor test ops: $out" || fail "monitor test ops: $out"
 out=$(motel monitor test oncall 2>&1) && fail "monitor test oncall succeeded: $out" || pass "monitor test oncall fails: $(echo "$out" | tail -1)"
 
+}
+
+case_7a() {
 echo "=== notify 7a: motel monitor silence ==="
 # rollback for blog, as liveswap's one-shot carries it, posted by root
 # so that the suite need not roll a release back.
@@ -335,6 +387,9 @@ out=$(motel monitor silence add --comment "e2e: unknown" --alert deploy_failed -
 	|| { echo "$out" | grep -q -- '--release names no release of blog on this box; they are .*v3' && ! echo "$out" | grep -q v9 \
 		&& pass "a release neither on disk nor recorded is refused, the known ones listed" || fail "--release v9: $out"; }
 
+}
+
+case_8() {
 echo "=== notify 8: an app's sandbox has none of it in view ==="
 code=$(deploy demo-probe.tar.gz sb1)
 [ "$code" = 200 ] || fail "deploy of the probe release returned $code: $(cat /tmp/deploy-body)"
@@ -347,6 +402,9 @@ for k in notify_run notify_socket notify_state; do
 	[ "$v" = closed ] && pass "inside the sandbox: $k=closed" || fail "inside the sandbox: $k=$v"
 done
 
+}
+
+case_9() {
 echo "=== notify 9: what was delivered once stays delivered once ==="
 # Alertmanager retried the failing oncall at every tick while each alert
 # lived; the operator's own channel, delivered, must have had each alert
@@ -358,10 +416,16 @@ for a in nightly_job_failed deploy_failed; do
 		|| fail "$a reached the operator $n times, want $want"
 done
 
+}
+
+case_10() {
 echo "=== notify 10: no channel URL in any journal ==="
 n=$(journalctl -u motel -u prometheus-alertmanager -o cat --no-pager | grep -c 'e2e-sink' || true)
 [ "$n" -eq 0 ] && pass "no channel URL in motel's or Alertmanager's journal" || fail "$n journal lines hold a channel URL"
 
+}
+
+case_10a() {
 echo "=== notify 10a: no heartbeat line, warned ==="
 sed '/^[[:space:]]*heartbeat /d' /etc/motel/Caddyfile >/tmp/Caddyfile.nohb
 grep -q 'heartbeat ' /tmp/Caddyfile.nohb && fail "fixture: could not cut the heartbeat line"
@@ -373,11 +437,14 @@ motel validate --adapter caddyfile --config /etc/motel/Caddyfile >/tmp/validate-
 grep -q 'no heartbeat' /tmp/validate-hb.out && fail "validate warns of no heartbeat with the line in place" \
 	|| pass "and with the line, no such warning"
 
+}
+
+case_11() {
 echo "=== notify 11: a secret missing at boot drops its channel; validate and reload refuse ==="
 # A channel line whose secret _box.env does not hold: the box's
 # consistency check refuses such a push, so this is a hand edit, or a
-# file lost. A boot must not take every site down for it.
-cp /etc/motel/Caddyfile /tmp/Caddyfile.before
+# file lost. A boot must not take every site down for it. The Caddyfile
+# to put back is the prelude's copy.
 sed -i 's#^\(\t*\)operator ops oncall#\1channel spare json {secret.NOTIFY_SPARE_URL}\n\1operator ops oncall spare#' /etc/motel/Caddyfile
 grep -q 'NOTIFY_SPARE_URL' /etc/motel/Caddyfile || fail "fixture: the spare channel line is not in the Caddyfile"
 if motel validate --adapter caddyfile --config /etc/motel/Caddyfile >/tmp/validate.out 2>&1; then
@@ -431,6 +498,9 @@ until systemctl is-active -q motel && [ -S /run/motel/admin.sock ]; do
 	i=$((i + 1)); [ "$i" -ge 120 ] && break; sleep 0.5
 done
 
+}
+
+case_12() {
 echo "=== notify 12: motel restarted while a state alert fires: it is told again, and still resolves ==="
 # A relaunch refused: blog's command gone from its release, then its
 # process killed. Nothing re-detects that after a restart (recovery's
@@ -490,6 +560,9 @@ t=$(first_arrival /ops relaunch_refused "$t_fix" 150 resolved blog)
 within "the recovery once an instance runs again (hold, then a tick)" "$t" "$t_fix" 25 150
 [ ! -e /var/lib/liveswap/blog/alerts.json ] && pass "alerts.json is gone once nothing stands" || fail "alerts.json: $(cat /var/lib/liveswap/blog/alerts.json 2>&1)"
 
+}
+
+case_13() {
 echo "=== notify 13: the old spellings are refused, naming the new ==="
 sed 's/^\tmonitor {$/\tnotify {/' /etc/motel/Caddyfile >/tmp/Caddyfile.old
 grep -q '^	notify {$' /tmp/Caddyfile.old || fail "fixture: could not rename the monitor block"
@@ -506,6 +579,9 @@ else
 		&& pass "motel notify setup exits non-zero, naming motel monitor setup" || fail "motel notify setup: $(cat /tmp/old.out)"
 fi
 
+}
+
+case_14() {
 echo "=== notify 14: the block taken out by a reload: Alertmanager sends nothing ==="
 # Alertmanager keeps the last config it loaded, and would end what it
 # holds at resolve_timeout through it: a recovery that did not happen,
@@ -544,6 +620,9 @@ fi
 cp /tmp/Caddyfile.before /etc/motel/Caddyfile
 systemctl reload motel || fail "the reload that puts the block back"
 
+}
+
+case_15() {
 echo "=== notify 15: a failure no channel can hear holds the heartbeat ==="
 # oncall alone is the operator's, and it answers 400: there is no other
 # channel to tell of its failure. Once the failure has stood 5 minutes
@@ -596,12 +675,15 @@ e2=$(wd_ends)
 cp -p /tmp/_box.env.15 /etc/motel/secrets/_box.env
 cp /tmp/Caddyfile.before /etc/motel/Caddyfile
 systemctl reload motel || fail "the reload that puts the fixture back"
+}
+
+for p in $parts; do "case_$p"; done
 
 echo
 if [ "$FAILURES" -ne 0 ]; then
-	echo "notify suite: $FAILURES failure(s)"
+	echo "notify suite ($SPLIT): $FAILURES failure(s)"
 	echo "--- sink log"; sinklog | tail -60
 	echo "--- alertmanager"; journalctl -u prometheus-alertmanager -o cat --no-pager | tail -30
 	exit 1
 fi
-echo "notify suite: all passed"
+echo "notify suite ($SPLIT): all passed"
