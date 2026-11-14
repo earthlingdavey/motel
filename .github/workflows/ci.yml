@@ -10,6 +10,23 @@ on:
   pull_request:
   workflow_call:
 
+# A newer push to a pull request cancels the run of the commit it
+# replaced: only the head's result gates a merge, and the replaced run's
+# jobs hold runners the newer run's wait for [measured over the 200 PR
+# runs to 2026-11-14: 53 overlapped a newer push to their PR; of 15
+# sampled each, a run that overlapped one waited a median 808 s for its
+# last job to get a runner, against 83 s]. Every other run (a push to
+# main, the release's workflow_call) has a group of its own and is
+# never cancelled: a group shared by main's pushes would keep one
+# pending run and cancel the one before it, so a merge could go untested.
+# Called, the run id is release.yml's, so release.yml must never take a
+# ci-yml-run- group itself: a caller holding its callee's group waits on
+# it for ever. A replaced run's ci-ok still runs (always()) and is red,
+# as it must be for a run cancelled by hand or a job timed out.
+concurrency:
+  group: ${{ github.event_name == 'pull_request' && format('ci-pr-{0}', github.event.pull_request.number) || format('ci-yml-run-{0}', github.run_id) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 # Least-privilege token for every job: the graph only ever reads the
 # repo (checkout, caches, artifacts use the runtime token, not this
 # one). Jobs that need more must say so at job level.
