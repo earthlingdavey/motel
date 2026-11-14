@@ -9,6 +9,7 @@
 #
 #   the first --metrics restarting Alertmanager once, the second not
 #   the store's TCP in its namespace only; its socket's mode and reach
+#   its socket listening on through a namespace or a store that cannot start
 #   Alertmanager's own listener there: a SIGKILL, the namespace restarted,
 #   stopped and back, failing once, stopped and started by hand with motel
 #   down; an upgrade from the proxy shape
@@ -76,8 +77,8 @@ RELOAD_WAIT=15
 # so a part that moves the store, Alertmanager or the Caddyfile moves
 # them for its own split alone. The shared sink answers each box with
 # its own deliveries (sinklog).
-split_all="vm 2b 3 3a 4 4a 4b 4c 4d 5 6 7 8 9 10 11"
-split_view="vm 2b 3 3a" split_vmalert="4 4a" split_store="4b 4c 4d 5 6" split_rules="5 7 8 9 10 11"
+split_all="vm 2b 3 3a 4 4a 4b 4c 4d 4e 5 6 7 8 9 10 11"
+split_view="vm 2b 3 3a" split_vmalert="4 4a" split_store="4b 4c 4d 4e 5 6" split_rules="5 7 8 9 10 11"
 case "${SPLIT:=all}" in
 all) parts=$split_all ;;
 view) parts=$split_view ;;
@@ -674,6 +675,23 @@ sleep 1
 systemctl is-active -q prometheus-alertmanager && ! systemctl is-active -q motel-am-metrics.socket && ! systemctl is-active -q motel-metrics-netns && amready \
 	&& pass "the namespace failing: Alertmanager starts on am.sock alone, and notify is unharmed" \
 	|| fail "the namespace failing: $(systemctl is-active prometheus-alertmanager motel-am-metrics.socket motel-metrics-netns | tr '\n' ' '), am.sock $(amready && echo answers || echo 'does not answer')"
+# A connection to vm.sock meanwhile, which is what a push or a read of
+# motel's is, cannot start the store's chain: it is closed unanswered,
+# and the socket listens on (FlushPending=). Left queued, one
+# retriggered the failing start 20 times in about 40 ms, the socket
+# failed for good and vm.sock was removed (#450); flushed, 25 back to
+# back still passed the default trigger limit (20 in 2 s), so the unit
+# has none. Made here rather than left to a push landing in the fault,
+# which only a loaded runner's longer fault did.
+n=0 answered=0
+while [ "$n" -lt 25 ]; do
+	n=$((n + 1))
+	vm -o /dev/null http://vm/health && answered=$((answered + 1))
+done
+sleep 1
+[ "$answered" = 0 ] && systemctl is-active -q motel-vm.socket && [ -S "$VM" ] \
+	&& pass "the namespace failing: 25 connections to vm.sock back to back, none answered, and the socket listens on" \
+	|| fail "the namespace failing: after 25 connections to vm.sock ($answered answered), $(systemctl show -p ActiveState,SubState,Result motel-vm.socket | tr '\n' ' '), vm.sock $([ -S "$VM" ] && echo there || echo gone)"
 rm -f "$NSD/99-e2e-fail.conf"
 rmdir "$NSD"
 systemctl daemon-reload
@@ -684,6 +702,14 @@ until nsready; do i=$((i + 1)); [ "$i" -ge 60 ] && break; sleep 2; done
 [ "$i" -lt 60 ] && [ "$(aminv)" != "$inv" ] && held "$(ampid)" \
 	&& pass "the fault gone, the namespace's start (motel's push) restarted Alertmanager, which answers on 9093 again after $(( $(date +%s) - t0 )) s" \
 	|| fail "120 s after the namespace's fault went: $(systemctl is-active motel-metrics-netns victoria-metrics motel-vm.socket prometheus-alertmanager motel-am-metrics.socket | tr '\n' ' '), the same Alertmanager: $([ "$(aminv)" = "$inv" ] && echo yes || echo no)"
+# And the store answers through vm.sock again. Tried a few times: the
+# first connection after the store's cold start can be reset (the store
+# is Type=simple, and the proxy connects before it listens).
+t1=$(date +%s)
+i=0
+until [ "$(vm http://vm/health)" = OK ]; do i=$((i + 1)); [ "$i" -ge 15 ] && break; sleep 2; done
+[ "$i" -lt 15 ] && pass "the fault gone, the store answers through vm.sock again" \
+	|| fail "$(( $(date +%s) - t1 )) s more, the store does not answer through vm.sock: $(systemctl is-active motel-vm.socket motel-vm.service victoria-metrics | tr '\n' ' ')"
 # With motel down, the namespace stopped and started by hand, then the
 # store: nothing reads am.sock, so only vmalert's start (its Wants=)
 # starts the socket in the namespace again, and the store's scrape
@@ -707,6 +733,40 @@ systemctl start motel
 i=0
 until systemctl is-active -q motel && [ -S /run/motel/admin.sock ]; do i=$((i + 1)); [ "$i" -ge 120 ] && break; sleep 0.5; done
 systemctl is-active -q motel || fail "motel did not start again: $(systemctl is-active motel)"
+
+}
+
+case_4e() {
+echo "=== metrics 4e: the store's socket through a store that exits after its start ==="
+# The store is Type=simple: its start succeeds, and one that then exits
+# (killed at its MemoryMax=, say) is restarted, which restarts its proxy
+# at the next connection to vm.sock. Five of those in 10 s were the
+# proxy's default start limit, whose start-limit-hit failed the socket
+# for good and removed vm.sock (#450, measured); the proxy has none.
+i=0
+until [ "$(vm http://vm/health)" = OK ]; do i=$((i + 1)); [ "$i" -ge 15 ] && break; sleep 2; done
+[ "$i" -lt 15 ] || fail "before the store's fault, it does not answer through vm.sock: $(systemctl show -p ActiveState,Result motel-vm.socket | tr '\n' ' ')"
+dropin=/etc/systemd/system/victoria-metrics.service.d
+printf '[Service]\nExecStart=\nExecStart=/bin/sh -c "sleep 0.3; exit 1"\n' >"$dropin/99-e2e-exit.conf"
+systemctl daemon-reload && systemctl restart victoria-metrics
+n=0 answered=0
+while [ "$n" -lt 10 ]; do
+	n=$((n + 1))
+	vm -o /dev/null http://vm/health && answered=$((answered + 1))
+	sleep 1
+done
+[ "$answered" = 0 ] && systemctl is-active -q motel-vm.socket && [ -S "$VM" ] \
+	&& pass "the store exiting after each start: 10 connections to vm.sock a second apart, none answered, and the socket listens on" \
+	|| fail "the store exiting after each start: after 10 connections ($answered answered), $(systemctl show -p ActiveState,SubState,Result motel-vm.socket | tr '\n' ' '), the proxy $(systemctl show -p Result --value motel-vm.service), vm.sock $([ -S "$VM" ] && echo there || echo gone)"
+rm -f "$dropin/99-e2e-exit.conf"
+systemctl daemon-reload && systemctl restart victoria-metrics
+# The first connection after the store's cold start can be reset (the
+# proxy connects before the store listens): tried a few times.
+t1=$(date +%s)
+i=0
+until [ "$(vm http://vm/health)" = OK ] && systemctl is-active -q motel-vmalert; do i=$((i + 1)); [ "$i" -ge 15 ] && break; sleep 2; done
+[ "$i" -lt 15 ] && pass "the fault gone, the store answers through vm.sock again, vmalert beside it" \
+	|| fail "$(( $(date +%s) - t1 )) s after the fault went: $(systemctl is-active motel-vm.socket motel-vm.service victoria-metrics motel-vmalert | tr '\n' ' ')"
 
 }
 

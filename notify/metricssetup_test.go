@@ -423,10 +423,19 @@ func TestMetricsUnitsAreTheMeasuredOnes(t *testing.T) {
 		// holds no listener in it: the namespace's start restarts it.
 		"ExecStartPost=-/usr/bin/systemctl --no-block try-restart prometheus-alertmanager.service\n",
 		"Before=victoria-metrics.service motel-vmalert.service motel-am-metrics.socket motel-vm.service\n")
-	has("motel-vm.socket", unitVMSocket, "ListenStream="+DefaultStoreSocket+"\n", "SocketGroup=motel", "SocketMode=0660")
+	// As systemd reads it: a pinned line commented out is no line.
+	has("motel-vm.socket", uncommented(unitVMSocket), "ListenStream="+DefaultStoreSocket+"\n", "SocketGroup=motel", "SocketMode=0660",
+		// A connection queued while the store's chain cannot start
+		// retriggered its failing start to the trigger limit, and the
+		// socket failed for good (#450, measured); flushed, a burst of
+		// connections still reached the limit, so it has none.
+		"FlushPending=yes\n", "TriggerLimitIntervalSec=0\n")
 	has("motel-vm.service", unitVMProxy, "NetworkNamespacePath=/run/netns/motel-metrics", "systemd-socket-proxyd --exit-idle-time=5min 127.0.0.1:8428",
 		// Not root (the box audit of 2026-11-11).
 		"DynamicUser=yes", "CapabilityBoundingSet=\n")
+	// Its start limit, reached by connections to a store that exits
+	// after its start, failed the socket for good (#450, measured).
+	has("motel-vm.service", uncommented(unitVMProxy), "StartLimitIntervalSec=0\n")
 	// The cold-boot ordering cycle's fix, and the socket handed to
 	// Alertmanager itself.
 	has(amNSSocket, unitAMMetricsSocket, "DefaultDependencies=no", "Requires=motel-metrics-netns.service\n", "After=sysinit.target motel-metrics-netns.service\n",

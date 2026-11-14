@@ -5,6 +5,13 @@
 Description=Bridge /run/motel-metrics/vm.sock to the metrics store in its namespace
 Requires=victoria-metrics.service motel-vm.socket
 After=victoria-metrics.service motel-vm.socket
+# A store that starts and then exits (it is Type=simple: killed at its
+# MemoryMax=, say) is restarted, and the proxy with it at the next
+# connection: five of those in 10 s were this unit's default start limit,
+# and its start-limit-hit failed motel-vm.socket for good, vm.sock
+# removed (measured, systemd 257; #450). Its starts are its socket's
+# connections, so no limit.
+StartLimitIntervalSec=0
 
 [Service]
 Type=notify
