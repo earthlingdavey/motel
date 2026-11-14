@@ -310,7 +310,13 @@ before Caddy loads the config it has just adapted, reading
 `apps.monitor.metrics` in the adapted JSON: the groups empty in setup's
 state directory, and the same line on stderr; nothing on a box the
 store is not set up on, and nothing at `validate` or `reload`
-(`notify.RetireRules`; Copilot round 4 on #423). Inside the one app,
+(`notify.RetireRules`; Copilot round 4 on #423). The gate, and Start
+for a config with the line, act on the state directory only as its
+owner (`notify.NotOwner`; DESIGN-notify.md, "Reloads"): Start then
+writes no rules and starts no push or comparison, so root by hand
+leaves the rules and the store as they are, whatever the file's
+metrics line, and is told so.
+Inside the one app,
 Provision runs notify's part first (the rules are rendered from its
 receivers), Start points notify's engine at the config before the
 pusher, so the chain's events reach an engine serving it, and Stop

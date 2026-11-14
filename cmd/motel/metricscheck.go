@@ -22,7 +22,9 @@ var metricsStateDir = notify.DefaultMetricsStateDir
 // restart (Copilot round 4 on #423). A config with the line is left
 // alone: its Start writes its rules, and a shutdown keeps them. A reload
 // that takes the line away is the pusher's (notify/metricspush.go,
-// release); validate writes nothing. A config that is not JSON, or
+// release); validate writes nothing. A process that does not run as the
+// state directory's owner leaves the rules as they are, saying why
+// (notify.NotOwner). A config that is not JSON, or
 // whose monitor app is not an object, is Caddy's to refuse.
 func retireMetricsRules(cfg []byte, stderr io.Writer) {
 	var c struct {
@@ -39,6 +41,10 @@ func retireMetricsRules(cfg []byte, stderr io.Writer) {
 		return
 	}
 	path := filepath.Join(metricsStateDir, notify.RulesName)
+	if why := notify.NotOwner(metricsStateDir, euid()); why != "" {
+		_, _ = fmt.Fprintf(stderr, "WARNING: monitor metrics: this config has no metrics line, and the rules in %s were left as they are: %s: this process writes nothing there\n", path, why)
+		return
+	}
 	switch changed, err := notify.RetireRules(metricsStateDir); {
 	case err != nil:
 		_, _ = fmt.Fprintf(stderr, "ERROR: %s: %s: %v\n", notify.RulesNotRetiredMessage, path, err)

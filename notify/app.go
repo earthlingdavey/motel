@@ -297,13 +297,24 @@ func readSecrets(path string) (map[string]string, error) {
 // push at this config. Nothing here fails the config load: serving
 // never waits on notify or the store, and every failure is a journal
 // line naming what to do. notify's engine comes first, so that the
-// store's chain events reach an engine serving this config.
+// store's chain events reach an engine serving this config. A part
+// whose state directory this process does not run as the owner of
+// (NotOwner) is not started: no file, no reload, no post or push, and
+// Stop then finds nothing of it to release.
 func (a *App) Start() error {
 	if a.notifies {
-		a.startNotify()
+		if why := NotOwner(theStateDir, euid()); why != "" {
+			a.logger.Warn("monitor: Alertmanager is left as it is: " + why + ": this process writes nothing there, reloads nothing and posts nothing, so no event or heartbeat of this config reaches a channel")
+		} else {
+			a.startNotify()
+		}
 	}
 	if a.Metrics != nil {
-		a.Metrics.start()
+		if why := NotOwner(a.Metrics.stateDir(), euid()); why != "" {
+			a.logger.Warn("monitor metrics: the store and vmalert are left as they are: " + why + ": this process writes no rules there, and pushes and compares nothing")
+		} else {
+			a.Metrics.start()
+		}
 	}
 	return nil
 }

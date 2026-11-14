@@ -631,6 +631,119 @@ func TestStartAndStopBothParts(t *testing.T) {
 	}
 }
 
+// A Start by a process that does not run as a state directory's owner
+// (root trying a file by hand while motel.service runs) starts neither
+// part on it: Alertmanager's config, the URL files, the producers' kept
+// states and the rules stay as the service left them, no engine, pusher
+// or comparator serves the config (so nothing is posted or pushed),
+// each part says why, and Stop releases nothing. As the owner, the same
+// config writes both: the directories are this test's to see change.
+func TestAStartNotAsTheOwnerLeavesTheStateAlone(t *testing.T) {
+	dir := t.TempDir()
+	state, metrics := filepath.Join(dir, "state"), filepath.Join(dir, "metrics")
+	useStateDir(t, state)
+	useSocket(t, filepath.Join(dir, "am.sock"))
+	savedEngine, savedPusher, savedComparator := theEngine, thePusher, theComparator
+	theEngine = newEngine()
+	thePusher = newPusher(theEngine.report)
+	theComparator = newComparator(theEngine.report)
+	t.Cleanup(func() { theEngine, thePusher, theComparator = savedEngine, savedPusher, savedComparator })
+	files := map[string]string{
+		filepath.Join(state, ConfigName):           "# Rendered by motel\nreceivers: [ops]\n",
+		filepath.Join(state, "url-NOTIFY_OPS_URL"): "https://ntfy.sh/ops\n",
+		filepath.Join(state, externalName):         "{}\n",
+		filepath.Join(metrics, RulesName):          "groups: []\n",
+	}
+	for path, body := range files {
+		if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(body), 0o640); err != nil {
+			t.Fatal(err)
+		}
+	}
+	secrets := filepath.Join(dir, "_box.env")
+	if err := os.WriteFile(secrets, []byte("NOTIFY_OPS_URL=https://ntfy.sh/other\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	src := "{\n\tadmin off\n\tmonitor {\n\t\tchannel ops ntfy {secret.NOTIFY_OPS_URL}\n\t\toperator ops\n\t\tsecrets_file " + secrets +
+		"\n\t\tbackup_record off\n\t\tmetrics " + filepath.Join(dir, "vm.sock") + "\n\t}\n}\n:8080 {\n\trespond ok\n}\n"
+	start := func() (*App, *observer.ObservedLogs) {
+		t.Helper()
+		a, err := provision(t, src)
+		if err != nil {
+			t.Fatal(err)
+		}
+		a.Metrics.stateDirOverride = metrics
+		core, logs := observer.New(zap.WarnLevel)
+		a.logger = zap.New(core)
+		if err := a.Start(); err != nil {
+			t.Fatal(err)
+		}
+		return a, logs
+	}
+	serving := func() (*App, *MetricsStore, *MetricsStore) {
+		theEngine.mu.Lock()
+		defer theEngine.mu.Unlock()
+		thePusher.mu.Lock()
+		defer thePusher.mu.Unlock()
+		theComparator.mu.Lock()
+		defer theComparator.mu.Unlock()
+		return theEngine.active, thePusher.active, theComparator.active
+	}
+	unchanged := func(when string) {
+		t.Helper()
+		for path, body := range files {
+			if b, err := os.ReadFile(path); err != nil || string(b) != body {
+				t.Errorf("%s: %s is %q (%v); want it as it was", when, path, b, err)
+			}
+		}
+		for _, d := range []string{state, metrics} {
+			if entries, _ := os.ReadDir(d); len(entries) != map[string]int{state: 3, metrics: 1}[d] {
+				t.Errorf("%s: %s holds %d entries; want nothing added", when, d, len(entries))
+			}
+		}
+	}
+
+	was := euid
+	t.Cleanup(func() { euid = was })
+	euid = func() int { return os.Geteuid() + 1 }
+	a, logs := start()
+	unchanged("after Start")
+	if e, p, c := serving(); e != nil || p != nil || c != nil {
+		t.Errorf("after Start the engine serves %v, the pusher %v, the comparator %v; want none", e, p, c)
+	}
+	notOwned := func(what, dir string) bool {
+		for _, l := range logs.All() {
+			if strings.HasPrefix(l.Message, what) && strings.Contains(l.Message, dir+" is owned by ") && strings.Contains(l.Message, ", not as its owner: ") {
+				return true
+			}
+		}
+		return false
+	}
+	if !notOwned("monitor: Alertmanager is left as it is: ", state) || !notOwned("monitor metrics: the store and vmalert are left as they are: ", metrics) {
+		t.Errorf("logged %v; want why each part was left alone", logs.All())
+	}
+	if err := a.Stop(); err != nil {
+		t.Fatal(err)
+	}
+	unchanged("after Stop")
+	euid = was
+
+	a, _ = start()
+	if e, p, _ := serving(); e != a || p != a.Metrics {
+		t.Errorf("as the owner, the engine serves %v and the pusher %v; want this config", e, p)
+	}
+	if err := a.Stop(); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{filepath.Join(state, ConfigName), filepath.Join(metrics, RulesName)} {
+		if b, _ := os.ReadFile(path); string(b) == files[path] {
+			t.Errorf("as the owner, %s was not written", path)
+		}
+	}
+}
+
 // Every field of the app but Metrics is a notify line: set to any value
 // a line can give it, the block is notify's. A field added later is
 // held to it with no list to update; one that is not omitempty makes

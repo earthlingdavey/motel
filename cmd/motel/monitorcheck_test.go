@@ -81,6 +81,66 @@ func TestTheGateSendsNothingAtABootWithoutChannels(t *testing.T) {
 	}
 }
 
+// asAnotherUser has the gate run as a user that owns none of the test's
+// directories: root trying a file by hand on a live box.
+func asAnotherUser(t *testing.T) {
+	t.Helper()
+	was := euid
+	euid = func() int { return os.Geteuid() + 1 }
+	t.Cleanup(func() { euid = was })
+}
+
+// `motel run` by a user other than the state directory's owner (root
+// trying a file by hand, the service running) is not motel.service's
+// start: it leaves Alertmanager's config, the URL files and the
+// producers' kept states as the running service left them, writes
+// nothing the service could not read, and says why. A box setup has
+// not run on stays unsaid.
+func TestARunByHandLeavesTheServicesAlertmanagerAlone(t *testing.T) {
+	config, _ := dirs(t)
+	noBlock := config + "/Caddyfile"
+	write(t, noBlock, "{\n\tadmin off\n}\n", 0o644)
+	state := t.TempDir()
+	wasDir, wasSock := notifyStateDir, notifySocket
+	notifyStateDir, notifySocket = state, filepath.Join(t.TempDir(), "absent.sock")
+	t.Cleanup(func() { notifyStateDir, notifySocket = wasDir, wasSock })
+	// The store's directory is not there: this machine's own, if it has
+	// one, is not this test's to report on.
+	wasMetrics := metricsStateDir
+	metricsStateDir = filepath.Join(t.TempDir(), "motel-metrics")
+	t.Cleanup(func() { metricsStateDir = wasMetrics })
+	rendered := "# Rendered by motel\nreceivers: [ops]\n"
+	write(t, filepath.Join(state, notify.ConfigName), rendered, 0o640)
+	write(t, filepath.Join(state, "url-NOTIFY_OPS_URL"), "https://ntfy.sh/ops\n", 0o640)
+	write(t, filepath.Join(state, "external.json"), "{}\n", 0o640)
+	asAnotherUser(t)
+
+	var stderr bytes.Buffer
+	if gate([]string{"run", "--config", noBlock}, &stderr) {
+		t.Fatalf("stopped: %s", stderr.String())
+	}
+	b, _ := os.ReadFile(filepath.Join(state, notify.ConfigName))
+	_, urlErr := os.Stat(filepath.Join(state, "url-NOTIFY_OPS_URL"))
+	_, extErr := os.Stat(filepath.Join(state, "external.json"))
+	entries, _ := os.ReadDir(state)
+	if string(b) != rendered || urlErr != nil || extErr != nil || len(entries) != 3 {
+		t.Errorf("the state directory was changed: config %q, url file %v, external.json %v, %d entries", b, urlErr, extErr, len(entries))
+	}
+	said := stderr.String()
+	if strings.Contains(said, notify.SendNothingMessage) ||
+		!strings.Contains(said, "WARNING: monitor: this config has no monitor block with channels, and Alertmanager was left as it is: "+state+" is owned by ") ||
+		!strings.Contains(said, ", not as its owner: this process writes nothing there and reloads nothing\n") {
+		t.Errorf("said %q; want why the service's Alertmanager was left alone", said)
+	}
+
+	notifyStateDir = filepath.Join(t.TempDir(), "motel-notify")
+	stderr.Reset()
+	gate([]string{"run", "--config", noBlock}, &stderr)
+	if strings.Contains(stderr.String(), "monitor") {
+		t.Errorf("not set up: said %q; want nothing", stderr.String())
+	}
+}
+
 // `motel reload` of a config with a monitor block loads it even when it
 // is unchanged: the block reads the box's secrets file, which the config
 // does not hold, so a mended _box.env would otherwise load nothing.

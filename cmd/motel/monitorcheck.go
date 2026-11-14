@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
 
 	"github.com/smallhoursorg/motel/notify"
 )
@@ -47,8 +48,14 @@ var (
 // resolve_timeout with a recovery that did not happen
 // (notify.SendNothing). A reload's case is notify's own
 // (engine.release); a config that runs notify renders its own at Start.
+// A process that does not run as the state directory's owner leaves it
+// and Alertmanager alone, saying why (notify.NotOwner).
 func sendNothing(monitor []byte, stderr io.Writer) {
 	if notify.ReadsSecrets(monitor) {
+		return
+	}
+	if why := notify.NotOwner(notifyStateDir, euid()); why != "" {
+		_, _ = fmt.Fprintf(stderr, "WARNING: monitor: this config has no monitor block with channels, and Alertmanager was left as it is: %s: this process writes nothing there and reloads nothing\n", why)
 		return
 	}
 	switch changed, err := notify.SendNothing(notifyStateDir, notifySocket); {
@@ -58,6 +65,10 @@ func sendNothing(monitor []byte, stderr io.Writer) {
 		_, _ = fmt.Fprintln(stderr, notify.SendNothingMessage)
 	}
 }
+
+// euid is this process's effective uid. A variable only so a test can
+// run as a user that does not own its state directories.
+var euid = os.Geteuid
 
 // reloadForces reports whether `motel reload` must load the config even
 // when it is unchanged: a monitor block with channels reads the box's

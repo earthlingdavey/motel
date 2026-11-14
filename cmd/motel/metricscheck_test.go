@@ -83,6 +83,33 @@ func TestABootWithNoMetricsLineRetiresTheRules(t *testing.T) {
 	}
 }
 
+// `motel run` by a user other than the state directory's owner (root
+// trying a file by hand, the service running) is not motel.service's
+// start: the rules stay as the running service wrote them, and it says
+// why.
+func TestARunByHandLeavesTheServicesRulesAlone(t *testing.T) {
+	config, _ := dirs(t)
+	noBlock := config + "/Caddyfile"
+	write(t, noBlock, "{\n\tadmin off\n}\n", 0o644)
+	dir := metricsDir(t)
+	asAnotherUser(t)
+	var stderr bytes.Buffer
+	if gate([]string{"run", "--config", noBlock}, &stderr) {
+		t.Fatalf("stopped: %s", stderr.String())
+	}
+	b, _ := os.ReadFile(filepath.Join(dir, notify.RulesName))
+	entries, _ := os.ReadDir(dir)
+	if string(b) != stale || len(entries) != 1 {
+		t.Errorf("rules.yml %q, %d entries; want it untouched, and nothing written", b, len(entries))
+	}
+	said := stderr.String()
+	if strings.Contains(said, notify.RulesRetiredMessage) ||
+		!strings.Contains(said, "WARNING: monitor metrics: this config has no metrics line, and the rules in "+filepath.Join(dir, notify.RulesName)+" were left as they are: "+dir+" is owned by ") ||
+		!strings.Contains(said, ", not as its owner: this process writes nothing there\n") {
+		t.Errorf("said %q; want why the rules were left alone", said)
+	}
+}
+
 // The gate reads the adapted JSON: the line is apps.monitor.metrics, an
 // object; anything else is no line, and a config that is not JSON, or
 // whose monitor app is not an object, is Caddy's to refuse.

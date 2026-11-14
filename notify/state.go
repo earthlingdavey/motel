@@ -7,7 +7,9 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"os/user"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -16,6 +18,42 @@ import (
 // errNotSetUp is a state directory that is not there: `motel monitor
 // setup` has not run, so there is no Alertmanager to configure.
 var errNotSetUp = errors.New("alertmanager is not set up on this box (run motel monitor setup as root)")
+
+// NotOwner is why a process running as uid must leave dir, a state
+// directory setup made the motel user's, alone: only motel.service's
+// process runs as its owner. Another, such as root trying a file by
+// hand on a live box (`motel run --config …`), would replace or retire
+// what the running service put there without telling it, post to the
+// service's Alertmanager or store, and leave files of its own user,
+// which the service cannot read. "" when uid owns dir, or when its owner
+// is not known: dir missing (setup has not run), which each caller says
+// as before, or another error, which the write that follows reports.
+// Both of motel's writers at a start ask it: cmd/motel's gate, and
+// Start.
+func NotOwner(dir string, uid int) string {
+	fi, err := os.Stat(dir)
+	if err != nil {
+		return ""
+	}
+	st, ok := fi.Sys().(*syscall.Stat_t)
+	if !ok || int(st.Uid) == uid {
+		return ""
+	}
+	return fmt.Sprintf("%s is owned by %s, and this process runs as %s, not as its owner", dir, userText(int(st.Uid)), userText(uid))
+}
+
+// euid is this process's effective uid, which Start holds to its state
+// directories' owners. A variable only so a test can run as another.
+var euid = os.Geteuid
+
+// userText is a uid as a message names it: the user's name, or the
+// number when it has none.
+func userText(uid int) string {
+	if u, err := user.LookupId(strconv.Itoa(uid)); err == nil {
+		return u.Username
+	}
+	return "uid " + strconv.Itoa(uid)
+}
 
 // writeState writes what render made into dir: each URL file, then the
 // config, each to a temporary beside it and renamed over the name, so
