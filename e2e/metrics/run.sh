@@ -735,6 +735,9 @@ echo "=== metrics 4e: the store's socket through a store that exits after its st
 # at the next connection to vm.sock. Five of those in 10 s were the
 # proxy's default start limit, whose start-limit-hit failed the socket
 # for good and removed vm.sock (#450, measured); the proxy has none.
+i=0
+until [ "$(vm http://vm/health)" = OK ]; do i=$((i + 1)); [ "$i" -ge 15 ] && break; sleep 2; done
+[ "$i" -lt 15 ] || fail "before the store's fault, it does not answer through vm.sock: $(systemctl show -p ActiveState,Result motel-vm.socket | tr '\n' ' ')"
 dropin=/etc/systemd/system/victoria-metrics.service.d
 printf '[Service]\nExecStart=\nExecStart=/bin/sh -c "sleep 0.3; exit 1"\n' >"$dropin/99-e2e-exit.conf"
 systemctl daemon-reload && systemctl restart victoria-metrics
