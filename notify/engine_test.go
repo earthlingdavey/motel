@@ -38,6 +38,12 @@ func (p *recPoster) postAlerts(_ context.Context, a []amAlert) error {
 	return nil
 }
 
+func (p *recPoster) setErr(err error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.err = err
+}
+
 func (p *recPoster) take() []amAlert {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -660,7 +666,7 @@ func TestResolveDeliveredLateIsStillPostedAgain(t *testing.T) {
 	te.report(watchdog(true))
 	te.report(watchdog(false))
 	te.drain()
-	te.p.err = &netErr{syscall.ECONNREFUSED}
+	te.p.setErr(&netErr{syscall.ECONNREFUSED})
 	te.advance(31 * time.Second)
 	te.tick() // the resolve is queued
 	te.drain()
@@ -669,9 +675,7 @@ func TestResolveDeliveredLateIsStillPostedAgain(t *testing.T) {
 		te.tick()
 		te.drain()
 	}
-	te.p.mu.Lock()
-	te.p.err = nil
-	te.p.mu.Unlock()
+	te.p.setErr(nil)
 	if r := resolves(te.drain()); len(r) != 1 {
 		t.Fatalf("the late delivery = %+v", r)
 	}
@@ -693,7 +697,7 @@ func TestResolveGivenUpIsNotPostedAgain(t *testing.T) {
 	te.report(watchdog(true))
 	te.report(watchdog(false))
 	te.drain()
-	te.p.err = &netErr{syscall.ECONNREFUSED}
+	te.p.setErr(&netErr{syscall.ECONNREFUSED})
 	te.advance(31 * time.Second)
 	te.tick()
 	te.drain()
@@ -706,13 +710,123 @@ func TestResolveGivenUpIsNotPostedAgain(t *testing.T) {
 	if n := len(te.ends); n != 0 {
 		t.Fatalf("a given-up resolve left %d entries", n)
 	}
-	te.p.mu.Lock()
-	te.p.err = nil
-	te.p.mu.Unlock()
+	te.p.setErr(nil)
 	te.drain()
 	te.mute("blog", false)
 	if r := resolves(te.drain()); len(r) != 0 {
 		t.Fatalf("a given-up resolve posted again: %+v", r)
+	}
+}
+
+// A resolve and a mute's end's post of it, both waiting on Alertmanager
+// (down through a deploy), share one entry: it stands while either
+// waits, whichever is taken or given up first (the review pass of
+// Copilot round 1's fix).
+func TestResolveWithTwoPostsWaiting(t *testing.T) {
+	down := &netErr{syscall.ECONNREFUSED}
+	queueResolveThroughADeploy := func(t *testing.T) *testEngine {
+		te := newTestEngine(t)
+		te.report(watchdog(true))
+		te.report(watchdog(false))
+		te.drain()
+		te.p.setErr(down)
+		te.advance(31 * time.Second)
+		te.tick() // the resolve is queued
+		te.drain()
+		te.advance(10 * time.Second)
+		te.mute("blog", true)
+		te.advance(80 * time.Second)
+		te.tick()
+		te.mute("blog", false) // its post of the resolve is queued too
+		te.drain()
+		return te
+	}
+	againAtTheNextMute := func(t *testing.T, te *testEngine) {
+		t.Helper()
+		te.p.setErr(nil)
+		te.drain()
+		te.advance(5 * time.Second)
+		te.mute("blog", true)
+		te.mute("blog", false)
+		if r := resolves(te.drain()); len(r) != 1 {
+			t.Fatalf("at the next mute's end = %+v", r)
+		}
+	}
+	t.Run("the first taken, the second waiting past the window", func(t *testing.T) {
+		te := queueResolveThroughADeploy(t)
+		te.p.setErr(nil)
+		for taken := false; !taken; { // up to the resolve, and no further
+			if again, _ := te.attempt(context.Background()); !again {
+				t.Fatal("the resolve was not taken")
+			}
+			taken = len(resolves(te.p.take())) > 0
+		}
+		te.p.setErr(down)
+		for range 6 {
+			te.advance(30 * time.Second)
+			te.tick()
+			te.drain()
+		}
+		againAtTheNextMute(t, te)
+	})
+	t.Run("the first given up, the second taken", func(t *testing.T) {
+		te := queueResolveThroughADeploy(t)
+		for range 8 { // past the resolve's five minutes, inside the second's
+			te.advance(30 * time.Second)
+			te.tick()
+			te.drain()
+		}
+		if len(te.ends) != 1 {
+			t.Fatalf("the entry went with the first post: %v", te.ends)
+		}
+		againAtTheNextMute(t, te)
+	})
+}
+
+// fillingPoster fills the engine's queue while a post is in flight, so a
+// full queue drops that post as its oldest, then answers the post as
+// taken.
+type fillingPoster struct {
+	recPoster
+	e    *engine
+	done bool
+}
+
+func (p *fillingPoster) postAlerts(ctx context.Context, a []amAlert) error {
+	if !p.done {
+		p.done = true
+		p.e.mu.Lock()
+		for range queueMax {
+			p.e.enqueue(&pending{key: "filler", first: p.e.now()})
+		}
+		p.e.mu.Unlock()
+	}
+	return p.recPoster.postAlerts(ctx, a)
+}
+
+// A resolve the full queue drops while Alertmanager is taking it was
+// taken all the same: a mute right after still has it to post again.
+func TestResolveDroppedWhilePostingIsKept(t *testing.T) {
+	te := newTestEngine(t)
+	te.report(watchdog(true))
+	te.report(watchdog(false))
+	te.drain()
+	te.advance(31 * time.Second)
+	te.reconcile(watchdog(false).key(), te.states[watchdog(false).key()], te.at) // the resolve alone in the queue
+	fp := &fillingPoster{e: te.engine}
+	te.post = fp
+	te.attempt(context.Background())
+	if r := resolves(fp.take()); len(r) != 1 {
+		t.Fatalf("the resolve was not posted: %+v", r)
+	}
+	te.mu.Lock()
+	te.queue = nil
+	te.mu.Unlock()
+	te.post = te.p
+	te.mute("blog", true)
+	te.mute("blog", false)
+	if r := resolves(te.drain()); len(r) != 1 {
+		t.Fatalf("at the mute's end = %+v", r)
 	}
 }
 

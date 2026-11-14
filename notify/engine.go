@@ -424,7 +424,7 @@ func (e *engine) reconcile(key string, st *stateAlert, now time.Time) {
 		p := e.postState(key, st, now, now, true)
 		delete(e.states, key)
 		if muteTarget(st.ev) {
-			p.end = &toldEnd{ev: st.ev, startsAt: st.startsAt, at: now, queued: true}
+			p.end = &toldEnd{ev: st.ev, startsAt: st.startsAt, queued: 1}
 			e.ends[key] = p.end
 		}
 	default:
@@ -452,14 +452,26 @@ func (e *engine) muted(ev Event) bool {
 // it takes the post, so a deploy that starts in that time swallows it
 // too: the mute marks it, and its end posts it again. A resolve that was
 // sent before is not sent twice (Alertmanager's notification log:
-// measured). One the queue gives up on is forgotten, as a failed
-// delivery: Alertmanager never had it.
+// measured). One whose every post the queue gave up on is forgotten, as
+// a failed delivery: Alertmanager never had it.
 type toldEnd struct {
 	ev       Event
 	startsAt time.Time
-	at       time.Time // Alertmanager took it
-	queued   bool      // its post waits for Alertmanager: at is not yet
-	muted    bool      // a mute of its app began while queued or within endWindow of at
+	at       time.Time // Alertmanager last took a post of it; zero: none yet
+	queued   int       // its posts waiting in the queue (the resolve, a mute's end's)
+	muted    bool      // a mute of its app began while a post waited or within endWindow of at
+}
+
+// endPosted settles a post of t that Alertmanager took (took) or that
+// the queue gave up on. With mu held.
+func (e *engine) endPosted(key string, t *toldEnd, took bool) {
+	t.queued--
+	if took {
+		t.at = e.now()
+	}
+	if t.queued == 0 && t.at.IsZero() && e.ends[key] == t {
+		delete(e.ends, key)
+	}
 }
 
 // endWindow is how long a resolve Alertmanager took may yet meet a mute:
@@ -492,7 +504,7 @@ func (e *engine) mute(app string, on bool) {
 		e.mutes[app] = now
 		e.enqueue(&pending{key: "mute/" + app, alerts: []amAlert{muteAlert(app, now, time.Time{})}, first: now})
 		for _, t := range e.ends {
-			if t.ev.App == app && (t.queued || now.Sub(t.at) < endWindow) {
+			if t.ev.App == app && (t.queued > 0 || !t.at.IsZero() && now.Sub(t.at) < endWindow) {
 				t.muted = true
 			}
 		}
@@ -518,7 +530,8 @@ func (e *engine) endMute(app string, now time.Time) {
 			delete(e.ends, key) // fired since: that alert is the key's now
 		default:
 			e.enqueue(&pending{key: key, alerts: []amAlert{stateAlertFor(t.ev, t.startsAt, now)}, first: now, end: t})
-			t.queued, t.muted = true, false
+			t.queued++
+			t.muted = false
 		}
 	}
 	for key, st := range e.states {
@@ -557,7 +570,7 @@ func (e *engine) tick() {
 	}
 	e.persistExternal() // a recovery's hold ended
 	for key, t := range e.ends {
-		if !t.queued && !t.muted && now.Sub(t.at) >= endWindow {
+		if t.queued == 0 && !t.muted && now.Sub(t.at) >= endWindow {
 			delete(e.ends, key)
 		}
 	}
@@ -694,8 +707,8 @@ func (e *engine) enqueue(p *pending) {
 
 func (e *engine) gaveUp(p *pending, err error) {
 	e.failures.inc()
-	if p.end != nil && e.ends[p.key] == p.end {
-		delete(e.ends, p.key)
+	if p.end != nil {
+		e.endPosted(p.key, p.end, false)
 	}
 	log := e.logger.Debug
 	if p.journal {
@@ -727,7 +740,15 @@ func (e *engine) attempt(ctx context.Context) (again bool, wait time.Duration) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	if len(e.queue) == 0 || e.queue[0] != p {
-		return true, 0 // dropped while posting
+		// Dropped while posting (a full queue's oldest, given up): a
+		// resolve Alertmanager took all the same may yet meet a mute.
+		if err == nil && p.end != nil && e.active != nil {
+			p.end.at = e.now()
+			if e.ends[p.key] == nil {
+				e.ends[p.key] = p.end
+			}
+		}
+		return true, 0
 	}
 	p.attempt++
 	var refused *amStatusError
@@ -735,7 +756,7 @@ func (e *engine) attempt(ctx context.Context) (again bool, wait time.Duration) {
 	case err == nil:
 		e.queue = e.queue[1:]
 		if p.end != nil {
-			p.end.at, p.end.queued = e.now(), false
+			e.endPosted(p.key, p.end, true)
 		}
 		return true, 0
 	case errors.As(err, &refused) && refused.code < 500, e.now().Sub(p.first) >= e.retryFor:
