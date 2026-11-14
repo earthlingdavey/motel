@@ -363,7 +363,7 @@ the operator's channels (with `--subject app:<name>`, to that app's
 deployers too). Two things keep an event from a channel. A channel
 with a `severity` floor hears nothing below it, and an event is a
 warning unless `--severity` says otherwise. And one key (the source,
-subject, name and instance together) sends four messages at once, then
+subject, name and instance together) is posted four times at once, then
 one more every 15 minutes: past that, an event is a journal line only,
 marked `"suppressed":"more than four an hour for this key"`.
 
@@ -377,6 +377,53 @@ producer may resolve whatever it last said). On a box where
 <key>, and delivered nowhere: …`. `--summary` is always needed: one line, at
 most 200 characters. When a state resolves, the message repeats the
 summary it fired with, not the one you give.
+
+A one-shot sent again with the same `--source`, `--subject`, `--name`,
+`--instance` and `--severity` is the same alert to Alertmanager while
+it still holds the last one, so it reaches your channels once until
+five to six minutes after the last of them, and each repeat inside that
+starts it again. The message you got does not say it happened again;
+the journal has a `monitor: event` line for every one. A producer that
+wants every occurrence delivered gives each its own `--instance`, such
+as a run id, a UUID or a timestamp. A numeric run id or a lowercase
+UUID will do; a 40-hex git commit id is refused as secret-shaped. A
+timestamp to the second tells apart occurrences at least a second
+apart; a producer that can fire faster uses an id unique to each
+occurrence, such as a UUID. An instance per occurrence has a
+cost: the instance is part of the key, so the limit of four then one
+every 15 minutes counts each instance on its own and no longer holds
+back a storm. Of the recipes below, the daily reboot reminder is not
+affected; the `OnFailure=` unit tells a unit that fails again within
+five or six minutes once.
+
+A timestamp is written for where the command runs. In a shell:
+
+```sh
+--instance "$(date -u +%Y%m%dT%H%M%SZ)"
+```
+
+In a crontab line, each `%` as `\%`: cron turns a bare `%` into a new
+line and sends the rest as input (crontab(5)):
+
+```
+--instance "$(date -u +\%Y\%m\%dT\%H\%M\%SZ)"
+```
+
+In a unit's `ExecStart=`, through `/bin/sh -c '…'`, with each `%` as
+`%%` and each `$` as `$$`. Written as in a shell, systemd runs no
+`$(…)`: a word that is nothing else vanishes, so the next flag is
+taken for the instance and `send` fails, and inside a longer word `%Y`
+and the rest are systemd's own specifiers. The `OnFailure=` template
+below, with its unit's name and the time:
+
+```ini
+ExecStart=/bin/sh -c 'exec /usr/bin/motel monitor send --source systemd --name unit_failed --instance "%i-$$(date -u +%%Y%%m%%dT%%H%%M%%SZ)" --summary "%i failed: see journalctl -u %i"'
+```
+
+A UUID has no `%` to escape: the kernel gives a new lowercase one at
+each read of `/proc/sys/kernel/random/uuid`, so
+`--instance "$(cat /proc/sys/kernel/random/uuid)"` serves a shell and a
+crontab line as it is, and a unit's `/bin/sh -c '…'` with `$$(…)`.
 
 A state outlives a restart of motel (an upgrade of the package restarts
 it): motel keeps what is firing in `/var/lib/motel-notify/external.json`
