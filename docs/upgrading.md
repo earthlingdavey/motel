@@ -377,7 +377,7 @@ Alertmanager's and the store's data directories stay 0755, readable by
 every local user, until both drop-ins are rewritten. After step 3, on
 a box with the store, root runs `motel monitor setup --metrics`. It
 rewrites the store's units and
-restarts vmalert and the store (a push or two fails meanwhile). It
+restarts vmalert and the store (a push may fail meanwhile). It
 also retires the proxy that carried vmalert's posts to Alertmanager
 (`retired motel-am-proxy.socket …`) and restarts Alertmanager once,
 which loses what it holds in memory, so that Alertmanager holds that
@@ -405,6 +405,19 @@ alone when none does), and that setup retires it and, unless
 Alertmanager listens in the store's namespace already, restarts (or
 starts) it once.
 
+**One run of `motel monitor setup --metrics` covers every paragraph
+below that fits a box**, however many do, and it is the same run as
+the `--metrics` one above: each run writes all of its units and
+`scrape.yml` as this motel ships them, and restarts the store and
+vmalert. The warning each paragraph names is the store's (`the files
+motel monitor setup --metrics wrote differ …`). None of them needs
+`motel monitor setup` without `--metrics`, which is due only as the
+paragraph above says, or while a load warns `monitor: the units motel
+monitor setup wrote differ …`.
+The store is down for part of the run, so a push that comes then
+fails; motel pushes every 30 seconds, and hotserve-1's two re-runs
+(2026-11-14) took under 2.5 seconds each, with no push failed.
+
 **Run `motel monitor setup --metrics` again on a box whose store was set
 up before the 5 s clocks** (the warning above names `10-motel.conf` and
 `motel-vmalert.service`). Until it is, vmalert re-reads a new
@@ -412,8 +425,8 @@ up before the 5 s clocks** (the warning above names `10-motel.conf` and
 VictoriaMetrics' 30 s `-search.latencyOffset`, so every alert and
 `GET /<app>` waits the 30 s as before. Post-deploy checks are right
 either way: they ask the store for the 5 s themselves. The re-run
-rewrites the units and restarts the store and vmalert; a push or two
-fails meanwhile.
+rewrites the units and restarts the store and vmalert; a push may
+fail meanwhile.
 
 **Run `motel monitor setup --metrics` again on a box whose store was set
 up before its restarts backed off** (each load's warning names
@@ -422,7 +435,7 @@ fails at its start (a full disk, say) is restarted about 60 times a
 second for as long as the fault lasts, about a fifth of a core and some
 400 journal lines a second. The re-run writes the drop-in that backs
 the restarts off from 1 s to a minute; it restarts the store and
-vmalert, so a push or two fails meanwhile.
+vmalert, so a push may fail meanwhile.
 
 **The same re-run trims what the store keeps of its own scrapes.** From
 this version the store keeps, of its scrapes of itself, vmalert and
@@ -457,7 +470,7 @@ reads the failed counter alone, and misses a failure counted just after
 a config load that brings the counter back to the value the scrape
 before the load read; motel's own `ChannelFailed` tells of it either
 way. The re-run rewrites `scrape.yml` and restarts the store and
-vmalert; a push or two fails meanwhile.
+vmalert; a push may fail meanwhile.
 
 ## Patching the host
 
