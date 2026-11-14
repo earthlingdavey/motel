@@ -13,6 +13,7 @@
 #   deploy_failed (a real deploy) → /ops and /blog, the same second
 #   a box one-shot (monitor send) → /ops only, at once
 #   four distinct one-shots       → four deliveries, none lost
+#   one one-shot sent twice       → two deliveries: each occurrence is its own alert
 #   watchdog_throttled blog       → nothing: inhibited by deploy_in_progress
 #   watchdog_throttled shop       → /ops, after the 30 s group_wait
 #   a box state (monitor send)    → /ops at +30 s; its recovery within a minute of motel's hold
@@ -224,6 +225,18 @@ for n in 1 2 3 4; do send --name batch_item_failed --instance "item-$n" --summar
 sleep 3
 n=$(arrivals /ops batch_item_failed "$t_four" | wc -l)
 [ "$n" -eq 4 ] && pass "four distinct one-shots in a burst: four deliveries, none lost" || fail "four one-shots: $n deliveries"
+# The same one-shot twice, its arguments the same: each occurrence is its
+# own alert to Alertmanager (occurred_at), so each is delivered. 9 counts
+# it again.
+t_rep=$(now_ms)
+for n in 1 2; do
+	send --name repeat_job_failed --summary "e2e: the job failed again" || fail "monitor send: $(cat /tmp/send.out)"
+	[ "$n" = 1 ] && sleep 3
+done
+i=0
+until [ "$(arrivals /ops repeat_job_failed "$t_rep" | wc -l)" -ge 2 ]; do i=$((i + 1)); [ "$i" -ge 40 ] && break; sleep 0.25; done
+n=$(arrivals /ops repeat_job_failed "$t_rep" | wc -l)
+[ "$n" -eq 2 ] && pass "the same one-shot sent twice, 3 s apart: two deliveries" || fail "the same one-shot twice: $n deliveries, want 2"
 send --subject app:nosuch --name x_failed --summary "e2e" && fail "a subject naming no app was accepted" || pass "refused: $(tail -1 /tmp/send.out)"
 send --name deploy_in_progress --subject app:blog --summary "e2e" && fail "the mute's name was accepted" || pass "refused: $(tail -1 /tmp/send.out)"
 send --name watchdog_throttled --subject app:blog --summary "e2e" && fail "a watchdog name was accepted" || pass "refused: $(tail -1 /tmp/send.out)"
@@ -414,10 +427,11 @@ case_9() {
 echo "=== notify 9: what was delivered once stays delivered once ==="
 # Alertmanager retried the failing oncall at every tick while each alert
 # lived; the operator's own channel, delivered, must have had each alert
-# once only.
-for a in nightly_job_failed deploy_failed; do
+# once only: repeat_job_failed was sent twice (4), each its own alert.
+for a in nightly_job_failed repeat_job_failed deploy_failed; do
 	n=$(arrivals /ops "$a" 0 | wc -l)
-	want=1; [ "$a" = deploy_failed ] && want=$(arrivals /blog deploy_failed 0 | wc -l)
+	want=1; [ "$a" = repeat_job_failed ] && want=2
+	[ "$a" = deploy_failed ] && want=$(arrivals /blog deploy_failed 0 | wc -l)
 	[ "$n" -eq "$want" ] && pass "$a reached the operator $n time(s), as many as it was posted, beside a failing channel's retries" \
 		|| fail "$a reached the operator $n times, want $want"
 done

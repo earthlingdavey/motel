@@ -250,6 +250,9 @@ func TestServeTest(t *testing.T) {
 	if len(posts) != 1 || posts[0].Labels[labelChannel] != "ops" || posts[0].Labels["alertname"] != "NotifyTest" || posts[0].Labels["test"] == "" {
 		t.Fatalf("posts = %+v", posts)
 	}
+	if _, ok := posts[0].Labels[labelOccurredAt]; ok {
+		t.Fatalf("NotifyTest carries occurred_at beside its nonce: %v", posts[0].Labels)
+	}
 
 	// Attempts that fail and are given up: failed, never delivered.
 	set(amCounts(0, 0, 0, 0))

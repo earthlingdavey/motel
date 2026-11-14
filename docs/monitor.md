@@ -349,8 +349,7 @@ sent; an alert never delivered has no such pass. So a
 delivery, and one when the test alert ends five minutes later (the 2
 measured on hotserve-1, 2026-11-14; when, from Alertmanager's
 source). A one-shot event counts the same way on each `event-`
-receiver, and a repeat of it with the same labels before it ends is
-the same alert to Alertmanager, counted with it.
+receiver, each time it is sent: each is its own alert.
 `heartbeat`'s rises once with no ping when motel stops posting the
 `Watchdog` alert (the heartbeat held, or motel stopped while
 Alertmanager runs) and the alert ends. The messages that went are
@@ -402,52 +401,20 @@ producer may resolve whatever it last said). On a box where
 most 200 characters. When a state resolves, the message repeats the
 summary it fired with, not the one you give.
 
-A one-shot sent again with the same `--source`, `--subject`, `--name`,
-`--instance` and `--severity` is the same alert to Alertmanager while
-it still holds the last one, so it reaches your channels once until
-five to six minutes after the last of them, and each repeat inside that
-starts it again. The message you got does not say it happened again;
-the journal has a `monitor: event` line for every one. A producer that
-wants every occurrence delivered gives each its own `--instance`, such
-as a run id, a UUID or a timestamp. A numeric run id or a lowercase
-UUID will do; a 40-hex git commit id is refused as secret-shaped. A
-timestamp to the second tells apart occurrences at least a second
-apart; a producer that can fire faster uses an id unique to each
-occurrence, such as a UUID. An instance per occurrence has a
-cost: the instance is part of the key, so the limit of four then one
-every 15 minutes counts each instance on its own and no longer holds
-back a storm. Of the recipes below, the daily reboot reminder is not
-affected; the `OnFailure=` unit tells a unit that fails again within
-five or six minutes once.
-
-A timestamp is written for where the command runs. In a shell:
-
-```sh
---instance "$(date -u +%Y%m%dT%H%M%SZ)"
-```
-
-In a crontab line, each `%` as `\%`: cron turns a bare `%` into a new
-line and sends the rest as input (crontab(5)):
-
-```
---instance "$(date -u +\%Y\%m\%dT\%H\%M\%SZ)"
-```
-
-In a unit's `ExecStart=`, through `/bin/sh -c '…'`, with each `%` as
-`%%` and each `$` as `$$`. Written as in a shell, systemd runs no
-`$(…)`: a word that is nothing else vanishes, so the next flag is
-taken for the instance and `send` fails, and inside a longer word `%Y`
-and the rest are systemd's own specifiers. The `OnFailure=` template
-below, with its unit's name and the time:
-
-```ini
-ExecStart=/bin/sh -c 'exec /usr/bin/motel monitor send --source systemd --name unit_failed --instance "%i-$$(date -u +%%Y%%m%%dT%%H%%M%%SZ)" --summary "%i failed: see journalctl -u %i"'
-```
-
-A UUID has no `%` to escape: the kernel gives a new lowercase one at
-each read of `/proc/sys/kernel/random/uuid`, so
-`--instance "$(cat /proc/sys/kernel/random/uuid)"` serves a shell and a
-crontab line as it is, and a unit's `/bin/sh -c '…'` with `$$(…)`.
+Every one-shot you send is delivered, the same one again too: a
+failure sent twice, two minutes apart and with the same arguments,
+reaches your channels twice, up to the limit above. Each carries its
+own `occurred_at` label (in a json or ntfy channel's payload), the
+time motel took it. motel does not group or mute repeats; the service
+that receives them is the place for that. Group there on the alert's
+`labels.key` (with `labels.severity`), the same for every occurrence;
+`fingerprint`, `groupKey` and `groupLabels` differ for each, since
+they are made from every label. `--instance` is for telling
+things apart (the unit that failed, the disk, the job): it is part of
+the key, so each instance has a limit of its own, and an instance new
+at every send (a timestamp, a UUID) leaves no limit to hold back a
+storm. An instance the filter would take for a secret is refused: a
+40-hex git commit id is, a numeric run id or a lowercase UUID is not.
 
 A state outlives a restart of motel (an upgrade of the package restarts
 it): motel keeps what is firing in `/var/lib/motel-notify/external.json`

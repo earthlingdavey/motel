@@ -206,6 +206,8 @@ type engine struct {
 	mutes         map[string]time.Time
 	buckets       map[string]*bucket
 	lastHeartbeat time.Time
+	// lastOccurrence is the last one-shot's occurred_at (occurrence).
+	lastOccurrence time.Time
 
 	queue    []*pending
 	wake     chan struct{}
@@ -327,7 +329,7 @@ func (e *engine) reportLocked(ev Event) {
 			return
 		}
 		e.journal(ev, "oneshot")
-		e.enqueue(&pending{key: ev.key(), alerts: []amAlert{oneShotAlert(ev, now)}, first: now, journal: true})
+		e.enqueue(&pending{key: ev.key(), alerts: []amAlert{oneShotAlert(ev, e.occurrence(now))}, first: now, journal: true})
 		return
 	}
 	if strings.HasPrefix(ev.Source, sourceExternal) {
@@ -506,7 +508,33 @@ func labelsFor(ev Event) map[string]string {
 	return l
 }
 
-func oneShotAlert(ev Event, now time.Time) amAlert {
+// labelOccurredAt is a one-shot's time, its startsAt to the nanosecond
+// (occurredAtLayout): it makes each occurrence its own alert to
+// Alertmanager, which would take a second one-shot with the same
+// labels for the first and send nothing (DESIGN-notify.md, "Events").
+// Set once, when the alert is built, so a retried post is the same
+// alert. No route, silence or inhibition matches on it.
+const (
+	labelOccurredAt  = "occurred_at"
+	occurredAtLayout = "2006-01-02T15:04:05.000000000Z07:00"
+)
+
+// occurrence is a one-shot's time: now, on the wall clock, or a
+// nanosecond after the last one-shot's when now is not after it and
+// less than a second before it (two in one clock reading, a small step
+// back), so that no two occurrences in a process share one. Called
+// with mu held.
+func (e *engine) occurrence(now time.Time) time.Time {
+	at := now.Round(0).UTC()
+	if !at.After(e.lastOccurrence) && e.lastOccurrence.Sub(at) < time.Second {
+		at = e.lastOccurrence.Add(time.Nanosecond)
+	}
+	e.lastOccurrence = at
+	return at
+}
+
+// oneShotAlert is a one-shot's alert at its occurrence's time.
+func oneShotAlert(ev Event, at time.Time) amAlert {
 	l := labelsFor(ev)
 	if ev.Release != "" {
 		l["release"] = ev.Release
@@ -514,7 +542,8 @@ func oneShotAlert(ev Event, now time.Time) amAlert {
 	if ev.DeployedBy != "" {
 		l["deployed_by"] = ev.DeployedBy
 	}
-	return amAlert{Labels: l, Annotations: annotations(ev), StartsAt: now, EndsAt: now.Add(oneShotLife)}
+	l[labelOccurredAt] = at.Format(occurredAtLayout)
+	return amAlert{Labels: l, Annotations: annotations(ev), StartsAt: at, EndsAt: at.Add(oneShotLife)}
 }
 
 func annotations(ev Event) map[string]string {

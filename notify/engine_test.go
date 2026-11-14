@@ -1,8 +1,11 @@
 package notify
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"strings"
@@ -14,6 +17,8 @@ import (
 	"github.com/prometheus/client_golang/prometheus/testutil"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zaptest/observer"
+
+	"github.com/smallhoursorg/motel/liveswap"
 )
 
 type recPoster struct {
@@ -149,6 +154,122 @@ func TestOneShotBucket(t *testing.T) {
 	te.report(deployFailed())
 	if got := te.drain(); len(got) != 1 {
 		t.Fatalf("after a refill: %d", len(got))
+	}
+}
+
+// TestEachOneShotIsItsOwnAlert: two identical one-shots are two alerts
+// to Alertmanager, apart in occurred_at alone, so each reaches the
+// channels; two in one clock reading too.
+func TestEachOneShotIsItsOwnAlert(t *testing.T) {
+	te := newTestEngine(t)
+	te.report(deployFailed())
+	te.report(deployFailed()) // the same instant
+	te.advance(2 * time.Minute)
+	te.report(deployFailed())
+	got := te.drain()
+	if len(got) != 3 {
+		t.Fatalf("posts = %d, want 3", len(got))
+	}
+	seen := map[string]bool{}
+	for i, a := range got {
+		v := a.Labels[labelOccurredAt]
+		if v == "" || seen[v] {
+			t.Fatalf("alert %d: occurred_at %q, seen %v", i, v, seen)
+		}
+		seen[v] = true
+		if want := a.StartsAt.Format(occurredAtLayout); v != want {
+			t.Errorf("alert %d: occurred_at %q, startsAt %q", i, v, want)
+		}
+		if !a.EndsAt.Equal(a.StartsAt.Add(oneShotLife)) {
+			t.Errorf("alert %d: endsAt %v, startsAt %v", i, a.EndsAt, a.StartsAt)
+		}
+		// Through the filter, as a summary is, it is left whole.
+		if r, _ := liveswap.NewRedactor(te.known, nil).Redact(v); r != v {
+			t.Errorf("the filter masks occurred_at %q as %q", v, r)
+		}
+		// Apart from it, the labels and annotations are the first's.
+		l := maps.Clone(a.Labels)
+		delete(l, labelOccurredAt)
+		l0 := maps.Clone(got[0].Labels)
+		delete(l0, labelOccurredAt)
+		if !maps.Equal(l, l0) || !maps.Equal(a.Annotations, got[0].Annotations) {
+			t.Errorf("alert %d differs from the first beyond occurred_at: %v, %v", i, a.Labels, got[0].Labels)
+		}
+	}
+	if got[0].Labels[labelOccurredAt] != "2026-11-10T12:00:00.000000000Z" ||
+		got[1].Labels[labelOccurredAt] != "2026-11-10T12:00:00.000000001Z" ||
+		got[2].Labels[labelOccurredAt] != "2026-11-10T12:02:00.000000000Z" {
+		t.Errorf("occurred_at = %s, %s, %s", got[0].Labels[labelOccurredAt], got[1].Labels[labelOccurredAt], got[2].Labels[labelOccurredAt])
+	}
+	// A clock stepped back by more than a second is taken as it reads
+	// (another key: the bucket's refill runs backwards too).
+	te.advance(-time.Hour)
+	ev := deployFailed()
+	ev.Name = "rollback"
+	te.report(ev)
+	if got := te.drain(); len(got) != 1 || got[0].Labels[labelOccurredAt] != "2026-11-10T11:02:00.000000000Z" {
+		t.Fatalf("after a step back: %+v", got)
+	}
+}
+
+// attemptPoster records every attempt, failed ones too.
+type attemptPoster struct {
+	attempts [][]byte
+	err      error
+}
+
+func (p *attemptPoster) postAlerts(_ context.Context, a []amAlert) error {
+	b, _ := json.Marshal(a)
+	p.attempts = append(p.attempts, b)
+	return p.err
+}
+
+// TestRetriedOneShotIsTheSameAlert: the queue's retry of a one-shot
+// posts the very alert of the first attempt, so it stays one.
+func TestRetriedOneShotIsTheSameAlert(t *testing.T) {
+	te := newTestEngine(t)
+	p := &attemptPoster{err: &netErr{syscall.ECONNREFUSED}}
+	te.post = p
+	te.report(deployFailed())
+	te.attempt(context.Background())
+	te.advance(30 * time.Second)
+	te.attempt(context.Background())
+	p.err = nil
+	te.advance(30 * time.Second)
+	if again, _ := te.attempt(context.Background()); !again {
+		t.Fatal("not delivered once Alertmanager answered")
+	}
+	if len(p.attempts) != 3 || !bytes.Equal(p.attempts[0], p.attempts[1]) || !bytes.Equal(p.attempts[0], p.attempts[2]) {
+		t.Fatalf("attempts differ: %s", bytes.Join(p.attempts, []byte("\n")))
+	}
+	if !bytes.Contains(p.attempts[0], []byte(`"occurred_at":"2026-11-10T12:00:00.000000000Z"`)) {
+		t.Fatalf("attempt = %s", p.attempts[0])
+	}
+}
+
+// TestOnlyOneShotsCarryOccurredAt: a state alert's identity is stable
+// across its re-posts and its resolve, and the mute's and the
+// heartbeat's are fixed; none carries occurred_at.
+func TestOnlyOneShotsCarryOccurredAt(t *testing.T) {
+	te := newTestEngine(t)
+	te.report(watchdog(true))
+	te.mute("blog", true)
+	te.tick()
+	te.advance(61 * time.Second)
+	te.tick() // a re-post, the mute's and a heartbeat again
+	te.report(watchdog(false))
+	te.mute("blog", false)
+	te.advance(31 * time.Second)
+	te.tick() // the resolve
+	names := map[string]int{}
+	for _, a := range te.drain() {
+		names[a.Labels["alertname"]]++
+		if _, ok := a.Labels[labelOccurredAt]; ok {
+			t.Errorf("%s carries occurred_at: %v", a.Labels["alertname"], a.Labels)
+		}
+	}
+	if names["watchdog_throttled"] < 3 || names[alertDeployMute] < 3 || names[alertWatchdog] < 2 {
+		t.Fatalf("posted = %v", names)
 	}
 }
 

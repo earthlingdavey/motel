@@ -196,6 +196,11 @@ func TestScrapeFailedTellsTheOtherOperatorChannels(t *testing.T) {
 	if len(got) != 1 || got[0].Labels[labelChannel] != "pager" || got[0].Labels["suspects"] != "ops" || got[0].Labels["alertname"] != "ChannelFailed" {
 		t.Fatalf("posts = %+v", got)
 	}
+	// vmalert's rule posts these labels too, and Alertmanager merges the
+	// two only while they are the same: no occurred_at here.
+	if _, ok := got[0].Labels[labelOccurredAt]; ok || len(got[0].Labels) != 6 {
+		t.Fatalf("ChannelFailed's labels = %v", got[0].Labels)
+	}
 	// Without receiver_name, every webhook channel is a suspect (pager,
 	// bob): ops is told.
 	body = metricsHead + failedLine("slack", "event-warning-ops", "clientError", 2) + failedLine("webhook", "", "other", 4)
