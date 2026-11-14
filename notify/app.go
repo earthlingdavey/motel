@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/caddyserver/caddy/v2"
@@ -172,7 +173,7 @@ func (a *App) provisionNotify(ctx caddy.Context, ls *liveswap.App) error {
 	}
 	// Every value the file holds is a known value to the filter, named
 	// by a channel line or not: a spare URL is as much a credential.
-	a.known = knownValues(secrets, a.Channels)
+	a.known = knownValues(secrets, a.Channels, a.HeartbeatSecret)
 	a.rendered, a.files, a.receivers = render(a.cfg, theStateDir)
 	theEngine.failures.register(ctx.GetMetricsRegistry())
 
@@ -402,15 +403,16 @@ func (a *App) backupRecord() string {
 // knownValues is the filter's known values: every KEY=value of the
 // secrets file, and for each channel line of a kind whose URL carries
 // its credential in a known place (ntfy's topic and auth parameter, a
-// Slack or Discord hook's token) that part as partial:KEY=part, so
-// that it is masked alone too, as [redacted:partial:KEY]; the whole
-// URL, a longer form, is masked first and keeps [redacted:KEY]. A
-// json channel's path is an arbitrary endpoint's, and is not taken. A
-// part under the filter's 8 characters is skipped by the filter
-// itself. Every place notify primes a filter takes its known values
-// from here.
-func knownValues(secrets map[string]string, channels []Channel) []string {
-	out := make([]string, 0, len(secrets)+len(channels))
+// Slack or Discord hook's token), and for the heartbeat's ping URL
+// (Healthchecks' UUID), that part as partial:KEY=part, so that it is
+// masked alone too, as [redacted:partial:KEY]; the whole URL, a longer
+// form, is masked first and keeps [redacted:KEY]. A json channel's
+// path is an arbitrary endpoint's, and is not taken. A part under the
+// filter's 8 characters is skipped by the filter itself. heartbeat is
+// the heartbeat line's secret key, or "". Every place notify primes a
+// filter takes its known values from here.
+func knownValues(secrets map[string]string, channels []Channel, heartbeat string) []string {
+	out := make([]string, 0, len(secrets)+len(channels)+1)
 	for k, v := range secrets {
 		out = append(out, k+"="+v)
 	}
@@ -422,18 +424,44 @@ func knownValues(secrets map[string]string, channels []Channel) []string {
 			out = append(out, partialKeyPrefix+ch.Secret+"="+part)
 		}
 	}
+	if heartbeat != "" {
+		for _, part := range urlCredentials(heartbeatKind, secrets[heartbeat]) {
+			out = append(out, partialKeyPrefix+heartbeat+"="+part)
+		}
+	}
 	return out
 }
+
+// heartbeatKind is the heartbeat's place in urlCredentials and
+// pathSuffixes: no channel kind, its URL a dead-man check's ping URL.
+const heartbeatKind = "heartbeat"
 
 // partialKeyPrefix names a known value that is part of a secret, not a
 // secret of the file: it is a marker's label, never a key to look up.
 const partialKeyPrefix = "partial:"
 
 // pathSuffixes are the fixed words a kind's URL may end in after its
-// credential: ntfy's publish aliases, Discord's compatible endpoints.
+// credential: ntfy's publish aliases, Discord's compatible endpoints,
+// Healthchecks' ping endpoints (https://healthchecks.io/docs/http_api/;
+// its exit status, 0 to 255, is isSuffix's).
 var pathSuffixes = map[string][]string{
-	"ntfy":    {"publish", "send", "trigger"},
-	"discord": {"slack", "github"},
+	"ntfy":        {"publish", "send", "trigger"},
+	"discord":     {"slack", "github"},
+	heartbeatKind: {"start", "fail", "log"},
+}
+
+// isSuffix is whether seg, decoded, is one of kind's fixed suffixes:
+// for the heartbeat, a Healthchecks exit status too.
+func isSuffix(kind, seg string) bool {
+	seg = unescaped(seg)
+	if slices.Contains(pathSuffixes[kind], seg) {
+		return true
+	}
+	if kind != heartbeatKind || len(seg) > 3 || strings.Trim(seg, "0123456789") != "" {
+		return false
+	}
+	n, err := strconv.Atoi(seg)
+	return err == nil && n <= 255
 }
 
 // unescaped is seg decoded, or seg as it is when it does not decode.
@@ -444,9 +472,10 @@ func unescaped(seg string) string {
 	return seg
 }
 
-// urlCredentials is the credential parts of a channel URL of kind:
-// its last non-empty path segment before any of the kind's fixed
-// suffixes, as written and decoded, and an ntfy URL's auth parameter.
+// urlCredentials is the credential parts of a channel URL of kind, or
+// of the heartbeat's: its last non-empty path segment before any of
+// the kind's fixed suffixes, as written and decoded, and an ntfy URL's
+// auth parameter.
 // None for a json channel or a value that is not a URL with a host.
 func urlCredentials(kind, v string) []string {
 	if kind == "json" {
@@ -459,7 +488,7 @@ func urlCredentials(kind, v string) []string {
 	var out []string
 	segs := strings.FieldsFunc(u.EscapedPath(), func(r rune) bool { return r == '/' })
 	// The suffix compared decoded: /%70ublish is /publish.
-	if n := len(segs); n > 1 && slices.Contains(pathSuffixes[kind], unescaped(segs[n-1])) {
+	if n := len(segs); n > 1 && isSuffix(kind, segs[n-1]) {
 		segs = segs[:n-1]
 	}
 	if n := len(segs); n > 0 {
