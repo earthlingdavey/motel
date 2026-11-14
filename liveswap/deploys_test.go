@@ -725,10 +725,11 @@ func TestDeployRecordSizeBoundCountsTheNewline(t *testing.T) {
 
 // An env_file that cannot be parsed whole leaves the values before the
 // bad line unknown to the filter — and the error that says so can
-// carry one; the record is then the envelope, never the error.
+// carry one (a short name-shaped one, invalidEnvKeyMsg's residual);
+// the record is then the envelope, never the error.
 func TestDeployRecordIsAnEnvelopeWhenTheEnvFileWillNotParseWhole(t *testing.T) {
 	rig := newTestRig(t)
-	secret := "q7Wm2xK9pL4vB8nR3tY6zH5c" // gitleaks:allow — a made-up value for this test
+	secret := "q7Wm2xK9pL4vB8nR3t" // gitleaks:allow — a made-up value for this test
 	rig.spec.envFile = filepath.Join(t.TempDir(), "app.env")
 	must(t, os.WriteFile(rig.spec.envFile, []byte("TOKEN="+secret+"\n"+secret+"-=x\n"), 0o600))
 	err := deployOnceV1(t, rig)

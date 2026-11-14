@@ -1,18 +1,22 @@
 package notify
 
 import (
+	"bytes"
 	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/x509"
 	"encoding/pem"
+	"io"
 	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/caddyserver/caddy/v2"
 	"github.com/caddyserver/caddy/v2/caddyconfig"
+	"github.com/caddyserver/caddy/v2/caddyconfig/caddyfile"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zaptest/observer"
 
@@ -349,6 +353,84 @@ func TestBootDropsTheChannelsOfAnUnusableSecretsFile(t *testing.T) {
 		}
 		if !c.ok && (err == nil || !strings.Contains(err.Error(), secrets+":2: not KEY=VALUE")) {
 			t.Errorf("%q, running %v: err = %v", c.cmd, c.running, err)
+		}
+	}
+}
+
+// testJournal is a log output for this package's tests, `output
+// test_journal` in a Caddyfile's log block: what a load writes to the
+// journal, kept in memory for a test to read.
+type testJournal struct{}
+
+var (
+	testJournalMu  sync.Mutex
+	testJournalBuf bytes.Buffer
+)
+
+func init() { caddy.RegisterModule(testJournal{}) }
+
+func (testJournal) CaddyModule() caddy.ModuleInfo {
+	return caddy.ModuleInfo{ID: "caddy.logging.writers.test_journal", New: func() caddy.Module { return new(testJournal) }}
+}
+func (testJournal) String() string                                   { return "test_journal" }
+func (testJournal) WriterKey() string                                { return "test_journal" }
+func (testJournal) OpenWriter() (io.WriteCloser, error)              { return testJournal{}, nil }
+func (testJournal) Close() error                                     { return nil }
+func (*testJournal) UnmarshalCaddyfile(d *caddyfile.Dispenser) error { d.Next(); return nil }
+func (testJournal) Write(p []byte) (int, error) {
+	testJournalMu.Lock()
+	defer testJournalMu.Unlock()
+	return testJournalBuf.Write(p)
+}
+
+// takeJournal returns what testJournal holds, and empties it.
+func takeJournal() string {
+	testJournalMu.Lock()
+	defer testJournalMu.Unlock()
+	s := testJournalBuf.String()
+	testJournalBuf.Reset()
+	return s
+}
+
+// A secrets file whose line is a channel URL with its NOTIFY_…= left
+// out, or a `KEY: url` line, is named by its file and line: neither the
+// refusal nor a boot's journal lines carry the URL or its topic, which
+// on ntfy.sh is the credential, and which no filter can mask, as a file
+// that does not parse gives it no values.
+func TestAnUnusableSecretsFileNamesTheLineNotItsText(t *testing.T) {
+	orig := configRunning
+	t.Cleanup(func() { SetCommand(""); configRunning = orig })
+	configRunning = func() bool { return false }
+	const topic = "spare-topic-7f3a"
+	secrets := filepath.Join(t.TempDir(), "_box.env")
+	src := "{\n\tadmin off\n\tlog {\n\t\toutput test_journal\n\t}\n\tmonitor {\n\t\tchannel ops ntfy {secret.NOTIFY_OPS_URL}\n\t\toperator ops\n\t\tsecrets_file " + secrets +
+		"\n\t}\n}\n:8080 {\n\trespond ok\n}\n"
+	for _, line := range []string{
+		"https://ntfy.sh/" + topic + "?title=box1",
+		"NOTIFY_OPS_URL: https://ntfy.sh/" + topic + "?auth=x",
+	} {
+		if err := os.WriteFile(secrets, []byte("OTHER=1\n"+line+"\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		want := secrets + `:2: the text before the first "=" is not a valid environment variable name`
+		SetCommand("validate")
+		err := validate(t, src)
+		if err == nil || !strings.Contains(err.Error(), want) || strings.Contains(err.Error(), topic) {
+			t.Errorf("%q: validate: err = %v, want %q and no topic", line, err, want)
+		}
+		takeJournal()
+		SetCommand("run")
+		if err := validate(t, src); err != nil {
+			t.Fatalf("%q: a boot refused: %v", line, err)
+		}
+		logged := takeJournal()
+		for _, msg := range []string{"monitor: the box's secrets file cannot be used", "monitor: a channel is dropped from this load", `the text before the first \"=\"`} {
+			if !strings.Contains(logged, msg) {
+				t.Errorf("%q: the boot's journal has no %q:\n%s", line, msg, logged)
+			}
+		}
+		if strings.Contains(logged, topic) {
+			t.Errorf("%q: the journal carries the topic:\n%s", line, logged)
 		}
 	}
 }

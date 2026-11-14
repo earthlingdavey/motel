@@ -2138,9 +2138,10 @@ func parseEnvLines(path string, data []byte) ([]string, error) {
 			return nil, fmt.Errorf("%s:%d: not KEY=VALUE", path, i+1)
 		}
 		if !validEnvKey(key) {
-			return nil, fmt.Errorf("%s:%d: %q is not a valid environment variable name (systemd requires %s)", path, i+1, key, envKeyRe)
+			return nil, fmt.Errorf("%s:%d: %s", path, i+1, invalidEnvKeyMsg(key))
 		}
 		if shellOwnedEnvKey(key) {
+			// key is one of the four names here, never a line's text.
 			return nil, fmt.Errorf("%s:%d: %q %s", path, i+1, key, shellOwnedEnvKeyMsg)
 		}
 		value = strings.TrimSpace(value)
@@ -2154,6 +2155,31 @@ func parseEnvLines(path string, data []byte) ([]string, error) {
 	}
 	return vars, nil
 }
+
+// invalidEnvKeyMsg says that the text before a line's first `=` is not
+// a variable name, quoting it only when it looks like a name mistyped:
+// at most maxQuotedEnvKey bytes of letters, digits, `_`, `.`, `-` and
+// spaces (`MY-KEY`, `my.key`, `9LIVES`). Anything else is not a name
+// at all: a value written where the key belongs, such as a channel URL
+// whose `NOTIFY_…=` was forgotten (`https://ntfy.sh/<topic>?title=x`)
+// or a `KEY: url` line. The message goes to the journal, to a refused
+// reload and to the box handler's pusher, and nothing can mask it, since
+// a file that does not parse gives the filter no values; so that text
+// is not quoted, and the file and line name it instead.
+func invalidEnvKeyMsg(key string) string {
+	if len(key) <= maxQuotedEnvKey && strings.TrimLeft(key, envKeyLookalike) == "" {
+		return fmt.Sprintf("%q is not a valid environment variable name (systemd requires %s)", key, envKeyRe)
+	}
+	return fmt.Sprintf("the text before the first \"=\" is not a valid environment variable name (systemd requires %s)", envKeyRe)
+}
+
+// maxQuotedEnvKey bounds a quoted key below what a 128-bit random
+// secret takes in envKeyLookalike's 65 characters (22, at about 6 bits
+// each), so that a generated token written where the key belongs is not
+// quoted however it is encoded: hex, base64, base64url or base32.
+const maxQuotedEnvKey = 21
+
+const envKeyLookalike = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_.- "
 
 // ParseEnvLines is parseEnvLines, the reading every launch makes, for a
 // caller that holds the bytes: the box, which reads the env file a push
@@ -2188,7 +2214,7 @@ func RenderEnvFile(vars []string) ([]byte, error) {
 	for _, kv := range vars {
 		key, value, found := strings.Cut(kv, "=")
 		if !found || !validEnvKey(key) {
-			return nil, fmt.Errorf("%q is not a valid environment variable name (systemd requires %s)", key, envKeyRe)
+			return nil, errors.New(invalidEnvKeyMsg(key))
 		}
 		if shellOwnedEnvKey(key) {
 			return nil, fmt.Errorf("%q %s", key, shellOwnedEnvKeyMsg)

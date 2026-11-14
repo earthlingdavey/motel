@@ -1419,6 +1419,7 @@ func TestRenderEnvFileRefusesWhatTheFormatCannotCarry(t *testing.T) {
 		{[]string{"my-var=v"}, "not a valid environment variable name"},
 		{[]string{"=v"}, "not a valid environment variable name"},
 		{[]string{"novalue"}, "not a valid environment variable name"},
+		{[]string{"https://ntfy.sh/x?a=b"}, `the text before the first "=" is not a valid environment variable name`},
 		{[]string{"OPTIND=2"}, "set by the shell"},
 		{[]string{"K=a", "L=b", "K=c"}, "K is given twice"},
 	} {
@@ -2428,6 +2429,42 @@ func TestParseEnvFileRejectsInvalidKeys(t *testing.T) {
 	_, err := parseEnvFile(envFile)
 	if err == nil || !strings.Contains(err.Error(), `"my-var"`) || !strings.Contains(err.Error(), ":2:") {
 		t.Fatalf("an invalid key must be named with its line, got %v", err)
+	}
+}
+
+// An invalid key is quoted only when it looks like a mistyped name: the
+// text before `=` on a line that is not one (a channel URL whose
+// NOTIFY_…= was forgotten, a `KEY: url` line, a token) is named by its
+// file and line alone, since nothing can mask it in the messages that
+// carry it.
+func TestParseEnvLinesQuotesOnlyNameShapedKeys(t *testing.T) {
+	const notName = `/app.env:2: the text before the first "=" is not a valid environment variable name`
+	for _, c := range []struct{ line, want, hidden string }{
+		{"MY-KEY=1", `/app.env:2: "MY-KEY" is not a valid environment variable name`, ""},
+		{"MY KEY=1", `/app.env:2: "MY KEY" is not a valid environment variable name`, ""},
+		{"9LIVES=1", `/app.env:2: "9LIVES" is not a valid environment variable name`, ""},
+		{"my.key=1", `/app.env:2: "my.key" is not a valid environment variable name`, ""},
+		{"export DB-URL = x", `/app.env:2: "DB-URL" is not a valid environment variable name`, ""},
+		{"ABCDEFGHIJ-KLMNOPQRST=1", `"ABCDEFGHIJ-KLMNOPQRST"`, ""}, // 21 bytes, the longest quoted
+		{"https://ntfy.sh/ops-7f3a9c2e1b?title=box1", notName, "ops-7f3a9c2e1b"},
+		{"NOTIFY_OPS_URL: https://ntfy.sh/ops-7f3a9c2e1b?auth=x", notName, "ops-7f3a9c2e1b"},
+		{"ntfy.sh/ops-7f3a9c2e1b=x", notName, "ops-7f3a9c2e1b"},
+		{"ABCDEFGHIJK-LMNOPQRSTU=1", notName, "LMNOPQRSTU"},             // 22 bytes
+		{"q2F-x8_Lm4Rv.T0p9Zk3wY==", notName, "q2F-x8_Lm4Rv.T0p9Zk3wY"}, // 22 bytes before the padding
+		{"KEYé=1", notName, "KEYé"},
+	} {
+		_, err := ParseEnvLines("/app.env", []byte("GOOD=1\n"+c.line+"\n"))
+		if err == nil || !strings.Contains(err.Error(), c.want) {
+			t.Errorf("%q: err = %v, want %q", c.line, err, c.want)
+			continue
+		}
+		if c.hidden != "" && strings.Contains(err.Error(), c.hidden) {
+			t.Errorf("%q: the error quotes the line: %v", c.line, err)
+		}
+	}
+	// A line without `=` quotes nothing, as before.
+	if _, err := ParseEnvLines("/app.env", []byte("GOOD=1\nhttps://ntfy.sh/ops-7f3a9c2e1b\n")); err == nil || err.Error() != "/app.env:2: not KEY=VALUE" {
+		t.Errorf("a line without = : %v", err)
 	}
 }
 
