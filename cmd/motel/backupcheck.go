@@ -54,6 +54,9 @@ func gateArgs(args []string, stderr io.Writer) (stop bool, run []string) {
 	}
 	run = args
 	cfg, warning, err := checkAndLoad(cmd, args[1:])
+	if cmd == "run" && refuseRunByHand(cfg, stderr) {
+		return true, run
+	}
 	if cmd == "run" && cfg != nil {
 		retireMetricsRules(cfg, stderr)
 		sendNothing(monitorJSON(cfg), stderr)

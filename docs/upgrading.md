@@ -146,6 +146,13 @@ Before you upgrade:
   from the `.deb`, unpacked and not installed:
   `dpkg-deb -x motel_<version>_$(dpkg --print-architecture).deb /root/motel-new`,
   then `/root/motel-new/usr/bin/motel validate --config /etc/motel/Caddyfile`.
+  To see why an upgraded motel will not start, read `journalctl -u motel`
+  and run `motel validate --config /etc/motel/Caddyfile`; do not run
+  `motel run` by hand on the box: while motel runs, a second one takes
+  its admin socket and can disturb its apps.
+  motel refuses root's run only when the Caddyfile's liveswap root
+  exists and is not root's, as on a packaged box (it is motel's);
+  otherwise nothing stops it, so do not rely on the refusal.
 - **A box with an ECDSA signer rotates it first** (upgrading from
   v0.6.0 or earlier). A `signer` line with an `ecdsa-sha2-nistp256`,
   `-384`, `-521` or `sk-ecdsa-sha2-nistp256@openssh.com` key is refused
