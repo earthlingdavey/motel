@@ -559,15 +559,23 @@ i=0
 until am "http://am/api/v2/alerts?$roq" | grep -q '"severity":"critical"'; do i=$((i + 1)); [ "$i" -ge 60 ] && break; sleep 2; done
 [ "$i" -lt 60 ] && pass "motel posted metrics_store_read_only, critical" \
 	|| fail "no metrics_store_read_only in Alertmanager after 120 s: $(am "http://am/api/v2/alerts?$roq" | cut -c1-300)"
-# Two of the store's 30 s self-scrapes have come and gone by now, and
-# neither was kept: the free space the disk rule reads stops with every
-# other write. (The flag itself is no series the store keeps, scrape.yml.)
+# Two of the store's 30 s self-scrapes, and motel's pushes, have come and
+# gone by now, and none was kept: the free space the disk rule reads
+# stops with every other write. (The flag itself is no series the store
+# keeps, scrape.yml.) The store counts the rows it adds from its start,
+# and its every write path is refused before that count when read-only
+# (vmstorage's AddRows), so a store read-only from its start reads 0.
+# Not a sample's stamp against a mark taken at the restart: the store
+# before it was writable and kept its last scrape, which can be stamped
+# after that mark (arm CI at ed64772: .221 into the second date +%s gave;
+# and the scraper stamps on its own 30 s schedule, up to 3 s off a clock
+# stepped back, promscrape's scrapework.go).
 while [ $(( $(date +%s) - ro_at )) -lt 75 ]; do sleep 2; done
 before=$(q 'tlast_over_time(vm_free_disk_space_bytes[15m])')
-a=$(q "tlast_over_time(vm_free_disk_space_bytes[15m]) > $ro_at")
-has_result "$before" && printf '%s' "$a" | grep -q '"status":"success"' && ! has_result "$a" \
-	&& pass "75 s read-only and no sample of the store's free space since, only before: the store refused its own scrapes" \
-	|| fail "a scrape was kept while read-only, or none before it, or the store did not answer: $(printf '%s' "$before" | cut -c1-200) / $(printf '%s' "$a" | cut -c1-200)"
+added=$(vm http://vm/metrics | awk '$1 == "vm_rows_added_to_storage_total" { print $2 }')
+has_result "$before" && [ "$added" = 0 ] \
+	&& pass "75 s read-only and no row added, its own scrapes with the rest; its free space read from before it" \
+	|| fail "the read-only store added '$added' rows (0 is none, empty no answer), or holds no sample of its free space: $(printf '%s' "$before" | cut -c1-200)"
 rm "$dropin/20-e2e-read-only.conf"
 systemctl daemon-reload && systemctl restart victoria-metrics
 back_at=$(date +%s)
