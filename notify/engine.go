@@ -166,6 +166,9 @@ type pending struct {
 	// is a `monitor: delivery failed` line. Re-posts, the heartbeat and
 	// the mute fail at debug.
 	journal bool
+	// end is the watchdog_* resolve the post carries (toldEnd): stamped
+	// when Alertmanager takes it, forgotten if it is given up.
+	end *toldEnd
 }
 
 // expired says an alert of the post had an endsAt ahead when it was
@@ -418,10 +421,11 @@ func (e *engine) reconcile(key string, st *stateAlert, now time.Time) {
 			return
 		}
 		e.journal(st.ev, "resolved")
-		e.postState(key, st, now, now, true)
+		p := e.postState(key, st, now, now, true)
 		delete(e.states, key)
 		if muteTarget(st.ev) {
-			e.ends[key] = &toldEnd{ev: st.ev, startsAt: st.startsAt, at: now}
+			p.end = &toldEnd{ev: st.ev, startsAt: st.startsAt, at: now, queued: true}
+			e.ends[key] = p.end
 		}
 	default:
 		// Firing and told, or cleared and held (by its hold, or by the
@@ -445,18 +449,21 @@ func (e *engine) muted(ev Event) bool {
 
 // toldEnd is a watchdog_* resolve the engine posted. Alertmanager judges
 // the mute when the alert's group flushes, up to a group_interval after
-// the post, so a deploy that starts in that time swallows it too: the
-// mute marks it, and its end posts it again. A resolve that was sent
-// before is not sent twice (Alertmanager's notification log: measured).
+// it takes the post, so a deploy that starts in that time swallows it
+// too: the mute marks it, and its end posts it again. A resolve that was
+// sent before is not sent twice (Alertmanager's notification log:
+// measured). One the queue gives up on is forgotten, as a failed
+// delivery: Alertmanager never had it.
 type toldEnd struct {
 	ev       Event
 	startsAt time.Time
-	at       time.Time // posted
-	muted    bool      // a mute of its app began within endWindow of at
+	at       time.Time // Alertmanager took it
+	queued   bool      // its post waits for Alertmanager: at is not yet
+	muted    bool      // a mute of its app began while queued or within endWindow of at
 }
 
-// endWindow is how long a posted resolve may yet meet a mute: twice the
-// state routes' group_interval (stateGroupInterval, 1 m).
+// endWindow is how long a resolve Alertmanager took may yet meet a mute:
+// twice the state routes' group_interval (stateGroupInterval, 1 m).
 const endWindow = 2 * time.Minute
 
 func (e *engine) repost(key string, st *stateAlert, now time.Time) {
@@ -465,9 +472,11 @@ func (e *engine) repost(key string, st *stateAlert, now time.Time) {
 	}
 }
 
-func (e *engine) postState(key string, st *stateAlert, now, endsAt time.Time, journal bool) {
+func (e *engine) postState(key string, st *stateAlert, now, endsAt time.Time, journal bool) *pending {
 	st.lastPost = now
-	e.enqueue(&pending{key: key, alerts: []amAlert{stateAlertFor(st.ev, st.startsAt, endsAt)}, first: now, journal: journal})
+	p := &pending{key: key, alerts: []amAlert{stateAlertFor(st.ev, st.startsAt, endsAt)}, first: now, journal: journal}
+	e.enqueue(p)
+	return p
 }
 
 // mute posts deploy_in_progress for an app while its deploy runs; the
@@ -483,7 +492,7 @@ func (e *engine) mute(app string, on bool) {
 		e.mutes[app] = now
 		e.enqueue(&pending{key: "mute/" + app, alerts: []amAlert{muteAlert(app, now, time.Time{})}, first: now})
 		for _, t := range e.ends {
-			if t.ev.App == app && now.Sub(t.at) < endWindow {
+			if t.ev.App == app && (t.queued || now.Sub(t.at) < endWindow) {
 				t.muted = true
 			}
 		}
@@ -508,8 +517,8 @@ func (e *engine) endMute(app string, now time.Time) {
 		case e.states[key] != nil:
 			delete(e.ends, key) // fired since: that alert is the key's now
 		default:
-			e.enqueue(&pending{key: key, alerts: []amAlert{stateAlertFor(t.ev, t.startsAt, now)}, first: now})
-			t.at, t.muted = now, false
+			e.enqueue(&pending{key: key, alerts: []amAlert{stateAlertFor(t.ev, t.startsAt, now)}, first: now, end: t})
+			t.queued, t.muted = true, false
 		}
 	}
 	for key, st := range e.states {
@@ -548,7 +557,7 @@ func (e *engine) tick() {
 	}
 	e.persistExternal() // a recovery's hold ended
 	for key, t := range e.ends {
-		if !t.muted && now.Sub(t.at) >= endWindow {
+		if !t.queued && !t.muted && now.Sub(t.at) >= endWindow {
 			delete(e.ends, key)
 		}
 	}
@@ -685,6 +694,9 @@ func (e *engine) enqueue(p *pending) {
 
 func (e *engine) gaveUp(p *pending, err error) {
 	e.failures.inc()
+	if p.end != nil && e.ends[p.key] == p.end {
+		delete(e.ends, p.key)
+	}
 	log := e.logger.Debug
 	if p.journal {
 		log = e.logger.Error
@@ -722,6 +734,9 @@ func (e *engine) attempt(ctx context.Context) (again bool, wait time.Duration) {
 	switch {
 	case err == nil:
 		e.queue = e.queue[1:]
+		if p.end != nil {
+			p.end.at, p.end.queued = e.now(), false
+		}
 		return true, 0
 	case errors.As(err, &refused) && refused.code < 500, e.now().Sub(p.first) >= e.retryFor:
 		// Refused (4xx) is final; retried for long enough is too. A 5xx

@@ -440,9 +440,11 @@ whichever config serves when it clears.
   (1 m) after the post, so a resolve posted just before a deploy starts
   is swallowed the same way, the held one too when a second deploy
   follows the first within the minute: the engine keeps each
-  `watchdog_*` resolve it posted for `endWindow` (2 m), a mute of its
-  app that starts in that time marks it, and the mute's end posts it
-  again, unless its key has fired since. Alertmanager's notification
+  `watchdog_*` resolve it posted while the post waits in the queue and
+  for `endWindow` (2 m) after Alertmanager takes it, a mute of its app
+  that starts in that time marks it, and the mute's end posts it
+  again, unless its key has fired since. One the queue gives up on is
+  forgotten, as any failed delivery (Copilot round 1 on #496). Alertmanager's notification
   log sends a resolve posted again once, and nothing for one it had
   already sent (measured, "The route tree"). A firing alert
   needs nothing: Alertmanager tells it at its group's first flush after

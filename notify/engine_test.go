@@ -651,6 +651,71 @@ func TestHeldRecoveryThenASecondDeploy(t *testing.T) {
 	}
 }
 
+// Alertmanager not answering for longer than endWindow, inside the
+// queue's retry limit: the window counts from when it takes the resolve,
+// so a deploy that starts right after the late delivery still has it to
+// post again at its end (Copilot round 1).
+func TestResolveDeliveredLateIsStillPostedAgain(t *testing.T) {
+	te := newTestEngine(t)
+	te.report(watchdog(true))
+	te.report(watchdog(false))
+	te.drain()
+	te.p.err = &netErr{syscall.ECONNREFUSED}
+	te.advance(31 * time.Second)
+	te.tick() // the resolve is queued
+	te.drain()
+	for range 6 { // three minutes refused
+		te.advance(30 * time.Second)
+		te.tick()
+		te.drain()
+	}
+	te.p.mu.Lock()
+	te.p.err = nil
+	te.p.mu.Unlock()
+	if r := resolves(te.drain()); len(r) != 1 {
+		t.Fatalf("the late delivery = %+v", r)
+	}
+	te.advance(5 * time.Second)
+	te.mute("blog", true)
+	te.advance(time.Minute)
+	te.tick()
+	te.drain()
+	te.mute("blog", false)
+	if r := resolves(te.drain()); len(r) != 1 || !r[0].EndsAt.Equal(te.at) {
+		t.Fatalf("at the mute's end = %+v", r)
+	}
+}
+
+// A resolve the queue gives up on was never delivered: it leaves nothing
+// a later mute's end would post.
+func TestResolveGivenUpIsNotPostedAgain(t *testing.T) {
+	te := newTestEngine(t)
+	te.report(watchdog(true))
+	te.report(watchdog(false))
+	te.drain()
+	te.p.err = &netErr{syscall.ECONNREFUSED}
+	te.advance(31 * time.Second)
+	te.tick()
+	te.drain()
+	te.mute("blog", true) // inside the window: it would be marked
+	for range 11 {
+		te.advance(30 * time.Second)
+		te.tick()
+		te.drain()
+	}
+	if n := len(te.ends); n != 0 {
+		t.Fatalf("a given-up resolve left %d entries", n)
+	}
+	te.p.mu.Lock()
+	te.p.err = nil
+	te.p.mu.Unlock()
+	te.drain()
+	te.mute("blog", false)
+	if r := resolves(te.drain()); len(r) != 0 {
+		t.Fatalf("a given-up resolve posted again: %+v", r)
+	}
+}
+
 // What the mute's end does not post again: a resolve whose key fired
 // since (that alert is the key's now), and one posted longer than
 // endWindow before the mute, whose flush has come.
