@@ -481,21 +481,32 @@ func vmUnittest(t *testing.T, tool, dir, test string) (string, bool) {
 	return string(out), strings.Contains(string(out), "SUCCESS")
 }
 
-// A request counter over the store's own MetricsQL: a series new to the
+// A request counter over the store's own MetricsQL, read directly (the
+// rules' guards leave out an app's first window): a series new to the
 // store once the push is older than the window counts from zero (fresh
 // answers a burst of 400 and nothing after, which increase would drop),
 // and so does one back below its last value (reused, a release name
-// rolled back to with a fresh counter); one back after a 20-minute gap
-// in the pushes is not read as its lifetime (gapped counts 10 a minute
-// throughout, 500 by its return); nor is one that came with the push
-// itself (the metrics line first loaded on a box whose observer had
-// counted 5000).
+// rolled back to with a fresh counter), and one born after a gap in the
+// pushes (after); one back after a 20-minute gap in its own series is
+// not read as its lifetime (gapped counts 10 a minute throughout, 500 by
+// its return); nor is one that came with the push itself (old: the
+// metrics line first loaded on a box whose observer had counted 5000;
+// born and restarted: with the push's first sample after a 20-minute gap
+// in the pushes, born new in it, restarted counting from zero in it).
 func TestOperatorRulesCountAfterAGap(t *testing.T) {
 	tool := vmTool(t, "vmalert-tool")
 	dir := t.TempDir()
 	a := rulesApp(t, "rule busy threshold request_rate > 1 for 2m")
 	if err := os.WriteFile(filepath.Join(dir, RulesName), renderRules(a), 0o600); err != nil {
 		t.Fatal(err)
+	}
+	inc := "sum by (app) (" + strings.ReplaceAll(counterIncrease("motel_app_requests_total", requestWindow, 0), "'", "''") + ")"
+	counts := func(at string, want ...string) string {
+		s := "      - expr: '" + inc + "'\n        eval_time: " + at + "\n        exp_samples:\n"
+		for i := 0; i < len(want); i += 2 {
+			s += "          - labels: '{app=\"" + want[i] + "\"}'\n            value: " + want[i+1] + "\n"
+		}
+		return s
 	}
 	test := `rule_files: [rules.yml]
 evaluation_interval: 1m
@@ -510,42 +521,16 @@ tests:
         values: '0+10x30 _x20 500+10x40'
       - series: 'motel_app_requests_total{app="reused",release="v1",class="2xx",job="motel"}'
         values: '0+100x10 _x30 400x50'
-      - series: 'motel_app_observed{app="fresh",job="motel"}'
-        values: '_x30 1x60'
-      - series: 'motel_app_observed{app="gapped",job="motel"}'
-        values: '1x30 _x20 1x40'
-      - series: 'motel_app_observed{app="reused",job="motel"}'
-        values: '1x10 _x30 1x50'
-    alert_rule_test:
-      - eval_time: 33m
-        groupname: motel-operator
-        alertname: busy
-        exp_alerts:
-          - exp_labels: {app: fresh, kind: state, severity: warning, subject: "app:fresh", source: rules, key: "rules/app:fresh/busy"}
-            exp_annotations: {summary: "fresh: its requests a second over 5 minutes has been above 1 for 2m (rule busy); now 1.333"}
-      - eval_time: 44m
-        groupname: motel-operator
-        alertname: busy
-        exp_alerts:
-          - exp_labels: {app: reused, kind: state, severity: warning, subject: "app:reused", source: rules, key: "rules/app:reused/busy"}
-            exp_annotations: {summary: "reused: its requests a second over 5 minutes has been above 1 for 2m (rule busy); now 1.333"}
-      - eval_time: 54m
-        groupname: motel-operator
-        alertname: busy
-        exp_alerts: []
+    metricsql_expr_test:
+` + counts("33m", "fresh", "400", "gapped", "20") + counts("44m", "fresh", "0", "reused", "400") + counts("54m", "fresh", "0", "gapped", "30", "reused", "0") + `
   - interval: 1m
     input_series:
       - series: 'process_start_time_seconds{job="motel"}'
         values: '_x30 1x60'
       - series: 'motel_app_requests_total{app="old",release="v1",class="2xx",job="motel"}'
         values: '_x30 5000+10x60'
-      - series: 'motel_app_observed{app="old",job="motel"}'
-        values: '_x30 1x60'
-    alert_rule_test:
-      - eval_time: 34m
-        groupname: motel-operator
-        alertname: busy
-        exp_alerts: []
+    metricsql_expr_test:
+` + counts("34m", "old", "40") + `
   - interval: 1m
     input_series:
       - series: 'process_start_time_seconds{job="motel"}'
@@ -556,24 +541,8 @@ tests:
         values: '0+50x59 _x20 750+50x40'
       - series: 'motel_app_requests_total{app="after",release="v3",class="2xx",job="motel"}'
         values: '_x90 400x30'
-      - series: 'motel_app_observed{app="born",job="motel"}'
-        values: '_x80 1x40'
-      - series: 'motel_app_observed{app="restarted",job="motel"}'
-        values: '1x59 _x20 1x40'
-      - series: 'motel_app_observed{app="after",job="motel"}'
-        values: '_x90 1x30'
-    alert_rule_test:
-      - eval_time: 84m
-        groupname: motel-operator
-        alertname: busy
-        exp_alerts: []
-      - eval_time: 93m
-        groupname: motel-operator
-        alertname: busy
-        exp_alerts:
-          - exp_labels: {app: after, kind: state, severity: warning, subject: "app:after", source: rules, key: "rules/app:after/busy"}
-            exp_annotations: {summary: "after: its requests a second over 5 minutes has been above 1 for 2m (rule busy); now 1.333"}
-`
+    metricsql_expr_test:
+` + counts("84m", "born", "200", "restarted", "200") + counts("93m", "after", "400", "born", "250", "restarted", "250")
 	runUnittest(t, tool, dir, test)
 }
 
