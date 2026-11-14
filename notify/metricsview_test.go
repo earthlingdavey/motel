@@ -163,7 +163,7 @@ func viewUnittest(t *testing.T, tool, dir string, cases []viewCase, qs func(stri
 // at 0.5 from 10m30s: read over each series' own span, the stopped u1
 // kept its 0.5 beside u2's for the rate's window, a point of 1.0 after
 // every cutover in avg_5m and avg. stopped runs 1.0 cores and stops at
-// 10m: its last rate was read as now for the rate's window.
+// 10m: its last rate had points for the rate's window after it.
 func TestMetricsViewReadsTheRunningUnit(t *testing.T) {
 	tool := vmTool(t, "vmalert-tool")
 	dir := t.TempDir()

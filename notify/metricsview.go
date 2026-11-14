@@ -148,7 +148,9 @@ func requestQueries(sel string, span time.Duration) viewRequests {
 // cpuQuery is the view's CPU range query over the app sel names, each
 // point the running unit's rate over rate (unitCPU): summed over every
 // unit, a point after a cutover read the stopped unit's rate beside the
-// new one's, and a stopped app's last rate read as now.
+// new one's, and a stopped app had points for the rate's window after
+// its last push; now for pushFresh. Whether the newest point is the
+// present is still judged by viewFreshSteps.
 func cpuQuery(sel, rate string) string {
 	return "sum(" + unitCPU("{"+sel+"}", rate) + ")"
 }
