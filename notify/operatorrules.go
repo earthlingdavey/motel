@@ -739,9 +739,11 @@ func pushBefore(win time.Duration) string {
 // observe line comes, or comes back, and over a window the push's span
 // covers before then a steady rate read from nothing up for five
 // minutes, firing a `request_rate <`; motel was pushing all along, so
-// pushBefore holds. A motel restart, or the store down, leaves the push
-// series and the app's alike, so the app is out only while pushBefore
-// is none.
+// pushBefore holds. The app is out until five minutes after its first
+// push, and after a gap in its own series for as long as the gap, five
+// minutes at most, ending five minutes after its return. A motel
+// restart, or the store down, leaves the push series and the app's
+// alike, so across those the app is out only while pushBefore is none.
 func observedBefore(sel string, win time.Duration) string {
 	return "max by (app) (tlast_over_time(motel_app_observed" + sel + "[" + promDuration(prevReach) + "] offset " + promDuration(win) + "))" +
 		" > scalar(" + pushBefore(win) + ") - " + strconv.Itoa(int(pushApart.Seconds()))

@@ -943,7 +943,8 @@ over five minutes in the pushes, and for an app after its `observe`
 line comes, or comes back after over five minutes out (its counts
 start from zero then). An `observe` line out for less than five
 minutes reads low by the gap's share until five minutes after it was
-taken out.
+taken out, then has no value for as long as it was out, so an alert
+firing for the app resolves and fires again only after its `for`.
 `memory_share` and `cpu_cores` read the app's running unit alone. An
 app that stopped is read for at most 75 s after its last push, which
 vmalert sees about a minute later (`query_offset_seconds`, below), so
