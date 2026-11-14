@@ -235,7 +235,7 @@ make test-integration  # real deploys through caddytest, under a real systemd us
 make e2e               # full stack: the liveswap and penaltybox suites against the shipped binary under systemd, restart survival + crash recovery, then signed box pushes
 make e2e-backup        # the backups suites — setup, a run, the timers, status, restore, the repository check — one box each against a local S3 server; CI runs it beside e2e
 make lint vet tidy     # golangci-lint (gofmt-gated), go vet, go mod tidy
-make tidy-check        # fails if go mod tidy would change a module's go.mod/go.sum; CI runs it on every PR
+make tidy-check        # fails if go mod tidy would change a module's go.mod/go.sum; CI runs it on every PR that changes code
 make vulncheck         # govulncheck, all modules (tool dep in go.mod — Dependabot-bumped)
 make secretscan        # gitleaks secret scan: full history, or the working tree in a git worktree (same image as the CI gate)
 make usage             # what building this costs (Claude Code, Actions minutes, Copilot) → usage/ CSVs + docs/footprint.md; needs gh auth login
@@ -243,8 +243,9 @@ make usage             # what building this costs (Claude Code, Actions minutes,
 make usage-claude      # the Claude Code half alone (no token), to run on each machine the sessions live on
 make usage-check       # usage.py's tests, then fails if docs/footprint.md no longer matches the usage/ CSVs; CI runs it on every PR
 make pin-watch-check   # pin-watch.py's manifest rules (dismissals, go.mod-held pins), in the same python image; usage-check runs it first
+make ci-changes-check  # the rule by which a PR of markdown or usage ledger alone skips CI's build-and-test jobs; usage-check runs it too
 make fuzz              # fuzz the untrusted-input surfaces (FUZZTIME=2m per target)
-make fuzz-list         # what fuzz will run (discovered per module, not listed by hand); CI runs it on every PR
+make fuzz-list         # what fuzz will run (discovered per module, not listed by hand); CI runs it on every PR that changes code
 make soak              # ~20min leak hunt: deploy/reload churn, goroutine/fd assertions; CI runs it per merge to main and weekly
 make build             # cross-compile linux amd64/arm64
 make package           # .deb via nfpm, into dist/
@@ -352,7 +353,7 @@ in `docker-compose.yml`: `golang` (toolchain), `golangci-lint`,
 ledger and pin-watch) and `curl` (the e2e runner). GitHub Actions are
 pinned to commit SHAs.
 
-What keeps this honest: `govulncheck` gates every PR and runs weekly
+What keeps this honest: `govulncheck` gates every PR that changes code and runs weekly
 against the fresh vulnerability database (reachable-code analysis, all
 modules; the only exceptions are the reviewed `govulncheck:` entries
 in `pin-watch.yml`, each with its evidence), every release is blocked until the full test matrix passes —
