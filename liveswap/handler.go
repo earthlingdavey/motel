@@ -21,6 +21,7 @@ import (
 
 	"github.com/caddyserver/caddy/v2"
 	"github.com/caddyserver/caddy/v2/modules/caddyhttp"
+	"github.com/smallhoursorg/motel/liveswap/access"
 	"github.com/smallhoursorg/motel/liveswap/deploytrust"
 	"github.com/smallhoursorg/motel/liveswap/wire"
 	"go.uber.org/zap"
@@ -113,58 +114,108 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request, _ caddyhttp.
 		return refusal.Write(func(code int, body any) error { return RespondJSON(w, code, body, nil) })
 	}
 	if ma == nil {
+		// A global source verified the token: a deployer of no app here
+		// (access.GlobalDeployer), which may take no action. The name is
+		// answered 404 whatever the method, before the route table.
 		return RespondJSON(w, http.StatusNotFound, wire.Error{Error: fmt.Sprintf("unknown app %q", name)}, nil)
 	}
-
-	switch r.Method {
-	case http.MethodGet:
-		// Parsed strictly: URL.Query drops a pair it cannot decode, and
-		// a malformed `?deploy=%ZZ` would fall through to the status.
-		q, err := url.ParseQuery(r.URL.RawQuery)
-		if err != nil {
-			return RespondJSON(w, http.StatusUnprocessableEntity, wire.Error{Error: "malformed query: " + err.Error()}, ma.redactorFor(statusSnapshot{}))
-		}
-		if q.Has("deploy") {
-			return h.deployRecord(w, ma, q.Get("deploy"))
-		}
-		window := wire.MetricsRanges[0]
-		if q.Has("range") {
-			// Refused whether or not the box keeps metrics: a typo is told
-			// the same on every box.
-			if window = q.Get("range"); !slices.Contains(wire.MetricsRanges, window) {
-				return RespondJSON(w, http.StatusUnprocessableEntity, wire.Error{
-					Error: "range must be one of " + strings.Join(wire.MetricsRanges, ", ")}, ma.redactorFor(statusSnapshot{}))
-			}
-		}
-		s := ma.status()
-		if src := h.app.metricsSource; src != nil {
-			// Best-effort and bounded by the source itself: a store that
-			// does not answer is an error inside the object, never a
-			// failed or stalled status.
-			s.Metrics = src.AppMetrics(r.Context(), ma.name, window)
-		}
-		return RespondJSON(w, http.StatusOK, s, ma.redactorFor(s))
-	case http.MethodPost:
-		return h.deploy(w, r, ma, who.By)
-	default:
+	rt := findRoute(r)
+	if rt == nil {
 		w.Header().Set("Allow", "GET, POST")
 		return RespondJSON(w, http.StatusMethodNotAllowed, wire.Error{Error: "method not allowed"}, ma.redactorFor(statusSnapshot{}))
 	}
+	// The token was verified against this app's own sources, so it is
+	// a deployer of this app and Decide allows every app action: it
+	// refuses only if the table and the routes fall apart, and then
+	// refuses rather than serves.
+	if err := access.Decide(access.Principal{Kind: access.AppDeployer, App: name}, rt.action, name); err != nil {
+		return RespondJSON(w, http.StatusForbidden, wire.Error{Error: "forbidden"}, ma.redactorFor(statusSnapshot{}))
+	}
+	return rt.serve(h, w, r, ma, who.By)
 }
 
-// deploy dispatches on the request shape:
-//   - a gzip body  → push an uploaded artifact  (POST /<app>?version=v2)
-//   - ?rollback=v1 → relaunch an on-disk release (POST /<app>?rollback=v1)
-//   - otherwise    → pull from a URL             (JSON {url, version})
-func (h *Handler) deploy(w http.ResponseWriter, r *http.Request, ma *managedApp, by string) error {
-	switch {
-	case isGzipUpload(r):
-		return h.deployPush(w, r, ma, by)
-	case r.URL.Query().Get("rollback") != "":
-		return h.deployRollback(w, r, ma, by)
-	default:
-		return h.deployURL(w, r, ma, by)
+// route is one row of liveswap_webhook's route table: a method, the
+// shape of the query or body it takes, the action Decide is asked
+// about, and the function that answers. Every row's path is /<app>,
+// the app being the path's last element.
+type route struct {
+	method string
+	shape  string // the query or body the row takes, for a reader
+	action access.Action
+	match  func(*http.Request) bool // nil: any request of the method
+	serve  func(h *Handler, w http.ResponseWriter, r *http.Request, ma *managedApp, by string) error
+}
+
+// routes is matched in order: the first row of the request's method
+// whose shape matches answers it, so a GET or a POST always finds one
+// and any other method none (the 405). A gzip body is a push whatever
+// the query; then a rollback; then a pull from a URL.
+var routes = []route{
+	{http.MethodGet, "?deploy=<v>", access.AppDeployRecord, wantsDeployRecord, (*Handler).getDeployRecord},
+	{http.MethodGet, "[?range=1h|24h]", access.AppStatus, nil, (*Handler).getStatus},
+	{http.MethodPost, "a gzip body [?version=<v>]", access.AppDeploy, isGzipUpload, (*Handler).deployPush},
+	{http.MethodPost, "?rollback=<v>", access.AppRollback, wantsRollback, (*Handler).deployRollback},
+	{http.MethodPost, "a JSON body", access.AppDeploy, nil, (*Handler).deployURL},
+}
+
+// findRoute is the request's row, or nil when its method has none.
+func findRoute(r *http.Request) *route {
+	for i := range routes {
+		if rt := &routes[i]; rt.method == r.Method && (rt.match == nil || rt.match(r)) {
+			return rt
+		}
 	}
+	return nil
+}
+
+// wantsDeployRecord is a GET whose query parses strictly and names a
+// deploy. A query that does not parse is the status route's, which
+// answers it 422: URL.Query drops a pair it cannot decode, and a
+// malformed `?deploy=%ZZ` would otherwise fall through to the status.
+func wantsDeployRecord(r *http.Request) bool {
+	q, err := url.ParseQuery(r.URL.RawQuery)
+	return err == nil && q.Has("deploy")
+}
+
+// wantsRollback is a POST naming a version to relaunch, read as
+// deployRollback reads it.
+func wantsRollback(r *http.Request) bool {
+	return r.URL.Query().Get("rollback") != ""
+}
+
+// getDeployRecord is GET /<app>?deploy=<v>; its query parsed when the
+// row matched (wantsDeployRecord).
+func (h *Handler) getDeployRecord(w http.ResponseWriter, r *http.Request, ma *managedApp, _ string) error {
+	q, _ := url.ParseQuery(r.URL.RawQuery)
+	return h.deployRecord(w, ma, q.Get("deploy"))
+}
+
+// getStatus is GET /<app>: the app's status, with metric summaries
+// over the range asked for.
+func (h *Handler) getStatus(w http.ResponseWriter, r *http.Request, ma *managedApp, _ string) error {
+	// Parsed strictly, as wantsDeployRecord parses it: a malformed
+	// query is refused here rather than read as no query.
+	q, err := url.ParseQuery(r.URL.RawQuery)
+	if err != nil {
+		return RespondJSON(w, http.StatusUnprocessableEntity, wire.Error{Error: "malformed query: " + err.Error()}, ma.redactorFor(statusSnapshot{}))
+	}
+	window := wire.MetricsRanges[0]
+	if q.Has("range") {
+		// Refused whether or not the box keeps metrics: a typo is told
+		// the same on every box.
+		if window = q.Get("range"); !slices.Contains(wire.MetricsRanges, window) {
+			return RespondJSON(w, http.StatusUnprocessableEntity, wire.Error{
+				Error: "range must be one of " + strings.Join(wire.MetricsRanges, ", ")}, ma.redactorFor(statusSnapshot{}))
+		}
+	}
+	s := ma.status()
+	if src := h.app.metricsSource; src != nil {
+		// Best-effort and bounded by the source itself: a store that
+		// does not answer is an error inside the object, never a
+		// failed or stalled status.
+		s.Metrics = src.AppMetrics(r.Context(), ma.name, window)
+	}
+	return RespondJSON(w, http.StatusOK, s, ma.redactorFor(s))
 }
 
 // deployURL is the default path: a JSON body naming an artifact URL to
