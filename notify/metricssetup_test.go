@@ -426,8 +426,9 @@ func TestMetricsUnitsAreTheMeasuredOnes(t *testing.T) {
 	has("motel-vm.socket", unitVMSocket, "ListenStream="+DefaultStoreSocket+"\n", "SocketGroup=motel", "SocketMode=0660",
 		// A connection queued while the store's chain cannot start
 		// retriggered its failing start to the trigger limit, and the
-		// socket failed for good (#450, measured).
-		"FlushPending=yes\n")
+		// socket failed for good (#450, measured); flushed, a burst of
+		// connections still reached the limit, so it has none.
+		"FlushPending=yes\n", "TriggerLimitIntervalSec=0\n")
 	has("motel-vm.service", unitVMProxy, "NetworkNamespacePath=/run/netns/motel-metrics", "systemd-socket-proxyd --exit-idle-time=5min 127.0.0.1:8428",
 		// Not root (the box audit of 2026-11-11).
 		"DynamicUser=yes", "CapabilityBoundingSet=\n")

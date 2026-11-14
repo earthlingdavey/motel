@@ -428,15 +428,16 @@ motel runs reads them, so no rule, check or `GET /<app>` changes. A
 query of your own over one of them finds its samples from before the
 re-run until the retention ends them, and none after.
 
-**The same re-run keeps the store's socket listening when the store
-cannot start.** On a box set up before it, one push that came while
-the store or its namespace failed to start ended
+**Run `motel monitor setup --metrics` again on a box whose store was set
+up before its socket outlived a failed start** (each load's warning
+names `motel-vm.socket`). Until it is, one push that comes while the
+store or its namespace fails to start ends
 `/run/motel-metrics/vm.sock` for good (`motel-vm.socket` failed with
-`trigger-limit-hit`), and the store stayed down after the cause was
-gone until root ran `systemctl start motel-vm.socket`. The re-run
-writes `FlushPending=yes` into the socket unit (each load's warning
-names `motel-vm.socket` until then), and its `daemon-reload` applies
-it to the running socket, with no restart.
+`trigger-limit-hit`), and the store stays down after the cause is gone
+until root runs `systemctl start motel-vm.socket`. The re-run writes
+the socket unit's `FlushPending=yes` and `TriggerLimitIntervalSec=0`,
+which its `daemon-reload` applies to a running socket with no restart,
+and its `enable --now` starts one that had already failed.
 
 ## Patching the host
 
