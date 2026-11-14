@@ -34,7 +34,7 @@ var (
 	storeDiskFill = ruleTerm{value: "min(predict_linear(vm_free_disk_space_bytes[6h], 86400))", op: "<",
 		guards: []ruleTerm{{value: "min(predict_linear(vm_free_disk_space_bytes[1h], 86400))", op: "<",
 			meaning: "the 1h line predicts it full too: a one-off write tilts the 6h line alone"}}}
-	appMemoryHigh = ruleTerm{value: "max by (app) (motel_app_memory_bytes / motel_app_memory_max_bytes)", op: ">", threshold: 0.9}
+	appMemoryHigh = ruleTerm{value: memoryShare(""), op: ">", threshold: 0.9}
 )
 
 type vmRuleFile struct {

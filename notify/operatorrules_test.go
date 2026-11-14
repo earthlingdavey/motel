@@ -292,8 +292,11 @@ func TestOperatorRulesRender(t *testing.T) {
 			` and on () max(tlast_over_time(process_start_time_seconds{job="motel"}[5m] offset 5m))` + pushed(`{app="blog"}`),
 		"hits_low": `(sum by (app) (` + inc(`motel_app_cache_responses_total{result=~"hit|stale"}`) + `) or sum by (app) (` + inc(`motel_app_cache_responses_total`) + `) * 0)` +
 			` / sum by (app) (` + inc(`motel_app_cache_responses_total`) + `) < 0.5 and sum by (app) (` + inc(`motel_app_cache_responses_total`) + `) >= 20` + pushed(""),
-		"mem":    `max by (app) (motel_app_memory_bytes / motel_app_memory_max_bytes) > 0.8`,
-		"busy":   `sum by (app) (rate(motel_app_cpu_seconds_total{app="shop"}[5m])) > 1.5`,
+		// The running unit's: its last push within 75 s, and the newest
+		// unit with a rate of an app with a unit pushed within 75 s.
+		"mem": `max by (app) (last_over_time(motel_app_memory_bytes[75s]) / last_over_time(motel_app_memory_max_bytes[75s])) > 0.8`,
+		"busy": `sum by (app) (rate(motel_app_cpu_seconds_total{app="shop"}[5m]) and topk by (app) (1, tlast_over_time(motel_app_cpu_seconds_total{app="shop"}[5m])` +
+			` and rate(motel_app_cpu_seconds_total{app="shop"}[5m])) and on (app) tlast_over_time(motel_app_cpu_seconds_total{app="shop"}[75s])) > 1.5`,
 		"median": `histogram_quantile(0.5, sum by (app, le) (` + hist(``) + `)) > 0.2 and sum by (app) (` + inc(`motel_app_response_seconds_count`) + `) >= 20` + pushed(""),
 		"disk_filling": `min by (path) (predict_linear(motel_disk_avail_bytes[42h], 604800)) < 0 and min by (path) (predict_linear(motel_disk_avail_bytes[7h], 604800)) < 0` +
 			` and max by (path) (present_over_time(motel_disk_avail_bytes[42h] offset 35h))`,
@@ -356,7 +359,7 @@ func TestOperatorRulesRender(t *testing.T) {
 // A name an app or a release could hold is quoted in, never spliced.
 func TestThresholdQuotesTheApp(t *testing.T) {
 	r := Rule{Name: "x", Kind: ruleThreshold, App: "a-b", Metric: "memory_share", Op: ">", Value: 0.5, For: 600e9}
-	if got := thresholdTerm(r).expr(); got != `max by (app) (motel_app_memory_bytes{app="a-b"} / motel_app_memory_max_bytes{app="a-b"}) > 0.5` {
+	if got := thresholdTerm(r).expr(); got != `max by (app) (last_over_time(motel_app_memory_bytes{app="a-b"}[75s]) / last_over_time(motel_app_memory_max_bytes{app="a-b"}[75s])) > 0.5` {
 		t.Fatal(got)
 	}
 }
@@ -874,6 +877,117 @@ func TestOperatorRulesRateAcrossARestart(t *testing.T) {
 		return g
 	}
 	test := "rule_files: [rules.yml]\nevaluation_interval: 1m\ntests:\n" + group("up", 1199, 25, 0) + group("down", 1200, 5, 0) + group("gapped", 1200, 5, 150)
+	runUnittest(t, tool, dir, test)
+}
+
+// The unit series over the store's own MetricsQL, at pushEvery's 30 s.
+// Each deploy, rollback, relaunch or watchdog restart is a new unit, so
+// a new CPU series, and only the running unit is sampled: deployed's u1
+// runs at 0.5 cores to its last push at 10m and u2 at 0.5 from 10m30s.
+// Read over each series' own span, the stopped u1 kept its 0.5 beside
+// u2's until its last sample left the window: 1.0 to 15m, and `hot`
+// fired for an app that never passed 0.5. stopped runs 1.0 cores at
+// 0.95 of its memory cap and stops at 10m: a bare selector reads a
+// series' last sample for the query's step (5m), so `hot`, `full` and
+// app_memory_high fired on for five minutes for an app that was not
+// running. lossy runs throughout with one push lost (10m30s), and
+// stays in; so does redeployed, whose new unit's second push (11m) is
+// lost: its old unit is past 75 s from 11m15s, the new one has no rate
+// until 11m30s, and the app is read meanwhile.
+func TestOperatorRulesReadTheRunningUnit(t *testing.T) {
+	tool := vmTool(t, "vmalert-tool")
+	dir := t.TempDir()
+	a := rulesApp(t, "rule hot threshold cpu_cores > 0.8 for 2m", "rule full threshold memory_share > 0.9 for 2m")
+	if err := os.WriteFile(filepath.Join(dir, RulesName), renderRules(a), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	value := func(metric, app string) string {
+		return strings.ReplaceAll(thresholdTerm(Rule{Name: "v", Kind: ruleThreshold, Metric: metric, App: app, Op: ">", Value: 0, For: 60e9}).value, "'", "''")
+	}
+	summary := map[string]string{
+		"hot":             "%s: the CPU it used over 5 minutes, in cores has been above 0.8 for 2m (rule hot); now 1",
+		"full":            "%s: its working set''s share of its memory cap has been above 0.9 for 2m (rule full); now 95%%",
+		"app_memory_high": "%s has used over 90 %% of its memory cap for ten minutes",
+	}
+	alerts := func(group, name string, apps ...string) string {
+		s := ""
+		for _, app := range apps {
+			key, source := "rules/app:"+app+"/"+name, "rules"
+			if group == "motel-store" {
+				key, source = "vmalert/app:"+app+"/"+name, "vmalert"
+			}
+			s += "\n          - exp_labels: {app: " + app + ", kind: state, severity: warning, subject: \"app:" + app + "\", source: " + source + ", key: \"" + key + "\"}" +
+				"\n            exp_annotations: {summary: '" + fmt.Sprintf(summary[name], app) + "'}"
+		}
+		return s
+	}
+	test := `rule_files: [rules.yml]
+evaluation_interval: 1m
+tests:
+  - interval: 30s
+    input_series:
+      - series: 'process_start_time_seconds{job="motel"}'
+        values: '1x60'
+      - series: 'motel_app_cpu_seconds_total{app="deployed",unit="app-deployed-u1.service",job="motel"}'
+        values: '0+15x20'
+      - series: 'motel_app_cpu_seconds_total{app="deployed",unit="app-deployed-u2.service",job="motel"}'
+        values: '_x21 15+15x38'
+      - series: 'motel_app_cpu_seconds_total{app="redeployed",unit="app-redeployed-r1.service",job="motel"}'
+        values: '0+15x20'
+      - series: 'motel_app_cpu_seconds_total{app="redeployed",unit="app-redeployed-r2.service",job="motel"}'
+        values: '_x21 15 _ 45+15x36'
+      - series: 'motel_app_cpu_seconds_total{app="stopped",unit="app-stopped-s1.service",job="motel"}'
+        values: '0+30x20'
+      - series: 'motel_app_memory_bytes{app="stopped",job="motel"}'
+        values: '95x20'
+      - series: 'motel_app_memory_max_bytes{app="stopped",job="motel"}'
+        values: '100x20'
+      - series: 'motel_app_cpu_seconds_total{app="lossy",unit="app-lossy-l1.service",job="motel"}'
+        values: '0+30x20 _ 660+30x38'
+      - series: 'motel_app_memory_bytes{app="lossy",job="motel"}'
+        values: '95x20 _ 95x38'
+      - series: 'motel_app_memory_max_bytes{app="lossy",job="motel"}'
+        values: '100x20 _ 100x38'
+    metricsql_expr_test:`
+	for _, at := range []string{"10m40s", "11m10s", "13m", "14m50s"} {
+		test += `
+      - expr: '` + value("cpu_cores", "deployed") + `'
+        eval_time: ` + at + `
+        exp_samples: [{labels: '{app="deployed"}', value: 0.5}]`
+	}
+	test += `
+      - expr: '` + value("cpu_cores", "redeployed") + `'
+        eval_time: 11m20s
+        exp_samples: [{labels: '{app="redeployed"}', value: 0.5}]`
+	for _, m := range []string{"cpu_cores", "memory_share"} {
+		test += `
+      - expr: '` + value(m, "stopped") + `'
+        eval_time: 11m20s
+        exp_samples: []`
+	}
+	test += `
+      - expr: '` + value("cpu_cores", "lossy") + `'
+        eval_time: 10m59s
+        exp_samples: [{labels: '{app="lossy"}', value: 1}]
+      - expr: '` + value("memory_share", "lossy") + `'
+        eval_time: 10m59s
+        exp_samples: [{labels: '{app="lossy"}', value: 0.95}]
+    alert_rule_test:
+`
+	for _, c := range []struct {
+		at, group, name string
+		apps            []string
+	}{
+		{"9m", "motel-operator", "hot", []string{"lossy", "stopped"}},
+		{"9m", "motel-operator", "full", []string{"lossy", "stopped"}},
+		{"11m", "motel-store", "app_memory_high", []string{"lossy", "stopped"}},
+		{"12m", "motel-operator", "hot", []string{"lossy"}},
+		{"12m", "motel-operator", "full", []string{"lossy"}},
+		{"12m", "motel-store", "app_memory_high", []string{"lossy"}},
+		{"14m", "motel-operator", "hot", []string{"lossy"}},
+	} {
+		test += "      - eval_time: " + c.at + "\n        groupname: " + c.group + "\n        alertname: " + c.name + "\n        exp_alerts:" + alerts(c.group, c.name, c.apps...) + "\n"
+	}
 	runUnittest(t, tool, dir, test)
 }
 

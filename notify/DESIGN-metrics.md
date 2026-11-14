@@ -487,7 +487,7 @@ template, and the operator's `rule` lines choose among motel's kinds
 | Rule | Expression | For | Labels | Reaches |
 |---|---|---|---|---|
 | `metrics_store_disk_fill` | `min(predict_linear(vm_free_disk_space_bytes[6h], 86400)) < 0 and min(predict_linear(vm_free_disk_space_bytes[1h], 86400)) < 0` | 30 m | box, state, warning | the operator |
-| `app_memory_high` | `max by (app) (motel_app_memory_bytes / motel_app_memory_max_bytes) > 0.9` | 10 m | `app`, `subject="app:<app>"`, state, warning | the operator and the app's bound channels |
+| `app_memory_high` | `max by (app) (last_over_time(motel_app_memory_bytes[75s]) / last_over_time(motel_app_memory_max_bytes[75s])) > 0.9` (`MEM`, "Operator rules") | 10 m | `app`, `subject="app:<app>"`, state, warning | the operator and the app's bound channels |
 | `ChannelFailed` (one per told channel) | `(sum(increase(F[300s])) > 0) or (sum(F) > 0 and on () (time() - max(alertmanager_config_last_reload_success_timestamp_seconds)) < 300)`, F being `alertmanager_notifications_failed_total{integration=…, receiver_name=~…, reason!="contextCanceled"}`: for five minutes after a config load, which resets the counter, any count is a failure since it | — | exactly motel's `ChannelFailed` labels | the told channel alone |
 
 Each fixed rule carries `kind="state"`, `severity`, `subject`, `source="vmalert"`
@@ -635,7 +635,11 @@ parse, a JSON config's at Provision, both by `motel validate`):
   never loosens or silences them (only post_deploy has replacement,
   below; "Accepted residuals"). A rule that names an app and could never fire for it is
   refused: `memory_share` of an app with no `memory_max` (the cap's
-  series is pushed only for a capped app), at Provision; a request
+  series is pushed only while status lists the cap under `caps`; a cap
+  configured that status lists under `caps_unenforced`, or not at all
+  after a caps change that failed, passes the check, and the rule does
+  not fire while it is so, once the store no longer reads the last
+  sample of a cap pushed before: minutes), at Provision; a request
   threshold or a post_deploy of an app no route observes (no `observe
   <app>` handler, so no request series), by cmd/motel's gate at
   `motel validate` and `motel reload` (`motel run` serves it, saying
@@ -653,8 +657,8 @@ parse, a JSON config's at Provision, both by `motel validate`):
 | `threshold p50`, `p95` | `histogram_quantile(q, sum by (app, le) (hinc(motel_app_response_seconds))) > v and sum by (app) (inc(motel_app_response_seconds_count)) >= floor and on (app) PUSHED`, v in seconds | `for` | as above | as above |
 | `threshold request_rate` | `sum by (app) (inc(motel_app_requests_total)) / SPAN > v and on () BEFORE and on (app) PUSHED` | `for` | as above | as above |
 | `threshold cache_hit_share` | `(HITS or SPOKE * 0) / SPOKE > v and SPOKE >= floor and on (app) PUSHED`, both `sum by (app) (inc(motel_app_cache_responses_total))`, HITS over `result=~"hit\|stale"` | `for` | as above | as above |
-| `threshold memory_share` | `max by (app) (motel_app_memory_bytes / motel_app_memory_max_bytes) > v` | `for` | as above | as above |
-| `threshold cpu_cores` | `sum by (app) (rate(motel_app_cpu_seconds_total[5m])) > v` | `for` | as above | as above |
+| `threshold memory_share` | `MEM > v`, `MEM` below | `for` | as above | as above |
+| `threshold cpu_cores` | `sum by (app) (UNIT_CPU) > v`, `UNIT_CPU` below over `[5m]` | `for` | as above | as above |
 | `disk_fill` | `min by (path) (predict_linear(motel_disk_avail_bytes[L], H)) < 0 and min by (path) (predict_linear(motel_disk_avail_bytes[L/6], H)) < 0 and max by (path) (present_over_time(motel_disk_avail_bytes[L] offset 5L/6))`, H `within` in seconds, L 6 h up to a `within` of a day and `within`/4 beyond it, in whole minutes | L/12: 30 m up to a day | `path`, `subject="box"`, `kind="state"`, `severity`, `source="rules"`, `key="rules/box/<name>/<path>"`, each filesystem's alert its own key, as `disk_low`'s | the operator |
 | `post_deploy` | motel's queries, below | — | the event `post_deploy_regressed`: `app`, `subject="app:<app>"`, `kind="event"`, `severity="warning"`, `source="rules"`, `key="rules/app:<app>/post_deploy_regressed"`, `release`, `deployed_by`; the rule's name as `detail_rule` | the operator and the app's bound channels |
 
@@ -800,14 +804,57 @@ second, and a 150 s gap, in `TestOperatorRulesRateAcrossARestart`). The `min_req
 floors stay counts: they ask whether there are responses enough to
 judge a share or a quantile, and the window holds that many whatever
 span it covers. A share or a quantile divides two counts over the same
-span, and `cpu_cores`' `rate` divides by each series' own. `GET /<app>`'s
+span, and `cpu_cores`' `rate` divides by its one unit's own (below). `GET /<app>`'s
 `per_second` is over an hour or a day, which a restart moves by under
 1 %, and no rule reads it.
 
-`memory_share` and `cpu_cores` read the unit's
-series, pushed while it runs whatever the routes observe.
-CPU is `rate` over the per-unit counters, each from
-zero when its unit starts. The summary says the bound and the value in
+`memory_share`, `cpu_cores` and `app_memory_high` read the running
+unit's series, pushed while it runs whatever the routes observe, and
+only the running unit's: the current instance alone is sampled, and a
+deploy, a rollback, a relaunch or a watchdog restart is a new unit
+(its name carries a nonce). `MEM` (`memoryShare`) is each app's last
+push of the two within 75 s:
+
+```
+max by (app) (last_over_time(motel_app_memory_bytes[75s])
+  / last_over_time(motel_app_memory_max_bytes[75s]))
+```
+
+A bare selector reads a series' last sample as far back as the query's
+step (5 m, vmalert's `-datasource.queryStep` unset), so an app stopped,
+or throttled after an OOM loop, kept `memory_share` and
+`app_memory_high` firing for five minutes on its last push. Within
+75 s (`pushFresh`, two pushes and a half, as for `PUSHED`) one push
+lost leaves the app in, and so does a motel restart's first push,
+which can come before liveswap has reattached the unit (its recovery
+runs after its Start, behind the manager's probe) and carries no
+memory and `motel_app_up` 0 for an app that runs: a guard on
+`motel_app_up == 1` would resolve a firing alert whenever an
+evaluation fell between that push and the next. `UNIT_CPU` (`unitCPU`) is the newest unit's rate:
+
+```
+rate(motel_app_cpu_seconds_total[W])
+  and topk by (app) (1, tlast_over_time(motel_app_cpu_seconds_total[W])
+      and rate(motel_app_cpu_seconds_total[W]))
+  and on (app) tlast_over_time(motel_app_cpu_seconds_total[75s])
+```
+
+The counter is one series per unit, each from zero when its unit
+starts. `rate` divides by each series' own span, from its last sample
+before the window or, for a unit born in it, its first (the CPU it used
+since it began), so summed over every unit the stopped one kept its
+last rate beside the new one's until its last sample left the window:
+a steady 0.5 cores read 1.0 for most of the five minutes after each
+cutover, and `cpu_cores > 0.8` fired on every deploy (measured on
+1.112.0, `TestOperatorRulesReadTheRunningUnit`). Over the newest unit
+with a rate, which a unit has from its second push, the one before it
+meanwhile, it reads 0.5 throughout, and an app none of whose units a
+push has carried for 75 s drops out: a stopped one 75 s after its
+last push. The 75 s is the app's and not the chosen unit's, since the
+old unit is past it before the new one has a rate when the new one's
+second push is lost (/code-review pass 2). Each rule reads the
+unit's own numbers, not the app's across the cutover: the old unit's
+CPU in the window is not added to the new one's. The summary says the bound and the value in
 plain words: `shop: the 5xx share of its responses over 5 minutes has
 been above 0.05 for 10m (rule errors_high); now 12.5%`. The threshold
 and disk_fill rules are `rules.yml`'s third group, `motel-operator`;
@@ -1222,8 +1269,12 @@ store too. Seven fixed queries over the socket, scoped to `app="<name>"`
 and run at once. Two `query_range` templates over the window, at a 60 s
 step for the hour and 5 m for the day, the memory
 pair (`{__name__=~"motel_app_memory_bytes|motel_app_memory_max_bytes",app=…}`)
-and `sum(rate(motel_app_cpu_seconds_total{app=…}[2m]))` (`[5m]` for the
-day, one step); one instant `max_over_time(motel_app_memory_bytes{app=…}[<window>])` for `max`, since a
+and `sum(UNIT_CPU)` over `app=…` ("Operator rules") at `[2m]` (`[5m]` for the
+day, one step), the running unit's: summed over every unit, a point
+after a cutover read the stopped unit's rate beside the new one's,
+double, and a stopped app had points for the rate's window after its
+last push, now for 75 s (whether the newest point is the present is
+judged as below); one instant `max_over_time(motel_app_memory_bytes{app=…}[<window>])` for `max`, since a
 60 s step holds one of the two samples a minute the push writes and a
 peak between steps would be lost (Copilot on #423). `at` is the newest
 point; `max` and `avg` are over the window; `now`, `avg_5m` and
@@ -1600,7 +1651,11 @@ on its general scales. metrics' examples:
 | The push at stop's 2 s bounds its import alone: a statfs that hangs (a network mount among the disk paths) holds the loop's last gather, which release waits for, or the push's own, up to `diskStatWait` (2 s) once, so with a store that does not answer too the stop spends about 4 s of the unit's 5 s before the rest of it (the engine's and the comparator's release) | notify/metricspush.go (`finalPushTimeout`) | 2 | 2 | 1 | 4; two faults, and past 5 s systemd's SIGKILL is in the journal, naming the timeout; what it cuts short holds nothing a restart needs. A budget over the gather too is a goroutine and a timer around a call with no context (size 2, risk 2). /code-review pass 1 on the push at stop |
 | A fresh counter is read through `increase`, which drops a first push that is large beside the next (a burst, then a lull), in two cases the store cannot tell from a gap or from a lifetime: one that comes with the push's first sample after the store's start or after a gap in the pushes of over two minutes (a new release deployed in the gap, a class's first response in it: the series' first sample is the push's), and under a release name the store saw within the day whose fresh count is above the last it had (a rollback past the two releases the observer keeps). The window under-reads that push for its length: five minutes for a rule, an hour or a day for `GET /<app>` | notify/operatorrules.go (`counterIncrease`), notify/metricsview.go | 2 | 5 | 3 | 30, accepted under the skill's rule 4: both read the same as a series that holds counts from before the window, which `increase_pure` would count whole; telling them apart needs the series' age from motel (a label or a series per process and release on every request series: size 3, risk 3). An under-read of one push, against a lifetime read in its place. /code-review pass 4 on operator rules; the gap case pass 5's, the push term narrowed from a day to two minutes; narrowed 2026-11-12 from the first five minutes after the push first came, or came back, to the series that came with that push, so that a series born after it counts from zero on a store younger than the window (`GET /<app>`'s Owed row) |
 | A gap in every push over 75 s (motel down, or the store refusing every push) takes every app out of the request thresholds, the shares and quantiles too: one pending starts again after it, one firing resolves (a recovery the traffic did not make) and, still over its bound, fires again after its `for` once the pushes are back | notify/operatorrules.go (`pushedNow`) | 2 | 3 | 3 | 18; it ends correct once the pushes are back (rule 2), and the cause is told by motel's heartbeat with motel down, by `metrics_store_read_only` for a read-only store, by `metrics_store_down` once the pushes have failed for five minutes (a gap of 75 s to five minutes otherwise told by nothing but the resolve); read through the gap, every app's readings fell a push's worth a push instead, and each `<` fired falsely for every app, while a share or a quantile was read over the part of the window left, whose summary says five minutes, and one guard holds for every request kind (/code-review of the guard, for the shares and quantiles) (the unscored note on #434's Owed row, 18 and fixed here as a cheap fix: the guard's push window, size 1, risk 1). Holding a firing alert through a gap is vmalert's `keep_firing_for`, a field per rule whose length no gap bounds. Scored with the guard (#434's Owed row) |
+| A gap in every push over 75 s takes every app out of `memory_share`, `cpu_cores` and `app_memory_high` too (`MEM`, `UNIT_CPU`): one firing resolves, a recovery the app did not make, and, still over its bound, fires again after its `for` (10 m for `app_memory_high`) once the pushes are back. Before, a bare selector and `rate` read the last push for five minutes, so they resolved at about five minutes of the gap instead | notify/operatorrules.go (`memoryShare`, `unitCPU`) | 2 | 3 | 3 | 18; it ends correct once the pushes are back (rule 2), and the cause is told as in the row above: motel's heartbeat, `metrics_store_read_only`, `metrics_store_down`. The 75 s is what stops a stopped or replaced unit being read for five minutes (the row below); a longer window for the gap alone cannot tell the two apart. The review of af7a124 scored the five-minute version 3 × 3 × 3 = 27, accepted under rule 4 |
+| An app that stops is still read for up to 75 s after its last push, two of vmalert's minutely evaluations at most: a firing `memory_share`, `cpu_cores` or `app_memory_high` resolves that much late in the query's time (by the clock, with vmalert's 65 s offset and the evaluation that then finds it gone, up to about three and a half minutes after the stop: docs/monitor.md, "Your own alerts"), and one pending with a `for` of a minute can fire in them on the last push. A cap a deploy drops (`memory_max` taken out) divides the new unit's working set for those 75 s alike. For 30 s after a cutover `cpu_cores` reads the old unit's last rate, until the new one has a second push, and past the 75 s when that push is lost: the 75 s bound is the app's, not the unit's (`unitCPU`) | notify/operatorrules.go (`memoryShare`, `unitCPU`) | 2 | 5 | 3 | 30, accepted under the skill's rule 4: the alert is about numbers that held up to the stop, and was five minutes late before this change (S2 O4 D3, 24, and the CPU over-read at every cutover, 30). Reading the latest push alone, or `motel_app_up == 1`, ends it at the next push, but a motel restart's first push can come before liveswap has reattached the unit, and would resolve a firing alert at a common fault (2 × 4 × 3 = 24, rule 2); telling a stop from a reattach needs the latest push's `motel_app_release_info` (absent before the reattach) beside `motel_app_up`, a term on each rule (size 2, risk 2). The review of af7a124. The operator accepted it on 2026-11-14 |
 | Before liveswap has reattached an app's release after a motel restart (milliseconds, or its recovery's backoff while the manager does not answer), motel's pushes carry no series of that release: the app stays in `PUSHED` (`motel_app_observed`), so its request thresholds read the old process's series, falling a push's worth a push, and `GET /<app>` misses the responses counted meanwhile under no release | liveswap/appmetrics.go (`sample`), notify/metricscollector.go (`collectRequests`) | 2 | 2 | 3 | 12; it needs the restart and a recovery slow past a push or two, and the fall reaches a `for` of a minute only past about 90 s; counting under the release state.json names from the config's start, before the reattach, is a change to liveswap's recovery (size 3, risk 2). /code-review pass 2 on the guard |
+| A motel restart whose reattach of an app's unit comes over 75 s after the old process's last push (liveswap's recovery backing off while the manager does not answer): the pushes meanwhile carry `motel_app_up` 0 and no memory or CPU for an app that runs, so its `memory_share`, `cpu_cores` and `app_memory_high` drop out, and one firing resolves and fires again after its `for` once the unit is back | notify/operatorrules.go (`memoryShare`, `unitCPU`), liveswap/app.go (`recover`) | 2 | 2 | 3 | 12; it needs the restart and a manager that does not answer for about a minute, whose recovery error is in the journal; an ordinary restart's first push before the reattach is inside the 75 s. Counting the unit as running from state.json before the reattach is the change to liveswap's recovery the row above weighs (size 3, risk 2). /code-review pass 1 on the unit series |
+| An app whose units each die before their second push (a crash loop faster than 30 s, each restart a new unit) has no CPU rate: `cpu_cores` and `GET /<app>`'s CPU read nothing for it, whatever the restarts burn | notify/operatorrules.go (`unitCPU`) | 2 | 3 | 1 | 6; `rate` needs two samples of a series, so summed over every unit it read nothing too before this change (measured: a unit's first push alone adds no rate); the loop is told by the watchdog's own alerts (`watchdog_throttled`). /code-review pass 1 on the unit series |
 | A motel restart (or a crash) inside a post-deploy window loses the comparison: nothing compares that deploy again, and a regression is told only by a threshold rule | notify/postdeploy.go | 2 | 2 | 3 | 12; the comparison is in memory, and keeping it across a restart is state on disk for a notification (size 2, risk 2); a restart rarely falls in the half hour after a deploy, and the numbers stay in `GET /<app>` |
 | A relaunch after a stop is compared from 40 s after its cutover (`relaunchSkip`): the relaunched instance's answers before then are in none of its checks, so a regression over by then is not told by the comparison | notify/postdeploy.go (`newWindow`) | 2 | 5 | 3 | 30, accepted under the skill's rule 4: those answers come in the first push after the cutover with the stopped instance's last ones, under the release's one set of counters, and only counters split at the cutover (a new state in the observer, size 3, risk 3) tell the two apart; read from the cutover, a crash loop's last 503s were the relaunch's in every check. The threshold rules and `GET /<app>` count them. /code-review of the relaunch mark; the operator accepted it on 2026-11-12 |
 | A relaunch after a stop whose first push after the cutover the store did not take within 40 s of the cutover (an import that failed, or a push gathered late behind a slow chain check) reads the stopped instance's last push as its own: a crash loop's last 503s in every check | notify/postdeploy.go (`relaunchSkip`) | 2 | 2 | 3 | 12; it needs the release's instance to have failed before (the crash loop) and the store to fail that one import; starting the window at the pusher's first import taken after the cutover is a state shared between the pusher and the comparator (size 3, risk 2). /code-review of the relaunch mark |

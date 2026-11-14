@@ -216,7 +216,7 @@ vmalert -dryRun -rule="$STATE/rules.yml" >/tmp/dry.out 2>&1 \
 # test that calls vmTool (TestE2EMetricsListsEveryVMAlertTest).
 case_vm() {
 echo "=== metrics 1 (vm): notify's vmalert and amtool tests ==="
-vmtests='^(TestRenderedRulesPassVMAlertDryRun|TestRenderedRulesFireAsMotelsAlerts|TestChannelFailedRuleAcrossAConfigLoad|TestOperatorRulesPassVMAlertDryRun|TestOperatorRulesFire|TestOperatorRulesCountAfterAGap|TestOperatorRulesHistogramIsReadWhole|TestDiskFillHistoryOverAGap|TestDiskFillStepIsNoTrend|TestOperatorRulesCountOnAFreshStore|TestOperatorRulesReadThePushedApps|TestOperatorRulesRateAcrossARestart|TestMetricsViewCountsOverTheStore|TestPostDeployARelaunchReadsPastTheStoppedInstance|TestPostDeployPushedQueryOverTheStore|TestScrapeConfigPassesTheStoresCheck)$'
+vmtests='^(TestRenderedRulesPassVMAlertDryRun|TestRenderedRulesFireAsMotelsAlerts|TestChannelFailedRuleAcrossAConfigLoad|TestOperatorRulesPassVMAlertDryRun|TestOperatorRulesFire|TestOperatorRulesCountAfterAGap|TestOperatorRulesHistogramIsReadWhole|TestDiskFillHistoryOverAGap|TestDiskFillStepIsNoTrend|TestOperatorRulesCountOnAFreshStore|TestOperatorRulesReadThePushedApps|TestOperatorRulesRateAcrossARestart|TestMetricsViewCountsOverTheStore|TestMetricsViewReadsTheRunningUnit|TestOperatorRulesReadTheRunningUnit|TestPostDeployARelaunchReadsPastTheStoppedInstance|TestPostDeployPushedQueryOverTheStore|TestScrapeConfigPassesTheStoresCheck)$'
 nvm=$(printf '%s\n' "$vmtests" | tr '|' '\n' | wc -l)
 (cd /tmp && notify.test -test.run "$vmtests" -test.v -test.count=1) >/tmp/vmtests.out 2>&1
 [ $? -eq 0 ] && [ "$(grep -c '^--- PASS' /tmp/vmtests.out)" = "$nvm" ] && ! grep -q -- '--- SKIP' /tmp/vmtests.out \
@@ -330,7 +330,7 @@ echo "=== metrics 3: GET /<app> ==="
 # after the first push, measured on 1.112.0 (PR #445). The suite waits
 # for that point in the store (a cap, not a timing), then gives the view
 # its cache and a margin.
-rq='sum(rate(motel_app_cpu_seconds_total{app="blog"}[2m]))'
+rq='sum(rate(motel_app_cpu_seconds_total{app="blog"}[2m]) and topk by (app) (1, tlast_over_time(motel_app_cpu_seconds_total{app="blog"}[2m]) and rate(motel_app_cpu_seconds_total{app="blog"}[2m])) and on (app) tlast_over_time(motel_app_cpu_seconds_total{app="blog"}[75s]))'
 [ "$MEMORY" = 1 ] && rq='{__name__=~"motel_app_memory_bytes|motel_app_memory_max_bytes",app="blog"}'
 end=$(( $(date +%s) + 180 ))
 while [ "$(date +%s)" -lt "$end" ]; do
