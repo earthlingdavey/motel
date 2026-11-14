@@ -273,6 +273,8 @@ jobs:
   # The notify suite: its own stack (a box with Debian's Alertmanager and
   # a stub receiver), so its own job, as the backup suite's is.
   e2e-notify:
+    needs: [changes]
+    if: needs.changes.outputs.heavy == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -304,6 +306,8 @@ jobs:
   # The metrics suite: notify's box with Debian's victoria-metrics (the
   # store and vmalert), so its own job, as notify's is.
   e2e-metrics:
+    needs: [changes]
+    if: needs.changes.outputs.heavy == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -586,7 +590,7 @@ jobs:
           NEEDS: ${{ toJSON(needs) }}
         run: |
           echo "$NEEDS" | jq -e '
-            ["lint", "test", "govulncheck", "e2e", "e2e-backup", "package", "install-test"] as $gated
+            ["lint", "test", "govulncheck", "e2e", "e2e-backup", "e2e-notify", "e2e-metrics", "package", "install-test"] as $gated
             | (.changes.result == "success" and .changes.outputs.heavy == "false") as $light
             | to_entries
             | map(select(.value.result != "success"
