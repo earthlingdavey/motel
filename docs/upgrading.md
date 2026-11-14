@@ -430,14 +430,16 @@ re-run until the retention ends them, and none after.
 
 **Run `motel monitor setup --metrics` again on a box whose store was set
 up before its socket outlived a failed start** (each load's warning
-names `motel-vm.socket`). Until it is, one push that comes while the
-store or its namespace fails to start ends
+names `motel-vm.socket` and `motel-vm.service`). Until it is, one push
+that comes while the store or its namespace fails to start ends
 `/run/motel-metrics/vm.sock` for good (`motel-vm.socket` failed with
 `trigger-limit-hit`), and the store stays down after the cause is gone
-until root runs `systemctl start motel-vm.socket`. The re-run writes
-the socket unit's `FlushPending=yes` and `TriggerLimitIntervalSec=0`,
-which its `daemon-reload` applies to a running socket with no restart,
-and its `enable --now` starts one that had already failed.
+until root runs `systemctl start motel-vm.socket`; so do a few
+pushes or reads a few seconds apart while the store keeps exiting
+after its start. The re-run writes the socket unit's `FlushPending=yes`
+and `TriggerLimitIntervalSec=0` and the proxy's `StartLimitIntervalSec=0`,
+which its `daemon-reload` applies to the running units with no restart,
+and its `enable --now` starts a socket that had already failed.
 
 ## Patching the host
 

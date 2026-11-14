@@ -21,13 +21,12 @@ RemoveOnStop=yes
 # again (#450). Flushed, that connection is closed unanswered and the
 # socket listens on, so motel's next push after the fault starts the
 # chain. With no retrigger of its own left, each trigger is a client's
-# connection, and the limit, 20 in 2 s, only failed the socket for good
-# under a burst of them during the fault (25 back to back did): so no
-# limit. Measured, systemd 257: 300 connections in 1.4 s, the socket
-# listening, and the store back 3 s after the fault went. The cost: a
-# connection queued as the proxy exits (5 idle minutes, or stopped with
-# the store) is closed, not started again; motel pushes every 30 s, so
-# the proxy does not idle while motel runs.
+# connection, and the default limit, 20 in 2 s, still failed the socket
+# for good under a burst of them during the fault: so no limit. The
+# cost: a connection queued as the proxy exits (5 idle minutes, or
+# stopped with the store) is closed, not started again; motel pushes
+# every 30 s, so the proxy does not idle while motel runs. Measured on
+# systemd 257 (notify/DESIGN-metrics.md, "The shape").
 FlushPending=yes
 TriggerLimitIntervalSec=0
 

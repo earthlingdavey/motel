@@ -100,7 +100,8 @@ and every 5 minutes after; the
 response observer counted 10 requests after the boot as 10.
 
 **The store's socket outlives a store that cannot start.**
-`motel-vm.socket` has `FlushPending=yes` and `TriggerLimitIntervalSec=0`.
+`motel-vm.socket` has `FlushPending=yes` and `TriggerLimitIntervalSec=0`,
+and its proxy `StartLimitIntervalSec=0`.
 Without the first, a connection that comes while the proxy's start
 cannot succeed (the namespace or the store failing at its own start)
 stays queued on the listener: the proxy's start fails on its
@@ -117,7 +118,15 @@ them during the fault: 25 connections back to back did, and so did 25
 waves of seven at once (a `GET /<app>` asks the store seven things at
 once). So the socket has no limit; what bounds its triggers is its
 clients. A higher limit only moves the burst that fails it (200 in 2 s:
-300 back to back failed it). Measured in the e2e box (systemd 257) on
+300 back to back failed it). The proxy's own start limit did the same
+by another way: a store that starts and then exits (it is
+`Type=simple`: killed at its `MemoryMax=`, say) is restarted, and the
+proxy with it at the next connection, and with connections a second
+apart the proxy's fifth start in 10 s was its default limit, whose
+`start-limit-hit` failed the socket (`service-start-limit-hit`),
+`vm.sock` removed. Its starts are its socket's connections, so it has
+no limit either: 30 connections a second apart, 38 starts, the socket
+listening and the store back 1 s after the fault went. Measured in the e2e box (systemd 257) on
 2026-11-14, the namespace failing at its start: before, 205 journal
 lines for one connection and no recovery; with `FlushPending=yes`
 alone, the socket listening through 13 connections (8 of them in 8 s),
@@ -127,7 +136,7 @@ both lines, 300 connections in 1.4 s (11 lines each, 0.19 s of PID 1's
 CPU in all) and 50 waves of seven leaving the socket listening, the
 store answering 3 to 11 s after the fault went (the namespace's own
 start limit, five in 10 s, holds it that long after a burst). A
-`daemon-reload` applies both without a restart of the socket, and the
+`daemon-reload` applies all three without a restart of the socket, and the
 re-run's `enable --now` starts one that had failed, so setup's re-run
 fixes a box set up before them. Also measured, and not taken: an
 `OnFailure=` unit that resets and starts the socket again recovers,
@@ -138,7 +147,8 @@ changes nothing (the retriggers are no poll events);
 cannot start the socket (it runs as `User=motel`); and a drop-in cannot
 remove the proxy's `Requires=`. What the flush costs is an accepted
 row. e2e metrics 4d connects to `vm.sock` 25 times back to back while
-the namespace fails, and asserts the socket listening.
+the namespace fails, and 4e ten times a second apart while the store
+exits after each start, and both assert the socket listening.
 
 **The store's proxy runs as no root.** It passes bytes it does not
 parse, and motel shapes some of them (its own reads through `vm.sock`),
@@ -1583,7 +1593,10 @@ back to back closed unanswered with the socket listening on (without
 `FlushPending=`, the first failed it for good: #450; with it alone,
 the trigger limit did), and once the fault is gone the
 namespace's start restarting Alertmanager onto 9093 and the store
-answering through `vm.sock` again; with motel down, the
+answering through `vm.sock` again; the store exiting after each start,
+ten connections to `vm.sock` a second apart with the socket listening
+on (the proxy's start limit failed it: metrics 4e), and the store and
+vmalert back once the fault is gone; with motel down, the
 namespace stopped and started by hand and the store started, vmalert's
 start starting the socket and the store's scrape Alertmanager through
 it (without vmalert's `Wants=`, measured on 6471dee: the socket and
