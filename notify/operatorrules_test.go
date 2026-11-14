@@ -746,6 +746,90 @@ tests:
 	runUnittest(t, tool, dir, test)
 }
 
+// request_rate judges an app once motel's push from before its window
+// observed it, at 2 a second throughout while it is observed. new's
+// observe line comes at 20m, back's is taken out at 10m and put back at
+// 21m, seven's out for 7 minutes (10m to 17m): each one's counts start
+// from zero, and over the push's span of 300 s they read from nothing up
+// for five minutes, firing `low` (new and back at 23m, seven at 19m) and
+// `busy` late (new's 1.2 at 23m). Each is read from five minutes after
+// its first push, whole. steady is observed throughout, and deployed
+// too, its v2 counting from zero at 20m: each is read throughout. When
+// the pushes themselves stop for 7 minutes (gap, at 1m a push), the
+// rule has no value just while the store holds no push from the five
+// minutes before the window (20m and 21m), as before.
+func TestOperatorRulesRateOnceObserved(t *testing.T) {
+	tool := vmTool(t, "vmalert-tool")
+	dir := t.TempDir()
+	a := rulesApp(t, "rule low threshold request_rate < 1.5 for 1m", "rule busy threshold request_rate > 1 for 1m app new")
+	if err := os.WriteFile(filepath.Join(dir, RulesName), renderRules(a), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// The rule's whole expression, guards and all, so that an app the
+	// guards leave out has no sample.
+	whole := strings.ReplaceAll(thresholdTerm(Rule{Name: "v", Kind: ruleThreshold, Metric: "request_rate", Op: ">=", Value: 0, For: 60e9}).expr(), "'", "''")
+	samples := func(at string, apps ...string) string {
+		s := "      - expr: 'round(" + whole + ", 0.01)'\n        eval_time: " + at + "\n        exp_samples:\n"
+		for _, app := range apps {
+			s += "          - labels: '{app=\"" + app + "\"}'\n            value: 2\n"
+		}
+		return s
+	}
+	none := func(at, alert string) string {
+		return "      - eval_time: " + at + "\n        groupname: motel-operator\n        alertname: " + alert + "\n        exp_alerts: []\n"
+	}
+	test := `rule_files: [rules.yml]
+evaluation_interval: 1m
+tests:
+  - interval: 1m
+    input_series:
+      - series: 'process_start_time_seconds{job="motel"}'
+        values: '1x50'
+      - series: 'motel_app_observed{app="steady",job="motel"}'
+        values: '1x50'
+      - series: 'motel_app_requests_total{app="steady",release="v1",class="2xx",job="motel"}'
+        values: '0+120x50'
+      - series: 'motel_app_observed{app="new",job="motel"}'
+        values: '_x20 1x30'
+      - series: 'motel_app_requests_total{app="new",release="v1",class="2xx",job="motel"}'
+        values: '_x20 0+120x30'
+      - series: 'motel_app_observed{app="back",job="motel"}'
+        values: '1x10 _x10 1x29'
+      - series: 'motel_app_requests_total{app="back",release="v1",class="2xx",job="motel"}'
+        values: '0+120x10 _x10 0+120x29'
+      - series: 'motel_app_observed{app="seven",job="motel"}'
+        values: '1x10 _x6 1x33'
+      - series: 'motel_app_requests_total{app="seven",release="v1",class="2xx",job="motel"}'
+        values: '0+120x10 _x6 0+120x33'
+      - series: 'motel_app_observed{app="deployed",job="motel"}'
+        values: '1x50'
+      - series: 'motel_app_requests_total{app="deployed",release="v1",class="2xx",job="motel"}'
+        values: '0+120x20 2400x30'
+      - series: 'motel_app_requests_total{app="deployed",release="v2",class="2xx",job="motel"}'
+        values: '_x20 0+120x30'
+    metricsql_expr_test:
+` + samples("19m", "deployed", "steady") + samples("22m", "deployed", "seven", "steady") +
+		samples("25m", "deployed", "new", "seven", "steady") + samples("26m", "back", "deployed", "new", "seven", "steady") + `    alert_rule_test:
+` + none("19m", "low") + none("23m", "low") + none("26m", "low") + none("24m", "busy") + `      - eval_time: 26m
+        groupname: motel-operator
+        alertname: busy
+        exp_alerts:
+          - exp_labels: {app: new, kind: state, severity: warning, subject: "app:new", source: rules, key: "rules/app:new/busy"}
+            exp_annotations: {summary: "new: its requests a second over 5 minutes has been above 1 for 1m (rule busy); now 2"}
+  - interval: 1m
+    input_series:
+      - series: 'process_start_time_seconds{job="motel"}'
+        values: '1x10 _x6 1x33'
+      - series: 'motel_app_observed{app="gap",job="motel"}'
+        values: '1x10 _x6 1x33'
+      - series: 'motel_app_requests_total{app="gap",release="v1",class="2xx",job="motel"}'
+        values: '0+120x10 _x6 2040+120x33'
+    metricsql_expr_test:
+` + samples("17m", "gap") + samples("19m", "gap") + samples("20m") + samples("21m") + samples("22m", "gap") + `    alert_rule_test:
+` + none("18m", "low") + none("23m", "low")
+	runUnittest(t, tool, dir, test)
+}
+
 // pushedSeries is an input series at a 1 s interval with a sample at
 // each push (seconds from 0) and none between, value(at) its value.
 func pushedSeries(pushes []int, value func(at int) int) string {
