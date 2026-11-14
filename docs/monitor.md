@@ -884,7 +884,10 @@ monitor {
   alone, a rule naming an app with no `memory_max` is refused, and one
   naming an app whose cap status lists under `caps_unenforced`, or
   not at all after a caps change that failed, loads and does not fire
-  while it is so.
+  while it is so. A cap status listed under `caps` until then (a caps
+  change that failed on a running app) is still read from the store
+  for a few minutes after its last push: through them an every-app
+  rule still watches the app, and either rule can fire on the old cap.
 - **`disk_fill`**: a filesystem that will be full `within` the time
   given, at the rate it is filling.
 - **`post_deploy`**: after each deploy or rollback of the app, the new
