@@ -244,6 +244,17 @@ There is no APT repository yet, so nothing upgrades motel behind
 your back; the hosted repository on the [roadmap](../README.md#roadmap) is what
 will change that.
 
+## A producer's state across the install
+
+A box built from the notify-and-metrics feature branch before motel
+kept the states your producers send (`motel monitor send --state
+firing`; no release has the monitor block) holds them in memory only.
+The install's restart loses them, so about five minutes later
+Alertmanager tells their channels `[RESOLVED]`, although nothing
+recovered. After the install, send each state that still fires once
+more. From then on motel keeps them across a restart
+([Monitor](monitor.md)).
+
 ## A receiver per channel: one repeat of what fires
 
 A box built from the notify-and-metrics feature branch before each

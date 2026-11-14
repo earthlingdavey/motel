@@ -203,7 +203,7 @@ func sendAnswer(w io.Writer, res SendResult) error {
 		return fmt.Errorf("journalled as %s, and delivered nowhere: %s", res.Key, res.Undelivered)
 	}
 	if res.ResolvedNothing {
-		_, err := fmt.Fprintf(w, "resolved nothing: no state fires under %s (a resolve matches the firing's --source, --subject, --name and --instance, and a restart of motel forgets the state)\n", res.Key)
+		_, err := fmt.Fprintf(w, "resolved nothing: no state fires under %s (a resolve matches the firing's --source, --subject, --name and --instance; a state also ends when its app leaves the config, and every state when the monitor block is taken out)\n", res.Key)
 		return err
 	}
 	_, err := fmt.Fprintf(w, "sent %s\n", res.Key)

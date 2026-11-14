@@ -186,7 +186,7 @@ func serveSend(w http.ResponseWriter, r *http.Request) error {
 	if masked {
 		return unprocessable(errors.New("the name, instance or source holds a value the filter masks (a channel URL or its topic or token, the heartbeat's ping URL or its last path segment, or a secret-shaped token): name the thing, not its credential"))
 	}
-	ev := Event{Name: req.Name, Severity: req.Severity, Instance: req.Instance, Source: "external:" + req.Source,
+	ev := Event{Name: req.Name, Severity: req.Severity, Instance: req.Instance, Source: sourceExternal + req.Source,
 		Summary: req.Summary, Kind: kindEvent, Details: req.Details}
 	if app, ok := strings.CutPrefix(req.Subject, "app:"); ok {
 		if !slices.Contains(active.cfg.apps, app) {
@@ -199,8 +199,8 @@ func serveSend(w http.ResponseWriter, r *http.Request) error {
 	}
 	res := SendResult{Key: ev.key()}
 	if req.State == "resolved" {
-		// A resolve that differs from its firing in any part of the key,
-		// or one after a restart of motel, finds nothing to end.
+		// A resolve that differs from its firing in any part of the key
+		// finds nothing to end.
 		e.mu.Lock()
 		res.ResolvedNothing = e.states[res.Key] == nil
 		e.mu.Unlock()

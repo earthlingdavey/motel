@@ -527,6 +527,17 @@ grep -q '"refused":true' /var/lib/liveswap/blog/alerts.json 2>/dev/null \
 	&& pass "alerts.json keeps it for a restart" || fail "alerts.json: $(cat /var/lib/liveswap/blog/alerts.json 2>&1)"
 t=$(first_arrival /ops relaunch_refused "$t_rr" 60 firing blog)
 within "relaunch_refused to the operator (group_wait)" "$t" "$t_rr" 0 45
+# A producer's state across the same restart: no detector of motel's
+# tells it again, so the engine keeps it in external.json.
+send --name restart_probe --state firing --summary "e2e: firing across a restart" || fail "send firing: $(cat /tmp/send.out)"
+grep -q '"name":"restart_probe"' "$STATE/external.json" 2>/dev/null \
+	&& pass "external.json keeps the producer's state for a restart" || fail "external.json: $(cat "$STATE/external.json" 2>&1)"
+x_ends() { am 'http://am/api/v2/alerts?filter=alertname%3D%22restart_probe%22' | sed -n 's/.*"endsAt":"\([^"]*\)".*/\1/p' | head -1; }
+i=0
+until [ -n "$(x_ends)" ]; do
+	i=$((i + 1)); [ "$i" -ge 20 ] && break; sleep 0.5
+done
+x0=$(x_ends)
 e0=$(rr_ends)
 t_restart=$(date +%s)
 systemctl restart motel
@@ -540,6 +551,19 @@ until journalctl -u motel --since "@$t_restart" -o cat --no-pager | grep 'monito
 done
 journalctl -u motel --since "@$t_restart" -o cat --no-pager | grep 'monitor: event' | grep 'liveswap/app:blog/relaunch_refused' | grep -q '"standing":true' \
 	&& pass "after the restart, motel tells it again, standing" || fail "no standing relaunch_refused after the restart"
+journalctl -u motel --since "@$t_restart" -o cat --no-pager | grep 'monitor: event' | grep 'external:e2e/box/restart_probe' | grep -q '"standing":true' \
+	&& pass "and the producer's state, standing" || fail "no standing restart_probe after the restart"
+i=0
+until [ -n "$x0" ] && [ -n "$(x_ends)" ] && expr "$(x_ends)" \> "$x0" >/dev/null; do
+	i=$((i + 1)); [ "$i" -ge 40 ] && break; sleep 0.5
+done
+x1=$(x_ends)
+[ -n "$x0" ] && [ -n "$x1" ] && expr "$x1" \> "$x0" >/dev/null \
+	&& pass "and Alertmanager's alert for it is kept alive (endsAt $x0 → $x1)" || fail "restart_probe's endsAt did not move: '$x0' → '$x1'"
+n=$(am 'http://am/api/v2/alerts?filter=alertname%3D%22restart_probe%22' | grep -o '"fingerprint"' | wc -l)
+[ "$n" -eq 1 ] && pass "one alert for it: the standing report has the original's labels" || fail "$n restart_probe alerts in Alertmanager"
+send --name restart_probe --state resolved --summary "e2e: firing across a restart" || fail "send resolved: $(cat /tmp/send.out)"
+grep -q '^sent ' /tmp/send.out && pass "the producer's resolve after the restart finds its state" || fail "the resolve after the restart: $(cat /tmp/send.out)"
 i=0
 until [ -n "$e0" ] && [ -n "$(rr_ends)" ] && expr "$(rr_ends)" \> "$e0" >/dev/null; do
 	i=$((i + 1)); [ "$i" -ge 40 ] && break; sleep 0.5
@@ -590,6 +614,7 @@ send --name removal_probe --state firing --summary "e2e: firing when the block g
 t_rm=$(now_ms)
 t=$(first_arrival /ops removal_probe "$t_rm" 60 firing)
 [ -n "$t" ] && pass "a state fires before the block goes" || fail "removal_probe never fired"
+grep -q '"name":"removal_probe"' "$STATE/external.json" 2>/dev/null || fail "fixture: external.json does not hold removal_probe"
 awk 'BEGIN{skip=0} /^\tmonitor \{$/{skip=1} skip&&/^\t\}$/{skip=0; next} !skip' /etc/motel/Caddyfile >/tmp/Caddyfile.noblock
 grep -q 'monitor {' /tmp/Caddyfile.noblock && fail "fixture: could not cut the monitor block"
 cp /tmp/Caddyfile.noblock /etc/motel/Caddyfile
@@ -599,6 +624,7 @@ grep -q '^# Written by `motel monitor setup`' "$STATE/alertmanager.yml" && grep 
 	&& ! grep -q 'Rendered by motel' "$STATE/alertmanager.yml" \
 	&& pass "the state directory holds the config that sends nothing" || fail "after the reload: $(head -5 "$STATE/alertmanager.yml")"
 [ -z "$(find "$STATE" -name 'url-*')" ] && pass "and no URL file" || fail "URL files left: $(find "$STATE" -name 'url-*')"
+[ ! -e "$STATE/external.json" ] && pass "and no producer's state kept for a restart" || fail "external.json left: $(cat "$STATE/external.json")"
 am http://am/api/v2/status | grep -q 'e2e-sink\|receiver: ops\|ch-ops' && fail "Alertmanager still runs a config with channels" \
 	|| pass "Alertmanager runs it: no receiver of motel's channels"
 journalctl -u motel --since "@$t_reload" -o cat --no-pager | grep -q 'Alertmanager was given the config that sends nothing' \

@@ -125,9 +125,12 @@ func ReadsSecrets(monitor []byte) bool {
 // files, and has Alertmanager on socket reload only when that changed anything: a
 // box whose block never had channels starts no Alertmanager for it. It
 // reports whether it changed anything; a box Alertmanager is not set up
-// on has nothing to change, and is no error.
-func SendNothing(dir, socket string) (bool, error) {
-	changed, _, err := writeState(dir, defaultConfig, map[string]string{})
+// on has nothing to change, and is no error. The producers' states kept
+// for a restart are forgotten with the block, as at a reload's
+// (external.go): a later start with it must not tell them again.
+func SendNothing(dir, socket string) (changed bool, err error) {
+	defer func() { err = errors.Join(err, removeExternal(filepath.Join(dir, externalName))) }()
+	changed, _, err = writeState(dir, defaultConfig, map[string]string{})
 	if errors.Is(err, errNotSetUp) || err == nil && !changed {
 		return false, nil
 	}

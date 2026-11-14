@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -47,8 +48,9 @@ type Event struct {
 	// send --detail), annotations detail_<key>, through the filter.
 	Details map[string]string
 	// Standing, on a state alert, is a detector's report of what it
-	// told before and has not ended (liveswap's ReportStanding, at
-	// Start): ignored for a key the table holds; for one it does not —
+	// told before and has not ended (liveswap's ReportStanding at Start,
+	// and the producers' states kept in external.json): ignored for a key
+	// the table holds; for one it does not —
 	// a motel restarted since, its table empty while Alertmanager still
 	// holds the alert — taken as told: a firing one fires, a cleared one
 	// is held as after a firing one was told, so its recovery comes
@@ -218,6 +220,13 @@ type engine struct {
 	metrics func(context.Context) ([]byte, error)
 
 	failures *failCounter
+
+	// externalPath is the file the producers' states are kept in for a
+	// restart (external.go), set once it has been read, at the first
+	// configure of a config with the block; externalSaved is what was
+	// written to it last (nil: no file).
+	externalPath  string
+	externalSaved []byte
 }
 
 func newEngine() *engine {
@@ -270,6 +279,11 @@ func cleanText(known []string, s string, safe ...string) string {
 func (e *engine) report(ev Event) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
+	e.reportLocked(ev)
+}
+
+// reportLocked is report, with mu held.
+func (e *engine) reportLocked(ev Event) {
 	if e.active == nil {
 		return
 	}
@@ -296,6 +310,9 @@ func (e *engine) report(ev Event) {
 		e.journal(ev, "oneshot")
 		e.enqueue(&pending{key: ev.key(), alerts: []amAlert{oneShotAlert(ev, now)}, first: now, journal: true})
 		return
+	}
+	if strings.HasPrefix(ev.Source, sourceExternal) {
+		defer e.persistExternal()
 	}
 	key := ev.key()
 	st := e.states[key]
@@ -443,6 +460,7 @@ func (e *engine) tick() {
 		}
 		e.reconcile(key, st, now)
 	}
+	e.persistExternal() // a recovery's hold ended
 	for app, at := range e.mutes {
 		if now.Sub(at) >= repostEvery {
 			e.mutes[app] = now
@@ -686,6 +704,9 @@ func (e *engine) configure(a *App, post poster, known []string, logger *zap.Logg
 	e.live = slices.DeleteFunc(e.live, func(l liveConfig) bool { return l.a == a })
 	e.live = append(e.live, liveConfig{a, post, known, logger})
 	e.setConfig(a, post, known, logger)
+	if e.externalPath == "" && a.cfg != nil {
+		e.restoreExternal(a.cfg.apps)
+	}
 	if !e.running {
 		ctx, cancel := context.WithCancel(context.Background())
 		e.running, e.cancel, e.done = true, cancel, make(chan struct{})
@@ -741,6 +762,7 @@ func (e *engine) prune(apps []string) {
 		}
 		delete(e.states, key)
 	}
+	e.persistExternal()
 	// The pollers' own memory is their goroutine's (poll runs outside
 	// mu): a clear they report later for a key pruned here finds no
 	// state, and is nothing.
@@ -785,6 +807,10 @@ func (e *engine) release(a *App) {
 	// resolve_timeout.
 	e.states, e.mutes, e.buckets = map[string]*stateAlert{}, map[string]time.Time{}, map[string]*bucket{}
 	e.untold = map[string]*untold{}
+	// The producers' states are kept on disk at a shutdown, for the next
+	// process; a reload's are forgotten below with the render.
+	external, logger := e.externalPath, e.logger
+	e.externalSaved = nil
 	cancel, done, running := e.cancel, e.done, e.running
 	e.running = false
 	e.mu.Unlock()
@@ -802,6 +828,11 @@ func (e *engine) release(a *App) {
 	// last config's apps (caddy.Stop), so configRunning (load.go) is a
 	// reload's alone here, as for the store's rules (pusher.release).
 	if configRunning() {
+		if external != "" {
+			if err := removeExternal(external); err != nil {
+				logger.Warn("monitor: the producers' states kept for a restart could not be removed: a later start with the block would tell them again", zap.String("file", external), zap.Error(err))
+			}
+		}
 		a.applyNothing()
 	}
 }
