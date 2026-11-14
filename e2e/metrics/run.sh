@@ -296,9 +296,9 @@ if motel monitor rules --json >/tmp/rules.json 2>/tmp/rules.err; then
 	got=$(pick 'const by = Object.fromEntries(l.alerts.map((a) => [a.name, a]));
 		const ok = l.store?.query_offset_seconds === 65 && by.errors_high?.kind === "guarded" && by.blog_slow?.app === "blog"
 			&& by.app_memory_high?.value_query && by.disk_low?.readings?.length > 0 && by.Watchdog === undefined
-			&& !JSON.stringify(l).includes("summary") && !JSON.stringify(l).includes("http");
+			&& !JSON.stringify(l).includes("summary") && !JSON.stringify(l).includes("http") && l.rules_file === undefined;
 		console.log(ok ? "ok" : JSON.stringify(l).slice(0, 400));' </tmp/rules.json)
-	[ "$got" = ok ] && pass "motel monitor rules --json lists the store's rules with their queries and the checks with their readings, no summary, no URL" \
+	[ "$got" = ok ] && pass "motel monitor rules --json lists the store's rules with their queries and the checks with their readings, no summary, no URL, and rules.yml as this config's render (no rules_file)" \
 		|| fail "motel monitor rules --json: $got"
 	# errors_high's floor counts blog's responses sent, pushed at zero
 	# since metrics 2: its query at now - offset has blog's series.

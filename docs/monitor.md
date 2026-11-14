@@ -958,10 +958,12 @@ WARNING: /var/lib/motel-metrics/rules.yml, the file vmalert reads, is not this c
 With `--json` it is `rules_file`: `differs`, `missing` (a `metrics`
 line and no file: `motel monitor setup --metrics` makes it) or
 `unreadable`; absent when the file is this config's, or, without the
-`metrics` line, empty of rules or not there. The command still exits
-0: test `rules_file` in a script. Once the cause is mended,
-`systemctl reload motel` writes the file again. The line speaks for the
-file alone: vmalert re-reads it within 5 s of a write, and whether
+`metrics` line, the empty one this motel's retire leaves, or none. The
+command still exits 0: test `rules_file` in a script. Once the cause is
+mended, `systemctl reload motel` writes the file again for a config
+with the `metrics` line; without it a reload writes nothing there, and
+`systemctl restart motel` empties it. The line speaks for the file
+alone: vmalert re-reads it within 5 s of a write, and whether
 vmalert accepted it is not checked.
 
 The listing holds motel's own query text, rule, app and path names:

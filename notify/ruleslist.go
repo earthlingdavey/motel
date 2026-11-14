@@ -399,9 +399,10 @@ func promSeconds(s string) int {
 }
 
 // serveRules is GET /notify/rules: the listing of the config notify's
-// Start configured, with what its detectors last read. It reads
-// nothing new: the pollers' and the pusher's last numbers, and the
-// watchdogs' counts in memory.
+// Start configured, with what its detectors last read. It polls
+// nothing: the pollers' and the pusher's last numbers, and the
+// watchdogs' counts in memory; it reads vmalert's unit for its timing
+// (vmalertTiming) and rules.yml to compare it (rulesFile).
 func serveRules(w http.ResponseWriter, r *http.Request) error {
 	if r.Method != http.MethodGet {
 		return caddy.APIError{HTTPStatus: http.StatusMethodNotAllowed, Err: errors.New("GET only")}
