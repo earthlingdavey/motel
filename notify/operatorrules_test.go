@@ -292,8 +292,11 @@ func TestOperatorRulesRender(t *testing.T) {
 			` and on () max(tlast_over_time(process_start_time_seconds{job="motel"}[5m] offset 5m))` + pushed(`{app="blog"}`),
 		"hits_low": `(sum by (app) (` + inc(`motel_app_cache_responses_total{result=~"hit|stale"}`) + `) or sum by (app) (` + inc(`motel_app_cache_responses_total`) + `) * 0)` +
 			` / sum by (app) (` + inc(`motel_app_cache_responses_total`) + `) < 0.5 and sum by (app) (` + inc(`motel_app_cache_responses_total`) + `) >= 20` + pushed(""),
-		"mem":    `max by (app) (motel_app_memory_bytes / motel_app_memory_max_bytes) > 0.8`,
-		"busy":   `sum by (app) (rate(motel_app_cpu_seconds_total{app="shop"}[5m])) > 1.5`,
+		// The running unit's: its last push within 75 s, and the newest
+		// unit with a rate.
+		"mem": `max by (app) (last_over_time(motel_app_memory_bytes[75s]) / last_over_time(motel_app_memory_max_bytes[75s])) > 0.8`,
+		"busy": `sum by (app) (rate(motel_app_cpu_seconds_total{app="shop"}[5m]) and topk by (app) (1, tlast_over_time(motel_app_cpu_seconds_total{app="shop"}[75s])` +
+			` and rate(motel_app_cpu_seconds_total{app="shop"}[5m]))) > 1.5`,
 		"median": `histogram_quantile(0.5, sum by (app, le) (` + hist(``) + `)) > 0.2 and sum by (app) (` + inc(`motel_app_response_seconds_count`) + `) >= 20` + pushed(""),
 		"disk_filling": `min by (path) (predict_linear(motel_disk_avail_bytes[42h], 604800)) < 0 and min by (path) (predict_linear(motel_disk_avail_bytes[7h], 604800)) < 0` +
 			` and max by (path) (present_over_time(motel_disk_avail_bytes[42h] offset 35h))`,
@@ -356,7 +359,7 @@ func TestOperatorRulesRender(t *testing.T) {
 // A name an app or a release could hold is quoted in, never spliced.
 func TestThresholdQuotesTheApp(t *testing.T) {
 	r := Rule{Name: "x", Kind: ruleThreshold, App: "a-b", Metric: "memory_share", Op: ">", Value: 0.5, For: 600e9}
-	if got := thresholdTerm(r).expr(); got != `max by (app) (motel_app_memory_bytes{app="a-b"} / motel_app_memory_max_bytes{app="a-b"}) > 0.5` {
+	if got := thresholdTerm(r).expr(); got != `max by (app) (last_over_time(motel_app_memory_bytes{app="a-b"}[75s]) / last_over_time(motel_app_memory_max_bytes{app="a-b"}[75s])) > 0.5` {
 		t.Fatal(got)
 	}
 }

@@ -146,9 +146,11 @@ func requestQueries(sel string, span time.Duration) viewRequests {
 }
 
 // cpuQuery is the view's CPU range query over the app sel names, each
-// point a rate over rate.
+// point the running unit's rate over rate (unitCPU): summed over every
+// unit, a point after a cutover read the stopped unit's rate beside the
+// new one's, and a stopped app's last rate read as now.
 func cpuQuery(sel, rate string) string {
-	return `sum(rate(motel_app_cpu_seconds_total{` + sel + `}[` + rate + `]))`
+	return "sum(" + unitCPU("{"+sel+"}", rate) + ")"
 }
 
 func (v *metricsView) ask(ctx context.Context, app, window string, w viewWindow, now time.Time) (wire.Metrics, error) {

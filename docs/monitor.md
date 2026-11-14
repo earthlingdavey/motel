@@ -885,7 +885,12 @@ and `metrics_store_down` once they have failed for five minutes.
 restart in the window barely moves it. It has no value until the
 store holds a push from the five minutes before its window, so a
 `request_rate` rule fires no sooner than five minutes and its `for`
-after setup, or after a gap of over five minutes in the pushes. The
+after setup, or after a gap of over five minutes in the pushes.
+`memory_share` and `cpu_cores` read the app's running unit alone: a
+unit that stopped (the app stopped, or replaced by a deploy, a
+rollback or a restart) is read for at most 75 s after its last push,
+and every app drops out of them, and of `app_memory_high`, while no
+push reaches the store for over 75 s, as for the request metrics. The
 rule goes to the operator's channels, and to the app's bound channels
 when it is about one app. Every parameter and every refusal is in
 DESIGN-metrics.md's [Operator rules](../notify/DESIGN-metrics.md#operator-rules).

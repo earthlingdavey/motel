@@ -826,16 +826,48 @@ func thresholdTerm(r Rule) ruleTerm {
 		t.value = "(" + sum("motel_app_cache_responses_total", `result=~"hit|stale"`) + " or " + spoke + " * 0) / " + spoke
 		t.guards = append(floor(spoke, "responses its cache spoke for"), pushed)
 	case "memory_share":
-		t.value = "max by (app) (motel_app_memory_bytes" + sel() + " / motel_app_memory_max_bytes" + sel() + ")"
+		t.value = memoryShare(sel())
 	case "cpu_cores":
-		// rate, not counterIncrease: each unit's counter starts at zero
-		// when the unit does, and its first value is the CPU it used
-		// before the window.
-		t.value = "sum by (app) (rate(motel_app_cpu_seconds_total" + sel() + "[" + promDuration(requestWindow) + "]))"
+		t.value = "sum by (app) (" + unitCPU(sel(), promDuration(requestWindow)) + ")"
 	default:
 		panic("thresholdTerm: unchecked metric " + r.Metric)
 	}
 	return t
+}
+
+// memoryShare is each app's working set over its cap (sel: the rule's
+// selector), from the running unit's last push within pushFresh. The
+// collector pushes the two while the unit runs; a bare selector reads a
+// series' last sample as far back as the query's step (vmalert's 5m),
+// so a stopped app's memory_share and app_memory_high kept firing for
+// five minutes after it stopped. One push lost leaves the app in, and
+// so does a motel restart's first push, which can come before liveswap
+// has reattached the unit (its recovery runs after Start) and carries
+// motel_app_up 0 for an app that runs.
+func memoryShare(sel string) string {
+	w := "[" + promDuration(pushFresh) + "]"
+	return "max by (app) (last_over_time(motel_app_memory_bytes" + sel + w + ") / last_over_time(motel_app_memory_max_bytes" + sel + w + "))"
+}
+
+// unitCPU is the CPU rate over win of each app's running unit (sel: the
+// selector), for cpu_cores and GET /<app>'s view to sum by app.
+// motel_app_cpu_seconds_total is one series per unit, each counting
+// from zero when its unit starts, and only the running unit is sampled,
+// so a deploy, a rollback, a relaunch or a watchdog restart begins a new
+// series and ends the old one's samples. rate divides by each series'
+// own span, its base the series' first sample in the window (for a unit
+// born in it, the CPU it used since it began) or its last before: summed
+// over every unit, the stopped one kept its last rate beside the new
+// one's until its last sample left the window, and an app at a steady
+// 0.5 cores read 1.0 for most of the five minutes after each cutover.
+// So the sum is of one unit an app: the newest with a sample within
+// pushFresh and a rate, which a unit has from its second sample, the one
+// before it meanwhile. One push lost leaves the unit in, as memoryShare
+// does; a unit no push has carried for pushFresh (its app stopped,
+// motel down, every push failing) is not read.
+func unitCPU(sel, win string) string {
+	rate := "rate(motel_app_cpu_seconds_total" + sel + "[" + win + "])"
+	return rate + " and topk by (app) (1, tlast_over_time(motel_app_cpu_seconds_total" + sel + "[" + promDuration(pushFresh) + "]) and " + rate + ")"
 }
 
 // diskFillRule is the store's disk rule's shape over motel's own disk

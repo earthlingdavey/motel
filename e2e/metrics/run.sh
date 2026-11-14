@@ -330,7 +330,7 @@ echo "=== metrics 3: GET /<app> ==="
 # after the first push, measured on 1.112.0 (PR #445). The suite waits
 # for that point in the store (a cap, not a timing), then gives the view
 # its cache and a margin.
-rq='sum(rate(motel_app_cpu_seconds_total{app="blog"}[2m]))'
+rq='sum(rate(motel_app_cpu_seconds_total{app="blog"}[2m]) and topk by (app) (1, tlast_over_time(motel_app_cpu_seconds_total{app="blog"}[75s]) and rate(motel_app_cpu_seconds_total{app="blog"}[2m])))'
 [ "$MEMORY" = 1 ] && rq='{__name__=~"motel_app_memory_bytes|motel_app_memory_max_bytes",app="blog"}'
 end=$(( $(date +%s) + 180 ))
 while [ "$(date +%s)" -lt "$end" ]; do
