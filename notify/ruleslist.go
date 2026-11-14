@@ -36,8 +36,12 @@ import (
 type RulesListing struct {
 	// Store is how to read the store-backed rules; absent with no
 	// metrics line, and so are those rules.
-	Store  *StoreQueries  `json:"store,omitempty"`
-	Alerts []AlertListing `json:"alerts"`
+	Store *StoreQueries `json:"store,omitempty"`
+	// RulesFile is set when rules.yml, the file vmalert reads, is not
+	// what this config renders into it (rulesFile): differs, missing or
+	// unreadable. It speaks for the file, not for what vmalert loaded.
+	RulesFile string         `json:"rules_file,omitempty"`
+	Alerts    []AlertListing `json:"alerts"`
 }
 
 // StoreQueries are the store's socket and how vmalert's evaluations
@@ -219,10 +223,50 @@ func storeQueries(m *MetricsStore) (*StoreQueries, error) {
 	}, nil
 }
 
+// RulesListing.RulesFile's values.
+const (
+	rulesFileDiffers    = "differs"
+	rulesFileMissing    = "missing"
+	rulesFileUnreadable = "unreadable"
+)
+
+// unlinedRulesDir is where rules.yml is for a config with no metrics
+// line, which has no MetricsStore to name it: setup's state directory.
+// A var so that a test can stand another in.
+var unlinedRulesDir = DefaultMetricsStateDir
+
+// rulesFile is how rules.yml stands against the config a: "" when it
+// holds what a's Start wrote (MetricsStore.rules), or, with no metrics
+// line, the render of no rule that a retire writes, or no file at all.
+// A write or a retire that failed (only a journal line at the load)
+// leaves another render there, which vmalert evaluates while the
+// listing shows a's. It compares bytes and says no more: what the file
+// holds is root's and the motel user's to read, not the listing's to
+// show.
+func rulesFile(a *App) string {
+	dir, want := unlinedRulesDir, renderRules(nil)
+	if a.Metrics != nil {
+		dir, want = a.Metrics.stateDir(), a.Metrics.rules
+	}
+	got, err := os.ReadFile(filepath.Join(dir, RulesName)) //nolint:gosec // the state directory's own file
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
+		if a.Metrics == nil {
+			return ""
+		}
+		return rulesFileMissing
+	case err != nil:
+		return rulesFileUnreadable
+	case !bytes.Equal(got, want):
+		return rulesFileDiffers
+	}
+	return ""
+}
+
 // listRules is the listing of the config a, with the detectors'
 // numbers as last read.
 func listRules(a *App, seen polled, chain chainRead, budgets []liveswap.WatchdogBudget) (RulesListing, error) {
-	l := RulesListing{Alerts: []AlertListing{}}
+	l := RulesListing{Alerts: []AlertListing{}, RulesFile: rulesFile(a)}
 	rules := map[string]vmRule{}
 	if a.Metrics != nil {
 		q, err := storeQueries(a.Metrics)
@@ -396,7 +440,27 @@ func rulesText(l RulesListing, now time.Time) []byte {
 		_, _ = fmt.Fprintf(&b, "\nNOW for the store's rules: run each value_query (--json) on %s at now - %ds;\npending and firing are %s (firing over pending; a resolved alert shows within the lookback).\n",
 			l.Store.Socket, l.Store.QueryOffsetSeconds, l.Store.StateQuery)
 	}
+	if l.RulesFile != "" {
+		_, _ = fmt.Fprintf(&b, "\n%s\n", rulesFileText(l))
+	}
 	return b.Bytes()
+}
+
+// rulesFileText is the line that states a rules.yml that is not the
+// config's: what it means for the listing, never what the file holds.
+func rulesFileText(l RulesListing) string {
+	file := "WARNING: " + filepath.Join(DefaultMetricsStateDir, RulesName) + ", the file vmalert reads,"
+	switch {
+	case l.RulesFile == rulesFileUnreadable && l.Store != nil:
+		return file + " could not be read: whether it holds the store's rules listed above is unknown."
+	case l.RulesFile == rulesFileUnreadable:
+		return file + " could not be read: whether it still holds rules is unknown."
+	case l.RulesFile == rulesFileMissing:
+		return file + " is not there: the store's rules listed above are in no file vmalert reads."
+	case l.Store != nil:
+		return file + " is not this config's render: the store's rules listed above are not the ones in it (the journal says why)."
+	}
+	return file + " is not the empty one a config with no metrics line leaves there: vmalert may evaluate rules not listed here (the journal says why)."
 }
 
 // amount is v in unit, as the table writes it.

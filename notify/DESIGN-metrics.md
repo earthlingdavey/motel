@@ -1076,6 +1076,37 @@ are not silenceable: they are not about the box.
 rule absent says the same as one marked unavailable, with one shape
 fewer.
 
+**The file vmalert reads.** The listing is the loaded config's render,
+and vmalert evaluates `rules.yml`: a write that fails at a load
+(`EIO`, a read-only `/var/lib`: `applyRules`) or a retire that fails at
+a reload that takes the `metrics` line out (`retireRules`) leaves
+another config's rules there while the load succeeds, with one Error
+line in the journal. So the listing compares the file with what this
+config's Start writes, byte for byte (`rulesFile`), and `rules_file`
+says when they are not the same: `differs` (with the line, another
+render; with none, not the render of no rule a retire leaves, so
+vmalert may evaluate rules the listing does not show), `missing` (a
+`metrics` line and no file, or no state directory:
+`errMetricsNotSetUp`), or `unreadable` (`EACCES`, `EIO`: said as
+such, never as a difference). With no `metrics` line, no file (or no
+setup) is nothing to say. The table ends with one line that states it;
+neither shows what the file holds, which is root's and the motel
+user's to read (0640 `motel:_victoria-metrics`), not the listing's to
+print. The command exits 0: the listing was given, and `rules_file` is
+what a script tests. It speaks for the file, not for vmalert: vmalert
+re-reads the file within 5 s of a write (`-configCheckInterval=5s`),
+so for those seconds after a load it may still run the old one
+unmarked, and whether vmalert accepted the file is not read (the Owed
+row on a render vmalert refuses). A listing in the milliseconds of a
+load, between notify's engine taking the config and the write, is
+marked. In a reload that fails at an app's Start after the monitor
+app's ("Accepted residuals"), the engine serves the candidate through
+the gap and the file is the candidate's, so the listing is the
+candidate's, unmarked; once the fallback has written the serving
+config's rules back (`pusher.release`, before the engine goes back),
+both are the old config's again, and a fallback write that failed is
+marked as any other.
+
 **Why not annotations.** The parts could ride in each rule's
 annotations (and a client read `rules.yml` or vmalert's API). They are
 sent with the alert to Alertmanager, and the `json` and `ntfy` channels
@@ -1578,6 +1609,7 @@ on its general scales. metrics' examples:
 
 | Owed | S | O | D | Lands in |
 |---|---|---|---|---|
+| vmalert refusing a `rules.yml` motel rendered (after a version change, say) keeps its old rules, and `up{job="vmalert"}` stays 1, so `metrics_rules_down` never fires and neither motel nor `motel monitor rules` can tell (30, owed by the owner's decision of 2026-11-14): `scrape.yml` drops every vmalert series but `up`, and the chain (notify/metricspush.go) reads only `up`. The fix keeps `vmalert_config_last_reload_successful` in `scrape.yml` and reads it beside `up` (size 3, risk 2). The listing's `rules_file` speaks for the file, not for this. Read-only review at af7a124 | 3 | 2 | 5 | its own PR, with the `scrape.yml` change and the `motel monitor setup --metrics` re-run on every box that docs/upgrading.md would order |
 | The store's RSS on a 1 or 2 GB box (a day on hotserve-1's 3.8 GB is in "Footprint") | — | — | — | a deploy to a box of that size |
 | On a booted Debian host, the delete-a-leftover branch of the namespace unit's test before its delete (#430's `ExecStartPre`), measured in the e2e box alone. A reboot cannot reach it: a cold boot has an empty `/run`, so hotserve-1's of 2026-11-13 at a8038b4 took the nothing-to-delete branch alone (the unit's start took 165 ms, with no `Cannot remove namespace` line), and setup's re-run does not restart the namespace unit, which is active. #426's proxies have had their cold boot: the deploy of 01b2fd5 to hotserve-1 rebooted it at about 17:53 UTC on 2026-11-12, and both came back as no root | — | — | — | a start of the namespace unit on hotserve-1 with `/run/netns/motel-metrics` already there (a start after one that failed past its `ip netns add`), not a reboot |
 | Debian's security support for `victoria-metrics` 1.112.0 and `prometheus-alertmanager` 0.28.1 on trixie, whose binaries are built with Go 1.24.2 (the store, vmalert) and 1.24.1 (Alertmanager), and a dist-upgrade check of both drop-ins' flags | — | — | — | before any release |
