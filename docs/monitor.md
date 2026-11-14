@@ -886,14 +886,17 @@ restart in the window barely moves it. It has no value until the
 store holds a push from the five minutes before its window, so a
 `request_rate` rule fires no sooner than five minutes and its `for`
 after setup, or after a gap of over five minutes in the pushes.
-`memory_share` and `cpu_cores` read the app's running unit alone: a
-unit that stopped (the app stopped, or replaced by a deploy, a
-rollback or a restart) is read for at most 75 s after its last push,
-which vmalert sees about a minute later (`query_offset_seconds`,
-below), so an alert on a stopped app ends up to about three and a
-half minutes after the stop; every app drops out of them, and of
-`app_memory_high`, while no push reaches the store for over 75 s, as
-for the request metrics. The
+`memory_share` and `cpu_cores` read the app's running unit alone. An
+app that stopped is read for at most 75 s after its last push, which
+vmalert sees about a minute later (`query_offset_seconds`, below), so
+an alert on a stopped app ends up to about three and a half minutes
+after the stop. A unit a deploy, a rollback or a restart replaced is
+read by `cpu_cores` in the new unit's place, never beside it, until
+the new one has a rate, which it has from its second push: within
+about a minute of the cutover, and past the 75 s when that push is
+lost, for as long as some unit of the app is pushed. Every app drops
+out of them, and of `app_memory_high`, while no push reaches the store
+for over 75 s, as for the request metrics. The
 rule goes to the operator's channels, and to the app's bound channels
 when it is about one app. Every parameter and every refusal is in
 DESIGN-metrics.md's [Operator rules](../notify/DESIGN-metrics.md#operator-rules).
