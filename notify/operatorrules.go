@@ -732,6 +732,21 @@ func pushBefore(win time.Duration) string {
 	return "max(tlast_over_time(" + pushSeries + "[" + promDuration(prevReach) + "] offset " + promDuration(win) + "))"
 }
 
+// observedBefore is the apps (sel: the rule's selector) that pushBefore,
+// the push windowSpan's base is, said were observed: its last sample of
+// motel_app_observed within the same reach held to the push's, less
+// pushApart as pushedNow's. An app's counts start from zero when its
+// observe line comes, or comes back, and over a window the push's span
+// covers before then a steady rate read from nothing up for five
+// minutes, firing a `request_rate <`; motel was pushing all along, so
+// pushBefore holds. A motel restart, or the store down, leaves the push
+// series and the app's alike, so the app is out only while pushBefore
+// is none.
+func observedBefore(sel string, win time.Duration) string {
+	return "max by (app) (tlast_over_time(motel_app_observed" + sel + "[" + promDuration(prevReach) + "] offset " + promDuration(win) + "))" +
+		" > scalar(" + pushBefore(win) + ") - " + strconv.Itoa(int(pushApart.Seconds()))
+}
+
 // ruleTerm is a store rule's expression in parts (DESIGN-metrics.md,
 // "How close each rule is"): value, the MetricsQL whose series are the
 // number compared (one per subject), op and threshold, and guards, the
@@ -818,7 +833,9 @@ func thresholdTerm(r Rule) ruleTerm {
 	case "request_rate":
 		t.value = sum("motel_app_requests_total") + " / " + windowSpan(requestWindow)
 		t.guards = []ruleTerm{{match: "on ()", value: pushBefore(requestWindow),
-			meaning: "the store holds a push from the " + promDuration(prevReach) + " before the window: before it, the span its counts cover is not known"}, pushed}
+			meaning: "the store holds a push from the " + promDuration(prevReach) + " before the window: before it, the span its counts cover is not known"},
+			{match: "on (app)", value: "(" + observedBefore(sel(), requestWindow) + ")",
+				meaning: "motel's push from the " + promDuration(prevReach) + " before the window says this config observed the app: before it, the app's counts cover part of the span alone"}, pushed}
 	case "cache_hit_share":
 		// A hit result's series exists once there is one: an app whose
 		// cache spoke and never hit has a share of 0, not none.

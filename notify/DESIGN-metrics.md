@@ -655,7 +655,7 @@ parse, a JSON config's at Provision, both by `motel validate`):
 |---|---|---|---|---|
 | `threshold 5xx_share` | `(sum by (app) (inc(motel_app_requests_total{class="5xx"})) / SENT) > v and SENT >= floor and on (app) PUSHED`, SENT the same over `class!="aborted"` | `for` | `app`, `subject="app:<app>"`, `kind="state"`, `severity`, `source="rules"`, `key="rules/app:<app>/<name>"` | the operator and the app's bound channels |
 | `threshold p50`, `p95` | `histogram_quantile(q, sum by (app, le) (hinc(motel_app_response_seconds))) > v and sum by (app) (inc(motel_app_response_seconds_count)) >= floor and on (app) PUSHED`, v in seconds | `for` | as above | as above |
-| `threshold request_rate` | `sum by (app) (inc(motel_app_requests_total)) / SPAN > v and on () BEFORE and on (app) PUSHED` | `for` | as above | as above |
+| `threshold request_rate` | `sum by (app) (inc(motel_app_requests_total)) / SPAN > v and on () BEFORE and on (app) OBSERVED and on (app) PUSHED` | `for` | as above | as above |
 | `threshold cache_hit_share` | `(HITS or SPOKE * 0) / SPOKE > v and SPOKE >= floor and on (app) PUSHED`, both `sum by (app) (inc(motel_app_cache_responses_total))`, HITS over `result=~"hit\|stale"` | `for` | as above | as above |
 | `threshold memory_share` | `MEM > v`, `MEM` below | `for` | as above | as above |
 | `threshold cpu_cores` | `sum by (app) (UNIT_CPU) > v`, `UNIT_CPU` below over `[5m]` | `for` | as above | as above |
@@ -800,7 +800,37 @@ the pushes have run a window: the store's `increase` then drops each
 series' first value, so over 300 the rate read from nothing up for five
 minutes and a `request_rate <` fired after setup on a running box
 (`TestOperatorRulesCountOnAFreshStore`; the restart's two grids, to the
-second, and a 150 s gap, in `TestOperatorRulesRateAcrossARestart`). The `min_requests`
+second, and a 150 s gap, in `TestOperatorRulesRateAcrossARestart`).
+
+`OBSERVED` (`observedBefore`) is `BEFORE` per app: the apps the push
+`SPAN` counts from said were observed.
+
+```
+max by (app) (tlast_over_time(motel_app_observed[5m] offset 5m))
+  > scalar(max(tlast_over_time(process_start_time_seconds{job="motel"}[5m] offset 5m))) - 15
+```
+
+An app's counts start from zero when its `observe` line comes, or comes
+back after it was taken out, and when the app is new; the counter guard
+reads them from zero, and `PUSHED` takes the app in from its first push.
+But motel was pushing all along, so `BEFORE` holds and `SPAN` is the
+push's 300 s, of which the app was counted for part alone: a steady 2 a
+second read 0, 0.4, 0.8, 1.2, 1.6 as its first window filled, and a
+`request_rate < 1.5 for 1m` fired a few minutes after the `observe` line
+and recovered, with no change in the traffic (a `>` judged it low, and
+fired late or not at all). The app is in once the push `SPAN` counts
+from carried it, five minutes after its first, and read whole from
+then. Its last sample there is held to that push's, less `pushApart`, as
+`PUSHED`'s, so an app whose `observe` line was out at that push stays
+out, however its `motel_app_observed` came back since: tested by its mere
+presence in the five minutes, an `observe` line out for between five and
+ten minutes was in again from its first push back and read from nothing
+up. A motel restart, or the store down or refusing the pushes, leaves
+the push series and the app's alike, so `OBSERVED` holds where `BEFORE`
+does and costs a restart nothing; and a deploy starts a release's counts
+from zero but leaves the app observed (`TestOperatorRulesRateOnceObserved`;
+across a restart, and across a gap but while `PUSHED` has no push,
+`TestOperatorRulesRateAcrossARestart`). The `min_requests`
 floors stay counts: they ask whether there are responses enough to
 judge a share or a quantile, and the window holds that many whatever
 span it covers. A share or a quantile divides two counts over the same
@@ -1064,6 +1094,9 @@ together and compares them with the rendered `expr`, for every rule of
   `match`), which has no op and no labels: the store holds a push from
   the five minutes before the window, without which `SPAN` is unknown
   and the value has no series;
+- `request_rate`'s `observedBefore` (`and on (app) (…)`, listed with
+  its `match`), which has no op: that push observed the app, without
+  which the app's counts cover part of `SPAN` alone;
 - disk_fill's short window (`< 0`) and its history term, which has no
   op: it holds when its value has a series at all;
 - `metrics_store_disk_fill`'s hour window.
@@ -1665,6 +1698,8 @@ on its general scales. metrics' examples:
 | With no `metrics` line, a `rules.yml` that holds another motel version's render of no rule (setup keeps a file that is there, and a motel not run as the state directory's owner retires nothing: `NotOwner`) is listed as `differs`, its line saying vmalert may evaluate rules not listed | notify/ruleslist.go (`rulesFile`) | 2 | 2 | 3 | 12; it needs a version whose render of no rule differs, and the gate's retire at that version's start not run (motel not its owner) or failed (its own journal line); the line says "may", and motel.service's start at the upgrade retires the file. Reading the groups for a rule rather than comparing bytes is a YAML parse of the file (size 2, risk 2). /code-review pass 1 on the listing's `rules_file` |
 | The listing's `differs` line sends the operator to the journal, which has no line for a `rules.yml` changed outside motel (by root's hand, a package) or for the other version's render of the row above | notify/ruleslist.go (`rulesFileText`) | 2 | 1 | 3 | 6; a file only root and the motel user can write, changed by them, or the row above's two faults; the line still says the file is not this config's, which is the fault to mend, and a reload or restart writes it back. Keeping each write's last error for the listing is a state in the store and the pusher (size 3, risk 2). /code-review pass 2 on the listing's `rules_file` |
 | A `request_rate` rule has no value until the store holds a push from before its window: for five minutes after setup, and after a gap in the pushes of over five minutes, a real change of traffic is not judged, so a `>` (or a `<`) over its bound then fires up to five minutes late | notify/operatorrules.go (`windowSpan`) | 2 | 2 | 3 | 12; it needs the traffic to cross the bound in those five minutes, and it ends correct once the window holds the pushes. Over 300 the rate read from nothing up then, and a `<` fired after every setup on a running box; dividing by the span since the store's first push instead reads the counts a series holds from before that push (its first value, counted from zero when it is small) as the window's, up to a division by zero at the first push (size 2, risk 2). Found measuring the divisor |
+| A `request_rate` rule has no value for an app until the push its window counts from observed it (`OBSERVED`): for five minutes after the app's `observe` line comes, or comes back after over five minutes out, or the app is new, a real drop or rise in its traffic is not judged, so a `request_rate` alert on it fires up to five minutes late | notify/operatorrules.go (`observedBefore`) | 2 | 2 | 3 | 12; it needs the traffic to cross the bound in those five minutes, and it ends correct once the window holds the app's pushes, as `BEFORE`'s row above. Without the guard the rate read from nothing up then, and a `<` fired a few minutes after every `observe` line; reading over the time the app has been counted instead needs its series' first sample in the window, against a push it may share by milliseconds (size 2, risk 2). The fix of that firing, from a read-only review of the operator rules |
+| An app whose `observe` line is taken out and put back within five minutes counts nothing meanwhile and from zero after, and the push its window counts from observed it: for five minutes less the gap after the put-back `request_rate` reads low by the gap's share of `SPAN`, so a `<` within that share can fire and recover; for the gap's length after that it has no value (`OBSERVED`) | notify/operatorrules.go (`observedBefore`) | 2 | 5 | 3 | 30, accepted under the skill's rule 4: the counts the rate misses were never made, the gap is one the operator's edit made and undid, and it ends correct five minutes after the put-back. Holding the app out until every push of the window carried it compares the app's samples with the push's, which one push stamps milliseconds apart, so a window edge between them drops a live app for an evaluation and resolves its firing alert (size 2, risk 2). From the same review; before `OBSERVED` the reading was low for the whole five minutes |
 | Across a motel restart, an evaluation whose window starts within the milliseconds between one push's samples (the store stamps an import chunk by chunk) at one end and not the other reads that push's counts against the other's span: up to a tenth high or low, at that phase, while the restart sits in the window | notify/operatorrules.go (`windowSpan`) | 2 | 2 | 3 | 12; the phase must fall within those milliseconds of the 30 s cycle (about 1 in 10 000 restarts at a millisecond), and without a restart both ends fall alike. Reading each app's span from its own counters (`max by (app)`) moves the straddle inside an app's series and doubles the term (size 2, risk 2). Found measuring the divisor |
 | `SPAN`'s base is the push within `prevReach` (5 m) before the window, which is the store's own reach for an instant query only while the step is 5 m: vmalert's `-datasource.queryStep` default, which motel-vmalert.service leaves unset. A vmalert whose default changed, or a step passed by hand to the listing's `value_query`, gives the counters a shorter reach than the push's, and after a gap in the pushes over the window's start `request_rate` reads the gap's span against counts without it, low | notify/operatorrules.go (`prevReach`) | 2 | 2 | 3 | 12; it needs a changed default (Debian's 1.112.0 is pinned, and a dist-upgrade's flag check is Owed) and a gap over the window's start, and it ends correct once the window has passed the gap. Writing `-datasource.queryStep=5m` into the unit is a unit change every box takes through setup's re-run (size 1, risk 2, and upgrading.md's order). Measured: a 150 s gap reads flat at 1.112.0's 5 m. /code-review pass 1 on the divisor |
 | A connection to `vm.sock` queued as the store's proxy exits (five idle minutes, `--exit-idle-time=5min`, or stopped with the store or the namespace) is closed unanswered (`FlushPending=yes`), where it used to start the proxy again: that one push of motel's, or one read (`GET /<app>`'s metrics, `motel monitor rules`), fails | notify/units/metrics/motel-vm.socket | 2 | 4 | 1 | 8; it needs a connection in the instant of the exit: the proxy idles only while motel is down, since motel connects every 30 s (its push), and a stop of the store is by hand or a package's. Measured: 1 of 100 connections timed against the idle exit, with motel stopped and the idle time cut to 2 s, and none while motel runs. motel logs the failed push, and its next one, 30 s on, carries the counters whole; a stopped store is started by that next push as before. Without the flush, one connection while the store's chain cannot start failed the socket for good (#450, S4 O3 D3 = 36); a retry of a failed push in motel is a new branch (size 2, risk 2). The measurements of #450, 2026-11-14; the stop case from /code-review pass 1 on #450's fix |

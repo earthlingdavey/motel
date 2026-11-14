@@ -936,9 +936,14 @@ the pushes: `metrics_store_read_only` says so for a read-only store,
 and `metrics_store_down` once they have failed for five minutes.
 `request_rate` is over the time the store's samples cover, so a motel
 restart in the window barely moves it. It has no value until the
-store holds a push from the five minutes before its window, so a
-`request_rate` rule fires no sooner than five minutes and its `for`
-after setup, or after a gap of over five minutes in the pushes.
+store holds a push from the five minutes before its window, and for an
+app until that push observed it, so a `request_rate` rule fires no
+sooner than five minutes and its `for` after setup, or after a gap of
+over five minutes in the pushes, and for an app after its `observe`
+line comes, or comes back after over five minutes out (its counts
+start from zero then). An `observe` line out for less than five
+minutes reads low by the gap's share until five minutes after it was
+taken out.
 `memory_share` and `cpu_cores` read the app's running unit alone. An
 app that stopped is read for at most 75 s after its last push, which
 vmalert sees about a minute later (`query_offset_seconds`, below), so
