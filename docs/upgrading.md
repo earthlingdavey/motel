@@ -235,6 +235,22 @@ seconds apart from the others. `grep NoNewPrivs /proc/$(systemctl show
 -p MainPID --value "user@$(id -u motel).service")/status` shows `1`
 once it has.
 
+After an upgrade from v0.3.1 or later, on a box that takes pushes: the
+releases before this one named, in each push's output, the variables
+of an env file in `/etc/motel/secrets/` that the push replaced or
+removed when someone had made or edited it by hand, and a secret
+pasted alone on a line of it (base64 ending in `=`) read as a
+variable's name. If a push ever took over such a file, look through
+the box repository's old apply runs (logs and job summaries) and
+`journalctl -u motel-box-apply` for a name after `removed` that is no
+variable's, and give any value found that way a new one ([Change a
+value](secrets.md#change-a-value)). `make secrets-import` had the same
+gap: copy this release's `examples/box/bin/secrets` and
+`examples/box/bin/apply` into the box repository's `bin/` (the second
+says a push left a hand-edited file's own variables unnamed), and a
+name in `make secrets` that is a value is one to change too, since the
+old name stays in the repository's history.
+
 The box repository's workflow checks config with the latest stable
 release, so it needs nothing after an upgrade — unless its
 `MOTEL_VERSION` repository variable pins a release, which then

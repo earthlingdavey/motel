@@ -566,6 +566,7 @@ type standIn struct {
 	recipient string            // GET /'s box key; "" leaves it out, as a box without one does
 	secrets   map[string]string // the secrets the box runs: <app>/<VAR> → the value's blob
 	envEdited []string          // results say these apps' env files were edited on the box
+	envMode   []string          // and these apps' at the box's own bytes, their mode changed: removals still named
 	pollGaps  []int             // polls answered, in order, by something in front of the box
 	mintFails int               // token requests that fail before one succeeds
 	audience  string            // the last token request's audience, decoded
@@ -839,12 +840,17 @@ func (s *standIn) post(w http.ResponseWriter, r *http.Request) {
 			changed = append(changed, k)
 		}
 	}
+	// As the box's: removed names only from bytes the box wrote (a file
+	// whose mode alone changed included), never from a file edited on
+	// it, where a line may be a value pasted alone.
 	for k := range s.secrets {
-		if _, ok := values[k]; !ok {
+		app, _, _ := strings.Cut(k, "/")
+		if _, ok := values[k]; !ok && !slices.Contains(s.envEdited, app) {
 			removed = append(removed, k)
 		}
 	}
-	for key, names := range map[string][]string{"secrets_added": added, "secrets_changed": changed, "secrets_removed": removed, "secrets_edited_out_of_band": s.envEdited} {
+	oob := slices.Concat(s.envEdited, s.envMode)
+	for key, names := range map[string][]string{"secrets_added": added, "secrets_changed": changed, "secrets_removed": removed, "secrets_edited_out_of_band": oob} {
 		if len(names) > 0 {
 			slices.Sort(names)
 			res[key] = names
@@ -853,6 +859,7 @@ func (s *standIn) post(w http.ResponseWriter, r *http.Request) {
 	// As the box's txn.reloads: the Caddyfile, or the box's own env
 	// file's bytes — which a name in the lists or an out-of-band edit of
 	// _box.env changes.
+	// A mode-only rewrite (envMode) changes nothing a load reads.
 	if res["diff"] != nil || slices.Contains(s.envEdited, "_box") || slices.ContainsFunc(slices.Concat(added, changed, removed), func(n string) bool { return strings.HasPrefix(n, "_box/") }) {
 		res["reloaded"] = true
 	}
@@ -1313,7 +1320,16 @@ func TestBoxApply(t *testing.T) {
 		if code != 0 || !strings.Contains(out, "deploy.example.com at "+head[:7]+": the box's notify secrets updated and loaded; the Caddyfile is unchanged, running apps are not restarted") {
 			t.Fatalf("the box's own file rewritten: exit %d\n%s", code, out)
 		}
-		g.box.set(func(s *standIn) { s.envEdited = nil })
+		// Its mode alone changed on the box: rewritten, named out of band,
+		// and nothing reloaded, as the box's txn.reloads has it.
+		g.box.set(func(s *standIn) { s.envEdited, s.envMode = nil, []string{"_box"} })
+		head = g.commit("the box's file at another mode")
+		out, code = g.apply()
+		if code != 0 || !strings.Contains(out, "deploy.example.com at "+head[:7]+": secrets updated; the Caddyfile is unchanged, nothing reloaded") ||
+			!strings.Contains(out, "_box's env file on the box had been edited there since the last apply") {
+			t.Fatalf("the box's own file at another mode: exit %d\n%s", code, out)
+		}
+		g.box.set(func(s *standIn) { s.envEdited, s.envMode = nil, nil })
 		g.remove("deploy.example.com/secrets/_box")
 		g.change("no notify secrets")
 		if out, code := g.apply(); code != 0 {
@@ -1328,24 +1344,27 @@ func TestBoxApply(t *testing.T) {
 		}
 
 		// One of two removed, and the Caddyfile changed in the same push,
-		// over an env file edited on the box: the file is rewritten with
-		// the value left, not removed.
-		g.box.set(func(s *standIn) { s.envEdited = []string{"example"} })
+		// over an env file whose mode was changed on the box: the file is
+		// rewritten with the value left, not removed, and its bytes are the
+		// box's, so the removal is named and the warning says nothing of
+		// unnamed variables.
+		g.box.set(func(s *standIn) { s.envMode = []string{"example"} })
 		g.remove("deploy.example.com/secrets/example/COPY.age")
 		head = g.change("three")
 		out, code = g.apply()
 		if code != 0 || !strings.Contains(out, "apply: deploy.example.com secrets: example: removed COPY\n") ||
 			!strings.Contains(out, "deploy.example.com at "+head[:7]+": loaded; running apps are not restarted") ||
-			!strings.Contains(out, "this push replaced the edit with deploy.example.com/secrets/example/ at "+head[:7]) {
+			!strings.Contains(out, "this push replaced the edit with deploy.example.com/secrets/example/ at "+head[:7]+"\n") {
 			t.Fatalf("a removal: exit %d\n%s", code, out)
 		}
-		g.box.set(func(s *standIn) { s.envEdited = nil })
+		g.box.set(func(s *standIn) { s.envMode = nil })
 
 		// An env file edited on the box: said, and on the job page.
 		g.box.set(func(s *standIn) { s.envEdited = []string{"example"} })
 		head = g.change("four")
 		out, code = g.apply("GITHUB_ACTIONS=true")
-		if code != 0 || !strings.Contains(out, "example's env file on the box had been edited there since the last apply; this push replaced the edit with deploy.example.com/secrets/example/ at "+head[:7]) ||
+		if code != 0 || !strings.Contains(out, "example's env file on the box had been edited there since the last apply; this push replaced the edit with deploy.example.com/secrets/example/ at "+head[:7]+
+			"; any variable only the edit had is gone, and the box does not name those (a line of a file it did not write may be a value)\n") ||
 			!strings.Contains(out, "::warning title=apply deploy.example.com::example's env file") {
 			t.Fatalf("an env file edited on the box: exit %d\n%s", code, out)
 		}
@@ -1379,8 +1398,8 @@ func TestBoxApply(t *testing.T) {
 		g.write(boxFile, strings.Replace(g.read(boxFile), "\tenv_file /etc/motel/secrets/example.env", "\t# env_file /etc/motel/secrets/example.env", 1))
 		g.box.set(func(s *standIn) { s.envEdited = []string{"example"} })
 		head = g.commit("no secrets")
-		if out, code := g.apply(); code != 0 || !strings.Contains(out, "apply: deploy.example.com secrets: example: removed DATABASE_URL\n") ||
-			!strings.Contains(out, "example's env file on the box had been edited there since the last apply; this push removed it, as "+head[:7]+" has no secrets for example") {
+		if out, code := g.apply(); code != 0 || strings.Contains(out, "removed DATABASE_URL") ||
+			!strings.Contains(out, "example's env file on the box had been edited there since the last apply; this push removed it, as "+head[:7]+" has no secrets for example\n") {
 			t.Fatalf("every secret removed: exit %d\n%s", code, out)
 		}
 	})

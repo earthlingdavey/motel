@@ -260,6 +260,11 @@ done_ok() {
 			w="$app's env file on the box had been edited there since the last apply; this push removed it, as $short has no secrets for $app"
 		else
 			w="$app's env file on the box had been edited there since the last apply; this push replaced the edit with $dir/secrets/$app/ at $short"
+			# The box names no variable read from bytes it did not write: a
+			# line there may be a value pasted alone. A removal it names
+			# for the app says the bytes were its own (the mode changed).
+			list secrets_removed | grep -q "^$app/" ||
+				w="$w; any variable only the edit had is gone, and the box does not name those (a line of a file it did not write may be a value)"
 		fi
 		printf 'apply: %s\n' "$w"
 		[ -z "$actions" ] || printf '::warning title=%s::%s\n' "$(prop "apply $box")" "$(msg "$w")"

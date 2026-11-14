@@ -770,25 +770,97 @@ func TestApplySecretsModeFixIsNoChange(t *testing.T) {
 	}
 }
 
-// Names read from an env file a console made are held to the caps a
-// record and a result are read back with: a variable name no secret can
-// have is not reported, and the lists stop at their cap — so the push's
-// result reads back, and so would its record.
-func TestApplySecretsNamesFromAConsoleFile(t *testing.T) {
-	b, id := newSecretsBox(t)
-	var file strings.Builder
-	file.WriteString(strings.Repeat("L", proof.MaxVarName+1) + "=x\n")
-	for i := 0; i < maxSecretNames+100; i++ {
-		fmt.Fprintf(&file, "V%04d=\n", i)
+// A file root did not write gives no names (I9): a secret pasted alone on
+// a line, in base64 with its `=` padding, parses as a variable named
+// after it. The push that takes such a file over, or removes it, names
+// none of its variables as removed — not in the result, not in the
+// journal — and names its app out of band; the names HEAD's own files
+// give (added, changed) are still reported. A file at the digest
+// applied.json records, whatever its mode, is bytes root rendered from
+// the repository's file names, and its removed names are reported.
+func TestApplySecretsNoNamesFromAFileRootDidNotWrite(t *testing.T) {
+	const pasted = "dGhpc2lzYXNlY3JldA" // base64 of "thisisasecret", less its padding; made up for this test
+	type tc struct {
+		name    string
+		before  func(b *testBox, enc func(string) []byte) (base string)
+		head    func(enc func(string) []byte) secrets
+		added   []string
+		changed []string
+		removed []string
 	}
-	b.putEnv("example", []byte(file.String()), 0o640)
-	head := b.repo.commitSecrets(b.v1, secrets{"example": {"KEY": encrypt(t, []byte("v"), id.Recipient())}}, &b.alice, b.base)
-	r := b.pushOne(b.repo.bundleFiles(head, b.base))
-	if r.Phase != phaseApplied || len(r.SecretsRemoved) != maxSecretNames || !slices.Equal(r.SecretsAdded, []string{"example/KEY"}) {
-		t.Fatalf("%s %q: %d removed", r.Phase, r.Error, len(r.SecretsRemoved))
+	one := func(enc func(string) []byte) secrets { return secrets{"example": {"KEY": enc("new")}} }
+	none := func(func(string) []byte) secrets { return nil }
+	install := func(b *testBox, enc func(string) []byte) string {
+		head := b.repo.commitSecrets(b.v1, secrets{"example": {"KEY": enc("old"), "OLD": enc("o")}}, &b.alice, b.base)
+		if r := b.pushOne(b.repo.bundleFiles(head, b.base)); r.Phase != phaseApplied {
+			b.t.Fatalf("setup: %+v", r)
+		}
+		return head
 	}
-	if slices.ContainsFunc(r.SecretsRemoved, func(s string) bool { return strings.Contains(s, "LLL") }) {
-		t.Error("a name no secret can have was reported")
+	var cases []tc
+	for _, pad := range []string{"==", "="} {
+		line := pasted + pad + "\n"
+		cases = append(cases,
+			tc{name: "a console's file taken over, padding " + pad, head: one, changed: []string{"example/KEY"},
+				before: func(b *testBox, _ func(string) []byte) string {
+					b.putEnv("example", []byte(line+"KEY=old\nGONE=x\n"), 0o640)
+					return ""
+				}},
+			tc{name: "an installed file edited at the console, taken over, padding " + pad, head: one, changed: []string{"example/KEY"},
+				before: func(b *testBox, enc func(string) []byte) string {
+					head := install(b, enc)
+					b.putEnv("example", append(b.env("example"), line...), 0o640)
+					return head
+				}},
+			tc{name: "an installed file edited at the console, removed, padding " + pad, head: none,
+				before: func(b *testBox, enc func(string) []byte) string {
+					head := install(b, enc)
+					b.putEnv("example", append(b.env("example"), line...), 0o640)
+					return head
+				}},
+		)
+	}
+	cases = append(cases, tc{name: "an installed file at its digest, its mode drifted, names what it removes", head: one,
+		changed: []string{"example/KEY"}, removed: []string{"example/OLD"},
+		before: func(b *testBox, enc func(string) []byte) string {
+			head := install(b, enc)
+			if err := os.Chmod(b.envPath("example"), 0o644); err != nil {
+				b.t.Fatal(err)
+			}
+			return head
+		}})
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			b, id := newSecretsBox(t)
+			enc := func(v string) []byte { return encrypt(t, []byte(v), id.Recipient()) }
+			base := c.before(b, enc)
+			if base == "" {
+				base = b.base
+			}
+			head := b.repo.commitSecrets(b.v1, c.head(enc), &b.alice, base)
+			pushID := b.push(b.repo.bundleFiles(head, base))
+			if err := b.run(hooks{}); err != nil {
+				t.Fatal(err)
+			}
+			b.settled()
+			r := b.result(pushID)
+			if r == nil || r.Phase != phaseApplied || !slices.Equal(r.SecretsOutOfBand, []string{"example"}) ||
+				!slices.Equal(r.SecretsAdded, c.added) || !slices.Equal(r.SecretsChanged, c.changed) || !slices.Equal(r.SecretsRemoved, c.removed) {
+				t.Fatalf("%+v; want added %v, changed %v, removed %v", r, c.added, c.changed, c.removed)
+			}
+			raw, err := os.ReadFile(filepath.Join(b.x("out"), pushID+".json"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if strings.Contains(string(raw), pasted) {
+				t.Errorf("the result names the pasted value: %s", raw)
+			}
+			for _, e := range b.logs.All() {
+				if strings.Contains(fmt.Sprint(e.Message, e.ContextMap()), pasted) {
+					t.Errorf("a journal line names the pasted value: %s %v", e.Message, e.ContextMap())
+				}
+			}
+		})
 	}
 }
 

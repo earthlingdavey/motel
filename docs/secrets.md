@@ -153,6 +153,15 @@ make secrets-import APP=example < example.env
 sets one secret for each `KEY=VALUE` line, reading the file the way
 motel reads an env file: `#` comments and blank lines skipped, an
 optional `export ` dropped, one pair of quotes around a value taken off.
+A value that is empty or only `=` signs is refused, and so is an
+unquoted one that starts with `=` or `#`, or that has white space
+after the `=` and none before it, each without the line's name: a
+base64 secret pasted alone on its line reads that way, the secret as
+the name and its padding, and whatever follows, as the value. Two
+tokens glued (`<secret>=<token>=`) read as a name and a value like any
+other line: when a name the import adds or changes has a lower-case
+letter, it asks you to check the names, and says what to do with one
+an earlier import may have committed.
 For a file that is already on the box, see [Move a hand-made env file
 in](#move-a-hand-made-env-file-in).
 
@@ -346,7 +355,7 @@ next push, as a hand edit of the Caddyfile is: the repository is the
 truth. The run says so, as a warning:
 
 ```
-apply: example's env file on the box had been edited there since the last apply; this push replaced the edit with deploy.example.com/secrets/example/ at 9be0d44
+apply: example's env file on the box had been edited there since the last apply; this push replaced the edit with deploy.example.com/secrets/example/ at 9be0d44; any variable only the edit had is gone, and the box does not name those (a line of a file it did not write may be a value)
 ```
 
 ## What is checked, and where

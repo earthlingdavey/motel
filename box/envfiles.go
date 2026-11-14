@@ -34,9 +34,11 @@ import (
 //     followed); anything else that is not a regular file — which no
 //     rename replaces — and a file larger than the cap are the box's
 //     errors before the transaction, and match nothing during it.
-//  6. Names read from a file root did not write are held to the grammar
-//     and the caps a record and a result are read back with, so every
-//     record root writes reads back.
+//  6. The names a push reports come from the repository's file names,
+//     or from a file at the digest applied.json records (bytes root
+//     rendered from them), never from a file root did not write: a
+//     secret pasted alone on a line there, base64 with its `=` padding,
+//     parses as a variable's name (I9).
 //  3. A file root writes is the rendered bytes, 0640, born group
 //     motel in the setgid directory (Paths): the unit has no
 //     CAP_CHOWN. Before anything is written, the directory must be the
@@ -271,7 +273,7 @@ func (a *Applier) planSecrets(s *proof.Secrets, base *applied, caddyfile string)
 		case !isListed && cur.present && write:
 			p.oob = append(p.oob, o.name)
 		}
-		p.names(o.name, cur, o.file)
+		p.names(o.name, cur, isListed && cur.regular && digest(cur.data) == listed, o.file)
 		p.installed[o.name] = digest(o.file)
 		if !write {
 			continue
@@ -300,24 +302,17 @@ func (a *Applier) planSecrets(s *proof.Secrets, base *applied, caddyfile string)
 			// another kind the console made, which is left alone.
 			continue
 		}
-		p.names(app, cur, nil)
+		p.names(app, cur, digest(cur.data) == base.Secrets[app], nil)
 		p.entries = append(p.entries, envEntry{App: app, Prev: cur.data, PrevSHA256: digest(cur.data)})
 	}
 	slices.SortFunc(p.entries, func(x, y envEntry) int { return strings.Compare(x.App, y.App) })
-	p.added, p.changed, p.removed = capNames(p.added), capNames(p.changed), capNames(p.removed)
+	// Every name is HEAD's or one root rendered from an earlier HEAD, so
+	// no list passes maxSecretNames (rule 6).
+	slices.Sort(p.added)
+	slices.Sort(p.changed)
+	slices.Sort(p.removed)
 	slices.Sort(p.oob)
 	return p, nil
-}
-
-// capNames sorts names and keeps the first maxSecretNames (rule 6): a
-// file a console made can hold more variables than any push writes, and
-// the names are a report, never a decision.
-func capNames(names []string) []string {
-	slices.Sort(names)
-	if len(names) > maxSecretNames {
-		names = names[:maxSecretNames]
-	}
-	return names
 }
 
 // readEnvFor is readEnv before the transaction, a file over the cap and
@@ -337,8 +332,11 @@ func (a *Applier) readEnvFor(app string, owner *fileOwner) (envFile, error) {
 // names adds to the plan the secrets app's push adds, changes and
 // removes: the installed file's variables against the rendered ones
 // (next nil for a removal). A file that does not read as an env file
-// has none to compare.
-func (p *secretsPlan) names(app string, cur envFile, next []byte) {
+// has none to compare. Added and changed are the rendered file's names;
+// removed are the installed file's, so they are named only when root
+// wrote it (rootBytes; rule 6): any other file's app is named out of
+// band instead.
+func (p *secretsPlan) names(app string, cur envFile, rootBytes bool, next []byte) {
 	was := envVars(cur.data)
 	now := envVars(next)
 	for _, k := range slices.Sorted(maps.Keys(now)) {
@@ -349,6 +347,9 @@ func (p *secretsPlan) names(app string, cur envFile, next []byte) {
 		case old != now[k]:
 			p.changed = append(p.changed, app+"/"+k)
 		}
+	}
+	if !rootBytes {
+		return
 	}
 	for _, k := range slices.Sorted(maps.Keys(was)) {
 		if _, ok := now[k]; !ok {
@@ -370,9 +371,6 @@ func envVars(data []byte) map[string]string {
 	}
 	for _, kv := range vars {
 		k, v, _ := strings.Cut(kv, "=")
-		if len(k) > proof.MaxVarName { // no secret's name: rule 6
-			continue
-		}
 		out[k] = v
 	}
 	return out

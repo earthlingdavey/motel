@@ -1054,15 +1054,16 @@ func TestBoxSecretsImport(t *testing.T) {
 		`D='single'`,
 		`E="unbalanced`,
 		"F=a=b=c",
-		"G=  spaced" + nbsp,
+		"G =  spaced" + nbsp,
 		em + "H=em" + em,
 		`I="  inner spaces kept  "`,
-		"J=#not a comment",
-		"K=" + ideo + "tail" + mmsp,
+		`J="#not a comment"`,
+		"K =" + ideo + "tail" + mmsp,
 		"\tTAB_ED=x\t",
-		"L=" + nel + "nel" + nel,
+		"L =" + nel + "nel" + nel,
 		`M=""quoted twice""`,
 		"N=caf" + string(rune(0xe9)),
+		`O="=x # kept"`,
 		"A=again",
 		"CR=line\r",
 		"",
@@ -1077,7 +1078,7 @@ func TestBoxSecretsImport(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit %d\n%s", code, out)
 	}
-	if !strings.Contains(out, "secrets: note: A is given again on line 19; the last one is kept\n") {
+	if !strings.Contains(out, "secrets: note: A is given again on line 20; the last one is kept\n") {
 		t.Errorf("no note of A twice:\n%s", out)
 	}
 	last := map[string]string{}
@@ -1088,32 +1089,96 @@ func TestBoxSecretsImport(t *testing.T) {
 	for k, v := range last {
 		r.mustDecrypt(boxID, "deploy.example.com/secrets/example/"+k+".age", v)
 	}
-	if !strings.Contains(out, "secrets: deploy.example.com/secrets/example: added A B C D E F G H I J K TAB_ED L M N CR\n") ||
+	if !strings.Contains(out, "secrets: deploy.example.com/secrets/example: added A B C D E F G H I J K TAB_ED L M N O CR\n") ||
 		!strings.Contains(out, fmt.Sprintf("secrets: %d values, encrypted to 2 keys, in the commit\n", len(last))) {
 		t.Errorf("summary:\n%s", out)
 	}
+	if strings.Contains(out, "check the names added above") {
+		t.Errorf("names in capitals alone, and the note of a value read as a name:\n%s", out)
+	}
 
-	// Lines motel refuses, it refuses, and then imports nothing.
-	for _, c := range []struct{ line, want string }{
-		{"1BAD=x", "line 2: the name is not letters, digits and _, not starting with a digit"},
-		{"NOEQUALS", "line 2: not KEY=VALUE"},
-		{"=x", "line 2: not KEY=VALUE"},
-		{"export\tX=1", "line 2: the name is not letters"},
-		{"BAD-NAME=x", "line 2: the name is not letters"},
-		{"EMPTY=", "line 2: EMPTY is empty"},
-		{`EMPTY=""`, "line 2: EMPTY is empty"},
+	// Lines motel refuses, it refuses, and then imports nothing. It also
+	// refuses lines motel takes, without naming the line's name, in the
+	// shapes a base64 secret pasted alone on its line reads as, the secret
+	// as the name: a value that is empty or only = signs, an unquoted one
+	// starting with = or # (a comment after it), white space after the =
+	// and none before (another token after it). Both tokens are made up
+	// for this test.
+	pasted, second := "dGhpc2lzYXNlY3JldA", "c2Vjb25kc2VjcmV0"
+	startsWith := "line 2: the value starts with = or #, as a base64 value alone on the line reads when a comment or another token follows it; quote the value if it is one"
+	spacedOut := "line 2: white space after the = and none before it, as a base64 value alone on the line reads when another token follows it; write NAME=value"
+	for _, c := range []struct {
+		line, want string
+		motelTakes bool
+	}{
+		{line: "1BAD=x", want: "line 2: the name is not letters, digits and _, not starting with a digit"},
+		{line: "NOEQUALS", want: "line 2: not KEY=VALUE"},
+		{line: "=x", want: "line 2: not KEY=VALUE"},
+		{line: "export\tX=1", want: "line 2: the name is not letters"},
+		{line: "BAD-NAME=x", want: "line 2: the name is not letters"},
+		{line: "EMPTY=", want: "line 2: the value is empty", motelTakes: true},
+		{line: `EMPTY=""`, want: "line 2: the value is empty", motelTakes: true},
+		{line: "EQUALS==", want: "line 2: the value is only = signs, as a base64 value alone on the line reads, its padding as the value; a value that is only = signs goes in with make secret", motelTakes: true},
+		{line: `EQUALS="=="`, want: "line 2: the value is only = signs", motelTakes: true},
+		{line: pasted + "=", want: "line 2: the value is empty", motelTakes: true},
+		{line: pasted + "==", want: "line 2: the value is only = signs", motelTakes: true},
+		{line: strings.Repeat("L", 129) + "=x", want: "line 2: the name is longer than 128 bytes", motelTakes: true},
+		{line: pasted + "== # prod", want: startsWith, motelTakes: true},
+		{line: pasted + "= # prod", want: startsWith, motelTakes: true},
+		{line: "export " + pasted + "= # prod", want: startsWith, motelTakes: true},
+		{line: pasted + "= =x", want: startsWith, motelTakes: true},
+		{line: "HASH=#x", want: startsWith, motelTakes: true},
+		{line: pasted + "= " + second + "=", want: spacedOut, motelTakes: true},
+		{line: pasted + "=\t" + second, want: spacedOut, motelTakes: true},
+		{line: "SPACED= value", want: spacedOut, motelTakes: true},
 	} {
 		input := "OK=1\n" + c.line + "\n"
-		if _, err := liveswap.ParseEnvLines("input", []byte(input)); err == nil && !strings.Contains(c.want, "is empty") {
-			t.Errorf("%q: motel's parser takes it, the test expects a refusal", c.line)
+		if _, err := liveswap.ParseEnvLines("input", []byte(input)); (err == nil) != c.motelTakes {
+			t.Errorf("%q: motel's parser error %v, the test expects it to take the line: %v", c.line, err, c.motelTakes)
 		}
 		out, code := r.secrets("", input, "import", "APP=other")
 		if code != 1 || !strings.Contains(out, "secrets: "+c.want) || !strings.Contains(out, "nothing imported") {
 			t.Errorf("%q: exit %d, want %q\n%s", c.line, code, c.want, out)
 		}
+		if c.motelTakes && (strings.Contains(out, pasted) || strings.Contains(out, "EMPTY") || strings.Contains(out, "EQUALS") || strings.Contains(out, "LLL") ||
+			strings.Contains(out, "HASH") || strings.Contains(out, "SPACED")) {
+			t.Errorf("%q: the refusal prints the line's name\n%s", c.line, out)
+		}
 		if r.exists("deploy.example.com/secrets/other") {
 			t.Fatalf("%q: a refused import wrote something", c.line)
 		}
+	}
+	// Two tokens glued read as a name and a value, which no rule about
+	// the line's shape tells from KEY=<base64 value>: the import takes
+	// it, and since a name added has a lower-case letter, says so in a
+	// line that names nothing; its command takes the staged file out.
+	// A quoted value after white space is taken too.
+	note := "secrets: check the names added above: a value pasted alone on a line reads as a name; if one of them is a value, git rm -f deploy.example.com/secrets/glued/<that name>.age before you commit, and fix the line\n"
+	out, code = r.secrets("", "QUOTED= \"value\"\n"+pasted+"="+second+"=\n", "import", "APP=glued")
+	if code != 0 || !strings.Contains(out, "secrets: deploy.example.com/secrets/glued: added QUOTED "+pasted+"\n"+note) {
+		t.Fatalf("a glued pair: exit %d\n%s", code, out)
+	}
+	r.mustDecrypt(boxID, "deploy.example.com/secrets/glued/QUOTED.age", "value")
+	// Imported again, staged or committed (an older bin/secrets, which
+	// said nothing, committed such names): the files are there, so the
+	// names read as changed, and the line for a changed name says what
+	// to do with one that may be committed. In capitals alone, nothing.
+	changedNote := "secrets: check the names changed above: a value pasted alone on a line reads as a name, and an earlier import may have committed it; if one of them is a value, git rm -f deploy.example.com/secrets/glued/<that name>.age and commit that, and if it was ever pushed, give the value a new one: the name stays in the history\n"
+	for _, commit := range []bool{false, true} {
+		if commit {
+			r.commit("glued, as an older import committed it")
+		}
+		out, code = r.secrets("", "QUOTED= \"value\"\n"+pasted+"="+second+"=\n", "import", "APP=glued")
+		if code != 0 || !strings.Contains(out, "secrets: deploy.example.com/secrets/glued: changed QUOTED "+pasted+"\n"+changedNote) || strings.Contains(out, note) {
+			t.Fatalf("a glued pair imported again (committed %v): exit %d\n%s", commit, code, out)
+		}
+	}
+	if out, code := r.secrets("", "QUOTED=again\n", "import", "APP=glued"); code != 0 || !strings.Contains(out, "changed QUOTED\n") || strings.Contains(out, "check the names") {
+		t.Errorf("a name in capitals imported again: exit %d\n%s", code, out)
+	}
+	r.git("rm", "-q", "-f", "deploy.example.com/secrets/glued/"+pasted+".age")
+	if r.exists("deploy.example.com/secrets/glued/"+pasted+".age") || strings.Contains(r.git("ls-files", "deploy.example.com/secrets/glued"), pasted) {
+		t.Error("git rm -f left the file named after the value")
 	}
 	if out, code := r.secrets("", "# nothing\n", "import", "APP=other"); code != 1 || !strings.Contains(out, "the env file has no KEY=VALUE line") {
 		t.Errorf("an empty file: exit %d\n%s", code, out)
