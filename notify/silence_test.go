@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/caddyserver/caddy/v2"
+	"go.uber.org/zap"
 )
 
 func goodSilence() SilenceRequest {
@@ -331,26 +332,46 @@ func TestSilenceReleaseFromTheRecords(t *testing.T) {
 	}
 }
 
-// stallingAM takes a POST's whole body, says so on got, then answers
-// nothing until the request's context ends: Alertmanager that stored
-// the silence and whose answer is lost.
-func stallingAM(t *testing.T) (string, chan string) {
+// unansweringAM takes a request's whole body, says so on got, then
+// gives no answer: it waits until the request's context ends, or, with
+// hangUp, closes the connection (Alertmanager that stopped after it
+// read the request). Either way it may have stored the silence.
+func unansweringAM(t *testing.T, hangUp bool) (string, chan string) {
 	t.Helper()
 	got := make(chan string, 1)
 	return unixServe(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		b, _ := io.ReadAll(r.Body)
 		got <- r.Method + " " + r.URL.Path + " " + string(b)
+		if hangUp {
+			if c, _, err := http.NewResponseController(w).Hijack(); err == nil {
+				_ = c.Close()
+			}
+			return
+		}
 		<-r.Context().Done()
 	})), got
+}
+
+// posted is the request the stub read, waited for within a bound.
+func posted(t *testing.T, got chan string) string {
+	t.Helper()
+	select {
+	case r := <-got:
+		return r
+	case <-time.After(5 * time.Second):
+		t.Fatal("Alertmanager never got the request")
+		return ""
+	}
 }
 
 // TestSilenceAnswerLost: a silence posted whose answer never comes (the
 // client's timeout, or the caller gone, after Alertmanager read it) may
 // be in Alertmanager: the 502 says so and how to list what it holds,
 // rather than that the add failed, and echoes nothing of the request.
+// The journal says what was asked, and not that it was added.
 func TestSilenceAnswerLost(t *testing.T) {
 	te, _ := withFakeAM(t)
-	sock, got := stallingAM(t)
+	sock, got := unansweringAM(t, false)
 	useSocket(t, sock)
 	req := goodSilence()
 	req.Comment = "resizing, see https://hooks.slack.com/services/T0/B0/secretpart" // gitleaks:allow — made up for this test
@@ -360,16 +381,11 @@ func TestSilenceAnswerLost(t *testing.T) {
 	}
 	// The request's context is the seam: the route posts with it, so its
 	// deadline ends the POST as the client's 10 s would.
-	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
 	defer cancel()
 	err := serveSilence(httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, "/notify/silences", &body).WithContext(ctx))
-	select {
-	case r := <-got:
-		if !strings.HasPrefix(r, "POST /api/v2/silences ") {
-			t.Fatalf("Alertmanager got %q", r)
-		}
-	default:
-		t.Fatal("Alertmanager never got the POST")
+	if r := posted(t, got); !strings.HasPrefix(r, "POST /api/v2/silences ") {
+		t.Fatalf("Alertmanager got %q", r)
 	}
 	if apiStatus(err) != http.StatusBadGateway {
 		t.Fatalf("an answer lost: %v", err)
@@ -386,29 +402,52 @@ func TestSilenceAnswerLost(t *testing.T) {
 			t.Fatalf("the 502 echoes %q: %s", v, msg)
 		}
 	}
-	// No line says it was added: it may not have been.
 	if n := len(te.lines("monitor: silence added")); n != 0 {
 		t.Fatalf("an answer lost journalled as added: %d lines", n)
+	}
+	lines := te.lines("monitor: silence add unanswered: Alertmanager may hold the silence")
+	if len(lines) != 1 || lines[0].Level != zap.WarnLevel {
+		t.Fatalf("journal lines: %v", lines)
+	}
+	fields := lines[0].ContextMap()
+	if _, ok := fields["id"]; ok || fields["alert"] != "disk_low" || fields["created_by"] != "motel monitor: alice" ||
+		fields["ends_at"] != "2026-11-10T14:00:00Z" || !strings.HasPrefix(fields["comment"].(string), "resizing, see ") ||
+		strings.Contains(fields["comment"].(string), "secretpart") || !strings.Contains(fields["error"].(string), "deadline exceeded") {
+		t.Fatalf("journal fields: %v", fields)
 	}
 }
 
 // TestAnswerLost holds the classification to the client's real errors:
-// its own timeout (the 10 s, shortened here on the client) and a
-// cancelled request are answers lost; a refused connection and a non-2xx
-// answer are failures in which Alertmanager took nothing.
+// its own timeout (the 10 s, shortened here on the client), a cancelled
+// request and a connection closed after the request was read are
+// answers lost; a refused connection and a non-2xx answer are failures
+// in which Alertmanager took nothing.
 func TestAnswerLost(t *testing.T) {
-	sock, got := stallingAM(t)
+	sock, got := unansweringAM(t, false)
 	am := newAMClient(sock)
-	am.http.Timeout = 100 * time.Millisecond
+	am.http.Timeout = 300 * time.Millisecond
 	_, err := am.postSilence(context.Background(), amSilence{})
-	<-got
-	if !answerLost(err) {
+	posted(t, got)
+	if !answerLost(err) || !strings.Contains(err.Error(), "Client.Timeout exceeded") {
 		t.Fatalf("the client's timeout: %v", err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	go func() { <-got; cancel() }()
-	if _, err := newAMClient(sock).postSilence(ctx, amSilence{}); !answerLost(err) {
+	defer cancel()
+	go func() {
+		select {
+		case <-got:
+			cancel()
+		case <-time.After(5 * time.Second):
+		}
+	}()
+	if _, err := newAMClient(sock).postSilence(ctx, amSilence{}); !answerLost(err) || !errors.Is(err, context.Canceled) {
 		t.Fatalf("a cancelled request: %v", err)
+	}
+	sock, got = unansweringAM(t, true)
+	_, err = newAMClient(sock).postSilence(context.Background(), amSilence{})
+	posted(t, got)
+	if !answerLost(err) || !errors.Is(err, io.EOF) {
+		t.Fatalf("a connection closed after the request: %v", err)
 	}
 	_, err = newAMClient(refusingSocket(t)).postSilence(context.Background(), amSilence{})
 	if err == nil || answerLost(err) {

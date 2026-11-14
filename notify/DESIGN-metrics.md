@@ -1238,9 +1238,11 @@ per 30 s, fourteen with both windows. A store that does not
 answer is `"metrics": {"error": "the metrics store did not answer"}`,
 fixed text, and the status is otherwise the same; the route never waits
 longer or fails for it. The cause is a warning in motel's journal
-(`monitor metrics: GET /<app> answered without metrics`, with the app,
-the range and the error), cached with the failure, so at most one per
-app and window per 30 s: a store that takes pushes but fails the view's
+(`monitor metrics: GET /<app> answered without metrics: the metrics
+store did not answer the view's queries`, with the app, the range and
+the error), cached with the failure, so at most one per app and window
+per 30 s, and again at the first ask after a load (each load's view
+starts with no cache): a store that takes pushes but fails the view's
 queries (the budget, the 4 MB cap, a point it cannot read) leaves
 `metrics_store_down` quiet, and the deployer's fixed text is all
 anyone else sees. The whole body passes the app's response filter,
