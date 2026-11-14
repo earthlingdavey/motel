@@ -404,7 +404,7 @@ func (e *engine) reconcile(key string, st *stateAlert, now time.Time) {
 		e.postState(key, st, now, time.Time{}, true)
 	case !st.firing && !st.posted:
 		delete(e.states, key)
-	case !st.firing && now.Sub(st.clearSince) >= st.hold:
+	case !st.firing && now.Sub(st.clearSince) >= st.hold && !e.muted(st.ev):
 		if !e.bucketFor(key).take(now) {
 			if !st.heldLogged {
 				e.journal(st.ev, "resolved", zap.String("held", "more than four transitions an hour for this key; posted when the bucket allows"))
@@ -417,9 +417,20 @@ func (e *engine) reconcile(key string, st *stateAlert, now time.Time) {
 		e.postState(key, st, now, now, true)
 		delete(e.states, key)
 	default:
-		// Firing and told, or cleared and held: keep it alive.
+		// Firing and told, or cleared and held (by its hold, or by the
+		// mute): keep it alive.
 		e.repost(key, st, now)
 	}
+}
+
+// muted says the app's deploy mute stands over ev: the inhibit rule
+// (render.go) mutes a watchdog_* alert of an app whose deploy runs, and
+// Alertmanager mutes its resolve too, then drops it as sent, so the
+// recovery is held until the mute has ended (measured on 0.28.1,
+// DESIGN-notify.md "Behaviour"). With mu held.
+func (e *engine) muted(ev Event) bool {
+	_, ok := e.mutes[ev.App]
+	return ok && strings.HasPrefix(ev.Name, "watchdog_")
 }
 
 func (e *engine) repost(key string, st *stateAlert, now time.Time) {
@@ -452,6 +463,13 @@ func (e *engine) mute(app string, on bool) {
 	}
 	delete(e.mutes, app)
 	e.enqueue(&pending{key: "mute/" + app, alerts: []amAlert{muteAlert(app, now, now)}, first: now})
+	// A recovery the mute held is posted right behind its end, before a
+	// flush of its group could tell the alert it ends.
+	for key, st := range e.states {
+		if st.ev.App == app && !st.firing {
+			e.reconcile(key, st, now)
+		}
+	}
 }
 
 // tick is the engine's minute: the heartbeat, re-posts, held
@@ -775,6 +793,19 @@ func (e *engine) configure(a *App, post poster, known []string, logger *zap.Logg
 		e.settle(a)
 	}
 	if e.externalPath == "" && a.cfg != nil {
+		// This process's first: a deploy the last one ran ended with it,
+		// and its mute, which Alertmanager keeps to resolve_timeout, would
+		// swallow a watchdog_* recovery this one posts (muted). Ended for
+		// every app, in one post before any other: the end of a mute that
+		// is not there reaches no one.
+		now := e.now()
+		ends := make([]amAlert, 0, len(a.cfg.apps))
+		for _, app := range a.cfg.apps {
+			ends = append(ends, muteAlert(app, now, now))
+		}
+		if len(ends) > 0 {
+			e.enqueue(&pending{key: "mute/", alerts: ends, first: now})
+		}
 		e.restoreExternal(a.cfg.apps)
 	}
 	if !e.running {
@@ -834,6 +865,14 @@ func (e *engine) settle(a *App) {
 // end of it. Called with mu held.
 func (e *engine) prune(apps []string) {
 	now := e.now()
+	// The mute first, so that a resolve of its app's watchdog_* follows
+	// its end rather than going under it (muted).
+	for app := range e.mutes {
+		if !slices.Contains(apps, app) {
+			delete(e.mutes, app)
+			e.enqueue(&pending{key: "mute/" + app, alerts: []amAlert{muteAlert(app, now, now)}, first: now})
+		}
+	}
 	for key, st := range e.states {
 		ev := st.ev
 		gone := ev.App != "" && !slices.Contains(apps, ev.App) || e.unread(ev)
@@ -850,12 +889,6 @@ func (e *engine) prune(apps []string) {
 	// The pollers' own memory is their goroutine's (poll runs outside
 	// mu): a clear they report later for a key pruned here finds no
 	// state, and is nothing.
-	for app := range e.mutes {
-		if !slices.Contains(apps, app) {
-			delete(e.mutes, app)
-			e.enqueue(&pending{key: "mute/" + app, alerts: []amAlert{muteAlert(app, now, now)}, first: now})
-		}
-	}
 }
 
 // unread says the settled config does not read ev's source: the backup

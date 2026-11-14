@@ -312,6 +312,7 @@ The timings are measured (2026-11-10, hotserve-1, Debian 13 arm64):
 | `POST /-/reload` over the socket | 200, live config replaced | how motel applies a render |
 | `amtool` | has no unix-socket support | tests run `amtool check-config` and `amtool config routes test` offline on the rendered file (thirteen label sets) |
 | The corrected tree with two apps | every alert reached only its receiver; `watchdog_*` of the deploying app suppressed, `inhibitedBy` the mute | e2e reproduces it ("e2e rows") |
+| A `watchdog_*` resolve posted under its app's mute (measured 2026-11-14: Debian's 0.28.1 on the golden render, a stub receiver) | `alertmanager_notifications_suppressed_total{reason="inhibition"}` rose by one per leaf at the group's next flush and the alert was gone; no `[RESOLVED]` reached any channel then, or in the 140 s after the mute's end. Kept firing under the mute and resolved right behind its end instead: one `[RESOLVED]` per channel 33 s later, at the group's next tick; fired and resolved within the mute: nothing told | the engine holds such a recovery to the mute's end ("Behaviour", the mute) |
 
 ## Events
 
@@ -425,7 +426,23 @@ whichever config serves when it clears.
   restarts Alertmanager in about a second, so the usual outage is one
   failed connect.
 - **The mute** is `deploy_in_progress` for the app, posted at a
-  deploy's start, re-posted each minute, ended at its end.
+  deploy's start, re-posted each minute, ended at its end. It lives
+  as long as the deploy, which liveswap's `deadline` bounds (on
+  pre_start and on the health gate, 5 m each by default). The inhibit
+  rule mutes the app's `watchdog_*` alerts under it, and Alertmanager
+  mutes a resolve as it does a firing alert, then drops it as sent: no
+  `[RESOLVED]` comes, then or after the mute's end ("The route tree",
+  the measurements). So a `watchdog_*` recovery whose hold ends while
+  its app's mute stands is held (`muted`), kept alive by the re-posts,
+  and posted right behind the mute's end, whatever the deploy came to;
+  fired again meanwhile, it has no recovery to post. A firing alert
+  needs nothing: Alertmanager tells it at its group's first flush after
+  the mute's end if it still fires, and one that fires and recovers
+  within one deploy reaches no one. A reload that drops the app ends
+  its mute before it resolves the app's keys. A deploy ends with the
+  process that ran it while its mute lives on in Alertmanager to
+  `resolve_timeout`, so a process's first configure ends the mute of
+  every app its config runs, in one post before any other.
 - **Summaries** pass through liveswap's filter, primed with every
   channel URL (and, at liveswap's end, with the app's own values), with
   the release as a safe name (a git sha is otherwise masked by the
