@@ -854,7 +854,10 @@ that Alertmanager did not answer within 10 seconds says that
 Alertmanager may have taken the silence all the same: list its
 silences (below) before you add it again. The journal then has
 `monitor: silence add unanswered: Alertmanager may hold the silence`,
-with what was asked but no id, and no `silence added` line. Another
+with what was asked but no id, and no `silence added` line. An add
+you interrupt once it has reached motel (Ctrl-C, a dropped `ssh`)
+still runs to Alertmanager's answer: the journal has its line, with
+the id if Alertmanager gave one. Another
 user than root is told `the admin socket … admits root and the motel
 user: run motel monitor silence as root`.
 

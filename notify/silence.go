@@ -288,11 +288,17 @@ func silenceTarget() (*App, *amClient, *zap.Logger, time.Time, error) {
 	if !active.setUp() {
 		return nil, nil, nil, now, caddy.APIError{HTTPStatus: http.StatusServiceUnavailable, Err: errNotSetUp}
 	}
-	return active, newAMClient(theSocket), logger, now, nil
+	am := newAMClient(theSocket)
+	am.http.Timeout = silenceTimeout
+	return active, am, logger, now, nil
 }
 
+// silenceTimeout bounds a silence route's request to Alertmanager:
+// amRequestTimeout, a var so that a test can lose an answer sooner.
+var silenceTimeout = amRequestTimeout
+
 // answerLost is a request that ended unanswered, by the client's
-// timeout, the caller's cancel, or Alertmanager closing the connection
+// timeout, a cancel of its context, or Alertmanager closing the connection
 // after it read the request (EOF; one that closes with the request
 // unread resets it): Alertmanager may have taken it. A refused
 // connection or a non-2xx answer is not one; it took nothing. Judged
@@ -338,7 +344,11 @@ func serveSilence(w http.ResponseWriter, r *http.Request) error {
 	comment := cleanText(known, req.Comment, req.Release)
 	now = now.UTC()
 	s := amSilence{Matchers: req.matchers(), StartsAt: now, EndsAt: now.Add(d), CreatedBy: createdBy(req.By), Comment: comment}
-	id, err := am.postSilence(r.Context(), s)
+	// Without the caller's cancel, bounded by the client's timeout: a
+	// caller gone once Alertmanager has the request (Ctrl-C, a dropped
+	// ssh) would cut the POST, and a silence Alertmanager took would have
+	// no id in the journal.
+	id, err := am.postSilence(context.WithoutCancel(r.Context()), s)
 	if answerLost(err) {
 		// Not `silence added`: it may not be there. The line keeps what
 		// was asked, for whoever finds the silence, as the 502 cannot.
