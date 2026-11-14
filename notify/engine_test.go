@@ -462,19 +462,20 @@ func TestRecoveryHeldUnderTheMute(t *testing.T) {
 	te.advance(10 * time.Second)
 	te.mute("blog", true) // the next deploy, inside the hold
 	te.drain()
-	for range 5 {
+	// About three minutes under the mute: never resolved, and kept alive
+	// by the re-posts, so resolve_timeout does not end it unsaid.
+	reposts := 0
+	for range 6 {
 		te.advance(31 * time.Second)
 		te.tick()
-		if r := resolves(te.drain()); len(r) != 0 {
+		got := te.drain()
+		if r := resolves(got); len(r) != 0 {
 			t.Fatalf("resolved under the mute: %+v", r)
 		}
+		reposts += countAlert(got, "watchdog_throttled")
 	}
-	// 2.5 minutes under the mute: kept alive, so resolve_timeout does
-	// not end it unsaid.
-	te.advance(31 * time.Second)
-	te.tick()
-	if n := countAlert(te.drain(), "watchdog_throttled"); n != 1 {
-		t.Fatalf("re-posts while held = %d", n)
+	if reposts < 2 {
+		t.Fatalf("re-posts while held = %d", reposts)
 	}
 	te.mute("blog", false)
 	got := te.drain()
@@ -566,6 +567,30 @@ func TestMuteHoldsOnlyItsAppsWatchdog(t *testing.T) {
 	}
 }
 
+// The mute's end posts only what it held: a producer's state of the app
+// whose hold has passed is the tick's, which writes external.json after
+// it (persistExternal).
+func TestMuteEndLeavesOtherStatesToTheTick(t *testing.T) {
+	te := newTestEngine(t)
+	ext := Event{Name: "queue_stuck", Kind: kindState, Severity: SeverityWarning, App: "blog", Source: sourceExternal + "cron", Summary: "x", Firing: true}
+	te.report(ext)
+	te.mute("blog", true)
+	ext.Firing = false
+	te.report(ext)
+	te.drain()
+	te.advance(31 * time.Second) // its hold passed between two ticks
+	te.mute("blog", false)
+	for _, a := range te.drain() {
+		if a.Labels["alertname"] == "queue_stuck" {
+			t.Fatalf("the mute's end posted another state: %+v", a)
+		}
+	}
+	te.tick()
+	if got := te.drain(); countAlert(got, "queue_stuck") != 1 {
+		t.Fatalf("the tick's resolve = %+v", got)
+	}
+}
+
 // A reload that drops an app whose deploy runs ends its mute before it
 // resolves the app's keys: under the mute the resolve would never be
 // sent.
@@ -584,7 +609,9 @@ func TestPruneEndsTheMuteBeforeTheResolve(t *testing.T) {
 // A restart mid-deploy: the deploy ended with the process, and its mute
 // lives on in Alertmanager to resolve_timeout. The new process's first
 // configure ends every app's, before anything it posts, so a recovery
-// it tells (a standing one's, after its hold) is not sent under it.
+// it tells (a standing one's, after its hold) is not sent under it; so
+// does a configure after a reload took the block out, which forgot the
+// mutes, and a reload's does not.
 func TestFirstConfigureEndsTheLastProcessMutes(t *testing.T) {
 	useStateDir(t, t.TempDir())
 	useSocket(t, filepath.Join(t.TempDir(), "absent.sock"))
@@ -592,7 +619,6 @@ func TestFirstConfigureEndsTheLastProcessMutes(t *testing.T) {
 	a := &App{BackupRecord: "off", cfg: &resolved{apps: []string{"blog", "shop"}}, logger: zap.NewNop()}
 	p := &recPoster{}
 	e.configure(a, p, nil, zap.NewNop())
-	defer e.release(a)
 	var first []amAlert
 	for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); time.Sleep(10 * time.Millisecond) {
 		p.mu.Lock()
@@ -614,18 +640,28 @@ func TestFirstConfigureEndsTheLastProcessMutes(t *testing.T) {
 		t.Fatalf("the first post = %+v", first)
 	}
 	// A second config (a reload) ends none: a deploy running now is this
-	// process's. Its Alertmanager refuses, so what it queued stays.
+	// engine's. Its Alertmanager refuses, so what it queued stays.
 	e.mute("blog", true)
+	down := &recPoster{err: &netErr{syscall.ECONNREFUSED}}
 	b := &App{BackupRecord: "off", cfg: &resolved{apps: []string{"blog", "shop"}}, logger: zap.NewNop()}
-	e.configure(b, &recPoster{err: &netErr{syscall.ECONNREFUSED}}, nil, zap.NewNop())
-	defer e.release(b)
-	e.mu.Lock()
-	queued := slices.Clone(e.queue)
-	e.mu.Unlock()
-	for _, q := range queued {
-		if q.key == "mute/" {
-			t.Fatalf("a reload ended the mutes: %+v", q.alerts)
-		}
+	e.configure(b, down, nil, zap.NewNop())
+	mutesEnded := func() bool {
+		e.mu.Lock()
+		defer e.mu.Unlock()
+		return slices.ContainsFunc(e.queue, func(q *pending) bool { return q.key == "mute/" })
+	}
+	if mutesEnded() {
+		t.Fatal("a reload ended the mutes")
+	}
+	// The block taken out by a reload (the last config's Stop) forgets
+	// blog's mute with the table; one that brings it back ends it.
+	e.release(b)
+	e.release(a)
+	c := &App{BackupRecord: "off", cfg: &resolved{apps: []string{"blog"}}, logger: zap.NewNop()}
+	e.configure(c, down, nil, zap.NewNop())
+	defer e.release(c)
+	if !mutesEnded() {
+		t.Fatal("the block brought back ended no mute")
 	}
 }
 

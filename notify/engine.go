@@ -466,7 +466,7 @@ func (e *engine) mute(app string, on bool) {
 	// A recovery the mute held is posted right behind its end, before a
 	// flush of its group could tell the alert it ends.
 	for key, st := range e.states {
-		if st.ev.App == app && !st.firing {
+		if st.ev.App == app && !st.firing && strings.HasPrefix(st.ev.Name, "watchdog_") {
 			e.reconcile(key, st, now)
 		}
 	}
@@ -792,12 +792,14 @@ func (e *engine) configure(a *App, post poster, known []string, logger *zap.Logg
 	if len(e.live) == 1 {
 		e.settle(a)
 	}
-	if e.externalPath == "" && a.cfg != nil {
-		// This process's first: a deploy the last one ran ended with it,
-		// and its mute, which Alertmanager keeps to resolve_timeout, would
-		// swallow a watchdog_* recovery this one posts (muted). Ended for
-		// every app, in one post before any other: the end of a mute that
-		// is not there reaches no one.
+	if !e.running && a.cfg != nil {
+		// The engine starts with no mutes: at a process's start a deploy
+		// the last process ran ended with it, and a reload that took the
+		// block out forgot them with the table (release). Alertmanager
+		// keeps each to resolve_timeout, where it would swallow a
+		// watchdog_* recovery this engine posts (muted): the mute of every
+		// app the config runs is ended, in one post before any other. The
+		// end of a mute that is not there reaches no one.
 		now := e.now()
 		ends := make([]amAlert, 0, len(a.cfg.apps))
 		for _, app := range a.cfg.apps {
@@ -806,6 +808,8 @@ func (e *engine) configure(a *App, post poster, known []string, logger *zap.Logg
 		if len(ends) > 0 {
 			e.enqueue(&pending{key: "mute/", alerts: ends, first: now})
 		}
+	}
+	if e.externalPath == "" && a.cfg != nil {
 		e.restoreExternal(a.cfg.apps)
 	}
 	if !e.running {
