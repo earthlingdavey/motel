@@ -339,7 +339,7 @@ make e2e               # both module suites against the motel binary (incl. Soui
 make lint vet tidy
 ```
 
-CI runs all of these on every PR except `tidy`, which writes files and
+CI runs all of these on every PR that changes code, except `tidy`, which writes files and
 so is local-only; in its place CI runs `make tidy-check`, which fails if
 tidy would change go.mod or go.sum.
 
