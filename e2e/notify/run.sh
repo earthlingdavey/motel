@@ -80,8 +80,9 @@ failing_receivers() {
 
 # SPLIT: which parts run after the prelude (notify 0-2, on every box).
 # `make e2e-notify` runs each split on a box of its own, at once, sharing
-# the sink, which answers each box with its own deliveries; unset, every
-# part runs, in order, on one box. A split holds parts that share state:
+# the sink, which answers each box with its own deliveries; heartbeat
+# runs on CI, or locally when named. Unset, every part runs, in order,
+# on one box. A split holds parts that share state:
 # 6 and 9 count every delivery since the box began, 7a silences 3's
 # failed v3. 15, five minutes of a held heartbeat and its resume, is a
 # split alone; 11 to 14 are another, near core's length.

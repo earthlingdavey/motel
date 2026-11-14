@@ -239,7 +239,9 @@ jobs:
       - uses: ./.github/actions/runner-sample
       # The e2e job says why (the runner's Ubuntu kernel).
       - run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
-      - run: make e2e-notify COMPOSE="$COMPOSE"
+      # Every split, named here: a bare run leaves heartbeat (notify 15,
+      # motel's 5-minute hold) out, for local runs.
+      - run: make e2e-notify COMPOSE="$COMPOSE" NOTIFY_SPLITS="core reload heartbeat"
 
   # The metrics suite: notify's box with Debian's victoria-metrics (the
   # store and vmalert), so its own job, as notify's is.

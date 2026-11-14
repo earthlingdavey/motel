@@ -362,11 +362,13 @@ e2e:
 # Its splits (run.sh's SPLIT) run at once, a box each, sharing the sink,
 # which answers each box with its own deliveries; their output is held
 # and printed a split at a time, each ended at NOTIFY_LIMIT inside its
-# box. The heartbeat split, five minutes of motel's hold and its resume,
-# is the lane's length. NOTIFY_SPLITS=core runs one; =all the whole
-# suite on one box. The sink is metrics' too, its paths the same, so
-# e2e-notify and e2e-metrics do not run at once on one host.
-NOTIFY_SPLITS ?= core reload heartbeat
+# box. The heartbeat split, five minutes of motel's hold and its resume
+# (~9.5 min), is the lane's length: ci.yml names it with the other
+# two, and a bare run leaves it out, and says so at its end.
+# NOTIFY_SPLITS=heartbeat runs it alone; =all the whole suite on one
+# box. The sink is metrics' too, its paths the same, so e2e-notify and
+# e2e-metrics do not run at once on one host.
+NOTIFY_SPLITS ?= core reload
 NOTIFY_LIMIT ?= 1800
 e2e-notify:
 	$(cgroup2_preflight)
@@ -394,6 +396,7 @@ e2e-notify:
 	done; \
 	rm -rf $$logs; \
 	$(COMPOSE) rm -sf e2e-notify-box e2e-sink >/dev/null; \
+	$(if $(filter heartbeat all,$(NOTIFY_SPLITS)),,echo "════ heartbeat split not run (notify 15, motel's 5-minute hold, ~9.5 min): CI runs it; NOTIFY_SPLITS=heartbeat runs it here ════";) \
 	exit $$status
 
 # The metrics suite: notify's box with Debian's victoria-metrics, and the
