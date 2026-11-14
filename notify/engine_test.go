@@ -56,6 +56,7 @@ func newTestEngine(t *testing.T) *testEngine {
 	core, logs := observer.New(zap.DebugLevel)
 	te := &testEngine{engine: newEngine(), t: t, at: time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC), logs: logs, p: &recPoster{}}
 	te.now = func() time.Time { return te.at }
+	te.fail.started = te.at // the stamps tests give are compared with it, not the host's clock
 	te.logger = zap.New(core)
 	te.post = te.p
 	te.active = &App{}

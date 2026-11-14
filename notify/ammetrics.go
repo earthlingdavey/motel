@@ -33,6 +33,14 @@ const (
 	// failed an attempt before the cancel keeps that attempt's reason.
 	// Neither channel_failed nor vmalert's rules count it.
 	reasonCanceled = "contextCanceled"
+	// loadedMetric is when Alertmanager last loaded a config, in unix
+	// seconds: at its start and at every reload that took. With
+	// receiver-name-in-metrics the three counters above start again
+	// from 0 at each such load (notify.Metrics.InitializeFor, 0.28.1),
+	// and the stamp is set just after, so a stamp other than the last
+	// read's says that all of a count is since that load. A reload
+	// that fails resets nothing and keeps the stamp.
+	loadedMetric = "alertmanager_config_last_reload_success_timestamp_seconds"
 )
 
 // failedSample is one series of failedMetric.
@@ -47,7 +55,18 @@ type amMetrics struct {
 	// requests and requestsFailed are by receiver_name, summed over
 	// integrations; "" is the series without one.
 	requests, requestsFailed map[string]float64
+	// loaded is loadedMetric, when the counters name receivers (without
+	// receiver-name-in-metrics a reload resets nothing); 0 otherwise,
+	// or when the body has none.
+	loaded float64
 }
+
+// newLoad reports whether a read's load stamp (amMetrics.loaded) says
+// Alertmanager loaded a config since a read whose stamp was last, and
+// so counts from 0 since; 0 is no stamp. Any other stamp is a load, not
+// only a later one: the stamp changes only at a load, and one after the
+// wall clock stepped back is earlier.
+func newLoad(loaded, last float64) bool { return last > 0 && loaded > 0 && loaded != last }
 
 // errNoFailedCounter is a body without failedMetric. Alertmanager makes
 // its series at zero for every receiver and integration the config uses
@@ -72,8 +91,12 @@ func parseAMMetrics(body []byte) (amMetrics, error) {
 		return amMetrics{}, errNoFailedCounter
 	}
 	m := amMetrics{requests: map[string]float64{}, requestsFailed: map[string]float64{}}
+	byReceiver := false
 	for _, s := range fam.GetMetric() {
 		l := labelMap(s)
+		if _, ok := l["receiver_name"]; ok {
+			byReceiver = true
+		}
 		if l["reason"] == reasonCanceled {
 			continue
 		}
@@ -83,6 +106,9 @@ func parseAMMetrics(body []byte) (amMetrics, error) {
 		for _, s := range fams[name].GetMetric() {
 			dst[labelMap(s)["receiver_name"]] += metricValue(s)
 		}
+	}
+	if l := fams[loadedMetric].GetMetric(); byReceiver && len(l) == 1 {
+		m.loaded = metricValue(l[0])
 	}
 	return m, nil
 }
@@ -95,11 +121,14 @@ func labelMap(m *dto.Metric) map[string]string {
 	return out
 }
 
-// metricValue is a counter's value, or an untyped series' (a body with
-// no TYPE line for the family).
+// metricValue is a counter's or a gauge's value, or an untyped series'
+// (a body with no TYPE line for the family).
 func metricValue(m *dto.Metric) float64 {
 	if c := m.GetCounter(); c != nil {
 		return c.GetValue()
+	}
+	if g := m.GetGauge(); g != nil {
+		return g.GetValue()
 	}
 	return m.GetUntyped().GetValue()
 }

@@ -262,6 +262,55 @@ func TestRenderedRulesPassVMAlertDryRun(t *testing.T) {
 	}
 }
 
+// TestChannelFailedRuleAcrossAConfigLoad: the store scrapes every 30 s,
+// and a config load resets the failed counter. alice's 1 before a load
+// at 615 s and one failure before the next scrape (1 again at 630 s) is
+// no increase; the rule fires on it for the five minutes after the
+// load, 11m to 15m. bob, whose failure came before the load and none
+// after (0 from 630 s), does not fire again.
+func TestChannelFailedRuleAcrossAConfigLoad(t *testing.T) {
+	tool := vmTool(t, "vmalert-tool")
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, RulesName), renderRules(notifyApp(t)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	alice := `
+          - exp_labels: {notify_channel: ops, severity: warning, subject: box, integration: discord, suspects: alice}
+            exp_annotations: {summary: "Alertmanager could not deliver through discord; failing channel: alice (seen by the metrics store)"}`
+	test := `rule_files: [rules.yml]
+evaluation_interval: 1m
+tests:
+  - interval: 30s
+    input_series:
+      - series: 'alertmanager_notifications_failed_total{integration="discord",receiver_name="event-warning-alice",reason="clientError",job="alertmanager"}'
+        values: '0 0 0 0 1x36'
+      - series: 'alertmanager_notifications_failed_total{integration="webhook",receiver_name="event-critical-bob",reason="clientError",job="alertmanager"}'
+        values: '0 0 0 0 1x16 0x19'
+      - series: 'alertmanager_config_last_reload_success_timestamp_seconds{job="alertmanager"}'
+        values: '5x20 615x19'
+    alert_rule_test:
+      - {eval_time: 9m, groupname: motel-channel-failed, alertname: ChannelFailed, exp_alerts: []}
+      - eval_time: 11m
+        groupname: motel-channel-failed
+        alertname: ChannelFailed
+        exp_alerts:` + alice + `
+      - eval_time: 15m
+        groupname: motel-channel-failed
+        alertname: ChannelFailed
+        exp_alerts:` + alice + `
+      - {eval_time: 16m, groupname: motel-channel-failed, alertname: ChannelFailed, exp_alerts: []}
+`
+	if err := os.WriteFile(filepath.Join(dir, "test.yml"), []byte(test), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command(tool, "unittest", "-files", "test.yml")
+	cmd.Dir = dir
+	out, err := cmd.CombinedOutput()
+	if err != nil || !strings.Contains(string(out), "SUCCESS") {
+		t.Fatalf("vmalert-tool unittest: %v\n%s", err, out)
+	}
+}
+
 // vmalert-tool runs the rendered rules over input series: the store's
 // ChannelFailed fires with motel's labels, and app_memory_high carries
 // the app's subject and key, which route it to the app's channels.

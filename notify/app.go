@@ -341,6 +341,7 @@ func (a *App) applyRender(am *amClient) {
 	case err != nil:
 		a.logger.Error("monitor: Alertmanager's config was not updated", zap.String("state_dir", theStateDir), zap.Error(err))
 	case reloaded:
+		theEngine.noteReload()
 		a.logger.Info("monitor: Alertmanager reloaded the rendered config", zap.String("config", filepath.Join(theStateDir, ConfigName)))
 	}
 }

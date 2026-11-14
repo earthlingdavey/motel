@@ -237,6 +237,7 @@ func newEngine() *engine {
 		mutes:    map[string]time.Time{},
 		buckets:  map[string]*bucket{},
 		untold:   map[string]*untold{},
+		fail:     failWatch{started: time.Now()},
 		wake:     make(chan struct{}, 1),
 		retryFor: retryFor,
 		backoff: func(attempt int) time.Duration {
