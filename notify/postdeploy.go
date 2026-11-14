@@ -60,8 +60,9 @@ const (
 	//     push after the lost one was stamped slower than the one
 	//     before it.
 	// A check with no such push whose store has taken one since (asked
-	// the same at the tick's time less storeLag: a push in the minute
-	// before that is after the check's time) is missed: none will come
+	// the same at the tick's time less storeLag, once that is a minute
+	// past the check's time, so a push in the minute before it is after
+	// the check's time) is missed: none will come
 	// for it. It is skipped, and the comparison goes on, its later
 	// checks reading the missed minute's responses (the windows are
 	// cumulative); the window's last ends it unfinished, the minutes
@@ -371,9 +372,10 @@ type verdict struct {
 // checkRelease is one check: the new release over elapsed since the
 // cutover, and, when it is over a bound, the old one over the same
 // length before it; both read at cutover + elapsed, so the windows meet
-// at the cutover. First, once for both windows, whether the store took
-// a push of motel's in the minute before then (checkFresh), and with
-// none whether it has taken one since (now: the tick's time): asked
+// at the cutover. First, once a check (at its time, not per window: the
+// old release's is not asked about), whether the store took a push of
+// motel's in the minute before then (checkFresh), and with none whether
+// it has taken one since (freshness; now: the tick's time): asked
 // before the floor too, so that a skip, like a verdict, is drawn from
 // counts pushed within that minute. It is motel's push, not the app's
 // series, so a quiet app's check is no more often without one than a
@@ -383,16 +385,7 @@ func checkRelease(ctx context.Context, store instantQuerier, r comparison, rule 
 	wantP95 := rule.MaxP95 != 0
 	floor := float64(rule.minRequests())
 	at := r.cutover.Add(elapsed)
-	pushed, err := pushedBefore(ctx, store, at)
-	if err == nil && !pushed {
-		if pushed, err = pushedBefore(ctx, store, now.Add(-storeLag)); err == nil {
-			v.missed = pushed
-			if !pushed {
-				err = fmt.Errorf("the metrics store holds no push of motel's from the minute before the check %s after the cutover, nor since: it is down or read-only, or motel is not pushing", promDuration(elapsed))
-			}
-		}
-	}
-	if v.err = err; err != nil || v.missed {
+	if v.missed, v.err = freshness(ctx, store, at, elapsed, now); v.err != nil || v.missed {
 		return v
 	}
 	if v.newer, v.err = queryRelease(ctx, store, r.app, r.release, at, newWindow(r, elapsed), 0, wantP95, floor); v.err != nil {
@@ -424,6 +417,26 @@ func checkRelease(ctx context.Context, store instantQuerier, r comparison, rule 
 	failP95 := overP95 && (!v.hasOld || !v.old.hasP95 || v.newer.p95 > v.old.p95*p95Margin)
 	v.failed = fail5xx || failP95
 	return v
+}
+
+// freshness is whether the check over elapsed, at at, may count: with
+// a push of motel's within checkFresh before at, it may; with none, and
+// one taken since, it is missed; with neither, the store's error, asked
+// again. Since is asked at now less storeLag only once that is checkFresh
+// past at, so the minute it reads is wholly after at: a push stamped
+// before at that the store made searchable between the two asks is not
+// taken for one after it (/code-review pass 2 of the push ask).
+func freshness(ctx context.Context, store instantQuerier, at time.Time, elapsed time.Duration, now time.Time) (missed bool, err error) {
+	ok, err := pushedBefore(ctx, store, at)
+	if err != nil || ok {
+		return false, err
+	}
+	if since := now.Add(-storeLag); !since.Before(at.Add(checkFresh)) {
+		if ok, err = pushedBefore(ctx, store, since); err != nil || ok {
+			return ok, err
+		}
+	}
+	return false, fmt.Errorf("the metrics store holds no push of motel's from the minute before the check %s after the cutover, nor one since yet: it is down or read-only, or motel is not pushing", promDuration(elapsed))
 }
 
 // pushedBefore is whether the store holds a push of motel's within

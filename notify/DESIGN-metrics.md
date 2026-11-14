@@ -944,11 +944,12 @@ check after it (/code-review pass 4 on operator rules). An old release
 with fewer timed is no p95 baseline. A check counts only when the store
 holds a push of motel's from the minute before its time
 (`max(present_over_time(process_start_time_seconds{job="motel"}[1m]))`,
-asked first, once for both windows, and before the floor, so a skip is
-drawn from fresh counts too): the store stamps a push as it takes it
+asked first, once a check at its time, not per window, and before the
+floor, so a skip is drawn from fresh counts too; the old release's
+window is not asked about, "Owed"): the store stamps a push as it takes it
 and back-fills none it missed, so a check read past its last push reads
-the counts as they stood then. Down from minute 1.5 to 5, it answered
-minutes 2 and 3 with one snapshot, and a warning counted three failing
+the counts as they stood then. Without the ask, a store down from
+minute 1.5 to 5 answered minutes 2 and 3 with one snapshot, and a warning counted three failing
 checks over a minute and a half of responses; down over the window's
 end, the late checks passed on it and the comparison ended as if the
 release held (`TestPostDeployCountsNoSnapshotTwice`,
@@ -956,7 +957,9 @@ release held (`TestPostDeployCountsNoSnapshotTwice`,
 span between two checks, so no two count one push, and it holds a push
 lost (they are 30 s apart, stamped milliseconds after their gather).
 A check with none, whose store has taken a push since (the same ask at
-the tick's time less 10 s), is **missed**: none will come for it. It is
+the tick's time less 10 s, once that is a minute past the check's time,
+so a push it finds is after it and not one of the check's own minute
+made searchable late), is **missed**: none will come for it. It is
 skipped, a debug line (`the post-deploy check is skipped: the metrics
 store took no push`), and the checks after it read its minute's
 responses, the windows being cumulative; the window's last ends the
@@ -1605,6 +1608,7 @@ on its general scales. metrics' examples:
 
 | Owed | S | O | D | Lands in |
 |---|---|---|---|---|
+| The post-deploy push ask (`checkFresh`) is made at the check's time alone, so the old release's window, which ends a push after the cutover, is read without one: a store down over the cutover (from before the old window's end to after it) and back by the check gives a baseline as it stood at its last push before, a shorter span than the new release's, so the share and p95 the bound is held against are noisier | 2 | 3 | 3 | a follow-up PR: the same ask at the old window's end, `cutover + pushEvery`, once a comparison (out of the push ask's change, which asks once a check; /code-review pass 2 of the push ask) |
 | The store's RSS on a 1 or 2 GB box (a day on hotserve-1's 3.8 GB is in "Footprint") | — | — | — | a deploy to a box of that size |
 | On a booted Debian host, the delete-a-leftover branch of the namespace unit's test before its delete (#430's `ExecStartPre`), measured in the e2e box alone. A reboot cannot reach it: a cold boot has an empty `/run`, so hotserve-1's of 2026-11-13 at a8038b4 took the nothing-to-delete branch alone (the unit's start took 165 ms, with no `Cannot remove namespace` line), and setup's re-run does not restart the namespace unit, which is active. #426's proxies have had their cold boot: the deploy of 01b2fd5 to hotserve-1 rebooted it at about 17:53 UTC on 2026-11-12, and both came back as no root | — | — | — | a start of the namespace unit on hotserve-1 with `/run/netns/motel-metrics` already there (a start after one that failed past its `ip netns add`), not a reboot |
 | Debian's security support for `victoria-metrics` 1.112.0 and `prometheus-alertmanager` 0.28.1 on trixie, whose binaries are built with Go 1.24.2 (the store, vmalert) and 1.24.1 (Alertmanager), and a dist-upgrade check of both drop-ins' flags | — | — | — | before any release |

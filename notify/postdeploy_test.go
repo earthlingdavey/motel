@@ -864,7 +864,7 @@ func TestPostDeployCountsNoCheckTheStoreTookNoPushFor(t *testing.T) {
 		t.Fatalf("read-only throughout: %d in flight, %d events", len(ro.runs), len(ro.evs))
 	}
 	lines = ro.logs.FilterMessageSnippet("ended unfinished").AllUntimed()
-	want := "the metrics store holds no push of motel's from the minute before the check 1m after the cutover, nor since"
+	want := "the metrics store holds no push of motel's from the minute before the check 1m after the cutover, nor one since yet"
 	if len(lines) != 1 {
 		t.Fatalf("%d warning lines, want one", len(lines))
 	}
@@ -926,7 +926,8 @@ func TestPostDeployCountsNoSnapshotTwice(t *testing.T) {
 // A minute the store took no push for, with pushes since, is skipped,
 // and the comparison goes on: the checks after it read its responses
 // too (the windows are cumulative). Read-only from minute 2 to 3m30s,
-// the release failing from then: minutes 4 and 5 fail and it is told.
+// the release failing from then: minute 3 is asked again until a
+// minute past it, then skipped; minutes 4 and 5 fail and it is told.
 func TestPostDeployGoesOnPastAMinuteTheStoreMissed(t *testing.T) {
 	r := regressRule
 	r.Window, r.Failures = caddyMinutes(5), 2
@@ -941,12 +942,17 @@ func TestPostDeployGoesOnPastAMinuteTheStoreMissed(t *testing.T) {
 	tc.minute() // minute 3: none, nor since
 	tc.at = cutover.Add(3*time.Minute + 30*time.Second)
 	tc.store.resume(tc.at)
-	for range 2 {
+	for range 3 { // 3m40s to 4m: no push since that is past minute 3's
 		tc.at = tc.at.Add(10 * time.Second)
 		tc.tick(context.Background())
+		if run := tc.runs["blog"]; run == nil || run.next != 3 {
+			t.Fatalf("minute 3 skipped before a minute past it: %+v", run)
+		}
 	}
+	tc.at = tc.at.Add(10 * time.Second)
+	tc.tick(context.Background())
 	if run := tc.runs["blog"]; run == nil || run.next != 4 || run.failed != 0 {
-		t.Fatalf("minute 3 skipped once the store took a push: %+v", run)
+		t.Fatalf("minute 3 skipped once the store took a push after it: %+v", run)
 	}
 	tc.minute()
 	tc.minute()
@@ -956,15 +962,17 @@ func TestPostDeployGoesOnPastAMinuteTheStoreMissed(t *testing.T) {
 }
 
 // A push the store stamped before a check's time but had not made
-// searchable when the check asked (nor any since) is found when the
-// check is asked again, and the check counts then, once.
+// searchable when the check first asked is found when the check is
+// asked again, and the check counts then, once: no push since is asked
+// about until a minute after the check's time, which that push is not
+// in (/code-review pass 2 of the push ask).
 func TestPostDeployAPushSeenLateCountsOnce(t *testing.T) {
 	r := regressRule
 	r.Failures = 2
 	tc := newTestComparator(t, r)
 	tc.deploy("blog", "v2", "")
 	tc.store.set("v2", 200, 20, 0.1)
-	tc.store.unseen = 2 // the check's minute, and since
+	tc.store.unseen = 1
 	tc.minute()
 	run := tc.runs["blog"]
 	if run == nil || run.failed != 0 || run.next != 1 {
