@@ -145,6 +145,12 @@ func requestQueries(sel string, span time.Duration) viewRequests {
 	}
 }
 
+// cpuQuery is the view's CPU range query over the app sel names, each
+// point a rate over rate.
+func cpuQuery(sel, rate string) string {
+	return `sum(rate(motel_app_cpu_seconds_total{` + sel + `}[` + rate + `]))`
+}
+
 func (v *metricsView) ask(ctx context.Context, app, window string, w viewWindow, now time.Time) (wire.Metrics, error) {
 	start, end := now.Add(-w.span), now
 	sel := fmt.Sprintf(`app=%q`, app)
@@ -162,7 +168,7 @@ func (v *metricsView) ask(ctx context.Context, app, window string, w viewWindow,
 			return v.store.queryRange(ctx, `{__name__=~"motel_app_memory_bytes|motel_app_memory_max_bytes",`+sel+`}`, start, end, w.step)
 		}},
 		{&a.cpu, func() ([]series, error) {
-			return v.store.queryRange(ctx, `sum(rate(motel_app_cpu_seconds_total{`+sel+`}[`+w.rate+`]))`, start, end, w.step)
+			return v.store.queryRange(ctx, cpuQuery(sel, w.rate), start, end, w.step)
 		}},
 		// The window's peak over the raw samples, which the push writes
 		// every 30 s: the range above holds one sample a step, and a peak

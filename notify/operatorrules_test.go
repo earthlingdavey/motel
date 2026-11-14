@@ -877,6 +877,107 @@ func TestOperatorRulesRateAcrossARestart(t *testing.T) {
 	runUnittest(t, tool, dir, test)
 }
 
+// The unit series over the store's own MetricsQL, at pushEvery's 30 s.
+// Each deploy, rollback, relaunch or watchdog restart is a new unit, so
+// a new CPU series, and only the running unit is sampled: deployed's u1
+// runs at 0.5 cores to its last push at 10m and u2 at 0.5 from 10m30s.
+// Read over each series' own span, the stopped u1 kept its 0.5 beside
+// u2's until its last sample left the window: 1.0 to 15m, and `hot`
+// fired for an app that never passed 0.5. stopped runs 1.0 cores at
+// 0.95 of its memory cap and stops at 10m: a bare selector reads a
+// series' last sample for the query's step (5m), so `hot`, `full` and
+// app_memory_high fired on for five minutes for an app that was not
+// running. lossy runs throughout with one push lost (10m30s), and
+// stays in.
+func TestOperatorRulesReadTheRunningUnit(t *testing.T) {
+	tool := vmTool(t, "vmalert-tool")
+	dir := t.TempDir()
+	a := rulesApp(t, "rule hot threshold cpu_cores > 0.8 for 2m", "rule full threshold memory_share > 0.9 for 2m")
+	if err := os.WriteFile(filepath.Join(dir, RulesName), renderRules(a), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	value := func(metric, app string) string {
+		return strings.ReplaceAll(thresholdTerm(Rule{Name: "v", Kind: ruleThreshold, Metric: metric, App: app, Op: ">", Value: 0, For: 60e9}).value, "'", "''")
+	}
+	summary := map[string]string{
+		"hot":             "%s: the CPU it used over 5 minutes, in cores has been above 0.8 for 2m (rule hot); now 1",
+		"full":            "%s: its working set''s share of its memory cap has been above 0.9 for 2m (rule full); now 95%%",
+		"app_memory_high": "%s has used over 90 %% of its memory cap for ten minutes",
+	}
+	alerts := func(group, name string, apps ...string) string {
+		s := ""
+		for _, app := range apps {
+			key, source := "rules/app:"+app+"/"+name, "rules"
+			if group == "motel-store" {
+				key, source = "vmalert/app:"+app+"/"+name, "vmalert"
+			}
+			s += "\n          - exp_labels: {app: " + app + ", kind: state, severity: warning, subject: \"app:" + app + "\", source: " + source + ", key: \"" + key + "\"}" +
+				"\n            exp_annotations: {summary: '" + fmt.Sprintf(summary[name], app) + "'}"
+		}
+		return s
+	}
+	test := `rule_files: [rules.yml]
+evaluation_interval: 1m
+tests:
+  - interval: 30s
+    input_series:
+      - series: 'process_start_time_seconds{job="motel"}'
+        values: '1x60'
+      - series: 'motel_app_cpu_seconds_total{app="deployed",unit="app-deployed-u1.service",job="motel"}'
+        values: '0+15x20'
+      - series: 'motel_app_cpu_seconds_total{app="deployed",unit="app-deployed-u2.service",job="motel"}'
+        values: '_x21 15+15x38'
+      - series: 'motel_app_cpu_seconds_total{app="stopped",unit="app-stopped-s1.service",job="motel"}'
+        values: '0+30x20'
+      - series: 'motel_app_memory_bytes{app="stopped",job="motel"}'
+        values: '95x20'
+      - series: 'motel_app_memory_max_bytes{app="stopped",job="motel"}'
+        values: '100x20'
+      - series: 'motel_app_cpu_seconds_total{app="lossy",unit="app-lossy-l1.service",job="motel"}'
+        values: '0+30x20 _ 660+30x38'
+      - series: 'motel_app_memory_bytes{app="lossy",job="motel"}'
+        values: '95x20 _ 95x38'
+      - series: 'motel_app_memory_max_bytes{app="lossy",job="motel"}'
+        values: '100x20 _ 100x38'
+    metricsql_expr_test:`
+	for _, at := range []string{"10m40s", "11m10s", "13m", "14m50s"} {
+		test += `
+      - expr: '` + value("cpu_cores", "deployed") + `'
+        eval_time: ` + at + `
+        exp_samples: [{labels: '{app="deployed"}', value: 0.5}]`
+	}
+	for _, m := range []string{"cpu_cores", "memory_share"} {
+		test += `
+      - expr: '` + value(m, "stopped") + `'
+        eval_time: 11m20s
+        exp_samples: []`
+	}
+	test += `
+      - expr: '` + value("cpu_cores", "lossy") + `'
+        eval_time: 10m59s
+        exp_samples: [{labels: '{app="lossy"}', value: 1}]
+      - expr: '` + value("memory_share", "lossy") + `'
+        eval_time: 10m59s
+        exp_samples: [{labels: '{app="lossy"}', value: 0.95}]
+    alert_rule_test:
+`
+	for _, c := range []struct {
+		at, group, name string
+		apps            []string
+	}{
+		{"9m", "motel-operator", "hot", []string{"lossy", "stopped"}},
+		{"9m", "motel-operator", "full", []string{"lossy", "stopped"}},
+		{"11m", "motel-store", "app_memory_high", []string{"lossy", "stopped"}},
+		{"12m", "motel-operator", "hot", []string{"lossy"}},
+		{"12m", "motel-operator", "full", []string{"lossy"}},
+		{"12m", "motel-store", "app_memory_high", []string{"lossy"}},
+		{"14m", "motel-operator", "hot", []string{"lossy"}},
+	} {
+		test += "      - eval_time: " + c.at + "\n        groupname: " + c.group + "\n        alertname: " + c.name + "\n        exp_alerts:" + alerts(c.group, c.name, c.apps...) + "\n"
+	}
+	runUnittest(t, tool, dir, test)
+}
+
 // A histogram is read whole, by its count: under a release name rolled
 // back to with a fresh counter, reused's buckets that came back below
 // their last values and the one above it are all counted from zero (380
