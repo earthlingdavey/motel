@@ -399,7 +399,7 @@ template, and the operator's `rule` lines choose among motel's kinds
 |---|---|---|---|---|
 | `metrics_store_disk_fill` | `min(predict_linear(vm_free_disk_space_bytes[6h], 86400)) < 0 and min(predict_linear(vm_free_disk_space_bytes[1h], 86400)) < 0` | 30 m | box, state, warning | the operator |
 | `app_memory_high` | `max by (app) (motel_app_memory_bytes / motel_app_memory_max_bytes) > 0.9` | 10 m | `app`, `subject="app:<app>"`, state, warning | the operator and the app's bound channels |
-| `ChannelFailed` (one per told channel) | `sum(increase(alertmanager_notifications_failed_total{integration=…, receiver_name=~…}[5m])) > 0` | — | exactly motel's `ChannelFailed` labels | the told channel alone |
+| `ChannelFailed` (one per told channel) | `sum(increase(alertmanager_notifications_failed_total{integration=…, receiver_name=~…, reason!="contextCanceled"}[5m])) > 0` | — | exactly motel's `ChannelFailed` labels | the told channel alone |
 
 Each fixed rule carries `kind="state"`, `severity`, `subject`, `source="vmalert"`
 and `key="vmalert/<subject>/<name>"`, so slice one's route tree routes it

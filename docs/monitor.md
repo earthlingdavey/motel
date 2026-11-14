@@ -322,7 +322,12 @@ motel renders for it (a channel's URL included) or follows one it did
 not answer. Read live, the counts since the last load are
 `curl -s --unix-socket /run/motel-notify/am.sock http://am/metrics | grep 'receiver_name="heartbeat"'`.
 motel and the store's `ChannelFailed` rule read a counter that fell as
-one started again, not as a failure.
+one started again, not as a failure. A delivery in flight when
+Alertmanager loads its config is cancelled and counted in
+`alertmanager_notifications_failed_total` under
+`reason="contextCanceled"`; the new config sends it again, and neither
+motel nor the rule reads that reason, so a count there after a load is
+no failed channel.
 
 The check also pages when a channel failed and no other channel could
 be told: motel stops the pings then, so a dead channel is not hidden

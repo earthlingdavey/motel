@@ -72,9 +72,12 @@ post_alert() { # <labels JSON>: as root, as an admin's own tool would
 		http://am/api/v2/alerts -d "[{\"labels\":$1,\"annotations\":{\"summary\":\"e2e: posted to the socket by root\"}}]"
 }
 send() { motel monitor send --source e2e "$@" >/tmp/send.out 2>&1; }
-# failing_receivers: the receivers Alertmanager's failed counter names.
+# failing_receivers: the receivers Alertmanager's failed counter names,
+# as motel reads it: not a delivery Alertmanager's own reload cancelled
+# (reason contextCanceled), which setup's reload can do to the first
+# Watchdog or the event queued before setup (notify/ammetrics.go).
 failing_receivers() {
-	am http://am/metrics | awk '/^alertmanager_notifications_failed_total\{/ && $NF+0 > 0 {
+	am http://am/metrics | awk '/^alertmanager_notifications_failed_total\{/ && !/reason="contextCanceled"/ && $NF+0 > 0 {
 		if (match($0, /receiver_name="[^"]*"/)) print substr($0, RSTART+15, RLENGTH-16) }' | sort -u
 }
 

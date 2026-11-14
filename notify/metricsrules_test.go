@@ -284,6 +284,10 @@ tests:
         values: '0 0 1 1 1'
       - series: 'alertmanager_notifications_failed_total{integration="webhook",receiver_name="event-critical-pager",reason="clientError",job="alertmanager"}'
         values: '0 0 0 0 0'
+      # A delivery to pager in flight when Alertmanager reloaded: no
+      # channel's failure, so no rule names pager.
+      - series: 'alertmanager_notifications_failed_total{integration="webhook",receiver_name="event-critical-pager",reason="contextCanceled",job="alertmanager"}'
+        values: '0 0 1 1 1'
       - series: 'motel_app_memory_bytes{app="blog",job="motel"}'
         values: '95x20'
       - series: 'motel_app_memory_max_bytes{app="blog",job="motel"}'

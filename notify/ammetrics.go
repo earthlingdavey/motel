@@ -23,6 +23,16 @@ const (
 	// first attempt, so it says nothing of the outcome.
 	requestsMetric       = "alertmanager_notification_requests_total"
 	requestsFailedMetric = "alertmanager_notification_requests_failed_total"
+	// reasonCanceled is the failed counter's reason for a notification
+	// Alertmanager cancelled before any attempt at it failed. At a
+	// reload that is a delivery in flight: no channel's failure, and
+	// sent again by the new config wherever it still routes the alert.
+	// (At a stop the counters go with the process.) With
+	// receiver-name-in-metrics the reload resets the counters before
+	// the cancel is counted, so it would read as a rise. A channel that
+	// failed an attempt before the cancel keeps that attempt's reason.
+	// Neither channel_failed nor vmalert's rules count it.
+	reasonCanceled = "contextCanceled"
 )
 
 // failedSample is one series of failedMetric.
@@ -64,6 +74,9 @@ func parseAMMetrics(body []byte) (amMetrics, error) {
 	m := amMetrics{requests: map[string]float64{}, requestsFailed: map[string]float64{}}
 	for _, s := range fam.GetMetric() {
 		l := labelMap(s)
+		if l["reason"] == reasonCanceled {
+			continue
+		}
 		m.failed = append(m.failed, failedSample{integration: l["integration"], receiver: l["receiver_name"], reason: l["reason"], value: metricValue(s)})
 	}
 	for name, dst := range map[string]map[string]float64{requestsMetric: m.requests, requestsFailedMetric: m.requestsFailed} {

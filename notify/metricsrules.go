@@ -156,8 +156,8 @@ func channelFailedRules(n *App) vmGroup {
 		}
 		g.Rules = append(g.Rules, vmRule{
 			Alert: alertChannelFailed,
-			Expr: fmt.Sprintf(`sum(increase(%s{integration=%q,receiver_name=~%q}[5m])) > 0`,
-				failedMetric, k.integration, strings.Join(quoted, "|")),
+			Expr: fmt.Sprintf(`sum(increase(%s{integration=%q,receiver_name=~%q,reason!=%q}[5m])) > 0`,
+				failedMetric, k.integration, strings.Join(quoted, "|"), reasonCanceled),
 			Labels: map[string]string{
 				labelChannel: k.channel, "severity": SeverityWarning, "subject": "box",
 				"integration": k.integration, "suspects": k.suspects,

@@ -150,7 +150,7 @@ func TestScrapeFailedKeepsTheBaselineOverABadRead(t *testing.T) {
 	_, _, a.receivers = render(r, testStateDir)
 	te.setConfig(a, te.p, te.known, te.logger)
 	line := func(v string) string {
-		return failedMetric + `{integration="discord",receiver_name="event-app-blog-warning",reason="clientError"} ` + v + "\n"
+		return failedMetric + `{integration="discord",receiver_name="event-warning-alice",reason="clientError"} ` + v + "\n"
 	}
 	bodies := []string{
 		line("2"),      // baseline: two failures before motel looked
@@ -175,5 +175,54 @@ func TestScrapeFailedKeepsTheBaselineOverABadRead(t *testing.T) {
 	}
 	if n := len(te.lines("monitor: channel failed")); n != 1 {
 		t.Fatalf("channel failed lines = %d", n)
+	}
+}
+
+// TestReloadCancelIsNoFailure: Alertmanager's reload cancels a delivery
+// in flight and counts it failed with reason contextCanceled, after
+// (with receiver-name-in-metrics) the reload has reset the counters.
+// That is no channel's failure: it raises no ChannelFailed, and is not
+// the failed count `motel monitor test` reads; a rise of another reason
+// beside it still raises one. bob's receiver is webhook's, as pager's
+// is: the named receiver gives bob alone, the fallback would add pager.
+func TestReloadCancelIsNoFailure(t *testing.T) {
+	te := newTestEngine(t)
+	a := mustParse(t, fullBlock)
+	r, err := a.resolve(testTrust(), testSecrets())
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.cfg = r
+	_, _, a.receivers = render(r, testStateDir)
+	te.setConfig(a, te.p, te.known, te.logger)
+	line := func(reason, v string) string {
+		return failedMetric + `{integration="webhook",receiver_name="event-warning-bob",reason="` + reason + `"} ` + v + "\n"
+	}
+	bodies := []string{
+		line(reasonCanceled, "0") + line("clientError", "2"), // baseline: two refusals before
+		line(reasonCanceled, "1") + line("clientError", "0"), // a reload: reset, then one cancelled
+		line(reasonCanceled, "2") + line("clientError", "1"), // and a refusal beside another cancel
+	}
+	for i, b := range bodies {
+		body := b
+		te.scrapeFailed(context.Background(), func(context.Context) ([]byte, error) { return []byte(body), nil })
+		got := te.drain()
+		switch i {
+		case 0, 1:
+			if len(got) != 0 {
+				t.Fatalf("read %d posted %+v", i, got)
+			}
+		case 2:
+			if len(got) != 1 || got[0].Labels["suspects"] != "bob" || !strings.Contains(got[0].Annotations["summary"], "clientError") {
+				t.Fatalf("the refusal: %+v", got)
+			}
+		}
+	}
+	c, err := countsFor([]byte(line(reasonCanceled, "1")), "event-warning-bob")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.failed != 0 || c.reason != "" {
+		t.Fatalf("monitor test would read the cancel as a failure: %+v", c)
 	}
 }
