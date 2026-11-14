@@ -19,6 +19,8 @@
 #   oncall (answers 400)          → ChannelFailed to /ops, naming oncall
 #   blog-deployer failing         → ChannelFailed to /ops (json beside its ntfy), naming it alone
 #   oncall the only operator      → the heartbeat held after 5 m, resumed by a delivery
+#   a reload dropping blog that fails at the http app's Start, after
+#   notify's                      → no recovery of blog's alerts; the reload that serves ends them
 #
 # and the socket's reach: no TCP listener, root and motel admitted,
 # nobody refused, nothing of it in an app's sandbox view; the journal
@@ -89,7 +91,7 @@ failing_receivers() {
 # 6 and 9 count every delivery since the box began, 7a silences 3's
 # failed v3. 15, five minutes of a held heartbeat and its resume, is a
 # split alone; 11 to 14 are another, near core's length.
-split_core="3 4 5 6 6b 7 7a 8 9 10 10a" split_reload="11 12 13 14" split_heartbeat="15"
+split_core="3 4 5 6 6b 7 7a 8 9 10 10a" split_reload="11 12 13 14 14a" split_heartbeat="15"
 split_all="$split_core $split_reload $split_heartbeat"
 case "${SPLIT:=all}" in
 all) parts=$split_all ;;
@@ -649,6 +651,106 @@ else
 fi
 cp /tmp/Caddyfile.before /etc/motel/Caddyfile
 systemctl reload motel || fail "the reload that puts the block back"
+
+}
+
+case_14a() {
+echo "=== notify 14a: a reload that fails at an app's Start after notify's ends nothing its config drops ==="
+# The candidate drops blog (its app and the binding to its key) and binds
+# a site to an address the box does not have: it provisions (validate
+# passes), and its http app's Start fails. Caddy then stops the apps it
+# started and the old config serves on. It starts them in map order, so
+# notify's Start runs before that failure in about half the tries; the
+# fallback's journal line says when it did, and the tries go on until
+# two have, at most sixteen: two, so that a failed reload after a first
+# fallback is one too (the engine's configs and table as the first left
+# them), and fewer fail the case (with even odds, 17 in 65536 runs).
+# Each try is checked; then a minute and a quarter for a
+# recovery Alertmanager would send; then a reload that drops blog for
+# real must end both, so the case cannot pass by never ending anything.
+rr_alert() { am 'http://am/api/v2/alerts?filter=alertname%3D%22relaunch_refused%22&filter=app%3D%22blog%22'; }
+fr_alert() { am 'http://am/api/v2/alerts?filter=alertname%3D%22failed_reload_probe%22'; }
+code=$(deploy demo-v1.tar.gz fr1)
+[ "$code" = 200 ] && pass "deploy fr1" || fail "deploy fr1 returned $code: $(cat /tmp/deploy-body)"
+REL=/var/lib/liveswap/blog/releases/fr1
+cp "$REL/server" /tmp/server.fr1
+pid=$(json_num "$(status)" pid)
+t_case=$(date +%s)
+t_fr=$(now_ms)
+rm "$REL/server"
+[ -n "$pid" ] && kill -9 "$pid"
+send --name failed_reload_probe --subject app:blog --state firing --summary "e2e: firing across a failed reload" || fail "send firing: $(cat /tmp/send.out)"
+t=$(first_arrival /ops relaunch_refused "$t_fr" 90 firing blog)
+[ -n "$t" ] && pass "blog's refused relaunch fires and reaches the operator" || fail "no relaunch_refused for blog at /ops"
+t=$(first_arrival /ops failed_reload_probe "$t_fr" 90 firing blog)
+[ -n "$t" ] && pass "a producer's state for blog fires and reaches the operator" || fail "no failed_reload_probe at /ops"
+grep -q '"name":"failed_reload_probe"' "$STATE/external.json" 2>/dev/null \
+	&& pass "external.json keeps the producer's state" || fail "external.json: $(cat "$STATE/external.json" 2>&1)"
+
+awk 'BEGIN{skip=0} /^\t\tapp blog \{$/{skip=1} skip&&/^\t\t\}$/{skip=0; next} !skip && !/^\t\tbind local:\/shared\/deploy.pub blog-deployer$/' \
+	/tmp/Caddyfile.before >/tmp/Caddyfile.noblog
+grep -q 'app blog\|bind local:' /tmp/Caddyfile.noblog && fail "fixture: could not drop blog"
+printf '\n:8082 {\n\tbind 192.0.2.1\n\trespond "never served"\n}\n' | cat /tmp/Caddyfile.noblog - >/tmp/Caddyfile.failstart
+motel validate --adapter caddyfile --config /tmp/Caddyfile.failstart >/tmp/validate-14a.out 2>&1 \
+	&& pass "the candidate passes validate: what fails is a Start" || fail "validate refused the candidate: $(tail -3 /tmp/validate-14a.out)"
+
+tries=0 fellback=0
+while [ "$tries" -lt 16 ] && [ "$fellback" -lt 2 ]; do
+	tries=$((tries + 1))
+	sleep 1 # each try's journal lines from a second of its own
+	t_try=$(date +%s)
+	if motel reload --config /tmp/Caddyfile.failstart >/tmp/reload-14a.out 2>&1; then
+		fail "try $tries: the reload with a site bound to 192.0.2.1 succeeded"
+		break
+	fi
+	why=$(grep -o 'listen tcp 192.0.2.1[^"\\]*' /tmp/reload-14a.out | head -1)
+	[ -n "$why" ] || fail "try $tries: the reload failed for another reason: $(tail -3 /tmp/reload-14a.out)"
+	log=$(journalctl -u motel --since "@$t_try" -o cat --no-pager)
+	if echo "$log" | grep -q 'the config serving before a failed reload has the engine again'; then
+		fellback=$((fellback + 1))
+		echo "  try $tries ($why): notify's Start ran before the failure; the engine fell back"
+	else
+		echo "  try $tries ($why): the failing Start came before notify's"
+	fi
+	curl -s --max-time 5 --unix-socket /run/motel/admin.sock http://localhost/config/apps/liveswap/apps/blog | grep -q '"command"' \
+		|| fail "try $tries: the config serving has no blog"
+	echo "$log" | grep -q 'the config no longer has its source' && fail "try $tries: the journal has a resolve for a source the candidate dropped"
+	grep -q '"name":"failed_reload_probe"' "$STATE/external.json" 2>/dev/null || fail "try $tries: external.json lost the producer's state"
+done
+[ "$fellback" -ge 2 ] && pass "$fellback of $tries failed reloads ran notify's Start before the failing one, and fell back" \
+	|| fail "$fellback of $tries tries ran notify's Start before the failing one, want 2: the fallback was not exercised twice"
+systemctl is-active -q motel && pass "the old config serves on, blog in it" || fail "motel is not active after the failed reloads"
+# A recovery the candidate's Start had posted would reach /ops at the
+# group's next flush (group_interval 1m).
+sleep 75
+n=$(arrivals /ops relaunch_refused "$t_fr" resolved blog | wc -l)
+[ "$n" -eq 0 ] && pass "no recovery of blog's refused relaunch reached the operator" || fail "$n recoveries of relaunch_refused while blog is down"
+n=$(arrivals /ops failed_reload_probe "$t_fr" resolved blog | wc -l)
+[ "$n" -eq 0 ] && pass "no recovery of the producer's state reached the operator" || fail "$n recoveries of failed_reload_probe"
+rr_alert | grep -q '"state":"active"' && pass "relaunch_refused is still active in Alertmanager" || fail "relaunch_refused: $(rr_alert | head -c 300)"
+fr_alert | grep -q '"state":"active"' && pass "and the producer's state" || fail "failed_reload_probe: $(fr_alert | head -c 300)"
+grep -q '"name":"failed_reload_probe"' "$STATE/external.json" 2>/dev/null \
+	&& pass "external.json still holds the producer's state" || fail "external.json after the failed reloads: $(cat "$STATE/external.json" 2>&1)"
+journalctl -u motel --since "@$t_case" -o cat --no-pager | grep -q 'the config no longer has its source' \
+	&& fail "the journal has a resolve for a source the failed candidates dropped" || pass "the journal resolves nothing the failed candidates dropped"
+
+# The reload that drops blog and serves: both end now.
+t_drop=$(now_ms)
+t_drop_s=$(date +%s)
+motel reload --config /tmp/Caddyfile.noblog >/tmp/reload-14a.out 2>&1 || fail "the reload that drops blog: $(tail -3 /tmp/reload-14a.out)"
+t=$(first_arrival /ops relaunch_refused "$t_drop" 120 resolved blog)
+[ -n "$t" ] && pass "a reload that drops blog and serves ends its refused relaunch" || fail "no recovery of relaunch_refused after blog was dropped"
+t=$(first_arrival /ops failed_reload_probe "$t_drop" 120 resolved blog)
+[ -n "$t" ] && pass "and the producer's state" || fail "no recovery of failed_reload_probe after blog was dropped"
+journalctl -u motel --since "@$t_drop_s" -o cat --no-pager | grep 'the config no longer has its source' | grep -q 'failed_reload_probe' \
+	&& pass "journal: resolved, the config no longer has its source" || fail "no journal line for the resolve of the dropped source"
+grep -q '"name":"failed_reload_probe"' "$STATE/external.json" 2>/dev/null \
+	&& fail "external.json still holds the dropped app's state" || pass "external.json no longer holds it"
+# blog back, its server first, so that recovery launches it.
+cp /tmp/server.fr1 "$REL/server"
+chown --reference="$REL" "$REL/server" 2>/dev/null || true
+cp /tmp/Caddyfile.before /etc/motel/Caddyfile
+systemctl reload motel || fail "the reload that puts the fixture back"
 
 }
 

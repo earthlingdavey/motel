@@ -402,7 +402,9 @@ whichever config serves when it clears.
 - **A config that drops a source** ends what nothing can clear any
   more: the keys of an app it no longer runs (and its mute), the backup
   keys once `backup_record off`, a filesystem's once its path is not
-  measured; each fired key is resolved with a journal line. An
+  measured; each fired key is resolved with a journal line, once the
+  config serves: a reload's at the old config's Stop, and a poll that
+  was reading then tells nothing of what it dropped. An
   unreadable backup record keeps what fired firing beside
   `backup_unreadable`, and a filesystem statfs cannot measure keeps
   what it fired, and fires nothing new: a statfs that fails, or that
@@ -414,7 +416,11 @@ whichever config serves when it clears.
   though the file has not changed. A reload that fails after notify's
   Start stops the new config while the old one serves on; the engine
   goes back to the old one, and puts the old one's render back in the
-  state directory and in Alertmanager. When the last config running
+  state directory and in Alertmanager. What the new one drops (above,
+  and a heartbeat hold on a channel it no longer has) is ended only at
+  the old one's Stop, and the pollers read the old one's sources until
+  then, so a fallback finds it as it was: Caddy has no hook that says
+  a config serves. When the last config running
   notify stops, the engine's table, mutes and buckets are emptied, and
   each post still queued is given up as above (at motel's shutdown
   too): a block added back later starts clean. When that stop is a reload's
@@ -586,7 +592,8 @@ not fail, read from `alertmanager_notification_requests_total` and
 Alertmanager's own `/metrics` over the socket with the failed counter
 (not from the store). The pings resume at the next delivery through
 the suspect's receivers (`motel monitor test <channel>` makes one), at
-a load whose config no longer has the channel, or at a restart of
+a load whose config no longer has the channel, once it serves
+("Reloads"), or at a restart of
 motel: the hold is in memory, as the counter's baseline is.
 `monitor: heartbeat held: …` (warn) names the suspect, when it failed
 and what resumes it, and `monitor: heartbeat resumed` says through
@@ -938,6 +945,7 @@ on its general scales. notify's examples:
 | `motel monitor test` reads the counters for 15 s; a slow receiver answers "neither yet" | notify/admin.go (`testWait`) | 2 | 2 | 1 | the answer says so; Alertmanager's retries continue |
 | At a boot, an event liveswap reports before notify's Start (Caddy starts the apps in no fixed order) is dropped, the engine serving no config yet: a recovery at that instant ends its alert at `resolve_timeout`, up to five minutes late | notify/engine.go (`report`, `active == nil`) | 2 | 3 | 3 | 18; what stands is told again at notify's Start (`ReportStanding`), and an end told meanwhile is told again after it; holding events for a config not yet started adds a queue with its own lifetime (size 3). /code-review of the Owed rows |
 | The last config running notify stops (a reload that takes the block out, or motel's shutdown) while a post is in flight: the cancel cuts the POST after Alertmanager has taken the body and before its answer, the post is still at the queue's head, and `release` gives it up: a `monitor: delivery failed` line and the counter for a post that was delivered | notify/engine.go (`release`: the queue given up after `cancel`) | 2 | 2 | 3 | 12; a stop that lands inside one POST's answer, and the alert reaches its channels; before, the same post was lost unsaid, or posted again by a later config whatever its age. Letting the last attempt finish before the cancel waits on Alertmanager inside the stop (size 2, risk 2). /code-review pass 1 of monitor/queue-no-stale-posts |
+| Caddy's `finishSettingUp` fails after every app of a reload's candidate started: `run` returns the error and stops none of them, so the candidate is never released while the old config serves on. Alertmanager keeps the candidate's render and the engine its audience (`point`), the pollers the old config's sources (no `settle`); and the candidate stays in `live`, so a later Stop of the config serving falls back to it: its render is put back, and the engine keeps posting even after a reload that takes the block out | notify/engine.go (`configure`, `release`); Caddy's caddy.go (`run`, `finishSettingUp`) | 3 | 1 | 3 | 9; only `admin.identity`, `admin.remote` or `admin.config.load` can fail it, which motel's Caddyfile and tools do not write; Caddy leaks every started app of that candidate there (its listeners too), so the fix is upstream; telling the stuck candidate apart in the engine is a new state (size 2, risk 2). /code-review of the failed-reload fix |
 | A restart after notify has resolved a recovery but before the next healthy probe clears `alerts.json` (with `health_interval 2m` and a 30 s hold, up to about 90 s) replays the recovery: the emptied engine posts the alert held, then resolved, and the operator sees the firing and recovery messages again. A reload does the same when it lengthens the hold (the standing report judges it with the candidate's `watchdog_grace`), and so does a push just after a restart (the watchdog's own `healthySince` is new) | liveswap/watchdog.go (`reportedAlerts` keeps `Recovering`, not when the hold began); liveswap/lifecycle.go (`reportStanding`) | 2 | 2 | 1 | 4; a duplicate the operator sees, only for a restart or reload inside one health interval after a hold ends; persisting the hold's start, and the engine honouring it, is size 3 (risk 2). Copilot round 1 on #424, widened by /code-review xhigh on #424 |
 | A restart inside a recovery's hold, then a relaunch that fails for good (no instance runs after the restart): the persisted `recovering` is re-reported as a held recovery, so the engine resolves the alert of an app that is down, and the flags stay for the next restart | liveswap/lifecycle.go (`reportStanding`) | 3 | 2 | 3 | 18; two faults, a restart inside a hold and then a relaunch that fails; the journal names the failed relaunch and status shows the app down; telling it apart needs a branch on whether an instance runs after recovery (size 2, risk 2). /code-review xhigh on #424 |
 | A failed write of `alerts.json` (EIO, a read-only remount) leaves the old file until the next change, and a restart before it reports what the file still says | liveswap/watchdog.go (`alertsChanged`) | 3 | 3 | 1 | 9; the warning at the failure names the file and the consequence; a retry needs a timer outside the transitions (size 2, risk 2). /code-review of the Owed rows |
@@ -1019,7 +1027,18 @@ validate` naming `monitor`, and `motel notify setup` exiting 1 with
 `motel monitor setup`; the block taken out by a reload while a state
 fires: the state directory holds the config that sends nothing and no
 URL file, the journal says so, and the alert's end, posted by root at
-once rather than awaited at `resolve_timeout`, reaches no channel; and
+once rather than awaited at `resolve_timeout`, reaches no channel; a
+reload that drops blog, while its refused relaunch and a producer's
+state for it fire, and fails at the http app's Start (a site bound to
+an address the box does not have, which `motel validate` passes),
+tried until notify's Start ran before the failure twice (the
+fallback's journal line; at most sixteen tries, and fewer than two
+fail the case): after each, the old
+config serves with blog, the journal resolves nothing and
+`external.json` keeps the state; after a minute and a quarter no
+recovery has reached the operator and both alerts are active in
+Alertmanager; then a reload that drops blog and serves resolves both,
+with the journal line, and `external.json` lets the state go; and
 with the failing channel the operator's only one, the heartbeat held
 about six minutes after the failure (`monitor: heartbeat held` naming
 it, `ChannelFailed` told to no channel, no `Watchdog` posted after),
@@ -1042,7 +1061,7 @@ next rollback reaches the operator, and a second `expire --json` exits
 The suite runs as three splits, a box each, at once (`SPLIT` in
 e2e/notify/run.sh, `NOTIFY_SPLITS` in the Makefile): core (notify 3 to
 10a, which count every delivery since their box began, 7a silencing 3's
-failed v3), reload (11 to 14) and heartbeat (15 alone, five minutes of
+failed v3), reload (11 to 14a) and heartbeat (15 alone, five minutes of
 motel's hold and its resume), each after the prelude (notify 0 to 2),
 which keeps the Caddyfile they put back. The boxes share the sink, which keeps
 each delivery with the address it came from and answers a box's
