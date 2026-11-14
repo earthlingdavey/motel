@@ -786,7 +786,7 @@ func (a *Applier) rollingBack(ctx context.Context, t *txn, recovering bool) erro
 		return nil
 	}
 	if why == "" {
-		why = msgReloadFailed
+		why = t.pick(msgRolledBackInterrupted, msgRolledBackInterruptedFiles)
 	}
 	a.finish(t, phaseRolledBack, why)
 	return nil
