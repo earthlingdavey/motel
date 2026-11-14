@@ -812,8 +812,9 @@ func TestPostDeployAsksAgainWhatTheStoreDidNotAnswer(t *testing.T) {
 // back inside the grace: the checks of minutes 2 and 3, asked again,
 // passed on the snapshot of 1m30s while the release failed after it,
 // and the comparison ended as if it had held. Minute 2 counts on that
-// push, 30 s before its time; minute 3 has none, and the comparison
-// ends unfinished, saying why.
+// push, 30 s before its time; minute 3, the window's last, has none and
+// the store has taken one since: none will come, and the comparison
+// ends unfinished, saying so.
 func TestPostDeployCountsNoCheckTheStoreTookNoPushFor(t *testing.T) {
 	r := regressRule
 	r.Window, r.Failures = caddyMinutes(3), 2
@@ -831,27 +832,27 @@ func TestPostDeployCountsNoCheckTheStoreTookNoPushFor(t *testing.T) {
 	tc.at = cutover.Add(5 * time.Minute)
 	tc.store.resume(tc.at)
 	tc.store.err = nil
-	for range 6 {
+	tc.at = tc.at.Add(10 * time.Second)
+	tc.tick(context.Background()) // minute 2
+	if run := tc.runs["blog"]; run == nil || run.next != 3 || run.failed != 0 {
+		t.Fatalf("minute 2 a pass on the push of 1m30s: %+v", run)
+	}
+	for range 3 {
 		tc.at = tc.at.Add(10 * time.Second)
 		tc.tick(context.Background())
 	}
-	run := tc.runs["blog"]
-	if run == nil || len(tc.evs) != 0 {
-		t.Fatalf("after the store came back: %d events, in flight %+v (nil: ended as held on the snapshot of 1m30s)", len(tc.evs), run)
-	}
-	if run.next != 3 || run.failed != 0 {
-		t.Errorf("minute 2 a pass on the push of 1m30s, minute 3 owed: next %d, failed %d", run.next, run.failed)
-	}
-	tc.at = cutover.Add(r.window() + storeLag + postDeployGrace + time.Second)
-	tc.tick(context.Background())
 	if len(tc.runs) != 0 || len(tc.evs) != 0 {
-		t.Fatalf("past the grace: %d in flight, %d events", len(tc.runs), len(tc.evs))
+		t.Fatalf("after the store came back: %d in flight, %d events", len(tc.runs), len(tc.evs))
 	}
-	unfinished(t, tc, "3m")
+	lines := tc.logs.FilterMessage("monitor rules: the post-deploy comparison ended unfinished: the metrics store took no push of motel's for its last check").AllUntimed()
+	if len(lines) != 1 || lines[0].ContextMap()["elapsed"] != 3*time.Minute {
+		t.Fatalf("ended as held on the snapshot of 1m30s, unsaid: %+v", lines)
+	}
 
 	// A store read-only for the whole window (queries answered, pushes
-	// refused) reads as nothing pushed: no check counts, a skip under the
-	// floor no more than a verdict, and the comparison ends unfinished.
+	// refused) reads as nothing pushed, then or since: no check counts, a
+	// skip under the floor no more than a verdict; each is asked again,
+	// and past the grace the comparison ends unfinished.
 	ro := newTestComparator(t, r)
 	ro.store.stop(ro.at)
 	ro.store.set("v2", 200, 200, 0.1)
@@ -862,25 +863,18 @@ func TestPostDeployCountsNoCheckTheStoreTookNoPushFor(t *testing.T) {
 	if len(ro.runs) != 0 || len(ro.evs) != 0 {
 		t.Fatalf("read-only throughout: %d in flight, %d events", len(ro.runs), len(ro.evs))
 	}
-	unfinished(t, ro, "1m")
+	lines = ro.logs.FilterMessageSnippet("ended unfinished").AllUntimed()
+	want := "the metrics store holds no push of motel's from the minute before the check 1m after the cutover, nor since"
+	if len(lines) != 1 {
+		t.Fatalf("%d warning lines, want one", len(lines))
+	}
+	if got, _ := lines[0].ContextMap()["error"].(string); !strings.Contains(got, want) {
+		t.Errorf("the warning's error = %q, want %q", got, want)
+	}
 	for _, q := range ro.store.queries {
 		if q != pushedQuery {
 			t.Errorf("a release read with no push in the store: %s", q)
 		}
-	}
-}
-
-// unfinished is the one warning of a comparison that ended unfinished,
-// for the check over elapsed, naming the push the store did not take.
-func unfinished(t *testing.T, tc *testComparator, elapsed string) {
-	t.Helper()
-	lines := tc.logs.FilterMessageSnippet("ended unfinished").AllUntimed()
-	if len(lines) != 1 {
-		t.Fatalf("%d warning lines, want one", len(lines))
-	}
-	want := "the metrics store holds no push of motel's from the minute before the check " + elapsed + " after the cutover"
-	if got, _ := lines[0].ContextMap()["error"].(string); !strings.Contains(got, want) {
-		t.Errorf("the warning's error = %q, want %q", got, want)
 	}
 }
 
@@ -889,7 +883,8 @@ func unfinished(t *testing.T, tc *testComparator, elapsed string) {
 // and 3, asked again once it came back, read the one snapshot of 1m30s
 // and failed again, and the warning counted three failing checks in a
 // row over a minute and a half of responses. Minute 2 counts on that
-// push, 30 s before its time; minute 3 has none and is not counted.
+// push, 30 s before its time; minutes 3 and 4 have none and are
+// skipped; minute 5 reads the pushes since, and passes.
 func TestPostDeployCountsNoSnapshotTwice(t *testing.T) {
 	r := regressRule
 	r.Window, r.Failures = caddyMinutes(5), 3
@@ -907,28 +902,69 @@ func TestPostDeployCountsNoSnapshotTwice(t *testing.T) {
 	tc.at = cutover.Add(5 * time.Minute)
 	tc.store.resume(tc.at)
 	tc.store.err = nil
-	for range 3 {
+	tc.at = tc.at.Add(10 * time.Second)
+	tc.tick(context.Background()) // minute 2
+	if run := tc.runs["blog"]; run == nil || run.failed != 2 || run.next != 3 {
+		t.Fatalf("minutes 1 and 2 failing, 3 owed: %+v", run)
+	}
+	for range 4 {
 		tc.at = tc.at.Add(10 * time.Second)
 		tc.tick(context.Background())
 	}
 	if len(tc.evs) != 0 {
 		t.Fatalf("told on one snapshot counted as three checks: %+v", tc.evs)
 	}
-	if run := tc.runs["blog"]; run == nil || run.failed != 2 || run.next != 3 {
-		t.Fatalf("minutes 1 and 2 failing, 3 owed: %+v", run)
+	tc.minute() // the window is over
+	if len(tc.runs) != 0 || tc.logs.FilterMessageSnippet("ended unfinished").Len() != 0 {
+		t.Fatalf("minute 5 a pass: %d in flight, %+v", len(tc.runs), tc.logs.FilterMessageSnippet("ended unfinished").AllUntimed())
+	}
+	if n := tc.logs.FilterMessage("monitor rules: the post-deploy check is skipped: the metrics store took no push of motel's for it").Len(); n != 2 {
+		t.Errorf("%d minutes skipped, want 3 and 4", n)
+	}
+}
+
+// A minute the store took no push for, with pushes since, is skipped,
+// and the comparison goes on: the checks after it read its responses
+// too (the windows are cumulative). Read-only from minute 2 to 3m30s,
+// the release failing from then: minutes 4 and 5 fail and it is told.
+func TestPostDeployGoesOnPastAMinuteTheStoreMissed(t *testing.T) {
+	r := regressRule
+	r.Window, r.Failures = caddyMinutes(5), 2
+	tc := newTestComparator(t, r)
+	cutover := tc.at
+	tc.deploy("blog", "v2", "")
+	tc.store.set("v2", 200, 0, 0.1)
+	tc.minute()
+	tc.store.stop(cutover.Add(2 * time.Minute))
+	tc.minute() // minute 2: the push of 2m
+	tc.store.set("v2", 400, 200, 0.1)
+	tc.minute() // minute 3: none, nor since
+	tc.at = cutover.Add(3*time.Minute + 30*time.Second)
+	tc.store.resume(tc.at)
+	for range 2 {
+		tc.at = tc.at.Add(10 * time.Second)
+		tc.tick(context.Background())
+	}
+	if run := tc.runs["blog"]; run == nil || run.next != 4 || run.failed != 0 {
+		t.Fatalf("minute 3 skipped once the store took a push: %+v", run)
+	}
+	tc.minute()
+	tc.minute()
+	if len(tc.evs) != 1 || !strings.Contains(tc.evs[0].Summary, "regressed 5m after") || !strings.Contains(tc.evs[0].Summary, "2 failing checks in a row") {
+		t.Fatalf("after the missed minute: %+v", tc.evs)
 	}
 }
 
 // A push the store stamped before a check's time but had not made
-// searchable when the check asked is found when the check is asked
-// again, and the check counts then, once.
+// searchable when the check asked (nor any since) is found when the
+// check is asked again, and the check counts then, once.
 func TestPostDeployAPushSeenLateCountsOnce(t *testing.T) {
 	r := regressRule
 	r.Failures = 2
 	tc := newTestComparator(t, r)
 	tc.deploy("blog", "v2", "")
 	tc.store.set("v2", 200, 20, 0.1)
-	tc.store.unseen = 1
+	tc.store.unseen = 2 // the check's minute, and since
 	tc.minute()
 	run := tc.runs["blog"]
 	if run == nil || run.failed != 0 || run.next != 1 {
