@@ -911,7 +911,18 @@ monitor {
   for a few minutes after its last push: through them an every-app
   rule still watches the app, and either rule can fire on the old cap.
 - **`disk_fill`**: a filesystem that will be full `within` the time
-  given, at the rate it is filling.
+  given, at the rate it is filling. The rate is read over the last
+  quarter of `within` (15 minutes at `1h`, 6 hours at `1d`), so a
+  steady fill is told a little less than `within` ahead: at `1h`, 55
+  minutes ahead of a fill that takes two hours or more, 44 ahead of
+  one that takes the hour. A single write, even one that takes a few
+  minutes, fires only when it took about half of what was free. The
+  rule cannot fire, nor start its `for`, until the store holds most of
+  that quarter of history (10 minutes at `1h`, 5 hours at `1d`, 150
+  hours at `30d`) after its setup, a wipe of its data, or a
+  filesystem's first measurement; the store's own disk rule,
+  `metrics_store_disk_fill`, waits 5 hours the same way. `disk_low`
+  watches the disks meanwhile.
 - **`post_deploy`**: after each deploy or rollback of the app, the new
   release compared with the one it replaced. It sends
   `post_deploy_regressed` once, and it never rolls back. Each minute

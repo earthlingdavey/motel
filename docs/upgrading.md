@@ -323,6 +323,18 @@ once in the other direction. What will repeat is what fires before
 the install ([Monitor](monitor.md#what-is-firing-with-amtool) reads
 it).
 
+## The disk rules' new expressions: a resolve, then firing again
+
+On a box built from the notify-and-metrics feature branch, the first
+load after the install changes the expression of
+`metrics_store_disk_fill` (it waits for 5 hours of the store's
+history) and of each `disk_fill` rule whose `within` is under a day
+(its windows and `for` are scaled to `within`). vmalert knows a rule
+by its expression, so an alert of either that fires at the install is
+no longer sent: its channels can get `[RESOLVED]` while the disk still
+fills, then `[FIRING]` once the new rule's `for` has passed (30 m for
+the store's, from 5 m for yours). Nothing to do.
+
 ## From a state_dir or alertmanager line
 
 A box built from the notify-and-metrics feature branch (no release

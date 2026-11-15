@@ -33,7 +33,8 @@ const (
 var (
 	storeDiskFill = ruleTerm{value: "min(predict_linear(vm_free_disk_space_bytes[6h], 86400))", op: "<",
 		guards: []ruleTerm{{value: "min(predict_linear(vm_free_disk_space_bytes[1h], 86400))", op: "<",
-			meaning: "the 1h line predicts it full too: a one-off write tilts the 6h line alone"}}}
+			meaning: "the 1h line predicts it full too: a one-off write tilts the 6h line alone"},
+			diskFillHistory("max", "vm_free_disk_space_bytes", 6*time.Hour, time.Hour)}}
 	appMemoryHigh = ruleTerm{value: memoryShare(""), op: ">", threshold: 0.9}
 )
 
@@ -80,7 +81,8 @@ func fixedRules() vmGroup {
 			// Both windows: free space is the whole filesystem's, and one
 			// large write (a release, an upgrade) tilts the six-hour line
 			// below zero for hours. The hour's line is flat again once the
-			// write is an hour old.
+			// write is an hour old. Both wait for their history
+			// (diskFillHistory), as an operator's disk_fill does.
 			Alert: ruleStoreDiskFill, Expr: storeDiskFill.expr(), For: "30m",
 			Labels:      stateLabels(ruleStoreDiskFill, SeverityWarning, "box"),
 			Annotations: map[string]string{"summary": "the metrics store's disk is predicted to fill within a day"},

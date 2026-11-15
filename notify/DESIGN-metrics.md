@@ -486,7 +486,7 @@ template, and the operator's `rule` lines choose among motel's kinds
 
 | Rule | Expression | For | Labels | Reaches |
 |---|---|---|---|---|
-| `metrics_store_disk_fill` | `min(predict_linear(vm_free_disk_space_bytes[6h], 86400)) < 0 and min(predict_linear(vm_free_disk_space_bytes[1h], 86400)) < 0` | 30 m | box, state, warning | the operator |
+| `metrics_store_disk_fill` | `min(predict_linear(vm_free_disk_space_bytes[6h], 86400)) < 0 and min(predict_linear(vm_free_disk_space_bytes[1h], 86400)) < 0 and max(present_over_time(vm_free_disk_space_bytes[6h] offset 5h))` | 30 m | box, state, warning | the operator |
 | `app_memory_high` | `max by (app) (last_over_time(motel_app_memory_bytes[75s]) / last_over_time(motel_app_memory_max_bytes[75s])) > 0.9` (`MEM`, "Operator rules") | 10 m | `app`, `subject="app:<app>"`, state, warning | the operator and the app's bound channels |
 | `ChannelFailed` (one per told channel) | `(sum(increase(F[300s])) > 0) or (sum(F) > 0 and on () (time() - max(alertmanager_config_last_reload_success_timestamp_seconds)) < 300)`, F being `alertmanager_notifications_failed_total{integration=…, receiver_name=~…, reason!="contextCanceled"}`: for five minutes after a config load, which resets the counter, any count is a failure since it | — | exactly motel's `ChannelFailed` labels | the told channel alone |
 
@@ -497,7 +497,7 @@ state receivers' `send_resolved`, one recovery when vmalert resolves it.
 vmalert runs with `-disableAlertgroupLabel`, so an alert's labels are
 the rule's and the expression's only.
 
-**The disk rule reads two windows.** Free space is the whole filesystem's, and one write of D bytes tilts the six-hour line below zero for hours on any disk with under about 7 × D free (computed at 30 s samples: 70 minutes at 6 × D, 286 at 2 × D). The hour's line is flat again once the write is an hour old, so with both and the 30 minutes' `for:` a single write fires only when it took half of what was free.
+**The disk rule reads two windows.** Free space is the whole filesystem's, and one write of D bytes tilts the six-hour line below zero for hours on any disk with under about 7 × D free (computed at 30 s samples: 70 minutes at 6 × D, 286 at 2 × D). The hour's line is flat again once the write is an hour old, so with both and the 30 minutes' `for:` a single write fires only when it took half of what was free. That holds once the store has its history, which the rule waits for as `disk_fill` does ("Operator rules", disk_fill's shape): a sample older than 5 h. Over less, both lines are shorter than their shape, and on a store set up half an hour before (or wiped) a write of 1 GB at 20 GB free fired about half an hour later (vmalert-tool). So for its first five hours the rule says nothing, and `disk_low` (80 and 90 %) is what watches the store's filesystem then ("Accepted residuals").
 
 **ChannelFailed, a second source.** The store scrapes Alertmanager's
 `/metrics` at its listener in the namespace, every 30 s. For each
@@ -659,7 +659,7 @@ parse, a JSON config's at Provision, both by `motel validate`):
 | `threshold cache_hit_share` | `(HITS or SPOKE * 0) / SPOKE > v and SPOKE >= floor and on (app) PUSHED`, both `sum by (app) (inc(motel_app_cache_responses_total))`, HITS over `result=~"hit\|stale"` | `for` | as above | as above |
 | `threshold memory_share` | `MEM > v`, `MEM` below | `for` | as above | as above |
 | `threshold cpu_cores` | `sum by (app) (UNIT_CPU) > v`, `UNIT_CPU` below over `[5m]` | `for` | as above | as above |
-| `disk_fill` | `min by (path) (predict_linear(motel_disk_avail_bytes[L], H)) < 0 and min by (path) (predict_linear(motel_disk_avail_bytes[L/6], H)) < 0 and max by (path) (present_over_time(motel_disk_avail_bytes[L] offset 5L/6))`, H `within` in seconds, L 6 h up to a `within` of a day and `within`/4 beyond it, in whole minutes | L/12: 30 m up to a day | `path`, `subject="box"`, `kind="state"`, `severity`, `source="rules"`, `key="rules/box/<name>/<path>"`, each filesystem's alert its own key, as `disk_low`'s | the operator |
+| `disk_fill` | `min by (path) (predict_linear(motel_disk_avail_bytes[L], H)) < 0 and min by (path) (predict_linear(motel_disk_avail_bytes[S], H)) < 0 and max by (path) (present_over_time(motel_disk_avail_bytes[L] offset L-S))`, H `within` in seconds, L `within`/4 in whole minutes (15 m at 1 h, 6 h at a day), S L/6 and at least 5 m | L/12, at least 5 m: 30 m at a day | `path`, `subject="box"`, `kind="state"`, `severity`, `source="rules"`, `key="rules/box/<name>/<path>"`, each filesystem's alert its own key, as `disk_low`'s | the operator |
 | `post_deploy` | motel's queries, below | — | the event `post_deploy_regressed`: `app`, `subject="app:<app>"`, `kind="event"`, `severity="warning"`, `source="rules"`, `key="rules/app:<app>/post_deploy_regressed"`, `release`, `deployed_by`; the rule's name as `detail_rule` | the operator and the app's bound channels |
 
 With `app`, every selector carries `app="<name>"`, quoted (a name of
@@ -891,30 +891,61 @@ and disk_fill rules are `rules.yml`'s third group, `motel-operator`;
 post_deploy is motel's.
 
 **disk_fill's shape** is the store's own rule's
-(`metrics_store_disk_fill`: a day ahead over 6 h and 1 h, held 30 m) up
-to a `within` of a day, and beyond it the same shape scaled to the
-horizon: windows of a quarter and a 24th of it, held for a 48th (7d: 42
-h, 7 h, 3 h 30 m; 30d: 180 h, 30 h, 15 h), all inside the store's 14
-days. A regression is scale-free, so a one-off step in free space (a
-deploy's extraction, a staged backup, an image pulled) must then be as
-large a share of it to fire at 30 days as at one, about half of what is
-free; over 6 h and 1 h, a 30-day horizon fired on a step of 2 % and a
-7-day one on 8 % (simulated at the push's 30 s, and the 7-day case in
-vmalert-tool; /code-review pass 4 on operator rules). The third term
-wants a sample older than the long window's last five sixths: over less
-history the windows are shorter than their shape and a step fires again,
-so a rule waits for its history (5 h at a day or less, 150 h at 30d)
-after the store's setup or a filesystem's first series. Any sample in a
-long window before them (back to 330 h at 30d, inside the 14 days), not
-one in the long window's first sixth alone: a gap in the pushes longer
-than the short window (the store down for 2 h, at a day) left a hole
-there when it slid into that sixth, five hours on, and a firing alert
-resolved and fired again (/code-review pass 5). A bound on `within` was
-the other way: it would refuse the week and month horizons a disk is
-watched over. The `for` kept at 30 m would still let a step of a quarter
-of the free space fire at 30d; a `for` longer than the short window
-would stop any step, but a horizon of an hour would wait longer than
-itself.
+(`metrics_store_disk_fill`: a day ahead over 6 h and 1 h, held 30 m)
+scaled to the horizon: windows of a quarter and a 24th of it, held for a
+48th, the short window and the hold no less than 5 m, in whole minutes
+(1h: 15 m, 5 m, 5 m; 6h: 90
+m, 15 m, 7 m; 7d: 42 h, 7 h, 3 h 30 m; 30d: 180 h, 30 h, 15 h), all
+inside the store's 14 days. A regression is scale-free, so a one-off
+step in free space (a deploy's extraction, a staged backup, an image
+pulled) must be as large a share of it to fire at 30 days as at one,
+about half of what is free; over 6 h and 1 h, a 30-day horizon fired on
+a step of 2 % and a 7-day one on 8 % (simulated at the push's 30 s, and
+the 7-day case in vmalert-tool; /code-review pass 4 on operator rules).
+Up to a day the shape was the day's, and its 6 h line lagged a fill
+that began within it while its 30 m hold was half of an hour's horizon:
+at 1h no fill from flat of 1 to 4 hours was told before the disk was
+full, and one of 8 hours 30 minutes before. Scaled (vmalert-tool, 30 s
+samples, a disk flat and then filling steadily to full), 1h tells a
+fill of an hour 44 minutes ahead and one of 2 to 8 hours 55 minutes
+ahead; 6h tells fills of 6 and of 12 to 48 hours 4 h 47 m and 5 h 53 m
+ahead (the day's shape: 2 h 14 m and 5 h 30 m); 12h, of 12 and of 24 to
+96 hours, 9 h 33 m and 11 h 45 m ahead (7 h 37 m and 11 h 30 m). A step
+fires at 6h and 12h at half of what is free and not at 40 %, as at a
+day, and at 1h at none up to 80 %. The floor binds under a `within` of
+2h. The hold's is for writes that take minutes (a release built, an
+image pulled, a backup staged), which are no step there: held its 48th
+(a minute) at 1h, a third of what is free written in five minutes
+fired, and a fifth in ten. The short window's is for fills written in
+bursts: over 2 m (four pushes) under a 5 m hold, a fill written every
+three minutes or more was never told, its short line flat between the
+writes and the hold restarted at each (/code-review round two on this
+shape); a short window of a 24th has the same limit at every horizon,
+bursts further apart than it, but under 2h it would be minutes. At 5 m
+and 5 m, no write done within three minutes fires, up to 80 %, one of
+five to seven minutes fires at half, as a step does at a day, and one
+of ten at 30 %; a fill written every five minutes (a job on a
+five-minute timer) is told 24 minutes ahead and stays told between its
+writes; a gap of four minutes in the pushes leaves a firing alert
+firing. It costs 4 minutes of the lead at 1h. 4 m holds let 40 % over
+ten minutes fire over a 2 m window. Sample noise is not what fires: a
+jitter of 20 % of the free space at each 30 s sample fired at no minute
+at 1h held a minute. The third term wants a sample older than the long
+window less the short (its last five sixths, or two thirds at 1h):
+over less history the windows are shorter than their shape and a step
+fires again, so a rule waits for its history (10 m at 1h, 5 h at a day,
+150 h at 30d) after
+the store's setup or a filesystem's first series. Any sample in a long
+window before them (back to 330 h at 30d, inside the 14 days), not one
+in the long window's first part alone: a gap in the pushes longer than
+the short window (the store down for 2 h, at a day) left a hole there
+when it slid into that part, five hours on, and a firing alert resolved
+and fired again (/code-review pass 5). A bound on `within` was the other
+way: it would refuse the week and month horizons a disk is watched over.
+The `for` kept at 30 m would still let a step of a quarter of the free
+space fire at 30d; a `for` longer than the short window would stop any
+step, but also any fill written in bursts further apart than the short
+window, as the 5 m hold over a 2 m window did.
 
 **`motel_disk_avail_bytes{path}`** is the box series `disk_fill`
 reads: statfs's available bytes (df's Avail: available blocks of
@@ -1126,7 +1157,8 @@ together and compares them with the rendered `expr`, for every rule of
   which the app's counts cover part of `SPAN` alone;
 - disk_fill's short window (`< 0`) and its history term, which has no
   op: it holds when its value has a series at all;
-- `metrics_store_disk_fill`'s hour window.
+- `metrics_store_disk_fill`'s hour window and its history term, as
+  disk_fill's.
 
 The seven threshold metrics and `app_memory_high` split with no guard
 of their own beyond the floor and the request terms above. `ChannelFailed`'s vmalert rule is listed
@@ -1642,7 +1674,7 @@ or a line of theirs the facts overturned:
 | The store keeps of its own scrapes only what motel reads (`scrape.yml`'s `metric_relabel_configs`), not the stack whole | a series kept later is a line added and breaks nothing; one dropped later loses its history. The kept list is held to motel's queries by a test ("What the store scrapes") |
 | `MemoryMax=256M`, `-memory.allowedBytes=96MiB`, 14 days | the measured working set above; both caps mandatory, since the store sizes its caches from what it can see |
 | The operator's rules are a grammar of fixed kinds with parameters (`threshold`, `disk_fill`, `post_deploy`), never an expression or a template | the review's finding 17: a rule or template a config author writes could pull any app's series, or the box's, into a notification that reaches an app's deployers (T6); a kind reads only motel's own expression, of the app named or each app for itself, so a config author chooses a bound and a duration, never what is read |
-| disk_fill's windows and `for` scale with `within` beyond a day, and wait for their history | a regression extrapolated a hundred times past its window fires on a step; scaled, a step must be the same share of free space at every horizon ("Operator rules", disk_fill's shape). Not a bound on `within`, which would refuse the horizons a disk is watched over. /code-review pass 4 on operator rules |
+| disk_fill's windows and `for` scale with `within`, below a day as beyond it, the short window and the `for` no shorter than 5 m, and wait for their history | a regression extrapolated a hundred times past its window fires on a step; scaled, a step must be the same share of free space at every horizon ("Operator rules", disk_fill's shape). Not a bound on `within`, which would refuse the horizons a disk is watched over. /code-review pass 4 on operator rules. Below a day the day's 6 h line lagged a fill that began within it, and its 30 m hold was half of an hour's horizon: `within 1h` told no fill of 1 to 4 hours before the disk was full; the 5 m floors because a minute's `for` fired at 1 h on a third of what was free written in five minutes, and a 2 m short window under it never told a fill written every three minutes (a read-only review of af7a124, and /code-review round two on this shape; measured in vmalert-tool) |
 | A request metric is over a fixed five minutes, with a floor of 20 by default | long enough for a small app to reach a floor, short enough that a rule fires within its `for` and five minutes; one window keeps the expression motel's. The floor keeps two requests, one of them a 5xx, from being a 50 % share |
 | A relaunch of the release serving starts no post-deploy comparison; a relaunch of a release whose instance had stopped is compared with the bound alone and told as a relaunch | the first is no new release; the observer's counters are per release, so the old and new instance share them, and a comparison would need the counters split at the cutover (a new state in the observer) to keep the new instance's answers out of the baseline. A relaunch that regresses is told by the threshold rules (Copilot round 2 on #429). The second (a rollback to the release that had crashed; deploying it again is refused as a version that exists) has no baseline, but the bound still holds, so the warning stays, worded `is over its bound … after its relaunch (its earlier instance had stopped)`, not `regressed … after its deploy`. liveswap marks both on the `cutover` (`Relaunch`), so notify does not infer a relaunch after a stop from the names; a cutover with `Previous` = the release starts no comparison with the mark or without it. The deploy events carry no mark, since the comparison is the mark's one reader. The operator's decision of 2026-11-12; the second's window starts 40 s after the cutover, past the stopped instance's last push (/code-review of the mark) |
 | The post-deploy comparison is motel's, not vmalert's, and only tells | vmalert knows neither the cutover nor the release before; #418 and requirement 4: motel never refuses a cutover or rolls back over a number |
@@ -1722,6 +1754,8 @@ on its general scales. metrics' examples:
 | A re-run over the proxy shape whose `daemon-reload` is refused after the proxy is retired (systemd refuses one with `/run` nearly full, or past `ReloadLimitBurst=`) leaves the manager on the units it had: the put-back's own reload is refused too, and its restart of Alertmanager takes the definition without `20-motel-metrics.conf`, so at worst Alertmanager comes back on `motel-am.socket` alone and vmalert's posts to 9093 have nowhere to go until the next run | notify/metricssetup.go | 4 | 3 | 1 | 12; setup ends on the reload's error, and the put-back says it failed too, naming `systemctl daemon-reload`: "put back" is said only when the put-back's reload got through, and then the new units are loaded and its restart gives Alertmanager its socket in the namespace. The next run once reloads work finishes the upgrade. Not measured: the fault persists, so the put-back's message is the same whatever systemd starts from memory (vmalert's put-back start on its old definition may bring the proxy's socket back). The reload before the retirement keeps the proxy through the same failure (size 1, risk 2: the upgrade's order changes under its test). Copilot round 2 on #435 |
 | A re-run rewrites `motel-am-metrics.socket` but, with it active, restarts neither it nor Alertmanager: a socket whose `ListenStream=` or namespace a later binary changed keeps the old listener until the namespace restarts or the box reboots, while setup says Alertmanager was left as it runs | notify/metricssetup.go (`amListenInNamespace`) | 2 | 2 | 3 | 12; no binary has changed it, and `motel-vm.socket` and the namespace unit are alike (a re-run leaves them running too: the Owed row's `ExecStartPre`); a restart of the socket when its file changed is a comparison and a new step, to measure (size 2, risk 2). /code-review pass 2 on #435 |
 | `metrics_store_disk_fill` reads `vm_free_disk_space_bytes` with no `job` matcher, and `TestScrapeKeepsWhatMotelReads` gives a read with no job to the job its prefix names (`vm_` to `victoria-metrics`): a second source of a `vm_*` series would join the rule's `min` and pass the test | notify/metricsrules.go, notify/metricssetup_test.go (`readJob`) | 2 | 2 | 3 | 12; the store's one other writer is motel's push (`job="motel"`, `motel_*` names) and vmalert's remote write (`ALERTS*`), so it takes a change that adds a source and a series of that name. `{job="victoria-metrics"}` on the rule changes an expression the vmalert-tool tests pin (size 1, risk 2). /code-review pass 1 on the keep list |
+| `metrics_store_disk_fill` cannot fire for the first 5 h after the store's setup or a wipe of its data: its history term ("Rules") wants a sample older than 5 h, so a store disk filling fast then is told by `disk_low` alone, at 80 and 90 % | notify/metricsrules.go | 2 | 5 | 1 | 10; without the term a write of 1 GB at 20 GB free on a store half an hour old fired (S2 O5 D3 = 30, fixed). `disk_low` measures motel's state directory, on the same filesystem as `/var/lib/victoria-metrics` unless the operator mounted one there, and names it; a store's first hours hold little. Ticket B of the af7a124 review |
+| Under a `within` of 2h24m disk_fill's short window is 5 m, ten pushes: a gap of 4 m 30 s or more in the pushes while it fires (motel down for minutes, the store refusing them) leaves the window under two samples, so the alert resolves and fires again 5 m (its hold) after they resume (vmalert-tool; 4 m rides out) | notify/operatorrules.go (`diskFillShape`) | 2 | 3 | 3 | 18; a restart pushes at start and at stop, so its gap is under a minute. A longer floor rides out more but lets shorter writes fire, as 5 m did against 2 m (30 % over ten minutes at 1h). The request rules drop every app after 75 s without a push the same way (docs/monitor.md). Ticket B of the af7a124 review |
 | `TestScrapeKeepsWhatMotelReads`'s scan refuses a selector with a single-quoted matcher (`x{job='motel'}`), which MetricsQL accepts: the test fails on a valid query of motel's until it is written with double quotes | notify/metricssetup_test.go (`storeReads`) | 2 | 5 | 1 | 10; red and named (`matcher "job='motel'"`), never a false pass, and every query motel writes uses Go's `%q` or literal double quotes; single quotes in the matchers' split and unquote are a second quoting path to test (size 2, risk 1). /code-review pass 2 on the keep list |
 | While the store is read-only, `motel monitor rules` lists `metrics_store_down`'s failing time past its 5 m with nothing firing: the read-only hold keeps the alert back | notify/ruleslist.go | 2 | 3 | 3 | 18; `metrics_store_read_only`, critical, fires and names the cause beside it, and a reading that changes meaning under the hold would be a second state to explain |
 | While the store is read-only, each minute's read-only answer resets the rules count to 0 and stamps it, so `metrics_rules_down` lists 0 reads, just read, while an alert raised before the hold still fires | notify/metricspush.go (`checkReadOnly`) | 2 | 3 | 3 | 18; the read-only alert, critical, names the cause, and the firing one is the accepted residual above it |
