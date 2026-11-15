@@ -640,12 +640,16 @@ row's function (box/DESIGN-box.md, "Handler contract").
 
 `access/` holds the actions (`app.status`, `app.deploy_record`,
 `app.deploy`, `app.rollback`, `box.status`, `box.push_result`,
-`box.push`), the principal kinds and `Decide`, which refuses every pair
-its table does not list. The principals are what a deploy token can
-be on a route: a deploy source of the app in the path, which may take
-every app action on that app and on no other, and the box channel's
-source, which may take the three box actions; a token a global source
-verified names no app and gets the 404 before the table. Authentication already chose the sources by the path's app,
+`box.push`, and `box.whoami` and `box.apps`, served here under
+`/_motel/`), the principal kinds and `Decide`, which refuses every pair
+its table does not list. A deploy token's principals: a deploy source
+of the app in the path, which may take every app action on that app
+and on no other, and the box channel's source, which may take the three
+box actions; a token a global source verified names no app and gets the
+404 before the table. A person, admitted by a token their own ssh key
+signs, may read what their grants cover; a path under `/_motel/` names
+no app (access/DESIGN-access.md has the person's way in, the routes
+there and the answers). Authentication already chose the sources by the path's app,
 so `Decide` refuses nothing it accepted and every answer is the one
 the method switch gave; a refusal, which no principal meets, would be
 a 403 `forbidden`. The tests hold the tables to each other both ways
@@ -735,7 +739,9 @@ plugin's handler can take its ID.
 | `ownfile.go` | how a file motel keeps in an app dir is written and read — temp file + rename; no link followed at the name, no FIFO held, size-bounded — shared by the deploy records, `state.json` and the deploy marker |
 | `caddyfile.go` | all Caddyfile parsing (global option, directive, upstreams) but the `deploy_trust` block, which is `deploytrust.Parse`; NO defaults here — Provision owns them, reading a zero field as unset, so a value below an option's minimum (0 included) is refused here, named; `soak` and `deploy_log_lines`, whose 0 is a setting, are pointers |
 | `handler.go` | the webhook: payload validation, deploy dispatch, the status endpoint, and every body's filter (`RespondJSON`); authentication is `deploytrust`'s |
-| `access/` | leaf package: the webhooks' actions, the principal kinds and `Decide`, the one table of who may take which action; `handler.go` and the box webhook each hold a route table that names an action per row ("Who may take which action") |
+| `access/` | leaf package: the webhooks' actions, the principal kinds and `Decide`, the one table of who may take which action; the `person` and `grant` lines, the registry of people and the person token's checker (access/DESIGN-access.md); `handler.go` and the box webhook each hold a route table that names an action per row ("Who may take which action") |
+| `people.go` | `AdmitPerson`: a person's way in on both webhooks (the token, the address list, the failure budgets, the protocol headers, the rate) |
+| `motel_routes.go` | the rows under `/_motel/`: `whoami` and `apps` |
 | `redact.go` | the response filter (`Redactor`) that `RespondJSON` applies: known `env_file` values in their encoded forms, a safe list, shape rules, entropy; the four rules every writer of a body holds head the file |
 | `deploytrust/` | leaf package: deploy auth — the `deploy_trust` grammar (`Parse`), its sources and verifiers (OIDC + local-key JWT verification), the webhook preamble (`Limiter.Authenticate`) and what a failed attempt costs the journal (`Limiter`, on an injected clock). Imports nothing of liveswap's; the box webhook authenticates through it too. `trusttest/` beside it mints tokens and runs an issuer for tests |
 | `internal/dispenser/` | leaf package: the one Caddyfile rule the parsers here and `deploytrust.Parse` apply alike — a repeated subdirective is refused — in one place so the two cannot drift |

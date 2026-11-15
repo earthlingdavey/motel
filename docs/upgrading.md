@@ -243,6 +243,24 @@ Before you upgrade:
   `/var/lib/motel-box/applied.json` and deletes
   `/etc/motel/secrets/_box.env`, and the next push (without the block,
   the `observe` lines and the directory) applies.
+- **Going back to a release without people** (0.6.x, or a build
+  before `person` and `grant`) needs the Caddyfile emptied of them
+  first. Those releases refuse a `box` block with a `person` or `grant`
+  line: `validate` with the old binary says `unknown box subdirective
+  "person"` (or `"grant"`), and the install's restart fails with nothing
+  served until the file is mended. While the box still runs the newer
+  release:
+  1. **Take out every `person` and `grant` line.** On a box that takes
+     pushes, push a commit without them. On a box with no push channel,
+     root edits them out of `/etc/motel/Caddyfile` and runs `systemctl
+     reload motel`. People's clients get the flat 401 from then on.
+  2. **Go back** with the `.deb`, as above.
+
+  `signer` lines are not affected: they mean what they meant, and the
+  box channel works across the downgrade. On a box already back whose
+  motel refused to start, root edits the lines out of
+  `/etc/motel/Caddyfile` and runs `systemctl restart motel`; the next
+  push, without them, applies.
 - **Upgrade motel and the host separately.** motel measures what
   the host can sandbox at every start and refuses to start on a host
   that cannot deliver it ([liveswap/README.md](../liveswap/README.md#sandbox)),

@@ -166,6 +166,9 @@ work, and puts an app back.
 [Monitor](docs/monitor.md) (experimental, since v0.7.0) tells you
 when something on the box goes wrong, at ntfy, Slack, Discord or any
 URL that takes Alertmanager's JSON, and keeps each app's numbers.
+[Giving a person access](docs/people.md) (experimental, in no release
+yet) lets someone you name read an app's status and deploys from their
+laptop, with their own ssh key and no account on the box.
 
 
 ## What motel is (and isn't)

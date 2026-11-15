@@ -181,10 +181,12 @@ deploy.example.com {
 
 ### People and grants
 
-**In this change the lines are read and checked, and nothing admits a
-person yet**: no handler reads them, and no request is answered
-differently for them. They declare who will reach the box over HTTPS
-with a token their own ssh key signs, and what they may read there.
+They declare who reaches the box over HTTPS with a token their own ssh
+key signs, and what they may read there. The `box` app builds the
+registry of who it admits at each load from the walk of the installed
+file, never from the running configuration, and both webhooks admit a
+person through it (liveswap/access/DESIGN-access.md has the token, the
+routes and `Decide`).
 
 ```
 box {
@@ -235,12 +237,13 @@ the block is read, each refusal naming its lines:
 | one key on two lines, of any kinds and names, and in either of its forms (`ssh-ed25519` and `sk-ssh-ed25519@openssh.com` under any application string are one Ed25519 key; `ecdsa-sha2-*` and `sk-ecdsa-sha2-*` one ECDSA key) | refused: `signer alice@example.com and person bob@example.com are the same key` |
 | a `grant` for a name no `person` or `signer` line declares | refused |
 | a `grant` for a name whose only keys are `ssh-rsa` signer keys | refused, naming the remedy |
-| a `grant` on an app the `liveswap` block does not run, or runs under a name written through a placeholder (the walk reads the name as written) | refused **by the walk only**: the module's parser sees the `box` block alone, so `motel validate` and a reload take the line; a push, `GET /`, the applier and `motel box describe` (the template's `make check`) refuse it. So such a line written at the console leaves an installed file that no longer walks: every push is refused, and `GET /` answers that refusal, until root mends the line. Accepted; a check at load is owed to the change that connects the box app to liveswap's app list |
+| a `grant` on an app the `liveswap` block does not run, or runs under a name written through a placeholder (the walk reads the name as written) | refused. The walk refuses both; the `box` app, at load and so at `motel validate`, asks the `liveswap` app which apps the config runs and refuses a grant on any other (a config with no `liveswap` block runs none). It sees a placeholder's name resolved, so a grant on an app named through a placeholder is refused by the walk alone: such a line written at the console loads, and leaves an installed file that no longer walks, so every push is refused and no person is admitted (the load's journal says why) until root mends the line |
 | two grants for one name on one scope | refused |
 | a box grant and an app grant for one name | taken, warned: the box grant covers the app |
 | a `person` name with no grant and no `signer` line | taken, warned |
 | an `ssh-rsa` signer whose name has no other key a person may hold | taken, warned |
-| people and no `monitor` block with a channel | taken, warned **by the walk only** (`motel box describe`): the module cannot see the `monitor` block |
+| people and no `monitor` block with a channel | taken, warned: by the walk (`motel box describe`, and the journal at each load), and by `motel validate`, which reads the adapted config; the module cannot see the `monitor` block |
+| a `grant` with a `from` list on a box whose server has `trusted_proxies` | taken, warned by `motel validate`: the list is held to Caddy's `client_ip`, which a trusted proxy's `X-Forwarded-For` sets |
 | more than 1,024 key lines (`signer` and `person`) or 4,096 `grant` lines | refused |
 
 A block with no `person` and no `grant` line is not held to these
