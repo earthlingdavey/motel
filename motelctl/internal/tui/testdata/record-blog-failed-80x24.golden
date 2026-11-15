@@ -1,0 +1,24 @@
+motel · deploy.example.com · v0.7.0 │ alice@example.com · viewer … live · 0s ago
+apps › blog › deploy e9a0b3f2c118
+✖ FAILED in soaking after 62 s · 11:51:38 → 11:52:40 UTC · github:example/blog@…
+serves now  7c1e55d0a913 (as of 14:12:40 UTC)
+error       the health check at /healthz answered 500 for 60 s
+phases      downloading 1.2s › extracting 0.8s › preparing 4.1s › starting 1.0s…
+exit        (none given)
+probe       500 from /healthz, body:
+              {"ok":false,"db":"connection refused (127.0.0.1:5432)"}
+redacted    the box replaced the values of: DATABASE_URL
+artifact    1842 entries · 38 MiB
+── log tail: 40 lines, earlier ones cut ────────────────────────────────────────
+> blog@1.4.0 start
+> node server.js
+listening on /srv/motel/blog/run/app.sock
+migrations: 14 applied, 1 pending
+migration 0015_add_index: connecting to [redacted: DATABASE_URL]
+Error: connect ECONNREFUSED 127.0.0.1:5432
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1606:16)
+health: db check failed: connection refused
+health: db check failed: connection refused
+health: db check failed: connection refused
+health: db check failed: connection refused
+↑↓ scroll  w wrap  p previous  n next  esc back  q quit
