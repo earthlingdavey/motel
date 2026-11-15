@@ -48,6 +48,14 @@ restore() {
 }
 trap 'restore; rm -rf "$work"' EXIT
 
+# motel up, as the notify and metrics suites wait for it: run alone
+# straight after `up -d`, the box may still be starting, and motel init
+# needs a running motel.
+i=0
+until systemctl is-active -q motel && [ -S /run/motel/admin.sock ]; do
+	i=$((i + 1)); [ "$i" -ge 120 ] && { echo "FATAL: motel did not come up"; journalctl -u motel --no-pager -n 50; exit 1; }
+	sleep 0.5
+done
 wait_for_token # $TOKEN: the e2e deploy token, audience e2e
 
 # ── the keys and the box's file ────────────────────────────────────
