@@ -80,6 +80,9 @@ type PersonToken struct {
 	Signer sshkey.Signer
 	Box    Box
 	Now    func() time.Time
+	// Life is how long each token lasts: zero is a command's own
+	// (sshkey's), and the TUI asks for sshkey.MaxLife.
+	Life time.Duration
 
 	// The token last signed, and its times: reused while it has
 	// minLeft of life, so a retry asks a hardware key for no second
@@ -98,12 +101,12 @@ func (p *PersonToken) Authorization(ctx context.Context) (string, error) {
 	if p.header != "" && p.exp.Sub(now) >= minLeft {
 		return p.header, nil
 	}
-	h, err := sshkey.Token(ctx, p.Signer, p.Key, p.Box.Host, now)
+	h, err := sshkey.TokenLasting(ctx, p.Signer, p.Key, p.Box.Host, now, p.Life)
 	if err != nil {
 		return "", err
 	}
 	p.header = h
-	p.iat, p.exp = sshkey.Times(now)
+	p.iat, p.exp = sshkey.TimesLasting(now, p.Life)
 	return h, nil
 }
 
@@ -170,9 +173,17 @@ type Client struct {
 	// Notes is where a word that does not stop the command goes (a box
 	// newer than this client): stderr. nil says nothing.
 	Notes io.Writer
+	// NoWait returns a 429 at once, with the wait it asks for, rather
+	// than waiting it out: the TUI's refresh engine waits it out for
+	// every read it makes, so one read does not hold the rest.
+	NoWait bool
 
 	noted bool
 }
+
+// Expires is when the token last signed stops being taken, and zero
+// before one is signed: the TUI shows it.
+func (p *PersonToken) Expires() time.Time { return p.exp }
 
 // Answer is a box's answer.
 type Answer struct {
@@ -228,7 +239,7 @@ func (c *Client) Get(ctx context.Context, path string, query url.Values) (*Answe
 			// A wait past the cap, or none that reads, is not waited
 			// out: the command says what the box asked instead.
 			secs, ok := retryAfter(ans.Header, c.Now())
-			if waited || !ok || secs > int64(maxRetryAfter/time.Second) {
+			if waited || !ok || secs > int64(maxRetryAfter/time.Second) || c.NoWait {
 				return nil, c.slowDown(secs, ok, waited)
 			}
 			waited = true
@@ -420,7 +431,7 @@ func (c *Client) refused(ans *Answer) error {
 		if scope == "" {
 			scope = "this app's"
 		}
-		return &Failure{Exit: ExitRefused, Message: fmt.Sprintf(
+		return &Failure{Exit: ExitRefused, Status: http.StatusUnauthorized, Message: fmt.Sprintf(
 			"%s refused the token in MOTEL_TOKEN (sent as Bearer). Most often %s deploy_trust does not accept the key it was minted with, or the audience, subject or claim it pins. Or the app is not one the box knows: an unknown app answers the same 401. Or the box could not consult the token's issuer. The box's journal (journalctl -u motel, 'webhook auth failed') names the check that refused it.",
 			box, scope)}
 	}
@@ -439,7 +450,7 @@ func (c *Client) refused(ans *Answer) error {
 	if clock != "" {
 		lead = clock + " Or, as the box says no more, one of these:"
 	}
-	return &Failure{Exit: ExitRefused, Message: fmt.Sprintf(
+	return &Failure{Exit: ExitRefused, Status: http.StatusUnauthorized, Message: fmt.Sprintf(
 		"%s did not accept your key %s (%s).%s no person or signer line on the box lists it; your address is outside the from list on every grant you hold; %s is not the box's main name; or the box's motel is too old to take a key's token at all. Send the operator the line `motelctl key` prints.",
 		box, cred.Key.Public.Fingerprint(), termtext.From(cred.Key.Shown), lead, box)}
 }
@@ -447,14 +458,21 @@ func (c *Client) refused(ans *Answer) error {
 // slowDown is a 429 that stood after the wait, or one that asked for a
 // longer wait than motelctl makes, or one whose wait did not read.
 func (c *Client) slowDown(secs int64, ok, waited bool) error {
+	f := &Failure{Exit: ExitUnknown, Status: http.StatusTooManyRequests}
+	if ok {
+		// Capped as a number before it is a duration, so no value can
+		// overflow into a short wait.
+		f.RetryAfter = time.Duration(min(max(secs, 1), 3600)) * time.Second
+	}
 	switch {
 	case !ok:
-		return &Failure{Exit: ExitUnknown, Message: fmt.Sprintf("%s asked you to slow down; try again later.", c.Box.Host)}
-	case waited:
-		return &Failure{Exit: ExitUnknown, Message: fmt.Sprintf("%s asked you to slow down; try again in %d s.", c.Box.Host, max(secs, 1))}
+		f.Message = fmt.Sprintf("%s asked you to slow down; try again later.", c.Box.Host)
+	case waited || c.NoWait && secs <= int64(maxRetryAfter/time.Second):
+		f.Message = fmt.Sprintf("%s asked you to slow down; try again in %d s.", c.Box.Host, max(secs, 1))
+	default:
+		f.Message = fmt.Sprintf("%s asked you to slow down: the box asks you to wait %d s, longer than motelctl waits; try again then.", c.Box.Host, secs)
 	}
-	return &Failure{Exit: ExitUnknown, Message: fmt.Sprintf(
-		"%s asked you to slow down: the box asks you to wait %d s, longer than motelctl waits; try again then.", c.Box.Host, secs)}
+	return f
 }
 
 // retryAfter reads Retry-After, in seconds or as a date: the seconds
@@ -517,7 +535,7 @@ func (c *Client) Read(ans *Answer, v any) error {
 	}
 	said := termtext.Quote(e.Error)
 	if ans.Code == http.StatusNotFound {
-		return &Failure{Exit: ExitNotFound, Message: fmt.Sprintf("%s answered 404; the box says: %s", c.Box.Host, said), Body: ans.Body}
+		return &Failure{Exit: ExitNotFound, Status: ans.Code, Message: fmt.Sprintf("%s answered 404; the box says: %s", c.Box.Host, said), Body: ans.Body}
 	}
 	// A gateway in front of a box can answer a 5xx in JSON too. Motel
 	// stamps Motel-Version on every answer to a token it verified, and,
@@ -525,10 +543,10 @@ func (c *Client) Read(ans *Answer, v any) error {
 	// links no release sends alone), so a 5xx without either is not
 	// known to be motel's own.
 	if ans.Code >= 500 && !stamped(ans.Header) {
-		return &Failure{Exit: ExitUnknown, Message: fmt.Sprintf(
+		return &Failure{Exit: ExitUnknown, Status: ans.Code, Message: fmt.Sprintf(
 			"Something at %s answered %d without %s, so not known to be motel's own answer; it says: %s", c.Box.Addr(), ans.Code, versionHeader, said)}
 	}
-	return &Failure{Exit: ExitFailed, Message: fmt.Sprintf("%s answered %d; the box says: %s", c.Box.Host, ans.Code, said), Body: ans.Body}
+	return &Failure{Exit: ExitFailed, Status: ans.Code, Message: fmt.Sprintf("%s answered %d; the box says: %s", c.Box.Host, ans.Code, said), Body: ans.Body}
 }
 
 // The grammars the server holds the values to that the client prints
@@ -701,7 +719,7 @@ func (c *Client) forbidden(ans *Answer) *Failure {
 		if f.Error != "" {
 			said = "; the box says: " + termtext.Quote(f.Error).String() + "."
 		}
-		return &Failure{Exit: ExitForbidden, Body: body, Message: fmt.Sprintf(
+		return &Failure{Exit: ExitForbidden, Status: ans.Code, Body: body, Message: fmt.Sprintf(
 			"%s refused this (HTTP 403) and did not say what it needs%s%s", c.Box.Host, said, whoami)}
 	}
 	var needs string
@@ -716,14 +734,14 @@ func (c *Client) forbidden(ans *Answer) *Failure {
 		needs = "the " + f.Needs + " role on " + on
 	}
 	if person {
-		return &Failure{Exit: ExitForbidden, Body: body, Message: fmt.Sprintf(
+		return &Failure{Exit: ExitForbidden, Status: ans.Code, Body: body, Message: fmt.Sprintf(
 			"%s does not allow your key this: it needs %s.%s", c.Box.Host, needs, whoami)}
 	}
 	hint := ""
 	if f.Needs == "key" {
 		hint = " Unset MOTEL_TOKEN, or name your key with --key."
 	}
-	return &Failure{Exit: ExitForbidden, Body: body, Message: fmt.Sprintf(
+	return &Failure{Exit: ExitForbidden, Status: ans.Code, Body: body, Message: fmt.Sprintf(
 		"%s does not allow the token in MOTEL_TOKEN this: it needs %s.%s", c.Box.Host, needs, hint)}
 }
 
@@ -736,7 +754,7 @@ func (c *Client) notMotel(ans *Answer, why string) error {
 	if why != "" {
 		why = ": " + termtext.From(why).String()
 	}
-	return &Failure{Exit: ExitUnknown, Message: fmt.Sprintf(
+	return &Failure{Exit: ExitUnknown, Status: ans.Code, Message: fmt.Sprintf(
 		"Something at %s answered (HTTP %d, not motel's answer%s). Is this the box's deploy host?", c.Box.Addr(), ans.Code, why)}
 }
 

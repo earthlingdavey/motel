@@ -3,7 +3,6 @@ package cli
 import (
 	"encoding/json"
 	"fmt"
-	"net/url"
 	"slices"
 	"strings"
 
@@ -136,27 +135,18 @@ func (r *runner) status() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			q := url.Values{}
-			if cmd.Flags().Changed("range") {
-				if !slices.Contains(wire.MetricsRanges, rng) {
-					return &client.Failure{Exit: client.ExitUsage, Message: fmt.Sprintf("--range %q is not one of %s", termtext.From(rng), strings.Join(wire.MetricsRanges, ", "))}
-				}
-				q.Set("range", rng)
+			// The range is refused before the box is looked for, as
+			// every argument is.
+			if cmd.Flags().Changed("range") && !slices.Contains(wire.MetricsRanges, rng) {
+				return &client.Failure{Exit: client.ExitUsage, Message: fmt.Sprintf("--range %q is not one of %s", termtext.From(rng), strings.Join(wire.MetricsRanges, ", "))}
 			}
 			c, err := r.client(cmd.Context(), &t, app.Box, "this app's", "")
 			if err != nil {
 				return err
 			}
-			ans, err := c.Get(cmd.Context(), app.Path, q)
+			st, ans, err := c.Status(cmd.Context(), app, rng)
 			if err != nil {
 				return fail(err)
-			}
-			var st wire.Status
-			if err := c.Read(ans, &st); err != nil {
-				return err
-			}
-			if st.App != app.Name {
-				return c.NotMotel(ans, "it is the status of another app")
 			}
 			if r.json {
 				return r.emit(ans.Body)
@@ -185,40 +175,28 @@ func (r *runner) deploys() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			q := url.Values{}
 			if len(args) == 2 {
 				if err := client.CheckVersion(args[1]); err != nil {
 					return err
 				}
-				q.Set("deploy", args[1])
 			}
 			c, err := r.client(cmd.Context(), &t, app.Box, "this app's", "")
 			if err != nil {
 				return err
 			}
-			ans, err := c.Get(cmd.Context(), app.Path, q)
-			if err != nil {
-				return fail(err)
-			}
 			if len(args) == 2 {
-				var d wire.DeployResult
-				if err := c.Read(ans, &d); err != nil {
-					return err
-				}
-				if d.Version != args[1] {
-					return c.NotMotel(ans, "it is the record of another version")
+				d, ans, err := c.Deploy(cmd.Context(), app, args[1])
+				if err != nil {
+					return fail(err)
 				}
 				if r.json {
 					return r.emit(ans.Body)
 				}
 				return render.WriteDeploy(r.env.Stdout, r.style(), termtext.From(app.Name), deployView(d))
 			}
-			var st wire.Status
-			if err := c.Read(ans, &st); err != nil {
-				return err
-			}
-			if st.App != app.Name {
-				return c.NotMotel(ans, "it is the status of another app")
+			st, ans, err := c.Status(cmd.Context(), app, "")
+			if err != nil {
+				return fail(err)
 			}
 			if r.json {
 				// The one projection: the status's deploys as the box
@@ -255,16 +233,9 @@ func (r *runner) boxStatus() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			ans, err := c.Get(cmd.Context(), "/", nil)
+			b, ans, err := c.BoxStatus(cmd.Context())
 			if err != nil {
 				return fail(err)
-			}
-			var b wire.BoxStatus
-			if err := c.Read(ans, &b); err != nil {
-				return err
-			}
-			if b.BoxWebhook != c.Box.Host {
-				return c.NotMotel(ans, "it names another host than the one asked")
 			}
 			if r.json {
 				return r.emit(ans.Body)
@@ -294,13 +265,9 @@ func (r *runner) whoami() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			ans, err := c.Get(cmd.Context(), "/_motel/whoami", nil)
+			me, ans, err := c.WhoAmI(cmd.Context())
 			if err != nil {
 				return fail(err)
-			}
-			var me wire.WhoAmI
-			if err := c.Read(ans, &me); err != nil {
-				return err
 			}
 			view := whoamiView(me, c.Box.Host, c.Cred.(*client.PersonToken).Key, r.env.Now())
 			odd := view.KeyDiffers || view.BoxDiffers
@@ -338,13 +305,9 @@ func (r *runner) apps() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			ans, err := c.Get(cmd.Context(), "/_motel/apps", nil)
+			list, ans, err := c.Apps(cmd.Context())
 			if err != nil {
 				return fail(err)
-			}
-			var list wire.Apps
-			if err := c.Read(ans, &list); err != nil {
-				return err
 			}
 			if r.json {
 				return r.emit(ans.Body)

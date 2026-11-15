@@ -1,5 +1,7 @@
 package client
 
+import "time"
+
 // The exit codes. Scripts branch on them, so each keeps its meaning
 // once a release ships them; every command is experimental until then.
 const (
@@ -45,6 +47,12 @@ type Failure struct {
 	// Body is the box's answer as received, printed by --json in place
 	// of an {"error"} of motelctl's.
 	Body []byte
+	// Status is the HTTP status of the answer the failure is about, and
+	// zero when none came; RetryAfter, on a 429, the wait the box asked
+	// for. The TUI's engine reads them: a 401 stops it, a 403 stops one
+	// app's reads, a 429 slows it.
+	Status     int
+	RetryAfter time.Duration
 }
 
 func (f *Failure) Error() string { return f.Message }

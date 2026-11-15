@@ -41,6 +41,11 @@ const (
 const (
 	backdate = 30 * time.Second
 	life     = 300 * time.Second
+	// MaxLife is the longest life a box takes. The TUI asks for it: it
+	// holds one token for the session and reuses it until a minute
+	// before it ends, so a hardware key is touched about every nine
+	// minutes rather than at every refresh.
+	MaxLife = 600 * time.Second
 	// BoxSkew is how far a box lets its clock and a token's times
 	// disagree, either way (liveswap/access's tokenSkew).
 	BoxSkew = 60 * time.Second
@@ -174,10 +179,15 @@ func encryptedKeyFile(path string) bool {
 // the box's name as its identity has it: a lowercase hostname, which
 // needs no escape in JSON.
 func Token(ctx context.Context, s Signer, key Key, aud string, now time.Time) (string, error) {
+	return TokenLasting(ctx, s, key, aud, now, life)
+}
+
+// TokenLasting is Token with a life of its own, at most MaxLife.
+func TokenLasting(ctx context.Context, s Signer, key Key, aud string, now time.Time, d time.Duration) (string, error) {
 	if err := Refusal(key); err != nil {
 		return "", err
 	}
-	iat, exp := Times(now)
+	iat, exp := TimesLasting(now, d)
 	claims, err := encodeClaims(aud, iat.Unix(), exp.Unix())
 	if err != nil {
 		return "", err
@@ -194,9 +204,17 @@ func Token(ctx context.Context, s Signer, key Key, aud string, now time.Time) (s
 }
 
 // Times are the iat and exp of a token made at now, to the second.
-func Times(now time.Time) (iat, exp time.Time) {
+func Times(now time.Time) (iat, exp time.Time) { return TimesLasting(now, life) }
+
+// TimesLasting are the iat and exp of a token of life d made at now;
+// a d of zero is the commands' own life, and one past MaxLife is
+// MaxLife, since a box takes no longer.
+func TimesLasting(now time.Time, d time.Duration) (iat, exp time.Time) {
+	if d <= 0 {
+		d = life
+	}
 	iat = time.Unix(now.Add(-backdate).Unix(), 0)
-	return iat, iat.Add(life)
+	return iat, iat.Add(min(d, MaxLife))
 }
 
 // encodeClaims is the claims document, encoded as the box re-encodes
