@@ -18,7 +18,7 @@ ARG BASE_IMAGE=debian:13
 # rclone's own image as e2e/backup/s3.Dockerfile takes it (Debian's
 # rclone has no `serve s3`). The same pin as there; Dependabot bumps
 # both.
-FROM rclone/rclone:1.75@sha256:2687085f718d3c628f7fdfb77c52a1d344332aed543110bb88088f2c70d43eb5 AS rclone
+FROM rclone/rclone:1.76@sha256:7cbeec24a44f206067597c0368be4de90ae19a64d5113c7d1938bd737a81e466 AS rclone
 
 FROM ${BASE_IMAGE}
 

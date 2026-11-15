@@ -31,6 +31,7 @@ import (
 	"mime"
 	"net/http"
 	"net/url"
+	"os"
 	"slices"
 	"strings"
 	"sync"
@@ -123,12 +124,16 @@ func (h *Handler) push(w http.ResponseWriter, r *http.Request) error {
 	// Two bounds on the body, the handler's own and the connection's
 	// (DESIGN-box.md, Caps, "bundle upload"). The deadline on the
 	// connection bounds a stall: a read that blocks until nothing more
-	// arrives. It holds until the first read; from then on Caddy's idle
-	// reader re-arms it before every read, within the server's own
-	// limits (the floors on those, "The request limits"), and a body that
-	// keeps arriving a byte at a time would hold the slot for as long as
-	// the server lets it. So boundedBody refuses every read once the
-	// bound has passed, whatever the connection's deadline says. HTTP/1.1,
+	// arrives. Caddy's idle reader re-arms it before every read, and
+	// since v2.11.8 the server's own reader keeps the handler's deadline
+	// as a ceiling on each re-arm (caddy#8284), so on a default server
+	// it bounds a trickle as well. A reader that does not — the
+	// `timeouts` directive's own, where the server's is off — re-arms
+	// past it within the server's limits ("The request limits"), and a
+	// body that keeps arriving a byte at a time would hold the slot for
+	// as long as the server lets it. So boundedBody refuses every read
+	// once the bound has passed, and names a read that ended at a
+	// deadline past it as the bound, whichever deadline it was. HTTP/1.1,
 	// HTTP/2 and HTTP/3 all take the deadline; a writer in the chain that
 	// hides the method is said in the journal, since a stall then has no
 	// bound but the connection's.
@@ -307,10 +312,17 @@ func (p *pushing) answer(res *result, err error) error {
 // boundedBody is the handler's own bound on a push's body: once until
 // has passed, every Read fails instead of reading, whatever deadline
 // the connection has by then. A Read already blocked in the server
-// returns with the next bytes or at the connection's deadline (Caddy's
-// idle window), so the slot is held at most the bound and one idle
-// window. Wall time, as the connection's deadline is, not the handler's
-// Clock, which is step 8's wait. Not a timer that closes the body: on
+// returns with the next bytes or at the connection's deadline: until
+// itself, under a reader that keeps it as a ceiling (Caddy v2.11.8 on),
+// else Caddy's idle window, so the slot is held at most the bound and
+// one idle window. A Read that ends at a deadline once until has passed
+// fails with the bound's error too, not the connection's "i/o
+// timeout": every protocol's deadline error wraps os.ErrDeadlineExceeded
+// (net.OpError, HTTP/2's stream timer, quic-go's deadlineError), and a
+// deadline that fires before until is another bound's, Caddy's idle
+// one, left as it is. Wall time, as the connection's deadline is, not
+// the handler's Clock, which is step 8's wait. Not a timer that closes
+// the body: on
 // HTTP/1.1 the server's body Close is a drain under the body's own
 // lock, which waits behind the read in flight and then reads on, so it
 // would end nothing sooner, and each protocol's Close does something
@@ -324,9 +336,17 @@ type boundedBody struct {
 
 func (b *boundedBody) Read(p []byte) (int, error) {
 	if !time.Now().Before(b.until) {
-		return 0, errors.New("the upload outlasted " + b.bound.String())
+		return 0, b.outlasted()
 	}
-	return b.r.Read(p)
+	n, err := b.r.Read(p)
+	if errors.Is(err, os.ErrDeadlineExceeded) && !time.Now().Before(b.until) {
+		return n, b.outlasted()
+	}
+	return n, err
+}
+
+func (b *boundedBody) outlasted() error {
+	return errors.New("the upload outlasted " + b.bound.String())
 }
 
 // pushSlot is the process's one push in memory, shared by every
