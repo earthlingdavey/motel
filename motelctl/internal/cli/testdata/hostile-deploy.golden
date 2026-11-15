@@ -1,0 +1,21 @@
+blog v41  failed in health_gate  2026-11-13 17:39:02 to 17:40:11 UTC (1m9s)
+by      github:example/blog@refs/heads/main
+error   the health check answered 500 osc52 \x1b]52;c;cHduZWQ=\x07
+phases  fetch 2.1 s · health_gatecsi \x1b[2J\x1b[H 65.4 s
+exit    exit status 3 bidi abc\u202edef
+probe   500  location osc8 \x1b]8;;https://evil.example/\x1b\click\x1b]8;;\x1b\
+  {"db":"connection refused"}
+  fake ::error::file=x::owned
+log tail (12 lines):
+  pg: connection refused (127.0.0.1:5432)
+  two
+  lines c1 \u009b31mred
+  osc52 \x1b]52;c;cHduZWQ=\x07
+  csi \x1b[2J\x1b[H
+  osc8 \x1b]8;;https://evil.example/\x1b\click\x1b]8;;\x1b\
+  title \x1b]0;pwned\x07
+  tags [red]alert[-] ["region"]
+  bidi abc\u202edef
+  c1 \u009b31mred
+  fake ::error::file=x::owned
+  bad utf8 ��
