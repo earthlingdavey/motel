@@ -132,18 +132,15 @@ const maxKeyFile = 64 << 10
 
 // encryptedKeyFile says whether the private key file at path says it
 // is encrypted: an OpenSSH key whose cipher is not "none", or a PEM
-// key marked ENCRYPTED. Only a regular file is read, opened without
-// blocking, so a FIFO at the path never holds the command; anything it
-// cannot read is not said to be.
+// key marked ENCRYPTED. The file is opened without blocking, so a
+// FIFO at the path never holds the command (it reads as empty); anything
+// it cannot read is not said to be.
 func encryptedKeyFile(path string) bool {
 	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NONBLOCK, 0) //nolint:gosec // G304: the key the person named, which ssh-keygen was just given
 	if err != nil {
 		return false
 	}
 	defer func() { _ = f.Close() }()
-	if st, err := f.Stat(); err != nil || !st.Mode().IsRegular() {
-		return false
-	}
 	b, err := io.ReadAll(io.LimitReader(f, maxKeyFile))
 	if err != nil {
 		return false

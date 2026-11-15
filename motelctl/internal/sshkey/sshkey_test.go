@@ -552,8 +552,10 @@ func TestEncryptedKeyFileForms(t *testing.T) {
 	}
 }
 
-// encryptedKeyFile reads at most 64 KiB, and only a regular file: a
-// FIFO at the path is not waited on.
+// encryptedKeyFile reads at most 64 KiB (written here as a number, so
+// a change of the bound fails this test): a file whose header ends past
+// it is not read whole, and is not said to be encrypted. A FIFO at the
+// path is not waited on.
 func TestEncryptedKeyFileBounds(t *testing.T) {
 	dir := t.TempDir()
 	block := func(pad int) []byte {
@@ -561,8 +563,11 @@ func TestEncryptedKeyFileBounds(t *testing.T) {
 		return pem.EncodeToMemory(&pem.Block{Type: "OPENSSH PRIVATE KEY", Bytes: b})
 	}
 	small, big := filepath.Join(dir, "small"), filepath.Join(dir, "big")
-	write(t, small, string(block(100)))
-	write(t, big, string(block(maxKeyFile)))
+	write(t, small, string(block(40000))) // about 53 KiB encoded
+	write(t, big, string(block(65536)))   // about 87 KiB encoded
+	if st, _ := os.Stat(small); st.Size() >= 65536 {
+		t.Fatalf("the small file is %d bytes", st.Size())
+	}
 	if !encryptedKeyFile(small) || encryptedKeyFile(big) {
 		t.Errorf("small %v, past the bound %v: want true, false", encryptedKeyFile(small), encryptedKeyFile(big))
 	}
