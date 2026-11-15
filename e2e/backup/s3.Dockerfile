@@ -10,7 +10,7 @@
 #
 # Pinned by digest — the multi-arch index's, so amd64 and arm64 each
 # get their own binary; the tag is for Dependabot and for people.
-FROM rclone/rclone:1.75@sha256:2687085f718d3c628f7fdfb77c52a1d344332aed543110bb88088f2c70d43eb5 AS rclone
+FROM rclone/rclone:1.76@sha256:7cbeec24a44f206067597c0368be4de90ae19a64d5113c7d1938bd737a81e466 AS rclone
 
 FROM scratch
 COPY --from=rclone /usr/local/bin/rclone /rclone
