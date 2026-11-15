@@ -233,12 +233,17 @@ func TestE2EMetricsListsEveryVMAlertTest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// One name a line, sorted: two changes that each add a test then
+	// merge, where a list on one line conflicted at every one.
 	for helper, list := range map[string]string{"vmTool": "vmtests", "amtool": "amtests"} {
-		m := regexp.MustCompile(`(?m)^` + list + `='\^\(([^)]*)\)\$'$`).FindSubmatch(run)
+		m := regexp.MustCompile(`(?m)^` + list + `='\n((?:\w+\n)+)'$`).FindSubmatch(run)
 		if m == nil {
-			t.Fatalf("e2e/metrics/run.sh has no %s='^(...)$' line", list)
+			t.Fatalf("e2e/metrics/run.sh has no %s=' list, one test's name a line, closed by a ' on its own line", list)
 		}
-		listed := strings.Split(string(m[1]), "|")
+		listed := strings.Split(strings.TrimSuffix(string(m[1]), "\n"), "\n")
+		if !slices.IsSorted(listed) {
+			t.Errorf("e2e/metrics/run.sh's %s is not sorted: %v", list, listed)
+		}
 		slices.Sort(need[helper])
 		slices.Sort(listed)
 		if len(need[helper]) == 0 || !slices.Equal(need[helper], listed) {

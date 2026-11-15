@@ -213,22 +213,54 @@ vmalert -dryRun -rule="$STATE/rules.yml" >/tmp/dry.out 2>&1 \
 	&& pass "vmalert -dryRun passes the rendered rules" || fail "vmalert -dryRun: $(tail -3 /tmp/dry.out)"
 # notify's tests over vmalert, vmalert-tool and the store's binary, which `make test` skips
 # for want of them: each must run here, none skip. The list is every
-# test that calls vmTool (TestE2EMetricsListsEveryVMAlertTest).
+# test that calls vmTool (TestE2EMetricsListsEveryVMAlertTest), one name
+# a line and sorted, so that two changes that each add a test merge.
+# names_pattern is -test.run's pattern for such a list, names_count its
+# length.
+names_pattern() { printf '^(%s)$' "$(printf '%s\n' "$1" | grep . | paste -sd '|' -)"; }
+names_count() { printf '%s\n' "$1" | grep -c .; }
 case_vm() {
 echo "=== metrics 1 (vm): notify's vmalert and amtool tests ==="
-vmtests='^(TestRenderedRulesPassVMAlertDryRun|TestRenderedRulesFireAsMotelsAlerts|TestChannelFailedRuleAcrossAConfigLoad|TestOperatorRulesPassVMAlertDryRun|TestOperatorRulesFire|TestOperatorRulesCountAfterAGap|TestOperatorRulesHistogramIsReadWhole|TestDiskFillHistoryOverAGap|TestDiskFillStepIsNoTrend|TestDiskFillUnderADay|TestDiskFillSeesAFillInBursts|TestStoreDiskFillWaitsForItsHistory|TestOperatorRulesCountOnAFreshStore|TestOperatorRulesReadThePushedApps|TestOperatorRulesRateAcrossARestart|TestOperatorRulesRateOnceObserved|TestMetricsViewCountsOverTheStore|TestMetricsViewReadsTheRunningUnit|TestOperatorRulesReadTheRunningUnit|TestPostDeployARelaunchReadsPastTheStoppedInstance|TestPostDeployPushedQueryOverTheStore|TestScrapeConfigPassesTheStoresCheck)$'
-nvm=$(printf '%s\n' "$vmtests" | tr '|' '\n' | wc -l)
-(cd /tmp && notify.test -test.run "$vmtests" -test.v -test.count=1) >/tmp/vmtests.out 2>&1
+vmtests='
+TestChannelFailedRuleAcrossAConfigLoad
+TestDiskFillHistoryOverAGap
+TestDiskFillSeesAFillInBursts
+TestDiskFillStepIsNoTrend
+TestDiskFillUnderADay
+TestMetricsViewCountsOverTheStore
+TestMetricsViewReadsTheRunningUnit
+TestOperatorRulesCountAfterAGap
+TestOperatorRulesCountOnAFreshStore
+TestOperatorRulesFire
+TestOperatorRulesHistogramIsReadWhole
+TestOperatorRulesPassVMAlertDryRun
+TestOperatorRulesRateAcrossARestart
+TestOperatorRulesRateOnceObserved
+TestOperatorRulesReadThePushedApps
+TestOperatorRulesReadTheRunningUnit
+TestPostDeployARelaunchReadsPastTheStoppedInstance
+TestPostDeployPushedQueryOverTheStore
+TestRenderedRulesFireAsMotelsAlerts
+TestRenderedRulesPassVMAlertDryRun
+TestScrapeConfigPassesTheStoresCheck
+TestStoreDiskFillWaitsForItsHistory
+'
+nvm=$(names_count "$vmtests")
+(cd /tmp && notify.test -test.run "$(names_pattern "$vmtests")" -test.v -test.count=1) >/tmp/vmtests.out 2>&1
 [ $? -eq 0 ] && [ "$(grep -c '^--- PASS' /tmp/vmtests.out)" = "$nvm" ] && ! grep -q -- '--- SKIP' /tmp/vmtests.out \
 	&& pass "notify's $nvm vmalert tests run and pass against the box's vmalert, vmalert-tool and victoria-metrics" \
 	|| fail "notify's vmalert tests: $(grep -E -- '^(--- |FAIL|ok)|SKIP' /tmp/vmtests.out | head -10)"
 # notify's tests over amtool (Debian's prometheus-alertmanager, which
 # this box has as the notify box does): Alertmanager's own router over
 # the rendered tree, a receiver per channel. The list is every test
-# that calls amtool (TestE2EMetricsListsEveryVMAlertTest too).
-amtests='^(TestRenderPassesAmtoolCheckConfig|TestRenderRoutesWithAmtool)$'
-nam=$(printf '%s\n' "$amtests" | tr '|' '\n' | wc -l)
-(cd /tmp && notify.test -test.run "$amtests" -test.v -test.count=1) >/tmp/amtests.out 2>&1
+# that calls amtool (TestE2EMetricsListsEveryVMAlertTest too), written
+# as the one above.
+amtests='
+TestRenderPassesAmtoolCheckConfig
+TestRenderRoutesWithAmtool
+'
+nam=$(names_count "$amtests")
+(cd /tmp && notify.test -test.run "$(names_pattern "$amtests")" -test.v -test.count=1) >/tmp/amtests.out 2>&1
 [ $? -eq 0 ] && [ "$(grep -c '^--- PASS' /tmp/amtests.out)" = "$nam" ] && ! grep -q -- '--- SKIP' /tmp/amtests.out \
 	&& pass "notify's $nam amtool tests run and pass against the box's amtool" \
 	|| fail "notify's amtool tests: $(grep -E -- '^(--- |FAIL|ok)|SKIP|→' /tmp/amtests.out | head -10)"
