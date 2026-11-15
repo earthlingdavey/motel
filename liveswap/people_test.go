@@ -1,6 +1,7 @@
 package liveswap
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -17,6 +18,7 @@ import (
 
 	"github.com/smallhoursorg/motel/liveswap/access"
 	"github.com/smallhoursorg/motel/liveswap/access/accesstest"
+	"github.com/smallhoursorg/motel/liveswap/wire"
 )
 
 const personBox = "deploy.example.test"
@@ -222,5 +224,100 @@ func TestOneHandleMaker(t *testing.T) {
 	}
 	if len(where) != 1 || where[0] != "handler.go" {
 		t.Errorf("an app handle is made in %v, want once, in handler.go's allowApp", where)
+	}
+}
+
+// TestEveryMotelRouteHasAnAction: the rows under /_motel/ and the box
+// actions served there are the same set, both ways, and every row is a
+// GET of an exact path under the prefix.
+func TestEveryMotelRouteHasAnAction(t *testing.T) {
+	var actions []access.Action
+	for _, rt := range motelRoutes {
+		if !strings.HasPrefix(rt.path, motelPrefix+"/") || rt.serve == nil {
+			t.Errorf("row %s: not under %s/, or no function", rt.path, motelPrefix)
+		}
+		if !slices.Contains(access.MotelActions, rt.action) {
+			t.Errorf("row %s: action %s is not one served under /_motel/", rt.path, rt.action)
+		}
+		actions = append(actions, rt.action)
+	}
+	for _, a := range access.MotelActions {
+		if !slices.Contains(actions, a) {
+			t.Errorf("action %s has no row under /_motel/", a)
+		}
+		if !slices.Contains(access.Actions(), a) {
+			t.Errorf("action %s is in no cell of Decide's table", a)
+		}
+	}
+}
+
+// TestWhoamiAndApps: who a person is here and which apps they may
+// view, for each kind of person; a deploy token on a row under /_motel/
+// is told it needs a declared key (a global source's) or the flat 401
+// (an app's, which names no app here); any other path, method or query
+// under /_motel/ is a 404 once authenticated. Every answer to a
+// verified token carries Motel-Protocol, and none says "person".
+func TestWhoamiAndApps(t *testing.T) {
+	people := newTestPeople(t)
+	h, rig := newTestHandler(t)
+	h.people = people.reg
+	blog := newManagedApp("blog")
+	blog.spec, blog.verifiers, blog.logger = rig.spec, rig.ma.verifiers, zap.NewNop()
+	h.app.managed["blog"] = blog
+	for _, c := range []struct {
+		who   accesstest.Key
+		name  string
+		roles []wire.RoleHeld
+		apps  []string
+	}{
+		{people.alice, "alice", []wire.RoleHeld{{Role: "viewer", Scope: "app:demo"}}, []string{"demo"}},
+		{people.carol, "carol", []wire.RoleHeld{{Role: "viewer", Scope: "box"}}, []string{"blog", "demo"}},
+		{people.dave, "dave", []wire.RoleHeld{}, []string{}},
+	} {
+		tok := token(c.who)
+		w := sendTo(t, h, "GET", "/_motel/whoami", tok)
+		var me wire.WhoAmI
+		if err := json.Unmarshal(w.Body.Bytes(), &me); err != nil || w.Code != http.StatusOK {
+			t.Fatalf("%s whoami: %d %s", c.name, w.Code, w.Body)
+		}
+		if me.Name != c.name || me.Key != c.who.Fingerprint() || me.Box != personBox || me.Protocol != 1 || !slices.Equal(me.Roles, c.roles) || me.TokenExpiresAt.IsZero() {
+			t.Errorf("%s whoami: %s", c.name, w.Body)
+		}
+		if got := w.Result().Header.Get("Motel-Protocol"); got != "1" {
+			t.Errorf("%s whoami: Motel-Protocol %q", c.name, got)
+		}
+		w = sendTo(t, h, "GET", "/_motel/apps", tok)
+		var apps wire.Apps
+		if err := json.Unmarshal(w.Body.Bytes(), &apps); err != nil || w.Code != http.StatusOK || !slices.Equal(apps.Apps, c.apps) {
+			t.Errorf("%s apps: %d %s, want %v", c.name, w.Code, w.Body, c.apps)
+		}
+		for _, target := range []string{"/_motel/", "/_motel", "/_motel/whoami/x", "/_motel/demo", "/x/_motel/whoami", "/_motel/whoami?x=1", "/_motel/apps?"} {
+			w := sendTo(t, h, "GET", target, tok)
+			want := http.StatusNotFound
+			if target == "/x/_motel/whoami" { // the app whoami, which is none: Decide first
+				want = http.StatusForbidden
+				if c.name == "carol" {
+					want = http.StatusNotFound
+				}
+			}
+			if w.Code != want {
+				t.Errorf("%s GET %s: %d %s, want %d", c.name, target, w.Code, w.Body, want)
+			}
+		}
+	}
+	const needsKey = `{"error":"this needs a token signed by a declared key","needs":"key","scope":"box"}` + "\n"
+	for _, target := range []string{"/_motel/whoami", "/_motel/apps"} {
+		if w := sendTo(t, h, "GET", target, "Bearer "+globalToken(t)); w.Code != http.StatusForbidden || w.Body.String() != needsKey {
+			t.Errorf("a global source on %s: %d %q", target, w.Code, w.Body)
+		}
+		if w := sendTo(t, h, "GET", target, "Bearer "+appToken(t)); w.Code != http.StatusUnauthorized {
+			t.Errorf("an app's source on %s: %d %q, want 401", target, w.Code, w.Body)
+		}
+		if w := sendTo(t, h, "POST", target, "Bearer "+globalToken(t)); w.Code != http.StatusNotFound {
+			t.Errorf("a global source posting to %s: %d %q, want 404", target, w.Code, w.Body)
+		}
+	}
+	if w := sendTo(t, h, "GET", "/_motel/nothing", "Bearer "+globalToken(t)); w.Code != http.StatusNotFound || w.Result().Header.Get("Motel-Protocol") != "1" {
+		t.Errorf("a global source on another path: %d %v", w.Code, w.Result().Header)
 	}
 }

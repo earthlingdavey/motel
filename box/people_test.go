@@ -36,16 +36,16 @@ import (
 const peopleIdentity = "deploy.example.test"
 
 type peopleBox struct {
-	t       testing.TB
-	dir     string
-	people  map[string]accesstest.Key
-	deploy  map[string]ed25519.PrivateKey // "a", "b", "box"
-	canary  map[string]string
-	extra   string // more box lines
-	grants  []string
-	file    string // the installed Caddyfile
-	ctx     caddy.Context
-	server  *caddyhttp.Server
+	t      testing.TB
+	dir    string
+	people map[string]accesstest.Key
+	deploy map[string]ed25519.PrivateKey // "a", "b", "box"
+	canary map[string]string
+	extra  string // more box lines
+	grants []string
+	file   string // the installed Caddyfile
+	ctx    caddy.Context
+	server *caddyhttp.Server
 }
 
 func newPeopleBox(t testing.TB) *peopleBox {
@@ -402,6 +402,44 @@ func TestPersonOnTheBoxWebhook(t *testing.T) {
 		}
 		if (c.code == http.StatusOK) != (*served != nil) {
 			t.Errorf("%s GET %s: answered by row %v", c.name, c.target, *served)
+		}
+	}
+}
+
+// TestPersonNotRefusedAfterAStart is the second check the design never
+// tried: issue #473's window. A config is provisioned and no app has
+// started, which is where a start leaves the server when Caddy starts
+// the http app before liveswap: a deploy token of app a is refused then
+// (liveswap installs an app's sources at its Start), but a person's
+// token is not, because the registry is built at provision and the
+// person's way in reads nothing liveswap's Start installs. A person
+// sent at once is answered, as after the start.
+func TestPersonNotRefusedAfterAStart(t *testing.T) {
+	b := newPeopleBox(t)
+	b.install()
+	b.load()
+	now := time.Now()
+	alice, carol := b.people["alice@example.test"], b.people["carol@example.test"]
+	if w := b.do("GET", "/a", "Bearer "+trusttest.Mint(t, b.deploy["a"], "a", nil), ""); w.Code != http.StatusUnauthorized {
+		t.Fatalf("a deploy token of a before liveswap starts: %d %s; the test is not in #473's window", w.Code, w.Body)
+	}
+	for _, c := range []struct {
+		who          accesstest.Key
+		name, target string
+		code         int
+	}{
+		{alice, "alice", "/_motel/whoami", http.StatusOK},
+		{alice, "alice", "/a", http.StatusOK},
+		{alice, "alice", "/_motel/apps", http.StatusOK},
+		{carol, "carol", "/b", http.StatusOK},
+		{carol, "carol", "/", 0}, // the box's status, read from the box's own paths: whatever they hold
+	} {
+		w := b.do("GET", c.target, c.who.Token(peopleIdentity, now, time.Minute), "")
+		if w.Code != c.code && (c.code != 0 || w.Code == http.StatusUnauthorized || w.Code == http.StatusForbidden) {
+			t.Errorf("%s GET %s at once: %d %s, want %d", c.name, c.target, w.Code, w.Body, c.code)
+		}
+		if w.Header().Get("Motel-Protocol") != "1" {
+			t.Errorf("%s GET %s: no Motel-Protocol: %v", c.name, c.target, w.Header())
 		}
 	}
 }

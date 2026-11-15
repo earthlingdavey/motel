@@ -111,11 +111,18 @@ func (h *Handler) Provision(ctx caddy.Context) error {
 
 // ServeHTTP is terminal: it never calls the next handler.
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request, _ caddyhttp.Handler) error {
-	name := path.Base(path.Clean(r.URL.Path))
+	clean := path.Clean(r.URL.Path)
+	name := path.Base(clean)
+	// The first segment before the last: a path under /_motel/ names no
+	// app, whatever its last segment (`_` is outside the app grammar).
+	motel := clean == motelPrefix || strings.HasPrefix(clean, motelPrefix+"/")
 	if access.HasPersonScheme(r.Header.Values("Authorization")) {
-		return h.servePerson(w, r, name)
+		return h.servePerson(w, r, name, motel)
 	}
-	ma := h.app.managedApp(name)
+	var ma *managedApp
+	if !motel {
+		ma = h.app.managedApp(name)
+	}
 
 	// Authenticate before revealing whether the app exists. For an
 	// unknown app the token is verified against the global trust
@@ -134,6 +141,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request, _ caddyhttp.
 		return refusal.Write(func(code int, body any) error { return RespondJSON(w, code, body, nil) })
 	}
 	StampVersion(w.Header())
+	if motel {
+		// A global source verified the token: a deployer of no app,
+		// which no route under /_motel/ allows.
+		return h.serveMotel(w, r, access.Principal{Kind: access.AppDeployer}, nil)
+	}
 	if ma == nil {
 		// A global source verified the token: a deployer of no app
 		// here, which may take no action on this name. The name is
@@ -197,10 +209,13 @@ func ForbiddenBody(err error) any {
 // token judged by CheckToken against this load's registry, then the
 // route's action put to Decide with the person. The app is found after
 // Decide, so a person told no learns nothing of which apps exist.
-func (h *Handler) servePerson(w http.ResponseWriter, r *http.Request, name string) error {
+func (h *Handler) servePerson(w http.ResponseWriter, r *http.Request, name string, motel bool) error {
 	p, ok, err := AdmitPerson(w, r, h.gate(), "app", loggedAppName(name), func(code int, body any) error { return RespondJSON(w, code, body, nil) })
 	if !ok {
 		return err
+	}
+	if motel {
+		return h.serveMotel(w, r, p.Principal, &p)
 	}
 	rt := findRoute(r)
 	if rt == nil {
@@ -228,19 +243,32 @@ func (h *Handler) gate() PersonGate {
 	return PersonGate{Registry: h.people, Limiter: h.limiter, Logger: h.logger}
 }
 
-// versionHeader carries the release on every answer to a verified
-// token, and on no other: the exact release tells a stranger which
-// known flaws a box has, so no 401 carries it.
-const versionHeader = "Motel-Version"
+// versionHeader carries the release, and protocolHeader the protocol
+// number, on every answer to a verified token, and on no other: the
+// exact release tells a stranger which known flaws a box has, and no
+// answer to a caller the box has not accepted names motel (the flat
+// 401 and the box webhook's early 405 are as they were).
+const (
+	versionHeader  = "Motel-Version"
+	protocolHeader = "Motel-Protocol"
+)
 
-// StampVersion sets versionHeader to the release this binary was
-// built as, caddy.CustomVersion, which the release build links in
-// (the Makefile's GO_LDFLAGS). Each webhook calls it once, as soon as
-// a token verified, so every answer after that carries it, a deploy
-// stream's included. A build that links none (go build, a test) sends
-// no header: an empty value would be no release, and Caddy's own
+// Protocol is the number of the forms of person token this box takes:
+// 1 is the form a person's own key signs, with aud, iat and exp, good
+// on a GET. A later form raises it; it moves with the forms, never with
+// a release, so it tells a caller a range of releases, not one.
+const Protocol = 1
+
+// StampVersion sets protocolHeader, and versionHeader to the release
+// this binary was built as, caddy.CustomVersion, which the release
+// build links in (the Makefile's GO_LDFLAGS). Each webhook calls it
+// once, as soon as a token verified, a deploy token's or a person's, so
+// every answer after that carries both, a deploy stream's included. A
+// build that links no release (go build, a test) sends no
+// versionHeader: an empty value would be no release, and Caddy's own
 // "(devel)" names no motel release either.
 func StampVersion(h http.Header) {
+	h.Set(protocolHeader, strconv.Itoa(Protocol))
 	if v := caddy.CustomVersion; v != "" {
 		h.Set(versionHeader, v)
 	}

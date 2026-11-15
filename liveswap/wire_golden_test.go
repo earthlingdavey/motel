@@ -15,6 +15,7 @@ import (
 
 	"github.com/caddyserver/caddy/v2/modules/caddyhttp"
 
+	"github.com/smallhoursorg/motel/liveswap/access/accesstest"
 	"github.com/smallhoursorg/motel/liveswap/wire"
 )
 
@@ -120,6 +121,7 @@ var wireNoise = []struct {
 	{regexp.MustCompile(`"seconds":[0-9.e-]+`), `"seconds":<s>`},
 	{regexp.MustCompile(`/run/[0-9a-f]{16}/`), `/run/<nonce>/`},
 	{regexp.MustCompile(`local:/tmp/[^"]*/deploy\.pub`), `local:<key>`},
+	{regexp.MustCompile(`"SHA256:[A-Za-z0-9+/]{43}"`), `"<fingerprint>"`},
 }
 
 func wireBody(t *testing.T, rig *testRig, w *httptest.ResponseRecorder) string {
@@ -181,6 +183,12 @@ func decodesAsWire(t *testing.T, what string, w *httptest.ResponseRecorder) {
 		default:
 			check(last, new(done))
 		}
+	case w.Code == http.StatusOK && strings.Contains(what, "/_motel/whoami"):
+		check(body, new(wire.WhoAmI))
+	case w.Code == http.StatusOK && strings.Contains(what, "/_motel/apps"):
+		check(body, new(wire.Apps))
+	case w.Code == http.StatusForbidden && strings.Contains(body, `"needs":`):
+		check(body, new(wire.Forbidden))
 	case w.Code == http.StatusOK && strings.Contains(what, "?deploy="):
 		check(body, new(wire.DeployResult))
 	case w.Code == http.StatusOK:
@@ -249,6 +257,21 @@ func TestWireHandlerBodies(t *testing.T) {
 	add("POST v5, streamed, the env_file unreadable", stream("v5"))
 	rig.runner.startErr = nil
 	rig.spec.envFile = ""
+
+	// A person's answers: who they are, the apps they may view, an app
+	// their grants do not cover, and a deploy token on a person's route.
+	people := newTestPeople(t)
+	h.people = people.reg
+	person := func(target string, k accesstest.Key) *httptest.ResponseRecorder {
+		t.Helper()
+		return sendTo(t, h, http.MethodGet, target, token(k))
+	}
+	add("GET /_motel/whoami as a viewer of demo", person("/_motel/whoami", people.alice))
+	add("GET /_motel/apps as a viewer of demo", person("/_motel/apps", people.alice))
+	add("GET /_motel/apps as a person with no grant", person("/_motel/apps", people.dave))
+	add("GET an app no grant covers, as a person", person("/ghost", people.alice))
+	add("GET /_motel/whoami with a deploy token", do(t, h, http.MethodGet, "/_motel/whoami", globalToken(t), ""))
+	add("GET a path under /_motel/ that is no route", do(t, h, http.MethodGet, "/_motel/nothing", globalToken(t), ""))
 
 	checkWireGolden(t, "handler-bodies.txt", out.String())
 }

@@ -113,7 +113,8 @@ func TestRouteActions(t *testing.T) {
 // where today's handler answers them: 401 for a token the path's
 // sources refuse (an unknown name and a stranger alike), 404 for a
 // global source on a name that is no app whatever the method, 405 for
-// a deployer of the app with no row.
+// a deployer of the app with no row. A path under /_motel/ names no app:
+// a global source is told 403 on its rows and 404 elsewhere.
 func FuzzNoRouteNoAnswer(f *testing.F) {
 	// Every row of the table is reached by some seed (checked below,
 	// against the real table): the gzip push only with its content type.
@@ -186,7 +187,12 @@ func FuzzNoRouteNoAnswer(f *testing.F) {
 				t.Fatal(err)
 			}
 
-			app := path.Base(path.Clean(target)) == "demo"
+			// A path under /_motel/ names no app, whatever its last
+			// segment: a global source is told 403 on its rows (they are
+			// a person's) and 404 on the rest.
+			clean := path.Clean(target)
+			motel := clean == motelPrefix || strings.HasPrefix(clean, motelPrefix+"/")
+			app := !motel && path.Base(clean) == "demo"
 			row := findRoute(req)
 			want := http.StatusUnauthorized
 			switch {
@@ -194,6 +200,8 @@ func FuzzNoRouteNoAnswer(f *testing.F) {
 				want = http.StatusOK // the recording function's
 			case caller == "deployer of demo" && app:
 				want = http.StatusMethodNotAllowed
+			case caller == "global source" && motel && findMotelRoute(req) != nil:
+				want = http.StatusForbidden
 			case caller == "global source" && !app:
 				want = http.StatusNotFound
 			}

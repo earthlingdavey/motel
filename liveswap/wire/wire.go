@@ -1,7 +1,7 @@
 // Package wire is the deploy route's JSON on the wire: the bodies
 // liveswap's webhook answers with (GET /<app>, GET /<app>?deploy=<v>,
-// a deploy's response and its ndjson lines, every refusal) and the box
-// webhook's GET /. liveswap marshals these types, so they are the
+// a deploy's response and its ndjson lines, every refusal, and the
+// routes under /_motel/) and the box webhook's GET /. liveswap marshals these types, so they are the
 // shape and nothing is copied: a client decodes into them, and can be
 // tested against the real handlers in-process.
 //
@@ -281,4 +281,42 @@ type BoxStatus struct {
 	// compares with the first line of recipients ("The box's key").
 	// Absent when the box has none.
 	Recipient string `json:"recipient,omitempty"`
+}
+
+// WhoAmI is GET /_motel/whoami's body: who the box takes a token's
+// signer to be, what they may view from the address the request came
+// from, and the box's own facts. Only a caller whose token a declared
+// key signed reaches it.
+type WhoAmI struct {
+	// Name is the name on the key's line.
+	Name string `json:"name"`
+	// Key is the key that signed, SHA256:<base64> as ssh-keygen -l
+	// prints it.
+	Key string `json:"key"`
+	// Roles are the grants that apply from this request's address, the
+	// box's first; always present, [] for none. No address list is
+	// shown.
+	Roles []RoleHeld `json:"roles"`
+	// Box is the box's identity: the token's aud.
+	Box string `json:"box"`
+	// Version is the release, as the Motel-Version header names it; ""
+	// for a build that links none.
+	Version string `json:"version"`
+	// Protocol is the protocol number, as the Motel-Protocol header.
+	Protocol int `json:"protocol"`
+	// TokenExpiresAt is when the token that asked stops being accepted.
+	TokenExpiresAt time.Time `json:"token_expires_at"`
+}
+
+// RoleHeld is one role held here, on one scope: "box", or "app:<name>".
+type RoleHeld struct {
+	Role  string `json:"role"`
+	Scope string `json:"scope"`
+}
+
+// Apps is GET /_motel/apps's body: the names of the apps the caller may
+// view, sorted; every app the box runs for a viewer of the box. Always
+// present, [] for none.
+type Apps struct {
+	Apps []string `json:"apps"`
 }
