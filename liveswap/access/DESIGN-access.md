@@ -75,7 +75,7 @@ are not touched by any of it.
 
 **A person's key is an Ed25519 key, for now**: `ssh-ed25519`, or
 `sk-ssh-ed25519@openssh.com` for a hardware key (the owner's decision
-of 2026-11-16). ECDSA is not accepted yet: a `person` line with an
+of 2026-11-15). ECDSA is not accepted yet: a `person` line with an
 `ecdsa-sha2-nistp256`, `-nistp384`, `-nistp521` or
 `sk-ecdsa-sha2-nistp256@openssh.com` key is refused by name, by both
 readers, with the remedy (`ssh-keygen -t ed25519`, or `-t ed25519-sk`
@@ -366,7 +366,7 @@ access's examples:
 | 9 | the registry after a start | a person refused in #473's window | 2 | 4 | 1 | fix | built at provision; `TestPersonNotRefusedAfterAStart` |
 | 10 | the address list on `client_ip` | a client names its own address in `X-Forwarded-For` behind a trusted proxy (Caddy's default, non-strict mode takes the left-most), or too wide a `trusted_proxies` lets a peer set it | 3 | 3 | 5 | fix | without `trusted_proxies_strict`: refused by the gate, and no list holds a forwarded request; with it, `motel validate` warns that the ranges decide; `TestFromBehindATrustedProxy` drives a forged header through a provisioned server in each mode |
 | 15 | the cost of a refusal by lookup | a stranger tells by timing whether a published key is listed | 2 | 2 | 5 | fix | a signature check against a dummy key of the type before `key-not-listed`, for a type some listed key has (`TestUnlistedKeyCostsASignatureCheck`) |
-| 16 | that dummy check | a stranger with no key makes any box verify a P-521 signature per request (1.3 ms against 3 µs) | 3 | 3 | 5 | fix | no dummy check for a type no listed key has, nor with no registry (`TestUnlistedTypeCostsNothing`); since 2026-11-16 no ECDSA type at all, refused as `key-type` before any lookup (`TestECDSANeverVerified`) |
+| 16 | that dummy check | a stranger with no key makes any box verify a P-521 signature per request (1.3 ms against 3 µs) | 3 | 3 | 5 | fix | no dummy check for a type no listed key has, nor with no registry (`TestUnlistedTypeCostsNothing`); since 2026-11-15 no ECDSA type at all, refused as `key-type` before any lookup (`TestECDSANeverVerified`) |
 | 11 | people with no channel | what they do is told to no one | 3 | 5 | 5 | fix by naming | warned by `validate` and at load |
 | 12 | the 403 to people | a 403 for one app tells a person of another that the name exists | 3 | 5 | 5 | fix | one 403 for an app that exists and one that does not |
 | 13 | `Host` equal to the identity | a proxy that rewrites `Host` refuses every person | 2 | 5 | 1 | fix | the journal's line names the host received |
@@ -386,7 +386,7 @@ access's examples:
 | The time of a refusal tells a stranger which key types the box lists (a type no listed key has costs no verification) | 1 | 3 | 5 | — | it says nothing of who; hiding it would mean verifying every type for anyone, which is the cost row 16 removes |
 | A box too old for people and a key the box does not list both answer the flat 401 | 2 | 5 | 3 | — | the owner's decision: no answer to a stranger names motel; the client's message names both |
 | A legitimate burst over 60 requests is told to wait | 2 | 3 | 1 | — | `Retry-After` names the wait |
-| A person whose only key is ECDSA (for example from an agent that makes only P-256 keys) cannot be declared until a later release admits that type | 2 | 2 | 1 | — | the owner's decision of 2026-11-16: a stranger presenting a listed public key buys one check of its type, 0.04 ms for Ed25519 against 0.5 to 1.3 ms for the larger ECDSA curves, and widening later breaks no one where narrowing would; the line's refusal names the remedy |
+| A person whose only key is ECDSA (for example from an agent that makes only P-256 keys) cannot be declared until a later release admits that type | 2 | 2 | 1 | — | the owner's decision of 2026-11-15: a stranger presenting a listed public key buys one check of its type, 0.04 ms for Ed25519 against 0.5 to 1.3 ms for the larger ECDSA curves, and widening later breaks no one where narrowing would; the line's refusal names the remedy |
 | A token sent by hand over plain HTTP, to a site the operator serves in clear under the box's name, is answered like any other; no webhook checks that a request came over TLS | 3 | 1 | 3 | 2, 2 | the owner's decision: a hand-made plain-HTTP request is not catered for. `motelctl` speaks https only and follows no redirect; `deploy.sh` refuses an `http://` address unless `MOTEL_ALLOW_HTTP=1`, for a test box; the template's deploy host is served over https |
 
 ## Not in this release

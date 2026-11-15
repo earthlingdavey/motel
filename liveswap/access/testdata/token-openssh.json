@@ -1,5 +1,5 @@
 {
-  "about": "Made once on 2026-11-15 by ssh-keygen -Y sign (OpenSSH 10.0p2) with throwaway keys whose private halves were deleted after; ssh-keygen -Y verify called every signature good in the namespace it was made in. The claims are {\"aud\":\"deploy.example.test\",\"iat\":1794657570,\"exp\":1794658170}. Checked at now, with the box's identity. The ECDSA vectors are refused by their key type since 2026-11-16, when the owner deferred ECDSA for a person's key: they stay as refused vectors, real ssh-keygen tokens a later release that admits a type can turn back into accepted ones.",
+  "about": "Made once on 2026-11-15 by ssh-keygen -Y sign (OpenSSH 10.0p2) with throwaway keys whose private halves were deleted after; ssh-keygen -Y verify called every signature good in the namespace it was made in. The claims are {\"aud\":\"deploy.example.test\",\"iat\":1794657570,\"exp\":1794658170}. Checked at now, with the box's identity. The ECDSA vectors are refused by their key type since 2026-11-15, when the owner deferred ECDSA for a person's key: they stay as refused vectors, real ssh-keygen tokens a later release that admits a type can turn back into accepted ones.",
   "identity": "deploy.example.test",
   "now": 1794657600,
   "keys": [

@@ -59,7 +59,7 @@ var personKeyTypes = map[string]bool{
 }
 
 // deferredKeyTypes are the ECDSA types, which a person may not hold for
-// now (the owner's decision of 2026-11-16): a stranger who presents a
+// now (the owner's decision of 2026-11-15): a stranger who presents a
 // listed person's public key buys one signature check of its type, and
 // an Ed25519 check costs about 0.04 ms where a P-384 or P-521 one costs
 // 0.5 to 1.3 ms. A later release may admit some of them, which breaks

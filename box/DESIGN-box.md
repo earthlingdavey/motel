@@ -209,7 +209,7 @@ box {
   name, saying a person's key is an Ed25519 key for now and naming the
   remedy (`ssh-keygen -t ed25519`, or `-t ed25519-sk`), so an agent
   that makes only P-256 keys cannot be used for now. The owner deferred
-  it on 2026-11-16 for its cost, not its form (a token has no id made
+  it on 2026-11-15 for its cost, not its form (a token has no id made
   from its signature): a stranger who presents a listed person's public
   key buys one signature check of its type, about 0.04 ms for Ed25519
   and 0.5 to 1.3 ms for the larger ECDSA curves; a later release may
