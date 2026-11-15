@@ -67,7 +67,7 @@ func TestRateTableBounded(t *testing.T) {
 	if _, kept := r.buckets["busy"]; !kept || len(r.buckets) != 2 {
 		t.Errorf("%d buckets, busy kept %v; want busy and new", len(r.buckets), kept)
 	}
-	if SharedRate() != SharedRate() || SharedRate() == nil {
+	if a, b := SharedRate(), SharedRate(); a != b || a == nil {
 		t.Error("the shared rate is not one for the process")
 	}
 }

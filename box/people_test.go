@@ -183,14 +183,11 @@ func (b *peopleBox) registry() *access.Registry {
 	return app.(access.Source).Access()
 }
 
-// do serves one request through the whole server, as Caddy would.
-func (b *peopleBox) do(method, target, auth, remote string) *httptest.ResponseRecorder {
-	r := httptest.NewRequest(method, "http://"+peopleIdentity+target, nil)
+// get serves one GET through the whole server, as Caddy would.
+func (b *peopleBox) get(target, auth string) *httptest.ResponseRecorder {
+	r := httptest.NewRequest(http.MethodGet, "http://"+peopleIdentity+target, nil)
 	if auth != "" {
 		r.Header.Set("Authorization", auth)
-	}
-	if remote != "" {
-		r.RemoteAddr = remote
 	}
 	w := httptest.NewRecorder()
 	b.server.ServeHTTP(w, r)
@@ -420,7 +417,7 @@ func TestPersonNotRefusedAfterAStart(t *testing.T) {
 	b.load()
 	now := time.Now()
 	alice, carol := b.people["alice@example.test"], b.people["carol@example.test"]
-	if w := b.do("GET", "/a", "Bearer "+trusttest.Mint(t, b.deploy["a"], "a", nil), ""); w.Code != http.StatusUnauthorized {
+	if w := b.get("/a", "Bearer "+trusttest.Mint(t, b.deploy["a"], "a", nil)); w.Code != http.StatusUnauthorized {
 		t.Fatalf("a deploy token of a before liveswap starts: %d %s; the test is not in #473's window", w.Code, w.Body)
 	}
 	for _, c := range []struct {
@@ -434,7 +431,7 @@ func TestPersonNotRefusedAfterAStart(t *testing.T) {
 		{carol, "carol", "/b", http.StatusOK},
 		{carol, "carol", "/", 0}, // the box's status, read from the box's own paths: whatever they hold
 	} {
-		w := b.do("GET", c.target, c.who.Token(peopleIdentity, now, time.Minute), "")
+		w := b.get(c.target, c.who.Token(peopleIdentity, now, time.Minute))
 		if w.Code != c.code && (c.code != 0 || w.Code == http.StatusUnauthorized || w.Code == http.StatusForbidden) {
 			t.Errorf("%s GET %s at once: %d %s, want %d", c.name, c.target, w.Code, w.Body, c.code)
 		}
@@ -569,18 +566,18 @@ func TestRemovedPersonRefusedAfterReload(t *testing.T) {
 	b.load()
 	alice, carol := b.people["alice@example.test"], b.people["carol@example.test"]
 	now := time.Now()
-	if w := b.do("GET", "/_motel/whoami", alice.Token(peopleIdentity, now, time.Minute), ""); w.Code != http.StatusOK {
+	if w := b.get("/_motel/whoami", alice.Token(peopleIdentity, now, time.Minute)); w.Code != http.StatusOK {
 		t.Fatalf("alice before: %d %s", w.Code, w.Body)
 	}
 	delete(b.people, "alice@example.test")
 	b.grants = b.grants[1:]
 	b.install()
 	b.load()
-	stranger := b.do("GET", "/_motel/whoami", "", "")
-	if w := b.do("GET", "/_motel/whoami", alice.Token(peopleIdentity, now, time.Minute), ""); w.Code != http.StatusUnauthorized || w.Body.String() != stranger.Body.String() {
+	stranger := b.get("/_motel/whoami", "")
+	if w := b.get("/_motel/whoami", alice.Token(peopleIdentity, now, time.Minute)); w.Code != http.StatusUnauthorized || w.Body.String() != stranger.Body.String() {
 		t.Errorf("alice after her lines are removed: %d %s", w.Code, w.Body)
 	}
-	if w := b.do("GET", "/b", carol.Token(peopleIdentity, now, time.Minute), ""); w.Code != http.StatusOK {
+	if w := b.get("/b", carol.Token(peopleIdentity, now, time.Minute)); w.Code != http.StatusOK {
 		t.Errorf("carol after the reload: %d %s", w.Code, w.Body)
 	}
 }
