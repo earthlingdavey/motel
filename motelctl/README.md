@@ -47,10 +47,18 @@ the same 401, with no header that names motel. So after its one retry
 motelctl names every cause it cannot tell apart (no line lists the key,
 the address is outside every `from` list, the name is not the box's main
 one, a motel too old for people's tokens), and the clock first when the
-box's `Date` says it is off. A 403 is said from its `needs` and `scope`
-alone, and names no app. `Motel-Protocol` comes only on answers to a
-token the box verified; a higher number than this client's is said on
-stderr, and the command carries on.
+box's `Date` says it is off. A 403 whose `needs` and `scope` are words
+of their grammar (`needs` a lowercase word, `scope` `app` or `box`) is
+said from those two alone, and names no app; any other 403 is said as a
+refusal that did not say what it needs, with the box's `error`, if any,
+quoted as the box's (made safe to print, cut at 200 characters). The
+box's words are never motelctl's own advice. `whoami` shows the key this
+command signed with and the box it asked; an answer naming another key
+or box is warned of and exits 3. `Motel-Protocol` comes only on answers
+to a token the box verified, and counts only as one header of 1 to 9
+digits; a higher number than this client's is said on stderr, and the
+command carries on. A passphrase-protected key file with no terminal to
+ask on is refused with the remedy, `ssh-add` (exit 2).
 
 **Only https.** motelctl never sends a request over plain http, and has
 no flag or variable that would (`deploy.sh`'s `MOTEL_ALLOW_HTTP` is not

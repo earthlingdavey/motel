@@ -77,6 +77,17 @@ func Lines(s string) []Text {
 // String is the sanitised string.
 func (t Text) String() string { return t.s }
 
+// Cut is the text cut to at most n runes, with "…" in place of what
+// was cut: a box's sentence quoted in motelctl's own message stays a
+// quotation, not a page.
+func (t Text) Cut(n int) Text {
+	if utf8.RuneCountInString(t.s) <= n {
+		return t
+	}
+	r := []rune(t.s)
+	return Text{string(r[:n]) + "…"}
+}
+
 // Empty says whether the text is the empty string.
 func (t Text) Empty() bool { return t.s == "" }
 
