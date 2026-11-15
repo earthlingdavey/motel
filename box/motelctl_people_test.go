@@ -74,6 +74,7 @@ func TestMotelctlBoxStatusPeople(t *testing.T) {
 	}
 
 	r := newRig(t)
+	r.write(t, r.installed, file(strings.Replace(good, "deploy.example.com {", "127.0.0.1 {", 1)))
 	r.h.app.registry = access.NewRegistry("127.0.0.1", l)
 	r.applied(t, sha)
 	var mu sync.Mutex

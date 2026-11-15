@@ -155,6 +155,26 @@ type Role struct {
 	Scope termtext.Text
 }
 
+// LineMax is the most of a box's free-text value, or of one line of a
+// log tail or a probe body, that a labelled line prints, in runes: the
+// rest is cut and the cut marked "…[cut]", so no value runs on for
+// rows of a terminal and puts text that looks like a label at a row's
+// start. (--json has the whole value.)
+const LineMax = 200
+
+// capped is t cut to LineMax runes, the cut marked.
+func capped(t termtext.Text) string {
+	s := t.String()
+	n := 0
+	for i := range s {
+		if n == LineMax {
+			return s[:i] + "…[cut]"
+		}
+		n++
+	}
+	return s
+}
+
 // printer writes lines and keeps the first write error.
 type printer struct {
 	w   io.Writer
@@ -190,7 +210,7 @@ func WriteStatus(w io.Writer, s Style, st Status) error {
 			line += fmt.Sprintf(", %d restarts in its window", wd.Restarts)
 		}
 		if !wd.LastFailure.Empty() {
-			line += ": " + wd.LastFailure.String()
+			line += ": " + capped(wd.LastFailure)
 		}
 		p.line("watchdog     %s", line)
 	}
@@ -206,14 +226,14 @@ func WriteStatus(w io.Writer, s Style, st Status) error {
 			line += " " + d.Finished.UTC().Format("2006-01-02 15:04 UTC")
 		}
 		if !d.By.Empty() {
-			line += "  by " + d.By.String()
+			line += "  by " + capped(d.By)
 		}
 		p.line("last deploy  %s", line)
 		if !d.Error.Empty() {
-			p.line("error        %s", d.Error)
+			p.line("error        %s", capped(d.Error))
 		}
 		if !d.Note.Empty() {
-			p.line("note         %s", d.Note)
+			p.line("note         %s", capped(d.Note))
 		}
 	}
 	if len(st.Versions) > 0 {
@@ -235,7 +255,7 @@ func writeMetrics(p *printer, m *Metrics) {
 		window = "  (" + m.Window.String() + ")"
 	}
 	if !m.Error.Empty() {
-		p.line("metrics      none: %s", m.Error)
+		p.line("metrics      none: %s", capped(m.Error))
 		return
 	}
 	if m.MemNow != nil || m.MemMax != nil {
@@ -269,7 +289,10 @@ func mib(b float64) string {
 
 // WriteDeploys writes the deploys list, newest first, as the box
 // ordered it. Not in colour: tabwriter would count a colour's escape
-// as width, and the columns would not line up.
+// as width, and the columns would not line up. Every cell but BY is a
+// word of its grammar (the client's odd) or the client's own, with no
+// white space; BY, which holds spaces, is last and capped, so it cannot
+// fake a column.
 func WriteDeploys(w io.Writer, rows []Summary) error {
 	if len(rows) == 0 {
 		_, err := fmt.Fprintln(w, "no deploy recorded")
@@ -277,9 +300,9 @@ func WriteDeploys(w io.Writer, rows []Summary) error {
 	}
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
 	p := &printer{w: tw}
-	p.line("VERSION\tSTATUS\tPHASE\tBY\tFINISHED (UTC)")
+	p.line("VERSION\tSTATUS\tPHASE\tFINISHED (UTC)\tBY")
 	for _, r := range rows {
-		p.line("%s\t%s\t%s\t%s\t%s", r.Version, r.Status, r.Phase, r.By, r.Finished)
+		p.line("%s\t%s\t%s\t%s\t%s", r.Version, r.Status, r.Phase, r.Finished, capped(r.By))
 	}
 	if p.err != nil {
 		return p.err
@@ -304,13 +327,13 @@ func WriteDeploy(w io.Writer, s Style, app termtext.Text, d Deploy) error {
 	}
 	p.line("%s", head)
 	if !d.By.Empty() {
-		p.line("by      %s", d.By)
+		p.line("by      %s", capped(d.By))
 	}
 	if !d.Error.Empty() {
-		p.line("error   %s", d.Error)
+		p.line("error   %s", capped(d.Error))
 	}
 	if !d.Note.Empty() {
-		p.line("note    %s", d.Note)
+		p.line("note    %s", capped(d.Note))
 	}
 	if len(d.Phases) > 0 {
 		parts := make([]string, len(d.Phases))
@@ -320,16 +343,16 @@ func WriteDeploy(w io.Writer, s Style, app termtext.Text, d Deploy) error {
 		p.line("phases  %s", strings.Join(parts, " · "))
 	}
 	if !d.Exit.Empty() {
-		p.line("exit    %s", d.Exit)
+		p.line("exit    %s", capped(d.Exit))
 	}
 	if pr := d.Probe; pr != nil {
 		line := strconv.Itoa(pr.Status)
 		if !pr.Location.Empty() {
-			line += "  location " + pr.Location.String()
+			line += "  location " + capped(pr.Location)
 		}
 		p.line("probe   %s", line)
 		for _, l := range pr.Body {
-			p.line("  %s", l)
+			p.line("  %s", capped(l))
 		}
 	}
 	if len(d.LogTail) > 0 {
@@ -339,11 +362,11 @@ func WriteDeploy(w io.Writer, s Style, app termtext.Text, d Deploy) error {
 		}
 		p.line("log tail (%d lines%s):", len(d.LogTail), cut)
 		for _, l := range d.LogTail {
-			p.line("  %s", l)
+			p.line("  %s", capped(l))
 		}
 	}
 	if !d.LogTailError.Empty() {
-		p.line("log tail: none: %s", d.LogTailError)
+		p.line("log tail: none: %s", capped(d.LogTailError))
 	}
 	return p.err
 }
@@ -360,7 +383,7 @@ func WriteBox(w io.Writer, b Box) error {
 	p.line("commit           %s", commit)
 	p.line("Caddyfile sha256 %s", b.SHA256)
 	if !b.Recipient.Empty() {
-		p.line("key for secrets  %s", b.Recipient)
+		p.line("key for secrets  %s", capped(b.Recipient))
 	}
 	return p.err
 }

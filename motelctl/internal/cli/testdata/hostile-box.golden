@@ -1,4 +1,4 @@
-deploy.example.com  runs 3f9c2a1e0000
+127.0.0.1  runs 3f9c2a1e0000
 commit           3f9c2a1e00000000000000000000000000000000
 Caddyfile sha256 9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b
 key for secrets  age1osc52 \x1b]52;c;cHduZWQ=\x07

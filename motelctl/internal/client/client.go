@@ -332,9 +332,10 @@ func (c *Client) once(ctx context.Context, path string, query url.Values) (*Answ
 	return &Answer{Code: resp.StatusCode, Header: resp.Header, Body: body}, nil
 }
 
-// unreachable says why no answer came: a certificate that did not
-// verify (never continued past), nothing answering, or a name not
-// found.
+// unreachable says why no answer was read: a certificate that did not
+// verify (never continued past), a name not found, nothing to connect
+// to, a timeout, a connection closed, or something that answered in no
+// HTTP motelctl reads.
 func (c *Client) unreachable(ctx context.Context, err error) error {
 	if ctx.Err() != nil {
 		return ctx.Err()
@@ -352,9 +353,17 @@ func (c *Client) unreachable(ctx context.Context, err error) error {
 	case errors.As(err, &verify), errors.As(err, &unknown), errors.As(err, &hostname), errors.As(err, &invalid):
 		// The reason quotes the certificate's names, which whoever
 		// answered chose.
-		why := err.Error()
-		if errors.As(err, &verify) {
+		// The x509 error's own words, without the request's around them.
+		var why string
+		switch {
+		case errors.As(err, &verify):
 			why = verify.Err.Error()
+		case errors.As(err, &hostname):
+			why = hostname.Error()
+		case errors.As(err, &unknown):
+			why = unknown.Error()
+		default:
+			why = invalid.Error()
 		}
 		if len(c.Roots) > 0 {
 			return &Failure{Exit: ExitCertificate, Message: fmt.Sprintf(
@@ -368,22 +377,29 @@ func (c *Client) unreachable(ctx context.Context, err error) error {
 		return &Failure{Exit: ExitUnknown, Message: fmt.Sprintf(
 			"%s was not found (%s): is the box's name right?", c.Box.Host, termtext.From(dns.Err))}
 	}
-	var why string
+	// Past the dial, bytes may have come from the peer, and Go's error
+	// text then quotes them (a status line, a header's value): only a
+	// fixed reason of motelctl's own is said. The system's words are
+	// kept for a dial alone, which no byte of the peer's reached.
+	down := "If motel is down, as root on the box: systemctl status motel; journalctl -u motel -n 50. The box's off-box heartbeat also reports a stopped motel."
+	var op *net.OpError
 	switch {
-	case errors.Is(err, syscall.ECONNREFUSED):
-		why = "connection refused"
-	case errors.Is(err, syscall.ECONNRESET):
-		why = "connection reset"
+	case errors.As(err, &op) && op.Op == "dial":
+		why := "could not connect: " + termtext.From(op.Err.Error()).String()
+		switch {
+		case errors.Is(err, syscall.ECONNREFUSED):
+			why = "connection refused"
+		case op.Timeout():
+			why = fmt.Sprintf("could not connect in %d s", int(timeout/time.Second))
+		}
+		return &Failure{Exit: ExitUnknown, Message: fmt.Sprintf("%s did not answer on %s (%s). %s", c.Box.Host, c.Box.PortOr443(), why, down)}
 	case errors.As(err, &netErr) && netErr.Timeout():
-		why = fmt.Sprintf("no answer in %d s", int(timeout/time.Second))
-	case errors.Is(err, io.EOF), errors.Is(err, io.ErrUnexpectedEOF):
-		why = "the connection closed"
-	default:
-		why = termtext.From(err.Error()).String()
+		return &Failure{Exit: ExitUnknown, Message: fmt.Sprintf("%s timed out on %s: no whole answer in %d s. %s", c.Box.Host, c.Box.PortOr443(), int(timeout/time.Second), down)}
+	case errors.Is(err, syscall.ECONNRESET), errors.Is(err, io.EOF), errors.Is(err, io.ErrUnexpectedEOF):
+		return &Failure{Exit: ExitUnknown, Message: fmt.Sprintf("%s closed the connection on %s before a whole answer came. %s", c.Box.Host, c.Box.PortOr443(), down)}
 	}
 	return &Failure{Exit: ExitUnknown, Message: fmt.Sprintf(
-		"%s did not answer on %s (%s). If motel is down, as root on the box: systemctl status motel; journalctl -u motel -n 50. The box's off-box heartbeat also reports a stopped motel.",
-		c.Box.Host, c.Box.PortOr443(), why)}
+		"Something at %s answered, but not in HTTP as motel speaks it. Is this the box's deploy host?", c.Box.Addr())}
 }
 
 // refused is a 401 that stood after the retry. Its body says nothing
@@ -515,11 +531,60 @@ func (c *Client) Read(ans *Answer, v any) error {
 	return &Failure{Exit: ExitFailed, Message: fmt.Sprintf("%s answered %d; the box says: %s", c.Box.Host, ans.Code, said), Body: ans.Body}
 }
 
+// The grammars the server holds the values to that the client prints
+// unlabelled or as markers. A value outside them is no honest box's.
+var (
+	// wireVersionRe is liveswap/names.go's versionRe: every version a
+	// status or a record names was one a deploy took.
+	wireVersionRe = regexp.MustCompile(`^[A-Za-z0-9_-][A-Za-z0-9._-]{0,63}$`)
+	// unitRe is liveswap/runner_systemd.go's unitNameRe: motel-, the
+	// app, the version, the instance's nonce (liveswap/socket.go).
+	unitRe = regexp.MustCompile(`^motel-[a-z0-9-]{1,63}\.[A-Za-z0-9_-][A-Za-z0-9._-]{0,63}\.[0-9a-f]{16}(\.prestart)?\.service$`)
+	// commitRe is box/proof's IsID: a commit as the box records one,
+	// 40 lowercase hex.
+	commitRe = regexp.MustCompile(`^[0-9a-f]{40}$`)
+	// digestRe is box/check.go's digest: a SHA-256 in lowercase hex.
+	digestRe = regexp.MustCompile(`^[0-9a-f]{64}$`)
+	// outcomeStatuses and outcomePhases are liveswap/app.go's outcome
+	// vocabulary: a deploy's status, and the phases it passes through
+	// (the app's phase is one of those, or "idle", liveswap/app.go's
+	// newManagedApp and its end of a deploy).
+	outcomeStatuses = map[string]bool{"succeeded": true, "failed": true}
+	outcomePhases   = map[string]bool{"downloading": true, "extracting": true, "preparing": true, "starting": true, "soaking": true, "promoting": true, "draining": true, "stopping_old": true}
+)
+
 // odd says why a body that decoded is still not one an honest box
 // sends: a value outside the grammar the box holds it to. The client
 // never prints such a value, so it never says it either.
 func odd(v any) string {
 	switch a := v.(type) {
+	case *wire.Status:
+		if a.Phase != "idle" && !outcomePhases[a.Phase] {
+			return "its phase is not one an app has"
+		}
+		if (a.CurrentVersion != "" && !wireVersionRe.MatchString(a.CurrentVersion)) || !allVersions(a.AvailableVersions) {
+			return "a version in it is not a version"
+		}
+		if a.Unit != "" && !unitRe.MatchString(a.Unit) {
+			return "its unit is not one motel names"
+		}
+		for _, d := range a.Deploys {
+			if why := oddOutcome(d.Version, d.Status, d.Phase, nil); why != "" {
+				return why
+			}
+		}
+		if d := a.LastDeploy; d != nil {
+			return oddOutcome(d.Version, d.Status, d.Phase, d.Phases)
+		}
+	case *wire.DeployResult:
+		return oddOutcome(a.Version, a.Status, a.Phase, a.Phases)
+	case *wire.BoxStatus:
+		if !commitRe.MatchString(a.Commit) {
+			return "its commit is not a commit id"
+		}
+		if !digestRe.MatchString(a.SHA256) {
+			return "its sha256 is not a digest"
+		}
 	case *wire.Apps:
 		for _, name := range a.Apps {
 			if !appRe.MatchString(name) {
@@ -544,6 +609,34 @@ func odd(v any) string {
 		}
 	}
 	return ""
+}
+
+// oddOutcome holds a deploy's version, status, phase and phases to the
+// outcome vocabulary.
+func oddOutcome(version, status, phase string, phases []wire.PhaseTiming) string {
+	switch {
+	case !wireVersionRe.MatchString(version):
+		return "a version in it is not a version"
+	case !outcomeStatuses[status]:
+		return "a deploy's status in it is not succeeded or failed"
+	case phase != "" && !outcomePhases[phase]:
+		return "a deploy's phase in it is not one a deploy has"
+	}
+	for _, p := range phases {
+		if !outcomePhases[p.Name] {
+			return "a deploy's phase in it is not one a deploy has"
+		}
+	}
+	return ""
+}
+
+func allVersions(vs []string) bool {
+	for _, v := range vs {
+		if !wireVersionRe.MatchString(v) {
+			return false
+		}
+	}
+	return true
 }
 
 // scopeOK is a role's scope as a box writes one: "box", or "app:" and
@@ -633,6 +726,11 @@ func (c *Client) forbidden(ans *Answer) *Failure {
 	return &Failure{Exit: ExitForbidden, Body: body, Message: fmt.Sprintf(
 		"%s does not allow the token in MOTEL_TOKEN this: it needs %s.%s", c.Box.Host, needs, hint)}
 }
+
+// NotMotel is an answer that is not motel's, for a command that reads
+// what Read took and finds it about another thing than it asked (an
+// app, a version, a host): why is the command's own words.
+func (c *Client) NotMotel(ans *Answer, why string) error { return c.notMotel(ans, why) }
 
 func (c *Client) notMotel(ans *Answer, why string) error {
 	if why != "" {

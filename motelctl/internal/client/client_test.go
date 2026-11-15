@@ -310,7 +310,7 @@ func TestRead(t *testing.T) {
 		wantMsg  string
 		wantBody bool
 	}{
-		{"status", 200, "application/json", `{"app":"blog","phase":"running","available_versions":[]}`, ExitOK, "", false},
+		{"status", 200, "application/json", `{"app":"blog","phase":"idle","available_versions":[]}`, ExitOK, "", false},
 		{"not found", 404, "application/json", `{"error":"no deploy recorded for version v9"}`, ExitNotFound, `127.0.0.1 answered 404; the box says: "no deploy recorded for version v9"`, true},
 		{"forbidden", 403, "application/json", `{"error":"this needs the viewer role on this app","needs":"viewer","scope":"app"}`, ExitForbidden, "127.0.0.1 does not allow the token in MOTEL_TOKEN this: it needs the viewer role on this app.", true},
 		{"forbidden, a body of an older box", 403, "application/json", `{"error":"forbidden"}`, ExitForbidden, `127.0.0.1 refused this (HTTP 403) and did not say what it needs; the box says: "forbidden".`, true},

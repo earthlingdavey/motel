@@ -44,14 +44,14 @@ func pf(f float64) *float64 { return &f }
 func hostileStatus() wire.Status {
 	at := time.Date(2026, 11, 13, 17, 40, 11, 0, time.UTC)
 	return wire.Status{
-		App: "blog", Phase: "running", CurrentVersion: "v42" + hostile[6], Unit: "motel-app-blog.service" + hostile[1], PID: 41233, Running: true,
+		App: "blog", Phase: "idle", CurrentVersion: "v42", Unit: "motel-blog.v42.0123456789abcdef.service", PID: 41233, Running: true,
 		Deploys: []wire.DeploySummary{
 			{Version: "v42", Status: "succeeded", By: hostile[0] + hostile[9], FinishedAt: json.RawMessage(`"2026-11-14T09:12:30Z"`)},
-			{Version: "v41", Status: "failed", Phase: "health_gate", By: hostile[2], FinishedAt: json.RawMessage(`"` + "\\u001b[31m" + `"`)},
+			{Version: "v41", Status: "failed", Phase: "soaking", By: hostile[2] + "  v40  succeeded", FinishedAt: json.RawMessage(`"` + "\\u001b[31m" + `"`)},
 		},
-		LastDeploy:        &wire.DeployResult{Version: "v42", Status: "failed", Error: hostile[3], By: hostile[5], FinishedAt: at},
-		Watchdog:          &wire.Watchdog{State: "ok", LastFailure: hostile[4]},
-		AvailableVersions: []string{"v42" + hostile[6], "v41", hostile[8], hostile[9]},
+		LastDeploy:        &wire.DeployResult{Version: "v42", Status: "failed", Error: hostile[3], By: hostile[5], Note: strings.Repeat("n", 300), FinishedAt: at},
+		Watchdog:          &wire.Watchdog{State: "ok", LastFailure: hostile[4] + strings.Repeat(" ", 60) + "error        forged"},
+		AvailableVersions: []string{"v42", "v41", "v40_rc.1"},
 		Metrics: &wire.Metrics{Window: "1h", Memory: &wire.MemorySummary{Now: pf(182 << 20), Max: pf(210 << 20)},
 			CPU: &wire.CPUSummary{Avg: 0.02}, Requests: &wire.RequestSummary{Total: 1234, PerSecond: 0.34, Share5xx: pf(0.001), P95: pf(120)}},
 	}
@@ -60,13 +60,13 @@ func hostileStatus() wire.Status {
 func hostileDeploy() wire.DeployResult {
 	start := time.Date(2026, 11, 13, 17, 39, 2, 0, time.UTC)
 	return wire.DeployResult{
-		Version: "v41", Status: "failed", Phase: "health_gate", Error: "the health check answered 500 " + hostile[0],
+		Version: "v41", Status: "failed", Phase: "soaking", Error: "the health check answered 500 " + hostile[0],
 		By: "github:example/blog@refs/heads/main", StartedAt: start, FinishedAt: start.Add(69 * time.Second),
-		Phases: []wire.PhaseTiming{{Name: "fetch", Seconds: 2.1}, {Name: "health_gate" + hostile[1], Seconds: 65.4}},
+		Phases: []wire.PhaseTiming{{Name: "downloading", Seconds: 2.1}, {Name: "soaking", Seconds: 65.4}},
 		Detail: &wire.DeployDetail{
 			Exit:    "exit status 3 " + hostile[5],
 			Probe:   &wire.ProbeDetail{Status: 500, Location: hostile[2], Body: "{\"db\":\"connection refused\"}\n" + hostile[7]},
-			LogTail: append([]string{"pg: connection refused (127.0.0.1:5432)", "two\nlines " + hostile[6]}, hostile...),
+			LogTail: append([]string{"pg: connection refused (127.0.0.1:5432)", "two\nlines " + hostile[6], strings.Repeat("L", 500)}, hostile...),
 		},
 	}
 }
@@ -105,7 +105,7 @@ func newFakeBox(t *testing.T) *fakeBox {
 		case r.URL.Path == "/_motel/apps":
 			body = encode(fb.apps)
 		case r.URL.Path == "/":
-			body = encode(wire.BoxStatus{Commit: "3f9c2a1e" + strings.Repeat("0", 32), BoxWebhook: "deploy.example.com", SHA256: strings.Repeat("9b", 32), Recipient: "age1" + hostile[0]})
+			body = encode(wire.BoxStatus{Commit: "3f9c2a1e" + strings.Repeat("0", 32), BoxWebhook: "127.0.0.1", SHA256: strings.Repeat("9b", 32), Recipient: "age1" + hostile[0]})
 		case r.URL.Path != "/blog":
 			code, body = http.StatusUnauthorized, []byte(`{"error":"invalid or missing deploy token (Authorization: Bearer <jwt>)"}`+"\n")
 		case r.URL.Query().Get("deploy") == "v41":

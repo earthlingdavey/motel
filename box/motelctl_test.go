@@ -61,6 +61,9 @@ func ctl(t *testing.T, bin string, env []string, args ...string) ctlRun {
 func TestMotelctlBoxStatus(t *testing.T) {
 	bin := motelctlBin(t)
 	r := newRig(t)
+	// The installed file names the box by the host the client asks,
+	// which box status must name.
+	r.write(t, r.installed, file(strings.Replace(good, "deploy.example.com {", "127.0.0.1 {", 1)))
 	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, q *http.Request) {
 		if err := r.h.ServeHTTP(w, q, nextFunc(func(http.ResponseWriter, *http.Request) error { return nil })); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)

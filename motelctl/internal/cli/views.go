@@ -17,9 +17,12 @@ import (
 
 var tx = termtext.From
 
-func statusView(st wire.Status) render.Status {
+// statusView names the app asked for: the client takes a status only
+// when the box's app is that one (and its other head values only in
+// their grammars, client's odd).
+func statusView(st wire.Status, asked string) render.Status {
 	v := render.Status{
-		App:     tx(st.App),
+		App:     tx(asked),
 		Phase:   tx(st.Phase),
 		Version: tx(st.CurrentVersion),
 		Unit:    tx(st.Unit),
@@ -101,24 +104,26 @@ func summaryViews(ds []wire.DeploySummary) []render.Summary {
 }
 
 // rawTime shows a summary's time, which the box carries as the record
-// has it: a timestamp when it is one, and whatever it is otherwise
-// (the response filter may have replaced it).
+// has it: a timestamp when it is one, and the client's own word
+// otherwise (the response filter may have replaced it), never what it
+// holds, which could fake the table's columns.
 func rawTime(raw json.RawMessage) termtext.Text {
 	if len(raw) == 0 {
 		return termtext.Text{}
 	}
 	var s string
-	if err := json.Unmarshal(raw, &s); err != nil {
-		return tx(string(raw))
+	if err := json.Unmarshal(raw, &s); err == nil {
+		if t, err := time.Parse(time.RFC3339Nano, s); err == nil {
+			return tx(t.UTC().Format("2006-01-02 15:04"))
+		}
 	}
-	if t, err := time.Parse(time.RFC3339Nano, s); err == nil {
-		return tx(t.UTC().Format("2006-01-02 15:04"))
-	}
-	return tx(s)
+	return tx("(unreadable)")
 }
 
-func boxView(b wire.BoxStatus) render.Box {
-	return render.Box{Host: tx(b.BoxWebhook), Commit: tx(b.Commit), SHA256: tx(b.SHA256), Recipient: tx(b.Recipient)}
+// boxView names the host asked for, which the client checked the
+// box's box_webhook against.
+func boxView(b wire.BoxStatus, asked string) render.Box {
+	return render.Box{Host: tx(asked), Commit: tx(b.Commit), SHA256: tx(b.SHA256), Recipient: tx(b.Recipient)}
 }
 
 // whoamiView is the box's answer beside what this side knows: the box

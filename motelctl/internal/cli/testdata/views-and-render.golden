@@ -1,18 +1,18 @@
-== crashed, its running version not first: no (running)
-blog  [31mcrashed[0m v2
+== idle, its running version not first: no (running)
+blog  idle v2
 watchdog     [31munhealthy[0m, 2 failed checks in a row, 3 restarts in its window: health check timed out
 last deploy  v2 [32msucceeded[0m 2026-11-13 17:39 UTC
 note         v2 was running: relaunched from the release on disk
 versions     v3 v2
 == running, first: (running) on it alone
-blog  [32mrunning[0m v2
+blog  soaking v2
 versions     v2 (running) v1
-== deploys: a zone dropped to UTC, null as nothing, a number as itself
-VERSION  STATUS     PHASE        BY  FINISHED (UTC)
-v3       failed     health_gate      2026-11-14 07:12
-v2       succeeded                   
-v1       succeeded                   5
+== deploys: a zone dropped to UTC, anything but a time as (unreadable)
+VERSION  STATUS     PHASE    FINISHED (UTC)    BY
+v3       failed     soaking  2026-11-14 07:12  
+v2       succeeded           (unreadable)      
+v1       succeeded           (unreadable)      
 == a deploy with no finish: no duration; a cut log tail
-blog v3  [31mfailed[0m in start  2026-11-13 17:39:02 UTC
+blog v3  [31mfailed[0m in starting  2026-11-13 17:39:02 UTC
 log tail (1 lines, the earlier ones cut):
   last line

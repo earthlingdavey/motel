@@ -1,3 +1,3 @@
-VERSION  STATUS     PHASE        BY                                                               FINISHED (UTC)
-v42      succeeded               osc52 \x1b]52;c;cHduZWQ=\x07marks alm\u061c lrm\u200e rlm\u200f  2026-11-14 09:12
-v41      failed     health_gate  osc8 \x1b]8;;https://evil.example/\x1b\click\x1b]8;;\x1b\        \x1b[31m
+VERSION  STATUS     PHASE    FINISHED (UTC)    BY
+v42      succeeded           2026-11-14 09:12  osc52 \x1b]52;c;cHduZWQ=\x07marks alm\u061c lrm\u200e rlm\u200f
+v41      failed     soaking  (unreadable)      osc8 \x1b]8;;https://evil.example/\x1b\click\x1b]8;;\x1b\  v40  succeeded

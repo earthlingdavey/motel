@@ -155,10 +155,13 @@ func (r *runner) status() *cobra.Command {
 			if err := c.Read(ans, &st); err != nil {
 				return err
 			}
+			if st.App != app.Name {
+				return c.NotMotel(ans, "it is the status of another app")
+			}
 			if r.json {
 				return r.emit(ans.Body)
 			}
-			return render.WriteStatus(r.env.Stdout, r.style(), statusView(st))
+			return render.WriteStatus(r.env.Stdout, r.style(), statusView(st, app.Name))
 		},
 	}
 	t.flags(c)
@@ -202,6 +205,9 @@ func (r *runner) deploys() *cobra.Command {
 				if err := c.Read(ans, &d); err != nil {
 					return err
 				}
+				if d.Version != args[1] {
+					return c.NotMotel(ans, "it is the record of another version")
+				}
 				if r.json {
 					return r.emit(ans.Body)
 				}
@@ -210,6 +216,9 @@ func (r *runner) deploys() *cobra.Command {
 			var st wire.Status
 			if err := c.Read(ans, &st); err != nil {
 				return err
+			}
+			if st.App != app.Name {
+				return c.NotMotel(ans, "it is the status of another app")
 			}
 			if r.json {
 				// The one projection: the status's deploys as the box
@@ -254,10 +263,13 @@ func (r *runner) boxStatus() *cobra.Command {
 			if err := c.Read(ans, &b); err != nil {
 				return err
 			}
+			if b.BoxWebhook != c.Box.Host {
+				return c.NotMotel(ans, "it names another host than the one asked")
+			}
 			if r.json {
 				return r.emit(ans.Body)
 			}
-			return render.WriteBox(r.env.Stdout, boxView(b))
+			return render.WriteBox(r.env.Stdout, boxView(b, c.Box.Host))
 		},
 	}
 	t.flags(c)

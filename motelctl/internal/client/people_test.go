@@ -87,7 +87,7 @@ func TestProtocolNote(t *testing.T) {
 						w.Header().Add("Motel-Protocol", v)
 					}
 				}
-				motelJSON(w, 200, `{"app":"blog","phase":"running"}`)
+				motelJSON(w, 200, `{"app":"blog","phase":"idle"}`)
 			})
 			var notes bytes.Buffer
 			b.client.Notes = &notes
@@ -153,7 +153,7 @@ func TestProtocolNoteNotOnA401(t *testing.T) {
 	}
 	b = newBox(t, DeployToken("tok"), func(_ int, w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Motel-Protocol", "7")
-		motelJSON(w, 200, `{"app":"blog","phase":"running"}`)
+		motelJSON(w, 200, `{"app":"blog","phase":"idle"}`)
 	})
 	if _, err := b.client.Get(context.Background(), "/blog", nil); err != nil || b.client.noted {
 		t.Fatalf("with no Notes: %v, noted %v", err, b.client.noted)

@@ -216,12 +216,15 @@ func TestReasonsAreSanitised(t *testing.T) {
 	for name, err := range map[string]error{
 		"certificate":    &url.Error{Op: "Get", URL: "https://deploy.example.com/", Err: &tls.CertificateVerificationError{Err: x509.HostnameError{Certificate: cert, Host: "deploy.example.com"}}},
 		"name not found": &url.Error{Op: "Get", URL: "https://deploy.example.com/", Err: &net.OpError{Op: "dial", Err: &net.DNSError{Err: evil, Name: "deploy.example.com"}}},
-		"unreachable":    &url.Error{Op: "Get", URL: "https://deploy.example.com/", Err: errors.New(evil)},
 	} {
 		f := failure(t, c.unreachable(ctx, err))
 		if strings.ContainsAny(f.Message, "\x1b\x07") || !strings.Contains(f.Message, `evil\x1b]0;pwned\x07`) {
 			t.Errorf("%s: %q", name, f.Message)
 		}
+	}
+	// Past the dial, the transport's words are not printed at all.
+	if f := failure(t, c.unreachable(ctx, &url.Error{Op: "Get", URL: "https://deploy.example.com/", Err: errors.New(evil)})); strings.Contains(f.Message, "evil") {
+		t.Errorf("unreachable: %q", f.Message)
 	}
 	f := failure(t, c.notMotel(&Answer{Code: 200}, evil))
 	if strings.ContainsAny(f.Message, "\x1b\x07") || !strings.Contains(f.Message, `evil\x1b]0;pwned\x07`) {
@@ -256,9 +259,9 @@ func TestReadNeedsTheIdentifyingFields(t *testing.T) {
 	json200 := func(body string) *Answer {
 		return &Answer{Code: 200, Header: http.Header{"Content-Type": {"application/json"}}, Body: []byte(body + "\n")}
 	}
-	status := `{"app":"blog","phase":"running","available_versions":[],"added_later":{"x":1}}`
+	status := `{"app":"blog","phase":"idle","available_versions":[],"added_later":{"x":1}}`
 	record := `{"version":"v1","status":"succeeded","started_at":"2026-11-14T09:12:30Z","finished_at":"2026-11-14T09:13:00Z","artifact_entries":0,"artifact_bytes":0}`
-	box := `{"commit":"3f9c2a1e","box_webhook":"deploy.example.com","sha256":"9b"}`
+	box := `{"commit":"3f9c2a1e00000000000000000000000000000000","box_webhook":"deploy.example.com","sha256":"` + strings.Repeat("9b", 32) + `"}`
 	cases := []struct {
 		name string
 		v    any
