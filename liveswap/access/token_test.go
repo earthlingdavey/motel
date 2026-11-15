@@ -647,8 +647,8 @@ func TestTokenMutation(t *testing.T) {
 			}
 		}
 	}
-	if len(types) != len(tokenKeyTypes) {
-		t.Errorf("changed tokens of %d key types, want all %d", len(types), len(tokenKeyTypes))
+	if len(types) != len(personKeyTypes) {
+		t.Errorf("changed tokens of %d key types, want all %d", len(types), len(personKeyTypes))
 	}
 	t.Logf("%d key types, %d changed tokens refused", len(types), tried)
 }

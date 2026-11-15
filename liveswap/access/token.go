@@ -110,18 +110,6 @@ type VerifiedToken struct {
 // its Marshal, which would panic.
 type KeyLookup func(fingerprint string) (ssh.PublicKey, bool)
 
-// tokenKeyTypes are the key types a person may hold (the owner's
-// decision): ed25519, ecdsa, and the hardware forms of both. No RSA,
-// whatever its size: an RSA signer key signs commits only.
-var tokenKeyTypes = map[string]bool{
-	ssh.KeyAlgoED25519:    true,
-	ssh.KeyAlgoSKED25519:  true,
-	ssh.KeyAlgoECDSA256:   true,
-	ssh.KeyAlgoECDSA384:   true,
-	ssh.KeyAlgoECDSA521:   true,
-	ssh.KeyAlgoSKECDSA256: true,
-}
-
 // tokenSig is the SSHSIG structure after its six-byte magic
 // (OpenSSH's PROTOCOL.sshsig).
 type tokenSig struct {
@@ -217,7 +205,7 @@ func CheckToken(req TokenRequest, identity string, now time.Time, lookup KeyLook
 		Type string
 		Rest []byte `ssh:"rest"`
 	}
-	if err := ssh.Unmarshal(sig.PublicKey, &keyType); err != nil || !tokenKeyTypes[keyType.Type] {
+	if err := ssh.Unmarshal(sig.PublicKey, &keyType); err != nil || !personKeyTypes[keyType.Type] {
 		return refuseToken("key-type")
 	}
 	sum := sha256.Sum256(sig.PublicKey)

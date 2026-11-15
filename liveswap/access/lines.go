@@ -47,16 +47,18 @@ var lineNameRE = regexp.MustCompile(`^[A-Za-z0-9._@+-]+$`)
 // package imports nothing of liveswap's, so it is written again here.
 var lineAppNameRE = regexp.MustCompile(`^[a-z0-9-]{1,63}$`)
 
-// personKeyTypes are the key types a person may hold: no ssh-rsa. A
-// person's token is verified by key type before anything else, and
-// with no RSA there is no size floor to keep and no rsa-sha2 rule.
+// personKeyTypes are the key types a person may hold (the owner's
+// decision): ed25519, ecdsa, and the hardware forms of both. No RSA,
+// whatever its size: an RSA signer key signs commits only, and with no
+// RSA there is no size floor to keep and no rsa-sha2 rule. The one list
+// both the line parser and the token checker hold a key to.
 var personKeyTypes = map[string]bool{
-	"ssh-ed25519":                        true,
-	"sk-ssh-ed25519@openssh.com":         true,
-	"ecdsa-sha2-nistp256":                true,
-	"ecdsa-sha2-nistp384":                true,
-	"ecdsa-sha2-nistp521":                true,
-	"sk-ecdsa-sha2-nistp256@openssh.com": true,
+	ssh.KeyAlgoED25519:    true,
+	ssh.KeyAlgoSKED25519:  true,
+	ssh.KeyAlgoECDSA256:   true,
+	ssh.KeyAlgoECDSA384:   true,
+	ssh.KeyAlgoECDSA521:   true,
+	ssh.KeyAlgoSKECDSA256: true,
 }
 
 // Role is what a grant gives.
