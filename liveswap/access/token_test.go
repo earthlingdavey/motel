@@ -266,7 +266,7 @@ type tokenCase struct {
 }
 
 func verdict(req TokenRequest, identity string, now int64, lookup KeyLookup) (string, VerifiedToken) {
-	v, err := CheckToken(req, identity, time.Unix(now, 0), lookup)
+	v, err := CheckToken(req, identity, time.Unix(now, 0), lookup, everyType)
 	var r *TokenRefusal
 	switch {
 	case err == nil:
@@ -699,7 +699,7 @@ func FuzzCheckToken(f *testing.F) {
 		return claims
 	}
 	for _, h := range headers {
-		v, err := CheckToken(TokenRequest{Authorization: []string{h}, Method: "GET", Host: testIdentity}, testIdentity, time.Unix(testNow, 0), lookup)
+		v, err := CheckToken(TokenRequest{Authorization: []string{h}, Method: "GET", Host: testIdentity}, testIdentity, time.Unix(testNow, 0), lookup, everyType)
 		if err != nil {
 			f.Fatalf("seed %s…: %v", h[:24], err)
 		}
@@ -712,7 +712,7 @@ func FuzzCheckToken(f *testing.F) {
 		}
 	}
 	f.Fuzz(func(t *testing.T, h string) {
-		v, err := CheckToken(TokenRequest{Authorization: []string{h}, Method: "GET", Host: testIdentity}, testIdentity, time.Unix(testNow, 0), lookup)
+		v, err := CheckToken(TokenRequest{Authorization: []string{h}, Method: "GET", Host: testIdentity}, testIdentity, time.Unix(testNow, 0), lookup, everyType)
 		if err != nil {
 			return
 		}
@@ -722,26 +722,41 @@ func FuzzCheckToken(f *testing.F) {
 	})
 }
 
-// TestUnlistedKeyCostsASignatureCheck: a token whose key is not listed
-// is checked against the dummy key of its type before it is refused,
-// for every type a person may hold, and still refused as key-not-listed;
-// a listed key's token never meets a dummy. The dummies are one per
-// type, none of them listed.
+// everyType lists every key type, for the vectors: their verdicts do
+// not depend on which types are listed.
+func everyType(string) bool { return true }
+
+// TestUnlistedKeyCostsASignatureCheck: a token whose key is not listed,
+// of a type some listed key has, is verified against the dummy of that
+// type before it is refused, for every type a person may hold, and is
+// still refused as key-not-listed; the hook sees the verification run,
+// and by which dummy's type. A listed key's token never meets a dummy.
 func TestUnlistedKeyCostsASignatureCheck(t *testing.T) {
 	var seen []string
 	unlistedVerifyHook = func(keyType string) { seen = append(seen, keyType) }
 	t.Cleanup(func() { unlistedVerifyHook = nil })
 	k := testKeys()
 	claims := claimsDoc(testIdentity, testNow-10, testNow+60)
-	for _, key := range []*testKey{k.ed, k.p256, k.p384, k.p521, k.skEd, k.skEc} {
+	check := func(key *testKey, lookup KeyLookup, listed ListedType) string {
 		seen = nil
-		got, _ := verdict(TokenRequest{Authorization: signed(key, claims), Method: "GET", Host: testIdentity}, testIdentity, testNow, lookupOf())
-		if got != "key-not-listed" || len(seen) != 1 || seen[0] != key.pub.Type() {
-			t.Errorf("%s, unlisted: %s, dummy checks %v", key.pub.Type(), got, seen)
+		v, err := CheckToken(TokenRequest{Authorization: signed(key, claims), Method: "GET", Host: testIdentity}, testIdentity, time.Unix(testNow, 0), lookup, listed)
+		var r *TokenRefusal
+		switch {
+		case err == nil && v.Fingerprint != "":
+			return "accept"
+		case errors.As(err, &r):
+			return r.Reason
 		}
-		seen = nil
-		if got, _ := verdict(TokenRequest{Authorization: signed(key, claims), Method: "GET", Host: testIdentity}, testIdentity, testNow, lookupOf(key.pub)); got != "accept" || len(seen) != 0 {
-			t.Errorf("%s, listed: %s, dummy checks %v", key.pub.Type(), got, seen)
+		return err.Error()
+	}
+	for _, key := range []*testKey{k.ed, k.p256, k.p384, k.p521, k.skEd, k.skEc} {
+		typ := key.pub.Type()
+		only := func(t string) bool { return t == typ }
+		if got := check(key, lookupOf(), only); got != "key-not-listed" || len(seen) != 1 || seen[0] != typ {
+			t.Errorf("%s, unlisted, its type listed: %s, dummy verifications %v", typ, got, seen)
+		}
+		if got := check(key, lookupOf(key.pub), only); got != "accept" || len(seen) != 0 {
+			t.Errorf("%s, listed: %s, dummy verifications %v", typ, got, seen)
 		}
 	}
 	if len(unlistedKeys) != len(personKeyTypes) {
@@ -750,6 +765,62 @@ func TestUnlistedKeyCostsASignatureCheck(t *testing.T) {
 	for typ, d := range unlistedKeys {
 		if !personKeyTypes[typ] || d.Type() != typ {
 			t.Errorf("dummy %s is of type %s", typ, d.Type())
+		}
+	}
+}
+
+// TestUnlistedTypeCostsNothing: a token whose key is of a type no listed
+// key has is refused before any verification, whatever it holds: a box
+// whose only listed key is ed25519 verifies an unlisted ed25519 key's
+// token against the ed25519 dummy, and nothing for a P-521 one; a box
+// with no registry, or one listing no key, verifies nothing for any
+// type. So a stranger with no key cannot make the box verify anything.
+func TestUnlistedTypeCostsNothing(t *testing.T) {
+	var seen []string
+	unlistedVerifyHook = func(keyType string) { seen = append(seen, keyType) }
+	t.Cleanup(func() { unlistedVerifyHook = nil })
+	k := testKeys()
+	claims := claimsDoc(testIdentity, testNow-10, testNow+60)
+	listedEd := lookupOf(k.ed.pub)
+	edOnly := func(t string) bool { return t == ssh.KeyAlgoED25519 }
+	other := plainKey(func() crypto.Signer {
+		_, priv, err := ed25519.GenerateKey(rand.Reader)
+		if err != nil {
+			panic(err)
+		}
+		return priv
+	}(), "")
+	for _, c := range []struct {
+		name   string
+		key    *testKey
+		lookup KeyLookup
+		listed ListedType
+		want   []string
+	}{
+		{"an unlisted ed25519 key beside a listed one", other, listedEd, edOnly, []string{ssh.KeyAlgoED25519}},
+		{"a P-521 key where only ed25519 is listed", k.p521, listedEd, edOnly, nil},
+		{"a P-384 key where only ed25519 is listed", k.p384, listedEd, edOnly, nil},
+		{"an sk ed25519 key where only ed25519 is listed", k.skEd, listedEd, edOnly, nil},
+		{"no registry, P-521", k.p521, nil, nil, nil},
+		{"no registry, ed25519", k.ed, nil, nil, nil},
+	} {
+		seen = nil
+		_, err := CheckToken(TokenRequest{Authorization: signed(c.key, claims), Method: "GET", Host: testIdentity}, testIdentity, time.Unix(testNow, 0), c.lookup, c.listed)
+		var r *TokenRefusal
+		if !errors.As(err, &r) || r.Reason != "key-not-listed" {
+			t.Errorf("%s: %v", c.name, err)
+		}
+		if !slices.Equal(seen, c.want) {
+			t.Errorf("%s: dummy verifications %v, want %v", c.name, seen, c.want)
+		}
+	}
+	// A registry listing no key, through its own ListsType.
+	for _, typ := range []*testKey{k.ed, k.p256, k.p384, k.p521, k.skEd, k.skEc} {
+		seen = nil
+		empty := map[string]bool{}
+		_, _ = CheckToken(TokenRequest{Authorization: signed(typ, claims), Method: "GET", Host: testIdentity}, testIdentity, time.Unix(testNow, 0), lookupOf(), func(t string) bool { return empty[t] })
+		if len(seen) != 0 {
+			t.Errorf("%s, nothing listed: dummy verifications %v", typ.pub.Type(), seen)
 		}
 	}
 }

@@ -536,7 +536,7 @@ func TestSignerKeysNoPersonMayUse(t *testing.T) {
 	}{1, smallWire, access.TokenNamespace, nil, "sha512", sig})...)
 	forged := access.TokenScheme + " " + access.TokenEnvelope + base64.RawURLEncoding.EncodeToString([]byte(claims)) + "." + base64.RawURLEncoding.EncodeToString(blob)
 	if _, err := access.CheckToken(access.TokenRequest{Authorization: []string{forged}, Method: "GET", Host: personBox}, personBox, now,
-		func(string) (ssh.PublicKey, bool) { return small, true }); err != nil {
+		func(string) (ssh.PublicKey, bool) { return small, true }, nil); err != nil {
 		t.Fatalf("the forgery does not verify under the small-order key, so this test shows nothing: %v", err)
 	}
 	h, _ := newTestHandler(t)

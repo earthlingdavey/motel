@@ -118,18 +118,29 @@ type VerifiedToken struct {
 // its Marshal, which would panic.
 type KeyLookup func(fingerprint string) (ssh.PublicKey, bool)
 
+// ListedType reports whether some listed key is of a type, the type
+// string a key's wire form begins with. A nil ListedType lists none.
+type ListedType func(keyType string) bool
+
 // unlistedKeys are one key of each type a person may hold, made at
-// init and listed nowhere: a token whose key is not listed is checked
-// against the one of its type, and refused whatever that says.
-// Without it a refusal by lookup costs a map read and one past it a
-// signature check, and the difference tells a stranger holding a
-// published public key whether this box lists it. This narrows that
-// timing difference to what the two checks' own work differs by; it
-// does not make the refusals take constant time.
+// init and listed nowhere. A token whose key is not listed, but is of a
+// type some listed key has, is checked against the dummy of its type
+// and refused whatever that says. Without it a refusal by lookup costs
+// a map read and one past it a signature check, and the difference
+// tells a stranger holding a published public key whether this box
+// lists it. Only for a listed type: a key of a type nobody listed
+// cannot be mistaken for a listed one, so there is nothing to hide, and
+// checking it would let anyone, with no key at all, make the box spend
+// a signature check (a P-521 one is over a millisecond) on every
+// request, on a box with no people too. So a stranger can make the box
+// verify at most what presenting a listed person's public key already
+// buys. This narrows the timing difference to what the two paths'
+// other work differs by; it does not make the refusals take constant
+// time, and the time still tells which key types are listed.
 var unlistedKeys = makeUnlistedKeys()
 
-// unlistedVerifyHook, when set (a test), is told of each check against
-// an unlisted key, by the presented key's type.
+// unlistedVerifyHook, when set (a test), is told of each signature
+// check against a dummy key, by the dummy's type, as it runs.
 var unlistedVerifyHook func(keyType string)
 
 // unlistedVerify spends on a token whose key is not listed the check a
@@ -139,9 +150,16 @@ func unlistedVerify(keyType string, sig *tokenSig, claims []byte) {
 	if k := unlistedKeys[keyType]; k != nil {
 		_ = tokenVerify(sig, k, claims)
 	}
+}
+
+// dummyKey is a dummy key that tells the hook when it verifies.
+type dummyKey struct{ ssh.PublicKey }
+
+func (k dummyKey) Verify(data []byte, sig *ssh.Signature) error {
 	if unlistedVerifyHook != nil {
-		unlistedVerifyHook(keyType)
+		unlistedVerifyHook(k.Type())
 	}
+	return k.PublicKey.Verify(data, sig)
 }
 
 func makeUnlistedKeys() map[string]ssh.PublicKey {
@@ -154,7 +172,7 @@ func makeUnlistedKeys() map[string]ssh.PublicKey {
 		if err != nil {
 			panic(err)
 		}
-		keys[k.Type()] = k
+		keys[k.Type()] = dummyKey{k}
 	}
 	add(ssh.NewPublicKey(edPub))
 	add(ssh.ParsePublicKey(ssh.Marshal(struct {
@@ -209,8 +227,10 @@ func refuseToken(reason string) (VerifiedToken, error) {
 // It returns ErrNoPersonToken when no header carries the scheme, a
 // *TokenRefusal when the token is refused, and otherwise the key that
 // signed and the token's times. Who that key belongs to, and what they
-// may do, is the caller's to decide.
-func CheckToken(req TokenRequest, identity string, now time.Time, lookup KeyLookup) (VerifiedToken, error) {
+// may do, is the caller's to decide. listed says which key types the
+// lookup lists, so a token whose key is not listed costs a signature
+// check only when its type is one of them (unlistedKeys).
+func CheckToken(req TokenRequest, identity string, now time.Time, lookup KeyLookup, listed ListedType) (VerifiedToken, error) {
 	// 1. The scheme. A request with no header in it is not a person's.
 	token, mine := personToken(req.Authorization)
 	if !mine {
@@ -281,7 +301,9 @@ func CheckToken(req TokenRequest, identity string, now time.Time, lookup KeyLook
 	// checked with; the token's copy is never parsed as a key. Byte
 	// equality also means a certificate never stands for a plain key.
 	if !ok || key == nil || !bytes.Equal(key.Marshal(), sig.PublicKey) {
-		unlistedVerify(keyType.Type, &sig, claims)
+		if listed != nil && listed(keyType.Type) {
+			unlistedVerify(keyType.Type, &sig, claims)
+		}
 		return refuseToken("key-not-listed")
 	}
 	// From here a refusal names the listed key it was signed with.

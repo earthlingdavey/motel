@@ -17,6 +17,7 @@ import (
 type Registry struct {
 	identity string
 	keys     map[string]listedKey
+	types    map[string]bool
 	grants   map[string][]Grant
 }
 
@@ -42,7 +43,7 @@ type Source interface {
 // listed key. Lines without a person or a grant line declare no one
 // (Lines.Declared), so a block of signers alone lists no key.
 func NewRegistry(identity string, l Lines) *Registry {
-	r := &Registry{identity: identity, keys: map[string]listedKey{}, grants: map[string][]Grant{}}
+	r := &Registry{identity: identity, keys: map[string]listedKey{}, types: map[string]bool{}, grants: map[string][]Grant{}}
 	if !l.Declared() {
 		return r
 	}
@@ -55,6 +56,7 @@ func NewRegistry(identity string, l Lines) *Registry {
 			continue // parsed when the line was read; never here
 		}
 		r.keys[k.Fingerprint] = listedKey{name: k.Name, pub: pub}
+		r.types[pub.Type()] = true
 	}
 	names := map[string]bool{}
 	for _, k := range r.keys {
@@ -88,6 +90,12 @@ func (r *Registry) Lookup(fingerprint string) (ssh.PublicKey, bool) {
 		return nil, false
 	}
 	return k.pub, true
+}
+
+// ListsType reports whether some listed key is of keyType: CheckToken's
+// ListedType. A nil Registry lists none.
+func (r *Registry) ListsType(keyType string) bool {
+	return r != nil && r.types[keyType]
 }
 
 // Name is the person a listed key belongs to.

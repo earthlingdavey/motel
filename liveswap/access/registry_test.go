@@ -53,7 +53,7 @@ func TestRegistryLooksUpListedKeys(t *testing.T) {
 	reg := access.NewRegistry(box, lines(t, nil, map[string]accesstest.Key{"alice": alice}, []string{"alice", "viewer", "box"}))
 	now := time.Unix(1794657600, 0)
 	check := func(reg *access.Registry, k accesstest.Key) (access.VerifiedToken, error) {
-		return access.CheckToken(access.TokenRequest{Authorization: []string{k.Token(box, now, time.Minute)}, Method: "GET", Host: box}, reg.Identity(), now, reg.Lookup)
+		return access.CheckToken(access.TokenRequest{Authorization: []string{k.Token(box, now, time.Minute)}, Method: "GET", Host: box}, reg.Identity(), now, reg.Lookup, reg.ListsType)
 	}
 	v, err := check(reg, alice)
 	if err != nil {
@@ -96,7 +96,7 @@ func TestRegistryListsPersonKeysOnly(t *testing.T) {
 		t.Errorf("the signer's key names %q", name)
 	}
 	now := time.Unix(1794657600, 0)
-	_, err := access.CheckToken(access.TokenRequest{Authorization: []string{bob.Token("other.example.test", now, time.Minute)}, Method: "GET", Host: box}, reg.Identity(), now, reg.Lookup)
+	_, err := access.CheckToken(access.TokenRequest{Authorization: []string{bob.Token("other.example.test", now, time.Minute)}, Method: "GET", Host: box}, reg.Identity(), now, reg.Lookup, reg.ListsType)
 	var ref *access.TokenRefusal
 	if !errors.As(err, &ref) || ref.Reason != "aud" || ref.Fingerprint != bob.Fingerprint() {
 		t.Errorf("a token for another box: %v (%+v), want aud naming bob's key", err, ref)
@@ -154,5 +154,22 @@ func TestRegistryViews(t *testing.T) {
 	var nilViews *access.Views
 	if nilViews.Covers("shop") || !nilViews.Empty() {
 		t.Error("no views cover something")
+	}
+}
+
+// TestRegistryListsTypes: the registry says which key types it lists,
+// for CheckToken; a nil registry and one listing no key list none.
+func TestRegistryListsTypes(t *testing.T) {
+	alice := accesstest.Ed25519()
+	reg := access.NewRegistry(box, lines(t, nil, map[string]accesstest.Key{"alice": alice}, []string{"alice", "viewer", "box"}))
+	if !reg.ListsType("ssh-ed25519") || reg.ListsType("ecdsa-sha2-nistp521") || reg.ListsType("sk-ssh-ed25519@openssh.com") {
+		t.Error("an ed25519 registry lists the wrong types")
+	}
+	var none *access.Registry
+	empty := access.NewRegistry(box, access.Lines{})
+	for _, typ := range []string{"ssh-ed25519", "ecdsa-sha2-nistp256", "ecdsa-sha2-nistp521"} {
+		if none.ListsType(typ) || empty.ListsType(typ) {
+			t.Errorf("no registry, or an empty one, lists %s", typ)
+		}
 	}
 }

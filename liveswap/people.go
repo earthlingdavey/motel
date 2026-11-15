@@ -61,7 +61,7 @@ func AdmitPerson(w http.ResponseWriter, r *http.Request, g PersonGate, scopeKey,
 		Authorization: r.Header.Values("Authorization"),
 		Method:        r.Method,
 		Host:          r.Host,
-	}, g.Registry.Identity(), now(), g.Registry.Lookup)
+	}, g.Registry.Identity(), now(), g.Registry.Lookup, g.Registry.ListsType)
 	if err != nil {
 		reason := err.Error()
 		var fields []zap.Field
