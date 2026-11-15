@@ -72,7 +72,7 @@ application/json OK
 {"name":"alice","key":"<fingerprint>","roles":[{"role":"viewer","scope":"app:demo"}],"box":"deploy.example.test","version":"","protocol":1,"token_expires_at":"<time>"}
 # GET /_motel/apps as a viewer of demo
 application/json OK
-{"apps":["demo"]}
+{"apps":[{"name":"demo"}]}
 # GET /_motel/apps as a person with no grant
 application/json OK
 {"apps":[]}

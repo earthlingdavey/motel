@@ -229,7 +229,7 @@ Its half on `box_webhook` does the same for that table.
 | 404 | a viewer of the box asking for a name that is no app (`unknown app "<name>"`, as a global deploy source is told); a path under `/_motel/` with no row (`not found`) | `wire.Error` |
 | 429 | a person past their rate | `{"error":"too many requests; retry after <n> s"}`, with `Retry-After` |
 | 200 | `GET /_motel/whoami` | `wire.WhoAmI`: `name`, `key` (its fingerprint), `roles` (the grants that apply from here, no address list shown), `box`, `version`, `protocol`, `token_expires_at` |
-| 200 | `GET /_motel/apps` | `wire.Apps`: the names, sorted, of the apps this config runs that the person may view |
+| 200 | `GET /_motel/apps` | `wire.Apps`: the apps this config runs that the person may view, sorted by name, each an object (`{"name":…}`) so a later release can say more of an app without changing the list's shape |
 
 No answer says "person": a later kind of declared key changes no field.
 

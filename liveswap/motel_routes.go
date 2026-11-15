@@ -102,5 +102,9 @@ func (h *Handler) apps(w http.ResponseWriter, _ *http.Request, p *Person) error 
 		}
 	}
 	slices.Sort(names)
-	return RespondJSON(w, http.StatusOK, wire.Apps{Apps: names}, NewRedactor(nil, names))
+	body := wire.Apps{Apps: make([]wire.AppEntry, 0, len(names))}
+	for _, name := range names {
+		body.Apps = append(body.Apps, wire.AppEntry{Name: name})
+	}
+	return RespondJSON(w, http.StatusOK, body, NewRedactor(nil, names))
 }

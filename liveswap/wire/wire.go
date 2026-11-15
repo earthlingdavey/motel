@@ -314,9 +314,18 @@ type RoleHeld struct {
 	Scope string `json:"scope"`
 }
 
-// Apps is GET /_motel/apps's body: the names of the apps the caller may
-// view, sorted; every app the box runs for a viewer of the box. Always
-// present, [] for none.
+// Apps is GET /_motel/apps's body: the apps the caller may view, sorted
+// by name; every app the box runs for a viewer of the box. Always
+// present, [] for none. Each app is an object and not a bare name, so
+// a later release can say more of each app in the same list without
+// changing what the list is made of, which would break every client
+// that read the earlier shape.
 type Apps struct {
-	Apps []string `json:"apps"`
+	Apps []AppEntry `json:"apps"`
+}
+
+// AppEntry is one app in Apps.
+type AppEntry struct {
+	// Name is the app's name, as in the path of its routes.
+	Name string `json:"name"`
 }

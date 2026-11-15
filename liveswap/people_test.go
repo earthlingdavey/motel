@@ -297,7 +297,7 @@ func TestWhoamiAndApps(t *testing.T) {
 		}
 		w = sendTo(t, h, "GET", "/_motel/apps", tok)
 		var apps wire.Apps
-		if err := json.Unmarshal(w.Body.Bytes(), &apps); err != nil || w.Code != http.StatusOK || !slices.Equal(apps.Apps, c.apps) {
+		if err := json.Unmarshal(w.Body.Bytes(), &apps); err != nil || w.Code != http.StatusOK || !slices.Equal(appNames(apps), c.apps) {
 			t.Errorf("%s apps: %d %s, want %v", c.name, w.Code, w.Body, c.apps)
 		}
 		for _, target := range []string{"/_motel/", "/_motel", "/_motel/whoami/x", "/_motel/demo", "/x/_motel/whoami", "/_motel/whoami?x=1", "/_motel/apps?"} {
@@ -708,4 +708,13 @@ func TestHandlerDummyCheckByListedType(t *testing.T) {
 			t.Errorf("%s: dummy verifications %v, want %v", c.name, seen, c.want)
 		}
 	}
+}
+
+// appNames is the names in an app list's body, in its order.
+func appNames(a wire.Apps) []string {
+	names := make([]string, 0, len(a.Apps))
+	for _, e := range a.Apps {
+		names = append(names, e.Name)
+	}
+	return names
 }
