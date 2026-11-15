@@ -184,6 +184,9 @@ func (r *runner) client(ctx context.Context, t *target, fromApp *client.Box, sco
 		if err != nil {
 			return nil, err
 		}
+		if err := client.TokenFor(box, r.env.Getenv); err != nil {
+			return nil, err
+		}
 		cred = dt
 	} else {
 		key, err := sshkey.Resolve(ctx, sshkey.Lookup{Flag: t.key, Getenv: r.env.Getenv, Home: r.env.Home, Dir: r.env.Dir, Run: r.env.Run})
@@ -204,7 +207,20 @@ func (r *runner) client(ctx context.Context, t *target, fromApp *client.Box, sco
 		Sleep:     r.env.Sleep,
 		UserAgent: "motelctl/" + r.env.Version,
 		Scope:     scope,
+		Roots:     roots(r.env.Getenv),
 	}, nil
+}
+
+// roots names the variables that replace the system's roots for Go's
+// TLS, with their values, when set.
+func roots(getenv func(string) string) []string {
+	var set []string
+	for _, k := range []string{"SSL_CERT_FILE", "SSL_CERT_DIR"} {
+		if v := getenv(k); v != "" {
+			set = append(set, k+"="+v)
+		}
+	}
+	return set
 }
 
 // keyFailure is a key that cannot sign: nothing was sent.

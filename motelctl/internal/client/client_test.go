@@ -105,8 +105,10 @@ func TestGetAnswersAtOnce(t *testing.T) {
 
 // A 401 is sent once more after the wait its credential has, with a
 // fresh token; a second 401 stands.
+// A 401 is sent once more after the wait its credential has; a
+// second 401 stands.
 func TestGetRetriesA401Once(t *testing.T) {
-	person, signer := personCred(t)
+	person, _ := personCred(t)
 	cases := []struct {
 		name string
 		cred Credential
@@ -133,30 +135,74 @@ func TestGetRetriesA401Once(t *testing.T) {
 			}
 		})
 	}
-	if signer.n != 2 {
-		t.Errorf("the person's retry signed %d tokens, want a fresh one: 2", signer.n)
+}
+
+// The retry sends the same person token while it has a minute of life
+// left, so a hardware key is touched once; with less left it signs
+// again.
+func TestPersonRetryReusesTheToken(t *testing.T) {
+	for _, c := range []struct {
+		name      string
+		advance   time.Duration // the clock's step during the wait
+		wantSigns int
+	}{
+		{"a second later", time.Second, 1},
+		{"with 61 s of life left", 209 * time.Second, 1},
+		{"with 59 s of life left", 211 * time.Second, 2},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			person, signer := personCred(t)
+			now := time.Now().Truncate(time.Second)
+			person.Now = func() time.Time { return now }
+			b := newBox(t, person, func(n int, w http.ResponseWriter, _ *http.Request) {
+				if n == 1 {
+					motelJSON(w, 401, flat401)
+					return
+				}
+				motelJSON(w, 200, `{}`)
+			})
+			b.client.Sleep = func(context.Context, time.Duration) error { now = now.Add(c.advance); return nil }
+			if _, err := b.client.Get(context.Background(), "/blog", nil); err != nil {
+				t.Fatal(err)
+			}
+			if signer.n != c.wantSigns || (c.wantSigns == 1) != (b.auths[0] == b.auths[1]) {
+				t.Errorf("%d signatures, the same token twice: %v; want %d", signer.n, b.auths[0] == b.auths[1], c.wantSigns)
+			}
+		})
 	}
 }
 
+// The clock is named only for a person's token, only when the box's
+// Date is outside what the box takes for the token sent (iat = now-30,
+// exp = now+270, 60 s either way), first, and with the other causes
+// kept.
 func TestGetRefused(t *testing.T) {
-	person, _ := personCred(t)
+	others := "person line on the box lists it, your address is outside the address list on your grants, or 127.0.0.1 is not the box's main name. Send the operator the line `motelctl key` prints."
 	cases := []struct {
-		name string
-		cred Credential
-		skew time.Duration
-		want []string
+		name   string
+		person bool
+		skew   time.Duration // the box's Date, from this machine's clock
+		want   []string
+		not    string
 	}{
-		{"person, clock right", person, 0, []string{
-			"did not accept your key SHA256:", "(~/.ssh/id_ed25519.pub). Either no person line on the box lists it, your address is outside the address list on your grants, or 127.0.0.1 is not the box's main name. Your clock is within 1 s of the box's. Send the operator the line `motelctl key` prints."}},
-		{"deploy, clock right", DeployToken("tok"), 0, []string{
-			"refused the token in MOTEL_TOKEN (sent as Bearer). Most often this app's deploy_trust", "Your clock is within 1 s"}},
-		{"box clock behind", person, -2 * time.Minute, []string{"this machine's clock is 120 s ahead of the box's", "only within 60 s of its own clock"}},
-		{"box clock ahead", DeployToken("tok"), 51 * time.Second, []string{"this machine's clock is 51 s behind the box's"}},
+		{"person, clock right", true, 0, []string{"did not accept your key SHA256:", "(~/.ssh/id_ed25519.pub). Either no " + others}, "clock"},
+		{"person, box 89 s behind: still taken", true, -89 * time.Second, []string{"Either no " + others}, "clock"},
+		{"person, box 91 s behind", true, -91 * time.Second, []string{"This machine's clock differs from the box's by 91 s (ahead of it; the box's Date is ", "more than a token made here can bridge", ". Or no " + others}, ""},
+		{"person, box 329 s ahead: still taken", true, 329 * time.Second, []string{"Either no " + others}, "clock"},
+		{"person, box 331 s ahead", true, 331 * time.Second, []string{"differs from the box's by 331 s (behind it;", ". Or no " + others}, ""},
+		{"deploy, clock right", false, 0, []string{"refused the token in MOTEL_TOKEN (sent as Bearer). Most often this app's deploy_trust"}, "clock"},
+		{"deploy, box 10 min behind: the clock plays no part", false, -10 * time.Minute, []string{"refused the token in MOTEL_TOKEN"}, "clock"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			now := time.Now().Truncate(time.Second)
-			b := newBox(t, c.cred, func(_ int, w http.ResponseWriter, _ *http.Request) {
+			var cred Credential = DeployToken("tok")
+			if c.person {
+				p, _ := personCred(t)
+				p.Now = func() time.Time { return now }
+				cred = p
+			}
+			b := newBox(t, cred, func(_ int, w http.ResponseWriter, _ *http.Request) {
 				// Go's server keeps a Date the handler set.
 				w.Header().Set("Date", now.Add(c.skew).UTC().Format(http.TimeFormat))
 				motelJSON(w, 401, flat401)
@@ -171,6 +217,9 @@ func TestGetRefused(t *testing.T) {
 				if !strings.Contains(f.Message, w) {
 					t.Errorf("message\n%s\nlacks %q", f.Message, w)
 				}
+			}
+			if c.not != "" && strings.Contains(f.Message, c.not) {
+				t.Errorf("message\n%s\nnames the %s", f.Message, c.not)
 			}
 		})
 	}
@@ -187,8 +236,8 @@ func TestGetWaitsOutA429Once(t *testing.T) {
 		{"waits, then answered", []string{"2", ""}, []time.Duration{2 * time.Second}, ExitOK, ""},
 		{"zero is a second", []string{"0", ""}, []time.Duration{time.Second}, ExitOK, ""},
 		{"stands after the wait", []string{"2", "7"}, []time.Duration{2 * time.Second}, ExitUnknown, "127.0.0.1 asked you to slow down; try again in 7 s."},
-		{"too long to wait", []string{"120"}, nil, ExitUnknown, "try again later."},
-		{"a wait that would overflow", []string{"18446744083"}, nil, ExitUnknown, "try again later."},
+		{"too long to wait", []string{"120"}, nil, ExitUnknown, "127.0.0.1 asked you to slow down: the box asks you to wait 120 s, longer than motelctl waits; try again then."},
+		{"a wait that would overflow", []string{"18446744083"}, nil, ExitUnknown, "the box asks you to wait 18446744083 s, longer than motelctl waits; try again then."},
 		{"a negative wait", []string{"-5"}, nil, ExitUnknown, "try again later."},
 		{"no Retry-After", []string{"none"}, nil, ExitUnknown, "try again later."},
 	}

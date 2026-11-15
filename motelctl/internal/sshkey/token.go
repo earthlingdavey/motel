@@ -37,6 +37,9 @@ const (
 const (
 	backdate = 30 * time.Second
 	life     = 300 * time.Second
+	// BoxSkew is how far a box lets its clock and a token's times
+	// disagree, either way (liveswap/access's tokenSkew).
+	BoxSkew = 60 * time.Second
 )
 
 // Signer makes the SSHSIG signature of a message, armored as
@@ -102,8 +105,8 @@ func Token(ctx context.Context, s Signer, key Key, aud string, now time.Time) (s
 	if key.Public.RSA() {
 		return "", &RSAError{Shown: key.Shown}
 	}
-	iat := now.Add(-backdate).Unix()
-	claims, err := encodeClaims(aud, iat, iat+int64(life/time.Second))
+	iat, exp := Times(now)
+	claims, err := encodeClaims(aud, iat.Unix(), exp.Unix())
 	if err != nil {
 		return "", err
 	}
@@ -116,6 +119,12 @@ func Token(ctx context.Context, s Signer, key Key, aud string, now time.Time) (s
 		return "", fmt.Errorf("ssh-keygen's signature: %w", err)
 	}
 	return Scheme + " " + Envelope + base64.RawURLEncoding.EncodeToString(claims) + "." + base64.RawURLEncoding.EncodeToString(sig), nil
+}
+
+// Times are the iat and exp of a token made at now, to the second.
+func Times(now time.Time) (iat, exp time.Time) {
+	iat = time.Unix(now.Add(-backdate).Unix(), 0)
+	return iat, iat.Add(life)
 }
 
 // encodeClaims is the claims document, encoded as the box re-encodes

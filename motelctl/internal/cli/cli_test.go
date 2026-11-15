@@ -505,3 +505,27 @@ func TestNoPlainHTTP(t *testing.T) {
 		t.Fatalf("an http URL with MOTEL_ALLOW_HTTP=1: exit %d", r.code)
 	}
 }
+
+// A command that resolves another box than MOTEL_URL's sends
+// MOTEL_TOKEN nowhere.
+func TestDeployTokenStaysWithItsBox(t *testing.T) {
+	fb := newFakeBox(t)
+	env := map[string]string{"MOTEL_TOKEN": "a.deploy.token", "MOTEL_URL": "https://deploy.example.com/blog"}
+	for _, args := range [][]string{{"status", appURL(fb, "blog")}, {"status", "blog", "--box", "other.example.com"}} {
+		r := run(t, fb, env, args...)
+		if r.code != 2 || len(fb.auth) != 0 || !strings.Contains(r.stderr, "the token in MOTEL_TOKEN belongs with MOTEL_URL's box, deploy.example.com") {
+			t.Fatalf("%v: exit %d, %d requests, stderr %q", args, r.code, len(fb.auth), r.stderr)
+		}
+	}
+	env["MOTEL_URL"] = fb.srv.URL + "/blog"
+	if r := run(t, fb, env, "status", appURL(fb, "blog")); r.code != 0 {
+		t.Fatalf("MOTEL_URL's own box: exit %d %s", r.code, r.stderr)
+	}
+}
+
+func TestRoots(t *testing.T) {
+	got := roots(func(k string) string { return map[string]string{"SSL_CERT_DIR": "/etc/x"}[k] })
+	if len(got) != 1 || got[0] != "SSL_CERT_DIR=/etc/x" {
+		t.Fatalf("roots = %q", got)
+	}
+}

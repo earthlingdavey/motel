@@ -23,34 +23,57 @@ import (
 	"golang.org/x/crypto/ssh"
 
 	"github.com/smallhoursorg/motel/liveswap/access"
+	"github.com/smallhoursorg/motel/liveswap/wire"
 	"github.com/smallhoursorg/motel/motelctl/internal/sshkey"
 )
 
+// What a 429's Retry-After makes the client do: wait it out once when
+// it is at most 60 s, or say what the box asked, never overflowing a
+// huge number into a short wait.
 func TestRetryAfterBounds(t *testing.T) {
 	now := time.Date(2026, 11, 15, 9, 0, 0, 0, time.UTC)
+	date := func(d time.Duration) string { return now.Add(d).Format(http.TimeFormat) }
 	cases := []struct {
-		v    string
-		want time.Duration
-		ok   bool
+		v     string
+		slept time.Duration // 0: no wait
+		msg   string        // the end of the message when there is no wait
 	}{
-		{"0", time.Second, true},
-		{"7", 7 * time.Second, true},
-		{"60", 60 * time.Second, true},
-		{"61", 0, false},
-		{"18446744083", 0, false}, // overflowed to a 9 s wait before the cap came first
-		{"9223372036854775807", 0, false},
-		{"-1", 0, false},
-		{"", 0, false},
-		{"soon", 0, false},
-		{"1.5", 0, false},
-		{now.Add(30 * time.Second).Format(http.TimeFormat), 30 * time.Second, true},
-		{now.Add(-time.Hour).Format(http.TimeFormat), time.Second, true},
-		{now.Add(time.Hour).Format(http.TimeFormat), 0, false},
+		{"0", time.Second, ""},
+		{"7", 7 * time.Second, ""},
+		{"60", 60 * time.Second, ""},
+		{"61", 0, "the box asks you to wait 61 s, longer than motelctl waits; try again then."},
+		{"18446744083", 0, "the box asks you to wait 18446744083 s, longer than motelctl waits; try again then."}, // once overflowed into a 9 s wait
+		{"99999999999999999999", 0, "try again later."},                                                           // past int64: it does not read
+		{"9223372036854775807", 0, "the box asks you to wait 9223372036854775807 s, longer than motelctl waits; try again then."},
+		{"-1", 0, "try again later."},
+		{"", 0, "try again later."},
+		{"soon", 0, "try again later."},
+		{"1.5", 0, "try again later."},
+		{date(30 * time.Second), 30 * time.Second, ""},
+		{date(60 * time.Second), 60 * time.Second, ""},
+		{date(61 * time.Second), 0, "the box asks you to wait 61 s, longer than motelctl waits; try again then."},
+		{date(-time.Hour), time.Second, ""},
+		{date(time.Hour), 0, "the box asks you to wait 3600 s, longer than motelctl waits; try again then."},
 	}
 	for _, c := range cases {
-		d, ok := retryAfter(http.Header{"Retry-After": {c.v}}, now)
-		if d != c.want || ok != c.ok {
-			t.Errorf("Retry-After %q = %s, %v; want %s, %v", c.v, d, ok, c.want, c.ok)
+		b := newBox(t, DeployToken("tok"), func(n int, w http.ResponseWriter, _ *http.Request) {
+			if n > 1 {
+				motelJSON(w, 200, `{}`)
+				return
+			}
+			w.Header().Set("Retry-After", c.v)
+			motelJSON(w, 429, `{"error":"slow down"}`)
+		})
+		b.client.Now = func() time.Time { return now }
+		_, err := b.client.Get(context.Background(), "/blog", nil)
+		if c.slept != 0 {
+			if err != nil || len(b.slept) != 1 || b.slept[0] != c.slept {
+				t.Errorf("Retry-After %q: err %v, slept %v; want one wait of %s", c.v, err, b.slept, c.slept)
+			}
+			continue
+		}
+		if f := failure(t, err); len(b.slept) != 0 || f.Exit != ExitUnknown || !strings.HasSuffix(f.Message, c.msg) {
+			t.Errorf("Retry-After %q: slept %v, exit %d %q; want no wait and %q", c.v, b.slept, f.Exit, f.Message, c.msg)
 		}
 	}
 }
@@ -221,6 +244,86 @@ func TestBodyCap(t *testing.T) {
 		}
 		if f := failure(t, err); f.Exit != ExitUnknown || !strings.Contains(f.Message, "answered with more than 4194304 bytes") {
 			t.Errorf("exit %d %q", f.Exit, f.Message)
+		}
+	}
+}
+
+// A 200 is the answer asked for only with the fields that make it one;
+// an unknown extra field is taken, as a newer box sends them.
+func TestReadNeedsTheIdentifyingFields(t *testing.T) {
+	c := &Client{Box: Box{Host: "127.0.0.1"}}
+	json200 := func(body string) *Answer {
+		return &Answer{Code: 200, Header: http.Header{"Content-Type": {"application/json"}}, Body: []byte(body + "\n")}
+	}
+	status := `{"app":"blog","phase":"running","available_versions":[],"added_later":{"x":1}}`
+	record := `{"version":"v1","status":"succeeded","started_at":"2026-11-14T09:12:30Z","finished_at":"2026-11-14T09:13:00Z","artifact_entries":0,"artifact_bytes":0}`
+	box := `{"commit":"3f9c2a1e","box_webhook":"deploy.example.com","sha256":"9b"}`
+	cases := []struct {
+		name string
+		v    any
+		body string
+		ok   bool
+	}{
+		{"a status", &wire.Status{}, status, true},
+		{"a deploy record", &wire.DeployResult{}, record, true},
+		{"a box status", &wire.BoxStatus{}, box, true},
+		{"an empty object as a status", &wire.Status{}, `{}`, false},
+		{"another object as a deploy record", &wire.DeployResult{}, `{"ok":true}`, false},
+		{"an app's status as the box's", &wire.BoxStatus{}, status, false},
+		{"the box's status as an app's", &wire.Status{}, box, false},
+		{"an empty phase", &wire.Status{}, `{"app":"blog","phase":""}`, false},
+	}
+	for _, tc := range cases {
+		err := c.Read(json200(tc.body), tc.v)
+		if tc.ok {
+			if err != nil {
+				t.Errorf("%s: %v", tc.name, err)
+			}
+			continue
+		}
+		if f := failure(t, err); f.Exit != ExitUnknown || !strings.Contains(f.Message, "not motel's answer: it has no ") {
+			t.Errorf("%s: exit %d %q", tc.name, f.Exit, f.Message)
+		}
+	}
+	// motel's answer by its fields, with a time the response filter
+	// replaced: said as that, not as someone else's answer.
+	replaced := strings.Replace(record, `"2026-11-14T09:13:00Z"`, `"[redacted:DB_PASSWORD]"`, 1)
+	f := failure(t, c.Read(json200(replaced), &wire.DeployResult{}))
+	if f.Exit != ExitUnknown || strings.Contains(f.Message, "not motel's") || !strings.Contains(f.Message, "127.0.0.1 answered, but a value in it could not be read (parsing time") {
+		t.Errorf("a replaced time: exit %d %q", f.Exit, f.Message)
+	}
+}
+
+// A certificate that does not verify while SSL_CERT_FILE or
+// SSL_CERT_DIR is set names the variable: its roots replace the
+// system's.
+func TestCertificateFailureNamesTheRoots(t *testing.T) {
+	err := &url.Error{Op: "Get", URL: "https://deploy.example.com/", Err: &tls.CertificateVerificationError{Err: x509.UnknownAuthorityError{}}}
+	c := &Client{Box: Box{Host: "deploy.example.com"}, Roots: []string{"SSL_CERT_FILE=/tmp/ca\x1b[2J.pem"}}
+	f := failure(t, c.unreachable(context.Background(), err))
+	if f.Exit != ExitCertificate || strings.ContainsRune(f.Message, '\x1b') ||
+		!strings.Contains(f.Message, `SSL_CERT_FILE=/tmp/ca\x1b[2J.pem is set, and replaces the system's roots with the ones it names: that is the likelier cause.`) {
+		t.Fatalf("exit %d %q", f.Exit, f.Message)
+	}
+	c.Roots = nil
+	if f := failure(t, c.unreachable(context.Background(), err)); strings.Contains(f.Message, "SSL_CERT") {
+		t.Fatalf("no variable set, and one named: %q", f.Message)
+	}
+}
+
+// MOTEL_TOKEN goes only to MOTEL_URL's box when MOTEL_URL is set.
+func TestTokenFor(t *testing.T) {
+	env := func(u string) func(string) string { return func(string) string { return u } }
+	if err := TokenFor(Box{Host: "a.example.com"}, env("")); err != nil {
+		t.Errorf("no MOTEL_URL: %v", err)
+	}
+	if err := TokenFor(Box{Host: "a.example.com"}, env("https://A.example.com:443/blog")); err != nil {
+		t.Errorf("the same box: %v", err)
+	}
+	for _, b := range []Box{{Host: "b.example.com"}, {Host: "a.example.com", Port: "8443"}} {
+		f := failure(t, TokenFor(b, env("https://a.example.com/blog")))
+		if f.Exit != ExitUsage || !strings.HasPrefix(f.Message, "the token in MOTEL_TOKEN belongs with MOTEL_URL's box, a.example.com, and this command asks "+b.Addr()) {
+			t.Errorf("%s: exit %d %q", b.Addr(), f.Exit, f.Message)
 		}
 	}
 }

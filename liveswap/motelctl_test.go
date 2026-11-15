@@ -185,8 +185,10 @@ func TestMotelctlFaults(t *testing.T) {
 	}{
 		{"a refused token", []string{"MOTEL_TOKEN=not-a-jwt", "SSL_CERT_FILE=" + box.cert}, box.url, 4,
 			"refused the token in MOTEL_TOKEN (sent as Bearer). Most often this app's deploy_trust does not accept"},
-		{"a refused token, and the clock off", []string{"MOTEL_TOKEN=not-a-jwt", "SSL_CERT_FILE=" + staleDate.cert}, staleDate.url, 4,
-			"this machine's clock is 30"}, // 300 s, or 301 by the Date header's whole seconds
+		// The laptop's clock plays no part in a deploy token, so a
+		// Date 5 minutes off is not named.
+		{"a refused token, and the box's Date off", []string{"MOTEL_TOKEN=not-a-jwt", "SSL_CERT_FILE=" + staleDate.cert}, staleDate.url, 4,
+			"refused the token in MOTEL_TOKEN (sent as Bearer)"},
 		{"a self-signed certificate", []string{"MOTEL_TOKEN=" + appToken(t)}, box.url, 8,
 			"did not verify (x509: certificate signed by unknown authority). motelctl never sends a token over an unverified connection."},
 		{"nothing answering", []string{"MOTEL_TOKEN=" + appToken(t)}, closed, 3,
@@ -198,7 +200,7 @@ func TestMotelctlFaults(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel() // the refusals each wait out deploy.sh's 3 s retry
 			r := ctl(t, bin, c.env, "status", c.app+"/demo", "--json")
-			if r.code != c.code || !strings.Contains(r.stderr, c.want) {
+			if r.code != c.code || !strings.Contains(r.stderr, c.want) || strings.Contains(r.stderr, "clock") {
 				t.Fatalf("exit %d, stderr %q; want %d and %q", r.code, r.stderr, c.code, c.want)
 			}
 			if !strings.HasPrefix(r.stdout, `{"error":"`) {

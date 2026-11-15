@@ -21,6 +21,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -63,35 +64,72 @@ func (t DeployToken) Authorization(context.Context) (string, error) {
 	return "Bearer " + string(t), nil
 }
 
-// PersonToken is a token the person's own ssh key signs, made fresh
-// for each request.
+// PersonToken is a token the person's own ssh key signs.
 type PersonToken struct {
 	Key    sshkey.Key
 	Signer sshkey.Signer
 	Box    Box
 	Now    func() time.Time
+
+	// The token last signed, and its times: reused while it has
+	// minLeft of life, so a retry asks a hardware key for no second
+	// touch.
+	header   string
+	iat, exp time.Time
 }
 
-// Authorization signs a new token for the box.
+// minLeft is the life a token must have left to be sent again.
+const minLeft = 60 * time.Second
+
+// Authorization is the token last signed while it has a minute of
+// life left, and a new one otherwise.
 func (p *PersonToken) Authorization(ctx context.Context) (string, error) {
-	return sshkey.Token(ctx, p.Signer, p.Key, p.Box.Host, p.Now())
+	now := p.Now()
+	if p.header != "" && p.exp.Sub(now) >= minLeft {
+		return p.header, nil
+	}
+	h, err := sshkey.Token(ctx, p.Signer, p.Key, p.Box.Host, now)
+	if err != nil {
+		return "", err
+	}
+	p.header = h
+	p.iat, p.exp = sshkey.Times(now)
+	return h, nil
+}
+
+// TokenFor refuses to send MOTEL_TOKEN to a box other than MOTEL_URL's
+// when both are set: the token was made for the box MOTEL_URL names,
+// and another box, or whoever answers for it, would be handed it.
+// Without MOTEL_URL nothing says which box the token is for.
+func TokenFor(box Box, getenv func(string) string) error {
+	v := getenv("MOTEL_URL")
+	if v == "" {
+		return nil
+	}
+	urlBox, _, err := parseHTTPS(v, "MOTEL_URL")
+	if err != nil {
+		return err
+	}
+	if urlBox != box {
+		return &Failure{Exit: ExitUsage, Message: fmt.Sprintf(
+			"the token in MOTEL_TOKEN belongs with MOTEL_URL's box, %s, and this command asks %s: name %s, or unset MOTEL_URL if the token is for %s, or unset MOTEL_TOKEN to sign with your own key",
+			urlBox.Addr(), box.Addr(), urlBox.Addr(), box.Addr())}
+	}
+	return nil
 }
 
 // The waits before the one retry of a 401. For a person's token one
 // second covers the 55 to 61 ms after every start in which motel
-// refuses a valid token (#473). For a deploy token it is deploy.sh's
-// three: a box refuses the first token under an issuer's new signing
-// key while it fetches the key.
+// refuses a valid token (#473), and the token sent is still good, so
+// it is sent again. For a deploy token it is deploy.sh's three: a box
+// refuses the first token under an issuer's new signing key while it
+// fetches the key.
 const (
 	retryPerson = time.Second
 	retryDeploy = 3 * time.Second
 	// maxRetryAfter is the longest a 429's Retry-After is waited out;
-	// past it the command says when to try again instead.
+	// past it the command says how long the box asked to wait instead.
 	maxRetryAfter = 60 * time.Second
-	// clockLimit is how far apart the box's Date and this machine's
-	// clock may be before a 401 names the clock as its cause: a box
-	// takes a token within 60 s of its own clock.
-	clockLimit = 50 * time.Second
 	// maxBody bounds what is read of an answer. The largest body a
 	// read gets is a deploy record with its 8 KiB log tail.
 	maxBody = 4 << 20
@@ -114,6 +152,11 @@ type Client struct {
 	// Scope says whose deploy_trust a refused deploy token is judged
 	// by, for the 401's sentence: "this app's" or "the box block's".
 	Scope string
+	// Roots names SSL_CERT_FILE or SSL_CERT_DIR, with its value, when
+	// the environment sets one: the roots it names replace the
+	// system's, and are then the likelier cause of a certificate that
+	// does not verify.
+	Roots []string
 }
 
 // Answer is a box's answer.
@@ -140,7 +183,8 @@ func NewHTTP(rt http.RoundTripper) *http.Client {
 }
 
 // Get asks the box for path and query, with the rules every command
-// shares: one retry of a 401 after a wait, with a fresh token; one
+// shares: one retry of a 401 after a wait, with the same token while
+// it has a minute of life left (a fresh one otherwise); one
 // wait for a 429's Retry-After. A 401 or 429 that stands, and an
 // answer that never came, are a *Failure; every other answer is
 // returned for the command to read.
@@ -162,13 +206,13 @@ func (c *Client) Get(ctx context.Context, path string, query url.Values) (*Answe
 			return nil, c.refused(ans)
 		case ans.Code == http.StatusTooManyRequests:
 			// A wait past the cap, or none that reads, is not waited
-			// out: the command says to try later.
-			d, ok := retryAfter(ans.Header, c.Now())
-			if waited || !ok {
-				return nil, c.slowDown(d, ok)
+			// out: the command says what the box asked instead.
+			secs, ok := retryAfter(ans.Header, c.Now())
+			if waited || !ok || secs > int64(maxRetryAfter/time.Second) {
+				return nil, c.slowDown(secs, ok, waited)
 			}
 			waited = true
-			if err := c.Sleep(ctx, d); err != nil {
+			if err := c.Sleep(ctx, max(time.Duration(secs)*time.Second, time.Second)); err != nil {
 				return nil, err
 			}
 			continue
@@ -243,6 +287,11 @@ func (c *Client) unreachable(ctx context.Context, err error) error {
 		if errors.As(err, &verify) {
 			why = verify.Err.Error()
 		}
+		if len(c.Roots) > 0 {
+			return &Failure{Exit: ExitCertificate, Message: fmt.Sprintf(
+				"The certificate of %s did not verify (%s). motelctl never sends a token over an unverified connection. %s is set, and replaces the system's roots with the ones it names: that is the likelier cause. Else, as root on the box: journalctl -u motel -g certificate",
+				box, termtext.From(why), termtext.From(strings.Join(c.Roots, " and ")))}
+		}
 		return &Failure{Exit: ExitCertificate, Message: fmt.Sprintf(
 			"The certificate of %s did not verify (%s). motelctl never sends a token over an unverified connection. As root on the box: journalctl -u motel -g certificate",
 			box, termtext.From(why))}
@@ -270,74 +319,71 @@ func (c *Client) unreachable(ctx context.Context, err error) error {
 
 // refused is a 401 that stood after the retry. Its body says nothing
 // of why: a box answers every refusal with the same sentence, so the
-// causes are named from what this side knows, and the clock, which the
-// answer's Date shows, first when it is off.
+// causes are named from what this side knows. A deploy token's do not
+// involve this machine's clock. A person's token does: when the
+// answer's Date is outside what the box takes for the token just sent
+// (its iat and exp, with the box's allowance either way), the clock is
+// named first, and the other causes stay, since a Date can be wrong or
+// a gateway's.
 func (c *Client) refused(ans *Answer) error {
 	box := c.Box.Host
-	clock := ""
-	if date, err := http.ParseTime(ans.Header.Get("Date")); err == nil {
-		skew := c.Now().Sub(date)
-		secs := int(math.Round(math.Abs(skew.Seconds())))
-		if math.Abs(skew.Seconds()) > clockLimit.Seconds() {
-			way := "behind"
-			if skew > 0 {
-				way = "ahead of"
-			}
-			return &Failure{Exit: ExitRefused, Message: fmt.Sprintf(
-				"%s did not accept the token: this machine's clock is %d s %s the box's (its Date is %s), and a box takes a token only within 60 s of its own clock. Set the clock that is wrong, and try again.",
-				box, secs, way, date.UTC().Format(time.RFC1123))}
-		}
-		clock = fmt.Sprintf(" Your clock is within %d s of the box's.", max(secs, 1))
-	}
-	switch cred := c.Cred.(type) {
-	case *PersonToken:
-		return &Failure{Exit: ExitRefused, Message: fmt.Sprintf(
-			"%s did not accept your key %s (%s). Either no person line on the box lists it, your address is outside the address list on your grants, or %s is not the box's main name.%s Send the operator the line `motelctl key` prints.",
-			box, cred.Key.Public.Fingerprint(), cred.Key.Shown, box, clock)}
-	default:
+	cred, ok := c.Cred.(*PersonToken)
+	if !ok {
 		scope := c.Scope
 		if scope == "" {
 			scope = "this app's"
 		}
 		return &Failure{Exit: ExitRefused, Message: fmt.Sprintf(
-			"%s refused the token in MOTEL_TOKEN (sent as Bearer). Most often %s deploy_trust does not accept the key it was minted with, or the audience, subject or claim it pins. Or the app is not one the box knows: an unknown app answers the same 401. Or the box could not consult the token's issuer.%s The box's journal (journalctl -u motel, 'webhook auth failed') names the check that refused it.",
-			box, scope, clock)}
+			"%s refused the token in MOTEL_TOKEN (sent as Bearer). Most often %s deploy_trust does not accept the key it was minted with, or the audience, subject or claim it pins. Or the app is not one the box knows: an unknown app answers the same 401. Or the box could not consult the token's issuer. The box's journal (journalctl -u motel, 'webhook auth failed') names the check that refused it.",
+			box, scope)}
 	}
-}
-
-// slowDown is a 429 that stood, or one that asked for a longer wait
-// than motelctl makes.
-func (c *Client) slowDown(d time.Duration, ok bool) error {
-	when := "later"
-	if ok {
-		when = fmt.Sprintf("in %d s", int(math.Ceil(d.Seconds())))
-	}
-	return &Failure{Exit: ExitUnknown, Message: fmt.Sprintf("%s asked you to slow down; try again %s.", c.Box.Host, when)}
-}
-
-// retryAfter reads Retry-After, in seconds or as a date, and says
-// whether it is a wait motelctl makes: at least one second, at most
-// maxRetryAfter. The number is compared with the cap before it becomes
-// a duration, so no value can overflow into a short wait; a negative
-// one, one past the cap, or one that does not read is no wait.
-func retryAfter(h http.Header, now time.Time) (time.Duration, bool) {
-	v := h.Get("Retry-After")
-	capSecs := int64(maxRetryAfter / time.Second)
-	if n, err := strconv.ParseInt(v, 10, 64); err == nil {
-		if n < 0 || n > capSecs {
-			return 0, false
+	clock := ""
+	if date, err := http.ParseTime(ans.Header.Get("Date")); err == nil && !cred.exp.IsZero() &&
+		(date.Before(cred.iat.Add(-sshkey.BoxSkew)) || date.After(cred.exp.Add(sshkey.BoxSkew))) {
+		skew := c.Now().Sub(date)
+		way := "behind it"
+		if skew > 0 {
+			way = "ahead of it"
 		}
-		return max(time.Duration(n)*time.Second, time.Second), true
+		clock = fmt.Sprintf(" This machine's clock differs from the box's by %d s (%s; the box's Date is %s), more than a token made here can bridge: if the box's Date is right, set this machine's clock.",
+			int64(math.Round(math.Abs(skew.Seconds()))), way, date.UTC().Format(time.RFC1123))
+	}
+	lead := " Either no"
+	if clock != "" {
+		lead = clock + " Or no"
+	}
+	return &Failure{Exit: ExitRefused, Message: fmt.Sprintf(
+		"%s did not accept your key %s (%s).%s person line on the box lists it, your address is outside the address list on your grants, or %s is not the box's main name. Send the operator the line `motelctl key` prints.",
+		box, cred.Key.Public.Fingerprint(), cred.Key.Shown, lead, box)}
+}
+
+// slowDown is a 429 that stood after the wait, or one that asked for a
+// longer wait than motelctl makes, or one whose wait did not read.
+func (c *Client) slowDown(secs int64, ok, waited bool) error {
+	switch {
+	case !ok:
+		return &Failure{Exit: ExitUnknown, Message: fmt.Sprintf("%s asked you to slow down; try again later.", c.Box.Host)}
+	case waited:
+		return &Failure{Exit: ExitUnknown, Message: fmt.Sprintf("%s asked you to slow down; try again in %d s.", c.Box.Host, max(secs, 1))}
+	}
+	return &Failure{Exit: ExitUnknown, Message: fmt.Sprintf(
+		"%s asked you to slow down: the box asks you to wait %d s, longer than motelctl waits; try again then.", c.Box.Host, secs)}
+}
+
+// retryAfter reads Retry-After, in seconds or as a date: the seconds
+// the box asks for, never negative, kept as a number so that no value
+// can overflow into a short wait (the caller compares it with the cap
+// before it becomes a duration). ok is false when it does not read.
+func retryAfter(h http.Header, now time.Time) (int64, bool) {
+	v := h.Get("Retry-After")
+	if n, err := strconv.ParseInt(v, 10, 64); err == nil {
+		return n, n >= 0
 	}
 	t, err := http.ParseTime(v)
 	if err != nil {
 		return 0, false
 	}
-	d := t.Sub(now).Round(time.Second)
-	if d > maxRetryAfter {
-		return 0, false
-	}
-	return max(d, time.Second), true
+	return max(t.Unix()-now.Unix(), 0), true
 }
 
 // Read decodes a 200's body into v and returns nil, or says why the
@@ -346,8 +392,21 @@ func retryAfter(h http.Header, now time.Time) (time.Duration, bool) {
 // answer that is not motel's.
 func (c *Client) Read(ans *Answer, v any) error {
 	if ans.Code == http.StatusOK {
-		if err := decodeObject(ans, v); err != nil {
+		keys := identity(v)
+		err := decodeObject(ans, v)
+		var syntax *json.SyntaxError
+		switch {
+		case err != nil && !errors.Is(err, errNotJSON) && !errors.Is(err, errNotObject) && !errors.As(err, &syntax) && hasStrings(ans.Body, keys):
+			// motel's answer, by its fields, with a value that did not
+			// decode: the box's response filter replaces a value equal
+			// to a secret, a timestamp's included, with its marker.
+			return &Failure{Exit: ExitUnknown, Message: fmt.Sprintf(
+				"%s answered, but a value in it could not be read (%s): the box's response filter may have replaced it. The box's journal says which key it replaced.",
+				c.Box.Addr(), termtext.From(err.Error()))}
+		case err != nil:
 			return c.notMotel(ans, err.Error())
+		case !hasStrings(ans.Body, keys):
+			return c.notMotel(ans, "it has no "+strings.Join(keys, " and "))
 		}
 		return nil
 	}
@@ -380,16 +439,55 @@ func (c *Client) notMotel(ans *Answer, why string) error {
 		"Something at %s answered (HTTP %d, not motel's answer%s). Is this the box's deploy host?", c.Box.Addr(), ans.Code, why)}
 }
 
+// identity is the fields that make a body the answer v is for: the
+// ones the handlers always send, as strings that are never empty. Any
+// other field may be missing, and an unknown one is taken: a newer box
+// adds fields.
+func identity(v any) []string {
+	switch v.(type) {
+	case *wire.Status:
+		return []string{"app", "phase"}
+	case *wire.DeployResult:
+		return []string{"version", "status"}
+	case *wire.BoxStatus:
+		return []string{"box_webhook", "commit"}
+	}
+	return nil
+}
+
+// hasStrings says whether body is an object with each key a string
+// that is not empty.
+func hasStrings(body []byte, keys []string) bool {
+	var m map[string]json.RawMessage
+	if json.Unmarshal(body, &m) != nil {
+		return false
+	}
+	for _, k := range keys {
+		var s string
+		if json.Unmarshal(m[k], &s) != nil || s == "" {
+			return false
+		}
+	}
+	return true
+}
+
+// errNotJSON and errNotObject are a body that is not motel's shape at
+// all.
+var (
+	errNotJSON   = errors.New("not JSON")
+	errNotObject = errors.New("not a JSON object")
+)
+
 // decodeObject decodes a JSON body: motel answers in application/json
 // and with one object.
 func decodeObject(ans *Answer, v any) error {
 	mt, _, err := mime.ParseMediaType(ans.Header.Get("Content-Type"))
 	if err != nil || mt != "application/json" {
-		return errors.New("not JSON")
+		return errNotJSON
 	}
 	body := bytes.TrimSpace(ans.Body)
 	if len(body) == 0 || body[0] != '{' {
-		return errors.New("not a JSON object")
+		return errNotObject
 	}
 	return json.Unmarshal(body, v)
 }

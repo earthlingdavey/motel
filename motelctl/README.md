@@ -25,7 +25,12 @@ of `MOTEL_URL`, or the box repository the shell is in (inside
 
 **Which credential:** a token the person's own ssh key signs when
 `--key` names the key. Otherwise `MOTEL_TOKEN`, sent as `Bearer`, when it
-is set: a deploy token reads its own app on any motel today. Otherwise a
+is set: a deploy token reads its own app on any motel today, though a
+5xx from a box on a release that predates the `Motel-Version` header is
+reported as "could not tell" (exit 3), since motelctl cannot tell it
+from a gateway's. With `MOTEL_URL` set too, the token goes to
+`MOTEL_URL`'s box only; a command that names another box sends nothing
+(exit 2). Otherwise a
 token the person's own ssh key signs, made by the system `ssh-keygen -Y sign` in
 the namespace `motel-access-v1@motel.smallhours.org`. The key is
 `MOTEL_KEY`, then git's `user.signingkey` inside a box
