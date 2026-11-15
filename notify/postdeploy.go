@@ -124,6 +124,10 @@ type comparison struct {
 	next int
 	// failed is how many checks in a row failed.
 	failed int
+	// oldEnd is the first push of motel's the store took after the
+	// cutover, where the old release's window ends (oldWindow): zero
+	// until a check first reads that window.
+	oldEnd time.Time
 }
 
 // liveRules is a config's part of the comparator.
@@ -300,6 +304,9 @@ func (c *comparator) check(ctx context.Context, store instantQuerier, logger *za
 	var ev *Event
 	c.mu.Lock()
 	if c.runs[d.cmp.app] == d.run { // not ended or replaced meanwhile
+		if !v.oldEnd.IsZero() {
+			d.run.oldEnd = v.oldEnd
+		}
 		switch {
 		case v.err != nil:
 			// Asked again at the next tick: a check skipped would leave
@@ -367,14 +374,19 @@ type verdict struct {
 	failed     bool
 	newer, old releaseNumbers
 	hasOld     bool
+	// oldEnd is the end of the old release's window, when this check
+	// asked for it (comparison.oldEnd).
+	oldEnd time.Time
 }
 
 // checkRelease is one check: the new release over elapsed since the
-// cutover, and, when it is over a bound, the old one from the same
-// length before it (oldWindow); both read at cutover + elapsed, and
-// both windows end there. First, once a check (at its time, the end of
-// both windows), whether the store took a push of
-// motel's in the minute before then (checkFresh), and with none whether
+// cutover, and, when it is over a bound, the old one over the same
+// length before it, to the first push the store took after the
+// cutover (oldWindow); both read at cutover + elapsed. First, once a
+// check (at its time; the push it finds is after the cutover, so the
+// store holds the one the old release's window ends at), whether the
+// store took a push of motel's in the minute before then (checkFresh),
+// and with none whether
 // it has taken one since (freshness; now: the tick's time): asked
 // before the floor too, so that a skip, like a verdict, is drawn from
 // counts pushed within that minute. It is motel's push, not the app's
@@ -401,7 +413,17 @@ func checkRelease(ctx context.Context, store instantQuerier, r comparison, rule 
 		return v
 	}
 	if r.previous != "" {
-		if v.old, v.err = queryRelease(ctx, store, r.app, r.previous, at, oldWindow(elapsed), 0, wantP95, floor); v.err != nil {
+		// Where the old release's window ends is asked once a
+		// comparison, when it is first read, and kept (check).
+		end := r.oldEnd
+		if end.IsZero() {
+			if end, v.err = firstPushAfter(ctx, store, r.cutover, at); v.err != nil {
+				return v
+			}
+			v.oldEnd = end
+		}
+		win, off := oldWindow(elapsed, at, end)
+		if v.old, v.err = queryRelease(ctx, store, r.app, r.previous, at, win, off, wantP95, floor); v.err != nil {
 			return v
 		}
 		// An old release with fewer responses than the floor is no
@@ -461,8 +483,9 @@ func shareRose(newer, old releaseNumbers) bool {
 
 // queryRelease asks the store, at at, for a release's responses sent,
 // its 5xx and its p95 over win, ending off before at: the new release's
-// since its cutover (newWindow), or the old release's from the same
-// length before the cutover (oldWindow). The p95 is asked only once
+// since its cutover (newWindow), or the old release's over the same
+// length before the cutover and on to the first push after it
+// (oldWindow). The p95 is asked only once
 // floor responses were timed: min_requests counts the responses sent,
 // cache hits among them, and on a cached site a few misses (one of
 // them a cold start) would otherwise make the quantile, in every
@@ -523,21 +546,54 @@ func queryRelease(ctx context.Context, store instantQuerier, app, release string
 	return n, nil
 }
 
-// oldWindow is the window a check over elapsed reads of the old
-// release, up to the check as the new one's is: from elapsed before
-// the cutover. Its answers in the last half minute before the cutover
-// reach the store with the first push after it, and the store
-// back-fills no push it missed, so a window that ended a push past the
-// cutover read, with the store down over that push and back by the
-// check, the counts of the old release's last push before the outage:
-// a baseline as short as the outage was long before the cutover, or
-// none. The check counts only on a push from the minute before its
-// time (checkFresh), from after the cutover, and every push carries
-// the old release's final counts until the next deploy (liveswap's
-// requestCounts keeps it beside the current one), so the window holds
-// them with no ask of its own. Its only answers after the cutover are
-// to requests its instance already held, which it drains.
-func oldWindow(elapsed time.Duration) time.Duration { return 2 * elapsed }
+// firstPushQuery is the time of the first push of motel's the store
+// took within a window (the query's [<d>]) before the query's time.
+func firstPushQuery(d time.Duration) string {
+	return "min(tfirst_over_time(" + pushSeries + "[" + promDuration(d) + "]))"
+}
+
+// firstPushAfter is the first push of motel's the store took after the
+// cutover, asked at the check's time at, by then searchable (storeLag).
+// The check's own ask found one in the minute before at, so none is the
+// store's lag, an error, and the check is asked again.
+func firstPushAfter(ctx context.Context, store instantQuerier, cutover, at time.Time) (time.Time, error) {
+	ss, err := store.queryAt(ctx, firstPushQuery(at.Sub(cutover)), at)
+	if err != nil {
+		return time.Time{}, err
+	}
+	if len(ss) > 0 {
+		if v, ok := instantValue(ss[0]); ok {
+			return time.UnixMilli(int64(math.Round(v * 1e3))), nil
+		}
+	}
+	return time.Time{}, fmt.Errorf("the metrics store shows no push of motel's after the cutover yet, for the check %s after it", promDuration(at.Sub(cutover)))
+}
+
+// oldWindow is the window a check over elapsed, at at, reads of the old
+// release, and its offset: from elapsed before the cutover to end, the
+// first push the store took after the cutover (firstPushAfter), and
+// within a second past it, as an offset is whole seconds. Its answers
+// in the last half minute before the cutover reach the store with that
+// push, and one push's samples are stamped milliseconds apart, the
+// request series before motel's own (pushedNow). The store back-fills
+// no push it missed, so a window that ended a push past the cutover
+// read, with the store down over that push and back by the check, the
+// counts as they stood at the old release's last push before the
+// outage: a baseline as short as the outage was long before the
+// cutover, or none. Every push after the cutover carries the old
+// release's final counts while the comparison lasts (liveswap's
+// requestCounts keeps it beside the current release until the next
+// deploy, and a motel restart ends the comparison). With no outage the
+// first push is within pushEvery of the cutover, and the window reads
+// the samples the one ending a push past it read: the next push is
+// pushEvery later. Not to the check's time: the old instance drains
+// past the cutover, and a long drain's answers, and the errors of the
+// requests its stop cuts, would be read as its baseline (/code-review
+// of this window).
+func oldWindow(elapsed time.Duration, at, end time.Time) (win, off time.Duration) {
+	off = at.Sub(end) / time.Second * time.Second
+	return 2*elapsed - off, off
+}
 
 // newWindow is the window a check over elapsed reads of the new
 // release, up to the check: from the cutover, and for a relaunch after
