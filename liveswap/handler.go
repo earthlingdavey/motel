@@ -112,6 +112,9 @@ func (h *Handler) Provision(ctx caddy.Context) error {
 // ServeHTTP is terminal: it never calls the next handler.
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request, _ caddyhttp.Handler) error {
 	name := path.Base(path.Clean(r.URL.Path))
+	if access.HasPersonScheme(r.Header.Values("Authorization")) {
+		return h.servePerson(w, r, name)
+	}
 	ma := h.app.managedApp(name)
 
 	// Authenticate before revealing whether the app exists. For an
@@ -150,6 +153,37 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request, _ caddyhttp.
 		return RespondJSON(w, http.StatusForbidden, wire.Error{Error: "forbidden"}, ma.redactorFor(statusSnapshot{}))
 	}
 	return rt.serve(h, w, r, ma, who.By)
+}
+
+// servePerson answers a request in the person token's scheme: the
+// token judged by CheckToken against this load's registry, then the
+// route's action put to Decide with the person. The app is found after
+// Decide, so a person told no learns nothing of which apps exist.
+func (h *Handler) servePerson(w http.ResponseWriter, r *http.Request, name string) error {
+	p, ok, err := AdmitPerson(w, r, h.gate(), "app", loggedAppName(name), func(code int, body any) error { return RespondJSON(w, code, body, nil) })
+	if !ok {
+		return err
+	}
+	rt := findRoute(r)
+	if rt == nil {
+		// A person's token is good on a GET alone, which always has a
+		// row: this is the table and the token falling apart.
+		w.Header().Set("Allow", "GET, POST")
+		return RespondJSON(w, http.StatusMethodNotAllowed, wire.Error{Error: "method not allowed"}, nil)
+	}
+	if err := decide(p.Principal, rt.action, name); err != nil {
+		return RespondJSON(w, http.StatusForbidden, wire.Error{Error: "forbidden"}, nil)
+	}
+	ma := h.app.managedApp(name)
+	if ma == nil {
+		return RespondJSON(w, http.StatusNotFound, wire.Error{Error: fmt.Sprintf("unknown app %q", name)}, nil)
+	}
+	return rt.serve(h, w, r, ma, p.Name)
+}
+
+// gate is what a person is admitted through on this handler.
+func (h *Handler) gate() PersonGate {
+	return PersonGate{Registry: h.people, Limiter: h.limiter, Logger: h.logger}
 }
 
 // versionHeader carries the release on every answer to a verified

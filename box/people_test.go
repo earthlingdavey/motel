@@ -4,11 +4,13 @@ import (
 	"crypto/ed25519"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/caddyserver/caddy/v2"
 	"github.com/caddyserver/caddy/v2/caddyconfig"
@@ -295,5 +297,58 @@ func TestRegistryAtLoad(t *testing.T) {
 	}
 	if logs.Len() != 0 {
 		t.Errorf("a block of signers alone: journal %v", logs.All())
+	}
+}
+
+// TestPersonRefusalsAreTheFlat401: on the box webhook too, every way a
+// person's token is refused is answered exactly as a request with no
+// token is, on each route, a box with no people included; the 405 of
+// another method comes before any of it, as for a deploy token.
+func TestPersonRefusalsAreTheFlat401(t *testing.T) {
+	alice, stranger := accesstest.Ed25519(), accesstest.Ed25519()
+	k, err := access.ParsePerson([]string{"alice", alice.Type(), alice.B64()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	g, err := access.ParseGrant([]string{"alice", "viewer", "box"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	reg := access.NewRegistry(peopleIdentity, access.Lines{Keys: []access.Key{k}, Grants: []access.Grant{g}})
+	now := time.Now()
+	for _, c := range []struct {
+		name       string
+		auth       string
+		noRegistry bool
+	}{
+		{"no registry", alice.Token(peopleIdentity, now, time.Minute), true},
+		{"a key no line lists", stranger.Token(peopleIdentity, now, time.Minute), false},
+		{"for another box", alice.Token("other.example.test", now, time.Minute), false},
+		{"expired", alice.Token(peopleIdentity, now.Add(-time.Hour), time.Minute), false},
+		{"garbage", "Motel m1.x.y", false},
+	} {
+		for _, target := range []string{"/", "/?result=" + strings.Repeat("0", 32)} {
+			for _, method := range []string{http.MethodGet, http.MethodPost, http.MethodPut} {
+				r := newRig(t)
+				if !c.noRegistry {
+					r.h.app.registry = reg
+				}
+				do := func(auth string) *httptest.ResponseRecorder {
+					hr := httptest.NewRequest(method, "http://"+peopleIdentity+target, nil)
+					if auth != "" {
+						hr.Header.Set("Authorization", auth)
+					}
+					w := httptest.NewRecorder()
+					if err := r.h.ServeHTTP(w, hr, nextFunc(func(http.ResponseWriter, *http.Request) error { return nil })); err != nil {
+						t.Fatal(err)
+					}
+					return w
+				}
+				want, got := do(""), do(c.auth)
+				if got.Code != want.Code || got.Body.String() != want.Body.String() || fmt.Sprint(got.Header()) != fmt.Sprint(want.Header()) {
+					t.Errorf("%s, %s %s: %d %v %q, want %d %v %q", c.name, method, target, got.Code, got.Header(), got.Body, want.Code, want.Header(), want.Body)
+				}
+			}
+		}
 	}
 }

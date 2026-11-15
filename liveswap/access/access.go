@@ -46,6 +46,9 @@ const (
 	// BoxChannel is a source the box block's deploy_trust accepted:
 	// it may present pushes.
 	BoxChannel
+	// Person is a person whose token the box verified (CheckToken):
+	// Principal.Name, who may view Principal.Views.
+	Person
 )
 
 // Principal is who a verified token is, as far as Decide needs to know.
@@ -54,6 +57,11 @@ type Principal struct {
 	// App is the app an AppDeployer deploys: the name in the path its
 	// token was verified for. Empty for every other kind.
 	App string
+	// Name is a Person's name, and Views what their grants let them view
+	// from where the request came from (Registry.Views). Empty and nil
+	// for every other kind.
+	Name  string
+	Views *Views
 }
 
 // cell is one allowed pair of the table.
