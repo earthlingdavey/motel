@@ -18,6 +18,10 @@ package access
 
 import (
 	"bytes"
+	"crypto/ecdsa"
+	"crypto/ed25519"
+	"crypto/elliptic"
+	"crypto/rand"
 	"crypto/sha256"
 	"crypto/sha512"
 	"encoding/base64"
@@ -114,6 +118,67 @@ type VerifiedToken struct {
 // its Marshal, which would panic.
 type KeyLookup func(fingerprint string) (ssh.PublicKey, bool)
 
+// unlistedKeys are one key of each type a person may hold, made at
+// init and listed nowhere: a token whose key is not listed is checked
+// against the one of its type, and refused whatever that says.
+// Without it a refusal by lookup costs a map read and one past it a
+// signature check, and the difference tells a stranger holding a
+// published public key whether this box lists it. This narrows that
+// timing difference to what the two checks' own work differs by; it
+// does not make the refusals take constant time.
+var unlistedKeys = makeUnlistedKeys()
+
+// unlistedVerifyHook, when set (a test), is told of each check against
+// an unlisted key, by the presented key's type.
+var unlistedVerifyHook func(keyType string)
+
+// unlistedVerify spends on a token whose key is not listed the check a
+// listed key's would cost, against the dummy of its type, and discards
+// the answer. The token's own copy of the key verifies nothing.
+func unlistedVerify(keyType string, sig *tokenSig, claims []byte) {
+	if k := unlistedKeys[keyType]; k != nil {
+		_ = tokenVerify(sig, k, claims)
+	}
+	if unlistedVerifyHook != nil {
+		unlistedVerifyHook(keyType)
+	}
+}
+
+func makeUnlistedKeys() map[string]ssh.PublicKey {
+	keys := map[string]ssh.PublicKey{}
+	edPub, _, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		panic(err)
+	}
+	add := func(k ssh.PublicKey, err error) {
+		if err != nil {
+			panic(err)
+		}
+		keys[k.Type()] = k
+	}
+	add(ssh.NewPublicKey(edPub))
+	add(ssh.ParsePublicKey(ssh.Marshal(struct {
+		Type, Key, Application string
+	}{ssh.KeyAlgoSKED25519, string(edPub), "ssh:"})))
+	for _, c := range []elliptic.Curve{elliptic.P256(), elliptic.P384(), elliptic.P521()} {
+		priv, err := ecdsa.GenerateKey(c, rand.Reader)
+		if err != nil {
+			panic(err)
+		}
+		add(ssh.NewPublicKey(&priv.PublicKey))
+		if c == elliptic.P256() {
+			point, err := priv.PublicKey.Bytes()
+			if err != nil {
+				panic(err)
+			}
+			add(ssh.ParsePublicKey(ssh.Marshal(struct {
+				Type, Curve, Key, Application string
+			}{ssh.KeyAlgoSKECDSA256, "nistp256", string(point), "ssh:"})))
+		}
+	}
+	return keys
+}
+
 // tokenSig is the SSHSIG structure after its six-byte magic
 // (OpenSSH's PROTOCOL.sshsig).
 type tokenSig struct {
@@ -207,14 +272,16 @@ func CheckToken(req TokenRequest, identity string, now time.Time, lookup KeyLook
 	}
 	sum := sha256.Sum256(sig.PublicKey)
 	fingerprint := "SHA256:" + base64.RawStdEncoding.EncodeToString(sum[:])
-	if lookup == nil {
-		return refuseToken("key-not-listed")
+	var key ssh.PublicKey
+	ok = false
+	if lookup != nil {
+		key, ok = lookup(fingerprint)
 	}
-	key, ok := lookup(fingerprint)
 	// The listed key, parsed at load, is the one the signature is
 	// checked with; the token's copy is never parsed as a key. Byte
 	// equality also means a certificate never stands for a plain key.
 	if !ok || key == nil || !bytes.Equal(key.Marshal(), sig.PublicKey) {
+		unlistedVerify(keyType.Type, &sig, claims)
 		return refuseToken("key-not-listed")
 	}
 	// From here a refusal names the listed key it was signed with.

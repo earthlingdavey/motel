@@ -721,3 +721,35 @@ func FuzzCheckToken(f *testing.F) {
 		}
 	})
 }
+
+// TestUnlistedKeyCostsASignatureCheck: a token whose key is not listed
+// is checked against the dummy key of its type before it is refused,
+// for every type a person may hold, and still refused as key-not-listed;
+// a listed key's token never meets a dummy. The dummies are one per
+// type, none of them listed.
+func TestUnlistedKeyCostsASignatureCheck(t *testing.T) {
+	var seen []string
+	unlistedVerifyHook = func(keyType string) { seen = append(seen, keyType) }
+	t.Cleanup(func() { unlistedVerifyHook = nil })
+	k := testKeys()
+	claims := claimsDoc(testIdentity, testNow-10, testNow+60)
+	for _, key := range []*testKey{k.ed, k.p256, k.p384, k.p521, k.skEd, k.skEc} {
+		seen = nil
+		got, _ := verdict(TokenRequest{Authorization: signed(key, claims), Method: "GET", Host: testIdentity}, testIdentity, testNow, lookupOf())
+		if got != "key-not-listed" || len(seen) != 1 || seen[0] != key.pub.Type() {
+			t.Errorf("%s, unlisted: %s, dummy checks %v", key.pub.Type(), got, seen)
+		}
+		seen = nil
+		if got, _ := verdict(TokenRequest{Authorization: signed(key, claims), Method: "GET", Host: testIdentity}, testIdentity, testNow, lookupOf(key.pub)); got != "accept" || len(seen) != 0 {
+			t.Errorf("%s, listed: %s, dummy checks %v", key.pub.Type(), got, seen)
+		}
+	}
+	if len(unlistedKeys) != len(personKeyTypes) {
+		t.Errorf("%d dummy keys for %d types", len(unlistedKeys), len(personKeyTypes))
+	}
+	for typ, d := range unlistedKeys {
+		if !personKeyTypes[typ] || d.Type() != typ {
+			t.Errorf("dummy %s is of type %s", typ, d.Type())
+		}
+	}
+}
