@@ -35,6 +35,42 @@ const (
 	// windows away from the cutover (measured in e2e metrics 10: the
 	// old release's last half minute read as nothing).
 	storeLag = 10 * time.Second
+	// checkFresh is how recent a push of motel's the store must hold at
+	// a check's time for the check to count (pushedQuery). The store
+	// stamps a push as it takes it and back-fills none it missed, so a
+	// check read past the store's last push reads the counts as they
+	// stood then: down from minute 1.5 to 5, it answered minutes 2 and
+	// 3, asked again once it was back, with one snapshot, and a warning
+	// counted three failing checks over a minute and a half of
+	// responses; down over the window's end, the checks passed on it and
+	// the comparison ended as if the release held. Derived:
+	//   - the check runs storeLag (10 s) after its time, past the latency
+	//     offset queryAt asks for (5 s), so the store reads at the time
+	//     as given and has every push it stamped by then searchable: a
+	//     push missing then is missing for good, but for a late
+	//     ingestion, which a later try finds;
+	//   - within the minute before its time, the push is one the check a
+	//     minute before could not read (the window leaves its start
+	//     out), so no two checks count one snapshot, and the first
+	//     reads a push from after the cutover;
+	//   - a minute holds the pushes: one is gathered every pushEvery
+	//     (30 s) and stamped as the store takes it, milliseconds later
+	//     over the socket, so the last before a time is about 30 s old,
+	//     and with one lost about 60 s: over it only by as much as the
+	//     push after the lost one was stamped slower than the one
+	//     before it.
+	// A check with no such push whose store has taken one since (asked
+	// the same at the tick's time less storeLag, once that is a minute
+	// past the check's time, so a push in the minute before it is after
+	// the check's time) is missed: none will come
+	// for it. It is skipped, and the comparison goes on, its later
+	// checks reading the missed minute's responses (the windows are
+	// cumulative); the window's last ends it unfinished, the minutes
+	// after the store's last push for it never read. With none since
+	// either, the store takes no push, or shows none yet: the store's
+	// error, asked again at the next tick, and past the grace the
+	// comparison ends unfinished.
+	checkFresh = postDeployEvery
 	// p95Margin is how much slower than the old release the new one's
 	// p95 must be, over its bound, to fail a check: a quantile is an
 	// estimate inside a bucket.
@@ -60,10 +96,14 @@ const (
 	// first check of 20 s, and every one 40 s short.
 	relaunchSkip = pushEvery + storeRequestTimeout
 	// postDeployGrace is how long past the window's end a check the
-	// store did not answer is asked again before the comparison ends
-	// unfinished.
+	// store did not answer, or held no push for (checkFresh), is asked
+	// again before the comparison ends unfinished.
 	postDeployGrace = 10 * time.Minute
 )
+
+// pushedQuery is whether the store holds a push of motel's within
+// checkFresh before the query's time: one series, or none.
+var pushedQuery = "max(present_over_time(" + pushSeries + "[" + promDuration(checkFresh) + "]))"
 
 // instantQuerier is the store's instant query at a time.
 type instantQuerier interface {
@@ -197,6 +237,7 @@ type due struct {
 	cmp     comparison // the run as it stood, for the queries
 	rule    Rule
 	elapsed time.Duration
+	now     time.Time // the tick's
 }
 
 // tick makes every check due, outside the lock.
@@ -232,7 +273,7 @@ func (c *comparator) tick(ctx context.Context) {
 		k := r.next
 		elapsed := time.Duration(k) * postDeployEvery
 		r.next = k + 1
-		dues = append(dues, due{run: r, cmp: *r, rule: rule, elapsed: elapsed})
+		dues = append(dues, due{run: r, cmp: *r, rule: rule, elapsed: elapsed, now: now})
 	}
 	store, logger := c.store, c.logger
 	c.mu.Unlock()
@@ -254,7 +295,7 @@ func (c *comparator) tick(ctx context.Context) {
 // check makes one due check and counts its outcome.
 func (c *comparator) check(ctx context.Context, store instantQuerier, logger *zap.Logger, d due) {
 	cctx, cancel := context.WithTimeout(ctx, storeRequestTimeout)
-	v := checkRelease(cctx, store, d.cmp, d.rule, d.elapsed)
+	v := checkRelease(cctx, store, d.cmp, d.rule, d.elapsed, d.now)
 	cancel()
 	var ev *Event
 	c.mu.Lock()
@@ -266,13 +307,20 @@ func (c *comparator) check(ctx context.Context, store instantQuerier, logger *za
 			// Past the grace the comparison ends, said where it is seen.
 			if c.now().Sub(d.cmp.cutover.Add(d.rule.window()+storeLag)) > postDeployGrace {
 				delete(c.runs, d.cmp.app)
-				logger.Warn("monitor rules: the post-deploy comparison ended unfinished: the metrics store did not answer its checks",
+				logger.Warn("monitor rules: the post-deploy comparison ended unfinished: the metrics store did not answer its checks, or held no push of motel's for them",
 					zap.String("app", d.cmp.app), zap.String("release", d.cmp.release), zap.Int("failing_in_a_row", d.run.failed), zap.Error(v.err))
 				break
 			}
 			d.run.next = int(d.elapsed / postDeployEvery)
-			logger.Debug("monitor rules: the post-deploy check is asked again: the metrics store did not answer",
+			logger.Debug("monitor rules: the post-deploy check is asked again: the metrics store did not answer, or held no push of motel's for it",
 				zap.String("app", d.cmp.app), zap.String("release", d.cmp.release), zap.Error(v.err))
+		case v.missed && d.elapsed >= d.rule.window():
+			delete(c.runs, d.cmp.app)
+			logger.Warn("monitor rules: the post-deploy comparison ended unfinished: the metrics store took no push of motel's for its last check",
+				zap.String("app", d.cmp.app), zap.String("release", d.cmp.release), zap.Int("failing_in_a_row", d.run.failed), zap.Duration("elapsed", d.elapsed))
+		case v.missed:
+			logger.Debug("monitor rules: the post-deploy check is skipped: the metrics store took no push of motel's for it",
+				zap.String("app", d.cmp.app), zap.String("release", d.cmp.release), zap.Duration("elapsed", d.elapsed))
 		case v.skipped:
 		case !v.failed:
 			d.run.failed = 0
@@ -311,8 +359,11 @@ func (n releaseNumbers) share() float64 {
 
 // verdict is one check's outcome.
 type verdict struct {
-	err        error
-	skipped    bool
+	err     error
+	skipped bool
+	// missed is a check the store took no push for, and will take none:
+	// it has taken one since (checkFresh).
+	missed     bool
 	failed     bool
 	newer, old releaseNumbers
 	hasOld     bool
@@ -321,12 +372,22 @@ type verdict struct {
 // checkRelease is one check: the new release over elapsed since the
 // cutover, and, when it is over a bound, the old one over the same
 // length before it; both read at cutover + elapsed, so the windows meet
-// at the cutover.
-func checkRelease(ctx context.Context, store instantQuerier, r comparison, rule Rule, elapsed time.Duration) verdict {
+// at the cutover. First, once a check (at its time, not per window: the
+// old release's is not asked about), whether the store took a push of
+// motel's in the minute before then (checkFresh), and with none whether
+// it has taken one since (freshness; now: the tick's time): asked
+// before the floor too, so that a skip, like a verdict, is drawn from
+// counts pushed within that minute. It is motel's push, not the app's
+// series, so a quiet app's check is no more often without one than a
+// busy app's.
+func checkRelease(ctx context.Context, store instantQuerier, r comparison, rule Rule, elapsed time.Duration, now time.Time) verdict {
 	var v verdict
 	wantP95 := rule.MaxP95 != 0
 	floor := float64(rule.minRequests())
 	at := r.cutover.Add(elapsed)
+	if v.missed, v.err = freshness(ctx, store, at, elapsed, now); v.err != nil || v.missed {
+		return v
+	}
 	if v.newer, v.err = queryRelease(ctx, store, r.app, r.release, at, newWindow(r, elapsed), 0, wantP95, floor); v.err != nil {
 		return v
 	}
@@ -356,6 +417,37 @@ func checkRelease(ctx context.Context, store instantQuerier, r comparison, rule 
 	failP95 := overP95 && (!v.hasOld || !v.old.hasP95 || v.newer.p95 > v.old.p95*p95Margin)
 	v.failed = fail5xx || failP95
 	return v
+}
+
+// freshness is whether the check over elapsed, at at, may count: with
+// a push of motel's within checkFresh before at, it may; with none, and
+// one taken since, it is missed; with neither, the store's error, asked
+// again. Since is asked at now less storeLag only once that is checkFresh
+// past at, so the minute it reads is wholly after at: a push stamped
+// before at that the store made searchable between the two asks is not
+// taken for one after it (/code-review pass 2 of the push ask).
+func freshness(ctx context.Context, store instantQuerier, at time.Time, elapsed time.Duration, now time.Time) (missed bool, err error) {
+	ok, err := pushedBefore(ctx, store, at)
+	if err != nil || ok {
+		return false, err
+	}
+	if since := now.Add(-storeLag); !since.Before(at.Add(checkFresh)) {
+		if ok, err = pushedBefore(ctx, store, since); err != nil || ok {
+			return ok, err
+		}
+	}
+	return false, fmt.Errorf("the metrics store holds no push of motel's from the minute before the check %s after the cutover, nor one since yet: it is down or read-only, or motel is not pushing", promDuration(elapsed))
+}
+
+// pushedBefore is whether the store holds a push of motel's within
+// checkFresh before t.
+func pushedBefore(ctx context.Context, store instantQuerier, t time.Time) (bool, error) {
+	ss, err := store.queryAt(ctx, pushedQuery, t)
+	if err != nil || len(ss) == 0 {
+		return false, err
+	}
+	_, ok := instantValue(ss[0])
+	return ok, nil
 }
 
 // shareRose is whether the new release's 5xx share rose from the old

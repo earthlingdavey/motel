@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -34,6 +35,37 @@ type relStore struct {
 	together int
 	inFlight int
 	cond     *sync.Cond
+	// The store stamps a push as it takes it and back-fills none it
+	// missed. Unless stopped, it takes one at every instant. From
+	// stoppedAt it took none, until resumedAt when that is set: a query
+	// at a time between reads the numbers as they stood at stoppedAt
+	// (snap, snapTimed), and its last push of motel's is at stoppedAt.
+	stoppedAt, resumedAt time.Time
+	snap                 map[string]releaseNumbers
+	snapTimed            map[string]float64
+	// unseen is how many asks for motel's push more find none: a push
+	// the store has stamped and not yet made searchable.
+	unseen int
+}
+
+// stop is the store taking no push from at on: down, or read-only.
+func (s *relStore) stop(at time.Time) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.stoppedAt, s.resumedAt = at, time.Time{}
+	s.snap, s.snapTimed = maps.Clone(s.nums), maps.Clone(s.timed)
+}
+
+// resume is the store taking pushes again from at.
+func (s *relStore) resume(at time.Time) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.resumedAt = at
+}
+
+// gap is whether t falls where the store took no push.
+func (s *relStore) gap(t time.Time) bool {
+	return !s.stoppedAt.IsZero() && !t.Before(s.stoppedAt) && (s.resumedAt.IsZero() || t.Before(s.resumedAt))
 }
 
 func (s *relStore) set(key string, sent, errs float64, p95 float64) {
@@ -81,15 +113,33 @@ func (s *relStore) queryAt(_ context.Context, q string, t time.Time) ([]series, 
 	if s.err != nil {
 		return nil, s.err
 	}
+	pt := func(v float64) []point { return []point{{t: time.Unix(0, 0), v: v}} }
+	if q == pushedQuery { // proven over the store's own engine in TestPostDeployPushedQueryOverTheStore
+		last := t
+		if s.gap(t) {
+			last = s.stoppedAt
+		}
+		if s.unseen > 0 {
+			s.unseen--
+			return nil, nil
+		}
+		if t.Sub(last) >= checkFresh {
+			return nil, nil
+		}
+		return []series{{labels: map[string]string{}, points: pt(1)}}, nil
+	}
 	key := releaseRe.FindStringSubmatch(q)[1]
 	if oldWindow.MatchString(q) {
 		key += " old"
 	}
-	n, ok := s.nums[key]
+	nums, timed := s.nums, s.timed
+	if s.gap(t) {
+		nums, timed = s.snap, s.snapTimed
+	}
+	n, ok := nums[key]
 	if !ok {
 		return nil, nil // no series
 	}
-	pt := func(v float64) []point { return []point{{t: time.Unix(0, 0), v: v}} }
 	if strings.HasPrefix(q, "histogram_quantile") { // its buckets are told by the count
 		if !n.hasP95 {
 			return nil, nil
@@ -97,7 +147,7 @@ func (s *relStore) queryAt(_ context.Context, q string, t time.Time) ([]series, 
 		return []series{{labels: map[string]string{}, points: pt(n.p95)}}, nil
 	}
 	if strings.Contains(q, "motel_app_response_seconds_count") {
-		return []series{{labels: map[string]string{}, points: pt(s.timed[key])}}, nil
+		return []series{{labels: map[string]string{}, points: pt(timed[key])}}, nil
 	}
 	return []series{
 		{labels: map[string]string{"class": "2xx"}, points: pt(n.sent - n.errors)},
@@ -199,6 +249,9 @@ func TestPostDeployFailsAfterItsCountInARow(t *testing.T) {
 	}
 	var sawNew, sawOld bool
 	for _, q := range tc.store.queries {
+		if q == pushedQuery {
+			continue
+		}
 		if !strings.Contains(q, " (present_over_time(") || !strings.Contains(q, ") or increase(") {
 			t.Errorf("a query not through counterIncrease: %s", q)
 		}
@@ -352,7 +405,7 @@ func TestPostDeployAPassResetsTheCount(t *testing.T) {
 	if len(tc.evs) != 0 {
 		t.Fatalf("told with a pass between the failures: %+v", tc.evs)
 	}
-	if tc.logs.FilterMessage("monitor rules: the post-deploy check is asked again: the metrics store did not answer").Len() != 1 {
+	if tc.logs.FilterMessage("monitor rules: the post-deploy check is asked again: the metrics store did not answer, or held no push of motel's for it").Len() != 1 {
 		t.Error("no debug line for the store not answering")
 	}
 	tc.minute()
@@ -648,7 +701,7 @@ func TestPostDeployARelaunchAfterAStop(t *testing.T) {
 			}
 			// A relaunch's window starts past the stopped instance's
 			// last push (relaunchSkip).
-			if q := tc.store.queries[0]; !strings.Contains(q, c.first) {
+			if q := tc.store.queries[1]; !strings.Contains(q, c.first) { // after the ask for motel's push
 				t.Errorf("the first check's query has no %s: %s", c.first, q)
 			}
 		})
@@ -723,10 +776,11 @@ func TestPostDeployAsksAgainWhatTheStoreDidNotAnswer(t *testing.T) {
 	if len(tc.evs) != 1 || !strings.Contains(tc.evs[0].Summary, "regressed 3m after") || !strings.Contains(tc.evs[0].Summary, "3 failing checks in a row") {
 		t.Fatalf("after the store came back: %+v", tc.evs)
 	}
-	// Each check read at its own minute, whenever it was made.
+	// Each check read at its own minute, whenever it was made: its
+	// first query, for motel's push, at each try.
 	var mins []time.Duration
 	for i, at := range tc.store.at {
-		if q := tc.store.queries[i]; !strings.HasPrefix(q, "histogram_quantile") && !strings.Contains(q, "motel_app_response_seconds_count") {
+		if tc.store.queries[i] == pushedQuery {
 			mins = append(mins, at.Sub(cutover))
 		}
 	}
@@ -749,4 +803,234 @@ func TestPostDeployAsksAgainWhatTheStoreDidNotAnswer(t *testing.T) {
 	if n := tc.logs.FilterMessageSnippet("ended unfinished").FilterField(zap.String("release", "v3")).Len(); n != 1 {
 		t.Errorf("%d warning lines, want one", n)
 	}
+}
+
+// A check counts only on a push the store took in the minute before its
+// time: the store stamps a push as it takes it and back-fills none, so
+// a check read past its last push reads the counts as they stood then.
+// The store down from 1m30s to 5m, over a 3-minute window's end, and
+// back inside the grace: the checks of minutes 2 and 3, asked again,
+// passed on the snapshot of 1m30s while the release failed after it,
+// and the comparison ended as if it had held. Minute 2 counts on that
+// push, 30 s before its time; minute 3, the window's last, has none and
+// the store has taken one since: none will come, and the comparison
+// ends unfinished, saying so.
+func TestPostDeployCountsNoCheckTheStoreTookNoPushFor(t *testing.T) {
+	r := regressRule
+	r.Window, r.Failures = caddyMinutes(3), 2
+	tc := newTestComparator(t, r)
+	cutover := tc.at
+	tc.deploy("blog", "v2", "v1")
+	tc.store.set("v1 old", 200, 0, 0.1)
+	tc.store.set("v2", 200, 0, 0.1)
+	tc.minute() // minute 1: a pass
+	tc.store.stop(cutover.Add(90 * time.Second))
+	tc.store.err = errors.New("down")
+	tc.store.set("v2", 400, 200, 0.1) // what the store would hold had it taken the pushes
+	tc.minute()                       // minute 2: no answer
+	tc.minute()                       // minute 3, and 2 still owed
+	tc.at = cutover.Add(5 * time.Minute)
+	tc.store.resume(tc.at)
+	tc.store.err = nil
+	tc.at = tc.at.Add(10 * time.Second)
+	tc.tick(context.Background()) // minute 2
+	if run := tc.runs["blog"]; run == nil || run.next != 3 || run.failed != 0 {
+		t.Fatalf("minute 2 a pass on the push of 1m30s: %+v", run)
+	}
+	for range 3 {
+		tc.at = tc.at.Add(10 * time.Second)
+		tc.tick(context.Background())
+	}
+	if len(tc.runs) != 0 || len(tc.evs) != 0 {
+		t.Fatalf("after the store came back: %d in flight, %d events", len(tc.runs), len(tc.evs))
+	}
+	lines := tc.logs.FilterMessage("monitor rules: the post-deploy comparison ended unfinished: the metrics store took no push of motel's for its last check").AllUntimed()
+	if len(lines) != 1 || lines[0].ContextMap()["elapsed"] != 3*time.Minute {
+		t.Fatalf("ended as held on the snapshot of 1m30s, unsaid: %+v", lines)
+	}
+
+	// A store read-only for the whole window (queries answered, pushes
+	// refused) reads as nothing pushed, then or since: no check counts, a
+	// skip under the floor no more than a verdict; each is asked again,
+	// and past the grace the comparison ends unfinished.
+	ro := newTestComparator(t, r)
+	ro.store.stop(ro.at)
+	ro.store.set("v2", 200, 200, 0.1)
+	ro.deploy("blog", "v2", "v1")
+	for range int((r.window() + postDeployGrace) / time.Minute) {
+		ro.minute()
+	}
+	if len(ro.runs) != 0 || len(ro.evs) != 0 {
+		t.Fatalf("read-only throughout: %d in flight, %d events", len(ro.runs), len(ro.evs))
+	}
+	lines = ro.logs.FilterMessageSnippet("ended unfinished").AllUntimed()
+	want := "the metrics store holds no push of motel's from the minute before the check 1m after the cutover, nor one since yet"
+	if len(lines) != 1 {
+		t.Fatalf("%d warning lines, want one", len(lines))
+	}
+	if got, _ := lines[0].ContextMap()["error"].(string); !strings.Contains(got, want) {
+		t.Errorf("the warning's error = %q, want %q", got, want)
+	}
+	for _, q := range ro.store.queries {
+		if q != pushedQuery {
+			t.Errorf("a release read with no push in the store: %s", q)
+		}
+	}
+}
+
+// The store down from 1m30s to 5m (or read-only then, or a clock
+// stepped forward): minute 1 failed on a cold start's blip, minutes 2
+// and 3, asked again once it came back, read the one snapshot of 1m30s
+// and failed again, and the warning counted three failing checks in a
+// row over a minute and a half of responses. Minute 2 counts on that
+// push, 30 s before its time; minutes 3 and 4 have none and are
+// skipped; minute 5 reads the pushes since, and passes.
+func TestPostDeployCountsNoSnapshotTwice(t *testing.T) {
+	r := regressRule
+	r.Window, r.Failures = caddyMinutes(5), 3
+	tc := newTestComparator(t, r)
+	cutover := tc.at
+	tc.deploy("blog", "v2", "")
+	tc.store.set("v2", 200, 20, 0.1) // a cold start's blip
+	tc.minute()
+	tc.store.stop(cutover.Add(90 * time.Second))
+	tc.store.err = errors.New("down")
+	tc.store.set("v2", 2000, 20, 0.1) // the blip, diluted since
+	for range 3 {
+		tc.minute()
+	}
+	tc.at = cutover.Add(5 * time.Minute)
+	tc.store.resume(tc.at)
+	tc.store.err = nil
+	tc.at = tc.at.Add(10 * time.Second)
+	tc.tick(context.Background()) // minute 2
+	if run := tc.runs["blog"]; run == nil || run.failed != 2 || run.next != 3 {
+		t.Fatalf("minutes 1 and 2 failing, 3 owed: %+v", run)
+	}
+	for range 4 {
+		tc.at = tc.at.Add(10 * time.Second)
+		tc.tick(context.Background())
+	}
+	if len(tc.evs) != 0 {
+		t.Fatalf("told on one snapshot counted as three checks: %+v", tc.evs)
+	}
+	tc.minute() // the window is over
+	if len(tc.runs) != 0 || tc.logs.FilterMessageSnippet("ended unfinished").Len() != 0 {
+		t.Fatalf("minute 5 a pass: %d in flight, %+v", len(tc.runs), tc.logs.FilterMessageSnippet("ended unfinished").AllUntimed())
+	}
+	if n := tc.logs.FilterMessage("monitor rules: the post-deploy check is skipped: the metrics store took no push of motel's for it").Len(); n != 2 {
+		t.Errorf("%d minutes skipped, want 3 and 4", n)
+	}
+}
+
+// A minute the store took no push for, with pushes since, is skipped,
+// and the comparison goes on: the checks after it read its responses
+// too (the windows are cumulative). Read-only from minute 2 to 3m30s,
+// the release failing from then: minute 3 is asked again until a
+// minute past it, then skipped; minutes 4 and 5 fail and it is told.
+func TestPostDeployGoesOnPastAMinuteTheStoreMissed(t *testing.T) {
+	r := regressRule
+	r.Window, r.Failures = caddyMinutes(5), 2
+	tc := newTestComparator(t, r)
+	cutover := tc.at
+	tc.deploy("blog", "v2", "")
+	tc.store.set("v2", 200, 0, 0.1)
+	tc.minute()
+	tc.store.stop(cutover.Add(2 * time.Minute))
+	tc.minute() // minute 2: the push of 2m
+	tc.store.set("v2", 400, 200, 0.1)
+	tc.minute() // minute 3: none, nor since
+	tc.at = cutover.Add(3*time.Minute + 30*time.Second)
+	tc.store.resume(tc.at)
+	for range 3 { // 3m40s to 4m: no push since that is past minute 3's
+		tc.at = tc.at.Add(10 * time.Second)
+		tc.tick(context.Background())
+		if run := tc.runs["blog"]; run == nil || run.next != 3 {
+			t.Fatalf("minute 3 skipped before a minute past it: %+v", run)
+		}
+	}
+	tc.at = tc.at.Add(10 * time.Second)
+	tc.tick(context.Background())
+	if run := tc.runs["blog"]; run == nil || run.next != 4 || run.failed != 0 {
+		t.Fatalf("minute 3 skipped once the store took a push after it: %+v", run)
+	}
+	tc.minute()
+	tc.minute()
+	if len(tc.evs) != 1 || !strings.Contains(tc.evs[0].Summary, "regressed 5m after") || !strings.Contains(tc.evs[0].Summary, "2 failing checks in a row") {
+		t.Fatalf("after the missed minute: %+v", tc.evs)
+	}
+}
+
+// A push the store stamped before a check's time but had not made
+// searchable when the check first asked is found when the check is
+// asked again, and the check counts then, once: no push since is asked
+// about until a minute after the check's time, which that push is not
+// in (/code-review pass 2 of the push ask).
+func TestPostDeployAPushSeenLateCountsOnce(t *testing.T) {
+	r := regressRule
+	r.Failures = 2
+	tc := newTestComparator(t, r)
+	tc.deploy("blog", "v2", "")
+	tc.store.set("v2", 200, 20, 0.1)
+	tc.store.unseen = 1
+	tc.minute()
+	run := tc.runs["blog"]
+	if run == nil || run.failed != 0 || run.next != 1 {
+		t.Fatalf("counted before its push was seen: %+v", run)
+	}
+	for range 2 {
+		tc.at = tc.at.Add(10 * time.Second)
+		tc.tick(context.Background())
+		if run.failed != 1 || run.next != 2 {
+			t.Fatalf("asked again: %+v", run)
+		}
+	}
+	tc.minute()
+	if len(tc.evs) != 1 || !strings.Contains(tc.evs[0].Summary, "regressed 2m after") || !strings.Contains(tc.evs[0].Summary, "2 failing checks in a row") {
+		t.Fatalf("the second failing check: %+v", tc.evs)
+	}
+	classes := 0
+	for _, q := range tc.store.queries {
+		if strings.HasPrefix(q, "sum by (class)") {
+			classes++
+		}
+	}
+	if classes != 2 {
+		t.Errorf("the release read %d times, want once a counted check", classes)
+	}
+}
+
+// The ask for motel's push, over the store's own MetricsQL: pushes
+// every 30 s from 0 to 90 s, then none until 300 s. A check at 120 s
+// (its last push 30 s before it) or at 149 s counts; at 150 s the push
+// of 90 s is the one the check a minute before read, and the window
+// leaves it out; at 270 s there is none; from 300 s there is again.
+func TestPostDeployPushedQueryOverTheStore(t *testing.T) {
+	tool := vmTool(t, "vmalert-tool")
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, RulesName), renderRules(nil), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var b strings.Builder
+	b.WriteString(`rule_files: [` + RulesName + `]
+evaluation_interval: 30s
+tests:
+  - interval: 30s
+    input_series:
+      - series: 'process_start_time_seconds{job="motel"}'
+        values: '1x3 _x6 1x4'
+    metricsql_expr_test:
+`)
+	for _, c := range []struct {
+		at     int
+		pushed bool
+	}{{60, true}, {120, true}, {149, true}, {150, false}, {180, false}, {270, false}, {300, true}, {330, true}} {
+		fmt.Fprintf(&b, "      - expr: '%s'\n        eval_time: %ds\n", strings.ReplaceAll(pushedQuery, "'", "''"), c.at)
+		if c.pushed {
+			b.WriteString("        exp_samples:\n          - {labels: '{}', value: 1}\n")
+		} else {
+			b.WriteString("        exp_samples: []\n")
+		}
+	}
+	runUnittest(t, tool, dir, b.String())
 }

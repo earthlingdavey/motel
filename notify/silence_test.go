@@ -365,7 +365,7 @@ func posted(t *testing.T, got chan string) string {
 }
 
 // TestSilenceAnswerLost: a silence posted whose answer never comes (the
-// client's timeout, or the caller gone, after Alertmanager read it) may
+// client's timeout, after Alertmanager read it) may
 // be in Alertmanager: the 502 says so and how to list what it holds,
 // rather than that the add failed, and echoes nothing of the request.
 // The journal says what was asked, and not that it was added.
@@ -379,11 +379,12 @@ func TestSilenceAnswerLost(t *testing.T) {
 	if err := json.NewEncoder(&body).Encode(req); err != nil {
 		t.Fatal(err)
 	}
-	// The request's context is the seam: the route posts with it, so its
-	// deadline ends the POST as the client's 10 s would.
-	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
-	defer cancel()
-	err := serveSilence(httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, "/notify/silences", &body).WithContext(ctx))
+	// The client's 10 s, shortened: the caller's context does not reach
+	// the POST.
+	was := silenceTimeout
+	silenceTimeout = 300 * time.Millisecond
+	t.Cleanup(func() { silenceTimeout = was })
+	err := serveSilence(httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, "/notify/silences", &body))
 	if r := posted(t, got); !strings.HasPrefix(r, "POST /api/v2/silences ") {
 		t.Fatalf("Alertmanager got %q", r)
 	}
@@ -414,6 +415,57 @@ func TestSilenceAnswerLost(t *testing.T) {
 		fields["ends_at"] != "2026-11-10T14:00:00Z" || !strings.HasPrefix(fields["comment"].(string), "resizing, see ") ||
 		strings.Contains(fields["comment"].(string), "secretpart") || !strings.Contains(fields["error"].(string), "deadline exceeded") {
 		t.Fatalf("journal fields: %v", fields)
+	}
+}
+
+// TestSilenceAddOutlivesItsCaller: a caller gone once Alertmanager has
+// the request (Ctrl-C, a dropped ssh) does not cut the POST: the route
+// waits for Alertmanager's answer and journals `silence added` with the
+// id, as for a caller who stayed, not the unanswered warning.
+func TestSilenceAddOutlivesItsCaller(t *testing.T) {
+	te, _ := withFakeAM(t)
+	got, answer := make(chan string, 1), make(chan struct{}, 1)
+	useSocket(t, unixServe(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		got <- r.Method + " " + r.URL.Path + " " + string(b)
+		select {
+		case <-answer:
+			_, _ = io.WriteString(w, `{"silenceID":"`+testSilenceID+`"}`)
+		case <-r.Context().Done():
+		}
+	})))
+	var body bytes.Buffer
+	if err := json.NewEncoder(&body).Encode(goodSilence()); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	w, done := httptest.NewRecorder(), make(chan error, 1)
+	go func() {
+		done <- serveSilence(w, httptest.NewRequest(http.MethodPost, "/notify/silences", &body).WithContext(ctx))
+	}()
+	if r := posted(t, got); !strings.HasPrefix(r, "POST /api/v2/silences ") {
+		t.Fatalf("Alertmanager got %q", r)
+	}
+	cancel()
+	// Alertmanager answers once the caller has left.
+	time.Sleep(200 * time.Millisecond)
+	answer <- struct{}{}
+	var err error
+	select {
+	case err = <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the add never ended")
+	}
+	if lines := te.lines("monitor: silence add unanswered: Alertmanager may hold the silence"); len(lines) != 0 {
+		t.Fatalf("an answered add journalled as unanswered: %v", lines[0].ContextMap())
+	}
+	lines := te.lines("monitor: silence added")
+	if len(lines) != 1 || lines[0].ContextMap()["id"] != testSilenceID {
+		t.Fatalf("journal lines: %v", lines)
+	}
+	if err != nil || !strings.Contains(w.Body.String(), `"id":"`+testSilenceID+`"`) {
+		t.Fatalf("an add whose caller left: %v %s", err, w.Body.String())
 	}
 }
 
