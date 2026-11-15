@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -46,6 +47,11 @@ type relStore struct {
 	// unseen is how many asks for motel's push more find none: a push
 	// the store has stamped and not yet made searchable.
 	unseen int
+	// firstUnseen is the same for the first push after a cutover.
+	firstUnseen int
+	// cutover is each app's: a window that starts before it is the old
+	// release's.
+	cutover map[string]time.Time
 }
 
 // stop is the store taking no push from at on: down, or read-only.
@@ -83,11 +89,65 @@ func (s *relStore) setTimed(key string, timed float64) {
 	s.timed[key] = timed
 }
 
-var releaseRe = regexp.MustCompile(`release="([^"]*)"`)
+var (
+	releaseRe = regexp.MustCompile(`release="([^"]*)"`)
+	appRe     = regexp.MustCompile(`app="([^"]*)"`)
+	// windowRe is a query's window, from counterIncrease's last term:
+	// its length and its offset.
+	windowRe = regexp.MustCompile(`\) or increase\([^\[]*\[(\w+)\](?: offset (\w+))?\)`)
+	// firstPushRe is firstPushQuery's, and its window.
+	firstPushRe = regexp.MustCompile(`^min\(tfirst_over_time\(` + regexp.QuoteMeta(pushSeries) + `\[(\w+)\]\)\)$`)
+)
 
-// oldWindow is a query over the old release's window: its increase is
-// offset (counterIncrease's guard has an offset in either).
-var oldWindow = regexp.MustCompile(`increase\([^)]*\] offset `)
+// promParse is promDuration's inverse.
+func promParse(s string) time.Duration {
+	if d, ok := strings.CutSuffix(s, "d"); ok {
+		n, _ := strconv.Atoi(d)
+		return time.Duration(n) * 24 * time.Hour
+	}
+	d, err := time.ParseDuration(s)
+	if err != nil {
+		panic("the fake store reads no duration " + s)
+	}
+	return d
+}
+
+// window is where a release's query at t reads: from start to end.
+func window(q string, t time.Time) (start, end time.Time) {
+	m := windowRe.FindStringSubmatch(q)
+	if m == nil {
+		panic("the fake store finds no window in " + q)
+	}
+	end = t
+	if m[2] != "" {
+		end = t.Add(-promParse(m[2]))
+	}
+	return end.Add(-promParse(m[1])), end
+}
+
+// isOld is whether q, at t, reads a window that starts before its
+// app's cutover: the old release's.
+func (s *relStore) isOld(q string, t time.Time) bool {
+	m := appRe.FindStringSubmatch(q)
+	if m == nil {
+		return false
+	}
+	start, _ := window(q, t)
+	return start.Before(s.cutover[m[1]])
+}
+
+// oldAsked is the queries made over the old release's window.
+func (s *relStore) oldAsked() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var out []string
+	for i, q := range s.queries {
+		if strings.Contains(q, "release=") && s.isOld(q, s.at[i]) {
+			out = append(out, q)
+		}
+	}
+	return out
+}
 
 func (s *relStore) queryAt(_ context.Context, q string, t time.Time) ([]series, error) {
 	s.mu.Lock()
@@ -128,12 +188,29 @@ func (s *relStore) queryAt(_ context.Context, q string, t time.Time) ([]series, 
 		}
 		return []series{{labels: map[string]string{}, points: pt(1)}}, nil
 	}
+	// A release is read as the store holds it at its window's end: as
+	// it stood at the store's last push before a gap the end falls in.
+	if m := firstPushRe.FindStringSubmatch(q); m != nil { // proven over the store's own engine in TestPostDeployTheBaselineOverTheStore
+		if s.firstUnseen > 0 {
+			s.firstUnseen--
+			return nil, nil
+		}
+		first := t.Add(-promParse(m[1])).Add(time.Second)
+		if s.gap(first) {
+			first = s.resumedAt
+		}
+		if first.IsZero() || first.After(t) {
+			return nil, nil
+		}
+		return []series{{labels: map[string]string{}, points: pt(float64(first.UnixMilli()) / 1e3)}}, nil
+	}
 	key := releaseRe.FindStringSubmatch(q)[1]
-	if oldWindow.MatchString(q) {
+	_, end := window(q, t)
+	if s.isOld(q, t) {
 		key += " old"
 	}
 	nums, timed := s.nums, s.timed
-	if s.gap(t) {
+	if s.gap(end) {
 		nums, timed = s.snap, s.snapTimed
 	}
 	n, ok := nums[key]
@@ -167,7 +244,7 @@ type testComparator struct {
 
 func newTestComparator(t *testing.T, rules ...Rule) *testComparator {
 	t.Helper()
-	tc := &testComparator{at: time.Date(2026, 11, 11, 12, 0, 0, 0, time.UTC), store: &relStore{nums: map[string]releaseNumbers{}, timed: map[string]float64{}}, m: &MetricsStore{Rules: rules}}
+	tc := &testComparator{at: time.Date(2026, 11, 11, 12, 0, 0, 0, time.UTC), store: &relStore{nums: map[string]releaseNumbers{}, timed: map[string]float64{}, cutover: map[string]time.Time{}}, m: &MetricsStore{Rules: rules}}
 	var mu sync.Mutex
 	tc.comparator = newComparator(func(ev Event) { mu.Lock(); tc.evs = append(tc.evs, ev); mu.Unlock() })
 	tc.now = func() time.Time { return tc.at }
@@ -189,6 +266,7 @@ func caddyMs(n int) caddy.Duration      { return caddy.Duration(time.Duration(n)
 // deploy is liveswap's report of a cutover at the test's now; the
 // clock then moves to where the store answers for it.
 func (tc *testComparator) deploy(app, release, previous string) {
+	tc.store.cutover[app] = tc.at
 	tc.deployed(liveswap.LifecycleEvent{Name: liveswap.EventCutover, App: app, Release: release, Previous: previous, DeployedBy: "local:/k.pub", Cutover: tc.at})
 	tc.at = tc.at.Add(storeLag + time.Second)
 }
@@ -197,6 +275,7 @@ func (tc *testComparator) deploy(app, release, previous string) {
 // release itself when its instance still served, empty when it had
 // stopped.
 func (tc *testComparator) relaunch(app, release, previous string) {
+	tc.store.cutover[app] = tc.at
 	tc.deployed(liveswap.LifecycleEvent{Name: liveswap.EventCutover, App: app, Release: release, Previous: previous, DeployedBy: "local:/k.pub", Cutover: tc.at, Relaunch: true})
 	tc.at = tc.at.Add(storeLag + time.Second)
 }
@@ -239,17 +318,25 @@ func TestPostDeployFailsAfterItsCountInARow(t *testing.T) {
 	if len(tc.evs) != 1 || len(tc.runs) != 0 {
 		t.Fatalf("after the event: %d events, %d in flight", len(tc.evs), len(tc.runs))
 	}
-	// The windows: the new release's since the cutover, the old one's
-	// the same length before it and a push past it, in whole minutes,
-	// through counterIncrease, read at their end, which the store has.
+	// The windows: the new release's since the cutover, in whole
+	// minutes, the old one's the same length before it and on to the
+	// first push the store took over storeRequestTimeout after the cutover
+	// (the fake's: a second after that), asked once, through
+	// counterIncrease, read at the
+	// check's time, which the store has.
 	for i, at := range tc.store.at {
 		if k := at.Sub(cutover); k%time.Minute != 0 || k < time.Minute || at.After(tc.at.Add(-storeLag)) {
 			t.Errorf("query %d read at cutover + %s (now cutover + %s)", i, k, tc.at.Sub(cutover))
 		}
 	}
 	var sawNew, sawOld bool
+	firstAsks := 0
 	for _, q := range tc.store.queries {
 		if q == pushedQuery {
+			continue
+		}
+		if firstPushRe.MatchString(q) {
+			firstAsks++
 			continue
 		}
 		if !strings.Contains(q, " (present_over_time(") || !strings.Contains(q, ") or increase(") {
@@ -259,11 +346,11 @@ func TestPostDeployFailsAfterItsCountInARow(t *testing.T) {
 			t.Errorf("a bucket query not through histogramIncrease: %s", q)
 		}
 		sawNew = sawNew || strings.Contains(q, counterIncrease(`motel_app_requests_total{app="blog",release="v2"}`, 2*time.Minute, 0))
-		sawOld = sawOld || strings.Contains(q, `{app="blog",release="v1"}[150s] offset 90s)`) &&
+		sawOld = sawOld || strings.Contains(q, `or increase(motel_app_requests_total{app="blog",release="v1"}[131s] offset 109s)`) &&
 			strings.Contains(q, `present_over_time(motel_app_requests_total{app="blog",release="v1"}[1d] offset 4m)`)
 	}
-	if !sawNew || !sawOld {
-		t.Errorf("queries = %q", tc.store.queries)
+	if !sawNew || !sawOld || firstAsks != 1 {
+		t.Errorf("%d asks for the first push after the cutover, queries = %q", firstAsks, tc.store.queries)
 	}
 }
 
@@ -277,10 +364,8 @@ func TestPostDeploySkipsBelowTheFloor(t *testing.T) {
 	if len(tc.evs) != 0 {
 		t.Fatalf("told below the floor: %+v", tc.evs)
 	}
-	for _, q := range tc.store.queries {
-		if oldWindow.MatchString(q) {
-			t.Errorf("the old release asked about under the floor: %s", q)
-		}
+	for _, q := range tc.store.oldAsked() {
+		t.Errorf("the old release asked about under the floor: %s", q)
 	}
 	tc.store.set("v2", 50, 50, 0)
 	tc.minute()
@@ -694,10 +779,8 @@ func TestPostDeployARelaunchAfterAStop(t *testing.T) {
 			if ev.Summary != c.want {
 				t.Errorf("summary =\n%s\nwant\n%s", ev.Summary, c.want)
 			}
-			for _, q := range tc.store.queries {
-				if oldWindow.MatchString(q) {
-					t.Errorf("a release before it was asked for: %s", q)
-				}
+			for _, q := range tc.store.oldAsked() {
+				t.Errorf("a release before it was asked for: %s", q)
 			}
 			// A relaunch's window starts past the stopped instance's
 			// last push (relaunchSkip).
@@ -998,6 +1081,206 @@ func TestPostDeployAPushSeenLateCountsOnce(t *testing.T) {
 	if classes != 2 {
 		t.Errorf("the release read %d times, want once a counted check", classes)
 	}
+}
+
+// The old release's last answers before the cutover reach the store
+// with the first push after it, and the store stamps a push as it takes
+// it and back-fills none it missed. Down from before the cutover to 40 s
+// after it (past the push that carries those answers) and back before
+// the check, it held the old release's series as it stood at its last
+// push before the outage; read up to a push past the cutover, the
+// baseline was that short span's: a warning the whole baseline withheld
+// was told against a few responses, or against none ("too few to
+// compare"), and a mild outage read a nine-tenths baseline. Read up to
+// the first push the store took after the cutover, it is the whole
+// one: one ask more a comparison, when the old release is first read,
+// none for a deploy that holds, the verdicts with no outage unchanged.
+func TestPostDeployReadsTheWholeBaselineAfterAnOutage(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		// down is how long before the cutover the store took its last
+		// push; none: it missed none.
+		down time.Duration
+		// snap is the old release as the store held it then, sent and
+		// 5xx; none at 0 sent.
+		snapSent, snapErrs float64
+		window, minute     int
+		newSent, newErrs   float64
+		want               string // the summary's part; "" none told
+	}{
+		// The old release at 4 % over 1000 responses, the new at 5 % over
+		// 400: no rise beyond chance, nothing told.
+		{"down from a minute before: no baseline left", time.Minute, 0, 0, 5, 1, 400, 20, ""},
+		{"down from 20 s before: a short baseline at 0 %", 20 * time.Second, 120, 0, 5, 1, 400, 20, ""},
+		// A 10-minute window, its last check over the bound: a store down
+		// a minute before the cutover left nine tenths, at 5 %.
+		{"mild: down from a minute before, a long window", time.Minute, 900, 45, 10, 10, 2000, 200, "5xx share 0.1 against 0.04 before it;"},
+		{"no outage", 0, 0, 0, 10, 10, 2000, 200, "5xx share 0.1 against 0.04 before it;"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			r := regressRule
+			r.Window, r.Failures, r.MaxP95 = caddyMinutes(c.window), 1, 0
+			tc := newTestComparator(t, r)
+			cutover := tc.at
+			if c.down > 0 {
+				if c.snapSent > 0 {
+					tc.store.set("v1 old", c.snapSent, c.snapErrs, 0.1)
+				}
+				tc.store.stop(cutover.Add(-c.down))
+				tc.store.resume(cutover.Add(40 * time.Second))
+			}
+			tc.store.set("v1 old", 1000, 40, 0.1) // what the store holds from the first push it took after the cutover
+			tc.deploy("blog", "v2", "v1")
+			tc.store.set("v2", 2000, 0, 0.1)
+			for range c.minute - 1 {
+				tc.minute()
+			}
+			tc.store.set("v2", c.newSent, c.newErrs, 0.1)
+			tc.minute()
+			switch {
+			case c.want == "" && len(tc.evs) != 0:
+				t.Fatalf("told against the baseline the store held before the outage: %s", tc.evs[0].Summary)
+			case c.want != "" && (len(tc.evs) != 1 || !strings.Contains(tc.evs[0].Summary, c.want)):
+				t.Fatalf("events %+v, want one with %q", tc.evs, c.want)
+			}
+			// One ask a check, its own, and one for where the old
+			// release's window ends, made with its read.
+			asks, firstAsks := 0, 0
+			for _, q := range tc.store.queries {
+				switch {
+				case q == pushedQuery:
+					asks++
+				case firstPushRe.MatchString(q):
+					firstAsks++
+				}
+			}
+			if asks != c.minute || firstAsks != 1 {
+				t.Errorf("%d asks for motel's push over %d checks, %d for the first after the cutover", asks, c.minute, firstAsks)
+			}
+			if old := tc.store.oldAsked(); len(old) != 1 {
+				t.Errorf("the old release read %d times, want once, at the check over the bound", len(old))
+			}
+		})
+	}
+}
+
+// Where the old release's window ends is not decided while the store
+// shows no push gathered after the cutover (stamped storeRequestTimeout
+// past it): the check's own push may be one stamped sooner, which only
+// the first minute's can be. Not yet searchable, the check is asked
+// again at the next tick, the end with it; with none until a minute
+// past the check's time (the next push lost), it is missed, and the
+// next minute's check finds the push after.
+func TestPostDeployAsksAgainForTheOldWindowsEnd(t *testing.T) {
+	r := regressRule
+	r.Failures = 1
+	tc := newTestComparator(t, r)
+	tc.deploy("blog", "v2", "v1")
+	tc.store.set("v1 old", 1000, 0, 0.1)
+	tc.store.set("v2", 200, 20, 0.1)
+	tc.store.firstUnseen = 1
+	tc.minute()
+	if run := tc.runs["blog"]; run == nil || run.next != 1 || !run.oldEnd.IsZero() || len(tc.evs) != 0 {
+		t.Fatalf("decided with no push gathered after the cutover shown: %+v, %+v", run, tc.evs)
+	}
+	if tc.logs.FilterMessageSnippet("the post-deploy check is asked again").Len() != 1 {
+		t.Error("no debug line for the check asked again")
+	}
+	tc.at = tc.at.Add(postDeployTick)
+	tc.tick(context.Background())
+	if len(tc.evs) != 1 || !strings.Contains(tc.evs[0].Summary, "against 0 before it") {
+		t.Fatalf("asked again, against the whole baseline: %+v", tc.evs)
+	}
+
+	lost := newTestComparator(t, r)
+	cutover := lost.at
+	lost.deploy("blog", "v2", "v1")
+	lost.store.set("v1 old", 1000, 0, 0.1)
+	lost.store.set("v2", 200, 20, 0.1)
+	lost.store.firstUnseen = 1000
+	lost.minute()
+	for lost.at.Add(-storeLag).Before(cutover.Add(time.Minute + checkFresh)) {
+		if run := lost.runs["blog"]; run == nil || run.next != 1 {
+			t.Fatalf("missed before a minute past it: %+v", run)
+		}
+		lost.at = lost.at.Add(postDeployTick)
+		lost.tick(context.Background())
+	}
+	if run := lost.runs["blog"]; run == nil || run.next != 2 || !run.oldEnd.IsZero() || len(lost.evs) != 0 {
+		t.Fatalf("minute 1 missed: %+v, %+v", run, lost.evs)
+	}
+	lost.store.firstUnseen = 0
+	lost.at = lost.at.Add(postDeployTick)
+	lost.tick(context.Background())
+	if len(lost.evs) != 1 || !strings.Contains(lost.evs[0].Summary, "regressed 2m after") || !strings.Contains(lost.evs[0].Summary, "against 0 before it") {
+		t.Fatalf("minute 2 against the whole baseline: %+v", lost.evs)
+	}
+}
+
+// The old release's window over the store's own MetricsQL: pushes every
+// 30 s from 0, the cutover at 610 s, the check 5 minutes after it, so
+// v1 is read from its sample of 300 s (200 2xx, 10 5xx) to the first
+// push the store took more than 10 s after the cutover (gathered after
+// it), which carries v1's final counts before the cutover: 400 and 20.
+//
+//   - The store down from 540 s to 660 s: the first push after the
+//     cutover is 660 s's. Read up to a push past the cutover (330 s
+//     offset 270 s) the window held only the push of 510 s, before the
+//     outage: 140 and 7.
+//   - No outage: the push of 630 s. The old instance's stop then cuts 5
+//     requests it still held, 502s counted under v1 after it, which a
+//     window to the check's time read as its baseline: 200 and 15.
+//   - The cutover at 625 s, so the push of 630 s, within
+//     storeRequestTimeout of it, may have been gathered before it (a
+//     slow store): it holds 400 and 20, and the push of 660 s v1's
+//     final 410 and 21. The first push is 660 s's, and the window reads
+//     210 and 11 from the sample of 300 s; asked from the cutover, it
+//     was 630 s's, and the window read 200 and 10.
+//   - The cutover at 620 s: the push of 630 s, exactly
+//     storeRequestTimeout past it, is left out too, the store's window
+//     leaving its start out (pushedQuery's): the first push is 660 s's.
+func TestPostDeployTheBaselineOverTheStore(t *testing.T) {
+	tool := vmTool(t, "vmalert-tool")
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, RulesName), renderRules(nil), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	elapsed := 5 * time.Minute
+	var b strings.Builder
+	b.WriteString(`rule_files: [` + RulesName + `]
+evaluation_interval: 30s
+tests:
+`)
+	for _, c := range []struct {
+		cutover          int64
+		push, ok, errs   string
+		first            int64
+		wantOK, wantErrs int
+	}{
+		{610, "1x17 _x4 1x9", "0+20x17 _x4 400x9", "0+1x17 _x4 20x9", 660, 200, 10},
+		{610, "1x30", "0+20x20 400x10", "0+1x20 20 25x9", 630, 200, 10},
+		{625, "1x31", "0+20x20 400 410x9", "0+1x20 20 21x9", 660, 210, 11},
+		{620, "1x31", "0+20x20 400 410x9", "0+1x20 20 21x9", 660, 210, 11},
+	} {
+		cutover := time.Unix(c.cutover, 0)
+		at := cutover.Add(elapsed)
+		fmt.Fprintf(&b, `  - interval: 30s
+    input_series:
+      - series: 'process_start_time_seconds{job="motel"}'
+        values: '%s'
+      - series: 'motel_app_requests_total{app="blog",release="v1",class="2xx",job="motel"}'
+        values: '%s'
+      - series: 'motel_app_requests_total{app="blog",release="v1",class="5xx",job="motel"}'
+        values: '%s'
+    metricsql_expr_test:
+`, c.push, c.ok, c.errs)
+		fmt.Fprintf(&b, "      - expr: '%s'\n        eval_time: %ds\n        exp_samples:\n          - {labels: '{}', value: %d}\n", firstPushQuery(cutover, at), at.Unix(), c.first)
+		win, off := oldWindow(elapsed, at, time.Unix(c.first, 0))
+		q := classesQuery(releaseSelector("blog", "v1"), win, off)
+		fmt.Fprintf(&b, "      - expr: '%s'\n        eval_time: %ds\n        exp_samples:\n", strings.ReplaceAll(q, "'", "''"), at.Unix())
+		fmt.Fprintf(&b, "          - {labels: '{class=\"2xx\"}', value: %d}\n          - {labels: '{class=\"5xx\"}', value: %d}\n", c.wantOK, c.wantErrs)
+	}
+	runUnittest(t, tool, dir, b.String())
 }
 
 // The ask for motel's push, over the store's own MetricsQL: pushes
