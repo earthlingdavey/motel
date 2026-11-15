@@ -7,6 +7,7 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"encoding/base64"
+	"encoding/hex"
 	"fmt"
 	"net/netip"
 	"slices"
@@ -122,6 +123,20 @@ func prefixes(n int) string {
 	return b.String()
 }
 
+// smallOrder is an Ed25519 public key of small order, from its hex
+// encoding (libsodium's blocklist), in the plain or the sk form.
+func smallOrder(t testing.TB, hexKey string, sk bool) string {
+	t.Helper()
+	key, err := hex.DecodeString(hexKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sk {
+		return b64(ssh.Marshal(struct{ Type, Key, Application string }{"sk-ssh-ed25519@openssh.com", string(key), "ssh:"}))
+	}
+	return b64(ssh.Marshal(struct{ Type, Key string }{"ssh-ed25519", string(key)}))
+}
+
 func rsaKey(t testing.TB) string {
 	t.Helper()
 	priv, err := rsa.GenerateKey(rand.Reader, 2048)
@@ -184,6 +199,13 @@ func TestParsePerson(t *testing.T) {
 		"not a key":     {[]string{"bob", "ssh-ed25519", "AAAA"}, "person bob: the key does not parse as an SSH public key"},
 		"trailing":      {[]string{"bob", "ssh-ed25519", b64(append(slices.Clone(wire), 0))}, "person bob: the key does not parse as an SSH public key"},
 		"other type":    {[]string{"bob", "ecdsa-sha2-nistp256", ed}, `person bob: the key is "ssh-ed25519", not ecdsa-sha2-nistp256`},
+		"the identity point": {[]string{"bob", "ssh-ed25519", smallOrder(t, "0100000000000000000000000000000000000000000000000000000000000000", false)},
+			"person bob: the key is not a usable ed25519 key: its point has small order, so anyone can sign for it"},
+		"the point of order 2":                  {[]string{"bob", "ssh-ed25519", smallOrder(t, "ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f", false)}, "not a usable ed25519 key"},
+		"a point of order 8":                    {[]string{"bob", "ssh-ed25519", smallOrder(t, "26e8958fc2b227b045c3f489f2ef98f0d5dfac05d3c63339b13802886d53fc05", false)}, "not a usable ed25519 key"},
+		"the identity, written non-canonically": {[]string{"bob", "ssh-ed25519", smallOrder(t, "eeffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f", false)}, "not a usable ed25519 key"},
+		"no point":                              {[]string{"bob", "ssh-ed25519", smallOrder(t, "0200000000000000000000000000000000000000000000000000000000000000", false)}, "person bob: the key is not a usable ed25519 key: its bytes are no point on the curve"},
+		"the identity, as an sk key":            {[]string{"bob", "sk-ssh-ed25519@openssh.com", smallOrder(t, "0100000000000000000000000000000000000000000000000000000000000000", true)}, "not a usable ed25519 key"},
 	} {
 		_, err := ParsePerson(c.args)
 		if err == nil || !strings.Contains(err.Error(), c.want) {
@@ -297,7 +319,8 @@ func fixture(t *testing.T, lines ...string) Lines {
 
 // TestCheckLines is each rule across lines, taken and refused.
 func TestCheckLines(t *testing.T) {
-	k1, k2, k3, k4, rsa1 := edKey(t), ecdsaKey(t, elliptic.P256()), skEdKey(t), edKey(t), rsaKey(t)
+	k1, k2, k3, k4, rsa1, rsa2 := edKey(t), ecdsaKey(t, elliptic.P256()), skEdKey(t), edKey(t), rsaKey(t), rsaKey(t)
+	identity := smallOrder(t, "0100000000000000000000000000000000000000000000000000000000000000", false)
 	ed, edSK, edSKOther := edForms(t)
 	ec, ecSK := ecForms(t)
 	apps := &Around{Apps: []string{"example", "blog"}, Channels: true}
@@ -409,13 +432,21 @@ func TestCheckLines(t *testing.T) {
 			lines: []string{"signer alice ssh-ed25519 " + k1, "person carol ecdsa-sha2-nistp256 " + k2, "person carol sk-ssh-ed25519@openssh.com " + k3}, around: apps,
 			warnings: []string{"person carol has no grant"},
 		},
+		"two ssh-rsa signer keys for one name, warned once": {
+			lines: []string{"signer carol ssh-rsa " + rsa1, "signer carol ssh-rsa " + rsa2, "person bob ssh-ed25519 " + k1, "grant bob viewer box"}, around: apps,
+			warnings: []string{"signer carol: an ssh-rsa key signs commits but cannot be a person's key; for carol to be a person, add a person line with an ed25519 or ecdsa key (ssh-keygen -t ed25519)"},
+		},
+		"a signer key of small order is no person's key": {
+			lines: []string{"signer mallory ssh-ed25519 " + identity, "grant mallory viewer box"},
+			want:  "grant mallory viewer box: mallory has no key a person's token can use (an ssh-rsa signer key signs commits only); add a person line with an ed25519 or ecdsa key",
+		},
 		"an ssh-rsa signer beside people": {
 			lines: []string{"signer carol ssh-rsa " + rsa1, "person bob ssh-ed25519 " + k1, "grant bob viewer box"}, around: apps,
 			warnings: []string{"signer carol: an ssh-rsa key signs commits but cannot be a person's key; for carol to be a person, add a person line with an ed25519 or ecdsa key (ssh-keygen -t ed25519)"},
 		},
 		"people and no monitor channel": {
 			lines: []string{"person bob ssh-ed25519 " + k1, "grant bob viewer box"}, around: &Around{},
-			warnings: []string{"people are declared and no monitor channel is, so what they do on this box will be told to no one"},
+			warnings: []string{"people are declared and no monitor channel is, so what they do on this box will be told to no one; add a channel line to the monitor block: channel <name> <kind> {secret.NOTIFY_<NAME>}"},
 		},
 		"people and no monitor known": {
 			lines: []string{"person bob ssh-ed25519 " + k1, "grant bob viewer box"}, around: nil, warnings: noWarning,

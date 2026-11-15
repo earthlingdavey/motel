@@ -23,6 +23,7 @@ import (
 	"strconv"
 	"strings"
 
+	"filippo.io/edwards25519"
 	"golang.org/x/crypto/ssh"
 )
 
@@ -83,12 +84,16 @@ type Key struct {
 	// sk-ssh-ed25519@openssh.com under any application string, and an
 	// ECDSA key the same as ecdsa-sha2-* and sk-ecdsa-sha2-*.
 	material string
+	// smallOrder is an Ed25519 key, in either form, that is no point or
+	// a point of small order (unusableEd25519).
+	smallOrder bool
 }
 
 // Person reports whether a person's token may be signed with the key.
 // Every person line's key may; a signer line's unless it is ssh-rsa,
-// which signs commits only.
-func (k Key) Person() bool { return personKeyTypes[k.Type] }
+// which signs commits only, or an Ed25519 key of small order, which
+// anyone can sign for.
+func (k Key) Person() bool { return personKeyTypes[k.Type] && !k.smallOrder }
 
 // identity is the key the one-key rule compares: its material, or its
 // wire bytes for a Key not made by ParsePerson or SignerKey.
@@ -146,7 +151,40 @@ func keyFingerprint(wire []byte) string {
 // checked by its own parser (box/proof's ParseSigner), which this
 // package cannot import.
 func SignerKey(name, keyType, b64 string, wire []byte) Key {
-	return Key{Name: name, Type: keyType, B64: b64, Wire: wire, Fingerprint: keyFingerprint(wire), Signer: true, material: keyMaterial(wire)}
+	return Key{Name: name, Type: keyType, B64: b64, Wire: wire, Fingerprint: keyFingerprint(wire), Signer: true, material: keyMaterial(wire), smallOrder: unusableEd25519(wire) != ""}
+}
+
+// unusableEd25519 is why wire, an Ed25519 key in either form, can be
+// no person's key, "" when it can (or is not Ed25519): its bytes are no
+// point on the curve, which nothing verifies under, or a point of small
+// order (the identity, and the seven others whose multiple by the
+// cofactor 8 is the identity), in any encoding, canonical or not: the
+// points libsodium's crypto_sign_ed25519 refuses as public keys (its
+// blocklist, ge25519_has_small_order). Under such a key a signature
+// anyone can make without a private key (R the base point, S = 1, for
+// the identity) verifies for every message with crypto/ed25519 and with
+// ssh-keygen -Y verify.
+func unusableEd25519(wire []byte) string {
+	pub, err := ssh.ParsePublicKey(wire)
+	if err != nil {
+		return ""
+	}
+	cpk, ok := pub.(ssh.CryptoPublicKey)
+	if !ok {
+		return ""
+	}
+	k, ok := cpk.CryptoPublicKey().(ed25519.PublicKey)
+	if !ok {
+		return ""
+	}
+	p, err := new(edwards25519.Point).SetBytes(k)
+	if err != nil {
+		return "its bytes are no point on the curve"
+	}
+	if new(edwards25519.Point).MultByCofactor(p).Equal(edwards25519.NewIdentityPoint()) == 1 {
+		return "its point has small order, so anyone can sign for it"
+	}
+	return ""
 }
 
 // ParsePerson checks one person line's arguments, `<name> <key-type>
@@ -188,6 +226,9 @@ func ParsePerson(args []string) (Key, error) {
 	// parse to the key but are not its marshalling would never match.
 	if string(pub.Marshal()) != string(wire) {
 		return Key{}, fmt.Errorf("person %s: the key is not in its one wire form", name)
+	}
+	if why := unusableEd25519(wire); why != "" {
+		return Key{}, fmt.Errorf("person %s: the key is not a usable ed25519 key: %s", name, why)
 	}
 	return Key{Name: name, Type: keyType, B64: b64, Wire: wire, Fingerprint: keyFingerprint(wire), material: keyMaterial(wire)}, nil
 }
@@ -476,7 +517,7 @@ func CheckLines(l Lines, around *Around) (warnings []string, err error) {
 	warned := map[string]bool{}
 	for _, k := range l.Keys {
 		switch {
-		case k.Signer && !k.Person() && !personKey[k.Name] && !warned["signer "+k.Name]:
+		case k.Signer && k.Type == "ssh-rsa" && !personKey[k.Name] && !warned["signer "+k.Name]:
 			warned["signer "+k.Name] = true
 			warnings = append(warnings, fmt.Sprintf("signer %s: an ssh-rsa key signs commits but cannot be a person's key; for %s to be a person, add a person line with an ed25519 or ecdsa key (ssh-keygen -t ed25519)", k.Name, k.Name))
 		case !k.Signer && !hasGrant[k.Name] && !signerName[k.Name] && !warned["person "+k.Name]:
@@ -492,7 +533,7 @@ func CheckLines(l Lines, around *Around) (warnings []string, err error) {
 		}
 	}
 	if around != nil && !around.Channels && len(personKey) > 0 {
-		warnings = append(warnings, "people are declared and no monitor channel is, so what they do on this box will be told to no one")
+		warnings = append(warnings, "people are declared and no monitor channel is, so what they do on this box will be told to no one; add a channel line to the monitor block: channel <name> <kind> {secret.NOTIFY_<NAME>}")
 	}
 	return warnings, nil
 }
