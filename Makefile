@@ -6,8 +6,8 @@ COMPOSE ?= docker compose
 # the root module — nested modules are excluded from a parent module's
 # pattern even in workspace mode — so test/vet name each module's tree
 # explicitly.
-MODULES ?= . backups box liveswap notify penaltybox
-PKGS = ./... ./backups/... ./box/... ./liveswap/... ./notify/... ./penaltybox/...
+MODULES ?= . backups box liveswap motelctl notify penaltybox
+PKGS = ./... ./backups/... ./box/... ./liveswap/... ./motelctl/... ./notify/... ./penaltybox/...
 
 # Release version: the tag when present (release.yml passes it in),
 # else a digit-leading dev placeholder that deb version rules accept.
@@ -107,7 +107,7 @@ lint:
 # FUZZTIME (default 2m) is read by the shell, never declared as a make
 # variable: fuzz.yml passes a workflow_dispatch input through the
 # environment, and a make variable would expand $(shell ...) in it.
-FUZZ_MODULES = box liveswap penaltybox
+FUZZ_MODULES = box liveswap motelctl penaltybox
 
 # Fuzz targets are discovered (`go test -list '^Fuzz'` in every package
 # of the module — box keeps its proof core in a subpackage), never
