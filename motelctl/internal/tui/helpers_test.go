@@ -140,6 +140,18 @@ func (h *harness) open(v model.View) {
 	h.sync()
 }
 
+// quit sends a key that ends the event loop (q), and waits only for
+// the key itself: after the loop ends no update is run, so press's
+// waits would never return.
+func (h *harness) quit(r rune) {
+	done := make(chan struct{})
+	go h.u.App.QueueUpdate(func() {
+		defer close(done)
+		h.u.key(tcell.NewEventKey(tcell.KeyRune, r, tcell.ModNone))
+	})
+	<-done
+}
+
 // screen is the simulation screen as text, trailing spaces cut.
 func (h *harness) screen() string {
 	var out string

@@ -92,7 +92,7 @@ func TestKeys(t *testing.T) {
 	if s := h.screen(); !strings.Contains(s, "by name") {
 		t.Fatalf("s did not sort by name")
 	}
-	h.press("q")
+	h.quit('q')
 }
 
 // TestTooSmall: below 60x16 the screen says what it needs.
