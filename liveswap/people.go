@@ -2,9 +2,12 @@ package liveswap
 
 import (
 	"errors"
+	"fmt"
+	"math"
 	"net"
 	"net/http"
 	"net/netip"
+	"strconv"
 	"time"
 
 	"github.com/caddyserver/caddy/v2/modules/caddyhttp"
@@ -12,6 +15,7 @@ import (
 
 	"github.com/smallhoursorg/motel/liveswap/access"
 	"github.com/smallhoursorg/motel/liveswap/deploytrust"
+	"github.com/smallhoursorg/motel/liveswap/wire"
 )
 
 // A person reaches either webhook with a token their own ssh key signs,
@@ -24,10 +28,12 @@ import (
 
 // PersonGate is what a webhook admits a person through: the registry
 // of this load (nil admits no one), the shared failure budgets, the
-// webhook's journal, and the clock (nil is time.Now).
+// rate per person (access.SharedRate; nil, in a test, takes every
+// request), the webhook's journal, and the clock (nil is time.Now).
 type PersonGate struct {
 	Registry *access.Registry
 	Limiter  *deploytrust.Limiter
+	Rate     *access.Rate
 	Logger   *zap.Logger
 	Now      func() time.Time
 }
@@ -85,6 +91,19 @@ func AdmitPerson(w http.ResponseWriter, r *http.Request, g PersonGate, scopeKey,
 	}
 	g.Limiter.Admit(r)
 	StampVersion(w.Header())
+	// The rate, after the address and before Decide: a person's own
+	// budget of accepted requests, told when to come back.
+	if g.Rate != nil {
+		if ok, wait, log := g.Rate.Take(name); !ok {
+			secs := max(1, int(math.Ceil(wait.Seconds())))
+			if log {
+				g.Logger.Warn("access: person throttled", zap.String("person", name), zap.String(scopeKey, scopeValue),
+					zap.Int("per_second", access.RatePerSecond), zap.Int("burst", access.RateBurst))
+			}
+			w.Header().Set("Retry-After", strconv.Itoa(secs))
+			return Person{}, false, write(http.StatusTooManyRequests, wire.Error{Error: fmt.Sprintf("too many requests; retry after %d s", secs)})
+		}
+	}
 	return Person{
 		Name:      name,
 		Token:     v,

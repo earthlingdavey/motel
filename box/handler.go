@@ -44,6 +44,9 @@ type Handler struct {
 	app     *App
 	logger  *zap.Logger
 	limiter *deploytrust.Limiter
+	// rate is the rate per person, access.SharedRate; nil in a test
+	// that does not ask for one.
+	rate *access.Rate
 
 	// Where the handler reads: installedFile, exchangeDir and
 	// secretsDir, set in Provision; a test's temporary files otherwise.
@@ -84,6 +87,7 @@ func (h *Handler) Provision(ctx caddy.Context) error {
 	}
 	h.app = app.(*App)
 	h.limiter = deploytrust.Shared()
+	h.rate = access.SharedRate()
 	h.installed, h.dir, h.secrets, h.agePub = installedFile, exchangeDir, secretsDir, agePubFile
 	h.verifier = &proof.Verifier{} // RunAs 0: as the motel uid, in the service's PrivateTmp
 	h.validator = newChildValidator(h.x("stage"))
@@ -131,7 +135,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddyht
 // on the limiter and with the journal name the deploy token's preamble
 // uses, then the route's action put to Decide with the person.
 func (h *Handler) servePerson(w http.ResponseWriter, r *http.Request, rt *route) error {
-	gate := liveswap.PersonGate{Registry: h.app.Access(), Limiter: h.limiter, Logger: h.logger}
+	gate := liveswap.PersonGate{Registry: h.app.Access(), Limiter: h.limiter, Rate: h.rate, Logger: h.logger}
 	p, ok, err := liveswap.AdmitPerson(w, r, gate, "box_request", rt.journal, func(code int, body any) error { return respond(w, code, body) })
 	if !ok {
 		return err

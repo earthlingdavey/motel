@@ -406,3 +406,36 @@ func TestAddressList(t *testing.T) {
 		}
 	}
 }
+
+// TestRatePerPerson: past the burst a person is told 429, with
+// Retry-After and the protocol header (the token verified), whatever
+// the route; the journal says so once; and another person is not held
+// to it.
+func TestRatePerPerson(t *testing.T) {
+	people := newTestPeople(t)
+	h, _ := newTestHandler(t)
+	core, logs := observer.New(zap.InfoLevel)
+	h.logger = zap.New(core)
+	h.people = people.reg
+	now := time.Now()
+	h.rate = access.NewRate(func() time.Time { return now })
+	tok := token(people.alice)
+	for i := range access.RateBurst {
+		if w := sendTo(t, h, "GET", "/_motel/whoami", tok); w.Code != http.StatusOK {
+			t.Fatalf("request %d: %d", i+1, w.Code)
+		}
+	}
+	for _, target := range []string{"/demo", "/_motel/apps", "/ghost"} {
+		w := sendTo(t, h, "GET", target, tok)
+		if w.Code != http.StatusTooManyRequests || w.Header().Get("Retry-After") != "1" || w.Header().Get("Motel-Protocol") != "1" ||
+			w.Body.String() != "{\"error\":\"too many requests; retry after 1 s\"}\n" {
+			t.Errorf("past the burst, %s: %d %v %q", target, w.Code, w.Header(), w.Body)
+		}
+	}
+	if got := logs.FilterMessage("access: person throttled").All(); len(got) != 1 || got[0].ContextMap()["person"] != "alice" {
+		t.Errorf("journal %v", logs.All())
+	}
+	if w := sendTo(t, h, "GET", "/demo", token(people.carol)); w.Code != http.StatusOK {
+		t.Errorf("carol, beside a throttled alice: %d", w.Code)
+	}
+}
