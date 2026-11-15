@@ -1004,9 +1004,23 @@ is given, past the offset:
   and with `max_p95`, `histogram_quantile(0.95, sum by (le) (hinc(motel_app_response_seconds{app="A",release="NEW"})))`,
   `inc` and `hinc` the threshold rules' over `[<e>m]` (their guards' offsets moved by the window and any offset), for a relaunch after a stop over `[<e>m − 40s]`;
 - **the old**, asked only once the new is over a bound: the same over
-  `release="OLD"` with `[<e+30>s] offset <e−30>s`, its last e before
-  the cutover and one push past it: its answers in the last half minute
-  before the cutover reach the store with the first push after it.
+  `release="OLD"` with `[<2e>m]` (`oldWindow`), from e before the
+  cutover to the check's time. Its answers in the last half minute
+  before the cutover reach the store with the first push after it, and
+  every push after that carries its final counts (liveswap keeps the
+  release before beside the current one, pushing both until the next
+  deploy), so the check's own push ask (below), which finds a push from
+  the minute before its time, after the cutover, finds one that holds
+  them. It ended a push past the cutover until 2026-11-15: with the
+  store down over that push and back by the check, the store held the
+  old release's counts as they stood at its last push before the
+  outage, and the baseline was as short as the outage was long before
+  the cutover, or none: a warning the whole baseline withheld was
+  told against a few responses, or as `too few to compare`
+  (`TestPostDeployReadsTheWholeBaselineAfterAnOutage`; over the store,
+  `TestPostDeployTheBaselineOverTheStore`: 140 of 200 2xx). Past the
+  cutover the window adds only the answers the old instance gives to
+  the requests it held at the cutover, while it drains.
 
 The checks due at a tick run at once, each within the store's 10 s
 budget, so a slow store does not stretch the minute between them.
@@ -1021,9 +1035,8 @@ check after it (/code-review pass 4 on operator rules). An old release
 with fewer timed is no p95 baseline. A check counts only when the store
 holds a push of motel's from the minute before its time
 (`max(present_over_time(process_start_time_seconds{job="motel"}[1m]))`,
-asked first, once a check at its time, not per window, and before the
-floor, so a skip is drawn from fresh counts too; the old release's
-window is not asked about, "Owed"): the store stamps a push as it takes it
+asked first, once a check at its time, where both windows end, and
+before the floor, so a skip is drawn from fresh counts too): the store stamps a push as it takes it
 and back-fills none it missed, so a check read past its last push reads
 the counts as they stood then. Without the ask, a store down from
 minute 1.5 to 5 answered minutes 2 and 3 with one snapshot, and a warning counted three failing
@@ -1743,7 +1756,6 @@ on its general scales. metrics' examples:
 | Owed | S | O | D | Lands in |
 |---|---|---|---|---|
 | vmalert refusing a `rules.yml` motel rendered (after a version change, say) keeps its old rules, and `up{job="vmalert"}` stays 1, so `metrics_rules_down` never fires and neither motel nor `motel monitor rules` can tell (30, owed by the owner's decision of 2026-11-14): `scrape.yml` drops every vmalert series but `up`, and the chain (notify/metricspush.go) reads only `up`. The fix keeps `vmalert_config_last_reload_successful` in `scrape.yml` and reads it beside `up` (size 3, risk 2). The listing's `rules_file` speaks for the file, not for this. Read-only review at af7a124 | 3 | 2 | 5 | its own PR, with the `scrape.yml` change and the `motel monitor setup --metrics` re-run on every box that docs/upgrading.md would order |
-| The post-deploy push ask (`checkFresh`) is made at the check's time alone, so the old release's window, which ends a push after the cutover, is read without one: a store down over the cutover (from before the old window's end to after it) and back by the check gives a baseline as it stood at its last push before, a shorter span than the new release's, so the share and p95 the bound is held against are noisier | 2 | 3 | 3 | a follow-up PR: the same ask at the old window's end, `cutover + pushEvery`, once a comparison (out of the push ask's change, which asks once a check; /code-review pass 2 of the push ask) |
 | The store's RSS on a 1 or 2 GB box (a day on hotserve-1's 3.8 GB is in "Footprint") | — | — | — | a deploy to a box of that size |
 | On a booted Debian host, the delete-a-leftover branch of the namespace unit's test before its delete (#430's `ExecStartPre`), measured in the e2e box alone. A reboot cannot reach it: a cold boot has an empty `/run`, so hotserve-1's of 2026-11-13 at a8038b4 took the nothing-to-delete branch alone (the unit's start took 165 ms, with no `Cannot remove namespace` line), and setup's re-run does not restart the namespace unit, which is active. #426's proxies have had their cold boot: the deploy of 01b2fd5 to hotserve-1 rebooted it at about 17:53 UTC on 2026-11-12, and both came back as no root | — | — | — | a start of the namespace unit on hotserve-1 with `/run/netns/motel-metrics` already there (a start after one that failed past its `ip netns add`), not a reboot |
 | Debian's security support for `victoria-metrics` 1.112.0 and `prometheus-alertmanager` 0.28.1 on trixie, whose binaries are built with Go 1.24.2 (the store, vmalert) and 1.24.1 (Alertmanager), and a dist-upgrade check of both drop-ins' flags | — | — | — | before any release |

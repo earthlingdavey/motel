@@ -370,10 +370,10 @@ type verdict struct {
 }
 
 // checkRelease is one check: the new release over elapsed since the
-// cutover, and, when it is over a bound, the old one over the same
-// length before it; both read at cutover + elapsed, so the windows meet
-// at the cutover. First, once a check (at its time, not per window: the
-// old release's is not asked about), whether the store took a push of
+// cutover, and, when it is over a bound, the old one from the same
+// length before it (oldWindow); both read at cutover + elapsed, and
+// both windows end there. First, once a check (at its time, the end of
+// both windows), whether the store took a push of
 // motel's in the minute before then (checkFresh), and with none whether
 // it has taken one since (freshness; now: the tick's time): asked
 // before the floor too, so that a skip, like a verdict, is drawn from
@@ -401,10 +401,7 @@ func checkRelease(ctx context.Context, store instantQuerier, r comparison, rule 
 		return v
 	}
 	if r.previous != "" {
-		// The old release's window ends a push after the cutover: its
-		// answers in the last half minute before it reach the store
-		// with the first push after it.
-		if v.old, v.err = queryRelease(ctx, store, r.app, r.previous, at, elapsed+pushEvery, elapsed-pushEvery, wantP95, floor); v.err != nil {
+		if v.old, v.err = queryRelease(ctx, store, r.app, r.previous, at, oldWindow(elapsed), 0, wantP95, floor); v.err != nil {
 			return v
 		}
 		// An old release with fewer responses than the floor is no
@@ -464,8 +461,8 @@ func shareRose(newer, old releaseNumbers) bool {
 
 // queryRelease asks the store, at at, for a release's responses sent,
 // its 5xx and its p95 over win, ending off before at: the new release's
-// since its cutover (newWindow), or the old release's over the same
-// length before the cutover and a push past it. The p95 is asked only once
+// since its cutover (newWindow), or the old release's from the same
+// length before the cutover (oldWindow). The p95 is asked only once
 // floor responses were timed: min_requests counts the responses sent,
 // cache hits among them, and on a cached site a few misses (one of
 // them a cold start) would otherwise make the quantile, in every
@@ -525,6 +522,22 @@ func queryRelease(ctx context.Context, store instantQuerier, app, release string
 	}
 	return n, nil
 }
+
+// oldWindow is the window a check over elapsed reads of the old
+// release, up to the check as the new one's is: from elapsed before
+// the cutover. Its answers in the last half minute before the cutover
+// reach the store with the first push after it, and the store
+// back-fills no push it missed, so a window that ended a push past the
+// cutover read, with the store down over that push and back by the
+// check, the counts of the old release's last push before the outage:
+// a baseline as short as the outage was long before the cutover, or
+// none. The check counts only on a push from the minute before its
+// time (checkFresh), from after the cutover, and every push carries
+// the old release's final counts until the next deploy (liveswap's
+// requestCounts keeps it beside the current one), so the window holds
+// them with no ask of its own. Its only answers after the cutover are
+// to requests its instance already held, which it drains.
+func oldWindow(elapsed time.Duration) time.Duration { return 2 * elapsed }
 
 // newWindow is the window a check over elapsed reads of the new
 // release, up to the check: from the cutover, and for a relaunch after
