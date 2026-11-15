@@ -95,7 +95,7 @@ func encode(v any) []byte {
 
 func newFakeBox(t *testing.T) *fakeBox {
 	t.Helper()
-	fb := &fakeBox{status: hostileStatus(), deploy: hostileDeploy(), whoami: hostileWhoAmI(), apps: wire.Apps{Apps: []string{"blog", "shop-2"}}, bodies: map[string][]byte{}}
+	fb := &fakeBox{status: hostileStatus(), deploy: hostileDeploy(), whoami: hostileWhoAmI(), apps: wire.Apps{Apps: []wire.AppEntry{{Name: "blog"}, {Name: "shop-2"}}}, bodies: map[string][]byte{}}
 	fb.srv = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		fb.auth = append(fb.auth, r.Header.Get("Authorization"))
 		code, body := http.StatusOK, []byte(nil)

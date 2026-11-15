@@ -123,7 +123,7 @@ func TestWhoamiPlain(t *testing.T) {
 // --json is the box's [] as it came.
 func TestAppsNone(t *testing.T) {
 	fb := newFakeBox(t)
-	fb.apps = wire.Apps{Apps: []string{}}
+	fb.apps = wire.Apps{Apps: []wire.AppEntry{}}
 	r := runKey(t, fb, nil, "apps")
 	if r.code != 0 || r.stdout != "" || r.stderr != "motelctl: 127.0.0.1 lists no app your key may view from this address.\n" {
 		t.Fatalf("%+v", r)

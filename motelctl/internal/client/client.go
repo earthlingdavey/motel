@@ -586,8 +586,8 @@ func odd(v any) string {
 			return "its sha256 is not a digest"
 		}
 	case *wire.Apps:
-		for _, name := range a.Apps {
-			if !appRe.MatchString(name) {
+		for _, e := range a.Apps {
+			if !appRe.MatchString(e.Name) {
 				return "a name in its list is no app name"
 			}
 		}

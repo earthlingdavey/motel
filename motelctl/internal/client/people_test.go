@@ -121,7 +121,7 @@ func TestReadPeoplesBodies(t *testing.T) {
 		{"whoami", &wire.WhoAmI{}, `{"name":"alice","key":"SHA256:x","roles":[],"box":"b","version":"","protocol":1,"token_expires_at":"2026-11-15T10:00:00Z"}`, true},
 		{"whoami with no roles", &wire.WhoAmI{}, `{"name":"alice","key":"SHA256:x","box":"b"}`, false},
 		{"whoami with no name", &wire.WhoAmI{}, `{"key":"SHA256:x","roles":[],"box":"b"}`, false},
-		{"apps", &wire.Apps{}, `{"apps":["a","b"]}`, true},
+		{"apps", &wire.Apps{}, `{"apps":[{"name":"a"},{"name":"b"}]}`, true},
 		{"no apps", &wire.Apps{}, `{"apps":[]}`, true},
 		{"apps as null", &wire.Apps{}, `{"apps":null}`, false},
 		{"an empty object", &wire.Apps{}, `{}`, false},
@@ -202,14 +202,14 @@ func TestReadPeoplesFields(t *testing.T) {
 		t.Errorf("the whole answer: %v", err)
 	}
 	for _, name := range []string{"", "../etc", "a b", "Blog", "x\u001b[2J", strings.Repeat("a", 64)} {
-		body, _ := json.Marshal(wire.Apps{Apps: []string{"blog", name}})
+		body, _ := json.Marshal(wire.Apps{Apps: []wire.AppEntry{{Name: "blog"}, {Name: name}}})
 		ans := &Answer{Code: http.StatusOK, Header: http.Header{"Content-Type": {"application/json"}}, Body: body}
 		f := failure(t, cl.Read(ans, &wire.Apps{}))
 		if f.Exit != ExitUnknown || !strings.HasSuffix(f.Message, "not motel's answer: a name in its list is no app name). Is this the box's deploy host?") {
 			t.Errorf("%q: exit %d %q", name, f.Exit, f.Message)
 		}
 	}
-	ans = &Answer{Code: http.StatusOK, Header: http.Header{"Content-Type": {"application/json"}}, Body: []byte(`{"apps":["blog","-rf","0"]}`)}
+	ans = &Answer{Code: http.StatusOK, Header: http.Header{"Content-Type": {"application/json"}}, Body: []byte(`{"apps":[{"name":"blog"},{"name":"-rf"},{"name":"0"}]}`)}
 	if err := cl.Read(ans, &wire.Apps{}); err != nil {
 		t.Errorf("names of the box's grammar: %v", err)
 	}

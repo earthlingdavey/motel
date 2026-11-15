@@ -156,8 +156,8 @@ func whoamiView(me wire.WhoAmI, asked string, key sshkey.Key, now time.Time) ren
 
 func appsView(a wire.Apps) []termtext.Text {
 	out := make([]termtext.Text, 0, len(a.Apps))
-	for _, name := range a.Apps {
-		out = append(out, tx(name))
+	for _, e := range a.Apps {
+		out = append(out, tx(e.Name))
 	}
 	return out
 }
