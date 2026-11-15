@@ -414,8 +414,9 @@ func TestReachConnectionJSON(t *testing.T) {
 		"drop":                                             {settings: `"tls_connection_policies":[{"drop":true}],`, want: "a TLS connection policy for deploy.example.com drops the connection"},
 		"drop false":                                       {settings: `"tls_connection_policies":[{"drop":false}],`},
 		"an empty client_authentication":                   {settings: `"tls_connection_policies":[{"client_authentication":{}}],`},
-		"a verifier, mode request":                         {settings: `"tls_connection_policies":[{"client_authentication":{"mode":"request","verifiers":[{"verifier":"leaf"}]}}],`, want: requires},
-		"trusted leaf certs, mode verify_if_given":         {settings: `"tls_connection_policies":[{"client_authentication":{"mode":"verify_if_given","trusted_leaf_certs":["AA=="]}}],`, want: requires},
+		"a verifier, mode request":                         {settings: `"tls_connection_policies":[{"client_authentication":{"mode":"request","verifiers":[{"verifier":"leaf"}]}}],`},
+		"trusted leaf certs, mode verify_if_given":         {settings: `"tls_connection_policies":[{"client_authentication":{"mode":"verify_if_given","trusted_leaf_certs":["AA=="]}}],`},
+		"a verifier and no mode":                           {settings: `"tls_connection_policies":[{"client_authentication":{"verifiers":[{"verifier":"leaf"}]}}],`, want: requires},
 		"a setting the table does not name":                {settings: `"tls_connection_policies":[{"handshake_context":{"module":"x"}}],`, want: "a TLS connection policy for deploy.example.com sets handshake_context, which may refuse the handshake"},
 		// The first policy whose matchers all match is Caddy's: one
 		// for the host shields the ones after it; one decided per
@@ -597,7 +598,8 @@ func TestReachJSON(t *testing.T) {
 		"a failing matcher beside a decided no in one set":           {adapted: reachJSON(`{"match":[{"path":["/x"],"expression":{"expr":"true"}}],"handle":[{"handler":"vars"}]},`, ""), want: "the expression matcher ahead of it may fail (decided per request)"},
 		"a file matcher on a handler that passes":                    {adapted: reachJSON(`{"match":[{"file":{"try_files":["{path}"]}}],"handle":[{"handler":"encode"}]},`, ""), want: "the file matcher ahead of it may fail (decided per request)"},
 		"a matcher the table does not know on a handler that passes": {adapted: reachJSON(`{"match":[{"geoip":{"country":["GB"]}}],"handle":[{"handler":"encode"}]},`, ""), want: "the geoip matcher ahead of it may fail (decided per request)"},
-		"a failing matcher on a route a group already skips":         {adapted: reachJSON(`{"group":"g","handle":[{"handler":"vars"}]},{"group":"g","match":[{"expression":{"expr":"true"}}],"handle":[{"handler":"vars"}]},`, ""), want: "the expression matcher ahead of it may fail (decided per request)"},
+		"a failing matcher on a route a group already skips":         {adapted: reachJSON(`{"group":"g","handle":[{"handler":"vars"}]},{"group":"g","match":[{"expression":{"expr":"true"}}],"handle":[{"handler":"vars"}]},`, ""), want: ""},
+		"a failing matcher on a route a group may have skipped":      {adapted: reachJSON(`{"group":"g","match":[{"header":{"X-A":["b"]}}],"handle":[{"handler":"vars"}]},{"group":"g","match":[{"expression":{"expr":"true"}}],"handle":[{"handler":"vars"}]},`, ""), want: "the expression matcher ahead of it may fail (decided per request)"},
 		// Caddy's group map is one per request across nesting: a member
 		// under a per-request outer route satisfies its group only for
 		// the requests that outer route admits, so a sibling of the

@@ -231,7 +231,8 @@ func TestATokenLeadingItsLineStandsWhereANameIsRead(t *testing.T) {
 }
 
 // What a failed trial failed at is read off the adapter's words as the
-// real adapter writes them [measured, Caddy 2.11.7; held there by
+// real adapter writes them [measured, Caddy 2.11.7, and 2.11.9 for a
+// stat that fails; held there by
 // TestIntegrationTheAdapterRefusesAnImportAndADirectiveAsInspectReadsThem]:
 // its parser's about an import, a directive's own with the HTTP
 // adapter's prefix, or neither.
@@ -242,6 +243,7 @@ func TestTheAdaptersWordsAreReadAsItWritesThem(t *testing.T) {
 	}{
 		{`{"level":"error","ts":1,"msg":"File to import not found: sites/hsb-placeholder-env.invalid.caddy, at /etc/motel/Caddyfile:1"}`, true, false},
 		{`{"level":"error","ts":1,"msg":"Could not import /etc/motel/sites: is a directory, at /etc/motel/Caddyfile:1"}`, true, false},
+		{`{"level":"error","ts":1,"msg":"Failed to import file sites/app.caddy/a.caddy: stat /etc/motel/sites/app.caddy/a.caddy: not a directory, at /etc/motel/Caddyfile:1"}`, true, false},
 		{`{"level":"warn","ts":1,"msg":"No files matching import glob pattern","pattern":"sites/hsb-placeholder-env.invalid/*.caddy"}`, true, false},
 		// A glob matching nothing is a warning, and the directive after
 		// it fails: the import's, since the parser met it first.
