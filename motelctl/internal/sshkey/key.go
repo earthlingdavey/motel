@@ -24,7 +24,7 @@ var personTypes = map[string]bool{
 }
 
 // ecdsaTypes are the ECDSA types, which a box does not take from a
-// person yet (deferred by the owner on 2026-11-16; a later release may
+// person yet (deferred by the owner on 2026-11-15; a later release may
 // take some of them). A line of one parses, to be refused by name.
 var ecdsaTypes = map[string]bool{
 	"ecdsa-sha2-nistp256":                true,

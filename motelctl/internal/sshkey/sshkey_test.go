@@ -774,17 +774,36 @@ func TestKeygenAgentOnlyKeyECDSA(t *testing.T) {
 	}
 }
 
-// An ECDSA key in ssh's default files is refused by name, not passed
-// over for the agent's key or a later default file.
-func TestResolveDefaultECDSANotSkipped(t *testing.T) {
+// The default files are the Ed25519 ones alone: id_ecdsa (and id_rsa)
+// are not read, so a person with id_ecdsa beside id_ed25519_sk signs
+// with the hardware Ed25519 key, and one with id_ecdsa alone gets the
+// agent's only key, not a refusal naming a file they did not name.
+func TestResolveDefaultFilesAreEd25519(t *testing.T) {
+	pub, _, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sk := "sk-ssh-ed25519@openssh.com " + base64.StdEncoding.EncodeToString(ssh.Marshal(struct{ Type, Key, Application string }{"sk-ssh-ed25519@openssh.com", string(pub), "ssh:"}))
+	none := func(string) string { return "" }
+
 	home := t.TempDir()
-	ec := lineOf(newSigner(t, "ecdsa"))
-	write(t, filepath.Join(home, ".ssh", "id_ecdsa.pub"), ec+"\n")
-	write(t, filepath.Join(home, ".ssh", "id_ed25519_sk.pub"), lineOf(newSigner(t, "ed25519"))+"\n")
+	write(t, filepath.Join(home, ".ssh", "id_ecdsa.pub"), lineOf(newSigner(t, "ecdsa"))+"\n")
+	write(t, filepath.Join(home, ".ssh", "id_rsa.pub"), rsaLine()+"\n")
+	write(t, filepath.Join(home, ".ssh", "id_ed25519_sk.pub"), sk+" me@laptop\n")
 	run := &fakeRun{agent: lineOf(newSigner(t, "ed25519")) + " agent\n"}
-	_, err := Resolve(context.Background(), Lookup{Getenv: func(string) string { return "" }, Home: home, Dir: home, Run: run})
-	var ecErr *ECDSAError
-	if !errors.As(err, &ecErr) || !strings.HasPrefix(err.Error(), "~/.ssh/id_ecdsa.pub (the default file, SHA256:") || run.agentAsks != 0 {
-		t.Fatalf("err %v, the agent asked %d times; want the ECDSA refusal naming ~/.ssh/id_ecdsa.pub, and no agent", err, run.agentAsks)
+	k, err := Resolve(context.Background(), Lookup{Getenv: none, Home: home, Dir: home, Run: run})
+	if err != nil || k.Public.Line() != sk || k.Source != SourceDefault || k.Path != filepath.Join(home, ".ssh", "id_ed25519_sk") || run.agentAsks != 0 {
+		t.Fatalf("id_ecdsa beside id_ed25519_sk: %+v, %v, the agent asked %d times; want ~/.ssh/id_ed25519_sk", k, err, run.agentAsks)
+	}
+
+	alone := t.TempDir()
+	write(t, filepath.Join(alone, ".ssh", "id_ecdsa.pub"), lineOf(newSigner(t, "ecdsa"))+"\n")
+	agentKey := lineOf(newSigner(t, "ed25519"))
+	k, err = Resolve(context.Background(), Lookup{Getenv: none, Home: alone, Dir: alone, Run: &fakeRun{agent: agentKey + " agent\n"}})
+	if err != nil || k.Public.Line() != agentKey || k.Source != SourceAgent {
+		t.Fatalf("id_ecdsa alone: %+v, %v; want the agent's only key", k, err)
+	}
+	if _, err := Resolve(context.Background(), Lookup{Getenv: none, Home: alone, Dir: alone, Run: &fakeRun{}}); !errors.Is(err, ErrNoKey) {
+		t.Fatalf("id_ecdsa alone, no agent: %v, want ErrNoKey", err)
 	}
 }

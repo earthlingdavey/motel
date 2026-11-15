@@ -36,11 +36,13 @@ const (
 	SourceAgent   = "the agent's only key"
 )
 
-// defaultFiles are ssh's own default keys a box can take, in ssh's
-// order. id_rsa is not among them: no box takes it. The ECDSA ones
-// are, so that one found is refused by name (*ECDSAError) rather than
-// passed over for a key further down the list.
-var defaultFiles = []string{"id_ed25519", "id_ecdsa", "id_ed25519_sk", "id_ecdsa_sk"}
+// defaultFiles are ssh's own default files that can hold a key a box
+// takes, in ssh's order: Ed25519, then its hardware form. id_rsa and
+// the ECDSA files are not among them: no box takes RSA, nor ECDSA yet,
+// so a person with id_ecdsa beside id_ed25519_sk gets the key they can
+// use. A key of those types they name (--key, MOTEL_KEY, git's
+// user.signingkey) is still refused by name.
+var defaultFiles = []string{"id_ed25519", "id_ed25519_sk"}
 
 // ErrNoKey is Resolve's answer when nothing names a key.
 var ErrNoKey = errors.New("name your key: --key ~/.ssh/<key>.pub or MOTEL_KEY")
@@ -59,7 +61,8 @@ type Lookup struct {
 
 // Resolve finds the one key a command signs with: --key, then
 // MOTEL_KEY, then git's user.signingkey inside a box repository when
-// git signs with ssh, then ssh's default files, then the agent's key
+// git signs with ssh, then ssh's default Ed25519 files
+// (~/.ssh/id_ed25519, then ~/.ssh/id_ed25519_sk), then the agent's key
 // when it holds exactly one. It never tries several keys: each refused
 // key would be a 401 against the box's budget for logging them, and a
 // touch of a hardware key. An RSA or an ECDSA key, wherever it came

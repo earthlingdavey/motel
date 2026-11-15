@@ -50,8 +50,9 @@ const experimental = "Every command is experimental: its flags, output and exit 
 	"or the box repository the shell is in. The credential: a token your ssh key\n" +
 	"signs when --key names the key; else MOTEL_TOKEN as Bearer when set (a deploy\n" +
 	"token reads its app); else a token signed by the key MOTEL_KEY names, or\n" +
-	"git's user.signingkey in a box repository, ssh's default files, or the\n" +
-	"agent's only key, in that order. Only https: there is no way round it.\n\n" +
+	"git's user.signingkey in a box repository, ~/.ssh/id_ed25519, then\n" +
+	"~/.ssh/id_ed25519_sk, or the agent's only key, in that order. Only https:\n" +
+	"there is no way round it.\n\n" +
 	"Exit codes: 0 read; 1 the box answered with a failure; 2 nothing sent (usage,\n" +
 	"no box or key, an RSA or ECDSA key); 3 could not tell (no answer, not motel's\n" +
 	"answer, a 429 that stood); 4 not accepted (a 401 after one retry); 5 not\n" +

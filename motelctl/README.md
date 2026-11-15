@@ -38,13 +38,16 @@ from a gateway's. With `MOTEL_URL` set too, the token goes to
 token the person's own ssh key signs, made by the system `ssh-keygen -q -Y sign` in
 the namespace `motel-access-v1@motel.smallhours.org`. The key is
 `MOTEL_KEY`, then git's `user.signingkey` inside a box
-repository, then ssh's default files, then the agent's key when it holds
-exactly one. One key per command, never several. A box takes Ed25519
-keys (`ssh-ed25519`, or `sk-ssh-ed25519@openssh.com` for a hardware key)
-for now: RSA keys, and ECDSA keys (not accepted yet, so an agent that
-makes only P-256 keys cannot be used for now), are refused before
-anything is signed, wherever the key was found, with a message that
-names the key and the remedy (`ssh-keygen -t ed25519`). motelctl writes
+repository, then ssh's default Ed25519 files (`~/.ssh/id_ed25519`, then
+`~/.ssh/id_ed25519_sk`), then the agent's key when it holds exactly one.
+One key per command, never several. A box takes Ed25519 keys
+(`ssh-ed25519`, or `sk-ssh-ed25519@openssh.com` for a hardware key) for
+now, so the default files looked at are only those: `id_ecdsa` and
+`id_rsa` are not read. An RSA or ECDSA key that is named (`--key`,
+`MOTEL_KEY`, git's `user.signingkey`) or is the agent's only key is
+refused before anything is signed, with a message that names the key
+and the remedy (`ssh-keygen -t ed25519`); ECDSA is not accepted yet, so
+an agent that makes only P-256 keys cannot be used for now. motelctl writes
 nothing to disk.
 
 **What a box tells a key it does not take.** Nothing: every refusal is
