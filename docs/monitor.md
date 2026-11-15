@@ -14,9 +14,8 @@ again. How it works, and everything it refuses, is in
 [notify/DESIGN-notify.md](../notify/DESIGN-notify.md) and
 [notify/DESIGN-metrics.md](../notify/DESIGN-metrics.md).
 
-**Experimental.** Monitor is on the `feature/notify-and-metrics` branch
-and in no release yet. Its block, its commands and the files it writes
-may change before it ships.
+**Experimental** since v0.7.0. Its block, its commands and the files
+it writes may change in a later release.
 
 The transcripts below come from motel's metrics e2e box at commit
 01b2fd5 (Debian 13, with `prometheus-alertmanager` 0.28.1 and
@@ -104,14 +103,16 @@ The smallest block, with one channel and the numbers:
 }
 ```
 
-The box-repo path needs this branch's `examples/box` tooling in the
-repository, since no release has monitor yet. A repository made from a
-released template refuses `APP=_box` (`app '_box': lower-case letters,
-digits and - only`). Its `check` job validates with the latest release
-unless `MOTEL_VERSION` names another, and no release knows the block,
-so every commit that has it fails that job with `unrecognized global
-option: monitor`. The push still reaches the box, which checks it with
-its own motel.
+The box-repo path needs the `examples/box/bin/` of v0.7.0 or later in
+the repository. Copy it into one made from the v0.6.0 or v0.6.1
+template, whose `secrets` refuses `APP=_box` (`app '_box': lower-case
+letters, digits and - only, as in its app block`) and whose `check`
+refuses a block that reads a secret. Its `check` job validates with the
+latest stable release unless `MOTEL_VERSION` names another, so while
+that is v0.6.1 or earlier, which does not know the block, every commit
+that has it fails that job with `unrecognized global option:
+monitor`. The push still reaches the box, which checks it with its own
+motel.
 
 On a box with nothing installed yet, setup says:
 

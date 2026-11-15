@@ -163,7 +163,7 @@ GitHub Actions with no stored secret.
 [Backups](docs/backups.md) copies each app's databases and files into a
 bucket off the box every hour, proves weekly that a restore would
 work, and puts an app back.
-[Monitor](docs/monitor.md) (experimental, in no release yet) tells you
+[Monitor](docs/monitor.md) (experimental, since v0.7.0) tells you
 when something on the box goes wrong, at ntfy, Slack, Discord or any
 URL that takes Alertmanager's JSON, and keeps each app's numbers.
 
@@ -230,8 +230,8 @@ each one is there. What is still ahead:
   later milestone.
 - **A hosted APT repository**, with package signing and auto-updates.
 
-In progress, on the `feature/notify-and-metrics` branch and in no
-release yet: [monitor](docs/monitor.md), alerts and metrics beside
+Experimental since v0.7.0: [monitor](docs/monitor.md), alerts and
+metrics beside
 liveswap and penaltybox. Among other things it reports when the
 watchdog is stuck in a restart loop: the watchdog retries a crash or a
 health failure forever by design (only a release that cannot run at
