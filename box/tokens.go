@@ -221,7 +221,7 @@ func walk(input []byte) (*Shape, error) {
 		// appPlaceholder: an app line names its app through a
 		// placeholder, which this reading takes as written.
 		appPlaceholder bool
-		pending  []string // addresses of a header continued by a trailing comma
+		pending        []string // addresses of a header continued by a trailing comma
 	)
 	lines := splitLines(tokens)
 	for _, line := range lines {

@@ -534,8 +534,8 @@ func TestEqual(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !k.Equal(k) {
-		t.Fatal("a key is not equal to itself")
+	if same := k; !k.Equal(same) {
+		t.Fatal("a key is not equal to a copy of itself")
 	}
 	for name, change := range map[string]func(*Key){
 		"name":   func(k *Key) { k.Name = "carol" },
@@ -554,8 +554,8 @@ func TestEqual(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !g.Equal(g) {
-		t.Fatal("a grant is not equal to itself")
+	if same := g; !g.Equal(same) {
+		t.Fatal("a grant is not equal to a copy of itself")
 	}
 	for name, change := range map[string]func(*Grant){
 		"name":        func(g *Grant) { g.Name = "carol" },
