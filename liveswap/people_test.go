@@ -1,8 +1,14 @@
 package liveswap
 
 import (
+	"bytes"
 	"context"
+	"crypto/ed25519"
+	"crypto/rand"
+	"crypto/rsa"
+	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -16,9 +22,11 @@ import (
 	"github.com/caddyserver/caddy/v2/modules/caddyhttp"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zaptest/observer"
+	"golang.org/x/crypto/ssh"
 
 	"github.com/smallhoursorg/motel/liveswap/access"
 	"github.com/smallhoursorg/motel/liveswap/access/accesstest"
+	"github.com/smallhoursorg/motel/liveswap/deploytrust"
 	"github.com/smallhoursorg/motel/liveswap/wire"
 )
 
@@ -458,5 +466,136 @@ func TestHostRefusalNamesTheHost(t *testing.T) {
 	lines := logs.FilterMessage("webhook auth failed").All()
 	if w.Code != http.StatusUnauthorized || len(lines) != 1 || lines[0].ContextMap()["host"] != "www.example.test" || lines[0].ContextMap()["person"] != "alice" {
 		t.Errorf("%d; journal %v", w.Code, logs.All())
+	}
+}
+
+// TestSignerKeysNoPersonMayUse: once a block declares people, a signer
+// line's ed25519 key is a person's, but an ssh-rsa signer key and an
+// Ed25519 key of small order are not, and the registry lists neither.
+// For the small-order key the reason is a forgery: under the identity
+// point, R the base point and S = 1 verify for any claims, with no
+// private key. The test first shows that forgery verifies, then that a
+// handler refuses it end to end, as it would a stranger.
+func TestSignerKeysNoPersonMayUse(t *testing.T) {
+	identity := make([]byte, ed25519.PublicKeySize)
+	identity[0] = 1 // the identity point's encoding
+	smallWire := ssh.Marshal(struct {
+		Type string
+		Key  []byte
+	}{ssh.KeyAlgoED25519, identity})
+	rsaPriv, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rsaPub, err := ssh.NewPublicKey(&rsaPriv.PublicKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	alice := accesstest.Ed25519()
+	aliceKey, err := access.ParsePerson([]string{"alice", alice.Type(), alice.B64()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	b64 := base64.StdEncoding.EncodeToString
+	l := access.Lines{Keys: []access.Key{
+		access.SignerKey("mallory", ssh.KeyAlgoED25519, b64(smallWire), smallWire),
+		access.SignerKey("carol", ssh.KeyAlgoRSA, b64(rsaPub.Marshal()), rsaPub.Marshal()),
+		aliceKey,
+	}}
+	if _, err := access.CheckLines(l, nil); err != nil {
+		t.Fatal(err)
+	}
+	reg := access.NewRegistry(personBox, l)
+	small, err := ssh.ParsePublicKey(smallWire)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, k := range map[string]ssh.PublicKey{"the small-order key": small, "the ssh-rsa key": rsaPub} {
+		if _, listed := reg.Lookup(ssh.FingerprintSHA256(k)); listed {
+			t.Errorf("%s is listed", name)
+		}
+	}
+	if _, listed := reg.Lookup(alice.Fingerprint()); !listed || reg.Keys() != 1 {
+		t.Fatalf("alice listed %v, %d keys", listed, reg.Keys())
+	}
+
+	// The forgery: no private key, any claims.
+	now := time.Now()
+	claims := fmt.Sprintf(`{"aud":"%s","iat":%d,"exp":%d}`, personBox, now.Unix(), now.Add(time.Minute).Unix())
+	base := append([]byte{0x58}, bytes.Repeat([]byte{0x66}, 31)...)
+	one := make([]byte, 32)
+	one[0] = 1
+	sig := ssh.Marshal(ssh.Signature{Format: ssh.KeyAlgoED25519, Blob: append(base, one...)})
+	blob := append([]byte("SSHSIG"), ssh.Marshal(struct {
+		Version   uint32
+		PublicKey []byte
+		Namespace string
+		Reserved  []byte
+		HashAlg   string
+		Signature []byte
+	}{1, smallWire, access.TokenNamespace, nil, "sha512", sig})...)
+	forged := access.TokenScheme + " " + access.TokenEnvelope + base64.RawURLEncoding.EncodeToString([]byte(claims)) + "." + base64.RawURLEncoding.EncodeToString(blob)
+	if _, err := access.CheckToken(access.TokenRequest{Authorization: []string{forged}, Method: "GET", Host: personBox}, personBox, now,
+		func(string) (ssh.PublicKey, bool) { return small, true }); err != nil {
+		t.Fatalf("the forgery does not verify under the small-order key, so this test shows nothing: %v", err)
+	}
+	h, _ := newTestHandler(t)
+	h.people = reg
+	stranger := sendTo(t, h, "GET", "/_motel/whoami")
+	if w := sendTo(t, h, "GET", "/_motel/whoami", forged); w.Code != http.StatusUnauthorized || w.Body.String() != stranger.Body.String() {
+		t.Errorf("the forged token: %d %s", w.Code, w.Body)
+	}
+	if w := sendTo(t, h, "GET", "/_motel/whoami", token(alice)); w.Code != http.StatusOK {
+		t.Errorf("alice beside them: %d %s", w.Code, w.Body)
+	}
+}
+
+// TestRateIsThePersons: the rate is one bucket per person, whichever of
+// their keys signs: a burst spent with one key leaves none for the
+// other.
+func TestRateIsThePersons(t *testing.T) {
+	one, two := accesstest.Ed25519(), accesstest.ECDSA()
+	var l access.Lines
+	for _, k := range []accesstest.Key{one, two} {
+		key, err := access.ParsePerson([]string{"alice", k.Type(), k.B64()})
+		if err != nil {
+			t.Fatal(err)
+		}
+		l.Keys = append(l.Keys, key)
+	}
+	h, _ := newTestHandler(t)
+	h.people = access.NewRegistry(personBox, l)
+	now := time.Now()
+	h.rate = access.NewRate(func() time.Time { return now })
+	for i := range access.RateBurst {
+		if w := sendTo(t, h, "GET", "/_motel/whoami", token(one)); w.Code != http.StatusOK {
+			t.Fatalf("request %d with the first key: %d", i+1, w.Code)
+		}
+	}
+	if w := sendTo(t, h, "GET", "/_motel/whoami", token(two)); w.Code != http.StatusTooManyRequests {
+		t.Errorf("the second key after the first spent the burst: %d", w.Code)
+	}
+}
+
+// TestPersonClearsTheAddressFailures: a person's token that verifies
+// forgets its address's failures, as a deploy token's does, so the next
+// refusals from that address are journaled again from a fresh budget.
+func TestPersonClearsTheAddressFailures(t *testing.T) {
+	people := newTestPeople(t)
+	h, rig := newTestHandler(t)
+	core, logs := observer.New(zap.InfoLevel)
+	h.logger, h.people, h.limiter = zap.New(core), people.reg, deploytrust.NewLimiter(rig.clock)
+	bad := token(people.stranger)
+	for range deploytrust.FailBudget - 1 {
+		sendTo(t, h, "GET", "/demo", bad)
+	}
+	if w := sendTo(t, h, "GET", "/demo", token(people.alice)); w.Code != http.StatusOK {
+		t.Fatalf("alice: %d", w.Code)
+	}
+	for range deploytrust.FailBudget {
+		sendTo(t, h, "GET", "/demo", bad)
+	}
+	if got, want := logs.FilterMessage("webhook auth failed").Len(), 2*deploytrust.FailBudget-1; got != want {
+		t.Errorf("%d refusals journaled, want %d: the verified token did not clear the address", got, want)
 	}
 }
