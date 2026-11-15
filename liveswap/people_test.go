@@ -439,3 +439,24 @@ func TestRatePerPerson(t *testing.T) {
 		t.Errorf("carol, beside a throttled alice: %d", w.Code)
 	}
 }
+
+// TestHostRefusalNamesTheHost: a token for this box sent to another of
+// its names (or through a proxy that rewrites Host) is the flat 401,
+// and the journal names the host that arrived.
+func TestHostRefusalNamesTheHost(t *testing.T) {
+	people := newTestPeople(t)
+	h, _ := newTestHandler(t)
+	core, logs := observer.New(zap.InfoLevel)
+	h.logger = zap.New(core)
+	h.people = people.reg
+	req := httptest.NewRequest(http.MethodGet, "http://www.example.test/demo", nil)
+	req.Header.Set("Authorization", token(people.alice))
+	w := httptest.NewRecorder()
+	if err := h.ServeHTTP(w, req, nil); err != nil {
+		t.Fatal(err)
+	}
+	lines := logs.FilterMessage("webhook auth failed").All()
+	if w.Code != http.StatusUnauthorized || len(lines) != 1 || lines[0].ContextMap()["host"] != "www.example.test" || lines[0].ContextMap()["person"] != "alice" {
+		t.Errorf("%d; journal %v", w.Code, logs.All())
+	}
+}

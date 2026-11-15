@@ -69,6 +69,11 @@ func AdmitPerson(w http.ResponseWriter, r *http.Request, g PersonGate, scopeKey,
 		if errors.As(err, &ref) && ref.Fingerprint != "" {
 			name, _ := g.Registry.Name(ref.Fingerprint)
 			fields = append(fields, zap.String("key", ref.Fingerprint), zap.String("person", name))
+			if ref.Reason == "host" {
+				// A proxy in front that rewrites Host refuses every person:
+				// the line says what arrived, cut to a hostname's length.
+				fields = append(fields, zap.String("host", deploytrust.CutRunes(r.Host, 253)))
+			}
 		}
 		return Person{}, false, g.Limiter.Refuse(r, g.Logger, scopeKey, scopeValue, reason, fields...).Write(write)
 	}
