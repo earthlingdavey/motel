@@ -24,7 +24,6 @@ import (
 	"encoding/json"
 	"errors"
 	"hash"
-	"net"
 	"strings"
 	"time"
 
@@ -101,7 +100,10 @@ type VerifiedToken struct {
 }
 
 // KeyLookup finds a listed key by its fingerprint, in the form
-// VerifiedToken.Fingerprint has. A nil KeyLookup lists nothing.
+// VerifiedToken.Fingerprint has. A nil KeyLookup lists nothing, and a
+// nil key is not listed. A key that is a typed nil (a nil pointer in
+// the interface) must never be returned with true: CheckToken calls
+// its Marshal, which would panic.
 type KeyLookup func(fingerprint string) (ssh.PublicKey, bool)
 
 // tokenKeyTypes are the key types a person may hold (the owner's
@@ -255,11 +257,7 @@ func CheckToken(req TokenRequest, identity string, now time.Time, lookup KeyLook
 	}
 	// 10. Sent to this box's own name, not to another site the same
 	// box serves.
-	host := strings.ToLower(req.Host)
-	if h, _, err := net.SplitHostPort(host); err == nil {
-		host = h
-	}
-	if host != identity {
+	if host, ok := tokenHost(req.Host); !ok || host != identity {
 		return refuseToken("host")
 	}
 	// 11. The times, with the skew either way. Each comparison is
@@ -274,19 +272,51 @@ func CheckToken(req TokenRequest, identity string, now time.Time, lookup KeyLook
 	if t-tokenSkew > c.Exp {
 		return refuseToken("expired")
 	}
-	// 13. A person's token only reads, and a read is a GET. (12, a
-	// token's scope, belongs to a later form.)
-	if req.Method != "GET" {
-		return refuseToken("method")
-	}
+	// 13. The lifetime, then the method: a person's token only reads,
+	// and a read is a GET. (12, a token's scope, belongs to a later
+	// form.)
 	if c.Exp-c.Iat > maxTokenLife {
 		return refuseToken("life")
+	}
+	if req.Method != "GET" {
+		return refuseToken("method")
 	}
 	return VerifiedToken{
 		Fingerprint: fingerprint,
 		IssuedAt:    time.Unix(c.Iat, 0).UTC(),
 		ExpiresAt:   time.Unix(c.Exp, 0).UTC(),
 	}, nil
+}
+
+// tokenHost is the request's Host as a bare hostname: ASCII letters
+// lowered, a port of 1 to 5 digits dropped. Anything else a Host may
+// carry (a byte outside a hostname's, brackets, an empty or a named
+// port) is refused rather than folded, since a fold is a second
+// spelling of the box's name: strings.ToLower would fold the Kelvin
+// sign to k, and net.SplitHostPort strips brackets.
+func tokenHost(raw string) (string, bool) {
+	name, port, hasPort := strings.Cut(raw, ":")
+	if hasPort {
+		if len(port) < 1 || len(port) > 5 {
+			return "", false
+		}
+		for i := range len(port) {
+			if port[i] < '0' || port[i] > '9' {
+				return "", false
+			}
+		}
+	}
+	b := []byte(name)
+	for i, c := range b {
+		switch {
+		case 'A' <= c && c <= 'Z':
+			b[i] = c + 'a' - 'A'
+		case 'a' <= c && c <= 'z', '0' <= c && c <= '9', c == '.', c == '-':
+		default:
+			return "", false
+		}
+	}
+	return string(b), true
 }
 
 // tokenBase64 decodes one part of the envelope. Go's decoder skips CR
@@ -338,13 +368,15 @@ func tokenVerify(sig *tokenSig, key ssh.PublicKey, claims []byte) string {
 	}
 	// What the key signed: the magic, the namespace, the reserved
 	// field, the hash's name and the claims' hash (PROTOCOL.sshsig).
+	// The namespace and the empty reserved field are the box's own,
+	// not the token's copies, which by now equal them.
 	h.Write(claims)
 	signed := append([]byte(sshsigMagic), ssh.Marshal(struct {
 		Namespace string
 		Reserved  []byte
 		HashAlg   string
 		Hash      []byte
-	}{sig.Namespace, sig.Reserved, sig.HashAlg, h.Sum(nil)})...)
+	}{tokenNamespace, nil, sig.HashAlg, h.Sum(nil)})...)
 	if err := key.Verify(signed, &s); err != nil {
 		return "signature"
 	}

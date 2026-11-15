@@ -344,8 +344,10 @@ func tokenCases(k *testKeySet) []tokenCase {
 
 		// 3.
 		{name: "N22-too-long", auth: hdr(tokenEnvelope + strings.Repeat("A", maxTokenLen)), expect: "too-long"},
-		{name: "one-past-the-cap", auth: hdr(tokenEnvelope + strings.Repeat("A", maxTokenLen-len(tokenEnvelope)+1)), expect: "too-long"},
-		{name: "at-the-cap-is-parsed", auth: hdr(tokenEnvelope + strings.Repeat("A", maxTokenLen-len(tokenEnvelope))), expect: "envelope-parts"},
+		// The caps as numbers, not as the constants: changing a cap, or
+		// > to >=, fails here.
+		{name: "token-of-8193-bytes", auth: hdr("m1." + strings.Repeat("A", 8190)), expect: "too-long"},
+		{name: "token-of-8192-bytes-is-parsed", auth: hdr("m1." + strings.Repeat("A", 8189)), expect: "envelope-parts"},
 
 		// 4.
 		{name: "N19-jwt-under-motel", auth: hdr("eyJhbGciOiJFZERTQSIsInR5cCI6IkpXVCJ9.eyJhdWQiOiJkZXBsb3kuZXhhbXBsZS50ZXN0In0.c2ln"), expect: "envelope-prefix"}, // gitleaks:allow — made up for this test
@@ -358,7 +360,8 @@ func tokenCases(k *testKeySet) []tokenCase {
 		{name: "claims-standard-alphabet", auth: hdr(tokenEnvelope + "+" + claims64[1:] + "." + sig64), expect: "claims-encoding"},
 		{name: "claims-newline-go-would-skip", auth: hdr(tokenEnvelope + claims64[:10] + "\n" + claims64[10:] + "." + sig64), expect: "claims-encoding"},
 		{name: "claims-loose-trailing-bits", auth: hdr(tokenEnvelope + flipLowBit(b64u.EncodeToString([]byte("{}"))) + "." + sig64), expect: "claims-encoding"},
-		{name: "claims-too-long", auth: hdr(tok(`{"aud":"`+strings.Repeat("a", maxClaimsLen)+`"}`, good)), expect: "claims-too-long"},
+		{name: "claims-of-1025-bytes", auth: hdr(tok(strings.Repeat("a", 1025), good)), expect: "claims-too-long"},
+		{name: "claims-of-1024-bytes-reach-the-signature", auth: hdr(tok(strings.Repeat("a", 1024), good)), expect: "signature"},
 		{name: "sig-padded", auth: hdr(goodTok + "="), expect: "sig-encoding"},
 		{name: "sig-crlf-go-would-skip", auth: hdr(tokenEnvelope + claims64 + "." + sig64[:20] + "\r\n" + sig64[20:]), expect: "sig-encoding"},
 
@@ -378,11 +381,14 @@ func tokenCases(k *testKeySet) []tokenCase {
 		{name: "unlisted-before-any-signature-check", auth: hdr(tok(c0, sshsig(k.unlisted, c0, sigOpts{sigBytes: []byte("garbage")}))), expect: "key-not-listed"},
 		{name: "lookup-names-another-key", auth: signed(k.ed, c0), lookup: func(string) (ssh.PublicKey, bool) { return k.p256.pub, true }, expect: "key-not-listed"},
 		{name: "lookup-says-yes-with-no-key", auth: signed(k.ed, c0), lookup: func(string) (ssh.PublicKey, bool) { return nil, true }, expect: "key-not-listed"},
+		{name: "lookup-gives-a-key-but-says-no", auth: signed(k.ed, c0), lookup: func(string) (ssh.PublicKey, bool) { return k.ed.pub, false }, expect: "key-not-listed"},
 		{name: "no-lookup-lists-nothing", auth: signed(k.ed, c0), noLookup: true, expect: "key-not-listed"},
 
 		// 7.
 		{name: "N1-namespace-git", auth: hdr(tok(c0, sshsig(k.ed, c0, sigOpts{ns: "git"}))), expect: "signature-namespace"},
 		{name: "N2-namespace-file", auth: hdr(tok(c0, sshsig(k.ed, c0, sigOpts{ns: "file"}))), expect: "signature-namespace"},
+		{name: "namespace-with-a-suffix", auth: hdr(tok(c0, sshsig(k.ed, c0, sigOpts{ns: tokenNamespace + ".x"}))), expect: "signature-namespace"},
+		{name: "namespace-in-another-case", auth: hdr(tok(c0, sshsig(k.ed, c0, sigOpts{ns: "Motel-Access-v1@motel.smallhours.org"}))), expect: "signature-namespace"},
 		{name: "reserved-not-empty", auth: hdr(tok(c0, sshsig(k.ed, c0, sigOpts{reserved: []byte("x")}))), expect: "signature-reserved"},
 		{name: "N24-hash-sha1", auth: hdr(tok(c0, sshsig(k.ed, c0, sigOpts{hashAlg: "sha1"}))), expect: "signature-hash"},
 		{name: "hash-name-in-upper-case", auth: hdr(tok(c0, sshsig(k.ed, c0, sigOpts{hashAlg: "SHA512"}))), expect: "signature-hash"},
@@ -422,6 +428,12 @@ func tokenCases(k *testKeySet) []tokenCase {
 		{name: "N7-wrong-host", auth: hdr(goodTok), host: "www.example.test", expect: "host"},
 		{name: "host-with-trailing-dot", auth: hdr(goodTok), host: testIdentity + ".", expect: "host"},
 		{name: "host-a-suffix", auth: hdr(goodTok), host: testIdentity + ".evil.test", expect: "host"},
+		{name: "host-bracketed", auth: hdr(goodTok), host: "[deploy.example.test]:443", expect: "host"},
+		{name: "host-empty-port", auth: hdr(goodTok), host: "deploy.example.test:", expect: "host"},
+		{name: "host-named-port", auth: hdr(goodTok), host: "deploy.example.test:abc", expect: "host"},
+		{name: "host-six-digit-port", auth: hdr(goodTok), host: "deploy.example.test:443443", expect: "host"},
+		{name: "host-two-ports", auth: hdr(goodTok), host: "deploy.example.test:443:443", expect: "host"},
+		{name: "host-empty", auth: hdr(goodTok), host: ":443", expect: "host"},
 		{name: "iat-zero", auth: signed(k.ed, claimsDoc(testIdentity, 0, n+60)), expect: "times"},
 		{name: "exp-equals-iat", auth: signed(k.ed, claimsDoc(testIdentity, n, n)), expect: "times"},
 		{name: "exp-before-iat", auth: signed(k.ed, claimsDoc(testIdentity, n, n-1)), expect: "times"},
@@ -433,6 +445,7 @@ func tokenCases(k *testKeySet) []tokenCase {
 		{name: "N14-read-token-on-post", auth: hdr(goodTok), method: "POST", expect: "method"},
 		{name: "head", auth: hdr(goodTok), method: "HEAD", expect: "method"},
 		{name: "get-in-lower-case", auth: hdr(goodTok), method: "get", expect: "method"},
+		{name: "one-hour-on-a-post-is-life-first", auth: signed(k.ed, claimsDoc(testIdentity, n-30, n+3570)), method: "POST", expect: "life"},
 		{name: "N5-one-hour", auth: signed(k.ed, claimsDoc(testIdentity, n-30, n+3570)), expect: "life"},
 		{name: "life-one-past-the-cap", auth: signed(k.ed, claimsDoc(testIdentity, n-100, n+501)), expect: "life"},
 	}
@@ -632,6 +645,27 @@ func TestTokenMutation(t *testing.T) {
 		t.Errorf("changed tokens of %d key types, want all %d", len(types), len(tokenKeyTypes))
 	}
 	t.Logf("%d key types, %d changed tokens refused", len(types), tried)
+}
+
+// TestTokenHostNotFolded: a Host with a byte no hostname holds is
+// refused, not folded to the box's name. Go's lower-casing folds the
+// Kelvin sign to k and a dotted capital I to i, so the identity here
+// has both letters.
+func TestTokenHostNotFolded(t *testing.T) {
+	k := testKeys()
+	const identity = "box.kitchen.test"
+	auth := signed(k.ed, claimsDoc(identity, testNow-30, testNow+570))
+	for host, want := range map[string]string{
+		"BOX.KITCHEN.TEST:443":  "accept",
+		"box.\u212Aitchen.test": "host",
+		"box.k\u0130tchen.test": "host",
+		"box.kitchen.t\u00e9st": "host",
+	} {
+		got, _ := verdict(TokenRequest{Authorization: auth, Method: "GET", Host: host}, identity, testNow, lookupOf(k.listed()...))
+		if got != want {
+			t.Errorf("Host %q: got %q, want %q", host, got, want)
+		}
+	}
 }
 
 // TestTokenEmptyIdentity: an empty identity is no box's, so nothing
