@@ -320,8 +320,9 @@ func TestPostDeployFailsAfterItsCountInARow(t *testing.T) {
 	}
 	// The windows: the new release's since the cutover, in whole
 	// minutes, the old one's the same length before it and on to the
-	// first push the store took after the cutover (the fake's: a second
-	// after it), asked once, through counterIncrease, read at the
+	// first push the store took storeRequestTimeout after the cutover
+	// (the fake's: a second after that), asked once, through
+	// counterIncrease, read at the
 	// check's time, which the store has.
 	for i, at := range tc.store.at {
 		if k := at.Sub(cutover); k%time.Minute != 0 || k < time.Minute || at.After(tc.at.Add(-storeLag)) {
@@ -345,7 +346,7 @@ func TestPostDeployFailsAfterItsCountInARow(t *testing.T) {
 			t.Errorf("a bucket query not through histogramIncrease: %s", q)
 		}
 		sawNew = sawNew || strings.Contains(q, counterIncrease(`motel_app_requests_total{app="blog",release="v2"}`, 2*time.Minute, 0))
-		sawOld = sawOld || strings.Contains(q, `or increase(motel_app_requests_total{app="blog",release="v1"}[121s] offset 119s)`) &&
+		sawOld = sawOld || strings.Contains(q, `or increase(motel_app_requests_total{app="blog",release="v1"}[131s] offset 109s)`) &&
 			strings.Contains(q, `present_over_time(motel_app_requests_total{app="blog",release="v1"}[1d] offset 4m)`)
 	}
 	if !sawNew || !sawOld || firstAsks != 1 {
@@ -1164,9 +1165,12 @@ func TestPostDeployReadsTheWholeBaselineAfterAnOutage(t *testing.T) {
 }
 
 // Where the old release's window ends is not decided while the store
-// shows no push after the cutover: the check's own ask found one, so
-// none is the store's lag, and the check is the store's error, asked
-// again at the next tick, the end with it.
+// shows no push gathered after the cutover (stamped storeRequestTimeout
+// past it): the check's own push may be one stamped sooner, which only
+// the first minute's can be. Not yet searchable, the check is asked
+// again at the next tick, the end with it; with none until a minute
+// past the check's time (the next push lost), it is missed, and the
+// next minute's check finds the push after.
 func TestPostDeployAsksAgainForTheOldWindowsEnd(t *testing.T) {
 	r := regressRule
 	r.Failures = 1
@@ -1177,7 +1181,7 @@ func TestPostDeployAsksAgainForTheOldWindowsEnd(t *testing.T) {
 	tc.store.firstUnseen = 1
 	tc.minute()
 	if run := tc.runs["blog"]; run == nil || run.next != 1 || !run.oldEnd.IsZero() || len(tc.evs) != 0 {
-		t.Fatalf("decided with no push after the cutover shown: %+v, %+v", run, tc.evs)
+		t.Fatalf("decided with no push gathered after the cutover shown: %+v, %+v", run, tc.evs)
 	}
 	if tc.logs.FilterMessageSnippet("the post-deploy check is asked again").Len() != 1 {
 		t.Error("no debug line for the check asked again")
@@ -1187,13 +1191,37 @@ func TestPostDeployAsksAgainForTheOldWindowsEnd(t *testing.T) {
 	if len(tc.evs) != 1 || !strings.Contains(tc.evs[0].Summary, "against 0 before it") {
 		t.Fatalf("asked again, against the whole baseline: %+v", tc.evs)
 	}
+
+	lost := newTestComparator(t, r)
+	cutover := lost.at
+	lost.deploy("blog", "v2", "v1")
+	lost.store.set("v1 old", 1000, 0, 0.1)
+	lost.store.set("v2", 200, 20, 0.1)
+	lost.store.firstUnseen = 1000
+	lost.minute()
+	for lost.at.Add(-storeLag).Before(cutover.Add(time.Minute + checkFresh)) {
+		if run := lost.runs["blog"]; run == nil || run.next != 1 {
+			t.Fatalf("missed before a minute past it: %+v", run)
+		}
+		lost.at = lost.at.Add(postDeployTick)
+		lost.tick(context.Background())
+	}
+	if run := lost.runs["blog"]; run == nil || run.next != 2 || !run.oldEnd.IsZero() || len(lost.evs) != 0 {
+		t.Fatalf("minute 1 missed: %+v, %+v", run, lost.evs)
+	}
+	lost.store.firstUnseen = 0
+	lost.at = lost.at.Add(postDeployTick)
+	lost.tick(context.Background())
+	if len(lost.evs) != 1 || !strings.Contains(lost.evs[0].Summary, "regressed 2m after") || !strings.Contains(lost.evs[0].Summary, "against 0 before it") {
+		t.Fatalf("minute 2 against the whole baseline: %+v", lost.evs)
+	}
 }
 
 // The old release's window over the store's own MetricsQL: pushes every
 // 30 s from 0, the cutover at 610 s, the check 5 minutes after it, so
 // v1 is read from its sample of 300 s (200 2xx, 10 5xx) to the first
-// push the store took after the cutover, which carries v1's final
-// counts before the cutover: 400 and 20.
+// push the store took 10 s or more after the cutover (gathered after
+// it), which carries v1's final counts before the cutover: 400 and 20.
 //
 //   - The store down from 540 s to 660 s: the first push after the
 //     cutover is 660 s's. Read up to a push past the cutover (330 s

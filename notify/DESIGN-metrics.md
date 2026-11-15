@@ -1005,20 +1005,27 @@ is given, past the offset:
   `inc` and `hinc` the threshold rules' over `[<e>m]` (their guards' offsets moved by the window and any offset), for a relaunch after a stop over `[<e>m − 40s]`;
 - **the old**, asked only once the new is over a bound: the same over
   `release="OLD"`, from e before the cutover to the first push of
-  motel's the store took after it (`oldWindow`: `[<2e − o>s] offset
-  <o>s`, o the whole seconds from that push to the check's time, so the
-  window ends within a second past it). Its answers in the last half
-  minute before the cutover reach the store with that push, and one
-  push's samples are stamped milliseconds apart, the request series
-  before motel's own. The push is asked once a comparison, when the
-  old release is first read, and kept:
-  `min(tfirst_over_time(process_start_time_seconds{job="motel"}[<e>m]))`
-  at the check's time, whose own ask (below) has found a push after the
-  cutover, so none found is the store's lag, the check's error, asked
-  again. With no outage that push is within 30 s of the cutover, and the
-  window reads the samples the one before it read, which ended a push
-  past the cutover (`[<e+30>s] offset <e−30>s`) and so held the first
-  push after it and not the next. With the store down over that push
+  motel's the store took after it and gathered after it (`oldWindow`:
+  `[<2e − o>s] offset <o>s`, o the whole seconds from that push to the
+  check's time, so the window ends within a second past it). Its
+  answers in the last half minute before the cutover reach the store
+  with that push, and one push's samples are stamped milliseconds
+  apart, the request series before motel's own. Gathered after it is
+  stamped 10 s or more after it (the store stamps an import within its
+  request's budget, as for `relaunchSkip`): one stamped sooner may have
+  been gathered before the cutover, without the last answers
+  (/code-review pass 2 of this change). The push is asked once a
+  comparison, when the old release is first read, and kept:
+  `min(tfirst_over_time(process_start_time_seconds{job="motel"}[<e − 10s>]))`
+  at the check's time. Its own ask (below) has found a push in the
+  minute before, which from the second minute on is one; at the first,
+  it can be one stamped within the 10 s, and with none found the check
+  is asked again, as that ask is, until a minute past its time, then
+  missed (the next push lost; `TestPostDeployAsksAgainForTheOldWindowsEnd`).
+  With no outage that push is the first or the second after the
+  cutover, and the window reads the samples the one before it read,
+  which ended a push past the cutover (`[<e+30>s] offset <e−30>s`), but
+  for one more push when the first came within the 10 s. With the store down over that push
   and back by the check, the store held the old release's counts as
   they stood at its last push before the outage, and the baseline was
   as short as the outage was long before the cutover, or none: a
