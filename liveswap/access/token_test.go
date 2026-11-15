@@ -178,7 +178,7 @@ func (k *testKeySet) listed() []ssh.PublicKey {
 // ssh-keygen -Y sign makes.
 type sigOpts struct {
 	version  uint32 // 0: 1
-	ns       string // "": tokenNamespace
+	ns       string // "": TokenNamespace
 	reserved []byte
 	hashAlg  string // "": sha512. A name that is neither is hashed with sha512
 	flags    *byte  // sk- keys: nil is the touch flag alone
@@ -196,7 +196,7 @@ func sshsig(k *testKey, claims string, o sigOpts) []byte {
 		o.version = 1
 	}
 	if o.ns == "" {
-		o.ns = tokenNamespace
+		o.ns = TokenNamespace
 	}
 	if o.hashAlg == "" {
 		o.hashAlg = "sha512"
@@ -237,10 +237,10 @@ func sshsig(k *testKey, claims string, o sigOpts) []byte {
 var b64u = base64.RawURLEncoding
 
 func tok(claims string, blob []byte) string {
-	return tokenEnvelope + b64u.EncodeToString([]byte(claims)) + "." + b64u.EncodeToString(blob)
+	return TokenEnvelope + b64u.EncodeToString([]byte(claims)) + "." + b64u.EncodeToString(blob)
 }
 
-func hdr(token string) []string { return []string{tokenScheme + " " + token} }
+func hdr(token string) []string { return []string{TokenScheme + " " + token} }
 
 func claimsDoc(aud string, iat, exp int64) string {
 	return fmt.Sprintf(`{"aud":"%s","iat":%d,"exp":%d}`, aud, iat, exp)
@@ -309,7 +309,7 @@ func tokenCases(k *testKeySet) []tokenCase {
 	c0 := claimsDoc(testIdentity, n-30, n+570)
 	good := sshsig(k.ed, c0, sigOpts{})
 	goodTok := tok(c0, good)
-	claims64, sig64, _ := strings.Cut(strings.TrimPrefix(goodTok, tokenEnvelope), ".")
+	claims64, sig64, _ := strings.Cut(strings.TrimPrefix(goodTok, TokenEnvelope), ".")
 	withSig := func(claims string) []string { return hdr(tok(claims, good)) }
 	cert := &ssh.Certificate{Key: k.ed.pub, CertType: ssh.UserCert, ValidPrincipals: []string{"alice"}, ValidBefore: ssh.CertTimeInfinity}
 	if err := cert.SignCert(rand.Reader, k.ed.signer); err != nil {
@@ -336,14 +336,14 @@ func tokenCases(k *testKeySet) []tokenCase {
 		{name: "N20-person-token-as-bearer", auth: []string{"Bearer " + goodTok}, expect: "not-mine"},
 		{name: "no-authorization", auth: nil, expect: "not-mine"},
 		{name: "two-bearer-headers", auth: []string{"Bearer a", "Bearer b"}, expect: "not-mine"},
-		{name: "scheme-glued-to-token", auth: []string{tokenScheme + goodTok}, expect: "not-mine"},
+		{name: "scheme-glued-to-token", auth: []string{TokenScheme + goodTok}, expect: "not-mine"},
 
 		// 2.
-		{name: "N21-bearer-and-motel", auth: []string{"Bearer x", tokenScheme + " " + goodTok}, expect: "authorization-not-one-header"},
-		{name: "two-motel-headers", auth: []string{tokenScheme + " " + goodTok, tokenScheme + " " + goodTok}, expect: "authorization-not-one-header"},
+		{name: "N21-bearer-and-motel", auth: []string{"Bearer x", TokenScheme + " " + goodTok}, expect: "authorization-not-one-header"},
+		{name: "two-motel-headers", auth: []string{TokenScheme + " " + goodTok, TokenScheme + " " + goodTok}, expect: "authorization-not-one-header"},
 
 		// 3.
-		{name: "N22-too-long", auth: hdr(tokenEnvelope + strings.Repeat("A", maxTokenLen)), expect: "too-long"},
+		{name: "N22-too-long", auth: hdr(TokenEnvelope + strings.Repeat("A", maxTokenLen)), expect: "too-long"},
 		// The caps as numbers, not as the constants: changing a cap, or
 		// > to >=, fails here.
 		{name: "token-of-8193-bytes", auth: hdr("m1." + strings.Repeat("A", 8190)), expect: "too-long"},
@@ -352,22 +352,22 @@ func tokenCases(k *testKeySet) []tokenCase {
 		// 4.
 		{name: "N19-jwt-under-motel", auth: hdr("eyJhbGciOiJFZERTQSIsInR5cCI6IkpXVCJ9.eyJhdWQiOiJkZXBsb3kuZXhhbXBsZS50ZXN0In0.c2ln"), expect: "envelope-prefix"}, // gitleaks:allow — made up for this test
 		{name: "envelope-in-upper-case", auth: hdr("M1." + claims64 + "." + sig64), expect: "envelope-prefix"},
-		{name: "scheme-alone", auth: []string{tokenScheme}, expect: "envelope-prefix"},
-		{name: "two-spaces-after-scheme", auth: []string{tokenScheme + "  " + goodTok}, expect: "envelope-prefix"},
-		{name: "one-part", auth: hdr(tokenEnvelope + claims64), expect: "envelope-parts"},
+		{name: "scheme-alone", auth: []string{TokenScheme}, expect: "envelope-prefix"},
+		{name: "two-spaces-after-scheme", auth: []string{TokenScheme + "  " + goodTok}, expect: "envelope-prefix"},
+		{name: "one-part", auth: hdr(TokenEnvelope + claims64), expect: "envelope-parts"},
 		{name: "three-parts-a-later-form", auth: hdr(goodTok + "." + claims64), expect: "envelope-parts"},
-		{name: "claims-padded", auth: hdr(tokenEnvelope + claims64 + "=." + sig64), expect: "claims-encoding"},
-		{name: "claims-standard-alphabet", auth: hdr(tokenEnvelope + "+" + claims64[1:] + "." + sig64), expect: "claims-encoding"},
-		{name: "claims-newline-go-would-skip", auth: hdr(tokenEnvelope + claims64[:10] + "\n" + claims64[10:] + "." + sig64), expect: "claims-encoding"},
-		{name: "claims-loose-trailing-bits", auth: hdr(tokenEnvelope + flipLowBit(b64u.EncodeToString([]byte("{}"))) + "." + sig64), expect: "claims-encoding"},
+		{name: "claims-padded", auth: hdr(TokenEnvelope + claims64 + "=." + sig64), expect: "claims-encoding"},
+		{name: "claims-standard-alphabet", auth: hdr(TokenEnvelope + "+" + claims64[1:] + "." + sig64), expect: "claims-encoding"},
+		{name: "claims-newline-go-would-skip", auth: hdr(TokenEnvelope + claims64[:10] + "\n" + claims64[10:] + "." + sig64), expect: "claims-encoding"},
+		{name: "claims-loose-trailing-bits", auth: hdr(TokenEnvelope + flipLowBit(b64u.EncodeToString([]byte("{}"))) + "." + sig64), expect: "claims-encoding"},
 		{name: "claims-of-1025-bytes", auth: hdr(tok(strings.Repeat("a", 1025), good)), expect: "claims-too-long"},
 		{name: "claims-of-1024-bytes-reach-the-signature", auth: hdr(tok(strings.Repeat("a", 1024), good)), expect: "signature"},
 		{name: "sig-padded", auth: hdr(goodTok + "="), expect: "sig-encoding"},
-		{name: "sig-crlf-go-would-skip", auth: hdr(tokenEnvelope + claims64 + "." + sig64[:20] + "\r\n" + sig64[20:]), expect: "sig-encoding"},
+		{name: "sig-crlf-go-would-skip", auth: hdr(TokenEnvelope + claims64 + "." + sig64[:20] + "\r\n" + sig64[20:]), expect: "sig-encoding"},
 
 		// 5.
 		{name: "no-magic", auth: hdr(tok(c0, append([]byte("SSHSIX"), good[6:]...))), expect: "blob-magic"},
-		{name: "empty-signature-part", auth: hdr(tokenEnvelope + claims64 + "."), expect: "blob-magic"},
+		{name: "empty-signature-part", auth: hdr(TokenEnvelope + claims64 + "."), expect: "blob-magic"},
 		{name: "N8-byte-after-blob", auth: hdr(tok(c0, append(slices.Clone(good), 0))), expect: "blob-structure"},
 		{name: "blob-cut-short", auth: hdr(tok(c0, good[:len(good)-1])), expect: "blob-structure"},
 		{name: "version-2", auth: hdr(tok(c0, sshsig(k.ed, c0, sigOpts{version: 2}))), expect: "blob-version"},
@@ -388,7 +388,7 @@ func tokenCases(k *testKeySet) []tokenCase {
 		// 7.
 		{name: "N1-namespace-git", auth: hdr(tok(c0, sshsig(k.ed, c0, sigOpts{ns: "git"}))), expect: "signature-namespace"},
 		{name: "N2-namespace-file", auth: hdr(tok(c0, sshsig(k.ed, c0, sigOpts{ns: "file"}))), expect: "signature-namespace"},
-		{name: "namespace-with-a-suffix", auth: hdr(tok(c0, sshsig(k.ed, c0, sigOpts{ns: tokenNamespace + ".x"}))), expect: "signature-namespace"},
+		{name: "namespace-with-a-suffix", auth: hdr(tok(c0, sshsig(k.ed, c0, sigOpts{ns: TokenNamespace + ".x"}))), expect: "signature-namespace"},
 		{name: "namespace-in-another-case", auth: hdr(tok(c0, sshsig(k.ed, c0, sigOpts{ns: "Motel-Access-v1@motel.smallhours.org"}))), expect: "signature-namespace"},
 		{name: "reserved-not-empty", auth: hdr(tok(c0, sshsig(k.ed, c0, sigOpts{reserved: []byte("x")}))), expect: "signature-reserved"},
 		{name: "N24-hash-sha1", auth: hdr(tok(c0, sshsig(k.ed, c0, sigOpts{hashAlg: "sha1"}))), expect: "signature-hash"},
@@ -695,7 +695,7 @@ func FuzzCheckToken(f *testing.F) {
 	signedPairs := map[string]bool{}
 	pair := func(h string) string {
 		_, token, _ := strings.Cut(h, " ")
-		claims, _, _ := strings.Cut(strings.TrimPrefix(token, tokenEnvelope), ".")
+		claims, _, _ := strings.Cut(strings.TrimPrefix(token, TokenEnvelope), ".")
 		return claims
 	}
 	for _, h := range headers {

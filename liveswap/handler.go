@@ -64,6 +64,10 @@ type Handler struct {
 	app     *App
 	logger  *zap.Logger
 	limiter *deploytrust.Limiter
+	// people is the registry of the box app this config loaded with: who
+	// may read with a person's token. nil, with no box app or no person
+	// in its installed file, admits no one.
+	people *access.Registry
 	// stage is a test seam for stageUpload; nil is stageUpload. A full
 	// disk cannot be made in a test that runs as root.
 	stage func(body io.Reader, tmpDir string, maxBytes int64) (string, string, error)
@@ -89,6 +93,19 @@ func (h *Handler) Provision(ctx caddy.Context) error {
 		return fmt.Errorf("liveswap_webhook is configured but no apps are defined in the liveswap global options")
 	}
 	h.limiter = deploytrust.Shared()
+	// The box app builds the registry; this package reaches it through
+	// an interface of its own, so it imports nothing of box. With no box
+	// block there is none, and no person is admitted.
+	box, err := ctx.AppIfConfigured("box")
+	switch {
+	case errors.Is(err, caddy.ErrNotConfigured):
+	case err != nil:
+		return err
+	default:
+		if src, ok := box.(access.Source); ok {
+			h.people = src.Access()
+		}
+	}
 	return nil
 }
 

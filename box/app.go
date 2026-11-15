@@ -3,8 +3,10 @@ package box
 import (
 	"errors"
 	"fmt"
+	"io/fs"
 	"maps"
 	"slices"
+	"sync/atomic"
 
 	"github.com/caddyserver/caddy/v2"
 	"go.uber.org/zap"
@@ -27,7 +29,8 @@ func init() {
 // with it `motel validate`; the signer list the box trusts is read
 // from the installed file's raw tokens (Walk), never from the running
 // configuration (step 10). People and Grants, the person and grant
-// lines, are held for the same reason; nothing admits a person yet.
+// lines, are held for the same reason: the people the box admits are
+// the registry's, which is read from the installed file too.
 type App struct {
 	DeployTrust []deploytrust.TrustConfig `json:"deploy_trust,omitempty"`
 	Signers     []SignerConfig            `json:"signers,omitempty"`
@@ -35,6 +38,8 @@ type App struct {
 	Grants      []GrantConfig             `json:"grants,omitempty"`
 
 	verifiers []deploytrust.Verifier
+	// registry is the people this load admits (Access), nil for none.
+	registry *access.Registry
 }
 
 // SignerConfig is one `signer <principal> <key-type> <base64>` line.
@@ -99,7 +104,92 @@ func (App) CaddyModule() caddy.ModuleInfo {
 // (deploytrust.New, which refuses an empty set at config load), then
 // warns about a deploy_trust block wider than it reads.
 func (a *App) Provision(ctx caddy.Context) error {
-	return a.provision(ctx.Logger())
+	if err := a.provision(ctx.Logger()); err != nil {
+		return err
+	}
+	a.registry = a.loadRegistry(ctx.Logger(), registryFile())
+	return nil
+}
+
+// Access is the people this load admits, for both webhooks: nil when
+// it admits no one.
+func (a *App) Access() *access.Registry { return a.registry }
+
+// registryPath is the installed file the registry is read from; a test
+// stands another in (setRegistryFile). An atomic, as the tests that
+// provision an App run beside one another.
+var registryPath atomic.Pointer[string]
+
+func registryFile() string {
+	if p := registryPath.Load(); p != nil {
+		return *p
+	}
+	return installedFile
+}
+
+// loadRegistry is the registry of the installed file at path, read as
+// the walk reads it (DESIGN-box.md, "Reading the signed file"), never
+// from the running configuration: an admin-socket load cannot add a
+// person. It is built here, at provision, before any app starts, so a
+// person's first request after a start finds it (unlike a deploy
+// token's sources, which liveswap installs at Start: issue #473). A
+// file that cannot be read or that the walk refuses admits no one, and
+// the journal says why at each load; deploys are not touched. A file
+// whose box block has no person and no grant line admits no one either
+// (Walk hands out no key for it). What the walk took with a doubt and
+// this module's own reading could not see (people with no monitor
+// channel) is said here too.
+func (a *App) loadRegistry(logger *zap.Logger, path string) *access.Registry {
+	declares := len(a.People) > 0 || len(a.Grants) > 0
+	none := func(why string, err error) *access.Registry {
+		level := logger.Info
+		if declares {
+			level = logger.Warn
+		}
+		level("box: no person is admitted: "+why, zap.String("file", path), zap.String("error", proof.Bound(err.Error())))
+		return nil
+	}
+	b, err := readFile(path, proof.MaxCaddyfile, true)
+	if errors.Is(err, fs.ErrNotExist) {
+		return none("the box runs no installed Caddyfile", err)
+	}
+	if err != nil {
+		return none("the installed Caddyfile cannot be read", err)
+	}
+	shape, err := Walk(b)
+	if err != nil {
+		return none("the installed Caddyfile is not one the box can speak for", err)
+	}
+	reg := access.NewRegistry(shape.Host, shape.Access)
+	if reg.Keys() == 0 {
+		return nil
+	}
+	mine, _ := access.CheckLines(a.linesOrEmpty(), nil)
+	for _, w := range shape.AccessWarnings {
+		if !slices.Contains(mine, w) {
+			logger.Warn(w, zap.String("option", "box"), zap.String("file", path))
+		}
+	}
+	logger.Info("box: people admitted", zap.String("box", shape.Host), zap.Int("keys", reg.Keys()))
+	return reg
+}
+
+// linesOrEmpty is the block's own lines as provision read them, or none
+// if they do not parse (provision has refused such a block already).
+func (a *App) linesOrEmpty() access.Lines {
+	signers := make(proof.Signers, 0, len(a.Signers))
+	for _, s := range a.Signers {
+		sg, err := proof.ParseSigner(s.Principal, s.Type, s.Key)
+		if err != nil {
+			return access.Lines{}
+		}
+		signers = append(signers, sg)
+	}
+	l, err := a.lines(signers)
+	if err != nil {
+		return access.Lines{}
+	}
+	return l
 }
 
 func (a *App) provision(logger *zap.Logger) error {
@@ -197,4 +287,5 @@ func (*App) Stop() error { return nil }
 var (
 	_ caddy.App         = (*App)(nil)
 	_ caddy.Provisioner = (*App)(nil)
+	_ access.Source     = (*App)(nil)
 )

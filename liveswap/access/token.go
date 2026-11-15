@@ -31,20 +31,20 @@ import (
 )
 
 const (
-	// tokenScheme is the Authorization scheme of a person's token,
+	// TokenScheme is the Authorization scheme of a person's token,
 	// compared without regard to case as RFC 9110 asks of a scheme.
 	// The word is a proposal the owner has not confirmed: this is the
 	// one place to change it.
-	tokenScheme = "Motel"
-	// tokenEnvelope begins every token: version 1 of the envelope. A
+	TokenScheme = "Motel"
+	// TokenEnvelope begins every token: version 1 of the envelope. A
 	// proposal too, kept here alone.
-	tokenEnvelope = "m1."
-	// tokenNamespace is the SSHSIG namespace a token is signed in. It
+	TokenEnvelope = "m1."
+	// TokenNamespace is the SSHSIG namespace a token is signed in. It
 	// keeps a token apart from every other signature the same key
 	// makes: a commit is signed in "git", a file in "file", and
 	// neither can be read as a token. Chosen by the owner; changing it
 	// is a new format.
-	tokenNamespace = "motel-access-v1@motel.smallhours.org"
+	TokenNamespace = "motel-access-v1@motel.smallhours.org"
 
 	// maxTokenLen is deploytrust.MaxTokenLen, so one cap holds for
 	// both kinds of token. It is checked before anything is parsed.
@@ -76,6 +76,10 @@ var ErrNoPersonToken = errors.New("no Authorization header in the person token's
 // same 401 as every other refusal, so a caller learns nothing from it.
 type TokenRefusal struct {
 	Reason string
+	// Fingerprint is the signing key's, for a token refused after its
+	// key was found listed: what the journal names beside the reason.
+	// Empty before that, so no key a stranger made is named.
+	Fingerprint string
 }
 
 func (r *TokenRefusal) Error() string { return "person token refused: " + r.Reason }
@@ -143,14 +147,7 @@ func refuseToken(reason string) (VerifiedToken, error) {
 // may do, is the caller's to decide.
 func CheckToken(req TokenRequest, identity string, now time.Time, lookup KeyLookup) (VerifiedToken, error) {
 	// 1. The scheme. A request with no header in it is not a person's.
-	var token string
-	mine := false
-	for _, v := range req.Authorization {
-		scheme, rest, _ := strings.Cut(v, " ")
-		if strings.EqualFold(scheme, tokenScheme) {
-			mine, token = true, rest
-		}
-	}
+	token, mine := personToken(req.Authorization)
 	if !mine {
 		return VerifiedToken{}, ErrNoPersonToken
 	}
@@ -165,7 +162,7 @@ func CheckToken(req TokenRequest, identity string, now time.Time, lookup KeyLook
 	}
 	// 4. The envelope: the prefix, exactly two parts, each strict
 	// unpadded base64url.
-	rest, ok := strings.CutPrefix(token, tokenEnvelope)
+	rest, ok := strings.CutPrefix(token, TokenEnvelope)
 	if !ok {
 		return refuseToken("envelope-prefix")
 	}
@@ -220,9 +217,13 @@ func CheckToken(req TokenRequest, identity string, now time.Time, lookup KeyLook
 	if !ok || key == nil || !bytes.Equal(key.Marshal(), sig.PublicKey) {
 		return refuseToken("key-not-listed")
 	}
+	// From here a refusal names the listed key it was signed with.
+	refuse := func(reason string) (VerifiedToken, error) {
+		return VerifiedToken{}, &TokenRefusal{Reason: reason, Fingerprint: fingerprint}
+	}
 	// 7. The signature.
 	if reason := tokenVerify(&sig, key, claims); reason != "" {
-		return refuseToken(reason)
+		return refuse(reason)
 	}
 	// 8. The claims, now signed, in their one spelling: the bytes must
 	// equal the compact encoding of what they decode to. That refuses
@@ -234,50 +235,70 @@ func CheckToken(req TokenRequest, identity string, now time.Time, lookup KeyLook
 	dec.DisallowUnknownFields()
 	var c tokenClaims
 	if err := dec.Decode(&c); err != nil {
-		return refuseToken("claims-json")
+		return refuse("claims-json")
 	}
 	var again bytes.Buffer
 	enc := json.NewEncoder(&again)
 	enc.SetEscapeHTML(false)
 	if err := enc.Encode(c); err != nil || !bytes.Equal(bytes.TrimSuffix(again.Bytes(), []byte("\n")), claims) {
-		return refuseToken("claims-not-canonical")
+		return refuse("claims-not-canonical")
 	}
 	// 9. For this box. An empty identity, which no box has, matches
 	// nothing.
 	if identity == "" || c.Aud != identity {
-		return refuseToken("aud")
+		return refuse("aud")
 	}
 	// 10. Sent to this box's own name, not to another site the same
 	// box serves.
 	if host, ok := tokenHost(req.Host); !ok || host != identity {
-		return refuseToken("host")
+		return refuse("host")
 	}
 	// 11. The times, with the skew either way. Each comparison is
 	// written so that no sum can overflow.
 	t := now.Unix()
 	if c.Iat <= 0 || c.Exp <= c.Iat {
-		return refuseToken("times")
+		return refuse("times")
 	}
 	if c.Iat-tokenSkew > t {
-		return refuseToken("iat-in-future")
+		return refuse("iat-in-future")
 	}
 	if t-tokenSkew > c.Exp {
-		return refuseToken("expired")
+		return refuse("expired")
 	}
 	// 13. The lifetime, then the method: a person's token only reads,
 	// and a read is a GET. (12, a token's scope, belongs to a later
 	// form.)
 	if c.Exp-c.Iat > maxTokenLife {
-		return refuseToken("life")
+		return refuse("life")
 	}
 	if req.Method != "GET" {
-		return refuseToken("method")
+		return refuse("method")
 	}
 	return VerifiedToken{
 		Fingerprint: fingerprint,
 		IssuedAt:    time.Unix(c.Iat, 0).UTC(),
 		ExpiresAt:   time.Unix(c.Exp, 0).UTC(),
 	}, nil
+}
+
+// personToken is the token of the last header in the person token's
+// scheme, and whether any header is in it: check 1.
+func personToken(authorization []string) (token string, mine bool) {
+	for _, v := range authorization {
+		scheme, rest, _ := strings.Cut(v, " ")
+		if strings.EqualFold(scheme, TokenScheme) {
+			mine, token = true, rest
+		}
+	}
+	return token, mine
+}
+
+// HasPersonScheme reports whether any of a request's Authorization
+// header values is in the person token's scheme: such a request is a
+// person's, and only CheckToken judges it, whatever else it carries.
+func HasPersonScheme(authorization []string) bool {
+	_, mine := personToken(authorization)
+	return mine
 }
 
 // tokenHost is the request's Host with ASCII letters lowered and a
@@ -326,7 +347,7 @@ func tokenBase64(s string) ([]byte, bool) {
 // own verifier leaves the sk- flags unchecked, and x/crypto would
 // verify a signature with bytes after it, so both are checked here.
 func tokenVerify(sig *tokenSig, key ssh.PublicKey, claims []byte) string {
-	if sig.Namespace != tokenNamespace {
+	if sig.Namespace != TokenNamespace {
 		return "signature-namespace"
 	}
 	if len(sig.Reserved) != 0 {
@@ -364,7 +385,7 @@ func tokenVerify(sig *tokenSig, key ssh.PublicKey, claims []byte) string {
 		Reserved  []byte
 		HashAlg   string
 		Hash      []byte
-	}{tokenNamespace, nil, sig.HashAlg, h.Sum(nil)})...)
+	}{TokenNamespace, nil, sig.HashAlg, h.Sum(nil)})...)
 	if err := key.Verify(signed, &s); err != nil {
 		return "signature"
 	}
