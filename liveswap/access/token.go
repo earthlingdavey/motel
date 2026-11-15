@@ -140,8 +140,19 @@ type ListedType func(keyType string) bool
 var unlistedKeys = makeUnlistedKeys()
 
 // unlistedVerifyHook, when set (a test), is told of each signature
-// check against a dummy key, by the dummy's type, as it runs.
-var unlistedVerifyHook func(keyType string)
+// check against a dummy key once it has run: the dummy's type, and what
+// the verification said.
+var unlistedVerifyHook func(keyType string, err error)
+
+// SetDummyVerifyHook makes f told of each signature check against a
+// dummy key once it has run, until restore is called. For tests of the
+// handlers, which cannot see this package's insides; never set in
+// production.
+func SetDummyVerifyHook(f func(keyType string, err error)) (restore func()) {
+	saved := unlistedVerifyHook
+	unlistedVerifyHook = f
+	return func() { unlistedVerifyHook = saved }
+}
 
 // unlistedVerify spends on a token whose key is not listed the check a
 // listed key's would cost, against the dummy of its type, and discards
@@ -156,10 +167,11 @@ func unlistedVerify(keyType string, sig *tokenSig, claims []byte) {
 type dummyKey struct{ ssh.PublicKey }
 
 func (k dummyKey) Verify(data []byte, sig *ssh.Signature) error {
+	err := k.PublicKey.Verify(data, sig)
 	if unlistedVerifyHook != nil {
-		unlistedVerifyHook(k.Type())
+		unlistedVerifyHook(k.Type(), err)
 	}
-	return k.PublicKey.Verify(data, sig)
+	return err
 }
 
 func makeUnlistedKeys() map[string]ssh.PublicKey {

@@ -45,6 +45,15 @@ func ECDSA() Key {
 	return fromSigner(priv)
 }
 
+// P521 is a fresh ecdsa-sha2-nistp521 key.
+func P521() Key {
+	priv, err := ecdsa.GenerateKey(elliptic.P521(), rand.Reader)
+	if err != nil {
+		panic(err)
+	}
+	return fromSigner(priv)
+}
+
 func fromSigner(priv crypto.Signer) Key {
 	s, err := ssh.NewSignerFromSigner(priv)
 	if err != nil {

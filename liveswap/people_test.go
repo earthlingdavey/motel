@@ -673,3 +673,39 @@ func TestForwardedNotStrictFailsClosed(t *testing.T) {
 	}
 }
 
+// TestHandlerDummyCheckByListedType: through the handler, with only an
+// ed25519 key listed, an unlisted ed25519 key's token costs one dummy
+// verification, which fails, and an unlisted P-521 key's none: the
+// handler hands CheckToken the registry's own listed types.
+func TestHandlerDummyCheckByListedType(t *testing.T) {
+	alice := accesstest.Ed25519()
+	key, err := access.ParsePerson([]string{"alice", alice.Type(), alice.B64()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	h, _ := newTestHandler(t)
+	h.people = access.NewRegistry(personBox, access.Lines{Keys: []access.Key{key}})
+	var seen []string
+	t.Cleanup(access.SetDummyVerifyHook(func(keyType string, err error) {
+		if err == nil {
+			t.Errorf("the dummy %s key verified", keyType)
+		}
+		seen = append(seen, keyType)
+	}))
+	for _, c := range []struct {
+		name string
+		auth string
+		want []string
+	}{
+		{"an unlisted ed25519 key", token(accesstest.Ed25519()), []string{ssh.KeyAlgoED25519}},
+		{"an unlisted P-521 key", token(accesstest.P521()), nil},
+	} {
+		seen = nil
+		if w := sendTo(t, h, "GET", "/_motel/whoami", c.auth); w.Code != http.StatusUnauthorized {
+			t.Errorf("%s: %d", c.name, w.Code)
+		}
+		if !slices.Equal(seen, c.want) {
+			t.Errorf("%s: dummy verifications %v, want %v", c.name, seen, c.want)
+		}
+	}
+}

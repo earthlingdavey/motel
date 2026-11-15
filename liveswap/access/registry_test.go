@@ -1,6 +1,7 @@
 package access_test
 
 import (
+	"encoding/base64"
 	"errors"
 	"net/netip"
 	"testing"
@@ -8,6 +9,7 @@ import (
 
 	"github.com/smallhoursorg/motel/liveswap/access"
 	"github.com/smallhoursorg/motel/liveswap/access/accesstest"
+	"golang.org/x/crypto/ssh"
 )
 
 const box = "deploy.example.test"
@@ -171,5 +173,28 @@ func TestRegistryListsTypes(t *testing.T) {
 		if none.ListsType(typ) || empty.ListsType(typ) {
 			t.Errorf("no registry, or an empty one, lists %s", typ)
 		}
+	}
+}
+
+// TestRegistryListsPersonKeyTypesOnly: a key type is listed only for a
+// key a person may sign with: a box whose only ed25519 key is a signer's
+// of small order lists no ed25519, so no dummy check runs for that type.
+func TestRegistryListsPersonKeyTypesOnly(t *testing.T) {
+	identity := make([]byte, 32)
+	identity[0] = 1
+	wire := ssh.Marshal(struct {
+		Type string
+		Key  []byte
+	}{ssh.KeyAlgoED25519, identity})
+	bob := accesstest.ECDSA()
+	pk, err := access.ParsePerson([]string{"bob", bob.Type(), bob.B64()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	reg := access.NewRegistry(box, access.Lines{Keys: []access.Key{
+		access.SignerKey("mallory", ssh.KeyAlgoED25519, base64.StdEncoding.EncodeToString(wire), wire), pk,
+	}})
+	if reg.ListsType(ssh.KeyAlgoED25519) || !reg.ListsType(bob.Type()) {
+		t.Errorf("lists ed25519 %v, ecdsa %v; want only ecdsa", reg.ListsType(ssh.KeyAlgoED25519), reg.ListsType(bob.Type()))
 	}
 }

@@ -733,7 +733,12 @@ func everyType(string) bool { return true }
 // and by which dummy's type. A listed key's token never meets a dummy.
 func TestUnlistedKeyCostsASignatureCheck(t *testing.T) {
 	var seen []string
-	unlistedVerifyHook = func(keyType string) { seen = append(seen, keyType) }
+	unlistedVerifyHook = func(keyType string, err error) {
+		if err == nil {
+			t.Errorf("a dummy %s key verified a signature it never made", keyType)
+		}
+		seen = append(seen, keyType)
+	}
 	t.Cleanup(func() { unlistedVerifyHook = nil })
 	k := testKeys()
 	claims := claimsDoc(testIdentity, testNow-10, testNow+60)
@@ -777,7 +782,12 @@ func TestUnlistedKeyCostsASignatureCheck(t *testing.T) {
 // type. So a stranger with no key cannot make the box verify anything.
 func TestUnlistedTypeCostsNothing(t *testing.T) {
 	var seen []string
-	unlistedVerifyHook = func(keyType string) { seen = append(seen, keyType) }
+	unlistedVerifyHook = func(keyType string, err error) {
+		if err == nil {
+			t.Errorf("a dummy %s key verified a signature it never made", keyType)
+		}
+		seen = append(seen, keyType)
+	}
 	t.Cleanup(func() { unlistedVerifyHook = nil })
 	k := testKeys()
 	claims := claimsDoc(testIdentity, testNow-10, testNow+60)
