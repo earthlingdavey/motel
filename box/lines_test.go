@@ -216,11 +216,11 @@ func TestLinesBothReaders(t *testing.T) {
 		"a name of 256 bytes":              {lines: "\t\tperson " + strings.Repeat("n", 256) + " ssh-ed25519 @ED3@\n\t\tgrant " + strings.Repeat("n", 256) + " viewer box"},
 		"a quoted argument":                {lines: "\t\tgrant \"bob\" viewer \"box\""},
 		"a person with no grant": {lines: "\t\tperson carol ssh-ed25519 @ED3@",
-			warn: "person carol has no grant"},
+			warn: "person carol has no grant: their key is told only who they are here (/_motel/whoami)"},
 		"a box grant and an app grant": {lines: "\t\tgrant bob viewer box\n\t\tgrant bob viewer app blog",
 			warn: "grant bob viewer app blog: the box grant already covers it"},
 		"an ssh-rsa signer": {lines: "\t\tsigner carol ssh-rsa @RSA@\n\t\tgrant bob viewer box",
-			warn: "signer carol: an ssh-rsa key signs commits but cannot be a person's key; for carol to be a person, add a person line with an ed25519 or ecdsa key (ssh-keygen -t ed25519)"},
+			warn: "signer carol: an ssh-rsa key signs commits but cannot sign a person's token; to reach this box over HTTPS, add a person line for carol with an ed25519 or ecdsa key (ssh-keygen -t ed25519)"},
 
 		// Refused, one line at a time.
 		"a person's ssh-rsa key": {lines: "\t\tperson carol ssh-rsa @RSA@",

@@ -430,11 +430,11 @@ func TestCheckLines(t *testing.T) {
 		},
 		"a person with no grant": {
 			lines: []string{"signer alice ssh-ed25519 " + k1, "person carol ecdsa-sha2-nistp256 " + k2, "person carol sk-ssh-ed25519@openssh.com " + k3}, around: apps,
-			warnings: []string{"person carol has no grant"},
+			warnings: []string{"person carol has no grant: their key is told only who they are here (/_motel/whoami)"},
 		},
 		"two ssh-rsa signer keys for one name, warned once": {
 			lines: []string{"signer carol ssh-rsa " + rsa1, "signer carol ssh-rsa " + rsa2, "person bob ssh-ed25519 " + k1, "grant bob viewer box"}, around: apps,
-			warnings: []string{"signer carol: an ssh-rsa key signs commits but cannot be a person's key; for carol to be a person, add a person line with an ed25519 or ecdsa key (ssh-keygen -t ed25519)"},
+			warnings: []string{"signer carol: an ssh-rsa key signs commits but cannot sign a person's token; to reach this box over HTTPS, add a person line for carol with an ed25519 or ecdsa key (ssh-keygen -t ed25519)"},
 		},
 		"a signer key of small order is no person's key": {
 			lines: []string{"signer mallory ssh-ed25519 " + identity, "grant mallory viewer box"},
@@ -442,7 +442,7 @@ func TestCheckLines(t *testing.T) {
 		},
 		"an ssh-rsa signer beside people": {
 			lines: []string{"signer carol ssh-rsa " + rsa1, "person bob ssh-ed25519 " + k1, "grant bob viewer box"}, around: apps,
-			warnings: []string{"signer carol: an ssh-rsa key signs commits but cannot be a person's key; for carol to be a person, add a person line with an ed25519 or ecdsa key (ssh-keygen -t ed25519)"},
+			warnings: []string{"signer carol: an ssh-rsa key signs commits but cannot sign a person's token; to reach this box over HTTPS, add a person line for carol with an ed25519 or ecdsa key (ssh-keygen -t ed25519)"},
 		},
 		"people and no monitor channel": {
 			lines: []string{"person bob ssh-ed25519 " + k1, "grant bob viewer box"}, around: &Around{},

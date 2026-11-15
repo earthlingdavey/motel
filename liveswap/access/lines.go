@@ -7,8 +7,9 @@ package access
 // the installed file's raw tokens. One parser for both is what keeps
 // the two from disagreeing about who is declared.
 //
-// In this release the lines are read and checked, and nothing admits a
-// person: no handler reads them.
+// The box app builds the registry of who it admits from the walk's
+// reading of these lines (Registry), and both webhooks admit a person
+// through it (CheckToken, Decide).
 
 import (
 	"crypto/ecdsa"
@@ -521,10 +522,10 @@ func CheckLines(l Lines, around *Around) (warnings []string, err error) {
 		switch {
 		case k.Signer && k.Type == "ssh-rsa" && !personKey[k.Name] && !warned["signer "+k.Name]:
 			warned["signer "+k.Name] = true
-			warnings = append(warnings, fmt.Sprintf("signer %s: an ssh-rsa key signs commits but cannot be a person's key; for %s to be a person, add a person line with an ed25519 or ecdsa key (ssh-keygen -t ed25519)", k.Name, k.Name))
+			warnings = append(warnings, fmt.Sprintf("signer %s: an ssh-rsa key signs commits but cannot sign a person's token; to reach this box over HTTPS, add a person line for %s with an ed25519 or ecdsa key (ssh-keygen -t ed25519)", k.Name, k.Name))
 		case !k.Signer && !hasGrant[k.Name] && !signerName[k.Name] && !warned["person "+k.Name]:
 			warned["person "+k.Name] = true
-			warnings = append(warnings, fmt.Sprintf("person %s has no grant", k.Name))
+			warnings = append(warnings, fmt.Sprintf("person %s has no grant: their key is told only who they are here (/_motel/whoami)", k.Name))
 		}
 	}
 	for _, g := range l.Grants {
@@ -535,10 +536,20 @@ func CheckLines(l Lines, around *Around) (warnings []string, err error) {
 		}
 	}
 	if around != nil && !around.Channels && len(personKey) > 0 {
-		warnings = append(warnings, "people are declared and no monitor channel is, so what they do on this box will be told to no one; add a channel line to the monitor block: channel <name> <kind> {secret.NOTIFY_<NAME>}")
+		warnings = append(warnings, NoChannelWarning)
 	}
 	return warnings, nil
 }
+
+// NoChannelWarning is what a box with people and no monitor channel is
+// told, by the walk and by `motel validate`, which reads the channels
+// from the adapted config.
+const NoChannelWarning = "people are declared and no monitor channel is, so what they do on this box will be told to no one; add a channel line to the monitor block: channel <name> <kind> {secret.NOTIFY_<NAME>}"
+
+// FromProxiesWarning is what `motel validate` says of a grant with an
+// address list on a box whose server trusts proxies: the list is held to
+// Caddy's client_ip, which a trusted proxy's X-Forwarded-For sets.
+const FromProxiesWarning = "a grant has a from list, and a server here has trusted_proxies: the address a from list is held to is Caddy's client_ip, which takes X-Forwarded-For from any peer in the trusted_proxies ranges; the list is only as good as those ranges"
 
 // lineQuote is a value a line wrote, quoted and cut to a length a message
 // can carry: it may be anything a token can hold.

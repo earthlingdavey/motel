@@ -61,6 +61,9 @@ func gateArgs(args []string, stderr io.Writer) (stop bool, run []string) {
 		retireMetricsRules(cfg, stderr)
 		sendNothing(monitorJSON(cfg), stderr)
 	}
+	if cmd == "validate" && cfg != nil {
+		warnPeople(cfg, stderr)
+	}
 	if monitor := monitorJSON(cfg); monitor != nil {
 		warnMonitor(cmd, monitor, stderr)
 		if cmd == "reload" && reloadForces(args[1:], monitor) {

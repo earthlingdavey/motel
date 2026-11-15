@@ -9,4 +9,4 @@ person bob@example.com ecdsa-sha2-nistp256 SHA256:jcqs/XJfUuLe6kYafE3bV9wP6RnrHJ
 grant alice@example.com viewer box
 grant bob@example.com viewer app example
 grant bob@example.com viewer app blog from 198.51.100.0/24 2001:db8:5::/48
-warning signer carol@example.com: an ssh-rsa key signs commits but cannot be a person's key; for carol@example.com to be a person, add a person line with an ed25519 or ecdsa key (ssh-keygen -t ed25519)
+warning signer carol@example.com: an ssh-rsa key signs commits but cannot sign a person's token; to reach this box over HTTPS, add a person line for carol@example.com with an ed25519 or ecdsa key (ssh-keygen -t ed25519)

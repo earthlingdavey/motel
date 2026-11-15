@@ -66,9 +66,11 @@ grants, then a warning line for each doubt the lines were taken with:
 
     person bob@example.com ecdsa-sha2-nistp256 SHA256:e2/1Bk...
     grant bob@example.com viewer app example
-    warning person carol@example.com has no grant
+    warning person carol@example.com has no grant: their key is told only who they are here (/_motel/whoami)
 
-These lines are read and checked; nothing admits a person yet.
+Together they say who may reach this box over HTTPS with a token their
+own key signs, and what each may read there, from the box's own name;
+root's key, which is not in the file, is the one other way in.
 
 With a secrets/ directory beside the file it reads that too, as the
 working tree has it, and adds:

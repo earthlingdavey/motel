@@ -47,8 +47,9 @@ func parseGlobalOption(d *caddyfile.Dispenser, existing any) (any, error) {
 //	    grant <name> viewer box|app <app> [from <prefix>...]  # what a person may read (repeatable)
 //	}
 //
-// person and grant lines are read and checked; nothing admits a person
-// yet (DESIGN-box.md, "People and grants").
+// person and grant lines are read and checked here, so a bad one fails
+// validate and the load; who is admitted is read from the installed
+// file (DESIGN-box.md, "People and grants").
 func (a *App) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
 	d.Next() // the option's name
 	if d.NextArg() {
