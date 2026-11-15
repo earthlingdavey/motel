@@ -1127,7 +1127,11 @@ func testTrickledUpload(t *testing.T, routed bool) {
 	p.h.upload = 300 * time.Millisecond
 	// Twenty trickle intervals: a loaded runner's pause must not turn
 	// the trickle into a stall, which the idle reader ends itself.
-	const idle = time.Second
+	// Routed, a hundred, past the room its limit gives (below).
+	idle := time.Second
+	if routed {
+		idle = 5 * time.Second
+	}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body := &caddyhttp.IdleTimeoutReader{
 			ReadCloser: r.Body,
@@ -1180,11 +1184,16 @@ func testTrickledUpload(t *testing.T, routed bool) {
 		t.Fatal("the slot outlived the trickled upload")
 	}
 	release()
-	// The bound, one idle window — the read blocked past the bound
-	// returns with the next byte, and the server's drain of the rest
-	// ends at the deadline that read armed — and room for a loaded
-	// runner.
-	if limit := p.h.upload + idle + 2*time.Second; elapsed > limit {
+	// Re-armed: the bound, one idle window — the read blocked past the
+	// bound returns with the next byte, and the server's drain of the
+	// rest ends at the deadline that read armed — and room for a loaded
+	// runner. Routed: the bound and the same room, under one idle
+	// window, so a reader that no longer caps its re-arm fails here.
+	limit := p.h.upload + idle + 2*time.Second
+	if routed {
+		limit = p.h.upload + 2*time.Second
+	}
+	if elapsed > limit {
 		t.Fatalf("answered after %s, past %s", elapsed, limit)
 	}
 	_ = conn.Close()
@@ -1242,6 +1251,56 @@ func TestPushStalledUploadUnderIdleReader(t *testing.T) {
 		t.Fatal("the slot is held with the drain")
 	}
 	release()
+}
+
+// TestPushStalledUploadRouted: a stall under the server's reader as
+// v2.11.8 installs it (the handler's deadline routed to it) ends at the
+// idle deadline when that comes before the bound, with the connection's
+// own error and not the bound's, since the bound has not passed; and
+// the 400 leaves, since the reader keeps its expired deadline for
+// net/http's drain (caddy#8178).
+func TestPushStalledUploadRouted(t *testing.T) {
+	p := newPushRig(t)
+	p.h.upload = 5 * time.Second
+	const idle = 300 * time.Millisecond
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body := &caddyhttp.IdleTimeoutReader{
+			ReadCloser:    r.Body,
+			Ctrl:          http.NewResponseController(w),
+			Deadline:      caddyhttp.IdleDeadline{Start: time.Now(), Timeout: idle},
+			Logger:        zap.NewNop(),
+			DrainDeadline: true,
+		}
+		defer body.HandlerDone()
+		r.Body = body
+		w = deadlineRouted{ResponseWriter: w, body: body}
+		_ = p.h.ServeHTTP(w, r, nextFunc(func(http.ResponseWriter, *http.Request) error { return nil }))
+	}))
+	defer srv.Close()
+	conn, err := net.Dial("tcp", srv.Listener.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close() //nolint:errcheck // a test connection
+	c2, _ := p.change()
+	start := time.Now()
+	if _, err := fmt.Fprintf(conn, "POST / HTTP/1.1\r\nHost: x\r\nAuthorization: Bearer %s\r\n%s: %s\r\nContent-Type: application/gzip\r\nContent-Length: 1000\r\n\r\npartial",
+		p.token(t, c2), headerRequestID, randomID(t)); err != nil {
+		t.Fatal(err)
+	}
+	_ = conn.SetReadDeadline(time.Now().Add(10 * time.Second))
+	resp, err := http.ReadResponse(bufio.NewReader(conn), nil)
+	if err != nil {
+		t.Fatalf("no answer to a stalled upload: %v", err)
+	}
+	elapsed := time.Since(start)
+	b, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusBadRequest || !strings.Contains(string(b), "i/o timeout") || strings.Contains(string(b), "outlasted") {
+		t.Fatalf("%d %s", resp.StatusCode, b)
+	}
+	if elapsed >= p.h.upload {
+		t.Fatalf("answered after %s, not before the bound %s", elapsed, p.h.upload)
+	}
 }
 
 // TestPushDeadlineCleared: after a whole body the upload deadline no

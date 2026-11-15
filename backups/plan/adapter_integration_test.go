@@ -91,10 +91,13 @@ func TestIntegrationTheAdapterRefusesAnImportAndADirectiveAsInspectReadsThem(t *
 		said                  string
 		atImport, atDirective bool
 	}{
-		"a directive's check":     {said(site, "TLS_MIN=1"), false, true},
-		"a file to import":        {said("import sites/{$ENV:prod}.caddy\n"+site, "ENV=1"), true, false},
-		"a directory to import":   {said("import {$F:sites/prod.caddy}\n"+site, "F=sites"), true, false},
-		"a glob, and a directive": {said("import sites/{$ENV:prod}/*.caddy\nexample.com {\n\ttls {\n\t\tprotocols {$ENV:tls1.2}\n\t}\n}\n", "ENV=1"), true, true},
+		"a directive's check":   {said(site, "TLS_MIN=1"), false, true},
+		"a file to import":      {said("import sites/{$ENV:prod}.caddy\n"+site, "ENV=1"), true, false},
+		"a directory to import": {said("import {$F:sites/prod.caddy}\n"+site, "F=sites"), true, false},
+		// A stat that fails but not for a file not there (ENOTDIR here;
+		// EACCES alike) has its own words from v2.11.8.
+		"a path through a file to import": {said("import {$F:sites/prod.caddy}\n"+site, "F=sites/prod.caddy/a.caddy"), true, false},
+		"a glob, and a directive":         {said("import sites/{$ENV:prod}/*.caddy\nexample.com {\n\ttls {\n\t\tprotocols {$ENV:tls1.2}\n\t}\n}\n", "ENV=1"), true, true},
 	} {
 		if failedAtImport(tc.said) != tc.atImport || failedAtDirective(tc.said) != tc.atDirective {
 			t.Errorf("%s: import %v, directive %v, want %v, %v; the adapter said:\n%s", name, failedAtImport(tc.said), failedAtDirective(tc.said), tc.atImport, tc.atDirective, tc.said)

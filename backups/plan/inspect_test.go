@@ -242,6 +242,7 @@ func TestTheAdaptersWordsAreReadAsItWritesThem(t *testing.T) {
 	}{
 		{`{"level":"error","ts":1,"msg":"File to import not found: sites/hsb-placeholder-env.invalid.caddy, at /etc/motel/Caddyfile:1"}`, true, false},
 		{`{"level":"error","ts":1,"msg":"Could not import /etc/motel/sites: is a directory, at /etc/motel/Caddyfile:1"}`, true, false},
+		{`{"level":"error","ts":1,"msg":"Failed to import file sites/app.caddy: stat sites/app.caddy: permission denied, at /etc/motel/Caddyfile:1"}`, true, false},
 		{`{"level":"warn","ts":1,"msg":"No files matching import glob pattern","pattern":"sites/hsb-placeholder-env.invalid/*.caddy"}`, true, false},
 		// A glob matching nothing is a warning, and the directive after
 		// it fails: the import's, since the parser met it first.
