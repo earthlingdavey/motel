@@ -58,11 +58,14 @@ type Keygen struct {
 	Stderr io.Writer
 }
 
-// Sign runs `ssh-keygen -Y sign -n <namespace> -f <key>` with the
+// Sign runs `ssh-keygen -q -Y sign -n <namespace> -f <key>` with the
 // message on stdin, and returns what it writes on stdout. A key the
-// agent alone holds is given to it as /dev/fd/3.
+// agent alone holds is given to it as /dev/fd/3. -q drops the
+// "Signing data on standard input" every command would otherwise
+// print; a hardware key's prompt is printed whatever -q says, and a
+// passphrase is asked on the terminal.
 func (k Keygen) Sign(ctx context.Context, key Key, namespace string, message []byte) ([]byte, error) {
-	cmd := local.Cmd{Name: "ssh-keygen", Args: []string{"-Y", "sign", "-n", namespace, "-f", key.Path}, Stdin: message}
+	cmd := local.Cmd{Name: "ssh-keygen", Args: []string{"-q", "-Y", "sign", "-n", namespace, "-f", key.Path}, Stdin: message}
 	if key.Path == "" {
 		cmd.Args[len(cmd.Args)-1] = "/dev/fd/3"
 		cmd.FD3 = []byte(key.Public.Line() + "\n")
