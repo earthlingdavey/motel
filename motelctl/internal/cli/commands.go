@@ -270,10 +270,12 @@ func (r *runner) whoami() *cobra.Command {
 		Use:   "whoami",
 		Short: "Who the box takes your key to be, and what it may view from here (experimental)",
 		Long: "whoami asks the box who your ssh key is there: GET /_motel/whoami. It prints\n" +
-			"the name the box lists the key under, the box and its release, the key and\n" +
-			"where motelctl found it, the roles it holds from the address you ask from,\n" +
-			"and when the token expires. It is asked with your own key only: with\n" +
-			"MOTEL_TOKEN set, name the key with --key.\n\n" + experimental,
+			"the name the box lists the key under, the box asked and its release, the key\n" +
+			"this command signed with and where motelctl found it, the roles it holds\n" +
+			"from the address you ask from, and when the token expires. An answer that\n" +
+			"names another key, or another box, is warned of and exits 3: it is not one\n" +
+			"to act on. It is asked with your own key only: with MOTEL_TOKEN set, name\n" +
+			"the key with --key.\n\n" + experimental,
 		Args: usageArgs(cobra.NoArgs),
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			c, err := r.client(cmd.Context(), &t, nil, "", "whoami")
@@ -288,11 +290,21 @@ func (r *runner) whoami() *cobra.Command {
 			if err := c.Read(ans, &me); err != nil {
 				return err
 			}
-			if r.json {
+			view := whoamiView(me, c.Box.Host, c.Cred.(*client.PersonToken).Key, r.env.Now())
+			odd := view.KeyDiffers || view.BoxDiffers
+			if r.json && !odd {
 				return r.emit(ans.Body)
 			}
-			key := c.Cred.(*client.PersonToken).Key
-			return render.WriteWhoAmI(r.env.Stdout, whoamiView(me, key, r.env.Now()))
+			if !r.json {
+				if err := render.WriteWhoAmI(r.env.Stdout, view); err != nil {
+					return err
+				}
+			}
+			if odd {
+				return &client.Failure{Exit: client.ExitUnknown, Message: fmt.Sprintf(
+					"%s answered about another key than the one this command signed with, or as another box than the one it asked: an answer that is not about this key here is not one to act on.", c.Box.Host)}
+			}
+			return nil
 		},
 	}
 	t.flags(c)

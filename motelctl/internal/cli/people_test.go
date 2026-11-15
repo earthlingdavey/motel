@@ -12,17 +12,32 @@ import (
 	"unicode/utf8"
 
 	"github.com/smallhoursorg/motel/liveswap/wire"
+	"github.com/smallhoursorg/motel/motelctl/internal/sshkey"
 )
 
 // whoamiNow is the clock of the whoami tests: the fake box's token
 // expires 270 s after it.
 var whoamiNow = time.Date(2026, 11, 15, 10, 0, 0, 0, time.UTC)
 
+// meLine is runKey's key, ~/me.pub: made up, and only its shape is read.
+const meLine = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIMuTYJV40qpZ7rH7T4/BJP6ERoj5JgqFQwHIEBTe5wrn" // gitleaks:allow — made up for this test
+
+// meFingerprint is meLine's fingerprint, which an honest box names.
+func meFingerprint() string {
+	pk, err := sshkey.ParsePublic(meLine)
+	if err != nil {
+		panic(err)
+	}
+	return pk.Fingerprint()
+}
+
+// hostileWhoAmI is about runKey's key, from the box it asks (the fake
+// box's address), with hostile strings in the box's other words.
 func hostileWhoAmI() wire.WhoAmI {
 	return wire.WhoAmI{
-		Name: "alice@example.com" + hostile[0], Key: "SHA256:the-fake-box-names-this-key",
+		Name: "alice@example.com" + hostile[0], Key: meFingerprint(),
 		Roles: []wire.RoleHeld{{Role: "viewer", Scope: "box"}, {Role: "viewer", Scope: "app:blog" + hostile[5]}, {Role: "auditor" + hostile[1], Scope: "team:x"}},
-		Box:   "deploy.example.com", Version: "v0.7.0" + hostile[3], Protocol: 1, TokenExpiresAt: whoamiNow.Add(270 * time.Second),
+		Box:   "127.0.0.1", Version: "v0.7.0" + hostile[3], Protocol: 1, TokenExpiresAt: whoamiNow.Add(270 * time.Second),
 	}
 }
 
@@ -32,8 +47,7 @@ func hostileWhoAmI() wire.WhoAmI {
 func runKey(t *testing.T, fb *fakeBox, env map[string]string, args ...string) result {
 	t.Helper()
 	home := t.TempDir()
-	line := "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIMuTYJV40qpZ7rH7T4/BJP6ERoj5JgqFQwHIEBTe5wrn" // gitleaks:allow — made up for this test
-	if err := os.WriteFile(filepath.Join(home, "me.pub"), []byte(line+"\n"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(home, "me.pub"), []byte(meLine+"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	all := map[string]string{"MOTEL_KEY": "~/me.pub", "MOTEL_URL": fb.srv.URL + "/blog"}
@@ -51,7 +65,8 @@ func runKey(t *testing.T, fb *fakeBox, env map[string]string, args ...string) re
 
 // whoami and apps: --json is the box's body as received; the human
 // output holds nothing a box could use on a terminal, and is what the
-// goldens say. The fake box's roles hold a role and a scope no box
+// goldens say. (A list of apps with a name outside the app grammar is
+// not taken at all: client's TestReadPeoplesFields.) The fake box's roles hold a role and a scope no box
 // sends today, printed as they came.
 func TestWhoamiAndApps(t *testing.T) {
 	fb := newFakeBox(t)
@@ -77,22 +92,24 @@ func TestWhoamiAndApps(t *testing.T) {
 			if bad := unsafeOutput.FindString(r.stdout); bad != "" || !utf8.ValidString(r.stdout) {
 				t.Errorf("the output holds %q, or is not UTF-8:\n%s", bad, r.stdout)
 			}
-			golden(t, "hostile-"+c.golden, r.stdout)
+			// The fingerprint is put by name, so the golden holds no
+			// string a secret scan reads as a key.
+			golden(t, "hostile-"+c.golden, strings.ReplaceAll(r.stdout, meFingerprint(), "<me.pub's fingerprint>"))
 		})
 	}
 }
 
 // whoami names "a build that names no release" for an empty version,
-// "none" for no role, and a token already past its time as such.
+// "none" for no role, and a token already past its time as expired.
 func TestWhoamiPlain(t *testing.T) {
 	fb := newFakeBox(t)
-	fb.whoami = wire.WhoAmI{Name: "dave", Key: "SHA256:k", Roles: []wire.RoleHeld{}, Box: "deploy.example.com", Protocol: 1, TokenExpiresAt: whoamiNow.Add(-5 * time.Second)}
+	fb.whoami = wire.WhoAmI{Name: "dave", Key: meFingerprint(), Roles: []wire.RoleHeld{}, Box: "127.0.0.1", Protocol: 1, TokenExpiresAt: whoamiNow.Add(-5 * time.Second)}
 	r := runKey(t, fb, nil, "whoami")
 	want := "name     dave\n" +
-		"box      deploy.example.com, motel, a build that names no release, protocol 1\n" +
-		"key      SHA256:k (~/me.pub, MOTEL_KEY)\n" +
+		"box      127.0.0.1, motel, a build that names no release, protocol 1\n" +
+		"key      " + meFingerprint() + " (~/me.pub, MOTEL_KEY)\n" +
 		"roles    none from this address\n" +
-		"token    expires 2026-11-15 09:59:55 UTC (5s ago)\n"
+		"token    expired 2026-11-15 09:59:55 UTC\n"
 	if r.code != 0 || r.stdout != want {
 		t.Fatalf("exit %d\n%s\nwant\n%s", r.code, r.stdout, want)
 	}
@@ -134,6 +151,38 @@ func TestWhoamiAndAppsNeedAKey(t *testing.T) {
 			r = runKey(t, fb, env, cmd, "--key", "~/me.pub")
 			if r.code != 0 || len(fb.auth) != 1 || !strings.HasPrefix(fb.auth[0], "Motel m1.") {
 				t.Fatalf("with --key: exit %d, Authorization %v, stderr %s", r.code, fb.auth, r.stderr)
+			}
+		})
+	}
+}
+
+// An answer about another key than the one this command signed with,
+// or from another box than the one it asked, is not one to act on:
+// the key line is this side's, the box's value is quoted in a warning
+// on its own line, and the command exits 3; --json prints motelctl's
+// own error, not the body.
+func TestWhoamiAboutAnotherKeyOrBox(t *testing.T) {
+	for _, c := range []struct {
+		name  string
+		edit  func(*wire.WhoAmI)
+		warns string
+	}{
+		{"another key", func(me *wire.WhoAmI) { me.Key = "SHA256:another\x1b[2J" },
+			`warning  the box names another key than the one this command signed with: "SHA256:another\x1b[2J"`},
+		{"another box", func(me *wire.WhoAmI) { me.Box = "other.example.com" },
+			`warning  the box answers as another box than the one this command asked: "other.example.com"`},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			fb := newFakeBox(t)
+			c.edit(&fb.whoami)
+			r := runKey(t, fb, nil, "whoami")
+			if r.code != 3 || !strings.Contains(r.stdout, "\n"+c.warns+"\n") || !strings.Contains(r.stdout, "key      "+meFingerprint()+" (~/me.pub, MOTEL_KEY)\n") ||
+				!strings.Contains(r.stderr, "is not one to act on") || strings.ContainsRune(r.stdout, '\x1b') {
+				t.Fatalf("exit %d, stdout\n%s\nstderr %s", r.code, r.stdout, r.stderr)
+			}
+			r = runKey(t, fb, nil, "whoami", "--json")
+			if r.code != 3 || !strings.HasPrefix(r.stdout, `{"error":"127.0.0.1 answered about another key`) {
+				t.Fatalf("--json: %+v", r)
 			}
 		})
 	}

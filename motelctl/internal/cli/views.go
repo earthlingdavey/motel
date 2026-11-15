@@ -121,19 +121,27 @@ func boxView(b wire.BoxStatus) render.Box {
 	return render.Box{Host: tx(b.BoxWebhook), Commit: tx(b.Commit), SHA256: tx(b.SHA256), Recipient: tx(b.Recipient)}
 }
 
-// whoamiView is the box's answer beside what this side knows: where
-// the key came from, and the clock the expiry is told against.
-func whoamiView(me wire.WhoAmI, key sshkey.Key, now time.Time) render.WhoAmI {
+// whoamiView is the box's answer beside what this side knows: the box
+// asked, the key that signed and where it came from, and the clock the
+// expiry is told against. The key and box shown are this side's; the
+// box's own are kept to be quoted when they differ.
+func whoamiView(me wire.WhoAmI, asked string, key sshkey.Key, now time.Time) render.WhoAmI {
+	fp := key.Public.Fingerprint()
 	v := render.WhoAmI{
-		Name:      tx(me.Name),
-		Box:       tx(me.Box),
-		Release:   tx(me.Version),
-		Protocol:  me.Protocol,
-		Key:       tx(me.Key),
-		KeyShown:  tx(key.Shown),
-		KeySource: tx(key.Source),
-		Expires:   me.TokenExpiresAt,
-		Now:       now,
+		Name:       tx(me.Name),
+		Box:        tx(asked),
+		Release:    tx(me.Version),
+		Protocol:   me.Protocol,
+		Key:        tx(fp),
+		KeyShown:   tx(key.Shown),
+		KeySource:  tx(key.Source),
+		BoxKey:     tx(me.Key),
+		BoxName:    tx(me.Box),
+		KeyDiffers: me.Key != fp,
+		BoxDiffers: me.Box != asked,
+		HasExpiry:  true, // Read takes no whoami without it
+		Expires:    me.TokenExpiresAt,
+		Now:        now,
 	}
 	for _, r := range me.Roles {
 		v.Roles = append(v.Roles, render.Role{Role: tx(r.Role), Scope: tx(r.Scope)})

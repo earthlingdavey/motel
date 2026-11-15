@@ -1,5 +1,5 @@
 name     alice@example.comosc52 \x1b]52;c;cHduZWQ=\x07
-box      deploy.example.com, motel v0.7.0title \x1b]0;pwned\x07, protocol 1
-key      SHA256:the-fake-box-names-this-key (~/me.pub, MOTEL_KEY)
+box      127.0.0.1, motel v0.7.0title \x1b]0;pwned\x07, protocol 1
+key      <me.pub's fingerprint> (~/me.pub, MOTEL_KEY)
 roles    viewer of the box, viewer of app blogbidi abc\u202edef, auditorcsi \x1b[2J\x1b[H on team:x
 token    expires 2026-11-15 10:04:30 UTC (in 4m30s)

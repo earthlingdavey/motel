@@ -123,21 +123,29 @@ type Box struct {
 	Recipient termtext.Text
 }
 
-// WhoAmI is GET /_motel/whoami's body, beside where the key came from.
+// WhoAmI is GET /_motel/whoami's body, beside what this side knows:
+// the box asked and the key that signed. The box's own key and box
+// fields are shown only as the box's, in a warning, when they differ.
 type WhoAmI struct {
 	// Name is the name the box lists the key under.
-	Name     termtext.Text
+	Name termtext.Text
+	// Box is the box this command asked.
 	Box      termtext.Text
 	Release  termtext.Text
 	Protocol int
-	// Key is the fingerprint the box names; KeyShown and KeySource are
-	// this side's: the key as named, and how it was chosen.
+	// Key is the fingerprint of the key this command signed with;
+	// KeyShown and KeySource name it and say how it was chosen.
 	Key       termtext.Text
 	KeyShown  termtext.Text
 	KeySource termtext.Text
-	Roles     []Role
-	// Expires is when the token stops being taken; Now is the clock
-	// it is told against.
+	// BoxKey and BoxName are the box's key and box fields, said when
+	// KeyDiffers or BoxDiffers.
+	BoxKey, BoxName        termtext.Text
+	KeyDiffers, BoxDiffers bool
+	Roles                  []Role
+	// Expires is when the token stops being taken, when HasExpiry; Now
+	// is the clock it is told against.
+	HasExpiry    bool
 	Expires, Now time.Time
 }
 
@@ -359,7 +367,8 @@ func WriteBox(w io.Writer, b Box) error {
 
 // WriteWhoAmI writes who the box takes the key to be. The box's words
 // are labelled as the box's fields are (its name for the key is
-// "name").
+// "name"); the key and the box are this side's, and a box that names
+// others is quoted in a warning.
 func WriteWhoAmI(w io.Writer, me WhoAmI) error {
 	p := &printer{w: w}
 	p.line("name     %s", me.Name)
@@ -369,6 +378,12 @@ func WriteWhoAmI(w io.Writer, me WhoAmI) error {
 	}
 	p.line("box      %s, %s, protocol %d", me.Box, release, me.Protocol)
 	p.line("key      %s (%s, %s)", me.Key, me.KeyShown, me.KeySource)
+	if me.KeyDiffers {
+		p.line("warning  the box names another key than the one this command signed with: \"%s\"", me.BoxKey.Cut(quoteMax))
+	}
+	if me.BoxDiffers {
+		p.line("warning  the box answers as another box than the one this command asked: \"%s\"", me.BoxName.Cut(quoteMax))
+	}
 	if len(me.Roles) == 0 {
 		p.line("roles    none from this address")
 	} else {
@@ -378,16 +393,24 @@ func WriteWhoAmI(w io.Writer, me WhoAmI) error {
 		}
 		p.line("roles    %s", strings.Join(roles, ", "))
 	}
-	if !me.Expires.IsZero() {
-		left := me.Expires.Sub(me.Now).Round(time.Second)
-		when := fmt.Sprintf("in %s", left)
-		if left < 0 {
-			when = fmt.Sprintf("%s ago", -left)
+	if me.HasExpiry {
+		at := me.Expires.UTC().Format("2006-01-02 15:04:05")
+		// A token lives at most ten minutes: a time further off is said
+		// as such, never as a duration that a far date would overflow.
+		switch left := me.Expires.Sub(me.Now).Round(time.Second); {
+		case left <= 0:
+			p.line("token    expired %s UTC", at)
+		case left > time.Hour:
+			p.line("token    expires %s UTC (more than an hour from now, longer than a token lives)", at)
+		default:
+			p.line("token    expires %s UTC (in %s)", at, left)
 		}
-		p.line("token    expires %s UTC (%s)", me.Expires.UTC().Format("2006-01-02 15:04:05"), when)
 	}
 	return p.err
 }
+
+// quoteMax is the most of a box's value a warning quotes.
+const quoteMax = 200
 
 // scopeWords says a role's scope: "of the box", "of app <name>", and
 // any other as the box wrote it.
