@@ -160,24 +160,34 @@ func registryFile() string {
 // channel) is said here too.
 func (a *App) loadRegistry(logger *zap.Logger, path string) *access.Registry {
 	declares := len(a.People) > 0 || len(a.Grants) > 0
-	none := func(why string, err error) *access.Registry {
-		level := logger.Info
-		if declares {
-			level = logger.Warn
-		}
-		level("box: no person is admitted: "+why, zap.String("file", path), zap.String("error", proof.Bound(err.Error())))
+	// Every line names the file this machine runs: at `motel validate`
+	// of a candidate, the registry is still this machine's, not the
+	// candidate's.
+	running := "the Caddyfile this machine runs (" + path + ")"
+	none := func(why string, err error, level func(string, ...zap.Field)) *access.Registry {
+		level("box: no person is admitted from "+running+": "+why, zap.String("file", path), zap.String("error", proof.Bound(err.Error())))
 		return nil
+	}
+	quiet := logger.Info
+	if declares {
+		quiet = logger.Warn
 	}
 	b, err := readFile(path, proof.MaxCaddyfile, true)
 	if errors.Is(err, fs.ErrNotExist) {
-		return none("the box runs no installed Caddyfile", err)
+		// A config that declares no one, on a machine with no installed
+		// file (a laptop's validate): nothing worth a line above debug.
+		absent := logger.Debug
+		if declares {
+			absent = logger.Warn
+		}
+		return none("there is no such file", err, absent)
 	}
 	if err != nil {
-		return none("the installed Caddyfile cannot be read", err)
+		return none("it cannot be read", err, quiet)
 	}
 	shape, err := Walk(b)
 	if err != nil {
-		return none("the installed Caddyfile is not one the box can speak for", err)
+		return none("it is not one the box can speak for", err, quiet)
 	}
 	reg := access.NewRegistry(shape.Host, shape.Access)
 	if reg.Keys() == 0 {
@@ -186,10 +196,10 @@ func (a *App) loadRegistry(logger *zap.Logger, path string) *access.Registry {
 	mine, _ := access.CheckLines(a.linesOrEmpty(), nil)
 	for _, w := range shape.AccessWarnings {
 		if !slices.Contains(mine, w) {
-			logger.Warn(w, zap.String("option", "box"), zap.String("file", path))
+			logger.Warn(running+": "+w, zap.String("option", "box"), zap.String("file", path))
 		}
 	}
-	logger.Info("box: people admitted", zap.String("box", shape.Host), zap.Int("keys", reg.Keys()))
+	logger.Info("box: people admitted from "+running, zap.String("box", shape.Host), zap.Int("keys", reg.Keys()))
 	return reg
 }
 

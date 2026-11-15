@@ -238,9 +238,12 @@ func TestLiveswapReachesTheRegistry(t *testing.T) {
 }
 
 // TestRegistryAtLoad: the registry is read from the installed file at
-// each load. No file, an unreadable one, or one the walk refuses admits
-// no one, with a journal line saying why (a warning when the config
-// declares people, else information); a block with signers alone
+// each load, and every line it writes names that file as the one this
+// machine runs (a validate of a candidate reads it too). No file, an
+// unreadable one, or one the walk refuses admits no one, with a line
+// saying why: a warning when the config declares people, else
+// information, and only debug for a config that declares no one on a
+// machine with no installed file; a block with signers alone
 // admits no one and says nothing; and a reload reads the file again, so
 // a person whose lines a push removed is not in the next registry.
 func TestRegistryAtLoad(t *testing.T) {
@@ -254,9 +257,10 @@ func TestRegistryAtLoad(t *testing.T) {
 		level zapcore.Level
 		want  string
 	}{
-		{"no installed file", nil, declaring, zapcore.WarnLevel, "the box runs no installed Caddyfile"},
-		{"no installed file, no people in the config", nil, &App{}, zapcore.InfoLevel, "the box runs no installed Caddyfile"},
+		{"no installed file", nil, declaring, zapcore.WarnLevel, "there is no such file"},
+		{"no installed file, no people in the config", nil, &App{}, zapcore.DebugLevel, "there is no such file"},
 		{"a file the walk refuses", []byte("import x\n"), declaring, zapcore.WarnLevel, "not one the box can speak for"},
+		{"a file the walk refuses, no people in the config", []byte("import x\n"), &App{}, zapcore.InfoLevel, "not one the box can speak for"},
 	} {
 		path := filepath.Join(t.TempDir(), "Caddyfile")
 		if c.file != nil {
@@ -268,7 +272,7 @@ func TestRegistryAtLoad(t *testing.T) {
 		if reg := c.app.loadRegistry(zap.New(core), path); reg != nil {
 			t.Errorf("%s: a registry of %d keys", c.name, reg.Keys())
 		}
-		got := logs.FilterMessageSnippet("no person is admitted").All()
+		got := logs.FilterMessageSnippet("no person is admitted from the Caddyfile this machine runs (" + path + ")").All()
 		if len(got) != 1 || got[0].Level != c.level || !strings.Contains(got[0].Message, c.want) || got[0].ContextMap()["file"] != path {
 			t.Errorf("%s: journal %v, want one %s line saying %q", c.name, logs.All(), c.level, c.want)
 		}
@@ -283,7 +287,8 @@ func TestRegistryAtLoad(t *testing.T) {
 	core, logs := observer.New(zapcore.DebugLevel)
 	write(good)
 	reg := declaring.loadRegistry(zap.New(core), path)
-	if reg.Keys() != len(b.people) || logs.FilterMessage("box: people admitted").Len() != 1 {
+	if reg.Keys() != len(b.people) || logs.FilterMessage("box: people admitted from the Caddyfile this machine runs ("+path+")").Len() != 1 ||
+		logs.FilterMessageSnippet("the Caddyfile this machine runs ("+path+"): people are declared and no monitor channel is").Len() != 1 {
 		t.Fatalf("the good file: %d keys; journal %v", reg.Keys(), logs.All())
 	}
 
