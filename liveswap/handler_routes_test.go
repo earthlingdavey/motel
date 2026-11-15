@@ -114,7 +114,11 @@ func TestRouteActions(t *testing.T) {
 // sources refuse (an unknown name and a stranger alike), 404 for a
 // global source on a name that is no app whatever the method, 405 for
 // a deployer of the app with no row. A path under /_motel/ names no app:
-// a global source is told 403 on its rows and 404 elsewhere.
+// a global source is told 403 on its rows and 404 elsewhere. People
+// too: a viewer of demo, of the box, and a person with no grant, whose
+// tokens are refused on anything but a GET, reach a row only where
+// Decide's table and their grants allow, and are told 403 or 404
+// everywhere else, as "Unknown names" says.
 func FuzzNoRouteNoAnswer(f *testing.F) {
 	// Every row of the table is reached by some seed (checked below,
 	// against the real table): the gzip push only with its content type.
@@ -136,6 +140,10 @@ func FuzzNoRouteNoAnswer(f *testing.F) {
 		{"OPTIONS", "/", "", "", ""},
 		{"get", "/demo", "", "", ""},
 		{"PATCH", "/_motel/demo", "rollback=v1", "", ""},
+		{"GET", "/_motel/whoami", "", "", ""},
+		{"GET", "/_motel/apps", "x=1", "", ""},
+		{"GET", "/_motel", "", "", ""},
+		{"POST", "/_motel/apps", "", "", ""},
 		{"GET", "/ghost", "deploy=v1", "", ""},
 		{"POST", "/demo/", "", "", ""},
 	}
@@ -156,15 +164,24 @@ func FuzzNoRouteNoAnswer(f *testing.F) {
 	}
 
 	served := recordRows(f)
+	// People: a viewer of demo, a viewer of the box, and a person with
+	// no grant; their tokens are made once, for the run.
+	people := newTestPeople(f)
+	personTokens := map[string]string{
+		"viewer of demo":       token(people.alice),
+		"viewer of the box":    token(people.carol),
+		"person with no grant": token(people.dave),
+	}
 
 	f.Fuzz(func(t *testing.T, method, target, query, contentType, body string) {
 		if method == "" || strings.ContainsAny(method, " \t\r\n") {
 			return // not a method net/http would hand a handler
 		}
 		h, rig := newTestHandler(t)
-		for _, caller := range []string{"stranger", "deployer of demo", "global source"} {
+		h.people = people.reg
+		for _, caller := range []string{"stranger", "deployer of demo", "global source", "viewer of demo", "viewer of the box", "person with no grant"} {
 			h.limiter = deploytrust.NewLimiter(rig.clock)
-			req := httptest.NewRequest(http.MethodGet, "/", strings.NewReader(body))
+			req := httptest.NewRequest(http.MethodGet, "http://"+personBox+"/", strings.NewReader(body))
 			req.Method = method
 			req.URL.Path = target
 			req.URL.RawQuery = query
@@ -176,6 +193,10 @@ func FuzzNoRouteNoAnswer(f *testing.F) {
 				req.Header.Set("Authorization", "Bearer "+appToken(t))
 			case "global source":
 				req.Header.Set("Authorization", "Bearer "+globalToken(t))
+			default:
+				if tok, ok := personTokens[caller]; ok {
+					req.Header.Set("Authorization", tok)
+				}
 			}
 			*served = nil
 			w := httptest.NewRecorder()
@@ -194,6 +215,8 @@ func FuzzNoRouteNoAnswer(f *testing.F) {
 			motel := clean == motelPrefix || strings.HasPrefix(clean, motelPrefix+"/")
 			app := !motel && path.Base(clean) == "demo"
 			row := findRoute(req)
+			_, person := personTokens[caller]
+			get := method == http.MethodGet
 			want := http.StatusUnauthorized
 			switch {
 			case caller == "deployer of demo" && app && row != nil:
@@ -204,13 +227,28 @@ func FuzzNoRouteNoAnswer(f *testing.F) {
 				want = http.StatusForbidden
 			case caller == "global source" && !app:
 				want = http.StatusNotFound
+			// A person's token is good on a GET alone. Under /_motel/ its
+			// rows answer every person and nothing else does; on an app's
+			// path Decide comes before the app is looked for.
+			case person && !get:
+			case person && motel && findMotelRoute(req) != nil:
+				want = http.StatusOK
+				row = nil // answered by its own function, not a recorded row
+			case person && motel:
+				want = http.StatusNotFound
+			case person && app && caller != "person with no grant":
+				want = http.StatusOK
+			case person && caller == "viewer of the box":
+				want = http.StatusNotFound
+			case person:
+				want = http.StatusForbidden
 			}
 			if w.Code != want {
 				t.Fatalf("%s: %s %q ?%q = %d, want %d: %s", caller, method, target, query, w.Code, want, w.Body)
 			}
 			switch {
 			case want == http.StatusOK && *served != row:
-				t.Fatalf("%s: %s %q ?%q was answered by %v, want the row %s %s", caller, method, target, query, *served, row.method, row.shape)
+				t.Fatalf("%s: %s %q ?%q was answered by %v, want the row %v", caller, method, target, query, *served, row)
 			case want != http.StatusOK && *served != nil:
 				t.Fatalf("%s: %s %q ?%q reached the row %s %s and was answered %d", caller, method, target, query, (*served).method, (*served).shape, w.Code)
 			}

@@ -7,8 +7,10 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/smallhoursorg/motel/liveswap/access"
+	"github.com/smallhoursorg/motel/liveswap/access/accesstest"
 	"github.com/smallhoursorg/motel/liveswap/deploytrust"
 )
 
@@ -121,14 +123,16 @@ func TestJournalNamesEachRoute(t *testing.T) {
 
 // FuzzNoRouteNoAnswer drives the handler with any method, path and
 // query, for each kind of caller: a stranger (a liveswap deploy token
-// is one here) and the box channel's source. The route table's
-// functions are swapped for ones that record the call (recordRows),
-// so the test
-// reads the table and covers a row as it is added. A request reaches
-// a row's function only when the box channel's source sends it to `/`
-// and a row matches; on `/` every other request is 405 before
-// authentication whoever sends it, or the flat 401 for a stranger; a
-// request to any other path is passed on, answered by nothing here.
+// is one here), the box channel's source, a viewer of the box and a
+// person whose grant is on an app alone. The route table's functions
+// are swapped for ones that record the call (recordRows), so the test
+// reads the table and covers a row as it is added. A request reaches a
+// row's function only when the box channel's source sends it to `/`
+// and a row matches, or a viewer of the box asks for the box's status;
+// on `/` every other request is 405 before authentication whoever
+// sends it, the flat 401 for a stranger and for a person's token off a
+// GET, or the 403 for a person; a request to any other path is passed
+// on, answered by nothing here.
 func FuzzNoRouteNoAnswer(f *testing.F) {
 	// Every row of the table is reached by some seed (checked below,
 	// against the real table).
@@ -162,21 +166,49 @@ func FuzzNoRouteNoAnswer(f *testing.F) {
 
 	r := newRig(f)
 	served := recordRows(f)
+	// People: a viewer of the box and a viewer of an app alone, their
+	// tokens made once, for the run.
+	carol, alice := accesstest.Ed25519(), accesstest.ECDSA()
+	var l access.Lines
+	for name, k := range map[string]accesstest.Key{"carol": carol, "alice": alice} {
+		key, err := access.ParsePerson([]string{name, k.Type(), k.B64()})
+		if err != nil {
+			f.Fatal(err)
+		}
+		l.Keys = append(l.Keys, key)
+	}
+	for _, args := range [][]string{{"carol", "viewer", "box"}, {"alice", "viewer", "app", "a"}} {
+		g, err := access.ParseGrant(args)
+		if err != nil {
+			f.Fatal(err)
+		}
+		l.Grants = append(l.Grants, g)
+	}
+	r.h.app.registry = access.NewRegistry(peopleIdentity, l)
+	now := time.Now()
+	people := map[string]string{
+		"a viewer of the box": carol.Token(peopleIdentity, now, 10*time.Minute),
+		"a viewer of an app":  alice.Token(peopleIdentity, now, 10*time.Minute),
+	}
 
 	f.Fuzz(func(t *testing.T, method, target, query string, forceQuery bool) {
 		if method == "" || strings.ContainsAny(method, " \t\r\n") {
 			return // not a method net/http would hand a handler
 		}
-		for _, channel := range []bool{false, true} {
+		for _, caller := range []string{"a stranger", "the box channel", "a viewer of the box", "a viewer of an app"} {
+			channel := caller == "the box channel"
 			r.h.limiter = deploytrust.NewLimiter(r.clock)
 			r.logs.TakeAll() // the rig lives for the run: its journal must not grow with it
-			hr := httptest.NewRequest(http.MethodGet, "/", nil)
+			hr := httptest.NewRequest(http.MethodGet, "http://"+peopleIdentity+"/", nil)
 			hr.Method = method
 			hr.URL.Path = target
 			hr.URL.RawQuery = query
 			hr.URL.ForceQuery = forceQuery
 			if channel {
 				hr.Header.Set("Authorization", "Bearer "+r.token(t))
+			}
+			if tok, ok := people[caller]; ok {
+				hr.Header.Set("Authorization", tok)
 			}
 			*served = nil
 			passed := false
@@ -189,6 +221,7 @@ func FuzzNoRouteNoAnswer(f *testing.F) {
 			}
 
 			row := findRoute(hr)
+			_, person := people[caller]
 			want := http.StatusUnauthorized
 			switch {
 			case target != "/":
@@ -197,11 +230,15 @@ func FuzzNoRouteNoAnswer(f *testing.F) {
 				want = http.StatusMethodNotAllowed
 			case channel:
 				want = http.StatusOK // the recording function's
+			// A person's token is good on a GET alone; the box's status
+			// is a viewer of the box's, and a push's result no person's.
+			case person && method != http.MethodGet:
+			case person && caller == "a viewer of the box" && row.action == access.BoxStatus:
+				want = http.StatusOK
+			case person:
+				want = http.StatusForbidden
 			}
-			who := "a stranger"
-			if channel {
-				who = "the box channel"
-			}
+			who := caller
 			switch {
 			case want == 0 && (!passed || *served != nil):
 				t.Fatalf("%s: %s %q ?%q: not passed on (answered %d)", who, method, target, query, w.Code)

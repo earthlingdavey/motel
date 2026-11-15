@@ -469,3 +469,118 @@ func TestGrantOnAnAppNotRunRefusedAtLoad(t *testing.T) {
 		t.Errorf("no liveswap block: %v", err)
 	}
 }
+
+// TestTwoAppsTwoPeopleOnTheBoxWebhook is the two-apps-two-people test's
+// half on box_webhook (liveswap's TestTwoAppsTwoPeople has the apps'
+// routes): every row of its route table, for every kind of caller, has
+// the status the action table gives, and a person's 200 names no app.
+// A row whose journal name the test does not know fails it.
+func TestTwoAppsTwoPeopleOnTheBoxWebhook(t *testing.T) {
+	b := newPeopleBox(t)
+	var l access.Lines
+	for name, k := range b.people {
+		var key access.Key
+		var err error
+		if name == "ops@example.test" {
+			key, err = access.ParsePerson([]string{name, k.Type(), k.B64()})
+			key = access.SignerKey(key.Name, key.Type, key.B64, key.Wire)
+		} else {
+			key, err = access.ParsePerson([]string{name, k.Type(), k.B64()})
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		l.Keys = append(l.Keys, key)
+	}
+	for _, line := range b.grants {
+		g, err := access.ParseGrant(strings.Fields(line)[1:])
+		if err != nil {
+			t.Fatal(err)
+		}
+		l.Grants = append(l.Grants, g)
+	}
+	reg := access.NewRegistry(peopleIdentity, l)
+	stranger := accesstest.Ed25519()
+	now := time.Now()
+	callers := []string{"alice@example.test", "bob@example.test", "carol@example.test", "dave@example.test", "ops@example.test",
+		"a key no line lists", "deployer of a", "deployer of b", "the box channel", "no token"}
+	for _, rt := range routes {
+		for _, caller := range callers {
+			r := newRig(t)
+			r.h.app.registry = reg
+			r.applied(t, strings.Repeat("c", 40))
+			q := req{method: rt.method, target: "http://" + peopleIdentity + "/"}
+			switch rt.journal {
+			case "status":
+			case "result":
+				q.target += "?result=" + strings.Repeat("0", 32)
+			case "push":
+				q.body = strings.NewReader("not a bundle")
+			default:
+				t.Fatalf("the row %s / (%s) has no request in this test: write its expectations", rt.method, rt.journal)
+			}
+			switch caller {
+			case "a key no line lists":
+				q.header = http.Header{"Authorization": {stranger.Token(peopleIdentity, now, time.Minute)}}
+			case "deployer of a", "deployer of b":
+				q.header = http.Header{"Authorization": {"Bearer " + trusttest.Mint(t, b.deploy[strings.TrimPrefix(caller, "deployer of ")], "box", nil)}}
+			case "the box channel":
+				q.token = r.token(t)
+			case "no token":
+			default:
+				q.header = http.Header{"Authorization": {b.people[caller].Token(peopleIdentity, now, time.Minute)}}
+			}
+			w := r.do(t, q)
+			_, person := b.people[caller]
+			want := http.StatusUnauthorized
+			switch {
+			case caller == "the box channel":
+				want = 0 // the row's own answer, whatever it is
+			case person && rt.method != http.MethodGet:
+			case person && caller == "carol@example.test" && rt.action == access.BoxStatus:
+				want = http.StatusOK
+			case person:
+				want = http.StatusForbidden
+			}
+			switch {
+			case want == 0 && (w.Code == http.StatusUnauthorized || w.Code == http.StatusForbidden):
+				t.Errorf("%s, %s / (%s): %d %s", caller, rt.method, rt.journal, w.Code, w.Body)
+			case want != 0 && w.Code != want:
+				t.Errorf("%s, %s / (%s): %d %s, want %d", caller, rt.method, rt.journal, w.Code, w.Body, want)
+			}
+			if w.Code == http.StatusOK && person {
+				for _, s := range []string{`"a"`, `"b"`, b.canary["a"], b.canary["b"]} {
+					if strings.Contains(w.Body.String(), s) {
+						t.Errorf("%s, %s / (%s): the 200 holds %q: %s", caller, rt.method, rt.journal, s, w.Body)
+					}
+				}
+			}
+		}
+	}
+}
+
+// TestRemovedPersonRefusedAfterReload: a push that removes a person's
+// lines is applied by a reload, which reads the installed file again;
+// from then on that person's token is the flat 401, and everyone else's
+// is answered as before.
+func TestRemovedPersonRefusedAfterReload(t *testing.T) {
+	b := newPeopleBox(t)
+	b.install()
+	b.load()
+	alice, carol := b.people["alice@example.test"], b.people["carol@example.test"]
+	now := time.Now()
+	if w := b.do("GET", "/_motel/whoami", alice.Token(peopleIdentity, now, time.Minute), ""); w.Code != http.StatusOK {
+		t.Fatalf("alice before: %d %s", w.Code, w.Body)
+	}
+	delete(b.people, "alice@example.test")
+	b.grants = b.grants[1:]
+	b.install()
+	b.load()
+	stranger := b.do("GET", "/_motel/whoami", "", "")
+	if w := b.do("GET", "/_motel/whoami", alice.Token(peopleIdentity, now, time.Minute), ""); w.Code != http.StatusUnauthorized || w.Body.String() != stranger.Body.String() {
+		t.Errorf("alice after her lines are removed: %d %s", w.Code, w.Body)
+	}
+	if w := b.do("GET", "/b", carol.Token(peopleIdentity, now, time.Minute), ""); w.Code != http.StatusOK {
+		t.Errorf("carol after the reload: %d %s", w.Code, w.Body)
+	}
+}
