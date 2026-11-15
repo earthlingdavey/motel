@@ -289,7 +289,10 @@ func TestOperatorRulesRender(t *testing.T) {
 		// sample in it less its last before it.
 		"blog_quiet": `sum by (app) (` + inc(`motel_app_requests_total{app="blog"}`) + `) / scalar(max(tlast_over_time(process_start_time_seconds{job="motel"}[5m]))` +
 			` - max(tlast_over_time(process_start_time_seconds{job="motel"}[5m] offset 5m))) < 0.1` +
-			` and on () max(tlast_over_time(process_start_time_seconds{job="motel"}[5m] offset 5m))` + pushed(`{app="blog"}`),
+			` and on () max(tlast_over_time(process_start_time_seconds{job="motel"}[5m] offset 5m))` +
+			// And for an app that push observed.
+			` and on (app) (max by (app) (tlast_over_time(motel_app_observed{app="blog"}[5m] offset 5m))` +
+			` > scalar(max(tlast_over_time(process_start_time_seconds{job="motel"}[5m] offset 5m))) - 15)` + pushed(`{app="blog"}`),
 		"hits_low": `(sum by (app) (` + inc(`motel_app_cache_responses_total{result=~"hit|stale"}`) + `) or sum by (app) (` + inc(`motel_app_cache_responses_total`) + `) * 0)` +
 			` / sum by (app) (` + inc(`motel_app_cache_responses_total`) + `) < 0.5 and sum by (app) (` + inc(`motel_app_cache_responses_total`) + `) >= 20` + pushed(""),
 		// The running unit's: its last push within 75 s, and the newest
@@ -481,21 +484,32 @@ func vmUnittest(t *testing.T, tool, dir, test string) (string, bool) {
 	return string(out), strings.Contains(string(out), "SUCCESS")
 }
 
-// A request counter over the store's own MetricsQL: a series new to the
+// A request counter over the store's own MetricsQL, read directly (the
+// rules' guards leave out an app's first window): a series new to the
 // store once the push is older than the window counts from zero (fresh
 // answers a burst of 400 and nothing after, which increase would drop),
 // and so does one back below its last value (reused, a release name
-// rolled back to with a fresh counter); one back after a 20-minute gap
-// in the pushes is not read as its lifetime (gapped counts 10 a minute
-// throughout, 500 by its return); nor is one that came with the push
-// itself (the metrics line first loaded on a box whose observer had
-// counted 5000).
+// rolled back to with a fresh counter), and one born after a gap in the
+// pushes (after); one back after a 20-minute gap in its own series is
+// not read as its lifetime (gapped counts 10 a minute throughout, 500 by
+// its return); nor is one that came with the push itself (old: the
+// metrics line first loaded on a box whose observer had counted 5000;
+// born and restarted: with the push's first sample after a 20-minute gap
+// in the pushes, born new in it, restarted counting from zero in it).
 func TestOperatorRulesCountAfterAGap(t *testing.T) {
 	tool := vmTool(t, "vmalert-tool")
 	dir := t.TempDir()
 	a := rulesApp(t, "rule busy threshold request_rate > 1 for 2m")
 	if err := os.WriteFile(filepath.Join(dir, RulesName), renderRules(a), 0o600); err != nil {
 		t.Fatal(err)
+	}
+	inc := "sum by (app) (" + strings.ReplaceAll(counterIncrease("motel_app_requests_total", requestWindow, 0), "'", "''") + ")"
+	counts := func(at string, want ...string) string {
+		s := "      - expr: '" + inc + "'\n        eval_time: " + at + "\n        exp_samples:\n"
+		for i := 0; i < len(want); i += 2 {
+			s += "          - labels: '{app=\"" + want[i] + "\"}'\n            value: " + want[i+1] + "\n"
+		}
+		return s
 	}
 	test := `rule_files: [rules.yml]
 evaluation_interval: 1m
@@ -510,42 +524,16 @@ tests:
         values: '0+10x30 _x20 500+10x40'
       - series: 'motel_app_requests_total{app="reused",release="v1",class="2xx",job="motel"}'
         values: '0+100x10 _x30 400x50'
-      - series: 'motel_app_observed{app="fresh",job="motel"}'
-        values: '_x30 1x60'
-      - series: 'motel_app_observed{app="gapped",job="motel"}'
-        values: '1x30 _x20 1x40'
-      - series: 'motel_app_observed{app="reused",job="motel"}'
-        values: '1x10 _x30 1x50'
-    alert_rule_test:
-      - eval_time: 33m
-        groupname: motel-operator
-        alertname: busy
-        exp_alerts:
-          - exp_labels: {app: fresh, kind: state, severity: warning, subject: "app:fresh", source: rules, key: "rules/app:fresh/busy"}
-            exp_annotations: {summary: "fresh: its requests a second over 5 minutes has been above 1 for 2m (rule busy); now 1.333"}
-      - eval_time: 44m
-        groupname: motel-operator
-        alertname: busy
-        exp_alerts:
-          - exp_labels: {app: reused, kind: state, severity: warning, subject: "app:reused", source: rules, key: "rules/app:reused/busy"}
-            exp_annotations: {summary: "reused: its requests a second over 5 minutes has been above 1 for 2m (rule busy); now 1.333"}
-      - eval_time: 54m
-        groupname: motel-operator
-        alertname: busy
-        exp_alerts: []
+    metricsql_expr_test:
+` + counts("33m", "fresh", "400", "gapped", "20") + counts("44m", "fresh", "0", "reused", "400") + counts("54m", "fresh", "0", "gapped", "30", "reused", "0") + `
   - interval: 1m
     input_series:
       - series: 'process_start_time_seconds{job="motel"}'
         values: '_x30 1x60'
       - series: 'motel_app_requests_total{app="old",release="v1",class="2xx",job="motel"}'
         values: '_x30 5000+10x60'
-      - series: 'motel_app_observed{app="old",job="motel"}'
-        values: '_x30 1x60'
-    alert_rule_test:
-      - eval_time: 34m
-        groupname: motel-operator
-        alertname: busy
-        exp_alerts: []
+    metricsql_expr_test:
+` + counts("34m", "old", "40") + `
   - interval: 1m
     input_series:
       - series: 'process_start_time_seconds{job="motel"}'
@@ -556,24 +544,8 @@ tests:
         values: '0+50x59 _x20 750+50x40'
       - series: 'motel_app_requests_total{app="after",release="v3",class="2xx",job="motel"}'
         values: '_x90 400x30'
-      - series: 'motel_app_observed{app="born",job="motel"}'
-        values: '_x80 1x40'
-      - series: 'motel_app_observed{app="restarted",job="motel"}'
-        values: '1x59 _x20 1x40'
-      - series: 'motel_app_observed{app="after",job="motel"}'
-        values: '_x90 1x30'
-    alert_rule_test:
-      - eval_time: 84m
-        groupname: motel-operator
-        alertname: busy
-        exp_alerts: []
-      - eval_time: 93m
-        groupname: motel-operator
-        alertname: busy
-        exp_alerts:
-          - exp_labels: {app: after, kind: state, severity: warning, subject: "app:after", source: rules, key: "rules/app:after/busy"}
-            exp_annotations: {summary: "after: its requests a second over 5 minutes has been above 1 for 2m (rule busy); now 1.333"}
-`
+    metricsql_expr_test:
+` + counts("84m", "born", "200", "restarted", "200") + counts("93m", "after", "400", "born", "250", "restarted", "250")
 	runUnittest(t, tool, dir, test)
 }
 
@@ -777,6 +749,106 @@ tests:
 	runUnittest(t, tool, dir, test)
 }
 
+// request_rate judges an app once the push its window counts from
+// observed it; each app here has 2 a second while it is observed. new's
+// observe line comes at 20m, back's is out from 11m to 20m, seven's from
+// 11m to 16m (7 minutes from its last push to its next): each one's
+// counts start from zero at its first push back, and over the push's
+// span of 300 s they read from nothing up for five minutes, firing `low`
+// (new and back at 23m, seven at 19m). Each is read from five minutes
+// after its first push back, whole, so `busy` (an app's `>`) fires for
+// new at 26m, where it fired at 24m on 1.6, read over a window it had
+// been counted for four minutes of. brief's is out at 11m and 12m: the
+// window that holds the gap reads its share low, 0.8 at 15m, which fires
+// (an accepted row in DESIGN-metrics.md), and the rule has no value at
+// 16m and 17m, the push the window counts from having left brief out.
+// steady is observed throughout, and deployed too, its v2 counting from
+// zero at 20m: each is read throughout. When the pushes themselves stop
+// for 7 minutes (gap, at 1m a push), the rule has no value just while
+// the store holds no push from the five minutes before the window (20m
+// and 21m), as before.
+func TestOperatorRulesRateOnceObserved(t *testing.T) {
+	tool := vmTool(t, "vmalert-tool")
+	dir := t.TempDir()
+	a := rulesApp(t, "rule low threshold request_rate < 1.5 for 1m", "rule busy threshold request_rate > 1 for 1m app new")
+	if err := os.WriteFile(filepath.Join(dir, RulesName), renderRules(a), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// The rule's whole expression, guards and all, so that an app the
+	// guards leave out has no sample.
+	whole := strings.ReplaceAll(thresholdTerm(Rule{Name: "v", Kind: ruleThreshold, Metric: "request_rate", Op: ">=", Value: 0, For: 60e9}).expr(), "'", "''")
+	samples := func(at string, apps ...string) string {
+		s := "      - expr: 'round(" + whole + ", 0.01)'\n        eval_time: " + at + "\n        exp_samples:\n"
+		for _, app := range apps {
+			s += "          - labels: '{app=\"" + app + "\"}'\n            value: 2\n"
+		}
+		return s
+	}
+	none := func(at, alert string) string {
+		return "      - eval_time: " + at + "\n        groupname: motel-operator\n        alertname: " + alert + "\n        exp_alerts: []\n"
+	}
+	test := `rule_files: [rules.yml]
+evaluation_interval: 1m
+tests:
+  - interval: 1m
+    input_series:
+      - series: 'process_start_time_seconds{job="motel"}'
+        values: '1x50'
+      - series: 'motel_app_observed{app="steady",job="motel"}'
+        values: '1x50'
+      - series: 'motel_app_requests_total{app="steady",release="v1",class="2xx",job="motel"}'
+        values: '0+120x50'
+      - series: 'motel_app_observed{app="new",job="motel"}'
+        values: '_x20 1x30'
+      - series: 'motel_app_requests_total{app="new",release="v1",class="2xx",job="motel"}'
+        values: '_x20 0+120x30'
+      - series: 'motel_app_observed{app="back",job="motel"}'
+        values: '1x10 _x10 1x29'
+      - series: 'motel_app_requests_total{app="back",release="v1",class="2xx",job="motel"}'
+        values: '0+120x10 _x10 0+120x29'
+      - series: 'motel_app_observed{app="seven",job="motel"}'
+        values: '1x10 _x6 1x33'
+      - series: 'motel_app_requests_total{app="seven",release="v1",class="2xx",job="motel"}'
+        values: '0+120x10 _x6 0+120x33'
+      - series: 'motel_app_observed{app="brief",job="motel"}'
+        values: '1x10 _x2 1x37'
+      - series: 'motel_app_requests_total{app="brief",release="v1",class="2xx",job="motel"}'
+        values: '0+120x10 _x2 0+120x37'
+      - series: 'motel_app_observed{app="deployed",job="motel"}'
+        values: '1x50'
+      - series: 'motel_app_requests_total{app="deployed",release="v1",class="2xx",job="motel"}'
+        values: '0+120x20 2400x30'
+      - series: 'motel_app_requests_total{app="deployed",release="v2",class="2xx",job="motel"}'
+        values: '_x20 0+120x30'
+    metricsql_expr_test:
+` + samples("19m", "brief", "deployed", "steady") + samples("22m", "brief", "deployed", "seven", "steady") +
+		samples("25m", "brief", "deployed", "new", "seven", "steady") + samples("26m", "back", "brief", "deployed", "new", "seven", "steady") + `    alert_rule_test:
+      - eval_time: 15m
+        groupname: motel-operator
+        alertname: low
+        exp_alerts:
+          - exp_labels: {app: brief, kind: state, severity: warning, subject: "app:brief", source: rules, key: "rules/app:brief/low"}
+            exp_annotations: {summary: "brief: its requests a second over 5 minutes has been below 1.5 for 1m (rule low); now 800m"}
+` + none("16m", "low") + none("19m", "low") + none("23m", "low") + none("26m", "low") + none("24m", "busy") + `      - eval_time: 26m
+        groupname: motel-operator
+        alertname: busy
+        exp_alerts:
+          - exp_labels: {app: new, kind: state, severity: warning, subject: "app:new", source: rules, key: "rules/app:new/busy"}
+            exp_annotations: {summary: "new: its requests a second over 5 minutes has been above 1 for 1m (rule busy); now 2"}
+  - interval: 1m
+    input_series:
+      - series: 'process_start_time_seconds{job="motel"}'
+        values: '1x10 _x6 1x33'
+      - series: 'motel_app_observed{app="gap",job="motel"}'
+        values: '1x10 _x6 1x33'
+      - series: 'motel_app_requests_total{app="gap",release="v1",class="2xx",job="motel"}'
+        values: '0+120x10 _x6 2040+120x33'
+    metricsql_expr_test:
+` + samples("17m", "gap") + samples("19m", "gap") + samples("20m") + samples("21m") + samples("22m", "gap") + `    alert_rule_test:
+` + none("18m", "low") + none("23m", "low")
+	runUnittest(t, tool, dir, test)
+}
+
 // pushedSeries is an input series at a 1 s interval with a sample at
 // each push (seconds from 0) and none between, value(at) its value.
 func pushedSeries(pushes []int, value func(at int) int) string {
@@ -814,7 +886,8 @@ func TestOperatorRulesRateAcrossARestart(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, RulesName), renderRules(a), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	value := strings.ReplaceAll(thresholdTerm(Rule{Name: "v", Kind: ruleThreshold, Metric: "request_rate", Op: ">", Value: 0, For: 60e9}).value, "'", "''")
+	term := thresholdTerm(Rule{Name: "v", Kind: ruleThreshold, Metric: "request_rate", Op: ">", Value: 0, For: 60e9})
+	value, whole := strings.ReplaceAll(term.value, "'", "''"), strings.ReplaceAll(term.expr(), "'", "''")
 	// group is one app's pushes: a restart at stop (gp after the old
 	// process's last tick), or with gap, no restart and no push taken
 	// from stop to stop + gap.
@@ -858,14 +931,22 @@ func TestOperatorRulesRateAcrossARestart(t *testing.T) {
     metricsql_expr_test:
 `
 		// The value itself, so that a rate with no value (a divisor
-		// that is NaN) cannot pass for one that does not fire.
+		// that is NaN) cannot pass for one that does not fire; and with
+		// its guards, which keep the app in across the restart, and
+		// across the gap but while no push has come for 75 s (22m).
 		for _, m := range []int{19, 22, 24, 26, 27} {
 			want := "2"
 			if gap == 0 && (m == 22 || m == 24) {
 				want = "1.99"
 			}
-			g += fmt.Sprintf("      - expr: 'round(%s, 0.01)'\n        eval_time: %dm\n        exp_samples:\n          - labels: '{app=\"%s\"}'\n            value: %s\n",
-				value, m, app, want)
+			for _, e := range []string{value, whole} {
+				if e == whole && gap > 0 && m == 22 {
+					g += fmt.Sprintf("      - expr: 'round(%s, 0.01)'\n        eval_time: %dm\n        exp_samples: []\n", e, m)
+					continue
+				}
+				g += fmt.Sprintf("      - expr: 'round(%s, 0.01)'\n        eval_time: %dm\n        exp_samples:\n          - labels: '{app=\"%s\"}'\n            value: %s\n",
+					e, m, app, want)
+			}
 		}
 		g += "    alert_rule_test:\n"
 		// From before the stop to past the window's leaving it.

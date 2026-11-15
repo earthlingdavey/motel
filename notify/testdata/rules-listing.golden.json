@@ -80,6 +80,11 @@
           "meaning": "the store holds a push from the 5m before the window: before it, the span its counts cover is not known"
         },
         {
+          "query": "(max by (app) (tlast_over_time(motel_app_observed{app=\"blog\"}[5m] offset 5m)) > scalar(max(tlast_over_time(process_start_time_seconds{job=\"motel\"}[5m] offset 5m))) - 15)",
+          "match": "on (app)",
+          "meaning": "motel's push from the 5m before the window says this config observed the app: before it, the app's counts cover part of the span alone"
+        },
+        {
           "query": "(max by (app) (tlast_over_time(motel_app_observed{app=\"blog\"}[75s])) > scalar(max(tlast_over_time(process_start_time_seconds{job=\"motel\"}[75s]))) - 15)",
           "match": "on (app)",
           "meaning": "motel's last push says this config observes the app: one whose observe line is gone is not read"
