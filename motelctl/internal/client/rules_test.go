@@ -200,7 +200,8 @@ func TestPersonTokenAudIsTheBareHost(t *testing.T) {
 		return s.PublicKey(), fp == ssh.FingerprintSHA256(s.PublicKey())
 	}
 	req := access.TokenRequest{Authorization: rec.req.Header.Values("Authorization"), Method: rec.req.Method, Host: rec.req.URL.Host}
-	if _, err := access.CheckToken(req, "deploy.example.test", now, lookup); err != nil {
+	listed := func(keyType string) bool { return keyType == s.PublicKey().Type() }
+	if _, err := access.CheckToken(req, "deploy.example.test", now, lookup, listed); err != nil {
 		t.Fatalf("the box refused a token sent to %s: %v", req.Host, err)
 	}
 }

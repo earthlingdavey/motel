@@ -112,7 +112,8 @@ func check(t *testing.T, header string, pub ssh.PublicKey, now time.Time) (acces
 		}
 		return nil, false
 	}
-	return access.CheckToken(access.TokenRequest{Authorization: []string{header}, Method: "GET", Host: testBox}, testBox, now, lookup)
+	listed := func(keyType string) bool { return keyType == pub.Type() }
+	return access.CheckToken(access.TokenRequest{Authorization: []string{header}, Method: "GET", Host: testBox}, testBox, now, lookup, listed)
 }
 
 func keyFor(t *testing.T, s ssh.Signer) Key {
