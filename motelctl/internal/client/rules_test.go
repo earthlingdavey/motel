@@ -290,7 +290,7 @@ func TestReadNeedsTheIdentifyingFields(t *testing.T) {
 	// replaced: said as that, not as someone else's answer.
 	replaced := strings.Replace(record, `"2026-11-14T09:13:00Z"`, `"[redacted:DB_PASSWORD]"`, 1)
 	f := failure(t, c.Read(json200(replaced), &wire.DeployResult{}))
-	if f.Exit != ExitUnknown || strings.Contains(f.Message, "not motel's") || !strings.Contains(f.Message, "127.0.0.1 answered, but a value in it could not be read (parsing time") {
+	if f.Exit != ExitUnknown || strings.Contains(f.Message, "not motel's") || f.Message != "127.0.0.1 answered, but its finished_at could not be read: the box's response filter may have replaced it. The box's journal says which key it replaced." {
 		t.Errorf("a replaced time: exit %d %q", f.Exit, f.Message)
 	}
 }

@@ -135,8 +135,8 @@ func whoamiView(me wire.WhoAmI, asked string, key sshkey.Key, now time.Time) ren
 		Key:        tx(fp),
 		KeyShown:   tx(key.Shown),
 		KeySource:  tx(key.Source),
-		BoxKey:     tx(me.Key),
-		BoxName:    tx(me.Box),
+		BoxKey:     termtext.Quote(me.Key),
+		BoxName:    termtext.Quote(me.Box),
 		KeyDiffers: me.Key != fp,
 		BoxDiffers: me.Box != asked,
 		HasExpiry:  true, // Read takes no whoami without it

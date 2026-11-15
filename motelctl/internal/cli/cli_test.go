@@ -273,7 +273,7 @@ func golden(t *testing.T, name, got string) {
 func TestBoxAnswersFailure(t *testing.T) {
 	fb := newFakeBox(t)
 	r := run(t, fb, deployToken, "deploys", appURL(fb, "blog"), "v9")
-	if r.code != 6 || r.stdout != "" || r.stderr != "motelctl: 127.0.0.1: no deploy recorded for version v9\n" {
+	if r.code != 6 || r.stdout != "" || r.stderr != "motelctl: 127.0.0.1 answered 404; the box says: \"no deploy recorded for version v9\"\n" {
 		t.Fatalf("%+v", r)
 	}
 	r = run(t, fb, deployToken, "deploys", appURL(fb, "blog"), "v9", "--json")

@@ -32,12 +32,16 @@ func meFingerprint() string {
 }
 
 // hostileWhoAmI is about runKey's key, from the box it asks (the fake
-// box's address), with hostile strings in the box's other words.
+// box's address); a role a box may name later (auditor) is said as a
+// role. whoami prints no box value outside its grammar: an answer with
+// a hostile name, release, role or scope is not taken at all (client's
+// TestWhoamiNullsAndRoles), and a key or box that differs is quoted
+// (TestWhoamiAboutAnotherKeyOrBox).
 func hostileWhoAmI() wire.WhoAmI {
 	return wire.WhoAmI{
-		Name: "alice@example.com" + hostile[0], Key: meFingerprint(),
-		Roles: []wire.RoleHeld{{Role: "viewer", Scope: "box"}, {Role: "viewer", Scope: "app:blog" + hostile[5]}, {Role: "auditor" + hostile[1], Scope: "team:x"}},
-		Box:   "127.0.0.1", Version: "v0.7.0" + hostile[3], Protocol: 1, TokenExpiresAt: whoamiNow.Add(270 * time.Second),
+		Name: "alice@example.com", Key: meFingerprint(),
+		Roles: []wire.RoleHeld{{Role: "viewer", Scope: "box"}, {Role: "viewer", Scope: "app:blog"}, {Role: "auditor", Scope: "app:shop-2"}},
+		Box:   "127.0.0.1", Version: "v0.7.0", Protocol: 1, TokenExpiresAt: whoamiNow.Add(270 * time.Second),
 	}
 }
 
@@ -158,9 +162,9 @@ func TestWhoamiAndAppsNeedAKey(t *testing.T) {
 
 // An answer about another key than the one this command signed with,
 // or from another box than the one it asked, is not one to act on:
-// the key line is this side's, the box's value is quoted in a warning
-// on its own line, and the command exits 3; --json prints motelctl's
-// own error, not the body.
+// only the warning is printed, the box's value quoted beside this
+// side's, and nothing else of the answer; the command exits 3, and
+// --json prints motelctl's own error, not the body.
 func TestWhoamiAboutAnotherKeyOrBox(t *testing.T) {
 	for _, c := range []struct {
 		name  string
@@ -168,16 +172,16 @@ func TestWhoamiAboutAnotherKeyOrBox(t *testing.T) {
 		warns string
 	}{
 		{"another key", func(me *wire.WhoAmI) { me.Key = "SHA256:another\x1b[2J" },
-			`warning  the box names another key than the one this command signed with: "SHA256:another\x1b[2J"`},
-		{"another box", func(me *wire.WhoAmI) { me.Box = "other.example.com" },
-			`warning  the box answers as another box than the one this command asked: "other.example.com"`},
+			`warning  the box names another key than the one this command signed with (<fp>): "SHA256:another\x1b[2J"`},
+		{"another box", func(me *wire.WhoAmI) { me.Box = `other.example.com"` },
+			`warning  the box answers as another box than the one this command asked (127.0.0.1): "other.example.com\""`},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			fb := newFakeBox(t)
 			c.edit(&fb.whoami)
 			r := runKey(t, fb, nil, "whoami")
-			if r.code != 3 || !strings.Contains(r.stdout, "\n"+c.warns+"\n") || !strings.Contains(r.stdout, "key      "+meFingerprint()+" (~/me.pub, MOTEL_KEY)\n") ||
-				!strings.Contains(r.stderr, "is not one to act on") || strings.ContainsRune(r.stdout, '\x1b') {
+			if r.code != 3 || r.stdout != strings.ReplaceAll(c.warns, "<fp>", meFingerprint())+"\n" ||
+				!strings.Contains(r.stderr, "is not one to act on") {
 				t.Fatalf("exit %d, stdout\n%s\nstderr %s", r.code, r.stdout, r.stderr)
 			}
 			r = runKey(t, fb, nil, "whoami", "--json")
@@ -185,5 +189,17 @@ func TestWhoamiAboutAnotherKeyOrBox(t *testing.T) {
 				t.Fatalf("--json: %+v", r)
 			}
 		})
+	}
+}
+
+// The warning's quotation of the box's key is cut at the cap, with the
+// cut marked outside the quotes.
+func TestWhoamiWarningQuotationIsCut(t *testing.T) {
+	fb := newFakeBox(t)
+	fb.whoami.Key = "SHA256:" + strings.Repeat("a", 300)
+	r := runKey(t, fb, nil, "whoami")
+	want := "warning  the box names another key than the one this command signed with (" + meFingerprint() + "): \"SHA256:" + strings.Repeat("a", 193) + "\"…\n"
+	if r.code != 3 || r.stdout != want {
+		t.Fatalf("exit %d\n%q\nwant\n%q", r.code, r.stdout, want)
 	}
 }

@@ -51,10 +51,16 @@ box's `Date` says it is off. A 403 whose `needs` and `scope` are words
 of their grammar (`needs` a lowercase word, `scope` `app` or `box`) is
 said from those two alone, and names no app; any other 403 is said as a
 refusal that did not say what it needs, with the box's `error`, if any,
-quoted as the box's (made safe to print, cut at 200 characters). The
-box's words are never motelctl's own advice. `whoami` shows the key this
-command signed with and the box it asked; an answer naming another key
-or box is warned of and exits 3. `Motel-Protocol` comes only on answers
+quoted as the box's. The box's words are never motelctl's own: a value
+it prints in a sentence is held to the grammar the box holds it to, or
+quoted by the one quoting function (`termtext.Quote`: cut at 200
+characters, made safe to print, `"` and `\` escaped, so the closing
+quote is motelctl's own), and no message carries a decoder's error,
+which would quote the body. `whoami` takes an answer only when its name,
+release, roles and scopes are of the box's grammars and no required
+field is missing or `null`; it shows the key this command signed with
+and the box it asked, and an answer naming another key or box prints
+only a warning quoting the box's value, and exits 3. `Motel-Protocol` comes only on answers
 to a token the box verified, and counts only as one header of 1 to 9
 digits; a higher number than this client's is said on stderr, and the
 command carries on. A passphrase-protected key file with no terminal to

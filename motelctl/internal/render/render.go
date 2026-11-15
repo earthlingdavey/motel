@@ -138,8 +138,8 @@ type WhoAmI struct {
 	Key       termtext.Text
 	KeyShown  termtext.Text
 	KeySource termtext.Text
-	// BoxKey and BoxName are the box's key and box fields, said when
-	// KeyDiffers or BoxDiffers.
+	// BoxKey and BoxName are the box's key and box fields as
+	// termtext.Quote quotes them, said when KeyDiffers or BoxDiffers.
 	BoxKey, BoxName        termtext.Text
 	KeyDiffers, BoxDiffers bool
 	Roles                  []Role
@@ -371,6 +371,17 @@ func WriteBox(w io.Writer, b Box) error {
 // others is quoted in a warning.
 func WriteWhoAmI(w io.Writer, me WhoAmI) error {
 	p := &printer{w: w}
+	// An answer about another key, or from another box, is said as
+	// that alone: nothing else in it is about this key here.
+	if me.KeyDiffers || me.BoxDiffers {
+		if me.KeyDiffers {
+			p.line("warning  the box names another key than the one this command signed with (%s): %s", me.Key, me.BoxKey)
+		}
+		if me.BoxDiffers {
+			p.line("warning  the box answers as another box than the one this command asked (%s): %s", me.Box, me.BoxName)
+		}
+		return p.err
+	}
 	p.line("name     %s", me.Name)
 	release := "motel " + me.Release.String()
 	if me.Release.Empty() {
@@ -378,12 +389,6 @@ func WriteWhoAmI(w io.Writer, me WhoAmI) error {
 	}
 	p.line("box      %s, %s, protocol %d", me.Box, release, me.Protocol)
 	p.line("key      %s (%s, %s)", me.Key, me.KeyShown, me.KeySource)
-	if me.KeyDiffers {
-		p.line("warning  the box names another key than the one this command signed with: \"%s\"", me.BoxKey.Cut(quoteMax))
-	}
-	if me.BoxDiffers {
-		p.line("warning  the box answers as another box than the one this command asked: \"%s\"", me.BoxName.Cut(quoteMax))
-	}
 	if len(me.Roles) == 0 {
 		p.line("roles    none from this address")
 	} else {
@@ -409,20 +414,13 @@ func WriteWhoAmI(w io.Writer, me WhoAmI) error {
 	return p.err
 }
 
-// quoteMax is the most of a box's value a warning quotes.
-const quoteMax = 200
-
-// scopeWords says a role's scope: "of the box", "of app <name>", and
-// any other as the box wrote it.
+// scopeWords says a role's scope, which the client took only as
+// "box" or "app:<name>" (client's odd): "of the box", "of app <name>".
 func scopeWords(scope termtext.Text) string {
-	s := scope.String()
-	if s == "box" {
-		return "of the box"
-	}
-	if name, ok := strings.CutPrefix(s, "app:"); ok {
+	if name, ok := strings.CutPrefix(scope.String(), "app:"); ok {
 		return "of app " + name
 	}
-	return "on " + s
+	return "of the box"
 }
 
 // WriteNames writes one name a line.

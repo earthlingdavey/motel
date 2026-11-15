@@ -80,7 +80,7 @@ func TestMotelctlBoxStatus(t *testing.T) {
 
 	// No baseline yet: the box's 409, its sentence, exit 1.
 	c := ctl(t, bin, env, "box", "status")
-	if c.code != 1 || c.stdout != "" || c.stderr != "motelctl: 127.0.0.1 answered 409: "+msgNoBaseline+"\n" {
+	if c.code != 1 || c.stdout != "" || c.stderr != "motelctl: 127.0.0.1 answered 409; the box says: \""+msgNoBaseline+"\"\n" {
 		t.Fatalf("no baseline: %+v", c)
 	}
 	want409 := r.do(t, req{target: "/", token: tok}).Body.String()

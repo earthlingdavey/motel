@@ -77,15 +77,36 @@ func Lines(s string) []Text {
 // String is the sanitised string.
 func (t Text) String() string { return t.s }
 
-// Cut is the text cut to at most n runes, with "…" in place of what
-// was cut: a box's sentence quoted in motelctl's own message stays a
-// quotation, not a page.
-func (t Text) Cut(n int) Text {
-	if utf8.RuneCountInString(t.s) <= n {
-		return t
+// QuoteMax is the most of a value a quotation holds: runes of what
+// was sent, before any escape is written.
+const QuoteMax = 200
+
+// Quote is the one way motelctl quotes a value someone else sent (a
+// box's sentence, a box's field, a certificate's reason) inside its own
+// words: s cut to QuoteMax runes of what was sent, on a rune boundary
+// and before any escape is written, so a cut never splits one; then
+// every " and \ escaped with a \, and everything From escapes made
+// visible; all between double quotes, with "…" after the closing quote
+// when s was cut. The closing quote is the only unescaped one, so
+// nothing s holds can end the quotation and write motelctl's next
+// words. (A \ is escaped before From runs, so a \ the sender wrote reads
+// \\, and an escape From wrote reads \x1b: the two stay apart.)
+func Quote(s string) Text {
+	cut := false
+	n := 0
+	for i := range s {
+		if n == QuoteMax {
+			s, cut = s[:i], true
+			break
+		}
+		n++
 	}
-	r := []rune(t.s)
-	return Text{string(r[:n]) + "…"}
+	q := From(strings.NewReplacer(`\`, `\\`, `"`, `\"`).Replace(s))
+	out := `"` + q.s + `"`
+	if cut {
+		out += "…"
+	}
+	return Text{out}
 }
 
 // Empty says whether the text is the empty string.

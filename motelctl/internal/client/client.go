@@ -20,6 +20,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"reflect"
 	"regexp"
 	"strconv"
 	"strings"
@@ -281,17 +282,13 @@ var (
 	// releaseRe is a release as the Makefile links it in: v0.6.1, and
 	// a pre-release or build suffix.
 	releaseRe = regexp.MustCompile(`^v?[0-9]{1,9}\.[0-9]{1,9}\.[0-9]{1,9}([-+][0-9A-Za-z.+-]{1,64})?$`)
-	// needsRe is the word a 403's needs may be, for the client to say
-	// it as a role.
-	needsRe = regexp.MustCompile(`^[a-z][a-z_-]{0,31}$`)
+	// nameRe is a name as a person or signer line holds one
+	// (box/proof/signers.go), at most 256 bytes.
+	nameRe = regexp.MustCompile(`^[A-Za-z0-9._@+-]{1,256}$`)
+	// roleRe is a role as a box names one, in a 403's needs or a
+	// whoami's roles: a word the client may say as a role.
+	roleRe = regexp.MustCompile(`^[a-z][a-z_-]{0,31}$`)
 )
-
-// quoteMax is the most of a box's sentence a message quotes.
-const quoteMax = 200
-
-// quoted is a box's sentence as motelctl's messages quote it: made
-// safe to print, cut to quoteMax runes.
-func quoted(s string) termtext.Text { return termtext.From(s).Cut(quoteMax) }
 
 func (c *Client) retry401() time.Duration {
 	if _, ok := c.Cred.(DeployToken); ok {
@@ -361,12 +358,12 @@ func (c *Client) unreachable(ctx context.Context, err error) error {
 		}
 		if len(c.Roots) > 0 {
 			return &Failure{Exit: ExitCertificate, Message: fmt.Sprintf(
-				"The certificate of %s did not verify (%s). motelctl never sends a token over an unverified connection. %s is set, and replaces the system's roots with the ones it names: that is the likelier cause. Else, as root on the box: journalctl -u motel -g certificate",
-				box, termtext.From(why), termtext.From(strings.Join(c.Roots, " and ")))}
+				"The certificate of %s did not verify; the check says: %s. motelctl never sends a token over an unverified connection. %s is set, and replaces the system's roots with the ones it names: that is the likelier cause. Else, as root on the box: journalctl -u motel -g certificate",
+				box, termtext.Quote(why), termtext.From(strings.Join(c.Roots, " and ")))}
 		}
 		return &Failure{Exit: ExitCertificate, Message: fmt.Sprintf(
-			"The certificate of %s did not verify (%s). motelctl never sends a token over an unverified connection. As root on the box: journalctl -u motel -g certificate",
-			box, termtext.From(why))}
+			"The certificate of %s did not verify; the check says: %s. motelctl never sends a token over an unverified connection. As root on the box: journalctl -u motel -g certificate",
+			box, termtext.Quote(why))}
 	case errors.As(err, &dns):
 		return &Failure{Exit: ExitUnknown, Message: fmt.Sprintf(
 			"%s was not found (%s): is the box's name right?", c.Box.Host, termtext.From(dns.Err))}
@@ -462,32 +459,36 @@ func retryAfter(h http.Header, now time.Time) (int64, bool) {
 
 // Read decodes a 200's body into v and returns nil, or says why the
 // answer is not the one asked for: the box's own refusal (403, 404, a
-// 409 or a 5xx in motel's words, each with the box's sentence), or an
-// answer that is not motel's.
+// 409 or a 5xx in motel's words, each with the box's sentence quoted),
+// or an answer that is not motel's. No message carries a decoder's
+// error, which quotes what the body holds: a field that does not read
+// is named by the client's own name for it, and nothing of its value.
 func (c *Client) Read(ans *Answer, v any) error {
 	if ans.Code == http.StatusOK {
 		missing := identity(v).missing(ans.Body)
 		err := decodeObject(ans, v)
 		var syntax *json.SyntaxError
 		switch {
-		case errors.Is(err, errNotJSON), errors.Is(err, errNotObject), errors.As(err, &syntax):
-			return c.notMotel(ans, err.Error())
+		case errors.Is(err, errNotJSON), errors.As(err, &syntax):
+			return c.notMotel(ans, "not JSON")
+		case errors.Is(err, errNotObject):
+			return c.notMotel(ans, "not a JSON object")
 		case len(missing) > 0:
 			return c.notMotel(ans, "it has no "+fieldList(missing))
 		case err != nil:
 			// motel's answer, by its fields, with a value that did not
 			// decode: the box's response filter replaces a value equal
 			// to a secret, a timestamp's included, with its marker.
-			return &Failure{Exit: ExitUnknown, Message: fmt.Sprintf(
-				"%s answered, but a value in it could not be read (%s): the box's response filter may have replaced it. The box's journal says which key it replaced.",
-				c.Box.Addr(), termtext.From(err.Error()))}
-		}
-		if a, ok := v.(*wire.Apps); ok {
-			for _, name := range a.Apps {
-				if !appRe.MatchString(name) {
-					return c.notMotel(ans, "a name in its list is no app name")
-				}
+			what := "a value in it"
+			if f := badField(ans.Body, v); f != "" {
+				what = "its " + f
 			}
+			return &Failure{Exit: ExitUnknown, Message: fmt.Sprintf(
+				"%s answered, but %s could not be read: the box's response filter may have replaced it. The box's journal says which key it replaced.",
+				c.Box.Addr(), what)}
+		}
+		if why := odd(v); why != "" {
+			return c.notMotel(ans, why)
 		}
 		return nil
 	}
@@ -498,9 +499,9 @@ func (c *Client) Read(ans *Answer, v any) error {
 	if decodeObject(ans, &e) != nil || e.Error == "" {
 		return c.notMotel(ans, "")
 	}
-	said := quoted(e.Error)
+	said := termtext.Quote(e.Error)
 	if ans.Code == http.StatusNotFound {
-		return &Failure{Exit: ExitNotFound, Message: fmt.Sprintf("%s: %s", c.Box.Host, said), Body: ans.Body}
+		return &Failure{Exit: ExitNotFound, Message: fmt.Sprintf("%s answered 404; the box says: %s", c.Box.Host, said), Body: ans.Body}
 	}
 	// A gateway in front of a box can answer a 5xx in JSON too. Motel
 	// stamps Motel-Version on every answer to a token it verified, and,
@@ -509,23 +510,92 @@ func (c *Client) Read(ans *Answer, v any) error {
 	// known to be motel's own.
 	if ans.Code >= 500 && !stamped(ans.Header) {
 		return &Failure{Exit: ExitUnknown, Message: fmt.Sprintf(
-			"Something at %s answered %d without %s, so not known to be motel's own answer: %s", c.Box.Addr(), ans.Code, versionHeader, said)}
+			"Something at %s answered %d without %s, so not known to be motel's own answer; it says: %s", c.Box.Addr(), ans.Code, versionHeader, said)}
 	}
-	return &Failure{Exit: ExitFailed, Message: fmt.Sprintf("%s answered %d: %s", c.Box.Host, ans.Code, said), Body: ans.Body}
+	return &Failure{Exit: ExitFailed, Message: fmt.Sprintf("%s answered %d; the box says: %s", c.Box.Host, ans.Code, said), Body: ans.Body}
 }
 
-// forbidden is a 403, which exits 5 whatever its body. The box's
-// words are never the client's advice: needs and scope are used only
-// when they are words of their grammar (needsRe; "app" or "box"), and
-// the sentence is built from them alone, so an app that exists and one
+// odd says why a body that decoded is still not one an honest box
+// sends: a value outside the grammar the box holds it to. The client
+// never prints such a value, so it never says it either.
+func odd(v any) string {
+	switch a := v.(type) {
+	case *wire.Apps:
+		for _, name := range a.Apps {
+			if !appRe.MatchString(name) {
+				return "a name in its list is no app name"
+			}
+		}
+	case *wire.WhoAmI:
+		// Every value whoami prints as the box's is held to the grammar
+		// the box holds it to: the name to a person line's, the release
+		// to the Makefile's; the key and the box are compared, not
+		// printed.
+		if !nameRe.MatchString(a.Name) {
+			return "its name is not one a box takes"
+		}
+		if a.Version != "" && !releaseRe.MatchString(a.Version) {
+			return "its version is not a release"
+		}
+		for _, r := range a.Roles {
+			if !roleRe.MatchString(r.Role) || !scopeOK(r.Scope) {
+				return "a role in it is not one a box names"
+			}
+		}
+	}
+	return ""
+}
+
+// scopeOK is a role's scope as a box writes one: "box", or "app:" and
+// an app's name.
+func scopeOK(s string) bool {
+	if s == "box" {
+		return true
+	}
+	name, ok := strings.CutPrefix(s, "app:")
+	return ok && appRe.MatchString(name)
+}
+
+// badField is the first top-level field of v's type whose value in
+// body does not decode into it, by the wire type's own JSON name; ""
+// when none is found (the decoder matched a key by another case).
+func badField(body []byte, v any) string {
+	var m map[string]json.RawMessage
+	t := reflect.TypeOf(v)
+	if json.Unmarshal(body, &m) != nil || t.Kind() != reflect.Pointer || t.Elem().Kind() != reflect.Struct {
+		return ""
+	}
+	t = t.Elem()
+	for i := range t.NumField() {
+		f := t.Field(i)
+		name, _, _ := strings.Cut(f.Tag.Get("json"), ",")
+		raw, ok := m[name]
+		if name == "" || name == "-" || !ok {
+			continue
+		}
+		if json.Unmarshal(raw, reflect.New(f.Type).Interface()) != nil {
+			return name
+		}
+	}
+	return ""
+}
+
+// forbidden is a 403, which exits 5 whatever its body, and whose body
+// --json prints as received whenever it is JSON. The box's words are
+// never the client's advice: needs and scope are used only when they
+// are words of their grammar (roleRe; "app" or "box"), and the
+// sentence is built from them alone, so an app that exists and one
 // that does not read the same and no app is named. A 403 that does not
 // say what it needs in those words is said as a refusal, with the
 // box's own sentence, if any, quoted as the box's.
 func (c *Client) forbidden(ans *Answer) *Failure {
-	var f wire.Forbidden
 	var body []byte
-	if decodeObject(ans, &f) == nil {
+	if json.Valid(ans.Body) {
 		body = ans.Body
+	}
+	var f wire.Forbidden
+	if decodeObject(ans, &f) != nil {
+		f = wire.Forbidden{Error: f.Error} // a field of the wrong type: nothing but the sentence is read
 	}
 	_, person := c.Cred.(*PersonToken)
 	whoami := ""
@@ -533,13 +603,13 @@ func (c *Client) forbidden(ans *Answer) *Failure {
 		whoami = " `motelctl whoami` lists the roles you hold from here."
 	}
 	on := map[string]string{"app": "this app", "box": "the box"}[f.Scope]
-	if !needsRe.MatchString(f.Needs) || on == "" {
-		said := ""
+	if !roleRe.MatchString(f.Needs) || on == "" {
+		said := "."
 		if f.Error != "" {
-			said = fmt.Sprintf(" The box says: \"%s\"", quoted(f.Error))
+			said = "; the box says: " + termtext.Quote(f.Error).String() + "."
 		}
 		return &Failure{Exit: ExitForbidden, Body: body, Message: fmt.Sprintf(
-			"%s refused this (HTTP 403) and did not say what it needs.%s%s", c.Box.Host, said, whoami)}
+			"%s refused this (HTTP 403) and did not say what it needs%s%s", c.Box.Host, said, whoami)}
 	}
 	var needs string
 	switch f.Needs {
@@ -598,36 +668,37 @@ func identity(v any) shape {
 	return shape{}
 }
 
-// missing is the fields of the shape body lacks, or has in another
-// form, in the shape's order; all of them when body is no object.
+// missing is the fields of the shape body lacks, has as null, or has
+// in another form, in the shape's order; all of them when body is no
+// object. A required field that is null is missing, whatever its kind.
 func (s shape) missing(body []byte) []string {
 	var m map[string]json.RawMessage
 	ok := json.Unmarshal(body, &m) == nil
 	var out []string
-	for _, k := range s.strs {
-		var v string
-		if !ok || json.Unmarshal(m[k], &v) != nil || v == "" {
-			out = append(out, k)
+	check := func(keys []string, good func(raw json.RawMessage) bool) {
+		for _, k := range keys {
+			raw, there := m[k]
+			if !ok || !there || string(bytes.TrimSpace(raw)) == "null" || !good(raw) {
+				out = append(out, k)
+			}
 		}
 	}
-	for _, k := range s.lists {
+	check(s.strs, func(raw json.RawMessage) bool {
+		var v string
+		return json.Unmarshal(raw, &v) == nil && v != ""
+	})
+	check(s.lists, func(raw json.RawMessage) bool {
 		var a []json.RawMessage
-		if !ok || json.Unmarshal(m[k], &a) != nil || a == nil {
-			out = append(out, k)
-		}
-	}
-	for _, k := range s.counts {
+		return json.Unmarshal(raw, &a) == nil
+	})
+	check(s.counts, func(raw json.RawMessage) bool {
 		var n int64
-		if !ok || json.Unmarshal(m[k], &n) != nil || n < 1 {
-			out = append(out, k)
-		}
-	}
-	for _, k := range s.times {
+		return json.Unmarshal(raw, &n) == nil && n >= 1
+	})
+	check(s.times, func(raw json.RawMessage) bool {
 		var v string
-		if !ok || json.Unmarshal(m[k], &v) != nil {
-			out = append(out, k)
-		}
-	}
+		return json.Unmarshal(raw, &v) == nil && v != ""
+	})
 	return out
 }
 

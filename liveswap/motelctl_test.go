@@ -149,7 +149,7 @@ func TestMotelctlReadsTheWebhook(t *testing.T) {
 		t.Errorf("status:\n%s", r.stdout)
 	}
 	r = ctl(t, bin, env, "deploys", app, "v9")
-	if r.stderr != "motelctl: 127.0.0.1: no deploy recorded for version v9\n" {
+	if r.stderr != "motelctl: 127.0.0.1 answered 404; the box says: \"no deploy recorded for version v9\"\n" {
 		t.Errorf("an unknown version: %q", r.stderr)
 	}
 }
@@ -190,7 +190,7 @@ func TestMotelctlFaults(t *testing.T) {
 		{"a refused token, and the box's Date off", []string{"MOTEL_TOKEN=not-a-jwt", "SSL_CERT_FILE=" + staleDate.cert}, staleDate.url, 4,
 			"refused the token in MOTEL_TOKEN (sent as Bearer)"},
 		{"a self-signed certificate", []string{"MOTEL_TOKEN=" + appToken(t)}, box.url, 8,
-			"did not verify (x509: certificate signed by unknown authority). motelctl never sends a token over an unverified connection."},
+			"did not verify; the check says: \"x509: certificate signed by unknown authority\". motelctl never sends a token over an unverified connection."},
 		{"nothing answering", []string{"MOTEL_TOKEN=" + appToken(t)}, closed, 3,
 			"(connection refused). If motel is down, as root on the box: systemctl status motel"},
 		{"a 429 that stands", []string{"MOTEL_TOKEN=" + appToken(t), "SSL_CERT_FILE=" + busy.cert}, busy.url, 3,
