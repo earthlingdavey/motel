@@ -388,7 +388,7 @@ func TestCheckLinesLimits(t *testing.T) {
 	if _, err := CheckLines(l, nil); err != nil {
 		t.Fatalf("%d grant lines: %v", MaxGrantLines, err)
 	}
-	l.Grants = append(grants, Grant{Name: "p9", Role: Viewer})
+	l.Grants = append(slices.Clone(grants), Grant{Name: "p9", Role: Viewer})
 	if _, err := CheckLines(l, nil); err == nil || err.Error() != "set of grant lines: there are 4097, and a box takes at most 4096" {
 		t.Fatalf("%d grant lines: %v", MaxGrantLines+1, err)
 	}
