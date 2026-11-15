@@ -318,13 +318,15 @@ func (p *pushing) answer(res *result, err error) error {
 // one idle window. A Read that ends at a deadline once until has passed
 // fails with the bound's error too, not the connection's "i/o
 // timeout": every protocol's deadline error wraps os.ErrDeadlineExceeded
-// (net.OpError, HTTP/2's stream timer, quic-go's deadlineError), and a
-// deadline that fires before until is another bound's, Caddy's idle
-// one, left as it is. Wall time, as the connection's deadline is, not
-// the handler's Clock, which is step 8's wait. Not a timer that closes
-// the body: on
-// HTTP/1.1 the server's body Close is a drain under the body's own
-// lock, which waits behind the read in flight and then reads on, so it
+// (net.OpError, HTTP/2's stream timer, quic-go's deadlineError). A
+// read that ends before until ended at another bound, Caddy's idle
+// one, and keeps its error; whether until has passed is asked as the
+// read returns, so an idle deadline that fires a moment before it is
+// named as the bound, which the upload has outlasted by then. Wall
+// time, as the connection's deadline is, not the handler's Clock,
+// which is step 8's wait. Not a timer that closes the body: on HTTP/1.1
+// the server's body Close is a drain under the body's own lock, which
+// waits behind the read in flight and then reads on, so it
 // would end nothing sooner, and each protocol's Close does something
 // else (HTTP/2 breaks the stream's pipe, HTTP/3 cancels the stream's
 // read side).
