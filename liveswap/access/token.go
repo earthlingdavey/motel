@@ -90,7 +90,11 @@ type TokenRequest struct {
 	Host string
 }
 
-// VerifiedToken is a token CheckToken accepted.
+// VerifiedToken is a token CheckToken accepted. A token's bytes are
+// not unique to what was signed (an ECDSA signature has several
+// encodings that verify alike), so anything that must recognise a
+// token seen before keys on the verified claims and Fingerprint, never
+// on the token string.
 type VerifiedToken struct {
 	// Fingerprint is the signing key's, SHA256:<base64> as
 	// `ssh-keygen -l` prints it: the lookup's key, and the journal's.
@@ -288,12 +292,12 @@ func CheckToken(req TokenRequest, identity string, now time.Time, lookup KeyLook
 	}, nil
 }
 
-// tokenHost is the request's Host as a bare hostname: ASCII letters
-// lowered, a port of 1 to 5 digits dropped. Anything else a Host may
-// carry (a byte outside a hostname's, brackets, an empty or a named
-// port) is refused rather than folded, since a fold is a second
-// spelling of the box's name: strings.ToLower would fold the Kelvin
-// sign to k, and net.SplitHostPort strips brackets.
+// tokenHost is the request's Host with ASCII letters lowered and a
+// port of 1 to 5 digits dropped; any other port is refused. Nothing
+// else is folded or stripped, so a Host with any other byte (brackets,
+// a non-ASCII letter) can never equal the identity, a bare lowercase
+// hostname: strings.ToLower would fold the Kelvin sign to k, and
+// net.SplitHostPort strips brackets.
 func tokenHost(raw string) (string, bool) {
 	name, port, hasPort := strings.Cut(raw, ":")
 	if hasPort {
@@ -308,12 +312,8 @@ func tokenHost(raw string) (string, bool) {
 	}
 	b := []byte(name)
 	for i, c := range b {
-		switch {
-		case 'A' <= c && c <= 'Z':
+		if 'A' <= c && c <= 'Z' {
 			b[i] = c + 'a' - 'A'
-		case 'a' <= c && c <= 'z', '0' <= c && c <= '9', c == '.', c == '-':
-		default:
-			return "", false
 		}
 	}
 	return string(b), true

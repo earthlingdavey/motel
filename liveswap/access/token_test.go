@@ -377,6 +377,7 @@ func tokenCases(k *testKeySet) []tokenCase {
 		{name: "N23-rsa-ssh-rsa-sha1", auth: hdr(tok(c0, sshsig(plainKeySHA1(k.rsa), c0, sigOpts{}))), expect: "key-type"},
 		{name: "certificate-as-key", auth: hdr(tok(c0, sshsig(k.ed, c0, sigOpts{keyWire: cert.Marshal()}))), expect: "key-type"},
 		{name: "key-not-a-key", auth: hdr(tok(c0, sshsig(k.ed, c0, sigOpts{keyWire: []byte{1, 2, 3}}))), expect: "key-type"},
+		{name: "unlisted-before-namespace", auth: hdr(tok(c0, sshsig(k.unlisted, c0, sigOpts{ns: "git"}))), expect: "key-not-listed"},
 		{name: "N10-key-not-listed", auth: signed(k.unlisted, c0), expect: "key-not-listed"},
 		{name: "unlisted-before-any-signature-check", auth: hdr(tok(c0, sshsig(k.unlisted, c0, sigOpts{sigBytes: []byte("garbage")}))), expect: "key-not-listed"},
 		{name: "lookup-names-another-key", auth: signed(k.ed, c0), lookup: func(string) (ssh.PublicKey, bool) { return k.p256.pub, true }, expect: "key-not-listed"},
@@ -402,6 +403,8 @@ func tokenCases(k *testKeySet) []tokenCase {
 		{name: "sk-flags-changed-after-signing", auth: hdr(tok(c0, sshsig(k.skEd, c0, sigOpts{skRest: skTrailer(0x05)}))), expect: "signature"},
 		{name: "claims-changed-after-signing", auth: withSig(claimsDoc(testIdentity, n-30, n+3570)), expect: "signature"},
 		{name: "signed-by-another-key", auth: hdr(tok(c0, sshsig(k.unlisted, c0, sigOpts{keyWire: k.ed.pub.Marshal()}))), expect: "signature"},
+		{name: "signature-before-aud", auth: withSig(claimsDoc("deploy.other.test", n-30, n+570)), expect: "signature"},
+		{name: "signature-before-host", auth: withSig(claimsDoc(testIdentity, n-30, n+3570)), host: "www.example.test", expect: "signature"},
 		{name: "claims-read-only-after-signature", auth: withSig("not json"), expect: "signature"},
 
 		// 8. Decision 5: the claims are aud, iat and exp, nothing else.
@@ -424,6 +427,7 @@ func tokenCases(k *testKeySet) []tokenCase {
 
 		// 9 to 11, and 13.
 		{name: "N6-wrong-audience", auth: signed(k.ed, claimsDoc("deploy.other.test", n-30, n+570)), expect: "aud"},
+		{name: "aud-before-host", auth: signed(k.ed, claimsDoc("deploy.other.test", n-30, n+570)), host: "deploy.other.test", expect: "aud"},
 		{name: "aud-in-upper-case", auth: signed(k.ed, claimsDoc("Deploy.example.test", n-30, n+570)), expect: "aud"},
 		{name: "N7-wrong-host", auth: hdr(goodTok), host: "www.example.test", expect: "host"},
 		{name: "host-with-trailing-dot", auth: hdr(goodTok), host: testIdentity + ".", expect: "host"},
@@ -446,6 +450,8 @@ func tokenCases(k *testKeySet) []tokenCase {
 		{name: "head", auth: hdr(goodTok), method: "HEAD", expect: "method"},
 		{name: "get-in-lower-case", auth: hdr(goodTok), method: "get", expect: "method"},
 		{name: "one-hour-on-a-post-is-life-first", auth: signed(k.ed, claimsDoc(testIdentity, n-30, n+3570)), method: "POST", expect: "life"},
+		{name: "expired-before-life", auth: signed(k.ed, claimsDoc(testIdentity, n-4000, n-100)), expect: "expired"},
+		{name: "times-before-life", auth: signed(k.ed, claimsDoc(testIdentity, 0, n+3600)), expect: "times"},
 		{name: "N5-one-hour", auth: signed(k.ed, claimsDoc(testIdentity, n-30, n+3570)), expect: "life"},
 		{name: "life-one-past-the-cap", auth: signed(k.ed, claimsDoc(testIdentity, n-100, n+501)), expect: "life"},
 	}
@@ -647,10 +653,9 @@ func TestTokenMutation(t *testing.T) {
 	t.Logf("%d key types, %d changed tokens refused", len(types), tried)
 }
 
-// TestTokenHostNotFolded: a Host with a byte no hostname holds is
-// refused, not folded to the box's name. Go's lower-casing folds the
-// Kelvin sign to k and a dotted capital I to i, so the identity here
-// has both letters.
+// TestTokenHostNotFolded: a Host with a non-ASCII letter is never
+// folded to the box's name. Go's lower-casing folds the Kelvin sign to
+// k and a dotted capital I to i, so the identity here has both letters.
 func TestTokenHostNotFolded(t *testing.T) {
 	k := testKeys()
 	const identity = "box.kitchen.test"
