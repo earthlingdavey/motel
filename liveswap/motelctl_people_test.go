@@ -264,9 +264,9 @@ func TestMotelctlPeople(t *testing.T) {
 
 // TestMotelctlPeopleRefused: a key no line lists, and a person whose
 // one grant's from list does not hold the address they ask from, are
-// each the flat 401, after one retry, for every command; the message
-// names every cause the client cannot tell apart, and what to send the
-// operator.
+// each the flat 401, after one retry with the same token (exactly two
+// requests), for every command; the message names every cause the
+// client cannot tell apart, and what to send the operator.
 func TestMotelctlPeopleRefused(t *testing.T) {
 	bin := motelctlBin(t)
 	keys := t.TempDir()
@@ -282,13 +282,30 @@ func TestMotelctlPeopleRefused(t *testing.T) {
 		t.Fatal(err)
 	}
 	h.people = access.NewRegistry(ctlIdentity, access.Lines{Keys: []access.Key{key}, Grants: []access.Grant{g}})
-	box := serveCtl(t, webhook(h))
-	app := box.url + "/demo"
+	served := webhook(h)
 	for who, k := range map[string]sshKey{"a key no line lists": stranger, "a person outside their from list": erin} {
-		for _, args := range [][]string{{"whoami"}, {"apps"}, {"status", app}, {"deploys", app}, {"deploys", app, "v1"}} {
-			t.Run(who+", "+strings.Join(args[:1], " "), func(t *testing.T) {
+		for _, args := range [][]string{{"whoami"}, {"apps"}, {"status"}, {"deploys"}, {"deploys", "v1"}} {
+			t.Run(who+", "+strings.Join(args, " "), func(t *testing.T) {
 				t.Parallel() // each waits out the one retry
+				// A box of its own, counting what reaches it.
+				var mu sync.Mutex
+				var auths []string
+				box := serveCtl(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					mu.Lock()
+					auths = append(auths, r.Header.Get("Authorization"))
+					mu.Unlock()
+					served.ServeHTTP(w, r)
+				}))
+				app := box.url + "/demo"
+				if args[0] != "whoami" && args[0] != "apps" {
+					args = append([]string{args[0], app}, args[1:]...)
+				}
 				r := ctl(t, bin, []string{"MOTEL_KEY=" + k.path, "MOTEL_URL=" + app, "SSL_CERT_FILE=" + box.cert}, args...)
+				mu.Lock()
+				defer mu.Unlock()
+				if len(auths) != 2 || auths[0] != auths[1] || !strings.HasPrefix(auths[0], "Motel m1.") {
+					t.Errorf("%d requests, the same token twice: %v", len(auths), len(auths) == 2 && auths[0] == auths[1])
+				}
 				for _, w := range []string{
 					"motelctl: 127.0.0.1 did not accept your key " + k.fp,
 					"no person or signer line on the box lists it",
