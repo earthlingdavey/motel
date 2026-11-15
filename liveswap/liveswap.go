@@ -610,12 +610,15 @@ func (a *App) MemoryCapped() map[string]bool {
 // Releases are the release versions on disk for app, newest first
 // (listReleases): with RecordedVersions, what notify's `motel monitor
 // silence add --release` takes. Nil for an app this config does not run, or when the
-// directory cannot be read.
+// directory cannot be read. The paths read are the app's spec's, built
+// from its configured name, never from app: the name comes off the
+// admin API's request body (CodeQL's go/path-injection).
 func (a *App) Releases(app string) []string {
-	if _, ok := a.specs[app]; !ok {
+	spec, ok := a.specs[app]
+	if !ok {
 		return nil
 	}
-	versions, _ := listReleases(newAppDirs(a.Root, app))
+	versions, _ := listReleases(spec.dirs)
 	return versions
 }
 
@@ -626,13 +629,15 @@ func (a *App) Releases(app string) []string {
 // written (one that failed before it was accepted, or whose record
 // write failed) is in neither list. What
 // notify's silence --release takes beside Releases. Nil for an app
-// this config does not run, or with no records to read.
+// this config does not run, or with no records to read. The paths are
+// the spec's, as Releases says.
 func (a *App) RecordedVersions(app string) []string {
-	if _, ok := a.specs[app]; !ok {
+	spec, ok := a.specs[app]
+	if !ok {
 		return nil
 	}
 	var versions []string
-	for _, s := range listDeploySummaries(newAppDirs(a.Root, app)) {
+	for _, s := range listDeploySummaries(spec.dirs) {
 		versions = append(versions, s.Version)
 	}
 	return versions
