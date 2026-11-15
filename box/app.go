@@ -12,6 +12,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/smallhoursorg/motel/box/proof"
+	"github.com/smallhoursorg/motel/liveswap"
 	"github.com/smallhoursorg/motel/liveswap/access"
 	"github.com/smallhoursorg/motel/liveswap/deploytrust"
 )
@@ -40,6 +41,11 @@ type App struct {
 	verifiers []deploytrust.Verifier
 	// registry is the people this load admits (Access), nil for none.
 	registry *access.Registry
+	// runs are the apps the config's liveswap block runs, which a grant
+	// on an app must name; known only once Provision has asked the
+	// liveswap app (a test that calls provision alone does not).
+	runs      []string
+	runsKnown bool
 }
 
 // SignerConfig is one `signer <principal> <key-type> <base64>` line.
@@ -104,6 +110,19 @@ func (App) CaddyModule() caddy.ModuleInfo {
 // (deploytrust.New, which refuses an empty set at config load), then
 // warns about a deploy_trust block wider than it reads.
 func (a *App) Provision(ctx caddy.Context) error {
+	// The apps the config runs, for a grant on an app: the liveswap app
+	// is provisioned by now or here (it needs nothing of box's), and a
+	// config with no liveswap block runs none.
+	switch ls, err := ctx.AppIfConfigured("liveswap"); {
+	case errors.Is(err, caddy.ErrNotConfigured):
+		a.runsKnown = true
+	case err != nil:
+		return err
+	default:
+		if app, ok := ls.(*liveswap.App); ok {
+			a.runs, a.runsKnown = slices.Sorted(maps.Keys(app.Apps)), true
+		}
+	}
 	if err := a.provision(ctx.Logger()); err != nil {
 		return err
 	}
@@ -229,15 +248,20 @@ func (a *App) provision(logger *zap.Logger) error {
 }
 
 // checkLines holds the person and grant lines to the rules across lines
-// with the signers. This reader sees the box block alone: which apps
-// the file runs and whether it has a monitor channel are the walk's to
-// check (Walk).
+// with the signers, and a grant on an app to the apps the config runs
+// once Provision knows them. Whether the file has a monitor channel is
+// not this reader's to see: validate and the load say it (cmd/motel's
+// warnPeople, loadRegistry), so it is not asked here.
 func (a *App) checkLines(logger *zap.Logger, signers proof.Signers) error {
 	lines, err := a.lines(signers)
 	if err != nil {
 		return err
 	}
-	warnings, err := access.CheckLines(lines, nil)
+	var around *access.Around
+	if a.runsKnown {
+		around = &access.Around{Apps: a.runs, Channels: true}
+	}
+	warnings, err := access.CheckLines(lines, around)
 	if err != nil {
 		return err
 	}

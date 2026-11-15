@@ -443,3 +443,29 @@ func TestPersonNotRefusedAfterAStart(t *testing.T) {
 		}
 	}
 }
+
+// TestGrantOnAnAppNotRunRefusedAtLoad: a grant on an app the config's
+// liveswap block does not run fails the load, and so `motel validate`,
+// as the walk refuses it: the box app asks the liveswap app which apps
+// it runs. A config with no liveswap block runs none.
+func TestGrantOnAnAppNotRunRefusedAtLoad(t *testing.T) {
+	b := newPeopleBox(t)
+	b.install()
+	b.grants = append(b.grants, "grant alice@example.test viewer app shop")
+	cfgJSON, _, err := caddyconfig.GetAdapter("caddyfile").Adapt([]byte(b.caddyfile("http://"+peopleIdentity)), map[string]any{"filename": "Caddyfile"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cfg caddy.Config
+	if err := json.Unmarshal(cfgJSON, &cfg); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := caddy.ProvisionContext(&cfg); err == nil || !strings.Contains(err.Error(), "grant alice@example.test viewer app shop: the liveswap block runs no app shop") {
+		t.Errorf("a grant on an app not run: %v", err)
+	}
+	delete(cfg.AppsRaw, "liveswap")
+	delete(cfg.AppsRaw, "http")
+	if _, err := caddy.ProvisionContext(&cfg); err == nil || !strings.Contains(err.Error(), "viewer app a: the liveswap block runs no app a") {
+		t.Errorf("no liveswap block: %v", err)
+	}
+}
