@@ -1,6 +1,7 @@
 package liveswap
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -319,5 +320,89 @@ func TestWhoamiAndApps(t *testing.T) {
 	}
 	if w := sendTo(t, h, "GET", "/_motel/nothing", "Bearer "+globalToken(t)); w.Code != http.StatusNotFound || w.Result().Header.Get("Motel-Protocol") != "1" {
 		t.Errorf("a global source on another path: %d %v", w.Code, w.Result().Header)
+	}
+}
+
+// TestAddressList: a grant with a from list holds only from the listed
+// networks, at their bounds: the first and the last address of a prefix
+// are in it and the ones either side are not. A person left with no
+// grant from where the request came is refused with the flat 401 and a
+// journal line naming the key, the person and the address; one with a
+// grant left is told what that grant covers; a person with no grant at
+// all is still told who they are. The address is Caddy's client_ip when
+// it set one, the peer otherwise.
+func TestAddressList(t *testing.T) {
+	alice, bob, dave := accesstest.Ed25519(), accesstest.ECDSA(), accesstest.Ed25519()
+	var l access.Lines
+	for name, k := range map[string]accesstest.Key{"alice": alice, "bob": bob, "dave": dave} {
+		key, err := access.ParsePerson([]string{name, k.Type(), k.B64()})
+		if err != nil {
+			t.Fatal(err)
+		}
+		l.Keys = append(l.Keys, key)
+	}
+	for _, args := range [][]string{
+		{"alice", "viewer", "app", "demo", "from", "198.51.100.0/24", "2001:db8:5::/48"},
+		{"bob", "viewer", "box", "from", "203.0.113.9"},
+		{"bob", "viewer", "app", "demo"},
+	} {
+		g, err := access.ParseGrant(args)
+		if err != nil {
+			t.Fatal(err)
+		}
+		l.Grants = append(l.Grants, g)
+	}
+	reg := access.NewRegistry(personBox, l)
+	for _, c := range []struct {
+		who            accesstest.Key
+		name, from     string
+		clientIP       string // "": Caddy set none
+		target         string
+		code           int
+		refusedOutside bool
+	}{
+		{alice, "alice", "198.51.100.0:1234", "", "/demo", http.StatusOK, false},
+		{alice, "alice", "198.51.100.255:1234", "", "/demo", http.StatusOK, false},
+		{alice, "alice", "198.51.99.255:1234", "", "/demo", http.StatusUnauthorized, true},
+		{alice, "alice", "198.51.101.0:1234", "", "/demo", http.StatusUnauthorized, true},
+		{alice, "alice", "[2001:db8:5:ffff:ffff:ffff:ffff:ffff]:1234", "", "/demo", http.StatusOK, false},
+		{alice, "alice", "[2001:db8:6::]:1234", "", "/demo", http.StatusUnauthorized, true},
+		{alice, "alice", "[::ffff:198.51.100.7]:1234", "", "/demo", http.StatusOK, false},
+		{alice, "alice", "192.0.2.1:1234", "198.51.100.7", "/_motel/whoami", http.StatusOK, false},
+		{alice, "alice", "198.51.100.7:1234", "192.0.2.1", "/_motel/whoami", http.StatusUnauthorized, true},
+		{alice, "alice", "not an address", "", "/demo", http.StatusUnauthorized, true},
+		{bob, "bob", "203.0.113.9:1", "", "/demo", http.StatusOK, false},
+		{bob, "bob", "203.0.113.10:1", "", "/demo", http.StatusOK, false},
+		{bob, "bob", "203.0.113.10:1", "", "/ghost", http.StatusForbidden, false},
+		{bob, "bob", "203.0.113.9:1", "", "/ghost", http.StatusNotFound, false},
+		{dave, "dave", "192.0.2.1:1", "", "/_motel/whoami", http.StatusOK, false},
+	} {
+		h, _ := newTestHandler(t)
+		core, logs := observer.New(zap.InfoLevel)
+		h.logger = zap.New(core)
+		h.people = reg
+		req := httptest.NewRequest(http.MethodGet, "http://"+personBox+c.target, nil)
+		req.RemoteAddr = c.from
+		if c.clientIP != "" {
+			req = req.WithContext(context.WithValue(req.Context(), caddyhttp.VarsCtxKey, map[string]any{caddyhttp.ClientIPVarKey: c.clientIP}))
+		}
+		req.Header.Set("Authorization", token(c.who))
+		w := httptest.NewRecorder()
+		if err := h.ServeHTTP(w, req, nil); err != nil {
+			t.Fatal(err)
+		}
+		if w.Code != c.code {
+			t.Errorf("%s from %s (client_ip %q) GET %s: %d %s, want %d", c.name, c.from, c.clientIP, c.target, w.Code, w.Body, c.code)
+		}
+		lines := logs.FilterMessage("webhook auth failed").All()
+		if c.refusedOutside {
+			if len(lines) != 1 || !strings.Contains(lines[0].ContextMap()["refused"].(string), "outside-every-address-list") ||
+				lines[0].ContextMap()["person"] != c.name || lines[0].ContextMap()["key"] != c.who.Fingerprint() {
+				t.Errorf("%s from %s: journal %v", c.name, c.from, logs.All())
+			}
+			sameAnswer(t, c.name+" from "+c.from, w, sendTo(t, h, http.MethodGet, c.target))
+		} else if len(lines) != 0 {
+			t.Errorf("%s from %s: journal %v", c.name, c.from, logs.All())
+		}
 	}
 }

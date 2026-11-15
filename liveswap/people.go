@@ -2,10 +2,12 @@ package liveswap
 
 import (
 	"errors"
+	"net"
 	"net/http"
 	"net/netip"
 	"time"
 
+	"github.com/caddyserver/caddy/v2/modules/caddyhttp"
 	"go.uber.org/zap"
 
 	"github.com/smallhoursorg/motel/liveswap/access"
@@ -65,7 +67,22 @@ func AdmitPerson(w http.ResponseWriter, r *http.Request, g PersonGate, scopeKey,
 		return Person{}, false, g.Limiter.Refuse(r, g.Logger, scopeKey, scopeValue, reason, fields...).Write(write)
 	}
 	name, _ := g.Registry.Name(v.Fingerprint)
-	views, _ := g.Registry.Views(name, netip.Addr{})
+	// The address list: a grant whose list does not hold the request's
+	// address does not exist for this request. A person left with none,
+	// who holds some, is refused as a stranger is, so a key used from
+	// elsewhere learns nothing; the journal names the key, the person,
+	// the address the lists were held to (Caddy's client_ip) and the
+	// peer it came through, inside the same budgets.
+	addr := clientAddr(r)
+	views, granted := g.Registry.Views(name, addr)
+	if granted && views.Empty() {
+		shown := "unknown"
+		if addr.IsValid() {
+			shown = addr.String()
+		}
+		return Person{}, false, g.Limiter.Refuse(r, g.Logger, scopeKey, scopeValue, "person token refused: outside-every-address-list",
+			zap.String("key", v.Fingerprint), zap.String("person", name), zap.String("address", shown), zap.String("peer", r.RemoteAddr)).Write(write)
+	}
 	g.Limiter.Admit(r)
 	StampVersion(w.Header())
 	return Person{
@@ -73,4 +90,25 @@ func AdmitPerson(w http.ResponseWriter, r *http.Request, g PersonGate, scopeKey,
 		Token:     v,
 		Principal: access.Principal{Kind: access.Person, Name: name, Views: views},
 	}, true, nil
+}
+
+// clientAddr is the address a request came from as a grant's address
+// list is compared with: Caddy's client_ip (the peer, or the address it
+// forwarded for when the peer is in the server's trusted_proxies),
+// whole, not grouped as the failure budgets group it; the peer when
+// Caddy set none. The zero Addr when neither parses, which no list
+// holds.
+func clientAddr(r *http.Request) netip.Addr {
+	addr := r.RemoteAddr
+	if v, ok := caddyhttp.GetVar(r.Context(), caddyhttp.ClientIPVarKey).(string); ok && v != "" {
+		addr = v
+	}
+	if host, _, err := net.SplitHostPort(addr); err == nil {
+		addr = host
+	}
+	a, err := netip.ParseAddr(addr)
+	if err != nil {
+		return netip.Addr{}
+	}
+	return a.Unmap()
 }
