@@ -48,6 +48,7 @@ func TestRecoveryStates(t *testing.T) {
 		state    string  // is-active's answer
 		reloads  []error // reload results
 		recError string  // a rolling_back record's error
+		boxEnv   bool    // the set is _box.env alone: d and file are its, the Caddyfile stays prev
 		file     string  // the installed file at the end: prev, new, other
 		advanced bool
 		result   string // the terminal phase: a result file, or for init the journal's (it writes none)
@@ -82,6 +83,11 @@ func TestRecoveryStates(t *testing.T) {
 
 		{phase: phaseRollingBack, d: dPrev, state: "active", recError: msgRecordAfterReload, file: dPrev, result: phaseRolledBack, msg: msgRecordAfterReload, reloaded: 1},
 		{phase: phaseRollingBack, d: dNew, state: "active", recError: msgReloadFailed, file: dPrev, result: phaseRolledBack, msg: msgReloadFailed, reloaded: 1},
+		// A record with no error (none the applier writes: a hand edit)
+		// names no first reload: the reload succeeding, it reads as one a
+		// crash cut short, for the Caddyfile or the box's own env file.
+		{phase: phaseRollingBack, d: dNew, state: "active", file: dPrev, result: phaseRolledBack, msg: msgRolledBackInterrupted, reloaded: 1},
+		{phase: phaseRollingBack, boxEnv: true, d: dNew, state: "active", file: dPrev, result: phaseRolledBack, msg: msgRolledBackInterruptedFiles, reloaded: 1},
 		{phase: phaseRollingBack, d: dPrev, state: "active", reloads: []error{errReload}, file: dPrev, result: phaseUnknown, msg: msgPrevReloadFailed, reloaded: 1},
 		{phase: phaseRollingBack, d: dPrev, state: "active", recError: msgReloadFailed, reloads: []error{errReload}, file: dPrev, result: phaseUnknown, msg: msgBothReloads, reloaded: 1},
 		{phase: phaseRollingBack, d: dPrev, state: "active", recError: msgRecordAfterReload, reloads: []error{errReload}, file: dPrev, result: phaseUnknown, msg: msgPrevReloadFailed, reloaded: 1},
@@ -95,17 +101,32 @@ func TestRecoveryStates(t *testing.T) {
 			r.origin = originApplier
 		}
 		name := r.phase + "/" + string(r.origin) + "/d=" + r.d + "/" + r.state
+		if r.boxEnv {
+			name += "/" + boxSlot + ".env"
+		}
 		t.Run(name, func(t *testing.T) {
 			b := newTestBox(t)
 			v2 := boxFile(2, b.alice)
 			head := b.repo.commit(v2, &b.alice, b.base)
 			next := v2
-			if r.phase == phaseNoChange {
+			if r.phase == phaseNoChange || r.boxEnv {
 				next = b.v1
 			}
 			other := boxFile(9, b.alice)
 			files := map[string][]byte{dPrev: b.v1, dNew: next, dOther: other}
-			b.writeInstalled(files[r.d])
+			var set []envEntry
+			var installed map[string]string
+			var tree string
+			if r.boxEnv {
+				files = map[string][]byte{dPrev: []byte("NOTIFY_OPS_URL=old\n"), dNew: []byte("NOTIFY_OPS_URL=new\n"), dOther: []byte("NOTIFY_OPS_URL=other\n")}
+				b.secretsDirAs(0o750 | os.ModeSetgid)
+				b.putEnv(boxSlot, files[r.d], 0o640)
+				b.writeInstalled(b.v1)
+				set = []envEntry{{App: boxSlot, Prev: files[dPrev], PrevSHA256: digest(files[dPrev]), NewSHA256: digest(files[dNew])}}
+				installed, tree = map[string]string{boxSlot: digest(files[dNew])}, strings.Repeat("e", 40)
+			} else {
+				b.writeInstalled(files[r.d])
+			}
 			if r.state != "" {
 				b.sd.states = []string{r.state}
 			}
@@ -118,7 +139,7 @@ func TestRecoveryStates(t *testing.T) {
 			b.lyingRecord(record{
 				ID: id, Origin: r.origin, Phase: r.phase, Commit: head, Path: testPath, Signer: signer,
 				Prev: b.v1, PrevSHA256: digest(b.v1), NewSHA256: digest(next), BoxWebhook: "deploy.example.com",
-				Error: r.recError,
+				Error: r.recError, Secrets: set, SecretsTree: tree, SecretsInstalled: installed,
 			})
 			// A temporary the crash left beside the Caddyfile goes too.
 			if err := os.WriteFile(filepath.Join(b.path("etc/motel"), ".Caddyfile.box-"+id), []byte("half"), 0o644); err != nil {
@@ -128,7 +149,10 @@ func TestRecoveryStates(t *testing.T) {
 				t.Fatal(err)
 			}
 			b.settled()
-			if got := string(b.installed()); got != string(files[r.file]) {
+			switch {
+			case r.boxEnv && (string(b.env(boxSlot)) != string(files[r.file]) || string(b.installed()) != string(b.v1)):
+				t.Errorf("%s.env is not %s, or the Caddyfile not the one it was", boxSlot, r.file)
+			case !r.boxEnv && string(b.installed()) != string(files[r.file]):
 				t.Errorf("installed file is not %s", r.file)
 			}
 			if adv := b.applied().SHA == head; adv != r.advanced {

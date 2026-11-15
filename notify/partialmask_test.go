@@ -1,0 +1,295 @@
+package notify
+
+import (
+	"encoding/base64"
+	"encoding/hex"
+	"net/http"
+	"slices"
+	"strings"
+	"testing"
+)
+
+// The topics and tokens below are made up for these tests.
+const (
+	pmTopic   = "ops-7f3a9c2e1b"                                            // gitleaks:allow — made up for this test
+	pmNtfy    = "https://ntfy.sh/" + pmTopic                                // gitleaks:allow — made up for this test
+	pmSlackTk = "Xq7Lm2Nv9Rt4Kw8Pz3Ab"                                      // gitleaks:allow — made up for this test
+	pmSlack   = "https://hooks.slack.com/services/T0AB1/B0CD2/" + pmSlackTk // gitleaks:allow — made up for this test
+	pmJSONSeg = "endpoint-for-alerts"
+	pmJSON    = "https://alerts.example.com/hooks/" + pmJSONSeg + "?x=1"
+	pmShort   = "https://ntfy.sh/ops7"
+)
+
+func pmChannels() ([]Channel, map[string]string) {
+	return []Channel{
+		{Name: "ops", Kind: "ntfy", Secret: "NOTIFY_OPS_URL"},
+		{Name: "team", Kind: "slack", Secret: "NOTIFY_TEAM_URL"},
+		{Name: "hook", Kind: "json", Secret: "NOTIFY_HOOK_URL"},
+		{Name: "short", Kind: "ntfy", Secret: "NOTIFY_SHORT_URL"},
+	}, map[string]string{
+		"NOTIFY_OPS_URL":   pmNtfy,
+		"NOTIFY_TEAM_URL":  pmSlack,
+		"NOTIFY_HOOK_URL":  pmJSON,
+		"NOTIFY_SHORT_URL": pmShort,
+	}
+}
+
+// TestPartialMask: a channel URL's last path segment, the credential on
+// its own (an ntfy topic, a Slack hook's token), is masked alone as
+// [redacted:partial:KEY], in its encoded forms too; the whole URL keeps
+// [redacted:KEY]. A json channel's path and a segment under 8
+// characters are not taken.
+func TestPartialMask(t *testing.T) {
+	channels, secrets := pmChannels()
+	te := newTestEngine(t)
+	te.known = knownValues(secrets, channels, "")
+	cases := []struct{ in, want string }{
+		{"disk on " + pmTopic + " is full", "disk on [redacted:partial:NOTIFY_OPS_URL] is full"},
+		{"posting to " + pmNtfy + " failed", "posting to [redacted:NOTIFY_OPS_URL] failed"},
+		{"b64 " + base64.StdEncoding.EncodeToString([]byte(pmTopic)), "b64 [redacted:partial:NOTIFY_OPS_URL]"},
+		{"hex " + hex.EncodeToString([]byte(pmTopic)), "hex [redacted:partial:NOTIFY_OPS_URL]"},
+		{`json "` + pmTopic + `"`, `json "[redacted:partial:NOTIFY_OPS_URL]"`},
+		{"token " + pmSlackTk, "token [redacted:partial:NOTIFY_TEAM_URL]"},
+		{"hook " + pmSlack, "hook [redacted:NOTIFY_TEAM_URL]"},
+		{"seg " + pmJSONSeg + " here", "seg " + pmJSONSeg + " here"},
+		{"topic ops7 here", "topic ops7 here"},
+	}
+	for _, c := range cases {
+		if got := te.clean(c.in); got != c.want {
+			t.Errorf("clean(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+	// Through the engine to the post, as an external producer's summary.
+	ev := deployFailed()
+	ev.Summary = "check " + pmTopic
+	te.report(ev)
+	if got := te.drain(); len(got) != 1 || got[0].Annotations["summary"] != "check [redacted:partial:NOTIFY_OPS_URL]" {
+		t.Fatalf("posts = %+v", got)
+	}
+}
+
+// TestPartialKnownValuesNameNoSecret: the derived entries are labels of
+// the marker alone. What reads the secrets (resolve, the missing-secret
+// check, the _box slot) reads the file's map, never knownValues, so a
+// partial: name is never a secret a user is told is missing; and every
+// entry knownValues adds beyond the file's is one of them.
+func TestPartialKnownValuesNameNoSecret(t *testing.T) {
+	channels, secrets := pmChannels()
+	known := knownValues(secrets, channels, "")
+	var partial []string
+	for _, kv := range known {
+		k, _, _ := strings.Cut(kv, "=")
+		if _, ok := secrets[k]; ok {
+			continue
+		}
+		if !strings.HasPrefix(k, partialKeyPrefix) {
+			t.Fatalf("an entry that is neither a secret nor partial: %q", k)
+		}
+		partial = append(partial, kv)
+	}
+	slices.Sort(partial)
+	want := []string{
+		"partial:NOTIFY_OPS_URL=" + pmTopic,
+		"partial:NOTIFY_SHORT_URL=ops7", // the filter skips it: under 8
+		"partial:NOTIFY_TEAM_URL=" + pmSlackTk,
+	}
+	if !slices.Equal(partial, want) {
+		t.Fatalf("partial = %q, want %q", partial, want)
+	}
+	// A channel whose secret the file does not hold adds nothing.
+	if got := knownValues(nil, channels, ""); len(got) != 0 {
+		t.Fatalf("no secrets: %q", got)
+	}
+}
+
+// TestURLCredentials: the part of each kind's URL that is its
+// credential on its own, past a fixed suffix, as written and decoded,
+// and ntfy's auth parameter; nothing of a json URL.
+func TestURLCredentials(t *testing.T) {
+	cases := []struct {
+		kind, in string
+		want     []string
+	}{
+		{"ntfy", "https://ntfy.sh/topic-abc", []string{"topic-abc"}},
+		{"ntfy", "https://ntfy.sh/topic-abc/", []string{"topic-abc"}},
+		{"ntfy", "https://ntfy.sh/topic-abc#frag", []string{"topic-abc"}},
+		{"ntfy", "https://ntfy.sh/topic-abc/publish", []string{"topic-abc"}},
+		{"ntfy", "https://ntfy.sh/topic-abc/trigger", []string{"topic-abc"}},
+		{"ntfy", "https://ntfy.sh/publish", []string{"publish"}}, // a topic named publish
+		{"ntfy", "https://ntfy.sh/alerts%5Fops", []string{"alerts%5Fops", "alerts_ops"}},
+		{"ntfy", "https://ntfy.sh/operator-alerts/%70ublish", []string{"operator-alerts"}}, // an escaped suffix is the suffix
+		{"discord", "https://discord.com/api/webhooks/123/tok/%73lack", []string{"tok"}},
+		{"ntfy", "https://ntfy.example.com/ops?auth=QmVhcmVyIHRrX2FiYw", []string{"ops", "QmVhcmVyIHRrX2FiYw"}}, // gitleaks:allow — made up for this test
+		{"slack", "https://hooks.slack.com/services/T0/B0/tok", []string{"tok"}},
+		{"slack", "https://hooks.slack.com/services/T0/B0/tok?auth=x", []string{"tok"}},
+		{"discord", "https://discord.com/api/webhooks/123/tok", []string{"tok"}},
+		{"discord", "https://discord.com/api/webhooks/123/tok/slack", []string{"tok"}},
+		{"slack", "https://hooks.example.com/hook/slack", []string{"slack"}}, // Slack's own URL has no suffix
+		{"json", "https://alerts.example.com/hooks/endpoint", nil},
+		{"ntfy", "https://ntfy.sh/", nil},
+		{"ntfy", "https://ntfy.sh", nil},
+		{"ntfy", "not a url", nil},
+		{"ntfy", "", nil},
+	}
+	for _, c := range cases {
+		if got := urlCredentials(c.kind, c.in); !slices.Equal(got, c.want) {
+			t.Errorf("urlCredentials(%s, %q) = %q, want %q", c.kind, c.in, got, c.want)
+		}
+	}
+}
+
+// TestPartialMaskPastASuffix: a topic before ntfy's /publish, and one
+// written escaped in the file, are masked alone; a json line on the
+// secret an ntfy line reads, listed first, takes nothing from it.
+func TestPartialMaskPastASuffix(t *testing.T) {
+	secrets := map[string]string{
+		"NOTIFY_OPS_URL": "https://ntfy.sh/" + pmTopic + "/publish",
+		"NOTIFY_ESC_URL": "https://ntfy.sh/alerts%5Fops%5F7f3a",
+	}
+	channels := []Channel{
+		{Name: "raw", Kind: "json", Secret: "NOTIFY_OPS_URL"},
+		{Name: "ops", Kind: "ntfy", Secret: "NOTIFY_OPS_URL"},
+		{Name: "ops-crit", Kind: "ntfy", Secret: "NOTIFY_OPS_URL", Severity: SeverityCritical},
+		{Name: "esc", Kind: "ntfy", Secret: "NOTIFY_ESC_URL"},
+	}
+	te := newTestEngine(t)
+	te.known = knownValues(secrets, channels, "")
+	for in, want := range map[string]string{
+		"check " + pmTopic:    "check [redacted:partial:NOTIFY_OPS_URL]",
+		"see alerts_ops_7f3a": "see [redacted:partial:NOTIFY_ESC_URL]",
+	} {
+		if got := te.clean(in); got != want {
+			t.Errorf("clean(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+// TestServeSendRefusesATopicAsName: a name, instance or source is the
+// key and is not rewritten, so one holding a channel's topic is
+// refused, as one holding its URL is.
+func TestServeSendRefusesATopicAsName(t *testing.T) {
+	withEngine(t)
+	channels, secrets := pmChannels()
+	theEngine.known = knownValues(secrets, channels, "")
+	r := goodSend()
+	r.Instance = pmTopic
+	if _, err := callAdmin(t, serveSend, http.MethodPost, r); apiStatus(err) != http.StatusUnprocessableEntity || !strings.Contains(err.Error(), "filter masks") {
+		t.Fatalf("a topic as the instance: %v", err)
+	}
+	r = goodSend()
+	r.Source = pmTopic
+	if _, err := callAdmin(t, serveSend, http.MethodPost, r); apiStatus(err) != http.StatusUnprocessableEntity || !strings.Contains(err.Error(), "filter masks") {
+		t.Fatalf("a topic as the source: %v", err)
+	}
+}
+
+// The heartbeat's check UUID below is made up for these tests.
+const (
+	pmHCUUID = "5b7a3c1e-9d2f-4e8a-b6c0-1f2e3d4c5b6a" // gitleaks:allow — made up for this test
+	pmHC     = "https://hc-ping.com/" + pmHCUUID      // gitleaks:allow — made up for this test
+)
+
+// TestHeartbeatPartialMask: the heartbeat's ping URL contributes its
+// UUID, past Healthchecks' /start, /fail, /log or exit status, so the
+// UUID alone is masked as [redacted:partial:KEY] and the whole URL keeps
+// [redacted:KEY]; a part under 8 characters is skipped by the filter;
+// with no heartbeat line nothing is added.
+func TestHeartbeatPartialMask(t *testing.T) {
+	const key = "NOTIFY_HC_URL"
+	for _, u := range []string{pmHC, pmHC + "/fail", pmHC + "/start", pmHC + "/log", pmHC + "/1", pmHC + "/"} {
+		secrets := map[string]string{key: u}
+		te := newTestEngine(t)
+		te.known = knownValues(secrets, nil, key)
+		for in, want := range map[string]string{
+			"ping " + pmHCUUID + " here": "ping [redacted:partial:" + key + "] here",
+			"ping " + u + " failed":      "ping [redacted:" + key + "] failed",
+		} {
+			if got := te.clean(in); got != want {
+				t.Errorf("%s: clean(%q) = %q, want %q", u, in, got, want)
+			}
+		}
+	}
+
+	// Through the engine to the post, as an external producer's summary.
+	te := newTestEngine(t)
+	te.known = knownValues(map[string]string{key: pmHC}, nil, key)
+	ev := deployFailed()
+	ev.Summary = "check " + pmHCUUID
+	te.report(ev)
+	if got := te.drain(); len(got) != 1 || got[0].Annotations["summary"] != "check [redacted:partial:"+key+"]" {
+		t.Fatalf("posts = %+v", got)
+	}
+
+	// Under 8 characters: added, and the filter skips it.
+	te = newTestEngine(t)
+	te.known = knownValues(map[string]string{key: "https://hc.example.com/abc1234"}, nil, key)
+	if got := te.clean("ping abc1234 here"); got != "ping abc1234 here" {
+		t.Errorf("a short heartbeat part: %q", got)
+	}
+
+	// No heartbeat line: the file's entry alone.
+	secrets := map[string]string{key: pmHC}
+	if got := knownValues(secrets, nil, ""); !slices.Equal(got, []string{key + "=" + pmHC}) {
+		t.Fatalf("no heartbeat line: %q", got)
+	}
+	// A heartbeat line whose secret the file does not hold adds nothing.
+	if got := knownValues(nil, nil, key); len(got) != 0 {
+		t.Fatalf("no heartbeat secret: %q", got)
+	}
+	if got := knownValues(secrets, nil, key); !slices.Equal(got, []string{key + "=" + pmHC, "partial:" + key + "=" + pmHCUUID}) {
+		t.Fatalf("known = %q", got)
+	}
+}
+
+// TestHeartbeatURLCredentials: Healthchecks' ping endpoints past the
+// UUID are suffixes, an exit status 0 to 255 included; a number over
+// 255 or a channel kind's suffix is not.
+// TestServeSendRefusesTheHeartbeatsUUID: the heartbeat's check UUID as
+// a name, instance or source is refused, as a channel's topic is.
+func TestServeSendRefusesTheHeartbeatsUUID(t *testing.T) {
+	withEngine(t)
+	theEngine.known = knownValues(map[string]string{"NOTIFY_HC_URL": pmHC}, nil, "NOTIFY_HC_URL")
+	r := goodSend()
+	r.Instance = pmHCUUID
+	if _, err := callAdmin(t, serveSend, http.MethodPost, r); apiStatus(err) != http.StatusUnprocessableEntity || !strings.Contains(err.Error(), "filter masks") {
+		t.Fatalf("the heartbeat's UUID as the instance: %v", err)
+	}
+}
+
+// TestIsSuffixEmpty: an empty segment is no exit status.
+func TestIsSuffixEmpty(t *testing.T) {
+	if isSuffix(heartbeatKind, "") {
+		t.Fatal(`isSuffix(heartbeat, "") is true`)
+	}
+}
+
+func TestHeartbeatURLCredentials(t *testing.T) {
+	cases := []struct {
+		in   string
+		want []string
+	}{
+		{"https://hc-ping.com/uuid-abc", []string{"uuid-abc"}},
+		{"https://hc-ping.com/uuid-abc/start", []string{"uuid-abc"}},
+		{"https://hc-ping.com/uuid-abc/fail", []string{"uuid-abc"}},
+		{"https://hc-ping.com/uuid-abc/log", []string{"uuid-abc"}},
+		{"https://hc-ping.com/uuid-abc/%66ail", []string{"uuid-abc"}},
+		{"https://hc-ping.com/uuid-abc/0", []string{"uuid-abc"}},
+		{"https://hc-ping.com/uuid-abc/255", []string{"uuid-abc"}},
+		{"https://hc-ping.com/uuid-abc/256", []string{"256"}},
+		{"https://hc-ping.com/uuid-abc/publish", []string{"publish"}},
+		{"https://hc-ping.com/uuid-abc?rid=x", []string{"uuid-abc"}},
+		{"https://hc-ping.com/ping-key/my-slug/fail", []string{"my-slug"}}, // the slug form: the slug, not the key
+		{"https://hc-ping.com/fail", []string{"fail"}},
+		{"https://hc-ping.com/", nil},
+	}
+	for _, c := range cases {
+		if got := urlCredentials(heartbeatKind, c.in); !slices.Equal(got, c.want) {
+			t.Errorf("urlCredentials(heartbeat, %q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+	// The heartbeat's suffixes are its own: an ntfy topic named fail is
+	// the topic.
+	if got := urlCredentials("ntfy", "https://ntfy.sh/ops-alerts/fail"); !slices.Equal(got, []string{"fail"}) {
+		t.Errorf("ntfy /fail: %q", got)
+	}
+}

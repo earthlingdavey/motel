@@ -1,0 +1,636 @@
+package notify
+
+import (
+	"context"
+	"fmt"
+	"slices"
+	"strings"
+	"testing"
+	"time"
+)
+
+const metricsHead = `# HELP alertmanager_notifications_failed_total The total number of failed notifications.
+# TYPE alertmanager_notifications_failed_total counter
+`
+
+func failedLine(integration, receiver, reason string, v int) string {
+	if receiver == "" {
+		return fmt.Sprintf("%s{integration=%q,reason=%q} %d\n", failedMetric, integration, reason, v)
+	}
+	return fmt.Sprintf("%s{integration=%q,receiver_name=%q,reason=%q} %d\n", failedMetric, integration, receiver, reason, v)
+}
+
+func TestFailWatchRises(t *testing.T) {
+	var w failWatch
+	s := func(r string, v float64) failedSample { return failedSample{"webhook", r, "other", v} }
+	if got := w.rises([]failedSample{s("a", 5), s("b", 0)}, false); len(got) != 0 {
+		t.Fatalf("the first read is a baseline: %+v", got)
+	}
+	if got := w.rises([]failedSample{s("a", 5), s("b", 0)}, false); len(got) != 0 {
+		t.Fatalf("nothing rose: %+v", got)
+	}
+	if got := w.rises([]failedSample{s("a", 6), s("b", 0), s("c", 2)}, false); len(got) != 2 {
+		t.Fatalf("a rose, c appeared non-zero: %+v", got)
+	}
+	// A load the read gives no stamp of: the counters start over.
+	if got := w.rises([]failedSample{s("a", 1), s("b", 0), s("c", 0)}, false); len(got) != 1 || got[0].receiver != "a" {
+		t.Fatalf("after a restart: %+v", got)
+	}
+	// A load the read's stamp says came since: a's 1 is a failure since
+	// it, though the last read was 1 too.
+	if got := w.rises([]failedSample{s("a", 1), s("b", 0), s("c", 0)}, true); len(got) != 1 || got[0].receiver != "a" {
+		t.Fatalf("after a load back to the same count: %+v", got)
+	}
+	// The first read, of a load after motel started, is no baseline.
+	var fresh failWatch
+	if got := fresh.rises([]failedSample{s("a", 1), s("b", 0)}, true); len(got) != 1 || got[0].receiver != "a" {
+		t.Fatalf("the first read after a load since the start: %+v", got)
+	}
+}
+
+// loadedAt is Alertmanager's last config load as its /metrics has it.
+func loadedAt(stamp float64) string {
+	return fmt.Sprintf("# TYPE %s gauge\n%s %v\n", loadedMetric, loadedMetric, stamp)
+}
+
+// TestLoadSince: a stamp other than the last read's is a load since
+// (an earlier one too: the wall clock stepped back between two loads),
+// and the first read's is compared with motel's start; a read without
+// a stamp, or after reads that never had one, is none.
+func TestLoadSince(t *testing.T) {
+	start := time.Unix(1_794_000_000, 0)
+	w := failWatch{started: start}
+	at := func(stamp float64) amMetrics { return amMetrics{loaded: stamp} }
+	if w.loadSince(at(1_793_999_999)) {
+		t.Fatal("a load before motel started is not the first read's")
+	}
+	if !w.loadSince(at(1_794_000_001)) {
+		t.Fatal("a load after motel started counts from 0 at the first read")
+	}
+	if (&failWatch{}).loadSince(at(1_794_000_001)) {
+		t.Fatal("a watch with no start reads a baseline first")
+	}
+	w.prev, w.loaded = map[string]float64{}, 1_794_000_100
+	for stamp, want := range map[float64]bool{0: false, 1_794_000_050: true, 1_794_000_100: false, 1_794_000_100.5: true} {
+		if got := w.loadSince(at(stamp)); got != want {
+			t.Errorf("last read's load %v, this read's %v: loadSince = %v", w.loaded, stamp, got)
+		}
+	}
+	w.loaded = 0 // no read so far had a stamp
+	if w.loadSince(at(1_794_000_100)) {
+		t.Fatal("the first stamp after reads that never had one is no load since")
+	}
+}
+
+// TestChannelFailedAcrossAConfigLoad: 1 before a config load, the load
+// (0), and one failure before the next minute's read (1 again) is a
+// rise: the read's load stamp is not the last read's. Compared with the
+// last read alone it is none. A read without the stamp keeps the last
+// one, so the load after it is still seen; so is one stamped earlier
+// (the clock stepped back).
+func TestChannelFailedAcrossAConfigLoad(t *testing.T) {
+	te, _, body, read := holdEngine(t, fullBlock)
+	line := func(v int) string { return metricsHead + failedLine("webhook", "event-warning-bob", "clientError", v) }
+	for i, c := range []struct {
+		body  string
+		rises bool
+	}{
+		{line(1) + loadedAt(1_794_000_000), false},   // baseline: a failure before
+		{line(1) + loadedAt(1_794_000_100.25), true}, // a load, then a failure
+		{line(1) + loadedAt(1_794_000_100.25), false},
+		{line(0) + loadedAt(1_794_000_200), false}, // a load, nothing since
+		{line(1) + loadedAt(1_794_000_200), true},
+		{line(1), false}, // a body without the stamp
+		{line(1) + loadedAt(1_794_000_300), true},
+		{line(1) + loadedAt(1_794_000_250), true}, // the clock stepped back
+	} {
+		te.advance(20 * time.Minute) // a key's bucket takes four an hour
+		*body = c.body
+		te.scrapeFailed(context.Background(), read)
+		got := te.drain()
+		if c.rises != (len(got) == 1 && got[0].Labels["suspects"] == "bob") || !c.rises && len(got) != 0 {
+			t.Fatalf("read %d: posts %+v, want a ChannelFailed: %v", i, got, c.rises)
+		}
+	}
+}
+
+// TestFirstReadCountsFromALoadAfterTheStart: Alertmanager started after
+// motel (setup's start, its socket's at motel's first post), and a
+// failure before motel's first read is told; a load from before motel
+// started is a baseline, which an earlier motel may have told of. The
+// reload motel's start asked for counts whatever its stamp says (the
+// clock stepped back after the start), and a body without receiver
+// names (no stamp read) stays a baseline.
+func TestFirstReadCountsFromALoadAfterTheStart(t *testing.T) {
+	for _, c := range []struct {
+		stamp    float64
+		reloaded bool
+		names    bool
+		want     int
+	}{
+		{1_794_000_030, false, true, 1},
+		{1_793_999_000, false, true, 0},
+		{1_793_999_000, true, true, 1},
+		{1_794_000_030, true, false, 0},
+	} {
+		te, _, body, read := holdEngine(t, fullBlock)
+		te.fail.started = time.Unix(1_794_000_000, 0)
+		if c.reloaded {
+			te.noteReload()
+		}
+		receiver := "event-warning-bob"
+		if !c.names {
+			receiver = ""
+		}
+		*body = metricsHead + failedLine("webhook", receiver, "clientError", 1) + loadedAt(c.stamp)
+		te.scrapeFailed(context.Background(), read)
+		if got := te.drain(); len(got) != c.want {
+			t.Errorf("%+v: posts %+v, want %d", c, got, c.want)
+		}
+	}
+}
+
+func TestScrapeFailedTellsTheOtherOperatorChannels(t *testing.T) {
+	te := newTestEngine(t)
+	a := mustParse(t, fullBlock)
+	r, err := a.resolve(testTrust(), testSecrets())
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.cfg = r
+	_, _, a.receivers = render(r, testStateDir)
+	te.setConfig(a, te.p, te.known, te.logger) // no goroutine: the test drains
+
+	body := metricsHead + failedLine("slack", "event-warning-ops", "clientError", 0) + failedLine("webhook", "", "other", 0)
+	read := func(context.Context) ([]byte, error) { return []byte(body), nil }
+	te.scrapeFailed(context.Background(), read) // baseline
+	if len(te.queue) != 0 {
+		t.Fatal("the baseline posted")
+	}
+	// ops's receiver for warning events failed, its slack config the
+	// only one in it: pager, the other operator channel, takes
+	// criticals alone: a ChannelFailed is a warning, so nobody is told,
+	// and the journal says so.
+	body = metricsHead + failedLine("slack", "event-warning-ops", "clientError", 1) + failedLine("webhook", "", "other", 0)
+	te.scrapeFailed(context.Background(), read)
+	if got := te.drain(); len(got) != 0 {
+		t.Fatalf("a critical-only channel was told a warning: %+v", got)
+	}
+	lines := te.lines("monitor: channel failed")
+	if len(lines) != 1 || lines[0].ContextMap()["suspects"] == nil {
+		t.Fatalf("lines = %+v", lines)
+	}
+	// With pager's floor at warning, it is told.
+	for i := range a.Channels {
+		if a.Channels[i].Name == "pager" {
+			a.Channels[i].Severity = SeverityWarning
+		}
+	}
+	if a.cfg, err = a.resolve(testTrust(), testSecrets()); err != nil {
+		t.Fatal(err)
+	}
+	te.setConfig(a, te.p, te.known, te.logger)
+	body = metricsHead + failedLine("slack", "event-warning-ops", "clientError", 2) + failedLine("webhook", "", "other", 0)
+	te.scrapeFailed(context.Background(), read)
+	got := te.drain()
+	if len(got) != 1 || got[0].Labels[labelChannel] != "pager" || got[0].Labels["suspects"] != "ops" || got[0].Labels["alertname"] != "ChannelFailed" {
+		t.Fatalf("posts = %+v", got)
+	}
+	// vmalert's rule posts these labels too, and Alertmanager merges the
+	// two only while they are the same: no occurred_at here.
+	if _, ok := got[0].Labels[labelOccurredAt]; ok || len(got[0].Labels) != 6 {
+		t.Fatalf("ChannelFailed's labels = %v", got[0].Labels)
+	}
+	// Without receiver_name, every webhook channel is a suspect (pager,
+	// bob): ops is told.
+	body = metricsHead + failedLine("slack", "event-warning-ops", "clientError", 2) + failedLine("webhook", "", "other", 4)
+	te.scrapeFailed(context.Background(), read)
+	got = te.drain()
+	if len(got) != 1 || got[0].Labels[labelChannel] != "ops" || !strings.Contains(got[0].Labels["suspects"], "pager") {
+		t.Fatalf("posts = %+v", got)
+	}
+}
+
+func TestSuspects(t *testing.T) {
+	w := failWatch{
+		kinds:    map[string]string{"ops": "slack", "pager": "webhook", "bob": "webhook"},
+		channels: map[string][]string{"ch-pager": {"pager"}, "state-warning-bob": {"bob"}, "state-warning-ops": {"ops"}},
+	}
+	cases := []struct {
+		s    failedSample
+		want []string
+	}{
+		{failedSample{integration: "webhook", receiver: "ch-pager"}, []string{"pager"}},
+		{failedSample{integration: "webhook", receiver: "state-warning-bob"}, []string{"bob"}},
+		{failedSample{integration: "slack", receiver: "state-warning-ops"}, []string{"ops"}},
+		{failedSample{integration: "webhook"}, []string{"bob", "pager"}},
+		{failedSample{integration: "discord", receiver: "state-warning-bob"}, nil},
+	}
+	for _, c := range cases {
+		if got := w.suspects(c.s); !slices.Equal(got, c.want) {
+			t.Errorf("suspects(%+v) = %v, want %v", c.s, got, c.want)
+		}
+	}
+}
+
+func TestHeartbeatFailureSuspectsNoChannel(t *testing.T) {
+	_, _, recv := renderFull(t)
+	w := failWatch{kinds: map[string]string{"pager": "webhook", "bob": "webhook", "ops": "slack"}, channels: recv}
+	if got := w.suspects(failedSample{integration: "webhook", receiver: "heartbeat"}); len(got) != 0 {
+		t.Fatalf("a failing heartbeat blamed %v", got)
+	}
+}
+
+// TestEachReceiversFailureNamesItsChannelAlone: with a receiver per
+// channel, the failed counter of any receiver of the full block names
+// that receiver's channel and no other, json and ntfy (one integration,
+// webhook) among them.
+func TestEachReceiversFailureNamesItsChannelAlone(t *testing.T) {
+	a := mustParse(t, fullBlock)
+	r, err := a.resolve(testTrust(), testSecrets())
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _, recv := render(r, testStateDir)
+	w := failWatch{kinds: map[string]string{}, channels: recv}
+	for name, ch := range r.channels {
+		w.kinds[name] = channelKinds[ch.Kind]
+	}
+	n := 0
+	for name, chans := range recv {
+		if name == "heartbeat" {
+			continue
+		}
+		if len(chans) != 1 {
+			t.Fatalf("receiver %s holds %v", name, chans)
+		}
+		if got := w.suspects(failedSample{integration: w.kinds[chans[0]], receiver: name}); !slices.Equal(got, chans) {
+			t.Errorf("a failure of %s names %v, want %v", name, got, chans)
+		}
+		n++
+	}
+	if n < 20 {
+		t.Fatalf("only %d receivers", n)
+	}
+}
+
+// TestScrapeFailedNamesOneWebhookChannel: bob (json) and pager (ntfy)
+// are one integration, and both hear shop's criticals. bob's failure
+// names bob alone, and ops, an operator channel that is not a suspect,
+// is told; under a receiver both shared, the failure named both.
+func TestScrapeFailedNamesOneWebhookChannel(t *testing.T) {
+	te := newTestEngine(t)
+	a := mustParse(t, fullBlock)
+	r, err := a.resolve(testTrust(), testSecrets())
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.cfg = r
+	_, _, a.receivers = render(r, testStateDir)
+	te.setConfig(a, te.p, te.known, te.logger)
+	body := metricsHead + failedLine("webhook", "event-critical-bob", "clientError", 0) + failedLine("webhook", "event-critical-pager", "clientError", 0)
+	read := func(context.Context) ([]byte, error) { return []byte(body), nil }
+	te.scrapeFailed(context.Background(), read)
+	body = metricsHead + failedLine("webhook", "event-critical-bob", "clientError", 1) + failedLine("webhook", "event-critical-pager", "clientError", 0)
+	te.scrapeFailed(context.Background(), read)
+	got := te.drain()
+	if len(got) != 1 || got[0].Labels[labelChannel] != "ops" || got[0].Labels["suspects"] != "bob" {
+		t.Fatalf("posts = %+v", got)
+	}
+	if len(te.untold) != 0 {
+		t.Fatalf("a failure told to ops holds the heartbeat: %+v", te.untold)
+	}
+}
+
+// amLines is one receiver's counters as Alertmanager's /metrics has
+// them (a webhook's): deliveries is attempts that did not fail.
+func amLines(receiver string, failed, requests, requestsFailed int) string {
+	const integration = "webhook"
+	return failedLine(integration, receiver, "clientError", failed) +
+		fmt.Sprintf("%s{integration=%q,receiver_name=%q} %d\n", requestsMetric, integration, receiver, requests) +
+		fmt.Sprintf("%s{integration=%q,receiver_name=%q} %d\n", requestsFailedMetric, integration, receiver, requestsFailed)
+}
+
+// holdEngine is an engine serving a block whose one operator channel,
+// ops (ntfy), has no other channel to hear its failure, and read is
+// Alertmanager's /metrics as *body says.
+func holdEngine(t *testing.T, block string) (*testEngine, *App, *string, func(context.Context) ([]byte, error)) {
+	t.Helper()
+	te := newTestEngine(t)
+	a := mustParse(t, block)
+	r, err := a.resolve(testTrust(), testSecrets())
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.cfg = r
+	_, _, a.receivers = render(r, testStateDir)
+	te.setConfig(a, te.p, te.known, te.logger)
+	body := new(string)
+	return te, a, body, func(context.Context) ([]byte, error) { return []byte(*body), nil }
+}
+
+const oneChannelBlock = `monitor {
+	channel ops ntfy {secret.NOTIFY_OPS_URL}
+	operator ops
+	heartbeat {secret.NOTIFY_HC_URL}
+}`
+
+// counters is ops's two receivers in holdEngine's block that the test
+// moves: its warning events' and its own (motel monitor test's).
+func counters(failed, events, eventsFailed, tests int) string {
+	return metricsHead + amLines("event-warning-ops", failed, events, eventsFailed) +
+		amLines("ch-ops", 0, tests, 0) + amLines("heartbeat", 0, 9, 0)
+}
+
+func heartbeats(te *testEngine) int {
+	te.tick()
+	return countAlert(te.drain(), alertWatchdog)
+}
+
+// TestHeartbeatHeldWhileAFailureIsToldToNoChannel: the one channel
+// fails, and nobody can be told. After heartbeatHoldAfter with no
+// delivery through it, motel stops posting Watchdog, so the check off
+// the box reports the box down; a delivery through the channel (a test)
+// resumes it.
+func TestHeartbeatHeldWhileAFailureIsToldToNoChannel(t *testing.T) {
+	te, _, body, read := holdEngine(t, oneChannelBlock)
+	*body = counters(0, 3, 0, 0)
+	te.scrapeFailed(context.Background(), read) // baseline
+	if heartbeats(te) != 1 {
+		t.Fatal("no heartbeat before any failure")
+	}
+	*body = counters(1, 4, 1, 0)
+	te.scrapeFailed(context.Background(), read)
+	if got := te.drain(); len(got) != 0 {
+		t.Fatalf("told someone: %+v", got)
+	}
+	l := te.lines("monitor: channel failed")
+	if len(l) != 1 || len(l[0].ContextMap()["told"].([]interface{})) != 0 {
+		t.Fatalf("lines = %+v", l)
+	}
+	// Not yet: Alertmanager sends a failed notification again at the
+	// group's next flushes.
+	for range 4 {
+		te.advance(time.Minute)
+		te.scrapeFailed(context.Background(), read)
+		if heartbeats(te) != 1 {
+			t.Fatalf("held at %v", te.at)
+		}
+	}
+	te.advance(time.Minute)
+	te.scrapeFailed(context.Background(), read)
+	held := te.lines("monitor: heartbeat held: a failed delivery no channel was told of; the heartbeat's check off the box will report this box down")
+	if len(held) != 1 || !slices.Equal(stringsOf(held[0].ContextMap()["suspects"]), []string{"ops"}) {
+		t.Fatalf("held lines = %+v", held)
+	}
+	for range 10 {
+		te.advance(time.Minute)
+		te.scrapeFailed(context.Background(), read)
+		if heartbeats(te) != 0 {
+			t.Fatalf("a heartbeat while held, at %v", te.at)
+		}
+	}
+	if len(te.lines("monitor: heartbeat held: a failed delivery no channel was told of; the heartbeat's check off the box will report this box down")) != 1 {
+		t.Fatal("held said twice")
+	}
+	// The channel mended, and motel monitor test delivers through it.
+	*body = counters(1, 4, 1, 1)
+	te.advance(time.Minute)
+	te.scrapeFailed(context.Background(), read)
+	if l := te.lines("monitor: heartbeat resumed"); len(l) != 1 || l[0].ContextMap()["delivered_through"] != "ch-ops" {
+		t.Fatalf("resumed lines = %+v", l)
+	}
+	if heartbeats(te) != 1 {
+		t.Fatal("no heartbeat after the delivery")
+	}
+}
+
+// TestHeartbeatResumesAtADeliveryAfterALoad: the documented mend, the
+// URL mended (a reload of Alertmanager, which starts its counts from 0)
+// and then `motel monitor test`, resumes the heartbeat at the next read.
+// First with a read between the load and the test: the load alone
+// resumes nothing (that read's 0 is any reader's baseline for the
+// test's 1). Then the case that needs the load's stamp: the test read
+// in the load's own read, its count no higher than ops's before the
+// load (one earlier test).
+func TestHeartbeatResumesAtADeliveryAfterALoad(t *testing.T) {
+	te, _, body, read := holdEngine(t, oneChannelBlock)
+	const before, after = 1_794_000_000, 1_794_000_900
+	*body = counters(0, 3, 0, 1) + loadedAt(before)
+	te.scrapeFailed(context.Background(), read) // baseline
+	*body = counters(1, 4, 1, 1) + loadedAt(before)
+	te.scrapeFailed(context.Background(), read)
+	for range 6 {
+		te.advance(time.Minute)
+		te.scrapeFailed(context.Background(), read)
+	}
+	if !te.heartbeatHeld() {
+		t.Fatal("not held")
+	}
+	*body = counters(0, 0, 0, 0) + loadedAt(after) // the mend's reload
+	te.advance(time.Minute)
+	te.scrapeFailed(context.Background(), read)
+	if !te.heartbeatHeld() {
+		t.Fatal("resumed by a load with no delivery since")
+	}
+	*body = counters(0, 0, 0, 1) + loadedAt(after) // motel monitor test ops
+	te.advance(time.Minute)
+	te.scrapeFailed(context.Background(), read)
+	if l := te.lines("monitor: heartbeat resumed"); len(l) != 1 || l[0].ContextMap()["delivered_through"] != "ch-ops" {
+		t.Fatalf("resumed lines = %+v", l)
+	}
+	// And when the test is read in the load's own read.
+	te, _, body, read = holdEngine(t, oneChannelBlock)
+	*body = counters(0, 3, 0, 1) + loadedAt(before)
+	te.scrapeFailed(context.Background(), read)
+	*body = counters(1, 4, 1, 1) + loadedAt(before)
+	te.scrapeFailed(context.Background(), read)
+	for range 6 {
+		te.advance(time.Minute)
+		te.scrapeFailed(context.Background(), read)
+	}
+	*body = counters(0, 0, 0, 1) + loadedAt(after)
+	te.advance(time.Minute)
+	te.scrapeFailed(context.Background(), read)
+	if te.heartbeatHeld() || len(te.lines("monitor: heartbeat resumed")) != 1 {
+		t.Fatalf("a test read in the load's own read: held %v", te.heartbeatHeld())
+	}
+}
+
+func stringsOf(v any) []string {
+	var out []string
+	switch s := v.(type) {
+	case []string:
+		return s
+	case []interface{}:
+		for _, x := range s {
+			out = append(out, fmt.Sprint(x))
+		}
+	}
+	return out
+}
+
+// TestHeartbeatNotHeldWhenTheChannelDeliversAgain: a passing fault is
+// delivered at a later flush, inside heartbeatHoldAfter, and no hold
+// comes; nor for a failure some channel is told of, nor for the
+// heartbeat's own receiver.
+func TestHeartbeatNotHeldWhenTheChannelDeliversAgain(t *testing.T) {
+	te, _, body, read := holdEngine(t, oneChannelBlock)
+	*body = counters(0, 3, 0, 0)
+	te.scrapeFailed(context.Background(), read)
+	*body = counters(1, 4, 1, 0)
+	te.scrapeFailed(context.Background(), read)
+	te.advance(time.Minute)
+	*body = counters(1, 5, 1, 0) // the next flush delivered it
+	te.scrapeFailed(context.Background(), read)
+	for range 10 {
+		te.advance(time.Minute)
+		te.scrapeFailed(context.Background(), read)
+		if heartbeats(te) != 1 {
+			t.Fatalf("held at %v after a delivery", te.at)
+		}
+	}
+	if len(te.untold) != 0 || len(te.lines("monitor: heartbeat resumed")) != 0 {
+		t.Fatalf("untold = %+v", te.untold)
+	}
+
+	// The heartbeat's own receiver failing: its check hears it already.
+	*body = counters(1, 5, 1, 0) + amLines("heartbeat", 3, 12, 3)
+	te.scrapeFailed(context.Background(), read)
+	if len(te.untold) != 0 {
+		t.Fatalf("the heartbeat's own failure holds it: %+v", te.untold)
+	}
+
+	// A second operator channel at warning hears ops' failure: no hold.
+	te2, _, body2, read2 := holdEngine(t, `monitor {
+	channel ops ntfy {secret.NOTIFY_OPS_URL}
+	channel bob json {secret.NOTIFY_BOB_URL} severity warning
+	operator ops bob
+	heartbeat {secret.NOTIFY_HC_URL}
+}`)
+	*body2 = counters(0, 3, 0, 0)
+	te2.scrapeFailed(context.Background(), read2)
+	*body2 = counters(1, 4, 1, 0)
+	te2.scrapeFailed(context.Background(), read2)
+	if got := te2.drain(); len(got) != 1 || got[0].Labels[labelChannel] != "bob" || got[0].Labels["suspects"] != "ops" {
+		t.Fatalf("posts = %+v", got)
+	}
+	if len(te2.untold) != 0 {
+		t.Fatalf("a failure told to bob holds the heartbeat: %+v", te2.untold)
+	}
+}
+
+// TestHeartbeatHoldEndsWithTheChannel: a reload whose config no longer
+// has the failing channel ends its hold (nothing can deliver through
+// it); one that keeps it keeps the hold, and the engine's emptying at
+// the last config's stop ends it too.
+func TestHeartbeatHoldEndsWithTheChannel(t *testing.T) {
+	te, a, body, read := holdEngine(t, oneChannelBlock)
+	*body = counters(0, 3, 0, 0)
+	te.scrapeFailed(context.Background(), read)
+	*body = counters(1, 4, 1, 0)
+	te.scrapeFailed(context.Background(), read)
+	te.advance(heartbeatHoldAfter)
+	te.scrapeFailed(context.Background(), read)
+	if !te.heartbeatHeld() {
+		t.Fatal("not held")
+	}
+	te.setConfig(a, te.p, te.known, te.logger) // the same block reloaded
+	if !te.heartbeatHeld() {
+		t.Fatal("a reload that keeps the channel ended the hold")
+	}
+
+	b := mustParse(t, `monitor {
+	channel bob json {secret.NOTIFY_BOB_URL}
+	operator bob
+	heartbeat {secret.NOTIFY_HC_URL}
+}`)
+	b.cfg = mustResolve(t, b)
+	_, _, b.receivers = render(b.cfg, testStateDir)
+	te.setConfig(b, te.p, te.known, te.logger)
+	if te.heartbeatHeld() {
+		t.Fatal("a config without ops keeps its hold")
+	}
+	if l := te.lines("monitor: heartbeat resumed"); len(l) != 1 || l[0].ContextMap()["why"] == nil {
+		t.Fatalf("resumed lines = %+v", l)
+	}
+}
+
+func mustResolve(t *testing.T, a *App) *resolved {
+	t.Helper()
+	r, err := a.resolve(testTrust(), testSecrets())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return r
+}
+
+// TestHeartbeatNotHeldOnAGuess: a failure whose receiver is not this
+// config's (the counter names none: a drop-in without the feature; or
+// a name from before a reload) has suspects that are a guess and no
+// delivery count by channel to end a hold by: nothing is recorded.
+func TestHeartbeatNotHeldOnAGuess(t *testing.T) {
+	for name, receiver := range map[string]string{"no receiver_name": "", "a receiver from before a reload": "event-box-warning"} {
+		te, _, body, read := holdEngine(t, oneChannelBlock)
+		*body = counters(0, 3, 0, 0) + failedLine("webhook", receiver, "other", 0)
+		te.scrapeFailed(context.Background(), read)
+		*body = counters(0, 3, 0, 0) + failedLine("webhook", receiver, "other", 2)
+		te.scrapeFailed(context.Background(), read)
+		if l := te.lines("monitor: channel failed"); len(l) != 1 {
+			t.Fatalf("%s: the rise was not read: %+v", name, l)
+		}
+		if len(te.untold) != 0 {
+			t.Errorf("%s: recorded %+v", name, te.untold)
+		}
+	}
+}
+
+// TestHeartbeatHoldNeedsAHeartbeatLine: with no heartbeat line there is
+// no check off the box to hear a hold. The failure is recorded but
+// nothing is held and no held line is written; a load that adds the
+// line holds it at the next read, and one that takes the line away
+// ends the hold.
+func TestHeartbeatHoldNeedsAHeartbeatLine(t *testing.T) {
+	const noHeartbeat = `monitor {
+	channel ops ntfy {secret.NOTIFY_OPS_URL}
+	operator ops
+}`
+	te, _, body, read := holdEngine(t, noHeartbeat)
+	*body = counters(0, 3, 0, 0)
+	te.scrapeFailed(context.Background(), read)
+	*body = counters(1, 4, 1, 0)
+	te.scrapeFailed(context.Background(), read)
+	for range 7 {
+		te.advance(time.Minute)
+		te.scrapeFailed(context.Background(), read)
+	}
+	if len(te.untold) != 1 || te.heartbeatHeld() || len(te.lines("monitor: heartbeat held: a failed delivery no channel was told of; the heartbeat's check off the box will report this box down")) != 0 {
+		t.Fatalf("no heartbeat line: untold %+v, held %v", te.untold, te.heartbeatHeld())
+	}
+
+	with := mustParse(t, oneChannelBlock)
+	with.cfg = mustResolve(t, with)
+	_, _, with.receivers = render(with.cfg, testStateDir)
+	te.setConfig(with, te.p, te.known, te.logger)
+	te.advance(time.Minute)
+	te.scrapeFailed(context.Background(), read)
+	if !te.heartbeatHeld() || heartbeats(te) != 0 {
+		t.Fatal("a load that adds the heartbeat line does not hold what stands")
+	}
+
+	without := mustParse(t, noHeartbeat)
+	without.cfg = mustResolve(t, without)
+	_, _, without.receivers = render(without.cfg, testStateDir)
+	te.setConfig(without, te.p, te.known, te.logger)
+	if te.heartbeatHeld() {
+		t.Fatal("a load that takes the heartbeat line away keeps the hold")
+	}
+	if l := te.lines("monitor: heartbeat resumed"); len(l) != 1 || l[0].ContextMap()["why"] != "the config has no heartbeat line" {
+		t.Fatalf("resumed lines = %+v", l)
+	}
+	te.advance(time.Minute)
+	te.scrapeFailed(context.Background(), read)
+	if te.heartbeatHeld() {
+		t.Fatal("held again with no heartbeat line")
+	}
+}

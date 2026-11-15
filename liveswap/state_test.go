@@ -34,6 +34,48 @@ func TestListReleasesSkipsNamesThatAreNotVersions(t *testing.T) {
 	}
 }
 
+// TestReleasesIsListReleasesForAConfiguredApp: what notify's silence
+// --release takes; nothing for an app the config does not run. It
+// reads the spec's dirs, not a path rebuilt from the name it is given:
+// Root here is another, empty directory.
+func TestReleasesIsListReleasesForAConfiguredApp(t *testing.T) {
+	d := newAppDirs(t.TempDir(), "demo")
+	must(t, os.MkdirAll(filepath.Join(d.releases, "v1"), 0o755))
+	a := &App{Root: t.TempDir(), specs: map[string]*appSpec{"demo": {dirs: d}}}
+	if got := a.Releases("demo"); strings.Join(got, ",") != "v1" {
+		t.Fatalf("Releases(demo) = %v", got)
+	}
+	if got := a.Releases("other"); got != nil {
+		t.Fatalf("Releases(other) = %v", got)
+	}
+}
+
+// TestRecordedVersionsAreTheDeployRecords: a failed deploy's version,
+// whose release is not on disk, is recorded; a file that does not
+// prove itself a record is not listed; nothing for an app the config
+// does not run, or one with no records yet. The spec's dirs are read,
+// as in the test above.
+func TestRecordedVersionsAreTheDeployRecords(t *testing.T) {
+	root := t.TempDir()
+	d := newAppDirs(root, "demo")
+	base := time.Now().Add(-time.Hour)
+	for i, r := range [][2]string{{"v1", "succeeded"}, {"f1", "failed"}} {
+		must(t, writeDeployRecord(d, r[0], []byte(`{"version":"`+r[0]+`","status":"`+r[1]+`"}`)))
+		stampRecord(t, d, r[0], base.Add(time.Duration(i)*time.Minute))
+	}
+	must(t, os.WriteFile(filepath.Join(d.deploys, "wrong.json"), []byte(`{"version":"other","status":"failed"}`), 0o600))
+	a := &App{Root: t.TempDir(), specs: map[string]*appSpec{"demo": {dirs: d}, "empty": {dirs: newAppDirs(root, "empty")}}}
+	if got := a.RecordedVersions("demo"); strings.Join(got, ",") != "f1,v1" {
+		t.Fatalf("RecordedVersions(demo) = %v", got)
+	}
+	if got := a.RecordedVersions("empty"); got != nil {
+		t.Fatalf("RecordedVersions(empty) = %v", got)
+	}
+	if got := a.RecordedVersions("other"); got != nil {
+		t.Fatalf("RecordedVersions(other) = %v", got)
+	}
+}
+
 func TestFileStateStoreRoundTrip(t *testing.T) {
 	store := &fileStateStore{path: filepath.Join(t.TempDir(), "app", "state.json")}
 

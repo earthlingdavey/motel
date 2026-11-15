@@ -14,6 +14,7 @@ import (
 	"net/url"
 	"os"
 	"path"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -21,6 +22,7 @@ import (
 	"github.com/caddyserver/caddy/v2"
 	"github.com/caddyserver/caddy/v2/modules/caddyhttp"
 	"github.com/smallhoursorg/motel/liveswap/deploytrust"
+	"github.com/smallhoursorg/motel/liveswap/wire"
 	"go.uber.org/zap"
 )
 
@@ -61,6 +63,9 @@ type Handler struct {
 	app     *App
 	logger  *zap.Logger
 	limiter *deploytrust.Limiter
+	// stage is a test seam for stageUpload; nil is stageUpload. A full
+	// disk cannot be made in a test that runs as root.
+	stage func(body io.Reader, tmpDir string, maxBytes int64) (string, string, error)
 }
 
 // CaddyModule returns the Caddy module information.
@@ -108,7 +113,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request, _ caddyhttp.
 		return refusal.Write(func(code int, body any) error { return RespondJSON(w, code, body, nil) })
 	}
 	if ma == nil {
-		return RespondJSON(w, http.StatusNotFound, map[string]string{"error": fmt.Sprintf("unknown app %q", name)}, nil)
+		return RespondJSON(w, http.StatusNotFound, wire.Error{Error: fmt.Sprintf("unknown app %q", name)}, nil)
 	}
 
 	switch r.Method {
@@ -117,18 +122,33 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request, _ caddyhttp.
 		// a malformed `?deploy=%ZZ` would fall through to the status.
 		q, err := url.ParseQuery(r.URL.RawQuery)
 		if err != nil {
-			return RespondJSON(w, http.StatusUnprocessableEntity, map[string]string{"error": "malformed query: " + err.Error()}, ma.redactorFor(statusSnapshot{}))
+			return RespondJSON(w, http.StatusUnprocessableEntity, wire.Error{Error: "malformed query: " + err.Error()}, ma.redactorFor(statusSnapshot{}))
 		}
 		if q.Has("deploy") {
 			return h.deployRecord(w, ma, q.Get("deploy"))
 		}
+		window := wire.MetricsRanges[0]
+		if q.Has("range") {
+			// Refused whether or not the box keeps metrics: a typo is told
+			// the same on every box.
+			if window = q.Get("range"); !slices.Contains(wire.MetricsRanges, window) {
+				return RespondJSON(w, http.StatusUnprocessableEntity, wire.Error{
+					Error: "range must be one of " + strings.Join(wire.MetricsRanges, ", ")}, ma.redactorFor(statusSnapshot{}))
+			}
+		}
 		s := ma.status()
+		if src := h.app.metricsSource; src != nil {
+			// Best-effort and bounded by the source itself: a store that
+			// does not answer is an error inside the object, never a
+			// failed or stalled status.
+			s.Metrics = src.AppMetrics(r.Context(), ma.name, window)
+		}
 		return RespondJSON(w, http.StatusOK, s, ma.redactorFor(s))
 	case http.MethodPost:
 		return h.deploy(w, r, ma, who.By)
 	default:
 		w.Header().Set("Allow", "GET, POST")
-		return RespondJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"}, ma.redactorFor(statusSnapshot{}))
+		return RespondJSON(w, http.StatusMethodNotAllowed, wire.Error{Error: "method not allowed"}, ma.redactorFor(statusSnapshot{}))
 	}
 }
 
@@ -155,15 +175,15 @@ func (h *Handler) deployURL(w http.ResponseWriter, r *http.Request, ma *managedA
 	// would surface as a misleading "invalid JSON" 400.
 	body, err := io.ReadAll(io.LimitReader(r.Body, maxPayloadBytes+1))
 	if err != nil {
-		return RespondJSON(w, http.StatusBadRequest, map[string]string{"error": "reading body: " + err.Error()}, ma.redactorFor(statusSnapshot{}))
+		return RespondJSON(w, http.StatusBadRequest, wire.Error{Error: "reading body: " + err.Error()}, ma.redactorFor(statusSnapshot{}))
 	}
 	if len(body) > maxPayloadBytes {
-		return RespondJSON(w, http.StatusRequestEntityTooLarge, map[string]string{
-			"error": fmt.Sprintf("payload exceeds %d bytes", maxPayloadBytes)}, ma.redactorFor(statusSnapshot{}))
+		return RespondJSON(w, http.StatusRequestEntityTooLarge, wire.Error{
+			Error: fmt.Sprintf("payload exceeds %d bytes", maxPayloadBytes)}, ma.redactorFor(statusSnapshot{}))
 	}
 	p, status, msg := parseDeployPayload(body)
 	if status != 0 {
-		return RespondJSON(w, status, map[string]string{"error": msg}, ma.redactorFor(statusSnapshot{}))
+		return RespondJSON(w, status, wire.Error{Error: msg}, ma.redactorFor(statusSnapshot{}))
 	}
 	return h.runDeploy(w, r, ma, p.request(), by)
 }
@@ -208,7 +228,7 @@ func parseDeployPayload(body []byte) (p deployPayload, status int, msg string) {
 func (h *Handler) deployPush(w http.ResponseWriter, r *http.Request, ma *managedApp, by string) error {
 	version := r.URL.Query().Get("version")
 	if !validVersion(version) {
-		return RespondJSON(w, http.StatusUnprocessableEntity, map[string]string{"error": fmt.Sprintf("version query param must match %s", versionRe)}, ma.redactorFor(statusSnapshot{}))
+		return RespondJSON(w, http.StatusUnprocessableEntity, wire.Error{Error: fmt.Sprintf("version query param must match %s", versionRe)}, ma.redactorFor(statusSnapshot{}))
 	}
 	// Acquire the per-app deploy lock BEFORE staging the upload: a
 	// concurrent push then gets an immediate 409 instead of streaming a
@@ -231,21 +251,32 @@ func (h *Handler) deployPush(w http.ResponseWriter, r *http.Request, ma *managed
 		// refusal comes before it.
 		c.logger.Error("deploy failed", zap.String("version", version), zap.String("via", by),
 			zap.String("source", "push"), zap.String("remote", r.RemoteAddr), zap.Error(err))
+		// Before the pipeline, so its own report does not run: the box's
+		// failure, told as the pipeline's would be.
+		ma.lifecycle(c, LifecycleEvent{Name: EventDeployFailed, Release: version, DeployedBy: by,
+			Summary: "deploy of " + version + " failed before it began: the app's directories are not as motel made them"})
 		return h.mapDeployResult(w, ma, err)
 	}
-	archive, digest, err := stageUpload(r.Body, spec.dirs.tmp, spec.maxArtifactSize)
+	stage := h.stage
+	if stage == nil {
+		stage = stageUpload
+	}
+	archive, digest, err := stage(r.Body, spec.dirs.tmp, spec.maxArtifactSize)
 	var stgErr *stagingError
 	switch {
 	case errors.Is(err, errArtifactTooLarge):
-		return RespondJSON(w, http.StatusRequestEntityTooLarge, map[string]string{
-			"error": fmt.Sprintf("uploaded artifact exceeds max_artifact_size (%d bytes)", spec.maxArtifactSize)}, ma.redactorFor(statusSnapshot{}))
+		return RespondJSON(w, http.StatusRequestEntityTooLarge, wire.Error{
+			Error: fmt.Sprintf("uploaded artifact exceeds max_artifact_size (%d bytes)", spec.maxArtifactSize)}, ma.redactorFor(statusSnapshot{}))
 	case errors.As(err, &stgErr):
 		// A local filesystem failure (mkdir/create/write/close, e.g. a
-		// full disk) is a server error, like a failed URL download.
-		return RespondJSON(w, http.StatusInternalServerError, map[string]string{"error": "staging upload: " + err.Error()}, ma.redactorFor(statusSnapshot{}))
+		// full disk) is a server error, like a failed URL download, and
+		// reported as one: the pipeline's own report never runs.
+		ma.lifecycle(c, LifecycleEvent{Name: EventDeployFailed, Release: version, DeployedBy: by,
+			Summary: "deploy of " + version + " failed before it began: the upload could not be staged on the box"})
+		return RespondJSON(w, http.StatusInternalServerError, wire.Error{Error: "staging upload: " + err.Error()}, ma.redactorFor(statusSnapshot{}))
 	case err != nil:
 		// Otherwise the body read itself failed — a bad request.
-		return RespondJSON(w, http.StatusBadRequest, map[string]string{"error": "reading upload: " + err.Error()}, ma.redactorFor(statusSnapshot{}))
+		return RespondJSON(w, http.StatusBadRequest, wire.Error{Error: "reading upload: " + err.Error()}, ma.redactorFor(statusSnapshot{}))
 	}
 	// Backstop cleanup: fetch removes the archive once it extracts it,
 	// but if the pipeline returns before fetch it would leak.
@@ -266,7 +297,7 @@ func (h *Handler) deployPush(w http.ResponseWriter, r *http.Request, ma *managed
 func (h *Handler) deployRollback(w http.ResponseWriter, r *http.Request, ma *managedApp, by string) error {
 	version := r.URL.Query().Get("rollback")
 	if !validVersion(version) {
-		return RespondJSON(w, http.StatusUnprocessableEntity, map[string]string{"error": fmt.Sprintf("rollback version must match %s", versionRe)}, ma.redactorFor(statusSnapshot{}))
+		return RespondJSON(w, http.StatusUnprocessableEntity, wire.Error{Error: fmt.Sprintf("rollback version must match %s", versionRe)}, ma.redactorFor(statusSnapshot{}))
 	}
 	return h.runDeploy(w, r, ma, deployRequest{version: version, rollback: true}, by)
 }
@@ -275,13 +306,13 @@ func (h *Handler) deployRollback(w http.ResponseWriter, r *http.Request, ma *man
 // outcome of that version's latest deploy (deploys.go).
 func (h *Handler) deployRecord(w http.ResponseWriter, ma *managedApp, version string) error {
 	if !validVersion(version) {
-		return RespondJSON(w, http.StatusUnprocessableEntity, map[string]string{"error": fmt.Sprintf("deploy query param must match %s", versionRe)}, ma.redactorFor(statusSnapshot{}))
+		return RespondJSON(w, http.StatusUnprocessableEntity, wire.Error{Error: fmt.Sprintf("deploy query param must match %s", versionRe)}, ma.redactorFor(statusSnapshot{}))
 	}
 	c := ma.snapshot()
 	if c.spec == nil {
 		// An app the pool still holds but no loaded config describes
 		// (status() makes the same allowance): nowhere to read from.
-		return RespondJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "app has no configuration loaded"}, ma.redactorFor(statusSnapshot{}))
+		return RespondJSON(w, http.StatusServiceUnavailable, wire.Error{Error: "app has no configuration loaded"}, ma.redactorFor(statusSnapshot{}))
 	}
 	rec, err := readDeployRecord(c.spec.dirs, version)
 	// The requested version, and the record's own pin, are names the
@@ -295,9 +326,9 @@ func (h *Handler) deployRecord(w http.ResponseWriter, ma *managedApp, version st
 	s.Deploys = append(s.Deploys, head)
 	switch {
 	case errors.Is(err, errNoDeployRecord):
-		return RespondJSON(w, http.StatusNotFound, map[string]string{"error": fmt.Sprintf("no deploy recorded for version %s", version)}, ma.redactorFor(s))
+		return RespondJSON(w, http.StatusNotFound, wire.Error{Error: fmt.Sprintf("no deploy recorded for version %s", version)}, ma.redactorFor(s))
 	case err != nil:
-		return RespondJSON(w, http.StatusInternalServerError, map[string]string{"error": "reading deploy record: " + err.Error()}, ma.redactorFor(s))
+		return RespondJSON(w, http.StatusInternalServerError, wire.Error{Error: "reading deploy record: " + err.Error()}, ma.redactorFor(s))
 	}
 	// Through the live filter like every body; its outcome words
 	// stand outside the filter there (redact.go, rule 3).
@@ -371,15 +402,15 @@ func deployOutcome(ma *managedApp, err error) (int, any, *Redactor) {
 	case err == nil:
 		return http.StatusOK, status, rd
 	case errors.Is(err, errDeployInProgress):
-		return http.StatusConflict, map[string]string{"error": err.Error()}, rd
+		return http.StatusConflict, wire.Error{Error: err.Error()}, rd
 	case errors.As(err, &vErr):
-		return http.StatusUnprocessableEntity, map[string]string{"error": err.Error()}, rd
+		return http.StatusUnprocessableEntity, wire.Error{Error: err.Error()}, rd
 	case errors.Is(err, context.Canceled):
 		return 0, nil, rd
 	default:
-		return http.StatusInternalServerError, map[string]any{
-			"error":  err.Error(),
-			"status": status, // shows the old version still serving
+		return http.StatusInternalServerError, wire.Failure{
+			Error:  err.Error(),
+			Status: status, // shows the old version still serving
 		}, rd
 	}
 }
@@ -458,7 +489,7 @@ func (s *deployStream) phase(phase string) {
 		return
 	}
 	filtered := s.ma.redactorFor(statusSnapshot{}).redactJSON(raw)
-	_ = s.write(fmt.Sprintf(`%s,"event":"phase","phase":%q}`, filtered[:len(filtered)-1], phase))
+	_ = s.write(fmt.Sprintf(`%s,"event":%q,"phase":%q}`, filtered[:len(filtered)-1], wire.EventPhase, phase))
 }
 
 // finish writes the outcome as the last line: the single response's
@@ -489,7 +520,7 @@ func (s *deployStream) finish(ma *managedApp, err error) error {
 		return mErr
 	}
 	filtered := rd.redactJSON(raw)
-	return s.write(fmt.Sprintf(`%s,"event":"done","http_status":%d}`, filtered[:len(filtered)-1], code))
+	return s.write(fmt.Sprintf(`%s,"event":%q,"http_status":%d}`, filtered[:len(filtered)-1], wire.EventDone, code))
 }
 
 // isGzipUpload reports whether the request body is a pushed artifact.

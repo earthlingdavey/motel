@@ -1,0 +1,34 @@
+# Written by `motel monitor setup --metrics` (notify/DESIGN-metrics.md, "The shape").
+# The metrics store's only listener in the host's namespace: a unix socket
+# in a runtime directory of its own, 0660 root:motel. Every app runs as the
+# motel uid, so the group is not what keeps apps out: no app's sandbox has
+# /run/motel-metrics in its view. The group keeps out every other system
+# user. Its service bridges it to the store inside its namespace.
+[Unit]
+Description=The metrics store's unix socket, for root and motel (motel monitor setup --metrics)
+
+[Socket]
+ListenStream=/run/motel-metrics/vm.sock
+SocketUser=root
+SocketGroup=motel
+SocketMode=0660
+RemoveOnStop=yes
+# A connection that comes while the store's chain cannot start (the
+# namespace or the store failing at its start) would stay queued here:
+# the proxy's start fails on its Requires=, the queued connection
+# triggers it again at once, and 20 tries in about 40 ms fail the socket
+# for good (trigger-limit-hit), vm.sock removed, with nothing to start it
+# again (#450). Flushed, that connection is closed unanswered and the
+# socket listens on, so motel's next push after the fault starts the
+# chain. With no retrigger of its own left, each trigger is a client's
+# connection, and the default limit, 20 in 2 s, still failed the socket
+# for good under a burst of them during the fault: so no limit. The
+# cost: a connection queued as the proxy exits (5 idle minutes, or
+# stopped with the store) is closed, not started again; motel pushes
+# every 30 s, so the proxy does not idle while motel runs. Measured on
+# systemd 257 (notify/DESIGN-metrics.md, "The shape").
+FlushPending=yes
+TriggerLimitIntervalSec=0
+
+[Install]
+WantedBy=sockets.target

@@ -141,7 +141,42 @@ Before you upgrade:
   config check without touching anything that is running. A config it
   rejects would stop the upgraded motel from starting, and the site
   would stay down until you fixed the config or went back (systemd
-  retries a crash, not a refusal).
+  retries a crash, not a refusal). A build with a `.deb` and no
+  `.tar.gz`, such as one of a feature branch, is checked the same way
+  from the `.deb`, unpacked and not installed:
+  `dpkg-deb -x motel_<version>_$(dpkg --print-architecture).deb /root/motel-new`,
+  then `/root/motel-new/usr/bin/motel validate --config /etc/motel/Caddyfile`.
+  To see why an upgraded motel will not start, read `journalctl -u motel`
+  and run `motel validate --config /etc/motel/Caddyfile`; do not run
+  `motel run` by hand on the box: while motel runs, a second one takes
+  its admin socket and can disturb its apps.
+  motel refuses root's run only when the Caddyfile's liveswap root
+  exists and is not root's, as on a packaged box (it is motel's);
+  otherwise nothing stops it, so do not rely on the refusal.
+- **Check motel.service runs as the motel user.** That refusal cannot
+  tell root's run by hand from a unit edited to run motel as root, and
+  the install makes `/var/lib/liveswap` motel's again. So such a box,
+  with the liveswap root the package makes, is refused at every start,
+  the install's own included, and serves nothing until someone at the
+  console mends it. `systemctl show -p User --value motel` prints
+  `motel` on a packaged box, and anything else means the unit was
+  edited (`root`, `0` or nothing at all: to run as root), by a drop-in
+  from `systemctl edit motel` (not `10-user-manager.conf`, the
+  package's own: the revert below removes it too, and the install
+  writes it back) or a copy of the unit in `/etc/systemd/system/`.
+  Just before the install, run `systemctl revert motel`, which drops
+  every local edit of the unit; a copy also hides every later
+  release's changes to the unit, so revert that one. To keep a
+  drop-in's other lines instead, set `User=motel` and `Group=motel` in
+  it and run `systemctl daemon-reload`. Either way, the `show` must
+  then print `motel`, and `systemctl is-enabled motel` `enabled`.
+  `systemctl cat motel` prints each file still in play, among them any
+  drop-in in `/etc/systemd/system/service.d/`, which every service
+  reads and the revert leaves. A box that ran motel as root may also
+  hold files of root's where motel writes, Caddy's certificates in
+  `/var/lib/motel/caddy` among them: before the install,
+  `find /var/lib/motel /var/lib/liveswap -user root` lists them, and
+  each one motel wrote wants `chown motel:motel`.
 - **A box with an ECDSA signer rotates it first** (upgrading from
   v0.6.0 or earlier). A `signer` line with an `ecdsa-sha2-nistp256`,
   `-384`, `-521` or `sk-ecdsa-sha2-nistp256@openssh.com` key is refused
@@ -160,6 +195,54 @@ Before you upgrade:
   `apt install --allow-downgrades ./motel_<old>_$(dpkg --print-architecture).deb`
   puts it back — the same restart, in reverse, and nothing to download
   first. On a VPS, a snapshot taken first is the fuller way back.
+- **Going back to v0.6.1 or earlier from a release with monitor**
+  needs the Caddyfile emptied of it first. Those releases know none of
+  monitor's two pieces: neither the `monitor` block (its `metrics` and
+  `rule` lines go with it) nor the response observer's `observe <app>`
+  lines in the sites. They refuse the file, and `validate` with 0.6.1's
+  binary says `unrecognized global option: monitor` or
+  `unrecognized directive: observe`. The install's restart then fails
+  (`motel: restarting onto the new version FAILED; motel.service is now
+  failed.`) and nothing is served until the file is mended. Their box
+  channel also refuses an `applied.json` that lists the box's own
+  `secrets/_box/`, so every push after the downgrade would fail before
+  it began. While the box still runs the newer release:
+  1. **Pause the heartbeat's check, then stop Alertmanager**, as
+     [Monitor](monitor.md#turn-it-off-and-remove-it)'s steps 1 and 3
+     say (on a box set up with `--metrics`, vmalert and Alertmanager's
+     socket in the store's namespace with it). The older release
+     neither uses nor stops them.
+  2. **Take out the `monitor` block and every `observe` line.** On a box
+     that takes pushes, push a commit without them and without
+     `secrets/_box/`. It removes `/etc/motel/secrets/_box.env` and takes
+     `_box` out of `applied.json`. That holds for a block edited in by
+     hand, too: the push replaces the file. On a box with no push
+     channel, root edits them out of `/etc/motel/Caddyfile` and runs
+     `systemctl reload motel`. 0.6.1 starts with `_box.env` still in
+     place and reads nothing from it; delete it if you are not coming
+     back.
+  3. **Go back** with the `.deb`, as above.
+
+  The store keeps running after this, and so do Alertmanager and
+  vmalert if you skip step 1, as do any of Monitor's recipe units you
+  installed (they fail once `motel monitor send` is gone). A reboot
+  starts vmalert again with the store, whose drop-in starts it
+  (`ExecStartPost=`), though step 1 disabled it; Alertmanager and its socket in the store's
+  namespace stay down, so it reaches no Alertmanager and nothing is
+  sent. They are
+  setup's or yours, not the package's, and the older release neither
+  uses nor stops them. [Monitor](monitor.md#turn-it-off-and-remove-it)
+  stops and removes them. Coming back to a release with monitor later
+  means its setup again: step 1 left Alertmanager disabled, so once
+  the block and its URLs are back, root runs
+  `motel monitor setup [--metrics]` ("To turn it back on", there). On
+  a box already back whose motel refused to start, root edits
+  the block and the `observe` lines out of `/etc/motel/Caddyfile` and
+  runs `systemctl restart motel`. On a box that takes pushes, root also
+  removes the `"_box"` entry from the `secrets` map in
+  `/var/lib/motel-box/applied.json` and deletes
+  `/etc/motel/secrets/_box.env`, and the next push (without the block,
+  the `observe` lines and the directory) applies.
 - **Upgrade motel and the host separately.** motel measures what
   the host can sandbox at every start and refuses to start on a host
   that cannot deliver it ([liveswap/README.md](../liveswap/README.md#sandbox)),
@@ -182,14 +265,283 @@ seconds apart from the others. `grep NoNewPrivs /proc/$(systemctl show
 -p MainPID --value "user@$(id -u motel).service")/status` shows `1`
 once it has.
 
+After an upgrade from v0.3.1 or later, on a box that takes pushes: the
+releases before this one named, in each push's output, the variables
+of an env file in `/etc/motel/secrets/` that the push replaced or
+removed when someone had made or edited it by hand, and a secret
+pasted alone on a line of it (base64 ending in `=`) read as a
+variable's name. If a push ever took over such a file, look through
+the box repository's old apply runs (logs and job summaries) and
+the applier's journal for a name after `removed` that is no
+variable's, and give any value found that way a new one ([Change a
+value](secrets.md#change-a-value)). What you are looking for may
+hold a secret, so read the old runs only where they are, and never
+paste a line of them or of the journal into a chat, an issue or a bug
+report. The runs name every push's removals; the journal names them
+only for a push whose result could not be written, so count before
+you read it:
+`journalctl -u motel-box-apply -u hotserve-box-apply | grep -c 'secrets_removed": *\["'`
+(`hotserve-box-apply` is the applier's name before v0.6.0) prints 0
+when the journal names no removal, which says nothing of the runs.
+Read any lines it counts on the box itself. `make secrets-import` had the same
+gap: copy this release's `examples/box/bin/secrets` and
+`examples/box/bin/apply` into the box repository's `bin/` (the second
+says a push left a hand-edited file's own variables unnamed), and a
+name in `make secrets` that is a value is one to change too, since the
+old name stays in the repository's history.
+
 The box repository's workflow checks config with the latest stable
 release, so it needs nothing after an upgrade — unless its
 `MOTEL_VERSION` repository variable pins a release, which then
-wants the new one.
+wants the new one. One made from the v0.6.0 or v0.6.1 template that
+takes a `monitor` block also wants this release's `examples/box/bin/`
+in its `bin/` ([Monitor](monitor.md)).
 
 There is no APT repository yet, so nothing upgrades motel behind
 your back; the hosted repository on the [roadmap](../README.md#roadmap) is what
 will change that.
+
+## A producer's state across the install
+
+A box built from the notify-and-metrics feature branch before motel
+kept the states your producers send (`motel monitor send --state
+firing`; v0.6.1 and earlier have no monitor block) holds them
+in memory only.
+The install's restart loses them, so about five minutes later
+Alertmanager tells their channels `[RESOLVED]`, although nothing
+recovered. After the install, send each state that still fires once
+more. From then on motel keeps them across a restart
+([Monitor](monitor.md)).
+
+## A receiver per channel: one repeat of what fires
+
+A box built from the notify-and-metrics feature branch before each
+channel had its own receivers (v0.6.1 and earlier have no
+monitor block) gets
+a new Alertmanager config at the first load after the install: every
+alert keeps its channels, under new routes and receiver names. Nothing
+is dropped, and nothing to do; but Alertmanager's notification log is
+keyed by route and receiver, so it has no record of what the old
+receivers sent: **each state still firing, and each one-shot sent in
+the last five minutes, reaches its channels once more as `[FIRING]`**,
+about 30 seconds after the restart. A recovery already told is not
+told again, and the heartbeat, `ChannelFailed` and `motel monitor test`
+keep their receivers. Going back to the older binary does the same
+once in the other direction. What will repeat is what fires before
+the install ([Monitor](monitor.md#what-is-firing-with-amtool) reads
+it).
+
+## The disk rules' new expressions: a resolve, then firing again
+
+On a box built from the notify-and-metrics feature branch, the first
+load after the install changes the expression of
+`metrics_store_disk_fill` (it waits for 5 hours of the store's
+history) and of each `disk_fill` rule whose `within` is under a day
+(its windows and `for` are scaled to `within`). vmalert knows a rule
+by its expression, so an alert of either that fires at the install is
+no longer sent: its channels can get `[RESOLVED]` while the disk still
+fills, then `[FIRING]` once the new rule's `for` has passed (30 m for
+the store's, from 5 m for yours). Nothing to do.
+
+## From a state_dir or alertmanager line
+
+A box built from the notify-and-metrics feature branch (no release
+has either line) may have a `state_dir` or an `alertmanager` line in
+its `monitor` block, or in the older `notify` block. The new binary
+refuses both, naming the line and the path it fixes, so the install's
+restart onto a file that still has one stops every site. **Take the
+line out before the install.** Setup only ever made
+`/var/lib/motel-notify` and `/run/motel-notify/am.sock`, so a line
+naming either changed nothing, and one naming another path never
+reached Alertmanager. Push the file without it, or on a box with no
+push channel edit it out and run `systemctl reload motel`: the old
+binary takes it. Then upgrade. The new binary's `motel validate`,
+from the `.deb` as above, names any line left. On a box with a
+`notify` block, the next section's steps leave these lines out of
+step 3's `monitor` block.
+
+## From the notify and metrics_store blocks
+
+A box built from the notify-and-metrics feature branch before the
+`monitor` block (no release has either) runs a `notify` block and
+perhaps a `metrics_store` block. The new binary refuses both, naming
+`monitor`, and the old one refuses `monitor`, so no Caddyfile loads on
+both: upgrading with the old blocks in place stops every site, since
+the install restarts motel onto a binary that refuses to start on the
+file. Do it in this order:
+
+1. **Push the Caddyfile without the `notify` and `metrics_store`
+   blocks**, and without `secrets/_box/`: the old box channel refuses
+   that directory beside a file with no `notify` block, and the push
+   removes `/etc/motel/secrets/_box.env` (the encrypted files stay in
+   the repository's history). The old motel validates and reloads it.
+   On a box with no push channel, root edits the blocks out of
+   `/etc/motel/Caddyfile` and runs `systemctl reload motel`. So does a
+   box that takes pushes but whose blocks were edited into the file by
+   hand and never committed. Its next push replaces the file with the
+   repository's, so before that push commit the `monitor` block, and
+   with it each secret the block reads
+   (`make secret APP=_box VAR=NOTIFY_<NAME>`): a `_box.env` written by
+   hand does not count, and a push of the block without
+   `secrets/_box/` is refused, naming the secret.
+2. **Upgrade the package**, as above. The new motel starts on that
+   Caddyfile, which has nothing for it to refuse.
+3. **Push the Caddyfile with `monitor { … }`**: the notify block's
+   lines unchanged under the new name (less any `state_dir` or
+   `alertmanager` line, whose paths are fixed: the section above), and
+   a `metrics` line inside it
+   in place of the `metrics_store` block: `metrics` for a bare
+   `metrics_store`, `metrics <path>` for one whose `store <path>` named
+   a socket. Put `secrets/_box/` back, restored from the commit before
+   step 1's (`git checkout <that commit> -- <host>/secrets/_box`), so no
+   value is typed again. On a box with no push channel, root writes the
+   block into the file, puts `_box.env` back if it went
+   (root:motel 0640, [Monitor](monitor.md#the-secrets-file)), and runs
+   `systemctl reload motel`.
+
+The new binary can check step 3's file before you install it, from the
+`.deb` as above (`/root/motel-new/usr/bin/motel validate --config
+<the new file>`). It reads `_box.env` to check each secret, and on a
+box that takes pushes step 1's push deletes that file, so run the
+check before step 1. Writing the `monitor` block into the file before the
+install, so that the install's restart reads it, would skip the gap
+below. It is untested, and it leaves a file the running binary refuses
+until the install: a reload in between fails, and a restart stops every
+site. On hotserve-1 the three steps left 23 seconds with no monitor,
+and the site answered throughout (2026-11-12).
+
+**No alert is delivered between step 1's reload and step 3's.** motel
+posts nothing to Alertmanager: no event, no `Watchdog`, so the
+heartbeat stops pinging and the dead-man check pages once its own
+period is out (pause it first, or expect it). The old binary's reload
+at step 1 leaves Alertmanager the last config motel rendered, which
+would end what was firing at its `resolve_timeout`, five minutes on,
+with a recovery to the channels that did not happen. The install's
+restart onto step 1's file prevents that: the new binary, starting a
+config with no monitor block, gives Alertmanager the config that sends
+nothing (`monitor: this config has no monitor block with channels: …`
+on stderr, in the journal), so what was firing ends without a message,
+unless more than five minutes pass between step 1 and the install.
+Step 1's reload also retires the store's rules:
+the reload to a config with no `metrics_store` block writes
+`/var/lib/motel-metrics/rules.yml` with its groups empty
+(`grep -c 'alert:'` on it says 0), so vmalert evaluates nothing, and
+motel stops pushing, so the store keeps no motel series for the gap
+(its own scrapes of itself, vmalert and Alertmanager go on). The
+store, vmalert and Alertmanager keep running throughout: their units
+are setup's. Step 3's load renders Alertmanager's config, writes the
+rules again and resumes the push. The journal says the rules were
+retired twice, in two spellings. The old binary says it at step 1's
+reload (`metrics_store: the block is gone: vmalert is given no rule;
+…`), and the new one says it again when the install restarts it onto
+step 1's file (`monitor metrics: the metrics line is gone: vmalert is
+given no rule; …`).
+
+**Run setup again if the box was built before b7754fc** (#426,
+2026-11-11): both setups on a box that had a `metrics_store` block,
+and `motel monitor setup` alone on one that had only `notify`
+(`--metrics` there would install the store and start it). Their units
+have changed how they run since then: the two
+socket proxies run as root until the store's units are rewritten
+(`ps -eo user,cmd | grep socket-proxyd` shows `root`), and
+Alertmanager's and the store's data directories stay 0755, readable by
+every local user, until both drop-ins are rewritten. After step 3, on
+a box with the store, root runs `motel monitor setup --metrics`. It
+rewrites the store's units and
+restarts vmalert and the store (a push may fail meanwhile). It
+also retires the proxy that carried vmalert's posts to Alertmanager
+(`retired motel-am-proxy.socket …`) and restarts Alertmanager once,
+which loses what it holds in memory, so that Alertmanager holds that
+listener in the store's namespace itself (`restarted Alertmanager,
+once, …`). Then, at a quiet moment, root runs
+`motel monitor setup`. It rewrites Alertmanager's units and restarts
+it, which loses what it holds in memory: motel posts each firing state
+alert again within a minute, and a one-shot waiting in a group is
+lost. On a box built at b7754fc or later whose store still reaches
+Alertmanager through a proxy (`/etc/systemd/system/motel-am-proxy.socket`
+is there), `motel monitor setup --metrics` is due, as above, and
+`motel monitor setup` is not. Going back to such a build later, root first runs `systemctl disable --now motel-am-metrics.socket`, removes it and `prometheus-alertmanager.service.d/20-motel-metrics.conf` from `/etc/systemd/system`, and runs `systemctl daemon-reload`: that build's `setup --metrics` cannot otherwise bind its proxy's 9093. Otherwise, on a box built at b7754fc or later, the units differ from the
+old setups' in their comments, in the store's clocks (below), and in the `Description=` lines,
+which name the old commands (`systemctl status` shows
+`(motel notify setup)` until they are rewritten). Running both setups
+again then renames them and sets the store's clocks. Either way, motel says when it is due:
+from this version, every load (`motel validate`, `motel reload`, and
+the restart onto the new binary, in the journal) warns `monitor: the
+units motel monitor setup wrote differ from this motel's (…)` (for the store's, `monitor: the files motel monitor setup --metrics wrote differ …`) for as
+long as a unit differs from the one this binary would write, comments
+aside, and names the setup to run. While the proxy's units are there,
+the store's warning says `the proxy an older setup wrote for
+Alertmanager (…) is still in place` (after the files that differ, or
+alone when none does), and that setup retires it and, unless
+Alertmanager listens in the store's namespace already, restarts (or
+starts) it once.
+
+**One run of `motel monitor setup --metrics` covers every paragraph
+below that fits a box**, however many do, and it is the same run as
+the `--metrics` one above: each run writes all of its units and
+`scrape.yml` as this motel ships them, and restarts the store and
+vmalert. The warning each paragraph names is the store's (`the files
+motel monitor setup --metrics wrote differ …`). None of them needs
+`motel monitor setup` without `--metrics`, which is due only as the
+paragraph above says, or while a load warns `monitor: the units motel
+monitor setup wrote differ …`.
+The store is down for part of the run, so a push that comes then
+fails; motel pushes every 30 seconds, and hotserve-1's two re-runs
+(2026-11-14) took under 2.5 seconds each, with no push failed.
+
+**Run `motel monitor setup --metrics` again on a box whose store was set
+up before the 5 s clocks** (the warning above names `10-motel.conf` and
+`motel-vmalert.service`). Until it is, vmalert re-reads a new
+`rules.yml` only once a minute, and the store keeps
+VictoriaMetrics' 30 s `-search.latencyOffset`, so every alert and
+`GET /<app>` waits the 30 s as before. Post-deploy checks are right
+either way: they ask the store for the 5 s themselves. The re-run
+rewrites the units and restarts the store and vmalert; a push may
+fail meanwhile.
+
+**Run `motel monitor setup --metrics` again on a box whose store was set
+up before its restarts backed off** (each load's warning names
+`10-motel.conf`). Until it is, a store that
+fails at its start (a full disk, say) is restarted about 60 times a
+second for as long as the fault lasts, about a fifth of a core and some
+400 journal lines a second. The re-run writes the drop-in that backs
+the restarts off from 1 s to a minute; it restarts the store and
+vmalert, so a push may fail meanwhile.
+
+**The same re-run trims what the store keeps of its own scrapes.** From
+this version the store keeps, of its scrapes of itself, vmalert and
+Alertmanager, only the series motel reads ([Monitor](monitor.md#promql-over-the-socket-as-root)):
+about 80 where it kept over 2,000. Only setup writes
+`/var/lib/motel-metrics/scrape.yml`, so a store set up before goes on
+keeping every series, and each load's warning names `scrape.yml`, until
+root runs `motel monitor setup --metrics` (the re-run above does it).
+The store is restarted onto the new file; the series it no longer
+keeps stop there and age out over the 14 days' retention. Nothing
+motel runs reads them, so no rule, check or `GET /<app>` changes. A
+query of your own over one of them finds its samples from before the
+re-run until the retention ends them, and none after.
+
+**Run `motel monitor setup --metrics` again on a box whose store was set
+up before its socket outlived a failed start** (each load's warning
+names `motel-vm.socket` and `motel-vm.service`). Until it is, one push
+that comes while the store or its namespace fails to start ends
+`/run/motel-metrics/vm.sock` for good (`motel-vm.socket` failed with
+`trigger-limit-hit`), and the store stays down after the cause is gone
+until root runs `systemctl start motel-vm.socket`; so do a few
+pushes or reads a few seconds apart while the store keeps exiting
+after its start. The re-run writes the socket unit's `FlushPending=yes`
+and `TriggerLimitIntervalSec=0` and the proxy's `StartLimitIntervalSec=0`,
+which its `daemon-reload` applies to the running units with no restart,
+and its `enable --now` starts a socket that had already failed.
+
+**Run `motel monitor setup --metrics` again on a box whose store was set
+up before it kept Alertmanager's last config load** (each load's
+warning names `scrape.yml`). Until it is, the store's `ChannelFailed`
+reads the failed counter alone, and misses a failure counted just after
+a config load that brings the counter back to the value the scrape
+before the load read; motel's own `ChannelFailed` tells of it either
+way. The re-run rewrites `scrape.yml` and restarts the store and
+vmalert; a push may fail meanwhile.
 
 ## Patching the host
 

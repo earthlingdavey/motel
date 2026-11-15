@@ -137,7 +137,11 @@ for f in $files; do
 		bad "$f: its box_webhook host is $host, so it belongs at $host/Caddyfile (git mv $dir $host)"
 		continue
 	fi
-	if ! "$MOTEL" validate --adapter caddyfile --config "$f" >"$tmpd/validate" 2>&1; then
+	# The box's own secrets are not on this machine: validate is told
+	# their names, as the box's handler tells it (box/DESIGN-box.md,
+	# "The box's own slot"), names only.
+	pushed=$(sed -n 's/^secret _box \([^ ]*\) .*/\1/p' "$tmpd/describe" | paste -s -d , -)
+	if ! MOTEL_NOTIFY_PUSHED_SECRETS=$pushed "$MOTEL" validate --adapter caddyfile --config "$f" >"$tmpd/validate" 2>&1; then
 		bad "$f does not validate:"
 		[ -s "$tmpd/validate" ] || printf '%s validate failed, and said nothing\n' "$MOTEL" >"$tmpd/validate"
 		sed 's/^/  /' "$tmpd/validate" >&2

@@ -2,7 +2,9 @@
 // orchestrator. Reports its version (from version.txt in the release)
 // and pid; /health goes 500 while a "broken" marker file exists in the
 // release dir (shipped in the artifact for the broken-deploy scenario,
-// or created live via /break for the watchdog scenario). /boom exits
+// or created live via /break for the watchdog scenario); every other
+// path answers 500 while an "errors" marker is in it (the release a
+// post-deploy comparison must find worse than the one before). /boom exits
 // the process — the crash the watchdog must recover from. /argv
 // reports the arguments it was started with, Go-quoted, so the suite
 // can see that a `command` word reaches the app as written.
@@ -57,6 +59,10 @@ func main() {
 		_, _ = fmt.Fprintf(w, "%q", os.Args[1:]) //nolint:gosec // the test app's own argv, Go-quoted, as plain text: no markup reaches a browser
 	})
 	http.HandleFunc("/", func(w http.ResponseWriter, _ *http.Request) {
+		if _, err := os.Stat("errors"); err == nil {
+			http.Error(w, "the errors release fails every request", http.StatusInternalServerError)
+			return
+		}
 		_, _ = fmt.Fprintf(w, "hello %s pid %d", version, os.Getpid())
 	})
 	ln, err := net.Listen("unix", os.Getenv("SOCKET"))

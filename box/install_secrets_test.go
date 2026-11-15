@@ -770,25 +770,97 @@ func TestApplySecretsModeFixIsNoChange(t *testing.T) {
 	}
 }
 
-// Names read from an env file a console made are held to the caps a
-// record and a result are read back with: a variable name no secret can
-// have is not reported, and the lists stop at their cap — so the push's
-// result reads back, and so would its record.
-func TestApplySecretsNamesFromAConsoleFile(t *testing.T) {
-	b, id := newSecretsBox(t)
-	var file strings.Builder
-	file.WriteString(strings.Repeat("L", proof.MaxVarName+1) + "=x\n")
-	for i := 0; i < maxSecretNames+100; i++ {
-		fmt.Fprintf(&file, "V%04d=\n", i)
+// A file root did not write gives no names (I9): a secret pasted alone on
+// a line, in base64 with its `=` padding, parses as a variable named
+// after it. The push that takes such a file over, or removes it, names
+// none of its variables as removed — not in the result, not in the
+// journal — and names its app out of band; the names HEAD's own files
+// give (added, changed) are still reported. A file at the digest
+// applied.json records, whatever its mode, is bytes root rendered from
+// the repository's file names, and its removed names are reported.
+func TestApplySecretsNoNamesFromAFileRootDidNotWrite(t *testing.T) {
+	const pasted = "dGhpc2lzYXNlY3JldA" // base64 of "thisisasecret", less its padding; made up for this test
+	type tc struct {
+		name    string
+		before  func(b *testBox, enc func(string) []byte) (base string)
+		head    func(enc func(string) []byte) secrets
+		added   []string
+		changed []string
+		removed []string
 	}
-	b.putEnv("example", []byte(file.String()), 0o640)
-	head := b.repo.commitSecrets(b.v1, secrets{"example": {"KEY": encrypt(t, []byte("v"), id.Recipient())}}, &b.alice, b.base)
-	r := b.pushOne(b.repo.bundleFiles(head, b.base))
-	if r.Phase != phaseApplied || len(r.SecretsRemoved) != maxSecretNames || !slices.Equal(r.SecretsAdded, []string{"example/KEY"}) {
-		t.Fatalf("%s %q: %d removed", r.Phase, r.Error, len(r.SecretsRemoved))
+	one := func(enc func(string) []byte) secrets { return secrets{"example": {"KEY": enc("new")}} }
+	none := func(func(string) []byte) secrets { return nil }
+	install := func(b *testBox, enc func(string) []byte) string {
+		head := b.repo.commitSecrets(b.v1, secrets{"example": {"KEY": enc("old"), "OLD": enc("o")}}, &b.alice, b.base)
+		if r := b.pushOne(b.repo.bundleFiles(head, b.base)); r.Phase != phaseApplied {
+			b.t.Fatalf("setup: %+v", r)
+		}
+		return head
 	}
-	if slices.ContainsFunc(r.SecretsRemoved, func(s string) bool { return strings.Contains(s, "LLL") }) {
-		t.Error("a name no secret can have was reported")
+	var cases []tc
+	for _, pad := range []string{"==", "="} {
+		line := pasted + pad + "\n"
+		cases = append(cases,
+			tc{name: "a console's file taken over, padding " + pad, head: one, changed: []string{"example/KEY"},
+				before: func(b *testBox, _ func(string) []byte) string {
+					b.putEnv("example", []byte(line+"KEY=old\nGONE=x\n"), 0o640)
+					return ""
+				}},
+			tc{name: "an installed file edited at the console, taken over, padding " + pad, head: one, changed: []string{"example/KEY"},
+				before: func(b *testBox, enc func(string) []byte) string {
+					head := install(b, enc)
+					b.putEnv("example", append(b.env("example"), line...), 0o640)
+					return head
+				}},
+			tc{name: "an installed file edited at the console, removed, padding " + pad, head: none,
+				before: func(b *testBox, enc func(string) []byte) string {
+					head := install(b, enc)
+					b.putEnv("example", append(b.env("example"), line...), 0o640)
+					return head
+				}},
+		)
+	}
+	cases = append(cases, tc{name: "an installed file at its digest, its mode drifted, names what it removes", head: one,
+		changed: []string{"example/KEY"}, removed: []string{"example/OLD"},
+		before: func(b *testBox, enc func(string) []byte) string {
+			head := install(b, enc)
+			if err := os.Chmod(b.envPath("example"), 0o644); err != nil {
+				b.t.Fatal(err)
+			}
+			return head
+		}})
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			b, id := newSecretsBox(t)
+			enc := func(v string) []byte { return encrypt(t, []byte(v), id.Recipient()) }
+			base := c.before(b, enc)
+			if base == "" {
+				base = b.base
+			}
+			head := b.repo.commitSecrets(b.v1, c.head(enc), &b.alice, base)
+			pushID := b.push(b.repo.bundleFiles(head, base))
+			if err := b.run(hooks{}); err != nil {
+				t.Fatal(err)
+			}
+			b.settled()
+			r := b.result(pushID)
+			if r == nil || r.Phase != phaseApplied || !slices.Equal(r.SecretsOutOfBand, []string{"example"}) ||
+				!slices.Equal(r.SecretsAdded, c.added) || !slices.Equal(r.SecretsChanged, c.changed) || !slices.Equal(r.SecretsRemoved, c.removed) {
+				t.Fatalf("%+v; want added %v, changed %v, removed %v", r, c.added, c.changed, c.removed)
+			}
+			raw, err := os.ReadFile(filepath.Join(b.x("out"), pushID+".json"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if strings.Contains(string(raw), pasted) {
+				t.Errorf("the result names the pasted value: %s", raw)
+			}
+			for _, e := range b.logs.All() {
+				if strings.Contains(fmt.Sprint(e.Message, e.ContextMap()), pasted) {
+					t.Errorf("a journal line names the pasted value: %s %v", e.Message, e.ContextMap())
+				}
+			}
+		})
 	}
 }
 
@@ -1082,5 +1154,92 @@ func TestUnchangedSecrets(t *testing.T) {
 		if unchanged(bundle, b.v1, &odd, at(want, nil)) {
 			t.Errorf("%s: unchanged", name)
 		}
+	}
+}
+
+// The box's own slot, secrets/_box/, is installed as an app's secrets
+// are, into _box.env, and reloads motel whenever its bytes change:
+// notify reads the file at a config load, not at an app's launch. An
+// app's secrets alone still reload nothing.
+func TestApplyBoxSecrets(t *testing.T) {
+	b, id := newSecretsBox(t)
+	enc := func(v string) []byte { return encrypt(t, []byte(v), id.Recipient()) }
+
+	c1 := b.repo.commitSecrets(b.v1, secrets{"_box": {"NOTIFY_OPS_URL": enc("https://ntfy.sh/ops-1")}}, &b.alice, b.base)
+	r := b.pushOne(b.repo.bundleFiles(c1, b.base))
+	want := rendered(t, "NOTIFY_OPS_URL=https://ntfy.sh/ops-1")
+	if r.Phase != phaseApplied || !bytes.Equal(b.env("_box"), want) || b.envMode("_box") != 0o640 {
+		t.Fatalf("%+v; _box.env %q", r, b.env("_box"))
+	}
+	if b.sd.reloaded != 1 || !r.Reloaded {
+		t.Errorf("%d reloads for the box's own secrets, want 1; result says reloaded %v", b.sd.reloaded, r.Reloaded)
+	}
+	if a := b.applied(); a.Secrets["_box"] != digest(want) || !slices.Equal(r.SecretsAdded, []string{"_box/NOTIFY_OPS_URL"}) {
+		t.Errorf("applied.json %+v, result %+v", a, r)
+	}
+
+	// A rotation reloads again; an app's secrets beside it change nothing
+	// of that.
+	c2 := b.repo.commitSecrets(b.v1, secrets{"_box": {"NOTIFY_OPS_URL": enc("https://ntfy.sh/ops-2")}, "example": {"KEY": enc("v")}}, &b.alice, c1)
+	r = b.pushOne(b.repo.bundleFiles(c2, c1))
+	if r.Phase != phaseApplied || b.sd.reloaded != 2 || !r.Reloaded || !slices.Equal(r.SecretsChanged, []string{"_box/NOTIFY_OPS_URL"}) {
+		t.Fatalf("%+v; %d reloads", r, b.sd.reloaded)
+	}
+
+	// An app's secrets alone: no reload.
+	c3 := b.repo.commitSecrets(b.v1, secrets{"_box": {"NOTIFY_OPS_URL": enc("https://ntfy.sh/ops-2")}, "example": {"KEY": enc("w")}}, &b.alice, c2)
+	r = b.pushOne(b.repo.bundleFiles(c3, c2))
+	if r.Phase != phaseApplied || b.sd.reloaded != 2 || r.Reloaded {
+		t.Fatalf("%+v; %d reloads for an app's secrets alone", r, b.sd.reloaded)
+	}
+
+	// The box's file given back its mode alone changes nothing a load
+	// reads: rewritten, not reloaded.
+	if err := os.Chmod(b.envPath("_box"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	c4 := b.repo.commitSecrets(b.v1, secrets{"_box": {"NOTIFY_OPS_URL": enc("https://ntfy.sh/ops-2")}, "example": {"KEY": enc("w")}}, &b.alice, c3)
+	r = b.pushOne(b.repo.bundleFiles(c4, c3))
+	if r.Phase != phaseApplied || b.envMode("_box") != 0o640 || b.sd.reloaded != 2 || r.Reloaded {
+		t.Fatalf("%+v; mode %v; %d reloads", r, b.envMode("_box"), b.sd.reloaded)
+	}
+
+	// The same values over other bytes (a hand edit, or the file an
+	// operator wrote before the slot): rewritten and reloaded, though no
+	// name changed, and the result says so, for the workflow's line.
+	b.putEnv("_box", []byte("NOTIFY_OPS_URL=https://ntfy.sh/ops-2\n"), 0o640)
+	c4b := b.repo.commitSecrets(b.v1, secrets{"_box": {"NOTIFY_OPS_URL": enc("https://ntfy.sh/ops-2")}, "example": {"KEY": enc("w")}}, &b.alice, c4)
+	r = b.pushOne(b.repo.bundleFiles(c4b, c4))
+	if r.Phase != phaseApplied || b.sd.reloaded != 3 || !r.Reloaded || len(r.SecretsAdded)+len(r.SecretsChanged)+len(r.SecretsRemoved) != 0 ||
+		!slices.Equal(r.SecretsOutOfBand, []string{"_box"}) {
+		t.Fatalf("%+v; %d reloads for other bytes of the same values", r, b.sd.reloaded)
+	}
+	c4 = c4b
+
+	// The slot gone: the file removed, and motel reloaded without it.
+	c5 := b.repo.commitSecrets(b.v1, secrets{"example": {"KEY": enc("w")}}, &b.alice, c4)
+	r = b.pushOne(b.repo.bundleFiles(c5, c4))
+	if r.Phase != phaseApplied || b.env("_box") != nil || b.sd.reloaded != 4 || !r.Reloaded || !slices.Equal(r.SecretsRemoved, []string{"_box/NOTIFY_OPS_URL"}) {
+		t.Fatalf("%+v; _box.env %q; %d reloads", r, b.env("_box"), b.sd.reloaded)
+	}
+}
+
+// A reload that refuses the box's new secrets rolls them back, with the
+// Caddyfile it never touched, and reloads the previous file.
+func TestApplyBoxSecretsRollBack(t *testing.T) {
+	b, id := newSecretsBox(t)
+	old := rendered(t, "NOTIFY_OPS_URL=https://ntfy.sh/old")
+	b.putEnv("_box", old, 0o640)
+	a := b.applied()
+	a.SecretsTree, a.Secrets = strings.Repeat("e", 40), map[string]string{"_box": digest(old)}
+	b.writeApplied(a)
+	head := b.repo.commitSecrets(b.v1, secrets{"_box": {"NOTIFY_OPS_URL": encrypt(t, []byte("https://ntfy.sh/new"), id.Recipient())}}, &b.alice, b.base)
+	b.sd.reloads = []error{errReload}
+	r := b.pushOne(b.repo.bundleFiles(head, b.base))
+	if r.Phase != phaseRolledBack || r.Error != msgReloadFailedBox {
+		t.Fatalf("%+v", r)
+	}
+	if !bytes.Equal(b.env("_box"), old) || !bytes.Equal(b.installed(), b.v1) || b.applied().SHA != b.base || b.sd.reloaded != 2 {
+		t.Errorf("not rolled back: _box.env %q, %d reloads", b.env("_box"), b.sd.reloaded)
 	}
 }

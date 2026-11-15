@@ -1,0 +1,1335 @@
+package notify
+
+import (
+	"encoding/json"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+)
+
+// withRules is fullBlock with a metrics line and the rule lines given.
+func withRules(lines ...string) string {
+	return strings.TrimSuffix(fullBlock, "}") + "\tmetrics\n\t" + strings.Join(lines, "\n\t") + "\n}"
+}
+
+// rulesApp is withRules, resolved and rendered as Provision does.
+func rulesApp(t *testing.T, lines ...string) *App {
+	t.Helper()
+	a := mustParse(t, withRules(lines...))
+	r, err := a.resolve(testTrust(), testSecrets())
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.cfg = r
+	_, _, a.receivers = render(r, testStateDir)
+	return a
+}
+
+func TestRuleLines(t *testing.T) {
+	a := mustParse(t, withRules(
+		"rule errors_high threshold 5xx_share > 0.05 for 10m",
+		"rule shop_slow threshold p95 > 1.5s for 15m app shop min_requests 50 severity critical",
+		"rule blog_quiet threshold request_rate < 0.1 for 1h app blog",
+		"rule disk_filling disk_fill within 7d",
+		"rule regress post_deploy {\n\t\twindow 20m\n\t\tmax_5xx_share 0.02\n\t}",
+		"rule blog_regress post_deploy app blog {\n\t\tmin_requests 30\n\t\tmax_p95 800ms\n\t\tfailures 2\n\t}",
+	))
+	b, _ := json.Marshal(a.Metrics)
+	got := strings.NewReplacer(`\u003e`, ">", `\u003c`, "<").Replace(string(b))
+	want := `{"rules":[` +
+		`{"name":"errors_high","kind":"threshold","metric":"5xx_share","op":">","value":0.05,"for":600000000000},` +
+		`{"name":"shop_slow","kind":"threshold","app":"shop","severity":"critical","metric":"p95","op":">","value":1.5,"for":900000000000,"min_requests":50},` +
+		`{"name":"blog_quiet","kind":"threshold","app":"blog","metric":"request_rate","op":"<","value":0.1,"for":3600000000000},` +
+		`{"name":"disk_filling","kind":"disk_fill","within":604800000000000},` +
+		`{"name":"regress","kind":"post_deploy","window":1200000000000,"max_5xx_share":0.02},` +
+		`{"name":"blog_regress","kind":"post_deploy","app":"blog","min_requests":30,"max_p95":800000000,"failures":2}]}`
+	if got != want {
+		t.Fatalf("metrics =\n%s\nwant\n%s", got, want)
+	}
+	r := a.Metrics.Rules
+	if r[4].minRequests() != 100 || r[4].failures() != 3 || r[4].window().String() != "20m0s" || r[0].minRequests() != 20 || r[0].severity() != SeverityWarning {
+		t.Errorf("defaults: %d %d %s %d %s", r[4].minRequests(), r[4].failures(), r[4].window(), r[0].minRequests(), r[0].severity())
+	}
+}
+
+func TestRuleRefusals(t *testing.T) {
+	for _, c := range []struct{ line, want string }{
+		{"rule", "rule takes <name> threshold|disk_fill|post_deploy"},
+		{"rule x", "rule takes <name> threshold|disk_fill|post_deploy"},
+		{"rule Errors threshold 5xx_share > 0.05 for 10m", "a rule's name is lowercase letters"},
+		{"rule 9lives threshold 5xx_share > 0.05 for 10m", "a rule's name is lowercase letters"},
+		{"rule a-b threshold 5xx_share > 0.05 for 10m", "a rule's name is lowercase letters"},
+		{"rule " + strings.Repeat("a", 49) + " threshold 5xx_share > 0.05 for 10m", "at most 48"},
+		{"rule app_memory_high threshold memory_share > 0.5 for 10m", "is one of motel's own alerts"},
+		{"rule metrics_store_full threshold memory_share > 0.5 for 10m", "is one of motel's own alerts"},
+		{"rule metrics_store_down threshold memory_share > 0.5 for 10m", "is one of motel's own alerts"},
+		{"rule channelfailed threshold memory_share > 0.5 for 10m", "is one of motel's own alerts"},
+		{"rule watchdog threshold memory_share > 0.5 for 10m", "is one of motel's own alerts"},
+		{"rule watchdog_x threshold memory_share > 0.5 for 10m", "is one of motel's own alerts"},
+		{"rule deploy_failed threshold memory_share > 0.5 for 10m", "is one of motel's own alerts"},
+		{"rule post_deploy_regressed threshold memory_share > 0.5 for 10m", "is one of motel's own alerts"},
+		{"rule disk_low disk_fill within 7d", "is one of motel's own alerts"},
+		{"rule x sum 5xx_share > 0.05 for 10m", `unknown kind "sum"`},
+		{"rule x threshold 5xx_share > 0.05", "threshold takes <metric> > | < <value> for <duration>"},
+		{"rule x threshold 5xx_share > 0.05 during 10m", "threshold takes <metric>"},
+		{"rule x threshold errors > 0.05 for 10m", `unknown metric "errors"; a threshold reads one of 5xx_share, p50, p95`},
+		{`rule x threshold motel_app_up{app="shop"} > 0 for 10m`, "unknown metric"},
+		{"rule x threshold 5xx_share >= 0.05 for 10m", `the comparison is > or <, not ">="`},
+		{"rule x threshold 5xx_share = 0.05 for 10m", "the comparison is > or <"},
+		{"rule x threshold 5xx_share > 5% for 10m", `"5%" is not a plain number`},
+		{"rule x threshold 5xx_share > -0.1 for 10m", "is not a plain number"},
+		{"rule x threshold 5xx_share > 1e-2 for 10m", "is not a plain number"},
+		{"rule x threshold 5xx_share > 1.5 for 10m", "5xx_share is from 0 to 1, not 1.5"},
+		{"rule x threshold 5xx_share > 1 for 10m", "5xx_share > 1 can never hold"},
+		{"rule x threshold cache_hit_share < 0 for 10m", "cache_hit_share < 0 can never hold"},
+		{"rule x threshold p95 > 800 for 10m", "is not a duration in ms or s"},
+		{"rule x threshold p95 > 1m for 10m", "is not a duration in ms or s"},
+		{"rule x threshold p95 > 0.5ms for 10m", "p95 is from 1ms to 10s"},
+		{"rule x threshold p50 > 11s for 10m", "p50 is from 1ms to 10s"},
+		{"rule x threshold p50 > 10s for 10m", "can never hold"},
+		{"rule x threshold request_rate > 0.5s for 10m", "is not a plain number"},
+		{"rule x threshold cpu_cores > 2000 for 10m", "cpu_cores is from 0 to 1024"},
+		{"rule x threshold memory_share > 0.9 for 30s", "for is whole seconds from 1m to 24h"},
+		{"rule x threshold memory_share > 0.9 for 25h", "for is whole seconds from 1m to 24h"},
+		{"rule x threshold memory_share > 0.9 for 90.5s", "for is whole seconds"},
+		{"rule x threshold memory_share > 0.9 for soon", `"soon" is not a duration`},
+		{"rule x threshold memory_share > 0.9 for 10m min_requests 20", "min_requests is the sample floor of a share or a quantile"},
+		{"rule x threshold cpu_cores > 0.9 for 10m min_requests 20", "not of cpu_cores"},
+		{"rule x threshold request_rate > 0.9 for 10m min_requests 20", "not of request_rate"},
+		{"rule x threshold 5xx_share > 0.05 for 10m min_requests 0", `min_requests: "0" is not a whole number from 1`},
+		{"rule x threshold 5xx_share > 0.05 for 10m min_requests many", `"many" is not a whole number from 1`},
+		{"rule x threshold 5xx_share > 0.05 for 10m min_requests -1", "is not a whole number"},
+		{"rule x threshold 5xx_share > 0.05 for 10m severity info", `severity is warning or critical, not "info"`},
+		{"rule x threshold 5xx_share > 0.05 for 10m severity", "severity takes a value"},
+		{"rule x threshold 5xx_share > 0.05 for 10m app", "app takes a value"},
+		{"rule x threshold 5xx_share > 0.05 for 10m app Shop", `app "Shop" is not an app name`},
+		{"rule x threshold 5xx_share > 0.05 for 10m app shop app blog", "app is given more than once"},
+		{"rule x threshold 5xx_share > 0.05 for 10m expr up", `unknown option "expr"; it takes app, min_requests, severity`},
+		{"rule x threshold 5xx_share > 0.05 for 10m {\n\t\tapp shop\n\t}", "a threshold rule takes no block"},
+		{"rule x disk_fill 7d", "disk_fill takes within <duration>"},
+		{"rule x disk_fill within 30m", "within is whole seconds from 1h to 30d"},
+		{"rule x disk_fill within 31d", "within is whole seconds from 1h to 30d"},
+		{"rule x disk_fill within 7d app shop", `unknown option "app"; it takes severity`},
+		{"rule x disk_fill within 7d severity page", "severity is warning or critical"},
+		{"rule x post_deploy", "post_deploy needs max_5xx_share, max_p95 or both"},
+		{"rule x post_deploy {\n\t}", "post_deploy needs max_5xx_share, max_p95 or both"},
+		{"rule x post_deploy {\n\t\twindow 30m\n\t}", "post_deploy needs max_5xx_share, max_p95 or both"},
+		{"rule x post_deploy {\n\t\tmax_5xx_share 0.02\n\t\tquery up\n\t}", `unknown post_deploy parameter "query"`},
+		{"rule x post_deploy {\n\t\tmax_5xx_share 0.02\n\t\tseverity critical\n\t}", `unknown post_deploy parameter "severity"`},
+		{"rule x post_deploy {\n\t\tmax_5xx_share 0.02 0.03\n\t}", "max_5xx_share takes one value"},
+		{"rule x post_deploy {\n\t\tmax_5xx_share 0.02\n\t\tmax_5xx_share 0.03\n\t}", "max_5xx_share is given more than once"},
+		{"rule x post_deploy {\n\t\tmax_5xx_share 2\n\t}", "max_5xx_share is a share between 0 and 1"},
+		{"rule x post_deploy {\n\t\tmax_5xx_share 0\n\t}", "max_5xx_share is a share between 0 and 1"},
+		{"rule x post_deploy {\n\t\tmax_p95 10s\n\t}", "max_p95 is from 1ms to under 10s"},
+		{"rule x post_deploy {\n\t\tmax_p95 0.5ms\n\t}", "max_p95 is from 1ms to under 10s"},
+		{"rule x post_deploy {\n\t\tmax_p95 800\n\t}", "is not a duration in ms or s"},
+		{"rule x post_deploy {\n\t\tmax_p95 800ms\n\t\twindow 90s\n\t}", "window is whole minutes from 1m to 24h"},
+		{"rule x post_deploy {\n\t\tmax_p95 800ms\n\t\twindow 25h\n\t}", "window is whole minutes from 1m to 24h"},
+		{"rule x post_deploy {\n\t\tmax_p95 800ms\n\t\tfailures 0\n\t}", `failures: "0" is not a whole number from 1`},
+		{"rule x post_deploy {\n\t\tmax_p95 800ms\n\t\tfailures 61\n\t}", "failures is from 1 to 60"},
+		{"rule x post_deploy {\n\t\tmax_p95 800ms\n\t\twindow 2m\n\t}", "3 failures in a row need a window of at least 3 minutes"},
+		{"rule x post_deploy {\n\t\tmax_p95 800ms\n\t\tmin_requests 0\n\t}", `min_requests: "0" is not a whole number from 1`},
+		{"rule x post_deploy app {\n\t\tmax_p95 800ms\n\t}", "app takes a value"},
+		{"rule x post_deploy shop {\n\t\tmax_p95 800ms\n\t}", `unknown option "shop"; it takes app`},
+		{"rule x post_deploy {\n\t\tmax_p95 800ms {\n\t\t\tx\n\t\t}\n\t}", "max_p95 takes no block"},
+		{"rule x threshold 5xx_share > 0.05 for 10m\n\trule x disk_fill within 7d", "rule x is defined twice"},
+		{"rule a post_deploy {\n\t\tmax_p95 800ms\n\t}\n\trule b post_deploy {\n\t\tmax_5xx_share 0.1\n\t}", "a second post_deploy for every app"},
+		{"rule a post_deploy app shop {\n\t\tmax_p95 800ms\n\t}\n\trule b post_deploy app shop {\n\t\tmax_5xx_share 0.1\n\t}", "a second post_deploy for shop"},
+	} {
+		if _, err := parse(t, withRules(c.line)); err == nil || !strings.Contains(err.Error(), c.want) {
+			t.Errorf("%q: err = %v, want %q", c.line, err, c.want)
+		}
+	}
+	// One for every app and one per app is no duplicate: the app's
+	// replaces the other for it.
+	mustParse(t, withRules("rule a post_deploy {\n\t\tmax_p95 800ms\n\t}", "rule b post_deploy app shop {\n\t\tmax_p95 1s\n\t}"))
+}
+
+// A refusal of the lines together names the second rule's line; a
+// latency is kept to the nanosecond as written.
+func TestRuleLinesTogether(t *testing.T) {
+	_, err := parse(t, withRules("rule x threshold 5xx_share > 0.05 for 10m", "rule y disk_fill within 7d", "rule x disk_fill within 1d"))
+	if err == nil || !strings.Contains(err.Error(), "rule x is defined twice, at Testfile:14") {
+		t.Errorf("a duplicate: %v", err)
+	}
+	_, err = parse(t, withRules("rule a post_deploy {\n\t\tmax_p95 1s\n\t}", "rule b post_deploy {\n\t\tmax_p95 2s\n\t}"))
+	if err == nil || !strings.Contains(err.Error(), "rule b: a second post_deploy for every app") || !strings.Contains(err.Error(), "at Testfile:15") {
+		t.Errorf("a second post_deploy: %v", err)
+	}
+	a := mustParse(t, withRules("rule a post_deploy {\n\t\tmax_p95 1001ms\n\t}", "rule b threshold p95 > 1.001s for 10m"))
+	if got := time.Duration(a.Metrics.Rules[0].MaxP95); got != 1001*time.Millisecond {
+		t.Errorf("max_p95 1001ms = %s", got)
+	}
+}
+
+// A rule line reads the store's numbers: without the metrics line it is
+// refused, naming the line, wherever the metrics line would be.
+func TestRuleNeedsTheMetricsLine(t *testing.T) {
+	src := strings.TrimSuffix(fullBlock, "}") + "\trule errors_high threshold 5xx_share > 0.05 for 10m\n}"
+	_, err := parse(t, src)
+	if err == nil || !strings.Contains(err.Error(), errRuleNeedsMetrics.Error()) || !strings.Contains(err.Error(), ":11") {
+		t.Fatalf("err = %v, want the refusal at the rule's line", err)
+	}
+	// After the rule, the metrics line counts.
+	mustParse(t, strings.TrimSuffix(fullBlock, "}")+"\trule errors_high threshold 5xx_share > 0.05 for 10m\n\tmetrics\n}")
+}
+
+// JSON never goes through parseRule: Provision holds it to the same
+// grammar, and checks every app a rule names against liveswap's.
+func TestRuleRefusalsAtProvision(t *testing.T) {
+	dir := t.TempDir()
+	key := filepath.Join(dir, "deploy.pub")
+	writePubKey(t, key)
+	secrets := filepath.Join(dir, "_box.env")
+	if err := os.WriteFile(secrets, []byte("NOTIFY_OPS_URL=https://ntfy.sh/ops\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	notify := "\t\tchannel ops ntfy {secret.NOTIFY_OPS_URL}\n\t\toperator ops\n\t\tsecrets_file " + secrets + "\n"
+	block := func(rules string) string {
+		return "{\n\tadmin off\n\tliveswap {\n\t\troot " + filepath.Join(dir, "liveswap") + "\n\t\tartifact_allowlist example.org\n\t\tapp blog {\n\t\t\tcommand ./server\n" +
+			"\t\t\tdeploy_trust local {\n\t\t\t\tpublic_key " + key + "\n\t\t\t\taudience blog\n\t\t\t}\n\t\t}\n\t}\n" +
+			"\tmonitor {\n" + notify + "\t\tmetrics /run/x/vm.sock\n\t\t" + rules + "\n\t}\n}\n:8080 {\n\trespond ok\n}\n"
+	}
+	if _, err := provision(t, block("rule blog_errors threshold 5xx_share > 0.05 for 10m app blog")); err != nil {
+		t.Fatalf("a rule on a configured app: %v", err)
+	}
+	if _, err := provision(t, block("rule shop_errors threshold 5xx_share > 0.05 for 10m app shop")); err == nil ||
+		!strings.Contains(err.Error(), "rule shop_errors names app shop, which the liveswap block does not configure") {
+		t.Errorf("a rule on an unknown app: %v", err)
+	}
+	if _, err := provision(t, block("rule shop_regress post_deploy app shop {\n\t\t\tmax_p95 1s\n\t\t}")); err == nil ||
+		!strings.Contains(err.Error(), "names app shop") {
+		t.Errorf("a post_deploy on an unknown app: %v", err)
+	}
+	// memory_share of an app with no memory_max: nothing to divide by.
+	if _, err := provision(t, block("rule blog_mem threshold memory_share > 0.8 for 5m app blog")); err == nil ||
+		!strings.Contains(err.Error(), "rule blog_mem: app blog has no memory_max, so its memory_share has nothing to divide by") {
+		t.Errorf("memory_share of an uncapped app: %v", err)
+	}
+	capped := strings.Replace(block("rule blog_mem threshold memory_share > 0.8 for 5m app blog"), "command ./server\n", "command ./server\n\t\t\tmemory_max 512MB\n", 1)
+	if _, err := provision(t, capped); err != nil {
+		t.Errorf("memory_share of a capped app: %v", err)
+	}
+	if _, err := provision(t, block("rule mem threshold memory_share > 0.8 for 5m")); err != nil {
+		t.Errorf("an every-app memory_share: %v", err)
+	}
+	// A block with no channel: the rules would reach no one.
+	alone := "{\n\tadmin off\n\tmonitor {\n\t\tmetrics /run/x/vm.sock\n\t\trule e threshold 5xx_share > 0.05 for 10m\n\t}\n}\n:8080 {\n\trespond ok\n}\n"
+	if _, err := provision(t, alone); err == nil || !strings.Contains(err.Error(), "rule e reaches no one: the monitor block has no channel") {
+		t.Errorf("rules in a block with no channel: %v", err)
+	}
+	noLiveswap := "{\n\tadmin off\n\tmonitor {\n" + notify + "\t\tmetrics /run/x/vm.sock\n\t\trule e threshold 5xx_share > 0.05 for 10m app blog\n\t}\n}\n:8080 {\n\trespond ok\n}\n"
+	if _, err := provision(t, noLiveswap); err == nil || !strings.Contains(err.Error(), "no liveswap block") {
+		t.Errorf("a rule naming an app with no liveswap block: %v", err)
+	}
+	for _, c := range []struct {
+		rule Rule
+		want string
+	}{
+		{Rule{Name: "x", Kind: ruleThreshold, Metric: "5xx_share", Op: ">", Value: 0.05}, "for is whole seconds from 1m to 24h"},
+		{Rule{Name: "x", Kind: ruleThreshold, Metric: "up", Op: ">", Value: 0.05, For: 600e9}, `unknown metric "up"`},
+		{Rule{Name: "x", Kind: ruleDiskFill, Within: 3600e9, Metric: "p95"}, "metric, op, value and for are a threshold's"},
+		{Rule{Name: "x", Kind: ruleThreshold, Metric: "5xx_share", Op: ">", Value: 0.05, For: 600e9, Within: 3600e9}, "within is disk_fill's"},
+		{Rule{Name: "x", Kind: ruleThreshold, Metric: "5xx_share", Op: ">", Value: 0.05, For: 600e9, Failures: 2}, "are post_deploy's"},
+		{Rule{Name: "x", Kind: ruleDiskFill, Within: 3600e9, App: "blog"}, "disk_fill is the box's"},
+		{Rule{Name: "x", Kind: ruleDiskFill, Within: 3600e9, MinRequests: 5}, "min_requests is a request rule's"},
+		{Rule{Name: "x", Kind: rulePostDeploy, MaxP95: 1e9, Severity: SeverityCritical}, "it takes no severity"},
+		{Rule{Name: "x", Kind: "expr"}, `unknown kind "expr"`},
+		{Rule{Name: "X", Kind: ruleDiskFill, Within: 3600e9}, "a rule's name is lowercase"},
+	} {
+		if err := checkRules([]Rule{c.rule}, map[string]bool{"blog": true}); err == nil || !strings.Contains(err.Error(), c.want) {
+			t.Errorf("%+v: %v, want %q", c.rule, err, c.want)
+		}
+	}
+}
+
+func TestOperatorRulesRender(t *testing.T) {
+	a := rulesApp(t,
+		"rule errors_high threshold 5xx_share > 0.05 for 10m",
+		"rule shop_slow threshold p95 > 1.5s for 15m app shop min_requests 50 severity critical",
+		"rule blog_quiet threshold request_rate < 0.1 for 1h app blog",
+		"rule hits_low threshold cache_hit_share < 0.5 for 30m",
+		"rule mem threshold memory_share > 0.8 for 5m",
+		"rule busy threshold cpu_cores > 1.5 for 10m app shop",
+		"rule median threshold p50 > 200ms for 10m",
+		"rule disk_filling disk_fill within 7d severity critical",
+		"rule regress post_deploy {\n\t\tmax_5xx_share 0.02\n\t}",
+	)
+	f := parseRules(t, renderRules(a))
+	if len(f.Groups) != 3 || f.Groups[2].Name != operatorGroup || f.Groups[2].Interval != "1m" {
+		t.Fatalf("groups = %+v", f.Groups)
+	}
+	rules := map[string]vmRule{}
+	for _, r := range f.Groups[2].Rules {
+		rules[r.Alert] = r
+	}
+	if len(rules) != 8 {
+		t.Fatalf("operator rules = %+v; want the threshold and disk_fill lines, no post_deploy", f.Groups[2].Rules)
+	}
+	inc := func(sel string) string { return counterIncrease(sel, 5*time.Minute, 0) }
+	hist := func(m string) string { return histogramIncrease("motel_app_response_seconds", m, 5*time.Minute, 0) }
+	every := func(r string) string { return `sum by (app) (` + inc(`motel_app_requests_total{`+r+`}`) + `)` }
+	shop := func(metric, extra string) string {
+		return `sum by (app) (` + inc(metric+`{app="shop"`+extra+`}`) + `)`
+	}
+	// The request thresholds hold for the apps in motel's last push.
+	pushed := func(sel string) string {
+		return ` and on (app) (max by (app) (tlast_over_time(motel_app_observed` + sel + `[75s]))` +
+			` > scalar(max(tlast_over_time(process_start_time_seconds{job="motel"}[75s]))) - 15)`
+	}
+	for name, want := range map[string]string{
+		"errors_high": "(" + every(`class="5xx"`) + " / " + every(`class!="aborted"`) + ") > 0.05 and " + every(`class!="aborted"`) + " >= 20" + pushed(""),
+		"shop_slow": `histogram_quantile(0.95, sum by (app, le) (` + hist(`{app="shop"}`) + `)) > 1.5 and ` +
+			shop("motel_app_response_seconds_count", "") + " >= 50" + pushed(`{app="shop"}`),
+		// Over the time the window's samples cover: the push's last
+		// sample in it less its last before it.
+		"blog_quiet": `sum by (app) (` + inc(`motel_app_requests_total{app="blog"}`) + `) / scalar(max(tlast_over_time(process_start_time_seconds{job="motel"}[5m]))` +
+			` - max(tlast_over_time(process_start_time_seconds{job="motel"}[5m] offset 5m))) < 0.1` +
+			` and on () max(tlast_over_time(process_start_time_seconds{job="motel"}[5m] offset 5m))` +
+			// And for an app that push observed.
+			` and on (app) (max by (app) (tlast_over_time(motel_app_observed{app="blog"}[5m] offset 5m))` +
+			` > scalar(max(tlast_over_time(process_start_time_seconds{job="motel"}[5m] offset 5m))) - 15)` + pushed(`{app="blog"}`),
+		"hits_low": `(sum by (app) (` + inc(`motel_app_cache_responses_total{result=~"hit|stale"}`) + `) or sum by (app) (` + inc(`motel_app_cache_responses_total`) + `) * 0)` +
+			` / sum by (app) (` + inc(`motel_app_cache_responses_total`) + `) < 0.5 and sum by (app) (` + inc(`motel_app_cache_responses_total`) + `) >= 20` + pushed(""),
+		// The running unit's: its last push within 75 s, and the newest
+		// unit with a rate of an app with a unit pushed within 75 s.
+		"mem": `max by (app) (last_over_time(motel_app_memory_bytes[75s]) / last_over_time(motel_app_memory_max_bytes[75s])) > 0.8`,
+		"busy": `sum by (app) (rate(motel_app_cpu_seconds_total{app="shop"}[5m]) and topk by (app) (1, tlast_over_time(motel_app_cpu_seconds_total{app="shop"}[5m])` +
+			` and rate(motel_app_cpu_seconds_total{app="shop"}[5m])) and on (app) tlast_over_time(motel_app_cpu_seconds_total{app="shop"}[75s])) > 1.5`,
+		"median": `histogram_quantile(0.5, sum by (app, le) (` + hist(``) + `)) > 0.2 and sum by (app) (` + inc(`motel_app_response_seconds_count`) + `) >= 20` + pushed(""),
+		"disk_filling": `min by (path) (predict_linear(motel_disk_avail_bytes[42h], 604800)) < 0 and min by (path) (predict_linear(motel_disk_avail_bytes[7h], 604800)) < 0` +
+			` and max by (path) (present_over_time(motel_disk_avail_bytes[42h] offset 35h))`,
+	} {
+		r := rules[name]
+		if r.Expr != want {
+			t.Errorf("%s: expr =\n%s\nwant\n%s", name, r.Expr, want)
+		}
+	}
+	// The guard itself, whole: increase_pure for a series new to the
+	// store, or back below its last value, first seen over half a push
+	// after the push's first sample in the window and the four pushes
+	// before it; increase otherwise. A histogram's buckets are told by
+	// its count.
+	if got, want := counterIncrease(`m{app="a"}`, 150*time.Second, 90*time.Second),
+		`((increase_pure(m{app="a"}[150s] offset 90s) unless (present_over_time(m{app="a"}[1d] offset 4m)`+
+			` unless (last_over_time(m{app="a"}[1d] offset 4m) > first_over_time(m{app="a"}[150s] offset 90s))))`+
+			` and (tfirst_over_time(m{app="a"}[150s] offset 90s) > scalar(min(tfirst_over_time(process_start_time_seconds{job="motel"}[270s] offset 90s))) + 15))`+
+			` or increase(m{app="a"}[150s] offset 90s)`; got != want {
+		t.Errorf("counterIncrease =\n%s\nwant\n%s", got, want)
+	}
+	if got, want := histogramIncrease("h", `{app="a"}`, 5*time.Minute, 0),
+		`((increase_pure(h_bucket{app="a"}[5m]) unless ignoring(le) (present_over_time(h_count{app="a"}[1d] offset 5m)`+
+			` unless (last_over_time(h_count{app="a"}[1d] offset 5m) > first_over_time(h_count{app="a"}[5m]))))`+
+			` and ignoring(le) (tfirst_over_time(h_count{app="a"}[5m]) > scalar(min(tfirst_over_time(process_start_time_seconds{job="motel"}[7m]))) + 15))`+
+			` or increase(h_bucket{app="a"}[5m])`; got != want {
+		t.Errorf("histogramIncrease =\n%s\nwant\n%s", got, want)
+	}
+	for name, want := range map[string]map[string]string{
+		"errors_high":  {"kind": "state", "severity": "warning", "subject": "app:{{ $labels.app }}", "source": "rules", "key": "rules/app:{{ $labels.app }}/errors_high"},
+		"shop_slow":    {"kind": "state", "severity": "critical", "subject": "app:shop", "source": "rules", "key": "rules/app:shop/shop_slow"},
+		"disk_filling": {"kind": "state", "severity": "critical", "subject": "box", "source": "rules", "key": "rules/box/disk_filling/{{ $labels.path }}"},
+	} {
+		got := rules[name].Labels
+		if len(got) != len(want) {
+			t.Errorf("%s: labels %v, want %v", name, got, want)
+		}
+		for k, v := range want {
+			if got[k] != v {
+				t.Errorf("%s: label %s = %q, want %q", name, k, got[k], v)
+			}
+		}
+	}
+	for name, want := range map[string][2]string{
+		"errors_high":  {"10m", "{{ $labels.app }}: the 5xx share of its responses over 5 minutes has been above 0.05 for 10m (rule errors_high); now {{ $value | humanizePercentage }}"},
+		"shop_slow":    {"15m", "shop: its p95 time to headers over 5 minutes has been above 1.5s for 15m (rule shop_slow); now {{ $value | humanizeDuration }}"},
+		"blog_quiet":   {"1h", "blog: its requests a second over 5 minutes has been below 0.1 for 1h (rule blog_quiet); now {{ $value | humanize }}"},
+		"disk_filling": {"210m", "the filesystem holding {{ $labels.path }} is predicted to fill within 7d (rule disk_filling)"},
+	} {
+		if r := rules[name]; r.For != want[0] || r.Annotations["summary"] != want[1] {
+			t.Errorf("%s: for %q, summary %q; want %q, %q", name, r.For, r.Annotations["summary"], want[0], want[1])
+		}
+	}
+	// A store-alone block: the group is there, empty, as the fixed ones.
+	if g := parseRules(t, renderRules(nil)).Groups[2]; g.Name != operatorGroup || len(g.Rules) != 0 {
+		t.Errorf("no notify: %+v", g)
+	}
+}
+
+// A name an app or a release could hold is quoted in, never spliced.
+func TestThresholdQuotesTheApp(t *testing.T) {
+	r := Rule{Name: "x", Kind: ruleThreshold, App: "a-b", Metric: "memory_share", Op: ">", Value: 0.5, For: 600e9}
+	if got := thresholdTerm(r).expr(); got != `max by (app) (last_over_time(motel_app_memory_bytes{app="a-b"}[75s]) / last_over_time(motel_app_memory_max_bytes{app="a-b"}[75s])) > 0.5` {
+		t.Fatal(got)
+	}
+}
+
+func TestOperatorRulesPassVMAlertDryRun(t *testing.T) {
+	tool := vmTool(t, "vmalert")
+	path := filepath.Join(t.TempDir(), RulesName)
+	a := rulesApp(t,
+		"rule errors_high threshold 5xx_share > 0.05 for 10m",
+		"rule shop_slow threshold p95 > 1.5s for 15m app shop",
+		"rule hits_low threshold cache_hit_share < 0.5 for 30m",
+		"rule mem threshold memory_share > 0.8 for 5m",
+		"rule busy threshold cpu_cores > 1.5 for 10m app shop",
+		"rule rate threshold request_rate > 100 for 2m",
+		"rule disk_filling disk_fill within 7d",
+	)
+	if err := os.WriteFile(path, renderRules(a), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := exec.Command(tool, "-dryRun", "-rule="+path).CombinedOutput(); err != nil {
+		t.Fatalf("vmalert -dryRun: %v\n%s", err, out)
+	}
+}
+
+// vmalert-tool runs the operator's rules over input series: a 5xx
+// share over its bound fires per app, with the app's labels, once the
+// floor is met; one under the floor does not; a filling disk fires for
+// its path.
+func TestOperatorRulesFire(t *testing.T) {
+	tool := vmTool(t, "vmalert-tool")
+	dir := t.TempDir()
+	a := rulesApp(t,
+		"rule errors_high threshold 5xx_share > 0.5 for 2m",
+		"rule shop_hits threshold cache_hit_share < 0.5 for 2m app shop min_requests 5",
+		"rule disk_filling disk_fill within 1d",
+	)
+	if err := os.WriteFile(filepath.Join(dir, RulesName), renderRules(a), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// shop answers 5xx from its first push on, its series appearing at
+	// 30 already (increase_pure counts them); blog has two 5xx of three,
+	// under the floor of 20. shop's cache spoke and never hit. A disk
+	// loses a GB a minute.
+	test := `rule_files: [rules.yml]
+evaluation_interval: 1m
+tests:
+  - interval: 1m
+    input_series:
+      - series: 'process_start_time_seconds{job="motel"}'
+        values: '1x480'
+      - series: 'motel_app_requests_total{app="shop",release="",class="5xx",job="motel"}'
+        values: '30+30x20'
+      - series: 'motel_app_requests_total{app="shop",release="",class="2xx",job="motel"}'
+        values: '0x20'
+      - series: 'motel_app_requests_total{app="shop",release="",class="aborted",job="motel"}'
+        values: '0+5x20'
+      - series: 'motel_app_requests_total{app="blog",release="v1",class="5xx",job="motel"}'
+        values: '2x20'
+      - series: 'motel_app_requests_total{app="blog",release="v1",class="2xx",job="motel"}'
+        values: '1x20'
+      - series: 'motel_app_observed{app="shop",job="motel"}'
+        values: '1x20'
+      - series: 'motel_app_observed{app="blog",job="motel"}'
+        values: '1x20'
+      - series: 'motel_app_cache_responses_total{app="shop",release="",result="miss",job="motel"}'
+        values: '10+10x20'
+      - series: 'motel_disk_avail_bytes{path="/var/lib/liveswap",job="motel"}'
+        values: '100000000000-1000000000x480'
+      - series: 'motel_disk_avail_bytes{path="/var/lib/caddy",job="motel"}'
+        values: '50000000000-1000000000x480'
+    alert_rule_test:
+      - eval_time: 4m
+        groupname: motel-operator
+        alertname: errors_high
+        exp_alerts:
+          - exp_labels: {app: shop, kind: state, severity: warning, subject: "app:shop", source: rules, key: "rules/app:shop/errors_high"}
+            exp_annotations: {summary: "shop: the 5xx share of its responses over 5 minutes has been above 0.5 for 2m (rule errors_high); now 100%"}
+      - eval_time: 4m
+        groupname: motel-operator
+        alertname: shop_hits
+        exp_alerts:
+          - exp_labels: {app: shop, kind: state, severity: warning, subject: "app:shop", source: rules, key: "rules/app:shop/shop_hits"}
+            exp_annotations: {summary: "shop: the hit share of the responses its cache spoke for over 5 minutes has been below 0.5 for 2m (rule shop_hits); now 0%"}
+      - eval_time: 7h
+        groupname: motel-operator
+        alertname: disk_filling
+        exp_alerts:
+          - exp_labels: {path: /var/lib/caddy, kind: state, severity: warning, subject: box, source: rules, key: "rules/box/disk_filling//var/lib/caddy"}
+            exp_annotations: {summary: "the filesystem holding /var/lib/caddy is predicted to fill within 1d (rule disk_filling)"}
+          - exp_labels: {path: /var/lib/liveswap, kind: state, severity: warning, subject: box, source: rules, key: "rules/box/disk_filling//var/lib/liveswap"}
+            exp_annotations: {summary: "the filesystem holding /var/lib/liveswap is predicted to fill within 1d (rule disk_filling)"}
+`
+	runUnittest(t, tool, dir, test)
+}
+
+// runUnittest runs vmalert-tool's unittest over test, in dir beside
+// its rules.yml, and fails the test unless every case read as wanted.
+func runUnittest(t *testing.T, tool, dir, test string) {
+	t.Helper()
+	if out, ok := vmUnittest(t, tool, dir, test); !ok {
+		t.Fatalf("vmalert-tool unittest:\n%s", out)
+	}
+}
+
+// vmUnittest runs vmalert-tool's unittest over test, in dir beside its
+// rules.yml, and says whether every case read as wanted, with the
+// tool's output.
+func vmUnittest(t *testing.T, tool, dir, test string) (string, bool) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(dir, "test.yml"), []byte(test), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command(tool, "unittest", "-files", "test.yml")
+	cmd.Dir = dir
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Sprintf("%v\n%s", err, out), false
+	}
+	return string(out), strings.Contains(string(out), "SUCCESS")
+}
+
+// A request counter over the store's own MetricsQL, read directly (the
+// rules' guards leave out an app's first window): a series new to the
+// store once the push is older than the window counts from zero (fresh
+// answers a burst of 400 and nothing after, which increase would drop),
+// and so does one back below its last value (reused, a release name
+// rolled back to with a fresh counter), and one born after a gap in the
+// pushes (after); one back after a 20-minute gap in its own series is
+// not read as its lifetime (gapped counts 10 a minute throughout, 500 by
+// its return); nor is one that came with the push itself (old: the
+// metrics line first loaded on a box whose observer had counted 5000;
+// born and restarted: with the push's first sample after a 20-minute gap
+// in the pushes, born new in it, restarted counting from zero in it).
+func TestOperatorRulesCountAfterAGap(t *testing.T) {
+	tool := vmTool(t, "vmalert-tool")
+	dir := t.TempDir()
+	a := rulesApp(t, "rule busy threshold request_rate > 1 for 2m")
+	if err := os.WriteFile(filepath.Join(dir, RulesName), renderRules(a), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	inc := "sum by (app) (" + strings.ReplaceAll(counterIncrease("motel_app_requests_total", requestWindow, 0), "'", "''") + ")"
+	counts := func(at string, want ...string) string {
+		s := "      - expr: '" + inc + "'\n        eval_time: " + at + "\n        exp_samples:\n"
+		for i := 0; i < len(want); i += 2 {
+			s += "          - labels: '{app=\"" + want[i] + "\"}'\n            value: " + want[i+1] + "\n"
+		}
+		return s
+	}
+	test := `rule_files: [rules.yml]
+evaluation_interval: 1m
+tests:
+  - interval: 1m
+    input_series:
+      - series: 'process_start_time_seconds{job="motel"}'
+        values: '1x90'
+      - series: 'motel_app_requests_total{app="fresh",release="v2",class="2xx",job="motel"}'
+        values: '_x30 400x60'
+      - series: 'motel_app_requests_total{app="gapped",release="v1",class="2xx",job="motel"}'
+        values: '0+10x30 _x20 500+10x40'
+      - series: 'motel_app_requests_total{app="reused",release="v1",class="2xx",job="motel"}'
+        values: '0+100x10 _x30 400x50'
+    metricsql_expr_test:
+` + counts("33m", "fresh", "400", "gapped", "20") + counts("44m", "fresh", "0", "reused", "400") + counts("54m", "fresh", "0", "gapped", "30", "reused", "0") + `
+  - interval: 1m
+    input_series:
+      - series: 'process_start_time_seconds{job="motel"}'
+        values: '_x30 1x60'
+      - series: 'motel_app_requests_total{app="old",release="v1",class="2xx",job="motel"}'
+        values: '_x30 5000+10x60'
+    metricsql_expr_test:
+` + counts("34m", "old", "40") + `
+  - interval: 1m
+    input_series:
+      - series: 'process_start_time_seconds{job="motel"}'
+        values: '1x59 _x20 1x40'
+      - series: 'motel_app_requests_total{app="born",release="v2",class="2xx",job="motel"}'
+        values: '_x80 900+50x40'
+      - series: 'motel_app_requests_total{app="restarted",release="v1",class="2xx",job="motel"}'
+        values: '0+50x59 _x20 750+50x40'
+      - series: 'motel_app_requests_total{app="after",release="v3",class="2xx",job="motel"}'
+        values: '_x90 400x30'
+    metricsql_expr_test:
+` + counts("84m", "born", "200", "restarted", "200") + counts("93m", "after", "400", "born", "250", "restarted", "250")
+	runUnittest(t, tool, dir, test)
+}
+
+// On a store younger than the window (here four minutes old), a series
+// that comes after the push's first sample is new since and counts from
+// zero: fresh's 22 responses (e2e metrics 3a's), which increase would
+// drop, fire a 5xx share over its floor of 20. request_rate does not
+// judge until the store holds a push from before the window (busy is
+// silent at 34m, as steady's 0.5 a second would read from nothing up),
+// then reads steady's whole (fires at 37m). With no push in the store
+// at all the guard is increase, which drops them, and nothing fires or
+// fails.
+func TestOperatorRulesCountOnAFreshStore(t *testing.T) {
+	tool := vmTool(t, "vmalert-tool")
+	dir := t.TempDir()
+	a := rulesApp(t, "rule busy threshold request_rate > 0.05 for 2m",
+		"rule errors threshold 5xx_share > 0.5 for 2m min_requests 20")
+	if err := os.WriteFile(filepath.Join(dir, RulesName), renderRules(a), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	test := `rule_files: [rules.yml]
+evaluation_interval: 1m
+tests:
+  - interval: 1m
+    input_series:
+      - series: 'process_start_time_seconds{job="motel"}'
+        values: '_x30 1x30'
+      - series: 'motel_app_requests_total{app="fresh",release="v1",class="5xx",job="motel"}'
+        values: '_x31 22x29'
+      - series: 'motel_app_observed{app="fresh",job="motel"}'
+        values: '_x31 1x29'
+      - series: 'motel_app_requests_total{app="steady",release="v1",class="2xx",job="motel"}'
+        values: '_x30 0+30x30'
+      - series: 'motel_app_observed{app="steady",job="motel"}'
+        values: '_x30 1x30'
+    alert_rule_test:
+      - eval_time: 34m
+        groupname: motel-operator
+        alertname: errors
+        exp_alerts:
+          - exp_labels: {app: fresh, kind: state, severity: warning, subject: "app:fresh", source: rules, key: "rules/app:fresh/errors"}
+            exp_annotations: {summary: "fresh: the 5xx share of its responses over 5 minutes has been above 0.5 for 2m (rule errors); now 100%"}
+      - eval_time: 34m
+        groupname: motel-operator
+        alertname: busy
+        exp_alerts: []
+      - eval_time: 37m
+        groupname: motel-operator
+        alertname: busy
+        exp_alerts:
+          - exp_labels: {app: steady, kind: state, severity: warning, subject: "app:steady", source: rules, key: "rules/app:steady/busy"}
+            exp_annotations: {summary: "steady: its requests a second over 5 minutes has been above 0.05 for 2m (rule busy); now 500m"}
+  - interval: 1m
+    input_series:
+      - series: 'motel_app_requests_total{app="nopush",release="v1",class="5xx",job="motel"}'
+        values: '_x31 22x29'
+      - series: 'motel_app_observed{app="nopush",job="motel"}'
+        values: '_x31 1x29'
+    alert_rule_test:
+      - eval_time: 34m
+        groupname: motel-operator
+        alertname: busy
+        exp_alerts: []
+      - eval_time: 34m
+        groupname: motel-operator
+        alertname: errors
+        exp_alerts: []
+`
+	runUnittest(t, tool, dir, test)
+}
+
+// A request threshold reads the apps motel's last push says are
+// observed, at pushEvery's 30 s. gone's observe line is taken out at
+// 12m30s while the pushes go on: its 2 a second falls a push's worth at
+// each push after, and it is out from the first, so at 13m10s a
+// `request_rate < 1.9` reads quiet and reattached alone (gone's 1.8
+// was the bound's) and `request_rate < 1.5` never fires for it. quiet,
+// observed and never reached, fires and stays firing at 6m, a minute
+// after the last push before two lost ones (the most one lost push
+// leaves at an evaluation before the next). reattached's push at 9m
+// carries it as observed but not its counts, as a restart's first
+// push before liveswap has reattached its release: it stays firing.
+// With every push stopped at 12m, all's fall fires nothing either. A
+// restart at 10m15s: no push at 10m30s, the new process's from 11m,
+// its counts from 12m once liveswap has reattached the release, from
+// zero; idle, observed throughout, stays firing (0.1 a second read
+// as 0.08 and 0.06 meanwhile: the reattach row).
+func TestOperatorRulesReadThePushedApps(t *testing.T) {
+	tool := vmTool(t, "vmalert-tool")
+	dir := t.TempDir()
+	a := rulesApp(t, "rule low threshold request_rate < 1.5 for 1m")
+	if err := os.WriteFile(filepath.Join(dir, RulesName), renderRules(a), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	near := thresholdTerm(Rule{Name: "near", Kind: ruleThreshold, Metric: "request_rate", Op: "<", Value: 1.9, For: 60e9}).expr()
+	firing := ""
+	for _, app := range []string{"quiet", "reattached"} {
+		firing += `
+          - exp_labels: {app: ` + app + `, kind: state, severity: warning, subject: "app:` + app + `", source: rules, key: "rules/app:` + app + `/low"}
+            exp_annotations: {summary: "` + app + `: its requests a second over 5 minutes has been below 1.5 for 1m (rule low); now 0"}`
+	}
+	test := `rule_files: [rules.yml]
+evaluation_interval: 1m
+tests:
+  - interval: 30s
+    input_series:
+      - series: 'process_start_time_seconds{job="motel"}'
+        values: '1x10 _ _ 1x40'
+      - series: 'motel_app_observed{app="live",job="motel"}'
+        values: '1x10 _ _ 1x40'
+      - series: 'motel_app_requests_total{app="live",release="v1",class="2xx",job="motel"}'
+        values: '0+60x10 _ _ 780+60x40'
+      - series: 'motel_app_observed{app="quiet",job="motel"}'
+        values: '1x10 _ _ 1x40'
+      - series: 'motel_app_requests_total{app="quiet",release="v1",class="2xx",job="motel"}'
+        values: '0x10 _ _ 0x40'
+      - series: 'motel_app_observed{app="reattached",job="motel"}'
+        values: '1x10 _ _ 1x40'
+      - series: 'motel_app_requests_total{app="reattached",release="v1",class="2xx",job="motel"}'
+        values: '0x10 _ _ 0x4 _ 0x34'
+      - series: 'motel_app_observed{app="gone",job="motel"}'
+        values: '1x25'
+      - series: 'motel_app_requests_total{app="gone",release="v1",class="2xx",job="motel"}'
+        values: '0+60x25'
+    metricsql_expr_test:
+      - expr: '` + near + `'
+        eval_time: 13m10s
+        exp_samples:
+          - labels: '{app="quiet"}'
+            value: 0
+          - labels: '{app="reattached"}'
+            value: 0
+    alert_rule_test:
+      - eval_time: 6m
+        groupname: motel-operator
+        alertname: low
+        exp_alerts:` + firing + `
+      - eval_time: 9m
+        groupname: motel-operator
+        alertname: low
+        exp_alerts:` + firing + `
+      - eval_time: 15m
+        groupname: motel-operator
+        alertname: low
+        exp_alerts:` + firing + `
+      - eval_time: 17m
+        groupname: motel-operator
+        alertname: low
+        exp_alerts:` + firing + `
+  - interval: 30s
+    input_series:
+      - series: 'process_start_time_seconds{job="motel"}'
+        values: '1x24'
+      - series: 'motel_app_observed{app="all",job="motel"}'
+        values: '1x24'
+      - series: 'motel_app_requests_total{app="all",release="v1",class="2xx",job="motel"}'
+        values: '0+60x24'
+    alert_rule_test:
+      - eval_time: 15m
+        groupname: motel-operator
+        alertname: low
+        exp_alerts: []
+      - eval_time: 17m
+        groupname: motel-operator
+        alertname: low
+        exp_alerts: []
+  - interval: 30s
+    input_series:
+      - series: 'process_start_time_seconds{job="motel"}'
+        values: '1x20 _ 650x20'
+      - series: 'motel_app_observed{app="idle",job="motel"}'
+        values: '1x20 _ 1x20'
+      - series: 'motel_app_requests_total{app="idle",release="v1",class="4xx",job="motel"}'
+        values: '0+3x20 _ _ _ 0+3x18'
+    alert_rule_test:
+      - eval_time: 10m
+        groupname: motel-operator
+        alertname: low
+        exp_alerts:
+          - exp_labels: {app: idle, kind: state, severity: warning, subject: "app:idle", source: rules, key: "rules/app:idle/low"}
+            exp_annotations: {summary: "idle: its requests a second over 5 minutes has been below 1.5 for 1m (rule low); now 100m"}
+      - eval_time: 11m
+        groupname: motel-operator
+        alertname: low
+        exp_alerts:
+          - exp_labels: {app: idle, kind: state, severity: warning, subject: "app:idle", source: rules, key: "rules/app:idle/low"}
+            exp_annotations: {summary: "idle: its requests a second over 5 minutes has been below 1.5 for 1m (rule low); now 80m"}
+      - eval_time: 12m
+        groupname: motel-operator
+        alertname: low
+        exp_alerts:
+          - exp_labels: {app: idle, kind: state, severity: warning, subject: "app:idle", source: rules, key: "rules/app:idle/low"}
+            exp_annotations: {summary: "idle: its requests a second over 5 minutes has been below 1.5 for 1m (rule low); now 60m"}
+      - eval_time: 13m
+        groupname: motel-operator
+        alertname: low
+        exp_alerts:
+          - exp_labels: {app: idle, kind: state, severity: warning, subject: "app:idle", source: rules, key: "rules/app:idle/low"}
+            exp_annotations: {summary: "idle: its requests a second over 5 minutes has been below 1.5 for 1m (rule low); now 60m"}
+`
+	runUnittest(t, tool, dir, test)
+}
+
+// request_rate judges an app once the push its window counts from
+// observed it; each app here has 2 a second while it is observed. new's
+// observe line comes at 20m, back's is out from 11m to 20m, seven's from
+// 11m to 16m (7 minutes from its last push to its next): each one's
+// counts start from zero at its first push back, and over the push's
+// span of 300 s they read from nothing up for five minutes, firing `low`
+// (new and back at 23m, seven at 19m). Each is read from five minutes
+// after its first push back, whole, so `busy` (an app's `>`) fires for
+// new at 26m, where it fired at 24m on 1.6, read over a window it had
+// been counted for four minutes of. brief's is out at 11m and 12m: the
+// window that holds the gap reads its share low, 0.8 at 15m, which fires
+// (an accepted row in DESIGN-metrics.md), and the rule has no value at
+// 16m and 17m, the push the window counts from having left brief out.
+// steady is observed throughout, and deployed too, its v2 counting from
+// zero at 20m: each is read throughout. When the pushes themselves stop
+// for 7 minutes (gap, at 1m a push), the rule has no value just while
+// the store holds no push from the five minutes before the window (20m
+// and 21m), as before.
+func TestOperatorRulesRateOnceObserved(t *testing.T) {
+	tool := vmTool(t, "vmalert-tool")
+	dir := t.TempDir()
+	a := rulesApp(t, "rule low threshold request_rate < 1.5 for 1m", "rule busy threshold request_rate > 1 for 1m app new")
+	if err := os.WriteFile(filepath.Join(dir, RulesName), renderRules(a), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// The rule's whole expression, guards and all, so that an app the
+	// guards leave out has no sample.
+	whole := strings.ReplaceAll(thresholdTerm(Rule{Name: "v", Kind: ruleThreshold, Metric: "request_rate", Op: ">=", Value: 0, For: 60e9}).expr(), "'", "''")
+	samples := func(at string, apps ...string) string {
+		s := "      - expr: 'round(" + whole + ", 0.01)'\n        eval_time: " + at + "\n        exp_samples:\n"
+		for _, app := range apps {
+			s += "          - labels: '{app=\"" + app + "\"}'\n            value: 2\n"
+		}
+		return s
+	}
+	none := func(at, alert string) string {
+		return "      - eval_time: " + at + "\n        groupname: motel-operator\n        alertname: " + alert + "\n        exp_alerts: []\n"
+	}
+	test := `rule_files: [rules.yml]
+evaluation_interval: 1m
+tests:
+  - interval: 1m
+    input_series:
+      - series: 'process_start_time_seconds{job="motel"}'
+        values: '1x50'
+      - series: 'motel_app_observed{app="steady",job="motel"}'
+        values: '1x50'
+      - series: 'motel_app_requests_total{app="steady",release="v1",class="2xx",job="motel"}'
+        values: '0+120x50'
+      - series: 'motel_app_observed{app="new",job="motel"}'
+        values: '_x20 1x30'
+      - series: 'motel_app_requests_total{app="new",release="v1",class="2xx",job="motel"}'
+        values: '_x20 0+120x30'
+      - series: 'motel_app_observed{app="back",job="motel"}'
+        values: '1x10 _x10 1x29'
+      - series: 'motel_app_requests_total{app="back",release="v1",class="2xx",job="motel"}'
+        values: '0+120x10 _x10 0+120x29'
+      - series: 'motel_app_observed{app="seven",job="motel"}'
+        values: '1x10 _x6 1x33'
+      - series: 'motel_app_requests_total{app="seven",release="v1",class="2xx",job="motel"}'
+        values: '0+120x10 _x6 0+120x33'
+      - series: 'motel_app_observed{app="brief",job="motel"}'
+        values: '1x10 _x2 1x37'
+      - series: 'motel_app_requests_total{app="brief",release="v1",class="2xx",job="motel"}'
+        values: '0+120x10 _x2 0+120x37'
+      - series: 'motel_app_observed{app="deployed",job="motel"}'
+        values: '1x50'
+      - series: 'motel_app_requests_total{app="deployed",release="v1",class="2xx",job="motel"}'
+        values: '0+120x20 2400x30'
+      - series: 'motel_app_requests_total{app="deployed",release="v2",class="2xx",job="motel"}'
+        values: '_x20 0+120x30'
+    metricsql_expr_test:
+` + samples("19m", "brief", "deployed", "steady") + samples("22m", "brief", "deployed", "seven", "steady") +
+		samples("25m", "brief", "deployed", "new", "seven", "steady") + samples("26m", "back", "brief", "deployed", "new", "seven", "steady") + `    alert_rule_test:
+      - eval_time: 15m
+        groupname: motel-operator
+        alertname: low
+        exp_alerts:
+          - exp_labels: {app: brief, kind: state, severity: warning, subject: "app:brief", source: rules, key: "rules/app:brief/low"}
+            exp_annotations: {summary: "brief: its requests a second over 5 minutes has been below 1.5 for 1m (rule low); now 800m"}
+` + none("16m", "low") + none("19m", "low") + none("23m", "low") + none("26m", "low") + none("24m", "busy") + `      - eval_time: 26m
+        groupname: motel-operator
+        alertname: busy
+        exp_alerts:
+          - exp_labels: {app: new, kind: state, severity: warning, subject: "app:new", source: rules, key: "rules/app:new/busy"}
+            exp_annotations: {summary: "new: its requests a second over 5 minutes has been above 1 for 1m (rule busy); now 2"}
+  - interval: 1m
+    input_series:
+      - series: 'process_start_time_seconds{job="motel"}'
+        values: '1x10 _x6 1x33'
+      - series: 'motel_app_observed{app="gap",job="motel"}'
+        values: '1x10 _x6 1x33'
+      - series: 'motel_app_requests_total{app="gap",release="v1",class="2xx",job="motel"}'
+        values: '0+120x10 _x6 2040+120x33'
+    metricsql_expr_test:
+` + samples("17m", "gap") + samples("19m", "gap") + samples("20m") + samples("21m") + samples("22m", "gap") + `    alert_rule_test:
+` + none("18m", "low") + none("23m", "low")
+	runUnittest(t, tool, dir, test)
+}
+
+// pushedSeries is an input series at a 1 s interval with a sample at
+// each push (seconds from 0) and none between, value(at) its value.
+func pushedSeries(pushes []int, value func(at int) int) string {
+	var b strings.Builder
+	next := 0
+	for _, at := range pushes {
+		if gap := at - next; gap > 0 {
+			fmt.Fprintf(&b, "_x%d ", gap)
+		}
+		fmt.Fprintf(&b, "%d ", value(at))
+		next = at + 1
+	}
+	return strings.TrimSpace(b.String())
+}
+
+// A steady 2 a second across a motel restart, on the store's own
+// arithmetic (pushes placed to the second): the old process pushes
+// every 30 s, its stop pushes what it counted since (stop - gp after
+// its last tick), and the new one pushes from zero a second after the
+// stop, then every 30 s. The window's samples hold 300 + gp s or
+// 270 + gp s of counts, by where the evaluation falls; read over 300 s,
+// the rate read gp/300 high or (30 - gp)/300 low for the five minutes
+// the restart was in the window. up (gp 25, each evaluation on
+// the new grid's push) read 2.17 and fired `high`; down (gp 5, each
+// 29 s after the new grid's push) read 1.83 and fired `low`. gapped's
+// store refused five pushes (150 s; 180 s between its samples) while
+// motel counted on: over 300 s the counts of the gap and the window
+// read up to 2.8, and fired `high`. Over the time the samples cover,
+// each reads 2 within a third of a percent (the second the box was
+// down), and neither fires.
+func TestOperatorRulesRateAcrossARestart(t *testing.T) {
+	tool := vmTool(t, "vmalert-tool")
+	dir := t.TempDir()
+	a := rulesApp(t, "rule high threshold request_rate > 2.1 for 1m", "rule low threshold request_rate < 1.9 for 1m")
+	if err := os.WriteFile(filepath.Join(dir, RulesName), renderRules(a), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	term := thresholdTerm(Rule{Name: "v", Kind: ruleThreshold, Metric: "request_rate", Op: ">", Value: 0, For: 60e9})
+	value, whole := strings.ReplaceAll(term.value, "'", "''"), strings.ReplaceAll(term.expr(), "'", "''")
+	// group is one app's pushes: a restart at stop (gp after the old
+	// process's last tick), or with gap, no restart and no push taken
+	// from stop to stop + gap.
+	group := func(app string, stop, gp, gap int) string {
+		var pushes []int
+		for at := (stop - gp) % 30; at <= stop-gp; at += 30 {
+			pushes = append(pushes, at)
+		}
+		next := stop + 1
+		if gap > 0 {
+			next = stop - gp + 30
+		} else {
+			pushes = append(pushes, stop)
+		}
+		for at := next; at <= stop+600; at += 30 {
+			if gap == 0 || at >= stop+gap {
+				pushes = append(pushes, at)
+			}
+		}
+		count := func(at int) int {
+			if gap > 0 || at <= stop {
+				return 2 * at
+			}
+			return 2 * (at - stop - 1)
+		}
+		one := func(int) int { return 1 }
+		start := func(at int) int {
+			if gap > 0 || at <= stop {
+				return 1
+			}
+			return 2
+		}
+		g := `  - interval: 1s
+    input_series:
+      - series: 'process_start_time_seconds{job="motel"}'
+        values: '` + pushedSeries(pushes, start) + `'
+      - series: 'motel_app_observed{app="` + app + `",job="motel"}'
+        values: '` + pushedSeries(pushes, one) + `'
+      - series: 'motel_app_requests_total{app="` + app + `",release="v1",class="2xx",job="motel"}'
+        values: '` + pushedSeries(pushes, count) + `'
+    metricsql_expr_test:
+`
+		// The value itself, so that a rate with no value (a divisor
+		// that is NaN) cannot pass for one that does not fire; and with
+		// its guards, which keep the app in across the restart, and
+		// across the gap but while no push has come for 75 s (22m).
+		for _, m := range []int{19, 22, 24, 26, 27} {
+			want := "2"
+			if gap == 0 && (m == 22 || m == 24) {
+				want = "1.99"
+			}
+			for _, e := range []string{value, whole} {
+				if e == whole && gap > 0 && m == 22 {
+					g += fmt.Sprintf("      - expr: 'round(%s, 0.01)'\n        eval_time: %dm\n        exp_samples: []\n", e, m)
+					continue
+				}
+				g += fmt.Sprintf("      - expr: 'round(%s, 0.01)'\n        eval_time: %dm\n        exp_samples:\n          - labels: '{app=\"%s\"}'\n            value: %s\n",
+					e, m, app, want)
+			}
+		}
+		g += "    alert_rule_test:\n"
+		// From before the stop to past the window's leaving it.
+		for m := 19; m <= 28; m++ {
+			for _, name := range []string{"high", "low"} {
+				g += fmt.Sprintf("      - eval_time: %dm\n        groupname: motel-operator\n        alertname: %s\n        exp_alerts: []\n", m, name)
+			}
+		}
+		return g
+	}
+	test := "rule_files: [rules.yml]\nevaluation_interval: 1m\ntests:\n" + group("up", 1199, 25, 0) + group("down", 1200, 5, 0) + group("gapped", 1200, 5, 150)
+	runUnittest(t, tool, dir, test)
+}
+
+// The unit series over the store's own MetricsQL, at pushEvery's 30 s.
+// Each deploy, rollback, relaunch or watchdog restart is a new unit, so
+// a new CPU series, and only the running unit is sampled: deployed's u1
+// runs at 0.5 cores to its last push at 10m and u2 at 0.5 from 10m30s.
+// Read over each series' own span, the stopped u1 kept its 0.5 beside
+// u2's until its last sample left the window: 1.0 to 15m, and `hot`
+// fired for an app that never passed 0.5. stopped runs 1.0 cores at
+// 0.95 of its memory cap and stops at 10m: a bare selector reads a
+// series' last sample for the query's step (5m), so `hot`, `full` and
+// app_memory_high fired on for five minutes for an app that was not
+// running. lossy runs throughout with one push lost (10m30s), and
+// stays in; so does redeployed, whose new unit's second push (11m) is
+// lost: its old unit is past 75 s from 11m15s, the new one has no rate
+// until 11m30s, and the app is read meanwhile.
+func TestOperatorRulesReadTheRunningUnit(t *testing.T) {
+	tool := vmTool(t, "vmalert-tool")
+	dir := t.TempDir()
+	a := rulesApp(t, "rule hot threshold cpu_cores > 0.8 for 2m", "rule full threshold memory_share > 0.9 for 2m")
+	if err := os.WriteFile(filepath.Join(dir, RulesName), renderRules(a), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	value := func(metric, app string) string {
+		return strings.ReplaceAll(thresholdTerm(Rule{Name: "v", Kind: ruleThreshold, Metric: metric, App: app, Op: ">", Value: 0, For: 60e9}).value, "'", "''")
+	}
+	summary := map[string]string{
+		"hot":             "%s: the CPU it used over 5 minutes, in cores has been above 0.8 for 2m (rule hot); now 1",
+		"full":            "%s: its working set''s share of its memory cap has been above 0.9 for 2m (rule full); now 95%%",
+		"app_memory_high": "%s has used over 90 %% of its memory cap for ten minutes",
+	}
+	alerts := func(group, name string, apps ...string) string {
+		s := ""
+		for _, app := range apps {
+			key, source := "rules/app:"+app+"/"+name, "rules"
+			if group == "motel-store" {
+				key, source = "vmalert/app:"+app+"/"+name, "vmalert"
+			}
+			s += "\n          - exp_labels: {app: " + app + ", kind: state, severity: warning, subject: \"app:" + app + "\", source: " + source + ", key: \"" + key + "\"}" +
+				"\n            exp_annotations: {summary: '" + fmt.Sprintf(summary[name], app) + "'}"
+		}
+		return s
+	}
+	test := `rule_files: [rules.yml]
+evaluation_interval: 1m
+tests:
+  - interval: 30s
+    input_series:
+      - series: 'process_start_time_seconds{job="motel"}'
+        values: '1x60'
+      - series: 'motel_app_cpu_seconds_total{app="deployed",unit="app-deployed-u1.service",job="motel"}'
+        values: '0+15x20'
+      - series: 'motel_app_cpu_seconds_total{app="deployed",unit="app-deployed-u2.service",job="motel"}'
+        values: '_x21 15+15x38'
+      - series: 'motel_app_cpu_seconds_total{app="redeployed",unit="app-redeployed-r1.service",job="motel"}'
+        values: '0+15x20'
+      - series: 'motel_app_cpu_seconds_total{app="redeployed",unit="app-redeployed-r2.service",job="motel"}'
+        values: '_x21 15 _ 45+15x36'
+      - series: 'motel_app_cpu_seconds_total{app="stopped",unit="app-stopped-s1.service",job="motel"}'
+        values: '0+30x20'
+      - series: 'motel_app_memory_bytes{app="stopped",job="motel"}'
+        values: '95x20'
+      - series: 'motel_app_memory_max_bytes{app="stopped",job="motel"}'
+        values: '100x20'
+      - series: 'motel_app_cpu_seconds_total{app="lossy",unit="app-lossy-l1.service",job="motel"}'
+        values: '0+30x20 _ 660+30x38'
+      - series: 'motel_app_memory_bytes{app="lossy",job="motel"}'
+        values: '95x20 _ 95x38'
+      - series: 'motel_app_memory_max_bytes{app="lossy",job="motel"}'
+        values: '100x20 _ 100x38'
+    metricsql_expr_test:`
+	for _, at := range []string{"10m40s", "11m10s", "13m", "14m50s"} {
+		test += `
+      - expr: '` + value("cpu_cores", "deployed") + `'
+        eval_time: ` + at + `
+        exp_samples: [{labels: '{app="deployed"}', value: 0.5}]`
+	}
+	test += `
+      - expr: '` + value("cpu_cores", "redeployed") + `'
+        eval_time: 11m20s
+        exp_samples: [{labels: '{app="redeployed"}', value: 0.5}]`
+	for _, m := range []string{"cpu_cores", "memory_share"} {
+		test += `
+      - expr: '` + value(m, "stopped") + `'
+        eval_time: 11m20s
+        exp_samples: []`
+	}
+	test += `
+      - expr: '` + value("cpu_cores", "lossy") + `'
+        eval_time: 10m59s
+        exp_samples: [{labels: '{app="lossy"}', value: 1}]
+      - expr: '` + value("memory_share", "lossy") + `'
+        eval_time: 10m59s
+        exp_samples: [{labels: '{app="lossy"}', value: 0.95}]
+    alert_rule_test:
+`
+	for _, c := range []struct {
+		at, group, name string
+		apps            []string
+	}{
+		{"9m", "motel-operator", "hot", []string{"lossy", "stopped"}},
+		{"9m", "motel-operator", "full", []string{"lossy", "stopped"}},
+		{"11m", "motel-store", "app_memory_high", []string{"lossy", "stopped"}},
+		{"12m", "motel-operator", "hot", []string{"lossy"}},
+		{"12m", "motel-operator", "full", []string{"lossy"}},
+		{"12m", "motel-store", "app_memory_high", []string{"lossy"}},
+		{"14m", "motel-operator", "hot", []string{"lossy"}},
+	} {
+		test += "      - eval_time: " + c.at + "\n        groupname: " + c.group + "\n        alertname: " + c.name + "\n        exp_alerts:" + alerts(c.group, c.name, c.apps...) + "\n"
+	}
+	runUnittest(t, tool, dir, test)
+}
+
+// A histogram is read whole, by its count: under a release name rolled
+// back to with a fresh counter, reused's buckets that came back below
+// their last values and the one above it are all counted from zero (380
+// of 400 under 0.1 s), not some through increase_pure and one through
+// increase (0.1 s read as 0, a p95 of 0.97 s). slow is new to the store
+// (all in increase_pure); kept came back after a gap at its last values,
+// its history slow and its new answers fast, all through increase.
+// Each app is motel_app_observed while its histogram is pushed, as in
+// motel's push, for the rule reads the apps the push says are observed.
+func TestOperatorRulesHistogramIsReadWhole(t *testing.T) {
+	tool := vmTool(t, "vmalert-tool")
+	dir := t.TempDir()
+	a := rulesApp(t, "rule slow threshold p95 > 500ms for 2m min_requests 5")
+	if err := os.WriteFile(filepath.Join(dir, RulesName), renderRules(a), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	test := `rule_files: [rules.yml]
+evaluation_interval: 1m
+tests:
+  - interval: 1m
+    input_series:
+      - series: 'process_start_time_seconds{job="motel"}'
+        values: '1x90'
+      - series: 'motel_app_response_seconds_bucket{app="reused",release="v1",le="0.1",job="motel"}'
+        values: '0+1x10 _x30 380x50'
+      - series: 'motel_app_response_seconds_bucket{app="reused",release="v1",le="1",job="motel"}'
+        values: '0+50x10 _x30 395x50'
+      - series: 'motel_app_response_seconds_bucket{app="reused",release="v1",le="+Inf",job="motel"}'
+        values: '0+100x10 _x30 400x50'
+      - series: 'motel_app_response_seconds_count{app="reused",release="v1",job="motel"}'
+        values: '0+100x10 _x30 400x50'
+      - series: 'motel_app_observed{app="reused",job="motel"}'
+        values: '1x10 _x30 1x50'
+      - series: 'motel_app_response_seconds_bucket{app="slow",release="v1",le="0.1",job="motel"}'
+        values: '_x40 0x50'
+      - series: 'motel_app_response_seconds_bucket{app="slow",release="v1",le="1",job="motel"}'
+        values: '_x40 50x50'
+      - series: 'motel_app_response_seconds_bucket{app="slow",release="v1",le="+Inf",job="motel"}'
+        values: '_x40 50x50'
+      - series: 'motel_app_response_seconds_count{app="slow",release="v1",job="motel"}'
+        values: '_x40 50x50'
+      - series: 'motel_app_observed{app="slow",job="motel"}'
+        values: '_x40 1x50'
+      - series: 'motel_app_response_seconds_bucket{app="kept",release="v1",le="0.1",job="motel"}'
+        values: '0x10 _x30 0+10x50'
+      - series: 'motel_app_response_seconds_bucket{app="kept",release="v1",le="1",job="motel"}'
+        values: '0x10 _x30 0+10x50'
+      - series: 'motel_app_response_seconds_bucket{app="kept",release="v1",le="+Inf",job="motel"}'
+        values: '0+100x10 _x30 1000+10x50'
+      - series: 'motel_app_response_seconds_count{app="kept",release="v1",job="motel"}'
+        values: '0+100x10 _x30 1000+10x50'
+      - series: 'motel_app_observed{app="kept",job="motel"}'
+        values: '1x10 _x30 1x50'
+    alert_rule_test:
+      - eval_time: 44m
+        groupname: motel-operator
+        alertname: slow
+        exp_alerts:
+          - exp_labels: {app: slow, kind: state, severity: warning, subject: "app:slow", source: rules, key: "rules/app:slow/slow"}
+            exp_annotations: {summary: "slow: its p95 time to headers over 5 minutes has been above 500ms for 2m (rule slow); now 955ms"}
+`
+	runUnittest(t, tool, dir, test)
+}
+
+// disk_fill's shape is the store's own rule's at a day, and scaled to the
+// horizon above and below it, its short window and hold no less than
+// five minutes.
+func TestDiskFillShape(t *testing.T) {
+	for _, c := range []struct {
+		within, long, short, hold time.Duration
+	}{
+		{time.Hour, 15 * time.Minute, 5 * time.Minute, 5 * time.Minute},
+		{2 * time.Hour, 30 * time.Minute, 5 * time.Minute, 5 * time.Minute},
+		{6 * time.Hour, 90 * time.Minute, 15 * time.Minute, 7 * time.Minute},
+		{12 * time.Hour, 3 * time.Hour, 30 * time.Minute, 15 * time.Minute},
+		{24 * time.Hour, 6 * time.Hour, time.Hour, 30 * time.Minute},
+		{36 * time.Hour, 9 * time.Hour, 90 * time.Minute, 45 * time.Minute},
+		{7 * 24 * time.Hour, 42 * time.Hour, 7 * time.Hour, 210 * time.Minute},
+		{30 * 24 * time.Hour, 180 * time.Hour, 30 * time.Hour, 15 * time.Hour},
+		{25*time.Hour + 7*time.Second, 6*time.Hour + 15*time.Minute, 62 * time.Minute, 31 * time.Minute},
+	} {
+		if l, s, h := diskFillShape(c.within); l != c.long || s != c.short || h != c.hold {
+			t.Errorf("within %s: %s, %s, %s; want %s, %s, %s", c.within, l, s, h, c.long, c.short, c.hold)
+		}
+	}
+}
+
+// disk_fill's history is any sample older than its long window's last
+// five sixths: a two-hour gap in the pushes (the store down) leaves no
+// hole when it slides into the long window's first sixth, five hours
+// on, and a rule still waits five hours from the series' first sample.
+func TestDiskFillHistoryOverAGap(t *testing.T) {
+	tool := vmTool(t, "vmalert-tool")
+	dir := t.TempDir()
+	a := rulesApp(t, "rule disk_day disk_fill within 1d")
+	if err := os.WriteFile(filepath.Join(dir, RulesName), renderRules(a), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	test := `rule_files: [rules.yml]
+evaluation_interval: 1m
+tests:
+  - interval: 1m
+    input_series:
+      - series: 'motel_disk_avail_bytes{path="/var/lib/liveswap",job="motel"}'
+        values: '1440000000000-1000000000x599 _x120 720000000000-1000000000x480'
+    alert_rule_test:
+      - eval_time: 5h20m
+        groupname: motel-operator
+        alertname: disk_day
+        exp_alerts: []
+      - eval_time: 16h30m
+        groupname: motel-operator
+        alertname: disk_day
+        exp_alerts:
+          - exp_labels: {path: /var/lib/liveswap, kind: state, severity: warning, subject: box, source: rules, key: "rules/box/disk_day//var/lib/liveswap"}
+            exp_annotations: {summary: "the filesystem holding /var/lib/liveswap is predicted to fill within 1d (rule disk_day)"}
+`
+	runUnittest(t, tool, dir, test)
+}
+
+// A one-off step of a fifth of the free space (a deploy's extraction, a
+// staged backup) is no trend at 7d, whose 6 h and 1 h windows fired on
+// it within the hour; a disk that fills in three and a half days does
+// fire.
+func TestDiskFillStepIsNoTrend(t *testing.T) {
+	tool := vmTool(t, "vmalert-tool")
+	dir := t.TempDir()
+	a := rulesApp(t, "rule disk_week disk_fill within 7d")
+	if err := os.WriteFile(filepath.Join(dir, RulesName), renderRules(a), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	test := `rule_files: [rules.yml]
+evaluation_interval: 1m
+tests:
+  - interval: 1m
+    input_series:
+      - series: 'motel_disk_avail_bytes{path="/var/lib/liveswap",job="motel"}'
+        values: '20000000000x3000 16000000000x600'
+      - series: 'motel_disk_avail_bytes{path="/var/lib/caddy",job="motel"}'
+        values: '100000000000-20000000x3600'
+    alert_rule_test:
+      - eval_time: 50h55m
+        groupname: motel-operator
+        alertname: disk_week
+        exp_alerts:
+          - exp_labels: {path: /var/lib/caddy, kind: state, severity: warning, subject: box, source: rules, key: "rules/box/disk_week//var/lib/caddy"}
+            exp_annotations: {summary: "the filesystem holding /var/lib/caddy is predicted to fill within 7d (rule disk_week)"}
+      - eval_time: 53h
+        groupname: motel-operator
+        alertname: disk_week
+        exp_alerts:
+          - exp_labels: {path: /var/lib/caddy, kind: state, severity: warning, subject: box, source: rules, key: "rules/box/disk_week//var/lib/caddy"}
+            exp_annotations: {summary: "the filesystem holding /var/lib/caddy is predicted to fill within 7d (rule disk_week)"}
+`
+	runUnittest(t, tool, dir, test)
+}
+
+// Under a day disk_fill's shape is scaled down as it is scaled up beyond
+// one, its short window and hold no shorter than diskFillMin. At the push's 30 s, a
+// disk sits flat, a third of what is free is written in five minutes (a
+// release built, an image pulled, a backup staged) and kept, and then
+// the disk fills steadily from flat in twice the horizon: the write
+// fires at no minute, and the fill is told at least lead before the disk
+// is full (measured: 55 m, 5 h 53 m, 11 h 45 m; lead leaves a few
+// minutes of slack). Over the day's 6 h and 1 h held 30 m, a within of 1h told no
+// fill of 1 to 4 hours before the disk was full, and a 6h one told this
+// one at 5h30m; held a minute, the write fired at 1h.
+func TestDiskFillUnderADay(t *testing.T) {
+	tool := vmTool(t, "vmalert-tool")
+	for _, c := range []struct {
+		within string
+		lead   time.Duration
+	}{
+		{"1h", 53 * time.Minute},
+		{"6h", 5*time.Hour + 50*time.Minute},
+		{"12h", 11*time.Hour + 40*time.Minute},
+	} {
+		t.Run(c.within, func(t *testing.T) {
+			within, err := time.ParseDuration(c.within)
+			if err != nil {
+				t.Fatal(err)
+			}
+			dir := t.TempDir()
+			a := rulesApp(t, "rule disk_soon disk_fill within "+c.within)
+			if err := os.WriteFile(filepath.Join(dir, RulesName), renderRules(a), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			const step = 30 * time.Second
+			n := func(d time.Duration) int { return int(d / step) }
+			mins := func(d time.Duration) string { return fmt.Sprintf("%dm", int(d/time.Minute)) }
+			// Flat at 43.2 GB until write, 14.4 GB written over five
+			// minutes, flat at 28.8 GB until fill, then to none over
+			// twice the horizon.
+			write, fill, full := within/2, within, 3*within
+			per := 28_800_000_000 / n(full-fill)
+			values := fmt.Sprintf("43200000000x%d 41760000000-1440000000x9 28800000000x%d %d-%dx%d",
+				n(write)-1, n(fill-write-5*time.Minute)-1, 28_800_000_000-per, per, n(full-fill)-1)
+			var none strings.Builder
+			for m := write; m <= fill; m += time.Minute {
+				fmt.Fprintf(&none, "      - eval_time: %s\n        groupname: motel-operator\n        alertname: disk_soon\n        exp_alerts: []\n", mins(m))
+			}
+			test := `rule_files: [rules.yml]
+evaluation_interval: 1m
+tests:
+  - interval: 30s
+    input_series:
+      - series: 'motel_disk_avail_bytes{path="/var/lib/liveswap",job="motel"}'
+        values: '` + values + `'
+    alert_rule_test:
+` + none.String() + `      - eval_time: ` + mins(full-c.lead) + `
+        groupname: motel-operator
+        alertname: disk_soon
+        exp_alerts:
+          - exp_labels: {path: /var/lib/liveswap, kind: state, severity: warning, subject: box, source: rules, key: "rules/box/disk_soon//var/lib/liveswap"}
+            exp_annotations: {summary: "the filesystem holding /var/lib/liveswap is predicted to fill within ` + c.within + ` (rule disk_soon)"}
+`
+			runUnittest(t, tool, dir, test)
+		})
+	}
+}
+
+// A disk filled in bursts, a gigabyte every five minutes (a job on a
+// five-minute timer), from 24 GB free: within 1h tells it at least 20
+// minutes before the disk is full, and keeps telling it between the
+// bursts. With a 2 m short window under a 5 m hold, a flat stretch
+// between bursts left the short line flat, the hold restarted at each,
+// and the fill was never told.
+func TestDiskFillSeesAFillInBursts(t *testing.T) {
+	tool := vmTool(t, "vmalert-tool")
+	dir := t.TempDir()
+	a := rulesApp(t, "rule disk_soon disk_fill within 1h")
+	if err := os.WriteFile(filepath.Join(dir, RulesName), renderRules(a), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// Flat for 30 minutes, then 1 GB less every 5 minutes (ten 30 s
+	// samples each): none left at 145m.
+	values := []string{"24000000000x59"}
+	for k := 1; k <= 24; k++ {
+		values = append(values, fmt.Sprintf("%dx9", 24_000_000_000-k*1_000_000_000))
+	}
+	var firing strings.Builder
+	for m := 125; m <= 130; m++ {
+		fmt.Fprintf(&firing, `      - eval_time: %dm
+        groupname: motel-operator
+        alertname: disk_soon
+        exp_alerts:
+          - exp_labels: {path: /var/lib/liveswap, kind: state, severity: warning, subject: box, source: rules, key: "rules/box/disk_soon//var/lib/liveswap"}
+            exp_annotations: {summary: "the filesystem holding /var/lib/liveswap is predicted to fill within 1h (rule disk_soon)"}
+`, m)
+	}
+	test := `rule_files: [rules.yml]
+evaluation_interval: 1m
+tests:
+  - interval: 30s
+    input_series:
+      - series: 'motel_disk_avail_bytes{path="/var/lib/liveswap",job="motel"}'
+        values: '` + strings.Join(values, " ") + `'
+    alert_rule_test:
+` + firing.String()
+	runUnittest(t, tool, dir, test)
+}

@@ -10,6 +10,20 @@ import (
 	"github.com/caddyserver/caddy/v2/caddyconfig"
 )
 
+// TestStarterObserveFirst holds the starter's example route to its
+// written order with observe on: the observer outside the
+// cache and penaltybox, so that it counts what they answer too.
+func TestStarterObserveFirst(t *testing.T) {
+	order := adaptedHandlerOrder(t, starterExampleSite(t))
+	got := slices.DeleteFunc(order, func(h string) bool {
+		return h != "liveswap_observe" && h != "cache" && h != "hint_penaltybox" && h != "reverse_proxy"
+	})
+	want := []string{"liveswap_observe", "hint_penaltybox", "cache", "reverse_proxy"}
+	if !slices.Equal(got, want) {
+		t.Errorf("handler order %v, want %v", got, want)
+	}
+}
+
 // TestPenaltyboxCacheOrder pins where Caddy's directive sorting puts
 // hint_penaltybox against Souin's cache in this build, which compiles
 // both in. Souin registers cache before rewrite and penaltybox
@@ -77,10 +91,11 @@ func starterExampleSite(t *testing.T) string {
 		}
 		line = strings.TrimPrefix(strings.TrimPrefix(line, "#"), " ")
 		// The optional directives are commented once more in the block:
-		// "# cache", alone or before a trailing comment, but not prose
+		// "# cache" (with its argument, for observe), alone or
+		// before a trailing comment, but not prose
 		// that happens to start with the word.
 		body := strings.TrimLeft(line, "\t")
-		for _, d := range []string{"hint_penaltybox", "cache"} {
+		for _, d := range []string{"observe myapp", "hint_penaltybox", "cache"} {
 			rest, ok := strings.CutPrefix(body, "# "+d)
 			if ok && (rest == "" || strings.HasPrefix(strings.TrimLeft(rest, " "), "#")) {
 				line = line[:len(line)-len(body)] + strings.TrimPrefix(body, "# ")

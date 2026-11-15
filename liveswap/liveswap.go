@@ -98,15 +98,28 @@ type App struct {
 
 	logger  *zap.Logger
 	managed map[string]*managedApp
-	specs   map[string]*appSpec // built in Provision, installed at Start
-	clients *fetchClients
-	started bool     // Start ran: this config counts as live until Cleanup
-	pooled  []string // pool keys this config instance holds references to
+	// observed names the apps an observe handler of this config names
+	// (Observe.observe), as keys: AppSample.Observed. Written while the
+	// config provisions, and read meanwhile too: Caddy starts a load's
+	// admin server before its apps, and its /metrics gathers this
+	// config's registry, which notify's collector may join before the
+	// HTTP app provisions its handlers. Hence a sync.Map, made at Provision.
+	observed *sync.Map
+	// notifier is the notify module's listener (SetNotifier), handed
+	// to every app at Start; nil reports to nobody.
+	notifier Notifier
+	specs    map[string]*appSpec // built in Provision, installed at Start
+	clients  *fetchClients
+	started  bool     // Start ran: this config counts as live until Cleanup
+	pooled   []string // pool keys this config instance holds references to
 	// recoverCancel/recoverWG own the boot-recovery goroutines this
 	// config started, so Cleanup can end them before rolling back or
 	// releasing anything.
 	recoverCancel context.CancelFunc
 	recoverWG     *sync.WaitGroup // pointer: App values are copied by Caddy
+	// metricsSource is the metrics store's (SetMetricsSource),
+	// which adds `metrics` to GET /<app>; nil adds nothing.
+	metricsSource MetricsSource
 	// manager is the manager connection everything this config starts
 	// talks to — its apps' runners, its unknown-app sweep, and (when
 	// the seams below are nil) its capability measurement. Typed as
@@ -348,6 +361,7 @@ func (a *App) Provision(ctx caddy.Context) error {
 	// deploy-auth verifiers included) would already be live on the pooled
 	// object. Validate-before-commit keeps a bad reload from taking effect.
 	a.managed = make(map[string]*managedApp, len(a.Apps))
+	a.observed = new(sync.Map)
 	specs := make(map[string]*appSpec, len(a.Apps))
 	// One pass: a spec is built from its own app's config alone. This
 	// used to need two — the sandbox's hidden set was derived from
@@ -562,6 +576,73 @@ func (a *App) buildSpec(name string, cfg *AppConfig) (*appSpec, error) {
 	}, nil
 }
 
+// TrustSources is each app's effective deploy_trust (its own blocks, or
+// the global ones it falls back to), as this config built them in
+// Provision: for the notify module, which sends an app's events to the
+// channels bound to an identity the app trusts, and refuses a binding
+// no app trusts. Nil before Provision.
+func (a *App) TrustSources() map[string][]deploytrust.Source {
+	if a.specs == nil {
+		return nil
+	}
+	out := make(map[string][]deploytrust.Source, len(a.specs))
+	for name, spec := range a.specs {
+		out[name] = slices.Clone(spec.trust)
+	}
+	return out
+}
+
+// MemoryCapped is whether each app has a memory_max, as this config
+// built it: for the notify module, which refuses a memory_share rule
+// naming an app with none (its share has nothing to divide by). Nil
+// before Provision.
+func (a *App) MemoryCapped() map[string]bool {
+	if a.specs == nil {
+		return nil
+	}
+	out := make(map[string]bool, len(a.specs))
+	for name, spec := range a.specs {
+		out[name] = spec.caps.memoryMax > 0
+	}
+	return out
+}
+
+// Releases are the release versions on disk for app, newest first
+// (listReleases): with RecordedVersions, what notify's `motel monitor
+// silence add --release` takes. Nil for an app this config does not run, or when the
+// directory cannot be read. The paths read are the app's spec's, built
+// from its configured name, never from app: the name comes off the
+// admin API's request body (CodeQL's go/path-injection).
+func (a *App) Releases(app string) []string {
+	spec, ok := a.specs[app]
+	if !ok {
+		return nil
+	}
+	versions, _ := listReleases(spec.dirs)
+	return versions
+}
+
+// RecordedVersions are the versions in app's deploy records, newest
+// first (listDeploySummaries): a record is kept for each version on
+// disk and for the newest keep others, a failed deploy's among them,
+// whose release is removed at once. A deploy whose record was never
+// written (one that failed before it was accepted, or whose record
+// write failed) is in neither list. What
+// notify's silence --release takes beside Releases. Nil for an app
+// this config does not run, or with no records to read. The paths are
+// the spec's, as Releases says.
+func (a *App) RecordedVersions(app string) []string {
+	spec, ok := a.specs[app]
+	if !ok {
+		return nil
+	}
+	var versions []string
+	for _, s := range listDeploySummaries(spec.dirs) {
+		versions = append(versions, s.Version)
+	}
+	return versions
+}
+
 // Validate enforces semantic invariants (runs after Provision has
 // applied defaults, for JSON and Caddyfile config alike).
 func (a *App) Validate() error {
@@ -742,6 +823,7 @@ func (a *App) Start() error {
 	}
 	for name, ma := range a.managed {
 		ma.configure(a, a.specs[name], a.appVerifiers[name], a.logger.Named(name), a.clients, a.systemdConn())
+		ma.setNotifier(a.notifier)
 		ma.startWatchdog()
 	}
 	a.started = true

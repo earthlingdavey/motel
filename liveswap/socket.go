@@ -11,6 +11,7 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"go.uber.org/zap"
 )
@@ -53,6 +54,10 @@ type socketRef struct {
 	path   string // what the app binds
 	pinned string // what motel dials
 	dir    string // the instance's own run dir, removed with the pin; "" = none
+	// counts is the instance's release's response counters, set before
+	// the socket is routed (requestCounts.setRelease), so that a request
+	// counts under the release that served it (markUpstream).
+	counts atomic.Pointer[releaseCounts]
 
 	mu      sync.Mutex
 	linked  bool

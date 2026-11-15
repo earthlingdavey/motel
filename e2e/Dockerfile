@@ -12,13 +12,39 @@
 # e2e/liveswap/artifacts.Dockerfile and the example's workflow.
 FROM denoland/deno:bin-2.9.8 AS deno
 
+# The source is bind-mounted, not copied, and Go's module and build
+# caches are BuildKit cache mounts, kept by the builder between builds
+# and shared by every worktree's: a one-line change compiles one package
+# and links, where `COPY . .` and a cold build downloaded every module
+# and compiled everything again after any edit to the context, and left
+# both caches in the layer [measured: 3.4 GB of build cache a rebuild].
+# The mount is writable because go may write go.work.sum; what it writes
+# is dropped with the step. The cache ids are motel's, shared by its
+# worktrees and no other build. A builder pruned, or CI's, starts cold.
 FROM golang:1.27-trixie AS builder
 WORKDIR /src
-COPY . .
-RUN CGO_ENABLED=0 GOFLAGS=-buildvcs=false go build -trimpath -o /motel ./cmd/motel \
+RUN --mount=type=bind,target=/src,rw \
+	--mount=type=cache,id=motel-gomod,target=/go/pkg/mod \
+	--mount=type=cache,id=motel-gobuild,target=/root/.cache/go-build \
+	CGO_ENABLED=0 GOFLAGS=-buildvcs=false go build -trimpath -o /motel ./cmd/motel \
 	&& cd backups && CGO_ENABLED=0 GOFLAGS=-buildvcs=false go build -trimpath -o /motel-backup ./cmd/motel-backup
 
-FROM debian:trixie-slim
+# notify's tests that run vmalert and vmalert-tool over the rendered
+# rules, compiled for the metrics box, which has both (Debian's
+# victoria-metrics); the dev image has neither, so `make test` skips
+# them. Built only for the metrics box, from the toolchain alone, so
+# BuildKit builds it beside the builder stage.
+FROM golang:1.27-trixie AS notify-tests
+WORKDIR /src
+RUN --mount=type=bind,target=/src,rw \
+	--mount=type=cache,id=motel-gomod,target=/go/pkg/mod \
+	--mount=type=cache,id=motel-gobuild,target=/root/.cache/go-build \
+	cd notify && CGO_ENABLED=0 GOFLAGS=-buildvcs=false go test -c -o /notify.test .
+
+# The box. A named stage, because the notify suite's box below builds on
+# it: docker-compose.yml names this one as e2e-motel's and e2e-upstream's
+# target, or they would get the last stage.
+FROM debian:trixie-slim AS box
 ENV DEBIAN_FRONTEND=noninteractive
 # libpam-systemd: pam_systemd gives user@<uid>.service its runtime dir;
 # dbus: logind; procps + curl: the in-container systemd suite;
@@ -107,3 +133,46 @@ RUN useradd -m -G adm admin
 
 STOPSIGNAL SIGRTMIN+3
 CMD ["/sbin/init"]
+
+# The notify suite's box (make e2e-notify, e2e/notify/run.sh): the same
+# box with Debian's Alertmanager installed as `motel monitor setup` would
+# install it, masked first so that nothing it enables starts; the suite
+# runs setup itself, which finds the package installed and does the
+# rest. iproute2: the suite's `ss`, for what listens.
+FROM box AS notify-box
+RUN systemctl mask prometheus-alertmanager.service \
+	&& apt-get update \
+	&& apt-get install -y --no-install-recommends prometheus-alertmanager iproute2 \
+	&& rm -rf /var/lib/apt/lists/*
+# shop's deploy key, which nothing binds a channel to; /shared is where
+# e2e-token.service mints blog's (no volume: this box shares it with no
+# runner).
+RUN mkdir -p /shared \
+	&& motel deploy-keygen --out /etc/motel/shop.key >/dev/null 2>&1 \
+	&& cp /etc/motel/shop.key.pub /etc/motel/shop.pub && chmod 644 /etc/motel/shop.pub
+COPY e2e/notify/Caddyfile /etc/motel/Caddyfile
+# The box tier's secrets, as the applier would write secrets/_box/: one
+# URL per channel, each a path on the stub receiver.
+RUN install -d -m 2750 -o root -g motel /etc/motel/secrets \
+	&& printf '%s\n' \
+		'NOTIFY_OPS_URL="http://e2e-sink:8080/ops"' \
+		'NOTIFY_ONCALL_URL="http://e2e-sink:8080/broken"' \
+		'NOTIFY_BLOG_URL="http://e2e-sink:8080/blog"' \
+		'NOTIFY_HC_URL="http://e2e-sink:8080/deadman"' \
+		> /etc/motel/secrets/_box.env \
+	&& chown root:motel /etc/motel/secrets/_box.env && chmod 0640 /etc/motel/secrets/_box.env
+
+# The metrics suite's box (make e2e-metrics, e2e/metrics/run.sh): the
+# notify suite's box with Debian's victoria-metrics (the store and
+# vmalert) installed as `motel monitor setup --metrics` would install
+# it, masked first so that its unit, which listens on 0.0.0.0:8428, never
+# starts; the suite runs `motel monitor setup`, then `motel monitor
+# setup --metrics`, the store's setup, which finds the package installed
+# and does the rest.
+FROM notify-box AS metrics-box
+RUN systemctl mask victoria-metrics.service \
+	&& apt-get update \
+	&& apt-get install -y --no-install-recommends victoria-metrics \
+	&& rm -rf /var/lib/apt/lists/*
+COPY --from=notify-tests /notify.test /usr/local/bin/notify.test
+COPY e2e/metrics/Caddyfile /etc/motel/Caddyfile

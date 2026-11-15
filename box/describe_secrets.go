@@ -178,6 +178,11 @@ func (ts *treeSecrets) measure() error {
 		rendered[f.app] += int64(len(f.v)) + n + 4 // KEY="value"\n
 	}
 	for _, app := range ts.secrets.Apps {
+		for _, v := range app.Vars {
+			if app.Name != boxSlot && strings.HasPrefix(v.Name, "NOTIFY_") {
+				ts.warnings = append(ts.warnings, fmt.Sprintf("app %s's secret %s is withheld from the app: a NOTIFY_ variable in an env file the box writes is notify's (a channel's URL goes in %s/%s/); name it otherwise if the app reads it", app.Name, v.Name, ts.shown, boxSlot))
+			}
+		}
 		if n := len(app.Vars); n >= warnSecretVars {
 			ts.warnings = append(ts.warnings, fmt.Sprintf("app %s has %d secrets; the cap is %d", app.Name, n, proof.MaxSecretVars))
 		}

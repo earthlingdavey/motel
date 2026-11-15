@@ -18,10 +18,12 @@ import (
 	"github.com/smallhoursorg/motel/liveswap"
 )
 
-// gate holds a config to two rules before Caddy's own command runs
+// gate holds a config to three rules before Caddy's own command runs
 // (checkConfig): that the admin API is off TCP where apps run
-// (checkAdmin), and that what a Caddyfile declares as a backup is what
-// a backup run can read of it (checkBackups). A run (motel-backup)
+// (checkAdmin), that a monitor rule naming an app reads responses some
+// route observes (checkObserved, metricscheck.go), and that what a
+// Caddyfile declares as a backup is what a backup run can read of it
+// (checkBackups). A run (motel-backup)
 // adapts the Caddyfile inside a view that holds the Caddyfile's own
 // directory and nothing else, as an account that owns nothing there: a
 // backup declared in a file outside that directory, or in one that
@@ -35,14 +37,36 @@ import (
 // over an admin API that the starter's own line keeps off TCP. It
 // returns whether the command is to go no further.
 func gate(args []string, stderr io.Writer) (stop bool) {
+	stop, _ = gateArgs(args, stderr)
+	return stop
+}
+
+// gateArgs is gate, and the arguments Caddy's own command is to run
+// with: args, with --force added to a `motel reload` of a config with a
+// monitor block (reloadForces, monitorcheck.go).
+func gateArgs(args []string, stderr io.Writer) (stop bool, run []string) {
 	if len(args) == 0 {
-		return false
+		return false, args
 	}
 	cmd := args[0]
 	if cmd != "validate" && cmd != "reload" && cmd != "run" {
-		return false
+		return false, args
 	}
-	warning, err := checkConfig(cmd, args[1:])
+	run = args
+	cfg, warning, err := checkAndLoad(cmd, args[1:])
+	if cmd == "run" && refuseRunByHand(cfg, stderr) {
+		return true, run
+	}
+	if cmd == "run" && cfg != nil {
+		retireMetricsRules(cfg, stderr)
+		sendNothing(monitorJSON(cfg), stderr)
+	}
+	if monitor := monitorJSON(cfg); monitor != nil {
+		warnMonitor(cmd, monitor, stderr)
+		if cmd == "reload" && reloadForces(args[1:], monitor) {
+			run = append(append([]string{}, args...), "--force")
+		}
+	}
 	switch {
 	case err != nil && cmd == "run":
 		_, _ = fmt.Fprintf(stderr, "ERROR: %v (served all the same; `motel reload` refuses this until it is mended)\n", err)
@@ -53,7 +77,7 @@ func gate(args []string, stderr io.Writer) (stop bool) {
 	if warning != "" {
 		_, _ = fmt.Fprintf(stderr, "WARNING: %s\n", warning)
 	}
-	return stop
+	return stop, run
 }
 
 // backupCaddyfile is the Caddyfile motel-backup reads, and
@@ -86,25 +110,35 @@ func commandFlags(name string, args []string) (*pflag.FlagSet, bool) {
 }
 
 // checkConfig holds the config the command's flags name to the gate's
-// two rules, each on its own, and joins what they refuse: neither
-// rule's early returns can drop the other's.
+// three rules, each on its own, and joins what they refuse: no rule's
+// early returns can drop another's.
 func checkConfig(cmd string, args []string) (warning string, err error) {
+	_, warning, err = checkAndLoad(cmd, args)
+	return warning, err
+}
+
+// checkAndLoad is checkConfig, and hands back the config it loaded:
+// nil when it loaded none.
+func checkAndLoad(cmd string, args []string) (cfg []byte, warning string, err error) {
 	cfg, file, adapter, err := loadConfig(cmd, args)
 	if errors.Is(err, errCaddysToSay) {
-		return "", nil
+		return nil, "", nil
 	}
 	if err != nil {
-		return "", err
+		return nil, "", err
 	}
-	adminErr := checkAdmin(cfg)
+	adminErr, observedErr := checkAdmin(cfg), checkObserved(cfg)
 	warning, err = checkBackups(cmd, file, adapter)
-	switch {
-	case adminErr == nil:
-		return warning, err
-	case err == nil:
-		return warning, adminErr
+	var said []string
+	for _, e := range []error{adminErr, observedErr, err} {
+		if e != nil {
+			said = append(said, e.Error())
+		}
 	}
-	return warning, errors.New(adminErr.Error() + "; and " + err.Error())
+	if len(said) == 0 {
+		return cfg, warning, nil
+	}
+	return cfg, warning, errors.New(strings.Join(said, "; and "))
 }
 
 // errCaddysToSay is loadConfig's answer for a config that does not load:

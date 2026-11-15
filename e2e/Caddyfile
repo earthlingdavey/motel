@@ -4,6 +4,7 @@
 # POST this same file to /load mid-traffic.
 #
 # Listeners: 8080/8081 = liveswap (proxy + webhook), 8082/8083 = the Deno/Node examples,
+#            8090/8091/8092 = demo observed / observed and cached / cached (e2e/bench/observe.sh),
 #            9080/9090/9091 = penaltybox (plain / cached / tiered).
 {
 	# TCP admin is TEST-ONLY (the runner container drives /load and
@@ -122,6 +123,37 @@
 
 :8081 {
 	liveswap_webhook
+}
+
+# The observer's cost (e2e/bench/observe.sh): the same app as :8080,
+# observed, cached, and both, so that one run measures each against the
+# bare site.
+:8090 {
+	route {
+		observe demo
+		reverse_proxy {
+			dynamic liveswap demo
+		}
+	}
+}
+
+:8091 {
+	route {
+		observe demo
+		cache
+		reverse_proxy {
+			dynamic liveswap demo
+		}
+	}
+}
+
+:8092 {
+	route {
+		cache
+		reverse_proxy {
+			dynamic liveswap demo
+		}
+	}
 }
 
 # ── penaltybox: rate-limit hint enforcement ────────────────────────

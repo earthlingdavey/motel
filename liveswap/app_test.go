@@ -170,9 +170,16 @@ type fakeRunner struct {
 	// recorded and before the handle takes the caps, outside the
 	// runner's lock: a test's chance to overlap another sync with it.
 	setCapsHook func(resourceCaps)
+	// startHook, when set, runs at the start of Start, outside the
+	// runner's lock: a test's chance to change what runs while a deploy
+	// launches.
+	startHook func()
 }
 
 func (r *fakeRunner) Start(spec startSpec) (handle, error) {
+	if r.startHook != nil {
+		r.startHook()
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.startErr != nil {
@@ -1281,6 +1288,42 @@ func TestBuildEnvPrecedenceAndPlaceholders(t *testing.T) {
 	}
 }
 
+// A NOTIFY_ variable in an env file the box wrote is a notify channel's
+// URL, from secrets/<app>/NOTIFY_*.age: withheld from the unit's
+// environment, named, and still a value the filter knows. In an env file
+// the operator keeps elsewhere it is the operator's, and passes.
+func TestBuildEnvWithholdsNotifyVariables(t *testing.T) {
+	boxDir := t.TempDir()
+	orig := boxSecretsDir
+	boxSecretsDir = boxDir
+	t.Cleanup(func() { boxSecretsDir = orig })
+	body := []byte("DATABASE_URL=\"postgres://db\"\nNOTIFY_BLOG_URL=\"https://ntfy.sh/blog-topic\"\n")
+	spec := testSpec(t)
+	spec.envFile = filepath.Join(boxDir, "demo.env")
+	must(t, os.WriteFile(spec.envFile, body, 0o600))
+	env, secrets, withheld, _, err := buildEnvFull(spec, "v1", spec.dirs.socket("0a1b2c3d0a1b2c3d"), spec.dirs.release("v1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, kv := range env {
+		if strings.HasPrefix(kv, "NOTIFY_") {
+			t.Errorf("%s reached the unit's environment", kv)
+		}
+	}
+	if !slices.Contains(env, "DATABASE_URL=postgres://db") || !slices.Equal(withheld, []string{"NOTIFY_BLOG_URL"}) {
+		t.Errorf("env %v, withheld %v", env, withheld)
+	}
+	if !slices.Contains(secrets, "NOTIFY_BLOG_URL=https://ntfy.sh/blog-topic") {
+		t.Errorf("a withheld value is no longer a known value to the filter: %v", secrets)
+	}
+	spec.envFile = filepath.Join(t.TempDir(), "operator.env")
+	must(t, os.WriteFile(spec.envFile, body, 0o600))
+	env, _, withheld, _, err = buildEnvFull(spec, "v1", spec.dirs.socket("0a1b2c3d0a1b2c3d"), spec.dirs.release("v1"))
+	if err != nil || !slices.Contains(env, "NOTIFY_BLOG_URL=https://ntfy.sh/blog-topic") || withheld != nil {
+		t.Errorf("an operator's own env file: env %v, withheld %v, err %v", env, withheld, err)
+	}
+}
+
 func TestBuildEnvDoesNotLeakSupervisorSecrets(t *testing.T) {
 	t.Setenv("ACME_DNS_API_TOKEN", "hunter2")
 	t.Setenv("AWS_SECRET_ACCESS_KEY", "tok")
@@ -1376,6 +1419,7 @@ func TestRenderEnvFileRefusesWhatTheFormatCannotCarry(t *testing.T) {
 		{[]string{"my-var=v"}, "not a valid environment variable name"},
 		{[]string{"=v"}, "not a valid environment variable name"},
 		{[]string{"novalue"}, "not a valid environment variable name"},
+		{[]string{"https://ntfy.sh/x?a=b"}, `the text before the first "=" is not a valid environment variable name`},
 		{[]string{"OPTIND=2"}, "set by the shell"},
 		{[]string{"K=a", "L=b", "K=c"}, "K is given twice"},
 	} {
@@ -2385,6 +2429,42 @@ func TestParseEnvFileRejectsInvalidKeys(t *testing.T) {
 	_, err := parseEnvFile(envFile)
 	if err == nil || !strings.Contains(err.Error(), `"my-var"`) || !strings.Contains(err.Error(), ":2:") {
 		t.Fatalf("an invalid key must be named with its line, got %v", err)
+	}
+}
+
+// An invalid key is quoted only when it looks like a mistyped name: the
+// text before `=` on a line that is not one (a channel URL whose
+// NOTIFY_…= was forgotten, a `KEY: url` line, a token) is named by its
+// file and line alone, since nothing can mask it in the messages that
+// carry it.
+func TestParseEnvLinesQuotesOnlyNameShapedKeys(t *testing.T) {
+	const notName = `/app.env:2: the text before the first "=" is not a valid environment variable name`
+	for _, c := range []struct{ line, want, hidden string }{
+		{"MY-KEY=1", `/app.env:2: "MY-KEY" is not a valid environment variable name`, ""},
+		{"MY KEY=1", `/app.env:2: "MY KEY" is not a valid environment variable name`, ""},
+		{"9LIVES=1", `/app.env:2: "9LIVES" is not a valid environment variable name`, ""},
+		{"my.key=1", `/app.env:2: "my.key" is not a valid environment variable name`, ""},
+		{"export DB-URL = x", `/app.env:2: "DB-URL" is not a valid environment variable name`, ""},
+		{"ABCDEFGHIJ-KLMNOPQRST=1", `"ABCDEFGHIJ-KLMNOPQRST"`, ""}, // 21 bytes, the longest quoted
+		{"https://ntfy.sh/ops-7f3a9c2e1b?title=box1", notName, "ops-7f3a9c2e1b"},
+		{"NOTIFY_OPS_URL: https://ntfy.sh/ops-7f3a9c2e1b?auth=x", notName, "ops-7f3a9c2e1b"},
+		{"ntfy.sh/ops-7f3a9c2e1b=x", notName, "ops-7f3a9c2e1b"},
+		{"ABCDEFGHIJK-LMNOPQRSTU=1", notName, "LMNOPQRSTU"},             // 22 bytes
+		{"q2F-x8_Lm4Rv.T0p9Zk3wY==", notName, "q2F-x8_Lm4Rv.T0p9Zk3wY"}, // 22 bytes before the padding
+		{"KEYé=1", notName, "KEYé"},
+	} {
+		_, err := ParseEnvLines("/app.env", []byte("GOOD=1\n"+c.line+"\n"))
+		if err == nil || !strings.Contains(err.Error(), c.want) {
+			t.Errorf("%q: err = %v, want %q", c.line, err, c.want)
+			continue
+		}
+		if c.hidden != "" && strings.Contains(err.Error(), c.hidden) {
+			t.Errorf("%q: the error quotes the line: %v", c.line, err)
+		}
+	}
+	// A line without `=` quotes nothing, as before.
+	if _, err := ParseEnvLines("/app.env", []byte("GOOD=1\nhttps://ntfy.sh/ops-7f3a9c2e1b\n")); err == nil || err.Error() != "/app.env:2: not KEY=VALUE" {
+		t.Errorf("a line without = : %v", err)
 	}
 }
 

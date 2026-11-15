@@ -1,11 +1,13 @@
-# Builds the demo app once, packs six release tarballs (v1, v2, a v3
+# Builds the demo app once, packs its release tarballs (v1, v2, a v3
 # whose health check always fails, a "workers" release whose ./server
 # is a shell leader that forks a worker before exec'ing the app — the
 # process-tree shape the systemd suite kills — a "probe" release whose
 # ./server records its sandbox view before exec'ing the app, and a
-# "crash" release whose ./server prints its secret and exits 3, and a
+# "crash" release whose ./server prints its secret and exits 3, a
 # "wrongarch" release whose ./server was built for the other machine —
-# the tarball a workflow on the wrong runs-on produces), and serves
+# the tarball a workflow on the wrong runs-on produces — and an
+# "errors" release, healthy, whose every other path answers 500: the
+# metrics suite's post-deploy comparison), and serves
 # them over HTTP — the stand-in for a GitHub/GitLab release
 # asset URL.
 #
@@ -35,6 +37,11 @@ RUN mkdir /out \
 	&& echo v3 > /tmp/stage-v3/version.txt \
 	&& touch /tmp/stage-v3/broken \
 	&& tar -czf /out/demo-v3-broken.tar.gz -C /tmp/stage-v3 . \
+	&& mkdir /tmp/stage-errors \
+	&& cp /build/server /tmp/stage-errors/ \
+	&& echo errors > /tmp/stage-errors/version.txt \
+	&& touch /tmp/stage-errors/errors \
+	&& tar -czf /out/demo-errors.tar.gz -C /tmp/stage-errors . \
 	&& mkdir /tmp/stage-workers \
 	&& cp /build/server /tmp/stage-workers/server-bin \
 	&& cp /build/workers.sh /tmp/stage-workers/server \

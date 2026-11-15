@@ -178,6 +178,7 @@ func TestSweepUnknownAppsPrunesAppsWithNoUnitsLeft(t *testing.T) {
 		must(t, os.MkdirAll(d.runDir("0a1b2c3d0a1b2c3d"), 0o750))
 		must(t, os.MkdirAll(d.proxy, 0o750))
 		must(t, os.WriteFile(filepath.Join(d.proxy, "0a1b2c3d0a1b2c3d.sock"), nil, 0o600))
+		must(t, os.WriteFile(d.alerts, []byte(`{"refused":true}`), 0o600))
 	}
 	must(t, os.WriteFile(filepath.Join(root, "not-an-app-dir.txt"), nil, 0o600))
 	swapSeam(t, &appConfiguredSeam, func(app string) bool { return app == "demo" })
@@ -190,6 +191,11 @@ func TestSweepUnknownAppsPrunesAppsWithNoUnitsLeft(t *testing.T) {
 		_, pinErr := os.Stat(filepath.Join(d.proxy, "0a1b2c3d0a1b2c3d.sock"))
 		if got := runErr == nil && pinErr == nil; got != want {
 			t.Fatalf("%s's socket dirs present = %v, want %v", app, got, want)
+		}
+		// What a removed app's watchdog reported goes with it, so an app
+		// of the name added back later reports nothing stale.
+		if _, err := os.Stat(d.alerts); (err == nil) != want {
+			t.Fatalf("%s's alerts.json present = %v, want %v", app, err == nil, want)
 		}
 	}
 	if _, err := os.Stat(newAppDirs(root, "gone").app); err != nil {

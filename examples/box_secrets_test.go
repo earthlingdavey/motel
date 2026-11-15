@@ -180,6 +180,7 @@ func readersRepo(t *testing.T) (r *boxRepo, alice, carol string) {
 }
 
 func TestBoxSecretSet(t *testing.T) {
+	t.Parallel()
 	r, alice, carol := readersRepo(t)
 	app := []string{"APP=example", "VAR=DATABASE_URL"}
 
@@ -297,6 +298,9 @@ func TestBoxSecretSet(t *testing.T) {
 		{[]string{"APP=recipients", "VAR=X"}, "that name is the recipients file's"},
 		{[]string{"APP=" + strings.Repeat("a", 64), "VAR=X"}, "at most 63 characters"},
 		{[]string{"APP=example", "VAR=X", "BOX=nope.example.com"}, "no box nope.example.com here"},
+		{[]string{"APP=_box", "VAR=DATABASE_URL"}, "variable 'DATABASE_URL': the box's own secrets (APP=_box) are notify's channel URLs, each named NOTIFY_ then capitals, digits and _"},
+		{[]string{"APP=_box", "VAR=NOTIFY_ops"}, "variable 'NOTIFY_ops': the box's own secrets (APP=_box) are notify's"},
+		{[]string{"APP=_boxes", "VAR=X"}, "app '_boxes': lower-case letters, digits and - only, as in its app block (or _box, for a notify channel's URL)"},
 	} {
 		if out, code := r.secrets("", "v", "set", c.env...); code != 1 || !strings.Contains(out, c.want) {
 			t.Errorf("%v: exit %d, want %q\n%s", c.env, code, c.want, out)
@@ -317,6 +321,24 @@ func TestBoxSecretSet(t *testing.T) {
 		t.Errorf("an app the file does not declare: exit %d\n%s", code, out)
 	}
 	r.write(boxFile, f)
+
+	// The box's own slot: a notify channel's URL, which the monitor
+	// block reads by name; no env_file hint, and the notify hint once
+	// the name is read.
+	notifyFile := "deploy.example.com/secrets/_box/NOTIFY_OPS_URL.age"
+	if out, code := r.secrets("", "https://ntfy.sh/ops-topic", "set", "APP=_box", "VAR=NOTIFY_OPS_URL"); code != 0 ||
+		!strings.Contains(out, "secret: "+notifyFile+", encrypted to 3 keys, added to the commit\n") ||
+		!strings.Contains(out, "secret: no line of "+boxFile+"'s monitor block reads NOTIFY_OPS_URL yet: a channel reads it as  channel <name> json|ntfy|slack|discord {secret.NOTIFY_OPS_URL}") ||
+		strings.Contains(out, "env_file") {
+		t.Errorf("APP=_box: exit %d\n%s", code, out)
+	}
+	r.mustDecrypt(boxID, notifyFile, "https://ntfy.sh/ops-topic")
+	r.write(boxFile, strings.Replace(f, "{\n", "{\n\tmonitor {\n\t\tchannel ops ntfy {secret.NOTIFY_OPS_URL}\n\t\toperator ops\n\t}\n", 1))
+	if out, code := r.secrets("", "https://ntfy.sh/ops-2", "set", "APP=_box", "VAR=NOTIFY_OPS_URL"); code != 0 || strings.Contains(out, "monitor block reads") {
+		t.Errorf("APP=_box, read by a channel line: exit %d\n%s", code, out)
+	}
+	r.write(boxFile, f)
+	r.remove("deploy.example.com/secrets/_box")
 
 	// On a Mac's disk two names that differ in case are one file: the
 	// second would overwrite the first.
@@ -371,6 +393,7 @@ func TestBoxSecretSet(t *testing.T) {
 // The shells it runs under: the container's /bin/sh is dash; a Mac's is
 // bash 3.2 in POSIX mode.
 func TestBoxSecretSetUnderBash(t *testing.T) {
+	t.Parallel()
 	if _, err := exec.LookPath("bash"); err != nil {
 		t.Skip("no bash here")
 	}
@@ -400,6 +423,7 @@ func firstKey(recipients string) string {
 }
 
 func TestBoxSecretsListShowRekey(t *testing.T) {
+	t.Parallel()
 	r, alice, carol := readersRepo(t)
 	boxID, box := r.boxKey("box")
 	if out, code := r.secrets("", "one", "set", "APP=example", "VAR=DATABASE_URL", "BOX_KEY="+box); code != 0 {
@@ -512,7 +536,27 @@ func TestBoxSecretsListShowRekey(t *testing.T) {
 	}
 }
 
+// A NOTIFY_ name in an app's directory is warned of on stderr: what show
+// prints on stdout is the value alone, so a capture of it is too.
+func TestBoxSecretShowOfANotifyNameIsTheValueAlone(t *testing.T) {
+	t.Parallel()
+	r, _, _ := readersRepo(t)
+	_, box := r.boxKey("box")
+	if out, code := r.secrets("", "three", "set", "APP=example", "VAR=NOTIFY_LEGACY", "BOX_KEY="+box); code != 0 {
+		t.Fatalf("set NOTIFY_LEGACY: exit %d\n%s", code, out)
+	}
+	show := exec.Command(filepath.Join(r.dir, "bin", "secrets"), "show")
+	show.Dir, show.Env = r.dir, append(append([]string{}, r.env...), "APP=example", "VAR=NOTIFY_LEGACY")
+	var stdout, stderr strings.Builder
+	show.Stdout, show.Stderr = &stdout, &stderr
+	if err := show.Run(); err != nil || stdout.String() != "three" ||
+		!strings.Contains(stderr.String(), "motel withholds a NOTIFY_ variable from example's environment") {
+		t.Errorf("show of a NOTIFY_ name: %v\nstdout %q\nstderr %q", err, stdout.String(), stderr.String())
+	}
+}
+
 func TestBoxSignerAddsAReader(t *testing.T) {
+	t.Parallel()
 	r := secretsRepo(t)
 	r.key("id_ed25519")
 	if out, code := r.run("signer"); code != 0 {
@@ -603,6 +647,7 @@ func TestBoxSignerAddsAReader(t *testing.T) {
 // An agent holds the key, with no file beside the .pub: still a
 // reader in the file, and told that age cannot read through an agent.
 func TestBoxSignerAgentHeldReader(t *testing.T) {
+	t.Parallel()
 	r := secretsRepo(t)
 	r.key("id_ed25519")
 	if out, code := r.run("signer"); code != 0 {
@@ -630,6 +675,7 @@ func TestBoxSignerAgentHeldReader(t *testing.T) {
 // anything is written through it: the box takes none, and through one
 // a write could reach outside the repository.
 func TestBoxSecretsRefuseLinks(t *testing.T) {
+	t.Parallel()
 	r := secretsRepo(t)
 	r.key("id_ed25519")
 	if out, code := r.run("signer"); code != 0 {
@@ -758,6 +804,7 @@ func TestBoxSecretsRefuseLinks(t *testing.T) {
 // make signer with more than one box: a box whose recipients file it
 // may not write stops it before any box is written, the good one too.
 func TestBoxSignerChecksEveryBoxFirst(t *testing.T) {
+	t.Parallel()
 	r := secretsRepo(t)
 	r.key("id_ed25519")
 	if out, code := r.run("signer"); code != 0 {
@@ -830,6 +877,7 @@ func snapshot(t *testing.T, dir string) map[string]string {
 // have every command work on files outside it. git's index is asked
 // too, for a link the checkout has not made yet.
 func TestBoxSecretsNeverReadThroughALink(t *testing.T) {
+	t.Parallel()
 	r := secretsRepo(t)
 	alicePub := r.key("id_ed25519")
 	alice := strings.TrimSuffix(alicePub, ".pub")
@@ -975,6 +1023,7 @@ func mapsEqual(a, b map[string]string) bool {
 }
 
 func TestBoxSecretsNeedAge(t *testing.T) {
+	t.Parallel()
 	r := newBoxRepo(t) // the age CLI not on PATH
 	if _, err := exec.LookPath("age"); err == nil {
 		t.Skip("age is installed here")
@@ -987,6 +1036,7 @@ func TestBoxSecretsNeedAge(t *testing.T) {
 }
 
 func TestBoxSecretsImport(t *testing.T) {
+	t.Parallel()
 	r := secretsRepo(t)
 	r.key("id_ed25519")
 	if out, code := r.run("signer"); code != 0 {
@@ -1004,15 +1054,16 @@ func TestBoxSecretsImport(t *testing.T) {
 		`D='single'`,
 		`E="unbalanced`,
 		"F=a=b=c",
-		"G=  spaced" + nbsp,
+		"G =  spaced" + nbsp,
 		em + "H=em" + em,
 		`I="  inner spaces kept  "`,
-		"J=#not a comment",
-		"K=" + ideo + "tail" + mmsp,
+		`J="#not a comment"`,
+		"K =" + ideo + "tail" + mmsp,
 		"\tTAB_ED=x\t",
-		"L=" + nel + "nel" + nel,
+		"L =" + nel + "nel" + nel,
 		`M=""quoted twice""`,
 		"N=caf" + string(rune(0xe9)),
+		`O="=x # kept"`,
 		"A=again",
 		"CR=line\r",
 		"",
@@ -1027,7 +1078,7 @@ func TestBoxSecretsImport(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit %d\n%s", code, out)
 	}
-	if !strings.Contains(out, "secrets: note: A is given again on line 19; the last one is kept\n") {
+	if !strings.Contains(out, "secrets: note: A is given again on line 20; the last one is kept\n") {
 		t.Errorf("no note of A twice:\n%s", out)
 	}
 	last := map[string]string{}
@@ -1038,32 +1089,96 @@ func TestBoxSecretsImport(t *testing.T) {
 	for k, v := range last {
 		r.mustDecrypt(boxID, "deploy.example.com/secrets/example/"+k+".age", v)
 	}
-	if !strings.Contains(out, "secrets: deploy.example.com/secrets/example: added A B C D E F G H I J K TAB_ED L M N CR\n") ||
+	if !strings.Contains(out, "secrets: deploy.example.com/secrets/example: added A B C D E F G H I J K TAB_ED L M N O CR\n") ||
 		!strings.Contains(out, fmt.Sprintf("secrets: %d values, encrypted to 2 keys, in the commit\n", len(last))) {
 		t.Errorf("summary:\n%s", out)
 	}
+	if strings.Contains(out, "check the names added above") {
+		t.Errorf("names in capitals alone, and the note of a value read as a name:\n%s", out)
+	}
 
-	// Lines motel refuses, it refuses, and then imports nothing.
-	for _, c := range []struct{ line, want string }{
-		{"1BAD=x", "line 2: the name is not letters, digits and _, not starting with a digit"},
-		{"NOEQUALS", "line 2: not KEY=VALUE"},
-		{"=x", "line 2: not KEY=VALUE"},
-		{"export\tX=1", "line 2: the name is not letters"},
-		{"BAD-NAME=x", "line 2: the name is not letters"},
-		{"EMPTY=", "line 2: EMPTY is empty"},
-		{`EMPTY=""`, "line 2: EMPTY is empty"},
+	// Lines motel refuses, it refuses, and then imports nothing. It also
+	// refuses lines motel takes, without naming the line's name, in the
+	// shapes a base64 secret pasted alone on its line reads as, the secret
+	// as the name: a value that is empty or only = signs, an unquoted one
+	// starting with = or # (a comment after it), white space after the =
+	// and none before (another token after it). Both tokens are made up
+	// for this test.
+	pasted, second := "dGhpc2lzYXNlY3JldA", "c2Vjb25kc2VjcmV0"
+	startsWith := "line 2: the value starts with = or #, as a base64 value alone on the line reads when a comment or another token follows it; quote the value if it is one"
+	spacedOut := "line 2: white space after the = and none before it, as a base64 value alone on the line reads when another token follows it; write NAME=value"
+	for _, c := range []struct {
+		line, want string
+		motelTakes bool
+	}{
+		{line: "1BAD=x", want: "line 2: the name is not letters, digits and _, not starting with a digit"},
+		{line: "NOEQUALS", want: "line 2: not KEY=VALUE"},
+		{line: "=x", want: "line 2: not KEY=VALUE"},
+		{line: "export\tX=1", want: "line 2: the name is not letters"},
+		{line: "BAD-NAME=x", want: "line 2: the name is not letters"},
+		{line: "EMPTY=", want: "line 2: the value is empty", motelTakes: true},
+		{line: `EMPTY=""`, want: "line 2: the value is empty", motelTakes: true},
+		{line: "EQUALS==", want: "line 2: the value is only = signs, as a base64 value alone on the line reads, its padding as the value; a value that is only = signs goes in with make secret", motelTakes: true},
+		{line: `EQUALS="=="`, want: "line 2: the value is only = signs", motelTakes: true},
+		{line: pasted + "=", want: "line 2: the value is empty", motelTakes: true},
+		{line: pasted + "==", want: "line 2: the value is only = signs", motelTakes: true},
+		{line: strings.Repeat("L", 129) + "=x", want: "line 2: the name is longer than 128 bytes", motelTakes: true},
+		{line: pasted + "== # prod", want: startsWith, motelTakes: true},
+		{line: pasted + "= # prod", want: startsWith, motelTakes: true},
+		{line: "export " + pasted + "= # prod", want: startsWith, motelTakes: true},
+		{line: pasted + "= =x", want: startsWith, motelTakes: true},
+		{line: "HASH=#x", want: startsWith, motelTakes: true},
+		{line: pasted + "= " + second + "=", want: spacedOut, motelTakes: true},
+		{line: pasted + "=\t" + second, want: spacedOut, motelTakes: true},
+		{line: "SPACED= value", want: spacedOut, motelTakes: true},
 	} {
 		input := "OK=1\n" + c.line + "\n"
-		if _, err := liveswap.ParseEnvLines("input", []byte(input)); err == nil && !strings.Contains(c.want, "is empty") {
-			t.Errorf("%q: motel's parser takes it, the test expects a refusal", c.line)
+		if _, err := liveswap.ParseEnvLines("input", []byte(input)); (err == nil) != c.motelTakes {
+			t.Errorf("%q: motel's parser error %v, the test expects it to take the line: %v", c.line, err, c.motelTakes)
 		}
 		out, code := r.secrets("", input, "import", "APP=other")
 		if code != 1 || !strings.Contains(out, "secrets: "+c.want) || !strings.Contains(out, "nothing imported") {
 			t.Errorf("%q: exit %d, want %q\n%s", c.line, code, c.want, out)
 		}
+		if c.motelTakes && (strings.Contains(out, pasted) || strings.Contains(out, "EMPTY") || strings.Contains(out, "EQUALS") || strings.Contains(out, "LLL") ||
+			strings.Contains(out, "HASH") || strings.Contains(out, "SPACED")) {
+			t.Errorf("%q: the refusal prints the line's name\n%s", c.line, out)
+		}
 		if r.exists("deploy.example.com/secrets/other") {
 			t.Fatalf("%q: a refused import wrote something", c.line)
 		}
+	}
+	// Two tokens glued read as a name and a value, which no rule about
+	// the line's shape tells from KEY=<base64 value>: the import takes
+	// it, and since a name added has a lower-case letter, says so in a
+	// line that names nothing; its command takes the staged file out.
+	// A quoted value after white space is taken too.
+	note := "secrets: check the names added above: a value pasted alone on a line reads as a name; if one of them is a value, git rm -f deploy.example.com/secrets/glued/<that name>.age before you commit, and fix the line\n"
+	out, code = r.secrets("", "QUOTED= \"value\"\n"+pasted+"="+second+"=\n", "import", "APP=glued")
+	if code != 0 || !strings.Contains(out, "secrets: deploy.example.com/secrets/glued: added QUOTED "+pasted+"\n"+note) {
+		t.Fatalf("a glued pair: exit %d\n%s", code, out)
+	}
+	r.mustDecrypt(boxID, "deploy.example.com/secrets/glued/QUOTED.age", "value")
+	// Imported again, staged or committed (an older bin/secrets, which
+	// said nothing, committed such names): the files are there, so the
+	// names read as changed, and the line for a changed name says what
+	// to do with one that may be committed. In capitals alone, nothing.
+	changedNote := "secrets: check the names changed above: a value pasted alone on a line reads as a name, and an earlier import may have committed it; if one of them is a value, git rm -f deploy.example.com/secrets/glued/<that name>.age and commit that, and if it was ever pushed, give the value a new one: the name stays in the history\n"
+	for _, commit := range []bool{false, true} {
+		if commit {
+			r.commit("glued, as an older import committed it")
+		}
+		out, code = r.secrets("", "QUOTED= \"value\"\n"+pasted+"="+second+"=\n", "import", "APP=glued")
+		if code != 0 || !strings.Contains(out, "secrets: deploy.example.com/secrets/glued: changed QUOTED "+pasted+"\n"+changedNote) || strings.Contains(out, note) {
+			t.Fatalf("a glued pair imported again (committed %v): exit %d\n%s", commit, code, out)
+		}
+	}
+	if out, code := r.secrets("", "QUOTED=again\n", "import", "APP=glued"); code != 0 || !strings.Contains(out, "changed QUOTED\n") || strings.Contains(out, "check the names") {
+		t.Errorf("a name in capitals imported again: exit %d\n%s", code, out)
+	}
+	r.git("rm", "-q", "-f", "deploy.example.com/secrets/glued/"+pasted+".age")
+	if r.exists("deploy.example.com/secrets/glued/"+pasted+".age") || strings.Contains(r.git("ls-files", "deploy.example.com/secrets/glued"), pasted) {
+		t.Error("git rm -f left the file named after the value")
 	}
 	if out, code := r.secrets("", "# nothing\n", "import", "APP=other"); code != 1 || !strings.Contains(out, "the env file has no KEY=VALUE line") {
 		t.Errorf("an empty file: exit %d\n%s", code, out)
@@ -1097,6 +1212,7 @@ func TestBoxSecretsImport(t *testing.T) {
 // what make secret leaves to it checked, and a motel too old to read
 // secrets named.
 func TestBoxCheckSecrets(t *testing.T) {
+	t.Parallel()
 	bin := motelBinary(t)
 	r := secretsRepo(t)
 	r.key("id_ed25519")
@@ -1118,6 +1234,18 @@ func TestBoxCheckSecrets(t *testing.T) {
 	if out, code := check(); code != 0 || out != "deploy.example.com/Caddyfile → https://deploy.example.com/ (1 app, 1 signer, 1 secret)\n" {
 		t.Fatalf("one secret: exit %d\n%s", code, out)
 	}
+	// A monitor block reading the box's own secret, which is not on this
+	// machine: validate is told it is the push's.
+	withoutNotify := r.read(boxFile)
+	r.write(boxFile, strings.Replace(withoutNotify, "{\n", "{\n\tmonitor {\n\t\tchannel ops ntfy {secret.NOTIFY_OPS_URL}\n\t\toperator ops\n\t}\n", 1))
+	if out, code := r.secrets("", "https://ntfy.sh/ops-topic", "set", "APP=_box", "VAR=NOTIFY_OPS_URL"); code != 0 {
+		t.Fatalf("make secret APP=_box: exit %d\n%s", code, out)
+	}
+	if out, code := check(); code != 0 || !strings.Contains(out, "(1 app, 1 signer, 2 secrets)") {
+		t.Fatalf("a monitor block and its secret in _box/: exit %d\n%s", code, out)
+	}
+	r.remove("deploy.example.com/secrets/_box")
+	r.write(boxFile, withoutNotify)
 
 	// Two names one file on a Mac's disk: the box takes both, so a
 	// warning, annotated in Actions.

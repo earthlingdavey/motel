@@ -58,3 +58,7 @@ func versionPathComponent(v string) string {
 func validVersion(v string) bool {
 	return versionRe.MatchString(v)
 }
+
+// ValidVersion is validVersion for another package: notify's
+// `motel monitor silence add --release` takes a release by this grammar.
+func ValidVersion(v string) bool { return validVersion(v) }

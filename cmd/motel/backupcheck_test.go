@@ -18,10 +18,12 @@ import (
 // after its imports, snippets and heredocs.
 
 // TestMain makes every test one on a box where motel-backup is not
-// installed, unless it says otherwise (installed): whether this machine
-// has it is not the test's business.
+// installed, unless it says otherwise (installed), and where the
+// default liveswap root is not there: whether this machine has either
+// is not the test's business.
 func TestMain(m *testing.M) {
 	backupBinary = "/nonexistent/motel-backup"
+	liveswapDefaultRoot = "/nonexistent/liveswap"
 	os.Exit(m.Run())
 }
 

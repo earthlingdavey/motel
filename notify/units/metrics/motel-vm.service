@@ -1,0 +1,29 @@
+# Written by `motel monitor setup --metrics` (notify/DESIGN-metrics.md, "The shape").
+# Started by motel-vm.socket: joins the store's namespace and forwards
+# each connection to its 127.0.0.1:8428; exits after five idle minutes.
+[Unit]
+Description=Bridge /run/motel-metrics/vm.sock to the metrics store in its namespace
+Requires=victoria-metrics.service motel-vm.socket
+After=victoria-metrics.service motel-vm.socket
+# A store that starts and then exits (it is Type=simple: killed at its
+# MemoryMax=, say) is restarted, and the proxy with it at the next
+# connection: five of those in 10 s were this unit's default start limit,
+# and its start-limit-hit failed motel-vm.socket for good, vm.sock
+# removed (measured, systemd 257; #450). Its starts are its socket's
+# connections, so no limit.
+StartLimitIntervalSec=0
+
+[Service]
+Type=notify
+NetworkNamespacePath=/run/netns/motel-metrics
+ExecStart=/usr/lib/systemd/systemd-socket-proxyd --exit-idle-time=5min 127.0.0.1:8428
+# Not root: a uid of its own for the run, and no capability. It needs
+# none: its listener comes by socket activation and it connects to the
+# namespace's loopback, so the bytes motel and the store send through it
+# reach nothing a bug in it could turn into root.
+DynamicUser=yes
+CapabilityBoundingSet=
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+NoNewPrivileges=yes

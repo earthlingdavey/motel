@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"regexp"
 	"slices"
 	"strings"
@@ -157,54 +158,6 @@ func (r deployRequest) source() string {
 	}
 }
 
-// deployResult records the outcome of the most recent deploy attempt
-// for the status endpoint and webhook responses.
-type deployResult struct {
-	Version    string    `json:"version"`
-	Status     string    `json:"status"` // "succeeded" | "failed"
-	Error      string    `json:"error,omitempty"`
-	Phase      string    `json:"phase,omitempty"`       // phase reached when it failed
-	By         string    `json:"deployed_by,omitempty"` // the trust source that authorized it, and the token's attribution claims
-	SHA256     string    `json:"sha256,omitempty"`      // the pin the deployer asserted, the digest of the bytes a push uploaded, or a rollback's carried from the record it replaces (recordedPin); never a hash of an unpinned download
-	StartedAt  time.Time `json:"started_at"`
-	FinishedAt time.Time `json:"finished_at"`
-	// Note says what the deploy did that its outcome words do not: a
-	// deploy or rollback naming the running version relaunched it from
-	// the release already on disk (relaunchNote). Empty otherwise. It
-	// is in last_deploy and the response only — a relaunch writes no
-	// record, so the version's record keeps the deploy that put it
-	// there, its pin and its times.
-	Note string `json:"note,omitempty"`
-	// What the artifact cost against max_artifact_entries and the
-	// decompressed byte cap — the files, directories and links
-	// extraction created, and its bytes — so an app growing toward
-	// either is visible from the status endpoint before a deploy fails
-	// on it. Zero for a rollback (nothing is extracted) and for a
-	// deploy that failed before extraction.
-	ArtifactEntries int   `json:"artifact_entries"`
-	ArtifactBytes   int64 `json:"artifact_bytes"`
-	// Phases is each phase the deploy passed through, in order, with
-	// how long it took: where the time went, and where it stopped.
-	Phases []phaseTiming `json:"phases,omitempty"`
-	// Detail is why a failed deploy failed, from the app's side: how
-	// its process ended, what its health endpoint answered, the last
-	// lines it wrote. Nil for a success, and for a failure before a
-	// launch (nothing of the app's ran).
-	Detail *deployDetail `json:"detail,omitempty"`
-	// RedactedEnv is the env keys whose values the detail's early
-	// replacement found (failureDetail): by the time the response
-	// filter runs they are markers already, so it reports them from
-	// here — this field, wherever the result sits in a body, is hoisted
-	// into the body's own `redacted_env` (withField, redact.go).
-	RedactedEnv []string `json:"redacted_env,omitempty"`
-}
-
-type phaseTiming struct {
-	Name      string    `json:"name"`
-	StartedAt time.Time `json:"started_at"`
-	Seconds   float64   `json:"seconds"`
-}
-
 // The outcome vocabulary: what a deploy's status and phase may say.
 // A record's status is one of these and its phase one of these or
 // absent (recordHead, deploys.go); the response filter holds the
@@ -215,37 +168,6 @@ var (
 	outcomeStatuses = map[string]bool{"succeeded": true, "failed": true}
 	outcomePhases   = map[string]bool{"downloading": true, "extracting": true, "preparing": true, "starting": true, "soaking": true, "promoting": true, "draining": true, "stopping_old": true}
 )
-
-// deployDetail is the app's side of a failed deploy. Every string in
-// it passes the response filter before it is written (redact.go), and
-// the known values are replaced as it is built, before the tail and
-// body caps cut, so a cap never leaves a fragment of one.
-type deployDetail struct {
-	// Exit is how the process ended, from the runner: "exit status 3",
-	// "killed by signal 9 (killed)". The pre_start's when that failed,
-	// otherwise the app's, when it died before becoming healthy.
-	Exit string `json:"exit,omitempty"`
-	// Probe is the last health probe that completed with a non-2xx
-	// answer: the status, a redirect's target, the first bytes of the
-	// body — where "Invalid HTTP_HOST header" or "no such table" is.
-	// The body is the app's output and deploy_log_lines 0 leaves it
-	// out, as it does the tail; the status and location stay.
-	Probe *probeDetail `json:"probe,omitempty"`
-	// LogTail is the last lines the app's units wrote to the journal
-	// since the deploy began — pre_start and app alike — bounded by
-	// deploy_log_lines and 8 KiB; LogTailTruncated says when a cap
-	// dropped lines. LogTailError says why there is no tail when there
-	// should have been one (journalctl missing, the journal unreadable).
-	LogTail          []string `json:"log_tail,omitempty"`
-	LogTailTruncated bool     `json:"log_tail_truncated,omitempty"`
-	LogTailError     string   `json:"log_tail_error,omitempty"`
-}
-
-type probeDetail struct {
-	Status   int    `json:"status"`
-	Location string `json:"location,omitempty"`
-	Body     string `json:"body,omitempty"`
-}
 
 // instance is one running version of an app.
 type instance struct {
@@ -280,6 +202,7 @@ type managedApp struct {
 	specMu    sync.RWMutex
 	spec      *appSpec
 	verifiers []deploytrust.Verifier // resolved deploy-auth trust sources; rewired every reload
+	notifier  Notifier               // the notify module's listener, rewired every Start (lifecycle.go)
 	runner    runner
 	prober    prober
 	fetch     fetcher
@@ -309,6 +232,14 @@ type managedApp struct {
 	// activeSocket is what GetUpstreams reads on every request; storing
 	// it is the cutover. nil = nothing serving yet.
 	activeSocket atomic.Pointer[socketRef]
+	// requests is what observe counts, per release (observe.go):
+	// set to the new release wherever current gets a new instance.
+	requests requestCounts
+	// observers is how many observe handlers of the loaded configs name
+	// the app (Provision adds one, Cleanup takes it away): the first
+	// after none zeroes the counts (Observe.observe). Whether a push
+	// carries them is the running config's own (App.observed).
+	observers atomic.Int32
 
 	// Watchdog plumbing. The goroutine is pool-scoped like everything
 	// else here: started once (first Start), never touched by
@@ -414,7 +345,7 @@ func (ma *managedApp) redactorFor(s statusSnapshot, names ...string) *Redactor {
 		safe = append(safe, s.LastDeploy.Version, s.LastDeploy.SHA256)
 	}
 	for _, d := range s.Deploys {
-		safe = append(safe, d.Version, d.pin())
+		safe = append(safe, d.Version, summaryPin(d))
 	}
 	if spec != nil {
 		safe = append(safe, spec.dirs.root, spec.dirs.app, spec.dirs.releases, spec.dirs.shared, spec.dirs.run)
@@ -458,6 +389,9 @@ type appConfigState struct {
 	verifiers []deploytrust.Verifier
 	logger    *zap.Logger
 	store     stateStore
+	// notifier is the serving config's, which the candidate's Start
+	// replaced (setNotifier, after configure).
+	notifier Notifier
 }
 
 // owner is the config installing this definition (see rollbackConfig).
@@ -487,7 +421,7 @@ func (ma *managedApp) installSpec(owner any, spec *appSpec, verifiers []deploytr
 	defer ma.specMu.Unlock()
 	changed := ma.spec != nil && !specEqual(ma.spec, spec)
 	if ma.spec != nil {
-		ma.prev = &appConfigState{spec: ma.spec, verifiers: ma.verifiers, logger: ma.logger, store: ma.store}
+		ma.prev = &appConfigState{spec: ma.spec, verifiers: ma.verifiers, logger: ma.logger, store: ma.store, notifier: ma.notifier}
 	}
 	ma.configuredBy = owner
 	ma.spec = spec
@@ -505,6 +439,7 @@ func (ma *managedApp) installSpec(owner any, spec *appSpec, verifiers []deploytr
 		sr.setLogger(logger)
 	}
 	ma.store = &fileStateStore{path: spec.dirs.state}
+	ma.restoreAlerts(spec, logger)
 	if changed {
 		logger.Info("app definition changed; it applies at the app's next launch (deploy, rollback, or relaunch after a crash, health failure or reboot), except its resource caps, which reach the running instance now")
 	}
@@ -542,20 +477,23 @@ type collaborators struct {
 	// onPhase is the request's phase listener, carried with the
 	// snapshot so setPhase needs no lock to find it.
 	onPhase func(phase string)
+	// notifier is the notify module's, or nil (lifecycle.go).
+	notifier Notifier
 }
 
 func (ma *managedApp) snapshot() collaborators {
 	ma.specMu.RLock()
 	defer ma.specMu.RUnlock()
 	return collaborators{
-		spec:    ma.spec,
-		runner:  ma.runner,
-		prober:  ma.prober,
-		fetch:   ma.fetch,
-		clock:   ma.clock,
-		store:   ma.store,
-		journal: ma.journal,
-		logger:  ma.logger,
+		spec:     ma.spec,
+		runner:   ma.runner,
+		prober:   ma.prober,
+		fetch:    ma.fetch,
+		clock:    ma.clock,
+		store:    ma.store,
+		journal:  ma.journal,
+		logger:   ma.logger,
+		notifier: ma.notifier,
 	}
 }
 
@@ -703,6 +641,38 @@ func (ma *managedApp) Deploy(ctx context.Context, req deployRequest) error {
 	return ma.deployLocked(ctx, req, c)
 }
 
+// reportDeploy tells the notifier what a deploy came to (#418's table:
+// failed or refused, a rollback, a success that is off by default
+// there), then that it has ended, which lifts the deploy mute. A
+// success also ends a reported restart loop. The summary names the
+// version and the phase, never the error's text, which can quote what
+// the app printed; a refusal's is liveswap's own words, through the
+// filter.
+func (ma *managedApp) reportDeploy(c collaborators, req deployRequest, result deployResult, err error) {
+	ev := LifecycleEvent{Release: req.version, DeployedBy: req.by}
+	var ve validationError
+	switch {
+	case err == nil && req.rollback:
+		ev.Name, ev.Summary = EventRollback, "rolled back to "+req.version
+	case err == nil:
+		ev.Name, ev.Summary = EventDeploySucceeded, "deployed "+req.version
+	case errors.As(err, &ve):
+		ev.Name, ev.Summary = EventDeployRefused, "deploy of "+req.version+" refused: "+firstLine(ve.msg)
+	default:
+		// What serves now is not said: a first deploy, or one to an app
+		// already down, leaves nothing serving.
+		ev.Name, ev.Summary = EventDeployFailed, "deploy of "+req.version+" failed"
+		if result.Phase != "" {
+			ev.Summary += " in phase " + result.Phase
+		}
+	}
+	ma.lifecycle(c, ev)
+	if err == nil && ma.wd.endLoopAlert() {
+		ma.lifecycle(c, LifecycleEvent{Name: EventWatchdogRecovered, Release: req.version, Summary: "a deploy of " + req.version + " ended the restart loop"})
+	}
+	ma.lifecycle(c, LifecycleEvent{Name: EventDeployEnded, Release: req.version})
+}
+
 // unlockDeploy lets go of deployMu for any holder but the watchdog, and
 // wakes the watchdog: a restart that found the lock held waits for
 // this, not for a timer (handleFailure). A poke where nothing changed
@@ -740,6 +710,7 @@ func (ma *managedApp) deployLocked(ctx context.Context, req deployRequest, c col
 	ma.mu.Lock()
 	ma.phases = nil
 	ma.mu.Unlock()
+	ma.lifecycle(c, LifecycleEvent{Name: EventDeployStarted, Release: req.version, DeployedBy: req.by})
 
 	pin := req.sha256 // a rollback's is read once it is accepted, below
 
@@ -817,6 +788,7 @@ func (ma *managedApp) deployLocked(ctx context.Context, req deployRequest, c col
 		if !relaunch && (err == nil || (accepted && !errors.As(err, &ve))) {
 			ma.recordDeploy(c, result)
 		}
+		ma.reportDeploy(c, req, result, err)
 	}()
 
 	// Before anything is read or written through the app's dirs: one
@@ -826,6 +798,24 @@ func (ma *managedApp) deployLocked(ctx context.Context, req deployRequest, c col
 		return err
 	}
 	old := ma.currentInstance()
+	// lastRan is the release the app last ran: the instance this deploy
+	// replaces, alive or not, else the one state.json names when no
+	// instance is in memory (dropped after a refused relaunch, or a
+	// recovery that failed). A cutover to it is a relaunch to the
+	// post-deploy comparison (LifecycleEvent.Relaunch), whether or not
+	// the instance still served; the relaunch flag, set below, is the
+	// narrower fact of the version serving, which decides the record and
+	// the pin. With no instance in memory nothing routes to the app
+	// (activeSocket is nil), and the launch's sweep stops any unit the
+	// manager still holds before the new one starts, so a relaunch named
+	// by state.json alone is one whose instance had stopped.
+	// A state that cannot be read names nothing: this is a label only.
+	lastRan := ""
+	if old != nil {
+		lastRan = old.version
+	} else if st, ok, err := c.store.load(); err == nil && ok {
+		lastRan = st.CurrentVersion
+	}
 	if old != nil && old.version == req.version && c.runner.Alive(old.handle) {
 		// The version that is running, asked for again: relaunched from
 		// its release on disk — the normal pipeline minus fetch and
@@ -1055,7 +1045,23 @@ func (ma *managedApp) deployLocked(ctx context.Context, req deployRequest, c col
 	// ignored: a CI client hanging up must not abort stop-old or GC.
 	ma.setPhase(c, "promoting")
 	newInst := l.instance(newHandle)
-	if err := ma.publishInstance(c, newInst); err != nil { // ← the cutover
+	// The cutover is told at the swap itself: before the state's
+	// persist and the caps' sync, which can wait on the manager, and
+	// not with the deploy's result after the drain, the old instance's
+	// stop and GC, so what compares the release that serves starts with
+	// its traffic. What it replaced is what served at that moment: an
+	// instance that had died (a crash loop, unrouted) is no release's
+	// baseline, and a relaunch taken while it served, whose instance died
+	// before the swap, is told as one after a stop, which it then is.
+	// Nothing after the swap fails the deploy.
+	tellCutover := func(swapped time.Time) {
+		cut := LifecycleEvent{Name: EventCutover, Release: req.version, DeployedBy: req.by, Cutover: swapped, Relaunch: lastRan == req.version}
+		if old != nil && c.runner.Alive(old.handle) {
+			cut.Previous = old.version
+		}
+		ma.lifecycle(c, cut)
+	}
+	if err := ma.publishInstance(c, newInst, tellCutover); err != nil { // ← the cutover
 		logger.Error("state persistence failed; deploys still work but a Caddy restart will not know about this version", zap.Error(err))
 	}
 	promoted = true // past the cutover: never clean up the now-live release
@@ -1278,6 +1284,7 @@ func (ma *managedApp) ensureRunning() error {
 		ma.mu.Lock()
 		ma.current = inst
 		ma.mu.Unlock()
+		inst.sock.counts.Store(ma.requests.setRelease(inst.version))
 		ma.activeSocket.Store(inst.sock)
 		ma.wd.setLastFailure("") // a recovery that gave up, or a refusal, is over
 		c.logger.Info("reattached to running instance", zap.String("version", st.CurrentVersion))
@@ -1306,7 +1313,7 @@ func (ma *managedApp) ensureRunning() error {
 		}
 		return &transientRecoveryError{fmt.Errorf("relaunching %s: %w", st.CurrentVersion, err)}
 	}
-	if err := ma.publishInstance(c, inst); err != nil {
+	if err := ma.publishInstance(c, inst, nil); err != nil {
 		c.logger.Warn("persisting recovered state", zap.Error(err))
 	}
 	ma.wd.setLastFailure("") // a recovery that gave up, or a refusal, is over
@@ -1511,9 +1518,14 @@ func (spec *appSpec) prepareLaunch(logger *zap.Logger, version string) (launch, 
 	}
 	l := launch{version: version, nonce: nonce, socket: spec.dirs.socket(nonce), releaseDir: spec.dirs.release(version)}
 	l.sock = spec.dirs.socketRef(nonce)
-	if l.env, l.secrets, l.envFileMode, err = buildEnvFull(spec, version, l.socket, l.releaseDir); err != nil {
+	var withheld []string
+	if l.env, l.secrets, withheld, l.envFileMode, err = buildEnvFull(spec, version, l.socket, l.releaseDir); err != nil {
 		l.sock.retire()
 		return launch{}, err
+	}
+	if len(withheld) > 0 {
+		logger.Warn("env_file: NOTIFY_ variables withheld from the app: the env file is in /etc/motel/secrets, where the box writes notify's, and no app is given one; name the variable otherwise if the app needs it",
+			zap.String("env_file", spec.envFile), zap.Strings("withheld", withheld))
 	}
 	if spec.envFile != "" {
 		warnEnvFileModeBits(logger, spec.name, spec.envFile, l.envFileMode)
@@ -1579,12 +1591,26 @@ func (l launch) instance(h handle) *instance {
 // and watchdog restarts must all go through it. The replaced
 // instance's pinned socket is the caller's to retire, once that
 // instance is stopped. A persist failure is returned, not logged: each
-// caller has its own severity and message.
-func (ma *managedApp) publishInstance(c collaborators, inst *instance) error {
+// caller has its own severity and message. onSwap, a deploy's (nil for
+// the watchdog's and recovery's), is called the moment the traffic
+// moves, with that time: the persist and the caps' sync after it can
+// wait on the manager.
+func (ma *managedApp) publishInstance(c collaborators, inst *instance, onSwap func(time.Time)) error {
 	ma.mu.Lock()
 	ma.current = inst
 	ma.mu.Unlock()
+	// Before the cutover: a request the new socket is selected for counts
+	// as the new release's; one that went to the old socket stays the
+	// old's, whenever it ends (markUpstream).
+	inst.sock.counts.Store(ma.requests.setRelease(inst.version))
+	if ma.wd.takeRefused() {
+		ma.lifecycle(c, LifecycleEvent{Name: EventRelaunchResolved, Release: inst.version, Summary: "an instance of " + inst.version + " runs again"})
+	}
+	swapped := c.clock.Now()
 	ma.activeSocket.Store(inst.sock)
+	if onSwap != nil {
+		onSwap(swapped)
+	}
 	// Persisted before the caps are reconciled: the record is what a
 	// restart recovers, and a sync that waits on the manager must not
 	// hold it back from naming the instance that is already serving.
@@ -1652,72 +1678,6 @@ func (ma *managedApp) currentInstance() *instance {
 	ma.mu.Lock()
 	defer ma.mu.Unlock()
 	return ma.current
-}
-
-// statusSnapshot backs the webhook's GET endpoint.
-type statusSnapshot struct {
-	App            string `json:"app"`
-	Phase          string `json:"phase"`
-	CurrentVersion string `json:"current_version,omitempty"`
-	// Socket is the unix socket the instance listens on, under its
-	// run/ dir. It is what the app bound, not what motel dials:
-	// that is a hard link to the same inode under proxy/, outside
-	// the app's reach. Reachable by the motel user (run/ is 0750).
-	Socket string `json:"socket,omitempty"`
-	PID    int    `json:"pid,omitempty"`
-	// Command is the argv the manager reports for the running unit —
-	// rendered, so an absolute path with placeholders substituted, and
-	// not what the config says now (a reload does not restart an app).
-	// Env is not reported: see DESIGN-threat-model.md.
-	Command []string `json:"command,omitempty"`
-	// Unit is the systemd unit running the instance — what to pass to
-	// journalctl for the app's own output.
-	Unit    string `json:"unit,omitempty"`
-	Running bool   `json:"running"`
-	// Caps is what the running unit is bounded to, as the manager last
-	// applied them: set at the unit's start, changed live by a reload
-	// (syncCaps), or read back at reattach. Absent when none is set,
-	// and without any cap the host does not enforce.
-	Caps *capsSnapshot `json:"caps,omitempty"`
-	// CapsUnenforced names the configured caps the host does not
-	// enforce: the user manager does not delegate their controller to
-	// the unit's cgroup, so the manager holds the value and the kernel
-	// bounds nothing (not the case on Debian 13). Absent when every
-	// cap is enforced.
-	CapsUnenforced []string `json:"caps_unenforced,omitempty"`
-	// Deploys is the outcome of the latest deploy of each version a
-	// record is kept for (deploys.go), newest first; the whole record
-	// is GET /<app>?deploy=<version>. Serialized before last_deploy:
-	// the examples' deploy.sh reads the failing phase as the last
-	// "phase" in a failure body, which must stay last_deploy's. That
-	// body carries the snapshot under "status", whose keys' order the
-	// filter keeps (withField sorts only the top level).
-	Deploys    []deploySummary   `json:"deploys,omitempty"`
-	LastDeploy *deployResult     `json:"last_deploy,omitempty"`
-	Watchdog   *watchdogSnapshot `json:"watchdog,omitempty"`
-	// AvailableVersions lists the on-disk releases, the running version
-	// first, then most recently deployed first (state.go, "Release
-	// order") — the versions
-	// `?rollback=<version>` can relaunch. Always serialized (a healthy
-	// app with no releases reports []), so an empty set is
-	// distinguishable from a server that doesn't report the field.
-	AvailableVersions []string `json:"available_versions"`
-	// OrderedByMtime names the entries of AvailableVersions placed by
-	// their release dir's mtime, which the app can set: those with no
-	// deploy record (deployed before records, a record write that
-	// failed, or a first deploy still in flight) and those whose record
-	// is there but cannot be read. Each comes after every recorded
-	// release unless it is the running version, which the list puts
-	// first; absent when there are none.
-	OrderedByMtime []string `json:"ordered_by_mtime,omitempty"`
-}
-
-// capsSnapshot is resourceCaps on the wire, in the directives' own
-// names and units (bytes, a count, a percentage of one CPU).
-type capsSnapshot struct {
-	MemoryMax uint64 `json:"memory_max,omitempty"`
-	TasksMax  int    `json:"tasks_max,omitempty"`
-	CPUQuota  int    `json:"cpu_quota,omitempty"`
 }
 
 // capsForStatus splits the unit's caps into the ones in effect and the
@@ -1805,7 +1765,13 @@ func (ma *managedApp) restoreSpec(owner any) bool {
 		return false
 	}
 	p := ma.prev
-	ma.spec, ma.verifiers, ma.logger, ma.store = p.spec, p.verifiers, p.logger, p.store
+	ma.spec, ma.verifiers, ma.logger, ma.store, ma.notifier = p.spec, p.verifiers, p.logger, p.store, p.notifier
+	// The candidate's install pointed the watchdog's alerts.json writes
+	// at its own root: back to the serving one (Copilot round 1 on #424),
+	// and what stands written there, ahead of a write still in flight to
+	// the candidate's (round 3).
+	ma.restoreAlerts(p.spec, p.logger)
+	ma.wd.rewriteAlerts()
 	ma.prev = nil
 	ma.configuredBy = nil
 	if sr, ok := ma.runner.(*systemdRunner); ok {
@@ -1854,6 +1820,7 @@ func (ma *managedApp) Destruct() error {
 		}
 		return nil
 	}
+	ma.wd.forgetAlerts()
 	// Removed by a reload that is now serving: no unit may outlive
 	// the definition. A deploy of the app may still be in flight — a
 	// reload stops the old config's servers without waiting for their
@@ -1966,7 +1933,7 @@ func inheritedEnv() []string {
 // shape a deny-by-default view fails in. Applied before env_file and
 // env, so an operator can still point it elsewhere.
 func buildEnv(spec *appSpec, version, socket, releaseDir string) ([]string, error) {
-	env, _, _, err := buildEnvFull(spec, version, socket, releaseDir)
+	env, _, _, _, err := buildEnvFull(spec, version, socket, releaseDir)
 	return env, err
 }
 
@@ -1975,21 +1942,31 @@ func buildEnv(spec *appSpec, version, socket, releaseDir string) ([]string, erro
 // among them — it lives in the Caddyfile, in a repo, and is not secret
 // by policy — and neither are HOME, SOCKET or the inherited PATH,
 // which a diagnostic has to be able to name.
-func buildEnvFull(spec *appSpec, version, socket, releaseDir string) (env, secrets []string, envFileMode os.FileMode, err error) {
+func buildEnvFull(spec *appSpec, version, socket, releaseDir string) (env, secrets, withheld []string, envFileMode os.FileMode, err error) {
 	env = append(inheritedEnv(), "HOME="+spec.dirs.shared)
 	if spec.envFile != "" {
 		fileVars, perm, err := readEnvFile(spec.envFile)
 		if err != nil {
-			return nil, nil, 0, fmt.Errorf("env_file: %w", err)
+			return nil, nil, nil, 0, fmt.Errorf("env_file: %w", err)
 		}
-		env = append(env, fileVars...)
+		boxs := boxWritten(spec.envFile)
+		for _, kv := range fileVars {
+			if boxs && notifyOwnedEnvKey(kv) {
+				key, _, _ := strings.Cut(kv, "=")
+				withheld = append(withheld, key)
+				continue
+			}
+			env = append(env, kv)
+		}
+		// Every value the file holds is a known value to the filter,
+		// a withheld one too: it is a credential all the same.
 		secrets, envFileMode = fileVars, perm
 	}
 	for k, v := range spec.env {
 		env = append(env, k+"="+expandPlaceholders(v, spec, version, socket, releaseDir))
 	}
 	env = append(env, "SOCKET="+socket)
-	return env, secrets, envFileMode, nil
+	return env, secrets, withheld, envFileMode, nil
 }
 
 // envKeyRe is what systemd accepts in Environment=; the exec runner
@@ -2012,6 +1989,36 @@ var shellOwnedEnvKeys = map[string]bool{"IFS": true, "OPTIND": true, "PPID": tru
 func shellOwnedEnvKey(key string) bool { return shellOwnedEnvKeys[key] }
 
 const shellOwnedEnvKeyMsg = "is set by the shell every app unit runs behind (/bin/sh resets IFS, OPTIND, PPID and PWD at its start), so an app cannot be given it"
+
+// notifyEnvPrefix is the notify module's in what the box writes: a
+// NOTIFY_ variable there is a notify channel's URL (notify/DESIGN-
+// notify.md, "Secrets"), a credential motel reads and no app is given.
+// One in an env file in /etc/motel/secrets, where the box writes them
+// (secrets/<app>/NOTIFY_*.age), is withheld from the unit's environment,
+// named in a warning at each launch, and stays a known value to the
+// filter (#418, #417's rule); so is one in an operator's own file kept
+// in that directory (notify/DESIGN-notify.md, Accepted residuals). An
+// inline env line, and an env file the operator keeps anywhere else,
+// are the operator's and pass as they are.
+const notifyEnvPrefix = "NOTIFY_"
+
+// notifyOwnedEnvKey reports whether a KEY or KEY=value is notify's.
+func notifyOwnedEnvKey(kv string) bool { return strings.HasPrefix(kv, notifyEnvPrefix) }
+
+// BoxSecretsDir is where the box writes each app's env file
+// (box/DESIGN-box.md, "Values and the env file"), held equal to the
+// box's own by cmd/motel's test; boxSecretsDir is it, a variable so a
+// test can stand in for it.
+const BoxSecretsDir = "/etc/motel/secrets" //nolint:gosec // G101: a directory's path, not a credential
+
+var boxSecretsDir = BoxSecretsDir
+
+// boxWritten reports whether an env_file is in the directory the box
+// writes them in: a test of the path alone, so an operator's own file
+// kept there is held to the box's rules too.
+func boxWritten(envFile string) bool {
+	return strings.HasPrefix(filepath.Clean(envFile), boxSecretsDir+"/")
+}
 
 // The env_file mode check. motel reads the file as the motel
 // user, so its mode is not motel's concern; the documented
@@ -2131,9 +2138,10 @@ func parseEnvLines(path string, data []byte) ([]string, error) {
 			return nil, fmt.Errorf("%s:%d: not KEY=VALUE", path, i+1)
 		}
 		if !validEnvKey(key) {
-			return nil, fmt.Errorf("%s:%d: %q is not a valid environment variable name (systemd requires %s)", path, i+1, key, envKeyRe)
+			return nil, fmt.Errorf("%s:%d: %s", path, i+1, invalidEnvKeyMsg(key))
 		}
 		if shellOwnedEnvKey(key) {
+			// key is one of the four names here, never a line's text.
 			return nil, fmt.Errorf("%s:%d: %q %s", path, i+1, key, shellOwnedEnvKeyMsg)
 		}
 		value = strings.TrimSpace(value)
@@ -2147,6 +2155,31 @@ func parseEnvLines(path string, data []byte) ([]string, error) {
 	}
 	return vars, nil
 }
+
+// invalidEnvKeyMsg says that the text before a line's first `=` is not
+// a variable name, quoting it only when it looks like a name mistyped:
+// at most maxQuotedEnvKey bytes of letters, digits, `_`, `.`, `-` and
+// spaces (`MY-KEY`, `my.key`, `9LIVES`). Anything else is not a name
+// at all: a value written where the key belongs, such as a channel URL
+// whose `NOTIFY_…=` was forgotten (`https://ntfy.sh/<topic>?title=x`)
+// or a `KEY: url` line. The message goes to the journal, to a refused
+// reload and to the box handler's pusher, and nothing can mask it, since
+// a file that does not parse gives the filter no values; so that text
+// is not quoted, and the file and line name it instead.
+func invalidEnvKeyMsg(key string) string {
+	if len(key) <= maxQuotedEnvKey && strings.TrimLeft(key, envKeyLookalike) == "" {
+		return fmt.Sprintf("%q is not a valid environment variable name (systemd requires %s)", key, envKeyRe)
+	}
+	return fmt.Sprintf("the text before the first \"=\" is not a valid environment variable name (systemd requires %s)", envKeyRe)
+}
+
+// maxQuotedEnvKey bounds a quoted key below what a 128-bit random
+// secret takes in envKeyLookalike's 65 characters (22, at about 6 bits
+// each), so that a generated token written where the key belongs is not
+// quoted however it is encoded: hex, base64, base64url or base32.
+const maxQuotedEnvKey = 21
+
+const envKeyLookalike = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_.- "
 
 // ParseEnvLines is parseEnvLines, the reading every launch makes, for a
 // caller that holds the bytes: the box, which reads the env file a push
@@ -2181,7 +2214,7 @@ func RenderEnvFile(vars []string) ([]byte, error) {
 	for _, kv := range vars {
 		key, value, found := strings.Cut(kv, "=")
 		if !found || !validEnvKey(key) {
-			return nil, fmt.Errorf("%q is not a valid environment variable name (systemd requires %s)", key, envKeyRe)
+			return nil, errors.New(invalidEnvKeyMsg(key))
 		}
 		if shellOwnedEnvKey(key) {
 			return nil, fmt.Errorf("%q %s", key, shellOwnedEnvKeyMsg)

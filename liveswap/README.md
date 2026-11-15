@@ -164,6 +164,31 @@ deploy.example.com {
 }
 ```
 
+To count an app's responses for the metrics store (the monitor
+block's `metrics` line; experimental, notify/DESIGN-metrics.md), write
+`observe <app>` first in its
+site or route: per release, it counts each response's status class,
+times it to its headers, and reads a cache's `Cache-Status` verdict, and
+`GET /<app>` with the deploy token gains `metrics.requests`
+(`?range=1h`, the default, or `?range=24h`). It keeps nothing of a
+request, and costs about 0.4 µs on one (liveswap/DESIGN-liveswap.md,
+"The response observer"). In a `route`, write it first; in a site with
+no `route`, anywhere among the site's lines, since Caddy orders it
+before `cache` and `hint_penaltybox` by itself. Taken out, the app's
+numbers stop being pushed; put back, they start from zero.
+
+```
+blog.example.com {
+	route {
+		observe blog
+		cache
+		reverse_proxy {
+			dynamic liveswap blog
+		}
+	}
+}
+```
+
 Apps must listen on the unix socket at the injected `SOCKET` path —
 one per instance, in a `run/<nonce>/` dir of its own; motel proxies to
 it and health-probes it, and nothing listens on a TCP port. Their
@@ -494,7 +519,8 @@ also the bound on anyone who can make your health endpoint fail. A
 successful deploy is the fast path out of a throttle wait: it resets
 the budget and backoff immediately. A long-running throttle loop means
 the release itself is broken — watch `restarts_in_window` in the
-status JSON (loop alerting is on the roadmap). A deploy running over
+status JSON, or have the monitor block report it as
+`watchdog_throttled` ([docs/monitor.md](../docs/monitor.md); experimental). A deploy running over
 a dead instance holds the restart until it ends (the state stays
 `backoff` meanwhile): one that promotes replaces the instance, and
 after one that fails the restart goes within about a second, without
@@ -1322,6 +1348,22 @@ instead (see **3. Roll back** above).
 The tarball's contents must sit at the archive root (`tar -czf
 app.tar.gz -C dist .`), with versions matching `[A-Za-z0-9._-]{1,64}` and not starting with a dot.
 
+**The bodies as Go types.** Every body this section describes is a
+type in [`liveswap/wire`](wire/), which imports only the standard
+library, so a client decodes them without linking Caddy: `Status`
+(`GET /<app>`, and a deploy's 200), `Failure` (a failed deploy's 5xx:
+`error`, and the `status` after it), `Error` (every other refusal,
+`{"error": …}`), `DeployResult` (`last_deploy`, and
+`GET /<app>?deploy=<version>`), `PhaseEvent` and `DoneEvent` (a
+streamed deploy's lines, below), `Metrics` (the status's `metrics`,
+over one of `MetricsRanges`) and `BoxStatus` (the box webhook's
+`GET /`). The handlers marshal these types (a streamed line is the
+filtered body with the event's fields appended); the order of their
+keys is part of the shape, and `liveswap/testdata/wire` pins every body byte
+for byte. A body the filter changed gains a top-level `redacted_env`
+(see [Secrets and logs](#secrets-and-logs)), which only `DeployResult`
+has a field for.
+
 ### Streaming the deploy
 
 Send `Accept: application/x-ndjson` on any deploy or rollback POST and
@@ -1680,6 +1722,7 @@ gives up after the cutover turns red a deploy the box completed.
   shared/                 persistent data, survives deploys (the app's HOME)
   state.json              current version, nonce and unit name
   deploying.json          a URL or push deploy in flight; gone when it ends
+  alerts.json             a restart loop or refused relaunch reported to notify and not over; gone when none is
   deploys/v1.4.2.json     each version's latest deploy outcome (see Deploy records)
   tmp/                    download staging
 ```

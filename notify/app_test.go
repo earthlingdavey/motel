@@ -1,0 +1,779 @@
+package notify
+
+import (
+	"bytes"
+	"crypto/ed25519"
+	"crypto/rand"
+	"crypto/x509"
+	"encoding/pem"
+	"io"
+	"os"
+	"path/filepath"
+	"reflect"
+	"strings"
+	"sync"
+	"testing"
+
+	"github.com/caddyserver/caddy/v2"
+	"github.com/caddyserver/caddy/v2/caddyconfig"
+	"github.com/caddyserver/caddy/v2/caddyconfig/caddyfile"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zaptest/observer"
+
+	// The Caddyfile adapter and the liveswap option, as the motel
+	// binary links them.
+	_ "github.com/caddyserver/caddy/v2/caddyconfig/httpcaddyfile"
+	_ "github.com/smallhoursorg/motel/liveswap"
+)
+
+func writePubKey(t *testing.T, path string) {
+	t.Helper()
+	pub, _, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	der, err := x509.MarshalPKIXPublicKey(pub)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: der}), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// validate adapts a Caddyfile and provisions it without starting, as
+// `motel validate` does.
+func validate(t *testing.T, src string) error {
+	t.Helper()
+	adapter := caddyconfig.GetAdapter("caddyfile")
+	cfgJSON, warn, err := adapter.Adapt([]byte(src), nil)
+	if err != nil {
+		return err
+	}
+	for _, w := range warn {
+		t.Logf("adapt warning: %s", w.Message)
+	}
+	var cfg caddy.Config
+	if err := caddy.StrictUnmarshalJSON(cfgJSON, &cfg); err != nil {
+		t.Fatalf("unmarshal: %v\n%s", err, cfgJSON)
+	}
+	return caddy.Validate(&cfg)
+}
+
+// useStateDir stands dir in for the state directory for one test.
+func useStateDir(t *testing.T, dir string) {
+	t.Helper()
+	was := theStateDir
+	theStateDir = dir
+	t.Cleanup(func() { theStateDir = was })
+}
+
+// useSocket stands sock in for Alertmanager's socket for one test.
+func useSocket(t *testing.T, sock string) {
+	t.Helper()
+	was := theSocket
+	theSocket = sock
+	t.Cleanup(func() { theSocket = was })
+}
+
+// TestValidateThroughCaddy holds Provision to its promise: the
+// refusals reach `motel validate`, read the apps as liveswap built
+// them, and touch nothing on disk.
+func TestValidateThroughCaddy(t *testing.T) {
+	dir := t.TempDir()
+	alice := filepath.Join(dir, "alice.pub")
+	carol := filepath.Join(dir, "carol.pub")
+	writePubKey(t, alice)
+	writePubKey(t, carol)
+	secrets := filepath.Join(dir, "_box.env")
+	if err := os.WriteFile(secrets, []byte("# box\nNOTIFY_OPS_URL=\"https://hooks.slack.com/services/T0/B0/x\"\nNOTIFY_ALICE_URL=\"https://ntfy.sh/alice\"\nOTHER=1\n"), 0o600); err != nil { // gitleaks:allow
+		t.Fatal(err)
+	}
+	state := filepath.Join(dir, "state")
+	useStateDir(t, state)
+	file := func(binding string) string {
+		return `{
+	admin off
+	liveswap {
+		root ` + filepath.Join(dir, "liveswap") + `
+		artifact_allowlist example.org
+		app blog {
+			command ./server
+			deploy_trust local {
+				public_key ` + alice + `
+				audience blog
+			}
+		}
+	}
+	monitor {
+		channel ops slack {secret.NOTIFY_OPS_URL}
+		channel alice ntfy {secret.NOTIFY_ALICE_URL}
+		operator ops
+		` + binding + `
+		secrets_file ` + secrets + `
+	}
+}
+:8080 {
+	respond ok
+}
+`
+	}
+	if err := validate(t, file("bind local:"+alice+" alice")); err != nil {
+		t.Fatalf("a valid block was refused: %v", err)
+	}
+	err := validate(t, file("bind local:"+carol+" alice"))
+	if err == nil || !strings.Contains(err.Error(), "no app's deploy_trust trusts this identity") {
+		t.Fatalf("a binding to an identity no app trusts: err = %v", err)
+	}
+	if _, err := os.Stat(state); !os.IsNotExist(err) {
+		t.Fatalf("validate wrote the state dir: %v", err)
+	}
+}
+
+func TestValidateWithoutLiveswap(t *testing.T) {
+	dir := t.TempDir()
+	secrets := filepath.Join(dir, "_box.env")
+	if err := os.WriteFile(secrets, []byte("NOTIFY_OPS_URL=https://ntfy.sh/ops\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	src := "{\n\tadmin off\n\tmonitor {\n\t\tchannel ops ntfy {secret.NOTIFY_OPS_URL}\n\t\toperator ops\n\t\tsecrets_file " + secrets + "\n\t}\n}\n:8080 {\n\trespond ok\n}\n"
+	if err := validate(t, src); err != nil {
+		t.Fatal(err)
+	}
+	// The secret is missing once the file is gone: refused by name.
+	if err := os.Remove(secrets); err != nil {
+		t.Fatal(err)
+	}
+	err := validate(t, src)
+	if err == nil || !strings.Contains(err.Error(), "secret NOTIFY_OPS_URL is not in the box's secrets") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+// TestValidateRefusesASecretsFileMotelCannotRead: validate runs as root,
+// who reads anything; motel serves as its own uid. A file moved in with
+// mv keeps root:root 0600, which a reload refuses and a restart drops
+// every channel over, so validate refuses it, naming the mend. Only
+// validate: a load reads the file as motel, which is the judgement.
+func TestValidateRefusesASecretsFileMotelCannotRead(t *testing.T) {
+	origUser := motelUser
+	t.Cleanup(func() { motelUser = origUser; SetCommand("") })
+	const motelUID = 4242
+	group := os.Getegid()
+	motelUser = func() (int, []int, bool) { return motelUID, []int{group + 1}, true }
+	// Directories motel may enter, as /etc/motel/secrets is (2750
+	// root:motel, motel's group): t.TempDir's are 0700.
+	dir, err := os.MkdirTemp("", "secretsmode-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	if err := os.Chmod(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	secrets := filepath.Join(dir, "_box.env")
+	if err := os.WriteFile(secrets, []byte("NOTIFY_OPS_URL=https://ntfy.sh/ops\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	src := "{\n\tadmin off\n\tmonitor {\n\t\tchannel ops ntfy {secret.NOTIFY_OPS_URL}\n\t\toperator ops\n\t\tsecrets_file " + secrets + "\n\t}\n}\n:8080 {\n\trespond ok\n}\n"
+	SetCommand("validate")
+	err = validate(t, src)
+	if err == nil || !strings.Contains(err.Error(), "the motel user cannot read the box's secrets file "+secrets) ||
+		!strings.Contains(err.Error(), " 0600)") || !strings.Contains(err.Error(), "chmod 0640") {
+		t.Fatalf("0600, owned by another: err = %v", err)
+	}
+	// Group-readable, the group motel's: taken.
+	motelUser = func() (int, []int, bool) { return motelUID, []int{group}, true }
+	if err := os.Chmod(secrets, 0o640); err != nil {
+		t.Fatal(err)
+	}
+	if err := validate(t, src); err != nil {
+		t.Fatalf("0640 in motel's group: %v", err)
+	}
+	// The file readable, its directory one motel may not enter: refused.
+	if err := os.Chmod(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := validate(t, src); err == nil || !strings.Contains(err.Error(), "it may not enter "+dir) {
+		t.Fatalf("a directory motel may not enter: %v", err)
+	}
+	if err := os.Chmod(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// Group-readable, another group's: refused.
+	motelUser = func() (int, []int, bool) { return motelUID, []int{group + 1}, true }
+	if err := validate(t, src); err == nil {
+		t.Fatal("0640 in a group motel is not in was taken")
+	}
+	// Not validate: the load's own read judges.
+	SetCommand("")
+	if err := validate(t, src); err != nil {
+		t.Fatalf("a load: %v", err)
+	}
+}
+
+// TestEverySecretIsAKnownValue: a value no channel line names is still
+// masked in what motel sends.
+func TestEverySecretIsAKnownValue(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "_box.env")
+	if err := os.WriteFile(path, []byte("NOTIFY_OPS_URL=\"https://ntfy.sh/ops\"\nNOTIFY_SPARE_URL=\"https://ntfy.sh/spare-topic-7f3a\"\nOTHER=\"x\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	secrets, err := readSecrets(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if secrets["NOTIFY_SPARE_URL"] == "" || secrets["OTHER"] == "" {
+		t.Fatalf("secrets = %v", secrets)
+	}
+	te := newTestEngine(t)
+	te.known = knownValues(secrets, nil, "")
+	ev := deployFailed()
+	ev.Summary = "posting to https://ntfy.sh/spare-topic-7f3a failed"
+	te.report(ev)
+	if got := te.drain(); strings.Contains(got[0].Annotations["summary"], "spare-topic") {
+		t.Fatalf("summary = %q", got[0].Annotations["summary"])
+	}
+}
+
+// The box handler validates a push before root writes its
+// secrets/_box/ into _box.env: `motel validate` takes the names the
+// push carries as held, in validate alone and for the box's own file
+// alone, and refuses every other missing one as before.
+func TestValidateTakesAPushsSecretsAsHeld(t *testing.T) {
+	if _, err := os.Stat(DefaultSecretsFile); err == nil {
+		t.Skip("this machine has a box's secrets file")
+	}
+	t.Cleanup(func() { SetCommand("") })
+	src := func(secretsFile string) string {
+		line := ""
+		if secretsFile != "" {
+			line = "\t\tsecrets_file " + secretsFile + "\n"
+		}
+		return "{\n\tadmin off\n\tmonitor {\n\t\tchannel ops ntfy {secret.NOTIFY_OPS_URL}\n\t\toperator ops\n" + line +
+			"\t}\n}\n:8080 {\n\trespond ok\n}\n"
+	}
+	t.Setenv(PushedSecretsEnv, "NOTIFY_OTHER_URL,NOTIFY_OPS_URL")
+	SetCommand("validate")
+	if err := validate(t, src("")); err != nil {
+		t.Fatalf("a secret the push carries was refused as missing: %v", err)
+	}
+	// The box's file however it is spelt, as the box compares it.
+	if err := validate(t, src("/etc/motel//secrets/./_box.env")); err != nil {
+		t.Fatalf("the box's file spelt otherwise: %v", err)
+	}
+	// Another file is not where root writes the push's secrets.
+	err := validate(t, src(filepath.Join(t.TempDir(), "other.env")))
+	if err == nil || !strings.Contains(err.Error(), "secret NOTIFY_OPS_URL is not in the box's secrets") {
+		t.Fatalf("a custom secrets_file: err = %v", err)
+	}
+	// Not named: refused.
+	t.Setenv(PushedSecretsEnv, "NOTIFY_OTHER_URL")
+	if err := validate(t, src("")); err == nil || !strings.Contains(err.Error(), "secret NOTIFY_OPS_URL is not in the box's secrets") {
+		t.Fatalf("a secret the push does not carry: err = %v", err)
+	}
+	// In any other command the variable is nobody's word: a reload of a
+	// running config refuses the missing secret.
+	t.Setenv(PushedSecretsEnv, "NOTIFY_OPS_URL")
+	SetCommand("run")
+	orig := configRunning
+	configRunning = func() bool { return true }
+	t.Cleanup(func() { configRunning = orig })
+	if err := validate(t, src("")); err == nil {
+		t.Fatal("a load took the variable's names as held")
+	}
+}
+
+// The first load of `motel run` (a boot) drops a channel whose secret is
+// missing and serves; validate, a reload (a config running) and a load
+// told no command refuse it.
+func TestBootDropsAMissingSecret(t *testing.T) {
+	orig := configRunning
+	t.Cleanup(func() { SetCommand(""); configRunning = orig })
+	running := false
+	configRunning = func() bool { return running }
+	dir := t.TempDir()
+	secrets := filepath.Join(dir, "_box.env")
+	if err := os.WriteFile(secrets, []byte("NOTIFY_OPS_URL=https://ntfy.sh/ops\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	src := "{\n\tadmin off\n\tmonitor {\n\t\tchannel ops ntfy {secret.NOTIFY_OPS_URL}\n\t\tchannel spare json {secret.NOTIFY_SPARE_URL}\n\t\toperator ops spare\n\t\tsecrets_file " + secrets +
+		"\n\t}\n}\n:8080 {\n\trespond ok\n}\n"
+	for _, c := range []struct {
+		cmd     string
+		running bool
+		ok      bool
+	}{
+		{"run", false, true},
+		{"run", true, false},
+		{"validate", false, false},
+		{"", false, false},
+	} {
+		SetCommand(c.cmd)
+		running = c.running
+		err := validate(t, src)
+		if c.ok && err != nil {
+			t.Errorf("%q, running %v: refused: %v", c.cmd, c.running, err)
+		}
+		if !c.ok && (err == nil || !strings.Contains(err.Error(), "secret NOTIFY_SPARE_URL is not in the box's secrets")) {
+			t.Errorf("%q, running %v: err = %v", c.cmd, c.running, err)
+		}
+	}
+}
+
+// A secrets file a boot cannot parse drops every channel that reads it,
+// and serves; validate and a reload refuse it as before.
+func TestBootDropsTheChannelsOfAnUnusableSecretsFile(t *testing.T) {
+	orig := configRunning
+	t.Cleanup(func() { SetCommand(""); configRunning = orig })
+	running := false
+	configRunning = func() bool { return running }
+	dir := t.TempDir()
+	secrets := filepath.Join(dir, "_box.env")
+	if err := os.WriteFile(secrets, []byte("NOTIFY_OPS_URL=https://ntfy.sh/ops\nnot a line\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	src := "{\n\tadmin off\n\tmonitor {\n\t\tchannel ops ntfy {secret.NOTIFY_OPS_URL}\n\t\toperator ops\n\t\tsecrets_file " + secrets +
+		"\n\t}\n}\n:8080 {\n\trespond ok\n}\n"
+	for _, c := range []struct {
+		cmd     string
+		running bool
+		ok      bool
+	}{
+		{"run", false, true},
+		{"run", true, false},
+		{"validate", false, false},
+		{"", false, false},
+	} {
+		SetCommand(c.cmd)
+		running = c.running
+		err := validate(t, src)
+		if c.ok && err != nil {
+			t.Errorf("%q, running %v: refused: %v", c.cmd, c.running, err)
+		}
+		if !c.ok && (err == nil || !strings.Contains(err.Error(), secrets+":2: not KEY=VALUE")) {
+			t.Errorf("%q, running %v: err = %v", c.cmd, c.running, err)
+		}
+	}
+}
+
+// testJournal is a log output for this package's tests, `output
+// test_journal` in a Caddyfile's log block: what a load writes to the
+// journal, kept in memory for a test to read.
+type testJournal struct{}
+
+var (
+	testJournalMu  sync.Mutex
+	testJournalBuf bytes.Buffer
+)
+
+func init() { caddy.RegisterModule(testJournal{}) }
+
+func (testJournal) CaddyModule() caddy.ModuleInfo {
+	return caddy.ModuleInfo{ID: "caddy.logging.writers.test_journal", New: func() caddy.Module { return new(testJournal) }}
+}
+func (testJournal) String() string                                   { return "test_journal" }
+func (testJournal) WriterKey() string                                { return "test_journal" }
+func (testJournal) OpenWriter() (io.WriteCloser, error)              { return testJournal{}, nil }
+func (testJournal) Close() error                                     { return nil }
+func (*testJournal) UnmarshalCaddyfile(d *caddyfile.Dispenser) error { d.Next(); return nil }
+func (testJournal) Write(p []byte) (int, error) {
+	testJournalMu.Lock()
+	defer testJournalMu.Unlock()
+	return testJournalBuf.Write(p)
+}
+
+// takeJournal returns what testJournal holds, and empties it.
+func takeJournal() string {
+	testJournalMu.Lock()
+	defer testJournalMu.Unlock()
+	s := testJournalBuf.String()
+	testJournalBuf.Reset()
+	return s
+}
+
+// A secrets file whose line is a channel URL with its NOTIFY_…= left
+// out, or a `KEY: url` line, is named by its file and line: neither the
+// refusal nor a boot's journal lines carry the URL or its topic, which
+// on ntfy.sh is the credential, and which no filter can mask, as a file
+// that does not parse gives it no values.
+func TestAnUnusableSecretsFileNamesTheLineNotItsText(t *testing.T) {
+	orig := configRunning
+	t.Cleanup(func() { SetCommand(""); configRunning = orig })
+	configRunning = func() bool { return false }
+	const topic = "spare-topic-7f3a"
+	secrets := filepath.Join(t.TempDir(), "_box.env")
+	src := "{\n\tadmin off\n\tlog {\n\t\toutput test_journal\n\t}\n\tmonitor {\n\t\tchannel ops ntfy {secret.NOTIFY_OPS_URL}\n\t\toperator ops\n\t\tsecrets_file " + secrets +
+		"\n\t}\n}\n:8080 {\n\trespond ok\n}\n"
+	for _, line := range []string{
+		"https://ntfy.sh/" + topic + "?title=box1",
+		"NOTIFY_OPS_URL: https://ntfy.sh/" + topic + "?auth=x",
+	} {
+		if err := os.WriteFile(secrets, []byte("OTHER=1\n"+line+"\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		want := secrets + `:2: the text before the first "=" is not a valid environment variable name`
+		SetCommand("validate")
+		err := validate(t, src)
+		if err == nil || !strings.Contains(err.Error(), want) || strings.Contains(err.Error(), topic) {
+			t.Errorf("%q: validate: err = %v, want %q and no topic", line, err, want)
+		}
+		takeJournal()
+		SetCommand("run")
+		if err := validate(t, src); err != nil {
+			t.Fatalf("%q: a boot refused: %v", line, err)
+		}
+		logged := takeJournal()
+		for _, msg := range []string{"monitor: the box's secrets file cannot be used", "monitor: a channel is dropped from this load", `the text before the first \"=\"`} {
+			if !strings.Contains(logged, msg) {
+				t.Errorf("%q: the boot's journal has no %q:\n%s", line, msg, logged)
+			}
+		}
+		if strings.Contains(logged, topic) {
+			t.Errorf("%q: the journal carries the topic:\n%s", line, logged)
+		}
+	}
+}
+
+// TestNoHeartbeatIsWarned: a block with no heartbeat line loads (the
+// Watchdog goes to the blackhole), and every load says so; so does a
+// boot that drops the line for its secret; one with the line says
+// nothing of it.
+func TestNoHeartbeatIsWarned(t *testing.T) {
+	// The secrets are given to resolveWith; the file only names them.
+	secrets := filepath.Join(t.TempDir(), "_box.env")
+	ops := Channel{Name: "ops", Kind: "ntfy", Secret: "NOTIFY_OPS_URL"}
+	for _, c := range []struct {
+		name, heartbeat string
+		secrets         map[string]string
+		want            int
+	}{
+		{"no line", "", map[string]string{"NOTIFY_OPS_URL": "https://ntfy.sh/ops"}, 1},
+		{"the line, its secret missing at a boot", "NOTIFY_HC_URL", map[string]string{"NOTIFY_OPS_URL": "https://ntfy.sh/ops"}, 1},
+		{"the line", "NOTIFY_HC_URL", map[string]string{"NOTIFY_OPS_URL": "https://ntfy.sh/ops", "NOTIFY_HC_URL": "https://hc-ping.com/x"}, 0},
+	} {
+		core, logs := observer.New(zap.WarnLevel)
+		a := &App{Channels: []Channel{ops}, Operator: []string{"ops"}, HeartbeatSecret: c.heartbeat, SecretsFile: secrets, logger: zap.New(core)}
+		r, _, err := a.resolveWith(map[string][]TrustSource{}, c.secrets, nil, true, nil)
+		if err != nil {
+			t.Fatalf("%s: %v", c.name, err)
+		}
+		a.warnAtLoad(r.heartbeat)
+		if n := len(logs.FilterMessageSnippet("monitor: no heartbeat in this load").All()); n != c.want {
+			t.Errorf("%s: %d warnings, want %d (%v)", c.name, n, c.want, logs.All())
+		}
+	}
+}
+
+// provision adapts a Caddyfile and provisions it without starting, as
+// validate does, and returns the monitor app it built.
+func provision(t *testing.T, src string) (*App, error) {
+	t.Helper()
+	cfgJSON, _, err := caddyconfig.GetAdapter("caddyfile").Adapt([]byte(src), nil)
+	if err != nil {
+		return nil, err
+	}
+	var cfg caddy.Config
+	if err := caddy.StrictUnmarshalJSON(cfgJSON, &cfg); err != nil {
+		t.Fatalf("unmarshal: %v\n%s", err, cfgJSON)
+	}
+	ctx, err := caddy.ProvisionContext(&cfg)
+	if err != nil {
+		return nil, err
+	}
+	mod, err := ctx.App(appID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return mod.(*App), nil
+}
+
+// The two blocks the monitor block replaced are refused at the adapt,
+// each naming what to write instead.
+func TestTheOldBlocksAreRefused(t *testing.T) {
+	for src, want := range map[string]string{
+		"{\n\tadmin off\n\tnotify {\n\t\tchannel ops ntfy {secret.NOTIFY_OPS_URL}\n\t\toperator ops\n\t}\n}\n": "the notify block is now `monitor { … }`, with the same lines but state_dir and alertmanager, whose paths are fixed",
+		"{\n\tadmin off\n\tmetrics_store\n}\n":                                              "metrics_store is now a `metrics [<socket path>]` line in the monitor block",
+		"{\n\tadmin off\n\tmetrics_store {\n\t\tstore /run/x/vm.sock\n\t}\n}\n":             "metrics_store is now a `metrics [<socket path>]` line in the monitor block",
+		"{\n\tadmin off\n\tmonitor {\n\t\tmetrics\n\t}\n\tmonitor {\n\t\tmetrics\n\t}\n}\n": "the monitor option is given more than once",
+	} {
+		_, _, err := caddyconfig.GetAdapter("caddyfile").Adapt([]byte(src), nil)
+		if err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("%q: %v, want %q", src, err, want)
+		}
+	}
+}
+
+// A monitor block that is a metrics line alone is the store with no
+// notify: the numbers kept, no rule, and nothing of notify built (no
+// render, so nothing for Alertmanager; no engine at Start). Any other
+// line makes the block notify's, held to its refusals; a block with no
+// line at all is refused for its operator line, as notify's always was.
+func TestAMetricsLineAloneIsTheStoreWithoutNotify(t *testing.T) {
+	block := func(lines ...string) string {
+		return "{\n\tadmin off\n\tmonitor {\n\t\t" + strings.Join(lines, "\n\t\t") + "\n\t}\n}\n:8080 {\n\trespond ok\n}\n"
+	}
+	a, err := provision(t, block("metrics /run/x/vm.sock"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a.notifies || a.cfg != nil || a.rendered != nil || a.Metrics == nil || a.Metrics.store() != "/run/x/vm.sock" {
+		t.Fatalf("notifies %v, cfg %v, rendered %d bytes, metrics %+v; want the store alone", a.notifies, a.cfg, len(a.rendered), a.Metrics)
+	}
+	if strings.Contains(string(a.Metrics.rules), "alert:") {
+		t.Errorf("the store alone renders alerting rules:\n%s", a.Metrics.rules)
+	}
+
+	for _, c := range []struct {
+		name  string
+		lines []string
+		want  string
+	}{
+		{"an empty block", []string{""}, "no operator line"},
+		{"an option alone", []string{"deploy_succeeded on"}, "no operator line"},
+		{"metrics and an option", []string{"metrics", "secrets_file /tmp/x"}, "no operator line"},
+		{"metrics and an option at its default", []string{"metrics", "deploy_succeeded off"}, "no operator line"},
+		{"metrics and an empty path", []string{"metrics", `secrets_file ""`}, "secrets_file takes a path, not an empty string"},
+		{"metrics and an operator line", []string{"metrics", "operator ops"}, "operator names ops, which no channel line defines"},
+		{"metrics and a channel", []string{"metrics", "channel ops ntfy {secret.NOTIFY_OPS_URL}"}, "no operator line"},
+		{"a relative socket in the JSON", nil, "is not an absolute path"},
+	} {
+		src := block(c.lines...)
+		if c.lines == nil {
+			// The Caddyfile refuses it first; JSON is held to it too.
+			a := &App{Metrics: &MetricsStore{Store: "run/vm.sock"}}
+			cfg := caddy.Config{AppsRaw: caddy.ModuleMap{appID: caddyconfig.JSON(a, nil)}, Admin: &caddy.AdminConfig{Disabled: true}}
+			if err := caddy.Validate(&cfg); err == nil || !strings.Contains(err.Error(), c.want) {
+				t.Errorf("%s: %v, want %q", c.name, err, c.want)
+			}
+			continue
+		}
+		if _, err := provision(t, src); err == nil || !strings.Contains(err.Error(), c.want) {
+			t.Errorf("%s: %v, want %q", c.name, err, c.want)
+		}
+	}
+}
+
+// One app, both parts: Start points the engine and the pusher at this
+// config, notify's first; Stop lets go of both. The store alone never
+// takes the engine.
+func TestStartAndStopBothParts(t *testing.T) {
+	// The paths first: the release below may render or reload, and must
+	// reach this test's, not a box's (cleanups run last first).
+	dir := t.TempDir()
+	useStateDir(t, filepath.Join(dir, "state")) // not made: Start finds no Alertmanager set up
+	useSocket(t, filepath.Join(dir, "am.sock"))
+	// Fresh ones, put back after: Provision and Start reach the
+	// globals, and no other test's state is this one's to read or leave.
+	savedEngine, savedPusher := theEngine, thePusher
+	theEngine = newEngine()
+	thePusher = newPusher(theEngine.report)
+	t.Cleanup(func() {
+		// A failed assertion may leave either running: stop both.
+		thePusher.mu.Lock()
+		m := thePusher.active
+		thePusher.mu.Unlock()
+		if m != nil {
+			thePusher.release(m)
+		}
+		theEngine.mu.Lock()
+		a := theEngine.active
+		theEngine.mu.Unlock()
+		if a != nil {
+			theEngine.release(a)
+		}
+		theEngine, thePusher = savedEngine, savedPusher
+	})
+	secrets := filepath.Join(dir, "_box.env")
+	if err := os.WriteFile(secrets, []byte("NOTIFY_OPS_URL=https://ntfy.sh/ops\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	both := "{\n\tadmin off\n\tmonitor {\n\t\tchannel ops ntfy {secret.NOTIFY_OPS_URL}\n\t\toperator ops\n\t\tsecrets_file " + secrets +
+		"\n\t\tbackup_record off\n\t\tmetrics " + filepath.Join(dir, "vm.sock") + "\n\t}\n}\n:8080 {\n\trespond ok\n}\n"
+	alone := "{\n\tadmin off\n\tmonitor {\n\t\tmetrics " + filepath.Join(dir, "vm.sock") + "\n\t}\n}\n:8080 {\n\trespond ok\n}\n"
+	for _, c := range []struct {
+		name, src string
+		engine    bool
+	}{{"both", both, true}, {"the store alone", alone, false}} {
+		a, err := provision(t, c.src)
+		if err != nil {
+			t.Fatalf("%s: %v", c.name, err)
+		}
+		a.Metrics.stateDirOverride = filepath.Join(dir, "metrics")
+		if err := a.Start(); err != nil {
+			t.Fatal(err)
+		}
+		theEngine.mu.Lock()
+		engine := theEngine.active
+		theEngine.mu.Unlock()
+		thePusher.mu.Lock()
+		pusher := thePusher.active
+		thePusher.mu.Unlock()
+		var want *App
+		if c.engine {
+			want = a
+		}
+		if engine != want || pusher != a.Metrics {
+			t.Errorf("%s: after Start the engine serves %p, the pusher %p; want the engine %v, and the pusher this config's", c.name, engine, pusher, c.engine)
+		}
+		if err := a.Stop(); err != nil {
+			t.Fatal(err)
+		}
+		theEngine.mu.Lock()
+		engine = theEngine.active
+		theEngine.mu.Unlock()
+		thePusher.mu.Lock()
+		pusher = thePusher.active
+		thePusher.mu.Unlock()
+		if engine != nil || pusher != nil {
+			t.Errorf("%s: after Stop the engine serves %p, the pusher %p; want neither", c.name, engine, pusher)
+		}
+	}
+}
+
+// A Start by a process that does not run as a state directory's owner
+// (root trying a file by hand while motel.service runs) starts neither
+// part on it: Alertmanager's config, the URL files, the producers' kept
+// states and the rules stay as the service left them, no engine, pusher
+// or comparator serves the config (so nothing is posted or pushed),
+// each part says why, and Stop releases nothing. As the owner, the same
+// config writes both: the directories are this test's to see change.
+func TestAStartNotAsTheOwnerLeavesTheStateAlone(t *testing.T) {
+	dir := t.TempDir()
+	state, metrics := filepath.Join(dir, "state"), filepath.Join(dir, "metrics")
+	useStateDir(t, state)
+	useSocket(t, filepath.Join(dir, "am.sock"))
+	savedEngine, savedPusher, savedComparator := theEngine, thePusher, theComparator
+	theEngine = newEngine()
+	thePusher = newPusher(theEngine.report)
+	theComparator = newComparator(theEngine.report)
+	t.Cleanup(func() { theEngine, thePusher, theComparator = savedEngine, savedPusher, savedComparator })
+	files := map[string]string{
+		filepath.Join(state, ConfigName):           "# Rendered by motel\nreceivers: [ops]\n",
+		filepath.Join(state, "url-NOTIFY_OPS_URL"): "https://ntfy.sh/ops\n",
+		filepath.Join(state, externalName):         "{}\n",
+		filepath.Join(metrics, RulesName):          "groups: []\n",
+	}
+	for path, body := range files {
+		if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(body), 0o640); err != nil {
+			t.Fatal(err)
+		}
+	}
+	secrets := filepath.Join(dir, "_box.env")
+	if err := os.WriteFile(secrets, []byte("NOTIFY_OPS_URL=https://ntfy.sh/other\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	src := "{\n\tadmin off\n\tmonitor {\n\t\tchannel ops ntfy {secret.NOTIFY_OPS_URL}\n\t\toperator ops\n\t\tsecrets_file " + secrets +
+		"\n\t\tbackup_record off\n\t\tmetrics " + filepath.Join(dir, "vm.sock") + "\n\t}\n}\n:8080 {\n\trespond ok\n}\n"
+	start := func() (*App, *observer.ObservedLogs) {
+		t.Helper()
+		a, err := provision(t, src)
+		if err != nil {
+			t.Fatal(err)
+		}
+		a.Metrics.stateDirOverride = metrics
+		core, logs := observer.New(zap.WarnLevel)
+		a.logger = zap.New(core)
+		if err := a.Start(); err != nil {
+			t.Fatal(err)
+		}
+		return a, logs
+	}
+	serving := func() (*App, *MetricsStore, *MetricsStore) {
+		theEngine.mu.Lock()
+		defer theEngine.mu.Unlock()
+		thePusher.mu.Lock()
+		defer thePusher.mu.Unlock()
+		theComparator.mu.Lock()
+		defer theComparator.mu.Unlock()
+		return theEngine.active, thePusher.active, theComparator.active
+	}
+	unchanged := func(when string) {
+		t.Helper()
+		for path, body := range files {
+			if b, err := os.ReadFile(path); err != nil || string(b) != body {
+				t.Errorf("%s: %s is %q (%v); want it as it was", when, path, b, err)
+			}
+		}
+		for _, d := range []string{state, metrics} {
+			if entries, _ := os.ReadDir(d); len(entries) != map[string]int{state: 3, metrics: 1}[d] {
+				t.Errorf("%s: %s holds %d entries; want nothing added", when, d, len(entries))
+			}
+		}
+	}
+
+	was := euid
+	t.Cleanup(func() { euid = was })
+	euid = func() int { return os.Geteuid() + 1 }
+	a, logs := start()
+	unchanged("after Start")
+	if e, p, c := serving(); e != nil || p != nil || c != nil {
+		t.Errorf("after Start the engine serves %v, the pusher %v, the comparator %v; want none", e, p, c)
+	}
+	notOwned := func(what, dir string) bool {
+		for _, l := range logs.All() {
+			if strings.HasPrefix(l.Message, what) && strings.Contains(l.Message, dir+" is owned by ") && strings.Contains(l.Message, ", not as its owner: ") {
+				return true
+			}
+		}
+		return false
+	}
+	if !notOwned("monitor: Alertmanager is left as it is: ", state) || !notOwned("monitor metrics: the store and vmalert are left as they are: ", metrics) {
+		t.Errorf("logged %v; want why each part was left alone", logs.All())
+	}
+	if err := a.Stop(); err != nil {
+		t.Fatal(err)
+	}
+	unchanged("after Stop")
+	euid = was
+
+	a, _ = start()
+	if e, p, _ := serving(); e != a || p != a.Metrics {
+		t.Errorf("as the owner, the engine serves %v and the pusher %v; want this config", e, p)
+	}
+	if err := a.Stop(); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{filepath.Join(state, ConfigName), filepath.Join(metrics, RulesName)} {
+		if b, _ := os.ReadFile(path); string(b) == files[path] {
+			t.Errorf("as the owner, %s was not written", path)
+		}
+	}
+}
+
+// Every field of the app but Metrics is a notify line: set to any value
+// a line can give it, the block is notify's. A field added later is
+// held to it with no list to update; one that is not omitempty makes
+// every metrics line alone notify's, which the test above refuses.
+func TestEveryOtherFieldIsANotifyLine(t *testing.T) {
+	if !(&App{Metrics: &MetricsStore{}}).storeAlone() {
+		t.Fatal("a metrics line alone is not the store alone")
+	}
+	typ := reflect.TypeOf(App{})
+	for i := range typ.NumField() {
+		f := typ.Field(i)
+		if !f.IsExported() || f.Name == "Metrics" {
+			continue
+		}
+		a := &App{Metrics: &MetricsStore{}}
+		v := reflect.ValueOf(a).Elem().Field(i)
+		switch v.Kind() {
+		case reflect.Slice:
+			v.Set(reflect.MakeSlice(v.Type(), 1, 1))
+		case reflect.String:
+			v.SetString("x")
+		case reflect.Bool:
+			v.SetBool(true)
+		case reflect.Pointer:
+			v.Set(reflect.New(v.Type().Elem())) // its zero value: deploy_succeeded off
+		default:
+			t.Fatalf("field %s is a %s: give it a value here", f.Name, v.Kind())
+		}
+		if a.storeAlone() {
+			t.Errorf("a metrics line beside %s is taken for the store alone", f.Name)
+		}
+	}
+}

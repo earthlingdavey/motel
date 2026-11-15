@@ -61,7 +61,10 @@ scope by product design.
    into a setgid `root:motel` directory, and the values also exist
    encrypted in that repository's history, which the box's key for
    secrets (`/etc/motel/age/identity`, root 0600 in a 0700 root
-   directory) and each reader's key decrypt.
+   directory) and each reader's key decrypt. The box's own file beside
+   them, `/etc/motel/secrets/_box.env` (from `<host>/secrets/_box/`),
+   holds notify's channel URLs, which motel reads and no app is given
+   (notify/DESIGN-notify.md, "Secrets").
 6. **The box's configuration at rest** — `/etc/motel/Caddyfile`:
    which repository may deploy each app, each app's command and
    flags, which hosts are served, and who may change the file itself.
@@ -495,6 +498,15 @@ idle-eviction). The origin's hint header is strict-parsed and fails
 open. It is a minor surface: denial-of-protection under bad config, not
 injection or exhaustion.
 
+**observe** (the response observer, liveswap/DESIGN-liveswap.md)
+reads what passes it and keeps none of it: a response's status is a
+class, its time to headers a histogram bucket, its `Cache-Status` one of
+four fixed results, in counters per app and release. No path, query,
+header value or client address is kept, so nothing of a request reaches
+the metrics store's labels. Its memory is fixed per app (two releases'
+counters), whatever the traffic, so a flood costs it nothing it keeps;
+an app can make its own numbers read badly (T1), never another's.
+
 ### Supervisor⇄app and app⇄app boundaries
 
 Every app runs as `motel`, in its own user namespace and its own PID
@@ -737,6 +749,17 @@ changes:
   reader removed from `recipients` keeps what was encrypted to them:
   age has no revocation, so a person leaving, or a leaked key, means
   new values, not only new ciphertext.
+- **The box's own slot** (`<host>/secrets/_box/NOTIFY_*.age`,
+  box/DESIGN-box.md, "The box's own slot"): notify's channel URLs, into
+  `/etc/motel/secrets/_box.env`, 0640 root:motel, read by notify at each
+  config load and bound into no unit. Nothing new for T5, which read the
+  hand-written file the same way, nor for a signer, who already chose
+  every URL in the `monitor` block. A `NOTIFY_` variable in an env
+  file the box writes for an app is withheld from the app's environment
+  (liveswap/app.go, `notifyOwnedEnvKey`): no app is given a channel URL
+  from the box's repository, which would let a poisoned dependency (T1)
+  post to the channel as motel. An operator's own inline `env` line or
+  env file is the operator's to word.
 - **New: names and lengths are public to repository readers.** The
   layout puts each variable's name in a file name, and age pads
   nothing, so anyone with `contents:read` learns which apps have
@@ -1142,17 +1165,20 @@ the mechanism:
    *Residual, recorded because `liveswap/harden` cites it:* app units
    outlive supervisor restarts, so a same-UID app could in principle
    race the interval between `execve` and that `init` — well under a
-   millisecond — and read the new supervisor's environment. On Debian
-   13 that is a *read* race: Yama's default
-   `kernel.yama.ptrace_scope=1` forbids a non-descendant from
-   `PTRACE_ATTACH`/`PTRACE_SEIZE` at any time (Yama gates
-   `PTRACE_MODE_ATTACH`, which the dumpable flag does not govern), so
-   an app cannot seize the supervisor in the window; a host set to
-   `ptrace_scope=0` is outside this model. The window is closed from
-   the app's side by the namespaces above — an app in its own user
-   namespace cannot read the supervisor's `/proc` at all, and one in
-   its own PID namespace cannot see the supervisor's PID — and since
-   every app is sandboxed it stands for nothing on a running box.
+   millisecond — and read the new supervisor's environment, or attach
+   to it. Debian 13 leaves Yama's `kernel.yama.ptrace_scope` at 0
+   (measured on hotserve-1, a stock Debian 13 image, after a reboot:
+   0, set by no sysctl file and no boot parameter), so in that window a
+   same-UID process outside the apps' namespaces could also
+   `PTRACE_ATTACH` the supervisor, and an attach made then survives the
+   init; a host that raises it to 1 makes the window a read race
+   alone, since Yama gates `PTRACE_MODE_ATTACH`, which the dumpable
+   flag does not govern. The window is closed from the app's side by
+   the namespaces above, whatever the sysctl — an app in its own user
+   namespace is refused the supervisor's `/proc` and `ptrace` alike
+   (commoncap's check, "The shared-UID rule"), and one in its own PID
+   namespace cannot see the supervisor's PID — and since every app is
+   sandboxed it stands for nothing on a running box.
 
    *The capability probe runs under the shared uid.* It starts a real
    transient unit, bounded at 30 s, so any process holding that uid can
@@ -1724,3 +1750,10 @@ Dated one-liners; the full text of each is in git.
   one; the principals, what each attacker gains, and six residual
   risks, the stolen provider account first (#169), with what
   `v0.5.0-rc1` measured through B2's S3 endpoint.
+- 2026-11-10 — The box's own secrets slot (`secrets/_box/` into
+  `/etc/motel/secrets/_box.env`, notify's channel URLs) and the `NOTIFY_`
+  prefix withheld from the env files in `/etc/motel/secrets/`, where the
+  box writes them (#418).
+- 2026-11-11 — The response observer, `observe`: a handler on
+  an observed app's request path that keeps a class, a bucket and a
+  cache result, never a request's bytes (#418, slice three).

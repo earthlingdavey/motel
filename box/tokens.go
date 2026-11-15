@@ -40,6 +40,37 @@ type Shape struct {
 	// so it does not hold the two readings to agree, as Walk does for
 	// the host and the signers.
 	AppEnv map[string]AppEnv
+	// Notify is the global monitor block, nil for none: where its notify
+	// lines read the box's own secrets from, for secretsFit. Read like
+	// AppEnv.
+	Notify *NotifyBlock
+}
+
+// NotifyBlock is what the box reads of the global monitor block: its
+// notify lines (notify/DESIGN-notify.md).
+type NotifyBlock struct {
+	// Channels is whether a channel line is there: a monitor block that
+	// is a metrics line alone runs no notify, which reads no secret.
+	Channels bool
+	// SecretsFile is the secrets_file line's argument, "" for none (the
+	// default, the file the box writes from secrets/_box/).
+	SecretsFile string
+	// Secrets are the names the channel and heartbeat lines read, each
+	// written {secret.<NAME>}, in file order: what a push must carry in
+	// secrets/_box/. A URL written any other way is notify's to refuse.
+	Secrets []string
+}
+
+// notifySecret is the name a channel or heartbeat line's
+// {secret.<NAME>} argument reads, if it is one notify takes (boxVar):
+// a name it refuses is validate's to name, with notify's own reason.
+func notifySecret(arg string) (string, bool) {
+	name, ok := strings.CutPrefix(arg, "{secret.")
+	if !ok {
+		return "", false
+	}
+	name, ok = strings.CutSuffix(name, "}")
+	return name, ok && boxVar.MatchString(name)
 }
 
 // AppEnv is an app block's env_file and env lines.
@@ -132,6 +163,7 @@ const (
 	kindSnippet                   // a top-level `(name)` block
 	kindLiveswap                  // the global block's `liveswap` block
 	kindApp                       // an `app <name>` block in the liveswap block
+	kindNotify                    // the global block's `monitor` block
 )
 
 // frame is one open brace.
@@ -315,6 +347,20 @@ func walk(input []byte) (*Shape, error) {
 			if first.Text == "liveswap" {
 				child.kind = kindLiveswap
 			}
+			// The blocks the monitor block replaced, refused here by name
+			// as motel validate refuses them (notify/caddyfile.go): the
+			// walk would read no monitor block, and the slot's check
+			// below would refuse the push in words that name neither.
+			switch first.Text {
+			case "notify":
+				return nil, refuse("has a notify block, which is now `monitor { … }`, with the same lines but state_dir and alertmanager, whose paths are fixed; to move a box onto it, docs/upgrading.md, \"From the notify and metrics_store blocks\"")
+			case "metrics_store":
+				return nil, refuse("has a metrics_store block, which is now a `metrics [<socket path>]` line in the monitor block; to move a box onto it, docs/upgrading.md, \"From the notify and metrics_store blocks\"")
+			}
+			if first.Text == "monitor" && opens && shape.Notify == nil { // Caddy refuses a second
+				shape.Notify = &NotifyBlock{}
+				child.kind = kindNotify
+			}
 		case kindLiveswap:
 			if first.Text == "app" && len(args) > 0 && appName.MatchString(args[0]) {
 				shape.Apps = append(shape.Apps, args[0])
@@ -335,6 +381,20 @@ func walk(input []byte) (*Shape, error) {
 				e.Env = append(e.Env, args[0])
 			}
 			shape.AppEnv[top.app] = e
+		case kindNotify:
+			switch {
+			case first.Text == "secrets_file" && len(args) > 0:
+				shape.Notify.SecretsFile = args[0]
+			case first.Text == "channel" && len(args) >= 3:
+				shape.Notify.Channels = true
+				if name, ok := notifySecret(args[2]); ok {
+					shape.Notify.Secrets = append(shape.Notify.Secrets, name)
+				}
+			case first.Text == "heartbeat" && len(args) >= 1:
+				if name, ok := notifySecret(args[0]); ok {
+					shape.Notify.Secrets = append(shape.Notify.Secrets, name)
+				}
+			}
 		case kindBox:
 			switch first.Text {
 			case "signer":

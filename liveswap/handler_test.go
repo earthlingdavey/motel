@@ -35,6 +35,7 @@ func newTestHandler(t *testing.T) (*Handler, *testRig) {
 	rig := newTestRig(t)
 	app := &App{
 		managed:         map[string]*managedApp{"demo": rig.ma},
+		observed:        new(sync.Map),
 		globalVerifiers: deploytrust.Verifiers([]deploytrust.Source{localSource(t, globalTestPub, "global")}, nil),
 	}
 	h := &Handler{app: app, logger: zap.NewNop(), limiter: deploytrust.NewLimiter(rig.clock)}

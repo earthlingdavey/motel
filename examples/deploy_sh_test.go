@@ -112,6 +112,7 @@ func countedBox(t *testing.T, mode string) (*httptest.Server, *atomic.Int64) {
 // The scripts stay byte-identical, and each reads every shape of
 // answer to the same exit status.
 func TestDeployShReadsEveryShapeOfAnswer(t *testing.T) {
+	t.Parallel()
 	if _, err := exec.LookPath("curl"); err != nil {
 		t.Fatal("deploy.sh needs curl; install it to run this test")
 	}
@@ -180,6 +181,11 @@ func deployShIn(t *testing.T, srv *httptest.Server, dir string, args []string, e
 	if err != nil {
 		t.Fatal(err)
 	}
+	// sh opens the script, not this process: the stat is what puts it in
+	// Go's test cache, so an edit to it re-runs these tests.
+	if _, err := os.Stat(script); err != nil {
+		t.Fatal(err)
+	}
 	cmd := exec.Command("sh", append([]string{script}, args...)...)
 	cmd.Dir = dir
 	// Later entries win, so a developer's own MOTEL_AUDIENCE, or the
@@ -220,6 +226,7 @@ func deployShIn(t *testing.T, srv *httptest.Server, dir string, args []string, e
 // the box pins — the script refuses before any output or request,
 // rather than drop the pin.
 func TestDeployShPinsTheArtifactDigest(t *testing.T) {
+	t.Parallel()
 	if _, err := exec.LookPath("curl"); err != nil {
 		t.Fatal("deploy.sh needs curl; install it to run this test")
 	}
@@ -276,6 +283,7 @@ func TestDeployShPinsTheArtifactDigest(t *testing.T) {
 // minted it with — every value the run's own, so the box gives nothing
 // away — in the log, the error annotation and the job summary.
 func TestDeployShSaysWhatARefusedRunMustBeTrustedFor(t *testing.T) {
+	t.Parallel()
 	if _, err := exec.LookPath("curl"); err != nil {
 		t.Fatal("deploy.sh needs curl; install it to run this test")
 	}
@@ -316,6 +324,7 @@ func TestDeployShSaysWhatARefusedRunMustBeTrustedFor(t *testing.T) {
 // be an issuer's too (a GitLab id_token). A 401 from something that
 // is not the box is not sent again.
 func TestDeployShSendsARefusedTokenOnceMore(t *testing.T) {
+	t.Parallel()
 	if _, err := exec.LookPath("curl"); err != nil {
 		t.Fatal("deploy.sh needs curl; install it to run this test")
 	}
@@ -357,6 +366,7 @@ func TestDeployShSendsARefusedTokenOnceMore(t *testing.T) {
 // and the command that sets it. A laptop deploy has no workflow, and
 // gets no such line.
 func TestDeployShNamesTheRunnerVariableForAWrongArchitecture(t *testing.T) {
+	t.Parallel()
 	if _, err := exec.LookPath("curl"); err != nil {
 		t.Fatal("deploy.sh needs curl; install it to run this test")
 	}
@@ -382,6 +392,7 @@ func TestDeployShNamesTheRunnerVariableForAWrongArchitecture(t *testing.T) {
 // http://, no scheme, a space in front — is refused unless
 // MOTEL_ALLOW_HTTP is exactly 1.
 func TestDeployShRefusesAPlaintextURLBeforeTheMint(t *testing.T) {
+	t.Parallel()
 	if _, err := exec.LookPath("curl"); err != nil {
 		t.Fatal("deploy.sh needs curl; install it to run this test")
 	}
@@ -457,6 +468,7 @@ func TestDeployShRefusesAPlaintextURLBeforeTheMint(t *testing.T) {
 // deploys whatever the checkout holds, and a URL's artifact, built
 // elsewhere, is not judged by edits here.
 func TestDeployShRefusesADirtyCheckoutsDefaultVersion(t *testing.T) {
+	t.Parallel()
 	for _, tool := range []string{"curl", "git"} {
 		if _, err := exec.LookPath(tool); err != nil {
 			t.Fatalf("this test needs %s; install it to run it", tool)
@@ -572,6 +584,7 @@ func TestDeployShRefusesADirtyCheckoutsDefaultVersion(t *testing.T) {
 // deploying under another version than the one printed. What the box
 // accepts goes through unchanged.
 func TestDeployShRefusesAVersionOutsideTheBoxAlphabet(t *testing.T) {
+	t.Parallel()
 	if _, err := exec.LookPath("curl"); err != nil {
 		t.Fatal("deploy.sh needs curl; install it to run this test")
 	}

@@ -52,8 +52,42 @@ var (
 	buildErr  error
 )
 
+// TestMain puts a `sleep` first on PATH that waits a twentieth of what
+// it is asked: the scripts under test (bin/apply's poll backoff and
+// resends, deploy.sh's resend) wait on the box's answers, which here
+// are a test server's, there at once. Their waits are counted by the
+// tests, never timed, so a twentieth of the time leaves every answer
+// the same [measured: TestBoxApply 74 s to 9.7 s, the package's results
+// unchanged]. A duration that is not a plain number goes to the real
+// sleep.
 func TestMain(m *testing.M) {
+	shim, err := os.MkdirTemp("", "sleep-shim")
+	if err != nil {
+		panic(err)
+	}
+	realSleep, err := exec.LookPath("sleep")
+	if err != nil {
+		panic(err)
+	}
+	// Whole seconds alone are scaled, in the shell's integer arithmetic
+	// (no awk, whose decimal point is the locale's), their leading zeros
+	// dropped (a 0 would make them octal); anything else, nine digits or
+	// more among it, goes to the real sleep as asked.
+	q := "'" + strings.ReplaceAll(realSleep, "'", `'\''`) + "'"
+	script := "#!/bin/sh\n" +
+		"[ $# -eq 1 ] || exec " + q + " \"$@\"\n" +
+		"case $1 in ''|*[!0-9]*|?????????*) exec " + q + " \"$@\" ;; esac\n" +
+		"n=${1#\"${1%%[!0]*}\"}\n" +
+		"ms=$((${n:-0} * 50))\n" +
+		"exec " + q + " \"$((ms / 1000)).$(printf %03d $((ms % 1000)))\"\n"
+	if err := os.WriteFile(filepath.Join(shim, "sleep"), []byte(script), 0o755); err != nil {
+		panic(err)
+	}
+	if err := os.Setenv("PATH", shim+string(os.PathListSeparator)+os.Getenv("PATH")); err != nil {
+		panic(err)
+	}
 	code := m.Run()
+	_ = os.RemoveAll(shim)
 	if builtBin != "" {
 		_ = os.RemoveAll(filepath.Dir(builtBin))
 	}
@@ -68,6 +102,9 @@ func TestMain(m *testing.M) {
 func motelBinary(t *testing.T) string {
 	t.Helper()
 	buildOnce.Do(func() {
+		if buildErr = statMotelSources(); buildErr != nil {
+			return
+		}
 		dir, err := os.MkdirTemp("", "motel-bin")
 		if err != nil {
 			buildErr = err
@@ -83,6 +120,56 @@ func motelBinary(t *testing.T) string {
 		t.Fatal(buildErr)
 	}
 	return builtBin
+}
+
+// statMotelSources stats every file of this workspace the motel binary
+// is built from, with go.work and each module's go.mod and go.sum. Go's
+// test cache keys a package's results on its imports and on the files
+// its tests open or stat; motelBinary builds the binary in a
+// subprocess, which the cache cannot see, so a change to cmd/motel, or
+// to a package of another module that only it imports, left this
+// package's results "(cached)" [measured: a line added to
+// cmd/motel/main.go, and a test that runs the binary answered
+// (cached)]. Each package's directory is stated too, whose time moves
+// when a file is added to it or taken out. A module-cache package is
+// fixed by its version, which go.sum holds.
+func statMotelSources() error {
+	const files = `{{if and .Module .Module.Main}}{{$d := .Dir}}{{$d}}{{"\n"}}` +
+		`{{range .GoFiles}}{{$d}}/{{.}}{{"\n"}}{{end}}{{range .CgoFiles}}{{$d}}/{{.}}{{"\n"}}{{end}}` +
+		`{{range .SFiles}}{{$d}}/{{.}}{{"\n"}}{{end}}{{range .EmbedFiles}}{{$d}}/{{.}}{{"\n"}}{{end}}` +
+		`{{.Module.GoMod}}{{"\n"}}{{end}}`
+	var stderr bytes.Buffer
+	list := exec.Command("go", "list", "-deps", "-f", files, "github.com/smallhoursorg/motel/cmd/motel")
+	list.Stderr = &stderr
+	out, err := list.Output()
+	if err != nil {
+		return fmt.Errorf("go list motel's sources: %w\n%s", err, stderr.Bytes())
+	}
+	// The workspace's files are at the root, the parent of this package's.
+	paths := []string{filepath.Join("..", "go.work"), filepath.Join("..", "go.work.sum")}
+	for _, p := range strings.Split(string(out), "\n") {
+		if p == "" {
+			continue
+		}
+		paths = append(paths, p)
+		if strings.HasSuffix(p, "/go.mod") {
+			paths = append(paths, strings.TrimSuffix(p, "mod")+"sum")
+		}
+	}
+	seen := map[string]bool{}
+	for _, p := range paths {
+		if seen[p] {
+			continue
+		}
+		seen[p] = true
+		// The stat is what the cache records; a go.sum or go.work.sum
+		// that is not there is recorded as absent, which is as much.
+		_, _ = os.Stat(p)
+	}
+	if len(seen) < 10 {
+		return fmt.Errorf("go list named %d of motel's files, too few to be all of them: %q", len(seen), paths)
+	}
+	return nil
 }
 
 // boxRepo is a clone of a repository made from the template: its first
@@ -241,6 +328,7 @@ func (r *boxRepo) commit(msg string, extra ...string) string {
 const boxFile = "deploy.example.com/Caddyfile"
 
 func TestBoxSigner(t *testing.T) {
+	t.Parallel()
 	r := newBoxRepo(t)
 	if out, code := r.run("signer"); code != 1 || !strings.Contains(out, "no key at "+filepath.Join(r.home, ".ssh", "id_ed25519.pub")) {
 		t.Fatalf("no key: exit %d\n%s", code, out)
@@ -344,6 +432,7 @@ func TestBoxSigner(t *testing.T) {
 }
 
 func TestBoxCheck(t *testing.T) {
+	t.Parallel()
 	bin := motelBinary(t)
 	r := newBoxRepo(t)
 	check := func() (string, int) { return r.run("check", "MOTEL="+bin) }
@@ -477,6 +566,7 @@ type standIn struct {
 	recipient string            // GET /'s box key; "" leaves it out, as a box without one does
 	secrets   map[string]string // the secrets the box runs: <app>/<VAR> → the value's blob
 	envEdited []string          // results say these apps' env files were edited on the box
+	envMode   []string          // and these apps' at the box's own bytes, their mode changed: removals still named
 	pollGaps  []int             // polls answered, in order, by something in front of the box
 	mintFails int               // token requests that fail before one succeeds
 	audience  string            // the last token request's audience, decoded
@@ -485,9 +575,11 @@ type standIn struct {
 var boxID = regexp.MustCompile(`^[0-9a-f]{32}$`)
 
 // secretNames are the grammars root holds the secrets' names to
-// (box/secrets.go): an app's name as box/tokens.go reads one, a
-// variable's as liveswap does.
-var secretNames = proof.Names{App: regexp.MustCompile(`^[a-z0-9-]{1,63}$`).MatchString, Var: liveswap.ValidEnvKey}
+// (box/secrets.go): an app's name as box/tokens.go reads one, or the
+// box's own slot, _box; a variable's as liveswap does.
+var secretNames = proof.Names{App: func(s string) bool { return s == "_box" || appNameRe.MatchString(s) }, Var: liveswap.ValidEnvKey}
+
+var appNameRe = regexp.MustCompile(`^[a-z0-9-]{1,63}$`)
 
 func newStandIn(t *testing.T, baseline string, installed []byte) *standIn {
 	s := &standIn{t: t, baseline: baseline, installed: installed, path: boxFile,
@@ -748,16 +840,28 @@ func (s *standIn) post(w http.ResponseWriter, r *http.Request) {
 			changed = append(changed, k)
 		}
 	}
+	// As the box's: removed names only from bytes the box wrote (a file
+	// whose mode alone changed included), never from a file edited on
+	// it, where a line may be a value pasted alone.
 	for k := range s.secrets {
-		if _, ok := values[k]; !ok {
+		app, _, _ := strings.Cut(k, "/")
+		if _, ok := values[k]; !ok && !slices.Contains(s.envEdited, app) {
 			removed = append(removed, k)
 		}
 	}
-	for key, names := range map[string][]string{"secrets_added": added, "secrets_changed": changed, "secrets_removed": removed, "secrets_edited_out_of_band": s.envEdited} {
+	oob := slices.Concat(s.envEdited, s.envMode)
+	for key, names := range map[string][]string{"secrets_added": added, "secrets_changed": changed, "secrets_removed": removed, "secrets_edited_out_of_band": oob} {
 		if len(names) > 0 {
 			slices.Sort(names)
 			res[key] = names
 		}
+	}
+	// As the box's txn.reloads: the Caddyfile, or the box's own env
+	// file's bytes — which a name in the lists or an out-of-band edit of
+	// _box.env changes.
+	// A mode-only rewrite (envMode) changes nothing a load reads.
+	if res["diff"] != nil || slices.Contains(s.envEdited, "_box") || slices.ContainsFunc(slices.Concat(added, changed, removed), func(n string) bool { return strings.HasPrefix(n, "_box/") }) {
+		res["reloaded"] = true
 	}
 	s.results[id] = encode(res)
 	s.baseline, s.installed, s.secrets = b.Commit.ID, b.Caddyfile, values
@@ -871,6 +975,7 @@ func (g *applyRig) change(msg string, extra ...string) string {
 }
 
 func TestBoxApply(t *testing.T) {
+	t.Parallel()
 	t.Run("the commit the box runs", func(t *testing.T) {
 		g := newApplyRig(t)
 		out, code := g.apply()
@@ -1193,6 +1298,44 @@ func TestBoxApply(t *testing.T) {
 			"- secrets updated; the Caddyfile is unchanged, nothing reloaded; apps `example`\n") {
 			t.Errorf("the job summary, secrets alone:\n%s", b)
 		}
+		// The box's own secrets alone: notify reads them at a load, so
+		// the push reloads, and no app is told to relaunch for them.
+		if out, code := g.secrets("", "https://ntfy.sh/ops", "set", "APP=_box", "VAR=NOTIFY_OPS_URL"); code != 0 {
+			t.Fatalf("make secret APP=_box: exit %d\n%s", code, out)
+		}
+		head = g.commit("the operator's channel")
+		out, code = g.apply()
+		if code != 0 || !strings.Contains(out, "apply: deploy.example.com secrets: _box: added NOTIFY_OPS_URL\n") ||
+			!strings.Contains(out, "deploy.example.com at "+head[:7]+": the box's notify secrets updated and loaded; the Caddyfile is unchanged, running apps are not restarted") ||
+			strings.Contains(out, "_box reads its secrets") || strings.Contains(out, "ntfy.sh") {
+			t.Fatalf("the box's own secrets: exit %d\n%s", code, out)
+		}
+		// The same values over other bytes on the box (an operator's
+		// hand-written _box.env from before the slot): no name changes,
+		// the box rewrites the file and reloads, and the line says what
+		// the result does.
+		g.box.set(func(s *standIn) { s.envEdited = []string{"_box"} })
+		head = g.commit("the box's file rewritten")
+		out, code = g.apply()
+		if code != 0 || !strings.Contains(out, "deploy.example.com at "+head[:7]+": the box's notify secrets updated and loaded; the Caddyfile is unchanged, running apps are not restarted") {
+			t.Fatalf("the box's own file rewritten: exit %d\n%s", code, out)
+		}
+		// Its mode alone changed on the box: rewritten, named out of band,
+		// and nothing reloaded, as the box's txn.reloads has it.
+		g.box.set(func(s *standIn) { s.envEdited, s.envMode = nil, []string{"_box"} })
+		head = g.commit("the box's file at another mode")
+		out, code = g.apply()
+		if code != 0 || !strings.Contains(out, "deploy.example.com at "+head[:7]+": secrets updated; the Caddyfile is unchanged, nothing reloaded") ||
+			!strings.Contains(out, "_box's env file on the box had been edited there since the last apply") {
+			t.Fatalf("the box's own file at another mode: exit %d\n%s", code, out)
+		}
+		g.box.set(func(s *standIn) { s.envEdited, s.envMode = nil, nil })
+		g.remove("deploy.example.com/secrets/_box")
+		g.change("no notify secrets")
+		if out, code := g.apply(); code != 0 {
+			t.Fatalf("the box's own secrets removed: exit %d\n%s", code, out)
+		}
+
 		// A recipients file written on Windows reads as age reads it.
 		g.write(recipientsFile, strings.ReplaceAll(g.read(recipientsFile), "\n", "\r\n"))
 		g.change("crlf")
@@ -1201,24 +1344,27 @@ func TestBoxApply(t *testing.T) {
 		}
 
 		// One of two removed, and the Caddyfile changed in the same push,
-		// over an env file edited on the box: the file is rewritten with
-		// the value left, not removed.
-		g.box.set(func(s *standIn) { s.envEdited = []string{"example"} })
+		// over an env file whose mode was changed on the box: the file is
+		// rewritten with the value left, not removed, and its bytes are the
+		// box's, so the removal is named and the warning says nothing of
+		// unnamed variables.
+		g.box.set(func(s *standIn) { s.envMode = []string{"example"} })
 		g.remove("deploy.example.com/secrets/example/COPY.age")
 		head = g.change("three")
 		out, code = g.apply()
 		if code != 0 || !strings.Contains(out, "apply: deploy.example.com secrets: example: removed COPY\n") ||
 			!strings.Contains(out, "deploy.example.com at "+head[:7]+": loaded; running apps are not restarted") ||
-			!strings.Contains(out, "this push replaced the edit with deploy.example.com/secrets/example/ at "+head[:7]) {
+			!strings.Contains(out, "this push replaced the edit with deploy.example.com/secrets/example/ at "+head[:7]+"\n") {
 			t.Fatalf("a removal: exit %d\n%s", code, out)
 		}
-		g.box.set(func(s *standIn) { s.envEdited = nil })
+		g.box.set(func(s *standIn) { s.envMode = nil })
 
 		// An env file edited on the box: said, and on the job page.
 		g.box.set(func(s *standIn) { s.envEdited = []string{"example"} })
 		head = g.change("four")
 		out, code = g.apply("GITHUB_ACTIONS=true")
-		if code != 0 || !strings.Contains(out, "example's env file on the box had been edited there since the last apply; this push replaced the edit with deploy.example.com/secrets/example/ at "+head[:7]) ||
+		if code != 0 || !strings.Contains(out, "example's env file on the box had been edited there since the last apply; this push replaced the edit with deploy.example.com/secrets/example/ at "+head[:7]+
+			"; any variable only the edit had is gone, and the box does not name those (a line of a file it did not write may be a value)\n") ||
 			!strings.Contains(out, "::warning title=apply deploy.example.com::example's env file") {
 			t.Fatalf("an env file edited on the box: exit %d\n%s", code, out)
 		}
@@ -1252,8 +1398,8 @@ func TestBoxApply(t *testing.T) {
 		g.write(boxFile, strings.Replace(g.read(boxFile), "\tenv_file /etc/motel/secrets/example.env", "\t# env_file /etc/motel/secrets/example.env", 1))
 		g.box.set(func(s *standIn) { s.envEdited = []string{"example"} })
 		head = g.commit("no secrets")
-		if out, code := g.apply(); code != 0 || !strings.Contains(out, "apply: deploy.example.com secrets: example: removed DATABASE_URL\n") ||
-			!strings.Contains(out, "example's env file on the box had been edited there since the last apply; this push removed it, as "+head[:7]+" has no secrets for example") {
+		if out, code := g.apply(); code != 0 || strings.Contains(out, "removed DATABASE_URL") ||
+			!strings.Contains(out, "example's env file on the box had been edited there since the last apply; this push removed it, as "+head[:7]+" has no secrets for example\n") {
 			t.Fatalf("every secret removed: exit %d\n%s", code, out)
 		}
 	})
@@ -1332,6 +1478,7 @@ func recorder(t *testing.T, path, tag, bin string) {
 // with $MOTEL-<version>; one without, with $MOTEL; a file that
 // names no release is refused and named, never read as the latest.
 func TestBoxCheckVersionFile(t *testing.T) {
+	t.Parallel()
 	bin := motelBinary(t)
 	r := newBoxRepo(t)
 	r.key("id_ed25519")
@@ -1552,6 +1699,7 @@ func (g *releases) reset() {
 // once, verified, as motel-<version>; the default as motel too;
 // and bin/check then picks each box's.
 func TestBoxInstallMotel(t *testing.T) {
+	t.Parallel()
 	if runtime.GOOS != "linux" {
 		t.Skip("bin/install-motel installs Linux binaries, and refuses elsewhere")
 	}

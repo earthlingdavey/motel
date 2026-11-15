@@ -23,6 +23,7 @@ import (
 //	<root>/<app>/deploys/<version>.json  the latest deploy's outcome for that version, filtered (not in any view)
 //	<root>/<app>/state.json            current version + process handle
 //	<root>/<app>/deploying.json        a URL or push deploy in flight (deploying.go; not in any view)
+//	<root>/<app>/alerts.json           what the watchdog reported to notify and has not ended (lifecycle.go; not in any view)
 //	<root>/<app>/current -> releases/<version>   convenience symlink
 type appDirs struct {
 	root      string // the liveswap root every app lives under
@@ -35,6 +36,7 @@ type appDirs struct {
 	deploys   string
 	state     string
 	deploying string
+	alerts    string
 	current   string
 }
 
@@ -51,6 +53,7 @@ func newAppDirs(root, name string) appDirs {
 		deploys:   filepath.Join(app, "deploys"),
 		state:     filepath.Join(app, "state.json"),
 		deploying: filepath.Join(app, "deploying.json"),
+		alerts:    filepath.Join(app, "alerts.json"),
 		current:   filepath.Join(app, "current"),
 	}
 }

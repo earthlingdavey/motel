@@ -46,7 +46,10 @@ const (
 	msgInterruptedStopped = "interrupted; the previous Caddyfile is on disk; motel is not running — systemctl reset-failed motel, then systemctl start motel, loads it"
 	msgNoRecord           = "the box has no record of this push; push again"
 	msgReloadFailed       = "the reload failed; the previous Caddyfile is back and running — journalctl -u motel -n 50 on the box says why"
-	msgRecordAfterReload  = "the record could not be updated after a successful reload (disk full); rolled back to keep the file and the record consistent"
+	// The same, for a set whose Caddyfile is unchanged: the box's own
+	// env file (_box.env) was what reloaded, and notify refused it.
+	msgReloadFailedBox   = "the reload failed on the box's new notify secrets; the previous ones are back and running — journalctl -u motel -n 50 on the box says why (notify takes a channel URL that is https to a public host)"
+	msgRecordAfterReload = "the record could not be updated after a successful reload (disk full); rolled back to keep the file and the record consistent"
 	// The swap landed, then the `swapped` record or the swap's own fsync
 	// failed: nothing was reloaded before the rollback.
 	msgRolledBackUnrecorded = "the Caddyfile was swapped, then a write after the swap failed; rolled back: the previous Caddyfile is back and running"
@@ -138,6 +141,11 @@ type result struct {
 	// Named is the object ids Error names, which an answer holds out of
 	// the response filter as it does Commit.
 	Named []string `json:"named,omitempty"`
+	// Reloaded, on an applied result, says that the push reloaded motel:
+	// the Caddyfile changed, or the box's own env file did (txn.reloads),
+	// which the names below cannot tell — the same values over other
+	// bytes reload, and a rekey of the same bytes does not.
+	Reloaded bool `json:"reloaded,omitempty"`
 	// The secrets the push adds, changes and removes, as <app>/<VAR>,
 	// and the apps whose env file root wrote or removed over bytes it
 	// had not installed: names, never a value (I9).
@@ -228,7 +236,7 @@ func resultFields(r result) []zap.Field {
 		zap.String("id", r.ID), zap.String("phase", r.Phase), zap.String("commit", r.Commit),
 		zap.String("path", proof.Bound(r.Path)), zap.String("signer", r.Signer), zap.String("box", r.BoxWebhook),
 		zap.Bool("caddyfile_edited_out_of_band", r.OutOfBand), zap.Strings("apps", r.Apps),
-		zap.String("diff", r.Diff), zap.String("error", r.Error), zap.Strings("named", r.Named),
+		zap.String("diff", r.Diff), zap.String("error", r.Error), zap.Strings("named", r.Named), zap.Bool("reloaded", r.Reloaded),
 		zap.Strings("secrets_added", r.SecretsAdded), zap.Strings("secrets_changed", r.SecretsChanged),
 		zap.Strings("secrets_removed", r.SecretsRemoved), zap.Strings("secrets_edited_out_of_band", r.SecretsOutOfBand),
 	}

@@ -6,8 +6,8 @@ COMPOSE ?= docker compose
 # the root module — nested modules are excluded from a parent module's
 # pattern even in workspace mode — so test/vet name each module's tree
 # explicitly.
-MODULES ?= . backups box liveswap penaltybox
-PKGS = ./... ./backups/... ./box/... ./liveswap/... ./penaltybox/...
+MODULES ?= . backups box liveswap notify penaltybox
+PKGS = ./... ./backups/... ./box/... ./liveswap/... ./notify/... ./penaltybox/...
 
 # Release version: the tag when present (release.yml passes it in),
 # else a digit-leading dev placeholder that deb version rules accept.
@@ -16,7 +16,7 @@ VERSION ?= $(shell (git describe --tags --exact-match 2>/dev/null || echo v0.0.0
 # Distro image for the package install smoke test (install-test).
 DISTRO ?= debian:13
 
-.PHONY: test test-integration vet tidy tidy-check lint fuzz fuzz-list vulncheck pin-watch-check ci-changes-check secretscan usage usage-claude usage-check build package clean-debs install-test e2e e2e-backup soak e2e-logs clean
+.PHONY: test test-integration vet tidy tidy-check lint fuzz fuzz-list vulncheck pin-watch-check ci-changes-check secretscan usage usage-claude usage-check build package clean-debs install-test e2e e2e-backup e2e-notify e2e-metrics soak e2e-logs clean
 
 test:
 	$(COMPOSE) run --rm dev go test -race -cover $(PKGS)
@@ -37,8 +37,15 @@ endef
 # manager started by test/systemd/ready.sh): liveswap's runner creates
 # real transient units, and the caddytest scenarios deploy a real app
 # through them; the box applier asks the real systemctl. -p 1: the
-# modules' caddytest suites all pin admin :2999 / http :9080, so their
-# test binaries must not run in parallel.
+# modules' caddytest suites (liveswap's and penaltybox's) all pin admin
+# :2999 / http :9080, so their test binaries must not run in parallel;
+# and backups' tests add users and run transient units one after
+# another. Two groups, each -p 1, run at once: the caddytest pair, and
+# backups, box and notify, which hold none of those ports, add no user
+# liveswap reads, and reload only the system manager, not root's user
+# manager, where liveswap's units run. Each group's output is held and
+# printed after, a group at a time; go test's own -timeout (10 m a
+# package) bounds a wedged one.
 # -count=1: these tests hold what systemd, restic and sqlite3 do, and
 # Go's test cache knows none of them — given the same test binary and
 # flags it replays the last result, a pass included, after the program
@@ -51,8 +58,14 @@ test-integration:
 	status=0; \
 	$(COMPOSE) exec -T dev-systemd /bin/sh /src/test/systemd/ready.sh || status=1; \
 	if [ $$status -eq 0 ]; then \
-		$(COMPOSE) exec -T -e XDG_RUNTIME_DIR=/run/user/0 dev-systemd \
-			go test -count=1 -race -tags integration -v -run Integration -p 1 ./backups/... ./box/... ./liveswap/... ./penaltybox/... || status=1; \
+		$(COMPOSE) exec -T -e XDG_RUNTIME_DIR=/run/user/0 dev-systemd sh -c '\
+			it="go test -count=1 -race -tags integration -v -run Integration -p 1"; \
+			$$it ./liveswap/... ./penaltybox/... >/tmp/it-caddytest.log 2>&1 & a=$$!; \
+			$$it ./backups/... ./box/... ./notify/... >/tmp/it-rest.log 2>&1 & b=$$!; \
+			wait $$a; ra=$$?; wait $$b; rb=$$?; \
+			echo "════ liveswap, penaltybox (the caddytest group) ════"; cat /tmp/it-caddytest.log; \
+			echo "════ backups, box, notify ════"; cat /tmp/it-rest.log; \
+			[ $$ra -eq 0 ] && [ $$rb -eq 0 ]' || status=1; \
 	fi; \
 	if [ $$status -ne 0 ]; then $(COMPOSE) exec -T dev-systemd journalctl --no-pager -n 100 || true; fi; \
 	$(COMPOSE) rm -sf dev-systemd >/dev/null; \
@@ -347,6 +360,92 @@ e2e:
 		$(COMPOSE) exec -T e2e-motel journalctl --no-pager -n 300 || true; \
 	fi; \
 	$(COMPOSE) down --remove-orphans; \
+	exit $$status
+
+# The notify suite: a box with Debian's Alertmanager and a stub receiver
+# (e2e/notify/run.sh). Its own target, as the backup suite is: its waits
+# are Alertmanager's and motel's timers, which no other lane should pay.
+# Its splits (run.sh's SPLIT) run at once, a box each, sharing the sink,
+# which answers each box with its own deliveries; their output is held
+# and printed a split at a time, each ended at NOTIFY_LIMIT inside its
+# box. The heartbeat split, five minutes of motel's hold and its resume
+# (~9.5 min), is the lane's length: ci.yml names it with the other
+# two, and a bare run leaves it out, and says so at its end.
+# NOTIFY_SPLITS=heartbeat runs it alone; =all the whole suite on one
+# box. The sink is metrics' too, its paths the same, so e2e-notify and
+# e2e-metrics do not run at once on one host.
+NOTIFY_SPLITS ?= core reload
+NOTIFY_LIMIT ?= 1800
+e2e-notify:
+	$(cgroup2_preflight)
+	$(if $(strip $(NOTIFY_SPLITS)),,$(error NOTIFY_SPLITS is empty: name a split, or all))
+	$(COMPOSE) rm -sf e2e-notify-box e2e-sink >/dev/null
+	$(COMPOSE) up --build -d --scale e2e-notify-box=$(words $(NOTIFY_SPLITS)) e2e-notify-box e2e-sink e2e-artifacts
+	logs=$$(mktemp -d); i=0; \
+	for s in $(NOTIFY_SPLITS); do \
+		i=$$((i + 1)); \
+		( t0=$$(date +%s); $(COMPOSE) exec -T --index $$i -e SPLIT=$$s e2e-notify-box timeout $(NOTIFY_LIMIT) /bin/sh /suite-notify.sh >$$logs/$$i.log 2>&1; echo "$$? $$(($$(date +%s) - t0))" >$$logs/$$i.rc ) & \
+	done; \
+	wait; \
+	status=0; i=0; \
+	for s in $(NOTIFY_SPLITS); do \
+		i=$$((i + 1)); \
+		rc=; took=; read rc took <$$logs/$$i.rc || rc=unknown; \
+		echo "════ notify split $$s (box $$i, $${took:-?}s) ════"; \
+		cat $$logs/$$i.log; \
+		if [ "$$rc" = 124 ]; then echo "════ notify split $$s ended at NOTIFY_LIMIT ($(NOTIFY_LIMIT)s) ════"; fi; \
+		if [ "$$rc" != 0 ]; then \
+			status=1; \
+			echo "════ notify split $$s failed: box $$i's journal ════"; \
+			$(COMPOSE) exec -T --index $$i e2e-notify-box journalctl --no-pager -n 200 -u motel -u prometheus-alertmanager -u motel-am.socket || true; \
+		fi; \
+	done; \
+	rm -rf $$logs; \
+	$(COMPOSE) rm -sf e2e-notify-box e2e-sink >/dev/null; \
+	$(if $(filter heartbeat all,$(NOTIFY_SPLITS)),,echo "════ heartbeat split not run (notify 15, motel's 5-minute hold, ~9.5 min): CI runs it; NOTIFY_SPLITS=heartbeat runs it here ════";) \
+	exit $$status
+
+# The metrics suite: notify's box with Debian's victoria-metrics, and the
+# same stub receiver; its own target and CI job, as notify's. Its parts
+# are timer-bound, not CPU-bound (a minute's evaluation, a 75 s hold), so
+# its splits (e2e/metrics/run.sh's SPLIT) run at once, a box each, as the
+# backup suites do, with their output held and printed a split at a time.
+# METRICS_SPLITS=rules runs one; METRICS_SPLITS=all is the whole suite on
+# one box, in the order it ran in before the split. Each split is ended
+# at METRICS_LIMIT inside its box, as a backup suite at SUITE_LIMIT, so a
+# wedged one still prints what it got to. The boxes and the sink are
+# removed first: a box count, or sink lines, left by an interrupted run.
+# The sink is notify's too, its paths the same, so e2e-notify and
+# e2e-metrics do not run at once on one host (a compose project a lane
+# would let them).
+METRICS_SPLITS ?= view vmalert store rules
+METRICS_LIMIT ?= 900
+e2e-metrics:
+	$(cgroup2_preflight)
+	$(if $(strip $(METRICS_SPLITS)),,$(error METRICS_SPLITS is empty: name a split, or all))
+	$(COMPOSE) rm -sf e2e-metrics-box e2e-sink >/dev/null
+	$(COMPOSE) up --build -d --scale e2e-metrics-box=$(words $(METRICS_SPLITS)) e2e-metrics-box e2e-sink e2e-artifacts
+	logs=$$(mktemp -d); i=0; \
+	for s in $(METRICS_SPLITS); do \
+		i=$$((i + 1)); \
+		( t0=$$(date +%s); $(COMPOSE) exec -T --index $$i -e SPLIT=$$s e2e-metrics-box timeout $(METRICS_LIMIT) /bin/sh /suite-metrics.sh >$$logs/$$i.log 2>&1; echo "$$? $$(($$(date +%s) - t0))" >$$logs/$$i.rc ) & \
+	done; \
+	wait; \
+	status=0; i=0; \
+	for s in $(METRICS_SPLITS); do \
+		i=$$((i + 1)); \
+		rc=; took=; read rc took <$$logs/$$i.rc || rc=unknown; \
+		echo "════ metrics split $$s (box $$i, $${took:-?}s) ════"; \
+		cat $$logs/$$i.log; \
+		if [ "$$rc" = 124 ]; then echo "════ metrics split $$s ended at METRICS_LIMIT ($(METRICS_LIMIT)s) ════"; fi; \
+		if [ "$$rc" != 0 ]; then \
+			status=1; \
+			echo "════ metrics split $$s failed: box $$i's journal ════"; \
+			$(COMPOSE) exec -T --index $$i e2e-metrics-box journalctl --no-pager -n 200 -u motel -u victoria-metrics -u motel-vmalert -u motel-vm.socket -u motel-vm.service -u motel-am-metrics.socket -u prometheus-alertmanager -u motel-metrics-netns || true; \
+		fi; \
+	done; \
+	rm -rf $$logs; \
+	$(COMPOSE) rm -sf e2e-metrics-box e2e-sink >/dev/null; \
 	exit $$status
 
 # The backup suite: a box with systemd, Debian's restic and sqlite3, and

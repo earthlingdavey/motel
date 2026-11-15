@@ -10,6 +10,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+
+	"github.com/smallhoursorg/motel/liveswap/wire"
 )
 
 // The webhook's responses land in CI logs — readable by everyone with
@@ -603,7 +605,7 @@ func (r *Redactor) redactJSON(raw []byte) string {
 		// Marshalled, not concatenated: the reason carries a path. And
 		// filtered like any body: the path, or the parse error quoting
 		// a line of the file, can carry a token-shaped string.
-		b, err := json.Marshal(map[string]string{"error": "response withheld: " + r.withhold})
+		b, err := json.Marshal(wire.Error{Error: "response withheld: " + r.withhold})
 		if err != nil {
 			return `{"error":"[#0]"}`
 		}

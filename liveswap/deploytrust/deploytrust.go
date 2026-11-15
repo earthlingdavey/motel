@@ -96,6 +96,27 @@ type Source struct {
 	attribution []string // the preset's attributionClaims, kept past the fold to "oidc"
 }
 
+// Label names the source the way deployed_by and Verifier.Label do:
+// oidc:<issuer> (a preset's issuer, resolved) or local:<public key
+// path>. For the notify module, whose `bind` lines name an identity by
+// its source and the claims the source pins.
+func (s Source) Label() string {
+	if s.kind == "local" {
+		return "local:" + s.keyPath
+	}
+	return "oidc:" + s.issuer
+}
+
+// PinnedClaim is the value the source requires of the named claim, as
+// the operator configured it (`subject` folded in as `sub`), and
+// whether it pins that claim at all. What a token merely carries is
+// not here: a binding names who the box trusts, never what a token
+// said.
+func (s Source) PinnedClaim(name string) (string, bool) {
+	v, ok := s.claims[name]
+	return v, ok
+}
+
 // ResolvePlaceholders expands {env.*} (and other known Caddy
 // placeholders) in a slice of trust configs, in place. Kind is a
 // literal block token and is never a placeholder. The JSON `subject`

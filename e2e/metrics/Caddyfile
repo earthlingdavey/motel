@@ -1,0 +1,105 @@
+# The metrics suite's box (e2e/metrics/run.sh): the notify suite's
+# Caddyfile (e2e/notify/Caddyfile) with a metrics line in the monitor
+# block, which takes both defaults: the socket motel monitor setup
+# --metrics makes, and its state directory; and the operator's rule
+# lines beside it. The channels are the same:
+# the store's rules route through their tree, and vmalert's ChannelFailed
+# is rendered from their receivers.
+# Plain HTTP and a private address are refused for every channel on a
+# real box; allow_insecure_channels admits them here.
+{
+	admin unix//run/motel/admin.sock
+	auto_https off
+
+	# The observed site's cache (metrics 3a): its hits are counted.
+	cache {
+		ttl 30s
+		otter
+	}
+
+	liveswap {
+		root /var/lib/liveswap
+		allow_insecure_http
+		artifact_allowlist e2e-artifacts:8080
+
+		# blog trusts the minted deploy key, which a deployer's channel is
+		# bound to; shop trusts another key nobody binds.
+		app blog {
+			command ./server
+			deploy_trust local {
+				public_key /shared/deploy.pub
+				audience e2e
+				max_token_ttl 87600h
+			}
+			health_interval 250ms
+			health_timeout 1s
+			soak 1s
+			deadline 10s
+			drain 500ms
+			grace 3s
+			watchdog_grace 5s
+		}
+		app shop {
+			command ./server
+			deploy_trust local {
+				public_key /etc/motel/shop.pub
+				audience e2e
+			}
+		}
+	}
+
+	monitor {
+		channel ops json {secret.NOTIFY_OPS_URL}
+		# Answers 400: the failing channel channel_failed must name.
+		channel oncall discord {secret.NOTIFY_ONCALL_URL}
+		channel blog-deployer ntfy {secret.NOTIFY_BLOG_URL}
+		operator ops oncall
+		bind local:/shared/deploy.pub blog-deployer
+		heartbeat {secret.NOTIFY_HC_URL}
+		allow_insecure_channels
+		metrics
+		# The operator's rules (metrics 10): every app's 5xx share, which
+		# shop's 503s set off; a named app's latency, which never fires
+		# here; the box's disks; and blog's post-deploy comparison, short
+		# enough for one run.
+		rule errors_high threshold 5xx_share > 0.5 for 1m min_requests 3
+		rule blog_slow threshold p95 > 5s for 10m app blog
+		rule disk_filling disk_fill within 1h
+		rule blog_regressed post_deploy app blog {
+			window 4m
+			min_requests 10
+			max_5xx_share 0.1
+			failures 1
+		}
+	}
+}
+
+:8081 {
+	liveswap_webhook
+}
+
+# The response observer (metrics 3a): blog behind the cache, observed
+# outside it; shop, never deployed, observed while it answers 503.
+# /refused stands for penaltybox's refusal: answered inside the
+# observer, never by the app, so counted and not timed as the release's;
+# /abort for a cut stream, counted as aborted.
+:8080 {
+	route {
+		observe blog
+		@refused path /refused
+		respond @refused 429
+		@cut path /abort
+		abort @cut
+		cache
+		reverse_proxy {
+			dynamic liveswap blog
+		}
+	}
+}
+
+:8085 {
+	observe shop
+	reverse_proxy {
+		dynamic liveswap shop
+	}
+}

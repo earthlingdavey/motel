@@ -367,6 +367,24 @@ there would defeat the pool.
 - `mu` guards current instance/phase/last-deploy.
 - `activeSocket` is the single atomic the proxy hot path reads: the
   current instance's pinned socket, or nil while nothing serves.
+- `requests` is the response observer's counters ("The response
+  observer"): an atomic pointer to the current release's, read on
+  every observed request, and the release before's under its own
+  mutex, which only a release change and a gather take. Whether they
+  are pushed is the running config's: while one of its observe
+  handlers names the app (`App.observed`, set at Provision), the
+  current release's counts are pushed even at zero (`AppSample.Observed`);
+  while none does (its `observe` line taken out), nothing of its counts
+  is pushed: pushed unchanged, they would read as an app no request
+  reaches. The running config's and not every loaded one's, since the
+  old config's handler stays until its requests in flight end and its
+  Cleanup runs, and meanwhile the counts grow by those alone.
+  `observers` counts the loaded configs' handlers naming the app
+  (Provision adds one, Cleanup takes it back): the first after none
+  zeroes the counts in place (the instances' sockets keep their
+  counters), as a motel restart starts them from zero: resumed, their
+  first push after the gap would be every response since motel
+  started, read as one window's.
 - `ownerLock(app)` (one mutex per app name) makes "stop what nobody
   owns, then prune its socket dirs" one step with respect to recovery:
   the start-time sweep of unconfigured apps holds it across the manager
@@ -485,7 +503,10 @@ SIGCHLD then, as a prefork master does from a worker. It costs one task
 `systemctl --user status` beside the app. `unset PWD` keeps invariant 8
 (dash exports it), and the four names dash resets at its start
 whatever it inherited — `IFS`, `OPTIND`, `PPID`, `PWD` — are refused
-as `env` and `env_file` keys (`shellOwnedEnvKey`), named; measured,
+as `env` and `env_file` keys (`shellOwnedEnvKey`), named (and every
+`NOTIFY_` key in an env file the box writes, notify's channel URLs, is
+withheld and named in a launch warning, `notifyOwnedEnvKey`:
+notify/DESIGN-notify.md, "Secrets"); measured,
 every other inherited variable passes byte for byte and nothing is
 added. Both tools are Essential on Debian and under /usr,
 which every view binds; Preflight checks them all the same
@@ -603,6 +624,75 @@ properly needs the type checker, which is a real dependency for a
 property no operator ever sees. The trigger for revisiting is
 backwards edges reappearing *despite* this table.
 
+### The response observer (`observe.go`)
+
+`observe <app>` is a handler the operator writes first in an
+app's site or route. It counts each response under its release ("Which
+release") by status class (`1xx` for 101 alone, `2xx` to `5xx`, and
+`aborted` for a request no headers went to: its client gone first, or
+its handler aborted), times it to the headers the client is sent
+(behind the cache, after Souin has buffered the whole body) in a fixed
+histogram, and reads the cache's verdict from `Cache-Status` (hit,
+stale, miss, bypass). It exists because Caddy's request metrics carry a
+server and a handler, never a liveswap app (notify/DESIGN-metrics.md,
+"The response observer"). The directive is `observe`; the module
+(`http.handlers.liveswap_observe`, what an adapted JSON config names)
+keeps liveswap's prefix, as `liveswap_webhook`'s does, so that no other
+plugin's handler can take its ID.
+
+- **Where.** Ordered before `redir`, the earliest standard anchor
+  (box_webhook's), so that at site level it sorts outside `cache`
+  (before `rewrite`) and `hint_penaltybox` and counts what they answer;
+  in a `route`, first by the written order. The app is named on the
+  line, not learned in `GetUpstreams`: a cache hit never reaches it.
+- **Which release.** A response counts under the release whose
+  instance served it: `publishInstance` and the reattach set the
+  release and give its counters to the instance's socket before routing
+  it, and `GetUpstreams` marks the request's observer, found in the
+  request's vars, with the socket it selected (the last selection, on a
+  retry). A request selected before a cutover stays the old release's
+  however long it runs. One that reached no upstream (a cache hit,
+  penaltybox's refusal) counts under `current` as it began, and so does
+  one with no socket routed: an unroute does not change `current`, so a
+  release that crashed owns the errors that follow it (502s while its
+  socket is routed and refuses, 503s once it is unrouted). Only a
+  response that went to the upstream, or that the cache fetched from it
+  (a miss Souin coalesced onto another request's call too), is timed. A
+  return to the release before (a rollback) swaps the two back; neither
+  restarts from zero. Responses before any release count under `""`.
+- **What it keeps.** Atomics per release (classes, buckets, a sum,
+  cache results), the current release's and the one before's, for the
+  app's life in the pool. Nothing of a request: no path, query, header
+  or client.
+- **What it costs.** 280 ns and two allocations a request on the dev
+  VM's arm64 (`BenchmarkObserve` as it was first, to a handler that
+  writes a status; one of the two is the benchmark's own handler). With
+  the upstream mark (/code-review pass 1 on slice three), the benchmark
+  prepares the request as Caddy's server does and selects the upstream:
+  410 ns and five allocations, against 375 ns for the same benchmark
+  before the mark (`GetUpstreams`' own allocations are three of the
+  five), so the mark costs about 37 ns; the parser that reads up to
+  Souin's `key=` (/code-review pass 2) about 430 ns with a real key in
+  the header. Through the e2e stack (e2e/bench/observe.sh, ab
+  keep-alive, the median of three runs) the observed site against the
+  bare one in the same run, at the branch's last commit (0d02d5f, load
+  0.3): c=1 5 428 against 5 437 req/s, p50 0.180 against 0.180 ms;
+  c=16 51 900 against 53 533 (−3 %), p50 0.235 against 0.236 ms, p95
+  0.772 against 0.699. Behind the cache, 10 830 against 10 951 at c=1,
+  122 105 against 122 190 at c=16. The bare site measured before the
+  handler existed (9228935): 5 127 and 51 786 req/s, within the runs'
+  spread. The three buckets under 5 ms (0.5, 1 and 2.5 ms, added after
+  hotserve-1's example read p50 2.5 ms and p95 4.8 ms for responses of
+  about 0.5 ms) leave the benchmark as it was: 441 ns against 441 ns,
+  five allocations each, the median of five runs of each on the dev VM
+  on 2026-11-12. The benchmark's handler answers at once, so its
+  response finds its bucket at the first comparison, as one under 5 ms
+  did before; one over 5 ms makes three comparisons more than it did,
+  which the benchmark does not measure (a float comparison each, beside
+  a response that took 5 ms).
+- **What it never does.** Write, buffer or change a byte, or fail a
+  request: an error from the handlers after it is returned as it came.
+
 ### File-by-file
 
 | File | Concern |
@@ -618,6 +708,8 @@ backwards edges reappearing *despite* this table.
 | `deploytrust/` | leaf package: deploy auth — the `deploy_trust` grammar (`Parse`), its sources and verifiers (OIDC + local-key JWT verification), the webhook preamble (`Limiter.Authenticate`) and what a failed attempt costs the journal (`Limiter`, on an injected clock). Imports nothing of liveswap's; the box webhook authenticates through it too. `trusttest/` beside it mints tokens and runs an issuer for tests |
 | `internal/dispenser/` | leaf package: the one Caddyfile rule the parsers here and `deploytrust.Parse` apply alike — a repeated subdirective is refused — in one place so the two cannot drift |
 | `upstreams.go` | dynamic upstream source (the cutover read side) |
+| `observe.go` | `observe`: the response observer's handler and writer, and the per-release counters on `managedApp` ("The response observer") |
+| `appmetrics.go` | what the metrics store reads of liveswap: `AppSamples` (each app's instance and its request counts) and the `MetricsSource` hook that adds `metrics` to `GET /<app>`, with the `?range=` windows |
 | `runner.go` / `runner_systemd.go` / `systemd_dbus.go` | runner interface + the systemd transient-unit implementation + its D-Bus client |
 | `sweep.go` | `App.Start`'s reconciliation against the manager: stop the units, and prune the dirs, of apps no loaded config names. Module-layer (the pool is the ledger), driving the runner |
 | `socket.go` | the per-instance socket: nonce, path checks, stale-socket pruning, the unix dialer |
@@ -873,13 +965,20 @@ severity × occurrence × detection, then the fix's size and risk.
 | A `daemon-reload` or `daemon-reexec` of the user manager — which Debian's systemd postinst sends every user manager (`SIGRTMIN+25`) on each systemd upgrade — re-reads every running unit's transient file, and two settings do not survive the round trip: `RestrictNamespaces=yes` is written as an empty set and reads back as no restriction, and `TemporaryFileSystem=/dev/shm:…,size=50%` is written `50%%` and read back verbatim. Nothing running changes: an app unit execs once, before the reload. A start whose fork lands after a reload of the same instant runs with the re-read settings, and fails `226/NAMESPACE` on the invalid tmpfs option — red, named by the watchdog or the health gate — before anything runs with the namespace restriction lifted; its next start is a fresh unit. | the manager's transient-unit serialisation (`dbus-execute.c`, v257) | 2 | 2 | 1 | 4 | none in motel: both are the manager's. Dropping `size=50%` (tmpfs's own default) would make the round trip clean, and leave a start racing a reload running unrestricted instead of failing red | Under rule 3 the product is under 20 (#380, 2026-10-31): a reload and a start within the same instant. Measured in the dev-systemd lane (257.13): the properties before and after a reload, the transient file's lines, and under continuous reloads 6 of 40 starts not reaching ready with the namespace probe never succeeding. The option stays for this reason too (DESIGN-sandbox.md, "Sibling IPC closed"). |
 | An `env_file` value that is a URL followed by prose holding a `:` and then an `@` before any `/` or `?` (`smtp://mail.example.com:587 contact: ops@example.com`) reads a password that is none (`587 contact: ops`), and every response masks that string under the key's name. | `urlPasswords` (redact.go) | 2 | 5 | 3 | 30 | size 1, risk 1 — but a bound at a space un-reads a password that holds one, which libpq takes as it stands, and that is a secret the log would carry (3 × 5 × 5) | The two cannot both hold; the mask over nothing is named for its key, and the value's shape is the operator's to see there. |
 | An admin API on a socket-activated listener (`admin fd/3`, `fdgram/3`) is refused by `motel validate` and `reload`, and said at `run`, as a TCP one is, though the descriptor systemd passed may be a unix socket: the gate reads the config alone and cannot see what the descriptor is. | `checkAdmin` (cmd/motel/backupcheck.go) | 2 | 5 | 1 | 10 | size 2, risk 2 (taking `fd/` on trust is fail-open for a TCP descriptor; asking the manager what it passed is a new state) | Red and named, with the remedy in the message (`admin unix//run/motel/admin.sock`, or `admin off`); the package ships no socket unit, and the starter's socket needs none. |
+| A `motel run` by hand on a live box as the motel user (`sudo -u motel motel run --config <a file>`), or as root with a config that has no liveswap block (or names a liveswap root that is not there, cannot be looked at, or is root's own), with a config that names the live admin socket (a copy of `/etc/motel/Caddyfile` carries `admin unix//run/motel/admin.sock`), always ends in exit 1, since the http app cannot listen on :80 and :443 (as root `EADDRINUSE`, `SO_REUSEPORT` sharing a port only within one uid; as the motel user `EACCES`, without `CAP_NET_BIND_SERVICE`); the harm is what comes before that. Root by hand with a config whose liveswap root exists and is not root's is refused first, before anything is touched (`refuseRunByHand`, cmd/motel/runcheck.go: exit 1, saying to use motel.service, `motel validate` and `journalctl -u motel`); that took the case found, root's run with a copy of the box's file, whose liveswap recovery in root's own user manager retired the socket each live app is routed through. Any other user goes on, and can harm nothing here: it can neither unlink the admin socket (`/run/motel` is 0750 motel:motel) nor reach the motel user's manager. For what is left, Caddy unlinks the service's admin socket before it provisions any app (`provisionContext`, then `replaceLocalAdminServer` and `reuseUnixSocket`): reloads, `motel monitor`'s commands and a box push's reload fail (the push ends `unknown`) until a restart. Caddy then starts the apps in map order, so liveswap or monitor may start before http fails. As the motel user, liveswap reaches the service's own manager: it applies the try file's caps to the live units, stops the units of an app the try file leaves out (`sweepUnknownApps`), and takes a deploy in flight as abandoned (`settleInterrupted`), removing its release. Read from the code, not run; the liveswap behaviour is the same on v0.6.1, and monitor's state writes are this branch's, which #478 stops for a process that does not own the state directory | Caddy's `replaceLocalAdminServer` and `reuseUnixSocket` (v2.11.7); liveswap's Start (`recover`, `sweepUnknownApps`, `settleInterrupted`) | 4 | 5 | 3 | 60, for what is left | size 2, risk 2, **Wide** (a dial of the config's admin socket at the gate's `run`, cmd/motel/backupcheck.go, stopping if a motel answers; every start of motel would run through it) | Over the bar, and rule 2 applies (an operator's command, and the box ends neither correct nor named): the rule says fix. Accepted against the rule by the owner's decision of 2026-11-14: no doc tells anyone to run `motel run` by hand on a box (the checks are `motel validate` and `journalctl -u motel`, and docs/upgrading.md says not to), and a guard at every start of motel is complexity he does not want; the smallest version, the refusal of a process that does not own the liveswap root, is his later request of the same day. `systemctl restart motel` mends it. Review of the `motel run` gate, 2026-11-14 |
+| A box whose operator runs motel.service as root on purpose (the unit edited to `User=root`) over the liveswap root the package leaves motel's is refused at every start: the gate cannot tell that start from root's by hand, so it exits 1, which `RestartPreventExitStatus=1` keeps final, and every site is down until the console; the refusal names the root, its owner and the process's user. Nothing in this repository sets a box up that way: the unit says `User=motel`, and postinstall lingers the motel user's manager alone. Without a user manager of root's, such a start was already refused once the config ran an app, liveswap's Start failing its probe of the manager (`probeManager`, read, not run); with one (root lingered, or a root login open), what it did is not traced | `refuseRunByHand` (cmd/motel/runcheck.go) | 4 | 5 | 1 | 20 | size 1 to 2, risk 2: refuse only when `INVOCATION_ID` is unset, which systemd sets for every process of a unit (systemd.exec(5), since v232; seen set in a `systemd-run --user` unit here, and unset in a login shell), a branch kept for a setup nothing supports, which would also let a root `systemd-run motel run` through | The rule says fix; accepted pending the owner's confirmation, 2026-11-14: the package's unit runs motel as the motel user, and the owner wants no complexity for a setup no doc makes. Red and named: `chown -R` of the root to the service's user, or `User=motel` back in the unit, mends it; docs/upgrading.md's "Before you upgrade" says how to see the unit's user and put it back. Second review of the `motel run` refusal, 2026-11-14 |
 | Layer 4 of the response filter misses a short generated token: its bar follows the token's length (`looksGenerated`, `log2(len) − 0.3` bits a character up to 4.5), which masks about 55% of random 20- and 22-character url-safe tokens, 41% at 24, 29% at 26 and all that the fixed bar masked above; the rest of a runtime secret an app prints bare (`secrets.token_urlsafe(16)`'s 22 characters, half the time) reaches the CI log. | `looksGenerated`, `maskGenerated` (redact.go) | 3 | 5 | 5 | 75 | size 1, risk 2: a bar of `0.9·log2(len)`, as first proposed, masks 80% of each short length but also nine of the 148 mixed-case tokens in this repository's own text — identifiers with a digit (`loadEd25519PrivateKey`), unit settings (`RandomizedDelaySec=40s`) — in the failed-deploy bodies the filter exists to keep readable; the bar taken masks one (an e-mail's local part). Measured 2026-11-07 | The known values are not at stake: `env_file` values are replaced whole, and now before the caps cut (`failureDetail`), so no fragment of one leaks. What remains is a secret the app fetched at runtime and printed bare, under 26 characters, on a failed deploy; `deploy_log_lines 0` keeps the app's output on the box, as the README says for a public repository. An assignment is judged by its parts, so `KEY=<secret>` keeps its key and masks its value whatever the key's letters add. |
 | A read bound — the journal tail's 16 KiB, the probe body's 4 KiB — that falls inside an `env_file` value holding whitespace leaves the part of it before (journal) or after (probe) the nearest space as a fragment the filter cannot match, when the replacement of other values shrinks the text enough for the kept cap to reach it. `dropUnfinished` removes the unfinished token up to the nearest whitespace, which is the whole of a value without one. | `dropUnfinished` (journal.go), `probeOnce` (health.go) | 3 | 1 | 5 | 15 | size 2, risk 2: cutting at a line instead of a token drops a diagnosis's first or last line for a case that needs a value with a space, printed at the bound, behind several kilobytes of other known values | Three things must hold at once: a value with whitespace in it (a URL password or a sentence, not a token), printed so that the read bound falls inside it, and enough other known values before (probe) or after (journal) it for their markers to pull the fragment under the kept cap. The fragment is at most one space-delimited piece of the value. `deploy_log_lines 0` keeps the app's output on the box. |
+| `e2e/bench/observe.sh` names the stack's network `<the directory's name>_default`: with `COMPOSE_PROJECT_NAME` set, or a directory name Compose normalises (upper case, a dot), `docker run` refuses the network and the bench stops before measuring | `e2e/bench/observe.sh` | 2 | 5 | 1 | 10 | size 1, risk 2 | under 20, and the fix is not size 1 and risk 1: reading the network off the running `e2e-motel` container (`docker inspect`) is one line, but no test runs the bench, and running it here would bring up the stack beside the running suites. The failure is loud and names the network. /code-review pass 2 on slice three |
+| A response a removed config's observer still holds (a hijacked stream, a long poll open across the reloads) is counted when it ends: into an app no config observes, or into the counts the next first observer has just zeroed, or, ending while `zero` runs, beside it, so one push may carry classes and buckets that disagree by that one response | `observe.go` (`record`, `requestCounts.zero`) | 2 | 2 | 3 | 12 | size 2, risk 2 | under 20: two reloads (the line out, then back) while one response stays open across both, and the cost is that response counted once in the wrong period; holding a generation per handler for every record is a load on the request path the observer is kept free of. /code-review pass 2 on #434 |
+| A client decoding a body into `liveswap/wire`'s types fails on the whole body when the response filter replaced text inside a timestamp (an `env_file` value that equals part of one): `DeployResult`'s and `PhaseTiming`'s times, `Watchdog.LastRestartAt`, `PhaseEvent.At` and `Metrics.At` are `time.Time`, where `DeploySummary` carries its times raw for this reason. The decode error names the field. | `liveswap/wire` | 2 | 5 | 1 | 10 | size 3, risk 2 (raw times in every type, and the pipeline's `deployResult` parted from the wire's) | Under 20, and not a size-1, risk-1 fix (rule 3). The server's bytes are as before; no client exists yet, and the one #212 plans can decode a body that fails leniently (a `map`) and show it raw. |
+| An env file's malformed line whose text before the first `=` is a secret or part of one, at most 21 bytes of letters, digits, `_`, `.`, `-` and spaces and not a valid name, is quoted in the parse error. That text can be: a generated secret under 128 bits that ends in `=` padding and starts with a digit (`openssl rand -base64` of 8, 10, 11, 13 or 14 bytes, or fewer); the part before the first `=` of a longer generated password whose characters include `=` (`pwgen -sy`, KeePass's special characters); a key and a padded value with a space where the `=` belongs (`API_KEY 3q2x8w==` is quoted as `"API_KEY 3q2x8w"`); or a short secret the operator chose and wrote with no key. It surfaces at each launch (the journal, the deploy's answer); while the file does not parse, in the reason every webhook and status answer is withheld with (`withhold`, redact.go); and for the box's own secrets file in notify's journal lines and in the refusal `motel validate` and a reload return, which the box handler sends to the pusher. Nothing masks it: a file that does not parse gives the filter no values. | `invalidEnvKeyMsg` (app.go) | 5 | 5 | 5 | 125 | size 1, risk 1 (never quote the text) | Rule 1 would fix it; the repository's owner chose to keep the quote for a mistyped name (`MY-KEY`, `my.key`, `9LIVES`), the common case, so the error says what to mend, and confirmed it on 2026-11-14. The bound keeps out every generated secret of 128 bits or more, which takes at least 22 characters in that alphabet however it is encoded, and the alphabet keeps out every URL, so no channel URL is quoted whole. |
 
 **Owed** (over the bar, not yet fixed):
 
 | Finding | S | O | D | Where the fix lands |
 |---|---|---|---|---|
+| A secret pasted alone on an `env_file` line, base64 with its `=` padding (`dGhpc2lzYXNlY3JldA==`), parses as a variable named after it whose value is `=` or empty, so the response filter's known-value layer never learns it (`buildEnvFull`, `NewRedactor`: values under `secretMinLen` are skipped, names are not values). An app that prints its environment (a journal tail, a probe's body) sends it out in a deploy's response; layer 4 masks only a token of `entropyMinLen` (20) or more that looks generated, so a short one passes. Wide: every app's deploy responses. Found reviewing box/no-secret-taken-for-a-name (2026-11-14) | 5 | 5 | 5 | its own liveswap PR, with the owner's go (size 2, risk 1–2): the name of a pair whose value is empty or only `=` signs becomes a known value when it is `secretMinLen` or more, under a fixed label such as `[redacted:env_file line]`, never `[redacted:<KEY>]`, which would print it, and kept out of the `redacted_env` list |
 | A bind mount can give two apps one directory, or put one app's data inside another's: an fstab source another app also uses, or a whole app dir mounted at another's. A mount resolves to itself, so the launch check (`resolveBindSources`) passes it: blog launches on shop's data, writable, and nothing says so. | 5 | 5 | 5 | #308, to design: equal `(st_dev, st_ino)` alone misses a source nested in another's; when to check, what to refuse and what to say are open there. Until then, the README's bind-mount advice says the source must be the app's own |
 
 ## Resource caps
@@ -1043,7 +1142,10 @@ report as in effect, until a SetCaps succeeds.
    users can wire notifications. Lean: yes, cheap and composable.
 2. **Admin endpoints** (`caddy liveswap status/rollback`) alongside the
    webhook. Lean: later; the webhook + status JSON covers CI and cron.
-3. **Metrics.** Lean: add with events.
+3. **Metrics.** Per-app request counts are the response observer's
+   ("The response observer"), pushed with the units' cgroup numbers by
+   the metrics store (notify/DESIGN-metrics.md); deploy counters, the
+   non-goal above, are not.
 4. **Config-change restarts** — an explicit "apply now" admin action
    instead of waiting for the next launch. A rollback to the running
    version, or a deploy of it with the same artifact, is that action
@@ -1128,3 +1230,7 @@ Dated one-liners; the full text of each is in git.
   residual with the numbers, and the steeper bar first proposed is
   declined there. An assignment is judged by its parts, so a setting
   stays readable and `KEY=<secret>` keeps its key.
+- 2026-11-11 — The response observer, `observe`: per-release
+  counts of an app's responses (class, time to headers, cache verdict),
+  measured on the request path before and after (part of #418, slice
+  three of notify and metrics).
