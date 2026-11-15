@@ -994,8 +994,10 @@ func TestResultPoll(t *testing.T) {
 }
 
 // TestPushStalledUpload: an upload that stops arriving does not hold
-// the push slot past its deadline — through a real server, since a
-// recorder has no connection to put a deadline on.
+// the push slot past its deadline, and is answered with the bound by
+// name, though the read ended at the connection's deadline ("i/o
+// timeout") — through a real server, since a recorder has no
+// connection to put a deadline on.
 func TestPushStalledUpload(t *testing.T) {
 	p := newPushRig(t)
 	p.h.upload = 300 * time.Millisecond
@@ -1018,9 +1020,7 @@ func TestPushStalledUpload(t *testing.T) {
 	if err != nil {
 		t.Fatalf("no answer to a stalled upload: %v", err)
 	}
-	if resp.StatusCode != http.StatusBadRequest {
-		t.Fatalf("status %d", resp.StatusCode)
-	}
+	wantOutlasted(t, resp)
 	release, ok := p.h.takeSlot()
 	if !ok {
 		t.Fatal("the slot outlived the stalled upload")
@@ -1028,15 +1028,99 @@ func TestPushStalledUpload(t *testing.T) {
 	release()
 }
 
+// TestPushStalledUploadHTTP2: on HTTP/2 the deadline is the stream's
+// timer, which fails the body with an error of its own wrapping
+// os.ErrDeadlineExceeded; the answer names the bound all the same.
+func TestPushStalledUploadHTTP2(t *testing.T) {
+	p := newPushRig(t)
+	p.h.upload = 300 * time.Millisecond
+	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = p.h.ServeHTTP(w, r, nextFunc(func(http.ResponseWriter, *http.Request) error { return nil }))
+	}))
+	srv.EnableHTTP2 = true
+	srv.StartTLS()
+	defer srv.Close()
+	c2, _ := p.change()
+	body, more := io.Pipe()
+	defer more.Close() //nolint:errcheck // a test pipe
+	go func() { _, _ = more.Write([]byte("partial")) }()
+	req, err := http.NewRequest(http.MethodPost, srv.URL+"/", body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.ContentLength = 1000
+	req.Header.Set("Authorization", "Bearer "+p.token(t, c2))
+	req.Header.Set("Content-Type", "application/gzip")
+	req.Header.Set(headerRequestID, randomID(t))
+	client := srv.Client()
+	client.Timeout = 10 * time.Second
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("no answer to a stalled upload: %v", err)
+	}
+	if resp.ProtoMajor != 2 {
+		t.Fatalf("protocol %s, not HTTP/2", resp.Proto)
+	}
+	wantOutlasted(t, resp)
+	release, ok := p.h.takeSlot()
+	if !ok {
+		t.Fatal("the slot outlived the stalled upload")
+	}
+	release()
+}
+
+// wantOutlasted: a 400 that names the handler's bound on the body.
+func wantOutlasted(t *testing.T, resp *http.Response) {
+	t.Helper()
+	b, _ := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest || !strings.HasPrefix(string(b), `{"error":"could not read the bundle: the upload outlasted `) {
+		t.Fatalf("%d %s", resp.StatusCode, b)
+	}
+}
+
+// deadlineRouted is the response writer Caddy's server hands the
+// handler from v2.11.8 (readDeadlineWriter, caddy#8284): the handler's
+// read deadline goes to the server's idle reader, which keeps it as a
+// ceiling on every re-arm.
+type deadlineRouted struct {
+	http.ResponseWriter
+	body *caddyhttp.IdleTimeoutReader
+}
+
+func (w deadlineRouted) SetReadDeadline(d time.Time) error { return w.body.SetReadDeadline(d) }
+
+func (w deadlineRouted) Unwrap() http.ResponseWriter { return w.ResponseWriter }
+
 // TestPushTrickledUpload: a body that keeps arriving a byte at a time
-// does not hold the push slot past the handler's bound — through a real
-// server with Caddy's idle reader around the body, as Server.ServeHTTP
-// installs it on v2.11.7 (its fields, its HandlerDone). That reader
-// re-arms the connection's read deadline before every read, so the
-// deadline the handler set bounds nothing past the first byte; the
-// handler's own bound on the body does, within the bound and one idle
-// window. Before it, this test saw no answer within its 10 s.
+// does not hold the push slot past the handler's bound, and is answered
+// with the bound by name — through a real server with Caddy's idle
+// reader around the body, as Server.ServeHTTP installs it (its fields,
+// its HandlerDone), in both shapes a push meets:
+//
+//   - routed: the server's reader from v2.11.8, to which the handler's
+//     read deadline goes (caddy#8284). It keeps that deadline as a
+//     ceiling on every re-arm, so the read in flight at the bound ends
+//     there with the connection's "i/o timeout", which the handler
+//     names as its bound.
+//   - re-armed: a reader the handler's deadline does not reach (the
+//     server's before v2.11.8, the `timeouts` directive's own where the
+//     server's is off). It re-arms the connection's deadline before
+//     every read, so the deadline the handler set bounds nothing past
+//     the first byte; the handler's own bound on the body does, within
+//     the bound and one idle window. Before that bound, this case saw
+//     no answer within its 10 s.
 func TestPushTrickledUpload(t *testing.T) {
+	for _, routed := range []bool{true, false} {
+		name := "re-armed"
+		if routed {
+			name = "routed"
+		}
+		t.Run(name, func(t *testing.T) { testTrickledUpload(t, routed) })
+	}
+}
+
+func testTrickledUpload(t *testing.T, routed bool) {
 	p := newPushRig(t)
 	p.h.upload = 300 * time.Millisecond
 	// Twenty trickle intervals: a loaded runner's pause must not turn
@@ -1053,6 +1137,9 @@ func TestPushTrickledUpload(t *testing.T) {
 		}
 		defer body.HandlerDone()
 		r.Body = body
+		if routed {
+			w = deadlineRouted{ResponseWriter: w, body: body}
+		}
 		_ = p.h.ServeHTTP(w, r, nextFunc(func(http.ResponseWriter, *http.Request) error { return nil }))
 	}))
 	defer srv.Close()
@@ -1085,10 +1172,7 @@ func TestPushTrickledUpload(t *testing.T) {
 		t.Fatalf("no answer to a trickled upload: %v", err)
 	}
 	elapsed := time.Since(start)
-	b, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode != http.StatusBadRequest || !strings.HasPrefix(string(b), `{"error":"could not read the bundle: the upload outlasted `) {
-		t.Fatalf("%d %s", resp.StatusCode, b)
-	}
+	wantOutlasted(t, resp)
 	release, ok := p.h.takeSlot()
 	if !ok {
 		t.Fatal("the slot outlived the trickled upload")
@@ -1106,12 +1190,14 @@ func TestPushTrickledUpload(t *testing.T) {
 }
 
 // TestPushStalledUploadUnderIdleReader: a stall under Caddy's idle
-// reader ends with that reader's error at its idle deadline, after
-// which it clears the connection's deadline (caddy#8103); before the
-// answer's header goes out net/http drains what is left of the body,
-// now with no deadline, so the answer never leaves while the client
-// holds the connection open. The slot is given back all the same, by
-// the idle deadline: the drain holds the connection, not the slot.
+// reader ends with that reader's error at its idle deadline. Before the
+// answer's header goes out net/http drains what is left of the body;
+// before v2.11.8 the reader cleared the connection's deadline after
+// its error (caddy#8103), so the drain had none and the answer never
+// left while the client held the connection open (since caddy#8178 the
+// expired deadline is kept and ends the drain too). The slot is given
+// back by the idle deadline either way: the drain holds the
+// connection, not the slot.
 func TestPushStalledUploadUnderIdleReader(t *testing.T) {
 	p := newPushRig(t)
 	p.h.upload = 300 * time.Millisecond
@@ -1141,7 +1227,7 @@ func TestPushStalledUploadUnderIdleReader(t *testing.T) {
 	}
 	// The line is written after the slot is given back, by the idle
 	// deadline, with room for a loaded runner; the answer is not waited
-	// for, since none comes.
+	// for, since the slot is what this test is about.
 	deadline := time.Now().Add(idle + 2*time.Second)
 	for len(p.logged(zap.WarnLevel, "box push upload failed")) == 0 {
 		if time.Now().After(deadline) {
