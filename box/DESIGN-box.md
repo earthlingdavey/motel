@@ -221,18 +221,19 @@ box {
   reserved word, which a later release may take as a second spelling
   of a `signer` line. `app` takes an app name in liveswap's grammar.
   `from` takes 1 to 16 addresses or prefixes as `net/netip` reads
-  them: a prefix with host bits set, `/0`, a zone and an IPv4 address
-  written as IPv6 are refused; a lone address is its /32 or /128.
+  them: a prefix with host bits set, `/0`, a zone, an IPv4 address
+  written as IPv6 and an entry listed twice are refused; a lone address
+  is its /32 or /128.
 
 Rules across lines, held by `access.CheckLines` in both readers once
 the block is read, each refusal naming its lines:
 
 | Case | Verdict |
 |---|---|
-| one key on two lines, of any kinds and names | refused: `signer alice@example.com and person bob@example.com are the same key` |
+| one key on two lines, of any kinds and names, and in either of its forms (`ssh-ed25519` and `sk-ssh-ed25519@openssh.com` under any application string are one Ed25519 key; `ecdsa-sha2-*` and `sk-ecdsa-sha2-*` one ECDSA key) | refused: `signer alice@example.com and person bob@example.com are the same key` |
 | a `grant` for a name no `person` or `signer` line declares | refused |
 | a `grant` for a name whose only keys are `ssh-rsa` signer keys | refused, naming the remedy |
-| a `grant` on an app the `liveswap` block does not run | refused **by the walk only**: the module's parser sees the `box` block alone, so `motel validate` takes the line; a push, `GET /`, the applier and `motel box describe` (the template's `make check`) refuse it |
+| a `grant` on an app the `liveswap` block does not run, or runs under a name written through a placeholder (the walk reads the name as written) | refused **by the walk only**: the module's parser sees the `box` block alone, so `motel validate` and a reload take the line; a push, `GET /`, the applier and `motel box describe` (the template's `make check`) refuse it. So such a line written at the console leaves an installed file that no longer walks: every push is refused, and `GET /` answers that refusal, until root mends the line. Accepted; a check at load is owed to the change that connects the box app to liveswap's app list |
 | two grants for one name on one scope | refused |
 | a box grant and an app grant for one name | taken, warned: the box grant covers the app |
 | a `person` name with no grant and no `signer` line | taken, warned |
