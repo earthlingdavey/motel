@@ -243,7 +243,7 @@ the block is read, each refusal naming its lines:
 | a `person` name with no grant and no `signer` line | taken, warned |
 | an `ssh-rsa` signer whose name has no other key a person may hold | taken, warned |
 | people and no `monitor` block with a channel | taken, warned: by the walk (`motel box describe`, and the journal at each load), and by `motel validate`, which reads the adapted config; the module cannot see the `monitor` block |
-| a `grant` with a `from` list on a box whose server has `trusted_proxies` | without `trusted_proxies_strict`, refused by `motel validate`, `reload` and `run` (Caddy then takes the client's address from the left of `X-Forwarded-For`, which the client writes), and the serving process matches no list for a request such a proxy forwarded; with it, taken and warned by `motel validate`: the list is only as good as the ranges |
+| a `grant` with a `from` list on a box whose server has `trusted_proxies` | without `trusted_proxies_strict` (or with `trusted_proxies_unix` and no `trusted_proxies_strict`), refused by `motel validate` and `motel reload`, and so a push; `motel run` prints an `ERROR` and serves all the same (Caddy then takes the client's address from the left of the header, which the client writes), and the serving process matches no list for a request such a proxy forwarded, however the config arrived; with it, taken and warned by `motel validate`, naming the headers the address comes from. A server with a `proxy_protocol` listener is warned of too (liveswap/access/DESIGN-access.md, "Safeguards") |
 | more than 1,024 key lines (`signer` and `person`) or 4,096 `grant` lines | refused |
 
 A block with no `person` and no `grant` line is not held to these

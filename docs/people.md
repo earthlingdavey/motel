@@ -52,13 +52,18 @@ box {
   anywhere else their key gets the same refusal as a stranger's; with
   a grant beside it that has none, they are still let in, and told
   `403` for what only the limited grant covers.
-- Behind a proxy of yours, set `trusted_proxies` to it **and**
-  `trusted_proxies_strict` in the global `servers` options. Without
-  `trusted_proxies_strict`, Caddy takes the address from the left of
-  `X-Forwarded-For`, which the client writes, so a client could choose
-  its own address: `motel validate` refuses a `from` list then, and the
-  box matches no list for a forwarded request. With it, the list is
-  only as good as the ranges you trust.
+- A `from` list is as trustworthy as whatever tells Caddy the
+  client's address. Behind a proxy of yours, set `trusted_proxies` (or
+  `trusted_proxies_unix`) to it **and** `trusted_proxies_strict` in
+  the global `servers` options: without `trusted_proxies_strict`
+  Caddy takes the address from the left of `X-Forwarded-For`, which
+  the client writes, so `motel validate` refuses a `from` list and the
+  box matches no list for a forwarded request. With it, the list holds
+  only if your proxy sets the address header itself (also any other
+  you name in `client_ip_headers`, such as `X-Real-IP`) rather than
+  passing on the client's; and on a listener with `proxy_protocol`,
+  the address is whatever the PROXY header says, so it is only as good
+  as that listener's `allow` list. `motel validate` warns of both.
 
 Check the file, then push it as any change to the box (a signed
 commit):
