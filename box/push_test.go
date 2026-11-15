@@ -1301,6 +1301,11 @@ func TestPushStalledUploadRouted(t *testing.T) {
 	if elapsed >= p.h.upload {
 		t.Fatalf("answered after %s, not before the bound %s", elapsed, p.h.upload)
 	}
+	release, ok := p.h.takeSlot()
+	if !ok {
+		t.Fatal("the slot outlived the stalled upload")
+	}
+	release()
 }
 
 // TestPushDeadlineCleared: after a whole body the upload deadline no

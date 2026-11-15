@@ -54,7 +54,8 @@ func TestIntegrationTheAdapterWarnsOfAnEmptyGlobAsTheRefusalReadsIt(t *testing.T
 // failed at an import and let through where every trial was refused by
 // a directive checking its argument's form (#394). Which is which is
 // read off the adapter's words, as emptyGlobs reads its warning: the
-// parser's "File to import not found" and "Could not import" with no
+// parser's "File to import not found", "Failed to import file" (a stat
+// that fails otherwise, v2.11.8 on) and "Could not import" with no
 // prefix, a directive's own behind the HTTP adapter's "parsing
 // caddyfile tokens for '…':". Were a Caddy bump to change the first,
 // an import through a variable would still be refused, in the words
