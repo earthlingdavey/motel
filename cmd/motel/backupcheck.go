@@ -18,10 +18,12 @@ import (
 	"github.com/smallhoursorg/motel/liveswap"
 )
 
-// gate holds a config to three rules before Caddy's own command runs
+// gate holds a config to four rules before Caddy's own command runs
 // (checkConfig): that the admin API is off TCP where apps run
 // (checkAdmin), that a monitor rule naming an app reads responses some
-// route observes (checkObserved, metricscheck.go), and that what a
+// route observes (checkObserved, metricscheck.go), that a grant's
+// address list is not behind proxies trusted without
+// trusted_proxies_strict (checkPeople, peoplecheck.go), and that what a
 // Caddyfile declares as a backup is what a backup run can read of it
 // (checkBackups). A run (motel-backup)
 // adapts the Caddyfile inside a view that holds the Caddyfile's own
@@ -130,10 +132,10 @@ func checkAndLoad(cmd string, args []string) (cfg []byte, warning string, err er
 	if err != nil {
 		return nil, "", err
 	}
-	adminErr, observedErr := checkAdmin(cfg), checkObserved(cfg)
+	adminErr, observedErr, peopleErr := checkAdmin(cfg), checkObserved(cfg), checkPeople(cfg)
 	warning, err = checkBackups(cmd, file, adapter)
 	var said []string
-	for _, e := range []error{adminErr, observedErr, err} {
+	for _, e := range []error{adminErr, observedErr, peopleErr, err} {
 		if e != nil {
 			said = append(said, e.Error())
 		}

@@ -547,9 +547,16 @@ func CheckLines(l Lines, around *Around) (warnings []string, err error) {
 const NoChannelWarning = "people are declared and no monitor channel is, so what they do on this box will be told to no one; add a channel line to the monitor block: channel <name> <kind> {secret.NOTIFY_<NAME>}"
 
 // FromProxiesWarning is what `motel validate` says of a grant with an
-// address list on a box whose server trusts proxies: the list is held to
-// Caddy's client_ip, which a trusted proxy's X-Forwarded-For sets.
-const FromProxiesWarning = "a grant has a from list, and a server here has trusted_proxies: the address a from list is held to is Caddy's client_ip, which takes X-Forwarded-For from any peer in the trusted_proxies ranges; the list is only as good as those ranges"
+// address list on a box whose servers trust proxies strictly: the list
+// is held to Caddy's client_ip, the right-most address in
+// X-Forwarded-For outside the trusted ranges.
+const FromProxiesWarning = "a grant has a from list, and a server here has trusted_proxies with trusted_proxies_strict: the address a from list is held to is the right-most one in X-Forwarded-For outside the trusted_proxies ranges, so the list is only as good as those ranges"
+
+// FromProxiesRefusal is why `motel validate`, `motel reload` and
+// `motel run` refuse a grant with an address list on a box with a
+// server that trusts proxies without trusted_proxies_strict; a request
+// such a proxy forwards matches no list (liveswap's clientAddr).
+const FromProxiesRefusal = "a grant has a from list, and a server here has trusted_proxies without trusted_proxies_strict: Caddy then takes the client's address from the left of X-Forwarded-For, which the client writes, so the list would not hold; add trusted_proxies_strict to that servers block, or take the from lists out"
 
 // lineQuote is a value a line wrote, quoted and cut to a length a message
 // can carry: it may be anything a token can hold.

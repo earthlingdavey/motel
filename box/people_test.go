@@ -42,6 +42,7 @@ type peopleBox struct {
 	deploy map[string]ed25519.PrivateKey // "a", "b", "box"
 	canary map[string]string
 	extra  string // more box lines
+	global string // more global options
 	grants []string
 	file   string // the installed Caddyfile
 	ctx    caddy.Context
@@ -111,6 +112,7 @@ func (b *peopleBox) caddyfile(site string) string {
 	log {
 		output discard
 	}
+%s
 	box {
 		deploy_trust local {
 			public_key %s
@@ -128,7 +130,7 @@ func (b *peopleBox) caddyfile(site string) string {
 	liveswap_webhook
 	box_webhook
 }
-`, pub("box"), strings.Join(lines, "\n\t\t"), filepath.Join(b.dir, "liveswap"), app("a"), app("b"), site)
+`, b.global, pub("box"), strings.Join(lines, "\n\t\t"), filepath.Join(b.dir, "liveswap"), app("a"), app("b"), site)
 }
 
 // install writes the installed file and points the registry at it.
@@ -185,9 +187,20 @@ func (b *peopleBox) registry() *access.Registry {
 
 // get serves one GET through the whole server, as Caddy would.
 func (b *peopleBox) get(target, auth string) *httptest.ResponseRecorder {
+	return b.getFrom(target, auth, "", "")
+}
+
+// getFrom is get from the peer remote, with an X-Forwarded-For.
+func (b *peopleBox) getFrom(target, auth, remote, forwarded string) *httptest.ResponseRecorder {
 	r := httptest.NewRequest(http.MethodGet, "http://"+peopleIdentity+target, nil)
 	if auth != "" {
 		r.Header.Set("Authorization", auth)
+	}
+	if remote != "" {
+		r.RemoteAddr = remote
+	}
+	if forwarded != "" {
+		r.Header.Set("X-Forwarded-For", forwarded)
 	}
 	w := httptest.NewRecorder()
 	b.server.ServeHTTP(w, r)
@@ -579,5 +592,53 @@ func TestRemovedPersonRefusedAfterReload(t *testing.T) {
 	}
 	if w := b.get("/b", carol.Token(peopleIdentity, now, time.Minute)); w.Code != http.StatusOK {
 		t.Errorf("carol after the reload: %d %s", w.Code, w.Body)
+	}
+}
+
+// TestFromBehindATrustedProxy drives a request with a forged
+// X-Forwarded-For through a provisioned server whose trusted_proxies
+// names the peer. The client writes an address on alice's list; the
+// proxy appends the client's real one, on bob's. Without
+// trusted_proxies_strict, Caddy's client_ip is the client's choice, so
+// no from list holds a forwarded request at all: both are refused (and
+// motel validate refuses such a config). With it, client_ip is the
+// right-most address outside the ranges, the real one: bob reads, alice
+// does not. A request from a peer that is no proxy is judged by the
+// peer in either mode, whatever header it writes.
+func TestFromBehindATrustedProxy(t *testing.T) {
+	for _, strict := range []bool{false, true} {
+		b := newPeopleBox(t)
+		b.global = "\tservers {\n\t\ttrusted_proxies static 192.0.2.0/24\n"
+		if strict {
+			b.global += "\t\ttrusted_proxies_strict\n"
+		}
+		b.global += "\t}"
+		b.grants = []string{
+			"grant alice@example.test viewer app a from 198.51.100.0/24",
+			"grant bob@example.test viewer app b from 203.0.113.0/24",
+		}
+		b.install()
+		b.load()
+		now := time.Now()
+		alice := b.people["alice@example.test"].Token(peopleIdentity, now, time.Minute)
+		bob := b.people["bob@example.test"].Token(peopleIdentity, now, time.Minute)
+		const proxy, forged = "192.0.2.1:4321", "198.51.100.7, 203.0.113.9"
+		bobCode := http.StatusUnauthorized
+		if strict {
+			bobCode = http.StatusOK
+		}
+		for _, c := range []struct {
+			name, target, auth, remote, forwarded string
+			code                                  int
+		}{
+			{"alice, forged through the proxy", "/a", alice, proxy, forged, http.StatusUnauthorized},
+			{"bob, the real address through the proxy", "/b", bob, proxy, forged, bobCode},
+			{"alice, from her network, no proxy", "/a", alice, "198.51.100.7:1", "", http.StatusOK},
+			{"alice's header from elsewhere, no proxy", "/a", alice, "203.0.113.9:1", "198.51.100.7", http.StatusUnauthorized},
+		} {
+			if w := b.getFrom(c.target, c.auth, c.remote, c.forwarded); w.Code != c.code {
+				t.Errorf("strict %v, %s: %d %s, want %d", strict, c.name, w.Code, w.Body, c.code)
+			}
+		}
 	}
 }

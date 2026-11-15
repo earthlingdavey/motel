@@ -84,10 +84,10 @@ func AdmitPerson(w http.ResponseWriter, r *http.Request, g PersonGate, scopeKey,
 	// elsewhere learns nothing; the journal names the key, the person,
 	// the address the lists were held to (Caddy's client_ip) and the
 	// peer it came through, inside the same budgets.
-	addr := clientAddr(r)
+	addr, why := clientAddr(r)
 	views, granted := g.Registry.Views(name, addr)
 	if granted && views.Empty() {
-		shown := "unknown"
+		shown := why
 		if addr.IsValid() {
 			shown = addr.String()
 		}
@@ -117,12 +117,21 @@ func AdmitPerson(w http.ResponseWriter, r *http.Request, g PersonGate, scopeKey,
 }
 
 // clientAddr is the address a request came from as a grant's address
-// list is compared with: Caddy's client_ip (the peer, or the address it
-// forwarded for when the peer is in the server's trusted_proxies),
-// whole, not grouped as the failure budgets group it; the peer when
-// Caddy set none. The zero Addr when neither parses, which no list
-// holds.
-func clientAddr(r *http.Request) netip.Addr {
+// list is compared with: Caddy's client_ip (the peer, or the address a
+// proxy in the server's trusted_proxies forwarded for), whole, not
+// grouped as the failure budgets group it; the peer when Caddy set
+// none. The zero Addr, which no list holds, when neither parses, or
+// when a trusted proxy forwarded the request and the server does not
+// set trusted_proxies_strict: Caddy then takes the left-most address in
+// X-Forwarded-For, which the client writes and a proxy appends to, so a
+// client could name any address. why says which, for the journal.
+func clientAddr(r *http.Request) (netip.Addr, string) {
+	if trusted, _ := caddyhttp.GetVar(r.Context(), caddyhttp.TrustedProxyVarKey).(bool); trusted {
+		srv, _ := r.Context().Value(caddyhttp.ServerCtxKey).(*caddyhttp.Server)
+		if srv == nil || srv.TrustedProxiesStrict == 0 {
+			return netip.Addr{}, "forwarded by a trusted proxy on a server without trusted_proxies_strict"
+		}
+	}
 	addr := r.RemoteAddr
 	if v, ok := caddyhttp.GetVar(r.Context(), caddyhttp.ClientIPVarKey).(string); ok && v != "" {
 		addr = v
@@ -132,7 +141,7 @@ func clientAddr(r *http.Request) netip.Addr {
 	}
 	a, err := netip.ParseAddr(addr)
 	if err != nil {
-		return netip.Addr{}
+		return netip.Addr{}, "unknown"
 	}
-	return a.Unmap()
+	return a.Unmap(), ""
 }
