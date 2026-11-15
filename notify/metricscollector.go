@@ -36,7 +36,8 @@ var (
 		"CPU the running unit has used, from its cgroup's cpu.stat: one series per unit, since each new unit counts from zero.", []string{"app", "unit"}, nil)
 	// 1 for an app the running config observes, whatever its release:
 	// the request thresholds read the apps in the last push alone
-	// (operatorrules.go, pushedNow).
+	// (operatorrules.go, pushedNow), and request_rate those also in
+	// the push its window counts from (observedBefore).
 	appObservedDesc = prometheus.NewDesc("motel_app_observed",
 		"1 for an app a route of the running config observes; absent otherwise.", []string{"app"}, nil)
 	// observe's counts, per release: the current one and the
