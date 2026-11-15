@@ -21,13 +21,20 @@ FROM denoland/deno:bin-2.9.8 AS deno
 # The mount is writable because go may write go.work.sum; what it writes
 # is dropped with the step. The cache ids are motel's, shared by its
 # worktrees and no other build. A builder pruned, or CI's, starts cold.
+# motel links a release as `make build` links one (Caddy's
+# CustomVersion), so the box names one in Motel-Version and whoami as a
+# shipped box does; the people suite (e2e/box/people.sh) reads both.
+# motelctl is the laptop client that suite runs on the box, as a
+# laptop would, over the box's own TLS.
 FROM golang:1.27-trixie AS builder
 WORKDIR /src
 RUN --mount=type=bind,target=/src,rw \
 	--mount=type=cache,id=motel-gomod,target=/go/pkg/mod \
 	--mount=type=cache,id=motel-gobuild,target=/root/.cache/go-build \
-	CGO_ENABLED=0 GOFLAGS=-buildvcs=false go build -trimpath -o /motel ./cmd/motel \
-	&& cd backups && CGO_ENABLED=0 GOFLAGS=-buildvcs=false go build -trimpath -o /motel-backup ./cmd/motel-backup
+	CGO_ENABLED=0 GOFLAGS=-buildvcs=false go build -trimpath \
+		-ldflags "-X github.com/caddyserver/caddy/v2.CustomVersion=v0.0.0-e2e" -o /motel ./cmd/motel \
+	&& cd backups && CGO_ENABLED=0 GOFLAGS=-buildvcs=false go build -trimpath -o /motel-backup ./cmd/motel-backup \
+	&& cd ../motelctl && CGO_ENABLED=0 GOFLAGS=-buildvcs=false go build -trimpath -o /motelctl .
 
 # notify's tests that run vmalert and vmalert-tool over the rendered
 # rules, compiled for the metrics box, which has both (Debian's
@@ -72,6 +79,8 @@ COPY --from=builder /motel /usr/bin/motel
 # The box channel's step 6 asks it whether a backup run could plan
 # from the Caddyfile being pushed; nothing here runs a backup.
 COPY --from=builder /motel-backup /usr/bin/motel-backup
+# Not the package's: the laptop's client, for the people suite.
+COPY --from=builder /motelctl /usr/local/bin/motelctl
 COPY --from=deno /deno /usr/local/bin/deno
 # The example pins the Deno its workflow builds with in .deno-version;
 # the FROM above is Dependabot's to bump. Refuse to build when the two
