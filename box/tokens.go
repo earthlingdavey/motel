@@ -28,7 +28,8 @@ type Shape struct {
 	Signers proof.Signers
 	// Access are the box block's signer and person lines as key lines,
 	// in file order, and its grant lines: held by Walk to agree across
-	// the two readings, as the signers are. Nothing admits a person yet.
+	// the two readings, as the signers are. Empty for a block without a
+	// person or a grant line. Nothing admits a person yet.
 	Access access.Lines
 	// AccessWarnings are what access.CheckLines took with a doubt, for
 	// describe to print; none for a block without a person or a grant
@@ -497,6 +498,12 @@ func walk(input []byte) (*Shape, error) {
 	// After every rule above, so a file without person or grant lines
 	// is refused as it always was; CheckLines takes such a block as it
 	// is.
+	// A block without a person or a grant line hands out no key: its
+	// signer lines were never held to the rules across lines, and a
+	// reader of Access need not remember to ask Declared first.
+	if !shape.Access.Declared() {
+		shape.Access = access.Lines{}
+	}
 	around := &access.Around{Apps: shape.Apps, Channels: shape.Notify != nil && shape.Notify.Channels, AppPlaceholder: appPlaceholder}
 	if shape.AccessWarnings, err = access.CheckLines(shape.Access, around); err != nil {
 		return nil, refuse("has a bad " + err.Error())

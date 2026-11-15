@@ -173,6 +173,12 @@ func (a *App) lines(signers proof.Signers) (access.Lines, error) {
 		lines.Keys = append(lines.Keys, k)
 	}
 	for _, c := range a.Grants {
+		// The scope decides which of the two the line is: a JSON grant
+		// whose app disagrees with it would be checked as one and kept
+		// as the other.
+		if (c.Scope == "box") != (c.App == "") {
+			return access.Lines{}, fmt.Errorf("grant %q: a grant on the box names no app, and a grant on an app names one (scope %q, app %q)", c.Name, c.Scope, c.App)
+		}
 		g, err := access.ParseGrant(c.args())
 		if err != nil {
 			return access.Lines{}, err

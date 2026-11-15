@@ -23,6 +23,7 @@ import (
 
 	"github.com/smallhoursorg/motel/box/proof"
 	"github.com/smallhoursorg/motel/liveswap/access"
+	"github.com/smallhoursorg/motel/liveswap/deploytrust"
 )
 
 // The public halves of keys of every type a person or signer line may
@@ -73,7 +74,12 @@ var lineKeys = func() map[string]string {
 	}
 	skEC := base64.StdEncoding.EncodeToString(ssh.Marshal(struct{ Type, Curve, Key, Application string }{"sk-ecdsa-sha2-nistp256@openssh.com", "nistp256", string(point), "ssh:"}))
 	return map[string]string{
-		"ED1": marshal(ed1), "SKED1": skEdOf(ed1), "SKP256": skECOf(p256), "ED2": marshal(ed()), "ED3": marshal(ed()), "ED4": marshal(ed()),
+		// Ed25519 points of small order (libsodium's blocklist): the
+		// identity, the point of order 2, the identity as an sk key.
+		"SO1":  base64.StdEncoding.EncodeToString(ssh.Marshal(struct{ Type, Key string }{"ssh-ed25519", "\x01" + strings.Repeat("\x00", 31)})),
+		"SO2":  base64.StdEncoding.EncodeToString(ssh.Marshal(struct{ Type, Key string }{"ssh-ed25519", "\xec" + strings.Repeat("\xff", 30) + "\x7f"})),
+		"SKSO": base64.StdEncoding.EncodeToString(ssh.Marshal(struct{ Type, Key, Application string }{"sk-ssh-ed25519@openssh.com", "\x01" + strings.Repeat("\x00", 31), "ssh:"})),
+		"ED1":  marshal(ed1), "SKED1": skEdOf(ed1), "SKP256": skECOf(p256), "ED2": marshal(ed()), "ED3": marshal(ed()), "ED4": marshal(ed()),
 		"SKED": skEd, "SKEC": skEC,
 		"P256": marshal(p256), "P384": marshal(ec(elliptic.P384())), "P521": marshal(ec(elliptic.P521())),
 		"RSA": marshal(&r.PublicKey),
@@ -219,12 +225,18 @@ func TestLinesBothReaders(t *testing.T) {
 		// Refused, one line at a time.
 		"a person's ssh-rsa key": {lines: "\t\tperson carol ssh-rsa @RSA@",
 			want: "person carol: a person's key is ssh-ed25519, ecdsa or the sk- form of either, not ssh-rsa (ssh-keygen -t ed25519, or -t ed25519-sk for a hardware key)"},
-		"an unknown type":   {lines: "\t\tperson carol ssh-dss @ED3@", want: `person carol: key type "ssh-dss" is not one of`},
-		"the wrong type":    {lines: "\t\tperson carol ecdsa-sha2-nistp256 @ED3@", want: `person carol: the key is "ssh-ed25519", not ecdsa-sha2-nistp256`},
-		"not base64":        {lines: "\t\tperson carol ssh-ed25519 !!!!", want: "person carol: the key is not base64"},
-		"not a key":         {lines: "\t\tperson carol ssh-ed25519 AAAA", want: "person carol: the key does not parse as an SSH public key"},
-		"a person, 2 args":  {lines: "\t\tperson carol ssh-ed25519", want: "person line: it takes <name> <key-type> <base64>"},
-		"a person, 4 args":  {lines: "\t\tperson carol ssh-ed25519 @ED3@ x", want: "person line: it takes <name> <key-type> <base64>"},
+		"an unknown type":  {lines: "\t\tperson carol ssh-dss @ED3@", want: `person carol: key type "ssh-dss" is not one of`},
+		"the wrong type":   {lines: "\t\tperson carol ecdsa-sha2-nistp256 @ED3@", want: `person carol: the key is "ssh-ed25519", not ecdsa-sha2-nistp256`},
+		"not base64":       {lines: "\t\tperson carol ssh-ed25519 !!!!", want: "person carol: the key is not base64"},
+		"not a key":        {lines: "\t\tperson carol ssh-ed25519 AAAA", want: "person carol: the key does not parse as an SSH public key"},
+		"a person, 2 args": {lines: "\t\tperson carol ssh-ed25519", want: "person line: it takes <name> <key-type> <base64>"},
+		"a person, 4 args": {lines: "\t\tperson carol ssh-ed25519 @ED3@ x", want: "person line: it takes <name> <key-type> <base64>"},
+		"the identity point": {lines: "\t\tperson mallory ssh-ed25519 @SO1@",
+			want: "person mallory: the key is not a usable ed25519 key: its point has small order, so anyone can sign for it"},
+		"the point of order 2": {lines: "\t\tperson mallory ssh-ed25519 @SO2@",
+			want: "person mallory: the key is not a usable ed25519 key"},
+		"the identity as an sk key": {lines: "\t\tperson mallory sk-ssh-ed25519@openssh.com @SKSO@",
+			want: "person mallory: the key is not a usable ed25519 key"},
 		"a person, no args": {lines: "\t\tperson", want: "person line: it takes <name> <key-type> <base64>"},
 		"a person, a block": {lines: "\t\tperson carol ssh-ed25519 @ED3@ {\n\t\t\tx\n\t\t}", want: "person line: it takes no block"},
 		"a person, an empty block": {lines: "\t\tperson carol ssh-ed25519 @ED3@ {\n\t\t}\n\t\tgrant carol viewer box",
@@ -340,7 +352,7 @@ func TestLinesNoneReadAsBefore(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if shape.Access.Declared() || len(shape.AccessWarnings) != 0 {
+	if shape.Access.Declared() || len(shape.AccessWarnings) != 0 || shape.Access.Keys != nil || shape.Access.Grants != nil {
 		t.Errorf("the walk: %+v", shape)
 	}
 	var b strings.Builder
@@ -414,7 +426,7 @@ func TestDescribePeople(t *testing.T) {
 	if err := describe(path, &out); err != nil {
 		t.Fatal(err)
 	}
-	wantWarn := string(want) + "warning people are declared and no monitor channel is, so what they do on this box will be told to no one\n"
+	wantWarn := string(want) + "warning people are declared and no monitor channel is, so what they do on this box will be told to no one; add a channel line to the monitor block: channel <name> <kind> {secret.NOTIFY_<NAME>}\n"
 	if out.String() != wantWarn {
 		t.Errorf("describe:\n%s\nwant:\n%s", out.String(), wantWarn)
 	}
@@ -460,10 +472,17 @@ func TestNameGrammarIsTheSigners(t *testing.T) {
 
 // TestSameReading is the comparison of the walk's two readings: a
 // reading that differs from the other only in a person, or only in a
-// grant's from list, is not the same. No file is known to produce
-// either today (every token of the box block is held to the
-// placeholder rule), so the comparison is held here.
+// grant's from list, is not the same. A real file can make them differ:
+// one that hides a placeholder's start in a comment and its end before
+// a grant line, which the raw reading takes as an unknown word and the
+// expanded one as a grant.
 func TestSameReading(t *testing.T) {
+	unsetForTest(t, "MOTEL_BOX_TEST_UNSET_H")
+	hidden := linesFile(t, "\t\t# {$MOTEL_BOX_TEST_UNSET_H:\n\t\t}grant bob viewer box")
+	if _, err := Walk(hidden); err == nil || err.Error() != "the Caddyfile reads differently once its placeholders are expanded" {
+		t.Errorf("a grant hidden from the raw reading: %v", err)
+	}
+
 	read := func() *Shape {
 		t.Helper()
 		s, err := Walk(linesFile(t, "\t\tperson carol ssh-ed25519 @ED3@\n\t\tgrant carol viewer app blog from 10.0.0.0/8"))
@@ -514,12 +533,36 @@ func TestWalkMonitorWithoutChannel(t *testing.T) {
 // through a placeholder cannot be granted, since the walk reads the
 // raw file, and the refusal says so rather than that no such app runs.
 func TestWalkAppThroughPlaceholder(t *testing.T) {
-	in := strings.Replace(string(linesFile(t, "\t\tgrant bob viewer app shop")), "\t\tapp blog {", "\t\tapp {$MOTEL_BOX_TEST_UNSET_APP:shop} {", 1)
 	unsetForTest(t, "MOTEL_BOX_TEST_UNSET_APP")
-	_, err := Walk([]byte(in))
-	want := "the Caddyfile has a bad grant bob viewer app shop: no app line in the liveswap block names shop as written; an app named through a placeholder cannot be granted"
-	if err == nil || err.Error() != want {
-		t.Fatalf("got %v, want %q", err, want)
+	for _, app := range []string{"{$MOTEL_BOX_TEST_UNSET_APP:shop}", "shop{$MOTEL_BOX_TEST_UNSET_APP}"} {
+		in := strings.Replace(string(linesFile(t, "\t\tgrant bob viewer app shop")), "\t\tapp blog {", "\t\tapp "+app+" {", 1)
+		_, err := Walk([]byte(in))
+		want := "the Caddyfile has a bad grant bob viewer app shop: no app line in the liveswap block names shop as written; an app named through a placeholder cannot be granted"
+		if err == nil || err.Error() != want {
+			t.Errorf("app %s: got %v, want %q", app, err, want)
+		}
+	}
+}
+
+// TestLinesModuleJSONScope: a grant posted as JSON whose app disagrees
+// with its scope is refused at load, not checked as one and kept as
+// the other.
+func TestLinesModuleJSONScope(t *testing.T) {
+	tc := localTrust(t)
+	signer := SignerConfig{Principal: "bob", Type: "ssh-ed25519", Key: lineKeys["ED1"]}
+	for _, g := range []GrantConfig{
+		{Name: "bob", Role: "viewer", Scope: "box", App: "example"},
+		{Name: "bob", Role: "viewer", Scope: "app"},
+	} {
+		a := App{DeployTrust: []deploytrust.TrustConfig{tc}, Signers: []SignerConfig{signer}, Grants: []GrantConfig{g}}
+		err := a.provision(zap.NewNop())
+		if err == nil || !strings.Contains(err.Error(), `box: grant "bob": a grant on the box names no app, and a grant on an app names one`) {
+			t.Errorf("%+v: %v", g, err)
+		}
+	}
+	a := App{DeployTrust: []deploytrust.TrustConfig{tc}, Signers: []SignerConfig{signer}, Grants: []GrantConfig{{Name: "bob", Role: "viewer", Scope: "app", App: "example"}, {Name: "bob", Role: "viewer", Scope: "box"}}}
+	if err := a.provision(zap.NewNop()); err != nil {
+		t.Errorf("good grants: %v", err)
 	}
 }
 
