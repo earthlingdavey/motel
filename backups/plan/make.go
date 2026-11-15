@@ -709,14 +709,16 @@ func emptyGlobs(stderr []byte) (patterns []string) {
 }
 
 // isImportLine says whether a line of the adapter's is its parser's
-// about an import: a file not there, one it could not read, a pattern
-// it could not use. The wording is Caddy's
+// about an import: a file not there, one it could not stat (v2.11.8
+// on: permission denied, say) or read, a pattern it could not use. The
+// wording is Caddy's
 // (caddyconfig/caddyfile/parse.go), held to the real adapter by
 // TestIntegrationTheAdapterRefusesAnImportAndADirectiveAsInspectReadsThem.
 // Were it to change, a variable in an import would be refused all the
 // same, as neither an import's nor a directive's words.
 func isImportLine(line string) bool {
 	return strings.Contains(line, "File to import not found") ||
+		strings.Contains(line, "Failed to import file ") ||
 		strings.Contains(line, "Could not import ") ||
 		strings.Contains(line, "Could not read imported file") ||
 		strings.Contains(line, "Failed to use import pattern")
