@@ -208,11 +208,10 @@ Before you upgrade:
   `secrets/_box/`, so every push after the downgrade would fail before
   it began. While the box still runs the newer release:
   1. **Pause the heartbeat's check, then stop Alertmanager**, as
-     [Monitor](monitor.md#turn-it-off-and-remove-it)'s steps 1 and 2
+     [Monitor](monitor.md#turn-it-off-and-remove-it)'s steps 1 and 3
      say (on a box set up with `--metrics`, vmalert and Alertmanager's
-     socket in the store's namespace with it). Otherwise Alertmanager reports every alert that was
-     firing as recovered five minutes after the next step, though
-     nothing recovered.
+     socket in the store's namespace with it). The older release
+     neither uses nor stops them.
   2. **Take out the `monitor` block and every `observe` line.** On a box
      that takes pushes, push a commit without them and without
      `secrets/_box/`. It removes `/etc/motel/secrets/_box.env` and takes

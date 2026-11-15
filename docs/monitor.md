@@ -951,6 +951,25 @@ monitor {
   (`ended unfinished` in the journal). A deploy or rollback to another
   release ends it and starts its own.
 
+A `post_deploy` comparison that holds logs nothing at the default
+level, Info, and no command shows that one ran. A regression's
+`post_deploy_regressed` is sent and journaled (`monitor: event`);
+`ended unfinished` is a journal warning, never sent. At Debug the
+`monitor` logger says `monitor rules: the post-deploy comparison
+ended with its window`, with the app and the release, when the
+window ends (a window that judged nothing says it too), and
+`monitor rules: a new deploy ends the post-deploy comparison in
+flight` when a deploy does; its other ends log no such line. In the
+Caddyfile's global options, this writes the `monitor` logger's lines
+to the journal from Debug up:
+
+```
+log monitor_debug {
+	level DEBUG
+	include monitor
+}
+```
+
 The request metrics need `observe <app>` in the app's site, and a rule
 on them reads only the apps motel's last push says are observed: an
 app whose `observe` line is taken out drops out at the next push, and
