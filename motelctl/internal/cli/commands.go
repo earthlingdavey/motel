@@ -225,7 +225,7 @@ func (r *runner) deploys() *cobra.Command {
 				}
 				return r.emit(raw.Deploys)
 			}
-			return render.WriteDeploys(r.env.Stdout, r.style(), summaryViews(st.Deploys))
+			return render.WriteDeploys(r.env.Stdout, summaryViews(st.Deploys))
 		},
 	}
 	t.flags(c)

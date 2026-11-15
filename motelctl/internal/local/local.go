@@ -133,7 +133,9 @@ func BoxRepo(ctx context.Context, run Runner, dir string) (Repo, bool) {
 	if real, err := filepath.EvalSymlinks(dir); err == nil {
 		dir = real
 	}
-	if rel, err := filepath.Rel(top, dir); err == nil && rel != "." && !strings.HasPrefix(rel, "..") {
+	// The first element of dir's path under the top level: "." for the
+	// top itself and ".." outside it, neither of which is a box's name.
+	if rel, err := filepath.Rel(top, dir); err == nil {
 		first, _, _ := strings.Cut(filepath.ToSlash(rel), "/")
 		if slices.Contains(repo.Boxes, first) {
 			repo.Here = first
@@ -165,7 +167,9 @@ func GitConfig(ctx context.Context, run Runner, dir, key string) string {
 // each at most 63 bytes, at most 253 in all; and lowercase, as the
 // box's identity is.
 func IsHostname(h string) bool {
-	if h == "" || len(h) > 253 || strings.ToLower(h) != h {
+	// Upper case is refused below, with every byte outside a-z, 0-9
+	// and the hyphen.
+	if h == "" || len(h) > 253 {
 		return false
 	}
 	for _, label := range strings.Split(h, ".") {

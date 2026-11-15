@@ -88,3 +88,36 @@ func TestExecFD3(t *testing.T) {
 		t.Fatalf("out %q, err %v", out, err)
 	}
 }
+
+// A box is a regular Caddyfile in a dotted directory, and the shell's
+// directory names it only from inside that directory.
+func TestBoxRepoHere(t *testing.T) {
+	top, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range []string{"a.example.com/apps", "dir.example.com/Caddyfile"} {
+		if err := os.MkdirAll(filepath.Join(top, p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(top, "a.example.com", "Caddyfile"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	outside, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for dir, here := range map[string]string{
+		filepath.Join(top, "a.example.com", "apps"): "a.example.com",
+		filepath.Join(top, "a.example.com"):         "a.example.com",
+		top:                                         "",
+		filepath.Join(top, "dir.example.com"):       "",
+		outside:                                     "",
+	} {
+		repo, ok := BoxRepo(context.Background(), gitTop(top), dir)
+		if !ok || !slices.Equal(repo.Boxes, []string{"a.example.com"}) || repo.Here != here {
+			t.Errorf("from %s: %+v, %v; want the one box, here %q (a Caddyfile that is a directory is no box)", dir, repo, ok, here)
+		}
+	}
+}

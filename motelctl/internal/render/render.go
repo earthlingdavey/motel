@@ -236,8 +236,9 @@ func mib(b float64) string {
 }
 
 // WriteDeploys writes the deploys list, newest first, as the box
-// ordered it.
-func WriteDeploys(w io.Writer, s Style, rows []Summary) error {
+// ordered it. Not in colour: tabwriter would count a colour's escape
+// as width, and the columns would not line up.
+func WriteDeploys(w io.Writer, rows []Summary) error {
 	if len(rows) == 0 {
 		_, err := fmt.Fprintln(w, "no deploy recorded")
 		return err
@@ -246,7 +247,7 @@ func WriteDeploys(w io.Writer, s Style, rows []Summary) error {
 	p := &printer{w: tw}
 	p.line("VERSION\tSTATUS\tPHASE\tBY\tFINISHED (UTC)")
 	for _, r := range rows {
-		p.line("%s\t%s\t%s\t%s\t%s", r.Version, s.word(r.Status), r.Phase, r.By, r.Finished)
+		p.line("%s\t%s\t%s\t%s\t%s", r.Version, r.Status, r.Phase, r.By, r.Finished)
 	}
 	if p.err != nil {
 		return p.err
