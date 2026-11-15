@@ -52,13 +52,16 @@ wait_for_token # $TOKEN: the e2e deploy token, audience e2e
 
 # ── the keys and the box's file ────────────────────────────────────
 
-# alice signs the commits; vera views the box; otto views demo alone,
-# with an ECDSA key; fran views the box from 198.51.100.0/24 only, an
-# address this client does not have; nora is declared with no grant;
-# lena views demo from 127.0.0.0/8, the client's own address, so that
-# fran's refusal is the list's; stranger's key no line lists.
-for k in alice vera fran nora lena stranger; do ssh-keygen -q -t ed25519 -N '' -C "$k" -f "$work/$k"; done
-ssh-keygen -q -t ecdsa -b 256 -N '' -C otto -f "$work/otto"
+# alice signs the commits; vera views the box; otto views demo alone;
+# fran views the box from 198.51.100.0/24 only, an address this client
+# does not have; nora is declared with no grant; lena views demo from
+# 127.0.0.0/8, the client's own address, so that fran's refusal is the
+# list's; stranger's key no line lists. Every person's key is Ed25519,
+# the one kind a box takes for now; eve's is ECDSA, which no box takes
+# yet, so her line is refused (people 0) and motelctl will not sign
+# with it (people 1).
+for k in alice vera otto fran nora lena stranger; do ssh-keygen -q -t ed25519 -N '' -C "$k" -f "$work/$k"; done
+ssh-keygen -q -t ecdsa -b 256 -N '' -C eve -f "$work/eve"
 key() { cut -d' ' -f1,2 "$work/$1.pub"; }
 fp() { ssh-keygen -lf "$work/$1.pub" | cut -d' ' -f2; }
 
@@ -111,6 +114,10 @@ $REST" >"$work/f0"
 render "$SIGNER
 $VERA
 $REST" >"$work/f1"
+render "$SIGNER
+$VERA
+		person eve@e2e.test $(key eve)
+		grant eve@e2e.test viewer box" >"$work/fe"
 
 git init -q -b main "$repo"
 git -C "$repo" config user.name e2e
@@ -204,6 +211,12 @@ same() {
 echo "=== people 0: the box's file installed, the apps deployed through the deploy host ==="
 motel validate --adapter caddyfile --config "$work/f0" >"$work/validate" 2>&1 \
 	&& pass "motel validate takes the file with people" || { fail "motel validate: $(tail -5 "$work/validate")"; exit 1; }
+if motel validate --adapter caddyfile --config "$work/fe" >"$work/validate-ecdsa" 2>&1; then
+	fail "motel validate took a person line with an ECDSA key"
+else
+	has "motel validate refuses a person's ECDSA key by name, for now, with the remedy" "$work/validate-ecdsa" \
+		"person eve@e2e.test: a person's key is an Ed25519 key for now, and this release does not take ecdsa-sha2-nistp256 yet (ssh-keygen -t ed25519, or -t ed25519-sk for a hardware key)"
+fi
 C0=$(commit "$work/f0")
 rm -rf "$work/init" && mkdir -p "$work/init" && git -C "$repo" archive "$C0" "$HOST" | tar -xf - -C "$work/init"
 printf '127.0.0.1 %s\n' "$HOST" >>/etc/hosts
@@ -310,6 +323,16 @@ done
 mc whoami --box "$HOST" --key "$work/lena"
 expect "lena, inside her from list: whoami" 0
 has "lena: whoami gives demo's viewer role from here" "$work/out" "roles    viewer of app demo"
+
+# eve's ECDSA key: motelctl refuses it before it signs or sends, and
+# `motelctl key` prints no person line the box would refuse.
+for cmd in "whoami --box $HOST" key; do
+	# shellcheck disable=SC2086 # the command's words
+	mc $cmd --key "$work/eve.pub"
+	expect "eve's ECDSA key: motelctl ${cmd%% *} refuses it" 2
+	has "eve: motelctl ${cmd%% *} says why, and the remedy" "$work/err" "is an ecdsa-sha2-nistp256 key. A box takes Ed25519 keys for now, not ECDSA yet: make one with ssh-keygen -t ed25519"
+	[ ! -s "$work/out" ] && pass "eve: motelctl ${cmd%% *} prints nothing on stdout" || fail "eve: motelctl ${cmd%% *} printed: $(head -c 300 "$work/out")"
+done
 
 echo "=== people 2: --json is the box's answer ==="
 mc whoami --json --box "$HOST" --key "$work/vera"
