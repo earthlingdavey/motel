@@ -558,22 +558,25 @@ func queryRelease(ctx context.Context, store instantQuerier, app, release string
 	return n, nil
 }
 
-// firstPushQuery is the time of the first push of motel's the store
-// took within a window (the query's [<d>]) before the query's time.
-func firstPushQuery(d time.Duration) string {
-	return "min(tfirst_over_time(" + pushSeries + "[" + promDuration(d) + "]))"
+// firstPushQuery is firstPushAfter's ask, at the check's time at: the
+// time of the first push of motel's the store took more than
+// storeRequestTimeout after the cutover: the store's window leaves its
+// start out, so a push stamped exactly that past it is not one
+// (TestPostDeployTheBaselineOverTheStore).
+func firstPushQuery(cutover, at time.Time) string {
+	return "min(tfirst_over_time(" + pushSeries + "[" + promDuration(at.Sub(cutover)-storeRequestTimeout) + "]))"
 }
 
 // firstPushAfter is the first push of motel's the store took after the
 // cutover that was gathered after it, asked at the check's time at, by
-// then searchable (storeLag): one stamped storeRequestTimeout past the
-// cutover at least, since the store stamps an import within its
+// then searchable (storeLag): one stamped more than storeRequestTimeout
+// after the cutover, since the store stamps an import within its
 // request's budget (relaunchSkip). One stamped sooner may have been
 // gathered before the cutover, without the old release's last answers
 // (/code-review pass 2 of the old window's end). ok is whether there is
 // one.
 func firstPushAfter(ctx context.Context, store instantQuerier, cutover, at time.Time) (end time.Time, ok bool, err error) {
-	ss, err := store.queryAt(ctx, firstPushQuery(at.Sub(cutover)-storeRequestTimeout), at)
+	ss, err := store.queryAt(ctx, firstPushQuery(cutover, at), at)
 	if err != nil || len(ss) == 0 {
 		return time.Time{}, false, err
 	}

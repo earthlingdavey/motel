@@ -320,7 +320,7 @@ func TestPostDeployFailsAfterItsCountInARow(t *testing.T) {
 	}
 	// The windows: the new release's since the cutover, in whole
 	// minutes, the old one's the same length before it and on to the
-	// first push the store took storeRequestTimeout after the cutover
+	// first push the store took over storeRequestTimeout after the cutover
 	// (the fake's: a second after that), asked once, through
 	// counterIncrease, read at the
 	// check's time, which the store has.
@@ -1220,7 +1220,7 @@ func TestPostDeployAsksAgainForTheOldWindowsEnd(t *testing.T) {
 // The old release's window over the store's own MetricsQL: pushes every
 // 30 s from 0, the cutover at 610 s, the check 5 minutes after it, so
 // v1 is read from its sample of 300 s (200 2xx, 10 5xx) to the first
-// push the store took 10 s or more after the cutover (gathered after
+// push the store took more than 10 s after the cutover (gathered after
 // it), which carries v1's final counts before the cutover: 400 and 20.
 //
 //   - The store down from 540 s to 660 s: the first push after the
@@ -1230,26 +1230,40 @@ func TestPostDeployAsksAgainForTheOldWindowsEnd(t *testing.T) {
 //   - No outage: the push of 630 s. The old instance's stop then cuts 5
 //     requests it still held, 502s counted under v1 after it, which a
 //     window to the check's time read as its baseline: 200 and 15.
+//   - The cutover at 625 s, so the push of 630 s, within
+//     storeRequestTimeout of it, may have been gathered before it (a
+//     slow store): it holds 400 and 20, and the push of 660 s v1's
+//     final 410 and 21. The first push is 660 s's, and the window reads
+//     210 and 11 from the sample of 300 s; asked from the cutover, it
+//     was 630 s's, and the window read 200 and 10.
+//   - The cutover at 620 s: the push of 630 s, exactly
+//     storeRequestTimeout past it, is left out too, the store's window
+//     leaving its start out (pushedQuery's): the first push is 660 s's.
 func TestPostDeployTheBaselineOverTheStore(t *testing.T) {
 	tool := vmTool(t, "vmalert-tool")
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, RulesName), renderRules(nil), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	cutover, elapsed := time.Unix(610, 0), 5*time.Minute
-	at := cutover.Add(elapsed)
+	elapsed := 5 * time.Minute
 	var b strings.Builder
 	b.WriteString(`rule_files: [` + RulesName + `]
 evaluation_interval: 30s
 tests:
 `)
 	for _, c := range []struct {
-		push, ok, errs string
-		first          int64
+		cutover          int64
+		push, ok, errs   string
+		first            int64
+		wantOK, wantErrs int
 	}{
-		{"1x17 _x4 1x9", "0+20x17 _x4 400x9", "0+1x17 _x4 20x9", 660},
-		{"1x30", "0+20x20 400x10", "0+1x20 20 25x9", 630},
+		{610, "1x17 _x4 1x9", "0+20x17 _x4 400x9", "0+1x17 _x4 20x9", 660, 200, 10},
+		{610, "1x30", "0+20x20 400x10", "0+1x20 20 25x9", 630, 200, 10},
+		{625, "1x31", "0+20x20 400 410x9", "0+1x20 20 21x9", 660, 210, 11},
+		{620, "1x31", "0+20x20 400 410x9", "0+1x20 20 21x9", 660, 210, 11},
 	} {
+		cutover := time.Unix(c.cutover, 0)
+		at := cutover.Add(elapsed)
 		fmt.Fprintf(&b, `  - interval: 30s
     input_series:
       - series: 'process_start_time_seconds{job="motel"}'
@@ -1260,11 +1274,11 @@ tests:
         values: '%s'
     metricsql_expr_test:
 `, c.push, c.ok, c.errs)
-		fmt.Fprintf(&b, "      - expr: '%s'\n        eval_time: %ds\n        exp_samples:\n          - {labels: '{}', value: %d}\n", firstPushQuery(elapsed), at.Unix(), c.first)
+		fmt.Fprintf(&b, "      - expr: '%s'\n        eval_time: %ds\n        exp_samples:\n          - {labels: '{}', value: %d}\n", firstPushQuery(cutover, at), at.Unix(), c.first)
 		win, off := oldWindow(elapsed, at, time.Unix(c.first, 0))
 		q := classesQuery(releaseSelector("blog", "v1"), win, off)
 		fmt.Fprintf(&b, "      - expr: '%s'\n        eval_time: %ds\n        exp_samples:\n", strings.ReplaceAll(q, "'", "''"), at.Unix())
-		b.WriteString("          - {labels: '{class=\"2xx\"}', value: 200}\n          - {labels: '{class=\"5xx\"}', value: 10}\n")
+		fmt.Fprintf(&b, "          - {labels: '{class=\"2xx\"}', value: %d}\n          - {labels: '{class=\"5xx\"}', value: %d}\n", c.wantOK, c.wantErrs)
 	}
 	runUnittest(t, tool, dir, b.String())
 }
