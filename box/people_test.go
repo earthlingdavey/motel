@@ -352,3 +352,56 @@ func TestPersonRefusalsAreTheFlat401(t *testing.T) {
 		}
 	}
 }
+
+// TestPersonOnTheBoxWebhook: a viewer of the box reads the box's
+// status, through the row that answers it; a person whose grants are
+// on apps alone is told the viewer role on the box; a push's result,
+// which only the box's own source reads, names the deployer.
+func TestPersonOnTheBoxWebhook(t *testing.T) {
+	carol, alice := accesstest.Ed25519(), accesstest.ECDSA()
+	var l access.Lines
+	for name, k := range map[string]accesstest.Key{"carol": carol, "alice": alice} {
+		key, err := access.ParsePerson([]string{name, k.Type(), k.B64()})
+		if err != nil {
+			t.Fatal(err)
+		}
+		l.Keys = append(l.Keys, key)
+	}
+	for _, args := range [][]string{{"carol", "viewer", "box"}, {"alice", "viewer", "app", "a"}} {
+		g, err := access.ParseGrant(args)
+		if err != nil {
+			t.Fatal(err)
+		}
+		l.Grants = append(l.Grants, g)
+	}
+	reg := access.NewRegistry(peopleIdentity, l)
+	served := recordRows(t)
+	now := time.Now()
+	for _, c := range []struct {
+		who    accesstest.Key
+		name   string
+		target string
+		code   int
+		body   string
+	}{
+		{carol, "carol", "/", http.StatusOK, ""},
+		{alice, "alice", "/", http.StatusForbidden, `{"error":"this needs the viewer role on the box","needs":"viewer","scope":"box"}` + "\n"},
+		{carol, "carol", "/?result=" + strings.Repeat("0", 32), http.StatusForbidden, `{"error":"this needs a deploy token of the box","needs":"deployer","scope":"box"}` + "\n"},
+	} {
+		r := newRig(t)
+		r.h.app.registry = reg
+		*served = nil
+		hr := httptest.NewRequest(http.MethodGet, "http://"+peopleIdentity+c.target, nil)
+		hr.Header.Set("Authorization", c.who.Token(peopleIdentity, now, time.Minute))
+		w := httptest.NewRecorder()
+		if err := r.h.ServeHTTP(w, hr, nextFunc(func(http.ResponseWriter, *http.Request) error { return nil })); err != nil {
+			t.Fatal(err)
+		}
+		if w.Code != c.code || (c.body != "" && w.Body.String() != c.body) {
+			t.Errorf("%s GET %s: %d %q, want %d %q", c.name, c.target, w.Code, w.Body, c.code, c.body)
+		}
+		if (c.code == http.StatusOK) != (*served != nil) {
+			t.Errorf("%s GET %s: answered by row %v", c.name, c.target, *served)
+		}
+	}
+}

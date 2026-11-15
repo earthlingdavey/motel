@@ -39,10 +39,11 @@ func TestEveryRouteHasAnAction(t *testing.T) {
 }
 
 // TestEveryActionHasARoute is the reverse: every box action Decide
-// allows to someone has a row. The app actions are liveswap's.
+// allows to someone has a row. The app actions are liveswap's, and so
+// are the box actions it serves under /_motel/.
 func TestEveryActionHasARoute(t *testing.T) {
 	for _, a := range access.Actions() {
-		if !strings.HasPrefix(string(a), "box.") {
+		if !strings.HasPrefix(string(a), "box.") || slices.Contains(access.MotelActions, a) {
 			continue
 		}
 		if !slices.ContainsFunc(routes, func(rt route) bool { return rt.action == a }) {

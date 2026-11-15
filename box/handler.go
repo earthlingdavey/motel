@@ -137,7 +137,7 @@ func (h *Handler) servePerson(w http.ResponseWriter, r *http.Request, rt *route)
 		return err
 	}
 	if err := decide(p.Principal, rt.action, ""); err != nil {
-		return respond(w, http.StatusForbidden, errorBody("forbidden"))
+		return respond(w, http.StatusForbidden, liveswap.ForbiddenBody(err))
 	}
 	return rt.serve(h, w, r, deploytrust.Identity{})
 }

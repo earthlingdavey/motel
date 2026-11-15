@@ -149,10 +149,48 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request, _ caddyhttp.
 	// a deployer of this app and Decide allows every app action: it
 	// refuses only if the table and the routes fall apart, and then
 	// refuses rather than serves.
-	if err := decide(access.Principal{Kind: access.AppDeployer, App: name}, rt.action, name); err != nil {
-		return RespondJSON(w, http.StatusForbidden, wire.Error{Error: "forbidden"}, ma.redactorFor(statusSnapshot{}))
+	app, err := h.allowApp(access.Principal{Kind: access.AppDeployer, App: name}, rt.action, name)
+	if err != nil {
+		return RespondJSON(w, http.StatusForbidden, ForbiddenBody(err), ma.redactorFor(statusSnapshot{}))
 	}
-	return rt.serve(h, w, r, ma, who.By)
+	return rt.serve(h, w, r, app, who.By)
+}
+
+// appHandle is the one app a route reads or acts on. Only allowApp
+// makes one, after Decide allowed the action on that app, so a route's
+// function cannot be given an app nobody asked Decide about; and each
+// reads that app alone, through that app's filter.
+type appHandle struct {
+	ma *managedApp
+}
+
+// errUnknownApp is allowApp's answer for a name that is no app here,
+// once Decide allowed the action on it: a box viewer asking for an app
+// that does not exist.
+var errUnknownApp = errors.New("unknown app")
+
+// allowApp asks Decide whether p may take a on the app name, and is the
+// one place an appHandle is made.
+func (h *Handler) allowApp(p access.Principal, a access.Action, name string) (appHandle, error) {
+	if err := decide(p, a, name); err != nil {
+		return appHandle{}, err
+	}
+	ma := h.app.managedApp(name)
+	if ma == nil {
+		return appHandle{}, errUnknownApp
+	}
+	return appHandle{ma: ma}, nil
+}
+
+// ForbiddenBody is the 403's body for Decide's refusal: what the caller
+// would need, when Decide names it (access.Forbidden), and otherwise
+// the bare word, the answer of a table and routes that fall apart.
+func ForbiddenBody(err error) any {
+	var f *access.Forbidden
+	if errors.As(err, &f) {
+		return wire.Forbidden{Error: f.Error(), Needs: f.Needs, Scope: f.Scope}
+	}
+	return wire.Error{Error: "forbidden"}
 }
 
 // servePerson answers a request in the person token's scheme: the
@@ -171,14 +209,18 @@ func (h *Handler) servePerson(w http.ResponseWriter, r *http.Request, name strin
 		w.Header().Set("Allow", "GET, POST")
 		return RespondJSON(w, http.StatusMethodNotAllowed, wire.Error{Error: "method not allowed"}, nil)
 	}
-	if err := decide(p.Principal, rt.action, name); err != nil {
-		return RespondJSON(w, http.StatusForbidden, wire.Error{Error: "forbidden"}, nil)
-	}
-	ma := h.app.managedApp(name)
-	if ma == nil {
+	// Decide before the app is looked for: a person whose grants do not
+	// cover the name is told the same 403 whether it is an app here or
+	// not, and only a viewer of the box, who may list the apps, is told
+	// a name is none.
+	app, err := h.allowApp(p.Principal, rt.action, name)
+	switch {
+	case errors.Is(err, errUnknownApp):
 		return RespondJSON(w, http.StatusNotFound, wire.Error{Error: fmt.Sprintf("unknown app %q", name)}, nil)
+	case err != nil:
+		return RespondJSON(w, http.StatusForbidden, ForbiddenBody(err), nil)
 	}
-	return rt.serve(h, w, r, ma, p.Name)
+	return rt.serve(h, w, r, app, p.Name)
 }
 
 // gate is what a person is admitted through on this handler.
@@ -217,7 +259,7 @@ type route struct {
 	shape  string // the query or body the row takes, for a reader
 	action access.Action
 	match  func(*http.Request) bool // nil: any request of the method
-	serve  func(h *Handler, w http.ResponseWriter, r *http.Request, ma *managedApp, by string) error
+	serve  func(h *Handler, w http.ResponseWriter, r *http.Request, app appHandle, by string) error
 }
 
 // routes is matched in order: the first row of the request's method
@@ -259,14 +301,16 @@ func wantsRollback(r *http.Request) bool {
 
 // getDeployRecord is GET /<app>?deploy=<v>; its query parsed when the
 // row matched (wantsDeployRecord).
-func (h *Handler) getDeployRecord(w http.ResponseWriter, r *http.Request, ma *managedApp, _ string) error {
+func (h *Handler) getDeployRecord(w http.ResponseWriter, r *http.Request, app appHandle, _ string) error {
+	ma := app.ma
 	q, _ := url.ParseQuery(r.URL.RawQuery)
 	return h.deployRecord(w, ma, q.Get("deploy"))
 }
 
 // getStatus is GET /<app>: the app's status, with metric summaries
 // over the range asked for.
-func (h *Handler) getStatus(w http.ResponseWriter, r *http.Request, ma *managedApp, _ string) error {
+func (h *Handler) getStatus(w http.ResponseWriter, r *http.Request, app appHandle, _ string) error {
+	ma := app.ma
 	// Parsed strictly, as wantsDeployRecord parses it: a malformed
 	// query is refused here rather than read as no query.
 	q, err := url.ParseQuery(r.URL.RawQuery)
@@ -294,7 +338,8 @@ func (h *Handler) getStatus(w http.ResponseWriter, r *http.Request, ma *managedA
 
 // deployURL is the default path: a JSON body naming an artifact URL to
 // pull, size-capped like any control payload.
-func (h *Handler) deployURL(w http.ResponseWriter, r *http.Request, ma *managedApp, by string) error {
+func (h *Handler) deployURL(w http.ResponseWriter, r *http.Request, app appHandle, by string) error {
+	ma := app.ma
 	// Read one byte past the cap: exceeding it proves the payload is
 	// oversized, which deserves an honest 413 — truncating at the cap
 	// would surface as a misleading "invalid JSON" 400.
@@ -350,7 +395,8 @@ func parseDeployPayload(body []byte) (p deployPayload, status int, msg string) {
 // deployPush streams an uploaded gzip tarball to a staging file and
 // deploys it — no artifact host needed. Version comes from the query
 // string because the body is the artifact.
-func (h *Handler) deployPush(w http.ResponseWriter, r *http.Request, ma *managedApp, by string) error {
+func (h *Handler) deployPush(w http.ResponseWriter, r *http.Request, app appHandle, by string) error {
+	ma := app.ma
 	version := r.URL.Query().Get("version")
 	if !validVersion(version) {
 		return RespondJSON(w, http.StatusUnprocessableEntity, wire.Error{Error: fmt.Sprintf("version query param must match %s", versionRe)}, ma.redactorFor(statusSnapshot{}))
@@ -419,7 +465,8 @@ func (h *Handler) deployPush(w http.ResponseWriter, r *http.Request, ma *managed
 }
 
 // deployRollback relaunches an already-extracted on-disk release.
-func (h *Handler) deployRollback(w http.ResponseWriter, r *http.Request, ma *managedApp, by string) error {
+func (h *Handler) deployRollback(w http.ResponseWriter, r *http.Request, app appHandle, by string) error {
+	ma := app.ma
 	version := r.URL.Query().Get("rollback")
 	if !validVersion(version) {
 		return RespondJSON(w, http.StatusUnprocessableEntity, wire.Error{Error: fmt.Sprintf("rollback version must match %s", versionRe)}, ma.redactorFor(statusSnapshot{}))

@@ -219,7 +219,7 @@ func recordRows(tb testing.TB) **route {
 	served := new(*route)
 	routes = slices.Clone(saved)
 	for i := range routes {
-		routes[i].serve = func(*Handler, http.ResponseWriter, *http.Request, *managedApp, string) error {
+		routes[i].serve = func(*Handler, http.ResponseWriter, *http.Request, appHandle, string) error {
 			*served = &routes[i]
 			return nil
 		}

@@ -3,6 +3,9 @@ package liveswap
 import (
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -157,5 +160,67 @@ func TestPersonTokenPassesTheGate(t *testing.T) {
 	}
 	if w := sendTo(t, h, "GET", "/demo", token(people.alice), "Bearer "+appToken(t)); w.Code != http.StatusUnauthorized {
 		t.Errorf("a person's and a deploy token together: %d, want 401", w.Code)
+	}
+}
+
+// TestPersonReadsByGrant: a person reads an app a grant covers, and is
+// told 403, naming the viewer role on an app, for any other name,
+// whether it is an app here or not; a viewer of the box reads every app
+// and is told 404 for a name that is no app, as a deploy source with
+// global trust is; a person with no grant reads nothing.
+func TestPersonReadsByGrant(t *testing.T) {
+	people := newTestPeople(t)
+	h, _ := newTestHandler(t)
+	h.people = people.reg
+	const viewerApp = `{"error":"this needs the viewer role on this app","needs":"viewer","scope":"app"}` + "\n"
+	for _, c := range []struct {
+		who    accesstest.Key
+		name   string
+		target string
+		code   int
+		body   string // "" for any
+	}{
+		{people.alice, "alice", "/demo", http.StatusOK, ""},
+		{people.alice, "alice", "/x/demo?range=24h", http.StatusOK, ""},
+		{people.alice, "alice", "/demo?deploy=v1", http.StatusNotFound, "{\"error\":\"no deploy recorded for version v1\"}\n"},
+		{people.alice, "alice", "/demo?range=1w", http.StatusUnprocessableEntity, ""},
+		{people.alice, "alice", "/ghost", http.StatusForbidden, viewerApp},
+		{people.alice, "alice", "/ghost?deploy=v1", http.StatusForbidden, viewerApp},
+		{people.dave, "dave", "/demo", http.StatusForbidden, viewerApp},
+		{people.dave, "dave", "/ghost", http.StatusForbidden, viewerApp},
+		{people.carol, "carol", "/demo", http.StatusOK, ""},
+		{people.carol, "carol", "/ghost", http.StatusNotFound, "{\"error\":\"unknown app \\\"ghost\\\"\"}\n"},
+	} {
+		w := sendTo(t, h, "GET", c.target, token(c.who))
+		if w.Code != c.code || (c.body != "" && w.Body.String() != c.body) {
+			t.Errorf("%s GET %s: %d %q, want %d %q", c.name, c.target, w.Code, w.Body, c.code, c.body)
+		}
+	}
+}
+
+// TestOneHandleMaker: an app handle is made in one place, allowApp,
+// after Decide allowed the action on that app; no other code of the
+// package writes one with an app in it.
+func TestOneHandleMaker(t *testing.T) {
+	files, err := filepath.Glob("*.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	made := regexp.MustCompile(`appHandle\{[^}]`)
+	var where []string
+	for _, f := range files {
+		if strings.HasSuffix(f, "_test.go") {
+			continue
+		}
+		b, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for range made.FindAllIndex(b, -1) {
+			where = append(where, f)
+		}
+	}
+	if len(where) != 1 || where[0] != "handler.go" {
+		t.Errorf("an app handle is made in %v, want once, in handler.go's allowApp", where)
 	}
 }
