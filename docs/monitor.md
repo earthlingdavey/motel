@@ -623,8 +623,15 @@ down.
 
 A state is told twice: once when it fires (after 30 seconds, so a burst
 arrives as one message) and once when it resolves. While it holds, a
-reminder comes every 4 hours (every 24 for a disk). The events motel
-reports itself, and when each resolves, are in DESIGN-notify.md's
+reminder comes every 4 hours (every 24 for a disk). A deploy in
+progress mutes its own app's watchdog alerts (`watchdog_*`): one that
+fires during the deploy is told within a minute after it ends if it
+has not recovered by then (a recovery counts once the app has stayed
+healthy for 30 seconds, or its `watchdog_grace` if longer), a recovery
+that comes during the deploy is told once the deploy has ended,
+whatever it came to, and a loop that begins and has recovered within
+one deploy is not told. The events motel reports
+itself, and when each resolves, are in DESIGN-notify.md's
 [Events](../notify/DESIGN-notify.md#events) table.
 
 ### What each channel kind shows

@@ -8,6 +8,7 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"syscall"
@@ -35,6 +36,12 @@ func (p *recPoster) postAlerts(_ context.Context, a []amAlert) error {
 	}
 	p.posts = append(p.posts, a)
 	return nil
+}
+
+func (p *recPoster) setErr(err error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.err = err
 }
 
 func (p *recPoster) take() []amAlert {
@@ -434,6 +441,588 @@ func TestMute(t *testing.T) {
 	}
 	if len(te.lines("monitor: event")) != 0 {
 		t.Fatal("the mute is not an event")
+	}
+}
+
+// resolves are the posts that end a watchdog_throttled alert, in order.
+func resolves(as []amAlert) []amAlert {
+	var out []amAlert
+	for _, a := range as {
+		if a.Labels["alertname"] == "watchdog_throttled" && !a.EndsAt.IsZero() {
+			out = append(out, a)
+		}
+	}
+	return out
+}
+
+// TestRecoveryHeldUnderTheMute: Alertmanager 0.28.1 mutes a resolve
+// under the inhibit rule as it does a firing alert, then drops it as
+// sent, so a watchdog_* recovery whose hold ends while its app's deploy
+// runs is held, kept alive, and posted once right behind the mute's end
+// (the finding's first scenario: a second deploy inside the hold).
+func TestRecoveryHeldUnderTheMute(t *testing.T) {
+	te := newTestEngine(t)
+	te.report(watchdog(true))
+	te.drain()
+	te.report(watchdog(false)) // a deploy's success ended the loop
+	te.advance(10 * time.Second)
+	te.mute("blog", true) // the next deploy, inside the hold
+	te.drain()
+	// About three minutes under the mute: never resolved, and kept alive
+	// by the re-posts, so resolve_timeout does not end it unsaid.
+	reposts := 0
+	for range 6 {
+		te.advance(31 * time.Second)
+		te.tick()
+		got := te.drain()
+		if r := resolves(got); len(r) != 0 {
+			t.Fatalf("resolved under the mute: %+v", r)
+		}
+		reposts += countAlert(got, "watchdog_throttled")
+	}
+	if reposts < 2 {
+		t.Fatalf("re-posts while held = %d", reposts)
+	}
+	te.mute("blog", false)
+	got := te.drain()
+	if len(got) != 2 || got[0].Labels["alertname"] != "deploy_in_progress" || !got[0].EndsAt.Equal(te.at) ||
+		len(resolves(got[1:])) != 1 || !got[1].EndsAt.Equal(te.at) {
+		t.Fatalf("at the mute's end, want its end and then the resolve: %+v", got)
+	}
+	var states []string
+	for _, l := range te.lines("monitor: event") {
+		states = append(states, l.ContextMap()["state"].(string))
+	}
+	if strings.Join(states, ",") != "firing,resolved" {
+		t.Fatalf("journal states = %v", states)
+	}
+	te.advance(time.Minute)
+	te.tick()
+	if n := countAlert(te.drain(), "watchdog_throttled"); n != 0 || len(te.states) != 0 {
+		t.Fatalf("after the resolve: %d posts, table %v", n, te.states)
+	}
+}
+
+// The second scenario: the recovery's hold ends while a deploy that
+// fails still runs; its end, whatever it came to, lets it go.
+func TestRecoveryHoldEndsInsideADeploy(t *testing.T) {
+	te := newTestEngine(t)
+	te.report(watchdog(true))
+	te.mute("blog", true)
+	te.report(watchdog(false)) // the old instance recovered
+	te.drain()
+	te.advance(31 * time.Second)
+	te.tick()
+	if r := resolves(te.drain()); len(r) != 0 {
+		t.Fatalf("resolved under the mute: %+v", r)
+	}
+	te.report(deployFailed())
+	te.mute("blog", false)
+	if r := resolves(te.drain()); len(r) != 1 {
+		t.Fatalf("resolves at the mute's end = %+v", r)
+	}
+}
+
+// Fired again before the mute ends: no recovery was, so none is posted
+// at its end, and the alert stays firing.
+func TestRecoveryHeldUnderTheMuteThenFiringAgain(t *testing.T) {
+	te := newTestEngine(t)
+	te.report(watchdog(true))
+	te.report(watchdog(false))
+	te.mute("blog", true)
+	te.advance(31 * time.Second)
+	te.tick()
+	te.report(watchdog(true))
+	te.mute("blog", false)
+	te.advance(time.Minute)
+	te.tick()
+	if r := resolves(te.drain()); len(r) != 0 {
+		t.Fatalf("a recovery was posted over the alert firing again: %+v", r)
+	}
+	if st := te.states[watchdog(true).key()]; st == nil || !st.firing {
+		t.Fatalf("the key: %+v", st)
+	}
+}
+
+// Only what the inhibit rule mutes is held: another of the app's states
+// (relaunch_refused is not watchdog_*) and another app's watchdog
+// resolve after their hold, as before.
+func TestMuteHoldsOnlyItsAppsWatchdog(t *testing.T) {
+	te := newTestEngine(t)
+	refused := watchdog(true)
+	refused.Name = "relaunch_refused"
+	shop := watchdog(true)
+	shop.App = "shop"
+	te.report(refused)
+	te.report(shop)
+	te.mute("blog", true)
+	refused.Firing, shop.Firing = false, false
+	te.report(refused)
+	te.report(shop)
+	te.drain()
+	te.advance(31 * time.Second)
+	te.tick()
+	ended := map[string]bool{}
+	for _, a := range te.drain() {
+		if a.EndsAt.Equal(te.at) {
+			ended[a.Labels["key"]] = true
+		}
+	}
+	if !ended[refused.key()] || !ended[shop.key()] || len(ended) != 2 {
+		t.Fatalf("ended under blog's mute: %v", ended)
+	}
+}
+
+// The mute's end posts only what it held: a producer's state of the app
+// whose hold has passed is the tick's, which writes external.json after
+// it (persistExternal).
+func TestMuteEndLeavesOtherStatesToTheTick(t *testing.T) {
+	te := newTestEngine(t)
+	ext := Event{Name: "queue_stuck", Kind: kindState, Severity: SeverityWarning, App: "blog", Source: sourceExternal + "cron", Summary: "x", Firing: true}
+	te.report(ext)
+	te.mute("blog", true)
+	ext.Firing = false
+	te.report(ext)
+	te.drain()
+	te.advance(31 * time.Second) // its hold passed between two ticks
+	te.mute("blog", false)
+	for _, a := range te.drain() {
+		if a.Labels["alertname"] == "queue_stuck" {
+			t.Fatalf("the mute's end posted another state: %+v", a)
+		}
+	}
+	te.tick()
+	if got := te.drain(); countAlert(got, "queue_stuck") != 1 {
+		t.Fatalf("the tick's resolve = %+v", got)
+	}
+}
+
+// Alertmanager judges the mute at the group's flush, up to a minute
+// after the post: a resolve posted just before a deploy starts is
+// swallowed as one posted under it, so the mute's end posts it again.
+func TestResolveJustBeforeTheMuteIsPostedAgain(t *testing.T) {
+	te := newTestEngine(t)
+	te.report(watchdog(true))
+	te.report(watchdog(false))
+	te.advance(31 * time.Second)
+	te.tick()
+	first := resolves(te.drain())
+	if len(first) != 1 {
+		t.Fatalf("the resolve = %+v", first)
+	}
+	te.advance(20 * time.Second) // before the group's next flush
+	te.mute("blog", true)
+	for range 6 {
+		te.advance(31 * time.Second)
+		te.tick()
+		if r := resolves(te.drain()); len(r) != 0 {
+			t.Fatalf("posted again under the mute: %+v", r)
+		}
+	}
+	te.mute("blog", false)
+	got := te.drain()
+	if len(got) != 2 || got[0].Labels["alertname"] != "deploy_in_progress" || len(resolves(got[1:])) != 1 || !got[1].EndsAt.Equal(te.at) ||
+		!got[1].StartsAt.Equal(first[0].StartsAt) {
+		t.Fatalf("at the mute's end, want its end and the resolve again, the alert's startsAt kept: %+v", got)
+	}
+	// Once, and no journal line: the event was told at the first post.
+	if l := te.lines("monitor: event"); len(l) != 2 {
+		t.Fatalf("journal = %+v", l)
+	}
+	te.advance(endWindow)
+	te.tick()
+	if r := resolves(te.drain()); len(r) != 0 || len(te.ends) != 0 {
+		t.Fatalf("after the window: %+v, ends %v", r, te.ends)
+	}
+}
+
+// Two deploys in a row: the recovery the first held is posted at its
+// end, and the second's mute comes before the group's flush; its end
+// posts the resolve again.
+func TestHeldRecoveryThenASecondDeploy(t *testing.T) {
+	te := newTestEngine(t)
+	te.report(watchdog(true))
+	te.report(watchdog(false))
+	te.mute("blog", true)
+	te.advance(31 * time.Second)
+	te.tick()
+	te.mute("blog", false)
+	if r := resolves(te.drain()); len(r) != 1 {
+		t.Fatalf("the held resolve = %+v", r)
+	}
+	te.advance(10 * time.Second)
+	te.mute("blog", true)
+	te.advance(40 * time.Second)
+	te.mute("blog", false)
+	if r := resolves(te.drain()); len(r) != 1 || !r[0].EndsAt.Equal(te.at) {
+		t.Fatalf("at the second mute's end = %+v", r)
+	}
+}
+
+// Alertmanager not answering for longer than endWindow, inside the
+// queue's retry limit: the window counts from when it takes the resolve,
+// so a deploy that starts right after the late delivery still has it to
+// post again at its end (Copilot round 1).
+func TestResolveDeliveredLateIsStillPostedAgain(t *testing.T) {
+	te := newTestEngine(t)
+	te.report(watchdog(true))
+	te.report(watchdog(false))
+	te.drain()
+	te.p.setErr(&netErr{syscall.ECONNREFUSED})
+	te.advance(31 * time.Second)
+	te.tick() // the resolve is queued
+	te.drain()
+	for range 6 { // three minutes refused
+		te.advance(30 * time.Second)
+		te.tick()
+		te.drain()
+	}
+	te.p.setErr(nil)
+	if r := resolves(te.drain()); len(r) != 1 {
+		t.Fatalf("the late delivery = %+v", r)
+	}
+	te.advance(5 * time.Second)
+	te.mute("blog", true)
+	te.advance(time.Minute)
+	te.tick()
+	te.drain()
+	te.mute("blog", false)
+	if r := resolves(te.drain()); len(r) != 1 || !r[0].EndsAt.Equal(te.at) {
+		t.Fatalf("at the mute's end = %+v", r)
+	}
+}
+
+// A resolve the queue gives up on was never delivered: it leaves nothing
+// a later mute's end would post.
+func TestResolveGivenUpIsNotPostedAgain(t *testing.T) {
+	te := newTestEngine(t)
+	te.report(watchdog(true))
+	te.report(watchdog(false))
+	te.drain()
+	te.p.setErr(&netErr{syscall.ECONNREFUSED})
+	te.advance(31 * time.Second)
+	te.tick()
+	te.drain()
+	te.mute("blog", true) // inside the window: it would be marked
+	for range 11 {
+		te.advance(30 * time.Second)
+		te.tick()
+		te.drain()
+	}
+	if n := len(te.ends); n != 0 {
+		t.Fatalf("a given-up resolve left %d entries", n)
+	}
+	te.p.setErr(nil)
+	te.drain()
+	te.mute("blog", false)
+	if r := resolves(te.drain()); len(r) != 0 {
+		t.Fatalf("a given-up resolve posted again: %+v", r)
+	}
+}
+
+// A resolve and a mute's end's post of it, both waiting on Alertmanager
+// (down through a deploy), share one entry: it stands while either
+// waits, whichever is taken or given up first (the review pass of
+// Copilot round 1's fix).
+func TestResolveWithTwoPostsWaiting(t *testing.T) {
+	down := &netErr{syscall.ECONNREFUSED}
+	queueResolveThroughADeploy := func(t *testing.T) *testEngine {
+		te := newTestEngine(t)
+		te.report(watchdog(true))
+		te.report(watchdog(false))
+		te.drain()
+		te.p.setErr(down)
+		te.advance(31 * time.Second)
+		te.tick() // the resolve is queued
+		te.drain()
+		te.advance(10 * time.Second)
+		te.mute("blog", true)
+		te.advance(80 * time.Second)
+		te.tick()
+		te.mute("blog", false) // its post of the resolve is queued too
+		te.drain()
+		return te
+	}
+	againAtTheNextMute := func(t *testing.T, te *testEngine) {
+		t.Helper()
+		te.p.setErr(nil)
+		te.drain()
+		te.advance(5 * time.Second)
+		te.mute("blog", true)
+		te.mute("blog", false)
+		if r := resolves(te.drain()); len(r) != 1 {
+			t.Fatalf("at the next mute's end = %+v", r)
+		}
+	}
+	t.Run("the first taken, the second waiting past the window", func(t *testing.T) {
+		te := queueResolveThroughADeploy(t)
+		te.p.setErr(nil)
+		for taken := false; !taken; { // up to the resolve, and no further
+			if again, _ := te.attempt(context.Background()); !again {
+				t.Fatal("the resolve was not taken")
+			}
+			taken = len(resolves(te.p.take())) > 0
+		}
+		te.p.setErr(down)
+		for range 6 {
+			te.advance(30 * time.Second)
+			te.tick()
+			te.drain()
+		}
+		againAtTheNextMute(t, te)
+	})
+	t.Run("the first given up, the second taken", func(t *testing.T) {
+		te := queueResolveThroughADeploy(t)
+		for range 8 { // past the resolve's five minutes, inside the second's
+			te.advance(30 * time.Second)
+			te.tick()
+			te.drain()
+		}
+		if len(te.ends) != 1 {
+			t.Fatalf("the entry went with the first post: %v", te.ends)
+		}
+		againAtTheNextMute(t, te)
+	})
+}
+
+// fillingPoster fills the engine's queue while a post is in flight, so a
+// full queue drops that post as its oldest, then answers the post as
+// taken.
+type fillingPoster struct {
+	recPoster
+	e    *engine
+	done bool
+}
+
+func (p *fillingPoster) postAlerts(ctx context.Context, a []amAlert) error {
+	if !p.done {
+		p.done = true
+		p.e.mu.Lock()
+		for range queueMax {
+			p.e.enqueue(&pending{key: "filler", first: p.e.now()})
+		}
+		p.e.mu.Unlock()
+	}
+	return p.recPoster.postAlerts(ctx, a)
+}
+
+// A resolve the full queue drops while Alertmanager is taking it was
+// taken all the same: a mute right after still has it to post again.
+func TestResolveDroppedWhilePostingIsKept(t *testing.T) {
+	te := newTestEngine(t)
+	te.report(watchdog(true))
+	te.report(watchdog(false))
+	te.drain()
+	te.advance(31 * time.Second)
+	te.reconcile(watchdog(false).key(), te.states[watchdog(false).key()], te.at) // the resolve alone in the queue
+	fp := &fillingPoster{e: te.engine}
+	te.post = fp
+	te.attempt(context.Background())
+	if r := resolves(fp.take()); len(r) != 1 {
+		t.Fatalf("the resolve was not posted: %+v", r)
+	}
+	te.mu.Lock()
+	te.queue = nil
+	te.mu.Unlock()
+	te.post = te.p
+	te.mute("blog", true)
+	te.mute("blog", false)
+	if r := resolves(te.drain()); len(r) != 1 {
+		t.Fatalf("at the mute's end = %+v", r)
+	}
+}
+
+// A re-fire the flapping guard holds unposted is not the key's alert in
+// Alertmanager: the resolve the mute swallowed is still the last thing
+// it was told, so the mute's end posts it again (independent review of
+// #496, item 1).
+func TestMuteEndPostsAgainOverAnUnpostedRefire(t *testing.T) {
+	te := newTestEngine(t)
+	for range 2 { // F1, R1, F2, R2: the bucket's four
+		te.report(watchdog(true))
+		te.report(watchdog(false))
+		te.advance(31 * time.Second)
+		te.tick()
+	}
+	if r := resolves(te.drain()); len(r) != 2 {
+		t.Fatalf("R1 and R2 = %+v", r)
+	}
+	te.advance(20 * time.Second)
+	te.mute("blog", true)     // its flush swallows R2
+	te.report(watchdog(true)) // F3: held, the bucket is empty
+	if st := te.states[watchdog(true).key()]; st == nil || st.posted {
+		t.Fatalf("F3 = %+v, want held unposted", st)
+	}
+	te.drain()
+	te.advance(time.Minute)
+	te.mute("blog", false) // the deploy failed
+	if r := resolves(te.drain()); len(r) != 1 {
+		t.Fatalf("at the mute's end = %+v, want R2 again", r)
+	}
+	te.report(watchdog(false)) // healthy: the unposted state goes
+	te.advance(31 * time.Second)
+	te.tick()
+	if got := te.drain(); countAlert(got, "watchdog_throttled") != 0 {
+		t.Fatalf("after the unposted state cleared: %+v", got)
+	}
+}
+
+// The window, judged by mute itself: a resolve Alertmanager took longer
+// than endWindow before the mute, with no tick between to sweep it, is
+// not marked, and its end posts nothing.
+func TestMuteMarksNoResolvePastTheWindow(t *testing.T) {
+	te := newTestEngine(t)
+	te.report(watchdog(true))
+	te.report(watchdog(false))
+	te.advance(31 * time.Second)
+	te.tick()
+	te.drain()
+	te.advance(endWindow)
+	te.mute("blog", true)
+	te.mute("blog", false)
+	if r := resolves(te.drain()); len(r) != 0 {
+		t.Fatalf("posted again past the window: %+v", r)
+	}
+}
+
+// An older resolve of the key given up after a newer one replaced its
+// entry leaves the newer entry alone (endPosted's identity check).
+func TestOldResolveGivenUpKeepsTheNewEntry(t *testing.T) {
+	te := newTestEngine(t)
+	te.report(watchdog(true))
+	te.drain()
+	te.p.setErr(&netErr{syscall.ECONNREFUSED})
+	te.report(watchdog(false))
+	te.advance(31 * time.Second)
+	te.tick() // R1 queued
+	te.report(watchdog(true))
+	te.report(watchdog(false))
+	te.advance(31 * time.Second)
+	te.tick() // R2 queued: its entry replaces R1's
+	key := watchdog(true).key()
+	newer := te.ends[key]
+	for range 9 { // R1 given up at five minutes, R2 not yet
+		te.advance(30 * time.Second)
+		te.tick()
+		te.drain()
+	}
+	if got := te.ends[key]; got != newer || got.queued != 1 {
+		t.Fatalf("after R1's give-up: %+v, want R2's entry, still queued", got)
+	}
+}
+
+// What the mute's end does not post again: a resolve whose key fired
+// since (that alert is the key's now), and one posted longer than
+// endWindow before the mute, whose flush has come.
+func TestMuteEndPostsNoStaleResolve(t *testing.T) {
+	te := newTestEngine(t)
+	te.report(watchdog(true))
+	te.report(watchdog(false))
+	te.advance(31 * time.Second)
+	te.tick()
+	te.mute("blog", true)
+	te.report(watchdog(true)) // fired again under the mute
+	te.drain()
+	te.mute("blog", false)
+	if r := resolves(te.drain()); len(r) != 0 {
+		t.Fatalf("an old resolve over the alert firing again: %+v", r)
+	}
+
+	te = newTestEngine(t)
+	te.report(watchdog(true))
+	te.report(watchdog(false))
+	te.advance(31 * time.Second)
+	te.tick()
+	te.drain()
+	te.advance(endWindow)
+	te.tick()
+	te.mute("blog", true)
+	te.mute("blog", false)
+	if r := resolves(te.drain()); len(r) != 0 {
+		t.Fatalf("a resolve its flush had told, posted again: %+v", r)
+	}
+}
+
+// A reload that drops an app whose deploy runs ends its mute before it
+// resolves the app's keys: under the mute the resolve would never be
+// sent.
+func TestPruneEndsTheMuteBeforeTheResolve(t *testing.T) {
+	te := newTestEngine(t)
+	te.report(watchdog(true))
+	te.mute("blog", true)
+	te.drain()
+	te.prune([]string{"shop"})
+	got := te.drain()
+	if len(got) != 2 || got[0].Labels["alertname"] != "deploy_in_progress" || got[0].EndsAt.IsZero() || len(resolves(got[1:])) != 1 {
+		t.Fatalf("want the mute's end, then the resolve: %+v", got)
+	}
+}
+
+// A restart mid-deploy: the deploy ended with the process, and its mute
+// lives on in Alertmanager to resolve_timeout. The new process's first
+// configure ends every app's, before anything it posts, so a recovery
+// it tells (a standing one's, after its hold) is not sent under it; so
+// does a configure after a reload took the block out, which forgot the
+// mutes, and a reload's does not.
+func TestFirstConfigureEndsTheLastProcessMutes(t *testing.T) {
+	useStateDir(t, t.TempDir())
+	useSocket(t, filepath.Join(t.TempDir(), "absent.sock"))
+	e := newEngine()
+	a := &App{BackupRecord: "off", cfg: &resolved{apps: []string{"blog", "shop"}}, logger: zap.NewNop()}
+	p := &recPoster{}
+	e.configure(a, p, nil, zap.NewNop())
+	var first []amAlert
+	for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); time.Sleep(10 * time.Millisecond) {
+		p.mu.Lock()
+		if len(p.posts) > 0 {
+			first = p.posts[0]
+		}
+		p.mu.Unlock()
+		if first != nil {
+			break
+		}
+	}
+	// Wait for the goroutine to have taken the post off the queue.
+	for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); time.Sleep(10 * time.Millisecond) {
+		e.mu.Lock()
+		queued := slices.ContainsFunc(e.queue, func(q *pending) bool { return q.key == "mute/" })
+		e.mu.Unlock()
+		if !queued {
+			break
+		}
+	}
+	ended := map[string]bool{}
+	for _, m := range first {
+		if m.Labels["alertname"] == "deploy_in_progress" && !m.EndsAt.IsZero() && m.EndsAt.Equal(m.StartsAt) {
+			ended[m.Labels["app"]] = true
+		}
+	}
+	if len(first) != 2 || !ended["blog"] || !ended["shop"] {
+		t.Fatalf("the first post = %+v", first)
+	}
+	// A second config (a reload) ends none: a deploy running now is this
+	// engine's. Its Alertmanager refuses, so what it queued stays.
+	e.mute("blog", true)
+	down := &recPoster{err: &netErr{syscall.ECONNREFUSED}}
+	b := &App{BackupRecord: "off", cfg: &resolved{apps: []string{"blog", "shop"}}, logger: zap.NewNop()}
+	e.configure(b, down, nil, zap.NewNop())
+	mutesEnded := func() bool {
+		e.mu.Lock()
+		defer e.mu.Unlock()
+		return slices.ContainsFunc(e.queue, func(q *pending) bool { return q.key == "mute/" })
+	}
+	if mutesEnded() {
+		t.Fatal("a reload ended the mutes")
+	}
+	// The block taken out by a reload (the last config's Stop) forgets
+	// blog's mute with the table; one that brings it back ends it.
+	e.release(b)
+	e.release(a)
+	c := &App{BackupRecord: "off", cfg: &resolved{apps: []string{"blog"}}, logger: zap.NewNop()}
+	e.configure(c, down, nil, zap.NewNop())
+	defer e.release(c)
+	if !mutesEnded() {
+		t.Fatal("the block brought back ended no mute")
 	}
 }
 

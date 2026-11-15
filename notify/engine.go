@@ -166,6 +166,9 @@ type pending struct {
 	// is a `monitor: delivery failed` line. Re-posts, the heartbeat and
 	// the mute fail at debug.
 	journal bool
+	// end is the watchdog_* resolve the post carries (toldEnd): stamped
+	// when Alertmanager takes it, forgotten if it is given up.
+	end *toldEnd
 }
 
 // expired says an alert of the post had an endsAt ahead when it was
@@ -202,8 +205,11 @@ type engine struct {
 	deploySucceeded bool
 	active          *App // the config whose Start configured it; nil when none is running
 
-	states        map[string]*stateAlert
-	mutes         map[string]time.Time
+	states map[string]*stateAlert
+	mutes  map[string]time.Time
+	// ends are the watchdog_* resolves posted in the last endWindow, and
+	// those a mute has stood over since (toldEnd).
+	ends          map[string]*toldEnd
 	buckets       map[string]*bucket
 	lastHeartbeat time.Time
 	// lastOccurrence is the last one-shot's occurred_at (occurrence).
@@ -255,6 +261,7 @@ func newEngine() *engine {
 		logger:   zap.NewNop(),
 		states:   map[string]*stateAlert{},
 		mutes:    map[string]time.Time{},
+		ends:     map[string]*toldEnd{},
 		buckets:  map[string]*bucket{},
 		untold:   map[string]*untold{},
 		fail:     failWatch{started: time.Now()},
@@ -404,7 +411,7 @@ func (e *engine) reconcile(key string, st *stateAlert, now time.Time) {
 		e.postState(key, st, now, time.Time{}, true)
 	case !st.firing && !st.posted:
 		delete(e.states, key)
-	case !st.firing && now.Sub(st.clearSince) >= st.hold:
+	case !st.firing && now.Sub(st.clearSince) >= st.hold && !e.muted(st.ev):
 		if !e.bucketFor(key).take(now) {
 			if !st.heldLogged {
 				e.journal(st.ev, "resolved", zap.String("held", "more than four transitions an hour for this key; posted when the bucket allows"))
@@ -414,13 +421,62 @@ func (e *engine) reconcile(key string, st *stateAlert, now time.Time) {
 			return
 		}
 		e.journal(st.ev, "resolved")
-		e.postState(key, st, now, now, true)
+		p := e.postState(key, st, now, now, true)
 		delete(e.states, key)
+		if muteTarget(st.ev) {
+			p.end = &toldEnd{ev: st.ev, startsAt: st.startsAt, queued: 1}
+			e.ends[key] = p.end
+		}
 	default:
-		// Firing and told, or cleared and held: keep it alive.
+		// Firing and told, or cleared and held (by its hold, or by the
+		// mute): keep it alive.
 		e.repost(key, st, now)
 	}
 }
+
+// muteTarget says the deploy mute's inhibit rule (render.go) takes ev:
+// a watchdog_* alert of an app.
+func muteTarget(ev Event) bool { return ev.App != "" && strings.HasPrefix(ev.Name, "watchdog_") }
+
+// muted says the app's deploy mute stands over ev. Alertmanager mutes a
+// resolve under it as it does a firing alert, then drops it as sent, so
+// the recovery is held until the mute has ended (measured on 0.28.1,
+// DESIGN-notify.md "Behaviour"). With mu held.
+func (e *engine) muted(ev Event) bool {
+	_, ok := e.mutes[ev.App]
+	return ok && muteTarget(ev)
+}
+
+// toldEnd is a watchdog_* resolve the engine posted. Alertmanager judges
+// the mute when the alert's group flushes, up to a group_interval after
+// it takes the post, so a deploy that starts in that time swallows it
+// too: the mute marks it, and its end posts it again. A resolve that was
+// sent before is not sent twice (Alertmanager's notification log:
+// measured). One whose every post the queue gave up on is forgotten, as
+// a failed delivery: Alertmanager never had it.
+type toldEnd struct {
+	ev       Event
+	startsAt time.Time
+	at       time.Time // Alertmanager last took a post of it; zero: none yet
+	queued   int       // its posts waiting in the queue (the resolve, a mute's end's)
+	muted    bool      // a mute of its app began while a post waited or within endWindow of at
+}
+
+// endPosted settles a post of t that Alertmanager took (took) or that
+// the queue gave up on. With mu held.
+func (e *engine) endPosted(key string, t *toldEnd, took bool) {
+	t.queued--
+	if took {
+		t.at = e.now()
+	}
+	if t.queued == 0 && t.at.IsZero() && e.ends[key] == t {
+		delete(e.ends, key)
+	}
+}
+
+// endWindow is how long a resolve Alertmanager took may yet meet a mute:
+// twice the state routes' group_interval (stateGroupInterval, 1 m).
+const endWindow = 2 * time.Minute
 
 func (e *engine) repost(key string, st *stateAlert, now time.Time) {
 	if now.Sub(st.lastPost) >= repostEvery {
@@ -428,9 +484,11 @@ func (e *engine) repost(key string, st *stateAlert, now time.Time) {
 	}
 }
 
-func (e *engine) postState(key string, st *stateAlert, now, endsAt time.Time, journal bool) {
+func (e *engine) postState(key string, st *stateAlert, now, endsAt time.Time, journal bool) *pending {
 	st.lastPost = now
-	e.enqueue(&pending{key: key, alerts: []amAlert{stateAlertFor(st.ev, st.startsAt, endsAt)}, first: now, journal: journal})
+	p := &pending{key: key, alerts: []amAlert{stateAlertFor(st.ev, st.startsAt, endsAt)}, first: now, journal: journal}
+	e.enqueue(p)
+	return p
 }
 
 // mute posts deploy_in_progress for an app while its deploy runs; the
@@ -445,13 +503,44 @@ func (e *engine) mute(app string, on bool) {
 	if on {
 		e.mutes[app] = now
 		e.enqueue(&pending{key: "mute/" + app, alerts: []amAlert{muteAlert(app, now, time.Time{})}, first: now})
+		for _, t := range e.ends {
+			if t.ev.App == app && (t.queued > 0 || !t.at.IsZero() && now.Sub(t.at) < endWindow) {
+				t.muted = true
+			}
+		}
 		return
 	}
 	if _, ok := e.mutes[app]; !ok {
 		return
 	}
+	e.endMute(app, now)
+}
+
+// endMute ends app's mute and posts right behind its end what the mute
+// held or may have swallowed, before a flush of the group could tell
+// the alert it ends: each resolve it stood over (toldEnd), unless its
+// key has fired since, and each recovery it held. With mu held.
+func (e *engine) endMute(app string, now time.Time) {
 	delete(e.mutes, app)
 	e.enqueue(&pending{key: "mute/" + app, alerts: []amAlert{muteAlert(app, now, now)}, first: now})
+	for key, t := range e.ends {
+		switch {
+		case t.ev.App != app || !t.muted:
+		case e.states[key] != nil && e.states[key].posted:
+			// Fired since, and told: that alert is the key's now. One the
+			// flapping guard holds unposted is not, and posts after this.
+			delete(e.ends, key)
+		default:
+			e.enqueue(&pending{key: key, alerts: []amAlert{stateAlertFor(t.ev, t.startsAt, now)}, first: now, end: t})
+			t.queued++
+			t.muted = false
+		}
+	}
+	for key, st := range e.states {
+		if st.ev.App == app && !st.firing && muteTarget(st.ev) {
+			e.reconcile(key, st, now)
+		}
+	}
 }
 
 // tick is the engine's minute: the heartbeat, re-posts, held
@@ -482,6 +571,11 @@ func (e *engine) tick() {
 		e.reconcile(key, st, now)
 	}
 	e.persistExternal() // a recovery's hold ended
+	for key, t := range e.ends {
+		if t.queued == 0 && !t.muted && now.Sub(t.at) >= endWindow {
+			delete(e.ends, key)
+		}
+	}
 	for app, at := range e.mutes {
 		if now.Sub(at) >= repostEvery {
 			e.mutes[app] = now
@@ -615,6 +709,9 @@ func (e *engine) enqueue(p *pending) {
 
 func (e *engine) gaveUp(p *pending, err error) {
 	e.failures.inc()
+	if p.end != nil {
+		e.endPosted(p.key, p.end, false)
+	}
 	log := e.logger.Debug
 	if p.journal {
 		log = e.logger.Error
@@ -645,13 +742,24 @@ func (e *engine) attempt(ctx context.Context) (again bool, wait time.Duration) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	if len(e.queue) == 0 || e.queue[0] != p {
-		return true, 0 // dropped while posting
+		// Dropped while posting (a full queue's oldest, given up): a
+		// resolve Alertmanager took all the same may yet meet a mute.
+		if err == nil && p.end != nil && e.active != nil {
+			p.end.at = e.now()
+			if e.ends[p.key] == nil {
+				e.ends[p.key] = p.end
+			}
+		}
+		return true, 0
 	}
 	p.attempt++
 	var refused *amStatusError
 	switch {
 	case err == nil:
 		e.queue = e.queue[1:]
+		if p.end != nil {
+			e.endPosted(p.key, p.end, true)
+		}
 		return true, 0
 	case errors.As(err, &refused) && refused.code < 500, e.now().Sub(p.first) >= e.retryFor:
 		// Refused (4xx) is final; retried for long enough is too. A 5xx
@@ -774,6 +882,23 @@ func (e *engine) configure(a *App, post poster, known []string, logger *zap.Logg
 	if len(e.live) == 1 {
 		e.settle(a)
 	}
+	if !e.running && a.cfg != nil {
+		// The engine starts with no mutes: at a process's start a deploy
+		// the last process ran ended with it, and a reload that took the
+		// block out forgot them with the table (release). Alertmanager
+		// keeps each to resolve_timeout, where it would swallow a
+		// watchdog_* recovery this engine posts (muted): the mute of every
+		// app the config runs is ended, in one post before any other. The
+		// end of a mute that is not there reaches no one.
+		now := e.now()
+		ends := make([]amAlert, 0, len(a.cfg.apps))
+		for _, app := range a.cfg.apps {
+			ends = append(ends, muteAlert(app, now, now))
+		}
+		if len(ends) > 0 {
+			e.enqueue(&pending{key: "mute/", alerts: ends, first: now})
+		}
+	}
 	if e.externalPath == "" && a.cfg != nil {
 		e.restoreExternal(a.cfg.apps)
 	}
@@ -834,6 +959,13 @@ func (e *engine) settle(a *App) {
 // end of it. Called with mu held.
 func (e *engine) prune(apps []string) {
 	now := e.now()
+	// The mute first, so that a resolve of its app's watchdog_* follows
+	// its end rather than going under it (muted).
+	for app := range e.mutes {
+		if !slices.Contains(apps, app) {
+			e.endMute(app, now)
+		}
+	}
 	for key, st := range e.states {
 		ev := st.ev
 		gone := ev.App != "" && !slices.Contains(apps, ev.App) || e.unread(ev)
@@ -850,12 +982,6 @@ func (e *engine) prune(apps []string) {
 	// The pollers' own memory is their goroutine's (poll runs outside
 	// mu): a clear they report later for a key pruned here finds no
 	// state, and is nothing.
-	for app := range e.mutes {
-		if !slices.Contains(apps, app) {
-			delete(e.mutes, app)
-			e.enqueue(&pending{key: "mute/" + app, alerts: []amAlert{muteAlert(app, now, now)}, first: now})
-		}
-	}
 }
 
 // unread says the settled config does not read ev's source: the backup
@@ -903,6 +1029,7 @@ func (e *engine) release(a *App) {
 	// brings the block back. Alertmanager ends what it was told at
 	// resolve_timeout.
 	e.states, e.mutes, e.buckets = map[string]*stateAlert{}, map[string]time.Time{}, map[string]*bucket{}
+	e.ends = map[string]*toldEnd{}
 	e.untold = map[string]*untold{}
 	// The producers' states are kept on disk at a shutdown, for the next
 	// process; a reload's are forgotten below with the render.
