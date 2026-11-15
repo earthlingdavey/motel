@@ -12,6 +12,7 @@ import (
 	"io"
 	"os"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/smallhoursorg/motel/motelctl/internal/local"
@@ -98,12 +99,15 @@ func (k Keygen) Sign(ctx context.Context, key Key, namespace string, message []b
 		}
 		// With no terminal, ssh-keygen asks a key file's passphrase on
 		// stdin, reads the token's claims as it, and fails. Told by
-		// three things together: it failed, the key file says it is
-		// encrypted, and no terminal opens. (A key the agent holds is
-		// signed by the agent, and never gets here.)
-		if priv := strings.TrimSuffix(key.Path, ".pub"); priv != "" && encryptedKeyFile(priv) && !k.terminal() {
-			shown := strings.TrimSuffix(key.Shown, ".pub")
-			return nil, fmt.Errorf("%s is protected by a passphrase, and with no terminal to ask it on, ssh-keygen cannot read it: add the key to the agent (ssh-add %s) and run motelctl again", termtext.From(shown), termtext.From(shown))
+		// three things together: it failed signing from a private key
+		// file (Path is the .pub when the agent holds the key, and an
+		// agent's failure is another matter: a confirmation refused, a
+		// touch timed out), that file's header says it is encrypted,
+		// and no terminal opens.
+		if key.Path != "" && !strings.HasSuffix(key.Path, ".pub") && encryptedKeyFile(key.Path) && !k.terminal() {
+			// ssh-add takes the private key: Shown may name its .pub.
+			shown := termtext.From(strings.TrimSuffix(key.Shown, ".pub"))
+			return nil, fmt.Errorf("%s is protected by a passphrase, and with no terminal to ask it on, ssh-keygen cannot read it: add the key to the agent (ssh-add %s) and run motelctl again", shown, shown)
 		}
 		return nil, fmt.Errorf("ssh-keygen could not sign with %s: %s", key.Shown, termtext.From(last))
 	}
@@ -122,16 +126,25 @@ func (k Keygen) terminal() bool {
 	return true
 }
 
+// maxKeyFile bounds what is read of a private key file: a key's is a
+// few KiB at most.
+const maxKeyFile = 64 << 10
+
 // encryptedKeyFile says whether the private key file at path says it
 // is encrypted: an OpenSSH key whose cipher is not "none", or a PEM
-// key marked ENCRYPTED. Anything it cannot read is not said to be.
+// key marked ENCRYPTED. Only a regular file is read, opened without
+// blocking, so a FIFO at the path never holds the command; anything it
+// cannot read is not said to be.
 func encryptedKeyFile(path string) bool {
-	f, err := os.Open(path) //nolint:gosec // G304: the key the person named, which ssh-keygen was just given
+	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NONBLOCK, 0) //nolint:gosec // G304: the key the person named, which ssh-keygen was just given
 	if err != nil {
 		return false
 	}
 	defer func() { _ = f.Close() }()
-	b, err := io.ReadAll(io.LimitReader(f, 64<<10))
+	if st, err := f.Stat(); err != nil || !st.Mode().IsRegular() {
+		return false
+	}
+	b, err := io.ReadAll(io.LimitReader(f, maxKeyFile))
 	if err != nil {
 		return false
 	}

@@ -9,11 +9,14 @@ import (
 	"crypto/rand"
 	"crypto/sha512"
 	"encoding/base64"
+	"encoding/pem"
 	"errors"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -547,4 +550,77 @@ func TestEncryptedKeyFileForms(t *testing.T) {
 	if encryptedKeyFile(filepath.Join(dir, "none")) {
 		t.Error("a file that is not there")
 	}
+}
+
+// encryptedKeyFile reads at most 64 KiB, and only a regular file: a
+// FIFO at the path is not waited on.
+func TestEncryptedKeyFileBounds(t *testing.T) {
+	dir := t.TempDir()
+	block := func(pad int) []byte {
+		b := append([]byte("openssh-key-v1\x00\x00\x00\x00\x0aaes256-ctr"), make([]byte, pad)...)
+		return pem.EncodeToMemory(&pem.Block{Type: "OPENSSH PRIVATE KEY", Bytes: b})
+	}
+	small, big := filepath.Join(dir, "small"), filepath.Join(dir, "big")
+	write(t, small, string(block(100)))
+	write(t, big, string(block(maxKeyFile)))
+	if !encryptedKeyFile(small) || encryptedKeyFile(big) {
+		t.Errorf("small %v, past the bound %v: want true, false", encryptedKeyFile(small), encryptedKeyFile(big))
+	}
+	fifo := filepath.Join(dir, "fifo")
+	if err := syscall.Mkfifo(fifo, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan bool, 1)
+	go func() { done <- encryptedKeyFile(fifo) }()
+	select {
+	case got := <-done:
+		if got {
+			t.Error("a FIFO is said to be an encrypted key")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("reading a FIFO at the key's path blocked")
+	}
+}
+
+// The passphrase advice is for a private key file alone: a key whose
+// .pub is the path (the agent holds the private half) that fails to
+// sign, with an encrypted file beside it and no terminal, gets
+// ssh-keygen's own words. And with no Terminal set, the check is
+// whether /dev/tty opens.
+func TestPassphraseAdviceOnlyForAKeyFile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "id_ed25519")
+	write(t, path, string(pem.EncodeToMemory(&pem.Block{Type: "OPENSSH PRIVATE KEY", Bytes: []byte("openssh-key-v1\x00\x00\x00\x00\x0aaes256-ctr")})))
+	pk, err := ParsePublic(lineOf(newSigner(t, "ed25519")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	failing := failRun{}
+	for _, c := range []struct {
+		name, path string
+		advice     bool
+	}{
+		{"the private key file", path, true},
+		{"its .pub, the agent holding the key", path + ".pub", false},
+	} {
+		k := Key{Public: pk, Path: c.path, Shown: c.path, Source: SourceFlag}
+		_, err := Keygen{Run: failing, Terminal: func() bool { return false }}.Sign(context.Background(), k, Namespace, []byte("{}"))
+		if err == nil || strings.Contains(err.Error(), "ssh-add") != c.advice {
+			t.Errorf("%s: %v", c.name, err)
+		}
+	}
+	_, ttyErr := os.OpenFile("/dev/tty", os.O_RDWR, 0)
+	if got := (Keygen{}).terminal(); got != (ttyErr == nil) {
+		t.Errorf("terminal() %v, /dev/tty opens: %v", got, ttyErr == nil)
+	}
+}
+
+// failRun is ssh-keygen failing as it does on a wrong passphrase.
+type failRun struct{}
+
+func (failRun) Output(_ context.Context, c local.Cmd) ([]byte, error) {
+	if c.Stderr != nil {
+		_, _ = io.WriteString(c.Stderr, "Load key: incorrect passphrase supplied to decrypt private key\n")
+	}
+	return nil, errors.New("exit status 255")
 }
