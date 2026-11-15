@@ -36,6 +36,23 @@ type Credential interface {
 	Authorization(ctx context.Context) (string, error)
 }
 
+// versionHeader is the release motel stamps on every answer to a
+// verified token (liveswap.StampVersion); never on a 401.
+const versionHeader = "Motel-Version"
+
+// NewDeployToken takes MOTEL_TOKEN's value. A deploy token is one
+// header-safe word (a JWT is base64url and dots); a value with a
+// space, a line break or a control byte cannot be sent, and nothing is.
+// The value itself is never quoted back: it is a credential.
+func NewDeployToken(v string) (DeployToken, error) {
+	for i := 0; i < len(v); i++ {
+		if v[i] <= ' ' || v[i] >= 0x7f {
+			return "", &Failure{Exit: ExitUsage, Message: "MOTEL_TOKEN holds something that is not a token (a space, a line break, a control or non-ASCII byte): set it to the deploy token alone"}
+		}
+	}
+	return DeployToken(v), nil
+}
+
 // DeployToken is MOTEL_TOKEN: a deploy token, or an issuer's ID
 // token, sent as Bearer. With it the reads work against any motel
 // release, since a deployer of an app may read its status.
@@ -144,8 +161,10 @@ func (c *Client) Get(ctx context.Context, path string, query url.Values) (*Answe
 		case ans.Code == http.StatusUnauthorized:
 			return nil, c.refused(ans)
 		case ans.Code == http.StatusTooManyRequests:
+			// A wait past the cap, or none that reads, is not waited
+			// out: the command says to try later.
 			d, ok := retryAfter(ans.Header, c.Now())
-			if waited || !ok || d > maxRetryAfter {
+			if waited || !ok {
 				return nil, c.slowDown(d, ok)
 			}
 			waited = true
@@ -296,20 +315,29 @@ func (c *Client) slowDown(d time.Duration, ok bool) error {
 	return &Failure{Exit: ExitUnknown, Message: fmt.Sprintf("%s asked you to slow down; try again %s.", c.Box.Host, when)}
 }
 
-// retryAfter reads Retry-After, in seconds or as a date; never less
-// than one second.
+// retryAfter reads Retry-After, in seconds or as a date, and says
+// whether it is a wait motelctl makes: at least one second, at most
+// maxRetryAfter. The number is compared with the cap before it becomes
+// a duration, so no value can overflow into a short wait; a negative
+// one, one past the cap, or one that does not read is no wait.
 func retryAfter(h http.Header, now time.Time) (time.Duration, bool) {
 	v := h.Get("Retry-After")
-	if v == "" {
-		return 0, false
-	}
-	if n, err := strconv.Atoi(v); err == nil && n >= 0 {
+	capSecs := int64(maxRetryAfter / time.Second)
+	if n, err := strconv.ParseInt(v, 10, 64); err == nil {
+		if n < 0 || n > capSecs {
+			return 0, false
+		}
 		return max(time.Duration(n)*time.Second, time.Second), true
 	}
-	if t, err := http.ParseTime(v); err == nil {
-		return max(t.Sub(now).Round(time.Second), time.Second), true
+	t, err := http.ParseTime(v)
+	if err != nil {
+		return 0, false
 	}
-	return 0, false
+	d := t.Sub(now).Round(time.Second)
+	if d > maxRetryAfter {
+		return 0, false
+	}
+	return max(d, time.Second), true
 }
 
 // Read decodes a 200's body into v and returns nil, or says why the
@@ -333,6 +361,13 @@ func (c *Client) Read(ans *Answer, v any) error {
 		return &Failure{Exit: ExitForbidden, Message: fmt.Sprintf("%s does not allow this: %s", c.Box.Host, said), Body: ans.Body}
 	case http.StatusNotFound:
 		return &Failure{Exit: ExitNotFound, Message: fmt.Sprintf("%s: %s", c.Box.Host, said), Body: ans.Body}
+	}
+	// A gateway in front of a box can answer a 5xx in JSON too. Motel
+	// stamps Motel-Version on every answer to a token it verified, so
+	// a 5xx without it is not known to be motel's own.
+	if ans.Code >= 500 && ans.Header.Get(versionHeader) == "" {
+		return &Failure{Exit: ExitUnknown, Message: fmt.Sprintf(
+			"Something at %s answered %d without %s, so not known to be motel's own answer: %s", c.Box.Addr(), ans.Code, versionHeader, said)}
 	}
 	return &Failure{Exit: ExitFailed, Message: fmt.Sprintf("%s answered %d: %s", c.Box.Host, ans.Code, said), Body: ans.Body}
 }

@@ -24,8 +24,8 @@ type Text struct {
 }
 
 // From sanitises s. Every C0 control (tab and newline among them), DEL
-// and every C1 control becomes a visible escape, \x1b or \u009b; the
-// bidi embeddings, overrides and isolates (U+202A to U+202E, U+2066 to
+// and every C1 control becomes a visible escape, \x1b or \u009b; every
+// bidi control (U+061C, U+200E, U+200F, U+202A to U+202E, U+2066 to
 // U+2069) and U+2028 and U+2029 become \u202e and the like; a byte
 // that is not UTF-8 becomes U+FFFD. Everything else is kept as it is.
 // A multi-line field is split first, with Lines, so that its line
@@ -85,7 +85,10 @@ func unsafeRune(r rune) bool {
 	switch {
 	case r < 0x20, r == 0x7f, r >= 0x80 && r <= 0x9f:
 		return true
-	case r >= 0x202a && r <= 0x202e, r >= 0x2066 && r <= 0x2069:
+	// Unicode's whole Bidi_Control set: the Arabic letter mark, the
+	// left-to-right and right-to-left marks, the embeddings and
+	// overrides, the isolates.
+	case r == 0x061c, r == 0x200e, r == 0x200f, r >= 0x202a && r <= 0x202e, r >= 0x2066 && r <= 0x2069:
 		return true
 	case r == 0x2028, r == 0x2029:
 		return true

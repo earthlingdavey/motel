@@ -23,14 +23,19 @@ the box too.
 of `MOTEL_URL`, or the box repository the shell is in (inside
 `<host>/`, or at its top when it holds one box).
 
-**Which credential:** `MOTEL_TOKEN`, sent as `Bearer`, when it is set: a
-deploy token reads its own app on any motel today. Otherwise a token the
-person's own ssh key signs, made by the system `ssh-keygen -Y sign` in
+**Which credential:** a token the person's own ssh key signs when
+`--key` names the key. Otherwise `MOTEL_TOKEN`, sent as `Bearer`, when it
+is set: a deploy token reads its own app on any motel today. Otherwise a
+token the person's own ssh key signs, made by the system `ssh-keygen -Y sign` in
 the namespace `motel-access-v1@motel.smallhours.org`. The key is
-`--key`, then `MOTEL_KEY`, then git's `user.signingkey` inside a box
+`MOTEL_KEY`, then git's `user.signingkey` inside a box
 repository, then ssh's default files, then the agent's key when it holds
 exactly one. One key per command, never several; RSA keys are refused
 before anything is signed. motelctl writes nothing to disk.
+
+**Only https.** motelctl never sends a request over plain http, and has
+no flag or variable that would (`deploy.sh`'s `MOTEL_ALLOW_HTTP` is not
+read).
 
 **Exit codes:** 0 read; 1 the box answered with a failure; 2 nothing was
 sent (usage, no box or key, an RSA key); 3 could not tell (no answer, not

@@ -36,6 +36,7 @@ var hostile = []string{
 	"c1 \xc2\x9b31mred",
 	"fake ::error::file=x::owned",
 	"bad utf8 \xff\xfe",
+	"marks alm\xd8\x9c lrm\xe2\x80\x8e rlm\xe2\x80\x8f",
 }
 
 func pf(f float64) *float64 { return &f }
@@ -45,12 +46,12 @@ func hostileStatus() wire.Status {
 	return wire.Status{
 		App: "blog", Phase: "running", CurrentVersion: "v42" + hostile[6], Unit: "motel-app-blog.service" + hostile[1], PID: 41233, Running: true,
 		Deploys: []wire.DeploySummary{
-			{Version: "v42", Status: "succeeded", By: hostile[0], FinishedAt: json.RawMessage(`"2026-11-14T09:12:30Z"`)},
+			{Version: "v42", Status: "succeeded", By: hostile[0] + hostile[9], FinishedAt: json.RawMessage(`"2026-11-14T09:12:30Z"`)},
 			{Version: "v41", Status: "failed", Phase: "health_gate", By: hostile[2], FinishedAt: json.RawMessage(`"` + "\\u001b[31m" + `"`)},
 		},
 		LastDeploy:        &wire.DeployResult{Version: "v42", Status: "failed", Error: hostile[3], By: hostile[5], FinishedAt: at},
 		Watchdog:          &wire.Watchdog{State: "ok", LastFailure: hostile[4]},
-		AvailableVersions: []string{"v42" + hostile[6], "v41", hostile[8]},
+		AvailableVersions: []string{"v42" + hostile[6], "v41", hostile[8], hostile[9]},
 		Metrics: &wire.Metrics{Window: "1h", Memory: &wire.MemorySummary{Now: pf(182 << 20), Max: pf(210 << 20)},
 			CPU: &wire.CPUSummary{Avg: 0.02}, Requests: &wire.RequestSummary{Total: 1234, PerSecond: 0.34, Share5xx: pf(0.001), P95: pf(120)}},
 	}
@@ -240,8 +241,8 @@ func TestHumanOutputOfHostileStrings(t *testing.T) {
 }
 
 // unsafeOutput is any C0 control but the line feed, DEL, a C1 control,
-// a bidi control, U+2028 or U+2029.
-var unsafeOutput = regexp.MustCompile(`[\x00-\x09\x0b-\x1f\x7f\x{80}-\x{9f}\x{202a}-\x{202e}\x{2066}-\x{2069}\x{2028}\x{2029}]`)
+// a bidi control (the whole Bidi_Control set), U+2028 or U+2029.
+var unsafeOutput = regexp.MustCompile(`[\x00-\x09\x0b-\x1f\x7f\x{80}-\x{9f}\x{061c}\x{200e}\x{200f}\x{202a}-\x{202e}\x{2066}-\x{2069}\x{2028}\x{2029}]`)
 
 func golden(t *testing.T, name, got string) {
 	t.Helper()
@@ -431,4 +432,76 @@ func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) {
 		return nil, err
 	}
 	return f(r)
+}
+
+// Which credential: a --key typed beats MOTEL_TOKEN; MOTEL_TOKEN beats
+// MOTEL_KEY and every key motelctl finds by itself.
+func TestCredentialOrder(t *testing.T) {
+	line := "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIMuTYJV40qpZ7rH7T4/BJP6ERoj5JgqFQwHIEBTe5wrn" // gitleaks:allow — made up for this test
+	home := t.TempDir()
+	for _, f := range []string{"me.pub", ".ssh/id_ed25519.pub"} {
+		if err := os.MkdirAll(filepath.Dir(filepath.Join(home, f)), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(home, f), []byte(line+"\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cases := []struct {
+		name   string
+		env    map[string]string
+		flags  []string
+		bearer bool
+	}{
+		{"--key beats MOTEL_TOKEN", map[string]string{"MOTEL_TOKEN": "a.deploy.token"}, []string{"--key", "~/me.pub"}, false},
+		{"MOTEL_TOKEN beats MOTEL_KEY", map[string]string{"MOTEL_TOKEN": "a.deploy.token", "MOTEL_KEY": "~/me.pub"}, nil, true},
+		{"MOTEL_TOKEN beats the default file", map[string]string{"MOTEL_TOKEN": "a.deploy.token"}, nil, true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			fb := newFakeBox(t)
+			var out, errOut bytes.Buffer
+			code := Main(context.Background(), append([]string{"status", appURL(fb, "blog"), "--json"}, c.flags...), Env{
+				Getenv: func(k string) string { return c.env[k] }, Stdout: &out, Stderr: &errOut, Dir: t.TempDir(), Home: home,
+				Now: time.Now, Sleep: func(context.Context, time.Duration) error { return nil },
+				Transport: fb.srv.Client().Transport, Run: noPrograms{}, Signer: &fixedSigner{}, Version: "test",
+			})
+			if code != 0 || len(fb.auth) != 1 || strings.HasPrefix(fb.auth[0], "Bearer ") != c.bearer {
+				t.Fatalf("exit %d, Authorization %v, stderr %s; want Bearer: %v", code, fb.auth, errOut.String(), c.bearer)
+			}
+		})
+	}
+}
+
+// A MOTEL_TOKEN that cannot be a header is refused before anything is
+// sent, and never echoed.
+func TestBadDeployToken(t *testing.T) {
+	fb := newFakeBox(t)
+	r := run(t, fb, map[string]string{"MOTEL_TOKEN": "s3cr3t\nX-Evil: 1"}, "status", appURL(fb, "blog"))
+	if r.code != 2 || len(fb.auth) != 0 || strings.Contains(r.stderr, "s3cr3t") || !strings.Contains(r.stderr, "MOTEL_TOKEN holds something that is not a token") {
+		t.Fatalf("exit %d, %d requests, stderr %q", r.code, len(fb.auth), r.stderr)
+	}
+}
+
+// A key path from the environment reaches stderr made safe to print,
+// in the error the file system gives too.
+func TestHostileKeyPath(t *testing.T) {
+	r := run(t, nil, map[string]string{"MOTEL_KEY": "~/evil\x1b]0;pwned\x07.pub"}, "status", "blog", "--box", "deploy.example.com")
+	if r.code != 2 || strings.ContainsAny(r.stderr, "\x1b\x07") || !strings.Contains(r.stderr, `evil\x1b]0;pwned\x07.pub`) {
+		t.Fatalf("exit %d, stderr %q", r.code, r.stderr)
+	}
+}
+
+// motelctl is https only, with no way round it: no help text offers
+// deploy.sh's MOTEL_ALLOW_HTTP.
+func TestNoPlainHTTP(t *testing.T) {
+	for _, cmd := range [][]string{{}, {"status"}, {"deploys"}, {"box", "status"}, {"key"}, {"version"}} {
+		r := run(t, nil, nil, append(cmd, "--help")...)
+		if strings.Contains(r.stdout, "ALLOW_HTTP") || strings.Contains(r.stdout, "insecure") {
+			t.Errorf("%v --help offers plain http:\n%s", cmd, r.stdout)
+		}
+	}
+	if r := run(t, nil, map[string]string{"MOTEL_TOKEN": "t", "MOTEL_ALLOW_HTTP": "1"}, "status", "http://deploy.example.com/blog"); r.code != 2 {
+		t.Fatalf("an http URL with MOTEL_ALLOW_HTTP=1: exit %d", r.code)
+	}
 }

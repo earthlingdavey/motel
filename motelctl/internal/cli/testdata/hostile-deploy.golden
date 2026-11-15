@@ -6,7 +6,7 @@ exit    exit status 3 bidi abc\u202edef
 probe   500  location osc8 \x1b]8;;https://evil.example/\x1b\click\x1b]8;;\x1b\
   {"db":"connection refused"}
   fake ::error::file=x::owned
-log tail (12 lines):
+log tail (13 lines):
   pg: connection refused (127.0.0.1:5432)
   two
   lines c1 \u009b31mred
@@ -19,3 +19,4 @@ log tail (12 lines):
   c1 \u009b31mred
   fake ::error::file=x::owned
   bad utf8 ��
+  marks alm\u061c lrm\u200e rlm\u200f

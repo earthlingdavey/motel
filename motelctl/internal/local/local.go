@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"time"
 )
 
 // Cmd is one program to run and wait for.
@@ -43,6 +44,9 @@ type Runner interface {
 	Output(ctx context.Context, c Cmd) ([]byte, error)
 }
 
+// waitDelay bounds the wait for a program's pipes after it ends.
+const waitDelay = time.Second
+
 // Exec runs programs with os/exec, in motelctl's own environment, so
 // ssh-keygen reaches the agent through SSH_AUTH_SOCK as ssh would.
 type Exec struct{}
@@ -52,6 +56,10 @@ func (Exec) Output(ctx context.Context, c Cmd) ([]byte, error) {
 	//nolint:gosec // G204: the program is one of motelctl's own three, its arguments motelctl's; nothing reaches a shell
 	cmd := exec.CommandContext(ctx, c.Name, c.Args...)
 	cmd.Dir = c.Dir
+	// Once the program has exited or the context has ended, its pipes
+	// are waited on this long and no longer: a child it left behind
+	// holding one cannot hang motelctl.
+	cmd.WaitDelay = waitDelay
 	cmd.Stdin = bytes.NewReader(c.Stdin)
 	cmd.Stderr = c.Stderr
 	var out bytes.Buffer
@@ -106,8 +114,11 @@ func BoxRepo(ctx context.Context, run Runner, dir string) (Repo, bool) {
 	}
 	repo := Repo{Top: top}
 	for _, e := range entries {
+		// A box's main name has a dot; a directory without one (docs,
+		// packaging) is the repository's, not a box's, whatever it
+		// holds.
 		name := e.Name()
-		if !IsHostname(name) {
+		if !IsHostname(name) || !strings.Contains(name, ".") {
 			continue
 		}
 		if fi, err := os.Stat(filepath.Join(top, name, "Caddyfile")); err == nil && fi.Mode().IsRegular() {

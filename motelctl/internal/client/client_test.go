@@ -5,7 +5,6 @@ import (
 	"errors"
 	"io"
 	"log"
-	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -188,7 +187,9 @@ func TestGetWaitsOutA429Once(t *testing.T) {
 		{"waits, then answered", []string{"2", ""}, []time.Duration{2 * time.Second}, ExitOK, ""},
 		{"zero is a second", []string{"0", ""}, []time.Duration{time.Second}, ExitOK, ""},
 		{"stands after the wait", []string{"2", "7"}, []time.Duration{2 * time.Second}, ExitUnknown, "127.0.0.1 asked you to slow down; try again in 7 s."},
-		{"too long to wait", []string{"120"}, nil, ExitUnknown, "try again in 120 s."},
+		{"too long to wait", []string{"120"}, nil, ExitUnknown, "try again later."},
+		{"a wait that would overflow", []string{"18446744083"}, nil, ExitUnknown, "try again later."},
+		{"a negative wait", []string{"-5"}, nil, ExitUnknown, "try again later."},
 		{"no Retry-After", []string{"none"}, nil, ExitUnknown, "try again later."},
 	}
 	for _, c := range cases {
@@ -236,14 +237,11 @@ func TestGetCertificateFailure(t *testing.T) {
 }
 
 func TestGetNothingAnswers(t *testing.T) {
-	l, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, port, _ := net.SplitHostPort(l.Addr().String())
-	_ = l.Close()
+	// Port 1 (tcpmux): nothing in a test environment listens there,
+	// and no test can take it, as a port just closed could be taken.
+	port := "1"
 	c := &Client{Box: Box{Host: "127.0.0.1", Port: port}, Cred: DeployToken("tok"), HTTP: NewHTTP(nil), Now: time.Now}
-	_, err = c.Get(context.Background(), "/blog", nil)
+	_, err := c.Get(context.Background(), "/blog", nil)
 	f := failure(t, err)
 	want := "127.0.0.1 did not answer on " + port + " (connection refused). If motel is down, as root on the box: systemctl status motel; journalctl -u motel -n 50. The box's off-box heartbeat also reports a stopped motel."
 	if f.Exit != ExitUnknown || f.Message != want {
@@ -265,7 +263,9 @@ func TestRead(t *testing.T) {
 		{"not found", 404, "application/json", `{"error":"no deploy recorded for version v9"}`, ExitNotFound, "127.0.0.1: no deploy recorded for version v9", true},
 		{"forbidden", 403, "application/json", `{"error":"this needs the viewer role on this app","needs":"viewer","scope":"app"}`, ExitForbidden, "127.0.0.1 does not allow this: this needs the viewer role on this app", true},
 		{"no baseline", 409, "application/json", `{"error":"this box has no baseline"}`, ExitFailed, "127.0.0.1 answered 409: this box has no baseline", true},
-		{"a hostile sentence", 500, "application/json; charset=utf-8", "{\"error\":\"boom \\u001b]52;c;eA==\\u0007\"}", ExitFailed, `127.0.0.1 answered 500: boom \x1b]52;c;eA==\x07`, true},
+		{"motel's 500, a hostile sentence", 500, "application/json; charset=utf-8", "{\"error\":\"boom \\u001b]52;c;eA==\\u0007\"}", ExitFailed, `127.0.0.1 answered 500: boom \x1b]52;c;eA==\x07`, true},
+		{"a gateway's JSON 502", 502, "application/json", "{\"error\":\"upstream \\u001b[2J down\"}", ExitUnknown, `Something at 127.0.0.1 answered 502 without Motel-Version, so not known to be motel's own answer: upstream \x1b[2J down`, false},
+		{"a 500 without Motel-Version", 500, "application/json", `{"error":"boom"}`, ExitUnknown, "answered 500 without Motel-Version", false},
 		{"a gateway's 502", 502, "text/html", "<html>bad gateway</html>", ExitUnknown, "Something at 127.0.0.1 answered (HTTP 502, not motel's answer). Is this the box's deploy host?", false},
 		{"a 200 that is not motel's", 200, "text/html", "<html>hi</html>", ExitUnknown, "Something at 127.0.0.1 answered (HTTP 200, not motel's answer: not JSON). Is this the box's deploy host?", false},
 		{"a 200 of the wrong shape", 200, "application/json", `{"app":7}`, ExitUnknown, "not motel's answer: json: cannot unmarshal", false},
@@ -274,6 +274,11 @@ func TestRead(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			ans := &Answer{Code: tc.code, Header: http.Header{"Content-Type": {tc.ctype}}, Body: []byte(tc.body + "\n")}
+			// Motel stamps its release on every answer to a verified
+			// token; the gateway's do not carry it.
+			if strings.HasPrefix(tc.name, "motel's") {
+				ans.Header.Set("Motel-Version", "v0.7.0")
+			}
 			var st wire.Status
 			err := c.Read(ans, &st)
 			if tc.wantExit == ExitOK {

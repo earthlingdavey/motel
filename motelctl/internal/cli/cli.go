@@ -51,10 +51,11 @@ const experimental = "Every command is experimental: its flags, output and exit 
 	"in any release until a release's notes say otherwise. The human output is\n" +
 	"never a contract; --json is the box's own answer.\n\n" +
 	"The box: an app's URL as <app>, else --box, MOTEL_BOX, the host of MOTEL_URL,\n" +
-	"or the box repository the shell is in. The credential: MOTEL_TOKEN as Bearer\n" +
-	"when set (a deploy token reads its app), else a token your ssh key signs:\n" +
-	"--key, MOTEL_KEY, git's user.signingkey in a box repository, ssh's default\n" +
-	"files, or the agent's only key, in that order.\n\n" +
+	"or the box repository the shell is in. The credential: a token your ssh key\n" +
+	"signs when --key names the key; else MOTEL_TOKEN as Bearer when set (a deploy\n" +
+	"token reads its app); else a token signed by the key MOTEL_KEY names, or\n" +
+	"git's user.signingkey in a box repository, ssh's default files, or the\n" +
+	"agent's only key, in that order. Only https: there is no way round it.\n\n" +
 	"Exit codes: 0 read; 1 the box answered with a failure; 2 nothing sent (usage,\n" +
 	"no box or key, an RSA key); 3 could not tell (no answer, not motel's answer,\n" +
 	"a 429 that stood); 4 not accepted (a 401 after one retry); 5 not allowed (403);\n" +
@@ -175,9 +176,15 @@ func (r *runner) client(ctx context.Context, t *target, fromApp *client.Box, sco
 	if err != nil {
 		return nil, err
 	}
+	// A --key typed on the command line beats MOTEL_TOKEN; MOTEL_TOKEN
+	// beats MOTEL_KEY and every key motelctl would find by itself.
 	var cred client.Credential
-	if tok := r.env.Getenv("MOTEL_TOKEN"); tok != "" {
-		cred = client.DeployToken(tok)
+	if tok := r.env.Getenv("MOTEL_TOKEN"); tok != "" && t.key == "" {
+		dt, err := client.NewDeployToken(tok)
+		if err != nil {
+			return nil, err
+		}
+		cred = dt
 	} else {
 		key, err := sshkey.Resolve(ctx, sshkey.Lookup{Flag: t.key, Getenv: r.env.Getenv, Home: r.env.Home, Dir: r.env.Dir, Run: r.env.Run})
 		if err != nil {

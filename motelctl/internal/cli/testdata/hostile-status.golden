@@ -5,4 +5,4 @@ cpu          0.02 cores on average  (1h)
 requests     1234, 0.34 a second, 5xx 0.1%, p95 120 ms  (1h)
 last deploy  v42 failed 2026-11-13 17:40 UTC  by bidi abc\u202edef
 error        title \x1b]0;pwned\x07
-versions     v42c1 \u009b31mred (running) v41 bad utf8 ��
+versions     v42c1 \u009b31mred (running) v41 bad utf8 �� marks alm\u061c lrm\u200e rlm\u200f

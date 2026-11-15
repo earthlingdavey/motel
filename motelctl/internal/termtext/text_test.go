@@ -20,6 +20,8 @@ func TestFrom(t *testing.T) {
 		{"bidi \u202eevil", "bidi \\u202eevil"},
 		{"isolate \u2066x\u2069", "isolate \\u2066x\\u2069"},
 		{"sep \u2028 \u2029", "sep \\u2028 \\u2029"},
+		{"marks \u061c \u200e \u200f", "marks \\u061c \\u200e \\u200f"},
+		{"not bidi: zero width \u200b, joiner \u200d", "not bidi: zero width \u200b, joiner \u200d"},
 		{"bad \xff utf8", "bad \uFFFD utf8"},
 		{"a cut rune \xe2\x82", "a cut rune \uFFFD\uFFFD"},
 		{"a real \uFFFD stays", "a real \uFFFD stays"},

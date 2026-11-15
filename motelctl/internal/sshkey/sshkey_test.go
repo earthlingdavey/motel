@@ -206,15 +206,18 @@ func TestDearmor(t *testing.T) {
 		t.Fatalf("Dearmor = %x, %v", got, err)
 	}
 	for name, in := range map[string][]byte{
-		"empty":            nil,
-		"text before":      append([]byte("note\n"), good...),
-		"text after":       append(bytes.Clone(good), []byte("note\n")...),
-		"two blocks":       append(bytes.Clone(good), good...),
-		"not base64":       []byte(armorBegin + "\n!!!!\n" + armorEnd + "\n"),
-		"not SSHSIG":       armor([]byte("NOTSIG and more")),
-		"no end":           []byte(armorBegin + "\nU1NIU0lH\n"),
-		"blank line":       []byte(armorBegin + "\n\nU1NIU0lH\n" + armorEnd + "\n"),
-		"other armor type": []byte("-----BEGIN PGP SIGNATURE-----\nU1NIU0lH\n-----END PGP SIGNATURE-----\n"),
+		"empty":                nil,
+		"text before":          append([]byte("note\n"), good...),
+		"text after":           append(bytes.Clone(good), []byte("note\n")...),
+		"two blocks":           append(bytes.Clone(good), good...),
+		"not base64":           []byte(armorBegin + "\n!!!!\n" + armorEnd + "\n"),
+		"not SSHSIG":           armor([]byte("NOTSIG and more")),
+		"no end":               []byte(armorBegin + "\nU1NIU0lH\n"),
+		"blank line":           []byte(armorBegin + "\n\nU1NIU0lH\n" + armorEnd + "\n"),
+		"other armor type":     []byte("-----BEGIN PGP SIGNATURE-----\nU1NIU0lH\n-----END PGP SIGNATURE-----\n"),
+		"the BEGIN line wrong": []byte("-----BEGIN PGP SIGNATURE-----\nU1NIU0lH\n" + armorEnd + "\n"),
+		"the END line wrong":   []byte(armorBegin + "\nU1NIU0lH\n-----END PGP SIGNATURE-----\n"),
+		"a BEGIN line padded":  []byte(" " + armorBegin + "\nU1NIU0lH\n" + armorEnd + "\n"),
 	} {
 		if _, err := Dearmor(in); err == nil {
 			t.Errorf("%s: Dearmor took %q", name, in)
