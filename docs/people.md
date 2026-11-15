@@ -40,15 +40,25 @@ box {
   and its deploys. `grant <name> viewer box` lets them read every app
   and the box's own status.
 - A `signer` line's ed25519 key is already that signer's key as a
-  person: `alice` above needs no `person` line, only a `grant`.
+  person: `alice` above needs no `person` line, only a `grant`. Once
+  the block names anyone in a `person` or `grant` line, every signer
+  with an ed25519 key can ask who they are here, even with no grant,
+  and is told an empty list of apps.
 - A second key for the same person is a second `person` line with the
   same name.
 - `from` limits a grant to the addresses you list, last on the line:
   `grant bob@example.com viewer app blog from 198.51.100.0/24
-  2001:db8:5::/48`. From anywhere else their key gets the same refusal
-  as a stranger's. If your server has `trusted_proxies`, the address is
-  the one those proxies forward, so the list is only as good as those
-  ranges: `motel validate` says so.
+  2001:db8:5::/48`. If every grant they hold has a `from` list, from
+  anywhere else their key gets the same refusal as a stranger's; with
+  a grant beside it that has none, they are still let in, and told
+  `403` for what only the limited grant covers.
+- Behind a proxy of yours, set `trusted_proxies` to it **and**
+  `trusted_proxies_strict` in the global `servers` options. Without
+  `trusted_proxies_strict`, Caddy takes the address from the left of
+  `X-Forwarded-For`, which the client writes, so a client could choose
+  its own address: `motel validate` refuses a `from` list then, and the
+  box matches no list for a forwarded request. With it, the list is
+  only as good as the ranges you trust.
 
 Check the file, then push it as any change to the box (a signed
 commit):
@@ -66,7 +76,8 @@ grant, an app grant a box grant already covers, people with no monitor channel.
 On a box with no box repository, edit `/etc/motel/Caddyfile` as root,
 `motel validate --config /etc/motel/Caddyfile`, and `systemctl reload
 motel`. The box reads who it admits from that file at each load; the
-journal says `box: people admitted`, or why no one is.
+journal says `box: people admitted from the Caddyfile this machine
+runs (/etc/motel/Caddyfile)`, or why no one is.
 
 ## What they reach
 

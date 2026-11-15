@@ -60,15 +60,22 @@ token is answered from the first request. `TestPersonNotRefusedAfterAStart`
 provisions a whole config, starts nothing, and shows a deploy token
 refused and a person's token answered at that moment.
 
-**What admits no one.** No `box` block; no installed file; a file that
-cannot be read; one the walk refuses; and one whose `box` block has no
-`person` and no `grant` line (its signers are not logins). Each but the
-last is said in the journal at each load, as a warning when the config
-declares people (`box: no person is admitted: …`). Deploys are not
-touched by any of it.
+**What admits no one.** A config with no `box` block, which has no
+`box` app and so no registry, and says nothing; and, with a `box`
+block, no installed file, a file that cannot be read, one the walk
+refuses, and one whose `box` block has no `person` and no `grant` line
+(its signers are not logins). With a `box` block, each but the last is
+said in the journal at each load (`box: no person is admitted from the
+Caddyfile this machine runs (/etc/motel/Caddyfile): …`): a warning when
+the config declares people, information otherwise, and only debug for
+a config that declares no one on a machine with no installed file.
+Every line the registry writes names the file this machine runs: at
+`motel validate` of a candidate, it is still this machine's. Deploys
+are not touched by any of it.
 
 **Only keys a person may sign with are listed**: a `person` line's, and
-a `signer` line's ed25519 or ecdsa key once the block declares people.
+a `signer` line's ed25519 key once the block declares people (a
+`signer` line takes no ECDSA key: box/proof refuses one).
 An `ssh-rsa` signer key, and an Ed25519 key of small order, are no
 person's key. The lookup never returns a nil key as listed.
 
@@ -130,7 +137,10 @@ On either webhook, a request in the `Motel` scheme goes through
 2. **The address list.** Each grant whose `from` list does not hold the
    request's address does not exist for this request. The address is
    Caddy's `client_ip`, whole: the peer, or the address a proxy in the
-   server's `trusted_proxies` forwarded for. A person who holds grants
+   server's `trusted_proxies` forwarded for. A request a trusted proxy
+   forwarded, on a server without `trusted_proxies_strict`, matches no
+   list: Caddy then takes the left-most address in `X-Forwarded-For`,
+   which the client writes. A person who holds grants
    and has none left from here gets the flat 401, and the journal names
    the key, the person, the address and the peer. A person with no
    grant at all goes on: they may ask who they are.
@@ -243,10 +253,16 @@ box does not list both look like the flat 401.
 ## Safeguards
 
 **Keys by fingerprint.** One parse of the structure, one hash, one map
-lookup, then at most one signature check: a refusal costs the same
-whatever the number of keys. A stranger can put a listed public key in
-the structure and buy one signature check, as a JWT under a known `kid`
-does; the failure budgets bound the journal, not the work.
+lookup, then one signature check: a refusal costs the same whatever the
+number of keys. A stranger can put a listed public key in the structure
+and buy one signature check, as a JWT under a known `kid` does; the
+failure budgets bound the journal, not the work. A token whose key is
+not listed is checked against a dummy key of its type (made at start,
+listed nowhere) before it is refused, so a stranger holding someone's
+published public key does not learn from the time whether this box
+lists it by the cost of a signature check. That narrows the difference
+to what the two paths' other work differs by; the refusals do not take
+constant time.
 
 **The rate per person**: 2 requests a second sustained, a burst of 60,
 per name, for the process, so a reload does not refill it; only a
@@ -256,10 +272,19 @@ verified token reaches it, so it holds declared names alone. 429 with
 which count refusals by address.
 
 **The address list** is held to `client_ip`. Behind a proxy the
-operator runs, `trusted_proxies` naming it makes the list work; ranges
-wider than that proxy let any peer in them set the address with
-`X-Forwarded-For`, and `motel validate` warns when a grant has a `from`
-list and a server has `trusted_proxies`.
+operator runs, `trusted_proxies` naming it and `trusted_proxies_strict`
+make the list work: Caddy then takes the right-most address in
+`X-Forwarded-For` outside the ranges, which the operator's proxy
+appended. Without `trusted_proxies_strict` it takes the left-most,
+which the client writes, so a client could name any address: `motel
+validate`, `motel reload` and `motel run` refuse a grant's `from` list
+on a box with a server that trusts proxies without it, and the serving
+process, for a config the gate never saw, matches no list for a
+request such a proxy forwarded. With it, `motel validate` warns that
+the list is only as good as the ranges. The module cannot refuse this
+at load itself: Caddy loads a server's `trusted_proxies` and clears the
+raw field before it provisions the handlers, and the `box` app cannot
+ask the `http` app without a provisioning cycle.
 
 **A box with people and no monitor channel** is allowed, with a warning
 from `motel validate` and in the journal at each load: in this release
@@ -299,7 +324,8 @@ access's examples:
 | 7 | two readers of the lines | `validate` and the serving process disagree on who is admitted | 3 | 5 | 3 | fix | one parser for both; the registry from the walk alone; a grant on an app the config does not run now fails the load too |
 | 8 | the registry from the installed file | the walk refuses it, so no person is admitted | 2 | 5 | 1 | fix | a journal line at each load naming why |
 | 9 | the registry after a start | a person refused in #473's window | 2 | 4 | 1 | fix | built at provision; `TestPersonNotRefusedAfterAStart` |
-| 10 | the address list on `client_ip` | `X-Forwarded-For` from too wide a `trusted_proxies` defeats `from` | 3 | 5 | 5 | fix by naming | `motel validate` warns; the journal names the address and the peer |
+| 10 | the address list on `client_ip` | a client names its own address in `X-Forwarded-For` behind a trusted proxy (Caddy's default, non-strict mode takes the left-most), or too wide a `trusted_proxies` lets a peer set it | 3 | 3 | 5 | fix | without `trusted_proxies_strict`: refused by the gate, and no list holds a forwarded request; with it, `motel validate` warns that the ranges decide; `TestFromBehindATrustedProxy` drives a forged header through a provisioned server in each mode |
+| 15 | the cost of a refusal by lookup | a stranger tells by timing whether a published key is listed | 2 | 2 | 5 | fix | a signature check against a dummy key of the type before `key-not-listed` (`TestUnlistedKeyCostsASignatureCheck`) |
 | 11 | people with no channel | what they do is told to no one | 3 | 5 | 5 | fix by naming | warned by `validate` and at load |
 | 12 | the 403 to people | a 403 for one app tells a person of another that the name exists | 3 | 5 | 5 | fix | one 403 for an app that exists and one that does not |
 | 13 | `Host` equal to the identity | a proxy that rewrites `Host` refuses every person | 2 | 5 | 1 | fix | the journal's line names the host received |
@@ -314,7 +340,8 @@ access's examples:
 | A grant on an app named through a placeholder loads (the module sees the name resolved), and leaves an installed file the walk refuses: no person is admitted and every push is refused until root mends it, with a journal line at each load saying why | 2 | 2 | 1 | 2, 2 | the walk names the line; refusing placeholders in the `liveswap` block's app names at load is a change to liveswap's grammar, not this one's |
 | A deploy token of one app (not a global source) under `/_motel/` gets the flat 401, not the 403 naming a declared key | 1 | 1 | 1 | 2, 2 | judging it against every app's sources would let a stranger buy one verification per app; no CI asks who anyone is |
 | `whoami` lists the grants, not a `signer` line's role | 1 | 2 | 1 | 1, 1 | a signer is not a login here; adding a value to `roles` later breaks no client |
-| `motel validate` on a machine with no installed file, of a config with people, journals that no person is admitted | 1 | 5 | 1 | 1, 1 | true of that machine; the line names the file |
+| `motel validate` on a machine with no installed file, of a config with people, warns that no person is admitted from the Caddyfile this machine runs | 1 | 5 | 1 | 1, 1 | true of that machine, and the line says it is about that machine's file |
+| A refusal by lookup and one past it still differ by the work around the signature check (a hash, the key's parse) | 1 | 2 | 5 | 2, 2 | a stranger learns at most that difference, not a signature check's; constant time would need the whole path padded |
 | A box too old for people and a key the box does not list both answer the flat 401 | 2 | 5 | 3 | — | the owner's decision: no answer to a stranger names motel; the client's message names both |
 | A legitimate burst over 60 requests is told to wait | 2 | 3 | 1 | — | `Retry-After` names the wait |
 

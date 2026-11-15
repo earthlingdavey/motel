@@ -1056,7 +1056,11 @@ scope for the runtime model, in scope for release signing (roadmap).
   structure, one fingerprint lookup and at most one signature check,
   under the same 8 KiB cap and the same failure budgets; a stranger can
   put a listed key's public half in the structure and buy one signature
-  check, as a JWT under a published `kid` does. Every refusal of a
+  check, as a JWT under a published `kid` does. A key that is not listed
+  costs a signature check too, against a dummy key of its type, so a
+  stranger holding someone's published key does not learn by the cost
+  of one whether the box lists it; the refusals are not constant-time,
+  and what is left is the smaller work around that check. Every refusal of a
   person's token is the same flat 401 as a deploy token's, and no answer
   to a caller the box has not accepted names motel's protocol or
   release.
