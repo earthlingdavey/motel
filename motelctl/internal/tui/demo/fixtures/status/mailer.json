@@ -1,0 +1,86 @@
+{
+ "app": "mailer",
+ "phase": "idle",
+ "running": false,
+ "available_versions": [
+  "9f02bb1c4e7a"
+ ],
+ "current_version": "9f02bb1c4e7a",
+ "pid": 41233,
+ "unit": "motel-mailer.9f02bb1c4e7a.3f9a0c21d4e8b7a6.service",
+ "socket": "/srv/motel/mailer/run/app.sock",
+ "command": [
+  "node",
+  "server.js"
+ ],
+ "caps": {
+  "memory_max": 536870912,
+  "tasks_max": 64,
+  "cpu_quota": 100
+ },
+ "deploys": [
+  {
+   "version": "9f02bb1c4e7a",
+   "status": "succeeded",
+   "deployed_by": "github:example/mailer@refs/heads/main",
+   "sha256": "3d8586eb17d54bea40f01c103764901dccf6318a88a4f89edc46290ae346a310",
+   "started_at": "@-518430s",
+   "finished_at": "@-6d"
+  }
+ ],
+ "last_deploy": {
+  "version": "9f02bb1c4e7a",
+  "status": "succeeded",
+  "deployed_by": "github:example/mailer@refs/heads/main",
+  "sha256": "3d8586eb17d54bea40f01c103764901dccf6318a88a4f89edc46290ae346a310",
+  "started_at": "@-518430s",
+  "finished_at": "@-6d",
+  "artifact_entries": 1842,
+  "artifact_bytes": 39845888,
+  "phases": [
+   {
+    "name": "downloading",
+    "started_at": "@-518430s",
+    "seconds": 1.2
+   },
+   {
+    "name": "extracting",
+    "started_at": "@-518428s",
+    "seconds": 0.8
+   },
+   {
+    "name": "preparing",
+    "started_at": "@-518428s",
+    "seconds": 4.1
+   },
+   {
+    "name": "starting",
+    "started_at": "@-518423s",
+    "seconds": 1.0
+   },
+   {
+    "name": "soaking",
+    "started_at": "@-518422s",
+    "seconds": 15.0
+   },
+   {
+    "name": "promoting",
+    "started_at": "@-518407s",
+    "seconds": 0.4
+   },
+   {
+    "name": "draining",
+    "started_at": "@-518407s",
+    "seconds": 5.0
+   },
+   {
+    "name": "stopping_old",
+    "started_at": "@-518402s",
+    "seconds": 0.2
+   }
+  ]
+ },
+ "watchdog": {
+  "state": "watching"
+ }
+}

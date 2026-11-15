@@ -1,0 +1,92 @@
+{
+ "version": "e9a0b3f2c118",
+ "status": "failed",
+ "deployed_by": "github:example/shop@refs/heads/main",
+ "sha256": "08e1fce8c19ab833769916ef9876b6fdedeebeba74518d4a0006a81be36268c9",
+ "started_at": "@-782s",
+ "finished_at": "@-12m",
+ "phase": "soaking",
+ "artifact_entries": 1842,
+ "artifact_bytes": 39845888,
+ "phases": [
+  {
+   "name": "downloading",
+   "started_at": "@-782s",
+   "seconds": 1.2
+  },
+  {
+   "name": "extracting",
+   "started_at": "@-780s",
+   "seconds": 0.8
+  },
+  {
+   "name": "preparing",
+   "started_at": "@-780s",
+   "seconds": 4.1
+  },
+  {
+   "name": "starting",
+   "started_at": "@-775s",
+   "seconds": 1.0
+  },
+  {
+   "name": "soaking",
+   "started_at": "@-774s",
+   "seconds": 54.9
+  }
+ ],
+ "error": "the health check at /healthz answered 500 for 60 s",
+ "detail": {
+  "probe": {
+   "status": 500,
+   "location": "/healthz",
+   "body": "{\"ok\":false,\"db\":\"connection refused (127.0.0.1:5432)\"}"
+  },
+  "log_tail": [
+   "> blog@1.4.0 start",
+   "> node server.js",
+   "listening on /srv/motel/blog/run/app.sock",
+   "migrations: 14 applied, 1 pending",
+   "migration 0015_add_index: connecting to [redacted: DATABASE_URL]",
+   "Error: connect ECONNREFUSED 127.0.0.1:5432",
+   "    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1606:16)",
+   "health: db check failed: connection refused",
+   "health: db check failed: connection refused",
+   "health: db check failed: connection refused",
+   "health: db check failed: connection refused",
+   "health: db check failed: connection refused",
+   "health: db check failed: connection refused",
+   "health: db check failed: connection refused",
+   "health: db check failed: connection refused",
+   "health: db check failed: connection refused",
+   "health: db check failed: connection refused",
+   "health: db check failed: connection refused",
+   "health: db check failed: connection refused",
+   "health: db check failed: connection refused",
+   "health: db check failed: connection refused",
+   "health: db check failed: connection refused",
+   "health: db check failed: connection refused",
+   "health: db check failed: connection refused",
+   "health: db check failed: connection refused",
+   "health: db check failed: connection refused",
+   "health: db check failed: connection refused",
+   "health: db check failed: connection refused",
+   "health: db check failed: connection refused",
+   "health: db check failed: connection refused",
+   "health: db check failed: connection refused",
+   "health: db check failed: connection refused",
+   "health: db check failed: connection refused",
+   "health: db check failed: connection refused",
+   "health: db check failed: connection refused",
+   "health: db check failed: connection refused",
+   "health: db check failed: connection refused",
+   "health: db check failed: connection refused",
+   "health: db check failed: connection refused",
+   "health: db check failed: connection refused"
+  ],
+  "log_tail_truncated": true
+ },
+ "redacted_env": [
+  "DATABASE_URL"
+ ]
+}

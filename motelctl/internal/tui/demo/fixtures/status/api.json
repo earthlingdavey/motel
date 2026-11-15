@@ -1,0 +1,110 @@
+{
+ "app": "api",
+ "phase": "soaking",
+ "running": true,
+ "available_versions": [
+  "3b8812aa0c4f"
+ ],
+ "current_version": "3b8812aa0c4f",
+ "pid": 41233,
+ "unit": "motel-api.3b8812aa0c4f.3f9a0c21d4e8b7a6.service",
+ "socket": "/srv/motel/api/run/app.sock",
+ "command": [
+  "node",
+  "server.js"
+ ],
+ "caps": {
+  "memory_max": 536870912,
+  "tasks_max": 64,
+  "cpu_quota": 100
+ },
+ "deploys": [
+  {
+   "version": "3b8812aa0c4f",
+   "status": "succeeded",
+   "deployed_by": "github:example/api@refs/heads/main",
+   "sha256": "62261c1a78b4ea8c3dce2037b4e0ea0416fb91b7101b6271f66497873bd75564",
+   "started_at": "@-3639s",
+   "finished_at": "@-1h"
+  }
+ ],
+ "last_deploy": {
+  "version": "3b8812aa0c4f",
+  "status": "succeeded",
+  "deployed_by": "github:example/api@refs/heads/main",
+  "sha256": "62261c1a78b4ea8c3dce2037b4e0ea0416fb91b7101b6271f66497873bd75564",
+  "started_at": "@-3639s",
+  "finished_at": "@-1h",
+  "artifact_entries": 1842,
+  "artifact_bytes": 39845888,
+  "phases": [
+   {
+    "name": "downloading",
+    "started_at": "@-3639s",
+    "seconds": 1.2
+   },
+   {
+    "name": "extracting",
+    "started_at": "@-3637s",
+    "seconds": 0.8
+   },
+   {
+    "name": "preparing",
+    "started_at": "@-3637s",
+    "seconds": 4.1
+   },
+   {
+    "name": "starting",
+    "started_at": "@-3632s",
+    "seconds": 1.0
+   },
+   {
+    "name": "soaking",
+    "started_at": "@-3631s",
+    "seconds": 15.0
+   },
+   {
+    "name": "promoting",
+    "started_at": "@-3616s",
+    "seconds": 0.4
+   },
+   {
+    "name": "draining",
+    "started_at": "@-3616s",
+    "seconds": 5.0
+   },
+   {
+    "name": "stopping_old",
+    "started_at": "@-3611s",
+    "seconds": 0.2
+   }
+  ]
+ },
+ "watchdog": {
+  "state": "watching"
+ },
+ "metrics": {
+  "window": "1h",
+  "at": "@-30s",
+  "memory_bytes": {
+   "now": 327155712,
+   "max": 346030080
+  },
+  "cpu_cores": {
+   "avg_5m": 0.03,
+   "avg": 0.02
+  },
+  "requests": {
+   "total": 1234,
+   "per_second": 0.34,
+   "by_class": {
+    "2xx": 1224,
+    "5xx": 10
+   },
+   "5xx_share": 0.0,
+   "p50_ms": 18,
+   "p95_ms": 41,
+   "cache_hit_share": 0.62
+  }
+ }
+}
