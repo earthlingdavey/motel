@@ -37,7 +37,9 @@ const (
 )
 
 // defaultFiles are ssh's own default keys a box can take, in ssh's
-// order. id_rsa is not among them: no box takes it.
+// order. id_rsa is not among them: no box takes it. The ECDSA ones
+// are, so that one found is refused by name (*ECDSAError) rather than
+// passed over for a key further down the list.
 var defaultFiles = []string{"id_ed25519", "id_ecdsa", "id_ed25519_sk", "id_ecdsa_sk"}
 
 // ErrNoKey is Resolve's answer when nothing names a key.
@@ -60,8 +62,8 @@ type Lookup struct {
 // git signs with ssh, then ssh's default files, then the agent's key
 // when it holds exactly one. It never tries several keys: each refused
 // key would be a 401 against the box's budget for logging them, and a
-// touch of a hardware key. An RSA key, wherever it came from, is
-// refused here (*RSAError).
+// touch of a hardware key. An RSA or an ECDSA key, wherever it came
+// from, is refused here (Refusal), naming the key and why.
 func Resolve(ctx context.Context, l Lookup) (Key, error) {
 	if l.Flag != "" {
 		return l.load(l.Flag, SourceFlag)
@@ -132,10 +134,11 @@ func fromLine(line, path, shown, source string) (Key, error) {
 	if err != nil {
 		return Key{}, fmt.Errorf("%s (%s): %w", shown, source, err)
 	}
-	if k.RSA() {
-		return Key{}, &RSAError{Shown: shown}
+	key := Key{Public: k, Path: path, Shown: shown, Source: source}
+	if err := Refusal(key); err != nil {
+		return Key{}, err
 	}
-	return Key{Public: k, Path: path, Shown: shown, Source: source}, nil
+	return key, nil
 }
 
 // shown is path as the person would write it, made safe to print: a

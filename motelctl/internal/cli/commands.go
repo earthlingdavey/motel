@@ -69,8 +69,8 @@ func (r *runner) key() *cobra.Command {
 		Short: "Say which ssh key motelctl signs with, and the person line that lists it (experimental)",
 		Long: "key says which ssh key motelctl would sign a token with, why that one, and its\n" +
 			"fingerprint; and prints the person line for the box's operator to add.\n" +
-			"It sends nothing. A box takes ed25519 and ecdsa keys, hardware ones included,\n" +
-			"never RSA.\n\n" + experimental,
+			"It sends nothing. A box takes ed25519 keys for now, hardware ones included:\n" +
+			"not ECDSA yet, and never RSA. For either, key says why and prints no line.\n\n" + experimental,
 		Args: usageArgs(cobra.NoArgs),
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if name != "" && !validName(name) {

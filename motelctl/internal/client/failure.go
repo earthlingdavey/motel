@@ -10,7 +10,7 @@ const (
 	// from box status, a 5xx in motel's own words).
 	ExitFailed = 1
 	// ExitUsage: nothing was sent (bad arguments, no box or key named,
-	// an RSA key).
+	// an RSA or an ECDSA key).
 	ExitUsage = 2
 	// ExitUnknown: could not tell (no answer, a timeout, a body that is
 	// not motel's, a 429 that stood after one wait).

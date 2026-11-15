@@ -39,8 +39,13 @@ token the person's own ssh key signs, made by the system `ssh-keygen -q -Y sign`
 the namespace `motel-access-v1@motel.smallhours.org`. The key is
 `MOTEL_KEY`, then git's `user.signingkey` inside a box
 repository, then ssh's default files, then the agent's key when it holds
-exactly one. One key per command, never several; RSA keys are refused
-before anything is signed. motelctl writes nothing to disk.
+exactly one. One key per command, never several. A box takes Ed25519
+keys (`ssh-ed25519`, or `sk-ssh-ed25519@openssh.com` for a hardware key)
+for now: RSA keys, and ECDSA keys (not accepted yet, so an agent that
+makes only P-256 keys cannot be used for now), are refused before
+anything is signed, wherever the key was found, with a message that
+names the key and the remedy (`ssh-keygen -t ed25519`). motelctl writes
+nothing to disk.
 
 **What a box tells a key it does not take.** Nothing: every refusal is
 the same 401, with no header that names motel. So after its one retry
@@ -71,7 +76,7 @@ no flag or variable that would (`deploy.sh`'s `MOTEL_ALLOW_HTTP` is not
 read).
 
 **Exit codes:** 0 read; 1 the box answered with a failure; 2 nothing was
-sent (usage, no box or key, an RSA key); 3 could not tell (no answer, not
+sent (usage, no box or key, an RSA or ECDSA key); 3 could not tell (no answer, not
 motel's answer, a 429 that stood); 4 not accepted (a 401 after one
 retry); 5 not allowed (403); 6 not found (404); 8 the certificate did not
 verify (motelctl never continues past one); 130 interrupted. 7 is held

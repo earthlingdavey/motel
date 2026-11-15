@@ -174,8 +174,8 @@ func encryptedKeyFile(path string) bool {
 // the box's name as its identity has it: a lowercase hostname, which
 // needs no escape in JSON.
 func Token(ctx context.Context, s Signer, key Key, aud string, now time.Time) (string, error) {
-	if key.Public.RSA() {
-		return "", &RSAError{Shown: key.Shown}
+	if err := Refusal(key); err != nil {
+		return "", err
 	}
 	iat, exp := Times(now)
 	claims, err := encodeClaims(aud, iat.Unix(), exp.Unix())

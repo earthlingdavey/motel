@@ -38,6 +38,10 @@ func newSigner(t *testing.T, kind string) ssh.Signer {
 		_, priv, err = ed25519.GenerateKey(rand.Reader)
 	case "ecdsa":
 		priv, err = ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	case "ecdsa384":
+		priv, err = ecdsa.GenerateKey(elliptic.P384(), rand.Reader)
+	case "ecdsa521":
+		priv, err = ecdsa.GenerateKey(elliptic.P521(), rand.Reader)
 	}
 	if err != nil {
 		t.Fatal(err)
@@ -129,10 +133,11 @@ func keyFor(t *testing.T, s ssh.Signer) Key {
 }
 
 // The token this code makes is one the box's checker accepts: every
-// key type a person may hold that x/crypto makes here.
+// key type a person may hold that x/crypto makes here (ed25519; its sk-
+// form needs an authenticator, and ssh-keygen's own tokens are below).
 func TestTokenIsAcceptedByTheBox(t *testing.T) {
 	now := time.Unix(1794657600, 0)
-	for _, kind := range []string{"ed25519", "ecdsa"} {
+	for _, kind := range []string{"ed25519"} {
 		t.Run(kind, func(t *testing.T) {
 			s := newSigner(t, kind)
 			header, err := Token(context.Background(), &memSigner{s: s}, keyFor(t, s), testBox, now)
@@ -198,8 +203,44 @@ func TestTokenRefusesRSA(t *testing.T) {
 	if !errors.As(err, &rsaErr) || m.calls != 0 {
 		t.Fatalf("err %v after %d signatures, want an RSAError before any", err, m.calls)
 	}
-	if want := "~/.ssh/id_rsa.pub is an RSA key. A box takes ed25519 and ecdsa keys, including hardware ones, not RSA: make one with ssh-keygen -t ed25519."; err.Error() != want {
+	if want := "~/.ssh/id_rsa.pub is an RSA key. A box takes ed25519 keys, including hardware ones, not RSA: make one with ssh-keygen -t ed25519."; err.Error() != want {
 		t.Errorf("message\n%s\nwant\n%s", err, want)
+	}
+}
+
+// skECDSALine is an sk-ecdsa-sha2-nistp256@openssh.com public key line,
+// as OpenSSH writes a hardware key's: only its type is read here.
+func skECDSALine(t *testing.T) string {
+	t.Helper()
+	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	point, err := priv.PublicKey.Bytes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return "sk-ecdsa-sha2-nistp256@openssh.com " + base64.StdEncoding.EncodeToString(ssh.Marshal(struct{ Type, Curve, Key, Application string }{"sk-ecdsa-sha2-nistp256@openssh.com", "nistp256", string(point), "ssh:"}))
+}
+
+// An ECDSA key, of each type, is refused before anything is signed, as
+// RSA is: a box takes Ed25519 keys for now. The message names the key,
+// how it was chosen, its fingerprint, and the remedy.
+func TestTokenRefusesECDSA(t *testing.T) {
+	for _, line := range []string{lineOf(newSigner(t, "ecdsa")), lineOf(newSigner(t, "ecdsa384")), lineOf(newSigner(t, "ecdsa521")), skECDSALine(t)} {
+		pk, err := ParsePublic(line)
+		if err != nil {
+			t.Fatal(err)
+		}
+		m := &memSigner{s: newSigner(t, "ed25519")}
+		_, err = Token(context.Background(), m, Key{Public: pk, Shown: "~/.ssh/id_ecdsa.pub", Source: SourceDefault}, testBox, time.Now())
+		var ecErr *ECDSAError
+		if !errors.As(err, &ecErr) || m.calls != 0 {
+			t.Fatalf("%s: err %v after %d signatures, want an ECDSAError before any", pk.Type, err, m.calls)
+		}
+		if want := "~/.ssh/id_ecdsa.pub (the default file, " + pk.Fingerprint() + ") is an " + pk.Type + " key. A box takes Ed25519 keys for now, not ECDSA yet: make one with ssh-keygen -t ed25519 (or -t ed25519-sk for a hardware key) and name it with --key or MOTEL_KEY."; err.Error() != want {
+			t.Errorf("message\n%s\nwant\n%s", err, want)
+		}
 	}
 }
 
@@ -253,6 +294,12 @@ func TestParsePublic(t *testing.T) {
 	if k, err := ParsePublic(rsaLine()); err != nil || !k.RSA() {
 		t.Errorf("an ssh-rsa line parses, to be refused by name: %+v, %v", k, err)
 	}
+	if k, err := ParsePublic(lineOf(newSigner(t, "ecdsa"))); err != nil || !k.ECDSA() || k.RSA() {
+		t.Errorf("an ecdsa line parses, to be refused by name: %+v, %v", k, err)
+	}
+	if _, err := ParsePublic("ssh-dss " + b64); err == nil || err.Error() != `"ssh-dss" is not a key type a box takes (ssh-ed25519, or sk-ssh-ed25519@openssh.com for a hardware key)` {
+		t.Errorf("ssh-dss: %v", err)
+	}
 }
 
 // fakeRun answers git and ssh-add as a test sets them.
@@ -303,8 +350,8 @@ func TestResolveOrder(t *testing.T) {
 		keys[n] = lineOf(newSigner(t, "ed25519"))
 		write(t, filepath.Join(home, n+".pub"), keys[n]+" "+n+"\n")
 	}
-	keys["default"] = lineOf(newSigner(t, "ecdsa"))
-	write(t, filepath.Join(home, ".ssh", "id_ecdsa.pub"), keys["default"]+"\n")
+	keys["default"] = lineOf(newSigner(t, "ed25519"))
+	write(t, filepath.Join(home, ".ssh", "id_ed25519.pub"), keys["default"]+"\n")
 	write(t, filepath.Join(home, ".ssh", "id_rsa.pub"), rsaLine()+"\n")
 
 	type setup struct {
@@ -323,7 +370,7 @@ func TestResolveOrder(t *testing.T) {
 		{"flag first", setup{flag: "~/flag.pub", env: "~/env.pub", git: true, dflt: true, agent: keys["agent"]}, "flag", SourceFlag, filepath.Join(home, "flag.pub")},
 		{"then MOTEL_KEY", setup{env: filepath.Join(home, "env.pub"), git: true, dflt: true, agent: keys["agent"]}, "env", SourceEnv, filepath.Join(home, "env.pub")},
 		{"then git in a box repository", setup{git: true, dflt: true, agent: keys["agent"]}, "git", SourceGit, filepath.Join(home, "git.pub")},
-		{"then the default file", setup{dflt: true, agent: keys["agent"]}, "default", SourceDefault, filepath.Join(home, ".ssh", "id_ecdsa")},
+		{"then the default file", setup{dflt: true, agent: keys["agent"]}, "default", SourceDefault, filepath.Join(home, ".ssh", "id_ed25519")},
 		{"then the agent's only key", setup{agent: keys["agent"] + " agent\n"}, "agent", SourceAgent, ""},
 	}
 	for _, c := range cases {
@@ -358,6 +405,17 @@ func TestResolveRefusals(t *testing.T) {
 	write(t, filepath.Join(home, "rsa.pub"), rsaLine()+"\n")
 	write(t, filepath.Join(home, "lonely"), "-----BEGIN OPENSSH PRIVATE KEY-----\nAAAA\n-----END OPENSSH PRIVATE KEY-----\n") // gitleaks:allow — made up for this test
 	two := lineOf(newSigner(t, "ed25519")) + "\n" + lineOf(newSigner(t, "ed25519")) + "\n"
+	ec := lineOf(newSigner(t, "ecdsa"))
+	write(t, filepath.Join(home, "ecdsa.pub"), ec+"\n")
+	repo := t.TempDir()
+	write(t, filepath.Join(repo, testBox, "Caddyfile"), "")
+	fp := func(line string) string {
+		k, err := ParsePublic(line)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return k.Fingerprint()
+	}
 	none := func(string) string { return "" }
 	cases := []struct {
 		name string
@@ -366,6 +424,9 @@ func TestResolveRefusals(t *testing.T) {
 	}{
 		{"RSA by flag", Lookup{Flag: "~/rsa.pub"}, "~/rsa.pub is an RSA key."},
 		{"RSA in the agent", Lookup{Run: &fakeRun{agent: rsaLine() + " me\n"}}, "the agent's key is an RSA key."},
+		{"ECDSA by flag", Lookup{Flag: "~/ecdsa.pub"}, "~/ecdsa.pub (--key, " + fp(ec) + ") is an ecdsa-sha2-nistp256 key. A box takes Ed25519 keys for now, not ECDSA yet: make one with ssh-keygen -t ed25519 (or -t ed25519-sk for a hardware key) and name it with --key or MOTEL_KEY."},
+		{"ECDSA as the agent's only key", Lookup{Run: &fakeRun{agent: ec + " me\n"}}, "the agent's key (the agent's only key, " + fp(ec) + ") is an ecdsa-sha2-nistp256 key. A box takes Ed25519 keys for now"},
+		{"ECDSA in git's config, as the key itself", Lookup{Run: &fakeRun{top: repo, config: map[string]string{"gpg.format": "ssh", "user.signingkey": "key::" + ec}}}, "git's user.signingkey key (git's user.signingkey, " + fp(ec) + ") is an ecdsa-sha2-nistp256 key."},
 		{"git outside a box repository is not read", Lookup{Run: &fakeRun{config: map[string]string{"gpg.format": "ssh", "user.signingkey": "~/rsa.pub"}}}, ErrNoKey.Error()},
 		{"a private key with no .pub", Lookup{Flag: "~/lonely"}, "~/lonely (--key): no public key beside it: name its .pub"},
 		{"a file that is not there", Lookup{Flag: "~/missing.pub"}, "~/missing.pub (--key): open "},
@@ -400,11 +461,11 @@ func keygen(t *testing.T) string {
 
 // makeKey makes a throwaway key with ssh-keygen, in the test's own
 // directory, never committed.
-func makeKey(t *testing.T, bin, typ string) string {
+func makeKey(t *testing.T, bin, typ string, args ...string) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "id_"+typ)
-	if out, err := exec.Command(bin, "-q", "-t", typ, "-N", "", "-C", "motelctl-test", "-f", path).CombinedOutput(); err != nil {
-		t.Fatalf("ssh-keygen -t %s: %v\n%s", typ, err, out)
+	if out, err := exec.Command(bin, append([]string{"-q", "-t", typ, "-N", "", "-C", "motelctl-test", "-f", path}, args...)...).CombinedOutput(); err != nil {
+		t.Fatalf("ssh-keygen -t %s %v: %v\n%s", typ, args, err, out)
 	}
 	return path
 }
@@ -413,7 +474,7 @@ func makeKey(t *testing.T, bin, typ string) string {
 // box's checker accepts: the format is OpenSSH's, not only this code's.
 func TestKeygenTokenIsAcceptedByTheBox(t *testing.T) {
 	bin := keygen(t)
-	for _, typ := range []string{"ed25519", "ecdsa"} {
+	for _, typ := range []string{"ed25519"} {
 		t.Run(typ, func(t *testing.T) {
 			path := makeKey(t, bin, typ)
 			k, err := Lookup{Home: t.TempDir()}.load(path, SourceFlag)
@@ -436,15 +497,64 @@ func TestKeygenTokenIsAcceptedByTheBox(t *testing.T) {
 	}
 }
 
-// A key the agent alone holds (no file at all) is handed to ssh-keygen
-// on a pipe, and the token it signs is accepted.
-func TestKeygenAgentOnlyKey(t *testing.T) {
+// An ECDSA key the real ssh-keygen makes, of each size, is refused by
+// the client before anything is signed, naming the key; and the token
+// ssh-keygen signs with it, made here past that refusal, is one the
+// box's checker refuses by its type: the client refuses what the box
+// would.
+func TestKeygenECDSARefused(t *testing.T) {
 	bin := keygen(t)
+	for _, bits := range []string{"256", "384", "521"} {
+		t.Run(bits, func(t *testing.T) {
+			path := makeKey(t, bin, "ecdsa", "-b", bits)
+			_, err := Lookup{Home: t.TempDir()}.load(path, SourceFlag)
+			var ecErr *ECDSAError
+			if !errors.As(err, &ecErr) || ecErr.Type != "ecdsa-sha2-nistp"+bits || !strings.HasPrefix(err.Error(), path+".pub (--key, SHA256:") {
+				t.Fatalf("load: %v, want the ECDSA refusal naming %s.pub", err, path)
+			}
+			line, err := os.ReadFile(path + ".pub")
+			if err != nil {
+				t.Fatal(err)
+			}
+			pk, err := ParsePublic(string(line))
+			if err != nil {
+				t.Fatal(err)
+			}
+			now := time.Now()
+			iat, exp := Times(now)
+			claims, err := encodeClaims(testBox, iat.Unix(), exp.Unix())
+			if err != nil {
+				t.Fatal(err)
+			}
+			armored, err := Keygen{Run: local.Exec{}}.Sign(context.Background(), Key{Public: pk, Path: path, Shown: path, Source: SourceFlag}, Namespace, claims)
+			if err != nil {
+				t.Fatal(err)
+			}
+			sig, err := Dearmor(armored)
+			if err != nil {
+				t.Fatal(err)
+			}
+			header := Scheme + " " + Envelope + base64.RawURLEncoding.EncodeToString(claims) + "." + base64.RawURLEncoding.EncodeToString(sig)
+			pub, _, _, _, err := ssh.ParseAuthorizedKey(line)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var ref *access.TokenRefusal
+			if _, err := check(t, header, pub, now); !errors.As(err, &ref) || ref.Reason != "key-type" {
+				t.Fatalf("the box: %v, want key-type", err)
+			}
+		})
+	}
+}
+
+// startAgent starts an ssh-agent of the test's own, with no key, and
+// points SSH_AUTH_SOCK at it.
+func startAgent(t *testing.T) {
+	t.Helper()
 	agent, err := exec.LookPath("ssh-agent")
 	if err != nil {
 		t.Skip("SKIPPED — NOT TESTED HERE: ssh-agent is not installed, so a key the agent alone holds was not signed with.")
 	}
-	path := makeKey(t, bin, "ed25519")
 	sock := filepath.Join(t.TempDir(), "agent.sock")
 	cmd := exec.Command(agent, "-D", "-a", sock)
 	if err := cmd.Start(); err != nil {
@@ -461,6 +571,12 @@ func TestKeygenAgentOnlyKey(t *testing.T) {
 		time.Sleep(20 * time.Millisecond)
 	}
 	t.Setenv("SSH_AUTH_SOCK", sock)
+}
+
+// agentOnly adds the key at path to the agent, then deletes both its
+// files: the agent alone holds it.
+func agentOnly(t *testing.T, path string) (pubLine []byte) {
+	t.Helper()
 	if out, err := exec.Command("ssh-add", path).CombinedOutput(); err != nil {
 		t.Fatalf("ssh-add: %v\n%s", err, out)
 	}
@@ -473,6 +589,15 @@ func TestKeygenAgentOnlyKey(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	return pubLine
+}
+
+// A key the agent alone holds (no file at all) is handed to ssh-keygen
+// on a pipe, and the token it signs is accepted.
+func TestKeygenAgentOnlyKey(t *testing.T) {
+	bin := keygen(t)
+	startAgent(t)
+	pubLine := agentOnly(t, makeKey(t, bin, "ed25519"))
 	k, err := Resolve(context.Background(), Lookup{Getenv: func(string) string { return "" }, Home: t.TempDir(), Dir: t.TempDir(), Run: local.Exec{}})
 	if err != nil {
 		t.Fatal(err)
@@ -628,4 +753,38 @@ func (failRun) Output(_ context.Context, c local.Cmd) ([]byte, error) {
 		_, _ = io.WriteString(c.Stderr, "Load key: incorrect passphrase supplied to decrypt private key\n")
 	}
 	return nil, errors.New("exit status 255")
+}
+
+// An ECDSA key the agent alone holds, its only key, is not passed over:
+// Resolve refuses it, naming the agent's key, how it was chosen, its
+// fingerprint and the remedy, and nothing is signed.
+func TestKeygenAgentOnlyKeyECDSA(t *testing.T) {
+	bin := keygen(t)
+	startAgent(t)
+	pubLine := agentOnly(t, makeKey(t, bin, "ecdsa"))
+	pk, err := ParsePublic(string(pubLine))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = Resolve(context.Background(), Lookup{Getenv: func(string) string { return "" }, Home: t.TempDir(), Dir: t.TempDir(), Run: local.Exec{}})
+	var ecErr *ECDSAError
+	want := "the agent's key (the agent's only key, " + pk.Fingerprint() + ") is an ecdsa-sha2-nistp256 key. A box takes Ed25519 keys for now"
+	if !errors.As(err, &ecErr) || !strings.HasPrefix(err.Error(), want) {
+		t.Fatalf("err %v, want it to start %q", err, want)
+	}
+}
+
+// An ECDSA key in ssh's default files is refused by name, not passed
+// over for the agent's key or a later default file.
+func TestResolveDefaultECDSANotSkipped(t *testing.T) {
+	home := t.TempDir()
+	ec := lineOf(newSigner(t, "ecdsa"))
+	write(t, filepath.Join(home, ".ssh", "id_ecdsa.pub"), ec+"\n")
+	write(t, filepath.Join(home, ".ssh", "id_ed25519_sk.pub"), lineOf(newSigner(t, "ed25519"))+"\n")
+	run := &fakeRun{agent: lineOf(newSigner(t, "ed25519")) + " agent\n"}
+	_, err := Resolve(context.Background(), Lookup{Getenv: func(string) string { return "" }, Home: home, Dir: home, Run: run})
+	var ecErr *ECDSAError
+	if !errors.As(err, &ecErr) || !strings.HasPrefix(err.Error(), "~/.ssh/id_ecdsa.pub (the default file, SHA256:") || run.agentAsks != 0 {
+		t.Fatalf("err %v, the agent asked %d times; want the ECDSA refusal naming ~/.ssh/id_ecdsa.pub, and no agent", err, run.agentAsks)
+	}
 }

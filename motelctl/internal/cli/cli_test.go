@@ -379,8 +379,24 @@ func TestKey(t *testing.T) {
 		t.Fatalf("%+v", r)
 	}
 	r = run(t, nil, env, "key", "--key", "~/id_rsa.pub")
-	if r.code != 2 || r.stderr != "motelctl: ~/id_rsa.pub is an RSA key. A box takes ed25519 and ecdsa keys, including hardware ones, not RSA: make one with ssh-keygen -t ed25519.\n" {
+	if r.code != 2 || r.stderr != "motelctl: ~/id_rsa.pub is an RSA key. A box takes ed25519 keys, including hardware ones, not RSA: make one with ssh-keygen -t ed25519.\n" {
 		t.Fatalf("an RSA key: %+v", r)
+	}
+	// An ECDSA key prints no person line a box would refuse: it is
+	// refused, as RSA is, with the remedy.
+	ec := "ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAABBBDwDfrEFh7S+4W3sDNtlO0anzlUu3vMU7X2BFcjr0e8A4abZE2yeaKs/RS/NEixorLYz0QmWu/Ms6E1WAdjjDrI=" // gitleaks:allow — made up for this test
+	if err := os.WriteFile(filepath.Join(home, "id_ecdsa.pub"), []byte(ec+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ecRefusal := "~/id_ecdsa.pub (--key, SHA256:2V9I6P3ozgWx2JpYaQK7AK8DiYFppveucXuFQ7NFEXk) is an ecdsa-sha2-nistp256 key. A box takes Ed25519 keys for now, not ECDSA yet: make one with ssh-keygen -t ed25519 (or -t ed25519-sk for a hardware key) and name it with --key or MOTEL_KEY."
+	r = run(t, nil, env, "key", "--key", "~/id_ecdsa.pub")
+	if r.code != 2 || r.stdout != "" || r.stderr != "motelctl: "+ecRefusal+"\n" {
+		t.Fatalf("an ECDSA key: %+v", r)
+	}
+	r = run(t, nil, env, "key", "--key", "~/id_ecdsa.pub", "--json", "--name", "alice@example.com")
+	var refused struct{ Error string }
+	if r.code != 2 || json.Unmarshal([]byte(r.stdout), &refused) != nil || refused.Error != ecRefusal || strings.Contains(r.stdout, "person") {
+		t.Fatalf("an ECDSA key, --json: %+v", r)
 	}
 	r = run(t, nil, env, "key", "--name", "alice example")
 	if r.code != 2 {

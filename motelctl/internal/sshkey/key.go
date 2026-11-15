@@ -17,10 +17,16 @@ import (
 )
 
 // personTypes are the key types a box takes in a person's token (the
-// owner's decision): ed25519, ecdsa, and the hardware forms of both.
+// owner's decision): ed25519 and its hardware form, for now.
 var personTypes = map[string]bool{
-	"ssh-ed25519":                        true,
-	"sk-ssh-ed25519@openssh.com":         true,
+	"ssh-ed25519":                true,
+	"sk-ssh-ed25519@openssh.com": true,
+}
+
+// ecdsaTypes are the ECDSA types, which a box does not take from a
+// person yet (deferred by the owner on 2026-11-16; a later release may
+// take some of them). A line of one parses, to be refused by name.
+var ecdsaTypes = map[string]bool{
 	"ecdsa-sha2-nistp256":                true,
 	"ecdsa-sha2-nistp384":                true,
 	"ecdsa-sha2-nistp521":                true,
@@ -36,7 +42,8 @@ type PublicKey struct {
 }
 
 // ParsePublic reads a public key line, `<type> <base64> [comment]`:
-// the type a box could take or ssh-rsa (refused later, by name), the
+// the type a box could take, ssh-rsa or an ECDSA type (both refused
+// later, by name: Refusal), the
 // base64 one canonical standard line, and the key's own first string
 // equal to the declared type.
 func ParsePublic(line string) (PublicKey, error) {
@@ -45,8 +52,8 @@ func ParsePublic(line string) (PublicKey, error) {
 		return PublicKey{}, errors.New("not a public key line (<type> <base64> [comment])")
 	}
 	typ, b64 := f[0], f[1]
-	if !personTypes[typ] && !isRSA(typ) {
-		return PublicKey{}, fmt.Errorf("%q is not a key type a box takes (ssh-ed25519, ecdsa-sha2-nistp256/384/521, or the sk- form of either)", bound(typ))
+	if !personTypes[typ] && !isRSA(typ) && !ecdsaTypes[typ] {
+		return PublicKey{}, fmt.Errorf("%q is not a key type a box takes (ssh-ed25519, or sk-ssh-ed25519@openssh.com for a hardware key)", bound(typ))
 	}
 	blob, err := base64.StdEncoding.Strict().DecodeString(b64)
 	if err != nil || base64.StdEncoding.EncodeToString(blob) != b64 {
@@ -80,6 +87,10 @@ func (k PublicKey) Line() string {
 // person.
 func (k PublicKey) RSA() bool { return isRSA(k.Type) }
 
+// ECDSA says whether the key is an ECDSA key, which a box does not take
+// from a person yet.
+func (k PublicKey) ECDSA() bool { return ecdsaTypes[k.Type] }
+
 func isRSA(typ string) bool {
 	return typ == "ssh-rsa" || typ == "ssh-rsa-cert-v01@openssh.com"
 }
@@ -94,7 +105,42 @@ type RSAError struct {
 }
 
 func (e *RSAError) Error() string {
-	return e.Shown + " is an RSA key. A box takes ed25519 and ecdsa keys, including hardware ones, not RSA: make one with ssh-keygen -t ed25519."
+	return e.Shown + " is an RSA key. A box takes ed25519 keys, including hardware ones, not RSA: make one with ssh-keygen -t ed25519."
+}
+
+// ECDSAError is an ECDSA key named for a person's token, refused as an
+// RSA key is, before anything is signed or sent: a box takes Ed25519
+// keys for now and would answer the token with the same 401 as a key
+// it does not list. It names the key, how it was chosen and its
+// fingerprint, since a key found by a default (the default file, the
+// agent's only key) is one the person did not name.
+type ECDSAError struct {
+	// Shown is the key as the person named it, or as it was found.
+	Shown string
+	// Source is how it was chosen; empty when not known.
+	Source      string
+	Type        string
+	Fingerprint string
+}
+
+func (e *ECDSAError) Error() string {
+	which := e.Fingerprint
+	if e.Source != "" {
+		which = e.Source + ", " + which
+	}
+	return e.Shown + " (" + which + ") is an " + e.Type + " key. A box takes Ed25519 keys for now, not ECDSA yet: make one with ssh-keygen -t ed25519 (or -t ed25519-sk for a hardware key) and name it with --key or MOTEL_KEY."
+}
+
+// Refusal is why no token may be signed with key, nil when one may:
+// an RSA key (*RSAError) or an ECDSA one (*ECDSAError).
+func Refusal(key Key) error {
+	switch {
+	case key.Public.RSA():
+		return &RSAError{Shown: key.Shown}
+	case key.Public.ECDSA():
+		return &ECDSAError{Shown: key.Shown, Source: key.Source, Type: key.Public.Type, Fingerprint: key.Public.Fingerprint()}
+	}
+	return nil
 }
 
 // bound cuts what a refusal quotes of an argument to a printable size.

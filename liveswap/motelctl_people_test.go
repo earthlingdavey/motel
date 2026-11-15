@@ -108,7 +108,7 @@ func TestMotelctlPeople(t *testing.T) {
 	bin := motelctlBin(t)
 	keys := t.TempDir()
 	alice := keygen(t, keys, "alice", "ed25519")
-	carol := keygen(t, keys, "carol", "ecdsa")
+	carol := keygen(t, keys, "carol", "ed25519")
 	dave := keygen(t, keys, "dave", "ed25519")
 	erin := keygen(t, keys, "erin", "ed25519")
 
@@ -323,5 +323,41 @@ func TestMotelctlPeopleRefused(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+// TestMotelctlPeopleECDSA: a person whose key ssh-keygen made as ECDSA
+// cannot be declared yet (the box refuses the line by name: a person's
+// key is an Ed25519 key for now), and motelctl refuses that key before
+// it signs or sends anything, exit 2 with the remedy, for a read and
+// for `motelctl key`, which prints no line the box would refuse.
+func TestMotelctlPeopleECDSA(t *testing.T) {
+	bin := motelctlBin(t)
+	frank := keygen(t, t.TempDir(), "frank", "ecdsa")
+	if _, err := access.ParsePerson([]string{"frank@example.test", frank.typ, frank.b64}); err == nil || err.Error() != "person frank@example.test: a person's key is an Ed25519 key for now, and this release does not take ecdsa-sha2-nistp256 yet (ssh-keygen -t ed25519, or -t ed25519-sk for a hardware key)" {
+		t.Fatalf("the box's reading of frank's line: %v", err)
+	}
+	h, _ := newTestHandler(t)
+	served := webhook(h)
+	var mu sync.Mutex
+	reached := 0
+	box := serveCtl(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		reached++
+		mu.Unlock()
+		served.ServeHTTP(w, r)
+	}))
+	app := box.url + "/demo"
+	want := "motelctl: " + frank.path + ".pub (MOTEL_KEY, " + frank.fp + ") is an ecdsa-sha2-nistp256 key. A box takes Ed25519 keys for now, not ECDSA yet: make one with ssh-keygen -t ed25519 (or -t ed25519-sk for a hardware key) and name it with --key or MOTEL_KEY.\n"
+	for _, args := range [][]string{{"whoami"}, {"apps"}, {"status", app}, {"key", "--name", "frank@example.test"}} {
+		r := ctl(t, bin, []string{"MOTEL_KEY=" + frank.path, "MOTEL_URL=" + app, "SSL_CERT_FILE=" + box.cert}, args...)
+		if r.code != 2 || r.stdout != "" || r.stderr != want {
+			t.Errorf("%v: exit %d, stdout %q, stderr %q", args, r.code, r.stdout, r.stderr)
+		}
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if reached != 0 {
+		t.Errorf("%d requests reached the box", reached)
 	}
 }
