@@ -1019,14 +1019,41 @@ hit is sent and never timed), and a release has one only with
 one of them a cold start, would otherwise make the quantile, and the
 windows are cumulative, so the same slow request would fail every
 check after it (/code-review pass 4 on operator rules). An old release
-with fewer timed is no p95 baseline. One the store does not answer is **asked again** at the next tick
-(a debug line, `the post-deploy check is asked again`), and the minutes
-it held up after it in turn, one a tick, each read at its own time, so a
-late answer is the one it would have been and failures equal to the
-window's minutes stay reachable; a minute a stalled tick left behind is
-made late the same way. A store that has not answered 10 minutes past
-the window's end ends the comparison, with a warning line (`ended
-unfinished`). It **fails** when the new release is over
+with fewer timed is no p95 baseline. A check counts only when the store
+holds a push of motel's from the minute before its time
+(`max(present_over_time(process_start_time_seconds{job="motel"}[1m]))`,
+asked first, once a check at its time, not per window, and before the
+floor, so a skip is drawn from fresh counts too; the old release's
+window is not asked about, "Owed"): the store stamps a push as it takes it
+and back-fills none it missed, so a check read past its last push reads
+the counts as they stood then. Without the ask, a store down from
+minute 1.5 to 5 answered minutes 2 and 3 with one snapshot, and a warning counted three failing
+checks over a minute and a half of responses; down over the window's
+end, the late checks passed on it and the comparison ended as if the
+release held (`TestPostDeployCountsNoSnapshotTwice`,
+`TestPostDeployCountsNoCheckTheStoreTookNoPushFor`). A minute is the
+span between two checks, so no two count one push, and it holds a push
+lost (they are 30 s apart, stamped milliseconds after their gather).
+A check with none, whose store has taken a push since (the same ask at
+the tick's time less 10 s, once that is a minute past the check's time,
+so a push it finds is after it and not one of the check's own minute
+made searchable late), is **missed**: none will come for it. It is
+skipped, a debug line (`the post-deploy check is skipped: the metrics
+store took no push`), and the checks after it read its minute's
+responses, the windows being cumulative; the window's last ends the
+comparison unfinished, a warning line (`ended unfinished: the metrics
+store took no push of motel's for its last check`), since the responses
+after the store's last push for it are never read
+(`TestPostDeployGoesOnPastAMinuteTheStoreMissed`). One the store does
+not answer, or holds no push for nor since (down, read-only, or motel
+not pushing), is **asked again** at the next tick (a debug line, `the
+post-deploy check is asked again`), and the minutes it held up after it
+in turn, one a tick, each read at its own time, so failures equal to
+the window's minutes stay reachable unless a minute was missed; a
+minute a stalled tick left behind is made late the same way. A store
+that has not answered, or held no push, 10 minutes past the window's
+end ends the comparison, with a warning line (`ended unfinished`) whose
+error says which. It **fails** when the new release is over
 `max_p95` with a p95 above 1.2 × the old's (a quantile is an estimate
 inside a bucket), or over `max_5xx_share` and worse than the old: an old
 release within the bound makes crossing it the regression; an old one
@@ -1664,6 +1691,9 @@ on its general scales. metrics' examples:
 | A motel restart (or a crash) inside a post-deploy window loses the comparison: nothing compares that deploy again, and a regression is told only by a threshold rule | notify/postdeploy.go | 2 | 2 | 3 | 12; the comparison is in memory, and keeping it across a restart is state on disk for a notification (size 2, risk 2); a restart rarely falls in the half hour after a deploy, and the numbers stay in `GET /<app>` |
 | A relaunch after a stop is compared from 40 s after its cutover (`relaunchSkip`): the relaunched instance's answers before then are in none of its checks, so a regression over by then is not told by the comparison | notify/postdeploy.go (`newWindow`) | 2 | 5 | 3 | 30, accepted under the skill's rule 4: those answers come in the first push after the cutover with the stopped instance's last ones, under the release's one set of counters, and only counters split at the cutover (a new state in the observer, size 3, risk 3) tell the two apart; read from the cutover, a crash loop's last 503s were the relaunch's in every check. The threshold rules and `GET /<app>` count them. /code-review of the relaunch mark; the operator accepted it on 2026-11-12 |
 | A relaunch after a stop whose first push after the cutover the store did not take within 40 s of the cutover (an import that failed, or a push gathered late behind a slow chain check) reads the stopped instance's last push as its own: a crash loop's last 503s in every check | notify/postdeploy.go (`relaunchSkip`) | 2 | 2 | 3 | 12; it needs the release's instance to have failed before (the crash loop) and the store to fail that one import; starting the window at the pusher's first import taken after the cutover is a state shared between the pusher and the comparator (size 3, risk 2). /code-review of the relaunch mark |
+| A post-deploy check needs a push of motel's in exactly the minute before its time (`checkFresh`): with one push lost, a check whose time falls after the minute from the push before it, by as much as the push after it was stamped slower than that one, has none and is missed: skipped, so a warning comes a check later (or, with `failures` equal to the window's minutes, not at all), or, the window's last, the comparison ends unfinished | notify/postdeploy.go (`checkFresh`) | 2 | 2 | 3 | 12; it needs a push lost and the next one stamped slower, over the socket's milliseconds unless the store is slow too; a wider window lets two checks count one push, the failure this guards against (size 1, risk 2). /code-review pass 1 of the push ask |
+| The ask for motel's push is one more query inside a check's 10 s budget, so a slow store times out a check sooner: asked again, and past the grace the comparison ends unfinished on the deadline | notify/postdeploy.go (`checkRelease`) | 2 | 3 | 1 | 6; the warning names the error, and the ask is the cheapest of a check's queries (one series, a minute); folding it into the release's queries changes every one of them (size 2, risk 2). /code-review pass 1 of the push ask |
+| A comparison held because the store takes no push (down, or read-only) or does not answer says so only in a debug line until 10 minutes past its window's end, its warning | notify/postdeploy.go (`check`) | 2 | 3 | 1 | 6; the store's state is told meanwhile by `metrics_store_down` (five minutes of failed pushes) or `metrics_store_read_only`, and the comparison is held, not ended as held; a warning at each held check would repeat each 10 s. /code-review pass 1 of the push ask |
 | vmalert's rules have no flapping guard: a condition that flaps around its threshold fires and resolves at each crossing | notify/metricsrules.go | 2 | 3 | 3 | 18; every rule has a `for:` of 2 to 30 minutes, which bounds a flap to one pair per `for:` |
 | `GET /<app>`'s p50 and p95 each run the guarded histogram expression over every bucket, the view's heaviest, where `histogram_quantiles("phi", 0.5, 0.95, …)` would run it once | notify/metricsview.go (`requestQueries`) | 2 | 2 | 1 | 4; on a store of two days of ten apps at the push's 30 s (401 series, 2.3 million samples), one p95 took 1.6 ms at the day and 2.0 ms at the hour, both quantiles in one 1.3 ms and 1.8 ms (2026-11-12, uncached), against the 2 s budget; a view over it answers `the metrics store did not answer`. One query is a `phi` label to read (size 2, risk 2). /code-review of the view's guard |
 | `GET /<app>?range=24h` reads two days through the guard (`[1d] offset 1d` for the series' earlier sample) and three more rollups a series | notify/operatorrules.go (`guardedIncrease`), notify/metricsview.go | 2 | 2 | 1 | 4; on the same store, the day's request query took 1.4 ms against 0.4 ms for `increase_pure` alone, the p95 1.6 ms against 0.7 ms, against the 2 s budget, and a view over it says so; a lookback sized to the window, or no guard when the push is older than the window, is a second expression to prove against the store (size 2, risk 2). /code-review of the view's guard |
@@ -1712,6 +1742,7 @@ on its general scales. metrics' examples:
 | Owed | S | O | D | Lands in |
 |---|---|---|---|---|
 | vmalert refusing a `rules.yml` motel rendered (after a version change, say) keeps its old rules, and `up{job="vmalert"}` stays 1, so `metrics_rules_down` never fires and neither motel nor `motel monitor rules` can tell (30, owed by the owner's decision of 2026-11-14): `scrape.yml` drops every vmalert series but `up`, and the chain (notify/metricspush.go) reads only `up`. The fix keeps `vmalert_config_last_reload_successful` in `scrape.yml` and reads it beside `up` (size 3, risk 2). The listing's `rules_file` speaks for the file, not for this. Read-only review at af7a124 | 3 | 2 | 5 | its own PR, with the `scrape.yml` change and the `motel monitor setup --metrics` re-run on every box that docs/upgrading.md would order |
+| The post-deploy push ask (`checkFresh`) is made at the check's time alone, so the old release's window, which ends a push after the cutover, is read without one: a store down over the cutover (from before the old window's end to after it) and back by the check gives a baseline as it stood at its last push before, a shorter span than the new release's, so the share and p95 the bound is held against are noisier | 2 | 3 | 3 | a follow-up PR: the same ask at the old window's end, `cutover + pushEvery`, once a comparison (out of the push ask's change, which asks once a check; /code-review pass 2 of the push ask) |
 | The store's RSS on a 1 or 2 GB box (a day on hotserve-1's 3.8 GB is in "Footprint") | — | — | — | a deploy to a box of that size |
 | On a booted Debian host, the delete-a-leftover branch of the namespace unit's test before its delete (#430's `ExecStartPre`), measured in the e2e box alone. A reboot cannot reach it: a cold boot has an empty `/run`, so hotserve-1's of 2026-11-13 at a8038b4 took the nothing-to-delete branch alone (the unit's start took 165 ms, with no `Cannot remove namespace` line), and setup's re-run does not restart the namespace unit, which is active. #426's proxies have had their cold boot: the deploy of 01b2fd5 to hotserve-1 rebooted it at about 17:53 UTC on 2026-11-12, and both came back as no root | — | — | — | a start of the namespace unit on hotserve-1 with `/run/netns/motel-metrics` already there (a start after one that failed past its `ip netns add`), not a reboot |
 | Debian's security support for `victoria-metrics` 1.112.0 and `prometheus-alertmanager` 0.28.1 on trixie, whose binaries are built with Go 1.24.2 (the store, vmalert) and 1.24.1 (Alertmanager), and a dist-upgrade check of both drop-ins' flags | — | — | — | before any release |

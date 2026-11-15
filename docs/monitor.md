@@ -623,8 +623,15 @@ down.
 
 A state is told twice: once when it fires (after 30 seconds, so a burst
 arrives as one message) and once when it resolves. While it holds, a
-reminder comes every 4 hours (every 24 for a disk). The events motel
-reports itself, and when each resolves, are in DESIGN-notify.md's
+reminder comes every 4 hours (every 24 for a disk). A deploy in
+progress mutes its own app's watchdog alerts (`watchdog_*`): one that
+fires during the deploy is told within a minute after it ends if it
+has not recovered by then (a recovery counts once the app has stayed
+healthy for 30 seconds, or its `watchdog_grace` if longer), a recovery
+that comes during the deploy is told once the deploy has ended,
+whatever it came to, and a loop that begins and has recovered within
+one deploy is not told. The events motel reports
+itself, and when each resolves, are in DESIGN-notify.md's
 [Events](../notify/DESIGN-notify.md#events) table.
 
 ### What each channel kind shows
@@ -854,7 +861,12 @@ that Alertmanager did not answer within 10 seconds says that
 Alertmanager may have taken the silence all the same: list its
 silences (below) before you add it again. The journal then has
 `monitor: silence add unanswered: Alertmanager may hold the silence`,
-with what was asked but no id, and no `silence added` line. Another
+with what was asked but no id, and no `silence added` line. Ctrl-C
+does not undo an add that has reached motel, nor does a dropped `ssh`:
+it runs to Alertmanager's answer, and the journal has its line, with
+the id if Alertmanager gave one, though the command printed none. Read
+the id there, or list the silences, before you add it again; expire it
+by that id if you did not mean it. Another
 user than root is told `the admin socket … admits root and the motel
 user: run motel monitor silence as root`.
 
