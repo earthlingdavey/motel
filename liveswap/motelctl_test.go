@@ -7,7 +7,6 @@ import (
 	"errors"
 	"io"
 	"log"
-	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -173,12 +172,9 @@ func TestMotelctlFaults(t *testing.T) {
 		w.WriteHeader(http.StatusTooManyRequests)
 		_, _ = w.Write([]byte(`{"error":"too many requests from this person; retry after 1 s"}` + "\n"))
 	}))
-	l, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	closed := "https://" + l.Addr().String()
-	_ = l.Close()
+	// Port 1 (tcpmux): nothing in a test environment listens there,
+	// and no test can take it, as a port just closed could be taken.
+	closed := "https://127.0.0.1:1"
 
 	cases := []struct {
 		name string

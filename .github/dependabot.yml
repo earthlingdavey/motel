@@ -31,10 +31,11 @@ updates:
         patterns: ["*"]
       # Security updates are grouped across the same directories (a
       # group takes one applies-to, hence two groups). Ungrouped, each
-      # would be a one-directory PR, and the root module replaces the
-      # other three modules with their local directories: a bump in only
-      # one of those can leave the root go.mod untidy, which ci.yml's
-      # tidy-check fails.
+      # would be a one-directory PR, and the root module (and box,
+      # notify, backups and motelctl) replace the sibling modules they
+      # import with their local directories: a bump in only one of those
+      # can leave an importer's go.mod untidy, which ci.yml's tidy-check
+      # fails.
       go-security:
         applies-to: security-updates
         patterns: ["*"]
