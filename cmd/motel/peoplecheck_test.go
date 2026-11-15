@@ -29,6 +29,11 @@ func TestWarnPeople(t *testing.T) {
 		realIP  = `{"trusted_proxies":{"source":"static","ranges":["10.0.0.0/8"]},"trusted_proxies_strict":1,"client_ip_headers":["X-Real-IP"]}`
 		unix    = `{"trusted_proxies_unix":true}`
 		unixS   = `{"trusted_proxies_unix":true,"trusted_proxies_strict":1}`
+		minus   = `{"trusted_proxies":{"source":"static","ranges":["10.0.0.0/8"]},"trusted_proxies_strict":-1}`
+		unixM   = `{"trusted_proxies_unix":true,"trusted_proxies_strict":-1}`
+		two     = `{"trusted_proxies":{"source":"static","ranges":["10.0.0.0/8"]},"trusted_proxies_strict":2}`
+		null    = `{"trusted_proxies":null}`
+		noTrust = `{"trusted_proxies_strict":1}`
 		pp      = `{"listener_wrappers":[{"wrapper":"proxy_protocol","allow":["10.0.0.0/8"]},{"wrapper":"tls"}]}`
 		plain   = `{}`
 	)
@@ -69,6 +74,12 @@ func TestWarnPeople(t *testing.T) {
 		{"a strict server, then a loose one", cfg(box(from), channel, servers(strict, loose)), false, true, []string{"server srv0 trusts proxies"}},
 		{"a loose server, then a strict one", cfg(box(from), channel, servers(loose, strict)), false, true, []string{"server srv1 trusts proxies"}},
 		{"a from list, then a grant without one", cfg(box(from, grant), channel, servers(loose)), false, true, nil},
+		{"strict as -1, which Caddy reads as not strict", cfg(box(from), channel, servers(minus)), false, true, nil},
+		{"a unix socket's proxy, strict as -1", cfg(box(from), channel, servers(unixM)), false, true, nil},
+		{"strict as 2, which Caddy reads as strict", cfg(box(from), channel, servers(two)), false, false, []string{"server srv0 trusts proxies"}},
+		{"trusted_proxies null", cfg(box(from), channel, servers(null)), false, false, nil},
+		{"strict on a server that trusts no proxy", cfg(box(from), channel, servers(noTrust)), false, false, nil},
+		{"strict and PROXY protocol servers, no from list", cfg(box(grant), channel, servers(strict, pp)), false, false, nil},
 		{"a grant without a from list, then one with", cfg(box(grant, from), channel, servers(loose)), false, true, nil},
 	} {
 		err := checkPeople(c.cfg)

@@ -638,6 +638,8 @@ func TestForwardedNotStrictFailsClosed(t *testing.T) {
 	}{
 		{"alice, forwarded, not strict", alice, true, 0, http.StatusUnauthorized, "forwarded by a trusted proxy on a server without trusted_proxies_strict"},
 		{"alice, forwarded, strict", alice, true, 1, http.StatusOK, ""},
+		{"alice, forwarded, strict as 2 (Caddy: any value > 0)", alice, true, 2, http.StatusOK, ""},
+		{"alice, forwarded, strict as -1 (Caddy: not strict)", alice, true, -1, http.StatusUnauthorized, "forwarded by a trusted proxy on a server without trusted_proxies_strict"},
 		{"alice, not forwarded, not strict", alice, false, 0, http.StatusOK, ""},
 		{"bob, forwarded, not strict: his box grant has no list", bob, true, 0, http.StatusOK, ""},
 	} {
@@ -670,3 +672,4 @@ func TestForwardedNotStrictFailsClosed(t *testing.T) {
 		}
 	}
 }
+

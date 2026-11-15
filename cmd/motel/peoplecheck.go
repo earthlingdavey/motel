@@ -95,7 +95,7 @@ func checkPeople(cfg []byte) error {
 		return nil
 	}
 	for _, name := range c.servers() {
-		if s := c.Apps.HTTP.Servers[name]; s.trusts() && s.TrustedProxiesStrict == 0 {
+		if s := c.Apps.HTTP.Servers[name]; s.trusts() && s.TrustedProxiesStrict <= 0 { // Caddy's own test of strict is > 0
 			return errors.New("box: " + access.FromProxiesRefusal)
 		}
 	}

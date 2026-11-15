@@ -128,7 +128,7 @@ func AdmitPerson(w http.ResponseWriter, r *http.Request, g PersonGate, scopeKey,
 func clientAddr(r *http.Request) (netip.Addr, string) {
 	if trusted, _ := caddyhttp.GetVar(r.Context(), caddyhttp.TrustedProxyVarKey).(bool); trusted {
 		srv, _ := r.Context().Value(caddyhttp.ServerCtxKey).(*caddyhttp.Server)
-		if srv == nil || srv.TrustedProxiesStrict == 0 {
+		if srv == nil || srv.TrustedProxiesStrict <= 0 { // Caddy's own test of strict is > 0
 			return netip.Addr{}, "forwarded by a trusted proxy on a server without trusted_proxies_strict"
 		}
 	}
