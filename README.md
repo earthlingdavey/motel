@@ -362,6 +362,7 @@ the scanner.)
 | [go-oidc](https://github.com/coreos/go-oidc) + [go-jose](https://github.com/go-jose/go-jose) | 0 (already in Caddy's tree) | ✓ | ✓ | — | — | — | — | Deploy authentication (`deploy_trust`): OIDC discovery/JWKS verification and JWT signing/verification. Both were already transitive dependencies of Caddy; liveswap now requires them directly, and box's pushes use the same verifier through liveswap. Vetted and widely used — the deliberate alternative to hand-rolling JWT crypto. |
 | [age](https://github.com/FiloSottile/age) (`filippo.io/age`) | +4 | ✓ | — | — | ✓ | — | — | Secrets: each value in the box repository is an age file encrypted to the box's own key, which root decrypts on the box into the app's env file. Chosen over SOPS, whose library measured 80 more modules in a binary root runs ([box/DESIGN-box.md](box/DESIGN-box.md), "Decisions and rejected alternatives"). |
 | [cobra](https://github.com/spf13/cobra) + [pflag](https://github.com/spf13/pflag) | 0 (already in Caddy's tree) | ✓ | — | — | ✓ | — | ✓ | Caddy's own CLI is cobra, so anything that adds a subcommand speaks it: box registers `motel box ...` through Caddy's command API, and `cmd/motel` parses a command's flags with Caddy's own definition of them before its backup check runs. motelctl, the laptop client, parses its commands with cobra too. |
+| [tview](https://github.com/rivo/tview) + [tcell](https://github.com/gdamore/tcell) | +4 (tview, tcell, gdamore/encoding, go-colorful; uniseg) | — | — | — | — | — | ✓ | `motelctl tui` only, in the laptop client; no server links them. tview has one maintainer and no release since 2025-08, and it stays on tcell v2: the TUI keeps its screens thin over a model with no terminal library (`internal/tui/model`), so a move to another library costs the screens alone. tview reads `[...]` tags in box text, which `internal/tui/boxtext.go` makes inert (motelctl/README.md, "The TUI"). |
 
 A ✓ in the liveswap, penaltybox and box columns means that module's own
 code requires the dependency. A "—" there is not "absent from that
@@ -376,7 +377,9 @@ own ([backups/README.md](backups/README.md)).
 
 The motelctl column is the laptop client, which no server installs: it
 too links no Caddy, and its binary holds the client's own packages,
-`liveswap/wire`, cobra and pflag, and nothing else (`TestLinksNoCaddy`).
+`liveswap/wire`, cobra and pflag, and for `motelctl tui` tview, tcell
+and the modules they bring (gdamore/encoding, go-colorful, uniseg,
+x/term and x/text), and nothing else (`TestLinksNoCaddy`).
 Its module graph is larger than that (about 180 modules) only because
 `liveswap/wire` is a package of the liveswap module, whose go.mod
 requires Caddy.
