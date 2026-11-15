@@ -143,10 +143,17 @@ func Walk(input []byte) (*Shape, error) {
 	if err != nil {
 		return nil, err
 	}
-	if raw.Host != expanded.Host || !sameSigners(raw.Signers, expanded.Signers) || !raw.Access.Equal(expanded.Access) {
+	if !sameReading(raw, expanded) {
 		return nil, refuse("reads differently once its placeholders are expanded")
 	}
 	return raw, nil
+}
+
+// sameReading is whether the two readings agree on what a proof or a
+// person's admission rests on: the host, the signers, and the person
+// and grant lines.
+func sameReading(raw, expanded *Shape) bool {
+	return raw.Host == expanded.Host && sameSigners(raw.Signers, expanded.Signers) && raw.Access.Equal(expanded.Access)
 }
 
 func sameSigners(a, b proof.Signers) bool {
@@ -211,6 +218,9 @@ func walk(input []byte) (*Shape, error) {
 		blocks   int // top-level blocks opened, in order
 		boxes    int
 		hasTrust bool
+		// appPlaceholder: an app line names its app through a
+		// placeholder, which this reading takes as written.
+		appPlaceholder bool
 		pending  []string // addresses of a header continued by a trailing comma
 	)
 	lines := splitLines(tokens)
@@ -372,6 +382,9 @@ func walk(input []byte) (*Shape, error) {
 				child.kind = kindNotify
 			}
 		case kindLiveswap:
+			if first.Text == "app" && len(args) > 0 && strings.Contains(args[0], "{$") {
+				appPlaceholder = true
+			}
 			if first.Text == "app" && len(args) > 0 && appName.MatchString(args[0]) {
 				shape.Apps = append(shape.Apps, args[0])
 				if shape.AppEnv == nil {
@@ -484,7 +497,7 @@ func walk(input []byte) (*Shape, error) {
 	// After every rule above, so a file without person or grant lines
 	// is refused as it always was; CheckLines takes such a block as it
 	// is.
-	around := &access.Around{Apps: shape.Apps, Channels: shape.Notify != nil && shape.Notify.Channels}
+	around := &access.Around{Apps: shape.Apps, Channels: shape.Notify != nil && shape.Notify.Channels, AppPlaceholder: appPlaceholder}
 	if shape.AccessWarnings, err = access.CheckLines(shape.Access, around); err != nil {
 		return nil, refuse("has a bad " + err.Error())
 	}

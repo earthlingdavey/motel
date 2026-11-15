@@ -9,6 +9,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -53,16 +54,28 @@ var lineKeys = func() map[string]string {
 		panic(err)
 	}
 	// A hardware key's public half as OpenSSH writes it (PROTOCOL.u2f).
-	skEd := base64.StdEncoding.EncodeToString(ssh.Marshal(struct{ Type, Key, Application string }{"sk-ssh-ed25519@openssh.com", string(ed()), "ssh:"}))
+	skEdOf := func(pub ed25519.PublicKey) string {
+		return base64.StdEncoding.EncodeToString(ssh.Marshal(struct{ Type, Key, Application string }{"sk-ssh-ed25519@openssh.com", string(pub), "ssh:"}))
+	}
+	skECOf := func(pub *ecdsa.PublicKey) string {
+		point, err := pub.Bytes()
+		if err != nil {
+			panic(err)
+		}
+		return base64.StdEncoding.EncodeToString(ssh.Marshal(struct{ Type, Curve, Key, Application string }{"sk-ecdsa-sha2-nistp256@openssh.com", "nistp256", string(point), "ssh:"}))
+	}
+	skEd := skEdOf(ed())
+	// ED1 and SKED1 are one key in two forms, as are P256 and SKP256.
+	ed1, p256 := ed(), ec(elliptic.P256())
 	point, err := ec(elliptic.P256()).Bytes()
 	if err != nil {
 		panic(err)
 	}
 	skEC := base64.StdEncoding.EncodeToString(ssh.Marshal(struct{ Type, Curve, Key, Application string }{"sk-ecdsa-sha2-nistp256@openssh.com", "nistp256", string(point), "ssh:"}))
 	return map[string]string{
-		"ED1": marshal(ed()), "ED2": marshal(ed()), "ED3": marshal(ed()), "ED4": marshal(ed()),
+		"ED1": marshal(ed1), "SKED1": skEdOf(ed1), "SKP256": skECOf(p256), "ED2": marshal(ed()), "ED3": marshal(ed()), "ED4": marshal(ed()),
 		"SKED": skEd, "SKEC": skEC,
-		"P256": marshal(ec(elliptic.P256())), "P384": marshal(ec(elliptic.P384())), "P521": marshal(ec(elliptic.P521())),
+		"P256": marshal(p256), "P384": marshal(ec(elliptic.P384())), "P521": marshal(ec(elliptic.P521())),
 		"RSA": marshal(&r.PublicKey),
 	}
 }()
@@ -138,6 +151,15 @@ func readModule(t *testing.T, in []byte) ([]string, error) {
 	return warnings, nil
 }
 
+// prefixes is n distinct from entries, each after a space.
+func prefixes(n int) string {
+	var b strings.Builder
+	for i := range n {
+		fmt.Fprintf(&b, " 10.0.%d.0/24", i)
+	}
+	return b.String()
+}
+
 // adaptRaw is adapt without its K1/K2 template, which a real key's
 // base64 may hold.
 func adaptRaw(in []byte) ([]byte, []caddyconfig.Warning, error) {
@@ -147,7 +169,7 @@ func adaptRaw(in []byte) ([]byte, []caddyconfig.Warning, error) {
 // noChannel is the walk's warning for this file, which has no monitor
 // block: the module cannot see that block, so it is left out where the
 // two readers' warnings are compared.
-const noChannel = "people are declared but no monitor channel is"
+const noChannel = "people are declared and no monitor channel is"
 
 // TestLinesBothReaders feeds one table of person and grant lines to
 // both readers, the module's (adapter and Provision: `motel validate`
@@ -184,15 +206,15 @@ func TestLinesBothReaders(t *testing.T) {
 		grant alice@example.com viewer box`},
 		"a signer granted, no person line": {lines: "\t\tgrant bob viewer app example"},
 		"a lone address":                   {lines: "\t\tgrant bob viewer box from 198.51.100.7 2001:db8::1"},
-		"sixteen prefixes":                 {lines: "\t\tgrant bob viewer box from" + strings.Repeat(" 10.0.0.0/8", 16)},
+		"sixteen prefixes":                 {lines: "\t\tgrant bob viewer box from" + prefixes(16)},
 		"a name of 256 bytes":              {lines: "\t\tperson " + strings.Repeat("n", 256) + " ssh-ed25519 @ED3@\n\t\tgrant " + strings.Repeat("n", 256) + " viewer box"},
 		"a quoted argument":                {lines: "\t\tgrant \"bob\" viewer \"box\""},
 		"a person with no grant": {lines: "\t\tperson carol ssh-ed25519 @ED3@",
-			warn: "person carol has no grant: their key reaches only /_motel/whoami"},
+			warn: "person carol has no grant"},
 		"a box grant and an app grant": {lines: "\t\tgrant bob viewer box\n\t\tgrant bob viewer app blog",
 			warn: "grant bob viewer app blog: the box grant already covers it"},
 		"an ssh-rsa signer": {lines: "\t\tsigner carol ssh-rsa @RSA@\n\t\tgrant bob viewer box",
-			warn: "signer carol: an ssh-rsa key signs commits but cannot sign a person's token"},
+			warn: "signer carol: an ssh-rsa key signs commits but cannot be a person's key; for carol to be a person, add a person line with an ed25519 or ecdsa key (ssh-keygen -t ed25519)"},
 
 		// Refused, one line at a time.
 		"a person's ssh-rsa key": {lines: "\t\tperson carol ssh-rsa @RSA@",
@@ -220,7 +242,7 @@ func TestLinesBothReaders(t *testing.T) {
 		"grant bad app":         {lines: "\t\tgrant bob viewer app Blog", want: `grant bob viewer app "Blog": not an app name`},
 		"grant a word after":    {lines: "\t\tgrant bob viewer box please", want: `grant bob viewer box: "please" after the scope`},
 		"grant from nothing":    {lines: "\t\tgrant bob viewer box from", want: "grant bob viewer box: from takes 1 to 16 addresses or prefixes"},
-		"seventeen prefixes": {lines: "\t\tgrant bob viewer box from" + strings.Repeat(" 10.0.0.0/8", 17),
+		"seventeen prefixes": {lines: "\t\tgrant bob viewer box from" + prefixes(17),
 			want: "grant bob viewer box: from lists 17 addresses or prefixes; a grant takes at most 16"},
 		"host bits":        {lines: "\t\tgrant bob viewer box from 198.51.100.7/24", want: "grant bob viewer box: 198.51.100.7/24 has host bits set; write 198.51.100.0/24"},
 		"slash zero":       {lines: "\t\tgrant bob viewer box from 0.0.0.0/0", want: "grant bob viewer box: 0.0.0.0/0 would admit every address; leave from out instead"},
@@ -237,6 +259,12 @@ func TestLinesBothReaders(t *testing.T) {
 			want: "signer dave and person carol are the same key"},
 		"two people, one key": {lines: "\t\tperson carol ssh-ed25519 @ED3@\n\t\tperson dave ssh-ed25519 @ED3@",
 			want: "person carol and person dave are the same key"},
+		"a signer's key in its sk form": {lines: "\t\tperson carol sk-ssh-ed25519@openssh.com @SKED1@",
+			want: "signer alice@example.com and person carol are the same key, written as ssh-ed25519 and as sk-ssh-ed25519@openssh.com"},
+		"an ECDSA key in both forms": {lines: "\t\tperson carol ecdsa-sha2-nistp256 @P256@\n\t\tperson dave sk-ecdsa-sha2-nistp256@openssh.com @SKP256@",
+			want: "person carol and person dave are the same key, written as ecdsa-sha2-nistp256 and as sk-ecdsa-sha2-nistp256@openssh.com"},
+		"an address twice": {lines: "\t\tgrant bob viewer box from 198.51.100.7 198.51.100.7/32",
+			want: "grant bob viewer box: from lists 198.51.100.7 twice"},
 		"a grant for no one": {lines: "\t\tgrant carol viewer box", want: "grant carol viewer box: no person or signer line declares carol"},
 		"a grant for an ssh-rsa signer": {lines: "\t\tsigner carol ssh-rsa @RSA@\n\t\tgrant carol viewer box",
 			want: "grant carol viewer box: carol has no key a person's token can use (an ssh-rsa signer key signs commits only); add a person line with an ed25519 or ecdsa key"},
@@ -386,7 +414,7 @@ func TestDescribePeople(t *testing.T) {
 	if err := describe(path, &out); err != nil {
 		t.Fatal(err)
 	}
-	wantWarn := string(want) + "warning people are declared but no monitor channel is: what they do here will be told to no one (from step 2, a key's first use from a new network; from step 3, their acts)\n"
+	wantWarn := string(want) + "warning people are declared and no monitor channel is, so what they do on this box will be told to no one\n"
 	if out.String() != wantWarn {
 		t.Errorf("describe:\n%s\nwant:\n%s", out.String(), wantWarn)
 	}
@@ -427,5 +455,136 @@ func TestNameGrammarIsTheSigners(t *testing.T) {
 	}
 	if access.MaxName != proof.MaxPrincipal {
 		t.Errorf("MaxName %d, MaxPrincipal %d", access.MaxName, proof.MaxPrincipal)
+	}
+}
+
+// TestSameReading is the comparison of the walk's two readings: a
+// reading that differs from the other only in a person, or only in a
+// grant's from list, is not the same. No file is known to produce
+// either today (every token of the box block is held to the
+// placeholder rule), so the comparison is held here.
+func TestSameReading(t *testing.T) {
+	read := func() *Shape {
+		t.Helper()
+		s, err := Walk(linesFile(t, "\t\tperson carol ssh-ed25519 @ED3@\n\t\tgrant carol viewer app blog from 10.0.0.0/8"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return s
+	}
+	if !sameReading(read(), read()) {
+		t.Fatal("one file read twice reads differently")
+	}
+	person := read()
+	k, err := access.ParsePerson([]string{"dave", "ssh-ed25519", lineKeys["ED4"]})
+	if err != nil {
+		t.Fatal(err)
+	}
+	person.Access.Keys = append(person.Access.Keys, k)
+	from := read()
+	from.Access.Grants[0].From = nil
+	for name, other := range map[string]*Shape{"a person": person, "a grant's from": from} {
+		if sameReading(read(), other) || sameReading(other, read()) {
+			t.Errorf("readings differing in %s are the same", name)
+		}
+	}
+}
+
+// TestWalkMonitorWithoutChannel: a monitor block with no channel line
+// (a metrics line alone) is no channel, and people beside it are
+// warned of; a channel line ends the warning.
+func TestWalkMonitorWithoutChannel(t *testing.T) {
+	for monitor, warned := range map[string]bool{
+		"\tmonitor {\n\t\tmetrics\n\t}\n":                                          true,
+		"\tmonitor {\n\t\tchannel ops json https://hooks.example.com/motel\n\t}\n": false,
+	} {
+		in := strings.Replace(string(linesFile(t, "\t\tgrant bob viewer box")), "\tliveswap {", monitor+"\n\tliveswap {", 1)
+		s, err := Walk([]byte(in))
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := slices.ContainsFunc(s.AccessWarnings, func(w string) bool { return strings.HasPrefix(w, noChannel) })
+		if got != warned {
+			t.Errorf("%q: warned %v, want %v (%q)", monitor, got, warned, s.AccessWarnings)
+		}
+	}
+}
+
+// TestWalkAppThroughPlaceholder: an app the liveswap block names
+// through a placeholder cannot be granted, since the walk reads the
+// raw file, and the refusal says so rather than that no such app runs.
+func TestWalkAppThroughPlaceholder(t *testing.T) {
+	in := strings.Replace(string(linesFile(t, "\t\tgrant bob viewer app shop")), "\t\tapp blog {", "\t\tapp {$MOTEL_BOX_TEST_UNSET_APP:shop} {", 1)
+	unsetForTest(t, "MOTEL_BOX_TEST_UNSET_APP")
+	_, err := Walk([]byte(in))
+	want := "the Caddyfile has a bad grant bob viewer app shop: no app line in the liveswap block names shop as written; an app named through a placeholder cannot be granted"
+	if err == nil || err.Error() != want {
+		t.Fatalf("got %v, want %q", err, want)
+	}
+}
+
+// TestLinesModuleJSONRoundTrip: the people and the grants go through the
+// app's JSON (the adapter's output, marshalled and loaded again, as a
+// config is) and come out as the walk reads them.
+func TestLinesModuleJSONRoundTrip(t *testing.T) {
+	in := linesFile(t, `
+		person carol ssh-ed25519 @ED3@
+		signer dave sk-ssh-ed25519@openssh.com @SKED@
+		person carol ecdsa-sha2-nistp384 @P384@
+		grant carol viewer app blog from 198.51.100.7 2001:db8:5::/48
+		grant carol viewer box from 10.0.0.0/8
+		grant bob viewer app example
+		grant dave viewer box`)
+	cfg, _, err := adaptRaw(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var c struct {
+		Apps struct {
+			Box json.RawMessage `json:"box"`
+		} `json:"apps"`
+	}
+	if err := json.Unmarshal(cfg, &c); err != nil {
+		t.Fatal(err)
+	}
+	var first, loaded App
+	if err := json.Unmarshal(c.Apps.Box, &first); err != nil {
+		t.Fatal(err)
+	}
+	out, err := json.Marshal(first)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(out, &loaded); err != nil {
+		t.Fatal(err)
+	}
+	signers := proof.Signers{}
+	for _, s := range loaded.Signers {
+		sg, err := proof.ParseSigner(s.Principal, s.Type, s.Key)
+		if err != nil {
+			t.Fatal(err)
+		}
+		signers = append(signers, sg)
+	}
+	got, err := loaded.lines(signers)
+	if err != nil {
+		t.Fatal(err)
+	}
+	shape, err := Walk(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The module holds the signers apart from the people: its keys are
+	// the signers', then the people's, each in file order.
+	want := access.Lines{Grants: shape.Access.Grants}
+	for _, signer := range []bool{true, false} {
+		for _, k := range shape.Access.Keys {
+			if k.Signer == signer {
+				want.Keys = append(want.Keys, k)
+			}
+		}
+	}
+	if !got.Equal(want) {
+		t.Errorf("the module's JSON reads\n%+v\nthe walk\n%+v", got, want)
 	}
 }

@@ -138,29 +138,14 @@ func (a *App) provision(logger *zap.Logger) error {
 	return nil
 }
 
-// checkLines parses the person and grant lines again, as a config
-// posted as JSON was never through the Caddyfile parser, and holds them
-// to the rules across lines with the signers. This reader sees the box
-// block alone: which apps the file runs and whether it has a monitor
-// channel are the walk's to check (Walk).
+// checkLines holds the person and grant lines to the rules across lines
+// with the signers. This reader sees the box block alone: which apps
+// the file runs and whether it has a monitor channel are the walk's to
+// check (Walk).
 func (a *App) checkLines(logger *zap.Logger, signers proof.Signers) error {
-	var lines access.Lines
-	for _, s := range signers {
-		lines.Keys = append(lines.Keys, access.SignerKey(s.Principal, s.Type, s.B64, s.Key))
-	}
-	for _, p := range a.People {
-		k, err := access.ParsePerson([]string{p.Name, p.Type, p.Key})
-		if err != nil {
-			return err
-		}
-		lines.Keys = append(lines.Keys, k)
-	}
-	for _, c := range a.Grants {
-		g, err := access.ParseGrant(c.args())
-		if err != nil {
-			return err
-		}
-		lines.Grants = append(lines.Grants, g)
+	lines, err := a.lines(signers)
+	if err != nil {
+		return err
 	}
 	warnings, err := access.CheckLines(lines, nil)
 	if err != nil {
@@ -170,6 +155,31 @@ func (a *App) checkLines(logger *zap.Logger, signers proof.Signers) error {
 		logger.Warn(w, zap.String("option", "box"))
 	}
 	return nil
+}
+
+// lines parses the person and grant lines again, as a config posted as
+// JSON was never through the Caddyfile parser: the signers' keys first,
+// then the people's, then the grants, each in file order.
+func (a *App) lines(signers proof.Signers) (access.Lines, error) {
+	var lines access.Lines
+	for _, s := range signers {
+		lines.Keys = append(lines.Keys, access.SignerKey(s.Principal, s.Type, s.B64, s.Key))
+	}
+	for _, p := range a.People {
+		k, err := access.ParsePerson([]string{p.Name, p.Type, p.Key})
+		if err != nil {
+			return access.Lines{}, err
+		}
+		lines.Keys = append(lines.Keys, k)
+	}
+	for _, c := range a.Grants {
+		g, err := access.ParseGrant(c.args())
+		if err != nil {
+			return access.Lines{}, err
+		}
+		lines.Grants = append(lines.Grants, g)
+	}
+	return lines, nil
 }
 
 // Start is a no-op: the app is configuration box_webhook reads.

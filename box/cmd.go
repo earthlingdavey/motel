@@ -50,7 +50,7 @@ address a file names. The file may be a pipe:
 			})
 			cmd.AddCommand(&cobra.Command{
 				Use:   "describe <Caddyfile>",
-				Short: "Print a Caddyfile's box_webhook host, apps and signers, as the box reads them",
+				Short: "Print a Caddyfile's box_webhook host, apps, signers, people and grants, as the box reads them",
 				Long: `Reads the Caddyfile as "motel box webhook" does and prints one line
 per fact, for a script to read: the host, then the apps, then the
 signers, each in file order:
@@ -58,6 +58,17 @@ signers, each in file order:
     host deploy.example.com
     app example
     signer alice@example.com ssh-ed25519 AAAAC3Nz...
+
+With a person or grant line in the box block, it adds a person line for
+each key a person may hold (a signer line's too, marked signer; an
+ssh-rsa signer key is not one), by the key's fingerprint, then the
+grants, then a warning line for each doubt the lines were taken with:
+
+    person bob@example.com ecdsa-sha2-nistp256 SHA256:e2/1Bk...
+    grant bob@example.com viewer app example
+    warning person carol@example.com has no grant
+
+These lines are read and checked; nothing admits a person yet.
 
 With a secrets/ directory beside the file it reads that too, as the
 working tree has it, and adds:
