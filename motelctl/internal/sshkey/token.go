@@ -4,10 +4,13 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
+	"encoding/binary"
 	"encoding/json"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 	"time"
 
@@ -56,6 +59,9 @@ type Keygen struct {
 	// is on the terminal, but a hardware key's "confirm user presence"
 	// is on stderr.
 	Stderr io.Writer
+	// Terminal says whether a passphrase can be asked on a terminal;
+	// nil opens /dev/tty to see.
+	Terminal func() bool
 }
 
 // Sign runs `ssh-keygen -q -Y sign -n <namespace> -f <key>` with the
@@ -90,9 +96,62 @@ func (k Keygen) Sign(ctx context.Context, key Key, namespace string, message []b
 		if last == "" {
 			last = err.Error()
 		}
+		// With no terminal, ssh-keygen asks a key file's passphrase on
+		// stdin, reads the token's claims as it, and fails. Told by
+		// three things together: it failed, the key file says it is
+		// encrypted, and no terminal opens. (A key the agent holds is
+		// signed by the agent, and never gets here.)
+		if priv := strings.TrimSuffix(key.Path, ".pub"); priv != "" && encryptedKeyFile(priv) && !k.terminal() {
+			shown := strings.TrimSuffix(key.Shown, ".pub")
+			return nil, fmt.Errorf("%s is protected by a passphrase, and with no terminal to ask it on, ssh-keygen cannot read it: add the key to the agent (ssh-add %s) and run motelctl again", termtext.From(shown), termtext.From(shown))
+		}
 		return nil, fmt.Errorf("ssh-keygen could not sign with %s: %s", key.Shown, termtext.From(last))
 	}
 	return out, nil
+}
+
+func (k Keygen) terminal() bool {
+	if k.Terminal != nil {
+		return k.Terminal()
+	}
+	f, err := os.OpenFile("/dev/tty", os.O_RDWR, 0)
+	if err != nil {
+		return false
+	}
+	_ = f.Close()
+	return true
+}
+
+// encryptedKeyFile says whether the private key file at path says it
+// is encrypted: an OpenSSH key whose cipher is not "none", or a PEM
+// key marked ENCRYPTED. Anything it cannot read is not said to be.
+func encryptedKeyFile(path string) bool {
+	f, err := os.Open(path) //nolint:gosec // G304: the key the person named, which ssh-keygen was just given
+	if err != nil {
+		return false
+	}
+	defer func() { _ = f.Close() }()
+	b, err := io.ReadAll(io.LimitReader(f, 64<<10))
+	if err != nil {
+		return false
+	}
+	block, _ := pem.Decode(b)
+	switch {
+	case block == nil:
+		return false
+	case block.Type == "OPENSSH PRIVATE KEY":
+		const magic = "openssh-key-v1\x00"
+		d, ok := bytes.CutPrefix(block.Bytes, []byte(magic))
+		if !ok || len(d) < 4 {
+			return false
+		}
+		n := binary.BigEndian.Uint32(d)
+		d = d[4:]
+		return uint64(n) <= uint64(len(d)) && string(d[:n]) != "none"
+	case block.Type == "ENCRYPTED PRIVATE KEY":
+		return true
+	}
+	return strings.Contains(block.Headers["Proc-Type"], "ENCRYPTED")
 }
 
 // Token makes a person's token for the box aud, at now, and returns

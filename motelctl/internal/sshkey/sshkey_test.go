@@ -490,3 +490,61 @@ func TestKeygenAgentOnlyKey(t *testing.T) {
 		t.Fatalf("the box refused the agent key's token: %v", err)
 	}
 }
+
+// A key file protected by a passphrase, with no terminal to ask it on:
+// ssh-keygen reads the token's claims as the passphrase and fails, and
+// motelctl says to add the key to the agent. With a terminal, or with
+// a key file that is not encrypted, ssh-keygen's own words stand.
+func TestKeygenPassphraseWithNoTerminal(t *testing.T) {
+	bin := keygen(t)
+	path := filepath.Join(t.TempDir(), "id_ed25519")
+	if out, err := exec.Command(bin, "-q", "-t", "ed25519", "-N", "a passphrase", "-C", "motelctl-test", "-f", path).CombinedOutput(); err != nil {
+		t.Fatalf("ssh-keygen: %v\n%s", err, out)
+	}
+	k, err := Lookup{Home: t.TempDir()}.load(path, SourceFlag)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !encryptedKeyFile(path) || encryptedKeyFile(makeKey(t, bin, "ed25519")) || encryptedKeyFile(path+".pub") {
+		t.Fatal("encryptedKeyFile reads a key file's header wrongly")
+	}
+	for _, c := range []struct {
+		name     string
+		terminal bool
+		want     string
+	}{
+		{"no terminal", false, "is protected by a passphrase, and with no terminal to ask it on, ssh-keygen cannot read it: add the key to the agent (ssh-add " + strings.TrimSuffix(k.Shown, ".pub") + ") and run motelctl again"},
+		{"a terminal", true, "ssh-keygen could not sign with " + k.Shown + ": "},
+	} {
+		_, err := Token(context.Background(), Keygen{Run: local.Exec{}, Terminal: func() bool { return c.terminal }}, k, testBox, time.Now())
+		if err == nil || !strings.Contains(err.Error(), c.want) {
+			t.Errorf("%s: %v, want %q", c.name, err, c.want)
+		}
+	}
+}
+
+// encryptedKeyFile reads the older PEM forms too, and nothing that is
+// no key file.
+func TestEncryptedKeyFileForms(t *testing.T) {
+	dir := t.TempDir()
+	begin := "-----BEGIN " // split, so no line here is a key's header
+	for _, c := range []struct {
+		name, content string
+		encrypted     bool
+	}{
+		{"PEM, encrypted", begin + "EC PRIVATE KEY-----\nProc-Type: 4,ENCRYPTED\nDEK-Info: AES-128-CBC,00\n\nAAAA\n-----END EC PRIVATE KEY-----\n", true},
+		{"PEM, plain", begin + "EC PRIVATE KEY-----\nAAAA\n-----END EC PRIVATE KEY-----\n", false},
+		{"PKCS #8, encrypted", begin + "ENCRYPTED PRIVATE KEY-----\nAAAA\n-----END ENCRYPTED PRIVATE KEY-----\n", true},
+		{"OpenSSH, truncated", begin + "OPENSSH PRIVATE KEY-----\nb3BlbnNzaC1rZXktdjEA\n-----END OPENSSH PRIVATE KEY-----\n", false},
+		{"not a key", "hello\n", false},
+	} {
+		p := filepath.Join(dir, strings.ReplaceAll(c.name, " ", "_"))
+		write(t, p, c.content)
+		if got := encryptedKeyFile(p); got != c.encrypted {
+			t.Errorf("%s: %v", c.name, got)
+		}
+	}
+	if encryptedKeyFile(filepath.Join(dir, "none")) {
+		t.Error("a file that is not there")
+	}
+}
