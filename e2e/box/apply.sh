@@ -464,13 +464,17 @@ refused "a file whose timeouts would cut an upload" "the new Caddyfile does not 
 echo "=== box apply 3b: a trickled upload gives the push slot back at the handler's bound ==="
 # Caddy's idle reader re-arms the connection's read deadline before
 # every body read (read_body_idle, a minute by default), so a body that
-# keeps arriving is never idle, and the deadline the handler set bounds
-# nothing past the first byte. The handler's own bound on the body ends
-# the push at 120 s: the read in flight then returns with the next byte
-# (within 20 s here) and the slot is given back; the answer follows
-# once the server has given up draining the rest, at the idle deadline
-# that read armed when it began, before the bound — so by 180 s (Caps,
-# "bundle upload"). The client: openssl's s_client, sending a byte
+# keeps arriving is never idle. From v2.11.8 it never re-arms past the
+# deadline the handler set (caddy#8284): the read in flight at 120 s
+# ends there with "i/o timeout", which the handler names as its bound,
+# and the slot is given back and the push answered then. Under a reader
+# that re-arms past it (v2.11.7's), the handler's own bound on the body
+# ends the push: the read in flight returns with the next byte (within
+# 20 s here), and the answer follows once the server has given up
+# draining the rest, at the idle deadline that read armed when it
+# began, before the bound — so by 180 s either way (Caps, "bundle
+# upload"). The client is timed to its exit, with its first byte after
+# the answer: 140 s on v2.11.9. The client: openssl's s_client, sending a byte
 # every 20 s of a body it declared as 1000 bytes, 15 bytes in all, under
 # a 400 s timeout: before the bound, the slot was held until the bytes
 # stopped, and the answer then never left — the idle deadline's error

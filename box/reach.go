@@ -690,16 +690,14 @@ func (p tlsPolicy) block(served map[string]bool) string {
 
 // requiresCertificate is whether a client authentication refuses a
 // client that sends no certificate: one Caddy counts as active, unless
-// in mode request or verify_if_given with no verifier, since Caddy runs
-// each verifier on every connection (trusted_leaf_certs becomes one,
-// which fails a connection with no certificate).
+// in mode request or verify_if_given. Its verifiers (trusted_leaf_certs
+// becomes one) run only on a certificate presented, from v2.11.8
+// (verifyConnection), so they refuse no client that sends none.
 func requiresCertificate(ca *caddytls.ClientAuthentication) bool {
 	if ca == nil || !ca.Active() {
 		return false
 	}
-	lets := (ca.Mode == "request" || ca.Mode == "verify_if_given") && len(ca.VerifiersRaw) == 0 &&
-		len(ca.TrustedLeafCerts) == 0 //nolint:staticcheck // deprecated, but Caddy v2.11.7 still makes it a verifier
-	return !lets
+	return ca.Mode != "request" && ca.Mode != "verify_if_given"
 }
 
 // matchStatus is what a matcher, a set or a route says of the request:
@@ -827,9 +825,13 @@ type reachWalk struct {
 // server's own route list, whose routes are sites.
 func (w *reachWalk) routes(rs []adaptedRoute, outer matchVerdict, top bool) (reachEnd, *reachBlock) {
 	for _, r := range rs {
-		// Caddy runs a route's matchers before its group check, so a
-		// matcher that may fail fails whether or not the group is
-		// already satisfied.
+		// Caddy checks a route's group before its matchers (v2.11.8
+		// on), so a member of a group already satisfied is skipped
+		// with its matchers unrun: one that may fail fails only while
+		// the group is not.
+		if r.group != "" && w.groups[r.group].status == matches {
+			continue
+		}
 		v := w.match(r.match)
 		if v.fails {
 			return blocked, &reachBlock{fails: true, matcher: v.matcher}
@@ -851,9 +853,6 @@ func (w *reachWalk) routes(rs []adaptedRoute, outer matchVerdict, top bool) (rea
 			// satisfies the group whether or not an earlier one may
 			// have, and later members never run.
 			g := w.groups[r.group]
-			if g.status == matches {
-				continue
-			}
 			if v.status > g.status {
 				w.groups[r.group] = groupState{v.status, v.matcher}
 			}

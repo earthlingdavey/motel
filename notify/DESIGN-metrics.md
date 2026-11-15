@@ -407,8 +407,14 @@ mechanics, its order and its measured cost are DESIGN-liveswap.md's
   response, which it buffers whole first to store it, so a miss's time
   runs to the end of the app's body, the time the client waited for its
   first byte; with no cache in front it is the app's own time to
-  headers. p50 and p95 are `histogram_quantile` over them: an estimate
-  inside a bucket.
+  headers, unless `encode` wraps the observer (as it does in a site,
+  where `observe` is ordered ahead of it; in a `route`, the one written
+  first wraps the other). `encode` holds the headers until the first
+  body write, or the response's end when it has no body (a 204, a 304,
+  a HEAD), and sends an SSE or incremental response's at once; on
+  Caddy v2.11.9 it does so for every client, where v2.11.7 did only for
+  one that accepts an encoding. p50 and p95 are `histogram_quantile`
+  over them: an estimate inside a bucket.
 - **The cache.** The `Cache-Status` the cache in front wrote (RFC 9211,
   as Souin writes it): hit, stale (a hit with `fwd=stale`), miss
   (`fwd=uri-miss`, or a revalidation) or bypass. Souin's entry is the
