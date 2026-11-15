@@ -1056,7 +1056,10 @@ scope for the runtime model, in scope for release signing (roadmap).
   structure, one fingerprint lookup and at most one signature check,
   under the same 8 KiB cap and the same failure budgets; a stranger can
   put a listed key's public half in the structure and buy one signature
-  check, as a JWT under a published `kid` does. A key that is not listed
+  check, as a JWT under a published `kid` does. That check is an
+  Ed25519 one, about 0.04 ms: a person's key is Ed25519 for now, and a
+  token with an ECDSA key (0.5 to 1.3 ms a check for the larger curves)
+  is refused by its type before any lookup. A key that is not listed
   but is of a type some listed key has costs a signature check too,
   against a dummy key of that type, so a stranger holding someone's
   published key does not learn by the cost of one whether the box lists

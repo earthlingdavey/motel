@@ -12,12 +12,16 @@ that site's name.
 
 ## What they need
 
-An ssh key of a type a person may hold: `ssh-ed25519`, `ecdsa-sha2-*`,
-or the hardware forms of either (`sk-ssh-ed25519@openssh.com`,
-`sk-ecdsa-sha2-nistp256@openssh.com`). Not RSA: someone with only an RSA
-key makes one with `ssh-keygen -t ed25519`, or `ssh-keygen -t
-ed25519-sk` for a hardware key. They send you the public half, the one
-line of their `.pub` file.
+An Ed25519 ssh key: `ssh-ed25519`, or its hardware form
+`sk-ssh-ed25519@openssh.com`. That is the one kind a person may hold for
+now. Not RSA, and not ECDSA yet (`ecdsa-sha2-*`,
+`sk-ecdsa-sha2-nistp256@openssh.com`): a box refuses a `person` line
+with either, so an agent that makes only P-256 keys, such as one that
+keeps its keys in the Secure Enclave, cannot be used for now. A later
+release may take ECDSA keys too. Someone without an Ed25519 key makes
+one with `ssh-keygen -t ed25519`, or `ssh-keygen -t ed25519-sk` for a
+hardware key. They send you the public half, the one line of their
+`.pub` file.
 
 ## Add them
 
@@ -30,7 +34,7 @@ box {
 	deploy_trust github { … }
 	signer alice@example.com ssh-ed25519 AAAAC3Nz…
 
-	person bob@example.com ecdsa-sha2-nistp256 AAAAE2Vj…
+	person bob@example.com ssh-ed25519 AAAAC3Nz…
 	grant bob@example.com viewer app blog
 	grant alice@example.com viewer box
 }

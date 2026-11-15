@@ -73,6 +73,21 @@ Every line the registry writes names the file this machine runs: at
 `motel validate` of a candidate, it is still this machine's. Deploys
 are not touched by any of it.
 
+**A person's key is an Ed25519 key, for now**: `ssh-ed25519`, or
+`sk-ssh-ed25519@openssh.com` for a hardware key (the owner's decision
+of 2026-11-16). ECDSA is not accepted yet: a `person` line with an
+`ecdsa-sha2-nistp256`, `-nistp384`, `-nistp521` or
+`sk-ecdsa-sha2-nistp256@openssh.com` key is refused by name, by both
+readers, with the remedy (`ssh-keygen -t ed25519`, or `-t ed25519-sk`
+for a hardware key), and a token signed with one is refused as
+`key-type` before any lookup, so no ECDSA signature is ever verified
+for a person. So an agent that makes only P-256 keys (the Secure
+Enclave's, Secretive's) cannot be used for now. The reason is the cost
+a stranger can spend: presenting a listed person's public key buys one
+signature check of its type, about 0.04 ms for Ed25519 and 0.5 to
+1.3 ms for the larger ECDSA curves. Admitting a type later breaks no
+one; taking one away would. RSA stays refused, whatever its size.
+
 **Only keys a person may sign with are listed**: a `person` line's, and
 a `signer` line's ed25519 key once the block declares people (a
 `signer` line takes no ECDSA key: box/proof refuses one).
@@ -85,8 +100,9 @@ their token is the flat 401 (`TestRemovedPersonRefusedAfterReload`).
 A console edit of the file is seen at the next reload, as for any other
 line.
 
-**Nothing keys on the token's bytes**: an ECDSA signature has several
-encodings that verify alike. Anything that must recognise a token keys
+**Nothing keys on the token's bytes**: the same claims signed again
+under the other hash, or by an `sk-` key with another counter, are
+another token that verifies alike. Anything that must recognise a token keys
 on its verified claims and the key's fingerprint.
 
 ## The token
@@ -112,7 +128,7 @@ the signature verifies:
 | 3 | at most 8 KiB, before any parse | `too-long` |
 | 4 | `m1.`, two more parts, strict unpadded base64url, claims at most 1 KiB | `envelope-…`, `claims-…`, `sig-encoding` |
 | 5 | the SSHSIG structure: magic, version 1, nothing after it | `blob-…` |
-| 6 | the key's type is a person's (no RSA), then its fingerprint is listed | `key-type`, `key-not-listed` |
+| 6 | the key's type is a person's (Ed25519 in either form: no RSA, and no ECDSA yet), then its fingerprint is listed | `key-type`, `key-not-listed` |
 | 7 | namespace, empty reserved field, `sha256` or `sha512`, the `sk-` trailer and touch flag, nothing after the signature, the signature | `signature-…` |
 | 8 | the claims in their one spelling, no unknown key | `claims-json`, `claims-not-canonical` |
 | 9 | `aud` is the box's identity | `aud` |
@@ -264,7 +280,8 @@ learn from the time whether this box lists it. A key of a type no
 listed key has is refused before any verification: it cannot be
 mistaken for a listed key, and checking it would let anyone, with no
 key at all, make every box (one with no people too) spend a signature
-check per request, over a millisecond for P-521. So a stranger can make
+check per request (and the cost of that check is why a person's key is
+Ed25519 for now: a P-521 one was over a millisecond). So a stranger can make
 the box do at most one verification, of a type some listed key has,
 per request, which presenting a listed person's public key already
 buys. What timing still tells a stranger is which key **types** are
@@ -349,7 +366,7 @@ access's examples:
 | 9 | the registry after a start | a person refused in #473's window | 2 | 4 | 1 | fix | built at provision; `TestPersonNotRefusedAfterAStart` |
 | 10 | the address list on `client_ip` | a client names its own address in `X-Forwarded-For` behind a trusted proxy (Caddy's default, non-strict mode takes the left-most), or too wide a `trusted_proxies` lets a peer set it | 3 | 3 | 5 | fix | without `trusted_proxies_strict`: refused by the gate, and no list holds a forwarded request; with it, `motel validate` warns that the ranges decide; `TestFromBehindATrustedProxy` drives a forged header through a provisioned server in each mode |
 | 15 | the cost of a refusal by lookup | a stranger tells by timing whether a published key is listed | 2 | 2 | 5 | fix | a signature check against a dummy key of the type before `key-not-listed`, for a type some listed key has (`TestUnlistedKeyCostsASignatureCheck`) |
-| 16 | that dummy check | a stranger with no key makes any box verify a P-521 signature per request (1.3 ms against 3 µs) | 3 | 3 | 5 | fix | no dummy check for a type no listed key has, nor with no registry (`TestUnlistedTypeCostsNothing`) |
+| 16 | that dummy check | a stranger with no key makes any box verify a P-521 signature per request (1.3 ms against 3 µs) | 3 | 3 | 5 | fix | no dummy check for a type no listed key has, nor with no registry (`TestUnlistedTypeCostsNothing`); since 2026-11-16 no ECDSA type at all, refused as `key-type` before any lookup (`TestECDSANeverVerified`) |
 | 11 | people with no channel | what they do is told to no one | 3 | 5 | 5 | fix by naming | warned by `validate` and at load |
 | 12 | the 403 to people | a 403 for one app tells a person of another that the name exists | 3 | 5 | 5 | fix | one 403 for an app that exists and one that does not |
 | 13 | `Host` equal to the identity | a proxy that rewrites `Host` refuses every person | 2 | 5 | 1 | fix | the journal's line names the host received |
@@ -369,6 +386,7 @@ access's examples:
 | The time of a refusal tells a stranger which key types the box lists (a type no listed key has costs no verification) | 1 | 3 | 5 | — | it says nothing of who; hiding it would mean verifying every type for anyone, which is the cost row 16 removes |
 | A box too old for people and a key the box does not list both answer the flat 401 | 2 | 5 | 3 | — | the owner's decision: no answer to a stranger names motel; the client's message names both |
 | A legitimate burst over 60 requests is told to wait | 2 | 3 | 1 | — | `Retry-After` names the wait |
+| A person whose only key is ECDSA (for example from an agent that makes only P-256 keys) cannot be declared until a later release admits that type | 2 | 2 | 1 | — | the owner's decision of 2026-11-16: a stranger presenting a listed public key buys one check of its type, 0.04 ms for Ed25519 against 0.5 to 1.3 ms for the larger ECDSA curves, and widening later breaks no one where narrowing would; the line's refusal names the remedy |
 | A token sent by hand over plain HTTP, to a site the operator serves in clear under the box's name, is answered like any other; no webhook checks that a request came over TLS | 3 | 1 | 3 | 2, 2 | the owner's decision: a hand-made plain-HTTP request is not catered for. `motelctl` speaks https only and follows no redirect; `deploy.sh` refuses an `http://` address unless `MOTEL_ALLOW_HTTP=1`, for a test box; the template's deploy host is served over https |
 
 ## Not in this release
