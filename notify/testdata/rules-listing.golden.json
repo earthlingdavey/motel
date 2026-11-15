@@ -196,21 +196,21 @@
       "severity": "warning",
       "subject": "box",
       "kind": "guarded",
-      "value_query": "min by (path) (predict_linear(motel_disk_avail_bytes[6h], 7200))",
+      "value_query": "min by (path) (predict_linear(motel_disk_avail_bytes[30m], 7200))",
       "op": "<",
       "threshold": 0,
       "unit": "bytes",
-      "for_seconds": 1800,
+      "for_seconds": 300,
       "guards": [
         {
-          "query": "min by (path) (predict_linear(motel_disk_avail_bytes[1h], 7200))",
+          "query": "min by (path) (predict_linear(motel_disk_avail_bytes[5m], 7200))",
           "op": "<",
           "value": 0,
-          "meaning": "the 1h line predicts it full too: a one-off write tilts the long line alone"
+          "meaning": "the 5m line predicts it full too: a one-off write tilts the long line alone"
         },
         {
-          "query": "max by (path) (present_over_time(motel_disk_avail_bytes[6h] offset 5h))",
-          "meaning": "the store holds a sample older than 5h: over less history the lines are too short to judge"
+          "query": "max by (path) (present_over_time(motel_disk_avail_bytes[30m] offset 25m))",
+          "meaning": "the store holds a sample older than 25m: over less history the lines are too short to judge"
         }
       ]
     },
@@ -341,6 +341,10 @@
           "op": "<",
           "value": 0,
           "meaning": "the 1h line predicts it full too: a one-off write tilts the 6h line alone"
+        },
+        {
+          "query": "max(present_over_time(vm_free_disk_space_bytes[6h] offset 5h))",
+          "meaning": "the store holds a sample older than 5h: over less history the lines are too short to judge"
         }
       ]
     },

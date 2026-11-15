@@ -233,12 +233,17 @@ func TestE2EMetricsListsEveryVMAlertTest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// One name a line, sorted: two changes that each add a test then
+	// merge, where a list on one line conflicted at every one.
 	for helper, list := range map[string]string{"vmTool": "vmtests", "amtool": "amtests"} {
-		m := regexp.MustCompile(`(?m)^` + list + `='\^\(([^)]*)\)\$'$`).FindSubmatch(run)
+		m := regexp.MustCompile(`(?m)^` + list + `='\n((?:\w+\n)+)'$`).FindSubmatch(run)
 		if m == nil {
-			t.Fatalf("e2e/metrics/run.sh has no %s='^(...)$' line", list)
+			t.Fatalf("e2e/metrics/run.sh has no %s=' list, one test's name a line, closed by a ' on its own line", list)
 		}
-		listed := strings.Split(string(m[1]), "|")
+		listed := strings.Split(strings.TrimSuffix(string(m[1]), "\n"), "\n")
+		if !slices.IsSorted(listed) {
+			t.Errorf("e2e/metrics/run.sh's %s is not sorted: %v", list, listed)
+		}
 		slices.Sort(need[helper])
 		slices.Sort(listed)
 		if len(need[helper]) == 0 || !slices.Equal(need[helper], listed) {
@@ -366,4 +371,53 @@ tests:
 	if err != nil || !strings.Contains(string(out), "SUCCESS") {
 		t.Fatalf("vmalert-tool unittest: %v\n%s", err, out)
 	}
+}
+
+// metrics_store_disk_fill waits for its history, as an operator's
+// disk_fill does: on a store set up half an hour ago, a write of 1 GB at
+// 20 GB free fired within the hour, both lines shorter than their
+// shape. A store filling from its first sample fires once it holds 5 h
+// and the rule's 30 m; one with its history fires on a fill as before.
+func TestStoreDiskFillWaitsForItsHistory(t *testing.T) {
+	tool := vmTool(t, "vmalert-tool")
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, RulesName), renderRules(notifyApp(t)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	none := func(at string) string {
+		return "      - eval_time: " + at + "\n        groupname: motel-store\n        alertname: metrics_store_disk_fill\n        exp_alerts: []\n"
+	}
+	firing := func(at string) string {
+		return "      - eval_time: " + at + `
+        groupname: motel-store
+        alertname: metrics_store_disk_fill
+        exp_alerts:
+          - exp_labels: {kind: state, severity: warning, subject: box, source: vmalert, key: "vmalert/box/metrics_store_disk_fill"}
+            exp_annotations: {summary: "the metrics store's disk is predicted to fill within a day"}
+`
+	}
+	test := `rule_files: [rules.yml]
+evaluation_interval: 1m
+tests:
+  - interval: 1m
+    input_series:
+      - series: 'vm_free_disk_space_bytes{job="victoria-metrics"}'
+        values: '20000000000x29 19000000000x120'
+    alert_rule_test:
+` + none("62m") + none("70m") + none("90m") + `
+  # 21.6 GB used in 12 h from the store's first sample.
+  - interval: 1m
+    input_series:
+      - series: 'vm_free_disk_space_bytes{job="victoria-metrics"}'
+        values: '21600000000-30000000x719'
+    alert_rule_test:
+` + none("5h25m") + firing("5h35m") + `
+  # Flat for 6 h, then the same fill.
+  - interval: 1m
+    input_series:
+      - series: 'vm_free_disk_space_bytes{job="victoria-metrics"}'
+        values: '21600000000x359 21570000000-30000000x719'
+    alert_rule_test:
+` + none("7h") + firing("10h")
+	runUnittest(t, tool, dir, test)
 }

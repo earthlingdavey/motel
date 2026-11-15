@@ -120,10 +120,13 @@ const (
 	defaultPostDeployMin = 100
 	defaultWindow        = 30 * time.Minute
 	defaultFailures      = 3
-	// diskFillWindow is disk_fill's long window up to a within of
-	// diskFillScale: the store's own rule's shape (diskFillShape).
+	// diskFillWindow is disk_fill's long window at a within of
+	// diskFillScale, the store's own rule's shape, scaled to the
+	// horizon; its short window and hold are no shorter than
+	// diskFillMin (diskFillShape).
 	diskFillWindow = 6 * time.Hour
 	diskFillScale  = 24 * time.Hour
+	diskFillMin    = 5 * time.Minute
 )
 
 var (
@@ -910,8 +913,7 @@ func diskFillRule(r Rule) vmRule {
 		guards: []ruleTerm{
 			{value: "min by (path) (predict_linear(" + diskAvailMetric + "[" + promDuration(short) + "], " + h + "))", op: "<",
 				meaning: "the " + promDuration(short) + " line predicts it full too: a one-off write tilts the long line alone"},
-			{value: "max by (path) (present_over_time(" + diskAvailMetric + "[" + promDuration(long) + "] offset " + promDuration(long-short) + "))",
-				meaning: "the store holds a sample older than " + promDuration(long-short) + ": over less history the lines are too short to judge"},
+			diskFillHistory("max by (path) ", diskAvailMetric, long, short),
 		},
 	}
 	return vmRule{
@@ -926,25 +928,43 @@ func diskFillRule(r Rule) vmRule {
 	}
 }
 
+// diskFillHistory is a disk rule's third term (agg: "max", or "max by
+// (path) "): a sample of metric older than the long window less the
+// short, as diskFillShape says. metrics_store_disk_fill's too: without
+// it a store set up half an hour before fired on a write of a twentieth
+// of what was free.
+func diskFillHistory(agg, metric string, long, short time.Duration) ruleTerm {
+	return ruleTerm{value: agg + "(present_over_time(" + metric + "[" + promDuration(long) + "] offset " + promDuration(long-short) + "))",
+		meaning: "the store holds a sample older than " + promDuration(long-short) + ": over less history the lines are too short to judge"}
+}
+
 // diskFillShape is disk_fill's two regression windows and its for: the
 // store's own rule's (metrics_store_disk_fill: a day ahead over 6 h and
-// 1 h, held 30 m) up to a within of a day, and beyond it the same shape
-// scaled to the horizon (a quarter, a 24th, a 48th of it), whole
-// minutes. A regression is scale-free, so a one-off step in free space
-// must then be as large a share of it to fire at 30 days as at one
+// 1 h, held 30 m) scaled to the horizon (a quarter, a 24th, a 48th of
+// it), whole minutes, the short window and the hold no shorter than
+// diskFillMin. A regression is scale-free, so a one-off step in free
+// space must be as large a share of it to fire at 30 days as at one
 // (about half); over 6 h, a 30-day horizon fired on a step of 2 %
-// (/code-review pass 4 on operator rules). The rule's third term wants
-// a sample older than the long window's last five sixths: over less
-// history the windows are shorter than their shape, and a step fires
-// again. Any sample in a long window before that, not one in its first
-// sixth alone, so that a gap in the pushes longer than the short window
-// leaves no hole when it slides into that sixth (/code-review pass 5).
+// (/code-review pass 4 on operator rules), and a horizon of an hour told
+// no fill of 1 to 4 hours before the disk was full. The floor, under a
+// within of 2h (vmalert-tool, DESIGN-metrics.md): held its 48th (a
+// minute) at 1h, a third of what is free written in five minutes fired,
+// a write that takes minutes being no step there; and over a short
+// window of 2 m, under a hold of 5, a fill written every few minutes
+// was never told, the line flat between its writes. At 5 m and 5 m no
+// write done in three minutes fires, up to 80 %, one of five to seven
+// fires at half, a fill written every five minutes is told, and a gap
+// of four minutes in the pushes leaves a firing alert firing; it costs
+// four minutes of the lead at 1h. The rule's third term wants a sample
+// older than the long window less the short (its last five sixths but
+// under the floor): over less history the windows are shorter than
+// their shape, and a step fires again. Any sample in a long window
+// before that, not one in its first part alone, so that a gap in the
+// pushes longer than the short window leaves no hole when it slides
+// into that part (/code-review pass 5).
 func diskFillShape(within time.Duration) (long, short, hold time.Duration) {
-	long = diskFillWindow
-	if within > diskFillScale {
-		long = (diskFillWindow * (within / time.Minute) / (diskFillScale / time.Minute)).Truncate(time.Minute)
-	}
-	return long, (long / 6).Truncate(time.Minute), (long / 12).Truncate(time.Minute)
+	long = (diskFillWindow * (within / time.Minute) / (diskFillScale / time.Minute)).Truncate(time.Minute)
+	return long, max((long / 6).Truncate(time.Minute), diskFillMin), max((long / 12).Truncate(time.Minute), diskFillMin)
 }
 
 // promDuration writes d as the store reads a duration: its largest
