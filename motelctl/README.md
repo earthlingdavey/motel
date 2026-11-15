@@ -77,6 +77,42 @@ retry); 5 not allowed (403); 6 not found (404); 8 the certificate did not
 verify (motelctl never continues past one); 130 interrupted. 7 is held
 for a box too old for people's tokens.
 
+## How box text is kept out of the client's voice
+
+Everything a box sends is hostile until shown otherwise, and motelctl's
+own sentences (its advice, its causes, its labels) must never be ones a
+box wrote. A value from a box is used in one of three ways only:
+
+1. **A checked token**: held to the grammar the server holds it to
+   (an app or version name, a phase, a deploy's status, a unit, a
+   commit, a digest, a role and its scope, whoami's name and release,
+   each with the server code it mirrors cited beside its pattern in
+   `internal/client/client.go`), or compared with what was asked (the
+   app, the version, the host, the key, the box). A value outside its
+   grammar makes the answer "not motel's answer", exit 3, and is not
+   printed.
+2. **A quotation through `termtext.Quote`**: white space collapsed,
+   cut at 200 characters, every control, invisible character and
+   look-alike quote mark made visible, `"` and `\` escaped, so the
+   closing quote is motelctl's own; attributed ("the box says: …").
+   A box-written backtick command inside a quotation is shown as the
+   box's words, by design: it is inside the box's quotation.
+3. **A labelled, capped value**: a free-text field (a deploy's error, a
+   note, a log tail line) on a line whose label is motelctl's, made safe
+   by `termtext.From` and cut at 200 characters (`…[cut]`).
+
+No message carries a transport's or a decoder's error text once a byte
+came from the peer: a fixed reason of motelctl's own is said instead.
+
+This is held by review, the hostile fixtures and goldens
+(`internal/cli/testdata/hostile-*.golden`), and one partial source test,
+`TestNoHandMadeQuoteMarks`, which finds only a few shapes of a quotation
+made by hand. Accepted:
+
+| Residual | S | O | D | Score | Size of a fix | Outcome |
+|---|---|---|---|---|---|---|
+| A new message could splice box text without a test failing | 2 | 2 | 3 | 12 | 3 (typed message parts) | accepted |
+
 ## Layout
 
 | Package | What |
