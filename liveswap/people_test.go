@@ -599,3 +599,74 @@ func TestPersonClearsTheAddressFailures(t *testing.T) {
 		t.Errorf("%d refusals journaled, want %d: the verified token did not clear the address", got, want)
 	}
 }
+
+// TestForwardedNotStrictFailsClosed: a request a trusted proxy
+// forwarded, on a server without trusted_proxies_strict, matches no
+// from list whatever client_ip says (the client wrote it), and the
+// journal says why; on a strict server client_ip is judged; a request
+// no proxy forwarded is judged by client_ip either way. A grant with
+// no list still applies.
+func TestForwardedNotStrictFailsClosed(t *testing.T) {
+	alice, bob := accesstest.Ed25519(), accesstest.ECDSA()
+	var l access.Lines
+	for name, k := range map[string]accesstest.Key{"alice": alice, "bob": bob} {
+		key, err := access.ParsePerson([]string{name, k.Type(), k.B64()})
+		if err != nil {
+			t.Fatal(err)
+		}
+		l.Keys = append(l.Keys, key)
+	}
+	for _, args := range [][]string{
+		{"alice", "viewer", "app", "demo", "from", "198.51.100.0/24"},
+		{"bob", "viewer", "app", "demo", "from", "198.51.100.0/24"},
+		{"bob", "viewer", "box"},
+	} {
+		g, err := access.ParseGrant(args)
+		if err != nil {
+			t.Fatal(err)
+		}
+		l.Grants = append(l.Grants, g)
+	}
+	reg := access.NewRegistry(personBox, l)
+	for _, c := range []struct {
+		name      string
+		who       accesstest.Key
+		forwarded bool
+		strict    int
+		code      int
+		reason    string // the journal's address, for a refusal
+	}{
+		{"alice, forwarded, not strict", alice, true, 0, http.StatusUnauthorized, "forwarded by a trusted proxy on a server without trusted_proxies_strict"},
+		{"alice, forwarded, strict", alice, true, 1, http.StatusOK, ""},
+		{"alice, not forwarded, not strict", alice, false, 0, http.StatusOK, ""},
+		{"bob, forwarded, not strict: his box grant has no list", bob, true, 0, http.StatusOK, ""},
+	} {
+		h, _ := newTestHandler(t)
+		core, logs := observer.New(zap.InfoLevel)
+		h.logger, h.people = zap.New(core), reg
+		req := httptest.NewRequest(http.MethodGet, "http://"+personBox+"/demo", nil)
+		req.RemoteAddr = "192.0.2.1:4321"
+		ctx := context.WithValue(req.Context(), caddyhttp.VarsCtxKey, map[string]any{
+			caddyhttp.ClientIPVarKey:     "198.51.100.7",
+			caddyhttp.TrustedProxyVarKey: c.forwarded,
+		})
+		ctx = context.WithValue(ctx, caddyhttp.ServerCtxKey, &caddyhttp.Server{TrustedProxiesStrict: c.strict})
+		req = req.WithContext(ctx)
+		req.Header.Set("Authorization", token(c.who))
+		w := httptest.NewRecorder()
+		if err := h.ServeHTTP(w, req, nil); err != nil {
+			t.Fatal(err)
+		}
+		if w.Code != c.code {
+			t.Errorf("%s: %d %s, want %d", c.name, w.Code, w.Body, c.code)
+		}
+		lines := logs.FilterMessage("webhook auth failed").All()
+		switch {
+		case c.reason != "" && (len(lines) != 1 || lines[0].ContextMap()["address"] != c.reason ||
+			!strings.Contains(lines[0].ContextMap()["refused"].(string), "outside-every-address-list")):
+			t.Errorf("%s: journal %v", c.name, logs.All())
+		case c.reason == "" && len(lines) != 0:
+			t.Errorf("%s: journal %v", c.name, logs.All())
+		}
+	}
+}
