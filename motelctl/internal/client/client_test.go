@@ -177,7 +177,9 @@ func TestPersonRetryReusesTheToken(t *testing.T) {
 // exp = now+270, 60 s either way), first, and with the other causes
 // kept.
 func TestGetRefused(t *testing.T) {
-	others := "person line on the box lists it, your address is outside the address list on your grants, or 127.0.0.1 is not the box's main name. Send the operator the line `motelctl key` prints."
+	others := "no person or signer line on the box lists it; your address is outside the from list on every grant you hold; 127.0.0.1 is not the box's main name; or the box's motel is too old to take a key's token at all. Send the operator the line `motelctl key` prints."
+	either := "The box says no more to a key it does not accept, so it is one of these: " + others
+	or := ". Or, as the box says no more, one of these: " + others
 	cases := []struct {
 		name   string
 		person bool
@@ -185,11 +187,11 @@ func TestGetRefused(t *testing.T) {
 		want   []string
 		not    string
 	}{
-		{"person, clock right", true, 0, []string{"did not accept your key SHA256:", "(~/.ssh/id_ed25519.pub). Either no " + others}, "clock"},
-		{"person, box 89 s behind: still taken", true, -89 * time.Second, []string{"Either no " + others}, "clock"},
-		{"person, box 91 s behind", true, -91 * time.Second, []string{"This machine's clock differs from the box's by 91 s (ahead of it; the box's Date is ", "more than a token made here can bridge", ". Or no " + others}, ""},
-		{"person, box 329 s ahead: still taken", true, 329 * time.Second, []string{"Either no " + others}, "clock"},
-		{"person, box 331 s ahead", true, 331 * time.Second, []string{"differs from the box's by 331 s (behind it;", ". Or no " + others}, ""},
+		{"person, clock right", true, 0, []string{"did not accept your key SHA256:", "(~/.ssh/id_ed25519.pub). " + either}, "clock"},
+		{"person, box 89 s behind: still taken", true, -89 * time.Second, []string{either}, "clock"},
+		{"person, box 91 s behind", true, -91 * time.Second, []string{"This machine's clock differs from the box's by 91 s (ahead of it; the box's Date is ", "more than a token made here can bridge", or}, ""},
+		{"person, box 329 s ahead: still taken", true, 329 * time.Second, []string{either}, "clock"},
+		{"person, box 331 s ahead", true, 331 * time.Second, []string{"differs from the box's by 331 s (behind it;", or}, ""},
 		{"deploy, clock right", false, 0, []string{"refused the token in MOTEL_TOKEN (sent as Bearer). Most often this app's deploy_trust"}, "clock"},
 		{"deploy, box 10 min behind: the clock plays no part", false, -10 * time.Minute, []string{"refused the token in MOTEL_TOKEN"}, "clock"},
 	}
@@ -310,7 +312,9 @@ func TestRead(t *testing.T) {
 	}{
 		{"status", 200, "application/json", `{"app":"blog","phase":"running","available_versions":[]}`, ExitOK, "", false},
 		{"not found", 404, "application/json", `{"error":"no deploy recorded for version v9"}`, ExitNotFound, "127.0.0.1: no deploy recorded for version v9", true},
-		{"forbidden", 403, "application/json", `{"error":"this needs the viewer role on this app","needs":"viewer","scope":"app"}`, ExitForbidden, "127.0.0.1 does not allow this: this needs the viewer role on this app", true},
+		{"forbidden", 403, "application/json", `{"error":"this needs the viewer role on this app","needs":"viewer","scope":"app"}`, ExitForbidden, "127.0.0.1 does not allow the token in MOTEL_TOKEN this: it needs the viewer role on this app.", true},
+		{"forbidden, a body of an older box", 403, "application/json", `{"error":"forbidden"}`, ExitForbidden, "127.0.0.1 does not allow this: forbidden", true},
+		{"motel's 500 from a build with no release", 500, "application/json", `{"error":"boom"}`, ExitFailed, "127.0.0.1 answered 500: boom", true},
 		{"no baseline", 409, "application/json", `{"error":"this box has no baseline"}`, ExitFailed, "127.0.0.1 answered 409: this box has no baseline", true},
 		{"motel's 500, a hostile sentence", 500, "application/json; charset=utf-8", "{\"error\":\"boom \\u001b]52;c;eA==\\u0007\"}", ExitFailed, `127.0.0.1 answered 500: boom \x1b]52;c;eA==\x07`, true},
 		{"a gateway's JSON 502", 502, "application/json", "{\"error\":\"upstream \\u001b[2J down\"}", ExitUnknown, `Something at 127.0.0.1 answered 502 without Motel-Version, so not known to be motel's own answer: upstream \x1b[2J down`, false},
@@ -326,7 +330,10 @@ func TestRead(t *testing.T) {
 			// Motel stamps its release on every answer to a verified
 			// token; the gateway's do not carry it.
 			if strings.HasPrefix(tc.name, "motel's") {
-				ans.Header.Set("Motel-Version", "v0.7.0")
+				ans.Header.Set("Motel-Protocol", "1")
+				if !strings.Contains(tc.name, "no release") {
+					ans.Header.Set("Motel-Version", "v0.7.0")
+				}
 			}
 			var st wire.Status
 			err := c.Read(ans, &st)

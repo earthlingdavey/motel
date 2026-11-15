@@ -123,6 +123,30 @@ type Box struct {
 	Recipient termtext.Text
 }
 
+// WhoAmI is GET /_motel/whoami's body, beside where the key came from.
+type WhoAmI struct {
+	// Name is the name the box lists the key under.
+	Name     termtext.Text
+	Box      termtext.Text
+	Release  termtext.Text
+	Protocol int
+	// Key is the fingerprint the box names; KeyShown and KeySource are
+	// this side's: the key as named, and how it was chosen.
+	Key       termtext.Text
+	KeyShown  termtext.Text
+	KeySource termtext.Text
+	Roles     []Role
+	// Expires is when the token stops being taken; Now is the clock
+	// it is told against.
+	Expires, Now time.Time
+}
+
+// Role is one role held on one scope: "box", or "app:<name>".
+type Role struct {
+	Role  termtext.Text
+	Scope termtext.Text
+}
+
 // printer writes lines and keeps the first write error.
 type printer struct {
 	w   io.Writer
@@ -329,6 +353,60 @@ func WriteBox(w io.Writer, b Box) error {
 	p.line("Caddyfile sha256 %s", b.SHA256)
 	if !b.Recipient.Empty() {
 		p.line("key for secrets  %s", b.Recipient)
+	}
+	return p.err
+}
+
+// WriteWhoAmI writes who the box takes the key to be. The box's words
+// are labelled as the box's fields are (its name for the key is
+// "name").
+func WriteWhoAmI(w io.Writer, me WhoAmI) error {
+	p := &printer{w: w}
+	p.line("name     %s", me.Name)
+	release := "motel " + me.Release.String()
+	if me.Release.Empty() {
+		release = "motel, a build that names no release"
+	}
+	p.line("box      %s, %s, protocol %d", me.Box, release, me.Protocol)
+	p.line("key      %s (%s, %s)", me.Key, me.KeyShown, me.KeySource)
+	if len(me.Roles) == 0 {
+		p.line("roles    none from this address")
+	} else {
+		roles := make([]string, len(me.Roles))
+		for i, r := range me.Roles {
+			roles[i] = r.Role.String() + " " + scopeWords(r.Scope)
+		}
+		p.line("roles    %s", strings.Join(roles, ", "))
+	}
+	if !me.Expires.IsZero() {
+		left := me.Expires.Sub(me.Now).Round(time.Second)
+		when := fmt.Sprintf("in %s", left)
+		if left < 0 {
+			when = fmt.Sprintf("%s ago", -left)
+		}
+		p.line("token    expires %s UTC (%s)", me.Expires.UTC().Format("2006-01-02 15:04:05"), when)
+	}
+	return p.err
+}
+
+// scopeWords says a role's scope: "of the box", "of app <name>", and
+// any other as the box wrote it.
+func scopeWords(scope termtext.Text) string {
+	s := scope.String()
+	if s == "box" {
+		return "of the box"
+	}
+	if name, ok := strings.CutPrefix(s, "app:"); ok {
+		return "of app " + name
+	}
+	return "on " + s
+}
+
+// WriteNames writes one name a line.
+func WriteNames(w io.Writer, names []termtext.Text) error {
+	p := &printer{w: w}
+	for _, n := range names {
+		p.line("%s", n)
 	}
 	return p.err
 }

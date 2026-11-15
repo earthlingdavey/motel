@@ -37,9 +37,17 @@ type Credential interface {
 	Authorization(ctx context.Context) (string, error)
 }
 
-// versionHeader is the release motel stamps on every answer to a
-// verified token (liveswap.StampVersion); never on a 401.
-const versionHeader = "Motel-Version"
+// The headers motel stamps on every answer to a token it verified
+// (liveswap.StampVersion), and never on a 401: the release, when the
+// build links one, and the protocol number.
+const (
+	versionHeader  = "Motel-Version"
+	protocolHeader = "Motel-Protocol"
+)
+
+// Protocol is the person-token protocol this client speaks: the
+// Motel-Protocol a box answers with, 1 being the token form m1.
+const Protocol = 1
 
 // NewDeployToken takes MOTEL_TOKEN's value. A deploy token is one
 // header-safe word (a JWT is base64url and dots); a value with a
@@ -157,6 +165,11 @@ type Client struct {
 	// system's, and are then the likelier cause of a certificate that
 	// does not verify.
 	Roots []string
+	// Notes is where a word that does not stop the command goes (a box
+	// newer than this client): stderr. nil says nothing.
+	Notes io.Writer
+
+	noted bool
 }
 
 // Answer is a box's answer.
@@ -195,6 +208,7 @@ func (c *Client) Get(ctx context.Context, path string, query url.Values) (*Answe
 		if err != nil {
 			return nil, err
 		}
+		c.noteProtocol(ans.Header)
 		switch {
 		case ans.Code == http.StatusUnauthorized && !retried:
 			retried = true
@@ -219,6 +233,20 @@ func (c *Client) Get(ctx context.Context, path string, query url.Values) (*Answe
 		}
 		return ans, nil
 	}
+}
+
+// noteProtocol reads Motel-Protocol where an answer carries it (only
+// an answer to a token the box verified does) and says once, on Notes,
+// when the box speaks a later protocol than this client: the command
+// carries on, since a later protocol adds to what a box answers.
+func (c *Client) noteProtocol(h http.Header) {
+	n, err := strconv.Atoi(h.Get(protocolHeader))
+	if err != nil || n <= Protocol || c.noted || c.Notes == nil {
+		return
+	}
+	c.noted = true
+	_, _ = fmt.Fprintf(c.Notes, "motelctl: %s speaks protocol %d and this motelctl %d: the box is newer than this client, which may not show all it answers. Carrying on; a newer motelctl reads it all.\n",
+		c.Box.Host, n, Protocol)
 }
 
 func (c *Client) retry401() time.Duration {
@@ -318,13 +346,15 @@ func (c *Client) unreachable(ctx context.Context, err error) error {
 }
 
 // refused is a 401 that stood after the retry. Its body says nothing
-// of why: a box answers every refusal with the same sentence, so the
-// causes are named from what this side knows. A deploy token's do not
-// involve this machine's clock. A person's token does: when the
-// answer's Date is outside what the box takes for the token just sent
-// (its iat and exp, with the box's allowance either way), the clock is
-// named first, and the other causes stay, since a Date can be wrong or
-// a gateway's.
+// of why: a box answers every refusal with the same sentence, and
+// names nothing of motel in it, so the causes are named from what this
+// side knows, all of them, since the client cannot tell them apart. A
+// deploy token's do not involve this machine's clock. A person's token
+// does: when the answer's Date is outside what the box takes for the
+// token just sent (its iat and exp, with the box's allowance either
+// way), the clock is named first, and the other causes stay, since a
+// Date can be wrong or a gateway's. A box whose motel is too old to
+// take a person's token at all is one of them: it answers the same 401.
 func (c *Client) refused(ans *Answer) error {
 	box := c.Box.Host
 	cred, ok := c.Cred.(*PersonToken)
@@ -348,13 +378,13 @@ func (c *Client) refused(ans *Answer) error {
 		clock = fmt.Sprintf(" This machine's clock differs from the box's by %d s (%s; the box's Date is %s), more than a token made here can bridge: if the box's Date is right, set this machine's clock.",
 			int64(math.Round(math.Abs(skew.Seconds()))), way, date.UTC().Format(time.RFC1123))
 	}
-	lead := " Either no"
+	lead := " The box says no more to a key it does not accept, so it is one of these:"
 	if clock != "" {
-		lead = clock + " Or no"
+		lead = clock + " Or, as the box says no more, one of these:"
 	}
 	return &Failure{Exit: ExitRefused, Message: fmt.Sprintf(
-		"%s did not accept your key %s (%s).%s person line on the box lists it, your address is outside the address list on your grants, or %s is not the box's main name. Send the operator the line `motelctl key` prints.",
-		box, cred.Key.Public.Fingerprint(), cred.Key.Shown, lead, box)}
+		"%s did not accept your key %s (%s).%s no person or signer line on the box lists it; your address is outside the from list on every grant you hold; %s is not the box's main name; or the box's motel is too old to take a key's token at all. Send the operator the line `motelctl key` prints.",
+		box, cred.Key.Public.Fingerprint(), termtext.From(cred.Key.Shown), lead, box)}
 }
 
 // slowDown is a 429 that stood after the wait, or one that asked for a
@@ -392,11 +422,11 @@ func retryAfter(h http.Header, now time.Time) (int64, bool) {
 // answer that is not motel's.
 func (c *Client) Read(ans *Answer, v any) error {
 	if ans.Code == http.StatusOK {
-		keys := identity(v)
+		keys, lists := identity(v)
 		err := decodeObject(ans, v)
 		var syntax *json.SyntaxError
 		switch {
-		case err != nil && !errors.Is(err, errNotJSON) && !errors.Is(err, errNotObject) && !errors.As(err, &syntax) && hasStrings(ans.Body, keys):
+		case err != nil && !errors.Is(err, errNotJSON) && !errors.Is(err, errNotObject) && !errors.As(err, &syntax) && hasFields(ans.Body, keys, lists):
 			// motel's answer, by its fields, with a value that did not
 			// decode: the box's response filter replaces a value equal
 			// to a secret, a timestamp's included, with its marker.
@@ -405,10 +435,15 @@ func (c *Client) Read(ans *Answer, v any) error {
 				c.Box.Addr(), termtext.From(err.Error()))}
 		case err != nil:
 			return c.notMotel(ans, err.Error())
-		case !hasStrings(ans.Body, keys):
-			return c.notMotel(ans, "it has no "+strings.Join(keys, " and "))
+		case !hasFields(ans.Body, keys, lists):
+			return c.notMotel(ans, "it has no "+strings.Join(append(keys, lists...), " and "))
 		}
 		return nil
+	}
+	if ans.Code == http.StatusForbidden {
+		if f := c.forbidden(ans); f != nil {
+			return f
+		}
 	}
 	var e wire.Error
 	if decodeObject(ans, &e) != nil || e.Error == "" {
@@ -422,13 +457,57 @@ func (c *Client) Read(ans *Answer, v any) error {
 		return &Failure{Exit: ExitNotFound, Message: fmt.Sprintf("%s: %s", c.Box.Host, said), Body: ans.Body}
 	}
 	// A gateway in front of a box can answer a 5xx in JSON too. Motel
-	// stamps Motel-Version on every answer to a token it verified, so
-	// a 5xx without it is not known to be motel's own.
-	if ans.Code >= 500 && ans.Header.Get(versionHeader) == "" {
+	// stamps Motel-Version on every answer to a token it verified, and,
+	// since people's tokens, Motel-Protocol too (which a build that
+	// links no release sends alone), so a 5xx without either is not
+	// known to be motel's own.
+	if ans.Code >= 500 && ans.Header.Get(versionHeader) == "" && ans.Header.Get(protocolHeader) == "" {
 		return &Failure{Exit: ExitUnknown, Message: fmt.Sprintf(
 			"Something at %s answered %d without %s, so not known to be motel's own answer: %s", c.Box.Addr(), ans.Code, versionHeader, said)}
 	}
 	return &Failure{Exit: ExitFailed, Message: fmt.Sprintf("%s answered %d: %s", c.Box.Host, ans.Code, said), Body: ans.Body}
+}
+
+// forbidden is a 403 whose body says what it needs (wire.Forbidden),
+// or nil for one that does not, which is then read as any refusal. The
+// sentence is built from needs and scope alone: the body names no app,
+// so a 403 for an app that exists and one that does not read the same,
+// and the client names none either.
+func (c *Client) forbidden(ans *Answer) *Failure {
+	var f wire.Forbidden
+	if decodeObject(ans, &f) != nil || f.Needs == "" || f.Scope == "" {
+		return nil
+	}
+	var on string
+	switch f.Scope {
+	case "app":
+		on = "this app"
+	case "box":
+		on = "the box"
+	default:
+		on = "a scope of kind " + termtext.From(f.Scope).String()
+	}
+	var needs string
+	switch f.Needs {
+	case "viewer":
+		needs = "the viewer role on " + on
+	case "deployer":
+		needs = "a deploy token of " + on
+	case "key":
+		needs = "a token your own key signs"
+	default:
+		needs = "the " + termtext.From(f.Needs).String() + " role on " + on
+	}
+	if _, person := c.Cred.(*PersonToken); person {
+		return &Failure{Exit: ExitForbidden, Body: ans.Body, Message: fmt.Sprintf(
+			"%s does not allow your key this: it needs %s. `motelctl whoami` lists the roles you hold from here.", c.Box.Host, needs)}
+	}
+	hint := ""
+	if f.Needs == "key" {
+		hint = " Unset MOTEL_TOKEN, or name your key with --key."
+	}
+	return &Failure{Exit: ExitForbidden, Body: ans.Body, Message: fmt.Sprintf(
+		"%s does not allow the token in MOTEL_TOKEN this: it needs %s.%s", c.Box.Host, needs, hint)}
 }
 
 func (c *Client) notMotel(ans *Answer, why string) error {
@@ -440,24 +519,28 @@ func (c *Client) notMotel(ans *Answer, why string) error {
 }
 
 // identity is the fields that make a body the answer v is for: the
-// ones the handlers always send, as strings that are never empty. Any
-// other field may be missing, and an unknown one is taken: a newer box
-// adds fields.
-func identity(v any) []string {
+// ones the handlers always send, as strings that are never empty
+// (keys) or as arrays, empty or not (lists). Any other field may be
+// missing, and an unknown one is taken: a newer box adds fields.
+func identity(v any) (keys, lists []string) {
 	switch v.(type) {
 	case *wire.Status:
-		return []string{"app", "phase"}
+		return []string{"app", "phase"}, nil
 	case *wire.DeployResult:
-		return []string{"version", "status"}
+		return []string{"version", "status"}, nil
 	case *wire.BoxStatus:
-		return []string{"box_webhook", "commit"}
+		return []string{"box_webhook", "commit"}, nil
+	case *wire.WhoAmI:
+		return []string{"name", "key", "box"}, []string{"roles"}
+	case *wire.Apps:
+		return nil, []string{"apps"}
 	}
-	return nil
+	return nil, nil
 }
 
-// hasStrings says whether body is an object with each key a string
-// that is not empty.
-func hasStrings(body []byte, keys []string) bool {
+// hasFields says whether body is an object with each of keys a string
+// that is not empty, and each of lists an array.
+func hasFields(body []byte, keys, lists []string) bool {
 	var m map[string]json.RawMessage
 	if json.Unmarshal(body, &m) != nil {
 		return false
@@ -465,6 +548,12 @@ func hasStrings(body []byte, keys []string) bool {
 	for _, k := range keys {
 		var s string
 		if json.Unmarshal(m[k], &s) != nil || s == "" {
+			return false
+		}
+	}
+	for _, k := range lists {
+		var a []json.RawMessage
+		if json.Unmarshal(m[k], &a) != nil || a == nil {
 			return false
 		}
 	}

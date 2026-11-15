@@ -21,9 +21,10 @@ const (
 	ExitForbidden = 5
 	// ExitNotFound: a 404 (an unknown deploy version).
 	ExitNotFound = 6
-	// ExitTooOld is held for a box whose answer carries no
-	// Motel-Protocol: one that predates people's tokens. Nothing
-	// returns it until boxes send the header.
+	// ExitTooOld is held for a box too old for people's tokens. Nothing
+	// returns it: a box sends Motel-Protocol only on an answer to a
+	// token it verified, so such a box's 401 is the same as a key it
+	// does not list, and the 401's message names both.
 	ExitTooOld = 7
 	// ExitCertificate: the box's certificate did not verify. motelctl
 	// never continues past one.

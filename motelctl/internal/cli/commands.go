@@ -33,7 +33,7 @@ func (r *runner) version() *cobra.Command {
 		Short: "Print motelctl's release and the protocol it speaks (experimental)",
 		Args:  usageArgs(cobra.NoArgs),
 		RunE: func(*cobra.Command, []string) error {
-			v := ClientVersion{Version: r.env.Version, Protocols: []int{Protocol}, TokenForms: []string{strings.TrimSuffix(sshkey.Envelope, ".")}}
+			v := ClientVersion{Version: r.env.Version, Protocols: []int{client.Protocol}, TokenForms: []string{strings.TrimSuffix(sshkey.Envelope, ".")}}
 			if r.json {
 				b, err := json.Marshal(v)
 				if err != nil {
@@ -41,7 +41,7 @@ func (r *runner) version() *cobra.Command {
 				}
 				return r.emit(b)
 			}
-			_, err := fmt.Fprintf(r.env.Stdout, "motelctl %s\nprotocol %d (person token %s)\n", v.Version, Protocol, v.TokenForms[0])
+			_, err := fmt.Fprintf(r.env.Stdout, "motelctl %s\nprotocol %d (person token %s)\n", v.Version, client.Protocol, v.TokenForms[0])
 			return err
 		},
 	}
@@ -143,7 +143,7 @@ func (r *runner) status() *cobra.Command {
 				}
 				q.Set("range", rng)
 			}
-			c, err := r.client(cmd.Context(), &t, app.Box, "this app's")
+			c, err := r.client(cmd.Context(), &t, app.Box, "this app's", "")
 			if err != nil {
 				return err
 			}
@@ -189,7 +189,7 @@ func (r *runner) deploys() *cobra.Command {
 				}
 				q.Set("deploy", args[1])
 			}
-			c, err := r.client(cmd.Context(), &t, app.Box, "this app's")
+			c, err := r.client(cmd.Context(), &t, app.Box, "this app's", "")
 			if err != nil {
 				return err
 			}
@@ -242,7 +242,7 @@ func (r *runner) boxStatus() *cobra.Command {
 			"for secrets. A box with no baseline yet answers 409, which exits 1.\n\n" + experimental,
 		Args: usageArgs(cobra.NoArgs),
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			c, err := r.client(cmd.Context(), &t, nil, "the box block's")
+			c, err := r.client(cmd.Context(), &t, nil, "the box block's", "")
 			if err != nil {
 				return err
 			}
@@ -258,6 +258,78 @@ func (r *runner) boxStatus() *cobra.Command {
 				return r.emit(ans.Body)
 			}
 			return render.WriteBox(r.env.Stdout, boxView(b))
+		},
+	}
+	t.flags(c)
+	return c
+}
+
+func (r *runner) whoami() *cobra.Command {
+	var t target
+	c := &cobra.Command{
+		Use:   "whoami",
+		Short: "Who the box takes your key to be, and what it may view from here (experimental)",
+		Long: "whoami asks the box who your ssh key is there: GET /_motel/whoami. It prints\n" +
+			"the name the box lists the key under, the box and its release, the key and\n" +
+			"where motelctl found it, the roles it holds from the address you ask from,\n" +
+			"and when the token expires. It is asked with your own key only: with\n" +
+			"MOTEL_TOKEN set, name the key with --key.\n\n" + experimental,
+		Args: usageArgs(cobra.NoArgs),
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			c, err := r.client(cmd.Context(), &t, nil, "", "whoami")
+			if err != nil {
+				return err
+			}
+			ans, err := c.Get(cmd.Context(), "/_motel/whoami", nil)
+			if err != nil {
+				return fail(err)
+			}
+			var me wire.WhoAmI
+			if err := c.Read(ans, &me); err != nil {
+				return err
+			}
+			if r.json {
+				return r.emit(ans.Body)
+			}
+			key := c.Cred.(*client.PersonToken).Key
+			return render.WriteWhoAmI(r.env.Stdout, whoamiView(me, key, r.env.Now()))
+		},
+	}
+	t.flags(c)
+	return c
+}
+
+func (r *runner) apps() *cobra.Command {
+	var t target
+	c := &cobra.Command{
+		Use:   "apps",
+		Short: "The apps your key may view on the box, one a line (experimental)",
+		Long: "apps lists the apps your ssh key may view on the box from the address you ask\n" +
+			"from: GET /_motel/apps. One name a line; none is said on stderr, with nothing\n" +
+			"on stdout. It is asked with your own key only: with MOTEL_TOKEN set, name\n" +
+			"the key with --key.\n\n" + experimental,
+		Args: usageArgs(cobra.NoArgs),
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			c, err := r.client(cmd.Context(), &t, nil, "", "apps")
+			if err != nil {
+				return err
+			}
+			ans, err := c.Get(cmd.Context(), "/_motel/apps", nil)
+			if err != nil {
+				return fail(err)
+			}
+			var list wire.Apps
+			if err := c.Read(ans, &list); err != nil {
+				return err
+			}
+			if r.json {
+				return r.emit(ans.Body)
+			}
+			if len(list.Apps) == 0 {
+				_, err := fmt.Fprintf(r.env.Stderr, "motelctl: %s lists no app your key may view from this address.\n", c.Box.Host)
+				return err
+			}
+			return render.WriteNames(r.env.Stdout, appsView(list))
 		},
 	}
 	t.flags(c)

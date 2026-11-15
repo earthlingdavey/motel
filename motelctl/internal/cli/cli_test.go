@@ -77,6 +77,8 @@ type fakeBox struct {
 	srv    *httptest.Server
 	status wire.Status
 	deploy wire.DeployResult
+	whoami wire.WhoAmI
+	apps   wire.Apps
 	auth   []string
 	bodies map[string][]byte // what each target was answered
 }
@@ -93,11 +95,15 @@ func encode(v any) []byte {
 
 func newFakeBox(t *testing.T) *fakeBox {
 	t.Helper()
-	fb := &fakeBox{status: hostileStatus(), deploy: hostileDeploy(), bodies: map[string][]byte{}}
+	fb := &fakeBox{status: hostileStatus(), deploy: hostileDeploy(), whoami: hostileWhoAmI(), apps: wire.Apps{Apps: []string{"blog", hostile[0], hostile[5]}}, bodies: map[string][]byte{}}
 	fb.srv = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		fb.auth = append(fb.auth, r.Header.Get("Authorization"))
 		code, body := http.StatusOK, []byte(nil)
 		switch {
+		case r.URL.Path == "/_motel/whoami":
+			body = encode(fb.whoami)
+		case r.URL.Path == "/_motel/apps":
+			body = encode(fb.apps)
 		case r.URL.Path == "/":
 			body = encode(wire.BoxStatus{Commit: "3f9c2a1e" + strings.Repeat("0", 32), BoxWebhook: "deploy.example.com", SHA256: strings.Repeat("9b", 32), Recipient: "age1" + hostile[0]})
 		case r.URL.Path != "/blog":
@@ -324,13 +330,13 @@ func TestHelpMarksEveryCommandExperimental(t *testing.T) {
 	if r.code != 0 || !strings.Contains(r.stdout, "Experimental commands:") || !strings.Contains(r.stdout, "Every command is experimental") {
 		t.Fatalf("%+v", r)
 	}
-	for _, cmd := range [][]string{{"version"}, {"key"}, {"status"}, {"deploys"}, {"box"}, {"box", "status"}} {
+	for _, cmd := range [][]string{{"version"}, {"key"}, {"whoami"}, {"apps"}, {"status"}, {"deploys"}, {"box"}, {"box", "status"}} {
 		r := run(t, nil, nil, append(cmd, "--help")...)
 		if r.code != 0 || !strings.Contains(r.stdout, "(experimental)") && !strings.Contains(r.stdout, "Every command is experimental") {
 			t.Errorf("%v --help does not say experimental:\n%s", cmd, r.stdout)
 		}
 	}
-	if strings.Contains(r.stdout, "completion") || strings.Contains(r.stdout, "whoami") {
+	if strings.Contains(r.stdout, "completion") || strings.Contains(r.stdout, "rollback") {
 		t.Errorf("help lists a command this part does not have:\n%s", r.stdout)
 	}
 }
@@ -495,7 +501,7 @@ func TestHostileKeyPath(t *testing.T) {
 // motelctl is https only, with no way round it: no help text offers
 // deploy.sh's MOTEL_ALLOW_HTTP.
 func TestNoPlainHTTP(t *testing.T) {
-	for _, cmd := range [][]string{{}, {"status"}, {"deploys"}, {"box", "status"}, {"key"}, {"version"}} {
+	for _, cmd := range [][]string{{}, {"status"}, {"deploys"}, {"box", "status"}, {"key"}, {"version"}, {"whoami"}, {"apps"}} {
 		r := run(t, nil, nil, append(cmd, "--help")...)
 		if strings.Contains(r.stdout, "ALLOW_HTTP") || strings.Contains(r.stdout, "insecure") {
 			t.Errorf("%v --help offers plain http:\n%s", cmd, r.stdout)

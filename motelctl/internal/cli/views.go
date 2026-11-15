@@ -6,6 +6,7 @@ import (
 
 	"github.com/smallhoursorg/motel/liveswap/wire"
 	"github.com/smallhoursorg/motel/motelctl/internal/render"
+	"github.com/smallhoursorg/motel/motelctl/internal/sshkey"
 	"github.com/smallhoursorg/motel/motelctl/internal/termtext"
 )
 
@@ -118,4 +119,32 @@ func rawTime(raw json.RawMessage) termtext.Text {
 
 func boxView(b wire.BoxStatus) render.Box {
 	return render.Box{Host: tx(b.BoxWebhook), Commit: tx(b.Commit), SHA256: tx(b.SHA256), Recipient: tx(b.Recipient)}
+}
+
+// whoamiView is the box's answer beside what this side knows: where
+// the key came from, and the clock the expiry is told against.
+func whoamiView(me wire.WhoAmI, key sshkey.Key, now time.Time) render.WhoAmI {
+	v := render.WhoAmI{
+		Name:      tx(me.Name),
+		Box:       tx(me.Box),
+		Release:   tx(me.Version),
+		Protocol:  me.Protocol,
+		Key:       tx(me.Key),
+		KeyShown:  tx(key.Shown),
+		KeySource: tx(key.Source),
+		Expires:   me.TokenExpiresAt,
+		Now:       now,
+	}
+	for _, r := range me.Roles {
+		v.Roles = append(v.Roles, render.Role{Role: tx(r.Role), Scope: tx(r.Scope)})
+	}
+	return v
+}
+
+func appsView(a wire.Apps) []termtext.Text {
+	out := make([]termtext.Text, 0, len(a.Apps))
+	for _, name := range a.Apps {
+		out = append(out, tx(name))
+	}
+	return out
 }

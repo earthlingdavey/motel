@@ -9,13 +9,17 @@ box's own answer.
 motelctl version                       the client's release and protocol
 motelctl key [--key <path>] [--name <you@example.com>]
                                        the key it signs with, and the person line to send the operator
+motelctl whoami                        who the box takes your key to be, and its roles from here
+motelctl apps                          the apps your key may view, one a line
 motelctl status <app> [--range 1h|24h] an app's status
 motelctl deploys <app>                 its deploys, newest first
 motelctl deploys <app> <version>       one deploy's whole record
 motelctl box status                    the commit the box runs, its Caddyfile's digest, its key for secrets
 ```
 
-Each takes `--json`. `<app>` is a name, or the app's URL
+Each takes `--json`. `whoami` and `apps` are asked with your own key
+only: with `MOTEL_TOKEN` set, name the key with `--key` (else exit 2,
+nothing sent). `<app>` is a name, or the app's URL
 (`https://deploy.example.com/blog`, as `MOTEL_URL` holds it), which names
 the box too.
 
@@ -31,12 +35,22 @@ reported as "could not tell" (exit 3), since motelctl cannot tell it
 from a gateway's. With `MOTEL_URL` set too, the token goes to
 `MOTEL_URL`'s box only; a command that names another box sends nothing
 (exit 2). Otherwise a
-token the person's own ssh key signs, made by the system `ssh-keygen -Y sign` in
+token the person's own ssh key signs, made by the system `ssh-keygen -q -Y sign` in
 the namespace `motel-access-v1@motel.smallhours.org`. The key is
 `MOTEL_KEY`, then git's `user.signingkey` inside a box
 repository, then ssh's default files, then the agent's key when it holds
 exactly one. One key per command, never several; RSA keys are refused
 before anything is signed. motelctl writes nothing to disk.
+
+**What a box tells a key it does not take.** Nothing: every refusal is
+the same 401, with no header that names motel. So after its one retry
+motelctl names every cause it cannot tell apart (no line lists the key,
+the address is outside every `from` list, the name is not the box's main
+one, a motel too old for people's tokens), and the clock first when the
+box's `Date` says it is off. A 403 is said from its `needs` and `scope`
+alone, and names no app. `Motel-Protocol` comes only on answers to a
+token the box verified; a higher number than this client's is said on
+stderr, and the command carries on.
 
 **Only https.** motelctl never sends a request over plain http, and has
 no flag or variable that would (`deploy.sh`'s `MOTEL_ALLOW_HTTP` is not

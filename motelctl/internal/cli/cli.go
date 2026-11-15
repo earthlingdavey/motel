@@ -43,10 +43,6 @@ type Env struct {
 	Version string
 }
 
-// Protocol is the person-token protocol this client speaks: the value
-// a box's Motel-Protocol will carry, 1 being the token form m1.
-const Protocol = 1
-
 const experimental = "Every command is experimental: its flags, output and exit codes can change\n" +
 	"in any release until a release's notes say otherwise. The human output is\n" +
 	"never a contract; --json is the box's own answer.\n\n" +
@@ -121,7 +117,7 @@ func (r *runner) tree() *cobra.Command {
 	root := &cobra.Command{
 		Use:           "motelctl",
 		Short:         "Read a motel box over HTTPS (experimental)",
-		Long:          "motelctl reads a motel box over HTTPS: an app's status and deploys, and the box's own state.\n\n" + experimental,
+		Long:          "motelctl reads a motel box over HTTPS: who your key is there and the apps it may view,\nan app's status and deploys, and the box's own state.\n\n" + experimental,
 		SilenceErrors: true,
 		SilenceUsage:  true,
 	}
@@ -142,7 +138,7 @@ func (r *runner) tree() *cobra.Command {
 		},
 	}
 	box.AddCommand(r.boxStatus())
-	for _, c := range []*cobra.Command{r.version(), r.key(), r.status(), r.deploys(), box} {
+	for _, c := range []*cobra.Command{r.version(), r.key(), r.whoami(), r.apps(), r.status(), r.deploys(), box} {
 		c.GroupID = "experimental"
 		root.AddCommand(c)
 	}
@@ -170,8 +166,11 @@ func (t *target) flags(c *cobra.Command) {
 }
 
 // client resolves the box and the credential, in that order, and
-// returns the client that asks the box.
-func (r *runner) client(ctx context.Context, t *target, fromApp *client.Box, scope string) (*client.Client, error) {
+// returns the client that asks the box. scope is whose deploy_trust a
+// refused deploy token is judged by; keyOnly, for a command a person's
+// key alone can ask, names that command and refuses MOTEL_TOKEN before
+// anything is sent.
+func (r *runner) client(ctx context.Context, t *target, fromApp *client.Box, scope, keyOnly string) (*client.Client, error) {
 	box, err := client.ResolveBox(ctx, client.BoxLookup{FromApp: fromApp, Flag: t.box, Getenv: r.env.Getenv, Dir: r.env.Dir, Run: r.env.Run})
 	if err != nil {
 		return nil, err
@@ -179,7 +178,11 @@ func (r *runner) client(ctx context.Context, t *target, fromApp *client.Box, sco
 	// A --key typed on the command line beats MOTEL_TOKEN; MOTEL_TOKEN
 	// beats MOTEL_KEY and every key motelctl would find by itself.
 	var cred client.Credential
-	if tok := r.env.Getenv("MOTEL_TOKEN"); tok != "" && t.key == "" {
+	tok := r.env.Getenv("MOTEL_TOKEN")
+	if tok != "" && t.key == "" && keyOnly != "" {
+		return nil, &client.Failure{Exit: client.ExitUsage, Message: keyOnly + " is asked with your own ssh key, and MOTEL_TOKEN is set, which motelctl would send instead: a deploy token is no one's key. Name your key with --key, or unset MOTEL_TOKEN."}
+	}
+	if tok != "" && t.key == "" {
 		dt, err := client.NewDeployToken(tok)
 		if err != nil {
 			return nil, err
@@ -208,6 +211,7 @@ func (r *runner) client(ctx context.Context, t *target, fromApp *client.Box, sco
 		UserAgent: "motelctl/" + r.env.Version,
 		Scope:     scope,
 		Roots:     roots(r.env.Getenv),
+		Notes:     r.env.Stderr,
 	}, nil
 }
 
