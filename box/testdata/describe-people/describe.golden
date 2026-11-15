@@ -1,0 +1,10 @@
+host deploy.example.com
+app blog
+app example
+signer alice@example.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJTxbCB1QdiskXvEbkxkjl5p09A5ZsEN9HC/xOJOxi8j
+person alice@example.com ssh-ed25519 SHA256:KHM2mBw22Bx9FvZtqagqhJYjJu6DbbnoAPK48jerwkU signer
+person alice@example.com sk-ssh-ed25519@openssh.com SHA256:COq9c93M+uYPaDGA1dlOf/hzoiuQH1DSDBv3R3+yj9I
+person bob@example.com ecdsa-sha2-nistp256 SHA256:jcqs/XJfUuLe6kYafE3bV9wP6RnrHJFczBGFTBFMyeg
+grant alice@example.com viewer box
+grant bob@example.com viewer app example
+grant bob@example.com viewer app blog from 198.51.100.0/24 2001:db8:5::/48

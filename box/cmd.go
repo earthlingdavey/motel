@@ -252,11 +252,42 @@ func describe(path string, w io.Writer) error {
 	for _, s := range shape.Signers {
 		fmt.Fprintf(&b, "signer %s %s %s\n", s.Principal, s.Type, s.B64)
 	}
+	describeAccess(&b, shape)
 	for _, line := range ts.lines() {
 		fmt.Fprintf(&b, "%s\n", line)
 	}
 	_, err = io.WriteString(w, b.String())
 	return err
+}
+
+// describeAccess prints the people and the grants after the signers,
+// for a block with a person or a grant line only, so a file without
+// one describes as before: a `person` line per key a person's token
+// may be signed with, by its fingerprint, ending `signer` when the key
+// is a signer line's (an ssh-rsa signer key is not a person's and
+// prints none); a `grant` line per grant, its addresses in their one
+// spelling (a lone address as an address); then a
+// `warning` line for each thing the lines were taken with a doubt for.
+func describeAccess(b *strings.Builder, shape *Shape) {
+	if !shape.Access.Declared() {
+		return
+	}
+	for _, k := range shape.Access.Keys {
+		if !k.Person() {
+			continue
+		}
+		fmt.Fprintf(b, "person %s %s %s", k.Name, k.Type, k.Fingerprint)
+		if k.Signer {
+			b.WriteString(" signer")
+		}
+		b.WriteString("\n")
+	}
+	for _, g := range shape.Access.Grants {
+		fmt.Fprintf(b, "grant %s\n", strings.Join(g.Args(), " "))
+	}
+	for _, w := range shape.AccessWarnings {
+		fmt.Fprintf(b, "warning %s\n", w)
+	}
 }
 
 // readShape walks the file at path, read whole at most the Caddyfile
