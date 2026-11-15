@@ -11,6 +11,8 @@ package access
 // person: no handler reads them.
 
 import (
+	"crypto/ecdsa"
+	"crypto/ed25519"
 	"crypto/sha256"
 	"encoding/base64"
 	"errors"
@@ -75,12 +77,27 @@ type Key struct {
 	Fingerprint string
 	// Signer is whether the line is a signer line.
 	Signer bool
+
+	// material is the public key itself, whatever form the line wrote
+	// it in: an Ed25519 key is the same key as ssh-ed25519 and as
+	// sk-ssh-ed25519@openssh.com under any application string, and an
+	// ECDSA key the same as ecdsa-sha2-* and sk-ecdsa-sha2-*.
+	material string
 }
 
 // Person reports whether a person's token may be signed with the key.
 // Every person line's key may; a signer line's unless it is ssh-rsa,
 // which signs commits only.
 func (k Key) Person() bool { return personKeyTypes[k.Type] }
+
+// identity is the key the one-key rule compares: its material, or its
+// wire bytes for a Key not made by ParsePerson or SignerKey.
+func (k Key) identity() string {
+	if k.material != "" {
+		return k.material
+	}
+	return "wire " + string(k.Wire)
+}
 
 // kind is the line's keyword, for messages.
 func (k Key) kind() string {
@@ -98,6 +115,26 @@ func (k Key) Equal(o Key) bool {
 	return k.Name == o.Name && k.Type == o.Type && k.B64 == o.B64 && k.Signer == o.Signer
 }
 
+// keyMaterial is the public key a wire form carries, for the one-key
+// rule: the curve point of an Ed25519 or ECDSA key in either form, the
+// wire bytes of any other.
+func keyMaterial(wire []byte) string {
+	pub, err := ssh.ParsePublicKey(wire)
+	if err == nil {
+		if cpk, ok := pub.(ssh.CryptoPublicKey); ok {
+			switch k := cpk.CryptoPublicKey().(type) {
+			case ed25519.PublicKey:
+				return "ed25519 " + string(k)
+			case *ecdsa.PublicKey:
+				if point, err := k.Bytes(); err == nil {
+					return "ecdsa " + k.Curve.Params().Name + " " + string(point)
+				}
+			}
+		}
+	}
+	return "wire " + string(wire)
+}
+
 // keyFingerprint is SHA-256 of a key's wire bytes as ssh-keygen -l
 // prints it.
 func keyFingerprint(wire []byte) string {
@@ -109,7 +146,7 @@ func keyFingerprint(wire []byte) string {
 // checked by its own parser (box/proof's ParseSigner), which this
 // package cannot import.
 func SignerKey(name, keyType, b64 string, wire []byte) Key {
-	return Key{Name: name, Type: keyType, B64: b64, Wire: wire, Fingerprint: keyFingerprint(wire), Signer: true}
+	return Key{Name: name, Type: keyType, B64: b64, Wire: wire, Fingerprint: keyFingerprint(wire), Signer: true, material: keyMaterial(wire)}
 }
 
 // ParsePerson checks one person line's arguments, `<name> <key-type>
@@ -152,7 +189,7 @@ func ParsePerson(args []string) (Key, error) {
 	if string(pub.Marshal()) != string(wire) {
 		return Key{}, fmt.Errorf("person %s: the key is not in its one wire form", name)
 	}
-	return Key{Name: name, Type: keyType, B64: b64, Wire: wire, Fingerprint: keyFingerprint(wire)}, nil
+	return Key{Name: name, Type: keyType, B64: b64, Wire: wire, Fingerprint: keyFingerprint(wire), material: keyMaterial(wire)}, nil
 }
 
 // Grant is one grant line: a role for a name on the box or on one app,
@@ -184,14 +221,19 @@ func (g Grant) Args() []string {
 	if len(g.From) > 0 {
 		args = append(args, "from")
 		for _, p := range g.From {
-			if p.IsSingleIP() {
-				args = append(args, p.Addr().String())
-			} else {
-				args = append(args, p.String())
-			}
+			args = append(args, printPrefix(p))
 		}
 	}
 	return args
+}
+
+// printPrefix is a from entry in its one spelling: a lone address as
+// an address, a prefix as a prefix.
+func printPrefix(p netip.Prefix) string {
+	if p.IsSingleIP() {
+		return p.Addr().String()
+	}
+	return p.String()
 }
 
 // Equal reports whether two grants say the same.
@@ -264,6 +306,11 @@ func ParseGrant(args []string) (Grant, error) {
 		p, err := parseFrom(s)
 		if err != nil {
 			return Grant{}, fmt.Errorf("%s: %w", g.line(), err)
+		}
+		// One spelling per line: an address and its /32, or a prefix
+		// written twice, would be one entry read twice.
+		if slices.Contains(g.From, p) {
+			return Grant{}, fmt.Errorf("%s: from lists %s twice", g.line(), printPrefix(p))
 		}
 		g.From = append(g.From, p)
 	}
@@ -343,6 +390,10 @@ type Around struct {
 	Apps []string
 	// Channels is whether the monitor block has a channel line.
 	Channels bool
+	// AppPlaceholder is whether an app line in the liveswap block names
+	// its app through a placeholder, which the walk reads as written: no
+	// grant can name that app.
+	AppPlaceholder bool
 }
 
 // CheckLines holds the lines to the rules across lines, after the
@@ -371,16 +422,19 @@ func CheckLines(l Lines, around *Around) (warnings []string, err error) {
 	personKey := map[string]bool{} // a name with a key a token can use
 	signerName := map[string]bool{}
 	for _, k := range l.Keys {
-		if first, dup := seen[string(k.Wire)]; dup {
+		if first, dup := seen[k.identity()]; dup {
 			// The signer first: the module's reader holds the signer
 			// lines apart from the person lines, the walk in file order,
 			// and both name the pair alike.
 			if k.Signer && !first.Signer {
 				first, k = k, first
 			}
+			if first.Type != k.Type {
+				return nil, fmt.Errorf("%s %s and %s %s are the same key, written as %s and as %s", first.kind(), first.Name, k.kind(), k.Name, first.Type, k.Type)
+			}
 			return nil, fmt.Errorf("%s %s and %s %s are the same key", first.kind(), first.Name, k.kind(), k.Name)
 		}
-		seen[string(k.Wire)] = k
+		seen[k.identity()] = k
 		declared[k.Name] = true
 		if k.Person() {
 			personKey[k.Name] = true
@@ -402,6 +456,9 @@ func CheckLines(l Lines, around *Around) (warnings []string, err error) {
 		case g.App != "" && around != nil && !slices.Contains(around.Apps, g.App):
 			// A typo would grant nothing, and an app added later under
 			// that name would inherit the grant.
+			if around.AppPlaceholder {
+				return nil, fmt.Errorf("%s: no app line in the liveswap block names %s as written; an app named through a placeholder cannot be granted", g.line(), g.App)
+			}
 			return nil, fmt.Errorf("%s: the liveswap block runs no app %s", g.line(), g.App)
 		case granted[scoped{g.Name, g.App}]:
 			where := "the box"
@@ -421,10 +478,10 @@ func CheckLines(l Lines, around *Around) (warnings []string, err error) {
 		switch {
 		case k.Signer && !k.Person() && !personKey[k.Name] && !warned["signer "+k.Name]:
 			warned["signer "+k.Name] = true
-			warnings = append(warnings, fmt.Sprintf("signer %s: an ssh-rsa key signs commits but cannot sign a person's token; to reach this box over HTTPS, add a person line for %s with an ed25519 or ecdsa key (ssh-keygen -t ed25519)", k.Name, k.Name))
+			warnings = append(warnings, fmt.Sprintf("signer %s: an ssh-rsa key signs commits but cannot be a person's key; for %s to be a person, add a person line with an ed25519 or ecdsa key (ssh-keygen -t ed25519)", k.Name, k.Name))
 		case !k.Signer && !hasGrant[k.Name] && !signerName[k.Name] && !warned["person "+k.Name]:
 			warned["person "+k.Name] = true
-			warnings = append(warnings, fmt.Sprintf("person %s has no grant: their key reaches only /_motel/whoami", k.Name))
+			warnings = append(warnings, fmt.Sprintf("person %s has no grant", k.Name))
 		}
 	}
 	for _, g := range l.Grants {
@@ -435,7 +492,7 @@ func CheckLines(l Lines, around *Around) (warnings []string, err error) {
 		}
 	}
 	if around != nil && !around.Channels && len(personKey) > 0 {
-		warnings = append(warnings, "people are declared but no monitor channel is: what they do here will be told to no one (from step 2, a key's first use from a new network; from step 3, their acts)")
+		warnings = append(warnings, "people are declared and no monitor channel is, so what they do on this box will be told to no one")
 	}
 	return warnings, nil
 }

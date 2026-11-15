@@ -8,6 +8,7 @@ import (
 	"crypto/rsa"
 	"encoding/base64"
 	"fmt"
+	"net/netip"
 	"slices"
 	"strings"
 	"testing"
@@ -73,6 +74,52 @@ func skECDSAKey(t testing.TB) string {
 	return b64(ssh.Marshal(struct {
 		Type, Curve, Key, Application string
 	}{"sk-ecdsa-sha2-nistp256@openssh.com", "nistp256", string(point), "ssh:"}))
+}
+
+// edForms is one Ed25519 key written three ways: ssh-ed25519, and
+// sk-ssh-ed25519@openssh.com under two application strings.
+func edForms(t testing.TB) (plain, sk, skOther string) {
+	t.Helper()
+	pub, _, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	k, err := ssh.NewPublicKey(pub)
+	if err != nil {
+		t.Fatal(err)
+	}
+	skForm := func(app string) string {
+		return b64(ssh.Marshal(struct{ Type, Key, Application string }{"sk-ssh-ed25519@openssh.com", string(pub), app}))
+	}
+	return b64(k.Marshal()), skForm("ssh:"), skForm("ssh:other")
+}
+
+// ecForms is one P-256 key written as ecdsa-sha2-nistp256 and as
+// sk-ecdsa-sha2-nistp256@openssh.com.
+func ecForms(t testing.TB) (plain, sk string) {
+	t.Helper()
+	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	k, err := ssh.NewPublicKey(&priv.PublicKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	point, err := priv.PublicKey.Bytes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return b64(k.Marshal()), b64(ssh.Marshal(struct{ Type, Curve, Key, Application string }{"sk-ecdsa-sha2-nistp256@openssh.com", "nistp256", string(point), "ssh:"}))
+}
+
+// prefixes is n distinct from entries, each after a space.
+func prefixes(n int) string {
+	var b strings.Builder
+	for i := range n {
+		fmt.Fprintf(&b, " 10.0.%d.0/24", i)
+	}
+	return b.String()
 }
 
 func rsaKey(t testing.TB) string {
@@ -168,37 +215,40 @@ func TestParseGrant(t *testing.T) {
 			t.Errorf("%s: prints %q, want %q", line, got, want)
 		}
 	}
-	from16 := "bob viewer box from" + strings.Repeat(" 10.0.0.0/8", MaxFrom)
+	from16 := "bob viewer box from" + prefixes(MaxFrom)
 	if _, err := ParseGrant(strings.Fields(from16)); err != nil {
 		t.Errorf("%d prefixes: %v", MaxFrom, err)
 	}
 	for line, want := range map[string]string{
-		"":                                        grantUsage,
-		"bob viewer":                              grantUsage,
-		"b*b viewer box":                          `grant name "b*b" may only contain letters, digits and . _ @ + -`,
-		"bob deployer box":                        "grant bob deployer: deployer is held by a deploy_trust block, not granted",
-		"bob signer box":                          "grant bob signer: signer is held by a signer line (signer bob <key-type> <base64>); this release takes it from no grant",
-		"bob root box":                            "grant bob root: root is held by root's key on the box, not granted",
-		"bob admin box":                           `grant bob "admin": unknown role; the one role a grant gives is viewer`,
-		"bob Viewer box":                          `grant bob "Viewer": unknown role`,
-		"bob viewer everything":                   `grant bob viewer "everything": the scope is box or app <app>`,
-		"bob viewer app":                          "grant bob viewer app: app takes the app's name",
-		"bob viewer app Blog":                     `grant bob viewer app "Blog": not an app name (lowercase letters, digits and -, at most 63)`,
-		"bob viewer app {env.APP}":                `grant bob viewer app "{env.APP}": not an app name`,
-		"bob viewer box example":                  `grant bob viewer box: "example" after the scope; only from <prefix>... may follow`,
-		"bob viewer app blog extra":               `grant bob viewer app blog: "extra" after the scope`,
-		"bob viewer box from":                     "grant bob viewer box: from takes 1 to 16 addresses or prefixes",
-		from16 + " 10.0.0.0/8":                    "grant bob viewer box: from lists 17 addresses or prefixes; a grant takes at most 16",
-		"bob viewer box from 198.51.100.7/24":     "grant bob viewer box: 198.51.100.7/24 has host bits set; write 198.51.100.0/24",
-		"bob viewer box from 0.0.0.0/0":           "grant bob viewer box: 0.0.0.0/0 would admit every address; leave from out instead",
-		"bob viewer box from ::/0":                "grant bob viewer box: ::/0 would admit every address",
-		"bob viewer box from example.com":         `grant bob viewer box: "example.com" is not an address or a prefix`,
-		"bob viewer box from 10.0.0.0/33":         `grant bob viewer box: "10.0.0.0/33" is not an address or a prefix`,
-		"bob viewer box from 010.0.0.1":           `grant bob viewer box: "010.0.0.1" is not an address or a prefix`,
-		"bob viewer box from fe80::1%eth0":        `grant bob viewer box: "fe80::1%eth0" has a zone; an address on a grant has none`,
-		"bob viewer box from ::ffff:10.0.0.1":     "grant bob viewer box: ::ffff:10.0.0.1 is an IPv4 address written as IPv6; write it as IPv4",
-		"bob viewer box from ::ffff:10.0.0.0/104": "is an IPv4 address written as IPv6",
-		"bob viewer box from 10.0.0.0/8 nope":     `grant bob viewer box: "nope" is not an address or a prefix`,
+		"":                                                     grantUsage,
+		"bob viewer":                                           grantUsage,
+		"b*b viewer box":                                       `grant name "b*b" may only contain letters, digits and . _ @ + -`,
+		"bob deployer box":                                     "grant bob deployer: deployer is held by a deploy_trust block, not granted",
+		"bob signer box":                                       "grant bob signer: signer is held by a signer line (signer bob <key-type> <base64>); this release takes it from no grant",
+		"bob root box":                                         "grant bob root: root is held by root's key on the box, not granted",
+		"bob admin box":                                        `grant bob "admin": unknown role; the one role a grant gives is viewer`,
+		"bob Viewer box":                                       `grant bob "Viewer": unknown role`,
+		"bob viewer everything":                                `grant bob viewer "everything": the scope is box or app <app>`,
+		"bob viewer app":                                       "grant bob viewer app: app takes the app's name",
+		"bob viewer app Blog":                                  `grant bob viewer app "Blog": not an app name (lowercase letters, digits and -, at most 63)`,
+		"bob viewer app {env.APP}":                             `grant bob viewer app "{env.APP}": not an app name`,
+		"bob viewer box example":                               `grant bob viewer box: "example" after the scope; only from <prefix>... may follow`,
+		"bob viewer app blog extra":                            `grant bob viewer app blog: "extra" after the scope`,
+		"bob viewer box from":                                  "grant bob viewer box: from takes 1 to 16 addresses or prefixes",
+		from16 + " 10.1.0.0/16":                                "grant bob viewer box: from lists 17 addresses or prefixes; a grant takes at most 16",
+		"bob viewer box from 198.51.100.7/24":                  "grant bob viewer box: 198.51.100.7/24 has host bits set; write 198.51.100.0/24",
+		"bob viewer box from 0.0.0.0/0":                        "grant bob viewer box: 0.0.0.0/0 would admit every address; leave from out instead",
+		"bob viewer box from ::/0":                             "grant bob viewer box: ::/0 would admit every address",
+		"bob viewer box from example.com":                      `grant bob viewer box: "example.com" is not an address or a prefix`,
+		"bob viewer box from 10.0.0.0/33":                      `grant bob viewer box: "10.0.0.0/33" is not an address or a prefix`,
+		"bob viewer box from 010.0.0.1":                        `grant bob viewer box: "010.0.0.1" is not an address or a prefix`,
+		"bob viewer box from fe80::1%eth0":                     `grant bob viewer box: "fe80::1%eth0" has a zone; an address on a grant has none`,
+		"bob viewer box from ::ffff:10.0.0.1":                  "grant bob viewer box: ::ffff:10.0.0.1 is an IPv4 address written as IPv6; write it as IPv4",
+		"bob viewer box from ::ffff:10.0.0.0/104":              "is an IPv4 address written as IPv6",
+		"bob viewer box from 10.0.0.0/8 nope":                  `grant bob viewer box: "nope" is not an address or a prefix`,
+		"bob viewer box from 10.0.0.0/8 10.0.0.0/8":            "grant bob viewer box: from lists 10.0.0.0/8 twice",
+		"bob viewer box from 198.51.100.7 198.51.100.7/32":     "grant bob viewer box: from lists 198.51.100.7 twice",
+		"bob viewer app blog from 2001:db8::/32 2001:DB8::/32": "grant bob viewer app blog: from lists 2001:db8::/32 twice",
 	} {
 		_, err := ParseGrant(strings.Fields(line))
 		if err == nil || !strings.Contains(err.Error(), want) {
@@ -248,6 +298,8 @@ func fixture(t *testing.T, lines ...string) Lines {
 // TestCheckLines is each rule across lines, taken and refused.
 func TestCheckLines(t *testing.T) {
 	k1, k2, k3, k4, rsa1 := edKey(t), ecdsaKey(t, elliptic.P256()), skEdKey(t), edKey(t), rsaKey(t)
+	ed, edSK, edSKOther := edForms(t)
+	ec, ecSK := ecForms(t)
 	apps := &Around{Apps: []string{"example", "blog"}, Channels: true}
 	noWarning := []string(nil)
 	for name, c := range map[string]struct {
@@ -285,6 +337,23 @@ func TestCheckLines(t *testing.T) {
 			lines: []string{"signer alice ssh-ed25519 " + k1, "person alice ssh-ed25519 " + k1}, want: "signer alice and person alice are the same key",
 		},
 
+		"one Ed25519 key, plain and sk": {
+			lines: []string{"signer alice ssh-ed25519 " + ed, "person bob sk-ssh-ed25519@openssh.com " + edSK},
+			want:  "signer alice and person bob are the same key, written as ssh-ed25519 and as sk-ssh-ed25519@openssh.com",
+		},
+		"one Ed25519 key, two sk applications": {
+			lines: []string{"person bob sk-ssh-ed25519@openssh.com " + edSK, "person carol sk-ssh-ed25519@openssh.com " + edSKOther},
+			want:  "person bob and person carol are the same key",
+		},
+		"one ECDSA key, plain and sk": {
+			lines: []string{"person bob sk-ecdsa-sha2-nistp256@openssh.com " + ecSK, "person carol ecdsa-sha2-nistp256 " + ec},
+			want:  "person bob and person carol are the same key, written as sk-ecdsa-sha2-nistp256@openssh.com and as ecdsa-sha2-nistp256",
+		},
+		"one signer key in two forms, beside a person": {
+			lines: []string{"signer alice ssh-ed25519 " + ed, "signer bob sk-ssh-ed25519@openssh.com " + edSK, "person carol ssh-ed25519 " + k4, "grant carol viewer box"},
+			want:  "signer alice and signer bob are the same key, written as ssh-ed25519 and as sk-ssh-ed25519@openssh.com",
+		},
+
 		"a grant for no one": {
 			lines: []string{"signer alice ssh-ed25519 " + k1, "grant carol viewer box"}, want: "grant carol viewer box: no person or signer line declares carol",
 		},
@@ -302,6 +371,13 @@ func TestCheckLines(t *testing.T) {
 		"a grant on an app the file does not run": {
 			lines: []string{"person bob ssh-ed25519 " + k1, "grant bob viewer app shop"}, around: apps,
 			want: "grant bob viewer app shop: the liveswap block runs no app shop",
+		},
+		"a grant on an app named through a placeholder": {
+			lines: []string{"person bob ssh-ed25519 " + k1, "grant bob viewer app shop"}, around: &Around{Apps: []string{"example"}, AppPlaceholder: true},
+			want: "grant bob viewer app shop: no app line in the liveswap block names shop as written; an app named through a placeholder cannot be granted",
+		},
+		"a grant on an app the file runs, beside a placeholder": {
+			lines: []string{"person bob ssh-ed25519 " + k1, "grant bob viewer app example"}, around: &Around{Apps: []string{"example"}, Channels: true, AppPlaceholder: true}, warnings: noWarning,
 		},
 		"a grant on an app, the apps unknown": {
 			lines: []string{"person bob ssh-ed25519 " + k1, "grant bob viewer app shop"}, around: nil, warnings: noWarning,
@@ -322,21 +398,24 @@ func TestCheckLines(t *testing.T) {
 			lines: []string{"person bob ssh-ed25519 " + k1, "grant bob viewer app example", "grant bob viewer app blog"}, around: apps, warnings: noWarning,
 		},
 
+		"a signer's second key, no grant": {
+			lines: []string{"signer alice ssh-ed25519 " + k1, "person alice sk-ssh-ed25519@openssh.com " + k3}, around: apps, warnings: noWarning,
+		},
 		"a box grant and an app grant": {
 			lines: []string{"person bob ssh-ed25519 " + k1, "grant bob viewer app example", "grant bob viewer box"}, around: apps,
 			warnings: []string{"grant bob viewer app example: the box grant already covers it"},
 		},
 		"a person with no grant": {
 			lines: []string{"signer alice ssh-ed25519 " + k1, "person carol ecdsa-sha2-nistp256 " + k2, "person carol sk-ssh-ed25519@openssh.com " + k3}, around: apps,
-			warnings: []string{"person carol has no grant: their key reaches only /_motel/whoami"},
+			warnings: []string{"person carol has no grant"},
 		},
 		"an ssh-rsa signer beside people": {
 			lines: []string{"signer carol ssh-rsa " + rsa1, "person bob ssh-ed25519 " + k1, "grant bob viewer box"}, around: apps,
-			warnings: []string{"signer carol: an ssh-rsa key signs commits but cannot sign a person's token; to reach this box over HTTPS, add a person line for carol with an ed25519 or ecdsa key (ssh-keygen -t ed25519)"},
+			warnings: []string{"signer carol: an ssh-rsa key signs commits but cannot be a person's key; for carol to be a person, add a person line with an ed25519 or ecdsa key (ssh-keygen -t ed25519)"},
 		},
 		"people and no monitor channel": {
 			lines: []string{"person bob ssh-ed25519 " + k1, "grant bob viewer box"}, around: &Around{},
-			warnings: []string{"people are declared but no monitor channel is: what they do here will be told to no one (from step 2, a key's first use from a new network; from step 3, their acts)"},
+			warnings: []string{"people are declared and no monitor channel is, so what they do on this box will be told to no one"},
 		},
 		"people and no monitor known": {
 			lines: []string{"person bob ssh-ed25519 " + k1, "grant bob viewer box"}, around: nil, warnings: noWarning,
@@ -446,4 +525,74 @@ func FuzzParseGrant(f *testing.F) {
 			t.Fatalf("%+v re-reads as %+v", g, again)
 		}
 	})
+}
+
+// TestEqual changes one field at a time: each makes two keys, two
+// grants, two readings unequal.
+func TestEqual(t *testing.T) {
+	k, err := ParsePerson([]string{"bob", "ssh-ed25519", edKey(t)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !k.Equal(k) {
+		t.Fatal("a key is not equal to itself")
+	}
+	for name, change := range map[string]func(*Key){
+		"name":   func(k *Key) { k.Name = "carol" },
+		"type":   func(k *Key) { k.Type = "ecdsa-sha2-nistp256" },
+		"base64": func(k *Key) { k.B64 = edKey(t) },
+		"signer": func(k *Key) { k.Signer = true },
+	} {
+		o := k
+		change(&o)
+		if k.Equal(o) || o.Equal(k) {
+			t.Errorf("keys differing in %s are equal", name)
+		}
+	}
+
+	g, err := ParseGrant(strings.Fields("bob viewer app blog from 10.0.0.0/8 2001:db8::/32"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !g.Equal(g) {
+		t.Fatal("a grant is not equal to itself")
+	}
+	for name, change := range map[string]func(*Grant){
+		"name":        func(g *Grant) { g.Name = "carol" },
+		"role":        func(g *Grant) { g.Role = "other" },
+		"scope":       func(g *Grant) { g.App = "" },
+		"app":         func(g *Grant) { g.App = "example" },
+		"an address":  func(g *Grant) { g.From = []netip.Prefix{g.From[0], netip.MustParsePrefix("2001:db8::/48")} },
+		"one fewer":   func(g *Grant) { g.From = g.From[:1] },
+		"no from":     func(g *Grant) { g.From = nil },
+		"one more":    func(g *Grant) { g.From = append(slices.Clone(g.From), netip.MustParsePrefix("192.0.2.0/24")) },
+		"their order": func(g *Grant) { g.From = []netip.Prefix{g.From[1], g.From[0]} },
+	} {
+		o := g
+		change(&o)
+		if g.Equal(o) || o.Equal(g) {
+			t.Errorf("grants differing in %s are equal", name)
+		}
+	}
+
+	l := Lines{Keys: []Key{k}, Grants: []Grant{g}}
+	if !l.Equal(Lines{Keys: []Key{k}, Grants: []Grant{g}}) {
+		t.Fatal("a reading is not equal to itself")
+	}
+	other := k
+	other.Name = "carol"
+	otherGrant := g
+	otherGrant.From = nil
+	for name, o := range map[string]Lines{
+		"a key":        {Keys: []Key{other}, Grants: []Grant{g}},
+		"a grant":      {Keys: []Key{k}, Grants: []Grant{otherGrant}},
+		"a key more":   {Keys: []Key{k, other}, Grants: []Grant{g}},
+		"a grant more": {Keys: []Key{k}, Grants: []Grant{g, otherGrant}},
+		"no grant":     {Keys: []Key{k}},
+		"nothing":      {},
+	} {
+		if l.Equal(o) || o.Equal(l) {
+			t.Errorf("readings differing in %s are equal", name)
+		}
+	}
 }
