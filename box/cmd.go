@@ -64,7 +64,7 @@ each key a person may hold (a signer line's too, marked signer; an
 ssh-rsa signer key is not one), by the key's fingerprint, then the
 grants, then a warning line for each doubt the lines were taken with:
 
-    person bob@example.com ecdsa-sha2-nistp256 SHA256:e2/1Bk...
+    person bob@example.com ssh-ed25519 SHA256:e2/1Bk...
     grant bob@example.com viewer app example
     warning person carol@example.com has no grant: their key is told only who they are here (/_motel/whoami)
 

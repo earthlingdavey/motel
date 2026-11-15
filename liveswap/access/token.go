@@ -18,9 +18,7 @@ package access
 
 import (
 	"bytes"
-	"crypto/ecdsa"
 	"crypto/ed25519"
-	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/sha512"
@@ -99,10 +97,10 @@ type TokenRequest struct {
 }
 
 // VerifiedToken is a token CheckToken accepted. A token's bytes are
-// not unique to what was signed (an ECDSA signature has several
-// encodings that verify alike), so anything that must recognise a
-// token seen before keys on the verified claims and Fingerprint, never
-// on the token string.
+// not unique to what was signed (the same claims signed under the other
+// hash, or by an sk- key with another counter, verify alike), so
+// anything that must recognise a token seen before keys on the verified
+// claims and Fingerprint, never on the token string.
 type VerifiedToken struct {
 	// Fingerprint is the signing key's, SHA256:<base64> as
 	// `ssh-keygen -l` prints it: the lookup's key, and the journal's.
@@ -131,8 +129,7 @@ type ListedType func(keyType string) bool
 // lists it. Only for a listed type: a key of a type nobody listed
 // cannot be mistaken for a listed one, so there is nothing to hide, and
 // checking it would let anyone, with no key at all, make the box spend
-// a signature check (a P-521 one is over a millisecond) on every
-// request, on a box with no people too. So a stranger can make the box
+// a signature check on every request, on a box with no people too. So a stranger can make the box
 // verify at most what presenting a listed person's public key already
 // buys. This narrows the timing difference to what the two paths'
 // other work differs by; it does not make the refusals take constant
@@ -190,22 +187,6 @@ func makeUnlistedKeys() map[string]ssh.PublicKey {
 	add(ssh.ParsePublicKey(ssh.Marshal(struct {
 		Type, Key, Application string
 	}{ssh.KeyAlgoSKED25519, string(edPub), "ssh:"})))
-	for _, c := range []elliptic.Curve{elliptic.P256(), elliptic.P384(), elliptic.P521()} {
-		priv, err := ecdsa.GenerateKey(c, rand.Reader)
-		if err != nil {
-			panic(err)
-		}
-		add(ssh.NewPublicKey(&priv.PublicKey))
-		if c == elliptic.P256() {
-			point, err := priv.PublicKey.Bytes()
-			if err != nil {
-				panic(err)
-			}
-			add(ssh.ParsePublicKey(ssh.Marshal(struct {
-				Type, Curve, Key, Application string
-			}{ssh.KeyAlgoSKECDSA256, "nistp256", string(point), "ssh:"})))
-		}
-	}
 	return keys
 }
 
@@ -294,7 +275,9 @@ func CheckToken(req TokenRequest, identity string, now time.Time, lookup KeyLook
 	// 6. The key: a type a person may hold, read from the key's first
 	// string without parsing the rest; then its fingerprint in the
 	// lookup. Fingerprints are not secret, so a stranger can name a
-	// listed key and buy one signature check, and no more.
+	// listed key and buy one signature check, and no more. An ECDSA key
+	// (deferredKeyTypes) is refused here, before any lookup, so no
+	// ECDSA signature is ever verified.
 	var keyType struct {
 		Type string
 		Rest []byte `ssh:"rest"`
@@ -467,7 +450,7 @@ func tokenVerify(sig *tokenSig, key ssh.PublicKey, claims []byte) string {
 	if err := ssh.Unmarshal(sig.Signature, &s); err != nil {
 		return "signature-form"
 	}
-	sk := key.Type() == ssh.KeyAlgoSKED25519 || key.Type() == ssh.KeyAlgoSKECDSA256
+	sk := key.Type() == ssh.KeyAlgoSKED25519
 	switch {
 	case !sk && len(s.Rest) != 0:
 		return "signature-trailing"

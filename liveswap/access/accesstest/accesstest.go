@@ -12,9 +12,12 @@ import (
 	"crypto/ed25519"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/sha512"
 	"encoding/base64"
 	"fmt"
+	"io"
+	"slices"
 	"time"
 
 	"golang.org/x/crypto/ssh"
@@ -36,7 +39,42 @@ func Ed25519() Key {
 	return fromSigner(priv)
 }
 
-// ECDSA is a fresh ecdsa-sha2-nistp256 key.
+// SKEd25519 is a fresh sk-ssh-ed25519@openssh.com key under the
+// application "ssh:", made and signed in software as OpenSSH's own
+// provider does (PROTOCOL.u2f), every signature with the touch flag:
+// the second type a person may hold, with no authenticator.
+func SKEd25519() Key {
+	pub, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		panic(err)
+	}
+	k, err := ssh.ParsePublicKey(ssh.Marshal(struct {
+		Type, Key, Application string
+	}{ssh.KeyAlgoSKED25519, string(pub), "ssh:"}))
+	if err != nil {
+		panic(err)
+	}
+	return Key{signer: skSigner{pub: k, priv: priv}}
+}
+
+// skSigner signs as an authenticator does for an sk- Ed25519 key: the
+// application's hash, the flags and counter, the message's hash.
+type skSigner struct {
+	pub  ssh.PublicKey
+	priv ed25519.PrivateKey
+}
+
+func (s skSigner) PublicKey() ssh.PublicKey { return s.pub }
+
+func (s skSigner) Sign(_ io.Reader, data []byte) (*ssh.Signature, error) {
+	app := sha256.Sum256([]byte("ssh:"))
+	msg := sha256.Sum256(data)
+	trailer := []byte{0x01, 0, 0, 0, 1} // touched; counter 1
+	return &ssh.Signature{Format: ssh.KeyAlgoSKED25519, Blob: ed25519.Sign(s.priv, slices.Concat(app[:], trailer, msg[:])), Rest: trailer}, nil
+}
+
+// ECDSA is a fresh ecdsa-sha2-nistp256 key: a type a person may not
+// hold for now, for the tests of its refusal.
 func ECDSA() Key {
 	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
@@ -45,7 +83,7 @@ func ECDSA() Key {
 	return fromSigner(priv)
 }
 
-// P521 is a fresh ecdsa-sha2-nistp521 key.
+// P521 is a fresh ecdsa-sha2-nistp521 key, refused as ECDSA() is.
 func P521() Key {
 	priv, err := ecdsa.GenerateKey(elliptic.P521(), rand.Reader)
 	if err != nil {

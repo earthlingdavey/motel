@@ -78,7 +78,8 @@ func skTrailer(flags byte) []byte { return []byte{flags, 0, 0, 0, 7} }
 
 // skEd25519Key and skECDSAKey make sk- keys without an authenticator:
 // the same wire forms and signatures OpenSSH's software provider makes,
-// which x/crypto verifies as it would a hardware key's.
+// which x/crypto verifies as it would a hardware key's. The ECDSA one
+// signs only refused vectors: a person's key is Ed25519 for now.
 func skEd25519Key() *testKey {
 	pub, priv, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
@@ -318,11 +319,7 @@ func tokenCases(k *testKeySet) []tokenCase {
 	return []tokenCase{
 		// Accepted.
 		{name: "P1-read-ed25519", auth: signed(k.ed, c0), key: k.ed, expect: "accept"},
-		{name: "P2-read-ecdsa-p256", auth: signed(k.p256, c0), key: k.p256, expect: "accept"},
-		{name: "read-ecdsa-p384", auth: signed(k.p384, c0), key: k.p384, expect: "accept"},
-		{name: "read-ecdsa-p521", auth: signed(k.p521, c0), key: k.p521, expect: "accept"},
 		{name: "read-sk-ed25519", auth: signed(k.skEd, c0), key: k.skEd, expect: "accept"},
-		{name: "read-sk-ecdsa-p256", auth: signed(k.skEc, c0), key: k.skEc, expect: "accept"},
 		{name: "read-sk-touch-and-pin", auth: hdr(tok(c0, sshsig(k.skEd, c0, sigOpts{flags: flags(0x05)}))), key: k.skEd, expect: "accept"},
 		{name: "P5-read-sha256", auth: hdr(tok(c0, sshsig(k.ed, c0, sigOpts{hashAlg: "sha256"}))), key: k.ed, expect: "accept"},
 		{name: "P6-expired-within-skew", auth: signed(k.ed, claimsDoc(testIdentity, n-600, n-30)), key: k.ed, expect: "accept"},
@@ -375,6 +372,14 @@ func tokenCases(k *testKeySet) []tokenCase {
 		// 6.
 		{name: "N25-rsa-listed-but-refused", auth: signed(k.rsa, c0), expect: "key-type"},
 		{name: "N23-rsa-ssh-rsa-sha1", auth: hdr(tok(c0, sshsig(plainKeySHA1(k.rsa), c0, sigOpts{}))), expect: "key-type"},
+		// ECDSA is deferred: refused by its type, though the lookup lists
+		// the key and its signature is good.
+		{name: "P2-ecdsa-p256-not-yet", auth: signed(k.p256, c0), expect: "key-type"},
+		{name: "ecdsa-p384-not-yet", auth: signed(k.p384, c0), expect: "key-type"},
+		{name: "ecdsa-p521-not-yet", auth: signed(k.p521, c0), expect: "key-type"},
+		{name: "sk-ecdsa-p256-not-yet", auth: signed(k.skEc, c0), expect: "key-type"},
+		{name: "ecdsa-before-its-signature-is-read", auth: hdr(tok(c0, sshsig(k.p256, c0, sigOpts{sigTail: []byte{0}}))), expect: "key-type"},
+		{name: "ecdsa-before-the-lookup", auth: signed(k.p521, c0), lookup: func(string) (ssh.PublicKey, bool) { return k.p521.pub, true }, expect: "key-type"},
 		{name: "certificate-as-key", auth: hdr(tok(c0, sshsig(k.ed, c0, sigOpts{keyWire: cert.Marshal()}))), expect: "key-type"},
 		{name: "key-not-a-key", auth: hdr(tok(c0, sshsig(k.ed, c0, sigOpts{keyWire: []byte{1, 2, 3}}))), expect: "key-type"},
 		{name: "unlisted-before-namespace", auth: hdr(tok(c0, sshsig(k.unlisted, c0, sigOpts{ns: "git"}))), expect: "key-not-listed"},
@@ -395,11 +400,11 @@ func tokenCases(k *testKeySet) []tokenCase {
 		{name: "hash-name-in-upper-case", auth: hdr(tok(c0, sshsig(k.ed, c0, sigOpts{hashAlg: "SHA512"}))), expect: "signature-hash"},
 		{name: "signature-not-a-signature", auth: hdr(tok(c0, sshsig(k.ed, c0, sigOpts{sigBytes: []byte{0, 0, 0, 1, 'x'}}))), expect: "signature-form"},
 		{name: "N9-byte-inside-signature", auth: hdr(tok(c0, sshsig(k.ed, c0, sigOpts{sigTail: []byte{0}}))), expect: "signature-trailing"},
-		{name: "ecdsa-byte-inside-signature", auth: hdr(tok(c0, sshsig(k.p256, c0, sigOpts{sigTail: []byte{0}}))), expect: "signature-trailing"},
+		{name: "sk-byte-after-the-trailer", auth: hdr(tok(c0, sshsig(k.skEd, c0, sigOpts{sigTail: []byte{0}}))), expect: "signature-sk-trailer"},
 		{name: "sk-trailer-short", auth: hdr(tok(c0, sshsig(k.skEd, c0, sigOpts{skRest: []byte{1, 0, 0, 7}}))), expect: "signature-sk-trailer"},
-		{name: "sk-trailer-long", auth: hdr(tok(c0, sshsig(k.skEc, c0, sigOpts{skRest: []byte{1, 0, 0, 0, 7, 0}}))), expect: "signature-sk-trailer"},
+		{name: "sk-trailer-long", auth: hdr(tok(c0, sshsig(k.skEd, c0, sigOpts{skRest: []byte{1, 0, 0, 0, 7, 0}}))), expect: "signature-sk-trailer"},
 		{name: "sk-no-touch", auth: hdr(tok(c0, sshsig(k.skEd, c0, sigOpts{flags: flags(0)}))), expect: "signature-sk-touch"},
-		{name: "sk-pin-without-touch", auth: hdr(tok(c0, sshsig(k.skEc, c0, sigOpts{flags: flags(0x04)}))), expect: "signature-sk-touch"},
+		{name: "sk-pin-without-touch", auth: hdr(tok(c0, sshsig(k.skEd, c0, sigOpts{flags: flags(0x04)}))), expect: "signature-sk-touch"},
 		{name: "sk-flags-changed-after-signing", auth: hdr(tok(c0, sshsig(k.skEd, c0, sigOpts{skRest: skTrailer(0x05)}))), expect: "signature"},
 		{name: "claims-changed-after-signing", auth: withSig(claimsDoc(testIdentity, n-30, n+3570)), expect: "signature"},
 		{name: "signed-by-another-key", auth: hdr(tok(c0, sshsig(k.unlisted, c0, sigOpts{keyWire: k.ed.pub.Marshal()}))), expect: "signature"},
@@ -687,9 +692,9 @@ func TestTokenEmptyIdentity(t *testing.T) {
 // FuzzCheckToken feeds header values to CheckToken. It fails on a
 // panic, and on any accepted token whose claims and key are not a pair
 // the test signed: nothing is accepted that was not signed here. (Pairs,
-// not token bytes: an ECDSA signature has a second form that verifies
-// alike, and a token derives no id from its signature, so either form
-// may be carried.)
+// not token bytes: the same claims signed again under the other hash,
+// or by an sk- key with another counter, verify alike, and a token
+// derives no id from its signature, so any such form may be carried.)
 func FuzzCheckToken(f *testing.F) {
 	headers, lookup := acceptedHeaders(f)
 	signedPairs := map[string]bool{}
@@ -754,7 +759,7 @@ func TestUnlistedKeyCostsASignatureCheck(t *testing.T) {
 		}
 		return err.Error()
 	}
-	for _, key := range []*testKey{k.ed, k.p256, k.p384, k.p521, k.skEd, k.skEc} {
+	for _, key := range []*testKey{k.ed, k.skEd} {
 		typ := key.pub.Type()
 		only := func(t string) bool { return t == typ }
 		if got := check(key, lookupOf(), only); got != "key-not-listed" || len(seen) != 1 || seen[0] != typ {
@@ -762,6 +767,17 @@ func TestUnlistedKeyCostsASignatureCheck(t *testing.T) {
 		}
 		if got := check(key, lookupOf(key.pub), only); got != "accept" || len(seen) != 0 {
 			t.Errorf("%s, listed: %s, dummy verifications %v", typ, got, seen)
+		}
+	}
+	// An ECDSA key, deferred, is refused by its type whether or not the
+	// lookup and ListedType say it is listed, and meets no dummy.
+	for _, key := range []*testKey{k.p256, k.p384, k.p521, k.skEc} {
+		typ := key.pub.Type()
+		only := func(t string) bool { return t == typ }
+		for _, lookup := range []KeyLookup{lookupOf(), lookupOf(key.pub)} {
+			if got := check(key, lookup, only); got != "key-type" || len(seen) != 0 {
+				t.Errorf("%s: %s, dummy verifications %v", typ, got, seen)
+			}
 		}
 	}
 	if len(unlistedKeys) != len(personKeyTypes) {
@@ -805,20 +821,21 @@ func TestUnlistedTypeCostsNothing(t *testing.T) {
 		key    *testKey
 		lookup KeyLookup
 		listed ListedType
+		reason string
 		want   []string
 	}{
-		{"an unlisted ed25519 key beside a listed one", other, listedEd, edOnly, []string{ssh.KeyAlgoED25519}},
-		{"a P-521 key where only ed25519 is listed", k.p521, listedEd, edOnly, nil},
-		{"a P-384 key where only ed25519 is listed", k.p384, listedEd, edOnly, nil},
-		{"an sk ed25519 key where only ed25519 is listed", k.skEd, listedEd, edOnly, nil},
-		{"no registry, P-521", k.p521, nil, nil, nil},
-		{"no registry, ed25519", k.ed, nil, nil, nil},
+		{"an unlisted ed25519 key beside a listed one", other, listedEd, edOnly, "key-not-listed", []string{ssh.KeyAlgoED25519}},
+		{"a P-521 key where only ed25519 is listed", k.p521, listedEd, edOnly, "key-type", nil},
+		{"a P-384 key where only ed25519 is listed", k.p384, listedEd, edOnly, "key-type", nil},
+		{"an sk ed25519 key where only ed25519 is listed", k.skEd, listedEd, edOnly, "key-not-listed", nil},
+		{"no registry, P-521", k.p521, nil, nil, "key-type", nil},
+		{"no registry, ed25519", k.ed, nil, nil, "key-not-listed", nil},
 	} {
 		seen = nil
 		_, err := CheckToken(TokenRequest{Authorization: signed(c.key, claims), Method: "GET", Host: testIdentity}, testIdentity, time.Unix(testNow, 0), c.lookup, c.listed)
 		var r *TokenRefusal
-		if !errors.As(err, &r) || r.Reason != "key-not-listed" {
-			t.Errorf("%s: %v", c.name, err)
+		if !errors.As(err, &r) || r.Reason != c.reason {
+			t.Errorf("%s: %v, want %s", c.name, err, c.reason)
 		}
 		if !slices.Equal(seen, c.want) {
 			t.Errorf("%s: dummy verifications %v, want %v", c.name, seen, c.want)
@@ -831,6 +848,60 @@ func TestUnlistedTypeCostsNothing(t *testing.T) {
 		_, _ = CheckToken(TokenRequest{Authorization: signed(typ, claims), Method: "GET", Host: testIdentity}, testIdentity, time.Unix(testNow, 0), lookupOf(), func(t string) bool { return empty[t] })
 		if len(seen) != 0 {
 			t.Errorf("%s, nothing listed: dummy verifications %v", typ.pub.Type(), seen)
+		}
+	}
+}
+
+// countingKey is a listed key that counts the signature checks made
+// with it.
+type countingKey struct {
+	ssh.PublicKey
+	verified *int
+}
+
+func (k countingKey) Verify(data []byte, sig *ssh.Signature) error {
+	*k.verified++
+	return k.PublicKey.Verify(data, sig)
+}
+
+// TestECDSANeverVerified: a person's key is Ed25519 for now, and no
+// ECDSA signature is verified on a person's token's path, whatever the
+// lookup and ListedType say: a token of each ECDSA type, signed well
+// and with its key listed, is refused as key-type with no signature
+// check against the listed key or a dummy, and no dummy key is ECDSA.
+// The listed key counts its checks; an Ed25519 one beside it shows the
+// count works.
+func TestECDSANeverVerified(t *testing.T) {
+	var dummies []string
+	unlistedVerifyHook = func(keyType string, _ error) { dummies = append(dummies, keyType) }
+	t.Cleanup(func() { unlistedVerifyHook = nil })
+	k := testKeys()
+	claims := claimsDoc(testIdentity, testNow-10, testNow+60)
+	for _, key := range []*testKey{k.p256, k.p384, k.p521, k.skEc, k.ed} {
+		verified := 0
+		dummies = nil
+		listedKey := countingKey{key.pub, &verified}
+		lookup := func(string) (ssh.PublicKey, bool) { return listedKey, true }
+		_, err := CheckToken(TokenRequest{Authorization: signed(key, claims), Method: "GET", Host: testIdentity}, testIdentity, time.Unix(testNow, 0), lookup, everyType)
+		if key == k.ed {
+			if err != nil || verified != 1 {
+				t.Errorf("ed25519, listed: %v, %d checks; the counting key counts nothing", err, verified)
+			}
+			continue
+		}
+		var r *TokenRefusal
+		if !errors.As(err, &r) || r.Reason != "key-type" || verified != 0 || len(dummies) != 0 {
+			t.Errorf("%s: %v, %d checks with the listed key, dummies %v", key.pub.Type(), err, verified, dummies)
+		}
+	}
+	for typ := range unlistedKeys {
+		if deferredKeyTypes[typ] {
+			t.Errorf("a dummy key of the deferred type %s", typ)
+		}
+	}
+	for typ := range deferredKeyTypes {
+		if personKeyTypes[typ] {
+			t.Errorf("%s is both a person's type and deferred", typ)
 		}
 	}
 }

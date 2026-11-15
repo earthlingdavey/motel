@@ -48,10 +48,11 @@ func lines(t *testing.T, signers []accesstest.Key, people map[string]accesstest.
 
 // TestRegistryLooksUpListedKeys: the registry is CheckToken's lookup. A
 // token signed by a listed key verifies and names its person; one by a
-// key no line lists is refused before any signature check; and a nil
-// registry, a box with no people, admits no one.
+// key no line lists is refused before any signature check of its own,
+// and an ECDSA key's by its type; and a nil registry, a box with no
+// people, admits no one.
 func TestRegistryLooksUpListedKeys(t *testing.T) {
-	alice, stranger := accesstest.Ed25519(), accesstest.ECDSA()
+	alice, stranger, ecdsa := accesstest.Ed25519(), accesstest.SKEd25519(), accesstest.ECDSA()
 	reg := access.NewRegistry(box, lines(t, nil, map[string]accesstest.Key{"alice": alice}, []string{"alice", "viewer", "box"}))
 	now := time.Unix(1794657600, 0)
 	check := func(reg *access.Registry, k accesstest.Key) (access.VerifiedToken, error) {
@@ -68,6 +69,9 @@ func TestRegistryLooksUpListedKeys(t *testing.T) {
 	if _, err := check(reg, stranger); !errors.As(err, &ref) || ref.Reason != "key-not-listed" || ref.Fingerprint != "" {
 		t.Errorf("a stranger's token: %v (%+v), want key-not-listed naming no key", err, ref)
 	}
+	if _, err := check(reg, ecdsa); !errors.As(err, &ref) || ref.Reason != "key-type" || ref.Fingerprint != "" {
+		t.Errorf("an ECDSA key's token: %v (%+v), want key-type naming no key", err, ref)
+	}
 	var none *access.Registry
 	if _, err := check(none, alice); !errors.As(err, &ref) || ref.Reason != "key-not-listed" {
 		t.Errorf("no registry: %v, want key-not-listed", err)
@@ -80,12 +84,12 @@ func TestRegistryLooksUpListedKeys(t *testing.T) {
 	}
 }
 
-// TestRegistryListsPersonKeysOnly: a signer line's ed25519 or ecdsa key
-// is a person's key once the block declares people, and a block of
+// TestRegistryListsPersonKeysOnly: a signer line's ed25519 key is a
+// person's key once the block declares people, and a block of
 // signers alone (no person and no grant line) lists nothing: its signers
 // are not logins. A refusal after the key was found names the key.
 func TestRegistryListsPersonKeysOnly(t *testing.T) {
-	sig, bob := accesstest.Ed25519(), accesstest.ECDSA()
+	sig, bob := accesstest.Ed25519(), accesstest.SKEd25519()
 	signersOnly := lines(t, []accesstest.Key{sig}, nil)
 	if reg := access.NewRegistry(box, signersOnly); reg.Keys() != 0 {
 		t.Errorf("a block of signers alone lists %d keys", reg.Keys())
@@ -178,7 +182,9 @@ func TestRegistryListsTypes(t *testing.T) {
 
 // TestRegistryListsPersonKeyTypesOnly: a key type is listed only for a
 // key a person may sign with: a box whose only ed25519 key is a signer's
-// of small order lists no ed25519, so no dummy check runs for that type.
+// of small order lists no ed25519, so no dummy check runs for that type;
+// and a key of a deferred ECDSA type, which no reader takes from a line,
+// lists nothing even when a Key is made of one by hand.
 func TestRegistryListsPersonKeyTypesOnly(t *testing.T) {
 	identity := make([]byte, 32)
 	identity[0] = 1
@@ -186,15 +192,19 @@ func TestRegistryListsPersonKeyTypesOnly(t *testing.T) {
 		Type string
 		Key  []byte
 	}{ssh.KeyAlgoED25519, identity})
-	bob := accesstest.ECDSA()
+	bob, eve := accesstest.SKEd25519(), accesstest.P521()
 	pk, err := access.ParsePerson([]string{"bob", bob.Type(), bob.B64()})
 	if err != nil {
 		t.Fatal(err)
 	}
+	ek := access.SignerKey("eve", eve.Type(), eve.B64(), eve.Public().Marshal())
+	if ek.Person() {
+		t.Errorf("a %s key is a person's", eve.Type())
+	}
 	reg := access.NewRegistry(box, access.Lines{Keys: []access.Key{
-		access.SignerKey("mallory", ssh.KeyAlgoED25519, base64.StdEncoding.EncodeToString(wire), wire), pk,
+		access.SignerKey("mallory", ssh.KeyAlgoED25519, base64.StdEncoding.EncodeToString(wire), wire), pk, ek,
 	}})
-	if reg.ListsType(ssh.KeyAlgoED25519) || !reg.ListsType(bob.Type()) {
-		t.Errorf("lists ed25519 %v, ecdsa %v; want only ecdsa", reg.ListsType(ssh.KeyAlgoED25519), reg.ListsType(bob.Type()))
+	if reg.ListsType(ssh.KeyAlgoED25519) || !reg.ListsType(bob.Type()) || reg.ListsType(eve.Type()) || reg.Keys() != 1 {
+		t.Errorf("lists ed25519 %v, sk-ed25519 %v, p521 %v, %d keys; want only sk-ed25519", reg.ListsType(ssh.KeyAlgoED25519), reg.ListsType(bob.Type()), reg.ListsType(eve.Type()), reg.Keys())
 	}
 }

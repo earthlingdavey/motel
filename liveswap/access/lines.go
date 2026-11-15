@@ -12,7 +12,6 @@ package access
 // through it (CheckToken, Decide).
 
 import (
-	"crypto/ecdsa"
 	"crypto/ed25519"
 	"crypto/sha256"
 	"encoding/base64"
@@ -49,13 +48,24 @@ var lineNameRE = regexp.MustCompile(`^[A-Za-z0-9._@+-]+$`)
 var lineAppNameRE = regexp.MustCompile(`^[a-z0-9-]{1,63}$`)
 
 // personKeyTypes are the key types a person may hold (the owner's
-// decision): ed25519, ecdsa, and the hardware forms of both. No RSA,
-// whatever its size: an RSA signer key signs commits only, and with no
-// RSA there is no size floor to keep and no rsa-sha2 rule. The one list
-// both the line parser and the token checker hold a key to.
+// decision): ed25519 and its hardware form, for now. No RSA, whatever
+// its size: an RSA signer key signs commits only, and with no RSA there
+// is no size floor to keep and no rsa-sha2 rule. ECDSA is deferred
+// (deferredKeyTypes). The one list both the line parser and the token
+// checker hold a key to.
 var personKeyTypes = map[string]bool{
-	ssh.KeyAlgoED25519:    true,
-	ssh.KeyAlgoSKED25519:  true,
+	ssh.KeyAlgoED25519:   true,
+	ssh.KeyAlgoSKED25519: true,
+}
+
+// deferredKeyTypes are the ECDSA types, which a person may not hold for
+// now (the owner's decision of 2026-11-16): a stranger who presents a
+// listed person's public key buys one signature check of its type, and
+// an Ed25519 check costs about 0.04 ms where a P-384 or P-521 one costs
+// 0.5 to 1.3 ms. A later release may admit some of them, which breaks
+// no one; narrowing would. A person line with one is refused by name,
+// and a token with one by its type.
+var deferredKeyTypes = map[string]bool{
 	ssh.KeyAlgoECDSA256:   true,
 	ssh.KeyAlgoECDSA384:   true,
 	ssh.KeyAlgoECDSA521:   true,
@@ -84,8 +94,7 @@ type Key struct {
 
 	// material is the public key itself, whatever form the line wrote
 	// it in: an Ed25519 key is the same key as ssh-ed25519 and as
-	// sk-ssh-ed25519@openssh.com under any application string, and an
-	// ECDSA key the same as ecdsa-sha2-* and sk-ecdsa-sha2-*.
+	// sk-ssh-ed25519@openssh.com under any application string.
 	material string
 	// smallOrder is an Ed25519 key, in either form, that is no point or
 	// a point of small order (unusableEd25519).
@@ -124,19 +133,15 @@ func (k Key) Equal(o Key) bool {
 }
 
 // keyMaterial is the public key a wire form carries, for the one-key
-// rule: the curve point of an Ed25519 or ECDSA key in either form, the
-// wire bytes of any other.
+// rule: the curve point of an Ed25519 key in either form, the wire
+// bytes of any other (an ssh-rsa signer key; no line takes an ECDSA
+// key).
 func keyMaterial(wire []byte) string {
 	pub, err := ssh.ParsePublicKey(wire)
 	if err == nil {
 		if cpk, ok := pub.(ssh.CryptoPublicKey); ok {
-			switch k := cpk.CryptoPublicKey().(type) {
-			case ed25519.PublicKey:
+			if k, ok := cpk.CryptoPublicKey().(ed25519.PublicKey); ok {
 				return "ed25519 " + string(k)
-			case *ecdsa.PublicKey:
-				if point, err := k.Bytes(); err == nil {
-					return "ecdsa " + k.Curve.Params().Name + " " + string(point)
-				}
 			}
 		}
 	}
@@ -203,10 +208,13 @@ func ParsePerson(args []string) (Key, error) {
 		return Key{}, err
 	}
 	if keyType == "ssh-rsa" {
-		return Key{}, fmt.Errorf("person %s: a person's key is ssh-ed25519, ecdsa or the sk- form of either, not ssh-rsa (ssh-keygen -t ed25519, or -t ed25519-sk for a hardware key)", name)
+		return Key{}, fmt.Errorf("person %s: a person's key is ssh-ed25519 or its sk- form, not ssh-rsa (ssh-keygen -t ed25519, or -t ed25519-sk for a hardware key)", name)
+	}
+	if deferredKeyTypes[keyType] {
+		return Key{}, fmt.Errorf("person %s: a person's key is an Ed25519 key for now, and this release does not take %s yet (ssh-keygen -t ed25519, or -t ed25519-sk for a hardware key)", name, keyType)
 	}
 	if !personKeyTypes[keyType] {
-		return Key{}, fmt.Errorf("person %s: key type %s is not one of ssh-ed25519, sk-ssh-ed25519@openssh.com, ecdsa-sha2-nistp256, ecdsa-sha2-nistp384, ecdsa-sha2-nistp521, sk-ecdsa-sha2-nistp256@openssh.com", name, lineQuote(keyType))
+		return Key{}, fmt.Errorf("person %s: key type %s is not one of ssh-ed25519, sk-ssh-ed25519@openssh.com", name, lineQuote(keyType))
 	}
 	wire, err := base64.StdEncoding.Strict().DecodeString(b64)
 	if err != nil {
@@ -496,7 +504,7 @@ func CheckLines(l Lines, around *Around) (warnings []string, err error) {
 		case !declared[g.Name]:
 			return nil, fmt.Errorf("%s: no person or signer line declares %s", g.line(), g.Name)
 		case !personKey[g.Name]:
-			return nil, fmt.Errorf("%s: %s has no key a person's token can use (an ssh-rsa signer key signs commits only); add a person line with an ed25519 or ecdsa key", g.line(), g.Name)
+			return nil, fmt.Errorf("%s: %s has no key a person's token can use (an ssh-rsa signer key signs commits only); add a person line with an ed25519 key", g.line(), g.Name)
 		case g.App != "" && around != nil && !slices.Contains(around.Apps, g.App):
 			// A typo would grant nothing, and an app added later under
 			// that name would inherit the grant.
@@ -522,7 +530,7 @@ func CheckLines(l Lines, around *Around) (warnings []string, err error) {
 		switch {
 		case k.Signer && k.Type == "ssh-rsa" && !personKey[k.Name] && !warned["signer "+k.Name]:
 			warned["signer "+k.Name] = true
-			warnings = append(warnings, fmt.Sprintf("signer %s: an ssh-rsa key signs commits but cannot sign a person's token; to reach this box over HTTPS, add a person line for %s with an ed25519 or ecdsa key (ssh-keygen -t ed25519)", k.Name, k.Name))
+			warnings = append(warnings, fmt.Sprintf("signer %s: an ssh-rsa key signs commits but cannot sign a person's token; to reach this box over HTTPS, add a person line for %s with an ed25519 key (ssh-keygen -t ed25519)", k.Name, k.Name))
 		case !k.Signer && !hasGrant[k.Name] && !signerName[k.Name] && !warned["person "+k.Name]:
 			warned["person "+k.Name] = true
 			warnings = append(warnings, fmt.Sprintf("person %s has no grant: their key is told only who they are here (/_motel/whoami)", k.Name))

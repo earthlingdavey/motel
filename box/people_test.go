@@ -54,7 +54,7 @@ func newPeopleBox(t testing.TB) *peopleBox {
 		t: t, dir: t.TempDir(),
 		people: map[string]accesstest.Key{
 			"alice@example.test": accesstest.Ed25519(),
-			"bob@example.test":   accesstest.ECDSA(),
+			"bob@example.test":   accesstest.SKEd25519(),
 			"carol@example.test": accesstest.Ed25519(),
 			"dave@example.test":  accesstest.Ed25519(),
 			"ops@example.test":   accesstest.Ed25519(),
@@ -373,7 +373,7 @@ func TestPersonRefusalsAreTheFlat401(t *testing.T) {
 // on apps alone is told the viewer role on the box; a push's result,
 // which only the box's own source reads, names the deployer.
 func TestPersonOnTheBoxWebhook(t *testing.T) {
-	carol, alice := accesstest.Ed25519(), accesstest.ECDSA()
+	carol, alice := accesstest.Ed25519(), accesstest.SKEd25519()
 	var l access.Lines
 	for name, k := range map[string]accesstest.Key{"carol": carol, "alice": alice} {
 		key, err := access.ParsePerson([]string{name, k.Type(), k.B64()})

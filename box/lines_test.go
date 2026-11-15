@@ -58,16 +58,10 @@ var lineKeys = func() map[string]string {
 	skEdOf := func(pub ed25519.PublicKey) string {
 		return base64.StdEncoding.EncodeToString(ssh.Marshal(struct{ Type, Key, Application string }{"sk-ssh-ed25519@openssh.com", string(pub), "ssh:"}))
 	}
-	skECOf := func(pub *ecdsa.PublicKey) string {
-		point, err := pub.Bytes()
-		if err != nil {
-			panic(err)
-		}
-		return base64.StdEncoding.EncodeToString(ssh.Marshal(struct{ Type, Curve, Key, Application string }{"sk-ecdsa-sha2-nistp256@openssh.com", "nistp256", string(point), "ssh:"}))
-	}
 	skEd := skEdOf(ed())
-	// ED1 and SKED1 are one key in two forms, as are P256 and SKP256.
-	ed1, p256 := ed(), ec(elliptic.P256())
+	// ED1 and SKED1 are one key in two forms, as are ED3 and SKED3. The
+	// ECDSA keys are for the refusals: a person's key is Ed25519 for now.
+	ed1, ed3 := ed(), ed()
 	point, err := ec(elliptic.P256()).Bytes()
 	if err != nil {
 		panic(err)
@@ -79,9 +73,9 @@ var lineKeys = func() map[string]string {
 		"SO1":  base64.StdEncoding.EncodeToString(ssh.Marshal(struct{ Type, Key string }{"ssh-ed25519", "\x01" + strings.Repeat("\x00", 31)})),
 		"SO2":  base64.StdEncoding.EncodeToString(ssh.Marshal(struct{ Type, Key string }{"ssh-ed25519", "\xec" + strings.Repeat("\xff", 30) + "\x7f"})),
 		"SKSO": base64.StdEncoding.EncodeToString(ssh.Marshal(struct{ Type, Key, Application string }{"sk-ssh-ed25519@openssh.com", "\x01" + strings.Repeat("\x00", 31), "ssh:"})),
-		"ED1":  marshal(ed1), "SKED1": skEdOf(ed1), "SKP256": skECOf(p256), "ED2": marshal(ed()), "ED3": marshal(ed()), "ED4": marshal(ed()),
-		"SKED": skEd, "SKEC": skEC,
-		"P256": marshal(p256), "P384": marshal(ec(elliptic.P384())), "P521": marshal(ec(elliptic.P521())),
+		"ED1":  marshal(ed1), "SKED1": skEdOf(ed1), "ED2": marshal(ed()), "ED3": marshal(ed3), "SKED3": skEdOf(ed3), "ED4": marshal(ed()),
+		"SKED": skEd, "SKED4": skEdOf(ed()), "SKEC": skEC,
+		"P256": marshal(ec(elliptic.P256())), "P384": marshal(ec(elliptic.P384())), "P521": marshal(ec(elliptic.P521())),
 		"RSA": marshal(&r.PublicKey),
 	}
 }()
@@ -198,14 +192,10 @@ func TestLinesBothReaders(t *testing.T) {
 		"a person of each type": {lines: `
 		person carol ssh-ed25519 @ED3@
 		person carol sk-ssh-ed25519@openssh.com @SKED@
-		person carol ecdsa-sha2-nistp256 @P256@
-		person carol ecdsa-sha2-nistp384 @P384@
-		person carol ecdsa-sha2-nistp521 @P521@
-		person carol sk-ecdsa-sha2-nistp256@openssh.com @SKEC@
 		grant carol viewer box`},
 		"the design's lines": {lines: `
 		person alice@example.com sk-ssh-ed25519@openssh.com @SKED@
-		person bob@example.com   ecdsa-sha2-nistp256 @P256@
+		person bob@example.com   ssh-ed25519 @ED4@
 
 		grant bob@example.com   viewer app example
 		grant bob@example.com   viewer app blog from 198.51.100.0/24 2001:db8:5::/48
@@ -220,13 +210,22 @@ func TestLinesBothReaders(t *testing.T) {
 		"a box grant and an app grant": {lines: "\t\tgrant bob viewer box\n\t\tgrant bob viewer app blog",
 			warn: "grant bob viewer app blog: the box grant already covers it"},
 		"an ssh-rsa signer": {lines: "\t\tsigner carol ssh-rsa @RSA@\n\t\tgrant bob viewer box",
-			warn: "signer carol: an ssh-rsa key signs commits but cannot sign a person's token; to reach this box over HTTPS, add a person line for carol with an ed25519 or ecdsa key (ssh-keygen -t ed25519)"},
+			warn: "signer carol: an ssh-rsa key signs commits but cannot sign a person's token; to reach this box over HTTPS, add a person line for carol with an ed25519 key (ssh-keygen -t ed25519)"},
 
 		// Refused, one line at a time.
 		"a person's ssh-rsa key": {lines: "\t\tperson carol ssh-rsa @RSA@",
-			want: "person carol: a person's key is ssh-ed25519, ecdsa or the sk- form of either, not ssh-rsa (ssh-keygen -t ed25519, or -t ed25519-sk for a hardware key)"},
+			want: "person carol: a person's key is ssh-ed25519 or its sk- form, not ssh-rsa (ssh-keygen -t ed25519, or -t ed25519-sk for a hardware key)"},
+		// ECDSA is deferred, each type refused by name by both readers.
+		"a person's ecdsa-sha2-nistp256 key": {lines: "\t\tperson carol ecdsa-sha2-nistp256 @P256@\n\t\tgrant carol viewer box",
+			want: "person carol: a person's key is an Ed25519 key for now, and this release does not take ecdsa-sha2-nistp256 yet (ssh-keygen -t ed25519, or -t ed25519-sk for a hardware key)"},
+		"a person's ecdsa-sha2-nistp384 key": {lines: "\t\tperson carol ecdsa-sha2-nistp384 @P384@",
+			want: "person carol: a person's key is an Ed25519 key for now, and this release does not take ecdsa-sha2-nistp384 yet"},
+		"a person's ecdsa-sha2-nistp521 key": {lines: "\t\tperson carol ecdsa-sha2-nistp521 @P521@",
+			want: "person carol: a person's key is an Ed25519 key for now, and this release does not take ecdsa-sha2-nistp521 yet"},
+		"a person's sk-ecdsa key": {lines: "\t\tperson carol sk-ecdsa-sha2-nistp256@openssh.com @SKEC@",
+			want: "person carol: a person's key is an Ed25519 key for now, and this release does not take sk-ecdsa-sha2-nistp256@openssh.com yet"},
 		"an unknown type":  {lines: "\t\tperson carol ssh-dss @ED3@", want: `person carol: key type "ssh-dss" is not one of`},
-		"the wrong type":   {lines: "\t\tperson carol ecdsa-sha2-nistp256 @ED3@", want: `person carol: the key is "ssh-ed25519", not ecdsa-sha2-nistp256`},
+		"the wrong type":   {lines: "\t\tperson carol sk-ssh-ed25519@openssh.com @ED3@", want: `person carol: the key is "ssh-ed25519", not sk-ssh-ed25519@openssh.com`},
 		"not base64":       {lines: "\t\tperson carol ssh-ed25519 !!!!", want: "person carol: the key is not base64"},
 		"not a key":        {lines: "\t\tperson carol ssh-ed25519 AAAA", want: "person carol: the key does not parse as an SSH public key"},
 		"a person, 2 args": {lines: "\t\tperson carol ssh-ed25519", want: "person line: it takes <name> <key-type> <base64>"},
@@ -273,13 +272,13 @@ func TestLinesBothReaders(t *testing.T) {
 			want: "person carol and person dave are the same key"},
 		"a signer's key in its sk form": {lines: "\t\tperson carol sk-ssh-ed25519@openssh.com @SKED1@",
 			want: "signer alice@example.com and person carol are the same key, written as ssh-ed25519 and as sk-ssh-ed25519@openssh.com"},
-		"an ECDSA key in both forms": {lines: "\t\tperson carol ecdsa-sha2-nistp256 @P256@\n\t\tperson dave sk-ecdsa-sha2-nistp256@openssh.com @SKP256@",
-			want: "person carol and person dave are the same key, written as ecdsa-sha2-nistp256 and as sk-ecdsa-sha2-nistp256@openssh.com"},
+		"an Ed25519 key in both forms, two people": {lines: "\t\tperson carol ssh-ed25519 @ED3@\n\t\tperson dave sk-ssh-ed25519@openssh.com @SKED3@",
+			want: "person carol and person dave are the same key, written as ssh-ed25519 and as sk-ssh-ed25519@openssh.com"},
 		"an address twice": {lines: "\t\tgrant bob viewer box from 198.51.100.7 198.51.100.7/32",
 			want: "grant bob viewer box: from lists 198.51.100.7 twice"},
 		"a grant for no one": {lines: "\t\tgrant carol viewer box", want: "grant carol viewer box: no person or signer line declares carol"},
 		"a grant for an ssh-rsa signer": {lines: "\t\tsigner carol ssh-rsa @RSA@\n\t\tgrant carol viewer box",
-			want: "grant carol viewer box: carol has no key a person's token can use (an ssh-rsa signer key signs commits only); add a person line with an ed25519 or ecdsa key"},
+			want: "grant carol viewer box: carol has no key a person's token can use (an ssh-rsa signer key signs commits only); add a person line with an ed25519 key"},
 		"two grants on one scope": {lines: "\t\tgrant bob viewer app blog\n\t\tgrant bob viewer app blog from 10.0.0.0/8",
 			want: "grant bob viewer app blog: bob already has a grant on app blog; one per scope"},
 
@@ -573,7 +572,7 @@ func TestLinesModuleJSONRoundTrip(t *testing.T) {
 	in := linesFile(t, `
 		person carol ssh-ed25519 @ED3@
 		signer dave sk-ssh-ed25519@openssh.com @SKED@
-		person carol ecdsa-sha2-nistp384 @P384@
+		person carol sk-ssh-ed25519@openssh.com @SKED4@
 		grant carol viewer app blog from 198.51.100.7 2001:db8:5::/48
 		grant carol viewer box from 10.0.0.0/8
 		grant bob viewer app example

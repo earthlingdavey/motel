@@ -1,5 +1,5 @@
 {
-  "about": "Made once on 2026-11-15 by ssh-keygen -Y sign (OpenSSH 10.0p2) with throwaway keys whose private halves were deleted after; ssh-keygen -Y verify called every signature good in the namespace it was made in. The claims are {\"aud\":\"deploy.example.test\",\"iat\":1794657570,\"exp\":1794658170}. Checked at now, with the box's identity.",
+  "about": "Made once on 2026-11-15 by ssh-keygen -Y sign (OpenSSH 10.0p2) with throwaway keys whose private halves were deleted after; ssh-keygen -Y verify called every signature good in the namespace it was made in. The claims are {\"aud\":\"deploy.example.test\",\"iat\":1794657570,\"exp\":1794658170}. Checked at now, with the box's identity. The ECDSA vectors are refused by their key type since 2026-11-16, when the owner deferred ECDSA for a person's key: they stay as refused vectors, real ssh-keygen tokens a later release that admits a type can turn back into accepted ones.",
   "identity": "deploy.example.test",
   "now": 1794657600,
   "keys": [
@@ -42,37 +42,37 @@
       "expect": "accept"
     },
     {
-      "name": "P2-read-ecdsa-p256",
-      "about": "a read token, ecdsa-p256 (Secretive's only type)",
+      "name": "P2-ecdsa-p256-not-yet",
+      "about": "a read token, ecdsa-p256 (Secretive's only type): refused by its type, since a person's key is Ed25519 for now",
       "key": "ecdsa-p256",
       "method": "GET",
       "host": "deploy.example.test",
       "authorization": [
         "Motel m1.eyJhdWQiOiJkZXBsb3kuZXhhbXBsZS50ZXN0IiwiaWF0IjoxNzk0NjU3NTcwLCJleHAiOjE3OTQ2NTgxNzB9.U1NIU0lHAAAAAQAAAGgAAAATZWNkc2Etc2hhMi1uaXN0cDI1NgAAAAhuaXN0cDI1NgAAAEEEUxAHTpd6HwpVehmF9EsDOqEjs7QTVWvwDl36Sg1ntj_IqT6ULUIg5Cpex8jSXM-9JhpZ2JdYaSvDs1u136Jn7gAAACRtb3RlbC1hY2Nlc3MtdjFAbW90ZWwuc21hbGxob3Vycy5vcmcAAAAAAAAABnNoYTUxMgAAAGQAAAATZWNkc2Etc2hhMi1uaXN0cDI1NgAAAEkAAAAgIrBen-P_1mV8bdg4o3ce2_OFFzA0WfFejuWQQ-7ZlOUAAAAhAPqZRpl1IdvlQNF0b8MGnhNzErjtRJ7fp_-mRJCIpgaV"
       ],
-      "expect": "accept"
+      "expect": "key-type"
     },
     {
-      "name": "read-ecdsa-p384",
-      "about": "a read token, ecdsa-p384",
+      "name": "ecdsa-p384-not-yet",
+      "about": "a read token, ecdsa-p384: refused by its type, since a person's key is Ed25519 for now",
       "key": "ecdsa-p384",
       "method": "GET",
       "host": "deploy.example.test",
       "authorization": [
         "Motel m1.eyJhdWQiOiJkZXBsb3kuZXhhbXBsZS50ZXN0IiwiaWF0IjoxNzk0NjU3NTcwLCJleHAiOjE3OTQ2NTgxNzB9.U1NIU0lHAAAAAQAAAIgAAAATZWNkc2Etc2hhMi1uaXN0cDM4NAAAAAhuaXN0cDM4NAAAAGEEVZ6EM7RWO47mgI5epMgCqFKsMyT_DUQyii1NLj0DvDSMwJxqfy3KPyZ8VcMdq32oxe__kbnMfpIHODyA55GY_fs-M-MxdPBDO1Ywni4ACbJU7_JhxG06N4dqlwn4tqfUAAAAJG1vdGVsLWFjY2Vzcy12MUBtb3RlbC5zbWFsbGhvdXJzLm9yZwAAAAAAAAAGc2hhNTEyAAAAhAAAABNlY2RzYS1zaGEyLW5pc3RwMzg0AAAAaQAAADAV_xt3ipnMfp02PIUDyN5HZ3AI77clgam26HL-C_gX7czkVPI0c2r0Tw0FUKbK9F0AAAAxAO-RisoQjVJYcMB8YK9-XQPs56wQ1tS3hyzlvxAU7skUBKu-zgdHDdjhFTzXbBNYDA"
       ],
-      "expect": "accept"
+      "expect": "key-type"
     },
     {
-      "name": "read-ecdsa-p521",
-      "about": "a read token, ecdsa-p521: the largest key type a person may hold",
+      "name": "ecdsa-p521-not-yet",
+      "about": "a read token, ecdsa-p521, the costliest to verify: refused by its type, before any lookup or verification",
       "key": "ecdsa-p521",
       "method": "GET",
       "host": "deploy.example.test",
       "authorization": [
         "Motel m1.eyJhdWQiOiJkZXBsb3kuZXhhbXBsZS50ZXN0IiwiaWF0IjoxNzk0NjU3NTcwLCJleHAiOjE3OTQ2NTgxNzB9.U1NIU0lHAAAAAQAAAKwAAAATZWNkc2Etc2hhMi1uaXN0cDUyMQAAAAhuaXN0cDUyMQAAAIUEAaEjh5q8IDbJE0hpgNXsWqlQ1a9DHKx0TVLVoKK79pu1iQsGX-KGLZ7obHhJix_HaF0DqvXbrUNL_TbpGxnD3DCEATCZr0wQGqrG-wjkK6LIbHOwxVnBUkUP8gY7g7BVkLjU8_LBH_EHVehQxYyvRiCNJ9JrkIPtKNGSLoNZqxQ6nrjSAAAAJG1vdGVsLWFjY2Vzcy12MUBtb3RlbC5zbWFsbGhvdXJzLm9yZwAAAAAAAAAGc2hhNTEyAAAApgAAABNlY2RzYS1zaGEyLW5pc3RwNTIxAAAAiwAAAEE7uxnah1Ogb17r2CQSkyS5ye14eFXiJf63niPnReog198NtK-Z3DrF_hLMpuKTkp_OlmyYx3_dcKvWmlCCH-dMwAAAAEIBpDP1TNBHTAj4Egrjh_doUgisnSft2f4375beqLJplN_XhfElIef-GY_9PagNTXmW7G3u4fueaCPTMJo1l761Zpg"
       ],
-      "expect": "accept"
+      "expect": "key-type"
     },
     {
       "name": "P5-read-sha256",

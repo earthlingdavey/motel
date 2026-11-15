@@ -41,7 +41,7 @@ type testPeople struct {
 
 func newTestPeople(t testing.TB) *testPeople {
 	t.Helper()
-	p := &testPeople{alice: accesstest.Ed25519(), carol: accesstest.ECDSA(), dave: accesstest.Ed25519(), stranger: accesstest.Ed25519()}
+	p := &testPeople{alice: accesstest.Ed25519(), carol: accesstest.SKEd25519(), dave: accesstest.Ed25519(), stranger: accesstest.Ed25519()}
 	var l access.Lines
 	for name, k := range map[string]accesstest.Key{"alice": p.alice, "carol": p.carol, "dave": p.dave} {
 		key, err := access.ParsePerson([]string{name, k.Type(), k.B64()})
@@ -340,7 +340,7 @@ func TestWhoamiAndApps(t *testing.T) {
 // all is still told who they are. The address is Caddy's client_ip when
 // it set one, the peer otherwise.
 func TestAddressList(t *testing.T) {
-	alice, bob, dave := accesstest.Ed25519(), accesstest.ECDSA(), accesstest.Ed25519()
+	alice, bob, dave := accesstest.Ed25519(), accesstest.SKEd25519(), accesstest.Ed25519()
 	var l access.Lines
 	for name, k := range map[string]accesstest.Key{"alice": alice, "bob": bob, "dave": dave} {
 		key, err := access.ParsePerson([]string{name, k.Type(), k.B64()})
@@ -554,7 +554,7 @@ func TestSignerKeysNoPersonMayUse(t *testing.T) {
 // their keys signs: a burst spent with one key leaves none for the
 // other.
 func TestRateIsThePersons(t *testing.T) {
-	one, two := accesstest.Ed25519(), accesstest.ECDSA()
+	one, two := accesstest.Ed25519(), accesstest.SKEd25519()
 	var l access.Lines
 	for _, k := range []accesstest.Key{one, two} {
 		key, err := access.ParsePerson([]string{"alice", k.Type(), k.B64()})
@@ -607,7 +607,7 @@ func TestPersonClearsTheAddressFailures(t *testing.T) {
 // no proxy forwarded is judged by client_ip either way. A grant with
 // no list still applies.
 func TestForwardedNotStrictFailsClosed(t *testing.T) {
-	alice, bob := accesstest.Ed25519(), accesstest.ECDSA()
+	alice, bob := accesstest.Ed25519(), accesstest.SKEd25519()
 	var l access.Lines
 	for name, k := range map[string]accesstest.Key{"alice": alice, "bob": bob} {
 		key, err := access.ParsePerson([]string{name, k.Type(), k.B64()})
@@ -698,7 +698,7 @@ func TestHandlerDummyCheckByListedType(t *testing.T) {
 		want []string
 	}{
 		{"an unlisted ed25519 key", token(accesstest.Ed25519()), []string{ssh.KeyAlgoED25519}},
-		{"an unlisted P-521 key", token(accesstest.P521()), nil},
+		{"a P-521 key, a type a person may not hold yet", token(accesstest.P521()), nil},
 	} {
 		seen = nil
 		if w := sendTo(t, h, "GET", "/_motel/whoami", c.auth); w.Code != http.StatusUnauthorized {

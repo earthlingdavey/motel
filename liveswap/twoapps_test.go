@@ -47,7 +47,7 @@ func newTwoAppsRig(t *testing.T) *twoAppsRig {
 		deploy: map[string]ed25519.PrivateKey{}, canary: map[string]string{}, sockets: map[string]string{},
 		people: map[string]accesstest.Key{
 			"viewer of appalpha":  accesstest.Ed25519(),
-			"viewer of appbravo":  accesstest.ECDSA(),
+			"viewer of appbravo":  accesstest.SKEd25519(),
 			"viewer of the box":   accesstest.Ed25519(),
 			"no grant":            accesstest.Ed25519(),
 			"a key no line lists": accesstest.Ed25519(),

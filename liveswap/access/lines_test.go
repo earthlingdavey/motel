@@ -95,25 +95,6 @@ func edForms(t testing.TB) (plain, sk, skOther string) {
 	return b64(k.Marshal()), skForm("ssh:"), skForm("ssh:other")
 }
 
-// ecForms is one P-256 key written as ecdsa-sha2-nistp256 and as
-// sk-ecdsa-sha2-nistp256@openssh.com.
-func ecForms(t testing.TB) (plain, sk string) {
-	t.Helper()
-	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		t.Fatal(err)
-	}
-	k, err := ssh.NewPublicKey(&priv.PublicKey)
-	if err != nil {
-		t.Fatal(err)
-	}
-	point, err := priv.PublicKey.Bytes()
-	if err != nil {
-		t.Fatal(err)
-	}
-	return b64(k.Marshal()), b64(ssh.Marshal(struct{ Type, Curve, Key, Application string }{"sk-ecdsa-sha2-nistp256@openssh.com", "nistp256", string(point), "ssh:"}))
-}
-
 // prefixes is n distinct from entries, each after a space.
 func prefixes(n int) string {
 	var b strings.Builder
@@ -155,10 +136,6 @@ func TestParsePerson(t *testing.T) {
 	for _, c := range []struct{ typ, key string }{
 		{"ssh-ed25519", ed},
 		{"sk-ssh-ed25519@openssh.com", skEdKey(t)},
-		{"ecdsa-sha2-nistp256", ecdsaKey(t, elliptic.P256())},
-		{"ecdsa-sha2-nistp384", ecdsaKey(t, elliptic.P384())},
-		{"ecdsa-sha2-nistp521", ecdsaKey(t, elliptic.P521())},
-		{"sk-ecdsa-sha2-nistp256@openssh.com", skECDSAB64(t)},
 	} {
 		k, err := ParsePerson([]string{"bob@example.com", c.typ, c.key})
 		if err != nil {
@@ -173,7 +150,7 @@ func TestParsePerson(t *testing.T) {
 	}
 
 	wire, _ := base64.StdEncoding.DecodeString(ed)
-	p256 := ecdsaKey(t, elliptic.P256()) // 104 bytes: its base64 ends in =
+	skEd := skEdKey(t) // 74 bytes: its base64 ends in =
 	long := strings.Repeat("a", MaxName)
 	if _, err := ParsePerson([]string{long, "ssh-ed25519", ed}); err != nil {
 		t.Errorf("a name of %d bytes: %v", MaxName, err)
@@ -190,15 +167,27 @@ func TestParsePerson(t *testing.T) {
 		"long name":        {[]string{long + "a", "ssh-ed25519", ed}, "is longer than 256 bytes"},
 		"placeholder name": {[]string{"{env.WHO}", "ssh-ed25519", ed}, `person name "{env.WHO}" may only contain`},
 		"rsa": {[]string{"carol@example.com", "ssh-rsa", rsaKey(t)},
-			"person carol@example.com: a person's key is ssh-ed25519, ecdsa or the sk- form of either, not ssh-rsa (ssh-keygen -t ed25519, or -t ed25519-sk for a hardware key)"},
-		"dss":           {[]string{"bob", "ssh-dss", ed}, `person bob: key type "ssh-dss" is not one of ssh-ed25519, sk-ssh-ed25519@openssh.com, ecdsa-sha2-nistp256, ecdsa-sha2-nistp384, ecdsa-sha2-nistp521, sk-ecdsa-sha2-nistp256@openssh.com`},
+			"person carol@example.com: a person's key is ssh-ed25519 or its sk- form, not ssh-rsa (ssh-keygen -t ed25519, or -t ed25519-sk for a hardware key)"},
+		// ECDSA is deferred: each type refused by name, a good key of it
+		// as much as any other.
+		"ecdsa p256": {[]string{"bob@example.com", "ecdsa-sha2-nistp256", ecdsaKey(t, elliptic.P256())},
+			"person bob@example.com: a person's key is an Ed25519 key for now, and this release does not take ecdsa-sha2-nistp256 yet (ssh-keygen -t ed25519, or -t ed25519-sk for a hardware key)"},
+		"ecdsa p384": {[]string{"bob", "ecdsa-sha2-nistp384", ecdsaKey(t, elliptic.P384())},
+			"person bob: a person's key is an Ed25519 key for now, and this release does not take ecdsa-sha2-nistp384 yet (ssh-keygen -t ed25519, or -t ed25519-sk for a hardware key)"},
+		"ecdsa p521": {[]string{"bob", "ecdsa-sha2-nistp521", ecdsaKey(t, elliptic.P521())},
+			"person bob: a person's key is an Ed25519 key for now, and this release does not take ecdsa-sha2-nistp521 yet (ssh-keygen -t ed25519, or -t ed25519-sk for a hardware key)"},
+		"sk ecdsa p256": {[]string{"bob", "sk-ecdsa-sha2-nistp256@openssh.com", skECDSAB64(t)},
+			"person bob: a person's key is an Ed25519 key for now, and this release does not take sk-ecdsa-sha2-nistp256@openssh.com yet (ssh-keygen -t ed25519, or -t ed25519-sk for a hardware key)"},
+		"ecdsa, before its base64": {[]string{"bob", "ecdsa-sha2-nistp256", "!!!!"},
+			"this release does not take ecdsa-sha2-nistp256 yet"},
+		"dss":           {[]string{"bob", "ssh-dss", ed}, `person bob: key type "ssh-dss" is not one of ssh-ed25519, sk-ssh-ed25519@openssh.com`},
 		"a certificate": {[]string{"bob", "ssh-ed25519-cert-v01@openssh.com", ed}, `key type "ssh-ed25519-cert-v01@openssh.com" is not one of`},
 		"not base64":    {[]string{"bob", "ssh-ed25519", "!!!!"}, "person bob: the key is not base64"},
-		"padding off":   {[]string{"bob", "ecdsa-sha2-nistp256", strings.TrimRight(p256, "=")}, "person bob: the key is not base64"},
+		"padding off":   {[]string{"bob", "sk-ssh-ed25519@openssh.com", strings.TrimRight(skEd, "=")}, "person bob: the key is not base64"},
 		"two lines":     {[]string{"bob", "ssh-ed25519", ed[:20] + "\n" + ed[20:]}, "person bob: the key is not one line of canonical base64"},
 		"not a key":     {[]string{"bob", "ssh-ed25519", "AAAA"}, "person bob: the key does not parse as an SSH public key"},
 		"trailing":      {[]string{"bob", "ssh-ed25519", b64(append(slices.Clone(wire), 0))}, "person bob: the key does not parse as an SSH public key"},
-		"other type":    {[]string{"bob", "ecdsa-sha2-nistp256", ed}, `person bob: the key is "ssh-ed25519", not ecdsa-sha2-nistp256`},
+		"other type":    {[]string{"bob", "sk-ssh-ed25519@openssh.com", ed}, `person bob: the key is "ssh-ed25519", not sk-ssh-ed25519@openssh.com`},
 		"the identity point": {[]string{"bob", "ssh-ed25519", smallOrder(t, "0100000000000000000000000000000000000000000000000000000000000000", false)},
 			"person bob: the key is not a usable ed25519 key: its point has small order, so anyone can sign for it"},
 		"the point of order 2":                  {[]string{"bob", "ssh-ed25519", smallOrder(t, "ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f", false)}, "not a usable ed25519 key"},
@@ -319,10 +308,9 @@ func fixture(t *testing.T, lines ...string) Lines {
 
 // TestCheckLines is each rule across lines, taken and refused.
 func TestCheckLines(t *testing.T) {
-	k1, k2, k3, k4, rsa1, rsa2 := edKey(t), ecdsaKey(t, elliptic.P256()), skEdKey(t), edKey(t), rsaKey(t), rsaKey(t)
+	k1, k2, k3, k4, rsa1, rsa2 := edKey(t), skEdKey(t), skEdKey(t), edKey(t), rsaKey(t), rsaKey(t)
 	identity := smallOrder(t, "0100000000000000000000000000000000000000000000000000000000000000", false)
 	ed, edSK, edSKOther := edForms(t)
-	ec, ecSK := ecForms(t)
 	apps := &Around{Apps: []string{"example", "blog"}, Channels: true}
 	noWarning := []string(nil)
 	for name, c := range map[string]struct {
@@ -335,7 +323,7 @@ func TestCheckLines(t *testing.T) {
 			lines: []string{"signer alice ssh-ed25519 " + k1, "signer alice ssh-ed25519 " + k1}, around: apps, warnings: noWarning,
 		},
 		"a person who is not a signer, granted": {
-			lines: []string{"signer alice ssh-ed25519 " + k1, "person bob ecdsa-sha2-nistp256 " + k2, "grant bob viewer app example"}, around: apps, warnings: noWarning,
+			lines: []string{"signer alice ssh-ed25519 " + k1, "person bob sk-ssh-ed25519@openssh.com " + k2, "grant bob viewer app example"}, around: apps, warnings: noWarning,
 		},
 		"a second key for a signer's name": {
 			lines: []string{"signer alice ssh-ed25519 " + k1, "person alice sk-ssh-ed25519@openssh.com " + k3, "grant alice viewer box"}, around: apps, warnings: noWarning,
@@ -344,7 +332,7 @@ func TestCheckLines(t *testing.T) {
 			lines: []string{"signer alice ssh-ed25519 " + k1, "grant alice viewer box"}, around: apps, warnings: noWarning,
 		},
 		"a signer with no grant is not warned": {
-			lines: []string{"signer alice ssh-ed25519 " + k1, "person bob ecdsa-sha2-nistp256 " + k2, "grant bob viewer box"}, around: apps, warnings: noWarning,
+			lines: []string{"signer alice ssh-ed25519 " + k1, "person bob sk-ssh-ed25519@openssh.com " + k2, "grant bob viewer box"}, around: apps, warnings: noWarning,
 		},
 
 		"the same key, a signer and a person": {
@@ -354,7 +342,7 @@ func TestCheckLines(t *testing.T) {
 			lines: []string{"person bob ssh-ed25519 " + k1, "signer alice ssh-ed25519 " + k1}, want: "signer alice and person bob are the same key",
 		},
 		"the same key, two people": {
-			lines: []string{"signer alice ssh-ed25519 " + k1, "person bob ecdsa-sha2-nistp256 " + k2, "person carol ecdsa-sha2-nistp256 " + k2}, want: "person bob and person carol are the same key",
+			lines: []string{"signer alice ssh-ed25519 " + k1, "person bob sk-ssh-ed25519@openssh.com " + k2, "person carol sk-ssh-ed25519@openssh.com " + k2}, want: "person bob and person carol are the same key",
 		},
 		"the same key, one name twice": {
 			lines: []string{"signer alice ssh-ed25519 " + k1, "person alice ssh-ed25519 " + k1}, want: "signer alice and person alice are the same key",
@@ -368,9 +356,9 @@ func TestCheckLines(t *testing.T) {
 			lines: []string{"person bob sk-ssh-ed25519@openssh.com " + edSK, "person carol sk-ssh-ed25519@openssh.com " + edSKOther},
 			want:  "person bob and person carol are the same key",
 		},
-		"one ECDSA key, plain and sk": {
-			lines: []string{"person bob sk-ecdsa-sha2-nistp256@openssh.com " + ecSK, "person carol ecdsa-sha2-nistp256 " + ec},
-			want:  "person bob and person carol are the same key, written as sk-ecdsa-sha2-nistp256@openssh.com and as ecdsa-sha2-nistp256",
+		"one Ed25519 key, sk and plain, two people": {
+			lines: []string{"person bob sk-ssh-ed25519@openssh.com " + edSK, "person carol ssh-ed25519 " + ed},
+			want:  "person bob and person carol are the same key, written as sk-ssh-ed25519@openssh.com and as ssh-ed25519",
 		},
 		"one signer key in two forms, beside a person": {
 			lines: []string{"signer alice ssh-ed25519 " + ed, "signer bob sk-ssh-ed25519@openssh.com " + edSK, "person carol ssh-ed25519 " + k4, "grant carol viewer box"},
@@ -382,7 +370,7 @@ func TestCheckLines(t *testing.T) {
 		},
 		"a grant for an ssh-rsa signer alone": {
 			lines: []string{"signer carol ssh-rsa " + rsa1, "grant carol viewer box"},
-			want:  "grant carol viewer box: carol has no key a person's token can use (an ssh-rsa signer key signs commits only); add a person line with an ed25519 or ecdsa key",
+			want:  "grant carol viewer box: carol has no key a person's token can use (an ssh-rsa signer key signs commits only); add a person line with an ed25519 key",
 		},
 		"an ssh-rsa signer with a person key": {
 			lines: []string{"signer carol ssh-rsa " + rsa1, "person carol ssh-ed25519 " + k1, "grant carol viewer box"}, around: apps, warnings: noWarning,
@@ -429,20 +417,20 @@ func TestCheckLines(t *testing.T) {
 			warnings: []string{"grant bob viewer app example: the box grant already covers it"},
 		},
 		"a person with no grant": {
-			lines: []string{"signer alice ssh-ed25519 " + k1, "person carol ecdsa-sha2-nistp256 " + k2, "person carol sk-ssh-ed25519@openssh.com " + k3}, around: apps,
+			lines: []string{"signer alice ssh-ed25519 " + k1, "person carol sk-ssh-ed25519@openssh.com " + k2, "person carol sk-ssh-ed25519@openssh.com " + k3}, around: apps,
 			warnings: []string{"person carol has no grant: their key is told only who they are here (/_motel/whoami)"},
 		},
 		"two ssh-rsa signer keys for one name, warned once": {
 			lines: []string{"signer carol ssh-rsa " + rsa1, "signer carol ssh-rsa " + rsa2, "person bob ssh-ed25519 " + k1, "grant bob viewer box"}, around: apps,
-			warnings: []string{"signer carol: an ssh-rsa key signs commits but cannot sign a person's token; to reach this box over HTTPS, add a person line for carol with an ed25519 or ecdsa key (ssh-keygen -t ed25519)"},
+			warnings: []string{"signer carol: an ssh-rsa key signs commits but cannot sign a person's token; to reach this box over HTTPS, add a person line for carol with an ed25519 key (ssh-keygen -t ed25519)"},
 		},
 		"a signer key of small order is no person's key": {
 			lines: []string{"signer mallory ssh-ed25519 " + identity, "grant mallory viewer box"},
-			want:  "grant mallory viewer box: mallory has no key a person's token can use (an ssh-rsa signer key signs commits only); add a person line with an ed25519 or ecdsa key",
+			want:  "grant mallory viewer box: mallory has no key a person's token can use (an ssh-rsa signer key signs commits only); add a person line with an ed25519 key",
 		},
 		"an ssh-rsa signer beside people": {
 			lines: []string{"signer carol ssh-rsa " + rsa1, "person bob ssh-ed25519 " + k1, "grant bob viewer box"}, around: apps,
-			warnings: []string{"signer carol: an ssh-rsa key signs commits but cannot sign a person's token; to reach this box over HTTPS, add a person line for carol with an ed25519 or ecdsa key (ssh-keygen -t ed25519)"},
+			warnings: []string{"signer carol: an ssh-rsa key signs commits but cannot sign a person's token; to reach this box over HTTPS, add a person line for carol with an ed25519 key (ssh-keygen -t ed25519)"},
 		},
 		"people and no monitor channel": {
 			lines: []string{"person bob ssh-ed25519 " + k1, "grant bob viewer box"}, around: &Around{},
@@ -570,7 +558,7 @@ func TestEqual(t *testing.T) {
 	}
 	for name, change := range map[string]func(*Key){
 		"name":   func(k *Key) { k.Name = "carol" },
-		"type":   func(k *Key) { k.Type = "ecdsa-sha2-nistp256" },
+		"type":   func(k *Key) { k.Type = "sk-ssh-ed25519@openssh.com" },
 		"base64": func(k *Key) { k.B64 = edKey(t) },
 		"signer": func(k *Key) { k.Signer = true },
 	} {

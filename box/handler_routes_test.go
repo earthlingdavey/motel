@@ -168,7 +168,7 @@ func FuzzNoRouteNoAnswer(f *testing.F) {
 	served := recordRows(f)
 	// People: a viewer of the box and a viewer of an app alone, their
 	// tokens made once, for the run.
-	carol, alice := accesstest.Ed25519(), accesstest.ECDSA()
+	carol, alice := accesstest.Ed25519(), accesstest.SKEd25519()
 	var l access.Lines
 	for name, k := range map[string]accesstest.Key{"carol": carol, "alice": alice} {
 		key, err := access.ParsePerson([]string{name, k.Type(), k.B64()})
