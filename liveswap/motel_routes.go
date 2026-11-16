@@ -102,7 +102,7 @@ func (h *Handler) whoami(w http.ResponseWriter, _ *http.Request, p *Person) erro
 // row can carry another app's. After every row's last pass the list
 // adds only the key around them: the rows are carried as raw JSON, so
 // the encoder writes the text each filter left, as withField does.
-func (h *Handler) apps(w http.ResponseWriter, _ *http.Request, p *Person) error {
+func (h *Handler) apps(w http.ResponseWriter, r *http.Request, p *Person) error {
 	names := []string{}
 	for name := range h.app.managed {
 		if p.Principal.Views.Covers(name) {
@@ -110,6 +110,17 @@ func (h *Handler) apps(w http.ResponseWriter, _ *http.Request, p *Person) error 
 		}
 	}
 	slices.Sort(names)
+	// Each row is the app's status at this moment, so the list waits
+	// for the apps it names as GET /<app> does (awaitRead), under one
+	// bound: in the first moments of a start a row would say an app
+	// that serves is idle and has no deploy.
+	listed := make([]*managedApp, len(names))
+	for i, name := range names {
+		listed[i] = h.app.managed[name]
+	}
+	if late := h.awaitRead(r, p.Name, listed...); late != nil {
+		return h.installing(w, late)
+	}
 	body := struct {
 		Apps []json.RawMessage `json:"apps"`
 	}{make([]json.RawMessage, 0, len(names))}

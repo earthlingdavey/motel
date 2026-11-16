@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -14,6 +15,7 @@ import (
 	"go.uber.org/zap"
 	"go.uber.org/zap/zaptest/observer"
 
+	"github.com/smallhoursorg/motel/liveswap/access/accesstest"
 	"github.com/smallhoursorg/motel/liveswap/deploytrust"
 	"github.com/smallhoursorg/motel/liveswap/deploytrust/trusttest"
 )
@@ -291,14 +293,230 @@ func TestReloadBeforeStartAnswersAtOnce(t *testing.T) {
 	}
 }
 
-// TestPersonBeforeStartDoesNotWait: a person's way in reads nothing
-// liveswap's Start installs, and is not made to wait for it.
-func TestPersonBeforeStartDoesNotWait(t *testing.T) {
+// personGet is GET target at the box's name with k's token.
+func personGet(target string, k accesstest.Key) *http.Request {
+	req := httptest.NewRequest(http.MethodGet, "http://"+personBox+target, nil)
+	req.Header.Set("Authorization", token(k))
+	return req
+}
+
+// TestPersonBeforeStartReadsTheInstalledApp: a person's read of an app
+// sent before liveswap's Start installed it is answered once the app
+// is installed, with the installed app's state, as a deploy token's
+// is. Before the install the pooled app holds no spec, and its status
+// was a 200 saying an app that has deployed is idle with no release
+// and no deploy; a deploy's record was a 503 with no Retry-After ("app
+// has no configuration loaded").
+func TestPersonBeforeStartReadsTheInstalledApp(t *testing.T) {
+	for _, c := range []struct {
+		target string
+		code   int
+		holds  string
+	}{
+		{"/demo", http.StatusOK, `"deploys":[{"version":"v1","status":"succeeded"}]`},
+		{"/_motel/apps", http.StatusOK, `"newest_deploy":{"version":"v1","status":"succeeded"}`},
+		{"/demo?deploy=v1", http.StatusOK, `"status":"succeeded"`},
+	} {
+		people := newTestPeople(t)
+		h, rig := notInstalled(t)
+		h.people = people.reg
+		// What only an installed app can show: a deploy on its disk.
+		must(t, writeDeployRecord(rig.spec.dirs, "v1", []byte(`{"version":"v1","status":"succeeded"}`)))
+		got := make(chan answer, 1)
+		go func() { got <- serveOne(h, personGet(c.target, people.alice)) }()
+		select {
+		case a := <-got:
+			t.Fatalf("%s: a person's read before Start was answered before the install: %d %s", c.target, a.w.Code, strings.TrimSpace(a.w.Body.String()))
+		case <-time.After(60 * time.Millisecond):
+		}
+		install(h, rig)
+		a := <-got
+		if a.err != nil || a.w.Code != c.code || !strings.Contains(a.w.Body.String(), c.holds) {
+			t.Errorf("%s, installed 60 ms later: %d %s (%v), want %d holding %s", c.target, a.w.Code, strings.TrimSpace(a.w.Body.String()), a.err, c.code, c.holds)
+		}
+		if a.took > 2*time.Second {
+			t.Errorf("%s: answered %v after it was sent, long after the install", c.target, a.took)
+		}
+	}
+}
+
+// TestPersonBeforeStartPastTheBound: a person's read whose app no Start
+// installs within installWait is told to come back, the deploy token's
+// 503 with Retry-After, and the journal says so with the person's
+// name. On a fake clock: not answered a millisecond before the bound,
+// answered at it.
+func TestPersonBeforeStartPastTheBound(t *testing.T) {
+	for _, target := range []string{"/demo", "/demo?deploy=v1", "/_motel/apps"} {
+		people := newTestPeople(t)
+		h, _ := notInstalled(t)
+		h.people = people.reg
+		core, logs := observer.New(zap.InfoLevel)
+		h.logger = zap.New(core)
+		fc := newFakeClock()
+		h.waitClock = fc
+		got := make(chan answer, 1)
+		go func() { got <- serveOne(h, personGet(target, people.alice)) }()
+		if at := pendingTimer(t, fc); !at.Equal(fc.Now().Add(installWait)) {
+			t.Fatalf("%s: the timer fires %v from now, want %v", target, at.Sub(fc.Now()), installWait)
+		}
+		fc.Advance(installWait - time.Millisecond)
+		select {
+		case a := <-got:
+			t.Fatalf("%s answered before the bound: %d %s", target, a.w.Code, a.w.Body)
+		case <-time.After(20 * time.Millisecond):
+		}
+		fc.Advance(time.Millisecond)
+		a := <-got
+		const body = `{"error":"motel is starting and has not loaded this app yet; retry after 1 s"}` + "\n"
+		if a.err != nil || a.w.Code != http.StatusServiceUnavailable || a.w.Body.String() != body || a.w.Header().Get("Retry-After") != "1" {
+			t.Errorf("%s before Start, past the bound: %d %v %q (%v)", target, a.w.Code, a.w.Header(), a.w.Body, a.err)
+		}
+		lines := logs.FilterMessage("a person's read came before liveswap installed the app; answered 503").All()
+		if len(lines) != 1 || lines[0].ContextMap()["app"] != "demo" || lines[0].ContextMap()["via"] != "alice" || lines[0].ContextMap()["waited"] != installWait {
+			t.Errorf("%s: journal: %v", target, logs.All())
+		}
+	}
+}
+
+// TestAppsListWaitsOnceForEveryApp: the list's wait is one bound for
+// all the apps it names, not one each. Two apps, neither installed:
+// the first is installed part of the way through, and the list is told
+// to come back when installWait has passed since it was sent, on the
+// one timer it set.
+func TestAppsListWaitsOnceForEveryApp(t *testing.T) {
+	people := newTestPeople(t)
+	h, rig := notInstalled(t)
+	h.people = people.reg
+	h.app.managed["zeta"] = newManagedApp("zeta")
+	core, logs := observer.New(zap.InfoLevel)
+	h.logger = zap.New(core)
+	fc := newFakeClock()
+	h.waitClock = fc
+	got := make(chan answer, 1)
+	go func() { got <- serveOne(h, personGet("/_motel/apps", people.carol)) }()
+	pendingTimer(t, fc)
+	fc.Advance(installWait / 2)
+	install(h, rig) // demo, the first by name
+	select {
+	case a := <-got:
+		t.Fatalf("answered with zeta not installed: %d %s", a.w.Code, a.w.Body)
+	case <-time.After(20 * time.Millisecond):
+	}
+	fc.mu.Lock()
+	timers := len(fc.waiters)
+	fc.mu.Unlock()
+	if timers != 1 {
+		t.Fatalf("%d timers pending, want the one the list set", timers)
+	}
+	fc.Advance(installWait / 2)
+	a := <-got
+	if a.err != nil || a.w.Code != http.StatusServiceUnavailable || a.w.Header().Get("Retry-After") != "1" {
+		t.Fatalf("past the one bound: %d %s (%v)", a.w.Code, a.w.Body, a.err)
+	}
+	lines := logs.FilterMessage("a person's read came before liveswap installed the app; answered 503").All()
+	if len(lines) != 1 || lines[0].ContextMap()["app"] != "zeta" || lines[0].ContextMap()["waited"] != installWait {
+		t.Errorf("journal: %v", logs.All())
+	}
+}
+
+// slowClock is a clock a second later each time it is read, which
+// keeps the waits it is asked for and never fires them.
+type slowClock struct {
+	mu     sync.Mutex
+	now    time.Time
+	waits  []time.Duration
+	asked  chan struct{}
+	notify sync.Once
+}
+
+func (c *slowClock) Now() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.now = c.now.Add(time.Second)
+	return c.now
+}
+
+func (c *slowClock) Sleep(time.Duration) {}
+
+func (c *slowClock) After(d time.Duration) <-chan time.Time {
+	c.mu.Lock()
+	c.waits = append(c.waits, d)
+	c.mu.Unlock()
+	c.notify.Do(func() { close(c.asked) })
+	return make(chan time.Time)
+}
+
+// TestPersonWaitIsWhatIsLeftOfTheBound: the timer a person's read sets
+// is for what is left of installWait since the read began, not a whole
+// installWait from whenever the first app that is not installed is
+// reached: the bound is on the read. On a clock a second later at each
+// reading, the read begins at one reading and sets its timer at the
+// next, for a second less than installWait.
+func TestPersonWaitIsWhatIsLeftOfTheBound(t *testing.T) {
+	people := newTestPeople(t)
+	h, rig := notInstalled(t)
+	h.people = people.reg
+	sc := &slowClock{now: time.Unix(1_700_000_000, 0), asked: make(chan struct{})}
+	h.waitClock = sc
+	got := make(chan answer, 1)
+	go func() { got <- serveOne(h, personGet("/demo", people.alice)) }()
+	select {
+	case <-sc.asked:
+	case a := <-got:
+		t.Fatalf("answered with no timer set: %d %s", a.w.Code, a.w.Body)
+	case <-time.After(5 * time.Second):
+		t.Fatal("the handler set no timer")
+	}
+	sc.mu.Lock()
+	waits := append([]time.Duration(nil), sc.waits...)
+	sc.mu.Unlock()
+	if len(waits) != 1 || waits[0] != installWait-time.Second {
+		t.Errorf("the timer is for %v, want %v: installWait less the second since the read began", waits, installWait-time.Second)
+	}
+	install(h, rig)
+	if a := <-got; a.err != nil || a.w.Code != http.StatusOK {
+		t.Errorf("after the install: %d %s (%v)", a.w.Code, a.w.Body, a.err)
+	}
+}
+
+// TestPersonNotAllowedBeforeStartDoesNotWait: only a read Decide
+// allowed waits for an install. Before Start a stranger's 401, a
+// person's 403 for an app no grant of theirs covers, a box viewer's 404
+// for a name that is no app, whoami, and the list of a person who may
+// view no app are answered at once, and set no timer.
+func TestPersonNotAllowedBeforeStartDoesNotWait(t *testing.T) {
 	people := newTestPeople(t)
 	h, _ := notInstalled(t)
 	h.people = people.reg
-	began := time.Now()
-	if w := sendTo(t, h, "GET", "/demo", token(people.alice)); w.Code != http.StatusOK || time.Since(began) > time.Second {
-		t.Errorf("alice before Start: %d %s in %v", w.Code, w.Body, time.Since(began))
+	fc := newFakeClock()
+	h.waitClock = fc
+	for _, c := range []struct {
+		what   string
+		target string
+		key    accesstest.Key
+		code   int
+	}{
+		{"a stranger", "/demo", people.stranger, http.StatusUnauthorized},
+		{"a person with no grant on the app", "/demo", people.dave, http.StatusForbidden},
+		{"a box viewer, a name that is no app", "/nothere", people.carol, http.StatusNotFound},
+		{"whoami", "/_motel/whoami", people.alice, http.StatusOK},
+		{"the list of a person who views no app", "/_motel/apps", people.dave, http.StatusOK},
+	} {
+		got := make(chan answer, 1)
+		go func() { got <- serveOne(h, personGet(c.target, c.key)) }()
+		select {
+		case a := <-got:
+			if a.err != nil || a.w.Code != c.code {
+				t.Errorf("%s before Start: %d %s (%v), want %d", c.what, a.w.Code, strings.TrimSpace(a.w.Body.String()), a.err, c.code)
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatalf("%s before Start was made to wait", c.what)
+		}
+		fc.mu.Lock()
+		timers := len(fc.waiters)
+		fc.mu.Unlock()
+		if timers != 0 {
+			t.Fatalf("%s set a timer", c.what)
+		}
 	}
 }
