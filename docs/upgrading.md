@@ -92,8 +92,14 @@ finish, and the new process cannot listen until the old one has
 exited. New visitors get connection refused for that whole window,
 sometimes followed by a few dozen milliseconds of 503s while the new
 process picks the apps back up. A deploy sent in those first moments
-waits for motel to load its app, at most 5 seconds, and is answered
-503 with `Retry-After: 1` only past that; its token is not refused.
+waits for motel to load its app, at most 5 seconds; past that it is
+answered 503 with `Retry-After: 1`, and the deploy script sends it once
+more. That holds for a token a `local` key signed, and for an issuer's
+token whose signing keys the new process has already fetched. It
+fetches them in the background as it starts and no token waits on that,
+so the first issuer's token after a restart (a GitHub Actions deploy's)
+can still be answered 401 once; the script sends it again 3 seconds
+later, which goes through once the keys are in.
 A crash has a window of its own: whatever was in flight is cut off,
 systemd waits a second
 (`RestartSec=1s`) and starts motel again, and the apps are picked
