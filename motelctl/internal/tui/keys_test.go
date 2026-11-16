@@ -3,6 +3,7 @@ package tui
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gdamore/tcell/v2"
 
@@ -139,5 +140,61 @@ func TestRecoverWithR(t *testing.T) {
 	}
 	if s := h.screen(); strings.Contains(s, "SIGNED OUT") || strings.Contains(s, "not asking:") {
 		t.Fatalf("the stop is still said:\n%s", s)
+	}
+}
+
+// TestRForgetsFirst: r forgets the refused token before it lets any
+// read go: when Resign runs, the reads are still stopped.
+func TestRForgetsFirst(t *testing.T) {
+	h := start(t, 100, 30, nil)
+	h.fake.Set("blog", &model.Failure{Kind: model.FailSignedOut, Message: "refused"})
+	h.press(tcell.KeyCtrlR)
+	if h.s.Engine.Stopped() == model.Running {
+		t.Fatal("no stop")
+	}
+	h.fake.Set("blog", nil)
+	order := ""
+	h.u.Resign = func() {
+		if h.s.Engine.Stopped() == model.Running {
+			order = "retried before forgetting"
+		} else {
+			order = "forgot first"
+		}
+	}
+	h.press("r")
+	if order != "forgot first" {
+		t.Fatalf("r: %q", order)
+	}
+}
+
+// TestCtrlRRecord: a record whose read failed is read again by ctrl-r
+// on its screen.
+func TestCtrlRRecord(t *testing.T) {
+	h := start(t, 100, 30, nil)
+	h.fake.Set("blog@e9a0b3f2c118", &model.Failure{Kind: model.FailThis, Message: "deploy.example.com answered 500"})
+	h.open(app("blog"))
+	h.open(record("blog", "e9a0b3f2c118"))
+	if s := h.screen(); !strings.Contains(s, "answered 500") {
+		t.Fatalf("the failure is not on screen:\n%s", s)
+	}
+	h.fake.Set("blog@e9a0b3f2c118", nil)
+	h.press(tcell.KeyCtrlR)
+	if s := h.screen(); !strings.Contains(s, "FAILED in soaking") {
+		t.Fatalf("ctrl-r did not read the record again:\n%s", s)
+	}
+}
+
+// TestNoCtrlRHintWhileSlowed: during a 429's wait the footer offers no
+// ctrl-r, which would do nothing.
+func TestNoCtrlRHintWhileSlowed(t *testing.T) {
+	h := start(t, 100, 30, nil)
+	if s := h.screen(); !strings.Contains(s, "ctrl-r ask again") {
+		t.Fatalf("no ctrl-r hint to start with:\n%s", s)
+	}
+	h.fake.Set("blog", &model.Failure{Kind: model.FailSlowed, RetryAfter: time.Minute})
+	h.press(tcell.KeyCtrlR)
+	s := h.screen()
+	if strings.Contains(s, "ctrl-r") || !strings.Contains(s, "slowed by the box (429) until") {
+		t.Fatalf("during the wait the screen shows:\n%s", s)
 	}
 }

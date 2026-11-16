@@ -12,6 +12,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"os"
 	"os/signal"
 	"strings"
 	"sync"
@@ -41,9 +42,9 @@ func (r *runner) tui() *cobra.Command {
 			"only reads, well inside the box's limit of 2 requests a second and 60 at once:\n" +
 			"up to 30 at once to start, then at most 1.5 a second. It signs one token for\n" +
 			"ten minutes at a time, so a hardware key is touched about every nine, and never\n" +
-			"asks for a passphrase or a PIN: a key that needs one must be in the agent\n" +
-			"(ssh-add). Each screen's keys are on its last line. It is asked with your own\n" +
-			"key only.\n\n" + experimental,
+			"asks for a passphrase or a PIN: a key with a passphrase must be in the agent\n" +
+			"(ssh-add), and a hardware key that requires its PIN cannot be used here yet.\n" +
+			"Each screen's keys are on its last line. It is asked with your own key only.\n\n" + experimental,
 		Args: usageArgs(cobra.NoArgs),
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if r.json {
@@ -52,14 +53,17 @@ func (r *runner) tui() *cobra.Command {
 			// A closed terminal window (SIGHUP) ends it as SIGTERM does:
 			// through the screen's event loop, which gives the terminal
 			// back.
-			ctx, stop := signal.NotifyContext(cmd.Context(), syscall.SIGHUP)
+			ctx, stop := signal.NotifyContext(cmd.Context(), tuiSignals...)
 			defer stop()
 			o := tui.Options{Clock: tui.RealClock{}, Colour: r.env.Color, Tick: time.Second}
-			s := &model.Session{Version: r.env.Version, Now: r.env.Now}
+			// Wall-clock time: a monotonic reading stops while a laptop
+			// sleeps, and ages and due times would leave the sleep out.
+			wall := func() time.Time { return r.env.Now().Round(0) }
+			s := &model.Session{Version: r.env.Version, Now: wall}
 			if sample {
 				s.Host, s.Demo, s.Key = demo.Host, true, demo.Key
-				s.TokenExpires = func() time.Time { return r.env.Now().Add(9 * time.Minute) }
-				o.Client = &demo.Fake{Now: r.env.Now}
+				s.TokenExpires = func() time.Time { return wall().Add(9 * time.Minute) }
+				o.Client = &demo.Fake{Now: wall}
 			} else {
 				gt := &gate{w: r.env.Stderr}
 				rr := *r
@@ -73,7 +77,7 @@ func (r *runner) tui() *cobra.Command {
 					shown := termtext.From(strings.TrimSuffix(pt.Key.Shown, ".pub"))
 					return &client.Failure{Exit: client.ExitUsage, Message: shown.String() + " is protected by a passphrase, and the agent does not hold it: the TUI signs again about every nine minutes while its screen holds the terminal, where ssh-keygen could not ask for it. Add the key to the agent (ssh-add " + shown.String() + ") and run motelctl tui again."}
 				}
-				sig := forTUI(c, r.env.Now)
+				sig := forTUI(c, wall)
 				k := pt.Key
 				s.Host = c.Box.Host
 				s.Key = model.Key{Fingerprint: k.Public.Fingerprint(), Shown: k.Shown, Source: k.Source,
@@ -81,7 +85,7 @@ func (r *runner) tui() *cobra.Command {
 				s.TokenExpires = sig.Expires
 				o.Client, o.Signing, o.Started, o.Resign = live{c}, sig.Notify, gt.Close, pt.Forget
 			}
-			s.Engine = model.NewEngine(r.env.Now())
+			s.Engine = model.NewEngine(wall())
 			o.Session = s
 			start := tui.Prime(ctx, o)
 			if err := ctx.Err(); err != nil {
@@ -90,11 +94,7 @@ func (r *runner) tui() *cobra.Command {
 				return err
 			}
 			if err := tui.Run(ctx, o, start); err != nil {
-				var p *tui.Panic
-				if errors.As(err, &p) {
-					return &client.Failure{Exit: client.ExitUnknown, Message: termtext.From(p.Error()).String()}
-				}
-				return &client.Failure{Exit: client.ExitUsage, Message: "the screen could not start: " + termtext.From(err.Error()).String()}
+				return runFailure(err)
 			}
 			return ctx.Err()
 		},
@@ -103,6 +103,52 @@ func (r *runner) tui() *cobra.Command {
 	c.Flags().BoolVar(&sample, "demo", false, "show sample data, with no box")
 	_ = c.Flags().MarkHidden("demo")
 	return c
+}
+
+// tuiSignals end the TUI as SIGINT and SIGTERM do (main's): a closed
+// terminal window sends SIGHUP.
+var tuiSignals = []os.Signal{syscall.SIGHUP}
+
+// runFailure is how the TUI's end is said: a panic, already one line
+// and safe, exits 3; a screen that would not start, 2.
+func runFailure(err error) error {
+	var p *tui.Panic
+	if errors.As(err, &p) {
+		// The value quoted and cut (it may hold what a box sent), and the
+		// functions it went through, innermost first, at most eight.
+		return &client.Failure{Exit: client.ExitUnknown, Message: "the TUI failed: " + termtext.Quote(panicText(p.Value)).String() + " in " + shortStack(p.Stack)}
+	}
+	return &client.Failure{Exit: client.ExitUsage, Message: "the screen could not start: " + termtext.From(err.Error()).String()}
+}
+
+func panicText(v any) string {
+	switch v := v.(type) {
+	case error:
+		return v.Error()
+	case string:
+		return v
+	}
+	return "a panic"
+}
+
+func shortStack(stack []byte) string {
+	var fns []string
+	for _, l := range strings.Split(string(stack), "\n") {
+		if l == "" || strings.HasPrefix(l, "\t") || strings.HasPrefix(l, "goroutine ") {
+			continue
+		}
+		if i := strings.LastIndexByte(l, '('); i > 0 {
+			l = l[:i]
+		}
+		if strings.HasPrefix(l, "runtime/debug.") || strings.HasPrefix(l, "panic") || strings.HasPrefix(l, "runtime.") {
+			continue
+		}
+		fns = append(fns, l)
+		if len(fns) == 8 {
+			break
+		}
+	}
+	return termtext.From(strings.Join(fns, " < ")).String()
 }
 
 // forTUI makes c the TUI's client, and is the only place one is made:

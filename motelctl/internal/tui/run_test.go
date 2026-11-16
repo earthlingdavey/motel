@@ -3,7 +3,6 @@ package tui
 import (
 	"context"
 	"errors"
-	"strings"
 	"testing"
 	"time"
 
@@ -36,7 +35,7 @@ func TestPanicEndsThroughTheLoop(t *testing.T) {
 	select {
 	case err := <-done:
 		var p *Panic
-		if !errors.As(err, &p) || !strings.Contains(p.Error(), "a read went wrong") || len(p.Stack) == 0 {
+		if !errors.As(err, &p) || p.Value != "a read went wrong" || len(p.Stack) == 0 {
 			t.Fatalf("Run ended with %v", err)
 		}
 	case <-time.After(10 * time.Second):
@@ -61,5 +60,28 @@ func TestPostAfterTheEnd(t *testing.T) {
 	}
 	if ran {
 		t.Fatal("post ran after the loop had ended")
+	}
+}
+
+// TestPanicOnTheLoop: a panic on tview's own event loop (here, while a
+// frame is drawn) is recovered once tview has given the terminal back,
+// and returned, not printed raw by Go.
+func TestPanicOnTheLoop(t *testing.T) {
+	now := t0
+	clock := fixedClock{&now}
+	f := &demo.Fake{Now: clock.Now}
+	s := &model.Session{Host: demo.Host, Now: clock.Now, Engine: model.NewEngine(t0)}
+	o := Options{Session: s, Client: f, Clock: clock, Screen: &sizedSim{tcell.NewSimulationScreen("UTF-8"), 100, 30}}
+	o.Started = func() { panic("drawn wrong \x1b[2J") }
+	done := make(chan error, 1)
+	go func() { done <- Run(context.Background(), o, model.View{Screen: model.ScreenApps}) }()
+	select {
+	case err := <-done:
+		var p *Panic
+		if !errors.As(err, &p) || p.Value != "drawn wrong \x1b[2J" {
+			t.Fatalf("Run ended with %v", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("a panic on the event loop did not end the screen")
 	}
 }

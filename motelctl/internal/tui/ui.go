@@ -186,8 +186,13 @@ func (u *UI) key(ev *tcell.EventKey) *tcell.EventKey {
 	case r == 'r' && u.S.Engine.Stopped() != model.Running:
 		// The only way out of a stop: one whoami, as a new start, with a
 		// token signed afresh; held to one in RetryEvery.
-		if u.S.Engine.Retry(u.now()) && u.Resign != nil {
-			u.Resign()
+		// Forgotten before the retry: Retry wakes the reads, and the
+		// whoami must not go out with the refused token.
+		if now := u.now(); u.S.Engine.RetryReady(now) {
+			if u.Resign != nil {
+				u.Resign()
+			}
+			u.S.Engine.Retry(now)
 		}
 	case r == '/' && v.Screen == model.ScreenApps:
 		u.ask()

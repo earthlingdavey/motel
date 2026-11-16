@@ -95,6 +95,7 @@ type Engine struct {
 	// ones opening an app causes among them, come out of its share.
 	lastFocus time.Time
 	lastRetry time.Time
+	ticked    time.Time
 	wake      chan struct{}
 }
 
@@ -109,6 +110,10 @@ type entry struct {
 	// so asking again (ctrl-r, opening it again) reads it.
 	held, failed bool
 	once         bool
+	// slowed is the read a 429 answered: the first after the wait.
+	slowed bool
+	// woke is a row not re-read since the machine slept: stale.
+	woke bool
 	// every is the interval the read after the last answer was due by,
 	// against which the row's age is judged; answered is when that
 	// answer came.
@@ -205,7 +210,9 @@ func (e *Engine) Focus(app string, now time.Time) {
 	old := e.focus
 	e.focus = app
 	if en, ok := e.jobs[Job{Kind: KStatus, App: old}]; ok && old != "" {
-		en.due = e.nextSlot(en, now)
+		// Closed: back to its place in the cycle, and judged by the
+		// background interval from now, not the open app's.
+		en.due, en.every = e.nextSlot(en, now), e.background()
 	}
 	if app != "" {
 		// Read at once only when its last answer is older than the open
@@ -302,6 +309,15 @@ func (e *Engine) Retry(now time.Time) bool {
 	return true
 }
 
+// RetryReady says whether r would ask now: stopped, and RetryEvery
+// since the last. The screen forgets the token first, then retries, so
+// no read can go out with the refused token between the two.
+func (e *Engine) RetryReady(now time.Time) bool {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.stopped != Running && e.inflight == nil && (e.lastRetry.IsZero() || now.Sub(e.lastRetry) >= RetryEvery)
+}
+
 // Touch is a key pressed: polling resumes when it had paused.
 func (e *Engine) Touch(now time.Time) {
 	e.mu.Lock()
@@ -384,6 +400,8 @@ func (e *Engine) next(at time.Time) (Job, time.Time, bool) {
 
 func (e *Engine) rank(j Job, en *entry) int {
 	switch {
+	case en.slowed:
+		return -1
 	case en.once:
 		return 0
 	case j.Kind == KWhoAmI:
@@ -461,6 +479,9 @@ func (e *Engine) Done(j Job, now time.Time, err error) Outcome {
 	defer e.mu.Unlock()
 	taken := e.taken
 	e.inflight, e.taken, e.cancel = nil, nil, nil
+	if taken != nil {
+		taken.slowed = false
+	}
 	out, stop := Classify(err)
 	en := e.jobs[j]
 	if en == nil || en != taken {
@@ -471,7 +492,7 @@ func (e *Engine) Done(j Job, now time.Time, err error) Outcome {
 	}
 	switch out {
 	case Answered:
-		en.misses, en.failed, en.answered = 0, false, now
+		en.misses, en.failed, en.answered, en.woke = 0, false, now, false
 		if e.misses > 0 {
 			// Back after no answer: whoami again, since the box may
 			// have been upgraded while it did not answer.
@@ -505,9 +526,8 @@ func (e *Engine) Done(j Job, now time.Time, err error) Outcome {
 		e.tokens, e.filled = 0, e.slowUntil
 		// The rest of the session runs slower, so it is not asked again.
 		e.rate = max(0.5, e.rate*0.75)
-		// Due before every other, so it is the first read the wait lets
-		// through.
-		en.due = time.Time{}
+		// First of all once the wait ends, whatever else came due in it.
+		en.due, en.slowed = time.Time{}, true
 		e.poke()
 		return out
 	case Stopped:
@@ -566,21 +586,60 @@ func (e *Engine) Health(now time.Time) Health {
 // row, whether it is held (not asked until ctrl-r), and the interval
 // its age is judged by: the one its next read was due by when its last
 // answer came, so an app just opened is not judged by the new one.
-func (e *Engine) Row(app string) (misses int, held bool, every time.Duration) {
+func (e *Engine) Row(app string) (misses int, held bool, every time.Duration, woke bool) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	en, ok := e.jobs[Job{Kind: KStatus, App: app}]
 	switch {
 	case !ok:
-		return 0, false, e.background()
+		return 0, false, e.background(), false
 	case en.every == 0:
 		every = e.background()
 		if app == e.focus {
 			every = FocusEvery
 		}
-		return en.misses, en.held, every
+		return en.misses, en.held, every, en.woke
 	}
-	return en.misses, en.held, en.every
+	return en.misses, en.held, en.every, en.woke
+}
+
+// WakeAfter is a gap between two ticks of the clock that only a
+// machine asleep makes: the TUI's clock ticks every second.
+const WakeAfter = 30 * time.Second
+
+// Tick is the clock's tick, every second while the screen is up. A gap
+// past WakeAfter is a laptop that slept: every row is stale until read
+// again, the reads are spread over the cycle again rather than all due
+// at once, whoami is asked again (the box may have changed meanwhile),
+// and the bucket starts empty. now is wall-clock time: a monotonic
+// reading stops while the machine sleeps.
+func (e *Engine) Tick(now time.Time) bool {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	last := e.ticked
+	e.ticked = now
+	if last.IsZero() || now.Sub(last) <= WakeAfter {
+		return false
+	}
+	every := e.background()
+	for j, en := range e.jobs {
+		if j.Kind != KStatus {
+			continue
+		}
+		en.woke = true
+		if j.App == e.focus {
+			en.due = now
+		} else {
+			en.due = now.Add(en.phase % every)
+		}
+	}
+	if en, ok := e.jobs[Job{Kind: KApps}]; ok {
+		en.due = now
+	}
+	e.jobs[Job{Kind: KWhoAmI}] = &entry{due: now, once: true}
+	e.tokens, e.filled = 0, now
+	e.poke()
+	return true
 }
 
 // CanAskAgain says whether ctrl-r would ask now: not while every read

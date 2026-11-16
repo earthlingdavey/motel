@@ -85,6 +85,7 @@ func Run(ctx context.Context, o Options, start model.View) error {
 				case <-ctx.Done():
 					return
 				case <-t.C:
+					u.S.Engine.Tick(o.Clock.Now())
 					u.post(func() {})
 				}
 			}
@@ -104,7 +105,7 @@ func Run(ctx context.Context, o Options, start model.View) error {
 		o.Signing(func(on bool) { u.post(func() { u.S.Signing = on }) })
 		defer o.Signing(nil)
 	}
-	err := u.App.Run()
+	err := u.runLoop()
 	close(u.ended)
 	cancel()
 	wg.Wait()
@@ -122,18 +123,21 @@ type Panic struct {
 	Stack []byte
 }
 
-func (p *Panic) Error() string {
-	return "the TUI failed: " + panicText(p.Value) + "\n" + string(p.Stack)
-}
+// Error names the panic only: its value may hold what a box sent, so
+// what prints it (cli's runFailure) makes it safe first.
+func (p *Panic) Error() string { return "the TUI failed with a panic" }
 
-func panicText(v any) string {
-	switch v := v.(type) {
-	case error:
-		return v.Error()
-	case string:
-		return v
-	}
-	return "a panic"
+// runLoop is tview's Run, with a panic on its event loop (in an
+// answer applied, a frame drawn, a key) recovered once tview has given
+// the terminal back, and returned as a Panic, so Go does not print it
+// raw.
+func (u *UI) runLoop() (err error) {
+	defer func() {
+		if p := recover(); p != nil {
+			u.panicked.CompareAndSwap(nil, &panicked{p, debug.Stack()})
+		}
+	}()
+	return u.App.Run()
 }
 
 type panicked struct {
@@ -181,8 +185,10 @@ func (u *UI) Drive(ctx context.Context, c model.Client, clock model.Clock) {
 // RealClock is the wall clock.
 type RealClock struct{}
 
-// Now is time.Now.
-func (RealClock) Now() time.Time { return time.Now() }
+// Now is time.Now on the wall clock alone: a monotonic reading stops
+// while a laptop sleeps, so ages and due times taken with it would
+// leave the sleep out.
+func (RealClock) Now() time.Time { return time.Now().Round(0) }
 
 // After is time.After.
 func (RealClock) After(d time.Duration) <-chan time.Time { return time.After(d) }

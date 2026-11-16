@@ -55,38 +55,33 @@ func imports(t *testing.T, dir string) map[string]string {
 	return out
 }
 
-// banned is the standard library no package the TUI reaches may
-// import: what reaches the network, a program, the process's
-// environment or files, or the runtime's back doors. Signals and all
-// that needs os are in cli/tui.go, which starts the TUI.
-func banned(p string) bool {
-	switch p {
-	case "os", "syscall", "net", "log/syslog", "plugin", "unsafe", "crypto/tls", "runtime/cgo":
-		return true
-	}
-	return strings.HasPrefix(p, "net/") || strings.HasPrefix(p, "os/")
-}
-
-// allows is each package's exact list beyond the standard library:
-// model draws nothing (no tview, no tcell); only the screens and the
-// door use tview; nothing reaches the client, sshkey or local.
+// allows is each package's exact set of imports, the standard
+// library's among them: the ones it uses today, and nothing more. A
+// package the TUI reaches may import nothing else, so nothing reads a
+// file, the environment or the build, runs a program, or reaches the
+// network: what needs any of that is in cli/tui.go, which starts the
+// TUI. model draws nothing (no tview, no tcell); only the screens and
+// the door use tview; nothing reaches the client, sshkey or local.
 var allows = map[string][]string{
-	"tui":      {"github.com/rivo/tview", "github.com/gdamore/tcell/v2", mod + "internal/termtext", mod + "internal/tui/model", mod + "internal/tui/door"},
-	"door":     {"github.com/rivo/tview", "github.com/gdamore/tcell/v2", mod + "internal/termtext", mod + "internal/tui/model"},
-	"model":    {mod + "internal/termtext", "github.com/smallhoursorg/motel/liveswap/wire"},
-	"demo":     {mod + "internal/tui/model", "github.com/smallhoursorg/motel/liveswap/wire"},
-	"termtext": {},
-	"wire":     {},
+	"tui": {"context", "runtime/debug", "strconv", "strings", "sync", "sync/atomic", "time",
+		"github.com/rivo/tview", "github.com/gdamore/tcell/v2",
+		mod + "internal/termtext", mod + "internal/tui/model", mod + "internal/tui/door"},
+	"door": {"strings", "github.com/rivo/tview", "github.com/gdamore/tcell/v2",
+		mod + "internal/termtext", mod + "internal/tui/model"},
+	"model": {"context", "encoding/json", "errors", "slices", "strconv", "strings", "sync", "time",
+		mod + "internal/termtext", "github.com/smallhoursorg/motel/liveswap/wire"},
+	"demo": {"context", "embed", "encoding/json", "fmt", "io/fs", "regexp", "strconv", "sync", "time",
+		mod + "internal/tui/model", "github.com/smallhoursorg/motel/liveswap/wire"},
+	"termtext": {"fmt", "strings", "unicode", "unicode/utf8"},
+	"wire":     {"encoding/json", "time"},
 }
-
-func stdlib(p string) bool { return !strings.Contains(strings.Split(p, "/")[0], ".") }
 
 // importBreaks is every import of pkg (a key of allows) that is not on
 // its list.
 func importBreaks(pkg string, imps map[string]string) []string {
 	var out []string
 	for p, file := range imps {
-		ok := stdlib(p) && !banned(p)
+		ok := false
 		for _, a := range allows[pkg] {
 			ok = ok || p == a
 		}
@@ -142,6 +137,14 @@ func TestTUIImports(t *testing.T) {
 		{"model", "github.com/gdamore/tcell/v2"},
 		{"demo", mod + "internal/client"},
 		{"tui", mod + "internal/sshkey"},
+		// What reads a file, the environment or the build.
+		{"model", "io/ioutil"},
+		{"model", "go/build"},
+		{"model", "text/template"},
+		{"model", "debug/buildinfo"},
+		{"model", "runtime/debug"},
+		{"model", "embed"},
+		{"door", "fmt"},
 	} {
 		if len(importBreaks(c.pkg, map[string]string{c.imp: "probe.go"})) == 0 {
 			t.Errorf("TestTUIImports lets %s import %s", c.pkg, c.imp)

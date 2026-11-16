@@ -11,13 +11,16 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
 	"github.com/smallhoursorg/motel/liveswap/wire"
 	"github.com/smallhoursorg/motel/motelctl/internal/client"
 	"github.com/smallhoursorg/motel/motelctl/internal/sshkey"
+	"github.com/smallhoursorg/motel/motelctl/internal/tui"
 	"github.com/smallhoursorg/motel/motelctl/internal/tui/model"
 )
 
@@ -249,5 +252,25 @@ func TestInterruptedAtTheFirstRead(t *testing.T) {
 	})
 	if code != client.ExitInterrupted || strings.Contains(errOut.String(), "screen") {
 		t.Errorf("exit %d, stderr %q", code, errOut.String())
+	}
+}
+
+// TestPanicSaid: a panic is said on one line, its value made safe and
+// cut, with a short stack, and the command exits non-zero.
+func TestPanicSaid(t *testing.T) {
+	err := runFailure(&tui.Panic{Value: "box said \x1b]52;c;Zm9v\x07" + strings.Repeat("x", 500), Stack: []byte("goroutine 1 [running]:\nmain.f()\n\t/src/f.go:1\nmain.g(0x1)\n\t/src/g.go:2\n")})
+	var f *client.Failure
+	if !errors.As(err, &f) || f.Exit == 0 || f.Exit == client.ExitUsage {
+		t.Fatalf("exit %v", err)
+	}
+	if strings.ContainsAny(f.Message, "\x1b\x07\n") || !strings.Contains(f.Message, `\x1b]52`) || len(f.Message) > 600 || !strings.Contains(f.Message, "main.f < main.g") {
+		t.Errorf("the panic is said as %q", f.Message)
+	}
+}
+
+// TestTUISignals: a closed terminal window (SIGHUP) ends the TUI.
+func TestTUISignals(t *testing.T) {
+	if !slices.Contains(tuiSignals, os.Signal(syscall.SIGHUP)) {
+		t.Errorf("SIGHUP is not among %v", tuiSignals)
 	}
 }

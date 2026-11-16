@@ -750,3 +750,195 @@ func TestUnusableAnswer(t *testing.T) {
 		t.Errorf("the row says %q", r.Why.Text())
 	}
 }
+
+// TestFocusReadsByAnswerAge: an app answered a second ago is not read
+// at once on opening, but at its answer and the open app's interval;
+// one answered long ago is read at once. Its interval is the open
+// app's after a focused answer, and the background's again from the
+// moment it is closed.
+func TestFocusReadsByAnswerAge(t *testing.T) {
+	apps := names(200)
+	e := model.NewEngine(t0)
+	calls := sim(e, apps, t0, 20*time.Second, 10*time.Millisecond, ok)
+	// The app read last: its answer a moment ago, the clock not
+	// going back.
+	var answered time.Time
+	app := ""
+	for _, c := range calls {
+		if c.j.Kind == model.KStatus {
+			answered, app = c.at.Add(10*time.Millisecond), c.j.App
+		}
+	}
+	at := answered.Add(time.Second)
+	e.Touch(at)
+	e.Focus(app, at)
+	for {
+		j, ok, _ := e.Take(at)
+		if !ok {
+			break
+		}
+		if j.App == app {
+			t.Fatalf("an app answered %s before was read at once on opening", at.Sub(answered))
+		}
+		e.Done(j, at, nil)
+	}
+	later := answered.Add(model.FocusEvery)
+	e.Touch(later)
+	if !takeApp(e, later, app) {
+		t.Fatal("the open app was not read at its answer and the open app's interval")
+	}
+	e.Done(model.Job{Kind: model.KStatus, App: app}, later, nil)
+	if _, _, every, _ := e.Row(app); every != model.FocusEvery {
+		t.Errorf("after a focused answer the interval is %s", every)
+	}
+	closed := later.Add(time.Second)
+	e.Focus("", closed)
+	if _, _, every, _ := e.Row(app); every != e.Interval("app-x") {
+		t.Errorf("a closed app is judged by %s, not the background's %s", every, e.Interval("app-x"))
+	}
+	// Answered long ago: read at once.
+	old := later.Add(time.Hour)
+	e.Touch(old)
+	e.Focus("app-7", old)
+	if !takeApp(e, old, "app-7") {
+		t.Fatal("an app with an old answer was not read at once on opening")
+	}
+}
+
+// takeApp takes reads from now until app's, within a second, waiting
+// for the bucket as the driver does and answering the others.
+func takeApp(e *model.Engine, now time.Time, app string) bool {
+	end := now.Add(time.Second)
+	for range 100 {
+		j, ok, wait := e.Take(now)
+		if !ok {
+			if wait <= 0 || now.Add(wait).After(end) {
+				return false
+			}
+			now = now.Add(wait)
+			continue
+		}
+		if j.App == app {
+			return true
+		}
+		e.Done(j, now, nil)
+	}
+	return false
+}
+
+// TestClosedAppNotStale: with 200 apps, an app closed is not stale
+// while its next background read is not yet due.
+func TestClosedAppNotStale(t *testing.T) {
+	now := t0
+	f := &demo.Fake{Now: func() time.Time { return now }}
+	s := &model.Session{Host: demo.Host, Now: f.Now, Engine: model.NewEngine(t0)}
+	for range 20 {
+		step(t, s, f, &now)
+	}
+	s.Engine.Focus("blog", now)
+	for range 5 {
+		step(t, s, f, &now)
+	}
+	s.Engine.Focus("", now)
+	if r := row(s, now.Add(time.Minute), "blog"); r.Stale {
+		t.Errorf("a closed app is stale a minute later, its next read not yet due")
+	}
+}
+
+// TestSlowedFirstOverAll: after a 429's wait the slowed read goes first,
+// though whoami, the list and the open app came due during the wait.
+func TestSlowedFirstOverAll(t *testing.T) {
+	e := model.NewEngine(t0)
+	e.Focus("app-0", t0)
+	sim(e, names(5), t0, 10*time.Second, 10*time.Millisecond, ok)
+	now := t0.Add(10 * time.Second)
+	e.Touch(now)
+	if !takeApp(e, now.Add(30*time.Second), "app-3") {
+		t.Fatal("app-3 not taken")
+	}
+	e.Done(model.Job{Kind: model.KStatus, App: "app-3"}, now, &model.Failure{Kind: model.FailSlowed, RetryAfter: 2 * time.Minute})
+	if e.CanAskAgain(now.Add(time.Minute)) {
+		t.Error("ctrl-r said to ask again during a 429's wait")
+	}
+	end := now.Add(2*time.Minute + time.Second)
+	if !e.CanAskAgain(end) {
+		t.Error("ctrl-r not offered after the wait")
+	}
+	e.Touch(end)
+	j, ok, wait := e.Take(end)
+	for !ok && wait > 0 && wait < 5*time.Second {
+		end = end.Add(wait)
+		j, ok, wait = e.Take(end)
+	}
+	if !ok || j.App != "app-3" {
+		t.Fatalf("the first read after the wait is %v, not the slowed one", j)
+	}
+}
+
+// TestWake: a clock that jumps ten minutes (a laptop asleep) makes
+// every row stale until read again, spreads the reads again, asks
+// whoami again, and leaves the bucket empty.
+func TestWake(t *testing.T) {
+	now := t0
+	f := &demo.Fake{Now: func() time.Time { return now }}
+	s := &model.Session{Host: demo.Host, Now: f.Now, Engine: model.NewEngine(t0)}
+	for range 20 {
+		step(t, s, f, &now)
+	}
+	e := s.Engine
+	if e.Tick(now) || e.Tick(now.Add(time.Second)) {
+		t.Fatal("a second's tick taken for a wake")
+	}
+	now = now.Add(10 * time.Minute)
+	if !e.Tick(now) {
+		t.Fatal("ten minutes between two ticks not taken for a wake")
+	}
+	if r := row(s, now, "docs"); !r.Stale {
+		t.Error("a row not re-read since the wake is not stale")
+	}
+	e.Touch(now)
+	j, ok, wait := e.Take(now)
+	if ok || wait <= 0 {
+		t.Fatalf("a full bucket after the wake: took %v", j)
+	}
+	now = now.Add(wait)
+	if j, ok, _ = e.Take(now); !ok || j.Kind != model.KWhoAmI {
+		t.Fatalf("the first read after a wake is %v, not whoami", j)
+	}
+	apply, err := s.Fetch(context.Background(), f, j)
+	apply()
+	e.Done(j, now, err)
+	// Spread: the background reads do not all come due at once.
+	due := 0
+	for range 20 {
+		now = now.Add(time.Second)
+		e.Touch(now)
+		if j, ok, _ := e.Take(now); ok {
+			due++
+			e.Done(j, now, nil)
+		}
+	}
+	if due > 20 {
+		t.Errorf("%d reads in 20 s after a wake", due)
+	}
+}
+
+// TestWords: the title's 429 says until when; an empty apps screen
+// while stopped says it is not asking.
+func TestWords(t *testing.T) {
+	now := t0
+	f := &demo.Fake{Now: func() time.Time { return now }}
+	s := &model.Session{Host: demo.Host, Now: f.Now, Engine: model.NewEngine(t0)}
+	step(t, s, f, &now) // whoami
+	f.Set("apps", &model.Failure{Kind: model.FailSlowed, RetryAfter: time.Hour})
+	step(t, s, f, &now)
+	if _, r := s.Title(now); !strings.Contains(r.Text(), "until "+now.Add(time.Hour).UTC().Format("15:04:05")+" UTC") || !strings.Contains(r.Text(), "1h left") {
+		t.Errorf("the title says %q", r.Text())
+	}
+	s2 := &model.Session{Host: demo.Host, Now: f.Now, Engine: model.NewEngine(t0)}
+	f.Set("whoami", fail(model.FailSignedOut))
+	step(t, s2, f, &now)
+	if v := s2.AppsView(now, "", 0); !strings.HasPrefix(v.Empty.Text(), "not asking") {
+		t.Errorf("an empty apps screen while stopped says %q", v.Empty.Text())
+	}
+}

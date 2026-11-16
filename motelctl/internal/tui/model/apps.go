@@ -175,8 +175,8 @@ func (s *Session) row(name string, now time.Time) (r AppRow) {
 	// that should have come and did not (an interval's grace: the first
 	// read after an app's first answer waits for its place in the
 	// cycle). A held row is not being asked, so it is never stale.
-	misses, held, every := s.Engine.Row(name)
-	r.Stale = !held && (misses >= StaleAfter || Stale(now.Sub(at), every))
+	misses, held, every, woke := s.Engine.Row(name)
+	r.Stale = !held && (woke || misses >= StaleAfter || Stale(now.Sub(at), every))
 	r.Cells[ColAge] = termtext.From(Ago(now.Sub(at)))
 	if r.Stale {
 		r.Cells[ColAge] = termtext.From("stale")
