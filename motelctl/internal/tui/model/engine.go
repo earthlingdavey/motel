@@ -54,8 +54,12 @@ const (
 	// NoRetryAfter is the wait for a 429 that names none: 30 s refills
 	// the box's whole burst of 60 at 2 a second, so the next read
 	// cannot be refused for a burst this session spent.
-	NoRetryAfter = 30 * time.Second
+	NoRetryAfter = time.Duration(BoxBurst/BoxRate) * time.Second
 	maxBackoff   = 60 * time.Second
+	// RetryEvery is the least time between two r: each may be a touch
+	// of a hardware key, and a signature that fails fast must not be
+	// asked for as fast as a key repeats.
+	RetryEvery = 5 * time.Second
 	// share is the part of what is left of the rate after the open app
 	// and the list that the other apps are given: the rest is room for
 	// a record the person opens and for whoami.
@@ -87,7 +91,11 @@ type Engine struct {
 	taken      *entry // the entry the read in flight was taken from
 	cancel     context.CancelFunc
 	recovering bool
-	wake       chan struct{}
+	// lastFocus is when the open app was last read: focus reads, the
+	// ones opening an app causes among them, come out of its share.
+	lastFocus time.Time
+	lastRetry time.Time
+	wake      chan struct{}
 }
 
 type entry struct {
@@ -97,9 +105,15 @@ type entry struct {
 	phase  time.Duration
 	misses int
 	// held is a read not asked again until the person asks (a 403, a
-	// 404, a record already read).
-	held bool
-	once bool
+	// 404, a record already read); failed says its last read failed,
+	// so asking again (ctrl-r, opening it again) reads it.
+	held, failed bool
+	once         bool
+	// every is the interval the read after the last answer was due by,
+	// against which the row's age is judged; answered is when that
+	// answer came.
+	every    time.Duration
+	answered time.Time
 }
 
 // Stop is why every read stopped, and zero while they run.
@@ -194,11 +208,16 @@ func (e *Engine) Focus(app string, now time.Time) {
 		en.due = e.nextSlot(en, now)
 	}
 	if app != "" {
+		// Read at once only when its last answer is older than the open
+		// app's interval; and never sooner than the open app's share
+		// allows (next).
 		j := Job{Kind: KStatus, App: app}
 		if en, ok := e.jobs[j]; !ok {
 			e.jobs[j] = &entry{due: now}
-		} else if en.due.After(now.Add(FocusEvery)) {
+		} else if en.answered.IsZero() || now.Sub(en.answered) >= FocusEvery {
 			en.due = now
+		} else {
+			en.due = en.answered.Add(FocusEvery)
 		}
 	}
 	e.poke()
@@ -220,8 +239,8 @@ func (e *Engine) nextSlot(en *entry, now time.Time) time.Time {
 func (e *Engine) Once(j Job, now time.Time) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	if en, ok := e.jobs[j]; ok && (en.held || en.due.Before(now) || en.due.Equal(now)) {
-		return
+	if en, ok := e.jobs[j]; ok && (en.held && !en.failed || !en.held && !en.due.After(now)) {
+		return // read, or about to be: the same entry, which a read in flight is for
 	}
 	e.jobs[j] = &entry{due: now, once: true}
 	e.poke()
@@ -245,15 +264,19 @@ func (e *Engine) dropLocked(j Job) {
 }
 
 // Again is ctrl-r: every read the person can see comes due now, the
-// held ones too (a 403 is asked again only so).
-func (e *Engine) Again(now time.Time) {
+// held ones too (a 403 is asked again only so), a record that failed,
+// and the records on the screen, which are named.
+func (e *Engine) Again(now time.Time, screen ...Job) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
+	for _, j := range screen {
+		e.jobs[j] = &entry{due: now, once: true}
+	}
 	for j, en := range e.jobs {
-		if en.once && en.held {
+		if en.once && en.held && !en.failed {
 			continue
 		}
-		en.held = false
+		en.held, en.failed = false, false
 		if j.Kind != KStatus || j.App == e.focus || e.focus == "" {
 			en.due = now
 		}
@@ -263,17 +286,20 @@ func (e *Engine) Again(now time.Time) {
 
 // Retry is r after a stop: one whoami, as a new start, then the reads
 // as they were. It is the only way out of a stop, so a refused key is
-// asked again once a press.
-func (e *Engine) Retry(now time.Time) {
+// asked again once a press, and no more than once in RetryEvery: each
+// may sign, and a signature may be a touch. It says whether it asks.
+func (e *Engine) Retry(now time.Time) bool {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	if e.stopped == Running {
-		return
+	if e.stopped == Running || e.inflight != nil || !e.lastRetry.IsZero() && now.Sub(e.lastRetry) < RetryEvery {
+		return false
 	}
+	e.lastRetry = now
 	e.stopped = Running
 	e.misses = 0
 	e.jobs[Job{Kind: KWhoAmI}] = &entry{due: now, once: true}
 	e.poke()
+	return true
 }
 
 // Touch is a key pressed: polling resumes when it had paused.
@@ -317,7 +343,17 @@ func (e *Engine) Take(now time.Time) (Job, bool, time.Duration) {
 	}
 	e.tokens--
 	e.inflight, e.taken = &j, e.jobs[j]
+	if j.Kind == KStatus && j.App == e.focus {
+		e.lastFocus = now
+	}
 	return j, true, 0
+}
+
+func maxTime(a, b time.Time) time.Time {
+	if b.After(a) {
+		return b
+	}
+	return a
 }
 
 // next is the job to run first of those due by at: a one-off the
@@ -332,11 +368,15 @@ func (e *Engine) next(at time.Time) (Job, time.Time, bool) {
 			continue
 		}
 		r := e.rank(j, en)
-		if en.due.After(at) {
+		due := en.due
+		if j.Kind == KStatus && j.App == e.focus && !e.lastFocus.IsZero() {
+			due = maxTime(due, e.lastFocus.Add(FocusEvery))
+		}
+		if due.After(at) {
 			r += 10 // not yet due: after every job that is
 		}
-		if !found || r < bestRank || r == bestRank && en.due.Before(bestDue) || r == bestRank && en.due.Equal(bestDue) && j.App < best.App {
-			best, bestDue, bestRank, found = j, en.due, r, true
+		if !found || r < bestRank || r == bestRank && due.Before(bestDue) || r == bestRank && due.Equal(bestDue) && j.App < best.App {
+			best, bestDue, bestRank, found = j, due, r, true
 		}
 	}
 	return best, bestDue, found
@@ -431,7 +471,7 @@ func (e *Engine) Done(j Job, now time.Time, err error) Outcome {
 	}
 	switch out {
 	case Answered:
-		en.misses = 0
+		en.misses, en.failed, en.answered = 0, false, now
 		if e.misses > 0 {
 			// Back after no answer: whoami again, since the box may
 			// have been upgraded while it did not answer.
@@ -450,6 +490,7 @@ func (e *Engine) Done(j Job, now time.Time, err error) Outcome {
 		e.retryAt = now.Add(min(maxBackoff, time.Second<<min(e.misses, 6)))
 	case Refused:
 		en.misses++
+		en.failed = true
 		en.held = en.once || Forbidden(err) || NotFound(err)
 	case Slowed:
 		var f *Failure
@@ -459,9 +500,14 @@ func (e *Engine) Done(j Job, now time.Time, err error) Outcome {
 			wait = NoRetryAfter
 		}
 		e.slowUntil = now.Add(wait)
+		// The bucket is spent and does not fill during the wait, so the
+		// reads resume at the rate, not in a burst.
+		e.tokens, e.filled = 0, e.slowUntil
 		// The rest of the session runs slower, so it is not asked again.
 		e.rate = max(0.5, e.rate*0.75)
-		en.due = e.slowUntil
+		// Due before every other, so it is the first read the wait lets
+		// through.
+		en.due = time.Time{}
 		e.poke()
 		return out
 	case Stopped:
@@ -480,9 +526,9 @@ func (e *Engine) Done(j Job, now time.Time, err error) Outcome {
 			delete(e.jobs, j)
 		}
 	case j.Kind == KStatus && j.App == e.focus:
-		en.due = now.Add(FocusEvery)
+		en.due, en.every = now.Add(FocusEvery), FocusEvery
 	case j.Kind == KStatus:
-		en.due = e.nextSlot(en, now)
+		en.due, en.every = e.nextSlot(en, now), e.background()
 	case j.Kind == KApps:
 		en.due = now.Add(AppsEvery)
 	}
@@ -514,6 +560,45 @@ func (e *Engine) Health(now time.Time) Health {
 		h.SlowIn = e.slowUntil.Sub(now)
 	}
 	return h
+}
+
+// Row is what the apps table needs of an app's reads: misses in a
+// row, whether it is held (not asked until ctrl-r), and the interval
+// its age is judged by: the one its next read was due by when its last
+// answer came, so an app just opened is not judged by the new one.
+func (e *Engine) Row(app string) (misses int, held bool, every time.Duration) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	en, ok := e.jobs[Job{Kind: KStatus, App: app}]
+	switch {
+	case !ok:
+		return 0, false, e.background()
+	case en.every == 0:
+		every = e.background()
+		if app == e.focus {
+			every = FocusEvery
+		}
+		return en.misses, en.held, every
+	}
+	return en.misses, en.held, en.every
+}
+
+// CanAskAgain says whether ctrl-r would ask now: not while every read
+// is stopped, nor while a 429's wait runs.
+func (e *Engine) CanAskAgain(now time.Time) bool {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.stopped == Running && !e.slowUntil.After(now)
+}
+
+// SlowUntil is the end of a 429's wait, zero when none runs.
+func (e *Engine) SlowUntil(now time.Time) time.Time {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.slowUntil.After(now) {
+		return e.slowUntil
+	}
+	return time.Time{}
 }
 
 // Stopped is why every read stopped, Running while they run.

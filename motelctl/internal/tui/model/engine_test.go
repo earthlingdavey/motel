@@ -344,7 +344,7 @@ func step(t *testing.T, s *model.Session, f *demo.Fake, now *time.Time) model.Jo
 }
 
 func row(s *model.Session, now time.Time, name string) model.AppRow {
-	for _, r := range s.Apps(now, "", 1).Rows {
+	for _, r := range s.AppsView(now, "", 1).Rows {
 		if r.Name == name {
 			return r
 		}
@@ -412,7 +412,7 @@ func TestListRefused(t *testing.T) {
 	s := &model.Session{Host: demo.Host, Now: f.Now, Engine: model.NewEngine(t0)}
 	step(t, s, f, &now) // whoami
 	step(t, s, f, &now) // apps, refused
-	if v := s.Apps(now, "", 0); !strings.Contains(v.Empty.Text(), "does not allow your key this") {
+	if v := s.AppsView(now, "", 0); !strings.Contains(v.Empty.Text(), "does not allow your key this") {
 		t.Errorf("the screen says %q", v.Empty.Text())
 	}
 	if _, right := s.Title(now.Add(time.Minute)); strings.HasPrefix(right.Text(), "live") {
@@ -479,5 +479,274 @@ func TestDroppedAppCancelled(t *testing.T) {
 			t.Fatal("a dropped app was read again")
 		}
 		e.Done(got, t0.Add(time.Hour), nil)
+	}
+}
+
+// TestSpread: after the first pass, background reads come at their own
+// places in the cycle, never a second's burst.
+func TestSpread(t *testing.T) {
+	apps := names(200)
+	e := model.NewEngine(t0)
+	calls := sim(e, apps, t0, 15*time.Minute, 20*time.Millisecond, ok)
+	settle := t0.Add(2 * e.Interval("app-1"))
+	per := map[int64]int{}
+	for _, c := range calls {
+		if c.j.Kind == model.KStatus && c.at.After(settle) {
+			per[c.at.Unix()]++
+		}
+	}
+	for s, n := range per {
+		if n > 3 {
+			t.Fatalf("%d reads in the second at +%ds: not spread", n, s-t0.Unix())
+		}
+	}
+}
+
+// TestFocusShare: opening an app reads it at once only if its answer is
+// older than the open app's interval; opening one after another every
+// 200 ms reads opened apps out of the open app's share, and the others
+// keep their turn; an app closed goes back to its place in the cycle.
+func TestFocusShare(t *testing.T) {
+	apps := names(12)
+	e := model.NewEngine(t0)
+	sim(e, apps, t0, 40*time.Second, 10*time.Millisecond, ok)
+	now := t0.Add(40 * time.Second)
+	e.Touch(now)
+	e.Focus("app-5", now)
+	if j, ok, _ := e.Take(now); !ok || j.App != "app-5" {
+		t.Fatalf("an app with an old answer was not read at once on opening: %v %v", j, ok)
+	}
+	e.Done(model.Job{Kind: model.KStatus, App: "app-5"}, now, nil)
+	e.Focus("", now)
+	e.Focus("app-5", now.Add(time.Second))
+	if j, ok, _ := e.Take(now.Add(time.Second)); ok && j.App == "app-5" {
+		t.Fatal("an app answered a second ago was read again on opening")
+	}
+	// Opening one app after another for two minutes.
+	e = model.NewEngine(t0)
+	sim(e, apps, t0, 40*time.Second, 10*time.Millisecond, ok)
+	opened, others := 0, 0
+	now = t0.Add(40 * time.Second)
+	end := now.Add(2 * time.Minute)
+	i := 0
+	next := now
+	for now.Before(end) {
+		if !now.Before(next) {
+			e.Focus(apps[i%len(apps)], now)
+			i++
+			next = now.Add(200 * time.Millisecond)
+		}
+		e.Touch(now)
+		j, ok, _ := e.Take(now)
+		if !ok {
+			now = now.Add(50 * time.Millisecond)
+			continue
+		}
+		if j.Kind == model.KStatus {
+			if j.App == apps[(i-1)%len(apps)] {
+				opened++
+			} else {
+				others++
+			}
+		}
+		e.Done(j, now, nil)
+		now = now.Add(10 * time.Millisecond)
+	}
+	if most := int(2*time.Minute/model.FocusEvery) + 2; opened > most {
+		t.Errorf("%d reads of opened apps in two minutes, more than the open app's share of %d", opened, most)
+	}
+	if least := 11 * 3; others < least {
+		t.Errorf("%d reads of the other apps in two minutes, fewer than %d", others, least)
+	}
+	// Closed: back to its slot, not every 5 s.
+	e = model.NewEngine(t0)
+	e.Focus("app-3", t0)
+	sim(e, apps, t0, time.Minute, 10*time.Millisecond, ok)
+	closed := t0.Add(time.Minute)
+	e.Focus("", closed)
+	calls := sim(e, apps, closed, 2*time.Minute, 10*time.Millisecond, ok)
+	var reads []time.Time
+	for _, c := range calls {
+		if c.j.App == "app-3" {
+			reads = append(reads, c.at)
+		}
+	}
+	if len(reads) < 2 || reads[1].Sub(reads[0]) < e.Interval("app-3")-time.Second {
+		t.Errorf("a closed app is read at %v, not at its place in the cycle", reads)
+	}
+}
+
+// TestNoRetryAfterIsTheBurst: a 429 with no Retry-After waits the time
+// the box's burst takes to refill, not a number of its own.
+func TestNoRetryAfterIsTheBurst(t *testing.T) {
+	if want := time.Duration(model.BoxBurst/model.BoxRate) * time.Second; model.NoRetryAfter != want {
+		t.Fatalf("NoRetryAfter %s, want %s", model.NoRetryAfter, want)
+	}
+}
+
+// TestResumeAfter429: after the wait the slowed read comes first, at the
+// wait's end, and the reads resume at the rate, not in a burst.
+func TestResumeAfter429(t *testing.T) {
+	e := model.NewEngine(t0)
+	sent := false
+	var slowAt time.Time
+	calls := sim(e, names(60), t0, 2*time.Minute, 10*time.Millisecond, func(j model.Job, at time.Time) error {
+		if j.Kind == model.KStatus && j.App == "app-40" && !sent {
+			sent, slowAt = true, at
+			return &model.Failure{Kind: model.FailSlowed, RetryAfter: 30 * time.Second}
+		}
+		return nil
+	})
+	until := slowAt.Add(30 * time.Second)
+	first, n := model.Job{}, 0
+	for _, c := range calls {
+		if !c.at.Before(until) {
+			if first == (model.Job{}) {
+				first = c.j
+				if c.at.Sub(until) > time.Second {
+					t.Errorf("the first read after the wait at +%s", c.at.Sub(until))
+				}
+			}
+			if c.at.Before(until.Add(time.Second)) {
+				n++
+			}
+		}
+	}
+	if first.App != "app-40" {
+		t.Errorf("the first read after the wait is %v, not the one slowed", first)
+	}
+	if n > 2 {
+		t.Errorf("%d reads in the first second after the wait: a burst", n)
+	}
+}
+
+// TestWhoAmIGoneAfterAStop: a whoami refused at the start is asked again
+// by r, once, and not after it answers.
+func TestWhoAmIGoneAfterAStop(t *testing.T) {
+	e := model.NewEngine(t0)
+	j, _, _ := e.Take(t0)
+	e.Done(j, t0, fail(model.FailSignedOut))
+	now := t0.Add(time.Minute)
+	e.Touch(now)
+	if !e.Retry(now) {
+		t.Fatal("r refused")
+	}
+	j, _, _ = e.Take(now)
+	e.Done(j, now, nil)
+	calls := sim(e, names(2), now, 10*time.Minute, 10*time.Millisecond, ok)
+	for _, c := range calls {
+		if c.j.Kind == model.KWhoAmI {
+			t.Fatalf("whoami read again at +%s", c.at.Sub(now))
+		}
+	}
+}
+
+// takeRec takes reads at now until rec, answering the others; false
+// when rec is not among them.
+func takeRec(e *model.Engine, now time.Time, rec model.Job) bool {
+	e.Touch(now)
+	for range 50 {
+		j, ok, _ := e.Take(now)
+		if !ok {
+			return false
+		}
+		if j == rec {
+			return true
+		}
+		e.Done(j, now, nil)
+	}
+	return false
+}
+
+// TestRecordOnceAndAgain: a record asked for twice while in flight is
+// read once; one that failed is read again on opening it again and on
+// ctrl-r; ctrl-r asks again the record on the screen.
+func TestRecordOnceAndAgain(t *testing.T) {
+	for _, k := range []model.Fail{model.FailNotFound, model.FailThis} {
+		e := model.NewEngine(t0)
+		sim(e, names(1), t0, time.Second, time.Millisecond, ok)
+		now := t0.Add(time.Minute)
+		e.Touch(now)
+		rec := model.Job{Kind: model.KDeploy, App: "app-0", Version: "v1"}
+		e.Once(rec, now)
+		if !takeRec(e, now, rec) {
+			t.Fatal("the record was not read")
+		}
+		e.Once(rec, now) // asked again while in flight
+		e.Done(rec, now, fail(k))
+		if takeRec(e, now.Add(time.Hour), rec) {
+			t.Fatal("a failed record read again on its own")
+		}
+		e.Once(rec, now.Add(time.Hour)) // left and opened again
+		if !takeRec(e, now.Add(time.Hour), rec) {
+			t.Fatalf("kind %d: a failed record not read again on opening it", k)
+		}
+		e.Done(rec, now.Add(time.Hour), fail(k))
+		later := now.Add(2 * time.Hour)
+		e.Again(later)
+		if !takeRec(e, later, rec) {
+			t.Fatalf("kind %d: ctrl-r did not ask a failed record again", k)
+		}
+		e.Done(rec, later, nil)
+		if takeRec(e, later.Add(time.Hour), rec) {
+			t.Fatal("an answered record read again with nothing asking")
+		}
+		last := later.Add(2 * time.Hour)
+		e.Again(last, rec)
+		if !takeRec(e, last, rec) {
+			t.Fatal("ctrl-r on the record's screen did not ask it again")
+		}
+	}
+}
+
+// TestStaleBounds: an answer is stale past StaleAfter intervals and one
+// of grace, not at it.
+func TestStaleBounds(t *testing.T) {
+	every := 30 * time.Second
+	edge := (model.StaleAfter + 1) * every
+	if model.Stale(edge, every) || !model.Stale(edge+time.Nanosecond, every) {
+		t.Fatalf("stale at %s: %v; a nanosecond after: %v", edge, model.Stale(edge, every), model.Stale(edge+time.Nanosecond, every))
+	}
+}
+
+// TestNotStaleWhenNotDue: a held row is not stale, nor an app just
+// opened, judged by the interval it had.
+func TestNotStaleWhenNotDue(t *testing.T) {
+	now := t0
+	f := &demo.Fake{Now: func() time.Time { return now }}
+	s := &model.Session{Host: demo.Host, Now: f.Now, Engine: model.NewEngine(t0)}
+	f.Set("blog", fail(model.FailForbidden))
+	for range 20 {
+		step(t, s, f, &now)
+	}
+	later := now.Add(10 * time.Minute)
+	if r := row(s, later, "blog"); r.Stale || strings.Contains(r.Cells[model.ColState].String(), "stale") {
+		t.Errorf("a held row says %q", r.Cells[model.ColState])
+	}
+	at := now.Add(25 * time.Second)
+	s.Engine.Focus("docs", at)
+	if r := row(s, at, "docs"); r.Stale {
+		t.Errorf("an app just opened is stale by the open app's interval")
+	}
+}
+
+// TestUnusableAnswer: an answer that could not be used is said on its
+// row; nothing else backs off, and the title still says live.
+func TestUnusableAnswer(t *testing.T) {
+	now := t0
+	f := &demo.Fake{Now: func() time.Time { return now }}
+	s := &model.Session{Host: demo.Host, Now: f.Now, Engine: model.NewEngine(t0)}
+	f.Set("blog", &model.Failure{Kind: model.FailUnusable, Message: "deploy.example.com answered, but its started_at could not be read"})
+	for range 20 {
+		step(t, s, f, &now)
+	}
+	if h := s.Engine.Health(now); h.Misses != 0 || h.RetryIn != 0 {
+		t.Errorf("an unusable answer backs off every read: %+v", h)
+	}
+	if _, r := s.Title(now); !strings.HasPrefix(r.Text(), "live") {
+		t.Errorf("the title says %q", r.Text())
+	}
+	if r := row(s, now, "blog"); !strings.Contains(r.Why.Text(), "could not be read") {
+		t.Errorf("the row says %q", r.Why.Text())
 	}
 }

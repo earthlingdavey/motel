@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"runtime/debug"
 	"sync"
 	"time"
 
@@ -26,6 +27,8 @@ type Options struct {
 	// bar a token is being signed (a hardware key waits for a touch),
 	// and nil when the screen is gone.
 	Signing func(func(bool))
+	// Resign drops the token last signed, for r.
+	Resign func()
 }
 
 // Prime makes the first reads before the screen opens, whoami and the
@@ -61,17 +64,20 @@ func Run(ctx context.Context, o Options, start model.View) error {
 	if o.Screen != nil {
 		u.App.SetScreen(o.Screen)
 	}
+	u.Resign = o.Resign
 	ctx, cancel := context.WithCancel(ctx)
 	var wg sync.WaitGroup
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
+		defer u.guard()
 		u.Drive(ctx, o.Client, o.Clock)
 	}()
 	if o.Tick > 0 {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
+			defer u.guard()
 			t := time.NewTicker(o.Tick)
 			defer t.Stop()
 			for {
@@ -102,7 +108,47 @@ func Run(ctx context.Context, o Options, start model.View) error {
 	close(u.ended)
 	cancel()
 	wg.Wait()
+	if p := u.panicked.Load(); p != nil {
+		// Said only now, with the terminal given back.
+		return &Panic{Value: p.value, Stack: p.stack}
+	}
 	return err
+}
+
+// Panic is a panic in one of the TUI's goroutines, said once the
+// screen has given the terminal back.
+type Panic struct {
+	Value any
+	Stack []byte
+}
+
+func (p *Panic) Error() string {
+	return "the TUI failed: " + panicText(p.Value) + "\n" + string(p.Stack)
+}
+
+func panicText(v any) string {
+	switch v := v.(type) {
+	case error:
+		return v.Error()
+	case string:
+		return v
+	}
+	return "a panic"
+}
+
+type panicked struct {
+	value any
+	stack []byte
+}
+
+// guard ends the screen through its event loop when the goroutine it
+// is deferred in panics, so tview gives the terminal back (a panic left
+// to run would leave it in raw mode); Run then returns it.
+func (u *UI) guard() {
+	if p := recover(); p != nil {
+		u.panicked.CompareAndSwap(nil, &panicked{p, debug.Stack()})
+		u.App.QueueEvent(tcell.NewEventKey(tcell.KeyCtrlC, 0, tcell.ModNone))
+	}
 }
 
 // post runs f on the event loop and draws, or does nothing once the
@@ -110,6 +156,7 @@ func Run(ctx context.Context, o Options, start model.View) error {
 func (u *UI) post(f func()) {
 	done := make(chan struct{})
 	go func() {
+		defer u.guard()
 		u.App.QueueUpdateDraw(f)
 		close(done)
 	}()

@@ -112,7 +112,7 @@ func TestRecoverWithR(t *testing.T) {
 	h.fake.Set("blog", refused)
 	h.press(tcell.KeyCtrlR)
 	s := h.screen()
-	if !strings.Contains(s, "SIGNED OUT") || !strings.Contains(s, "stopped: deploy.example.com did not accept your key") {
+	if !strings.Contains(s, "SIGNED OUT") || !strings.Contains(s, "not asking: deploy.example.com did not accept your key") {
 		t.Fatalf("a 401 is not said:\n%s", s)
 	}
 	h.press("r") // still refused: stopped again after one whoami
@@ -121,11 +121,23 @@ func TestRecoverWithR(t *testing.T) {
 	}
 	h.fake.Set("whoami", nil)
 	h.fake.Set("blog", nil)
+	// Held: r is taken at most once in RetryEvery, each a signature.
+	before := len(h.fake.Calls)
+	h.press("r", "r", "r")
+	if h.s.Engine.Stopped() == model.Running || len(h.fake.Calls) != before {
+		t.Fatalf("r within %s of the last asked again (%d reads)", model.RetryEvery, len(h.fake.Calls)-before)
+	}
+	h.now = h.now.Add(model.RetryEvery)
+	resigned := 0
+	h.u.Resign = func() { resigned++ }
 	h.press("r")
 	if h.s.Engine.Stopped() != model.Running {
 		t.Fatal("r did not resume the reads")
 	}
-	if s := h.screen(); strings.Contains(s, "SIGNED OUT") || strings.Contains(s, "stopped: deploy.example.com") {
+	if resigned != 1 {
+		t.Fatalf("r dropped the token %d times, want once", resigned)
+	}
+	if s := h.screen(); strings.Contains(s, "SIGNED OUT") || strings.Contains(s, "not asking:") {
 		t.Fatalf("the stop is still said:\n%s", s)
 	}
 }

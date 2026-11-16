@@ -12,8 +12,10 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"os/signal"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -36,16 +38,22 @@ func (r *runner) tui() *cobra.Command {
 		Long: "tui shows the box on screens in the terminal, over the same reads the other\n" +
 			"commands make: the apps you may view sorted by what needs a look, an app's\n" +
 			"state and deploys, and a deploy's record laid out for reading a failure. It\n" +
-			"only reads, at no more than 1.5 requests a second, and signs one token for ten\n" +
-			"minutes at a time, so a hardware key is touched about every nine. Each\n" +
-			"screen's keys are on its last line. It is asked with your own key only, and\n" +
-			"not with a key file that needs a passphrase the agent does not hold.\n\n" + experimental,
+			"only reads, well inside the box's limit of 2 requests a second and 60 at once:\n" +
+			"up to 30 at once to start, then at most 1.5 a second. It signs one token for\n" +
+			"ten minutes at a time, so a hardware key is touched about every nine, and never\n" +
+			"asks for a passphrase or a PIN: a key that needs one must be in the agent\n" +
+			"(ssh-add). Each screen's keys are on its last line. It is asked with your own\n" +
+			"key only.\n\n" + experimental,
 		Args: usageArgs(cobra.NoArgs),
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if r.json {
 				return &client.Failure{Exit: client.ExitUsage, Message: "tui has no --json: each other command's --json is the box's answer"}
 			}
-			ctx := cmd.Context()
+			// A closed terminal window (SIGHUP) ends it as SIGTERM does:
+			// through the screen's event loop, which gives the terminal
+			// back.
+			ctx, stop := signal.NotifyContext(cmd.Context(), syscall.SIGHUP)
+			defer stop()
 			o := tui.Options{Clock: tui.RealClock{}, Colour: r.env.Color, Tick: time.Second}
 			s := &model.Session{Version: r.env.Version, Now: r.env.Now}
 			if sample {
@@ -71,7 +79,7 @@ func (r *runner) tui() *cobra.Command {
 				s.Key = model.Key{Fingerprint: k.Public.Fingerprint(), Shown: k.Shown, Source: k.Source,
 					Hardware: strings.HasPrefix(k.Public.Type, "sk-"), Line: k.Public.Line()}
 				s.TokenExpires = sig.Expires
-				o.Client, o.Signing, o.Started = live{c}, sig.Notify, gt.Close
+				o.Client, o.Signing, o.Started, o.Resign = live{c}, sig.Notify, gt.Close, pt.Forget
 			}
 			s.Engine = model.NewEngine(r.env.Now())
 			o.Session = s
@@ -82,6 +90,10 @@ func (r *runner) tui() *cobra.Command {
 				return err
 			}
 			if err := tui.Run(ctx, o, start); err != nil {
+				var p *tui.Panic
+				if errors.As(err, &p) {
+					return &client.Failure{Exit: client.ExitUnknown, Message: termtext.From(p.Error()).String()}
+				}
 				return &client.Failure{Exit: client.ExitUsage, Message: "the screen could not start: " + termtext.From(err.Error()).String()}
 			}
 			return ctx.Err()
@@ -101,6 +113,13 @@ func (r *runner) tui() *cobra.Command {
 func forTUI(c *client.Client, now func() time.Time) *signer {
 	pt := c.Cred.(*client.PersonToken)
 	pt.Life = sshkey.MaxLife
+	if k, ok := pt.Signer.(sshkey.Keygen); ok {
+		// ssh-keygen kept off the terminal the screen holds: a key that
+		// needs a passphrase or PIN fails at once, and says to use the
+		// agent.
+		k.NoTerminal = true
+		pt.Signer = k
+	}
 	sig := &signer{inner: pt.Signer, now: now}
 	pt.Signer = sig
 	c.NoWait, c.Notes = true, nil
@@ -167,8 +186,11 @@ func failure(err error) error {
 		m.Kind = model.FailForbidden
 	case f.Exit == client.ExitNotFound:
 		m.Kind = model.FailNotFound
-	case f.Exit == client.ExitUnknown && (f.Status == 0 || f.Status >= 500):
+	case f.Exit == client.ExitUnknown && (f.Status == 0 || f.Status >= 500 && f.Status <= 599):
 		m.Kind = model.FailNoAnswer
+	case f.Exit == client.ExitUnknown:
+		// The box answered, and the answer could not be used.
+		m.Kind = model.FailUnusable
 	default:
 		m.Kind = model.FailThis
 	}

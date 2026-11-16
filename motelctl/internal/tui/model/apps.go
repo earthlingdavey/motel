@@ -62,14 +62,17 @@ type AppsView struct {
 	Empty Line
 }
 
-// Apps is the apps screen at now, filtered and sorted. A filter of
+// AppsView is the apps screen at now, filtered and sorted. A filter of
 // "!" or "!ok", with or without a name after it, keeps only marked
 // rows.
-func (s *Session) Apps(now time.Time, filter string, sort int) AppsView {
+func (s *Session) AppsView(now time.Time, filter string, sort int) AppsView {
 	var v AppsView
 	switch {
 	case s.List == nil && s.ListErr != nil:
-		v.Empty = Line{own("no apps list: "), Seg{T: Capped(failureText(s.ListErr), 2*LineMax)}, own(" ctrl-r asks again.")}
+		v.Empty = append(Line{own("no apps list: "), Seg{T: Capped(failureText(s.ListErr), 2*LineMax)}}, s.askAgain(now)...)
+		return v
+	case s.List == nil && s.Engine.Stopped() != Running:
+		v.Empty = Line{own("not asking " + s.Host + " for the apps you may view: every read has stopped (above).")}
 		return v
 	case s.List == nil:
 		v.Empty = Line{own("asking " + s.Host + " for the apps you may view…")}
@@ -167,13 +170,13 @@ func (s *Session) row(name string, now time.Time) (r AppRow) {
 	if a.st != nil {
 		at = a.st.At
 	}
-	// Stale is judged against this row's own interval: three reads
-	// that failed, or three that should have come and did not (an
-	// interval's grace: the first read after an app's first answer
-	// waits for its place in the cycle).
-	misses := s.Engine.Misses(Job{Kind: KStatus, App: name})
-	every := s.Engine.Interval(name)
-	r.Stale = misses >= StaleAfter || now.Sub(at) > (StaleAfter+1)*every
+	// Stale is judged against the interval the row's next read was due
+	// by when its last answer came: three reads that failed, or three
+	// that should have come and did not (an interval's grace: the first
+	// read after an app's first answer waits for its place in the
+	// cycle). A held row is not being asked, so it is never stale.
+	misses, held, every := s.Engine.Row(name)
+	r.Stale = !held && (misses >= StaleAfter || Stale(now.Sub(at), every))
 	r.Cells[ColAge] = termtext.From(Ago(now.Sub(at)))
 	if r.Stale {
 		r.Cells[ColAge] = termtext.From("stale")
@@ -268,6 +271,10 @@ func (s *Session) row(name string, now time.Time) (r AppRow) {
 	}
 	return r
 }
+
+// Stale says whether an answer this old is stale for a row read every
+// every: older than StaleAfter intervals and one of grace.
+func Stale(age, every time.Duration) bool { return age > (StaleAfter+1)*every }
 
 // memCap is the memory cap in bytes: the unit's, else the store's.
 func memCap(st wire.Status) float64 {

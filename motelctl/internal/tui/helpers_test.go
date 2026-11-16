@@ -37,6 +37,8 @@ type harness struct {
 	s     *model.Session
 	now   time.Time
 	clock fixedClock
+	// done is closed when the event loop has ended.
+	done chan struct{}
 }
 
 // start opens the TUI on the fixtures at w x h, after setup has had
@@ -65,6 +67,7 @@ func startOn(t *testing.T, scr tcell.Screen, setup func(*demo.Fake)) *harness {
 	hs.u = New(s, false, v)
 	hs.u.App.SetScreen(hs.scr)
 	done := make(chan struct{})
+	hs.done = done
 	go func() { defer close(done); _ = hs.u.App.Run() }()
 	// Stopped as the product stops it, from inside the event loop:
 	// tview clears its screen unlocked as Run returns, so a Stop from

@@ -85,7 +85,11 @@ func (s *Session) Fetch(ctx context.Context, c Client, j Job) (func(), error) {
 		case Answered:
 			s.last, s.StopErr = at, nil
 		case Refused:
-			s.refusedAt = at
+			if k, _ := failKind(err); k == FailUnusable {
+				s.last = at // an answer came, if not one to use
+			} else {
+				s.refusedAt = at
+			}
 		case Stopped:
 			s.StopErr = err
 		}

@@ -57,7 +57,7 @@ func (s *Session) Overview(app string, now time.Time) OverviewView {
 	case a.st == nil || Forbidden(a.err) || NotFound(a.err):
 		v.Note = []Line{{Seg{T: Capped(failureText(a.err), 4*LineMax)}}}
 		if Forbidden(a.err) {
-			v.Note = append(v.Note, Line{own("ctrl-r asks again.")})
+			v.Note = append(v.Note, s.askAgain(now))
 		}
 		return v
 	}

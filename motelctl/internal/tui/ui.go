@@ -6,11 +6,13 @@ package tui
 
 import (
 	"strconv"
+	"sync/atomic"
 	"time"
 
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
 
+	"github.com/smallhoursorg/motel/motelctl/internal/tui/door"
 	"github.com/smallhoursorg/motel/motelctl/internal/tui/model"
 )
 
@@ -35,7 +37,11 @@ type UI struct {
 	w, h        int
 	lastFocused string
 	// ended is closed once the event loop has ended.
-	ended chan struct{}
+	ended    chan struct{}
+	panicked atomic.Pointer[panicked]
+	// Resign drops the token last signed, so r signs afresh: a token
+	// the box refused for its times is not sent again.
+	Resign func()
 
 	root, body                  *tview.Pages
 	title, crumb, foot          *tview.TextView
@@ -57,17 +63,12 @@ func textView() *tview.TextView {
 
 // New builds the screens, opening on start.
 func New(s *model.Session, colour bool, start model.View) *UI {
-	tview.Styles = tview.Theme{
-		PrimitiveBackgroundColor: tcell.ColorDefault, ContrastBackgroundColor: tcell.ColorDefault,
-		MoreContrastBackgroundColor: tcell.ColorDefault, BorderColor: tcell.ColorDefault, TitleColor: tcell.ColorDefault,
-		GraphicsColor: tcell.ColorDefault, PrimaryTextColor: tcell.ColorDefault, SecondaryTextColor: tcell.ColorDefault,
-		TertiaryTextColor: tcell.ColorDefault, InverseTextColor: tcell.ColorDefault, ContrastSecondaryTextColor: tcell.ColorDefault,
-	}
+	door.TerminalColours()
 	u := &UI{App: tview.NewApplication(), S: s, Colour: colour, stack: []model.View{start}, ended: make(chan struct{})}
 	u.title, u.crumb, u.foot = textView(), textView(), textView()
 	u.prompt = tview.NewInputField().SetFieldStyle(tcell.StyleDefault).SetLabelStyle(tcell.StyleDefault).
 		SetAutocompleteUseTags(false)
-	u.prompt.SetChangedFunc(func(string) { u.filter = typed(u.prompt) })
+	u.prompt.SetChangedFunc(func(string) { u.filter = door.Typed(u.prompt) })
 	u.prompt.SetDoneFunc(u.promptDone)
 	u.row2 = tview.NewPages().AddPage("crumb", u.crumb, true, true).AddPage("prompt", u.prompt, true, false)
 
@@ -102,7 +103,7 @@ func New(s *model.Session, colour bool, start model.View) *UI {
 		u.w, u.h = scr.Size()
 		if u.w < minW || u.h < minH {
 			// Below this nothing lays out; say what is needed instead.
-			printAt(scr, 0, 0, u.w, "window too small: motelctl tui needs "+itoa(minW)+"x"+itoa(minH)+
+			door.PrintAt(scr, 0, 0, u.w, "window too small: motelctl tui needs "+itoa(minW)+"x"+itoa(minH)+
 				", this one is "+itoa(u.w)+"x"+itoa(u.h)+". q quits.")
 			return true
 		}
@@ -183,12 +184,20 @@ func (u *UI) key(ev *tcell.EventKey) *tcell.EventKey {
 	case r == 'q':
 		u.App.Stop()
 	case r == 'r' && u.S.Engine.Stopped() != model.Running:
-		// The only way out of a stop: one whoami, as a new start.
-		u.S.Engine.Retry(u.now())
+		// The only way out of a stop: one whoami, as a new start, with a
+		// token signed afresh; held to one in RetryEvery.
+		if u.S.Engine.Retry(u.now()) && u.Resign != nil {
+			u.Resign()
+		}
 	case r == '/' && v.Screen == model.ScreenApps:
 		u.ask()
 	case ev.Key() == tcell.KeyCtrlR:
-		u.S.Engine.Again(u.now())
+		// Everything on this screen, the record on it too.
+		var screen []model.Job
+		if v.Screen == model.ScreenRecord {
+			screen = append(screen, model.Job{Kind: model.KDeploy, App: v.App, Version: v.Version})
+		}
+		u.S.Engine.Again(u.now(), screen...)
 	case r == 'j':
 		return tcell.NewEventKey(tcell.KeyDown, 0, tcell.ModNone)
 	case r == 'k':

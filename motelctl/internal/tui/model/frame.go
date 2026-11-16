@@ -27,7 +27,17 @@ func (s *Session) StopLine() Line {
 	if s.StopErr == nil || s.Engine.Stopped() == Running {
 		return nil
 	}
-	return Line{ownC("stopped: ", Bad), Seg{T: Capped(failureText(s.StopErr), 4*LineMax)}}
+	return Line{ownC("not asking: ", Bad), Seg{T: Capped(failureText(s.StopErr), 4*LineMax)}}
+}
+
+// askAgain is " ctrl-r asks again." when it would, and nothing while
+// every read is stopped or a 429's wait runs: no hint for a key that
+// does nothing.
+func (s *Session) askAgain(now time.Time) Line {
+	if !s.Engine.CanAskAgain(now) {
+		return nil
+	}
+	return Line{own(" ctrl-r asks again.")}
 }
 
 // Title is the title bar at now: who and where on the left, and the
@@ -94,7 +104,9 @@ func (s *Session) freshness(now time.Time) Line {
 	case h.Paused:
 		return Line{ownC("PAUSED (idle 10m): any key resumes", Warn)}
 	case h.SlowIn > 0:
-		return Line{ownC("slowed by the box (429) · next in "+Ago(h.SlowIn), Warn)}
+		// The box's word, an hour if it says so: until when, counting
+		// down.
+		return Line{ownC("slowed by the box (429) until "+hms(now.Add(h.SlowIn))+" UTC · "+Ago(h.SlowIn)+" left", Warn)}
 	case h.Misses >= StaleAfter:
 		l := "STALE · " + ago
 		if !s.last.IsZero() {
@@ -106,7 +118,7 @@ func (s *Session) freshness(now time.Time) Line {
 	case !s.backAt.IsZero() && now.Sub(s.backAt) < 5*time.Second:
 		return Line{ownC("back · "+hms(s.backAt), Good)}
 	case !s.refusedAt.IsZero() && s.last.IsZero():
-		return Line{ownC("REFUSED: no read answered yet · ctrl-r asks again", Bad)}
+		return Line{ownC("REFUSED: no read answered yet", Bad)}
 	case !s.refusedAt.IsZero() && !s.refusedAt.Before(s.last):
 		// The last read was refused, and the screen says why: the word
 		// does not say live of answers that stopped coming.

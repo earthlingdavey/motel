@@ -4,7 +4,6 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
-	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -25,14 +24,25 @@ func srcDir(path string) (string, bool) {
 	return "", false
 }
 
-func imports(t *testing.T, dir string) map[string]string {
+func goFiles(t *testing.T, dir string) []string {
 	t.Helper()
 	files, _ := filepath.Glob(filepath.Join(dir, "*.go"))
-	out := map[string]string{}
-	for _, name := range files {
-		if strings.HasSuffix(name, "_test.go") {
-			continue
+	var out []string
+	for _, f := range files {
+		if !strings.HasSuffix(f, "_test.go") {
+			out = append(out, f)
 		}
+	}
+	if len(out) == 0 {
+		t.Fatalf("no Go files in %s", dir)
+	}
+	return out
+}
+
+func imports(t *testing.T, dir string) map[string]string {
+	t.Helper()
+	out := map[string]string{}
+	for _, name := range goFiles(t, dir) {
 		f, err := parser.ParseFile(token.NewFileSet(), name, nil, parser.ImportsOnly)
 		if err != nil {
 			t.Fatal(err)
@@ -42,36 +52,55 @@ func imports(t *testing.T, dir string) map[string]string {
 			out[p] = name
 		}
 	}
-	if len(files) == 0 {
-		t.Fatalf("no Go files in %s", dir)
+	return out
+}
+
+// banned is the standard library no package the TUI reaches may
+// import: what reaches the network, a program, the process's
+// environment or files, or the runtime's back doors. Signals and all
+// that needs os are in cli/tui.go, which starts the TUI.
+func banned(p string) bool {
+	switch p {
+	case "os", "syscall", "net", "log/syslog", "plugin", "unsafe", "crypto/tls", "runtime/cgo":
+		return true
+	}
+	return strings.HasPrefix(p, "net/") || strings.HasPrefix(p, "os/")
+}
+
+// allows is each package's exact list beyond the standard library:
+// model draws nothing (no tview, no tcell); only the screens and the
+// door use tview; nothing reaches the client, sshkey or local.
+var allows = map[string][]string{
+	"tui":      {"github.com/rivo/tview", "github.com/gdamore/tcell/v2", mod + "internal/termtext", mod + "internal/tui/model", mod + "internal/tui/door"},
+	"door":     {"github.com/rivo/tview", "github.com/gdamore/tcell/v2", mod + "internal/termtext", mod + "internal/tui/model"},
+	"model":    {mod + "internal/termtext", "github.com/smallhoursorg/motel/liveswap/wire"},
+	"demo":     {mod + "internal/tui/model", "github.com/smallhoursorg/motel/liveswap/wire"},
+	"termtext": {},
+	"wire":     {},
+}
+
+func stdlib(p string) bool { return !strings.Contains(strings.Split(p, "/")[0], ".") }
+
+// importBreaks is every import of pkg (a key of allows) that is not on
+// its list.
+func importBreaks(pkg string, imps map[string]string) []string {
+	var out []string
+	for p, file := range imps {
+		ok := stdlib(p) && !banned(p)
+		for _, a := range allows[pkg] {
+			ok = ok || p == a
+		}
+		if !ok {
+			out = append(out, file+" imports "+p)
+		}
 	}
 	return out
 }
 
-// allowed is what a TUI package may import: the standard library but
-// for its transports and programs, tview and tcell, termtext, the wire
-// types, and the TUI's own packages. The client, sshkey and local are
-// not among them: the TUI reads the box only through model.Client,
-// which the one file that starts it (cli/tui.go) builds.
-func allowed(p string) bool {
-	switch {
-	case p == "net/http", p == "os/exec", p == "net", strings.HasPrefix(p, "net/"), p == "crypto/tls", p == "syscall", p == "unsafe", p == "plugin":
-		return false
-	case !strings.Contains(strings.Split(p, "/")[0], "."):
-		return true // the standard library
-	case p == "github.com/rivo/tview", strings.HasPrefix(p, "github.com/gdamore/tcell/v2"):
-		return true
-	case p == mod+"internal/termtext", p == "github.com/smallhoursorg/motel/liveswap/wire":
-		return true
-	case strings.HasPrefix(p, mod+"internal/tui"):
-		return true
-	}
-	return false
-}
-
-// TestTUIImports holds the TUI to its allow-list, through every package
-// of this repository it reaches: none of them may reach the client, a
-// transport or a program, so the TUI can make no request of its own.
+// TestTUIImports holds each of the TUI's packages, and each package of
+// this repository they reach, to its own list: none reaches the
+// client, a transport, a program, the environment, a file or a
+// signal, so the TUI can make no request of its own and read no key.
 func TestTUIImports(t *testing.T) {
 	seen := map[string]bool{}
 	var walk func(path, dir string)
@@ -80,22 +109,42 @@ func TestTUIImports(t *testing.T) {
 			return
 		}
 		seen[path] = true
-		for p, file := range imports(t, dir) {
-			if !allowed(p) {
-				t.Errorf("%s imports %s, which the TUI may not reach", file, p)
-				continue
-			}
+		name := filepath.Base(path)
+		if _, ok := allows[name]; !ok {
+			t.Errorf("the TUI reaches %s, which is on no list", path)
+			return
+		}
+		imps := imports(t, dir)
+		for _, b := range importBreaks(name, imps) {
+			t.Error(b)
+		}
+		for p := range imps {
 			if d, ok := srcDir(p); ok {
 				walk(p, d)
 			}
 		}
 	}
 	walk(mod+"internal/tui", ".")
-	walk(mod+"internal/tui/model", "model")
 	walk(mod+"internal/tui/demo", "demo")
-	for _, want := range []string{mod + "internal/tui/model", mod + "internal/termtext", "github.com/smallhoursorg/motel/liveswap/wire"} {
+	for _, want := range []string{mod + "internal/tui/model", mod + "internal/tui/door", mod + "internal/termtext", "github.com/smallhoursorg/motel/liveswap/wire"} {
 		if !seen[want] {
 			t.Errorf("the walk never reached %s: the test reads the wrong tree", want)
+		}
+	}
+	// And it finds what it is for: a dial through syslog, a process,
+	// a key file, the environment, a model that draws.
+	for _, c := range []struct{ pkg, imp string }{
+		{"model", "log/syslog"}, // a TCP dial: syslog.Dial("tcp", …)
+		{"tui", "os"},           // os.StartProcess, os.Open of a key, os.Getenv("MOTEL_TOKEN")
+		{"door", "os/exec"},     // a program
+		{"model", "net/http"},   // a request of its own
+		{"model", "github.com/rivo/tview"},
+		{"model", "github.com/gdamore/tcell/v2"},
+		{"demo", mod + "internal/client"},
+		{"tui", mod + "internal/sshkey"},
+	} {
+		if len(importBreaks(c.pkg, map[string]string{c.imp: "probe.go"})) == 0 {
+			t.Errorf("TestTUIImports lets %s import %s", c.pkg, c.imp)
 		}
 	}
 }
@@ -103,14 +152,20 @@ func TestTUIImports(t *testing.T) {
 // handOver are the tview calls that take text to show.
 var handOver = map[string]bool{
 	"SetText": true, "SetTitle": true, "SetLabel": true, "SetPlaceholder": true, "Write": true, "WriteString": true,
-	"NewTableCell": true, "SetCellSimple": true, "Print": true, "PrintSimple": true, "NewModal": true, "AddButtons": true,
-	"String": true, "SetAutocompleteFunc": true,
+	"NewTableCell": true, "SetCellSimple": true, "Print": true, "PrintSimple": true, "AddButtons": true,
+	"String": true, "SetAutocompleteFunc": true, "AddOption": true, "SetOptions": true,
 }
 
-// doorBreaks is every place in src (a file other than boxtext.go) that
-// hands tview text without the door: a call above, a table cell built
-// by hand, a Text field set, a conversion to shown, a List's AddItem
-// with text, fmt.
+// primitives are the tview widgets the screens use. Any other (a
+// button, a dropdown, a tree node, a list, a modal, a form) takes text
+// by ways the door does not cover, and is not made here.
+var primitives = map[string]bool{
+	"NewApplication": true, "NewTextView": true, "NewTable": true, "NewFlex": true, "NewPages": true, "NewInputField": true,
+}
+
+// doorBreaks is every place in src that hands tview text without the
+// door: a call above, a tview value built by hand, a widget not on the
+// list, a Text field set, a List's AddItem with text, fmt.
 func doorBreaks(t *testing.T, name string, src any) []string {
 	t.Helper()
 	fset := token.NewFileSet()
@@ -128,8 +183,10 @@ func doorBreaks(t *testing.T, name string, src any) []string {
 	ast.Inspect(f, func(n ast.Node) bool {
 		switch n := n.(type) {
 		case *ast.CompositeLit:
-			if sel, ok := n.Type.(*ast.SelectorExpr); ok && sel.Sel.Name == "TableCell" {
-				say(n, "builds a table cell")
+			if sel, ok := n.Type.(*ast.SelectorExpr); ok {
+				if x, ok := sel.X.(*ast.Ident); ok && x.Name == "tview" {
+					say(n, "builds a tview."+sel.Sel.Name+" by hand")
+				}
 			}
 		case *ast.AssignStmt:
 			for _, l := range n.Lhs {
@@ -138,23 +195,26 @@ func doorBreaks(t *testing.T, name string, src any) []string {
 				}
 			}
 		case *ast.CallExpr:
-			switch fun := n.Fun.(type) {
-			case *ast.Ident:
-				if fun.Name == "shown" {
-					say(n, "converts to shown")
-				}
-			case *ast.SelectorExpr:
-				if handOver[fun.Sel.Name] {
-					say(n, "calls "+fun.Sel.Name)
-				}
-				// A Flex's AddItem takes a widget and a size; any other
-				// (a List's, a Form's) takes text.
-				if fun.Sel.Name == "AddItem" {
-					if len(n.Args) != 4 {
-						say(n, "AddItem with text")
-					} else if b, ok := n.Args[1].(*ast.BasicLit); !ok || b.Kind != token.INT {
-						say(n, "AddItem with text")
-					}
+			fun, ok := n.Fun.(*ast.SelectorExpr)
+			if !ok {
+				return true
+			}
+			if x, ok := fun.X.(*ast.Ident); ok && x.Name == "door" {
+				return true // the door's own setters, which take door.Shown
+			}
+			if x, ok := fun.X.(*ast.Ident); ok && x.Name == "tview" && strings.HasPrefix(fun.Sel.Name, "New") && !primitives[fun.Sel.Name] {
+				say(n, "makes a tview."+fun.Sel.Name)
+			}
+			if handOver[fun.Sel.Name] {
+				say(n, "calls "+fun.Sel.Name)
+			}
+			// A Flex's AddItem takes a widget and a size; any other
+			// (a List's, a Form's) takes text.
+			if fun.Sel.Name == "AddItem" {
+				if len(n.Args) != 4 {
+					say(n, "AddItem with text")
+				} else if b, ok := n.Args[1].(*ast.BasicLit); !ok || b.Kind != token.INT {
+					say(n, "AddItem with text")
 				}
 			}
 		}
@@ -163,17 +223,14 @@ func doorBreaks(t *testing.T, name string, src any) []string {
 	return out
 }
 
-// TestOneDoor holds by syntax what the compiler cannot: no file of
-// this package but boxtext.go hands tview text, builds a table cell,
-// sets a Text field, converts to shown, or formats with fmt. Its
-// helpers take shown, which only boxtext.go makes, so text reaches a
-// widget only through inert.
+// TestOneDoor holds by syntax what the compiler cannot: no file of the
+// screens' package hands tview text, builds a tview value by hand, makes
+// a widget off the list, sets a Text field, or formats with fmt. The
+// door's setters take door.Shown, which only package door can make
+// (its field is unexported), so text reaches a widget only through
+// door.Inert.
 func TestOneDoor(t *testing.T) {
-	files, _ := filepath.Glob("*.go")
-	for _, name := range files {
-		if strings.HasSuffix(name, "_test.go") || name == "boxtext.go" {
-			continue
-		}
+	for _, name := range goFiles(t, ".") {
 		for _, b := range doorBreaks(t, name, nil) {
 			t.Error(b)
 		}
@@ -182,18 +239,60 @@ func TestOneDoor(t *testing.T) {
 	for _, bad := range []string{
 		`u.apps.SetCell(1, 1, &tview.TableCell{Text: r.Name})`,
 		`u.title.SetText(r.Name)`,
-		`setText(u.title, shown(r.Name))`,
 		`u.apps.SetCell(1, 1, tview.NewTableCell(r.Name))`,
-		`c := cell(x); c.Text = r.Name`,
+		`c := door.Cell(x); c.Text = r.Name`,
 		`l.AddItem(r.Name, "", 0, nil)`,
 		`u.over.SetTitle(r.Name)`,
+		`b := tview.NewButton(r.Name)`,
+		`d := tview.NewDropDown().SetOptions([]string{r.Name}, nil)`,
+		`n := tview.NewTreeNode(r.Name)`,
+		`m := tview.NewModal()`,
 	} {
 		src := "package tui\nfunc f() {\n" + bad + "\n}\n"
 		if len(doorBreaks(t, "probe.go", src)) == 0 {
 			t.Errorf("TestOneDoor misses %s", bad)
 		}
 	}
-	if _, err := os.Stat("boxtext.go"); err != nil {
+}
+
+// clientMethods are model.Client's methods.
+var clientMethods = map[string]bool{"WhoAmI": true, "Apps": true, "Status": true, "Deploy": true, "BoxStatus": true}
+
+// clientCalls is every call of a model.Client method's name in src.
+func clientCalls(t *testing.T, name string, src any) []string {
+	t.Helper()
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, name, src, 0)
+	if err != nil {
 		t.Fatal(err)
+	}
+	var out []string
+	ast.Inspect(f, func(n ast.Node) bool {
+		if c, ok := n.(*ast.CallExpr); ok {
+			if sel, ok := c.Fun.(*ast.SelectorExpr); ok && clientMethods[sel.Sel.Name] {
+				out = append(out, fset.Position(c.Pos()).String()+": calls "+sel.Sel.Name)
+			}
+		}
+		return true
+	})
+	return out
+}
+
+// TestReadsOnlyThroughActions: a model.Client method is called in the
+// actions table's file alone, so no read is made that the table does
+// not name with its command.
+func TestReadsOnlyThroughActions(t *testing.T) {
+	for _, dir := range []string{".", "model", "door", "demo"} {
+		for _, name := range goFiles(t, dir) {
+			if name == filepath.Join("model", "actions.go") {
+				continue
+			}
+			for _, c := range clientCalls(t, name, nil) {
+				t.Error(c + ": a read outside model.Actions")
+			}
+		}
+	}
+	if len(clientCalls(t, "probe.go", "package model\nfunc f() { _, _ = c.Status(ctx, \"blog\") }\n")) == 0 {
+		t.Error("TestReadsOnlyThroughActions misses a direct read")
 	}
 }

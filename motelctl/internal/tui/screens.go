@@ -8,6 +8,7 @@ import (
 	"github.com/rivo/tview"
 
 	"github.com/smallhoursorg/motel/motelctl/internal/termtext"
+	"github.com/smallhoursorg/motel/motelctl/internal/tui/door"
 	"github.com/smallhoursorg/motel/motelctl/internal/tui/model"
 )
 
@@ -21,15 +22,18 @@ import (
 func (u *UI) render() {
 	now := u.now()
 	left, right := u.S.Title(now)
-	setText(u.title, line(spread(left, right, u.w), u.Colour))
+	door.SetText(u.title, door.Line(spread(left, right, u.w), u.Colour))
 	v := u.top()
 	crumbL, crumbR := u.crumbs(v)
-	setText(u.crumb, line(spread(crumbL, crumbR, u.w), u.Colour))
+	door.SetText(u.crumb, door.Line(spread(crumbL, crumbR, u.w), u.Colour))
 	foot := footers[v.Screen]
 	if u.S.Engine.Stopped() != model.Running {
 		foot = "r ask again  " + foot
 	}
-	setText(u.foot, lit(foot))
+	if !u.S.Engine.CanAskAgain(now) {
+		foot = strings.Replace(foot, "  ctrl-r ask again", "", 1)
+	}
+	door.SetText(u.foot, door.Lit(foot))
 	switch v.Screen {
 	case model.ScreenApps:
 		u.renderApps()
@@ -58,7 +62,7 @@ func (u *UI) crumbs(v model.View) (model.Line, model.Line) {
 	now := u.now()
 	switch v.Screen {
 	case model.ScreenApps:
-		return ownLine("apps"), u.S.Apps(now, u.filter, u.sort).Summary
+		return ownLine("apps"), u.S.AppsView(now, u.filter, u.sort).Summary
 	case model.ScreenApp:
 		return ownLine("apps › " + v.App), u.S.Overview(v.App, now).AsOf
 	}
@@ -78,7 +82,7 @@ var footers = map[model.Screen]string{
 var dropOrder = []int{model.ColAge, model.ColP95, model.Col5xx, model.ColOfCap, model.ColMem}
 
 func (u *UI) renderApps() {
-	view := u.S.Apps(u.now(), u.filter, u.sort)
+	view := u.S.AppsView(u.now(), u.filter, u.sort)
 	n := 4
 	if u.h < 30 {
 		n = 1
@@ -101,7 +105,7 @@ func (u *UI) renderApps() {
 		strip[i] = strip[i].Cut(u.w)
 	}
 	strip = append(strip, ownLine(strings.Repeat("─", u.w)))
-	setText(u.strip, lines(strip, u.Colour))
+	door.SetText(u.strip, door.Lines(strip, u.Colour))
 	u.appsFlex.ResizeItem(u.strip, len(strip), 0)
 
 	// Each column's width, then the columns that fit.
@@ -109,7 +113,7 @@ func (u *UI) renderApps() {
 	for c := range wd {
 		wd[c] = len([]rune(model.ColHeads[c]))
 		for _, r := range view.Rows {
-			wd[c] = max(wd[c], width(r.Cells[c]))
+			wd[c] = max(wd[c], door.Width(r.Cells[c]))
 		}
 	}
 	keep := map[int]bool{}
@@ -130,11 +134,11 @@ func (u *UI) renderApps() {
 	}
 	u.appRows = view.Rows
 	u.apps.Clear()
-	u.apps.SetCell(0, 0, head(" "))
+	u.apps.SetCell(0, 0, door.Head(" "))
 	col := 1
 	for c := 0; c < model.NCols; c++ {
 		if keep[c] {
-			u.apps.SetCell(0, col, head(model.ColHeads[c]))
+			u.apps.SetCell(0, col, door.Head(model.ColHeads[c]))
 			col++
 		}
 	}
@@ -149,7 +153,7 @@ func (u *UI) renderApps() {
 			if !keep[c] {
 				continue
 			}
-			cl := cell(r.Cells[c])
+			cl := door.Cell(r.Cells[c])
 			if r.Stale {
 				cl.SetAttributes(tcell.AttrDim)
 			}
@@ -166,7 +170,7 @@ func (u *UI) renderApps() {
 }
 
 func (u *UI) markCell(m model.Mark) *tview.TableCell {
-	c := cell(termtext.From(m.Glyph()))
+	c := door.Cell(termtext.From(m.Glyph()))
 	if u.Colour {
 		c.SetTextColor(colourOf(m.Class()))
 	}
@@ -195,24 +199,24 @@ func (u *UI) renderApp(v model.View) {
 	for i := range fs {
 		fs[i] = fs[i].Cut(u.w)
 	}
-	setText(u.fields, lines(fs, u.Colour))
+	door.SetText(u.fields, door.Lines(fs, u.Colour))
 	u.appFlex.ResizeItem(u.fields, min(len(fs), u.h/2), 0)
 	u.deployRows = view.Deploys
 	sel, _ := u.deploys.GetSelection()
 	u.deploys.Clear()
 	if len(view.Deploys) == 0 {
-		setText(u.onDisk, "")
+		door.SetText(u.onDisk, door.Lit(""))
 		return
 	}
-	setText(u.onDisk, line(spread(append(ownLine(strings.Repeat("─", 1)+" "), ownLine("DEPLOYS, newest first")...), view.OnDisk, u.w), u.Colour))
-	u.deploys.SetCell(0, 0, head(" "))
+	door.SetText(u.onDisk, door.Line(spread(append(ownLine(strings.Repeat("─", 1)+" "), ownLine("DEPLOYS, newest first")...), view.OnDisk, u.w), u.Colour))
+	u.deploys.SetCell(0, 0, door.Head(" "))
 	for c, h := range model.DeployCols {
-		u.deploys.SetCell(0, c+1, head(h))
+		u.deploys.SetCell(0, c+1, door.Head(h))
 	}
 	for i, r := range view.Deploys {
 		u.deploys.SetCell(i+1, 0, u.markCell(r.Mark))
 		for c, t := range r.Cells {
-			u.deploys.SetCell(i+1, c+1, cell(t))
+			u.deploys.SetCell(i+1, c+1, door.Cell(t))
 		}
 	}
 	u.deploys.Select(min(max(sel, 1), len(view.Deploys)), 0)
@@ -228,15 +232,15 @@ func (u *UI) renderRecord(v model.View) {
 	for i := range hd {
 		hd[i] = hd[i].Cut(u.w)
 	}
-	setText(u.recHead, lines(hd, u.Colour))
+	door.SetText(u.recHead, door.Lines(hd, u.Colour))
 	u.recFlex.ResizeItem(u.recHead, min(len(hd), u.h/2), 0)
 	title := model.Line{}
 	if view.TailTitle != nil {
 		title = append(ownLine("── "), view.TailTitle...).Cut(u.w)
 		title = append(title, ownLine(" "+strings.Repeat("─", max(u.w-title.Width()-1, 0)))...)
 	}
-	setText(u.recTailTitle, line(title, u.Colour))
-	setText(u.tail, texts(view.Tail))
+	door.SetText(u.recTailTitle, door.Line(title, u.Colour))
+	door.SetText(u.tail, door.Texts(view.Tail))
 }
 
 // withStop puts why every read stopped above a screen's lines, so the

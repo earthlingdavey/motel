@@ -72,4 +72,9 @@ const (
 	FailSignedOut
 	FailNotSigned
 	FailCertificate
+	// FailUnusable: the box answered, and the answer could not be used
+	// (a value that did not read, a body over the cap, not motel's
+	// shape). Said on its row or screen; nothing else backs off, and the
+	// box is not said to be silent.
+	FailUnusable
 )

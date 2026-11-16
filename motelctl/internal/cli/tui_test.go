@@ -44,19 +44,24 @@ func (r *recorder) Deploy(context.Context, string, string) (model.Got[wire.Deplo
 	return model.Got[wire.DeployResult]{}, nil
 }
 
-// commandOf is each model.Client method's command: live calls the
-// client's read of the same name, which that command calls.
-var commandOf = map[string]string{"WhoAmI": "whoami", "Apps": "apps", "Status": "status", "Deploy": "deploys"}
+// wantRead is the read each command makes, written out: the command
+// an action names, and the model.Client method its read must call,
+// which live maps to the client's read of the same name.
+var wantRead = map[string]string{
+	"whoami":                  "WhoAmI",
+	"apps":                    "Apps",
+	"status <app>":            "Status",
+	"deploys <app> <version>": "Deploy",
+}
 
-// TestActionsAreCommands: the TUI's reads are made only through its
-// table of actions, and each names a motelctl command that exists,
-// takes the arguments it names, and is the command whose client read
-// the action's read calls. The reads the TUI makes are all there.
+// TestActionsAreCommands: every read the TUI makes is an action naming
+// a command that exists and takes the arguments it names; each
+// action's read calls that command's method, as written out above; and
+// every command above has its action.
 func TestActionsAreCommands(t *testing.T) {
 	root := (&runner{}).tree()
-	kinds := map[model.Kind]bool{}
+	seen := map[string]bool{}
 	for _, a := range model.Actions {
-		kinds[a.Kind] = true
 		words := strings.Fields(a.Command)
 		var path, args []string
 		for _, w := range words {
@@ -74,17 +79,26 @@ func TestActionsAreCommands(t *testing.T) {
 		if err := cmd.Args(cmd, args); err != nil {
 			t.Errorf("%q: %s does not take %v: %v", a.Command, cmd.CommandPath(), args, err)
 		}
+		want, ok := wantRead[a.Command]
+		if !ok {
+			t.Errorf("an action names %q, which is not a read written out here", a.Command)
+			continue
+		}
+		seen[a.Command] = true
 		rec := &recorder{}
 		if err := a.Read(context.Background(), rec, model.Job{Kind: a.Kind, App: "blog", Version: "v1"}); err != nil {
 			t.Fatal(err)
 		}
-		if commandOf[rec.called] != path[0] {
-			t.Errorf("%q reads with %s, which is %q's read", a.Command, rec.called, commandOf[rec.called])
+		if rec.called != want {
+			t.Errorf("%q reads with %s, want %s", a.Command, rec.called, want)
+		}
+		if b, ok := model.ActionFor(a.Kind); !ok || b.Command != a.Command {
+			t.Errorf("kind %d finds %q, want %q", a.Kind, b.Command, a.Command)
 		}
 	}
-	for _, k := range []model.Kind{model.KWhoAmI, model.KApps, model.KStatus, model.KDeploy} {
-		if !kinds[k] {
-			t.Errorf("the TUI reads kind %d, and no action does it", k)
+	for c := range wantRead {
+		if !seen[c] {
+			t.Errorf("no action reads as %q does", c)
 		}
 	}
 }
@@ -93,6 +107,11 @@ func TestActionsAreCommands(t *testing.T) {
 // longest life a box takes and hands a 429 back; no other file of the
 // module sets either.
 func TestForTUI(t *testing.T) {
+	kc := &client.Client{Cred: &client.PersonToken{Signer: sshkey.Keygen{}}}
+	forTUI(kc, time.Now)
+	if k, ok := kc.Cred.(*client.PersonToken).Signer.(*signer).inner.(sshkey.Keygen); !ok || !k.NoTerminal {
+		t.Errorf("the TUI's ssh-keygen may reach the terminal: %#v", kc.Cred.(*client.PersonToken).Signer)
+	}
 	c := &client.Client{Cred: &client.PersonToken{Signer: &fixedSigner{}}, Notes: os.Stderr}
 	forTUI(c, time.Now)
 	pt := c.Cred.(*client.PersonToken)
@@ -114,22 +133,32 @@ func TestForTUI(t *testing.T) {
 			t.Fatal(err)
 		}
 		ast.Inspect(f, func(n ast.Node) bool {
-			var names []string
+			// Each field set, with its value: Life set to anything, and
+			// NoWait or NoTerminal set to true, are the TUI's client's.
+			type set struct {
+				name string
+				val  ast.Expr
+			}
+			var sets []set
 			switch n := n.(type) {
 			case *ast.AssignStmt:
-				for _, l := range n.Lhs {
-					if s, ok := l.(*ast.SelectorExpr); ok {
-						names = append(names, s.Sel.Name)
+				for i, l := range n.Lhs {
+					if s, ok := l.(*ast.SelectorExpr); ok && i < len(n.Rhs) {
+						sets = append(sets, set{s.Sel.Name, n.Rhs[i]})
 					}
 				}
 			case *ast.KeyValueExpr:
 				if k, ok := n.Key.(*ast.Ident); ok {
-					names = append(names, k.Name)
+					sets = append(sets, set{k.Name, n.Value})
 				}
 			}
-			for _, nm := range names {
-				if nm == "NoWait" || nm == "Life" {
-					t.Errorf("%s sets %s: only cli/tui.go builds the TUI's client", name, nm)
+			for _, st := range sets {
+				isTrue := false
+				if id, ok := st.val.(*ast.Ident); ok && id.Name == "true" {
+					isTrue = true
+				}
+				if st.name == "Life" || (st.name == "NoWait" || st.name == "NoTerminal") && isTrue {
+					t.Errorf("%s sets %s: only cli/tui.go builds the TUI's client", name, st.name)
 				}
 			}
 			return true
@@ -150,8 +179,12 @@ func TestFailureForTheTUI(t *testing.T) {
 		{&client.Failure{Exit: client.ExitForbidden, Status: 403}, model.FailForbidden},
 		{&client.Failure{Exit: client.ExitNotFound, Status: 404}, model.FailNotFound},
 		{&client.Failure{Exit: client.ExitUnknown}, model.FailNoAnswer},
-		{&client.Failure{Exit: client.ExitUnknown, Status: 502}, model.FailNoAnswer},
-		{&client.Failure{Exit: client.ExitUnknown, Status: 200}, model.FailThis},
+		{&client.Failure{Exit: client.ExitUnknown, Status: 500}, model.FailNoAnswer},
+		{&client.Failure{Exit: client.ExitUnknown, Status: 599}, model.FailNoAnswer},
+		{&client.Failure{Exit: client.ExitUnknown, Status: 499}, model.FailUnusable},
+		{&client.Failure{Exit: client.ExitUnknown, Status: 600}, model.FailUnusable},
+		{&client.Failure{Exit: client.ExitUnknown, Status: 200}, model.FailUnusable},
+		{&client.Failure{Exit: client.ExitFailed, Status: 500}, model.FailThis},
 		{&client.Failure{Exit: client.ExitFailed, Status: 409}, model.FailThis},
 	} {
 		var m *model.Failure
@@ -201,5 +234,20 @@ func TestDemoHidden(t *testing.T) {
 	r := run(t, nil, nil, "tui", "--help")
 	if r.code != 0 || strings.Contains(r.stdout, "demo") {
 		t.Errorf("exit %d; help shows --demo:\n%s", r.code, r.stdout)
+	}
+}
+
+// TestInterruptedAtTheFirstRead: an interrupt before the screen opens
+// ends the command, with no screen opened over nothing.
+func TestInterruptedAtTheFirstRead(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	var out, errOut bytes.Buffer
+	code := Main(ctx, []string{"tui", "--demo"}, Env{
+		Getenv: func(string) string { return "" }, Stdout: &out, Stderr: &errOut, Dir: t.TempDir(), Home: t.TempDir(),
+		Now: time.Now, Sleep: func(context.Context, time.Duration) error { return nil }, Run: noPrograms{}, Version: "test",
+	})
+	if code != client.ExitInterrupted || strings.Contains(errOut.String(), "screen") {
+		t.Errorf("exit %d, stderr %q", code, errOut.String())
 	}
 }
