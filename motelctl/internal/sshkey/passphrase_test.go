@@ -40,7 +40,9 @@ func TestPassphrased(t *testing.T) {
 		{"an encrypted file the agent holds", Key{Public: pk, Path: enc}, line + " me@laptop\n", false, false},
 		{"a file with no passphrase", Key{Public: pk, Path: plain}, "", false, false},
 		{"a hardware key's file with no passphrase", Key{Public: sk, Path: plain}, "", false, false},
-		{"named by its .pub, the agent holding the rest", Key{Public: pk, Path: enc + ".pub"}, "", false, false},
+		{"named by its .pub, the agent lacking it", Key{Public: pk, Path: enc + ".pub"}, "", false, true},
+		{"named by its .pub, the agent holding it", Key{Public: pk, Path: enc + ".pub"}, line + "\n", false, false},
+		{"the agent holding another key of its type", Key{Public: pk, Path: enc}, "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOtherKeyOtherKeyOtherKeyOtherKeyOtherKeyO\n", false, true}, // gitleaks:allow — made up for this test
 		{"the agent's only key", Key{Public: pk}, "", false, false},
 	} {
 		run := &fakeRun{agent: c.agent}

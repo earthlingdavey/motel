@@ -68,6 +68,10 @@ type Keygen struct {
 	// Terminal says whether a passphrase can be asked on a terminal;
 	// nil opens /dev/tty to see.
 	Terminal func() bool
+	// NoTerminal signs with ssh-keygen kept off every terminal (local's
+	// NoTerminal): a key that needs a passphrase or a PIN fails at once.
+	// The TUI's signer; the commands may still ask on a terminal.
+	NoTerminal bool
 }
 
 // Sign runs `ssh-keygen -q -Y sign -n <namespace> -f <key>` with the
@@ -77,7 +81,7 @@ type Keygen struct {
 // print; a hardware key's prompt is printed whatever -q says, and a
 // passphrase is asked on the terminal.
 func (k Keygen) Sign(ctx context.Context, key Key, namespace string, message []byte) ([]byte, error) {
-	cmd := local.Cmd{Name: "ssh-keygen", Args: []string{"-q", "-Y", "sign", "-n", namespace, "-f", key.Path}, Stdin: message}
+	cmd := local.Cmd{Name: "ssh-keygen", Args: []string{"-q", "-Y", "sign", "-n", namespace, "-f", key.Path}, Stdin: message, NoTerminal: k.NoTerminal}
 	if key.Path == "" {
 		cmd.Args[len(cmd.Args)-1] = "/dev/fd/3"
 		cmd.FD3 = []byte(key.Public.Line() + "\n")
@@ -109,6 +113,10 @@ func (k Keygen) Sign(ctx context.Context, key Key, namespace string, message []b
 		// agent's failure is another matter: a confirmation refused, a
 		// touch timed out), that file's header says it is encrypted,
 		// and no terminal opens.
+		if k.NoTerminal {
+			path := termtext.From(privatePath(key))
+			return nil, fmt.Errorf("%s did not sign: if it needs its passphrase or PIN, the TUI does not ask for one while its screen holds the terminal; add the key to the agent (ssh-add %s), then r tries again. ssh-keygen says: %s", key.Shown, path, termtext.From(last))
+		}
 		if key.Path != "" && !strings.HasSuffix(key.Path, ".pub") && encryptedKeyFile(key.Path) && !k.terminal() {
 			// ssh-add takes the private key: Shown may name its .pub.
 			shown := termtext.From(strings.TrimSuffix(key.Shown, ".pub"))
@@ -169,12 +177,23 @@ func encryptedKeyFile(path string) bool {
 	return strings.Contains(block.Headers["Proc-Type"], "ENCRYPTED")
 }
 
+// privatePath is the private key file ssh-keygen reads for key: its
+// Path, without the .pub when the key was named by it.
+func privatePath(key Key) string {
+	if key.Path == "" {
+		return "the agent's key"
+	}
+	return strings.TrimSuffix(key.Path, ".pub")
+}
+
 // Passphrased says whether signing with key would ask for a
 // passphrase: its private key file says it is encrypted, and the agent
-// (ssh-add -L) does not hold it. A key the agent alone holds, and one
-// named by its .pub with the agent holding the private half, never ask.
+// (ssh-add -L) does not hold this key, by its bytes. A key the agent
+// alone holds never asks.
 func Passphrased(ctx context.Context, run local.Runner, key Key) bool {
-	if key.Path == "" || strings.HasSuffix(key.Path, ".pub") || !encryptedKeyFile(key.Path) {
+	// Named by its .pub, the key is the private file beside it, which
+	// ssh-keygen loads when the agent does not hold the key.
+	if key.Path == "" || !encryptedKeyFile(privatePath(key)) {
 		return false
 	}
 	out, err := run.Output(ctx, local.Cmd{Name: "ssh-add", Args: []string{"-L"}})
