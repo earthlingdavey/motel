@@ -121,10 +121,10 @@ func pendingTimer(t *testing.T, c *fakeClock) time.Time {
 
 // TestDeployTokenBeforeStartPastTheBound: a valid deploy token whose app
 // no Start installs within installWait is told to come back, a 503 with
-// Retry-After in the handler's error style and the protocol header of
-// any answer to a verified token, and the journal says so; nothing of
-// the request ran. The bound is the handler's own, on a fake clock: not
-// answered a millisecond before it, answered at it. Once the app is
+// Retry-After in the handler's error style and no Motel- header, and
+// the journal says so; nothing of the request ran. The bound is the
+// handler's own, on a fake clock: not answered a millisecond before
+// it, answered at it. Once the app is
 // installed the status is answered, at once.
 func TestDeployTokenBeforeStartPastTheBound(t *testing.T) {
 	h, rig := notInstalled(t)
@@ -156,9 +156,10 @@ func TestDeployTokenBeforeStartPastTheBound(t *testing.T) {
 		}
 		const body = `{"error":"motel is starting and has not loaded this app yet; retry after 1 s"}` + "\n"
 		hdr := a.w.Header()
-		if a.w.Body.String() != body || hdr.Get("Retry-After") != "1" || hdr.Get("Content-Type") != "application/json" || hdr.Get("Motel-Protocol") != "1" {
+		if a.w.Body.String() != body || hdr.Get("Retry-After") != "1" || hdr.Get("Content-Type") != "application/json" {
 			t.Errorf("%s past the bound: %v %q", req.Method, hdr, a.w.Body)
 		}
+		wantNoMotelHeader(t, a.w)
 	}
 	if rig.fetch.lastReq.version != "" {
 		t.Errorf("a deploy ran before the app was installed: %+v", rig.fetch.lastReq)

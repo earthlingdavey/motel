@@ -1,15 +1,21 @@
 package liveswap
 
 import (
+	"encoding/json"
 	"errors"
 	"maps"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
 
 	"github.com/caddyserver/caddy/v2"
+
+	"github.com/smallhoursorg/motel/liveswap/access/accesstest"
+	"github.com/smallhoursorg/motel/liveswap/wire"
 )
 
 // testRelease stands for the release the release build links in.
@@ -28,12 +34,31 @@ func linkRelease(t *testing.T, v string) {
 // WriteHeader, not the live map a later write could change.
 func sent(w *httptest.ResponseRecorder) http.Header { return w.Result().Header }
 
-// TestVersionOnVerifiedAnswers: every answer to a token that verified
-// carries Motel-Version, the release: each row of the route table, the
+// wantNoMotelHeader fails if any header of w's is named Motel-
+// something, or names the release linked in.
+func wantNoMotelHeader(t *testing.T, w *httptest.ResponseRecorder) {
+	t.Helper()
+	for k, vs := range sent(w) {
+		if strings.HasPrefix(strings.ToLower(k), "motel-") {
+			t.Errorf("header %s: %q, want no Motel- header", k, vs)
+		}
+		for _, v := range vs {
+			if strings.Contains(v, testRelease) {
+				t.Errorf("header %s: %q names the release", k, v)
+			}
+		}
+	}
+}
+
+// TestNoMotelHeaderOnVerifiedAnswers: no answer to a token that
+// verified, with a release linked in, carries a Motel- header or a
+// header that names the release: each row of the route table, the
 // 404 for a name that is no app, the 405 after authentication, the
-// 400, 413 and 422s, a deploy stream (its headers go out with the first line), and
-// the 403 Decide's refusal would give.
-func TestVersionOnVerifiedAnswers(t *testing.T) {
+// 400, 413 and 422s, a deploy stream (its headers go out with the first line),
+// a deploy record's 500 and an app's 503 when no config describes it, a
+// global source's 403s under /_motel/, and the 403 Decide's refusal
+// would give.
+func TestNoMotelHeaderOnVerifiedAnswers(t *testing.T) {
 	linkRelease(t, testRelease)
 	pull := `{"url":"https://x/1.tgz","version":"v1"}`
 	oversized := `{"url":"https://x/1.tgz","version":"v1","pad":"` + strings.Repeat("a", maxPayloadBytes) + `"}`
@@ -77,9 +102,7 @@ func TestVersionOnVerifiedAnswers(t *testing.T) {
 			if w.Code != c.code {
 				t.Fatalf("got %d, want %d: %s", w.Code, c.code, w.Body)
 			}
-			if got := sent(w).Values("Motel-Version"); len(got) != 1 || got[0] != testRelease {
-				t.Fatalf("Motel-Version %q, want %q", got, testRelease)
-			}
+			wantNoMotelHeader(t, w)
 			// The stream's case must have taken the streaming path,
 			// whose headers go out with its first line.
 			if ct := sent(w).Get("Content-Type"); c.accept != "" && ct != c.accept {
@@ -93,21 +116,70 @@ func TestVersionOnVerifiedAnswers(t *testing.T) {
 		}
 	}
 
+	t.Run("a deploy record that does not read", func(t *testing.T) {
+		h, rig := newTestHandler(t)
+		dir, err := recordsDir(rig.spec.dirs, true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		must(t, os.Mkdir(filepath.Join(dir, "v7.json"), 0o700))
+		w := do(t, h, http.MethodGet, "/demo?deploy=v7", appToken(t), "")
+		if w.Code != http.StatusInternalServerError {
+			t.Fatalf("got %d, want 500: %s", w.Code, w.Body)
+		}
+		wantNoMotelHeader(t, w)
+	})
+
+	t.Run("an app no loaded config describes", func(t *testing.T) {
+		// A reload between the token's check and the read: called on
+		// the route's function, since no request can time it.
+		h, rig := newTestHandler(t)
+		rig.ma.specMu.Lock()
+		rig.ma.spec = nil
+		rig.ma.specMu.Unlock()
+		w := httptest.NewRecorder()
+		if err := h.deployRecord(w, rig.ma, "v1"); err != nil {
+			t.Fatal(err)
+		}
+		if w.Code != http.StatusServiceUnavailable {
+			t.Fatalf("got %d, want 503: %s", w.Code, w.Body)
+		}
+		wantNoMotelHeader(t, w)
+	})
+
+	t.Run("a deploy source under /_motel/, refused and allowed", func(t *testing.T) {
+		h, _ := newTestHandler(t)
+		w := do(t, h, http.MethodGet, "/_motel/whoami", globalToken(t), "")
+		if w.Code != http.StatusForbidden {
+			t.Fatalf("got %d, want 403: %s", w.Code, w.Body)
+		}
+		wantNoMotelHeader(t, w)
+		// Decide allowing it is the table and the routes falling
+		// apart: still a 403.
+		recordDecide(t, nil)
+		w = do(t, h, http.MethodGet, "/_motel/whoami", globalToken(t), "")
+		if w.Code != http.StatusForbidden {
+			t.Fatalf("Decide allowing: got %d, want 403: %s", w.Code, w.Body)
+		}
+		wantNoMotelHeader(t, w)
+	})
+
 	t.Run("the 403", func(t *testing.T) {
 		h, _ := newTestHandler(t)
 		recordDecide(t, errors.New("refused"))
 		w := do(t, h, http.MethodGet, "/demo", appToken(t), "")
-		if w.Code != http.StatusForbidden || sent(w).Get("Motel-Version") != testRelease {
-			t.Fatalf("got %d, Motel-Version %q", w.Code, sent(w).Get("Motel-Version"))
+		if w.Code != http.StatusForbidden {
+			t.Fatalf("got %d, want 403", w.Code)
 		}
+		wantNoMotelHeader(t, w)
 	})
 }
 
-// TestNoVersionOnTheFlat401: a refused token, an unknown name's and a
-// known one's alike, gets the flat 401 with no Motel-Version, and its
-// headers and body are exactly what a build with no release sends: the
-// release tells a stranger nothing.
-func TestNoVersionOnTheFlat401(t *testing.T) {
+// TestNoMotelHeaderOnTheFlat401: a refused token, an unknown name's and
+// a known one's alike, gets the flat 401 with Content-Type its one
+// header, so nothing names motel, and its headers and body are exactly
+// what a build with no release sends.
+func TestNoMotelHeaderOnTheFlat401(t *testing.T) {
 	for _, c := range []struct{ name, method, target, token string }{
 		{"no token", "GET", "/demo", ""},
 		{"no token, a POST", "POST", "/demo", ""},
@@ -144,16 +216,38 @@ func TestNoVersionOnTheFlat401(t *testing.T) {
 	}
 }
 
-// TestNoVersionWithoutARelease: a build that links no release (go
-// build, every other test) sends no Motel-Version, not an empty one.
-func TestNoVersionWithoutARelease(t *testing.T) {
-	linkRelease(t, "")
+// TestReleaseInWhoamiBodyAlone: with a release linked in, whoami's
+// body names it, and no header of a person's answers does: whoami,
+// the apps list, an app's status, Decide's 403, an unknown path's 404
+// and a box viewer's 404 for a name that is no app carry no Motel-
+// header either.
+func TestReleaseInWhoamiBodyAlone(t *testing.T) {
+	linkRelease(t, testRelease)
+	people := newTestPeople(t)
 	h, _ := newTestHandler(t)
-	w := do(t, h, http.MethodGet, "/demo", appToken(t), "")
-	if w.Code != http.StatusOK {
-		t.Fatalf("got %d: %s", w.Code, w.Body)
-	}
-	if _, ok := sent(w)["Motel-Version"]; ok {
-		t.Fatalf("Motel-Version %q, want none", sent(w).Values("Motel-Version"))
+	h.people = people.reg
+	for _, c := range []struct {
+		who    accesstest.Key
+		target string
+		code   int
+	}{
+		{people.alice, "/_motel/whoami", http.StatusOK},
+		{people.alice, "/_motel/apps", http.StatusOK},
+		{people.alice, "/demo", http.StatusOK},
+		{people.alice, "/blog", http.StatusForbidden},
+		{people.alice, "/_motel/nothing", http.StatusNotFound},
+		{people.carol, "/ghost", http.StatusNotFound}, // a viewer of the box, told a name is no app
+	} {
+		w := sendTo(t, h, "GET", c.target, token(c.who))
+		if w.Code != c.code {
+			t.Fatalf("GET %s: %d %s, want %d", c.target, w.Code, w.Body, c.code)
+		}
+		wantNoMotelHeader(t, w)
+		if c.target == "/_motel/whoami" {
+			var me wire.WhoAmI
+			if err := json.Unmarshal(w.Body.Bytes(), &me); err != nil || me.Version != testRelease {
+				t.Errorf("whoami's version %q (%v), want %q", me.Version, err, testRelease)
+			}
+		}
 	}
 }

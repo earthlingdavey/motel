@@ -471,9 +471,7 @@ func TestPersonNotRefusedAfterAStart(t *testing.T) {
 		if time.Since(began) > time.Second {
 			t.Errorf("%s GET %s, which reads no app, took %v", c.name, c.target, time.Since(began))
 		}
-		if w.Header().Get("Motel-Protocol") != "1" {
-			t.Errorf("%s GET %s: no Motel-Protocol: %v", c.name, c.target, w.Header())
-		}
+		noMotelHeader(t, c.name+" GET "+c.target, w.Result().Header)
 	}
 	for _, c := range []struct {
 		who          accesstest.Key
