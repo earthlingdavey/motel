@@ -92,7 +92,9 @@ func JSON(b []byte) []byte {
 	clean := true
 	for i := 0; i < len(b) && clean; {
 		r, size := utf8.DecodeRune(b[i:])
-		clean = !(r == utf8.RuneError && size <= 1) && (r == '\t' || r == '\n' || !unsafeRune(r))
+		if (r == utf8.RuneError && size <= 1) || (r != '\t' && r != '\n' && unsafeRune(r)) {
+			clean = false
+		}
 		i += size
 	}
 	if clean {
