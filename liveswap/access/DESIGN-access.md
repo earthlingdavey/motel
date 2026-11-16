@@ -184,7 +184,7 @@ names no app (`_` is outside the app grammar).
 | Route | Action | Who |
 |---|---|---|
 | `GET /_motel/whoami` | `box.whoami` | any declared person, granted or not |
-| `GET /_motel/apps` | `box.apps` | any declared person: the apps they may view |
+| `GET /_motel/apps` | `box.apps`, and `app.status` for each row's summary | any declared person: the apps they may view |
 | any other path, method or query under `/_motel/` | none | 404 once authenticated, the flat 401 before |
 
 A deploy token under `/_motel/` is judged against the global sources,
@@ -242,6 +242,19 @@ and that no 200 holds the name, canary or socket directory of an app
 the caller may not view; a row whose shape it does not know fails it.
 Its half on `box_webhook` does the same for that table.
 
+`GET /_motel/apps` is the one body about several apps, and it is made
+of rows that each keep to one app. The names are those `Views` covers;
+each row's summary is read through the handle `allowApp` makes for
+`app.status`, the action `GET /<app>` is asked about, from that app's
+status, and passes that app's filter alone, before the list puts it
+in place. So no filter is given two apps' values, and a row whose
+filter withholds (its env_file unreadable) becomes the name and the
+filter's sentence while the other rows and the 200 stand. The
+two-apps test gives each app a newest deploy whose version and
+`deployed_by` hold its canary, and asserts for every caller that each
+row holds its own canary only as its filter's marker and nothing of the
+other app.
+
 ## The answers
 
 | Answer | When | Body |
@@ -252,7 +265,7 @@ Its half on `box_webhook` does the same for that table.
 | 429 | a person past their rate | `{"error":"too many requests; retry after <n> s"}`, with `Retry-After` |
 | 503 | a deploy token that verified for an app liveswap's `Start` has not installed within 5 s, or whose request ended first (#473) | `{"error":"motel is starting and has not loaded this app yet; retry after 1 s"}`, with `Retry-After: 1` |
 | 200 | `GET /_motel/whoami` | `wire.WhoAmI`: `name`, `key` (its fingerprint), `roles` (the grants that apply from here, no address list shown), `box`, `version`, `protocol`, `token_expires_at` |
-| 200 | `GET /_motel/apps` | `wire.Apps`: the apps this config runs that the person may view, sorted by name, each an object (`{"name":…}`) so a later release can say more of an app without changing the list's shape |
+| 200 | `GET /_motel/apps` | `wire.Apps`: the apps this config runs that the person may view, sorted by name, each an object, `wire.AppEntry`: `name`, then `summary` (`phase`, `running`, `current_version`, `watchdog`, the watchdog's state, and `newest_deploy`, the status's first `deploys` entry), each value as `GET /<app>` gives it at the same moment; or, for a row the app's filter withheld, `error` in place of `summary`. A row the filter changed has its own `redacted_env`. No socket, pid, unit or command. A client reads an absent key as "not known" |
 
 No answer says "person": a later kind of declared key changes no field.
 
@@ -377,6 +390,9 @@ access's examples:
 | 11 | people with no channel | what they do is told to no one | 3 | 5 | 5 | fix by naming | warned by `validate` and at load |
 | 12 | the 403 to people | a 403 for one app tells a person of another that the name exists | 3 | 5 | 5 | fix | one 403 for an app that exists and one that does not |
 | 13 | `Host` equal to the identity | a proxy that rewrites `Host` refuses every person | 2 | 5 | 1 | fix | the journal's line names the host received |
+| 17 | the apps list's summary | one app's env value, or its name or socket, in another app's row | 5 | 5 | 5 | fix | a filter per row, never one over the list (`redact.go`, rule 2); each row through `allowApp` for `app.status`; `TestTwoAppsTwoPeople` over each row with a canary in the summary's fields; `TestAppsRowWithheld` |
+| 18 | the apps list's summary | the list and `GET /<app>` disagree about an app | 3 | 5 | 3 | fix | the summary is cut from the same status (`summaryOf`), never computed; `TestAppsSummaryIsTheStatus` for an app that serves, one never deployed, one whose newest deploy failed and one throttled |
+| 19 | the apps list's summary | a person at the rate on a box of many apps spends the box's CPU: measured (go1.27.3, arm64, one core, the token's check included) 8.6 KB and 6.9 ms a list for 30 apps, 57 KB and 50 ms for 200, against 0.8 ms for one `GET /<app>`; most of it the filter's heuristics. At 2 a second that is 1.4% of a core for 30 apps, 10% for 200; a burst of 60 at 200 apps is 3 s of a core | 2 | 5 | 3 | fix | the rate per person, which bounds it as it bounds `GET /<app>` (the list costs what one status read per app costs); the list is as long as the config's apps |
 | 14 | the `/_motel/` prefix | a deploy to `POST /_motel/<app>`, which deployed `<app>`, gets 401 or 404 | 2 | 5 | 1 | accept | no template or doc posts there; loud |
 | 17 | a deploy token after a start (#473) | a valid deploy token refused as a stranger's for some tens of milliseconds after a start, when Caddy starts the http app before liveswap (measured: 10 of 20 restarts) | 2 | 4 | 3 | fix: size 3, risk 1; **Wide** (every deploy and status request runs through it) | until a `Start` installs the app, the token is checked against the config's own sources; a verified one waits for the install, at most 5 s and the request's life, then 503 with `Retry-After`, which `deploy.sh` sends once more; nothing waits before a token verified. Covered: a `local` key's token, and an issuer's whose keys are fetched; the first token under an issuer's key after a start can still be refused once, while the key is fetched, as before (#306's row in DESIGN-liveswap.md), and the script's resend of a 401 covers it. `TestDeployTokenNotRefusedBeforeStart`, `TestDeployTokenBeforeStartPastTheBound` (on a fake clock; `TestInstallWaitIs5s` pins the bound), `TestTrustIsOneRead`, `TestStrangerBeforeStartIsTheFlat401`, `TestInstallWaitEndsWithTheRequest`, `TestReloadBeforeStartAnswersAtOnce`, `TestPersonBeforeStartDoesNotWait`; through a provisioned config, `TestPersonNotRefusedAfterAStart` |
 
