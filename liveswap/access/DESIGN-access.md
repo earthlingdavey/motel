@@ -212,7 +212,7 @@ names a declared key, or the 404; an app's source's is the flat 401.
 | `box.status` | `GET /` on `box_webhook` | — | yes | a viewer of the box |
 | `box.push_result` | `GET /?result=<id>` | — | yes | never (403 naming a deploy token of the box) |
 | `box.push` | `POST /` | — | yes | never |
-| `box.whoami` | `GET /_motel/whoami` | 403, needs a declared key (a global source's token: an app's own is the flat 401 under `/_motel/`) | the flat 401: liveswap's webhook, which serves `/_motel/`, does not know the box channel's source (the 403 only when it is a global liveswap source too) | any person |
+| `box.whoami` | `GET /_motel/whoami` | 403, needs a declared key, for a token a global source accepts (one that only an app's own sources accept is the flat 401 under `/_motel/`) | the flat 401: liveswap's webhook, which serves `/_motel/`, does not know the box channel's source (the 403 only when it is a global liveswap source too) | any person |
 | `box.apps` | `GET /_motel/apps` | as for `box.whoami` | as for `box.whoami` | any person |
 
 A box grant covers every app. A pair the table does not hold is

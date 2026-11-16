@@ -44,10 +44,10 @@ Concept map from the Nomad-era stack:
   verifying an `Authorization: Bearer <JWT>` against the app's
   `deploy_trust` sources (OIDC against an issuer's public JWKS, or a
   local public key); or a person's token, `Authorization: Motel …`,
-  which only a `GET` may carry, against the people the box admits: the
-  keys its installed Caddyfile held, with a `person` or `grant` line,
-  when the running config was loaded (access/DESIGN-access.md, "The
-  registry"). Its answer MUST NOT reveal whether an app exists to
+  which only a `GET` may carry, against the people the box admits,
+  read from its installed Caddyfile when the running config was loaded
+  (access/DESIGN-access.md, "The registry", says which keys those
+  are). Its answer MUST NOT reveal whether an app exists to
   unauthenticated callers (unknown apps verify against the global trust
   sources, then 404; a refused token gets the same 401 either way).
   No verification MUST wait on an issuer (#306): each check is local,
@@ -672,11 +672,11 @@ no app (access/DESIGN-access.md has the person's way in, the routes
 there and the answers). For a deploy token on an app's path,
 authentication already chose the sources by the path's app, so `Decide`
 refuses nothing it accepted there and every answer is the one the
-method switch gave. Under `/_motel/` a global source's token, a
-deployer of no app, is refused the people's routes, and a person is
-refused what no grant of theirs covers: each is told so, a 403 that
-names what is needed (`wire.Forbidden`). A refusal with no such word,
-which no principal meets, would be a 403 `forbidden`. The tests hold the tables to each other both ways
+method switch gave. Under `/_motel/` a token a global source accepts,
+a deployer of no app, is refused the people's routes; and a person
+`Decide` refuses is told so. Each gets a 403 that names what is needed
+(`wire.Forbidden`). A refusal with no such word, which no principal
+meets, would be a 403 `forbidden`. The tests hold the tables to each other both ways
 (`TestEveryRouteHasAnAction`, `TestEveryActionHasARoute`), write the
 decide table out cell by cell (`TestDecideTable`), and drive every
 method, path and query for each kind of caller (`FuzzNoRouteNoAnswer`,

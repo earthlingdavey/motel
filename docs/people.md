@@ -88,9 +88,11 @@ grant, an app grant a box grant already covers, people with no monitor channel.
 
 On a box whose Caddyfile you edit at the console and do not push, the
 file must still be one the box can read its people from, as the
-template's is: a `box` block, and one site holding `box_webhook` and
-`liveswap_webhook`, with no `import` and no `{$…}` in them (`motel
-validate` and the journal say when it is not). Edit
+template's is: a `box` block, exactly one site with `box_webhook`,
+under one bare host name, and no `import` anywhere in the file (the
+journal's line at each load says why when it is not). For people to
+reach more than the box's status, that same site needs
+`liveswap_webhook` too, as the template's has. Edit
 `/etc/motel/Caddyfile` as root,
 `motel validate --config /etc/motel/Caddyfile`, and `systemctl reload
 motel`. The box reads who it admits from that file at each load; the
