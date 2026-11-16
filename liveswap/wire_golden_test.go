@@ -273,5 +273,11 @@ func TestWireHandlerBodies(t *testing.T) {
 	add("GET /_motel/whoami with a deploy token", do(t, h, http.MethodGet, "/_motel/whoami", globalToken(t), ""))
 	add("GET a path under /_motel/ that is no route", do(t, h, http.MethodGet, "/_motel/nothing", globalToken(t), ""))
 
+	// A deploy token before liveswap's Start installed the app, past
+	// the wait (#473).
+	starting, _ := notInstalled(t)
+	starting.installWait = time.Millisecond
+	add("GET before liveswap's Start installed the app, past the wait", do(t, starting, http.MethodGet, "/demo", appToken(t), ""))
+
 	checkWireGolden(t, "handler-bodies.txt", out.String())
 }
