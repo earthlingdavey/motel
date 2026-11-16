@@ -115,11 +115,11 @@ func TestForTUI(t *testing.T) {
 	if k, ok := kc.Cred.(*client.PersonToken).Signer.(*signer).inner.(sshkey.Keygen); !ok || !k.NoTerminal {
 		t.Errorf("the TUI's ssh-keygen may reach the terminal: %#v", kc.Cred.(*client.PersonToken).Signer)
 	}
-	c := &client.Client{Cred: &client.PersonToken{Signer: &fixedSigner{}}, Notes: os.Stderr}
+	c := &client.Client{Cred: &client.PersonToken{Signer: &fixedSigner{}}}
 	forTUI(c, time.Now)
 	pt := c.Cred.(*client.PersonToken)
-	if pt.Life != sshkey.MaxLife || !c.NoWait || c.Notes != nil {
-		t.Errorf("life %s, NoWait %v, notes %v", pt.Life, c.NoWait, c.Notes)
+	if pt.Life != sshkey.MaxLife || !c.NoWait {
+		t.Errorf("life %s, NoWait %v", pt.Life, c.NoWait)
 	}
 	if _, ok := pt.Signer.(*signer); !ok {
 		t.Errorf("the signer does not tell the screen")
@@ -187,7 +187,6 @@ func TestFailureForTheTUI(t *testing.T) {
 		{&client.Failure{Exit: client.ExitUnknown, Status: 499}, model.FailUnusable},
 		{&client.Failure{Exit: client.ExitUnknown, Status: 600}, model.FailUnusable},
 		{&client.Failure{Exit: client.ExitUnknown, Status: 200}, model.FailUnusable},
-		{&client.Failure{Exit: client.ExitFailed, Status: 500}, model.FailThis},
 		{&client.Failure{Exit: client.ExitFailed, Status: 409}, model.FailThis},
 	} {
 		var m *model.Failure

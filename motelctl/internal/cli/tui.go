@@ -154,8 +154,7 @@ func shortStack(stack []byte) string {
 // forTUI makes c the TUI's client, and is the only place one is made:
 // each token lasts sshkey.MaxLife, so a session signs about every nine
 // minutes; a 429 is handed back for the engine to wait out for every
-// read; nothing is noted on stderr, which the screen holds. Its signer
-// tells the title bar while it signs.
+// read. Its signer tells the title bar while it signs.
 func forTUI(c *client.Client, now func() time.Time) *signer {
 	pt := c.Cred.(*client.PersonToken)
 	pt.Life = sshkey.MaxLife
@@ -168,7 +167,7 @@ func forTUI(c *client.Client, now func() time.Time) *signer {
 	}
 	sig := &signer{inner: pt.Signer, now: now}
 	pt.Signer = sig
-	c.NoWait, c.Notes = true, nil
+	c.NoWait = true
 	return sig
 }
 
