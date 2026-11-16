@@ -495,7 +495,11 @@ ask() {
 }
 # restarts <https|plain>: five restarts under the loop, each said in an
 # INFO line; a person's token or a deploy token refused in a first
-# second fails; the sums in $p_all, $p_401, $p_not200, $d_all, $d_401.
+# second fails, and so does any answer there that is not a 200: a 5xx,
+# a 403 or 404, or no answer (000) is as much a box that is not serving
+# a valid token. A 429 alone is let by: it is the person's own rate,
+# which a faster runner could reach, and not the restart's doing. The
+# sums in $p_all, $p_401, $p_not200, $d_all, $d_401.
 restarts() {
 	p_all=0 p_401=0 p_not200=0 d_all=0 d_401=0 r=1
 	while [ "$r" -le 5 ]; do
@@ -538,6 +542,9 @@ restarts() {
 				|| fail "$1 restart $r: a person's token was refused in the first second: $(awk -v f="$first" '$1 == "person" && $2 >= f && $2 < f + 1000 { printf "+%d:%s ", $2 - f, $3 }' "$work/loop")"
 			[ "$(in_first deploy 401)" -eq 0 ] \
 				|| fail "$1 restart $r: a valid deploy token was refused in the first second (#473)$d401"
+			other=$(awk -v f="$first" '$2 >= f && $2 < f + 1000 && $3 != "200" && $3 != "401" && $3 != "429" { printf "%s+%d:%s ", $1, $2 - f, $3 }' "$work/loop")
+			[ -z "$other" ] \
+				|| fail "$1 restart $r: a valid token got neither a 200 nor a refusal in the first second: $other"
 		fi
 		r=$((r + 1))
 	done
