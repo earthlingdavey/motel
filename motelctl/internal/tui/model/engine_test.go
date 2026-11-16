@@ -944,38 +944,81 @@ func TestWords(t *testing.T) {
 }
 
 // TestWaitIsForTheSoonest: the wait Take gives, which the driver sleeps
-// for, is until the next read of any kind; a driver that sleeps exactly
-// that long reads every app at its interval (a slower kind due later,
-// the list or whoami, must not hold the rest back).
+// for, is the time to the soonest read of any kind. With apps due at
+// different times and the list far off, a fake clock steps a tick at a
+// time and asks Take at every step: no read may come before the wait it
+// last gave runs out, one must come when it does, and over ten minutes
+// each app is read within a tick of its interval. An engine that gives
+// the wait for a later kind (the list's) fails the first rule as soon as
+// an app falls due before it.
 func TestWaitIsForTheSoonest(t *testing.T) {
-	apps := names(12)
+	const tick = 100 * time.Millisecond
+	apps := names(4)
 	e := model.NewEngine(t0)
 	now := t0
+	var promised time.Time // when the last wait given runs out; zero: none
 	byApp := map[string][]time.Time{}
+	var lists []time.Time
+	waits := 0
 	for now.Before(t0.Add(10 * time.Minute)) {
 		e.Touch(now)
 		j, ok, wait := e.Take(now)
 		if !ok {
 			if wait <= 0 {
-				t.Fatal("no wait and nothing to read")
+				t.Fatalf("at %s: nothing to read and no wait", now.Sub(t0))
 			}
-			now = now.Add(wait)
+			at := now.Add(wait)
+			if promised.IsZero() {
+				promised, waits = at, waits+1
+			} else if d := at.Sub(promised); d > tick || d < -tick {
+				t.Fatalf("at %s: the wait moved from %s to %s with nothing read", now.Sub(t0), promised.Sub(t0), at.Sub(t0))
+			}
+			if now.Sub(promised) > tick {
+				t.Fatalf("at %s: the wait ran out at %s and nothing was read", now.Sub(t0), promised.Sub(t0))
+			}
+			now = now.Add(tick)
 			continue
 		}
-		if j.Kind == model.KStatus {
-			byApp[j.App] = append(byApp[j.App], now)
+		if !promised.IsZero() && promised.Sub(now) >= tick {
+			t.Fatalf("at %s: %v read, before the wait given ran out at %s", now.Sub(t0), j, promised.Sub(t0))
 		}
-		if j.Kind == model.KApps {
+		promised = time.Time{}
+		switch j.Kind {
+		case model.KStatus:
+			byApp[j.App] = append(byApp[j.App], now)
+		case model.KApps:
+			lists = append(lists, now)
 			e.SetApps(apps, now)
 		}
 		e.Done(j, now, nil)
 	}
+	if waits < 20 {
+		t.Fatalf("only %d waits given in ten minutes", waits)
+	}
+	every := e.Interval(apps[0])
+	if every != model.BackgroundEvery {
+		t.Fatalf("four apps are read every %s, want %s", every, model.BackgroundEvery)
+	}
+	// Different times: the first reads after the first pass are spread.
+	seen := map[time.Time]bool{}
 	for _, a := range apps {
 		ts := byApp[a]
+		if len(ts) < 19 {
+			t.Fatalf("%s read %d times in ten minutes, every %s", a, len(ts), every)
+		}
+		seen[ts[1]] = true
 		for i := 2; i < len(ts); i++ {
-			if g := ts[i].Sub(ts[i-1]); g > model.BackgroundEvery+time.Second {
-				t.Fatalf("%s read %s apart, its interval %s", a, g, model.BackgroundEvery)
+			if g := ts[i].Sub(ts[i-1]); g > every+tick || g < every-tick {
+				t.Fatalf("%s read %s apart at %s, its interval %s", a, g, ts[i].Sub(t0), every)
 			}
+		}
+	}
+	if len(seen) < len(apps) {
+		t.Fatalf("the apps came due together: %v", seen)
+	}
+	for i := 1; i < len(lists); i++ {
+		if g := lists[i].Sub(lists[i-1]); g > model.AppsEvery+tick {
+			t.Fatalf("the list read %s apart, its interval %s", g, model.AppsEvery)
 		}
 	}
 }
