@@ -91,8 +91,11 @@ closes its listeners at once and lets the requests already in flight
 finish, and the new process cannot listen until the old one has
 exited. New visitors get connection refused for that whole window,
 sometimes followed by a few dozen milliseconds of 503s while the new
-process picks the apps back up. A crash has a window of its own:
-whatever was in flight is cut off, systemd waits a second
+process picks the apps back up. A deploy sent in those first moments
+waits for motel to load its app, at most 5 seconds, and is answered
+503 with `Retry-After: 1` only past that; its token is not refused.
+A crash has a window of its own: whatever was in flight is cut off,
+systemd waits a second
 (`RestartSec=1s`) and starts motel again, and the apps are picked
 back up the same way — a little over a second, plus the start itself.
 How long a planned restart's window lasts:
