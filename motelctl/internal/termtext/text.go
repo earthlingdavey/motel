@@ -92,7 +92,8 @@ const QuoteMax = 200
 // another, since two of them read as one double quote; everything From
 // escapes is made visible; and outside ASCII only the two dashes and
 // the ellipsis, which motel's own sentences use, are written as they
-// are: every other character is written as a \u escape. All between
+// are: every other character is written as a \u escape (\U and eight
+// digits above U+FFFF). All between
 // double quotes, with "…" after the closing quote when s was cut.
 //
 // So what stands between the quote marks is printable ASCII, those
@@ -104,8 +105,9 @@ const QuoteMax = 200
 // punctuation in some scripts and letters in others (U+1426, U+05F2),
 // a letter can print as a blank (the Hangul fillers) or on the cell
 // before it (a conjoining jamo, a combining mark on a space), and a
-// symbol as nothing (U+2800). motel's sentences are ASCII; a name in
-// another script inside one reads as its escapes. (A \ is escaped
+// symbol as nothing (U+2800). motel's sentences are ASCII but for
+// those three marks; a name in another script inside one reads as its
+// escapes. (A \ is escaped
 // before From runs, so a \ the sender wrote reads \\, and an escape
 // From wrote reads \x1b: the two stay apart.)
 func Quote(s string) Text {

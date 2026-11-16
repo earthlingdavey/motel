@@ -107,7 +107,7 @@ box wrote. A value from a box is used in one of three ways only:
    escaped, and each `'` and `` ` `` that stands beside another (two
    read as one double quote); outside ASCII only the two dashes and
    the ellipsis are written as they are, and every other character as
-   a `\u` escape, whatever it is: a quote mark of any script, a
+   a `\u` (or, above U+FFFF, `\U`) escape, whatever it is: a quote mark of any script, a
    letter that looks like one, a blank or invisible character. So the
    closing quote is motelctl's own; attributed ("the box says: …").
    A box-written backtick command inside a quotation is shown as the
