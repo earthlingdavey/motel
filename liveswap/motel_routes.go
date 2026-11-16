@@ -1,6 +1,7 @@
 package liveswap
 
 import (
+	"encoding/json"
 	"net/http"
 	"slices"
 
@@ -91,9 +92,16 @@ func (h *Handler) whoami(w http.ResponseWriter, _ *http.Request, p *Person) erro
 	return RespondJSON(w, http.StatusOK, body, NewRedactor(nil, safe))
 }
 
-// apps is GET /_motel/apps: the names of the apps the person may view,
-// of those this config runs; every one for a viewer of the box. A name
-// a grant holds that this config does not run is left out.
+// apps is GET /_motel/apps: the apps the person may view, of those this
+// config runs, each with its summary; every one for a viewer of the
+// box. A name a grant holds that this config does not run is left out.
+//
+// Each row is a body of its own to the filter (redact.go, rule 2): it
+// is read through an app handle, as GET /<app> is, and filtered by that
+// app's filter alone, so no filter ever sees two apps' values and no
+// row can carry another app's. After every row's last pass the list
+// adds only the key around them: the rows are carried as raw JSON, so
+// the encoder writes the text each filter left, as withField does.
 func (h *Handler) apps(w http.ResponseWriter, _ *http.Request, p *Person) error {
 	names := []string{}
 	for name := range h.app.managed {
@@ -102,9 +110,74 @@ func (h *Handler) apps(w http.ResponseWriter, _ *http.Request, p *Person) error 
 		}
 	}
 	slices.Sort(names)
-	body := wire.Apps{Apps: make([]wire.AppEntry, 0, len(names))}
+	body := struct {
+		Apps []json.RawMessage `json:"apps"`
+	}{make([]json.RawMessage, 0, len(names))}
 	for _, name := range names {
-		body.Apps = append(body.Apps, wire.AppEntry{Name: name})
+		body.Apps = append(body.Apps, json.RawMessage(h.appRow(p, name)))
 	}
-	return RespondJSON(w, http.StatusOK, body, NewRedactor(nil, names))
+	b, err := json.Marshal(body)
+	if err != nil {
+		return err // a row that is not JSON: redactJSON returns JSON whatever it is given
+	}
+	return respondFiltered(w, http.StatusOK, string(b))
+}
+
+// appRow is one app's entry in GET /_motel/apps, as the bytes sent. The
+// summary is the one GET /<app> would give: Decide is asked about the
+// same action, and the values come from the same status, through the
+// same filter.
+func (h *Handler) appRow(p *Person, name string) string {
+	app, err := h.allowApp(p.Principal, access.AppStatus, name)
+	if err != nil {
+		// Views covered the name and Decide refused its status: the table
+		// and the list falling apart. The name is the list's, which says no
+		// more than that.
+		return nameOnlyRow(name, "forbidden")
+	}
+	ma := app.ma
+	s := ma.status()
+	raw, err := json.Marshal(wire.AppEntry{Name: name, Summary: summaryOf(s)})
+	if err != nil {
+		// A record's raw times that are not JSON, which GET /<app> could
+		// not send either.
+		return nameOnlyRow(name, "the app's status could not be written")
+	}
+	row := ma.redactorFor(s).redactJSON(raw)
+	var got struct {
+		Name    string          `json:"name"`
+		Error   string          `json:"error"`
+		Summary json.RawMessage `json:"summary"`
+	}
+	if json.Unmarshal([]byte(row), &got) == nil && got.Name == name && len(got.Summary) > 0 && string(got.Summary) != "null" {
+		return row
+	}
+	// The filter withheld the row: what it sent is its sentence, past the
+	// app's last pass. The name goes back beside it, as the list names it
+	// for any app the person may view.
+	if got.Error == "" {
+		got.Error = "response withheld"
+	}
+	return nameOnlyRow(name, got.Error)
+}
+
+// nameOnlyRow is an entry with no summary, and why.
+func nameOnlyRow(name, why string) string {
+	b, _ := json.Marshal(wire.AppEntry{Name: name, Error: why}) // two strings: nothing to fail
+	return string(b)
+}
+
+// summaryOf is the part of s the list carries: taken from the status
+// GET /<app> answers with, never computed apart, so the two cannot
+// disagree.
+func summaryOf(s statusSnapshot) *wire.AppSummary {
+	sum := &wire.AppSummary{Phase: s.Phase, Running: s.Running, CurrentVersion: s.CurrentVersion}
+	if s.Watchdog != nil {
+		sum.Watchdog = s.Watchdog.State
+	}
+	if len(s.Deploys) > 0 {
+		newest := s.Deploys[0]
+		sum.NewestDeploy = &newest
+	}
+	return sum
 }

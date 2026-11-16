@@ -78,7 +78,13 @@ import (
 //     strings the filtered body already held). The stream's spliced
 //     event, phase and http_status fields (handler.go) are constants
 //     and a phase word. Nothing else appends to a body after that
-//     pass.
+//     pass. A body about several apps (GET /_motel/apps) is made of
+//     rows, and each row is a body here: filtered by its own app's
+//     filter, then put in the list, which adds its punctuation alone;
+//     a row the filter withheld is put back as the app's name, which
+//     the list names in any case, and the filter's sentence. So no
+//     filter is ever given two apps' values, and the outcome pairs of
+//     rule 3 are counted per row.
 //  3. The outcome vocabulary is structural, never textual. A pair
 //     "status":"<word>", "phase":"<word>" or "name":"<word>", the
 //     word one of the deploy vocabulary (app.go), is the one place

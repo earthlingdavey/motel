@@ -273,6 +273,12 @@ func TestWireHandlerBodies(t *testing.T) {
 	add("GET an app no grant covers, as a person", person("/ghost", people.alice))
 	add("GET /_motel/whoami with a deploy token", do(t, h, http.MethodGet, "/_motel/whoami", globalToken(t), ""))
 	add("GET a path under /_motel/ that is no route", do(t, h, http.MethodGet, "/_motel/nothing", globalToken(t), ""))
+	add("GET /_motel/apps as a viewer of the box", person("/_motel/apps", people.carol))
+	// A row the app's filter withholds is the name and the filter's
+	// sentence, and the list is still a 200.
+	rig.spec.envFile = filepath.Join(rig.spec.dirs.root, "missing.env")
+	add("GET /_motel/apps as a viewer of demo, the env_file unreadable", person("/_motel/apps", people.alice))
+	rig.spec.envFile = ""
 
 	// A deploy token before liveswap's Start installed the app, past
 	// the wait (#473): a request that ended first is answered the same.
