@@ -55,7 +55,8 @@ an agent's keys with `ssh-add`, and both reach an agent through
 for motelctl: set `SSH_AUTH_SOCK` to the agent's socket. Without it a
 command that signs stops before anything is sent (exit 2), saying to
 name a key, or that `ssh-keygen` could not sign with the one named;
-`motelctl key`, which signs nothing, still prints the key's line. git's
+`motelctl key`, which signs nothing, still prints the line of a key
+that is named or has a file. git's
 `user.signingkey` may be a path or the key itself, as `key::<line>` or
 as a bare line beginning `ssh-`, which git reads the same way; the
 agent then holds the key.

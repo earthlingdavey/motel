@@ -429,12 +429,20 @@ func TestResolveGitsKeyItself(t *testing.T) {
 			t.Errorf("%s: the agent was asked for its keys", name)
 		}
 	}
-	// A path whose name begins otherwise is read as a file.
+	// A path is read as a file: an absolute one, and a relative one
+	// whose name begins "ssh" with no hyphen after it, which git reads
+	// as a path too (there is no such file here, and the error is the
+	// file's, not a key line's).
 	write(t, filepath.Join(home, "sshkey.pub"), line+"\n")
 	run := &fakeRun{top: repo, config: map[string]string{"gpg.format": "ssh", "user.signingkey": filepath.Join(home, "sshkey.pub")}}
 	k, err := Resolve(context.Background(), Lookup{Getenv: func(string) string { return "" }, Home: home, Dir: filepath.Join(repo, testBox), Run: run})
-	if err != nil || k.Path != filepath.Join(home, "sshkey.pub") {
-		t.Errorf("a path: %v, path %q", err, k.Path)
+	if err != nil || k.Path != filepath.Join(home, "sshkey.pub") || k.Public.Line() != line || k.Source != SourceGit {
+		t.Errorf("an absolute path: %v, %+v", err, k)
+	}
+	run.config["user.signingkey"] = "sshkey-of-no-such-file.pub"
+	_, err = Resolve(context.Background(), Lookup{Getenv: func(string) string { return "" }, Home: home, Dir: filepath.Join(repo, testBox), Run: run})
+	if err == nil || !strings.Contains(err.Error(), "sshkey-of-no-such-file.pub (git's user.signingkey): open ") {
+		t.Errorf("a relative path beginning ssh with no hyphen: %v, want the file's error", err)
 	}
 }
 
