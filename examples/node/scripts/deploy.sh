@@ -40,8 +40,9 @@
 # version keeps serving) — with the status code the request would
 # have had in `http_status`. Every line is printed as it arrives, and
 # a failure exits non-zero. A 401 — the box would not accept the
-# token — is sent once more 3s later (send), and a 401 that stands
-# is followed by what the box must
+# token — is sent once more 3s later (send), and so is the box's 503
+# while it is starting, after the seconds its Retry-After names; a 401
+# that stands is followed by what the box must
 # trust for this run, since
 # the box's own answer deliberately does not say (the reason is in its
 # journal, for its operator).
@@ -228,18 +229,41 @@ boxrefused() {
 	case $(field "$(tail -n 1 "$body")" error) in 'invalid or missing deploy token'*) return 0 ;; esac
 	return 1
 }
+# boxstarting prints the seconds to wait when the answer is the box's
+# own 503 while it is starting, by its sentence and its Retry-After in
+# seconds (held to 1 to 10), and fails for any other answer: a 503
+# from something in front of the box, or one that names no wait, is
+# not this.
+boxstarting() {
+	[ "$(httpstatus)" = 503 ] || return 1
+	case $(field "$(tail -n 1 "$body")" error) in 'motel is starting'*) ;; *) return 1 ;; esac
+	secs=$(tr 'A-Z' 'a-z' <"$hdrs" | sed -n 's/^retry-after: *\([0-9][0-9]*\).*/\1/p' | tail -n 1)
+	[ -n "$secs" ] || return 1
+	case $secs in ?|??) ;; *) secs=10 ;; esac
+	[ "$secs" -ge 1 ] || secs=1
+	[ "$secs" -le 10 ] || secs=10
+	echo "$secs"
+}
 # send is stream, sent once more 3s after the box refuses the token.
 # The first token under an issuer's new signing key is refused while
 # the box fetches that key, without waiting on the fetch (a wait would
 # tell anyone with a token which apps exist), and the retry finds it.
 # That holds for a MOTEL_TOKEN too when it is an issuer's (a GitLab
 # id_token, say). The box refuses before it does anything else, so
-# sending the request again repeats nothing.
+# sending the request again repeats nothing. A box that has just
+# started answers a token it accepts 503 when it has not loaded the app
+# within 5s; nothing ran on the box for that answer either, so the
+# request is sent once more after the Retry-After it names. Either way
+# the second answer is the run's.
 send() { # <curl args...>
 	stream "$@"
 	if boxrefused; then
 		printf '\nthe box refused the token; sending it once more in 3s (a box refuses the first token under a new signing key while it fetches the key)\n'
 		sleep 3
+		stream "$@"
+	elif secs=$(boxstarting); then
+		printf '\nthe box is starting; sending the request once more in %ss, as it asks\n' "$secs"
+		sleep "$secs"
 		stream "$@"
 	fi
 }

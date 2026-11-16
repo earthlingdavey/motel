@@ -133,6 +133,10 @@ through. Before reporting a 401 the step sends the request once more,
 signing key while it fetches that key, and the retry goes through —
 unless the box had fetched the keys in the minute before, when the
 journal's refusal says from when a re-run goes through.
+A box that has just started and not yet loaded the app answers a
+token it accepts with a 503 that says so, after waiting up to 5
+seconds; the step sends that request once more too, after the seconds
+its `Retry-After` names.
 
 What a first deploy that worked looks like, from the laptop:
 
