@@ -196,5 +196,8 @@ func summaryOf(s statusSnapshot) *wire.AppSummary {
 		newest := s.Deploys[0]
 		sum.NewestDeploy = &newest
 	}
+	if s.Deploying != nil {
+		sum.Deploying = s.Deploying.Version
+	}
 	return sum
 }

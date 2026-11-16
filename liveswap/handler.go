@@ -501,6 +501,7 @@ func (h *Handler) deployPush(w http.ResponseWriter, r *http.Request, app appHand
 	// One snapshot for both staging and the pipeline, so a reload during
 	// the upload can't stage under one spec and extract under another.
 	c := ma.snapshot()
+	ma.beginDeploy(version, by, c.clock.Now())
 	spec := c.spec
 	// The upload is the push's first write, so the pipeline's refusal
 	// of an app dir that is not the directory it names comes first

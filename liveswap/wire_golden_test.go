@@ -60,6 +60,10 @@ func TestWireStatusEveryField(t *testing.T) {
 		Unit:    "app-demo-n.service", Running: true,
 		Caps:           &capsSnapshot{MemoryMax: 256 << 20, TasksMax: 64, CPUQuota: 150},
 		CapsUnenforced: []string{"cpu_quota"},
+		Deploying: &deployInFlight{
+			Version: "v3", By: "local:/k.pub", StartedAt: at,
+			Phases: []phaseTiming{{Name: "downloading", StartedAt: at, Seconds: 1.5}},
+		},
 		Deploys: []deploySummary{{
 			Version: "v2", Status: "failed", Phase: "starting", By: "local:/k.pub",
 			SHA256: pin, StartedAt: stamp, FinishedAt: stamp,
@@ -279,6 +283,20 @@ func TestWireHandlerBodies(t *testing.T) {
 	rig.spec.envFile = filepath.Join(rig.spec.dirs.root, "missing.env")
 	add("GET /_motel/apps as a viewer of demo, the env_file unreadable", person("/_motel/apps", people.alice))
 	rig.spec.envFile = ""
+	// A deploy in flight, held in its download: the status's deploying,
+	// before deploys, and the list's summary naming its version.
+	held, release := rig.holdFetch(t)
+	done := make(chan error, 1)
+	go func() {
+		done <- rig.ma.Deploy(context.Background(), deployRequest{url: "https://x/6.tgz", version: "v6", by: "github:example/demo@refs/heads/main"})
+	}()
+	held()
+	add("GET while v6 downloads", do(t, h, http.MethodGet, "/demo", appToken(t), ""))
+	add("GET /_motel/apps as a viewer of demo while v6 downloads", person("/_motel/apps", people.alice))
+	release(nil)
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
 
 	// A deploy token before liveswap's Start installed the app, past
 	// the wait (#473): a request that ended first is answered the same.
