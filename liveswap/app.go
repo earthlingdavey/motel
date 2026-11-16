@@ -229,6 +229,12 @@ type managedApp struct {
 	// let go: a test's place to be the next holder at once, before the
 	// last one returns. Set before any deploy runs; nil in production.
 	unlocked func()
+	// stepped, when set, is told inside the step that sets a deploy's
+	// outcome, under ma.mu, what was shown in flight as the step began
+	// and what is as it ends: a test's look into the one step, which a
+	// read from outside could only land in by chance. It must not take
+	// ma.mu. Set before any deploy runs; nil in production.
+	stepped func(began, ends *inFlight, outcome *deployResult)
 
 	// mu guards current, phase, phases, inFlight and lastDeploy.
 	mu         sync.Mutex
@@ -851,6 +857,7 @@ func (ma *managedApp) deployLocked(ctx context.Context, req deployRequest, c col
 		// read shows deploying, with every phase so far, or last_deploy,
 		// never neither and never both.
 		ma.mu.Lock()
+		shown := ma.inFlight
 		result.Phases = timedPhases(ma.phases, finished)
 		// The phase reached when it failed — none when it failed before
 		// the first (a rollback whose env_file would not read): "idle" is
@@ -862,6 +869,9 @@ func (ma *managedApp) deployLocked(ctx context.Context, req deployRequest, c col
 		ma.phase = "idle"
 		ma.phases = nil
 		ma.inFlight = nil
+		if ma.stepped != nil {
+			ma.stepped(shown, ma.inFlight, ma.lastDeploy)
+		}
 		ma.mu.Unlock()
 		if err != nil {
 			logger.Error("deploy failed", zap.Error(err))

@@ -526,8 +526,14 @@ func TestDeployingGoneFromAPushsResponses(t *testing.T) {
 		if stream {
 			req.Header.Set("Accept", "application/x-ndjson")
 		}
-		w := httptest.NewRecorder()
+		w := &statusAtWrite{ResponseRecorder: httptest.NewRecorder(), ma: rig.ma}
 		must(t, h.ServeHTTP(w, req, nil))
+		// As its answer (a stream's last line) is written, nothing of
+		// this push may still be shown, a body with no status included:
+		// only its deferred end runs after.
+		if w.shown != nil {
+			t.Errorf("%s: %+v shown as its answer was written: %s", version, w.shown, w.Body)
+		}
 		lines := strings.Split(strings.TrimRight(w.Body.String(), "\n"), "\n")
 		return lines[len(lines)-1]
 	}
@@ -547,9 +553,64 @@ func TestDeployingGoneFromAPushsResponses(t *testing.T) {
 			t.Errorf("a push failed in its pipeline (stream %v): %s", stream, body)
 		}
 	}
+	rig.runner.setStartErr(nil)
+	// An upload that is not staged, each way: answered with no status
+	// at all, so only the status at the write can show what it held.
+	for i, err := range []error{errArtifactTooLarge, &stagingError{errors.New("no space left on device")}, errors.New("the body ended")} {
+		h.stage = func(io.Reader, string, int64) (string, string, error) { return "", "", err }
+		if body := push(fmt.Sprintf("v2%d", i), false); !strings.Contains(body, `"error":`) {
+			t.Errorf("an upload not staged: %s", body)
+		}
+	}
+	h.stage = nil
 	if s := rig.ma.status(); s.Deploying != nil {
 		t.Errorf("after: %+v", s.Deploying)
 	}
+}
+
+// statusAtWrite is a recorder that reads the app's deploying as each
+// part of the answer is written; shown is what the last write saw (a
+// stream's last line, or the single answer).
+type statusAtWrite struct {
+	*httptest.ResponseRecorder
+	ma    *managedApp
+	shown *deployInFlight
+}
+
+func (w *statusAtWrite) WriteHeader(code int) {
+	w.shown = w.ma.status().Deploying
+	w.ResponseRecorder.WriteHeader(code)
+}
+
+func (w *statusAtWrite) Write(b []byte) (int, error) {
+	w.shown = w.ma.status().Deploying
+	return w.ResponseRecorder.Write(b)
+}
+
+// TestDeployingAPanicInStaging: the deferred end is the backstop for a
+// way out that clears nothing itself; a panic in the upload's staging
+// leaves no deploy shown and the lock free.
+func TestDeployingAPanicInStaging(t *testing.T) {
+	h, rig := newTestHandler(t)
+	h.stage = func(io.Reader, string, int64) (string, string, error) { panic("staging") }
+	req := httptest.NewRequest(http.MethodPost, "/demo?version=v1", strings.NewReader("the artifact"))
+	req.Header.Set("Content-Type", "application/gzip")
+	req.Header.Set("Authorization", "Bearer "+appToken(t))
+	func() {
+		defer func() {
+			if recover() == nil {
+				t.Fatal("the stage did not panic")
+			}
+		}()
+		_ = h.ServeHTTP(httptest.NewRecorder(), req, nil)
+	}()
+	if d := rig.ma.status().Deploying; d != nil {
+		t.Errorf("after a panic in staging: %+v", d)
+	}
+	if !rig.ma.deployMu.TryLock() {
+		t.Fatal("the deploy lock is still held")
+	}
+	rig.ma.deployMu.Unlock()
 }
 
 // statusAtEvents reads the app's status at each event a deploy's end
@@ -663,50 +724,51 @@ func TestDeployingGoneBeforeTheLockIsLetGo(t *testing.T) {
 
 // TestDeployingOneStepToItsOutcome: a deploy's end sets its outcome and
 // takes its deploying away in one step, so a read never finds both (the
-// outcome beside the deploy it is of) or neither (a phase but no
-// deploy). The reader reads the fields as status does, as fast as it
-// can, over many deploys, successes and failures.
+// outcome beside the deploy it is of) or neither (the deploy gone before
+// its outcome is there). The stepped seam looks inside that step, for
+// every kind of deploy: the deploy was still shown as it began, and is
+// not as it ends, beside its own outcome.
 func TestDeployingOneStepToItsOutcome(t *testing.T) {
-	rig := newTestRig(t)
-	stop := make(chan struct{})
-	done := make(chan struct{})
-	var bad []string
-	go func() {
-		defer close(done)
-		for {
-			select {
-			case <-stop:
-				return
-			default:
-			}
-			rig.ma.mu.Lock()
-			f, last, phase := rig.ma.inFlight, rig.ma.lastDeploy, rig.ma.phase
-			rig.ma.mu.Unlock()
-			switch {
-			case f == nil && phase != "idle":
-				bad = append(bad, "phase "+phase+" with no deploy in flight")
-			case f != nil && last != nil && last.StartedAt.Equal(f.started):
-				bad = append(bad, "the outcome of "+last.Version+" beside it in flight")
-			}
-		}
-	}()
-	ctx := context.Background()
-	for i := range 300 {
-		rig.clock.Advance(time.Second)
-		fail := i%2 == 1
-		if fail {
-			rig.runner.setStartErr(errors.New("boom"))
-		}
-		err := rig.ma.Deploy(ctx, deployRequest{url: "https://x/a.tgz", version: fmt.Sprintf("v%d", i)})
-		rig.runner.setStartErr(nil)
-		if (err != nil) != fail {
-			t.Fatalf("deploy %d: %v", i, err)
-		}
+	h, rig := newTestHandler(t)
+	type step struct {
+		began, ends *inFlight
+		outcome     *deployResult
 	}
-	close(stop)
-	<-done
-	if len(bad) > 0 {
-		t.Errorf("%d reads between the steps, the first: %s", len(bad), bad[0])
+	var steps []step
+	rig.ma.stepped = func(began, ends *inFlight, outcome *deployResult) {
+		steps = append(steps, step{began, ends, outcome})
+	}
+	ctx := context.Background()
+	push := func(version string) {
+		req := httptest.NewRequest(http.MethodPost, "/demo?version="+version, strings.NewReader("the artifact"))
+		req.Header.Set("Content-Type", "application/gzip")
+		req.Header.Set("Authorization", "Bearer "+appToken(t))
+		must(t, h.ServeHTTP(httptest.NewRecorder(), req, nil))
+	}
+	for _, tc := range []struct {
+		version string
+		run     func()
+	}{
+		{"v1", func() { must(t, rig.ma.Deploy(ctx, deployRequest{url: "https://x/1.tgz", version: "v1"})) }},
+		{"v2", func() {
+			rig.runner.setStartErr(errors.New("boom"))
+			defer rig.runner.setStartErr(nil)
+			_ = rig.ma.Deploy(ctx, deployRequest{url: "https://x/2.tgz", version: "v2"})
+		}},
+		{"v1", func() { _ = rig.ma.Deploy(ctx, deployRequest{url: "https://x/1.tgz", version: "v1"}) }}, // refused: running, no pin
+		{"v3", func() { push("v3") }},
+		{"v1", func() { must(t, rig.ma.Deploy(ctx, deployRequest{version: "v1", rollback: true})) }},
+		{"v1", func() { must(t, rig.ma.Deploy(ctx, deployRequest{version: "v1", rollback: true})) }}, // a relaunch
+	} {
+		steps = nil
+		tc.run()
+		if len(steps) != 1 {
+			t.Fatalf("%s: %d steps to the outcome, want one", tc.version, len(steps))
+		}
+		st := steps[0]
+		if st.began == nil || st.began.version != tc.version || st.ends != nil || st.outcome == nil || st.outcome.Version != tc.version {
+			t.Errorf("%s: the step began with %+v shown and ends with %+v, outcome %+v", tc.version, st.began, st.ends, st.outcome)
+		}
 	}
 }
 
