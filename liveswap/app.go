@@ -485,21 +485,20 @@ func (ma *managedApp) trust() ([]deploytrust.Verifier, bool) {
 }
 
 // awaitInstalled waits until a Start has installed the app, ctx ends
-// or d has passed, and reports whether it is installed. It starts no
-// goroutine: the timer is stopped on the way out.
-func (ma *managedApp) awaitInstalled(ctx context.Context, d time.Duration) bool {
+// or the channel bound makes fires, and reports whether it is
+// installed. bound is called only when there is something to wait
+// for. It starts no goroutine.
+func (ma *managedApp) awaitInstalled(ctx context.Context, bound func() <-chan time.Time) bool {
 	ma.specMu.RLock()
 	installed, ready := ma.spec != nil, ma.installed
 	ma.specMu.RUnlock()
 	if installed {
 		return true
 	}
-	t := time.NewTimer(d)
-	defer t.Stop()
 	select {
 	case <-ready:
 	case <-ctx.Done():
-	case <-t.C:
+	case <-bound():
 	}
 	_, installed = ma.trust()
 	return installed

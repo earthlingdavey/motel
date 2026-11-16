@@ -2,6 +2,7 @@ package liveswap
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -88,29 +89,69 @@ func TestDeployTokenNotRefusedBeforeStart(t *testing.T) {
 	}
 }
 
+// TestInstallWaitIs5s pins the bound: long enough for a Start that
+// probes the sandbox on a busy box, short enough that a CI run is told
+// to come back rather than held.
+func TestInstallWaitIs5s(t *testing.T) {
+	if installWait != 5*time.Second {
+		t.Fatalf("installWait is %v, want 5s", installWait)
+	}
+}
+
+// pendingTimer waits for the handler to set its timer on c, and returns
+// when it fires.
+func pendingTimer(t *testing.T, c *fakeClock) time.Time {
+	t.Helper()
+	for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); time.Sleep(time.Millisecond) {
+		c.mu.Lock()
+		n := len(c.waiters)
+		var at time.Time
+		if n > 0 {
+			at = c.waiters[0].at
+		}
+		c.mu.Unlock()
+		if n > 0 {
+			return at
+		}
+	}
+	t.Fatal("the handler set no timer")
+	return time.Time{}
+}
+
 // TestDeployTokenBeforeStartPastTheBound: a valid deploy token whose app
-// no Start installs within the bound is told to come back, a 503 with
+// no Start installs within installWait is told to come back, a 503 with
 // Retry-After in the handler's error style and the protocol header of
 // any answer to a verified token, and the journal says so; nothing of
-// the request ran. Once the app is installed the status is answered,
-// at once.
+// the request ran. The bound is the handler's own, on a fake clock: not
+// answered a millisecond before it, answered at it. Once the app is
+// installed the status is answered, at once.
 func TestDeployTokenBeforeStartPastTheBound(t *testing.T) {
 	h, rig := notInstalled(t)
 	core, logs := observer.New(zap.InfoLevel)
 	h.logger = zap.New(core)
-	h.installWait = 50 * time.Millisecond
+	fc := newFakeClock()
+	h.waitClock = fc
 	deploy := func() *http.Request {
 		req := httptest.NewRequest(http.MethodPost, "/demo", strings.NewReader(`{"url":"https://x/a.tgz","version":"v1"}`))
 		req.Header.Set("Authorization", "Bearer "+appToken(t))
 		return req
 	}
 	for _, req := range []*http.Request{demoGet(appToken(t)), deploy()} {
-		a := serveOne(h, req)
+		got := make(chan answer, 1)
+		go func() { got <- serveOne(h, req) }()
+		if at := pendingTimer(t, fc); !at.Equal(fc.Now().Add(installWait)) {
+			t.Fatalf("%s: the timer fires %v from now, want %v", req.Method, at.Sub(fc.Now()), installWait)
+		}
+		fc.Advance(installWait - time.Millisecond)
+		select {
+		case a := <-got:
+			t.Fatalf("%s answered before the bound: %d %s", req.Method, a.w.Code, a.w.Body)
+		case <-time.After(20 * time.Millisecond):
+		}
+		fc.Advance(time.Millisecond)
+		a := <-got
 		if a.err != nil || a.w.Code != http.StatusServiceUnavailable {
 			t.Fatalf("%s before Start, past the bound: %d %s (%v)", req.Method, a.w.Code, a.w.Body, a.err)
-		}
-		if a.took < h.installWait {
-			t.Errorf("%s answered after %v, before the bound %v", req.Method, a.took, h.installWait)
 		}
 		const body = `{"error":"motel is starting and has not loaded this app yet; retry after 1 s"}` + "\n"
 		hdr := a.w.Header()
@@ -122,14 +163,53 @@ func TestDeployTokenBeforeStartPastTheBound(t *testing.T) {
 		t.Errorf("a deploy ran before the app was installed: %+v", rig.fetch.lastReq)
 	}
 	lines := logs.FilterMessage("deploy token verified before liveswap installed the app; answered 503").All()
-	if len(lines) != 2 || lines[0].ContextMap()["app"] != "demo" || lines[0].ContextMap()["request_ended"] != false {
+	if len(lines) != 2 || lines[0].ContextMap()["app"] != "demo" || lines[0].ContextMap()["request_ended"] != false || lines[0].ContextMap()["waited"] != installWait {
 		t.Errorf("journal: %v", logs.All())
 	}
 
 	install(h, rig)
-	h.installWait = time.Minute
 	if a := serveOne(h, demoGet(appToken(t))); a.w.Code != http.StatusOK || a.took > time.Second {
 		t.Errorf("after the install: %d %s in %v", a.w.Code, a.w.Body, a.took)
+	}
+}
+
+// TestTrustIsOneRead: the handler takes an app's sources and whether it
+// is installed in one read (trust), beside the install that sets both.
+// No read sees the one without the other; under -race, a read outside
+// specMu is reported here, where nothing else orders it.
+func TestTrustIsOneRead(t *testing.T) {
+	for round := range 20 {
+		h, rig := notInstalled(t)
+		stop := make(chan struct{})
+		torn := make(chan string, 1)
+		done, reading := make(chan struct{}), make(chan struct{})
+		go func() {
+			defer close(done)
+			rig.ma.trust()
+			close(reading)
+			for {
+				select {
+				case <-stop:
+					return
+				default:
+				}
+				if vs, installed := rig.ma.trust(); installed != (len(vs) > 0) {
+					select {
+					case torn <- fmt.Sprintf("installed %v with %d sources", installed, len(vs)):
+					default:
+					}
+				}
+			}
+		}()
+		<-reading // a reader before the install as well as after it
+		install(h, rig)
+		close(stop)
+		<-done
+		select {
+		case why := <-torn:
+			t.Fatalf("round %d: a torn read: %s", round, why)
+		default:
+		}
 	}
 }
 
@@ -140,7 +220,6 @@ func TestDeployTokenBeforeStartPastTheBound(t *testing.T) {
 // it has just started.
 func TestStrangerBeforeStartIsTheFlat401(t *testing.T) {
 	before, _ := notInstalled(t)
-	before.installWait = time.Minute
 	after, _ := newTestHandler(t)
 	for name, tok := range map[string]string{
 		"no token":            "",
@@ -168,7 +247,6 @@ func TestInstallWaitEndsWithTheRequest(t *testing.T) {
 	h, _ := notInstalled(t)
 	core, logs := observer.New(zap.InfoLevel)
 	h.logger = zap.New(core)
-	h.installWait = time.Minute
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	got := make(chan answer, 1)
@@ -180,7 +258,7 @@ func TestInstallWaitEndsWithTheRequest(t *testing.T) {
 		if a.w.Code != http.StatusServiceUnavailable || a.w.Header().Get("Retry-After") != "1" {
 			t.Errorf("a request that ended while waiting: %d %v %s", a.w.Code, a.w.Header(), a.w.Body)
 		}
-	case <-time.After(5 * time.Second):
+	case <-time.After(installWait / 2):
 		t.Fatal("the wait did not end with the request")
 	}
 	lines := logs.FilterMessage("deploy token verified before liveswap installed the app; answered 503").All()
@@ -203,7 +281,7 @@ func TestReloadBeforeStartAnswersAtOnce(t *testing.T) {
 		appVerifiers:    map[string][]deploytrust.Verifier{"demo": serving.app.globalVerifiers},
 		specs:           map[string]*appSpec{"demo": rig.spec},
 	}
-	h := &Handler{app: reloaded, logger: zap.NewNop(), limiter: deploytrust.NewLimiter(rig.clock), installWait: time.Minute}
+	h := &Handler{app: reloaded, logger: zap.NewNop(), limiter: deploytrust.NewLimiter(rig.clock)}
 	if a := serveOne(h, demoGet(appToken(t))); a.w.Code != http.StatusOK || a.took > time.Second {
 		t.Fatalf("the serving config's token after a reload, before its Start: %d %s in %v", a.w.Code, a.w.Body, a.took)
 	}
@@ -218,7 +296,6 @@ func TestPersonBeforeStartDoesNotWait(t *testing.T) {
 	people := newTestPeople(t)
 	h, _ := notInstalled(t)
 	h.people = people.reg
-	h.installWait = time.Minute
 	began := time.Now()
 	if w := sendTo(t, h, "GET", "/demo", token(people.alice)); w.Code != http.StatusOK || time.Since(began) > time.Second {
 		t.Errorf("alice before Start: %d %s in %v", w.Code, w.Body, time.Since(began))

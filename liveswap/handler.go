@@ -81,9 +81,9 @@ type Handler struct {
 	// stage is a test seam for stageUpload; nil is stageUpload. A full
 	// disk cannot be made in a test that runs as root.
 	stage func(body io.Reader, tmpDir string, maxBytes int64) (string, string, error)
-	// installWait is a test seam for the const of that name; 0 is the
-	// const.
-	installWait time.Duration
+	// waitClock times awaitInstalled's bound; nil is the real clock. A
+	// test seam, so the bound itself is what a test runs against.
+	waitClock clock
 }
 
 // CaddyModule returns the Caddy module information.
@@ -202,17 +202,19 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request, _ caddyhttp.
 // Start installed, which is every app but in a start's first moments,
 // does not wait.
 func (h *Handler) awaitInstalled(r *http.Request, ma *managedApp, by string) bool {
-	d := h.installWait
-	if d == 0 {
-		d = installWait
+	c := h.waitClock
+	if c == nil {
+		c = realClock{}
 	}
-	began := time.Now()
-	if ma.awaitInstalled(r.Context(), d) {
+	began := c.Now()
+	// The timer is made only once the app is known not to be installed,
+	// so an installed app's request costs none.
+	if ma.awaitInstalled(r.Context(), func() <-chan time.Time { return c.After(installWait) }) {
 		return true
 	}
 	h.logger.Warn("deploy token verified before liveswap installed the app; answered 503",
 		zap.String("app", ma.name), zap.String("via", by), zap.String("remote", r.RemoteAddr),
-		zap.Duration("waited", time.Since(began)), zap.Bool("request_ended", r.Context().Err() != nil))
+		zap.Duration("waited", c.Now().Sub(began)), zap.Bool("request_ended", r.Context().Err() != nil))
 	return false
 }
 

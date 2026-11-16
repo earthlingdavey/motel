@@ -1,6 +1,7 @@
 package liveswap
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -274,10 +275,11 @@ func TestWireHandlerBodies(t *testing.T) {
 	add("GET a path under /_motel/ that is no route", do(t, h, http.MethodGet, "/_motel/nothing", globalToken(t), ""))
 
 	// A deploy token before liveswap's Start installed the app, past
-	// the wait (#473).
+	// the wait (#473): a request that ended first is answered the same.
 	starting, _ := notInstalled(t)
-	starting.installWait = time.Millisecond
-	add("GET before liveswap's Start installed the app, past the wait", do(t, starting, http.MethodGet, "/demo", appToken(t), ""))
+	ended, cancel := context.WithCancel(context.Background())
+	cancel()
+	add("GET before liveswap's Start installed the app, past the wait", send(t, starting, demoGet(appToken(t)).WithContext(ended)))
 
 	checkWireGolden(t, "handler-bodies.txt", out.String())
 }
