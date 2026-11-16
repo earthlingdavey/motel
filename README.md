@@ -298,8 +298,9 @@ root module builds the product binary from `cmd/motel`, and
 
 ### Dependency policy
 
-Dependabot opens weekly grouped PRs per ecosystem with a 7-day
-cooldown (security updates bypass it); patch/minor bumps auto-merge
+Dependabot opens grouped PRs per ecosystem with a 7-day cooldown
+(security updates bypass it), checking Go modules daily and the rest
+weekly; patch/minor bumps auto-merge
 once the full CI graph is green. Two escape hatches, both declared in
 [`.github/pin-watch.yml`](.github/pin-watch.yml) and enforced by the
 weekly `pin-watch` workflow:

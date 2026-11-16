@@ -1,8 +1,10 @@
 # Hands-off dependency updates. The design, together with
 # workflows/dependabot-automerge.yml:
 #
-#   - Weekly grouped PRs (one per ecosystem, not one per dep) so there
-#     is never a backlog to triage.
+#   - Grouped PRs (one per ecosystem, not one per dep) so there is
+#     never a backlog to triage. Weekly, except gomod, which is checked
+#     daily: Caddy is a Go module, and a weekly check added up to 7 days
+#     after the cooldown (Caddy v2.11.9 reached us 10 days after release).
 #   - A 7-day cooldown on routine version bumps: compromised upstream
 #     releases are almost always yanked within days, so waiting is the
 #     cheapest supply-chain defense there is. The gomod clock starts at
@@ -23,7 +25,7 @@ updates:
   - package-ecosystem: gomod
     directories: ["/", "/backups", "/box", "/liveswap", "/notify", "/penaltybox"]
     schedule:
-      interval: weekly
+      interval: daily
     cooldown:
       default-days: 7
     groups:
