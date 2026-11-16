@@ -621,7 +621,7 @@ func (ma *managedApp) failureDetail(c collaborators, spec *appSpec, err error, a
 		// The body is the app's output as much as the journal is:
 		// deploy_log_lines 0 keeps both on the box.
 		if withBody {
-			d.Probe.Body = deploytrust.CutRunes(known.replaceKnown(pe.body, seen), probeBodyExcerpt)
+			d.Probe.Body = deploytrust.CutRunes(known.replaceKnown(pe.body, seen, false), probeBodyExcerpt)
 		}
 	}
 	if withBody && c.journal != nil {
@@ -655,7 +655,7 @@ func (ma *managedApp) failureDetail(c collaborators, spec *appSpec, err error, a
 		}
 		if d.LogTailError == "" {
 			for i, line := range lines {
-				lines[i] = known.replaceKnown(line, seen)
+				lines[i] = known.replaceKnown(line, seen, false)
 			}
 			d.LogTail, d.LogTailTruncated = capTail(lines, spec.deployLogLines, deployLogMaxBytes)
 		}

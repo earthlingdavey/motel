@@ -223,14 +223,19 @@ Properties that matter to the model:
   such pairs at the end than it had — a value that is part of a word
   was replaced inside it — is withheld; and the same word in `error`
   or `detail` is text, and filtered. The third is the app's own name
-  where the body names the app by it, the pair `"app":"<name>"` (the
-  status's, in `GET /<app>` and a deploy's body): a value equal to the
-  name (`DB_NAME=<app>`) is left there and replaced everywhere else, a
-  path and the text of an error included. The name is in the request's
-  path and the config, so the pair tells nothing the caller did not
-  send; a value that holds the name inside it is replaced whole, before
-  the name is looked at. The app list names each app outside the
-  filter, for the same reason. A
+  where a JSON body names the app by it, the pair `"app":"<name>"` (the
+  status's, in `GET /<app>` and a deploy's body): an `env_file` value
+  that is the name as written (`DB_NAME=<app>`) is left there and
+  replaced everywhere else, a path and the text of an error included.
+  Only that value: an encoding of another value, or a URL's password,
+  that happens to equal the name is replaced in the pair too; and only
+  in a JSON body, where a quote inside a string is escaped, so the pair
+  is the body's own field and never text an app wrote (the plain-text
+  filter of a notification's summary has no such rule). The name is in
+  the request's path and the config, so the pair tells nothing the
+  caller did not send; a value that holds the name inside it is
+  replaced whole, before the name is looked at. The app list names each
+  app outside the filter, for the same reason. A
   body the first layer would leave unparsable (a value made of JSON's
   own punctuation matching the structure rather than a string) is
   withheld, with the keys still reported; and while an app's

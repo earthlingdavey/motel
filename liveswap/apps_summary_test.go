@@ -268,22 +268,40 @@ func TestAppOwnNameInClear(t *testing.T) {
 	}
 }
 
-// TestHoldOwnName: rule 5 leaves the app's name standing in the
-// body's own "app" pair alone, never in a string that spells the pair,
-// and with a name that is also an outcome word, its outcome pairs too.
+// TestHoldOwnName: rule 5 leaves the app's name standing in a JSON
+// body's own "app" pair alone: not under another key, not one that
+// ends in "app", not a longer string the name begins, not in a string
+// that spells the pair; with a name that is also an outcome word, its
+// outcome pairs too. Only the value as written: another value's
+// encoding equal to the name is replaced in the pair. And plain text
+// has no such rule.
 func TestHoldOwnName(t *testing.T) {
-	for _, tc := range []struct{ name, body, want string }{
-		{"billingapp", `{"app":"billingapp","error":"billingapp: \"app\":\"billingapp\"","path":"/srv/billingapp/run"}`,
+	for _, tc := range []struct{ env, name, body, want string }{
+		{"DB_NAME=billingapp", "billingapp",
+			`{"app":"billingapp","error":"billingapp: \"app\":\"billingapp\"","path":"/srv/billingapp/run"}`,
 			`{"app":"billingapp","error":"[redacted:DB_NAME]: \"app\":\"[redacted:DB_NAME]\"","path":"/srv/[redacted:DB_NAME]/run","redacted_env":["DB_NAME"]}`},
-		{"starting", `{"app":"starting","phase":"starting","error":"starting"}`,
+		{"DB_NAME=starting", "starting", `{"app":"starting","phase":"starting","error":"starting"}`,
 			`{"app":"starting","error":"[redacted:DB_NAME]","phase":"starting","redacted_env":["DB_NAME"]}`},
-		{"billingapp", `{"app":"billingapp"}`, `{"app":"billingapp"}`}, // only the pair: nothing was replaced
+		{"DB_NAME=billingapp", "billingapp", `{"app":"billingapp"}`, `{"app":"billingapp"}`}, // only the pair: nothing was replaced
+		{"DB_NAME=billingapp", "billingapp", `{"webapp":"billingapp"}`, `{"redacted_env":["DB_NAME"],"webapp":"[redacted:DB_NAME]"}`},
+		{"DB_NAME=billingapp", "billingapp", `{"app":"billingappsuffix"}`, `{"app":"[redacted:DB_NAME]suffix","redacted_env":["DB_NAME"]}`},
+		{"DB_NAME=billingapp", "billingapp", `{"name":"billingapp"}`, `{"name":"[redacted:DB_NAME]","redacted_env":["DB_NAME"]}`},
+		// The app is named by the hex of another value: that is an
+		// encoding of a secret, not the name as a value holds it.
+		{"TOKEN=abcdefgh", "6162636465666768", `{"app":"6162636465666768"}`, `{"app":"[redacted:TOKEN]","redacted_env":["TOKEN"]}`},
+		{"TOKEN=abcdefgh\nDB_NAME=6162636465666768", "6162636465666768", `{"app":"6162636465666768"}`,
+			`{"app":"[redacted:DB_NAME,TOKEN]","redacted_env":["DB_NAME","TOKEN"]}`},
 	} {
-		rd := NewRedactor([]string{"DB_NAME=" + tc.name}, nil)
+		rd := NewRedactor(strings.Split(tc.env, "\n"), nil)
 		rd.holdOwnName(tc.name)
 		if got := rd.redactJSON([]byte(tc.body)); got != tc.want {
-			t.Errorf("%s:\n got %s\nwant %s", tc.body, got, tc.want)
+			t.Errorf("%s, %s:\n got %s\nwant %s", tc.env, tc.body, got, tc.want)
 		}
+	}
+	rd := NewRedactor([]string{"DB_NAME=billingapp"}, nil)
+	rd.holdOwnName("billingapp")
+	if got, keys := rd.Redact(`"app":"billingapp" and billingapp`); got != `"app":"[redacted:DB_NAME]" and [redacted:DB_NAME]` || len(keys) != 1 {
+		t.Errorf("plain text: %s %v", got, keys)
 	}
 }
 
