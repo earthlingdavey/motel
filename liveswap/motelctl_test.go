@@ -2,6 +2,7 @@ package liveswap
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"encoding/pem"
 	"errors"
@@ -151,6 +152,72 @@ func TestMotelctlReadsTheWebhook(t *testing.T) {
 	r = ctl(t, bin, env, "deploys", app, "v9")
 	if r.stderr != "motelctl: 127.0.0.1 answered 404; the box says: \"no deploy recorded for version v9\"\n" {
 		t.Errorf("an unknown version: %q", r.stderr)
+	}
+}
+
+// TestMotelctlReadsWhatTheFilterChanged runs motelctl against the real
+// handler for apps whose env_file values meet their own names, which
+// the response filter then replaces inside the status (redact.go, rule
+// 5 keeps only a value equal to the name, in the "app" pair alone):
+// the client reads each status and shows the replaced values in its
+// own words, where it called the answer another server's. And an app
+// whose env_file does not parse, whose every body the filter withholds
+// in a 200: the client says the box's sentence.
+func TestMotelctlReadsWhatTheFilterChanged(t *testing.T) {
+	bin := motelctlBin(t)
+	const named, staged, broken = "billingapp", "blog-production", "brokenenv"
+	r := newAppsRig(t, named, staged, broken)
+	must(t, os.WriteFile(r.apps[named].spec.envFile, []byte("DB_NAME="+named+"\n"), 0o600))
+	must(t, os.WriteFile(r.apps[staged].spec.envFile, []byte("APP_ENV=production\n"), 0o600))
+	for _, name := range []string{named, staged} {
+		ma := r.apps[name]
+		must(t, ma.Deploy(context.Background(), deployRequest{url: "https://x/1.tgz", version: "v1", by: "ci"}))
+		ma.mu.Lock()
+		h := ma.current.handle.(*fakeHandle)
+		ma.mu.Unlock()
+		h.mu.Lock()
+		h.unit = "motel-" + name + ".v1.0a1b2c3d0a1b2c3d.service"
+		h.mu.Unlock()
+	}
+	must(t, os.WriteFile(r.apps[broken].spec.envFile, []byte("this line is no assignment\n"), 0o600))
+	tok := appToken(t)
+	box := serveCtl(t, webhook(r.h))
+	env := []string{"MOTEL_TOKEN=" + tok, "SSL_CERT_FILE=" + box.cert}
+
+	// What the box sends, so the test is of the filter's real output.
+	for name, holds := range map[string]string{
+		named:  `"unit":"motel-[redacted:DB_NAME].v1.0a1b2c3d0a1b2c3d.service"`,
+		staged: `"app":"blog-[redacted:APP_ENV]"`,
+		broken: `{"error":"response withheld: the app's env_file could not be read`,
+	} {
+		if w := do(t, r.h, http.MethodGet, "/"+name, tok, ""); w.Code != http.StatusOK || !strings.Contains(w.Body.String(), holds) {
+			t.Fatalf("GET /%s: %d %s, want a 200 holding %s", name, w.Code, w.Body, holds)
+		}
+	}
+	const hidden = "[hidden by the box's filter]"
+	for _, name := range []string{named, staged} {
+		got := ctl(t, bin, env, "status", box.url+"/"+name)
+		if got.code != 0 || !strings.HasPrefix(got.stdout, name+"  idle v1  unit "+hidden+"  pid 4242\n") || strings.Contains(got.stdout, "redacted:") {
+			t.Errorf("status %s: exit %d\n%s%s", name, got.code, got.stdout, got.stderr)
+		}
+		if got := ctl(t, bin, env, "deploys", box.url+"/"+name); got.code != 0 || !strings.Contains(got.stdout, "v1") {
+			t.Errorf("deploys %s: exit %d\n%s%s", name, got.code, got.stdout, got.stderr)
+		}
+		if got := ctl(t, bin, env, "deploys", box.url+"/"+name, "v1"); got.code != 0 || !strings.Contains(got.stdout, "v1") {
+			t.Errorf("deploys %s v1: exit %d\n%s%s", name, got.code, got.stdout, got.stderr)
+		}
+		want := do(t, r.h, http.MethodGet, "/"+name, tok, "").Body.String()
+		if got := ctl(t, bin, env, "status", box.url+"/"+name, "--json"); got.code != 0 || got.stdout != want {
+			t.Errorf("status %s --json: exit %d\n%s\nwant the handler's\n%s", name, got.code, got.stdout, want)
+		}
+	}
+	want := do(t, r.h, http.MethodGet, "/"+broken, tok, "").Body.String()
+	got := ctl(t, bin, env, "status", box.url+"/"+broken)
+	if got.code != 1 || got.stdout != "" || !strings.HasPrefix(got.stderr, "motelctl: 127.0.0.1 withheld its answer; the box says: \"response withheld: the app's env_file could not be read") {
+		t.Errorf("status of an app whose env_file does not parse: exit %d, stdout %q, stderr %q", got.code, got.stdout, got.stderr)
+	}
+	if got := ctl(t, bin, env, "status", box.url+"/"+broken, "--json"); got.code != 1 || got.stdout != want {
+		t.Errorf("--json of a withheld body: exit %d\n%s\nwant the handler's\n%s", got.code, got.stdout, want)
 	}
 }
 

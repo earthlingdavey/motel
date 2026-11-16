@@ -101,7 +101,15 @@ box wrote. A value from a box is used in one of three ways only:
    `internal/client/client.go`), or compared with what was asked (the
    app, the version, the host, the key, the box). A value outside its
    grammar makes the answer "not motel's answer", exit 3, and is not
-   printed.
+   printed. One exception, which prints nothing of the value either: a
+   value that carries a marker of the box's own response filter
+   (`[redacted:<KEY>]`, `[masked, N chars]`) is one the filter replaced
+   part of, as it does to a unit named after an app whose env_file
+   holds the app's name (`DB_NAME=<app>`). It is shown as
+   `[hidden by the box's filter]`, motelctl's words; and the app, or a
+   record's version, is taken as the one asked for when the box's
+   equals it everywhere but at a marker, and the one asked for is what
+   is printed.
 2. **A quotation through `termtext.Quote`**: white space collapsed,
    cut at 200 characters, every control, invisible character and
    look-alike quote mark made visible, `"` and `\` escaped, so the
@@ -114,6 +122,11 @@ box wrote. A value from a box is used in one of three ways only:
 
 No message carries a transport's or a decoder's error text once a byte
 came from the peer: a fixed reason of motelctl's own is said instead.
+
+A body the box's response filter withheld (a 200 whose one sentence
+opens `response withheld`: an env_file it could not read, say) is said
+as that, with the box's sentence quoted, exit 1: the sentence names
+what the operator has to mend.
 
 This is held by review, the hostile fixtures and goldens
 (`internal/cli/testdata/hostile-*.golden`), and one partial source test,
