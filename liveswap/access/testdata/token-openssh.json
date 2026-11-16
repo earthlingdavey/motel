@@ -1,0 +1,122 @@
+{
+  "about": "Made once on 2026-11-15 by ssh-keygen -Y sign (OpenSSH 10.0p2) with throwaway keys whose private halves were deleted after; ssh-keygen -Y verify called every signature good in the namespace it was made in. The claims are {\"aud\":\"deploy.example.test\",\"iat\":1794657570,\"exp\":1794658170}. Checked at now, with the box's identity.",
+  "identity": "deploy.example.test",
+  "now": 1794657600,
+  "keys": [
+    {
+      "name": "ed25519",
+      "line": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFHaP9OlT3Zo7QNBIxD2U6F0gNXy9fbCVPf+e4EsV+bg",
+      "fingerprint": "SHA256:UU99bccuUnVOHESnJDK3z1VGqEPuZ4zA/L/pcgvzjgs"
+    },
+    {
+      "name": "ecdsa-p256",
+      "line": "ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAABBBFMQB06Xeh8KVXoZhfRLAzqhI7O0E1Vr8A5d+koNZ7Y/yKk+lC1CIOQqXsfI0lzPvSYaWdiXWGkrw7Nbtd+iZ+4=",
+      "fingerprint": "SHA256:SwkrVRM8ZBo4B/AUsJQyp3sMCsMpcnDwYJdRO4kqQ38"
+    },
+    {
+      "name": "ecdsa-p384",
+      "line": "ecdsa-sha2-nistp384 AAAAE2VjZHNhLXNoYTItbmlzdHAzODQAAAAIbmlzdHAzODQAAABhBFWehDO0VjuO5oCOXqTIAqhSrDMk/w1EMootTS49A7w0jMCcan8tyj8mfFXDHat9qMXv/5G5zH6SBzg8gOeRmP37PjPjMXTwQztWMJ4uAAmyVO/yYcRtOjeHapcJ+Lan1A==",
+      "fingerprint": "SHA256:Qg+WFn4VlUj3ANMAa9OPtSX8M02q2gD43vTjq6uy2NU"
+    },
+    {
+      "name": "ecdsa-p521",
+      "line": "ecdsa-sha2-nistp521 AAAAE2VjZHNhLXNoYTItbmlzdHA1MjEAAAAIbmlzdHA1MjEAAACFBAGhI4eavCA2yRNIaYDV7FqpUNWvQxysdE1S1aCiu/abtYkLBl/ihi2e6Gx4SYsfx2hdA6r1261DS/026RsZw9wwhAEwma9MEBqqxvsI5CuiyGxzsMVZwVJFD/IGO4OwVZC41PPywR/xB1XoUMWMr0YgjSfSa5CD7SjRki6DWasUOp640g==",
+      "fingerprint": "SHA256:sjcZIOWsz/d4xGsid12cEGKGxhKWw5GIDjWS5hR3UnA"
+    },
+    {
+      "name": "rsa-3072",
+      "line": "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQC6vQ8WruVr63Z5qtGqVGFSOm1+n0/PTcMIEARXX+/b3yLKmaAllPPfVxxFFE3vZSmbseIUilRvEdBq5P3eKkiCJ7E8PlQ0xrC0BkUvmSQV4jnjEsg5MwnL8wO8dEtMCm1Dd45DR21/7iARfbj/gh94MmAz+RazQJxtbHE5zD8AAjWqkIXp6qFqCqYI+nszBbjxMCOhMuHtT5N0lkG+HXfc+MemKgbRAFAhU2AS9CUA5diBXxab1GyI5btluEFuN5oH1fX5An047pPmZlNPhlGJ6N7bx/3M9FLKMTuMO76PkUHb/x8zNAGaVLjNAcAh2tUqXt9yCYeb037cibJ+wzxAtnWVHsbmjQmYwOSAk/uqN8lXl+dD3hxM6oQDWLoJqRvzupz/SNAUgRqFfh2of98IT3E61SyLpYOlEGxnhqggvPJlMLLR29sY602LWDsLY2DVgxOakctGp2Zu4k7d9DVwSEvfUzNxRtIkkvMJTbLRgjaz+d9qwpQL6hcNEm9d1Xs=",
+      "fingerprint": "SHA256:mveaEmlHbxS/2Es1FzbWPEf5rKkyjm0LEA8s43Nyy3w"
+    }
+  ],
+  "vectors": [
+    {
+      "name": "P1-read-ed25519",
+      "about": "a read token, ed25519, ssh-keygen's default hash sha512",
+      "key": "ed25519",
+      "method": "GET",
+      "host": "deploy.example.test",
+      "authorization": [
+        "Motel m1.eyJhdWQiOiJkZXBsb3kuZXhhbXBsZS50ZXN0IiwiaWF0IjoxNzk0NjU3NTcwLCJleHAiOjE3OTQ2NTgxNzB9.U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgUdo_06VPdmjtA0EjEPZToXSA1fL19sJU9_57gSxX5uAAAAAkbW90ZWwtYWNjZXNzLXYxQG1vdGVsLnNtYWxsaG91cnMub3JnAAAAAAAAAAZzaGE1MTIAAABTAAAAC3NzaC1lZDI1NTE5AAAAQKG-9dOyj7sBszOUDpW14k2vlF39Z7jtIhoSpu6dKNppLhPqX8xn71peVQDYLu3UuiFxXQNsd1mXw0U1QbtKSwA"
+      ],
+      "expect": "accept"
+    },
+    {
+      "name": "P2-read-ecdsa-p256",
+      "about": "a read token, ecdsa-p256 (Secretive's only type)",
+      "key": "ecdsa-p256",
+      "method": "GET",
+      "host": "deploy.example.test",
+      "authorization": [
+        "Motel m1.eyJhdWQiOiJkZXBsb3kuZXhhbXBsZS50ZXN0IiwiaWF0IjoxNzk0NjU3NTcwLCJleHAiOjE3OTQ2NTgxNzB9.U1NIU0lHAAAAAQAAAGgAAAATZWNkc2Etc2hhMi1uaXN0cDI1NgAAAAhuaXN0cDI1NgAAAEEEUxAHTpd6HwpVehmF9EsDOqEjs7QTVWvwDl36Sg1ntj_IqT6ULUIg5Cpex8jSXM-9JhpZ2JdYaSvDs1u136Jn7gAAACRtb3RlbC1hY2Nlc3MtdjFAbW90ZWwuc21hbGxob3Vycy5vcmcAAAAAAAAABnNoYTUxMgAAAGQAAAATZWNkc2Etc2hhMi1uaXN0cDI1NgAAAEkAAAAgIrBen-P_1mV8bdg4o3ce2_OFFzA0WfFejuWQQ-7ZlOUAAAAhAPqZRpl1IdvlQNF0b8MGnhNzErjtRJ7fp_-mRJCIpgaV"
+      ],
+      "expect": "accept"
+    },
+    {
+      "name": "read-ecdsa-p384",
+      "about": "a read token, ecdsa-p384",
+      "key": "ecdsa-p384",
+      "method": "GET",
+      "host": "deploy.example.test",
+      "authorization": [
+        "Motel m1.eyJhdWQiOiJkZXBsb3kuZXhhbXBsZS50ZXN0IiwiaWF0IjoxNzk0NjU3NTcwLCJleHAiOjE3OTQ2NTgxNzB9.U1NIU0lHAAAAAQAAAIgAAAATZWNkc2Etc2hhMi1uaXN0cDM4NAAAAAhuaXN0cDM4NAAAAGEEVZ6EM7RWO47mgI5epMgCqFKsMyT_DUQyii1NLj0DvDSMwJxqfy3KPyZ8VcMdq32oxe__kbnMfpIHODyA55GY_fs-M-MxdPBDO1Ywni4ACbJU7_JhxG06N4dqlwn4tqfUAAAAJG1vdGVsLWFjY2Vzcy12MUBtb3RlbC5zbWFsbGhvdXJzLm9yZwAAAAAAAAAGc2hhNTEyAAAAhAAAABNlY2RzYS1zaGEyLW5pc3RwMzg0AAAAaQAAADAV_xt3ipnMfp02PIUDyN5HZ3AI77clgam26HL-C_gX7czkVPI0c2r0Tw0FUKbK9F0AAAAxAO-RisoQjVJYcMB8YK9-XQPs56wQ1tS3hyzlvxAU7skUBKu-zgdHDdjhFTzXbBNYDA"
+      ],
+      "expect": "accept"
+    },
+    {
+      "name": "read-ecdsa-p521",
+      "about": "a read token, ecdsa-p521: the largest key type a person may hold",
+      "key": "ecdsa-p521",
+      "method": "GET",
+      "host": "deploy.example.test",
+      "authorization": [
+        "Motel m1.eyJhdWQiOiJkZXBsb3kuZXhhbXBsZS50ZXN0IiwiaWF0IjoxNzk0NjU3NTcwLCJleHAiOjE3OTQ2NTgxNzB9.U1NIU0lHAAAAAQAAAKwAAAATZWNkc2Etc2hhMi1uaXN0cDUyMQAAAAhuaXN0cDUyMQAAAIUEAaEjh5q8IDbJE0hpgNXsWqlQ1a9DHKx0TVLVoKK79pu1iQsGX-KGLZ7obHhJix_HaF0DqvXbrUNL_TbpGxnD3DCEATCZr0wQGqrG-wjkK6LIbHOwxVnBUkUP8gY7g7BVkLjU8_LBH_EHVehQxYyvRiCNJ9JrkIPtKNGSLoNZqxQ6nrjSAAAAJG1vdGVsLWFjY2Vzcy12MUBtb3RlbC5zbWFsbGhvdXJzLm9yZwAAAAAAAAAGc2hhNTEyAAAApgAAABNlY2RzYS1zaGEyLW5pc3RwNTIxAAAAiwAAAEE7uxnah1Ogb17r2CQSkyS5ye14eFXiJf63niPnReog198NtK-Z3DrF_hLMpuKTkp_OlmyYx3_dcKvWmlCCH-dMwAAAAEIBpDP1TNBHTAj4Egrjh_doUgisnSft2f4375beqLJplN_XhfElIef-GY_9PagNTXmW7G3u4fueaCPTMJo1l761Zpg"
+      ],
+      "expect": "accept"
+    },
+    {
+      "name": "P5-read-sha256",
+      "about": "ssh-keygen -O hashalg=sha256",
+      "key": "ed25519",
+      "method": "GET",
+      "host": "deploy.example.test",
+      "authorization": [
+        "Motel m1.eyJhdWQiOiJkZXBsb3kuZXhhbXBsZS50ZXN0IiwiaWF0IjoxNzk0NjU3NTcwLCJleHAiOjE3OTQ2NTgxNzB9.U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgUdo_06VPdmjtA0EjEPZToXSA1fL19sJU9_57gSxX5uAAAAAkbW90ZWwtYWNjZXNzLXYxQG1vdGVsLnNtYWxsaG91cnMub3JnAAAAAAAAAAZzaGEyNTYAAABTAAAAC3NzaC1lZDI1NTE5AAAAQJfhhkLmrJaVLtP02daOyxIkVWbGgMiiZg8YKehsfQpX7nKxaFFSQdf-GLRyp6HXMwuxlfkYGKCc9UnD8OV8cQw"
+      ],
+      "expect": "accept"
+    },
+    {
+      "name": "N1-namespace-git",
+      "about": "the same claims signed with -n git, as a commit signature is",
+      "key": "ed25519",
+      "method": "GET",
+      "host": "deploy.example.test",
+      "authorization": [
+        "Motel m1.eyJhdWQiOiJkZXBsb3kuZXhhbXBsZS50ZXN0IiwiaWF0IjoxNzk0NjU3NTcwLCJleHAiOjE3OTQ2NTgxNzB9.U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgUdo_06VPdmjtA0EjEPZToXSA1fL19sJU9_57gSxX5uAAAAADZ2l0AAAAAAAAAAZzaGE1MTIAAABTAAAAC3NzaC1lZDI1NTE5AAAAQDSUJLNQ8cbNlz7aJnvhB_saAfVNMfmKhupQio9yK37l1IKo0pXpPoG1OKR9U2XSlc88BHmwwPlE2HwV7StsBAk"
+      ],
+      "expect": "signature-namespace"
+    },
+    {
+      "name": "N2-namespace-file",
+      "about": "the same claims signed with -n file",
+      "key": "ed25519",
+      "method": "GET",
+      "host": "deploy.example.test",
+      "authorization": [
+        "Motel m1.eyJhdWQiOiJkZXBsb3kuZXhhbXBsZS50ZXN0IiwiaWF0IjoxNzk0NjU3NTcwLCJleHAiOjE3OTQ2NTgxNzB9.U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgUdo_06VPdmjtA0EjEPZToXSA1fL19sJU9_57gSxX5uAAAAAEZmlsZQAAAAAAAAAGc2hhNTEyAAAAUwAAAAtzc2gtZWQyNTUxOQAAAEBoIEIo_9vtIeYZHI5-WcCVqOcPpH4LGvYCLEn808cz_U_-zzVQoLZiq9NKd9mh72MZM4sXROGWFWrBy2mxj7wC"
+      ],
+      "expect": "signature-namespace"
+    },
+    {
+      "name": "N25-rsa",
+      "about": "a sound rsa-sha2-512 signature from an RSA key the lookup lists: refused by its type",
+      "key": "rsa-3072",
+      "method": "GET",
+      "host": "deploy.example.test",
+      "authorization": [
+        "Motel m1.eyJhdWQiOiJkZXBsb3kuZXhhbXBsZS50ZXN0IiwiaWF0IjoxNzk0NjU3NTcwLCJleHAiOjE3OTQ2NTgxNzB9.U1NIU0lHAAAAAQAAAZcAAAAHc3NoLXJzYQAAAAMBAAEAAAGBALq9Dxau5Wvrdnmq0apUYVI6bX6fT89NwwgQBFdf79vfIsqZoCWU899XHEUUTe9lKZux4hSKVG8R0Grk_d4qSIInsTw-VDTGsLQGRS-ZJBXiOeMSyDkzCcvzA7x0S0wKbUN3jkNHbX_uIBF9uP-CH3gyYDP5FrNAnG1scTnMPwACNaqQhenqoWoKpgj6ezMFuPEwI6Ey4e1Pk3SWQb4dd9z4x6YqBtEAUCFTYBL0JQDl2IFfFpvUbIjlu2W4QW43mgfV9fkCfTjuk-ZmU0-GUYno3tvH_cz0UsoxO4w7vo-RQdv_HzM0AZpUuM0BwCHa1Spe33IJh5vTftyJsn7DPEC2dZUexuaNCZjA5ICT-6o3yVeX50PeHEzqhANYugmpG_O6nP9I0BSBGoV-Hah_3whPcTrVLIulg6UQbGeGqCC88mUwstHb2xjrTYtYOwtjYNWDE5qRy0anZm7iTt30NXBIS99TM3FG0iSS8wlNstGCNrP532rClAvqFw0Sb13VewAAACRtb3RlbC1hY2Nlc3MtdjFAbW90ZWwuc21hbGxob3Vycy5vcmcAAAAAAAAABnNoYTUxMgAAAZQAAAAMcnNhLXNoYTItNTEyAAABgF4TcDHNczfDdEGCP0rgcKplHAiDivZDTvyawF-g5ikZFMfm31hoTAvHEuXtMWkwxOB8W5AwHABv5RbvRL3Uj0Qvci8ZMBhmSnHoHo2vIRIogSHp9CAOSb4XXboVtHc9naqwzkrOE8k2diVw-H5cQpkdINrwoKUFvERbnWjE3eNBeizMuiQ2YfVDhqIBxyBPP4y7dvuWx7Jjp60WRon4ncadilFGa0UkcCb5rF5nQTrzJP-1_aMww43HGBoDdqkx6mmtzYAeBvViTARzo0pvGDX1YEuTtNY_1fGH2M0-7yvFVI0GVb6j6US5kx755bTGHdUtVin15n6TEYo-NzeUzlSqHM89MO7D963Fia90HJRCUQTL1qcZjwZ3DL5Snf3aTkdL-NiMy_Ogt3CunNrAFBQRiRqBC8O8AypYHCRTb2OfvuSCQi2pUkX-gBVMAvjHLviXszhFk4p6CVU26-Qz3sdDR3ZHiHP3Sz7sLF_uqkA9wdl7WO4EtfRxZDh5Qoteyw"
+      ],
+      "expect": "key-type"
+    }
+  ]
+}
