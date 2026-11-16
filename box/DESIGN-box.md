@@ -1686,6 +1686,11 @@ residuals).
 | another method on `/` | — | 405 |
 | another path | — | not this handler's; passed on |
 
+An answer to a token that verified, of every status above, carries the
+header `Motel-Version` with the box's release, as liveswap's webhook
+does (liveswap/README.md, "Webhook API"); only those answers carry it,
+so the 401 and the 405, which come before a token is verified, do not.
+
 Every answer passes liveswap's response filter (the shape and entropy
 layers) with the protocol's own fields on the safe list — `id`,
 `commit`, `sha256`, `box_webhook`, `phase`, `recipient`, each id in

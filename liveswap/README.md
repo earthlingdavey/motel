@@ -1364,6 +1364,13 @@ for byte. A body the filter changed gains a top-level `redacted_env`
 (see [Secrets and logs](#secrets-and-logs)), which only `DeployResult`
 has a field for.
 
+**The release.** An answer to a token that verified, every status a
+route answers with and a deploy stream's included, carries the header
+`Motel-Version` with the release the box runs (`v0.7.0`, say: the
+version `motel version` prints first); only those answers carry it, so a 401
+never does. A build that links no release (`go build` by hand) sends
+none.
+
 ### Streaming the deploy
 
 Send `Accept: application/x-ndjson` on any deploy or rollback POST and
