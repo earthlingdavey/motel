@@ -115,7 +115,7 @@ func (l Lookup) load(path, source string) (Key, error) {
 	pub := path
 	if !strings.HasSuffix(path, ".pub") {
 		pub = path + ".pub"
-		if _, err := os.Stat(pub); errors.Is(err, fs.ErrNotExist) {
+		if _, err := os.Stat(pub); errors.Is(err, fs.ErrNotExist) { //nolint:gosec // G703: the key the person named
 			// A key file named with no .pub beside it may itself be
 			// the public line.
 			pub = path

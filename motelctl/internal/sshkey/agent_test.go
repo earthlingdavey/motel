@@ -93,7 +93,7 @@ func TestNoTerminalSigning(t *testing.T) {
 			t.Errorf("%s: not said to need a passphrase with the agent holding another key", key.Path)
 		}
 		err := sign(key)
-		if err == nil || !strings.Contains(err.Error(), "ssh-add "+path) || !strings.Contains(err.Error(), "r tries again") {
+		if err == nil || !strings.Contains(err.Error(), "(ssh-add "+path+")") || !strings.Contains(err.Error(), "r tries again") {
 			t.Errorf("%s with the agent lacking it: %v", key.Path, err)
 		}
 	}
@@ -109,5 +109,74 @@ func TestNoTerminalSigning(t *testing.T) {
 	sshAdd(t, "", "-d", path+".pub")
 	if err := sign(byPub); err == nil || !strings.Contains(err.Error(), "ssh-add") {
 		t.Errorf("signing after the agent dropped the key: %v", err)
+	}
+}
+
+// TestSignHelper is not a test of its own: TestNoTerminalUnderAPty runs
+// the test binary with it, under a pty, to sign as the TUI does with a
+// controlling terminal there.
+func TestSignHelper(t *testing.T) {
+	path := os.Getenv("MOTELCTL_SIGN_HELPER")
+	if path == "" {
+		t.Skip("run by TestNoTerminalUnderAPty")
+	}
+	l := Lookup{Getenv: func(string) string { return "" }, Run: local.Exec{}}
+	key, err := l.load(path, SourceFlag)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = Keygen{Run: local.Exec{}, NoTerminal: true}.Sign(context.Background(), key, Namespace, []byte(`{"aud":"x"}`))
+	if err == nil {
+		_, _ = os.Stdout.WriteString("RESULT signed\n")
+		return
+	}
+	_, _ = os.Stdout.WriteString("RESULT failed: " + err.Error() + "\n")
+}
+
+// TestNoTerminalUnderAPty signs, as the TUI does, under a real pty
+// (script(1) makes one and puts the program in a session whose
+// controlling terminal it is): an encrypted key the agent does not
+// hold writes nothing that looks like a prompt to the terminal, and
+// fails within seconds, saying to add its private key file. Without
+// the no-terminal signing, ssh-keygen would ask on that terminal and
+// wait there.
+func TestNoTerminalUnderAPty(t *testing.T) {
+	script, err := exec.LookPath("script")
+	if err != nil {
+		t.Skip("NOT RUN: no script(1) to make a pty with; the no-terminal signing is not held here")
+	}
+	bin, err := exec.LookPath("ssh-keygen")
+	if err != nil {
+		t.Skip("NOT RUN: no ssh-keygen")
+	}
+	realAgent(t)
+	path := makeKey(t, bin, "ed25519")
+	if out, err := exec.Command(bin, "-q", "-p", "-N", "secretpw", "-P", "", "-f", path).CombinedOutput(); err != nil {
+		t.Fatalf("setting a passphrase: %v %s", err, out)
+	}
+	self, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, named := range []string{path, path + ".pub"} {
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		cmd := exec.CommandContext(ctx, script, "-qec", self+" -test.run=^TestSignHelper$ -test.count=1", "/dev/null")
+		cmd.Env = append(os.Environ(), "MOTELCTL_SIGN_HELPER="+named)
+		start := time.Now()
+		out, _ := cmd.CombinedOutput()
+		took := time.Since(start)
+		cancel()
+		tty := string(out)
+		for _, prompt := range []string{"Enter passphrase", "Enter PIN", "passphrase for"} {
+			if strings.Contains(tty, prompt) {
+				t.Errorf("%s: ssh-keygen asked on the terminal (%q):\n%s", named, prompt, tty)
+			}
+		}
+		if took > 5*time.Second {
+			t.Errorf("%s: signing took %s: it waited on the terminal", named, took)
+		}
+		if !strings.Contains(tty, "RESULT failed:") || !strings.Contains(tty, "(ssh-add "+path+")") {
+			t.Errorf("%s: want a failure naming %s for ssh-add; the terminal shows:\n%s", named, path, tty)
+		}
 	}
 }

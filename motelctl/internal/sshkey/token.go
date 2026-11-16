@@ -115,7 +115,7 @@ func (k Keygen) Sign(ctx context.Context, key Key, namespace string, message []b
 		// and no terminal opens.
 		if k.NoTerminal {
 			path := termtext.From(privatePath(key))
-			return nil, fmt.Errorf("%s did not sign: if it needs its passphrase or PIN, the TUI does not ask for one while its screen holds the terminal; add the key to the agent (ssh-add %s), then r tries again. ssh-keygen says: %s", key.Shown, path, termtext.From(last))
+			return nil, fmt.Errorf("%s did not sign: the TUI asks for no passphrase or PIN while its screen holds the terminal. If it needs its passphrase, add the key to the agent (ssh-add %s), then r tries again; a hardware key that requires its PIN cannot be used in the TUI for now. ssh-keygen says: %s", key.Shown, path, termtext.From(last))
 		}
 		if key.Path != "" && !strings.HasSuffix(key.Path, ".pub") && encryptedKeyFile(key.Path) && !k.terminal() {
 			// ssh-add takes the private key: Shown may name its .pub.
