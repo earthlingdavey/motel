@@ -9,6 +9,7 @@ import (
 	"github.com/caddyserver/caddy/v2/caddyconfig/caddyfile"
 
 	"github.com/smallhoursorg/motel/box/proof"
+	"github.com/smallhoursorg/motel/liveswap/access"
 )
 
 // Shape is what the box needs to know about a Caddyfile, and all it
@@ -25,6 +26,15 @@ type Shape struct {
 	Host string
 	// Signers are the box block's signer lines, in file order.
 	Signers proof.Signers
+	// Access are the box block's signer and person lines as key lines,
+	// in file order, and its grant lines: held by Walk to agree across
+	// the two readings, as the signers are. Empty for a block without a
+	// person or a grant line. Nothing admits a person yet.
+	Access access.Lines
+	// AccessWarnings are what access.CheckLines took with a doubt, for
+	// describe to print; none for a block without a person or a grant
+	// line.
+	AccessWarnings []string
 	// Apps are the names of the global liveswap block's `app` lines, in
 	// file order, as a result reports them; a name outside liveswap's
 	// app-name grammar is left out, since liveswap refuses the file at
@@ -120,7 +130,8 @@ const reasonNoSigner = "has no signer"
 // Caddy's own placeholder expansion with an empty environment, because
 // Caddy expands `{$NAME:default}` before it tokenizes and a default can
 // carry a quote or a newline that re-shapes the file. Both readings
-// must pass and agree on the host and the signers.
+// must pass and agree on the host, the signers and the person and grant
+// lines.
 func Walk(input []byte) (*Shape, error) {
 	if len(bytes.TrimSpace(input)) == 0 {
 		return nil, refuse("is empty")
@@ -133,10 +144,17 @@ func Walk(input []byte) (*Shape, error) {
 	if err != nil {
 		return nil, err
 	}
-	if raw.Host != expanded.Host || !sameSigners(raw.Signers, expanded.Signers) {
+	if !sameReading(raw, expanded) {
 		return nil, refuse("reads differently once its placeholders are expanded")
 	}
 	return raw, nil
+}
+
+// sameReading is whether the two readings agree on what a proof or a
+// person's admission rests on: the host, the signers, and the person
+// and grant lines.
+func sameReading(raw, expanded *Shape) bool {
+	return raw.Host == expanded.Host && sameSigners(raw.Signers, expanded.Signers) && raw.Access.Equal(expanded.Access)
 }
 
 func sameSigners(a, b proof.Signers) bool {
@@ -201,7 +219,10 @@ func walk(input []byte) (*Shape, error) {
 		blocks   int // top-level blocks opened, in order
 		boxes    int
 		hasTrust bool
-		pending  []string // addresses of a header continued by a trailing comma
+		// appPlaceholder: an app line names its app through a
+		// placeholder, which this reading takes as written.
+		appPlaceholder bool
+		pending        []string // addresses of a header continued by a trailing comma
 	)
 	lines := splitLines(tokens)
 	for _, line := range lines {
@@ -362,6 +383,9 @@ func walk(input []byte) (*Shape, error) {
 				child.kind = kindNotify
 			}
 		case kindLiveswap:
+			if first.Text == "app" && len(args) > 0 && strings.Contains(args[0], "{$") {
+				appPlaceholder = true
+			}
 			if first.Text == "app" && len(args) > 0 && appName.MatchString(args[0]) {
 				shape.Apps = append(shape.Apps, args[0])
 				if shape.AppEnv == nil {
@@ -406,6 +430,25 @@ func walk(input []byte) (*Shape, error) {
 					return nil, refuse("has a bad " + err.Error())
 				}
 				shape.Signers = append(shape.Signers, s)
+				shape.Access.Keys = append(shape.Access.Keys, access.SignerKey(s.Principal, s.Type, s.B64, s.Key))
+			case "person":
+				if opens {
+					return nil, refuse("has a bad " + lineTakesNoBlock("person"))
+				}
+				k, err := access.ParsePerson(args)
+				if err != nil {
+					return nil, refuse("has a bad " + err.Error())
+				}
+				shape.Access.Keys = append(shape.Access.Keys, k)
+			case "grant":
+				if opens {
+					return nil, refuse("has a bad " + lineTakesNoBlock("grant"))
+				}
+				g, err := access.ParseGrant(args)
+				if err != nil {
+					return nil, refuse("has a bad " + err.Error())
+				}
+				shape.Access.Grants = append(shape.Access.Grants, g)
 			case "deploy_trust":
 				child.kind = kindTrust
 			}
@@ -452,6 +495,19 @@ func walk(input []byte) (*Shape, error) {
 		return nil, refuse("has a box_webhook site whose address is not one bare hostname (" + proof.Bound(strings.Join(hooks[0].addresses, ", ")) + ")")
 	}
 	shape.Host = host
+	// After every rule above, so a file without person or grant lines
+	// is refused as it always was; CheckLines takes such a block as it
+	// is.
+	// A block without a person or a grant line hands out no key: its
+	// signer lines were never held to the rules across lines, and a
+	// reader of Access need not remember to ask Declared first.
+	if !shape.Access.Declared() {
+		shape.Access = access.Lines{}
+	}
+	around := &access.Around{Apps: shape.Apps, Channels: shape.Notify != nil && shape.Notify.Channels, AppPlaceholder: appPlaceholder}
+	if shape.AccessWarnings, err = access.CheckLines(shape.Access, around); err != nil {
+		return nil, refuse("has a bad " + err.Error())
+	}
 	return &shape, nil
 }
 

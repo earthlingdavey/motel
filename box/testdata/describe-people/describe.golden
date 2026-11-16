@@ -1,0 +1,12 @@
+host deploy.example.com
+app blog
+app example
+signer alice@example.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJTxbCB1QdiskXvEbkxkjl5p09A5ZsEN9HC/xOJOxi8j
+signer carol@example.com ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQCw4qVJUWkrTs8sGAaGVeWuzuexqDgvN+0jU7HBXVFz1X0tsaPnCLNyYM2HRjTKhkmrqd6jwkwmKcOOhs4EdMQN4r+5809n1H82TMR1HAjMQEA4XUIAsp1DctRbE3PZcUViRBOT1S3d1MXwqqMJPKMyTMIrcLOZYVYh8Os3HvzmopuR9ypPSb+y+asCXisrPI68zeVptg0Dc+1vfeuki5/UyZgbUz+fMbsXYgRFfL7CYhKBT8PMszl35ox00l08msDAaqLkkmWXpmiLFRnsxU1XoUWPW8RQczWuhAfd+t2KM7oOmFqTYZ63kH435I80qHG4MzQRKMJKiEewTN+peWv1
+person alice@example.com ssh-ed25519 SHA256:KHM2mBw22Bx9FvZtqagqhJYjJu6DbbnoAPK48jerwkU signer
+person alice@example.com sk-ssh-ed25519@openssh.com SHA256:YNIkYv73yohtpyU0y2DvkXXfTWop/p31YUX5YmPsCvA
+person bob@example.com ecdsa-sha2-nistp256 SHA256:jcqs/XJfUuLe6kYafE3bV9wP6RnrHJFczBGFTBFMyeg
+grant alice@example.com viewer box
+grant bob@example.com viewer app example
+grant bob@example.com viewer app blog from 198.51.100.0/24 2001:db8:5::/48
+warning signer carol@example.com: an ssh-rsa key signs commits but cannot be a person's key; for carol@example.com to be a person, add a person line with an ed25519 or ecdsa key (ssh-keygen -t ed25519)
