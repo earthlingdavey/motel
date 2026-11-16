@@ -231,8 +231,10 @@ var (
 	// nameRe is a name as a person or signer line holds one
 	// (box/proof/signers.go), at most 256 bytes.
 	nameRe = regexp.MustCompile(`^[A-Za-z0-9._@+-]{1,256}$`)
-	// roleRe is a role as a box names one in a whoami's roles: a word
-	// printed after the client's own label, in the box's list.
+	// roleRe is the shape of a role in a whoami's roles. A box grants
+	// one today, viewer; the shape is wider so that a later motel's
+	// role does not make the whole answer unreadable, and a word that
+	// is not viewer is printed quoted, as the box's (cli's whoamiView).
 	roleRe = regexp.MustCompile(`^[a-z][a-z_-]{0,31}$`)
 )
 

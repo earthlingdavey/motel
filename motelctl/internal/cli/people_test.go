@@ -32,8 +32,8 @@ func meFingerprint() string {
 }
 
 // hostileWhoAmI is about runKey's key, from the box it asks (the fake
-// box's address); a role a box may name later (auditor) is said as a
-// role. whoami prints no box value outside its grammar: an answer with
+// box's address); a role a box may name later (auditor) is quoted as
+// the box's word. whoami prints no box value outside its grammar: an answer with
 // a hostile name, release, role or scope is not taken at all (client's
 // TestWhoamiNullsAndRoles), and a key or box that differs is quoted
 // (TestWhoamiAboutAnotherKeyOrBox).

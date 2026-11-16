@@ -149,7 +149,16 @@ func whoamiView(me wire.WhoAmI, asked string, key sshkey.Key, now time.Time) ren
 		Now:        now,
 	}
 	for _, r := range me.Roles {
-		v.Roles = append(v.Roles, render.Role{Role: tx(r.Role), Scope: tx(r.Scope)})
+		// viewer is the one role a box grants today (liveswap/access,
+		// lines.go), and is said as a word. Any other word the box
+		// names, a later motel's role among them, is the box's own and
+		// is quoted as such: the client took it by its shape alone
+		// (client's roleRe), and a box chooses it.
+		role := tx(r.Role)
+		if r.Role != "viewer" {
+			role = termtext.Quote(r.Role)
+		}
+		v.Roles = append(v.Roles, render.Role{Role: role, Scope: tx(r.Scope)})
 	}
 	return v
 }
