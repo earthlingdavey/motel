@@ -199,6 +199,14 @@ DATA in the title bar, with no box.
 | `internal/tui/demo` | a box made of fixtures: `--demo`, and the TUI's tests |
 | `internal/tui/hostile` | test support: the hostile fixture's attacks, and a terminal that records bytes |
 
+Release builds are made with the workspace off (`make build-motelctl`,
+`GOWORK=off`), so the binary links exactly the versions this go.mod
+records, the ones Dependabot, govulncheck and a reader go by: in the
+workspace Go takes each module at the highest version any workspace
+module requires, which can be another. `TestWorkspaceAgrees` fails, naming
+the module, when a build in the workspace would link a version this
+go.mod does not record.
+
 The module links no Caddy (`TestLinksNoCaddy`): the wire types come from
 `liveswap/wire`, which imports only the standard library. The tests that
 run motelctl against the real `liveswap_webhook` and `box_webhook`
