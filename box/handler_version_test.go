@@ -37,10 +37,17 @@ func wantProtocol(t *testing.T, what string, w *httptest.ResponseRecorder, code 
 	if w.Code != code {
 		t.Errorf("%s: got %d, want %d: %s", what, w.Code, code, w.Body)
 	}
-	if got := sent(w).Values("Motel-Protocol"); len(got) != 1 || got[0] != "1" {
+	wantProtocolOnly(t, what, sent(w))
+}
+
+// wantProtocolOnly fails unless h carries Motel-Protocol 1, once, and
+// no header that names the release linked in.
+func wantProtocolOnly(t *testing.T, what string, h http.Header) {
+	t.Helper()
+	if got := h.Values("Motel-Protocol"); len(got) != 1 || got[0] != "1" {
 		t.Errorf("%s: Motel-Protocol %q, want 1", what, got)
 	}
-	for k, vs := range sent(w) {
+	for k, vs := range h {
 		for _, v := range vs {
 			if strings.Contains(v, testRelease) {
 				t.Errorf("%s: header %s: %q names the release", what, k, v)
@@ -96,6 +103,31 @@ func TestProtocolNotReleaseOnVerifiedAnswers(t *testing.T) {
 
 	recordDecide(t, errors.New("refused"))
 	wantProtocol(t, "the 403", p.get(t, "/", p.token(t, "")), http.StatusForbidden)
+}
+
+// TestProtocolNotReleaseOnPersonAnswers: a person's answers from the
+// box webhook on `/`, with a release linked in, carry Motel-Protocol
+// and no header names the release: a viewer of the box's, and the 403
+// to a person whose grants are on an app alone.
+func TestProtocolNotReleaseOnPersonAnswers(t *testing.T) {
+	linkRelease(t, testRelease)
+	b := newPeopleBox(t)
+	b.install()
+	b.load()
+	now := time.Now()
+	for _, c := range []struct {
+		name string
+		code int
+	}{
+		{"carol@example.test", 0}, // the box's status, read from the box's own paths: whatever they hold
+		{"alice@example.test", http.StatusForbidden},
+	} {
+		w := b.get("/", b.people[c.name].Token(peopleIdentity, now, time.Minute))
+		if w.Code == http.StatusUnauthorized || c.code != 0 && w.Code != c.code {
+			t.Errorf("%s GET /: %d %s, want %d", c.name, w.Code, w.Body, c.code)
+		}
+		wantProtocolOnly(t, c.name+" GET /", w.Result().Header)
+	}
 }
 
 // TestNoMotelHeaderBeforeAToken: the flat 401 and the 405 that comes

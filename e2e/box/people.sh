@@ -387,8 +387,9 @@ for path in /demo /_motel/whoami /; do
 	same "$path: no token at all is the same refusal" "d$tag" "n$tag"
 	for k in d n s f x a; do
 		[ -z "$(motel_headers "$k$tag")" ] || fail "$path: an answer to a caller not accepted names motel: $(motel_headers "$k$tag")"
+		no_release "$k$tag" || fail "$path: a refusal names the release in a header: $(grep -F "$RELEASE" "$work/$k$tag.h")"
 	done
-	pass "$path: no refusal carries a Motel- header ($(head -1 "$work/d$tag.h"), $(cat "$work/d$tag.b"))"
+	pass "$path: no refusal carries a Motel- header or names the release ($(head -1 "$work/d$tag.h"), $(cat "$work/d$tag.b"))"
 	get "v$tag" -H "Authorization: Motel $P_VERA" "$BASE$path"
 	[ "$CODE" = 200 ] && [ "$(motel_headers "v$tag")" = "motel-protocol: 1" ] && no_release "v$tag" \
 		&& pass "$path: vera's answer is 200 and carries Motel-Protocol 1 alone, no header naming $RELEASE" \
