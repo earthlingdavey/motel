@@ -624,6 +624,37 @@ properly needs the type checker, which is a real dependency for a
 property no operator ever sees. The trigger for revisiting is
 backwards edges reappearing *despite* this table.
 
+### Who may take which action
+
+The webhook's methods and query shapes are a route table (`routes`,
+`handler.go`): each row a method, the shape of its query or body, an
+action, and the function that answers. The handler authenticates
+first, as the behaviour specification requires; answers 404 to a token
+a global source accepted for a name that is no app, whatever the
+method; finds the row, or answers 405 with `Allow: GET, POST`; then
+asks `access.Decide` whether the principal may take the row's action,
+and calls the row's function. `box_webhook` holds its own table for
+its `/` and finds the row first, so its 405 still comes before
+authentication; then it authenticates, asks `Decide` and calls the
+row's function (box/DESIGN-box.md, "Handler contract").
+
+`access/` holds the actions (`app.status`, `app.deploy_record`,
+`app.deploy`, `app.rollback`, `box.status`, `box.push_result`,
+`box.push`), the principal kinds and `Decide`, which refuses every pair
+its table does not list. The principals are what a deploy token can
+be on a route: a deploy source of the app in the path, which may take
+every app action on that app and on no other, and the box channel's
+source, which may take the three box actions; a token a global source
+verified names no app and gets the 404 before the table. Authentication already chose the sources by the path's app,
+so `Decide` refuses nothing it accepted and every answer is the one
+the method switch gave; a refusal, which no principal meets, would be
+a 403 `forbidden`. The tests hold the tables to each other both ways
+(`TestEveryRouteHasAnAction`, `TestEveryActionHasARoute`), write the
+decide table out cell by cell (`TestDecideTable`), and drive every
+method, path and query for each kind of caller (`FuzzNoRouteNoAnswer`,
+in each webhook): a request that matches no row is answered 401, 404
+or 405 where it was before, and reaches no row's function.
+
 ### The response observer (`observe.go`)
 
 `observe <app>` is a handler the operator writes first in an
@@ -704,6 +735,7 @@ plugin's handler can take its ID.
 | `ownfile.go` | how a file motel keeps in an app dir is written and read — temp file + rename; no link followed at the name, no FIFO held, size-bounded — shared by the deploy records, `state.json` and the deploy marker |
 | `caddyfile.go` | all Caddyfile parsing (global option, directive, upstreams) but the `deploy_trust` block, which is `deploytrust.Parse`; NO defaults here — Provision owns them, reading a zero field as unset, so a value below an option's minimum (0 included) is refused here, named; `soak` and `deploy_log_lines`, whose 0 is a setting, are pointers |
 | `handler.go` | the webhook: payload validation, deploy dispatch, the status endpoint, and every body's filter (`RespondJSON`); authentication is `deploytrust`'s |
+| `access/` | leaf package: the webhooks' actions, the principal kinds and `Decide`, the one table of who may take which action; `handler.go` and the box webhook each hold a route table that names an action per row ("Who may take which action") |
 | `redact.go` | the response filter (`Redactor`) that `RespondJSON` applies: known `env_file` values in their encoded forms, a safe list, shape rules, entropy; the four rules every writer of a body holds head the file |
 | `deploytrust/` | leaf package: deploy auth — the `deploy_trust` grammar (`Parse`), its sources and verifiers (OIDC + local-key JWT verification), the webhook preamble (`Limiter.Authenticate`) and what a failed attempt costs the journal (`Limiter`, on an injected clock). Imports nothing of liveswap's; the box webhook authenticates through it too. `trusttest/` beside it mints tokens and runs an issuer for tests |
 | `internal/dispenser/` | leaf package: the one Caddyfile rule the parsers here and `deploytrust.Parse` apply alike — a repeated subdirective is refused — in one place so the two cannot drift |
@@ -1234,3 +1266,7 @@ Dated one-liners; the full text of each is in git.
   counts of an app's responses (class, time to headers, cache verdict),
   measured on the request path before and after (part of #418, slice
   three of notify and metrics).
+- 2026-11-14 — The webhook and the box webhook decide who may take
+  which action through one table, `access.Decide`, behind a route
+  table each, in place of a switch on the method ("Who may take which
+  action"). Every answer is unchanged.

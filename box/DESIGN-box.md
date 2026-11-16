@@ -1721,6 +1721,7 @@ says. The workflow's action is in the last column.
 | 404 | — | `no result and no marker for <id>: swept, or never admitted` | handler | after a POST answered 202 or 504, or not answered at all: not yet — keep polling to the 30-minute bound, then red naming `journalctl -u motel -u motel-box-apply`; otherwise fail |
 | 500 | — | `could not read <what>: <error>` / `could not check the push: <error>; nothing changed` | handler | fail; `journalctl -u motel` on the box |
 | 405 / 415 / 413 | — | `method not allowed` / `the bundle is a gzip tarball` / `the bundle is larger than 16 MiB` | handler | fail |
+| 403 | — | `forbidden` | handler, when `access.Decide` refuses the route's action: the box channel's source holds every box action, so no request meets it today (liveswap/DESIGN-liveswap.md, "Who may take which action") | fail; a bug in motel |
 | 409 | — | `a push is being admitted; retry in a moment` | handler | retry |
 | 409 | — | `a push is pending: <id>, <age> old` | handler | retry; after 30 min, `journalctl -u motel-box-apply -u motel-box-apply.path`, and if the path unit is `failed`, `systemctl restart motel-box-apply.path` once the journal's cause is cleared, again ten seconds later if that fails |
 | 422 | `refused` | `bundle: <what>` | handler or applier | fail |

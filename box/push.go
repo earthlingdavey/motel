@@ -40,6 +40,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/smallhoursorg/motel/box/proof"
+	"github.com/smallhoursorg/motel/liveswap/deploytrust"
 )
 
 // headerRequestID carries the id the workflow chose for its push.
@@ -84,11 +85,7 @@ func msgCheckFailed(err error) string {
 }
 
 // push is `POST /`.
-func (h *Handler) push(w http.ResponseWriter, r *http.Request) error {
-	ident, ok, err := h.authenticate(w, r, "push")
-	if !ok {
-		return err
-	}
+func (h *Handler) push(w http.ResponseWriter, r *http.Request, ident deploytrust.Identity) error {
 	ids := r.Header.Values(headerRequestID)
 	if len(ids) != 1 {
 		return respond(w, http.StatusBadRequest, errorBody(msgRequestID))
@@ -388,10 +385,7 @@ func (h *Handler) waitResult(ctx context.Context, id string) (*result, error) {
 }
 
 // result is `GET /?result=<id>`.
-func (h *Handler) result(w http.ResponseWriter, r *http.Request) error {
-	if _, ok, err := h.authenticate(w, r, "result"); !ok {
-		return err
-	}
+func (h *Handler) result(w http.ResponseWriter, r *http.Request, _ deploytrust.Identity) error {
 	q, err := url.ParseQuery(r.URL.RawQuery)
 	if err != nil || len(q) != 1 || len(q["result"]) != 1 {
 		return respond(w, http.StatusBadRequest, errorBody(msgResultID))
