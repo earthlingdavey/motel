@@ -47,6 +47,19 @@ and the remedy (`ssh-keygen -t ed25519`); ECDSA is not accepted yet, so
 an agent that makes only P-256 keys cannot be used for now. motelctl writes
 nothing to disk.
 
+**A key an agent holds** (`ssh-agent`, a password manager's agent, a
+hardware token's): motelctl signs with the system `ssh-keygen` and lists
+an agent's keys with `ssh-add`, and both reach an agent through
+`SSH_AUTH_SOCK` alone. Neither reads `IdentityAgent` from
+`~/.ssh/config`, so an agent named only there works for `ssh` and not
+for motelctl: set `SSH_AUTH_SOCK` to the agent's socket. Without it a
+command that signs stops before anything is sent (exit 2), saying to
+name a key, or that `ssh-keygen` could not sign with the one named;
+`motelctl key`, which signs nothing, still prints the key's line. git's
+`user.signingkey` may be a path or the key itself, as `key::<line>` or
+as a bare line beginning `ssh-`, which git reads the same way; the
+agent then holds the key.
+
 **What a box tells a key it does not take.** Nothing: every refusal is
 the same 401, with no header that names motel. So after its one retry
 motelctl names every cause it cannot tell apart (no line lists the key,

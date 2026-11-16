@@ -77,10 +77,17 @@ func Resolve(ctx context.Context, l Lookup) (Key, error) {
 	if _, ok := local.BoxRepo(ctx, l.Run, l.Dir); ok &&
 		local.GitConfig(ctx, l.Run, l.Dir, "gpg.format") == "ssh" {
 		if v := local.GitConfig(ctx, l.Run, l.Dir, "user.signingkey"); v != "" {
-			// git also takes the key itself, as key::<line>: then the
+			// git also takes the key itself, as key::<line>, and still
+			// reads a value that begins "ssh-" as one (git-config,
+			// user.signingKey: "a raw key which begins with ssh- ... is
+			// treated as key::..."; gpg-interface.c, is_literal_ssh_key),
+			// which is how an agent's own set-up may write it. Then the
 			// agent holds it, as for a key with no file.
 			if line, ok := strings.CutPrefix(v, "key::"); ok {
 				return fromLine(line, "", "git's user.signingkey key", SourceGit)
+			}
+			if strings.HasPrefix(v, "ssh-") {
+				return fromLine(v, "", "git's user.signingkey key", SourceGit)
 			}
 			return l.load(v, SourceGit)
 		}
