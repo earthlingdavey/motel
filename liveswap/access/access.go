@@ -130,8 +130,11 @@ func (f *Forbidden) Error() string {
 // Decide says whether p may take action a on resource: the app's name
 // for an app action, "" for a box action. nil is allowed; anything
 // else is refused, an action or a kind the table does not know
-// included. An AppDeployer is allowed on its own app only. The error
-// says why, for a test; no principal of today's meets one on a route.
+// included. An AppDeployer is allowed on its own app only. A person
+// refused, or a deploy token on a person's route, gets a *Forbidden,
+// which the handlers answer as a 403 naming what is needed; any other
+// error says why for a test, and no principal of today's meets one on
+// a route.
 func Decide(p Principal, a Action, resource string) error {
 	if p.Kind == Person {
 		return decidePerson(p, a, resource)

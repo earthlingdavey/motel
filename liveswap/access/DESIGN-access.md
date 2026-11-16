@@ -212,8 +212,8 @@ names a declared key, or the 404; an app's source's is the flat 401.
 | `box.status` | `GET /` on `box_webhook` | — | yes | a viewer of the box |
 | `box.push_result` | `GET /?result=<id>` | — | yes | never (403 naming a deploy token of the box) |
 | `box.push` | `POST /` | — | yes | never |
-| `box.whoami` | `GET /_motel/whoami` | 403, needs a declared key | 403, as for a deployer | any person |
-| `box.apps` | `GET /_motel/apps` | 403, needs a declared key | 403 | any person |
+| `box.whoami` | `GET /_motel/whoami` | 403, needs a declared key (a global source's token: an app's own is the flat 401 under `/_motel/`) | the flat 401: liveswap's webhook, which serves `/_motel/`, does not know the box channel's source (the 403 only when it is a global liveswap source too) | any person |
+| `box.apps` | `GET /_motel/apps` | as for `box.whoami` | as for `box.whoami` | any person |
 
 A box grant covers every app. A pair the table does not hold is
 refused. Three things are structural: no person's cell holds an act; no
@@ -422,6 +422,7 @@ access's examples:
 | A list row's `newest_deploy` can name the deploy before the newest for one read, when a record is rewritten between the row's stat of the records and its read (a deploy or a rollback under way) | 1 | 5 | 3 | 2, 2 | the row is a moment's reading, as two requests a moment apart are; a record is replaced whole, so what is read is one record, never a mix, and the next read (a client polls) orders it rightly. Ordering by the time read from the open file means opening every record, which `newestDeploySummary` exists not to do (row 20) |
 | Between a push taking the deploy lock and being shown in flight (`beginDeploy`, after the app's dirs pass `writeRefusal`, a few file checks), a status read shows no deploy in flight while a second deploy is already told 409 | 1 | 5 | 3 | 1, 2 | it lasts microseconds and misleads nobody for longer: the next read shows the push. Showing it before `writeRefusal` would need that refusal's answer to clear it first, one more way out to keep in step for no reader's benefit |
 | A deploy by URL or a rollback whose app directories fail `writeRefusal` is shown in flight from its start to that refusal (a few file checks), where a push refused the same way is never shown: `deployLocked` marks the deploy in flight where it logs `deploy started` and sends the lifecycle's start, before its first check | 1 | 1 | 3 | 1, 2 | `deploying` says what the journal and the lifecycle say, that the deploy started; it is cleared before the refusal is answered, so no answer of the deploy holds it. Marking it after the check would have the status deny a deploy the journal has already announced. It takes app directories that are not as motel made them |
+| A status read at `GET /_motel/<app>` with the app's deploy token, which named `<app>` before this release as any last path segment does, gets the flat 401 (a global source's token: 404), as row 14's `POST` there does; and the box channel's token under `/_motel/` gets the flat 401 where the table's cell for a deploy source says 403 | 2 | 5 | 1 | 2, 2 | as row 14: no template, doc or client asks there, and the answer is loud. Judging a token under `/_motel/` against every app's sources, or the box's, would let a stranger buy a verification per source |
 
 ## Not in this release
 

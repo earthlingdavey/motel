@@ -252,8 +252,8 @@ Before you upgrade:
   `/var/lib/motel-box/applied.json` and deletes
   `/etc/motel/secrets/_box.env`, and the next push (without the block,
   the `observe` lines and the directory) applies.
-- **Going back to a release without people** (0.6.x, or a build
-  before `person` and `grant`) needs the Caddyfile emptied of them
+- **Going back to a release without people** (0.7.0 and every earlier
+  one) needs the Caddyfile emptied of them
   first. Those releases refuse a `box` block with a `person` or `grant`
   line: `validate` with the old binary says `unknown box subdirective
   "person"` (or `"grant"`), and the install's restart fails with nothing

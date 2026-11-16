@@ -121,12 +121,15 @@ func TokenFor(box Box, getenv func(string) string) error {
 	return nil
 }
 
-// The waits before the one retry of a 401. For a person's token one
-// second covers the 55 to 61 ms after every start in which motel
-// refuses a valid token (#473), and the token sent is still good, so
-// it is sent again. For a deploy token it is deploy.sh's three: a box
-// refuses the first token under an issuer's new signing key while it
-// fetches the key.
+// The waits before the one retry of a 401. For a person's token it is
+// one second, and the token sent is still good, so it is sent again.
+// It was written for the moments after a start in which motel refused
+// a valid token (#473); that window was a deploy token's only (a
+// person's registry is built before any request is served, and
+// e2e/box/people.sh counts no person refused across restarts), and it
+// is closed. No case is known that a person's retry covers now. For a
+// deploy token it is deploy.sh's three: a box refuses the first token
+// under an issuer's new signing key while it fetches the key.
 const (
 	retryPerson = time.Second
 	retryDeploy = 3 * time.Second
