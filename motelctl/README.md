@@ -121,33 +121,44 @@ made by hand. Accepted:
 | Residual | S | O | D | Score | Size of a fix | Outcome |
 |---|---|---|---|---|---|---|
 | A new message could splice box text without a test failing | 2 | 2 | 3 | 12 | 3 (typed message parts) | accepted |
+| The TUI's marks (`▲ ✖ ⟳`) and box-drawing characters may be double width in some terminals, and misalign its columns (a plain-character mode is a later addition) | 1 | 2 | 1 | 2 | 2 | accepted |
+| The client's one retry of a 401 is a request the TUI's engine does not count against its rate | 1 | 1 | 3 | 3 | 2 | accepted |
 | A labelled value under the cap keeps its runs of spaces, so on a narrow terminal a long run can wrap the rest of the value to the start of the next row, where it can look like a label (the `hostile-status` golden shows one). Log lines keep their spacing on purpose | 2 | 1 | 3 | 6 | 2 (wrap-aware printing) | accepted |
 
 ## The TUI
 
-`motelctl tui` is a view over the reads above, in the same process: it
-calls the client's functions the commands call and makes no request of
-its own (`TestTUIImports`), and every screen names the command that
-reads the same (`model.Actions`, held by `TestActionsAreCommands`). It
-only reads. The apps screen is sorted by what needs a look, with a
-strip that says why; a person with one app opens on it. An app's
-screen shows its state and deploys; a deploy's record is laid out for
-reading a failure, its log tail last.
+`motelctl tui` is a view over the reads above, in the same process. Its
+packages see the box through `model.Client`, one method per command,
+which `internal/cli/tui.go` alone builds over the client's reads; no
+package of the TUI reaches the client, a transport or a program
+(`TestTUIImports`). Every read goes through the table `model.Actions`,
+each entry naming the command whose read it makes
+(`TestActionsAreCommands`). It only reads. The apps screen is sorted by
+what needs a look, with a strip that says why; a person with one app
+opens on it. An app's screen shows its state and deploys; a deploy's
+record is laid out for reading a failure, its log tail last.
 
 - **The rate.** A box allows a person 2 requests a second with a burst
-  of 60. The TUI keeps to 1.5 a second and 30 at once: the open app
-  every 5 s, the others every 30 s, spread over the cycle (longer when
-  there are more apps than that covers). A 429 is waited out for every
-  read, and slows the rest of the session; no answer backs off from 2
-  s to 60 s. A 401, a token not signed, or a certificate that did not
-  verify stops every read and says why in the title bar; a 403 stops
-  that app's alone. Ten idle minutes pause it.
+  of 60. The TUI keeps to 1.5 a second and 30 at once. The open app is
+  read every 5 s; every other app takes its turn in the rest of the
+  budget, every 30 s, or longer with more apps than that covers (about
+  55 s for 60 apps, 3 minutes for 200), each at its own place in the
+  cycle. A 429 is waited out for every read, by its `Retry-After`, or
+  30 s with none (the time the box's whole burst takes to refill), and
+  slows the rest of the session; no answer backs off from 2 s to 60 s.
+  A 401, a token not signed, or a certificate that did not verify stops
+  every read and says why; `r` asks once more. A 403 or a 404 stops
+  that read alone until `ctrl-r`. Ten idle minutes pause it.
 - **The token** lasts 600 s, the longest a box takes, and is signed
   again a minute before it ends: a hardware key is touched about every
-  nine minutes, and the title bar says when. Nothing is written to disk.
-- **Every value shows its age**, and a row three missed reads old says
-  `stale`. Colour only repeats a mark (`✖ ▲ ⟳ ? ·`) or a word;
-  `NO_COLOR` turns it off.
+  nine minutes, and the title bar says when. A key file that needs a
+  passphrase the agent does not hold is refused before the screen
+  opens (exit 2): ssh-keygen could not ask for it under the screen.
+  Nothing is written to disk.
+- **Every value shows its age**, and a row whose last three reads, by
+  its own interval, failed or did not come says `stale` in its state.
+  Colour only repeats a mark (`✖ ▲ ⟳ ? ·`) or a word; `NO_COLOR`
+  turns it off.
 - **Box text on tview.** tview reads `[...]` as tags in table cells,
   titles and text views, and a URL tag makes a real OSC 8 link.
   `tview.Escape` does not stop that (its pattern skips a tag holding a
