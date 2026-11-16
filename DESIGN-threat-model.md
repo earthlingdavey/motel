@@ -131,7 +131,12 @@ few samples, not for many; the asset is whether an app name exists,
 which a domain or repository name often says anyway. Config load refuses an app
 that resolves to zero trust sources (`App.Validate`,
 liveswap/liveswap.go). Bearer is the only transport, which Caddy
-redacts from access logs.
+redacts from access logs. In the first moments of a start, before
+liveswap's Start has installed the apps, a token is checked against
+the sources the config built, and only one that verified waits for the
+install (at most 5 s, then a 503 with `Retry-After`, #473): a refused
+token is the flat 401 at once, so no stranger can hold a connection
+open or learn that the box has just started.
 
 Properties that matter to the model:
 

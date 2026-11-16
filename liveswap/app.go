@@ -210,6 +210,10 @@ type managedApp struct {
 	store     stateStore
 	journal   journalReader
 	logger    *zap.Logger
+	// installed is closed by the first install of a spec (installSpec),
+	// and nil from then on: what a request whose token verified before
+	// any Start installed the app waits on (awaitInstalled, #473).
+	installed chan struct{}
 
 	// deployMu serializes deploys per app. TryLock (not a queue): a
 	// concurrent webhook gets an immediate 409 and CI can retry. The
@@ -285,7 +289,7 @@ type managedApp struct {
 }
 
 func newManagedApp(name string) *managedApp {
-	return &managedApp{name: name, phase: "idle", wdNotify: make(chan struct{}, 1)}
+	return &managedApp{name: name, phase: "idle", wdNotify: make(chan struct{}, 1), installed: make(chan struct{})}
 }
 
 // rememberSecrets records a launch's env_file pairs for the response
@@ -428,6 +432,11 @@ func (ma *managedApp) installSpec(owner any, spec *appSpec, verifiers []deploytr
 	// Deploy auth is not tied to the running process, so — unlike the
 	// runner — it is rewired on every reload and takes effect at once.
 	ma.verifiers = verifiers
+	if ma.installed != nil {
+		// Under specMu with the spec, so a waiter woken here finds it.
+		close(ma.installed)
+		ma.installed = nil
+	}
 	ma.logger = logger
 	if ma.runner == nil {
 		ma.runner = newSystemdRunner(manager, logger)
@@ -461,6 +470,38 @@ func (ma *managedApp) currentVerifiers() []deploytrust.Verifier {
 	ma.specMu.RLock()
 	defer ma.specMu.RUnlock()
 	return ma.verifiers
+}
+
+// trust is the app's deploy-auth sources, and whether a Start has
+// installed them. Until the first install (a start of motel, or an app
+// a reload adds) the pooled app holds none, and the handler checks a
+// token against its own config's instead (#473). One read, so the two
+// cannot disagree. An install is never undone: restoreSpec puts back
+// an earlier spec, never none.
+func (ma *managedApp) trust() ([]deploytrust.Verifier, bool) {
+	ma.specMu.RLock()
+	defer ma.specMu.RUnlock()
+	return ma.verifiers, ma.spec != nil
+}
+
+// awaitInstalled waits until a Start has installed the app, ctx ends
+// or the channel that bound returns fires, and reports whether it is
+// installed. bound is called only when there is something to wait
+// for. It starts no goroutine.
+func (ma *managedApp) awaitInstalled(ctx context.Context, bound func() <-chan time.Time) bool {
+	ma.specMu.RLock()
+	installed, ready := ma.spec != nil, ma.installed
+	ma.specMu.RUnlock()
+	if installed {
+		return true
+	}
+	select {
+	case <-ready:
+	case <-ctx.Done():
+	case <-bound():
+	}
+	_, installed = ma.trust()
+	return installed
 }
 
 // snapshot returns a consistent view of the spec and collaborators for

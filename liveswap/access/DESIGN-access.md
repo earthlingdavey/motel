@@ -51,14 +51,20 @@ person. The walk also gives the box's identity, which every token's
 `aud` and the request's `Host` must equal and which no module sees at
 load.
 
-**Built at provision, before any app starts.** A deploy token's sources
-are installed on each app at liveswap's `Start`, so for some tens of
-milliseconds after a start a valid deploy token is refused (issue
-#473). The registry is built in the `box` app's `Provision`, and a
-person's way in reads nothing liveswap's `Start` installs, so a person's
-token is answered from the first request. `TestPersonNotRefusedAfterAStart`
-provisions a whole config, starts nothing, and shows a deploy token
-refused and a person's token answered at that moment.
+**Built at provision, before any app starts.** Caddy may start the
+http app before liveswap, and liveswap installs each app at its
+`Start`, some tens of milliseconds later. A deploy token in that moment
+is checked against the sources the config built at provision and, once
+it verifies, waits for the install, at most 5 s (issue #473). An
+issuer's token whose keys the process has not fetched yet is refused
+then as at any time, since no token waits on an issuer. The
+registry is built in the `box` app's `Provision`, and a person's way
+in reads nothing liveswap's `Start` installs, so a person's token is
+answered from the first request and never waits.
+`TestPersonNotRefusedAfterAStart` provisions a whole config, starts
+nothing, and shows a deploy token held and then told to come back, a
+stranger refused at once, and a person's token answered at that
+moment.
 
 **What admits no one.** A config with no `box` block, which has no
 `box` app and so no registry, and says nothing; and, with a `box`
@@ -244,6 +250,7 @@ Its half on `box_webhook` does the same for that table.
 | 403 | a verified caller `Decide` refuses | `wire.Forbidden`: `{"error":"this needs the viewer role on this app","needs":"viewer","scope":"app"}`; `needs` is `viewer`, `deployer` or `key` (a token a declared key signed), `scope` is `app` or `box`. It names no app and echoes nothing of the request |
 | 404 | a viewer of the box asking for a name that is no app (`unknown app "<name>"`, as a global deploy source is told); a path under `/_motel/` with no row (`not found`) | `wire.Error` |
 | 429 | a person past their rate | `{"error":"too many requests; retry after <n> s"}`, with `Retry-After` |
+| 503 | a deploy token that verified for an app liveswap's `Start` has not installed within 5 s, or whose request ended first (#473) | `{"error":"motel is starting and has not loaded this app yet; retry after 1 s"}`, with `Retry-After: 1` |
 | 200 | `GET /_motel/whoami` | `wire.WhoAmI`: `name`, `key` (its fingerprint), `roles` (the grants that apply from here, no address list shown), `box`, `version`, `protocol`, `token_expires_at` |
 | 200 | `GET /_motel/apps` | `wire.Apps`: the apps this config runs that the person may view, sorted by name, each an object (`{"name":…}`) so a later release can say more of an app without changing the list's shape |
 
@@ -371,6 +378,7 @@ access's examples:
 | 12 | the 403 to people | a 403 for one app tells a person of another that the name exists | 3 | 5 | 5 | fix | one 403 for an app that exists and one that does not |
 | 13 | `Host` equal to the identity | a proxy that rewrites `Host` refuses every person | 2 | 5 | 1 | fix | the journal's line names the host received |
 | 14 | the `/_motel/` prefix | a deploy to `POST /_motel/<app>`, which deployed `<app>`, gets 401 or 404 | 2 | 5 | 1 | accept | no template or doc posts there; loud |
+| 17 | a deploy token after a start (#473) | a valid deploy token refused as a stranger's for some tens of milliseconds after a start, when Caddy starts the http app before liveswap (measured: 10 of 20 restarts) | 2 | 4 | 3 | fix: size 3, risk 1; **Wide** (every deploy and status request runs through it) | until a `Start` installs the app, the token is checked against the config's own sources; a verified one waits for the install, at most 5 s and the request's life, then 503 with `Retry-After`, which `deploy.sh` sends once more; nothing waits before a token verified. Covered: a `local` key's token, and an issuer's whose keys are fetched; the first token under an issuer's key after a start can still be refused once, while the key is fetched, as before (#306's row in DESIGN-liveswap.md), and the script's resend of a 401 covers it. `TestDeployTokenNotRefusedBeforeStart`, `TestDeployTokenBeforeStartPastTheBound` (on a fake clock; `TestInstallWaitIs5s` pins the bound), `TestTrustIsOneRead`, `TestStrangerBeforeStartIsTheFlat401`, `TestInstallWaitEndsWithTheRequest`, `TestReloadBeforeStartAnswersAtOnce`, `TestPersonBeforeStartDoesNotWait`; through a provisioned config, `TestPersonNotRefusedAfterAStart` |
 
 ### Accepted residuals
 

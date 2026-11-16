@@ -85,3 +85,6 @@ application/json Forbidden
 # GET a path under /_motel/ that is no route
 application/json Not Found
 {"error":"not found"}
+# GET before liveswap's Start installed the app, past the wait
+application/json Service Unavailable
+{"error":"motel is starting and has not loaded this app yet; retry after 1 s"}
