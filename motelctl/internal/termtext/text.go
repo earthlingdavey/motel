@@ -162,8 +162,10 @@ func unsafeRune(r rune) bool {
 		return true
 	// Unicode's whole Bidi_Control set: the Arabic letter mark, the
 	// left-to-right and right-to-left marks, the embeddings and
-	// overrides, the isolates.
-	case r == 0x061c, r == 0x200e, r == 0x200f, r >= 0x202a && r <= 0x202e, r >= 0x2066 && r <= 0x2069:
+	// overrides, the isolates. And the six deprecated format characters
+	// after the isolates (symmetric swapping, Arabic form shaping, the
+	// digit shapes), which some terminals still act on.
+	case r == 0x061c, r == 0x200e, r == 0x200f, r >= 0x202a && r <= 0x202e, r >= 0x2066 && r <= 0x206f:
 		return true
 	case r == 0x2028, r == 0x2029:
 		return true
