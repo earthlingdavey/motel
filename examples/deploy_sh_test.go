@@ -35,8 +35,13 @@ import (
 // box's pre-flight gives a release built for another architecture
 // (liveswap/elf.go words it); "refused-once" is the box's 401 to the
 // first request and a deploy to every later one, as when the box was
-// fetching the issuer's new signing key. The stand-in also mints the
-// run's OIDC token at /token, the way Actions does.
+// fetching the issuer's new signing key. "starting" is the box's 503
+// while liveswap's Start has not installed the app (liveswap/handler.go
+// words it), with Retry-After: 1; "starting-once" is that to the first
+// request and a deploy to every later one; "starting-no-retry-after"
+// lacks the header; "unavailable" is a 503 with Retry-After from
+// something that is not the box. The stand-in also mints the run's
+// OIDC token at /token, the way Actions does.
 func box(t *testing.T, mode string) *httptest.Server {
 	t.Helper()
 	srv, _ := countedBox(t, mode)
@@ -66,6 +71,12 @@ func countedBox(t *testing.T, mode string) (*httptest.Server, *atomic.Int64) {
 		} else if m == "refused-once" {
 			m = "stream"
 		}
+		if m == "starting-once" && n.Load() == 1 {
+			m = "starting"
+		} else if m == "starting-once" {
+			m = "stream"
+		}
+		const startingMessage = "motel is starting and has not loaded this app yet; retry after 1 s"
 		switch m {
 		case "single":
 			single(w, 200, status)
@@ -73,6 +84,14 @@ func countedBox(t *testing.T, mode string) (*httptest.Server, *atomic.Int64) {
 			single(w, 401, map[string]any{"error": "invalid or missing deploy token (Authorization: Bearer <jwt>)"})
 		case "refused-elsewhere":
 			single(w, 401, map[string]any{"error": "who are you"})
+		case "starting":
+			w.Header().Set("Retry-After", "1")
+			single(w, 503, map[string]any{"error": startingMessage})
+		case "starting-no-retry-after":
+			single(w, 503, map[string]any{"error": startingMessage})
+		case "unavailable":
+			w.Header().Set("Retry-After", "1")
+			single(w, 503, map[string]any{"error": "upstream unavailable"})
 		case "fail":
 			single(w, 500, map[string]any{"error": "health gate: boom", "status": status})
 		case "accepted":
@@ -355,6 +374,41 @@ func TestDeployShSendsARefusedTokenOnceMore(t *testing.T) {
 			retried := strings.Contains(out, "the box refused the token; sending it once more in 3s (a box refuses the first token under a new signing key while it fetches the key)")
 			if code != tc.exit || n.Load() != tc.requests || retried != (tc.requests == 2) {
 				t.Fatalf("exit %d (want %d), %d requests (want %d), retry said: %v; output:\n%s", code, tc.exit, n.Load(), tc.requests, retried, out)
+			}
+		})
+	}
+}
+
+// The box's 503 while it is starting is sent once more after its
+// Retry-After: nothing ran on the box for it. A second one is the run's
+// failure, with the box's sentence; a 503 without Retry-After, or with
+// another sentence (something in front of the box), is not sent again.
+func TestDeployShSendsAStartingBoxOnceMore(t *testing.T) {
+	t.Parallel()
+	if _, err := exec.LookPath("curl"); err != nil {
+		t.Fatal("deploy.sh needs curl; install it to run this test")
+	}
+	for _, tc := range []struct {
+		name, mode string
+		exit       int
+		requests   int64
+	}{
+		{"a 503, then the deploy", "starting-once", 0, 2},
+		{"two 503s", "starting", 1, 2},
+		{"a 503 without Retry-After", "starting-no-retry-after", 1, 1},
+		{"a 503 not the box's", "unavailable", 1, 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			srv, n := countedBox(t, tc.mode)
+			defer srv.Close()
+			out, code := deploySh(t, srv, "MOTEL_TOKEN=x", "GITHUB_ACTIONS=", "ACTIONS_ID_TOKEN_REQUEST_URL=")
+			resent := strings.Contains(out, "the box is starting; sending the request once more in 1s, as it asks")
+			if code != tc.exit || n.Load() != tc.requests || resent != (tc.requests == 2) {
+				t.Fatalf("exit %d (want %d), %d requests (want %d), resend said: %v; output:\n%s", code, tc.exit, n.Load(), tc.requests, resent, out)
+			}
+			if tc.mode == "starting" && !strings.Contains(out, "motel is starting and has not loaded this app yet") {
+				t.Errorf("the run's failure does not give the box's sentence:\n%s", out)
 			}
 		})
 	}

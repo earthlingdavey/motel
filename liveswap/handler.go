@@ -34,6 +34,13 @@ func init() {
 // maxPayloadBytes bounds the webhook JSON body.
 const maxPayloadBytes = 64 * 1024
 
+// installWait bounds how long a request whose deploy token verified
+// waits for liveswap's Start to install its app (#473). Start measures
+// the sandbox first, with a unit that starts and exits: about 65 ms on
+// an idle box, longer at boot or under load. Past it the request is
+// told to come back (installing).
+const installWait = 5 * time.Second
+
 // loggedAppName bounds a request-supplied app name for the log: no
 // configured name is longer than appNameRe allows, so anything past
 // that is noise.
@@ -74,6 +81,9 @@ type Handler struct {
 	// stage is a test seam for stageUpload; nil is stageUpload. A full
 	// disk cannot be made in a test that runs as root.
 	stage func(body io.Reader, tmpDir string, maxBytes int64) (string, string, error)
+	// waitClock times awaitInstalled's bound; nil is the real clock. A
+	// test seam, so the bound itself is what a test runs against.
+	waitClock clock
 }
 
 // CaddyModule returns the Caddy module information.
@@ -138,7 +148,15 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request, _ caddyhttp.
 	// ("Webhook endpoint").
 	verifiers := h.app.globalVerifiers
 	if ma != nil {
-		verifiers = ma.currentVerifiers()
+		var installed bool
+		if verifiers, installed = ma.trust(); !installed {
+			// No Start has installed the app yet: a start of motel, where
+			// Caddy may start the http app before liveswap, or an app a
+			// reload adds. The pooled app holds no sources until then, so
+			// the token is checked against the ones this config built in
+			// Provision, which are the ones its Start installs (#473).
+			verifiers = h.app.appVerifiers[name]
+		}
 	}
 	who, refusal := h.limiter.Authenticate(r, verifiers, h.logger, "app", loggedAppName(name))
 	if refusal != nil {
@@ -156,6 +174,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request, _ caddyhttp.
 		// answered 404 whatever the method, before the route table.
 		return RespondJSON(w, http.StatusNotFound, wire.Error{Error: fmt.Sprintf("unknown app %q", name)}, nil)
 	}
+	if !h.awaitInstalled(r, ma, who.By) {
+		return h.installing(w, ma)
+	}
 	rt := findRoute(r)
 	if rt == nil {
 		w.Header().Set("Allow", "GET, POST")
@@ -170,6 +191,41 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request, _ caddyhttp.
 		return RespondJSON(w, http.StatusForbidden, ForbiddenBody(err), ma.redactorFor(statusSnapshot{}))
 	}
 	return rt.serve(h, w, r, app, who.By)
+}
+
+// awaitInstalled holds a request whose deploy token verified until a
+// Start has installed its app, at most installWait and no longer than
+// the request lasts, and reports whether it is installed. Only a
+// verified token reaches it: a stranger's 401 comes first and never
+// waits, so no one without a token can make the box hold a connection
+// open, or learn from the answer that it has just started. An app a
+// Start installed, which is every app but in a start's first moments,
+// does not wait.
+func (h *Handler) awaitInstalled(r *http.Request, ma *managedApp, by string) bool {
+	c := h.waitClock
+	if c == nil {
+		c = realClock{}
+	}
+	began := c.Now()
+	// The timer is made only once the app is known not to be installed,
+	// so an installed app's request costs none.
+	if ma.awaitInstalled(r.Context(), func() <-chan time.Time { return c.After(installWait) }) {
+		return true
+	}
+	h.logger.Warn("deploy token verified before liveswap installed the app; answered 503",
+		zap.String("app", ma.name), zap.String("via", by), zap.String("remote", r.RemoteAddr),
+		zap.Duration("waited", c.Now().Sub(began)), zap.Bool("request_ended", r.Context().Err() != nil))
+	return false
+}
+
+// installingMessage is the 503's sentence when awaitInstalled gave up.
+const installingMessage = "motel is starting and has not loaded this app yet; retry after 1 s"
+
+// installing answers a verified request whose app no Start installed in
+// time: 503 with Retry-After, never the 401, since the token is good.
+func (h *Handler) installing(w http.ResponseWriter, ma *managedApp) error {
+	w.Header().Set("Retry-After", "1")
+	return RespondJSON(w, http.StatusServiceUnavailable, wire.Error{Error: installingMessage}, ma.redactorFor(statusSnapshot{}))
 }
 
 // appHandle is the one app a route reads or acts on. Only allowApp
@@ -460,11 +516,18 @@ func (h *Handler) deployPush(w http.ResponseWriter, r *http.Request, app appHand
 			Summary: "deploy of " + version + " failed before it began: the app's directories are not as motel made them"})
 		return h.mapDeployResult(w, ma, err)
 	}
+	// In flight from here, its upload included: each way out before the
+	// pipeline ends it before its response is written, which the status
+	// in a response must not show (the pipeline's own end does the same).
+	ma.beginDeploy(version, by, c.clock.Now())
 	stage := h.stage
 	if stage == nil {
 		stage = stageUpload
 	}
 	archive, digest, err := stage(r.Body, spec.dirs.tmp, spec.maxArtifactSize)
+	if err != nil {
+		ma.endInFlight()
+	}
 	var stgErr *stagingError
 	switch {
 	case errors.Is(err, errArtifactTooLarge):

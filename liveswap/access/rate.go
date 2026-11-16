@@ -19,9 +19,14 @@ const (
 	RateBurst     = 60
 	// rateLogEvery is how often a throttled person's line is written.
 	rateLogEvery = time.Minute
-	// rateNames bounds the table across loads that add and remove
-	// names: past it, every full bucket (a name idle long enough to
-	// have refilled) is dropped, which forgets nothing.
+	// rateNames holds the table across loads that add and remove
+	// names: past it, every full bucket (a name idle for the 30 s a
+	// bucket takes to refill) is dropped, which forgets nothing. It is
+	// not a hard bound: a bucket in use is never dropped, since that
+	// would refill a throttled person. The table passes rateNames only
+	// while more names than that have each asked in the last 30 s,
+	// which takes loads replacing every one of MaxKeyLines people in
+	// use, twice in that time.
 	rateNames = 2 * MaxKeyLines
 )
 
