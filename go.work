@@ -5,6 +5,7 @@ use (
 	./backups
 	./box
 	./liveswap
+	./motelctl
 	./notify
 	./penaltybox
 )
