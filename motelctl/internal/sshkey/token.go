@@ -169,6 +169,27 @@ func encryptedKeyFile(path string) bool {
 	return strings.Contains(block.Headers["Proc-Type"], "ENCRYPTED")
 }
 
+// Passphrased says whether signing with key would ask for a
+// passphrase: its private key file says it is encrypted, and the agent
+// (ssh-add -L) does not hold it. A key the agent alone holds, and one
+// named by its .pub with the agent holding the private half, never ask.
+func Passphrased(ctx context.Context, run local.Runner, key Key) bool {
+	if key.Path == "" || strings.HasSuffix(key.Path, ".pub") || !encryptedKeyFile(key.Path) {
+		return false
+	}
+	out, err := run.Output(ctx, local.Cmd{Name: "ssh-add", Args: []string{"-L"}})
+	if err != nil {
+		return true
+	}
+	want := key.Public.Line()
+	for _, l := range strings.Split(string(out), "\n") {
+		if f := strings.Fields(l); len(f) >= 2 && f[0]+" "+f[1] == want {
+			return false
+		}
+	}
+	return true
+}
+
 // Token makes a person's token for the box aud, at now, and returns
 // the whole Authorization header value:
 //
