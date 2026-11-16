@@ -86,8 +86,11 @@ is what they will see as their key, and a `grant` line per grant. A
 `warning` line names anything taken with a doubt: a person with no
 grant, an app grant a box grant already covers, people with no monitor channel.
 
-On a box whose Caddyfile you edit at the console and do not push (it
-still needs the `box` block and the `box_webhook` site), edit
+On a box whose Caddyfile you edit at the console and do not push, the
+file must still be one the box can read its people from, as the
+template's is: a `box` block, and one site holding `box_webhook` and
+`liveswap_webhook`, with no `import` and no `{$…}` in them (`motel
+validate` and the journal say when it is not). Edit
 `/etc/motel/Caddyfile` as root,
 `motel validate --config /etc/motel/Caddyfile`, and `systemctl reload
 motel`. The box reads who it admits from that file at each load; the

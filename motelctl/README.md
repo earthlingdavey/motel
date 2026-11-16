@@ -100,7 +100,8 @@ go build -o motelctl .
 ./motelctl version
 ```
 
-A build made this way prints `motelctl (devel)` for its release.
+A build made this way carries no release: `version` prints `(devel)`,
+or a version Go derives from the commit.
 
 ## How box text is kept out of the client's voice
 

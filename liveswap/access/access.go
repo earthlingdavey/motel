@@ -9,9 +9,10 @@
 // source, and a person whose token the box verified. A token a global
 // source verified names no app, and is answered 404 before the route
 // table on an app's path. What a deploy source may do is what it could
-// do before Decide existed, so Decide refuses nothing that its
-// authentication accepted (liveswap/DESIGN-liveswap.md, "Who may take
-// which action"). A person may read: an app's status and deploys where
+// do before Decide existed, so on an app's path and on the box's own
+// Decide refuses nothing that its authentication accepted; under
+// /_motel/ it refuses a global source's token the people's routes
+// (liveswap/DESIGN-liveswap.md, "Who may take which action"). A person may read: an app's status and deploys where
 // a grant covers the app, the box's status with a grant on the box, and
 // who they are and which apps they may view whatever their grants
 // (DESIGN-access.md).
