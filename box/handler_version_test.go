@@ -40,14 +40,17 @@ func wantProtocol(t *testing.T, what string, w *httptest.ResponseRecorder, code 
 	wantProtocolOnly(t, what, sent(w))
 }
 
-// wantProtocolOnly fails unless h carries Motel-Protocol 1, once, and
-// no header that names the release linked in.
+// wantProtocolOnly fails unless h carries Motel-Protocol 1, once, no
+// other Motel- header, and no header that names the release linked in.
 func wantProtocolOnly(t *testing.T, what string, h http.Header) {
 	t.Helper()
 	if got := h.Values("Motel-Protocol"); len(got) != 1 || got[0] != "1" {
 		t.Errorf("%s: Motel-Protocol %q, want 1", what, got)
 	}
 	for k, vs := range h {
+		if strings.HasPrefix(k, "Motel-") && k != "Motel-Protocol" {
+			t.Errorf("%s: header %s: %q, want no Motel- header but Motel-Protocol", what, k, vs)
+		}
 		for _, v := range vs {
 			if strings.Contains(v, testRelease) {
 				t.Errorf("%s: header %s: %q names the release", what, k, v)

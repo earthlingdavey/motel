@@ -518,7 +518,7 @@ func (c *Client) Read(ans *Answer, v any) error {
 	// a 5xx without a well-formed one is not known to be motel's own.
 	if _, stamped := protocolOf(ans.Header); ans.Code >= 500 && !stamped {
 		return &Failure{Exit: ExitUnknown, Message: fmt.Sprintf(
-			"Something at %s answered %d without %s, so not known to be motel's own answer; it says: %s", c.Box.Addr(), ans.Code, protocolHeader, said)}
+			"Something at %s answered %d without a well-formed %s, so not known to be motel's own answer; it says: %s", c.Box.Addr(), ans.Code, protocolHeader, said)}
 	}
 	return &Failure{Exit: ExitFailed, Message: fmt.Sprintf("%s answered %d; the box says: %s", c.Box.Host, ans.Code, said), Body: ans.Body}
 }

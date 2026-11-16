@@ -32,13 +32,17 @@ func linkRelease(t *testing.T, v string) {
 func sent(w *httptest.ResponseRecorder) http.Header { return w.Result().Header }
 
 // wantProtocolNoRelease fails unless w's headers carry Motel-Protocol 1,
-// once, and no header names the release linked in.
+// once, and no other Motel- header, and no header names the release
+// linked in.
 func wantProtocolNoRelease(t *testing.T, w *httptest.ResponseRecorder) {
 	t.Helper()
 	if got := sent(w).Values("Motel-Protocol"); len(got) != 1 || got[0] != "1" {
 		t.Errorf("Motel-Protocol %q, want 1", got)
 	}
 	for k, vs := range sent(w) {
+		if strings.HasPrefix(k, "Motel-") && k != "Motel-Protocol" {
+			t.Errorf("header %s: %q, want no Motel- header but Motel-Protocol", k, vs)
+		}
 		for _, v := range vs {
 			if strings.Contains(v, testRelease) {
 				t.Errorf("header %s: %q names the release", k, v)
