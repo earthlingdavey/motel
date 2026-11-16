@@ -126,7 +126,7 @@ func (h *Handler) apps(w http.ResponseWriter, _ *http.Request, p *Person) error 
 // appRow is one app's entry in GET /_motel/apps, as the bytes sent. The
 // summary is the one GET /<app> would give: Decide is asked about the
 // same action, and the values come from the same status, through the
-// same filter.
+// same filter. A row is withheld only when that filter withholds it.
 func (h *Handler) appRow(p *Person, name string) string {
 	app, err := h.allowApp(p.Principal, access.AppStatus, name)
 	if err != nil {
@@ -137,28 +137,43 @@ func (h *Handler) appRow(p *Person, name string) string {
 	}
 	ma := app.ma
 	s := ma.status()
-	raw, err := json.Marshal(wire.AppEntry{Name: name, Summary: summaryOf(s)})
+	// The summary alone goes through the filter, and the name is put
+	// beside it after: the name is the route's word, the one the person
+	// was granted the app by and the config runs it under, so the
+	// filter can neither redact it nor be taken to have withheld the
+	// row for it (an env_file value equal to the name, DB_NAME=<app>).
+	raw, err := json.Marshal(struct {
+		Summary *wire.AppSummary `json:"summary"`
+	}{summaryOf(s)})
 	if err != nil {
 		// A record's raw times that are not JSON, which GET /<app> could
 		// not send either.
 		return nameOnlyRow(name, "the app's status could not be written")
 	}
-	row := ma.redactorFor(s).redactJSON(raw)
-	var got struct {
-		Name    string          `json:"name"`
-		Error   string          `json:"error"`
-		Summary json.RawMessage `json:"summary"`
+	var row map[string]json.RawMessage
+	if json.Unmarshal([]byte(ma.redactorFor(s).redactJSON(raw)), &row) != nil {
+		return nameOnlyRow(name, "response withheld") // redactJSON returns an object whatever it is given
 	}
-	if json.Unmarshal([]byte(row), &got) == nil && got.Name == name && len(got.Summary) > 0 && string(got.Summary) != "null" {
-		return row
+	if _, ok := row["summary"]; !ok {
+		// The filter withheld the row, and its body is why, past the
+		// app's last pass. Nothing else drops the key: the filter
+		// replaces text inside strings, and a replacement that breaks the
+		// body's structure is a withhold of its own.
+		var why wire.Error
+		_ = json.Unmarshal(row["error"], &why.Error)
+		if why.Error == "" {
+			why.Error = "response withheld"
+		}
+		return nameOnlyRow(name, why.Error)
 	}
-	// The filter withheld the row: what it sent is its sentence, past the
-	// app's last pass. The name goes back beside it, as the list names it
-	// for any app the person may view.
-	if got.Error == "" {
-		got.Error = "response withheld"
+	row["name"], _ = json.Marshal(name) // a string: nothing to fail
+	// Raw values, so each is the text the filter left; the keys come out
+	// sorted, name first, as a row the filter changed always has.
+	b, err := json.Marshal(row)
+	if err != nil {
+		return nameOnlyRow(name, "response withheld")
 	}
-	return nameOnlyRow(name, got.Error)
+	return string(b)
 }
 
 // nameOnlyRow is an entry with no summary, and why.

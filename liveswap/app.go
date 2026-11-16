@@ -355,6 +355,7 @@ func (ma *managedApp) redactorFor(s statusSnapshot, names ...string) *Redactor {
 		safe = append(safe, spec.dirs.root, spec.dirs.app, spec.dirs.releases, spec.dirs.shared, spec.dirs.run)
 	}
 	r := NewRedactor(kvs, safe)
+	r.holdOwnName(ma.name) // rule 5
 	if unread != nil {
 		// The values the running app holds are unknown to the filter,
 		// and the heuristics alone are not the promise: no body until

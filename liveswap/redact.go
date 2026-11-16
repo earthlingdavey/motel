@@ -79,10 +79,10 @@ import (
 //     event, phase and http_status fields (handler.go) are constants
 //     and a phase word. Nothing else appends to a body after that
 //     pass. A body about several apps (GET /_motel/apps) is made of
-//     rows, and each row is a body here: filtered by its own app's
-//     filter, then put in the list, which adds its punctuation alone;
-//     a row the filter withheld is put back as the app's name, which
-//     the list names in any case, and the filter's sentence. So no
+//     rows, and each row's summary is a body here: filtered by its own
+//     app's filter, then given the app's name, the route's own word,
+//     and put in the list, which adds its punctuation alone; a row the
+//     filter withheld is the name and the filter's sentence. So no
 //     filter is ever given two apps' values, and the outcome pairs of
 //     rule 3 are counted per row.
 //  3. The outcome vocabulary is structural, never textual. A pair
@@ -102,6 +102,16 @@ import (
 //     current_version (ensureRunning), a release directory's name
 //     (listReleases), a record's (recordHead). Release GC enumerates
 //     directory entries by name; that is not a use of a version.
+//  5. The app's own name stands where a body names the app by it. An
+//     env_file value equal to the name (DB_NAME=<app>, a common setup)
+//     is left in the pair "app":"<name>" (holdOwnName), as rule 3
+//     leaves an outcome word in its pair: the name is in the request's
+//     path and in the config, and a status whose app is a marker names
+//     no app. It is replaced everywhere else, as any value is: in text,
+//     inside a path, under another key. A value that holds the name
+//     inside it is a longer form, replaced whole before the name is
+//     looked at (longest first). The app list's rows name their app
+//     outside the filter (motel_routes.go).
 const (
 	secretMinLen  = 8
 	entropyMinLen = 20
@@ -139,7 +149,8 @@ type secretForm struct {
 	// outside, for a text that is a bare word of the outcome
 	// vocabulary, matches the text everywhere but where it stands as
 	// an outcome (rule 3): the word where it is a pair's, or on its
-	// own. Nil for every other form.
+	// own; for the app's own name, the same with its "app" pair (rule
+	// 5). Nil for every other form.
 	outside *regexp.Regexp
 	keys    []string
 	marker  string
@@ -396,7 +407,8 @@ var entropyTokenRe = regexp.MustCompile(`[A-Za-z0-9+=_-]{20,}`)
 // replaceKnown is layer 1 on its own: every known form replaced by its
 // marker, and the keys found added to seen. A form that is a bare
 // word of the outcome vocabulary is replaced everywhere but where it
-// stands as an outcome (rule 3). Markers contain no form, so a second
+// stands as an outcome (rule 3), and the app's own name everywhere
+// but its "app" pair (rule 5). Markers contain no form, so a second
 // pass over its own output changes nothing.
 func (r *Redactor) replaceKnown(s string, seen map[string]bool) string {
 	if r == nil {
@@ -581,6 +593,27 @@ func (r *Redactor) maskGenerated(tok string) string {
 		return "[masked, " + strconv.Itoa(len(tok)) + " chars]"
 	}
 	return tok
+}
+
+// holdOwnName is rule 5: when name is a known form, the pair
+// "app":"<name>" is left standing wherever the body has it, and the
+// form is replaced everywhere else. JSON escapes a quote inside a
+// string, so the pair can only be the body's own field, never text an
+// app wrote. Called by the app's filter (redactorFor) with its name.
+func (r *Redactor) holdOwnName(name string) {
+	if r == nil || name == "" {
+		return
+	}
+	q := regexp.QuoteMeta(name)
+	pairs := `"app":"` + q + `"`
+	if outcomeOutside[name] != nil {
+		pairs += `|"(?:status|phase|name)":"` + q + `"`
+	}
+	for _, sf := range r.secrets {
+		if sf.text == name {
+			sf.outside = regexp.MustCompile(pairs + `|` + q)
+		}
+	}
 }
 
 // redactJSON filters a marshalled JSON body and, when a known value
