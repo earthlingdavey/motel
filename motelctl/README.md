@@ -78,8 +78,9 @@ ask on is refused with the remedy, `ssh-add` (exit 2).
 no flag or variable that would (`deploy.sh`'s `MOTEL_ALLOW_HTTP` is not
 read).
 
-**Exit codes:** 0 read; 1 a failure answered with a sentence (a 4xx,
-said as the box's: no header tells a gateway's from motel's); 2 nothing was
+**Exit codes:** 0 read; 1 a failure answered with a sentence (a 4xx
+other than the 401, 403, 404 and 429 below, a 409 for one; said as the
+box's: no header tells a gateway's from motel's); 2 nothing was
 sent (usage, no box or key, an RSA or ECDSA key); 3 could not tell (no answer, not
 motel's answer, any 5xx, a 429 that stood); 4 not accepted (a 401 after one
 retry); 5 not allowed (403); 6 not found (404); 8 the certificate did not
