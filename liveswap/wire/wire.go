@@ -332,7 +332,7 @@ type WhoAmI struct {
 	Roles []RoleHeld `json:"roles"`
 	// Box is the box's identity: the token's aud.
 	Box string `json:"box"`
-	// Version is the release, as the Motel-Version header names it; ""
+	// Version is the release the box runs, which no header names; ""
 	// for a build that links none.
 	Version string `json:"version"`
 	// Protocol is the protocol number, as the Motel-Protocol header.

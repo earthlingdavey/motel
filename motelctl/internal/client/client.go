@@ -40,13 +40,10 @@ type Credential interface {
 	Authorization(ctx context.Context) (string, error)
 }
 
-// The headers motel stamps on every answer to a token it verified
-// (liveswap.StampVersion), and never on a 401: the release, when the
-// build links one, and the protocol number.
-const (
-	versionHeader  = "Motel-Version"
-	protocolHeader = "Motel-Protocol"
-)
+// protocolHeader is the header motel stamps on every answer to a
+// token it verified (liveswap.StampProtocol), and never on a 401: the
+// protocol number. No header names the release; whoami's body does.
+const protocolHeader = "Motel-Protocol"
 
 // Protocol is the person-token protocol this client speaks: the
 // Motel-Protocol a box answers with, 1 being the token form m1.
@@ -268,20 +265,10 @@ func protocolOf(h http.Header) (int, bool) {
 	return n, err == nil && n > 0
 }
 
-// stamped says whether an answer carries motel's stamp, well formed:
-// a protocol number, or one Motel-Version that reads as a release.
-func stamped(h http.Header) bool {
-	if _, ok := protocolOf(h); ok {
-		return true
-	}
-	v := h.Values(versionHeader)
-	return len(v) == 1 && releaseRe.MatchString(v[0])
-}
-
 var (
 	protocolRe = regexp.MustCompile(`^[0-9]{1,9}$`)
-	// releaseRe is a release as the Makefile links it in: v0.6.1, and
-	// a pre-release or build suffix.
+	// releaseRe is a release as the Makefile links it in, as whoami's
+	// version names it: v0.6.1, and a pre-release or build suffix.
 	releaseRe = regexp.MustCompile(`^v?[0-9]{1,9}\.[0-9]{1,9}\.[0-9]{1,9}([-+][0-9A-Za-z.+-]{1,64})?$`)
 	// nameRe is a name as a person or signer line holds one
 	// (box/proof/signers.go), at most 256 bytes.
@@ -527,13 +514,11 @@ func (c *Client) Read(ans *Answer, v any) error {
 		return &Failure{Exit: ExitNotFound, Message: fmt.Sprintf("%s answered 404; the box says: %s", c.Box.Host, said), Body: ans.Body}
 	}
 	// A gateway in front of a box can answer a 5xx in JSON too. Motel
-	// stamps Motel-Version on every answer to a token it verified, and,
-	// since people's tokens, Motel-Protocol too (which a build that
-	// links no release sends alone), so a 5xx without either is not
-	// known to be motel's own.
-	if ans.Code >= 500 && !stamped(ans.Header) {
+	// stamps Motel-Protocol on every answer to a token it verified, so
+	// a 5xx without a well-formed one is not known to be motel's own.
+	if _, stamped := protocolOf(ans.Header); ans.Code >= 500 && !stamped {
 		return &Failure{Exit: ExitUnknown, Message: fmt.Sprintf(
-			"Something at %s answered %d without %s, so not known to be motel's own answer; it says: %s", c.Box.Addr(), ans.Code, versionHeader, said)}
+			"Something at %s answered %d without %s, so not known to be motel's own answer; it says: %s", c.Box.Addr(), ans.Code, protocolHeader, said)}
 	}
 	return &Failure{Exit: ExitFailed, Message: fmt.Sprintf("%s answered %d; the box says: %s", c.Box.Host, ans.Code, said), Body: ans.Body}
 }

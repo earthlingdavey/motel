@@ -50,8 +50,8 @@ type Person struct {
 // one journal field, as for Limiter.Authenticate. With ok false the
 // refusal is written through write, the webhook's filtered writer, and
 // err is the write's. With ok true nothing is written, and the
-// response's headers already name the release and the protocol
-// (StampVersion): every answer from here is to a verified token.
+// response's headers already carry the protocol number
+// (StampProtocol): every answer from here is to a verified token.
 func AdmitPerson(w http.ResponseWriter, r *http.Request, g PersonGate, scopeKey, scopeValue string, write func(code int, body any) error) (p Person, ok bool, err error) {
 	now := time.Now
 	if g.Now != nil {
@@ -95,7 +95,7 @@ func AdmitPerson(w http.ResponseWriter, r *http.Request, g PersonGate, scopeKey,
 			zap.String("key", v.Fingerprint), zap.String("person", name), zap.String("address", shown), zap.String("peer", r.RemoteAddr)).Write(write)
 	}
 	g.Limiter.Admit(r)
-	StampVersion(w.Header())
+	StampProtocol(w.Header())
 	// The rate, after the address and before Decide: a person's own
 	// budget of accepted requests, told when to come back.
 	if g.Rate != nil {

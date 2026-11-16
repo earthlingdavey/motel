@@ -22,8 +22,9 @@ FROM denoland/deno:bin-2.9.8 AS deno
 # is dropped with the step. The cache ids are motel's, shared by its
 # worktrees and no other build. A builder pruned, or CI's, starts cold.
 # motel links a release as `make build` links one (Caddy's
-# CustomVersion), so the box names one in Motel-Version and whoami as a
-# shipped box does; the people suite (e2e/box/people.sh) reads both.
+# CustomVersion), so whoami names one as a shipped box does; the people
+# suite (e2e/box/people.sh) reads it there, and holds every header to
+# naming none.
 # motelctl is the laptop client that suite runs on the box, as a
 # laptop would, over the box's own TLS.
 FROM golang:1.27-trixie AS builder

@@ -30,7 +30,7 @@ of `MOTEL_URL`, or the box repository the shell is in (inside
 **Which credential:** a token the person's own ssh key signs when
 `--key` names the key. Otherwise `MOTEL_TOKEN`, sent as `Bearer`, when it
 is set: a deploy token reads its own app on any motel today, though a
-5xx from a box on a release that predates the `Motel-Version` header is
+5xx from a box on a release that predates the `Motel-Protocol` header is
 reported as "could not tell" (exit 3), since motelctl cannot tell it
 from a gateway's. With `MOTEL_URL` set too, the token goes to
 `MOTEL_URL`'s box only; a command that names another box sends nothing
@@ -68,10 +68,11 @@ which would quote the body. `whoami` takes an answer only when its name,
 release, roles and scopes are of the box's grammars and no required
 field is missing or `null`; it shows the key this command signed with
 and the box it asked, and an answer naming another key or box prints
-only a warning quoting the box's value, and exits 3. `Motel-Protocol` comes only on answers
+only a warning quoting the box's value, and exits 3. The release is
+read from whoami's body alone: no header names it. `Motel-Protocol` comes only on answers
 to a token the box verified, and counts only as one header of 1 to 9
 digits; a higher number than this client's is said on stderr, and the
-command carries on. A passphrase-protected key file with no terminal to
+command carries on. A 5xx without it is not known to be motel's. A passphrase-protected key file with no terminal to
 ask on is refused with the remedy, `ssh-add` (exit 2).
 
 **Only https.** motelctl never sends a request over plain http, and has

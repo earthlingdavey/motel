@@ -1088,8 +1088,9 @@ scope for the runtime model, in scope for release signing (roadmap).
   types are listed, not which keys, and the refusals are not
   constant-time beyond the signature check. Every refusal of a
   person's token is the same flat 401 as a deploy token's, and no answer
-  to a caller the box has not accepted names motel's protocol or
-  release.
+  to a caller the box has not accepted names motel's protocol. No
+  header names the release, to anyone: whoami's body names it to a
+  declared person who asks.
 - **T5 — RCE in the supervisor itself** (a Caddy or liveswap bug). Low
   probability, catastrophic: it *is* the `motel` user, so it already
   holds every asset short of root. No app-isolation design prevents

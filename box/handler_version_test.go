@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -29,70 +30,79 @@ func linkRelease(t *testing.T, v string) {
 // WriteHeader, not the live map a later write could change.
 func sent(w *httptest.ResponseRecorder) http.Header { return w.Result().Header }
 
-// wantRelease fails unless w is code with Motel-Version the release.
-func wantRelease(t *testing.T, what string, w *httptest.ResponseRecorder, code int) {
+// wantProtocol fails unless w is code with Motel-Protocol 1, once, and
+// no header that names the release linked in.
+func wantProtocol(t *testing.T, what string, w *httptest.ResponseRecorder, code int) {
 	t.Helper()
 	if w.Code != code {
 		t.Errorf("%s: got %d, want %d: %s", what, w.Code, code, w.Body)
 	}
-	if got := sent(w).Values("Motel-Version"); len(got) != 1 || got[0] != testRelease {
-		t.Errorf("%s: Motel-Version %q, want %q", what, got, testRelease)
+	if got := sent(w).Values("Motel-Protocol"); len(got) != 1 || got[0] != "1" {
+		t.Errorf("%s: Motel-Protocol %q, want 1", what, got)
+	}
+	for k, vs := range sent(w) {
+		for _, v := range vs {
+			if strings.Contains(v, testRelease) {
+				t.Errorf("%s: header %s: %q names the release", what, k, v)
+			}
+		}
 	}
 }
 
-// TestVersionOnVerifiedAnswers: every answer to the box channel's
-// token carries Motel-Version, the release: `GET /` (200, and 409
+// TestProtocolNotReleaseOnVerifiedAnswers: every answer to the box
+// channel's token, with a release linked in, carries Motel-Protocol and
+// no header names the release: `GET /` (200, and 409
 // before a baseline and over a file that does not walk), each phase of a result poll and its 400 and 404,
 // a push's 200, 202, 400, 409, 413, 415, 422 and 504, and the 403 Decide's
 // refusal would give.
-func TestVersionOnVerifiedAnswers(t *testing.T) {
+func TestProtocolNotReleaseOnVerifiedAnswers(t *testing.T) {
 	linkRelease(t, testRelease)
 
 	r := newRig(t)
-	wantRelease(t, "GET / before a baseline", r.do(t, req{target: "/", token: r.token(t)}), http.StatusConflict)
+	wantProtocol(t, "GET / before a baseline", r.do(t, req{target: "/", token: r.token(t)}), http.StatusConflict)
 	r.applied(t, sha)
 	r.write(t, r.installed, file("{\n}\nx.com {\n}\n")) // no box block: a file the channel cannot speak for
-	wantRelease(t, "GET / over a file that does not walk", r.do(t, req{target: "/", token: r.token(t)}), http.StatusConflict)
+	wantProtocol(t, "GET / over a file that does not walk", r.do(t, req{target: "/", token: r.token(t)}), http.StatusConflict)
 
 	p := newPushRig(t)
-	wantRelease(t, "GET /", p.get(t, "/", p.token(t, "")), http.StatusOK)
+	wantProtocol(t, "GET /", p.get(t, "/", p.token(t, "")), http.StatusOK)
 
 	id := randomID(t)
-	wantRelease(t, "a poll with no id", p.get(t, "/?", p.token(t, "")), http.StatusBadRequest)
-	wantRelease(t, "a poll for nothing", p.get(t, "/?result="+id, p.token(t, "")), http.StatusNotFound)
+	wantProtocol(t, "a poll with no id", p.get(t, "/?", p.token(t, "")), http.StatusBadRequest)
+	wantProtocol(t, "a poll for nothing", p.get(t, "/?result="+id, p.token(t, "")), http.StatusNotFound)
 	p.markerAt(id, p.clock.Now().Add(-time.Hour))
-	wantRelease(t, "a poll, admitted", p.get(t, "/?result="+id, p.token(t, "")), http.StatusAccepted)
+	wantProtocol(t, "a poll, admitted", p.get(t, "/?result="+id, p.token(t, "")), http.StatusAccepted)
 	for phase, code := range map[string]int{phaseApplied: http.StatusOK, phaseRefused: http.StatusUnprocessableEntity} {
 		p.writeResult(t, result{ID: id, Phase: phase, Commit: p.base})
-		wantRelease(t, "a poll, "+phase, p.get(t, "/?result="+id, p.token(t, "")), code)
+		wantProtocol(t, "a poll, "+phase, p.get(t, "/?result="+id, p.token(t, "")), code)
 	}
 
 	c2, bundle := p.change()
-	wantRelease(t, "a push with no id", p.post(t, p.h, push{token: p.token(t, c2), body: bytes.NewReader(bundle)}), http.StatusBadRequest)
-	wantRelease(t, "a push too large", p.post(t, p.h, push{id: randomID(t), length: maxBody + 1, token: p.token(t, c2), body: failingReader{t}}), http.StatusRequestEntityTooLarge)
-	wantRelease(t, "a push not gzip", p.post(t, p.h, push{id: randomID(t), ctype: "application/json", token: p.token(t, c2), body: bytes.NewReader(bundle)}), http.StatusUnsupportedMediaType)
-	wantRelease(t, "a push for another commit", p.post(t, p.h, push{id: randomID(t), token: p.token(t, p.base), body: bytes.NewReader(bundle)}), http.StatusUnprocessableEntity)
-	wantRelease(t, "a push of a known id", p.post(t, p.h, push{id: id, token: p.token(t, c2), body: bytes.NewReader(bundle)}), http.StatusConflict)
+	wantProtocol(t, "a push with no id", p.post(t, p.h, push{token: p.token(t, c2), body: bytes.NewReader(bundle)}), http.StatusBadRequest)
+	wantProtocol(t, "a push too large", p.post(t, p.h, push{id: randomID(t), length: maxBody + 1, token: p.token(t, c2), body: failingReader{t}}), http.StatusRequestEntityTooLarge)
+	wantProtocol(t, "a push not gzip", p.post(t, p.h, push{id: randomID(t), ctype: "application/json", token: p.token(t, c2), body: bytes.NewReader(bundle)}), http.StatusUnsupportedMediaType)
+	wantProtocol(t, "a push for another commit", p.post(t, p.h, push{id: randomID(t), token: p.token(t, p.base), body: bytes.NewReader(bundle)}), http.StatusUnprocessableEntity)
+	wantProtocol(t, "a push of a known id", p.post(t, p.h, push{id: id, token: p.token(t, c2), body: bytes.NewReader(bundle)}), http.StatusConflict)
 	same := tgz(t, p.repo.bundleFiles(p.base, p.base))
-	wantRelease(t, "a push of the baseline", p.post(t, p.h, push{id: randomID(t), token: p.token(t, p.base), body: bytes.NewReader(same)}), http.StatusOK)
+	wantProtocol(t, "a push of the baseline", p.post(t, p.h, push{id: randomID(t), token: p.token(t, p.base), body: bytes.NewReader(same)}), http.StatusOK)
 	waiting := randomID(t)
-	wantRelease(t, "a push nothing answers", p.post(t, p.h, push{id: waiting, token: p.token(t, c2), body: bytes.NewReader(bundle)}), http.StatusGatewayTimeout)
+	wantProtocol(t, "a push nothing answers", p.post(t, p.h, push{id: waiting, token: p.token(t, c2), body: bytes.NewReader(bundle)}), http.StatusGatewayTimeout)
 
 	q := newPushRig(t)
 	c2, bundle = q.change()
 	verified := randomID(t)
 	q.clk.onSleep = func() { q.writeResult(t, result{ID: verified, Phase: phaseVerified}) }
-	wantRelease(t, "a push verified", q.post(t, q.h, push{id: verified, token: q.token(t, c2), body: bytes.NewReader(bundle)}), http.StatusAccepted)
+	wantProtocol(t, "a push verified", q.post(t, q.h, push{id: verified, token: q.token(t, c2), body: bytes.NewReader(bundle)}), http.StatusAccepted)
 
 	recordDecide(t, errors.New("refused"))
-	wantRelease(t, "the 403", p.get(t, "/", p.token(t, "")), http.StatusForbidden)
+	wantProtocol(t, "the 403", p.get(t, "/", p.token(t, "")), http.StatusForbidden)
 }
 
-// TestNoVersionBeforeAToken: the flat 401 and the 405 that comes
-// before authentication carry no Motel-Version, whoever sends them,
-// and their headers and bodies are exactly what a build with no
-// release sends. Another path is passed on, untouched.
-func TestNoVersionBeforeAToken(t *testing.T) {
+// TestNoMotelHeaderBeforeAToken: the flat 401 and the 405 that comes
+// before authentication carry no header that names motel, whoever
+// sends them, and their headers and bodies are exactly what a build
+// with no release sends. Another path is passed on, untouched.
+func TestNoMotelHeaderBeforeAToken(t *testing.T) {
 	r := newRig(t)
 	for _, c := range []struct {
 		name, method, target string
@@ -127,19 +137,5 @@ func TestNoVersionBeforeAToken(t *testing.T) {
 				t.Fatalf("body %q, without a release %q", after.Body, before.Body)
 			}
 		})
-	}
-}
-
-// TestNoVersionWithoutARelease: a build that links no release sends no
-// Motel-Version, not an empty one.
-func TestNoVersionWithoutARelease(t *testing.T) {
-	linkRelease(t, "")
-	p := newPushRig(t)
-	w := p.get(t, "/", p.token(t, ""))
-	if w.Code != http.StatusOK {
-		t.Fatalf("got %d: %s", w.Code, w.Body)
-	}
-	if _, ok := sent(w)["Motel-Version"]; ok {
-		t.Fatalf("Motel-Version %q, want none", sent(w).Values("Motel-Version"))
 	}
 }

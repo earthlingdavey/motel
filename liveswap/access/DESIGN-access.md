@@ -15,10 +15,10 @@ person can deploy, roll back or push, whatever the lines say.
 
 - The person who runs a box is the operator.
 - The words `Motel` (the `Authorization` scheme), `m1.` (the token's
-  envelope), `Motel-Protocol` and `Motel-Version` are proposals the
+  envelope) and `Motel-Protocol` are proposals the
   owner has not confirmed; each is one constant in the code
   (`access.TokenScheme`, `access.TokenEnvelope`, liveswap's
-  `protocolHeader` and `versionHeader`). The namespace
+  `protocolHeader`). The namespace
   `motel-access-v1@motel.smallhours.org` and the prefix `/_motel/` are
   chosen and one-way.
 
@@ -31,7 +31,7 @@ person can deploy, roll back or push, whatever the lines say.
 | The token checker | `CheckToken`: checks 1 to 13 below; writes nothing, journals nothing, knows no person | `token.go` |
 | `Decide` | the cells of who may take which action, narrowed for a person by their grants | `access.go` |
 | The rate | a token bucket per person name, for the process | `rate.go` |
-| The way in | `AdmitPerson`: the checker with the registry as its lookup, the address list, the failure budgets, the protocol headers, the rate | `liveswap/people.go`, called by both webhooks |
+| The way in | `AdmitPerson`: the checker with the registry as its lookup, the address list, the failure budgets, the protocol header, the rate | `liveswap/people.go`, called by both webhooks |
 | The routes | liveswap's route table and its rows under `/_motel/`; box's table on `/` | `liveswap/handler.go`, `liveswap/motel_routes.go`, `box/handler.go` |
 
 `access` is a leaf package in the liveswap module: it imports nothing
@@ -167,8 +167,7 @@ On either webhook, a request in the `Motel` scheme goes through
    the key, the person, the address and the peer. A person with no
    grant at all goes on: they may ask who they are.
 3. The address's failures are forgotten, as for an accepted deploy
-   token, and the answer from here carries `Motel-Protocol` and
-   `Motel-Version`.
+   token, and the answer from here carries `Motel-Protocol`.
 4. **The rate**: 429 past the person's budget.
 5. `Decide`, then the route's function.
 
@@ -278,12 +277,15 @@ viewer of the box, who may list the apps, gets the 404.
 
 ## The version on the wire
 
-`Motel-Protocol: 1` and `Motel-Version: <release>` go on every answer
-written after a token verified, a deploy token's or a person's, a
-deploy's stream included; `Motel-Version` only when the build links a
-release. Neither goes on a 401 or on the box webhook's early 405: no
-answer to a caller the box has not accepted names motel. The protocol
-number moves only with the token forms (1: this form). The cost, which
+`Motel-Protocol: 1` goes on every answer written after a token
+verified, a deploy token's or a person's, a deploy's stream included.
+It does not go on a 401 or on the box webhook's early 405: no answer to
+a caller the box has not accepted names motel. No header names the
+release, which is what picks a known flaw: a header on every verified
+answer would show it to every token holder and to anything that reads
+the responses, where whoami's `version` shows it only to a declared
+person who asks. The protocol number moves only with the token forms
+(1: this form). The cost, which
 the client's message carries: a box too old for people and a key the
 box does not list both look like the flat 401.
 
@@ -381,7 +383,7 @@ access's examples:
 | 3 | the person token | a token for box A accepted at box B | 5 | 5 | 5 | fix | `aud` and `Host` both equal to the identity (checks 9, 10) |
 | 4 | the token beside deploy tokens | one kind taken as the other | 5 | 5 | 5 | fix | the scheme picks the checker; two headers refused; no person's cell holds `app.deploy` |
 | 5 | the `Motel` scheme in both webhooks | an existing answer changes | 3 | 5 | 1 | fix | any other request takes today's path; `handler-bodies.txt` passes with additions only; every refusal is the flat 401 byte for byte (`TestPersonRefusalsAreTheFlat401`, both webhooks) |
-| 6 | the version on the wire | the release told to strangers | 2 | 5 | 5 | fix | both headers only after a token verified |
+| 6 | the version on the wire | the release told to strangers, or to every token holder | 2 | 5 | 5 | fix | no header names the release, only whoami's body; `Motel-Protocol` only after a token verified (`TestProtocolNotReleaseOnVerifiedAnswers` and `TestReleaseInWhoamiBodyAlone` in liveswap, `TestProtocolNotReleaseOnVerifiedAnswers` in box) |
 | 7 | two readers of the lines | `validate` and the serving process disagree on who is admitted | 3 | 5 | 3 | fix | one parser for both; the registry from the walk alone; a grant on an app the config does not run now fails the load too |
 | 8 | the registry from the installed file | the walk refuses it, so no person is admitted | 2 | 5 | 1 | fix | a journal line at each load naming why |
 | 9 | the registry after a start | a person refused in #473's window | 2 | 4 | 1 | fix | built at provision; `TestPersonNotRefusedAfterAStart` |

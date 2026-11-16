@@ -315,13 +315,12 @@ func TestRead(t *testing.T) {
 		{"forbidden", 403, "application/json", `{"error":"this needs the viewer role on this app","needs":"viewer","scope":"app"}`, ExitForbidden, "127.0.0.1 does not allow the token in MOTEL_TOKEN this: it needs the viewer role on this app.", true},
 		{"forbidden, a body of an older box", 403, "application/json", `{"error":"forbidden"}`, ExitForbidden, `127.0.0.1 refused this (HTTP 403) and did not say what it needs; the box says: "forbidden".`, true},
 		{"a 403 that is not JSON", 403, "text/html", "<html>no</html>", ExitForbidden, "127.0.0.1 refused this (HTTP 403) and did not say what it needs.", false},
-		{"a 5xx with a Motel-Version that is no release", 502, "application/json", `{"error":"boom"}`, ExitUnknown, "answered 502 without Motel-Version", false},
-		{"a 5xx with a Motel-Protocol that is no number", 502, "application/json", `{"error":"boom"}`, ExitUnknown, "answered 502 without Motel-Version", false},
-		{"motel's 500 from a build with no release", 500, "application/json", `{"error":"boom"}`, ExitFailed, `127.0.0.1 answered 500; the box says: "boom"`, true},
+		{"a 5xx with a Motel-Protocol that is no number", 502, "application/json", `{"error":"boom"}`, ExitUnknown, "answered 502 without Motel-Protocol", false},
+		{"motel's 500", 500, "application/json", `{"error":"boom"}`, ExitFailed, `127.0.0.1 answered 500; the box says: "boom"`, true},
 		{"no baseline", 409, "application/json", `{"error":"this box has no baseline"}`, ExitFailed, `127.0.0.1 answered 409; the box says: "this box has no baseline"`, true},
 		{"motel's 500, a hostile sentence", 500, "application/json; charset=utf-8", "{\"error\":\"boom \\u001b]52;c;eA==\\u0007\"}", ExitFailed, `127.0.0.1 answered 500; the box says: "boom \x1b]52;c;eA==\x07"`, true},
-		{"a gateway's JSON 502", 502, "application/json", "{\"error\":\"upstream \\u001b[2J down\"}", ExitUnknown, `Something at 127.0.0.1 answered 502 without Motel-Version, so not known to be motel's own answer; it says: "upstream \x1b[2J down"`, false},
-		{"a 500 without Motel-Version", 500, "application/json", `{"error":"boom"}`, ExitUnknown, "answered 500 without Motel-Version", false},
+		{"a gateway's JSON 502", 502, "application/json", "{\"error\":\"upstream \\u001b[2J down\"}", ExitUnknown, `Something at 127.0.0.1 answered 502 without Motel-Protocol, so not known to be motel's own answer; it says: "upstream \x1b[2J down"`, false},
+		{"a 500 without Motel-Protocol", 500, "application/json", `{"error":"boom"}`, ExitUnknown, "answered 500 without Motel-Protocol", false},
 		{"a redirect with a JSON error", 302, "application/json", `{"error":"sign in at https://elsewhere.example"}`, ExitUnknown, "Something at 127.0.0.1 answered (HTTP 302, not motel's answer). Is this the box's deploy host?", false},
 		{"a redirect with a JSON error and motel's headers", 307, "application/json", `{"error":"moved"}`, ExitUnknown, "Something at 127.0.0.1 answered (HTTP 307, not motel's answer). Is this the box's deploy host?", false},
 		{"a redirect with no body of its own", 301, "text/html", "<a href=\"https://x\">moved</a>", ExitUnknown, "Something at 127.0.0.1 answered (HTTP 301, not motel's answer). Is this the box's deploy host?", false},
@@ -333,23 +332,13 @@ func TestRead(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			ans := &Answer{Code: tc.code, Header: http.Header{"Content-Type": {tc.ctype}}, Body: []byte(tc.body + "\n")}
-			// Motel stamps its release on every answer to a verified
-			// token; the gateway's do not carry it.
-			switch tc.name {
-			case "a 5xx with a Motel-Version that is no release":
-				ans.Header.Set("Motel-Version", "x")
-			case "a 5xx with a Motel-Protocol that is no number":
+			// Motel stamps its protocol number on every answer to a
+			// verified token; the gateway's do not carry it.
+			if tc.name == "a 5xx with a Motel-Protocol that is no number" {
 				ans.Header.Set("Motel-Protocol", "x")
 			}
-			if strings.HasSuffix(tc.name, "and motel's headers") {
+			if strings.HasPrefix(tc.name, "motel's") || strings.HasSuffix(tc.name, "and motel's headers") {
 				ans.Header.Set("Motel-Protocol", "1")
-				ans.Header.Set("Motel-Version", "v0.7.0")
-			}
-			if strings.HasPrefix(tc.name, "motel's") {
-				ans.Header.Set("Motel-Protocol", "1")
-				if !strings.Contains(tc.name, "no release") {
-					ans.Header.Set("Motel-Version", "v0.7.0")
-				}
 			}
 			var st wire.Status
 			err := c.Read(ans, &st)

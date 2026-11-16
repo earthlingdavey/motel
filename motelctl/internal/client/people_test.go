@@ -348,43 +348,34 @@ func TestWhoamiNullsAndRoles(t *testing.T) {
 	}
 }
 
-// The header forms: a protocol number of 1 to 9 digits, not zero, in
-// one header; a release anchored at both ends, in one header.
+// The header's forms: a protocol number of 1 to 9 digits, not zero,
+// in one header. Only such a header makes a 5xx motel's own.
 func TestHeaderForms(t *testing.T) {
 	for _, c := range []struct {
 		protocol []string
-		version  []string
 		n        int
-		stamped  bool
 	}{
-		{[]string{"1"}, nil, 1, true},
-		{[]string{"0"}, nil, 0, false},
-		{[]string{"000000001"}, nil, 1, true},
-		{[]string{"1", "1"}, nil, 0, false},
-		{nil, []string{"v0.7.0"}, 0, true},
-		{nil, []string{"0.7.0-rc1"}, 0, true},
-		{nil, []string{"v0.7.0", "v0.7.0"}, 0, false},
-		{nil, []string{"xv0.7.0"}, 0, false},
-		{nil, []string{"v0.7.0x"}, 0, false},
-		{nil, []string{"x"}, 0, false},
+		{[]string{"1"}, 1},
+		{[]string{"0"}, 0},
+		{[]string{"000000001"}, 1},
+		{[]string{"1", "1"}, 0},
+		{[]string{"x"}, 0},
+		{nil, 0},
 	} {
 		h := http.Header{}
 		for _, v := range c.protocol {
 			h.Add("Motel-Protocol", v)
 		}
-		for _, v := range c.version {
-			h.Add("Motel-Version", v)
-		}
 		n, ok := protocolOf(h)
-		if n != c.n && ok || ok != (c.n > 0) || stamped(h) != c.stamped {
-			t.Errorf("%v %v: protocol %d %v, stamped %v", c.protocol, c.version, n, ok, stamped(h))
+		if n != c.n && ok || ok != (c.n > 0) {
+			t.Errorf("%v: protocol %d %v", c.protocol, n, ok)
 		}
 		// And so a 5xx is motel's or not.
 		ans := &Answer{Code: 502, Header: h, Body: []byte(`{"error":"boom"}`)}
 		ans.Header.Set("Content-Type", "application/json")
 		f := failure(t, (&Client{Box: Box{Host: "127.0.0.1"}}).Read(ans, &wire.Status{}))
-		if (f.Exit == ExitFailed) != c.stamped {
-			t.Errorf("%v %v: a 502 exits %d", c.protocol, c.version, f.Exit)
+		if (f.Exit == ExitFailed) != ok {
+			t.Errorf("%v: a 502 exits %d", c.protocol, f.Exit)
 		}
 	}
 }

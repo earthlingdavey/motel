@@ -1,6 +1,7 @@
 package liveswap
 
 import (
+	"encoding/json"
 	"errors"
 	"maps"
 	"net/http"
@@ -10,6 +11,8 @@ import (
 	"testing"
 
 	"github.com/caddyserver/caddy/v2"
+
+	"github.com/smallhoursorg/motel/liveswap/wire"
 )
 
 // testRelease stands for the release the release build links in.
@@ -28,12 +31,29 @@ func linkRelease(t *testing.T, v string) {
 // WriteHeader, not the live map a later write could change.
 func sent(w *httptest.ResponseRecorder) http.Header { return w.Result().Header }
 
-// TestVersionOnVerifiedAnswers: every answer to a token that verified
-// carries Motel-Version, the release: each row of the route table, the
+// wantProtocolNoRelease fails unless w's headers carry Motel-Protocol 1,
+// once, and no header names the release linked in.
+func wantProtocolNoRelease(t *testing.T, w *httptest.ResponseRecorder) {
+	t.Helper()
+	if got := sent(w).Values("Motel-Protocol"); len(got) != 1 || got[0] != "1" {
+		t.Errorf("Motel-Protocol %q, want 1", got)
+	}
+	for k, vs := range sent(w) {
+		for _, v := range vs {
+			if strings.Contains(v, testRelease) {
+				t.Errorf("header %s: %q names the release", k, v)
+			}
+		}
+	}
+}
+
+// TestProtocolNotReleaseOnVerifiedAnswers: every answer to a token
+// that verified, with a release linked in, carries Motel-Protocol and
+// no header names the release: each row of the route table, the
 // 404 for a name that is no app, the 405 after authentication, the
 // 400, 413 and 422s, a deploy stream (its headers go out with the first line), and
 // the 403 Decide's refusal would give.
-func TestVersionOnVerifiedAnswers(t *testing.T) {
+func TestProtocolNotReleaseOnVerifiedAnswers(t *testing.T) {
 	linkRelease(t, testRelease)
 	pull := `{"url":"https://x/1.tgz","version":"v1"}`
 	oversized := `{"url":"https://x/1.tgz","version":"v1","pad":"` + strings.Repeat("a", maxPayloadBytes) + `"}`
@@ -77,9 +97,7 @@ func TestVersionOnVerifiedAnswers(t *testing.T) {
 			if w.Code != c.code {
 				t.Fatalf("got %d, want %d: %s", w.Code, c.code, w.Body)
 			}
-			if got := sent(w).Values("Motel-Version"); len(got) != 1 || got[0] != testRelease {
-				t.Fatalf("Motel-Version %q, want %q", got, testRelease)
-			}
+			wantProtocolNoRelease(t, w)
 			// The stream's case must have taken the streaming path,
 			// whose headers go out with its first line.
 			if ct := sent(w).Get("Content-Type"); c.accept != "" && ct != c.accept {
@@ -97,17 +115,18 @@ func TestVersionOnVerifiedAnswers(t *testing.T) {
 		h, _ := newTestHandler(t)
 		recordDecide(t, errors.New("refused"))
 		w := do(t, h, http.MethodGet, "/demo", appToken(t), "")
-		if w.Code != http.StatusForbidden || sent(w).Get("Motel-Version") != testRelease {
-			t.Fatalf("got %d, Motel-Version %q", w.Code, sent(w).Get("Motel-Version"))
+		if w.Code != http.StatusForbidden {
+			t.Fatalf("got %d, want 403", w.Code)
 		}
+		wantProtocolNoRelease(t, w)
 	})
 }
 
-// TestNoVersionOnTheFlat401: a refused token, an unknown name's and a
-// known one's alike, gets the flat 401 with no Motel-Version, and its
-// headers and body are exactly what a build with no release sends: the
-// release tells a stranger nothing.
-func TestNoVersionOnTheFlat401(t *testing.T) {
+// TestNoMotelHeaderOnTheFlat401: a refused token, an unknown name's and
+// a known one's alike, gets the flat 401 with Content-Type its one
+// header, so nothing names motel, and its headers and body are exactly
+// what a build with no release sends.
+func TestNoMotelHeaderOnTheFlat401(t *testing.T) {
 	for _, c := range []struct{ name, method, target, token string }{
 		{"no token", "GET", "/demo", ""},
 		{"no token, a POST", "POST", "/demo", ""},
@@ -144,16 +163,35 @@ func TestNoVersionOnTheFlat401(t *testing.T) {
 	}
 }
 
-// TestNoVersionWithoutARelease: a build that links no release (go
-// build, every other test) sends no Motel-Version, not an empty one.
-func TestNoVersionWithoutARelease(t *testing.T) {
-	linkRelease(t, "")
+// TestReleaseInWhoamiBodyAlone: with a release linked in, whoami's
+// body names it, and no header of a person's answers does: whoami,
+// the apps list, an app's status, Decide's 403 and an unknown path's
+// 404 all carry Motel-Protocol alone.
+func TestReleaseInWhoamiBodyAlone(t *testing.T) {
+	linkRelease(t, testRelease)
+	people := newTestPeople(t)
 	h, _ := newTestHandler(t)
-	w := do(t, h, http.MethodGet, "/demo", appToken(t), "")
-	if w.Code != http.StatusOK {
-		t.Fatalf("got %d: %s", w.Code, w.Body)
-	}
-	if _, ok := sent(w)["Motel-Version"]; ok {
-		t.Fatalf("Motel-Version %q, want none", sent(w).Values("Motel-Version"))
+	h.people = people.reg
+	for _, c := range []struct {
+		target string
+		code   int
+	}{
+		{"/_motel/whoami", http.StatusOK},
+		{"/_motel/apps", http.StatusOK},
+		{"/demo", http.StatusOK},
+		{"/blog", http.StatusForbidden},
+		{"/_motel/nothing", http.StatusNotFound},
+	} {
+		w := sendTo(t, h, "GET", c.target, token(people.alice))
+		if w.Code != c.code {
+			t.Fatalf("GET %s: %d %s, want %d", c.target, w.Code, w.Body, c.code)
+		}
+		wantProtocolNoRelease(t, w)
+		if c.target == "/_motel/whoami" {
+			var me wire.WhoAmI
+			if err := json.Unmarshal(w.Body.Bytes(), &me); err != nil || me.Version != testRelease {
+				t.Errorf("whoami's version %q (%v), want %q", me.Version, err, testRelease)
+			}
+		}
 	}
 }
