@@ -559,7 +559,9 @@ func odd(v any) string {
 		// Every value whoami prints as the box's is held to the grammar
 		// the box holds it to: the name to a person line's, the release
 		// to the Makefile's; the key and the box are compared, not
-		// printed.
+		// printed. A role is held to its shape, which is wider than the
+		// one role a box grants, and printed as a word only when it is
+		// that one (roleRe).
 		if !nameRe.MatchString(a.Name) {
 			return "its name is not one a box takes"
 		}

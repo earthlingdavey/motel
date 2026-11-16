@@ -70,8 +70,9 @@ func runKey(t *testing.T, fb *fakeBox, env map[string]string, args ...string) re
 // whoami and apps: --json is the box's body as received; the human
 // output holds nothing a box could use on a terminal, and is what the
 // goldens say. (A list of apps with a name outside the app grammar is
-// not taken at all: client's TestReadPeoplesFields.) The fake box's roles hold a role and a scope no box
-// sends today, printed as they came.
+// not taken at all: client's TestReadPeoplesFields.) The fake box's
+// roles hold a role and a scope no box sends today: the role is quoted
+// as the box's word, the scope printed as it came.
 func TestWhoamiAndApps(t *testing.T) {
 	fb := newFakeBox(t)
 	for _, c := range []struct {
