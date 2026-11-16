@@ -162,7 +162,6 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request, _ caddyhttp.
 	if refusal != nil {
 		return refusal.Write(func(code int, body any) error { return RespondJSON(w, code, body, nil) })
 	}
-	StampProtocol(w.Header())
 	if motel {
 		// A global source verified the token: a deployer of no app,
 		// which no route under /_motel/ allows.
@@ -303,26 +302,13 @@ func (h *Handler) gate() PersonGate {
 	return PersonGate{Registry: h.people, Limiter: h.limiter, Rate: h.rate, Logger: h.logger}
 }
 
-// protocolHeader carries the protocol number on every answer to a
-// verified token, and on no other: no answer to a caller the box has
-// not accepted names motel (the flat 401 and the box webhook's early
-// 405 are as they were). No header carries the release, which tells
-// whoever reads it which known flaws a box has: only whoami's body
-// names it, to a declared person who asks.
-const protocolHeader = "Motel-Protocol"
-
 // Protocol is the number of the forms of person token this box takes:
 // 1 is the form a person's own key signs, with aud, iat and exp, good
 // on a GET. A later form raises it; it moves with the forms, never with
-// a release, so it tells a caller a range of releases, not one.
+// a release, so it tells a caller a range of releases, not one. Only
+// whoami's body names it, beside the release: no header of either
+// webhook names motel, its protocol or its release, to any caller.
 const Protocol = 1
-
-// StampProtocol sets protocolHeader. Each webhook calls it once, as
-// soon as a token verified, a deploy token's or a person's, so every
-// answer after that carries it, a deploy stream's included.
-func StampProtocol(h http.Header) {
-	h.Set(protocolHeader, strconv.Itoa(Protocol))
-}
 
 // decide is access.Decide, a variable so a test can see what the
 // handler asks it and make it refuse.

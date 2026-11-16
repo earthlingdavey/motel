@@ -63,51 +63,6 @@ func TestForbidden(t *testing.T) {
 	}
 }
 
-// Motel-Protocol is read where an answer carries it: a later number
-// than this client's is said once on stderr, and the command carries
-// on; this client's own, none, or one that does not read say nothing.
-func TestProtocolNote(t *testing.T) {
-	for _, c := range []struct {
-		name, header string
-		noted        bool
-	}{
-		{"a later protocol", "2", true},
-		{"this client's", "1", false},
-		{"none: an answer to no verified token", "", false},
-		{"not a number", "two", false},
-		{"zero", "0", false},
-		{"a sign", "+2", false},
-		{"ten digits", "1234567890", false},
-		{"two headers", "2,2", false},
-	} {
-		t.Run(c.name, func(t *testing.T) {
-			b := newBox(t, DeployToken("tok"), func(_ int, w http.ResponseWriter, _ *http.Request) {
-				for _, v := range strings.Split(c.header, ",") {
-					if v != "" {
-						w.Header().Add("Motel-Protocol", v)
-					}
-				}
-				motelJSON(w, 200, `{"app":"blog","phase":"idle"}`)
-			})
-			var notes bytes.Buffer
-			b.client.Notes = &notes
-			for range 2 {
-				ans, err := b.client.Get(context.Background(), "/blog", nil)
-				if err != nil || b.client.Read(ans, &wire.Status{}) != nil {
-					t.Fatalf("the command did not carry on: %v", err)
-				}
-			}
-			want := ""
-			if c.noted {
-				want = "motelctl: 127.0.0.1 speaks protocol 2 and this motelctl 1: the box is newer than this client, which may not show all it answers. Carrying on; a newer motelctl reads it all.\n"
-			}
-			if notes.String() != want {
-				t.Errorf("stderr %q, want %q", notes.String(), want)
-			}
-		})
-	}
-}
-
 // whoami's and apps' bodies are motel's by their fields: a 200 without
 // them is someone else's answer.
 func TestReadPeoplesBodies(t *testing.T) {
@@ -134,29 +89,6 @@ func TestReadPeoplesBodies(t *testing.T) {
 		if err != nil && failure(t, err).Exit != ExitUnknown {
 			t.Errorf("%s: exit %d, want 3", c.name, failure(t, err).Exit)
 		}
-	}
-}
-
-// A 401 is no answer to a verified token: a protocol it carries is not
-// read, so a refusal never says the box is newer. And with no Notes a
-// later protocol is said nowhere, and nothing fails.
-func TestProtocolNoteNotOnA401(t *testing.T) {
-	person, _ := personCred(t)
-	b := newBox(t, person, func(_ int, w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Motel-Protocol", "7")
-		motelJSON(w, 401, flat401)
-	})
-	var notes bytes.Buffer
-	b.client.Notes = &notes
-	if _, err := b.client.Get(context.Background(), "/blog", nil); failure(t, err).Exit != ExitRefused || notes.Len() != 0 {
-		t.Fatalf("notes %q after a 401", notes.String())
-	}
-	b = newBox(t, DeployToken("tok"), func(_ int, w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Motel-Protocol", "7")
-		motelJSON(w, 200, `{"app":"blog","phase":"idle"}`)
-	})
-	if _, err := b.client.Get(context.Background(), "/blog", nil); err != nil || b.client.noted {
-		t.Fatalf("with no Notes: %v, noted %v", err, b.client.noted)
 	}
 }
 
@@ -344,38 +276,6 @@ func TestWhoamiNullsAndRoles(t *testing.T) {
 		}
 		if f := read([]byte(body), v); f == nil || f.Exit != ExitUnknown {
 			t.Errorf("%s: %+v", body, f)
-		}
-	}
-}
-
-// The header's forms: a protocol number of 1 to 9 digits, not zero,
-// in one header. Only such a header makes a 5xx motel's own.
-func TestHeaderForms(t *testing.T) {
-	for _, c := range []struct {
-		protocol []string
-		n        int
-	}{
-		{[]string{"1"}, 1},
-		{[]string{"0"}, 0},
-		{[]string{"000000001"}, 1},
-		{[]string{"1", "1"}, 0},
-		{[]string{"x"}, 0},
-		{nil, 0},
-	} {
-		h := http.Header{}
-		for _, v := range c.protocol {
-			h.Add("Motel-Protocol", v)
-		}
-		n, ok := protocolOf(h)
-		if n != c.n && ok || ok != (c.n > 0) {
-			t.Errorf("%v: protocol %d %v", c.protocol, n, ok)
-		}
-		// And so a 5xx is motel's or not.
-		ans := &Answer{Code: 502, Header: h, Body: []byte(`{"error":"boom"}`)}
-		ans.Header.Set("Content-Type", "application/json")
-		f := failure(t, (&Client{Box: Box{Host: "127.0.0.1"}}).Read(ans, &wire.Status{}))
-		if (f.Exit == ExitFailed) != ok {
-			t.Errorf("%v: a 502 exits %d", c.protocol, f.Exit)
 		}
 	}
 }

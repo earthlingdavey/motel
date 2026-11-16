@@ -40,13 +40,8 @@ type Credential interface {
 	Authorization(ctx context.Context) (string, error)
 }
 
-// protocolHeader is the header motel stamps on every answer to a
-// token it verified (liveswap.StampProtocol), and never on a 401: the
-// protocol number. No header names the release; whoami's body does.
-const protocolHeader = "Motel-Protocol"
-
-// Protocol is the person-token protocol this client speaks: the
-// Motel-Protocol a box answers with, 1 being the token form m1.
+// Protocol is the person-token protocol this client speaks, as
+// whoami's protocol names a box's, 1 being the token form m1.
 const Protocol = 1
 
 // NewDeployToken takes MOTEL_TOKEN's value. A deploy token is one
@@ -165,11 +160,6 @@ type Client struct {
 	// system's, and are then the likelier cause of a certificate that
 	// does not verify.
 	Roots []string
-	// Notes is where a word that does not stop the command goes (a box
-	// newer than this client): stderr. nil says nothing.
-	Notes io.Writer
-
-	noted bool
 }
 
 // Answer is a box's answer.
@@ -208,11 +198,6 @@ func (c *Client) Get(ctx context.Context, path string, query url.Values) (*Answe
 		if err != nil {
 			return nil, err
 		}
-		// A 401 is no answer to a verified token, so whatever it
-		// carries says nothing of the box's protocol.
-		if ans.Code != http.StatusUnauthorized {
-			c.noteProtocol(ans.Header)
-		}
 		switch {
 		case ans.Code == http.StatusUnauthorized && !retried:
 			retried = true
@@ -239,34 +224,7 @@ func (c *Client) Get(ctx context.Context, path string, query url.Values) (*Answe
 	}
 }
 
-// noteProtocol reads Motel-Protocol where an answer carries it (only
-// an answer to a token the box verified does) and says once, on Notes,
-// when the box speaks a later protocol than this client: the command
-// carries on, since a later protocol adds to what a box answers.
-func (c *Client) noteProtocol(h http.Header) {
-	n, ok := protocolOf(h)
-	if !ok || n <= Protocol || c.noted || c.Notes == nil {
-		return
-	}
-	c.noted = true
-	_, _ = fmt.Fprintf(c.Notes, "motelctl: %s speaks protocol %d and this motelctl %d: the box is newer than this client, which may not show all it answers. Carrying on; a newer motelctl reads it all.\n",
-		c.Box.Host, n, Protocol)
-}
-
-// protocolOf is the Motel-Protocol an answer carries: exactly one
-// header, 1 to 9 decimal digits, not zero. Anything else is no
-// protocol number.
-func protocolOf(h http.Header) (int, bool) {
-	v := h.Values(protocolHeader)
-	if len(v) != 1 || !protocolRe.MatchString(v[0]) {
-		return 0, false
-	}
-	n, err := strconv.Atoi(v[0])
-	return n, err == nil && n > 0
-}
-
 var (
-	protocolRe = regexp.MustCompile(`^[0-9]{1,9}$`)
 	// releaseRe is a release as the Makefile links it in, as whoami's
 	// version names it: v0.6.1, and a pre-release or build suffix.
 	releaseRe = regexp.MustCompile(`^v?[0-9]{1,9}\.[0-9]{1,9}\.[0-9]{1,9}([-+][0-9A-Za-z.+-]{1,64})?$`)
@@ -462,9 +420,10 @@ func retryAfter(h http.Header, now time.Time) (int64, bool) {
 }
 
 // Read decodes a 200's body into v and returns nil, or says why the
-// answer is not the one asked for: the box's own refusal (403, 404, a
-// 409 or a 5xx in motel's words, each with the box's sentence quoted),
-// or an answer that is not motel's. No message carries a decoder's
+// answer is not the one asked for: a refusal (403, 404, a 409 or
+// another 4xx with an error sentence, each said as the box's with the
+// sentence quoted), a 5xx, said as not known to be motel's, or an
+// answer that is not motel's. No message carries a decoder's
 // error, which quotes what the body holds: a field that does not read
 // is named by the client's own name for it, and nothing of its value.
 func (c *Client) Read(ans *Answer, v any) error {
@@ -513,12 +472,11 @@ func (c *Client) Read(ans *Answer, v any) error {
 	if ans.Code == http.StatusNotFound {
 		return &Failure{Exit: ExitNotFound, Message: fmt.Sprintf("%s answered 404; the box says: %s", c.Box.Host, said), Body: ans.Body}
 	}
-	// A gateway in front of a box can answer a 5xx in JSON too. Motel
-	// stamps Motel-Protocol on every answer to a token it verified, so
-	// a 5xx without a well-formed one is not known to be motel's own.
-	if _, stamped := protocolOf(ans.Header); ans.Code >= 500 && !stamped {
+	// A gateway in front of a box can answer a 5xx in JSON too, and no
+	// header tells motel's own from it, so no 5xx is said as the box's.
+	if ans.Code >= 500 {
 		return &Failure{Exit: ExitUnknown, Message: fmt.Sprintf(
-			"Something at %s answered %d without a well-formed %s, so not known to be motel's own answer; it says: %s", c.Box.Addr(), ans.Code, protocolHeader, said)}
+			"Something at %s answered %d, not known to be motel's own answer; it says: %s", c.Box.Addr(), ans.Code, said)}
 	}
 	return &Failure{Exit: ExitFailed, Message: fmt.Sprintf("%s answered %d; the box says: %s", c.Box.Host, ans.Code, said), Body: ans.Body}
 }

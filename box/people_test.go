@@ -465,9 +465,7 @@ func TestPersonNotRefusedAfterAStart(t *testing.T) {
 		if w.Code != c.code && (c.code != 0 || w.Code == http.StatusUnauthorized || w.Code == http.StatusForbidden) {
 			t.Errorf("%s GET %s at once: %d %s, want %d", c.name, c.target, w.Code, w.Body, c.code)
 		}
-		if w.Header().Get("Motel-Protocol") != "1" {
-			t.Errorf("%s GET %s: no Motel-Protocol: %v", c.name, c.target, w.Header())
-		}
+		noMotelHeader(t, c.name+" GET "+c.target, w.Result().Header)
 	}
 }
 

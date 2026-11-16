@@ -1364,13 +1364,10 @@ for byte. A body the filter changed gains a top-level `redacted_env`
 (see [Secrets and logs](#secrets-and-logs)), which only `DeployResult`
 has a field for.
 
-**The protocol number.** An answer to a token that verified, every
-status a route answers with and a deploy stream's included, carries the
-header `Motel-Protocol` with the number of the person-token forms the
-box takes (`1`); only those answers carry it, so a 401 never does. No
-header names the release the box runs: `GET /_motel/whoami`'s
-`version` does, to a declared person who asks
-([access/DESIGN-access.md](access/DESIGN-access.md)).
+**No header names motel.** No answer, to any caller, carries a header
+that names motel, its protocol or the release the box runs:
+`GET /_motel/whoami`'s `version` and `protocol` do, to a declared
+person who asks ([access/DESIGN-access.md](access/DESIGN-access.md)).
 
 ### Streaming the deploy
 
