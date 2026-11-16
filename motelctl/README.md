@@ -123,6 +123,9 @@ made by hand. Accepted:
 | A new message could splice box text without a test failing | 2 | 2 | 3 | 12 | 3 (typed message parts) | accepted |
 | The TUI's marks (`▲ ✖ ⟳`) and box-drawing characters may be double width in some terminals, and misalign its columns (a plain-character mode is a later addition) | 1 | 2 | 1 | 2 | 2 | accepted |
 | The client's one retry of a 401 is a request the TUI's engine does not count against its rate | 1 | 1 | 3 | 3 | 2 | accepted |
+| A box string could reach a tview widget by a writer (`io.Copy`, `WriteTo` into a text view) or a method value of a setter without a test failing; held by review and the hostile goldens | 2 | 1 | 3 | 6 | 2 | accepted |
+| The TUI's `post` may leave a few short-lived goroutines after quit | 1 | 2 | 3 | 6 | 1 | accepted |
+| A `Retry-After` of an hour makes the TUI wait an hour: the box's word; the title bar says until when | 1 | 1 | 1 | 1 | 1 | accepted |
 | A labelled value under the cap keeps its runs of spaces, so on a narrow terminal a long run can wrap the rest of the value to the start of the next row, where it can look like a label (the `hostile-status` golden shows one). Log lines keep their spacing on purpose | 2 | 1 | 3 | 6 | 2 (wrap-aware printing) | accepted |
 
 ## The TUI
@@ -151,10 +154,15 @@ record is laid out for reading a failure, its log tail last.
   that read alone until `ctrl-r`. Ten idle minutes pause it.
 - **The token** lasts 600 s, the longest a box takes, and is signed
   again a minute before it ends: a hardware key is touched about every
-  nine minutes, and the title bar says when. A key file that needs a
-  passphrase the agent does not hold is refused before the screen
-  opens (exit 2): ssh-keygen could not ask for it under the screen.
-  Nothing is written to disk.
+  nine minutes, and the title bar says when. The TUI never asks for a
+  passphrase or a PIN: every signature runs ssh-keygen in a session of
+  its own, with no controlling terminal, and with `SSH_ASKPASS_REQUIRE=force`
+  and an `SSH_ASKPASS` that fails, so a key that needs one fails at
+  once. That stops the reads with the advice to add the key to the agent
+  (`ssh-add <path>`); `r` signs again, afresh, at most once in 5 s. A
+  key file with a passphrase the agent does not hold (matched by its
+  bytes) is refused before the screen opens, exit 2. The commands may
+  still ask on a terminal. Nothing is written to disk.
 - **Every value shows its age**, and a row whose last three reads, by
   its own interval, failed or did not come says `stale` in its state.
   Colour only repeats a mark (`✖ ▲ ⟳ ? ·`) or a word; `NO_COLOR`
@@ -162,13 +170,14 @@ record is laid out for reading a failure, its log tail last.
 - **Box text on tview.** tview reads `[...]` as tags in table cells,
   titles and text views, and a URL tag makes a real OSC 8 link.
   `tview.Escape` does not stop that (its pattern skips a tag holding a
-  `/`), so every string reaches a widget through one file,
-  `internal/tui/boxtext.go`, which puts a zero-width space after each
-  `[` on top of `termtext`. That rests on two tview internals, held by
+  `/`), so every string reaches a widget through one package,
+  `internal/tui/door`, which puts a zero-width space after each `[` on
+  top of `termtext`. Its setters take `door.Shown`, a struct only it
+  can make. That rests on two tview internals, held by
   `TestEscapeHolds` in every widget kind used; `TestOneDoor` fails if
-  another file hands tview text, and `TestSafeBytes` draws the hostile
-  fixture on a real terminfo screen and finds none of its attacks in
-  the bytes.
+  the screens hand tview text or make a widget off a short list, and
+  `TestSafeBytes` draws the hostile fixture on a real terminfo screen
+  and finds none of its attacks in the bytes.
 
 `motelctl tui --demo` (hidden) shows the test fixtures, marked SAMPLE
 DATA in the title bar, with no box.
@@ -184,9 +193,11 @@ DATA in the title bar, with no box.
 | `internal/render` | the human output; it takes views of `termtext.Text` and never a wire type |
 | `internal/termtext` | `Text`: a string a box sent, made safe to print |
 | `internal/local` | the programs it runs and the box repository it may be in |
-| `internal/tui` | the TUI's screens, on tview; text reaches tview only through `boxtext.go` |
+| `internal/tui` | the TUI's screens, on tview |
+| `internal/tui/door` | the one way text reaches tview |
 | `internal/tui/model` | what the screens read and when (the refresh engine), and what they show, with no terminal library |
 | `internal/tui/demo` | a box made of fixtures: `--demo`, and the TUI's tests |
+| `internal/tui/hostile` | test support: the hostile fixture's attacks, and a terminal that records bytes |
 
 The module links no Caddy (`TestLinksNoCaddy`): the wire types come from
 `liveswap/wire`, which imports only the standard library. The tests that
