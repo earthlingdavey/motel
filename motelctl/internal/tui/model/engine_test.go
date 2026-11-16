@@ -942,3 +942,40 @@ func TestWords(t *testing.T) {
 		t.Errorf("an empty apps screen while stopped says %q", v.Empty.Text())
 	}
 }
+
+// TestWaitIsForTheSoonest: the wait Take gives, which the driver sleeps
+// for, is until the next read of any kind; a driver that sleeps exactly
+// that long reads every app at its interval (a slower kind due later,
+// the list or whoami, must not hold the rest back).
+func TestWaitIsForTheSoonest(t *testing.T) {
+	apps := names(12)
+	e := model.NewEngine(t0)
+	now := t0
+	byApp := map[string][]time.Time{}
+	for now.Before(t0.Add(10 * time.Minute)) {
+		e.Touch(now)
+		j, ok, wait := e.Take(now)
+		if !ok {
+			if wait <= 0 {
+				t.Fatal("no wait and nothing to read")
+			}
+			now = now.Add(wait)
+			continue
+		}
+		if j.Kind == model.KStatus {
+			byApp[j.App] = append(byApp[j.App], now)
+		}
+		if j.Kind == model.KApps {
+			e.SetApps(apps, now)
+		}
+		e.Done(j, now, nil)
+	}
+	for _, a := range apps {
+		ts := byApp[a]
+		for i := 2; i < len(ts); i++ {
+			if g := ts[i].Sub(ts[i-1]); g > model.BackgroundEvery+time.Second {
+				t.Fatalf("%s read %s apart, its interval %s", a, g, model.BackgroundEvery)
+			}
+		}
+	}
+}

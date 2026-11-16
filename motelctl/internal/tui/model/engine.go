@@ -389,7 +389,10 @@ func (e *Engine) next(at time.Time) (Job, time.Time, bool) {
 			due = maxTime(due, e.lastFocus.Add(FocusEvery))
 		}
 		if due.After(at) {
-			r += 10 // not yet due: after every job that is
+			// Not yet due: after every job that is, and among the rest the
+			// soonest first, whatever its kind, so the wait it gives is
+			// the wait for the next read of any kind.
+			r = 100
 		}
 		if !found || r < bestRank || r == bestRank && due.Before(bestDue) || r == bestRank && due.Equal(bestDue) && j.App < best.App {
 			best, bestDue, bestRank, found = j, due, r, true
