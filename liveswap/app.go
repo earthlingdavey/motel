@@ -225,12 +225,23 @@ type managedApp struct {
 	// (endDeploy): what tells a restart waiting out its backoff that a
 	// deploy over its instance ended, from any other wake-up.
 	deploysEnded atomic.Uint64
+	// unlocked, when set, runs in unlockDeploy just after deployMu is
+	// let go: a test's place to be the next holder at once, before the
+	// last one returns. Set before any deploy runs; nil in production.
+	unlocked func()
+	// stepped, when set, is told inside the step that sets a deploy's
+	// outcome, under ma.mu, what was shown in flight as the step began
+	// and what is as it ends: a test's look into the one step, which a
+	// read from outside could only land in by chance. It must not take
+	// ma.mu. Set before any deploy runs; nil in production.
+	stepped func(began, ends *inFlight, outcome *deployResult)
 
-	// mu guards current, phase, phases and lastDeploy.
+	// mu guards current, phase, phases, inFlight and lastDeploy.
 	mu         sync.Mutex
 	current    *instance
 	phase      string
 	phases     []phaseTiming // the running deploy's phases, in order
+	inFlight   *inFlight     // the running deploy, as the status shows it; nil when none runs
 	lastDeploy *deployResult
 
 	// activeSocket is what GetUpstreams reads on every request; storing
@@ -336,10 +347,10 @@ func (ma *managedApp) redactorFor(s statusSnapshot, names ...string) *Redactor {
 	kvs := append([]string(nil), ma.secrets...)
 	ma.secretsMu.Unlock()
 	// Safe strings are names: the app's, every version the status
-	// names — the running one, the last deploy's, the releases on
-	// disk, the recorded ones — the digests those deploys were pinned
-	// to, the app's dirs, and any the caller's body names that the
-	// status does not (the digests a refused pin reports,
+	// names — the running one, the last deploy's, the one deploying,
+	// the releases on disk, the recorded ones — the digests those
+	// deploys were pinned to, the app's dirs, and any the caller's body
+	// names that the status does not (the digests a refused pin reports,
 	// deployOutcome). Whoever named one, it exempts nothing:
 	// a safe string equal to a known value is dropped by NewRedactor
 	// (redact.go, rule 1).
@@ -347,6 +358,11 @@ func (ma *managedApp) redactorFor(s statusSnapshot, names ...string) *Redactor {
 	safe = append(safe, names...)
 	if s.LastDeploy != nil {
 		safe = append(safe, s.LastDeploy.Version, s.LastDeploy.SHA256)
+	}
+	if s.Deploying != nil {
+		// The request's, validated as one (rule 4): a release still
+		// downloading is on no list above.
+		safe = append(safe, s.Deploying.Version)
 	}
 	for _, d := range s.Deploys {
 		safe = append(safe, d.Version, summaryPin(d))
@@ -550,22 +566,32 @@ func (ma *managedApp) setPhase(c collaborators, phase string) {
 	}
 }
 
-// takePhases returns the running deploy's phases with their durations
-// filled in (each ends where the next begins; the last at finished)
-// and clears the record for the next deploy.
-func (ma *managedApp) takePhases(finished time.Time) []phaseTiming {
-	ma.mu.Lock()
-	phases := ma.phases
-	ma.phases = nil
-	ma.mu.Unlock()
-	for i := range phases {
-		end := finished
-		if i+1 < len(phases) {
-			end = phases[i+1].StartedAt
-		}
-		phases[i].Seconds = end.Sub(phases[i].StartedAt).Seconds()
+// inFlight is the deploy holding deployMu (beginDeploy): what the
+// status's deploying says beside the phases entered so far (ma.phases).
+type inFlight struct {
+	version, by string
+	started     time.Time
+}
+
+// timedPhases is a copy of phases with their durations filled in: each
+// ends where the next begins, the last at end. A copy, because the
+// status times the running deploy's phases while setPhase appends to
+// them; the record's are timed the same way once it ends, so the two
+// never disagree on a phase that is over.
+func timedPhases(phases []phaseTiming, end time.Time) []phaseTiming {
+	if phases == nil {
+		return nil
 	}
-	return phases
+	out := make([]phaseTiming, len(phases))
+	for i, p := range phases {
+		stop := end
+		if i+1 < len(phases) {
+			stop = phases[i+1].StartedAt
+		}
+		p.Seconds = stop.Sub(p.StartedAt).Seconds()
+		out[i] = p
+	}
+	return out
 }
 
 // preflightResult classifies a pre-flight's outcome: a refusal is the
@@ -721,6 +747,9 @@ func (ma *managedApp) reportDeploy(c collaborators, req deployRequest, result de
 // reads as a re-read, so one more is harmless.
 func (ma *managedApp) unlockDeploy() {
 	ma.deployMu.Unlock()
+	if ma.unlocked != nil {
+		ma.unlocked()
+	}
 	ma.pokeWatchdog()
 }
 
@@ -729,8 +758,34 @@ func (ma *managedApp) unlockDeploy() {
 // failed deploy left dead goes now rather than at the end of its step.
 // A promoted deploy has already woken the watchdog with its instance.
 func (ma *managedApp) endDeploy() {
+	// Before deployMu goes: once it does, the next deploy's may be the
+	// one shown. Each way a deploy ends has cleared it already, before
+	// its response; this is the backstop for a way out that did not.
+	ma.endInFlight()
 	ma.deploysEnded.Add(1)
 	ma.unlockDeploy()
+}
+
+// endInFlight is a deploy that ends with no outcome to record (a push
+// whose upload was not staged): no longer shown in flight.
+func (ma *managedApp) endInFlight() {
+	ma.mu.Lock()
+	ma.inFlight = nil
+	ma.mu.Unlock()
+}
+
+// beginDeploy shows the deploy that holds deployMu as in flight, from
+// the moment it was taken: a push's from before its upload, which a
+// second deploy is refused for as for any. Its pipeline calls it again
+// and finds it begun: a deploy shown while deployMu is held is the
+// holder's, because each holder that shows one clears it before it lets
+// go (the record's defer, endInFlight, endDeploy).
+func (ma *managedApp) beginDeploy(version, by string, at time.Time) {
+	ma.mu.Lock()
+	defer ma.mu.Unlock()
+	if ma.inFlight == nil {
+		ma.inFlight = &inFlight{version: version, by: by, started: at}
+	}
 }
 
 // deployLocked runs the blue/green pipeline. The caller MUST already
@@ -752,6 +807,7 @@ func (ma *managedApp) deployLocked(ctx context.Context, req deployRequest, c col
 	ma.mu.Lock()
 	ma.phases = nil
 	ma.mu.Unlock()
+	ma.beginDeploy(req.version, req.by, started)
 	ma.lifecycle(c, LifecycleEvent{Name: EventDeployStarted, Release: req.version, DeployedBy: req.by})
 
 	pin := req.sha256 // a rollback's is read once it is accepted, below
@@ -788,7 +844,6 @@ func (ma *managedApp) deployLocked(ctx context.Context, req deployRequest, c col
 			FinishedAt:      finished,
 			ArtifactEntries: stats.entries,
 			ArtifactBytes:   stats.bytes,
-			Phases:          ma.takePhases(finished),
 		}
 		if relaunch && err == nil {
 			result.Note = relaunchNote(spec, req.version)
@@ -797,22 +852,32 @@ func (ma *managedApp) deployLocked(ctx context.Context, req deployRequest, c col
 			result.Status = "failed"
 			result.Error = err.Error()
 			result.Detail, result.RedactedEnv = detail, redacted
-			// The phase reached when it failed — none when it failed
-			// before the first (a rollback whose env_file would not
-			// read): "idle" is the app's state, not a deploy's phase.
-			if len(result.Phases) > 0 {
-				ma.mu.Lock()
-				result.Phase = ma.phase
-				ma.mu.Unlock()
-			}
+		}
+		// One step from the deploy in flight to its outcome: a status
+		// read shows deploying, with every phase so far, or last_deploy,
+		// never neither and never both.
+		ma.mu.Lock()
+		shown := ma.inFlight
+		result.Phases = timedPhases(ma.phases, finished)
+		// The phase reached when it failed — none when it failed before
+		// the first (a rollback whose env_file would not read): "idle" is
+		// the app's state, not a deploy's phase.
+		if err != nil && len(result.Phases) > 0 {
+			result.Phase = ma.phase
+		}
+		ma.lastDeploy = &result
+		ma.phase = "idle"
+		ma.phases = nil
+		ma.inFlight = nil
+		if ma.stepped != nil {
+			ma.stepped(shown, ma.inFlight, ma.lastDeploy)
+		}
+		ma.mu.Unlock()
+		if err != nil {
 			logger.Error("deploy failed", zap.Error(err))
 		} else {
 			logger.Info("deploy succeeded")
 		}
-		ma.mu.Lock()
-		ma.lastDeploy = &result
-		ma.phase = "idle"
-		ma.mu.Unlock()
 		// What happened before the request was accepted — the version
 		// already running or on disk, the app's directories not there
 		// to make — is about the request or the box, not the version:
@@ -1798,6 +1863,16 @@ func (ma *managedApp) statusFrom(c collaborators, available, byMtime []string, d
 		if hs.Caps.any() && !hs.CapsUnknown {
 			s.Caps, s.CapsUnenforced = capsForStatus(hs.Caps, hs.CapsUnenforced), hs.CapsUnenforced
 		}
+	}
+	if f := ma.inFlight; f != nil {
+		// Under the lock phase and lastDeploy are read under, which the
+		// deploy's end changes in one step with this: the phase is the
+		// last one listed here.
+		phases := []phaseTiming{}
+		if c.clock != nil && len(ma.phases) > 0 {
+			phases = timedPhases(ma.phases, c.clock.Now())
+		}
+		s.Deploying = &deployInFlight{Version: f.version, By: f.by, StartedAt: f.started, Phases: phases}
 	}
 	// After current: the watchdog records a restart before it installs
 	// the new instance, so a status that shows the instance shows why

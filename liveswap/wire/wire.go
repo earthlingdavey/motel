@@ -60,6 +60,13 @@ type Status struct {
 	// bounds nothing (not the case on Debian 13). Absent when every
 	// cap is enforced.
 	CapsUnenforced []string `json:"caps_unenforced,omitempty"`
+	// Deploying is the deploy running now; absent when none is. Before
+	// deploys and last_deploy, for the reason deploys is before
+	// last_deploy: a client reads a failure body's last "phase" as the
+	// phase it failed in, and this object holds no "phase" key. It is
+	// gone from the status by the time a deploy's own response is
+	// written.
+	Deploying *DeployInFlight `json:"deploying,omitempty"`
 	// Deploys is the outcome of the latest deploy of each version a
 	// record is kept for (liveswap/deploys.go), newest first; the whole
 	// record is GET /<app>?deploy=<version>. Serialized before
@@ -160,6 +167,31 @@ type DeployResult struct {
 	// wherever the result sits in a body, is hoisted into the body's
 	// own `redacted_env` (liveswap's withField).
 	RedactedEnv []string `json:"redacted_env,omitempty"`
+}
+
+// DeployInFlight is a deploy the app is running: set when the box takes
+// it (for a push, before its upload), cleared in the step that sets
+// last_deploy to its outcome, so a status holds the one or the other,
+// or when it ends with none (a push whose upload is not staged); either
+// way before the deploy's own response is written. A second
+// deploy refused while it runs changes nothing of it. A rollback and a
+// relaunch of the running version are deploys too; the watchdog's
+// restarts are not.
+type DeployInFlight struct {
+	// Version is the version asked for: every deploy names it before
+	// it begins.
+	Version string `json:"version"`
+	// By is who it runs under, as DeployResult.By.
+	By string `json:"deployed_by,omitempty"`
+	// StartedAt is when the box took it: the started_at its
+	// last_deploy and record will carry, but for a push, whose record
+	// begins once the upload is staged.
+	StartedAt time.Time `json:"started_at"`
+	// Phases are the phases entered so far, in order, timed as
+	// DeployResult.Phases is: each ends where the next begins, and the
+	// last's seconds run to the time of the answer. Always present, []
+	// before the first.
+	Phases []PhaseTiming `json:"phases"`
 }
 
 // PhaseTiming is one phase a deploy passed through.
@@ -365,4 +397,7 @@ type AppSummary struct {
 	// NewestDeploy is Status.Deploys[0], the newest deploy record's
 	// outcome: absent when no record is kept.
 	NewestDeploy *DeploySummary `json:"newest_deploy,omitempty"`
+	// Deploying is Status.Deploying.Version, the version of the deploy
+	// running now: absent when none is.
+	Deploying string `json:"deploying,omitempty"`
 }
