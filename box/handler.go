@@ -119,7 +119,6 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddyht
 	if !ok {
 		return err
 	}
-	liveswap.StampVersion(w.Header())
 	// A token the box block's deploy_trust accepted is the box
 	// channel's source, which Decide allows every box action: it
 	// refuses only if the table and the routes fall apart, and then

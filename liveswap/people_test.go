@@ -264,8 +264,8 @@ func TestEveryMotelRouteHasAnAction(t *testing.T) {
 // view, for each kind of person; a deploy token on a row under /_motel/
 // is told it needs a declared key (a global source's) or the flat 401
 // (an app's, which names no app here); any other path, method or query
-// under /_motel/ is a 404 once authenticated. Every answer to a
-// verified token carries Motel-Protocol, and none says "person".
+// under /_motel/ is a 404 once authenticated. No answer carries a
+// Motel- header, and none says "person".
 func TestWhoamiAndApps(t *testing.T) {
 	people := newTestPeople(t)
 	h, rig := newTestHandler(t)
@@ -292,14 +292,13 @@ func TestWhoamiAndApps(t *testing.T) {
 		if me.Name != c.name || me.Key != c.who.Fingerprint() || me.Box != personBox || me.Protocol != 1 || !slices.Equal(me.Roles, c.roles) || me.TokenExpiresAt.IsZero() {
 			t.Errorf("%s whoami: %s", c.name, w.Body)
 		}
-		if got := w.Result().Header.Get("Motel-Protocol"); got != "1" {
-			t.Errorf("%s whoami: Motel-Protocol %q", c.name, got)
-		}
+		wantNoMotelHeader(t, w)
 		w = sendTo(t, h, "GET", "/_motel/apps", tok)
 		var apps wire.Apps
 		if err := json.Unmarshal(w.Body.Bytes(), &apps); err != nil || w.Code != http.StatusOK || !slices.Equal(appNames(apps), c.apps) {
 			t.Errorf("%s apps: %d %s, want %v", c.name, w.Code, w.Body, c.apps)
 		}
+		wantNoMotelHeader(t, w)
 		for _, target := range []string{"/_motel/", "/_motel", "/_motel/whoami/x", "/_motel/demo", "/x/_motel/whoami", "/_motel/whoami?x=1", "/_motel/apps?"} {
 			w := sendTo(t, h, "GET", target, tok)
 			want := http.StatusNotFound
@@ -312,23 +311,30 @@ func TestWhoamiAndApps(t *testing.T) {
 			if w.Code != want {
 				t.Errorf("%s GET %s: %d %s, want %d", c.name, target, w.Code, w.Body, want)
 			}
+			wantNoMotelHeader(t, w)
 		}
 	}
 	const needsKey = `{"error":"this needs a token signed by a declared key","needs":"key","scope":"box"}` + "\n"
 	for _, target := range []string{"/_motel/whoami", "/_motel/apps"} {
-		if w := sendTo(t, h, "GET", target, "Bearer "+globalToken(t)); w.Code != http.StatusForbidden || w.Body.String() != needsKey {
+		w := sendTo(t, h, "GET", target, "Bearer "+globalToken(t))
+		if w.Code != http.StatusForbidden || w.Body.String() != needsKey {
 			t.Errorf("a global source on %s: %d %q", target, w.Code, w.Body)
 		}
+		wantNoMotelHeader(t, w)
 		if w := sendTo(t, h, "GET", target, "Bearer "+appToken(t)); w.Code != http.StatusUnauthorized {
 			t.Errorf("an app's source on %s: %d %q, want 401", target, w.Code, w.Body)
 		}
-		if w := sendTo(t, h, "POST", target, "Bearer "+globalToken(t)); w.Code != http.StatusNotFound {
+		w = sendTo(t, h, "POST", target, "Bearer "+globalToken(t))
+		if w.Code != http.StatusNotFound {
 			t.Errorf("a global source posting to %s: %d %q, want 404", target, w.Code, w.Body)
 		}
+		wantNoMotelHeader(t, w)
 	}
-	if w := sendTo(t, h, "GET", "/_motel/nothing", "Bearer "+globalToken(t)); w.Code != http.StatusNotFound || w.Result().Header.Get("Motel-Protocol") != "1" {
+	w := sendTo(t, h, "GET", "/_motel/nothing", "Bearer "+globalToken(t))
+	if w.Code != http.StatusNotFound {
 		t.Errorf("a global source on another path: %d %v", w.Code, w.Result().Header)
 	}
+	wantNoMotelHeader(t, w)
 }
 
 // TestAddressList: a grant with a from list holds only from the listed
@@ -416,9 +422,8 @@ func TestAddressList(t *testing.T) {
 }
 
 // TestRatePerPerson: past the burst a person is told 429, with
-// Retry-After and the protocol header (the token verified), whatever
-// the route; the journal says so once; and another person is not held
-// to it.
+// Retry-After and no Motel- header, whatever the route; the journal
+// says so once; and another person is not held to it.
 func TestRatePerPerson(t *testing.T) {
 	people := newTestPeople(t)
 	h, _ := newTestHandler(t)
@@ -435,10 +440,11 @@ func TestRatePerPerson(t *testing.T) {
 	}
 	for _, target := range []string{"/demo", "/_motel/apps", "/ghost"} {
 		w := sendTo(t, h, "GET", target, tok)
-		if w.Code != http.StatusTooManyRequests || w.Header().Get("Retry-After") != "1" || w.Header().Get("Motel-Protocol") != "1" ||
+		if w.Code != http.StatusTooManyRequests || w.Header().Get("Retry-After") != "1" ||
 			w.Body.String() != "{\"error\":\"too many requests; retry after 1 s\"}\n" {
 			t.Errorf("past the burst, %s: %d %v %q", target, w.Code, w.Header(), w.Body)
 		}
+		wantNoMotelHeader(t, w)
 	}
 	if got := logs.FilterMessage("access: person throttled").All(); len(got) != 1 || got[0].ContextMap()["person"] != "alice" {
 		t.Errorf("journal %v", logs.All())

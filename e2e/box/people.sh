@@ -178,6 +178,9 @@ get() {
 	cat "$o.h" "$o.b" >"$o"
 }
 motel_headers() { grep -i '^motel-' "$work/$1.h" | tr -d '\n' | tr 'A-Z' 'a-z'; }
+# no_release <name>: no header of the answer saved as <name> holds the
+# release, which only whoami's body names.
+no_release() { ! grep -qF "$RELEASE" "$work/$1.h"; }
 
 # mc <motelctl args...>: motelctl as a laptop runs it, with the box's
 # private root as SSL_CERT_FILE and nothing else of the environment's
@@ -384,12 +387,13 @@ for path in /demo /_motel/whoami /; do
 	same "$path: no token at all is the same refusal" "d$tag" "n$tag"
 	for k in d n s f x a; do
 		[ -z "$(motel_headers "$k$tag")" ] || fail "$path: an answer to a caller not accepted names motel: $(motel_headers "$k$tag")"
+		no_release "$k$tag" || fail "$path: a refusal names the release in a header: $(grep -F "$RELEASE" "$work/$k$tag.h")"
 	done
-	pass "$path: no refusal carries Motel-Protocol or Motel-Version ($(head -1 "$work/d$tag.h"), $(cat "$work/d$tag.b"))"
+	pass "$path: no refusal carries a Motel- header or names the release ($(head -1 "$work/d$tag.h"), $(cat "$work/d$tag.b"))"
 	get "v$tag" -H "Authorization: Motel $P_VERA" "$BASE$path"
-	[ "$CODE" = 200 ] && [ "$(motel_headers "v$tag")" = "motel-protocol: 1motel-version: $RELEASE" ] \
-		&& pass "$path: vera's answer is 200 and carries Motel-Protocol 1 and Motel-Version $RELEASE" \
-		|| fail "$path: vera: $CODE, headers '$(motel_headers "v$tag")'"
+	[ "$CODE" = 200 ] && [ -z "$(motel_headers "v$tag")" ] && no_release "v$tag" \
+		&& pass "$path: vera's answer is 200 with no Motel- header and no header naming $RELEASE" \
+		|| fail "$path: vera: $CODE, headers '$(motel_headers "v$tag")', release in a header: $(grep -F "$RELEASE" "$work/v$tag.h")"
 done
 echo "INFO: the flat 401 as sent: $(tr -d '\r' <"$work/d_demo.raw" | tr '\n' '|')$(cat "$work/d_demo.b")"
 
@@ -397,7 +401,8 @@ echo "=== people 4: deploy tokens as before, on the same box ==="
 get st -H "Authorization: Bearer $TOKEN" "$BASE/demo"
 [ "$CODE" = 200 ] && [ "$(json_str "$(cat "$work/st.b")" current_version)" = "$DV" ] \
 	&& pass "a deploy token's GET /demo answers 200 with the version deployed" || fail "deploy token status: $CODE $(head -c 400 "$work/st.b")"
-[ -n "$(motel_headers st)" ] && pass "and, a token the box verified, carries $(motel_headers st)" || fail "a deploy token's answer carries no Motel-Protocol"
+[ -z "$(motel_headers st)" ] && no_release st && pass "and, a token the box verified, its answer carries no Motel- header and no header naming $RELEASE" \
+	|| fail "a deploy token's answer: headers '$(motel_headers st)', release in a header: $(grep -F "$RELEASE" "$work/st.h")"
 get st -H "Authorization: Bearer $TOKEN" "$BASE/_motel/whoami"
 [ "$CODE" = 403 ] && pass "a global deploy source's token asking who it is: 403 ($(cat "$work/st.b"))" || fail "deploy token on whoami: $CODE $(cat "$work/st.b")"
 DV2=${DV}b
