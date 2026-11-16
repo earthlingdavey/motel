@@ -30,10 +30,7 @@ of `MOTEL_URL`, or the box repository the shell is in (inside
 
 **Which credential:** a token the person's own ssh key signs when
 `--key` names the key. Otherwise `MOTEL_TOKEN`, sent as `Bearer`, when it
-is set: a deploy token reads its own app on any motel today, though a
-5xx from a box on a release that predates the `Motel-Version` header is
-reported as "could not tell" (exit 3), since motelctl cannot tell it
-from a gateway's. With `MOTEL_URL` set too, the token goes to
+is set: a deploy token reads its own app on any motel today. With `MOTEL_URL` set too, the token goes to
 `MOTEL_URL`'s box only; a command that names another box sends nothing
 (exit 2). Otherwise a
 token the person's own ssh key signs, made by the system `ssh-keygen -q -Y sign` in
@@ -69,19 +66,24 @@ which would quote the body. `whoami` takes an answer only when its name,
 release, roles and scopes are of the box's grammars and no required
 field is missing or `null`; it shows the key this command signed with
 and the box it asked, and an answer naming another key or box prints
-only a warning quoting the box's value, and exits 3. `Motel-Protocol` comes only on answers
-to a token the box verified, and counts only as one header of 1 to 9
-digits; a higher number than this client's is said on stderr, and the
-command carries on. A passphrase-protected key file with no terminal to
+only a warning quoting the box's value, and exits 3. The release and
+the box's protocol are read from whoami's body alone: no header names
+motel. So nothing tells a box's own 5xx from a gateway's in front of
+it, and every 5xx is said as "Something at <host> answered <code>, not
+known to be motel's own answer", with its `error` quoted, and exits 3:
+a box still starting, which answers a deploy token 503, reads that
+way too (an accepted residual, below). A passphrase-protected key file with no terminal to
 ask on is refused with the remedy, `ssh-add` (exit 2).
 
 **Only https.** motelctl never sends a request over plain http, and has
 no flag or variable that would (`deploy.sh`'s `MOTEL_ALLOW_HTTP` is not
 read).
 
-**Exit codes:** 0 read; 1 the box answered with a failure; 2 nothing was
+**Exit codes:** 0 read; 1 a failure answered with a sentence (a 4xx
+other than the 401, 403, 404 and 429 below, a 409 for one; said as the
+box's: no header tells a gateway's from motel's); 2 nothing was
 sent (usage, no box or key, an RSA or ECDSA key); 3 could not tell (no answer, not
-motel's answer, a 429 that stood); 4 not accepted (a 401 after one
+motel's answer, any 5xx, a 429 that stood); 4 not accepted (a 401 after one
 retry); 5 not allowed (403); 6 not found (404); 8 the certificate did not
 verify (motelctl never continues past one); 130 interrupted. 7 is held
 for a box too old for people's tokens.
@@ -122,6 +124,8 @@ made by hand. Accepted:
 | Residual | S | O | D | Score | Size of a fix | Outcome |
 |---|---|---|---|---|---|---|
 | A new message could splice box text without a test failing | 2 | 2 | 3 | 12 | 3 (typed message parts) | accepted |
+| A 5xx in motel's own words (a box still starting, a box status that cannot read its files) is said as not known to be motel's and exits 3, not 1: no header tells it from a gateway's, by the owner's decision that no answer names motel. Its code and its quoted sentence are still shown | 2 | 4 | 1 | 8 | 3 (a stamp on the wire again) | accepted |
+| A gateway's JSON 4xx (a 403, 404, 409) is said as "the box says", as motel's would be: no header tells them apart, and none ever did for a 4xx | 2 | 5 | 3 | 30 | 1 (say a 4xx's sentence as "it says", not "the box says") | owed: older than this change, and it rewrites every 4xx sentence and its goldens |
 | The TUI's marks (`▲ ✖ ⟳`) and box-drawing characters may be double width in some terminals, and misalign its columns (a plain-character mode is a later addition) | 1 | 2 | 1 | 2 | 2 | accepted |
 | The client's one retry of a 401 is a request the TUI's engine does not count against its rate | 1 | 1 | 3 | 3 | 2 | accepted |
 | A box string could reach a tview widget by a writer (`io.Copy`, `WriteTo` into a text view), by reflection, through a type alias, or by a function or method value of a setter, and the TUI's structural tests (`TestOneDoor`, `TestTUIImports`, `TestActionsAreCommands`) be got round the same ways, without a test failing; held by review and the hostile goldens | 2 | 1 | 3 | 6 | 2 | accepted |

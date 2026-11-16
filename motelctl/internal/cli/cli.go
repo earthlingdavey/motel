@@ -213,7 +213,6 @@ func (r *runner) client(ctx context.Context, t *target, fromApp *client.Box, sco
 		UserAgent: "motelctl/" + r.env.Version,
 		Scope:     scope,
 		Roots:     roots(r.env.Getenv),
-		Notes:     r.env.Stderr,
 	}, nil
 }
 

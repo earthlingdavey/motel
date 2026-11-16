@@ -1364,12 +1364,10 @@ for byte. A body the filter changed gains a top-level `redacted_env`
 (see [Secrets and logs](#secrets-and-logs)), which only `DeployResult`
 has a field for.
 
-**The release.** An answer to a token that verified, every status a
-route answers with and a deploy stream's included, carries the header
-`Motel-Version` with the release the box runs (`v0.7.0`, say: the
-version `motel version` prints first); only those answers carry it, so a 401
-never does. A build that links no release (`go build` by hand) sends
-none.
+**No header names motel.** No answer, to any caller, carries a header
+that names motel, its protocol or the release the box runs:
+`GET /_motel/whoami`'s `version` and `protocol` do, to a declared
+person who asks ([access/DESIGN-access.md](access/DESIGN-access.md)).
 
 ### Streaming the deploy
 

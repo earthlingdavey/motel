@@ -20,7 +20,8 @@ import (
 type ClientVersion struct {
 	// Version is motelctl's release.
 	Version string `json:"version"`
-	// Protocols are the Motel-Protocol numbers it speaks.
+	// Protocols are the protocol numbers it speaks, as whoami's
+	// protocol names a box's.
 	Protocols []int `json:"protocols"`
 	// TokenForms are the person-token envelopes it can make.
 	TokenForms []string `json:"token_forms"`

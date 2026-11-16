@@ -14,11 +14,10 @@ box's status, who they are here, and which apps they may view. No
 person can deploy, roll back or push, whatever the lines say.
 
 - The person who runs a box is the operator.
-- The words `Motel` (the `Authorization` scheme), `m1.` (the token's
-  envelope), `Motel-Protocol` and `Motel-Version` are proposals the
-  owner has not confirmed; each is one constant in the code
-  (`access.TokenScheme`, `access.TokenEnvelope`, liveswap's
-  `protocolHeader` and `versionHeader`). The namespace
+- The words `Motel` (the `Authorization` scheme) and `m1.` (the
+  token's envelope) are proposals the owner has not confirmed; each is
+  one constant in the code (`access.TokenScheme`,
+  `access.TokenEnvelope`). The namespace
   `motel-access-v1@motel.smallhours.org` and the prefix `/_motel/` are
   chosen and one-way.
 
@@ -31,7 +30,7 @@ person can deploy, roll back or push, whatever the lines say.
 | The token checker | `CheckToken`: checks 1 to 13 below; writes nothing, journals nothing, knows no person | `token.go` |
 | `Decide` | the cells of who may take which action, narrowed for a person by their grants | `access.go` |
 | The rate | a token bucket per person name, for the process | `rate.go` |
-| The way in | `AdmitPerson`: the checker with the registry as its lookup, the address list, the failure budgets, the protocol headers, the rate | `liveswap/people.go`, called by both webhooks |
+| The way in | `AdmitPerson`: the checker with the registry as its lookup, the address list, the failure budgets, the rate | `liveswap/people.go`, called by both webhooks |
 | The routes | liveswap's route table and its rows under `/_motel/`; box's table on `/` | `liveswap/handler.go`, `liveswap/motel_routes.go`, `box/handler.go` |
 
 `access` is a leaf package in the liveswap module: it imports nothing
@@ -167,8 +166,7 @@ On either webhook, a request in the `Motel` scheme goes through
    the key, the person, the address and the peer. A person with no
    grant at all goes on: they may ask who they are.
 3. The address's failures are forgotten, as for an accepted deploy
-   token, and the answer from here carries `Motel-Protocol` and
-   `Motel-Version`.
+   token.
 4. **The rate**: 429 past the person's budget.
 5. `Decide`, then the route's function.
 
@@ -278,14 +276,16 @@ viewer of the box, who may list the apps, gets the 404.
 
 ## The version on the wire
 
-`Motel-Protocol: 1` and `Motel-Version: <release>` go on every answer
-written after a token verified, a deploy token's or a person's, a
-deploy's stream included; `Motel-Version` only when the build links a
-release. Neither goes on a 401 or on the box webhook's early 405: no
-answer to a caller the box has not accepted names motel. The protocol
-number moves only with the token forms (1: this form). The cost, which
-the client's message carries: a box too old for people and a key the
-box does not list both look like the flat 401.
+No answer of either webhook carries a header that names motel, to any
+caller, verified or not. The release is what picks a known flaw: a
+header on every verified answer would show it to every token holder
+and to anything that reads the responses, where whoami's `version`
+shows it only to a declared person who asks. whoami's `protocol` is
+the number of the token forms the box takes, and moves only with them
+(1: this form). The costs, both said by the client: a box too old for
+people and a key the box does not list both look like the flat 401;
+and nothing tells motel's own 5xx from a gateway's, so motelctl says
+every 5xx as not known to be motel's (motelctl/README.md).
 
 ## Safeguards
 
@@ -381,7 +381,7 @@ access's examples:
 | 3 | the person token | a token for box A accepted at box B | 5 | 5 | 5 | fix | `aud` and `Host` both equal to the identity (checks 9, 10) |
 | 4 | the token beside deploy tokens | one kind taken as the other | 5 | 5 | 5 | fix | the scheme picks the checker; two headers refused; no person's cell holds `app.deploy` |
 | 5 | the `Motel` scheme in both webhooks | an existing answer changes | 3 | 5 | 1 | fix | any other request takes today's path; `handler-bodies.txt` passes with additions only; every refusal is the flat 401 byte for byte (`TestPersonRefusalsAreTheFlat401`, both webhooks) |
-| 6 | the version on the wire | the release told to strangers | 2 | 5 | 5 | fix | both headers only after a token verified |
+| 6 | the version on the wire | the release told to strangers, or to every token holder | 2 | 5 | 5 | fix | no header names motel, its protocol or its release, only whoami's body (`TestNoMotelHeaderOnVerifiedAnswers` and `TestReleaseInWhoamiBodyAlone` in liveswap, `TestNoMotelHeaderOnVerifiedAnswers` and `TestNoMotelHeaderOnPersonAnswers` in box) |
 | 7 | two readers of the lines | `validate` and the serving process disagree on who is admitted | 3 | 5 | 3 | fix | one parser for both; the registry from the walk alone; a grant on an app the config does not run now fails the load too |
 | 8 | the registry from the installed file | the walk refuses it, so no person is admitted | 2 | 5 | 1 | fix | a journal line at each load naming why |
 | 9 | the registry after a start | a person refused in #473's window | 2 | 4 | 1 | fix | built at provision; `TestPersonNotRefusedAfterAStart` |
@@ -413,7 +413,7 @@ access's examples:
 | `motel validate` on a machine with no installed file, of a config with people, warns that no person is admitted from the Caddyfile this machine runs | 1 | 5 | 1 | 1, 1 | true of that machine, and the line says it is about that machine's file |
 | A refusal by lookup and one past it still differ by the work around the signature check (a hash, the key's parse) | 1 | 2 | 5 | 2, 2 | a stranger learns at most that difference, not a signature check's; constant time would need the whole path padded |
 | The time of a refusal tells a stranger which key types the box lists (a type no listed key has costs no verification) | 1 | 3 | 5 | — | it says nothing of who; hiding it would mean verifying every type for anyone, which is the cost row 16 removes |
-| A box too old for people and a key the box does not list both answer the flat 401 | 2 | 5 | 3 | — | the owner's decision: no answer to a stranger names motel; the client's message names both |
+| A box too old for people and a key the box does not list both answer the flat 401 | 2 | 5 | 3 | — | the owner's decision: no answer names motel in a header; the client's message names both |
 | A legitimate burst over 60 requests is told to wait | 2 | 3 | 1 | — | `Retry-After` names the wait |
 | The rate table holds more than its 2,048 names while more than that have each asked in the last 30 s: only buckets that have refilled are dropped | 1 | 5 | 5 | 2, 2 | a load declares at most 1,024 people and only a verified token of a declared name adds a bucket, so it takes loads that replace every person in use, twice in 30 s; dropping a bucket in use would refill a throttled person. A bucket can be dropped once 30 s have passed since its name last asked |
 | A person whose only key is ECDSA (for example from an agent that makes only P-256 keys) cannot be declared until a later release admits that type | 2 | 2 | 1 | — | the owner's decision of 2026-11-15: a stranger presenting a listed public key buys one check of its type, 0.04 ms for Ed25519 against 0.5 to 1.3 ms for the larger ECDSA curves, and widening later breaks no one where narrowing would; the line's refusal names the remedy |
