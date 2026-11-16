@@ -427,8 +427,9 @@ func retryAfter(h http.Header, now time.Time) (int64, bool) {
 // quoted), or an answer that is not motel's. No message carries a
 // decoder's error, which quotes what the body holds: a field that does
 // not read is named by the client's own name for it, and nothing of
-// its value. A value the box's filter replaced part of is Filtered in
-// v (hold).
+// its value. A value held to a grammar that the box's filter replaced
+// part of is Filtered in v (hold); the app and a record's version,
+// which the caller compares with what was asked (Same), are as sent.
 func (c *Client) Read(ans *Answer, v any) error {
 	if ans.Code == http.StatusOK {
 		missing := identity(v).missing(ans.Body)
@@ -526,7 +527,12 @@ var (
 // carries a marker is one the box's own filter changed, not another
 // server's: an env_file value equal to the app's name (DB_NAME=<app>)
 // is replaced inside the unit, which is named after the app.
-var filterMarkRe = regexp.MustCompile(`\[(?:redacted|REDACTED|withheld):[^\][]+\]|<[^<>]+ removed>|\[#[0-9]{1,9}\]|\[masked, [0-9]{1,9} chars\]`)
+//
+// The filter's later layers run over the markers of its first, so a
+// key name that itself looks generated is masked inside its own label:
+// [redacted:[masked, 24 chars]] is one marker, not a marker in a
+// bracket.
+var filterMarkRe = regexp.MustCompile(`\[(?:redacted|REDACTED|withheld):(?:[^\][]|\[masked, [0-9]{1,9} chars\])+\]|<[^<>]+ removed>|\[#[0-9]{1,9}\]|\[masked, [0-9]{1,9} chars\]`)
 
 // Filtered is what motelctl shows in place of a value the box's
 // response filter replaced part of: its own words, and nothing of the
@@ -580,7 +586,8 @@ func held(s *string, in func(string) bool) bool {
 // hold says why a body that decoded is still not one an honest box
 // sends: a value outside the grammar the box holds it to, which the
 // client never prints and so never says either. A value the box's own
-// filter replaced part of is no such value: it becomes Filtered in v.
+// filter replaced part of is no such value: it becomes Filtered in v
+// (but a record's version, which the caller compares and replaces).
 func hold(v any) string {
 	isVersion := wireVersionRe.MatchString
 	switch a := v.(type) {
@@ -775,12 +782,18 @@ func (c *Client) NotMotel(ans *Answer, why string) error { return c.notMotel(ans
 // an env_file it could not read, a replaced value that overlapped the
 // body's structure or one of its outcomes), which say what the
 // operator has to mend; or the bare marker [#0] it falls back to when
-// even that sentence cannot be written, which says no more than that
-// the answer was withheld. Any other 200 without the answer's fields
-// is still not motel's.
+// what it would send is not JSON after its last pass, which says no
+// more than that the answer was withheld. Any other 200 without the
+// answer's fields is still not motel's.
 func withheld(ans *Answer) (termtext.Text, bool) {
 	var e wire.Error
-	if decodeObject(ans, &e) != nil || (e.Error != "[#0]" && !strings.HasPrefix(e.Error, "response withheld")) {
+	if decodeObject(ans, &e) != nil {
+		return termtext.Text{}, false
+	}
+	// The opening is itself filtered (redact.go's filterBody): an
+	// env_file value that is one of its words stands as a marker there.
+	opening, _, _ := strings.Cut(e.Error, ": ")
+	if e.Error != "[#0]" && !Same(opening, "response withheld") {
 		return termtext.Text{}, false
 	}
 	return termtext.Quote(e.Error), true

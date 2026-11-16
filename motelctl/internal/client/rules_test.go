@@ -370,7 +370,9 @@ func TestReadTakesWhatTheFilterReplaced(t *testing.T) {
 	// chooseMarker falls back when a key is named for its own value),
 	// with one key or several.
 	for _, mark := range []string{"[redacted:DB_NAME]", "[redacted:A,B_2,c]", "[REDACTED:shop]", "[withheld:shop]", "<shop removed>", "<a,b removed>", "[#1]", "[#12]",
-		"[redacted:" + strings.Repeat("K,", 200) + "K]", "[masked, 20 chars]", "[redacted:private-key]"} {
+		"[redacted:" + strings.Repeat("K,", 200) + "K]", "[masked, 20 chars]", "[redacted:private-key]",
+		// A key name that looks generated is masked inside its own label.
+		"[redacted:[masked, 24 chars]]", "[redacted:A,[masked, 24 chars],B]", "[withheld:[masked, 24 chars]]", "<[masked, 24 chars] removed>"} {
 		var st wire.Status
 		body := `{"app":"blog","phase":"idle","unit":"motel-` + mark + `.v1.0a1b2c3d0a1b2c3d.service"}`
 		if err := c.Read(jsonAnswer(200, body), &st); err != nil || st.Unit != Filtered {
@@ -471,6 +473,21 @@ func TestReadSaysWhatTheFilterWithheld(t *testing.T) {
 			}
 		}
 	}
+	// The filter's sentence passes its own last pass: a value that is
+	// one of its opening words stands there as a marker.
+	for _, said := range []string{
+		"[redacted:MODE] withheld: a redacted value overlapped the response's own outcome",
+		"response [redacted:STATE]: a redacted value overlapped the response's own structure",
+		"[#1]: a redacted value overlapped the response's own structure",
+	} {
+		b, err := json.Marshal(wire.Error{Error: said})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if f := failure(t, c.Read(jsonAnswer(200, string(b)), &wire.Status{})); f.Exit != ExitFailed || !strings.Contains(f.Message, "withheld its answer; the box says: ") {
+			t.Errorf("%q: exit %d %q", said, f.Exit, f.Message)
+		}
+	}
 	withKeys := `{"error":"response withheld: a redacted value overlapped the response's own structure","redacted_env":["DB_NAME"]}`
 	if f := failure(t, c.Read(jsonAnswer(200, withKeys), &wire.Status{})); f.Exit != ExitFailed || !strings.Contains(f.Message, "withheld its answer; the box says: \"response withheld: a redacted value") {
 		t.Errorf("a withheld body naming its keys: exit %d %q", f.Exit, f.Message)
@@ -478,6 +495,8 @@ func TestReadSaysWhatTheFilterWithheld(t *testing.T) {
 	for name, body := range map[string]string{
 		"another server's error":        `{"error":"upstream timed out"}`,
 		"the words not at the start":    `{"error":"note: response withheld"}`,
+		"a marker and other words":      `{"error":"[redacted:X] timed out: upstream"}`,
+		"other words before the colon":  `{"error":"response withheld by a proxy: upstream"}`,
 		"a withheld body with no error": `{"redacted_env":["DB_NAME"]}`,
 	} {
 		f := failure(t, c.Read(jsonAnswer(200, body), &wire.Status{}))
