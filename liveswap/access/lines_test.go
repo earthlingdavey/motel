@@ -48,7 +48,7 @@ func ecdsaKey(t testing.TB, c elliptic.Curve) string {
 	return b64(k.Marshal())
 }
 
-// skEdKey and skECDSAKey are the wire forms OpenSSH writes for a
+// skEdKey and skECDSAB64 are the wire forms OpenSSH writes for a
 // hardware key's public half (PROTOCOL.u2f): no device is needed to
 // make one.
 func skEdKey(t testing.TB) string {
@@ -62,7 +62,7 @@ func skEdKey(t testing.TB) string {
 	}{"sk-ssh-ed25519@openssh.com", string(pub), "ssh:"}))
 }
 
-func skECDSAKey(t testing.TB) string {
+func skECDSAB64(t testing.TB) string {
 	t.Helper()
 	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
@@ -158,7 +158,7 @@ func TestParsePerson(t *testing.T) {
 		{"ecdsa-sha2-nistp256", ecdsaKey(t, elliptic.P256())},
 		{"ecdsa-sha2-nistp384", ecdsaKey(t, elliptic.P384())},
 		{"ecdsa-sha2-nistp521", ecdsaKey(t, elliptic.P521())},
-		{"sk-ecdsa-sha2-nistp256@openssh.com", skECDSAKey(t)},
+		{"sk-ecdsa-sha2-nistp256@openssh.com", skECDSAB64(t)},
 	} {
 		k, err := ParsePerson([]string{"bob@example.com", c.typ, c.key})
 		if err != nil {
@@ -518,7 +518,7 @@ func FuzzParsePerson(f *testing.F) {
 	f.Add("bob@example.com\x00ssh-ed25519\x00" + edKey(f))
 	f.Add("bob\x00ecdsa-sha2-nistp256\x00" + ecdsaKey(f, elliptic.P256()))
 	f.Add("bob\x00sk-ssh-ed25519@openssh.com\x00" + skEdKey(f))
-	f.Add("bob\x00sk-ecdsa-sha2-nistp256@openssh.com\x00" + skECDSAKey(f))
+	f.Add("bob\x00sk-ecdsa-sha2-nistp256@openssh.com\x00" + skECDSAB64(f))
 	f.Add("bob\x00ssh-rsa\x00AAAA")
 	f.Add("bob\x00ssh-ed25519")
 	f.Fuzz(func(t *testing.T, s string) {
