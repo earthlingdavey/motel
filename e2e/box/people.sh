@@ -474,9 +474,11 @@ echo "=== people 7: the first second after a restart ==="
 # than +140 ms: five restarts for each way in [measured, 2026-11-15,
 # ten restarts each: over 443, deploy tokens refused in 3, 16 of 641
 # requests, up to +81 ms after the first answer; on :8081, in 7, 57 of
-# 1028; persons' tokens 0 of 644 and 0 of 1030]. The e2e config's
-# plain-http webhook (:8081) answers a person whose Host names the box
-# (people 5), so it is asked too, and held to the same: no 401.
+# 1028; persons' tokens 0 of 644 and 0 of 1030]. Since #524 a valid
+# deploy token there waits for liveswap's Start, so both kinds are held
+# to the same: no 401 in the first second. The e2e config's plain-http
+# webhook (:8081) answers a person whose Host names the box (people 5),
+# so it is asked too.
 P_VERA=$(ptok vera) P_LENA=$(ptok lena)
 # in_first <kind> [<status>]: how many <kind> requests, of <status> when
 # given, the new process's first second holds.
@@ -492,8 +494,8 @@ ask() {
 	echo "$1 $t $c"
 }
 # restarts <https|plain>: five restarts under the loop, each said in an
-# INFO line; a person's token refused in a first second fails; the sums
-# in $p_all, $p_401, $p_not200, $d_all, $d_401.
+# INFO line; a person's token or a deploy token refused in a first
+# second fails; the sums in $p_all, $p_401, $p_not200, $d_all, $d_401.
 restarts() {
 	p_all=0 p_401=0 p_not200=0 d_all=0 d_401=0 r=1
 	while [ "$r" -le 5 ]; do
@@ -534,14 +536,21 @@ restarts() {
 			d_all=$((d_all + $(in_first deploy))) d_401=$((d_401 + $(in_first deploy 401)))
 			[ "$(in_first person 401)" -eq 0 ] \
 				|| fail "$1 restart $r: a person's token was refused in the first second: $(awk -v f="$first" '$1 == "person" && $2 >= f && $2 < f + 1000 { printf "+%d:%s ", $2 - f, $3 }' "$work/loop")"
+			[ "$(in_first deploy 401)" -eq 0 ] \
+				|| fail "$1 restart $r: a valid deploy token was refused in the first second (#473)$d401"
 		fi
 		r=$((r + 1))
 	done
-	echo "INFO: $1, five restarts' first seconds: person $p_all sent, $p_401 refused, $p_not200 not 200; deploy token $d_all sent, $d_401 refused (issue #473)"
+	echo "INFO: $1, five restarts' first seconds: person $p_all sent, $p_401 refused, $p_not200 not 200; deploy token $d_all sent, $d_401 refused"
 	if [ "$p_all" -lt 25 ]; then
 		fail "$1: only $p_all person requests in the five first seconds"
 	elif [ "$p_401" -eq 0 ]; then
 		pass "$1: no person's token was refused in the first second after any of five restarts ($p_all sent)"
+	fi
+	if [ "$d_all" -lt 25 ]; then
+		fail "$1: only $d_all deploy token requests in the five first seconds"
+	elif [ "$d_401" -eq 0 ]; then
+		pass "$1: no valid deploy token was refused in the first second after any of five restarts ($d_all sent; #473)"
 	fi
 }
 restarts https
