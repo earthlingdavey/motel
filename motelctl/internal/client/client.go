@@ -231,8 +231,8 @@ var (
 	// nameRe is a name as a person or signer line holds one
 	// (box/proof/signers.go), at most 256 bytes.
 	nameRe = regexp.MustCompile(`^[A-Za-z0-9._@+-]{1,256}$`)
-	// roleRe is a role as a box names one, in a 403's needs or a
-	// whoami's roles: a word the client may say as a role.
+	// roleRe is a role as a box names one in a whoami's roles: a word
+	// printed after the client's own label, in the box's list.
 	roleRe = regexp.MustCompile(`^[a-z][a-z_-]{0,31}$`)
 )
 
@@ -636,13 +636,17 @@ func badField(body []byte, v any) string {
 }
 
 // forbidden is a 403, which exits 5 whatever its body, and whose body
-// --json prints as received whenever it is JSON. The box's words are
+// --json prints whenever it is JSON. The box's words are
 // never the client's advice: needs and scope are used only when they
-// are words of their grammar (roleRe; "app" or "box"), and the
+// are the words access.Decide writes (liveswap/access/access.go,
+// Forbidden: "viewer", "deployer" or "key"; "app" or "box"), and the
 // sentence is built from them alone, so an app that exists and one
-// that does not read the same and no app is named. A 403 that does not
-// say what it needs in those words is said as a refusal, with the
-// box's own sentence, if any, quoted as the box's.
+// that does not read the same and no app is named. Any other needs,
+// a word a later box may name among them, is never put in motelctl's
+// own sentence, where a box could have it say "it needs the
+// <words of the box's choosing> role": such a 403 is said as a refusal
+// that did not say what it needs, with the box's own sentence, if any,
+// quoted as the box's.
 func (c *Client) forbidden(ans *Answer) *Failure {
 	var body []byte
 	if json.Valid(ans.Body) {
@@ -658,24 +662,18 @@ func (c *Client) forbidden(ans *Answer) *Failure {
 		whoami = " `motelctl whoami` lists the roles you hold from here."
 	}
 	on := map[string]string{"app": "this app", "box": "the box"}[f.Scope]
-	if !roleRe.MatchString(f.Needs) || on == "" {
+	needs := map[string]string{
+		"viewer":   "the viewer role on " + on,
+		"deployer": "a deploy token of " + on,
+		"key":      "a token your own key signs",
+	}[f.Needs]
+	if needs == "" || on == "" {
 		said := "."
 		if f.Error != "" {
 			said = "; the box says: " + termtext.Quote(f.Error).String() + "."
 		}
 		return &Failure{Exit: ExitForbidden, Body: body, Message: fmt.Sprintf(
 			"%s refused this (HTTP 403) and did not say what it needs%s%s", c.Box.Host, said, whoami)}
-	}
-	var needs string
-	switch f.Needs {
-	case "viewer":
-		needs = "the viewer role on " + on
-	case "deployer":
-		needs = "a deploy token of " + on
-	case "key":
-		needs = "a token your own key signs"
-	default:
-		needs = "the " + f.Needs + " role on " + on
 	}
 	if person {
 		return &Failure{Exit: ExitForbidden, Body: body, Message: fmt.Sprintf(
