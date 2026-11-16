@@ -44,7 +44,12 @@ func TestLinksNoCaddy(t *testing.T) {
 func linked(t *testing.T, gobin, goos string, env ...string) map[string]string {
 	t.Helper()
 	cmd := exec.Command(gobin, "list", "-deps", "-f", "{{with .Module}}{{if not .Main}}{{.Path}} {{.Version}}{{end}}{{end}}", ".")
-	cmd.Env = append(cmd.Environ(), append([]string{"GOOS=" + goos, "GOARCH=arm64", "CGO_ENABLED=0", "GOFLAGS="}, env...)...)
+	// GOFLAGS is the test's own, not the environment's (a -mod there
+	// would change what is linked), with -buildvcs=false: the versions
+	// linked do not depend on the checkout, and a checkout git will not
+	// read (owned by another user, as in CI's container) must not fail
+	// the list.
+	cmd.Env = append(cmd.Environ(), append([]string{"GOOS=" + goos, "GOARCH=arm64", "CGO_ENABLED=0", "GOFLAGS=-buildvcs=false"}, env...)...)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("go list for %s %v: %v\n%s", goos, env, err, out)
