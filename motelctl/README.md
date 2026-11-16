@@ -123,7 +123,8 @@ made by hand. Accepted:
 | A new message could splice box text without a test failing | 2 | 2 | 3 | 12 | 3 (typed message parts) | accepted |
 | The TUI's marks (`▲ ✖ ⟳`) and box-drawing characters may be double width in some terminals, and misalign its columns (a plain-character mode is a later addition) | 1 | 2 | 1 | 2 | 2 | accepted |
 | The client's one retry of a 401 is a request the TUI's engine does not count against its rate | 1 | 1 | 3 | 3 | 2 | accepted |
-| A box string could reach a tview widget by a writer (`io.Copy`, `WriteTo` into a text view) or a method value of a setter without a test failing; held by review and the hostile goldens | 2 | 1 | 3 | 6 | 2 | accepted |
+| A box string could reach a tview widget by a writer (`io.Copy`, `WriteTo` into a text view), by reflection, through a type alias, or by a function or method value of a setter, and the TUI's structural tests (`TestOneDoor`, `TestTUIImports`, `TestActionsAreCommands`) be got round the same ways, without a test failing; held by review and the hostile goldens | 2 | 1 | 3 | 6 | 2 | accepted |
+| A hardware key that requires its PIN cannot be used in the TUI: the TUI never asks for one, and the agent does not keep it | 2 | 1 | 1 | 2 | 3 (a PIN prompt outside the screen) | accepted |
 | The TUI's `post` may leave a few short-lived goroutines after quit | 1 | 2 | 3 | 6 | 1 | accepted |
 | A `Retry-After` of an hour makes the TUI wait an hour: the box's word; the title bar says until when | 1 | 1 | 1 | 1 | 1 | accepted |
 | A labelled value under the cap keeps its runs of spaces, so on a narrow terminal a long run can wrap the rest of the value to the start of the next row, where it can look like a label (the `hostile-status` golden shows one). Log lines keep their spacing on purpose | 2 | 1 | 3 | 6 | 2 (wrap-aware printing) | accepted |
@@ -161,8 +162,10 @@ record is laid out for reading a failure, its log tail last.
   once. That stops the reads with the advice to add the key to the agent
   (`ssh-add <path>`); `r` signs again, afresh, at most once in 5 s. A
   key file with a passphrase the agent does not hold (matched by its
-  bytes) is refused before the screen opens, exit 2. The commands may
-  still ask on a terminal. Nothing is written to disk.
+  bytes) is refused before the screen opens, exit 2. A hardware key
+  that requires its PIN cannot be used in the TUI for now: the agent
+  does not stop the PIN being asked for each signature. The commands
+  may still ask on a terminal. Nothing is written to disk.
 - **Every value shows its age**, and a row whose last three reads, by
   its own interval, failed or did not come says `stale` in its state.
   Colour only repeats a mark (`✖ ▲ ⟳ ? ·`) or a word; `NO_COLOR`
@@ -199,8 +202,9 @@ DATA in the title bar, with no box.
 | `internal/tui/demo` | a box made of fixtures: `--demo`, and the TUI's tests |
 | `internal/tui/hostile` | test support: the hostile fixture's attacks, and a terminal that records bytes |
 
-Release builds are made with the workspace off (`make build-motelctl`,
-`GOWORK=off`), so the binary links exactly the versions this go.mod
+A release build must be made with the workspace off (`make
+build-motelctl`, `GOWORK=off`; nothing in the release workflow builds
+the client yet), so the binary links exactly the versions this go.mod
 records, the ones Dependabot, govulncheck and a reader go by: in the
 workspace Go takes each module at the highest version any workspace
 module requires, which can be another. `TestWorkspaceAgrees` fails, naming

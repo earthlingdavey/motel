@@ -275,8 +275,10 @@ build:
 # workspace off (GOWORK=off), so the binary links exactly the versions
 # motelctl/go.mod records (TestWorkspaceAgrees holds the two builds
 # equal), CGO off, -trimpath, and the release stamped where `motelctl
-# version` reads it. For the host by default; GOOS= and GOARCH= on the
-# command line cross-build: make build-motelctl GOOS=darwin GOARCH=arm64.
+# version` reads it. It runs in the dev container, so by default it
+# builds for Linux on the container's architecture; GOOS= and GOARCH= on
+# the command line cross-build: make build-motelctl GOOS=darwin GOARCH=arm64.
+# Nothing in the release workflow builds the client yet.
 # GOFLAGS is cleared as for build, so Go records the commit too.
 build-motelctl:
 	$(COMPOSE) run --rm -e GOFLAGS= -e CGO_ENABLED=0 -e GOWORK=off $(if $(GOOS),-e GOOS=$(GOOS)) $(if $(GOARCH),-e GOARCH=$(GOARCH)) dev sh -c '\
