@@ -237,15 +237,18 @@ func (h *Handler) awaitRead(r *http.Request, by string, apps ...*managedApp) *ma
 	var timer <-chan time.Time
 	spent := make(chan time.Time)
 	close(spent)
-	// One timer for every app: made at the first that has to wait, and
-	// read as fired by the clock once it has, since a timer's channel
-	// delivers once and an earlier app's wait may have taken it.
+	// One timer for every app: made at the first that has to wait, for
+	// what is left of installWait since the read began, and read as
+	// fired by the clock once it has, since a timer's channel delivers
+	// once and an earlier app's wait may have taken it.
+	end := began.Add(installWait)
 	bound := func() <-chan time.Time {
-		if !c.Now().Before(began.Add(installWait)) {
+		now := c.Now()
+		if !now.Before(end) {
 			return spent
 		}
 		if timer == nil {
-			timer = c.After(installWait)
+			timer = c.After(end.Sub(now))
 		}
 		return timer
 	}

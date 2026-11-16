@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -415,6 +416,66 @@ func TestAppsListWaitsOnceForEveryApp(t *testing.T) {
 	lines := logs.FilterMessage("a person's read came before liveswap installed the app; answered 503").All()
 	if len(lines) != 1 || lines[0].ContextMap()["app"] != "zeta" || lines[0].ContextMap()["waited"] != installWait {
 		t.Errorf("journal: %v", logs.All())
+	}
+}
+
+// slowClock is a clock a second later each time it is read, which
+// keeps the waits it is asked for and never fires them.
+type slowClock struct {
+	mu     sync.Mutex
+	now    time.Time
+	waits  []time.Duration
+	asked  chan struct{}
+	notify sync.Once
+}
+
+func (c *slowClock) Now() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.now = c.now.Add(time.Second)
+	return c.now
+}
+
+func (c *slowClock) Sleep(time.Duration) {}
+
+func (c *slowClock) After(d time.Duration) <-chan time.Time {
+	c.mu.Lock()
+	c.waits = append(c.waits, d)
+	c.mu.Unlock()
+	c.notify.Do(func() { close(c.asked) })
+	return make(chan time.Time)
+}
+
+// TestPersonWaitIsWhatIsLeftOfTheBound: the timer a person's read sets
+// is for what is left of installWait since the read began, not a whole
+// installWait from whenever the first app that is not installed is
+// reached: the bound is on the read. On a clock a second later at each
+// reading, the read begins at one reading and sets its timer at the
+// next, for a second less than installWait.
+func TestPersonWaitIsWhatIsLeftOfTheBound(t *testing.T) {
+	people := newTestPeople(t)
+	h, rig := notInstalled(t)
+	h.people = people.reg
+	sc := &slowClock{now: time.Unix(1_700_000_000, 0), asked: make(chan struct{})}
+	h.waitClock = sc
+	got := make(chan answer, 1)
+	go func() { got <- serveOne(h, personGet("/demo", people.alice)) }()
+	select {
+	case <-sc.asked:
+	case a := <-got:
+		t.Fatalf("answered with no timer set: %d %s", a.w.Code, a.w.Body)
+	case <-time.After(5 * time.Second):
+		t.Fatal("the handler set no timer")
+	}
+	sc.mu.Lock()
+	waits := append([]time.Duration(nil), sc.waits...)
+	sc.mu.Unlock()
+	if len(waits) != 1 || waits[0] != installWait-time.Second {
+		t.Errorf("the timer is for %v, want %v: installWait less the second since the read began", waits, installWait-time.Second)
+	}
+	install(h, rig)
+	if a := <-got; a.err != nil || a.w.Code != http.StatusOK {
+		t.Errorf("after the install: %d %s (%v)", a.w.Code, a.w.Body, a.err)
 	}
 }
 
