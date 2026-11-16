@@ -125,7 +125,7 @@ func (r *runner) tree() *cobra.Command {
 	}
 	root.CompletionOptions.DisableDefaultCmd = true
 	root.AddGroup(&cobra.Group{ID: "experimental", Title: "Experimental commands:"})
-	root.PersistentFlags().BoolVar(&r.json, "json", false, "print JSON on stdout: the box's own answer")
+	root.PersistentFlags().BoolVar(&r.json, "json", false, "print JSON on stdout: for a read, the box's own answer")
 	root.SetFlagErrorFunc(func(_ *cobra.Command, err error) error {
 		return &client.Failure{Exit: client.ExitUsage, Message: termtext.From(err.Error()).String()}
 	})
