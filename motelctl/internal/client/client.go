@@ -512,6 +512,12 @@ func (c *Client) Read(ans *Answer, v any) error {
 	if ans.Code == http.StatusForbidden {
 		return c.forbidden(ans)
 	}
+	// A motel webhook never redirects, and none is followed (NewHTTP),
+	// so a 3xx is another thing's answer whatever its body holds: a JSON
+	// error in one is not the box's sentence.
+	if ans.Code >= 300 && ans.Code < 400 {
+		return c.notMotel(ans, "")
+	}
 	var e wire.Error
 	if decodeObject(ans, &e) != nil || e.Error == "" {
 		return c.notMotel(ans, "")
