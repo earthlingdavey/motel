@@ -19,7 +19,7 @@ var tx = termtext.From
 
 // statusView names the app asked for: the client takes a status only
 // when the box's app is that one (and its other head values only in
-// their grammars, client's odd).
+// their grammars, client's hold).
 func statusView(st wire.Status, asked string) render.Status {
 	v := render.Status{
 		App:     tx(asked),

@@ -293,9 +293,10 @@ func mib(b float64) string {
 // WriteDeploys writes the deploys list, newest first, as the box
 // ordered it. Not in colour: tabwriter would count a colour's escape
 // as width, and the columns would not line up. Every cell but BY is a
-// word of its grammar (the client's odd) or the client's own, with no
-// white space; BY, which holds spaces, is last and capped, so it cannot
-// fake a column.
+// word of its grammar (the client's hold), with no white space, or the
+// client's own words (a time it could not read, a version the box's
+// filter replaced part of); BY, the one cell that holds what a box
+// wrote with spaces, is last and capped, so it cannot fake a column.
 func WriteDeploys(w io.Writer, rows []Summary) error {
 	if len(rows) == 0 {
 		_, err := fmt.Fprintln(w, "no deploy recorded")
@@ -441,7 +442,7 @@ func WriteWhoAmI(w io.Writer, me WhoAmI) error {
 }
 
 // scopeWords says a role's scope, which the client took only as
-// "box" or "app:<name>" (client's odd): "of the box", "of app <name>".
+// "box" or "app:<name>" (client's hold): "of the box", "of app <name>".
 func scopeWords(scope termtext.Text) string {
 	if name, ok := strings.CutPrefix(scope.String(), "app:"); ok {
 		return "of app " + name

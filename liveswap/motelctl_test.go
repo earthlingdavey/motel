@@ -165,11 +165,14 @@ func TestMotelctlReadsTheWebhook(t *testing.T) {
 // in a 200: the client says the box's sentence.
 func TestMotelctlReadsWhatTheFilterChanged(t *testing.T) {
 	bin := motelctlBin(t)
-	const named, staged, broken = "billingapp", "blog-production", "brokenenv"
-	r := newAppsRig(t, named, staged, broken)
+	// keyed's key is named for its own value, so every named spelling
+	// of the marker would hold the value, and the filter writes [#1].
+	const named, staged, keyed, broken = "billingapp", "blog-production", "shopfront", "brokenenv"
+	r := newAppsRig(t, named, staged, keyed, broken)
 	must(t, os.WriteFile(r.apps[named].spec.envFile, []byte("DB_NAME="+named+"\n"), 0o600))
 	must(t, os.WriteFile(r.apps[staged].spec.envFile, []byte("APP_ENV=production\n"), 0o600))
-	for _, name := range []string{named, staged} {
+	must(t, os.WriteFile(r.apps[keyed].spec.envFile, []byte(keyed+"_db="+keyed+"\n"), 0o600))
+	for _, name := range []string{named, staged, keyed} {
 		ma := r.apps[name]
 		must(t, ma.Deploy(context.Background(), deployRequest{url: "https://x/1.tgz", version: "v1", by: "ci"}))
 		ma.mu.Lock()
@@ -188,6 +191,7 @@ func TestMotelctlReadsWhatTheFilterChanged(t *testing.T) {
 	for name, holds := range map[string]string{
 		named:  `"unit":"motel-[redacted:DB_NAME].v1.0a1b2c3d0a1b2c3d.service"`,
 		staged: `"app":"blog-[redacted:APP_ENV]"`,
+		keyed:  `"unit":"motel-[#1].v1.0a1b2c3d0a1b2c3d.service"`,
 		broken: `{"error":"response withheld: the app's env_file could not be read`,
 	} {
 		if w := do(t, r.h, http.MethodGet, "/"+name, tok, ""); w.Code != http.StatusOK || !strings.Contains(w.Body.String(), holds) {
@@ -195,9 +199,9 @@ func TestMotelctlReadsWhatTheFilterChanged(t *testing.T) {
 		}
 	}
 	const hidden = "[hidden by the box's filter]"
-	for _, name := range []string{named, staged} {
+	for _, name := range []string{named, staged, keyed} {
 		got := ctl(t, bin, env, "status", box.url+"/"+name)
-		if got.code != 0 || !strings.HasPrefix(got.stdout, name+"  idle v1  unit "+hidden+"  pid 4242\n") || strings.Contains(got.stdout, "redacted:") {
+		if got.code != 0 || !strings.HasPrefix(got.stdout, name+"  idle v1  unit "+hidden+"  pid 4242\n") || strings.Contains(got.stdout, "redacted:") || strings.Contains(got.stdout, "[#") {
 			t.Errorf("status %s: exit %d\n%s%s", name, got.code, got.stdout, got.stderr)
 		}
 		if got := ctl(t, bin, env, "deploys", box.url+"/"+name); got.code != 0 || !strings.Contains(got.stdout, "v1") {

@@ -489,7 +489,8 @@ func (c *Client) Read(ans *Answer, v any) error {
 }
 
 // The grammars the server holds the values to that the client prints
-// unlabelled or as markers. A value outside them is no honest box's.
+// unlabelled or as markers. A value outside them is no honest box's,
+// but one its response filter replaced part of (hold).
 var (
 	// wireVersionRe is liveswap/names.go's versionRe: every version a
 	// status or a record names was one a deploy took.
@@ -513,15 +514,19 @@ var (
 	outcomePhases  = map[string]bool{"downloading": true, "extracting": true, "preparing": true, "starting": true, "soaking": true, "promoting": true, "draining": true, "stopping_old": true}
 )
 
-// The box's response filter writes one of two markers where it
-// replaced text (liveswap/redact.go): [redacted:<what>], for an
-// env_file value of the app's or a credential's shape, and [masked, N
-// chars], for a token that looks generated. No grammar below takes a
-// bracket, so a value outside its grammar that carries a marker is one
-// the box's own filter changed, not another server's: an env_file
-// value equal to the app's name (DB_NAME=<app>) is replaced inside the
-// unit, which is named after the app.
-var filterMarkRe = regexp.MustCompile(`\[redacted:[^\][]{1,200}\]|\[masked, [0-9]{1,9} chars\]`)
+// The box's response filter writes a marker where it replaced text
+// (liveswap/redact.go). For an env_file value of the app's, or a
+// credential's shape, it is [redacted:<what>], <what> the key's name
+// (several, with commas, for keys that hold one value) or the shape's;
+// when that spelling would itself hold a known value (a key named for
+// its own value), the next of [REDACTED:<what>], [withheld:<what>],
+// <<what> removed> and [#N] that holds none (chooseMarker). For a
+// token that looks generated it is [masked, N chars]. No grammar below
+// takes a bracket or an angle, so a value outside its grammar that
+// carries a marker is one the box's own filter changed, not another
+// server's: an env_file value equal to the app's name (DB_NAME=<app>)
+// is replaced inside the unit, which is named after the app.
+var filterMarkRe = regexp.MustCompile(`\[(?:redacted|REDACTED|withheld):[^\][]+\]|<[^<>]+ removed>|\[#[0-9]{1,9}\]|\[masked, [0-9]{1,9} chars\]`)
 
 // Filtered is what motelctl shows in place of a value the box's
 // response filter replaced part of: its own words, and nothing of the
@@ -768,9 +773,11 @@ func (c *Client) NotMotel(ans *Answer, why string) error { return c.notMotel(ans
 // its response filter writes in place of an answer it withheld: an
 // error alone, in the filter's fixed opening words (liveswap/redact.go:
 // an env_file it could not read, a replaced value that overlapped the
-// body's structure or one of its outcomes), or the marker it falls
-// back to. The sentence says what the operator has to mend. Any other
-// 200 without the answer's fields is still not motel's.
+// body's structure or one of its outcomes), which say what the
+// operator has to mend; or the bare marker [#0] it falls back to when
+// even that sentence cannot be written, which says no more than that
+// the answer was withheld. Any other 200 without the answer's fields
+// is still not motel's.
 func withheld(ans *Answer) (termtext.Text, bool) {
 	var e wire.Error
 	if decodeObject(ans, &e) != nil || (e.Error != "[#0]" && !strings.HasPrefix(e.Error, "response withheld")) {

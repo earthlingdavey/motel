@@ -366,6 +366,21 @@ func TestReadTakesWhatTheFilterReplaced(t *testing.T) {
 		t.Errorf("a value in its grammar was changed: %+v", st)
 	}
 
+	// Every spelling of a marker the filter writes (redact.go's
+	// chooseMarker falls back when a key is named for its own value),
+	// with one key or several.
+	for _, mark := range []string{"[redacted:DB_NAME]", "[redacted:A,B_2,c]", "[REDACTED:shop]", "[withheld:shop]", "<shop removed>", "<a,b removed>", "[#1]", "[#12]",
+		"[redacted:" + strings.Repeat("K,", 200) + "K]", "[masked, 20 chars]", "[redacted:private-key]"} {
+		var st wire.Status
+		body := `{"app":"blog","phase":"idle","unit":"motel-` + mark + `.v1.0a1b2c3d0a1b2c3d.service"}`
+		if err := c.Read(jsonAnswer(200, body), &st); err != nil || st.Unit != Filtered {
+			t.Errorf("a unit holding the marker %s: %v, unit %q", mark, err, st.Unit)
+		}
+		if !Same("blog-"+mark, "blog-production") {
+			t.Errorf("Same does not take the marker %s", mark)
+		}
+	}
+
 	// Outside its grammar with no marker of the filter's: not motel's,
 	// as before. And a marker does not carry the rest of a value out.
 	for name, body := range map[string]string{
@@ -373,6 +388,9 @@ func TestReadTakesWhatTheFilterReplaced(t *testing.T) {
 		"a version with a bracket":   `{"app":"blog","phase":"idle","current_version":"[redacted]"}`,
 		"a watchdog state of no one": `{"app":"blog","phase":"idle","watchdog":{"state":"[hidden by the box's filter]"}}`,
 		"a marker with no label":     `{"app":"blog","phase":"idle","unit":"motel-[redacted:].service"}`,
+		"a bracket of another word":  `{"app":"blog","phase":"idle","unit":"motel-[hidden:X].service"}`,
+		"a number with no hash":      `{"app":"blog","phase":"idle","unit":"motel-[1].service"}`,
+		"an angle with other words":  `{"app":"blog","phase":"idle","unit":"motel-<shop deleted>.service"}`,
 	} {
 		f := failure(t, c.Read(jsonAnswer(200, body), &wire.Status{}))
 		if f.Exit != ExitUnknown || !strings.Contains(f.Message, "not motel's answer") {

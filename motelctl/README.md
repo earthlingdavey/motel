@@ -103,7 +103,10 @@ box wrote. A value from a box is used in one of three ways only:
    grammar makes the answer "not motel's answer", exit 3, and is not
    printed. One exception, which prints nothing of the value either: a
    value that carries a marker of the box's own response filter
-   (`[redacted:<KEY>]`, `[masked, N chars]`) is one the filter replaced
+   (`[redacted:<KEY>]`, or one of the spellings it falls back to when a
+   key is named for its own value: `[REDACTED:<KEY>]`,
+   `[withheld:<KEY>]`, `<<KEY> removed>`, `[#N]`; and
+   `[masked, N chars]`) is one the filter replaced
    part of, as it does to a unit named after an app whose env_file
    holds the app's name (`DB_NAME=<app>`). It is shown as
    `[hidden by the box's filter]`, motelctl's words; and the app, or a
@@ -126,7 +129,8 @@ came from the peer: a fixed reason of motelctl's own is said instead.
 A body the box's response filter withheld (a 200 whose one sentence
 opens `response withheld`: an env_file it could not read, say) is said
 as that, with the box's sentence quoted, exit 1: the sentence names
-what the operator has to mend.
+what the operator has to mend. (The filter's last resort, a body of
+`[#0]` alone, is said the same way and names nothing.)
 
 This is held by review, the hostile fixtures and goldens
 (`internal/cli/testdata/hostile-*.golden`), and one partial source test,
