@@ -84,7 +84,7 @@ func Main(ctx context.Context, args []string, env Env) int {
 	// read, so it is looked for here too.
 	if r.json || wantsJSON(args) {
 		if f.Body != nil {
-			_, _ = env.Stdout.Write(withNewline(f.Body))
+			_, _ = env.Stdout.Write(withNewline(termtext.JSON(f.Body)))
 		} else {
 			b, _ := json.Marshal(struct {
 				Error string `json:"error"`
@@ -125,7 +125,7 @@ func (r *runner) tree() *cobra.Command {
 	}
 	root.CompletionOptions.DisableDefaultCmd = true
 	root.AddGroup(&cobra.Group{ID: "experimental", Title: "Experimental commands:"})
-	root.PersistentFlags().BoolVar(&r.json, "json", false, "print JSON on stdout: the box's answer as received")
+	root.PersistentFlags().BoolVar(&r.json, "json", false, "print JSON on stdout: the box's own answer")
 	root.SetFlagErrorFunc(func(_ *cobra.Command, err error) error {
 		return &client.Failure{Exit: client.ExitUsage, Message: termtext.From(err.Error()).String()}
 	})
@@ -251,9 +251,12 @@ func fail(err error) error {
 	return keyFailure(err)
 }
 
-// emit prints a body as received, for --json.
+// emit prints a box's body for --json: the JSON value as received,
+// with the characters a terminal acts on written as JSON's own escapes
+// (termtext.JSON). stdout is as often a terminal as a pipe, and a pipe
+// may end at one.
 func (r *runner) emit(body []byte) error {
-	_, err := r.env.Stdout.Write(withNewline(body))
+	_, err := r.env.Stdout.Write(withNewline(termtext.JSON(body)))
 	return err
 }
 

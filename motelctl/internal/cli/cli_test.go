@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"strings"
 	"testing"
@@ -162,8 +163,26 @@ func appURL(fb *fakeBox, app string) string { return fb.srv.URL + "/" + app }
 
 var deployToken = map[string]string{"MOTEL_TOKEN": "a.deploy.token"}
 
-// --json prints the box's body as it came, byte for byte; deploys
-// <app> prints the status's deploys array.
+// sameJSON fails unless got and want are the same JSON value.
+func sameJSON(t *testing.T, got, want string) {
+	t.Helper()
+	var g, w any
+	if err := json.Unmarshal([]byte(got), &g); err != nil {
+		t.Fatalf("stdout is not JSON: %v\n%q", err, got)
+	}
+	if err := json.Unmarshal([]byte(want), &w); err != nil {
+		t.Fatalf("the box's body is not JSON: %v\n%q", err, want)
+	}
+	if !reflect.DeepEqual(g, w) {
+		t.Errorf("stdout\n%q\nis not the value of the box's\n%q", got, want)
+	}
+}
+
+// --json prints the box's own answer: the same JSON value, and byte
+// for byte when the body holds nothing a terminal acts on; deploys
+// <app> prints the status's deploys array. The fake box's bodies hold
+// the hostile strings as Go's encoder writes them, a C1 control and a
+// bidi override raw among them, and none reaches stdout raw.
 func TestJSONIsTheBoxsAnswer(t *testing.T) {
 	fb := newFakeBox(t)
 	cases := []struct {
@@ -198,13 +217,63 @@ func TestJSONIsTheBoxsAnswer(t *testing.T) {
 			if c.want != nil {
 				want = c.want(body)
 			}
-			if r.stdout != want {
-				t.Errorf("stdout\n%q\nwant the box's\n%q", r.stdout, want)
+			sameJSON(t, r.stdout, want)
+			if bad := unsafeOutput.FindString(r.stdout); bad != "" || !utf8.ValidString(r.stdout) {
+				t.Errorf("stdout holds %q, or is not UTF-8:\n%q", bad, r.stdout)
 			}
 		})
 	}
+	// A body with nothing to escape is the box's bytes.
+	fb.status = wire.Status{App: "blog", Phase: "idle", CurrentVersion: "v42", AvailableVersions: []string{"v42"}, LastDeploy: &wire.DeployResult{Version: "v42", Status: "succeeded", By: "caf\u00e9 \x1b[2J"}}
+	if r := run(t, fb, deployToken, "status", appURL(fb, "blog"), "--json"); r.code != 0 || r.stdout != string(fb.bodies["/blog"]) {
+		t.Errorf("a body with nothing to escape: exit %d\n%q\nwant the box's bytes\n%q", r.code, r.stdout, fb.bodies["/blog"])
+	}
 	if got := fb.auth[0]; got != "Bearer a.deploy.token" {
 		t.Errorf("Authorization %q, want MOTEL_TOKEN as Bearer", got)
+	}
+}
+
+// TestJSONWritesNothingATerminalActsOn: valid JSON can hold, raw in a
+// string, a C1 control (CSI and OSC in one character each), DEL, a
+// bidi override and bytes that are not UTF-8, and a carriage return
+// between its values. --json writes each as JSON's escape, or drops
+// the carriage return, in a 200's body and in a refusal's.
+func TestJSONWritesNothingATerminalActsOn(t *testing.T) {
+	fb := newFakeBox(t)
+	const raw = "c1 \u009b2J osc \u009d52;c;cHduZWQ=\u009c del \x7f bidi abc\u202edef bad \xff"
+	const escaped = `c1 \u009b2J osc \u009d52;c;cHduZWQ=\u009c del \u007f bidi abc\u202edef bad \ufffd`
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.URL.Query().Has("deploy"):
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte("{\"error\":\"" + raw + "\"}\r\n"))
+		case r.URL.Path == "/shop":
+			w.WriteHeader(http.StatusForbidden)
+			_, _ = w.Write([]byte("{\"error\":\"" + raw + "\",\r\"needs\":\"viewer\",\"scope\":\"app\"}"))
+		default:
+			_, _ = w.Write([]byte("{\"app\":\"blog\",\r\n\"phase\":\"idle\",\"added_later\":\"" + raw + "\",\"deploys\":[{\"version\":\"v1\",\"status\":\"succeeded\",\"deployed_by\":\"" + raw + "\"}]}\r\n"))
+		}
+	}))
+	t.Cleanup(srv.Close)
+	fb.srv = srv
+	for name, c := range map[string]struct {
+		args []string
+		code int
+		want string
+	}{
+		"a status":          {[]string{"status", srv.URL + "/blog"}, 0, "{\"app\":\"blog\",\n\"phase\":\"idle\",\"added_later\":\"" + escaped + "\",\"deploys\":[{\"version\":\"v1\",\"status\":\"succeeded\",\"deployed_by\":\"" + escaped + "\"}]}\n"},
+		"the deploys array": {[]string{"deploys", srv.URL + "/blog"}, 0, "[{\"version\":\"v1\",\"status\":\"succeeded\",\"deployed_by\":\"" + escaped + "\"}]\n"},
+		"a 404's body":      {[]string{"deploys", srv.URL + "/blog", "v9"}, 6, "{\"error\":\"" + escaped + "\"}\n"},
+		"a 403's body":      {[]string{"status", srv.URL + "/shop"}, 5, "{\"error\":\"" + escaped + "\",\"needs\":\"viewer\",\"scope\":\"app\"}\n"},
+	} {
+		r := run(t, fb, deployToken, append(c.args, "--json")...)
+		if r.code != c.code || r.stdout != c.want {
+			t.Errorf("%s: exit %d\n%q\nwant %d and\n%q\nstderr %s", name, r.code, r.stdout, c.code, c.want, r.stderr)
+		}
+		if bad := unsafeOutput.FindString(r.stdout + r.stderr); bad != "" || !utf8.ValidString(r.stdout) {
+			t.Errorf("%s: the output holds %q, or is not UTF-8", name, bad)
+		}
 	}
 }
 
