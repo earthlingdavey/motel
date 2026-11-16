@@ -491,8 +491,35 @@ func TestTokenVectors(t *testing.T) {
 			if want := ssh.FingerprintSHA256(c.key.pub); v.Fingerprint != want {
 				t.Errorf("%s: fingerprint %s, want %s", c.name, v.Fingerprint, want)
 			}
+			iat, exp := signedTimes(t, c.auth)
+			if !v.IssuedAt.Equal(iat) || !v.ExpiresAt.Equal(exp) {
+				t.Errorf("%s: times %v to %v, signed %v to %v", c.name, v.IssuedAt, v.ExpiresAt, iat, exp)
+			}
 		}
 	}
+}
+
+// signedTimes reads iat and exp out of the claims part of a token's
+// header with the test's own decoding: what was signed, whatever the
+// checker made of it.
+func signedTimes(t *testing.T, auth []string) (iat, exp time.Time) {
+	t.Helper()
+	parts := strings.Split(auth[0], ".")
+	if len(parts) != 3 {
+		t.Fatalf("a token of %d parts", len(parts))
+	}
+	raw, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		t.Fatal(err)
+	}
+	var c struct {
+		Iat int64 `json:"iat"`
+		Exp int64 `json:"exp"`
+	}
+	if err := json.Unmarshal(raw, &c); err != nil {
+		t.Fatal(err)
+	}
+	return time.Unix(c.Iat, 0), time.Unix(c.Exp, 0)
 }
 
 type opensshVectors struct {
