@@ -24,6 +24,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -89,7 +90,15 @@ type PersonToken struct {
 	// touch.
 	header   string
 	iat, exp time.Time
+	// forget, set by Forget from any goroutine, drops the token last
+	// signed before the next request.
+	forget atomic.Bool
 }
+
+// Forget drops the token last signed, so the next request signs
+// afresh: the TUI's r after a refusal, which a token refused for its
+// times would otherwise meet again until it expired.
+func (p *PersonToken) Forget() { p.forget.Store(true) }
 
 // minLeft is the life a token must have left to be sent again.
 const minLeft = 60 * time.Second
@@ -98,6 +107,9 @@ const minLeft = 60 * time.Second
 // life left, and a new one otherwise.
 func (p *PersonToken) Authorization(ctx context.Context) (string, error) {
 	now := p.Now()
+	if p.forget.Swap(false) {
+		p.header = ""
+	}
 	if p.header != "" && p.exp.Sub(now) >= minLeft {
 		return p.header, nil
 	}
@@ -338,7 +350,7 @@ func (c *Client) once(ctx context.Context, path string, query url.Values) (*Answ
 		return nil, c.unreachable(ctx, err)
 	}
 	if len(body) > maxBody {
-		return nil, &Failure{Exit: ExitUnknown, Message: fmt.Sprintf("%s answered with more than %d bytes, which is not motel's answer to a read. Is this the box's deploy host?", c.Box.Addr(), maxBody)}
+		return nil, &Failure{Exit: ExitUnknown, Status: resp.StatusCode, Message: fmt.Sprintf("%s answered with more than %d bytes, which is not motel's answer to a read. Is this the box's deploy host?", c.Box.Addr(), maxBody)}
 	}
 	return &Answer{Code: resp.StatusCode, Header: resp.Header, Body: body}, nil
 }
@@ -517,7 +529,7 @@ func (c *Client) Read(ans *Answer, v any) error {
 			if f := badField(ans.Body, v); f != "" {
 				what = "its " + f
 			}
-			return &Failure{Exit: ExitUnknown, Message: fmt.Sprintf(
+			return &Failure{Exit: ExitUnknown, Status: ans.Code, Message: fmt.Sprintf(
 				"%s answered, but %s could not be read: the box's response filter may have replaced it. The box's journal says which key it replaced.",
 				c.Box.Addr(), what)}
 		}
