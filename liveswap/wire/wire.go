@@ -17,7 +17,8 @@
 // (liveswap/redact.go): any string can come back as a marker, and a
 // body the filter changed gains a top-level "redacted_env" naming the
 // env keys whose values it replaced, which only DeployResult has a
-// field for.
+// field for. Apps is made of bodies, one per app: each entry is
+// filtered by its own app's filter, and gains its own "redacted_env".
 //
 // The package imports only the standard library, so a program that
 // reads these bodies does not link Caddy (TestImportsOnlyTheStandardLibrary).
@@ -59,6 +60,13 @@ type Status struct {
 	// bounds nothing (not the case on Debian 13). Absent when every
 	// cap is enforced.
 	CapsUnenforced []string `json:"caps_unenforced,omitempty"`
+	// Deploying is the deploy running now; absent when none is. Before
+	// deploys and last_deploy, for the reason deploys is before
+	// last_deploy: a client reads a failure body's last "phase" as the
+	// phase it failed in, and this object holds no "phase" key. It is
+	// gone from the status by the time a deploy's own response is
+	// written.
+	Deploying *DeployInFlight `json:"deploying,omitempty"`
 	// Deploys is the outcome of the latest deploy of each version a
 	// record is kept for (liveswap/deploys.go), newest first; the whole
 	// record is GET /<app>?deploy=<version>. Serialized before
@@ -159,6 +167,31 @@ type DeployResult struct {
 	// wherever the result sits in a body, is hoisted into the body's
 	// own `redacted_env` (liveswap's withField).
 	RedactedEnv []string `json:"redacted_env,omitempty"`
+}
+
+// DeployInFlight is a deploy the app is running: set when the box takes
+// it (for a push, before its upload), cleared in the step that sets
+// last_deploy to its outcome, so a status holds the one or the other,
+// or when it ends with none (a push whose upload is not staged); either
+// way before the deploy's own response is written. A second
+// deploy refused while it runs changes nothing of it. A rollback and a
+// relaunch of the running version are deploys too; the watchdog's
+// restarts are not.
+type DeployInFlight struct {
+	// Version is the version asked for: every deploy names it before
+	// it begins.
+	Version string `json:"version"`
+	// By is who it runs under, as DeployResult.By.
+	By string `json:"deployed_by,omitempty"`
+	// StartedAt is when the box took it: the started_at its
+	// last_deploy and record will carry, but for a push, whose record
+	// begins once the upload is staged.
+	StartedAt time.Time `json:"started_at"`
+	// Phases are the phases entered so far, in order, timed as
+	// DeployResult.Phases is: each ends where the next begins, and the
+	// last's seconds run to the time of the answer. Always present, []
+	// before the first.
+	Phases []PhaseTiming `json:"phases"`
 }
 
 // PhaseTiming is one phase a deploy passed through.
@@ -324,8 +357,47 @@ type Apps struct {
 	Apps []AppEntry `json:"apps"`
 }
 
-// AppEntry is one app in Apps.
+// AppEntry is one app in Apps. A client ignores the keys it does not
+// know, and reads a key's absence as "not known" (a box that sends
+// none, or a row withheld), never as false or zero.
+//
+// Each entry is a body of its own to the response filter: it is
+// marshalled and passed through its own app's filter, as GET /<app>
+// is, and then put in the list, so one app's values are never in
+// another app's row and the list is never withheld because of one
+// app. So an entry the filter changed gains a "redacted_env" of its
+// own, naming that app's keys, and its keys come in sorted order, as a
+// body's top level does (they are declared in that order here); the
+// list's top level holds "apps" alone.
 type AppEntry struct {
 	// Name is the app's name, as in the path of its routes.
 	Name string `json:"name"`
+	// Error is why the entry holds the name alone: the app's filter
+	// withheld the row (its env_file could not be read, say), in the
+	// filter's words. Absent when Summary is there.
+	Error string `json:"error,omitempty"`
+	// Summary is the app's state as GET /<app> gives it at the same
+	// moment, in part: each value is taken from the same status.
+	Summary *AppSummary `json:"summary,omitempty"`
+}
+
+// AppSummary is the part of an app's status the list carries, so a
+// client's first screen is one request and not one per app. No
+// socket, pid, unit or command: those are GET /<app>'s.
+type AppSummary struct {
+	// Phase is Status.Phase: "idle", or the phase of a deploy in flight.
+	Phase string `json:"phase"`
+	// Running is Status.Running.
+	Running bool `json:"running"`
+	// CurrentVersion is Status.CurrentVersion: absent when nothing runs.
+	CurrentVersion string `json:"current_version,omitempty"`
+	// Watchdog is Status.Watchdog.State: absent when the app's watchdog
+	// was never armed.
+	Watchdog string `json:"watchdog,omitempty"`
+	// NewestDeploy is Status.Deploys[0], the newest deploy record's
+	// outcome: absent when no record is kept.
+	NewestDeploy *DeploySummary `json:"newest_deploy,omitempty"`
+	// Deploying is Status.Deploying.Version, the version of the deploy
+	// running now: absent when none is.
+	Deploying string `json:"deploying,omitempty"`
 }

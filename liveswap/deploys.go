@@ -448,6 +448,58 @@ func listDeploySummaries(d appDirs) []deploySummary {
 	return out
 }
 
+// newestDeploySummary is listDeploySummaries(d)[0], read without
+// reading every record: the names are ordered by their mtime, which a
+// record is written with (the time listDeploySummaries orders by, read
+// there from the open file), newest first and by version on a tie, and
+// the first that opens and proves itself a record is the one. One
+// directory listing and a stat per entry, and in the common case one
+// record read, where the full list reads them all.
+func newestDeploySummary(d appDirs) (deploySummary, bool) {
+	dir, err := recordsDir(d, false)
+	if err != nil {
+		return deploySummary{}, false
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return deploySummary{}, false
+	}
+	type dated struct {
+		name    string
+		written time.Time
+	}
+	var names []dated
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
+			continue
+		}
+		info, err := e.Info()
+		if err != nil {
+			continue // gone since the listing
+		}
+		names = append(names, dated{e.Name(), info.ModTime()})
+	}
+	// The order listDeploySummaries sorts by: a record's version is its
+	// name without .json (recordHead), compared without the suffix, which
+	// would sort "v1" after "v1-x".
+	sort.Slice(names, func(i, j int) bool {
+		if !names[i].written.Equal(names[j].written) {
+			return names[i].written.After(names[j].written)
+		}
+		return strings.TrimSuffix(names[i].name, ".json") > strings.TrimSuffix(names[j].name, ".json")
+	})
+	for _, n := range names {
+		b, _, err := openRecord(filepath.Join(dir, n.name))
+		if err != nil {
+			continue // a link, or not a record
+		}
+		if s, ok := recordHead(b, n.name); ok {
+			return s, true
+		}
+	}
+	return deploySummary{}, false
+}
+
 // pruneDeployRecords keeps a record for every version still on disk
 // and the newest keep others, by modification time, and removes the
 // rest.

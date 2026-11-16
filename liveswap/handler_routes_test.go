@@ -11,6 +11,7 @@ import (
 
 	"github.com/caddyserver/caddy/v2/modules/caddyhttp"
 	"github.com/smallhoursorg/motel/liveswap/access"
+	"github.com/smallhoursorg/motel/liveswap/access/accesstest"
 	"github.com/smallhoursorg/motel/liveswap/deploytrust"
 	"go.uber.org/zap"
 )
@@ -165,12 +166,14 @@ func FuzzNoRouteNoAnswer(f *testing.F) {
 
 	served := recordRows(f)
 	// People: a viewer of demo, a viewer of the box, and a person with
-	// no grant; their tokens are made once, for the run.
+	// no grant. Each input signs its own tokens: the handler checks
+	// them by the real clock, and a token made once for the run would
+	// expire in a long one, a 401 no input caused.
 	people := newTestPeople(f)
-	personTokens := map[string]string{
-		"viewer of demo":       token(people.alice),
-		"viewer of the box":    token(people.carol),
-		"person with no grant": token(people.dave),
+	personKeys := map[string]accesstest.Key{
+		"viewer of demo":       people.alice,
+		"viewer of the box":    people.carol,
+		"person with no grant": people.dave,
 	}
 
 	f.Fuzz(func(t *testing.T, method, target, query, contentType, body string) {
@@ -194,8 +197,8 @@ func FuzzNoRouteNoAnswer(f *testing.F) {
 			case "global source":
 				req.Header.Set("Authorization", "Bearer "+globalToken(t))
 			default:
-				if tok, ok := personTokens[caller]; ok {
-					req.Header.Set("Authorization", tok)
+				if k, ok := personKeys[caller]; ok {
+					req.Header.Set("Authorization", token(k))
 				}
 			}
 			*served = nil
@@ -215,7 +218,7 @@ func FuzzNoRouteNoAnswer(f *testing.F) {
 			motel := clean == motelPrefix || strings.HasPrefix(clean, motelPrefix+"/")
 			app := !motel && path.Base(clean) == "demo"
 			row := findRoute(req)
-			_, person := personTokens[caller]
+			_, person := personKeys[caller]
 			get := method == http.MethodGet
 			want := http.StatusUnauthorized
 			switch {

@@ -1,6 +1,7 @@
 package box
 
 import (
+	"context"
 	"crypto/ed25519"
 	"encoding/json"
 	"fmt"
@@ -145,8 +146,7 @@ func (b *peopleBox) install() {
 // load adapts and provisions the config, as a start or a reload does up
 // to the point where the apps start, and keeps its server. No app is
 // started: a request served now is one served in the moments after a
-// start, before liveswap's Start installs the apps' deploy sources
-// (issue #473).
+// start, before liveswap's Start installs the apps (issue #473).
 func (b *peopleBox) load() {
 	t := b.t
 	t.Helper()
@@ -424,19 +424,31 @@ func TestPersonOnTheBoxWebhook(t *testing.T) {
 // TestPersonNotRefusedAfterAStart is the second check the design never
 // tried: issue #473's window. A config is provisioned and no app has
 // started, which is where a start leaves the server when Caddy starts
-// the http app before liveswap: a deploy token of app a is refused then
-// (liveswap installs an app's sources at its Start), but a person's
-// token is not, because the registry is built at provision and the
-// person's way in reads nothing liveswap's Start installs. A person
-// sent at once is answered, as after the start.
+// the http app before liveswap. A deploy token of app a is not refused
+// then: it verifies against the sources the config built, and waits for
+// liveswap's Start to install a (here it never does, so a request that
+// ends first is told to come back); a stranger is the flat 401 at once.
+// A person's token is answered at once, as after the start, because
+// the registry is built at provision and the person's way in reads
+// nothing liveswap's Start installs.
 func TestPersonNotRefusedAfterAStart(t *testing.T) {
 	b := newPeopleBox(t)
 	b.install()
 	b.load()
 	now := time.Now()
 	alice, carol := b.people["alice@example.test"], b.people["carol@example.test"]
-	if w := b.get("/a", "Bearer "+trusttest.Mint(t, b.deploy["a"], "a", nil)); w.Code != http.StatusUnauthorized {
-		t.Fatalf("a deploy token of a before liveswap starts: %d %s; the test is not in #473's window", w.Code, w.Body)
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel()
+	r := httptest.NewRequestWithContext(ctx, http.MethodGet, "http://"+peopleIdentity+"/a", nil)
+	r.Header.Set("Authorization", "Bearer "+trusttest.Mint(t, b.deploy["a"], "a", nil))
+	w := httptest.NewRecorder()
+	b.server.ServeHTTP(w, r)
+	if w.Code != http.StatusServiceUnavailable || w.Header().Get("Retry-After") != "1" {
+		t.Fatalf("a deploy token of a before liveswap starts: %d %v %s, want the 503 with Retry-After", w.Code, w.Header(), w.Body)
+	}
+	began := time.Now()
+	if w := b.get("/a", "Bearer not-a-jwt"); w.Code != http.StatusUnauthorized || time.Since(began) > time.Second {
+		t.Errorf("a stranger before liveswap starts: %d %s in %v", w.Code, w.Body, time.Since(began))
 	}
 	for _, c := range []struct {
 		who          accesstest.Key

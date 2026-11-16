@@ -22,7 +22,7 @@ func TestViewsAndRender(t *testing.T) {
 	section("idle, its running version not first: no (running)")
 	if err := render.WriteStatus(&out, color, statusView(wire.Status{
 		App: "blog", Phase: "idle", CurrentVersion: "v2",
-		Watchdog:          &wire.Watchdog{State: "unhealthy", Failures: 2, RestartsInWindow: 3, LastFailure: "health check timed out"},
+		Watchdog:          &wire.Watchdog{State: "backoff", Failures: 2, RestartsInWindow: 3, LastFailure: "health check timed out"},
 		LastDeploy:        &wire.DeployResult{Version: "v2", Status: "succeeded", Note: "v2 was running: relaunched from the release on disk", FinishedAt: start},
 		AvailableVersions: []string{"v3", "v2"},
 	}, "blog")); err != nil {

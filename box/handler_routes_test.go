@@ -166,8 +166,10 @@ func FuzzNoRouteNoAnswer(f *testing.F) {
 
 	r := newRig(f)
 	served := recordRows(f)
-	// People: a viewer of the box and a viewer of an app alone, their
-	// tokens made once, for the run.
+	// People: a viewer of the box and a viewer of an app alone. Each
+	// input signs its own tokens: the handler checks them by the real
+	// clock, and a token made once for the run would expire in a long
+	// one, a 401 no input caused.
 	carol, alice := accesstest.Ed25519(), accesstest.SKEd25519()
 	var l access.Lines
 	for name, k := range map[string]accesstest.Key{"carol": carol, "alice": alice} {
@@ -185,10 +187,9 @@ func FuzzNoRouteNoAnswer(f *testing.F) {
 		l.Grants = append(l.Grants, g)
 	}
 	r.h.app.registry = access.NewRegistry(peopleIdentity, l)
-	now := time.Now()
-	people := map[string]string{
-		"a viewer of the box": carol.Token(peopleIdentity, now, 10*time.Minute),
-		"a viewer of an app":  alice.Token(peopleIdentity, now, 10*time.Minute),
+	people := map[string]accesstest.Key{
+		"a viewer of the box": carol,
+		"a viewer of an app":  alice,
 	}
 
 	f.Fuzz(func(t *testing.T, method, target, query string, forceQuery bool) {
@@ -207,8 +208,8 @@ func FuzzNoRouteNoAnswer(f *testing.F) {
 			if channel {
 				hr.Header.Set("Authorization", "Bearer "+r.token(t))
 			}
-			if tok, ok := people[caller]; ok {
-				hr.Header.Set("Authorization", tok)
+			if k, ok := people[caller]; ok {
+				hr.Header.Set("Authorization", k.Token(peopleIdentity, time.Now(), 10*time.Minute))
 			}
 			*served = nil
 			passed := false

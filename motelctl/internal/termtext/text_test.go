@@ -19,6 +19,7 @@ func TestFrom(t *testing.T) {
 		{"next line \u0085", `next line \u0085`},
 		{"bidi \u202eevil", "bidi \\u202eevil"},
 		{"isolate \u2066x\u2069", "isolate \\u2066x\\u2069"},
+		{"deprecated formats \u206a\u206b\u206c\u206d\u206e\u206f", "deprecated formats \\u206a\\u206b\\u206c\\u206d\\u206e\\u206f"},
 		{"sep \u2028 \u2029", "sep \\u2028 \\u2029"},
 		{"marks \u061c \u200e \u200f", "marks \\u061c \\u200e \\u200f"},
 		{"not bidi: zero width \u200b, joiner \u200d", "not bidi: zero width \u200b, joiner \u200d"},

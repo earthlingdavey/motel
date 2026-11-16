@@ -3,6 +3,8 @@ package liveswap
 import (
 	"context"
 	"crypto/ed25519"
+	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -24,9 +26,11 @@ import (
 // a canary value in its env_file, and every kind of caller. For every
 // row of both route tables and every caller it asserts the status the
 // action table gives, and that no 200 holds the name, the canary or
-// the socket path of an app the caller may not view. It reads the
-// route tables, and a row whose shape it does not know fails it, so a
-// route added without its expectations fails here.
+// the socket path of an app the caller may not view; and that each row
+// of the app list holds nothing of the other app, and its own canary
+// only as its filter's marker. It reads the route tables, and a row
+// whose shape it does not know fails it, so a route added without its
+// expectations fails here.
 
 // twoApps are the test's apps: names no JSON key or word of a body
 // holds by chance.
@@ -83,6 +87,17 @@ func newTwoAppsRig(t *testing.T) *twoAppsRig {
 		if err := ma.Deploy(context.Background(), deployRequest{url: "https://x/" + name + ".tgz", version: "v1"}); err != nil {
 			t.Fatal(err)
 		}
+		// Then a deploy whose version and deployer hold the canary, which
+		// fails: its record is the newest (the version sorts after v1, for
+		// two records written in one tick), so the canary is in two fields
+		// the app list's summary carries, newest_deploy's version and
+		// deployed_by, as a deployer could shape them.
+		fetch := ma.fetch.(*fakeFetcher)
+		fetch.err = errors.New("the download failed")
+		if err := ma.Deploy(context.Background(), deployRequest{url: "https://x/" + name + "2.tgz", version: "z-" + r.canary[name], by: "local:" + r.canary[name]}); err == nil {
+			t.Fatal("the canary's deploy succeeded")
+		}
+		fetch.err = nil
 		r.sockets[name] = spec.dirs.root
 		app.managed[name] = ma
 	}
@@ -189,6 +204,33 @@ func TestTwoAppsTwoPeople(t *testing.T) {
 			}
 		}
 	}
+	// The rows under /_motel/ first, while each app's newest deploy is
+	// still the canary's: the deployers' acts below change it.
+	for _, rt := range motelRoutes {
+		for _, caller := range callers {
+			req := httptest.NewRequest(http.MethodGet, "http://"+personBox+rt.path, nil)
+			if auth := r.authorization(t, caller); auth != "" {
+				req.Header.Set("Authorization", auth)
+			}
+			w := httptest.NewRecorder()
+			if err := r.h.ServeHTTP(w, req, nil); err != nil {
+				t.Fatal(err)
+			}
+			want := http.StatusUnauthorized // a deploy token is judged against the global sources: none here
+			if person(caller) {
+				want = http.StatusOK
+			}
+			if w.Code != want {
+				t.Errorf("%s, GET %s: %d %s, want %d", caller, rt.path, w.Code, w.Body, want)
+			}
+			if w.Code == http.StatusOK {
+				leaks("GET "+rt.path, caller, w.Body.String(), func(other string) bool { return views(caller, other) })
+			}
+			if w.Code == http.StatusOK && rt.action == access.BoxApps {
+				r.rowsKeepToTheirApp(t, caller, w.Body.Bytes(), r.views[caller])
+			}
+		}
+	}
 	for _, rt := range routes {
 		for _, app := range twoApps {
 			for _, caller := range callers {
@@ -235,26 +277,44 @@ func TestTwoAppsTwoPeople(t *testing.T) {
 			}
 		}
 	}
-	for _, rt := range motelRoutes {
-		for _, caller := range callers {
-			req := httptest.NewRequest(http.MethodGet, "http://"+personBox+rt.path, nil)
-			if auth := r.authorization(t, caller); auth != "" {
-				req.Header.Set("Authorization", auth)
+}
+
+// rowsKeepToTheirApp holds GET /_motel/apps's body, row by row: the
+// rows are the apps the caller may view, each holds nothing of the
+// other app (its name, canary or socket directory), and its own app's
+// canary, which its summary carries, comes out as that app's filter's
+// marker and never as itself.
+func (r *twoAppsRig) rowsKeepToTheirApp(t *testing.T, caller string, body []byte, views []string) {
+	t.Helper()
+	var list struct {
+		Apps []json.RawMessage `json:"apps"`
+	}
+	if err := json.Unmarshal(body, &list); err != nil {
+		t.Fatalf("%s, GET /_motel/apps: %v: %s", caller, err, body)
+	}
+	if len(list.Apps) != len(views) {
+		t.Errorf("%s, GET /_motel/apps: %d rows, want %v: %s", caller, len(list.Apps), views, body)
+	}
+	for i, raw := range list.Apps {
+		row := string(raw)
+		if i >= len(views) || !strings.HasPrefix(row, `{"name":"`+views[i]+`",`) {
+			t.Errorf("%s, GET /_motel/apps: row %d is %s, want %v in order", caller, i, row, views)
+			continue
+		}
+		app := views[i]
+		for _, other := range twoApps {
+			if other == app {
+				continue
 			}
-			w := httptest.NewRecorder()
-			if err := r.h.ServeHTTP(w, req, nil); err != nil {
-				t.Fatal(err)
+			for _, s := range []string{other, r.canary[other], r.sockets[other]} {
+				if strings.Contains(row, s) {
+					t.Errorf("%s, GET /_motel/apps: %s's row holds %q: %s", caller, app, s, row)
+				}
 			}
-			want := http.StatusUnauthorized // a deploy token is judged against the global sources: none here
-			if person(caller) {
-				want = http.StatusOK
-			}
-			if w.Code != want {
-				t.Errorf("%s, GET %s: %d %s, want %d", caller, rt.path, w.Code, w.Body, want)
-			}
-			if w.Code == http.StatusOK {
-				leaks("GET "+rt.path, caller, w.Body.String(), func(other string) bool { return views(caller, other) })
-			}
+		}
+		if strings.Contains(row, r.canary[app]) || !strings.Contains(row, `"version":"z-[redacted:SECRET_TOKEN]"`) ||
+			!strings.Contains(row, `"redacted_env":["SECRET_TOKEN"]`) || strings.Contains(row, r.sockets[app]) {
+			t.Errorf("%s, GET /_motel/apps: %s's row does not hold its canary as the marker: %s", caller, app, row)
 		}
 	}
 }

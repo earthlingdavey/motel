@@ -322,6 +322,9 @@ func TestRead(t *testing.T) {
 		{"motel's 500, a hostile sentence", 500, "application/json; charset=utf-8", "{\"error\":\"boom \\u001b]52;c;eA==\\u0007\"}", ExitFailed, `127.0.0.1 answered 500; the box says: "boom \x1b]52;c;eA==\x07"`, true},
 		{"a gateway's JSON 502", 502, "application/json", "{\"error\":\"upstream \\u001b[2J down\"}", ExitUnknown, `Something at 127.0.0.1 answered 502 without Motel-Version, so not known to be motel's own answer; it says: "upstream \x1b[2J down"`, false},
 		{"a 500 without Motel-Version", 500, "application/json", `{"error":"boom"}`, ExitUnknown, "answered 500 without Motel-Version", false},
+		{"a redirect with a JSON error", 302, "application/json", `{"error":"sign in at https://elsewhere.example"}`, ExitUnknown, "Something at 127.0.0.1 answered (HTTP 302, not motel's answer). Is this the box's deploy host?", false},
+		{"a redirect with a JSON error and motel's headers", 307, "application/json", `{"error":"moved"}`, ExitUnknown, "Something at 127.0.0.1 answered (HTTP 307, not motel's answer). Is this the box's deploy host?", false},
+		{"a redirect with no body of its own", 301, "text/html", "<a href=\"https://x\">moved</a>", ExitUnknown, "Something at 127.0.0.1 answered (HTTP 301, not motel's answer). Is this the box's deploy host?", false},
 		{"a gateway's 502", 502, "text/html", "<html>bad gateway</html>", ExitUnknown, "Something at 127.0.0.1 answered (HTTP 502, not motel's answer). Is this the box's deploy host?", false},
 		{"a 200 that is not motel's", 200, "text/html", "<html>hi</html>", ExitUnknown, "Something at 127.0.0.1 answered (HTTP 200, not motel's answer: not JSON). Is this the box's deploy host?", false},
 		{"a 200 of the wrong shape", 200, "application/json", `{"app":7}`, ExitUnknown, "not motel's answer: it has no app and phase)", false},
@@ -337,6 +340,10 @@ func TestRead(t *testing.T) {
 				ans.Header.Set("Motel-Version", "x")
 			case "a 5xx with a Motel-Protocol that is no number":
 				ans.Header.Set("Motel-Protocol", "x")
+			}
+			if strings.HasSuffix(tc.name, "and motel's headers") {
+				ans.Header.Set("Motel-Protocol", "1")
+				ans.Header.Set("Motel-Version", "v0.7.0")
 			}
 			if strings.HasPrefix(tc.name, "motel's") {
 				ans.Header.Set("Motel-Protocol", "1")
