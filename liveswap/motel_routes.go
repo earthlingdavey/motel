@@ -125,8 +125,10 @@ func (h *Handler) apps(w http.ResponseWriter, _ *http.Request, p *Person) error 
 
 // appRow is one app's entry in GET /_motel/apps, as the bytes sent. The
 // summary is the one GET /<app> would give: Decide is asked about the
-// same action, and the values come from the same status, through the
-// same filter. A row is withheld only when that filter withholds it.
+// same action, and the values come from the same state (summaryStatus
+// reads of the disk only the newest record, the one the summary
+// carries), through the same filter. A row is withheld only when that
+// filter withholds it.
 func (h *Handler) appRow(p *Person, name string) string {
 	app, err := h.allowApp(p.Principal, access.AppStatus, name)
 	if err != nil {
@@ -136,7 +138,7 @@ func (h *Handler) appRow(p *Person, name string) string {
 		return nameOnlyRow(name, "forbidden")
 	}
 	ma := app.ma
-	s := ma.status()
+	s := ma.summaryStatus()
 	// The summary alone goes through the filter, and the name is put
 	// beside it after: the name is the route's word, the one the person
 	// was granted the app by and the config runs it under, so the

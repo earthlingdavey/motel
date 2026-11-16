@@ -1758,6 +1758,28 @@ func (ma *managedApp) status() statusSnapshot {
 		}
 		deploys = listDeploySummaries(c.spec.dirs)
 	}
+	return ma.statusFrom(c, available, byMtime, deploys)
+}
+
+// summaryStatus is the status as the app list's summary reads it: the
+// same in memory, and of the disk the newest record alone
+// (newestDeploySummary, the first of listDeploySummaries), not the
+// releases or the other records, which the summary does not carry.
+// Read for every app on every list, so it reads one record, not all.
+func (ma *managedApp) summaryStatus() statusSnapshot {
+	c := ma.snapshot()
+	var deploys []deploySummary
+	if c.spec != nil {
+		if d, ok := newestDeploySummary(c.spec.dirs); ok {
+			deploys = []deploySummary{d}
+		}
+	}
+	return ma.statusFrom(c, []string{}, nil, deploys)
+}
+
+// statusFrom is the status from what was read off disk outside ma.mu,
+// and the rest under it.
+func (ma *managedApp) statusFrom(c collaborators, available, byMtime []string, deploys []deploySummary) statusSnapshot {
 	ma.mu.Lock()
 	defer ma.mu.Unlock()
 	s := statusSnapshot{App: ma.name, Phase: ma.phase, LastDeploy: ma.lastDeploy, AvailableVersions: available, OrderedByMtime: byMtime, Deploys: deploys}

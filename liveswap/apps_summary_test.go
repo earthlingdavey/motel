@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"go.uber.org/zap"
 
@@ -283,5 +284,45 @@ func TestHoldOwnName(t *testing.T) {
 		if got := rd.redactJSON([]byte(tc.body)); got != tc.want {
 			t.Errorf("%s:\n got %s\nwant %s", tc.body, got, tc.want)
 		}
+	}
+}
+
+// TestNewestDeploySummaryIsTheListsFirst: the one record the summary
+// reads is the first of the full list, whatever the records: written
+// in turn, two in one tick (by version, "v1" before "v1-x"), the
+// newest not a record, a link, a directory, none at all.
+func TestNewestDeploySummaryIsTheListsFirst(t *testing.T) {
+	rig := newTestRig(t)
+	d := rig.spec.dirs
+	same := func(what string) {
+		t.Helper()
+		got, ok := newestDeploySummary(d)
+		all := listDeploySummaries(d)
+		if ok != (len(all) > 0) || (ok && !sameSummary(got, all[0])) {
+			t.Errorf("%s: newest %+v (%v), the list's first of %+v", what, got, ok, all)
+		}
+	}
+	same("no records directory")
+	at := time.Unix(1_700_000_000, 0)
+	record := func(version, status string, when time.Time) {
+		t.Helper()
+		must(t, writeDeployRecord(d, version, []byte(`{"version":"`+version+`","status":"`+status+`"}`)))
+		must(t, os.Chtimes(deployRecordPath(d.deploys, version), when, when))
+	}
+	record("v1", "succeeded", at)
+	same("one record")
+	record("v2", "failed", at.Add(time.Minute))
+	same("a newer one")
+	record("v1-x", "succeeded", at.Add(2*time.Minute))
+	record("v1", "succeeded", at.Add(2*time.Minute))
+	same("two in one tick")
+	must(t, os.WriteFile(filepath.Join(d.deploys, "v9.json"), []byte(`{"version":"v8","status":"succeeded"}`), 0o600))
+	must(t, os.Chtimes(filepath.Join(d.deploys, "v9.json"), at.Add(time.Hour), at.Add(time.Hour)))
+	same("the newest not a record")
+	must(t, os.Symlink(deployRecordPath(d.deploys, "v1"), filepath.Join(d.deploys, "v7.json")))
+	must(t, os.Mkdir(filepath.Join(d.deploys, "v6.json"), 0o700))
+	same("a link and a directory")
+	if got, _ := newestDeploySummary(d); got.Version != "v1-x" {
+		t.Errorf("the newest is %q, want v1-x", got.Version)
 	}
 }
