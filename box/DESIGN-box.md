@@ -181,16 +181,18 @@ deploy.example.com {
 
 ### People and grants
 
-**In this change the lines are read and checked, and nothing admits a
-person yet**: no handler reads them, and no request is answered
-differently for them. They declare who will reach the box over HTTPS
-with a token their own ssh key signs, and what they may read there.
+They declare who reaches the box over HTTPS with a token their own ssh
+key signs, and what they may read there. The `box` app builds the
+registry of who it admits at each load from the walk of the installed
+file, never from the running configuration, and both webhooks admit a
+person through it (liveswap/access/DESIGN-access.md has the token, the
+routes and `Decide`).
 
 ```
 box {
 	signer alice@example.com ssh-ed25519 AAAAC3Nz…                    # also declares alice and this key
 	person alice@example.com sk-ssh-ed25519@openssh.com AAAAGnNr…     # a second key for a name already declared
-	person bob@example.com   ecdsa-sha2-nistp256 AAAAE2Vj…            # a person who is not a signer
+	person bob@example.com   ssh-ed25519 AAAAC3Nz…                    # a person who is not a signer
 	grant bob@example.com   viewer app example
 	grant bob@example.com   viewer app blog from 198.51.100.0/24 2001:db8:5::/48
 	grant alice@example.com viewer box
@@ -200,12 +202,18 @@ box {
 - `person <name> <key-type> <base64>`: one key of a named person. The
   name is a signer principal's (`^[A-Za-z0-9._@+-]+$`, at most 256
   bytes), compared byte for byte: a name on a `signer` line and on a
-  `person` line is one person. Key types: `ssh-ed25519`,
-  `sk-ssh-ed25519@openssh.com`, `ecdsa-sha2-nistp256`, `-nistp384`,
-  `-nistp521`, `sk-ecdsa-sha2-nistp256@openssh.com`. No `ssh-rsa`,
-  refused with the remedy. ECDSA, which a `signer` line refuses because
-  a commit's id would have two spellings, is taken: a token has no id
-  made from its signature. The base64 is checked as a signer's is, and
+  `person` line is one person. Key types: `ssh-ed25519` and
+  `sk-ssh-ed25519@openssh.com`, for now. No `ssh-rsa`, refused with the
+  remedy. ECDSA (`ecdsa-sha2-nistp256`, `-nistp384`, `-nistp521`,
+  `sk-ecdsa-sha2-nistp256@openssh.com`) is not accepted yet: refused by
+  name, saying a person's key is an Ed25519 key for now and naming the
+  remedy (`ssh-keygen -t ed25519`, or `-t ed25519-sk`), so an agent
+  that makes only P-256 keys cannot be used for now. The owner deferred
+  it on 2026-11-15 for its cost, not its form (a token has no id made
+  from its signature): a stranger who presents a listed person's public
+  key buys one signature check of its type, about 0.04 ms for Ed25519
+  and 0.5 to 1.3 ms for the larger ECDSA curves; a later release may
+  admit some of them, which breaks no one. The base64 is checked as a signer's is, and
   must be the key's own wire form, since a token's key is looked up by
   the fingerprint of those bytes. An Ed25519 key (in either form) whose
   point has small order is refused: anyone can sign for it.
@@ -232,15 +240,16 @@ the block is read, each refusal naming its lines:
 
 | Case | Verdict |
 |---|---|
-| one key on two lines, of any kinds and names, and in either of its forms (`ssh-ed25519` and `sk-ssh-ed25519@openssh.com` under any application string are one Ed25519 key; `ecdsa-sha2-*` and `sk-ecdsa-sha2-*` one ECDSA key) | refused: `signer alice@example.com and person bob@example.com are the same key` |
+| one key on two lines, of any kinds and names, and in either of its forms (`ssh-ed25519` and `sk-ssh-ed25519@openssh.com` under any application string are one Ed25519 key) | refused: `signer alice@example.com and person bob@example.com are the same key` |
 | a `grant` for a name no `person` or `signer` line declares | refused |
 | a `grant` for a name whose only keys are `ssh-rsa` signer keys | refused, naming the remedy |
-| a `grant` on an app the `liveswap` block does not run, or runs under a name written through a placeholder (the walk reads the name as written) | refused **by the walk only**: the module's parser sees the `box` block alone, so `motel validate` and a reload take the line; a push, `GET /`, the applier and `motel box describe` (the template's `make check`) refuse it. So such a line written at the console leaves an installed file that no longer walks: every push is refused, and `GET /` answers that refusal, until root mends the line. Accepted; a check at load is owed to the change that connects the box app to liveswap's app list |
+| a `grant` on an app the `liveswap` block does not run, or runs under a name written through a placeholder (the walk reads the name as written) | refused. The walk refuses both; the `box` app, at load and so at `motel validate`, asks the `liveswap` app which apps the config runs and refuses a grant on any other (a config with no `liveswap` block runs none). It sees a placeholder's name resolved, so a grant on an app named through a placeholder is refused by the walk alone: such a line written at the console loads, and leaves an installed file that no longer walks, so every push is refused and no person is admitted (the load's journal says why) until root mends the line |
 | two grants for one name on one scope | refused |
 | a box grant and an app grant for one name | taken, warned: the box grant covers the app |
 | a `person` name with no grant and no `signer` line | taken, warned |
 | an `ssh-rsa` signer whose name has no other key a person may hold | taken, warned |
-| people and no `monitor` block with a channel | taken, warned **by the walk only** (`motel box describe`): the module cannot see the `monitor` block |
+| people and no `monitor` block with a channel | taken, warned: by the walk (`motel box describe`, and the journal at each load), and by `motel validate`, which reads the adapted config; the module cannot see the `monitor` block |
+| a `grant` with a `from` list on a box whose server has `trusted_proxies` | without `trusted_proxies_strict` (or with `trusted_proxies_unix` and no `trusted_proxies_strict`), refused by `motel validate` and `motel reload`, and so a push; `motel run` prints an `ERROR` and serves all the same (Caddy then takes the client's address from the left of the header, which the client writes), and the serving process matches no list for a request such a proxy forwarded, however the config arrived; with it, taken and warned by `motel validate`, naming the headers the address comes from. A server with a `proxy_protocol` listener is warned of too (liveswap/access/DESIGN-access.md, "Safeguards") |
 | more than 1,024 key lines (`signer` and `person`) or 4,096 `grant` lines | refused |
 
 A block with no `person` and no `grant` line is not held to these

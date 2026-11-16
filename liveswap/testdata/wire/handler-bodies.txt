@@ -67,3 +67,21 @@ application/x-ndjson OK
 {"error":"response withheld: the app's env_file could not be read, so its values are unknown to the filter (open <root>/missing.env: no such file or directory)","event":"phase","phase":"downloading"}
 {"error":"response withheld: the app's env_file could not be read, so its values are unknown to the filter (open <root>/missing.env: no such file or directory)","event":"phase","phase":"extracting"}
 {"error":"response withheld: the app's env_file could not be read, so its values are unknown to the filter (open <root>/missing.env: no such file or directory)","event":"done","http_status":500}
+# GET /_motel/whoami as a viewer of demo
+application/json OK
+{"name":"alice","key":"<fingerprint>","roles":[{"role":"viewer","scope":"app:demo"}],"box":"deploy.example.test","version":"","protocol":1,"token_expires_at":"<time>"}
+# GET /_motel/apps as a viewer of demo
+application/json OK
+{"apps":[{"name":"demo"}]}
+# GET /_motel/apps as a person with no grant
+application/json OK
+{"apps":[]}
+# GET an app no grant covers, as a person
+application/json Forbidden
+{"error":"this needs the viewer role on this app","needs":"viewer","scope":"app"}
+# GET /_motel/whoami with a deploy token
+application/json Forbidden
+{"error":"this needs a token signed by a declared key","needs":"key","scope":"box"}
+# GET a path under /_motel/ that is no route
+application/json Not Found
+{"error":"not found"}

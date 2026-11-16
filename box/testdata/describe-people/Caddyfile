@@ -12,7 +12,7 @@
 		signer carol@example.com ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQCw4qVJUWkrTs8sGAaGVeWuzuexqDgvN+0jU7HBXVFz1X0tsaPnCLNyYM2HRjTKhkmrqd6jwkwmKcOOhs4EdMQN4r+5809n1H82TMR1HAjMQEA4XUIAsp1DctRbE3PZcUViRBOT1S3d1MXwqqMJPKMyTMIrcLOZYVYh8Os3HvzmopuR9ypPSb+y+asCXisrPI68zeVptg0Dc+1vfeuki5/UyZgbUz+fMbsXYgRFfL7CYhKBT8PMszl35ox00l08msDAaqLkkmWXpmiLFRnsxU1XoUWPW8RQczWuhAfd+t2KM7oOmFqTYZ63kH435I80qHG4MzQRKMJKiEewTN+peWv1
 
 		person alice@example.com sk-ssh-ed25519@openssh.com AAAAGnNrLXNzaC1lZDI1NTE5QG9wZW5zc2guY29tAAAAILX9o34V95jemufjvXcibmMm8mYtok4vd2ryhihSoTyTAAAABHNzaDo=
-		person bob@example.com   ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAABBBAEDlhi8zbEURRrj0bvYj+S5Pox9160W3LOyqH7nkMZVMdjJyW0+oemQB7XlU10E4Z6HZpXfHg2e4JJ7B6zgFDw=
+		person bob@example.com   ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAILoDBHCP9BTSBnqM2NjTOEJlf2VVKycJulDE9ZXRYmiG
 
 		grant alice@example.com viewer box
 		grant bob@example.com   viewer app example

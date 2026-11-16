@@ -7,11 +7,11 @@ package access
 // the installed file's raw tokens. One parser for both is what keeps
 // the two from disagreeing about who is declared.
 //
-// In this release the lines are read and checked, and nothing admits a
-// person: no handler reads them.
+// The box app builds the registry of who it admits from the walk's
+// reading of these lines (Registry), and both webhooks admit a person
+// through it (CheckToken, Decide).
 
 import (
-	"crypto/ecdsa"
 	"crypto/ed25519"
 	"crypto/sha256"
 	"encoding/base64"
@@ -47,16 +47,29 @@ var lineNameRE = regexp.MustCompile(`^[A-Za-z0-9._@+-]+$`)
 // package imports nothing of liveswap's, so it is written again here.
 var lineAppNameRE = regexp.MustCompile(`^[a-z0-9-]{1,63}$`)
 
-// personKeyTypes are the key types a person may hold: no ssh-rsa. A
-// person's token is verified by key type before anything else, and
-// with no RSA there is no size floor to keep and no rsa-sha2 rule.
+// personKeyTypes are the key types a person may hold (the owner's
+// decision): ed25519 and its hardware form, for now. No RSA, whatever
+// its size: an RSA signer key signs commits only, and with no RSA there
+// is no size floor to keep and no rsa-sha2 rule. ECDSA is deferred
+// (deferredKeyTypes). The one list both the line parser and the token
+// checker hold a key to.
 var personKeyTypes = map[string]bool{
-	"ssh-ed25519":                        true,
-	"sk-ssh-ed25519@openssh.com":         true,
-	"ecdsa-sha2-nistp256":                true,
-	"ecdsa-sha2-nistp384":                true,
-	"ecdsa-sha2-nistp521":                true,
-	"sk-ecdsa-sha2-nistp256@openssh.com": true,
+	ssh.KeyAlgoED25519:   true,
+	ssh.KeyAlgoSKED25519: true,
+}
+
+// deferredKeyTypes are the ECDSA types, which a person may not hold for
+// now (the owner's decision of 2026-11-15): a stranger who presents a
+// listed person's public key buys one signature check of its type, and
+// an Ed25519 check costs about 0.04 ms where a P-384 or P-521 one costs
+// 0.5 to 1.3 ms. A later release may admit some of them, which breaks
+// no one; narrowing would. A person line with one is refused by name,
+// and a token with one by its type.
+var deferredKeyTypes = map[string]bool{
+	ssh.KeyAlgoECDSA256:   true,
+	ssh.KeyAlgoECDSA384:   true,
+	ssh.KeyAlgoECDSA521:   true,
+	ssh.KeyAlgoSKECDSA256: true,
 }
 
 // Role is what a grant gives.
@@ -81,8 +94,7 @@ type Key struct {
 
 	// material is the public key itself, whatever form the line wrote
 	// it in: an Ed25519 key is the same key as ssh-ed25519 and as
-	// sk-ssh-ed25519@openssh.com under any application string, and an
-	// ECDSA key the same as ecdsa-sha2-* and sk-ecdsa-sha2-*.
+	// sk-ssh-ed25519@openssh.com under any application string.
 	material string
 	// smallOrder is an Ed25519 key, in either form, that is no point or
 	// a point of small order (unusableEd25519).
@@ -121,19 +133,15 @@ func (k Key) Equal(o Key) bool {
 }
 
 // keyMaterial is the public key a wire form carries, for the one-key
-// rule: the curve point of an Ed25519 or ECDSA key in either form, the
-// wire bytes of any other.
+// rule: the curve point of an Ed25519 key in either form, the wire
+// bytes of any other (an ssh-rsa signer key; no line takes an ECDSA
+// key).
 func keyMaterial(wire []byte) string {
 	pub, err := ssh.ParsePublicKey(wire)
 	if err == nil {
 		if cpk, ok := pub.(ssh.CryptoPublicKey); ok {
-			switch k := cpk.CryptoPublicKey().(type) {
-			case ed25519.PublicKey:
+			if k, ok := cpk.CryptoPublicKey().(ed25519.PublicKey); ok {
 				return "ed25519 " + string(k)
-			case *ecdsa.PublicKey:
-				if point, err := k.Bytes(); err == nil {
-					return "ecdsa " + k.Curve.Params().Name + " " + string(point)
-				}
 			}
 		}
 	}
@@ -200,10 +208,13 @@ func ParsePerson(args []string) (Key, error) {
 		return Key{}, err
 	}
 	if keyType == "ssh-rsa" {
-		return Key{}, fmt.Errorf("person %s: a person's key is ssh-ed25519, ecdsa or the sk- form of either, not ssh-rsa (ssh-keygen -t ed25519, or -t ed25519-sk for a hardware key)", name)
+		return Key{}, fmt.Errorf("person %s: a person's key is ssh-ed25519 or its sk- form, not ssh-rsa (ssh-keygen -t ed25519, or -t ed25519-sk for a hardware key)", name)
+	}
+	if deferredKeyTypes[keyType] {
+		return Key{}, fmt.Errorf("person %s: a person's key is an Ed25519 key for now, and this release does not take %s yet (ssh-keygen -t ed25519, or -t ed25519-sk for a hardware key)", name, keyType)
 	}
 	if !personKeyTypes[keyType] {
-		return Key{}, fmt.Errorf("person %s: key type %s is not one of ssh-ed25519, sk-ssh-ed25519@openssh.com, ecdsa-sha2-nistp256, ecdsa-sha2-nistp384, ecdsa-sha2-nistp521, sk-ecdsa-sha2-nistp256@openssh.com", name, lineQuote(keyType))
+		return Key{}, fmt.Errorf("person %s: key type %s is not one of ssh-ed25519, sk-ssh-ed25519@openssh.com", name, lineQuote(keyType))
 	}
 	wire, err := base64.StdEncoding.Strict().DecodeString(b64)
 	if err != nil {
@@ -493,7 +504,7 @@ func CheckLines(l Lines, around *Around) (warnings []string, err error) {
 		case !declared[g.Name]:
 			return nil, fmt.Errorf("%s: no person or signer line declares %s", g.line(), g.Name)
 		case !personKey[g.Name]:
-			return nil, fmt.Errorf("%s: %s has no key a person's token can use (an ssh-rsa signer key signs commits only); add a person line with an ed25519 or ecdsa key", g.line(), g.Name)
+			return nil, fmt.Errorf("%s: %s has no key a person's token can use (an ssh-rsa signer key signs commits only); add a person line with an ed25519 key", g.line(), g.Name)
 		case g.App != "" && around != nil && !slices.Contains(around.Apps, g.App):
 			// A typo would grant nothing, and an app added later under
 			// that name would inherit the grant.
@@ -519,10 +530,10 @@ func CheckLines(l Lines, around *Around) (warnings []string, err error) {
 		switch {
 		case k.Signer && k.Type == "ssh-rsa" && !personKey[k.Name] && !warned["signer "+k.Name]:
 			warned["signer "+k.Name] = true
-			warnings = append(warnings, fmt.Sprintf("signer %s: an ssh-rsa key signs commits but cannot be a person's key; for %s to be a person, add a person line with an ed25519 or ecdsa key (ssh-keygen -t ed25519)", k.Name, k.Name))
+			warnings = append(warnings, fmt.Sprintf("signer %s: an ssh-rsa key signs commits but cannot sign a person's token; to reach this box over HTTPS, add a person line for %s with an ed25519 key (ssh-keygen -t ed25519)", k.Name, k.Name))
 		case !k.Signer && !hasGrant[k.Name] && !signerName[k.Name] && !warned["person "+k.Name]:
 			warned["person "+k.Name] = true
-			warnings = append(warnings, fmt.Sprintf("person %s has no grant", k.Name))
+			warnings = append(warnings, fmt.Sprintf("person %s has no grant: their key is told only who they are here (/_motel/whoami)", k.Name))
 		}
 	}
 	for _, g := range l.Grants {
@@ -533,10 +544,37 @@ func CheckLines(l Lines, around *Around) (warnings []string, err error) {
 		}
 	}
 	if around != nil && !around.Channels && len(personKey) > 0 {
-		warnings = append(warnings, "people are declared and no monitor channel is, so what they do on this box will be told to no one; add a channel line to the monitor block: channel <name> <kind> {secret.NOTIFY_<NAME>}")
+		warnings = append(warnings, NoChannelWarning)
 	}
 	return warnings, nil
 }
+
+// NoChannelWarning is what a box with people and no monitor channel is
+// told, by the walk and by `motel validate`, which reads the channels
+// from the adapted config.
+const NoChannelWarning = "people are declared and no monitor channel is, so what they do on this box will be told to no one; add a channel line to the monitor block: channel <name> <kind> {secret.NOTIFY_<NAME>}"
+
+// FromProxiesWarning is what `motel validate` says of a grant with an
+// address list on a box whose server trusts proxies strictly: the list
+// is held to the right-most address outside the trusted ranges in the
+// headers the server reads the client's address from, which holds only
+// if the operator's proxy sets each of them itself.
+func FromProxiesWarning(server string, headers []string) string {
+	return fmt.Sprintf("a grant has a from list, and server %s trusts proxies with trusted_proxies_strict: the address a from list is held to is the right-most one outside the trusted ranges in %s, so the list holds only if your proxy sets each of those headers itself, never passing on one a client sent, and only as well as the ranges", server, strings.Join(headers, ", "))
+}
+
+// FromProxyProtocolWarning is what `motel validate` says of a grant
+// with an address list on a box whose server takes the PROXY protocol.
+func FromProxyProtocolWarning(server string) string {
+	return fmt.Sprintf("a grant has a from list, and server %s takes the PROXY protocol: the address a from list is held to is whatever the PROXY header names, so the list is only as good as proxy_protocol's allow list (a fallback_policy that takes the header from any peer lets a client name its own address)", server)
+}
+
+// FromProxiesRefusal is why `motel validate`, `motel reload` and
+// `motel run` refuse a grant with an address list on a box with a
+// server that trusts proxies (trusted_proxies, or trusted_proxies_unix)
+// without trusted_proxies_strict; the serving process matches no list
+// for a request such a proxy forwards (liveswap's clientAddr).
+const FromProxiesRefusal = "a grant has a from list, and a server here has trusted_proxies or trusted_proxies_unix without trusted_proxies_strict: Caddy then takes the client's address from the left of the client IP header, which the client writes, so the list would not hold; add trusted_proxies_strict to that servers block, or take the from lists out"
 
 // lineQuote is a value a line wrote, quoted and cut to a length a message
 // can carry: it may be anything a token can hold.

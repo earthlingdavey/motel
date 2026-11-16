@@ -64,6 +64,13 @@ type Handler struct {
 	app     *App
 	logger  *zap.Logger
 	limiter *deploytrust.Limiter
+	// people is the registry of the box app this config loaded with: who
+	// may read with a person's token. nil, with no box app or no person
+	// in its installed file, admits no one.
+	people *access.Registry
+	// rate is the rate per person, access.SharedRate; nil in a test
+	// that does not ask for one.
+	rate *access.Rate
 	// stage is a test seam for stageUpload; nil is stageUpload. A full
 	// disk cannot be made in a test that runs as root.
 	stage func(body io.Reader, tmpDir string, maxBytes int64) (string, string, error)
@@ -89,13 +96,37 @@ func (h *Handler) Provision(ctx caddy.Context) error {
 		return fmt.Errorf("liveswap_webhook is configured but no apps are defined in the liveswap global options")
 	}
 	h.limiter = deploytrust.Shared()
+	h.rate = access.SharedRate()
+	// The box app builds the registry; this package reaches it through
+	// an interface of its own, so it imports nothing of box. With no box
+	// block there is none, and no person is admitted.
+	box, err := ctx.AppIfConfigured("box")
+	switch {
+	case errors.Is(err, caddy.ErrNotConfigured):
+	case err != nil:
+		return err
+	default:
+		if src, ok := box.(access.Source); ok {
+			h.people = src.Access()
+		}
+	}
 	return nil
 }
 
 // ServeHTTP is terminal: it never calls the next handler.
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request, _ caddyhttp.Handler) error {
-	name := path.Base(path.Clean(r.URL.Path))
-	ma := h.app.managedApp(name)
+	clean := path.Clean(r.URL.Path)
+	name := path.Base(clean)
+	// The first segment before the last: a path under /_motel/ names no
+	// app, whatever its last segment (`_` is outside the app grammar).
+	motel := clean == motelPrefix || strings.HasPrefix(clean, motelPrefix+"/")
+	if access.HasPersonScheme(r.Header.Values("Authorization")) {
+		return h.servePerson(w, r, name, motel)
+	}
+	var ma *managedApp
+	if !motel {
+		ma = h.app.managedApp(name)
+	}
 
 	// Authenticate before revealing whether the app exists. For an
 	// unknown app the token is verified against the global trust
@@ -114,6 +145,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request, _ caddyhttp.
 		return refusal.Write(func(code int, body any) error { return RespondJSON(w, code, body, nil) })
 	}
 	StampVersion(w.Header())
+	if motel {
+		// A global source verified the token: a deployer of no app,
+		// which no route under /_motel/ allows.
+		return h.serveMotel(w, r, access.Principal{Kind: access.AppDeployer}, nil)
+	}
 	if ma == nil {
 		// A global source verified the token: a deployer of no app
 		// here, which may take no action on this name. The name is
@@ -129,25 +165,114 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request, _ caddyhttp.
 	// a deployer of this app and Decide allows every app action: it
 	// refuses only if the table and the routes fall apart, and then
 	// refuses rather than serves.
-	if err := decide(access.Principal{Kind: access.AppDeployer, App: name}, rt.action, name); err != nil {
-		return RespondJSON(w, http.StatusForbidden, wire.Error{Error: "forbidden"}, ma.redactorFor(statusSnapshot{}))
+	app, err := h.allowApp(access.Principal{Kind: access.AppDeployer, App: name}, rt.action, name)
+	if err != nil {
+		return RespondJSON(w, http.StatusForbidden, ForbiddenBody(err), ma.redactorFor(statusSnapshot{}))
 	}
-	return rt.serve(h, w, r, ma, who.By)
+	return rt.serve(h, w, r, app, who.By)
 }
 
-// versionHeader carries the release on every answer to a verified
-// token, and on no other: the exact release tells a stranger which
-// known flaws a box has, so no 401 carries it.
-const versionHeader = "Motel-Version"
+// appHandle is the one app a route reads or acts on. Only allowApp
+// makes one, after Decide allowed the action on that app, so a route's
+// function cannot be given an app nobody asked Decide about; and each
+// reads that app alone, through that app's filter.
+type appHandle struct {
+	ma *managedApp
+}
 
-// StampVersion sets versionHeader to the release this binary was
-// built as, caddy.CustomVersion, which the release build links in
-// (the Makefile's GO_LDFLAGS). Each webhook calls it once, as soon as
-// a token verified, so every answer after that carries it, a deploy
-// stream's included. A build that links none (go build, a test) sends
-// no header: an empty value would be no release, and Caddy's own
+// errUnknownApp is allowApp's answer for a name that is no app here,
+// once Decide allowed the action on it: a box viewer asking for an app
+// that does not exist.
+var errUnknownApp = errors.New("unknown app")
+
+// allowApp asks Decide whether p may take a on the app name, and is the
+// one place an appHandle is made.
+func (h *Handler) allowApp(p access.Principal, a access.Action, name string) (appHandle, error) {
+	if err := decide(p, a, name); err != nil {
+		return appHandle{}, err
+	}
+	ma := h.app.managedApp(name)
+	if ma == nil {
+		return appHandle{}, errUnknownApp
+	}
+	return appHandle{ma: ma}, nil
+}
+
+// ForbiddenBody is the 403's body for Decide's refusal: what the caller
+// would need, when Decide names it (access.Forbidden), and otherwise
+// the bare word, the answer of a table and routes that fall apart.
+func ForbiddenBody(err error) any {
+	var f *access.Forbidden
+	if errors.As(err, &f) {
+		return wire.Forbidden{Error: f.Error(), Needs: f.Needs, Scope: f.Scope}
+	}
+	return wire.Error{Error: "forbidden"}
+}
+
+// servePerson answers a request in the person token's scheme: the
+// token judged by CheckToken against this load's registry, then the
+// route's action put to Decide with the person. The app is found after
+// Decide, so a person told no learns nothing of which apps exist.
+func (h *Handler) servePerson(w http.ResponseWriter, r *http.Request, name string, motel bool) error {
+	p, ok, err := AdmitPerson(w, r, h.gate(), "app", loggedAppName(name), func(code int, body any) error { return RespondJSON(w, code, body, nil) })
+	if !ok {
+		return err
+	}
+	if motel {
+		return h.serveMotel(w, r, p.Principal, &p)
+	}
+	rt := findRoute(r)
+	if rt == nil {
+		// A person's token is good on a GET alone, which always has a
+		// row: this is the table and the token falling apart.
+		w.Header().Set("Allow", "GET, POST")
+		return RespondJSON(w, http.StatusMethodNotAllowed, wire.Error{Error: "method not allowed"}, nil)
+	}
+	// Decide before the app is looked for: a person whose grants do not
+	// cover the name is told the same 403 whether it is an app here or
+	// not, and only a viewer of the box, who may list the apps, is told
+	// a name is none.
+	app, err := h.allowApp(p.Principal, rt.action, name)
+	switch {
+	case errors.Is(err, errUnknownApp):
+		return RespondJSON(w, http.StatusNotFound, wire.Error{Error: fmt.Sprintf("unknown app %q", name)}, nil)
+	case err != nil:
+		return RespondJSON(w, http.StatusForbidden, ForbiddenBody(err), nil)
+	}
+	return rt.serve(h, w, r, app, p.Name)
+}
+
+// gate is what a person is admitted through on this handler.
+func (h *Handler) gate() PersonGate {
+	return PersonGate{Registry: h.people, Limiter: h.limiter, Rate: h.rate, Logger: h.logger}
+}
+
+// versionHeader carries the release, and protocolHeader the protocol
+// number, on every answer to a verified token, and on no other: the
+// exact release tells a stranger which known flaws a box has, and no
+// answer to a caller the box has not accepted names motel (the flat
+// 401 and the box webhook's early 405 are as they were).
+const (
+	versionHeader  = "Motel-Version"
+	protocolHeader = "Motel-Protocol"
+)
+
+// Protocol is the number of the forms of person token this box takes:
+// 1 is the form a person's own key signs, with aud, iat and exp, good
+// on a GET. A later form raises it; it moves with the forms, never with
+// a release, so it tells a caller a range of releases, not one.
+const Protocol = 1
+
+// StampVersion sets protocolHeader, and versionHeader to the release
+// this binary was built as, caddy.CustomVersion, which the release
+// build links in (the Makefile's GO_LDFLAGS). Each webhook calls it
+// once, as soon as a token verified, a deploy token's or a person's, so
+// every answer after that carries both, a deploy stream's included. A
+// build that links no release (go build, a test) sends no
+// versionHeader: an empty value would be no release, and Caddy's own
 // "(devel)" names no motel release either.
 func StampVersion(h http.Header) {
+	h.Set(protocolHeader, strconv.Itoa(Protocol))
 	if v := caddy.CustomVersion; v != "" {
 		h.Set(versionHeader, v)
 	}
@@ -166,7 +291,7 @@ type route struct {
 	shape  string // the query or body the row takes, for a reader
 	action access.Action
 	match  func(*http.Request) bool // nil: any request of the method
-	serve  func(h *Handler, w http.ResponseWriter, r *http.Request, ma *managedApp, by string) error
+	serve  func(h *Handler, w http.ResponseWriter, r *http.Request, app appHandle, by string) error
 }
 
 // routes is matched in order: the first row of the request's method
@@ -208,14 +333,16 @@ func wantsRollback(r *http.Request) bool {
 
 // getDeployRecord is GET /<app>?deploy=<v>; its query parsed when the
 // row matched (wantsDeployRecord).
-func (h *Handler) getDeployRecord(w http.ResponseWriter, r *http.Request, ma *managedApp, _ string) error {
+func (h *Handler) getDeployRecord(w http.ResponseWriter, r *http.Request, app appHandle, _ string) error {
+	ma := app.ma
 	q, _ := url.ParseQuery(r.URL.RawQuery)
 	return h.deployRecord(w, ma, q.Get("deploy"))
 }
 
 // getStatus is GET /<app>: the app's status, with metric summaries
 // over the range asked for.
-func (h *Handler) getStatus(w http.ResponseWriter, r *http.Request, ma *managedApp, _ string) error {
+func (h *Handler) getStatus(w http.ResponseWriter, r *http.Request, app appHandle, _ string) error {
+	ma := app.ma
 	// Parsed strictly, as wantsDeployRecord parses it: a malformed
 	// query is refused here rather than read as no query.
 	q, err := url.ParseQuery(r.URL.RawQuery)
@@ -243,7 +370,8 @@ func (h *Handler) getStatus(w http.ResponseWriter, r *http.Request, ma *managedA
 
 // deployURL is the default path: a JSON body naming an artifact URL to
 // pull, size-capped like any control payload.
-func (h *Handler) deployURL(w http.ResponseWriter, r *http.Request, ma *managedApp, by string) error {
+func (h *Handler) deployURL(w http.ResponseWriter, r *http.Request, app appHandle, by string) error {
+	ma := app.ma
 	// Read one byte past the cap: exceeding it proves the payload is
 	// oversized, which deserves an honest 413 — truncating at the cap
 	// would surface as a misleading "invalid JSON" 400.
@@ -299,7 +427,8 @@ func parseDeployPayload(body []byte) (p deployPayload, status int, msg string) {
 // deployPush streams an uploaded gzip tarball to a staging file and
 // deploys it — no artifact host needed. Version comes from the query
 // string because the body is the artifact.
-func (h *Handler) deployPush(w http.ResponseWriter, r *http.Request, ma *managedApp, by string) error {
+func (h *Handler) deployPush(w http.ResponseWriter, r *http.Request, app appHandle, by string) error {
+	ma := app.ma
 	version := r.URL.Query().Get("version")
 	if !validVersion(version) {
 		return RespondJSON(w, http.StatusUnprocessableEntity, wire.Error{Error: fmt.Sprintf("version query param must match %s", versionRe)}, ma.redactorFor(statusSnapshot{}))
@@ -368,7 +497,8 @@ func (h *Handler) deployPush(w http.ResponseWriter, r *http.Request, ma *managed
 }
 
 // deployRollback relaunches an already-extracted on-disk release.
-func (h *Handler) deployRollback(w http.ResponseWriter, r *http.Request, ma *managedApp, by string) error {
+func (h *Handler) deployRollback(w http.ResponseWriter, r *http.Request, app appHandle, by string) error {
+	ma := app.ma
 	version := r.URL.Query().Get("rollback")
 	if !validVersion(version) {
 		return RespondJSON(w, http.StatusUnprocessableEntity, wire.Error{Error: fmt.Sprintf("rollback version must match %s", versionRe)}, ma.redactorFor(statusSnapshot{}))

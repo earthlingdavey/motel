@@ -29,7 +29,8 @@ type Shape struct {
 	// Access are the box block's signer and person lines as key lines,
 	// in file order, and its grant lines: held by Walk to agree across
 	// the two readings, as the signers are. Empty for a block without a
-	// person or a grant line. Nothing admits a person yet.
+	// person or a grant line. The box app's registry of who it admits
+	// is built from it (App.loadRegistry).
 	Access access.Lines
 	// AccessWarnings are what access.CheckLines took with a doubt, for
 	// describe to print; none for a block without a person or a grant

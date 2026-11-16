@@ -853,6 +853,9 @@ box at least once every 90.
   field of the plan again (backups/README.md, "A run", step 3, and "The
   Caddyfile is read without the server's environment"). A signer is the
   operator ("A signer's laptop is the operator").
+- **A person** (a `person` or `signer` line with a `grant`,
+  liveswap/access/DESIGN-access.md) holds no backup role: run, restore,
+  setup and status stay where they are.
 - **The administrator** (optional; docs/hardening.md, step 3) is in
   `adm` alone, with no `sudo`. They read the journal — restic's stderr
   among it, which names an app's files — and run `motel-backup
@@ -1025,7 +1028,12 @@ scope for the runtime model, in scope for release signing (roadmap).
   deploy arbitrary code to every app that accepts that trust source for
   the token's lifetime — by pushing a tarball directly, which passes no
   allowlist, or by pulling from a URL within `artifact_allowlist` — and
-  roll back versions. Containment is the claim scope (and, for pulls,
+  roll back versions. A deploy token is a deployer of the apps that
+  trust its source and nothing else: it holds no person's route, and a
+  person's token holds no deploy. The two are told apart by the
+  `Authorization` scheme before any verifier runs (`Bearer` for deploy
+  tokens, `Motel` for people's), so neither verifier ever parses the
+  other's token. Containment is the claim scope (and, for pulls,
   the allowlist), not the runtime; the sandbox bounds what the deployed
   code then reaches.
 - **T3 — Malicious/compromised artifact host** within the allowlist
@@ -1043,13 +1051,35 @@ scope for the runtime model, in scope for release signing (roadmap).
   hundred process-wide are logged, then silence; the answer is the
   flat 401 throughout), the CPU cost of JWT/JWKS verification (spent
   on every request — the budgets bound the journal, not the work),
-  and any pre-auth proxy/Caddy surface.
+  and any pre-auth proxy/Caddy surface. With people declared, the same
+  gate also parses a person's token: a fixed prefix, one SSHSIG
+  structure, one fingerprint lookup and at most one signature check,
+  under the same 8 KiB cap and the same failure budgets; a stranger can
+  put a listed key's public half in the structure and buy one signature
+  check, as a JWT under a published `kid` does. That check is an
+  Ed25519 one, about 0.04 ms: a person's key is Ed25519 for now, and a
+  token with an ECDSA key (0.5 to 1.3 ms a check for the larger curves)
+  is refused by its type before any lookup. A key that is not listed
+  but is of a type some listed key has costs a signature check too,
+  against a dummy key of that type, so a stranger holding someone's
+  published key does not learn by the cost of one whether the box lists
+  it; a key of a type no listed key has costs none. So a stranger can
+  make the box do at most one verification, of a listed type, per
+  request, and a box with no people none; the time tells which key
+  types are listed, not which keys, and the refusals are not
+  constant-time beyond the signature check. Every refusal of a
+  person's token is the same flat 401 as a deploy token's, and no answer
+  to a caller the box has not accepted names motel's protocol or
+  release.
 - **T5 — RCE in the supervisor itself** (a Caddy or liveswap bug). Low
   probability, catastrophic: it *is* the `motel` user, so it already
   holds every asset short of root. No app-isolation design prevents
   this; the design question is only how much *worse* it can get (does it
   reach root?) — which is why the supervisor holds no grant (see "The
-  shipped mechanism").
+  shipped mechanism"). It holds the people's public keys and grants and
+  could answer any person's request with anything, as it answers any
+  deploy's; it holds no private key and so can mint no person's token
+  for another box.
 - **T6 — Compromised identity of the box's config repository.** Three
   distinct holders, in descending likelihood: a credential that can
   push to the repository (a leaked PAT, a stolen session, an OAuth or
@@ -1071,6 +1101,27 @@ scope for the runtime model, in scope for release signing (roadmap).
   names and lengths, and the third, or anyone holding a reader's key
   file, decrypts them. A signer also chooses what is backed up
   ("Backups").
+- **T7 — A person's key, stolen, with a role on one app.** A key file
+  copied from a laptop, or an agent socket used by malware on it, of a
+  person whose only grant is `viewer` on one app
+  (liveswap/access/DESIGN-access.md). Can read that app's status,
+  deploys and deploy records, from any address their grant's `from`
+  list allows (any address, with no list), until a push removes the
+  key's line and the box reloads. Cannot read another app (each read
+  takes the app handle `Decide` allowed for the path's app, and the
+  two-apps-two-people test holds every route to it), cannot act (no
+  person may act in this release; a person's token is good on a `GET`
+  alone), cannot reach the box webhook's `GET /` without a box grant.
+  Its use from outside a `from` list is refused with the flat 401 and
+  a journal line; from elsewhere with no list on the grant it is not
+  noticed. A hardware-held key cannot be used without a touch.
+- **T8 — A person's key, stolen, with a role on the box.** As T7, for
+  every app and the box's status: the commit, the host, the
+  Caddyfile's digest, the box's key for secrets. This is the operator's
+  viewing key, and the one an address list is most worth having on. It
+  reads what the box webhooks answer through the same filtered bodies,
+  and nothing root alone reads (the journal, backups, the admin
+  socket).
 
 For **T2**: deploy-arbitrary-code (a push is contained by nothing but
 the claim scope; a pull additionally by the allowlist); deliberate
@@ -1090,7 +1141,10 @@ landed early; an OIDC holder gets a replay of `HEAD` (a `no_change`,
 or the undoing of a console edit), one bundle in `in/` at a time with
 no age-out and one in root's hands, and the handler's validate on a
 signer's file; a signer's software key gets the box, and — with secrets
-in the repository — every value encrypted to it, offline.
+in the repository — every value encrypted to it, offline. For **T7** and
+**T8**: disclosure of what the grant reads, bounded by the response
+filter as every body is ("Webhook endpoint"), and the CPU of reads up
+to the rate per person (2 a second, 60 at once).
 
 ## The shared-UID rule
 

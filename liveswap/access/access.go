@@ -1,22 +1,27 @@
 // Package access decides who may take which action on the two
-// webhooks: liveswap_webhook's app routes and box_webhook's `/`. Each
-// handler finds the request's row in its route table, authenticates
-// where it always has, and asks Decide whether the principal the token
-// stands for may take the row's action. Anything the table below does
-// not list is refused.
+// webhooks: liveswap_webhook's app routes and its routes under
+// /_motel/, and box_webhook's `/`. Each handler finds the request's
+// row in its route table, authenticates where it always has, and asks
+// Decide whether the principal the token stands for may take the row's
+// action. Anything the table below does not list is refused.
 //
-// The principals are the ones a deploy token can be today on a route:
-// a deploy source of one app, and the box channel's source. A token a
-// global source verified names no app, and is answered 404 before the
-// route table. What each may do is what it could do before Decide
-// existed, so
-// Decide refuses nothing that authentication accepted
-// (liveswap/DESIGN-liveswap.md, "Who may take which action").
+// The principals are a deploy source of one app, the box channel's
+// source, and a person whose token the box verified. A token a global
+// source verified names no app, and is answered 404 before the route
+// table on an app's path. What a deploy source may do is what it could
+// do before Decide existed, so Decide refuses nothing that its
+// authentication accepted (liveswap/DESIGN-liveswap.md, "Who may take
+// which action"). A person may read: an app's status and deploys where
+// a grant covers the app, the box's status with a grant on the box, and
+// who they are and which apps they may view whatever their grants
+// (DESIGN-access.md).
 package access
 
 import (
+	"errors"
 	"fmt"
 	"slices"
+	"strings"
 )
 
 // Action is what a route does, named for the table and the journal.
@@ -33,7 +38,13 @@ const (
 	BoxStatus       Action = "box.status"        // GET /
 	BoxPushResult   Action = "box.push_result"   // GET /?result=<id>
 	BoxPush         Action = "box.push"          // POST /
+	BoxWhoami       Action = "box.whoami"        // GET /_motel/whoami
+	BoxApps         Action = "box.apps"          // GET /_motel/apps
 )
+
+// MotelActions are the box actions liveswap_webhook serves under
+// /_motel/, beside the apps' routes; box_webhook serves the others.
+var MotelActions = []Action{BoxWhoami, BoxApps}
 
 // Kind is which sort of principal a verified token stands for.
 type Kind int
@@ -46,6 +57,9 @@ const (
 	// BoxChannel is a source the box block's deploy_trust accepted:
 	// it may present pushes.
 	BoxChannel
+	// Person is a person whose token the box verified (CheckToken):
+	// Principal.Name, who may view Principal.Views.
+	Person
 )
 
 // Principal is who a verified token is, as far as Decide needs to know.
@@ -54,6 +68,11 @@ type Principal struct {
 	// App is the app an AppDeployer deploys: the name in the path its
 	// token was verified for. Empty for every other kind.
 	App string
+	// Name is a Person's name, and Views what their grants let them view
+	// from where the request came from (Registry.Views). Empty and nil
+	// for every other kind.
+	Name  string
+	Views *Views
 }
 
 // cell is one allowed pair of the table.
@@ -72,6 +91,40 @@ var allowed = []cell{
 	{BoxChannel, BoxStatus},
 	{BoxChannel, BoxPushResult},
 	{BoxChannel, BoxPush},
+	// A person's cells are the most a person may take; the grants that
+	// apply from the request's address narrow them (decidePerson).
+	{Person, AppStatus},
+	{Person, AppDeployRecord},
+	{Person, BoxStatus},
+	{Person, BoxWhoami},
+	{Person, BoxApps},
+}
+
+// Forbidden is Decide's refusal of a principal the box verified, for
+// an action it may name to them: the lowest principal that may take it,
+// and on what kind of scope. It names no app and nothing of the
+// request, so one answer serves an app that exists and one that does
+// not. Its words are neutral: a declared key, not a kind of signer.
+type Forbidden struct {
+	// Needs is "viewer" (a grant), "deployer" (a deploy token of the
+	// app, or the box's) or "key" (a token a declared key signed).
+	Needs string
+	// Scope is "app" or "box".
+	Scope string
+}
+
+func (f *Forbidden) Error() string {
+	switch f.Needs + " " + f.Scope {
+	case "viewer app":
+		return "this needs the viewer role on this app"
+	case "viewer box":
+		return "this needs the viewer role on the box"
+	case "deployer app":
+		return "this needs a deploy token of this app"
+	case "deployer box":
+		return "this needs a deploy token of the box"
+	}
+	return "this needs a token signed by a declared key"
 }
 
 // Decide says whether p may take action a on resource: the app's name
@@ -80,7 +133,15 @@ var allowed = []cell{
 // included. An AppDeployer is allowed on its own app only. The error
 // says why, for a test; no principal of today's meets one on a route.
 func Decide(p Principal, a Action, resource string) error {
+	if p.Kind == Person {
+		return decidePerson(p, a, resource)
+	}
 	if !slices.Contains(allowed, cell{p.Kind, a}) {
+		if slices.Contains(MotelActions, a) && (p.Kind == AppDeployer || p.Kind == BoxChannel) {
+			// A deploy token is told what it would take: no deploy
+			// source may ask who anyone is.
+			return &Forbidden{Needs: "key", Scope: "box"}
+		}
 		return fmt.Errorf("principal kind %d may not take %s", p.Kind, a)
 	}
 	switch p.Kind {
@@ -91,6 +152,42 @@ func Decide(p Principal, a Action, resource string) error {
 	case BoxChannel:
 		if resource != "" {
 			return fmt.Errorf("%s is taken on the box, not on %q", a, resource)
+		}
+	}
+	return nil
+}
+
+// decidePerson is Decide for a person: the table's cells, narrowed by
+// the views. An app action on an app no view covers is the 403 naming
+// viewer on an app, the same whether the app exists or not; an act, or
+// a box read only the box's source takes, names the deployer.
+func decidePerson(p Principal, a Action, resource string) error {
+	app := strings.HasPrefix(string(a), "app.")
+	switch {
+	case p.Name == "":
+		return errors.New("a person with no name")
+	case app && resource == "":
+		return fmt.Errorf("%s is taken on an app", a)
+	case !app && resource != "":
+		return fmt.Errorf("%s is taken on the box, not on %q", a, resource)
+	case !slices.Contains(allowed, cell{Person, a}):
+		if !slices.Contains(Actions(), a) {
+			return fmt.Errorf("no principal may take %s", a)
+		}
+		scope := "box"
+		if app {
+			scope = "app"
+		}
+		return &Forbidden{Needs: "deployer", Scope: scope}
+	}
+	switch a {
+	case AppStatus, AppDeployRecord:
+		if !p.Views.Covers(resource) {
+			return &Forbidden{Needs: "viewer", Scope: "app"}
+		}
+	case BoxStatus:
+		if p.Views == nil || !p.Views.Box {
+			return &Forbidden{Needs: "viewer", Scope: "box"}
 		}
 	}
 	return nil
