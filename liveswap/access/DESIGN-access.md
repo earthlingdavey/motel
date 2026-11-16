@@ -184,7 +184,7 @@ names no app (`_` is outside the app grammar).
 | Route | Action | Who |
 |---|---|---|
 | `GET /_motel/whoami` | `box.whoami` | any declared person, granted or not |
-| `GET /_motel/apps` | `box.apps` | any declared person: the apps they may view |
+| `GET /_motel/apps` | `box.apps`, and `app.status` for each row's summary | any declared person: the apps they may view |
 | any other path, method or query under `/_motel/` | none | 404 once authenticated, the flat 401 before |
 
 A deploy token under `/_motel/` is judged against the global sources,
@@ -242,6 +242,19 @@ and that no 200 holds the name, canary or socket directory of an app
 the caller may not view; a row whose shape it does not know fails it.
 Its half on `box_webhook` does the same for that table.
 
+`GET /_motel/apps` is the one body about several apps, and it is made
+of rows that each keep to one app. The names are those `Views` covers;
+each row's summary is read through the handle `allowApp` makes for
+`app.status`, the action `GET /<app>` is asked about, from that app's
+status, and passes that app's filter alone, before the list puts it
+in place. So no filter is given two apps' values, and a row whose
+filter withholds (its env_file unreadable) becomes the name and the
+filter's sentence while the other rows and the 200 stand. The
+two-apps test gives each app a newest deploy whose version and
+`deployed_by` hold its canary, and asserts for every caller that each
+row holds its own canary only as its filter's marker and nothing of the
+other app.
+
 ## The answers
 
 | Answer | When | Body |
@@ -252,7 +265,7 @@ Its half on `box_webhook` does the same for that table.
 | 429 | a person past their rate | `{"error":"too many requests; retry after <n> s"}`, with `Retry-After` |
 | 503 | a deploy token that verified for an app liveswap's `Start` has not installed within 5 s, or whose request ended first (#473) | `{"error":"motel is starting and has not loaded this app yet; retry after 1 s"}`, with `Retry-After: 1` |
 | 200 | `GET /_motel/whoami` | `wire.WhoAmI`: `name`, `key` (its fingerprint), `roles` (the grants that apply from here, no address list shown), `box`, `version`, `protocol`, `token_expires_at` |
-| 200 | `GET /_motel/apps` | `wire.Apps`: the apps this config runs that the person may view, sorted by name, each an object (`{"name":…}`) so a later release can say more of an app without changing the list's shape |
+| 200 | `GET /_motel/apps` | `wire.Apps`: the apps this config runs that the person may view, sorted by name, each an object, `wire.AppEntry`: `name`, then `summary` (`phase`, `running`, `current_version`, `watchdog`, the watchdog's state, and `newest_deploy`, the status's first `deploys` entry), each value as `GET /<app>` gives it at the same moment; or, for a row the app's filter withheld, `error` in place of `summary`. A row the filter changed has its own `redacted_env`. No socket, pid, unit or command. A client reads an absent key as "not known" |
 
 No answer says "person": a later kind of declared key changes no field.
 
@@ -379,6 +392,10 @@ access's examples:
 | 13 | `Host` equal to the identity | a proxy that rewrites `Host` refuses every person | 2 | 5 | 1 | fix | the journal's line names the host received |
 | 14 | the `/_motel/` prefix | a deploy to `POST /_motel/<app>`, which deployed `<app>`, gets 401 or 404 | 2 | 5 | 1 | accept | no template or doc posts there; loud |
 | 17 | a deploy token after a start (#473) | a valid deploy token refused as a stranger's for some tens of milliseconds after a start, when Caddy starts the http app before liveswap (measured: 10 of 20 restarts) | 2 | 4 | 3 | fix: size 3, risk 1; **Wide** (every deploy and status request runs through it) | until a `Start` installs the app, the token is checked against the config's own sources; a verified one waits for the install, at most 5 s and the request's life, then 503 with `Retry-After`, which `deploy.sh` sends once more; nothing waits before a token verified. Covered: a `local` key's token, and an issuer's whose keys are fetched; the first token under an issuer's key after a start can still be refused once, while the key is fetched, as before (#306's row in DESIGN-liveswap.md), and the script's resend of a 401 covers it. `TestDeployTokenNotRefusedBeforeStart`, `TestDeployTokenBeforeStartPastTheBound` (on a fake clock; `TestInstallWaitIs5s` pins the bound), `TestTrustIsOneRead`, `TestStrangerBeforeStartIsTheFlat401`, `TestInstallWaitEndsWithTheRequest`, `TestReloadBeforeStartAnswersAtOnce`, `TestPersonBeforeStartDoesNotWait`; through a provisioned config, `TestPersonNotRefusedAfterAStart` |
+| 18 | the apps list's summary | one app's env value, or its name or socket, in another app's row | 5 | 5 | 5 | fix | a filter per row, never one over the list (`redact.go`, rule 2); each row through `allowApp` for `app.status`; `TestTwoAppsTwoPeople` over each row with a canary in the summary's fields; `TestAppsRowWithheld` |
+| 19 | the apps list's summary | the list and `GET /<app>` disagree about an app | 3 | 5 | 3 | fix | the summary is cut from the same status (`summaryOf`), never computed; `TestAppsSummaryIsTheStatus` for an app that serves, one never deployed, one whose newest deploy failed and one throttled |
+| 20 | the apps list's summary | a person at the rate on a box of many apps spends the box's CPU. A row reads the app's state in memory and, of the disk, only the newest deploy record (`summaryStatus`), never the release listing or the other records, which `GET /<app>` reads. Measured (go1.27.3, arm64, one core, five records an app, the token's check included): 8.6 KB and 4.8 ms a list for 30 apps, 57 KB and 31 ms for 200, against 0.8 ms for one `GET /<app>`; of a row's time about 15% is the disk, 20% building the app's filter and the rest running it. At 2 a second that is 1% of a core for 30 apps, 6% for 200; a burst of 60 at 200 apps is 1.9 s of a core | 2 | 5 | 3 | fix | the newest record alone (`TestNewestDeploySummaryIsTheListsFirst` holds it to the full list's first); the rate per person; the list is as long as the config's apps. What a cache would add is an accepted residual below |
+| 21 | the apps list, `GET /<app>` | an app whose env_file holds its own name (`DB_NAME=<app>`) is told withheld in the list, and `GET /<app>` answers `"app":"[redacted:DB_NAME]"`, which a client checking the answer names the app refuses | 3 | 5 | 3 | fix | the row's summary alone passes the filter and the name is put beside it after; the filter's rule 5 leaves a value that is the name as written in a JSON body's own `"app"` pair, and replaces it everywhere else, in plain text too; another value's encoding equal to the name is replaced in the pair as well (`holdOwnName`); `TestAppOwnNameInClear`, `TestHoldOwnName` |
 
 ### Accepted residuals
 
@@ -397,6 +414,8 @@ access's examples:
 | The rate table holds more than its 2,048 names while more than that have each asked in the last 30 s: only buckets that have refilled are dropped | 1 | 1 | 3 | 2, 2 | a load declares at most 1,024 people and only a verified token of a declared name adds a bucket, so it takes loads that replace every person in use, twice in 30 s; dropping a bucket in use would refill a throttled person. A bucket can be dropped once 30 s have passed since its name last asked |
 | A person whose only key is ECDSA (for example from an agent that makes only P-256 keys) cannot be declared until a later release admits that type | 2 | 2 | 1 | — | the owner's decision of 2026-11-15: a stranger presenting a listed public key buys one check of its type, 0.04 ms for Ed25519 against 0.5 to 1.3 ms for the larger ECDSA curves, and widening later breaks no one where narrowing would; the line's refusal names the remedy |
 | A token sent by hand over plain HTTP, to a site the operator serves in clear under the box's name, is answered like any other; no webhook checks that a request came over TLS | 3 | 1 | 3 | 2, 2 | the owner's decision: a hand-made plain-HTTP request is not catered for. `motelctl` speaks https only and follows no redirect; `deploy.sh` refuses an `http://` address unless `MOTEL_ALLOW_HTTP=1`, for a test box; the template's deploy host is served over https |
+| On a box with some 200 apps, a person at the rate can spend several percent of a core on `GET /_motel/apps` (6% measured, row 20); a short-lived cache of each app's filtered row would cut it | 1 | 5 | 3 | 3, 2 | the answers are right and nothing else waits on them: a cost, bounded by the rate per person. A cache is a new state to keep in step with deploys and the filter's known values; not built until a box that size exists (the owner's decision of 2026-11-16) |
+| A list row's `newest_deploy` can name the deploy before the newest for one read, when a record is rewritten between the row's stat of the records and its read (a deploy or a rollback under way) | 1 | 2 | 3 | 2, 2 | the row is a moment's reading, as two requests a moment apart are; a record is replaced whole, so what is read is one record, never a mix, and the next read (a client polls) orders it rightly. Ordering by the time read from the open file means opening every record, which `newestDeploySummary` exists not to do (row 20) |
 
 ## Not in this release
 

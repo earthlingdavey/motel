@@ -199,7 +199,8 @@ Properties that matter to the model:
   first layer: a safe string equal to a known value is dropped,
   whoever named it (a request, the config, a name read off disk), so
   a version, an app name or a path spelled as an `env_file` value is
-  redacted like the value. Third, shape rules for
+  redacted like the value, but in one place: the app's own name in the
+  body's `"app":"<name>"` pair (below). Third, shape rules for
   credentials with a recognisable form. Fourth, entropy: a run of 20+
   characters from the base64 or hex alphabet, mixed and with Shannon
   entropy above the class's bar — one that follows the run's length,
@@ -221,7 +222,20 @@ Properties that matter to the model:
   Every other form is replaced wherever it is; a body with fewer
   such pairs at the end than it had — a value that is part of a word
   was replaced inside it — is withheld; and the same word in `error`
-  or `detail` is text, and filtered. A
+  or `detail` is text, and filtered. The third is the app's own name
+  where a JSON body names the app by it, the pair `"app":"<name>"` (the
+  status's, in `GET /<app>` and a deploy's body): an `env_file` value
+  that is the name as written (`DB_NAME=<app>`) is left there and
+  replaced everywhere else, a path and the text of an error included.
+  Only that value: an encoding of another value, or a URL's password,
+  that happens to equal the name is replaced in the pair too; and only
+  in a JSON body, where a quote inside a string is escaped, so the pair
+  is the body's own field and never text an app wrote (the plain-text
+  filter of a notification's summary has no such rule). The name is in
+  the request's path and the config, so the pair tells nothing the
+  caller did not send; a value that holds the name inside it is
+  replaced whole, before the name is looked at. The app list names each
+  app outside the filter, for the same reason. A
   body the first layer would leave unparsable (a value made of JSON's
   own punctuation matching the structure rather than a string) is
   withheld, with the keys still reported; and while an app's

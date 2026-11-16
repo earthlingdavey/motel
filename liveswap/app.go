@@ -355,6 +355,7 @@ func (ma *managedApp) redactorFor(s statusSnapshot, names ...string) *Redactor {
 		safe = append(safe, spec.dirs.root, spec.dirs.app, spec.dirs.releases, spec.dirs.shared, spec.dirs.run)
 	}
 	r := NewRedactor(kvs, safe)
+	r.holdOwnName(ma.name) // rule 5
 	if unread != nil {
 		// The values the running app holds are unknown to the filter,
 		// and the heuristics alone are not the promise: no body until
@@ -620,7 +621,7 @@ func (ma *managedApp) failureDetail(c collaborators, spec *appSpec, err error, a
 		// The body is the app's output as much as the journal is:
 		// deploy_log_lines 0 keeps both on the box.
 		if withBody {
-			d.Probe.Body = deploytrust.CutRunes(known.replaceKnown(pe.body, seen), probeBodyExcerpt)
+			d.Probe.Body = deploytrust.CutRunes(known.replaceKnown(pe.body, seen, false), probeBodyExcerpt)
 		}
 	}
 	if withBody && c.journal != nil {
@@ -654,7 +655,7 @@ func (ma *managedApp) failureDetail(c collaborators, spec *appSpec, err error, a
 		}
 		if d.LogTailError == "" {
 			for i, line := range lines {
-				lines[i] = known.replaceKnown(line, seen)
+				lines[i] = known.replaceKnown(line, seen, false)
 			}
 			d.LogTail, d.LogTailTruncated = capTail(lines, spec.deployLogLines, deployLogMaxBytes)
 		}
@@ -1757,6 +1758,28 @@ func (ma *managedApp) status() statusSnapshot {
 		}
 		deploys = listDeploySummaries(c.spec.dirs)
 	}
+	return ma.statusFrom(c, available, byMtime, deploys)
+}
+
+// summaryStatus is the status as the app list's summary reads it: the
+// same in memory, and of the disk the newest record alone
+// (newestDeploySummary, the first of listDeploySummaries), not the
+// releases or the other records, which the summary does not carry.
+// Read for every app on every list, so it reads one record, not all.
+func (ma *managedApp) summaryStatus() statusSnapshot {
+	c := ma.snapshot()
+	var deploys []deploySummary
+	if c.spec != nil {
+		if d, ok := newestDeploySummary(c.spec.dirs); ok {
+			deploys = []deploySummary{d}
+		}
+	}
+	return ma.statusFrom(c, []string{}, nil, deploys)
+}
+
+// statusFrom is the status from what was read off disk outside ma.mu,
+// and the rest under it.
+func (ma *managedApp) statusFrom(c collaborators, available, byMtime []string, deploys []deploySummary) statusSnapshot {
 	ma.mu.Lock()
 	defer ma.mu.Unlock()
 	s := statusSnapshot{App: ma.name, Phase: ma.phase, LastDeploy: ma.lastDeploy, AvailableVersions: available, OrderedByMtime: byMtime, Deploys: deploys}
