@@ -50,7 +50,7 @@ func hostileStatus() wire.Status {
 			{Version: "v41", Status: "failed", Phase: "soaking", By: hostile[2] + "  v40  succeeded", FinishedAt: json.RawMessage(`"` + "\\u001b[31m" + `"`)},
 		},
 		LastDeploy:        &wire.DeployResult{Version: "v42", Status: "failed", Error: hostile[3], By: hostile[5], Note: strings.Repeat("n", 300), FinishedAt: at},
-		Watchdog:          &wire.Watchdog{State: "ok", LastFailure: hostile[4] + strings.Repeat(" ", 60) + "error        forged"},
+		Watchdog:          &wire.Watchdog{State: "watching", LastFailure: hostile[4] + strings.Repeat(" ", 60) + "error        forged"},
 		AvailableVersions: []string{"v42", "v41", "v40_rc.1"},
 		Metrics: &wire.Metrics{Window: "1h", Memory: &wire.MemorySummary{Now: pf(182 << 20), Max: pf(210 << 20)},
 			CPU: &wire.CPUSummary{Avg: 0.02}, Requests: &wire.RequestSummary{Total: 1234, PerSecond: 0.34, Share5xx: pf(0.001), P95: pf(120)}},

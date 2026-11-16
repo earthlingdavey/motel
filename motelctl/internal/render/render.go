@@ -29,10 +29,13 @@ func (s Style) word(t termtext.Text) string {
 	if !s.Color {
 		return t.String()
 	}
+	// The words a box sends where word is used: a deploy's status, and
+	// the watchdog's states that are well and that are not (the client
+	// package holds each to its vocabulary). A phase is not coloured.
 	switch t.String() {
-	case "succeeded", "running", "ok":
+	case "succeeded", "watching":
 		return "\x1b[32m" + t.String() + "\x1b[0m"
-	case "failed", "crashed", "stopped", "unhealthy":
+	case "failed", "backoff", "throttled":
 		return "\x1b[31m" + t.String() + "\x1b[0m"
 	}
 	return t.String()

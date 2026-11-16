@@ -1,6 +1,6 @@
 == idle, its running version not first: no (running)
 blog  idle v2
-watchdog     [31munhealthy[0m, 2 failed checks in a row, 3 restarts in its window: health check timed out
+watchdog     [31mbackoff[0m, 2 failed checks in a row, 3 restarts in its window: health check timed out
 last deploy  v2 [32msucceeded[0m 2026-11-13 17:39 UTC
 note         v2 was running: relaunched from the release on disk
 versions     v3 v2
