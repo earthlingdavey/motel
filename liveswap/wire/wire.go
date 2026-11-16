@@ -172,7 +172,8 @@ type DeployResult struct {
 // DeployInFlight is a deploy the app is running: set when the box takes
 // it (for a push, before its upload), cleared in the step that sets
 // last_deploy to its outcome, so a status holds the one or the other,
-// or when it ends with none (a push whose upload is refused). A second
+// or when it ends with none (a push whose upload is not staged); either
+// way before the deploy's own response is written. A second
 // deploy refused while it runs changes nothing of it. A rollback and a
 // relaunch of the running version are deploys too; the watchdog's
 // restarts are not.

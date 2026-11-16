@@ -501,7 +501,6 @@ func (h *Handler) deployPush(w http.ResponseWriter, r *http.Request, app appHand
 	// One snapshot for both staging and the pipeline, so a reload during
 	// the upload can't stage under one spec and extract under another.
 	c := ma.snapshot()
-	ma.beginDeploy(version, by, c.clock.Now())
 	spec := c.spec
 	// The upload is the push's first write, so the pipeline's refusal
 	// of an app dir that is not the directory it names comes first
@@ -517,11 +516,18 @@ func (h *Handler) deployPush(w http.ResponseWriter, r *http.Request, app appHand
 			Summary: "deploy of " + version + " failed before it began: the app's directories are not as motel made them"})
 		return h.mapDeployResult(w, ma, err)
 	}
+	// In flight from here, its upload included: each way out before the
+	// pipeline ends it before its response is written, which the status
+	// in a response must not show (the pipeline's own end does the same).
+	ma.beginDeploy(version, by, c.clock.Now())
 	stage := h.stage
 	if stage == nil {
 		stage = stageUpload
 	}
 	archive, digest, err := stage(r.Body, spec.dirs.tmp, spec.maxArtifactSize)
+	if err != nil {
+		ma.endInFlight()
+	}
 	var stgErr *stagingError
 	switch {
 	case errors.Is(err, errArtifactTooLarge):

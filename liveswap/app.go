@@ -225,6 +225,10 @@ type managedApp struct {
 	// (endDeploy): what tells a restart waiting out its backoff that a
 	// deploy over its instance ended, from any other wake-up.
 	deploysEnded atomic.Uint64
+	// unlocked, when set, runs in unlockDeploy just after deployMu is
+	// let go: a test's place to be the next holder at once, before the
+	// last one returns. Set before any deploy runs; nil in production.
+	unlocked func()
 
 	// mu guards current, phase, phases, inFlight and lastDeploy.
 	mu         sync.Mutex
@@ -737,6 +741,9 @@ func (ma *managedApp) reportDeploy(c collaborators, req deployRequest, result de
 // reads as a re-read, so one more is harmless.
 func (ma *managedApp) unlockDeploy() {
 	ma.deployMu.Unlock()
+	if ma.unlocked != nil {
+		ma.unlocked()
+	}
 	ma.pokeWatchdog()
 }
 
@@ -745,13 +752,20 @@ func (ma *managedApp) unlockDeploy() {
 // failed deploy left dead goes now rather than at the end of its step.
 // A promoted deploy has already woken the watchdog with its instance.
 func (ma *managedApp) endDeploy() {
-	// A push that ended before its pipeline (an upload refused or not
-	// staged) has no outcome to clear deploying with.
+	// Before deployMu goes: once it does, the next deploy's may be the
+	// one shown. Each way a deploy ends has cleared it already, before
+	// its response; this is the backstop for a way out that did not.
+	ma.endInFlight()
+	ma.deploysEnded.Add(1)
+	ma.unlockDeploy()
+}
+
+// endInFlight is a deploy that ends with no outcome to record (a push
+// whose upload was not staged): no longer shown in flight.
+func (ma *managedApp) endInFlight() {
 	ma.mu.Lock()
 	ma.inFlight = nil
 	ma.mu.Unlock()
-	ma.deploysEnded.Add(1)
-	ma.unlockDeploy()
 }
 
 // beginDeploy shows the deploy that holds deployMu as in flight, from
@@ -759,7 +773,7 @@ func (ma *managedApp) endDeploy() {
 // second deploy is refused for as for any. Its pipeline calls it again
 // and finds it begun: a deploy shown while deployMu is held is the
 // holder's, because each holder that shows one clears it before it lets
-// go (the record's defer, endDeploy).
+// go (the record's defer, endInFlight, endDeploy).
 func (ma *managedApp) beginDeploy(version, by string, at time.Time) {
 	ma.mu.Lock()
 	defer ma.mu.Unlock()
