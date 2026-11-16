@@ -27,12 +27,18 @@ import (
 	"github.com/smallhoursorg/motel/motelctl/internal/tui/model"
 )
 
+// shown is text made inert for tview: only this file makes one (by
+// inert), and the setters below take nothing else, so a string from a
+// box cannot reach a widget unescaped without a conversion here
+// (TestOneDoor fails on a conversion to shown anywhere else).
+type shown string
+
 // inert is t made safe for any tview text that reads tags.
-func inert(t termtext.Text) string { return strings.ReplaceAll(t.String(), "[", "[\u200b") }
+func inert(t termtext.Text) shown { return shown(strings.ReplaceAll(t.String(), "[", "[\u200b")) }
 
 // lit is the TUI's own words, through the same door: a [ in them (the
 // help's "[<version>]") must not start a tag either.
-func lit(s string) string { return inert(termtext.From(s)) }
+func lit(s string) shown { return inert(termtext.From(s)) }
 
 // tags are the classes' dress. Colour only repeats a mark or a word.
 func tags(c model.Class, colour bool) (string, string) {
@@ -59,69 +65,69 @@ func tags(c model.Class, colour bool) (string, string) {
 }
 
 // line is a model line as tview text.
-func line(l model.Line, colour bool) string {
+func line(l model.Line, colour bool) shown {
 	var b strings.Builder
 	for _, s := range l {
 		open, close := tags(s.C, colour)
 		b.WriteString(open)
-		b.WriteString(inert(s.T))
+		b.WriteString(string(inert(s.T)))
 		b.WriteString(close)
 	}
-	return b.String()
+	return shown(b.String())
 }
 
 // lines is model lines as one tview text.
-func lines(ls []model.Line, colour bool) string {
+func lines(ls []model.Line, colour bool) shown {
 	var b strings.Builder
 	for i, l := range ls {
 		if i > 0 {
 			b.WriteByte('\n')
 		}
-		b.WriteString(line(l, colour))
+		b.WriteString(string(line(l, colour)))
 	}
-	return b.String()
+	return shown(b.String())
 }
 
 // texts is box lines as one tview text: a log tail, a JSON body.
-func texts(ts []termtext.Text) string {
+func texts(ts []termtext.Text) shown {
 	var b strings.Builder
 	for i, t := range ts {
 		if i > 0 {
 			b.WriteByte('\n')
 		}
-		b.WriteString(inert(t))
+		b.WriteString(string(inert(t)))
 	}
-	return b.String()
+	return shown(b.String())
 }
 
 // setText sets a text view's text when it changed, so a redraw keeps
 // its scroll and costs nothing.
-func setText(tv *tview.TextView, s string) {
-	if tv.GetText(false) != s {
-		tv.SetText(s)
+func setText(tv *tview.TextView, s shown) {
+	if tv.GetText(false) != string(s) {
+		tv.SetText(string(s))
 	}
 }
 
 // cell is a table cell of text.
-func cell(t termtext.Text) *tview.TableCell { return tview.NewTableCell(inert(t)) }
+func cell(t termtext.Text) *tview.TableCell { return tview.NewTableCell(string(inert(t))) }
 
 // head is a table heading of the TUI's own.
 func head(s string) *tview.TableCell {
-	return tview.NewTableCell(lit(s)).SetSelectable(false).SetAttributes(tcell.AttrBold)
+	return tview.NewTableCell(string(lit(s))).SetSelectable(false).SetAttributes(tcell.AttrBold)
 }
 
 // width is how many cells t takes on screen.
-func width(t termtext.Text) int { return tview.TaggedStringWidth(inert(t)) }
+func width(t termtext.Text) int { return tview.TaggedStringWidth(string(inert(t))) }
 
 // setInput puts the person's own text back into an input field.
-func setInput(f *tview.InputField, s string) { f.SetText(lit(s)) }
+func setInput(f *tview.InputField, s string) { f.SetText(string(lit(s))) }
 
 // setLabel labels an input field.
-func setLabel(f *tview.InputField, s string) { f.SetLabel(lit(s)) }
+func setLabel(f *tview.InputField, s string) { f.SetLabel(string(lit(s))) }
 
 // printAt writes the TUI's own words on the screen directly.
 func printAt(scr tcell.Screen, x, y, w int, s string) {
-	tview.Print(scr, lit(s), x, y, w, tview.AlignLeft, tcell.ColorDefault)
+	tview.Print(scr, string(lit(s)), x, y, w, tview.AlignLeft, tcell.ColorDefault)
 }
 
 // typed is what the person typed into an input field: the inverse of

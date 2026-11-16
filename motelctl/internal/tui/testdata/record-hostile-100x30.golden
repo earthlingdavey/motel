@@ -1,6 +1,7 @@
 motel · deploy.example.com · v0.7.0 │ alice@example.com · viewer of the box            live · 0s ago
 apps › hostile › deploy v7
-✖ FAILED in starting after 20 s · 13:02:20 → 13:02:40 UTC · ci:\x1b]8;;https://evil.example/login\x…
+✖ FAILED in starting after 20 s · 13:02:20 → 13:02:40 UTC
+by          ci:\x1b]8;;https://evil.example/login\x1b\motel login\x1b]8;;\x1b\ [:::https://evil.exa…
 serves now  v6 (as of 14:12:40 UTC)
 error       start failed: \x1b[2J\x1b[H\x1b]0;motel: all healthy\x07probe 500 [red]FAKE[-] ["region…
 note        note [:::https://evil.example/tag]motel login[:::-] \x1b[5A\x1b[2K\x1b[10C
@@ -26,5 +27,4 @@ title \x1b]0;motel: all healthy\x07 end
 urltag [:::https://evil.example/tag]motel login[:::-] end
 multi
 line
-field
 ↑↓ scroll  w wrap  p previous  n next  esc back  q quit

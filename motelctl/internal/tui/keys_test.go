@@ -102,3 +102,30 @@ func TestTooSmall(t *testing.T) {
 		t.Fatalf("too small a screen shows:\n%s", s)
 	}
 }
+
+// TestRecoverWithR: a refused key stops every read and says so; once
+// the box takes the key again, r asks once and the reads carry on.
+func TestRecoverWithR(t *testing.T) {
+	h := start(t, 100, 30, nil)
+	refused := &model.Failure{Kind: model.FailSignedOut, Message: "deploy.example.com did not accept your key"}
+	h.fake.Set("whoami", refused)
+	h.fake.Set("blog", refused)
+	h.press(tcell.KeyCtrlR)
+	s := h.screen()
+	if !strings.Contains(s, "SIGNED OUT") || !strings.Contains(s, "stopped: deploy.example.com did not accept your key") {
+		t.Fatalf("a 401 is not said:\n%s", s)
+	}
+	h.press("r") // still refused: stopped again after one whoami
+	if h.s.Engine.Stopped() == model.Running {
+		t.Fatal("r with the key still refused left the reads running")
+	}
+	h.fake.Set("whoami", nil)
+	h.fake.Set("blog", nil)
+	h.press("r")
+	if h.s.Engine.Stopped() != model.Running {
+		t.Fatal("r did not resume the reads")
+	}
+	if s := h.screen(); strings.Contains(s, "SIGNED OUT") || strings.Contains(s, "stopped: deploy.example.com") {
+		t.Fatalf("the stop is still said:\n%s", s)
+	}
+}

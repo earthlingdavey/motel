@@ -7,20 +7,32 @@ import (
 	"testing"
 	"time"
 
-	"github.com/smallhoursorg/motel/motelctl/internal/client"
-	"github.com/smallhoursorg/motel/motelctl/internal/sshkey"
 	"github.com/smallhoursorg/motel/motelctl/internal/tui/demo"
 	"github.com/smallhoursorg/motel/motelctl/internal/tui/model"
 )
 
 var t0 = time.Date(2026, 11, 15, 14, 0, 0, 0, time.UTC)
 
+type call struct {
+	j  model.Job
+	at time.Time
+}
+
+func names(n int) []string {
+	out := make([]string, n)
+	for i := range out {
+		out[i] = "app-" + strconv.Itoa(i)
+	}
+	return out
+}
+
 // sim runs the engine on a fake clock for d, each read taking lat and
-// ending with answer(j, at). It returns every read and when it began.
-func sim(e *model.Engine, d, lat time.Duration, answer func(model.Job, time.Time) error) []call {
+// ending with answer(j, at); the apps list answers apps. It returns
+// every read and when it began.
+func sim(e *model.Engine, apps []string, from time.Time, d, lat time.Duration, answer func(model.Job, time.Time) error) []call {
 	var calls []call
-	now := t0
-	for now.Before(t0.Add(d)) {
+	now := from
+	for now.Before(from.Add(d)) {
 		e.Touch(now) // a person at the keys: no idle pause
 		j, ok, wait := e.Take(now)
 		if !ok {
@@ -32,33 +44,20 @@ func sim(e *model.Engine, d, lat time.Duration, answer func(model.Job, time.Time
 		}
 		calls = append(calls, call{j, now})
 		now = now.Add(lat)
-		if j.Kind == model.KApps {
-			e.SetApps(appNames, now)
+		err := answer(j, now)
+		if j.Kind == model.KApps && err == nil {
+			e.SetApps(apps, now)
 		}
-		e.Done(j, now, answer(j, now))
+		e.Done(j, now, err)
 	}
 	return calls
 }
 
-type call struct {
-	j  model.Job
-	at time.Time
-}
-
-var appNames []string
-
-func names(n int) []string {
-	out := make([]string, n)
-	for i := range out {
-		out[i] = "app-" + strconv.Itoa(i)
-	}
-	return out
-}
-
 func ok(model.Job, time.Time) error { return nil }
 
-// boxBucket fails when calls ever exceed the box's limit for a person:
-// 2 requests a second with a burst of 60.
+// boxBucket fails when calls ever go past the box's limit for a
+// person, written here as the box's own numbers: 2 a second, 60 at
+// once, the bucket full at the start.
 func boxBucket(t *testing.T, calls []call) {
 	t.Helper()
 	tokens, last := 60.0, t0
@@ -67,193 +66,281 @@ func boxBucket(t *testing.T, calls []call) {
 		last = c.at
 		tokens--
 		if tokens < 0 {
-			t.Fatalf("read %v at +%s goes past the box's rate", c.j, c.at.Sub(t0))
+			t.Fatalf("read %v at +%s goes past the box's limit", c.j, c.at.Sub(t0))
 		}
 	}
 }
 
-func TestRateNeverExceeded(t *testing.T) {
-	for _, n := range []int{1, 12, 60} {
-		t.Run(strconv.Itoa(n)+" apps", func(t *testing.T) {
-			appNames = names(n)
+// TestSchedule: for 1, 12, 60 and 200 apps the box's limit is never
+// passed, the open app is read every 5 s, and every other app at its
+// interval, which grows with their number; no row goes stale while the
+// box answers.
+func TestSchedule(t *testing.T) {
+	for _, c := range []struct {
+		n     int
+		every time.Duration // the others' interval with an app open
+	}{{1, 30 * time.Second}, {12, 30 * time.Second}, {60, 55 * time.Second}, {200, 183 * time.Second}} {
+		t.Run(strconv.Itoa(c.n)+" apps", func(t *testing.T) {
+			apps := names(c.n)
 			e := model.NewEngine(t0)
 			e.Focus("app-0", t0)
-			calls := sim(e, 10*time.Minute, 50*time.Millisecond, ok)
+			calls := sim(e, apps, t0, 20*time.Minute, 50*time.Millisecond, ok)
 			boxBucket(t, calls)
-			// Own bucket too: never more than 30 at once, 1.5 a second.
-			if got, most := len(calls), 30+int(1.5*600)+1; got > most {
-				t.Errorf("%d reads in 10 minutes, more than %d", got, most)
+			if got := e.Interval("app-1"); c.n > 1 && (got < c.every-time.Second || got > c.every+time.Second) {
+				t.Errorf("the others' interval is %s, want about %s", got, c.every)
 			}
-			// Every app was read, and none starved.
-			last := map[string]time.Time{}
-			for _, c := range calls {
-				if c.j.Kind == model.KStatus {
-					last[c.j.App] = c.at
+			byApp := map[string][]time.Time{}
+			for _, cl := range calls {
+				if cl.j.Kind == model.KStatus {
+					byApp[cl.j.App] = append(byApp[cl.j.App], cl.at)
 				}
 			}
-			for _, a := range appNames {
-				if t0.Add(10*time.Minute).Sub(last[a]) > 2*time.Minute {
-					t.Errorf("%s last read at %v", a, last[a])
+			// After the first pass, every gap is within its interval and
+			// a little: none starves.
+			settle := t0.Add(2 * e.Interval("app-1"))
+			for _, a := range apps {
+				every := e.Interval(a)
+				ts := byApp[a]
+				if len(ts) < 2 {
+					t.Fatalf("%s read %d times in 20 minutes", a, len(ts))
+				}
+				for i := 1; i < len(ts); i++ {
+					if ts[i-1].Before(settle) {
+						continue
+					}
+					if g := ts[i].Sub(ts[i-1]); g > every+every/5 || g < every-every/5 {
+						t.Fatalf("%s read %s apart, its interval %s", a, g, every)
+					}
 				}
 			}
+			reads := float64(len(calls)) / (20 * 60)
+			t.Logf("%d apps: %.2f reads a second; the open app every %s, the others every %s", c.n, reads, e.Interval("app-0"), e.Interval("app-1"))
 		})
 	}
 }
 
-func TestCadence(t *testing.T) {
-	appNames = names(12)
+// TestBurstWithinTheBoxs: the first paint of many apps spends at most
+// the engine's own bucket, half the box's burst.
+func TestBurstWithinTheBoxs(t *testing.T) {
+	if model.Burst > model.BoxBurst/2 || model.Rate > model.BoxRate*0.8 {
+		t.Fatalf("burst %d and rate %v are not well inside the box's %d and %v", model.Burst, model.Rate, model.BoxBurst, model.BoxRate)
+	}
 	e := model.NewEngine(t0)
-	e.Focus("app-3", t0)
-	calls := sim(e, 5*time.Minute, 20*time.Millisecond, ok)
-	byApp := map[string][]time.Time{}
+	calls := sim(e, names(200), t0, 2*time.Second, time.Millisecond, ok)
+	first := 0
 	for _, c := range calls {
-		if c.j.Kind == model.KStatus {
-			byApp[c.j.App] = append(byApp[c.j.App], c.at)
+		if c.at.Before(t0.Add(time.Second)) {
+			first++
 		}
 	}
-	gaps := func(ts []time.Time) (lo, hi time.Duration) {
-		lo = time.Hour
-		for i := 2; i < len(ts); i++ { // the first gap is the start's
-			g := ts[i].Sub(ts[i-1])
-			lo, hi = min(lo, g), max(hi, g)
-		}
-		return lo, hi
-	}
-	if lo, hi := gaps(byApp["app-3"]); lo < 5*time.Second || hi > 6*time.Second {
-		t.Errorf("the focused app is read every %s to %s, want 5 s", lo, hi)
-	}
-	if lo, hi := gaps(byApp["app-7"]); lo < 29*time.Second || hi > 31*time.Second {
-		t.Errorf("another app is read every %s to %s, want 30 s", lo, hi)
-	}
-	// Spread: after the first pass, no second holds more than two
-	// background reads.
-	per := map[int64]int{}
-	for _, c := range calls {
-		if c.j.Kind == model.KStatus && c.at.Sub(t0) > 40*time.Second {
-			per[c.at.Unix()]++
-		}
-	}
-	for s, n := range per {
-		if n > 3 {
-			t.Errorf("%d reads in the second at +%ds: not spread", n, s-t0.Unix())
-		}
+	if first > model.Burst+2 {
+		t.Errorf("%d reads in the first second, more than the bucket of %d", first, model.Burst)
 	}
 }
 
-func TestSlowedBy429(t *testing.T) {
-	appNames = names(3)
+// TestBucketSpent: with the bucket empty, nothing more is taken until
+// it refills.
+func TestBucketSpent(t *testing.T) {
 	e := model.NewEngine(t0)
-	slow := &client.Failure{Exit: client.ExitUnknown, Status: 429, RetryAfter: 12 * time.Second}
-	sent := false
-	calls := sim(e, time.Minute, 10*time.Millisecond, func(j model.Job, at time.Time) error {
-		if j.Kind == model.KStatus && !sent {
-			sent = true
-			return slow
-		}
-		return nil
-	})
-	var at429 time.Time
-	for i, c := range calls {
-		if c.j.Kind == model.KStatus {
-			at429 = c.at.Add(10 * time.Millisecond)
-			if next := calls[i+1].at; next.Sub(at429) < 12*time.Second {
-				t.Fatalf("read again %s after a 429 asking for 12 s", next.Sub(at429))
+	e.SetApps(names(100), t0)
+	n := 0
+	for {
+		j, ok, wait := e.Take(t0)
+		if !ok {
+			if wait <= 0 {
+				t.Fatal("an empty bucket gives no wait")
 			}
 			break
 		}
+		e.Done(j, t0, nil)
+		n++
 	}
-	if h := e.Health(at429.Add(time.Second)); h.SlowIn <= 0 {
-		t.Errorf("the title bar is not told of the 429: %+v", h)
+	if n != model.Burst {
+		t.Fatalf("took %d at once, want the bucket's %d", n, model.Burst)
 	}
 }
 
-func TestStopOn401(t *testing.T) {
-	appNames = names(3)
+// TestOneInFlight: no second read is taken while one is in flight.
+func TestOneInFlight(t *testing.T) {
 	e := model.NewEngine(t0)
-	refused := &client.Failure{Exit: client.ExitRefused, Status: 401}
+	e.SetApps(names(3), t0)
+	if _, ok, _ := e.Take(t0); !ok {
+		t.Fatal("nothing taken")
+	}
+	if j, ok, _ := e.Take(t0); ok {
+		t.Fatalf("took %v with a read in flight", j)
+	}
+}
+
+// TestIdlePause: ten minutes with no key pressed and nothing is read;
+// a key resumes.
+func TestIdlePause(t *testing.T) {
+	e := model.NewEngine(t0)
+	e.SetApps(names(3), t0)
+	later := t0.Add(model.Idle)
+	if _, ok, _ := e.Take(later); ok {
+		t.Fatal("read after ten idle minutes")
+	}
+	if h := e.Health(later); !h.Paused {
+		t.Fatal("not said to be paused")
+	}
+	e.Touch(later)
+	if _, ok, _ := e.Take(later); !ok {
+		t.Fatal("a key did not resume the reads")
+	}
+}
+
+func fail(k model.Fail) *model.Failure { return &model.Failure{Kind: k, Message: "no"} }
+
+// TestSlowedBy429: a 429 is waited out for every read, by its
+// Retry-After, or by NoRetryAfter with none; and the rest of the
+// session runs slower.
+func TestSlowedBy429(t *testing.T) {
+	for _, c := range []struct {
+		after, want time.Duration
+	}{{12 * time.Second, 12 * time.Second}, {0, model.NoRetryAfter}} {
+		e := model.NewEngine(t0)
+		sent := false
+		calls := sim(e, names(3), t0, 2*time.Minute, 10*time.Millisecond, func(j model.Job, _ time.Time) error {
+			if j.Kind == model.KStatus && !sent {
+				sent = true
+				return &model.Failure{Kind: model.FailSlowed, RetryAfter: c.after}
+			}
+			return nil
+		})
+		for i, cl := range calls {
+			if cl.j.Kind == model.KStatus {
+				at := cl.at.Add(10 * time.Millisecond)
+				if next := calls[i+1].at; next.Sub(at) < c.want {
+					t.Fatalf("Retry-After %s: read again %s after the 429, want %s", c.after, next.Sub(at), c.want)
+				}
+				break
+			}
+		}
+		if e.RateNow() >= model.Rate {
+			t.Errorf("the rate is %v after a 429, not cut", e.RateNow())
+		}
+	}
+}
+
+// TestStopAndRetry: a 401 stops every read after one; r makes one
+// whoami, and a second refusal stops again.
+func TestStopAndRetry(t *testing.T) {
+	for _, k := range []model.Fail{model.FailSignedOut, model.FailNotSigned, model.FailCertificate} {
+		e := model.NewEngine(t0)
+		n := 0
+		sim(e, names(3), t0, time.Minute, 10*time.Millisecond, func(j model.Job, _ time.Time) error {
+			if j.Kind == model.KStatus {
+				n++
+				return fail(k)
+			}
+			return nil
+		})
+		if n != 1 || e.Stopped() == model.Running {
+			t.Fatalf("kind %d: %d reads refused, stopped %v", k, n, e.Stopped())
+		}
+		now := t0.Add(2 * time.Minute)
+		e.Touch(now)
+		e.Retry(now)
+		j, ok, _ := e.Take(now)
+		if !ok || j.Kind != model.KWhoAmI {
+			t.Fatalf("after r, took %v %v, want whoami", j, ok)
+		}
+		e.Done(j, now, fail(k))
+		if _, ok, _ := e.Take(now.Add(time.Hour)); ok {
+			t.Fatal("a second refusal did not stop the reads")
+		}
+	}
+}
+
+// TestHeldUntilAsked: a 403 is not asked again until ctrl-r.
+func TestHeldUntilAsked(t *testing.T) {
+	e := model.NewEngine(t0)
 	n := 0
-	calls := sim(e, time.Minute, 10*time.Millisecond, func(j model.Job, _ time.Time) error {
-		if j.Kind == model.KStatus {
+	answer := func(j model.Job, _ time.Time) error {
+		if j.App == "app-1" {
 			n++
-			return refused
+			return fail(model.FailForbidden)
 		}
 		return nil
-	})
+	}
+	end := t0.Add(5 * time.Minute)
+	sim(e, names(3), t0, 5*time.Minute, 10*time.Millisecond, answer)
 	if n != 1 {
-		t.Fatalf("%d reads refused with 401, want 1 and a stop; calls %d", n, len(calls))
+		t.Fatalf("a 403 asked %d times", n)
 	}
-	if h := e.Health(t0.Add(time.Minute)); h.Stop != model.SignedOut {
-		t.Fatalf("health %+v, want SignedOut", h)
-	}
-	// r: one whoami, and nothing else until it answers.
-	now := t0.Add(2 * time.Minute)
-	e.Touch(now)
-	e.Retry(now)
-	j, ok, _ := e.Take(now)
-	if !ok || j.Kind != model.KWhoAmI {
-		t.Fatalf("after r, took %v %v, want whoami", j, ok)
-	}
-	e.Done(j, now, refused)
-	if _, ok, _ := e.Take(now.Add(time.Hour)); ok {
-		t.Fatal("a second refusal did not stop the reads")
+	e.Again(end)
+	sim(e, names(3), end, time.Second, 10*time.Millisecond, answer)
+	if n != 2 {
+		t.Fatalf("ctrl-r did not ask the 403 again (%d)", n)
 	}
 }
 
-func TestBackoffAndStale(t *testing.T) {
+// TestDropCancels: leaving a record whose read is in flight cancels
+// it; asking for it again then is not lost to that cancelled read.
+func TestDropCancels(t *testing.T) {
+	e := model.NewEngine(t0)
+	for _, j := range []model.Job{{Kind: model.KWhoAmI}, {Kind: model.KApps}} {
+		got, _, _ := e.Take(t0)
+		if got != j {
+			t.Fatalf("took %v, want %v", got, j)
+		}
+		e.Done(got, t0, nil)
+	}
+	rec := model.Job{Kind: model.KDeploy, App: "blog", Version: "v1"}
+	e.Once(rec, t0)
+	j, ok, _ := e.Take(t0)
+	if !ok || j != rec {
+		t.Fatalf("took %v", j)
+	}
+	cancelled := false
+	e.Started(func() { cancelled = true })
+	e.Drop(rec)     // esc
+	e.Once(rec, t0) // enter again, the first read still in flight
+	e.Done(j, t0, context.Canceled)
+	if !cancelled {
+		t.Fatal("esc did not cancel the read in flight")
+	}
+	j, ok, _ = e.Take(t0)
+	if !ok || j != rec {
+		t.Fatalf("the record asked for again is not read: took %v %v", j, ok)
+	}
+}
+
+// TestCancelledAnswerNotApplied: a read whose context was cancelled
+// changes nothing on screen.
+func TestCancelledAnswerNotApplied(t *testing.T) {
 	now := t0
-	f := &demo.Fake{Now: func() time.Time { return now }}
+	f := &demo.Fake{Now: func() time.Time { return now }, Delay: time.Second}
 	s := &model.Session{Host: demo.Host, Now: f.Now, Engine: model.NewEngine(t0)}
-	step := func() model.Job {
-		e := s.Engine
-		e.Touch(now)
-		for range 1000 {
-			j, ok, wait := e.Take(now)
-			if ok {
-				apply, err := s.Fetch(context.Background(), f, j)
-				apply()
-				e.Done(j, now, err)
-				return j
-			}
-			now = now.Add(max(wait, 100*time.Millisecond))
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	apply, err := s.Fetch(ctx, f, model.Job{Kind: model.KDeploy, App: "blog", Version: "7c1e55d0a913"})
+	apply()
+	if err == nil {
+		t.Fatal("a cancelled read answered")
+	}
+	if _, _, ok := s.Record("blog", "7c1e55d0a913"); ok {
+		t.Fatal("a cancelled read's answer was applied")
+	}
+}
+
+func step(t *testing.T, s *model.Session, f *demo.Fake, now *time.Time) model.Job {
+	t.Helper()
+	e := s.Engine
+	e.Touch(*now)
+	for range 2000 {
+		j, ok, wait := e.Take(*now)
+		if ok {
+			apply, err := s.Fetch(context.Background(), f, j)
+			apply()
+			e.Done(j, *now, err)
+			return j
 		}
-		t.Fatal("no read in 100 s")
-		return model.Job{}
+		*now = now.Add(max(wait, 100*time.Millisecond))
 	}
-	for range 20 {
-		step()
-	}
-	if r := row(s, now, "blog"); r.Stale {
-		t.Fatalf("blog stale while the box answers")
-	}
-	// Every read gets no answer now: the box is gone.
-	for _, n := range append(s.Names(), "apps", "whoami") {
-		f.Set(n, &client.Failure{Exit: client.ExitUnknown, Message: "no answer"})
-	}
-	var gaps []time.Duration
-	last := now
-	for i := range 4 {
-		step()
-		if i > 0 {
-			gaps = append(gaps, now.Sub(last))
-		}
-		last = now
-	}
-	for i := 1; i < len(gaps); i++ {
-		if gaps[i] <= gaps[i-1] {
-			t.Errorf("no back-off: waits %v", gaps)
-		}
-	}
-	h := s.Engine.Health(now)
-	if h.Misses < model.StaleAfter {
-		t.Fatalf("misses %d", h.Misses)
-	}
-	_, right := s.Title(now)
-	if got := right.Text(); got[:5] != "STALE" {
-		t.Errorf("title says %q, want STALE", got)
-	}
-	if r := row(s, now.Add(5*time.Minute), "blog"); !r.Stale || r.Cells[model.ColAge].String() != "stale" {
-		t.Errorf("blog not stale: %+v", r.Cells)
-	}
+	t.Fatal("no read in 200 s")
+	return model.Job{}
 }
 
 func row(s *model.Session, now time.Time, name string) model.AppRow {
@@ -265,43 +352,132 @@ func row(s *model.Session, now time.Time, name string) model.AppRow {
 	return model.AppRow{}
 }
 
-// countSigner stands in for ssh-keygen; each signature is new.
-type countSigner struct{ n int }
-
-func (c *countSigner) Sign(context.Context, sshkey.Key, string, []byte) ([]byte, error) {
-	c.n++
-	return []byte("-----BEGIN SSH SIGNATURE-----\nU1NIU0lH" + strings.Repeat("A", c.n*4) + "\n-----END SSH SIGNATURE-----\n"), nil
+// TestStaleAfterThree: a row is stale after exactly three missed reads
+// of its own, not two, and it says so in a word at every width; the
+// box not answering at all backs off and the title says STALE.
+func TestStaleAfterThree(t *testing.T) {
+	now := t0
+	f := &demo.Fake{Now: func() time.Time { return now }}
+	s := &model.Session{Host: demo.Host, Now: f.Now, Engine: model.NewEngine(t0)}
+	for range 20 {
+		step(t, s, f, &now)
+	}
+	if r := row(s, now, "blog"); r.Stale {
+		t.Fatalf("blog stale while the box answers")
+	}
+	f.Set("blog", fail(model.FailThis))
+	misses := 0
+	for misses < 3 {
+		if j := step(t, s, f, &now); j.App == "blog" {
+			misses++
+			r := row(s, now, "blog")
+			if want := misses >= 3; r.Stale != want {
+				t.Fatalf("after %d missed reads stale is %v", misses, r.Stale)
+			}
+		}
+	}
+	r := row(s, now, "blog")
+	if !strings.Contains(r.Cells[model.ColState].String(), "stale") || r.Cells[model.ColAge].String() != "stale" {
+		t.Errorf("a stale row says %q, %q", r.Cells[model.ColState], r.Cells[model.ColAge])
+	}
+	// The box gone: every read gets no answer.
+	for _, n := range append(s.Names(), "apps", "whoami") {
+		f.Set(n, fail(model.FailNoAnswer))
+	}
+	var gaps []time.Duration
+	last := now
+	for i := range 4 {
+		step(t, s, f, &now)
+		if i > 0 {
+			gaps = append(gaps, now.Sub(last))
+		}
+		last = now
+	}
+	for i := 1; i < len(gaps); i++ {
+		if gaps[i] <= gaps[i-1] {
+			t.Errorf("no back-off: waits %v", gaps)
+		}
+	}
+	if _, right := s.Title(now); !strings.HasPrefix(right.Text(), "STALE") {
+		t.Errorf("title says %q, want STALE", right.Text())
+	}
 }
 
-// TestTokenLife: the TUI's token lasts the longest a box takes, and is
-// signed again a minute before it ends, and not before: about every
-// nine minutes, one touch of a hardware key.
-func TestTokenLife(t *testing.T) {
-	pk, err := sshkey.ParsePublic("ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIMuTYJV40qpZ7rH7T4/BJP6ERoj5JgqFQwHIEBTe5wrn") // gitleaks:allow — made up for this test
-	if err != nil {
-		t.Fatal(err)
-	}
+// TestListRefused: an apps list the box refuses is said on screen, and
+// the title does not say live.
+func TestListRefused(t *testing.T) {
 	now := t0
-	sig := &countSigner{}
-	p := &client.PersonToken{Key: sshkey.Key{Public: pk}, Signer: sig, Box: client.Box{Host: demo.Host},
-		Now: func() time.Time { return now }, Life: sshkey.MaxLife}
-	ask := func(at time.Duration) int {
-		now = t0.Add(at)
-		if _, err := p.Authorization(context.Background()); err != nil {
-			t.Fatal(err)
+	f := &demo.Fake{Now: func() time.Time { return now }}
+	f.Set("apps", &model.Failure{Kind: model.FailForbidden, Message: "deploy.example.com does not allow your key this"})
+	s := &model.Session{Host: demo.Host, Now: f.Now, Engine: model.NewEngine(t0)}
+	step(t, s, f, &now) // whoami
+	step(t, s, f, &now) // apps, refused
+	if v := s.Apps(now, "", 0); !strings.Contains(v.Empty.Text(), "does not allow your key this") {
+		t.Errorf("the screen says %q", v.Empty.Text())
+	}
+	if _, right := s.Title(now.Add(time.Minute)); strings.HasPrefix(right.Text(), "live") {
+		t.Errorf("the title says %q of a refused list", right.Text())
+	}
+}
+
+// TestTitleWords: SAMPLE DATA on the demo, and TOUCH YOUR KEY while a
+// hardware key signs.
+func TestTitleWords(t *testing.T) {
+	s := &model.Session{Host: demo.Host, Now: func() time.Time { return t0 }, Engine: model.NewEngine(t0), Demo: true}
+	if l, _ := s.Title(t0); !strings.Contains(l.Text(), "SAMPLE DATA") {
+		t.Errorf("the demo's title is %q", l.Text())
+	}
+	s.Key.Hardware, s.Signing = true, true
+	if _, r := s.Title(t0); r.Text() != "TOUCH YOUR KEY to sign" {
+		t.Errorf("a hardware key signing: %q", r.Text())
+	}
+	s.Key.Hardware = false
+	if _, r := s.Title(t0); strings.Contains(r.Text(), "TOUCH") {
+		t.Errorf("a key with no touch: %q", r.Text())
+	}
+}
+
+// TestActionsMakeTheReads: a read whose kind has no action is not made.
+func TestActionsMakeTheReads(t *testing.T) {
+	f := &demo.Fake{Now: func() time.Time { return t0 }}
+	s := &model.Session{Host: demo.Host, Now: f.Now, Engine: model.NewEngine(t0)}
+	if _, err := s.Fetch(context.Background(), f, model.Job{Kind: model.Kind(99)}); err == nil || len(f.Calls) != 0 {
+		t.Fatalf("a read with no action: err %v, %d calls", err, len(f.Calls))
+	}
+}
+
+// TestDroppedAppCancelled: an app the box no longer lists has its read
+// in flight cancelled, and is not read again.
+func TestDroppedAppCancelled(t *testing.T) {
+	e := model.NewEngine(t0)
+	e.SetApps([]string{"blog"}, t0)
+	var j model.Job
+	for {
+		got, ok, _ := e.Take(t0)
+		if !ok {
+			t.Fatal("blog was never taken")
 		}
-		return sig.n
+		if got.Kind == model.KStatus {
+			j = got
+			break
+		}
+		e.Done(got, t0, nil)
 	}
-	if n := ask(0); n != 1 {
-		t.Fatalf("%d signatures to start", n)
+	cancelled := false
+	e.Started(func() { cancelled = true })
+	e.SetApps(nil, t0)
+	e.Done(j, t0, context.Canceled)
+	if !cancelled {
+		t.Fatal("the dropped app's read was not cancelled")
 	}
-	if got := p.Expires().Sub(t0); got != 570*time.Second {
-		t.Errorf("expires %s after signing, want 570 s (600 s from an iat 30 s back)", got)
-	}
-	if n := ask(510 * time.Second); n != 1 {
-		t.Errorf("signed again at 510 s, with a minute still left")
-	}
-	if n := ask(511 * time.Second); n != 2 {
-		t.Errorf("not signed again at 511 s, under a minute before the end")
+	for range 10 {
+		got, ok, _ := e.Take(t0.Add(time.Hour))
+		if !ok {
+			break
+		}
+		if got.App == "blog" {
+			t.Fatal("a dropped app was read again")
+		}
+		e.Done(got, t0.Add(time.Hour), nil)
 	}
 }

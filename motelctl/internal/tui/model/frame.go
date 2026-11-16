@@ -8,12 +8,11 @@ import (
 // Screen is a view the TUI shows.
 type Screen int
 
-// The screens. ScreenFrame is the title bar, which reads whoami.
+// The screens.
 const (
 	ScreenApps Screen = iota
 	ScreenApp
 	ScreenRecord
-	ScreenFrame
 )
 
 // View is the screen open and what it is of.
@@ -22,22 +21,13 @@ type View struct {
 	App, Version string
 }
 
-// Action is a view the TUI offers and the motelctl command that reads
-// the same: every view is first a command (TestActionsAreCommands
-// walks the command tree for each).
-type Action struct {
-	Screen  Screen
-	Read    Kind
-	Command string
-}
-
-// Actions is the TUI's whole surface. It acts on nothing: part 1 only
-// reads.
-var Actions = []Action{
-	{ScreenApps, KApps, "apps"},
-	{ScreenApp, KStatus, "status <app>"},
-	{ScreenRecord, KDeploy, "deploys <app> <version>"},
-	{ScreenFrame, KWhoAmI, "whoami"},
+// StopLine says why every read stopped, in the client's words, for the
+// top of the screen; nil while they run.
+func (s *Session) StopLine() Line {
+	if s.StopErr == nil || s.Engine.Stopped() == Running {
+		return nil
+	}
+	return Line{ownC("stopped: ", Bad), Seg{T: Capped(failureText(s.StopErr), 4*LineMax)}}
 }
 
 // Title is the title bar at now: who and where on the left, and the
@@ -96,11 +86,11 @@ func (s *Session) freshness(now time.Time) Line {
 	case s.Signing && s.Key.Hardware:
 		return Line{ownC("TOUCH YOUR KEY to sign", Warn)}
 	case h.Stop == SignedOut:
-		return Line{ownC("SIGNED OUT: the box refused the key (401)", Bad)}
+		return Line{ownC("SIGNED OUT: the box refused the key (401) · r asks again", Bad)}
 	case h.Stop == NotSigned:
 		return Line{ownC("NOT SIGNED: r signs again", Bad)}
 	case h.Stop == BadCertificate:
-		return Line{ownC("STOPPED: the certificate did not verify", Bad)}
+		return Line{ownC("STOPPED: the certificate did not verify · r tries again", Bad)}
 	case h.Paused:
 		return Line{ownC("PAUSED (idle 10m): any key resumes", Warn)}
 	case h.SlowIn > 0:
@@ -115,6 +105,14 @@ func (s *Session) freshness(now time.Time) Line {
 		return Line{ownC("slow · "+ago, Warn)}
 	case !s.backAt.IsZero() && now.Sub(s.backAt) < 5*time.Second:
 		return Line{ownC("back · "+hms(s.backAt), Good)}
+	case !s.refusedAt.IsZero() && s.last.IsZero():
+		return Line{ownC("REFUSED: no read answered yet · ctrl-r asks again", Bad)}
+	case !s.refusedAt.IsZero() && !s.refusedAt.Before(s.last):
+		// The last read was refused, and the screen says why: the word
+		// does not say live of answers that stopped coming.
+		return Line{ownC("refused · last answer "+ago, Warn)}
+	case s.last.IsZero():
+		return Line{own("asking…")}
 	}
 	return Line{own("live · " + ago)}
 }

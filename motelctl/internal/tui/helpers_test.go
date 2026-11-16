@@ -66,7 +66,10 @@ func startOn(t *testing.T, scr tcell.Screen, setup func(*demo.Fake)) *harness {
 	hs.u.App.SetScreen(hs.scr)
 	done := make(chan struct{})
 	go func() { defer close(done); _ = hs.u.App.Run() }()
-	t.Cleanup(func() { hs.u.App.Stop(); <-done })
+	// Stopped as the product stops it, from inside the event loop:
+	// tview clears its screen unlocked as Run returns, so a Stop from
+	// outside races it.
+	t.Cleanup(func() { hs.u.App.QueueEvent(tcell.NewEventKey(tcell.KeyCtrlC, 0, tcell.ModNone)); <-done })
 	hs.sync()
 	return hs
 }

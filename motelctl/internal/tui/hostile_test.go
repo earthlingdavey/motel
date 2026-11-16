@@ -124,8 +124,7 @@ func drawOnce(t *testing.T, p tview.Primitive, focus tview.Primitive) []byte {
 	done := make(chan struct{})
 	go func() { defer close(done); _ = app.Run() }()
 	app.QueueUpdateDraw(func() {})
-	app.QueueUpdate(func() {})
-	app.Stop()
+	app.QueueUpdate(app.Stop) // from inside the loop, as the TUI stops
 	<-done
 	return tty.bytes()
 }
@@ -167,7 +166,7 @@ func widgets(ts []termtext.Text) map[string]func() (tview.Primitive, tview.Primi
 		"framed title": func() (tview.Primitive, tview.Primitive) {
 			tv := textView()
 			tv.SetBorder(true)
-			tv.SetTitle(" " + inert(ts[0]) + " ")
+			tv.SetTitle(" " + string(inert(ts[0])) + " ")
 			return tv, nil
 		},
 		"input field": func() (tview.Primitive, tview.Primitive) {
@@ -210,7 +209,7 @@ func TestEscapeHolds(t *testing.T) {
 	}
 	// And its inverse: inert text shows the tag as text.
 	tv := tview.NewTextView().SetDynamicColors(true)
-	tv.SetText(inert(termtext.From("[red]x[-]")))
+	tv.SetText(string(inert(termtext.From("[red]x[-]"))))
 	if got := tv.GetText(true); !strings.Contains(got, "red") {
 		t.Errorf("inert text lost its tag's words: %q", got)
 	}

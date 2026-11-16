@@ -1,0 +1,97 @@
+package model
+
+import (
+	"context"
+	"time"
+)
+
+// Action is a read the TUI makes, and the motelctl command that makes
+// the same read. Every read goes through this table: a read with no
+// action is not made, so the TUI reads nothing a command does not
+// (TestActionsAreCommands holds that each names an existing command,
+// and that its read calls that command's Client method).
+type Action struct {
+	Kind    Kind
+	Command string
+	// What says where the TUI shows it.
+	What string
+	read func(ctx context.Context, c Client, j Job) (func(*Session, time.Time), error)
+}
+
+// Actions is the TUI's whole surface. It acts on nothing: it reads.
+var Actions = []Action{
+	{KWhoAmI, "whoami", "the title bar", readWhoAmI},
+	{KApps, "apps", "the apps screen", readApps},
+	{KStatus, "status <app>", "an app's row and screen", readStatus},
+	{KDeploy, "deploys <app> <version>", "a deploy's record", readDeploy},
+}
+
+// ActionFor is the action that reads k.
+func ActionFor(k Kind) (Action, bool) {
+	for _, a := range Actions {
+		if a.Kind == k {
+			return a, true
+		}
+	}
+	return Action{}, false
+}
+
+// Read makes the action's read with c, for a test that watches which
+// Client method it calls.
+func (a Action) Read(ctx context.Context, c Client, j Job) error {
+	_, err := a.read(ctx, c, j)
+	return err
+}
+
+func readWhoAmI(ctx context.Context, c Client, _ Job) (func(*Session, time.Time), error) {
+	g, err := c.WhoAmI(ctx)
+	return func(s *Session, at time.Time) {
+		if err != nil {
+			s.MeErr = err
+			return
+		}
+		g.At = at
+		s.Me, s.MeErr = &g, nil
+	}, err
+}
+
+func readApps(ctx context.Context, c Client, _ Job) (func(*Session, time.Time), error) {
+	g, err := c.Apps(ctx)
+	return func(s *Session, at time.Time) {
+		if err != nil {
+			s.ListErr = err
+			return
+		}
+		g.At = at
+		s.List, s.ListErr = &g, nil
+		s.Engine.SetApps(g.V, at)
+	}, err
+}
+
+func readStatus(ctx context.Context, c Client, j Job) (func(*Session, time.Time), error) {
+	g, err := c.Status(ctx, j.App)
+	return func(s *Session, at time.Time) {
+		a := s.app(j.App)
+		if err != nil {
+			a.err, a.errAt = err, at
+			return
+		}
+		g.At = at
+		a.st, a.err = &g, nil
+	}, err
+}
+
+func readDeploy(ctx context.Context, c Client, j Job) (func(*Session, time.Time), error) {
+	g, err := c.Deploy(ctx, j.App, j.Version)
+	return func(s *Session, at time.Time) {
+		if s.records == nil {
+			s.records = map[Job]*recData{}
+		}
+		if err != nil {
+			s.records[j] = &recData{err: err}
+			return
+		}
+		g.At = at
+		s.records[j] = &recData{d: &g}
+	}, err
+}

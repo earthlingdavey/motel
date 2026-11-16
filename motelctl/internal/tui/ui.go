@@ -1,6 +1,6 @@
 // Package tui is `motelctl tui`: k9s-style screens over the model. It
 // sees the box only through model, which reads it only through the
-// client package's reads, and it hands tview no text but through
+// Client it is given, and it hands tview no text but through
 // boxtext.go. It acts on nothing: every screen reads.
 package tui
 
@@ -34,6 +34,8 @@ type UI struct {
 	wrap        bool
 	w, h        int
 	lastFocused string
+	// ended is closed once the event loop has ended.
+	ended chan struct{}
 
 	root, body                  *tview.Pages
 	title, crumb, foot          *tview.TextView
@@ -61,7 +63,7 @@ func New(s *model.Session, colour bool, start model.View) *UI {
 		GraphicsColor: tcell.ColorDefault, PrimaryTextColor: tcell.ColorDefault, SecondaryTextColor: tcell.ColorDefault,
 		TertiaryTextColor: tcell.ColorDefault, InverseTextColor: tcell.ColorDefault, ContrastSecondaryTextColor: tcell.ColorDefault,
 	}
-	u := &UI{App: tview.NewApplication(), S: s, Colour: colour, stack: []model.View{start}}
+	u := &UI{App: tview.NewApplication(), S: s, Colour: colour, stack: []model.View{start}, ended: make(chan struct{})}
 	u.title, u.crumb, u.foot = textView(), textView(), textView()
 	u.prompt = tview.NewInputField().SetFieldStyle(tcell.StyleDefault).SetLabelStyle(tcell.StyleDefault).
 		SetAutocompleteUseTags(false)
@@ -180,6 +182,9 @@ func (u *UI) key(ev *tcell.EventKey) *tcell.EventKey {
 		u.back()
 	case r == 'q':
 		u.App.Stop()
+	case r == 'r' && u.S.Engine.Stopped() != model.Running:
+		// The only way out of a stop: one whoami, as a new start.
+		u.S.Engine.Retry(u.now())
 	case r == '/' && v.Screen == model.ScreenApps:
 		u.ask()
 	case ev.Key() == tcell.KeyCtrlR:

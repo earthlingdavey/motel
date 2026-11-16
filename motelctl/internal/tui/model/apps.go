@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/smallhoursorg/motel/liveswap/wire"
-	"github.com/smallhoursorg/motel/motelctl/internal/client"
 	"github.com/smallhoursorg/motel/motelctl/internal/termtext"
 )
 
@@ -68,13 +67,17 @@ type AppsView struct {
 // rows.
 func (s *Session) Apps(now time.Time, filter string, sort int) AppsView {
 	var v AppsView
-	if s.List == nil {
+	switch {
+	case s.List == nil && s.ListErr != nil:
+		v.Empty = Line{own("no apps list: "), Seg{T: Capped(failureText(s.ListErr), 2*LineMax)}, own(" ctrl-r asks again.")}
+		return v
+	case s.List == nil:
 		v.Empty = Line{own("asking " + s.Host + " for the apps you may view…")}
 		return v
 	}
 	names := s.List.V
 	if len(names) == 0 {
-		v.Empty = Line{own("You may view no app on " + s.Host + ". "), own(":me shows your roles; ask the operator for a grant line.")}
+		v.Empty = Line{own("You may view no app on " + s.Host + ". "), own("Ask the operator for a grant line.")}
 		return v
 	}
 	marked := false
@@ -149,8 +152,8 @@ func pad(s string, n int) string {
 
 // row derives an app's row from the box's facts, the first rule that
 // holds giving its state.
-func (s *Session) row(name string, now time.Time) AppRow {
-	r := AppRow{Name: name, Mark: MarkNone}
+func (s *Session) row(name string, now time.Time) (r AppRow) {
+	r = AppRow{Name: name, Mark: MarkNone}
 	r.Cells[ColName] = termtext.From(name)
 	for c := ColVersion; c < ColAge; c++ {
 		r.Cells[c] = termtext.From("-")
@@ -164,15 +167,19 @@ func (s *Session) row(name string, now time.Time) AppRow {
 	if a.st != nil {
 		at = a.st.At
 	}
+	// Stale is judged against this row's own interval: three reads
+	// that failed, or three that should have come and did not (an
+	// interval's grace: the first read after an app's first answer
+	// waits for its place in the cycle).
 	misses := s.Engine.Misses(Job{Kind: KStatus, App: name})
-	every := s.Engine.Cycle()
-	if s.Engine.focusIs(name) {
-		every = FocusEvery
-	}
-	r.Stale = misses >= StaleAfter || now.Sub(at) > StaleAfter*every
+	every := s.Engine.Interval(name)
+	r.Stale = misses >= StaleAfter || now.Sub(at) > (StaleAfter+1)*every
 	r.Cells[ColAge] = termtext.From(Ago(now.Sub(at)))
 	if r.Stale {
 		r.Cells[ColAge] = termtext.From("stale")
+		// The word goes in STATE too, which no width drops: a dimmed
+		// row alone would say it by style only.
+		defer func() { r.Cells[ColState] = termtext.From(r.Cells[ColState].String() + " · stale") }()
 	}
 	set := func(m Mark, state string, why ...Seg) {
 		r.Mark, r.Cells[ColState], r.Why = m, termtext.From(state), why
@@ -215,16 +222,16 @@ func (s *Session) row(name string, now time.Time) AppRow {
 	}
 	if len(st.Deploys) > 0 {
 		d := st.Deploys[0]
-		word := "ok"
+		// The box's own word: a status is a token of its grammar.
+		word := d.Status
 		if d.Status == "failed" {
-			word = "failed"
 			r.Failed = d.Version
 		}
 		ago := "?"
 		if t, ok := rawTime(d.FinishedAt); ok {
 			ago = Ago(now.Sub(t))
 		}
-		last := pad(word, 7) + pad(ago, 4)
+		last := pad(word, 10) + pad(ago, 4)
 		if d.Phase != "" {
 			last += " " + d.Phase
 		}
@@ -276,15 +283,9 @@ func memCap(st wire.Status) float64 {
 // failureText is what the client says of err: its own sentence, with
 // what the box sent in it already made safe or quoted.
 func failureText(err error) string {
-	var f *client.Failure
+	var f *Failure
 	if errors.As(err, &f) {
 		return f.Message
 	}
 	return "no answer"
-}
-
-func (e *Engine) focusIs(app string) bool {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	return e.focus == app
 }

@@ -57,7 +57,7 @@ func (s *Session) Overview(app string, now time.Time) OverviewView {
 	case a.st == nil || Forbidden(a.err) || NotFound(a.err):
 		v.Note = []Line{{Seg{T: Capped(failureText(a.err), 4*LineMax)}}}
 		if Forbidden(a.err) {
-			v.Note = append(v.Note, Line{own(":me lists what you hold here; ctrl-r asks again.")})
+			v.Note = append(v.Note, Line{own("ctrl-r asks again.")})
 		}
 		return v
 	}
@@ -262,10 +262,10 @@ func (s *Session) RecordView(app, version string, now time.Time) RecordView {
 	} else {
 		verdict = Line{ownC("✓ SUCCEEDED", Good), own(" in " + took + span)}
 	}
-	if d.By != "" {
-		verdict = append(verdict, own(" · "), boxT(d.By))
-	}
 	v.Head = append(v.Head, verdict)
+	if d.By != "" {
+		v.Head = append(v.Head, field("by", boxT(d.By)))
+	}
 	if a := s.apps[app]; a != nil && a.st != nil {
 		cur := a.st.V.CurrentVersion
 		switch cur {

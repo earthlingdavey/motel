@@ -17,7 +17,6 @@ import (
 	"time"
 
 	"github.com/smallhoursorg/motel/liveswap/wire"
-	"github.com/smallhoursorg/motel/motelctl/internal/client"
 	"github.com/smallhoursorg/motel/motelctl/internal/tui/model"
 )
 
@@ -100,7 +99,7 @@ func (f *Fake) load(ctx context.Context, j model.Job, key, path string, v any) (
 	if !replaced {
 		b, err := fs.ReadFile(fixtures, "fixtures/"+path)
 		if err != nil {
-			return nil, &client.Failure{Exit: client.ExitNotFound, Status: 404, Message: Host + ` answered 404; the box says: "no such record"`}
+			return nil, &model.Failure{Kind: model.FailNotFound, Message: Host + ` answered 404; the box says: "no such record"`}
 		}
 		body = string(b)
 	}
@@ -124,11 +123,16 @@ func (f *Fake) WhoAmI(ctx context.Context) (model.Got[wire.WhoAmI], error) {
 }
 
 // Apps answers apps.json, whose names it takes as the TUI does,
-// through client.AppNames.
+// as client.AppNames does: the fake stands in for the client package,
+// whose import the TUI's packages may not have.
 func (f *Fake) Apps(ctx context.Context) (model.Got[[]string], error) {
 	var list wire.Apps
 	b, err := f.load(ctx, model.Job{Kind: model.KApps}, "apps", "apps.json", &list)
-	return model.Got[[]string]{V: client.AppNames(list), Body: b}, err
+	names := make([]string, len(list.Apps))
+	for i, e := range list.Apps {
+		names[i] = e.Name
+	}
+	return model.Got[[]string]{V: names, Body: b}, err
 }
 
 // Status answers status/<app>.json.
@@ -152,14 +156,6 @@ func (f *Fake) Deploy(ctx context.Context, app, version string) (model.Got[wire.
 			return model.Got[wire.DeployResult]{V: *st.LastDeploy, Body: b}, nil
 		}
 	}
-	g.Body = b
-	return g, err
-}
-
-// BoxStatus answers box.json.
-func (f *Fake) BoxStatus(ctx context.Context) (model.Got[wire.BoxStatus], error) {
-	var g model.Got[wire.BoxStatus]
-	b, err := f.load(ctx, model.Job{Kind: model.KBox}, "box", "box.json", &g.V)
 	g.Body = b
 	return g, err
 }

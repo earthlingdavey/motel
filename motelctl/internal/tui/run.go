@@ -7,7 +7,6 @@ import (
 
 	"github.com/gdamore/tcell/v2"
 
-	"github.com/smallhoursorg/motel/motelctl/internal/sshkey"
 	"github.com/smallhoursorg/motel/motelctl/internal/tui/model"
 )
 
@@ -23,8 +22,10 @@ type Options struct {
 	Tick time.Duration
 	// Started is called once the screen has taken the terminal.
 	Started func()
-	// Signer, when set, tells the title bar while a token is signed.
-	Signer *Signer
+	// Signing, when set, is given the function that tells the title
+	// bar a token is being signed (a hardware key waits for a touch),
+	// and nil when the screen is gone.
+	Signing func(func(bool))
 }
 
 // Prime makes the first reads before the screen opens, whoami and the
@@ -50,13 +51,17 @@ func Prime(ctx context.Context, o Options) model.View {
 }
 
 // Run shows the screens until the person quits or ctx ends.
+//
+// tview's Run sets its screen to nil, unlocked, as it returns, so Stop
+// must never be called from outside its event loop: q stops it from
+// inside, and the end of ctx is sent in as ctrl-c, which tview handles
+// there too.
 func Run(ctx context.Context, o Options, start model.View) error {
 	u := New(o.Session, o.Colour, start)
 	if o.Screen != nil {
 		u.App.SetScreen(o.Screen)
 	}
 	ctx, cancel := context.WithCancel(ctx)
-	defer cancel()
 	var wg sync.WaitGroup
 	wg.Add(1)
 	go func() {
@@ -74,34 +79,53 @@ func Run(ctx context.Context, o Options, start model.View) error {
 				case <-ctx.Done():
 					return
 				case <-t.C:
-					u.App.QueueUpdateDraw(func() {})
+					u.post(func() {})
 				}
 			}
 		}()
 	}
 	go func() {
-		<-ctx.Done()
-		u.App.Stop()
+		select {
+		case <-ctx.Done():
+			u.App.QueueEvent(tcell.NewEventKey(tcell.KeyCtrlC, 0, tcell.ModNone))
+		case <-u.ended:
+		}
 	}()
 	if o.Started != nil {
-		u.App.QueueUpdate(o.Started)
+		go u.post(o.Started)
 	}
-	if o.Signer != nil {
-		o.Signer.Notify(func(on bool) { u.App.QueueUpdateDraw(func() { u.S.Signing = on }) })
-		defer o.Signer.Notify(nil)
+	if o.Signing != nil {
+		o.Signing(func(on bool) { u.post(func() { u.S.Signing = on }) })
+		defer o.Signing(nil)
 	}
 	err := u.App.Run()
+	close(u.ended)
 	cancel()
 	wg.Wait()
 	return err
 }
 
-// Drive runs the engine, applying each answer on the event goroutine.
+// post runs f on the event loop and draws, or does nothing once the
+// loop has ended: tview's own queue would wait for it for ever.
+func (u *UI) post(f func()) {
+	done := make(chan struct{})
+	go func() {
+		u.App.QueueUpdateDraw(f)
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-u.ended:
+	}
+}
+
+// Drive runs the engine, applying each answer on the event goroutine;
+// the answer to a read the person left is dropped.
 func (u *UI) Drive(ctx context.Context, c model.Client, clock model.Clock) {
 	u.S.Engine.Run(ctx, clock, func(jctx context.Context, j model.Job) error {
 		apply, err := u.S.Fetch(jctx, c, j)
 		if jctx.Err() == nil {
-			u.App.QueueUpdateDraw(apply)
+			u.post(apply)
 		}
 		return err
 	})
@@ -115,52 +139,3 @@ func (RealClock) Now() time.Time { return time.Now() }
 
 // After is time.After.
 func (RealClock) After(d time.Duration) <-chan time.Time { return time.After(d) }
-
-// Signer tells the screen while a token is being signed, so the title
-// bar can ask for a hardware key's touch, and says when the token last
-// signed ends.
-type Signer struct {
-	Inner sshkey.Signer
-	Now   func() time.Time
-	mu    sync.Mutex
-	note  func(bool)
-	at    time.Time
-}
-
-// Expires is when the token last signed stops being taken: its times
-// are sshkey's for a token of MaxLife made when signing began, as the
-// client's PersonToken makes them.
-func (s *Signer) Expires() time.Time {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.at.IsZero() {
-		return time.Time{}
-	}
-	_, exp := sshkey.TimesLasting(s.at, sshkey.MaxLife)
-	return exp
-}
-
-// Notify sets what is told; nil tells nothing.
-func (s *Signer) Notify(f func(bool)) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.note = f
-}
-
-// Sign signs with Inner, saying so before and after.
-func (s *Signer) Sign(ctx context.Context, key sshkey.Key, namespace string, message []byte) ([]byte, error) {
-	s.mu.Lock()
-	note, now := s.note, s.Now()
-	s.mu.Unlock()
-	if note != nil {
-		note(true)
-		defer note(false)
-	}
-	out, err := s.Inner.Sign(ctx, key, namespace, message)
-	if err == nil {
-		s.mu.Lock()
-		s.at = now
-		s.mu.Unlock()
-	}
-	return out, err
-}

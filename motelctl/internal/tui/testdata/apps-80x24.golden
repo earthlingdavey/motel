@@ -2,19 +2,19 @@ motel · deploy.example.com · v0.7.0 │ alice@example.com · viewer … live �
 apps                                      12 apps · 5 need a look · by attention
 ✖ billing      throttled: 5 restarts in its window; last cause "probe: timeout"…
 ────────────────────────────────────────────────────────────────────────────────
-  NAME        STATE        VERSION      LAST DEPLOY          MEM  OF CAP 5xx
-✖ billing     throttled    a41c09e2b7d1 ok     2d            498M 97%    4.1%
-✖ mailer      stopped      9f02bb1c4e7a ok     6d            -    -      -
-▲ hostile     running      v6           failed 1h   starting 67M  13%    0.5%
-▲ shop        running      7c1e55d0a913 failed 12m  soaking  201M 39%    0.2%
-⟳ api         soaking      3b8812aa0c4f ok     1h            312M 61%    0%
-  blog        running      7c1e55d0a913 ok     2h            182M 36%    0.1%
-  cron-runner running      0d41aa9e72c3 ok     3d            44M  8.6%   -
-  docs        running      5be2c0f1a8d0 ok     5d            61M  12%    0%
-  images      running      c9e1f3a7704b ok     24h           -    -      -
-  search      running      a0b9c8d7e6f5 ok     4h            310M 61%    0%
-  status-page running      1f2e3d4c5b6a ok     12d           30M  5.9%   0%
-· wiki        not deployed -            -                    -    -      -
+  NAME        STATE        VERSION      LAST DEPLOY             MEM  OF CAP
+✖ billing     throttled    a41c09e2b7d1 succeeded 2d            498M 97%
+✖ mailer      stopped      9f02bb1c4e7a succeeded 6d            -    -
+▲ hostile     running      v6           failed    1h   starting 67M  13%
+▲ shop        running      7c1e55d0a913 failed    12m  soaking  201M 39%
+⟳ api         soaking      3b8812aa0c4f succeeded 1h            312M 61%
+  blog        running      7c1e55d0a913 succeeded 2h            182M 36%
+  cron-runner running      0d41aa9e72c3 succeeded 3d            44M  8.6%
+  docs        running      5be2c0f1a8d0 succeeded 5d            61M  12%
+  images      running      c9e1f3a7704b succeeded 24h           -    -
+  search      running      a0b9c8d7e6f5 succeeded 4h            310M 61%
+  status-page running      1f2e3d4c5b6a succeeded 12d           30M  5.9%
+· wiki        not deployed -            -                       -    -
 
 
 

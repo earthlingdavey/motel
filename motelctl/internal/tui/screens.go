@@ -25,7 +25,11 @@ func (u *UI) render() {
 	v := u.top()
 	crumbL, crumbR := u.crumbs(v)
 	setText(u.crumb, line(spread(crumbL, crumbR, u.w), u.Colour))
-	setText(u.foot, lit(footers[v.Screen]))
+	foot := footers[v.Screen]
+	if u.S.Engine.Stopped() != model.Running {
+		foot = "r ask again  " + foot
+	}
+	setText(u.foot, lit(foot))
 	switch v.Screen {
 	case model.ScreenApps:
 		u.renderApps()
@@ -92,6 +96,7 @@ func (u *UI) renderApps() {
 	default:
 		strip = view.Strip
 	}
+	strip = u.withStop(strip)
 	for i := range strip {
 		strip[i] = strip[i].Cut(u.w)
 	}
@@ -186,6 +191,7 @@ func (u *UI) renderApp(v model.View) {
 	if view.Note != nil {
 		fs = view.Note
 	}
+	fs = u.withStop(fs)
 	for i := range fs {
 		fs[i] = fs[i].Cut(u.w)
 	}
@@ -218,6 +224,7 @@ func (u *UI) renderRecord(v model.View) {
 	if view.Note != nil {
 		hd = view.Note
 	}
+	hd = u.withStop(hd)
 	for i := range hd {
 		hd[i] = hd[i].Cut(u.w)
 	}
@@ -230,4 +237,13 @@ func (u *UI) renderRecord(v model.View) {
 	}
 	setText(u.recTailTitle, line(title, u.Colour))
 	setText(u.tail, texts(view.Tail))
+}
+
+// withStop puts why every read stopped above a screen's lines, so the
+// title bar's word has its reason on screen.
+func (u *UI) withStop(ls []model.Line) []model.Line {
+	if l := u.S.StopLine(); l != nil {
+		return append([]model.Line{l}, ls...)
+	}
+	return ls
 }

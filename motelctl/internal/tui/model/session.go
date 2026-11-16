@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/smallhoursorg/motel/liveswap/wire"
-	"github.com/smallhoursorg/motel/motelctl/internal/client"
 )
 
 // Session is what the TUI knows of the box: the last answer to each
@@ -28,11 +27,10 @@ type Session struct {
 	Engine       *Engine
 	Now          func() time.Time
 
-	Me     *Got[wire.WhoAmI]
-	MeErr  error
-	List   *Got[[]string]
-	BoxSt  *Got[wire.BoxStatus]
-	BoxErr error
+	Me      *Got[wire.WhoAmI]
+	MeErr   error
+	List    *Got[[]string]
+	ListErr error
 	// Signing is set while a token is being signed: a hardware key
 	// waits for its touch.
 	Signing bool
@@ -41,9 +39,10 @@ type Session struct {
 
 	apps    map[string]*appData
 	records map[Job]*recData
-	// last is when the box last answered anything; backAt when it
-	// answered again after a run of no answer.
-	last, backAt time.Time
+	// last is when the box last answered a read; refusedAt when it last
+	// refused one; backAt when it answered again after a run of no
+	// answer.
+	last, refusedAt, backAt time.Time
 }
 
 // Key is the key the session signs with, as this side knows it.
@@ -66,72 +65,17 @@ type recData struct {
 	err error
 }
 
-// Fetch makes the read j with c and returns its error, for the
-// engine, and the change to apply on the UI's goroutine; an answer to
-// a read the person left (its context cancelled) changes nothing.
+// Fetch makes the read j with c, through the action that names its
+// command, and returns its error, for the engine, and the change to
+// apply on the UI's goroutine. An answer to a read the person left (its
+// context cancelled) changes nothing; a read no action names is not
+// made.
 func (s *Session) Fetch(ctx context.Context, c Client, j Job) (func(), error) {
-	var apply func(at time.Time)
-	var err error
-	switch j.Kind {
-	case KWhoAmI:
-		var g Got[wire.WhoAmI]
-		g, err = c.WhoAmI(ctx)
-		apply = func(at time.Time) {
-			if err == nil {
-				g.At = at
-				s.Me, s.MeErr = &g, nil
-			} else {
-				s.MeErr = err
-			}
-		}
-	case KApps:
-		var g Got[[]string]
-		g, err = c.Apps(ctx)
-		apply = func(at time.Time) {
-			if err == nil {
-				g.At = at
-				s.List = &g
-				s.Engine.SetApps(g.V, at)
-			}
-		}
-	case KStatus:
-		var g Got[wire.Status]
-		g, err = c.Status(ctx, j.App)
-		apply = func(at time.Time) {
-			a := s.app(j.App)
-			if err == nil {
-				g.At = at
-				a.st, a.err = &g, nil
-			} else {
-				a.err, a.errAt = err, at
-			}
-		}
-	case KDeploy:
-		var g Got[wire.DeployResult]
-		g, err = c.Deploy(ctx, j.App, j.Version)
-		apply = func(at time.Time) {
-			if s.records == nil {
-				s.records = map[Job]*recData{}
-			}
-			if err == nil {
-				g.At = at
-				s.records[j] = &recData{d: &g}
-			} else {
-				s.records[j] = &recData{err: err}
-			}
-		}
-	case KBox:
-		var g Got[wire.BoxStatus]
-		g, err = c.BoxStatus(ctx)
-		apply = func(at time.Time) {
-			if err == nil {
-				g.At = at
-				s.BoxSt, s.BoxErr = &g, nil
-			} else {
-				s.BoxErr = err
-			}
-		}
+	a, ok := ActionFor(j.Kind)
+	if !ok {
+		return func() {}, &Failure{Kind: FailThis, Message: "no motelctl command reads this, so the TUI does not"}
 	}
+	apply, err := a.read(ctx, c, j)
 	at := s.Now()
 	if errors.Is(err, context.Canceled) {
 		return func() {}, err
@@ -141,11 +85,11 @@ func (s *Session) Fetch(ctx context.Context, c Client, j Job) (func(), error) {
 		case Answered:
 			s.last, s.StopErr = at, nil
 		case Refused:
-			s.last = at
+			s.refusedAt = at
 		case Stopped:
 			s.StopErr = err
 		}
-		apply(at)
+		apply(s, at)
 	}, err
 }
 
@@ -170,17 +114,19 @@ func (s *Session) Record(app, version string) (*Got[wire.DeployResult], error, b
 	return r.d, r.err, true
 }
 
-// Forbidden says whether err is a 403.
-func Forbidden(err error) bool {
-	var f *client.Failure
-	return errors.As(err, &f) && f.Exit == client.ExitForbidden
+func failKind(err error) (Fail, bool) {
+	var f *Failure
+	if errors.As(err, &f) {
+		return f.Kind, true
+	}
+	return 0, false
 }
 
+// Forbidden says whether err is a 403.
+func Forbidden(err error) bool { k, ok := failKind(err); return ok && k == FailForbidden }
+
 // NotFound says whether err is a 404.
-func NotFound(err error) bool {
-	var f *client.Failure
-	return errors.As(err, &f) && f.Exit == client.ExitNotFound
-}
+func NotFound(err error) bool { k, ok := failKind(err); return ok && k == FailNotFound }
 
 // Names is the apps the session knows, as the box listed them.
 func (s *Session) Names() []string {

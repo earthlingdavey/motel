@@ -6,8 +6,6 @@ import (
 	"slices"
 	"sync"
 	"time"
-
-	"github.com/smallhoursorg/motel/motelctl/internal/client"
 )
 
 // Kind is what a job reads.
@@ -19,7 +17,6 @@ const (
 	KApps
 	KStatus
 	KDeploy
-	KBox
 )
 
 // Job is one read.
@@ -28,43 +25,57 @@ type Job struct {
 	App, Version string
 }
 
-// The cadence. A box allows a person 2 requests a second with a burst
-// of 60 (liveswap/access's limiter). The engine keeps well inside it:
-// its own bucket refills at 1.5 a second and holds 30, so the first
-// paint of 30 apps is quick and a person's other motelctl, or the one
-// retry of a 401 the client makes, still has room.
+// The box's limit for a person (liveswap/access's limiter): 2 requests
+// a second, with a burst of 60.
 const (
-	Rate       = 1.5
-	Burst      = 30
+	BoxRate  = 2.0
+	BoxBurst = 60
+)
+
+// The cadence. The engine keeps well inside the box's limit: its own
+// bucket refills at Rate and holds Burst, half the box's, so the first
+// paint of 30 apps is quick and a person's other motelctl, or the
+// client's one retry of a 401, still has room.
+const (
+	Rate  = 1.5
+	Burst = BoxBurst / 2
+	// FocusEvery is the open app's refresh: one read per 5 s.
 	FocusEvery = 5 * time.Second
-	// BackgroundEvery is each other app's refresh, spread over the
-	// cycle so they do not come due together.
+	// BackgroundEvery is the shortest refresh of every other app; with
+	// more apps than the rest of the budget reads in it, the interval
+	// grows with their number (background).
 	BackgroundEvery = 30 * time.Second
 	AppsEvery       = 60 * time.Second
-	BoxEvery        = 30 * time.Second
 	// Idle pauses polling when no key was pressed for this long, so an
 	// unattended TUI neither asks for touches nor spends the rate.
 	Idle = 10 * time.Minute
-	// StaleAfter missed refreshes make a value stale.
+	// StaleAfter missed reads make a value stale.
 	StaleAfter = 3
-	maxBackoff = 60 * time.Second
+	// NoRetryAfter is the wait for a 429 that names none: 30 s refills
+	// the box's whole burst of 60 at 2 a second, so the next read
+	// cannot be refused for a burst this session spent.
+	NoRetryAfter = 30 * time.Second
+	maxBackoff   = 60 * time.Second
+	// share is the part of what is left of the rate after the open app
+	// and the list that the other apps are given: the rest is room for
+	// a record the person opens and for whoami.
+	share = 0.85
 )
 
 // Engine decides what to read next and when. It is the only caller of
 // the Client: one read at a time, never faster than its bucket, a 429
-// waited out for every read, a 401 or an unverified certificate
-// stopping every read until the person asks again. It keeps no box
-// value; the Session does. Its methods may be called from any
-// goroutine.
+// waited out for every read, a 401, an unsigned token or an unverified
+// certificate stopping every read until the person asks again (r). It
+// keeps no box value; the Session does. Its methods may be called from
+// any goroutine.
 type Engine struct {
-	mu      sync.Mutex
-	rate    float64
-	tokens  float64
-	filled  time.Time
-	jobs    map[Job]*entry
-	apps    []string
-	focus   string
-	boxOpen bool
+	mu     sync.Mutex
+	rate   float64
+	tokens float64
+	filled time.Time
+	jobs   map[Job]*entry
+	apps   []string
+	focus  string
 	// misses counts reads in a row that got no answer from the box at
 	// all; retryAt is when the next is tried.
 	misses     int
@@ -73,17 +84,20 @@ type Engine struct {
 	stopped    Stop
 	touched    time.Time
 	inflight   *Job
+	taken      *entry // the entry the read in flight was taken from
 	cancel     context.CancelFunc
 	recovering bool
 	wake       chan struct{}
 }
 
 type entry struct {
-	due    time.Time
-	slot   time.Time // a background status's place in the cycle
+	due time.Time
+	// phase is a background app's place in its cycle, so a pass is
+	// spread over it rather than every app coming due at once.
+	phase  time.Duration
 	misses int
-	// held is a read not asked again until the person does (a 403, a
-	// 404, a one-off record already read).
+	// held is a read not asked again until the person asks (a 403, a
+	// 404, a record already read).
 	held bool
 	once bool
 }
@@ -94,13 +108,8 @@ type Stop int
 // The stops.
 const (
 	Running Stop = iota
-	// SignedOut is a 401 that stood: the box did not accept the key.
 	SignedOut
-	// NotSigned is a token that could not be signed (a touch timed
-	// out, the agent refused).
 	NotSigned
-	// BadCertificate is a certificate that did not verify: motelctl
-	// never continues past one.
 	BadCertificate
 )
 
@@ -113,14 +122,45 @@ func NewEngine(now time.Time) *Engine {
 	return e
 }
 
-// SetApps is the box's list: each app's status comes due now, and its
-// later refreshes are spread over the cycle.
+// background is each other app's interval: BackgroundEvery, or longer
+// when the rate left over after the open app and the list cannot read
+// them all in it.
+func (e *Engine) background() time.Duration {
+	left := e.rate - 1/AppsEvery.Seconds()
+	if e.focus != "" {
+		left -= 1 / FocusEvery.Seconds()
+	}
+	n := len(e.apps)
+	if e.focus != "" && slices.Contains(e.apps, e.focus) {
+		n--
+	}
+	if n <= 0 || left <= 0 {
+		return BackgroundEvery
+	}
+	need := time.Duration(float64(n) / (left * share) * float64(time.Second))
+	return max(BackgroundEvery, need)
+}
+
+// Interval is how often app is read now: the open app every FocusEvery,
+// every other one as background says. A row is stale only against its
+// own interval.
+func (e *Engine) Interval(app string) time.Duration {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if app == e.focus {
+		return FocusEvery
+	}
+	return e.background()
+}
+
+// SetApps is the box's list: a new app's status comes due now, and each
+// is given its place in the cycle.
 func (e *Engine) SetApps(names []string, now time.Time) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	keep := map[Job]bool{}
-	respread := len(names) != len(e.apps)
 	e.apps = slices.Clone(names)
+	keep := map[Job]bool{}
+	every := e.background()
 	for i, n := range names {
 		j := Job{Kind: KStatus, App: n}
 		keep[j] = true
@@ -129,47 +169,50 @@ func (e *Engine) SetApps(names []string, now time.Time) {
 			en = &entry{due: now}
 			e.jobs[j] = en
 		}
-		// Each app has its own place in the cycle, so a pass is spread
-		// over it rather than every app coming due at once.
-		if !ok || respread {
-			en.slot = now.Add(time.Duration(i) * e.cycle() / time.Duration(len(names)))
-		}
+		en.phase = time.Duration(i) * every / time.Duration(len(names))
 	}
 	for j := range e.jobs {
 		if j.Kind == KStatus && !keep[j] && j.App != e.focus {
 			delete(e.jobs, j)
+			e.dropLocked(j)
 		}
 	}
 	e.poke()
 }
 
-// Focus is the app whose screen is open, refreshed every FocusEvery;
-// "" when none is.
+// Focus is the app whose screen is open, read every FocusEvery; ""
+// when none is. The app left goes back to its place in the cycle.
 func (e *Engine) Focus(app string, now time.Time) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
+	if app == e.focus {
+		return
+	}
+	old := e.focus
 	e.focus = app
+	if en, ok := e.jobs[Job{Kind: KStatus, App: old}]; ok && old != "" {
+		en.due = e.nextSlot(en, now)
+	}
 	if app != "" {
 		j := Job{Kind: KStatus, App: app}
-		if _, ok := e.jobs[j]; !ok {
+		if en, ok := e.jobs[j]; !ok {
 			e.jobs[j] = &entry{due: now}
+		} else if en.due.After(now.Add(FocusEvery)) {
+			en.due = now
 		}
 	}
 	e.poke()
 }
 
-// BoxOpen says whether the box screen is open: GET / is read only then.
-func (e *Engine) BoxOpen(open bool, now time.Time) {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	e.boxOpen = open
-	j := Job{Kind: KBox}
-	if open {
-		if _, ok := e.jobs[j]; !ok {
-			e.jobs[j] = &entry{due: now}
-		}
+// nextSlot is a background app's next read after now: its phase, plus
+// whole intervals from the start of time, so every app keeps its place.
+func (e *Engine) nextSlot(en *entry, now time.Time) time.Time {
+	every := e.background()
+	base := now.Truncate(every).Add(en.phase)
+	for !base.After(now) {
+		base = base.Add(every)
 	}
-	e.poke()
+	return base
 }
 
 // Once asks for a read now, once: a deploy's record, which does not
@@ -177,7 +220,7 @@ func (e *Engine) BoxOpen(open bool, now time.Time) {
 func (e *Engine) Once(j Job, now time.Time) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	if en, ok := e.jobs[j]; ok && en.held {
+	if en, ok := e.jobs[j]; ok && (en.held || en.due.Before(now) || en.due.Equal(now)) {
 		return
 	}
 	e.jobs[j] = &entry{due: now, once: true}
@@ -192,6 +235,10 @@ func (e *Engine) Drop(j Job) {
 	if en, ok := e.jobs[j]; ok && en.once && !en.held {
 		delete(e.jobs, j)
 	}
+	e.dropLocked(j)
+}
+
+func (e *Engine) dropLocked(j Job) {
 	if e.inflight != nil && *e.inflight == j && e.cancel != nil {
 		e.cancel()
 	}
@@ -214,8 +261,9 @@ func (e *Engine) Again(now time.Time) {
 	e.poke()
 }
 
-// Retry is r after a stop: one whoami, as a new start. It is the only
-// way out of a stop, so a refused key is asked again once a press.
+// Retry is r after a stop: one whoami, as a new start, then the reads
+// as they were. It is the only way out of a stop, so a refused key is
+// asked again once a press.
 func (e *Engine) Retry(now time.Time) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -268,20 +316,19 @@ func (e *Engine) Take(now time.Time) (Job, bool, time.Duration) {
 		return Job{}, false, gate.Sub(now)
 	}
 	e.tokens--
-	e.inflight = &j
+	e.inflight, e.taken = &j, e.jobs[j]
 	return j, true, 0
 }
 
 // next is the job to run first of those due by at: a one-off the
-// person asked for, then whoami, the focused app, the list, the box,
-// and the most overdue of the rest. With none due, it is the one due
-// soonest.
+// person asked for, then whoami, the open app, the list, and the most
+// overdue of the rest. With none due, it is the one due soonest.
 func (e *Engine) next(at time.Time) (Job, time.Time, bool) {
 	var best Job
 	var bestDue time.Time
 	bestRank, found := 99, false
 	for j, en := range e.jobs {
-		if en.held || (j.Kind == KBox && !e.boxOpen) {
+		if en.held {
 			continue
 		}
 		r := e.rank(j, en)
@@ -305,8 +352,6 @@ func (e *Engine) rank(j Job, en *entry) int {
 		return 2
 	case j.Kind == KApps:
 		return 3
-	case j.Kind == KBox:
-		return 4
 	}
 	return 5
 }
@@ -316,25 +361,6 @@ func (e *Engine) refill(now time.Time) {
 		e.tokens = min(Burst, e.tokens+now.Sub(e.filled).Seconds()*e.rate)
 		e.filled = now
 	}
-}
-
-// cycle is how long one pass over the background apps takes: their
-// interval, or longer when there are more apps than the rate covers.
-func (e *Engine) cycle() time.Duration {
-	c := BackgroundEvery
-	if n := len(e.apps); n > 0 {
-		need := time.Duration(float64(n) / (e.rate * 0.8) * float64(time.Second))
-		c = max(c, need)
-	}
-	return c
-}
-
-// Cycle is the background cycle now: a row older than StaleAfter of
-// them is stale even with no read failed.
-func (e *Engine) Cycle() time.Duration {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	return e.cycle()
 }
 
 // Started gives the in-flight read the cancel function of its context,
@@ -353,21 +379,19 @@ const (
 	Answered Outcome = iota
 	// Cancelled: the person left; nothing is counted.
 	Cancelled
-	// NoAnswer: the box did not answer at all, or something before it
-	// answered for it (a gateway's 5xx): every read backs off.
+	// NoAnswer: the box did not answer at all: every read backs off.
 	NoAnswer
-	// Refused: this read alone failed (a 403, a 404, a body not
-	// motel's); the rest carry on.
+	// Refused: this read alone failed; the rest carry on.
 	Refused
 	// Slowed: a 429.
 	Slowed
-	// Stopped: a 401 that stood, a token not signed, a certificate.
+	// Stopped: every read stops until r.
 	Stopped
 )
 
 // Classify says what err means.
 func Classify(err error) (Outcome, Stop) {
-	var f *client.Failure
+	var f *Failure
 	switch {
 	case err == nil:
 		return Answered, Running
@@ -375,15 +399,17 @@ func Classify(err error) (Outcome, Stop) {
 		return Cancelled, Running
 	case !errors.As(err, &f):
 		return NoAnswer, Running
-	case f.Exit == client.ExitRefused:
+	}
+	switch f.Kind {
+	case FailSignedOut:
 		return Stopped, SignedOut
-	case f.Exit == client.ExitCertificate:
-		return Stopped, BadCertificate
-	case f.Exit == client.ExitUsage:
+	case FailNotSigned:
 		return Stopped, NotSigned
-	case f.Status == 429: // Too Many Requests
+	case FailCertificate:
+		return Stopped, BadCertificate
+	case FailSlowed:
 		return Slowed, Running
-	case f.Exit == client.ExitUnknown && (f.Status == 0 || f.Status >= 500):
+	case FailNoAnswer:
 		return NoAnswer, Running
 	}
 	return Refused, Running
@@ -393,18 +419,22 @@ func Classify(err error) (Outcome, Stop) {
 func (e *Engine) Done(j Job, now time.Time, err error) Outcome {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	e.inflight, e.cancel = nil, nil
+	taken := e.taken
+	e.inflight, e.taken, e.cancel = nil, nil, nil
 	out, stop := Classify(err)
 	en := e.jobs[j]
-	if en == nil {
-		en = &entry{}
+	if en == nil || en != taken {
+		// Dropped while in flight, and perhaps asked for again since:
+		// what is in the table now is not what this read was for.
+		e.poke()
+		return out
 	}
 	switch out {
 	case Answered:
 		en.misses = 0
 		if e.misses > 0 {
-			// Back after no answer: whoami again, since the box may have
-			// been upgraded while it did not answer.
+			// Back after no answer: whoami again, since the box may
+			// have been upgraded while it did not answer.
 			e.misses, e.recovering = 0, true
 			if j.Kind != KWhoAmI {
 				e.jobs[Job{Kind: KWhoAmI}] = &entry{due: now, once: true}
@@ -419,16 +449,16 @@ func (e *Engine) Done(j Job, now time.Time, err error) Outcome {
 		e.misses++
 		e.retryAt = now.Add(min(maxBackoff, time.Second<<min(e.misses, 6)))
 	case Refused:
-		// A 403 or a 404 is not asked again until the person does
-		// (ctrl-r): a grant removed, an app gone. A body that is not
-		// motel's is asked again in its turn.
-		var f *client.Failure
 		en.misses++
-		en.held = en.once || errors.As(err, &f) && (f.Exit == client.ExitForbidden || f.Exit == client.ExitNotFound)
+		en.held = en.once || Forbidden(err) || NotFound(err)
 	case Slowed:
-		var f *client.Failure
+		var f *Failure
 		_ = errors.As(err, &f)
-		e.slowUntil = now.Add(max(f.RetryAfter, time.Second))
+		wait := f.RetryAfter
+		if wait <= 0 {
+			wait = NoRetryAfter
+		}
+		e.slowUntil = now.Add(wait)
 		// The rest of the session runs slower, so it is not asked again.
 		e.rate = max(0.5, e.rate*0.75)
 		en.due = e.slowUntil
@@ -452,19 +482,9 @@ func (e *Engine) Done(j Job, now time.Time, err error) Outcome {
 	case j.Kind == KStatus && j.App == e.focus:
 		en.due = now.Add(FocusEvery)
 	case j.Kind == KStatus:
-		c := e.cycle()
-		next := en.slot
-		if next.IsZero() {
-			next = now
-		}
-		for !next.After(now) {
-			next = next.Add(c)
-		}
-		en.slot, en.due = next, next
+		en.due = e.nextSlot(en, now)
 	case j.Kind == KApps:
 		en.due = now.Add(AppsEvery)
-	case j.Kind == KBox:
-		en.due = now.Add(BoxEvery)
 	}
 	e.poke()
 	return out
@@ -494,6 +514,20 @@ func (e *Engine) Health(now time.Time) Health {
 		h.SlowIn = e.slowUntil.Sub(now)
 	}
 	return h
+}
+
+// Stopped is why every read stopped, Running while they run.
+func (e *Engine) Stopped() Stop {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.stopped
+}
+
+// RateNow is the engine's rate now: Rate, less after a 429.
+func (e *Engine) RateNow() float64 {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.rate
 }
 
 // Misses is how many reads of j in a row failed.
