@@ -1,0 +1,226 @@
+package liveswap
+
+import (
+	"context"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/caddyserver/caddy/v2/modules/caddyhttp"
+	"go.uber.org/goleak"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zaptest/observer"
+
+	"github.com/smallhoursorg/motel/liveswap/deploytrust"
+	"github.com/smallhoursorg/motel/liveswap/deploytrust/trusttest"
+)
+
+// The handler in the first moments of a start (#473): Caddy has
+// provisioned the config and may have started the http app, but
+// liveswap's Start has not yet installed the apps on their pooled
+// state. These tests put the handler there by hand: the pooled app
+// holds no spec and no sources, and the config holds the sources its
+// Provision built.
+
+// notInstalled is newTestHandler as a start leaves it before liveswap's
+// Start: the pooled app as newManagedApp makes it, its collaborators
+// the rig's fakes, and demo's sources on the config alone.
+func notInstalled(t *testing.T) (*Handler, *testRig) {
+	t.Helper()
+	h, rig := newTestHandler(t)
+	h.app.appVerifiers = map[string][]deploytrust.Verifier{"demo": rig.ma.verifiers}
+	h.app.specs = map[string]*appSpec{"demo": rig.spec}
+	rig.ma.spec, rig.ma.verifiers = nil, nil
+	return h, rig
+}
+
+// install is what liveswap's Start does for demo: configure it with the
+// spec and sources the config built.
+func install(h *Handler, rig *testRig) {
+	rig.ma.configure(h.app, h.app.specs["demo"], h.app.appVerifiers["demo"], zap.NewNop(), &fetchClients{}, nil)
+}
+
+// answer is one request served, for a goroutine: no t.Fatal off the
+// test's own.
+type answer struct {
+	w    *httptest.ResponseRecorder
+	err  error
+	took time.Duration
+}
+
+func serveOne(h *Handler, req *http.Request) answer {
+	w := httptest.NewRecorder()
+	began := time.Now()
+	err := h.ServeHTTP(w, req, caddyhttp.HandlerFunc(func(http.ResponseWriter, *http.Request) error { return nil }))
+	return answer{w, err, time.Since(began)}
+}
+
+// demoGet is GET /demo with tok as the bearer ("" for none).
+func demoGet(tok string) *http.Request {
+	req := httptest.NewRequest(http.MethodGet, "/demo", nil)
+	if tok != "" {
+		req.Header.Set("Authorization", "Bearer "+tok)
+	}
+	return req
+}
+
+// TestDeployTokenNotRefusedBeforeStart is #473: a valid deploy token
+// sent before liveswap's Start installed its app was the flat 401. It
+// is answered once the app is installed, as late as the install.
+func TestDeployTokenNotRefusedBeforeStart(t *testing.T) {
+	h, rig := notInstalled(t)
+	got := make(chan answer, 1)
+	go func() { got <- serveOne(h, demoGet(appToken(t))) }()
+	select {
+	case a := <-got:
+		t.Fatalf("a valid deploy token before Start was answered before the install: %d %s", a.w.Code, strings.TrimSpace(a.w.Body.String()))
+	case <-time.After(60 * time.Millisecond):
+	}
+	install(h, rig)
+	a := <-got
+	if a.err != nil || a.w.Code != http.StatusOK {
+		t.Fatalf("a valid deploy token, installed 60 ms later: %d %s (%v)", a.w.Code, strings.TrimSpace(a.w.Body.String()), a.err)
+	}
+	if a.took > 2*time.Second {
+		t.Errorf("answered %v after it was sent, long after the install", a.took)
+	}
+}
+
+// TestDeployTokenBeforeStartPastTheBound: a valid deploy token whose app
+// no Start installs within the bound is told to come back, a 503 with
+// Retry-After in the handler's error style and the protocol header of
+// any answer to a verified token, and the journal says so; nothing of
+// the request ran. Once the app is installed the status is answered,
+// at once.
+func TestDeployTokenBeforeStartPastTheBound(t *testing.T) {
+	h, rig := notInstalled(t)
+	core, logs := observer.New(zap.InfoLevel)
+	h.logger = zap.New(core)
+	h.installWait = 50 * time.Millisecond
+	deploy := func() *http.Request {
+		req := httptest.NewRequest(http.MethodPost, "/demo", strings.NewReader(`{"url":"https://x/a.tgz","version":"v1"}`))
+		req.Header.Set("Authorization", "Bearer "+appToken(t))
+		return req
+	}
+	for _, req := range []*http.Request{demoGet(appToken(t)), deploy()} {
+		a := serveOne(h, req)
+		if a.err != nil || a.w.Code != http.StatusServiceUnavailable {
+			t.Fatalf("%s before Start, past the bound: %d %s (%v)", req.Method, a.w.Code, a.w.Body, a.err)
+		}
+		if a.took < h.installWait {
+			t.Errorf("%s answered after %v, before the bound %v", req.Method, a.took, h.installWait)
+		}
+		const body = `{"error":"motel is starting and has not loaded this app yet; retry after 1 s"}` + "\n"
+		hdr := a.w.Header()
+		if a.w.Body.String() != body || hdr.Get("Retry-After") != "1" || hdr.Get("Content-Type") != "application/json" || hdr.Get("Motel-Protocol") != "1" {
+			t.Errorf("%s past the bound: %v %q", req.Method, hdr, a.w.Body)
+		}
+	}
+	if rig.fetch.lastReq.version != "" {
+		t.Errorf("a deploy ran before the app was installed: %+v", rig.fetch.lastReq)
+	}
+	lines := logs.FilterMessage("deploy token verified before liveswap installed the app; answered 503").All()
+	if len(lines) != 2 || lines[0].ContextMap()["app"] != "demo" || lines[0].ContextMap()["request_ended"] != false {
+		t.Errorf("journal: %v", logs.All())
+	}
+
+	install(h, rig)
+	h.installWait = time.Minute
+	if a := serveOne(h, demoGet(appToken(t))); a.w.Code != http.StatusOK || a.took > time.Second {
+		t.Errorf("after the install: %d %s in %v", a.w.Code, a.w.Body, a.took)
+	}
+}
+
+// TestStrangerBeforeStartIsTheFlat401: before Start, a request whose
+// token does not verify is answered exactly as after it, status,
+// headers and body, and at once: nothing waits before a token verified,
+// so no stranger can make the box hold a connection open or learn that
+// it has just started.
+func TestStrangerBeforeStartIsTheFlat401(t *testing.T) {
+	before, _ := notInstalled(t)
+	before.installWait = time.Minute
+	after, _ := newTestHandler(t)
+	for name, tok := range map[string]string{
+		"no token":            "",
+		"garbage":             "not-a-jwt",
+		"a global source's":   globalToken(t), // not demo's
+		"demo's, another aud": trusttest.Mint(t, appTestPriv, "other", nil),
+	} {
+		b := serveOne(before, demoGet(tok))
+		if b.took > time.Second {
+			t.Errorf("%s before Start: answered after %v", name, b.took)
+		}
+		a := serveOne(after, demoGet(tok))
+		if b.w.Code != http.StatusUnauthorized {
+			t.Errorf("%s before Start: %d %s", name, b.w.Code, b.w.Body)
+		}
+		sameAnswer(t, name+" before Start", b.w, a.w)
+	}
+}
+
+// TestInstallWaitEndsWithTheRequest: a request that ends while it waits
+// for the install stops waiting at once, is answered the 503 (nobody
+// may be reading it), and leaves no goroutine behind.
+func TestInstallWaitEndsWithTheRequest(t *testing.T) {
+	defer goleak.VerifyNone(t, goleak.IgnoreCurrent())
+	h, _ := notInstalled(t)
+	core, logs := observer.New(zap.InfoLevel)
+	h.logger = zap.New(core)
+	h.installWait = time.Minute
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	got := make(chan answer, 1)
+	go func() { got <- serveOne(h, demoGet(appToken(t)).WithContext(ctx)) }()
+	time.Sleep(30 * time.Millisecond)
+	cancel()
+	select {
+	case a := <-got:
+		if a.w.Code != http.StatusServiceUnavailable || a.w.Header().Get("Retry-After") != "1" {
+			t.Errorf("a request that ended while waiting: %d %v %s", a.w.Code, a.w.Header(), a.w.Body)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the wait did not end with the request")
+	}
+	lines := logs.FilterMessage("deploy token verified before liveswap installed the app; answered 503").All()
+	if len(lines) != 1 || lines[0].ContextMap()["request_ended"] != true {
+		t.Errorf("journal: %v", logs.All())
+	}
+}
+
+// TestReloadBeforeStartAnswersAtOnce: a reload provisions a config whose
+// pooled apps are installed already, by the config still serving, so
+// until the new config's Start the token is checked against the serving
+// config's sources as before, and is answered at once; there is no
+// window to wait out. Here the new config trusts a different key, which
+// takes over only at its Start.
+func TestReloadBeforeStartAnswersAtOnce(t *testing.T) {
+	serving, rig := newTestHandler(t)
+	reloaded := &App{
+		managed:         map[string]*managedApp{"demo": rig.ma},
+		globalVerifiers: serving.app.globalVerifiers,
+		appVerifiers:    map[string][]deploytrust.Verifier{"demo": serving.app.globalVerifiers},
+		specs:           map[string]*appSpec{"demo": rig.spec},
+	}
+	h := &Handler{app: reloaded, logger: zap.NewNop(), limiter: deploytrust.NewLimiter(rig.clock), installWait: time.Minute}
+	if a := serveOne(h, demoGet(appToken(t))); a.w.Code != http.StatusOK || a.took > time.Second {
+		t.Fatalf("the serving config's token after a reload, before its Start: %d %s in %v", a.w.Code, a.w.Body, a.took)
+	}
+	if a := serveOne(h, demoGet(globalToken(t))); a.w.Code != http.StatusUnauthorized || a.took > time.Second {
+		t.Fatalf("the new config's token before its Start: %d %s in %v", a.w.Code, a.w.Body, a.took)
+	}
+}
+
+// TestPersonBeforeStartDoesNotWait: a person's way in reads nothing
+// liveswap's Start installs, and is not made to wait for it.
+func TestPersonBeforeStartDoesNotWait(t *testing.T) {
+	people := newTestPeople(t)
+	h, _ := notInstalled(t)
+	h.people = people.reg
+	h.installWait = time.Minute
+	began := time.Now()
+	if w := sendTo(t, h, "GET", "/demo", token(people.alice)); w.Code != http.StatusOK || time.Since(began) > time.Second {
+		t.Errorf("alice before Start: %d %s in %v", w.Code, w.Body, time.Since(began))
+	}
+}
