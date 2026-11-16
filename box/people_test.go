@@ -428,22 +428,27 @@ func TestPersonOnTheBoxWebhook(t *testing.T) {
 // then: it verifies against the sources the config built, and waits for
 // liveswap's Start to install a (here it never does, so a request that
 // ends first is told to come back); a stranger is the flat 401 at once.
-// A person's token is answered at once, as after the start, because
-// the registry is built at provision and the person's way in reads
-// nothing liveswap's Start installs.
+// A person's token is not refused either, because the registry is
+// built at provision: what reads no app (who am I, the box's status) is
+// answered at once, and a read of an app waits for its install as the
+// deploy token does, since until then there is no app to read.
 func TestPersonNotRefusedAfterAStart(t *testing.T) {
 	b := newPeopleBox(t)
 	b.install()
 	b.load()
 	now := time.Now()
 	alice, carol := b.people["alice@example.test"], b.people["carol@example.test"]
-	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
-	defer cancel()
-	r := httptest.NewRequestWithContext(ctx, http.MethodGet, "http://"+peopleIdentity+"/a", nil)
-	r.Header.Set("Authorization", "Bearer "+trusttest.Mint(t, b.deploy["a"], "a", nil))
-	w := httptest.NewRecorder()
-	b.server.ServeHTTP(w, r)
-	if w.Code != http.StatusServiceUnavailable || w.Header().Get("Retry-After") != "1" {
+	// held serves a GET whose request ends after 300 ms.
+	held := func(target, auth string) *httptest.ResponseRecorder {
+		ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+		defer cancel()
+		r := httptest.NewRequestWithContext(ctx, http.MethodGet, "http://"+peopleIdentity+target, nil)
+		r.Header.Set("Authorization", auth)
+		w := httptest.NewRecorder()
+		b.server.ServeHTTP(w, r)
+		return w
+	}
+	if w := held("/a", "Bearer "+trusttest.Mint(t, b.deploy["a"], "a", nil)); w.Code != http.StatusServiceUnavailable || w.Header().Get("Retry-After") != "1" {
 		t.Fatalf("a deploy token of a before liveswap starts: %d %v %s, want the 503 with Retry-After", w.Code, w.Header(), w.Body)
 	}
 	began := time.Now()
@@ -456,17 +461,31 @@ func TestPersonNotRefusedAfterAStart(t *testing.T) {
 		code         int
 	}{
 		{alice, "alice", "/_motel/whoami", http.StatusOK},
-		{alice, "alice", "/a", http.StatusOK},
-		{alice, "alice", "/_motel/apps", http.StatusOK},
-		{carol, "carol", "/b", http.StatusOK},
 		{carol, "carol", "/", 0}, // the box's status, read from the box's own paths: whatever they hold
 	} {
+		began := time.Now()
 		w := b.get(c.target, c.who.Token(peopleIdentity, now, time.Minute))
 		if w.Code != c.code && (c.code != 0 || w.Code == http.StatusUnauthorized || w.Code == http.StatusForbidden) {
 			t.Errorf("%s GET %s at once: %d %s, want %d", c.name, c.target, w.Code, w.Body, c.code)
 		}
+		if time.Since(began) > time.Second {
+			t.Errorf("%s GET %s, which reads no app, took %v", c.name, c.target, time.Since(began))
+		}
 		if w.Header().Get("Motel-Protocol") != "1" {
 			t.Errorf("%s GET %s: no Motel-Protocol: %v", c.name, c.target, w.Header())
+		}
+	}
+	for _, c := range []struct {
+		who          accesstest.Key
+		name, target string
+	}{
+		{alice, "alice", "/a"},
+		{alice, "alice", "/_motel/apps"},
+		{carol, "carol", "/b"},
+	} {
+		w := held(c.target, c.who.Token(peopleIdentity, now, time.Minute))
+		if w.Code != http.StatusServiceUnavailable || w.Header().Get("Retry-After") != "1" {
+			t.Errorf("%s GET %s before liveswap starts: %d %v %s, want the 503 with Retry-After", c.name, c.target, w.Code, w.Header(), w.Body)
 		}
 	}
 }
@@ -607,7 +626,7 @@ func TestRemovedPersonRefusedAfterReload(t *testing.T) {
 	if w := b.get("/_motel/whoami", alice.Token(peopleIdentity, now, time.Minute)); w.Code != http.StatusUnauthorized || w.Body.String() != stranger.Body.String() {
 		t.Errorf("alice after her lines are removed: %d %s", w.Code, w.Body)
 	}
-	if w := b.get("/b", carol.Token(peopleIdentity, now, time.Minute)); w.Code != http.StatusOK {
+	if w := b.get("/_motel/whoami", carol.Token(peopleIdentity, now, time.Minute)); w.Code != http.StatusOK {
 		t.Errorf("carol after the reload: %d %s", w.Code, w.Body)
 	}
 }
@@ -619,9 +638,11 @@ func TestRemovedPersonRefusedAfterReload(t *testing.T) {
 // trusted_proxies_strict, Caddy's client_ip is the client's choice, so
 // no from list holds a forwarded request at all: both are refused (and
 // motel validate refuses such a config). With it, client_ip is the
-// right-most address outside the ranges, the real one: bob reads, alice
-// does not. A request from a peer that is no proxy is judged by the
-// peer in either mode, whatever header it writes.
+// right-most address outside the ranges, the real one: bob is admitted,
+// alice is not. A request from a peer that is no proxy is judged by the
+// peer in either mode, whatever header it writes. Each asks who they
+// are: no app has started here, and a person outside every list is
+// refused on any path.
 func TestFromBehindATrustedProxy(t *testing.T) {
 	for _, strict := range []bool{false, true} {
 		b := newPeopleBox(t)
@@ -648,10 +669,10 @@ func TestFromBehindATrustedProxy(t *testing.T) {
 			name, target, auth, remote, forwarded string
 			code                                  int
 		}{
-			{"alice, forged through the proxy", "/a", alice, proxy, forged, http.StatusUnauthorized},
-			{"bob, the real address through the proxy", "/b", bob, proxy, forged, bobCode},
-			{"alice, from her network, no proxy", "/a", alice, "198.51.100.7:1", "", http.StatusOK},
-			{"alice's header from elsewhere, no proxy", "/a", alice, "203.0.113.9:1", "198.51.100.7", http.StatusUnauthorized},
+			{"alice, forged through the proxy", "/_motel/whoami", alice, proxy, forged, http.StatusUnauthorized},
+			{"bob, the real address through the proxy", "/_motel/whoami", bob, proxy, forged, bobCode},
+			{"alice, from her network, no proxy", "/_motel/whoami", alice, "198.51.100.7:1", "", http.StatusOK},
+			{"alice's header from elsewhere, no proxy", "/_motel/whoami", alice, "203.0.113.9:1", "198.51.100.7", http.StatusUnauthorized},
 		} {
 			if w := b.getFrom(c.target, c.auth, c.remote, c.forwarded); w.Code != c.code {
 				t.Errorf("strict %v, %s: %d %s, want %d", strict, c.name, w.Code, w.Body, c.code)
