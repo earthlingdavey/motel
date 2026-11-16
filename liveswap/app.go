@@ -486,7 +486,7 @@ func (ma *managedApp) trust() ([]deploytrust.Verifier, bool) {
 }
 
 // awaitInstalled waits until a Start has installed the app, ctx ends
-// or the channel bound makes fires, and reports whether it is
+// or the channel that bound returns fires, and reports whether it is
 // installed. bound is called only when there is something to wait
 // for. It starts no goroutine.
 func (ma *managedApp) awaitInstalled(ctx context.Context, bound func() <-chan time.Time) bool {
