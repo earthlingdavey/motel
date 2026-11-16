@@ -96,8 +96,8 @@ signed:
 | Path | What |
 |---|---|
 | `/_motel/whoami` | who the box takes them to be, their key, what they may read from where they are, and the box's release |
-| `/_motel/apps` | the apps they may read, each with a summary: its phase, whether it runs, its version, its watchdog's state and its newest deploy |
-| `/<app>` | an app's status, as a deploy workflow reads it |
+| `/_motel/apps` | the apps they may read, each with a summary: its phase, whether it runs, its version, its watchdog's state, its newest deploy and the version of a deploy in flight |
+| `/<app>` | an app's status, as a deploy workflow reads it, with the deploy in flight when one runs: its version, who started it, when, and the phases so far with their times |
 | `/<app>?deploy=<version>` | one deploy's record |
 | `/` | the box's status, for a viewer of the box |
 
