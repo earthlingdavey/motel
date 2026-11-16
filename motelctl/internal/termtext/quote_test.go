@@ -6,6 +6,8 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"unicode"
+	"unicode/utf8"
 )
 
 // Quote cuts what was sent to QuoteMax runes before it escapes
@@ -27,6 +29,16 @@ func TestQuote(t *testing.T) {
 		{"look-alike quote marks", "\u201cx\u201d \u2033 \uff02 \u201e \u301d", `"\u201cx\u201d \u2033 \uff02 \u201e \u301d"`},
 		{"invisible characters", "a\u200bb\u2060c\u00add\ufeffe\U000e0041f\u3164g", `"a\u200bb\u2060c\u00add\ufeffe\U000e0041f\u3164g"`},
 		{"a combining mark first, on the opening quote", "\u0301x\u0301", "\"\\u0301x\u0301\""},
+		// Marks no list of look-alikes held: the modifier letters, the
+		// double acute, the gershayim, the ditto mark, the ornaments,
+		// the guillemets, the single curly quotes two of which make a
+		// double.
+		{"quote marks of other looks", "no\u02ba \u02ee \u02dd \u05f4 \u3003 \u275d\u275e \u00abx\u00bb \u2019\u2019 \u2e42", `"no\u02ba \u02ee \u02dd \u05f4 \u3003 \u275d\u275e \u00abx\u00bb \u2019\u2019 \u2e42"`},
+		{"a combining mark on a space or a quote mark", "no \u030e a\u030e '\u030b \\\u030e", "\"no \\u030e a\u030e '\\u030b \\\\\\u030e\""},
+		{"a run of blank symbols that would wrap to a row's start", "no" + strings.Repeat("\u2800", 3) + "motelctl: run x", `"no\u2800\u2800\u2800motelctl: run x"`},
+		{"symbols and other punctuation", "5\u00d73 \u00a9 \u20ac \u00b0 \u2192 \u00bd \ufffd", `"5\u00d73 \u00a9 \u20ac \u00b0 \u2192 \u00bd \ufffd"`},
+		{"letters, digits and marks of any script, the dashes and the ellipsis", "caf\u00e9 \u65e5\u672c\u8a9e \u0645\u0631\u062d\u0628\u0627 e\u0301\u0323 \u0663 v1 \u2014 a\u2013b\u2026", "\"caf\u00e9 \u65e5\u672c\u8a9e \u0645\u0631\u062d\u0628\u0627 e\u0301\u0323 \u0663 v1 \u2014 a\u2013b\u2026\""},
+		{"motel's own sentence with a dash", "version v1 already exists \u2014 versions are immutable", "\"version v1 already exists \u2014 versions are immutable\""},
 		{"blanks do not count toward the cap", strings.Repeat(" ", 500) + a, `"` + a + `"`},
 		{"exactly the cap", a, `"` + a + `"`},
 		{"one past the cap", a + "b", `"` + a + `"…`},
@@ -81,6 +93,43 @@ func TestNoHandMadeQuoteMarks(t *testing.T) {
 	for _, bad := range []string{`fmt.Sprintf("says: \"%s\"", x)`, "p.line(`says: \"%s\"`, x)", `"said: " + "\"" + x`, `strconv.Quote(x)`, `fmt.Sprintf("\"%v\"", x)`} {
 		if !quotedBy.MatchString(bad) {
 			t.Errorf("the pattern misses %s", bad)
+		}
+	}
+}
+
+// TestQuoteLeavesNoMarkButItsOwn: over every rune of the Basic
+// Multilingual Plane and the supplementary planes in use, quoted alone
+// and after a space and after a letter, what Quote writes between its
+// own quote marks holds, outside ASCII, only letters that are not
+// modifiers, decimal digits, marks that stand on a letter or a digit,
+// the two dashes and the ellipsis. So no punctuation, symbol, separator, modifier or
+// format character of any script reaches the terminal inside a
+// quotation, whatever it looks like.
+func TestQuoteLeavesNoMarkButItsOwn(t *testing.T) {
+	for r := rune(0x80); r <= 0x3ffff; r++ {
+		if !utf8.ValidRune(r) {
+			continue
+		}
+		for _, in := range []string{string(r), "a " + string(r), "a" + string(r)} {
+			got := Quote(in).String()
+			inner := got[1 : len(got)-1]
+			based := false // whether a mark may stand on what came before
+			for _, o := range inner {
+				switch {
+				case o < 0x80:
+					based = unicode.IsLetter(o) || unicode.IsDigit(o)
+				case o == 0x2013, o == 0x2014, o == 0x2026:
+					based = false
+				case unicode.IsLetter(o) && !unicode.Is(unicode.Lm, o) && !hangulFiller(o), unicode.Is(unicode.Nd, o):
+					based = true
+				case unicode.Is(unicode.M, o) && based:
+				default:
+					t.Fatalf("Quote(%+q) = %s: %U is written as it is", in, got, o)
+				}
+			}
+			if strings.Count(inner, `"`) != strings.Count(inner, `\"`) {
+				t.Fatalf("Quote(%+q) = %s: an unescaped quote mark inside", in, got)
+			}
 		}
 	}
 }

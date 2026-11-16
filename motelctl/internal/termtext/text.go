@@ -88,15 +88,18 @@ const QuoteMax = 200
 // trimmed, so no run of blanks can wrap the value to the start of a
 // row; s is cut to QuoteMax runes of what is left, on a rune boundary
 // and before any escape is written, so a cut never splits one; every "
-// and \ is escaped with a \; a look-alike quote mark, an invisible
-// character (Unicode's Cf, and the Hangul fillers), and a combining mark
-// that would land on the opening quote are written as \u escapes;
-// everything From escapes is made visible; all between double quotes,
-// with "…" after the closing quote when s was cut. The closing quote is
-// the only unescaped quote mark of any look, so nothing s holds can end
-// the quotation and write motelctl's next words. (A \ is escaped before
-// From runs, so a \ the sender wrote reads \\, and an escape From wrote
-// reads \x1b: the two stay apart.)
+// and \ is escaped with a \; outside ASCII, only what plainInQuote
+// names is written as it is (letters, digits, the marks on them, the
+// dashes and the ellipsis), and every other character is written as a
+// \u escape: a quote mark of any script or look, a symbol that prints
+// as a blank, an invisible character, a combining mark that would land
+// on a quote mark or a space; everything From escapes is made visible;
+// all between double quotes, with "…" after the closing quote when s
+// was cut. The closing quote is the only unescaped mark that reads as
+// a double quote (two apostrophes side by side are ASCII, and stay),
+// so nothing s holds can end the quotation and write motelctl's next
+// words. (A \ is escaped before From runs, so a \ the sender wrote
+// reads \\, and an escape From wrote reads \x1b: the two stay apart.)
 func Quote(s string) Text {
 	s = strings.Join(strings.FieldsFunc(s, unicode.IsSpace), " ")
 	cut := false
@@ -109,22 +112,30 @@ func Quote(s string) Text {
 		n++
 	}
 	var b strings.Builder
+	// based is whether the last rune written as it is was a letter, a
+	// digit or a mark on one: what a combining mark may stand on.
+	based := false
 	for i := 0; i < len(s); {
 		r, size := utf8.DecodeRuneInString(s[i:])
+		mark := unicode.Is(unicode.M, r)
 		switch {
 		case r == '\\' || r == '"':
 			b.WriteByte('\\')
 			b.WriteRune(r)
+			based = false
 		case r == utf8.RuneError && size <= 1:
 			b.WriteString(s[i : i+size]) // From writes U+FFFD
-		case lookAlikeQuote(r), unicode.Is(unicode.Cf, r), hangulFiller(r), i == 0 && unicode.Is(unicode.M, r):
+			based = false
+		case !plainInQuote(r), mark && !based:
 			if r > 0xffff {
 				fmt.Fprintf(&b, `\U%08x`, r)
 			} else {
 				fmt.Fprintf(&b, `\u%04x`, r)
 			}
+			based = false
 		default:
 			b.WriteString(s[i : i+size])
+			based = mark || unicode.IsLetter(r) || unicode.IsDigit(r)
 		}
 		i += size
 	}
@@ -135,15 +146,27 @@ func Quote(s string) Text {
 	return Text{out}
 }
 
-// lookAlikeQuote is a quote mark a reader could take for ": the curly
-// and low double quotes, the reversed ones, the double prime and its
-// reverse, the fullwidth quote, the CJK double primes.
-func lookAlikeQuote(r rune) bool {
-	switch r {
-	case 0x201c, 0x201d, 0x201e, 0x201f, 0x2033, 0x2036, 0xff02, 0x301d, 0x301e, 0x301f:
+// plainInQuote says whether r is written as it is inside a quotation:
+// all of ASCII (Quote escapes its two marks, From its controls), and
+// outside it a letter, a decimal digit, a combining mark, and the three
+// marks motel's own sentences use, the dashes and the ellipsis. A rule,
+// not a list of look-alikes: a list of the marks that pass for a double
+// quote is never whole (the double primes and the ditto mark, the
+// modifier letters U+02BA and U+02EE, the double acute, the Hebrew
+// gershayim, the quote ornaments, the guillemets), and a symbol can
+// print as a blank (U+2800). So no punctuation, symbol, modifier
+// letter, separator or format character passes, and no letter that
+// prints as nothing (the Hangul fillers).
+func plainInQuote(r rune) bool {
+	switch {
+	case r < 0x80:
 		return true
+	case r == 0x2013, r == 0x2014, r == 0x2026:
+		return true
+	case hangulFiller(r), unicode.Is(unicode.Lm, r):
+		return false
 	}
-	return false
+	return unicode.IsLetter(r) || unicode.Is(unicode.Nd, r) || unicode.Is(unicode.M, r)
 }
 
 // hangulFiller is a Hangul filler: a letter by category that prints as

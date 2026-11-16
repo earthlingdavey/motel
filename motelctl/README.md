@@ -103,8 +103,11 @@ box wrote. A value from a box is used in one of three ways only:
    grammar makes the answer "not motel's answer", exit 3, and is not
    printed.
 2. **A quotation through `termtext.Quote`**: white space collapsed,
-   cut at 200 characters, every control, invisible character and
-   look-alike quote mark made visible, `"` and `\` escaped, so the
+   cut at 200 characters, every control made visible, `"` and `\`
+   escaped, and outside ASCII only letters, digits, the marks on them,
+   the dashes and the ellipsis written as they are: every other
+   character is a `\u` escape, so no quote mark of any script or look,
+   no blank symbol and no invisible character is printed, and the
    closing quote is motelctl's own; attributed ("the box says: …").
    A box-written backtick command inside a quotation is shown as the
    box's words, by design: it is inside the box's quotation.
