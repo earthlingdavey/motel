@@ -92,7 +92,8 @@ own sentences (its advice, its causes, its labels) must never be ones a
 box wrote. A value from a box is used in one of three ways only:
 
 1. **A checked token**: held to the grammar the server holds it to
-   (an app or version name, a phase, a deploy's status, a unit, a
+   (an app or version name, a phase, a deploy's status, a unit, the
+   watchdog's state, the metrics' window, a
    commit, a digest, a role and its scope, whoami's name and release,
    each with the server code it mirrors cited beside its pattern in
    `internal/client/client.go`), or compared with what was asked (the

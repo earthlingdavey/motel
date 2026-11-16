@@ -12,6 +12,7 @@ type (
 	deploySummary    = wire.DeploySummary
 	deployResult     = wire.DeployResult
 	phaseTiming      = wire.PhaseTiming
+	deployInFlight   = wire.DeployInFlight
 	deployDetail     = wire.DeployDetail
 	probeDetail      = wire.ProbeDetail
 	watchdogSnapshot = wire.Watchdog

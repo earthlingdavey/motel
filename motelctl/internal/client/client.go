@@ -22,6 +22,7 @@ import (
 	"net/url"
 	"reflect"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -511,6 +512,12 @@ func (c *Client) Read(ans *Answer, v any) error {
 	if ans.Code == http.StatusForbidden {
 		return c.forbidden(ans)
 	}
+	// A motel webhook never redirects, and none is followed (NewHTTP),
+	// so a 3xx is another thing's answer whatever its body holds: a JSON
+	// error in one is not the box's sentence.
+	if ans.Code >= 300 && ans.Code < 400 {
+		return c.notMotel(ans, "")
+	}
 	var e wire.Error
 	if decodeObject(ans, &e) != nil || e.Error == "" {
 		return c.notMotel(ans, "")
@@ -550,7 +557,10 @@ var (
 	// (the app's phase is one of those, or "idle", liveswap/app.go's
 	// newManagedApp and its end of a deploy).
 	outcomeStatuses = map[string]bool{"succeeded": true, "failed": true}
-	outcomePhases   = map[string]bool{"downloading": true, "extracting": true, "preparing": true, "starting": true, "soaking": true, "promoting": true, "draining": true, "stopping_old": true}
+	// watchdogStates are liveswap/watchdog.go's wdState values: the
+	// state is printed as a word, with the client's own words after it.
+	watchdogStates = map[string]bool{"disabled": true, "idle": true, "grace": true, "watching": true, "backoff": true, "throttled": true}
+	outcomePhases  = map[string]bool{"downloading": true, "extracting": true, "preparing": true, "starting": true, "soaking": true, "promoting": true, "draining": true, "stopping_old": true}
 )
 
 // odd says why a body that decoded is still not one an honest box
@@ -567,6 +577,15 @@ func odd(v any) string {
 		}
 		if a.Unit != "" && !unitRe.MatchString(a.Unit) {
 			return "its unit is not one motel names"
+		}
+		if wd := a.Watchdog; wd != nil && wd.State != "" && !watchdogStates[wd.State] {
+			return "its watchdog's state is not one a watchdog has"
+		}
+		// The window is one of the ranges a box answers for
+		// (wire.MetricsRanges), or absent when the store did not answer:
+		// it is printed inside the client's own brackets.
+		if m := a.Metrics; m != nil && m.Window != "" && !slices.Contains(wire.MetricsRanges, m.Window) {
+			return "its metrics' window is not one a box keeps"
 		}
 		for _, d := range a.Deploys {
 			if why := oddOutcome(d.Version, d.Status, d.Phase, nil); why != "" {
