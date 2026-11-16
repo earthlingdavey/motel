@@ -405,6 +405,7 @@ func tokenCases(k *testKeySet) []tokenCase {
 		{name: "sk-trailer-long", auth: hdr(tok(c0, sshsig(k.skEd, c0, sigOpts{skRest: []byte{1, 0, 0, 0, 7, 0}}))), expect: "signature-sk-trailer"},
 		{name: "sk-no-touch", auth: hdr(tok(c0, sshsig(k.skEd, c0, sigOpts{flags: flags(0)}))), expect: "signature-sk-touch"},
 		{name: "sk-pin-without-touch", auth: hdr(tok(c0, sshsig(k.skEd, c0, sigOpts{flags: flags(0x04)}))), expect: "signature-sk-touch"},
+		{name: "sk-another-bit-without-touch", auth: hdr(tok(c0, sshsig(k.skEd, c0, sigOpts{flags: flags(0x02)}))), expect: "signature-sk-touch"},
 		{name: "sk-flags-changed-after-signing", auth: hdr(tok(c0, sshsig(k.skEd, c0, sigOpts{skRest: skTrailer(0x05)}))), expect: "signature"},
 		{name: "claims-changed-after-signing", auth: withSig(claimsDoc(testIdentity, n-30, n+3570)), expect: "signature"},
 		{name: "signed-by-another-key", auth: hdr(tok(c0, sshsig(k.unlisted, c0, sigOpts{keyWire: k.ed.pub.Marshal()}))), expect: "signature"},
@@ -444,6 +445,8 @@ func tokenCases(k *testKeySet) []tokenCase {
 		{name: "host-two-ports", auth: hdr(goodTok), host: "deploy.example.test:443:443", expect: "host"},
 		{name: "host-empty", auth: hdr(goodTok), host: ":443", expect: "host"},
 		{name: "iat-zero", auth: signed(k.ed, claimsDoc(testIdentity, 0, n+60)), expect: "times"},
+		{name: "iat-negative", auth: signed(k.ed, claimsDoc(testIdentity, -1, n+60)), expect: "times"},
+		{name: "iat-negative-so-the-life-wraps", auth: signed(k.ed, claimsDoc(testIdentity, -9223372036854775748, 1<<63-1)), expect: "times"},
 		{name: "exp-equals-iat", auth: signed(k.ed, claimsDoc(testIdentity, n, n)), expect: "times"},
 		{name: "exp-before-iat", auth: signed(k.ed, claimsDoc(testIdentity, n, n-1)), expect: "times"},
 		{name: "N4-iat-120s-ahead", auth: signed(k.ed, claimsDoc(testIdentity, n+120, n+600)), expect: "iat-in-future"},
@@ -496,8 +499,35 @@ func TestTokenVectors(t *testing.T) {
 			if want := ssh.FingerprintSHA256(c.key.pub); v.Fingerprint != want {
 				t.Errorf("%s: fingerprint %s, want %s", c.name, v.Fingerprint, want)
 			}
+			iat, exp := signedTimes(t, c.auth)
+			if !v.IssuedAt.Equal(iat) || !v.ExpiresAt.Equal(exp) {
+				t.Errorf("%s: times %v to %v, signed %v to %v", c.name, v.IssuedAt, v.ExpiresAt, iat, exp)
+			}
 		}
 	}
+}
+
+// signedTimes reads iat and exp out of the claims part of a token's
+// header with the test's own decoding: what was signed, whatever the
+// checker made of it.
+func signedTimes(t *testing.T, auth []string) (iat, exp time.Time) {
+	t.Helper()
+	parts := strings.Split(auth[0], ".")
+	if len(parts) != 3 {
+		t.Fatalf("a token of %d parts", len(parts))
+	}
+	raw, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		t.Fatal(err)
+	}
+	var c struct {
+		Iat int64 `json:"iat"`
+		Exp int64 `json:"exp"`
+	}
+	if err := json.Unmarshal(raw, &c); err != nil {
+		t.Fatal(err)
+	}
+	return time.Unix(c.Iat, 0), time.Unix(c.Exp, 0)
 }
 
 type opensshVectors struct {
