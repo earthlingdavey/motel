@@ -119,14 +119,15 @@ services:
     # e2e-token.service mints a local deploy keypair + token into the
     # shared volume before motel starts (no OIDC provider on the
     # offline compose network); the runner reads the token as its
-    # deploy bearer. lib.sh + the systemd suite are for `make e2e`'s
-    # in-container step.
+    # deploy bearer. lib.sh + the systemd, box apply and people suites
+    # are for `make e2e`'s in-container steps.
     volumes:
       - e2e-deploy:/shared
       - /sys/fs/cgroup:/sys/fs/cgroup:rw
       - ./e2e/lib.sh:/lib.sh:ro
       - ./e2e/liveswap/systemd.sh:/suite-systemd.sh:ro
       - ./e2e/box/apply.sh:/suite-box.sh:ro
+      - ./e2e/box/people.sh:/suite-people.sh:ro
       # The box template, whose own commands the box apply suite runs:
       # bin/apply as the workflow does, make secret and the rest as a
       # laptop does.
