@@ -434,7 +434,9 @@ func (h *Handler) getStatus(w http.ResponseWriter, r *http.Request, app appHandl
 	// query is refused here rather than read as no query.
 	q, err := url.ParseQuery(r.URL.RawQuery)
 	if err != nil {
-		return RespondJSON(w, http.StatusUnprocessableEntity, wire.Error{Error: "malformed query: " + err.Error()}, ma.redactorFor(statusSnapshot{}))
+		// The handler's words and the parser's, which quote the
+		// request's own bad escape: nothing of the app's (rule 6).
+		return RespondJSON(w, http.StatusUnprocessableEntity, wire.Error{Error: "malformed query: " + err.Error()}, NewRedactor(nil, nil))
 	}
 	window := wire.MetricsRanges[0]
 	if q.Has("range") {
@@ -613,6 +615,26 @@ func (h *Handler) deployRecord(w http.ResponseWriter, ma *managedApp, version st
 		return RespondJSON(w, http.StatusServiceUnavailable, wire.Error{Error: "app has no configuration loaded"}, ma.redactorFor(statusSnapshot{}))
 	}
 	rec, err := readDeployRecord(c.spec.dirs, version)
+	if err != nil {
+		// No record was read, so the answer is the handler's own words,
+		// the system's, the app's directories as the config names them,
+		// and the version this request asked for: nothing the app wrote
+		// and none of its values. Such a body passes a filter that knows
+		// no value (redact.go, rule 6). Through the app's filter the
+		// version came back as a marker naming the key whenever it held
+		// an env_file value, in any form the filter knows, and a caller
+		// who may only read could try values until one did: in the 404,
+		// and in the 500, whose error names the record's file. The
+		// version passed validVersion, and it and the directories are
+		// safe strings here as they are in the status, so a commit id
+		// asked for reads as it was sent.
+		d := c.spec.dirs
+		own := NewRedactor(nil, []string{version, d.root, d.app, d.releases, d.shared, d.run})
+		if errors.Is(err, errNoDeployRecord) {
+			return RespondJSON(w, http.StatusNotFound, wire.Error{Error: fmt.Sprintf("no deploy recorded for version %s", version)}, own)
+		}
+		return RespondJSON(w, http.StatusInternalServerError, wire.Error{Error: "reading deploy record: " + err.Error()}, own)
+	}
 	// The requested version, and the record's own pin, are names the
 	// filter should let through whether or not the status still lists
 	// them by the time it is built (a prune, a reload between the read
@@ -622,21 +644,6 @@ func (h *Handler) deployRecord(w http.ResponseWriter, ma *managedApp, version st
 	head, _ := recordHead(rec, version+".json")
 	head.Version = version
 	s.Deploys = append(s.Deploys, head)
-	switch {
-	case errors.Is(err, errNoDeployRecord):
-		// The handler's own words and the version this request asked
-		// for: nothing of the app's, so the filter is one that knows
-		// none of the app's values (redact.go, rule 6). Through the
-		// app's filter the version came back as a marker naming the key
-		// whenever it held an env_file value, in any form the filter
-		// knows, and a caller who may only read could try values until
-		// one did. The version passed validVersion, and is a safe
-		// string here as it is in the status, so a commit id asked for
-		// reads as it was sent.
-		return RespondJSON(w, http.StatusNotFound, wire.Error{Error: fmt.Sprintf("no deploy recorded for version %s", version)}, NewRedactor(nil, []string{version}))
-	case err != nil:
-		return RespondJSON(w, http.StatusInternalServerError, wire.Error{Error: "reading deploy record: " + err.Error()}, ma.redactorFor(s))
-	}
 	// Through the live filter like every body; its outcome words
 	// stand outside the filter there (redact.go, rule 3).
 	return respondFiltered(w, http.StatusOK, ma.redactorFor(s).redactJSON(rec))

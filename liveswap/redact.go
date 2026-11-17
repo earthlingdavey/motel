@@ -128,9 +128,12 @@ import (
 //     made only of the handler's own words and this request's text is
 //     written through a filter that knows no value (NewRedactor with
 //     none; the shape and entropy layers still run, and a version
-//     asked for is a safe string, as in the status). Today that is one
-//     body, the 404 of GET /<app>?deploy=<version>, which a person
-//     with the viewer role can ask for (handler.go, deployRecord).
+//     asked for is a safe string, as in the status). Today those are
+//     the answers of a read that reads nothing of the app's, each of
+//     which a person with the viewer role can ask for: the 404 and the
+//     500 of GET /<app>?deploy=<version> when no record is read (the
+//     500's error names the record's file, and so the version), and
+//     the 422 of a query that does not parse (handler.go).
 //     The exemption is the body's, never the string's: a string is not
 //     exempt because a request named it (rule 1), and a body that
 //     holds one byte the app wrote, or text an earlier request stored

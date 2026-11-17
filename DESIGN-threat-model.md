@@ -244,8 +244,10 @@ Properties that matter to the model:
   the version asked for, answered `[redacted:DB_PASSWORD]` for a guess
   that held that value (as written, inside a longer string, in base64
   or hex, or a URL value's password alone), and a person with no more
-  than the viewer role could try values until one did. That 404 is the
-  one such body today. The exemption is the body's and never the
+  than the viewer role could try values until one did. The answers
+  of that read when it reads no record (the 404, and a 500 whose error
+  names the record's file) and of a query that does not parse are the
+  such bodies today. The exemption is the body's and never the
   string's: a string is not safe because a request named it, and text
   an earlier request stored, a deployed version in a status or a
   record, passes the app's filter with the app's bytes. A
@@ -253,8 +255,8 @@ Properties that matter to the model:
   own punctuation matching the structure rather than a string) is
   withheld, with the keys still reported; and while an app's
   `env_file` cannot be read, its values are unknown to the filter and
-  every body about that app is withheld rather than sent through the
-  heuristics alone. What the filter does **not** promise: an encoding not in
+  every body that holds anything of that app's is withheld rather than
+  sent through the heuristics alone. What the filter does **not** promise: an encoding not in
   the list, a value under 8 characters, a secret split across lines,
   a secret the app fetched at runtime and printed in a low-entropy
   form, an inline `env` value (not a secret by policy: the Caddyfile
