@@ -175,15 +175,18 @@ func TestMotelctlReadsWhatTheFilterChanged(t *testing.T) {
 	const named, staged, keyed, broken = "billingapp", "blog-production", "shopfront", "brokenenv"
 	// nested adds a value that is a word of the marker itself, so the
 	// filter's last pass writes a marker inside the rewritten one.
-	const shaped, spanned, nested = "shop-production", "spannedapp", "nest-production"
-	r := newAppsRig(t, named, staged, keyed, broken, shaped, spanned, nested)
-	must(t, os.WriteFile(r.apps[nested].spec.envFile, []byte("AKIAABCDEFGHIJKLMNOP=production\nPLACEHOLDER=redacted\n"), 0o600)) // gitleaks:allow — made up for this test: a key's name, not a key
-	must(t, os.WriteFile(r.apps[shaped].spec.envFile, []byte("AKIAABCDEFGHIJKLMNOP=production\n"), 0o600))                       // gitleaks:allow — made up for this test: a key's name, not a key
+	// angled holds every word a marker in brackets opens with as a
+	// value, so the filter spells its markers in angles, and nests those.
+	const shaped, spanned, nested, angled = "shop-production", "spannedapp", "nest-production", "deep-production"
+	r := newAppsRig(t, named, staged, keyed, broken, shaped, spanned, nested, angled)
+	must(t, os.WriteFile(r.apps[angled].spec.envFile, []byte("AKIAABCDEFGHIJKLMNOP=production\nP1=redacted\nP2=REDACTED\nP3=withheld\n"), 0o600)) // gitleaks:allow — made up for this test: a key's name, not a key
+	must(t, os.WriteFile(r.apps[nested].spec.envFile, []byte("AKIAABCDEFGHIJKLMNOP=production\nPLACEHOLDER=redacted\n"), 0o600))                  // gitleaks:allow — made up for this test: a key's name, not a key
+	must(t, os.WriteFile(r.apps[shaped].spec.envFile, []byte("AKIAABCDEFGHIJKLMNOP=production\n"), 0o600))                                        // gitleaks:allow — made up for this test: a key's name, not a key
 	must(t, os.WriteFile(r.apps[spanned].spec.envFile, []byte("K=ucceeded\nJ=withheld: a\n"), 0o600))
 	must(t, os.WriteFile(r.apps[named].spec.envFile, []byte("DB_NAME="+named+"\n"), 0o600))
 	must(t, os.WriteFile(r.apps[staged].spec.envFile, []byte("APP_ENV=production\n"), 0o600))
 	must(t, os.WriteFile(r.apps[keyed].spec.envFile, []byte(keyed+"_db="+keyed+"\n"), 0o600))
-	for _, name := range []string{named, staged, keyed, shaped, spanned, nested} {
+	for _, name := range []string{named, staged, keyed, shaped, spanned, nested, angled} {
 		ma := r.apps[name]
 		must(t, ma.Deploy(context.Background(), deployRequest{url: "https://x/1.tgz", version: "v1", by: "ci"}))
 		ma.mu.Lock()
@@ -212,10 +215,15 @@ func TestMotelctlReadsWhatTheFilterChanged(t *testing.T) {
 			t.Fatalf("GET /%s: %d %s, want a 200 holding %s", name, w.Code, w.Body, holds)
 		}
 	}
+	// The angles, which the body's last writer may spell as escapes.
+	var st struct{ App string }
+	if w := do(t, r.h, http.MethodGet, "/"+angled, tok, ""); json.Unmarshal(w.Body.Bytes(), &st) != nil || st.App != "deep-<[<P1 removed>:aws-key] removed>" {
+		t.Fatalf("GET /%s: %d %s, want its app spelled with a marker in angles in a marker in angles", angled, w.Code, w.Body)
+	}
 	const hidden = "[hidden by the box's filter]"
-	for _, name := range []string{named, staged, keyed, shaped, nested} {
+	for _, name := range []string{named, staged, keyed, shaped, nested, angled} {
 		got := ctl(t, bin, env, "status", box.url+"/"+name)
-		if got.code != 0 || !strings.HasPrefix(got.stdout, name+"  idle v1  unit "+hidden+"  pid 4242\n") || strings.Contains(got.stdout, "redacted:") || strings.Contains(got.stdout, "REDACTED:") || strings.Contains(got.stdout, "[#") {
+		if got.code != 0 || !strings.HasPrefix(got.stdout, name+"  idle v1  unit "+hidden+"  pid 4242\n") || strings.Contains(got.stdout, "redacted:") || strings.Contains(got.stdout, "REDACTED:") || strings.Contains(got.stdout, "[#") || strings.Contains(got.stdout, "removed>") {
 			t.Errorf("status %s: exit %d\n%s%s", name, got.code, got.stdout, got.stderr)
 		}
 		if got := ctl(t, bin, env, "deploys", box.url+"/"+name); got.code != 0 || !strings.Contains(got.stdout, "v1") {

@@ -540,33 +540,58 @@ var (
 // replaced, [redacted:[redacted:aws-key]]; and the last pass replaces
 // a known value in what those wrote, [REDACTED:[[REDACTED:K]:aws-key]].
 // Each is one marker, not a marker in a bracket: a marker runs from
-// its opening bracket to the bracket that closes it (filterMarks).
+// its opening bracket to the bracket that closes it, and one in angles
+// from its < to its > (filterMarks).
 var (
 	// markOpens are how a marker with a label opens.
 	markOpens = []string{"[redacted:", "[REDACTED:", "[withheld:"}
 	// bareMarkRe is a marker with no label, whole.
 	bareMarkRe = regexp.MustCompile(`^(?:\[#[0-9]{1,9}\]|\[masked, [0-9]{1,9} chars\])$`)
-	// angleMarkRe is the spelling in angles.
-	angleMarkRe = regexp.MustCompile(`<[^<>]+ removed>`)
 )
 
 // filterMarks finds the filter's markers in s: where each starts and
-// ends, in order, none inside another. One pass over s, whatever s
-// holds: a box's value is not trusted to be short or well formed.
+// ends, in order, none inside another. One pass over s, and work in
+// proportion to its length whatever it holds: a box's value is not
+// trusted to be short or well formed.
 func filterMarks(s string) [][]int {
-	var found [][]int
-	var open []int // the opening brackets not yet closed
+	type opening struct {
+		at    int
+		angle bool
+	}
+	var (
+		found [][]int
+		open  []opening // the [ and < not yet closed
+		left  [2]int    // how many of each kind are open: [ then <
+	)
+	kind := func(angle bool) int {
+		if angle {
+			return 1
+		}
+		return 0
+	}
 	for i := 0; i < len(s); i++ {
-		switch s[i] {
-		case '[':
-			open = append(open, i)
-		case ']':
-			if len(open) == 0 {
+		c := s[i]
+		switch c {
+		case '[', '<':
+			open = append(open, opening{i, c == '<'})
+			left[kind(c == '<')]++
+		case ']', '>':
+			angle := c == '>'
+			if left[kind(angle)] == 0 {
 				continue
 			}
-			start := open[len(open)-1]
-			open = open[:len(open)-1]
-			if !bracketMark(s[start : i+1]) {
+			// Its pair is the nearest opening of its kind; one of the
+			// other kind left open inside is no pair's, and goes.
+			k := len(open) - 1
+			for open[k].angle != angle {
+				left[kind(open[k].angle)]--
+				k--
+			}
+			left[kind(angle)]--
+			start := open[k].at
+			open = open[:k]
+			m := s[start : i+1]
+			if (angle && !angleMark(m)) || (!angle && !bracketMark(m)) {
 				continue
 			}
 			// What stands inside a marker is part of it.
@@ -576,17 +601,13 @@ func filterMarks(s string) [][]int {
 			found = append(found, []int{start, i + 1})
 		}
 	}
-	found = append(found, angleMarkRe.FindAllStringIndex(s, -1)...)
-	slices.SortFunc(found, func(a, b []int) int { return a[0] - b[0] })
-	marks := found[:0]
-	end := 0
-	for _, m := range found {
-		if m[0] < end {
-			continue // inside the one before
-		}
-		marks, end = append(marks, m), m[1]
-	}
-	return marks
+	return found
+}
+
+// angleMark says whether m, from a < to the > that closes it, is the
+// marker's spelling in angles: a label, then " removed".
+func angleMark(m string) bool {
+	return len(m) > len("< removed>") && strings.HasSuffix(m, " removed>")
 }
 
 // bracketMark says whether m, from a bracket to the one that closes

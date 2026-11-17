@@ -380,7 +380,9 @@ func TestReadTakesWhatTheFilterReplaced(t *testing.T) {
 		"[redacted:[redacted:aws-key]]", "[redacted:[redacted:github-token]]", "[redacted:A,[redacted:jwt]]", "[withheld:[redacted:AUTH_MODE]]", "<[redacted:aws-key] removed>",
 		// And the last pass may replace a value in what those wrote: a
 		// marker inside a marker inside a marker.
-		"[REDACTED:[[REDACTED:PLACEHOLDER]:aws-key]]", "[redacted:[masked, [#1]]]"} {
+		"[REDACTED:[[REDACTED:PLACEHOLDER]:aws-key]]", "[redacted:[masked, [#1]]]",
+		// The same in angles, when every spelling in brackets holds a value.
+		"<[<P1 removed>:aws-key] removed>", "<A,<B removed> removed>"} {
 		var st wire.Status
 		body := `{"app":"blog","phase":"idle","unit":"motel-` + mark + `.v1.0a1b2c3d0a1b2c3d.service"}`
 		if err := c.Read(okJSON(body), &st); err != nil || st.Unit != Filtered {
@@ -546,6 +548,15 @@ func TestFilterMarks(t *testing.T) {
 		{"[x [withheld:A,B] y]", []string{"[withheld:A,B]"}},
 		{"a]b[#1]c[", []string{"[#1]"}},
 		{"[redacted:A] and <B removed> and [redacted:C]", []string{"[redacted:A]", "<B removed>", "[redacted:C]"}},
+		{"nest-<[<P1 removed>:aws-key] removed>", []string{"<[<P1 removed>:aws-key] removed>"}},
+		{"a < b [redacted:X] c > d", []string{"[redacted:X]"}},
+		{"[redacted:a<b] <c removed>", []string{"[redacted:a<b]", "<c removed>"}},
+		{"[redacted:<a] removed>", []string{"[redacted:<a]"}},
+		{"<[redacted:a removed>", []string{"<[redacted:a removed>"}},
+		{"<a > b removed> < removed> <removed>", nil},
+		{strings.Repeat("[", 200000) + strings.Repeat(">", 200000), nil},
+		{strings.Repeat("<", 200000) + strings.Repeat("]", 200000), nil},
+		{strings.Repeat("[<", 100000) + strings.Repeat("]", 100000), nil},
 		{"[redacted:]", nil},
 		{"[redacted:A", nil},
 		{"redacted:A]", nil},
