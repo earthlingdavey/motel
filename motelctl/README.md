@@ -66,11 +66,13 @@ the same 401, with no header that names motel. So after its one retry
 motelctl names every cause it cannot tell apart (no line lists the key,
 the address is outside every `from` list, the name is not the box's main
 one, a motel too old for people's tokens), and the clock first when the
-box's `Date` says it is off. A 403 whose `needs` and `scope` are words
-of their grammar (`needs` a lowercase word, `scope` `app` or `box`) is
-said from those two alone, and names no app; any other 403 is said as a
-refusal that did not say what it needs, with the box's `error`, if any,
-quoted as the box's. The box's words are never motelctl's own: a value
+box's `Date` says it is off. A 403 whose `needs` and `scope` are the
+words a box writes (`needs` one of `viewer`, `deployer`, `key`; `scope`
+`app` or `box`) is said from those two alone, and names no app; any
+other 403, one naming a role a later motel adds among them, is said as
+a refusal that did not say what it needs, with the box's `error`, if
+any, quoted as the box's. `whoami` lists `viewer` as a word, and any
+other role a box names quoted, as the box's word. The box's words are never motelctl's own: a value
 it prints in a sentence is held to the grammar the box holds it to, or
 quoted by the one quoting function (`termtext.Quote`: cut at 200
 characters, made safe to print, `"` and `\` escaped, so the closing

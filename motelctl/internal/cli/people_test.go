@@ -32,8 +32,8 @@ func meFingerprint() string {
 }
 
 // hostileWhoAmI is about runKey's key, from the box it asks (the fake
-// box's address); a role a box may name later (auditor) is said as a
-// role. whoami prints no box value outside its grammar: an answer with
+// box's address); a role a box may name later (auditor) is quoted as
+// the box's word. whoami prints no box value outside its grammar: an answer with
 // a hostile name, release, role or scope is not taken at all (client's
 // TestWhoamiNullsAndRoles), and a key or box that differs is quoted
 // (TestWhoamiAboutAnotherKeyOrBox).
@@ -70,8 +70,9 @@ func runKey(t *testing.T, fb *fakeBox, env map[string]string, args ...string) re
 // whoami and apps: --json is the box's body as received; the human
 // output holds nothing a box could use on a terminal, and is what the
 // goldens say. (A list of apps with a name outside the app grammar is
-// not taken at all: client's TestReadPeoplesFields.) The fake box's roles hold a role and a scope no box
-// sends today, printed as they came.
+// not taken at all: client's TestReadPeoplesFields.) The fake box's
+// roles hold a role and a scope no box sends today: the role is quoted
+// as the box's word, the scope printed as it came.
 func TestWhoamiAndApps(t *testing.T) {
 	fb := newFakeBox(t)
 	for _, c := range []struct {
