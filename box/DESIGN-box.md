@@ -176,6 +176,89 @@ deploy.example.com {
   site address or inside the `box` block contains `{$`. Placeholders
   stay legal in values. See "Reading the signed file" for why each
   rule exists and what it does and does not guarantee.
+- `person` and `grant` lines declare people and what they may read:
+  "People and grants", below.
+
+### People and grants
+
+They declare who reaches the box over HTTPS with a token their own ssh
+key signs, and what they may read there. The `box` app builds the
+registry of who it admits at each load from the walk of the installed
+file, never from the running configuration, and both webhooks admit a
+person through it (liveswap/access/DESIGN-access.md has the token, the
+routes and `Decide`).
+
+```
+box {
+	signer alice@example.com ssh-ed25519 AAAAC3Nz…                    # also declares alice and this key
+	person alice@example.com sk-ssh-ed25519@openssh.com AAAAGnNr…     # a second key for a name already declared
+	person bob@example.com   ssh-ed25519 AAAAC3Nz…                    # a person who is not a signer
+	grant bob@example.com   viewer app example
+	grant bob@example.com   viewer app blog from 198.51.100.0/24 2001:db8:5::/48
+	grant alice@example.com viewer box
+}
+```
+
+- `person <name> <key-type> <base64>`: one key of a named person. The
+  name is a signer principal's (`^[A-Za-z0-9._@+-]+$`, at most 256
+  bytes), compared byte for byte: a name on a `signer` line and on a
+  `person` line is one person. Key types: `ssh-ed25519` and
+  `sk-ssh-ed25519@openssh.com`, for now. No `ssh-rsa`, refused with the
+  remedy. ECDSA (`ecdsa-sha2-nistp256`, `-nistp384`, `-nistp521`,
+  `sk-ecdsa-sha2-nistp256@openssh.com`) is not accepted yet: refused by
+  name, saying a person's key is an Ed25519 key for now and naming the
+  remedy (`ssh-keygen -t ed25519`, or `-t ed25519-sk`), so an agent
+  that makes only P-256 keys cannot be used for now. The owner deferred
+  it on 2026-11-15 for its cost, not its form (a token has no id made
+  from its signature): a stranger who presents a listed person's public
+  key buys one signature check of its type, about 0.04 ms for Ed25519
+  and 0.5 to 1.3 ms for the larger ECDSA curves; a later release may
+  admit some of them, which breaks no one. The base64 is checked as a signer's is, and
+  must be the key's own wire form, since a token's key is looked up by
+  the fingerprint of those bytes. An Ed25519 key (in either form) whose
+  point has small order is refused: anyone can sign for it.
+- A `signer` line also declares its name as a person, and its key as
+  one of that person's keys, unless the key is `ssh-rsa`, which keeps
+  signing commits and is no person's key, or an Ed25519 key of small
+  order, which is no person's key either. Signer lines keep their
+  grammar and their meaning for pushes exactly.
+- `grant <name> <role> box [from <prefix>…]` or `grant <name> <role>
+  app <app> [from <prefix>…]`: the name first, as on every line about
+  a person, so one search finds all of them; the scope always written;
+  `from` last. The one role is `viewer`. `deployer`, `signer` and
+  `root` are refused by name, each saying who holds it today (a
+  `deploy_trust` block, a `signer` line, root's key); `signer` is a
+  reserved word, which a later release may take as a second spelling
+  of a `signer` line. `app` takes an app name in liveswap's grammar.
+  `from` takes 1 to 16 addresses or prefixes as `net/netip` reads
+  them: a prefix with host bits set, `/0`, a zone, an IPv4 address
+  written as IPv6 and an entry listed twice are refused; a lone address
+  is its /32 or /128.
+
+Rules across lines, held by `access.CheckLines` in both readers once
+the block is read, each refusal naming its lines:
+
+| Case | Verdict |
+|---|---|
+| one key on two lines, of any kinds and names, and in either of its forms (`ssh-ed25519` and `sk-ssh-ed25519@openssh.com` under any application string are one Ed25519 key) | refused: `signer alice@example.com and person bob@example.com are the same key` |
+| a `grant` for a name no `person` or `signer` line declares | refused |
+| a `grant` for a name whose only keys are `ssh-rsa` signer keys | refused, naming the remedy |
+| a `grant` on an app the `liveswap` block does not run, or runs under a name written through a placeholder (the walk reads the name as written) | refused. The walk refuses both; the `box` app, at load and so at `motel validate`, asks the `liveswap` app which apps the config runs and refuses a grant on any other (a config with no `liveswap` block runs none). It sees a placeholder's name resolved, so a grant on an app named through a placeholder is refused by the walk alone: such a line written at the console loads, and leaves an installed file that no longer walks, so every push is refused and no person is admitted (the load's journal says why) until root mends the line |
+| two grants for one name on one scope | refused |
+| a box grant and an app grant for one name | taken, warned: the box grant covers the app |
+| a `person` name with no grant and no `signer` line | taken, warned |
+| an `ssh-rsa` signer whose name has no other key a person may hold | taken, warned |
+| people and no `monitor` block with a channel | taken, warned: by the walk (`motel box describe`, and the journal at each load), and by `motel validate`, which reads the adapted config; the module cannot see the `monitor` block |
+| a `grant` with a `from` list on a box whose server has `trusted_proxies` | without `trusted_proxies_strict` (or with `trusted_proxies_unix` and no `trusted_proxies_strict`), refused by `motel validate` and `motel reload`, and so a push; `motel run` prints an `ERROR` and serves all the same (Caddy then takes the client's address from the left of the header, which the client writes), and the serving process matches no list for a request such a proxy forwarded, however the config arrived; with it, taken and warned by `motel validate`, naming the headers the address comes from. A server with a `proxy_protocol` listener is warned of too (liveswap/access/DESIGN-access.md, "Safeguards") |
+| more than 1,024 key lines (`signer` and `person`) or 4,096 `grant` lines | refused |
+
+A block with no `person` and no `grant` line is not held to these
+rules, and every reader reads it as before. The module keeps the lines in the `box` app's JSON
+(`people` and `grants`, beside `signers`) so that a bad line fails the
+load and `motel validate`; the walk reads them from the raw tokens, and
+its two readings must agree on them as on the signers. A release
+without these lines refuses a file with one: `unknown box subdirective
+"person"`.
 
 ## The trust chain (normative)
 
@@ -1052,6 +1135,7 @@ can do both by other means.
 | An SSH signer that armors at a width other than ssh-keygen's 70 columns (Go's `encoding/pem` wraps at 64, RFC 2045 at 76) has every commit refused as a bundle error: the box reads one spelling, since each spelling is a commit id of its own | step 12; `canonicalSSHArmor` | 2 | 5 | 1 | 10; red and named, and the refusal says what to sign with (ssh-keygen, git's own `gpg.ssh.program`); taking a second width would be a second id for one signature, the hole the rule closes |
 | A push whose `monitor` block names a secret `secrets/_box/` does not hold is refused on a box with no slot yet, whose `_box.env` an operator wrote by hand and validate would read | "Which checks run where" (`notifyCarried`) | 2 | 5 | 1 | 10; refused by name with the remedy (`make secret APP=_box VAR=<NAME>`), whose push replaces the hand-written file; the handler cannot read the box's file to tell the two apart, and the merge notes of #424 say it. /code-review xhigh on #424 |
 | The remedy of the row above does not reach a hand-written `_box.env` that motel cannot use: one root:root 0600 (made elsewhere and moved in with `mv`, docs/monitor.md, "The secrets file"), or one with a line that does not parse. Step 6's `motel validate` runs as the motel uid, and notify's Provision reads the box's secrets file, and refuses one it cannot read or parse, before it looks at the names the push carries (`pushedSecrets`, consulted only in `resolveWith`): so every push whose `monitor` block has channels, the `make secret APP=_box VAR=<NAME>` push that would replace the file among them, is refused until root mends or removes the file at the console | "Which checks run where"; notify/app.go (`provisionNotify`) | 2 | 5 | 1 | 10; red and named: the refusal is `motel validate: …` ending `monitor: reading the box's secrets: open /etc/motel/secrets/_box.env: permission denied`, or the line that does not parse (`monitor: /etc/motel/secrets/_box.env:<line>: not KEY=VALUE`, say), and docs/monitor.md gives the `chown`/`chmod`. The file is the console's, and it already has `motel reload` refused and a restart drop every channel, so the console mends it either way. Skipping the read when the push carries every secret the block names is a new branch in Provision (size 2, risk 2). Review of the feature branch, 2026-11-14 |
+| A grant written as JSON config by hand, with a scope that is neither `box` nor `app`, is refused with the mismatch message ("a grant on the box names no app, and a grant on an app names one") and not the parser's "scope is box or app <app>" | "People and grants"; `box/app.go`, where the box's lines are read | 2 | 5 | 1 | 10; refused, and the message prints the scope and the app it was given. A Caddyfile's `grant` line is parsed first and gets the exact message; only config written as JSON, which no doc asks for, reaches this one |
 
 **Owed** (over the bar, not yet fixed):
 
@@ -1339,8 +1423,9 @@ Three refusals follow, and one honest limit:
   smuggles a newline and an `import` is seen as the tokens it would
   become. The expansion is reimplemented in `box` and pinned against
   `caddyfile.Parse` on fixtures with the environment cleared. The two
-  readings must agree on the host and the signers; a file that reads
-  differently once expanded is refused.
+  readings must agree on the host, the signers, and the `person` and
+  `grant` lines; a file that reads differently once expanded is
+  refused.
 - **The limit.** A placeholder in a *value* expands at reload under the
   service's real environment, which the walk cannot see. If root's own
   environment (`motel.service` and its drop-ins) sets a variable to
@@ -1681,10 +1766,14 @@ residuals).
 | Request | Authorised by | Answer |
 |---|---|---|
 | `POST /` with a bundle and `X-Box-Request-Id` | `deploy_trust` (step 1) | per step 8: 202 `{id, commit, phase: verified}` / 200 with a `no_change` or `applied` result / 422 with a `refused`, `failed`, `rolled_back` or `unknown` result / 504 `{id}`; 400, 409, 413, 415 from admission; 500 when the box cannot check the push |
-| `GET /` | `deploy_trust` | `{"commit", "box_webhook", "sha256", "recipient"}`: `commit` is `applied.json`'s `sha`; `box_webhook` and `sha256` are the installed file's walked host and its digest as read now — the digest step 4's fast path compares, so a console edit since the last apply shows; `recipient` is `/etc/motel/age.pub`'s one line, omitted when that file is absent (a box that has not run `motel box key`), unreadable, or not exactly one X25519 recipient — the last two journaled as `box webhook could not read its state` with `reading` — so a damaged key file never blocks a push of the Caddyfile, and the workflow reads the omission as "this box has no key" (`motel box key` rewrites `age.pub` from the identity). The workflow reads `commit` to bundle `rev-list --first-parent <commit>..HEAD`, and `recipient` to compare with `recipients` ("The box's key"). 409 before `init` (no `applied.json`), and when the installed file does not walk (a console edit that imports, say), which is the operator's to mend, not the box failing; 500 when `applied.json` or the installed file cannot be read |
-| `GET /?result=<id>` | `deploy_trust`, as every request on `/`: the workflow mints a fresh token for each poll | the query must be exactly one `result=<id>`, `<id>` in the id grammar (400). The result, with step 8's status for its phase: `verified` 202; `no_change`, `applied` 200; `refused`, `failed`, `rolled_back`, `unknown` 422. 202 `{"phase":"admitted"}` while a marker exists, or the push's bundle is still in `in/` (its marker never written), and no result does — admitted, no result yet, whatever the marker's age, since only root can tell a push it holds from one it lost, and its next run settles a lost one as `failed` (Retention); 404 when neither exists (swept, never admitted, or answered by the fast path); 500 when a file cannot be read |
+| `GET /` | `deploy_trust`, or a person's token with the viewer role on the box (liveswap/access/DESIGN-access.md) | `{"commit", "box_webhook", "sha256", "recipient"}`: `commit` is `applied.json`'s `sha`; `box_webhook` and `sha256` are the installed file's walked host and its digest as read now — the digest step 4's fast path compares, so a console edit since the last apply shows; `recipient` is `/etc/motel/age.pub`'s one line, omitted when that file is absent (a box that has not run `motel box key`), unreadable, or not exactly one X25519 recipient — the last two journaled as `box webhook could not read its state` with `reading` — so a damaged key file never blocks a push of the Caddyfile, and the workflow reads the omission as "this box has no key" (`motel box key` rewrites `age.pub` from the identity). The workflow reads `commit` to bundle `rev-list --first-parent <commit>..HEAD`, and `recipient` to compare with `recipients` ("The box's key"). 409 before `init` (no `applied.json`), and when the installed file does not walk (a console edit that imports, say), which is the operator's to mend, not the box failing; 500 when `applied.json` or the installed file cannot be read |
+| `GET /?result=<id>` | `deploy_trust` alone, as the push is (a person's token is told 403, "this needs a deploy token of the box"): the workflow mints a fresh token for each poll | the query must be exactly one `result=<id>`, `<id>` in the id grammar (400). The result, with step 8's status for its phase: `verified` 202; `no_change`, `applied` 200; `refused`, `failed`, `rolled_back`, `unknown` 422. 202 `{"phase":"admitted"}` while a marker exists, or the push's bundle is still in `in/` (its marker never written), and no result does — admitted, no result yet, whatever the marker's age, since only root can tell a push it holds from one it lost, and its next run settles a lost one as `failed` (Retention); 404 when neither exists (swept, never admitted, or answered by the fast path); 500 when a file cannot be read |
 | another method on `/` | — | 405 |
 | another path | — | not this handler's; passed on |
+
+No answer of any status above carries a header that names motel, its
+protocol or the box's release, as with liveswap's webhook
+(liveswap/README.md, "Webhook API").
 
 Every answer passes liveswap's response filter (the shape and entropy
 layers) with the protocol's own fields on the safe list — `id`,
@@ -1721,6 +1810,8 @@ says. The workflow's action is in the last column.
 | 404 | — | `no result and no marker for <id>: swept, or never admitted` | handler | after a POST answered 202 or 504, or not answered at all: not yet — keep polling to the 30-minute bound, then red naming `journalctl -u motel -u motel-box-apply`; otherwise fail |
 | 500 | — | `could not read <what>: <error>` / `could not check the push: <error>; nothing changed` | handler | fail; `journalctl -u motel` on the box |
 | 405 / 415 / 413 | — | `method not allowed` / `the bundle is a gzip tarball` / `the bundle is larger than 16 MiB` | handler | fail |
+| 403 | — | `this needs the viewer role on the box` / `this needs a deploy token of the box`, with `needs` and `scope` | handler, when `access.Decide` refuses a person the route's action: a person with no grant on the box asking for its status, any person asking for a push's result (liveswap/access/DESIGN-access.md, "The answers"). The workflow's token never meets it: the box channel's source holds every box action | not the workflow's; `motelctl` says what is needed |
+| 403 | — | `forbidden` | handler, when `access.Decide` refuses with no word for what is needed: the table and the routes falling apart, which no request meets today (liveswap/DESIGN-liveswap.md, "Who may take which action") | fail; a bug in motel |
 | 409 | — | `a push is being admitted; retry in a moment` | handler | retry |
 | 409 | — | `a push is pending: <id>, <age> old` | handler | retry; after 30 min, `journalctl -u motel-box-apply -u motel-box-apply.path`, and if the path unit is `failed`, `systemctl restart motel-box-apply.path` once the journal's cause is cleared, again ten seconds later if that fails |
 | 422 | `refused` | `bundle: <what>` | handler or applier | fail |
@@ -1738,7 +1829,7 @@ says. The workflow's action is in the last column.
 | 422 | `refused` | `the chain from <baseline> to <sha> is longer than 500 commits; run motel box baseline <sha> as root on the box` | both | fail |
 | 422 | `refused` | `this file is for <host2>; this box is <host1>` | both | fail |
 | 422 | `refused` | `this box's file is <recorded path>; the bundle is <path> — a box's file is <host>/Caddyfile at the top of the repository: move it there` (the recorded path is already `<host>/Caddyfile`) / `…: motel init, run again from that directory, records it` (it is not) | both | fail |
-| 422 | `refused` | `the new Caddyfile has no box block` / `… has no signer` / `… has no deploy_trust` / `… has no site with box_webhook` / `… has more than one site with box_webhook` / `… has a box_webhook site whose address is not one bare hostname (<address>)` / `… has a site without braces (<address>)` / `… has box_webhook inside a snippet or named route (<name>); write it in the site` / `… has box_webhook inside <block>; it must stand directly in the site block, where no matcher or nested route can leave / unserved` / `… has box_webhook with arguments (<args>); it takes none, and a matcher would leave / unserved` / `… imports <path>; inline the snippet` / `… has a placeholder where a directive name, a site address or a box line goes (<token>)` / `… reads differently once its placeholders are expanded` / `… is empty` / `… has a global options block that is not the first block` / `… has more than one box block` / ``… has a notify block, which is now `monitor { … }` …`` and ``… has a metrics_store block, which is now a `metrics [<socket path>]` line in the monitor block …``, each naming docs/upgrading.md's "From the notify and metrics_store blocks" / `… has a signer line that is not \`signer <principal> <key-type> <base64>\`` / `… has a bad signer <principal>: <what>` / `… does not tokenize: <lexer error>` / `… does not parse: <what>` / `… drops the key that signed this commit (<principal>); add the new key in one push, let it apply, then remove the old one` | both | fail |
+| 422 | `refused` | `the new Caddyfile has no box block` / `… has no signer` / `… has no deploy_trust` / `… has no site with box_webhook` / `… has more than one site with box_webhook` / `… has a box_webhook site whose address is not one bare hostname (<address>)` / `… has a site without braces (<address>)` / `… has box_webhook inside a snippet or named route (<name>); write it in the site` / `… has box_webhook inside <block>; it must stand directly in the site block, where no matcher or nested route can leave / unserved` / `… has box_webhook with arguments (<args>); it takes none, and a matcher would leave / unserved` / `… imports <path>; inline the snippet` / `… has a placeholder where a directive name, a site address or a box line goes (<token>)` / `… reads differently once its placeholders are expanded` / `… is empty` / `… has a global options block that is not the first block` / `… has more than one box block` / ``… has a notify block, which is now `monitor { … }` …`` and ``… has a metrics_store block, which is now a `metrics [<socket path>]` line in the monitor block …``, each naming docs/upgrading.md's "From the notify and metrics_store blocks" / `… has a signer line that is not \`signer <principal> <key-type> <base64>\`` / `… has a bad signer <principal>: <what>` / `… has a bad person <name>: <what>`, `… has a bad grant <name> <role> <scope>: <what>`, `… has a bad person line: <what>`, `… has a bad grant line: <what>`, `… has a bad person name "<name>" <what>`, `… has a bad grant name "<name>" <what>`, `… has a bad set of key lines: <what>`, `… has a bad set of grant lines: <what>` and `… has a bad <signer or person> <name> and <signer or person> <name> are the same key` (with `, written as <type> and as <type>` when the forms differ) ("People and grants") / `… does not tokenize: <lexer error>` / `… does not parse: <what>` / `… drops the key that signed this commit (<principal>); add the new key in one push, let it apply, then remove the old one` | both | fail |
 | 422 | `refused` | `motel validate: <redacted>` / `motel-backup validate: <redacted>` / `the new Caddyfile does not reach box_webhook on /: <what> answers first` / `… : <what> changes the request first` / `… : <what> may answer first (its <matcher> matcher is decided per request)` / `… : <what> may change the request first (its <matcher> matcher is decided per request)` / `… : request_body's max_size caps the body under 16 MiB first` / `… : request_body's max_size may cap the body under 16 MiB first (its <matcher> matcher is decided per request)` / `… : timeouts's read_timeout cuts an upload that stalls under 10s first` / `… : timeouts's read_min_rate cuts an upload under 64 KiB/s first` / `… : timeouts's read_timeout may cut an upload that stalls under 10s first (its <matcher> matcher is decided per request)` (and the rate's likewise) — `<what>` is a handler's module name (`request_body's set` for that setting), `an earlier site for <host>`, or `a terminal route` (one below a site that ran out of handlers; no directive adapts to one) / `… : box_webhook stands behind a <matcher> matcher decided per request` (the webhook itself under a per-request matcher; nothing the walk accepts adapts to one, the contract is kept anyway) / `… : the <matcher> matcher ahead of it may fail (decided per request)` / `the new Caddyfile's adaptation is larger than 16 MiB` / `motel adapt: did not finish within 2m0s` (the deadline, as validate's; any other end of the adapt child is the box's 500) | handler | fail |
 | 422 | `refused` | `this push changes where the box's server listens (its listen addresses differ from the loaded config's): a push cannot move the address it arrives on; make that change at the console` — fixed words; no address is quoted, since one may hold a value from the service's environment ("The door", in "Reachability") | handler | fail; a deliberate move is made at the console ("At 3am"), after which the push of the same commit is admitted |
 | 422 | `refused` | `the new Caddyfile does not reach box_webhook on /: a listener's protocols include neither h1 nor h2` / `… : the <wrapper> listener wrapper may refuse the connection` / `… : the server's strict_sni_host refuses a request to an IP address, which carries no SNI` / `… : a TLS connection policy for <host> <what>` / `… : a TLS connection policy that may apply to <host> <what> (its <matcher> matcher is decided per connection)` — `<what>` is `requires a client certificate`, `drops the connection`, `offers neither h2 nor http/1.1 by ALPN` or `sets <setting>, which may refuse the handshake` ("The connection", in "Reachability") / `… : the server's max_header_bytes is under 8 KB, the floor for a push's headers and token` / `… : the server's read_header_timeout is under 5s, the floor for a push's handshake and headers` / `… : the server's read_timeout is under 30s, the floor for a push's upload` / `… : the server's read_idle_timeout is under 10s, the floor for a push's upload` / `… : the server's read_min_rate is over 64 KiB/s, the ceiling for a push's upload` / `… : the server's write_timeout is under 5s, the floor for a push's handshake` — fixed words, the value never quoted ("The request limits") | handler | fail; in the file, raise the limit to its floor or above (for `read_min_rate`, lower it to its ceiling or below) |
@@ -1945,7 +2036,12 @@ address a file names.
 
 **`box describe <Caddyfile>`** prints the same walk's reading a fact a
 line — `host <host>`, then `app <name>` and `signer <principal>
-<key-type> <base64>`, each kind in file order — for the template's `make check`,
+<key-type> <base64>`, each kind in file order; with a `person` or
+`grant` line in the box block, then `person <name> <key-type>
+SHA256:<fingerprint>` for each key a person's token may be signed with
+(ending ` signer` for a signer line's key), `grant <name> viewer
+<scope> [from …]` for each grant, and a `warning <text>` line for each
+warning of "People and grants" — for the template's `make check`,
 which prints its line for each box from it and compares the boxes'
 signer keys. Same refusals; nothing on the box runs it. With a
 `secrets/` beside the file it also reads that directory, as the

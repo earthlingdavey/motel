@@ -90,28 +90,47 @@ func (l *Limiter) Authenticate(r *http.Request, verifiers []Verifier, logger *za
 		}
 	}
 	if refused != nil {
-		// What a failure costs in the journal is the limiter's call
-		// (see Limiter): the count of lines, and — the scope and the
-		// refusal being request input, both logged bounded — the size
-		// of each. The refusal is for this journal only: the response
-		// stays the same flat 401 for every reason and every verdict, so
-		// a caller learns neither which apps exist, nor what a source
-		// pins, nor whether its failures are still being logged.
-		v := l.fail(key)
-		if v.log {
-			logger.Warn("webhook auth failed",
-				append(scopeField(nil, scopeKey, scopeValue), zap.String("remote", key), zap.String("refused", refused.Error()))...)
-		}
-		if v.trippedKey {
-			logger.Warn("webhook auth failures from this address throttled: further ones are not logged",
-				zap.String("remote", key), zap.Int("failures", FailBudget), zap.Duration("window", FailWindow))
-		}
-		if v.trippedGlobal {
-			logger.Warn("webhook auth failures throttled process-wide: further ones are not logged",
-				zap.Int("failures", FailGlobalBudget), zap.Duration("window", FailWindow))
-		}
-		return Identity{}, &Refusal{Status: http.StatusUnauthorized, Message: unauthorizedMessage}
+		return Identity{}, l.refuse(key, logger, scopeKey, scopeValue, refused.Error())
 	}
 	l.clear(key)
 	return who, nil
+}
+
+// Refuse is the preamble's refusal of a request some other check
+// refused: a person's token (liveswap's AdmitPerson). It costs the
+// address and the journal exactly what a refused deploy token costs,
+// and is answered with the same flat 401. refused is the journal's
+// reason; fields, the key and the person when the refusing check knew
+// them, go on the line beside it, and nowhere else.
+func (l *Limiter) Refuse(r *http.Request, logger *zap.Logger, scopeKey, scopeValue, refused string, fields ...zap.Field) *Refusal {
+	return l.refuse(clientKey(r), logger, scopeKey, scopeValue, refused, fields...)
+}
+
+// Admit is the preamble's acceptance of a request some other check
+// verified: the address's failures are forgotten, as for a deploy
+// token Authenticate accepts.
+func (l *Limiter) Admit(r *http.Request) { l.clear(clientKey(r)) }
+
+func (l *Limiter) refuse(key string, logger *zap.Logger, scopeKey, scopeValue, refused string, fields ...zap.Field) *Refusal {
+	// What a failure costs in the journal is the limiter's call (see
+	// Limiter): the count of lines, and — the scope and the refusal
+	// being request input, both logged bounded — the size of each. The
+	// refusal is for this journal only: the response stays the same flat
+	// 401 for every reason and every verdict, so a caller learns neither
+	// which apps exist, nor what a source pins, nor whether its failures
+	// are still being logged.
+	v := l.fail(key)
+	if v.log {
+		line := append(scopeField(nil, scopeKey, scopeValue), zap.String("remote", key), zap.String("refused", refused))
+		logger.Warn("webhook auth failed", append(line, fields...)...)
+	}
+	if v.trippedKey {
+		logger.Warn("webhook auth failures from this address throttled: further ones are not logged",
+			zap.String("remote", key), zap.Int("failures", FailBudget), zap.Duration("window", FailWindow))
+	}
+	if v.trippedGlobal {
+		logger.Warn("webhook auth failures throttled process-wide: further ones are not logged",
+			zap.Int("failures", FailGlobalBudget), zap.Duration("window", FailWindow))
+	}
+	return &Refusal{Status: http.StatusUnauthorized, Message: unauthorizedMessage}
 }

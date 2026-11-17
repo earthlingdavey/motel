@@ -1247,6 +1247,7 @@ The response is synchronous:
 | 409 | A deploy is already running for this app (retry) |
 | 413 | Pushed upload exceeded `max_artifact_size`, or a JSON body exceeded 64 KiB |
 | 422 | Bad request — missing/invalid version, the running version asked for again without a matching digest (see [Relaunching the running version](#relaunching-the-running-version)), **version already exists** (versions are immutable — deploy a new version or roll back to relaunch it), a rollback target no longer on disk, a pre-flight refusal (the command or `pre_start` does not resolve inside the sandbox view, or is an executable built for another machine — the body names the box's architecture and the `runs-on` to build on — or a 32-bit one, which names the architecture to build for), or (URL path) an artifact url refused by `artifact_allowlist` (host, path, port, or an undeclared query parameter; the body names exactly what tripped and how the entry would declare it) |
+| 503 with `Retry-After` | motel has just started, or a reload has just added this app, and it is not loaded yet (`motel is starting and has not loaded this app yet; retry after 1 s`): nothing was deployed and nothing failed. The token is good; send the request again after that many seconds, as the templates' `deploy.sh` does once |
 | 5xx | Deploy failed — **the old version, if there was one, is still serving**; body says why. An artifact over `max_artifact_entries` or the decompressed byte cap fails here, before anything is written |
 
 Because the response is synchronous through the whole pipeline, the
@@ -1363,6 +1364,11 @@ keys is part of the shape, and `liveswap/testdata/wire` pins every body byte
 for byte. A body the filter changed gains a top-level `redacted_env`
 (see [Secrets and logs](#secrets-and-logs)), which only `DeployResult`
 has a field for.
+
+**No header names motel.** No answer, to any caller, carries a header
+that names motel, its protocol or the release the box runs:
+`GET /_motel/whoami`'s `version` and `protocol` do, to a declared
+person who asks ([access/DESIGN-access.md](access/DESIGN-access.md)).
 
 ### Streaming the deploy
 

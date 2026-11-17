@@ -67,3 +67,36 @@ application/x-ndjson OK
 {"error":"response withheld: the app's env_file could not be read, so its values are unknown to the filter (open <root>/missing.env: no such file or directory)","event":"phase","phase":"downloading"}
 {"error":"response withheld: the app's env_file could not be read, so its values are unknown to the filter (open <root>/missing.env: no such file or directory)","event":"phase","phase":"extracting"}
 {"error":"response withheld: the app's env_file could not be read, so its values are unknown to the filter (open <root>/missing.env: no such file or directory)","event":"done","http_status":500}
+# GET /_motel/whoami as a viewer of demo
+application/json OK
+{"name":"alice","key":"<fingerprint>","roles":[{"role":"viewer","scope":"app:demo"}],"box":"deploy.example.test","version":"","protocol":1,"token_expires_at":"<time>"}
+# GET /_motel/apps as a viewer of demo
+application/json OK
+{"apps":[{"name":"demo","summary":{"phase":"idle","running":true,"current_version":"v3","newest_deploy":{"version":"v5","status":"failed","phase":"extracting","deployed_by":"local:<key>","started_at":"<time>","finished_at":"<time>"}}}]}
+# GET /_motel/apps as a person with no grant
+application/json OK
+{"apps":[]}
+# GET an app no grant covers, as a person
+application/json Forbidden
+{"error":"this needs the viewer role on this app","needs":"viewer","scope":"app"}
+# GET /_motel/whoami with a deploy token
+application/json Forbidden
+{"error":"this needs a token signed by a declared key","needs":"key","scope":"box"}
+# GET a path under /_motel/ that is no route
+application/json Not Found
+{"error":"not found"}
+# GET /_motel/apps as a viewer of the box
+application/json OK
+{"apps":[{"name":"demo","summary":{"phase":"idle","running":true,"current_version":"v3","newest_deploy":{"version":"v5","status":"failed","phase":"extracting","deployed_by":"local:<key>","started_at":"<time>","finished_at":"<time>"}}}]}
+# GET /_motel/apps as a viewer of demo, the env_file unreadable
+application/json OK
+{"apps":[{"name":"demo","error":"response withheld: the app's env_file could not be read, so its values are unknown to the filter (open <root>/missing.env: no such file or directory)"}]}
+# GET while v6 downloads
+application/json OK
+{"app":"demo","phase":"extracting","current_version":"v3","socket":"<root>/demo/run/<nonce>/app.sock","pid":4242,"command":["./server","--version","v3"],"running":true,"deploying":{"version":"v6","deployed_by":"github:example/demo@refs/heads/main","started_at":"<time>","phases":[{"name":"downloading","started_at":"<time>","seconds":<s>},{"name":"extracting","started_at":"<time>","seconds":<s>}]},"deploys":[{"version":"v5","status":"failed","phase":"extracting","deployed_by":"local:<key>","started_at":"<time>","finished_at":"<time>"},{"version":"v4","status":"failed","phase":"starting","deployed_by":"local:<key>","started_at":"<time>","finished_at":"<time>"},{"version":"v3","status":"succeeded","deployed_by":"local:<key>","started_at":"<time>","finished_at":"<time>"},{"version":"v1","status":"succeeded","deployed_by":"local:<key>","started_at":"<time>","finished_at":"<time>"}],"last_deploy":{"version":"v5","status":"failed","error":"env_file: open <root>/missing.env: no such file or directory","phase":"extracting","deployed_by":"local:<key>","started_at":"<time>","finished_at":"<time>","artifact_entries":0,"artifact_bytes":0,"phases":[{"name":"downloading","started_at":"<time>","seconds":<s>},{"name":"extracting","started_at":"<time>","seconds":<s>}]},"available_versions":["v3","v1"],"metrics":{"window":"24h","at":"<time>","memory_bytes":{"now":30,"max":40},"memory_max_bytes":100,"cpu_cores":{"avg_5m":0.5,"avg":0.25},"requests":{"total":10,"per_second":0.000116,"by_class":{"2xx":9,"5xx":1},"5xx_share":0.1,"p50_ms":1.5,"p95_ms":20,"cache_hit_share":0.5},"error":"the metrics store did not answer"}}
+# GET /_motel/apps as a viewer of demo while v6 downloads
+application/json OK
+{"apps":[{"name":"demo","summary":{"phase":"extracting","running":true,"current_version":"v3","newest_deploy":{"version":"v5","status":"failed","phase":"extracting","deployed_by":"local:<key>","started_at":"<time>","finished_at":"<time>"},"deploying":"v6"}}]}
+# GET before liveswap's Start installed the app, past the wait
+application/json Service Unavailable
+{"error":"motel is starting and has not loaded this app yet; retry after 1 s"}

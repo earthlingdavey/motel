@@ -103,13 +103,16 @@ type fakeHandle struct {
 	// handle's worst case (the unit unreadable after the failure).
 	caps        resourceCaps
 	capsUnknown bool
-	mu          sync.Mutex
+	// unit is the unit's name, when a test gives the handle one: the
+	// real handle's is motel-<app>.<version>.<nonce>.service.
+	unit string
+	mu   sync.Mutex
 }
 
 func (h *fakeHandle) state() handleState {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	return handleState{PID: 4242, Command: h.argv, Caps: h.caps, CapsUnknown: h.capsUnknown}
+	return handleState{PID: 4242, Command: h.argv, Unit: h.unit, Caps: h.caps, CapsUnknown: h.capsUnknown}
 }
 
 func (h *fakeHandle) isAlive() bool {

@@ -18,6 +18,7 @@ import (
 
 	"github.com/smallhoursorg/motel/box/proof"
 	"github.com/smallhoursorg/motel/liveswap"
+	"github.com/smallhoursorg/motel/liveswap/access"
 	"github.com/smallhoursorg/motel/liveswap/deploytrust"
 	"github.com/smallhoursorg/motel/liveswap/wire"
 )
@@ -37,11 +38,15 @@ func init() {
 // Another method on `/` is 405 before anything else. Every GET and
 // POST on `/` is authenticated first, on the limiter liveswap's
 // webhook uses, so an unauthenticated caller gets the same flat 401 a
-// deploy host gives. Every body passes liveswap's response filter.
+// deploy host gives; the route's action is then put to access.Decide
+// (routes). Every body passes liveswap's response filter.
 type Handler struct {
 	app     *App
 	logger  *zap.Logger
 	limiter *deploytrust.Limiter
+	// rate is the rate per person, access.SharedRate; nil in a test
+	// that does not ask for one.
+	rate *access.Rate
 
 	// Where the handler reads: installedFile, exchangeDir and
 	// secretsDir, set in Provision; a test's temporary files otherwise.
@@ -82,6 +87,7 @@ func (h *Handler) Provision(ctx caddy.Context) error {
 	}
 	h.app = app.(*App)
 	h.limiter = deploytrust.Shared()
+	h.rate = access.SharedRate()
 	h.installed, h.dir, h.secrets, h.agePub = installedFile, exchangeDir, secretsDir, agePubFile
 	h.verifier = &proof.Verifier{} // RunAs 0: as the motel uid, in the service's PrivateTmp
 	h.validator = newChildValidator(h.x("stage"))
@@ -101,21 +107,94 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddyht
 	if r.URL.Path != "/" {
 		return next.ServeHTTP(w, r)
 	}
-	// A query is present when the target has a `?`, an empty one
-	// included (ForceQuery): `GET /?` is a result poll with no id, not
-	// the baseline.
-	queried := r.URL.RawQuery != "" || r.URL.ForceQuery
-	switch {
-	case r.Method == http.MethodGet && !queried:
-		return h.status(w, r)
-	case r.Method == http.MethodGet:
-		return h.result(w, r)
-	case r.Method == http.MethodPost:
-		return h.push(w, r)
-	default:
+	rt := findRoute(r)
+	if rt == nil {
 		w.Header().Set("Allow", "GET, POST")
 		return respond(w, http.StatusMethodNotAllowed, errorBody(msgMethod))
 	}
+	// A person's path is open only on a box whose registry lists a key,
+	// as on liveswap's webhook: on one that admits no one a request in
+	// the Motel scheme takes the deploy token's path, where a Motel
+	// header alone is no bearer token.
+	if h.app.Access().Keys() > 0 && access.HasPersonScheme(r.Header.Values("Authorization")) {
+		return h.servePerson(w, r, rt)
+	}
+	ident, ok, err := h.authenticate(w, r, rt.journal)
+	if !ok {
+		return err
+	}
+	// A token the box block's deploy_trust accepted is the box
+	// channel's source, which Decide allows every box action: it
+	// refuses only if the table and the routes fall apart, and then
+	// refuses rather than serves.
+	if err := decide(access.Principal{Kind: access.BoxChannel}, rt.action, ""); err != nil {
+		return respond(w, http.StatusForbidden, errorBody("forbidden"))
+	}
+	return rt.serve(h, w, r, ident)
+}
+
+// servePerson answers a request in the person token's scheme on `/`:
+// the token judged against this load's registry (liveswap.AdmitPerson),
+// on the limiter and with the journal name the deploy token's preamble
+// uses, then the route's action put to Decide with the person.
+func (h *Handler) servePerson(w http.ResponseWriter, r *http.Request, rt *route) error {
+	gate := liveswap.PersonGate{Registry: h.app.Access(), Limiter: h.limiter, Rate: h.rate, Logger: h.logger}
+	p, ok, err := liveswap.AdmitPerson(w, r, gate, "box_request", rt.journal, func(code int, body any) error { return respond(w, code, body) })
+	if !ok {
+		return err
+	}
+	if err := decide(p.Principal, rt.action, ""); err != nil {
+		return respond(w, http.StatusForbidden, liveswap.ForbiddenBody(err))
+	}
+	return rt.serve(h, w, r, deploytrust.Identity{})
+}
+
+// decide is access.Decide, a variable so a test can see what the
+// handler asks it and make it refuse.
+var decide = access.Decide
+
+// query is the shape of a route's query.
+type query int
+
+const (
+	anyQuery query = iota // with a query or without
+	noQuery               // no `?` in the target
+	aQuery                // a `?`, an empty query included
+)
+
+// route is one row of box_webhook's route table, on the path `/`: a
+// method, the shape of its query, the action Decide is asked about,
+// the name the preamble's journal lines give the request, and the
+// function that answers.
+type route struct {
+	method  string
+	query   query
+	action  access.Action
+	journal string
+	serve   func(h *Handler, w http.ResponseWriter, r *http.Request, ident deploytrust.Identity) error
+}
+
+// routes is every row; at most one matches a request. Another method
+// has none: the 405, before authentication.
+var routes = []route{
+	{http.MethodGet, noQuery, access.BoxStatus, "status", (*Handler).status},
+	{http.MethodGet, aQuery, access.BoxPushResult, "result", (*Handler).result},
+	{http.MethodPost, anyQuery, access.BoxPush, "push", (*Handler).push},
+}
+
+// findRoute is the request's row, or nil when its method has none. A
+// query is present when the target has a `?`, an empty one included
+// (ForceQuery): `GET /?` is a result poll with no id, not the
+// baseline.
+func findRoute(r *http.Request) *route {
+	queried := r.URL.RawQuery != "" || r.URL.ForceQuery
+	for i := range routes {
+		rt := &routes[i]
+		if rt.method == r.Method && (rt.query == anyQuery || (rt.query == aQuery) == queried) {
+			return rt
+		}
+	}
+	return nil
 }
 
 // authenticate is the preamble (deploytrust): ok=false means the
@@ -133,10 +212,7 @@ func (h *Handler) authenticate(w http.ResponseWriter, r *http.Request, route str
 // the host and digest of the file it runs, read now — the digest a
 // push's no_change fast path compares (step 4) — so a console edit since the
 // last apply shows; and the box's key for secrets, when it has one.
-func (h *Handler) status(w http.ResponseWriter, r *http.Request) error {
-	if _, ok, err := h.authenticate(w, r, "status"); !ok {
-		return err
-	}
+func (h *Handler) status(w http.ResponseWriter, _ *http.Request, _ deploytrust.Identity) error {
 	base, file, what, err := h.readState()
 	switch {
 	case what == readingBaseline && errors.Is(err, fs.ErrNotExist):

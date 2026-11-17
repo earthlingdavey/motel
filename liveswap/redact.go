@@ -64,7 +64,7 @@ import (
 // token the length-aware bar still misses (about half at 20 to 22
 // characters), all pass.
 //
-// Four rules hold across the layers and every writer of a body, and
+// Six rules hold across the layers and every writer of a body, and
 // the code is judged against them, not the other way round:
 //
 //  1. No safe string ever equals a known value. A safe string exempts
@@ -78,7 +78,13 @@ import (
 //     strings the filtered body already held). The stream's spliced
 //     event, phase and http_status fields (handler.go) are constants
 //     and a phase word. Nothing else appends to a body after that
-//     pass.
+//     pass. A body about several apps (GET /_motel/apps) is made of
+//     rows, and each row's summary is a body here: filtered by its own
+//     app's filter, then given the app's name, the route's own word,
+//     and put in the list, which adds its punctuation alone; a row the
+//     filter withheld is the name and the filter's sentence. So no
+//     filter is ever given two apps' values, and the outcome pairs of
+//     rule 3 are counted per row.
 //  3. The outcome vocabulary is structural, never textual. A pair
 //     "status":"<word>", "phase":"<word>" or "name":"<word>", the
 //     word one of the deploy vocabulary (app.go), is the one place
@@ -96,6 +102,52 @@ import (
 //     current_version (ensureRunning), a release directory's name
 //     (listReleases), a record's (recordHead). Release GC enumerates
 //     directory entries by name; that is not a use of a version.
+//  5. The app's own name stands where a JSON body names the app by
+//     it. An env_file value that is the name as written (DB_NAME=<app>,
+//     a common setup) is left in the pair "app":"<name>" (holdOwnName),
+//     as rule 3 leaves an outcome word in its pair: the name is in the
+//     request's path and in the config, and a status whose app is a
+//     marker names no app. In a JSON body alone, where a quote inside a
+//     string is escaped and the pair can only be the body's own field;
+//     plain text (Redact) is filtered as if there were no rule. Only
+//     that value: an encoding of a value, or a URL's password, that
+//     happens to equal the name is replaced in the pair too. The value
+//     is replaced everywhere else, as any is: in text, inside a path,
+//     under another key. A value that holds the name inside it is a
+//     longer form, replaced whole before the name is looked at
+//     (longest first). The app list's rows name their app outside the
+//     filter (motel_routes.go).
+//  6. What a request itself sent is never run past the app's values
+//     when the body holds nothing else of the app's. Layer 1 replaces
+//     a value wherever a body holds it and names the key, so a body
+//     that echoes the caller's text through the app's filter answers
+//     a question the caller may not ask: "is this one of the app's
+//     values?", for the value as written, inside a longer string, in
+//     base64 or hex, or a URL value's password alone. A caller who may
+//     only read could try values until a marker came back. So a body
+//     made only of the handler's own words and this request's text is
+//     written through a filter that knows no value (NewRedactor with
+//     none; the shape and entropy layers still run, and a version
+//     asked for is a safe string, as in the status). Today those are
+//     the answers of a read that reads nothing of the app's, each of
+//     which a person with the viewer role can ask for: the 404 of
+//     GET /<app>?deploy=<version> for a version with no record, and
+//     the 422 of a query that does not parse (handler.go). A body
+//     that only might hold something of the app's does not qualify:
+//     the 500 of that read carried the system's error, which named the
+//     version asked for but also the app's directory, and an env_file
+//     value may equal that. With the error in it the 500 was no such
+//     body; it now says one fixed sentence, which is, and the journal
+//     has the error.
+//     The exemption is the body's, never the string's: a string is not
+//     exempt because a request named it (rule 1), and a body that
+//     holds one byte the app wrote, or text an earlier request stored
+//     (a deployed version, in a status or a record), passes the app's
+//     filter whole. A deploy's refusals that echo its version or URL
+//     (a version that exists, a rollback with no release) still pass
+//     the app's filter: only a deploy token reaches them, and it can
+//     read the app's environment by deploying
+//     (DESIGN-threat-model.md).
 const (
 	secretMinLen  = 8
 	entropyMinLen = 20
@@ -135,6 +187,15 @@ type secretForm struct {
 	// an outcome (rule 3): the word where it is a pair's, or on its
 	// own. Nil for every other form.
 	outside *regexp.Regexp
+	// inBody is outside for a JSON body when the text is the app's own
+	// name as an env_file value holds it (rule 5): it matches the text
+	// everywhere but its "app" pair, and an outcome word's pairs too.
+	// Used in a body alone (redactJSON); text is filtered by outside.
+	inBody *regexp.Regexp
+	// literal: some key's value is this text as written, which rule 5
+	// asks of the name; a form derived from a value (an encoding, a
+	// URL's password) is not.
+	literal bool
 	keys    []string
 	marker  string
 }
@@ -193,10 +254,13 @@ func NewRedactor(envFile []string, safe []string) *Redactor {
 			}
 			sf := byText[form]
 			if sf == nil {
-				sf = &secretForm{text: form, outside: outcomeOutside[form]}
+				sf = &secretForm{text: form, outside: outcomeOutside[form], literal: true}
 				byText[form] = sf
 				r.secrets = append(r.secrets, sf)
 			}
+			// Literal while every key it came from holds it as written:
+			// shared with another value's encoding, it is that too.
+			sf.literal = sf.literal && form == value
 			if !contains(sf.keys, key) {
 				sf.keys = append(sf.keys, key)
 			}
@@ -390,9 +454,11 @@ var entropyTokenRe = regexp.MustCompile(`[A-Za-z0-9+=_-]{20,}`)
 // replaceKnown is layer 1 on its own: every known form replaced by its
 // marker, and the keys found added to seen. A form that is a bare
 // word of the outcome vocabulary is replaced everywhere but where it
-// stands as an outcome (rule 3). Markers contain no form, so a second
-// pass over its own output changes nothing.
-func (r *Redactor) replaceKnown(s string, seen map[string]bool) string {
+// stands as an outcome (rule 3), and in a JSON body (inBody) the
+// app's own name everywhere but its "app" pair (rule 5). Markers
+// contain no form, so a second pass over its own output changes
+// nothing.
+func (r *Redactor) replaceKnown(s string, seen map[string]bool, inBody bool) string {
 	if r == nil {
 		return s
 	}
@@ -401,11 +467,15 @@ func (r *Redactor) replaceKnown(s string, seen map[string]bool) string {
 			continue
 		}
 		found := true
-		if sec.outside == nil {
+		pattern := sec.outside
+		if inBody && sec.inBody != nil {
+			pattern = sec.inBody
+		}
+		if pattern == nil {
 			s = strings.ReplaceAll(s, sec.text, sec.marker)
 		} else {
 			found = false
-			s = sec.outside.ReplaceAllStringFunc(s, func(m string) string {
+			s = pattern.ReplaceAllStringFunc(s, func(m string) string {
 				if m[0] == '"' { // the pair, left as it is
 					return m
 				}
@@ -481,16 +551,17 @@ func reportedKeys(seen map[string]bool) []string {
 // the box webhook writes somewhere other than a response body.
 func (r *Redactor) Redact(s string) (string, []string) {
 	seen := map[string]bool{}
-	s = r.filter(s, seen)
-	s = r.replaceKnown(s, seen)
+	s = r.filter(s, seen, false)
+	s = r.replaceKnown(s, seen, false)
 	return s, reportedKeys(seen)
 }
 
 // filter is layers 1 to 4 in order, with the safe strings held out of
 // the heuristic layers: a version shaped like a provider token, or a
 // path with a generated-looking segment, comes back as it went in.
-func (r *Redactor) filter(s string, seen map[string]bool) string {
-	s = r.replaceKnown(s, seen)
+// inBody is whether s is a JSON body (replaceKnown).
+func (r *Redactor) filter(s string, seen map[string]bool, inBody bool) string {
+	s = r.replaceKnown(s, seen, inBody)
 	s, restore := r.protectSafe(s)
 	s = r.heuristics(s)
 	return restore(s)
@@ -577,6 +648,31 @@ func (r *Redactor) maskGenerated(tok string) string {
 	return tok
 }
 
+// holdOwnName is rule 5: when an env_file value is the app's name as
+// written, a JSON body's pair "app":"<name>" is left standing, and the
+// value is replaced everywhere else. In a JSON body only: there a
+// quote inside a string is escaped, so the pair can only be the body's
+// own field, never text an app wrote; plain text (Redact) has no such
+// guarantee and is filtered as if there were no rule. Only the value
+// itself: an encoding of a value, or a URL's password, equal to the
+// name is replaced as before. Called by the app's filter (redactorFor)
+// with its name.
+func (r *Redactor) holdOwnName(name string) {
+	if r == nil || name == "" {
+		return
+	}
+	q := regexp.QuoteMeta(name)
+	pairs := `"app":"` + q + `"`
+	if outcomeOutside[name] != nil {
+		pairs += `|"(?:status|phase|name)":"` + q + `"`
+	}
+	for _, sf := range r.secrets {
+		if sf.text == name && sf.literal {
+			sf.inBody = regexp.MustCompile(pairs + `|` + q)
+		}
+	}
+}
+
 // redactJSON filters a marshalled JSON body and, when a known value
 // was found, adds a `redacted_env` field naming the keys. Whatever is
 // finally sent — the filtered body or a fallback — gets a last
@@ -609,11 +705,11 @@ func (r *Redactor) redactJSON(raw []byte) string {
 		if err != nil {
 			return `{"error":"[#0]"}`
 		}
-		body = r.filter(string(b), seen)
+		body = r.filter(string(b), seen, true)
 		if !json.Valid([]byte(body)) {
 			body = `{"error":"response withheld: the app's env_file could not be read"}`
 		}
-		body = r.replaceKnown(body, seen)
+		body = r.replaceKnown(body, seen, true)
 	} else {
 		body = r.filterBody(string(raw), seen)
 	}
@@ -625,7 +721,7 @@ func (r *Redactor) redactJSON(raw []byte) string {
 	if len(seen) > 0 || strings.Contains(body, `"redacted_env"`) {
 		names := reportedKeys(seen)
 		for i, n := range names {
-			names[i] = r.replaceKnown(n, seen)
+			names[i] = r.replaceKnown(n, seen, false) // a key name, not a body
 		}
 		body = withField(body, "redacted_env", names)
 	}
@@ -641,11 +737,11 @@ func (r *Redactor) redactJSON(raw []byte) string {
 // outcomes.
 func (r *Redactor) filterBody(raw string, seen map[string]bool) string {
 	outcomes := len(outcomePairRe.FindAllStringIndex(raw, -1))
-	body := r.filter(raw, seen)
+	body := r.filter(raw, seen, true)
 	if !json.Valid([]byte(body)) {
-		return r.replaceKnown(`{"error":"response withheld: a redacted value overlapped the response's own structure"}`, seen)
+		return r.replaceKnown(`{"error":"response withheld: a redacted value overlapped the response's own structure"}`, seen, true)
 	}
-	body = r.replaceKnown(body, seen)
+	body = r.replaceKnown(body, seen, true)
 	// Every outcome the body had is still a word (rule 3), or the body
 	// is withheld: a value that is part of a word ("ucceeded") was
 	// replaced inside it, and a body whose status is not a word of the
@@ -653,7 +749,7 @@ func (r *Redactor) filterBody(raw string, seen map[string]bool) string {
 	// find, and none moves one next to an outcome key, so nothing can
 	// make a pair; the count can only fall.
 	if len(outcomePairRe.FindAllStringIndex(body, -1)) < outcomes {
-		return r.replaceKnown(`{"error":"response withheld: a redacted value overlapped the response's own outcome"}`, seen)
+		return r.replaceKnown(`{"error":"response withheld: a redacted value overlapped the response's own outcome"}`, seen, true)
 	}
 	return body
 }

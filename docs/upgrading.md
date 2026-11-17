@@ -45,7 +45,7 @@ curl -fsSLO "$base/$deb" && curl -fsSLO "$base/checksums.txt" &&
 
 A candidate sorts below the release it leads to, so if `apt` says it
 will downgrade motel, answer `n` and stop here: the box already runs
-that release or a later one.
+a version that sorts above the candidate.
 
 The box's repository then needs its Actions variable
 `MOTEL_VERSION` set to the same `<tag>`: its workflow
@@ -89,10 +89,37 @@ Deploys are zero-downtime; upgrading motel is not, because the
 process listening on 80 and 443 is the one being replaced. On stop it
 closes its listeners at once and lets the requests already in flight
 finish, and the new process cannot listen until the old one has
-exited. New visitors get connection refused for that whole window,
+exited. New visitors get connection refused for that whole window
+(or, as the old process stops, a connection closed with no answer),
 sometimes followed by a few dozen milliseconds of 503s while the new
-process picks the apps back up. A crash has a window of its own:
-whatever was in flight is cut off, systemd waits a second
+process picks the apps back up. A deploy sent in those first moments
+waits for motel to load its app, at most 5 seconds; past that it is
+answered 503 with `Retry-After: 1`, and the deploy script sends it once
+more. That holds for a token a `local` key signed, and for an issuer's
+token whose signing keys the new process has already fetched. It
+fetches them in the background as it starts and no token waits on that,
+so the first issuer's token after a restart (a GitHub Actions deploy's)
+can still be answered 401 once; the script sends it again 3 seconds
+later, which goes through once the keys are in.
+That is this release's script. A `scripts/deploy.sh` copied from a
+template of v0.4.0 to v0.7.0 sends a request once more only after a
+401, and one from an earlier template never, so after the 503 that
+run fails. `diff` the copy against this release's
+`examples/node/scripts/deploy.sh` (or `examples/deno/`'s): with no
+change of your own in it, copy the template's over it; with some,
+carry across `boxstarting()` and the `elif` branch of `send()` that
+calls it, or, in a copy with no `send()` (before v0.4.0), make your
+changes again in the template's. The template reads `MOTEL_` where a
+copy from before v0.6.0 reads `HOTSERVE_` (`MOTEL_URL` for
+`HOTSERVE_URL`, and so on), and its audience defaults to `motel`, not
+`hotserve`: before the template's goes in over such a copy, rename
+each `HOTSERVE_` to `MOTEL_` in the workflow file and in the
+repository variables (`HOTSERVE_URL`, and `HOTSERVE_RUNS_ON` if set)
+and anywhere else you set one, and unless the app's `deploy_trust`
+says `audience motel`, add `MOTEL_AUDIENCE: <its audience>` to the
+workflow's `env:`.
+A crash has a window of its own: whatever was in flight is cut off,
+systemd waits a second
 (`RestartSec=1s`) and starts motel again, and the apps are picked
 back up the same way — a little over a second, plus the start itself.
 How long a planned restart's window lasts:
@@ -142,10 +169,36 @@ Before you upgrade:
   rejects would stop the upgraded motel from starting, and the site
   would stay down until you fixed the config or went back (systemd
   retries a crash, not a refusal). A build with a `.deb` and no
-  `.tar.gz`, such as one of a feature branch, is checked the same way
-  from the `.deb`, unpacked and not installed:
+  `.tar.gz`, such as one of a feature branch, has no `checksums.txt`
+  either. Take its sha256 where it was built
+  (`sha256sum motel_<version>_<arch>.deb`, `<arch>` what
+  `dpkg --print-architecture` prints on the box), copy the `.deb` to
+  `/var/local/motel`, and before anything else check it in that
+  directory:
+  `cd /var/local/motel && echo '<that sha256>  motel_<version>_<arch>.deb' | sha256sum -c`
+  must say `OK`. Its config is checked the same way, from the `.deb`,
+  unpacked and not installed, into a directory that is not there yet
+  (`dpkg-deb -x` adds to one an earlier upgrade left, so
+  `rm -rf /root/motel-new` first):
   `dpkg-deb -x motel_<version>_$(dpkg --print-architecture).deb /root/motel-new`,
   then `/root/motel-new/usr/bin/motel validate --config /etc/motel/Caddyfile`.
+  After the checks below, it installs from `/var/local/motel` with
+  `apt install ./motel_<version>_<arch>.deb`. Its version is the one
+  `make package VERSION=<version>` was given, a `-` turned to `~`
+  (`0.7.1-x` builds `0.7.1~x`); with none, a tagged commit's tag, or
+  `0.0.0~dev`, below every release, for an untagged one. dpkg
+  sorts a `~` below everything, the version's end included, and two
+  builds of one version by what follows it, so `0.7.1~clientapp2` is an
+  upgrade over `0.7.0` and `0.7.1~clientapp1`, and a downgrade over
+  `0.7.1` and `0.7.1~rc1`. apt asks before a downgrade unless given
+  `--allow-downgrades`: answer `n` and stop, since taking a box below
+  what it runs is a decision of its own; if it is the one you mean,
+  the bullet on the way back below installs with that flag. The way
+  back is the `.deb` the box was installed from, whose version
+  `dpkg-query -W -f='${Version}\n' motel` prints before the install (a
+  candidate's file has a `.` where that has a `~`:
+  `motel_0.7.1.rc1_<arch>.deb`): keep it in `/var/local/motel`, and the
+  bullet on it below puts it back.
   To see why an upgraded motel will not start, read `journalctl -u motel`
   and run `motel validate --config /etc/motel/Caddyfile`; do not run
   `motel run` by hand on the box: while motel runs, a second one takes
@@ -158,23 +211,54 @@ Before you upgrade:
   the install makes `/var/lib/liveswap` motel's again. So such a box,
   with the liveswap root the package makes, is refused at every start,
   the install's own included, and serves nothing until someone at the
-  console mends it. `systemctl show -p User --value motel` prints
-  `motel` on a packaged box, and anything else means the unit was
-  edited (`root`, `0` or nothing at all: to run as root), by a drop-in
-  from `systemctl edit motel` (not `10-user-manager.conf`, the
-  package's own: the revert below removes it too, and the install
-  writes it back) or a copy of the unit in `/etc/systemd/system/`.
-  Just before the install, run `systemctl revert motel`, which drops
-  every local edit of the unit; a copy also hides every later
-  release's changes to the unit, so revert that one. To keep a
-  drop-in's other lines instead, set `User=motel` and `Group=motel` in
-  it and run `systemctl daemon-reload`. Either way, the `show` must
-  then print `motel`, and `systemctl is-enabled motel` `enabled`.
-  `systemctl cat motel` prints each file still in play, among them any
-  drop-in in `/etc/systemd/system/service.d/`, which every service
-  reads and the revert leaves. A box that ran motel as root may also
-  hold files of root's where motel writes, Caddy's certificates in
-  `/var/lib/motel/caddy` among them: before the install,
+  console mends it. `systemctl show -p User -p Group motel` prints
+  `User=motel` and `Group=motel` on a packaged box; anything else means
+  the unit was edited (an empty `User=` runs it as root) or masked
+  (both empty). `systemctl cat motel` shows what is there: each file in
+  play under a `# <path>` line, first the packaged unit
+  `/usr/lib/systemd/system/motel.service` or, in its place, a copy that
+  hides it, then the drop-ins, the package's own
+  `motel.service.d/10-user-manager.conf` among them; for a masked unit,
+  only that it is masked: `systemctl unmask motel` first
+  (`systemctl unmask --runtime motel` when `systemctl is-enabled motel`
+  says `masked-runtime`), then `show` and `cat` again, since the mask
+  hid every file below. Read the `cat` even when `show` prints `motel`
+  for both: a copy of the unit, or a `+` before a command, leaves
+  `show` as it is. Then, just before the install, do each of these
+  that fits, `<dir>` being `/etc/systemd/system` or
+  `/run/systemd/system` (none fits a box nobody edited, which needs
+  nothing here):
+  - **A copy is listed first, in place of the packaged unit**
+    (`<dir>/motel.service`, or one in `/usr/local/lib/systemd/system`,
+    which the revert below leaves), whatever its `User=`: it hides
+    every later release's changes to the unit. `rm` that file; your
+    drop-ins stay.
+  - **A drop-in in `<dir>/motel.service.d/` sets `User=` or `Group=` to
+    anything but `motel`, or puts `+` or a single `!` among the
+    characters before the path in an `ExecStart=` line
+    (`+/usr/bin/motel`, `-+/usr/bin/motel`)**, which runs it with
+    neither applied (systemd.service(5)): set both to `motel` and drop
+    the prefix, or delete the drop-in.
+  - **A drop-in in `<dir>/service.d/`, which every service reads, sets
+    `User=` or `Group=`:** drop-ins of different names apply in
+    lexicographic order whichever directory holds them
+    (systemd.unit(5)), so a `.conf` file in
+    `/etc/systemd/system/motel.service.d/` whose name sorts after that
+    one's byte by byte (`zz-user.conf` sorts after any name that starts
+    with a digit or a lower-case letter before `z`), holding
+    `[Service]`, `User=motel` and `Group=motel`, wins for motel alone.
+
+  `systemctl revert motel` does the first two at once, and takes more
+  with them: it deletes `motel.service.d/` and every file in it under
+  both directories (every drop-in of yours, the third item's too, and
+  `10-user-manager.conf`, which the install writes back) and any copy
+  of the unit in those two directories, and unmasks the unit; the
+  packaged unit and `service.d/` stay. After any of these, run
+  `systemctl daemon-reload`; the `show` must then print `User=motel`
+  and `Group=motel`, and `systemctl is-enabled motel` `enabled`
+  (`disabled`: `systemctl enable motel`). A box that ran motel as root
+  may also hold files of root's where motel writes, Caddy's
+  certificates in `/var/lib/motel/caddy` among them: before the install,
   `find /var/lib/motel /var/lib/liveswap -user root` lists them, and
   each one motel wrote wants `chown motel:motel`.
 - **A box with an ECDSA signer rotates it first** (upgrading from
@@ -243,6 +327,24 @@ Before you upgrade:
   `/var/lib/motel-box/applied.json` and deletes
   `/etc/motel/secrets/_box.env`, and the next push (without the block,
   the `observe` lines and the directory) applies.
+- **Going back to a release without people** (0.7.0, or an earlier one
+  with a `box` block, 0.3.0 on) needs the Caddyfile emptied of them
+  first. Those releases refuse a `box` block with a `person` or `grant`
+  line: `validate` with the old binary says `unknown box subdirective
+  "person"` (or `"grant"`), and the install's restart fails with nothing
+  served until the file is mended. While the box still runs the newer
+  release:
+  1. **Take out every `person` and `grant` line.** On a box that takes
+     pushes, push a commit without them. On a box with no push channel,
+     root edits them out of `/etc/motel/Caddyfile` and runs `systemctl
+     reload motel`. People's clients get the flat 401 from then on.
+  2. **Go back** with the `.deb`, as above.
+
+  `signer` lines are not affected: they mean what they meant, and the
+  box channel works across the downgrade. On a box already back whose
+  motel refused to start, root edits the lines out of
+  `/etc/motel/Caddyfile` and runs `systemctl restart motel`; the next
+  push, without them, applies.
 - **Upgrade motel and the host separately.** motel measures what
   the host can sandbox at every start and refuses to start on a host
   that cannot deliver it ([liveswap/README.md](../liveswap/README.md#sandbox)),
@@ -265,10 +367,10 @@ seconds apart from the others. `grep NoNewPrivs /proc/$(systemctl show
 -p MainPID --value "user@$(id -u motel).service")/status` shows `1`
 once it has.
 
-After an upgrade from v0.3.1 or later, on a box that takes pushes: the
-releases before this one named, in each push's output, the variables
-of an env file in `/etc/motel/secrets/` that the push replaced or
-removed when someone had made or edited it by hand, and a secret
+After an upgrade to v0.7.0 or later from a release between v0.3.1 and
+v0.6.1 (both included), on a box that takes pushes: those releases
+named, in each push's output, the variables of an env file in
+`/etc/motel/secrets/` that the push replaced or removed when someone had made or edited it by hand, and a secret
 pasted alone on a line of it (base64 ending in `=`) read as a
 variable's name. If a push ever took over such a file, look through
 the box repository's old apply runs (logs and job summaries) and

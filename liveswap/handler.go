@@ -21,6 +21,7 @@ import (
 
 	"github.com/caddyserver/caddy/v2"
 	"github.com/caddyserver/caddy/v2/modules/caddyhttp"
+	"github.com/smallhoursorg/motel/liveswap/access"
 	"github.com/smallhoursorg/motel/liveswap/deploytrust"
 	"github.com/smallhoursorg/motel/liveswap/wire"
 	"go.uber.org/zap"
@@ -32,6 +33,13 @@ func init() {
 
 // maxPayloadBytes bounds the webhook JSON body.
 const maxPayloadBytes = 64 * 1024
+
+// installWait bounds how long a request whose deploy token verified
+// waits for liveswap's Start to install its app (#473). Start measures
+// the sandbox first, with a unit that starts and exits: about 65 ms on
+// an idle box, longer at boot or under load. Past it the request is
+// told to come back (installing).
+const installWait = 5 * time.Second
 
 // loggedAppName bounds a request-supplied app name for the log: no
 // configured name is longer than appNameRe allows, so anything past
@@ -63,9 +71,19 @@ type Handler struct {
 	app     *App
 	logger  *zap.Logger
 	limiter *deploytrust.Limiter
+	// people is the registry of the box app this config loaded with: who
+	// may read with a person's token. nil, with no box app or no person
+	// in its installed file, admits no one.
+	people *access.Registry
+	// rate is the rate per person, access.SharedRate; nil in a test
+	// that does not ask for one.
+	rate *access.Rate
 	// stage is a test seam for stageUpload; nil is stageUpload. A full
 	// disk cannot be made in a test that runs as root.
 	stage func(body io.Reader, tmpDir string, maxBytes int64) (string, string, error)
+	// waitClock times awaitInstalled's bound; nil is the real clock. A
+	// test seam, so the bound itself is what a test runs against.
+	waitClock clock
 }
 
 // CaddyModule returns the Caddy module information.
@@ -88,13 +106,43 @@ func (h *Handler) Provision(ctx caddy.Context) error {
 		return fmt.Errorf("liveswap_webhook is configured but no apps are defined in the liveswap global options")
 	}
 	h.limiter = deploytrust.Shared()
+	h.rate = access.SharedRate()
+	// The box app builds the registry; this package reaches it through
+	// an interface of its own, so it imports nothing of box. With no box
+	// block there is none, and no person is admitted.
+	box, err := ctx.AppIfConfigured("box")
+	switch {
+	case errors.Is(err, caddy.ErrNotConfigured):
+	case err != nil:
+		return err
+	default:
+		if src, ok := box.(access.Source); ok {
+			h.people = src.Access()
+		}
+	}
 	return nil
 }
 
 // ServeHTTP is terminal: it never calls the next handler.
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request, _ caddyhttp.Handler) error {
-	name := path.Base(path.Clean(r.URL.Path))
-	ma := h.app.managedApp(name)
+	clean := path.Clean(r.URL.Path)
+	name := path.Base(clean)
+	// The first segment before the last: a path under /_motel/ names no
+	// app, whatever its last segment (`_` is outside the app grammar).
+	motel := clean == motelPrefix || strings.HasPrefix(clean, motelPrefix+"/")
+	// A person's path is open only on a box whose registry lists a key.
+	// On one that admits no one the scheme is not even looked for, and a
+	// request in the Motel scheme takes the deploy token's path, which
+	// reads the first Authorization header alone and takes a token from
+	// it only in the Bearer scheme: a Motel header alone is no bearer
+	// token.
+	if h.people.Keys() > 0 && access.HasPersonScheme(r.Header.Values("Authorization")) {
+		return h.servePerson(w, r, name, motel)
+	}
+	var ma *managedApp
+	if !motel {
+		ma = h.app.managedApp(name)
+	}
 
 	// Authenticate before revealing whether the app exists. For an
 	// unknown app the token is verified against the global trust
@@ -106,70 +154,319 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request, _ caddyhttp.
 	// ("Webhook endpoint").
 	verifiers := h.app.globalVerifiers
 	if ma != nil {
-		verifiers = ma.currentVerifiers()
+		var installed bool
+		if verifiers, installed = ma.trust(); !installed {
+			// No Start has installed the app yet: a start of motel, where
+			// Caddy may start the http app before liveswap, or an app a
+			// reload adds. The pooled app holds no sources until then, so
+			// the token is checked against the ones this config built in
+			// Provision, which are the ones its Start installs (#473).
+			verifiers = h.app.appVerifiers[name]
+		}
 	}
 	who, refusal := h.limiter.Authenticate(r, verifiers, h.logger, "app", loggedAppName(name))
 	if refusal != nil {
 		return refusal.Write(func(code int, body any) error { return RespondJSON(w, code, body, nil) })
 	}
+	if motel {
+		// A global source verified the token: a deployer of no app,
+		// which no route under /_motel/ allows.
+		return h.serveMotel(w, r, access.Principal{Kind: access.AppDeployer}, nil)
+	}
 	if ma == nil {
+		// A global source verified the token: a deployer of no app
+		// here, which may take no action on this name. The name is
+		// answered 404 whatever the method, before the route table.
 		return RespondJSON(w, http.StatusNotFound, wire.Error{Error: fmt.Sprintf("unknown app %q", name)}, nil)
 	}
-
-	switch r.Method {
-	case http.MethodGet:
-		// Parsed strictly: URL.Query drops a pair it cannot decode, and
-		// a malformed `?deploy=%ZZ` would fall through to the status.
-		q, err := url.ParseQuery(r.URL.RawQuery)
-		if err != nil {
-			return RespondJSON(w, http.StatusUnprocessableEntity, wire.Error{Error: "malformed query: " + err.Error()}, ma.redactorFor(statusSnapshot{}))
-		}
-		if q.Has("deploy") {
-			return h.deployRecord(w, ma, q.Get("deploy"))
-		}
-		window := wire.MetricsRanges[0]
-		if q.Has("range") {
-			// Refused whether or not the box keeps metrics: a typo is told
-			// the same on every box.
-			if window = q.Get("range"); !slices.Contains(wire.MetricsRanges, window) {
-				return RespondJSON(w, http.StatusUnprocessableEntity, wire.Error{
-					Error: "range must be one of " + strings.Join(wire.MetricsRanges, ", ")}, ma.redactorFor(statusSnapshot{}))
-			}
-		}
-		s := ma.status()
-		if src := h.app.metricsSource; src != nil {
-			// Best-effort and bounded by the source itself: a store that
-			// does not answer is an error inside the object, never a
-			// failed or stalled status.
-			s.Metrics = src.AppMetrics(r.Context(), ma.name, window)
-		}
-		return RespondJSON(w, http.StatusOK, s, ma.redactorFor(s))
-	case http.MethodPost:
-		return h.deploy(w, r, ma, who.By)
-	default:
+	if !h.awaitInstalled(r, ma, who.By) {
+		return h.installing(w, ma)
+	}
+	rt := findRoute(r)
+	if rt == nil {
 		w.Header().Set("Allow", "GET, POST")
 		return RespondJSON(w, http.StatusMethodNotAllowed, wire.Error{Error: "method not allowed"}, ma.redactorFor(statusSnapshot{}))
 	}
+	// The token was verified against this app's own sources, so it is
+	// a deployer of this app and Decide allows every app action: it
+	// refuses only if the table and the routes fall apart, and then
+	// refuses rather than serves.
+	app, err := h.allowApp(access.Principal{Kind: access.AppDeployer, App: name}, rt.action, name)
+	if err != nil {
+		return RespondJSON(w, http.StatusForbidden, ForbiddenBody(err), ma.redactorFor(statusSnapshot{}))
+	}
+	return rt.serve(h, w, r, app, who.By)
 }
 
-// deploy dispatches on the request shape:
-//   - a gzip body  → push an uploaded artifact  (POST /<app>?version=v2)
-//   - ?rollback=v1 → relaunch an on-disk release (POST /<app>?rollback=v1)
-//   - otherwise    → pull from a URL             (JSON {url, version})
-func (h *Handler) deploy(w http.ResponseWriter, r *http.Request, ma *managedApp, by string) error {
-	switch {
-	case isGzipUpload(r):
-		return h.deployPush(w, r, ma, by)
-	case r.URL.Query().Get("rollback") != "":
-		return h.deployRollback(w, r, ma, by)
-	default:
-		return h.deployURL(w, r, ma, by)
+// awaitInstalled holds a request whose deploy token verified until a
+// Start has installed its app, at most installWait and no longer than
+// the request lasts, and reports whether it is installed. Only a
+// verified token reaches it: a stranger's 401 comes first and never
+// waits, so no one without a token can make the box hold a connection
+// open, or learn from the answer that it has just started. An app a
+// Start installed, which is every app but in a start's first moments,
+// does not wait.
+func (h *Handler) awaitInstalled(r *http.Request, ma *managedApp, by string) bool {
+	c := h.waitClock
+	if c == nil {
+		c = realClock{}
 	}
+	began := c.Now()
+	// The timer is made only once the app is known not to be installed,
+	// so an installed app's request costs none.
+	if ma.awaitInstalled(r.Context(), func() <-chan time.Time { return c.After(installWait) }) {
+		return true
+	}
+	h.logger.Warn("deploy token verified before liveswap installed the app; answered 503",
+		zap.String("app", ma.name), zap.String("via", by), zap.String("remote", r.RemoteAddr),
+		zap.Duration("waited", c.Now().Sub(began)), zap.Bool("request_ended", r.Context().Err() != nil))
+	return false
+}
+
+// awaitRead holds a person's read until a Start has installed every
+// app it reads (the one of an app's route, each listed one of the app
+// list), under one bound of installWait for them all and no longer
+// than the request lasts, and returns the first that is not installed,
+// or nil. Until its first install a pooled app holds no spec: its
+// status is the name, "idle" and nothing else, a 200 that is not the
+// app's (no release, no deploy, no watchdog), where a deploy token on
+// the same route waits (awaitInstalled). Only a read Decide allowed
+// reaches it, so a refusal never waits, and a person waits only on
+// apps they may view; an installed app costs no timer. It is apart
+// from awaitInstalled so that a deploy token's path is as it was.
+func (h *Handler) awaitRead(r *http.Request, by string, apps ...*managedApp) *managedApp {
+	c := h.waitClock
+	if c == nil {
+		c = realClock{}
+	}
+	began := c.Now()
+	var timer <-chan time.Time
+	spent := make(chan time.Time)
+	close(spent)
+	// One timer for every app: made at the first that has to wait, for
+	// what is left of installWait since the read began, and read as
+	// fired by the clock once it has, since a timer's channel delivers
+	// once and an earlier app's wait may have taken it.
+	end := began.Add(installWait)
+	bound := func() <-chan time.Time {
+		now := c.Now()
+		if !now.Before(end) {
+			return spent
+		}
+		if timer == nil {
+			timer = c.After(end.Sub(now))
+		}
+		return timer
+	}
+	for _, ma := range apps {
+		if ma.awaitInstalled(r.Context(), bound) {
+			continue
+		}
+		h.logger.Warn("a person's read came before liveswap installed the app; answered 503",
+			zap.String("app", ma.name), zap.String("via", by), zap.String("remote", r.RemoteAddr),
+			zap.Duration("waited", c.Now().Sub(began)), zap.Bool("request_ended", r.Context().Err() != nil))
+		return ma
+	}
+	return nil
+}
+
+// installingMessage is the 503's sentence when awaitInstalled or
+// awaitRead gave up.
+const installingMessage = "motel is starting and has not loaded this app yet; retry after 1 s"
+
+// installing answers a verified request whose app no Start installed in
+// time: 503 with Retry-After, never the 401, since the token is good.
+func (h *Handler) installing(w http.ResponseWriter, ma *managedApp) error {
+	w.Header().Set("Retry-After", "1")
+	return RespondJSON(w, http.StatusServiceUnavailable, wire.Error{Error: installingMessage}, ma.redactorFor(statusSnapshot{}))
+}
+
+// appHandle is the one app a route reads or acts on. Only allowApp
+// makes one, after Decide allowed the action on that app, so a route's
+// function cannot be given an app nobody asked Decide about; and each
+// reads that app alone, through that app's filter.
+type appHandle struct {
+	ma *managedApp
+}
+
+// errUnknownApp is allowApp's answer for a name that is no app here,
+// once Decide allowed the action on it: a box viewer asking for an app
+// that does not exist.
+var errUnknownApp = errors.New("unknown app")
+
+// allowApp asks Decide whether p may take a on the app name, and is the
+// one place an appHandle is made.
+func (h *Handler) allowApp(p access.Principal, a access.Action, name string) (appHandle, error) {
+	if err := decide(p, a, name); err != nil {
+		return appHandle{}, err
+	}
+	ma := h.app.managedApp(name)
+	if ma == nil {
+		return appHandle{}, errUnknownApp
+	}
+	return appHandle{ma: ma}, nil
+}
+
+// ForbiddenBody is the 403's body for Decide's refusal: what the caller
+// would need, when Decide names it (access.Forbidden), and otherwise
+// the bare word, the answer of a table and routes that fall apart.
+func ForbiddenBody(err error) any {
+	var f *access.Forbidden
+	if errors.As(err, &f) {
+		return wire.Forbidden{Error: f.Error(), Needs: f.Needs, Scope: f.Scope}
+	}
+	return wire.Error{Error: "forbidden"}
+}
+
+// servePerson answers a request in the person token's scheme: the
+// token judged by CheckToken against this load's registry, then the
+// route's action put to Decide with the person. The app is found after
+// Decide, so a person told no learns nothing of which apps exist. A
+// read Decide allowed waits for the app's install in the first moments
+// of a start (awaitRead).
+func (h *Handler) servePerson(w http.ResponseWriter, r *http.Request, name string, motel bool) error {
+	p, ok, err := AdmitPerson(w, r, h.gate(), "app", loggedAppName(name), func(code int, body any) error { return RespondJSON(w, code, body, nil) })
+	if !ok {
+		return err
+	}
+	if motel {
+		return h.serveMotel(w, r, p.Principal, &p)
+	}
+	rt := findRoute(r)
+	if rt == nil {
+		// A person's token is good on a GET alone, which always has a
+		// row: this is the table and the token falling apart.
+		w.Header().Set("Allow", "GET, POST")
+		return RespondJSON(w, http.StatusMethodNotAllowed, wire.Error{Error: "method not allowed"}, nil)
+	}
+	// Decide before the app is looked for: a person whose grants do not
+	// cover the name is told the same 403 whether it is an app here or
+	// not, and only a viewer of the box, who may list the apps, is told
+	// a name is none.
+	app, err := h.allowApp(p.Principal, rt.action, name)
+	switch {
+	case errors.Is(err, errUnknownApp):
+		return RespondJSON(w, http.StatusNotFound, wire.Error{Error: fmt.Sprintf("unknown app %q", name)}, nil)
+	case err != nil:
+		return RespondJSON(w, http.StatusForbidden, ForbiddenBody(err), nil)
+	}
+	// After Decide: the read is this person's to make, and what it
+	// reads is the app a Start installed, as a deploy token's is.
+	if late := h.awaitRead(r, p.Name, app.ma); late != nil {
+		return h.installing(w, late)
+	}
+	return rt.serve(h, w, r, app, p.Name)
+}
+
+// gate is what a person is admitted through on this handler.
+func (h *Handler) gate() PersonGate {
+	return PersonGate{Registry: h.people, Limiter: h.limiter, Rate: h.rate, Logger: h.logger}
+}
+
+// Protocol is the number of the forms of person token this box takes:
+// 1 is the form a person's own key signs, with aud, iat and exp, good
+// on a GET. A later form raises it; it moves with the forms, never with
+// a release, so it tells a caller a range of releases, not one. Only
+// whoami's body names it, beside the release: no header of either
+// webhook names motel, its protocol or its release, to any caller.
+const Protocol = 1
+
+// decide is access.Decide, a variable so a test can see what the
+// handler asks it and make it refuse.
+var decide = access.Decide
+
+// route is one row of liveswap_webhook's route table: a method, the
+// shape of the query or body it takes, the action Decide is asked
+// about, and the function that answers. Every row's path is /<app>,
+// the app being the path's last element.
+type route struct {
+	method string
+	shape  string // the query or body the row takes, for a reader
+	action access.Action
+	match  func(*http.Request) bool // nil: any request of the method
+	serve  func(h *Handler, w http.ResponseWriter, r *http.Request, app appHandle, by string) error
+}
+
+// routes is matched in order: the first row of the request's method
+// whose shape matches answers it, so a GET or a POST always finds one
+// and any other method none (the 405). A gzip body is a push whatever
+// the query; then a rollback; then a pull from a URL.
+var routes = []route{
+	{http.MethodGet, "?deploy=<v>", access.AppDeployRecord, wantsDeployRecord, (*Handler).getDeployRecord},
+	{http.MethodGet, "[?range=1h|24h]", access.AppStatus, nil, (*Handler).getStatus},
+	{http.MethodPost, "a gzip body [?version=<v>]", access.AppDeploy, isGzipUpload, (*Handler).deployPush},
+	{http.MethodPost, "?rollback=<v>", access.AppRollback, wantsRollback, (*Handler).deployRollback},
+	{http.MethodPost, "a JSON body", access.AppDeploy, nil, (*Handler).deployURL},
+}
+
+// findRoute is the request's row, or nil when its method has none.
+func findRoute(r *http.Request) *route {
+	for i := range routes {
+		if rt := &routes[i]; rt.method == r.Method && (rt.match == nil || rt.match(r)) {
+			return rt
+		}
+	}
+	return nil
+}
+
+// wantsDeployRecord is a GET whose query parses strictly and names a
+// deploy. A query that does not parse is the status route's, which
+// answers it 422: URL.Query drops a pair it cannot decode, and a
+// malformed `?deploy=%ZZ` would otherwise fall through to the status.
+func wantsDeployRecord(r *http.Request) bool {
+	q, err := url.ParseQuery(r.URL.RawQuery)
+	return err == nil && q.Has("deploy")
+}
+
+// wantsRollback is a POST naming a version to relaunch, read as
+// deployRollback reads it.
+func wantsRollback(r *http.Request) bool {
+	return r.URL.Query().Get("rollback") != ""
+}
+
+// getDeployRecord is GET /<app>?deploy=<v>; its query parsed when the
+// row matched (wantsDeployRecord).
+func (h *Handler) getDeployRecord(w http.ResponseWriter, r *http.Request, app appHandle, _ string) error {
+	ma := app.ma
+	q, _ := url.ParseQuery(r.URL.RawQuery)
+	return h.deployRecord(w, ma, q.Get("deploy"))
+}
+
+// getStatus is GET /<app>: the app's status, with metric summaries
+// over the range asked for.
+func (h *Handler) getStatus(w http.ResponseWriter, r *http.Request, app appHandle, _ string) error {
+	ma := app.ma
+	// Parsed strictly, as wantsDeployRecord parses it: a malformed
+	// query is refused here rather than read as no query.
+	q, err := url.ParseQuery(r.URL.RawQuery)
+	if err != nil {
+		// The handler's words and the parser's, which quote the
+		// request's own bad escape: nothing of the app's (rule 6).
+		return RespondJSON(w, http.StatusUnprocessableEntity, wire.Error{Error: "malformed query: " + err.Error()}, NewRedactor(nil, nil))
+	}
+	window := wire.MetricsRanges[0]
+	if q.Has("range") {
+		// Refused whether or not the box keeps metrics: a typo is told
+		// the same on every box.
+		if window = q.Get("range"); !slices.Contains(wire.MetricsRanges, window) {
+			return RespondJSON(w, http.StatusUnprocessableEntity, wire.Error{
+				Error: "range must be one of " + strings.Join(wire.MetricsRanges, ", ")}, ma.redactorFor(statusSnapshot{}))
+		}
+	}
+	s := ma.status()
+	if src := h.app.metricsSource; src != nil {
+		// Best-effort and bounded by the source itself: a store that
+		// does not answer is an error inside the object, never a
+		// failed or stalled status.
+		s.Metrics = src.AppMetrics(r.Context(), ma.name, window)
+	}
+	return RespondJSON(w, http.StatusOK, s, ma.redactorFor(s))
 }
 
 // deployURL is the default path: a JSON body naming an artifact URL to
 // pull, size-capped like any control payload.
-func (h *Handler) deployURL(w http.ResponseWriter, r *http.Request, ma *managedApp, by string) error {
+func (h *Handler) deployURL(w http.ResponseWriter, r *http.Request, app appHandle, by string) error {
+	ma := app.ma
 	// Read one byte past the cap: exceeding it proves the payload is
 	// oversized, which deserves an honest 413 — truncating at the cap
 	// would surface as a misleading "invalid JSON" 400.
@@ -225,7 +522,8 @@ func parseDeployPayload(body []byte) (p deployPayload, status int, msg string) {
 // deployPush streams an uploaded gzip tarball to a staging file and
 // deploys it — no artifact host needed. Version comes from the query
 // string because the body is the artifact.
-func (h *Handler) deployPush(w http.ResponseWriter, r *http.Request, ma *managedApp, by string) error {
+func (h *Handler) deployPush(w http.ResponseWriter, r *http.Request, app appHandle, by string) error {
+	ma := app.ma
 	version := r.URL.Query().Get("version")
 	if !validVersion(version) {
 		return RespondJSON(w, http.StatusUnprocessableEntity, wire.Error{Error: fmt.Sprintf("version query param must match %s", versionRe)}, ma.redactorFor(statusSnapshot{}))
@@ -257,11 +555,18 @@ func (h *Handler) deployPush(w http.ResponseWriter, r *http.Request, ma *managed
 			Summary: "deploy of " + version + " failed before it began: the app's directories are not as motel made them"})
 		return h.mapDeployResult(w, ma, err)
 	}
+	// In flight from here, its upload included: each way out before the
+	// pipeline ends it before its response is written, which the status
+	// in a response must not show (the pipeline's own end does the same).
+	ma.beginDeploy(version, by, c.clock.Now())
 	stage := h.stage
 	if stage == nil {
 		stage = stageUpload
 	}
 	archive, digest, err := stage(r.Body, spec.dirs.tmp, spec.maxArtifactSize)
+	if err != nil {
+		ma.endInFlight()
+	}
 	var stgErr *stagingError
 	switch {
 	case errors.Is(err, errArtifactTooLarge):
@@ -294,7 +599,8 @@ func (h *Handler) deployPush(w http.ResponseWriter, r *http.Request, ma *managed
 }
 
 // deployRollback relaunches an already-extracted on-disk release.
-func (h *Handler) deployRollback(w http.ResponseWriter, r *http.Request, ma *managedApp, by string) error {
+func (h *Handler) deployRollback(w http.ResponseWriter, r *http.Request, app appHandle, by string) error {
+	ma := app.ma
 	version := r.URL.Query().Get("rollback")
 	if !validVersion(version) {
 		return RespondJSON(w, http.StatusUnprocessableEntity, wire.Error{Error: fmt.Sprintf("rollback version must match %s", versionRe)}, ma.redactorFor(statusSnapshot{}))
@@ -315,6 +621,30 @@ func (h *Handler) deployRecord(w http.ResponseWriter, ma *managedApp, version st
 		return RespondJSON(w, http.StatusServiceUnavailable, wire.Error{Error: "app has no configuration loaded"}, ma.redactorFor(statusSnapshot{}))
 	}
 	rec, err := readDeployRecord(c.spec.dirs, version)
+	if err != nil {
+		// No record was read, so the answer holds nothing the app wrote
+		// and need hold none of its values: it is the handler's own
+		// words and, in the 404, the version this request asked for.
+		// Both bodies below are such, and pass a filter that knows no
+		// value (redact.go, rule 6). Through the app's filter the
+		// version came back as a marker naming the key whenever it held
+		// an env_file value, in any form the filter knows, and a caller
+		// who may only read could try values until one did. The version
+		// passed validVersion, and is a safe string here as it is in
+		// the status, so a commit id asked for reads as it was sent.
+		if errors.Is(err, errNoDeployRecord) {
+			return RespondJSON(w, http.StatusNotFound, wire.Error{Error: fmt.Sprintf("no deploy recorded for version %s", version)}, NewRedactor(nil, []string{version}))
+		}
+		// The error may name the record's file, and so the version
+		// asked for, and the app's directories: the first is the same
+		// question through the app's filter, and the second may be one
+		// of the app's values (APP_DIR=<the directory>), which a filter
+		// that knows none would send as it is. So the error is not in
+		// the answer, which says only that the record did not read, in
+		// the handler's words alone, and the journal says why.
+		c.logger.Error("reading a deploy record", zap.String("version", version), zap.Error(err))
+		return RespondJSON(w, http.StatusInternalServerError, wire.Error{Error: "this deploy's record could not be read; the box's journal says why (journalctl -u motel)"}, NewRedactor(nil, nil))
+	}
 	// The requested version, and the record's own pin, are names the
 	// filter should let through whether or not the status still lists
 	// them by the time it is built (a prune, a reload between the read
@@ -324,12 +654,6 @@ func (h *Handler) deployRecord(w http.ResponseWriter, ma *managedApp, version st
 	head, _ := recordHead(rec, version+".json")
 	head.Version = version
 	s.Deploys = append(s.Deploys, head)
-	switch {
-	case errors.Is(err, errNoDeployRecord):
-		return RespondJSON(w, http.StatusNotFound, wire.Error{Error: fmt.Sprintf("no deploy recorded for version %s", version)}, ma.redactorFor(s))
-	case err != nil:
-		return RespondJSON(w, http.StatusInternalServerError, wire.Error{Error: "reading deploy record: " + err.Error()}, ma.redactorFor(s))
-	}
 	// Through the live filter like every body; its outcome words
 	// stand outside the filter there (redact.go, rule 3).
 	return respondFiltered(w, http.StatusOK, ma.redactorFor(s).redactJSON(rec))
@@ -607,8 +931,11 @@ func stageUpload(body io.Reader, tmpDir string, maxBytes int64) (string, string,
 // RespondJSON writes every body the webhook sends, through the
 // response filter (redact.go). r is the app's filter — every site
 // with the app in scope passes ma.redactorFor, the 405 included —
-// and nil only for the bodies written before an app is known (401,
-// 404), where the shape and entropy layers still apply. When a
+// but for a body that holds nothing of the app's: nil for the bodies
+// written before an app is known (401, 404), and a filter that knows
+// no values for one made only of the handler's words and what the
+// request itself sent (rule 6). The shape and entropy layers still
+// apply to both. When a
 // known secret was found the object gains a `redacted_env` field
 // naming the keys. The box webhook writes its bodies through it too,
 // with a filter from NewRedactor.
