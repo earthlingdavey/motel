@@ -109,7 +109,15 @@ run fails. `diff` the copy against this release's
 change of your own in it, copy the template's over it; with some,
 carry across `boxstarting()` and the `elif` branch of `send()` that
 calls it, or, in a copy with no `send()` (before v0.4.0), make your
-changes again in the template's.
+changes again in the template's. The template reads `MOTEL_` where a
+copy from before v0.6.0 reads `HOTSERVE_` (`MOTEL_URL` for
+`HOTSERVE_URL`, and so on), and its audience defaults to `motel`, not
+`hotserve`: before the template's goes in over such a copy, rename
+each `HOTSERVE_` to `MOTEL_` in the workflow file and in the
+repository variables (`HOTSERVE_URL`, and `HOTSERVE_RUNS_ON` if set)
+and anywhere else you set one, and unless the app's `deploy_trust`
+says `audience motel`, add `MOTEL_AUDIENCE: <its audience>` to the
+workflow's `env:`.
 A crash has a window of its own: whatever was in flight is cut off,
 systemd waits a second
 (`RestartSec=1s`) and starts motel again, and the apps are picked
@@ -164,19 +172,22 @@ Before you upgrade:
   `.tar.gz`, such as one of a feature branch, has no `checksums.txt`
   either. Take its sha256 where it was built
   (`sha256sum motel_<version>_<arch>.deb`, `<arch>` what
-  `dpkg --print-architecture` prints on the box), copy it to
-  `/var/local/motel`, and check it there before anything else:
-  `echo '<that sha256>  motel_<version>_<arch>.deb' | sha256sum -c`
+  `dpkg --print-architecture` prints on the box), copy the `.deb` to
+  `/var/local/motel`, and before anything else check it in that
+  directory:
+  `cd /var/local/motel && echo '<that sha256>  motel_<version>_<arch>.deb' | sha256sum -c`
   must say `OK`. Its config is checked the same way, from the `.deb`,
   unpacked and not installed, into a directory that is not there yet
   (`dpkg-deb -x` adds to one an earlier upgrade left, so
   `rm -rf /root/motel-new` first):
   `dpkg-deb -x motel_<version>_$(dpkg --print-architecture).deb /root/motel-new`,
   then `/root/motel-new/usr/bin/motel validate --config /etc/motel/Caddyfile`.
-  It installs from `/var/local/motel` with
-  `apt install ./motel_<version>_<arch>.deb`. dpkg sorts a `~` below
-  everything, the version's end included, and two builds of one
-  version by what follows it, so `0.7.1~clientapp2` is an
+  After the checks below, it installs from `/var/local/motel` with
+  `apt install ./motel_<version>_<arch>.deb`. Its version is the one
+  `make package VERSION=<version>` was given, or `0.0.0~dev`, below
+  every release, for a build of an untagged commit with none. dpkg
+  sorts a `~` below everything, the version's end included, and two
+  builds of one version by what follows it, so `0.7.1~clientapp2` is an
   upgrade over `0.7.0` and `0.7.1~clientapp1`, and a downgrade over
   `0.7.1` and `0.7.1~rc1`. apt asks before a downgrade unless given
   `--allow-downgrades`: answer `n` and stop, since taking a box below
@@ -199,33 +210,42 @@ Before you upgrade:
   the install makes `/var/lib/liveswap` motel's again. So such a box,
   with the liveswap root the package makes, is refused at every start,
   the install's own included, and serves nothing until someone at the
-  console mends it. `systemctl show -p User --value motel` prints
-  `motel` on a packaged box; anything else (`root`, `0` or nothing at
-  all: to run as root) means the unit was edited. `systemctl cat motel`
-  shows what is there: each file in play under a `# <path>` line, the
-  packaged unit `/usr/lib/systemd/system/motel.service` and the
-  package's own drop-in `motel.service.d/10-user-manager.conf` among
-  them. Then, just before the install:
-  - **The `show` prints `motel`, and nothing of yours is there but
-    drop-ins in `/etc/systemd/system/motel.service.d/`:** nothing to do.
-  - **A full copy of the unit, `/etc/systemd/system/motel.service`, is
-    there**, whatever its `User=`: it hides every later release's
-    changes to the unit. `rm /etc/systemd/system/motel.service` removes
-    it and leaves your drop-ins.
-  - **A drop-in in `motel.service.d/` sets `User=` or `Group=`** to
-    anything but `motel`: set both to `motel` in it, or delete it.
+  console mends it. `systemctl show -p User -p Group motel` prints
+  `User=motel` and `Group=motel` on a packaged box; anything else means
+  the unit was edited (an empty `User=` runs it as root) or masked
+  (both empty). `systemctl cat motel` shows what is there: each file in
+  play under a `# <path>` line, first the packaged unit
+  `/usr/lib/systemd/system/motel.service` or, in its place, a copy that
+  hides it, then the drop-ins, the package's own
+  `motel.service.d/10-user-manager.conf` among them; for a masked unit,
+  only that it is masked. Then, just before the install, do each of
+  these that fits, `<dir>` being `/etc/systemd/system` or
+  `/run/systemd/system` (none fits a box nobody edited):
+  - **A copy, `<dir>/motel.service`, is listed first**, whatever its
+    `User=`: it hides every later release's changes to the unit. `rm`
+    that file; your drop-ins stay.
+  - **A drop-in in `<dir>/motel.service.d/` sets `User=` or `Group=` to
+    anything but `motel`, or gives `ExecStart=` a command that starts
+    with `+` or `!`**, which runs it with neither applied
+    (systemd.service(5)): set both to `motel` and drop the prefix, or
+    delete the drop-in.
+  - **A drop-in in `<dir>/service.d/`, which every service reads, sets
+    `User=` or `Group=`:** drop-ins of different names apply in
+    lexicographic order whichever directory holds them
+    (systemd.unit(5)), so a file in `/etc/systemd/system/motel.service.d/`
+    whose name sorts after that one's, holding `[Service]`,
+    `User=motel` and `Group=motel`, wins for motel alone.
 
-  `systemctl revert motel` does the last two at once, and takes more
+  `systemctl revert motel` does the first two at once, and takes more
   with them: it deletes `motel.service.d/` and every file in it under
-  `/etc/systemd/system` and `/run/systemd/system` (every drop-in of
-  yours, and `10-user-manager.conf`, which the install writes back) and
-  any copy of the unit there, and unmasks the unit; the packaged unit
-  stays. After any of these, run `systemctl daemon-reload`; the `show`
-  must then print `motel`, and `systemctl is-enabled motel` `enabled`.
-  A drop-in in `/etc/systemd/system/service.d/`, which every service
-  reads, can set `User=` too; `systemctl cat` shows it, and the revert
-  leaves it. A box that ran motel as root may also
-  hold files of root's where motel writes, Caddy's certificates in
+  both directories (every drop-in of yours, the third item's too, and
+  `10-user-manager.conf`, which the install writes back) and any copy
+  of the unit there, and unmasks the unit; the packaged unit and
+  `service.d/` stay. After any of these, run `systemctl daemon-reload`;
+  the `show` must then print `User=motel` and `Group=motel`, and
+  `systemctl is-enabled motel` `enabled` (`disabled`: `systemctl enable
+  motel`; `masked`: `systemctl unmask motel`). A box that ran motel as
+  root may also hold files of root's where motel writes, Caddy's certificates in
   `/var/lib/motel/caddy` among them: before the install,
   `find /var/lib/motel /var/lib/liveswap -user root` lists them, and
   each one motel wrote wants `chown motel:motel`.
