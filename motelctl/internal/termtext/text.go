@@ -100,7 +100,7 @@ func JSON(b []byte) []byte {
 	if clean {
 		return b
 	}
-	out := make([]byte, 0, len(b)+16)
+	out := make([]byte, 0, len(b))
 	for i := 0; i < len(b); {
 		r, size := utf8.DecodeRune(b[i:])
 		switch {
