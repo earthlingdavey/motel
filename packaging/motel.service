@@ -8,9 +8,9 @@
 # back (Restart= below) and it reattaches to the running apps — and
 # PrivateTmp/ProtectSystem here apply to motel alone. TimeoutStopSec
 # bounds only motel's own shutdown; each app's stop budget is its
-# `grace`. /var/lib/liveswap (releases, shared data, state) and
-# /var/lib/motel (TLS certificates etc.) stay writable — that is
-# where motel and the apps keep their files.
+# `grace`. /var/lib/liveswap (releases, shared data, state)
+# and /var/lib/motel (TLS certificates etc.) stay writable — that
+# is where motel and the apps keep their files.
 
 [Unit]
 Description=motel — zero-downtime app deploys, powered by Caddy
@@ -32,14 +32,14 @@ Group=motel
 # compromised motel can read: every unit's lines, which the units
 # here keep free of secrets (no --environ, see below).
 SupplementaryGroups=systemd-journal
-# Caddy resolves its dirs to $XDG_.../caddy, so both land inside
-# /var/lib/motel (which the package owns and chowns): TLS material
-# and storage in /var/lib/motel/caddy, config autosave alongside it.
-# Pointing these anywhere the motel user cannot write breaks ACME
-# cert persistence.
+# Caddy resolves its dirs to $XDG_.../caddy, so both land
+# inside /var/lib/motel (which the package owns and chowns): TLS
+# material and storage in /var/lib/motel/caddy, config autosave
+# alongside it. Pointing these anywhere the motel user cannot write
+# breaks ACME cert persistence.
 Environment=XDG_DATA_HOME=/var/lib/motel
 Environment=XDG_CONFIG_HOME=/var/lib/motel
-# /run/motel holds the admin API's unix socket (see the starter
+# `/run/motel` holds the admin API's unix socket (see the starter
 # Caddyfile for why the admin API is not on TCP). Created at start,
 # owned by the service user, removed on stop.
 RuntimeDirectory=motel
