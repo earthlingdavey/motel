@@ -75,6 +75,50 @@ func Lines(s string) []Text {
 	return out
 }
 
+// JSON is a JSON text made safe to print, and still the same value:
+// what --json writes of a box's body. Every rune From escapes is
+// written as JSON's own \u escape. JSON allows such a rune raw only
+// inside a string (a C1 control, DEL, a bidi control, U+2028, U+2029:
+// a server's encoder writes them as they are, and a terminal acts on
+// them), where the escape reads back as the same character; a byte
+// that is not UTF-8 becomes \ufffd, which is what a JSON reader makes
+// of it. Between a body's values the tab and the line feed are kept
+// and the carriage return, which would move the cursor to the start of
+// the row, is dropped: white space there means nothing. b is taken to
+// be JSON; any other C0 control, which JSON allows nowhere raw, is
+// escaped the same way. A body that holds none of these is returned
+// as it is, byte for byte.
+func JSON(b []byte) []byte {
+	clean := true
+	for i := 0; i < len(b) && clean; {
+		r, size := utf8.DecodeRune(b[i:])
+		if (r == utf8.RuneError && size <= 1) || (r != '\t' && r != '\n' && unsafeRune(r)) {
+			clean = false
+		}
+		i += size
+	}
+	if clean {
+		return b
+	}
+	out := make([]byte, 0, len(b)+16)
+	for i := 0; i < len(b); {
+		r, size := utf8.DecodeRune(b[i:])
+		switch {
+		case r == utf8.RuneError && size <= 1:
+			out = append(out, `\ufffd`...)
+		case r == '\t', r == '\n':
+			out = append(out, b[i])
+		case r == '\r':
+		case unsafeRune(r): // none is above U+FFFF
+			out = fmt.Appendf(out, `\u%04x`, r)
+		default:
+			out = append(out, b[i:i+size]...)
+		}
+		i += size
+	}
+	return out
+}
+
 // String is the sanitised string.
 func (t Text) String() string { return t.s }
 

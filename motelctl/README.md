@@ -3,7 +3,13 @@
 The laptop client: reads a motel box over HTTPS. **Experimental**: every
 command, flag, output and exit code may change until a release's notes
 say otherwise. The human output is never a contract; `--json` prints the
-box's own answer.
+box's own answer: the same JSON value, and byte for byte unless the
+body holds something a terminal acts on. A server's encoder writes a C1
+control, DEL, a bidi control and the line and paragraph separators raw
+in a string: each is printed as JSON's own `\u` escape, a byte that is
+not UTF-8 as `\ufffd` (what a JSON reader makes of it), and a carriage
+return between values is dropped. `jq` reads the same value, and a
+terminal does nothing.
 
 ```text
 motelctl version                       the client's release and protocol

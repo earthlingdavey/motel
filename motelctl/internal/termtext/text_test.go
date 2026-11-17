@@ -1,6 +1,8 @@
 package termtext
 
 import (
+	"encoding/json"
+	"reflect"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -74,4 +76,48 @@ func FuzzFrom(f *testing.F) {
 			t.Fatalf("From(%q) = %q changed a clean string", s, out)
 		}
 	})
+}
+
+// JSON keeps the value and writes nothing a terminal acts on: each
+// such rune, which JSON allows raw only in a string, becomes its \u
+// escape, a byte that is not UTF-8 becomes \ufffd, and a carriage
+// return between values is dropped. A body with none is not touched.
+func TestJSON(t *testing.T) {
+	for _, tc := range []struct{ name, in, want string }{
+		{"nothing to escape", "{\"a\":\"caf\u00e9 \u65e5\u672c \\u001b[2J\",\n\t\"b\":[1,2]}\n", "{\"a\":\"caf\u00e9 \u65e5\u672c \\u001b[2J\",\n\t\"b\":[1,2]}\n"},
+		{"a C1 control", "{\"a\":\"x\u009b31mred\"}", `{"a":"x\u009b31mred"}`},
+		{"an OSC in C1", "{\"a\":\"\u009d52;c;cHduZWQ=\u009c\"}", `{"a":"\u009d52;c;cHduZWQ=\u009c"}`},
+		{"DEL", "{\"a\":\"x\x7fy\"}", `{"a":"x\u007fy"}`},
+		{"a bidi override", "{\"a\":\"abc\u202edef\"}", `{"a":"abc\u202edef"}`},
+		{"an isolate and a mark", "{\"a\":\"\u2066x\u2069\u200f\u061c\"}", `{"a":"\u2066x\u2069\u200f\u061c"}`},
+		{"line and paragraph separators", "{\"a\":\"x\u2028y\u2029\"}", `{"a":"x\u2028y\u2029"}`},
+		{"bytes that are not UTF-8", "{\"a\":\"x\xff\xfey\xc2\"}", `{"a":"x\ufffd\ufffdy\ufffd"}`},
+		{"a carriage return between values", "{\"a\":1,\r\n\"b\":2}\r", "{\"a\":1,\n\"b\":2}"},
+		{"in a key", "{\"a\u202e\":1}", `{"a\u202e":1}`},
+	} {
+		got := string(JSON([]byte(tc.in)))
+		if got != tc.want {
+			t.Errorf("%s:\n got %q\nwant %q", tc.name, got, tc.want)
+		}
+		for _, r := range got {
+			if r == utf8.RuneError || (r != '\n' && r != '\t' && unsafeRune(r)) {
+				t.Errorf("%s: the output holds %U: %q", tc.name, r, got)
+			}
+		}
+		// The same value: what a JSON reader makes of each.
+		var before, after any
+		errIn, errOut := json.Unmarshal([]byte(tc.in), &before), json.Unmarshal([]byte(got), &after)
+		if errIn != nil || errOut != nil || !reflect.DeepEqual(before, after) {
+			t.Errorf("%s: not the same value: %v (%v), then %v (%v)", tc.name, before, errIn, after, errOut)
+		}
+	}
+	clean := []byte("{\"a\":\"b\"}\n")
+	if got := JSON(clean); &got[0] != &clean[0] {
+		t.Error("a body with nothing to escape was copied")
+	}
+	// Not JSON at all (the callers never pass one): still nothing a
+	// terminal acts on.
+	if got := string(JSON([]byte("\x1b]0;title\x07 \x00"))); got != `\u001b]0;title\u0007 \u0000` {
+		t.Errorf("raw controls: %q", got)
+	}
 }

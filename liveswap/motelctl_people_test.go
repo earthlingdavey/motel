@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"strings"
 	"sync"
@@ -97,11 +98,24 @@ const hostileProbe = "osc52 \x1b]52;c;cHduZWQ=\x07 csi \x1b[2J bidi abc\u202edef
 // control, a bidi control, U+2028 or U+2029.
 var unsafeTerminal = regexp.MustCompile(`[\x00-\x09\x0b-\x1f\x7f\x{80}-\x{9f}\x{061c}\x{200e}\x{200f}\x{202a}-\x{202e}\x{2066}-\x{2069}\x{2028}\x{2029}]`)
 
+// printedAs says whether stdout is the handler's body as --json prints
+// it: byte for byte when the body holds nothing a terminal acts on,
+// and otherwise the same JSON value with none of it left raw (the
+// record of v2 carries what the app answered its probe with).
+func printedAs(stdout, body string) bool {
+	if unsafeTerminal.FindString(body) == "" {
+		return stdout == body
+	}
+	var got, want any
+	return json.Unmarshal([]byte(stdout), &got) == nil && json.Unmarshal([]byte(body), &want) == nil &&
+		reflect.DeepEqual(got, want) && unsafeTerminal.FindString(stdout) == ""
+}
+
 // TestMotelctlPeople runs every command a person has against the real
 // webhook, for a viewer of one app, a viewer of the box, a person with
 // no grant, a key no line lists, and a person outside their grant's
-// from list: the exit code; --json equal to the body the handler wrote,
-// byte for byte; human output with nothing a terminal acts on; the same
+// from list: the exit code; --json equal to the body the handler wrote
+// (printedAs); human output with nothing a terminal acts on; the same
 // 403 for an app that exists and one that does not; and the 401 that
 // names every cause the client cannot tell apart.
 func TestMotelctlPeople(t *testing.T) {
@@ -203,7 +217,7 @@ func TestMotelctlPeople(t *testing.T) {
 					}
 					body = string(st.Deploys) + "\n"
 				}
-				if r.code != w.code || r.stdout != body {
+				if r.code != w.code || !printedAs(r.stdout, body) {
 					t.Fatalf("--json: exit %d, stdout\n%s\nwant %d and the handler's\n%s\nstderr %s", r.code, r.stdout, w.code, body, r.stderr)
 				}
 				r = ctl(t, bin, envOf(c.key), args...)
