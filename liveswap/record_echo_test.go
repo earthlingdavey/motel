@@ -4,11 +4,15 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/hex"
+	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"go.uber.org/zap"
+	"go.uber.org/zap/zaptest/observer"
 )
 
 // TestRecordNotReadTellsNothingOfTheEnv: when GET /<app>?deploy=<version>
@@ -65,29 +69,37 @@ func TestRecordNotReadTellsNothingOfTheEnv(t *testing.T) {
 		}
 	}
 
-	// The 500 of the same read names the record's file, and so the
-	// version asked for: a record's name that cannot be read as one,
-	// here a directory in its place.
+	// The 500 of the same read: a record's name that cannot be read as
+	// one, here a directory in its place. Its error names the file, and
+	// so the version asked for and the app's directory; the answer is
+	// one fixed sentence, the same bytes whatever is asked and whatever
+	// the app holds, and the error is in the journal.
+	core, logs := observer.New(zap.ErrorLevel)
 	for _, name := range []string{secret, plain} {
 		dir, err := recordsDir(r.apps[name].spec.dirs, true)
 		must(t, err)
 		must(t, os.Mkdir(filepath.Join(dir, "correcthorse.json"), 0o700))
+		must(t, os.Mkdir(filepath.Join(dir, "wrongguess12.json"), 0o700))
+		r.apps[name].logger = zap.New(core)
 	}
+	const unread = `{"error":"this deploy's record could not be read; the box's journal says why (journalctl -u motel)"}` + "\n"
 	for who, ask := range callers {
-		code, body := ask(http.MethodGet, "/"+secret+"?deploy=correcthorse", "")
-		if code != http.StatusInternalServerError || !strings.Contains(body, "reading deploy record: ") || !strings.Contains(body, "correcthorse.json") || strings.Contains(body, "redacted") {
-			t.Errorf("%s, a record that does not read: %d %s, want a 500 naming the file as it was asked", who, code, body)
+		for _, name := range []string{secret, plain} {
+			for _, guess := range []string{"correcthorse", "wrongguess12"} {
+				if code, body := ask(http.MethodGet, "/"+name+"?deploy="+guess, ""); code != http.StatusInternalServerError || body != unread {
+					t.Errorf("%s, %s's record %s that does not read: %d %s, want 500 %s", who, name, guess, code, body, unread)
+				}
+			}
 		}
-		// The same but for each app's own directory.
-		c, b := ask(http.MethodGet, "/"+plain+"?deploy=correcthorse", "")
-		if c != code || strings.ReplaceAll(b, r.apps[plain].spec.dirs.deploys, ma.spec.dirs.deploys) != body {
-			t.Errorf("%s, a record that does not read: %d %s of the app that holds the values, %d %s of the one that holds none", who, code, body, c, b)
-		}
+	}
+	if lines := logs.FilterMessage("reading a deploy record").All(); len(lines) != 8 || lines[0].ContextMap()["version"] == nil || !strings.Contains(fmt.Sprint(lines[0].ContextMap()["error"]), ".json is not a regular file") {
+		t.Errorf("the journal for a record that does not read: %v", logs.All())
 	}
 	for _, name := range []string{secret, plain} {
 		dir, err := recordsDir(r.apps[name].spec.dirs, true)
 		must(t, err)
 		must(t, os.Remove(filepath.Join(dir, "correcthorse.json")))
+		must(t, os.Remove(filepath.Join(dir, "wrongguess12.json")))
 	}
 
 	// A query that does not parse: the parser's words, quoting the
@@ -122,7 +134,8 @@ func TestRecordNotReadTellsNothingOfTheEnv(t *testing.T) {
 // is one of the sentence's own words does not stand as a marker in it,
 // a version that is a commit id or is shaped like a token is the
 // caller's own and reads as sent, and the answer is not withheld while
-// the app's env_file does not read, as every body of the app's is.
+// the app's env_file does not read, as every body of the app's is; nor
+// is the 422 of a query that does not parse.
 func TestRecordNotFoundIsThePlainSentence(t *testing.T) {
 	const app = "billingapp"
 	r := newAppsRig(t, app)
@@ -151,5 +164,10 @@ func TestRecordNotFoundIsThePlainSentence(t *testing.T) {
 	}
 	if code, body := get("/" + app + "?deploy=v9"); code != http.StatusNotFound || body != `{"error":"no deploy recorded for version v9"}`+"\n" {
 		t.Errorf("?deploy=v9 while the env_file does not read: %d %s", code, body)
+	}
+	// Nor is the 422 of a query that does not parse, which holds the
+	// parser's words and three bytes of the request at most.
+	if code, body := get("/" + app + "?x=%ZZ"); code != http.StatusUnprocessableEntity || body != `{"error":"malformed query: invalid URL escape \"%ZZ\""}`+"\n" {
+		t.Errorf("a query that does not parse while the env_file does not read: %d %s", code, body)
 	}
 }

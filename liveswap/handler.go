@@ -616,24 +616,27 @@ func (h *Handler) deployRecord(w http.ResponseWriter, ma *managedApp, version st
 	}
 	rec, err := readDeployRecord(c.spec.dirs, version)
 	if err != nil {
-		// No record was read, so the answer is the handler's own words,
-		// the system's, the app's directories as the config names them,
-		// and the version this request asked for: nothing the app wrote
-		// and none of its values. Such a body passes a filter that knows
-		// no value (redact.go, rule 6). Through the app's filter the
-		// version came back as a marker naming the key whenever it held
-		// an env_file value, in any form the filter knows, and a caller
-		// who may only read could try values until one did: in the 404,
-		// and in the 500, whose error names the record's file. The
-		// version passed validVersion, and it and the directories are
-		// safe strings here as they are in the status, so a commit id
-		// asked for reads as it was sent.
-		d := c.spec.dirs
-		own := NewRedactor(nil, []string{version, d.root, d.app, d.releases, d.shared, d.run})
+		// No record was read, so the answer holds nothing the app wrote
+		// and need hold none of its values: it is the handler's own
+		// words and, in the 404, the version this request asked for.
+		// Such a body passes a filter that knows no value (redact.go,
+		// rule 6). Through the app's filter the version came back as a
+		// marker naming the key whenever it held an env_file value, in
+		// any form the filter knows, and a caller who may only read
+		// could try values until one did. The version passed
+		// validVersion, and is a safe string here as it is in the
+		// status, so a commit id asked for reads as it was sent.
 		if errors.Is(err, errNoDeployRecord) {
-			return RespondJSON(w, http.StatusNotFound, wire.Error{Error: fmt.Sprintf("no deploy recorded for version %s", version)}, own)
+			return RespondJSON(w, http.StatusNotFound, wire.Error{Error: fmt.Sprintf("no deploy recorded for version %s", version)}, NewRedactor(nil, []string{version}))
 		}
-		return RespondJSON(w, http.StatusInternalServerError, wire.Error{Error: "reading deploy record: " + err.Error()}, own)
+		// The error names the record's file, and so the version asked
+		// for and the app's directory: the first is the same question
+		// through the app's filter, and the second may be one of the
+		// app's values (APP_DIR=<the directory>), which a filter that
+		// knows none would send as it is. So the answer says only that
+		// the record did not read, and the journal says why.
+		c.logger.Error("reading a deploy record", zap.String("version", version), zap.Error(err))
+		return RespondJSON(w, http.StatusInternalServerError, wire.Error{Error: "this deploy's record could not be read; the box's journal says why (journalctl -u motel)"}, NewRedactor(nil, nil))
 	}
 	// The requested version, and the record's own pin, are names the
 	// filter should let through whether or not the status still lists
