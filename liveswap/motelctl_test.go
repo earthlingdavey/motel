@@ -167,12 +167,20 @@ func TestMotelctlReadsWhatTheFilterChanged(t *testing.T) {
 	bin := motelctlBin(t)
 	// keyed's key is named for its own value, so every named spelling
 	// of the marker would hold the value, and the filter writes [#1].
+	// shaped's key is named like a provider's credential, which the
+	// filter's shape rules replace inside the marker itself; spanned
+	// holds a value that makes the filter withhold its status (a piece
+	// of the word "succeeded") and one that is a piece of the filter's
+	// own sentence, colon and all.
 	const named, staged, keyed, broken = "billingapp", "blog-production", "shopfront", "brokenenv"
-	r := newAppsRig(t, named, staged, keyed, broken)
+	const shaped, spanned = "shop-production", "spannedapp"
+	r := newAppsRig(t, named, staged, keyed, broken, shaped, spanned)
+	must(t, os.WriteFile(r.apps[shaped].spec.envFile, []byte("AKIAABCDEFGHIJKLMNOP=production\n"), 0o600)) // gitleaks:allow — made up for this test: a key's name, not a key
+	must(t, os.WriteFile(r.apps[spanned].spec.envFile, []byte("K=ucceeded\nJ=withheld: a\n"), 0o600))
 	must(t, os.WriteFile(r.apps[named].spec.envFile, []byte("DB_NAME="+named+"\n"), 0o600))
 	must(t, os.WriteFile(r.apps[staged].spec.envFile, []byte("APP_ENV=production\n"), 0o600))
 	must(t, os.WriteFile(r.apps[keyed].spec.envFile, []byte(keyed+"_db="+keyed+"\n"), 0o600))
-	for _, name := range []string{named, staged, keyed} {
+	for _, name := range []string{named, staged, keyed, shaped, spanned} {
 		ma := r.apps[name]
 		must(t, ma.Deploy(context.Background(), deployRequest{url: "https://x/1.tgz", version: "v1", by: "ci"}))
 		ma.mu.Lock()
@@ -189,17 +197,19 @@ func TestMotelctlReadsWhatTheFilterChanged(t *testing.T) {
 
 	// What the box sends, so the test is of the filter's real output.
 	for name, holds := range map[string]string{
-		named:  `"unit":"motel-[redacted:DB_NAME].v1.0a1b2c3d0a1b2c3d.service"`,
-		staged: `"app":"blog-[redacted:APP_ENV]"`,
-		keyed:  `"unit":"motel-[#1].v1.0a1b2c3d0a1b2c3d.service"`,
-		broken: `{"error":"response withheld: the app's env_file could not be read`,
+		named:   `"unit":"motel-[redacted:DB_NAME].v1.0a1b2c3d0a1b2c3d.service"`,
+		staged:  `"app":"blog-[redacted:APP_ENV]"`,
+		keyed:   `"unit":"motel-[#1].v1.0a1b2c3d0a1b2c3d.service"`,
+		broken:  `{"error":"response withheld: the app's env_file could not be read`,
+		shaped:  `"app":"shop-[redacted:[redacted:aws-key]]"`,
+		spanned: `{"error":"response [redacted:J] redacted value overlapped the response's own outcome"`,
 	} {
 		if w := do(t, r.h, http.MethodGet, "/"+name, tok, ""); w.Code != http.StatusOK || !strings.Contains(w.Body.String(), holds) {
 			t.Fatalf("GET /%s: %d %s, want a 200 holding %s", name, w.Code, w.Body, holds)
 		}
 	}
 	const hidden = "[hidden by the box's filter]"
-	for _, name := range []string{named, staged, keyed} {
+	for _, name := range []string{named, staged, keyed, shaped} {
 		got := ctl(t, bin, env, "status", box.url+"/"+name)
 		if got.code != 0 || !strings.HasPrefix(got.stdout, name+"  idle v1  unit "+hidden+"  pid 4242\n") || strings.Contains(got.stdout, "redacted:") || strings.Contains(got.stdout, "[#") {
 			t.Errorf("status %s: exit %d\n%s%s", name, got.code, got.stdout, got.stderr)
@@ -222,6 +232,11 @@ func TestMotelctlReadsWhatTheFilterChanged(t *testing.T) {
 	}
 	if got := ctl(t, bin, env, "status", box.url+"/"+broken, "--json"); got.code != 1 || got.stdout != want {
 		t.Errorf("--json of a withheld body: exit %d\n%s\nwant the handler's\n%s", got.code, got.stdout, want)
+	}
+	// The filter's sentence with a piece of it replaced, its colon gone.
+	got = ctl(t, bin, env, "status", box.url+"/"+spanned)
+	if got.code != 1 || got.stdout != "" || !strings.HasPrefix(got.stderr, "motelctl: 127.0.0.1 withheld its answer; the box says: \"response [redacted:J] redacted value overlapped") {
+		t.Errorf("status of an app whose value spans the filter's own sentence: exit %d, stdout %q, stderr %q", got.code, got.stdout, got.stderr)
 	}
 }
 
