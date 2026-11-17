@@ -6,9 +6,9 @@ you choose, and the box's own status, with their own ssh key: no
 account on the box, no ssh access, and no deploy token. They cannot
 deploy, roll back or push, whatever you write. ssh stays root's.
 
-This needs a box with a box repository: a `box` block and a site with
-`box_webhook` (the template's deploy host). People reach the box only on
-that site's name.
+This needs a `box` block and a site with `box_webhook` (the template's
+deploy host), as a box with a box repository has. People reach the box
+only on that site's name.
 
 ## What they need
 
@@ -25,7 +25,10 @@ hardware key. Ask them for the line `motelctl key
 paste (`motelctl` is the laptop client, experimental; without it, the
 one line of their `.pub` file, with `person <name>` in front). Once you
 have pushed, `motelctl whoami` tells them who the box takes them to be
-and what they may read from where they are.
+and what they may read from where they are. If their key lives in an
+agent (a password manager's, say), `motelctl` reaches it through
+`SSH_AUTH_SOCK` only, not through an `IdentityAgent` line in
+`~/.ssh/config` (motelctl/README.md, "A key an agent holds").
 
 ## Add them
 
@@ -86,7 +89,24 @@ is what they will see as their key, and a `grant` line per grant. A
 `warning` line names anything taken with a doubt: a person with no
 grant, an app grant a box grant already covers, people with no monitor channel.
 
-On a box with no box repository, edit `/etc/motel/Caddyfile` as root,
+Until a release carries people, a push of a file with `person` or
+`grant` lines turns the box repository's check red (a file with
+neither stays green), and only a box that runs a build that is not a
+release takes such a file: the workflow validates with a release (the
+latest stable one, or the one `MOTEL_VERSION` names), which refuses
+the file at the first such line (`unknown box subdirective "person"`,
+or `"grant"`). To such a box the push applies all the same: the apply
+job does not wait for the check, and the box validates the file with
+its own binary.
+
+On a box whose Caddyfile you edit at the console and do not push, the
+file must still be one the box can read its people from, as the
+template's is: a `box` block, exactly one site with `box_webhook`,
+under one bare host name, and no `import` anywhere in the file (the
+journal's line at each load says why when it is not). For people to
+reach more than the box's status, that same site needs
+`liveswap_webhook` too, as the template's has. Edit
+`/etc/motel/Caddyfile` as root,
 `motel validate --config /etc/motel/Caddyfile`, and `systemctl reload
 motel`. The box reads who it admits from that file at each load; the
 journal says `box: people admitted from the Caddyfile this machine
@@ -105,7 +125,8 @@ signed:
 | `/<app>?deploy=<version>` | one deploy's record |
 | `/` | the box's status, for a viewer of the box |
 
-`motelctl` makes the token and asks: `motelctl whoami --box
+`motelctl` (in no release yet: built from a clone of this repository,
+motelctl/README.md, "Getting it") makes the token and asks: `motelctl whoami --box
 deploy.example.com`, `motelctl apps`, `motelctl status <app>`,
 `motelctl deploys <app> [<version>]`, `motelctl box status`. Without
 it, this makes one by hand and asks who they are (`box` is the box's

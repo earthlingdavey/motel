@@ -9,9 +9,10 @@
 // source, and a person whose token the box verified. A token a global
 // source verified names no app, and is answered 404 before the route
 // table on an app's path. What a deploy source may do is what it could
-// do before Decide existed, so Decide refuses nothing that its
-// authentication accepted (liveswap/DESIGN-liveswap.md, "Who may take
-// which action"). A person may read: an app's status and deploys where
+// do before Decide existed, so on an app's path and on the box's own
+// Decide refuses nothing that its authentication accepted; under
+// /_motel/ it refuses a global source's token the people's routes
+// (liveswap/DESIGN-liveswap.md, "Who may take which action"). A person may read: an app's status and deploys where
 // a grant covers the app, the box's status with a grant on the box, and
 // who they are and which apps they may view whatever their grants
 // (DESIGN-access.md).
@@ -130,8 +131,11 @@ func (f *Forbidden) Error() string {
 // Decide says whether p may take action a on resource: the app's name
 // for an app action, "" for a box action. nil is allowed; anything
 // else is refused, an action or a kind the table does not know
-// included. An AppDeployer is allowed on its own app only. The error
-// says why, for a test; no principal of today's meets one on a route.
+// included. An AppDeployer is allowed on its own app only. A person
+// refused, or a deploy token on a person's route, gets a *Forbidden,
+// which the handlers answer as a 403 naming what is needed; any other
+// error says why for a test, and no principal of today's meets one on
+// a route.
 func Decide(p Principal, a Action, resource string) error {
 	if p.Kind == Person {
 		return decidePerson(p, a, resource)

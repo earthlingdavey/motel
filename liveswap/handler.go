@@ -130,7 +130,13 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request, _ caddyhttp.
 	// The first segment before the last: a path under /_motel/ names no
 	// app, whatever its last segment (`_` is outside the app grammar).
 	motel := clean == motelPrefix || strings.HasPrefix(clean, motelPrefix+"/")
-	if access.HasPersonScheme(r.Header.Values("Authorization")) {
+	// A person's path is open only on a box whose registry lists a key.
+	// On one that admits no one the scheme is not even looked for, and a
+	// request in the Motel scheme takes the deploy token's path, which
+	// reads the first Authorization header alone and takes a token from
+	// it only in the Bearer scheme: a Motel header alone is no bearer
+	// token.
+	if h.people.Keys() > 0 && access.HasPersonScheme(r.Header.Values("Authorization")) {
 		return h.servePerson(w, r, name, motel)
 	}
 	var ma *managedApp
@@ -217,7 +223,55 @@ func (h *Handler) awaitInstalled(r *http.Request, ma *managedApp, by string) boo
 	return false
 }
 
-// installingMessage is the 503's sentence when awaitInstalled gave up.
+// awaitRead holds a person's read until a Start has installed every
+// app it reads (the one of an app's route, each listed one of the app
+// list), under one bound of installWait for them all and no longer
+// than the request lasts, and returns the first that is not installed,
+// or nil. Until its first install a pooled app holds no spec: its
+// status is the name, "idle" and nothing else, a 200 that is not the
+// app's (no release, no deploy, no watchdog), where a deploy token on
+// the same route waits (awaitInstalled). Only a read Decide allowed
+// reaches it, so a refusal never waits, and a person waits only on
+// apps they may view; an installed app costs no timer. It is apart
+// from awaitInstalled so that a deploy token's path is as it was.
+func (h *Handler) awaitRead(r *http.Request, by string, apps ...*managedApp) *managedApp {
+	c := h.waitClock
+	if c == nil {
+		c = realClock{}
+	}
+	began := c.Now()
+	var timer <-chan time.Time
+	spent := make(chan time.Time)
+	close(spent)
+	// One timer for every app: made at the first that has to wait, for
+	// what is left of installWait since the read began, and read as
+	// fired by the clock once it has, since a timer's channel delivers
+	// once and an earlier app's wait may have taken it.
+	end := began.Add(installWait)
+	bound := func() <-chan time.Time {
+		now := c.Now()
+		if !now.Before(end) {
+			return spent
+		}
+		if timer == nil {
+			timer = c.After(end.Sub(now))
+		}
+		return timer
+	}
+	for _, ma := range apps {
+		if ma.awaitInstalled(r.Context(), bound) {
+			continue
+		}
+		h.logger.Warn("a person's read came before liveswap installed the app; answered 503",
+			zap.String("app", ma.name), zap.String("via", by), zap.String("remote", r.RemoteAddr),
+			zap.Duration("waited", c.Now().Sub(began)), zap.Bool("request_ended", r.Context().Err() != nil))
+		return ma
+	}
+	return nil
+}
+
+// installingMessage is the 503's sentence when awaitInstalled or
+// awaitRead gave up.
 const installingMessage = "motel is starting and has not loaded this app yet; retry after 1 s"
 
 // installing answers a verified request whose app no Start installed in
@@ -267,7 +321,9 @@ func ForbiddenBody(err error) any {
 // servePerson answers a request in the person token's scheme: the
 // token judged by CheckToken against this load's registry, then the
 // route's action put to Decide with the person. The app is found after
-// Decide, so a person told no learns nothing of which apps exist.
+// Decide, so a person told no learns nothing of which apps exist. A
+// read Decide allowed waits for the app's install in the first moments
+// of a start (awaitRead).
 func (h *Handler) servePerson(w http.ResponseWriter, r *http.Request, name string, motel bool) error {
 	p, ok, err := AdmitPerson(w, r, h.gate(), "app", loggedAppName(name), func(code int, body any) error { return RespondJSON(w, code, body, nil) })
 	if !ok {
@@ -293,6 +349,11 @@ func (h *Handler) servePerson(w http.ResponseWriter, r *http.Request, name strin
 		return RespondJSON(w, http.StatusNotFound, wire.Error{Error: fmt.Sprintf("unknown app %q", name)}, nil)
 	case err != nil:
 		return RespondJSON(w, http.StatusForbidden, ForbiddenBody(err), nil)
+	}
+	// After Decide: the read is this person's to make, and what it
+	// reads is the app a Start installed, as a deploy token's is.
+	if late := h.awaitRead(r, p.Name, app.ma); late != nil {
+		return h.installing(w, late)
 	}
 	return rt.serve(h, w, r, app, p.Name)
 }
@@ -379,7 +440,9 @@ func (h *Handler) getStatus(w http.ResponseWriter, r *http.Request, app appHandl
 	// query is refused here rather than read as no query.
 	q, err := url.ParseQuery(r.URL.RawQuery)
 	if err != nil {
-		return RespondJSON(w, http.StatusUnprocessableEntity, wire.Error{Error: "malformed query: " + err.Error()}, ma.redactorFor(statusSnapshot{}))
+		// The handler's words and the parser's, which quote the
+		// request's own bad escape: nothing of the app's (rule 6).
+		return RespondJSON(w, http.StatusUnprocessableEntity, wire.Error{Error: "malformed query: " + err.Error()}, NewRedactor(nil, nil))
 	}
 	window := wire.MetricsRanges[0]
 	if q.Has("range") {
@@ -558,6 +621,30 @@ func (h *Handler) deployRecord(w http.ResponseWriter, ma *managedApp, version st
 		return RespondJSON(w, http.StatusServiceUnavailable, wire.Error{Error: "app has no configuration loaded"}, ma.redactorFor(statusSnapshot{}))
 	}
 	rec, err := readDeployRecord(c.spec.dirs, version)
+	if err != nil {
+		// No record was read, so the answer holds nothing the app wrote
+		// and need hold none of its values: it is the handler's own
+		// words and, in the 404, the version this request asked for.
+		// Both bodies below are such, and pass a filter that knows no
+		// value (redact.go, rule 6). Through the app's filter the
+		// version came back as a marker naming the key whenever it held
+		// an env_file value, in any form the filter knows, and a caller
+		// who may only read could try values until one did. The version
+		// passed validVersion, and is a safe string here as it is in
+		// the status, so a commit id asked for reads as it was sent.
+		if errors.Is(err, errNoDeployRecord) {
+			return RespondJSON(w, http.StatusNotFound, wire.Error{Error: fmt.Sprintf("no deploy recorded for version %s", version)}, NewRedactor(nil, []string{version}))
+		}
+		// The error may name the record's file, and so the version
+		// asked for, and the app's directories: the first is the same
+		// question through the app's filter, and the second may be one
+		// of the app's values (APP_DIR=<the directory>), which a filter
+		// that knows none would send as it is. So the error is not in
+		// the answer, which says only that the record did not read, in
+		// the handler's words alone, and the journal says why.
+		c.logger.Error("reading a deploy record", zap.String("version", version), zap.Error(err))
+		return RespondJSON(w, http.StatusInternalServerError, wire.Error{Error: "this deploy's record could not be read; the box's journal says why (journalctl -u motel)"}, NewRedactor(nil, nil))
+	}
 	// The requested version, and the record's own pin, are names the
 	// filter should let through whether or not the status still lists
 	// them by the time it is built (a prune, a reload between the read
@@ -567,12 +654,6 @@ func (h *Handler) deployRecord(w http.ResponseWriter, ma *managedApp, version st
 	head, _ := recordHead(rec, version+".json")
 	head.Version = version
 	s.Deploys = append(s.Deploys, head)
-	switch {
-	case errors.Is(err, errNoDeployRecord):
-		return RespondJSON(w, http.StatusNotFound, wire.Error{Error: fmt.Sprintf("no deploy recorded for version %s", version)}, ma.redactorFor(s))
-	case err != nil:
-		return RespondJSON(w, http.StatusInternalServerError, wire.Error{Error: "reading deploy record: " + err.Error()}, ma.redactorFor(s))
-	}
 	// Through the live filter like every body; its outcome words
 	// stand outside the filter there (redact.go, rule 3).
 	return respondFiltered(w, http.StatusOK, ma.redactorFor(s).redactJSON(rec))
@@ -850,8 +931,11 @@ func stageUpload(body io.Reader, tmpDir string, maxBytes int64) (string, string,
 // RespondJSON writes every body the webhook sends, through the
 // response filter (redact.go). r is the app's filter — every site
 // with the app in scope passes ma.redactorFor, the 405 included —
-// and nil only for the bodies written before an app is known (401,
-// 404), where the shape and entropy layers still apply. When a
+// but for a body that holds nothing of the app's: nil for the bodies
+// written before an app is known (401, 404), and a filter that knows
+// no values for one made only of the handler's words and what the
+// request itself sent (rule 6). The shape and entropy layers still
+// apply to both. When a
 // known secret was found the object gains a `redacted_env` field
 // naming the keys. The box webhook writes its bodies through it too,
 // with a filter from NewRedactor.

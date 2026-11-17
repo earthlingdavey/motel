@@ -123,7 +123,7 @@ func TestPersonRefusalsAreTheFlat401(t *testing.T) {
 		reason       string
 		named        bool
 	}{
-		{"no registry", "GET", []string{token(people.alice)}, true, "key-not-listed", false},
+		{"no registry", "GET", []string{token(people.alice)}, true, "no bearer token", false},
 		{"a key no line lists", "GET", []string{token(people.stranger)}, false, "key-not-listed", false},
 		{"for another box", "GET", []string{people.alice.Token("other.example.test", now, time.Minute)}, false, "aud", true},
 		{"expired", "GET", []string{people.alice.Token(personBox, now.Add(-time.Hour), time.Minute)}, false, "expired", true},
@@ -156,6 +156,82 @@ func TestPersonRefusalsAreTheFlat401(t *testing.T) {
 				t.Errorf("%s: journal names key %v, person %v; want named %v", c.name, fields["key"], fields["person"], c.named)
 			}
 		}
+	}
+}
+
+// TestNoOneAdmittedTakesTheDeployPath: on a box whose registry lists no
+// key (none at all, or one built from lines that declare no one), a
+// request in the Motel scheme never enters a person's path: a
+// well-formed token, junk of its length and short junk are each
+// answered as the same request with no Authorization header, status,
+// headers and body, and the journal's reason is the deploy token's own,
+// never a person token's refusal. A deploy token sent first beside a
+// Motel header is served as it would be alone, the first header being
+// all the deploy token's path reads; on a box with people the pair is
+// the flat 401, and a key no line lists is still refused as
+// key-not-listed.
+func TestNoOneAdmittedTakesTheDeployPath(t *testing.T) {
+	people := newTestPeople(t)
+	for _, reg := range []struct {
+		name string
+		reg  *access.Registry
+	}{
+		{"no registry", nil},
+		{"a registry that lists no key", access.NewRegistry(personBox, access.Lines{})},
+	} {
+		good := token(people.alice)
+		for _, auth := range []string{
+			good,
+			access.TokenScheme + " " + strings.Repeat("x", len(good)-len(access.TokenScheme+" ")),
+			access.TokenScheme + " junk",
+			access.TokenScheme,
+		} {
+			for _, target := range []string{"/demo", "/ghost", "/_motel/whoami", "/_motel/apps"} {
+				h, _ := newTestHandler(t)
+				core, logs := observer.New(zap.InfoLevel)
+				h.logger = zap.New(core)
+				h.people = reg.reg
+				what := fmt.Sprintf("%s, %.12s… on %s", reg.name, auth, target)
+				sameAnswer(t, what, sendTo(t, h, "GET", target, auth), sendTo(t, h, "GET", target))
+				lines := logs.FilterMessage("webhook auth failed").All()
+				if len(lines) != 2 {
+					t.Fatalf("%s: journal %v", what, logs.All())
+				}
+				none, got := lines[1].ContextMap()["refused"], lines[0].ContextMap()["refused"]
+				if got != none || strings.Contains(fmt.Sprint(got), "person token") {
+					t.Errorf("%s: refused %q, want the deploy path's %q", what, got, none)
+				}
+			}
+		}
+		// Two headers: the deploy token's path reads the first alone, so
+		// the deploy token first is judged as if alone, and the Motel one
+		// first is no bearer token, the flat 401.
+		h, _ := newTestHandler(t)
+		h.people = reg.reg
+		bearer := "Bearer " + appToken(t)
+		alone := sendTo(t, h, "GET", "/demo", bearer)
+		if alone.Code != http.StatusOK {
+			t.Fatalf("%s: the deploy token alone: %d %s", reg.name, alone.Code, alone.Body)
+		}
+		if w := sendTo(t, h, "GET", "/demo", bearer, good); w.Code != alone.Code || w.Body.String() != alone.Body.String() {
+			t.Errorf("%s: a deploy token, then a Motel header: %d %s, want %d %s", reg.name, w.Code, w.Body, alone.Code, alone.Body)
+		}
+		sameAnswer(t, reg.name+": a Motel header, then a deploy token", sendTo(t, h, "GET", "/demo", good, bearer), sendTo(t, h, "GET", "/demo"))
+	}
+	// A box with people: the pair is refused whichever comes first, and
+	// a stranger's token is judged as a person's and refused by lookup.
+	h, _ := newTestHandler(t)
+	core, logs := observer.New(zap.InfoLevel)
+	h.logger = zap.New(core)
+	h.people = people.reg
+	bearer := "Bearer " + appToken(t)
+	for _, pair := range [][]string{{bearer, token(people.alice)}, {token(people.alice), bearer}} {
+		sameAnswer(t, "a box with people, two headers", sendTo(t, h, "GET", "/demo", pair...), sendTo(t, h, "GET", "/demo"))
+	}
+	logs.TakeAll()
+	sameAnswer(t, "a box with people, a stranger's token", sendTo(t, h, "GET", "/demo", token(people.stranger)), sendTo(t, h, "GET", "/demo"))
+	if lines := logs.FilterMessage("webhook auth failed").All(); len(lines) != 2 || lines[0].ContextMap()["refused"] != "person token refused: key-not-listed" {
+		t.Errorf("a box with people, a stranger's token: journal %v, want key-not-listed", logs.All())
 	}
 }
 

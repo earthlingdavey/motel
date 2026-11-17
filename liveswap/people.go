@@ -19,10 +19,12 @@ import (
 )
 
 // A person reaches either webhook with a token their own ssh key signs,
-// in the Authorization scheme access.TokenScheme. Such a request is a
-// person's only by its scheme, and only access.CheckToken judges it: it
-// never meets a deploy token's sources, and a deploy token never meets
-// CheckToken. Every refusal is the deploy token's flat 401, byte for
+// in the Authorization scheme access.TokenScheme. On a box whose
+// registry lists a key, such a request is a person's only by its
+// scheme, and only access.CheckToken judges it: it never meets a deploy
+// token's sources, and a deploy token never meets CheckToken. On a box
+// that admits no one neither webhook looks for the scheme, and every
+// request takes the deploy token's path. Every refusal is the deploy token's flat 401, byte for
 // byte, through the same failure budgets, with the reason (and the key
 // and its person, once the key was found listed) in the journal alone.
 

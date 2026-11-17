@@ -150,8 +150,9 @@ func registryFile() string {
 // the walk reads it (DESIGN-box.md, "Reading the signed file"), never
 // from the running configuration: an admin-socket load cannot add a
 // person. It is built here, at provision, before any app starts, so a
-// person's first request after a start finds it and never waits for
-// liveswap's Start, as a deploy token does (issue #473). A
+// person's first request after a start finds it and is not refused
+// (issue #473); a read of an app then waits for liveswap's Start to
+// install the app, as a deploy token does. A
 // file that cannot be read or that the walk refuses admits no one, and
 // the journal says why at each load; deploys are not touched. A file
 // whose box block has no person and no grant line admits no one either

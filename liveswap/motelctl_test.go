@@ -2,6 +2,7 @@ package liveswap
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"encoding/pem"
 	"errors"
@@ -151,6 +152,103 @@ func TestMotelctlReadsTheWebhook(t *testing.T) {
 	r = ctl(t, bin, env, "deploys", app, "v9")
 	if r.stderr != "motelctl: 127.0.0.1 answered 404; the box says: \"no deploy recorded for version v9\"\n" {
 		t.Errorf("an unknown version: %q", r.stderr)
+	}
+}
+
+// TestMotelctlReadsWhatTheFilterChanged runs motelctl against the real
+// handler for apps whose env_file values meet their own names, which
+// the response filter then replaces inside the status (redact.go, rule
+// 5 keeps only a value equal to the name, in the "app" pair alone):
+// the client reads each status and shows the replaced values in its
+// own words, where it called the answer another server's. And an app
+// whose env_file does not parse, whose every body the filter withholds
+// in a 200: the client says the box's sentence.
+func TestMotelctlReadsWhatTheFilterChanged(t *testing.T) {
+	bin := motelctlBin(t)
+	// keyed's key is named for its own value, so every named spelling
+	// of the marker would hold the value, and the filter writes [#1].
+	// shaped's key is named like a provider's credential, which the
+	// filter's shape rules replace inside the marker itself; spanned
+	// holds a value that makes the filter withhold its status (a piece
+	// of the word "succeeded") and one that is a piece of the filter's
+	// own sentence, colon and all.
+	const named, staged, keyed, broken = "billingapp", "blog-production", "shopfront", "brokenenv"
+	// nested adds a value that is a word of the marker itself, so the
+	// filter's last pass writes a marker inside the rewritten one.
+	// angled holds every word a marker in brackets opens with as a
+	// value, so the filter spells its markers in angles, and nests those.
+	const shaped, spanned, nested, angled = "shop-production", "spannedapp", "nest-production", "deep-production"
+	r := newAppsRig(t, named, staged, keyed, broken, shaped, spanned, nested, angled)
+	must(t, os.WriteFile(r.apps[angled].spec.envFile, []byte("AKIAABCDEFGHIJKLMNOP=production\nP1=redacted\nP2=REDACTED\nP3=withheld\n"), 0o600)) // gitleaks:allow — made up for this test: a key's name, not a key
+	must(t, os.WriteFile(r.apps[nested].spec.envFile, []byte("AKIAABCDEFGHIJKLMNOP=production\nPLACEHOLDER=redacted\n"), 0o600))                  // gitleaks:allow — made up for this test: a key's name, not a key
+	must(t, os.WriteFile(r.apps[shaped].spec.envFile, []byte("AKIAABCDEFGHIJKLMNOP=production\n"), 0o600))                                        // gitleaks:allow — made up for this test: a key's name, not a key
+	must(t, os.WriteFile(r.apps[spanned].spec.envFile, []byte("K=ucceeded\nJ=withheld: a\n"), 0o600))
+	must(t, os.WriteFile(r.apps[named].spec.envFile, []byte("DB_NAME="+named+"\n"), 0o600))
+	must(t, os.WriteFile(r.apps[staged].spec.envFile, []byte("APP_ENV=production\n"), 0o600))
+	must(t, os.WriteFile(r.apps[keyed].spec.envFile, []byte(keyed+"_db="+keyed+"\n"), 0o600))
+	for _, name := range []string{named, staged, keyed, shaped, spanned, nested, angled} {
+		ma := r.apps[name]
+		must(t, ma.Deploy(context.Background(), deployRequest{url: "https://x/1.tgz", version: "v1", by: "ci"}))
+		ma.mu.Lock()
+		h := ma.current.handle.(*fakeHandle)
+		ma.mu.Unlock()
+		h.mu.Lock()
+		h.unit = "motel-" + name + ".v1.0a1b2c3d0a1b2c3d.service"
+		h.mu.Unlock()
+	}
+	must(t, os.WriteFile(r.apps[broken].spec.envFile, []byte("this line is no assignment\n"), 0o600))
+	tok := appToken(t)
+	box := serveCtl(t, webhook(r.h))
+	env := []string{"MOTEL_TOKEN=" + tok, "SSL_CERT_FILE=" + box.cert}
+
+	// What the box sends, so the test is of the filter's real output.
+	for name, holds := range map[string]string{
+		named:   `"unit":"motel-[redacted:DB_NAME].v1.0a1b2c3d0a1b2c3d.service"`,
+		staged:  `"app":"blog-[redacted:APP_ENV]"`,
+		keyed:   `"unit":"motel-[#1].v1.0a1b2c3d0a1b2c3d.service"`,
+		broken:  `{"error":"response withheld: the app's env_file could not be read`,
+		shaped:  `"app":"shop-[redacted:[redacted:aws-key]]"`,
+		nested:  `"app":"nest-[REDACTED:[[REDACTED:PLACEHOLDER]:aws-key]]"`,
+		spanned: `{"error":"response [redacted:J] redacted value overlapped the response's own outcome"`,
+	} {
+		if w := do(t, r.h, http.MethodGet, "/"+name, tok, ""); w.Code != http.StatusOK || !strings.Contains(w.Body.String(), holds) {
+			t.Fatalf("GET /%s: %d %s, want a 200 holding %s", name, w.Code, w.Body, holds)
+		}
+	}
+	// The angles, which the body's last writer may spell as escapes.
+	var st struct{ App string }
+	if w := do(t, r.h, http.MethodGet, "/"+angled, tok, ""); json.Unmarshal(w.Body.Bytes(), &st) != nil || st.App != "deep-<[<P1 removed>:aws-key] removed>" {
+		t.Fatalf("GET /%s: %d %s, want its app spelled with a marker in angles in a marker in angles", angled, w.Code, w.Body)
+	}
+	const hidden = "[hidden by the box's filter]"
+	for _, name := range []string{named, staged, keyed, shaped, nested, angled} {
+		got := ctl(t, bin, env, "status", box.url+"/"+name)
+		if got.code != 0 || !strings.HasPrefix(got.stdout, name+"  idle v1  unit "+hidden+"  pid 4242\n") || strings.Contains(got.stdout, "redacted:") || strings.Contains(got.stdout, "REDACTED:") || strings.Contains(got.stdout, "[#") || strings.Contains(got.stdout, "removed>") {
+			t.Errorf("status %s: exit %d\n%s%s", name, got.code, got.stdout, got.stderr)
+		}
+		if got := ctl(t, bin, env, "deploys", box.url+"/"+name); got.code != 0 || !strings.Contains(got.stdout, "v1") {
+			t.Errorf("deploys %s: exit %d\n%s%s", name, got.code, got.stdout, got.stderr)
+		}
+		if got := ctl(t, bin, env, "deploys", box.url+"/"+name, "v1"); got.code != 0 || !strings.Contains(got.stdout, "v1") {
+			t.Errorf("deploys %s v1: exit %d\n%s%s", name, got.code, got.stdout, got.stderr)
+		}
+		want := do(t, r.h, http.MethodGet, "/"+name, tok, "").Body.String()
+		if got := ctl(t, bin, env, "status", box.url+"/"+name, "--json"); got.code != 0 || got.stdout != want {
+			t.Errorf("status %s --json: exit %d\n%s\nwant the handler's\n%s", name, got.code, got.stdout, want)
+		}
+	}
+	want := do(t, r.h, http.MethodGet, "/"+broken, tok, "").Body.String()
+	got := ctl(t, bin, env, "status", box.url+"/"+broken)
+	if got.code != 1 || got.stdout != "" || !strings.HasPrefix(got.stderr, "motelctl: 127.0.0.1 withheld its answer; the box says: \"response withheld: the app's env_file could not be read") {
+		t.Errorf("status of an app whose env_file does not parse: exit %d, stdout %q, stderr %q", got.code, got.stdout, got.stderr)
+	}
+	if got := ctl(t, bin, env, "status", box.url+"/"+broken, "--json"); got.code != 1 || got.stdout != want {
+		t.Errorf("--json of a withheld body: exit %d\n%s\nwant the handler's\n%s", got.code, got.stdout, want)
+	}
+	// The filter's sentence with a piece of it replaced, its colon gone.
+	got = ctl(t, bin, env, "status", box.url+"/"+spanned)
+	if got.code != 1 || got.stdout != "" || !strings.HasPrefix(got.stderr, "motelctl: 127.0.0.1 withheld its answer; the box says: \"response [redacted:J] redacted value overlapped") {
+		t.Errorf("status of an app whose value spans the filter's own sentence: exit %d, stdout %q, stderr %q", got.code, got.stdout, got.stderr)
 	}
 }
 

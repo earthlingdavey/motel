@@ -54,7 +54,7 @@ func (c *Client) Status(ctx context.Context, app App, rng string) (wire.Status, 
 		q.Set("range", rng)
 	}
 	ans, err := c.read(ctx, app.Path, q, &st)
-	if err == nil && st.App != app.Name {
+	if err == nil && !Same(st.App, app.Name) {
 		err = c.NotMotel(ans, "it is the status of another app")
 	}
 	return st, ans, err
@@ -68,8 +68,11 @@ func (c *Client) Deploy(ctx context.Context, app App, version string) (wire.Depl
 		return d, nil, err
 	}
 	ans, err := c.read(ctx, app.Path, url.Values{"deploy": {version}}, &d)
-	if err == nil && d.Version != version {
+	if err == nil && !Same(d.Version, version) {
 		err = c.NotMotel(ans, "it is the record of another version")
+	}
+	if err == nil {
+		d.Version = version // the one asked for: the box's may carry its filter's marker
 	}
 	return d, ans, err
 }

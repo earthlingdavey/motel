@@ -400,6 +400,52 @@ func TestResolveOrder(t *testing.T) {
 	}
 }
 
+// TestResolveGitsKeyItself: git's user.signingkey may hold the key
+// itself, not a path: as key::<line>, or as a bare line that begins
+// "ssh-", which git reads the same way and which an agent's set-up for
+// signing commits writes. Either is the key, held by the agent (no
+// path), and the files and the agent are not looked at; a value that
+// begins otherwise is still a path.
+func TestResolveGitsKeyItself(t *testing.T) {
+	line := lineOf(newSigner(t, "ed25519"))
+	home, repo := t.TempDir(), t.TempDir()
+	write(t, filepath.Join(repo, testBox, "Caddyfile"), "")
+	write(t, filepath.Join(home, ".ssh", "id_ed25519.pub"), lineOf(newSigner(t, "ed25519"))+"\n")
+	for name, value := range map[string]string{
+		"key:: and the line":              "key::" + line,
+		"the bare line":                   line,
+		"the bare line, with its comment": line + " me@laptop",
+	} {
+		run := &fakeRun{top: repo, config: map[string]string{"gpg.format": "ssh", "user.signingkey": value}}
+		k, err := Resolve(context.Background(), Lookup{Getenv: func(string) string { return "" }, Home: home, Dir: filepath.Join(repo, testBox), Run: run})
+		if err != nil {
+			t.Errorf("%s: %v", name, err)
+			continue
+		}
+		if k.Public.Line() != line || k.Source != SourceGit || k.Path != "" {
+			t.Errorf("%s: got %s from %q at %q, want git's key itself, with no path", name, k.Public.Line(), k.Source, k.Path)
+		}
+		if run.agentAsks != 0 {
+			t.Errorf("%s: the agent was asked for its keys", name)
+		}
+	}
+	// A path is read as a file: an absolute one, and a relative one
+	// whose name begins "ssh" with no hyphen after it, which git reads
+	// as a path too (there is no such file here, and the error is the
+	// file's, not a key line's).
+	write(t, filepath.Join(home, "sshkey.pub"), line+"\n")
+	run := &fakeRun{top: repo, config: map[string]string{"gpg.format": "ssh", "user.signingkey": filepath.Join(home, "sshkey.pub")}}
+	k, err := Resolve(context.Background(), Lookup{Getenv: func(string) string { return "" }, Home: home, Dir: filepath.Join(repo, testBox), Run: run})
+	if err != nil || k.Path != filepath.Join(home, "sshkey.pub") || k.Public.Line() != line || k.Source != SourceGit {
+		t.Errorf("an absolute path: %v, %+v", err, k)
+	}
+	run.config["user.signingkey"] = "sshkey-of-no-such-file.pub"
+	_, err = Resolve(context.Background(), Lookup{Getenv: func(string) string { return "" }, Home: home, Dir: filepath.Join(repo, testBox), Run: run})
+	if err == nil || !strings.Contains(err.Error(), "sshkey-of-no-such-file.pub (git's user.signingkey): open ") {
+		t.Errorf("a relative path beginning ssh with no hyphen: %v, want the file's error", err)
+	}
+}
+
 func TestResolveRefusals(t *testing.T) {
 	home := t.TempDir()
 	write(t, filepath.Join(home, "rsa.pub"), rsaLine()+"\n")

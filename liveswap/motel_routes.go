@@ -20,7 +20,10 @@ const motelPrefix = "/_motel"
 // motelRoute is one row of the routes under /_motel/: an exact path,
 // taken by a GET with no query, the box action Decide is asked about,
 // and the function that answers. Every row is a person's; a deploy
-// token meets Decide's 403.
+// token a global source accepts meets Decide's 403 (one that only an
+// app's own sources accept, or the box channel's, is the flat 401
+// before it: under /_motel/ a deploy token is judged against the
+// global sources alone).
 type motelRoute struct {
 	path   string
 	action access.Action
@@ -102,7 +105,7 @@ func (h *Handler) whoami(w http.ResponseWriter, _ *http.Request, p *Person) erro
 // row can carry another app's. After every row's last pass the list
 // adds only the key around them: the rows are carried as raw JSON, so
 // the encoder writes the text each filter left, as withField does.
-func (h *Handler) apps(w http.ResponseWriter, _ *http.Request, p *Person) error {
+func (h *Handler) apps(w http.ResponseWriter, r *http.Request, p *Person) error {
 	names := []string{}
 	for name := range h.app.managed {
 		if p.Principal.Views.Covers(name) {
@@ -110,6 +113,17 @@ func (h *Handler) apps(w http.ResponseWriter, _ *http.Request, p *Person) error 
 		}
 	}
 	slices.Sort(names)
+	// Each row is the app's status at this moment, so the list waits
+	// for the apps it names as GET /<app> does (awaitRead), under one
+	// bound: in the first moments of a start a row would say an app
+	// that serves is idle and has no deploy.
+	listed := make([]*managedApp, len(names))
+	for i, name := range names {
+		listed[i] = h.app.managed[name]
+	}
+	if late := h.awaitRead(r, p.Name, listed...); late != nil {
+		return h.installing(w, late)
+	}
 	body := struct {
 		Apps []json.RawMessage `json:"apps"`
 	}{make([]json.RawMessage, 0, len(names))}

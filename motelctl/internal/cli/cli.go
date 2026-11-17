@@ -45,7 +45,10 @@ type Env struct {
 
 const experimental = "Every command is experimental: its flags, output and exit codes can change\n" +
 	"in any release until a release's notes say otherwise. The human output is\n" +
-	"never a contract; --json is the box's own answer.\n\n" +
+	"never a contract. --json prints the box's own JSON for a read of it (deploys\n" +
+	"<app>: its deploys array alone; version and key: motelctl's own), and on\n" +
+	"exit 1 or 6, or 5 when the 403 was JSON; on exit 2, 3, 4, 8 or another 5,\n" +
+	"{\"error\":...} holding motelctl's own sentence, the one stderr prints.\n\n" +
 	"The box: an app's URL as <app>, else --box, MOTEL_BOX, the host of MOTEL_URL,\n" +
 	"or the box repository the shell is in. The credential: a token your ssh key\n" +
 	"signs when --key names the key; else MOTEL_TOKEN as Bearer when set (a deploy\n" +
@@ -55,8 +58,8 @@ const experimental = "Every command is experimental: its flags, output and exit 
 	"there is no way round it.\n\n" +
 	"Exit codes: 0 read; 1 the box answered with a failure; 2 nothing sent (usage,\n" +
 	"no box or key, an RSA or ECDSA key); 3 could not tell (no answer, not motel's\n" +
-	"answer, a 429 that stood); 4 not accepted (a 401 after one retry); 5 not\n" +
-	"allowed (403); 6 not found (404); 8 the certificate did not verify; 130\n" +
+	"answer, any 5xx, a 429 that stood); 4 not accepted (a 401 after one retry);\n" +
+	"5 not allowed (403); 6 not found (404); 8 the certificate did not verify; 130\n" +
 	"interrupted."
 
 // Main runs motelctl with args (without the program's name) and
@@ -84,7 +87,7 @@ func Main(ctx context.Context, args []string, env Env) int {
 	// read, so it is looked for here too.
 	if r.json || wantsJSON(args) {
 		if f.Body != nil {
-			_, _ = env.Stdout.Write(withNewline(f.Body))
+			_, _ = env.Stdout.Write(withNewline(termtext.JSON(f.Body)))
 		} else {
 			b, _ := json.Marshal(struct {
 				Error string `json:"error"`
@@ -125,7 +128,7 @@ func (r *runner) tree() *cobra.Command {
 	}
 	root.CompletionOptions.DisableDefaultCmd = true
 	root.AddGroup(&cobra.Group{ID: "experimental", Title: "Experimental commands:"})
-	root.PersistentFlags().BoolVar(&r.json, "json", false, "print JSON on stdout: the box's answer as received")
+	root.PersistentFlags().BoolVar(&r.json, "json", false, "print JSON on stdout: for a read, the box's own answer")
 	root.SetFlagErrorFunc(func(_ *cobra.Command, err error) error {
 		return &client.Failure{Exit: client.ExitUsage, Message: termtext.From(err.Error()).String()}
 	})
@@ -251,9 +254,12 @@ func fail(err error) error {
 	return keyFailure(err)
 }
 
-// emit prints a body as received, for --json.
+// emit prints a box's body for --json: the JSON value as received,
+// with the characters a terminal acts on written as JSON's own escapes
+// (termtext.JSON). stdout is as often a terminal as a pipe, and a pipe
+// may end at one.
 func (r *runner) emit(body []byte) error {
-	_, err := r.env.Stdout.Write(withNewline(body))
+	_, err := r.env.Stdout.Write(withNewline(termtext.JSON(body)))
 	return err
 }
 

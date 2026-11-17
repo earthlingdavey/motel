@@ -59,11 +59,16 @@ issuer's token whose keys the process has not fetched yet is refused
 then as at any time, since no token waits on an issuer. The
 registry is built in the `box` app's `Provision`, and a person's way
 in reads nothing liveswap's `Start` installs, so a person's token is
-answered from the first request and never waits.
-`TestPersonNotRefusedAfterAStart` provisions a whole config, starts
-nothing, and shows a deploy token held and then told to come back, a
-stranger refused at once, and a person's token answered at that
-moment.
+never refused in that moment. What it reads may be: an app's status,
+its deploys and its row in the list come from the app `Start` installs,
+and until then the pooled app holds only its name. So a read `Decide`
+allowed waits for the install as a deploy token does, under the same
+5 s (one bound for all the apps a list names), and past it is told the
+same 503; who am I, the box's status and every refusal are answered at
+once. `TestPersonNotRefusedAfterAStart` provisions a whole config,
+starts nothing, and shows a deploy token and a person's read of an app
+held and then told to come back, a stranger refused at once, and a
+person's whoami answered at that moment.
 
 **What admits no one.** A config with no `box` block, which has no
 `box` app and so no registry, and says nothing; and, with a `box`
@@ -76,7 +81,17 @@ the config declares people, information otherwise, and only debug for
 a config that declares no one on a machine with no installed file.
 Every line the registry writes names the file this machine runs: at
 `motel validate` of a candidate, it is still this machine's. Deploys
-are not touched by any of it.
+are not touched by any of it. On a box that admits no one (a registry
+that lists no key, or none) neither webhook looks for the `Motel`
+scheme: a request in it takes the deploy token's path, and a `Motel`
+header alone is answered and journalled as a request with no bearer
+token ("How a request is judged"). So on a box whose config declares
+people and that admits no one, a person's request is journalled `no
+bearer token in Authorization header`, not as a person's refusal; why
+no one is admitted is the line the load writes, in every case above
+but the last. In the last, when the running config declares people and
+the installed file declares no one (a config loaded other than from
+that file), the load writes no line.
 
 **A person's key is an Ed25519 key, for now**: `ssh-ed25519`, or
 `sk-ssh-ed25519@openssh.com` for a hardware key (the owner's decision
@@ -141,14 +156,26 @@ the signature verifies:
 | 11 | the times, with the skew | `times`, `iat-in-future`, `expired` |
 | 13 | the lifetime, then the method | `life`, `method` |
 
-A request is a person's only by its scheme: such a request never meets
-a deploy token's sources, and a deploy token never meets `CheckToken`.
-A `Motel` header beside a `Bearer` one is refused at check 2.
+On a box that admits someone, a request is a person's only by its
+scheme: such a request never meets a deploy token's sources, and a
+deploy token never meets `CheckToken`. A `Motel` header beside a
+`Bearer` one is refused at check 2. On a box that admits no one the
+scheme is not looked for, and the deploy token's path reads the first
+`Authorization` header alone, as it always did: a `Bearer` one first
+is judged as that deploy token, and a `Motel` one first is no deploy
+token, the flat 401.
 
 ## How a request is judged
 
-On either webhook, a request in the `Motel` scheme goes through
-`AdmitPerson`, in this order:
+A box that admits no one (its registry lists no key: "What admits no
+one") does not look for the scheme at all. On either webhook a request
+in the `Motel` scheme there takes the deploy token's path, which reads
+the first `Authorization` header alone (under the token table): a
+`Motel` header alone gets the answer and the journal reason of a
+request with no bearer token.
+
+On a box that admits someone, a request in the `Motel` scheme goes
+through `AdmitPerson`, in this order:
 
 1. `CheckToken`, with the registry as its lookup. A refusal is the flat
    401 below, through the same failure budgets as a deploy token's
@@ -212,8 +239,8 @@ names a declared key, or the 404; an app's source's is the flat 401.
 | `box.status` | `GET /` on `box_webhook` | — | yes | a viewer of the box |
 | `box.push_result` | `GET /?result=<id>` | — | yes | never (403 naming a deploy token of the box) |
 | `box.push` | `POST /` | — | yes | never |
-| `box.whoami` | `GET /_motel/whoami` | 403, needs a declared key | 403, as for a deployer | any person |
-| `box.apps` | `GET /_motel/apps` | 403, needs a declared key | 403 | any person |
+| `box.whoami` | `GET /_motel/whoami` | 403, needs a declared key, for a token a global source accepts (one that only an app's own sources accept is the flat 401 under `/_motel/`) | the flat 401: liveswap's webhook, which serves `/_motel/`, does not know the box channel's source (the 403 only when it is a global liveswap source too) | any person |
+| `box.apps` | `GET /_motel/apps` | as for `box.whoami` | as for `box.whoami` | any person |
 
 A box grant covers every app. A pair the table does not hold is
 refused. Three things are structural: no person's cell holds an act; no
@@ -261,7 +288,7 @@ other app.
 | 403 | a verified caller `Decide` refuses | `wire.Forbidden`: `{"error":"this needs the viewer role on this app","needs":"viewer","scope":"app"}`; `needs` is `viewer`, `deployer` or `key` (a token a declared key signed), `scope` is `app` or `box`. It names no app and echoes nothing of the request |
 | 404 | a viewer of the box asking for a name that is no app (`unknown app "<name>"`, as a global deploy source is told); a path under `/_motel/` with no row (`not found`) | `wire.Error` |
 | 429 | a person past their rate | `{"error":"too many requests; retry after <n> s"}`, with `Retry-After` |
-| 503 | a deploy token that verified for an app liveswap's `Start` has not installed within 5 s, or whose request ended first (#473) | `{"error":"motel is starting and has not loaded this app yet; retry after 1 s"}`, with `Retry-After: 1` |
+| 503 | a deploy token that verified for an app liveswap's `Start` has not installed within 5 s, or whose request ended first (#473); a person's read of such an app, or a list that names one | `{"error":"motel is starting and has not loaded this app yet; retry after 1 s"}`, with `Retry-After: 1` |
 | 200 | `GET /<app>` | `wire.Status`, the body a deploy token reads too. `deploying` is the deploy in flight: `version`, `deployed_by`, `started_at` (when the box took it: for a push, before its upload) and `phases`, those entered so far in order, the last one's `seconds` running to the answer; absent when none runs. It is set when the box takes a deploy (a rollback and a relaunch are deploys; the watchdog's restarts are not) and cleared in the step that sets `last_deploy`, so a read shows one or the other. It sits before `deploys` and `last_deploy`, and holds no `"phase"` key: the templates' `deploy.sh` reads the failing phase as the last `"phase"` in a failure body |
 | 200 | `GET /_motel/whoami` | `wire.WhoAmI`: `name`, `key` (its fingerprint), `roles` (the grants that apply from here, no address list shown), `box`, `version`, `protocol`, `token_expires_at` |
 | 200 | `GET /_motel/apps` | `wire.Apps`: the apps this config runs that the person may view, sorted by name, each an object, `wire.AppEntry`: `name`, then `summary` (`phase`, `running`, `current_version`, `watchdog`, the watchdog's state, `newest_deploy`, the status's first `deploys` entry, and `deploying`, the version of a deploy in flight), each value as `GET /<app>` gives it at the same moment; or, for a row the app's filter withheld, `error` in place of `summary`. A row the filter changed has its own `redacted_env`. No socket, pid, unit or command. A client reads an absent key as "not known" |
@@ -291,8 +318,10 @@ every 5xx as not known to be motel's (motelctl/README.md).
 
 **Keys by fingerprint.** One parse of the structure, one hash, one map
 lookup, then one signature check: a refusal costs the same whatever the
-number of keys. A stranger can put a listed public key in the structure
-and buy one signature check, as a JWT under a known `kid` does; the
+number of keys. On a box that admits no one a stranger's token costs
+what junk of its length in another scheme costs: the scheme is not
+looked for and the token is not parsed. A stranger can put a listed public key in the structure and buy one
+signature check, as a JWT under a known `kid` does; the
 failure budgets bound the journal, not the work. A token whose key is
 not listed, but is of a type some listed key has, is checked against a
 dummy key of that type (made at start, listed nowhere) before it is
@@ -379,7 +408,7 @@ access's examples:
 | 1 | people's reads, by app | a route shows one app's data to another app's person | 5 | 5 | 5 | fix | the app handle only `allowApp` makes; each app's own filter; `TestTwoAppsTwoPeople` over every row and caller |
 | 2 | the person token | a viewer's token accepted for an act | 5 | 5 | 5 | fix | a person's token is good on a `GET` alone (check 13); no person's cell acts |
 | 3 | the person token | a token for box A accepted at box B | 5 | 5 | 5 | fix | `aud` and `Host` both equal to the identity (checks 9, 10) |
-| 4 | the token beside deploy tokens | one kind taken as the other | 5 | 5 | 5 | fix | the scheme picks the checker; two headers refused; no person's cell holds `app.deploy` |
+| 4 | the token beside deploy tokens | one kind taken as the other | 5 | 5 | 5 | fix | the scheme picks the checker; two headers refused, on a box that admits someone (on one that admits no one the scheme is not looked for, and the deploy token's path judges the first header alone: row 27); no person's cell holds `app.deploy` |
 | 5 | the `Motel` scheme in both webhooks | an existing answer changes | 3 | 5 | 1 | fix | any other request takes today's path; `handler-bodies.txt` passes with additions only; every refusal is the flat 401 byte for byte (`TestPersonRefusalsAreTheFlat401`, both webhooks) |
 | 6 | the version on the wire | the release told to strangers, or to every token holder | 2 | 5 | 5 | fix | no header names motel, its protocol or its release, only whoami's body (`TestNoMotelHeaderOnVerifiedAnswers` and `TestReleaseInWhoamiBodyAlone` in liveswap, `TestNoMotelHeaderOnVerifiedAnswers` and `TestNoMotelHeaderOnPersonAnswers` in box) |
 | 7 | two readers of the lines | `validate` and the serving process disagree on who is admitted | 3 | 5 | 3 | fix | one parser for both; the registry from the walk alone; a grant on an app the config does not run now fails the load too |
@@ -388,11 +417,12 @@ access's examples:
 | 10 | the address list on `client_ip` | a client names its own address in `X-Forwarded-For` behind a trusted proxy (Caddy's default, non-strict mode takes the left-most), or too wide a `trusted_proxies` lets a peer set it | 3 | 3 | 5 | fix | without `trusted_proxies_strict`: refused by the gate, and no list holds a forwarded request; with it, `motel validate` warns that the ranges decide; `TestFromBehindATrustedProxy` drives a forged header through a provisioned server in each mode |
 | 15 | the cost of a refusal by lookup | a stranger tells by timing whether a published key is listed | 2 | 2 | 5 | fix | a signature check against a dummy key of the type before `key-not-listed`, for a type some listed key has (`TestUnlistedKeyCostsASignatureCheck`) |
 | 16 | that dummy check | a stranger with no key makes any box verify a P-521 signature per request (1.3 ms against 3 µs) | 3 | 3 | 5 | fix | no dummy check for a type no listed key has, nor with no registry (`TestUnlistedTypeCostsNothing`); since 2026-11-15 no ECDSA type at all, refused as `key-type` before any lookup (`TestECDSANeverVerified`) |
+| 27 | a person's token on a box that admits no one | the person's path ran on such a box too: a well-formed token was refused 20 to 45 µs later than no token or junk of its length (z 3.0 to 4.4 at 300 samples over loopback, measured twice on a real box), and any request in the `Motel` scheme took a path a release without people does not have, so a stranger tells a release that reads people's tokens from one that does not, on a box with no people | 2 | 5 | 5 | fix: size 1, risk 1; **Wide** (every request to either webhook passes the gate) | both webhooks open a person's path only when the registry lists a key (`Registry.Keys`); otherwise the scheme is not looked for and the request takes the deploy token's path. With no registry and with one listing no key, a well-formed token, junk of its length and short junk get the answer and the journal reason of no `Authorization` header; a deploy token sent first beside a `Motel` header is served as it is alone, and on a box with people the pair is still the flat 401 and an unlisted key still `key-not-listed` (`TestNoOneAdmittedTakesTheDeployPath`, both webhooks) |
 | 11 | people with no channel | what they do is told to no one | 3 | 5 | 5 | fix by naming | warned by `validate` and at load |
 | 12 | the 403 to people | a 403 for one app tells a person of another that the name exists | 3 | 5 | 5 | fix | one 403 for an app that exists and one that does not |
 | 13 | `Host` equal to the identity | a proxy that rewrites `Host` refuses every person | 2 | 5 | 1 | fix | the journal's line names the host received |
 | 14 | the `/_motel/` prefix | a deploy to `POST /_motel/<app>`, which deployed `<app>`, gets 401 or 404 | 2 | 5 | 1 | accept | no template or doc posts there; loud |
-| 17 | a deploy token after a start (#473) | a valid deploy token refused as a stranger's for some tens of milliseconds after a start, when Caddy starts the http app before liveswap (measured: 10 of 20 restarts) | 2 | 4 | 3 | fix: size 3, risk 1; **Wide** (every deploy and status request runs through it) | until a `Start` installs the app, the token is checked against the config's own sources; a verified one waits for the install, at most 5 s and the request's life, then 503 with `Retry-After`, which `deploy.sh` sends once more; nothing waits before a token verified. Covered: a `local` key's token, and an issuer's whose keys are fetched; the first token under an issuer's key after a start can still be refused once, while the key is fetched, as before (#306's row in DESIGN-liveswap.md), and the script's resend of a 401 covers it. `TestDeployTokenNotRefusedBeforeStart`, `TestDeployTokenBeforeStartPastTheBound` (on a fake clock; `TestInstallWaitIs5s` pins the bound), `TestTrustIsOneRead`, `TestStrangerBeforeStartIsTheFlat401`, `TestInstallWaitEndsWithTheRequest`, `TestReloadBeforeStartAnswersAtOnce`, `TestPersonBeforeStartDoesNotWait`; through a provisioned config, `TestPersonNotRefusedAfterAStart` |
+| 17 | a deploy token after a start (#473) | a valid deploy token refused as a stranger's for some tens of milliseconds after a start, when Caddy starts the http app before liveswap (measured: 10 of 20 restarts) | 2 | 4 | 3 | fix: size 3, risk 1; **Wide** (every deploy and status request runs through it) | until a `Start` installs the app, the token is checked against the config's own sources; a verified one waits for the install, at most 5 s and the request's life, then 503 with `Retry-After`, which `deploy.sh` sends once more; nothing waits before a token verified. Covered: a `local` key's token, and an issuer's whose keys are fetched; the first token under an issuer's key after a start can still be refused once, while the key is fetched, as before (#306's row in DESIGN-liveswap.md), and the script's resend of a 401 covers it. `TestDeployTokenNotRefusedBeforeStart`, `TestDeployTokenBeforeStartPastTheBound` (on a fake clock; `TestInstallWaitIs5s` pins the bound), `TestTrustIsOneRead`, `TestStrangerBeforeStartIsTheFlat401`, `TestInstallWaitEndsWithTheRequest`, `TestReloadBeforeStartAnswersAtOnce`; through a provisioned config, `TestPersonNotRefusedAfterAStart` |
 | 18 | the apps list's summary | one app's env value, or its name or socket, in another app's row | 5 | 5 | 5 | fix | a filter per row, never one over the list (`redact.go`, rule 2); each row through `allowApp` for `app.status`; `TestTwoAppsTwoPeople` over each row with a canary in the summary's fields; `TestAppsRowWithheld` |
 | 19 | the apps list's summary | the list and `GET /<app>` disagree about an app | 3 | 5 | 3 | fix | the summary is cut from the same status (`summaryOf`), never computed; `TestAppsSummaryIsTheStatus` for an app that serves, one never deployed, one whose newest deploy failed and one throttled |
 | 20 | the apps list's summary | a person at the rate on a box of many apps spends the box's CPU. A row reads the app's state in memory and, of the disk, only the newest deploy record (`summaryStatus`), never the release listing or the other records, which `GET /<app>` reads. Measured (go1.27.3, arm64, one core, five records an app, the token's check included): 8.6 KB and 4.8 ms a list for 30 apps, 57 KB and 31 ms for 200, against 0.8 ms for one `GET /<app>`; of a row's time about 15% is the disk, 20% building the app's filter and the rest running it. At 2 a second that is 1% of a core for 30 apps, 6% for 200; a burst of 60 at 200 apps is 1.9 s of a core | 2 | 5 | 3 | fix | the newest record alone (`TestNewestDeploySummaryIsTheListsFirst` holds it to the full list's first); the rate per person; the list is as long as the config's apps. What a cache would add is an accepted residual below |
@@ -400,6 +430,8 @@ access's examples:
 | 22 | `deploying` in `GET /<app>` | placed after `last_deploy`, or holding a `"phase"`, so `deploy.sh` reports the wrong phase for a failed deploy | 3 | 5 | 3 | fix | before `deploys` in `wire.Status`; a failure body is written after it is cleared; `TestFailureBodyPhaseWithADeployInFlight` runs `deploy.sh`'s own `field` on a real failure body, with a deploy in flight and without; `status-every-field.json` |
 | 23 | `deploying` in `GET /<app>` | a read during a deploy's end shows neither the deploy nor its outcome, or both, or a deploy that ended | 3 | 5 | 3 | fix | the outcome, the phases and `deploying` change in one step under the app's lock; a push refused before its upload is never shown, and one whose upload is not staged is cleared before its answer; `endDeploy` clears what is left before it lets go of the lock, never after, when it would clear the next deploy's; no answer of a deploy holds its own `deploying`; `TestDeployingOneStepToItsOutcome`, `TestDeployingGoneWhenTheEndIsTold`, `TestDeployingGoneFromAPushsResponses`, `TestDeployingGoneBeforeTheLockIsLetGo`, `TestDeployingBeginIsUnderTheLock`, `TestDeployingUnderConcurrentReads` under `-race`, `TestDeployingAPushFromItsUpload`, `TestDeployingASecondDeployRefused` |
 | 24 | `deploying` in `GET /<app>` | a value in it unfiltered (a version or deployer holding an env value), or a git-SHA version masked as a token | 5 | 5 | 5 | fix | it is in the status, so the app's filter; the version is a safe string as the others the status names; `TestDeployingFiltered` |
+| 25 | a person's read after a start | in the moments before liveswap's `Start` installs an app, a person's `GET /<app>` answers 200 from the pooled app, which holds only its name: `idle`, not running, no release, no deploy, for an app that has them; the list's rows say the same, and a deploy's record is a 503 with no `Retry-After`. A deploy token on the same route waits (row 17). Found reviewing the PRs together (#538) | 3 | 4 | 3 | fix: size 2, risk 1 | a read `Decide` allowed waits for the install, one bound of 5 s for every app a list names, then the 503 with `Retry-After` (`awaitRead`); nothing waits before `Decide`, and whoami reads no app. `TestPersonBeforeStartReadsTheInstalledApp`, `TestPersonBeforeStartPastTheBound`, `TestAppsListWaitsOnceForEveryApp`, `TestPersonNotAllowedBeforeStartDoesNotWait`; through a provisioned config, `TestPersonNotRefusedAfterAStart` |
+| 26 | a person's read of a deploy's record | the 404 of `GET /<app>?deploy=<version>` named the version asked for through the app's filter, which replaces an `env_file` value wherever a body holds it and names the key: a guess that held a value (as written, inside a longer string, in base64 or hex, a URL value's password) came back `[redacted:DB_PASSWORD]`, and a viewer could try the app's secrets at the person's rate, 2 a second. The 500 of the same read, whose error names the record's file, did the same while a record's file could not be read. A deploy token has met both answers since the route was added (#104); a person who may only read reaching them is this release's. Found answering the owner's question on #538, 2026-11-17 | 5 | 3 | 5 | fix: size 1, risk 1; **Wide** (deploy tokens get these answers too. The 404 changes for them in three cases: a version that holds one of the app's values is shown as sent; a value that is one of the sentence's own words no longer stands as a marker in it; and it is not withheld while the app's `env_file` does not read. The 500 no longer carries the system's error, which is in the journal, and is not withheld then either) | the 404 is the handler's words and the request's own text, nothing of the app's, and passes a filter that knows no value, as the 422 of a query that does not parse does (`redact.go`, rule 6; the owner's choice: what a caller sent is never run past the app's values, as a body's rule and never a string's). The 500 says one fixed sentence: with its error, which may name the app's directory, and a value may equal that, it was no such body. `TestRecordNotReadTellsNothingOfTheEnv`: each form of guess, for a viewer and a deploy token, answered in the 404 as an app with none of the values answers it; the 500 the same bytes whatever is asked, and its error in the journal; a version an earlier deploy stored still replaced in the status, the record and a deploy's refusal. `TestRecordNotFoundIsThePlainSentence`: a value that is a word of the sentence, a version shaped like a token, and, for the 404 and the 422, an `env_file` that does not read |
 
 ### Accepted residuals
 
@@ -422,6 +454,9 @@ access's examples:
 | A list row's `newest_deploy` can name the deploy before the newest for one read, when a record is rewritten between the row's stat of the records and its read (a deploy or a rollback under way) | 1 | 5 | 3 | 2, 2 | the row is a moment's reading, as two requests a moment apart are; a record is replaced whole, so what is read is one record, never a mix, and the next read (a client polls) orders it rightly. Ordering by the time read from the open file means opening every record, which `newestDeploySummary` exists not to do (row 20) |
 | Between a push taking the deploy lock and being shown in flight (`beginDeploy`, after the app's dirs pass `writeRefusal`, a few file checks), a status read shows no deploy in flight while a second deploy is already told 409 | 1 | 5 | 3 | 1, 2 | it lasts microseconds and misleads nobody for longer: the next read shows the push. Showing it before `writeRefusal` would need that refusal's answer to clear it first, one more way out to keep in step for no reader's benefit |
 | A deploy by URL or a rollback whose app directories fail `writeRefusal` is shown in flight from its start to that refusal (a few file checks), where a push refused the same way is never shown: `deployLocked` marks the deploy in flight where it logs `deploy started` and sends the lifecycle's start, before its first check | 1 | 1 | 3 | 1, 2 | `deploying` says what the journal and the lifecycle say, that the deploy started; it is cleared before the refusal is answered, so no answer of the deploy holds it. Marking it after the check would have the status deny a deploy the journal has already announced. It takes app directories that are not as motel made them |
+| On a box that runs a build that is not a release, the box repository's check goes red on a pushed file with `person` or `grant` lines (one with neither stays green): the template's workflow checks with a release, the latest stable one or the one `MOTEL_VERSION` names (`bin/install-motel` takes nothing else), and a release without people refuses the file at the first such line (`unknown box subdirective "person"`, or `"grant"`). The apply job does not wait for the check and the box validates with its own binary, so the push still applies | 2 | 5 | 1 | 1, 2 | Red and named, and it ends when a release carries people; docs/people.md says so where it says to check the file. Checking with an unreleased build would need the workflow to take a binary from outside the releases, which `bin/install-motel` verifies against a release's `checksums.txt` (the client-app deploy report, finding 9, 2026-11-16) |
+| A status read at `GET /_motel/<app>` with the app's deploy token, which named `<app>` before this release as any last path segment does, gets the flat 401 (a global source's token: 404), as row 14's `POST` there does; and the box channel's token under `/_motel/` gets the flat 401, not a 403 that names a declared key (the 403 only when its source is a global liveswap source too) | 2 | 5 | 1 | 2, 2 | as row 14: no template, doc or client asks there, and the answer is loud. Judging a token under `/_motel/` against every app's sources, or the box's, would let a stranger buy a verification per source |
+| A stranger who knows an app's name tells this release from an older one by the time to the 401 for a junk `Bearer` JWT at `/_motel/<app>`, on a box where `<app>` has `deploy_trust` sources of its own, people or not (an app that takes the global sources is judged by the same ones on both): here the path names no app and the token is judged against the global sources (with none, refused before any parse: `no deploy_trust source resolves for this app`); on `main` (0.7.0 and before) `path.Base` makes it `<app>`, whose own sources parse it and, for a JWT that gets that far, check its signature. Measured for this release only (hotserve-1, a box with no global source, at 30f5f12f, 2026-11-17, over loopback, 300 samples a case): against no token, a junk RS256 JWT cost +130 µs (z 10.2) at `/example`, the path `main` gives `/_motel/example`, and nothing measurable at `/_motel/example` (+0 µs, z −0.19) or `/nosuchapp` (−10 µs, z −1.21). 0.7.0's side is still read from the code (`ServeHTTP` on `main`, `authorize`, `deploytrust.Build`): measuring it takes a downgrade | 2 | 5 | 5 | 2, 2; **Wide** (where no global source resolves, a check against a dummy source, on every box's deploy path; where global sources differ from the app's own, more than that) | accepted by the owner's decision (2026-11-17), over the bar: the fix changes the deploy path of a box with no person or grant line. The channel is the timing residual DESIGN-threat-model.md already accepts for the deploy path ("Webhook endpoint", #306): the time to the 401 differs by the local work a name's sources do. What is new is that it tells the release |
 
 ## Not in this release
 

@@ -64,7 +64,7 @@ import (
 // token the length-aware bar still misses (about half at 20 to 22
 // characters), all pass.
 //
-// Four rules hold across the layers and every writer of a body, and
+// Six rules hold across the layers and every writer of a body, and
 // the code is judged against them, not the other way round:
 //
 //  1. No safe string ever equals a known value. A safe string exempts
@@ -117,6 +117,37 @@ import (
 //     longer form, replaced whole before the name is looked at
 //     (longest first). The app list's rows name their app outside the
 //     filter (motel_routes.go).
+//  6. What a request itself sent is never run past the app's values
+//     when the body holds nothing else of the app's. Layer 1 replaces
+//     a value wherever a body holds it and names the key, so a body
+//     that echoes the caller's text through the app's filter answers
+//     a question the caller may not ask: "is this one of the app's
+//     values?", for the value as written, inside a longer string, in
+//     base64 or hex, or a URL value's password alone. A caller who may
+//     only read could try values until a marker came back. So a body
+//     made only of the handler's own words and this request's text is
+//     written through a filter that knows no value (NewRedactor with
+//     none; the shape and entropy layers still run, and a version
+//     asked for is a safe string, as in the status). Today those are
+//     the answers of a read that reads nothing of the app's, each of
+//     which a person with the viewer role can ask for: the 404 of
+//     GET /<app>?deploy=<version> for a version with no record, and
+//     the 422 of a query that does not parse (handler.go). A body
+//     that only might hold something of the app's does not qualify:
+//     the 500 of that read carried the system's error, which named the
+//     version asked for but also the app's directory, and an env_file
+//     value may equal that. With the error in it the 500 was no such
+//     body; it now says one fixed sentence, which is, and the journal
+//     has the error.
+//     The exemption is the body's, never the string's: a string is not
+//     exempt because a request named it (rule 1), and a body that
+//     holds one byte the app wrote, or text an earlier request stored
+//     (a deployed version, in a status or a record), passes the app's
+//     filter whole. A deploy's refusals that echo its version or URL
+//     (a version that exists, a rollback with no release) still pass
+//     the app's filter: only a deploy token reaches them, and it can
+//     read the app's environment by deploying
+//     (DESIGN-threat-model.md).
 const (
 	secretMinLen  = 8
 	entropyMinLen = 20

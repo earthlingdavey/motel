@@ -235,18 +235,44 @@ Properties that matter to the model:
   the request's path and the config, so the pair tells nothing the
   caller did not send; a value that holds the name inside it is
   replaced whole, before the name is looked at. The app list names each
-  app outside the filter, for the same reason. A
+  app outside the filter, for the same reason. The fourth is a whole
+  body: one made only of the handler's own words and what this request
+  itself sent, which holds nothing of the app's, is written through a
+  filter that knows no `env_file` value. Through the app's filter it
+  was an oracle: the first layer replaces a value wherever a body holds
+  it and names the key, so `GET /<app>?deploy=<guess>`, whose 404 names
+  the version asked for, answered `[redacted:DB_PASSWORD]` for a guess
+  that held that value (as written, inside a longer string, in base64
+  or hex, or a URL value's password alone), and a person with no more
+  than the viewer role could try values until one did. That 404 and
+  the 422 of a query that does not parse are the such bodies today;
+  the 500 of the same read, whose error may name the record's file
+  and so the version asked for, now says a fixed sentence and leaves
+  the error to the journal, since the error may also name the app's
+  directory, which a value may equal. The exemption is the body's and never the
+  string's: a string is not safe because a request named it, and text
+  an earlier request stored, a deployed version in a status or a
+  record, passes the app's filter with the app's bytes. A
   body the first layer would leave unparsable (a value made of JSON's
   own punctuation matching the structure rather than a string) is
   withheld, with the keys still reported; and while an app's
   `env_file` cannot be read, its values are unknown to the filter and
-  every body about that app is withheld rather than sent through the
-  heuristics alone. What the filter does **not** promise: an encoding not in
+  every body that holds anything of that app's is withheld rather than
+  sent through the heuristics alone. What the filter does **not** promise: an encoding not in
   the list, a value under 8 characters, a secret split across lines,
   a secret the app fetched at runtime and printed in a low-entropy
   form, an inline `env` value (not a secret by policy: the Caddyfile
   is in a repo), or a value the still-running instance was launched
-  with before a motel restart if the file has changed since.
+  with before a motel restart if the file has changed since. Nor that
+  a deploy source cannot confirm a guess of a value: a deploy's
+  refusals echo its version and URL through the app's filter, and a
+  version it deploys is named in the status; it can read the app's
+  environment by deploying code, so it learns nothing it could not.
+  Nor that a marker hides which key it stands for: it names the key,
+  so where a value is replaced inside text the reader already has (the
+  app's name when a value is part of it, the unit named after the app)
+  the reader learns that key's value by difference
+  (liveswap/DESIGN-liveswap.md, "Accepted residuals").
   Tested from both sides — a fuzz property that no known value or
   form survives and the JSON stays valid (`FuzzRedactor`), and a
   corpus that the diagnostics a reader needs do (`TestRedactorCorpus`)
@@ -1049,9 +1075,12 @@ scope for the runtime model, in scope for release signing (roadmap).
   allowlist, or by pulling from a URL within `artifact_allowlist` — and
   roll back versions. A deploy token is a deployer of the apps that
   trust its source and nothing else: it holds no person's route, and a
-  person's token holds no deploy. The two are told apart by the
-  `Authorization` scheme before any verifier runs (`Bearer` for deploy
-  tokens, `Motel` for people's), so neither verifier ever parses the
+  person's token holds no deploy. On a box that admits someone, the two
+  are told apart by the `Authorization` scheme before any verifier runs
+  (`Bearer` for deploy tokens, `Motel` for people's); on one that admits
+  no one the `Motel` scheme is not looked for, and the deploy token's
+  path reads the first `Authorization` header alone, taking a token from
+  it only in the `Bearer` scheme. So neither verifier ever parses the
   other's token. Containment is the claim scope (and, for pulls,
   the allowlist), not the runtime; the sandbox bounds what the deployed
   code then reaches.
@@ -1070,12 +1099,15 @@ scope for the runtime model, in scope for release signing (roadmap).
   hundred process-wide are logged, then silence; the answer is the
   flat 401 throughout), the CPU cost of JWT/JWKS verification (spent
   on every request — the budgets bound the journal, not the work),
-  and any pre-auth proxy/Caddy surface. With people declared, the same
-  gate also parses a person's token: a fixed prefix, one SSHSIG
-  structure, one fingerprint lookup and at most one signature check,
-  under the same 8 KiB cap and the same failure budgets; a stranger can
-  put a listed key's public half in the structure and buy one signature
-  check, as a JWT under a published `kid` does. That check is an
+  and any pre-auth proxy/Caddy surface. On a box whose registry lists a
+  key (people declared in an installed file the walk takes), the same gate also
+  parses a person's token; on one that admits no one the `Motel` scheme
+  is not looked for and no person's token is parsed. Reading one is a
+  fixed prefix, one SSHSIG structure, one fingerprint lookup and at
+  most one signature check, under the same 8 KiB cap and the same
+  failure budgets; a stranger can put a listed key's public half in
+  the structure and buy one signature check, as a JWT under a
+  published `kid` does. That check is an
   Ed25519 one, about 0.04 ms: a person's key is Ed25519 for now, and a
   token with an ECDSA key (0.5 to 1.3 ms a check for the larger curves)
   is refused by its type before any lookup. A key that is not listed

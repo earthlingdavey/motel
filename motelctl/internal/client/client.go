@@ -136,12 +136,15 @@ func TokenFor(box Box, getenv func(string) string) error {
 	return nil
 }
 
-// The waits before the one retry of a 401. For a person's token one
-// second covers the 55 to 61 ms after every start in which motel
-// refuses a valid token (#473), and the token sent is still good, so
-// it is sent again. For a deploy token it is deploy.sh's three: a box
-// refuses the first token under an issuer's new signing key while it
-// fetches the key.
+// The waits before the one retry of a 401. For a person's token it is
+// one second, and the token sent is still good, so it is sent again.
+// It was written for the moments after a start in which motel refused
+// a valid token (#473); that window was a deploy token's only (a
+// person's registry is built before any request is served, and
+// e2e/box/people.sh counts no person refused across restarts), and it
+// is closed. No case is known that a person's retry covers now. For a
+// deploy token it is deploy.sh's three: a box refuses the first token
+// under an issuer's new signing key while it fetches the key.
 const (
 	retryPerson = time.Second
 	retryDeploy = 3 * time.Second
@@ -254,8 +257,10 @@ var (
 	// nameRe is a name as a person or signer line holds one
 	// (box/proof/signers.go), at most 256 bytes.
 	nameRe = regexp.MustCompile(`^[A-Za-z0-9._@+-]{1,256}$`)
-	// roleRe is a role as a box names one, in a 403's needs or a
-	// whoami's roles: a word the client may say as a role.
+	// roleRe is the shape of a role in a whoami's roles. A box grants
+	// one today, viewer; the shape is wider so that a later motel's
+	// role does not make the whole answer unreadable, and a word that
+	// is not viewer is printed quoted, as the box's (cli's whoamiView).
 	roleRe = regexp.MustCompile(`^[a-z][a-z_-]{0,31}$`)
 )
 
@@ -452,10 +457,14 @@ func retryAfter(h http.Header, now time.Time) (int64, bool) {
 // Read decodes a 200's body into v and returns nil, or says why the
 // answer is not the one asked for: a refusal (403, 404, a 409 or
 // another 4xx with an error sentence, each said as the box's with the
-// sentence quoted), a 5xx, said as not known to be motel's, or an
-// answer that is not motel's. No message carries a decoder's
-// error, which quotes what the body holds: a field that does not read
-// is named by the client's own name for it, and nothing of its value.
+// sentence quoted), a 5xx, said as not known to be motel's, a body the
+// box's response filter withheld (a 200 whose one sentence says so,
+// quoted), or an answer that is not motel's. No message carries a
+// decoder's error, which quotes what the body holds: a field that does
+// not read is named by the client's own name for it, and nothing of
+// its value. A value held to a grammar that the box's filter replaced
+// part of is Filtered in v (hold); the app and a record's version,
+// which the caller compares with what was asked (Same), are as sent.
 func (c *Client) Read(ans *Answer, v any) error {
 	if ans.Code == http.StatusOK {
 		missing := identity(v).missing(ans.Body)
@@ -467,6 +476,10 @@ func (c *Client) Read(ans *Answer, v any) error {
 		case errors.Is(err, errNotObject):
 			return c.notMotel(ans, "not a JSON object")
 		case len(missing) > 0:
+			if said, ok := withheld(ans); ok {
+				return &Failure{Exit: ExitFailed, Status: ans.Code, Body: ans.Body, Message: fmt.Sprintf(
+					"%s withheld its answer; the box says: %s", c.Box.Host, said)}
+			}
 			return c.notMotel(ans, "it has no "+fieldList(missing))
 		case err != nil:
 			// motel's answer, by its fields, with a value that did not
@@ -480,7 +493,7 @@ func (c *Client) Read(ans *Answer, v any) error {
 				"%s answered, but %s could not be read: the box's response filter may have replaced it. The box's journal says which key it replaced.",
 				c.Box.Addr(), what)}
 		}
-		if why := odd(v); why != "" {
+		if why := hold(v); why != "" {
 			return c.notMotel(ans, why)
 		}
 		return nil
@@ -512,7 +525,8 @@ func (c *Client) Read(ans *Answer, v any) error {
 }
 
 // The grammars the server holds the values to that the client prints
-// unlabelled or as markers. A value outside them is no honest box's.
+// unlabelled or as markers. A value outside them is no honest box's,
+// but one its response filter replaced part of (hold).
 var (
 	// wireVersionRe is liveswap/names.go's versionRe: every version a
 	// status or a record names was one a deploy took.
@@ -536,22 +550,180 @@ var (
 	outcomePhases  = map[string]bool{"downloading": true, "extracting": true, "preparing": true, "starting": true, "soaking": true, "promoting": true, "draining": true, "stopping_old": true}
 )
 
-// odd says why a body that decoded is still not one an honest box
-// sends: a value outside the grammar the box holds it to. The client
-// never prints such a value, so it never says it either.
-func odd(v any) string {
+// The box's response filter writes a marker where it replaced text
+// (liveswap/redact.go). For an env_file value of the app's, or a
+// credential's shape, it is [redacted:<what>], <what> the key's name
+// (several, with commas, for keys that hold one value) or the shape's;
+// when that spelling would itself hold a known value (a key named for
+// its own value), the next of [REDACTED:<what>], [withheld:<what>],
+// <<what> removed> and [#N] that holds none (chooseMarker). For a
+// token that looks generated it is [masked, N chars]. No grammar below
+// takes a bracket or an angle, so a value outside its grammar that
+// carries a marker is one the box's own filter changed, not another
+// server's: an env_file value equal to the app's name (DB_NAME=<app>)
+// is replaced inside the unit, which is named after the app.
+//
+// The filter's later layers run over the markers of its first, so
+// what stands inside a marker can be rewritten there, to any depth: a
+// key's name that looks generated is masked, [redacted:[masked, 24
+// chars]]; one shaped like a provider's credential (AKIA…, ghp_…) is
+// replaced, [redacted:[redacted:aws-key]]; and the last pass replaces
+// a known value in what those wrote, [REDACTED:[[REDACTED:K]:aws-key]].
+// Each is one marker, not a marker in a bracket: a marker runs from
+// its opening bracket to the bracket that closes it, and one in angles
+// from its < to its > (filterMarks).
+var (
+	// markOpens are how a marker with a label opens.
+	markOpens = []string{"[redacted:", "[REDACTED:", "[withheld:"}
+	// bareMarkRe is a marker with no label, whole.
+	bareMarkRe = regexp.MustCompile(`^(?:\[#[0-9]{1,9}\]|\[masked, [0-9]{1,9} chars\])$`)
+)
+
+// filterMarks finds the filter's markers in s: where each starts and
+// ends, in order, none inside another. One pass over s, and work in
+// proportion to its length whatever it holds: a box's value is not
+// trusted to be short or well formed.
+func filterMarks(s string) [][]int {
+	type opening struct {
+		at    int
+		angle bool
+	}
+	var (
+		found [][]int
+		open  []opening // the [ and < not yet closed
+		left  [2]int    // how many of each kind are open: [ then <
+	)
+	kind := func(angle bool) int {
+		if angle {
+			return 1
+		}
+		return 0
+	}
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		switch c {
+		case '[', '<':
+			open = append(open, opening{i, c == '<'})
+			left[kind(c == '<')]++
+		case ']', '>':
+			angle := c == '>'
+			if left[kind(angle)] == 0 {
+				continue
+			}
+			// Its pair is the nearest opening of its kind; one of the
+			// other kind left open inside is no pair's, and goes.
+			k := len(open) - 1
+			for open[k].angle != angle {
+				left[kind(open[k].angle)]--
+				k--
+			}
+			left[kind(angle)]--
+			start := open[k].at
+			open = open[:k]
+			m := s[start : i+1]
+			if (angle && !angleMark(m)) || (!angle && !bracketMark(m)) {
+				continue
+			}
+			// What stands inside a marker is part of it.
+			for len(found) > 0 && found[len(found)-1][0] > start {
+				found = found[:len(found)-1]
+			}
+			found = append(found, []int{start, i + 1})
+		}
+	}
+	return found
+}
+
+// angleMark says whether m, from a < to the > that closes it, is the
+// marker's spelling in angles: a label, then " removed".
+func angleMark(m string) bool {
+	return len(m) > len("< removed>") && strings.HasSuffix(m, " removed>")
+}
+
+// bracketMark says whether m, from a bracket to the one that closes
+// it, is a marker: a known opening and a label, or a bare one.
+func bracketMark(m string) bool {
+	for _, o := range markOpens {
+		if strings.HasPrefix(m, o) {
+			return len(m) > len(o)+1
+		}
+	}
+	return len(m) <= 32 && bareMarkRe.MatchString(m)
+}
+
+// Filtered is what motelctl shows in place of a value the box's
+// response filter replaced part of: its own words, and nothing of the
+// value, which is outside its grammar.
+const Filtered = "[hidden by the box's filter]"
+
+// Same says whether got, a value of the box's, is the one asked for:
+// equal to it, or equal to it everywhere but where the box's filter
+// left a marker ("blog-[redacted:APP_ENV]" for blog-production). The
+// caller prints what was asked, never got.
+func Same(got, asked string) bool {
+	if got == asked {
+		return true
+	}
+	marks := filterMarks(got)
+	if len(marks) == 0 {
+		return false
+	}
+	// asked is got with each marker standing for some text of its own:
+	// the parts between the markers, in order, each where the one
+	// before left off, the first at the start and the last at the end.
+	var re strings.Builder
+	re.WriteString("^")
+	at := 0
+	for _, m := range marks {
+		re.WriteString(regexp.QuoteMeta(got[at:m[0]]))
+		re.WriteString(".+")
+		at = m[1]
+	}
+	re.WriteString(regexp.QuoteMeta(got[at:]))
+	re.WriteString("$")
+	ok, err := regexp.MatchString(re.String(), asked)
+	return err == nil && ok
+}
+
+// held keeps *s when it is in its grammar, puts Filtered in its place
+// when the box's filter changed it, and reports false for any other
+// value: the one way a value outside its grammar is taken, and then
+// not one byte of it is shown.
+func held(s *string, in func(string) bool) bool {
+	switch {
+	case in(*s):
+	case len(filterMarks(*s)) > 0:
+		*s = Filtered
+	default:
+		return false
+	}
+	return true
+}
+
+// hold says why a body that decoded is still not one an honest box
+// sends: a value outside the grammar the box holds it to, which the
+// client never prints and so never says either. A value the box's own
+// filter replaced part of is no such value: it becomes Filtered in v
+// (but a record's version, which the caller compares and replaces).
+func hold(v any) string {
+	isVersion := wireVersionRe.MatchString
 	switch a := v.(type) {
 	case *wire.Status:
 		if a.Phase != "idle" && !outcomePhases[a.Phase] {
 			return "its phase is not one an app has"
 		}
-		if (a.CurrentVersion != "" && !wireVersionRe.MatchString(a.CurrentVersion)) || !allVersions(a.AvailableVersions) {
+		if a.CurrentVersion != "" && !held(&a.CurrentVersion, isVersion) {
 			return "a version in it is not a version"
 		}
-		if a.Unit != "" && !unitRe.MatchString(a.Unit) {
+		for i := range a.AvailableVersions {
+			if !held(&a.AvailableVersions[i], isVersion) {
+				return "a version in it is not a version"
+			}
+		}
+		if a.Unit != "" && !held(&a.Unit, unitRe.MatchString) {
 			return "its unit is not one motel names"
 		}
-		if wd := a.Watchdog; wd != nil && wd.State != "" && !watchdogStates[wd.State] {
+		if wd := a.Watchdog; wd != nil && wd.State != "" && !held(&wd.State, func(s string) bool { return watchdogStates[s] }) {
 			return "its watchdog's state is not one a watchdog has"
 		}
 		// The window is one of the ranges a box answers for
@@ -560,16 +732,20 @@ func odd(v any) string {
 		if m := a.Metrics; m != nil && m.Window != "" && !slices.Contains(wire.MetricsRanges, m.Window) {
 			return "its metrics' window is not one a box keeps"
 		}
-		for _, d := range a.Deploys {
-			if why := oddOutcome(d.Version, d.Status, d.Phase, nil); why != "" {
+		for i := range a.Deploys {
+			d := &a.Deploys[i]
+			if why := holdOutcome(&d.Version, d.Status, d.Phase, nil); why != "" {
 				return why
 			}
 		}
 		if d := a.LastDeploy; d != nil {
-			return oddOutcome(d.Version, d.Status, d.Phase, d.Phases)
+			return holdOutcome(&d.Version, d.Status, d.Phase, d.Phases)
 		}
 	case *wire.DeployResult:
-		return oddOutcome(a.Version, a.Status, a.Phase, a.Phases)
+		// The record's version is compared with the one asked for
+		// (Same), which is what the caller prints: left as sent.
+		version := a.Version
+		return holdOutcome(&version, a.Status, a.Phase, a.Phases)
 	case *wire.BoxStatus:
 		if !commitRe.MatchString(a.Commit) {
 			return "its commit is not a commit id"
@@ -587,7 +763,9 @@ func odd(v any) string {
 		// Every value whoami prints as the box's is held to the grammar
 		// the box holds it to: the name to a person line's, the release
 		// to the Makefile's; the key and the box are compared, not
-		// printed.
+		// printed. A role is held to its shape, which is wider than the
+		// one role a box grants, and printed as a word only when it is
+		// that one (roleRe).
 		if !nameRe.MatchString(a.Name) {
 			return "its name is not one a box takes"
 		}
@@ -603,11 +781,13 @@ func odd(v any) string {
 	return ""
 }
 
-// oddOutcome holds a deploy's version, status, phase and phases to the
-// outcome vocabulary.
-func oddOutcome(version, status, phase string, phases []wire.PhaseTiming) string {
+// holdOutcome holds a deploy's version, status, phase and phases to
+// the outcome vocabulary. The words are never the filter's to change:
+// the box keeps an outcome word standing or withholds the body
+// (liveswap/redact.go, rule 3).
+func holdOutcome(version *string, status, phase string, phases []wire.PhaseTiming) string {
 	switch {
-	case !wireVersionRe.MatchString(version):
+	case !held(version, wireVersionRe.MatchString):
 		return "a version in it is not a version"
 	case !outcomeStatuses[status]:
 		return "a deploy's status in it is not succeeded or failed"
@@ -620,15 +800,6 @@ func oddOutcome(version, status, phase string, phases []wire.PhaseTiming) string
 		}
 	}
 	return ""
-}
-
-func allVersions(vs []string) bool {
-	for _, v := range vs {
-		if !wireVersionRe.MatchString(v) {
-			return false
-		}
-	}
-	return true
 }
 
 // scopeOK is a role's scope as a box writes one: "box", or "app:" and
@@ -666,13 +837,17 @@ func badField(body []byte, v any) string {
 }
 
 // forbidden is a 403, which exits 5 whatever its body, and whose body
-// --json prints as received whenever it is JSON. The box's words are
+// --json prints whenever it is JSON. The box's words are
 // never the client's advice: needs and scope are used only when they
-// are words of their grammar (roleRe; "app" or "box"), and the
+// are the words access.Decide writes (liveswap/access/access.go,
+// Forbidden: "viewer", "deployer" or "key"; "app" or "box"), and the
 // sentence is built from them alone, so an app that exists and one
-// that does not read the same and no app is named. A 403 that does not
-// say what it needs in those words is said as a refusal, with the
-// box's own sentence, if any, quoted as the box's.
+// that does not read the same and no app is named. Any other needs,
+// a word a later box may name among them, is never put in motelctl's
+// own sentence, where a box could have it say "it needs the
+// <words of the box's choosing> role": such a 403 is said as a refusal
+// that did not say what it needs, with the box's own sentence, if any,
+// quoted as the box's.
 func (c *Client) forbidden(ans *Answer) *Failure {
 	var body []byte
 	if json.Valid(ans.Body) {
@@ -688,24 +863,18 @@ func (c *Client) forbidden(ans *Answer) *Failure {
 		whoami = " `motelctl whoami` lists the roles you hold from here."
 	}
 	on := map[string]string{"app": "this app", "box": "the box"}[f.Scope]
-	if !roleRe.MatchString(f.Needs) || on == "" {
+	needs := map[string]string{
+		"viewer":   "the viewer role on " + on,
+		"deployer": "a deploy token of " + on,
+		"key":      "a token your own key signs",
+	}[f.Needs]
+	if needs == "" || on == "" {
 		said := "."
 		if f.Error != "" {
 			said = "; the box says: " + termtext.Quote(f.Error).String() + "."
 		}
 		return &Failure{Exit: ExitForbidden, Status: ans.Code, Body: body, Message: fmt.Sprintf(
 			"%s refused this (HTTP 403) and did not say what it needs%s%s", c.Box.Host, said, whoami)}
-	}
-	var needs string
-	switch f.Needs {
-	case "viewer":
-		needs = "the viewer role on " + on
-	case "deployer":
-		needs = "a deploy token of " + on
-	case "key":
-		needs = "a token your own key signs"
-	default:
-		needs = "the " + f.Needs + " role on " + on
 	}
 	if person {
 		return &Failure{Exit: ExitForbidden, Status: ans.Code, Body: body, Message: fmt.Sprintf(
@@ -723,6 +892,46 @@ func (c *Client) forbidden(ans *Answer) *Failure {
 // what Read took and finds it about another thing than it asked (an
 // app, a version, a host): why is the command's own words.
 func (c *Client) NotMotel(ans *Answer, why string) error { return c.notMotel(ans, why) }
+
+// withheld is the box's sentence, quoted, when a 200's body is the one
+// its response filter writes in place of an answer it withheld: an
+// error alone, in the filter's fixed opening words (liveswap/redact.go:
+// an env_file it could not read, a replaced value that overlapped the
+// body's structure or one of its outcomes), which say what the
+// operator has to mend; or the bare marker [#0] it falls back to when
+// what it would send is not JSON after its last pass, which says no
+// more than that the answer was withheld. The opening is read as the
+// filter's own last pass may have left it (opensWithheld), so a
+// sentence that opens with a marker is taken too, whatever follows.
+// Any other 200 without the answer's fields is still not motel's.
+func withheld(ans *Answer) (termtext.Text, bool) {
+	var e wire.Error
+	if decodeObject(ans, &e) != nil || !opensWithheld(e.Error) {
+		return termtext.Text{}, false
+	}
+	return termtext.Quote(e.Error), true
+}
+
+// opensWithheld says whether s, the one sentence of such a body, opens
+// with the filter's "response withheld" as the filter's own last pass
+// may have left it (redact.go's filterBody): an env_file value that is
+// a piece of the sentence stands there as a marker, and the piece can
+// be any, the colon after the opening included ("withheld: a"). So
+// what stands before the first marker must be the opening's start,
+// and the marker stands for the rest of it; with no marker that far,
+// the opening stands whole, and then the sentence ends, or goes on
+// with a colon or a marker. [#0], a marker alone, is the filter's too.
+func opensWithheld(s string) bool {
+	const opening = "response withheld"
+	before, marked := s, false
+	if m := filterMarks(s); len(m) > 0 {
+		before, marked = s[:m[0][0]], true
+	}
+	if rest, whole := strings.CutPrefix(before, opening); whole {
+		return rest == "" || strings.HasPrefix(rest, ":")
+	}
+	return marked && strings.HasPrefix(opening, before)
+}
 
 func (c *Client) notMotel(ans *Answer, why string) error {
 	if why != "" {
