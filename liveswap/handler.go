@@ -434,7 +434,9 @@ func (h *Handler) getStatus(w http.ResponseWriter, r *http.Request, app appHandl
 	// query is refused here rather than read as no query.
 	q, err := url.ParseQuery(r.URL.RawQuery)
 	if err != nil {
-		return RespondJSON(w, http.StatusUnprocessableEntity, wire.Error{Error: "malformed query: " + err.Error()}, ma.redactorFor(statusSnapshot{}))
+		// The handler's words and the parser's, which quote the
+		// request's own bad escape: nothing of the app's (rule 6).
+		return RespondJSON(w, http.StatusUnprocessableEntity, wire.Error{Error: "malformed query: " + err.Error()}, NewRedactor(nil, nil))
 	}
 	window := wire.MetricsRanges[0]
 	if q.Has("range") {
@@ -613,6 +615,30 @@ func (h *Handler) deployRecord(w http.ResponseWriter, ma *managedApp, version st
 		return RespondJSON(w, http.StatusServiceUnavailable, wire.Error{Error: "app has no configuration loaded"}, ma.redactorFor(statusSnapshot{}))
 	}
 	rec, err := readDeployRecord(c.spec.dirs, version)
+	if err != nil {
+		// No record was read, so the answer holds nothing the app wrote
+		// and need hold none of its values: it is the handler's own
+		// words and, in the 404, the version this request asked for.
+		// Both bodies below are such, and pass a filter that knows no
+		// value (redact.go, rule 6). Through the app's filter the
+		// version came back as a marker naming the key whenever it held
+		// an env_file value, in any form the filter knows, and a caller
+		// who may only read could try values until one did. The version
+		// passed validVersion, and is a safe string here as it is in
+		// the status, so a commit id asked for reads as it was sent.
+		if errors.Is(err, errNoDeployRecord) {
+			return RespondJSON(w, http.StatusNotFound, wire.Error{Error: fmt.Sprintf("no deploy recorded for version %s", version)}, NewRedactor(nil, []string{version}))
+		}
+		// The error may name the record's file, and so the version
+		// asked for, and the app's directories: the first is the same
+		// question through the app's filter, and the second may be one
+		// of the app's values (APP_DIR=<the directory>), which a filter
+		// that knows none would send as it is. So the error is not in
+		// the answer, which says only that the record did not read, in
+		// the handler's words alone, and the journal says why.
+		c.logger.Error("reading a deploy record", zap.String("version", version), zap.Error(err))
+		return RespondJSON(w, http.StatusInternalServerError, wire.Error{Error: "this deploy's record could not be read; the box's journal says why (journalctl -u motel)"}, NewRedactor(nil, nil))
+	}
 	// The requested version, and the record's own pin, are names the
 	// filter should let through whether or not the status still lists
 	// them by the time it is built (a prune, a reload between the read
@@ -622,12 +648,6 @@ func (h *Handler) deployRecord(w http.ResponseWriter, ma *managedApp, version st
 	head, _ := recordHead(rec, version+".json")
 	head.Version = version
 	s.Deploys = append(s.Deploys, head)
-	switch {
-	case errors.Is(err, errNoDeployRecord):
-		return RespondJSON(w, http.StatusNotFound, wire.Error{Error: fmt.Sprintf("no deploy recorded for version %s", version)}, ma.redactorFor(s))
-	case err != nil:
-		return RespondJSON(w, http.StatusInternalServerError, wire.Error{Error: "reading deploy record: " + err.Error()}, ma.redactorFor(s))
-	}
 	// Through the live filter like every body; its outcome words
 	// stand outside the filter there (redact.go, rule 3).
 	return respondFiltered(w, http.StatusOK, ma.redactorFor(s).redactJSON(rec))
@@ -905,8 +925,11 @@ func stageUpload(body io.Reader, tmpDir string, maxBytes int64) (string, string,
 // RespondJSON writes every body the webhook sends, through the
 // response filter (redact.go). r is the app's filter — every site
 // with the app in scope passes ma.redactorFor, the 405 included —
-// and nil only for the bodies written before an app is known (401,
-// 404), where the shape and entropy layers still apply. When a
+// but for a body that holds nothing of the app's: nil for the bodies
+// written before an app is known (401, 404), and a filter that knows
+// no values for one made only of the handler's words and what the
+// request itself sent (rule 6). The shape and entropy layers still
+// apply to both. When a
 // known secret was found the object gains a `redacted_env` field
 // naming the keys. The box webhook writes its bodies through it too,
 // with a filter from NewRedactor.

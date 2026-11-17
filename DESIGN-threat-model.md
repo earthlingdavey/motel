@@ -235,18 +235,44 @@ Properties that matter to the model:
   the request's path and the config, so the pair tells nothing the
   caller did not send; a value that holds the name inside it is
   replaced whole, before the name is looked at. The app list names each
-  app outside the filter, for the same reason. A
+  app outside the filter, for the same reason. The fourth is a whole
+  body: one made only of the handler's own words and what this request
+  itself sent, which holds nothing of the app's, is written through a
+  filter that knows no `env_file` value. Through the app's filter it
+  was an oracle: the first layer replaces a value wherever a body holds
+  it and names the key, so `GET /<app>?deploy=<guess>`, whose 404 names
+  the version asked for, answered `[redacted:DB_PASSWORD]` for a guess
+  that held that value (as written, inside a longer string, in base64
+  or hex, or a URL value's password alone), and a person with no more
+  than the viewer role could try values until one did. That 404 and
+  the 422 of a query that does not parse are the such bodies today;
+  the 500 of the same read, whose error may name the record's file
+  and so the version asked for, now says a fixed sentence and leaves
+  the error to the journal, since the error may also name the app's
+  directory, which a value may equal. The exemption is the body's and never the
+  string's: a string is not safe because a request named it, and text
+  an earlier request stored, a deployed version in a status or a
+  record, passes the app's filter with the app's bytes. A
   body the first layer would leave unparsable (a value made of JSON's
   own punctuation matching the structure rather than a string) is
   withheld, with the keys still reported; and while an app's
   `env_file` cannot be read, its values are unknown to the filter and
-  every body about that app is withheld rather than sent through the
-  heuristics alone. What the filter does **not** promise: an encoding not in
+  every body that holds anything of that app's is withheld rather than
+  sent through the heuristics alone. What the filter does **not** promise: an encoding not in
   the list, a value under 8 characters, a secret split across lines,
   a secret the app fetched at runtime and printed in a low-entropy
   form, an inline `env` value (not a secret by policy: the Caddyfile
   is in a repo), or a value the still-running instance was launched
-  with before a motel restart if the file has changed since.
+  with before a motel restart if the file has changed since. Nor that
+  a deploy source cannot confirm a guess of a value: a deploy's
+  refusals echo its version and URL through the app's filter, and a
+  version it deploys is named in the status; it can read the app's
+  environment by deploying code, so it learns nothing it could not.
+  Nor that a marker hides which key it stands for: it names the key,
+  so where a value is replaced inside text the reader already has (the
+  app's name when a value is part of it, the unit named after the app)
+  the reader learns that key's value by difference
+  (liveswap/DESIGN-liveswap.md, "Accepted residuals").
   Tested from both sides — a fuzz property that no known value or
   form survives and the JSON stays valid (`FuzzRedactor`), and a
   corpus that the diagnostics a reader needs do (`TestRedactorCorpus`)
