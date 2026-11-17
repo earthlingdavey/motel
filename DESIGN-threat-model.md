@@ -246,10 +246,10 @@ Properties that matter to the model:
   or hex, or a URL value's password alone), and a person with no more
   than the viewer role could try values until one did. That 404 and
   the 422 of a query that does not parse are the such bodies today;
-  the 500 of the same read, whose error named the record's file and so
-  the version asked for, now says a fixed sentence and leaves the
-  error to the journal, since it also named the app's directory, which
-  a value may equal. The exemption is the body's and never the
+  the 500 of the same read, whose error may name the record's file
+  and so the version asked for, now says a fixed sentence and leaves
+  the error to the journal, since the error may also name the app's
+  directory, which a value may equal. The exemption is the body's and never the
   string's: a string is not safe because a request named it, and text
   an earlier request stored, a deployed version in a status or a
   record, passes the app's filter with the app's bytes. A

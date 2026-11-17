@@ -134,10 +134,11 @@ import (
 //     GET /<app>?deploy=<version> for a version with no record, and
 //     the 422 of a query that does not parse (handler.go). A body
 //     that only might hold something of the app's does not qualify:
-//     the 500 of that read named the record's file, and so the version
-//     asked for, but also the app's directory, which an env_file value
-//     may equal; it now says a fixed sentence, and the journal the
-//     rest.
+//     the 500 of that read carried the system's error, which named the
+//     version asked for but also the app's directory, and an env_file
+//     value may equal that. With the error in it the 500 was no such
+//     body; it now says one fixed sentence, which is, and the journal
+//     has the error.
 //     The exemption is the body's, never the string's: a string is not
 //     exempt because a request named it (rule 1), and a body that
 //     holds one byte the app wrote, or text an earlier request stored

@@ -619,22 +619,23 @@ func (h *Handler) deployRecord(w http.ResponseWriter, ma *managedApp, version st
 		// No record was read, so the answer holds nothing the app wrote
 		// and need hold none of its values: it is the handler's own
 		// words and, in the 404, the version this request asked for.
-		// Such a body passes a filter that knows no value (redact.go,
-		// rule 6). Through the app's filter the version came back as a
-		// marker naming the key whenever it held an env_file value, in
-		// any form the filter knows, and a caller who may only read
-		// could try values until one did. The version passed
-		// validVersion, and is a safe string here as it is in the
-		// status, so a commit id asked for reads as it was sent.
+		// Both bodies below are such, and pass a filter that knows no
+		// value (redact.go, rule 6). Through the app's filter the
+		// version came back as a marker naming the key whenever it held
+		// an env_file value, in any form the filter knows, and a caller
+		// who may only read could try values until one did. The version
+		// passed validVersion, and is a safe string here as it is in
+		// the status, so a commit id asked for reads as it was sent.
 		if errors.Is(err, errNoDeployRecord) {
 			return RespondJSON(w, http.StatusNotFound, wire.Error{Error: fmt.Sprintf("no deploy recorded for version %s", version)}, NewRedactor(nil, []string{version}))
 		}
-		// The error names the record's file, and so the version asked
-		// for and the app's directory: the first is the same question
-		// through the app's filter, and the second may be one of the
-		// app's values (APP_DIR=<the directory>), which a filter that
-		// knows none would send as it is. So the answer says only that
-		// the record did not read, and the journal says why.
+		// The error may name the record's file, and so the version
+		// asked for, and the app's directories: the first is the same
+		// question through the app's filter, and the second may be one
+		// of the app's values (APP_DIR=<the directory>), which a filter
+		// that knows none would send as it is. So the error is not in
+		// the answer, which says only that the record did not read, in
+		// the handler's words alone, and the journal says why.
 		c.logger.Error("reading a deploy record", zap.String("version", version), zap.Error(err))
 		return RespondJSON(w, http.StatusInternalServerError, wire.Error{Error: "this deploy's record could not be read; the box's journal says why (journalctl -u motel)"}, NewRedactor(nil, nil))
 	}
