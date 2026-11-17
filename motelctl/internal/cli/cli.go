@@ -45,7 +45,10 @@ type Env struct {
 
 const experimental = "Every command is experimental: its flags, output and exit codes can change\n" +
 	"in any release until a release's notes say otherwise. The human output is\n" +
-	"never a contract; --json is the box's own answer.\n\n" +
+	"never a contract. --json prints the box's own JSON for a read of it (deploys\n" +
+	"<app>: its deploys array alone; version and key: motelctl's own), and on\n" +
+	"exit 1 or 6, or 5 when the 403 was JSON; on exit 2, 3, 4, 8 or another 5,\n" +
+	"{\"error\":...} holding motelctl's own sentence, the one stderr prints.\n\n" +
 	"The box: an app's URL as <app>, else --box, MOTEL_BOX, the host of MOTEL_URL,\n" +
 	"or the box repository the shell is in. The credential: a token your ssh key\n" +
 	"signs when --key names the key; else MOTEL_TOKEN as Bearer when set (a deploy\n" +

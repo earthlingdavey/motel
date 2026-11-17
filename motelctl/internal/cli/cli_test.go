@@ -350,8 +350,13 @@ func TestBoxAnswersFailure(t *testing.T) {
 		t.Fatalf("--json prints the box's 404 body: %+v", r)
 	}
 	// An unknown app answers 401 to a deploy token, like a bad token.
+	// The box's 401 body is not printed: --json is an object whose one
+	// key is error, holding motelctl's own sentence, the one on stderr.
 	r = run(t, fb, deployToken, "status", appURL(fb, "ghost"), "--json")
-	if r.code != 4 || !strings.HasPrefix(r.stdout, `{"error":"127.0.0.1 refused the token in MOTEL_TOKEN`) {
+	var got map[string]string
+	said := strings.TrimSuffix(strings.TrimPrefix(r.stderr, "motelctl: "), "\n")
+	if r.code != 4 || json.Unmarshal([]byte(r.stdout), &got) != nil || len(got) != 1 || got["error"] != said ||
+		!strings.HasPrefix(said, "127.0.0.1 refused the token in MOTEL_TOKEN") {
 		t.Fatalf("a refused token: %+v", r)
 	}
 }
