@@ -95,9 +95,9 @@ neither stays green), and only a box that runs a build that is not a
 release takes such a file: the workflow validates with a release (the
 latest stable one, or the one `MOTEL_VERSION` names), which refuses
 the file at the first such line (`unknown box subdirective "person"`,
-or `"grant"`). The push applies all the same, since the apply job does
-not wait for the check and the box validates the file with its own
-binary.
+or `"grant"`). To such a box the push applies all the same: the apply
+job does not wait for the check, and the box validates the file with
+its own binary.
 
 On a box whose Caddyfile you edit at the console and do not push, the
 file must still be one the box can read its people from, as the
