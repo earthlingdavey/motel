@@ -533,11 +533,93 @@ var (
 // server's: an env_file value equal to the app's name (DB_NAME=<app>)
 // is replaced inside the unit, which is named after the app.
 //
-// The filter's later layers run over the markers of its first, so a
-// key name that itself looks generated is masked inside its own label:
-// [redacted:[masked, 24 chars]] is one marker, not a marker in a
-// bracket.
-var filterMarkRe = regexp.MustCompile(`\[(?:redacted|REDACTED|withheld):(?:[^\][]|\[masked, [0-9]{1,9} chars\])+\]|<[^<>]+ removed>|\[#[0-9]{1,9}\]|\[masked, [0-9]{1,9} chars\]`)
+// The filter's later layers run over the markers of its first, so
+// what stands inside a marker can be rewritten there, to any depth: a
+// key's name that looks generated is masked, [redacted:[masked, 24
+// chars]]; one shaped like a provider's credential (AKIA…, ghp_…) is
+// replaced, [redacted:[redacted:aws-key]]; and the last pass replaces
+// a known value in what those wrote, [REDACTED:[[REDACTED:K]:aws-key]].
+// Each is one marker, not a marker in a bracket: a marker runs from
+// its opening bracket to the bracket that closes it, and one in angles
+// from its < to its > (filterMarks).
+var (
+	// markOpens are how a marker with a label opens.
+	markOpens = []string{"[redacted:", "[REDACTED:", "[withheld:"}
+	// bareMarkRe is a marker with no label, whole.
+	bareMarkRe = regexp.MustCompile(`^(?:\[#[0-9]{1,9}\]|\[masked, [0-9]{1,9} chars\])$`)
+)
+
+// filterMarks finds the filter's markers in s: where each starts and
+// ends, in order, none inside another. One pass over s, and work in
+// proportion to its length whatever it holds: a box's value is not
+// trusted to be short or well formed.
+func filterMarks(s string) [][]int {
+	type opening struct {
+		at    int
+		angle bool
+	}
+	var (
+		found [][]int
+		open  []opening // the [ and < not yet closed
+		left  [2]int    // how many of each kind are open: [ then <
+	)
+	kind := func(angle bool) int {
+		if angle {
+			return 1
+		}
+		return 0
+	}
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		switch c {
+		case '[', '<':
+			open = append(open, opening{i, c == '<'})
+			left[kind(c == '<')]++
+		case ']', '>':
+			angle := c == '>'
+			if left[kind(angle)] == 0 {
+				continue
+			}
+			// Its pair is the nearest opening of its kind; one of the
+			// other kind left open inside is no pair's, and goes.
+			k := len(open) - 1
+			for open[k].angle != angle {
+				left[kind(open[k].angle)]--
+				k--
+			}
+			left[kind(angle)]--
+			start := open[k].at
+			open = open[:k]
+			m := s[start : i+1]
+			if (angle && !angleMark(m)) || (!angle && !bracketMark(m)) {
+				continue
+			}
+			// What stands inside a marker is part of it.
+			for len(found) > 0 && found[len(found)-1][0] > start {
+				found = found[:len(found)-1]
+			}
+			found = append(found, []int{start, i + 1})
+		}
+	}
+	return found
+}
+
+// angleMark says whether m, from a < to the > that closes it, is the
+// marker's spelling in angles: a label, then " removed".
+func angleMark(m string) bool {
+	return len(m) > len("< removed>") && strings.HasSuffix(m, " removed>")
+}
+
+// bracketMark says whether m, from a bracket to the one that closes
+// it, is a marker: a known opening and a label, or a bare one.
+func bracketMark(m string) bool {
+	for _, o := range markOpens {
+		if strings.HasPrefix(m, o) {
+			return len(m) > len(o)+1
+		}
+	}
+	return len(m) <= 32 && bareMarkRe.MatchString(m)
+}
 
 // Filtered is what motelctl shows in place of a value the box's
 // response filter replaced part of: its own words, and nothing of the
@@ -552,8 +634,8 @@ func Same(got, asked string) bool {
 	if got == asked {
 		return true
 	}
-	marks := filterMarkRe.FindAllStringIndex(got, -1)
-	if marks == nil {
+	marks := filterMarks(got)
+	if len(marks) == 0 {
 		return false
 	}
 	// asked is got with each marker standing for some text of its own:
@@ -580,7 +662,7 @@ func Same(got, asked string) bool {
 func held(s *string, in func(string) bool) bool {
 	switch {
 	case in(*s):
-	case filterMarkRe.MatchString(*s):
+	case len(filterMarks(*s)) > 0:
 		*s = Filtered
 	default:
 		return false
@@ -788,20 +870,37 @@ func (c *Client) NotMotel(ans *Answer, why string) error { return c.notMotel(ans
 // body's structure or one of its outcomes), which say what the
 // operator has to mend; or the bare marker [#0] it falls back to when
 // what it would send is not JSON after its last pass, which says no
-// more than that the answer was withheld. Any other 200 without the
-// answer's fields is still not motel's.
+// more than that the answer was withheld. The opening is read as the
+// filter's own last pass may have left it (opensWithheld), so a
+// sentence that opens with a marker is taken too, whatever follows.
+// Any other 200 without the answer's fields is still not motel's.
 func withheld(ans *Answer) (termtext.Text, bool) {
 	var e wire.Error
-	if decodeObject(ans, &e) != nil {
-		return termtext.Text{}, false
-	}
-	// The opening is itself filtered (redact.go's filterBody): an
-	// env_file value that is one of its words stands as a marker there.
-	opening, _, _ := strings.Cut(e.Error, ": ")
-	if e.Error != "[#0]" && !Same(opening, "response withheld") {
+	if decodeObject(ans, &e) != nil || !opensWithheld(e.Error) {
 		return termtext.Text{}, false
 	}
 	return termtext.Quote(e.Error), true
+}
+
+// opensWithheld says whether s, the one sentence of such a body, opens
+// with the filter's "response withheld" as the filter's own last pass
+// may have left it (redact.go's filterBody): an env_file value that is
+// a piece of the sentence stands there as a marker, and the piece can
+// be any, the colon after the opening included ("withheld: a"). So
+// what stands before the first marker must be the opening's start,
+// and the marker stands for the rest of it; with no marker that far,
+// the opening stands whole, and then the sentence ends, or goes on
+// with a colon or a marker. [#0], a marker alone, is the filter's too.
+func opensWithheld(s string) bool {
+	const opening = "response withheld"
+	before, marked := s, false
+	if m := filterMarks(s); len(m) > 0 {
+		before, marked = s[:m[0][0]], true
+	}
+	if rest, whole := strings.CutPrefix(before, opening); whole {
+		return rest == "" || strings.HasPrefix(rest, ":")
+	}
+	return marked && strings.HasPrefix(opening, before)
 }
 
 func (c *Client) notMotel(ans *Answer, why string) error {

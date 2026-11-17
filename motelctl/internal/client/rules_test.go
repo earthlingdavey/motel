@@ -16,6 +16,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -373,7 +374,15 @@ func TestReadTakesWhatTheFilterReplaced(t *testing.T) {
 	for _, mark := range []string{"[redacted:DB_NAME]", "[redacted:A,B_2,c]", "[REDACTED:shop]", "[withheld:shop]", "<shop removed>", "<a,b removed>", "[#1]", "[#12]",
 		"[redacted:" + strings.Repeat("K,", 200) + "K]", "[masked, 20 chars]", "[redacted:private-key]",
 		// A key name that looks generated is masked inside its own label.
-		"[redacted:[masked, 24 chars]]", "[redacted:A,[masked, 24 chars],B]", "[withheld:[masked, 24 chars]]", "<[masked, 24 chars] removed>"} {
+		"[redacted:[masked, 24 chars]]", "[redacted:A,[masked, 24 chars],B]", "[withheld:[masked, 24 chars]]", "<[masked, 24 chars] removed>",
+		// A key named like a provider's credential is replaced there by
+		// the shape rules, and a known value by the last pass.
+		"[redacted:[redacted:aws-key]]", "[redacted:[redacted:github-token]]", "[redacted:A,[redacted:jwt]]", "[withheld:[redacted:AUTH_MODE]]", "<[redacted:aws-key] removed>",
+		// And the last pass may replace a value in what those wrote: a
+		// marker inside a marker inside a marker.
+		"[REDACTED:[[REDACTED:PLACEHOLDER]:aws-key]]", "[redacted:[masked, [#1]]]",
+		// The same in angles, when every spelling in brackets holds a value.
+		"<[<P1 removed>:aws-key] removed>", "<A,<B removed> removed>"} {
 		var st wire.Status
 		body := `{"app":"blog","phase":"idle","unit":"motel-` + mark + `.v1.0a1b2c3d0a1b2c3d.service"}`
 		if err := c.Read(okJSON(body), &st); err != nil || st.Unit != Filtered {
@@ -480,6 +489,14 @@ func TestReadSaysWhatTheFilterWithheld(t *testing.T) {
 		"[redacted:MODE] withheld: a redacted value overlapped the response's own outcome",
 		"response [redacted:STATE]: a redacted value overlapped the response's own structure",
 		"[#1]: a redacted value overlapped the response's own structure",
+		// A value that spans the opening's colon, or begins at it: the
+		// filter's real output for J=withheld: a and for J=: a redacted.
+		"response [redacted:J] redacted value overlapped the response's own outcome",
+		"response withheld[redacted:J] value overlapped the response's own outcome",
+		// A value that starts inside the opening, and the opening alone
+		// (which the filter does not write, and which stays taken).
+		"resp[redacted:J]",
+		"response withheld",
 	} {
 		b, err := json.Marshal(wire.Error{Error: said})
 		if err != nil {
@@ -489,6 +506,11 @@ func TestReadSaysWhatTheFilterWithheld(t *testing.T) {
 			t.Errorf("%q: exit %d %q", said, f.Exit, f.Message)
 		}
 	}
+	// A sentence that opens with a marker is taken, whatever follows:
+	// the marker may stand for the whole opening (README, accepted).
+	if f := failure(t, c.Read(okJSON(`{"error":"[redacted:X] timed out: upstream"}`), &wire.Status{})); f.Exit != ExitFailed || !strings.Contains(f.Message, `withheld its answer; the box says: "[redacted:X] timed out: upstream"`) {
+		t.Errorf("a sentence that opens with a marker: exit %d %q", f.Exit, f.Message)
+	}
 	withKeys := `{"error":"response withheld: a redacted value overlapped the response's own structure","redacted_env":["DB_NAME"]}`
 	if f := failure(t, c.Read(okJSON(withKeys), &wire.Status{})); f.Exit != ExitFailed || !strings.Contains(f.Message, "withheld its answer; the box says: \"response withheld: a redacted value") {
 		t.Errorf("a withheld body naming its keys: exit %d %q", f.Exit, f.Message)
@@ -496,13 +518,63 @@ func TestReadSaysWhatTheFilterWithheld(t *testing.T) {
 	for name, body := range map[string]string{
 		"another server's error":        `{"error":"upstream timed out"}`,
 		"the words not at the start":    `{"error":"note: response withheld"}`,
-		"a marker and other words":      `{"error":"[redacted:X] timed out: upstream"}`,
 		"other words before the colon":  `{"error":"response withheld by a proxy: upstream"}`,
+		"the opening cut short":         `{"error":"response with"}`,
+		"other words before a marker":   `{"error":"request [redacted:X] timed out"}`,
+		"the opening and more letters":  `{"error":"response withheldx[redacted:X]"}`,
+		"an empty sentence":             `{"error":""}`,
 		"a withheld body with no error": `{"redacted_env":["DB_NAME"]}`,
 	} {
 		f := failure(t, c.Read(okJSON(body), &wire.Status{}))
 		if f.Exit != ExitUnknown || !strings.Contains(f.Message, "not motel's answer: it has no app and phase") {
 			t.Errorf("%s: exit %d %q", name, f.Exit, f.Message)
+		}
+	}
+}
+
+// filterMarks takes each marker from its opening bracket to the one
+// that closes it, whatever was rewritten inside, and nothing that is
+// not one.
+func TestFilterMarks(t *testing.T) {
+	for _, tc := range []struct {
+		in   string
+		want []string
+	}{
+		{"motel-[redacted:DB_NAME].v1", []string{"[redacted:DB_NAME]"}},
+		{"x[REDACTED:[[REDACTED:PLACEHOLDER]:aws-key]]y", []string{"[REDACTED:[[REDACTED:PLACEHOLDER]:aws-key]]"}},
+		{"[redacted:[masked, 24 chars]]", []string{"[redacted:[masked, 24 chars]]"}},
+		{"a<[redacted:aws-key] removed>b", []string{"<[redacted:aws-key] removed>"}},
+		{"[masked, 20 chars][#2]", []string{"[masked, 20 chars]", "[#2]"}},
+		{"[x [withheld:A,B] y]", []string{"[withheld:A,B]"}},
+		{"a]b[#1]c[", []string{"[#1]"}},
+		{"[redacted:A] and <B removed> and [redacted:C]", []string{"[redacted:A]", "<B removed>", "[redacted:C]"}},
+		{"nest-<[<P1 removed>:aws-key] removed>", []string{"<[<P1 removed>:aws-key] removed>"}},
+		{"a < b [redacted:X] c > d", []string{"[redacted:X]"}},
+		{"[redacted:a<b] <c removed>", []string{"[redacted:a<b]", "<c removed>"}},
+		{"[redacted:<a] removed>", []string{"[redacted:<a]"}},
+		{"<[redacted:a removed>", []string{"<[redacted:a removed>"}},
+		{"<a > b removed> < removed> <removed>", nil},
+		{strings.Repeat("[", 200000) + strings.Repeat(">", 200000), nil},
+		{strings.Repeat("<", 200000) + strings.Repeat("]", 200000), nil},
+		{strings.Repeat("[<", 100000) + strings.Repeat("]", 100000), nil},
+		{"[redacted:]", nil},
+		{"[redacted:A", nil},
+		{"redacted:A]", nil},
+		{"[hidden:X] [1] [#] [masked, x chars] <shop deleted> [Redacted:A]", nil},
+		{strings.Repeat("[redacted:", 10000), nil},
+		{strings.Repeat("[", 5000) + "redacted:A" + strings.Repeat("]", 5000), []string{"[redacted:A]"}},
+		{strings.Repeat("[x", 5000) + strings.Repeat("]", 5000), nil},
+	} {
+		var got []string
+		for _, m := range filterMarks(tc.in) {
+			got = append(got, tc.in[m[0]:m[1]])
+		}
+		if !slices.Equal(got, tc.want) {
+			in := tc.in
+			if len(in) > 60 {
+				in = in[:60] + "…"
+			}
+			t.Errorf("filterMarks(%q) = %q, want %q", in, got, tc.want)
 		}
 	}
 }
