@@ -1,5 +1,12 @@
 # motel systemd unit, modeled on Caddy's official dist unit.
 #
+# Write every absolute path in these comments in backticks.
+# `systemctl cat motel` prints each file under a line that is "# "
+# and its path, and docs/upgrading.md tells the operator to read the
+# output by those lines: a comment line that opened with a bare path
+# would read as one more file (a test in cmd/motel fails on such a
+# line).
+#
 # Note on hardening: deployed apps do NOT run inside this unit. liveswap
 # starts them as transient units under the motel user's own systemd
 # manager (user@<uid>.service; postinstall enables lingering and adds a
@@ -8,9 +15,9 @@
 # back (Restart= below) and it reattaches to the running apps — and
 # PrivateTmp/ProtectSystem here apply to motel alone. TimeoutStopSec
 # bounds only motel's own shutdown; each app's stop budget is its
-# `grace`. /var/lib/liveswap (releases, shared data, state)
-# and /var/lib/motel (TLS certificates etc.) stay writable — that
-# is where motel and the apps keep their files.
+# `grace`. `/var/lib/liveswap` (releases, shared data, state) and
+# `/var/lib/motel` (TLS certificates etc.) stay writable — that is
+# where motel and the apps keep their files.
 
 [Unit]
 Description=motel — zero-downtime app deploys, powered by Caddy
@@ -32,11 +39,11 @@ Group=motel
 # compromised motel can read: every unit's lines, which the units
 # here keep free of secrets (no --environ, see below).
 SupplementaryGroups=systemd-journal
-# Caddy resolves its dirs to $XDG_.../caddy, so both land
-# inside /var/lib/motel (which the package owns and chowns): TLS
-# material and storage in /var/lib/motel/caddy, config autosave
-# alongside it. Pointing these anywhere the motel user cannot write
-# breaks ACME cert persistence.
+# Caddy resolves its dirs to $XDG_.../caddy, so both land inside
+# `/var/lib/motel` (which the package owns and chowns): TLS material
+# and storage in `/var/lib/motel/caddy`, config autosave alongside it.
+# Pointing these anywhere the motel user cannot write breaks ACME
+# cert persistence.
 Environment=XDG_DATA_HOME=/var/lib/motel
 Environment=XDG_CONFIG_HOME=/var/lib/motel
 # `/run/motel` holds the admin API's unix socket (see the starter
