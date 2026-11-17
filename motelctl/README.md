@@ -3,13 +3,18 @@
 The laptop client: reads a motel box over HTTPS. **Experimental**: every
 command, flag, output and exit code may change until a release's notes
 say otherwise. The human output is never a contract; `--json` prints the
-box's own answer: the same JSON value, and byte for byte unless the
+box's own answer to a read: the same JSON value, and byte for byte unless the
 body holds something a terminal acts on. A server's encoder writes a C1
 control, DEL, a bidi control and the line and paragraph separators raw
 in a string: each is printed as JSON's own `\u` escape, a byte that is
 not UTF-8 as `\ufffd` (what a JSON reader makes of it), and a carriage
 return between values is dropped. `jq` reads the same value, and a
-terminal does nothing.
+terminal does nothing. On a failure, stdout is the box's own body, made
+safe the same way, on exit 1 or 6, and on exit 5 when the box's 403 was
+JSON; on any other failure (exit 2, 3, 4 or 8, or a 5 whose body was not
+JSON) it is `{"error":"…"}` holding motelctl's own sentence, the one
+stderr prints, and the exit code is all that tells the two apart. An
+interrupted command (130) prints nothing.
 
 ```text
 motelctl version                       the client's release and protocol
