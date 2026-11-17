@@ -17,8 +17,8 @@ On a failure, stdout is the box's own body, made safe the same way, on
 exit 1 or 6, and on exit 5 when the 403's body was JSON. On any other
 failure (exit 2, 3, 4 or 8, or a 5 whose body was not JSON) it is
 `{"error":"…"}` holding motelctl's own sentence, the one stderr's last
-line prints after `motelctl: `. For every failure but a 5, the exit code
-says which of the two stdout is. For a 5, go by the object: motelctl's
+line prints after `motelctl: `. For exit 1, 2, 3, 4, 6 and 8, the exit
+code says which of the two stdout is. For a 5, go by the object: motelctl's
 own has `error` alone, the sentence on stderr; motel's access check
 writes `needs` and `scope` beside its `error` (a plainer 403 of motel's
 is `{"error":"forbidden"}`). An interrupted command (130) prints nothing
