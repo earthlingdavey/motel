@@ -624,7 +624,16 @@ func (h *Handler) deployRecord(w http.ResponseWriter, ma *managedApp, version st
 	s.Deploys = append(s.Deploys, head)
 	switch {
 	case errors.Is(err, errNoDeployRecord):
-		return RespondJSON(w, http.StatusNotFound, wire.Error{Error: fmt.Sprintf("no deploy recorded for version %s", version)}, ma.redactorFor(s))
+		// The handler's own words and the version this request asked
+		// for: nothing of the app's, so the filter is one that knows
+		// none of the app's values (redact.go, rule 6). Through the
+		// app's filter the version came back as a marker naming the key
+		// whenever it held an env_file value, in any form the filter
+		// knows, and a caller who may only read could try values until
+		// one did. The version passed validVersion, and is a safe
+		// string here as it is in the status, so a commit id asked for
+		// reads as it was sent.
+		return RespondJSON(w, http.StatusNotFound, wire.Error{Error: fmt.Sprintf("no deploy recorded for version %s", version)}, NewRedactor(nil, []string{version}))
 	case err != nil:
 		return RespondJSON(w, http.StatusInternalServerError, wire.Error{Error: "reading deploy record: " + err.Error()}, ma.redactorFor(s))
 	}
@@ -905,8 +914,11 @@ func stageUpload(body io.Reader, tmpDir string, maxBytes int64) (string, string,
 // RespondJSON writes every body the webhook sends, through the
 // response filter (redact.go). r is the app's filter — every site
 // with the app in scope passes ma.redactorFor, the 405 included —
-// and nil only for the bodies written before an app is known (401,
-// 404), where the shape and entropy layers still apply. When a
+// but for a body that holds nothing of the app's: nil for the bodies
+// written before an app is known (401, 404), and a filter that knows
+// no values for one made only of the handler's words and what the
+// request itself sent (rule 6). The shape and entropy layers still
+// apply to both. When a
 // known secret was found the object gains a `redacted_env` field
 // naming the keys. The box webhook writes its bodies through it too,
 // with a filter from NewRedactor.
