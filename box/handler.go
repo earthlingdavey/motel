@@ -112,7 +112,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddyht
 		w.Header().Set("Allow", "GET, POST")
 		return respond(w, http.StatusMethodNotAllowed, errorBody(msgMethod))
 	}
-	if access.HasPersonScheme(r.Header.Values("Authorization")) {
+	// A person's path is open only on a box whose registry lists a key,
+	// as on liveswap's webhook: on one that admits no one a request in
+	// the Motel scheme takes the deploy token's path, where a Motel
+	// header alone is no bearer token.
+	if h.app.Access().Keys() > 0 && access.HasPersonScheme(r.Header.Values("Authorization")) {
 		return h.servePerson(w, r, rt)
 	}
 	ident, ok, err := h.authenticate(w, r, rt.journal)

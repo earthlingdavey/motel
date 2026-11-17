@@ -378,8 +378,10 @@ func personToken(authorization []string) (token string, mine bool) {
 }
 
 // HasPersonScheme reports whether any of a request's Authorization
-// header values is in the person token's scheme: such a request is a
-// person's, and only CheckToken judges it, whatever else it carries.
+// header values is in the person token's scheme: on a box whose
+// registry lists a key, such a request is a person's, and only
+// CheckToken judges it, whatever else it carries. The webhooks ask it
+// only on such a box.
 func HasPersonScheme(authorization []string) bool {
 	_, mine := personToken(authorization)
 	return mine

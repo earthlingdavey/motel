@@ -130,7 +130,13 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request, _ caddyhttp.
 	// The first segment before the last: a path under /_motel/ names no
 	// app, whatever its last segment (`_` is outside the app grammar).
 	motel := clean == motelPrefix || strings.HasPrefix(clean, motelPrefix+"/")
-	if access.HasPersonScheme(r.Header.Values("Authorization")) {
+	// A person's path is open only on a box whose registry lists a key.
+	// On one that admits no one the scheme is not even looked for, and a
+	// request in the Motel scheme takes the deploy token's path, which
+	// reads the first Authorization header alone and takes a token from
+	// it only in the Bearer scheme: a Motel header alone is no bearer
+	// token.
+	if h.people.Keys() > 0 && access.HasPersonScheme(r.Header.Values("Authorization")) {
 		return h.servePerson(w, r, name, motel)
 	}
 	var ma *managedApp
