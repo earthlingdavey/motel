@@ -25,7 +25,10 @@ hardware key. Ask them for the line `motelctl key
 paste (`motelctl` is the laptop client, experimental; without it, the
 one line of their `.pub` file, with `person <name>` in front). Once you
 have pushed, `motelctl whoami` tells them who the box takes them to be
-and what they may read from where they are.
+and what they may read from where they are. If their key lives in an
+agent (a password manager's, say), `motelctl` reaches it through
+`SSH_AUTH_SOCK` only, not through an `IdentityAgent` line in
+`~/.ssh/config` (motelctl/README.md, "A key an agent holds").
 
 ## Add them
 

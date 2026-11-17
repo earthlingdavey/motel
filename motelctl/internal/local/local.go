@@ -48,7 +48,9 @@ type Runner interface {
 const waitDelay = time.Second
 
 // Exec runs programs with os/exec, in motelctl's own environment, so
-// ssh-keygen reaches the agent through SSH_AUTH_SOCK as ssh would.
+// ssh-keygen and ssh-add reach the agent SSH_AUTH_SOCK names. That is
+// the one way they have: unlike ssh, neither reads IdentityAgent from
+// ~/.ssh/config (the README says so to the person).
 type Exec struct{}
 
 // Output runs c.
