@@ -144,8 +144,9 @@ box wrote. A value from a box is used in one of three ways only:
    (`[redacted:<KEY>]`, or one of the spellings it falls back to when a
    key is named for its own value: `[REDACTED:<KEY>]`,
    `[withheld:<KEY>]`, `<<KEY> removed>`, `[#N]`; and
-   `[masked, N chars]`; a key's name may itself be rewritten inside
-   its marker, `[redacted:[redacted:aws-key]]`) is one the filter replaced
+   `[masked, N chars]`; what stands inside a marker may itself be
+   rewritten there, to any depth, `[redacted:[redacted:aws-key]]`: a
+   marker runs to the bracket that closes it) is one the filter replaced
    part of, as it does to a unit named after an app whose env_file
    holds the app's name (`DB_NAME=<app>`). It is shown as
    `[hidden by the box's filter]`, motelctl's words; and the app, or a
@@ -184,7 +185,7 @@ made by hand. Accepted:
 | Residual | S | O | D | Score | Size of a fix | Outcome |
 |---|---|---|---|---|---|---|
 | A new message could splice box text without a test failing | 2 | 2 | 3 | 12 | 3 (typed message parts) | accepted |
-| A 200 from something that is not motel whose one `error` opens with something shaped like one of the filter's markers (`[#404]`, `<content removed>`, `[redacted:x] timed out`) is said as the box withholding its answer, exit 1, not as "not motel's answer", exit 3: a marker may stand for the whole of the filter's opening words, so what follows it cannot be held to them | 2 | 2 | 3 | 12 | 2 | accepted: it takes another server at the box's name answering 200 with such an error; the sentence is still quoted as its sender's |
+| A 200 from something that is not motel, with none of the answer's fields, whose one `error` either opens `response withheld` and then ends or goes on with a colon or a marker, or opens with any start of those words (none of them, too) and then something shaped like one of the filter's markers (`[#404] not found`, `<content removed>`, `response [#504] gateway timeout`), is said as the box withholding its answer, exit 1, not as "not motel's answer", exit 3: a marker may stand for any piece of the filter's opening words, so what follows it cannot be held to them | 2 | 2 | 3 | 12 | 2 | accepted: it takes another server at the box's name answering 200 with such an error; the sentence is still quoted as its sender's |
 | A 5xx in motel's own words (a box still starting, a box status that cannot read its files) is said as not known to be motel's and exits 3, not 1: no header tells it from a gateway's, by the owner's decision that no answer names motel. Its code and its quoted sentence are still shown | 2 | 4 | 1 | 8 | 3 (a stamp on the wire again) | accepted |
 | A gateway's JSON 4xx (a 403, 404, 409) is said as "the box says", as motel's would be: no header tells them apart, and none ever did for a 4xx | 2 | 5 | 3 | 30 | 1 (say a 4xx's sentence as "it says", not "the box says") | owed: older than this change, and it rewrites every 4xx sentence and its goldens |
 | A box built with a release string that is not `N.N.N` with an optional suffix (`make build VERSION=<another shape>`: the Makefile's own default and every tag fit) has every `whoami` called "not motel's answer: its version is not a release", exit 3 | 2 | 5 | 3 | 30 | 1 (print another shape quoted) | accepted: over the bar, and no doc asks for such a build; the client holds the release to the shape the Makefile links in so that it can print it unquoted |

@@ -533,13 +533,72 @@ var (
 // server's: an env_file value equal to the app's name (DB_NAME=<app>)
 // is replaced inside the unit, which is named after the app.
 //
-// The filter's later layers run over the markers of its first, so a
-// key's name can be rewritten inside its own label: one that looks
-// generated is masked there, [redacted:[masked, 24 chars]], and one
-// shaped like a provider's credential (AKIA…, ghp_…) is replaced
-// there, [redacted:[redacted:aws-key]]. Each is one marker, not a
-// marker in a bracket, so a label may hold bracketed text of its own.
-var filterMarkRe = regexp.MustCompile(`\[(?:redacted|REDACTED|withheld):(?:[^\][]|\[[^\][]*\])+\]|<[^<>]+ removed>|\[#[0-9]{1,9}\]|\[masked, [0-9]{1,9} chars\]`)
+// The filter's later layers run over the markers of its first, so
+// what stands inside a marker can be rewritten there, to any depth: a
+// key's name that looks generated is masked, [redacted:[masked, 24
+// chars]]; one shaped like a provider's credential (AKIA…, ghp_…) is
+// replaced, [redacted:[redacted:aws-key]]; and the last pass replaces
+// a known value in what those wrote, [REDACTED:[[REDACTED:K]:aws-key]].
+// Each is one marker, not a marker in a bracket: a marker runs from
+// its opening bracket to the bracket that closes it (filterMarks).
+var (
+	// markOpens are how a marker with a label opens.
+	markOpens = []string{"[redacted:", "[REDACTED:", "[withheld:"}
+	// bareMarkRe is a marker with no label, whole.
+	bareMarkRe = regexp.MustCompile(`^(?:\[#[0-9]{1,9}\]|\[masked, [0-9]{1,9} chars\])$`)
+	// angleMarkRe is the spelling in angles.
+	angleMarkRe = regexp.MustCompile(`<[^<>]+ removed>`)
+)
+
+// filterMarks finds the filter's markers in s: where each starts and
+// ends, in order, none inside another. One pass over s, whatever s
+// holds: a box's value is not trusted to be short or well formed.
+func filterMarks(s string) [][]int {
+	var found [][]int
+	var open []int // the opening brackets not yet closed
+	for i := 0; i < len(s); i++ {
+		switch s[i] {
+		case '[':
+			open = append(open, i)
+		case ']':
+			if len(open) == 0 {
+				continue
+			}
+			start := open[len(open)-1]
+			open = open[:len(open)-1]
+			if !bracketMark(s[start : i+1]) {
+				continue
+			}
+			// What stands inside a marker is part of it.
+			for len(found) > 0 && found[len(found)-1][0] > start {
+				found = found[:len(found)-1]
+			}
+			found = append(found, []int{start, i + 1})
+		}
+	}
+	found = append(found, angleMarkRe.FindAllStringIndex(s, -1)...)
+	slices.SortFunc(found, func(a, b []int) int { return a[0] - b[0] })
+	marks := found[:0]
+	end := 0
+	for _, m := range found {
+		if m[0] < end {
+			continue // inside the one before
+		}
+		marks, end = append(marks, m), m[1]
+	}
+	return marks
+}
+
+// bracketMark says whether m, from a bracket to the one that closes
+// it, is a marker: a known opening and a label, or a bare one.
+func bracketMark(m string) bool {
+	for _, o := range markOpens {
+		if strings.HasPrefix(m, o) {
+			return len(m) > len(o)+1
+		}
+	}
+	return len(m) <= 32 && bareMarkRe.MatchString(m)
+}
 
 // Filtered is what motelctl shows in place of a value the box's
 // response filter replaced part of: its own words, and nothing of the
@@ -554,8 +613,8 @@ func Same(got, asked string) bool {
 	if got == asked {
 		return true
 	}
-	marks := filterMarkRe.FindAllStringIndex(got, -1)
-	if marks == nil {
+	marks := filterMarks(got)
+	if len(marks) == 0 {
 		return false
 	}
 	// asked is got with each marker standing for some text of its own:
@@ -582,7 +641,7 @@ func Same(got, asked string) bool {
 func held(s *string, in func(string) bool) bool {
 	switch {
 	case in(*s):
-	case filterMarkRe.MatchString(*s):
+	case len(filterMarks(*s)) > 0:
 		*s = Filtered
 	default:
 		return false
@@ -790,8 +849,10 @@ func (c *Client) NotMotel(ans *Answer, why string) error { return c.notMotel(ans
 // body's structure or one of its outcomes), which say what the
 // operator has to mend; or the bare marker [#0] it falls back to when
 // what it would send is not JSON after its last pass, which says no
-// more than that the answer was withheld. Any other 200 without the
-// answer's fields is still not motel's.
+// more than that the answer was withheld. The opening is read as the
+// filter's own last pass may have left it (opensWithheld), so a
+// sentence that opens with a marker is taken too, whatever follows.
+// Any other 200 without the answer's fields is still not motel's.
 func withheld(ans *Answer) (termtext.Text, bool) {
 	var e wire.Error
 	if decodeObject(ans, &e) != nil || !opensWithheld(e.Error) {
@@ -812,8 +873,8 @@ func withheld(ans *Answer) (termtext.Text, bool) {
 func opensWithheld(s string) bool {
 	const opening = "response withheld"
 	before, marked := s, false
-	if m := filterMarkRe.FindStringIndex(s); m != nil {
-		before, marked = s[:m[0]], true
+	if m := filterMarks(s); len(m) > 0 {
+		before, marked = s[:m[0][0]], true
 	}
 	if rest, whole := strings.CutPrefix(before, opening); whole {
 		return rest == "" || strings.HasPrefix(rest, ":")
