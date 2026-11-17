@@ -20,7 +20,10 @@ const motelPrefix = "/_motel"
 // motelRoute is one row of the routes under /_motel/: an exact path,
 // taken by a GET with no query, the box action Decide is asked about,
 // and the function that answers. Every row is a person's; a deploy
-// token meets Decide's 403.
+// token a global source accepts meets Decide's 403 (one that only an
+// app's own sources accept, or the box channel's, is the flat 401
+// before it: under /_motel/ a deploy token is judged against the
+// global sources alone).
 type motelRoute struct {
 	path   string
 	action access.Action

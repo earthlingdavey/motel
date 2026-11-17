@@ -6,9 +6,9 @@ you choose, and the box's own status, with their own ssh key: no
 account on the box, no ssh access, and no deploy token. They cannot
 deploy, roll back or push, whatever you write. ssh stays root's.
 
-This needs a box with a box repository: a `box` block and a site with
-`box_webhook` (the template's deploy host). People reach the box only on
-that site's name.
+This needs a `box` block and a site with `box_webhook` (the template's
+deploy host), as a box with a box repository has. People reach the box
+only on that site's name.
 
 ## What they need
 
@@ -89,7 +89,14 @@ is what they will see as their key, and a `grant` line per grant. A
 `warning` line names anything taken with a doubt: a person with no
 grant, an app grant a box grant already covers, people with no monitor channel.
 
-On a box with no box repository, edit `/etc/motel/Caddyfile` as root,
+On a box whose Caddyfile you edit at the console and do not push, the
+file must still be one the box can read its people from, as the
+template's is: a `box` block, exactly one site with `box_webhook`,
+under one bare host name, and no `import` anywhere in the file (the
+journal's line at each load says why when it is not). For people to
+reach more than the box's status, that same site needs
+`liveswap_webhook` too, as the template's has. Edit
+`/etc/motel/Caddyfile` as root,
 `motel validate --config /etc/motel/Caddyfile`, and `systemctl reload
 motel`. The box reads who it admits from that file at each load; the
 journal says `box: people admitted from the Caddyfile this machine
@@ -108,7 +115,8 @@ signed:
 | `/<app>?deploy=<version>` | one deploy's record |
 | `/` | the box's status, for a viewer of the box |
 
-`motelctl` makes the token and asks: `motelctl whoami --box
+`motelctl` (in no release yet: built from a clone of this repository,
+motelctl/README.md, "Getting it") makes the token and asks: `motelctl whoami --box
 deploy.example.com`, `motelctl apps`, `motelctl status <app>`,
 `motelctl deploys <app> [<version>]`, `motelctl box status`. Without
 it, this makes one by hand and asks who they are (`box` is the box's

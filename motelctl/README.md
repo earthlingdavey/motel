@@ -101,6 +101,22 @@ retry); 5 not allowed (403); 6 not found (404); 8 the certificate did not
 verify (motelctl never continues past one); 130 interrupted. 7 is held
 for a box too old for people's tokens.
 
+## Getting it
+
+No release carries `motelctl` yet, and `go install …/motelctl@<version>`
+does not work (the module names its sibling `liveswap` by a local
+`replace`, which `go install` refuses). Build it from a clone of
+this repository, with Go 1.27.1 or later:
+
+```sh
+git clone https://github.com/smallhoursorg/motel && cd motel/motelctl
+go build -o motelctl .
+./motelctl version
+```
+
+A build made this way carries no release: `version` prints `(devel)`,
+or a version Go derives from the commit.
+
 ## How box text is kept out of the client's voice
 
 Everything a box sends is hostile until shown otherwise, and motelctl's
@@ -139,6 +155,7 @@ made by hand. Accepted:
 | A new message could splice box text without a test failing | 2 | 2 | 3 | 12 | 3 (typed message parts) | accepted |
 | A 5xx in motel's own words (a box still starting, a box status that cannot read its files) is said as not known to be motel's and exits 3, not 1: no header tells it from a gateway's, by the owner's decision that no answer names motel. Its code and its quoted sentence are still shown | 2 | 4 | 1 | 8 | 3 (a stamp on the wire again) | accepted |
 | A gateway's JSON 4xx (a 403, 404, 409) is said as "the box says", as motel's would be: no header tells them apart, and none ever did for a 4xx | 2 | 5 | 3 | 30 | 1 (say a 4xx's sentence as "it says", not "the box says") | owed: older than this change, and it rewrites every 4xx sentence and its goldens |
+| A box built with a release string that is not `N.N.N` with an optional suffix (`make build VERSION=<another shape>`: the Makefile's own default and every tag fit) has every `whoami` called "not motel's answer: its version is not a release", exit 3 | 2 | 5 | 3 | 30 | 1 (print another shape quoted) | accepted: over the bar, and no doc asks for such a build; the client holds the release to the shape the Makefile links in so that it can print it unquoted |
 | A labelled value under the cap keeps its runs of spaces, so on a narrow terminal a long run can wrap the rest of the value to the start of the next row, where it can look like a label (the `hostile-status` golden shows one). Log lines keep their spacing on purpose | 2 | 1 | 3 | 6 | 2 (wrap-aware printing) | accepted |
 
 ## Layout

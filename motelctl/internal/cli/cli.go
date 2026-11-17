@@ -55,8 +55,8 @@ const experimental = "Every command is experimental: its flags, output and exit 
 	"there is no way round it.\n\n" +
 	"Exit codes: 0 read; 1 the box answered with a failure; 2 nothing sent (usage,\n" +
 	"no box or key, an RSA or ECDSA key); 3 could not tell (no answer, not motel's\n" +
-	"answer, a 429 that stood); 4 not accepted (a 401 after one retry); 5 not\n" +
-	"allowed (403); 6 not found (404); 8 the certificate did not verify; 130\n" +
+	"answer, any 5xx, a 429 that stood); 4 not accepted (a 401 after one retry);\n" +
+	"5 not allowed (403); 6 not found (404); 8 the certificate did not verify; 130\n" +
 	"interrupted."
 
 // Main runs motelctl with args (without the program's name) and

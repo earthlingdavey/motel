@@ -362,14 +362,19 @@ type Apps struct {
 // know, and reads a key's absence as "not known" (a box that sends
 // none, or a row withheld), never as false or zero.
 //
-// Each entry is a body of its own to the response filter: it is
-// marshalled and passed through its own app's filter, as GET /<app>
-// is, and then put in the list, so one app's values are never in
-// another app's row and the list is never withheld because of one
-// app. So an entry the filter changed gains a "redacted_env" of its
-// own, naming that app's keys, and its keys come in sorted order, as a
-// body's top level does (they are declared in that order here); the
-// list's top level holds "apps" alone.
+// Each entry's summary is a body of its own to the response filter:
+// the summary alone is marshalled and passed through its own app's
+// filter, as GET /<app> is, and the name is put beside it after (the
+// handler's appRow), so one app's values are never in another app's
+// row and the list is never withheld because of one app. Name is the
+// handler's own word, put beside what the filter returned; a field of
+// the app's added here is filtered only if appRow puts it inside what
+// it gives the filter, as it does Summary. A row that passed is
+// written with its keys sorted, and gains a "redacted_env" of its own,
+// naming that app's keys, when the filter replaced one of the app's
+// known values in it. A row the filter withheld is the name and the
+// error alone, in the order declared here. The list's top level holds
+// "apps" alone.
 type AppEntry struct {
 	// Name is the app's name, as in the path of its routes.
 	Name string `json:"name"`
