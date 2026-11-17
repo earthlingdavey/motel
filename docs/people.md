@@ -89,6 +89,14 @@ is what they will see as their key, and a `grant` line per grant. A
 `warning` line names anything taken with a doubt: a person with no
 grant, an app grant a box grant already covers, people with no monitor channel.
 
+Until a release carries people, the push's check in the box
+repository goes red on a box that runs a build that is not a release:
+the workflow validates with a release (the latest stable one, or the
+one `MOTEL_VERSION` names), which refuses the file (`unknown box
+subdirective "person"`, or `"grant"`); the push applies all the same,
+since the apply job does not wait for the check and the box validates
+the file with its own binary.
+
 On a box whose Caddyfile you edit at the console and do not push, the
 file must still be one the box can read its people from, as the
 template's is: a `box` block, exactly one site with `box_webhook`,

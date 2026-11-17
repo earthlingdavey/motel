@@ -89,12 +89,16 @@ Deploys are zero-downtime; upgrading motel is not, because the
 process listening on 80 and 443 is the one being replaced. On stop it
 closes its listeners at once and lets the requests already in flight
 finish, and the new process cannot listen until the old one has
-exited. New visitors get connection refused for that whole window,
+exited. New visitors get connection refused for that whole window
+(or, as the old process stops, a connection closed with no answer),
 sometimes followed by a few dozen milliseconds of 503s while the new
 process picks the apps back up. A deploy sent in those first moments
 waits for motel to load its app, at most 5 seconds; past that it is
 answered 503 with `Retry-After: 1`, and the deploy script sends it once
-more. That holds for a token a `local` key signed, and for an issuer's
+more (a `scripts/deploy.sh` copied from a template of v0.7.0 or
+earlier does not, and that run fails: copy this release's
+`examples/node/scripts/deploy.sh`, or `examples/deno/`'s, over it).
+That holds for a token a `local` key signed, and for an issuer's
 token whose signing keys the new process has already fetched. It
 fetches them in the background as it starts and no token waits on that,
 so the first issuer's token after a restart (a GitHub Actions deploy's)
@@ -151,10 +155,27 @@ Before you upgrade:
   rejects would stop the upgraded motel from starting, and the site
   would stay down until you fixed the config or went back (systemd
   retries a crash, not a refusal). A build with a `.deb` and no
-  `.tar.gz`, such as one of a feature branch, is checked the same way
-  from the `.deb`, unpacked and not installed:
+  `.tar.gz`, such as one of a feature branch, has no `checksums.txt`
+  either. Take its sha256 where it was built
+  (`sha256sum motel_<version>_<arch>.deb`, `<arch>` what
+  `dpkg --print-architecture` prints on the box), copy it to
+  `/var/local/motel`, and check it there before anything else:
+  `echo '<that sha256>  motel_<version>_<arch>.deb' | sha256sum -c`
+  must say `OK`. Its config is checked the same way, from the `.deb`,
+  unpacked and not installed, into a directory that is not there yet
+  (`dpkg-deb -x` adds to one an earlier upgrade left, so
+  `rm -rf /root/motel-new` first):
   `dpkg-deb -x motel_<version>_$(dpkg --print-architecture).deb /root/motel-new`,
   then `/root/motel-new/usr/bin/motel validate --config /etc/motel/Caddyfile`.
+  It installs from `/var/local/motel` with
+  `apt install ./motel_<version>_<arch>.deb`. dpkg sorts a `~` below
+  everything, the version's end included, and two builds of one
+  version by what follows it, so `0.7.1~clientapp2` is an
+  upgrade over `0.7.0` and `0.7.1~clientapp1`, and a downgrade, which
+  apt names, over `0.7.1` and `0.7.1~rc1`. The way back is the `.deb`
+  of the version `dpkg-query -W -f='${Version}\n' motel` prints before
+  the install: keep it in `/var/local/motel`, and the bullet on it
+  below puts it back.
   To see why an upgraded motel will not start, read `journalctl -u motel`
   and run `motel validate --config /etc/motel/Caddyfile`; do not run
   `motel run` by hand on the box: while motel runs, a second one takes
@@ -171,14 +192,19 @@ Before you upgrade:
   `motel` on a packaged box, and anything else means the unit was
   edited (`root`, `0` or nothing at all: to run as root), by a drop-in
   from `systemctl edit motel` (not `10-user-manager.conf`, the
-  package's own: the revert below removes it too, and the install
-  writes it back) or a copy of the unit in `/etc/systemd/system/`.
-  Just before the install, run `systemctl revert motel`, which drops
-  every local edit of the unit; a copy also hides every later
+  package's own) or a copy of the unit in `/etc/systemd/system/`.
+  Only on a box where the `show` prints something other than `motel`, just
+  before the install, run `systemctl revert motel`. It deletes
+  `motel.service.d/` and every file in it under `/etc/systemd/system`
+  and `/run/systemd/system` (a drop-in of your own, a `MemoryMax=` or a
+  hardening line, among them, and `10-user-manager.conf`, which the
+  install writes back) and any copy of the unit there, and unmasks the
+  unit; the packaged unit stays. A copy also hides every later
   release's changes to the unit, so revert that one. To keep a
   drop-in's other lines instead, set `User=motel` and `Group=motel` in
-  it and run `systemctl daemon-reload`. Either way, the `show` must
-  then print `motel`, and `systemctl is-enabled motel` `enabled`.
+  it, run `systemctl daemon-reload`, and do not revert. Either way,
+  the `show` must then print `motel`, and `systemctl is-enabled motel`
+  `enabled`.
   `systemctl cat motel` prints each file still in play, among them any
   drop-in in `/etc/systemd/system/service.d/`, which every service
   reads and the revert leaves. A box that ran motel as root may also
@@ -292,10 +318,10 @@ seconds apart from the others. `grep NoNewPrivs /proc/$(systemctl show
 -p MainPID --value "user@$(id -u motel).service")/status` shows `1`
 once it has.
 
-After an upgrade from v0.3.1 or later, on a box that takes pushes: the
-releases before this one named, in each push's output, the variables
-of an env file in `/etc/motel/secrets/` that the push replaced or
-removed when someone had made or edited it by hand, and a secret
+After an upgrade to v0.7.0 or later from a release between v0.3.1 and
+v0.6.1 (both included), on a box that takes pushes: those releases
+named, in each push's output, the variables of an env file in
+`/etc/motel/secrets/` that the push replaced or removed when someone had made or edited it by hand, and a secret
 pasted alone on a line of it (base64 ending in `=`) read as a
 variable's name. If a push ever took over such a file, look through
 the box repository's old apply runs (logs and job summaries) and
