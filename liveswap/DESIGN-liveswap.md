@@ -47,8 +47,9 @@ Concept map from the Nomad-era stack:
   which only a `GET` may carry, against the people the box admits,
   read from its installed Caddyfile when the running config was loaded
   (access/DESIGN-access.md, "The registry", says which keys those
-  are). Its answer MUST NOT reveal whether an app exists to
-  unauthenticated callers (unknown apps verify against the global trust
+  are). On a box that admits no one the `Motel` scheme is not looked
+  for, and every request is judged as a deploy token's. Its answer
+  MUST NOT reveal whether an app exists to unauthenticated callers (unknown apps verify against the global trust
   sources, then 404; a refused token gets the same 401 either way).
   No verification MUST wait on an issuer (#306): each check is local,
   against the discovery and keys the process holds once per issuer

@@ -1075,9 +1075,12 @@ scope for the runtime model, in scope for release signing (roadmap).
   allowlist, or by pulling from a URL within `artifact_allowlist` — and
   roll back versions. A deploy token is a deployer of the apps that
   trust its source and nothing else: it holds no person's route, and a
-  person's token holds no deploy. The two are told apart by the
-  `Authorization` scheme before any verifier runs (`Bearer` for deploy
-  tokens, `Motel` for people's), so neither verifier ever parses the
+  person's token holds no deploy. On a box that admits someone, the two
+  are told apart by the `Authorization` scheme before any verifier runs
+  (`Bearer` for deploy tokens, `Motel` for people's); on one that admits
+  no one the `Motel` scheme is not looked for, and the deploy token's
+  path reads the first `Authorization` header alone, taking a token from
+  it only in the `Bearer` scheme. So neither verifier ever parses the
   other's token. Containment is the claim scope (and, for pulls,
   the allowlist), not the runtime; the sandbox bounds what the deployed
   code then reaches.
@@ -1096,12 +1099,15 @@ scope for the runtime model, in scope for release signing (roadmap).
   hundred process-wide are logged, then silence; the answer is the
   flat 401 throughout), the CPU cost of JWT/JWKS verification (spent
   on every request — the budgets bound the journal, not the work),
-  and any pre-auth proxy/Caddy surface. With people declared, the same
-  gate also parses a person's token: a fixed prefix, one SSHSIG
-  structure, one fingerprint lookup and at most one signature check,
-  under the same 8 KiB cap and the same failure budgets; a stranger can
-  put a listed key's public half in the structure and buy one signature
-  check, as a JWT under a published `kid` does. That check is an
+  and any pre-auth proxy/Caddy surface. On a box whose registry lists a
+  key (people declared in an installed file the walk takes), the same gate also
+  parses a person's token; on one that admits no one the `Motel` scheme
+  is not looked for and no person's token is parsed. Reading one is a
+  fixed prefix, one SSHSIG structure, one fingerprint lookup and at
+  most one signature check, under the same 8 KiB cap and the same
+  failure budgets; a stranger can put a listed key's public half in
+  the structure and buy one signature check, as a JWT under a
+  published `kid` does. That check is an
   Ed25519 one, about 0.04 ms: a person's key is Ed25519 for now, and a
   token with an ECDSA key (0.5 to 1.3 ms a check for the larger curves)
   is refused by its type before any lookup. A key that is not listed

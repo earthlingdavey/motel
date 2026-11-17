@@ -107,7 +107,9 @@ func (r *Registry) Name(fingerprint string) (string, bool) {
 	return k.name, ok
 }
 
-// Keys is how many keys the registry lists, for the journal at load.
+// Keys is how many keys the registry lists: for the journal at load,
+// and for both webhooks, which open a person's path only when it is
+// more than none.
 func (r *Registry) Keys() int {
 	if r == nil {
 		return 0

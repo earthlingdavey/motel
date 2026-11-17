@@ -81,7 +81,17 @@ the config declares people, information otherwise, and only debug for
 a config that declares no one on a machine with no installed file.
 Every line the registry writes names the file this machine runs: at
 `motel validate` of a candidate, it is still this machine's. Deploys
-are not touched by any of it.
+are not touched by any of it. On a box that admits no one (a registry
+that lists no key, or none) neither webhook looks for the `Motel`
+scheme: a request in it takes the deploy token's path, and a `Motel`
+header alone is answered and journalled as a request with no bearer
+token ("How a request is judged"). So on a box whose config declares
+people and that admits no one, a person's request is journalled `no
+bearer token in Authorization header`, not as a person's refusal; why
+no one is admitted is the line the load writes, in every case above
+but the last. In the last, when the running config declares people and
+the installed file declares no one (a config loaded other than from
+that file), the load writes no line.
 
 **A person's key is an Ed25519 key, for now**: `ssh-ed25519`, or
 `sk-ssh-ed25519@openssh.com` for a hardware key (the owner's decision
@@ -146,14 +156,26 @@ the signature verifies:
 | 11 | the times, with the skew | `times`, `iat-in-future`, `expired` |
 | 13 | the lifetime, then the method | `life`, `method` |
 
-A request is a person's only by its scheme: such a request never meets
-a deploy token's sources, and a deploy token never meets `CheckToken`.
-A `Motel` header beside a `Bearer` one is refused at check 2.
+On a box that admits someone, a request is a person's only by its
+scheme: such a request never meets a deploy token's sources, and a
+deploy token never meets `CheckToken`. A `Motel` header beside a
+`Bearer` one is refused at check 2. On a box that admits no one the
+scheme is not looked for, and the deploy token's path reads the first
+`Authorization` header alone, as it always did: a `Bearer` one first
+is judged as that deploy token, and a `Motel` one first is no deploy
+token, the flat 401.
 
 ## How a request is judged
 
-On either webhook, a request in the `Motel` scheme goes through
-`AdmitPerson`, in this order:
+A box that admits no one (its registry lists no key: "What admits no
+one") does not look for the scheme at all. On either webhook a request
+in the `Motel` scheme there takes the deploy token's path, which reads
+the first `Authorization` header alone (under the token table): a
+`Motel` header alone gets the answer and the journal reason of a
+request with no bearer token.
+
+On a box that admits someone, a request in the `Motel` scheme goes
+through `AdmitPerson`, in this order:
 
 1. `CheckToken`, with the registry as its lookup. A refusal is the flat
    401 below, through the same failure budgets as a deploy token's
@@ -296,8 +318,10 @@ every 5xx as not known to be motel's (motelctl/README.md).
 
 **Keys by fingerprint.** One parse of the structure, one hash, one map
 lookup, then one signature check: a refusal costs the same whatever the
-number of keys. A stranger can put a listed public key in the structure
-and buy one signature check, as a JWT under a known `kid` does; the
+number of keys. On a box that admits no one a stranger's token costs
+what junk of its length in another scheme costs: the scheme is not
+looked for and the token is not parsed. A stranger can put a listed public key in the structure and buy one
+signature check, as a JWT under a known `kid` does; the
 failure budgets bound the journal, not the work. A token whose key is
 not listed, but is of a type some listed key has, is checked against a
 dummy key of that type (made at start, listed nowhere) before it is
@@ -384,7 +408,7 @@ access's examples:
 | 1 | people's reads, by app | a route shows one app's data to another app's person | 5 | 5 | 5 | fix | the app handle only `allowApp` makes; each app's own filter; `TestTwoAppsTwoPeople` over every row and caller |
 | 2 | the person token | a viewer's token accepted for an act | 5 | 5 | 5 | fix | a person's token is good on a `GET` alone (check 13); no person's cell acts |
 | 3 | the person token | a token for box A accepted at box B | 5 | 5 | 5 | fix | `aud` and `Host` both equal to the identity (checks 9, 10) |
-| 4 | the token beside deploy tokens | one kind taken as the other | 5 | 5 | 5 | fix | the scheme picks the checker; two headers refused; no person's cell holds `app.deploy` |
+| 4 | the token beside deploy tokens | one kind taken as the other | 5 | 5 | 5 | fix | the scheme picks the checker; two headers refused, on a box that admits someone (on one that admits no one the scheme is not looked for, and the deploy token's path judges the first header alone: row 27); no person's cell holds `app.deploy` |
 | 5 | the `Motel` scheme in both webhooks | an existing answer changes | 3 | 5 | 1 | fix | any other request takes today's path; `handler-bodies.txt` passes with additions only; every refusal is the flat 401 byte for byte (`TestPersonRefusalsAreTheFlat401`, both webhooks) |
 | 6 | the version on the wire | the release told to strangers, or to every token holder | 2 | 5 | 5 | fix | no header names motel, its protocol or its release, only whoami's body (`TestNoMotelHeaderOnVerifiedAnswers` and `TestReleaseInWhoamiBodyAlone` in liveswap, `TestNoMotelHeaderOnVerifiedAnswers` and `TestNoMotelHeaderOnPersonAnswers` in box) |
 | 7 | two readers of the lines | `validate` and the serving process disagree on who is admitted | 3 | 5 | 3 | fix | one parser for both; the registry from the walk alone; a grant on an app the config does not run now fails the load too |
@@ -393,6 +417,7 @@ access's examples:
 | 10 | the address list on `client_ip` | a client names its own address in `X-Forwarded-For` behind a trusted proxy (Caddy's default, non-strict mode takes the left-most), or too wide a `trusted_proxies` lets a peer set it | 3 | 3 | 5 | fix | without `trusted_proxies_strict`: refused by the gate, and no list holds a forwarded request; with it, `motel validate` warns that the ranges decide; `TestFromBehindATrustedProxy` drives a forged header through a provisioned server in each mode |
 | 15 | the cost of a refusal by lookup | a stranger tells by timing whether a published key is listed | 2 | 2 | 5 | fix | a signature check against a dummy key of the type before `key-not-listed`, for a type some listed key has (`TestUnlistedKeyCostsASignatureCheck`) |
 | 16 | that dummy check | a stranger with no key makes any box verify a P-521 signature per request (1.3 ms against 3 µs) | 3 | 3 | 5 | fix | no dummy check for a type no listed key has, nor with no registry (`TestUnlistedTypeCostsNothing`); since 2026-11-15 no ECDSA type at all, refused as `key-type` before any lookup (`TestECDSANeverVerified`) |
+| 27 | a person's token on a box that admits no one | the person's path ran on such a box too: a well-formed token was refused 20 to 45 µs later than no token or junk of its length (z 3.0 to 4.4 at 300 samples over loopback, measured twice on a real box), and any request in the `Motel` scheme took a path a release without people does not have, so a stranger tells a release that reads people's tokens from one that does not, on a box with no people | 2 | 5 | 5 | fix: size 1, risk 1; **Wide** (every request to either webhook passes the gate) | both webhooks open a person's path only when the registry lists a key (`Registry.Keys`); otherwise the scheme is not looked for and the request takes the deploy token's path. With no registry and with one listing no key, a well-formed token, junk of its length and short junk get the answer and the journal reason of no `Authorization` header; a deploy token sent first beside a `Motel` header is served as it is alone, and on a box with people the pair is still the flat 401 and an unlisted key still `key-not-listed` (`TestNoOneAdmittedTakesTheDeployPath`, both webhooks) |
 | 11 | people with no channel | what they do is told to no one | 3 | 5 | 5 | fix by naming | warned by `validate` and at load |
 | 12 | the 403 to people | a 403 for one app tells a person of another that the name exists | 3 | 5 | 5 | fix | one 403 for an app that exists and one that does not |
 | 13 | `Host` equal to the identity | a proxy that rewrites `Host` refuses every person | 2 | 5 | 1 | fix | the journal's line names the host received |
@@ -430,6 +455,7 @@ access's examples:
 | Between a push taking the deploy lock and being shown in flight (`beginDeploy`, after the app's dirs pass `writeRefusal`, a few file checks), a status read shows no deploy in flight while a second deploy is already told 409 | 1 | 5 | 3 | 1, 2 | it lasts microseconds and misleads nobody for longer: the next read shows the push. Showing it before `writeRefusal` would need that refusal's answer to clear it first, one more way out to keep in step for no reader's benefit |
 | A deploy by URL or a rollback whose app directories fail `writeRefusal` is shown in flight from its start to that refusal (a few file checks), where a push refused the same way is never shown: `deployLocked` marks the deploy in flight where it logs `deploy started` and sends the lifecycle's start, before its first check | 1 | 1 | 3 | 1, 2 | `deploying` says what the journal and the lifecycle say, that the deploy started; it is cleared before the refusal is answered, so no answer of the deploy holds it. Marking it after the check would have the status deny a deploy the journal has already announced. It takes app directories that are not as motel made them |
 | A status read at `GET /_motel/<app>` with the app's deploy token, which named `<app>` before this release as any last path segment does, gets the flat 401 (a global source's token: 404), as row 14's `POST` there does; and the box channel's token under `/_motel/` gets the flat 401, not a 403 that names a declared key (the 403 only when its source is a global liveswap source too) | 2 | 5 | 1 | 2, 2 | as row 14: no template, doc or client asks there, and the answer is loud. Judging a token under `/_motel/` against every app's sources, or the box's, would let a stranger buy a verification per source |
+| A stranger who knows an app's name tells this release from an older one by the time to the 401 for a junk `Bearer` JWT at `/_motel/<app>`, on a box where `<app>` has `deploy_trust` sources of its own, people or not (an app that takes the global sources is judged by the same ones on both): here the path names no app and the token is judged against the global sources (with none, refused before any parse: `no deploy_trust source resolves for this app`); on `main` (0.7.0 and before) `path.Base` makes it `<app>`, whose own sources parse it and, for a JWT that gets that far, check its signature. Read from the code (`ServeHTTP` here and on `main`, `authorize`, `deploytrust.Build`), not measured | 2 | 5 | 5 | 2, 2; **Wide** (where no global source resolves, a check against a dummy source, on every box's deploy path; where global sources differ from the app's own, more than that) | accepted by the owner's decision (2026-11-17), over the bar: the fix changes the deploy path of a box with no person or grant line. The channel is the timing residual DESIGN-threat-model.md already accepts for the deploy path ("Webhook endpoint", #306): the time to the 401 differs by the local work a name's sources do. What is new is that it tells the release |
 
 ## Not in this release
 
