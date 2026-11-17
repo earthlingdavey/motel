@@ -156,7 +156,7 @@ func (r *runner) status() *cobra.Command {
 			if err := c.Read(ans, &st); err != nil {
 				return err
 			}
-			if st.App != app.Name {
+			if !client.Same(st.App, app.Name) {
 				return c.NotMotel(ans, "it is the status of another app")
 			}
 			if r.json {
@@ -206,9 +206,10 @@ func (r *runner) deploys() *cobra.Command {
 				if err := c.Read(ans, &d); err != nil {
 					return err
 				}
-				if d.Version != args[1] {
+				if !client.Same(d.Version, args[1]) {
 					return c.NotMotel(ans, "it is the record of another version")
 				}
+				d.Version = args[1] // the one asked for: the box's may carry its filter's marker
 				if r.json {
 					return r.emit(ans.Body)
 				}
@@ -218,7 +219,7 @@ func (r *runner) deploys() *cobra.Command {
 			if err := c.Read(ans, &st); err != nil {
 				return err
 			}
-			if st.App != app.Name {
+			if !client.Same(st.App, app.Name) {
 				return c.NotMotel(ans, "it is the status of another app")
 			}
 			if r.json {

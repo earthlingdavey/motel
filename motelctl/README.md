@@ -133,7 +133,18 @@ box wrote. A value from a box is used in one of three ways only:
    `internal/client/client.go`), or compared with what was asked (the
    app, the version, the host, the key, the box). A value outside its
    grammar makes the answer "not motel's answer", exit 3, and is not
-   printed.
+   printed. One exception, which prints nothing of the value either: a
+   value that carries a marker of the box's own response filter
+   (`[redacted:<KEY>]`, or one of the spellings it falls back to when a
+   key is named for its own value: `[REDACTED:<KEY>]`,
+   `[withheld:<KEY>]`, `<<KEY> removed>`, `[#N]`; and
+   `[masked, N chars]`) is one the filter replaced
+   part of, as it does to a unit named after an app whose env_file
+   holds the app's name (`DB_NAME=<app>`). It is shown as
+   `[hidden by the box's filter]`, motelctl's words; and the app, or a
+   record's version, is taken as the one asked for when the box's
+   equals it everywhere but at a marker, and the one asked for is what
+   is printed.
 2. **A quotation through `termtext.Quote`**: white space collapsed,
    cut at 200 characters, every control made visible, `"` and `\`
    escaped, and each `'` and `` ` `` that stands beside another (two
@@ -151,6 +162,12 @@ box wrote. A value from a box is used in one of three ways only:
 No message carries a transport's or a decoder's error text once a byte
 came from the peer: a fixed reason of motelctl's own is said instead.
 
+A body the box's response filter withheld (a 200 whose one sentence
+opens `response withheld`: an env_file it could not read, say) is said
+as that, with the box's sentence quoted, exit 1: the sentence names
+what the operator has to mend. (The filter's last resort, a body of
+`[#0]` alone, is said the same way and names nothing.)
+
 This is held by review, the hostile fixtures and goldens
 (`internal/cli/testdata/hostile-*.golden`), and one partial source test,
 `TestNoHandMadeQuoteMarks`, which finds only a few shapes of a quotation
@@ -159,6 +176,9 @@ made by hand. Accepted:
 | Residual | S | O | D | Score | Size of a fix | Outcome |
 |---|---|---|---|---|---|---|
 | A new message could splice box text without a test failing | 2 | 2 | 3 | 12 | 3 (typed message parts) | accepted |
+| The filter's own "response withheld: …" sentence, with an env_file value of 8 characters or more that spans its colon (`withheld: a`) or begins `: `, loses the `: ` the client cuts at, and the withheld answer is "not motel's answer" again, exit 3 | 2 | 5 | 3 | 30 | 2 (match the filter's whole sentences, marker by marker) | accepted at the third review round, for the owner to confirm: over the bar because an operator's input scores occurrence 5 however unlikely; the value has to be a piece of that one sentence |
+| An env_file key named like a provider's credential (`AKIA…`, `ghp_…`, `sk_live_…`) whose value is part of the app's name: the filter's shape rules rewrite the key inside its own marker, `[redacted:[redacted:aws-key]]`, which is read as a marker in a bracket, and `status` says "the status of another app", exit 3 | 2 | 5 | 3 | 30 | 2 (a marker's label may hold any marker) | accepted at the third review round, for the owner to confirm: over the bar for the same reason; a key masked for looking generated, `[redacted:[masked, N chars]]`, is taken |
+| A 200 from something that is not motel whose one `error` is shaped like a marker (`[#404]`, `<content removed>`) is said as the box withholding its answer, exit 1, not as "not motel's answer", exit 3 | 2 | 2 | 3 | 12 | 2 | accepted: it takes another server at the box's name answering 200 with such an error; the sentence is still quoted as its sender's |
 | A 5xx in motel's own words (a box still starting, a box status that cannot read its files) is said as not known to be motel's and exits 3, not 1: no header tells it from a gateway's, by the owner's decision that no answer names motel. Its code and its quoted sentence are still shown | 2 | 4 | 1 | 8 | 3 (a stamp on the wire again) | accepted |
 | A gateway's JSON 4xx (a 403, 404, 409) is said as "the box says", as motel's would be: no header tells them apart, and none ever did for a 4xx | 2 | 5 | 3 | 30 | 1 (say a 4xx's sentence as "it says", not "the box says") | owed: older than this change, and it rewrites every 4xx sentence and its goldens |
 | A box built with a release string that is not `N.N.N` with an optional suffix (`make build VERSION=<another shape>`: the Makefile's own default and every tag fit) has every `whoami` called "not motel's answer: its version is not a release", exit 3 | 2 | 5 | 3 | 30 | 1 (print another shape quoted) | accepted: over the bar, and no doc asks for such a build; the client holds the release to the shape the Makefile links in so that it can print it unquoted |

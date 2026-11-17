@@ -427,10 +427,14 @@ func retryAfter(h http.Header, now time.Time) (int64, bool) {
 // Read decodes a 200's body into v and returns nil, or says why the
 // answer is not the one asked for: a refusal (403, 404, a 409 or
 // another 4xx with an error sentence, each said as the box's with the
-// sentence quoted), a 5xx, said as not known to be motel's, or an
-// answer that is not motel's. No message carries a decoder's
-// error, which quotes what the body holds: a field that does not read
-// is named by the client's own name for it, and nothing of its value.
+// sentence quoted), a 5xx, said as not known to be motel's, a body the
+// box's response filter withheld (a 200 whose one sentence says so,
+// quoted), or an answer that is not motel's. No message carries a
+// decoder's error, which quotes what the body holds: a field that does
+// not read is named by the client's own name for it, and nothing of
+// its value. A value held to a grammar that the box's filter replaced
+// part of is Filtered in v (hold); the app and a record's version,
+// which the caller compares with what was asked (Same), are as sent.
 func (c *Client) Read(ans *Answer, v any) error {
 	if ans.Code == http.StatusOK {
 		missing := identity(v).missing(ans.Body)
@@ -442,6 +446,10 @@ func (c *Client) Read(ans *Answer, v any) error {
 		case errors.Is(err, errNotObject):
 			return c.notMotel(ans, "not a JSON object")
 		case len(missing) > 0:
+			if said, ok := withheld(ans); ok {
+				return &Failure{Exit: ExitFailed, Body: ans.Body, Message: fmt.Sprintf(
+					"%s withheld its answer; the box says: %s", c.Box.Host, said)}
+			}
 			return c.notMotel(ans, "it has no "+fieldList(missing))
 		case err != nil:
 			// motel's answer, by its fields, with a value that did not
@@ -455,7 +463,7 @@ func (c *Client) Read(ans *Answer, v any) error {
 				"%s answered, but %s could not be read: the box's response filter may have replaced it. The box's journal says which key it replaced.",
 				c.Box.Addr(), what)}
 		}
-		if why := odd(v); why != "" {
+		if why := hold(v); why != "" {
 			return c.notMotel(ans, why)
 		}
 		return nil
@@ -487,7 +495,8 @@ func (c *Client) Read(ans *Answer, v any) error {
 }
 
 // The grammars the server holds the values to that the client prints
-// unlabelled or as markers. A value outside them is no honest box's.
+// unlabelled or as markers. A value outside them is no honest box's,
+// but one its response filter replaced part of (hold).
 var (
 	// wireVersionRe is liveswap/names.go's versionRe: every version a
 	// status or a record names was one a deploy took.
@@ -511,22 +520,98 @@ var (
 	outcomePhases  = map[string]bool{"downloading": true, "extracting": true, "preparing": true, "starting": true, "soaking": true, "promoting": true, "draining": true, "stopping_old": true}
 )
 
-// odd says why a body that decoded is still not one an honest box
-// sends: a value outside the grammar the box holds it to. The client
-// never prints such a value, so it never says it either.
-func odd(v any) string {
+// The box's response filter writes a marker where it replaced text
+// (liveswap/redact.go). For an env_file value of the app's, or a
+// credential's shape, it is [redacted:<what>], <what> the key's name
+// (several, with commas, for keys that hold one value) or the shape's;
+// when that spelling would itself hold a known value (a key named for
+// its own value), the next of [REDACTED:<what>], [withheld:<what>],
+// <<what> removed> and [#N] that holds none (chooseMarker). For a
+// token that looks generated it is [masked, N chars]. No grammar below
+// takes a bracket or an angle, so a value outside its grammar that
+// carries a marker is one the box's own filter changed, not another
+// server's: an env_file value equal to the app's name (DB_NAME=<app>)
+// is replaced inside the unit, which is named after the app.
+//
+// The filter's later layers run over the markers of its first, so a
+// key name that itself looks generated is masked inside its own label:
+// [redacted:[masked, 24 chars]] is one marker, not a marker in a
+// bracket.
+var filterMarkRe = regexp.MustCompile(`\[(?:redacted|REDACTED|withheld):(?:[^\][]|\[masked, [0-9]{1,9} chars\])+\]|<[^<>]+ removed>|\[#[0-9]{1,9}\]|\[masked, [0-9]{1,9} chars\]`)
+
+// Filtered is what motelctl shows in place of a value the box's
+// response filter replaced part of: its own words, and nothing of the
+// value, which is outside its grammar.
+const Filtered = "[hidden by the box's filter]"
+
+// Same says whether got, a value of the box's, is the one asked for:
+// equal to it, or equal to it everywhere but where the box's filter
+// left a marker ("blog-[redacted:APP_ENV]" for blog-production). The
+// caller prints what was asked, never got.
+func Same(got, asked string) bool {
+	if got == asked {
+		return true
+	}
+	marks := filterMarkRe.FindAllStringIndex(got, -1)
+	if marks == nil {
+		return false
+	}
+	// asked is got with each marker standing for some text of its own:
+	// the parts between the markers, in order, each where the one
+	// before left off, the first at the start and the last at the end.
+	var re strings.Builder
+	re.WriteString("^")
+	at := 0
+	for _, m := range marks {
+		re.WriteString(regexp.QuoteMeta(got[at:m[0]]))
+		re.WriteString(".+")
+		at = m[1]
+	}
+	re.WriteString(regexp.QuoteMeta(got[at:]))
+	re.WriteString("$")
+	ok, err := regexp.MatchString(re.String(), asked)
+	return err == nil && ok
+}
+
+// held keeps *s when it is in its grammar, puts Filtered in its place
+// when the box's filter changed it, and reports false for any other
+// value: the one way a value outside its grammar is taken, and then
+// not one byte of it is shown.
+func held(s *string, in func(string) bool) bool {
+	switch {
+	case in(*s):
+	case filterMarkRe.MatchString(*s):
+		*s = Filtered
+	default:
+		return false
+	}
+	return true
+}
+
+// hold says why a body that decoded is still not one an honest box
+// sends: a value outside the grammar the box holds it to, which the
+// client never prints and so never says either. A value the box's own
+// filter replaced part of is no such value: it becomes Filtered in v
+// (but a record's version, which the caller compares and replaces).
+func hold(v any) string {
+	isVersion := wireVersionRe.MatchString
 	switch a := v.(type) {
 	case *wire.Status:
 		if a.Phase != "idle" && !outcomePhases[a.Phase] {
 			return "its phase is not one an app has"
 		}
-		if (a.CurrentVersion != "" && !wireVersionRe.MatchString(a.CurrentVersion)) || !allVersions(a.AvailableVersions) {
+		if a.CurrentVersion != "" && !held(&a.CurrentVersion, isVersion) {
 			return "a version in it is not a version"
 		}
-		if a.Unit != "" && !unitRe.MatchString(a.Unit) {
+		for i := range a.AvailableVersions {
+			if !held(&a.AvailableVersions[i], isVersion) {
+				return "a version in it is not a version"
+			}
+		}
+		if a.Unit != "" && !held(&a.Unit, unitRe.MatchString) {
 			return "its unit is not one motel names"
 		}
-		if wd := a.Watchdog; wd != nil && wd.State != "" && !watchdogStates[wd.State] {
+		if wd := a.Watchdog; wd != nil && wd.State != "" && !held(&wd.State, func(s string) bool { return watchdogStates[s] }) {
 			return "its watchdog's state is not one a watchdog has"
 		}
 		// The window is one of the ranges a box answers for
@@ -535,16 +620,20 @@ func odd(v any) string {
 		if m := a.Metrics; m != nil && m.Window != "" && !slices.Contains(wire.MetricsRanges, m.Window) {
 			return "its metrics' window is not one a box keeps"
 		}
-		for _, d := range a.Deploys {
-			if why := oddOutcome(d.Version, d.Status, d.Phase, nil); why != "" {
+		for i := range a.Deploys {
+			d := &a.Deploys[i]
+			if why := holdOutcome(&d.Version, d.Status, d.Phase, nil); why != "" {
 				return why
 			}
 		}
 		if d := a.LastDeploy; d != nil {
-			return oddOutcome(d.Version, d.Status, d.Phase, d.Phases)
+			return holdOutcome(&d.Version, d.Status, d.Phase, d.Phases)
 		}
 	case *wire.DeployResult:
-		return oddOutcome(a.Version, a.Status, a.Phase, a.Phases)
+		// The record's version is compared with the one asked for
+		// (Same), which is what the caller prints: left as sent.
+		version := a.Version
+		return holdOutcome(&version, a.Status, a.Phase, a.Phases)
 	case *wire.BoxStatus:
 		if !commitRe.MatchString(a.Commit) {
 			return "its commit is not a commit id"
@@ -580,11 +669,13 @@ func odd(v any) string {
 	return ""
 }
 
-// oddOutcome holds a deploy's version, status, phase and phases to the
-// outcome vocabulary.
-func oddOutcome(version, status, phase string, phases []wire.PhaseTiming) string {
+// holdOutcome holds a deploy's version, status, phase and phases to
+// the outcome vocabulary. The words are never the filter's to change:
+// the box keeps an outcome word standing or withholds the body
+// (liveswap/redact.go, rule 3).
+func holdOutcome(version *string, status, phase string, phases []wire.PhaseTiming) string {
 	switch {
-	case !wireVersionRe.MatchString(version):
+	case !held(version, wireVersionRe.MatchString):
 		return "a version in it is not a version"
 	case !outcomeStatuses[status]:
 		return "a deploy's status in it is not succeeded or failed"
@@ -597,15 +688,6 @@ func oddOutcome(version, status, phase string, phases []wire.PhaseTiming) string
 		}
 	}
 	return ""
-}
-
-func allVersions(vs []string) bool {
-	for _, v := range vs {
-		if !wireVersionRe.MatchString(v) {
-			return false
-		}
-	}
-	return true
 }
 
 // scopeOK is a role's scope as a box writes one: "box", or "app:" and
@@ -698,6 +780,29 @@ func (c *Client) forbidden(ans *Answer) *Failure {
 // what Read took and finds it about another thing than it asked (an
 // app, a version, a host): why is the command's own words.
 func (c *Client) NotMotel(ans *Answer, why string) error { return c.notMotel(ans, why) }
+
+// withheld is the box's sentence, quoted, when a 200's body is the one
+// its response filter writes in place of an answer it withheld: an
+// error alone, in the filter's fixed opening words (liveswap/redact.go:
+// an env_file it could not read, a replaced value that overlapped the
+// body's structure or one of its outcomes), which say what the
+// operator has to mend; or the bare marker [#0] it falls back to when
+// what it would send is not JSON after its last pass, which says no
+// more than that the answer was withheld. Any other 200 without the
+// answer's fields is still not motel's.
+func withheld(ans *Answer) (termtext.Text, bool) {
+	var e wire.Error
+	if decodeObject(ans, &e) != nil {
+		return termtext.Text{}, false
+	}
+	// The opening is itself filtered (redact.go's filterBody): an
+	// env_file value that is one of its words stands as a marker there.
+	opening, _, _ := strings.Cut(e.Error, ": ")
+	if e.Error != "[#0]" && !Same(opening, "response withheld") {
+		return termtext.Text{}, false
+	}
+	return termtext.Quote(e.Error), true
+}
 
 func (c *Client) notMotel(ans *Answer, why string) error {
 	if why != "" {
