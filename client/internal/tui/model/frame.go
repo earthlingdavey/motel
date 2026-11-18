@@ -431,6 +431,9 @@ func (s *Session) MeView(now time.Time) []Line {
 		Line{own("             Read logs, alerts and backups: this client does not offer them yet.")}, nil,
 		Line{own("What the box knows of you is in its Caddyfile (person and grant lines), which the")},
 		Line{own("operator keeps. `motel key` prints the line to send them.")})
+	if s.MeErr != nil {
+		out = append(out, nil, Line{ownC("the last read failed: ", Warn), Seg{T: Capped(failureText(s.MeErr), 2*LineMax)}})
+	}
 	return out
 }
 

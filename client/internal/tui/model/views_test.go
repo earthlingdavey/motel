@@ -106,3 +106,48 @@ func TestRolesQuoted(t *testing.T) {
 		t.Errorf("who am I says %q, want %q", mine, want)
 	}
 }
+
+// TestMeLastReadFailed: a whoami that fails after one answered is said
+// on who am I, beside the answer held, as the box screen says its own;
+// the word goes when whoami answers again. An answer about another key
+// still shows its own screen, with no such line.
+func TestMeLastReadFailed(t *testing.T) {
+	s, f, now := session(t)
+	for range 3 {
+		step(t, s, f, now)
+	}
+	failed := func() string {
+		for _, l := range s.MeView(*now) {
+			if strings.HasPrefix(l.Text(), "the last read failed") {
+				return l.Text()
+			}
+		}
+		return ""
+	}
+	if s.Me == nil || failed() != "" {
+		t.Fatalf("before any failure: me %v, %q", s.Me, failed())
+	}
+	f.Set("whoami", &model.Failure{Kind: model.FailThis, Message: "deploy.example.com answered 409"})
+	s.Engine.Again(*now, model.Job{Kind: model.KWhoAmI})
+	if j := step(t, s, f, now); j.Kind != model.KWhoAmI {
+		t.Fatalf("ctrl-r read %v", j)
+	}
+	if s.Me == nil {
+		t.Fatal("the answer held was dropped")
+	}
+	if got := failed(); got != "the last read failed: deploy.example.com answered 409" {
+		t.Errorf("who am I says %q of the failed read", got)
+	}
+	f.Set("whoami", nil)
+	s.Engine.Again(*now, model.Job{Kind: model.KWhoAmI})
+	step(t, s, f, now)
+	if got := failed(); got != "" {
+		t.Errorf("after an answer who am I still says %q", got)
+	}
+	f.Body("whoami.json", `{"name":"mallory@example.com","key":"SHA256:OTHER00000000000000000000000000000000000000","roles":[],"box":"deploy.example.com","version":"v0.7.0","protocol":1,"token_expires_at":"@9m"}`)
+	s.Engine.Again(*now, model.Job{Kind: model.KWhoAmI})
+	step(t, s, f, now)
+	if v := s.MeView(*now); s.Engine.Stopped() != model.NotThisKey || len(v) != 1 || !strings.HasPrefix(v[0].Text(), "who you are is not known: the box answered about another key") {
+		t.Errorf("about another key, who am I says %v", v)
+	}
+}
