@@ -156,10 +156,11 @@ func (s *Session) Body(v View) ([]byte, time.Time, bool) {
 type Cells func(termtext.Text) int
 
 // AsIs says whether the screens draw a text as it is, character for
-// character. They do not always: the door puts an unseen zero-width
-// space after each [ and writes some characters as escapes (an emoji
-// modifier as \U0001f3fd), and a command line so drawn, selected and
-// copied, is another command. The screens hand it in, as Cells.
+// character. They do not always: the door writes some characters as
+// escapes (an emoji modifier as \U0001f3fd), and nothing is drawn for
+// a character of no width (a soft hyphen, a zero-width space), so a
+// command line so drawn, selected and copied, is another command. The
+// screens hand it in, as Cells.
 type AsIs func(termtext.Text) bool
 
 // Overlay is the command and JSON overlay for v: the command, then,
@@ -205,7 +206,7 @@ func (s *Session) Overlay(v View, json bool, width int, cells Cells, asIs AsIs) 
 				w = append(w, "a line above is cut at the window's edge, marked …: do not copy it.")
 			}
 			if other[0] || other[1] || other[2] {
-				w = append(w, "a line above is not drawn as it runs (an unseen space after a [, or a character written as an escape): do not copy it.")
+				w = append(w, "a line above is not drawn as it runs (a character written as an escape, or one not drawn at all): do not copy it.")
 			}
 			if bad(0) || bad(1) {
 				p := "P quits and prints the first command whole below your prompt"
@@ -244,7 +245,7 @@ func (s *Session) Overlay(v View, json bool, width int, cells Cells, asIs AsIs) 
 			w = append(w, "the line above is cut at the window's edge, marked …: do not copy it.")
 		}
 		if !drawnAsIs(c, asIs) {
-			w = append(w, "the line above is not drawn as it runs (an unseen space after a [, or a character written as an escape): do not copy it.")
+			w = append(w, "the line above is not drawn as it runs (a character written as an escape, or one not drawn at all): do not copy it.")
 		}
 		if len(w) > 0 {
 			// c works with this overlay open, and P there prints the

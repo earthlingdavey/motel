@@ -276,9 +276,10 @@ screen's cells, is cut at its edge (it is not wrapped: a line drawn on
 two rows copies with a line feed in it), the cut marked `…`, and the
 overlay says not to copy it and what prints it whole: `P` for the
 screen's command (its `--json` line is that with `--json` added), `c`
-then `P` on an app's screen for a row's. A command line the door does
-not draw as it runs (with a `[`, drawn with an unseen space after it,
-or a character it writes as an escape, as below) copies as another
+then `P` on an app's screen for a row's. A command line not drawn as
+it runs (a character the door writes as an escape, as below, or one of
+no width, which tview draws as nothing: a soft hyphen, a zero-width
+space; a `[` is drawn as it is) copies as another
 command: the overlay says so, and not to copy it, and what prints it,
 in the same way; it offers selecting the lines only when every one is
 drawn as it is. The overlays' own words are laid on more rows to fit
