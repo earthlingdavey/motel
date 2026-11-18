@@ -70,7 +70,7 @@ type shownSim struct {
 
 func (s *shownSim) Show() {
 	s.sizedSim.Show()
-	text := dump(s.sizedSim.SimulationScreen)
+	text := dump(s.SimulationScreen)
 	s.mu.Lock()
 	s.last = text
 	s.mu.Unlock()
@@ -105,7 +105,12 @@ func TestRunNoticesASleep(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() { _, err := Run(ctx, o, start); done <- err }()
-	defer func() { cancel(); <-done }()
+	defer func() {
+		cancel()
+		if err := <-done; err != nil {
+			t.Errorf("Run ended with %v", err)
+		}
+	}()
 	// until waits for frames until one is as wanted; Run's ticker draws
 	// one each millisecond.
 	until := func(what string, ok func(string) bool) {
@@ -115,6 +120,7 @@ func TestRunNoticesASleep(t *testing.T) {
 			select {
 			case <-scr.shown:
 			case err := <-done:
+				done <- err // for the deferred wait
 				t.Fatalf("Run ended (%v) before %s", err, what)
 			case <-bound:
 				t.Fatalf("no frame %s in 20 s:\n%s", what, scr.frame())
