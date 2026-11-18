@@ -15,7 +15,10 @@ import (
 
 // render lays out every screen from the session, before each frame: a
 // frame is drawn after a key, an answer, or the clock's tick, so every
-// age on screen is the age now.
+// age on screen is the age now. A frame reads the clock once: the
+// session and the engine take a time earlier than the last they saw
+// for a step of the clock back, and two readings in one frame, handed
+// to them out of order, would be one at every frame.
 //
 // It runs inside tview's draw, which holds the application's lock: it
 // must not change the focus or show a page (both take the lock), so it
@@ -28,7 +31,7 @@ func (u *UI) render() {
 	// Only the refusal is prose; the other pages are labelled lines,
 	// which a wrap would break under the labels.
 	u.page.SetWrap(v.Screen == model.ScreenRefused)
-	crumbL, crumbR := u.crumbs(v)
+	crumbL, crumbR := u.crumbs(v, now)
 	if u.notice != nil {
 		// What the : line said of what was typed, until the next key.
 		crumbL = u.notice
@@ -44,11 +47,11 @@ func (u *UI) render() {
 	door.SetText(u.foot, door.Lit(foot))
 	switch v.Screen {
 	case model.ScreenApps:
-		u.renderApps()
+		u.renderApps(now)
 	case model.ScreenApp:
-		u.renderApp(v)
+		u.renderApp(v, now)
 	case model.ScreenRecord:
-		u.renderRecord(v)
+		u.renderRecord(v, now)
 	case model.ScreenMe:
 		door.SetText(u.page, door.Lines(u.S.MeView(now), u.Colour))
 	case model.ScreenBox:
@@ -100,8 +103,7 @@ func spread(left, right model.Line, w int) model.Line {
 
 func ownLine(s string) model.Line { return model.Line{{T: termtext.From(s)}} }
 
-func (u *UI) crumbs(v model.View) (model.Line, model.Line) {
-	now := u.now()
+func (u *UI) crumbs(v model.View, now time.Time) (model.Line, model.Line) {
 	switch v.Screen {
 	case model.ScreenApps:
 		return ownLine("apps"), u.S.AppsView(now, u.filter, u.sort, u.w).Summary
@@ -140,8 +142,8 @@ var footers = map[model.Screen]string{
 // stay.
 var dropOrder = []int{model.ColAge, model.ColP95, model.Col5xx, model.ColOfCap, model.ColMem}
 
-func (u *UI) renderApps() {
-	view := u.S.AppsView(u.now(), u.filter, u.sort, u.w)
+func (u *UI) renderApps(now time.Time) {
+	view := u.S.AppsView(now, u.filter, u.sort, u.w)
 	n := 4
 	if u.h < 30 {
 		n = 1
@@ -263,8 +265,8 @@ func colourOf(c model.Class) tcell.Color {
 	return tcell.ColorDefault
 }
 
-func (u *UI) renderApp(v model.View) {
-	view := u.S.Overview(v.App, u.now())
+func (u *UI) renderApp(v model.View, now time.Time) {
+	view := u.S.Overview(v.App, now)
 	fs := view.Fields
 	if view.Note != nil {
 		fs = view.Note
@@ -308,8 +310,8 @@ func (u *UI) renderApp(v model.View) {
 	u.deploys.Select(min(max(sel, 1), len(view.Deploys)), 0)
 }
 
-func (u *UI) renderRecord(v model.View) {
-	view := u.S.RecordView(v.App, v.Version, u.now())
+func (u *UI) renderRecord(v model.View, now time.Time) {
+	view := u.S.RecordView(v.App, v.Version, now)
 	hd := view.Head
 	if view.Note != nil {
 		hd = view.Note
