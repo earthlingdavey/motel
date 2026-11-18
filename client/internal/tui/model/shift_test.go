@@ -35,11 +35,15 @@ func TestStepBackKeepsTheBackoff(t *testing.T) {
 	e := model.NewEngine(t0)
 	sim(e, names(3), t0, 10*time.Second, 10*time.Millisecond, ok)
 	out := t0.Add(10 * time.Second)
-	if n := len(sim(e, names(3), out, time.Second, 10*time.Millisecond, noAnswer)); n != 1 {
-		t.Fatalf("%d reads in the first second with no answer, want 1 and then the backoff", n)
+	// Two reads of two jobs due (ctrl-r), so the box not answering is a
+	// run of no answer, which every read backs off by: one alone backs
+	// off by itself.
+	e.Again(out, model.Job{Kind: model.KStatus, App: "app-0"}, model.Job{Kind: model.KStatus, App: "app-1"})
+	if n := len(sim(e, names(3), out, time.Second, 10*time.Millisecond, noAnswer)); n != 2 {
+		t.Fatalf("%d reads in the first second with no answer, want 2 and then the backoff", n)
 	}
 	h := e.Health(out.Add(time.Second))
-	if h.RetryIn <= 0 || h.RetryIn > 2*time.Second {
+	if h.RetryIn <= 0 || h.RetryIn > 4*time.Second {
 		t.Fatalf("after no answer the retry is in %s", h.RetryIn)
 	}
 	from := out.Add(time.Second - back)

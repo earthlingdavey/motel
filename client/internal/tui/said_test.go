@@ -38,12 +38,19 @@ func TestStopScreenStaysUntilAnswered(t *testing.T) {
 	if h.top().Screen != model.ScreenRefused {
 		t.Fatalf("not stopped: %+v", h.top())
 	}
-	h.fake.Set("whoami", &model.Failure{Kind: model.FailNoAnswer, Message: "deploy.example.com did not answer"})
+	// No read answered: every read gets no answer, as one read alone
+	// with none no longer holds the rest back.
+	reads := append([]string{"whoami", "apps"}, h.s.Names()...)
+	for _, k := range reads {
+		h.fake.Set(k, &model.Failure{Kind: model.FailNoAnswer, Message: "deploy.example.com did not answer"})
+	}
 	h.press("r")
 	if h.top().Screen != model.ScreenRefused || !strings.Contains(h.screen(), "did not accept your key") {
 		t.Fatalf("after r, whoami with no answer: on %+v:\n%s", h.top(), h.screen())
 	}
-	h.fake.Set("whoami", nil)
+	for _, k := range reads {
+		h.fake.Set(k, nil)
+	}
 	h.now = h.now.Add(model.MeEvery) // past the backoff
 	h.pump()
 	h.sync()
