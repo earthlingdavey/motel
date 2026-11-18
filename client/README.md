@@ -217,6 +217,7 @@ made by hand. Accepted:
 | A `Retry-After` of an hour makes the TUI wait an hour: the box's word; the title bar says until when. A longer one is cut to an hour: the client's cap, and meant (moteld's 429 says 1 s) | 1 | 1 | 1 | 1 | 1 | accepted |
 | A labelled value under the cap keeps its runs of spaces, so on a narrow terminal a long run can wrap the rest of the value to the start of the next row, where it can look like a label (the `hostile-status` golden shows one). Log lines keep their spacing on purpose | 2 | 1 | 3 | 6 | 2 (wrap-aware printing) | accepted |
 | An apps-list read that got no answer is asked again at the list's own interval, 60 s, not at the 2 s backoff a status gets; while no read is answered the title bar says STALE and the time of the last answer | 2 | 4 | 1 | 8 | 2 | accepted |
+| Enter and esc held on a record no read of which has yet ended (a slow box) send a read at each enter and cancel it at each esc: leaving a record that never answered forgets it. The reads stay within the engine's rate, and it was so before the review's fixes | 2 | 4 | 1 | 8 | 3 | accepted |
 
 Owed, from the two reviews of the TUI's first part (#558; scored there); the
 others are fixed:
@@ -237,7 +238,9 @@ each entry naming the command whose read it makes
 what needs a look, with a strip that says why; a person with one app
 opens on it, with the list under it. A name longer than 20 characters is
 cut in its middle, in the table and the strip, its start and its end
-kept; the whole name is what is opened, searched and printed. An app's
+kept; two names that would be cut alike are shown longer, alike, until
+they differ, as far as the screen leaves room for STATE beside them;
+the whole name is what is opened, searched and printed. An app's
 screen shows its state and deploys; a deploy's record is laid out for
 reading a failure, its log tail last. `:` goes to a view in the command
 words (`:status blog`, `:deploys blog <version>`, `:me`, `:box`); what
@@ -277,14 +280,19 @@ line to send the operator, which `P` prints.
   55 s for 60 apps, 3 minutes for 200), each at its own place in the
   cycle. A 429 is waited out for every read, by its `Retry-After`, or
   30 s with none (the time the box's whole burst takes to refill), and
-  slows the rest of the session; no answer backs off from 2 s to 60 s.
+  slows the rest of the session; no answer backs off from 2 s to 60 s,
+  until any answer from the box ends the run and whoami is asked again
+  (a read the client fails without sending, such as a record whose
+  version the box's filter hid, ends nothing).
   A 401, a token not signed, or a certificate that did not verify stops
   every read and says why; `r` asks once more. A 403 or a 404 stops
   that read alone until `ctrl-r`. A deploy's record is read each time it
-  is opened, at most once in 5 s, and by `ctrl-r`, at most once in 5 s
-  too; a read of it that fails, a 5xx too, is not asked again by
-  itself, and the record read before stays on screen beside the
-  failure. Ten idle minutes pause it.
+  is opened, and by `ctrl-r`, at most once in 5 s once a read of it has
+  ended (asked sooner, it is read when the 5 s have passed, if it is
+  still open); a read of it that fails, a 5xx too, is not asked again by
+  itself, and the record read before stays on screen beside a failure
+  that is not a refusal: a 403 or a 404 is said alone, as on an app's
+  screen. Ten idle minutes pause it.
 - **The token** lasts 600 s, the longest a box takes, and is signed
   again a minute before it ends: a hardware key is touched about every
   nine minutes, and the title bar says when. The TUI never asks for a
@@ -302,7 +310,12 @@ line to send the operator, which `P` prints.
 - **Every value shows its age** (on a screen too narrow for the AGE
   column, in its state: `running · 12s`), and a row whose last three
   reads, by its own interval, failed or did not come says `stale` in
-  its state.
+  its state; the strip counts the stale rows, and does not say every
+  app runs beside one. Ages are on the wall clock, so a laptop's sleep
+  counts. A step of the clock back is seen at the first time read after
+  it, and every time kept of the reads moves back by it, once, to within
+  the second between two readings; a sleep, or a step back past 30 s,
+  makes every row stale until read again.
   Colour only repeats a mark (`✖ ▲ ⟳ ? ·`) or a word; `NO_COLOR`
   turns it off.
 - **Box text on tview.** tview reads `[...]` as tags in table cells,
