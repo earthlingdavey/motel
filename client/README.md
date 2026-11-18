@@ -283,8 +283,9 @@ command: the overlay says so, and not to copy it, and what prints it,
 in the same way; it offers selecting the lines only when every one is
 drawn as it is. The overlays' own words are laid on more rows to fit
 the window. `y` shows the box's answer under
-its command, which is cut as `c` cuts it and which `c` then `P` prints
-whole; the answer is indented, its strings made safe to show; its long
+its command, which is cut as `c` cuts it, which it says not to copy, as
+`c` does, when it is cut or not drawn as it runs, and which `c` then
+`P` prints whole; the answer is indented, its strings made safe to show; its long
 lines and long answers are cut for display (a line wider than the
 window at its edge, as there is no scrolling sideways; lines over 2000
 characters and answers over 2000 lines here), and the overlay says so
