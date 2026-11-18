@@ -80,8 +80,9 @@ func (s *Session) Overview(app string, now time.Time) OverviewView {
 	}
 	v.Fields = append(v.Fields, field("state", state...))
 	if wd := st.Watchdog; wd != nil {
-		// The client holds no grammar for the watchdog's state, so a
-		// word it does not know is shown as the box's value.
+		// The client's check lets through the states it knows and its
+		// own words for one the box's filter hid; anything else would
+		// be shown as the box's value.
 		w := Line{boxT(wd.State)}
 		if watchdogStates[wd.State] {
 			w = Line{own(wd.State)}

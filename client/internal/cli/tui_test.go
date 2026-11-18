@@ -199,6 +199,19 @@ func TestFailureForTheTUI(t *testing.T) {
 	}
 }
 
+// TestHiddenVersionFailsItsReadAlone: a deploy whose version the box's
+// filter hid is listed in the client's own words. Opening it sends
+// nothing (the client here is nil) and fails that read alone, where
+// the usage failure of a version that is no version would stop every
+// read as a token not signed.
+func TestHiddenVersionFailsItsReadAlone(t *testing.T) {
+	_, err := live{}.Deploy(context.Background(), "blog", client.Filtered)
+	var m *model.Failure
+	if !errors.As(err, &m) || m.Kind != model.FailThis || !strings.Contains(m.Message, "filter hid this deploy's version") {
+		t.Errorf("a record asked by a hidden version: %+v (%v), want this read alone to fail", m, err)
+	}
+}
+
 // TestTUIRefusesAPassphraseKey: a key file that needs a passphrase the
 // agent does not hold is refused before anything is sent, exit 2.
 func TestTUIRefusesAPassphraseKey(t *testing.T) {

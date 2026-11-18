@@ -48,7 +48,7 @@ func (r *runner) tui() *cobra.Command {
 		Args: usageArgs(cobra.NoArgs),
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if r.json {
-				return &client.Failure{Exit: client.ExitUsage, Message: "tui has no --json: each other command's --json is the box's answer"}
+				return &client.Failure{Exit: client.ExitUsage, Message: "tui has no --json: it draws screens, and every other command takes --json"}
 			}
 			// A closed terminal window (SIGHUP) ends it as SIGTERM does:
 			// through the screen's event loop, which gives the terminal
@@ -199,6 +199,13 @@ func (l live) Deploy(ctx context.Context, app, version string) (model.Got[wire.D
 	a, err := client.ParseApp(app)
 	if err != nil {
 		return model.Got[wire.DeployResult]{}, failure(err)
+	}
+	// A version the box's filter hid is listed in the client's own
+	// words, which name no deploy. Asking for it sends nothing, and
+	// fails this read alone: the client's usage failure would read as
+	// a token that could not be signed, and stop every read.
+	if client.CheckVersion(version) != nil {
+		return model.Got[wire.DeployResult]{}, &model.Failure{Kind: model.FailThis, Message: "the box's filter hid this deploy's version, so its record cannot be asked for"}
 	}
 	v, ans, err := l.c.Deploy(ctx, a, version)
 	return got(v, ans, err)
