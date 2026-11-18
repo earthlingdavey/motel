@@ -133,6 +133,38 @@ func TestPrintOnExit(t *testing.T) {
 	}
 }
 
+// TestLongCommandCut: a command wider than the overlay is cut at its
+// edge with the cut marked, and the overlay says not to copy it and
+// that P prints it whole, in place of asking to select it; P prints
+// it whole. Where it fits, it is drawn whole and selecting it is
+// offered.
+func TestLongCommandCut(t *testing.T) {
+	const a, ver = "billing-reconciliation-worker-eu-west", "release-2026.11.18-build.4471-rc10"
+	want := "motel deploys --box deploy.example.com -- " + a + " " + ver
+	for _, c := range []struct {
+		w   int
+		cut bool
+	}{{80, true}, {130, false}} {
+		h := start(t, c.w, 24, nil)
+		h.open(record(a, ver))
+		h.press("c")
+		s := h.screen()
+		told := strings.Contains(s, "a line above is cut at the window's edge: do not copy it;") &&
+			strings.Contains(s, "P quits and prints the command whole below your prompt")
+		offered := strings.Contains(s, "select it with the mouse")
+		switch {
+		case c.cut && (!told || offered || strings.Contains(s, want) || !strings.Contains(s, "  motel deploys --box deploy.example.com -- billing-reconciliation-worker-eu-…║")):
+			t.Errorf("%d columns, the command cut: told %v, selecting offered %v:\n%s", c.w, told, offered, s)
+		case !c.cut && (told || !offered || !strings.Contains(s, "  "+want+" ") || !strings.Contains(s, "--json -- "+a+" "+ver+" ")):
+			t.Errorf("%d columns, the command whole: told %v, selecting offered %v:\n%s", c.w, told, offered, s)
+		}
+		h.quit('P')
+		if h.u.Print != want+"\n" {
+			t.Errorf("%d columns: P leaves %q", c.w, h.u.Print)
+		}
+	}
+}
+
 // TestTooSmall: below 60x16 the screen says what it needs.
 func TestTooSmall(t *testing.T) {
 	h := start(t, 59, 20, nil)

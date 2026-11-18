@@ -144,8 +144,12 @@ func (s *Session) Body(v View) ([]byte, time.Time, bool) {
 
 // Overlay is the command and JSON overlay for v: the command, then,
 // when json, the box's answer. The JSON is indented once per answer,
-// not at every frame: a large body would make every frame slow.
-func (s *Session) Overlay(v View, json bool) []Line {
+// not at every frame: a large body would make every frame slow. width
+// is the room inside the overlay's border: a command line wider than
+// it is cut there, the cut marked, and the overlay says not to copy it
+// and that P prints it whole, in place of asking to select it. Not
+// wrapped: a line drawn on two rows copies with a line feed in it.
+func (s *Session) Overlay(v View, json bool, width int) []Line {
 	c, ok := s.Command(v)
 	if !ok {
 		return []Line{{own("this screen reads nothing from the box")}}
@@ -157,7 +161,18 @@ func (s *Session) Overlay(v View, json bool) []Line {
 			out = append(out, Line{own("This screen is that list, and a row for each app: each row is")},
 				Line{own("  " + ShellLine([]string{"motel", "status", "--box", s.boxArg()}) + " -- <app>")}, nil)
 		}
-		out = append(out, Line{own("select it with the mouse, or press P to quit and print it below your prompt")})
+		cut := false
+		for i, l := range out {
+			if l.Width() > width {
+				out[i], cut = l.Cut(width), true
+			}
+		}
+		if cut {
+			out = append(out, Line{ownC("a line above is cut at the window's edge: do not copy it;", Warn)},
+				Line{ownC("P quits and prints the command whole below your prompt", Warn)})
+		} else {
+			out = append(out, Line{own("select it with the mouse, or press P to quit and print it below your prompt")})
+		}
 		if have {
 			out = append(out, Line{own("y: the box's answer as JSON (" + size(len(body)) + ", fetched " + hms(at) + " UTC)")})
 		}

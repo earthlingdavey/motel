@@ -126,7 +126,7 @@ func TestBigOverlay(t *testing.T) {
 	t.Logf("open %s, a key %s", opened, keys)
 	var last string
 	h.on(func() {
-		ls := h.s.Overlay(model.View{Screen: model.ScreenApps}, true)
+		ls := h.s.Overlay(model.View{Screen: model.ScreenApps}, true, 98)
 		last = ls[len(ls)-1].Text()
 	})
 	if !strings.Contains(last, "more lines not drawn here: P quits and prints the whole answer") {
