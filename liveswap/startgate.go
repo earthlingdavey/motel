@@ -192,19 +192,27 @@ func (g *StartGate) opening() {
 	fields := []zap.Field{
 		zap.Duration("waited", time.Since(began)),
 		zap.Bool("waited_for_apps", g.waitApps),
-		zap.Duration("apps_settled_after", appsAfter),
-		zap.Int("certificates_waited_for", len(names)),
+	}
+	if capped != "liveswap recovery" {
+		// Capped on the apps, the certificates were never read: say
+		// nothing of them rather than that none was missing.
+		fields = append(fields,
+			zap.Duration("apps_settled_after", appsAfter),
+			zap.Int("certificates_waited_for", len(names)))
 	}
 	if capped == "" {
 		g.logger.Info("start gate open", fields...)
 		return
 	}
-	const shown = 10
-	if len(missing) > shown {
-		missing = append(missing[:shown:shown], "…")
+	fields = append(fields, zap.String("capped_on", capped))
+	if capped == "certificate cache" {
+		const shown = 10
+		if len(missing) > shown {
+			missing = append(missing[:shown:shown], "…")
+		}
+		fields = append(fields, zap.Strings("certificates_not_cached", missing))
 	}
-	g.logger.Warn("start gate open at its cap: the first connections may meet a 503 or a TLS error",
-		append(fields, zap.String("capped_on", capped), zap.Strings("certificates_not_cached", missing))...)
+	g.logger.Warn("start gate open at its cap: the first connections may meet a 503 or a TLS error", fields...)
 }
 
 func (g *StartGate) uncached(names []string) []string {

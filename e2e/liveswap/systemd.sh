@@ -141,6 +141,7 @@ stop=$codes.stop
 (while [ ! -e "$stop" ]; do curl -s -o /dev/null -w '%{http_code}\n' --max-time 3 "$PROXY/"; done) >"$codes" 2>/dev/null &
 poller=$!
 sleep 0.3
+T_RESTART=$(date +%s)
 systemctl restart moteld || fail "systemctl restart moteld failed"
 wait_hook || fail "webhook not back within 30s of restart"
 since=$(wc -l <"$codes") # what the poller asked from here on, the new process answered
@@ -155,6 +156,14 @@ else
 	fail "the restart answered $n503 request(s) 503, and $after 200 once it was back: $(sort "$codes" | uniq -c | tr '\n' ' ')"
 fi
 rm -f "$codes" "$stop"
+# A poller can miss the window, so the gate's own line says it held:
+# it waited for the apps and did not open at its cap.
+gate=$(journalctl -u moteld --no-pager -o cat --since "@$T_RESTART" | grep '"msg":"start gate open' | tail -n 1)
+case "$gate" in
+*'at its cap'*) fail "the start gate opened at its cap: $gate" ;;
+*'"waited_for_apps":true'*) pass "the start gate held the first connections for the apps, then opened" ;;
+*) fail "no start gate line that waited for the apps since the restart: '$gate'" ;;
+esac
 s=$(status)
 if [ "$(json_num "$s" pid)" = "$pid" ] && [ "$(json_str "$s" unit)" = "$unit" ]; then
 	pass "same pid and unit after restart (reattached, not relaunched)"

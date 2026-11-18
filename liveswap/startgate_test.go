@@ -162,8 +162,12 @@ func TestStartGateOpensAtItsCap(t *testing.T) {
 			if m["capped_on"] != c.cappedOn {
 				t.Fatalf("capped_on = %v, want %q", m["capped_on"], c.cappedOn)
 			}
-			if got, _ := m["certificates_not_cached"].([]any); !slices.Equal(got, c.missing) {
-				t.Fatalf("certificates_not_cached = %v, want %v", m["certificates_not_cached"], c.missing)
+			got, said := m["certificates_not_cached"].([]any)
+			if !slices.Equal(got, c.missing) || said != (c.missing != nil) {
+				t.Fatalf("certificates_not_cached = %v (said: %v), want %v", m["certificates_not_cached"], said, c.missing)
+			}
+			if _, said := m["certificates_waited_for"]; said != c.settled {
+				t.Fatalf("certificates_waited_for said: %v, want %v (never read when capped on the apps)", said, c.settled)
 			}
 		})
 	}

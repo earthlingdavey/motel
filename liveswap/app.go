@@ -1474,10 +1474,11 @@ func (ma *managedApp) recover(ctx context.Context, logger *zap.Logger, firstDone
 	// signal (startgate.go) that a request for this app now meets what
 	// recovery settled, not a race with it — or with false when
 	// recovery ends before making one.
-	var once sync.Once
+	called := firstDone == nil // all on this goroutine: no lock
 	first := func(attempted bool) {
-		if firstDone != nil {
-			once.Do(func() { firstDone(attempted) })
+		if !called {
+			called = true
+			firstDone(attempted)
 		}
 	}
 	defer first(false)
