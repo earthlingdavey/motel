@@ -60,7 +60,7 @@ func (r *runner) tui() *cobra.Command {
 			// Wall-clock time: a monotonic reading stops while a laptop
 			// sleeps, and ages and due times would leave the sleep out.
 			wall := func() time.Time { return r.env.Now().Round(0) }
-			s := &model.Session{Version: r.env.Version, Now: wall}
+			s := &model.Session{Version: r.env.Version, Now: wall, Engine: model.NewEngine(wall())}
 			if sample {
 				s.Host, s.Demo, s.Key = demo.Host, true, demo.Key
 				s.TokenExpires = func() time.Time { return wall().Add(9 * time.Minute) }
@@ -83,7 +83,6 @@ func (r *runner) tui() *cobra.Command {
 				s.TokenExpires = sig.Expires
 				o.Client, o.Signing, o.Started, o.Resign = live{c}, sig.Notify, gt.Close, pt.Forget
 			}
-			s.Engine = model.NewEngine(wall())
 			o.Session = s
 			start := tui.Prime(ctx, o)
 			if err := ctx.Err(); err != nil {
@@ -110,8 +109,10 @@ func (r *runner) tui() *cobra.Command {
 // boxSession is the box and key a live session shows: the host alone
 // as its name (the token's aud, the title, whoami's rule), the address
 // the client asks, :port and all, for the commands it prints, and the
-// key the client signs with.
+// key the client signs with; and its engine drops the token that key
+// last signed when the clock steps back past model.WakeAfter.
 func boxSession(s *model.Session, c *client.Client, pt *client.PersonToken) {
+	s.Engine.Resign = pt.Forget
 	k := pt.Key
 	s.Host, s.Addr = c.Box.Host, c.Box.Addr()
 	s.Key = model.Key{Fingerprint: k.Public.Fingerprint(), Shown: k.Shown, Source: k.Source,

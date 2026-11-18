@@ -387,3 +387,79 @@ func TestTUISessionBox(t *testing.T) {
 		}
 	}
 }
+
+// TestTUIClockStepsBack: the TUI's client and session as tui builds
+// them, on a fake clock. Set back an hour (past model.WakeAfter), the
+// next read is signed afresh, so it carries no token the box has
+// stopped taking, and who am I's token line is the new token's; set
+// back 20 s, the token is sent again and the key is asked for nothing.
+func TestTUIClockStepsBack(t *testing.T) {
+	for _, c := range []struct {
+		back  time.Duration
+		signs int
+	}{{20 * time.Second, 1}, {time.Hour, 2}} {
+		t.Run(c.back.String(), func(t *testing.T) {
+			fb := newFakeBox(t)
+			home := t.TempDir()
+			if err := os.WriteFile(filepath.Join(home, "me.pub"), []byte(meLine+"\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			env := map[string]string{"MOTEL_KEY": "~/me.pub", "MOTEL_URL": fb.srv.URL + "/blog"}
+			now := whoamiNow
+			wall := func() time.Time { return now }
+			signs := &fixedSigner{}
+			r := &runner{env: Env{Getenv: func(k string) string { return env[k] }, Stderr: &bytes.Buffer{}, Dir: t.TempDir(), Home: home,
+				Now: wall, Sleep: func(context.Context, time.Duration) error { return nil },
+				Transport: fb.srv.Client().Transport, Run: noPrograms{}, Signer: signs, Version: "test"}}
+			cl, err := r.client(context.Background(), &target{}, nil, "", "tui")
+			if err != nil {
+				t.Fatal(err)
+			}
+			sig := forTUI(cl, wall)
+			s := &model.Session{Now: wall, Engine: model.NewEngine(now)}
+			boxSession(s, cl, cl.Cred.(*client.PersonToken))
+			s.TokenExpires = sig.Expires
+			// read makes the next read the engine gives, as Drive does, and
+			// says when.
+			read := func() time.Time {
+				t.Helper()
+				for range 1000 {
+					j, ok, wait := s.Engine.Take(now)
+					if !ok {
+						now = now.Add(max(wait, 100*time.Millisecond))
+						continue
+					}
+					apply, err := s.Fetch(context.Background(), live{cl}, j)
+					apply()
+					s.Engine.Done(j, now, err)
+					if err != nil {
+						t.Fatal(err)
+					}
+					return now
+				}
+				t.Fatal("no read")
+				return time.Time{}
+			}
+			signed := read() // whoami
+			now = now.Add(time.Minute)
+			read()
+			now = now.Add(-c.back)
+			at := read()
+			if signs.calls != c.signs {
+				t.Errorf("%d signatures, want %d", signs.calls, c.signs)
+			}
+			if c.signs == 2 {
+				signed = at
+			}
+			_, exp := sshkey.TimesLasting(signed, sshkey.MaxLife)
+			want := "good until " + exp.UTC().Format("15:04:05") + " UTC (" + model.Ago(exp.Sub(at)) + " left)"
+			var lines []string
+			for _, l := range s.MeView(at) {
+				lines = append(lines, l.Text())
+			}
+			if got := strings.Join(lines, "\n"); !strings.Contains(got, want) {
+				t.Errorf("who am I does not say %q:\n%s", want, got)
+			}
+		})
+	}
+}
