@@ -68,7 +68,7 @@ func startOn(t *testing.T, scr tcell.Screen, setup func(*demo.Fake)) *harness {
 	hs.u.App.SetScreen(hs.scr)
 	done := make(chan struct{})
 	hs.done = done
-	go func() { defer close(done); _ = hs.u.App.Run() }()
+	go func() { defer close(done); _ = hs.u.App.Run(); close(hs.u.ended) }()
 	// Stopped as the product stops it, from inside the event loop:
 	// tview clears its screen unlocked as Run returns, so a Stop from
 	// outside races it.
@@ -85,13 +85,15 @@ func (h *harness) pump() {
 		if !ok {
 			return
 		}
+		// As Drive does: the engine records the read, then the answer is
+		// applied and the screen looks for a stop.
 		apply, err := s.Fetch(context.Background(), h.fake, j)
+		s.Engine.Done(j, h.now, err)
 		if h.u != nil {
-			h.on(apply)
+			h.on(func() { apply(); h.u.stopped() })
 		} else {
 			apply()
 		}
-		s.Engine.Done(j, h.now, err)
 	}
 }
 
@@ -139,14 +141,7 @@ func (h *harness) press(keys ...any) {
 	h.sync()
 }
 
-// open goes to v as the screens do, by enter and esc.
-func (h *harness) open(v model.View) {
-	h.on(func() { h.u.open(v) })
-	h.pump()
-	h.sync()
-}
-
-// quit sends a key that ends the event loop (q), and waits only for
+// quit sends a key that ends the event loop (q, P), and waits only for
 // the key itself: after the loop ends no update is run, so press's
 // waits would never return.
 func (h *harness) quit(r rune) {
@@ -156,6 +151,19 @@ func (h *harness) quit(r rune) {
 		h.u.key(tcell.NewEventKey(tcell.KeyRune, r, tcell.ModNone))
 	})
 	<-done
+}
+
+// open goes to v as the screens do, by enter and esc.
+func (h *harness) open(v model.View) {
+	h.on(func() { h.u.open(v) })
+	h.pump()
+	h.sync()
+}
+
+func app(a string) model.View { return model.View{Screen: model.ScreenApp, App: a} }
+
+func record(a, v string) model.View {
+	return model.View{Screen: model.ScreenRecord, App: a, Version: v}
 }
 
 // screen is the simulation screen as text, trailing spaces cut.

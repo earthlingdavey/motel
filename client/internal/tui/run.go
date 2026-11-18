@@ -33,8 +33,8 @@ type Options struct {
 
 // Prime makes the first reads before the screen opens, whoami and the
 // apps list, so the TUI opens on the right screen: a person with one
-// app opens straight on it. A hardware key's first touch is asked for
-// on the plain terminal.
+// app opens straight on it, and a refused key on the refusal screen. A
+// hardware key's first touch is asked for on the plain terminal.
 func Prime(ctx context.Context, o Options) model.View {
 	s := o.Session
 	for range 2 {
@@ -53,13 +53,20 @@ func Prime(ctx context.Context, o Options) model.View {
 	return model.View{Screen: model.ScreenApps}
 }
 
-// Run shows the screens until the person quits or ctx ends.
+// Printed is what P asked to print below the prompt: Raw, the box's
+// answer as the command's --json prints it, for a stdout that is not a
+// terminal; Shown, when it is the box's answer, indented and made safe
+// for one ("" when Raw is the client's words).
+type Printed struct{ Raw, Shown string }
+
+// Run shows the screens until the person quits or ctx ends, and
+// returns what P asked to print below the prompt.
 //
 // tview's Run sets its screen to nil, unlocked, as it returns, so Stop
 // must never be called from outside its event loop: q stops it from
 // inside, and the end of ctx is sent in as ctrl-c, which tview handles
 // there too.
-func Run(ctx context.Context, o Options, start model.View) error {
+func Run(ctx context.Context, o Options, start model.View) (Printed, error) {
 	u := New(o.Session, o.Colour, start)
 	if o.Screen != nil {
 		u.App.SetScreen(o.Screen)
@@ -111,9 +118,9 @@ func Run(ctx context.Context, o Options, start model.View) error {
 	wg.Wait()
 	if p := u.panicked.Load(); p != nil {
 		// Said only now, with the terminal given back.
-		return &Panic{Value: p.value, Stack: p.stack}
+		return Printed{}, &Panic{Value: p.value, Stack: p.stack}
 	}
-	return err
+	return Printed{u.Print, u.Shown}, err
 }
 
 // Panic is a panic in one of the TUI's goroutines, said once the
@@ -170,15 +177,26 @@ func (u *UI) post(f func()) {
 	}
 }
 
-// Drive runs the engine, applying each answer on the event goroutine;
+// Drive runs the engine, applying each answer on the event goroutine
+// once the engine has recorded how the read ended, so a stop it caused
+// is a stop when the screen looks (the refusal screen comes at once);
 // the answer to a read the person left is dropped.
 func (u *UI) Drive(ctx context.Context, c model.Client, clock model.Clock) {
+	var apply func()
 	u.S.Engine.Run(ctx, clock, func(jctx context.Context, j model.Job) error {
-		apply, err := u.S.Fetch(jctx, c, j)
+		a, err := u.S.Fetch(jctx, c, j)
+		apply = nil
 		if jctx.Err() == nil {
-			u.post(apply)
+			apply = a
 		}
 		return err
+	}, func() {
+		if a := apply; a != nil {
+			u.post(func() {
+				a()
+				u.stopped()
+			})
+		}
 	})
 }
 

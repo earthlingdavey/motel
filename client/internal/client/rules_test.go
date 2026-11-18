@@ -189,23 +189,46 @@ func TestPersonTokenAudIsTheBareHost(t *testing.T) {
 		t.Fatal(err)
 	}
 	now := time.Now()
-	box := Box{Host: "deploy.example.test", Port: "8443"}
-	rec := &recordTrip{}
-	c := &Client{Box: box, Cred: &PersonToken{Key: sshkey.Key{Public: pk}, Signer: memSign{s}, Box: box, Now: func() time.Time { return now }},
-		HTTP: &http.Client{Transport: rec}, Now: time.Now}
-	if _, err := c.Get(context.Background(), "/blog", nil); err != nil {
-		t.Fatal(err)
-	}
-	if rec.req.URL.Host != "deploy.example.test:8443" {
-		t.Fatalf("asked %s", rec.req.URL.Host)
-	}
 	lookup := func(fp string) (ssh.PublicKey, bool) {
 		return s.PublicKey(), fp == ssh.FingerprintSHA256(s.PublicKey())
 	}
-	req := access.TokenRequest{Authorization: rec.req.Header.Values("Authorization"), Method: rec.req.Method, Host: rec.req.URL.Host}
 	listed := func(keyType string) bool { return keyType == s.PublicKey().Type() }
-	if _, err := access.CheckToken(req, "deploy.example.test", now, lookup, listed); err != nil {
-		t.Fatalf("the box refused a token sent to %s: %v", req.Host, err)
+	// The box as each source names it: --box, MOTEL_BOX and MOTEL_URL
+	// with the port, the last with leading zeros.
+	envOf := func(k, v string) func(string) string {
+		return func(n string) string {
+			if n == k {
+				return v
+			}
+			return ""
+		}
+	}
+	for name, l := range map[string]BoxLookup{
+		"--box":     {Flag: "deploy.example.test:8443", Getenv: envOf("", "")},
+		"MOTEL_BOX": {Getenv: envOf("MOTEL_BOX", "deploy.example.test:8443")},
+		"MOTEL_URL": {Getenv: envOf("MOTEL_URL", "https://deploy.example.test:08443/blog")},
+	} {
+		box, err := ResolveBox(context.Background(), l)
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		rec := &recordTrip{}
+		c := &Client{Box: box, Cred: &PersonToken{Key: sshkey.Key{Public: pk}, Signer: memSign{s}, Box: box, Now: func() time.Time { return now }},
+			HTTP: &http.Client{Transport: rec}, Now: time.Now}
+		if _, err := c.Get(context.Background(), "/blog", nil); err != nil {
+			t.Fatal(err)
+		}
+		if rec.req.URL.Host != "deploy.example.test:8443" {
+			t.Fatalf("%s: asked %s", name, rec.req.URL.Host)
+		}
+		req := access.TokenRequest{Authorization: rec.req.Header.Values("Authorization"), Method: rec.req.Method, Host: rec.req.URL.Host}
+		if _, err := access.CheckToken(req, "deploy.example.test", now, lookup, listed); err != nil {
+			t.Fatalf("%s: the box refused a token sent to %s: %v", name, req.Host, err)
+		}
+		// The same token is no good to another box on that port.
+		if _, err := access.CheckToken(req, "other.example.test", now, lookup, listed); err == nil {
+			t.Fatalf("%s: another box took the token", name)
+		}
 	}
 }
 
@@ -326,6 +349,20 @@ func TestTokenFor(t *testing.T) {
 	}
 	if err := TokenFor(Box{Host: "a.example.com"}, env("https://A.example.com:443/blog")); err != nil {
 		t.Errorf("the same box: %v", err)
+	}
+	// Ports are numbers: :08443 is --box a.example.com:8443's, :0443 no
+	// port at all.
+	flag, err := bareBox("a.example.com:8443", "--box")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for b, u := range map[Box]string{flag: "https://a.example.com:08443/x", {Host: "a.example.com"}: "https://a.example.com:0443/x"} {
+		if err := TokenFor(b, env(u)); err != nil {
+			t.Errorf("%s with MOTEL_URL %s: %v", b.Addr(), u, err)
+		}
+	}
+	if f := failure(t, TokenFor(flag, env("https://a.example.com:18443/x"))); f.Exit != ExitUsage {
+		t.Errorf("another port: exit %d", f.Exit)
 	}
 	for _, b := range []Box{{Host: "b.example.com"}, {Host: "a.example.com", Port: "8443"}} {
 		f := failure(t, TokenFor(b, env("https://a.example.com/blog")))

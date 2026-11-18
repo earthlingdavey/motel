@@ -4,6 +4,7 @@ import (
 	"encoding/pem"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -136,5 +137,28 @@ func TestClientBoxStatusPeople(t *testing.T) {
 				t.Errorf("human: %q", got.stdout)
 			}
 		})
+	}
+
+	// The box named with its port (the test server's, not 443) by
+	// --box, by MOTEL_BOX, and by MOTEL_URL with the port written with
+	// a leading zero: the same box, and the token is taken.
+	addr := strings.TrimPrefix(srv.URL, "https://")
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil || port == "443" {
+		t.Fatalf("the test server is on %s", addr)
+	}
+	keyEnv := []string{"MOTEL_KEY=" + carol.path, "SSL_CERT_FILE=" + cert}
+	for name, c := range map[string]struct{ env, args []string }{
+		"--box":                 {keyEnv, []string{"--box", addr}},
+		"MOTEL_BOX":             {append([]string{"MOTEL_BOX=" + addr}, keyEnv...), nil},
+		"MOTEL_URL, a 0 before": {append([]string{"MOTEL_URL=https://" + host + ":0" + port + "/app"}, keyEnv...), nil},
+	} {
+		got := runClient(t, bin, c.env, append([]string{"box", "status", "--json"}, c.args...)...)
+		mu.Lock()
+		body := last
+		mu.Unlock()
+		if got.code != 0 || got.stdout != body {
+			t.Errorf("%s: exit %d, stdout %q, want the handler's %q; stderr %s", name, got.code, got.stdout, body, got.stderr)
+		}
 	}
 }

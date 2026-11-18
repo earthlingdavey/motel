@@ -31,7 +31,7 @@ func TestPanicEndsThroughTheLoop(t *testing.T) {
 	o := Options{Session: s, Client: panicky{f}, Clock: clock, Screen: &sizedSim{tcell.NewSimulationScreen("UTF-8"), 100, 30}}
 	start := Prime(context.Background(), o)
 	done := make(chan error, 1)
-	go func() { done <- Run(context.Background(), o, start) }()
+	go func() { _, err := Run(context.Background(), o, start); done <- err }()
 	select {
 	case err := <-done:
 		var p *Panic
@@ -49,7 +49,6 @@ func TestPostAfterTheEnd(t *testing.T) {
 	h := start(t, 100, 30, nil)
 	h.quit('q')
 	<-h.done
-	close(h.u.ended)
 	ran := false
 	returned := make(chan struct{})
 	go func() { h.u.post(func() { ran = true }); close(returned) }()
@@ -74,7 +73,7 @@ func TestPanicOnTheLoop(t *testing.T) {
 	o := Options{Session: s, Client: f, Clock: clock, Screen: &sizedSim{tcell.NewSimulationScreen("UTF-8"), 100, 30}}
 	o.Started = func() { panic("drawn wrong \x1b[2J") }
 	done := make(chan error, 1)
-	go func() { done <- Run(context.Background(), o, model.View{Screen: model.ScreenApps}) }()
+	go func() { _, err := Run(context.Background(), o, model.View{Screen: model.ScreenApps}); done <- err }()
 	select {
 	case err := <-done:
 		var p *Panic

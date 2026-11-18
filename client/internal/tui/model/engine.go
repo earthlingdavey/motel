@@ -17,6 +17,7 @@ const (
 	KApps
 	KStatus
 	KDeploy
+	KBox
 )
 
 // Job is one read.
@@ -46,6 +47,15 @@ const (
 	// grows with their number (background).
 	BackgroundEvery = 30 * time.Second
 	AppsEvery       = 60 * time.Second
+	BoxEvery        = 30 * time.Second
+	// MeEvery is who am I's refresh while its screen is open: a slow one,
+	// since a person's grants change by a push, and the open app's 5 s
+	// share is not spent while no app is open.
+	MeEvery = 60 * time.Second
+	// MeAlways is whoami's refresh otherwise, so a grant removed in a
+	// push is seen in the title bar; a 403 asks it sooner, at most once
+	// in MeEvery.
+	MeAlways = 5 * time.Minute
 	// Idle pauses polling when no key was pressed for this long, so an
 	// unattended TUI neither asks for touches nor spends the rate.
 	Idle = 10 * time.Minute
@@ -56,6 +66,15 @@ const (
 	// cannot be refused for a burst this session spent.
 	NoRetryAfter = time.Duration(BoxBurst/BoxRate) * time.Second
 	maxBackoff   = 60 * time.Second
+	// ListAgainAfter is the least time between two reads of the list:
+	// ctrl-r held on the apps screen asks for it at each key repeat, and
+	// the statuses must still have their turn.
+	ListAgainAfter = 5 * time.Second
+	// AgainAfter is the least time after whoami, or the box, was last
+	// read that ctrl-r asks it again: held on who am I or on the box
+	// screen, it asks at each key repeat, and the rest must still have
+	// their turn.
+	AgainAfter = 5 * time.Second
 	// RetryEvery is the least time between two r: each may be a touch
 	// of a hardware key, and a signature that fails fast must not be
 	// asked for as fast as a key repeats.
@@ -80,6 +99,12 @@ type Engine struct {
 	jobs   map[Job]*entry
 	apps   []string
 	focus  string
+	// boxOpen is the box screen open: GET / is read only then; meOpen,
+	// who am I's, whose whoami is then read every MeEvery.
+	boxOpen, meOpen bool
+	// meAnswered is when whoami last answered; me403 when a 403 last
+	// asked it again.
+	meAnswered, me403 time.Time
 	// misses counts reads in a row that got no answer from the box at
 	// all; retryAt is when the next is tried.
 	misses     int
@@ -94,6 +119,9 @@ type Engine struct {
 	// lastFocus is when the open app was last read: focus reads, the
 	// ones opening an app causes among them, come out of its share.
 	lastFocus time.Time
+	// lastList is when the list was last read: not again within
+	// ListAgainAfter, whatever asks.
+	lastList  time.Time
 	lastRetry time.Time
 	ticked    time.Time
 	wake      chan struct{}
@@ -119,6 +147,8 @@ type entry struct {
 	// answer came.
 	every    time.Duration
 	answered time.Time
+	// asked is when whoami's or the box's read was last taken.
+	asked time.Time
 }
 
 // Stop is why every read stopped, and zero while they run.
@@ -130,13 +160,15 @@ const (
 	SignedOut
 	NotSigned
 	BadCertificate
+	// NotThisKey: whoami answered about another key or box.
+	NotThisKey
 )
 
 // NewEngine starts at now, with whoami due at once, and then the apps
 // list.
 func NewEngine(now time.Time) *Engine {
 	e := &Engine{rate: Rate, tokens: Burst, filled: now, touched: now, jobs: map[Job]*entry{}, wake: make(chan struct{}, 1)}
-	e.jobs[Job{Kind: KWhoAmI}] = &entry{due: now, once: true}
+	e.askMe(now)
 	e.jobs[Job{Kind: KApps}] = &entry{due: now}
 	return e
 }
@@ -241,6 +273,61 @@ func (e *Engine) nextSlot(en *entry, now time.Time) time.Time {
 	return base
 }
 
+// BoxOpen says whether the box screen is open: GET / is read only then.
+func (e *Engine) BoxOpen(open bool, now time.Time) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.boxOpen = open
+	if _, ok := e.jobs[Job{Kind: KBox}]; open && !ok {
+		e.jobs[Job{Kind: KBox}] = &entry{due: now}
+	}
+	e.poke()
+}
+
+// MeOpen says whether who am I's screen is open. whoami is always
+// read, every MeAlways; while who am I is open, every MeEvery, and at
+// once on opening it if its answer is older than that.
+func (e *Engine) MeOpen(open bool, now time.Time) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if open == e.meOpen {
+		return
+	}
+	e.meOpen = open
+	en := e.me()
+	switch {
+	case open && (e.meAnswered.IsZero() || now.Sub(e.meAnswered) >= MeEvery):
+		en.due = now
+	case !e.meAnswered.IsZero():
+		en.due = e.meAnswered.Add(e.meEvery())
+	}
+	e.poke()
+}
+
+// me is whoami's entry, which is always there.
+func (e *Engine) me() *entry {
+	j := Job{Kind: KWhoAmI}
+	en, ok := e.jobs[j]
+	if !ok {
+		en = &entry{}
+		e.jobs[j] = en
+	}
+	return en
+}
+
+// askMe makes whoami due now.
+func (e *Engine) askMe(now time.Time) {
+	en := e.me()
+	en.due, en.held, en.failed = now, false, false
+}
+
+func (e *Engine) meEvery() time.Duration {
+	if e.meOpen {
+		return MeEvery
+	}
+	return MeAlways
+}
+
 // Once asks for a read now, once: a deploy's record, which does not
 // change.
 func (e *Engine) Once(j Job, now time.Time) {
@@ -270,22 +357,30 @@ func (e *Engine) dropLocked(j Job) {
 	}
 }
 
-// Again is ctrl-r: every read the person can see comes due now, the
-// held ones too (a 403 is asked again only so), a record that failed,
-// and the records on the screen, which are named.
-func (e *Engine) Again(now time.Time, screen ...Job) {
+// Again is ctrl-r: the reads of what the screen shows, and nothing
+// else, come due now, a held one too (a 403 is asked again only so): a
+// record, which is read once, is read again. A read already due keeps
+// its time, so a held ctrl-r (a press at each key repeat) never puts a
+// read that waits behind one just asked; the list is held to
+// ListAgainAfter, the open app to FocusEvery (next), whoami and the box
+// to AgainAfter (here, so a whoami that r or a 403 asks is not held
+// back).
+func (e *Engine) Again(now time.Time, shown ...Job) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	for _, j := range screen {
-		e.jobs[j] = &entry{due: now, once: true}
-	}
-	for j, en := range e.jobs {
-		if en.once && en.held && !en.failed {
-			continue
+	for _, j := range shown {
+		en, ok := e.jobs[j]
+		if !ok || en.once {
+			en = &entry{once: j.Kind == KDeploy, due: now}
+			e.jobs[j] = en
 		}
 		en.held, en.failed = false, false
-		if j.Kind != KStatus || j.App == e.focus || e.focus == "" {
-			en.due = now
+		due := now
+		if j.Kind == KWhoAmI || j.Kind == KBox {
+			due = maxTime(now, en.asked.Add(AgainAfter))
+		}
+		if en.due.After(due) {
+			en.due = due
 		}
 	}
 	e.poke()
@@ -304,7 +399,7 @@ func (e *Engine) Retry(now time.Time) bool {
 	e.lastRetry = now
 	e.stopped = Running
 	e.misses = 0
-	e.jobs[Job{Kind: KWhoAmI}] = &entry{due: now, once: true}
+	e.askMe(now)
 	e.poke()
 	return true
 }
@@ -362,6 +457,12 @@ func (e *Engine) Take(now time.Time) (Job, bool, time.Duration) {
 	if j.Kind == KStatus && j.App == e.focus {
 		e.lastFocus = now
 	}
+	if j.Kind == KApps {
+		e.lastList = now
+	}
+	if j.Kind == KWhoAmI || j.Kind == KBox {
+		e.taken.asked = now
+	}
 	return j, true, 0
 }
 
@@ -380,13 +481,16 @@ func (e *Engine) next(at time.Time) (Job, time.Time, bool) {
 	var bestDue time.Time
 	bestRank, found := 99, false
 	for j, en := range e.jobs {
-		if en.held {
+		if en.held || j.Kind == KBox && !e.boxOpen {
 			continue
 		}
 		r := e.rank(j, en)
 		due := en.due
 		if j.Kind == KStatus && j.App == e.focus && !e.lastFocus.IsZero() {
 			due = maxTime(due, e.lastFocus.Add(FocusEvery))
+		}
+		if j.Kind == KApps && !e.lastList.IsZero() {
+			due = maxTime(due, e.lastList.Add(ListAgainAfter))
 		}
 		if due.After(at) {
 			// Not yet due: after every job that is, and among the rest the
@@ -404,15 +508,19 @@ func (e *Engine) next(at time.Time) (Job, time.Time, bool) {
 func (e *Engine) rank(j Job, en *entry) int {
 	switch {
 	case en.slowed:
-		return -1
+		return -3
+	case j.Kind == KWhoAmI:
+		// Before any one-off: after a stop it is r's new start, which no
+		// record the person had open may go ahead of.
+		return -2
 	case en.once:
 		return 0
-	case j.Kind == KWhoAmI:
-		return 1
 	case j.Kind == KStatus && j.App == e.focus:
 		return 2
 	case j.Kind == KApps:
 		return 3
+	case j.Kind == KBox:
+		return 4
 	}
 	return 5
 }
@@ -468,6 +576,8 @@ func Classify(err error) (Outcome, Stop) {
 		return Stopped, NotSigned
 	case FailCertificate:
 		return Stopped, BadCertificate
+	case FailAboutAnother:
+		return Stopped, NotThisKey
 	case FailSlowed:
 		return Slowed, Running
 	case FailNoAnswer:
@@ -496,12 +606,15 @@ func (e *Engine) Done(j Job, now time.Time, err error) Outcome {
 	switch out {
 	case Answered:
 		en.misses, en.failed, en.answered, en.woke = 0, false, now, false
+		if j.Kind == KWhoAmI {
+			e.meAnswered = now
+		}
 		if e.misses > 0 {
 			// Back after no answer: whoami again, since the box may
 			// have been upgraded while it did not answer.
 			e.misses, e.recovering = 0, true
 			if j.Kind != KWhoAmI {
-				e.jobs[Job{Kind: KWhoAmI}] = &entry{due: now, once: true}
+				e.askMe(now)
 			}
 		}
 	case Cancelled:
@@ -516,6 +629,13 @@ func (e *Engine) Done(j Job, now time.Time, err error) Outcome {
 		en.misses++
 		en.failed = true
 		en.held = en.once || Forbidden(err) || NotFound(err)
+		// A 403 may be a grant removed in a push: whoami again, so the
+		// title bar says what this key now holds; at most once in
+		// MeEvery.
+		if Forbidden(err) && j.Kind != KWhoAmI && (e.meAnswered.IsZero() || now.Sub(e.meAnswered) >= MeEvery) && now.Sub(e.me403) >= MeEvery {
+			e.me403 = now
+			e.askMe(now)
+		}
 	case Slowed:
 		var f *Failure
 		_ = errors.As(err, &f)
@@ -535,8 +655,8 @@ func (e *Engine) Done(j Job, now time.Time, err error) Outcome {
 		return out
 	case Stopped:
 		e.stopped = stop
-		if j.Kind == KWhoAmI {
-			delete(e.jobs, j)
+		if stop == NotThisKey {
+			e.forgetBox(now)
 		}
 		return out
 	}
@@ -545,18 +665,33 @@ func (e *Engine) Done(j Job, now time.Time, err error) Outcome {
 		if out == Answered || en.held {
 			en.held = true
 		}
-		if out == Answered && j.Kind == KWhoAmI {
-			delete(e.jobs, j)
-		}
+
 	case j.Kind == KStatus && j.App == e.focus:
 		en.due, en.every = now.Add(FocusEvery), FocusEvery
 	case j.Kind == KStatus:
 		en.due, en.every = e.nextSlot(en, now), e.background()
 	case j.Kind == KApps:
 		en.due = now.Add(AppsEvery)
+	case j.Kind == KBox:
+		en.due = now.Add(BoxEvery)
+	case j.Kind == KWhoAmI:
+		en.due = now.Add(e.meEvery())
 	}
 	e.poke()
 	return out
+}
+
+// forgetBox drops every read but whoami's after an answer about another
+// key or box: the apps it listed and what was due for them. After r,
+// whoami first, then the list, as at the start.
+func (e *Engine) forgetBox(now time.Time) {
+	e.apps, e.lastFocus, e.lastList = nil, time.Time{}, time.Time{}
+	for j := range e.jobs {
+		if j.Kind != KWhoAmI {
+			delete(e.jobs, j)
+		}
+	}
+	e.jobs[Job{Kind: KApps}] = &entry{due: now}
 }
 
 // Health is what the title bar says of the reads.
@@ -639,7 +774,7 @@ func (e *Engine) Tick(now time.Time) bool {
 	if en, ok := e.jobs[Job{Kind: KApps}]; ok {
 		en.due = now
 	}
-	e.jobs[Job{Kind: KWhoAmI}] = &entry{due: now, once: true}
+	e.askMe(now)
 	e.tokens, e.filled = 0, now
 	e.poke()
 	return true
@@ -704,9 +839,10 @@ type Clock interface {
 }
 
 // Run drives the engine until ctx ends: take a read, make it with do,
-// record how it ended. do returns the read's error; it applies the
-// answer itself (on the UI's goroutine).
-func (e *Engine) Run(ctx context.Context, clock Clock, do func(ctx context.Context, j Job) error) {
+// record how it ended, then call after (when not nil), so that what
+// after does (apply the answer, on the UI's goroutine) sees the engine
+// as the read left it: a stop it caused is already a stop.
+func (e *Engine) Run(ctx context.Context, clock Clock, do func(ctx context.Context, j Job) error, after func()) {
 	for ctx.Err() == nil {
 		j, ok, wait := e.Take(clock.Now())
 		if !ok {
@@ -726,5 +862,8 @@ func (e *Engine) Run(ctx context.Context, clock Clock, do func(ctx context.Conte
 		err := do(jctx, j)
 		cancel()
 		e.Done(j, clock.Now(), err)
+		if after != nil {
+			after()
+		}
 	}
 }

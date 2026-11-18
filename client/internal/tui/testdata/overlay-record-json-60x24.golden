@@ -1,0 +1,24 @@
+motel · deploy.example.com · v0.7.0 │ alice@e… live · 0s ago
+apps › blog › deploy 7c1e55d0a9… as of 14:12:40 UTC · 0s ago
+╔════════════════════ the box's answer ════════════════════╗
+║the box's answer to                                       ║
+║  motel deploys --box deploy.example.com --key '~/.ssh/id…║
+║the line above is cut at the window's edge, marked …: do  ║
+║not copy it. c then P prints it whole.                    ║
+║indented here; its strings as received, made safe to show;║
+║lines over 2000 characters, and answers over 2000 lines,  ║
+║are cut for display                                       ║
+║(1.1 KB, fetched 14:12:40 UTC); P prints it whole, made   ║
+║safe on a terminal                                        ║
+║a line below is wider than the window and cut at its edge,║
+║unmarked: P prints every line whole                       ║
+║                                                          ║
+║{                                                         ║
+║  "version": "7c1e55d0a913",                              ║
+║  "status": "succeeded",                                  ║
+║  "deployed_by": "github:example/blog@refs/heads/main",   ║
+║  "sha256": "ce0d1aac022608624a22f13a97c5ed6538f08ed6996cd║
+║  "started_at": "2026-11-15T12:11:59Z",                   ║
+║  "finished_at": "2026-11-15T12:12:40Z",                  ║
+╚══════════════════════════════════════════════════════════╝
+esc close  c command  y json  P quit and print  ↑↓ scroll

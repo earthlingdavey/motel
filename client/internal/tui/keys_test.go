@@ -27,8 +27,8 @@ func rowsShown(scr string) []string {
 	return names
 }
 
-// TestKeys walks the screens by key: filter, open, back, the record's
-// own keys, and the sort, each landing where the footer says.
+// TestKeys walks the screens by key: filter, open, back, :, help and
+// the overlay, each landing where the footer says.
 func TestKeys(t *testing.T) {
 	h := start(t, 100, 30, nil)
 	top := func() model.View {
@@ -57,10 +57,6 @@ func TestKeys(t *testing.T) {
 	if v := top(); v.Version != "7c1e55d0a913" {
 		t.Fatalf("p opened %+v", v)
 	}
-	h.press("n")
-	if v := top(); v.Version != "e9a0b3f2c118" {
-		t.Fatalf("n opened %+v", v)
-	}
 	h.press(tcell.KeyEscape, tcell.KeyEscape)
 	if v := top(); v.Screen != model.ScreenApps {
 		t.Fatalf("esc esc is %+v", v)
@@ -81,9 +77,39 @@ func TestKeys(t *testing.T) {
 	if v := top(); v.Screen != model.ScreenRecord || v.App != "hostile" || v.Version != "v7" {
 		t.Fatalf("d opened %+v", v)
 	}
+	h.press(tcell.KeyEscape, tcell.KeyEscape)
+
+	h.press(":", "deploys blog e9a0b3f2c118", tcell.KeyEnter)
+	if v := top(); v.Screen != model.ScreenRecord || v.App != "blog" {
+		t.Fatalf(":deploys opened %+v", v)
+	}
 	h.press(tcell.KeyEscape)
-	if v := top(); v.Screen != model.ScreenApp || v.App != "hostile" {
-		t.Fatalf("esc from d's record is %+v", v)
+	if v := top(); v.Screen != model.ScreenApp || v.App != "blog" {
+		t.Fatalf("esc from :deploys is %+v", v)
+	}
+	h.press("?")
+	if s := h.screen(); !strings.Contains(s, "KEYS OF THE SCREEN BELOW") || !strings.Contains(s, "open the deploy's record") {
+		t.Fatalf("? on the app is not its help:\n%s", s)
+	}
+	h.press(tcell.KeyEscape)
+	h.press("c")
+	if s := h.screen(); !strings.Contains(s, "motel status --box deploy.example.com -- blog") {
+		t.Fatalf("c shows no command:\n%s", s)
+	}
+	h.press("y")
+	if s := h.screen(); !strings.Contains(s, `"app": "blog"`) {
+		t.Fatalf("y shows no JSON:\n%s", s)
+	}
+	h.press(tcell.KeyEscape)
+	if v := top(); v.Screen != model.ScreenApp {
+		t.Fatalf("esc closing the overlay left %+v", v)
+	}
+	if s := h.screen(); strings.Contains(s, "the box's answer") {
+		t.Fatalf("the overlay is still up")
+	}
+	h.press(":", "me", tcell.KeyEnter)
+	if s := h.screen(); !strings.Contains(s, "you are     alice@example.com") {
+		t.Fatalf(":me shows:\n%s", s)
 	}
 	h.press(tcell.KeyEscape, tcell.KeyEscape, tcell.KeyEscape)
 	if v := top(); v.Screen != model.ScreenApps {
@@ -94,6 +120,49 @@ func TestKeys(t *testing.T) {
 		t.Fatalf("s did not sort by name")
 	}
 	h.quit('q')
+}
+
+// TestPrintOnExit: P on the command overlay quits and leaves the line
+// to print below the prompt.
+func TestPrintOnExit(t *testing.T) {
+	h := start(t, 100, 30, nil)
+	h.press(":", "status blog", tcell.KeyEnter, "c")
+	h.quit('P')
+	if h.u.Print != "motel status --box deploy.example.com -- blog\n" {
+		t.Fatalf("P leaves %q", h.u.Print)
+	}
+}
+
+// TestLongCommandCut: a command wider than the overlay is cut at its
+// edge with the cut marked, and the overlay says not to copy it and
+// that P prints it whole, in place of asking to select it; P prints
+// it whole. Where it fits, it is drawn whole and selecting it is
+// offered.
+func TestLongCommandCut(t *testing.T) {
+	const a, ver = "billing-reconciliation-worker-eu-west", "release-2026.11.18-build.4471-rc10"
+	want := "motel deploys --box deploy.example.com -- " + a + " " + ver
+	for _, c := range []struct {
+		w   int
+		cut bool
+	}{{80, true}, {130, false}} {
+		h := start(t, c.w, 24, nil)
+		h.open(record(a, ver))
+		h.press("c")
+		s := h.screen()
+		told := strings.Contains(s, "a line above is cut at the window's edge, marked …: do not copy it. P quits") &&
+			strings.Contains(s, "and prints the first command whole below your prompt")
+		offered := strings.Contains(s, "select it with the mouse")
+		switch {
+		case c.cut && (!told || offered || strings.Contains(s, want) || !strings.Contains(s, "  motel deploys --box deploy.example.com -- billing-reconciliation-worker-eu-…║")):
+			t.Errorf("%d columns, the command cut: told %v, selecting offered %v:\n%s", c.w, told, offered, s)
+		case !c.cut && (told || !offered || !strings.Contains(s, "  "+want+" ") || !strings.Contains(s, "--json -- "+a+" "+ver+" ")):
+			t.Errorf("%d columns, the command whole: told %v, selecting offered %v:\n%s", c.w, told, offered, s)
+		}
+		h.quit('P')
+		if h.u.Print != want+"\n" {
+			t.Errorf("%d columns: P leaves %q", c.w, h.u.Print)
+		}
+	}
 }
 
 // TestTooSmall: below 60x16 the screen says what it needs.
@@ -113,7 +182,7 @@ func TestRecoverWithR(t *testing.T) {
 	h.fake.Set("blog", refused)
 	h.press(tcell.KeyCtrlR)
 	s := h.screen()
-	if !strings.Contains(s, "SIGNED OUT") || !strings.Contains(s, "not asking: deploy.example.com did not accept your key") {
+	if !strings.Contains(s, "SIGNED OUT") || !strings.Contains(s, "deploy.example.com did not accept your key") {
 		t.Fatalf("a 401 is not said:\n%s", s)
 	}
 	h.press("r") // still refused: stopped again after one whoami
@@ -140,6 +209,11 @@ func TestRecoverWithR(t *testing.T) {
 	}
 	if s := h.screen(); strings.Contains(s, "SIGNED OUT") || strings.Contains(s, "not asking:") {
 		t.Fatalf("the stop is still said:\n%s", s)
+	}
+	for _, v := range h.u.stack {
+		if v.Screen == model.ScreenRefused {
+			t.Fatalf("the refusal screen stays after the reads resumed: %+v", h.u.stack)
+		}
 	}
 }
 
@@ -188,9 +262,6 @@ func TestCtrlRRecord(t *testing.T) {
 // ctrl-r, which would do nothing.
 func TestNoCtrlRHintWhileSlowed(t *testing.T) {
 	h := start(t, 100, 30, nil)
-	if s := h.screen(); !strings.Contains(s, "ctrl-r ask again") {
-		t.Fatalf("no ctrl-r hint to start with:\n%s", s)
-	}
 	h.fake.Set("blog", &model.Failure{Kind: model.FailSlowed, RetryAfter: time.Minute})
 	h.press(tcell.KeyCtrlR)
 	s := h.screen()

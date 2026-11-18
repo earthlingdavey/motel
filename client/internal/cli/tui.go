@@ -38,13 +38,14 @@ func (r *runner) tui() *cobra.Command {
 		Short: "Screens over the reads: the apps, an app and its deploys, a deploy's record (experimental)",
 		Long: "tui shows the box on screens in the terminal, over the same reads the other\n" +
 			"commands make: the apps you may view sorted by what needs a look, an app's\n" +
-			"state and deploys, and a deploy's record laid out for reading a failure. It\n" +
-			"only reads, well inside the box's limit of 2 requests a second and 60 at once:\n" +
-			"up to 30 at once to start, then at most 1.5 a second. It signs one token for\n" +
-			"ten minutes at a time, so a hardware key is touched about every nine, and never\n" +
-			"asks for a passphrase or a PIN: a key with a passphrase must be in the agent\n" +
-			"(ssh-add), and a hardware key that requires its PIN cannot be used here yet.\n" +
-			"Each screen's keys are on its last line. It is asked with your own key only.\n\n" + experimental,
+			"state and deploys, a deploy's record laid out for reading a failure, who you\n" +
+			"are, and the box. It only reads, well inside the box's limit of 2 requests a\n" +
+			"second and 60 at once: up to 30 at once to start, then at most 1.5 a second. It\n" +
+			"signs one token for ten minutes at a time, so a hardware key is touched about\n" +
+			"every nine, and never asks for a passphrase or a PIN: a key with a passphrase\n" +
+			"must be in the agent (ssh-add), and a hardware key that requires its PIN cannot\n" +
+			"be used here yet. ? lists the keys; c shows the command for a screen that reads\n" +
+			"the box, y the box's answer as JSON. It is asked with your own key only.\n\n" + experimental,
 		Args: usageArgs(cobra.NoArgs),
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if r.json {
@@ -78,10 +79,7 @@ func (r *runner) tui() *cobra.Command {
 					return &client.Failure{Exit: client.ExitUsage, Message: shown.String() + " is protected by a passphrase, and the agent does not hold it: the TUI signs again about every nine minutes while its screen holds the terminal, where ssh-keygen could not ask for it. Add the key to the agent (ssh-add " + shown.String() + ") and run motel tui again."}
 				}
 				sig := forTUI(c, wall)
-				k := pt.Key
-				s.Host = c.Box.Host
-				s.Key = model.Key{Fingerprint: k.Public.Fingerprint(), Shown: k.Shown, Source: k.Source,
-					Hardware: strings.HasPrefix(k.Public.Type, "sk-"), Line: k.Public.Line()}
+				boxSession(s, c, pt)
 				s.TokenExpires = sig.Expires
 				o.Client, o.Signing, o.Started, o.Resign = live{c}, sig.Notify, gt.Close, pt.Forget
 			}
@@ -93,8 +91,12 @@ func (r *runner) tui() *cobra.Command {
 				// screen with nothing refreshing behind it.
 				return err
 			}
-			if err := tui.Run(ctx, o, start); err != nil {
+			print, err := tui.Run(ctx, o, start)
+			if err != nil {
 				return runFailure(err)
+			}
+			if err := r.printed(print); err != nil {
+				return err
 			}
 			return ctx.Err()
 		},
@@ -103,6 +105,37 @@ func (r *runner) tui() *cobra.Command {
 	c.Flags().BoolVar(&sample, "demo", false, "show sample data, with no box")
 	_ = c.Flags().MarkHidden("demo")
 	return c
+}
+
+// boxSession is the box and key a live session shows: the host alone
+// as its name (the token's aud, the title, whoami's rule), the address
+// the client asks, :port and all, for the commands it prints, and the
+// key the client signs with.
+func boxSession(s *model.Session, c *client.Client, pt *client.PersonToken) {
+	k := pt.Key
+	s.Host, s.Addr = c.Box.Host, c.Box.Addr()
+	s.Key = model.Key{Fingerprint: k.Public.Fingerprint(), Shown: k.Shown, Source: k.Source,
+		Hardware: strings.HasPrefix(k.Public.Type, "sk-"), Line: k.Public.Line()}
+}
+
+// printed writes what P asked for. Into a pipe or a file, as P made it:
+// the box's answer as the command's --json prints it (a pipe may end at
+// a terminal too). On a terminal, the box's answer is printed indented
+// and made safe, every line whole, and stderr says so and how to get
+// what --json prints.
+func (r *runner) printed(p tui.Printed) error {
+	out := p.Raw
+	if r.env.Terminal && p.Shown != "" {
+		out = p.Shown
+		if _, err := io.WriteString(r.env.Stderr, "motel: the box's answer was indented and made safe for the terminal; redirect stdout (> file, or | cat) for what the command's --json prints\n"); err != nil {
+			return err
+		}
+	}
+	if out == "" {
+		return nil
+	}
+	_, err := io.WriteString(r.env.Stdout, out)
+	return err
 }
 
 // tuiSignals end the TUI as SIGINT and SIGTERM do (main's): a closed
@@ -189,25 +222,32 @@ func (l live) Apps(ctx context.Context) (model.Got[[]string], error) {
 func (l live) Status(ctx context.Context, app string) (model.Got[wire.Status], error) {
 	a, err := client.ParseApp(app)
 	if err != nil {
-		return model.Got[wire.Status]{}, failure(err)
+		return model.Got[wire.Status]{}, argument(err)
 	}
 	v, ans, err := l.c.Status(ctx, a, "")
 	return got(v, ans, err)
 }
 
 func (l live) Deploy(ctx context.Context, app, version string) (model.Got[wire.DeployResult], error) {
-	a, err := client.ParseApp(app)
-	if err != nil {
-		return model.Got[wire.DeployResult]{}, failure(err)
-	}
 	// A version the box's filter hid is listed in the client's own
-	// words, which name no deploy. Asking for it sends nothing, and
-	// fails this read alone: the client's usage failure would read as
-	// a token that could not be signed, and stop every read.
-	if client.CheckVersion(version) != nil {
+	// words, which name no deploy: nothing is sent, and this read
+	// alone fails, saying so.
+	if version == client.Filtered {
 		return model.Got[wire.DeployResult]{}, &model.Failure{Kind: model.FailThis, Message: "the box's filter hid this deploy's version, so its record cannot be asked for"}
 	}
+	a, err := client.ParseApp(app)
+	if err == nil {
+		err = client.CheckVersion(version)
+	}
+	if err != nil {
+		return model.Got[wire.DeployResult]{}, argument(err)
+	}
 	v, ans, err := l.c.Deploy(ctx, a, version)
+	return got(v, ans, err)
+}
+
+func (l live) BoxStatus(ctx context.Context) (model.Got[wire.BoxStatus], error) {
+	v, ans, err := l.c.BoxStatus(ctx)
 	return got(v, ans, err)
 }
 
@@ -218,7 +258,20 @@ func got[T any](v T, ans *client.Answer, err error) (model.Got[T], error) {
 	return model.Got[T]{V: v, Body: ans.Body}, nil
 }
 
-// failure is a client failure as the TUI's engine reads it.
+// argument is an argument the client refused before asking (an app or
+// a version outside its grammar): that read's own failure, said on its
+// screen, and never a stop of the session, as a failed signature is.
+func argument(err error) error {
+	var f *client.Failure
+	if !errors.As(err, &f) {
+		return err
+	}
+	return &model.Failure{Kind: model.FailThis, Message: f.Message}
+}
+
+// failure is a client failure as the TUI's engine reads it. A usage
+// failure here is a token that could not be signed: the arguments were
+// checked before (argument).
 func failure(err error) error {
 	var f *client.Failure
 	if !errors.As(err, &f) {

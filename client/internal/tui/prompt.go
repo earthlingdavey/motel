@@ -1,24 +1,133 @@
 package tui
 
 import (
+	"slices"
+	"strings"
+
 	"github.com/gdamore/tcell/v2"
 
+	"github.com/smallhoursorg/motel/client/internal/termtext"
 	"github.com/smallhoursorg/motel/client/internal/tui/door"
+	"github.com/smallhoursorg/motel/client/internal/tui/model"
 )
 
-// ask opens row 2's prompt for the filter.
-func (u *UI) ask() {
-	door.SetLabel(u.prompt, "/")
-	door.SetInput(u.prompt, u.filter)
+// ask opens row 2's prompt: ':' for the command line, '/' for the
+// filter.
+func (u *UI) ask(mode rune) {
+	u.promptMode = mode
+	door.SetLabel(u.prompt, string(mode))
+	door.SetInput(u.prompt, "")
+	if mode == '/' {
+		door.SetInput(u.prompt, u.filter)
+	}
 	u.row2.SwitchToPage("prompt")
 	u.App.SetFocus(u.prompt)
 }
 
-// promptDone is enter or esc on the filter: esc clears it.
+// promptDone is enter, esc or tab on the prompt.
 func (u *UI) promptDone(k tcell.Key) {
-	if k == tcell.KeyEscape {
+	if k == tcell.KeyTab || k == tcell.KeyBacktab {
+		return // nothing to complete: what is typed stays
+	}
+	text := strings.TrimSpace(door.Typed(u.prompt))
+	switch {
+	case u.promptMode == '/' && k == tcell.KeyEscape:
 		u.filter = ""
+	case u.promptMode == ':' && k == tcell.KeyEnter:
+		u.row2.SwitchToPage("crumb")
+		u.show()
+		u.run(text)
+		return
 	}
 	u.row2.SwitchToPage("crumb")
 	u.show()
+}
+
+// run is a command line: the motel command words, which mean here
+// what they mean in a shell. What is typed is held to the grammars the
+// client holds it to before anything is asked, and what is wrong is
+// said on the prompt's line, the typing echoed only as a quotation.
+func (u *UI) run(text string) {
+	w := strings.Fields(text)
+	if len(w) == 0 {
+		return
+	}
+	say := func(parts ...model.Seg) { u.notice = model.Line(parts) }
+	own := func(s string) model.Seg { return model.Seg{T: termtext.From(s), C: model.Warn} }
+	quoted := func(s string) model.Seg { return model.Seg{T: termtext.Quote(s), C: model.Warn} }
+	app := func() (string, bool) {
+		if len(w) < 2 {
+			say(own(w[0] + " needs an app: :" + w[0] + " <app>"))
+			return "", false
+		}
+		// One sentence whether the app does not exist or is not yours to
+		// view: the list is the box's answer to what you may view.
+		if !slices.Contains(u.S.Names(), w[1]) {
+			say(own("no app "), quoted(w[1]), own(" that you may view here"))
+			return "", false
+		}
+		return w[1], true
+	}
+	// Each word takes so many: more is not run, and said.
+	most, known := map[string]int{"status": 2, "app": 2, "deploys": 3, "q": 1, "quit": 1, "apps": 1, "whoami": 1, "me": 1, "box": 1, "help": 1, "keys": 1}[w[0]]
+	if known && len(w) > most {
+		say(own("one word too many: "), quoted(strings.Join(w[most:], " ")), own(" is more than :"+w[0]+" takes"))
+		return
+	}
+	switch w[0] {
+	case "q", "quit":
+		u.App.Stop()
+	case "apps":
+		u.open(model.View{Screen: model.ScreenApps})
+	case "status", "app", "deploys":
+		a, ok := app()
+		if !ok {
+			return
+		}
+		if w[0] == "deploys" && len(w) > 2 && !model.ValidVersion(w[2]) {
+			say(quoted(w[2]), own(" is not a version (letters, digits, . _ -, at most 64; not starting with .)"))
+			return
+		}
+		u.open(model.View{Screen: model.ScreenApp, App: a})
+		if w[0] == "deploys" && len(w) > 2 {
+			u.open(model.View{Screen: model.ScreenRecord, App: a, Version: w[2]})
+		}
+	case "whoami", "me":
+		u.open(model.View{Screen: model.ScreenMe})
+	case "box":
+		if !u.S.BoxViewer() {
+			say(own("the box screen is for a viewer of the box; :me lists what you hold here"))
+			return
+		}
+		u.open(model.View{Screen: model.ScreenBox})
+	case "help", "keys":
+		u.open(model.View{Screen: model.ScreenHelp})
+	default:
+		say(own("no command "), quoted(w[0]), own(" here: : takes apps, status <app>, deploys <app> [<version>], whoami, box, help, q"))
+	}
+}
+
+// complete offers only the views this person can reach on this box:
+// no box for a viewer of apps alone, and app names from the box's list.
+func (u *UI) complete(text string) []string {
+	if u.promptMode != ':' || text == "" {
+		return nil
+	}
+	all := []string{"apps", "whoami", "help", "quit"}
+	if u.S.BoxViewer() {
+		all = append(all, "box")
+	}
+	for _, a := range u.S.Names() {
+		all = append(all, "status "+a, "deploys "+a)
+	}
+	var out []string
+	for _, c := range all {
+		if strings.HasPrefix(c, text) && c != text {
+			out = append(out, c)
+		}
+	}
+	if len(out) > 8 {
+		out = out[:8]
+	}
+	return out
 }

@@ -73,6 +73,23 @@ func widgets(ts []termtext.Text) map[string]func() (tview.Primitive, tview.Primi
 			tv.SetTitle(" " + Inert(ts[0]).s + " ")
 			return tv, nil
 		},
+		"completions": func() (tview.Primitive, tview.Primitive) {
+			f := tview.NewInputField().SetAutocompleteUseTags(false)
+			var es []string
+			for _, x := range ts {
+				es = append(es, x.String())
+			}
+			SetCompletions(f, func(string) []string { return es })
+			f.SetText("x")
+			f.Autocomplete()
+			return f, f
+		},
+		"framed title, the TUI's own": func() (tview.Primitive, tview.Primitive) {
+			tv := tview.NewTextView()
+			tv.SetBorder(true)
+			SetTitle(tv.Box, ts[0].String())
+			return tv, nil
+		},
 		"input field": func() (tview.Primitive, tview.Primitive) {
 			f := tview.NewInputField()
 			SetLabel(f, ts[0].String())

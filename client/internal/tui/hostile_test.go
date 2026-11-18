@@ -16,6 +16,9 @@ func TestSafeBytes(t *testing.T) {
 	for _, keys := range [][]any{
 		{"/", "hos", tcell.KeyEnter, tcell.KeyEnter},
 		{"/", "hos", tcell.KeyEnter, tcell.KeyEnter, tcell.KeyEnter},
+		{":", "status hostile", tcell.KeyEnter},
+		{":", "deploys hostile v7", tcell.KeyEnter},
+		{":", "deploys hostile v7", tcell.KeyEnter, "y"},
 	} {
 		tty := hostile.NewTTY()
 		scr, err := hostile.Screen(tty)

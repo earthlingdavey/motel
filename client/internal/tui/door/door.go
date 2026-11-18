@@ -15,6 +15,21 @@ package door
 // rejects and which it does not draw. Both are tview internals, not
 // its API: TestEscapeHolds holds them, in every widget kind used here.
 //
+// A text view, and an input field's text area, also begin a row
+// wherever uniseg reports a mandatory line break, wrapping or not.
+// termtext escapes every character that is one, but uniseg v0.4.7
+// reports one too after an emoji modifier (U+1F3FB to U+1F3FF) that
+// ends a cluster begun by an emoji base or an unassigned
+// Extended_Pictographic code point (a thumbs-up and a skin tone,
+// U+1F44D U+1F3FD): box text could begin a row of its own, at the
+// row's start, where it reads as the client's. So the door asks
+// tview's own splitter (WordWrap, with no width to wrap at) where it
+// would begin a row inside a text, and writes the last character
+// before each such break as an escape, as termtext writes a character
+// it will not pass: the thumbs-up, then \U0001f3fd. TestOneRow holds
+// it, in every widget kind used here. SetInput alone does not: it puts
+// back the person's own keys, as the field drew them when typed.
+//
 // TestOneDoor holds the rest: no file of the screens' package calls a
 // method that hands tview text, calls String, or imports fmt, so text
 // reaches a widget only through here.
@@ -35,8 +50,78 @@ import (
 // can make one from a string a box sent.
 type Shown struct{ s string }
 
-// Inert is t made safe for any tview text that reads tags.
-func Inert(t termtext.Text) Shown { return Shown{strings.ReplaceAll(t.String(), "[", "[\u200b")} }
+// Inert is t made safe for any tview text that reads tags, and for a
+// text view's rows.
+func Inert(t termtext.Text) Shown { return Shown{unbreak([]string{tagless(t.String())})[0]} }
+
+// tagless is s with every [ made inert for tview's tag parser.
+func tagless(s string) string { return strings.ReplaceAll(s, "[", "[\u200b") }
+
+// unbreak is segs, one row's text in segments as tview reads them (the
+// tags between left out: a pair can be split between two), with the
+// last character before every row tview would begin inside them
+// written as an escape. The row's end counts as inside: what follows
+// it, the line feed between two lines, would begin a row after it.
+func unbreak(segs []string) []string {
+	ascii := true
+	for _, s := range segs {
+		for i := 0; i < len(s) && ascii; i++ {
+			ascii = s[i] < 0x80
+		}
+	}
+	if ascii {
+		return segs // no character of ASCII ends a row but the ones termtext escapes
+	}
+	for {
+		at := breaks(strings.Join(segs, ""))
+		if len(at) == 0 {
+			return segs
+		}
+		// From the last, so that the offsets before it still hold.
+		for k := len(at) - 1; k >= 0; k-- {
+			i := at[k]
+			for j, s := range segs {
+				if i < len(s) {
+					r := []rune(s[i:])[0]
+					segs[j] = s[:i] + escape(r) + s[i+len(string(r)):]
+					break
+				}
+				i -= len(s)
+			}
+		}
+	}
+}
+
+// breaks is the byte offset in row of the last character before each
+// row tview would begin inside it or at its end, but for one in ASCII,
+// which is left as it is. tview's own splitter says where: "x" stands
+// for what follows the row, and the width is no limit, so only a
+// mandatory break splits.
+func breaks(row string) (at []int) {
+	lines := tview.WordWrap(row+"x", 1<<30)
+	end := 0
+	for _, l := range lines[:len(lines)-1] {
+		end += len(l)
+		if r := []rune(l); len(r) > 0 && r[len(r)-1] >= 0x80 {
+			at = append(at, end-len(string(r[len(r)-1])))
+		}
+	}
+	return at
+}
+
+// escape is r as termtext.Quote writes one: \u and four hex digits, or
+// \U and eight above U+FFFF.
+func escape(r rune) string {
+	const hex = "0123456789abcdef"
+	n, b := 4, []byte(`\u`)
+	if r > 0xffff {
+		n, b = 8, []byte(`\U`)
+	}
+	for i := n - 1; i >= 0; i-- {
+		b = append(b, hex[r>>(4*i)&0xf])
+	}
+	return string(b)
+}
 
 // Lit is the TUI's own words, through the same door: a [ in them (the
 // help's "[<version>]") must not start a tag either.
@@ -80,10 +165,14 @@ func tags(c model.Class, colour bool) (string, string) {
 // Line is a model line as tview text.
 func Line(l model.Line, colour bool) Shown {
 	var b strings.Builder
-	for _, s := range l {
-		open, close := tags(s.C, colour)
+	segs := make([]string, len(l))
+	for i, s := range l {
+		segs[i] = tagless(s.T.String())
+	}
+	for i, t := range unbreak(segs) {
+		open, close := tags(l[i].C, colour)
 		b.WriteString(open)
-		b.WriteString(Inert(s.T).s)
+		b.WriteString(t)
 		b.WriteString(close)
 	}
 	return Shown{b.String()}
@@ -132,8 +221,47 @@ func Head(s string) *tview.TableCell {
 // Width is how many cells t takes on screen.
 func Width(t termtext.Text) int { return tview.TaggedStringWidth(Inert(t).s) }
 
-// SetInput puts the person's own text back into an input field.
-func SetInput(f *tview.InputField, s string) { f.SetText(Lit(s).s) }
+// LitLines is the TUI's own lines: each made safe as Lit makes it,
+// the line breaks kept.
+func LitLines(s string) Shown {
+	ls := strings.Split(s, "\n")
+	for i, l := range ls {
+		ls[i] = Lit(l).s
+	}
+	return Shown{strings.Join(ls, "\n")}
+}
+
+// SetTitle titles a framed widget with the TUI's own words.
+func SetTitle(b *tview.Box, s string) { b.SetTitle(" " + Lit(s).s + " ") }
+
+// SetCompletions gives an input field its completions, each made
+// inert.
+func SetCompletions(f *tview.InputField, complete func(string) []string) {
+	f.SetAutocompleteFunc(func(text string) []string { return completions(complete(text)) })
+	// Taken with Tab only: moving through the list changes nothing
+	// typed, and Enter is the screen's, which runs what is typed.
+	f.SetAutocompletedFunc(func(text string, _ int, source int) bool {
+		if source != tview.AutocompletedTab {
+			return false
+		}
+		f.SetText(text)
+		return true
+	})
+}
+
+// completions are the command line's entries, made inert.
+func completions(entries []string) []string {
+	out := make([]string, len(entries))
+	for i, e := range entries {
+		out[i] = Lit(e).s
+	}
+	return out
+}
+
+// SetInput puts the person's own text back into an input field: made
+// inert for tags only, so that Typed gives back what was typed. It is
+// the person's keys, which the field drew as they were typed.
+func SetInput(f *tview.InputField, s string) { f.SetText(tagless(termtext.From(s).String())) }
 
 // SetLabel labels an input field.
 func SetLabel(f *tview.InputField, s string) { f.SetLabel(Lit(s).s) }
@@ -144,5 +272,5 @@ func PrintAt(scr tcell.Screen, x, y, w int, s string) {
 }
 
 // Typed is what the person typed into an input field: the inverse of
-// Lit on the person's own keys, which hold no tag of tview's.
+// SetInput on the person's own keys, which hold no tag of tview's.
 func Typed(f *tview.InputField) string { return strings.ReplaceAll(f.GetText(), "\u200b", "") }

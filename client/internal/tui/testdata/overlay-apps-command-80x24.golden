@@ -1,0 +1,24 @@
+motel · deploy.example.com · v0.7.0 │ alice@example.com · viewer … live · 0s ago
+apps                                      12 apps · 5 need a look · by attention
+╔═══════════════════════════════════ command ══════════════════════════════════╗
+║the same read from a shell:                                                   ║
+║                                                                              ║
+║  motel apps --box deploy.example.com --key '~/.ssh/id_ed25519'               ║
+║  motel apps --box deploy.example.com --key '~/.ssh/id_ed25519' --json        ║
+║                                                                              ║
+║This screen is that list, and a row for each app: each row is                 ║
+║  motel status --box deploy.example.com --key '~/.ssh/id_ed25519' -- <app>    ║
+║                                                                              ║
+║select it with the mouse, or press P to quit and print it below your prompt   ║
+║y: the box's answer as JSON (252 B, fetched 14:12:40 UTC)                     ║
+║                                                                              ║
+║                                                                              ║
+║                                                                              ║
+║                                                                              ║
+║                                                                              ║
+║                                                                              ║
+║                                                                              ║
+║                                                                              ║
+║                                                                              ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+esc close  c command  y json  P quit and print  ↑↓ scroll

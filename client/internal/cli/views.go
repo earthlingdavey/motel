@@ -7,6 +7,7 @@ import (
 	"github.com/smallhoursorg/motel/client/internal/render"
 	"github.com/smallhoursorg/motel/client/internal/sshkey"
 	"github.com/smallhoursorg/motel/client/internal/termtext"
+	"github.com/smallhoursorg/motel/client/internal/tui/model"
 	"github.com/smallhoursorg/motel/liveswap/wire"
 )
 
@@ -133,21 +134,21 @@ func boxView(b wire.BoxStatus, asked string) render.Box {
 func whoamiView(me wire.WhoAmI, asked string, key sshkey.Key, now time.Time) render.WhoAmI {
 	fp := key.Public.Fingerprint()
 	v := render.WhoAmI{
-		Name:       tx(me.Name),
-		Box:        tx(asked),
-		Release:    tx(me.Version),
-		Protocol:   me.Protocol,
-		Key:        tx(fp),
-		KeyShown:   tx(key.Shown),
-		KeySource:  tx(key.Source),
-		BoxKey:     termtext.Quote(me.Key),
-		BoxName:    termtext.Quote(me.Box),
-		KeyDiffers: me.Key != fp,
-		BoxDiffers: me.Box != asked,
-		HasExpiry:  true, // Read takes no whoami without it
-		Expires:    me.TokenExpiresAt,
-		Now:        now,
+		Name:      tx(me.Name),
+		Box:       tx(asked),
+		Release:   tx(me.Version),
+		Protocol:  me.Protocol,
+		Key:       tx(fp),
+		KeyShown:  tx(key.Shown),
+		KeySource: tx(key.Source),
+		BoxKey:    termtext.Quote(me.Key),
+		BoxName:   termtext.Quote(me.Box),
+		HasExpiry: true, // Read takes no whoami without it
+		Expires:   me.TokenExpiresAt,
+		Now:       now,
 	}
+	// The TUI's rule too: one function, so the two cannot differ.
+	v.KeyDiffers, v.BoxDiffers = model.AboutAnother(me, fp, asked)
 	for _, r := range me.Roles {
 		// viewer is the one role a box grants today (liveswap/access,
 		// lines.go), and is said as a word. Any other word the box
