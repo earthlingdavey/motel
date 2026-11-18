@@ -330,7 +330,9 @@ func (s *Session) RecordView(app, version string, now time.Time) RecordView {
 		if p := dt.Probe; p != nil {
 			l := Line{own(strconv.Itoa(p.Status))}
 			if p.Location != "" {
-				l = append(l, own(" from "), boxT(p.Location))
+				// The app's own header, inside the client's sentence: a
+				// quotation, so ", body:" after it is the client's.
+				l = append(l, own(" from "), quoted(p.Location))
 			}
 			if p.Body != "" {
 				l = append(l, own(", body:"))

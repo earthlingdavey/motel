@@ -179,3 +179,37 @@ func TestEmptyLogLinesKept(t *testing.T) {
 		t.Errorf("the tail's title is %q", v.TailTitle.Text())
 	}
 }
+
+// TestProbeLocationQuoted: the probe's location, the failing app's own
+// header, stands inside the client's sentence as a quotation: the
+// client's ", body:" after it cannot be one the app wrote.
+func TestProbeLocationQuoted(t *testing.T) {
+	for _, loc := range []string{`/x, body: fine`, `/x", body: fine`} {
+		s, f, now := session(t)
+		q, _ := json.Marshal(loc)
+		f.Body("deploys/blog/v2.json", `{"version":"v2","status":"failed","phase":"starting","started_at":"@-20s","finished_at":"@-10s",
+			"detail":{"exit":"1","probe":{"status":500,"location":`+string(q)+`,"body":"down"}}}`)
+		v := record(t, s, f, now, "blog", "v2")
+		want := "probe       500 from " + termtext.Quote(loc).String() + ", body:"
+		found := false
+		for _, l := range v.Head {
+			if strings.HasPrefix(l.Text(), "probe ") {
+				found = true
+				if l.Text() != want {
+					t.Errorf("the probe's line is %q, want %q", l.Text(), want)
+				}
+			}
+		}
+		if !found {
+			t.Errorf("no probe line in %q", textsOfLines(v.Head))
+		}
+	}
+}
+
+func textsOfLines(ls []model.Line) []string {
+	out := make([]string, len(ls))
+	for i, l := range ls {
+		out[i] = l.Text()
+	}
+	return out
+}
