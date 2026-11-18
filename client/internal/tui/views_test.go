@@ -328,3 +328,23 @@ func TestDeployCursorAmongAlike(t *testing.T) {
 		t.Errorf("drawn again, the cursor moved from row 2 to row %d", r)
 	}
 }
+
+// TestTitleHeldWhoAmIFailedFits: the mark of an answer of whoami held
+// whose newest read failed is drawn whole beside the box's name and the
+// freshness word, at 60 and at 80 columns, as the simulation screen
+// shows them.
+func TestTitleHeldWhoAmIFailedFits(t *testing.T) {
+	for _, w := range []int{60, 80} {
+		h := start(t, w, 25, nil)
+		h.fake.Set("whoami", &model.Failure{Kind: model.FailUnusable, Message: "not moteld's answer"})
+		h.now = h.now.Add(21 * time.Minute)
+		h.s.Engine.Touch(h.now)
+		h.s.Engine.Again(h.now, model.Job{Kind: model.KWhoAmI})
+		h.pump()
+		h.sync()
+		top := strings.SplitN(h.screen(), "\n", 2)[0]
+		if !strings.HasPrefix(top, "motel · deploy.example.com │ 21m old, failed") || !strings.HasSuffix(top, " live · 0s ago") {
+			t.Errorf("at %d columns the title bar is %q", w, top)
+		}
+	}
+}

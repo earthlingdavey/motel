@@ -400,6 +400,7 @@ func size(n int) string {
 // Title is the title bar at now: who and where on the left, and the
 // freshness word on the right, which is never colour alone.
 func (s *Session) Title(now time.Time) (Line, Line) {
+	s.seen(now)
 	left := Line{ownC("motel", Strong)}
 	if s.Demo {
 		left = append(left, ownC(" · SAMPLE DATA", Warn))
@@ -410,6 +411,17 @@ func (s *Session) Title(now time.Time) (Line, Line) {
 		// The command's rule: an answer about another key or box names
 		// no one here, and nothing said before it is kept (forget).
 		left = append(left, ownC(" │ the box answered about another key or box", Warn))
+	case s.Me != nil && s.MeErr != nil && s.Engine.Stopped() == Running:
+		// whoami's newest read failed while the other reads answer: the
+		// answer held is said with its age, and that the read failed,
+		// before it, so the mark is cut after the host and not before
+		// (at 60 columns little else of the answer fits). Who am I says
+		// why.
+		left = append(left, own(" │ "), ownC(Ago(now.Sub(s.Me.At))+" old, failed", Warn), own(": "))
+		if r := s.Me.V.Version; r != "" {
+			left = append(left, own(r+" · "))
+		}
+		left = append(append(left, own(s.Me.V.Name+" · ")), s.scopes()...)
 	case s.Me != nil:
 		if r := s.Me.V.Version; r != "" {
 			left = append(left, own(" · "+r))

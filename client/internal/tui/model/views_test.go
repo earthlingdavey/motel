@@ -157,6 +157,69 @@ func TestMeLastReadFailed(t *testing.T) {
 	}
 }
 
+// TestTitleHeldWhoAmIFailed: with an answer of whoami held and its
+// newest read failed, while the session runs, the title bar says the
+// answer's age and that the read failed, before the answer; the word
+// goes when whoami answers again. Without a failure the title is as it
+// was, and so it is on a stop, which says its own reason. Each read of
+// whoami is a ctrl-r, AgainAfter or more after the last.
+func TestTitleHeldWhoAmIFailed(t *testing.T) {
+	held := "motel · deploy.example.com · v0.7.0 │ alice@example.com · viewer of the box"
+	for _, c := range []struct {
+		name string
+		err  *model.Failure
+		want string
+	}{
+		{"a release that is not N.N.N", &model.Failure{Kind: model.FailUnusable, Message: "not moteld's answer"}, "motel · deploy.example.com │ 21m old, failed: v0.7.0 · alice@example.com · viewer of the box"},
+		{"409", &model.Failure{Kind: model.FailThis, Message: "deploy.example.com answered 409"}, "motel · deploy.example.com │ 21m old, failed: v0.7.0 · alice@example.com · viewer of the box"},
+		{"no answer", &model.Failure{Kind: model.FailNoAnswer, Message: "deploy.example.com closed the connection"}, "motel · deploy.example.com │ 21m old, failed: v0.7.0 · alice@example.com · viewer of the box"},
+		{"403", &model.Failure{Kind: model.FailForbidden, Message: "deploy.example.com does not allow your key this"}, "motel · deploy.example.com │ 21m old, failed: v0.7.0 · alice@example.com · viewer of the box"},
+		{"a stop: 401", &model.Failure{Kind: model.FailSignedOut, Message: "deploy.example.com refused the key (401)"}, held},
+		{"none", nil, held},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			s, f, now := session(t)
+			for range 3 {
+				step(t, s, f, now)
+			}
+			if left, _ := s.Title(*now); left.Text() != held {
+				t.Fatalf("before: %q", left.Text())
+			}
+			if c.err != nil {
+				f.Set("whoami", c.err)
+			}
+			*now = now.Add(21 * time.Minute)
+			s.Engine.Again(*now, model.Job{Kind: model.KWhoAmI})
+			if j := step(t, s, f, now); j.Kind != model.KWhoAmI {
+				t.Fatalf("ctrl-r read %v", j)
+			}
+			if left, _ := s.Title(*now); left.Text() != c.want {
+				t.Errorf("the title says %q, want %q", left.Text(), c.want)
+			}
+			if c.err == nil || c.err.Kind == model.FailSignedOut {
+				return
+			}
+			f.Set("whoami", nil)
+			*now = now.Add(model.AgainAfter)
+			s.Engine.Again(*now, model.Job{Kind: model.KWhoAmI})
+			step(t, s, f, now)
+			if left, _ := s.Title(*now); left.Text() != held {
+				t.Errorf("after whoami answered again: %q", left.Text())
+			}
+		})
+	}
+	// No answer held: the failure is said in place of who you are, as
+	// before (TestWhoAmIFailedIsSaid).
+	s, f, now := session(t)
+	f.Set("whoami", &model.Failure{Kind: model.FailThis, Message: "deploy.example.com answered 409"})
+	for range 3 {
+		step(t, s, f, now)
+	}
+	if left, _ := s.Title(*now); left.Text() != "motel · deploy.example.com │ who you are is not known: deploy.example.com answered 409" {
+		t.Errorf("no answer held: %q", left.Text())
+	}
+}
+
 // TestRecordRefusedAlone: a record read before, read again by ctrl-r,
 // is kept beside a read that got no answer, and not beside a 403 or a
 // 404: the box refused it, and the screen says that alone, as an app's
