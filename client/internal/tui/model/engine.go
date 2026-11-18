@@ -129,8 +129,9 @@ type entry struct {
 	phase  time.Duration
 	misses int
 	// held is a read not asked again until the person asks (a 403, a
-	// 404, a record already read); failed says its last read failed,
-	// so asking again (ctrl-r, opening it again) reads it.
+	// 404, a record read, whatever its read ended in); failed says its
+	// last read failed, so asking again (ctrl-r, opening it again)
+	// reads it.
 	held, failed bool
 	once         bool
 	// slowed is the read a 429 answered: the first after the wait.
@@ -609,6 +610,13 @@ func (e *Engine) Done(j Job, now time.Time, err error) Outcome {
 		en.misses++
 		e.misses++
 		e.retryAt = now.Add(min(maxBackoff, time.Second<<min(e.misses, 6)))
+		// A record is held as a refused one is: a 5xx is no answer too,
+		// and a record asked again after each backoff, ahead of every
+		// other read, would be the only read made while its screen is
+		// open. Opening it again or ctrl-r asks it again.
+		if en.once {
+			en.failed = true
+		}
 	case Refused:
 		// The box answered, if not with this: a run of no answer ends.
 		e.misses = 0
@@ -651,9 +659,9 @@ func (e *Engine) Done(j Job, now time.Time, err error) Outcome {
 	}
 	switch {
 	case en.once:
-		if out == Answered || en.held {
-			en.held = true
-		}
+		// Answered, refused or not answered: not asked again until the
+		// person asks.
+		en.held = true
 
 	case j.Kind == KStatus && j.App == e.focus:
 		en.due, en.every = now.Add(FocusEvery), FocusEvery

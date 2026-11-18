@@ -128,3 +128,42 @@ func TestClockStepsBack(t *testing.T) {
 		})
 	}
 }
+
+// TestRecordNoAnswerHeld: a record whose read gets a 5xx (no answer,
+// by cli's failure) is held as a refused one is: with its screen open
+// for two minutes it is read once, the open app every FocusEvery, and
+// the title bar is not STALE. Opening it again asks it again.
+func TestRecordNoAnswerHeld(t *testing.T) {
+	now := t0
+	f := &demo.Fake{Now: func() time.Time { return now }}
+	s := &model.Session{Host: demo.Host, Now: f.Now, Engine: model.NewEngine(t0)}
+	for range 20 {
+		step(t, s, f, &now)
+	}
+	rec := model.Job{Kind: model.KDeploy, App: "blog", Version: "e9a0b3f2c118"}
+	f.Set("blog@e9a0b3f2c118", &model.Failure{Kind: model.FailNoAnswer, Message: "deploy.example.com answered 500"})
+	s.Engine.Focus("blog", now)
+	s.Engine.Once(rec, now)
+	before := len(f.Calls)
+	end := now.Add(2 * time.Minute)
+	for now.Before(end) {
+		step(t, s, f, &now)
+	}
+	reads := map[model.Job]int{}
+	for _, c := range f.Calls[before:] {
+		reads[c.Job]++
+	}
+	if n := reads[rec]; n != 1 {
+		t.Errorf("the record read %d times in two minutes", n)
+	}
+	if n := reads[model.Job{Kind: model.KStatus, App: "blog"}]; n < 20 {
+		t.Errorf("the open app read %d times in two minutes", n)
+	}
+	if _, r := s.Title(now); strings.HasPrefix(r.Text(), "STALE") {
+		t.Errorf("the title says %q", r.Text())
+	}
+	s.Engine.Once(rec, now)
+	if j := step(t, s, f, &now); j != rec {
+		t.Errorf("opening the record again read %v", j)
+	}
+}
