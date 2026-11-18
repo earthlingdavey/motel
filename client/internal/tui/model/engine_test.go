@@ -253,26 +253,33 @@ func TestStopAndRetry(t *testing.T) {
 	}
 }
 
-// TestHeldUntilAsked: a 403 is not asked again until ctrl-r.
+// TestHeldUntilAsked: a 403 or a 404 stops that read alone until
+// ctrl-r: it is not asked again by itself, the other reads carry on,
+// and ctrl-r asks it again.
 func TestHeldUntilAsked(t *testing.T) {
-	e := model.NewEngine(t0)
-	n := 0
-	answer := func(j model.Job, _ time.Time) error {
-		if j.App == "app-1" {
-			n++
-			return fail(model.FailForbidden)
+	for _, k := range []model.Fail{model.FailForbidden, model.FailNotFound} {
+		e := model.NewEngine(t0)
+		n, others := 0, 0
+		answer := func(j model.Job, _ time.Time) error {
+			if j.App == "app-1" {
+				n++
+				return fail(k)
+			}
+			if j.Kind == model.KStatus {
+				others++
+			}
+			return nil
 		}
-		return nil
-	}
-	end := t0.Add(5 * time.Minute)
-	sim(e, names(3), t0, 5*time.Minute, 10*time.Millisecond, answer)
-	if n != 1 {
-		t.Fatalf("a 403 asked %d times", n)
-	}
-	e.Again(end, model.Job{Kind: model.KStatus, App: "app-1"})
-	sim(e, names(3), end, time.Second, 10*time.Millisecond, answer)
-	if n != 2 {
-		t.Fatalf("ctrl-r did not ask the 403 again (%d)", n)
+		end := t0.Add(5 * time.Minute)
+		sim(e, names(3), t0, 5*time.Minute, 10*time.Millisecond, answer)
+		if n != 1 || others < 2*9 {
+			t.Fatalf("kind %d: the refused read asked %d times in 5 minutes, the others %d", k, n, others)
+		}
+		e.Again(end, model.Job{Kind: model.KStatus, App: "app-1"})
+		sim(e, names(3), end, time.Second, 10*time.Millisecond, answer)
+		if n != 2 {
+			t.Fatalf("kind %d: ctrl-r did not ask the refused read again (%d)", k, n)
+		}
 	}
 }
 
