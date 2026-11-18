@@ -152,8 +152,13 @@ func TestTUIImports(t *testing.T) {
 	}
 }
 
-// handOver are the tview calls that take text to show.
+// handOver are the tview calls that take text to show, and the
+// tcell.Screen calls that put text in the screen's cells, in the
+// window's title or in the terminal's clipboard (OSC 52) without tview:
+// the screens hold the Screen tview draws on (ui.go's before-draw
+// function).
 var handOver = map[string]bool{
+	"Put": true, "PutStr": true, "PutStrStyled": true, "SetContent": true, "SetClipboard": true, "RegisterRuneFallback": true,
 	"SetText": true, "SetTitle": true, "SetLabel": true, "SetPlaceholder": true, "Write": true, "WriteString": true,
 	"NewTableCell": true, "SetCellSimple": true, "Print": true, "PrintSimple": true, "AddButtons": true,
 	"String": true, "SetAutocompleteFunc": true, "AddOption": true, "SetOptions": true,
@@ -211,6 +216,11 @@ func doorBreaks(t *testing.T, name string, src any) []string {
 			if handOver[fun.Sel.Name] {
 				say(n, "calls "+fun.Sel.Name)
 			}
+			// A table's SetCell takes a row, a column and a cell, which
+			// only the door makes; the Screen's takes a style and runes.
+			if fun.Sel.Name == "SetCell" && len(n.Args) != 3 {
+				say(n, "calls a Screen's SetCell")
+			}
 			// A Flex's AddItem takes a widget and a size; any other
 			// (a List's, a Form's) takes text.
 			if fun.Sel.Name == "AddItem" {
@@ -227,7 +237,8 @@ func doorBreaks(t *testing.T, name string, src any) []string {
 }
 
 // TestOneDoor holds by syntax what the compiler cannot: no file of the
-// screens' package hands tview text, builds a tview value by hand, makes
+// screens' package hands tview text, or the tcell.Screen text (its
+// cells, its title, the clipboard), builds a tview value by hand, makes
 // a widget off the list, sets a Text field, or formats with fmt. The
 // door's setters take door.Shown, which only package door can make
 // (its field is unexported), so text reaches a widget only through
@@ -250,6 +261,13 @@ func TestOneDoor(t *testing.T) {
 		`d := tview.NewDropDown().SetOptions([]string{r.Name}, nil)`,
 		`n := tview.NewTreeNode(r.Name)`,
 		`m := tview.NewModal()`,
+		`scr.PutStr(0, 0, r.Name)`,
+		`scr.PutStrStyled(0, 0, r.Name, tcell.StyleDefault)`,
+		`scr.Put(0, 0, r.Name, tcell.StyleDefault)`,
+		`scr.SetContent(0, 0, []rune(r.Name)[0], []rune(r.Name)[1:], tcell.StyleDefault)`,
+		`scr.SetCell(0, 0, tcell.StyleDefault, []rune(r.Name)...)`,
+		`scr.SetClipboard([]byte(r.Name))`,
+		`scr.RegisterRuneFallback('x', r.Name)`,
 	} {
 		src := "package tui\nfunc f() {\n" + bad + "\n}\n"
 		if len(doorBreaks(t, "probe.go", src)) == 0 {

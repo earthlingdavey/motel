@@ -224,7 +224,8 @@ func TestHeldCtrlROnMeAndBox(t *testing.T) {
 
 // TestHeldCtrlRFloorsAcrossAStepBack: the one entry.asked, set in Take
 // for a deploy's record, whoami and the box, each with its own floor
-// (RecordAgainAfter in next, AgainAfter in Again): ctrl-r held on each
+// (RecordAgainAfter in next, AgainAfter in Again), and the list's last
+// read (ListAgainAfter): ctrl-r held on each
 // reads it at most once in 5 s. Then ctrl-r is let go for a second, the
 // wall clock is set back (an hour, a wake too; 20 s, not one), and
 // ctrl-r is held again: shift moves asked with every other time, so the
@@ -244,6 +245,8 @@ func TestHeldCtrlRFloorsAcrossAStepBack(t *testing.T) {
 		{"a record", rec, func(e *model.Engine, now time.Time) { e.Focus("app-0", now); e.Once(rec, now) }},
 		{"who am I", model.Job{Kind: model.KWhoAmI}, func(e *model.Engine, now time.Time) { e.MeOpen(true, now) }},
 		{"the box", model.Job{Kind: model.KBox}, func(e *model.Engine, now time.Time) { e.BoxOpen(true, now) }},
+		// The list's floor is its own (ListAgainAfter, from its last read).
+		{"the list", model.Job{Kind: model.KApps}, func(*model.Engine, time.Time) {}},
 	}
 	for _, back := range []time.Duration{time.Hour, 20 * time.Second} {
 		for _, c := range kinds {

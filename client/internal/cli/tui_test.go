@@ -386,12 +386,33 @@ func TestTUISignals(t *testing.T) {
 	}
 }
 
-// TestVersionGrammarIsTheClients: the : line's version check is the
-// client's, on every edge the grammar has.
+// TestVersionGrammarIsTheClients: the : line takes a version (its
+// check, model.ValidVersion, which prompt.go runs on :deploys' third
+// word) exactly when `motel deploys <app> <version>` sends it to the
+// box, on every edge the grammar has, but one difference, written out
+// here as the one there is: a version over 64 characters is refused on
+// the : line (the box's own grammar, liveswap's versionRe), and sent by
+// the command, whose check (client.CheckVersion) leaves its length to
+// the box's 422. A change to either side fails here.
 func TestVersionGrammarIsTheClients(t *testing.T) {
-	for _, v := range []string{"v1", "-v1", "_x", ".v1", "v1,", "v 1", "", "a.b-c_d", strings.Repeat("a", 64), strings.Repeat("a", 65), "v1\n", "ünï"} {
-		if model.ValidVersion(v) != (client.CheckVersion(v) == nil && len(v) <= 64) {
-			t.Errorf("%q: the TUI says %v, the client %v", v, model.ValidVersion(v), client.CheckVersion(v))
+	fb := newFakeBox(t)
+	env := map[string]string{"MOTEL_TOKEN": "tok", "MOTEL_URL": fb.srv.URL + "/blog"}
+	sends := func(v string) bool {
+		r := run(t, fb, env, "deploys", "--", appURL(fb, "blog"), v)
+		return r.code != client.ExitUsage
+	}
+	long, longer := strings.Repeat("a", 65), strings.Repeat("a", 300)
+	differs := map[string]bool{long: true, longer: true} // refused on the line, sent by the command
+	for _, v := range []string{"v1", "v41", "-v1", "_x", ".v1", "v1,", "a.b-c_d", "v1/x", "[x]", strings.Repeat("a", 64), long, longer, "v1\n", "ünï"} {
+		line, command := model.ValidVersion(v), sends(v)
+		if differs[v] {
+			if line || !command {
+				t.Errorf("%q: the : line takes it %v, the command sends it %v: the one known difference has changed", v, line, command)
+			}
+			continue
+		}
+		if line != command {
+			t.Errorf("%q: the : line takes it %v, the command sends it %v", v, line, command)
 		}
 	}
 }

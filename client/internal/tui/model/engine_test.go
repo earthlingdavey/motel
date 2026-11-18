@@ -253,26 +253,33 @@ func TestStopAndRetry(t *testing.T) {
 	}
 }
 
-// TestHeldUntilAsked: a 403 is not asked again until ctrl-r.
+// TestHeldUntilAsked: a 403 or a 404 stops that read alone until
+// ctrl-r: it is not asked again by itself, the other reads carry on,
+// and ctrl-r asks it again.
 func TestHeldUntilAsked(t *testing.T) {
-	e := model.NewEngine(t0)
-	n := 0
-	answer := func(j model.Job, _ time.Time) error {
-		if j.App == "app-1" {
-			n++
-			return fail(model.FailForbidden)
+	for _, k := range []model.Fail{model.FailForbidden, model.FailNotFound} {
+		e := model.NewEngine(t0)
+		n, others := 0, 0
+		answer := func(j model.Job, _ time.Time) error {
+			if j.App == "app-1" {
+				n++
+				return fail(k)
+			}
+			if j.Kind == model.KStatus {
+				others++
+			}
+			return nil
 		}
-		return nil
-	}
-	end := t0.Add(5 * time.Minute)
-	sim(e, names(3), t0, 5*time.Minute, 10*time.Millisecond, answer)
-	if n != 1 {
-		t.Fatalf("a 403 asked %d times", n)
-	}
-	e.Again(end, model.Job{Kind: model.KStatus, App: "app-1"})
-	sim(e, names(3), end, time.Second, 10*time.Millisecond, answer)
-	if n != 2 {
-		t.Fatalf("ctrl-r did not ask the 403 again (%d)", n)
+		end := t0.Add(5 * time.Minute)
+		sim(e, names(3), t0, 5*time.Minute, 10*time.Millisecond, answer)
+		if n != 1 || others < 2*9 {
+			t.Fatalf("kind %d: the refused read asked %d times in 5 minutes, the others %d", k, n, others)
+		}
+		e.Again(end, model.Job{Kind: model.KStatus, App: "app-1"})
+		sim(e, names(3), end, time.Second, 10*time.Millisecond, answer)
+		if n != 2 {
+			t.Fatalf("kind %d: ctrl-r did not ask the refused read again (%d)", k, n)
+		}
 	}
 }
 
@@ -893,51 +900,71 @@ func TestSlowedFirstOverAll(t *testing.T) {
 	}
 }
 
-// TestWake: a clock that jumps ten minutes (a laptop asleep) makes
-// every row stale until read again, spreads the reads again, asks
-// whoami again, and leaves the bucket empty.
+// TestWake: a clock that jumps past WakeAfter between two ticks (a
+// laptop asleep, here for two minutes, under whoami's own five, and for
+// ten) makes every row stale until read again, asks whoami again first,
+// leaves the bucket empty, and spreads the reads again: each app is
+// read at its own place in the cycle, not all at once, and once read
+// again it is no longer stale.
 func TestWake(t *testing.T) {
-	now := t0
-	f := &demo.Fake{Now: func() time.Time { return now }}
-	s := &model.Session{Host: demo.Host, Now: f.Now, Engine: model.NewEngine(t0)}
-	for range 20 {
-		step(t, s, f, &now)
-	}
-	e := s.Engine
-	if e.Tick(now) || e.Tick(now.Add(time.Second)) {
-		t.Fatal("a second's tick taken for a wake")
-	}
-	now = now.Add(10 * time.Minute)
-	if !e.Tick(now) {
-		t.Fatal("ten minutes between two ticks not taken for a wake")
-	}
-	if r := row(s, now, "docs"); !r.Stale {
-		t.Error("a row not re-read since the wake is not stale")
-	}
-	e.Touch(now)
-	j, ok, wait := e.Take(now)
-	if ok || wait <= 0 {
-		t.Fatalf("a full bucket after the wake: took %v", j)
-	}
-	now = now.Add(wait)
-	if j, ok, _ = e.Take(now); !ok || j.Kind != model.KWhoAmI {
-		t.Fatalf("the first read after a wake is %v, not whoami", j)
-	}
-	apply, err := s.Fetch(context.Background(), f, j)
-	apply()
-	e.Done(j, now, err)
-	// Spread: the background reads do not all come due at once.
-	due := 0
-	for range 20 {
-		now = now.Add(time.Second)
-		e.Touch(now)
-		if j, ok, _ := e.Take(now); ok {
-			due++
-			e.Done(j, now, nil)
-		}
-	}
-	if due > 20 {
-		t.Errorf("%d reads in 20 s after a wake", due)
+	for _, slept := range []time.Duration{2 * time.Minute, 10 * time.Minute} {
+		t.Run(slept.String(), func(t *testing.T) {
+			now := t0
+			f := &demo.Fake{Now: func() time.Time { return now }}
+			s := &model.Session{Host: demo.Host, Now: f.Now, Engine: model.NewEngine(t0)}
+			for range 20 {
+				step(t, s, f, &now)
+			}
+			e := s.Engine
+			if e.Tick(now) || e.Tick(now.Add(time.Second)) {
+				t.Fatal("a second's tick taken for a wake")
+			}
+			now = now.Add(slept)
+			if !e.Tick(now) {
+				t.Fatalf("%s between two ticks not taken for a wake", slept)
+			}
+			woke := now
+			if r := row(s, now, "docs"); !r.Stale {
+				t.Error("a row not re-read since the wake is not stale")
+			}
+			e.Touch(now)
+			j, ok, wait := e.Take(now)
+			if ok || wait <= 0 {
+				t.Fatalf("a full bucket after the wake: took %v", j)
+			}
+			now = now.Add(wait)
+			if j, ok, _ = e.Take(now); !ok || j.Kind != model.KWhoAmI {
+				t.Fatalf("the first read after a wake is %v, not whoami", j)
+			}
+			apply, err := s.Fetch(context.Background(), f, j)
+			apply()
+			e.Done(j, now, err)
+			// Spread: each app at its own place in the cycle after the
+			// wake, the last of them most of an interval after it.
+			first := map[string]time.Time{}
+			for now.Before(woke.Add(40 * time.Second)) {
+				if j := step(t, s, f, &now); j.Kind == model.KStatus {
+					if _, seen := first[j.App]; !seen {
+						first[j.App] = now
+					}
+				}
+			}
+			every := e.Interval("docs")
+			var latest time.Duration
+			for _, a := range s.Names() {
+				at, seen := first[a]
+				if !seen || at.Sub(woke) > every+time.Second {
+					t.Errorf("%s not read again within %s of the wake (%v)", a, every, at.Sub(woke))
+				}
+				latest = max(latest, at.Sub(woke))
+			}
+			if latest < every*2/3 {
+				t.Errorf("every app read again within %s of the wake: not spread over its interval of %s", latest, every)
+			}
+			if r := row(s, now, "docs"); r.Stale {
+				t.Errorf("docs read again since the wake is still stale: %q", r.Cells[model.ColState])
+			}
+		})
 	}
 }
 
@@ -1102,7 +1129,9 @@ func takeKind(e *model.Engine, now time.Time, k model.Kind) bool {
 }
 
 // TestWhoAmIBeforeARecordAfterAStop: r's whoami goes before a record
-// the person had open.
+// the person had open, though both are due at that instant: the record
+// read before, its 5 s floor long past, asked again by ctrl-r while
+// the read that was refused was in flight.
 func TestWhoAmIBeforeARecordAfterAStop(t *testing.T) {
 	e := model.NewEngine(t0)
 	sim(e, names(1), t0, time.Second, time.Millisecond, ok)
@@ -1110,13 +1139,23 @@ func TestWhoAmIBeforeARecordAfterAStop(t *testing.T) {
 	e.Touch(now)
 	rec := model.Job{Kind: model.KDeploy, App: "app-0", Version: "v1"}
 	e.Once(rec, now)
-	j, _, _ := e.Take(now)
-	e.Done(j, now, fail(model.FailSignedOut))
-	e.Once(rec, now)
-	if !e.Retry(now) {
+	if !takeRec(e, now, rec) {
+		t.Fatal("the record was not read")
+	}
+	e.Done(rec, now, nil)
+	later := now.Add(time.Minute)
+	e.Touch(later)
+	e.Focus("app-0", later)
+	j, took, _ := e.Take(later)
+	if !took || j != (model.Job{Kind: model.KStatus, App: "app-0"}) {
+		t.Fatalf("took %v %v, want the open app", j, took)
+	}
+	e.Again(later, rec, j) // ctrl-r on the record, its status in flight
+	e.Done(j, later, fail(model.FailSignedOut))
+	if !e.Retry(later) {
 		t.Fatal("r refused")
 	}
-	if j, ok, _ := e.Take(now); !ok || j.Kind != model.KWhoAmI {
+	if j, ok, _ := e.Take(later); !ok || j.Kind != model.KWhoAmI {
 		t.Fatalf("after r the first read is %v, not whoami", j)
 	}
 }
