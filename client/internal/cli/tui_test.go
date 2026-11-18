@@ -20,6 +20,7 @@ import (
 	"github.com/smallhoursorg/motel/client/internal/client"
 	"github.com/smallhoursorg/motel/client/internal/sshkey"
 	"github.com/smallhoursorg/motel/client/internal/tui"
+	"github.com/smallhoursorg/motel/client/internal/tui/demo"
 	"github.com/smallhoursorg/motel/client/internal/tui/model"
 	"github.com/smallhoursorg/motel/liveswap/wire"
 )
@@ -328,20 +329,41 @@ func TestDoubleDash(t *testing.T) {
 	}
 }
 
-// TestPrintedByTerminal: P's answer goes to a terminal made safe, with
-// a line on stderr that says so and how to get the bytes; into a pipe
-// or a file byte for byte, with nothing on stderr; the client's own
-// words (a command line) the same either way.
+// TestPrintedByTerminal: P's answer goes to a terminal indented and
+// made safe, with a line on stderr that says so and how to get what
+// --json prints; into a pipe or a file exactly what the command's
+// --json prints for the same body (a C1 control, a bidi override and
+// DEL in a string written as escapes), with nothing on stderr; the
+// client's own words (a command line) the same either way.
 func TestPrintedByTerminal(t *testing.T) {
-	raw := "{\"note\":\"\u009b31m \u202eabc\"}"
-	p := tui.Printed{Raw: raw + "\n", Shown: model.JSONShown([]byte(raw))}
+	body := "{\"apps\":[{\"name\":\"blog\"}],\"note\":\"\u009b31m \u202eabc\x7f\"}"
+	now := time.Date(2026, 11, 18, 12, 0, 0, 0, time.UTC)
+	f := &demo.Fake{Now: func() time.Time { return now }}
+	f.Body("apps.json", body)
+	s := &model.Session{Host: demo.Host, Key: demo.Key, Now: f.Now, Engine: model.NewEngine(now)}
+	apply, err := s.Fetch(context.Background(), f, model.Job{Kind: model.KApps})
+	if err != nil {
+		t.Fatal(err)
+	}
+	apply()
+	v := model.View{Screen: model.ScreenApps}
+	raw, _ := s.Printable(v, 2)
+	shown, _ := s.PrintShown(v, 2)
+	p := tui.Printed{Raw: string(raw), Shown: shown}
+	var flag bytes.Buffer
+	if err := (&runner{env: Env{Stdout: &flag}}).emit([]byte(body)); err != nil {
+		t.Fatal(err)
+	}
+	if strings.ContainsAny(flag.String(), "\u009b\u202e\x7f") || strings.ContainsAny(shown, "\u009b\u202e\x7f") {
+		t.Fatalf("a control printed raw: --json %q, the terminal's %q", flag.String(), shown)
+	}
 	for _, c := range []struct {
 		terminal     bool
 		p            tui.Printed
 		stdout, warn string
 	}{
-		{true, p, "{\n  \"note\": \"\\u009b31m \\u202eabc\"\n}\n", "motel: the box's answer was made safe for the terminal; redirect stdout (> file, or | cat) for its bytes as sent\n"},
-		{false, p, raw + "\n", ""},
+		{true, p, model.JSONShown([]byte(body)), "motel: the box's answer was indented and made safe for the terminal; redirect stdout (> file, or | cat) for what the command's --json prints\n"},
+		{false, p, flag.String(), ""},
 		{true, tui.Printed{Raw: "motel apps --box deploy.example.com\n"}, "motel apps --box deploy.example.com\n", ""},
 		{false, tui.Printed{}, "", ""},
 	} {

@@ -383,7 +383,8 @@ func jsonAll(body []byte) ([]termtext.Text, bool) {
 // overlay shows, indented and made safe, every one and each whole, a
 // line feed after each. By JSON's rules a body holds no raw C0 control,
 // but it may hold C1 controls and bidi overrides, which a terminal acts
-// on; the bytes as sent go where stdout is not a terminal.
+// on; what the command's --json prints goes where stdout is not a
+// terminal (Printable).
 func JSONShown(body []byte) string {
 	all, _ := jsonAll(body)
 	lines := make([]string, 0, len(all)+1)

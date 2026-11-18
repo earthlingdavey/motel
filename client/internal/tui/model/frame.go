@@ -197,10 +197,12 @@ type jsonKey struct {
 // Printable is what P prints to stdout once the screen is gone, for v
 // with the overlay that is open (0 none, 1 command, 2 JSON), and false
 // where there is nothing to print: the command line; the box's answer
-// as it sent it, byte for byte, what the command's --json prints for
-// this view (its body, with a line feed after it when it has none),
-// which is printed so only where stdout is not a terminal (PrintShown);
-// or, on the refusal screen of a refused key, the person line.
+// as the command's --json prints it for this view (termtext.JSON of
+// its body: the same value, with the characters a terminal acts on
+// written as JSON's escapes, and a line feed after it when it has
+// none), which is printed so only where stdout is not a terminal
+// (PrintShown); or, on the refusal screen of a refused key, the person
+// line.
 func (s *Session) Printable(v View, overlay int) ([]byte, bool) {
 	if !s.CanPrint(v, overlay) {
 		return nil, false
@@ -213,7 +215,7 @@ func (s *Session) Printable(v View, overlay int) ([]byte, bool) {
 		return []byte(c + "\n"), true
 	}
 	body, _, _ := s.Body(v)
-	out := append([]byte(nil), body...)
+	out := append([]byte(nil), termtext.JSON(body)...)
 	if len(out) == 0 || out[len(out)-1] != '\n' {
 		out = append(out, '\n')
 	}

@@ -96,7 +96,7 @@ func TestOverlayWords(t *testing.T) {
 	}
 	body, _, _ := s.Body(model.View{Screen: model.ScreenApps})
 	if p, ok := s.Printable(model.View{Screen: model.ScreenApps}, 2); !ok || string(p) != string(body) && string(p) != string(body)+"\n" {
-		t.Errorf("P on the JSON prints %q, not the body as the box sent it %q", p, body)
+		t.Errorf("P on the JSON prints %q, not the body as --json prints it %q", p, body)
 	}
 	if p, ok := s.Printable(model.View{Screen: model.ScreenApps}, 1); !ok || string(p) != "motel apps --box deploy.example.com\n" {
 		t.Errorf("P on the command prints %q", p)

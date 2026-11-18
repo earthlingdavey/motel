@@ -118,16 +118,16 @@ func boxSession(s *model.Session, c *client.Client, pt *client.PersonToken) {
 		Hardware: strings.HasPrefix(k.Public.Type, "sk-"), Line: k.Public.Line()}
 }
 
-// printed writes what P asked for. Into a pipe or a file, as P made it,
-// byte for byte: the JSON as the box sent it is what the command's
-// --json prints. On a terminal, the box's answer is printed made safe
-// (it may hold C1 controls and bidi overrides, which JSON allows and a
-// terminal acts on), and stderr says so and how to get the bytes.
+// printed writes what P asked for. Into a pipe or a file, as P made it:
+// the box's answer as the command's --json prints it (a pipe may end at
+// a terminal too). On a terminal, the box's answer is printed indented
+// and made safe, every line whole, and stderr says so and how to get
+// what --json prints.
 func (r *runner) printed(p tui.Printed) error {
 	out := p.Raw
 	if r.env.Terminal && p.Shown != "" {
 		out = p.Shown
-		if _, err := io.WriteString(r.env.Stderr, "motel: the box's answer was made safe for the terminal; redirect stdout (> file, or | cat) for its bytes as sent\n"); err != nil {
+		if _, err := io.WriteString(r.env.Stderr, "motel: the box's answer was indented and made safe for the terminal; redirect stdout (> file, or | cat) for what the command's --json prints\n"); err != nil {
 			return err
 		}
 	}

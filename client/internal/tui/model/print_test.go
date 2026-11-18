@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/smallhoursorg/motel/client/internal/termtext"
 	"github.com/smallhoursorg/motel/client/internal/tui/model"
 )
 
@@ -24,28 +25,32 @@ func overlayText(s *model.Session, v model.View) []string {
 }
 
 // TestPrintForATerminal: what P prints of the box's answer for a
-// terminal is the overlay's lines, made safe, every one and whole; the
-// bytes as sent stay what Printable gives, for a pipe or a file. A C1
-// control and a bidi override, which JSON lets a string hold raw, reach
-// neither the overlay nor the terminal form raw.
+// terminal is the overlay's lines, made safe, every one and whole; for
+// a pipe or a file Printable gives what the command's --json prints
+// (termtext.JSON of the body, and a line feed). A C1 control, a bidi
+// override and DEL, which JSON lets a string hold raw, reach none of
+// the overlay, the terminal form and the pipe's raw.
 func TestPrintForATerminal(t *testing.T) {
 	s, f, now := session(t)
 	long := strings.Repeat("x", model.TailMax+10)
-	body := `{"apps":[{"name":"blog"}],"note":"c1 ` + "\u009b" + `31m bidi ` + "\u202e" + `abc","long":"` + long + `","pad":[` + strings.TrimSuffix(strings.Repeat("1,", model.OverlayLines+5), ",") + `]}`
+	body := `{"apps":[{"name":"blog"}],"note":"c1 ` + "\u009b" + `31m bidi ` + "\u202e" + `abc` + "\x7f" + `","long":"` + long + `","pad":[` + strings.TrimSuffix(strings.Repeat("1,", model.OverlayLines+5), ",") + `]}`
 	f.Body("apps.json", body)
 	for range 3 {
 		step(t, s, f, now)
 	}
 	v := model.View{Screen: model.ScreenApps}
 	raw, ok := s.Printable(v, 2)
-	if !ok || string(raw) != body+"\n" {
-		t.Fatalf("P's bytes: %d, want the body and a line feed", len(raw))
+	if want := string(termtext.JSON([]byte(body))) + "\n"; !ok || string(raw) != want {
+		t.Fatalf("P into a pipe: %d bytes, want what --json prints, %d", len(raw), len(want))
+	}
+	if strings.ContainsAny(string(raw), "\u009b\u202e\x7f") || !strings.Contains(string(raw), `c1 \u009b31m bidi \u202eabc\u007f`) {
+		t.Errorf("the controls in the pipe's form: %q", raw[:120])
 	}
 	shown, ok := s.PrintShown(v, 2)
 	if !ok || shown != model.JSONShown([]byte(body)) {
 		t.Fatalf("PrintShown is not JSONShown of the body")
 	}
-	if strings.ContainsAny(shown, "\u009b\u202e\x1b") || !strings.Contains(shown, `c1 \u009b31m bidi \u202eabc`) {
+	if strings.ContainsAny(shown, "\u009b\u202e\x1b\x7f") || !strings.Contains(shown, `c1 \u009b31m bidi \u202eabc`) {
 		t.Errorf("the controls in the terminal form: %q", shown[:200])
 	}
 	lines := strings.Split(strings.TrimSuffix(shown, "\n"), "\n")
@@ -56,7 +61,7 @@ func TestPrintForATerminal(t *testing.T) {
 		t.Error("the long line is cut in the terminal form")
 	}
 	for _, l := range overlayText(s, v) {
-		if strings.ContainsAny(l, "\u009b\u202e") {
+		if strings.ContainsAny(l, "\u009b\u202e\x7f") {
 			t.Errorf("the overlay holds a control: %q", l)
 		}
 	}
@@ -65,8 +70,8 @@ func TestPrintForATerminal(t *testing.T) {
 	}
 }
 
-// TestPrintLineFeed: P prints the body as sent and adds a line feed
-// only when it ends without one.
+// TestPrintLineFeed: P prints a body that needs no escape as it came
+// and adds a line feed only when it ends without one, as --json does.
 func TestPrintLineFeed(t *testing.T) {
 	for _, c := range []struct{ body, want string }{
 		{`{"apps":[{"name":"blog"}]}`, `{"apps":[{"name":"blog"}]}` + "\n"},
