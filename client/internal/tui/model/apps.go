@@ -12,7 +12,7 @@ import (
 )
 
 // The apps table's columns, in the order a narrow screen drops them:
-// last the first (AGE folds into the title bar's word).
+// last the first (AGE then goes into STATE, as StateAged).
 const (
 	ColName = iota
 	ColState
@@ -37,13 +37,20 @@ type AppRow struct {
 	Name  string
 	Mark  Mark
 	Cells [NCols]termtext.Text
-	Stale bool
+	// StateAged is STATE with the row's age after it ("running · 12s"),
+	// for a screen too narrow for AGE; a stale row's STATE says stale
+	// already, and a row not yet answered has no age.
+	StateAged termtext.Text
+	Stale     bool
 	// Why is the "needs a look" line, empty when the row needs none.
 	Why Line
 	// Failed is the newest deploy's version when it failed.
 	Failed string
-	mem    float64
-	share  float64
+	// state is STATE's word before a stale row's suffix: what the
+	// strip counts by.
+	state string
+	mem   float64
+	share float64
 }
 
 // Sorts are the apps screen's orders, which s cycles.
@@ -60,6 +67,9 @@ type AppsView struct {
 	Summary Line
 	// Empty is said in place of the table when the box lists no app.
 	Empty Line
+	// ListFailed says, above the strip, how old the list held is and
+	// why the last read of it failed; nil while it reads.
+	ListFailed Line
 }
 
 // AppsView is the apps screen at now, filtered and sorted. A filter of
@@ -78,6 +88,10 @@ func (s *Session) AppsView(now time.Time, filter string, sort int) AppsView {
 		v.Empty = Line{own("asking " + s.Host + " for the apps you may view…")}
 		return v
 	}
+	if s.ListErr != nil {
+		v.ListFailed = append(Line{ownC("list as of "+hms(s.List.At)+" UTC, "+Ago(now.Sub(s.List.At))+" ago · the last read failed: ", Warn),
+			Seg{T: Capped(failureText(s.ListErr), 2*LineMax)}}, s.askAgain(now)...)
+	}
 	names := s.List.V
 	if len(names) == 0 {
 		v.Empty = Line{own("You may view no app on " + s.Host + ". "), own("Ask the operator for a grant line.")}
@@ -91,10 +105,14 @@ func (s *Session) AppsView(now time.Time, filter string, sort int) AppsView {
 	need, all, notRunning, asking := 0, 0, 0, 0
 	for _, n := range names {
 		r := s.row(n, now)
+		r.StateAged = r.Cells[ColState]
+		if age := r.Cells[ColAge].String(); age != "" && !r.Stale {
+			r.StateAged = termtext.From(r.Cells[ColState].String() + " · " + age)
+		}
 		if r.Mark < MarkNone {
 			need++
 		}
-		switch r.Cells[ColState].String() {
+		switch r.state {
 		case "running":
 		case "asking…":
 			asking++
@@ -136,6 +154,21 @@ func (s *Session) AppsView(now time.Time, filter string, sort int) AppsView {
 	return v
 }
 
+// NameMax is the most of an app's name the apps table shows. A longer
+// one (63 characters are allowed) is cut in the middle, its start and
+// its end kept, so that names which share a start still differ on
+// screen; the whole name is what is opened, filtered and completed.
+const NameMax = 20
+
+func cutName(name string) string {
+	r := []rune(name)
+	if len(r) <= NameMax {
+		return name
+	}
+	const end = 7
+	return string(r[:NameMax-1-end]) + "…" + string(r[len(r)-end:])
+}
+
 func cmpDesc(a, b float64) int {
 	switch {
 	case a > b:
@@ -157,13 +190,13 @@ func pad(s string, n int) string {
 // holds giving its state.
 func (s *Session) row(name string, now time.Time) (r AppRow) {
 	r = AppRow{Name: name, Mark: MarkNone}
-	r.Cells[ColName] = termtext.From(name)
+	r.Cells[ColName] = termtext.From(cutName(name))
 	for c := ColVersion; c < ColAge; c++ {
 		r.Cells[c] = termtext.From("-")
 	}
 	a := s.apps[name]
 	if a == nil || a.st == nil && a.err == nil {
-		r.Cells[ColState] = termtext.From("asking…")
+		r.state, r.Cells[ColState] = "asking…", termtext.From("asking…")
 		return r
 	}
 	at := a.errAt
@@ -185,7 +218,7 @@ func (s *Session) row(name string, now time.Time) (r AppRow) {
 		defer func() { r.Cells[ColState] = termtext.From(r.Cells[ColState].String() + " · stale") }()
 	}
 	set := func(m Mark, state string, why ...Seg) {
-		r.Mark, r.Cells[ColState], r.Why = m, termtext.From(state), why
+		r.Mark, r.state, r.Cells[ColState], r.Why = m, state, termtext.From(state), why
 	}
 	out, _ := Classify(a.err)
 	switch {

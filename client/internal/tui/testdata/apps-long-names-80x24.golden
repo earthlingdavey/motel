@@ -1,0 +1,24 @@
+motel · deploy.example.com · v0.7.0 │ alice@example.com · viewer… slow · 10s ago
+apps                                       4 apps · 1 need a look · by attention
+✖ mailer       stopped: 9f02bb1c4e7a is not running
+────────────────────────────────────────────────────────────────────────────────
+  NAME                 STATE           VERSION      LAST DEPLOY    MEM  OF CAP
+✖ mailer               stopped · 15s   9f02bb1c4e7a succeeded 6d   -    -
+  aaaaaaaaaaaa…staging running · 10s   7c1e55d0a913 succeeded 2h   182M 36%
+  aaaaaaaaaaaa…duction running · stale 7c1e55d0a913 succeeded 2h   182M 36%
+  blog                 running · 25s   7c1e55d0a913 succeeded 2h   182M 36%
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+enter open  / filter  : go to  y json  c command  ? more  q quit

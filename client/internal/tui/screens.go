@@ -135,8 +135,9 @@ var footers = map[model.Screen]string{
 }
 
 // The apps table's columns, dropped in this order when the screen is
-// too narrow: AGE first (the title bar's word says how fresh), then
-// P95, 5xx and OF CAP. NAME, STATE, VERSION and LAST DEPLOY stay.
+// too narrow: AGE first, each row's age then going in its STATE cell,
+// then P95, 5xx, OF CAP and MEM. NAME, STATE, VERSION and LAST DEPLOY
+// stay.
 var dropOrder = []int{model.ColAge, model.ColP95, model.Col5xx, model.ColOfCap, model.ColMem}
 
 func (u *UI) renderApps() {
@@ -157,6 +158,9 @@ func (u *UI) renderApps() {
 		strip = append(append([]model.Line{}, view.Strip[:n-1]...), ownLine("  +"+strconv.Itoa(len(view.Strip)-n+1)+" more (/!ok to list them)"))
 	default:
 		strip = view.Strip
+	}
+	if view.ListFailed != nil {
+		strip = append([]model.Line{view.ListFailed}, strip...)
 	}
 	strip = u.withStop(strip)
 	for i := range strip {
@@ -185,6 +189,14 @@ func (u *UI) renderApps() {
 			break
 		}
 		keep[c], total = false, total-wd[c]-1
+		if c == model.ColAge {
+			// Every value shows its age: STATE takes it, and widens.
+			aged := wd[model.ColState]
+			for _, r := range view.Rows {
+				aged = max(aged, door.Width(r.StateAged))
+			}
+			total, wd[model.ColState] = total+aged-wd[model.ColState], aged
+		}
 	}
 	selName := ""
 	if r, _ := u.apps.GetSelection(); r >= 1 && r-1 < len(u.appRows) {
@@ -211,7 +223,11 @@ func (u *UI) renderApps() {
 			if !keep[c] {
 				continue
 			}
-			cl := door.Cell(r.Cells[c])
+			t := r.Cells[c]
+			if c == model.ColState && !keep[model.ColAge] {
+				t = r.StateAged
+			}
+			cl := door.Cell(t)
 			if r.Stale {
 				cl.SetAttributes(tcell.AttrDim)
 			}
@@ -259,8 +275,14 @@ func (u *UI) renderApp(v model.View) {
 	}
 	door.SetText(u.fields, door.Lines(fs, u.Colour))
 	u.appFlex.ResizeItem(u.fields, min(len(fs), u.h/2), 0)
-	u.deployRows = view.Deploys
+	// The cursor stays on its deploy, by version, as the apps table's
+	// stays on its app by name: a new deploy lands above it.
 	sel, _ := u.deploys.GetSelection()
+	selVersion := ""
+	if sel >= 1 && sel-1 < len(u.deployRows) {
+		selVersion = u.deployRows[sel-1].Version
+	}
+	u.deployRows = view.Deploys
 	u.deploys.Clear()
 	if len(view.Deploys) == 0 {
 		door.SetText(u.onDisk, door.Lit(""))
@@ -272,6 +294,9 @@ func (u *UI) renderApp(v model.View) {
 		u.deploys.SetCell(0, c+1, door.Head(h))
 	}
 	for i, r := range view.Deploys {
+		if r.Version == selVersion {
+			sel = i + 1
+		}
 		u.deploys.SetCell(i+1, 0, u.markCell(r.Mark))
 		for c, t := range r.Cells {
 			u.deploys.SetCell(i+1, c+1, door.Cell(t))
