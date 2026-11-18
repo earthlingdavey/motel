@@ -8,6 +8,7 @@ import (
 	"github.com/gdamore/tcell/v2"
 
 	"github.com/smallhoursorg/motel/client/internal/tui/demo"
+	"github.com/smallhoursorg/motel/client/internal/tui/door"
 	"github.com/smallhoursorg/motel/client/internal/tui/model"
 )
 
@@ -126,7 +127,7 @@ func TestBigOverlay(t *testing.T) {
 	t.Logf("open %s, a key %s", opened, keys)
 	var last string
 	h.on(func() {
-		ls := h.s.Overlay(model.View{Screen: model.ScreenApps}, true, 98)
+		ls := h.s.Overlay(model.View{Screen: model.ScreenApps}, true, 98, door.Width)
 		last = ls[len(ls)-1].Text()
 	})
 	if !strings.Contains(last, "more lines not drawn here: P quits and prints the whole answer") {

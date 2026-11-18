@@ -18,7 +18,7 @@ func appsBody(lines int) string {
 
 func overlayText(s *model.Session, v model.View) []string {
 	var out []string
-	for _, l := range s.Overlay(v, true, 98) {
+	for _, l := range s.Overlay(v, true, 98, runes) {
 		out = append(out, l.Text())
 	}
 	return out

@@ -142,74 +142,184 @@ func (s *Session) Body(v View) ([]byte, time.Time, bool) {
 	return nil, time.Time{}, false
 }
 
+// Cells is how many cells of the screen a text takes. The screens'
+// library knows (a wide character takes two); model draws nothing, so
+// the screens hand it in.
+type Cells func(termtext.Text) int
+
 // Overlay is the command and JSON overlay for v: the command, then,
-// when json, the box's answer. The JSON is indented once per answer,
-// not at every frame: a large body would make every frame slow. width
-// is the room inside the overlay's border: a command line wider than
-// it is cut there, the cut marked, and the overlay says not to copy it
-// and that P prints it whole, in place of asking to select it. Not
-// wrapped: a line drawn on two rows copies with a line feed in it.
-func (s *Session) Overlay(v View, json bool, width int) []Line {
+// when json, the box's answer. The JSON is indented once per answer and
+// width, not at every frame: a large body would make every frame slow.
+// width is the room inside the overlay's border, in cells; every row is
+// laid out to it by lay. A command line wider than it is cut there, the
+// cut marked, and the overlay says not to copy it and what prints it
+// whole, in place of asking to select it.
+func (s *Session) Overlay(v View, json bool, width int, cells Cells) []Line {
 	c, ok := s.Command(v)
 	if !ok {
-		return []Line{{own("this screen reads nothing from the box")}}
+		return lay([]oRow{words("this screen reads nothing from the box")}, width, cells)
 	}
 	body, at, have := s.Body(v)
 	if !json {
-		out := []Line{{own("the same read from a shell:")}, nil, {own("  " + c)}, {own("  " + s.commandJSON(v))}, nil}
+		cmds := []oRow{command("  " + c), command("  " + s.commandJSON(v))}
+		rows := append([]oRow{words("the same read from a shell:"), blank}, append(cmds, blank)...)
+		first, second, row := !cmds[0].fits(width, cells), !cmds[1].fits(width, cells), false
 		if v.Screen == ScreenApps {
 			// A row's command as commandArgs makes it, --key among its
 			// flags, the app left as the placeholder <app>, unquoted.
-			row, _ := s.commandArgs(View{Screen: ScreenApp}, false)
-			out = append(out, Line{own("This screen is that list, and a row for each app: each row is")},
-				Line{own("  " + ShellLine(row[:len(row)-1]) + " <app>")}, nil)
+			args, _ := s.commandArgs(View{Screen: ScreenApp}, false)
+			tmpl := command("  " + ShellLine(args[:len(args)-1]) + " <app>")
+			row = !tmpl.fits(width, cells)
+			rows = append(rows, words("This screen is that list, and a row for each app: each row is"), tmpl, blank)
 		}
-		cut := false
-		for i, l := range out {
-			if l.Width() > width {
-				out[i], cut = l.Cut(width), true
+		if first || second || row {
+			// P prints the first command alone (Printable).
+			w := "a line above is cut at the window's edge, marked …: do not copy it."
+			if first || second {
+				w += " P quits and prints the first command whole below your prompt"
+				if second {
+					w += "; the second is it with --json among its flags"
+				}
+				w += "."
 			}
-		}
-		if cut {
-			out = append(out, Line{ownC("a line above is cut at the window's edge: do not copy it;", Warn)},
-				Line{ownC("P quits and prints the command whole below your prompt", Warn)})
+			if row {
+				w += " c then P on an app's own screen prints a row's command whole."
+			}
+			rows = append(rows, warn(w))
 		} else {
-			out = append(out, Line{own("select it with the mouse, or press P to quit and print it below your prompt")})
+			rows = append(rows, words("select it with the mouse, or press P to quit and print it below your prompt"))
 		}
 		if have {
-			out = append(out, Line{own("y: the box's answer as JSON (" + size(len(body)) + ", fetched " + hms(at) + " UTC)")})
+			rows = append(rows, words("y: the box's answer as JSON ("+size(len(body))+", fetched "+hms(at)+" UTC)"))
 		}
-		return out
+		return lay(rows, width, cells)
 	}
 	if !have {
-		return []Line{{own("no answer yet to show")}}
+		return lay([]oRow{words("no answer yet to show")}, width, cells)
 	}
-	key := jsonKey{v, at, len(body)}
+	key := jsonKey{v, at, len(body), width}
 	if s.json.key != key || s.json.lines == nil {
 		s.json.key, s.json.lines = key, nil
-		lines, cut, indented := JSONLines(body)
-		head := "indented here; its strings as received, made safe to show"
+		lines, more, indented := JSONLines(body)
+		head := "indented here; its strings as received, made safe to show;"
 		if !indented {
-			head = "not JSON that indents: shown line by line as it came, made safe to show"
+			head = "not JSON that indents: shown line by line as it came, made safe to show;"
 		}
-		s.json.lines = []Line{{own("the box's answer to")}, {own("  " + c)}, {own(head + ";")},
-			{own("lines over " + strconv.Itoa(TailMax) + " characters, and answers over " + strconv.Itoa(OverlayLines) + " lines, are cut for display")},
-			{own("(" + size(len(body)) + ", fetched " + hms(at) + " UTC); P prints it whole, made safe on a terminal")}, nil}
+		cmd := command("  " + c)
+		rows := []oRow{words("the box's answer to"), cmd}
+		if !cmd.fits(width, cells) {
+			rows = append(rows, warn("the line above is cut at the window's edge, marked …: do not copy it. c then P prints it whole."))
+		}
+		rows = append(rows, words(head),
+			words("lines over "+strconv.Itoa(TailMax)+" characters, and answers over "+strconv.Itoa(OverlayLines)+" lines, are cut for display"),
+			words("("+size(len(body))+", fetched "+hms(at)+" UTC); P prints it whole, made safe on a terminal"))
+		answer := make([]oRow, 0, len(lines))
+		wide := false
 		for _, l := range lines {
-			s.json.lines = append(s.json.lines, Line{Seg{T: l}})
+			r := oRow{Seg{T: l}, oAnswer}
+			wide = wide || !r.fits(width, cells)
+			answer = append(answer, r)
 		}
-		if cut > 0 {
-			s.json.lines = append(s.json.lines, nil, Line{ownC("… "+strconv.Itoa(cut)+" more lines not drawn here: P quits and prints the whole answer", Warn)})
+		if wide {
+			// There is no scrolling sideways: the screen cuts such a line
+			// at its edge, with no mark of its own.
+			rows = append(rows, warn("a line below is wider than the window and cut at its edge, unmarked: P prints every line whole"))
 		}
+		rows = append(append(rows, blank), answer...)
+		if more > 0 {
+			rows = append(rows, blank, warn("… "+strconv.Itoa(more)+" more lines not drawn here: P quits and prints the whole answer"))
+		}
+		s.json.lines = lay(rows, width, cells)
 	}
 	return s.json.lines
 }
 
-// jsonKey names the answer an indented JSON was made from.
+// oRow is a row of an overlay, and how it is laid out (lay).
+type oRow struct {
+	s Seg
+	k oKind
+}
+
+type oKind int
+
+const (
+	// oWords is the client's own words: laid on more rows to fit, never
+	// cut.
+	oWords oKind = iota
+	// oCommand is a command line: never laid on two rows, which would
+	// copy with a line feed in it, so one too wide is cut, the cut
+	// marked, and the overlay says so (Overlay).
+	oCommand
+	// oAnswer is a line of the box's answer, drawn as it is: the screen
+	// cuts one too wide at its edge, and the overlay says so (Overlay).
+	oAnswer
+)
+
+var blank = words("")
+
+func words(s string) oRow   { return oRow{own(s), oWords} }
+func warn(s string) oRow    { return oRow{ownC(s, Warn), oWords} }
+func command(s string) oRow { return oRow{own(s), oCommand} }
+
+func (r oRow) fits(width int, cells Cells) bool { return cells(r.s.T) <= width }
+
+// lay is every row of an overlay laid out to width cells: the one
+// place an overlay's rows are fitted to the window.
+func lay(rows []oRow, width int, cells Cells) []Line {
+	out := make([]Line, 0, len(rows))
+	for _, r := range rows {
+		switch {
+		case r.k == oAnswer || r.fits(width, cells):
+			out = append(out, Line{r.s})
+		case r.k == oCommand:
+			out = append(out, cutCells(r.s, width, cells))
+		default:
+			out = append(out, wrapCells(r.s, width, cells)...)
+		}
+	}
+	return out
+}
+
+// cutCells is s cut to width cells, the cut marked with "…".
+func cutCells(s Seg, width int, cells Cells) Line {
+	mark := termtext.From("…")
+	room := width - cells(mark)
+	t := s.T.String()
+	end := 0
+	for i := range t {
+		if cells(termtext.From(t[:i])) > room {
+			break
+		}
+		end = i
+	}
+	return Line{{T: termtext.From(t[:end] + "…"), C: s.C}}
+}
+
+// wrapCells is the client's words of s laid on rows of at most width
+// cells, broken at spaces.
+func wrapCells(s Seg, width int, cells Cells) []Line {
+	var out []Line
+	row := ""
+	for _, w := range strings.Fields(s.T.String()) {
+		if row != "" && cells(termtext.From(row+" "+w)) > width {
+			out = append(out, Line{{T: termtext.From(row), C: s.C}})
+			row = ""
+		}
+		if row != "" {
+			row += " "
+		}
+		row += w
+	}
+	return append(out, Line{{T: termtext.From(row), C: s.C}})
+}
+
+// jsonKey names the answer, and the width, an overlay's JSON was laid
+// out from.
 type jsonKey struct {
-	v   View
-	at  time.Time
-	len int
+	v     View
+	at    time.Time
+	len   int
+	width int
 }
 
 // Printable is what P prints to stdout once the screen is gone, for v

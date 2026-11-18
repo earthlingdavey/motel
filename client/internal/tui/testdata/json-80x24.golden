@@ -6,6 +6,8 @@ apps › hostile › deploy v7                           as of 14:12:40 UTC · 0
 ║indented here; its strings as received, made safe to show;                    ║
 ║lines over 2000 characters, and answers over 2000 lines, are cut for display  ║
 ║(2.4 KB, fetched 14:12:40 UTC); P prints it whole, made safe on a terminal    ║
+║a line below is wider than the window and cut at its edge, unmarked: P prints ║
+║every line whole                                                              ║
 ║                                                                              ║
 ║{                                                                             ║
 ║  "version": "v7",                                                            ║
@@ -18,7 +20,5 @@ apps › hostile › deploy v7                           as of 14:12:40 UTC · 0
 ║  "artifact_entries": 1842,                                                   ║
 ║  "artifact_bytes": 39845888,                                                 ║
 ║  "phases": [                                                                 ║
-║    {                                                                         ║
-║      "name": "downloading",                                                  ║
 ╚══════════════════════════════════════════════════════════════════════════════╝
 esc close  c command  y json  P quit and print  ↑↓ scroll

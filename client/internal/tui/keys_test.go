@@ -149,8 +149,8 @@ func TestLongCommandCut(t *testing.T) {
 		h.open(record(a, ver))
 		h.press("c")
 		s := h.screen()
-		told := strings.Contains(s, "a line above is cut at the window's edge: do not copy it;") &&
-			strings.Contains(s, "P quits and prints the command whole below your prompt")
+		told := strings.Contains(s, "a line above is cut at the window's edge, marked …: do not copy it. P quits") &&
+			strings.Contains(s, "and prints the first command whole below your prompt")
 		offered := strings.Contains(s, "select it with the mouse")
 		switch {
 		case c.cut && (!told || offered || strings.Contains(s, want) || !strings.Contains(s, "  motel deploys --box deploy.example.com -- billing-reconciliation-worker-eu-…║")):
