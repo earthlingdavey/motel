@@ -237,7 +237,7 @@ their fixes, and of its second part; the others are fixed:
 |---|---|---|---|---|---|---|
 | A record's and an app's details are cut to the window, with no way to scroll them | 2 | 5 | 3 | 30 | 3 | owed, the owner's call: the second part's `y` shows the whole answer; a header that scrolls is new screen behaviour |
 | Two names over 20 characters that differ only in their middle are shown longer until they differ, which can take the room of VERSION and LAST DEPLOY on every row. Where the width cannot hold both whole beside the widest STATE (with `running · 12s`, from 44 characters at 60 columns, none at 80; with `not deployed · stale`, from 37 at 60, 57 at 80) they are shown alike, and enter on one may open the other (at 80 columns its crumb then names it; at 60 the crumb is cut before the place they differ) | 2 | 5 | 3 | 30 | 3 | the owner's call: over the bar, and no cut within the width tells every such pair apart |
-| The title bar's name, roles and release are whoami's last answer, shown beside the freshness of the newest answer to any read: while whoami answers (every 5 minutes) they can be up to 5 minutes older than that word says, and while it fails and other reads answer they stay whoami's last answer for as long as that goes on, since a failed whoami keeps it (refused, an answer the client cannot use, or a 403, which holds whoami until asked again; seen 21 minutes on beside `live · 0s ago`) | 2 | 5 | 3 | 30 | 2 | the owner's call: over the bar; whoami's schedule is the owner's, and who am I shows the answer under its own age |
+| The title bar's name, roles and release are whoami's last answer, shown beside the freshness of the newest answer to any read: while whoami answers (every 5 minutes) they can be up to 5 minutes older than that word says, unmarked. While its newest read has failed, the title bar says so and the answer's age before it (below) | 2 | 5 | 3 | 30 | 2 | the owner's call: over the bar; whoami's schedule is the owner's, and who am I shows the answer under its own age |
 
 ## The TUI
 
@@ -255,9 +255,14 @@ kept; two names that would be cut alike are shown longer, alike, until
 they differ, as far as the screen leaves room for STATE beside them;
 the whole name is what is opened, searched and printed. An app's
 screen shows its state and deploys; a deploy's record is laid out for
-reading a failure, its log tail last. `:` goes to a view in the command
-words (`:status blog`, `:deploys blog <version>`, `:me`, `:box`); what
-is typed is held to the client's grammars before anything is asked, and
+reading a failure, its log tail last. The title bar, the crumb, the
+apps strip, an app's fields and a record's head are fitted to the
+window in the screen's cells, as the door draws them (a wide character
+takes two, a combining mark none, and a character the door writes as
+an escape as many as the escape has): a line too wide is cut, `…` its
+last cell, and the title bar's and the crumb's right side is never
+cut. `:` goes to a view in the command words (`:status blog`,
+`:deploys blog <version>`, `:me`, `:box`); what is typed is held to the client's grammars before anything is asked, and
 what is wrong is said on the prompt's line; Enter runs what is typed,
 Tab takes a completion. `?` lists the keys of the screen below it,
 written from the table the keys are bound from. On a screen that reads
@@ -271,8 +276,13 @@ screen's cells, is cut at its edge (it is not wrapped: a line drawn on
 two rows copies with a line feed in it), the cut marked `…`, and the
 overlay says not to copy it and what prints it whole: `P` for the
 screen's command (its `--json` line is that with `--json` added), `c`
-then `P` on an app's screen for a row's. The overlays' own words are
-laid on more rows to fit the window. `y` shows the box's answer under
+then `P` on an app's screen for a row's. A command line the door does
+not draw as it runs (with a `[`, drawn with an unseen space after it,
+or a character it writes as an escape, as below) copies as another
+command: the overlay says so, and not to copy it, and what prints it,
+in the same way; it offers selecting the lines only when every one is
+drawn as it is. The overlays' own words are laid on more rows to fit
+the window. `y` shows the box's answer under
 its command, which is cut as `c` cuts it and which `c` then `P` prints
 whole; the answer is indented, its strings made safe to show; its long
 lines and long answers are cut for display (a line wider than the
@@ -289,8 +299,12 @@ the screen shows, and nothing else; held down, it reads the list, a
 record, whoami or the box at most once in 5 s, and the other reads keep
 their turn. whoami is read every 5 minutes, every minute while who am I
 is open, and soon after a 403, so a removed grant shows in the title
-bar. An answer about another key or box (the `whoami` command's rule)
-stops every read, like a refusal, and the session drops everything the
+bar. While the session runs and whoami's newest read has failed (an
+answer the client cannot use, a 403, a 409, no answer), the title bar
+puts the age of its last answer, and that the read failed, before it
+(`21m old, failed: v0.7.0 · alice@…`), and who am I says why. An
+answer about another key or box (the `whoami` command's rule) stops
+every read, like a refusal, and the session drops everything the
 box said, before it too (who you are, the list, every status and
 record, the box's answer): a box that does not answer about this key
 gives no grounds to show any of its answers as yours. After `r`, the
