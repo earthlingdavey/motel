@@ -48,6 +48,11 @@ func TestRefusalDropsTheAnswer(t *testing.T) {
 				for seen := map[model.Job]bool{}; !seen[rec] || !seen[status]; {
 					seen[step(t, s, f, &now)] = true
 				}
+				// The app's screen says the refusal alone, and no "the last
+				// read failed" beside fields held.
+				if o := s.Overview("blog", now); o.Failed != nil || !strings.Contains(linesText(o.Note...), "does not allow your key") {
+					t.Errorf("after the refusal the app's screen says %q, failed %q", linesText(o.Note...), o.Failed.Text())
+				}
 				// y says the box refused it, not that no answer came yet.
 				for _, v := range []model.View{appV, recV} {
 					if l := s.Overlay(v, true, 98, runes, asIs); linesText(l...) != "no answer to show: the box refused this read, as the screen says" {
@@ -74,6 +79,11 @@ func TestRefusalDropsTheAnswer(t *testing.T) {
 				if len(o.Fields) != 0 || len(o.Deploys) != 0 || o.AsOf != nil {
 					t.Errorf("the app's screen shows the status the box refused: %d fields, %d deploys, crumb %q", len(o.Fields), len(o.Deploys), o.AsOf.Text())
 				}
+				// Nothing held, so the newest failure is said in the fields'
+				// place, not as "the last read failed" above them.
+				if o.Failed != nil || !strings.Contains(linesText(o.Note...), "timed out") {
+					t.Errorf("the app's screen does not say its read got no answer: %q, failed %q", linesText(o.Note...), o.Failed.Text())
+				}
 				r := s.RecordView("blog", version, now)
 				if len(r.Head) != 0 || s.RecordAsOf("blog", version, now) != nil {
 					t.Errorf("the record's screen shows the record the box refused: %q", linesText(r.Head...))
@@ -93,6 +103,9 @@ func TestRefusalDropsTheAnswer(t *testing.T) {
 				rw := row(s, now, "blog")
 				if st := rw.Cells[model.ColState].String(); strings.Contains(st, "running") || rw.Cells[model.ColVersion].String() != "-" {
 					t.Errorf("the row shows the status the box refused: %q, version %q", st, rw.Cells[model.ColVersion])
+				}
+				if st := rw.Cells[model.ColState].String(); st != "unknown" || !strings.Contains(model.Line(rw.Why).Text(), "cannot tell: deploy.example.com timed out") {
+					t.Errorf("the row after the read with no answer: %q, why %q", st, model.Line(rw.Why).Text())
 				}
 				v := s.AppsView(now, "", 0, 0)
 				if all := linesText(v.Strip...) + v.Summary.Text(); strings.Contains(all, "running") {
