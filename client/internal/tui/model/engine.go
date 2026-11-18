@@ -338,8 +338,9 @@ func (e *Engine) meEvery() time.Duration {
 // Once is a deploy's record opened: read now, and read again each time
 // it is opened, since a rollback or a redeploy rewrites a version's
 // record on the box. Not while a read of it is due or in flight (one
-// left and cancelled is not), and not again within RecordAgainAfter of
-// the last asked.
+// left and cancelled is not); opened within RecordAgainAfter of the
+// last asked, it is read once that has passed (next), as ctrl-r's is,
+// while it is still open.
 func (e *Engine) Once(j Job, now time.Time) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -348,8 +349,8 @@ func (e *Engine) Once(j Job, now time.Time) {
 	switch {
 	case !ok:
 		e.jobs[j] = &entry{due: now, once: true}
-	case !en.held || now.Sub(en.asked) < RecordAgainAfter:
-		return // due, or in flight (the same entry, which a read in flight is for), or asked just now
+	case !en.held:
+		return // due, or in flight (the same entry, which a read in flight is for)
 	default:
 		en.held, en.due = false, now
 	}

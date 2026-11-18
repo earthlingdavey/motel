@@ -185,8 +185,10 @@ func TestRecordNoAnswerHeld(t *testing.T) {
 // TestRecordLeftInFlight: a record read before is asked again on
 // opening it, never twice at once: opened again while that read is in
 // flight, it is read once. Left while the read is in flight, the read is
-// cancelled and the record held as it was, not read with nothing asking;
-// opened again before the cancelled read ended, it is read once after.
+// cancelled and the record held as it was, not read with nothing asking.
+// Opened again within RecordAgainAfter of the read left (before that
+// read ended, or after), it is not read at once, and is read once
+// RecordAgainAfter has passed.
 func TestRecordLeftInFlight(t *testing.T) {
 	e := model.NewEngine(t0)
 	sim(e, names(1), t0, time.Second, time.Millisecond, ok)
@@ -197,18 +199,18 @@ func TestRecordLeftInFlight(t *testing.T) {
 		t.Fatal("the record was not read")
 	}
 	e.Done(rec, now, nil)
-	for i, left := range []bool{false, true, true} {
+	for _, c := range []string{"kept open", "left", "opened again before the cancel ended", "opened again after it"} {
 		now = now.Add(time.Minute)
 		e.Once(rec, now)
 		if !takeRec(e, now, rec) {
-			t.Fatalf("%d: the record was not read again on opening it", i)
+			t.Fatalf("%s: the record was not read again on opening it", c)
 		}
-		later := now.Add(model.RecordAgainAfter)
-		if !left {
-			e.Once(rec, later) // opened again, the read in flight
-			e.Done(rec, later, nil)
+		inside, later := now.Add(time.Second), now.Add(model.RecordAgainAfter)
+		if c == "kept open" {
+			e.Once(rec, inside) // opened again, the read in flight
+			e.Done(rec, inside, nil)
 			if takeRec(e, later, rec) {
-				t.Fatalf("%d: opened again while its read was in flight: read twice", i)
+				t.Fatalf("%s: opened again while its read was in flight: read twice", c)
 			}
 			continue
 		}
@@ -216,19 +218,25 @@ func TestRecordLeftInFlight(t *testing.T) {
 		e.Started(func() { cancelled = true })
 		e.Drop(rec) // esc
 		if !cancelled {
-			t.Fatalf("%d: esc did not cancel the read in flight", i)
+			t.Fatalf("%s: esc did not cancel the read in flight", c)
 		}
-		if i == 2 {
-			e.Once(rec, later) // enter, the cancelled read not yet ended
+		if c == "opened again before the cancel ended" {
+			e.Once(rec, inside) // enter
 		}
-		e.Done(rec, later, context.Canceled)
-		if read := takeRec(e, later, rec); read != (i == 2) {
-			t.Fatalf("%d: after the read left was cancelled, read again: %v", i, read)
+		e.Done(rec, inside, context.Canceled)
+		if c == "opened again after it" {
+			e.Once(rec, inside) // enter
 		}
-		if i == 2 {
+		if takeRec(e, inside, rec) {
+			t.Fatalf("%s: read again within %s of the last", c, model.RecordAgainAfter)
+		}
+		if read := takeRec(e, later, rec); read != (c != "left") {
+			t.Fatalf("%s: once %s had passed, read: %v", c, model.RecordAgainAfter, read)
+		}
+		if c != "left" {
 			e.Done(rec, later, nil)
-			if takeRec(e, later, rec) {
-				t.Fatalf("%d: read twice", i)
+			if takeRec(e, later.Add(time.Minute), rec) {
+				t.Fatalf("%s: read twice", c)
 			}
 		}
 	}
