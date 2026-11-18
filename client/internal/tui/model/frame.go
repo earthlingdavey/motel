@@ -516,13 +516,13 @@ func (s *Session) BoxView(now time.Time) []Line {
 // RefusedView is the first-run and refusal screen: the client's own
 // message for what happened, and for a refused key the facts to send
 // the operator.
-func (s *Session) RefusedView() []Line {
+func (s *Session) RefusedView(now time.Time) []Line {
 	err := s.StopErr
 	if err == nil {
 		err = s.MeErr
 	}
 	out := []Line{{Seg{T: termtext.From(failureText(err))}}, nil}
-	h := s.Engine.Health(s.Now())
+	h := s.Engine.Health(now)
 	if h.Stop == SignedOut {
 		out = append(out, field("your key", own(s.Key.Fingerprint)),
 			Line{own("            " + s.Key.Shown + " (" + s.Key.Source + ")")}, nil,

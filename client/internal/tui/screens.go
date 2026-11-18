@@ -61,7 +61,7 @@ func (u *UI) render() {
 	case model.ScreenStopHelp:
 		door.SetText(u.page, door.LitLines(stopHelp()))
 	case model.ScreenRefused:
-		door.SetText(u.page, door.Lines(u.S.RefusedView(), u.Colour))
+		door.SetText(u.page, door.Lines(u.S.RefusedView(now), u.Colour))
 	}
 	if u.overlay != 0 {
 		door.SetTitle(u.over.Box, map[int]string{1: "command", 2: "the box's answer"}[u.overlay])
