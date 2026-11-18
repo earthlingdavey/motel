@@ -63,3 +63,23 @@ func TestNegativeMemory(t *testing.T) {
 		t.Errorf("the memory line is %q", mem)
 	}
 }
+
+// TestWhoAmIFailedIsSaid: a whoami the client cannot take, from a box
+// that answers every other read, is said in the title bar and on who
+// am I, not "not signed in" and "asking".
+func TestWhoAmIFailedIsSaid(t *testing.T) {
+	now := t0
+	f := &demo.Fake{Now: func() time.Time { return now }}
+	why := "Something at deploy.example.com answered (HTTP 200, not moteld's answer: its version is not a release). Is this the box's deploy host?"
+	f.Set("whoami", &model.Failure{Kind: model.FailUnusable, Message: why})
+	s := &model.Session{Host: demo.Host, Now: f.Now, Engine: model.NewEngine(t0)}
+	for range 3 {
+		step(t, s, f, &now)
+	}
+	if left, _ := s.Title(now); left.Text() != "motel · deploy.example.com │ who you are is not known: "+why {
+		t.Errorf("the title says %q", left.Text())
+	}
+	if me := s.MeView(now); len(me) == 0 || me[0].Text() != "who you are is not known: "+why {
+		t.Errorf("who am I says %v", me)
+	}
+}

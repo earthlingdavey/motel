@@ -274,6 +274,11 @@ func (s *Session) Title(now time.Time) (Line, Line) {
 			left = append(left, own(" · "+r))
 		}
 		left = append(left, own(" │ "+s.Me.V.Name+" · "+s.scopes()))
+	case s.MeErr != nil && s.Engine.Stopped() == Running:
+		// The box answers the other reads, but not whoami as the client
+		// takes it (a release that is not N.N.N): signed in, as no one
+		// known.
+		left = append(left, ownC(" │ who you are is not known: ", Warn), Seg{T: Capped(failureText(s.MeErr), 2*LineMax)})
 	default:
 		left = append(left, own(" │ not signed in"))
 	}
@@ -354,7 +359,10 @@ func (s *Session) freshness(now time.Time) Line {
 
 // MeView is who am I.
 func (s *Session) MeView(now time.Time) []Line {
-	if s.Me == nil {
+	switch {
+	case s.Me == nil && s.MeErr != nil:
+		return []Line{{own("who you are is not known: "), Seg{T: Capped(failureText(s.MeErr), 4*LineMax)}}}
+	case s.Me == nil:
 		return []Line{{own("asking " + s.Host + " who your key is…")}}
 	}
 	me := s.Me.V
