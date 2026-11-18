@@ -146,7 +146,9 @@ no503_start() {
 	(while [ ! -e "$stop" ]; do curl -s -o /dev/null -w '%{http_code}\n' --max-time 3 "$PROXY/"; sleep 0.02; done) >"$codes" 2>/dev/null &
 	poller=$!
 	sleep 0.3
-	t_restart=$(date +%s)
+	# To the nanosecond: a whole second would also match lines an
+	# earlier scenario logged in the same second.
+	t_restart=$(date +%s.%N)
 }
 no503_check() { # <what> [relaunch]; call once the webhook is back
 	since=$(wc -l <"$codes") # what the poller asked from here on, the new process answered
