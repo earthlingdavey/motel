@@ -103,16 +103,9 @@ The smallest block, with one channel and the numbers:
 }
 ```
 
-The box-repo path needs the `examples/box/bin/` of v0.7.0 or later in
-the repository. Copy it into one made from the v0.6.0 or v0.6.1
-template, whose `secrets` refuses `APP=_box` (`app '_box': lower-case
-letters, digits and - only, as in its app block`) and whose `check`
-refuses a block that reads a secret. Its `check` job validates with the
-latest stable release unless `MOTEL_VERSION` names another, so while
-that is v0.6.1 or earlier, which does not know the block, every commit
-that has it fails that job with `unrecognized global option:
-monitor`. The push still reaches the box, which checks it with its own
-moteld.
+The box-repo path needs a box repository on this release's template.
+[Upgrading](upgrading.md) says how one made from an earlier release's
+template takes it, in its paragraph on the box repository's workflow.
 
 On a box with nothing installed yet, setup says:
 
@@ -1174,9 +1167,10 @@ Alertmanager's socket fails it. If you purged first, run the
 names the two packages' units as missing and exits 5, and still stops
 and disables the rest. Then do steps 6 and 7.
 
-Going back to a motel release without monitor is in
-[Upgrading](upgrading.md), which also takes the `observe` lines out of
-the sites: v0.6.1 refuses those too.
+From a `moteld` release there is no going back to a release without
+monitor: each one (v0.6.1 and earlier) is from before the package was
+`moteld`, and no `.deb` goes back across that move
+([Upgrading](upgrading.md)).
 
 ## What has been verified where
 
@@ -1188,13 +1182,11 @@ the sites: v0.6.1 refuses those too.
 | The block taken out by a reload, a state firing | motel's notify e2e box (`make e2e-notify`, section 14), Debian 13 | the state directory holds the config that sends nothing and no URL file; the alert's end, posted by root at once rather than awaited, reaches no channel |
 | `apt purge` with nothing disabled first | the same box. Its `policy-rc.d` refuses the packages' own stop at removal, as Docker images do, so a real box's prerm may stop more | five units left enabled, as above |
 | The removal, with Alertmanager stopped before the block went (this page's order before the reload sent nothing), and `apt purge` first, where the packages' own stops run | the same image at c979404 with `policy-rc.d` removed, 2026-11-12 | steps 2 to 9 leave nothing but the two system users. Purged first, the same five units stay enabled, both unix sockets fail at their next connection, and steps 2, 4, 6 and 7 clear them |
-| Going back to v0.6.1 | the same box, with v0.6.1's arm64 `.deb` | refuses `monitor` and `observe`, and starts once both are out, with `_box.env` still there |
 | `moteld monitor silence add` and `expire`, and a one-shot under the silence reaching no channel | motel's notify e2e box (`make e2e-notify`, section 7a), Debian 13, 2026-11-13 | as shown; not tried on a real box |
 | The laptop's unix-socket forward | OpenSSH 10.0p2, ssh to an sshd on localhost in a Debian 13 container, 2026-11-13 | the socket `srw-------`, another user refused, a stale file failing the forward without `StreamLocalBindUnlink=yes`; not tried against a real box |
 | Real Slack, Discord and ntfy servers | not tried. On hotserve-1, an ntfy topic showed the JSON body as the message | owed (DESIGN-notify.md, "Owed") |
 | The heartbeat's pings | the same image at c979404, at the stub receiver | 299 s and 300 s apart undisturbed; 439 s across a restart of moteld 140 s after a ping |
 | A `--state firing` across a restart of moteld | motel's notify e2e box (`make e2e-notify`, section 12), Debian 13, 2026-11-14 | kept in `external.json`, told again at the start (`"standing":true`), and found by the `--state resolved` after it. Before motel kept it (the metrics box at c979404): `[RESOLVED]` five minutes after the restart, nothing having resolved it |
-| A reboot after going back to v0.6.1 | the same image, the container restarted | the store and vmalert come back, Alertmanager and both its sockets stay down, nothing is sent |
 | A reboot with monitor set up | hotserve-1 (Debian 13, at 9228935), three cold boots; again at a8038b4, with Alertmanager's own socket in the store's namespace, 2026-11-13 | the store and its sockets come back. At a8038b4 every unit of the stack is up within about a second of `sysinit.target`, Alertmanager starts once, by socket activation, nothing is started by hand and nothing fails; the heartbeat's next ping comes 6 min 50 s after its last before the reboot, the downtime included |
 | Setup's output with Alertmanager's socket in the store's namespace (first run, second run, upgrade from the proxy), and step 2's `--metrics` line | the metrics e2e box, 2026-11-12, with the change that replaced the proxy; the upgrade from the proxy again on hotserve-1 at a8038b4, 2026-11-13 | as shown; after step 2, Alertmanager, both its sockets and vmalert stay down for 70 s while the store scrapes 9093 and motel reads `am.sock`. On hotserve-1 the upgrade took 6 s, with the site answering throughout; its cold boot is the row above |
 | What the store keeps of its own scrapes, and the store's and vmalert's pages read live | the metrics e2e box at 59df185, 2026-11-13 (metrics 4) | of `victoria-metrics` `up` and `vm_free_disk_space_bytes`, of `vmalert` `up`, of `alertmanager` `up` and `alertmanager_notifications_failed_total`, each with `scrape_*`; Alertmanager's page is the store's scrape of it. Since then `scrape.yml` keeps `alertmanager_config_last_reload_success_timestamp_seconds` too (the store's `ChannelFailed` reads it), which e2e metrics 4 checks |

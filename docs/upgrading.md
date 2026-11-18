@@ -286,72 +286,6 @@ Before you upgrade:
   `apt install --allow-downgrades ./moteld_<old>_$(dpkg --print-architecture).deb`
   puts it back — the same restart, in reverse, and nothing to download
   first. On a VPS, a snapshot taken first is the fuller way back.
-- **Going back to v0.6.1 or earlier from a release with monitor**
-  needs the Caddyfile emptied of it first. Those releases know none of
-  monitor's two pieces: neither the `monitor` block (its `metrics` and
-  `rule` lines go with it) nor the response observer's `observe <app>`
-  lines in the sites. They refuse the file, and `validate` with 0.6.1's
-  binary says `unrecognized global option: monitor` or
-  `unrecognized directive: observe`. The install's restart then fails
-  (`motel: restarting onto the new version FAILED; moteld.service is now
-  failed.`) and nothing is served until the file is mended. Their box
-  channel also refuses an `applied.json` that lists the box's own
-  `secrets/_box/`, so every push after the downgrade would fail before
-  it began. While the box still runs the newer release:
-  1. **Pause the heartbeat's check, then stop Alertmanager**, as
-     [Monitor](monitor.md#turn-it-off-and-remove-it)'s steps 1 and 3
-     say (on a box set up with `--metrics`, vmalert and Alertmanager's
-     socket in the store's namespace with it). The older release
-     neither uses nor stops them.
-  2. **Take out the `monitor` block and every `observe` line.** On a box
-     that takes pushes, push a commit without them and without
-     `secrets/_box/`. It removes `/etc/motel/secrets/_box.env` and takes
-     `_box` out of `applied.json`. That holds for a block edited in by
-     hand, too: the push replaces the file. On a box with no push
-     channel, root edits them out of `/etc/motel/Caddyfile` and runs
-     `systemctl reload moteld`. 0.6.1 starts with `_box.env` still in
-     place and reads nothing from it; delete it if you are not coming
-     back.
-  3. **Go back** with the `.deb`, as above.
-
-  The store keeps running after this, and so do Alertmanager and
-  vmalert if you skip step 1, as do any of Monitor's recipe units you
-  installed (they fail once `moteld monitor send` is gone). A reboot
-  starts vmalert again with the store, whose drop-in starts it
-  (`ExecStartPost=`), though step 1 disabled it; Alertmanager and its socket in the store's
-  namespace stay down, so it reaches no Alertmanager and nothing is
-  sent. They are
-  setup's or yours, not the package's, and the older release neither
-  uses nor stops them. [Monitor](monitor.md#turn-it-off-and-remove-it)
-  stops and removes them. Coming back to a release with monitor later
-  means its setup again: step 1 left Alertmanager disabled, so once
-  the block and its URLs are back, root runs
-  `moteld monitor setup [--metrics]` ("To turn it back on", there). On
-  a box already back whose moteld refused to start, root edits
-  the block and the `observe` lines out of `/etc/motel/Caddyfile` and
-  runs `systemctl restart moteld`. On a box that takes pushes, root also
-  removes the `"_box"` entry from the `secrets` map in
-  `/var/lib/motel-box/applied.json` and deletes
-  `/etc/motel/secrets/_box.env`, and the next push (without the block,
-  the `observe` lines and the directory) applies.
-- **Going back to a release without people** (0.7.0, or an earlier one
-  with a `box` block, 0.3.0 on) needs the Caddyfile emptied of them
-  first. Those releases refuse a `box` block with a `person` or `grant`
-  line: `validate` with the old binary says `unknown box subdirective
-  "person"` (or `"grant"`), and the install's restart fails with nothing
-  served until the file is mended. While the box still runs the newer
-  release:
-  1. **Take out every `person` and `grant` line.** On a box that takes
-     pushes, push a commit without them. On a box with no push channel,
-     root edits them out of `/etc/motel/Caddyfile` and runs `systemctl
-     reload moteld`. People's clients get the flat 401 from then on.
-  2. **Go back** with the `.deb`, as above.
-
-  `signer` lines are not affected: they mean what they meant, and the
-  box channel works across the downgrade. On a box already back whose
-  moteld refused to start, root edits the lines out of
-  `/etc/motel/Caddyfile` and runs `systemctl restart moteld`; the next
-  push, without them, applies.
 - **Upgrade moteld and the host separately.** moteld measures what
   the host can sandbox at every start and refuses to start on a host
   that cannot deliver it ([liveswap/README.md](../liveswap/README.md#sandbox)),
@@ -393,18 +327,30 @@ you read it:
 (`hotserve-box-apply` is the applier's name before v0.6.0) prints 0
 when the journal names no removal, which says nothing of the runs.
 Read any lines it counts on the box itself. `make secrets-import` had the same
-gap: copy this release's `examples/box/bin/secrets` and
-`examples/box/bin/apply` into the box repository's `bin/` (the second
-says a push left a hand-edited file's own variables unnamed), and a
-name in `make secrets` that is a value is one to change too, since the
-old name stays in the repository's history.
+gap, which this release's template closes (the next paragraph has the
+box repository take it; its `bin/apply` says a push left a hand-edited
+file's own variables unnamed), and a name in `make secrets` that is a
+value is one to change too, since the old name stays in the
+repository's history.
 
 The box repository's workflow checks config with the latest stable
 release, so it needs nothing after an upgrade — unless its
 `MOTEL_VERSION` repository variable pins a release, which then
-wants the new one. One made from the v0.6.0 or v0.6.1 template that
-takes a `monitor` block also wants this release's `examples/box/bin/`
-in its `bin/` ([Monitor](monitor.md)).
+wants the new one. One made from the template of v0.7.0 or earlier
+is the exception, and takes this release's template before its next
+push: in one commit, copy `.github/workflows/apply.yml`,
+`.gitattributes`, `Makefile` and `bin/` from `examples/box/` over its
+own, and delete its `bin/install-motel` (`bin/install-hotserve` in one
+from before v0.6.0). With no pin, that script asks the latest release
+for an archive under the old name, which no `moteld` release has, so
+both of the workflow's jobs fail at their install step, naming the
+address tried, and no push applies. A pin that names a release from
+before `moteld` is removed, or set to this release, at the same time:
+the repository variable, and any `<host>/MOTEL_VERSION` file (a
+template from before v0.6.0 names both `HOTSERVE_VERSION`, which the
+new scripts do not read). The new script finds no archive for such a
+release: for the variable it fails the install step, and for a file it
+skips that release and `make check` refuses that box.
 
 There is no APT repository yet, so nothing upgrades moteld behind
 your back; the hosted repository on the [roadmap](../README.md#roadmap) is what

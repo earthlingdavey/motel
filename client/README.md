@@ -128,7 +128,7 @@ for a box too old for people's tokens.
 
 ## Getting it
 
-No release carries the client yet, and
+No release ships the client as a binary yet, and
 `go install …/client/cmd/motel@<version>` does not work (the module
 names its sibling `liveswap` by a local `replace`, which `go install`
 refuses). Build it from a clone of this repository, with Go 1.27.1 or
