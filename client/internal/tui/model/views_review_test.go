@@ -263,3 +263,69 @@ func TestSentenceLongWord(t *testing.T) {
 		t.Errorf("%d rows: %q", len(rows), textsOfLines(rows))
 	}
 }
+
+// timesOf is the app's screen's fields, its deploys' FINISHED and TOOK
+// cells, its row's LAST DEPLOY cell, and the record's verdict, after
+// the fake answers with status and record bodies.
+func timesOf(t *testing.T, status, rec string) (fields, finished, took, last, verdict string) {
+	t.Helper()
+	now := t0
+	f := &demo.Fake{Now: func() time.Time { return now }}
+	f.Body("apps.json", `{"apps": [{"name": "docs"}, {"name": "blog"}]}`)
+	f.Body("status/blog.json", status)
+	f.Body("deploys/blog/v2.json", rec)
+	s := &model.Session{Host: demo.Host, Now: f.Now, Engine: model.NewEngine(t0)}
+	record(t, s, f, &now, "blog", "v2")
+	for range 8 {
+		step(t, s, f, &now)
+	}
+	r, o := s.RecordView("blog", "v2", now), s.Overview("blog", now)
+	if len(o.Deploys) == 0 || len(r.Head) == 0 {
+		t.Fatalf("no deploys (%d) or no record (%d)", len(o.Deploys), len(r.Head))
+	}
+	return strings.Join(textsOfLines(o.Fields), "\n"), o.Deploys[0].Cells[3].String(), o.Deploys[0].Cells[4].String(),
+		row(s, now, "blog").Cells[model.ColLast].String(), r.Head[0].Text()
+}
+
+// TestTimesCarryTheirDay: a box's time shown as a time of day carries
+// its date when it is not today (the date in UTC), and its year when
+// not this year; a missing time is said as missing, not as year 1 or a
+// negative length; a time ahead of this machine's clock is said so.
+func TestTimesCarryTheirDay(t *testing.T) {
+	// t0 is 2026-11-15 14:00 UTC: 21 days before is 10-25, 400 days
+	// before is 2025-10-11.
+	fields, fin, took, last, verdict := timesOf(t, `{"app":"blog","phase":"idle","running":true,"current_version":"v2","available_versions":["v2"],
+		"watchdog":{"state":"watching","restarts_in_window":0,"last_restart_at":"@-21d"},
+		"metrics":{"window":"1h","at":"@-21d","memory_bytes":{"now":1048576}},
+		"deploys":[{"version":"v2","status":"succeeded","started_at":"@-400d","finished_at":"@-400d"}],
+		"last_deploy":{"version":"v2","status":"succeeded","started_at":"@-400d","finished_at":"@-400d"}}`,
+		`{"version":"v2","status":"failed","phase":"starting","started_at":"@-21d","finished_at":"@-21d"}`)
+	for _, want := range []string{"last restart 10-25 14:00 UTC", "newest point 10-25 14:00:", "deployed    succeeded 400d ago (2025-10-11 14:00 UTC, 0.0 s)"} {
+		if !strings.Contains(fields, want) {
+			t.Errorf("old times: no %q in\n%s", want, fields)
+		}
+	}
+	if !strings.HasPrefix(fin, "2025-10-11 14:00") || !strings.HasPrefix(verdict, "✖ FAILED in starting after 0.0 s · 10-25 14:00:") || !strings.Contains(verdict, " → 14:00:") {
+		t.Errorf("old times: finished %q, verdict %q", fin, verdict)
+	}
+
+	fields, fin, took, last, verdict = timesOf(t, `{"app":"blog","phase":"idle","running":true,"current_version":"v2","available_versions":["v2"],
+		"deploys":[{"version":"v2","status":"failed","phase":"starting","started_at":"@-20s","finished_at":null}],
+		"last_deploy":{"version":"v2","status":"failed","phase":"starting","started_at":"@-20s","finished_at":null}}`,
+		`{"version":"v2","status":"failed","phase":"starting","started_at":"@-20s"}`)
+	if !strings.Contains(fields, "deployed    failed in starting (the box gives no time it finished)") {
+		t.Errorf("no finished_at: the fields say\n%s", fields)
+	}
+	if fin != "(none)" || took != "-" || !strings.HasPrefix(last, "failed    -    starting") ||
+		!strings.HasPrefix(verdict, "✖ FAILED in starting · started 13:59:") || !strings.HasSuffix(verdict, " UTC, the box gives no time it finished") {
+		t.Errorf("no finished_at: finished %q, took %q, last %q, verdict %q", fin, took, last, verdict)
+	}
+
+	fields, _, _, last, _ = timesOf(t, `{"app":"blog","phase":"idle","running":true,"current_version":"v2","available_versions":["v2"],
+		"deploys":[{"version":"v2","status":"succeeded","started_at":"@4m","finished_at":"@5m"}],
+		"last_deploy":{"version":"v2","status":"succeeded","started_at":"@4m","finished_at":"@5m"}}`,
+		`{"version":"v2","status":"succeeded","started_at":"@4m","finished_at":"@5m"}`)
+	if !strings.Contains(fields, "deployed    succeeded ") || !strings.Contains(fields, "m from now (14:05 UTC, 60 s)") || !strings.HasPrefix(last, "succeeded ") || !strings.HasSuffix(last, "m from now") {
+		t.Errorf("a box's clock ahead: last %q, the fields\n%s", last, fields)
+	}
+}

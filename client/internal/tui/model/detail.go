@@ -95,10 +95,17 @@ func (s *Session) Overview(app string, now time.Time) OverviewView {
 			r.Mark = MarkLook
 		}
 		fin, took := "(unreadable)", "(unreadable)"
-		if f, ok := rawTime(d.FinishedAt); ok {
-			fin = f.UTC().Format("01-02 15:04")
+		switch f, ok := rawTime(d.FinishedAt); {
+		case noTime(d.FinishedAt) || ok && f.IsZero():
+			fin, took = "(none)", "-"
+		case ok:
+			fin, took = date(f, now), "-"
 			if b, ok := rawTime(d.StartedAt); ok {
-				took = secs(f.Sub(b))
+				if l, ok := span(b, f); ok {
+					took = l
+				}
+			} else if !noTime(d.StartedAt) {
+				took = "(unreadable)"
 			}
 		}
 		r.Cells = []termtext.Text{termtext.From(d.Version), termtext.From(d.Status), termtext.From(d.Phase), termtext.From(fin), termtext.From(took), Capped(d.By, 60)}
@@ -133,7 +140,7 @@ func (s *Session) Overview(app string, now time.Time) OverviewView {
 			w = append(w, own(" · "+strconv.Itoa(wd.Failures)+" failed checks in a row"))
 		}
 		if !wd.LastRestartAt.IsZero() {
-			w = append(w, own(" · last restart "+hm(wd.LastRestartAt)+" UTC"))
+			w = append(w, own(" · last restart "+clock(wd.LastRestartAt, now, false)+" UTC"))
 		}
 		v.Fields = append(v.Fields, field("watchdog", w...))
 		if wd.LastRestartCause != "" {
@@ -144,7 +151,7 @@ func (s *Session) Overview(app string, now time.Time) OverviewView {
 		}
 	}
 	v.Fields = append(v.Fields, lastDeploy(st.LastDeploy, now)...)
-	v.Fields = append(v.Fields, s.metricLines(st)...)
+	v.Fields = append(v.Fields, s.metricLines(st, now)...)
 	if d := st.LastDeploy; d != nil && d.ArtifactEntries > 0 {
 		v.Fields = append(v.Fields, field("artifact", own(strconv.Itoa(d.ArtifactEntries)+" entries · "+mib(float64(d.ArtifactBytes))+" (the last deploy's)")))
 	}
@@ -161,7 +168,15 @@ func lastDeploy(d *wire.DeployResult, now time.Time) []Line {
 	if d.Phase != "" {
 		l = append(l, own(" in "+d.Phase))
 	}
-	l = append(l, own(" "+Ago(now.Sub(d.FinishedAt))+" ago ("+hm(d.FinishedAt)+" UTC, "+secs(d.FinishedAt.Sub(d.StartedAt))+")"))
+	if d.FinishedAt.IsZero() {
+		l = append(l, own(" (the box gives no time it finished)"))
+	} else {
+		t := " " + since(d.FinishedAt, now) + " (" + clock(d.FinishedAt, now, false) + " UTC"
+		if took, ok := span(d.StartedAt, d.FinishedAt); ok {
+			t += ", " + took
+		}
+		l = append(l, own(t+")"))
+	}
 	if d.By != "" {
 		l = append(l, own(" by "), boxT(d.By))
 	}
@@ -182,7 +197,7 @@ func statusClass(status string) Class {
 	return Plain
 }
 
-func (s *Session) metricLines(st wire.Status) []Line {
+func (s *Session) metricLines(st wire.Status, now time.Time) []Line {
 	m := st.Metrics
 	switch {
 	case m == nil:
@@ -243,8 +258,8 @@ func (s *Session) metricLines(st wire.Status) []Line {
 		out = append(out, field("requests", l...))
 	}
 	l := Line{own("over "), boxT(m.Window)}
-	if m.At != nil {
-		l = append(l, own(", newest point "+hms(*m.At)+" UTC (the store runs 30 s behind)"))
+	if m.At != nil && !m.At.IsZero() {
+		l = append(l, own(", newest point "+clock(*m.At, now, true)+" UTC (the store runs 30 s behind)"))
 	}
 	return append(out, field("metrics", l...))
 }
@@ -280,17 +295,39 @@ func (s *Session) RecordView(app, version string, now time.Time) RecordView {
 		v.Head = append(v.Head, Line{ownC("the last read failed: ", Warn), Seg{T: Capped(failureText(err), 2*LineMax)}})
 	}
 	d := g.V
-	took := secs(d.FinishedAt.Sub(d.StartedAt))
-	span := " · " + hms(d.StartedAt) + " → " + hms(d.FinishedAt) + " UTC"
+	took, tookOK := span(d.StartedAt, d.FinishedAt)
+	// When it ran: the start, and the end after it, its date only when
+	// the start's is another; a time the box did not give is said so.
+	when := " · "
+	switch {
+	case d.StartedAt.IsZero() && d.FinishedAt.IsZero():
+		when += "the box gives no times"
+	case d.FinishedAt.IsZero():
+		when += "started " + clock(d.StartedAt, now, true) + " UTC, the box gives no time it finished"
+	case d.StartedAt.IsZero():
+		when += "the box gives no time it started; finished " + clock(d.FinishedAt, now, true) + " UTC"
+	default:
+		end := clock(d.FinishedAt, now, true)
+		if datePart(d.FinishedAt, d.StartedAt, false) == "" {
+			end = hms(d.FinishedAt)
+		}
+		when += clock(d.StartedAt, now, true) + " → " + end + " UTC"
+	}
 	var verdict Line
 	if d.Status == "failed" {
 		w := "✖ FAILED"
 		if d.Phase != "" {
 			w += " in " + d.Phase
 		}
-		verdict = Line{ownC(w, Bad), own(" after " + took + span)}
+		if tookOK {
+			when = " after " + took + when
+		}
+		verdict = Line{ownC(w, Bad), own(when)}
 	} else {
-		verdict = Line{ownC("✓ SUCCEEDED", Good), own(" in " + took + span)}
+		if tookOK {
+			when = " in " + took + when
+		}
+		verdict = Line{ownC("✓ SUCCEEDED", Good), own(when)}
 	}
 	v.Head = append(v.Head, verdict)
 	if d.By != "" {
@@ -300,11 +337,11 @@ func (s *Session) RecordView(app, version string, now time.Time) RecordView {
 		cur := a.st.V.CurrentVersion
 		switch cur {
 		case "":
-			v.Head = append(v.Head, field("serves now", own("nothing (as of "+hms(a.st.At)+" UTC)")))
+			v.Head = append(v.Head, field("serves now", own("nothing (as of "+clock(a.st.At, now, true)+" UTC)")))
 		case d.Version:
-			v.Head = append(v.Head, field("serves now", own("this version (as of "+hms(a.st.At)+" UTC)")))
+			v.Head = append(v.Head, field("serves now", own("this version (as of "+clock(a.st.At, now, true)+" UTC)")))
 		default:
-			v.Head = append(v.Head, field("serves now", own(cur+" (as of "+hms(a.st.At)+" UTC)")))
+			v.Head = append(v.Head, field("serves now", own(cur+" (as of "+clock(a.st.At, now, true)+" UTC)")))
 		}
 	}
 	if d.Error != "" {

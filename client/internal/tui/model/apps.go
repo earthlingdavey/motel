@@ -341,9 +341,15 @@ func (s *Session) row(name string, now time.Time) (r AppRow) {
 		if d.Status == "failed" {
 			r.Failed = d.Version
 		}
-		ago := "?"
-		if t, ok := rawTime(d.FinishedAt); ok {
-			ago = Ago(now.Sub(t))
+		// How long ago it finished; "-" when the box gives no time, and
+		// "?" for one that does not read.
+		ago, said := "?", ""
+		switch t, ok := rawTime(d.FinishedAt); {
+		case noTime(d.FinishedAt) || ok && t.IsZero():
+			ago = "-"
+		case ok:
+			said = since(t, now)
+			ago = strings.TrimSuffix(said, " ago")
 		}
 		last := pad(word, 10) + pad(ago, 4)
 		if d.Phase != "" {
@@ -355,7 +361,9 @@ func (s *Session) row(name string, now time.Time) (r AppRow) {
 			if d.Phase != "" {
 				why[0] = own(why[0].T.String() + " in " + d.Phase)
 			}
-			why = append(why, own(" "+ago+" ago"))
+			if said != "" {
+				why = append(why, own(" "+said))
+			}
 			if st.CurrentVersion != "" && st.Running {
 				why = append(why, own("; "+short(st.CurrentVersion)+" serves"))
 			}
