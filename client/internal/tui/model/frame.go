@@ -57,13 +57,15 @@ var screenReads = map[Screen]Kind{ScreenApps: KApps, ScreenApp: KStatus, ScreenR
 // its arguments: the command's words, --box so it works pasted
 // anywhere, --key only when the person named it, then -- and the
 // positional arguments, so a version that begins with - is not read as
-// a flag.
+// a flag. A record whose version is outside the version grammar (one
+// the box's filter hid, which the deploys table lists in the client's
+// words) has none: no command could ask for it.
 func (s *Session) CommandArgs(v View) ([]string, bool) { return s.commandArgs(v, false) }
 
 func (s *Session) commandArgs(v View, json bool) ([]string, bool) {
 	k, reads := screenReads[v.Screen]
 	a, ok := ActionFor(k)
-	if !reads || !ok {
+	if !reads || !ok || hiddenVersion(v) {
 		return nil, false
 	}
 	args := []string{"motel"}
@@ -90,6 +92,12 @@ func (s *Session) commandArgs(v View, json bool) ([]string, bool) {
 	}
 	return args, true
 }
+
+// hiddenVersion says whether v is a record whose version no command
+// can name: only one the box's filter hid reaches a screen so, since
+// the client refuses any other outside the grammar, and so does the :
+// line.
+func hiddenVersion(v View) bool { return v.Screen == ScreenRecord && !ValidVersion(v.Version) }
 
 // boxArg is the box as the printed command's --box gives it.
 func (s *Session) boxArg() string {
@@ -147,7 +155,10 @@ func (s *Session) Body(v View) ([]byte, time.Time, bool) {
 // not at every frame: a large body would make every frame slow.
 func (s *Session) Overlay(v View, json bool) []Line {
 	c, ok := s.Command(v)
-	if !ok {
+	switch {
+	case !ok && hiddenVersion(v):
+		return []Line{{own("the box's filter hid this deploy's version: no motel command can ask for its record")}}
+	case !ok:
 		return []Line{{own("this screen reads nothing from the box")}}
 	}
 	body, at, have := s.Body(v)
@@ -240,7 +251,7 @@ func (s *Session) CanPrint(v View, overlay int) bool {
 		return s.Engine.Stopped() == SignedOut
 	case overlay == 1:
 		_, ok := screenReads[v.Screen]
-		return ok
+		return ok && !hiddenVersion(v)
 	case overlay == 2:
 		_, ok := screenReads[v.Screen]
 		_, _, have := s.Body(v)

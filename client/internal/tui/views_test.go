@@ -148,3 +148,53 @@ func TestLongNames(t *testing.T) {
 		})
 	}
 }
+
+// TestHiddenVersionNoCommand: on the record of a deploy whose version
+// the box's filter hid, c and y say that no command can ask for it, and
+// P prints no command line: none would work.
+func TestHiddenVersionNoCommand(t *testing.T) {
+	const hidden = "[hidden by the box's filter]"
+	raw, err := os.ReadFile("demo/fixtures/status/shop.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := start(t, 100, 30, func(f *demo.Fake) {
+		f.Body("status/shop.json", strings.Replace(string(raw), `"version": "e9a0b3f2c118"`, `"version": "`+hidden+`"`, 1))
+	})
+	h.press(":", "status shop", tcell.KeyEnter)
+	selected := func() string {
+		var v string
+		h.on(func() {
+			if r, _ := h.u.deploys.GetSelection(); r >= 1 && r-1 < len(h.u.deployRows) {
+				v = h.u.deployRows[r-1].Version
+			}
+		})
+		return v
+	}
+	for i := 0; selected() != hidden && i < 10; i++ {
+		h.press(tcell.KeyDown)
+	}
+	h.press(tcell.KeyEnter)
+	var top model.View
+	h.on(func() { top = h.u.top() })
+	if top != record("shop", hidden) {
+		t.Fatalf("enter opened %+v", top)
+	}
+	const says = "the box's filter hid this deploy's version: no motel command can ask for its record"
+	h.press("c")
+	if s := h.screen(); !strings.Contains(s, says) || strings.Contains(s, "motel deploys") {
+		t.Fatalf("c on the record shows:\n%s", s)
+	}
+	h.press("P")
+	if h.u.Print != "" {
+		t.Fatalf("P prints %q", h.u.Print)
+	}
+	h.press("y")
+	if s := h.screen(); !strings.Contains(s, says) || strings.Contains(s, "motel deploys") {
+		t.Fatalf("y on the record shows:\n%s", s)
+	}
+	h.press("P")
+	if h.u.Print != "" {
+		t.Fatalf("P on the JSON prints %q", h.u.Print)
+	}
+}

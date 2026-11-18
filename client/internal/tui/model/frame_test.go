@@ -24,7 +24,8 @@ func session(t *testing.T) (*model.Session, *demo.Fake, *time.Time) {
 
 // TestCommandsAreShellSafe runs each printed command through a real sh,
 // with a stub motel on PATH, and compares the arguments it got with
-// the ones meant: hostile versions, key paths and a box name.
+// the ones meant: versions like flags, hostile key paths and a box
+// name. A version outside the grammar has no command at all.
 func TestCommandsAreShellSafe(t *testing.T) {
 	sh, err := exec.LookPath("sh")
 	if err != nil {
@@ -40,7 +41,7 @@ func TestCommandsAreShellSafe(t *testing.T) {
 	}{
 		{"-v1", "~/.ssh/my key", "deploy.example.com"},
 		{"--key", "/tmp/a;rm -rf x", "deploy.example.com"},
-		{"v1'x", "$(id)`id` \"q\" '", "box-1.example.com"},
+		{"v1.x", "$(id)`id` \"q\" '", "box-1.example.com"},
 		{"v2", "back\\slash*?[", "deploy.example.com"},
 	} {
 		s := &model.Session{Host: c.host, Key: model.Key{Source: "--key", Shown: c.key}, Now: func() time.Time { return t0 }, Engine: model.NewEngine(t0)}
@@ -63,6 +64,10 @@ func TestCommandsAreShellSafe(t *testing.T) {
 		if want[len(want)-3] != "--" {
 			t.Errorf("no -- before the positional arguments: %q", want)
 		}
+	}
+	s := &model.Session{Host: demo.Host, Now: func() time.Time { return t0 }, Engine: model.NewEngine(t0)}
+	if line, ok := s.Command(model.View{Screen: model.ScreenRecord, App: "blog", Version: "v1'x"}); ok {
+		t.Errorf("a version outside the grammar has the command %q", line)
 	}
 }
 
