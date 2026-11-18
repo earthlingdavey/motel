@@ -1,6 +1,9 @@
 package tui
 
 import (
+	"encoding/json"
+	"maps"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -38,5 +41,54 @@ func TestFirstDeployFailed(t *testing.T) {
 		if !strings.Contains(scr, want) {
 			t.Errorf("no %q on the screen:\n%s", want, scr)
 		}
+	}
+}
+
+// TestDeployCursorKeepsItsDeploy: when a new deploy lands above the
+// one the cursor is on, the cursor stays on its deploy, and enter opens
+// that one.
+func TestDeployCursorKeepsItsDeploy(t *testing.T) {
+	h := start(t, 100, 30, nil)
+	h.press(":", "status blog", tcell.KeyEnter, tcell.KeyDown)
+	selected := func() string {
+		var v string
+		h.on(func() {
+			if r, _ := h.u.deploys.GetSelection(); r >= 1 && r-1 < len(h.u.deployRows) {
+				v = h.u.deployRows[r-1].Version
+			}
+		})
+		return v
+	}
+	meant := selected()
+	if meant == "" {
+		t.Fatal("no deploy selected")
+	}
+	raw, err := os.ReadFile("demo/fixtures/status/blog.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m map[string]any
+	if err := json.Unmarshal(raw, &m); err != nil {
+		t.Fatal(err)
+	}
+	ds := m["deploys"].([]any)
+	newer := maps.Clone(ds[0].(map[string]any))
+	newer["version"] = "ffff00001111"
+	m["deploys"] = append([]any{newer}, ds...)
+	body, err := json.Marshal(m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.fake.Body("status/blog.json", string(body))
+	h.now = h.now.Add(6 * time.Second)
+	h.pump()
+	if got := selected(); got != meant {
+		t.Errorf("the cursor moved from %s to %s", meant, got)
+	}
+	h.press(tcell.KeyEnter)
+	var top model.View
+	h.on(func() { top = h.u.top() })
+	if top != record("blog", meant) {
+		t.Errorf("enter opens %+v, want the record of %s", top, meant)
 	}
 }
