@@ -628,19 +628,21 @@ func (e *Engine) Done(j Job, now time.Time, err error) Outcome {
 		e.poke()
 		return out
 	}
+	if fromBox := out == Answered || out == Slowed || out == Refused && !notSent(err); fromBox && e.misses > 0 {
+		// Back after no answer, whatever the box said: whoami again,
+		// since the box may have been upgraded while it did not answer.
+		// A failure the client made without sending anything says
+		// nothing of the box, and a run of no answer goes on.
+		e.misses, e.recovering = 0, true
+		if j.Kind != KWhoAmI {
+			e.askMe(now)
+		}
+	}
 	switch out {
 	case Answered:
 		en.misses, en.failed, en.answered, en.woke = 0, false, now, false
 		if j.Kind == KWhoAmI {
 			e.meAnswered = now
-		}
-		if e.misses > 0 {
-			// Back after no answer: whoami again, since the box may
-			// have been upgraded while it did not answer.
-			e.misses, e.recovering = 0, true
-			if j.Kind != KWhoAmI {
-				e.askMe(now)
-			}
 		}
 	case Cancelled:
 		// A record read before stays as Drop left it, or as opening it
@@ -662,8 +664,6 @@ func (e *Engine) Done(j Job, now time.Time, err error) Outcome {
 			en.failed = true
 		}
 	case Refused:
-		// The box answered, if not with this: a run of no answer ends.
-		e.misses = 0
 		en.misses++
 		en.failed = true
 		en.held = en.once || Forbidden(err) || NotFound(err)
@@ -681,10 +681,9 @@ func (e *Engine) Done(j Job, now time.Time, err error) Outcome {
 		if wait <= 0 {
 			wait = NoRetryAfter
 		}
+		// The wait stands in for the backoff of a run of no answer, which
+		// the 429, an answer, ended.
 		e.slowUntil = now.Add(wait)
-		// A 429 is an answer: a run of no answer ends, and the wait
-		// stands in for its backoff.
-		e.misses = 0
 		// The bucket is spent and does not fill during the wait, so the
 		// reads resume at the rate, not in a burst.
 		e.tokens, e.filled = 0, e.slowUntil

@@ -91,7 +91,7 @@ type recData struct {
 func (s *Session) Fetch(ctx context.Context, c Client, j Job) (func(), error) {
 	a, ok := ActionFor(j.Kind)
 	if !ok {
-		return func() {}, &Failure{Kind: FailThis, Message: "no motel command reads this, so the TUI does not"}
+		return func() {}, &Failure{Kind: FailNotSent, Message: "no motel command reads this, so the TUI does not"}
 	}
 	apply, err := a.read(ctx, s, c, j)
 	if errors.Is(err, context.Canceled) {
@@ -104,9 +104,11 @@ func (s *Session) Fetch(ctx context.Context, c Client, j Job) (func(), error) {
 		case Answered:
 			s.last, s.StopErr, s.refused = at, nil, false
 		case Refused:
-			if k, _ := failKind(err); k == FailUnusable {
+			switch k, _ := failKind(err); k {
+			case FailUnusable:
 				s.last, s.refused = at, false // an answer came, if not one to use
-			} else {
+			case FailNotSent: // nothing was asked of the box
+			default:
 				s.refused = true
 			}
 		case Stopped:
@@ -213,6 +215,10 @@ func failKind(err error) (Fail, bool) {
 
 // Forbidden says whether err is a 403.
 func Forbidden(err error) bool { k, ok := failKind(err); return ok && k == FailForbidden }
+
+// notSent says whether err is a failure the client made with nothing
+// sent.
+func notSent(err error) bool { k, ok := failKind(err); return ok && k == FailNotSent }
 
 // NotFound says whether err is a 404.
 func NotFound(err error) bool { k, ok := failKind(err); return ok && k == FailNotFound }

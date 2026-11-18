@@ -213,7 +213,7 @@ func TestFailureForTheTUI(t *testing.T) {
 func TestHiddenVersionFailsItsReadAlone(t *testing.T) {
 	_, err := live{}.Deploy(context.Background(), "blog", client.Filtered)
 	var m *model.Failure
-	if !errors.As(err, &m) || m.Kind != model.FailThis || !strings.Contains(m.Message, "filter hid this deploy's version") {
+	if !errors.As(err, &m) || m.Kind != model.FailNotSent || !strings.Contains(m.Message, "filter hid this deploy's version") {
 		t.Errorf("a record asked by a hidden version: %+v (%v), want this read alone to fail", m, err)
 	}
 }

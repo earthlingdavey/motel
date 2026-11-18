@@ -10,21 +10,28 @@ import (
 	"github.com/smallhoursorg/motel/client/internal/tui/model"
 )
 
-// TestRefusalEndsAnOutage: after reads that got no answer, a refusal
-// (a 403) or a 429 is an answer from the box: the count of misses is
-// cleared, and the title bar does not stay STALE.
+// TestRefusalEndsAnOutage: after reads that got no answer, any answer
+// from the box (a 200, a 403, a 404, a 409, a 429, a 200 that could not
+// be read) to the first read back ends the run alike: the misses are
+// cleared, the box is said to be back and then not STALE, and whoami is
+// asked again, since the box may have been upgraded meanwhile.
 func TestRefusalEndsAnOutage(t *testing.T) {
 	for _, c := range []struct {
 		name string
 		err  error
 	}{
+		{"200", nil},
 		{"403", fail(model.FailForbidden)},
+		{"404", fail(model.FailNotFound)},
+		{"409", fail(model.FailThis)},
 		{"429", &model.Failure{Kind: model.FailSlowed, RetryAfter: time.Second}},
+		{"unusable", fail(model.FailUnusable)},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			now := t0
 			f := &demo.Fake{Now: func() time.Time { return now }}
 			s := &model.Session{Host: demo.Host, Now: f.Now, Engine: model.NewEngine(t0)}
+			e := s.Engine
 			for range 20 {
 				step(t, s, f, &now)
 			}
@@ -41,15 +48,65 @@ func TestRefusalEndsAnOutage(t *testing.T) {
 			for _, n := range keys {
 				f.Set(n, c.err)
 			}
+			before := len(f.Calls)
 			step(t, s, f, &now)
-			if m := s.Engine.Health(now).Misses; m != 0 {
-				t.Errorf("after a %s the misses are %d", c.name, m)
+			for _, n := range keys {
+				f.Set(n, nil)
 			}
-			later := now.Add(2 * time.Second) // past the 429's wait
-			if _, r := s.Title(later); strings.HasPrefix(r.Text(), "STALE") {
+			if h := e.Health(now); h.Misses != 0 || !h.Back {
+				t.Errorf("after a %s the misses are %d, back %v", c.name, h.Misses, h.Back)
+			}
+			for end := now.Add(10 * time.Second); now.Before(end); {
+				step(t, s, f, &now)
+			}
+			me := 0
+			for _, call := range f.Calls[before:] {
+				if call.Job.Kind == model.KWhoAmI {
+					me++
+				}
+			}
+			if me == 0 {
+				t.Errorf("after a %s ended the run, whoami not asked in 10 s", c.name)
+			}
+			if _, r := s.Title(now); strings.HasPrefix(r.Text(), "STALE") {
 				t.Errorf("after a %s the title says %q", c.name, r.Text())
 			}
 		})
+	}
+}
+
+// TestNotSentKeepsAnOutage: a read the client fails without sending
+// anything (a record whose version the box's filter hid) while the box
+// does not answer changes nothing of the run: its misses, its backoff
+// and the title's STALE stay.
+func TestNotSentKeepsAnOutage(t *testing.T) {
+	now := t0
+	f := &demo.Fake{Now: func() time.Time { return now }}
+	s := &model.Session{Host: demo.Host, Now: f.Now, Engine: model.NewEngine(t0)}
+	e := s.Engine
+	e.Focus("blog", now)
+	for range 20 {
+		step(t, s, f, &now)
+	}
+	for _, n := range append(s.Names(), "apps", "whoami") {
+		f.Set(n, fail(model.FailNoAnswer))
+	}
+	for range 5 {
+		step(t, s, f, &now)
+	}
+	rec := model.Job{Kind: model.KDeploy, App: "blog", Version: "(hidden)"}
+	f.Set("blog@(hidden)", fail(model.FailNotSent))
+	e.Once(rec, now)
+	misses := e.Health(now).Misses
+	if j := step(t, s, f, &now); j != rec {
+		t.Fatalf("read %v, not the record", j)
+	}
+	h := e.Health(now)
+	if h.Misses != misses || h.Back {
+		t.Errorf("after a read not sent the misses are %d (were %d), back %v", h.Misses, misses, h.Back)
+	}
+	if _, r := s.Title(now); !strings.HasPrefix(r.Text(), "STALE") {
+		t.Errorf("after a read not sent the title says %q", r.Text())
 	}
 }
 
