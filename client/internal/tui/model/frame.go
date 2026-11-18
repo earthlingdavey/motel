@@ -536,7 +536,9 @@ func (s *Session) freshness(now time.Time) Line {
 	case h.Stop == BadCertificate:
 		return Line{ownC("STOPPED: the certificate did not verify · r tries again", Bad)}
 	case h.Stop == NotThisKey:
-		return Line{ownC("STOPPED: the box answered about another key or box · r asks again", Bad)}
+		// 57 cells: every word here fits the smallest window, 60, the
+		// left side cut before it (TestTitleWordsAt60).
+		return Line{ownC("STOPPED: answered about another key or box · r asks again", Bad)}
 	case h.Paused:
 		return Line{ownC("PAUSED (idle 10m): any key resumes", Warn)}
 	case h.SlowIn > 0:
