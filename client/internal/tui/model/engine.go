@@ -740,12 +740,23 @@ const WakeAfter = 30 * time.Second
 // at once, whoami is asked again (the box may have changed meanwhile),
 // and the bucket starts empty. now is wall-clock time: a monotonic
 // reading stops while the machine sleeps.
+//
+// A tick before the last is the wall clock set back: every time the
+// engine keeps is moved back with it, or no read would be due, and the
+// bucket would not fill, for the length of the step; a step back past
+// WakeAfter is a wake too, since how old each row is is not known.
 func (e *Engine) Tick(now time.Time) bool {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	last := e.ticked
 	e.ticked = now
-	if last.IsZero() || now.Sub(last) <= WakeAfter {
+	if last.IsZero() {
+		return false
+	}
+	if now.Before(last) {
+		e.shift(now.Sub(last))
+	}
+	if gap := now.Sub(last); gap <= WakeAfter && gap >= -WakeAfter {
 		return false
 	}
 	every := e.background()
@@ -769,6 +780,22 @@ func (e *Engine) Tick(now time.Time) bool {
 	e.tokens, e.filled = 0, maxTime(now, e.slowUntil)
 	e.poke()
 	return true
+}
+
+// shift moves every time the engine keeps by d: due times, answers,
+// waits and the bucket's fill time.
+func (e *Engine) shift(d time.Duration) {
+	move := func(ts ...*time.Time) {
+		for _, t := range ts {
+			if !t.IsZero() {
+				*t = t.Add(d)
+			}
+		}
+	}
+	move(&e.filled, &e.meAnswered, &e.me403, &e.retryAt, &e.slowUntil, &e.touched, &e.lastFocus, &e.lastList, &e.lastRetry)
+	for _, en := range e.jobs {
+		move(&en.due, &en.answered)
+	}
 }
 
 // CanAskAgain says whether ctrl-r would ask now: not while every read
