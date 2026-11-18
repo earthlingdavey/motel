@@ -96,11 +96,16 @@ func TestDeployCursorKeepsItsDeploy(t *testing.T) {
 
 // TestLongNames: two 63-character names that share their start are cut
 // in the middle, so NAME leaves STATE, and stale, on a 60- and an
-// 80-column screen; the whole name is what is filtered and opened.
+// 80-column screen, and the strip leaves the reason of the one stopped;
+// the whole name is what is filtered and opened.
 func TestLongNames(t *testing.T) {
 	staging := strings.Repeat("a", 55) + "-staging"
 	production := strings.Repeat("a", 52) + "-production"
 	st, err := os.ReadFile("demo/fixtures/status/blog.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	stopped, err := os.ReadFile("demo/fixtures/status/mailer.json")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -109,7 +114,7 @@ func TestLongNames(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			h := start(t, sz[0], sz[1], func(f *demo.Fake) {
 				f.Body("apps.json", `{"apps": [{"name": "`+staging+`"}, {"name": "`+production+`"}, {"name": "blog"}, {"name": "mailer"}]}`)
-				f.Body("status/"+staging+".json", string(st))
+				f.Body("status/"+staging+".json", string(stopped))
 				f.Body("status/"+production+".json", string(st))
 			})
 			// production's reads stop answering until its row is stale.
@@ -131,6 +136,9 @@ func TestLongNames(t *testing.T) {
 			}
 			h.sync()
 			golden(t, name, h.screen())
+			if s := h.screen(); !strings.Contains(s, "\n✖ aaaaaaaaaaaa…staging stopped: 9f02bb1c4e7a is not running") {
+				t.Errorf("the strip has no reason for the long name:\n%s", s)
+			}
 			h.press("/", "-staging", tcell.KeyEnter, tcell.KeyEnter)
 			var top model.View
 			h.on(func() { top = h.u.top() })

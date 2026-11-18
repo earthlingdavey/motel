@@ -135,7 +135,7 @@ func (s *Session) AppsView(now time.Time, filter string, sort int) AppsView {
 	}
 	for _, r := range v.Rows {
 		if len(r.Why) > 0 {
-			v.Strip = append(v.Strip, append(Line{ownC(r.Mark.Glyph()+" ", r.Mark.Class()), own(pad(r.Name, 12) + " ")}, r.Why...))
+			v.Strip = append(v.Strip, append(Line{ownC(r.Mark.Glyph()+" ", r.Mark.Class()), own(pad(cutName(r.Name), 12) + " ")}, r.Why...))
 		}
 	}
 	switch {
@@ -154,10 +154,11 @@ func (s *Session) AppsView(now time.Time, filter string, sort int) AppsView {
 	return v
 }
 
-// NameMax is the most of an app's name the apps table shows. A longer
-// one (63 characters are allowed) is cut in the middle, its start and
-// its end kept, so that names which share a start still differ on
-// screen; the whole name is what is opened, filtered and completed.
+// NameMax is the most of an app's name the apps table and its strip
+// show. A longer one (63 characters are allowed) is cut in the middle,
+// its start and its end kept, so that names which share a start still
+// differ on screen; the whole name is what is opened, filtered and
+// completed.
 const NameMax = 20
 
 func cutName(name string) string {
