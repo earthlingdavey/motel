@@ -218,13 +218,20 @@ made by hand. Accepted:
 | A labelled value under the cap keeps its runs of spaces, so on a narrow terminal a long run can wrap the rest of the value to the start of the next row, where it can look like a label (the `hostile-status` golden shows one). Log lines keep their spacing on purpose | 2 | 1 | 3 | 6 | 2 (wrap-aware printing) | accepted |
 | An apps-list read that got no answer is asked again at the list's own interval, 60 s, not at the 2 s backoff a status gets; while no read is answered the title bar says STALE and the time of the last answer | 2 | 4 | 1 | 8 | 2 | accepted |
 | Enter and esc held on a record no read of which has yet ended (a slow box) send a read at each enter and cancel it at each esc: leaving a record that never answered forgets it. The reads stay within the engine's rate, and it was so before the review's fixes | 2 | 4 | 1 | 8 | 3 | accepted |
+| A record every read of which the box refused (a 403, a 404, a 409) is read again by ctrl-r, esc, enter in turn, a read for every three keys: leaving it after ctrl-r forgets it, as the row above. The reads stay within the engine's rate | 2 | 5 | 1 | 10 | 2 | accepted |
+| A step of the wall clock back that lands between two readings handed to the engine out of order (two goroutines, microseconds apart) moves the engine's times twice: the title bar can say PAUSED until a key, and a 429's wait can end early by the step | 2 | 2 | 3 | 12 | 3 | accepted |
+| An answer's time is taken when it is applied on the UI's goroutine: after a terminal that stalled its output, the one answer that waited shows an age short by the stall, until that value is next read | 2 | 3 | 3 | 18 | 2 | accepted |
+| After a 403 or a 404 on an app or a record, `y` and `P` still give the last answer the box did send for it, with the time it was fetched | 2 | 5 | 1 | 10 | 2 | accepted |
+| When whoami alone gets no answer (a gateway's 5xx on that one route) while other reads answer, each answer ends the run and asks whoami again: about half the reads are whoami, within the rate, and the title bar goes between slow and back | 2 | 2 | 3 | 12 | 2 | accepted |
+| After the wall clock steps back, who am I's token line says the token is good for longer than it is, by the step, and the client keeps it that much too long; the box's 401 then has it signed again, and the line is right from there | 2 | 3 | 3 | 18 | 3 (the signer's clock moved with the TUI's) | accepted |
 
-Owed, from the two reviews of the TUI's first part (#558; scored there); the
-others are fixed:
+Owed, from the reviews of the TUI's first part (#558; scored there) and of
+their fixes; the others are fixed:
 
 | Owed | S | O | D | Score | Size of a fix | Outcome |
 |---|---|---|---|---|---|---|
 | A record's and an app's details are cut to the window, with no way to scroll them | 2 | 5 | 3 | 30 | 3 | owed, the owner's call: the second part's `y` shows the whole answer; a header that scrolls is new screen behaviour |
+| Two names over 20 characters that differ only in their middle are shown longer until they differ, which can take the room of VERSION and LAST DEPLOY on every row (two 57-character names at 80 columns). Where the width cannot hold both whole beside STATE (at 60 columns, names of 37 to 63 characters alike but for their middle; at 80, of 57 or more) they are shown alike, and enter on one may open the other, whose crumb then names it | 2 | 5 | 3 | 30 | 3 | the owner's call: over the bar, and no cut within the width tells every such pair apart |
 
 ## The TUI
 
@@ -287,9 +294,9 @@ line to send the operator, which `P` prints.
   A 401, a token not signed, or a certificate that did not verify stops
   every read and says why; `r` asks once more. A 403 or a 404 stops
   that read alone until `ctrl-r`. A deploy's record is read each time it
-  is opened, and by `ctrl-r`, at most once in 5 s once a read of it has
-  ended (asked sooner, it is read when the 5 s have passed, if it is
-  still open); a read of it that fails, a 5xx too, is not asked again by
+  is opened, and by `ctrl-r`, at most once in 5 s once the box has
+  answered with it (asked sooner, it is read when the 5 s have passed,
+  if it is still open); a read of it that fails, a 5xx too, is not asked again by
   itself, and the record read before stays on screen beside a failure
   that is not a refusal: a 403 or a 404 is said alone, as on an app's
   screen. Ten idle minutes pause it.
@@ -313,9 +320,10 @@ line to send the operator, which `P` prints.
   its state; the strip counts the stale rows, and does not say every
   app runs beside one. Ages are on the wall clock, so a laptop's sleep
   counts. A step of the clock back is seen at the first time read after
-  it, and every time kept of the reads moves back by it, once, to within
-  the second between two readings; a sleep, or a step back past 30 s,
-  makes every row stale until read again.
+  it, and every time kept of the reads moves back by it, to within the
+  second between two readings; a sleep, or a step back past 30 s, makes
+  every row that is still being read stale until read again (one held
+  by a 403 or a 404 waits for `ctrl-r`).
   Colour only repeats a mark (`✖ ▲ ⟳ ? ·`) or a word; `NO_COLOR`
   turns it off.
 - **Box text on tview.** tview reads `[...]` as tags in table cells,

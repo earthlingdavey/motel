@@ -139,7 +139,9 @@ var footers = map[model.Screen]string{
 // The apps table's columns, dropped in this order when the screen is
 // too narrow: AGE first, each row's age then going in its STATE cell,
 // then P95, 5xx, OF CAP and MEM. NAME, STATE, VERSION and LAST DEPLOY
-// stay.
+// stay, but that two long names shown longer to be told apart (the
+// model's shownNames) may take VERSION's and LAST DEPLOY's room: only
+// STATE is kept beside them.
 var dropOrder = []int{model.ColAge, model.ColP95, model.Col5xx, model.ColOfCap, model.ColMem}
 
 func (u *UI) renderApps(now time.Time) {
