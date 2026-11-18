@@ -220,3 +220,56 @@ func TestRecordLeftInFlight(t *testing.T) {
 		}
 	}
 }
+
+// TestClockBackTitle: after the wall clock is set back an hour, the
+// title bar's word is true of the reads made since: not "back" for the
+// length of the step after a run of no answer ended before it, nor
+// "refused" for answers that came after a refusal made before it.
+func TestClockBackTitle(t *testing.T) {
+	for _, before := range []string{"back", "refused"} {
+		t.Run(before, func(t *testing.T) {
+			now := t0
+			f := &demo.Fake{Now: func() time.Time { return now }}
+			s := &model.Session{Host: demo.Host, Now: f.Now, Engine: model.NewEngine(t0)}
+			e := s.Engine
+			for range 20 {
+				step(t, s, f, &now)
+			}
+			keys := append(s.Names(), "apps", "whoami")
+			switch before {
+			case "back":
+				for _, n := range keys {
+					f.Set(n, fail(model.FailNoAnswer))
+				}
+				step(t, s, f, &now)
+				for _, n := range keys {
+					f.Set(n, nil)
+				}
+				step(t, s, f, &now)
+			case "refused":
+				for _, n := range keys {
+					f.Set(n, fail(model.FailThis))
+				}
+				step(t, s, f, &now)
+				for _, n := range keys {
+					f.Set(n, nil)
+				}
+			}
+			if _, r := s.Title(now); !strings.HasPrefix(r.Text(), before) {
+				t.Fatalf("before the step the title says %q", r.Text())
+			}
+			e.Tick(now)
+			now = now.Add(time.Second)
+			e.Tick(now)
+			now = now.Add(-time.Hour)
+			e.Tick(now)
+			for end := now.Add(time.Minute); now.Before(end); {
+				step(t, s, f, &now)
+				e.Tick(now)
+			}
+			if _, r := s.Title(now); !strings.HasPrefix(r.Text(), "live") {
+				t.Errorf("a minute after the step the title says %q", r.Text())
+			}
+		})
+	}
+}

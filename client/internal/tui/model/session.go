@@ -50,10 +50,12 @@ type Session struct {
 
 	apps    map[string]*appData
 	records map[Job]*recData
-	// last is when the box last answered a read; refusedAt when it last
-	// refused one; backAt when it answered again after a run of no
-	// answer.
-	last, refusedAt, backAt time.Time
+	// last is when the box last answered a read; backAt when it
+	// answered again after a run of no answer. refused says the box
+	// refused the last read it answered or refused: an order kept
+	// without the clock, which may be set back between the two.
+	last, backAt time.Time
+	refused      bool
 }
 
 // Key is the key the session signs with, as this side knows it.
@@ -94,12 +96,12 @@ func (s *Session) Fetch(ctx context.Context, c Client, j Job) (func(), error) {
 	return func() {
 		switch out, stop := Classify(err); out {
 		case Answered:
-			s.last, s.StopErr = at, nil
+			s.last, s.StopErr, s.refused = at, nil, false
 		case Refused:
 			if k, _ := failKind(err); k == FailUnusable {
-				s.last = at // an answer came, if not one to use
+				s.last, s.refused = at, false // an answer came, if not one to use
 			} else {
-				s.refusedAt = at
+				s.refused = true
 			}
 		case Stopped:
 			s.StopErr = err

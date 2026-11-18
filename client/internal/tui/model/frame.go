@@ -356,11 +356,13 @@ func (s *Session) freshness(now time.Time) Line {
 		return Line{ownC(l+", retry in "+Ago(h.RetryIn), Bad)}
 	case h.Misses > 0:
 		return Line{ownC("slow · "+ago, Warn)}
-	case !s.backAt.IsZero() && now.Sub(s.backAt) < 5*time.Second:
+	case !s.backAt.IsZero() && !s.backAt.After(now) && now.Sub(s.backAt) < 5*time.Second:
+		// A backAt after now is one from before the wall clock was set
+		// back: not just now.
 		return Line{ownC("back · "+hms(s.backAt), Good)}
-	case !s.refusedAt.IsZero() && s.last.IsZero():
+	case s.refused && s.last.IsZero():
 		return Line{ownC("REFUSED: no read answered yet", Bad)}
-	case !s.refusedAt.IsZero() && !s.refusedAt.Before(s.last):
+	case s.refused:
 		// The last read was refused, and the screen says why: the word
 		// does not say live of answers that stopped coming.
 		return Line{ownC("refused · last answer "+ago, Warn)}
