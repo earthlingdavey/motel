@@ -237,7 +237,7 @@ their fixes, and of its second part; the others are fixed:
 |---|---|---|---|---|---|---|
 | A record's and an app's details are cut to the window, with no way to scroll them | 2 | 5 | 3 | 30 | 3 | owed, the owner's call: the second part's `y` shows the whole answer; a header that scrolls is new screen behaviour |
 | Two names over 20 characters that differ only in their middle are shown longer until they differ, which can take the room of VERSION and LAST DEPLOY on every row. Where the width cannot hold both whole beside the widest STATE (with `running · 12s`, from 44 characters at 60 columns, none at 80; with `not deployed · stale`, from 37 at 60, 57 at 80) they are shown alike, and enter on one may open the other (at 80 columns its crumb then names it; at 60 the crumb is cut before the place they differ) | 2 | 5 | 3 | 30 | 3 | the owner's call: over the bar, and no cut within the width tells every such pair apart |
-| The title bar's name, roles and release are whoami's answer, read every 5 minutes, shown beside the freshness of the newest answer to any read, so they can be up to 5 minutes older than that word says | 2 | 5 | 3 | 30 | 2 | the owner's call: over the bar; whoami's schedule is the owner's, and who am I shows the answer under its own age |
+| The title bar's name, roles and release are whoami's last answer, shown beside the freshness of the newest answer to any read: while whoami answers (every 5 minutes) they can be up to 5 minutes older than that word says, and while it fails and other reads answer they stay whoami's last answer for as long as that goes on, since a failed whoami keeps it (refused, an answer the client cannot use, or a 403, which holds whoami until asked again; seen 21 minutes on beside `live · 0s ago`) | 2 | 5 | 3 | 30 | 2 | the owner's call: over the bar; whoami's schedule is the owner's, and who am I shows the answer under its own age |
 
 ## The TUI
 
@@ -353,10 +353,22 @@ operator, which `P` prints.
   `internal/tui/door`, which puts a zero-width space after each `[` on
   top of `termtext`. Its setters take `door.Shown`, a struct only it
   can make. That rests on two tview internals, held by
-  `TestEscapeHolds` in every widget kind used; `TestOneDoor` fails if
-  the screens hand tview text or make a widget off a short list, and
-  `TestSafeBytes` draws the hostile fixture on a real terminfo screen
-  and finds none of its attacks in the bytes.
+  `TestEscapeHolds` in every widget kind used. tview also begins a row
+  of a text view, or of an input field, wherever uniseg reports a
+  mandatory line break, wrapping or not; `termtext` escapes every
+  character that is one, but uniseg v0.4.7 reports one too after an
+  emoji modifier that ends a cluster begun by an emoji base (a
+  thumbs-up with a skin tone), so box text could begin a row of its
+  own. `door` asks tview's own splitter where it would begin a row
+  inside a text and writes the character before each such break as an
+  escape (`\U0001f3fd`), as `termtext` writes one it will not pass; the
+  input field's text that the person typed is put back as it was.
+  `TestOneRow` has tview draw every code point, every
+  Extended_Pictographic character with each modifier, and a modifier
+  after a combining mark, in every widget kind used, each on one row.
+  `TestOneDoor` fails if the screens hand tview text or make a widget
+  off a short list, and `TestSafeBytes` draws the hostile fixture on a
+  real terminfo screen and finds none of its attacks in the bytes.
 
 `motel tui --demo` (hidden) shows the test fixtures, marked SAMPLE
 DATA in the title bar, with no box.

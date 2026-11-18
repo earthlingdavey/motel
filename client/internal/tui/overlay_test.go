@@ -8,43 +8,105 @@ import (
 
 	"github.com/gdamore/tcell/v2"
 
-	"github.com/smallhoursorg/motel/client/internal/termtext"
 	"github.com/smallhoursorg/motel/client/internal/tui/demo"
 	"github.com/smallhoursorg/motel/client/internal/tui/door"
 	"github.com/smallhoursorg/motel/client/internal/tui/model"
 )
 
-// overlayRows is what the open overlay draws inside its border, row by
-// row, a wide character once and trailing spaces cut.
-func overlayRows(h *harness) (rows []string) {
-	var cells []tcell.SimCell
-	var w, hgt int
+// drawnRow is a row inside the overlay's border as the screen holds
+// it: its text (a wide character once, trailing spaces cut), the
+// cells from the border to the end of its last drawn cell, and that
+// cell's text.
+type drawnRow struct {
+	text, last string
+	end        int
+}
+
+// cellRow is row y of scr from column x0 to x1 (not included), read
+// from the screen's own cells: the screen says how wide each is.
+func cellRow(scr tcell.Screen, y, x0, x1 int) drawnRow {
+	var r drawnRow
+	var b strings.Builder
+	for x := x0; x < x1; {
+		s, _, cw := scr.Get(x, y)
+		b.WriteString(s)
+		if s != " " && s != "" {
+			r.last, r.end = s, x-x0+max(cw, 1)
+		}
+		x += max(cw, 1)
+	}
+	r.text = strings.TrimRight(b.String(), " ")
+	return r
+}
+
+// screenRows is every row of the screen, read from its cells.
+func screenRows(h *harness) (rows []drawnRow) {
 	done := make(chan struct{})
-	h.u.App.QueueUpdate(func() { cells, w, hgt = h.scr.(tcell.SimulationScreen).GetContents(); close(done) })
+	h.u.App.QueueUpdate(func() {
+		defer close(done)
+		w, hgt := h.scr.Size()
+		for y := range hgt {
+			rows = append(rows, cellRow(h.scr, y, 0, w))
+		}
+	})
 	<-done
-	in := false
-	for y := range hgt {
-		switch string(cells[y*w].Runes) {
-		case "╔":
-			in = true
-			continue
-		case "╚":
-			return rows
-		}
-		if !in {
-			continue
-		}
-		var b strings.Builder
-		for x := 1; x < w-1; x++ {
-			r := string(cells[y*w+x].Runes)
-			b.WriteString(r)
-			if door.Width(termtext.From(r)) == 2 {
-				x++
+	return rows
+}
+
+// overlayCells is the open overlay's rows inside its border, read from
+// the screen's own cells.
+func overlayCells(h *harness) (rows []drawnRow) {
+	done := make(chan struct{})
+	h.u.App.QueueUpdate(func() {
+		defer close(done)
+		w, hgt := h.scr.Size()
+		in := false
+		for y := range hgt {
+			switch s, _, _ := h.scr.Get(0, y); s {
+			case "╔":
+				in = true
+				continue
+			case "╚":
+				return
+			}
+			if in {
+				rows = append(rows, cellRow(h.scr, y, 1, w-1))
 			}
 		}
-		rows = append(rows, strings.TrimRight(b.String(), " "))
-	}
+	})
+	<-done
 	return rows
+}
+
+// joinRows is the rows' text, joined by sep.
+func joinRows(rows []drawnRow, sep string) string {
+	var out []string
+	for _, r := range rows {
+		out = append(out, r.text)
+	}
+	return strings.Join(out, sep)
+}
+
+// cutAtEdge says whether a row that ends in … after prefix, a part of
+// the command line want as drawn, is cut at the edge of a window room
+// cells wide: the row ends at the edge, or the next of want's
+// characters is too wide to stand there before the mark. Widths are
+// the test's own, of the only characters its command lines hold: one
+// cell for ASCII, two for any other character, and ten for a skin tone
+// the door writes as an escape (shownUp).
+func cutAtEdge(r drawnRow, prefix, want string, room int) bool {
+	rest, ok := strings.CutPrefix(want, prefix)
+	if !ok || rest == "" || r.last != "…" || r.end > room {
+		return false
+	}
+	next := 2
+	switch {
+	case strings.HasPrefix(rest, `\U0001f3fd`):
+		next = 10
+	case rest[0] < 0x80:
+		next = 1
+	}
+	return r.end == room || r.end+next > room
 }
 
 // wantCommands is every command line the overlay over v shows, whole:
@@ -71,55 +133,48 @@ func wantCommands(h *harness, v model.View, json bool) (out []string) {
 	return out
 }
 
-// checkOverlay holds the open overlay over v to the rules, and says
-// whether a command line was cut: each command line is drawn whole, or
-// cut at the edge (where one more character and the mark would not
-// fit) with "…" there; the overlay says a line is cut, and
-// how to get it whole, exactly when one is; its own words are never cut
-// (each sentence is found whole, its rows read on one line); and in y,
-// it says a line of the answer is wider than the window exactly when
-// one is (by door.Width, the screens' measure).
+// checkOverlay holds the open overlay over v to the rules, read from
+// the screen's own cells, and says whether a command line was cut: the
+// command lines are drawn in their order, each on one row, whole or cut
+// at the edge (cutAtEdge) with "…" there; the overlay says a line is
+// cut, and what prints each cut one whole, exactly when one is (in the
+// command overlay: P for the first and the --json one, c then P for the
+// apps screen's row); its own words are never cut (each sentence is
+// found whole, its rows read on one line); and in y, it says a line of
+// the answer is wider than the window exactly when one is (by
+// door.Width, the screens' measure). The commands hold no character
+// the door writes as an escape.
 func checkOverlay(t *testing.T, h *harness, v model.View, json bool, w int) (cut, wide bool) {
 	t.Helper()
-	rows := overlayRows(h)
+	rows := overlayCells(h)
 	want := wantCommands(h, v, json)
-	seen := map[string]bool{}
+	cuts := make([]bool, len(want))
+	k := 0
 	for _, r := range rows {
-		s, ok := strings.CutPrefix(r, "  motel ")
-		if !ok {
+		if !strings.HasPrefix(r.text, "  motel ") {
 			continue
 		}
-		s = "motel " + s
-		if slices.Contains(want, s) {
-			seen[s] = true
+		if k == len(want) {
+			t.Errorf("a command line more than the %d drawn: %q", len(want), r.text)
 			continue
 		}
-		head, marked := strings.CutSuffix(s, "…")
-		found := false
-		for _, c := range want {
-			if !marked || !strings.HasPrefix(c, head) || c == head {
-				continue
-			}
-			// Cut at the edge: one more character and the mark would
-			// not fit.
-			next := []rune(c[len(head):])[0]
-			if door.Width(termtext.From("  "+head+string(next)+"…")) > w-2 {
-				seen[c], cut, found = true, true, true
-			}
+		c := "  " + want[k]
+		switch {
+		case r.text == c:
+		case cutAtEdge(r, strings.TrimSuffix(r.text, "…"), c, w-2):
+			cuts[k], cut = true, true
+		default:
+			t.Errorf("the command %q drawn neither whole nor cut at the edge with a mark: %q", want[k], r.text)
 		}
-		if !found {
-			t.Errorf("a command line drawn neither whole nor cut with a mark at the edge: %q", r)
-		}
+		k++
 	}
-	for _, c := range want {
-		if !seen[c] {
-			t.Errorf("the command %q is not drawn, whole or marked as cut", c)
-		}
+	if k < len(want) {
+		t.Errorf("%d of the %d command lines drawn:\n%s", k, len(want), joinRows(rows, "\n"))
 	}
-	text := strings.Join(rows, " ")
+	text := joinRows(rows, " ")
 	says := func(sentence string) bool { return strings.Contains(text, sentence) }
 	if says("do not copy it") != cut {
-		t.Errorf("a command line cut: %v; the overlay says not to copy it: %v\n%s", cut, !cut, strings.Join(rows, "\n"))
+		t.Errorf("a command line cut: %v; the overlay says not to copy it: %v\n%s", cut, !cut, joinRows(rows, "\n"))
 	}
 	var sentences []string
 	if !json {
@@ -129,11 +184,21 @@ func checkOverlay(t *testing.T, h *harness, v model.View, json bool, w int) (cut
 		}
 		if cut {
 			sentences = append(sentences, "a line above is cut at the window's edge, marked …: do not copy it.")
-			if !says("P quits and prints the first command whole below your prompt") && !says("c then P on an app's own screen prints a row's command whole.") {
-				t.Errorf("a command line is cut, and the overlay does not say what prints it whole:\n%s", strings.Join(rows, "\n"))
-			}
 		} else {
 			sentences = append(sentences, "select it with the mouse, or press P to quit and print it below your prompt")
+		}
+		row := len(cuts) == 3 && cuts[2]
+		for _, s := range []struct {
+			says string
+			want bool
+		}{
+			{"P quits and prints the first command whole below your prompt", cuts[0] || cuts[1]},
+			{"the second is it with --json among its flags", cuts[1]},
+			{"c then P on an app's own screen prints a row's command whole.", row},
+		} {
+			if says(s.says) != s.want {
+				t.Errorf("the overlay says %q: %v, want %v (cut: %v)\n%s", s.says, !s.want, s.want, cuts, joinRows(rows, "\n"))
+			}
 		}
 	} else {
 		sentences = []string{"the box's answer to", "indented here; its strings as received, made safe to show;",
@@ -155,7 +220,7 @@ func checkOverlay(t *testing.T, h *harness, v model.View, json bool, w int) (cut
 	}
 	for _, s := range sentences {
 		if !says(s) {
-			t.Errorf("the overlay's words %q are not drawn whole:\n%s", s, strings.Join(rows, "\n"))
+			t.Errorf("the overlay's words %q are not drawn whole:\n%s", s, joinRows(rows, "\n"))
 		}
 	}
 	return cut, wide
@@ -239,6 +304,46 @@ func TestOverlayScreens(t *testing.T) {
 			golden(t, "overlay-record-command-"+size, h.screen())
 			h.press("y")
 			golden(t, "overlay-record-json-"+size, h.screen())
+		})
+	}
+}
+
+// TestOverlayResize: the y overlay, open over a record with --key
+// while the window is made narrower, wider, and narrower again, is laid
+// out for the window's width each time: its command cut at the edge at
+// 80 and 60 columns, and whole at 100.
+func TestOverlayResize(t *testing.T) {
+	h := start(t, 80, 24, nil)
+	h.on(func() { h.s.Key.Source, h.s.Key.Shown = "--key", "~/.ssh/id_ed25519" })
+	v := record("blog", "7c1e55d0a913")
+	h.open(v)
+	h.press("y")
+	for _, w := range []int{80, 60, 100, 80} {
+		h.on(func() { h.scr.(*sizedSim).SetSize(w, 24) })
+		if cut, _ := checkOverlay(t, h, v, true, w); cut != (w < 100) {
+			t.Errorf("at %d columns: the command cut: %v, want %v", w, cut, w < 100)
+		}
+	}
+}
+
+// TestOverlayRowCut: with --key ~/.ssh/id_ed25519, at windows 72 to 75
+// columns wide, the apps screen's command overlay cuts its row's
+// command alone: the overlay says c then P prints it whole on an app's
+// screen, and does not offer P for the first command, which is whole.
+func TestOverlayRowCut(t *testing.T) {
+	for w := 72; w <= 75; w++ {
+		t.Run(strconv.Itoa(w), func(t *testing.T) {
+			h := start(t, w, 24, nil)
+			h.on(func() { h.s.Key.Source, h.s.Key.Shown = "--key", "~/.ssh/id_ed25519" })
+			h.press("c")
+			v := model.View{Screen: model.ScreenApps}
+			if cut, _ := checkOverlay(t, h, v, false, w); !cut {
+				t.Fatal("nothing cut: the case proves nothing")
+			}
+			text := joinRows(overlayCells(h), " ")
+			if !strings.Contains(text, "c then P on an app's own screen prints a row's command whole.") || strings.Contains(text, "P quits and prints the first command") {
+				t.Errorf("the warning does not name c then P alone:\n%s", joinRows(overlayCells(h), "\n"))
+			}
 		})
 	}
 }
