@@ -388,3 +388,59 @@ func TestOverlayOffersSelection(t *testing.T) {
 		}
 	}
 }
+
+// TestJSONHeaderAsRuns: y over a record with a --key path holding a [,
+// one holding a skin tone, and a plain one, at 100 columns and 60: the
+// header says not to copy its command when it is cut or not drawn as it
+// runs, each once, and c then P once; c then P, from there, prints the
+// command whole. The command is cut at 60, and at 100 with the skin
+// tone, whose escape is drawn ten cells wide: so a line both cut and
+// not drawn as it runs is held too.
+func TestJSONHeaderAsRuns(t *testing.T) {
+	const (
+		cutSays = "the line above is cut at the window's edge, marked …: do not copy it."
+		asRuns  = "the line above is not drawn as it runs (an unseen space after a [, or a character written as an escape): do not copy it."
+		prints  = "c then P prints it whole."
+	)
+	keys := map[string]string{"plain": "~/.ssh/id_ed25519", "bracket": "~/.ssh/[work]/id_ed25519", "skin tone": "~/.ssh/" + thumbsUp + "/id_ed25519"}
+	v := record("blog", "7c1e55d0a913")
+	for _, w := range []int{100, 60} {
+		for _, k := range []string{"plain", "bracket", "skin tone"} {
+			name := strconv.Itoa(w) + "/" + k
+			h := start(t, w, 30, nil)
+			h.on(func() { h.s.Key.Source, h.s.Key.Shown = "--key", keys[k] })
+			h.open(v)
+			h.press("y")
+			rows := overlayCells(h)
+			text := joinRows(rows, " ")
+			cut := false
+			for _, r := range rows {
+				cut = cut || strings.HasPrefix(r.text, "  motel ") && strings.HasSuffix(r.text, "…")
+			}
+			if want := w == 60 || k == "skin tone"; cut != want {
+				t.Fatalf("%s: the command cut: %v, want %v\n%s", name, cut, want, joinRows(rows, "\n"))
+			}
+			other := k != "plain"
+			for _, c := range []struct {
+				says string
+				want int
+			}{
+				{cutSays, map[bool]int{true: 1}[cut]},
+				{asRuns, map[bool]int{true: 1}[other]},
+				{prints, map[bool]int{true: 1}[cut || other]},
+				{"do not copy it", map[bool]int{true: 1}[cut] + map[bool]int{true: 1}[other]},
+			} {
+				if n := strings.Count(text, c.says); n != c.want {
+					t.Errorf("%s: the header says %q %d times, want %d\n%s", name, c.says, n, c.want, joinRows(rows, "\n"))
+				}
+			}
+			var want string
+			h.on(func() { want, _ = h.s.Command(v) })
+			h.press("c")
+			h.quit('P')
+			if h.u.Print != want+"\n" {
+				t.Errorf("%s: c then P with y open prints %q, want %q", name, h.u.Print, want+"\n")
+			}
+		}
+	}
+}

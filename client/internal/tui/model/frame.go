@@ -239,8 +239,17 @@ func (s *Session) Overlay(v View, json bool, width int, cells Cells, asIs AsIs) 
 		}
 		cmd := command("  " + c)
 		rows := []oRow{words("the box's answer to"), cmd}
+		var w []string
 		if !cmd.fits(width, cells) {
-			rows = append(rows, warn("the line above is cut at the window's edge, marked …: do not copy it. c then P prints it whole."))
+			w = append(w, "the line above is cut at the window's edge, marked …: do not copy it.")
+		}
+		if !drawnAsIs(c, asIs) {
+			w = append(w, "the line above is not drawn as it runs (an unseen space after a [, or a character written as an escape): do not copy it.")
+		}
+		if len(w) > 0 {
+			// c works with this overlay open, and P there prints the
+			// command (Printable).
+			rows = append(rows, warn(strings.Join(append(w, "c then P prints it whole."), " ")))
 		}
 		rows = append(rows, words(head),
 			words("lines over "+strconv.Itoa(TailMax)+" characters, and answers over "+strconv.Itoa(OverlayLines)+" lines, are cut for display"),
