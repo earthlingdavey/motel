@@ -571,11 +571,11 @@ func (s *Session) freshness(now time.Time) Line {
 func (s *Session) MeView(now time.Time) []Line { return s.MeViewFit(now, 0, nil) }
 
 // MeViewFit is who am I with a failure's sentence laid on rows of width
-// cells (sentence); 0 leaves it one line.
+// cells (Sentence); 0 leaves it one line.
 func (s *Session) MeViewFit(now time.Time, width int, cells Cells) []Line {
 	switch {
 	case s.Me == nil && s.MeErr != nil:
-		return sentence(Line{own("who you are is not known: "), Seg{T: Capped(failureText(s.MeErr), 4*LineMax)}}, width, cells)
+		return Sentence(Line{own("who you are is not known: "), Seg{T: Capped(failureText(s.MeErr), 4*LineMax)}}, width, cells)
 	case s.Me == nil:
 		return []Line{{own("asking " + s.Host + " who your key is…")}}
 	}
@@ -633,7 +633,7 @@ func (s *Session) MeViewFit(now time.Time, width int, cells Cells) []Line {
 		Line{own("What the box knows of you is in its Caddyfile (person and grant lines), which the")},
 		Line{own("operator keeps. `motel key` prints the line to send them.")})
 	if s.MeErr != nil {
-		out = append(append(out, nil), sentence(Line{ownC("the last read failed: ", Warn), Seg{T: Capped(failureText(s.MeErr), 2*LineMax)}}, width, cells)...)
+		out = append(append(out, nil), Sentence(Line{ownC("the last read failed: ", Warn), Seg{T: Capped(failureText(s.MeErr), 2*LineMax)}}, width, cells)...)
 	}
 	return out
 }
@@ -679,11 +679,11 @@ func (s *Session) BoxAsOf(now time.Time) Line {
 func (s *Session) BoxView(now time.Time) []Line { return s.BoxViewFit(now, 0, nil) }
 
 // BoxViewFit is the box screen with a failure's sentence laid on rows
-// of width cells (sentence); 0 leaves it one line.
+// of width cells (Sentence); 0 leaves it one line.
 func (s *Session) BoxViewFit(now time.Time, width int, cells Cells) []Line {
 	switch {
 	case s.BoxSt == nil && s.BoxErr != nil:
-		return sentence(Line{{T: Capped(failureText(s.BoxErr), 4*LineMax)}}, width, cells)
+		return Sentence(Line{{T: Capped(failureText(s.BoxErr), 4*LineMax)}}, width, cells)
 	case s.BoxSt == nil:
 		return []Line{{own("asking " + s.Host + " what it runs…")}}
 	}
@@ -700,12 +700,12 @@ func (s *Session) BoxViewFit(now time.Time, width int, cells Cells) []Line {
 		Line{own("the last push's log (journalctl -u motel-box-apply), systemctl --failed,")},
 		Line{own("host load (btop).")})
 	if s.BoxErr != nil {
-		out = append(append(out, nil), sentence(Line{ownC("the last read failed: ", Warn), Seg{T: Capped(failureText(s.BoxErr), 2*LineMax)}}, width, cells)...)
+		out = append(append(out, nil), Sentence(Line{ownC("the last read failed: ", Warn), Seg{T: Capped(failureText(s.BoxErr), 2*LineMax)}}, width, cells)...)
 	}
 	return out
 }
 
-// sentence is a sentence of the client's (a failure's, which may quote
+// Sentence is a sentence of the client's (a failure's, which may quote
 // the box) laid on rows of at most width cells, broken at spaces as lay
 // breaks the overlays' words, and a word wider than a row broken where
 // the row ends; a line that fits, or a width of 0, is the line as it
@@ -713,7 +713,7 @@ func (s *Session) BoxViewFit(now time.Time, width int, cells Cells) []Line {
 // goes on inside a quotation then never begins where a line of the
 // screen's own does, so it reads as the sentence's, and the quotation
 // as one.
-func sentence(l Line, width int, cells Cells) []Line {
+func Sentence(l Line, width int, cells Cells) []Line {
 	if width <= 0 || l.Width(cells) <= width {
 		return []Line{l}
 	}

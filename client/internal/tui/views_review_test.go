@@ -142,8 +142,8 @@ func TestTitleWordsAt60(t *testing.T) {
 	}
 }
 
-// TestFailureSentenceWrapped: on who am I and the box screen a
-// failure's sentence, the client's real ones, one quoting the box, is
+// TestFailureSentenceWrapped: on who am I, the box screen and an app's
+// screen a failure's sentence, the client's real ones, one quoting the box, is
 // on screen whole at 60 and 80 columns, laid on rows at spaces, every
 // row after its first indented, none past the window; labelled lines
 // stay one row each. Read from the screen's cells.
@@ -161,6 +161,7 @@ func TestFailureSentenceWrapped(t *testing.T) {
 			{"the box, read before", "the last read failed: ", busy, model.ScreenBox, "box", true},
 			{"who am I, no answer yet", "who you are is not known: ", busy, model.ScreenMe, "whoami", false},
 			{"who am I, read before", "the last read failed: ", timeout, model.ScreenMe, "whoami", true},
+			{"an app, read before", "the last read failed: ", busy, model.ScreenApp, "blog", true},
 		} {
 			kind := model.FailThis
 			if c.why == timeout {
@@ -172,7 +173,7 @@ func TestFailureSentenceWrapped(t *testing.T) {
 					f.Set(c.key, fail)
 				}
 			})
-			h.open(model.View{Screen: c.screen})
+			h.open(model.View{Screen: c.screen, App: map[bool]string{true: "blog"}[c.screen == model.ScreenApp]})
 			if c.held {
 				h.fake.Set(c.key, fail)
 				h.now = h.now.Add(model.MeAlways)
@@ -210,6 +211,9 @@ func TestFailureSentenceWrapped(t *testing.T) {
 			}
 			if c.screen == model.ScreenBox && c.held && !strings.HasPrefix(rows[0].text, "runs commit ") || c.screen == model.ScreenMe && c.held && !strings.HasPrefix(rows[0].text, "you are     ") {
 				t.Errorf("%s: the labelled lines moved: %q", name, rows[0].text)
+			}
+			if after := rows[min(at+len(parts), len(rows)-1)].text; c.screen == model.ScreenApp && !strings.HasPrefix(after, "state       running · stale ") && !strings.HasPrefix(after, "state       unknown") {
+				t.Errorf("%s: the app's fields do not follow the sentence: %q", name, after)
 			}
 		}
 	}

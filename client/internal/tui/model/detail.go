@@ -34,7 +34,11 @@ type DeployRow struct {
 // OverviewView is an app's screen: its state, and its deploys.
 type OverviewView struct {
 	// AsOf is the crumb's right side: how old the status is.
-	AsOf   Line
+	AsOf Line
+	// Failed says why the last read failed, beside the status read
+	// before it; nil while it reads. The screen lays it on rows
+	// (Sentence).
+	Failed Line
 	Fields []Line
 	// Note is said in place of the fields: no answer yet, a refusal,
 	// no version yet.
@@ -67,6 +71,7 @@ func (s *Session) Overview(app string, now time.Time) OverviewView {
 	v.AsOf = s.asOf(a.st.At, now)
 	if a.err != nil {
 		v.AsOf = append(v.AsOf, ownC(" · the last read failed", Warn))
+		v.Failed = Line{ownC("the last read failed: ", Warn), Seg{T: Capped(failureText(a.err), 2*LineMax)}}
 	}
 	// The deploys first: an app whose first deploy failed has no
 	// version, and its failed deploys are what there is to show.

@@ -274,6 +274,9 @@ func (u *UI) renderApp(v model.View, now time.Time) {
 	if view.Note != nil {
 		fs = view.Note
 	}
+	if view.Failed != nil {
+		fs = append(model.Sentence(view.Failed, u.w, door.Width), fs...)
+	}
 	fs = u.withStop(fs)
 	for i := range fs {
 		fs[i] = fs[i].Cut(u.w, door.Width)
