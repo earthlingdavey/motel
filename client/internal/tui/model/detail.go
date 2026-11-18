@@ -188,7 +188,9 @@ func (s *Session) metricLines(st wire.Status) []Line {
 				l = append(l, own(" (not enforced)"))
 			}
 			if mem.Now != nil {
-				f := min(*mem.Now/cap, 1)
+				// A share outside 0 to 1 (moteld sends none below 0) is
+				// drawn at its end of the bar.
+				f := min(max(*mem.Now/cap, 0), 1)
 				n := int(f*20 + 0.5)
 				l = append(l, own("  "+strings.Repeat("█", n)+strings.Repeat("░", 20-n)+" "+pct(*mem.Now/cap)+" of cap"))
 			}

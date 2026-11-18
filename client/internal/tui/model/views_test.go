@@ -1,6 +1,7 @@
 package model_test
 
 import (
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -34,5 +35,31 @@ func TestStaleRunningIsRunning(t *testing.T) {
 	}
 	if got := s.AppsView(now, "", 0).AllWell.Text(); !strings.HasPrefix(got, "all 2 apps running") {
 		t.Errorf("a stale running row is counted as not running: %q", got)
+	}
+}
+
+// TestNegativeMemory: a memory reading below zero draws an empty bar,
+// and does not end the TUI.
+func TestNegativeMemory(t *testing.T) {
+	now := t0
+	f := &demo.Fake{Now: func() time.Time { return now }}
+	b, err := os.ReadFile("../demo/fixtures/status/docs.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.Body("apps.json", `{"apps": [{"name": "docs"}]}`)
+	f.Body("status/docs.json", strings.Replace(string(b), `"now": 63963136`, `"now": -63963136`, 1))
+	s := &model.Session{Host: demo.Host, Now: f.Now, Engine: model.NewEngine(t0)}
+	for range 3 {
+		step(t, s, f, &now)
+	}
+	var mem string
+	for _, l := range s.Overview("docs", now).Fields {
+		if strings.HasPrefix(l.Text(), "memory") {
+			mem = l.Text()
+		}
+	}
+	if !strings.Contains(mem, strings.Repeat("░", 20)) {
+		t.Errorf("the memory line is %q", mem)
 	}
 }
