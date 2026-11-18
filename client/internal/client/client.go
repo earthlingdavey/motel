@@ -90,9 +90,7 @@ type PersonToken struct {
 
 // Forget drops the token last signed, so the next request signs
 // afresh: the TUI's r after a refusal, which a token refused for its
-// times would otherwise meet again until it expired; and the TUI's
-// clock set back by more than 30 s, after which Now gives the token
-// that much more life than it has.
+// times would otherwise meet again until it expired.
 func (p *PersonToken) Forget() { p.forget.Store(true) }
 
 // minLeft is the life a token must have left to be sent again.

@@ -91,13 +91,6 @@ const (
 // keeps no box value; the Session does. Its methods may be called from
 // any goroutine.
 type Engine struct {
-	// Resign, when set, drops the token last signed, so the next read
-	// signs afresh (r's way): called at a step of the clock back past
-	// WakeAfter (seen), under the lock, before any read is taken at the
-	// new time. Set before the engine is used; nil (--demo, a test's
-	// fake: no signer) drops nothing.
-	Resign func()
-
 	mu     sync.Mutex
 	rate   float64
 	tokens float64
@@ -826,12 +819,7 @@ func (e *Engine) Tick(now time.Time) bool {
 // step. Run is woken, since the wait it sleeps on was given before the
 // step. A step back past WakeAfter is a wake too (it says whether it
 // was one): the clock may have been set back while the machine slept,
-// and how old each row is is then not known. It also drops the token
-// last signed (Resign): after the step the client's clock gives the
-// token the step's length more life than it has, and the box may stop
-// taking it before the client stops sending it. A step of WakeAfter or
-// less is within the box's skew, and asks a hardware key for no touch.
-// A wake forward drops nothing: the client's clock expires it then.
+// and how old each row is is then not known.
 func (e *Engine) seen(now time.Time) bool {
 	if !now.Before(e.latest) {
 		e.latest = now
@@ -842,9 +830,6 @@ func (e *Engine) seen(now time.Time) bool {
 	e.latest = now
 	e.poke()
 	if -d > WakeAfter {
-		if e.Resign != nil {
-			e.Resign()
-		}
 		e.wakeLocked(now)
 		return true
 	}
