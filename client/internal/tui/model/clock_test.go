@@ -130,7 +130,8 @@ func TestClockStepsBack(t *testing.T) {
 
 // TestClockStepsBackAges: after the wall clock is set back, by a little
 // or an hour, no age on screen is less than it was: the record's, the
-// open app's, who am I's, a row held by a 403.
+// open app's, who am I's, a row held by a 403, the box's, and the
+// list's beside its last read's failure.
 func TestClockStepsBackAges(t *testing.T) {
 	for _, back := range []time.Duration{20 * time.Second, time.Hour} {
 		t.Run(back.String(), func(t *testing.T) {
@@ -139,8 +140,13 @@ func TestClockStepsBackAges(t *testing.T) {
 			s := &model.Session{Host: demo.Host, Now: f.Now, Engine: model.NewEngine(t0)}
 			e := s.Engine
 			f.Set("shop", fail(model.FailForbidden))
+			e.BoxOpen(true, now)
 			for range 20 {
 				step(t, s, f, &now)
+			}
+			f.Set("apps", fail(model.FailThis))
+			e.Again(now, model.Job{Kind: model.KApps})
+			for step(t, s, f, &now) != (model.Job{Kind: model.KApps}) {
 			}
 			rec := model.Job{Kind: model.KDeploy, App: "blog", Version: "e9a0b3f2c118"}
 			e.Focus("blog", now)
@@ -158,9 +164,16 @@ func TestClockStepsBackAges(t *testing.T) {
 					age(s.Overview("blog", now).AsOf),
 					age(s.MeAsOf(now)),
 					row(s, now, "shop").Cells[model.ColAge].String(),
+					age(s.BoxAsOf(now)),
+					listAge(s.AppsView(now, "", 0, 0).ListFailed),
 				}
 			}
 			before := ages()
+			for i, a := range before {
+				if a == "" {
+					t.Fatalf("age %d is not on screen before the step: %q", i, before)
+				}
+			}
 			now = now.Add(-back)
 			e.Tick(now)
 			after := ages()
@@ -171,6 +184,15 @@ func TestClockStepsBackAges(t *testing.T) {
 			}
 		})
 	}
+}
+
+// listAge is the age in the line the apps screen puts above the strip
+// when the list's last read failed: "list as of 14:00:00 UTC, 10m ago ·
+// the last read failed: …".
+func listAge(l model.Line) string {
+	_, rest, _ := strings.Cut(l.Text(), " UTC, ")
+	a, _, _ := strings.Cut(rest, " · ")
+	return a
 }
 
 // TestClockStepsBackOnce: a time the engine records after the step and
