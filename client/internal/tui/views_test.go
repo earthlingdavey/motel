@@ -199,6 +199,65 @@ func TestHiddenVersionNoCommand(t *testing.T) {
 	}
 }
 
+// TestHiddenVersionSentenceFits: on the record of a deploy whose
+// version the box's filter hid, at 60 and 80 columns, c and y show the
+// sentence that no command can ask for it whole, laid on as many rows
+// as it takes inside the overlay (wrapped, never cut), with no motel
+// line and no P in the footer; P prints nothing.
+func TestHiddenVersionSentenceFits(t *testing.T) {
+	const hidden = "[hidden by the box's filter]"
+	const says = "the box's filter hid this deploy's version: no motel command can ask for its record"
+	raw, err := os.ReadFile("demo/fixtures/status/shop.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, w := range []int{60, 80} {
+		h := start(t, w, 24, func(f *demo.Fake) {
+			f.Body("status/shop.json", strings.Replace(string(raw), `"version": "e9a0b3f2c118"`, `"version": "`+hidden+`"`, 1))
+		})
+		h.press(":", "status shop", tcell.KeyEnter)
+		selected := func() string {
+			var v string
+			h.on(func() {
+				if r, _ := h.u.deploys.GetSelection(); r >= 1 && r-1 < len(h.u.deployRows) {
+					v = h.u.deployRows[r-1].Version
+				}
+			})
+			return v
+		}
+		for i := 0; selected() != hidden && i < 10; i++ {
+			h.press(tcell.KeyDown)
+		}
+		h.press(tcell.KeyEnter)
+		var top model.View
+		h.on(func() { top = h.u.top() })
+		if top != record("shop", hidden) {
+			t.Fatalf("%d columns: enter opened %+v", w, top)
+		}
+		for _, key := range []string{"c", "y"} {
+			h.press(key)
+			s := h.screen()
+			var inside []string
+			for _, l := range strings.Split(s, "\n") {
+				if a, b := strings.Index(l, "║"), strings.LastIndex(l, "║"); a >= 0 && b > a {
+					inside = append(inside, strings.Fields(l[a+len("║"):b])...)
+				}
+			}
+			if got := strings.Join(inside, " "); got != says {
+				t.Errorf("%d columns, %s: the overlay says %q, not the sentence whole:\n%s", w, key, got, s)
+			}
+			if strings.Contains(s, "motel deploys") || strings.Contains(s, "P quit") {
+				t.Errorf("%d columns, %s: a command is offered:\n%s", w, key, s)
+			}
+			h.press("P")
+			if h.u.Print != "" || h.u.Shown != "" {
+				t.Errorf("%d columns, %s: P prints %q (%q)", w, key, h.u.Print, h.u.Shown)
+			}
+			h.press(tcell.KeyEscape)
+		}
+	}
+}
+
 // TestLongNamesAlike: two names the cut would show alike are shown so
 // that they differ, on a 60- and an 80-column screen, each row with its
 // STATE.
