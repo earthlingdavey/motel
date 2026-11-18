@@ -4,7 +4,7 @@
 # moteld.service as the motel user, the packaged applier units. The
 # box's file declares people with keys made here by ssh-keygen; it is
 # installed by `moteld init` and changed by a signed push sent with the
-# box template's bin/apply, the path a box takes. Then motelctl, the
+# box template's bin/apply, the path a box takes. Then motel, the
 # laptop's client, built from this tree, reads the box as a laptop
 # does: another process, over the box's own TLS on 443 (Caddy's
 # internal CA, its root given as SSL_CERT_FILE), the box's name
@@ -67,8 +67,8 @@ wait_for_token # $TOKEN: the e2e deploy token, audience e2e
 # 127.0.0.0/8, the client's own address, so that fran's refusal is the
 # list's; stranger's key no line lists. Every person's key is Ed25519,
 # the one kind a box takes for now; eve's is ECDSA, which no box takes
-# yet, so her line is refused (people 0) and motelctl will not sign
-# with it (people 1).
+# yet, so her line is refused (people 0) and the client will not
+# sign with it (people 1).
 for k in alice vera otto fran nora lena stranger; do ssh-keygen -q -t ed25519 -N '' -C "$k" -f "$work/$k"; done
 ssh-keygen -q -t ecdsa -b 256 -N '' -C eve -f "$work/eve"
 key() { cut -d' ' -f1,2 "$work/$1.pub"; }
@@ -182,16 +182,16 @@ motel_headers() { grep -i '^motel-' "$work/$1.h" | tr -d '\n' | tr 'A-Z' 'a-z'; 
 # release, which only whoami's body names.
 no_release() { ! grep -qF "$RELEASE" "$work/$1.h"; }
 
-# mc <motelctl args...>: motelctl as a laptop runs it, with the box's
+# client <motel args...>: motel as a laptop runs it, with the box's
 # private root as SSL_CERT_FILE and nothing else of the environment's
 # motel variables. Exit status in $RC, stdout in $work/out, stderr in
 # $work/err.
-mc() {
+client() {
 	env -u MOTEL_TOKEN -u MOTEL_URL -u MOTEL_KEY -u MOTEL_BOX SSL_CERT_FILE="$work/root.crt" \
-		motelctl "$@" >"$work/out" 2>"$work/err"
+		motel "$@" >"$work/out" 2>"$work/err"
 	RC=$?
 }
-# expect <label> <exit>: the last mc exited <exit>.
+# expect <label> <exit>: the last client run exited <exit>.
 expect() {
 	if [ "$RC" = "$2" ]; then
 		pass "$1: exit $2"
@@ -267,7 +267,7 @@ case "$(curl -s --max-time 5 http://localhost:8080/)" in
 *) fail "demo serves: $(curl -s --max-time 5 http://localhost:8080/ | head -c 200)" ;;
 esac
 
-echo "=== people 1: motelctl for each of them ==="
+echo "=== people 1: the client for each of them ==="
 # matrix <who> <8 exits>: whoami, apps, status demo, status
 # node-example, deploys demo, deploys node-example, deploys demo <DV>,
 # box status. Each command's output is kept as $work/<who>.<n>.out/.err.
@@ -277,8 +277,8 @@ matrix() {
 	n=0
 	for cmd in whoami apps "status demo" "status node-example" "deploys demo" "deploys node-example" "deploys demo $DV" "box status"; do
 		# shellcheck disable=SC2086 # the command's words
-		mc $cmd --box "$HOST" --key "$work/$who"
-		expect "$who: motelctl $cmd" "$1"
+		client $cmd --box "$HOST" --key "$work/$who"
+		expect "$who: motel $cmd" "$1"
 		cp "$work/out" "$work/$who.$n.out"
 		cp "$work/err" "$work/$who.$n.err"
 		n=$((n + 1))
@@ -288,7 +288,7 @@ matrix() {
 t_matrix=$(date +%s)
 matrix vera 0 0 0 0 0 0 0 0
 has "vera: whoami names her" "$work/vera.0.out" "name     vera@e2e.test"
-has "vera: whoami names the box and its release" "$work/vera.0.out" "box      $HOST, motel $RELEASE, protocol 1"
+has "vera: whoami names the box and its release" "$work/vera.0.out" "box      $HOST, moteld $RELEASE, protocol 1"
 has "vera: whoami shows the key that signed" "$work/vera.0.out" "$(fp vera)"
 has "vera: whoami gives the box's viewer role" "$work/vera.0.out" "roles    viewer of the box"
 [ "$(sort "$work/vera.1.out" | tr '\n' ' ')" = "demo deno-example node-example " ] \
@@ -303,7 +303,7 @@ matrix otto 0 0 0 5 0 5 0 5
 has "otto: whoami gives demo's viewer role alone" "$work/otto.0.out" "roles    viewer of app demo"
 [ "$(cat "$work/otto.1.out")" = demo ] && pass "otto: apps lists demo alone" || fail "otto: apps: $(cat "$work/otto.1.out")"
 has "otto: status demo names the version deployed" "$work/otto.2.out" "$DV"
-mc status no-such-app --box "$HOST" --key "$work/otto"
+client status no-such-app --box "$HOST" --key "$work/otto"
 expect "otto: an app that does not exist is the same 403" 5
 sed "s/no-such-app/node-example/g" "$work/err" >"$work/otto.none.err"
 cmp -s "$work/otto.none.err" "$work/otto.3.err" \
@@ -332,35 +332,35 @@ done
 [ -z "$differ" ] && pass "fran, outside her from list, is told what the unlisted key is told: $(head -c 200 "$work/fran.unkeyed")" \
 	|| fail "fran and stranger are told different things:$differ"
 
-mc whoami --box "$HOST" --key "$work/lena"
+client whoami --box "$HOST" --key "$work/lena"
 expect "lena, inside her from list: whoami" 0
 has "lena: whoami gives demo's viewer role from here" "$work/out" "roles    viewer of app demo"
 
-# eve's ECDSA key: motelctl refuses it before it signs or sends, and
-# `motelctl key` prints no person line the box would refuse.
+# eve's ECDSA key: the client refuses it before it signs or sends, and
+# `motel key` prints no person line the box would refuse.
 for cmd in "whoami --box $HOST" key; do
 	# shellcheck disable=SC2086 # the command's words
-	mc $cmd --key "$work/eve.pub"
-	expect "eve's ECDSA key: motelctl ${cmd%% *} refuses it" 2
-	has "eve: motelctl ${cmd%% *} says why, and the remedy" "$work/err" "is an ecdsa-sha2-nistp256 key. A box takes Ed25519 keys for now, not ECDSA yet: make one with ssh-keygen -t ed25519"
-	[ ! -s "$work/out" ] && pass "eve: motelctl ${cmd%% *} prints nothing on stdout" || fail "eve: motelctl ${cmd%% *} printed: $(head -c 300 "$work/out")"
+	client $cmd --key "$work/eve.pub"
+	expect "eve's ECDSA key: motel ${cmd%% *} refuses it" 2
+	has "eve: motel ${cmd%% *} says why, and the remedy" "$work/err" "is an ecdsa-sha2-nistp256 key. A box takes Ed25519 keys for now, not ECDSA yet: make one with ssh-keygen -t ed25519"
+	[ ! -s "$work/out" ] && pass "eve: motel ${cmd%% *} prints nothing on stdout" || fail "eve: motel ${cmd%% *} printed: $(head -c 300 "$work/out")"
 done
 
 echo "=== people 2: --json is the box's answer ==="
-mc whoami --json --box "$HOST" --key "$work/vera"
+client whoami --json --box "$HOST" --key "$work/vera"
 expect "vera: whoami --json" 0
 [ "$(jget "$work/out" 'j.name + " " + j.box + " " + j.key + " " + j.version + " " + j.protocol + " " + j.roles.map(r => r.role + ":" + r.scope).join(",")')" = "vera@e2e.test $HOST $(fp vera) $RELEASE 1 viewer:box" ] \
 	&& pass "vera: whoami --json parses and holds her name, the box, her key, the release and her role" \
 	|| fail "vera: whoami --json: $(jget "$work/out" 'JSON.stringify(j)')"
-mc apps --json --box "$HOST" --key "$work/otto"
+client apps --json --box "$HOST" --key "$work/otto"
 expect "otto: apps --json" 0
 [ "$(app_names "$work/out")" = demo ] && pass "otto: apps --json parses and holds demo alone" \
 	|| fail "otto: apps --json: $(cat "$work/out")"
-mc apps --json --box "$HOST" --key "$work/nora"
+client apps --json --box "$HOST" --key "$work/nora"
 expect "nora: apps --json" 0
 [ "$(app_names "$work/out")" = "" ] && jget "$work/out" 'Array.isArray(j.apps)' | grep -qx true && pass "nora: apps --json parses and holds an empty list" \
 	|| fail "nora: apps --json: $(cat "$work/out")"
-mc whoami --json --box "$HOST" --key "$work/nora"
+client whoami --json --box "$HOST" --key "$work/nora"
 [ "$(jget "$work/out" 'j.name + " " + JSON.stringify(j.roles)')" = "nora@e2e.test []" ] && pass "nora: whoami --json holds her name and no role" \
 	|| fail "nora: whoami --json: $(cat "$work/out")"
 
@@ -416,13 +416,13 @@ get st -X POST -H "Authorization: Motel $P_VERA" -d "{\"url\":\"$ART/demo-v1.tar
 [ "$CODE" = 401 ] && same "a person's token on a POST is the flat 401" d_demo st || fail "vera's POST: $CODE $(cat "$work/st.b")"
 
 echo "=== people 5: HTTP/2, and the box's name in Host ==="
-journalctl -u moteld --since "@$t_matrix" --no-pager -o cat | grep '"logger":"http.log.access' | grep -F '"uri":"/_motel/whoami"' | grep -F motelctl >"$work/access"
+journalctl -u moteld --since "@$t_matrix" --no-pager -o cat | grep '"logger":"http.log.access' | grep -F '"uri":"/_motel/whoami"' | grep -F '"User-Agent":["motel/' >"$work/access"
 # The request's proto, beside client_ip (the TLS block has one too).
 grep -o '"client_ip":"[^"]*","proto":"[^"]*"' "$work/access" | sed 's/.*"proto":"\([^"]*\)"/\1/' >"$work/protos"
 protos=$(sort "$work/protos" | uniq -c | tr -s ' ' | tr '\n' ' ')
 [ -s "$work/protos" ] && [ "$(wc -l <"$work/protos")" = "$(wc -l <"$work/access")" ] && ! grep -qvx 'HTTP/2.0' "$work/protos" \
-	&& pass "motelctl spoke HTTP/2 to the box: the access log's whoami lines say $protos" \
-	|| fail "motelctl's protocol in the access log: '$protos' ($(head -c 300 "$work/access"))"
+	&& pass "the client spoke HTTP/2 to the box: the access log's whoami lines say $protos" \
+	|| fail "the client's protocol in the access log: '$protos' ($(head -c 300 "$work/access"))"
 get h2 --http2 -H "Authorization: Motel $P_VERA" "$BASE/_motel/whoami"
 [ "$CODE" = 200 ] && [ "$PROTO" = 2 ] && pass "curl --http2 is answered over HTTP/2" || fail "curl --http2: $CODE over $PROTO"
 get h2up --http2 -H "Authorization: Motel $P_VERA" -H "Host: PEOPLE.E2E.TEST:443" "$BASE/_motel/whoami"
@@ -456,7 +456,7 @@ else
 	fail "bin/apply: $(cat "$work/tout")"
 fi
 cmp -s "$LIVE" "$work/f1" && pass "the installed file is the pushed one" || fail "the installed file is not the pushed one"
-mc whoami --box "$HOST" --key "$work/otto"
+client whoami --box "$HOST" --key "$work/otto"
 expect "otto, removed: whoami" 4
 unkeyed otto "$work/err"
 unkeyed stranger "$work/stranger.0.err"
@@ -464,7 +464,7 @@ cmp -s "$work/otto.unkeyed" "$work/stranger.unkeyed" && pass "otto is told what 
 	|| fail "otto removed: $(diff "$work/otto.unkeyed" "$work/stranger.unkeyed" | head -c 400)"
 get rm -H "Authorization: Motel $(ptok otto)" "$BASE/demo"
 same "otto's next request is the flat 401" d_demo rm
-mc status demo --box "$HOST" --key "$work/vera"
+client status demo --box "$HOST" --key "$work/vera"
 expect "vera, still declared, after the push" 0
 
 echo "=== people 7: the first second after a restart ==="

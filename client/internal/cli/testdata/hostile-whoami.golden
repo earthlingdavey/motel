@@ -1,0 +1,5 @@
+name     alice@example.com
+box      127.0.0.1, moteld v0.7.0, protocol 1
+key      <me.pub's fingerprint> (~/me.pub, MOTEL_KEY)
+roles    viewer of the box, viewer of app blog, "auditor" of app shop-2
+token    expires 2026-11-15 10:04:30 UTC (in 4m30s)

@@ -21,12 +21,12 @@ FROM denoland/deno:bin-2.9.8 AS deno
 # The mount is writable because go may write go.work.sum; what it writes
 # is dropped with the step. The cache ids are motel's, shared by its
 # worktrees and no other build. A builder pruned, or CI's, starts cold.
-# motel links a release as `make build` links one (Caddy's
+# moteld links a release as `make build` links one (Caddy's
 # CustomVersion), so whoami names one as a shipped box does; the people
 # suite (e2e/box/people.sh) reads it there, and holds each answer's
 # headers it checks, accepted or refused, to naming none.
-# motelctl is the laptop client that suite runs on the box, as a
-# laptop would, over the box's own TLS.
+# client/ builds motel, the laptop client that suite runs on the box,
+# as a laptop would, over the box's own TLS.
 FROM golang:1.27-trixie AS builder
 WORKDIR /src
 RUN --mount=type=bind,target=/src,rw \
@@ -35,7 +35,7 @@ RUN --mount=type=bind,target=/src,rw \
 	CGO_ENABLED=0 GOFLAGS=-buildvcs=false go build -trimpath \
 		-ldflags "-X github.com/caddyserver/caddy/v2.CustomVersion=v0.0.0-e2e" -o /moteld ./cmd/moteld \
 	&& cd backups && CGO_ENABLED=0 GOFLAGS=-buildvcs=false go build -trimpath -o /motel-backup ./cmd/motel-backup \
-	&& cd ../motelctl && CGO_ENABLED=0 GOFLAGS=-buildvcs=false go build -trimpath -o /motelctl .
+	&& cd ../client && CGO_ENABLED=0 GOFLAGS=-buildvcs=false go build -trimpath -o /motel ./cmd/motel
 
 # notify's tests that run vmalert and vmalert-tool over the rendered
 # rules, compiled for the metrics box, which has both (Debian's
@@ -81,7 +81,7 @@ COPY --from=builder /moteld /usr/bin/moteld
 # from the Caddyfile being pushed; nothing here runs a backup.
 COPY --from=builder /motel-backup /usr/bin/motel-backup
 # Not the package's: the laptop's client, for the people suite.
-COPY --from=builder /motelctl /usr/local/bin/motelctl
+COPY --from=builder /motel /usr/local/bin/motel
 COPY --from=deno /deno /usr/local/bin/deno
 # The example pins the Deno its workflow builds with in .deno-version;
 # the FROM above is Dependabot's to bump. Refuse to build when the two

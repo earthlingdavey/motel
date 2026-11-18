@@ -311,8 +311,8 @@ shows it only to a declared person who asks. whoami's `protocol` is
 the number of the token forms the box takes, and moves only with them
 (1: this form). The costs, both said by the client: a box too old for
 people and a key the box does not list both look like the flat 401;
-and nothing tells motel's own 5xx from a gateway's, so motelctl says
-every 5xx as not known to be motel's (motelctl/README.md).
+and nothing tells moteld's own 5xx from a gateway's, so the client
+says every 5xx as not known to be moteld's (client/README.md).
 
 ## Safeguards
 
@@ -350,7 +350,7 @@ operator runs, `trusted_proxies` naming it and `trusted_proxies_strict`
 make the list work: Caddy then takes the right-most address in
 `X-Forwarded-For` outside the ranges, which the operator's proxy
 appended. Without `trusted_proxies_strict` it takes the left-most,
-which the client writes, so a client could name any address: `motel
+which the client writes, so a client could name any address:
 motel's gate refuses a grant's `from` list on a box with a server that
 trusts proxies (`trusted_proxies`, or `trusted_proxies_unix`) without
 it, and the serving process matches no list for a request such a proxy
@@ -449,7 +449,7 @@ access's examples:
 | A legitimate burst over 60 requests is told to wait | 2 | 3 | 1 | — | `Retry-After` names the wait |
 | The rate table holds more than its 2,048 names while more than that have each asked in the last 30 s: only buckets that have refilled are dropped | 1 | 5 | 5 | 2, 2 | a load declares at most 1,024 people and only a verified token of a declared name adds a bucket, so it takes loads that replace every person in use, twice in 30 s; dropping a bucket in use would refill a throttled person. A bucket can be dropped once 30 s have passed since its name last asked |
 | A person whose only key is ECDSA (for example from an agent that makes only P-256 keys) cannot be declared until a later release admits that type | 2 | 2 | 1 | — | the owner's decision of 2026-11-15: a stranger presenting a listed public key buys one check of its type, 0.04 ms for Ed25519 against 0.5 to 1.3 ms for the larger ECDSA curves, and widening later breaks no one where narrowing would; the line's refusal names the remedy |
-| A token sent by hand over plain HTTP, to a site the operator serves in clear under the box's name, is answered like any other; no webhook checks that a request came over TLS | 3 | 1 | 3 | 2, 2 | the owner's decision: a hand-made plain-HTTP request is not catered for. `motelctl` speaks https only and follows no redirect; `deploy.sh` refuses an `http://` address unless `MOTEL_ALLOW_HTTP=1`, for a test box; the template's deploy host is served over https |
+| A token sent by hand over plain HTTP, to a site the operator serves in clear under the box's name, is answered like any other; no webhook checks that a request came over TLS | 3 | 1 | 3 | 2, 2 | the owner's decision: a hand-made plain-HTTP request is not catered for. The client, `motel`, speaks https only and follows no redirect; `deploy.sh` refuses an `http://` address unless `MOTEL_ALLOW_HTTP=1`, for a test box; the template's deploy host is served over https |
 | On a box with some 200 apps, a person at the rate can spend several percent of a core on `GET /_motel/apps` (6% measured, row 20); a short-lived cache of each app's filtered row would cut it | 1 | 5 | 3 | 3, 2 | the answers are right and nothing else waits on them: a cost, bounded by the rate per person. A cache is a new state to keep in step with deploys and the filter's known values; not built until a box that size exists (the owner's decision of 2026-11-16) |
 | A list row's `newest_deploy` can name the deploy before the newest for one read, when a record is rewritten between the row's stat of the records and its read (a deploy or a rollback under way) | 1 | 5 | 3 | 2, 2 | the row is a moment's reading, as two requests a moment apart are; a record is replaced whole, so what is read is one record, never a mix, and the next read (a client polls) orders it rightly. Ordering by the time read from the open file means opening every record, which `newestDeploySummary` exists not to do (row 20) |
 | Between a push taking the deploy lock and being shown in flight (`beginDeploy`, after the app's dirs pass `writeRefusal`, a few file checks), a status read shows no deploy in flight while a second deploy is already told 409 | 1 | 5 | 3 | 1, 2 | it lasts microseconds and misleads nobody for longer: the next read shows the push. Showing it before `writeRefusal` would need that refusal's answer to clear it first, one more way out to keep in step for no reader's benefit |

@@ -20,15 +20,15 @@ with either, so an agent that makes only P-256 keys, such as one that
 keeps its keys in the Secure Enclave, cannot be used for now. A later
 release may take ECDSA keys too. Someone without an Ed25519 key makes
 one with `ssh-keygen -t ed25519`, or `ssh-keygen -t ed25519-sk` for a
-hardware key. Ask them for the line `motelctl key
+hardware key. Ask them for the line `motel key
 --name <their name>` prints: the `person` line for their key, ready to
-paste (`motelctl` is the laptop client, experimental; without it, the
-one line of their `.pub` file, with `person <name>` in front). Once you
-have pushed, `motelctl whoami` tells them who the box takes them to be
-and what they may read from where they are. If their key lives in an
-agent (a password manager's, say), `motelctl` reaches it through
+paste (the `motel` command is the laptop client, experimental; without
+it, the one line of their `.pub` file, with `person <name>` in front).
+Once you have pushed, `motel whoami` tells them who the box takes them
+to be and what they may read from where they are. If their key lives in
+an agent (a password manager's, say), `motel` reaches it through
 `SSH_AUTH_SOCK` only, not through an `IdentityAgent` line in
-`~/.ssh/config` (motelctl/README.md, "A key an agent holds").
+`~/.ssh/config` (client/README.md, "A key an agent holds").
 
 ## Add them
 
@@ -125,10 +125,10 @@ signed:
 | `/<app>?deploy=<version>` | one deploy's record |
 | `/` | the box's status, for a viewer of the box |
 
-`motelctl` (in no release yet: built from a clone of this repository,
-motelctl/README.md, "Getting it") makes the token and asks: `motelctl whoami --box
-deploy.example.com`, `motelctl apps`, `motelctl status <app>`,
-`motelctl deploys <app> [<version>]`, `motelctl box status`. Without
+The `motel` command (in no release yet: built from a clone of this
+repository, client/README.md, "Getting it") makes the token and asks:
+`motel whoami --box deploy.example.com`, `motel apps`, `motel status
+<app>`, `motel deploys <app> [<version>]`, `motel box status`. Without
 it, this makes one by hand and asks who they are (`box` is the box's
 name; the key is theirs; GNU or macOS `base64`):
 

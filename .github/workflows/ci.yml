@@ -107,7 +107,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        module: [".", "backups", "box", "liveswap", "motelctl", "notify", "penaltybox"]
+        module: [".", "backups", "box", "client", "liveswap", "notify", "penaltybox"]
     runs-on: ubuntu-latest
     name: lint (${{ matrix.module }})
     steps:
