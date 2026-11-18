@@ -214,6 +214,13 @@ type managedApp struct {
 	// and nil from then on: what a request whose token verified before
 	// any Start installed the app waits on (awaitInstalled, #473).
 	installed chan struct{}
+	// recovered is closed once this process's first recovery attempt
+	// for the app has returned, whatever it decided (markRecovered):
+	// what a request that finds no instance routed at a start waits on
+	// (awaitRecovered, #489). The pooled app outlives reloads, so a
+	// reload never waits.
+	recovered     chan struct{}
+	recoveredOnce sync.Once
 
 	// deployMu serializes deploys per app. TryLock (not a queue): a
 	// concurrent webhook gets an immediate 409 and CI can retry. The
@@ -300,7 +307,7 @@ type managedApp struct {
 }
 
 func newManagedApp(name string) *managedApp {
-	return &managedApp{name: name, phase: "idle", wdNotify: make(chan struct{}, 1), installed: make(chan struct{})}
+	return &managedApp{name: name, phase: "idle", wdNotify: make(chan struct{}, 1), installed: make(chan struct{}), recovered: make(chan struct{})}
 }
 
 // rememberSecrets records a launch's env_file pairs for the response
@@ -519,6 +526,43 @@ func (ma *managedApp) awaitInstalled(ctx context.Context, bound func() <-chan ti
 	}
 	_, installed = ma.trust()
 	return installed
+}
+
+// firstRecoveryWait bounds two waits at a start of moteld (#489): a
+// request that finds no instance routed waits at most this long for
+// the app's first recovery attempt (Upstreams.GetUpstreams), and a
+// relaunch that attempt makes waits at most this long for the app to
+// accept on its socket before it is routed (ensureRunning).
+const firstRecoveryWait = 2 * time.Second
+
+// markRecovered records that the process's first recovery attempt for
+// the app has returned: requests stop waiting for it.
+func (ma *managedApp) markRecovered() {
+	ma.recoveredOnce.Do(func() {
+		if ma.recovered != nil {
+			close(ma.recovered)
+		}
+	})
+}
+
+// awaitRecovered waits until the first recovery attempt has returned,
+// ctx ends or the channel that bound returns fires. bound is called
+// only when there is something to wait for. It starts no goroutine.
+// An app built without newManagedApp has no channel and never waits.
+func (ma *managedApp) awaitRecovered(ctx context.Context, bound func() <-chan time.Time) {
+	if ma.recovered == nil {
+		return
+	}
+	select {
+	case <-ma.recovered:
+		return
+	default:
+	}
+	select {
+	case <-ma.recovered:
+	case <-ctx.Done():
+	case <-bound():
+	}
 }
 
 // snapshot returns a consistent view of the spec and collaborators for
@@ -1269,8 +1313,8 @@ func relaunchNote(spec *appSpec, version string) string {
 // it), this is a no-op. Otherwise it tries to reattach via the runner
 // and falls back to relaunching the version recorded in state.json.
 // The health gate is a deploy gate, not a boot gate: on a cold start
-// there is nothing better to serve, so the port is published as soon
-// as the process is up.
+// there is nothing better to serve, so a relaunch is published as soon
+// as it accepts on its socket, and after firstRecoveryWait even if not.
 func (ma *managedApp) ensureRunning() error {
 	if !ma.deployMu.TryLock() {
 		// A deploy owns the lifecycle right now; it may still fail
@@ -1420,6 +1464,16 @@ func (ma *managedApp) ensureRunning() error {
 		}
 		return &transientRecoveryError{fmt.Errorf("relaunching %s: %w", st.CurrentVersion, err)}
 	}
+	// Routed once it accepts on its socket, at most firstRecoveryWait:
+	// requests a start held for this attempt then reach an app that
+	// answers, not a socket that is not there yet (#489). One that does
+	// not get there in time is routed anyway, as before: there is
+	// nothing better to serve, and the watchdog sees to a process that
+	// died. Not the health gate, which is a deploy gate.
+	alive := func() bool { return c.runner.Alive(inst.handle) }
+	if err := c.prober.waitAccepting(context.Background(), inst.sock, alive, firstRecoveryWait); err != nil {
+		c.logger.Warn("relaunched instance is not accepting on its socket yet; routing it anyway", zap.Error(err))
+	}
 	if err := ma.publishInstance(c, inst, nil); err != nil {
 		c.logger.Warn("persisting recovered state", zap.Error(err))
 	}
@@ -1467,7 +1521,10 @@ const (
 // retry cannot fix, backing off on transient manager trouble. A boot
 // where the user manager is briefly unresponsive must not leave a
 // healthy app unrouted until an operator reloads. ctx belongs to the
-// config that started it and ends at that config's Cleanup.
+// config that started it and ends at that config's Cleanup. The first
+// attempt's return, whatever it decided, releases the requests waiting
+// for it (markRecovered); a config ended before any attempt leaves
+// that to the config that replaced it, whose Start recovers again.
 func (ma *managedApp) recover(ctx context.Context, logger *zap.Logger) {
 	delay := recoveryBackoffFloor
 	for attempt := 1; ; attempt++ {
@@ -1475,6 +1532,7 @@ func (ma *managedApp) recover(ctx context.Context, logger *zap.Logger) {
 			return // destructed before this attempt
 		}
 		err := ma.ensureRunning()
+		ma.markRecovered()
 		if err == nil {
 			return
 		}

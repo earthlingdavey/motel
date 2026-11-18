@@ -29,6 +29,7 @@ type healthConfig struct {
 type prober interface {
 	waitHealthy(ctx context.Context, sock *socketRef, alive func() bool, hc healthConfig) error
 	probeOnce(ctx context.Context, sock *socketRef, path string, timeout time.Duration) error
+	waitAccepting(ctx context.Context, sock *socketRef, alive func() bool, max time.Duration) error
 }
 
 // httpProber polls the new instance over its unix socket until it has
@@ -96,6 +97,38 @@ func (p *httpProber) waitHealthy(ctx context.Context, sock *socketRef, alive fun
 				now.Sub(wasHealthySince), hc.soak, hc.deadline, lastErr), probe: lastProbe}
 		}
 		p.clock.Sleep(hc.interval)
+	}
+}
+
+// acceptPoll is how often waitAccepting tries the socket again.
+const acceptPoll = 10 * time.Millisecond
+
+// waitAccepting waits until the instance accepts a connection on its
+// socket, the process exits, ctx ends or max passes. It sends nothing:
+// a connect, then a close. A relaunch at a start is routed only then
+// (ensureRunning), so the requests the start held reach an app that
+// answers rather than a socket that is not there yet (#489).
+func (p *httpProber) waitAccepting(ctx context.Context, sock *socketRef, alive func() bool, max time.Duration) error {
+	deadline := p.clock.Now().Add(max)
+	dial := dialUnix(sock)
+	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if !alive() {
+			return errors.New("the process exited before accepting on its socket")
+		}
+		dctx, cancel := context.WithTimeout(ctx, acceptPoll*10)
+		conn, err := dial(dctx, "unix", "")
+		cancel()
+		if err == nil {
+			_ = conn.Close()
+			return nil
+		}
+		if !p.clock.Now().Before(deadline) {
+			return fmt.Errorf("not accepting on its socket within %v: %w", max, err)
+		}
+		p.clock.Sleep(acceptPoll)
 	}
 }
 

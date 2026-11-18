@@ -391,6 +391,9 @@ type fakeProber struct {
 	probeResults []error
 	probeCalls   int
 	listeners    []net.Listener
+	acceptCalls  int
+	acceptErr    error
+	onAccept     func() // called under mu from waitAccepting
 }
 
 func (p *fakeProber) waitHealthy(_ context.Context, sock *socketRef, alive func() bool, _ healthConfig) error {
@@ -423,6 +426,19 @@ func (p *fakeProber) closeListeners() {
 		_ = ln.Close()
 	}
 	p.listeners = nil
+}
+
+// waitAccepting is a relaunch's wait for its socket: the fake records
+// whether an instance was routed when it was asked (it must not be yet),
+// and answers acceptErr.
+func (p *fakeProber) waitAccepting(_ context.Context, _ *socketRef, _ func() bool, _ time.Duration) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.acceptCalls++
+	if p.onAccept != nil {
+		p.onAccept()
+	}
+	return p.acceptErr
 }
 
 func (p *fakeProber) probeOnce(_ context.Context, _ *socketRef, _ string, _ time.Duration) error {

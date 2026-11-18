@@ -20,6 +20,7 @@ func newUpstreamsRig(t *testing.T) *testRig {
 
 func TestGetUpstreamsBeforeFirstDeploy(t *testing.T) {
 	rig := newTestRig(t)
+	rig.ma.markRecovered() // recovery found nothing to run: no wait (startwait_test.go)
 	u := &Upstreams{App: "demo", ma: rig.ma}
 	_, err := u.GetUpstreams(httptest.NewRequest("GET", "/", nil))
 	if err == nil || !strings.Contains(err.Error(), "no running version") {

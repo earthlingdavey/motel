@@ -97,9 +97,10 @@ process listening on 80 and 443 is the one being replaced. On stop it
 closes its listeners at once and lets the requests already in flight
 finish, and the new process cannot listen until the old one has
 exited. New visitors get connection refused for that whole window
-(or, as the old process stops, a connection closed with no answer),
-sometimes followed by a few dozen milliseconds of 503s while the new
-process picks the apps back up. A deploy sent in those first moments
+(or, as the old process stops, a connection closed with no answer).
+A visitor the new process takes before it has picked their app back
+up, a few tens of milliseconds, waits for that rather than get a 503
+(at most 2 seconds). A deploy sent in those first moments
 waits for motel to load its app, at most 5 seconds; past that it is
 answered 503 with `Retry-After: 1`, and the deploy script sends it once
 more. That holds for a token a `local` key signed, and for an issuer's
@@ -147,8 +148,9 @@ How long a planned restart's window lasts:
 
 This is how Caddy itself upgrades: its official Debian package restarts
 the service the same way, with the same 5-second stop timeout, and the
-shutdown is Caddy's own. The 503s are the one part that is motel's —
-the moment before liveswap has picked your apps back up.
+shutdown is Caddy's own. The one part that is motel's, the moment
+before liveswap has picked your apps back up, is held: a visitor waits
+for their app rather than get a 503.
 
 To check for a quiet moment, add `metrics` to the Caddyfile's global
 options (a push from the box's repository, which reloads), and read

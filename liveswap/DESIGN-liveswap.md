@@ -315,7 +315,17 @@ Concept map from the Nomad-era stack:
   after.
 - On Caddy start, each app with recorded state MUST be relaunched (or
   reattached, if the runner supports it) and published as soon as the
-  process is up — the health gate is a deploy gate, not a boot gate.
+  process accepts on its socket, waiting at most 2 s for that and
+  publishing anyway after — the health gate is a deploy gate, not a
+  boot gate.
+- A request that finds its app unrouted before the app's first
+  recovery attempt of this process has returned MUST wait for that
+  attempt, at most 2 s, the client's going, or whichever comes first,
+  then look again; once that attempt has returned (whatever it
+  decided), nothing waits, so an app never deployed or one the
+  watchdog is relaunching fails as fast as before (#489). A config
+  ended before its recovery made an attempt MUST NOT end the wait: the
+  config that replaced it recovers.
 - Every relaunch — a restart's recovery, a watchdog restart, a
   rollback — MUST run the deploy's pre-flight on the spec it starts,
   and a refusal (a release built for another machine; a command not
@@ -852,7 +862,11 @@ author's beliefs about systemd, and only the real thing corrects them.
    instance serving; GC gated on a confirmed sweep); recovery
    (reattach, relaunch, no-state sweep, transient vs permanent
    classification, retry loop on the fake clock, refusal of a foreign
-   unit name in state.json, Cleanup joining recovery); the pre-flight
+   unit name in state.json, Cleanup joining recovery); the start wait
+   (a request held until the first attempt, released by a failed one,
+   by its cap and by the client, none after it, none released by a
+   config ended before an attempt; a relaunch routed only after the
+   wait for its socket, which waits for a listener, not a file); the pre-flight
    on every relaunch path, on the spec it starts, and a refusal ending
    each once; Destruct's
    live-config gate, its wait for a deploy in flight (nothing left
@@ -899,11 +913,13 @@ author's beliefs about systemd, and only the real thing corrects them.
    watchdog after crash and after health failure; push and rollback.
    Then, inside the container: the app is a unit under `user@<uid>`
    with `Restart=no`; `systemctl restart moteld` keeps the same app
-   PID (reattach), and so do moteld's own deaths — SIGKILL, exit 2,
+   PID (reattach) and answers no request 503 (a poller across it, and
+   no `failed getting dynamic upstreams` line after it), and so do moteld's own deaths — SIGKILL, exit 2,
    an OOM kill — which the unit undoes on its own, while a start
    moteld refuses stays down; stopping a version takes its whole
    process tree; a crash leaves no failed unit; a unit gone behind
-   motel's back is relaunched on start; removing the app via reload
+   motel's back is relaunched on start, again with no request
+   answered 503; removing the app via reload
    stops its units and re-adding it relaunches; an app removed while
    moteld was down is swept on the next start; app output is in the
    journal. Finally the recovery suite from the runner's side.

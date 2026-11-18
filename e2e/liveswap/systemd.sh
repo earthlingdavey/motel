@@ -129,9 +129,47 @@ fi
 [ "$(hs_prop RestartPreventExitStatus)" = "1" ] \
 	&& pass "moteld.service never retries an exit 1" || fail "moteld.service RestartPreventExitStatus is '$(hs_prop RestartPreventExitStatus)'"
 
-echo "=== systemd 2: systemctl restart moteld keeps the app running ==="
+# no503_start / no503_check <what>: a poller asks the app's site for /
+# over and over across a restart. A request the new process takes
+# before liveswap has picked the app back up waits for that, and a
+# relaunched app is routed once it accepts (#489), so none is answered
+# 503. A refused connection (000) is the restart's other half: nothing
+# listens between the two processes. A poller can miss the window; the
+# proxy's own log does not: every request that found the app unrouted
+# is a line.
+no503_start() {
+	codes=$(mktemp)
+	stop=$codes.stop
+	# Stopped by a file, not a kill, so the request in flight is counted.
+	(while [ ! -e "$stop" ]; do curl -s -o /dev/null -w '%{http_code}\n' --max-time 3 "$PROXY/"; done) >"$codes" 2>/dev/null &
+	poller=$!
+	sleep 0.3
+	t_restart=$(date +%s)
+}
+no503_check() { # <what>; call once the webhook is back
+	since=$(wc -l <"$codes") # what the poller asked from here on, the new process answered
+	sleep 0.3
+	touch "$stop"
+	wait "$poller"
+	n503=$(grep -c '^503$' "$codes")
+	after=$(tail -n "+$((since + 1))" "$codes" | grep -c '^200$')
+	if [ "$n503" -eq 0 ] && [ "$after" -gt 0 ]; then
+		pass "$1: no request answered 503 ($(grep -c '^200$' "$codes") answered 200, $after of them after it; $(grep -c '^000$' "$codes") refused)"
+	else
+		fail "$1: $n503 request(s) answered 503, and $after 200 once it was back: $(sort "$codes" | uniq -c | tr '\n' ' ')"
+	fi
+	rm -f "$codes" "$stop"
+	unrouted=$(journalctl -u moteld --no-pager -o cat --since "@$t_restart" | grep 'failed getting dynamic upstreams')
+	[ -z "$unrouted" ] \
+		&& pass "$1: no request found the app unrouted" \
+		|| fail "$1: $(printf '%s\n' "$unrouted" | wc -l) request(s) found the app unrouted: $(printf '%s\n' "$unrouted" | head -n 2)"
+}
+
+echo "=== systemd 2: systemctl restart moteld keeps the app running, and answers no request 503 ==="
+no503_start
 systemctl restart moteld || fail "systemctl restart moteld failed"
 wait_hook || fail "webhook not back within 30s of restart"
+no503_check "restart"
 s=$(status)
 if [ "$(json_num "$s" pid)" = "$pid" ] && [ "$(json_str "$s" unit)" = "$unit" ]; then
 	pass "same pid and unit after restart (reattached, not relaunched)"
@@ -464,14 +502,17 @@ n=$(user_systemctl list-units --all --no-legend --plain "'motel-*'" | wc -l)
 echo "=== systemd 7: a unit gone behind motel's back is relaunched on start ==="
 # The cold path recovery takes when the recorded unit no longer exists
 # (a reboot, a manual stop — and a v0.1.0 state.json with no unit at
-# all): not reattach, but launch. Stop the unit as the operator might,
-# restart moteld, and expect the same version back on a new pid.
+# all): not reattach, but launch. Stop the unit as the operator might
+# while moteld is down, start moteld, and expect the same version back
+# on a new pid, with no request answered 503 on the way.
 s=$(status)
 gunit=$(json_str "$s" unit)
 gpid=$(json_num "$s" pid)
+systemctl stop moteld || fail "systemctl stop moteld failed"
 user_systemctl stop "$gunit"
-systemctl restart moteld || fail "systemctl restart moteld failed"
-wait_hook || fail "webhook not back within 30s of restart"
+no503_start
+systemctl start moteld || fail "systemctl start moteld failed"
+wait_hook || fail "webhook not back within 30s of the start"
 i=0
 until [ -n "$(json_num "$(status)" pid)" ] && [ "$(json_num "$(status)" pid)" != "$gpid" ]; do
 	i=$((i + 1))
@@ -485,12 +526,10 @@ else
 	fail "no relaunch after the unit was stopped behind motel's back: $s"
 fi
 case "$s" in *'"current_version":"sd-final"'*) pass "the relaunched instance is the recorded version" ;; *) fail "unexpected version after relaunch: $s" ;; esac
-# Recovery publishes the socket as soon as the unit starts (no health
-# gate on a relaunch); give the sandboxed app a moment to bind.
-i=0
-until case "$(body)" in "hello v1"*) true ;; *) false ;; esac; do
-	i=$((i + 1)); [ "$i" -ge 20 ] && break; sleep 0.5
-done
+# Recovery routes a relaunch once it accepts on its socket (no health
+# gate on a relaunch), so the requests the start held, and the first
+# after it, reach the app.
+no503_check "relaunch at a start"
 case "$(body)" in "hello v1"*) pass "proxy serves the relaunched instance" ;; *) fail "proxy not serving after relaunch" ;; esac
 
 # removal_config writes a Caddyfile without any app — and without the

@@ -3,6 +3,7 @@ package liveswap
 import (
 	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/caddyserver/caddy/v2"
 	"github.com/caddyserver/caddy/v2/modules/caddyhttp/reverseproxy"
@@ -28,6 +29,9 @@ type Upstreams struct {
 	App string `json:"app,omitempty"`
 
 	ma *managedApp
+	// waitFor bounds the wait for the app's first recovery; zero is
+	// firstRecoveryWait. Tests set it.
+	waitFor time.Duration
 }
 
 // CaddyModule returns the Caddy module information.
@@ -59,8 +63,24 @@ func (u *Upstreams) Provision(ctx caddy.Context) error {
 // which reverse_proxy logs before it finds no upstream and answers 503. It
 // tells the app's observe, if the route has one, which release
 // the request went to.
+//
+// At a start of moteld the server can be serving before liveswap has
+// picked its apps back up (Caddy starts its apps in no fixed order),
+// so a request that finds no instance routed waits for the app's first
+// recovery attempt to return, at most firstRecoveryWait, and then
+// looks again (#489). Once that attempt has returned nothing waits: a
+// crash the watchdog is relaunching, or an app never deployed, fails
+// as fast as it did before.
 func (u *Upstreams) GetUpstreams(r *http.Request) ([]*reverseproxy.Upstream, error) {
 	sock := u.ma.activeSocket.Load()
+	if sock == nil {
+		wait := u.waitFor
+		if wait <= 0 {
+			wait = firstRecoveryWait
+		}
+		u.ma.awaitRecovered(r.Context(), func() <-chan time.Time { return time.After(wait) })
+		sock = u.ma.activeSocket.Load()
+	}
 	markUpstream(r, u.ma, sock)
 	if sock == nil {
 		return nil, fmt.Errorf("liveswap app %q has no running version yet (deploy one via the webhook)", u.App)
