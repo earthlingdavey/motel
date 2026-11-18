@@ -29,7 +29,8 @@ func (u *UI) render() {
 	door.SetText(u.title, door.Line(spread(left, right, u.w), u.Colour))
 	v := u.top()
 	// Only the refusal is prose; the other pages are labelled lines,
-	// which a wrap would break under the labels.
+	// which a wrap would break under the labels: who am I and the box
+	// screen lay a failure's sentence on rows themselves.
 	u.page.SetWrap(v.Screen == model.ScreenRefused)
 	crumbL, crumbR := u.crumbs(v, now)
 	if u.notice != nil {
@@ -53,9 +54,9 @@ func (u *UI) render() {
 	case model.ScreenRecord:
 		u.renderRecord(v, now)
 	case model.ScreenMe:
-		door.SetText(u.page, door.Lines(u.S.MeView(now), u.Colour))
+		door.SetText(u.page, door.Lines(u.S.MeViewFit(now, u.w, door.Width), u.Colour))
 	case model.ScreenBox:
-		door.SetText(u.page, door.Lines(u.S.BoxView(now), u.Colour))
+		door.SetText(u.page, door.Lines(u.S.BoxViewFit(now, u.w, door.Width), u.Colour))
 	case model.ScreenHelp:
 		door.SetText(u.page, door.LitLines(u.help()))
 	case model.ScreenStopHelp:

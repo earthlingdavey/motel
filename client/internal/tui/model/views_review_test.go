@@ -244,3 +244,22 @@ func TestStripBesideStaleRows(t *testing.T) {
 		t.Errorf("the summary: %q", got)
 	}
 }
+
+// TestSentenceLongWord: a word of a failure's sentence wider than a row
+// is broken where the row ends, and no row is wider than the window.
+func TestSentenceLongWord(t *testing.T) {
+	s, _, now := session(t)
+	why := `deploy.example.com answered 409; the box says: "` + strings.Repeat("x", 130) + `" and more`
+	s.BoxErr = &model.Failure{Kind: model.FailThis, Message: why}
+	rows := s.BoxViewFit(*now, 60, runes)
+	var got string
+	for i, r := range rows {
+		if runes(termtext.From(r.Text())) > 60 || i > 0 && !strings.HasPrefix(r.Text(), "  ") {
+			t.Errorf("row %d: %q", i, r.Text())
+		}
+		got += r.Text()
+	}
+	if strings.ReplaceAll(got, " ", "") != strings.ReplaceAll(why, " ", "") || len(rows) < 3 {
+		t.Errorf("%d rows: %q", len(rows), textsOfLines(rows))
+	}
+}

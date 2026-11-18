@@ -567,11 +567,15 @@ func (s *Session) freshness(now time.Time) Line {
 	return Line{own("live · " + ago)}
 }
 
-// MeView is who am I.
-func (s *Session) MeView(now time.Time) []Line {
+// MeView is who am I, its lines whole.
+func (s *Session) MeView(now time.Time) []Line { return s.MeViewFit(now, 0, nil) }
+
+// MeViewFit is who am I with a failure's sentence laid on rows of width
+// cells (sentence); 0 leaves it one line.
+func (s *Session) MeViewFit(now time.Time, width int, cells Cells) []Line {
 	switch {
 	case s.Me == nil && s.MeErr != nil:
-		return []Line{{own("who you are is not known: "), Seg{T: Capped(failureText(s.MeErr), 4*LineMax)}}}
+		return sentence(Line{own("who you are is not known: "), Seg{T: Capped(failureText(s.MeErr), 4*LineMax)}}, width, cells)
 	case s.Me == nil:
 		return []Line{{own("asking " + s.Host + " who your key is…")}}
 	}
@@ -629,7 +633,7 @@ func (s *Session) MeView(now time.Time) []Line {
 		Line{own("What the box knows of you is in its Caddyfile (person and grant lines), which the")},
 		Line{own("operator keeps. `motel key` prints the line to send them.")})
 	if s.MeErr != nil {
-		out = append(out, nil, Line{ownC("the last read failed: ", Warn), Seg{T: Capped(failureText(s.MeErr), 2*LineMax)}})
+		out = append(append(out, nil), sentence(Line{ownC("the last read failed: ", Warn), Seg{T: Capped(failureText(s.MeErr), 2*LineMax)}}, width, cells)...)
 	}
 	return out
 }
@@ -671,11 +675,15 @@ func (s *Session) BoxAsOf(now time.Time) Line {
 	return s.asOf(s.BoxSt.At, now)
 }
 
-// BoxView is the box screen.
-func (s *Session) BoxView(now time.Time) []Line {
+// BoxView is the box screen, its lines whole.
+func (s *Session) BoxView(now time.Time) []Line { return s.BoxViewFit(now, 0, nil) }
+
+// BoxViewFit is the box screen with a failure's sentence laid on rows
+// of width cells (sentence); 0 leaves it one line.
+func (s *Session) BoxViewFit(now time.Time, width int, cells Cells) []Line {
 	switch {
 	case s.BoxSt == nil && s.BoxErr != nil:
-		return []Line{{Seg{T: Capped(failureText(s.BoxErr), 4*LineMax)}}}
+		return sentence(Line{{T: Capped(failureText(s.BoxErr), 4*LineMax)}}, width, cells)
 	case s.BoxSt == nil:
 		return []Line{{own("asking " + s.Host + " what it runs…")}}
 	}
@@ -692,9 +700,104 @@ func (s *Session) BoxView(now time.Time) []Line {
 		Line{own("the last push's log (journalctl -u motel-box-apply), systemctl --failed,")},
 		Line{own("host load (btop).")})
 	if s.BoxErr != nil {
-		out = append(out, nil, Line{ownC("the last read failed: ", Warn), Seg{T: Capped(failureText(s.BoxErr), 2*LineMax)}})
+		out = append(append(out, nil), sentence(Line{ownC("the last read failed: ", Warn), Seg{T: Capped(failureText(s.BoxErr), 2*LineMax)}}, width, cells)...)
 	}
 	return out
+}
+
+// sentence is a sentence of the client's (a failure's, which may quote
+// the box) laid on rows of at most width cells, broken at spaces as lay
+// breaks the overlays' words, and a word wider than a row broken where
+// the row ends; a line that fits, or a width of 0, is the line as it
+// is. Every row after the first is indented two spaces: a row that
+// goes on inside a quotation then never begins where a line of the
+// screen's own does, so it reads as the sentence's, and the quotation
+// as one.
+func sentence(l Line, width int, cells Cells) []Line {
+	if width <= 0 || l.Width(cells) <= width {
+		return []Line{l}
+	}
+	type piece struct {
+		s string
+		c Class
+	}
+	// The words, each its pieces of one class or more, in order.
+	var words [][]piece
+	var word []piece
+	for _, sg := range l {
+		for i, p := range strings.Split(sg.T.String(), " ") {
+			if i > 0 && len(word) > 0 {
+				words, word = append(words, word), nil
+			}
+			if p != "" {
+				word = append(word, piece{p, sg.C})
+			}
+		}
+	}
+	if len(word) > 0 {
+		words = append(words, word)
+	}
+	const indent = "  "
+	var out []Line
+	row := Line{}
+	add := func(p piece) {
+		if n := len(row); n > 0 && row[n-1].C == p.c {
+			row[n-1].T = termtext.From(row[n-1].T.String() + p.s)
+			return
+		}
+		row = append(row, Seg{T: termtext.From(p.s), C: p.c})
+	}
+	fits := func(extra string) bool { return cells(termtext.From(row.Text()+extra)) <= width }
+	empty := func() bool { return strings.TrimLeft(row.Text(), " ") == "" }
+	next := func() {
+		out, row = append(out, row), Line{own(indent)}
+	}
+	for _, w := range words {
+		whole := ""
+		for _, p := range w {
+			whole += p.s
+		}
+		if !empty() && !fits(" "+whole) {
+			next()
+		}
+		if !empty() {
+			add(piece{" ", Plain})
+		}
+		for _, p := range w {
+			// A word wider than a row is broken where the row ends.
+			for rest := p.s; rest != ""; {
+				end := 0
+				for i := range rest {
+					if !fits(rest[:i]) {
+						break
+					}
+					end = i
+				}
+				if fits(rest) {
+					end = len(rest)
+				}
+				if end == 0 {
+					if empty() {
+						// Not one character fits beside the indent: one
+						// goes anyway.
+						end = len(rest)
+						for i := range rest {
+							if i > 0 {
+								end = i
+								break
+							}
+						}
+					} else {
+						next()
+						continue
+					}
+				}
+				add(piece{rest[:end], p.c})
+				rest = rest[end:]
+			}
+		}
+	}
+	return append(out, row)
 }
 
 // RefusedView is the first-run and refusal screen: the client's own

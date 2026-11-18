@@ -141,3 +141,76 @@ func TestTitleWordsAt60(t *testing.T) {
 		t.Logf("%2d cells: %s", len([]rune(right.Text())), right.Text())
 	}
 }
+
+// TestFailureSentenceWrapped: on who am I and the box screen a
+// failure's sentence, the client's real ones, one quoting the box, is
+// on screen whole at 60 and 80 columns, laid on rows at spaces, every
+// row after its first indented, none past the window; labelled lines
+// stay one row each. Read from the screen's cells.
+func TestFailureSentenceWrapped(t *testing.T) {
+	const timeout = "deploy.example.com timed out on port 443: no whole answer in 30 s. If moteld is down, as root on the box: systemctl status moteld; journalctl -u moteld -n 50. The box's off-box heartbeat also reports a stopped moteld."
+	const busy = `deploy.example.com answered 409; the box says: "the app is being installed; the installer has not finished its work yet, try again in a minute or two"`
+	for _, w := range []int{60, 80} {
+		for _, c := range []struct {
+			name, lead, why string
+			screen          model.Screen
+			key             string
+			held            bool
+		}{
+			{"the box, no answer yet", "", timeout, model.ScreenBox, "box", false},
+			{"the box, read before", "the last read failed: ", busy, model.ScreenBox, "box", true},
+			{"who am I, no answer yet", "who you are is not known: ", busy, model.ScreenMe, "whoami", false},
+			{"who am I, read before", "the last read failed: ", timeout, model.ScreenMe, "whoami", true},
+		} {
+			kind := model.FailThis
+			if c.why == timeout {
+				kind = model.FailNoAnswer
+			}
+			fail := &model.Failure{Kind: kind, Message: c.why}
+			h := start(t, w, 40, func(f *demo.Fake) {
+				if !c.held {
+					f.Set(c.key, fail)
+				}
+			})
+			h.open(model.View{Screen: c.screen})
+			if c.held {
+				h.fake.Set(c.key, fail)
+				h.now = h.now.Add(model.MeAlways)
+				h.press(tcell.KeyCtrlR)
+			}
+			rows := screenRows(h)[2:]
+			name := c.name + " at " + strconv.Itoa(w)
+			at := -1
+			for i, r := range rows {
+				if strings.HasPrefix(r.text, c.lead+strings.Fields(c.why)[0]) {
+					at = i
+				}
+			}
+			if at < 0 {
+				t.Errorf("%s: no row begins the sentence:\n%s", name, h.screen())
+				continue
+			}
+			parts := []string{rows[at].text}
+			for _, r := range rows[at+1:] {
+				if !strings.HasPrefix(r.text, "  ") || strings.HasPrefix(r.text, "   ") {
+					break
+				}
+				parts = append(parts, strings.TrimPrefix(r.text, "  "))
+			}
+			if got := strings.Join(parts, " "); got != c.lead+c.why {
+				t.Errorf("%s: the sentence on screen is\n%q\nwant\n%q", name, got, c.lead+c.why)
+			}
+			if len(parts) < 2 {
+				t.Errorf("%s: the sentence is on one row: %q", name, parts[0])
+			}
+			for _, r := range rows {
+				if r.end > w {
+					t.Errorf("%s: a row past the window: %q", name, r.text)
+				}
+			}
+			if c.screen == model.ScreenBox && c.held && !strings.HasPrefix(rows[0].text, "runs commit ") || c.screen == model.ScreenMe && c.held && !strings.HasPrefix(rows[0].text, "you are     ") {
+				t.Errorf("%s: the labelled lines moved: %q", name, rows[0].text)
+			}
+		}
+	}
+}
