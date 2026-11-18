@@ -662,7 +662,8 @@ func takeRec(e *model.Engine, now time.Time, rec model.Job) bool {
 // TestRecordOnceAndAgain: a record asked for twice while in flight is
 // read once; one that failed is read again on opening it again and on
 // ctrl-r; one answered is read again on opening it again, but not
-// within RecordAgainAfter; ctrl-r asks again the record on the screen.
+// within RecordAgainAfter; ctrl-r asks again the record on the screen,
+// within RecordAgainAfter of its last read only once that has passed.
 func TestRecordOnceAndAgain(t *testing.T) {
 	for _, k := range []model.Fail{model.FailNotFound, model.FailThis} {
 		e := model.NewEngine(t0)
@@ -705,7 +706,10 @@ func TestRecordOnceAndAgain(t *testing.T) {
 			t.Fatalf("a record read again on opening it within %s", model.RecordAgainAfter)
 		}
 		e.Again(soon, rec)
-		if !takeRec(e, soon, rec) {
+		if takeRec(e, soon, rec) {
+			t.Fatalf("ctrl-r read a record again within %s", model.RecordAgainAfter)
+		}
+		if !takeRec(e, last.Add(model.RecordAgainAfter), rec) {
 			t.Fatal("ctrl-r on the record's screen did not ask it again")
 		}
 	}

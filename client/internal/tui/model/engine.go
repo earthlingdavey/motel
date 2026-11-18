@@ -70,9 +70,9 @@ const (
 	// ctrl-r held on the apps screen asks for it at each key repeat, and
 	// the statuses must still have their turn.
 	ListAgainAfter = 5 * time.Second
-	// RecordAgainAfter is the least time between two reads of a record
-	// on opening it: enter and esc held, or p and n, open it at each key
-	// repeat.
+	// RecordAgainAfter is the least time between two reads of a record:
+	// enter and esc held, or p and n, open it at each key repeat, and a
+	// held ctrl-r asks it at each one.
 	RecordAgainAfter = 5 * time.Second
 	// RetryEvery is the least time between two r: each may be a touch
 	// of a hardware key, and a signature that fails fast must not be
@@ -372,16 +372,17 @@ func (e *Engine) dropLocked(j Job) {
 
 // Again is ctrl-r: the reads of what the screen shows, and nothing
 // else, come due now, a held one too (a 403 is asked again only so),
-// and a record, whenever it was asked last. A read already due keeps
-// its time, so a held ctrl-r (a press at each key repeat) never puts a
-// read that waits behind one just asked; the list is held to
-// ListAgainAfter, the open app to FocusEvery (next).
+// and a record. A read already due keeps its time, so a held ctrl-r (a
+// press at each key repeat) never puts a read that waits behind one
+// just asked; the list is held to ListAgainAfter, a record to
+// RecordAgainAfter, the open app to FocusEvery (next). A record's read
+// in flight is the one asked for.
 func (e *Engine) Again(now time.Time, shown ...Job) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	for _, j := range shown {
 		en, ok := e.jobs[j]
-		if !ok || en.once {
+		if !ok {
 			en = &entry{once: j.Kind == KDeploy, due: now}
 			e.jobs[j] = en
 		}
@@ -498,6 +499,9 @@ func (e *Engine) next(at time.Time) (Job, time.Time, bool) {
 		}
 		if j.Kind == KApps && !e.lastList.IsZero() {
 			due = maxTime(due, e.lastList.Add(ListAgainAfter))
+		}
+		if en.once && !en.asked.IsZero() {
+			due = maxTime(due, en.asked.Add(RecordAgainAfter))
 		}
 		if due.After(at) {
 			// Not yet due: after every job that is, and among the rest the

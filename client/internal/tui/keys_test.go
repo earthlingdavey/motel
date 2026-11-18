@@ -210,7 +210,8 @@ func TestRForgetsFirst(t *testing.T) {
 }
 
 // TestCtrlRRecord: a record whose read failed is read again by ctrl-r
-// on its screen.
+// on its screen, RecordAgainAfter after its last read when pressed
+// sooner.
 func TestCtrlRRecord(t *testing.T) {
 	h := start(t, 100, 30, nil)
 	h.fake.Set("blog@e9a0b3f2c118", &model.Failure{Kind: model.FailThis, Message: "deploy.example.com answered 500"})
@@ -221,6 +222,12 @@ func TestCtrlRRecord(t *testing.T) {
 	}
 	h.fake.Set("blog@e9a0b3f2c118", nil)
 	h.press(tcell.KeyCtrlR)
+	if s := h.screen(); strings.Contains(s, "FAILED in soaking") {
+		t.Fatalf("ctrl-r read the record again within %s:\n%s", model.RecordAgainAfter, s)
+	}
+	h.now = h.now.Add(model.RecordAgainAfter)
+	h.pump()
+	h.sync()
 	if s := h.screen(); !strings.Contains(s, "FAILED in soaking") {
 		t.Fatalf("ctrl-r did not read the record again:\n%s", s)
 	}
