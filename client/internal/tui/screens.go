@@ -71,7 +71,7 @@ func (u *UI) render() {
 		key := overKey{v, u.overlay, at, len(body), u.w}
 		if key != u.overKey {
 			u.overKey = key
-			door.SetText(u.over, door.Lines(u.S.Overlay(v, u.overlay == 2), u.Colour))
+			door.SetText(u.over, door.Lines(u.S.Overlay(v, u.overlay == 2, u.w-2, door.Width), u.Colour))
 		}
 		foot := "esc close  c command  y json"
 		if u.S.CanPrint(v, u.overlay) {

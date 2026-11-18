@@ -74,6 +74,11 @@ const (
 	// enter and esc held, or p and n, open it at each key repeat, and a
 	// held ctrl-r asks it at each one.
 	RecordAgainAfter = 5 * time.Second
+	// AgainAfter is the least time after whoami, or the box, was last
+	// read that ctrl-r asks it again: held on who am I or on the box
+	// screen, it asks at each key repeat, and the rest must still have
+	// their turn.
+	AgainAfter = 5 * time.Second
 	// RetryEvery is the least time between two r: each may be a touch
 	// of a hardware key, and a signature that fails fast must not be
 	// asked for as fast as a key repeats.
@@ -150,7 +155,8 @@ type entry struct {
 	// answer came.
 	every    time.Duration
 	answered time.Time
-	// asked is when a record's read was last taken.
+	// asked is when a record's, whoami's or the box's read was last
+	// taken (Take): each kind's floor is measured from it.
 	asked time.Time
 }
 
@@ -384,8 +390,9 @@ func (e *Engine) dropLocked(j Job) {
 // and a record. A read already due keeps its time, so a held ctrl-r (a
 // press at each key repeat) never puts a read that waits behind one
 // just asked; the list is held to ListAgainAfter, a record to
-// RecordAgainAfter, the open app to FocusEvery (next). A record's read
-// in flight is the one asked for.
+// RecordAgainAfter, the open app to FocusEvery (next), whoami and the
+// box to AgainAfter (here, so a whoami that r or a 403 asks is not held
+// back). A record's read in flight is the one asked for.
 func (e *Engine) Again(now time.Time, shown ...Job) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -397,8 +404,12 @@ func (e *Engine) Again(now time.Time, shown ...Job) {
 			e.jobs[j] = en
 		}
 		en.held, en.failed = false, false
-		if en.due.After(now) {
-			en.due = now
+		due := now
+		if j.Kind == KWhoAmI || j.Kind == KBox {
+			due = maxTime(now, en.asked.Add(AgainAfter))
+		}
+		if en.due.After(due) {
+			en.due = due
 		}
 	}
 	e.poke()
@@ -476,7 +487,7 @@ func (e *Engine) Take(now time.Time) (Job, bool, time.Duration) {
 	}
 	e.tokens--
 	e.inflight, e.taken = &j, e.jobs[j]
-	if e.taken.once {
+	if e.taken.once || j.Kind == KWhoAmI || j.Kind == KBox {
 		e.taken.asked = now
 	}
 	if j.Kind == KStatus && j.App == e.focus {

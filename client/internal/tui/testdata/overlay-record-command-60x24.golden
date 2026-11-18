@@ -1,0 +1,24 @@
+motel · deploy.example.com · v0.7.0 │ alice@e… live · 0s ago
+apps › blog › deploy 7c1e55d0a9… as of 14:12:40 UTC · 0s ago
+╔═════════════════════════ command ════════════════════════╗
+║the same read from a shell:                               ║
+║                                                          ║
+║  motel deploys --box deploy.example.com --key '~/.ssh/id…║
+║  motel deploys --box deploy.example.com --key '~/.ssh/id…║
+║                                                          ║
+║a line above is cut at the window's edge, marked …: do not║
+║copy it. P quits and prints the first command whole below ║
+║your prompt; the second is it with --json among its flags.║
+║y: the box's answer as JSON (1.1 KB, fetched 14:12:40 UTC)║
+║                                                          ║
+║                                                          ║
+║                                                          ║
+║                                                          ║
+║                                                          ║
+║                                                          ║
+║                                                          ║
+║                                                          ║
+║                                                          ║
+║                                                          ║
+╚══════════════════════════════════════════════════════════╝
+esc close  c command  y json  P quit and print  ↑↓ scroll

@@ -1042,8 +1042,9 @@ func TestWaitIsForTheSoonest(t *testing.T) {
 }
 
 // TestMeAndBoxReads: whoami is read while who am I is open, every
-// MeEvery, and again on ctrl-r; the box only while its screen is open,
-// every BoxEvery; neither while closed.
+// MeEvery, and again on ctrl-r (AgainAfter after its last read); the
+// box only while its screen is open, every BoxEvery; neither while
+// closed.
 func TestMeAndBoxReads(t *testing.T) {
 	e := model.NewEngine(t0)
 	sim(e, names(2), t0, 10*time.Second, 10*time.Millisecond, ok)
@@ -1066,7 +1067,7 @@ func TestMeAndBoxReads(t *testing.T) {
 	if len(me) != 4 || me[0].Sub(now) > time.Second || me[1].Sub(me[0]) < model.MeEvery {
 		t.Errorf("who am I open 3 minutes: whoami at %v", me)
 	}
-	now = now.Add(3*time.Minute + time.Second)
+	now = now.Add(3*time.Minute + time.Second + model.AgainAfter)
 	e.Again(now, model.Job{Kind: model.KWhoAmI})
 	if !takeKind(e, now, model.KWhoAmI) {
 		t.Error("ctrl-r on who am I did not read whoami")

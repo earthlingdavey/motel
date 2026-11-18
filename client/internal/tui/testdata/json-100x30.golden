@@ -6,6 +6,7 @@ apps › hostile › deploy v7                                               as 
 ║indented here; its strings as received, made safe to show;                                        ║
 ║lines over 2000 characters, and answers over 2000 lines, are cut for display                      ║
 ║(2.4 KB, fetched 14:12:40 UTC); P prints it whole, made safe on a terminal                        ║
+║a line below is wider than the window and cut at its edge, unmarked: P prints every line whole    ║
 ║                                                                                                  ║
 ║{                                                                                                 ║
 ║  "version": "v7",                                                                                ║
@@ -25,6 +26,5 @@ apps › hostile › deploy v7                                               as 
 ║    },                                                                                            ║
 ║    {                                                                                             ║
 ║      "name": "extracting",                                                                       ║
-║      "started_at": "2026-11-15T13:02:22Z",                                                       ║
 ╚══════════════════════════════════════════════════════════════════════════════════════════════════╝
 esc close  c command  y json  P quit and print  ↑↓ scroll

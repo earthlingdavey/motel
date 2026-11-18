@@ -32,8 +32,9 @@ type UI struct {
 	// every meaning is still carried by a mark or a word.
 	Colour bool
 	// Print is what to print below the prompt once the TUI ends (P), as
-	// the box sent it; Shown, the box's answer made safe, for a stdout
-	// that is a terminal ("" when P printed only the client's words).
+	// the command's --json prints it; Shown, the box's answer indented
+	// and made safe, for a stdout that is a terminal ("" when P printed
+	// only the client's words).
 	Print, Shown string
 
 	stack       []model.View

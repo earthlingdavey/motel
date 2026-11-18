@@ -53,9 +53,10 @@ func Prime(ctx context.Context, o Options) model.View {
 	return model.View{Screen: model.ScreenApps}
 }
 
-// Printed is what P asked to print below the prompt: Raw as the box
-// sent it, for a stdout that is not a terminal; Shown, when it is the
-// box's answer, made safe for one ("" when Raw is the client's words).
+// Printed is what P asked to print below the prompt: Raw, the box's
+// answer as the command's --json prints it, for a stdout that is not a
+// terminal; Shown, when it is the box's answer, indented and made safe
+// for one ("" when Raw is the client's words).
 type Printed struct{ Raw, Shown string }
 
 // Run shows the screens until the person quits or ctx ends, and

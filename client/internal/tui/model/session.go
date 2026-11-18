@@ -42,7 +42,7 @@ type Session struct {
 	// StopErr is the failure that stopped every read.
 	StopErr error
 
-	// json is the JSON overlay's lines, made once per answer.
+	// json is the JSON overlay's lines, made once per answer and width.
 	json struct {
 		key   jsonKey
 		lines []Line
