@@ -227,3 +227,45 @@ func TestLongNamesAlike(t *testing.T) {
 		}
 	}
 }
+
+// TestDeployCursorAmongAlike: among deploys that show one version (the
+// box's filter hid theirs), the cursor stays on the row it is on as the
+// screen is drawn again, not on the last of them.
+func TestDeployCursorAmongAlike(t *testing.T) {
+	const hidden = "[hidden by the box's filter]"
+	raw, err := os.ReadFile("demo/fixtures/status/shop.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m map[string]any
+	if err := json.Unmarshal(raw, &m); err != nil {
+		t.Fatal(err)
+	}
+	ds := m["deploys"].([]any)
+	var alike []any
+	for range 3 {
+		d := maps.Clone(ds[0].(map[string]any))
+		d["version"] = hidden
+		alike = append(alike, d)
+	}
+	m["deploys"] = append(alike, ds[1:]...)
+	body, err := json.Marshal(m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := start(t, 100, 30, func(f *demo.Fake) { f.Body("status/shop.json", string(body)) })
+	h.press(":", "status shop", tcell.KeyEnter, tcell.KeyDown)
+	row := func() int {
+		var r int
+		h.on(func() { r, _ = h.u.deploys.GetSelection() })
+		return r
+	}
+	if r := row(); r != 2 {
+		t.Fatalf("down from the first deploy: row %d", r)
+	}
+	h.now = h.now.Add(6 * time.Second)
+	h.pump()
+	if r := row(); r != 2 {
+		t.Errorf("drawn again, the cursor moved from row 2 to row %d", r)
+	}
+}
