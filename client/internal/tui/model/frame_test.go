@@ -103,6 +103,28 @@ func TestOverlayWords(t *testing.T) {
 	}
 }
 
+// TestAppsRowTemplateKey: the apps screen's command overlay teaches a
+// row's command with the session's key, --key when the person named it
+// with --key, and no --key otherwise, as every other printed command.
+func TestAppsRowTemplateKey(t *testing.T) {
+	for _, c := range []struct {
+		source, want string
+	}{
+		{"--key", "  motel status --box deploy.example.com --key '~/.ssh/my key' -- <app>"},
+		{"the default file", "  motel status --box deploy.example.com -- <app>"},
+	} {
+		s, _, _ := session(t)
+		s.Key.Source, s.Key.Shown = c.source, "~/.ssh/my key"
+		found := false
+		for _, l := range s.Overlay(model.View{Screen: model.ScreenApps}, false, 98) {
+			found = found || l.Text() == c.want
+		}
+		if !found {
+			t.Errorf("with the key from %s, the apps overlay has no row line %q", c.source, c.want)
+		}
+	}
+}
+
 // TestJSONMadeOnce: a large answer is indented once, not at each frame.
 func TestJSONMadeOnce(t *testing.T) {
 	s, f, now := session(t)

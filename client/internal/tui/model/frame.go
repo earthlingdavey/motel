@@ -158,8 +158,11 @@ func (s *Session) Overlay(v View, json bool, width int) []Line {
 	if !json {
 		out := []Line{{own("the same read from a shell:")}, nil, {own("  " + c)}, {own("  " + s.commandJSON(v))}, nil}
 		if v.Screen == ScreenApps {
+			// A row's command as commandArgs makes it, --key among its
+			// flags, the app left as the placeholder <app>, unquoted.
+			row, _ := s.commandArgs(View{Screen: ScreenApp}, false)
 			out = append(out, Line{own("This screen is that list, and a row for each app: each row is")},
-				Line{own("  " + ShellLine([]string{"motel", "status", "--box", s.boxArg()}) + " -- <app>")}, nil)
+				Line{own("  " + ShellLine(row[:len(row)-1]) + " <app>")}, nil)
 		}
 		cut := false
 		for i, l := range out {
