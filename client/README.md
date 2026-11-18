@@ -219,6 +219,7 @@ made by hand. Accepted:
 | An apps-list read that got no answer is asked again at the list's own interval, 60 s, not at the 2 s backoff a status gets; while no read is answered the title bar says STALE and the time of the last answer | 2 | 4 | 1 | 8 | 2 | accepted |
 | The `--key` of a printed command (`c`, `P`) is the key's path as the TUI shows it (`Key.Shown`: the home directory as `~`, made safe by `termtext`), so a path holding a control character or bytes that are not UTF-8 prints as a path naming another file, and a relative path works only from the directory the TUI was started in; running the line then fails naming the path | 2 | 5 | 1 | 10 | 2 | accepted: the line fails, and says which path, rather than reading another key |
 | After an answer about another key and `r`, a whoami that comes back refused (a 403, or a release that is not `N.N.N`, as in the row on such a build above) leaves the stop screen up, saying `stopped` and the old reason until another read is answered, then the whoami's refusal, and offering `r`, while the reads run behind it (the list and every status; the title bar says `live`); `r` does nothing there, since no read is stopped; `q` leaves | 3 | 2 | 3 | 18 | 2 | accepted: it takes a box that answers about another key and then refuses whoami, and the screen still says what was refused |
+| Opening and closing who am I again and again (`?` then esc: each esc opens it again) reads whoami at each opening while its last answer is over a minute old, or it has never answered, and its newest read failed without being held (a release that is not `N.N.N`, as in the row on such a build above): 41 reads in 10 s were measured, within the engine's rate | 2 | 5 | 1 | 10 | 2 | accepted |
 
 Owed, from the two reviews of the TUI's first part (#558; scored there). The fix PR goes
 into `tui` after the TUI's second part, and `tui` does not go to `main` before it:
@@ -245,6 +246,7 @@ into `tui` after the TUI's second part, and `tui` does not go to `main` before i
 | A negative `memory_bytes.now` (moteld never sends one) panics the memory bar: the TUI ends, exit 3, the terminal given back | 2 | 2 | 1 | 4 | 1 | owed: the fix PR |
 | `c` and `P` on a record whose version the box's filter hid give `motel deploys … -- <app> '[hidden by the box's filter]'`, a line that exits 2 when run | 2 | 5 | 3 | 30 | 2 | owed: the fix PR |
 | A record's and an app's details are cut to the window, with no way to scroll them | 2 | 5 | 3 | 30 | 3 | owed, the owner's call: the second part's `y` shows the whole answer; a header that scrolls is new screen behaviour |
+| The title bar's name, roles and release are whoami's answer, read every 5 minutes, shown beside the freshness of the newest answer to any read, so they can be up to 5 minutes older than that word says | 2 | 5 | 3 | 30 | 2 | the owner's call: over the bar; whoami's schedule is the owner's, and who am I shows the answer under its own age |
 
 ## The TUI
 
@@ -265,13 +267,22 @@ prompt's line; Enter runs what is typed, Tab takes a completion. `?`
 lists the keys of the screen below it, written from the table the keys
 are bound from. On a screen that reads the box (not help or a stop
 screen), `c` shows the `motel` line for it, every argument quoted
-for a POSIX shell and `--box` naming the port when it is not 443; a
-line wider than the window is cut at its edge, the cut marked `…`, and
-the overlay says not to copy it and that `P` prints it whole (it is not
-wrapped: a line drawn on two rows copies with a line feed in it). `y`
-shows the box's answer, indented, its strings made safe to show; its
-long lines and long answers are cut for display, and the overlay says
-so. `P` quits and prints what the overlay names: the command line, or
+for a POSIX shell, `--box` naming the port when it is not 443 and
+`--key` the key when it was named with `--key` (on the apps screen, a
+row's line too, `<app>` for the app). A command line wider than the
+window, in the screen's cells, is cut at its edge (it is not wrapped: a
+line drawn on two rows copies with a line feed in it), the cut marked
+`…`, and the overlay says not to copy it and what prints it whole: `P`
+for the screen's command (its `--json` line is that with `--json`
+added), `c` then `P` on an app's screen for a row's. The overlays' own
+words are laid on more rows to fit the window. `y` shows the box's
+answer under its command, which is cut as `c` cuts it and which `c`
+then `P` prints whole; the answer is indented, its strings made safe
+to show; its long lines and long answers are cut for display (a line
+wider than the window at its edge, as there is no scrolling sideways;
+lines over 2000 characters and answers over 2000 lines here), and the
+overlay says so and that `P` prints it whole. `P` quits and prints
+what the overlay names: the command line, or
 the answer. Into a pipe or a file the answer goes as the command's
 `--json` prints it: the box's JSON, with the characters a terminal acts
 on that JSON lets a string carry raw (C1 controls, bidi overrides, DEL)

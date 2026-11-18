@@ -580,9 +580,9 @@ func (s *Session) BoxView(now time.Time) []Line {
 	case s.BoxSt == nil:
 		return []Line{{own("asking " + s.Host + " what it runs…")}}
 	}
-	// The box's answer alone, whose age the crumb gives (BoxAsOf): the
-	// release is whoami's, shown with its own in who am I and the title
-	// bar.
+	// The box's answer alone, whose age the crumb gives (BoxAsOf). The
+	// release is whoami's: who am I shows it under whoami's own age, and
+	// the title bar beside the session's freshness word.
 	b := s.BoxSt.V
 	out := []Line{field("runs commit", own(b.Commit)), field("Caddyfile", own("sha256 "+b.SHA256))}
 	if b.Recipient != "" {
