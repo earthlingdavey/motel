@@ -1,0 +1,30 @@
+motel · deploy.example.com · v0.7.0 │ alice@example.com · viewer of the box            live · 0s ago
+apps › blog                                                              as of 14:12:40 UTC · 0s ago
+╔═════════════════════════════════════════════ command ════════════════════════════════════════════╗
+║the same read from a shell:                                                                       ║
+║                                                                                                  ║
+║  motel status --box deploy.example.com -- blog                                                   ║
+║  motel status --box deploy.example.com --json -- blog                                            ║
+║                                                                                                  ║
+║select it with the mouse, or press P to quit and print it below your prompt                       ║
+║y: the box's answer as JSON (3.8 KB, fetched 14:12:40 UTC)                                        ║
+║                                                                                                  ║
+║                                                                                                  ║
+║                                                                                                  ║
+║                                                                                                  ║
+║                                                                                                  ║
+║                                                                                                  ║
+║                                                                                                  ║
+║                                                                                                  ║
+║                                                                                                  ║
+║                                                                                                  ║
+║                                                                                                  ║
+║                                                                                                  ║
+║                                                                                                  ║
+║                                                                                                  ║
+║                                                                                                  ║
+║                                                                                                  ║
+║                                                                                                  ║
+║                                                                                                  ║
+╚══════════════════════════════════════════════════════════════════════════════════════════════════╝
+esc close  c command  y json  P quit and print  ↑↓ scroll

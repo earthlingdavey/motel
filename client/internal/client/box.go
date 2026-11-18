@@ -132,12 +132,29 @@ func ResolveBox(ctx context.Context, l BoxLookup) (Box, error) {
 
 // bareBox is a box named by --box or MOTEL_BOX: its name alone.
 func bareBox(v, from string) (Box, error) {
-	h := strings.ToLower(v)
-	if !local.IsHostname(h) {
-		return Box{}, usagef("%s %q is not a box's name: give its host name, deploy.example.com", from, v)
+	h, port := strings.ToLower(v), ""
+	if i := strings.LastIndexByte(h, ':'); i >= 0 {
+		// host:port, as an app URL with a port names the box: the port
+		// is where it is asked, and the token's aud stays the host.
+		h, port = h[:i], h[i+1:]
+		n, err := strconv.Atoi(port)
+		if !portRe.MatchString(port) || err != nil || n < 1 || n > 65535 {
+			return Box{}, usagef("%s %q has no usable port: give the host name, and :port when it is not 443", from, v)
+		}
+		port = strconv.Itoa(n)
+		if n == 443 {
+			port = ""
+		}
 	}
-	return Box{Host: h}, nil
+	if !local.IsHostname(h) {
+		return Box{}, usagef("%s %q is not a box's name: give its host name, deploy.example.com, and :port when it is not 443", from, v)
+	}
+	return Box{Host: h, Port: port}, nil
 }
+
+// portRe is a port as --box and a URL give it: digits alone, read as a
+// number (so 08443 is 8443), which must be 1 to 65535.
+var portRe = regexp.MustCompile(`^[0-9]+$`)
 
 // parseHTTPS reads an https URL's box. Only https: the request carries
 // a token, which over http would cross the wire in the clear.
@@ -151,10 +168,14 @@ func parseHTTPS(raw, what string) (Box, *url.URL, error) {
 		return Box{}, nil, usagef("%s %q does not name a box by its host name", what, raw)
 	}
 	if box.Port != "" {
-		if n, err := strconv.Atoi(box.Port); err != nil || n < 1 || n > 65535 {
+		// A number, kept without leading zeros: :08443 is :8443, and the
+		// box compared with --box's or MOTEL_URL's is the same box.
+		n, err := strconv.Atoi(box.Port)
+		if !portRe.MatchString(box.Port) || err != nil || n < 1 || n > 65535 {
 			return Box{}, nil, usagef("%s %q has no usable port", what, raw)
 		}
-		if box.Port == "443" {
+		box.Port = strconv.Itoa(n)
+		if n == 443 {
 			box.Port = ""
 		}
 	}

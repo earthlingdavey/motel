@@ -5,6 +5,7 @@
 package tui
 
 import (
+	"slices"
 	"strconv"
 	"sync/atomic"
 	"time"
@@ -29,13 +30,24 @@ type UI struct {
 	S   *model.Session
 	// Colour is false with NO_COLOR or a terminal without colour:
 	// every meaning is still carried by a mark or a word.
-	Colour      bool
+	Colour bool
+	// Print is what to print below the prompt once the TUI ends (P), as
+	// the box sent it; Shown, the box's answer made safe, for a stdout
+	// that is a terminal ("" when P printed only the client's words).
+	Print, Shown string
+
 	stack       []model.View
+	overlay     int // 0 none, 1 command, 2 JSON
 	filter      string
 	sort        int
 	wrap        bool
 	w, h        int
 	lastFocused string
+	// notice is what the : line said of what was typed, shown in the
+	// crumb's place until the next key.
+	notice model.Line
+	// overKey is what the overlay was last made of.
+	overKey overKey
 	// ended is closed once the event loop has ended.
 	ended    chan struct{}
 	panicked atomic.Pointer[panicked]
@@ -53,8 +65,10 @@ type UI struct {
 	fields, onDisk              *tview.TextView
 	deploys                     *tview.Table
 	recHead, recTailTitle, tail *tview.TextView
+	page, over                  *tview.TextView
 	appRows                     []model.AppRow
 	deployRows                  []model.DeployRow
+	promptMode                  rune
 }
 
 func textView() *tview.TextView {
@@ -68,7 +82,13 @@ func New(s *model.Session, colour bool, start model.View) *UI {
 	u.title, u.crumb, u.foot = textView(), textView(), textView()
 	u.prompt = tview.NewInputField().SetFieldStyle(tcell.StyleDefault).SetLabelStyle(tcell.StyleDefault).
 		SetAutocompleteUseTags(false)
-	u.prompt.SetChangedFunc(func(string) { u.filter = door.Typed(u.prompt) })
+	u.prompt.SetAutocompleteStyles(tcell.ColorDefault, tcell.StyleDefault, tcell.StyleDefault.Reverse(true))
+	door.SetCompletions(u.prompt, u.complete)
+	u.prompt.SetChangedFunc(func(string) {
+		if u.promptMode == '/' {
+			u.filter = door.Typed(u.prompt)
+		}
+	})
 	u.prompt.SetDoneFunc(u.promptDone)
 	u.row2 = tview.NewPages().AddPage("crumb", u.crumb, true, true).AddPage("prompt", u.prompt, true, false)
 
@@ -92,12 +112,17 @@ func New(s *model.Session, colour bool, start model.View) *UI {
 	u.recFlex = tview.NewFlex().SetDirection(tview.FlexRow).AddItem(u.recHead, 1, 0, false).
 		AddItem(u.recTailTitle, 1, 0, false).AddItem(u.tail, 0, 1, true)
 
+	u.page, u.over = textView(), textView()
+	u.page.SetWrap(true).SetWordWrap(true)
+	u.over.SetBorder(true)
 	u.body = tview.NewPages().
 		AddPage("apps", u.appsFlex, true, false).AddPage("app", u.appFlex, true, false).
-		AddPage("record", u.recFlex, true, false)
+		AddPage("record", u.recFlex, true, false).AddPage("page", u.page, true, false)
 	frame := tview.NewFlex().SetDirection(tview.FlexRow).AddItem(u.title, 1, 0, false).
 		AddItem(u.row2, 1, 0, false).AddItem(u.body, 0, 1, true).AddItem(u.foot, 1, 0, false)
-	u.root = tview.NewPages().AddPage("frame", frame, true, true)
+	u.root = tview.NewPages().AddPage("frame", frame, true, true).
+		AddPage("overlay", tview.NewFlex().SetDirection(tview.FlexRow).AddItem(nil, 2, 0, false).
+			AddItem(u.over, 0, 1, true).AddItem(nil, 1, 0, false), true, false)
 	u.App.SetRoot(u.root, true).SetInputCapture(u.key)
 	u.App.SetBeforeDrawFunc(func(scr tcell.Screen) bool {
 		u.w, u.h = scr.Size()
@@ -111,6 +136,7 @@ func New(s *model.Session, colour bool, start model.View) *UI {
 		return false
 	})
 	u.show()
+	u.stopped()
 	return u
 }
 
@@ -126,12 +152,17 @@ func (u *UI) open(v model.View) {
 		return
 	}
 	u.stack = append(u.stack, v)
+	u.overlay = 0
 	u.show()
 }
 
-// back is esc: one screen goes back. It never quits.
+// back is esc: an overlay closes, a prompt closes, or one screen goes
+// back. It never quits.
 func (u *UI) back() {
-	if len(u.stack) > 1 {
+	switch {
+	case u.overlay != 0:
+		u.overlay = 0
+	case len(u.stack) > 1:
 		if v := u.top(); v.Screen == model.ScreenRecord {
 			u.S.Engine.Drop(model.Job{Kind: model.KDeploy, App: v.App, Version: v.Version})
 		}
@@ -159,10 +190,23 @@ func (u *UI) show() {
 		u.body.SwitchToPage("record")
 		u.tail.ScrollToBeginning()
 		u.App.SetFocus(u.tail)
+	default:
+		u.body.SwitchToPage("page")
+		u.page.ScrollToBeginning()
+		u.App.SetFocus(u.page)
 	}
 	if focus != u.lastFocused {
 		u.S.Engine.Focus(focus, now)
 		u.lastFocused = focus
+	}
+	u.S.Engine.BoxOpen(v.Screen == model.ScreenBox, now)
+	u.S.Engine.MeOpen(v.Screen == model.ScreenMe, now)
+	if u.overlay != 0 {
+		u.root.ShowPage("overlay")
+		u.over.ScrollToBeginning()
+		u.App.SetFocus(u.over)
+	} else {
+		u.root.HidePage("overlay")
 	}
 }
 
@@ -170,60 +214,86 @@ func (u *UI) show() {
 // same on every screen, but for the screen's own keys.
 func (u *UI) key(ev *tcell.EventKey) *tcell.EventKey {
 	u.S.Engine.Touch(u.now())
+	u.notice = nil
+	if ev.Key() == tcell.KeyCtrlC {
+		return ev // tview's own: it quits from inside its event loop
+	}
 	if u.App.GetFocus() == u.prompt {
+		// Enter runs what is typed, exactly: a completion is taken with
+		// Tab only, so an open list cannot replace what Enter runs.
+		if ev.Key() == tcell.KeyEnter {
+			u.promptDone(tcell.KeyEnter)
+			return nil
+		}
 		return ev
 	}
+	// Only the keys the table binds for this screen do anything: help
+	// is written from the same table.
 	v := u.top()
-	r := ev.Rune()
-	if ev.Key() != tcell.KeyRune {
-		r = 0
+	for _, b := range bindings {
+		if b.works(v.Screen, u.overlay != 0) && b.match(ev) {
+			out := b.do(u, v, ev)
+			u.stopped()
+			return out
+		}
 	}
-	switch {
-	case ev.Key() == tcell.KeyEscape:
-		u.back()
-	case r == 'q':
+	return nil
+}
+
+// openNewest is d: the app's screen, and its newest deploy's record
+// when that failed.
+func (u *UI) openNewest() {
+	if row, _ := u.apps.GetSelection(); row >= 1 && row-1 < len(u.appRows) {
+		a := u.appRows[row-1]
+		u.open(model.View{Screen: model.ScreenApp, App: a.Name})
+		if a.Failed != "" {
+			u.open(model.View{Screen: model.ScreenRecord, App: a.Name, Version: a.Failed})
+		}
+	}
+}
+
+// printAndQuit is P: what there is to print, printed once the screen
+// is gone; nothing where there is nothing.
+func (u *UI) printAndQuit(v model.View) {
+	if p, ok := u.S.Printable(v, u.overlay); ok {
+		u.Print = string(p)
+		u.Shown, _ = u.S.PrintShown(v, u.overlay)
 		u.App.Stop()
-	case r == 'r' && u.S.Engine.Stopped() != model.Running:
-		// The only way out of a stop: one whoami, as a new start, with a
-		// token signed afresh; held to one in RetryEvery.
-		// Forgotten before the retry: Retry wakes the reads, and the
-		// whoami must not go out with the refused token.
-		if now := u.now(); u.S.Engine.RetryReady(now) {
-			if u.Resign != nil {
-				u.Resign()
-			}
-			u.S.Engine.Retry(now)
+	}
+}
+
+// retry is r on a stop screen: the token forgotten, then one whoami.
+// Forgotten first: Retry wakes the reads, and the whoami must not go
+// out with the refused token; held to one in RetryEvery.
+func (u *UI) retry() {
+	if now := u.now(); u.S.Engine.RetryReady(now) {
+		if u.Resign != nil {
+			u.Resign()
 		}
-	case r == '/' && v.Screen == model.ScreenApps:
-		u.ask()
-	case ev.Key() == tcell.KeyCtrlR:
-		// Everything on this screen, the record on it too.
-		var screen []model.Job
-		if v.Screen == model.ScreenRecord {
-			screen = append(screen, model.Job{Kind: model.KDeploy, App: v.App, Version: v.Version})
+		u.S.Engine.Retry(now)
+	}
+}
+
+// shown is the reads behind what v shows, for ctrl-r: the list and every
+// app's row; an app's status; a record, and the status beside it;
+// whoami; the box; nothing on help.
+func (u *UI) shown(v model.View) []model.Job {
+	st := func(a string) model.Job { return model.Job{Kind: model.KStatus, App: a} }
+	switch v.Screen {
+	case model.ScreenApps:
+		out := []model.Job{{Kind: model.KApps}}
+		for _, a := range u.S.Names() {
+			out = append(out, st(a))
 		}
-		u.S.Engine.Again(u.now(), screen...)
-	case r == 'j':
-		return tcell.NewEventKey(tcell.KeyDown, 0, tcell.ModNone)
-	case r == 'k':
-		return tcell.NewEventKey(tcell.KeyUp, 0, tcell.ModNone)
-	case r == 's' && v.Screen == model.ScreenApps:
-		u.sort++
-	case r == 'd' && v.Screen == model.ScreenApps:
-		if row, _ := u.apps.GetSelection(); row >= 1 && row-1 < len(u.appRows) {
-			a := u.appRows[row-1]
-			u.open(model.View{Screen: model.ScreenApp, App: a.Name})
-			if a.Failed != "" {
-				u.open(model.View{Screen: model.ScreenRecord, App: a.Name, Version: a.Failed})
-			}
-		}
-	case r == 'w' && v.Screen == model.ScreenRecord:
-		u.wrap = !u.wrap
-		u.tail.SetWrap(u.wrap)
-	case (r == 'p' || r == 'n') && v.Screen == model.ScreenRecord:
-		u.step(map[rune]int{'p': 1, 'n': -1}[r])
-	default:
-		return ev
+		return out
+	case model.ScreenApp:
+		return []model.Job{st(v.App)}
+	case model.ScreenRecord:
+		return []model.Job{{Kind: model.KDeploy, App: v.App, Version: v.Version}, st(v.App)}
+	case model.ScreenMe:
+		return []model.Job{{Kind: model.KWhoAmI}}
+	case model.ScreenBox:
+		return []model.Job{{Kind: model.KBox}}
 	}
 	return nil
 }
@@ -246,4 +316,43 @@ func (u *UI) openApp(row int) {
 	if row >= 1 && row-1 < len(u.appRows) {
 		u.open(model.View{Screen: model.ScreenApp, App: u.appRows[row-1].Name})
 	}
+}
+
+// Stopped shows the refusal screen when the reads stopped, and leaves
+// it when they run again.
+func (u *UI) stopped() {
+	stop := u.S.Engine.Stopped()
+	at := slices.IndexFunc(u.stack, func(v model.View) bool { return v.Screen == model.ScreenRefused })
+	switch {
+	case stop == model.NotThisKey && at != 0:
+		// The session dropped all the box said (Session.forget): no
+		// screen of it stays under the stop, and nothing drawn from it
+		// stays in a widget. After r, the apps screen fills from empty.
+		u.stack = []model.View{{Screen: model.ScreenRefused}}
+		u.closeLine()
+		u.filter, u.appRows, u.deployRows, u.overKey = "", nil, nil, overKey{}
+		u.apps.Clear()
+		u.deploys.Clear()
+		door.SetInput(u.prompt, "")
+		u.show()
+	case stop != model.Running && at < 0:
+		// One refusal screen: help opened over it returns to it, and
+		// nothing opens from either (keys.go's stops).
+		u.stack = append(u.stack, model.View{Screen: model.ScreenRefused})
+		u.closeLine()
+		u.show()
+	case stop == model.Running && at >= 0 && u.S.Me != nil && u.S.StopErr == nil:
+		u.stack = u.stack[:at]
+		if len(u.stack) == 0 {
+			u.stack = []model.View{{Screen: model.ScreenApps}}
+		}
+		u.show()
+	}
+}
+
+// closeLine closes the : line and any overlay: nothing on them is asked
+// while every read is stopped.
+func (u *UI) closeLine() {
+	u.overlay, u.promptMode, u.notice = 0, 0, nil
+	u.row2.SwitchToPage("crumb")
 }

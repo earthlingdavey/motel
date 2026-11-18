@@ -39,14 +39,16 @@ func env() cli.Env {
 			v = bi.Main.Version
 		}
 	}
+	tty := terminal(os.Stdout)
 	return cli.Env{
-		Getenv: os.Getenv,
-		Stdout: os.Stdout,
-		Stderr: os.Stderr,
-		Color:  terminal(os.Stdout) && os.Getenv("NO_COLOR") == "" && os.Getenv("TERM") != "dumb",
-		Dir:    dir,
-		Home:   home,
-		Now:    time.Now,
+		Getenv:   os.Getenv,
+		Stdout:   os.Stdout,
+		Stderr:   os.Stderr,
+		Terminal: tty,
+		Color:    tty && os.Getenv("NO_COLOR") == "" && os.Getenv("TERM") != "dumb",
+		Dir:      dir,
+		Home:     home,
+		Now:      time.Now,
 		Sleep: func(ctx context.Context, d time.Duration) error {
 			t := time.NewTimer(d)
 			defer t.Stop()

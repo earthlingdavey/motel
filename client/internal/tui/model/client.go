@@ -16,7 +16,7 @@ import (
 )
 
 // Client is one method per command the TUI reads with: whoami, apps,
-// status <app>, deploys <app> <version>. Each returns the box's value
+// status <app>, deploys <app> <version>, box status. Each returns the box's value
 // and its body as received. An error is a *Failure, or the context's
 // own when it ended.
 type Client interface {
@@ -26,6 +26,7 @@ type Client interface {
 	Apps(ctx context.Context) (Got[[]string], error)
 	Status(ctx context.Context, app string) (Got[wire.Status], error)
 	Deploy(ctx context.Context, app, version string) (Got[wire.DeployResult], error)
+	BoxStatus(ctx context.Context) (Got[wire.BoxStatus], error)
 }
 
 // Got is one answer: the value, the body as received, and when it
@@ -72,6 +73,11 @@ const (
 	FailSignedOut
 	FailNotSigned
 	FailCertificate
+	// FailAboutAnother: whoami answered about another key than the one
+	// that signed, or as another box than the one asked (the whoami
+	// command's rule, AboutAnother). Nothing a box says is about this
+	// key then: every read stops, as for a refusal, until r.
+	FailAboutAnother
 	// FailUnusable: the box answered, and the answer could not be used
 	// (a value that did not read, a body over the cap, not moteld's
 	// shape). Said on its row or screen; nothing else backs off, and the

@@ -269,7 +269,7 @@ func TestHeldUntilAsked(t *testing.T) {
 	if n != 1 {
 		t.Fatalf("a 403 asked %d times", n)
 	}
-	e.Again(end)
+	e.Again(end, model.Job{Kind: model.KStatus, App: "app-1"})
 	sim(e, names(3), end, time.Second, 10*time.Millisecond, answer)
 	if n != 2 {
 		t.Fatalf("ctrl-r did not ask the 403 again (%d)", n)
@@ -372,7 +372,8 @@ func TestStaleAfterThree(t *testing.T) {
 			misses++
 			r := row(s, now, "blog")
 			if want := misses >= 3; r.Stale != want {
-				t.Fatalf("after %d missed reads stale is %v", misses, r.Stale)
+				m, h, ev, w := s.Engine.Row("blog")
+				t.Fatalf("after %d missed reads stale is %v (misses %d held %v every %s woke %v age %s)", misses, r.Stale, m, h, ev, w, r.Cells[model.ColAge])
 			}
 		}
 	}
@@ -621,7 +622,7 @@ func TestResumeAfter429(t *testing.T) {
 }
 
 // TestWhoAmIGoneAfterAStop: a whoami refused at the start is asked again
-// by r, once, and not after it answers.
+// by r, once, and then not until its MeAlways interval.
 func TestWhoAmIGoneAfterAStop(t *testing.T) {
 	e := model.NewEngine(t0)
 	j, _, _ := e.Take(t0)
@@ -633,7 +634,7 @@ func TestWhoAmIGoneAfterAStop(t *testing.T) {
 	}
 	j, _, _ = e.Take(now)
 	e.Done(j, now, nil)
-	calls := sim(e, names(2), now, 10*time.Minute, 10*time.Millisecond, ok)
+	calls := sim(e, names(2), now, model.MeAlways-time.Minute, 10*time.Millisecond, ok)
 	for _, c := range calls {
 		if c.j.Kind == model.KWhoAmI {
 			t.Fatalf("whoami read again at +%s", c.at.Sub(now))
@@ -683,7 +684,7 @@ func TestRecordOnceAndAgain(t *testing.T) {
 		}
 		e.Done(rec, now.Add(time.Hour), fail(k))
 		later := now.Add(2 * time.Hour)
-		e.Again(later)
+		e.Again(later, rec)
 		if !takeRec(e, later, rec) {
 			t.Fatalf("kind %d: ctrl-r did not ask a failed record again", k)
 		}
@@ -1020,5 +1021,84 @@ func TestWaitIsForTheSoonest(t *testing.T) {
 		if g := lists[i].Sub(lists[i-1]); g > model.AppsEvery+tick {
 			t.Fatalf("the list read %s apart, its interval %s", g, model.AppsEvery)
 		}
+	}
+}
+
+// TestMeAndBoxReads: whoami is read while who am I is open, every
+// MeEvery, and again on ctrl-r; the box only while its screen is open,
+// every BoxEvery; neither while closed.
+func TestMeAndBoxReads(t *testing.T) {
+	e := model.NewEngine(t0)
+	sim(e, names(2), t0, 10*time.Second, 10*time.Millisecond, ok)
+	count := func(calls []call, k model.Kind) []time.Time {
+		var at []time.Time
+		for _, c := range calls {
+			if c.j.Kind == k {
+				at = append(at, c.at)
+			}
+		}
+		return at
+	}
+	now := t0.Add(10 * time.Second)
+	if n := count(sim(e, names(2), now, 4*time.Minute, 10*time.Millisecond, ok), model.KWhoAmI); len(n) != 0 {
+		t.Fatalf("whoami read %d times in 4 minutes with who am I closed", len(n))
+	}
+	now = now.Add(4 * time.Minute)
+	e.MeOpen(true, now)
+	me := count(sim(e, names(2), now, 3*time.Minute+time.Second, 10*time.Millisecond, ok), model.KWhoAmI)
+	if len(me) != 4 || me[0].Sub(now) > time.Second || me[1].Sub(me[0]) < model.MeEvery {
+		t.Errorf("who am I open 3 minutes: whoami at %v", me)
+	}
+	now = now.Add(3*time.Minute + time.Second)
+	e.Again(now, model.Job{Kind: model.KWhoAmI})
+	if !takeKind(e, now, model.KWhoAmI) {
+		t.Error("ctrl-r on who am I did not read whoami")
+	}
+	e.Done(model.Job{Kind: model.KWhoAmI}, now, nil)
+	e.MeOpen(false, now)
+	e.BoxOpen(true, now)
+	box := count(sim(e, names(2), now, 2*time.Minute, 10*time.Millisecond, ok), model.KBox)
+	if len(box) != 4 || box[1].Sub(box[0]) < model.BoxEvery-time.Second {
+		t.Errorf("the box open 2 minutes: read at %v", box)
+	}
+	now = now.Add(2 * time.Minute)
+	e.BoxOpen(false, now)
+	if n := count(sim(e, names(2), now, 2*time.Minute, 10*time.Millisecond, ok), model.KBox); len(n) != 0 {
+		t.Errorf("the box read %d times with its screen closed", len(n))
+	}
+}
+
+func takeKind(e *model.Engine, now time.Time, k model.Kind) bool {
+	e.Touch(now)
+	for range 50 {
+		j, ok, _ := e.Take(now)
+		if !ok {
+			return false
+		}
+		if j.Kind == k {
+			return true
+		}
+		e.Done(j, now, nil)
+	}
+	return false
+}
+
+// TestWhoAmIBeforeARecordAfterAStop: r's whoami goes before a record
+// the person had open.
+func TestWhoAmIBeforeARecordAfterAStop(t *testing.T) {
+	e := model.NewEngine(t0)
+	sim(e, names(1), t0, time.Second, time.Millisecond, ok)
+	now := t0.Add(time.Minute)
+	e.Touch(now)
+	rec := model.Job{Kind: model.KDeploy, App: "app-0", Version: "v1"}
+	e.Once(rec, now)
+	j, _, _ := e.Take(now)
+	e.Done(j, now, fail(model.FailSignedOut))
+	e.Once(rec, now)
+	if !e.Retry(now) {
+		t.Fatal("r refused")
+	}
+	if j, ok, _ := e.Take(now); !ok || j.Kind != model.KWhoAmI {
+		t.Fatalf("after r the first read is %v, not whoami", j)
 	}
 }

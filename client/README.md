@@ -45,7 +45,10 @@ the box too.
 
 **Which box:** an app URL as `<app>`, else `--box`, `MOTEL_BOX`, the host
 of `MOTEL_URL`, or the box repository the shell is in (inside
-`<host>/`, or at its top when it holds one box).
+`<host>/`, or at its top when it holds one box). `--box` and `MOTEL_BOX`
+take the host name, and `:port` when it is not 443 (digits alone, read
+as a number from 1 to 65535, so `:08443` is `:8443` here and in a URL);
+the token is for the host, as with an app URL that names a port.
 
 **Which credential:** a token the person's own ssh key signs when
 `--key` names the key. Otherwise `MOTEL_TOKEN`, sent as `Bearer`, when it
@@ -225,7 +228,7 @@ into `tui` after the TUI's second part, and `tui` does not go to `main` before i
 | Once the apps list is held, a later failure of its read is not shown, and the list shows no age | 2 | 4 | 5 | 40 | 2 | owed: the fix PR |
 | A running app whose row is stale is counted as not running: the strip can say "2 of 2 apps are not deployed or not yours to view" | 2 | 5 | 3 | 30 | 1 | owed: the fix PR |
 | The deploys table keeps its cursor by row number: when a new deploy lands, enter opens the deploy above the one meant | 2 | 5 | 3 | 30 | 2 | owed: the fix PR |
-| A person with one app starts on its screen with nothing under it: the footer says `esc back`, esc does nothing, and an app granted later is not reached from it | 2 | 5 | 3 | 30 | 1 | owed: the fix PR |
+| A person with one app starts on its screen with nothing under it: the footer says `esc back`, and esc does nothing (`:apps` goes to the list) | 2 | 5 | 3 | 30 | 1 | owed: the fix PR |
 | A whoami that fails without stopping the session (a release string that is not `N.N.N`, the row in the table above) leaves the title bar at "not signed in" and `live` for a key the box accepts; the reason is held and not shown | 2 | 5 | 3 | 30 | 2 | owed: the fix PR |
 | An app whose first deploy failed opens to "Nothing to show", though the box sends its failed deploys | 2 | 5 | 3 | 30 | 2 | owed: the fix PR |
 | A long app name (63 characters are allowed) pushes STATE, and `stale` with it, off a 60- or 80-column screen | 2 | 5 | 3 | 30 | 2 | owed: the fix PR |
@@ -238,7 +241,6 @@ into `tui` after the TUI's second part, and `tui` does not go to `main` before i
 | With a key only the agent holds, the advice after a failed signature reads "ssh-add the agent's key" | 2 | 3 | 1 | 6 | 1 | owed: the fix PR |
 | A wake from sleep during a 429 wait refills the bucket from that moment, so a burst follows the wait (the wait must pass 30 s; moteld's 429 says 1 s) | 1 | 1 | 5 | 5 | 1 | owed: the fix PR |
 | A negative `memory_bytes.now` (moteld never sends one) panics the memory bar: the TUI ends, exit 3, the terminal given back | 2 | 2 | 1 | 4 | 1 | owed: the fix PR |
-| whoami is read once, so the title bar's roles go stale when grants change | 2 | 5 | 3 | 30 | 3 | owed: the TUI's second part (every 5 minutes, and soon after a 403) |
 | A record's and an app's details are cut to the window, with no way to scroll them | 2 | 5 | 3 | 30 | 3 | owed, the owner's call: the second part's `y` shows the whole answer; a header that scrolls is new screen behaviour |
 
 ## The TUI
@@ -252,7 +254,36 @@ each entry naming the command whose read it makes
 (`TestActionsAreCommands`). It only reads. The apps screen is sorted by
 what needs a look, with a strip that says why; a person with one app
 opens on it. An app's screen shows its state and deploys; a deploy's
-record is laid out for reading a failure, its log tail last.
+record is laid out for reading a failure, its log tail last. `:` goes
+to a view in the command words (`:status blog`, `:deploys blog
+<version>`, `:me`, `:box`); what is typed is held to the client's
+grammars before anything is asked, and what is wrong is said on the
+prompt's line; Enter runs what is typed, Tab takes a completion. `?`
+lists the keys of the screen below it, written from the table the keys
+are bound from. On a screen that reads the box (not help or a stop
+screen), `c` shows the `motel` line for it, every argument quoted
+for a POSIX shell and `--box` naming the port when it is not 443, and
+`y` the box's answer, indented, its strings made safe to show; long
+lines and long answers are cut for display, and the overlay says so.
+`P` quits and prints what the overlay names: the command line, or the
+answer. Into a pipe or a file the answer goes byte for byte as the box
+sent it, what the command's `--json` prints; to a terminal it goes
+indented and made safe, every line whole (JSON may carry C1 controls
+and bidi overrides, which a terminal acts on), and stderr says so.
+ctrl-r asks again for what the screen shows, and nothing else; held
+down, it reads the list at most once in 5 s, and the statuses keep
+their turn. whoami is read every 5 minutes, every minute while who am I
+is open, and soon after a 403, so a removed grant shows in the title
+bar. An answer about another key or box (the `whoami` command's rule)
+stops every read, like a refusal, and the session drops everything the
+box said, before it too (who you are, the list, every status and
+record, the box's answer): a box that does not answer about this key
+gives no grounds to show any of its answers as yours. After `r`, the
+session fills again from empty. A stop screen takes `r`, `?` and `q`
+alone, and `P` on a refused key's; help over it takes esc, `r` and `q`
+alone; nothing opens from either. A refused key's screen names every
+cause the client cannot tell apart and the person line to send the
+operator, which `P` prints.
 
 - **The rate.** A box allows a person 2 requests a second with a burst
   of 60. The TUI keeps to 1.5 a second and 30 at once. The open app is

@@ -47,6 +47,11 @@ func (r *recorder) Deploy(context.Context, string, string) (model.Got[wire.Deplo
 	return model.Got[wire.DeployResult]{}, nil
 }
 
+func (r *recorder) BoxStatus(context.Context) (model.Got[wire.BoxStatus], error) {
+	r.called = "BoxStatus"
+	return model.Got[wire.BoxStatus]{}, nil
+}
+
 // wantRead is the read each command makes, written out: the command
 // an action names, and the model.Client method its read must call,
 // which live maps to the client's read of the same name.
@@ -55,6 +60,7 @@ var wantRead = map[string]string{
 	"apps":                    "Apps",
 	"status <app>":            "Status",
 	"deploys <app> <version>": "Deploy",
+	"box status":              "BoxStatus",
 }
 
 // TestActionsAreCommands: every read the TUI makes is an action naming
@@ -284,5 +290,100 @@ func TestPanicSaid(t *testing.T) {
 func TestTUISignals(t *testing.T) {
 	if !slices.Contains(tuiSignals, os.Signal(syscall.SIGHUP)) {
 		t.Errorf("SIGHUP is not among %v", tuiSignals)
+	}
+}
+
+// TestVersionGrammarIsTheClients: the : line's version check is the
+// client's, on every edge the grammar has.
+func TestVersionGrammarIsTheClients(t *testing.T) {
+	for _, v := range []string{"v1", "-v1", "_x", ".v1", "v1,", "v 1", "", "a.b-c_d", strings.Repeat("a", 64), strings.Repeat("a", 65), "v1\n", "ünï"} {
+		if model.ValidVersion(v) != (client.CheckVersion(v) == nil && len(v) <= 64) {
+			t.Errorf("%q: the TUI says %v, the client %v", v, model.ValidVersion(v), client.CheckVersion(v))
+		}
+	}
+}
+
+// TestArgumentIsNoStop: a version the client refuses before asking is
+// that read's own failure, not a stop of the session as a failed
+// signature is; nothing is sent.
+func TestArgumentIsNoStop(t *testing.T) {
+	c := &client.Client{Box: client.Box{Host: "127.0.0.1"}, Cred: client.DeployToken("tok")}
+	_, err := live{c}.Deploy(context.Background(), "blog", "v1,")
+	if out, _ := model.Classify(err); out != model.Refused {
+		t.Fatalf("a bad version is %v (%v)", out, err)
+	}
+	if out, stop := model.Classify(failure(&client.Failure{Exit: client.ExitUsage, Message: "ssh-keygen could not sign"})); out != model.Stopped || stop != model.NotSigned {
+		t.Errorf("a signature that failed is %v", out)
+	}
+}
+
+// TestDoubleDash: the commands take -- before their positional
+// arguments, as the TUI prints them.
+func TestDoubleDash(t *testing.T) {
+	fb := newFakeBox(t)
+	host := strings.TrimPrefix(fb.srv.URL, "https://")
+	r := run(t, fb, map[string]string{"MOTEL_TOKEN": "tok", "MOTEL_URL": fb.srv.URL + "/blog"}, "deploys", "--json", "--", appURL(fb, "blog"), "v41")
+	if r.code != 0 || !strings.Contains(r.stdout, `"version"`) {
+		t.Errorf("deploys -- <app> <version>: exit %d, %q %q (%s)", r.code, r.stdout, r.stderr, host)
+	}
+}
+
+// TestPrintedByTerminal: P's answer goes to a terminal made safe, with
+// a line on stderr that says so and how to get the bytes; into a pipe
+// or a file byte for byte, with nothing on stderr; the client's own
+// words (a command line) the same either way.
+func TestPrintedByTerminal(t *testing.T) {
+	raw := "{\"note\":\"\u009b31m \u202eabc\"}"
+	p := tui.Printed{Raw: raw + "\n", Shown: model.JSONShown([]byte(raw))}
+	for _, c := range []struct {
+		terminal     bool
+		p            tui.Printed
+		stdout, warn string
+	}{
+		{true, p, "{\n  \"note\": \"\\u009b31m \\u202eabc\"\n}\n", "motel: the box's answer was made safe for the terminal; redirect stdout (> file, or | cat) for its bytes as sent\n"},
+		{false, p, raw + "\n", ""},
+		{true, tui.Printed{Raw: "motel apps --box deploy.example.com\n"}, "motel apps --box deploy.example.com\n", ""},
+		{false, tui.Printed{}, "", ""},
+	} {
+		var out, errOut bytes.Buffer
+		r := &runner{env: Env{Terminal: c.terminal, Stdout: &out, Stderr: &errOut}}
+		if err := r.printed(c.p); err != nil {
+			t.Fatal(err)
+		}
+		if out.String() != c.stdout || errOut.String() != c.warn {
+			t.Errorf("terminal %v: stdout %q, stderr %q; want %q, %q", c.terminal, out.String(), errOut.String(), c.stdout, c.warn)
+		}
+	}
+}
+
+// TestTUISessionBox: the TUI's client is built for the box --box or
+// MOTEL_BOX names, port and all; its session names the host alone (the
+// token's aud, the title) and prints commands that ask where it asks.
+func TestTUISessionBox(t *testing.T) {
+	home := t.TempDir()
+	if err := os.WriteFile(filepath.Join(home, "me.pub"), []byte(meLine+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for name, c := range map[string]struct {
+		flag string
+		env  map[string]string
+	}{
+		"--box":     {"deploy.example.test:8443", map[string]string{"MOTEL_KEY": "~/me.pub"}},
+		"MOTEL_BOX": {"", map[string]string{"MOTEL_KEY": "~/me.pub", "MOTEL_BOX": "deploy.example.test:08443"}},
+	} {
+		r := &runner{env: Env{Getenv: func(k string) string { return c.env[k] }, Stderr: &bytes.Buffer{}, Dir: t.TempDir(), Home: home,
+			Now: time.Now, Run: noPrograms{}, Signer: &fixedSigner{}}}
+		cl, err := r.client(context.Background(), &target{box: c.flag}, nil, "", "tui")
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		s := &model.Session{Engine: model.NewEngine(time.Now())}
+		boxSession(s, cl, cl.Cred.(*client.PersonToken))
+		if cl.Box.Addr() != "deploy.example.test:8443" || s.Host != "deploy.example.test" || s.Addr != "deploy.example.test:8443" {
+			t.Errorf("%s: the client asks %s; the session's host %q, addr %q", name, cl.Box.Addr(), s.Host, s.Addr)
+		}
+		if line, _ := s.Command(model.View{Screen: model.ScreenApps}); line != "motel apps --box deploy.example.test:8443" {
+			t.Errorf("%s: the command printed is %q", name, line)
+		}
 	}
 }

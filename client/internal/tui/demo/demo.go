@@ -160,9 +160,17 @@ func (f *Fake) Deploy(ctx context.Context, app, version string) (model.Got[wire.
 	return g, err
 }
 
+// BoxStatus answers box.json.
+func (f *Fake) BoxStatus(ctx context.Context) (model.Got[wire.BoxStatus], error) {
+	var g model.Got[wire.BoxStatus]
+	b, err := f.load(ctx, model.Job{Kind: model.KBox}, "box", "box.json", &g.V)
+	g.Body = b
+	return g, err
+}
+
 // Key is the key the demo says it signs with: a made-up one.
 var Key = model.Key{
-	Fingerprint: "SHA256:VKOVWJR/wCqOglzLV3//JOoCbHbUSBD6npnXCox7/P4",
+	Fingerprint: "SHA256:SAMPLE0000000000000000000000000000000000000",
 	Shown:       "~/.ssh/id_ed25519.pub",
 	Source:      "the default file",
 	Line:        "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIMuTYJV40qpZ7rH7T4/BJP6ERoj5JgqFQwHIEBTe5wrn", // gitleaks:allow — made up for this test

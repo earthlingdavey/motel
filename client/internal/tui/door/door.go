@@ -132,6 +132,43 @@ func Head(s string) *tview.TableCell {
 // Width is how many cells t takes on screen.
 func Width(t termtext.Text) int { return tview.TaggedStringWidth(Inert(t).s) }
 
+// LitLines is the TUI's own lines: each made safe as Lit makes it,
+// the line breaks kept.
+func LitLines(s string) Shown {
+	ls := strings.Split(s, "\n")
+	for i, l := range ls {
+		ls[i] = Lit(l).s
+	}
+	return Shown{strings.Join(ls, "\n")}
+}
+
+// SetTitle titles a framed widget with the TUI's own words.
+func SetTitle(b *tview.Box, s string) { b.SetTitle(" " + Lit(s).s + " ") }
+
+// SetCompletions gives an input field its completions, each made
+// inert.
+func SetCompletions(f *tview.InputField, complete func(string) []string) {
+	f.SetAutocompleteFunc(func(text string) []string { return completions(complete(text)) })
+	// Taken with Tab only: moving through the list changes nothing
+	// typed, and Enter is the screen's, which runs what is typed.
+	f.SetAutocompletedFunc(func(text string, _ int, source int) bool {
+		if source != tview.AutocompletedTab {
+			return false
+		}
+		f.SetText(text)
+		return true
+	})
+}
+
+// completions are the command line's entries, made inert.
+func completions(entries []string) []string {
+	out := make([]string, len(entries))
+	for i, e := range entries {
+		out[i] = Lit(e).s
+	}
+	return out
+}
+
 // SetInput puts the person's own text back into an input field.
 func SetInput(f *tview.InputField, s string) { f.SetText(Lit(s).s) }
 

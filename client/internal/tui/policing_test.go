@@ -63,12 +63,12 @@ func imports(t *testing.T, dir string) map[string]string {
 // TUI. model draws nothing (no tview, no tcell); only the screens and
 // the door use tview; nothing reaches the client, sshkey or local.
 var allows = map[string][]string{
-	"tui": {"context", "runtime/debug", "strconv", "strings", "sync", "sync/atomic", "time",
+	"tui": {"context", "runtime/debug", "slices", "strconv", "strings", "sync", "sync/atomic", "time",
 		"github.com/rivo/tview", "github.com/gdamore/tcell/v2",
 		mod + "internal/termtext", mod + "internal/tui/model", mod + "internal/tui/door"},
 	"door": {"strings", "github.com/rivo/tview", "github.com/gdamore/tcell/v2",
 		mod + "internal/termtext", mod + "internal/tui/model"},
-	"model": {"context", "encoding/json", "errors", "slices", "strconv", "strings", "sync", "time",
+	"model": {"bytes", "context", "encoding/json", "errors", "regexp", "slices", "strconv", "strings", "sync", "time",
 		mod + "internal/termtext", "github.com/smallhoursorg/motel/liveswap/wire"},
 	"demo": {"context", "embed", "encoding/json", "fmt", "io/fs", "regexp", "strconv", "sync", "time",
 		mod + "internal/tui/model", "github.com/smallhoursorg/motel/liveswap/wire"},

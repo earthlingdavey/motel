@@ -1,5 +1,5 @@
 motel · deploy.example.com · v0.7.0 │ alice@example.com · viewer … live · 0s ago
-apps › blog › deploy 7c1e55d0a913
+apps › blog › deploy 7c1e55d0a913                    as of 14:12:40 UTC · 0s ago
 ✓ SUCCEEDED in 41 s · 12:11:59 → 12:12:40 UTC
 by          github:example/blog@refs/heads/main
 serves now  this version (as of 14:12:40 UTC)
@@ -21,4 +21,4 @@ artifact    1842 entries · 38 MiB
 
 
 
-↑↓ scroll  w wrap  p previous  n next  esc back  q quit
+↑↓ scroll  w wrap  p previous  n next  y json  c command  esc back  ? more

@@ -27,9 +27,9 @@ import (
 type Env struct {
 	Getenv         func(string) string
 	Stdout, Stderr io.Writer
-	// Color is whether stdout may be dressed: a terminal, with
-	// NO_COLOR unset.
-	Color bool
+	// Terminal is whether stdout is a terminal; Color, whether it may
+	// be dressed: a terminal, with NO_COLOR unset.
+	Terminal, Color bool
 	// Dir is the working directory, Home the home directory.
 	Dir, Home string
 	Now       func() time.Time
@@ -166,7 +166,7 @@ type target struct {
 }
 
 func (t *target) flags(c *cobra.Command) {
-	c.Flags().StringVar(&t.box, "box", "", "the box's host name, e.g. deploy.example.com")
+	c.Flags().StringVar(&t.box, "box", "", "the box's host name, e.g. deploy.example.com, and :port when it is not 443")
 	c.Flags().StringVar(&t.key, "key", "", "the ssh key to sign with: its .pub, or the private key with a .pub beside it")
 }
 

@@ -1,6 +1,8 @@
 package model
 
 import (
+	"bytes"
+	"encoding/json"
 	"slices"
 	"strconv"
 	"strings"
@@ -346,3 +348,52 @@ func (s *Session) RecordView(app, version string, now time.Time) RecordView {
 	}
 	return v
 }
+
+// JSONLines is a body as received, indented, each line made safe and
+// capped: the box's answer is never re-encoded from the client's
+// types.
+//
+// At most OverlayLines are made, for the screen: cut says how many more
+// there were. indented is false for a body that would not indent,
+// which is shown line by line as it came.
+func JSONLines(body []byte) (out []termtext.Text, cut int, indented bool) {
+	all, indented := jsonAll(body)
+	if len(all) > OverlayLines {
+		all, cut = all[:OverlayLines], len(all)-OverlayLines
+	}
+	for _, l := range all {
+		out = append(out, Capped(l.String(), TailMax))
+	}
+	return out, cut, indented
+}
+
+// jsonAll is every line of a body, indented when it is JSON, each made
+// safe and whole.
+func jsonAll(body []byte) ([]termtext.Text, bool) {
+	var b bytes.Buffer
+	indented := json.Indent(&b, body, "", "  ") == nil
+	if !indented {
+		b.Reset()
+		b.Write(body)
+	}
+	return termtext.Lines(b.String()), indented
+}
+
+// JSONShown is a body as P prints it to a terminal: the lines the JSON
+// overlay shows, indented and made safe, every one and each whole, a
+// line feed after each. By JSON's rules a body holds no raw C0 control,
+// but it may hold C1 controls and bidi overrides, which a terminal acts
+// on; the bytes as sent go where stdout is not a terminal.
+func JSONShown(body []byte) string {
+	all, _ := jsonAll(body)
+	lines := make([]string, 0, len(all)+1)
+	for _, l := range all {
+		lines = append(lines, l.String())
+	}
+	return strings.Join(append(lines, ""), "\n")
+}
+
+// OverlayLines is the most of an answer's lines the JSON overlay draws:
+// tview's text view draws slower the further it is scrolled, and a body
+// of megabytes made every key slow. P prints all of it.
+const OverlayLines = 2000

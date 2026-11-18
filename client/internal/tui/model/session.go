@@ -17,6 +17,9 @@ type Session struct {
 	// Host is the box asked, as the person named it (a checked host
 	// name, never the box's own words).
 	Host string
+	// Addr is the box as --box names it: the host, and :port when it is
+	// not 443, so a printed command asks where this session asks.
+	Addr string
 	// Demo marks every screen as sample data.
 	Demo bool
 	// Version is the client's own release.
@@ -31,11 +34,19 @@ type Session struct {
 	MeErr   error
 	List    *Got[[]string]
 	ListErr error
+	BoxSt   *Got[wire.BoxStatus]
+	BoxErr  error
 	// Signing is set while a token is being signed: a hardware key
 	// waits for its touch.
 	Signing bool
 	// StopErr is the failure that stopped every read.
 	StopErr error
+
+	// json is the JSON overlay's lines, made once per answer.
+	json struct {
+		key   jsonKey
+		lines []Line
+	}
 
 	apps    map[string]*appData
 	records map[Job]*recData
@@ -75,13 +86,13 @@ func (s *Session) Fetch(ctx context.Context, c Client, j Job) (func(), error) {
 	if !ok {
 		return func() {}, &Failure{Kind: FailThis, Message: "no motel command reads this, so the TUI does not"}
 	}
-	apply, err := a.read(ctx, c, j)
+	apply, err := a.read(ctx, s, c, j)
 	at := s.Now()
 	if errors.Is(err, context.Canceled) {
 		return func() {}, err
 	}
 	return func() {
-		switch out, _ := Classify(err); out {
+		switch out, stop := Classify(err); out {
 		case Answered:
 			s.last, s.StopErr = at, nil
 		case Refused:
@@ -92,9 +103,31 @@ func (s *Session) Fetch(ctx context.Context, c Client, j Job) (func(), error) {
 			}
 		case Stopped:
 			s.StopErr = err
+			if stop == NotThisKey {
+				s.forget()
+			}
 		}
 		apply(s, at)
 	}, err
+}
+
+// forget drops everything the box said, after it answered about another
+// key or box: who it said you are, its list, every status and record,
+// the box's own answer, and the JSON made of one. Nothing it said before
+// can be told from what such a box would say, so none of it is shown;
+// after r, the session fills again from empty.
+func (s *Session) forget() {
+	s.Me, s.MeErr = nil, nil
+	s.List, s.ListErr = nil, nil
+	s.BoxSt, s.BoxErr = nil, nil
+	s.apps, s.records = nil, nil
+	s.json.key, s.json.lines = jsonKey{}, nil
+}
+
+// Forgotten says whether the session holds nothing the box said: true
+// at the start, and after an answer about another key or box.
+func (s *Session) Forgotten() bool {
+	return s.Me == nil && s.List == nil && s.ListErr == nil && s.BoxSt == nil && s.BoxErr == nil && len(s.apps) == 0 && len(s.records) == 0 && s.json.lines == nil
 }
 
 func (s *Session) app(name string) *appData {
@@ -131,6 +164,31 @@ func Forbidden(err error) bool { k, ok := failKind(err); return ok && k == FailF
 
 // NotFound says whether err is a 404.
 func NotFound(err error) bool { k, ok := failKind(err); return ok && k == FailNotFound }
+
+// Trusted says whether whoami's answer is about this key on this box,
+// by the whoami command's rule (AboutAnother): only then is anything in
+// it shown as who you are.
+func (s *Session) Trusted() bool {
+	if s.Me == nil {
+		return false
+	}
+	k, b := AboutAnother(s.Me.V, s.Key.Fingerprint, s.Host)
+	return !k && !b
+}
+
+// BoxViewer says whether whoami lists a role on the box, whichever
+// role: only then is the box screen offered.
+func (s *Session) BoxViewer() bool {
+	if !s.Trusted() {
+		return false
+	}
+	for _, r := range s.Me.V.Roles {
+		if r.Scope == "box" {
+			return true
+		}
+	}
+	return false
+}
 
 // Names is the apps the session knows, as the box listed them.
 func (s *Session) Names() []string {

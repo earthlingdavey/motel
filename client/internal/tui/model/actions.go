@@ -15,7 +15,7 @@ type Action struct {
 	Command string
 	// What says where the TUI shows it.
 	What string
-	read func(ctx context.Context, c Client, j Job) (func(*Session, time.Time), error)
+	read func(ctx context.Context, s *Session, c Client, j Job) (func(*Session, time.Time), error)
 }
 
 // Actions is the TUI's whole surface. It acts on nothing: it reads.
@@ -24,6 +24,7 @@ var Actions = []Action{
 	{KApps, "apps", "the apps screen", readApps},
 	{KStatus, "status <app>", "an app's row and screen", readStatus},
 	{KDeploy, "deploys <app> <version>", "a deploy's record", readDeploy},
+	{KBox, "box status", "the box screen", readBox},
 }
 
 // ActionFor is the action that reads k.
@@ -39,12 +40,15 @@ func ActionFor(k Kind) (Action, bool) {
 // Read makes the action's read with c, for a test that watches which
 // Client method it calls.
 func (a Action) Read(ctx context.Context, c Client, j Job) error {
-	_, err := a.read(ctx, c, j)
+	_, err := a.read(ctx, &Session{}, c, j)
 	return err
 }
 
-func readWhoAmI(ctx context.Context, c Client, _ Job) (func(*Session, time.Time), error) {
+func readWhoAmI(ctx context.Context, s *Session, c Client, _ Job) (func(*Session, time.Time), error) {
 	g, err := c.WhoAmI(ctx)
+	if err == nil {
+		err = s.aboutAnother(g.V)
+	}
 	return func(s *Session, at time.Time) {
 		if err != nil {
 			s.MeErr = err
@@ -55,7 +59,7 @@ func readWhoAmI(ctx context.Context, c Client, _ Job) (func(*Session, time.Time)
 	}, err
 }
 
-func readApps(ctx context.Context, c Client, _ Job) (func(*Session, time.Time), error) {
+func readApps(ctx context.Context, _ *Session, c Client, _ Job) (func(*Session, time.Time), error) {
 	g, err := c.Apps(ctx)
 	return func(s *Session, at time.Time) {
 		if err != nil {
@@ -68,7 +72,7 @@ func readApps(ctx context.Context, c Client, _ Job) (func(*Session, time.Time), 
 	}, err
 }
 
-func readStatus(ctx context.Context, c Client, j Job) (func(*Session, time.Time), error) {
+func readStatus(ctx context.Context, _ *Session, c Client, j Job) (func(*Session, time.Time), error) {
 	g, err := c.Status(ctx, j.App)
 	return func(s *Session, at time.Time) {
 		a := s.app(j.App)
@@ -81,7 +85,7 @@ func readStatus(ctx context.Context, c Client, j Job) (func(*Session, time.Time)
 	}, err
 }
 
-func readDeploy(ctx context.Context, c Client, j Job) (func(*Session, time.Time), error) {
+func readDeploy(ctx context.Context, _ *Session, c Client, j Job) (func(*Session, time.Time), error) {
 	g, err := c.Deploy(ctx, j.App, j.Version)
 	return func(s *Session, at time.Time) {
 		if s.records == nil {
@@ -93,5 +97,17 @@ func readDeploy(ctx context.Context, c Client, j Job) (func(*Session, time.Time)
 		}
 		g.At = at
 		s.records[j] = &recData{d: &g}
+	}, err
+}
+
+func readBox(ctx context.Context, _ *Session, c Client, _ Job) (func(*Session, time.Time), error) {
+	g, err := c.BoxStatus(ctx)
+	return func(s *Session, at time.Time) {
+		if err != nil {
+			s.BoxErr = err
+			return
+		}
+		g.At = at
+		s.BoxSt, s.BoxErr = &g, nil
 	}, err
 }

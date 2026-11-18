@@ -3,6 +3,7 @@ package liveswap
 import (
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -256,6 +257,28 @@ func TestClientPeople(t *testing.T) {
 		for _, w := range c.want {
 			if !strings.Contains(r.stdout, w) {
 				t.Errorf("whoami lacks %q:\n%s", w, r.stdout)
+			}
+		}
+	}
+
+	// The box named with its port (the test server's, not 443) by
+	// --box, by MOTEL_BOX, and by MOTEL_URL with the port written with
+	// a leading zero: the same box, and the token is taken.
+	addr := strings.TrimPrefix(box.url, "https://")
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil || port == "443" {
+		t.Fatalf("the test server is on %s", addr)
+	}
+	keyEnv := []string{"MOTEL_KEY=" + alice.path, "SSL_CERT_FILE=" + box.cert}
+	for name, c := range map[string]struct{ env, args []string }{
+		"--box":                 {keyEnv, []string{"--box", addr}},
+		"MOTEL_BOX":             {append([]string{"MOTEL_BOX=" + addr}, keyEnv...), nil},
+		"MOTEL_URL, a 0 before": {append([]string{"MOTEL_URL=https://" + host + ":0" + port + "/demo"}, keyEnv...), nil},
+	} {
+		for _, args := range [][]string{{"whoami", "--json"}, {"status", "demo", "--json"}} {
+			r := runClient(t, bin, c.env, append(args, c.args...)...)
+			if body := last.get(); r.code != 0 || !printedAs(r.stdout, body) {
+				t.Errorf("%s, %v: exit %d, stdout %q, want the handler's %q; stderr %s", name, args, r.code, r.stdout, body, r.stderr)
 			}
 		}
 	}
