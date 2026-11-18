@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -30,6 +31,13 @@ type Cmd struct {
 	// ssh-keygen when the agent holds the only copy of the key, with
 	// no file written for it.
 	FD3 []byte
+	// NoTerminal runs the program so that it cannot reach a terminal:
+	// in a session of its own, which has no controlling terminal, so
+	// /dev/tty does not open; and with SSH_ASKPASS_REQUIRE=force and an
+	// SSH_ASKPASS that fails, so OpenSSH asks no passphrase or PIN on
+	// stdin either. A key that needs one then fails at once. The TUI
+	// signs so, while its screen holds the terminal.
+	NoTerminal bool
 	// Stderr receives what the program writes there, as it writes it:
 	// a hardware key's "touch your key" prompt must reach the person
 	// while ssh-keygen waits. Nil discards it.
@@ -64,6 +72,16 @@ func (Exec) Output(ctx context.Context, c Cmd) ([]byte, error) {
 	cmd.WaitDelay = waitDelay
 	cmd.Stdin = bytes.NewReader(c.Stdin)
 	cmd.Stderr = c.Stderr
+	if c.NoTerminal {
+		cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+		// "false" fails whatever it is asked: no passphrase, no PIN. A
+		// hardware key's touch needs no answer, and still works.
+		askpass, err := exec.LookPath("false")
+		if err != nil {
+			askpass = "/usr/bin/false" //nolint:gosec // G101: a program's path, no credential
+		}
+		cmd.Env = append(os.Environ(), "SSH_ASKPASS="+askpass, "SSH_ASKPASS_REQUIRE=force")
+	}
 	var out bytes.Buffer
 	cmd.Stdout = &out
 	if c.FD3 != nil {

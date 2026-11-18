@@ -1,0 +1,98 @@
+{
+ "app": "cron-runner",
+ "phase": "idle",
+ "running": true,
+ "available_versions": [
+  "0d41aa9e72c3"
+ ],
+ "current_version": "0d41aa9e72c3",
+ "pid": 41233,
+ "unit": "motel-cron-runner.0d41aa9e72c3.3f9a0c21d4e8b7a6.service",
+ "socket": "/srv/motel/cron-runner/run/app.sock",
+ "command": [
+  "node",
+  "server.js"
+ ],
+ "caps": {
+  "memory_max": 536870912,
+  "tasks_max": 64,
+  "cpu_quota": 100
+ },
+ "deploys": [
+  {
+   "version": "0d41aa9e72c3",
+   "status": "succeeded",
+   "deployed_by": "github:example/cron-runner@refs/heads/main",
+   "sha256": "f7103a7fba2be47baafeadbdedc119be8f0b30d02044184a6426f036c5a69ec5",
+   "started_at": "@-259220s",
+   "finished_at": "@-3d"
+  }
+ ],
+ "last_deploy": {
+  "version": "0d41aa9e72c3",
+  "status": "succeeded",
+  "deployed_by": "github:example/cron-runner@refs/heads/main",
+  "sha256": "f7103a7fba2be47baafeadbdedc119be8f0b30d02044184a6426f036c5a69ec5",
+  "started_at": "@-259220s",
+  "finished_at": "@-3d",
+  "artifact_entries": 1842,
+  "artifact_bytes": 39845888,
+  "phases": [
+   {
+    "name": "downloading",
+    "started_at": "@-259220s",
+    "seconds": 1.2
+   },
+   {
+    "name": "extracting",
+    "started_at": "@-259218s",
+    "seconds": 0.8
+   },
+   {
+    "name": "preparing",
+    "started_at": "@-259218s",
+    "seconds": 4.1
+   },
+   {
+    "name": "starting",
+    "started_at": "@-259213s",
+    "seconds": 1.0
+   },
+   {
+    "name": "soaking",
+    "started_at": "@-259212s",
+    "seconds": 15.0
+   },
+   {
+    "name": "promoting",
+    "started_at": "@-259197s",
+    "seconds": 0.4
+   },
+   {
+    "name": "draining",
+    "started_at": "@-259197s",
+    "seconds": 5.0
+   },
+   {
+    "name": "stopping_old",
+    "started_at": "@-259192s",
+    "seconds": 0.2
+   }
+  ]
+ },
+ "watchdog": {
+  "state": "watching"
+ },
+ "metrics": {
+  "window": "1h",
+  "at": "@-30s",
+  "memory_bytes": {
+   "now": 46137344,
+   "max": 52428800
+  },
+  "cpu_cores": {
+   "avg_5m": 0.03,
+   "avg": 0.02
+  }
+ }
+}

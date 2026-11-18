@@ -1,0 +1,30 @@
+motel · deploy.example.com · v0.7.0 │ alice@example.com · viewer of the box            live · 0s ago
+apps                                                          12 apps · 5 need a look · by attention
+✖ billing      throttled: 5 restarts in its window; last cause "probe: timeout"
+✖ mailer       stopped: 9f02bb1c4e7a is not running
+▲ hostile      newest deploy v7 failed in starting 1h ago; v6 serves
+  +2 more (/!ok to list them)
+────────────────────────────────────────────────────────────────────────────────────────────────────
+  NAME        STATE        VERSION      LAST DEPLOY             MEM  OF CAP 5xx  P95   AGE
+✖ billing     throttled    a41c09e2b7d1 succeeded 2d            498M 97%    4.1% 870ms 0s
+✖ mailer      stopped      9f02bb1c4e7a succeeded 6d            -    -      -    -     0s
+▲ hostile     running      v6           failed    1h   starting 67M  13%    0.5% 127ms 0s
+▲ shop        running      7c1e55d0a913 failed    12m  soaking  201M 39%    0.2% 140ms 0s
+⟳ api         soaking      3b8812aa0c4f succeeded 1h            312M 61%    0%   41ms  0s
+  blog        running      7c1e55d0a913 succeeded 2h            182M 36%    0.1% 120ms 0s
+  cron-runner running      0d41aa9e72c3 succeeded 3d            44M  8.6%   -    -     0s
+  docs        running      5be2c0f1a8d0 succeeded 5d            61M  12%    0%   9ms   0s
+  images      running      c9e1f3a7704b succeeded 24h           -    -      -    -     0s
+  search      running      a0b9c8d7e6f5 succeeded 4h            310M 61%    0%   210ms 0s
+  status-page running      1f2e3d4c5b6a succeeded 12d           30M  5.9%   0%   4ms   0s
+· wiki        not deployed -            -                       -    -      -    -     0s
+
+
+
+
+
+
+
+
+
+enter open  / filter  d record  s sort  ctrl-r ask again  q quit

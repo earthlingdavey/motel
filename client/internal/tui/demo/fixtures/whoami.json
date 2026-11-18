@@ -1,0 +1,14 @@
+{
+ "name": "alice@example.com",
+ "key": "SHA256:VKOVWJR/wCqOglzLV3//JOoCbHbUSBD6npnXCox7/P4",
+ "roles": [
+  {
+   "role": "viewer",
+   "scope": "box"
+  }
+ ],
+ "box": "deploy.example.com",
+ "version": "v0.7.0",
+ "protocol": 1,
+ "token_expires_at": "@9m"
+}

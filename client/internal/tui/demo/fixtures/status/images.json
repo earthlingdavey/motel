@@ -1,0 +1,89 @@
+{
+ "app": "images",
+ "phase": "idle",
+ "running": true,
+ "available_versions": [
+  "c9e1f3a7704b"
+ ],
+ "current_version": "c9e1f3a7704b",
+ "pid": 41233,
+ "unit": "motel-images.c9e1f3a7704b.3f9a0c21d4e8b7a6.service",
+ "socket": "/srv/motel/images/run/app.sock",
+ "command": [
+  "node",
+  "server.js"
+ ],
+ "caps": {
+  "memory_max": 536870912,
+  "tasks_max": 64,
+  "cpu_quota": 100
+ },
+ "deploys": [
+  {
+   "version": "c9e1f3a7704b",
+   "status": "succeeded",
+   "deployed_by": "github:example/images@refs/heads/main",
+   "sha256": "cd78a210526f84344ecc803842109e9c1152d173c95d1bfd0eff4f3d5498ebf5",
+   "started_at": "@-86430s",
+   "finished_at": "@-1d"
+  }
+ ],
+ "last_deploy": {
+  "version": "c9e1f3a7704b",
+  "status": "succeeded",
+  "deployed_by": "github:example/images@refs/heads/main",
+  "sha256": "cd78a210526f84344ecc803842109e9c1152d173c95d1bfd0eff4f3d5498ebf5",
+  "started_at": "@-86430s",
+  "finished_at": "@-1d",
+  "artifact_entries": 1842,
+  "artifact_bytes": 39845888,
+  "phases": [
+   {
+    "name": "downloading",
+    "started_at": "@-86430s",
+    "seconds": 1.2
+   },
+   {
+    "name": "extracting",
+    "started_at": "@-86428s",
+    "seconds": 0.8
+   },
+   {
+    "name": "preparing",
+    "started_at": "@-86428s",
+    "seconds": 4.1
+   },
+   {
+    "name": "starting",
+    "started_at": "@-86423s",
+    "seconds": 1.0
+   },
+   {
+    "name": "soaking",
+    "started_at": "@-86422s",
+    "seconds": 15.0
+   },
+   {
+    "name": "promoting",
+    "started_at": "@-86407s",
+    "seconds": 0.4
+   },
+   {
+    "name": "draining",
+    "started_at": "@-86407s",
+    "seconds": 5.0
+   },
+   {
+    "name": "stopping_old",
+    "started_at": "@-86402s",
+    "seconds": 0.2
+   }
+  ]
+ },
+ "watchdog": {
+  "state": "watching"
+ },
+ "metrics": {
+  "error": "the metrics store did not answer"
+ }
+}

@@ -34,6 +34,7 @@ motel status <app> [--range 1h|24h] an app's status
 motel deploys <app>                 its deploys, newest first
 motel deploys <app> <version>       one deploy's whole record
 motel box status                    the commit the box runs, its Caddyfile's digest, its key for secrets
+motel tui                           screens over the same reads (below)
 ```
 
 Each takes `--json`. `whoami` and `apps` are asked with your own key
@@ -205,7 +206,96 @@ made by hand. Accepted:
 | A 5xx in moteld's own words (a box still starting, a box status that cannot read its files) is said as not known to be moteld's and exits 3, not 1: no header tells it from a gateway's, by the owner's decision that no answer names motel. Its code and its quoted sentence are still shown | 2 | 4 | 1 | 8 | 3 (a stamp on the wire again) | accepted |
 | A gateway's JSON 4xx (a 403, 404, 409) is said as "the box says", as motel's would be: no header tells them apart, and none ever did for a 4xx | 2 | 5 | 3 | 30 | 1 (say a 4xx's sentence as "it says", not "the box says") | owed: older than this change, and it rewrites every 4xx sentence and its goldens |
 | A box built with a release string that is not `N.N.N` with an optional suffix (`make build VERSION=<another shape>`: the Makefile's own default and every tag fit) has every `whoami` called "not moteld's answer: its version is not a release", exit 3 | 2 | 5 | 3 | 30 | 1 (print another shape quoted) | accepted: over the bar, and no doc asks for such a build; the client holds the release to the shape the Makefile links in so that it can print it unquoted |
+| The TUI's marks (`▲ ✖ ⟳`) and box-drawing characters may be double width in some terminals, and misalign its columns (a plain-character mode is a later addition) | 1 | 2 | 1 | 2 | 2 | accepted |
+| The client's one retry of a 401 is a request the TUI's engine does not count against its rate | 1 | 1 | 3 | 3 | 2 | accepted |
+| A box string could reach a tview widget by a writer (`io.Copy`, `WriteTo` into a text view), by reflection, through a type alias, or by a function or method value of a setter, and the TUI's structural tests (`TestOneDoor`, `TestTUIImports`, `TestActionsAreCommands`) be got round the same ways, without a test failing; held by review and the hostile goldens | 2 | 1 | 3 | 6 | 2 | accepted |
+| A hardware key that requires its PIN cannot be used in the TUI: the TUI never asks for one, and the agent does not keep it | 2 | 1 | 1 | 2 | 3 (a PIN prompt outside the screen) | accepted |
+| The TUI's `post` may leave a few short-lived goroutines after quit | 1 | 2 | 3 | 6 | 1 | accepted |
+| A `Retry-After` of an hour makes the TUI wait an hour: the box's word; the title bar says until when. A longer one is cut to an hour: the client's cap, and meant (moteld's 429 says 1 s) | 1 | 1 | 1 | 1 | 1 | accepted |
 | A labelled value under the cap keeps its runs of spaces, so on a narrow terminal a long run can wrap the rest of the value to the start of the next row, where it can look like a label (the `hostile-status` golden shows one). Log lines keep their spacing on purpose | 2 | 1 | 3 | 6 | 2 (wrap-aware printing) | accepted |
+| An apps-list read that got no answer is asked again at the list's own interval, 60 s, not at the 2 s backoff a status gets; while no read is answered the title bar says STALE and the time of the last answer | 2 | 4 | 1 | 8 | 2 | accepted |
+
+Owed, from the two reviews of the TUI's first part (#558; scored there). The fix PR goes
+into `tui` after the TUI's second part, and `tui` does not go to `main` before it:
+
+| Owed | S | O | D | Score | Size of a fix | Outcome |
+|---|---|---|---|---|---|---|
+| A deploy's record is read once and kept for the session: after a rollback or a redeploy rewrites it on the box, the TUI can still show FAILED for a version that succeeded | 3 | 5 | 3 | 45 | 2 | owed: the fix PR |
+| A failed ctrl-r on a record replaces the record on screen with the failure, though the session is meant to keep the last answer | 2 | 4 | 1 | 8 | 2 | owed: the fix PR, with the row above: once a record is read at each open, a lost connection would blank it without ctrl-r |
+| Once the apps list is held, a later failure of its read is not shown, and the list shows no age | 2 | 4 | 5 | 40 | 2 | owed: the fix PR |
+| A running app whose row is stale is counted as not running: the strip can say "2 of 2 apps are not deployed or not yours to view" | 2 | 5 | 3 | 30 | 1 | owed: the fix PR |
+| The deploys table keeps its cursor by row number: when a new deploy lands, enter opens the deploy above the one meant | 2 | 5 | 3 | 30 | 2 | owed: the fix PR |
+| A person with one app starts on its screen with nothing under it: the footer says `esc back`, esc does nothing, and an app granted later is not reached from it | 2 | 5 | 3 | 30 | 1 | owed: the fix PR |
+| A whoami that fails without stopping the session (a release string that is not `N.N.N`, the row in the table above) leaves the title bar at "not signed in" and `live` for a key the box accepts; the reason is held and not shown | 2 | 5 | 3 | 30 | 2 | owed: the fix PR |
+| An app whose first deploy failed opens to "Nothing to show", though the box sends its failed deploys | 2 | 5 | 3 | 30 | 2 | owed: the fix PR |
+| A long app name (63 characters are allowed) pushes STATE, and `stale` with it, off a 60- or 80-column screen | 2 | 5 | 3 | 30 | 2 | owed: the fix PR |
+| Under about 91 columns the apps table drops AGE first, so a row shows no age there, against "Every value shows its age" below | 2 | 5 | 3 | 30 | 2 | owed: the fix PR (a short age in the state cell), or that sentence, by the owner's call |
+| After the wall clock steps back, nothing is read for the length of the step, and the title bar says `live` | 3 | 3 | 3 | 27 | 2 | owed: the fix PR |
+| Stepping to the next or the previous record does not drop the read of the one left: a slow one holds the new screen up to 30 s | 2 | 4 | 3 | 24 | 1 | owed: the fix PR |
+| A record whose read gets a 5xx is asked again ahead of every other read after each backoff: nothing else is read while its screen is open, and the title bar says STALE for a box that answers | 2 | 3 | 3 | 18 | 2 | owed: the fix PR |
+| A role the box sends is shown in the title bar unquoted, as the client's own word; `motel whoami` quotes every role but `viewer` | 2 | 2 | 3 | 12 | 1 | owed: the fix PR |
+| After an outage that ends in refusals (a 403, a 404) the title bar stays STALE: only a 200 clears the count of misses | 2 | 2 | 3 | 12 | 1 | owed: the fix PR |
+| With a key only the agent holds, the advice after a failed signature reads "ssh-add the agent's key" | 2 | 3 | 1 | 6 | 1 | owed: the fix PR |
+| A wake from sleep during a 429 wait refills the bucket from that moment, so a burst follows the wait (the wait must pass 30 s; moteld's 429 says 1 s) | 1 | 1 | 5 | 5 | 1 | owed: the fix PR |
+| A negative `memory_bytes.now` (moteld never sends one) panics the memory bar: the TUI ends, exit 3, the terminal given back | 2 | 2 | 1 | 4 | 1 | owed: the fix PR |
+| whoami is read once, so the title bar's roles go stale when grants change | 2 | 5 | 3 | 30 | 3 | owed: the TUI's second part (every 5 minutes, and soon after a 403) |
+| A record's and an app's details are cut to the window, with no way to scroll them | 2 | 5 | 3 | 30 | 3 | owed, the owner's call: the second part's `y` shows the whole answer; a header that scrolls is new screen behaviour |
+
+## The TUI
+
+`motel tui` is a view over the reads above, in the same process. Its
+packages see the box through `model.Client`, one method per command,
+which `internal/cli/tui.go` alone builds over the client's reads; no
+package of the TUI reaches the client, a transport or a program
+(`TestTUIImports`). Every read goes through the table `model.Actions`,
+each entry naming the command whose read it makes
+(`TestActionsAreCommands`). It only reads. The apps screen is sorted by
+what needs a look, with a strip that says why; a person with one app
+opens on it. An app's screen shows its state and deploys; a deploy's
+record is laid out for reading a failure, its log tail last.
+
+- **The rate.** A box allows a person 2 requests a second with a burst
+  of 60. The TUI keeps to 1.5 a second and 30 at once. The open app is
+  read every 5 s; every other app takes its turn in the rest of the
+  budget, every 30 s, or longer with more apps than that covers (about
+  55 s for 60 apps, 3 minutes for 200), each at its own place in the
+  cycle. A 429 is waited out for every read, by its `Retry-After`, or
+  30 s with none (the time the box's whole burst takes to refill), and
+  slows the rest of the session; no answer backs off from 2 s to 60 s.
+  A 401, a token not signed, or a certificate that did not verify stops
+  every read and says why; `r` asks once more. A 403 or a 404 stops
+  that read alone until `ctrl-r`. Ten idle minutes pause it.
+- **The token** lasts 600 s, the longest a box takes, and is signed
+  again a minute before it ends: a hardware key is touched about every
+  nine minutes, and the title bar says when. The TUI never asks for a
+  passphrase or a PIN: every signature runs ssh-keygen in a session of
+  its own, with no controlling terminal, and with `SSH_ASKPASS_REQUIRE=force`
+  and an `SSH_ASKPASS` that fails, so a key that needs one fails at
+  once. That stops the reads with the advice to add the key to the agent
+  (`ssh-add <path>`); `r` signs again, afresh, at most once in 5 s. A
+  key file with a passphrase the agent does not hold (matched by its
+  bytes) is refused before the screen opens, exit 2. A hardware key
+  that requires its PIN cannot be used in the TUI for now: the agent
+  does not stop the PIN being asked for each signature. The commands
+  may still ask on a terminal. Nothing is written to disk.
+- **Every value shows its age**, and a row whose last three reads, by
+  its own interval, failed or did not come says `stale` in its state.
+  Colour only repeats a mark (`✖ ▲ ⟳ ? ·`) or a word; `NO_COLOR`
+  turns it off.
+- **Box text on tview.** tview reads `[...]` as tags in table cells,
+  titles and text views, and a URL tag makes a real OSC 8 link.
+  `tview.Escape` does not stop that (its pattern skips a tag holding a
+  `/`), so every string reaches a widget through one package,
+  `internal/tui/door`, which puts a zero-width space after each `[` on
+  top of `termtext`. Its setters take `door.Shown`, a struct only it
+  can make. That rests on two tview internals, held by
+  `TestEscapeHolds` in every widget kind used; `TestOneDoor` fails if
+  the screens hand tview text or make a widget off a short list, and
+  `TestSafeBytes` draws the hostile fixture on a real terminfo screen
+  and finds none of its attacks in the bytes.
+
+`motel tui --demo` (hidden) shows the test fixtures, marked SAMPLE
+DATA in the title bar, with no box.
 
 ## Layout
 
@@ -218,6 +308,20 @@ made by hand. Accepted:
 | `internal/render` | the human output; it takes views of `termtext.Text` and never a wire type |
 | `internal/termtext` | `Text`: a string a box sent, made safe to print |
 | `internal/local` | the programs it runs and the box repository it may be in |
+| `internal/tui` | the TUI's screens, on tview |
+| `internal/tui/door` | the one way text reaches tview |
+| `internal/tui/model` | what the screens read and when (the refresh engine), and what they show, with no terminal library |
+| `internal/tui/demo` | a box made of fixtures: `--demo`, and the TUI's tests |
+| `internal/tui/hostile` | test support: the hostile fixture's attacks, and a terminal that records bytes |
+
+A release build must be made with the workspace off (`make
+build-client`, `GOWORK=off`; nothing in the release workflow builds
+the client yet), so the binary links exactly the versions this go.mod
+records, the ones Dependabot, govulncheck and a reader go by: in the
+workspace Go takes each module at the highest version any workspace
+module requires, which can be another. `TestWorkspaceAgrees` fails, naming
+the module, when a build in the workspace would link a version this
+go.mod does not record.
 
 The module links no Caddy (`TestLinksNoCaddy`): the wire types come from
 `liveswap/wire`, which imports only the standard library. The tests that

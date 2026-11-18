@@ -1,0 +1,110 @@
+{
+ "app": "docs",
+ "phase": "idle",
+ "running": true,
+ "available_versions": [
+  "5be2c0f1a8d0"
+ ],
+ "current_version": "5be2c0f1a8d0",
+ "pid": 41233,
+ "unit": "motel-docs.5be2c0f1a8d0.3f9a0c21d4e8b7a6.service",
+ "socket": "/srv/motel/docs/run/app.sock",
+ "command": [
+  "node",
+  "server.js"
+ ],
+ "caps": {
+  "memory_max": 536870912,
+  "tasks_max": 64,
+  "cpu_quota": 100
+ },
+ "deploys": [
+  {
+   "version": "5be2c0f1a8d0",
+   "status": "succeeded",
+   "deployed_by": "github:example/docs@refs/heads/main",
+   "sha256": "d60863981893d553e796630dcd4b07236179aeff03381d9eb5261f9603e823d7",
+   "started_at": "@-432035s",
+   "finished_at": "@-5d"
+  }
+ ],
+ "last_deploy": {
+  "version": "5be2c0f1a8d0",
+  "status": "succeeded",
+  "deployed_by": "github:example/docs@refs/heads/main",
+  "sha256": "d60863981893d553e796630dcd4b07236179aeff03381d9eb5261f9603e823d7",
+  "started_at": "@-432035s",
+  "finished_at": "@-5d",
+  "artifact_entries": 1842,
+  "artifact_bytes": 39845888,
+  "phases": [
+   {
+    "name": "downloading",
+    "started_at": "@-432035s",
+    "seconds": 1.2
+   },
+   {
+    "name": "extracting",
+    "started_at": "@-432033s",
+    "seconds": 0.8
+   },
+   {
+    "name": "preparing",
+    "started_at": "@-432033s",
+    "seconds": 4.1
+   },
+   {
+    "name": "starting",
+    "started_at": "@-432028s",
+    "seconds": 1.0
+   },
+   {
+    "name": "soaking",
+    "started_at": "@-432027s",
+    "seconds": 15.0
+   },
+   {
+    "name": "promoting",
+    "started_at": "@-432012s",
+    "seconds": 0.4
+   },
+   {
+    "name": "draining",
+    "started_at": "@-432012s",
+    "seconds": 5.0
+   },
+   {
+    "name": "stopping_old",
+    "started_at": "@-432007s",
+    "seconds": 0.2
+   }
+  ]
+ },
+ "watchdog": {
+  "state": "watching"
+ },
+ "metrics": {
+  "window": "1h",
+  "at": "@-30s",
+  "memory_bytes": {
+   "now": 63963136,
+   "max": 84934656
+  },
+  "cpu_cores": {
+   "avg_5m": 0.03,
+   "avg": 0.02
+  },
+  "requests": {
+   "total": 1234,
+   "per_second": 0.34,
+   "by_class": {
+    "2xx": 1224,
+    "5xx": 10
+   },
+   "5xx_share": 0.0,
+   "p50_ms": 18,
+   "p95_ms": 9,
+   "cache_hit_share": 0.62
+  }
+ }
+}

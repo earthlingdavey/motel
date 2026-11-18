@@ -1,0 +1,9 @@
+{
+ "app": "wiki",
+ "phase": "idle",
+ "running": true,
+ "available_versions": [],
+ "watchdog": {
+  "state": "idle"
+ }
+}

@@ -143,7 +143,7 @@ func (r *runner) tree() *cobra.Command {
 		},
 	}
 	box.AddCommand(r.boxStatus())
-	for _, c := range []*cobra.Command{r.version(), r.key(), r.whoami(), r.apps(), r.status(), r.deploys(), box} {
+	for _, c := range []*cobra.Command{r.version(), r.key(), r.whoami(), r.apps(), r.status(), r.deploys(), box, r.tui()} {
 		c.GroupID = "experimental"
 		root.AddCommand(c)
 	}

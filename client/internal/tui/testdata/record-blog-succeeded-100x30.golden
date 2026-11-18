@@ -1,0 +1,30 @@
+motel · deploy.example.com · v0.7.0 │ alice@example.com · viewer of the box            live · 0s ago
+apps › blog › deploy 7c1e55d0a913
+✓ SUCCEEDED in 41 s · 12:11:59 → 12:12:40 UTC
+by          github:example/blog@refs/heads/main
+serves now  this version (as of 14:12:40 UTC)
+phases      downloading 1.2s › extracting 0.8s › preparing 4.1s › starting 1.0s › soaking 15.0s › p…
+artifact    1842 entries · 38 MiB
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+↑↓ scroll  w wrap  p previous  n next  esc back  q quit
