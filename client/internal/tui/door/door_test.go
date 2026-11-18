@@ -1,6 +1,7 @@
 package door
 
 import (
+	"bytes"
 	"sort"
 	"strings"
 	"testing"
@@ -13,8 +14,11 @@ import (
 )
 
 // drawOnce draws p once on a real terminfo screen over a fake tty, and
-// returns the bytes tcell wrote.
-func drawOnce(t *testing.T, p tview.Primitive, focus tview.Primitive) []byte {
+// returns the bytes tcell wrote. then, when not nil, runs on the event
+// loop before the frame is drawn, once the focus has settled: what a
+// focus change would undo (the completion list a blur drops) is done
+// there.
+func drawOnce(t *testing.T, p tview.Primitive, focus tview.Primitive, then func()) []byte {
 	t.Helper()
 	tty := hostile.NewTTY()
 	scr, err := hostile.Screen(tty)
@@ -25,9 +29,12 @@ func drawOnce(t *testing.T, p tview.Primitive, focus tview.Primitive) []byte {
 	if focus != nil {
 		app.SetFocus(focus)
 	}
+	if then == nil {
+		then = func() {}
+	}
 	done := make(chan struct{})
 	go func() { defer close(done); _ = app.Run() }()
-	app.QueueUpdateDraw(func() {})
+	app.QueueUpdateDraw(then)
 	app.QueueUpdate(app.Stop) // from inside the loop, as the TUI stops
 	<-done
 	return tty.Bytes()
@@ -42,90 +49,105 @@ func names() []string {
 	return n
 }
 
+// widget is a widget holding text, the one to focus (nil: none), and
+// what to do on the event loop once the focus has settled (nil:
+// nothing).
+type widget struct {
+	p, focus tview.Primitive
+	then     func()
+}
+
 // widgets puts text in every kind of widget the TUI hands text to, the
 // way it hands it: through boxtext.go.
-func widgets(ts []termtext.Text) map[string]func() (tview.Primitive, tview.Primitive) {
-	return map[string]func() (tview.Primitive, tview.Primitive){
-		"table cell": func() (tview.Primitive, tview.Primitive) {
+func widgets(ts []termtext.Text) map[string]func() widget {
+	return map[string]func() widget{
+		"table cell": func() widget {
 			tb := tview.NewTable()
 			for i, x := range ts {
 				tb.SetCell(i, 0, Cell(x))
 			}
-			return tb, nil
+			return widget{p: tb}
 		},
-		"text view, lines": func() (tview.Primitive, tview.Primitive) {
+		"text view, lines": func() widget {
 			tv := tview.NewTextView().SetDynamicColors(true).SetWrap(false)
 			var ls []model.Line
 			for _, x := range ts {
 				ls = append(ls, model.Line{{T: x, C: model.Bad}, {T: x}})
 			}
 			SetText(tv, Lines(ls, true))
-			return tv, nil
+			return widget{p: tv}
 		},
-		"text view, box lines": func() (tview.Primitive, tview.Primitive) {
+		"text view, box lines": func() widget {
 			tv := tview.NewTextView().SetDynamicColors(true).SetWrap(false)
 			SetText(tv, Texts(ts))
-			return tv, nil
+			return widget{p: tv}
 		},
-		"framed title": func() (tview.Primitive, tview.Primitive) {
+		"framed title": func() widget {
 			tv := tview.NewTextView().SetDynamicColors(true).SetWrap(false)
 			tv.SetBorder(true)
 			tv.SetTitle(" " + Inert(ts[0]).s + " ")
-			return tv, nil
+			return widget{p: tv}
 		},
-		"completions": func() (tview.Primitive, tview.Primitive) {
+		"completions": func() widget {
+			// As the screens use it (ui.go), and its list opened once the
+			// field has the focus: a focus set after would blur the field,
+			// and the blur closes the list, so nothing of it is drawn.
 			f := tview.NewInputField().SetAutocompleteUseTags(false)
 			var es []string
 			for _, x := range ts {
 				es = append(es, x.String())
 			}
 			SetCompletions(f, func(string) []string { return es })
-			f.SetText("x")
-			f.Autocomplete()
-			return f, f
+			return widget{p: f, focus: f, then: func() { f.SetText("x"); f.Autocomplete() }}
 		},
-		"framed title, the TUI's own": func() (tview.Primitive, tview.Primitive) {
+		"framed title, the TUI's own": func() widget {
 			tv := tview.NewTextView()
 			tv.SetBorder(true)
 			SetTitle(tv.Box, ts[0].String())
-			return tv, nil
+			return widget{p: tv}
 		},
-		"input field": func() (tview.Primitive, tview.Primitive) {
+		"input field": func() widget {
 			f := tview.NewInputField()
 			SetLabel(f, ts[0].String())
 			SetInput(f, ts[len(ts)-1].String())
-			return f, f
+			return widget{p: f, focus: f}
 		},
 	}
 }
 
 // TestEscapeHolds puts every hostile string, through termtext and the
 // one door, in every widget kind used, on a real terminfo screen: no
-// attack reaches the bytes. It also holds the gap the door exists for:
-// tview.Escape lets a URL tag through as a live OSC 8 link.
+// attack reaches the bytes, and each widget draws the text it holds
+// (the URL tag's words are on screen, as text), so the check is of what
+// was drawn. It also holds the gap the door exists for: tview.Escape
+// lets a URL tag through as a live OSC 8 link.
 func TestEscapeHolds(t *testing.T) {
 	var ts []termtext.Text
 	for _, n := range names() {
 		ts = append(ts, termtext.From(n+" <"+hostile.Payloads[n]+">"))
 	}
 	for name, mk := range widgets(ts) {
-		p, f := mk()
-		if found := hostile.Scan(drawOnce(t, p, f)); len(found) > 0 {
+		w := mk()
+		if found := hostile.Scan(drawOnce(t, w.p, w.focus, w.then)); len(found) > 0 {
 			t.Errorf("%s: attacks reached the terminal: %v", name, found)
 		}
 	}
 	for _, n := range names() {
 		one := []termtext.Text{termtext.From(hostile.Payloads[n])}
 		for name, mk := range widgets(one) {
-			p, f := mk()
-			if found := hostile.Scan(drawOnce(t, p, f)); len(found) > 0 {
+			w := mk()
+			out := drawOnce(t, w.p, w.focus, w.then)
+			if found := hostile.Scan(out); len(found) > 0 {
 				t.Errorf("%s alone in a %s: %v", n, name, found)
+			}
+			if n == "urltag" && !bytes.Contains(out, []byte("evil.example/tag")) {
+				t.Errorf("a %s draws nothing of the text it holds: no attack in it is drawn either", name)
 			}
 		}
 	}
 	// The gap: the same URL tag after termtext and tview.Escape is a link.
 	tag := termtext.From(hostile.Payloads["urltag"]).String()
-	if found := hostile.Scan(drawOnce(t, tview.NewTable().SetCell(0, 0, tview.NewTableCell(tview.Escape(tag))), nil)); !strings.Contains(strings.Join(found, ","), "osc8") {
+	if found := hostile.Scan(drawOnce(t, tview.NewTable().SetCell(0, 0, tview.NewTableCell(tview.Escape(tag))), nil, nil)); !strings.Contains(strings.Join(found, ","), "osc8") {
 		t.Errorf("tview.Escape no longer lets a URL tag through (%v): the door's reason has changed; re-read tview's tag parser", found)
 	}
 	// And its inverse: inert text shows the tag as text.
