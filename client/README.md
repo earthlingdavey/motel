@@ -285,7 +285,7 @@ drawn as it is. The overlays' own words are laid on more rows to fit
 the window. `y` shows the box's answer under
 its command, which is cut as `c` cuts it, which it says not to copy, as
 `c` does, when it is cut or not drawn as it runs, and which `c` then
-`P` prints whole; the answer is indented, its strings made safe to show; its long
+`P` prints whole; the answer is indented (at most 10 levels deep, and the overlay says when a line is deeper), its strings made safe to show; its long
 lines and long answers are cut for display (a line wider than the
 window at its edge, as there is no scrolling sideways; lines over 2000
 characters and answers over 2000 lines here), and the overlay says so
@@ -294,7 +294,7 @@ names: the command line, or the answer. Into a pipe or a file the
 answer goes as the command's `--json` prints it: the box's JSON, with
 the characters a terminal acts on that JSON lets a string carry raw (C1
 controls, bidi overrides, DEL) written as JSON's own escapes, since a
-pipe may end at a terminal; to a terminal it goes indented and made
+pipe may end at a terminal; to a terminal it goes indented (as on the overlay) and made
 safe, every line whole, and stderr says so. ctrl-r asks again for what
 the screen shows, and nothing else; held down, it reads the list, a
 record, whoami or the box at most once in 5 s, and the other reads keep

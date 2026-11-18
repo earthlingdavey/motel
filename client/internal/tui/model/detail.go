@@ -1,7 +1,6 @@
 package model
 
 import (
-	"bytes"
 	"encoding/json"
 	"slices"
 	"strconv"
@@ -380,36 +379,48 @@ func (s *Session) RecordView(app, version string, now time.Time) RecordView {
 // there were. indented is false for a body that would not indent,
 // which is shown line by line as it came.
 func JSONLines(body []byte) (out []termtext.Text, cut int, indented bool) {
-	all, indented := jsonAll(body)
+	out, cut, indented, _ = jsonLines(body)
+	return out, cut, indented
+}
+
+// jsonLines is JSONLines, and whether a line it made is nested deeper
+// than IndentMax levels, and so indented less than its depth.
+func jsonLines(body []byte) (out []termtext.Text, cut int, indented, deep bool) {
+	var all []termtext.Text
+	if !json.Valid(body) {
+		all = termtext.Lines(string(body))
+	} else {
+		// Only what the overlay draws is written: a line is cut a little
+		// past TailMax runes (four bytes a rune, the most UTF-8 takes),
+		// which Capped then cuts and marks, and nothing after the
+		// OverlayLines'th line is written, only counted.
+		w := indenter{lines: OverlayLines, lineBytes: 4 * (TailMax + 1)}
+		w.indent(body)
+		all, cut, indented, deep = termtext.Lines(string(w.b)), w.total()-OverlayLines, true, w.deep
+	}
 	if len(all) > OverlayLines {
 		all, cut = all[:OverlayLines], len(all)-OverlayLines
 	}
 	for _, l := range all {
 		out = append(out, Capped(l.String(), TailMax))
 	}
-	return out, cut, indented
-}
-
-// jsonAll is every line of a body, indented when it is JSON, each made
-// safe and whole.
-func jsonAll(body []byte) ([]termtext.Text, bool) {
-	var b bytes.Buffer
-	indented := json.Indent(&b, body, "", "  ") == nil
-	if !indented {
-		b.Reset()
-		b.Write(body)
-	}
-	return termtext.Lines(b.String()), indented
+	return out, max(cut, 0), indented, deep
 }
 
 // JSONShown is a body as P prints it to a terminal: the lines the JSON
-// overlay shows, indented and made safe, every one and each whole, a
-// line feed after each. By JSON's rules a body holds no raw C0 control,
-// but it may hold C1 controls and bidi overrides, which a terminal acts
-// on; what the command's --json prints goes where stdout is not a
-// terminal (Printable).
+// overlay shows, indented (at most IndentMax levels deep) and made
+// safe, every one and each whole, a line feed after each. By JSON's
+// rules a body holds no raw C0 control, but it may hold C1 controls and
+// bidi overrides, which a terminal acts on; what the command's --json
+// prints goes where stdout is not a terminal (Printable).
 func JSONShown(body []byte) string {
-	all, _ := jsonAll(body)
+	text := string(body)
+	if json.Valid(body) {
+		var w indenter
+		w.indent(body)
+		text = string(w.b)
+	}
+	all := termtext.Lines(text)
 	lines := make([]string, 0, len(all)+1)
 	for _, l := range all {
 		lines = append(lines, l.String())
@@ -421,3 +432,136 @@ func JSONShown(body []byte) string {
 // tview's text view draws slower the further it is scrolled, and a body
 // of megabytes made every key slow. P prints all of it.
 const OverlayLines = 2000
+
+// IndentMax is the most levels of nesting the answer is indented by, on
+// the overlay and as P prints it: a line nested deeper is indented as
+// at IndentMax. Each level is two spaces on every line inside it, so a
+// small body nested thousands deep would otherwise be gigabytes of
+// spaces; moteld's answers nest five deep at most.
+const IndentMax = 10
+
+// indenter writes a valid JSON body indented as json.Indent indents it
+// with two spaces and no prefix, but no deeper than IndentMax levels; it
+// writes at most lines lines (0: all), and at most lineBytes bytes of a
+// line (0: all), and counts the rest.
+type indenter struct {
+	lines, lineBytes int
+	b                []byte
+	// n is the line feeds of the whole text, cur the bytes of the line
+	// being written; endsNL says the whole text ends with a line feed.
+	n, cur int
+	endsNL bool
+	// deep says a line written is nested deeper than IndentMax.
+	deep bool
+}
+
+// total is how many lines termtext.Lines would make of the whole text.
+func (w *indenter) total() int {
+	if w.endsNL {
+		return w.n
+	}
+	return w.n + 1
+}
+
+func (w *indenter) put(c byte) {
+	w.endsNL = c == '\n'
+	if c == '\n' {
+		w.n, w.cur = w.n+1, 0
+	}
+	if w.lines > 0 && w.n >= w.lines || w.lineBytes > 0 && w.cur >= w.lineBytes {
+		return
+	}
+	w.b = append(w.b, c)
+	if c != '\n' {
+		w.cur++
+	}
+}
+
+func (w *indenter) newline(depth int) {
+	w.put('\n')
+	if w.lines > 0 && w.n >= w.lines {
+		return
+	}
+	if depth > IndentMax {
+		w.deep, depth = true, IndentMax
+	}
+	for range 2 * depth {
+		w.put(' ')
+	}
+}
+
+// indent writes body, which json.Valid holds valid: white space outside
+// strings is dropped, as json.Indent drops it, but for what follows the
+// value, which it keeps as it is.
+func (w *indenter) indent(body []byte) {
+	// depth is the indent's, which, as json.Indent's, grows only when an
+	// object or an array is found not empty; nest is the brackets open.
+	depth, nest := 0, 0
+	need, inStr, esc, begun := false, false, false, false
+	for i, c := range body {
+		if inStr {
+			w.put(c)
+			switch {
+			case esc:
+				esc = false
+			case c == '\\':
+				esc = true
+			case c == '"':
+				inStr = false
+				if nest == 0 {
+					w.rest(body[i+1:])
+					return
+				}
+			}
+			continue
+		}
+		if c == ' ' || c == '\t' || c == '\n' || c == '\r' {
+			if nest == 0 && begun {
+				// The end of a number or a literal that is the whole body.
+				w.rest(body[i:])
+				return
+			}
+			continue
+		}
+		if need && c != '}' && c != ']' {
+			need, depth = false, depth+1
+			w.newline(depth)
+		}
+		begun = true
+		switch c {
+		case '{', '[':
+			need, nest = true, nest+1
+			w.put(c)
+		case ',':
+			w.put(c)
+			w.newline(depth)
+		case ':':
+			w.put(c)
+			w.put(' ')
+		case '}', ']':
+			if need {
+				need = false
+			} else {
+				depth--
+				w.newline(depth)
+			}
+			w.put(c)
+			if nest--; nest == 0 {
+				w.rest(body[i+1:])
+				return
+			}
+		case '"':
+			inStr = true
+			w.put(c)
+		default:
+			w.put(c)
+		}
+	}
+}
+
+// rest is what follows the body's value, white space, kept as it is.
+func (w *indenter) rest(b []byte) {
+	for _, c := range b {
+		w.put(c)
+	}
+}

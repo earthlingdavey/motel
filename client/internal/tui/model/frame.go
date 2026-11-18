@@ -232,7 +232,7 @@ func (s *Session) Overlay(v View, json bool, width int, cells Cells, asIs AsIs) 
 	key := jsonKey{v, at, len(body), width}
 	if s.json.key != key || s.json.lines == nil {
 		s.json.key, s.json.lines = key, nil
-		lines, more, indented := JSONLines(body)
+		lines, more, indented, deep := jsonLines(body)
 		head := "indented here; its strings as received, made safe to show;"
 		if !indented {
 			head = "not JSON that indents: shown line by line as it came, made safe to show;"
@@ -265,6 +265,9 @@ func (s *Session) Overlay(v View, json bool, width int, cells Cells, asIs AsIs) 
 			// There is no scrolling sideways: the screen cuts such a line
 			// at its edge, with no mark of its own.
 			rows = append(rows, warn("a line below is wider than the window and cut at its edge, unmarked: P prints every line whole"))
+		}
+		if deep {
+			rows = append(rows, warn("a line below is nested deeper than "+strconv.Itoa(IndentMax)+" levels and indented as at "+strconv.Itoa(IndentMax)+", here and as P prints it"))
 		}
 		rows = append(append(rows, blank), answer...)
 		if more > 0 {
