@@ -37,7 +37,7 @@ motel box status                    the commit the box runs, its Caddyfile's dig
 motel tui                           screens over the same reads (below)
 ```
 
-Each takes `--json`. `whoami` and `apps` are asked with your own key
+Each but `tui` takes `--json`. `whoami` and `apps` are asked with your own key
 only: with `MOTEL_TOKEN` set, name the key with `--key` (else exit 2,
 nothing sent). `<app>` is a name, or the app's URL
 (`https://deploy.example.com/blog`, as `MOTEL_URL` holds it), which names
