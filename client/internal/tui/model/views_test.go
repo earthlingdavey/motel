@@ -22,7 +22,7 @@ func TestStaleRunningIsRunning(t *testing.T) {
 	for range 6 {
 		step(t, s, f, &now)
 	}
-	if got := s.AppsView(now, "", 0).AllWell.Text(); got != "all 2 apps running; every newest deploy succeeded" {
+	if got := s.AppsView(now, "", 0, 0).AllWell.Text(); got != "all 2 apps running; every newest deploy succeeded" {
 		t.Fatalf("both answering: %q", got)
 	}
 	f.Set("docs", fail(model.FailNoAnswer))
@@ -35,7 +35,7 @@ func TestStaleRunningIsRunning(t *testing.T) {
 	if st := row(s, now, "docs").Cells[model.ColState].String(); st != "running · stale" {
 		t.Fatalf("docs says %q", st)
 	}
-	if got := s.AppsView(now, "", 0).AllWell.Text(); !strings.HasPrefix(got, "all 2 apps running") {
+	if got := s.AppsView(now, "", 0, 0).AllWell.Text(); !strings.HasPrefix(got, "all 2 apps running") {
 		t.Errorf("a stale running row is counted as not running: %q", got)
 	}
 }
@@ -196,5 +196,61 @@ func TestRecordRefusedAlone(t *testing.T) {
 				t.Errorf("after a %s the crumb says %q", c.name, crumb.Text())
 			}
 		})
+	}
+}
+
+// TestLongNamesDistinct: two long names that the cut would show alike
+// are shown longer until they differ, the same in the table and in the
+// strip, and never so long that the mark, NAME and STATE leave the
+// screen: two names that differ only in what that leaves out stay
+// alike, and STATE stays.
+func TestLongNamesDistinct(t *testing.T) {
+	stopped, err := os.ReadFile("../demo/fixtures/status/mailer.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	mid := func(c string) string { return strings.Repeat("a", 31) + c + strings.Repeat("a", 31) }
+	for _, c := range []struct {
+		a, b     string
+		width    int
+		distinct bool
+	}{
+		{"acme-website-staging-frontend", "acme-website-production-frontend", 80, true},
+		{"acme-website-staging-frontend", "acme-website-production-frontend", 60, true},
+		{mid("b"), mid("c"), 0, true},
+		{mid("b"), mid("c"), 80, true}, // STATE 13 wide leaves 63 for NAME
+		{mid("b"), mid("c"), 60, false},
+	} {
+		now := t0
+		f := &demo.Fake{Now: func() time.Time { return now }}
+		f.Body("apps.json", `{"apps": [{"name": "`+c.a+`"}, {"name": "`+c.b+`"}, {"name": "blog"}]}`)
+		f.Body("status/"+c.a+".json", string(stopped))
+		f.Body("status/"+c.b+".json", string(stopped))
+		s := &model.Session{Host: demo.Host, Now: f.Now, Engine: model.NewEngine(t0)}
+		for range 6 {
+			step(t, s, f, &now)
+		}
+		v := s.AppsView(now, "", 1, c.width)
+		shown := map[string]string{}
+		stateW := 0
+		for _, r := range v.Rows {
+			shown[r.Name] = r.Cells[model.ColName].String()
+			stateW = max(stateW, len([]rune(r.StateAged.String())))
+		}
+		if got := shown[c.a] != shown[c.b]; got != c.distinct {
+			t.Errorf("%d columns: %q and %q shown as %q and %q", c.width, c.a, c.b, shown[c.a], shown[c.b])
+		}
+		if n := len([]rune(shown[c.a])); c.width > 0 && 4+n+stateW > c.width {
+			t.Errorf("%d columns: NAME %d wide and STATE %d leave the screen", c.width, n, stateW)
+		}
+		for _, l := range v.Strip {
+			name := strings.Fields(l.Text())[1]
+			if name != shown[c.a] && name != shown[c.b] {
+				t.Errorf("%d columns: the strip shows %q, the table %q and %q", c.width, name, shown[c.a], shown[c.b])
+			}
+		}
+		if len(v.Strip) != 2 {
+			t.Errorf("%d columns: %d strip lines", c.width, len(v.Strip))
+		}
 	}
 }

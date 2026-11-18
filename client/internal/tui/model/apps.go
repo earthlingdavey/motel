@@ -72,10 +72,10 @@ type AppsView struct {
 	ListFailed Line
 }
 
-// AppsView is the apps screen at now, filtered and sorted. A filter of
-// "!" or "!ok", with or without a name after it, keeps only marked
-// rows.
-func (s *Session) AppsView(now time.Time, filter string, sort int) AppsView {
+// AppsView is the apps screen at now, filtered and sorted, for a screen
+// width wide (0: of any width). A filter of "!" or "!ok", with or
+// without a name after it, keeps only marked rows.
+func (s *Session) AppsView(now time.Time, filter string, sort int, width int) AppsView {
 	s.seen(now)
 	var v AppsView
 	switch {
@@ -104,12 +104,14 @@ func (s *Session) AppsView(now time.Time, filter string, sort int) AppsView {
 	}
 	filter = strings.TrimSpace(filter)
 	need, all, notRunning, asking := 0, 0, 0, 0
+	stateW := len([]rune(ColHeads[ColState]))
 	for _, n := range names {
 		r := s.row(n, now)
 		r.StateAged = r.Cells[ColState]
 		if age := r.Cells[ColAge].String(); age != "" && !r.Stale {
 			r.StateAged = termtext.From(r.Cells[ColState].String() + " · " + age)
 		}
+		stateW = max(stateW, len([]rune(r.StateAged.String())))
 		if r.Mark < MarkNone {
 			need++
 		}
@@ -126,6 +128,17 @@ func (s *Session) AppsView(now time.Time, filter string, sort int) AppsView {
 		}
 		v.Rows = append(v.Rows, r)
 	}
+	// The mark, NAME and STATE fit the width, as the table lays them out
+	// (a column and a space each, the mark's two cells), STATE with an
+	// age in it.
+	most := 64
+	if width > 0 {
+		most = width - 4 - stateW
+	}
+	shown := shownNames(names, most)
+	for i := range v.Rows {
+		v.Rows[i].Cells[ColName] = termtext.From(shown[v.Rows[i].Name])
+	}
 	switch Sorts[sort%len(Sorts)] {
 	case "attention":
 		slices.SortStableFunc(v.Rows, func(a, b AppRow) int { return int(a.Mark) - int(b.Mark) })
@@ -136,7 +149,7 @@ func (s *Session) AppsView(now time.Time, filter string, sort int) AppsView {
 	}
 	for _, r := range v.Rows {
 		if len(r.Why) > 0 {
-			v.Strip = append(v.Strip, append(Line{ownC(r.Mark.Glyph()+" ", r.Mark.Class()), own(pad(cutName(r.Name), 12) + " ")}, r.Why...))
+			v.Strip = append(v.Strip, append(Line{ownC(r.Mark.Glyph()+" ", r.Mark.Class()), own(pad(r.Cells[ColName].String(), 12) + " ")}, r.Why...))
 		}
 	}
 	switch {
@@ -156,19 +169,54 @@ func (s *Session) AppsView(now time.Time, filter string, sort int) AppsView {
 }
 
 // NameMax is the most of an app's name the apps table and its strip
-// show. A longer one (63 characters are allowed) is cut in the middle,
-// its start and its end kept, so that names which share a start still
-// differ on screen; the whole name is what is opened, filtered and
-// completed.
+// show, but for names that would be shown alike (shownNames). A longer
+// one (63 characters are allowed) is cut in the middle, its start and
+// its end kept, so that names which share a start still differ on
+// screen; the whole name is what is opened, filtered and completed.
 const NameMax = 20
 
-func cutName(name string) string {
+// cutName is name cut in its middle to n runes, the cut marked: 12 of
+// its start and 7 of its end at NameMax, one more of each in turn for
+// each rune n is longer.
+func cutName(name string, n int) string {
 	r := []rune(name)
-	if len(r) <= NameMax {
+	if len(r) <= n {
 		return name
 	}
-	const end = 7
-	return string(r[:NameMax-1-end]) + "…" + string(r[len(r)-end:])
+	end := 7 + (n-NameMax)/2
+	return string(r[:n-1-end]) + "…" + string(r[len(r)-end:])
+}
+
+// shownNames is each of names as the apps table and its strip show it:
+// cut to NameMax, and those that would then be shown alike shown
+// longer, alike, until they differ or are whole, but never longer than
+// most. A name is never shown as another is: a cut holds "…", which no
+// name does, and once two cuts differ, longer ones of them do.
+func shownNames(names []string, most int) map[string]string {
+	n := make(map[string]int, len(names))
+	out := make(map[string]string, len(names))
+	for _, x := range names {
+		n[x], out[x] = NameMax, cutName(x, NameMax)
+	}
+	for {
+		alike := map[string][]string{}
+		for _, x := range names {
+			alike[out[x]] = append(alike[out[x]], x)
+		}
+		grew := false
+		for _, xs := range alike {
+			for _, x := range xs {
+				if len(xs) > 1 && n[x] < most && n[x] < len([]rune(x)) {
+					n[x]++
+					out[x] = cutName(x, n[x])
+					grew = true
+				}
+			}
+		}
+		if !grew {
+			return out
+		}
+	}
 }
 
 func cmpDesc(a, b float64) int {
@@ -193,7 +241,7 @@ func pad(s string, n int) string {
 func (s *Session) row(name string, now time.Time) (r AppRow) {
 	s.seen(now)
 	r = AppRow{Name: name, Mark: MarkNone}
-	r.Cells[ColName] = termtext.From(cutName(name))
+	r.Cells[ColName] = termtext.From(cutName(name, NameMax))
 	for c := ColVersion; c < ColAge; c++ {
 		r.Cells[c] = termtext.From("-")
 	}

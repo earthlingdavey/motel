@@ -344,7 +344,7 @@ func step(t *testing.T, s *model.Session, f *demo.Fake, now *time.Time) model.Jo
 }
 
 func row(s *model.Session, now time.Time, name string) model.AppRow {
-	for _, r := range s.AppsView(now, "", 1).Rows {
+	for _, r := range s.AppsView(now, "", 1, 0).Rows {
 		if r.Name == name {
 			return r
 		}
@@ -413,7 +413,7 @@ func TestListRefused(t *testing.T) {
 	s := &model.Session{Host: demo.Host, Now: f.Now, Engine: model.NewEngine(t0)}
 	step(t, s, f, &now) // whoami
 	step(t, s, f, &now) // apps, refused
-	if v := s.AppsView(now, "", 0); !strings.Contains(v.Empty.Text(), "does not allow your key this") {
+	if v := s.AppsView(now, "", 0, 0); !strings.Contains(v.Empty.Text(), "does not allow your key this") {
 		t.Errorf("the screen says %q", v.Empty.Text())
 	}
 	if _, right := s.Title(now.Add(time.Minute)); strings.HasPrefix(right.Text(), "live") {
@@ -956,7 +956,7 @@ func TestWords(t *testing.T) {
 	s2 := &model.Session{Host: demo.Host, Now: f.Now, Engine: model.NewEngine(t0)}
 	f.Set("whoami", fail(model.FailSignedOut))
 	step(t, s2, f, &now)
-	if v := s2.AppsView(now, "", 0); !strings.HasPrefix(v.Empty.Text(), "not asking") {
+	if v := s2.AppsView(now, "", 0, 0); !strings.HasPrefix(v.Empty.Text(), "not asking") {
 		t.Errorf("an empty apps screen while stopped says %q", v.Empty.Text())
 	}
 }

@@ -104,7 +104,7 @@ func (u *UI) crumbs(v model.View) (model.Line, model.Line) {
 	now := u.now()
 	switch v.Screen {
 	case model.ScreenApps:
-		return ownLine("apps"), u.S.AppsView(now, u.filter, u.sort).Summary
+		return ownLine("apps"), u.S.AppsView(now, u.filter, u.sort, u.w).Summary
 	case model.ScreenApp:
 		return ownLine("apps › " + v.App), u.S.Overview(v.App, now).AsOf
 	case model.ScreenRecord:
@@ -141,7 +141,7 @@ var footers = map[model.Screen]string{
 var dropOrder = []int{model.ColAge, model.ColP95, model.Col5xx, model.ColOfCap, model.ColMem}
 
 func (u *UI) renderApps() {
-	view := u.S.AppsView(u.now(), u.filter, u.sort)
+	view := u.S.AppsView(u.now(), u.filter, u.sort, u.w)
 	n := 4
 	if u.h < 30 {
 		n = 1

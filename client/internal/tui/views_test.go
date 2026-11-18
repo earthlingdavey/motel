@@ -120,7 +120,7 @@ func TestLongNames(t *testing.T) {
 			// production's reads stop answering until its row is stale.
 			h.fake.Set(production, &model.Failure{Kind: model.FailNoAnswer, Message: "no answer"})
 			stale := func() bool {
-				for _, r := range h.s.AppsView(h.now, "", 0).Rows {
+				for _, r := range h.s.AppsView(h.now, "", 0, 0).Rows {
 					if r.Name == production {
 						return r.Stale
 					}
@@ -196,5 +196,34 @@ func TestHiddenVersionNoCommand(t *testing.T) {
 	h.press("P")
 	if h.u.Print != "" {
 		t.Fatalf("P on the JSON prints %q", h.u.Print)
+	}
+}
+
+// TestLongNamesAlike: two names the cut would show alike are shown so
+// that they differ, on a 60- and an 80-column screen, each row with its
+// STATE.
+func TestLongNamesAlike(t *testing.T) {
+	staging, production := "acme-website-staging-frontend", "acme-website-production-frontend"
+	stopped, err := os.ReadFile("demo/fixtures/status/mailer.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, w := range []int{60, 80} {
+		h := start(t, w, 24, func(f *demo.Fake) {
+			f.Body("apps.json", `{"apps": [{"name": "`+staging+`"}, {"name": "`+production+`"}, {"name": "blog"}]}`)
+			f.Body("status/"+staging+".json", string(stopped))
+			f.Body("status/"+production+".json", string(stopped))
+		})
+		h.sync()
+		scr := h.screen()
+		got := rowsShown(scr)
+		if len(got) != 3 || got[0] == got[1] {
+			t.Errorf("%d columns: the rows show %q:\n%s", w, got, scr)
+		}
+		for _, l := range strings.Split(scr, "\n") {
+			if strings.HasPrefix(l, "✖ acme") && !strings.Contains(l, " stopped") {
+				t.Errorf("%d columns: a row without its STATE: %q", w, l)
+			}
+		}
 	}
 }
