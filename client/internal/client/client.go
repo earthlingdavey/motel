@@ -459,7 +459,9 @@ func retryAfter(h http.Header, now time.Time) (int64, bool) {
 // another 4xx with an error sentence, each said as the box's with the
 // sentence quoted), a 5xx, said as not known to be moteld's, a body the
 // box's response filter withheld (a 200 whose one sentence says so,
-// quoted), or an answer that is not moteld's. No message carries a
+// quoted), or an answer that is not moteld's; but a whoami answer about
+// another key or box is taken, v holding its key and box alone
+// (aboutAnother), for the caller to say so. No message carries a
 // decoder's error, which quotes what the body holds: a field that does
 // not read is named by the client's own name for it, and nothing of
 // its value. A value held to a grammar that the box's filter replaced
@@ -467,6 +469,9 @@ func retryAfter(h http.Header, now time.Time) (int64, bool) {
 // which the caller compares with what was asked (Same), are as sent.
 func (c *Client) Read(ans *Answer, v any) error {
 	if ans.Code == http.StatusOK {
+		if c.aboutAnother(ans, v) {
+			return nil
+		}
 		missing := identity(v).missing(ans.Body)
 		err := decodeObject(ans, v)
 		var syntax *json.SyntaxError
@@ -697,6 +702,30 @@ func held(s *string, in func(string) bool) bool {
 	default:
 		return false
 	}
+	return true
+}
+
+// aboutAnother says whether ans is a whoami answer naming another key
+// than the one this client signs with, or another box than the one it
+// asks, whatever else it holds: the whoami command's rule
+// (model.AboutAnother, the same comparison, which the command and the
+// TUI make again on the value returned, and say). The key and the box
+// are read on their own, as strings, and are all v is given; nothing
+// else of the answer is read or held to its grammar (hold): neither
+// shows anything else of such an answer, and a value missing or outside
+// its grammar would otherwise hide that it is about another.
+func (c *Client) aboutAnother(ans *Answer, v any) bool {
+	me, ok := v.(*wire.WhoAmI)
+	pt, person := c.Cred.(*PersonToken)
+	var named struct {
+		Key *string `json:"key"`
+		Box *string `json:"box"`
+	}
+	if !ok || !person || decodeObject(ans, &named) != nil || named.Key == nil || named.Box == nil ||
+		*named.Key == pt.Key.Public.Fingerprint() && *named.Box == c.Box.Host {
+		return false
+	}
+	*me = wire.WhoAmI{Key: *named.Key, Box: *named.Box}
 	return true
 }
 

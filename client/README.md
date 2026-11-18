@@ -103,7 +103,7 @@ quote is the client's own), and no message carries a decoder's error,
 which would quote the body. `whoami` takes an answer only when its name,
 release, roles and scopes are of the box's grammars and no required
 field is missing or `null`; it shows the key this command signed with
-and the box it asked, and an answer naming another key or box prints
+and the box it asked, and an answer naming another key or box, whatever else it holds, prints
 only a warning quoting the box's value, and exits 3. The release and
 the box's protocol are read from whoami's body alone: no header names
 motel. So nothing tells a box's own 5xx from a gateway's in front of
@@ -322,8 +322,12 @@ operator, which `P` prints.
   55 s for 60 apps, 3 minutes for 200), each at its own place in the
   cycle. A 429 is waited out for every read, by its `Retry-After`, or
   30 s with none (the time the box's whole burst takes to refill), and
-  slows the rest of the session; no answer backs off from 2 s to 60 s,
-  until any answer from the box ends the run and whoami is asked again
+  slows the rest of the session; no answer backs off from 2 s to 60 s:
+  that read alone, at its own interval or the backoff when longer, while
+  the box answers others (a 5xx on one route); every read, the title bar
+  saying slow, then STALE, once reads of two different things got none,
+  none answered between, until any answer from the box ends that run, the
+  title bar says back, and whoami is asked again
   (a read the client fails without sending, such as a record whose
   version the box's filter hid, ends nothing).
   A 401, a token not signed, or a certificate that did not verify stops
