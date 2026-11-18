@@ -123,7 +123,10 @@ type Engine struct {
 	lastList  time.Time
 	lastRetry time.Time
 	ticked    time.Time
-	wake      chan struct{}
+	// latest is the latest time a caller gave: one before it is the
+	// wall clock set back (seen).
+	latest time.Time
+	wake   chan struct{}
 }
 
 type entry struct {
@@ -167,7 +170,7 @@ const (
 // NewEngine starts at now, with whoami due at once, and then the apps
 // list.
 func NewEngine(now time.Time) *Engine {
-	e := &Engine{rate: Rate, tokens: Burst, filled: now, touched: now, jobs: map[Job]*entry{}, wake: make(chan struct{}, 1)}
+	e := &Engine{rate: Rate, tokens: Burst, filled: now, touched: now, latest: now, jobs: map[Job]*entry{}, wake: make(chan struct{}, 1)}
 	e.askMe(now)
 	e.jobs[Job{Kind: KApps}] = &entry{due: now}
 	return e
@@ -209,6 +212,7 @@ func (e *Engine) Interval(app string) time.Duration {
 func (e *Engine) SetApps(names []string, now time.Time) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
+	e.seen(now)
 	e.apps = slices.Clone(names)
 	keep := map[Job]bool{}
 	every := e.background()
@@ -236,6 +240,7 @@ func (e *Engine) SetApps(names []string, now time.Time) {
 func (e *Engine) Focus(app string, now time.Time) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
+	e.seen(now)
 	if app == e.focus {
 		return
 	}
@@ -277,6 +282,7 @@ func (e *Engine) nextSlot(en *entry, now time.Time) time.Time {
 func (e *Engine) BoxOpen(open bool, now time.Time) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
+	e.seen(now)
 	e.boxOpen = open
 	if _, ok := e.jobs[Job{Kind: KBox}]; open && !ok {
 		e.jobs[Job{Kind: KBox}] = &entry{due: now}
@@ -290,6 +296,7 @@ func (e *Engine) BoxOpen(open bool, now time.Time) {
 func (e *Engine) MeOpen(open bool, now time.Time) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
+	e.seen(now)
 	if open == e.meOpen {
 		return
 	}
@@ -336,6 +343,7 @@ func (e *Engine) meEvery() time.Duration {
 func (e *Engine) Once(j Job, now time.Time) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
+	e.seen(now)
 	en, ok := e.jobs[j]
 	switch {
 	case !ok:
@@ -380,6 +388,7 @@ func (e *Engine) dropLocked(j Job) {
 func (e *Engine) Again(now time.Time, shown ...Job) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
+	e.seen(now)
 	for _, j := range shown {
 		en, ok := e.jobs[j]
 		if !ok {
@@ -401,6 +410,7 @@ func (e *Engine) Again(now time.Time, shown ...Job) {
 func (e *Engine) Retry(now time.Time) bool {
 	e.mu.Lock()
 	defer e.mu.Unlock()
+	e.seen(now)
 	if e.stopped == Running || e.inflight != nil || !e.lastRetry.IsZero() && now.Sub(e.lastRetry) < RetryEvery {
 		return false
 	}
@@ -418,6 +428,7 @@ func (e *Engine) Retry(now time.Time) bool {
 func (e *Engine) RetryReady(now time.Time) bool {
 	e.mu.Lock()
 	defer e.mu.Unlock()
+	e.seen(now)
 	return e.stopped != Running && e.inflight == nil && (e.lastRetry.IsZero() || now.Sub(e.lastRetry) >= RetryEvery)
 }
 
@@ -425,6 +436,7 @@ func (e *Engine) RetryReady(now time.Time) bool {
 func (e *Engine) Touch(now time.Time) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
+	e.seen(now)
 	e.touched = now
 	e.poke()
 }
@@ -434,6 +446,7 @@ func (e *Engine) Touch(now time.Time) {
 func (e *Engine) Take(now time.Time) (Job, bool, time.Duration) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
+	e.seen(now)
 	if e.inflight != nil || e.stopped != Running || now.Sub(e.touched) >= Idle {
 		return Job{}, false, 0
 	}
@@ -601,6 +614,7 @@ func Classify(err error) (Outcome, Stop) {
 func (e *Engine) Done(j Job, now time.Time, err error) Outcome {
 	e.mu.Lock()
 	defer e.mu.Unlock()
+	e.seen(now)
 	taken := e.taken
 	e.inflight, e.taken, e.cancel = nil, nil, nil
 	if taken != nil {
@@ -736,6 +750,7 @@ type Health struct {
 func (e *Engine) Health(now time.Time) Health {
 	e.mu.Lock()
 	defer e.mu.Unlock()
+	e.seen(now)
 	h := Health{Stop: e.stopped, Paused: now.Sub(e.touched) >= Idle, Misses: e.misses, Back: e.recovering}
 	e.recovering = false
 	if e.misses > 0 && e.retryAt.After(now) {
@@ -777,26 +792,52 @@ const WakeAfter = 30 * time.Second
 // again, the reads are spread over the cycle again rather than all due
 // at once, whoami is asked again (the box may have changed meanwhile),
 // and the bucket starts empty. now is wall-clock time: a monotonic
-// reading stops while the machine sleeps.
-//
-// A tick before the last is the wall clock set back: every time the
-// engine keeps is moved back with it, or no read would be due, and the
-// bucket would not fill, for the length of the step; a step back past
-// WakeAfter is a wake too, since how old each row is is not known.
+// reading stops while the machine sleeps. A step of the clock back is
+// seen at whatever call gives the first time after it (seen); the tick
+// only makes sure one comes within a second.
 func (e *Engine) Tick(now time.Time) bool {
 	e.mu.Lock()
 	defer e.mu.Unlock()
+	if e.seen(now) {
+		e.ticked = now
+		return true
+	}
 	last := e.ticked
 	e.ticked = now
-	if last.IsZero() {
+	if last.IsZero() || now.Sub(last) <= WakeAfter {
 		return false
 	}
-	if now.Before(last) {
-		e.shift(now.Sub(last))
-	}
-	if gap := now.Sub(last); gap <= WakeAfter && gap >= -WakeAfter {
+	e.wakeLocked(now)
+	return true
+}
+
+// seen is the first thing each call given a time does with it. A time
+// before the latest given is the wall clock set back: every time the
+// engine keeps is moved back by the step then, before anything is
+// recorded at the new time, so none is moved twice; without it no read
+// would be due, and the bucket would not fill, for the length of the
+// step. Run is woken, since the wait it sleeps on was given before the
+// step. A step back past WakeAfter is a wake too (it says whether it
+// was one): the clock may have been set back while the machine slept,
+// and how old each row is is then not known.
+func (e *Engine) seen(now time.Time) bool {
+	if !now.Before(e.latest) {
+		e.latest = now
 		return false
 	}
+	d := now.Sub(e.latest)
+	e.shift(d)
+	e.latest = now
+	e.poke()
+	if -d > WakeAfter {
+		e.wakeLocked(now)
+		return true
+	}
+	return false
+}
+
+// wakeLocked is a wake from sleep at now (Tick).
+func (e *Engine) wakeLocked(now time.Time) {
 	every := e.background()
 	for j, en := range e.jobs {
 		if j.Kind != KStatus {
@@ -817,11 +858,10 @@ func (e *Engine) Tick(now time.Time) bool {
 	// still runs, as the 429 left it.
 	e.tokens, e.filled = 0, maxTime(now, e.slowUntil)
 	e.poke()
-	return true
 }
 
 // shift moves every time the engine keeps by d: due times, answers,
-// waits and the bucket's fill time.
+// waits, the bucket's fill time and the last tick.
 func (e *Engine) shift(d time.Duration) {
 	move := func(ts ...*time.Time) {
 		for _, t := range ts {
@@ -830,7 +870,7 @@ func (e *Engine) shift(d time.Duration) {
 			}
 		}
 	}
-	move(&e.filled, &e.meAnswered, &e.me403, &e.retryAt, &e.slowUntil, &e.touched, &e.lastFocus, &e.lastList, &e.lastRetry)
+	move(&e.filled, &e.meAnswered, &e.me403, &e.retryAt, &e.slowUntil, &e.touched, &e.lastFocus, &e.lastList, &e.lastRetry, &e.ticked)
 	for _, en := range e.jobs {
 		move(&en.due, &en.answered, &en.asked)
 	}
@@ -841,6 +881,7 @@ func (e *Engine) shift(d time.Duration) {
 func (e *Engine) CanAskAgain(now time.Time) bool {
 	e.mu.Lock()
 	defer e.mu.Unlock()
+	e.seen(now)
 	return e.stopped == Running && !e.slowUntil.After(now)
 }
 
@@ -848,6 +889,7 @@ func (e *Engine) CanAskAgain(now time.Time) bool {
 func (e *Engine) SlowUntil(now time.Time) time.Time {
 	e.mu.Lock()
 	defer e.mu.Unlock()
+	e.seen(now)
 	if e.slowUntil.After(now) {
 		return e.slowUntil
 	}

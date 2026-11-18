@@ -56,6 +56,9 @@ type Session struct {
 	// without the clock, which may be set back between the two.
 	last, backAt time.Time
 	refused      bool
+	// latest is the latest time the session was given: one before it is
+	// the wall clock set back (seen).
+	latest time.Time
 }
 
 // Key is the key the session signs with, as this side knows it.
@@ -82,18 +85,21 @@ type recData struct {
 // command, and returns its error, for the engine, and the change to
 // apply on the UI's goroutine. An answer to a read the person left (its
 // context cancelled) changes nothing; a read no action names is not
-// made.
+// made. The answer is stamped when it is applied, on the UI's
+// goroutine, as every other time the session reads is, so a step of
+// the clock is seen in the order the times were read (seen).
 func (s *Session) Fetch(ctx context.Context, c Client, j Job) (func(), error) {
 	a, ok := ActionFor(j.Kind)
 	if !ok {
 		return func() {}, &Failure{Kind: FailThis, Message: "no motel command reads this, so the TUI does not"}
 	}
 	apply, err := a.read(ctx, s, c, j)
-	at := s.Now()
 	if errors.Is(err, context.Canceled) {
 		return func() {}, err
 	}
 	return func() {
+		at := s.Now()
+		s.seen(at)
 		switch out, stop := Classify(err); out {
 		case Answered:
 			s.last, s.StopErr, s.refused = at, nil, false
@@ -111,6 +117,48 @@ func (s *Session) Fetch(ctx context.Context, c Client, j Job) (func(), error) {
 		}
 		apply(s, at)
 	}, err
+}
+
+// seen is the first thing each view given a time does with it, and
+// the stamp of each answer. The session is used on the UI's goroutine
+// alone, so its times come in the order they were read: one before the
+// latest is the wall clock set back, and every time the session keeps
+// (each answer's, each failure's, the last answer's) is moved back by
+// the step then, once, so no age on screen is less than it is for the
+// length of the step. The engine sees the same step on its own (its
+// seen), since it is also given times from other goroutines.
+func (s *Session) seen(now time.Time) {
+	if d := now.Sub(s.latest); d < 0 && !s.latest.IsZero() {
+		move := func(ts ...*time.Time) {
+			for _, t := range ts {
+				if !t.IsZero() {
+					*t = t.Add(d)
+				}
+			}
+		}
+		move(&s.last, &s.backAt)
+		if s.Me != nil {
+			move(&s.Me.At)
+		}
+		if s.List != nil {
+			move(&s.List.At)
+		}
+		if s.BoxSt != nil {
+			move(&s.BoxSt.At)
+		}
+		for _, a := range s.apps {
+			if a.st != nil {
+				move(&a.st.At)
+			}
+			move(&a.errAt)
+		}
+		for _, r := range s.records {
+			if r.d != nil {
+				move(&r.d.At)
+			}
+		}
+	}
+	s.latest = now
 }
 
 // forget drops everything the box said, after it answered about another

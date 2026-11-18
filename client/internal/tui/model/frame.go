@@ -334,6 +334,7 @@ func roleSeg(role string) Seg {
 }
 
 func (s *Session) freshness(now time.Time) Line {
+	s.seen(now)
 	h := s.Engine.Health(now)
 	if h.Back {
 		s.backAt = now
@@ -367,9 +368,7 @@ func (s *Session) freshness(now time.Time) Line {
 		return Line{ownC(l+", retry in "+Ago(h.RetryIn), Bad)}
 	case h.Misses > 0:
 		return Line{ownC("slow · "+ago, Warn)}
-	case !s.backAt.IsZero() && !s.backAt.After(now) && now.Sub(s.backAt) < 5*time.Second:
-		// A backAt after now is one from before the wall clock was set
-		// back: not just now.
+	case !s.backAt.IsZero() && now.Sub(s.backAt) < 5*time.Second:
 		return Line{ownC("back · "+hms(s.backAt), Good)}
 	case s.refused && s.last.IsZero():
 		return Line{ownC("REFUSED: no read answered yet", Bad)}
@@ -456,6 +455,7 @@ func (s *Session) Answered() bool { return !s.last.IsZero() }
 
 // MeAsOf is how old who am I's answer is, for its crumb.
 func (s *Session) MeAsOf(now time.Time) Line {
+	s.seen(now)
 	if s.Me == nil {
 		return nil
 	}
@@ -465,6 +465,7 @@ func (s *Session) MeAsOf(now time.Time) Line {
 // RecordAsOf is how old a deploy's record is, for its crumb: it is read
 // on opening it, and by ctrl-r, and kept when a later read fails.
 func (s *Session) RecordAsOf(app, version string, now time.Time) Line {
+	s.seen(now)
 	if g, err, ok := s.Record(app, version); ok && g != nil {
 		l := s.asOf(g.At, now)
 		if err != nil {
@@ -477,6 +478,7 @@ func (s *Session) RecordAsOf(app, version string, now time.Time) Line {
 
 // BoxAsOf is how old the box's answer is, for its crumb.
 func (s *Session) BoxAsOf(now time.Time) Line {
+	s.seen(now)
 	if s.BoxSt == nil {
 		return nil
 	}

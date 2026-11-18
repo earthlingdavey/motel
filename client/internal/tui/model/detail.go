@@ -50,6 +50,7 @@ func (s *Session) asOf(at time.Time, now time.Time) Line {
 
 // Overview is app's screen at now.
 func (s *Session) Overview(app string, now time.Time) OverviewView {
+	s.seen(now)
 	var v OverviewView
 	a := s.apps[app]
 	switch {

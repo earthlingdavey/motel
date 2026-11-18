@@ -76,6 +76,7 @@ type AppsView struct {
 // "!" or "!ok", with or without a name after it, keeps only marked
 // rows.
 func (s *Session) AppsView(now time.Time, filter string, sort int) AppsView {
+	s.seen(now)
 	var v AppsView
 	switch {
 	case s.List == nil && s.ListErr != nil:
@@ -190,6 +191,7 @@ func pad(s string, n int) string {
 // row derives an app's row from the box's facts, the first rule that
 // holds giving its state.
 func (s *Session) row(name string, now time.Time) (r AppRow) {
+	s.seen(now)
 	r = AppRow{Name: name, Mark: MarkNone}
 	r.Cells[ColName] = termtext.From(cutName(name))
 	for c := ColVersion; c < ColAge; c++ {

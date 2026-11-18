@@ -735,14 +735,16 @@ func TestNotStaleWhenNotDue(t *testing.T) {
 	for range 20 {
 		step(t, s, f, &now)
 	}
-	later := now.Add(10 * time.Minute)
-	if r := row(s, later, "blog"); r.Stale || strings.Contains(r.Cells[model.ColState].String(), "stale") {
-		t.Errorf("a held row says %q", r.Cells[model.ColState])
-	}
+	// In the clock's order: a time before one given is the clock set
+	// back.
 	at := now.Add(25 * time.Second)
 	s.Engine.Focus("docs", at)
 	if r := row(s, at, "docs"); r.Stale {
 		t.Errorf("an app just opened is stale by the open app's interval")
+	}
+	later := now.Add(10 * time.Minute)
+	if r := row(s, later, "blog"); r.Stale || strings.Contains(r.Cells[model.ColState].String(), "stale") {
+		t.Errorf("a held row says %q", r.Cells[model.ColState])
 	}
 }
 

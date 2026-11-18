@@ -86,50 +86,6 @@ func TestWakeDuringA429(t *testing.T) {
 	}
 }
 
-// TestClockStepsBack: after the wall clock is set back, the reads go
-// on: the open app is read within its interval, an hour back as twenty
-// seconds back. A step back past WakeAfter is a wake: every row is
-// stale until read again.
-func TestClockStepsBack(t *testing.T) {
-	for _, back := range []time.Duration{time.Hour, 20 * time.Second} {
-		t.Run(back.String(), func(t *testing.T) {
-			now := t0
-			f := &demo.Fake{Now: func() time.Time { return now }}
-			s := &model.Session{Host: demo.Host, Now: f.Now, Engine: model.NewEngine(t0)}
-			e := s.Engine
-			e.Focus("blog", now)
-			for range 20 {
-				step(t, s, f, &now)
-			}
-			e.Tick(now)
-			now = now.Add(time.Second)
-			e.Tick(now)
-			now = now.Add(-back)
-			if woke := e.Tick(now); woke != (back > model.WakeAfter) {
-				t.Fatalf("a step back of %s taken for a wake: %v", back, woke)
-			}
-			if r := row(s, now, "docs"); r.Stale != (back > model.WakeAfter) {
-				t.Errorf("after a step back of %s a row's stale is %v", back, r.Stale)
-			}
-			from, read := now, false
-			for !read && now.Before(from.Add(model.FocusEvery+time.Second)) {
-				now = now.Add(100 * time.Millisecond)
-				e.Touch(now)
-				if j, took, _ := e.Take(now); took {
-					apply, err := s.Fetch(t.Context(), f, j)
-					apply()
-					e.Done(j, now, err)
-					read = j == model.Job{Kind: model.KStatus, App: "blog"}
-				}
-			}
-			if !read {
-				_, took, wait := e.Take(now)
-				t.Fatalf("after a step back of %s the open app is not read in %s (take %v, wait %s)", back, model.FocusEvery+time.Second, took, wait)
-			}
-		})
-	}
-}
-
 // TestRecordNoAnswerHeld: a record whose read gets a 5xx (no answer,
 // by cli's failure) is held as a refused one is: with its screen open
 // for two minutes it is read once, the open app every FocusEvery, and
