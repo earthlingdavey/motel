@@ -217,6 +217,8 @@ made by hand. Accepted:
 | A `Retry-After` of an hour makes the TUI wait an hour: the box's word; the title bar says until when. A longer one is cut to an hour: the client's cap, and meant (moteld's 429 says 1 s) | 1 | 1 | 1 | 1 | 1 | accepted |
 | A labelled value under the cap keeps its runs of spaces, so on a narrow terminal a long run can wrap the rest of the value to the start of the next row, where it can look like a label (the `hostile-status` golden shows one). Log lines keep their spacing on purpose | 2 | 1 | 3 | 6 | 2 (wrap-aware printing) | accepted |
 | An apps-list read that got no answer is asked again at the list's own interval, 60 s, not at the 2 s backoff a status gets; while no read is answered the title bar says STALE and the time of the last answer | 2 | 4 | 1 | 8 | 2 | accepted |
+| The `--key` of a printed command (`c`, `P`) is the key's path as the TUI shows it (`Key.Shown`: the home directory as `~`, made safe by `termtext`), so a path holding a control character or bytes that are not UTF-8 prints as a path naming another file, and a relative path works only from the directory the TUI was started in; running the line then fails naming the path | 2 | 5 | 1 | 10 | 2 | accepted: the line fails, and says which path, rather than reading another key |
+| After an answer about another key and `r`, a whoami that comes back refused (a 403, or a release that is not `N.N.N`, as in the row on such a build above) leaves the stop screen up, saying `stopped` and the old reason until another read is answered, then the whoami's refusal, and offering `r`, while the reads run behind it (the list and every status; the title bar says `live`); `r` does nothing there, since no read is stopped; `q` leaves | 3 | 2 | 3 | 18 | 2 | accepted: it takes a box that answers about another key and then refuses whoami, and the screen still says what was refused |
 
 Owed, from the two reviews of the TUI's first part (#558; scored there). The fix PR goes
 into `tui` after the TUI's second part, and `tui` does not go to `main` before it:
@@ -263,28 +265,32 @@ prompt's line; Enter runs what is typed, Tab takes a completion. `?`
 lists the keys of the screen below it, written from the table the keys
 are bound from. On a screen that reads the box (not help or a stop
 screen), `c` shows the `motel` line for it, every argument quoted
-for a POSIX shell and `--box` naming the port when it is not 443, and
-`y` the box's answer, indented, its strings made safe to show; long
-lines and long answers are cut for display, and the overlay says so.
-`P` quits and prints what the overlay names: the command line, or the
-answer. Into a pipe or a file the answer goes byte for byte as the box
-sent it, what the command's `--json` prints; to a terminal it goes
-indented and made safe, every line whole (JSON may carry C1 controls
-and bidi overrides, which a terminal acts on), and stderr says so.
-ctrl-r asks again for what the screen shows, and nothing else; held
-down, it reads the list at most once in 5 s, and the statuses keep
-their turn. whoami is read every 5 minutes, every minute while who am I
-is open, and soon after a 403, so a removed grant shows in the title
-bar. An answer about another key or box (the `whoami` command's rule)
-stops every read, like a refusal, and the session drops everything the
-box said, before it too (who you are, the list, every status and
-record, the box's answer): a box that does not answer about this key
-gives no grounds to show any of its answers as yours. After `r`, the
-session fills again from empty. A stop screen takes `r`, `?` and `q`
-alone, and `P` on a refused key's; help over it takes esc, `r` and `q`
-alone; nothing opens from either. A refused key's screen names every
-cause the client cannot tell apart and the person line to send the
-operator, which `P` prints.
+for a POSIX shell and `--box` naming the port when it is not 443; a
+line wider than the window is cut at its edge, the cut marked `…`, and
+the overlay says not to copy it and that `P` prints it whole (it is not
+wrapped: a line drawn on two rows copies with a line feed in it). `y`
+shows the box's answer, indented, its strings made safe to show; its
+long lines and long answers are cut for display, and the overlay says
+so. `P` quits and prints what the overlay names: the command line, or
+the answer. Into a pipe or a file the answer goes as the command's
+`--json` prints it: the box's JSON, with the characters a terminal acts
+on that JSON lets a string carry raw (C1 controls, bidi overrides, DEL)
+written as JSON's own escapes, since a pipe may end at a terminal; to a
+terminal it goes indented and made safe, every line whole, and stderr
+says so. ctrl-r asks again for what the screen shows, and nothing else;
+held down, it reads the list, whoami or the box at most once in 5 s,
+and the statuses keep their turn. whoami is read every 5 minutes,
+every minute while who am I is open, and soon after a 403, so a
+removed grant shows in the title bar. An answer about another key or
+box (the `whoami` command's rule) stops every read, like a refusal, and
+the session drops everything the box said, before it too (who you
+are, the list, every status and record, the box's answer): a box that
+does not answer about this key gives no grounds to show any of its
+answers as yours. After `r`, the session fills again from empty. A
+stop screen takes `r`, `?` and `q` alone, and `P` on a refused key's;
+help over it takes esc, `r` and `q` alone; nothing opens from either.
+A refused key's screen names every cause the client cannot tell apart
+and the person line to send the operator, which `P` prints.
 
 - **The rate.** A box allows a person 2 requests a second with a burst
   of 60. The TUI keeps to 1.5 a second and 30 at once. The open app is
