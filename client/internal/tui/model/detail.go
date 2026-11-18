@@ -358,7 +358,13 @@ func (s *Session) RecordView(app, version string, now time.Time) RecordView {
 		v.TailTitle = Line{own("no log tail: this app may keep its output on the box (deploy_log_lines 0)")}
 	case len(dt.LogTail) > 0:
 		for _, l := range dt.LogTail {
-			for _, t := range termtext.Lines(l) {
+			ts := termtext.Lines(l)
+			if l == "" {
+				// Lines makes no line of nothing; an empty line of the
+				// tail is a line.
+				ts = []termtext.Text{{}}
+			}
+			for _, t := range ts {
 				v.Tail = append(v.Tail, Capped(t.String(), TailMax))
 			}
 		}

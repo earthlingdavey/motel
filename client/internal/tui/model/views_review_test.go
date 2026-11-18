@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/smallhoursorg/motel/client/internal/termtext"
+	"github.com/smallhoursorg/motel/client/internal/tui/demo"
 	"github.com/smallhoursorg/motel/client/internal/tui/model"
 )
 
@@ -150,5 +151,31 @@ func TestDeepJSONSaid(t *testing.T) {
 		if said != (depth+1 > model.IndentMax) {
 			t.Errorf("nested %d deep: the overlay says it is indented less: %v", depth, said)
 		}
+	}
+}
+
+// record is the session's record of app's version, read from the fake.
+func record(t *testing.T, s *model.Session, f *demo.Fake, now *time.Time, app, version string) model.RecordView {
+	t.Helper()
+	rec := model.Job{Kind: model.KDeploy, App: app, Version: version}
+	s.Engine.Focus(app, *now)
+	s.Engine.Once(rec, *now)
+	for step(t, s, f, now) != rec {
+	}
+	return s.RecordView(app, version, *now)
+}
+
+// TestEmptyLogLinesKept: an empty line of a log tail is a line, shown
+// and counted.
+func TestEmptyLogLinesKept(t *testing.T) {
+	s, f, now := session(t)
+	f.Body("deploys/blog/v2.json", `{"version":"v2","status":"failed","phase":"starting","started_at":"@-20s","finished_at":"@-10s",
+		"detail":{"exit":"1","log_tail":["","starting","","",""]}}`)
+	v := record(t, s, f, now, "blog", "v2")
+	if got := textsOf(v.Tail); strings.Join(got, "|") != "|starting|||" {
+		t.Errorf("the tail is %q, want five lines, four empty", got)
+	}
+	if v.TailTitle.Text() != "log tail: 5 lines" {
+		t.Errorf("the tail's title is %q", v.TailTitle.Text())
 	}
 }
