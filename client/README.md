@@ -241,6 +241,7 @@ into `tui` after the TUI's second part, and `tui` does not go to `main` before i
 | With a key only the agent holds, the advice after a failed signature reads "ssh-add the agent's key" | 2 | 3 | 1 | 6 | 1 | owed: the fix PR |
 | A wake from sleep during a 429 wait refills the bucket from that moment, so a burst follows the wait (the wait must pass 30 s; moteld's 429 says 1 s) | 1 | 1 | 5 | 5 | 1 | owed: the fix PR |
 | A negative `memory_bytes.now` (moteld never sends one) panics the memory bar: the TUI ends, exit 3, the terminal given back | 2 | 2 | 1 | 4 | 1 | owed: the fix PR |
+| `c` and `P` on a record whose version the box's filter hid give `motel deploys … -- <app> '[hidden by the box's filter]'`, a line that exits 2 when run | 2 | 5 | 3 | 30 | 2 | owed: the fix PR |
 | A record's and an app's details are cut to the window, with no way to scroll them | 2 | 5 | 3 | 30 | 3 | owed, the owner's call: the second part's `y` shows the whole answer; a header that scrolls is new screen behaviour |
 
 ## The TUI
