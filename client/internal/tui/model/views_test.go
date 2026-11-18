@@ -12,9 +12,10 @@ import (
 	"github.com/smallhoursorg/motel/liveswap/wire"
 )
 
-// TestStaleRunningIsRunning: a running app whose row went stale is
-// still counted as running by the strip, not as one not deployed.
-func TestStaleRunningIsRunning(t *testing.T) {
+// TestStaleRunningIsStale: a running app whose row went stale is not
+// counted by the strip as one not deployed, nor as running: the strip
+// says it is stale, and not that every app runs.
+func TestStaleRunningIsStale(t *testing.T) {
 	now := t0
 	f := &demo.Fake{Now: func() time.Time { return now }}
 	f.Body("apps.json", `{"apps": [{"name": "docs"}, {"name": "cron-runner"}]}`)
@@ -35,8 +36,8 @@ func TestStaleRunningIsRunning(t *testing.T) {
 	if st := row(s, now, "docs").Cells[model.ColState].String(); st != "running · stale" {
 		t.Fatalf("docs says %q", st)
 	}
-	if got := s.AppsView(now, "", 0, 0).AllWell.Text(); !strings.HasPrefix(got, "all 2 apps running") {
-		t.Errorf("a stale running row is counted as not running: %q", got)
+	if got := s.AppsView(now, "", 0, 0).AllWell.Text(); got != "nothing needs a look; 1 of 2 apps are stale" {
+		t.Errorf("beside a stale running row the strip says %q", got)
 	}
 }
 

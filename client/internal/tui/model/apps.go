@@ -103,7 +103,7 @@ func (s *Session) AppsView(now time.Time, filter string, sort int, width int) Ap
 		marked, filter = true, strings.TrimPrefix(rest, "ok")
 	}
 	filter = strings.TrimSpace(filter)
-	need, all, notRunning, asking := 0, 0, 0, 0
+	need, all, notRunning, asking, stale := 0, 0, 0, 0, 0
 	stateW := len([]rune(ColHeads[ColState]))
 	for _, n := range names {
 		r := s.row(n, now)
@@ -114,6 +114,9 @@ func (s *Session) AppsView(now time.Time, filter string, sort int, width int) Ap
 		stateW = max(stateW, len([]rune(r.StateAged.String())))
 		if r.Mark < MarkNone {
 			need++
+		}
+		if r.Stale {
+			stale++
 		}
 		switch r.state {
 		case "running":
@@ -155,10 +158,18 @@ func (s *Session) AppsView(now time.Time, filter string, sort int, width int) Ap
 	switch {
 	case asking > 0 && need == 0:
 		v.AllWell = Line{own("asking the box for " + strconv.Itoa(asking) + " of " + strconv.Itoa(all) + " apps…")}
-	case need == 0 && notRunning == 0:
+	case need == 0 && notRunning == 0 && stale == 0:
 		v.AllWell = Line{own("all " + strconv.Itoa(all) + " apps running; every newest deploy succeeded")}
 	case need == 0:
-		v.AllWell = Line{own("nothing needs a look; " + strconv.Itoa(notRunning) + " of " + strconv.Itoa(all) + " apps are not deployed or not yours to view")}
+		// A stale row is not known to be as it was: not said to run.
+		l := "nothing needs a look"
+		if notRunning > 0 {
+			l += "; " + strconv.Itoa(notRunning) + " of " + strconv.Itoa(all) + " apps are not deployed or not yours to view"
+		}
+		if stale > 0 {
+			l += "; " + strconv.Itoa(stale) + " of " + strconv.Itoa(all) + " apps are stale"
+		}
+		v.AllWell = Line{own(l)}
 	}
 	sum := strconv.Itoa(all) + " apps · " + strconv.Itoa(need) + " need a look · by " + Sorts[sort%len(Sorts)]
 	if filter != "" || marked {
