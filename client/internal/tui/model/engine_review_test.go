@@ -262,6 +262,9 @@ func TestClockBackTitle(t *testing.T) {
 				for _, n := range keys {
 					f.Set(n, fail(model.FailNoAnswer))
 				}
+				// Two reads, of two jobs, with no answer: a run (one alone
+				// is not).
+				step(t, s, f, &now)
 				step(t, s, f, &now)
 				for _, n := range keys {
 					f.Set(n, nil)

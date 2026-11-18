@@ -322,8 +322,12 @@ operator, which `P` prints.
   55 s for 60 apps, 3 minutes for 200), each at its own place in the
   cycle. A 429 is waited out for every read, by its `Retry-After`, or
   30 s with none (the time the box's whole burst takes to refill), and
-  slows the rest of the session; no answer backs off from 2 s to 60 s,
-  until any answer from the box ends the run and whoami is asked again
+  slows the rest of the session; no answer backs off from 2 s to 60 s:
+  that read alone, at its own interval or the backoff when longer, while
+  the box answers others (a 5xx on one route); every read, the title bar
+  saying slow, then STALE, once reads of two different things got none,
+  none answered between, until any answer from the box ends that run, the
+  title bar says back, and whoami is asked again
   (a read the client fails without sending, such as a record whose
   version the box's filter hid, ends nothing).
   A 401, a token not signed, or a certificate that did not verify stops

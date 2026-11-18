@@ -56,7 +56,8 @@ type Fail int
 // The kinds.
 const (
 	// FailNoAnswer: the box did not answer, or something in front of it
-	// answered for it (a gateway's 5xx): every read backs off.
+	// answered for it (a gateway's 5xx): that read backs off, and every
+	// read once reads of two jobs got none (Engine.misses).
 	FailNoAnswer Fail = iota
 	// FailThis: this read alone (a 409, say); asked again in its turn.
 	FailThis
