@@ -224,6 +224,8 @@ made by hand. Accepted:
 | After a 403 or a 404 on an app or a record, `y` and `P` still give the last answer the box did send for it, with the time it was fetched | 2 | 5 | 1 | 10 | 2 | accepted |
 | When whoami alone gets no answer (a gateway's 5xx on that one route) while other reads answer, each answer ends the run and asks whoami again: about half the reads are whoami, within the rate, and the title bar goes between slow and back | 2 | 2 | 3 | 12 | 2 | accepted |
 | The crumb cuts a long app name from its end, so two names that share a long start read alike there on a narrow screen: of a 63-character name it keeps the first 24 characters at 60 columns and 44 at 80 (fewer when the age beside it is longer), and a record's crumb loses its version | 2 | 5 | 1 | 10 | 1 | accepted |
+| After this machine's clock is set back and is then wrong by more than a token can bridge (2 minutes: the client sends a token until a minute before its exp on its own clock, and the box takes it until a minute after on the box's), the box refuses the token within its ten minutes, every read stops, and the refusal screen names the clock first ("This machine's clock differs from the box's by 3600 s (behind it; …"). Until then who am I's token line says the token has the step's length more left than it has. A token signed afresh is stamped on the same clock (`r`'s too: past about 10.5 minutes it is refused at once). A clock that was fast and is set right loses nothing | 2 | 3 | 1 | 6 | 3 (none on this side: the clock is wrong) | accepted |
+| After an answer about another key or box and `r`, the title bar's word can say `refused`, or `live` with the age of an answer from before the drop, until whoami answers, as it could before the review's fixes: the session drops what the box said, but not when it last answered or whether it refused | 2 | 2 | 3 | 12 | 1 | accepted |
 
 Owed, from the reviews of the TUI's first part (#558; scored there) and of
 their fixes; the others are fixed:
@@ -302,10 +304,7 @@ line to send the operator, which `P` prints.
   screen. Ten idle minutes pause it.
 - **The token** lasts 600 s, the longest a box takes, and is signed
   again a minute before it ends: a hardware key is touched about every
-  nine minutes, and the title bar says when. A step of the clock back
-  past 30 s drops it, and the next read signs afresh: the client judges
-  the token's life on its own clock, which after the step gives it the
-  step's length more than it has. The TUI never asks for a
+  nine minutes, and the title bar says when. The TUI never asks for a
   passphrase or a PIN: every signature runs ssh-keygen in a session of
   its own, with no controlling terminal, and with
   `SSH_ASKPASS_REQUIRE=force` and an `SSH_ASKPASS` that fails, so a key
