@@ -283,7 +283,7 @@ drawn as it is. The overlays' own words are laid on more rows to fit
 the window. `y` shows the box's answer under
 its command, which is cut as `c` cuts it, which it says not to copy, as
 `c` does, when it is cut or not drawn as it runs, and which `c` then
-`P` prints whole; the answer is indented, its strings made safe to show; its long
+`P` prints whole; the answer is indented (at most 10 levels deep, and the overlay says when a line is deeper), its strings made safe to show; its long
 lines and long answers are cut for display (a line wider than the
 window at its edge, as there is no scrolling sideways; lines over 2000
 characters and answers over 2000 lines here), and the overlay says so
@@ -292,7 +292,7 @@ names: the command line, or the answer. Into a pipe or a file the
 answer goes as the command's `--json` prints it: the box's JSON, with
 the characters a terminal acts on that JSON lets a string carry raw (C1
 controls, bidi overrides, DEL) written as JSON's own escapes, since a
-pipe may end at a terminal; to a terminal it goes indented and made
+pipe may end at a terminal; to a terminal it goes indented (as on the overlay) and made
 safe, every line whole, and stderr says so. ctrl-r asks again for what
 the screen shows, and nothing else; held down, it reads the list, a
 record, whoami or the box at most once in 5 s, and the other reads keep
@@ -301,7 +301,8 @@ is open, and soon after a 403, so a removed grant shows in the title
 bar. While the session runs and whoami's newest read has failed (an
 answer the client cannot use, a 403, a 409, no answer), the title bar
 puts the age of its last answer, and that the read failed, before it
-(`21m old, failed: v0.7.0 · alice@…`), and who am I says why. An
+(`21m old, failed: v0.7.0 · alice@…`), and who am I says why (a
+failure's sentence there and on the box screen is laid on rows to fit the window). An
 answer about another key or box (the `whoami` command's rule) stops
 every read, like a refusal, and the session drops everything the
 box said, before it too (who you are, the list, every status and
@@ -354,7 +355,9 @@ operator, which `P` prints.
 - **Every value shows its age** (on a screen too narrow for the AGE
   column, in its state: `running · 12s`), and a row whose last three
   reads, by its own interval, failed or did not come says `stale` in
-  its state; the strip counts the stale rows, and does not say every
+  its state; the apps screen's crumb counts the stale rows, the strip
+  says a stale row's reason as old and stale (`1h old, stale: stopped: …`)
+  and counts them when no row needs a look, and does not say every
   app runs beside one. Ages are on the wall clock, so a laptop's sleep
   counts. A step of the clock back is seen at the first time read after
   it, and every time kept of the reads moves back by it, to within the

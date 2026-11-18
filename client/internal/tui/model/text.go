@@ -125,8 +125,61 @@ func rawTime(raw json.RawMessage) (time.Time, bool) {
 	return t, err == nil
 }
 
-func hm(t time.Time) string  { return t.UTC().Format("15:04") }
+// noTime says a raw time is missing or null: none given, which is not
+// one that does not read.
+func noTime(raw json.RawMessage) bool {
+	return len(raw) == 0 || string(raw) == "null"
+}
+
 func hms(t time.Time) string { return t.UTC().Format("15:04:05") }
+
+// clock is a box's time as a time of day in UTC (with its seconds when
+// secs), after its date when it is not today ("11-12 14:00") and its
+// year too when it is not this year ("2025-11-12 14:00"). Today and
+// this year are now's by the date in UTC, the zone every time shown is
+// in, not by this machine's own.
+func clock(t, now time.Time, secs bool) string {
+	l := "15:04"
+	if secs {
+		l = "15:04:05"
+	}
+	return t.UTC().Format(datePart(t, now, false) + l)
+}
+
+// date is a box's time as a date and a time of day in UTC, the year
+// before them when it is not this year: a table's column of dates.
+func date(t, now time.Time) string { return t.UTC().Format(datePart(t, now, true) + "15:04") }
+
+func datePart(t, now time.Time, always bool) string {
+	t, now = t.UTC(), now.UTC()
+	switch {
+	case t.Year() != now.Year():
+		return "2006-01-02 "
+	case always || t.YearDay() != now.YearDay():
+		return "01-02 "
+	}
+	return ""
+}
+
+// since is how long before now a box's time is ("12m ago"), or after
+// it, by a second or more ("3m from now"): a box whose clock is ahead
+// of this machine's.
+func since(t, now time.Time) string {
+	if d := t.Sub(now); d >= time.Second {
+		return Ago(d) + " from now"
+	}
+	return Ago(now.Sub(t)) + " ago"
+}
+
+// span is how long from start to end, two box times, and false when
+// either is missing or the end is before the start: no length is said
+// then.
+func span(start, end time.Time) (string, bool) {
+	if start.IsZero() || end.IsZero() || end.Before(start) {
+		return "", false
+	}
+	return secs(end.Sub(start)), true
+}
 
 func mib(b float64) string { return strconv.FormatFloat(b/(1<<20), 'f', 0, 64) + " MiB" }
 

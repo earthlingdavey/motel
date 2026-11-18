@@ -1,7 +1,6 @@
 package model
 
 import (
-	"bytes"
 	"encoding/json"
 	"slices"
 	"strconv"
@@ -35,7 +34,11 @@ type DeployRow struct {
 // OverviewView is an app's screen: its state, and its deploys.
 type OverviewView struct {
 	// AsOf is the crumb's right side: how old the status is.
-	AsOf   Line
+	AsOf Line
+	// Failed says why the last read failed, beside the status read
+	// before it; nil while it reads. The screen lays it on rows
+	// (Sentence).
+	Failed Line
 	Fields []Line
 	// Note is said in place of the fields: no answer yet, a refusal,
 	// no version yet.
@@ -68,6 +71,7 @@ func (s *Session) Overview(app string, now time.Time) OverviewView {
 	v.AsOf = s.asOf(a.st.At, now)
 	if a.err != nil {
 		v.AsOf = append(v.AsOf, ownC(" · the last read failed", Warn))
+		v.Failed = Line{ownC("the last read failed: ", Warn), Seg{T: Capped(failureText(a.err), 2*LineMax)}}
 	}
 	// The deploys first: an app whose first deploy failed has no
 	// version, and its failed deploys are what there is to show.
@@ -91,10 +95,17 @@ func (s *Session) Overview(app string, now time.Time) OverviewView {
 			r.Mark = MarkLook
 		}
 		fin, took := "(unreadable)", "(unreadable)"
-		if f, ok := rawTime(d.FinishedAt); ok {
-			fin = f.UTC().Format("01-02 15:04")
+		switch f, ok := rawTime(d.FinishedAt); {
+		case noTime(d.FinishedAt) || ok && f.IsZero():
+			fin, took = "(none)", "-"
+		case ok:
+			fin, took = date(f, now), "-"
 			if b, ok := rawTime(d.StartedAt); ok {
-				took = secs(f.Sub(b))
+				if l, ok := span(b, f); ok {
+					took = l
+				}
+			} else if !noTime(d.StartedAt) {
+				took = "(unreadable)"
 			}
 		}
 		r.Cells = []termtext.Text{termtext.From(d.Version), termtext.From(d.Status), termtext.From(d.Phase), termtext.From(fin), termtext.From(took), Capped(d.By, 60)}
@@ -129,7 +140,7 @@ func (s *Session) Overview(app string, now time.Time) OverviewView {
 			w = append(w, own(" · "+strconv.Itoa(wd.Failures)+" failed checks in a row"))
 		}
 		if !wd.LastRestartAt.IsZero() {
-			w = append(w, own(" · last restart "+hm(wd.LastRestartAt)+" UTC"))
+			w = append(w, own(" · last restart "+clock(wd.LastRestartAt, now, false)+" UTC"))
 		}
 		v.Fields = append(v.Fields, field("watchdog", w...))
 		if wd.LastRestartCause != "" {
@@ -140,7 +151,7 @@ func (s *Session) Overview(app string, now time.Time) OverviewView {
 		}
 	}
 	v.Fields = append(v.Fields, lastDeploy(st.LastDeploy, now)...)
-	v.Fields = append(v.Fields, s.metricLines(st)...)
+	v.Fields = append(v.Fields, s.metricLines(st, now)...)
 	if d := st.LastDeploy; d != nil && d.ArtifactEntries > 0 {
 		v.Fields = append(v.Fields, field("artifact", own(strconv.Itoa(d.ArtifactEntries)+" entries · "+mib(float64(d.ArtifactBytes))+" (the last deploy's)")))
 	}
@@ -157,7 +168,15 @@ func lastDeploy(d *wire.DeployResult, now time.Time) []Line {
 	if d.Phase != "" {
 		l = append(l, own(" in "+d.Phase))
 	}
-	l = append(l, own(" "+Ago(now.Sub(d.FinishedAt))+" ago ("+hm(d.FinishedAt)+" UTC, "+secs(d.FinishedAt.Sub(d.StartedAt))+")"))
+	if d.FinishedAt.IsZero() {
+		l = append(l, own(" (the box gives no time it finished)"))
+	} else {
+		t := " " + since(d.FinishedAt, now) + " (" + clock(d.FinishedAt, now, false) + " UTC"
+		if took, ok := span(d.StartedAt, d.FinishedAt); ok {
+			t += ", " + took
+		}
+		l = append(l, own(t+")"))
+	}
 	if d.By != "" {
 		l = append(l, own(" by "), boxT(d.By))
 	}
@@ -178,7 +197,7 @@ func statusClass(status string) Class {
 	return Plain
 }
 
-func (s *Session) metricLines(st wire.Status) []Line {
+func (s *Session) metricLines(st wire.Status, now time.Time) []Line {
 	m := st.Metrics
 	switch {
 	case m == nil:
@@ -239,8 +258,8 @@ func (s *Session) metricLines(st wire.Status) []Line {
 		out = append(out, field("requests", l...))
 	}
 	l := Line{own("over "), boxT(m.Window)}
-	if m.At != nil {
-		l = append(l, own(", newest point "+hms(*m.At)+" UTC (the store runs 30 s behind)"))
+	if m.At != nil && !m.At.IsZero() {
+		l = append(l, own(", newest point "+clock(*m.At, now, true)+" UTC (the store runs 30 s behind)"))
 	}
 	return append(out, field("metrics", l...))
 }
@@ -276,17 +295,39 @@ func (s *Session) RecordView(app, version string, now time.Time) RecordView {
 		v.Head = append(v.Head, Line{ownC("the last read failed: ", Warn), Seg{T: Capped(failureText(err), 2*LineMax)}})
 	}
 	d := g.V
-	took := secs(d.FinishedAt.Sub(d.StartedAt))
-	span := " · " + hms(d.StartedAt) + " → " + hms(d.FinishedAt) + " UTC"
+	took, tookOK := span(d.StartedAt, d.FinishedAt)
+	// When it ran: the start, and the end after it, its date only when
+	// the start's is another; a time the box did not give is said so.
+	when := " · "
+	switch {
+	case d.StartedAt.IsZero() && d.FinishedAt.IsZero():
+		when += "the box gives no times"
+	case d.FinishedAt.IsZero():
+		when += "started " + clock(d.StartedAt, now, true) + " UTC, the box gives no time it finished"
+	case d.StartedAt.IsZero():
+		when += "the box gives no time it started; finished " + clock(d.FinishedAt, now, true) + " UTC"
+	default:
+		end := clock(d.FinishedAt, now, true)
+		if datePart(d.FinishedAt, d.StartedAt, false) == "" {
+			end = hms(d.FinishedAt)
+		}
+		when += clock(d.StartedAt, now, true) + " → " + end + " UTC"
+	}
 	var verdict Line
 	if d.Status == "failed" {
 		w := "✖ FAILED"
 		if d.Phase != "" {
 			w += " in " + d.Phase
 		}
-		verdict = Line{ownC(w, Bad), own(" after " + took + span)}
+		if tookOK {
+			when = " after " + took + when
+		}
+		verdict = Line{ownC(w, Bad), own(when)}
 	} else {
-		verdict = Line{ownC("✓ SUCCEEDED", Good), own(" in " + took + span)}
+		if tookOK {
+			when = " in " + took + when
+		}
+		verdict = Line{ownC("✓ SUCCEEDED", Good), own(when)}
 	}
 	v.Head = append(v.Head, verdict)
 	if d.By != "" {
@@ -296,11 +337,11 @@ func (s *Session) RecordView(app, version string, now time.Time) RecordView {
 		cur := a.st.V.CurrentVersion
 		switch cur {
 		case "":
-			v.Head = append(v.Head, field("serves now", own("nothing (as of "+hms(a.st.At)+" UTC)")))
+			v.Head = append(v.Head, field("serves now", own("nothing (as of "+clock(a.st.At, now, true)+" UTC)")))
 		case d.Version:
-			v.Head = append(v.Head, field("serves now", own("this version (as of "+hms(a.st.At)+" UTC)")))
+			v.Head = append(v.Head, field("serves now", own("this version (as of "+clock(a.st.At, now, true)+" UTC)")))
 		default:
-			v.Head = append(v.Head, field("serves now", own(cur+" (as of "+hms(a.st.At)+" UTC)")))
+			v.Head = append(v.Head, field("serves now", own(cur+" (as of "+clock(a.st.At, now, true)+" UTC)")))
 		}
 	}
 	if d.Error != "" {
@@ -331,7 +372,9 @@ func (s *Session) RecordView(app, version string, now time.Time) RecordView {
 		if p := dt.Probe; p != nil {
 			l := Line{own(strconv.Itoa(p.Status))}
 			if p.Location != "" {
-				l = append(l, own(" from "), boxT(p.Location))
+				// The app's own header, inside the client's sentence: a
+				// quotation, so ", body:" after it is the client's.
+				l = append(l, own(" from "), quoted(p.Location))
 			}
 			if p.Body != "" {
 				l = append(l, own(", body:"))
@@ -359,7 +402,13 @@ func (s *Session) RecordView(app, version string, now time.Time) RecordView {
 		v.TailTitle = Line{own("no log tail: this app may keep its output on the box (deploy_log_lines 0)")}
 	case len(dt.LogTail) > 0:
 		for _, l := range dt.LogTail {
-			for _, t := range termtext.Lines(l) {
+			ts := termtext.Lines(l)
+			if l == "" {
+				// Lines makes no line of nothing; an empty line of the
+				// tail is a line.
+				ts = []termtext.Text{{}}
+			}
+			for _, t := range ts {
 				v.Tail = append(v.Tail, Capped(t.String(), TailMax))
 			}
 		}
@@ -380,36 +429,48 @@ func (s *Session) RecordView(app, version string, now time.Time) RecordView {
 // there were. indented is false for a body that would not indent,
 // which is shown line by line as it came.
 func JSONLines(body []byte) (out []termtext.Text, cut int, indented bool) {
-	all, indented := jsonAll(body)
+	out, cut, indented, _ = jsonLines(body)
+	return out, cut, indented
+}
+
+// jsonLines is JSONLines, and whether a line it made is nested deeper
+// than IndentMax levels, and so indented less than its depth.
+func jsonLines(body []byte) (out []termtext.Text, cut int, indented, deep bool) {
+	var all []termtext.Text
+	if !json.Valid(body) {
+		all = termtext.Lines(string(body))
+	} else {
+		// Only what the overlay draws is written: a line is cut a little
+		// past TailMax runes (four bytes a rune, the most UTF-8 takes),
+		// which Capped then cuts and marks, and nothing after the
+		// OverlayLines'th line is written, only counted.
+		w := indenter{lines: OverlayLines, lineBytes: 4 * (TailMax + 1)}
+		w.indent(body)
+		all, cut, indented, deep = termtext.Lines(string(w.b)), w.total()-OverlayLines, true, w.deep
+	}
 	if len(all) > OverlayLines {
 		all, cut = all[:OverlayLines], len(all)-OverlayLines
 	}
 	for _, l := range all {
 		out = append(out, Capped(l.String(), TailMax))
 	}
-	return out, cut, indented
-}
-
-// jsonAll is every line of a body, indented when it is JSON, each made
-// safe and whole.
-func jsonAll(body []byte) ([]termtext.Text, bool) {
-	var b bytes.Buffer
-	indented := json.Indent(&b, body, "", "  ") == nil
-	if !indented {
-		b.Reset()
-		b.Write(body)
-	}
-	return termtext.Lines(b.String()), indented
+	return out, max(cut, 0), indented, deep
 }
 
 // JSONShown is a body as P prints it to a terminal: the lines the JSON
-// overlay shows, indented and made safe, every one and each whole, a
-// line feed after each. By JSON's rules a body holds no raw C0 control,
-// but it may hold C1 controls and bidi overrides, which a terminal acts
-// on; what the command's --json prints goes where stdout is not a
-// terminal (Printable).
+// overlay shows, indented (at most IndentMax levels deep) and made
+// safe, every one and each whole, a line feed after each. By JSON's
+// rules a body holds no raw C0 control, but it may hold C1 controls and
+// bidi overrides, which a terminal acts on; what the command's --json
+// prints goes where stdout is not a terminal (Printable).
 func JSONShown(body []byte) string {
-	all, _ := jsonAll(body)
+	text := string(body)
+	if json.Valid(body) {
+		var w indenter
+		w.indent(body)
+		text = string(w.b)
+	}
+	all := termtext.Lines(text)
 	lines := make([]string, 0, len(all)+1)
 	for _, l := range all {
 		lines = append(lines, l.String())
@@ -421,3 +482,136 @@ func JSONShown(body []byte) string {
 // tview's text view draws slower the further it is scrolled, and a body
 // of megabytes made every key slow. P prints all of it.
 const OverlayLines = 2000
+
+// IndentMax is the most levels of nesting the answer is indented by, on
+// the overlay and as P prints it: a line nested deeper is indented as
+// at IndentMax. Each level is two spaces on every line inside it, so a
+// small body nested thousands deep would otherwise be gigabytes of
+// spaces; moteld's answers nest five deep at most.
+const IndentMax = 10
+
+// indenter writes a valid JSON body indented as json.Indent indents it
+// with two spaces and no prefix, but no deeper than IndentMax levels; it
+// writes at most lines lines (0: all), and at most lineBytes bytes of a
+// line (0: all), and counts the rest.
+type indenter struct {
+	lines, lineBytes int
+	b                []byte
+	// n is the line feeds of the whole text, cur the bytes of the line
+	// being written; endsNL says the whole text ends with a line feed.
+	n, cur int
+	endsNL bool
+	// deep says a line written is nested deeper than IndentMax.
+	deep bool
+}
+
+// total is how many lines termtext.Lines would make of the whole text.
+func (w *indenter) total() int {
+	if w.endsNL {
+		return w.n
+	}
+	return w.n + 1
+}
+
+func (w *indenter) put(c byte) {
+	w.endsNL = c == '\n'
+	if c == '\n' {
+		w.n, w.cur = w.n+1, 0
+	}
+	if w.lines > 0 && w.n >= w.lines || w.lineBytes > 0 && w.cur >= w.lineBytes {
+		return
+	}
+	w.b = append(w.b, c)
+	if c != '\n' {
+		w.cur++
+	}
+}
+
+func (w *indenter) newline(depth int) {
+	w.put('\n')
+	if w.lines > 0 && w.n >= w.lines {
+		return
+	}
+	if depth > IndentMax {
+		w.deep, depth = true, IndentMax
+	}
+	for range 2 * depth {
+		w.put(' ')
+	}
+}
+
+// indent writes body, which json.Valid holds valid: white space outside
+// strings is dropped, as json.Indent drops it, but for what follows the
+// value, which it keeps as it is.
+func (w *indenter) indent(body []byte) {
+	// depth is the indent's, which, as json.Indent's, grows only when an
+	// object or an array is found not empty; nest is the brackets open.
+	depth, nest := 0, 0
+	need, inStr, esc, begun := false, false, false, false
+	for i, c := range body {
+		if inStr {
+			w.put(c)
+			switch {
+			case esc:
+				esc = false
+			case c == '\\':
+				esc = true
+			case c == '"':
+				inStr = false
+				if nest == 0 {
+					w.rest(body[i+1:])
+					return
+				}
+			}
+			continue
+		}
+		if c == ' ' || c == '\t' || c == '\n' || c == '\r' {
+			if nest == 0 && begun {
+				// The end of a number or a literal that is the whole body.
+				w.rest(body[i:])
+				return
+			}
+			continue
+		}
+		if need && c != '}' && c != ']' {
+			need, depth = false, depth+1
+			w.newline(depth)
+		}
+		begun = true
+		switch c {
+		case '{', '[':
+			need, nest = true, nest+1
+			w.put(c)
+		case ',':
+			w.put(c)
+			w.newline(depth)
+		case ':':
+			w.put(c)
+			w.put(' ')
+		case '}', ']':
+			if need {
+				need = false
+			} else {
+				depth--
+				w.newline(depth)
+			}
+			w.put(c)
+			if nest--; nest == 0 {
+				w.rest(body[i+1:])
+				return
+			}
+		case '"':
+			inStr = true
+			w.put(c)
+		default:
+			w.put(c)
+		}
+	}
+}
+
+// rest is what follows the body's value, white space, kept as it is.
+func (w *indenter) rest(b []byte) {
+	for _, c := range b {
+		w.put(c)
+	}
+}

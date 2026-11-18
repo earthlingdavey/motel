@@ -127,7 +127,7 @@ func (r *runner) printed(p tui.Printed) error {
 	out := p.Raw
 	if r.env.Terminal && p.Shown != "" {
 		out = p.Shown
-		if _, err := io.WriteString(r.env.Stderr, "motel: the box's answer was indented and made safe for the terminal; redirect stdout (> file, or | cat) for what the command's --json prints\n"); err != nil {
+		if _, err := io.WriteString(r.env.Stderr, "motel: the box's answer was indented (at most 10 levels deep) and made safe for the terminal; redirect stdout (> file, or | cat) for what the command's --json prints\n"); err != nil {
 			return err
 		}
 	}

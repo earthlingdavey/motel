@@ -353,6 +353,9 @@ func TestPrintedByTerminal(t *testing.T) {
 	raw, _ := s.Printable(v, 2)
 	shown, _ := s.PrintShown(v, 2)
 	p := tui.Printed{Raw: string(raw), Shown: shown}
+	if model.IndentMax != 10 {
+		t.Fatalf("stderr's sentence names 10 levels, and IndentMax is %d", model.IndentMax)
+	}
 	var flag bytes.Buffer
 	if err := (&runner{env: Env{Stdout: &flag}}).emit([]byte(body)); err != nil {
 		t.Fatal(err)
@@ -365,7 +368,7 @@ func TestPrintedByTerminal(t *testing.T) {
 		p            tui.Printed
 		stdout, warn string
 	}{
-		{true, p, model.JSONShown([]byte(body)), "motel: the box's answer was indented and made safe for the terminal; redirect stdout (> file, or | cat) for what the command's --json prints\n"},
+		{true, p, model.JSONShown([]byte(body)), "motel: the box's answer was indented (at most 10 levels deep) and made safe for the terminal; redirect stdout (> file, or | cat) for what the command's --json prints\n"},
 		{false, p, flag.String(), ""},
 		{true, tui.Printed{Raw: "motel apps --box deploy.example.com\n"}, "motel apps --box deploy.example.com\n", ""},
 		{false, tui.Printed{}, "", ""},
