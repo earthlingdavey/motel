@@ -14,7 +14,8 @@ import (
 // answer (ctrl-r in an outage, or the record opened again) cannot bring
 // the answer from before the refusal back: not on the row, the app's
 // screen, the record's screen, y and P, the strip and summary, or p and
-// n. A later answer is shown again.
+// n. y says the box refused the read while that is its newest word. A
+// later answer is shown again.
 func TestRefusalDropsTheAnswer(t *testing.T) {
 	const version = "e9a0b3f2c118"
 	rec := model.Job{Kind: model.KDeploy, App: "blog", Version: version}
@@ -47,6 +48,12 @@ func TestRefusalDropsTheAnswer(t *testing.T) {
 				for seen := map[model.Job]bool{}; !seen[rec] || !seen[status]; {
 					seen[step(t, s, f, &now)] = true
 				}
+				// y says the box refused it, not that no answer came yet.
+				for _, v := range []model.View{appV, recV} {
+					if l := s.Overlay(v, true, 98, runes, asIs); linesText(l...) != "no answer to show: the box refused this read, as the screen says" {
+						t.Errorf("after the refusal y on screen %d says %q", v.Screen, linesText(l...))
+					}
+				}
 
 				none := &model.Failure{Kind: model.FailNoAnswer, Message: "deploy.example.com timed out on 443: no whole answer in 30 s."}
 				f.Set("blog", none)
@@ -77,6 +84,10 @@ func TestRefusalDropsTheAnswer(t *testing.T) {
 				for _, v := range []model.View{appV, recV} {
 					if _, _, ok := s.Body(v); ok || s.CanPrint(v, 2) {
 						t.Errorf("y and P give the answer the box refused on screen %d", v.Screen)
+					}
+					// The newest read got no answer: nothing held, none yet.
+					if l := s.Overlay(v, true, 98, runes, asIs); linesText(l...) != "no answer yet to show" {
+						t.Errorf("after the read with no answer y on screen %d says %q", v.Screen, linesText(l...))
 					}
 				}
 				rw := row(s, now, "blog")

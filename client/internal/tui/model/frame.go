@@ -150,6 +150,26 @@ func (s *Session) Body(v View) ([]byte, time.Time, bool) {
 	return nil, time.Time{}, false
 }
 
+// readErr is the failure of the newest read behind v, if it failed.
+func (s *Session) readErr(v View) error {
+	switch v.Screen {
+	case ScreenApps:
+		return s.ListErr
+	case ScreenApp:
+		if a := s.apps[v.App]; a != nil {
+			return a.err
+		}
+	case ScreenRecord:
+		_, err, _ := s.Record(v.App, v.Version)
+		return err
+	case ScreenMe:
+		return s.MeErr
+	case ScreenBox:
+		return s.BoxErr
+	}
+	return nil
+}
+
 // Cells is how many cells of the screen a text takes. The screens'
 // library knows (a wide character takes two); model draws nothing, so
 // the screens hand it in.
@@ -227,6 +247,11 @@ func (s *Session) Overlay(v View, json bool, width int, cells Cells, asIs AsIs) 
 		return lay(rows, width, cells)
 	}
 	if !have {
+		if err := s.readErr(v); Forbidden(err) || NotFound(err) {
+			// A refusal drops what was held (readStatus, readDeploy): the
+			// box did answer, so not "yet".
+			return lay([]oRow{words("no answer to show: the box refused this read, as the screen says")}, width, cells)
+		}
 		return lay([]oRow{words("no answer yet to show")}, width, cells)
 	}
 	key := jsonKey{v, at, len(body), width}
