@@ -294,7 +294,7 @@ func timesOf(t *testing.T, status, rec string) (fields, finished, took, last, ve
 func TestTimesCarryTheirDay(t *testing.T) {
 	// t0 is 2026-11-15 14:00 UTC: 21 days before is 10-25, 400 days
 	// before is 2025-10-11.
-	fields, fin, took, last, verdict := timesOf(t, `{"app":"blog","phase":"idle","running":true,"current_version":"v2","available_versions":["v2"],
+	fields, fin, _, _, verdict := timesOf(t, `{"app":"blog","phase":"idle","running":true,"current_version":"v2","available_versions":["v2"],
 		"watchdog":{"state":"watching","restarts_in_window":0,"last_restart_at":"@-21d"},
 		"metrics":{"window":"1h","at":"@-21d","memory_bytes":{"now":1048576}},
 		"deploys":[{"version":"v2","status":"succeeded","started_at":"@-400d","finished_at":"@-400d"}],
@@ -309,7 +309,7 @@ func TestTimesCarryTheirDay(t *testing.T) {
 		t.Errorf("old times: finished %q, verdict %q", fin, verdict)
 	}
 
-	fields, fin, took, last, verdict = timesOf(t, `{"app":"blog","phase":"idle","running":true,"current_version":"v2","available_versions":["v2"],
+	fields, fin, took, last, verdict := timesOf(t, `{"app":"blog","phase":"idle","running":true,"current_version":"v2","available_versions":["v2"],
 		"deploys":[{"version":"v2","status":"failed","phase":"starting","started_at":"@-20s","finished_at":null}],
 		"last_deploy":{"version":"v2","status":"failed","phase":"starting","started_at":"@-20s","finished_at":null}}`,
 		`{"version":"v2","status":"failed","phase":"starting","started_at":"@-20s"}`)
