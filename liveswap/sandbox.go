@@ -213,7 +213,7 @@ type sandboxSpec struct {
 // swap what it points at. No such process exists: every app is
 // sandboxed, and inside its view the app directory is a tmpfs holding
 // mount points it cannot unlink — the symlink would have to be
-// planted from outside every sandbox, by motel itself or by root.
+// planted from outside every sandbox, by moteld itself or by root.
 // That holds only while nothing else runs as the motel uid outside
 // a sandbox. The check is for root's links: an operator's symlink,
 // made to move a directory or by mistake, is what it refuses (above).
@@ -329,7 +329,7 @@ func refusedAsBindSource(p string) error {
 // But a mandatory bind that resolves onto such a path *names* it, and
 // naming is exactly what puts something in the view. Two ways that bit:
 // `/var/lib/motel -> /srv/motel` made the lexical entry miss a
-// planted `shared -> /srv/motel`, and a motel pointed at a
+// planted `shared -> /srv/motel`, and a moteld pointed at a
 // non-default XDG data dir has its keys somewhere no literal mentions
 // at all. Both would hand the supervisor's TLS keys to an app on the
 // strength of one planted symlink.
@@ -447,10 +447,10 @@ func probeSandboxSpec() *sandboxSpec {
 // host's, bound in, reads as root or nobody), and its
 // /proc/self/ns/ipc is not the one motel passes in
 // (MOTEL_IPC_NS: motel's own, which is the manager's while
-// neither motel.service nor the user manager sets PrivateIPC=).
+// neither moteld.service nor the user manager sets PrivateIPC=).
 // Two signals, since each alone can be made vacuous — the first by a
-// motel running as uid 0, the second by a drop-in on
-// motel.service. And /dev/shm must be the unit's own tmpfs: the
+// moteld running as uid 0, the second by a drop-in on
+// moteld.service. And /dev/shm must be the unit's own tmpfs: the
 // probe writes probeShmCanary there, which must then not be in
 // motel's /dev/shm, the host's (checkShmCanary) — a write that
 // fails is a failure of its own, named on the line.
@@ -475,8 +475,8 @@ func sandboxProbeCommand(nonce string) []string {
 // next.
 func probeShmCanary(nonce string) string { return "/dev/shm/motel-sandbox-probe-" + nonce }
 
-// ownIPCNamespace is the IPC namespace motel runs in, as the probe
-// compares it: the manager's, since motel.service and the motel
+// ownIPCNamespace is the IPC namespace moteld runs in, as the probe
+// compares it: the manager's, since moteld.service and the motel
 // user's manager both sit in the initial one.
 func ownIPCNamespace() (string, error) {
 	ns, err := os.Readlink("/proc/self/ns/ipc")
@@ -488,7 +488,7 @@ func ownIPCNamespace() (string, error) {
 
 // checkShmCanary is the half of the /dev/shm check the probe cannot
 // make from inside its unit: the canary it wrote must not be in
-// motel's /dev/shm, which is the host's (motel.service sets no
+// motel's /dev/shm, which is the host's (moteld.service sets no
 // PrivateDevices=, and PrivateDevices= binds the host's anyway).
 // Found, every app's /dev/shm is one directory. Removed either way.
 // A motel that cannot see /dev/shm at all (a drop-in hiding it)
@@ -537,8 +537,8 @@ func probeStartSpec(nonce, ipcNS string) startSpec {
 // each to connect and again to authenticate: NewConnection opens two
 // sockets) and the two manager probes App.Start makes (probeTimeout
 // each), are what a start spends before Caddy reports ready — 40 + 20
-// + 130 = 190 s bounded, which motel.service's TimeoutStartSec
-// (packaging/motel.service, 240 s) is sized above with room for
+// + 130 = 190 s bounded, which moteld.service's TimeoutStartSec
+// (packaging/moteld.service, 240 s) is sized above with room for
 // Caddy's own start. Change one, re-derive the other.
 const sandboxProbeTimeout = 30 * time.Second
 
@@ -584,8 +584,8 @@ func probeSandboxCapability(r runner) error {
 		// One retry, for a timeout only. A probe that fails is a
 		// measurement; one that times out is the absence of one — the
 		// shape a capable host under boot load produces — and this
-		// verdict decides whether motel starts at all. A refused
-		// start exits 1, which motel.service deliberately never
+		// verdict decides whether moteld starts at all. A refused
+		// start exits 1, which moteld.service deliberately never
 		// retries (RestartPreventExitStatus=1: a refusal is final
 		// until an operator acts), so at boot there is no next start
 		// to re-measure on: without the retry, one slow attempt keeps
@@ -733,7 +733,7 @@ func pathWithin(p, dir string) bool {
 
 // AdminSocketInView says what makes a unix socket at path — the admin
 // API's listener — reachable from an app's sandbox, or "" where no
-// app's view holds it. Read by motel's command gate (cmd/motel), which
+// app's view holds it. Read by motel's command gate (cmd/moteld), which
 // lets a unix listener through only when this says nothing. Two places
 // are an app's: under the liveswap root (empty: the default), where an
 // app's shared and release directories are bound into its sandbox,

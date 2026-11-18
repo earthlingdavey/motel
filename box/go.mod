@@ -1,8 +1,8 @@
 // The box subsystem: config by signed push, applied on the box
 // (box/DESIGN-box.md). Its own module, as liveswap and penaltybox are,
 // so the proof core and the reading of the signed file are built,
-// tested and fuzzed on their own; cmd/motel imports it for the
-// `box` option, `box_webhook` and `motel box`.
+// tested and fuzzed on their own; cmd/moteld imports it for the
+// `box` option, `box_webhook` and `moteld box`.
 module github.com/smallhoursorg/motel/box
 
 // The Go toolchain is pinned by the golang image in docker-compose.yml —

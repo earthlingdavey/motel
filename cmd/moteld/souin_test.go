@@ -32,7 +32,7 @@ import (
 // penaltybox's are `integration`-tagged and run with -p 1 because they
 // all pin admin :2999 and http :9080. This one stays here because it
 // needs no systemd and nothing else in the root module listens on those
-// ports, so `go test ./cmd/motel/` keeps exercising the cache a bump
+// ports, so `go test ./cmd/moteld/` keeps exercising the cache a bump
 // changes. Accepted residual (S2 × O2 × D1 = 4; a lane move scores
 // risk 2): a second caddytest suite in the root module, or a Caddy of
 // the developer's own on those ports, fails the package loudly with

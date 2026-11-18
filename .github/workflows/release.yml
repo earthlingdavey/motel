@@ -63,7 +63,7 @@ jobs:
       - run: |
           for arch in amd64 arm64; do
             staging=$(mktemp -d)
-            cp "build/motel-linux-$arch" "$staging/motel"
+            cp "build/moteld-linux-$arch" "$staging/moteld"
             cp "build/motel-backup-linux-$arch" "$staging/motel-backup"
             mkdir "$staging/systemd"
             cp packaging/motel-backup.service packaging/motel-backup.timer \
@@ -74,7 +74,7 @@ jobs:
           motel — raw binary distribution
           ==================================
 
-          This archive contains the bare motel executable. It is for
+          This archive contains the bare moteld executable. It is for
           systemd hosts where you manage the service yourself — a
           NixOS-style distro, say.
 
@@ -94,7 +94,7 @@ jobs:
           What the package would have set up, and you now own:
             - a dedicated system user/group (motel) to run as
             - a systemd unit (Type=notify) running:
-                motel run --config /etc/motel/Caddyfile
+                moteld run --config /etc/motel/Caddyfile
               with XDG_DATA_HOME/XDG_CONFIG_HOME pointed somewhere the
               service user can write (TLS certificates live there)
             - libpam-systemd installed, and:
@@ -108,10 +108,10 @@ jobs:
           and two timers. What the package would have set up, and you
           now own:
             - motel-backup at /usr/bin/motel-backup, beside
-              /usr/bin/motel, /usr/bin/restic (0.18) and
+              /usr/bin/moteld, /usr/bin/restic (0.18) and
               /usr/bin/sqlite3: the units it starts run each by that
               path, and it refuses a box where one is missing; and the
-              CA store (ca-certificates), which restic and motel
+              CA store (ca-certificates), which restic and moteld
               verify every certificate against
             - the four unit files in /etc/systemd/system, then:
                 systemctl daemon-reload
@@ -139,10 +139,10 @@ jobs:
           (backups: docs/backups.md there, and backups/README.md for how
           they work)
           EOF
-            chmod 0755 "$staging/motel" "$staging/motel-backup"
+            chmod 0755 "$staging/moteld" "$staging/motel-backup"
             chmod 0644 "$staging"/systemd/*
-            tar -czf "dist/motel_${GITHUB_REF_NAME#v}_linux_${arch}.tar.gz" \
-              -C "$staging" motel motel-backup systemd LICENSE README.txt
+            tar -czf "dist/moteld_${GITHUB_REF_NAME#v}_linux_${arch}.tar.gz" \
+              -C "$staging" moteld motel-backup systemd LICENSE README.txt
           done
           # GitHub mangles "~" in asset filenames to "." — so rename
           # prerelease packages (0.0.1~rc1 -> 0.0.1.rc1) BEFORE

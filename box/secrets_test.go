@@ -147,7 +147,7 @@ func TestEnsureIdentity(t *testing.T) {
 			t.Fatal(err)
 		}
 		_, _, err := ensureIdentity(file, now)
-		if err == nil || err.Error() != file+" is not an age identity: move it aside, run motel box key again, then make rekey BOX_KEY=<the new key> in the repository" {
+		if err == nil || err.Error() != file+" is not an age identity: move it aside, run moteld box key again, then make rekey BOX_KEY=<the new key> in the repository" {
 			t.Fatal(err)
 		}
 	})

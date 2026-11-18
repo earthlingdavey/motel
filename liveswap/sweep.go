@@ -49,7 +49,7 @@ var unknownSweepMu sync.Mutex
 
 // sweepUnknownApps stops every motel unit whose app the current
 // config does not name (invariant 7): an app removed or renamed while
-// motel was down has no managedApp left to sweep it, so App.Start
+// moteld was down has no managedApp left to sweep it, so App.Start
 // does it here against the manager's own listing.
 func sweepUnknownApps(ctx context.Context, conn systemdConn, root string, logger *zap.Logger) error {
 	unknownSweepMu.Lock()
@@ -81,7 +81,7 @@ func sweepUnknownApps(ctx context.Context, conn systemdConn, root string, logger
 			errs = append(errs, serr)
 		}
 	}
-	// An app whose units are all gone — exited cleanly while motel
+	// An app whose units are all gone — exited cleanly while moteld
 	// was down — never appears in the listing, yet its socket dirs may
 	// remain; if it is also no longer configured, nothing else will
 	// ever prune them.

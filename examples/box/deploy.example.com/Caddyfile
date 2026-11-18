@@ -63,7 +63,7 @@ example.com {
 	# Before the first deploy, and while the app is down, the proxy has
 	# no upstream and answers 503. Keep that status — monitors and CI
 	# should see it — but give a person a sentence instead of a blank
-	# page. `journalctl -u motel` says which of the two it is.
+	# page. `journalctl -u moteld` says which of the two it is.
 	# The template's sentence is quoted, as a new box's answer, in
 	# README.md and motel's docs/first-deploy.md (step 3): a change
 	# to it in the template goes there too.

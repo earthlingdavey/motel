@@ -11,8 +11,8 @@ import (
 	"syscall"
 )
 
-// motelServiceGroups are the groups motel.service adds to the motel
-// user's own (packaging/motel.service, SupplementaryGroups=): what the
+// motelServiceGroups are the groups moteld.service adds to the motel
+// user's own (packaging/moteld.service, SupplementaryGroups=): what the
 // server may read through, beside them.
 var motelServiceGroups = []string{"systemd-journal"}
 

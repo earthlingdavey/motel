@@ -184,7 +184,7 @@ func TestRefusalsEchoNoInput(t *testing.T) {
 		}
 	}
 
-	// The finding: motel monitor test given the channel's URL.
+	// The finding: moteld monitor test given the channel's URL.
 	_, err := callAdmin(t, serveTest, http.MethodPost, TestRequest{Channel: url})
 	refused("test's channel", err, http.StatusUnprocessableEntity, "no channel by that name; its channels are alice, bob, ops, pager", url, topic)
 
@@ -394,7 +394,7 @@ func TestSendAndTestSayWhatTheJournalSays(t *testing.T) {
 	cfg := te.active.cfg
 	te.active.cfg = &resolved{channels: map[string]Channel{}, apps: cfg.apps}
 	if _, err := callAdmin(t, serveTest, http.MethodPost, TestRequest{Channel: "ops"}); apiStatus(err) != http.StatusUnprocessableEntity ||
-		!strings.Contains(err.Error(), "channel ops was dropped from this load") || !strings.Contains(err.Error(), "systemctl reload motel") {
+		!strings.Contains(err.Error(), "channel ops was dropped from this load") || !strings.Contains(err.Error(), "systemctl reload moteld") {
 		t.Fatalf("a dropped channel: %v", err)
 	}
 	if _, err := callAdmin(t, serveTest, http.MethodPost, TestRequest{Channel: "nosuch"}); err == nil || !strings.Contains(err.Error(), "channels are none in this load") {
@@ -410,13 +410,13 @@ func TestSendAndTestSayWhatTheJournalSays(t *testing.T) {
 	}
 	res = SendResult{}
 	_ = json.Unmarshal(w.Body.Bytes(), &res)
-	if err := sendAnswer(&out, res); err == nil || !strings.Contains(err.Error(), "delivered nowhere") || !strings.Contains(err.Error(), "run motel monitor setup as root") {
+	if err := sendAnswer(&out, res); err == nil || !strings.Contains(err.Error(), "delivered nowhere") || !strings.Contains(err.Error(), "run moteld monitor setup as root") {
 		t.Fatalf("send before setup: %s; %v", w.Body.String(), err)
 	}
 	if lines := te.lines("monitor: event"); len(lines) == 0 {
 		t.Fatal("the event was not journalled")
 	}
-	if _, err := callAdmin(t, serveTest, http.MethodPost, TestRequest{Channel: "ops"}); apiStatus(err) != http.StatusServiceUnavailable || !strings.Contains(err.Error(), "run motel monitor setup as root") {
+	if _, err := callAdmin(t, serveTest, http.MethodPost, TestRequest{Channel: "ops"}); apiStatus(err) != http.StatusServiceUnavailable || !strings.Contains(err.Error(), "run moteld monitor setup as root") {
 		t.Fatalf("test before setup: %v", err)
 	}
 }
@@ -514,12 +514,12 @@ func TestSetupSaysWhatTheLoadedConfigDoes(t *testing.T) {
 		metrics bool
 		want    string
 	}{
-		{channels, nil, false, "reloaded motel, which renders the monitor block's channels into /var/lib/motel-notify/alertmanager.yml"},
+		{channels, nil, false, "reloaded moteld, which renders the monitor block's channels into /var/lib/motel-notify/alertmanager.yml"},
 		{"", nil, false, "whose config has no monitor block with channels: Alertmanager sends nothing until there is one"},
 		{`{"metrics":{}}`, nil, false, "whose config has no monitor block with channels"},
-		{`{"metrics":{}}`, nil, true, "reloaded motel, which renders the store's rules into /var/lib/motel-metrics/rules.yml and pushes"},
+		{`{"metrics":{}}`, nil, true, "reloaded moteld, which renders the store's rules into /var/lib/motel-metrics/rules.yml and pushes"},
 		{channels, nil, true, "whose config has no monitor block with a metrics line: nothing is pushed until there is one"},
-		{"", errors.New("dial unix /run/motel/admin.sock: connect: no such file or directory"), false, "motel did not answer on its admin socket, unix//run/motel/admin.sock (dial unix /run/motel/admin.sock: connect: no such file or directory): it is not running, or its Caddyfile sets another admin address or none"},
+		{"", errors.New("dial unix /run/motel/admin.sock: connect: no such file or directory"), false, "moteld did not answer on its admin socket, unix//run/motel/admin.sock (dial unix /run/motel/admin.sock: connect: no such file or directory): it is not running, or its Caddyfile sets another admin address or none"},
 	} {
 		got := loadedSays(&fakeSystem{monitor: c.monitor, monitorErr: c.err}, c.metrics)
 		if !strings.Contains(got, c.want) {
@@ -574,7 +574,7 @@ func TestSetupOrderAndFiles(t *testing.T) {
 		"systemctl unmask prometheus-alertmanager.service",
 		"systemctl disable prometheus-alertmanager.service",
 		"systemctl enable --now motel-am.socket",
-		"systemctl try-reload-or-restart motel.service",
+		"systemctl try-reload-or-restart moteld.service",
 	}
 	if !slices.Equal(fs0.cmds, want) {
 		t.Fatalf("commands:\n%s\nwant\n%s", strings.Join(fs0.cmds, "\n"), strings.Join(want, "\n"))
@@ -584,7 +584,7 @@ func TestSetupOrderAndFiles(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if !bytes.HasPrefix(b, []byte("# Written by `motel monitor setup`")) {
+		if !bytes.HasPrefix(b, []byte("# Written by `moteld monitor setup`")) {
 			t.Errorf("%s = %q", p, b[:40])
 		}
 	}

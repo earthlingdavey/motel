@@ -328,7 +328,7 @@ func TestNothingIsAskedBeforeThePreflightPasses(t *testing.T) {
 	}{
 		{"restic missing", func(b *box) { b.haveProgram = func(p string) bool { return p != b.cfg.Restic } }, "restic, the backup program motel-backup runs, is not installed at /usr/bin/restic: apt install restic"},
 		{"sqlite3 missing", func(b *box) { b.haveProgram = func(p string) bool { return p != "/usr/bin/sqlite3" } }, "sqlite3 is not installed at /usr/bin/sqlite3: apt install sqlite3"},
-		{"motel missing", func(b *box) { b.haveProgram = func(p string) bool { return p != "/usr/bin/motel" } }, "motel is not installed at /usr/bin/motel"},
+		{"moteld missing", func(b *box) { b.haveProgram = func(p string) bool { return p != "/usr/bin/moteld" } }, "moteld is not installed at /usr/bin/moteld"},
 		{"this command elsewhere", func(b *box) { b.haveProgram = func(p string) bool { return p != b.cfg.Self } }, "motel-backup is not installed at /usr/bin/motel-backup, where the units run it"},
 		{"old systemd", func(b *box) { b.version = 255 }, "systemd 257 or later is needed (Debian 13's); this box has 255"},
 		{"the motel account missing", func(b *box) {

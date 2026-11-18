@@ -3,7 +3,7 @@ package access
 // The `person` and `grant` lines of the box block, and the rules that
 // hold them together with its `signer` lines. Two readers take them
 // through these functions: the box module's Caddyfile parser, so that a
-// bad line fails `motel validate` and the load, and the box's walk of
+// bad line fails `moteld validate` and the load, and the box's walk of
 // the installed file's raw tokens. One parser for both is what keeps
 // the two from disagreeing about who is declared.
 //
@@ -550,11 +550,11 @@ func CheckLines(l Lines, around *Around) (warnings []string, err error) {
 }
 
 // NoChannelWarning is what a box with people and no monitor channel is
-// told, by the walk and by `motel validate`, which reads the channels
+// told, by the walk and by `moteld validate`, which reads the channels
 // from the adapted config.
 const NoChannelWarning = "people are declared and no monitor channel is, so what they do on this box will be told to no one; add a channel line to the monitor block: channel <name> <kind> {secret.NOTIFY_<NAME>}"
 
-// FromProxiesWarning is what `motel validate` says of a grant with an
+// FromProxiesWarning is what `moteld validate` says of a grant with an
 // address list on a box whose server trusts proxies strictly: the list
 // is held to the right-most address outside the trusted ranges in the
 // headers the server reads the client's address from, which holds only
@@ -563,14 +563,14 @@ func FromProxiesWarning(server string, headers []string) string {
 	return fmt.Sprintf("a grant has a from list, and server %s trusts proxies with trusted_proxies_strict: the address a from list is held to is the right-most one outside the trusted ranges in %s, so the list holds only if your proxy sets each of those headers itself, never passing on one a client sent, and only as well as the ranges", server, strings.Join(headers, ", "))
 }
 
-// FromProxyProtocolWarning is what `motel validate` says of a grant
+// FromProxyProtocolWarning is what `moteld validate` says of a grant
 // with an address list on a box whose server takes the PROXY protocol.
 func FromProxyProtocolWarning(server string) string {
 	return fmt.Sprintf("a grant has a from list, and server %s takes the PROXY protocol: the address a from list is held to is whatever the PROXY header names, so the list is only as good as proxy_protocol's allow list (a fallback_policy that takes the header from any peer lets a client name its own address)", server)
 }
 
-// FromProxiesRefusal is why `motel validate`, `motel reload` and
-// `motel run` refuse a grant with an address list on a box with a
+// FromProxiesRefusal is why `moteld validate`, `moteld reload` and
+// `moteld run` refuse a grant with an address list on a box with a
 // server that trusts proxies (trusted_proxies, or trusted_proxies_unix)
 // without trusted_proxies_strict; the serving process matches no list
 // for a request such a proxy forwards (liveswap's clientAddr).

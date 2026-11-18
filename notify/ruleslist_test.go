@@ -506,7 +506,7 @@ func TestRulesCommandNotAdmitted(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, err = runRules(t, "unix/"+path)
-	if err == nil || !strings.Contains(err.Error(), "admits root and the motel user: run motel monitor rules as root") {
+	if err == nil || !strings.Contains(err.Error(), "admits root and the motel user: run moteld monitor rules as root") {
 		t.Fatalf("err = %v", err)
 	}
 }

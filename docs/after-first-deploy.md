@@ -75,7 +75,7 @@ Once, on the laptop: `brew install age` (Debian: `apt install age`).
 The first secret also needs the box's key, which root prints:
 
 ```sh
-make secret APP=example VAR=DATABASE_URL BOX_KEY=$(ssh root@box.example.com motel box key)
+make secret APP=example VAR=DATABASE_URL BOX_KEY=$(ssh root@box.example.com moteld box key)
 ```
 
 ```
@@ -159,28 +159,28 @@ see during the restart, and how to pick a quiet moment for it.
   signer, a secret — by a signed push to the box's repository (steps 1
   and 2). The run's output is what changed.
 - **Logs:** `journalctl -t motel-example` for the app's own output,
-  `journalctl -u motel` for motel's, `journalctl -u
+  `journalctl -u moteld` for moteld's, `journalctl -u
   motel-box-apply` for what the box did with a push — as root, or as
   the administrator, if there is one
   ([Hardening](hardening.md#3-an-administrator-if-you-want-one)),
   without sudo.
-- **If motel crashes** — a SIGKILL, out of memory, a bug — systemd
+- **If moteld crashes** — a SIGKILL, out of memory, a bug — systemd
   starts it again a second later and it picks the running apps back up.
   A plain `kill` (SIGTERM) is a clean stop, like `systemctl stop`, and
-  stays stopped; so does a start it *refuses*: `journalctl -u motel
+  stays stopped; so does a start it *refuses*: `journalctl -u moteld
   -n 50 --no-pager` says why. Fix it, then, as root, `systemctl start
-  motel` (after "start request repeated too quickly", `systemctl
-  reset-failed motel` first). A stopped box takes no pushes, so a fix to the
+  moteld` (after "start request repeated too quickly", `systemctl
+  reset-failed moteld` first). A stopped box takes no pushes, so a fix to the
   config is made on the box too ([At 3am](#at-3am)). A restart loads
   `/etc/motel/Caddyfile` as it stands: a pushed file that did not
   load was put back, but a hand edit that was not reloaded goes live
-  then — or, if it does not load, keeps motel down.
+  then — or, if it does not load, keeps moteld down.
 - **A second app:** another `app` block and site in the box's
   Caddyfile, pushed; another copy of the example, with its own
   `MOTEL_URL`. The Caddyfile, and the app's secrets if it has any
   (step 2), are all that change on the box.
 - **A second box:** another directory in the box's repository, named
-  for that box's deploy host, and `motel init` from it once as root
+  for that box's deploy host, and `moteld init` from it once as root
   on the new box. Every push goes to every box
   ([More than one box](../examples/box/README.md#more-than-one-box)).
 - **Patching the box** (`apt upgrade`, as root, or on its own:
@@ -193,7 +193,7 @@ see during the restart, and how to pick a quiet moment for it.
   [Backups](backups.md), which says first
   [who runs which](backups.md#who-runs-these).
 - **Hearing when something goes wrong** (experimental, since
-  v0.7.0): the `monitor` block, `motel monitor setup` and your
+  v0.7.0): the `monitor` block, `moteld monitor setup` and your
   channels are [Monitor](monitor.md).
 - **Everything else:** [liveswap/README.md](../liveswap/README.md) is the
   reference for every option, status code and edge.
@@ -204,11 +204,11 @@ If a pushed change broke the deploy host itself, the next push cannot
 reach the box. The way back is root over SSH (the provider's console
 only if SSH itself is down), in one of two ways:
 
-- Edit `/etc/motel/Caddyfile` and `systemctl reload motel`, then
+- Edit `/etc/motel/Caddyfile` and `systemctl reload moteld`, then
   make the same fix a commit and push it. The next signed push
   overwrites a hand edit — its run warns that it did — because the
   repository is the truth and the edit is a bridge back to it.
-- Or commit the fix first, and run `motel init` with that commit
+- Or commit the fix first, and run `moteld init` with that commit
   from its directory, copied over as the first page did it.
 
 A change that loads but misbehaves is reverted like any commit: `git

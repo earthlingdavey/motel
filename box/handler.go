@@ -99,7 +99,7 @@ func (h *Handler) Provision(ctx caddy.Context) error {
 // The handler's own messages (DESIGN-box.md, "Message catalogue").
 const (
 	msgMethod     = "method not allowed"
-	msgNoBaseline = "this box has no baseline; motel init <sha>, as root inside the box's directory, sets one"
+	msgNoBaseline = "this box has no baseline; moteld init <sha>, as root inside the box's directory, sets one"
 )
 
 // ServeHTTP answers on `/` and passes every other path on.
@@ -245,11 +245,11 @@ func (h *Handler) status(w http.ResponseWriter, _ *http.Request, _ deploytrust.I
 const readingKey = "the box's key for secrets (age.pub)"
 
 // recipient is age.pub's one line, held to an X25519 recipient, or ""
-// when there is none: a box that has not run `motel box key`. One
+// when there is none: a box that has not run `moteld box key`. One
 // that cannot be read, or is not exactly one X25519 recipient, is
 // journaled and omitted all the same, so a damaged key file never
 // blocks `GET /` and with it a push of the Caddyfile; the workflow
-// reads the omission as "this box has no key", whose remedy, `motel
+// reads the omission as "this box has no key", whose remedy, `moteld
 // box key`, rewrites age.pub from the identity.
 func (h *Handler) recipient() string {
 	b, err := readFile(h.agePub, maxAgePub, false)

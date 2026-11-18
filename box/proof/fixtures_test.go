@@ -325,7 +325,7 @@ func runFixtureTable(t *testing.T, fx *fixtures) {
 		}
 		// A replay: base pushed when the box runs head.
 		_, err = Chain(base, nil, head.ID)
-		refusalContaining(t, err, baseline+" does not descend from the commit this box runs ("+head.ID+") along main's first-parent line", "motel box baseline "+baseline)
+		refusalContaining(t, err, baseline+" does not descend from the commit this box runs ("+head.ID+") along main's first-parent line", "moteld box baseline "+baseline)
 		// Another history: the orphan root.
 		_, err = Chain(fx.commit(t, "orphan"), nil, baseline)
 		refusalContaining(t, err, "does not descend")

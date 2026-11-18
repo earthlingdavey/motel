@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-// `motel box key` (DESIGN-box.md, "The box's key"; Console commands):
+// `moteld box key` (DESIGN-box.md, "The box's key"; Console commands):
 // root only; the key made once and never replaced; standard output the
 // recipient alone; age.pub written when missing or another key's, and
 // left as it is otherwise.
@@ -147,7 +147,7 @@ func TestInitKeyLine(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out, "init: could not make the box's key for secrets: ") || !strings.HasSuffix(out, "; motel box key, as root, makes it\n") {
+	if !strings.Contains(out, "init: could not make the box's key for secrets: ") || !strings.HasSuffix(out, "; moteld box key, as root, makes it\n") {
 		t.Errorf("printed %q", out)
 	}
 	if !bytes.Equal(b.installed(), file) || b.applied().SHA != sha {

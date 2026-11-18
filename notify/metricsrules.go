@@ -55,7 +55,7 @@ type vmRule struct {
 	Labels      map[string]string `yaml:"labels"`
 	Annotations map[string]string `yaml:"annotations"`
 
-	// term is Expr in parts, and unit its value's: what `motel monitor
+	// term is Expr in parts, and unit its value's: what `moteld monitor
 	// rules` lists (ruleslist.go). Not in the file; nil for a rule with
 	// no closeness (ChannelFailed).
 	term *ruleTerm

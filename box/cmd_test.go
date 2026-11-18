@@ -69,7 +69,7 @@ func TestWebhookURL(t *testing.T) {
 	}
 }
 
-// TestBoxCommand runs `motel box webhook` as caddycmd builds it:
+// TestBoxCommand runs `moteld box webhook` as caddycmd builds it:
 // the registered command, its CobraFunc, its child.
 func TestBoxCommand(t *testing.T) {
 	cmd, ok := caddycmd.Commands()["box"]
@@ -127,7 +127,7 @@ func TestBoxCommand(t *testing.T) {
 	}
 }
 
-// `motel init` is a top-level command taking exactly the sha; what
+// `moteld init` is a top-level command taking exactly the sha; what
 // it does with it is TestInitCmd's.
 func TestInitCommand(t *testing.T) {
 	cmd, ok := caddycmd.Commands()["init"]

@@ -1158,7 +1158,7 @@ func TestUnchangedSecrets(t *testing.T) {
 }
 
 // The box's own slot, secrets/_box/, is installed as an app's secrets
-// are, into _box.env, and reloads motel whenever its bytes change:
+// are, into _box.env, and reloads moteld whenever its bytes change:
 // notify reads the file at a config load, not at an app's launch. An
 // app's secrets alone still reload nothing.
 func TestApplyBoxSecrets(t *testing.T) {
@@ -1216,7 +1216,7 @@ func TestApplyBoxSecrets(t *testing.T) {
 	}
 	c4 = c4b
 
-	// The slot gone: the file removed, and motel reloaded without it.
+	// The slot gone: the file removed, and moteld reloaded without it.
 	c5 := b.repo.commitSecrets(b.v1, secrets{"example": {"KEY": enc("w")}}, &b.alice, c4)
 	r = b.pushOne(b.repo.bundleFiles(c5, c4))
 	if r.Phase != phaseApplied || b.env("_box") != nil || b.sd.reloaded != 4 || !r.Reloaded || !slices.Equal(r.SecretsRemoved, []string{"_box/NOTIFY_OPS_URL"}) {

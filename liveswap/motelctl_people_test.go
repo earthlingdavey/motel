@@ -325,7 +325,7 @@ func TestMotelctlPeopleRefused(t *testing.T) {
 					"no person or signer line on the box lists it",
 					"your address is outside the from list on every grant you hold",
 					"127.0.0.1 is not the box's main name",
-					"the box's motel is too old to take a key's token at all",
+					"the box's moteld is too old to take a key's token at all",
 					"Send the operator the line `motelctl key` prints.",
 				} {
 					if !strings.Contains(r.stderr, w) {

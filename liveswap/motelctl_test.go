@@ -290,7 +290,7 @@ func TestMotelctlFaults(t *testing.T) {
 		{"a self-signed certificate", []string{"MOTEL_TOKEN=" + appToken(t)}, box.url, 8,
 			"did not verify; the check says: \"x509: certificate signed by unknown authority\". motelctl never sends a token over an unverified connection."},
 		{"nothing answering", []string{"MOTEL_TOKEN=" + appToken(t)}, closed, 3,
-			"(connection refused). If motel is down, as root on the box: systemctl status motel"},
+			"(connection refused). If moteld is down, as root on the box: systemctl status moteld"},
 		{"a 429 that stands", []string{"MOTEL_TOKEN=" + appToken(t), "SSL_CERT_FILE=" + busy.cert}, busy.url, 3,
 			"asked you to slow down; try again in 1 s."},
 	}

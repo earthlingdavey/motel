@@ -1,6 +1,6 @@
 #!/bin/sh
 # Recovery suite, run by `make e2e` LAST — after the main suites and
-# after the in-container systemd suite has killed motel three ways
+# after the in-container systemd suite has killed moteld three ways
 # (SIGKILL, exit 2, OOM) and let systemd bring it back, and refused it
 # a start once. This is the runner's view of that: the app that was
 # serving (sd-final, demo-v1 content, the last deploy the systemd
@@ -15,7 +15,7 @@ ART="http://e2e-artifacts:8080/artifacts"
 . /lib.sh
 wait_for_token
 
-echo "=== recovery 1: the app is still served after motel's crashes and restarts ==="
+echo "=== recovery 1: the app is still served after moteld's crashes and restarts ==="
 i=0
 until [ "$(curl -s -o /dev/null -w '%{http_code}' --max-time 2 "$PROXY/")" = "200" ]; do
 	i=$((i + 1))

@@ -18,14 +18,14 @@ import (
 	"unicode"
 )
 
-// motel is the binary that adapts the Caddyfile. Absolute: a
+// moteld is the binary that adapts the Caddyfile. Absolute: a
 // relative name is looked up on whatever PATH the caller has. A
 // variable only so a test can stand a script in for it.
-var motel = "/usr/bin/motel"
+var moteld = "/usr/bin/moteld"
 
-// Program is the path the plan unit runs motel from: what setup
+// Program is the path the plan unit runs moteld from: what setup
 // checks is installed before asking anyone for a secret.
-func Program() string { return motel }
+func Program() string { return moteld }
 
 // kinds are the values a variable can be given here, in the order they
 // are tried: a name of its own, then the other things a Caddyfile asks
@@ -140,7 +140,7 @@ func Inspect(ctx context.Context, caddyfile, configDir string) (*Inspection, err
 	// adapter said.
 	adapt := func(env map[string]string, file string) (adapted, error) {
 		//nolint:gosec // a constant path outside tests; the Caddyfile path is the caller's, a root-owned constant, or a copy of it made here
-		cmd := exec.CommandContext(ctx, motel, "adapt", "--adapter", "caddyfile", "--config", file)
+		cmd := exec.CommandContext(ctx, moteld, "adapt", "--adapter", "caddyfile", "--config", file)
 		cmd.Env = []string{} // never nil: nil means "inherit"
 		for k, v := range env {
 			cmd.Env = append(cmd.Env, k+"="+v)
@@ -150,7 +150,7 @@ func Inspect(ctx context.Context, caddyfile, configDir string) (*Inspection, err
 		runErr := cmd.Run()
 		a := adapted{out: stdout.String(), said: stderr.String()}
 		if runErr != nil {
-			return a, fmt.Errorf("%s adapt: %w: %s", motel, runErr, lastLine(a.said))
+			return a, fmt.Errorf("%s adapt: %w: %s", moteld, runErr, lastLine(a.said))
 		}
 		if globs := emptyGlobs(stderr.Bytes()); len(globs) > 0 {
 			return a, &emptyGlobError{globs}

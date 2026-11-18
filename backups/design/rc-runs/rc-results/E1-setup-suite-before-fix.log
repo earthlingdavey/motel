@@ -1,5 +1,5 @@
 docker compose run --rm -e CGO_ENABLED=0 dev sh -c '\
-		go build -trimpath -o build/e2e-backup/motel ./cmd/motel & p1=$!; \
+		go build -trimpath -o build/e2e-backup/moteld ./cmd/moteld & p1=$!; \
 		(cd backups && go build -trimpath -tags e2e -o ../build/e2e-backup/motel-backup ./cmd/motel-backup) & p2=$!; \
 		wait $p1 || exit 1; wait $p2 || exit 1; \
 		chmod -R a+rwX build'
@@ -74,7 +74,7 @@ docker compose up --build -d --scale e2e-backup-box=1 e2e-s3 e2e-backup-box
 #17 [e2e-backup-box stage-0 3/8] RUN systemctl mask 	systemd-udevd.service 	systemd-udevd-kernel.socket 	systemd-udevd-control.socket 	systemd-modules-load.service 	getty.target 	console-getty.service 	|| true
 #17 CACHED
 
-#18 [e2e-backup-box stage-0 4/8] COPY --from=bin motel motel-backup /usr/bin/
+#18 [e2e-backup-box stage-0 4/8] COPY --from=bin moteld motel-backup /usr/bin/
 #18 CACHED
 
 #19 [e2e-backup-box stage-0 6/8] COPY packaging/postinstall.sh /tmp/postinstall.sh
@@ -352,25 +352,25 @@ Oct 05 18:26:23 95c04638b565 systemd[1]: Starting motel_backup_open_775529222fad
 Oct 05 18:26:24 95c04638b565 systemd[1]: motel_backup_open_775529222fad.service: Main process exited, code=exited, status=12/n/a
 Oct 05 18:26:24 95c04638b565 systemd[1]: motel_backup_open_775529222fad.service: Failed with result 'exit-code'.
 Oct 05 18:26:24 95c04638b565 systemd[1]: Failed to start motel_backup_open_775529222fad.service - motel backup: open the repository.
-Oct 05 18:26:24 95c04638b565 systemd[1]: Started readonly-storage.service - [systemd-run] /usr/bin/motel run --config /root/readonly.Caddyfile --adapter caddyfile.
-Oct 05 18:26:24 95c04638b565 motel[2345]: {"level":"warn","ts":1791224784.5061498,"msg":"unable to determine directory for user configuration; falling back to current directory","error":"neither $XDG_CONFIG_HOME nor $HOME are defined"}
-Oct 05 18:26:24 95c04638b565 motel[2345]: {"level":"info","ts":1791224784.5070064,"msg":"using config from file","file":"/root/readonly.Caddyfile"}
-Oct 05 18:26:24 95c04638b565 motel[2345]: {"level":"info","ts":1791224784.5075324,"msg":"adapted config to JSON","adapter":"caddyfile"}
-Oct 05 18:26:24 95c04638b565 motel[2345]: {"level":"info","ts":1791224784.5088677,"msg":"maxprocs: Leaving GOMAXPROCS=6: CPU quota undefined"}
-Oct 05 18:26:24 95c04638b565 motel[2345]: {"level":"info","ts":1791224784.508883,"msg":"GOMEMLIMIT is updated","GOMEMLIMIT":7488025804,"previous":9223372036854775807}
-Oct 05 18:26:24 95c04638b565 motel[2345]: {"level":"info","ts":1791224784.5088913,"msg":"using config from file","file":"/root/readonly.Caddyfile"}
-Oct 05 18:26:24 95c04638b565 motel[2345]: {"level":"info","ts":1791224784.508895,"msg":"adapted config to JSON","adapter":"caddyfile"}
-Oct 05 18:26:24 95c04638b565 motel[2345]: {"level":"warn","ts":1791224784.508898,"logger":"admin","msg":"admin endpoint disabled"}
-Oct 05 18:26:24 95c04638b565 motel[2345]: {"level":"info","ts":1791224784.5095751,"logger":"http.auto_https","msg":"automatic HTTPS is completely disabled for server","server_name":"srv0"}
-Oct 05 18:26:24 95c04638b565 motel[2345]: {"level":"info","ts":1791224784.5095603,"logger":"tls.cache.maintenance","msg":"started background certificate maintenance","cache":"0x1220a091dc00"}
-Oct 05 18:26:24 95c04638b565 motel[2345]: {"level":"warn","ts":1791224784.518352,"logger":"http","msg":"HTTP/2 skipped because it requires TLS","network":"tcp","addr":":9100"}
-Oct 05 18:26:24 95c04638b565 motel[2345]: {"level":"warn","ts":1791224784.518389,"logger":"http","msg":"HTTP/3 skipped because it requires TLS","network":"tcp","addr":":9100"}
-Oct 05 18:26:24 95c04638b565 motel[2345]: {"level":"info","ts":1791224784.5183926,"logger":"http.log","msg":"server running","name":"srv0","protocols":["h1","h2","h3"]}
-Oct 05 18:26:24 95c04638b565 motel[2345]: {"level":"info","ts":1791224784.518917,"msg":"autosaved config (load with --resume flag)","file":"caddy/autosave.json"}
-Oct 05 18:26:24 95c04638b565 motel[2345]: {"level":"info","ts":1791224784.5189278,"msg":"serving initial configuration"}
-Oct 05 18:26:24 95c04638b565 motel[2345]: {"level":"warn","ts":1791224784.5189302,"msg":"$HOME environment variable is empty - please fix; some assets might be stored in ./caddy"}
-Oct 05 18:26:24 95c04638b565 motel[2345]: {"level":"info","ts":1791224784.5201797,"logger":"tls","msg":"cleaning storage unit","storage":"FileStorage:./caddy"}
-Oct 05 18:26:24 95c04638b565 motel[2345]: {"level":"info","ts":1791224784.5214252,"logger":"tls","msg":"finished cleaning storage units"}
+Oct 05 18:26:24 95c04638b565 systemd[1]: Started readonly-storage.service - [systemd-run] /usr/bin/moteld run --config /root/readonly.Caddyfile --adapter caddyfile.
+Oct 05 18:26:24 95c04638b565 moteld[2345]: {"level":"warn","ts":1791224784.5061498,"msg":"unable to determine directory for user configuration; falling back to current directory","error":"neither $XDG_CONFIG_HOME nor $HOME are defined"}
+Oct 05 18:26:24 95c04638b565 moteld[2345]: {"level":"info","ts":1791224784.5070064,"msg":"using config from file","file":"/root/readonly.Caddyfile"}
+Oct 05 18:26:24 95c04638b565 moteld[2345]: {"level":"info","ts":1791224784.5075324,"msg":"adapted config to JSON","adapter":"caddyfile"}
+Oct 05 18:26:24 95c04638b565 moteld[2345]: {"level":"info","ts":1791224784.5088677,"msg":"maxprocs: Leaving GOMAXPROCS=6: CPU quota undefined"}
+Oct 05 18:26:24 95c04638b565 moteld[2345]: {"level":"info","ts":1791224784.508883,"msg":"GOMEMLIMIT is updated","GOMEMLIMIT":7488025804,"previous":9223372036854775807}
+Oct 05 18:26:24 95c04638b565 moteld[2345]: {"level":"info","ts":1791224784.5088913,"msg":"using config from file","file":"/root/readonly.Caddyfile"}
+Oct 05 18:26:24 95c04638b565 moteld[2345]: {"level":"info","ts":1791224784.508895,"msg":"adapted config to JSON","adapter":"caddyfile"}
+Oct 05 18:26:24 95c04638b565 moteld[2345]: {"level":"warn","ts":1791224784.508898,"logger":"admin","msg":"admin endpoint disabled"}
+Oct 05 18:26:24 95c04638b565 moteld[2345]: {"level":"info","ts":1791224784.5095751,"logger":"http.auto_https","msg":"automatic HTTPS is completely disabled for server","server_name":"srv0"}
+Oct 05 18:26:24 95c04638b565 moteld[2345]: {"level":"info","ts":1791224784.5095603,"logger":"tls.cache.maintenance","msg":"started background certificate maintenance","cache":"0x1220a091dc00"}
+Oct 05 18:26:24 95c04638b565 moteld[2345]: {"level":"warn","ts":1791224784.518352,"logger":"http","msg":"HTTP/2 skipped because it requires TLS","network":"tcp","addr":":9100"}
+Oct 05 18:26:24 95c04638b565 moteld[2345]: {"level":"warn","ts":1791224784.518389,"logger":"http","msg":"HTTP/3 skipped because it requires TLS","network":"tcp","addr":":9100"}
+Oct 05 18:26:24 95c04638b565 moteld[2345]: {"level":"info","ts":1791224784.5183926,"logger":"http.log","msg":"server running","name":"srv0","protocols":["h1","h2","h3"]}
+Oct 05 18:26:24 95c04638b565 moteld[2345]: {"level":"info","ts":1791224784.518917,"msg":"autosaved config (load with --resume flag)","file":"caddy/autosave.json"}
+Oct 05 18:26:24 95c04638b565 moteld[2345]: {"level":"info","ts":1791224784.5189278,"msg":"serving initial configuration"}
+Oct 05 18:26:24 95c04638b565 moteld[2345]: {"level":"warn","ts":1791224784.5189302,"msg":"$HOME environment variable is empty - please fix; some assets might be stored in ./caddy"}
+Oct 05 18:26:24 95c04638b565 moteld[2345]: {"level":"info","ts":1791224784.5201797,"logger":"tls","msg":"cleaning storage unit","storage":"FileStorage:./caddy"}
+Oct 05 18:26:24 95c04638b565 moteld[2345]: {"level":"info","ts":1791224784.5214252,"logger":"tls","msg":"finished cleaning storage units"}
 Oct 05 18:26:24 95c04638b565 systemd[1]: Starting motel_backup_plan_c104b5ba0222.service - motel backup: read what each app declares...
 Oct 05 18:26:24 95c04638b565 systemd[1]: motel_backup_plan_c104b5ba0222.service: Supervising process 2378 which is not our child. We'll most likely not notice when it exits.
 Oct 05 18:26:24 95c04638b565 systemd[1]: motel_backup_plan_c104b5ba0222.service: Deactivated successfully.
@@ -382,33 +382,33 @@ Oct 05 18:26:25 95c04638b565 systemd[1]: Failed to start motel_backup_probe_c104
 Oct 05 18:26:25 95c04638b565 systemd[1]: Starting motel_backup_open_c104b5ba0222.service - motel backup: open the repository...
 Oct 05 18:26:25 95c04638b565 systemd[1]: motel_backup_open_c104b5ba0222.service: Deactivated successfully.
 Oct 05 18:26:25 95c04638b565 systemd[1]: Finished motel_backup_open_c104b5ba0222.service - motel backup: open the repository.
-Oct 05 18:26:25 95c04638b565 motel[2345]: {"level":"info","ts":1791224785.8697524,"msg":"shutting down apps, then terminating","signal":"SIGTERM"}
-Oct 05 18:26:25 95c04638b565 motel[2345]: {"level":"warn","ts":1791224785.8698003,"msg":"exiting; byeee!! 👋","signal":"SIGTERM"}
-Oct 05 18:26:25 95c04638b565 motel[2345]: {"level":"info","ts":1791224785.8698142,"logger":"http","msg":"servers shutting down with eternal grace period"}
-Oct 05 18:26:25 95c04638b565 motel[2345]: {"level":"info","ts":1791224785.8700147,"logger":"tls.cache.maintenance","msg":"stopped background certificate maintenance","cache":"0x1220a091dc00"}
-Oct 05 18:26:25 95c04638b565 systemd[1]: Stopping readonly-storage.service - [systemd-run] /usr/bin/motel run --config /root/readonly.Caddyfile --adapter caddyfile...
-Oct 05 18:26:25 95c04638b565 motel[2345]: {"level":"info","ts":1791224785.8707087,"msg":"shutdown complete","signal":"SIGTERM","exit_code":0}
+Oct 05 18:26:25 95c04638b565 moteld[2345]: {"level":"info","ts":1791224785.8697524,"msg":"shutting down apps, then terminating","signal":"SIGTERM"}
+Oct 05 18:26:25 95c04638b565 moteld[2345]: {"level":"warn","ts":1791224785.8698003,"msg":"exiting; byeee!! 👋","signal":"SIGTERM"}
+Oct 05 18:26:25 95c04638b565 moteld[2345]: {"level":"info","ts":1791224785.8698142,"logger":"http","msg":"servers shutting down with eternal grace period"}
+Oct 05 18:26:25 95c04638b565 moteld[2345]: {"level":"info","ts":1791224785.8700147,"logger":"tls.cache.maintenance","msg":"stopped background certificate maintenance","cache":"0x1220a091dc00"}
+Oct 05 18:26:25 95c04638b565 systemd[1]: Stopping readonly-storage.service - [systemd-run] /usr/bin/moteld run --config /root/readonly.Caddyfile --adapter caddyfile...
+Oct 05 18:26:25 95c04638b565 moteld[2345]: {"level":"info","ts":1791224785.8707087,"msg":"shutdown complete","signal":"SIGTERM","exit_code":0}
 Oct 05 18:26:25 95c04638b565 systemd[1]: readonly-storage.service: Deactivated successfully.
-Oct 05 18:26:25 95c04638b565 systemd[1]: Stopped readonly-storage.service - [systemd-run] /usr/bin/motel run --config /root/readonly.Caddyfile --adapter caddyfile.
-Oct 05 18:26:25 95c04638b565 systemd[1]: Started readonly-storage.service - [systemd-run] /usr/bin/motel run --config /root/readonly.Caddyfile --adapter caddyfile.
-Oct 05 18:26:25 95c04638b565 motel[2462]: {"level":"warn","ts":1791224785.9120483,"msg":"unable to determine directory for user configuration; falling back to current directory","error":"neither $XDG_CONFIG_HOME nor $HOME are defined"}
-Oct 05 18:26:25 95c04638b565 motel[2462]: {"level":"info","ts":1791224785.913696,"msg":"using config from file","file":"/root/readonly.Caddyfile"}
-Oct 05 18:26:25 95c04638b565 motel[2462]: {"level":"info","ts":1791224785.9142704,"msg":"adapted config to JSON","adapter":"caddyfile"}
-Oct 05 18:26:25 95c04638b565 motel[2462]: {"level":"info","ts":1791224785.9152195,"msg":"maxprocs: Leaving GOMAXPROCS=6: CPU quota undefined"}
-Oct 05 18:26:25 95c04638b565 motel[2462]: {"level":"info","ts":1791224785.9152286,"msg":"GOMEMLIMIT is updated","GOMEMLIMIT":7488025804,"previous":9223372036854775807}
-Oct 05 18:26:25 95c04638b565 motel[2462]: {"level":"info","ts":1791224785.9152308,"msg":"using config from file","file":"/root/readonly.Caddyfile"}
-Oct 05 18:26:25 95c04638b565 motel[2462]: {"level":"info","ts":1791224785.9152322,"msg":"adapted config to JSON","adapter":"caddyfile"}
-Oct 05 18:26:25 95c04638b565 motel[2462]: {"level":"warn","ts":1791224785.9152346,"logger":"admin","msg":"admin endpoint disabled"}
-Oct 05 18:26:25 95c04638b565 motel[2462]: {"level":"info","ts":1791224785.9153056,"logger":"http.auto_https","msg":"automatic HTTPS is completely disabled for server","server_name":"srv0"}
-Oct 05 18:26:25 95c04638b565 motel[2462]: {"level":"info","ts":1791224785.915384,"logger":"tls.cache.maintenance","msg":"started background certificate maintenance","cache":"0x69ad92205580"}
-Oct 05 18:26:25 95c04638b565 motel[2462]: {"level":"warn","ts":1791224785.9178555,"logger":"http","msg":"HTTP/2 skipped because it requires TLS","network":"tcp","addr":":9100"}
-Oct 05 18:26:25 95c04638b565 motel[2462]: {"level":"warn","ts":1791224785.9178708,"logger":"http","msg":"HTTP/3 skipped because it requires TLS","network":"tcp","addr":":9100"}
-Oct 05 18:26:25 95c04638b565 motel[2462]: {"level":"info","ts":1791224785.917873,"logger":"http.log","msg":"server running","name":"srv0","protocols":["h1","h2","h3"]}
-Oct 05 18:26:25 95c04638b565 motel[2462]: {"level":"info","ts":1791224785.9180043,"msg":"autosaved config (load with --resume flag)","file":"caddy/autosave.json"}
-Oct 05 18:26:25 95c04638b565 motel[2462]: {"level":"info","ts":1791224785.9180098,"msg":"serving initial configuration"}
-Oct 05 18:26:25 95c04638b565 motel[2462]: {"level":"warn","ts":1791224785.9180129,"msg":"$HOME environment variable is empty - please fix; some assets might be stored in ./caddy"}
-Oct 05 18:26:25 95c04638b565 motel[2462]: {"level":"info","ts":1791224785.9193754,"logger":"tls","msg":"storage cleaning happened too recently; skipping for now","storage":"FileStorage:./caddy","instance":"ecc389b9-86eb-4c3a-bc08-397c1aba01c5","try_again":1791311185.9193718,"try_again_in":86399.99999975}
-Oct 05 18:26:25 95c04638b565 motel[2462]: {"level":"info","ts":1791224785.9194148,"logger":"tls","msg":"finished cleaning storage units"}
+Oct 05 18:26:25 95c04638b565 systemd[1]: Stopped readonly-storage.service - [systemd-run] /usr/bin/moteld run --config /root/readonly.Caddyfile --adapter caddyfile.
+Oct 05 18:26:25 95c04638b565 systemd[1]: Started readonly-storage.service - [systemd-run] /usr/bin/moteld run --config /root/readonly.Caddyfile --adapter caddyfile.
+Oct 05 18:26:25 95c04638b565 moteld[2462]: {"level":"warn","ts":1791224785.9120483,"msg":"unable to determine directory for user configuration; falling back to current directory","error":"neither $XDG_CONFIG_HOME nor $HOME are defined"}
+Oct 05 18:26:25 95c04638b565 moteld[2462]: {"level":"info","ts":1791224785.913696,"msg":"using config from file","file":"/root/readonly.Caddyfile"}
+Oct 05 18:26:25 95c04638b565 moteld[2462]: {"level":"info","ts":1791224785.9142704,"msg":"adapted config to JSON","adapter":"caddyfile"}
+Oct 05 18:26:25 95c04638b565 moteld[2462]: {"level":"info","ts":1791224785.9152195,"msg":"maxprocs: Leaving GOMAXPROCS=6: CPU quota undefined"}
+Oct 05 18:26:25 95c04638b565 moteld[2462]: {"level":"info","ts":1791224785.9152286,"msg":"GOMEMLIMIT is updated","GOMEMLIMIT":7488025804,"previous":9223372036854775807}
+Oct 05 18:26:25 95c04638b565 moteld[2462]: {"level":"info","ts":1791224785.9152308,"msg":"using config from file","file":"/root/readonly.Caddyfile"}
+Oct 05 18:26:25 95c04638b565 moteld[2462]: {"level":"info","ts":1791224785.9152322,"msg":"adapted config to JSON","adapter":"caddyfile"}
+Oct 05 18:26:25 95c04638b565 moteld[2462]: {"level":"warn","ts":1791224785.9152346,"logger":"admin","msg":"admin endpoint disabled"}
+Oct 05 18:26:25 95c04638b565 moteld[2462]: {"level":"info","ts":1791224785.9153056,"logger":"http.auto_https","msg":"automatic HTTPS is completely disabled for server","server_name":"srv0"}
+Oct 05 18:26:25 95c04638b565 moteld[2462]: {"level":"info","ts":1791224785.915384,"logger":"tls.cache.maintenance","msg":"started background certificate maintenance","cache":"0x69ad92205580"}
+Oct 05 18:26:25 95c04638b565 moteld[2462]: {"level":"warn","ts":1791224785.9178555,"logger":"http","msg":"HTTP/2 skipped because it requires TLS","network":"tcp","addr":":9100"}
+Oct 05 18:26:25 95c04638b565 moteld[2462]: {"level":"warn","ts":1791224785.9178708,"logger":"http","msg":"HTTP/3 skipped because it requires TLS","network":"tcp","addr":":9100"}
+Oct 05 18:26:25 95c04638b565 moteld[2462]: {"level":"info","ts":1791224785.917873,"logger":"http.log","msg":"server running","name":"srv0","protocols":["h1","h2","h3"]}
+Oct 05 18:26:25 95c04638b565 moteld[2462]: {"level":"info","ts":1791224785.9180043,"msg":"autosaved config (load with --resume flag)","file":"caddy/autosave.json"}
+Oct 05 18:26:25 95c04638b565 moteld[2462]: {"level":"info","ts":1791224785.9180098,"msg":"serving initial configuration"}
+Oct 05 18:26:25 95c04638b565 moteld[2462]: {"level":"warn","ts":1791224785.9180129,"msg":"$HOME environment variable is empty - please fix; some assets might be stored in ./caddy"}
+Oct 05 18:26:25 95c04638b565 moteld[2462]: {"level":"info","ts":1791224785.9193754,"logger":"tls","msg":"storage cleaning happened too recently; skipping for now","storage":"FileStorage:./caddy","instance":"ecc389b9-86eb-4c3a-bc08-397c1aba01c5","try_again":1791311185.9193718,"try_again_in":86399.99999975}
+Oct 05 18:26:25 95c04638b565 moteld[2462]: {"level":"info","ts":1791224785.9194148,"logger":"tls","msg":"finished cleaning storage units"}
 Oct 05 18:26:26 95c04638b565 systemd[1]: Starting motel_backup_plan_92af28df3699.service - motel backup: read what each app declares...
 Oct 05 18:26:26 95c04638b565 systemd[1]: motel_backup_plan_92af28df3699.service: Supervising process 2495 which is not our child. We'll most likely not notice when it exits.
 Oct 05 18:26:26 95c04638b565 systemd[1]: motel_backup_plan_92af28df3699.service: Deactivated successfully.
@@ -420,14 +420,14 @@ Oct 05 18:26:26 95c04638b565 systemd[1]: Failed to start motel_backup_probe_92af
 Oct 05 18:26:26 95c04638b565 systemd[1]: Starting motel_backup_open_92af28df3699.service - motel backup: open the repository...
 Oct 05 18:26:27 95c04638b565 systemd[1]: motel_backup_open_92af28df3699.service: Deactivated successfully.
 Oct 05 18:26:27 95c04638b565 systemd[1]: Finished motel_backup_open_92af28df3699.service - motel backup: open the repository.
-Oct 05 18:26:27 95c04638b565 systemd[1]: Stopping readonly-storage.service - [systemd-run] /usr/bin/motel run --config /root/readonly.Caddyfile --adapter caddyfile...
-Oct 05 18:26:27 95c04638b565 motel[2462]: {"level":"info","ts":1791224787.3399498,"msg":"shutting down apps, then terminating","signal":"SIGTERM"}
-Oct 05 18:26:27 95c04638b565 motel[2462]: {"level":"warn","ts":1791224787.3400633,"msg":"exiting; byeee!! 👋","signal":"SIGTERM"}
-Oct 05 18:26:27 95c04638b565 motel[2462]: {"level":"info","ts":1791224787.3400745,"logger":"http","msg":"servers shutting down with eternal grace period"}
-Oct 05 18:26:27 95c04638b565 motel[2462]: {"level":"info","ts":1791224787.340227,"logger":"tls.cache.maintenance","msg":"stopped background certificate maintenance","cache":"0x69ad92205580"}
-Oct 05 18:26:27 95c04638b565 motel[2462]: {"level":"info","ts":1791224787.3402636,"msg":"shutdown complete","signal":"SIGTERM","exit_code":0}
+Oct 05 18:26:27 95c04638b565 systemd[1]: Stopping readonly-storage.service - [systemd-run] /usr/bin/moteld run --config /root/readonly.Caddyfile --adapter caddyfile...
+Oct 05 18:26:27 95c04638b565 moteld[2462]: {"level":"info","ts":1791224787.3399498,"msg":"shutting down apps, then terminating","signal":"SIGTERM"}
+Oct 05 18:26:27 95c04638b565 moteld[2462]: {"level":"warn","ts":1791224787.3400633,"msg":"exiting; byeee!! 👋","signal":"SIGTERM"}
+Oct 05 18:26:27 95c04638b565 moteld[2462]: {"level":"info","ts":1791224787.3400745,"logger":"http","msg":"servers shutting down with eternal grace period"}
+Oct 05 18:26:27 95c04638b565 moteld[2462]: {"level":"info","ts":1791224787.340227,"logger":"tls.cache.maintenance","msg":"stopped background certificate maintenance","cache":"0x69ad92205580"}
+Oct 05 18:26:27 95c04638b565 moteld[2462]: {"level":"info","ts":1791224787.3402636,"msg":"shutdown complete","signal":"SIGTERM","exit_code":0}
 Oct 05 18:26:27 95c04638b565 systemd[1]: readonly-storage.service: Deactivated successfully.
-Oct 05 18:26:27 95c04638b565 systemd[1]: Stopped readonly-storage.service - [systemd-run] /usr/bin/motel run --config /root/readonly.Caddyfile --adapter caddyfile.
+Oct 05 18:26:27 95c04638b565 systemd[1]: Stopped readonly-storage.service - [systemd-run] /usr/bin/moteld run --config /root/readonly.Caddyfile --adapter caddyfile.
 e2e-s3-1  | 2026/10/05 18:25:13 NOTICE: Config file "/.config/rclone/rclone.conf" not found - using defaults
 e2e-s3-1  | 2026/10/05 18:25:13 NOTICE: Local file system at /data: Starting s3 server on [http://[::]:9000/]
  Container motel-backups-v2-e2e-backup-box-1 Stopping 

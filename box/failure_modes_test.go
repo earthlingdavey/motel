@@ -10,7 +10,7 @@ import (
 	"go.uber.org/zap/zapcore"
 )
 
-var errReload = errors.New("job for motel.service failed")
+var errReload = errors.New("job for moteld.service failed")
 
 // fmRow is one row of DESIGN-box.md's Failure-mode table, in one of its
 // two columns: the write fails (fail), or the process dies once it is

@@ -91,7 +91,7 @@ func FuzzHandlerRoute(f *testing.F) {
 	})
 }
 
-// FuzzBoxOption: the `box` option's parser (what `motel validate`
+// FuzzBoxOption: the `box` option's parser (what `moteld validate`
 // and the running box read) and the walk (what root reads) agree on
 // the signers of any box block both accept — so the list the box
 // trusts is never other than the one the running config was checked

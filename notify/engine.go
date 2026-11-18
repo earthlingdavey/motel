@@ -31,7 +31,7 @@ type Event struct {
 	Instance string
 	// Source is the detector: liveswap, backup, tls, disk, metrics,
 	// rules (the operator's post_deploy), or external:<name> for
-	// `motel monitor send`.
+	// `moteld monitor send`.
 	Source  string
 	Summary string
 	// Release and DeployedBy are labels on a one-shot (part of what
@@ -44,14 +44,14 @@ type Event struct {
 	// Hold is how long a state alert's condition must stay clear before
 	// its recovery is posted; at least minHold.
 	Hold time.Duration
-	// Details are an external producer's key=value pairs (motel monitor
+	// Details are an external producer's key=value pairs (moteld monitor
 	// send --detail), annotations detail_<key>, through the filter.
 	Details map[string]string
 	// Standing, on a state alert, is a detector's report of what it
 	// told before and has not ended (liveswap's ReportStanding at Start,
 	// and the producers' states kept in external.json): ignored for a key
 	// the table holds; for one it does not —
-	// a motel restarted since, its table empty while Alertmanager still
+	// a moteld restarted since, its table empty while Alertmanager still
 	// holds the alert — taken as told: a firing one fires, a cleared one
 	// is held as after a firing one was told, so its recovery comes
 	// after the hold and never at resolve_timeout.
@@ -235,7 +235,7 @@ type engine struct {
 	diskPaths  []string
 	lastDisk   time.Time
 	// seen is what the pollers measured last, copied under mu for
-	// `motel monitor rules` (ruleslist.go).
+	// `moteld monitor rules` (ruleslist.go).
 	seen polled
 
 	// channel_failed's memory of Alertmanager's counter, and the read.
@@ -558,7 +558,7 @@ func (e *engine) tick() {
 		e.lastHeartbeat = now
 		e.enqueue(&pending{key: "heartbeat", alerts: []amAlert{{
 			Labels:      map[string]string{"alertname": alertWatchdog, "severity": "none"},
-			Annotations: map[string]string{"summary": "motel is running and can reach Alertmanager"},
+			Annotations: map[string]string{"summary": "moteld is running and can reach Alertmanager"},
 			StartsAt:    now, EndsAt: now.Add(heartbeatLife),
 		}}, first: now})
 	}
@@ -1046,7 +1046,7 @@ func (e *engine) release(a *App) {
 	// age, by a later config that brings the block back. With the
 	// goroutine stopped, no post still queued is known to be delivered
 	// (the cancel may cut one whose body Alertmanager had taken): each is
-	// given up as a full queue's oldest is, at a reload and at motel's
+	// given up as a full queue's oldest is, at a reload and at moteld's
 	// shutdown alike.
 	e.mu.Lock()
 	for _, p := range e.queue {
@@ -1058,7 +1058,7 @@ func (e *engine) release(a *App) {
 	// channels) away. Alertmanager would end what it holds at
 	// resolve_timeout through the last render's receivers, a recovery
 	// that did not happen on every channel, so it is given the config
-	// that sends nothing, and the URL files go. motel's own shutdown
+	// that sends nothing, and the URL files go. moteld's own shutdown
 	// leaves the render, so that what fired is kept alive across a
 	// restart: Caddy empties its running context before it stops the
 	// last config's apps (caddy.Stop), so configRunning (load.go) is a

@@ -82,10 +82,10 @@ Before the commands exist `motel-backup status` exits 2 with the usage text (`ma
 | 5 | `last_ok` set 4 h back, then `restore_proven` 9 days back, in `status.json` (no clock to move in a container; boundaries are the unit table's): stale, then old; the other app untouched | guard: the edit took (`grep` the new time) |
 | 6 | a run held mid-upload (`kill -STOP`, `run.sh:186` idiom): `running: upload of blog, since`; exit 0 while `last_ok` is fresh; never "failed" | guard: `units_running != 0` |
 | 7 | blog's newest snapshot crafted damaged, `drill`: blog not proven and why, non-zero; shop proven | — |
-| 8 | `validate`: good file → 0; an app with no `backup` block → named, exit 0; `root {$LIVESWAP_ROOT:/var/lib/liveswap}` with a `backup` → 1, names the variable; as `nobody` → works; a file that is not there → 1, names it; an import from outside `/etc/motel` → 1 | guard: `motel validate` **accepts** the `{$LIVESWAP_ROOT}` file; never "no app declares a backup" for a missing file |
+| 8 | `validate`: good file → 0; an app with no `backup` block → named, exit 0; `root {$LIVESWAP_ROOT:/var/lib/liveswap}` with a `backup` → 1, names the variable; as `nobody` → works; a file that is not there → 1, names it; an import from outside `/etc/motel` → 1 | guard: `moteld validate` **accepts** the `{$LIVESWAP_ROOT}` file; never "no app declares a backup" for a missing file |
 | 9 | `status x`, `validate`, `validate a b`, and `check /x` → usage, exit 2 | — |
 
-**5. `e2e/box-push.sh`** (the box suite; `e2e/Dockerfile` also builds `motel-backup`): a Caddyfile `motel validate` accepts and `validate` refuses → push exits non-zero, says the box rejected it **for backups**, live Caddyfile byte-identical, no `.new` left; with the binary moved aside, push works as before (boxes without backups).
+**5. `e2e/box-push.sh`** (the box suite; `e2e/Dockerfile` also builds `motel-backup`): a Caddyfile `moteld validate` accepts and `validate` refuses → push exits non-zero, says the box rejected it **for backups**, live Caddyfile byte-identical, no `.new` left; with the binary moved aside, push works as before (boxes without backups).
 
 **Shown failing once, several breaks in one run** (lesson 5): freshness read from `last_snapshot`; the `seen` stamp applied when the listing failed; `activating` treated as failed; the 8-day test off by a day; `validate` ignoring the second-value trial.
 
@@ -96,7 +96,7 @@ Before the commands exist `motel-backup status` exits 2 with the usage text (`ma
 - `backups/status/` — `Report` as above; `Running` filled from the bus: `ListUnitsByPatterns("motel_backup_*", "motel-backup*.service")` + `StateChangeTimestamp`, role and app parsed from the name (`x.name`, `engine.go:284`). Reuse `notLastOK` and the `%.8s` / `2006-01-02 15:04 MST` conventions from `main.go:138-177, 270`.
 - `backups/plan/` — `Inspect(ctx, file)`; `Make` calls it.
 - `backups/cmd/motel-backup/main.go` — `status` (no args, exit 1 with one summary line when unhealthy — the `run`/`drill` pattern, `main.go:129, 365`), `validate <file>` (no `runner()`: no root, no bus, no lock), `usage`, the arity guard at `:59`.
-- `examples/box/bin/push` — after `motel validate` (line 54): `on_box test -x /usr/bin/motel-backup` then `on_box motel-backup validate "$live.new"`; unprivileged, **no new sudoers line**. `examples/box/README.md` says so.
+- `examples/box/bin/push` — after `moteld validate` (line 54): `on_box test -x /usr/bin/motel-backup` then `on_box motel-backup validate "$live.new"`; unprivileged, **no new sudoers line**. `examples/box/README.md` says so.
 - `e2e/backup/lib.sh`, `docker-compose.yml:153-158` (mount), `Makefile:221` (one `exec` line), `backups/README.md` (`status`, `validate`, the record's new fields, "What a run says").
 
 ## PR 4b — `setup`, the account, the credential file (own plan when 4a is merged)

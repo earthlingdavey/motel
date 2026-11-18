@@ -2,7 +2,7 @@ package box
 
 // Step 6's reachability (DESIGN-box.md, "Reachability: what may stand
 // before box_webhook"): of the pushed file's adaptation — Caddy's JSON
-// as `motel adapt` prints it — whether the server that carries
+// as `moteld adapt` prints it — whether the server that carries
 // box_webhook still listens where the push arrived (the door), whether
 // the workflow's connection reaches that server's routes (its request
 // limits among them), and whether a GET and a POST for / on the

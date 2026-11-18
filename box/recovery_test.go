@@ -71,7 +71,7 @@ func TestRecoveryStates(t *testing.T) {
 		{phase: phaseSwapped, d: dPrev, state: "active", file: dPrev, result: phaseRolledBack, msg: msgRolledBackInterrupted, reloaded: 1},
 		{phase: phaseSwapped, d: dOther, file: dOther, result: phaseUnknown, msg: msgChanged},
 		// init's records recover as the applier's: a swap whose reload
-		// was never confirmed rolls back, whether or not motel runs.
+		// was never confirmed rolls back, whether or not moteld runs.
 		{phase: phaseSwapped, origin: originInit, d: dNew, state: "inactive", file: dPrev, result: phaseFailed, msg: msgInterruptedStopped},
 		{phase: phaseSwapped, origin: originInit, d: dNew, state: "active", file: dPrev, result: phaseRolledBack, msg: msgRolledBackInterrupted, reloaded: 1},
 		{phase: phaseNoChange, origin: originInit, d: dPrev, file: dPrev, advanced: true, result: phaseNoChange},

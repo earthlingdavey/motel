@@ -20,7 +20,7 @@ import (
 	"go.uber.org/zap"
 	"go.uber.org/zap/zaptest/observer"
 
-	// The Caddyfile adapter and the liveswap option, as the motel
+	// The Caddyfile adapter and the liveswap option, as the moteld
 	// binary links them.
 	_ "github.com/caddyserver/caddy/v2/caddyconfig/httpcaddyfile"
 	_ "github.com/smallhoursorg/motel/liveswap"
@@ -42,7 +42,7 @@ func writePubKey(t *testing.T, path string) {
 }
 
 // validate adapts a Caddyfile and provisions it without starting, as
-// `motel validate` does.
+// `moteld validate` does.
 func validate(t *testing.T, src string) error {
 	t.Helper()
 	adapter := caddyconfig.GetAdapter("caddyfile")
@@ -77,7 +77,7 @@ func useSocket(t *testing.T, sock string) {
 }
 
 // TestValidateThroughCaddy holds Provision to its promise: the
-// refusals reach `motel validate`, read the apps as liveswap built
+// refusals reach `moteld validate`, read the apps as liveswap built
 // them, and touch nothing on disk.
 func TestValidateThroughCaddy(t *testing.T) {
 	dir := t.TempDir()
@@ -237,7 +237,7 @@ func TestEverySecretIsAKnownValue(t *testing.T) {
 }
 
 // The box handler validates a push before root writes its
-// secrets/_box/ into _box.env: `motel validate` takes the names the
+// secrets/_box/ into _box.env: `moteld validate` takes the names the
 // push carries as held, in validate alone and for the box's own file
 // alone, and refuses every other missing one as before.
 func TestValidateTakesAPushsSecretsAsHeld(t *testing.T) {
@@ -284,7 +284,7 @@ func TestValidateTakesAPushsSecretsAsHeld(t *testing.T) {
 	}
 }
 
-// The first load of `motel run` (a boot) drops a channel whose secret is
+// The first load of `moteld run` (a boot) drops a channel whose secret is
 // missing and serves; validate, a reload (a config running) and a load
 // told no command refuse it.
 func TestBootDropsAMissingSecret(t *testing.T) {
@@ -632,7 +632,7 @@ func TestStartAndStopBothParts(t *testing.T) {
 }
 
 // A Start by a process that does not run as a state directory's owner
-// (root trying a file by hand while motel.service runs) starts neither
+// (root trying a file by hand while moteld.service runs) starts neither
 // part on it: Alertmanager's config, the URL files, the producers' kept
 // states and the rules stay as the service left them, no engine, pusher
 // or comparator serves the config (so nothing is posted or pushed),

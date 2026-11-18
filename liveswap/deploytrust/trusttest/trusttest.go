@@ -37,7 +37,7 @@ func GenerateKey() (ed25519.PrivateKey, ed25519.PublicKey) {
 	return priv, pub
 }
 
-// KeyFile writes pub as the PKIX PEM file `motel deploy-keygen`
+// KeyFile writes pub as the PKIX PEM file `moteld deploy-keygen`
 // emits, in a directory the test owns, and returns its path: what a
 // `deploy_trust local { public_key <path> }` block names.
 func KeyFile(tb testing.TB, pub ed25519.PublicKey) string {

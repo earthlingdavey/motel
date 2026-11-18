@@ -44,7 +44,7 @@ func gate(args []string, stderr io.Writer) (stop bool) {
 }
 
 // gateArgs is gate, and the arguments Caddy's own command is to run
-// with: args, with --force added to a `motel reload` of a config with a
+// with: args, with --force added to a `moteld reload` of a config with a
 // monitor block (reloadForces, monitorcheck.go).
 func gateArgs(args []string, stderr io.Writer) (stop bool, run []string) {
 	if len(args) == 0 {
@@ -74,7 +74,7 @@ func gateArgs(args []string, stderr io.Writer) (stop bool, run []string) {
 	}
 	switch {
 	case err != nil && cmd == "run":
-		_, _ = fmt.Fprintf(stderr, "ERROR: %v (served all the same; `motel reload` refuses this until it is mended)\n", err)
+		_, _ = fmt.Fprintf(stderr, "ERROR: %v (served all the same; `moteld reload` refuses this until it is mended)\n", err)
 	case err != nil:
 		_, _ = fmt.Fprintf(stderr, "Error: %v\n", err)
 		stop = true
@@ -392,7 +392,7 @@ func checkBackups(cmd, file, adapter string) (warning string, err error) {
 // Caddy's to refuse.
 // adminRestart ends each refusal of checkAdmin: a new admin line takes
 // effect at a restart, not a reload.
-const adminRestart = "then `systemctl restart motel` once: a reload asks the admin API where the new file puts it, and the running motel answers where the old one did"
+const adminRestart = "then `systemctl restart moteld` once: a reload asks the admin API where the new file puts it, and the running moteld answers where the old one did"
 
 func checkAdmin(cfg []byte) error {
 	var c struct {

@@ -335,7 +335,7 @@ in Docker):
 ```sh
 make test              # unit tests, all modules (race detector, coverage)
 make test-integration  # caddytest harness against an in-process Caddy
-make e2e               # both module suites against the motel binary (incl. Souin+Otter)
+make e2e               # both module suites against the moteld binary (incl. Souin+Otter)
 make lint vet tidy
 ```
 

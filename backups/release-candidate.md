@@ -490,7 +490,7 @@ afterwards.
 ## 7. Restore onto a second box, with another uid for `motel`
 
 [A rebuilt box](../docs/backups.md#a-rebuilt-box) on a second fresh box — its
-Caddyfile from the box repo with `motel init`, as step 1 says —
+Caddyfile from the box repo with `moteld init`, as step 1 says —
 with `id -u motel` and `id -g motel` there both not the first
 box's. Before installing the package, make a system user and a system
 group (`useradd --system rc-uidshift`, `groupadd --system rc-gidshift`).
@@ -510,7 +510,7 @@ channel), uids 996 and 993, the restore 10 s.
 ([how](design/rc-runs/v0.5.0-rc1.md#where-the-run-left-the-guide)):
 
 - **The ids:** `motel` 986:986, where the first box had 988:989.
-- **`motel init`:** run on the box repo's file at the commit the
+- **`moteld init`:** run on the box repo's file at the commit the
   first box ran, it installed the file and said the box applies
   commits descending from that one. The repository is private, so the
   file was copied from the first box, its checksum matched. The
@@ -532,7 +532,7 @@ channel), uids 996 and 993, the restore 10 s.
   included) and the drill (8.6 s) were `ok` and proven, `status`
   exited 0, and no lock was left.
 
-The guide's way back — the box repo and `motel init` — works.
+The guide's way back — the box repo and `moteld init` — works.
 
 ## 8. One drill, timed, and its egress
 

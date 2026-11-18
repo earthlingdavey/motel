@@ -14,7 +14,7 @@ import (
 // line names none. A variable only so a test can stand another in.
 var metricsStateDir = notify.DefaultMetricsStateDir
 
-// retireMetricsRules is the gate's at `motel run` alone, with the config
+// retireMetricsRules is the gate's at `moteld run` alone, with the config
 // Caddy is about to load: one with no monitor block, or a monitor block
 // with no metrics line, builds no MetricsStore, so nothing of notify
 // would retire the rules a config with one wrote, and vmalert and the

@@ -33,10 +33,10 @@ renders.`,
 	// The commands monitor replaced: hidden, and refused with the new
 	// spelling, as the Caddyfile's old blocks are.
 	movedCommand("notify", func(args []string) string {
-		return "motel notify is now motel monitor: motel monitor " + shellWords(args)
+		return "moteld notify is now moteld monitor: moteld monitor " + shellWords(args)
 	})
 	movedCommand("metrics", func([]string) string {
-		return "motel metrics setup is now motel monitor setup --metrics, which sets up Alertmanager, then the store"
+		return "moteld metrics setup is now moteld monitor setup --metrics, which sets up Alertmanager, then the store"
 	})
 }
 
@@ -60,7 +60,7 @@ func movedCommand(name string, moved func(args []string) string) {
 	caddycmd.RegisterCommand(caddycmd.Command{
 		Name:  name,
 		Usage: "",
-		Short: "Moved to motel monitor",
+		Short: "Moved to moteld monitor",
 		CobraFunc: func(cmd *cobra.Command) {
 			cmd.Hidden = true
 			cmd.DisableFlagParsing = true
@@ -75,7 +75,7 @@ func movedCommand(name string, moved func(args []string) string) {
 // defaultAdmin is the starter's admin address (packaging/Caddyfile).
 const defaultAdmin = "unix//run/motel/admin.sock"
 
-// adminFlags are how a command finds the running motel's admin API: the
+// adminFlags are how a command finds the running moteld's admin API: the
 // starter's address, another, or a Caddyfile that names one. Not the
 // box's Caddyfile by default: reading it adapts the whole file, which
 // logs, and the admin address is the starter's on every box.
@@ -137,7 +137,7 @@ func sendCommand() *cobra.Command {
 	c := &cobra.Command{
 		Use:   "send --source <name> --name <event> --summary <text> [flags]",
 		Short: "Emit an event from a producer outside motel (cron, smartd, a script)",
-		Long: `Sends one event to the running motel over its admin socket (root and the
+		Long: `Sends one event to the running moteld over its admin socket (root and the
 motel user reach it), which checks it, stamps source external:<name>,
 passes the text through the response filter, applies the flapping guard
 and writes the monitor: event line, as for its own events; then
@@ -146,9 +146,9 @@ Alertmanager routes it like any other.
 A one-shot by default. With --state firing, a state alert that stays
 until a --state resolved for the same name, subject and instance.
 
-    motel monitor send --source smartd --name disk_failing --severity critical \
+    moteld monitor send --source smartd --name disk_failing --severity critical \
         --instance /dev/sda --summary "SMART says /dev/sda is failing"
-    motel monitor send --source cron --name reboot_required --state firing \
+    moteld monitor send --source cron --name reboot_required --state firing \
         --summary "a kernel update waits for a reboot"
 
 Refused: motel's own event names (watchdog_*, deploy_*, rollback,
@@ -194,7 +194,7 @@ over 200 characters or on more than one line, details over 2 KiB.`,
 	return c
 }
 
-// sendAnswer is what `motel monitor send` says of motel's answer. An
+// sendAnswer is what `moteld monitor send` says of motel's answer. An
 // event that goes nowhere but the journal is an error (exit 1), naming
 // setup; a resolve that found nothing firing under its key is not one
 // (a producer may resolve whatever it last said), but it says so.
@@ -256,7 +256,7 @@ gives it motel's config and socket activation, the socket unit
 (/run/motel-notify/am.sock, 0660 root:motel), and
 /var/lib/motel-notify with a config that sends nothing; unmasks it,
 leaves it to start on its socket's first connection, starts the socket
-and reloads motel, which renders the monitor block's channels.
+and reloads moteld, which renders the monitor block's channels.
 
 With --metrics, the store, which posts to Alertmanager: on a
 box where Alertmanager's setup has not run to its end (motel-am.socket
@@ -275,15 +275,15 @@ the drop-in that hands it to Alertmanager, and vmalert's unit, and
 retires the proxy an earlier setup put on that port; unmasks the store;
 restarts Alertmanager once, unless that socket already listens (it
 takes a socket up only when it starts: what it holds in memory goes);
-starts them all and reloads motel, which renders the rules and pushes.
+starts them all and reloads moteld, which renders the rules and pushes.
 
 Run again, each puts its units back as the binary ships them:
-motel monitor setup Alertmanager's (stopping it for the while: what it
-holds in memory goes), motel monitor setup --metrics the store's.`,
+moteld monitor setup Alertmanager's (stopping it for the while: what it
+holds in memory goes), moteld monitor setup --metrics the store's.`,
 		Args: cobra.NoArgs,
 		RunE: func(c *cobra.Command, _ []string) error {
 			if os.Geteuid() != 0 {
-				return errors.New("motel monitor setup installs packages and writes units: run it as root")
+				return errors.New("moteld monitor setup installs packages and writes units: run it as root")
 			}
 			return runSetup(hostSystem{out: c.OutOrStdout()}, "/", c.OutOrStdout(), metrics)
 		},
@@ -292,7 +292,7 @@ holds in memory goes), motel monitor setup --metrics the store's.`,
 	return c
 }
 
-// runSetup is `motel monitor setup`: Alertmanager's setup; with
+// runSetup is `moteld monitor setup`: Alertmanager's setup; with
 // metrics, the store's, after Alertmanager's only where that has not
 // run to its end (amSetUp). A re-run with metrics does not run a working
 // Alertmanager's setup: it masks and stops Alertmanager, which loses the
@@ -303,7 +303,7 @@ holds in memory goes), motel monitor setup --metrics the store's.`,
 // first that fails stops the rest.
 func runSetup(sys system, root string, out io.Writer, metrics bool) error {
 	if metrics && amSetUp(sys, root) {
-		_, _ = fmt.Fprintf(out, "Alertmanager is set up (%s enabled and listening): its setup is not run again (motel monitor setup does that)\n", amSocket)
+		_, _ = fmt.Fprintf(out, "Alertmanager is set up (%s enabled and listening): its setup is not run again (moteld monitor setup does that)\n", amSocket)
 		return metricsSetup(sys, root, out)
 	}
 	if err := setup(sys, root, out); err != nil {

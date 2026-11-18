@@ -15,8 +15,8 @@ import (
 	"go.uber.org/zap"
 )
 
-// An external producer's state (`motel monitor send --state firing`)
-// outlives a restart of motel in externalName, in the state directory,
+// An external producer's state (`moteld monitor send --state firing`)
+// outlives a restart of moteld in externalName, in the state directory,
 // as liveswap's watchdog keeps what it told in each app's alerts.json
 // (DESIGN-notify.md, "Behaviour"): nothing else would report the key
 // again, so Alertmanager would end the alert at resolve_timeout with a

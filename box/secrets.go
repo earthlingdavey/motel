@@ -55,7 +55,7 @@ func managedEnvFile(app string) string { return secretsDir + "/" + app + ".env" 
 const boxSlot = "_box"
 
 // SecretsDir and BoxSecretsFile are secretsDir and the box's own env
-// file, for cmd/motel's test to hold equal to what liveswap withholds
+// file, for cmd/moteld's test to hold equal to what liveswap withholds
 // from (BoxSecretsDir) and notify reads (DefaultSecretsFile): the three
 // modules restate them and import none of the others for it.
 const (
@@ -82,7 +82,7 @@ var boxVar = regexp.MustCompile(`^NOTIFY_[A-Z0-9_]*$`)
 // errNotIdentity is a key file that is there and does not read as the
 // box's (the Console commands table's text); age's own parse error is
 // not passed on, since a line it could not read may be the key itself.
-var errNotIdentity = errors.New("is not an age identity: move it aside, run motel box key again, then make rekey BOX_KEY=<the new key> in the repository")
+var errNotIdentity = errors.New("is not an age identity: move it aside, run moteld box key again, then make rekey BOX_KEY=<the new key> in the repository")
 
 // readIdentity reads the box's key: a regular file, not followed if a
 // symlink, within maxIdentity, in age-keygen's format, holding exactly
@@ -313,7 +313,7 @@ func secretsShown(caddyfile string) string {
 // shadows none of them, and no app's env_file names a file in
 // secretsDir the box will not write for it. These are mistakes a push
 // should be told about before the app's next launch, not a boundary:
-// the handler and `motel box describe` run them, root does not. An
+// the handler and `moteld box describe` run them, root does not. An
 // env_file's value is never quoted back, since it may hold a value the
 // author meant to keep out of the run's output.
 func secretsFit(shape *Shape, s *proof.Secrets, caddyfile string) error {
@@ -398,7 +398,7 @@ func boxSlotFits(shape *Shape, a proof.SecretApp, dir string) error {
 }
 
 // boxSecretNames are the variables of the box's own slot in s, in the
-// commit's order: the names `motel validate` is told the push carries
+// commit's order: the names `moteld validate` is told the push carries
 // (NotifyPushedSecretsEnv).
 func boxSecretNames(s *proof.Secrets) []string {
 	var out []string

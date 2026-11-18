@@ -298,7 +298,7 @@ func TestWatchdogRestartAbortsWhenSweepUnconfirmed(t *testing.T) {
 	})
 }
 
-// A pre_start a motel restart left running blocks every launch
+// A pre_start a moteld restart left running blocks every launch
 // until it ends. A health restart that stopped the instance first
 // would turn an unhealthy app into a down one for that long, so the
 // watchdog leaves it serving, as it does while a deploy runs, and

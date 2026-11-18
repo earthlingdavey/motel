@@ -1,5 +1,5 @@
 docker compose run --rm -e CGO_ENABLED=0 dev sh -c '\
-		go build -trimpath -o build/e2e-backup/motel ./cmd/motel & p1=$!; \
+		go build -trimpath -o build/e2e-backup/moteld ./cmd/moteld & p1=$!; \
 		(cd backups && go build -trimpath -tags e2e -o ../build/e2e-backup/motel-backup ./cmd/motel-backup) & p2=$!; \
 		wait $p1 || exit 1; wait $p2 || exit 1; \
 		chmod -R a+rwX build'
@@ -71,7 +71,7 @@ docker compose up --build -d --scale e2e-backup-box=1 e2e-s3 e2e-backup-box
 #16 [e2e-backup-box stage-0 3/8] RUN systemctl mask 	systemd-udevd.service 	systemd-udevd-kernel.socket 	systemd-udevd-control.socket 	systemd-modules-load.service 	getty.target 	console-getty.service 	|| true
 #16 CACHED
 
-#17 [e2e-backup-box stage-0 4/8] COPY --from=bin motel motel-backup /usr/bin/
+#17 [e2e-backup-box stage-0 4/8] COPY --from=bin moteld motel-backup /usr/bin/
 #17 DONE 0.7s
 
 #18 [e2e-backup-box stage-0 5/8] COPY packaging/motel-backup.service packaging/motel-backup.timer 	packaging/motel-backup-drill.service packaging/motel-backup-drill.timer /lib/systemd/system/
@@ -83,8 +83,8 @@ docker compose up --build -d --scale e2e-backup-box=1 e2e-s3 e2e-backup-box
 #20 [e2e-backup-box stage-0 7/8] RUN mkdir -p /var/lib/motel /var/lib/liveswap /etc/motel 	&& chmod 750 /var/lib/motel /var/lib/liveswap 	&& sh /tmp/postinstall.sh && rm /tmp/postinstall.sh 	&& userdel motel-backup 	&& rm -f /etc/systemd/system/timers.target.wants/motel-backup.timer /etc/systemd/system/timers.target.wants/motel-backup-drill.timer 	&& rm -rf /var/lib/systemd/deb-systemd-helper-enabled
 #20 0.771 System has not been booted with systemd as init system (PID 1). Can't operate.
 #20 0.771 Failed to connect to system scope bus via local transport: Host is down
-#20 0.779 motel installed. Start it with:
-#20 0.779   sudo systemctl enable --now motel
+#20 0.779 moteld installed. Start it with:
+#20 0.779   sudo systemctl enable --now moteld
 #20 0.826 /usr/bin/deb-systemd-helper was not called from dpkg. Exiting.
 #20 0.849 /usr/bin/deb-systemd-helper was not called from dpkg. Exiting.
 #20 0.878 /usr/bin/deb-systemd-helper was not called from dpkg. Exiting.

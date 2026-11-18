@@ -20,7 +20,7 @@ Built in:
 | **[penaltybox](penaltybox/)** | Rate limiting driven by your app's `X-Rate-Limit-Level` hint headers — weighted sliding-window budgets, tiers, and a penalty box for clients that cross them. |
 | **[box](examples/box/)** | Config from git: the box's Caddyfile lives in a repository of its own, and each signed push to `main` reaches the box, which checks the commit's signature, validates the file, installs it as root, and rolls back a reload that fails. The apps' secrets ride along, encrypted to the box's own key. CI holds no SSH key. |
 | **[backups](backups/)** | Hourly backups of what each app declares — its SQLite databases and the files under its `shared/` — into a [restic](https://restic.net) repository off the box, a weekly drill that proves a restore would work, and `motel-backup restore` to put an app back. A program of its own in the package, `motel-backup`, which runs Debian's restic and sqlite3 in sandboxed units and links no Caddy; motel validates the declaration and does nothing else with it. The operator's guide is [docs/backups.md](docs/backups.md). |
-| **[notify](notify/DESIGN-notify.md)** | Who motel tells, about what (experimental): a restart loop, a failed or refused deploy, a rollback, a stale backup, a failed certificate renewal, a filling disk, a release worse than the one it replaced, the operator's own threshold rules, each to the operator's channels and, for an app, to the channels bound to the identities it trusts, from the `monitor` block in the Caddyfile, whose `metrics` line also keeps the box's and each app's numbers ([notify/DESIGN-metrics.md](notify/DESIGN-metrics.md)). Debian's Alertmanager delivers, on a unix socket and no port, with a config motel renders; `motel monitor setup` installs it, and `motel monitor setup --metrics` the store too. The operator's guide is [docs/monitor.md](docs/monitor.md). |
+| **[notify](notify/DESIGN-notify.md)** | Who motel tells, about what (experimental): a restart loop, a failed or refused deploy, a rollback, a stale backup, a failed certificate renewal, a filling disk, a release worse than the one it replaced, the operator's own threshold rules, each to the operator's channels and, for an app, to the channels bound to the identities it trusts, from the `monitor` block in the Caddyfile, whose `metrics` line also keeps the box's and each app's numbers ([notify/DESIGN-metrics.md](notify/DESIGN-metrics.md)). Debian's Alertmanager delivers, on a unix socket and no port, with a config motel renders; `moteld monitor setup` installs it, and `moteld monitor setup --metrics` the store too. The operator's guide is [docs/monitor.md](docs/monitor.md). |
 | **cache** | HTTP page caching via [Souin](https://github.com/darkweak/souin) with in-memory [Otter](https://github.com/darkweak/storages) storage. |
 | everything Caddy has | Automatic HTTPS, HTTP/2 + HTTP/3, the Caddyfile, the admin API — motel *is* Caddy underneath, with the modules above compiled in. |
 
@@ -30,8 +30,8 @@ A `.deb` for amd64 and arm64 on the
 [releases](https://github.com/smallhoursorg/motel/releases) page.
 [Your first deploy](docs/first-deploy.md) installs it and deploys an
 app, in four steps; [Upgrading](docs/upgrading.md) is every release
-after that. The package gives you `/usr/bin/motel`, a systemd
-service running as the `motel` user, a starter config at
+after that. The package gives you `/usr/bin/moteld`, a systemd
+service, `moteld.service`, running as the `motel` user, a starter config at
 `/etc/motel/Caddyfile`, a systemd instance for the `motel`
 user that stays up without anyone logging in — the thing your apps
 will run under — and, for a box whose config lives in a repository,
@@ -56,18 +56,18 @@ signature with `ssh-keygen`. And on `restic` (23 MB), `sqlite3` and
 `ca-certificates`, for [backups](backups/README.md): a box that uses
 none carries the two programs too, so that one whose image installs no
 recommended package (Hetzner's Debian 13) gets them; the CA store is
-what motel and restic verify every certificate against.
+what moteld and restic verify every certificate against.
 
 It suggests `prometheus-alertmanager` (Debian's, 46 MB installed),
 for [notify](notify/DESIGN-notify.md): not a dependency, because
 Debian's unit starts listening on a port the moment it is installed.
-`motel monitor setup`, as root, masks it, installs it and starts it on
+`moteld monitor setup`, as root, masks it, installs it and starts it on
 a unix socket only.
 
 It suggests `victoria-metrics` (Debian's, 143 MB installed, vmalert
 included) for the metrics store ([notify/DESIGN-metrics.md](notify/DESIGN-metrics.md),
 experimental), for the same reason: its unit listens on `0.0.0.0:8428`,
-unauthenticated, once installed. `motel monitor setup --metrics`, as
+unauthenticated, once installed. `moteld monitor setup --metrics`, as
 root, sets up Alertmanager as above if it is not yet, then masks it,
 installs it and starts it in a network namespace of its own, reached
 through a unix socket only.
@@ -75,7 +75,7 @@ through a unix socket only.
 <details>
 <summary><b>Without the package</b> — the raw binary, for other systemd hosts</summary>
 
-The `motel_<version>_linux_<arch>.tar.gz` archives on the same page
+The `moteld_<version>_linux_<arch>.tar.gz` archives on the same page
 hold the **raw binary** (plus LICENSE and a README; and
 `motel-backup` with its unit files, for [backups](backups/README.md)),
 for other systemd
@@ -83,15 +83,15 @@ hosts you wire up yourself — a NixOS-style distro, say. Prefer the
 packages where you can: going this way you take on what the package
 does for you, all of it in [packaging/](packaging/) (`nfpm.yaml` and
 `postinstall.sh` are the whole list): a dedicated `motel` user, the
-`Type=notify` unit `motel.service`, `loginctl enable-linger
+`Type=notify` unit `moteld.service`, `loginctl enable-linger
 motel` (with `libpam-systemd` installed) so the user manager exists
 for your apps, the config at `/etc/motel/Caddyfile`, and, for config
 pushed from a box repository, the root applier's units
 (`motel-box-apply.path` and `.service`), its directories
-(`motel-box.tmpfiles`) and the box's key (`motel box key`, as
+(`motel-box.tmpfiles`) and the box's key (`moteld box key`, as
 root). The sandbox applies here too, so the host
 needs systemd 257 or newer and has to deliver both namespaces (many
-container and LXC hosts cannot) and seccomp. motel checks both from
+container and LXC hosts cannot) and seccomp. moteld checks both from
 inside a test unit at start and refuses to start rather than run your
 apps without them. One case passes that check: a container host whose
 existing seccomp rules leave the kernel no room for the app units'
@@ -104,7 +104,7 @@ units on your user's systemd manager and there is no fallback runner,
 so this is not a path onto a non-systemd host. motel would still
 serve there — Caddy, the cache, penaltybox — but a Caddyfile defining
 any `app` refuses to start. That is also why there is no `.apk`:
-Alpine runs OpenRC, and an Alpine package would install a motel
+Alpine runs OpenRC, and an Alpine package would install a moteld
 without the feature it exists for.
 
 </details>
@@ -113,14 +113,14 @@ without the feature it exists for.
 
 **Installing and upgrading need root; everyday administering does
 not.** Checking a config
-(`motel validate`) needs no privilege, and reading the journal —
-motel's and every app's — needs the `adm` group. The config changes
+(`moteld validate`) needs no privilege, and reading the journal —
+moteld's and every app's — needs the `adm` group. The config changes
 only by a signed push from the box's repository
 ([examples/box](examples/box)), and so do the apps' secrets kept there,
 as values encrypted to the box's own key
-([docs/secrets.md](docs/secrets.md)); motel itself runs
+([docs/secrets.md](docs/secrets.md)); moteld itself runs
 unprivileged. One thing reaches wider: `adm` reads the
-whole system journal, not only motel's lines, so it is a trust
+whole system journal, not only moteld's lines, so it is a trust
 grant in its own right. The e2e suite administers its box that way.
 
 ## Getting started
@@ -174,8 +174,8 @@ laptop, with their own ssh key and no account on the box.
 ## What motel is (and isn't)
 
 - **A server product, distributed like Caddy.** Same CLI, same
-  Caddyfile, same admin API — `motel run`, `motel reload`,
-  `motel validate` all behave exactly as Caddy's do. The config is
+  Caddyfile, same admin API — `moteld run`, `moteld reload`,
+  `moteld validate` all behave exactly as Caddy's do. The config is
   a Caddyfile, though: a JSON config (a `.json` file, or JSON posted
   to the admin API) is unsupported, because Caddy deletes every
   `"@id"` key from JSON before motel's checks can see it.
@@ -301,7 +301,7 @@ own so that it links no Caddy: of this repository it takes only the
 wire types (`liveswap/wire`, standard library only), through a local
 `replace`; the tests that run it against the real webhooks are in the
 liveswap and box modules. The root module builds the product binary
-from `cmd/motel`, and `packaging/` turns `motel` and `motel-backup`
+from `cmd/moteld`, and `packaging/` turns `moteld` and `motel-backup`
 into the `.deb`.
 
 ### Dependency policy
@@ -341,7 +341,7 @@ weekly `pin-watch` workflow:
 ## Dependencies
 
 You're being asked to install this on a production server, so
-here's exactly what's in the two binaries, `motel` and
+here's exactly what's in the two binaries, `moteld` and
 `motel-backup`, and what they drag in. Module counts are the modules
 reachable from each dependency in the root module's `go mod graph`
 (`GOWORK=off`, deduplicated by module path), measured 2026-11-08; the
@@ -352,7 +352,7 @@ entirely. (Counts exclude the `govulncheck` tool dependency — a
 inherited by importers; it exists in go.mod so Dependabot can bump
 the scanner.)
 
-| Dependency | Pulls in (~modules) | motel | liveswap | penaltybox | box | motel-backup | motelctl | Notes |
+| Dependency | Pulls in (~modules) | moteld | liveswap | penaltybox | box | motel-backup | motelctl | Notes |
 |---|---|:-:|:-:|:-:|:-:|:-:|:-:|---|
 | [Caddy](https://github.com/caddyserver/caddy) | ~600 | ✓ | ✓ | ✓ | ✓ | — | — | The foundation — motel *is* a Caddy distribution. Commercially sponsored, strong security track record. Nearly the entire dependency tree is Caddy's. |
 | [Souin](https://github.com/darkweak/souin) (`cache`) | +6 | ✓ | — | — | — | — | — | HTTP cache (RFC 7234). Solo-maintained; the e2e suite exercises it directly so drift is caught in CI. The riskiest dependency here, and still better than an in-house HTTP cache. |
@@ -363,12 +363,12 @@ the scanner.)
 | [go-oidc](https://github.com/coreos/go-oidc) + [go-jose](https://github.com/go-jose/go-jose) | 0 (already in Caddy's tree) | ✓ | ✓ | — | — | — | — | Deploy authentication (`deploy_trust`): OIDC discovery/JWKS verification and JWT signing/verification. Both were already transitive dependencies of Caddy; liveswap now requires them directly, and box's pushes use the same verifier through liveswap. Vetted and widely used — the deliberate alternative to hand-rolling JWT crypto. |
 | [age](https://github.com/FiloSottile/age) (`filippo.io/age`) | +4 | ✓ | — | — | ✓ | — | — | Secrets: each value in the box repository is an age file encrypted to the box's own key, which root decrypts on the box into the app's env file. Chosen over SOPS, whose library measured 80 more modules in a binary root runs ([box/DESIGN-box.md](box/DESIGN-box.md), "Decisions and rejected alternatives"). |
 | [x/crypto](https://pkg.go.dev/golang.org/x/crypto) (`ssh`) + [edwards25519](https://github.com/FiloSottile/edwards25519) | 0 (already in Caddy's tree) | ✓ | ✓ | — | ✓ | — | — | The ssh formats. box reads `signer` keys and takes a commit's ssh signature apart with it (the check itself is the system `ssh-keygen -Y verify`). liveswap's `access` checks in-process the signature a person's token is, only when the token's key is of a type some listed key has (a box that declares no one lists none), and refuses an Ed25519 key of small order (edwards25519, liveswap alone). motelctl's binary links neither: it reads a key with the standard library and signs with the system `ssh-keygen`. The Go team's and Filippo Valsorda's; Caddy's own go.mod requires both. |
-| [cobra](https://github.com/spf13/cobra) + [pflag](https://github.com/spf13/pflag) | 0 (already in Caddy's tree) | ✓ | — | — | ✓ | — | ✓ | Caddy's own CLI is cobra, so anything that adds a subcommand speaks it: box registers `motel box ...` through Caddy's command API, and `cmd/motel` parses a command's flags with Caddy's own definition of them before its backup check runs. motelctl, the laptop client, parses its commands with cobra too. |
+| [cobra](https://github.com/spf13/cobra) + [pflag](https://github.com/spf13/pflag) | 0 (already in Caddy's tree) | ✓ | — | — | ✓ | — | ✓ | Caddy's own CLI is cobra, so anything that adds a subcommand speaks it: box registers `moteld box ...` through Caddy's command API, and `cmd/moteld` parses a command's flags with Caddy's own definition of them before its backup check runs. motelctl, the laptop client, parses its commands with cobra too. |
 
 A ✓ in the liveswap, penaltybox and box columns means that module's own
 code requires the dependency. A "—" there is not "absent from that
 module's graph" — the rows marked "already in Caddy's tree" arrive via
-Caddy either way. The motel column is ✓ throughout: the product
+Caddy either way. The moteld column is ✓ throughout: the product
 binary contains every row. The motel-backup column is the other
 binary, and there "—" does mean absent: it links no Caddy, so its
 graph is the one row marked ✓ plus `golang.org/x/sys`. What it needs

@@ -111,7 +111,7 @@ func TestMotelctlBoxStatusPeople(t *testing.T) {
 		{"a viewer of the box", carol, 0, ""},
 		{"a viewer of one app", alice, 5, needsBox},
 		{"a person with no grant", dave, 5, needsBox},
-		{"a key no line lists", stranger, 4, "the box's motel is too old to take a key's token at all"},
+		{"a key no line lists", stranger, 4, "the box's moteld is too old to take a key's token at all"},
 		{"a person outside their from list", erin, 4, "your address is outside the from list on every grant you hold"},
 	} {
 		t.Run(c.who, func(t *testing.T) {

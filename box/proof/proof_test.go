@@ -397,7 +397,7 @@ func TestChainHandMade(t *testing.T) {
 	}
 	// Root reached: a baseline that is not in the history.
 	_, err = Chain(cs[3], below(cs, 3, -1), zeroID)
-	refusalContaining(t, err, cs[3].ID+" does not descend from the commit this box runs ("+zeroID+") along main's first-parent line", "motel box baseline "+cs[3].ID)
+	refusalContaining(t, err, cs[3].ID+" does not descend from the commit this box runs ("+zeroID+") along main's first-parent line", "moteld box baseline "+cs[3].ID)
 	// Too few parents bundled: the walk ends before the baseline.
 	_, err = Chain(cs[3], below(cs, 3, 1), cs[0].ID)
 	refusalContaining(t, err, "does not descend")
@@ -433,7 +433,7 @@ func TestChainHandMade(t *testing.T) {
 	cs = line(MaxChain + 2)
 	head := cs[len(cs)-1]
 	_, err = Chain(head, below(cs, len(cs)-1, 0), cs[0].ID)
-	refusalContaining(t, err, "the chain from "+cs[0].ID+" to "+head.ID+" is longer than 500 commits; run motel box baseline "+head.ID+" as root on the box")
+	refusalContaining(t, err, "the chain from "+cs[0].ID+" to "+head.ID+" is longer than 500 commits; run moteld box baseline "+head.ID+" as root on the box")
 	_, err = Chain(head, below(cs, len(cs)-1, 1), cs[1].ID)
 	refusalContaining(t, err, "is longer than 500 commits")
 	if chain, err := Chain(head, below(cs, len(cs)-1, 2), cs[2].ID); err != nil || len(chain) != MaxChain {

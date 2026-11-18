@@ -614,7 +614,7 @@ func TestPusherReleaseSlowGatherKeepsTheImportsBudget(t *testing.T) {
 	}
 }
 
-// motel's stop pushes what was counted since the last tick: without it
+// moteld's stop pushes what was counted since the last tick: without it
 // a restart lost up to a push of every app's counts, and request_rate
 // read a tenth low for five minutes (the hotserve-1 deploy of ecb829a).
 func TestPusherReleasePushesTheCountsSinceTheLastTick(t *testing.T) {
@@ -638,7 +638,7 @@ func TestPusherReleasePushesTheCountsSinceTheLastTick(t *testing.T) {
 	}
 }
 
-// A store that does not answer cannot hold motel's stop past the
+// A store that does not answer cannot hold moteld's stop past the
 // push's own budget, and the journal says what was lost.
 func TestPusherReleaseGivesUpOnAStoreThatDoesNotAnswer(t *testing.T) {
 	was := finalPushTimeout
@@ -713,7 +713,7 @@ func TestPusherGoesBackToTheOlderConfig(t *testing.T) {
 
 // A reload to a config with no metrics line (the monitor block to
 // channels alone, or to none) retires the stopped config's rules;
-// motel's own shutdown keeps them (Copilot round 3 on #423).
+// moteld's own shutdown keeps them (Copilot round 3 on #423).
 func TestReleaseRetiresTheRulesOnAReloadAlone(t *testing.T) {
 	for _, reload := range []bool{true, false} {
 		tp := newTestPusher(t)
@@ -730,12 +730,12 @@ func TestReleaseRetiresTheRulesOnAReloadAlone(t *testing.T) {
 			t.Fatal(err)
 		}
 		alerting := strings.Contains(string(b), "alert:")
-		gone := logs.FilterMessage("monitor metrics: the metrics line is gone: vmalert is given no rule; the store and vmalert, which motel monitor setup --metrics started, run until their units are stopped").Len()
+		gone := logs.FilterMessage("monitor metrics: the metrics line is gone: vmalert is given no rule; the store and vmalert, which moteld monitor setup --metrics started, run until their units are stopped").Len()
 		switch {
 		case reload && (alerting || gone != 1):
 			t.Errorf("a reload took the metrics line away: rules.yml has alerting rules %v, %d journal lines; want none, and one", alerting, gone)
 		case !reload && (!alerting || gone != 0):
-			t.Errorf("motel's shutdown: rules.yml has alerting rules %v, %d journal lines; want them kept, and no line", alerting, gone)
+			t.Errorf("moteld's shutdown: rules.yml has alerting rules %v, %d journal lines; want them kept, and no line", alerting, gone)
 		}
 		if reload {
 			if f := parseRules(t, b); len(f.Groups) != 3 {
@@ -1247,7 +1247,7 @@ func TestMetricsViewRequests(t *testing.T) {
 	// The hour's, whole.
 	hour := `((increase_pure(%[1]s{app="blog"}[1h]) unless%[3]s (present_over_time(%[2]s{app="blog"}[1d] offset 1h)` +
 		` unless (last_over_time(%[2]s{app="blog"}[1d] offset 1h) > first_over_time(%[2]s{app="blog"}[1h]))))` +
-		` and%[3]s (tfirst_over_time(%[2]s{app="blog"}[1h]) > scalar(min(tfirst_over_time(process_start_time_seconds{job="motel"}[62m]))) + 15))` +
+		` and%[3]s (tfirst_over_time(%[2]s{app="blog"}[1h]) > scalar(min(tfirst_over_time(process_start_time_seconds{job="moteld"}[62m]))) + 15))` +
 		` or increase(%[1]s{app="blog"}[1h])`
 	reqs := fmt.Sprintf(hour, "motel_app_requests_total", "motel_app_requests_total", "")
 	hist := fmt.Sprintf(hour, "motel_app_response_seconds_bucket", "motel_app_response_seconds_count", " ignoring(le)")

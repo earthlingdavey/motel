@@ -88,7 +88,7 @@ type watchdogState struct {
 	// restart loop is reported and not yet over, recovering once its
 	// recovery is reported and the hold runs, refused while a relaunch
 	// refusal stands. They outlive the process in alerts.json
-	// (alertsChanged writes it), so that a motel restarted while one
+	// (alertsChanged writes it), so that a moteld restarted while one
 	// stands reports it again (ReportStanding).
 	alerted, recovering, refused bool
 	// refusedRelease and refusedReason are what the refusal was told
@@ -837,7 +837,7 @@ func (ma *managedApp) handleFailure(ctx context.Context, c collaborators, inst *
 		}
 	}
 
-	// A pre_start a motel restart left running holds every launch
+	// A pre_start a moteld restart left running holds every launch
 	// until it ends (Sweep): stopping this instance first would turn
 	// an unhealthy app into a down one for that long. It is left
 	// serving, as while a deploy runs, and the restart is tried again

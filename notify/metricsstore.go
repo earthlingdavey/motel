@@ -83,9 +83,9 @@ func (c *storeClient) do(ctx context.Context, method, path string, body []byte, 
 }
 
 // importPath is the store's Prometheus text import, every series
-// labelled job="motel" (measured on Debian's 1.112.0: 204, the label
+// labelled job="moteld" (measured on Debian's 1.112.0: 204, the label
 // applied).
-const importPath = "/api/v1/import/prometheus?extra_label=job=motel"
+const importPath = "/api/v1/import/prometheus?extra_label=job=moteld"
 
 func (c *storeClient) importText(ctx context.Context, text []byte) error {
 	_, err := c.do(ctx, http.MethodPost, importPath, text, "text/plain")

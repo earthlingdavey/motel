@@ -318,7 +318,7 @@ func (ma *managedApp) rememberSecrets(path string, kvs []string) {
 // remembered secrets, with the versions the status names exempt from
 // the heuristics (a git SHA as a version is high-entropy by design).
 //
-// After a motel restart the app is reattached without a launch, so
+// After a moteld restart the app is reattached without a launch, so
 // nothing has rendered its env_file yet; and a reload can name a
 // different env_file than the last launch rendered. Either way the
 // current spec's file is unread, and the filter reads it here. A file
@@ -490,7 +490,7 @@ func (ma *managedApp) currentVerifiers() []deploytrust.Verifier {
 }
 
 // trust is the app's deploy-auth sources, and whether a Start has
-// installed them. Until the first install (a start of motel, or an app
+// installed them. Until the first install (a start of moteld, or an app
 // a reload adds) the pooled app holds none, and the handler checks a
 // token against its own config's instead (#473). One read, so the two
 // cannot disagree. An install is never undone: restoreSpec puts back
@@ -978,7 +978,7 @@ func (ma *managedApp) deployLocked(ctx context.Context, req deployRequest, c col
 	// relaunch is fetched as a rollback of the running version.
 	extracted := !req.rollback && !relaunch
 	if extracted {
-		// Before anything is extracted: a motel that stops from here
+		// Before anything is extracted: a moteld that stops from here
 		// on leaves the marker naming this release (deploying.go).
 		if err := saveDeployMarker(spec.dirs, deployMarker{Version: req.version, StartedAt: started}); err != nil {
 			return fmt.Errorf("writing the deploy marker: %w", err)
@@ -1077,7 +1077,7 @@ func (ma *managedApp) deployLocked(ctx context.Context, req deployRequest, c col
 	}
 	if len(spec.preStart) > 0 && extracted {
 		pre := l.startSpec(spec, spec.preStart)
-		// Bounded on the unit too: a motel that stops during it takes
+		// Bounded on the unit too: a moteld that stops during it takes
 		// preCtx with it, and the migration runs on (DESIGN-liveswap.md).
 		pre.startTimeout = spec.deadline
 		if err := preflightResult("pre-flight of pre_start", c.runner.Preflight(pre)); err != nil {
@@ -1396,7 +1396,7 @@ func (ma *managedApp) ensureRunning() error {
 		ma.wd.setLastFailure("") // a recovery that gave up, or a refusal, is over
 		c.logger.Info("reattached to running instance", zap.String("version", st.CurrentVersion))
 		ma.pokeWatchdog()
-		ma.syncCaps() // the config may have changed its caps while motel was down
+		ma.syncCaps() // the config may have changed its caps while moteld was down
 		if err := ma.sweepOrWhy(c, inst, ""); err != nil {
 			// Serving, but the ledger is unsettled: recover() retries
 			// and the retry path above sweeps again.
@@ -1658,7 +1658,7 @@ func (l launch) startSpec(spec *appSpec, command []string) startSpec {
 // its unit carries others: a reload's changed memory_max, tasks_max or
 // cpu_quota applies to the running app rather than waiting for its
 // next launch, and a cap a reload removed is lifted. A unit reattached
-// after a motel restart carries whatever it was started with, which
+// after a moteld restart carries whatever it was started with, which
 // this brings up to date too. A failure is a warning, not an error:
 // the caps apply at the next launch regardless (startSpec).
 //
@@ -1939,8 +1939,8 @@ func (ma *managedApp) restoreSpec(owner any) bool {
 //
 // On process exit the instance is deliberately left running: it is a
 // systemd unit that does not depend on motel, state.json names it,
-// and the next motel start reattaches to it — that is how apps
-// survive motel restarts and upgrades. Only removing the app from
+// and the next moteld start reattaches to it — that is how apps
+// survive moteld restarts and upgrades. Only removing the app from
 // the config stops it.
 func (ma *managedApp) Destruct() error {
 	ma.stopWatchdog()
@@ -2146,7 +2146,7 @@ func notifyOwnedEnvKey(kv string) bool { return strings.HasPrefix(kv, notifyEnvP
 
 // BoxSecretsDir is where the box writes each app's env file
 // (box/DESIGN-box.md, "Values and the env file"), held equal to the
-// box's own by cmd/motel's test; boxSecretsDir is it, a variable so a
+// box's own by cmd/moteld's test; boxSecretsDir is it, a variable so a
 // test can stand in for it.
 const BoxSecretsDir = "/etc/motel/secrets" //nolint:gosec // G101: a directory's path, not a credential
 

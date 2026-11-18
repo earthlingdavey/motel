@@ -2,14 +2,14 @@
 Recommended packages:
 Setting up restic (0.18.0-1+b4) ...
 Setting up sqlite3 (3.46.1-7+deb13u2) ...
-Setting up motel (0.3.0~rc1) ...
+Setting up moteld (0.3.0~rc1) ...
 Depends: libpam-systemd, dbus, restic, sqlite3, ca-certificates
 bob@box3:~$ sudo tar -xzf etc-motel.tar.gz -C /etc
 ^@[exit 0, 0.0312006s, 2026-10-05T18:44:19Z]
 bob@box3:~$ motel-backup validate /etc/motel/Caddyfile
 a run would back up demo, under /var/lib/liveswap
 [exit 0, 0.0585775s, 2026-10-05T18:44:19Z]
-bob@box3:~$ sudo systemctl reload motel
+bob@box3:~$ sudo systemctl reload moteld
 [exit 0, 0.153528s, 2026-10-05T18:44:19Z]
 ## a storage that refuses every write plainly (403)
 bob@box3:~$ sudo motel-backup setup s3:http://127.0.0.1:9100/box1

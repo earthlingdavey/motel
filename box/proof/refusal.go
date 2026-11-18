@@ -67,7 +67,7 @@ type oid string
 
 // inCommit is " in <sha>" in a refusal of the layout of secrets, the
 // sha an id the refusal names as an oid is; empty, for a working tree
-// (`motel box describe`), it is "".
+// (`moteld box describe`), it is "".
 type inCommit oid
 
 func (c inCommit) String() string {

@@ -27,7 +27,7 @@ func TestTheGateSaysMonitorIsNotSetUp(t *testing.T) {
 			t.Fatalf("%s: stopped: %s", cmd, stderr.String())
 		}
 		said := strings.Contains(stderr.String(), "WARNING: monitor: Alertmanager is not set up on this box") &&
-			strings.Contains(stderr.String(), "motel monitor setup")
+			strings.Contains(stderr.String(), "moteld monitor setup")
 		if said != (cmd != "run") {
 			t.Errorf("%s: said %v: %s", cmd, said, stderr.String())
 		}
@@ -90,8 +90,8 @@ func asAnotherUser(t *testing.T) {
 	t.Cleanup(func() { euid = was })
 }
 
-// `motel run` by a user other than the state directory's owner (root
-// trying a file by hand, the service running) is not motel.service's
+// `moteld run` by a user other than the state directory's owner (root
+// trying a file by hand, the service running) is not moteld.service's
 // start: it leaves Alertmanager's config, the URL files and the
 // producers' kept states as the running service left them, writes
 // nothing the service could not read, and says why. A box setup has
@@ -141,7 +141,7 @@ func TestARunByHandLeavesTheServicesAlertmanagerAlone(t *testing.T) {
 	}
 }
 
-// `motel reload` of a config with a monitor block loads it even when it
+// `moteld reload` of a config with a monitor block loads it even when it
 // is unchanged: the block reads the box's secrets file, which the config
 // does not hold, so a mended _box.env would otherwise load nothing.
 // Others, and a reload already forced, run as given.

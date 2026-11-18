@@ -646,7 +646,7 @@ func TestOverlappingSyncsApplyTheLatestSpecLast(t *testing.T) {
 	}
 }
 
-// A unit reattached after a motel restart carries the caps it was
+// A unit reattached after a moteld restart carries the caps it was
 // started with; a config changed in between reaches it on recovery.
 func TestEnsureRunningSyncsCapsOfAReattachedUnit(t *testing.T) {
 	rig := newTestRig(t)

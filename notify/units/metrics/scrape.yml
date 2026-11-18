@@ -1,4 +1,4 @@
-# Written by `motel monitor setup --metrics` (notify/DESIGN-metrics.md, "Rules"),
+# Written by `moteld monitor setup --metrics` (notify/DESIGN-metrics.md, "Rules"),
 # as /var/lib/motel-metrics/scrape.yml. What the store scrapes inside its
 # namespace: itself, vmalert, and Alertmanager's /metrics at its own
 # listener in the namespace. motel pushes; it is not scraped.

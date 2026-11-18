@@ -13,12 +13,12 @@
 // caddyfile.go) and the `box_webhook` directive (handler.go), which
 // answers `GET /` from the box's state (exchange.go), admits pushes
 // (push.go, admission.go, validate.go) and answers result polls;
-// `motel box webhook` (cmd.go) prints the address a file names.
-// The root applier, `motel box apply`, is apply.go: the trust
+// `moteld box webhook` (cmd.go) prints the address a file names.
+// The root applier, `moteld box apply`, is apply.go: the trust
 // chain's root half (check.go), the install transaction and its
 // recovery (txn.go, durable.go), results (results.go), Retention
 // (retention.go), the service manager (systemd.go) and the diff a
 // result carries (diff.go). The console's commands share its
-// transaction and lock: `motel init` (init_cmd.go) and `motel box
+// transaction and lock: `moteld init` (init_cmd.go) and `moteld box
 // baseline` (baseline_cmd.go).
 package box

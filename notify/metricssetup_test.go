@@ -71,7 +71,7 @@ func TestMetricsSetupOrderAndFiles(t *testing.T) {
 		"systemctl enable --now motel-metrics-netns.service victoria-metrics.service motel-vm.socket motel-am-metrics.socket motel-vmalert.service",
 		"systemctl restart motel-vmalert.service",
 		"systemctl try-restart motel-vm.service",
-		"systemctl try-reload-or-restart motel.service",
+		"systemctl try-reload-or-restart moteld.service",
 	}
 	if !slices.Equal(f.cmds, want) {
 		t.Fatalf("commands:\n%s\nwant\n%s", strings.Join(f.cmds, "\n"), strings.Join(want, "\n"))
@@ -99,7 +99,7 @@ func TestMetricsSetupOrderAndFiles(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if !bytes.HasPrefix(b, []byte("# Written by `motel monitor setup --metrics`")) {
+		if !bytes.HasPrefix(b, []byte("# Written by `moteld monitor setup --metrics`")) {
 			t.Errorf("%s = %q", u.path, b[:40])
 		}
 	}
@@ -480,7 +480,7 @@ func TestMetricsUnitsAreTheMeasuredOnes(t *testing.T) {
 	has("scrape.yml", scrapeConfig, `job_name: vmalert`, `"127.0.0.1:8880"`, `job_name: alertmanager`, `"127.0.0.1:9093"`)
 }
 
-// `motel monitor setup` is Alertmanager's setup alone. With --metrics
+// `moteld monitor setup` is Alertmanager's setup alone. With --metrics
 // on a box where it has not run, Alertmanager's runs first and the
 // store's only once it has succeeded; where it has, Alertmanager's setup
 // is not run (it would mask and stop it) and the store's runs alone, a
@@ -507,12 +507,12 @@ func TestMonitorSetupRunsAlertmanagerOnlyWhereItIsNotSetUp(t *testing.T) {
 	am, vm := slices.Index(both.cmds, "systemctl mask "+amService), slices.Index(both.cmds, "systemctl mask "+vmService)
 	reloads := 0
 	for _, c := range both.cmds {
-		if c == "systemctl try-reload-or-restart motel.service" {
+		if c == "systemctl try-reload-or-restart moteld.service" {
 			reloads++
 		}
 	}
 	if am != 0 || vm <= am || reloads != 2 {
-		t.Fatalf("with --metrics: %v; want Alertmanager's setup, then the store's, each reloading motel", both.cmds)
+		t.Fatalf("with --metrics: %v; want Alertmanager's setup, then the store's, each reloading moteld", both.cmds)
 	}
 
 	// Alertmanager's setup fails: the store's never starts.
@@ -565,7 +565,7 @@ func TestMonitorSetupRunsAlertmanagerOnlyWhereItIsNotSetUp(t *testing.T) {
 	// Without --metrics, Alertmanager's setup runs again: its re-run.
 	amAgain := &fakeSystem{isInstalled: true}
 	if err := runSetup(amAgain, root, &bytes.Buffer{}, false); err != nil || amAgain.cmds[0] != "systemctl mask "+amService || has(amAgain.cmds, "systemctl mask "+vmService) {
-		t.Fatalf("motel monitor setup on a set-up box: %v, %v; want Alertmanager's setup alone", err, amAgain.cmds)
+		t.Fatalf("moteld monitor setup on a set-up box: %v, %v; want Alertmanager's setup alone", err, amAgain.cmds)
 	}
 }
 
@@ -882,12 +882,12 @@ func storeReads(expr string) ([]storeRead, error) {
 }
 
 // readJob is the job a read reads from: the one its selector names, or
-// the one its name's prefix belongs to. motel's push is job="motel".
+// the one its name's prefix belongs to. motel's push is job="moteld".
 func readJob(r storeRead) (string, error) {
 	if r.job != "" {
 		return r.job, nil
 	}
-	for prefix, job := range map[string]string{"vm_": "victoria-metrics", "vmalert_": "vmalert", "alertmanager_": "alertmanager", "motel_": "motel"} {
+	for prefix, job := range map[string]string{"vm_": "victoria-metrics", "vmalert_": "vmalert", "alertmanager_": "alertmanager", "motel_": "moteld"} {
 		if strings.HasPrefix(r.name, prefix) {
 			return job, nil
 		}
@@ -981,7 +981,7 @@ func keepDiff(kept map[string][]string, reads []storeRead) (string, error) {
 		if err != nil {
 			return "", err
 		}
-		if job == "motel" {
+		if job == "moteld" {
 			continue
 		}
 		if _, ok := kept[job]; !ok {
@@ -1094,9 +1094,9 @@ func TestStoreReads(t *testing.T) {
 		// The request thresholds' guard (#442), as rendered: both series
 		// are motel's push, neither a scraped job's.
 		{"x and on (app) (" + pushedNow(`{app="blog"}`) + ")",
-			[]storeRead{{"x", ""}, {"motel_app_observed", ""}, {"process_start_time_seconds", "motel"}}},
-		{`scalar(min(tfirst_over_time(process_start_time_seconds{job="motel"}[7m]))) + 15`,
-			[]storeRead{{"process_start_time_seconds", "motel"}}},
+			[]storeRead{{"x", ""}, {"motel_app_observed", ""}, {"process_start_time_seconds", "moteld"}}},
+		{`scalar(min(tfirst_over_time(process_start_time_seconds{job="moteld"}[7m]))) + 15`,
+			[]storeRead{{"process_start_time_seconds", "moteld"}}},
 	} {
 		got, err := storeReads(c.expr)
 		if err != nil || !slices.Equal(got, c.want) {

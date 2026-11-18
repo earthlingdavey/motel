@@ -52,14 +52,14 @@ docker run -d --name motel-smoke --privileged --cgroupns=host \
 814dfe86b9c84e2651df3563c5e8d5e4d0a91aa41152993e5331c90105c44c0c
 docker exec motel-smoke /bin/bash /smoke.sh; status=$?; \
 	if [ $status -ne 0 ]; then \
-		docker exec motel-smoke journalctl -u motel --no-pager || true; \
+		docker exec motel-smoke journalctl -u moteld --no-pager || true; \
 	fi; \
 	docker rm -f motel-smoke >/dev/null; \
 	exit $status
 
 ════ stage 0: wait for systemd, locate the package ════
 systemd is running after 1s
-package under test: /dist/motel_0.3.0~rc1_arm64.deb
+package under test: /dist/moteld_0.3.0~rc1_arm64.deb
 
 ════ stage 1: install, service basics, reload ════
 Reading package lists...
@@ -72,24 +72,24 @@ Suggested packages:
 Recommended packages:
   restic sqlite3 dbus-user-session
 The following NEW packages will be installed:
-  motel libpam-systemd
+  moteld libpam-systemd
 0 upgraded, 2 newly installed, 0 to remove and 15 not upgraded.
 Need to get 276 kB/21.0 MB of archives.
 After this operation, 59.8 MB of additional disk space will be used.
-Get:1 /dist/motel_0.3.0~rc1_arm64.deb motel arm64 0.3.0~rc1 [20.7 MB]
+Get:1 /dist/moteld_0.3.0~rc1_arm64.deb moteld arm64 0.3.0~rc1 [20.7 MB]
 Get:2 http://deb.debian.org/debian trixie/main arm64 libpam-systemd arm64 257.13-1~deb13u1 [276 kB]
 Fetched 276 kB in 0s (949 kB/s)
 Selecting previously unselected package libpam-systemd:arm64.
 (Reading database ... (Reading database ... 5%(Reading database ... 10%(Reading database ... 15%(Reading database ... 20%(Reading database ... 25%(Reading database ... 30%(Reading database ... 35%(Reading database ... 40%(Reading database ... 45%(Reading database ... 50%(Reading database ... 55%(Reading database ... 60%(Reading database ... 65%(Reading database ... 70%(Reading database ... 75%(Reading database ... 80%(Reading database ... 85%(Reading database ... 90%(Reading database ... 95%(Reading database ... 100%(Reading database ... 6929 files and directories currently installed.)
 Preparing to unpack .../libpam-systemd_257.13-1~deb13u1_arm64.deb ...
 Unpacking libpam-systemd:arm64 (257.13-1~deb13u1) ...
-Selecting previously unselected package motel.
-Preparing to unpack .../motel_0.3.0~rc1_arm64.deb ...
-Unpacking motel (0.3.0~rc1) ...
+Selecting previously unselected package moteld.
+Preparing to unpack .../moteld_0.3.0~rc1_arm64.deb ...
+Unpacking moteld (0.3.0~rc1) ...
 Setting up libpam-systemd:arm64 (257.13-1~deb13u1) ...
-Setting up motel (0.3.0~rc1) ...
-motel installed. Start it with:
-  sudo systemctl enable --now motel
+Setting up moteld (0.3.0~rc1) ...
+moteld installed. Start it with:
+  sudo systemctl enable --now moteld
 Created symlink '/etc/systemd/system/timers.target.wants/motel-backup.timer' → '/usr/lib/systemd/system/motel-backup.timer'.
 Created symlink '/etc/systemd/system/timers.target.wants/motel-backup-drill.timer' → '/usr/lib/systemd/system/motel-backup-drill.timer'.
 Backups: the hourly timer and the Sunday restore drill are enabled, and run nothing until:
@@ -97,7 +97,7 @@ Backups: the hourly timer and the Sunday restore drill are enabled, and run noth
 user/group and data dir ownership OK
 v2.11.6 h1:sWxeamdlCZvcH4qeDz8bB0mdxgfYTeqV7HxOjXyIRas=
 all product modules linked
-Created symlink '/etc/systemd/system/multi-user.target.wants/motel.service' → '/usr/lib/systemd/system/motel.service'.
+Created symlink '/etc/systemd/system/multi-user.target.wants/moteld.service' → '/usr/lib/systemd/system/moteld.service'.
 unit started and starter config answers on :80
 user manager user@996 active with lingering
 reload OK, journal clean
@@ -153,7 +153,7 @@ app NOFILE 1048576 = user@996 DefaultLimitNOFILE = the drop-in's 1048576 (system
 deployed as unit motel-demo.s1.4022fef70851c542.service under user@996; app output in the journal
 host: 7.0.12-linuxkit; apparmor_restrict_unprivileged_userns=absent; virt=docker
 in-unit routes closed: manager /proc root+environ, manager socket, admin socket, state.json, /etc/motel, /run/motel, the app's tmp and current
-in-unit base view: /bin/sh, /usr/bin/env, /usr/bin/motel, /etc/ssl/certs, /etc/resolv.conf; /etc=alternatives ca-certificates group hostname hosts ld.so.cache ld.so.conf ld.so.conf.d localtime nsswitch.conf passwd resolv.conf ssl  /var/lib=liveswap 
+in-unit base view: /bin/sh, /usr/bin/env, /usr/bin/moteld, /etc/ssl/certs, /etc/resolv.conf; /etc=alternatives ca-certificates group hostname hosts ld.so.cache ld.so.conf ld.so.conf.d localtime nsswitch.conf passwd resolv.conf ssl  /var/lib=liveswap 
 sandbox (systemd 257): uid_map range 1, pid 1, 4 pids visible, /var/lib/motel closed
 validate (root and motel) left the running app alone
 journal is free of the deploy token
@@ -163,117 +163,117 @@ SIGKILL: systemd restarted motel (NRestarts=1); app pid 505 reattached
 
 ════ stage 2c: backups — the guide's 'Set it up' lines, as an administrator ════
 FAIL: restic and sqlite3 did not come with the package, installed without recommends: they have to be Depends
-Oct 05 18:40:32 814dfe86b9c8 systemd[1]: Starting motel.service - motel — the Hot Sauce server, powered by Caddy...
-Oct 05 18:40:32 814dfe86b9c8 motel[374]: {"level":"info","ts":1791225632.1312263,"msg":"using config from file","file":"/etc/motel/Caddyfile"}
-Oct 05 18:40:32 814dfe86b9c8 motel[374]: {"level":"info","ts":1791225632.1317654,"msg":"adapted config to JSON","adapter":"caddyfile"}
-Oct 05 18:40:32 814dfe86b9c8 motel[374]: {"level":"warn","ts":1791225632.131772,"msg":"Caddyfile input is not formatted; run 'caddy fmt --overwrite' to fix inconsistencies","adapter":"caddyfile","file":"/etc/motel/Caddyfile","line":11}
-Oct 05 18:40:32 814dfe86b9c8 motel[374]: {"level":"info","ts":1791225632.1328273,"msg":"maxprocs: Leaving GOMAXPROCS=6: CPU quota undefined"}
-Oct 05 18:40:32 814dfe86b9c8 motel[374]: {"level":"info","ts":1791225632.1328354,"msg":"GOMEMLIMIT is updated","GOMEMLIMIT":7488025804,"previous":9223372036854775807}
-Oct 05 18:40:32 814dfe86b9c8 motel[374]: {"level":"info","ts":1791225632.1328375,"msg":"using config from file","file":"/etc/motel/Caddyfile"}
-Oct 05 18:40:32 814dfe86b9c8 motel[374]: {"level":"info","ts":1791225632.1328394,"msg":"adapted config to JSON","adapter":"caddyfile"}
-Oct 05 18:40:32 814dfe86b9c8 motel[374]: {"level":"warn","ts":1791225632.1328409,"msg":"Caddyfile input is not formatted; run 'caddy fmt --overwrite' to fix inconsistencies","adapter":"caddyfile","file":"/etc/motel/Caddyfile","line":11}
-Oct 05 18:40:32 814dfe86b9c8 motel[374]: {"level":"info","ts":1791225632.1335049,"logger":"admin","msg":"admin endpoint started","address":"unix//run/motel/admin.sock","enforce_origin":false,"origins":[]}
-Oct 05 18:40:32 814dfe86b9c8 motel[374]: {"level":"warn","ts":1791225632.1335158,"logger":"admin","msg":"admin endpoint on open interface; host checking disabled","address":"unix//run/motel/admin.sock"}
-Oct 05 18:40:32 814dfe86b9c8 motel[374]: {"level":"warn","ts":1791225632.1335857,"logger":"http.auto_https","msg":"server is listening only on the HTTP port, so no automatic HTTPS will be applied to this server","server_name":"srv0","http_port":80}
-Oct 05 18:40:32 814dfe86b9c8 motel[374]: {"level":"info","ts":1791225632.133711,"logger":"tls.cache.maintenance","msg":"started background certificate maintenance","cache":"0x538985210380"}
-Oct 05 18:40:32 814dfe86b9c8 motel[374]: {"level":"warn","ts":1791225632.1524367,"logger":"http","msg":"HTTP/2 skipped because it requires TLS","network":"tcp","addr":":80"}
-Oct 05 18:40:32 814dfe86b9c8 motel[374]: {"level":"warn","ts":1791225632.1524692,"logger":"http","msg":"HTTP/3 skipped because it requires TLS","network":"tcp","addr":":80"}
-Oct 05 18:40:32 814dfe86b9c8 motel[374]: {"level":"info","ts":1791225632.1524723,"logger":"http.log","msg":"server running","name":"srv0","protocols":["h1","h2","h3"]}
-Oct 05 18:40:32 814dfe86b9c8 motel[374]: {"level":"info","ts":1791225632.152726,"msg":"autosaved config (load with --resume flag)","file":"/var/lib/motel/caddy/autosave.json"}
-Oct 05 18:40:32 814dfe86b9c8 motel[374]: {"level":"info","ts":1791225632.152766,"msg":"serving initial configuration"}
-Oct 05 18:40:32 814dfe86b9c8 systemd[1]: Started motel.service - motel — the Hot Sauce server, powered by Caddy.
-Oct 05 18:40:32 814dfe86b9c8 motel[374]: {"level":"info","ts":1791225632.1546812,"logger":"tls","msg":"cleaning storage unit","storage":"FileStorage:/var/lib/motel/caddy"}
-Oct 05 18:40:32 814dfe86b9c8 motel[374]: {"level":"info","ts":1791225632.1559808,"logger":"tls","msg":"finished cleaning storage units"}
-Oct 05 18:40:32 814dfe86b9c8 systemd[1]: Reloading motel.service - motel — the Hot Sauce server, powered by Caddy...
-Oct 05 18:40:32 814dfe86b9c8 motel[390]: {"level":"info","ts":1791225632.2053425,"msg":"using config from file","file":"/etc/motel/Caddyfile"}
-Oct 05 18:40:32 814dfe86b9c8 motel[390]: {"level":"info","ts":1791225632.20585,"msg":"adapted config to JSON","adapter":"caddyfile"}
-Oct 05 18:40:32 814dfe86b9c8 motel[390]: {"level":"warn","ts":1791225632.2058604,"msg":"Caddyfile input is not formatted; run 'caddy fmt --overwrite' to fix inconsistencies","adapter":"caddyfile","file":"/etc/motel/Caddyfile","line":11}
-Oct 05 18:40:32 814dfe86b9c8 motel[390]: {"level":"info","ts":1791225632.2060137,"msg":"using config from file","file":"/etc/motel/Caddyfile"}
-Oct 05 18:40:32 814dfe86b9c8 motel[390]: {"level":"info","ts":1791225632.2063053,"msg":"adapted config to JSON","adapter":"caddyfile"}
-Oct 05 18:40:32 814dfe86b9c8 motel[390]: {"level":"warn","ts":1791225632.206317,"msg":"Caddyfile input is not formatted; run 'caddy fmt --overwrite' to fix inconsistencies","adapter":"caddyfile","file":"/etc/motel/Caddyfile","line":11}
-Oct 05 18:40:32 814dfe86b9c8 motel[374]: {"level":"info","ts":1791225632.20656,"logger":"admin.api","msg":"received request","method":"POST","host":"127.0.0.1","uri":"/load","remote_ip":"@","remote_port":"","headers":{"User-Agent":["Go-http-client/1.1"],"Content-Length":["241"],"Cache-Control":["must-revalidate"],"Caddy-Config-Source-Adapter":["caddyfile"],"Caddy-Config-Source-File":["/etc/motel/Caddyfile"],"Content-Type":["application/json"],"Accept-Encoding":["gzip"]}}
-Oct 05 18:40:32 814dfe86b9c8 motel[374]: {"level":"info","ts":1791225632.2076416,"logger":"admin","msg":"admin endpoint started","address":"unix//run/motel/admin.sock","enforce_origin":false,"origins":[]}
-Oct 05 18:40:32 814dfe86b9c8 motel[374]: {"level":"warn","ts":1791225632.2076566,"logger":"admin","msg":"admin endpoint on open interface; host checking disabled","address":"unix//run/motel/admin.sock"}
-Oct 05 18:40:32 814dfe86b9c8 motel[374]: {"level":"warn","ts":1791225632.207923,"logger":"http.auto_https","msg":"server is listening only on the HTTP port, so no automatic HTTPS will be applied to this server","server_name":"srv0","http_port":80}
-Oct 05 18:40:32 814dfe86b9c8 motel[374]: {"level":"warn","ts":1791225632.2081869,"logger":"http","msg":"HTTP/2 skipped because it requires TLS","network":"tcp","addr":":80"}
-Oct 05 18:40:32 814dfe86b9c8 motel[374]: {"level":"warn","ts":1791225632.2082012,"logger":"http","msg":"HTTP/3 skipped because it requires TLS","network":"tcp","addr":":80"}
-Oct 05 18:40:32 814dfe86b9c8 motel[374]: {"level":"info","ts":1791225632.208204,"logger":"http.log","msg":"server running","name":"srv0","protocols":["h1","h2","h3"]}
-Oct 05 18:40:32 814dfe86b9c8 motel[374]: {"level":"info","ts":1791225632.2082353,"logger":"http","msg":"servers shutting down with eternal grace period"}
-Oct 05 18:40:32 814dfe86b9c8 motel[374]: {"level":"info","ts":1791225632.208368,"msg":"autosaved config (load with --resume flag)","file":"/var/lib/motel/caddy/autosave.json"}
-Oct 05 18:40:32 814dfe86b9c8 motel[374]: {"level":"info","ts":1791225632.2084277,"logger":"admin.api","msg":"load complete"}
-Oct 05 18:40:32 814dfe86b9c8 systemd[1]: Reloaded motel.service - motel — the Hot Sauce server, powered by Caddy.
-Oct 05 18:40:32 814dfe86b9c8 motel[374]: {"level":"info","ts":1791225632.209474,"logger":"admin","msg":"stopped previous server","address":"unix//run/motel/admin.sock"}
-Oct 05 18:40:32 814dfe86b9c8 motel[374]: {"level":"info","ts":1791225632.3455937,"msg":"shutting down apps, then terminating","signal":"SIGTERM"}
-Oct 05 18:40:32 814dfe86b9c8 systemd[1]: Stopping motel.service - motel — the Hot Sauce server, powered by Caddy...
-Oct 05 18:40:32 814dfe86b9c8 motel[374]: {"level":"warn","ts":1791225632.345674,"msg":"exiting; byeee!! 👋","signal":"SIGTERM"}
-Oct 05 18:40:32 814dfe86b9c8 motel[374]: {"level":"info","ts":1791225632.3457005,"logger":"http","msg":"servers shutting down with eternal grace period"}
-Oct 05 18:40:32 814dfe86b9c8 motel[374]: {"level":"info","ts":1791225632.3457887,"logger":"tls.cache.maintenance","msg":"stopped background certificate maintenance","cache":"0x538985210380"}
-Oct 05 18:40:32 814dfe86b9c8 motel[374]: {"level":"info","ts":1791225632.345895,"logger":"admin","msg":"stopped previous server","address":"unix//run/motel/admin.sock"}
-Oct 05 18:40:32 814dfe86b9c8 motel[374]: {"level":"info","ts":1791225632.3459132,"msg":"shutdown complete","signal":"SIGTERM","exit_code":0}
-Oct 05 18:40:32 814dfe86b9c8 systemd[1]: motel.service: Deactivated successfully.
-Oct 05 18:40:32 814dfe86b9c8 systemd[1]: Stopped motel.service - motel — the Hot Sauce server, powered by Caddy.
-Oct 05 18:40:32 814dfe86b9c8 systemd[1]: Starting motel.service - motel — the Hot Sauce server, powered by Caddy...
-Oct 05 18:40:32 814dfe86b9c8 motel[448]: {"level":"info","ts":1791225632.3823588,"msg":"using config from file","file":"/etc/motel/Caddyfile"}
-Oct 05 18:40:32 814dfe86b9c8 motel[448]: {"level":"info","ts":1791225632.383036,"msg":"adapted config to JSON","adapter":"caddyfile"}
-Oct 05 18:40:32 814dfe86b9c8 motel[448]: {"level":"info","ts":1791225632.3842793,"msg":"maxprocs: Leaving GOMAXPROCS=6: CPU quota undefined"}
-Oct 05 18:40:32 814dfe86b9c8 motel[448]: {"level":"info","ts":1791225632.384298,"msg":"GOMEMLIMIT is updated","GOMEMLIMIT":7488025804,"previous":9223372036854775807}
-Oct 05 18:40:32 814dfe86b9c8 motel[448]: {"level":"info","ts":1791225632.3843005,"msg":"using config from file","file":"/etc/motel/Caddyfile"}
-Oct 05 18:40:32 814dfe86b9c8 motel[448]: {"level":"info","ts":1791225632.384303,"msg":"adapted config to JSON","adapter":"caddyfile"}
-Oct 05 18:40:32 814dfe86b9c8 motel[448]: {"level":"info","ts":1791225632.38456,"logger":"admin","msg":"admin endpoint started","address":"unix//run/motel/admin.sock","enforce_origin":false,"origins":[]}
-Oct 05 18:40:32 814dfe86b9c8 motel[448]: {"level":"warn","ts":1791225632.384571,"logger":"admin","msg":"admin endpoint on open interface; host checking disabled","address":"unix//run/motel/admin.sock"}
-Oct 05 18:40:32 814dfe86b9c8 motel[448]: {"level":"info","ts":1791225632.3846283,"logger":"http.auto_https","msg":"automatic HTTPS is completely disabled for server","server_name":"srv0"}
-Oct 05 18:40:32 814dfe86b9c8 motel[448]: {"level":"info","ts":1791225632.3846319,"logger":"http.auto_https","msg":"automatic HTTPS is completely disabled for server","server_name":"srv1"}
-Oct 05 18:40:32 814dfe86b9c8 motel[448]: {"level":"info","ts":1791225632.384927,"logger":"tls.cache.maintenance","msg":"started background certificate maintenance","cache":"0x71cdddb66900"}
-Oct 05 18:40:32 814dfe86b9c8 motel[448]: {"level":"warn","ts":1791225632.3880804,"logger":"http","msg":"HTTP/2 skipped because it requires TLS","network":"tcp","addr":":8080"}
-Oct 05 18:40:32 814dfe86b9c8 motel[448]: {"level":"warn","ts":1791225632.3880966,"logger":"http","msg":"HTTP/3 skipped because it requires TLS","network":"tcp","addr":":8080"}
-Oct 05 18:40:32 814dfe86b9c8 motel[448]: {"level":"info","ts":1791225632.388099,"logger":"http.log","msg":"server running","name":"srv0","protocols":["h1","h2","h3"]}
-Oct 05 18:40:32 814dfe86b9c8 motel[448]: {"level":"warn","ts":1791225632.3881228,"logger":"http","msg":"HTTP/2 skipped because it requires TLS","network":"tcp","addr":":8081"}
-Oct 05 18:40:32 814dfe86b9c8 motel[448]: {"level":"warn","ts":1791225632.3881252,"logger":"http","msg":"HTTP/3 skipped because it requires TLS","network":"tcp","addr":":8081"}
-Oct 05 18:40:32 814dfe86b9c8 motel[448]: {"level":"info","ts":1791225632.388127,"logger":"http.log","msg":"server running","name":"srv1","protocols":["h1","h2","h3"]}
-Oct 05 18:40:32 814dfe86b9c8 motel[448]: {"level":"info","ts":1791225632.389465,"logger":"tls","msg":"storage cleaning happened too recently; skipping for now","storage":"FileStorage:/var/lib/motel/caddy","instance":"cf892519-57d6-4e43-a221-1e875ec0c46d","try_again":1791312032.3894644,"try_again_in":86399.999999833}
-Oct 05 18:40:32 814dfe86b9c8 motel[448]: {"level":"info","ts":1791225632.389506,"logger":"tls","msg":"finished cleaning storage units"}
-Oct 05 18:40:32 814dfe86b9c8 motel[448]: {"level":"info","ts":1791225632.4407804,"logger":"liveswap","msg":"liveswap started","apps":1,"app_names":["demo"]}
-Oct 05 18:40:32 814dfe86b9c8 motel[448]: {"level":"info","ts":1791225632.4408836,"msg":"autosaved config (load with --resume flag)","file":"/var/lib/motel/caddy/autosave.json"}
-Oct 05 18:40:32 814dfe86b9c8 motel[448]: {"level":"info","ts":1791225632.4409342,"msg":"serving initial configuration"}
-Oct 05 18:40:32 814dfe86b9c8 systemd[1]: Started motel.service - motel — the Hot Sauce server, powered by Caddy.
-Oct 05 18:40:33 814dfe86b9c8 motel[448]: {"level":"info","ts":1791225633.5149477,"logger":"http.handlers.liveswap_webhook","msg":"deploy authorized","app":"demo","via":"local:/etc/motel/deploy.key.pub","source":"url","remote":"127.0.0.1:41184"}
-Oct 05 18:40:33 814dfe86b9c8 motel[448]: {"level":"info","ts":1791225633.5150125,"logger":"liveswap.demo","msg":"deploy started","version":"s1","artifact_host":"127.0.0.1:8200"}
-Oct 05 18:40:33 814dfe86b9c8 motel[448]: {"level":"info","ts":1791225633.5168893,"logger":"liveswap.demo","msg":"deploy phase","phase":"downloading"}
-Oct 05 18:40:33 814dfe86b9c8 motel[448]: {"level":"info","ts":1791225633.518129,"logger":"liveswap.demo","msg":"deploy phase","phase":"extracting"}
-Oct 05 18:40:33 814dfe86b9c8 motel[448]: {"level":"info","ts":1791225633.519452,"logger":"liveswap.demo","msg":"artifact extracted","version":"s1","entries":2,"max_entries":100000,"bytes":11776,"max_bytes":1000000000}
-Oct 05 18:40:33 814dfe86b9c8 motel[448]: {"level":"info","ts":1791225633.5195973,"logger":"liveswap.demo","msg":"deploy phase","phase":"preparing"}
-Oct 05 18:40:33 814dfe86b9c8 motel[448]: {"level":"info","ts":1791225633.5196738,"logger":"liveswap.demo","msg":"deploy phase","phase":"starting"}
-Oct 05 18:40:33 814dfe86b9c8 motel[448]: {"level":"info","ts":1791225633.554904,"logger":"liveswap.demo","msg":"instance started","unit":"motel-demo.s1.4022fef70851c542.service","pid":505}
-Oct 05 18:40:33 814dfe86b9c8 motel[448]: {"level":"info","ts":1791225633.5549374,"logger":"liveswap.demo","msg":"deploy phase","phase":"soaking"}
-Oct 05 18:40:34 814dfe86b9c8 motel[448]: {"level":"info","ts":1791225634.816466,"logger":"liveswap.demo","msg":"deploy phase","phase":"promoting"}
-Oct 05 18:40:34 814dfe86b9c8 motel[448]: {"level":"info","ts":1791225634.819222,"logger":"liveswap.demo","msg":"deploy succeeded","version":"s1"}
-Oct 05 18:40:36 814dfe86b9c8 systemd[1]: motel.service: Sent signal SIGKILL to main process 448 (motel) on client request.
-Oct 05 18:40:36 814dfe86b9c8 systemd[1]: motel.service: Main process exited, code=killed, status=9/KILL
-Oct 05 18:40:36 814dfe86b9c8 systemd[1]: motel.service: Failed with result 'signal'.
-Oct 05 18:40:37 814dfe86b9c8 systemd[1]: motel.service: Scheduled restart job, restart counter is at 1.
-Oct 05 18:40:37 814dfe86b9c8 systemd[1]: Starting motel.service - motel — the Hot Sauce server, powered by Caddy...
-Oct 05 18:40:37 814dfe86b9c8 motel[789]: {"level":"info","ts":1791225637.2867146,"msg":"using config from file","file":"/etc/motel/Caddyfile"}
-Oct 05 18:40:37 814dfe86b9c8 motel[789]: {"level":"info","ts":1791225637.287624,"msg":"adapted config to JSON","adapter":"caddyfile"}
-Oct 05 18:40:37 814dfe86b9c8 motel[789]: {"level":"info","ts":1791225637.2889934,"msg":"maxprocs: Leaving GOMAXPROCS=6: CPU quota undefined"}
-Oct 05 18:40:37 814dfe86b9c8 motel[789]: {"level":"info","ts":1791225637.2890127,"msg":"GOMEMLIMIT is updated","GOMEMLIMIT":7488025804,"previous":9223372036854775807}
-Oct 05 18:40:37 814dfe86b9c8 motel[789]: {"level":"info","ts":1791225637.289016,"msg":"using config from file","file":"/etc/motel/Caddyfile"}
-Oct 05 18:40:37 814dfe86b9c8 motel[789]: {"level":"info","ts":1791225637.289018,"msg":"adapted config to JSON","adapter":"caddyfile"}
-Oct 05 18:40:37 814dfe86b9c8 motel[789]: {"level":"info","ts":1791225637.2893214,"logger":"admin","msg":"admin endpoint started","address":"unix//run/motel/admin.sock","enforce_origin":false,"origins":[]}
-Oct 05 18:40:37 814dfe86b9c8 motel[789]: {"level":"warn","ts":1791225637.28933,"logger":"admin","msg":"admin endpoint on open interface; host checking disabled","address":"unix//run/motel/admin.sock"}
-Oct 05 18:40:37 814dfe86b9c8 motel[789]: {"level":"info","ts":1791225637.289454,"logger":"http.auto_https","msg":"automatic HTTPS is completely disabled for server","server_name":"srv0"}
-Oct 05 18:40:37 814dfe86b9c8 motel[789]: {"level":"info","ts":1791225637.289467,"logger":"http.auto_https","msg":"automatic HTTPS is completely disabled for server","server_name":"srv1"}
-Oct 05 18:40:37 814dfe86b9c8 motel[789]: {"level":"info","ts":1791225637.2895825,"logger":"tls.cache.maintenance","msg":"started background certificate maintenance","cache":"0x61fc64cd3900"}
-Oct 05 18:40:37 814dfe86b9c8 motel[789]: {"level":"info","ts":1791225637.3445528,"logger":"liveswap","msg":"liveswap started","apps":1,"app_names":["demo"]}
-Oct 05 18:40:37 814dfe86b9c8 motel[789]: {"level":"info","ts":1791225637.347253,"logger":"liveswap.demo","msg":"reattached to running instance","version":"s1"}
-Oct 05 18:40:37 814dfe86b9c8 motel[789]: {"level":"warn","ts":1791225637.353188,"logger":"http","msg":"HTTP/2 skipped because it requires TLS","network":"tcp","addr":":8081"}
-Oct 05 18:40:37 814dfe86b9c8 motel[789]: {"level":"warn","ts":1791225637.3532062,"logger":"http","msg":"HTTP/3 skipped because it requires TLS","network":"tcp","addr":":8081"}
-Oct 05 18:40:37 814dfe86b9c8 motel[789]: {"level":"info","ts":1791225637.3532138,"logger":"http.log","msg":"server running","name":"srv1","protocols":["h1","h2","h3"]}
-Oct 05 18:40:37 814dfe86b9c8 motel[789]: {"level":"warn","ts":1791225637.353269,"logger":"http","msg":"HTTP/2 skipped because it requires TLS","network":"tcp","addr":":8080"}
-Oct 05 18:40:37 814dfe86b9c8 motel[789]: {"level":"warn","ts":1791225637.3532732,"logger":"http","msg":"HTTP/3 skipped because it requires TLS","network":"tcp","addr":":8080"}
-Oct 05 18:40:37 814dfe86b9c8 motel[789]: {"level":"info","ts":1791225637.3532748,"logger":"http.log","msg":"server running","name":"srv0","protocols":["h1","h2","h3"]}
-Oct 05 18:40:37 814dfe86b9c8 motel[789]: {"level":"info","ts":1791225637.353496,"msg":"autosaved config (load with --resume flag)","file":"/var/lib/motel/caddy/autosave.json"}
-Oct 05 18:40:37 814dfe86b9c8 motel[789]: {"level":"info","ts":1791225637.353556,"msg":"serving initial configuration"}
-Oct 05 18:40:37 814dfe86b9c8 systemd[1]: Started motel.service - motel — the Hot Sauce server, powered by Caddy.
-Oct 05 18:40:37 814dfe86b9c8 motel[789]: {"level":"info","ts":1791225637.3573763,"logger":"tls","msg":"storage cleaning happened too recently; skipping for now","storage":"FileStorage:/var/lib/motel/caddy","instance":"cf892519-57d6-4e43-a221-1e875ec0c46d","try_again":1791312037.3573751,"try_again_in":86399.999999542}
-Oct 05 18:40:37 814dfe86b9c8 motel[789]: {"level":"info","ts":1791225637.3574588,"logger":"tls","msg":"finished cleaning storage units"}
+Oct 05 18:40:32 814dfe86b9c8 systemd[1]: Starting moteld.service - motel — the Hot Sauce server, powered by Caddy...
+Oct 05 18:40:32 814dfe86b9c8 moteld[374]: {"level":"info","ts":1791225632.1312263,"msg":"using config from file","file":"/etc/motel/Caddyfile"}
+Oct 05 18:40:32 814dfe86b9c8 moteld[374]: {"level":"info","ts":1791225632.1317654,"msg":"adapted config to JSON","adapter":"caddyfile"}
+Oct 05 18:40:32 814dfe86b9c8 moteld[374]: {"level":"warn","ts":1791225632.131772,"msg":"Caddyfile input is not formatted; run 'caddy fmt --overwrite' to fix inconsistencies","adapter":"caddyfile","file":"/etc/motel/Caddyfile","line":11}
+Oct 05 18:40:32 814dfe86b9c8 moteld[374]: {"level":"info","ts":1791225632.1328273,"msg":"maxprocs: Leaving GOMAXPROCS=6: CPU quota undefined"}
+Oct 05 18:40:32 814dfe86b9c8 moteld[374]: {"level":"info","ts":1791225632.1328354,"msg":"GOMEMLIMIT is updated","GOMEMLIMIT":7488025804,"previous":9223372036854775807}
+Oct 05 18:40:32 814dfe86b9c8 moteld[374]: {"level":"info","ts":1791225632.1328375,"msg":"using config from file","file":"/etc/motel/Caddyfile"}
+Oct 05 18:40:32 814dfe86b9c8 moteld[374]: {"level":"info","ts":1791225632.1328394,"msg":"adapted config to JSON","adapter":"caddyfile"}
+Oct 05 18:40:32 814dfe86b9c8 moteld[374]: {"level":"warn","ts":1791225632.1328409,"msg":"Caddyfile input is not formatted; run 'caddy fmt --overwrite' to fix inconsistencies","adapter":"caddyfile","file":"/etc/motel/Caddyfile","line":11}
+Oct 05 18:40:32 814dfe86b9c8 moteld[374]: {"level":"info","ts":1791225632.1335049,"logger":"admin","msg":"admin endpoint started","address":"unix//run/motel/admin.sock","enforce_origin":false,"origins":[]}
+Oct 05 18:40:32 814dfe86b9c8 moteld[374]: {"level":"warn","ts":1791225632.1335158,"logger":"admin","msg":"admin endpoint on open interface; host checking disabled","address":"unix//run/motel/admin.sock"}
+Oct 05 18:40:32 814dfe86b9c8 moteld[374]: {"level":"warn","ts":1791225632.1335857,"logger":"http.auto_https","msg":"server is listening only on the HTTP port, so no automatic HTTPS will be applied to this server","server_name":"srv0","http_port":80}
+Oct 05 18:40:32 814dfe86b9c8 moteld[374]: {"level":"info","ts":1791225632.133711,"logger":"tls.cache.maintenance","msg":"started background certificate maintenance","cache":"0x538985210380"}
+Oct 05 18:40:32 814dfe86b9c8 moteld[374]: {"level":"warn","ts":1791225632.1524367,"logger":"http","msg":"HTTP/2 skipped because it requires TLS","network":"tcp","addr":":80"}
+Oct 05 18:40:32 814dfe86b9c8 moteld[374]: {"level":"warn","ts":1791225632.1524692,"logger":"http","msg":"HTTP/3 skipped because it requires TLS","network":"tcp","addr":":80"}
+Oct 05 18:40:32 814dfe86b9c8 moteld[374]: {"level":"info","ts":1791225632.1524723,"logger":"http.log","msg":"server running","name":"srv0","protocols":["h1","h2","h3"]}
+Oct 05 18:40:32 814dfe86b9c8 moteld[374]: {"level":"info","ts":1791225632.152726,"msg":"autosaved config (load with --resume flag)","file":"/var/lib/motel/caddy/autosave.json"}
+Oct 05 18:40:32 814dfe86b9c8 moteld[374]: {"level":"info","ts":1791225632.152766,"msg":"serving initial configuration"}
+Oct 05 18:40:32 814dfe86b9c8 systemd[1]: Started moteld.service - motel — the Hot Sauce server, powered by Caddy.
+Oct 05 18:40:32 814dfe86b9c8 moteld[374]: {"level":"info","ts":1791225632.1546812,"logger":"tls","msg":"cleaning storage unit","storage":"FileStorage:/var/lib/motel/caddy"}
+Oct 05 18:40:32 814dfe86b9c8 moteld[374]: {"level":"info","ts":1791225632.1559808,"logger":"tls","msg":"finished cleaning storage units"}
+Oct 05 18:40:32 814dfe86b9c8 systemd[1]: Reloading moteld.service - motel — the Hot Sauce server, powered by Caddy...
+Oct 05 18:40:32 814dfe86b9c8 moteld[390]: {"level":"info","ts":1791225632.2053425,"msg":"using config from file","file":"/etc/motel/Caddyfile"}
+Oct 05 18:40:32 814dfe86b9c8 moteld[390]: {"level":"info","ts":1791225632.20585,"msg":"adapted config to JSON","adapter":"caddyfile"}
+Oct 05 18:40:32 814dfe86b9c8 moteld[390]: {"level":"warn","ts":1791225632.2058604,"msg":"Caddyfile input is not formatted; run 'caddy fmt --overwrite' to fix inconsistencies","adapter":"caddyfile","file":"/etc/motel/Caddyfile","line":11}
+Oct 05 18:40:32 814dfe86b9c8 moteld[390]: {"level":"info","ts":1791225632.2060137,"msg":"using config from file","file":"/etc/motel/Caddyfile"}
+Oct 05 18:40:32 814dfe86b9c8 moteld[390]: {"level":"info","ts":1791225632.2063053,"msg":"adapted config to JSON","adapter":"caddyfile"}
+Oct 05 18:40:32 814dfe86b9c8 moteld[390]: {"level":"warn","ts":1791225632.206317,"msg":"Caddyfile input is not formatted; run 'caddy fmt --overwrite' to fix inconsistencies","adapter":"caddyfile","file":"/etc/motel/Caddyfile","line":11}
+Oct 05 18:40:32 814dfe86b9c8 moteld[374]: {"level":"info","ts":1791225632.20656,"logger":"admin.api","msg":"received request","method":"POST","host":"127.0.0.1","uri":"/load","remote_ip":"@","remote_port":"","headers":{"User-Agent":["Go-http-client/1.1"],"Content-Length":["241"],"Cache-Control":["must-revalidate"],"Caddy-Config-Source-Adapter":["caddyfile"],"Caddy-Config-Source-File":["/etc/motel/Caddyfile"],"Content-Type":["application/json"],"Accept-Encoding":["gzip"]}}
+Oct 05 18:40:32 814dfe86b9c8 moteld[374]: {"level":"info","ts":1791225632.2076416,"logger":"admin","msg":"admin endpoint started","address":"unix//run/motel/admin.sock","enforce_origin":false,"origins":[]}
+Oct 05 18:40:32 814dfe86b9c8 moteld[374]: {"level":"warn","ts":1791225632.2076566,"logger":"admin","msg":"admin endpoint on open interface; host checking disabled","address":"unix//run/motel/admin.sock"}
+Oct 05 18:40:32 814dfe86b9c8 moteld[374]: {"level":"warn","ts":1791225632.207923,"logger":"http.auto_https","msg":"server is listening only on the HTTP port, so no automatic HTTPS will be applied to this server","server_name":"srv0","http_port":80}
+Oct 05 18:40:32 814dfe86b9c8 moteld[374]: {"level":"warn","ts":1791225632.2081869,"logger":"http","msg":"HTTP/2 skipped because it requires TLS","network":"tcp","addr":":80"}
+Oct 05 18:40:32 814dfe86b9c8 moteld[374]: {"level":"warn","ts":1791225632.2082012,"logger":"http","msg":"HTTP/3 skipped because it requires TLS","network":"tcp","addr":":80"}
+Oct 05 18:40:32 814dfe86b9c8 moteld[374]: {"level":"info","ts":1791225632.208204,"logger":"http.log","msg":"server running","name":"srv0","protocols":["h1","h2","h3"]}
+Oct 05 18:40:32 814dfe86b9c8 moteld[374]: {"level":"info","ts":1791225632.2082353,"logger":"http","msg":"servers shutting down with eternal grace period"}
+Oct 05 18:40:32 814dfe86b9c8 moteld[374]: {"level":"info","ts":1791225632.208368,"msg":"autosaved config (load with --resume flag)","file":"/var/lib/motel/caddy/autosave.json"}
+Oct 05 18:40:32 814dfe86b9c8 moteld[374]: {"level":"info","ts":1791225632.2084277,"logger":"admin.api","msg":"load complete"}
+Oct 05 18:40:32 814dfe86b9c8 systemd[1]: Reloaded moteld.service - motel — the Hot Sauce server, powered by Caddy.
+Oct 05 18:40:32 814dfe86b9c8 moteld[374]: {"level":"info","ts":1791225632.209474,"logger":"admin","msg":"stopped previous server","address":"unix//run/motel/admin.sock"}
+Oct 05 18:40:32 814dfe86b9c8 moteld[374]: {"level":"info","ts":1791225632.3455937,"msg":"shutting down apps, then terminating","signal":"SIGTERM"}
+Oct 05 18:40:32 814dfe86b9c8 systemd[1]: Stopping moteld.service - motel — the Hot Sauce server, powered by Caddy...
+Oct 05 18:40:32 814dfe86b9c8 moteld[374]: {"level":"warn","ts":1791225632.345674,"msg":"exiting; byeee!! 👋","signal":"SIGTERM"}
+Oct 05 18:40:32 814dfe86b9c8 moteld[374]: {"level":"info","ts":1791225632.3457005,"logger":"http","msg":"servers shutting down with eternal grace period"}
+Oct 05 18:40:32 814dfe86b9c8 moteld[374]: {"level":"info","ts":1791225632.3457887,"logger":"tls.cache.maintenance","msg":"stopped background certificate maintenance","cache":"0x538985210380"}
+Oct 05 18:40:32 814dfe86b9c8 moteld[374]: {"level":"info","ts":1791225632.345895,"logger":"admin","msg":"stopped previous server","address":"unix//run/motel/admin.sock"}
+Oct 05 18:40:32 814dfe86b9c8 moteld[374]: {"level":"info","ts":1791225632.3459132,"msg":"shutdown complete","signal":"SIGTERM","exit_code":0}
+Oct 05 18:40:32 814dfe86b9c8 systemd[1]: moteld.service: Deactivated successfully.
+Oct 05 18:40:32 814dfe86b9c8 systemd[1]: Stopped moteld.service - motel — the Hot Sauce server, powered by Caddy.
+Oct 05 18:40:32 814dfe86b9c8 systemd[1]: Starting moteld.service - motel — the Hot Sauce server, powered by Caddy...
+Oct 05 18:40:32 814dfe86b9c8 moteld[448]: {"level":"info","ts":1791225632.3823588,"msg":"using config from file","file":"/etc/motel/Caddyfile"}
+Oct 05 18:40:32 814dfe86b9c8 moteld[448]: {"level":"info","ts":1791225632.383036,"msg":"adapted config to JSON","adapter":"caddyfile"}
+Oct 05 18:40:32 814dfe86b9c8 moteld[448]: {"level":"info","ts":1791225632.3842793,"msg":"maxprocs: Leaving GOMAXPROCS=6: CPU quota undefined"}
+Oct 05 18:40:32 814dfe86b9c8 moteld[448]: {"level":"info","ts":1791225632.384298,"msg":"GOMEMLIMIT is updated","GOMEMLIMIT":7488025804,"previous":9223372036854775807}
+Oct 05 18:40:32 814dfe86b9c8 moteld[448]: {"level":"info","ts":1791225632.3843005,"msg":"using config from file","file":"/etc/motel/Caddyfile"}
+Oct 05 18:40:32 814dfe86b9c8 moteld[448]: {"level":"info","ts":1791225632.384303,"msg":"adapted config to JSON","adapter":"caddyfile"}
+Oct 05 18:40:32 814dfe86b9c8 moteld[448]: {"level":"info","ts":1791225632.38456,"logger":"admin","msg":"admin endpoint started","address":"unix//run/motel/admin.sock","enforce_origin":false,"origins":[]}
+Oct 05 18:40:32 814dfe86b9c8 moteld[448]: {"level":"warn","ts":1791225632.384571,"logger":"admin","msg":"admin endpoint on open interface; host checking disabled","address":"unix//run/motel/admin.sock"}
+Oct 05 18:40:32 814dfe86b9c8 moteld[448]: {"level":"info","ts":1791225632.3846283,"logger":"http.auto_https","msg":"automatic HTTPS is completely disabled for server","server_name":"srv0"}
+Oct 05 18:40:32 814dfe86b9c8 moteld[448]: {"level":"info","ts":1791225632.3846319,"logger":"http.auto_https","msg":"automatic HTTPS is completely disabled for server","server_name":"srv1"}
+Oct 05 18:40:32 814dfe86b9c8 moteld[448]: {"level":"info","ts":1791225632.384927,"logger":"tls.cache.maintenance","msg":"started background certificate maintenance","cache":"0x71cdddb66900"}
+Oct 05 18:40:32 814dfe86b9c8 moteld[448]: {"level":"warn","ts":1791225632.3880804,"logger":"http","msg":"HTTP/2 skipped because it requires TLS","network":"tcp","addr":":8080"}
+Oct 05 18:40:32 814dfe86b9c8 moteld[448]: {"level":"warn","ts":1791225632.3880966,"logger":"http","msg":"HTTP/3 skipped because it requires TLS","network":"tcp","addr":":8080"}
+Oct 05 18:40:32 814dfe86b9c8 moteld[448]: {"level":"info","ts":1791225632.388099,"logger":"http.log","msg":"server running","name":"srv0","protocols":["h1","h2","h3"]}
+Oct 05 18:40:32 814dfe86b9c8 moteld[448]: {"level":"warn","ts":1791225632.3881228,"logger":"http","msg":"HTTP/2 skipped because it requires TLS","network":"tcp","addr":":8081"}
+Oct 05 18:40:32 814dfe86b9c8 moteld[448]: {"level":"warn","ts":1791225632.3881252,"logger":"http","msg":"HTTP/3 skipped because it requires TLS","network":"tcp","addr":":8081"}
+Oct 05 18:40:32 814dfe86b9c8 moteld[448]: {"level":"info","ts":1791225632.388127,"logger":"http.log","msg":"server running","name":"srv1","protocols":["h1","h2","h3"]}
+Oct 05 18:40:32 814dfe86b9c8 moteld[448]: {"level":"info","ts":1791225632.389465,"logger":"tls","msg":"storage cleaning happened too recently; skipping for now","storage":"FileStorage:/var/lib/motel/caddy","instance":"cf892519-57d6-4e43-a221-1e875ec0c46d","try_again":1791312032.3894644,"try_again_in":86399.999999833}
+Oct 05 18:40:32 814dfe86b9c8 moteld[448]: {"level":"info","ts":1791225632.389506,"logger":"tls","msg":"finished cleaning storage units"}
+Oct 05 18:40:32 814dfe86b9c8 moteld[448]: {"level":"info","ts":1791225632.4407804,"logger":"liveswap","msg":"liveswap started","apps":1,"app_names":["demo"]}
+Oct 05 18:40:32 814dfe86b9c8 moteld[448]: {"level":"info","ts":1791225632.4408836,"msg":"autosaved config (load with --resume flag)","file":"/var/lib/motel/caddy/autosave.json"}
+Oct 05 18:40:32 814dfe86b9c8 moteld[448]: {"level":"info","ts":1791225632.4409342,"msg":"serving initial configuration"}
+Oct 05 18:40:32 814dfe86b9c8 systemd[1]: Started moteld.service - motel — the Hot Sauce server, powered by Caddy.
+Oct 05 18:40:33 814dfe86b9c8 moteld[448]: {"level":"info","ts":1791225633.5149477,"logger":"http.handlers.liveswap_webhook","msg":"deploy authorized","app":"demo","via":"local:/etc/motel/deploy.key.pub","source":"url","remote":"127.0.0.1:41184"}
+Oct 05 18:40:33 814dfe86b9c8 moteld[448]: {"level":"info","ts":1791225633.5150125,"logger":"liveswap.demo","msg":"deploy started","version":"s1","artifact_host":"127.0.0.1:8200"}
+Oct 05 18:40:33 814dfe86b9c8 moteld[448]: {"level":"info","ts":1791225633.5168893,"logger":"liveswap.demo","msg":"deploy phase","phase":"downloading"}
+Oct 05 18:40:33 814dfe86b9c8 moteld[448]: {"level":"info","ts":1791225633.518129,"logger":"liveswap.demo","msg":"deploy phase","phase":"extracting"}
+Oct 05 18:40:33 814dfe86b9c8 moteld[448]: {"level":"info","ts":1791225633.519452,"logger":"liveswap.demo","msg":"artifact extracted","version":"s1","entries":2,"max_entries":100000,"bytes":11776,"max_bytes":1000000000}
+Oct 05 18:40:33 814dfe86b9c8 moteld[448]: {"level":"info","ts":1791225633.5195973,"logger":"liveswap.demo","msg":"deploy phase","phase":"preparing"}
+Oct 05 18:40:33 814dfe86b9c8 moteld[448]: {"level":"info","ts":1791225633.5196738,"logger":"liveswap.demo","msg":"deploy phase","phase":"starting"}
+Oct 05 18:40:33 814dfe86b9c8 moteld[448]: {"level":"info","ts":1791225633.554904,"logger":"liveswap.demo","msg":"instance started","unit":"motel-demo.s1.4022fef70851c542.service","pid":505}
+Oct 05 18:40:33 814dfe86b9c8 moteld[448]: {"level":"info","ts":1791225633.5549374,"logger":"liveswap.demo","msg":"deploy phase","phase":"soaking"}
+Oct 05 18:40:34 814dfe86b9c8 moteld[448]: {"level":"info","ts":1791225634.816466,"logger":"liveswap.demo","msg":"deploy phase","phase":"promoting"}
+Oct 05 18:40:34 814dfe86b9c8 moteld[448]: {"level":"info","ts":1791225634.819222,"logger":"liveswap.demo","msg":"deploy succeeded","version":"s1"}
+Oct 05 18:40:36 814dfe86b9c8 systemd[1]: moteld.service: Sent signal SIGKILL to main process 448 (moteld) on client request.
+Oct 05 18:40:36 814dfe86b9c8 systemd[1]: moteld.service: Main process exited, code=killed, status=9/KILL
+Oct 05 18:40:36 814dfe86b9c8 systemd[1]: moteld.service: Failed with result 'signal'.
+Oct 05 18:40:37 814dfe86b9c8 systemd[1]: moteld.service: Scheduled restart job, restart counter is at 1.
+Oct 05 18:40:37 814dfe86b9c8 systemd[1]: Starting moteld.service - motel — the Hot Sauce server, powered by Caddy...
+Oct 05 18:40:37 814dfe86b9c8 moteld[789]: {"level":"info","ts":1791225637.2867146,"msg":"using config from file","file":"/etc/motel/Caddyfile"}
+Oct 05 18:40:37 814dfe86b9c8 moteld[789]: {"level":"info","ts":1791225637.287624,"msg":"adapted config to JSON","adapter":"caddyfile"}
+Oct 05 18:40:37 814dfe86b9c8 moteld[789]: {"level":"info","ts":1791225637.2889934,"msg":"maxprocs: Leaving GOMAXPROCS=6: CPU quota undefined"}
+Oct 05 18:40:37 814dfe86b9c8 moteld[789]: {"level":"info","ts":1791225637.2890127,"msg":"GOMEMLIMIT is updated","GOMEMLIMIT":7488025804,"previous":9223372036854775807}
+Oct 05 18:40:37 814dfe86b9c8 moteld[789]: {"level":"info","ts":1791225637.289016,"msg":"using config from file","file":"/etc/motel/Caddyfile"}
+Oct 05 18:40:37 814dfe86b9c8 moteld[789]: {"level":"info","ts":1791225637.289018,"msg":"adapted config to JSON","adapter":"caddyfile"}
+Oct 05 18:40:37 814dfe86b9c8 moteld[789]: {"level":"info","ts":1791225637.2893214,"logger":"admin","msg":"admin endpoint started","address":"unix//run/motel/admin.sock","enforce_origin":false,"origins":[]}
+Oct 05 18:40:37 814dfe86b9c8 moteld[789]: {"level":"warn","ts":1791225637.28933,"logger":"admin","msg":"admin endpoint on open interface; host checking disabled","address":"unix//run/motel/admin.sock"}
+Oct 05 18:40:37 814dfe86b9c8 moteld[789]: {"level":"info","ts":1791225637.289454,"logger":"http.auto_https","msg":"automatic HTTPS is completely disabled for server","server_name":"srv0"}
+Oct 05 18:40:37 814dfe86b9c8 moteld[789]: {"level":"info","ts":1791225637.289467,"logger":"http.auto_https","msg":"automatic HTTPS is completely disabled for server","server_name":"srv1"}
+Oct 05 18:40:37 814dfe86b9c8 moteld[789]: {"level":"info","ts":1791225637.2895825,"logger":"tls.cache.maintenance","msg":"started background certificate maintenance","cache":"0x61fc64cd3900"}
+Oct 05 18:40:37 814dfe86b9c8 moteld[789]: {"level":"info","ts":1791225637.3445528,"logger":"liveswap","msg":"liveswap started","apps":1,"app_names":["demo"]}
+Oct 05 18:40:37 814dfe86b9c8 moteld[789]: {"level":"info","ts":1791225637.347253,"logger":"liveswap.demo","msg":"reattached to running instance","version":"s1"}
+Oct 05 18:40:37 814dfe86b9c8 moteld[789]: {"level":"warn","ts":1791225637.353188,"logger":"http","msg":"HTTP/2 skipped because it requires TLS","network":"tcp","addr":":8081"}
+Oct 05 18:40:37 814dfe86b9c8 moteld[789]: {"level":"warn","ts":1791225637.3532062,"logger":"http","msg":"HTTP/3 skipped because it requires TLS","network":"tcp","addr":":8081"}
+Oct 05 18:40:37 814dfe86b9c8 moteld[789]: {"level":"info","ts":1791225637.3532138,"logger":"http.log","msg":"server running","name":"srv1","protocols":["h1","h2","h3"]}
+Oct 05 18:40:37 814dfe86b9c8 moteld[789]: {"level":"warn","ts":1791225637.353269,"logger":"http","msg":"HTTP/2 skipped because it requires TLS","network":"tcp","addr":":8080"}
+Oct 05 18:40:37 814dfe86b9c8 moteld[789]: {"level":"warn","ts":1791225637.3532732,"logger":"http","msg":"HTTP/3 skipped because it requires TLS","network":"tcp","addr":":8080"}
+Oct 05 18:40:37 814dfe86b9c8 moteld[789]: {"level":"info","ts":1791225637.3532748,"logger":"http.log","msg":"server running","name":"srv0","protocols":["h1","h2","h3"]}
+Oct 05 18:40:37 814dfe86b9c8 moteld[789]: {"level":"info","ts":1791225637.353496,"msg":"autosaved config (load with --resume flag)","file":"/var/lib/motel/caddy/autosave.json"}
+Oct 05 18:40:37 814dfe86b9c8 moteld[789]: {"level":"info","ts":1791225637.353556,"msg":"serving initial configuration"}
+Oct 05 18:40:37 814dfe86b9c8 systemd[1]: Started moteld.service - motel — the Hot Sauce server, powered by Caddy.
+Oct 05 18:40:37 814dfe86b9c8 moteld[789]: {"level":"info","ts":1791225637.3573763,"logger":"tls","msg":"storage cleaning happened too recently; skipping for now","storage":"FileStorage:/var/lib/motel/caddy","instance":"cf892519-57d6-4e43-a221-1e875ec0c46d","try_again":1791312037.3573751,"try_again_in":86399.999999542}
+Oct 05 18:40:37 814dfe86b9c8 moteld[789]: {"level":"info","ts":1791225637.3574588,"logger":"tls","msg":"finished cleaning storage units"}
 make: *** [install-test] Error 1

@@ -32,7 +32,7 @@ type viewCase struct {
 //   - gapped: 10 responses a push throughout, a 20-minute gap in the
 //     pushes over the window's start: increase's 990, the first push
 //     after the gap dropped (increase_pure: 4990, every count since
-//     motel began).
+//     moteld began).
 //   - old: the metrics line first loaded on a box whose observer had
 //     counted 7200, then 10 a push: 600, at the day 12000 (increase_pure:
 //     7800, 19200).
@@ -45,15 +45,15 @@ type viewCase struct {
 func TestMetricsViewCountsOverTheStore(t *testing.T) {
 	tool := vmTool(t, "vmalert-tool")
 	req := func(app string) string {
-		return `motel_app_requests_total{app="` + app + `",release="v1",class="2xx",job="motel"}`
+		return `motel_app_requests_total{app="` + app + `",release="v1",class="2xx",job="moteld"}`
 	}
 	ok2xx := func(v float64) []string { return []string{fmt.Sprintf(`{labels: '{class="2xx"}', value: %g}`, v)} }
 	hist := func(app, values string, counts [3]int) map[string]string {
 		m := map[string]string{}
 		for i, le := range []string{"0.1", "1", "+Inf"} {
-			m[`motel_app_response_seconds_bucket{app="`+app+`",release="v1",le="`+le+`",job="motel"}`] = fmt.Sprintf(values, counts[i])
+			m[`motel_app_response_seconds_bucket{app="`+app+`",release="v1",le="`+le+`",job="moteld"}`] = fmt.Sprintf(values, counts[i])
 		}
-		m[`motel_app_response_seconds_count{app="`+app+`",release="v1",job="motel"}`] = fmt.Sprintf(values, counts[2])
+		m[`motel_app_response_seconds_count{app="`+app+`",release="v1",job="moteld"}`] = fmt.Sprintf(values, counts[2])
 		return m
 	}
 	fresh := func(app string, span time.Duration, eval string, pushes ...string) viewCase {
@@ -64,8 +64,8 @@ func TestMetricsViewCountsOverTheStore(t *testing.T) {
 				"cache":   {`{labels: '{result="miss"}', value: 21}`, `{labels: '{result="hit"}', value: 1}`},
 			}}
 		c.series[req(app)] = "_x620 22x2980"
-		c.series[`motel_app_cache_responses_total{app="`+app+`",release="v1",result="miss",job="motel"}`] = "_x620 21x2980"
-		c.series[`motel_app_cache_responses_total{app="`+app+`",release="v1",result="hit",job="motel"}`] = "_x620 1x2980"
+		c.series[`motel_app_cache_responses_total{app="`+app+`",release="v1",result="miss",job="moteld"}`] = "_x620 21x2980"
+		c.series[`motel_app_cache_responses_total{app="`+app+`",release="v1",result="hit",job="moteld"}`] = "_x620 1x2980"
 		return c
 	}
 	cases := []viewCase{
@@ -129,9 +129,9 @@ func viewUnittest(t *testing.T, tool, dir string, cases []viewCase, qs func(stri
 	for _, c := range cases {
 		b.WriteString("  - interval: 30s\n    input_series:\n")
 		for i, p := range c.pushes {
-			sel := `process_start_time_seconds{job="motel"}`
+			sel := `process_start_time_seconds{job="moteld"}`
 			if i > 0 {
-				sel = fmt.Sprintf(`process_start_time_seconds{job="motel",instance="%d"}`, i)
+				sel = fmt.Sprintf(`process_start_time_seconds{job="moteld",instance="%d"}`, i)
 			}
 			fmt.Fprintf(&b, "      - series: '%s'\n        values: '%s'\n", sel, p)
 		}
@@ -175,13 +175,13 @@ evaluation_interval: 30s
 tests:
   - interval: 30s
     input_series:
-      - series: 'process_start_time_seconds{job="motel"}'
+      - series: 'process_start_time_seconds{job="moteld"}'
         values: '1x60'
-      - series: 'motel_app_cpu_seconds_total{app="deployed",unit="app-deployed-u1.service",job="motel"}'
+      - series: 'motel_app_cpu_seconds_total{app="deployed",unit="app-deployed-u1.service",job="moteld"}'
         values: '0+15x20'
-      - series: 'motel_app_cpu_seconds_total{app="deployed",unit="app-deployed-u2.service",job="motel"}'
+      - series: 'motel_app_cpu_seconds_total{app="deployed",unit="app-deployed-u2.service",job="moteld"}'
         values: '_x21 15+15x38'
-      - series: 'motel_app_cpu_seconds_total{app="stopped",unit="app-stopped-s1.service",job="motel"}'
+      - series: 'motel_app_cpu_seconds_total{app="stopped",unit="app-stopped-s1.service",job="moteld"}'
         values: '0+30x20'
     metricsql_expr_test:
 `

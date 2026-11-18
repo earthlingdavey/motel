@@ -6,11 +6,11 @@
 set -eu
 mount --make-rshared /
 useradd --system other1; useradd --system other2; useradd --system other3
-cd /root && cp /rc/motel_0.3.0.rc1_arm64.deb .
+cd /root && cp /rc/moteld_0.3.0.rc1_arm64.deb .
 apt-get update -qq
-apt-get install -y ./motel_0.3.0.rc1_arm64.deb >/dev/null 2>&1
-systemctl enable --now motel >/dev/null 2>&1
-motel deploy-keygen --out /etc/motel/deploy.key >/dev/null
+apt-get install -y ./moteld_0.3.0.rc1_arm64.deb >/dev/null 2>&1
+systemctl enable --now moteld >/dev/null 2>&1
+moteld deploy-keygen --out /etc/motel/deploy.key >/dev/null
 cat >/etc/motel/Caddyfile <<'EOF'
 {
 	admin unix//run/motel/admin.sock
@@ -41,7 +41,7 @@ cat >/etc/motel/Caddyfile <<'EOF'
 	liveswap_webhook
 }
 EOF
-systemctl reload motel
+systemctl reload moteld
 adduser --disabled-password --comment "" bob >/dev/null; usermod -aG sudo,adm bob
 echo 'bob ALL=(ALL:ALL) NOPASSWD: ALL' >/etc/sudoers.d/bob && chmod 0440 /etc/sudoers.d/bob
-echo "rebuilt box ready: $(dpkg -s motel | grep '^Version'), motel uid $(id -u motel) (the first box's: 996); /var/lib/liveswap holds: $(ls /var/lib/liveswap | tr '\n' ' ')"
+echo "rebuilt box ready: $(dpkg -s moteld | grep '^Version'), motel uid $(id -u motel) (the first box's: 996); /var/lib/liveswap holds: $(ls /var/lib/liveswap | tr '\n' ' ')"

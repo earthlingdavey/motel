@@ -23,7 +23,7 @@ import (
 // under the motel user's own service manager (user@<uid>.service,
 // kept alive by lingering). That manager, not motel, is the parent
 // of every app: cgroups make "stop" mean the whole process tree, the
-// journal captures stdout/stderr, and units keep running while motel
+// journal captures stdout/stderr, and units keep running while moteld
 // itself restarts or upgrades — Reattach adopts them afterwards.
 //
 // Invariants (the contract app.go and watchdog.go rely on):
@@ -59,7 +59,7 @@ import (
 //     and every start sweeps the units of apps the config no longer
 //     names (sweepUnknownApps), so a unit cannot outlive its app
 //     definition either. (Removing the whole liveswap block and then
-//     restarting motel is the one path that leaves units running:
+//     restarting moteld is the one path that leaves units running:
 //     on exit they are kept for reattach by design, and no liveswap
 //     code runs afterwards to judge them — documented for operators.)
 //  8. A unit's environment is exactly the env the caller built
@@ -1138,7 +1138,7 @@ func (r *systemdRunner) Stop(h handle, grace time.Duration) error {
 
 // Reattach adopts the unit recorded in state.json if the manager still
 // runs it — and runs it sandboxed: a running unit without the
-// namespaces is refused, since nothing this motel starts lacks them.
+// namespaces is refused, since nothing this moteld starts lacks them.
 // Whatever happened to it while motel was away is logged; a failed
 // unit is reset so it cannot linger, and the caller relaunches.
 // A unit whose state cannot be read is an error: the caller must not
@@ -1156,7 +1156,7 @@ func (r *systemdRunner) Reattach(st handleState) (handle, bool, error) {
 	if us.running() {
 		if !us.Sandboxed {
 			// Every unit motel starts is sandboxed, so this one was
-			// not started by this motel: a development build that
+			// not started by this moteld: a development build that
 			// still had `sandbox off`, say. It is running an app with
 			// no sandbox, which nothing else would ever report. Not
 			// adopted: the caller's relaunch sweeps this app's units
@@ -1200,7 +1200,7 @@ func (r *systemdRunner) Reattach(st handleState) (handle, bool, error) {
 		h.pid.Store(int64(us.MainPID))
 		h.setArgv(us.ExecStart)
 		// The caps the unit was started with, which a config changed
-		// while motel was down may no longer be: syncCaps (app.go)
+		// while moteld was down may no longer be: syncCaps (app.go)
 		// compares them with the spec's once the instance is current.
 		caps := r.unitCaps(ctx, us)
 		r.setCapsState(h, &caps, &us.ControlGroup, nil)
@@ -1208,7 +1208,7 @@ func (r *systemdRunner) Reattach(st handleState) (handle, bool, error) {
 		return h, true, nil
 	}
 	if us.ActiveState == "failed" {
-		r.log().Warn("recorded instance died while motel was down", zap.String("unit", st.Unit), zap.String("exit", us.exitString()), zap.String("result", us.Result))
+		r.log().Warn("recorded instance died while moteld was down", zap.String("unit", st.Unit), zap.String("exit", us.exitString()), zap.String("result", us.Result))
 		_ = r.resetFailed(ctx, st.Unit) // Sweep reports it if it stays loaded
 	} else {
 		r.log().Info("recorded unit is no longer running", zap.String("unit", st.Unit), zap.String("load_state", us.LoadState), zap.String("active_state", us.ActiveState))

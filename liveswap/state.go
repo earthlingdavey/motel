@@ -278,7 +278,7 @@ const (
 )
 
 // removeStagedArtifacts removes the staged artifacts left in tmp/. The
-// deploy that stages one removes it as it ends; one a motel that
+// deploy that stages one removes it as it ends; one a moteld that
 // stopped or died mid-transfer left is nobody's, and tmp/ is in no
 // app's view, so nothing else would, and the next upload could fail
 // on the disk it holds. Called at recovery's settle, under deployMu,

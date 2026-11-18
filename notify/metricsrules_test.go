@@ -342,9 +342,9 @@ tests:
       # channel's failure, so no rule names pager.
       - series: 'alertmanager_notifications_failed_total{integration="webhook",receiver_name="event-critical-pager",reason="contextCanceled",job="alertmanager"}'
         values: '0 0 1 1 1'
-      - series: 'motel_app_memory_bytes{app="blog",job="motel"}'
+      - series: 'motel_app_memory_bytes{app="blog",job="moteld"}'
         values: '95x20'
-      - series: 'motel_app_memory_max_bytes{app="blog",job="motel"}'
+      - series: 'motel_app_memory_max_bytes{app="blog",job="moteld"}'
         values: '100x20'
     alert_rule_test:
       - eval_time: 4m

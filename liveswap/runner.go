@@ -11,7 +11,7 @@ import (
 // pipeline in app.go is testable with a fake. The one production
 // implementation is systemdRunner (runner_systemd.go): every instance
 // is a transient systemd service unit under the motel user's own
-// service manager, which is what lets apps outlive motel restarts.
+// service manager, which is what lets apps outlive moteld restarts.
 // exitError is the runner's report of a unit that ran and failed: how
 // its process ended, in which unit, with what job, and the pid the
 // manager recorded for that process (0 where it recorded none). The
@@ -84,7 +84,7 @@ type runner interface {
 	SetCaps(h handle, caps resourceCaps) error
 
 	// Reattach tries to re-adopt an instance from persisted state after
-	// a motel restart: the unit named in st is still running under
+	// a moteld restart: the unit named in st is still running under
 	// the service manager. (nil, false, nil) means it was observed not
 	// running and the caller may launch afresh; a non-nil error means
 	// its state could not be read, and the caller must NOT launch (the
@@ -109,8 +109,8 @@ type runner interface {
 
 // migrationRunningError is a sweep that found a pre_start still
 // running — an earlier deploy's, since a deploy in flight holds the
-// lock every sweeping caller takes: one a motel stop cut short, or
-// one whose start and stop this motel could not observe. Stopping it would
+// lock every sweeping caller takes: one a moteld stop cut short, or
+// one whose start and stop this moteld could not observe. Stopping it would
 // half-apply a migration, so the sweep leaves it to end on its own
 // clock (TimeoutStartSec=) and reports itself unconfirmed, naming it.
 type migrationRunningError struct {
@@ -153,7 +153,7 @@ type startSpec struct {
 	env     []string      // complete environment, KEY=VALUE form
 	grace   time.Duration // SIGTERM→SIGKILL budget applied when the instance is stopped
 	// startTimeout bounds a pre_start on the unit itself
-	// (TimeoutStartSec=), so it still ends on time when the motel
+	// (TimeoutStartSec=), so it still ends on time when the moteld
 	// that started it has stopped; 0 sets none.
 	startTimeout time.Duration
 	// sandbox is the per-unit sandbox to apply. Every unit has one;
@@ -227,7 +227,7 @@ type handleState struct {
 	Command   []string  `json:"-"`
 	StartedAt time.Time `json:"started_at,omitempty"`
 	// Unit is the transient systemd unit running the instance; it is
-	// what Reattach looks up after a motel restart.
+	// what Reattach looks up after a moteld restart.
 	Unit string `json:"unit,omitempty"`
 	// Caps is what the unit is bounded to, as the manager last applied
 	// them: the start's, a SetCaps's, or the values read at reattach.

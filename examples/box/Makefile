@@ -1,12 +1,12 @@
 # The boxes' config, checked here and applied by the workflow on main.
 # See README.md.
-MOTEL ?= motel
-export MOTEL
+MOTELD ?= moteld
+export MOTELD
 
 .PHONY: check signer wip secret secrets secret-show rekey secrets-import
 
 # Every box here is one motel will take, and a line for each. Needs a
-# motel binary: Linux only (the release tarball's, as
+# moteld binary: Linux only (the release tarball's, as
 # .github/workflows/apply.yml installs it). On a Mac, the workflow runs
 # it on every push and pull request.
 check:
@@ -27,7 +27,7 @@ wip:
 # The apps' secrets, encrypted here with age to the box and its readers
 # (README.md, Secrets; bin/secrets says more). Needs age.
 #   make secret APP=example VAR=DATABASE_URL [BOX=deploy.example.com]
-#     a box's first secret also takes BOX_KEY=$(ssh root@<your box> motel box key)
+#     a box's first secret also takes BOX_KEY=$(ssh root@<your box> moteld box key)
 #   make secrets [BOX=…]
 #   make secret-show APP=example VAR=DATABASE_URL [IDENTITY=~/.ssh/id_ed25519]
 #   make rekey [BOX=…] [BOX_KEY=…]

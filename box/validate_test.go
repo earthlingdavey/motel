@@ -14,23 +14,23 @@ import (
 // stubHost is the box_webhook host the stub tests validate for.
 const stubHost = "deploy.example.com"
 
-// reachableAdaptation is what the stub `motel adapt` prints unless a
+// reachableAdaptation is what the stub `moteld adapt` prints unless a
 // test says otherwise: one server, the box site routing / to
 // box_webhook.
 const reachableAdaptation = `{"apps":{"http":{"servers":{"srv0":{"routes":[{"match":[{"host":["deploy.example.com"]}],"handle":[{"handler":"subroute","routes":[{"handle":[{"handler":"box_webhook"}]}]}],"terminal":true}]}}}}}`
 
-// stubValidator is the real child runner over stub programs: motel
-// is the body of a /bin/sh script standing for `motel validate`,
-// backup, unless "", for `motel-backup`; `motel adapt` prints
+// stubValidator is the real child runner over stub programs: moteld
+// is the body of a /bin/sh script standing for `moteld validate`,
+// backup, unless "", for `motel-backup`; `moteld adapt` prints
 // reachableAdaptation. Each script records its arguments, one line per
 // run, and the staged file beside itself.
-func stubValidator(t *testing.T, motel, backup string, env ...string) (*childValidator, string) {
+func stubValidator(t *testing.T, moteld, backup string, env ...string) (*childValidator, string) {
 	t.Helper()
-	return stubChildren(t, motel, "printf '%s' '"+reachableAdaptation+"'; exit 0", backup, env...)
+	return stubChildren(t, moteld, "printf '%s' '"+reachableAdaptation+"'; exit 0", backup, env...)
 }
 
-// stubAdapt is stubValidator with `motel validate` passing and adapt
-// the body of the script standing for `motel adapt`.
+// stubAdapt is stubValidator with `moteld validate` passing and adapt
+// the body of the script standing for `moteld adapt`.
 func stubAdapt(t *testing.T, adapt string, env ...string) (*childValidator, string) {
 	t.Helper()
 	return stubChildren(t, "exit 0", adapt, "", env...)
@@ -42,12 +42,12 @@ func stubChildren(t *testing.T, validate, adapt, backup string, env ...string) (
 	stage := filepath.Join(dir, "stage")
 	must(t, os.Mkdir(stage, 0o700))
 	// One program answers both subcommands, as the real one does.
-	motel := "case \"$1\" in adapt)\n" + adapt + "\n;; esac\n" + validate
+	moteld := "case \"$1\" in adapt)\n" + adapt + "\n;; esac\n" + validate
 	// The box's own deadline: a child a test means to finish must not
 	// race the machine's load (#289). Tests of the deadline set their
 	// own.
 	c := &childValidator{
-		stage: stage, motel: script(t, dir, "motel", motel), backup: filepath.Join(dir, "absent"),
+		stage: stage, moteld: script(t, dir, "moteld", moteld), backup: filepath.Join(dir, "absent"),
 		env: env, timeout: validateTimeout, redactor: liveswap.NewRedactor(secretCandidates(env), nil),
 	}
 	if backup != "" {
@@ -75,12 +75,12 @@ func TestValidateChild(t *testing.T) {
 		if msg != "" || err != nil {
 			t.Fatalf("msg %q err %v", msg, err)
 		}
-		args, _ := os.ReadFile(filepath.Join(dir, "motel.args"))
+		args, _ := os.ReadFile(filepath.Join(dir, "moteld.args"))
 		staged := filepath.Join(c.stage, stagedConfig("0123456789abcdef0123456789abcdef"))
 		if strings.TrimSpace(string(args)) != "validate --adapter caddyfile --config "+staged+"\nadapt --adapter caddyfile --config "+staged {
 			t.Fatalf("args %q", args)
 		}
-		if got, _ := os.ReadFile(filepath.Join(dir, "motel.args.file")); string(got) != string(file) {
+		if got, _ := os.ReadFile(filepath.Join(dir, "moteld.args.file")); string(got) != string(file) {
 			t.Fatalf("the child read %q", got)
 		}
 		if exists(staged) {
@@ -107,7 +107,7 @@ func TestValidateChild(t *testing.T) {
 	t.Run("refuses with the error line", func(t *testing.T) {
 		c, _ := stubValidator(t, `echo '{"level":"info","msg":"using config"}' >&2; echo 'Error: adapting config using caddyfile: Caddyfile:2: unrecognized directive: respnd' >&2; exit 1`, "")
 		msg, err := c.validate(context.Background(), randomID(t), file, stubHost, nil, nil)
-		if err != nil || msg != "motel validate: adapting config using caddyfile: Caddyfile:2: unrecognized directive: respnd" {
+		if err != nil || msg != "moteld validate: adapting config using caddyfile: Caddyfile:2: unrecognized directive: respnd" {
 			t.Fatalf("msg %q err %v", msg, err)
 		}
 	})
@@ -120,7 +120,7 @@ func TestValidateChild(t *testing.T) {
 			must(t, os.WriteFile(out, []byte(`{"level":"info","msg":"using config from file"}`+"\n"+line+"\n"), 0o600))
 			c, _ := stubValidator(t, "cat '"+out+"' >&2; exit 1", "")
 			msg, err := c.validate(context.Background(), randomID(t), file, stubHost, nil, nil)
-			if err != nil || !strings.HasPrefix(msg, "motel validate: ...") || !strings.HasSuffix(msg, caddyReason) || len(msg) > len("motel validate: ...")+300 {
+			if err != nil || !strings.HasPrefix(msg, "moteld validate: ...") || !strings.HasSuffix(msg, caddyReason) || len(msg) > len("moteld validate: ...")+300 {
 				t.Fatalf("%s: msg %q err %v", name, msg, err)
 			}
 		}
@@ -135,7 +135,7 @@ func TestValidateChild(t *testing.T) {
 		must(t, os.WriteFile(out, []byte(line+"\n"), 0o600))
 		c, _ := stubValidator(t, "cat '"+out+"' >&2; exit 1", "")
 		msg, err := c.validate(context.Background(), randomID(t), file, stubHost, nil, nil)
-		if err != nil || !strings.HasPrefix(msg, "motel validate: "+why) || !strings.HasSuffix(msg, "...") {
+		if err != nil || !strings.HasPrefix(msg, "moteld validate: "+why) || !strings.HasSuffix(msg, "...") {
 			t.Fatalf("msg %q err %v", msg, err)
 		}
 		// The end is chosen from the line as the child wrote it: a known
@@ -152,7 +152,7 @@ func TestValidateChild(t *testing.T) {
 		must(t, os.WriteFile(out, []byte(caddyLine("provision liveswap: app x: listen "+secret+" is not a number")+"\n"), 0o600))
 		c, _ := stubValidator(t, "cat '"+out+"'; exit 1", "", "DB_PASS="+secret)
 		msg, err := c.validate(context.Background(), randomID(t), file, stubHost, nil, nil)
-		if err != nil || strings.Contains(msg, secret) || !strings.HasPrefix(msg, "motel validate: provision liveswap: app x: listen ") {
+		if err != nil || strings.Contains(msg, secret) || !strings.HasPrefix(msg, "moteld validate: provision liveswap: app x: listen ") {
 			t.Fatalf("msg %q err %v", msg, err)
 		}
 	})
@@ -165,28 +165,28 @@ func TestValidateChild(t *testing.T) {
 		c, _ := stubValidator(t, `echo "Error: /var/lib/motel-box/stage/x.Caddyfile:2: parsing port: $DB_PASS is not a number"; exit 1`, "",
 			"DB_PASS="+secret, "HOME=/var/lib/motel", "USER=motel", "LOGNAME=motel")
 		msg, err := c.validate(context.Background(), randomID(t), file, stubHost, nil, nil)
-		if err != nil || strings.Contains(msg, secret) || !strings.HasPrefix(msg, "motel validate: /var/lib/motel-box/stage/x.Caddyfile:2: parsing port: ") {
+		if err != nil || strings.Contains(msg, secret) || !strings.HasPrefix(msg, "moteld validate: /var/lib/motel-box/stage/x.Caddyfile:2: parsing port: ") {
 			t.Fatalf("msg %q err %v", msg, err)
 		}
 	})
 	t.Run("bounds the line", func(t *testing.T) {
 		c, _ := stubValidator(t, `printf 'Error: '; head -c 2000 /dev/zero | tr '\0' 'x'; echo; exit 1`, "")
 		msg, _ := c.validate(context.Background(), randomID(t), file, stubHost, nil, nil)
-		if len(msg) > len("motel validate: ")+300+len("...") { // proof.Bound's cap
+		if len(msg) > len("moteld validate: ")+300+len("...") { // proof.Bound's cap
 			t.Fatalf("%d bytes", len(msg))
 		}
 	})
 	t.Run("keeps the tail of a long output", func(t *testing.T) {
 		c, _ := stubValidator(t, `head -c 100000 /dev/zero | tr '\0' 'y'; echo; echo 'Error: the end'; exit 1`, "")
 		msg, _ := c.validate(context.Background(), randomID(t), file, stubHost, nil, nil)
-		if msg != "motel validate: the end" {
+		if msg != "moteld validate: the end" {
 			t.Fatalf("msg %q", msg)
 		}
 	})
 	t.Run("no output", func(t *testing.T) {
 		c, _ := stubValidator(t, "exit 3", "")
 		msg, err := c.validate(context.Background(), randomID(t), file, stubHost, nil, nil)
-		if err != nil || msg != "motel validate: exit status 3" {
+		if err != nil || msg != "moteld validate: exit status 3" {
 			t.Fatalf("msg %q err %v", msg, err)
 		}
 	})
@@ -195,7 +195,7 @@ func TestValidateChild(t *testing.T) {
 		// the deadline. The answer is the child's line, not a timeout.
 		c, _ := stubValidator(t, "sleep 60 & echo 'Error: said why'; exit 1", "")
 		c.timeout = 800 * time.Millisecond // the shell's exit well inside it, WaitDelay (1 s) past it
-		if msg, err := c.validate(context.Background(), randomID(t), file, stubHost, nil, nil); msg != "motel validate: said why" || err != nil {
+		if msg, err := c.validate(context.Background(), randomID(t), file, stubHost, nil, nil); msg != "moteld validate: said why" || err != nil {
 			t.Fatalf("msg %q err %v", msg, err)
 		}
 	})
@@ -204,7 +204,7 @@ func TestValidateChild(t *testing.T) {
 		c.timeout = 200 * time.Millisecond
 		start := time.Now()
 		msg, err := c.validate(context.Background(), randomID(t), file, stubHost, nil, nil)
-		if err != nil || msg != "motel validate: did not finish within 200ms" || time.Since(start) > 10*time.Second {
+		if err != nil || msg != "moteld validate: did not finish within 200ms" || time.Since(start) > 10*time.Second {
 			t.Fatalf("msg %q err %v after %s", msg, err, time.Since(start))
 		}
 	})
@@ -214,7 +214,7 @@ func TestValidateChild(t *testing.T) {
 		c, _ := stubValidator(t, "sleep 60 & echo 'Error: gone'; exit 1", "")
 		start := time.Now()
 		msg, err := c.validate(context.Background(), randomID(t), file, stubHost, nil, nil)
-		if err != nil || msg != "motel validate: gone" || time.Since(start) > 10*time.Second {
+		if err != nil || msg != "moteld validate: gone" || time.Since(start) > 10*time.Second {
 			t.Fatalf("msg %q err %v after %s", msg, err, time.Since(start))
 		}
 	})
@@ -232,7 +232,7 @@ func TestValidateChild(t *testing.T) {
 	})
 	t.Run("a program that cannot start is the box's", func(t *testing.T) {
 		c, _ := stubValidator(t, "exit 0", "")
-		c.motel = filepath.Join(t.TempDir(), "missing")
+		c.moteld = filepath.Join(t.TempDir(), "missing")
 		if msg, err := c.validate(context.Background(), randomID(t), file, stubHost, nil, nil); msg != "" || err == nil {
 			t.Fatalf("msg %q err %v", msg, err)
 		}
@@ -277,7 +277,7 @@ func TestValidateBackup(t *testing.T) {
 	})
 	t.Run("not after motel refused", func(t *testing.T) {
 		c, dir := stubValidator(t, "echo 'Error: no'; exit 1", "exit 0")
-		if msg, _ := c.validate(context.Background(), randomID(t), file, stubHost, nil, nil); msg != "motel validate: no" {
+		if msg, _ := c.validate(context.Background(), randomID(t), file, stubHost, nil, nil); msg != "moteld validate: no" {
 			t.Fatalf("msg %q", msg)
 		}
 		if exists(filepath.Join(dir, "motel-backup.args")) {
@@ -291,7 +291,7 @@ func TestValidateBackup(t *testing.T) {
 		if msg, err := c.validate(context.Background(), randomID(t), file, stubHost, nil, nil); msg != "" || err != nil {
 			t.Fatalf("EACCES: msg %q err %v", msg, err)
 		}
-		c.backup = filepath.Join(dir, "motel.args", "x") // a component that is not a directory
+		c.backup = filepath.Join(dir, "moteld.args", "x") // a component that is not a directory
 		if msg, err := c.validate(context.Background(), randomID(t), file, stubHost, nil, nil); msg != "" || err != nil {
 			t.Fatalf("ENOTDIR: msg %q err %v", msg, err)
 		}

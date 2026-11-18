@@ -36,7 +36,7 @@
 // sqlite path, in the SQL on `sqlite3`'s argv (dump.execute, RestoreOver).
 // validate's argument is a path this process opens; it starts no unit.)
 //
-// It does not link Caddy, and motel does not run it: the two share a
+// It does not link Caddy, and moteld does not run it: the two share a
 // declaration format (liveswap/backupdecl) and nothing else.
 package main
 
@@ -518,7 +518,7 @@ func printStatus(w io.Writer, r status.Result, asJSON bool) error {
 // the same to the live file, as another user, inside a view that holds
 // the config directory and nothing else. What that view and that user
 // would make of an import it cannot say from here, where the whole
-// filesystem is in view: that is `motel validate`'s, which has the
+// filesystem is in view: that is `moteld validate`'s, which has the
 // adapter's own word on where each backup block comes from.
 func validate(ctx context.Context, file string) error {
 	abs, err := filepath.Abs(file)

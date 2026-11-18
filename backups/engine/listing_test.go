@@ -301,7 +301,7 @@ func TestAUnitNameIsReadBack(t *testing.T) {
 			t.Errorf("%s: read back as %q of %q (%v)", x.name(tc.role, tc.app), role, app, ok)
 		}
 	}
-	for _, other := range []string{"motel.service", "motel-backup.service", "motel_backup_test_x.service", "motel_backup_upload_Blog_0123456789ab.service", "motel_backup_upload_blog_0123456789ab.timer"} {
+	for _, other := range []string{"moteld.service", "motel-backup.service", "motel_backup_test_x.service", "motel_backup_upload_Blog_0123456789ab.service", "motel_backup_upload_blog_0123456789ab.timer"} {
 		if role, app, ok := ParseUnitName(other); ok {
 			t.Errorf("%s was read as %q of %q", other, role, app)
 		}

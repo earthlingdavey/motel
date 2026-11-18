@@ -68,20 +68,20 @@ box {
   `trusted_proxies_unix`) to it **and** `trusted_proxies_strict` in
   the global `servers` options: without `trusted_proxies_strict`
   Caddy takes the address from the left of `X-Forwarded-For`, which
-  the client writes, so `motel validate` refuses a `from` list and the
+  the client writes, so `moteld validate` refuses a `from` list and the
   box matches no list for a forwarded request. With it, the list holds
   only if your proxy sets the address header itself (also any other
   you name in `client_ip_headers`, such as `X-Real-IP`) rather than
   passing on the client's; and on a listener with `proxy_protocol`,
   the address is whatever the PROXY header says, so it is only as good
-  as that listener's `allow` list. `motel validate` warns of both.
+  as that listener's `allow` list. `moteld validate` warns of both.
 
 Check the file, then push it as any change to the box (a signed
 commit):
 
 ```sh
-motel validate --config Caddyfile
-motel box describe Caddyfile
+moteld validate --config Caddyfile
+moteld box describe Caddyfile
 ```
 
 `describe` prints a `person` line per key with its fingerprint, which
@@ -107,8 +107,8 @@ journal's line at each load says why when it is not). For people to
 reach more than the box's status, that same site needs
 `liveswap_webhook` too, as the template's has. Edit
 `/etc/motel/Caddyfile` as root,
-`motel validate --config /etc/motel/Caddyfile`, and `systemctl reload
-motel`. The box reads who it admits from that file at each load; the
+`moteld validate --config /etc/motel/Caddyfile`, and `systemctl reload
+moteld`. The box reads who it admits from that file at each load; the
 journal says `box: people admitted from the Caddyfile this machine
 runs (/etc/motel/Caddyfile)`, or why no one is.
 
@@ -145,7 +145,7 @@ curl -fsS -H "Authorization: Motel $token" "https://$box/_motel/whoami"
 A token lasts at most ten minutes and is good for reads only. Every
 refusal is the same `401`, whatever the cause: a key the box does not
 list, an address outside a `from` list, a clock more than a minute off,
-or a box whose motel is too old for people. An app they may not read
+or a box whose moteld is too old for people. An app they may not read
 is a `403` saying which role it needs, the same whether the app exists
 or not. Too many requests (more than 60 at once, then 2 a second) is a
 `429` with `Retry-After`.

@@ -494,7 +494,7 @@ func TestIntegrationSystemdReattachAdoptsLiveUnit(t *testing.T) {
 	if len(st.Command) == 0 || !filepath.IsAbs(st.Command[0]) || filepath.Base(st.Command[0]) != "server" {
 		t.Fatalf("the manager's ExecStart must decode to the resolved argv, got %v", st.Command)
 	}
-	// A "new motel": its own runner, same manager.
+	// A "new moteld": its own runner, same manager.
 	r2 := newSystemdRunner(userManager, zap.NewNop())
 	r2.poll = 50 * time.Millisecond
 	t.Cleanup(r2.close)
@@ -507,7 +507,7 @@ func TestIntegrationSystemdReattachAdoptsLiveUnit(t *testing.T) {
 	}
 	// Reattach has no launch of its own to remember, so an adopted
 	// handle can only report the command by reading it back — and must,
-	// or status would go blank for every app across a motel restart.
+	// or status would go blank for every app across a moteld restart.
 	if !slices.Equal(h2.state().Command, st.Command) {
 		t.Fatalf("adopted handle reports command %v, want the running unit's %v", h2.state().Command, st.Command)
 	}
@@ -534,7 +534,7 @@ func TestIntegrationSystemdReattachResetsFailedUnit(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Silence r1's watcher before it can reset the failure, standing in
-	// for "motel was down when the app died".
+	// for "moteld was down when the app died".
 	r1.close()
 	deadline := time.Now().Add(5 * time.Second)
 	for {
@@ -601,7 +601,7 @@ func TestIntegrationSystemdSweepStopsStrays(t *testing.T) {
 }
 
 // A motel that stops during a deploy leaves the deploy's pre_start
-// running under the manager (#317). The next motel's sweep must
+// running under the manager (#317). The next moteld's sweep must
 // leave it to finish — reporting itself unconfirmed, naming it — and
 // confirm once it has ended: the migration runs to its end.
 func TestIntegrationSystemdSweepLeavesARunningPreStart(t *testing.T) {
@@ -625,7 +625,7 @@ func TestIntegrationSystemdSweepLeavesARunningPreStart(t *testing.T) {
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
-	r1.close() // the motel that started it is gone; the manager runs it on
+	r1.close() // the moteld that started it is gone; the manager runs it on
 
 	r2 := newSystemdRunner(userManager, zap.NewNop())
 	t.Cleanup(r2.close)
@@ -1500,7 +1500,7 @@ func TestIntegrationSystemdUnitOutlivesItsFile(t *testing.T) {
 	if r.Alive(hs) {
 		t.Fatal("stopped handle still alive")
 	}
-	// A second runner (a restarted motel) sees the other as a stray.
+	// A second runner (a restarted moteld) sees the other as a stray.
 	r2 := integrationRunner(t)
 	if err := r2.Sweep("itest", nil); err != nil {
 		t.Fatalf("Sweep: %v", err)

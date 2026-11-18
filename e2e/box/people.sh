@@ -1,9 +1,9 @@
 #!/bin/sh
 # People end to end (liveswap/access/DESIGN-access.md, docs/people.md),
 # inside the e2e box: the e2e-motel container, systemd as PID 1,
-# motel.service as the motel user, the packaged applier units. The
+# moteld.service as the motel user, the packaged applier units. The
 # box's file declares people with keys made here by ssh-keygen; it is
-# installed by `motel init` and changed by a signed push sent with the
+# installed by `moteld init` and changed by a signed push sent with the
 # box template's bin/apply, the path a box takes. Then motelctl, the
 # laptop's client, built from this tree, reads the box as a laptop
 # does: another process, over the box's own TLS on 443 (Caddy's
@@ -44,17 +44,17 @@ restore() {
 	cat "$work/hosts" >/etc/hosts
 	cp "$work/original" "$LIVE.e2e-tmp" && chmod 0644 "$LIVE.e2e-tmp" && mv "$LIVE.e2e-tmp" "$LIVE" \
 		&& rm -f "$BOXDIR/applied.json" \
-		&& { systemctl reload motel || systemctl restart motel; }
+		&& { systemctl reload moteld || systemctl restart moteld; }
 }
 trap 'restore; rm -rf "$work"' EXIT
 
-# motel up, as the notify and metrics suites wait for it: run alone
-# straight after `up -d`, the box may still be starting, and motel init
-# needs a running motel. The unit alone: this e2e config's admin API is
+# moteld up, as the notify and metrics suites wait for it: run alone
+# straight after `up -d`, the box may still be starting, and moteld init
+# needs a running moteld. The unit alone: this e2e config's admin API is
 # on TCP, so there is no admin socket to wait for.
 i=0
-until systemctl is-active -q motel; do
-	i=$((i + 1)); [ "$i" -ge 120 ] && { echo "FATAL: motel did not come up"; journalctl -u motel --no-pager -n 50; exit 1; }
+until systemctl is-active -q moteld; do
+	i=$((i + 1)); [ "$i" -ge 120 ] && { echo "FATAL: moteld did not come up"; journalctl -u moteld --no-pager -n 50; exit 1; }
 	sleep 0.5
 done
 wait_for_token # $TOKEN: the e2e deploy token, audience e2e
@@ -148,9 +148,9 @@ commit() {
 # boxtok [<sha>]: a token for the box block's deploy_trust.
 boxtok() {
 	if [ -n "${1:-}" ]; then
-		motel deploy-token --key /shared/deploy.key --audience e2e-box --ttl 5m --claims "sha=$1"
+		moteld deploy-token --key /shared/deploy.key --audience e2e-box --ttl 5m --claims "sha=$1"
 	else
-		motel deploy-token --key /shared/deploy.key --audience e2e-box --ttl 5m
+		moteld deploy-token --key /shared/deploy.key --audience e2e-box --ttl 5m
 	fi
 }
 
@@ -221,22 +221,22 @@ same() {
 }
 
 echo "=== people 0: the box's file installed, the apps deployed through the deploy host ==="
-motel validate --adapter caddyfile --config "$work/f0" >"$work/validate" 2>&1 \
-	&& pass "motel validate takes the file with people" || { fail "motel validate: $(tail -5 "$work/validate")"; exit 1; }
-if motel validate --adapter caddyfile --config "$work/fe" >"$work/validate-ecdsa" 2>&1; then
-	fail "motel validate took a person line with an ECDSA key"
+moteld validate --adapter caddyfile --config "$work/f0" >"$work/validate" 2>&1 \
+	&& pass "moteld validate takes the file with people" || { fail "moteld validate: $(tail -5 "$work/validate")"; exit 1; }
+if moteld validate --adapter caddyfile --config "$work/fe" >"$work/validate-ecdsa" 2>&1; then
+	fail "moteld validate took a person line with an ECDSA key"
 else
-	has "motel validate refuses a person's ECDSA key by name, for now, with the remedy" "$work/validate-ecdsa" \
+	has "moteld validate refuses a person's ECDSA key by name, for now, with the remedy" "$work/validate-ecdsa" \
 		"person eve@e2e.test: a person's key is an Ed25519 key for now, and this release does not take ecdsa-sha2-nistp256 yet (ssh-keygen -t ed25519, or -t ed25519-sk for a hardware key)"
 fi
 C0=$(commit "$work/f0")
 rm -rf "$work/init" && mkdir -p "$work/init" && git -C "$repo" archive "$C0" "$HOST" | tar -xf - -C "$work/init"
 printf '127.0.0.1 %s\n' "$HOST" >>/etc/hosts
 since=$(date +%s)
-if (cd "$work/init/$HOST" && motel init "$C0") >"$work/init.out" 2>&1; then
-	pass "motel init installed the file and reloaded"
+if (cd "$work/init/$HOST" && moteld init "$C0") >"$work/init.out" 2>&1; then
+	pass "moteld init installed the file and reloaded"
 else
-	fail "motel init: $(cat "$work/init.out")"
+	fail "moteld init: $(cat "$work/init.out")"
 	exit 1
 fi
 # The internal certificate is issued after the reload that first names
@@ -248,9 +248,9 @@ until [ "$(curl -sk -o /dev/null -w '%{http_code}' --max-time 5 -H "Authorizatio
 	sleep 0.5
 done
 cp "$CA" "$work/root.crt"
-journalctl -u motel --since "@$since" --no-pager -o cat | grep -qF "people admitted from the Caddyfile this machine runs (/etc/motel/Caddyfile)" \
+journalctl -u moteld --since "@$since" --no-pager -o cat | grep -qF "people admitted from the Caddyfile this machine runs (/etc/motel/Caddyfile)" \
 	&& pass "the journal says people are admitted from the installed file" \
-	|| fail "the journal does not say people are admitted: $(journalctl -u motel --since "@$since" --no-pager -o cat | grep -F 'box:' | tail -3)"
+	|| fail "the journal does not say people are admitted: $(journalctl -u moteld --since "@$since" --no-pager -o cat | grep -F 'box:' | tail -3)"
 # bin/apply's curl takes the same root.
 mkdir -p "$work/curl"
 printf 'cacert = "%s"\n' "$work/root.crt" >"$work/curl/.curlrc"
@@ -365,9 +365,9 @@ mc whoami --json --box "$HOST" --key "$work/nora"
 	|| fail "nora: whoami --json: $(cat "$work/out")"
 
 echo "=== people 3: every refusal is the flat 401, byte for byte, and names no motel ==="
-motel deploy-keygen --out "$work/other.key" >/dev/null 2>&1
-OTHER=$(motel deploy-token --key "$work/other.key" --audience e2e --ttl 5m)
-OTHERBOX=$(motel deploy-token --key "$work/other.key" --audience e2e-box --ttl 5m)
+moteld deploy-keygen --out "$work/other.key" >/dev/null 2>&1
+OTHER=$(moteld deploy-token --key "$work/other.key" --audience e2e --ttl 5m)
+OTHERBOX=$(moteld deploy-token --key "$work/other.key" --audience e2e-box --ttl 5m)
 P_STRANGER=$(ptok stranger) P_FRAN=$(ptok fran) P_VERA=$(ptok vera) P_OTHERBOX=$(ptok vera other.e2e.test)
 for path in /demo /_motel/whoami /; do
 	tag=$(printf '%s' "$path" | tr -c 'a-z' '_')
@@ -416,7 +416,7 @@ get st -X POST -H "Authorization: Motel $P_VERA" -d "{\"url\":\"$ART/demo-v1.tar
 [ "$CODE" = 401 ] && same "a person's token on a POST is the flat 401" d_demo st || fail "vera's POST: $CODE $(cat "$work/st.b")"
 
 echo "=== people 5: HTTP/2, and the box's name in Host ==="
-journalctl -u motel --since "@$t_matrix" --no-pager -o cat | grep '"logger":"http.log.access' | grep -F '"uri":"/_motel/whoami"' | grep -F motelctl >"$work/access"
+journalctl -u moteld --since "@$t_matrix" --no-pager -o cat | grep '"logger":"http.log.access' | grep -F '"uri":"/_motel/whoami"' | grep -F motelctl >"$work/access"
 # The request's proto, beside client_ip (the TLS block has one too).
 grep -o '"client_ip":"[^"]*","proto":"[^"]*"' "$work/access" | sed 's/.*"proto":"\([^"]*\)"/\1/' >"$work/protos"
 protos=$(sort "$work/protos" | uniq -c | tr -s ' ' | tr '\n' ' ')
@@ -520,7 +520,7 @@ restarts() {
 		loop=$!
 		sleep 0.3
 		t_restart=$(date +%s%3N)
-		systemctl restart motel
+		systemctl restart moteld
 		t_ready=$(date +%s%3N)
 		# The new process's first answer: the first after a 000 that
 		# followed the restart.

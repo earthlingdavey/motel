@@ -80,7 +80,7 @@ func TestIntegrationTheAdapterRefusesAnImportAndADirectiveAsInspectReadsThem(t *
 		if err := os.WriteFile(file, []byte(caddyfile), 0o644); err != nil {
 			t.Fatal(err)
 		}
-		adapt := exec.Command(motel, "adapt", "--adapter", "caddyfile", "--config", file)
+		adapt := exec.Command(moteld, "adapt", "--adapter", "caddyfile", "--config", file)
 		adapt.Env = append([]string{}, env...) // never nil: nil means "inherit"
 		var stderr strings.Builder
 		adapt.Stderr = &stderr
@@ -266,7 +266,7 @@ func TestIntegrationTheAdapterRefusesAnImportAndADirectiveAsInspectReadsThem(t *
 	}
 }
 
-// The adapter, motel built from this repository: once, by the first
+// The adapter, moteld built from this repository: once, by the first
 // test that asks, and removed after the last (TestMain).
 var (
 	adapterOnce sync.Once
@@ -295,18 +295,18 @@ func realAdapter(t *testing.T) {
 		if adapterDir, adapterErr = os.MkdirTemp("", "plan-adapter-"); adapterErr != nil {
 			return
 		}
-		build := exec.Command("go", "build", "-o", filepath.Join(adapterDir, "motel"), "./cmd/motel")
+		build := exec.Command("go", "build", "-o", filepath.Join(adapterDir, "moteld"), "./cmd/moteld")
 		build.Dir = root
 		if out, err := build.CombinedOutput(); err != nil {
-			adapterErr = fmt.Errorf("building motel: %w\n%s", err, out)
+			adapterErr = fmt.Errorf("building moteld: %w\n%s", err, out)
 		}
 	})
 	if adapterErr != nil {
 		t.Fatal(adapterErr)
 	}
-	old := motel
-	motel = filepath.Join(adapterDir, "motel")
-	t.Cleanup(func() { motel = old })
+	old := moteld
+	moteld = filepath.Join(adapterDir, "moteld")
+	t.Cleanup(func() { moteld = old })
 }
 
 // A run adapts the Caddyfile without the server's environment, and what
@@ -347,7 +347,7 @@ func TestIntegrationTheAdapterSubstitutesVariablesAsMakeReadsThem(t *testing.T) 
 
 	// An ordinary production Caddyfile: variables with no default.
 	file := write("\temail {$ACME_EMAIL}\n", "/var/lib/liveswap", ":{$METRICS_PORT} {\n\trespond metrics\n}\n\n{$SITE_DOMAIN} {\n\trespond ok\n}\n")
-	adapt := exec.Command(motel, "adapt", "--adapter", "caddyfile", "--config", file)
+	adapt := exec.Command(moteld, "adapt", "--adapter", "caddyfile", "--config", file)
 	adapt.Env = []string{}
 	if out, err := adapt.CombinedOutput(); err == nil {
 		t.Fatalf("fixture: with an empty environment this Caddyfile adapts, so the test proves nothing: %s", out)

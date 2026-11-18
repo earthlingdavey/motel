@@ -815,11 +815,11 @@ evaluation_interval: 30s
 tests:
   - interval: 30s
     input_series:
-      - series: 'process_start_time_seconds{job="motel"}'
+      - series: 'process_start_time_seconds{job="moteld"}'
         values: '1x40'
-      - series: 'motel_app_requests_total{app="blog",release="v2",class="5xx",job="motel"}'
+      - series: 'motel_app_requests_total{app="blog",release="v2",class="5xx",job="moteld"}'
         values: '0+10x21 210x19'
-      - series: 'motel_app_requests_total{app="blog",release="v2",class="2xx",job="motel"}'
+      - series: 'motel_app_requests_total{app="blog",release="v2",class="2xx",job="moteld"}'
         values: '0x20 20+20x19'
     metricsql_expr_test:
 `)
@@ -1266,11 +1266,11 @@ tests:
 		at := cutover.Add(elapsed)
 		fmt.Fprintf(&b, `  - interval: 30s
     input_series:
-      - series: 'process_start_time_seconds{job="motel"}'
+      - series: 'process_start_time_seconds{job="moteld"}'
         values: '%s'
-      - series: 'motel_app_requests_total{app="blog",release="v1",class="2xx",job="motel"}'
+      - series: 'motel_app_requests_total{app="blog",release="v1",class="2xx",job="moteld"}'
         values: '%s'
-      - series: 'motel_app_requests_total{app="blog",release="v1",class="5xx",job="motel"}'
+      - series: 'motel_app_requests_total{app="blog",release="v1",class="5xx",job="moteld"}'
         values: '%s'
     metricsql_expr_test:
 `, c.push, c.ok, c.errs)
@@ -1300,7 +1300,7 @@ evaluation_interval: 30s
 tests:
   - interval: 30s
     input_series:
-      - series: 'process_start_time_seconds{job="motel"}'
+      - series: 'process_start_time_seconds{job="moteld"}'
         values: '1x3 _x6 1x4'
     metricsql_expr_test:
 `)

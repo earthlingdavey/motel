@@ -41,7 +41,7 @@ var (
 	notifySocket   = notify.DefaultSocket
 )
 
-// sendNothing is the gate's at `motel run` alone, for a config whose
+// sendNothing is the gate's at `moteld run` alone, for a config whose
 // monitor block runs no notify (none, or a metrics line alone): it
 // starts no notify App, so nothing would take back the render a config
 // with channels left, and Alertmanager would end what it holds at
@@ -70,15 +70,15 @@ func sendNothing(monitor []byte, stderr io.Writer) {
 // run as a user that does not own its state directories.
 var euid = os.Geteuid
 
-// reloadForces reports whether `motel reload` must load the config even
+// reloadForces reports whether `moteld reload` must load the config even
 // when it is unchanged: a monitor block with channels reads the box's
 // secrets file at every load, which the config does not hold, so a
 // mended _box.env leaves the Caddyfile as it was, and Caddy's
 // unchanged-config check would load nothing (it answers 200, saying
 // `config is unchanged` in the server's journal alone), leaving the
-// channels a boot dropped dropped. `systemctl reload motel`, which the
+// channels a boot dropped dropped. `systemctl reload moteld`, which the
 // box's push uses after it writes the secrets, passes --force for the
-// same reason (packaging/motel.service); this is that, for the command
+// same reason (packaging/moteld.service); this is that, for the command
 // an operator types. A --force the command already names, true or
 // false, is left as it is.
 func reloadForces(args []string, monitor []byte) bool {

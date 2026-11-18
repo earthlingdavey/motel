@@ -69,7 +69,7 @@ type LifecycleEvent struct {
 	Hold time.Duration
 	// Standing marks a report of what was told before and has not ended
 	// (ReportStanding): a listener that holds the alert already ignores
-	// it, and one that does not (a motel restarted since) takes it as
+	// it, and one that does not (a moteld restarted since) takes it as
 	// told — firing, or, for a recovery, held.
 	Standing bool
 }
@@ -118,7 +118,7 @@ func (ma *managedApp) tell(n Notifier, ev LifecycleEvent) {
 // the hold runs) and a refused relaunch, each a Standing report. The
 // notify module calls it at its Start, after its engine is configured,
 // so that the order in which Caddy starts the two apps does not matter.
-// It is what keeps an alert across a motel restart: the flags are read
+// It is what keeps an alert across a moteld restart: the flags are read
 // back from each app's alerts.json, and nothing else would report a
 // loop the watchdog was already in, nor a relaunch refused before the
 // restart (recovery's own refusal says nothing). On a reload the
@@ -169,7 +169,7 @@ func (ma *managedApp) reportStanding(n Notifier, spec *appSpec) {
 		// Its summary is the alert's while it is held, which a listener
 		// that lost it posts as firing: it says both.
 		ma.tell(n, LifecycleEvent{Name: EventWatchdogRecovered, Release: release, Hold: hold, Standing: true,
-			Summary: "a restart loop, reported before motel's restart; healthy since, its recovery held"})
+			Summary: "a restart loop, reported before moteld's restart; healthy since, its recovery held"})
 	case loop:
 		ma.tell(n, LifecycleEvent{Name: EventWatchdogThrottled, Release: release, Standing: true,
 			Summary: "the restart loop is still reported: it ends once the app is healthy for its hold"})

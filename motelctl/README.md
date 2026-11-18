@@ -84,7 +84,7 @@ agent then holds the key.
 the same 401, with no header that names motel. So after its one retry
 motelctl names every cause it cannot tell apart (no line lists the key,
 the address is outside every `from` list, the name is not the box's main
-one, a motel too old for people's tokens), and the clock first when the
+one, a moteld too old for people's tokens), and the clock first when the
 box's `Date` says it is off. A 403 whose `needs` and `scope` are the
 words a box writes (`needs` one of `viewer`, `deployer`, `key`; `scope`
 `app` or `box`) is said from those two alone, and names no app; any

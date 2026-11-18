@@ -3,8 +3,8 @@
 #
 # The box is the notify suite's with Debian's victoria-metrics installed
 # and masked; motel runs e2e/metrics/Caddyfile, the notify suite's
-# monitor block plus a `metrics` line. The suite runs `motel monitor
-# setup`, then `motel monitor setup --metrics` (the store's alone), then checks
+# monitor block plus a `metrics` line. The suite runs `moteld monitor
+# setup`, then `moteld monitor setup --metrics` (the store's alone), then checks
 # notify/DESIGN-metrics.md's "e2e rows":
 #
 #   the first --metrics restarting Alertmanager once, the second not
@@ -12,10 +12,10 @@
 #   its socket listening on through a namespace or a store that cannot start
 #   a store that fails at its start: its restarts backed off
 #   Alertmanager's own listener there: a SIGKILL, the namespace restarted,
-#   stopped and back, failing once, stopped and started by hand with motel
+#   stopped and back, failing once, stopped and started by hand with moteld
 #   down; an upgrade from the proxy shape
-#   motel's push (job="motel"), with a deployed app's motel_app_*
-#   motel monitor rules: the listing, and a listed query over vm.sock
+#   motel's push (job="moteld"), with a deployed app's motel_app_*
+#   moteld monitor rules: the listing, and a listed query over vm.sock
 #   GET /<app> with the deploy token carries the app's metrics
 #   observe's counts in the store and in GET /<app>?range=
 #   vmalert's rules loaded; its ChannelFailed and motel's one alert
@@ -109,12 +109,12 @@ done
 
 echo "=== metrics 0: the box ==="
 i=0
-until systemctl is-active -q motel && [ -S /run/motel/admin.sock ]; do
-	i=$((i + 1)); [ "$i" -ge 120 ] && { echo "FATAL: motel did not come up"; journalctl -u motel --no-pager -n 50; exit 1; }
+until systemctl is-active -q moteld && [ -S /run/motel/admin.sock ]; do
+	i=$((i + 1)); [ "$i" -ge 120 ] && { echo "FATAL: moteld did not come up"; journalctl -u moteld --no-pager -n 50; exit 1; }
 	sleep 0.5
 done
 wait_for_token
-journalctl -u motel -o cat --no-pager | grep -q 'the metrics store is not set up on this box' \
+journalctl -u moteld -o cat --no-pager | grep -q 'the metrics store is not set up on this box' \
 	&& pass "before setup, motel says the store is not set up, and serves" \
 	|| fail "no 'not set up' line for the store before setup"
 
@@ -122,7 +122,7 @@ echo "=== metrics 1: setup ==="
 # Without --metrics, Alertmanager's setup alone; with it, on a box where
 # Alertmanager is set up, the store's alone: Alertmanager's setup would
 # mask and stop it, and what it holds in memory would go.
-motel monitor setup >/tmp/nsetup.out 2>&1 && pass "monitor setup ran" || fail "monitor setup: $(cat /tmp/nsetup.out)"
+moteld monitor setup >/tmp/nsetup.out 2>&1 && pass "monitor setup ran" || fail "monitor setup: $(cat /tmp/nsetup.out)"
 [ ! -e /etc/systemd/system/motel-vm.socket ] && [ ! -e /etc/systemd/system/victoria-metrics.service.d/10-motel.conf ] \
 	&& pass "without --metrics, nothing of the store is set up" || fail "monitor setup wrote the store's units: $(ls /etc/systemd/system)"
 am -o /dev/null http://am/-/ready # started by its socket, if motel's render has not yet
@@ -130,7 +130,7 @@ am_run=$(aminv)
 ns_before=$(ls -d "/run/netns/$NS" 2>/dev/null)
 sleep 1 # journalctl's --since is to the second
 since=$(date '+%Y-%m-%d %H:%M:%S')
-if motel monitor setup --metrics >/tmp/msetup.out 2>&1; then
+if moteld monitor setup --metrics >/tmp/msetup.out 2>&1; then
 	pass "monitor setup --metrics ran: $(tr '\n' ';' </tmp/msetup.out | cut -c1-240)"
 else
 	fail "monitor setup --metrics: $(cat /tmp/msetup.out)"
@@ -170,7 +170,7 @@ nsj=$(journalctl -u motel-metrics-netns -o cat --no-pager)
 am_run=$(aminv)
 sleep 1
 since=$(date '+%Y-%m-%d %H:%M:%S')
-if motel monitor setup --metrics >/tmp/msetup2.out 2>&1; then
+if moteld monitor setup --metrics >/tmp/msetup2.out 2>&1; then
 	sleep 3
 	[ "$(aminv)" = "$am_run" ] && [ "$(amstarts "$since")" = 0 ] \
 		&& grep -q '^Alertmanager listens in the namespace already (motel-am-metrics.socket): left as it runs' /tmp/msetup2.out \
@@ -279,7 +279,7 @@ printf '%s' "$op" | grep -q 'increase_pure(motel_app_requests_total' \
 	&& printf '%s' "$op" | grep -q 'unless (present_over_time(motel_app_requests_total' \
 	&& printf '%s' "$op" | grep -q 'and (tfirst_over_time(motel_app_requests_total' \
 	&& printf '%s' "$op" | grep -q 'or increase(motel_app_requests_total' \
-	&& printf '%s' "$op" | grep -qF 'and on (app) (max by (app) (tlast_over_time(motel_app_observed[75s])) > scalar(max(tlast_over_time(process_start_time_seconds{job="motel"}[75s]))) - 15)' \
+	&& printf '%s' "$op" | grep -qF 'and on (app) (max by (app) (tlast_over_time(motel_app_observed[75s])) > scalar(max(tlast_over_time(process_start_time_seconds{job="moteld"}[75s]))) - 15)' \
 	&& ! grep -q 'blog_regressed' "$STATE/rules.yml" && printf '%s' "$op" | grep -q 'key: rules/app:blog/blog_slow' \
 	&& pass "the motel-operator group holds the threshold and disk_fill rules, through the counter guard, keyed rules/<subject>/<name>" \
 	|| fail "the motel-operator group: $(printf '%s' "$op" | head -c 600)"
@@ -287,8 +287,8 @@ printf '%s' "$op" | grep -q 'increase_pure(motel_app_requests_total' \
 echo "=== metrics 2: the push ==="
 code=$(deploy demo-v1.tar.gz v1)
 [ "$code" = 200 ] && pass "deploy v1" || fail "deploy v1 returned $code: $(cat /tmp/deploy-body)"
-a=$(wait_result push 'process_start_time_seconds{job="motel"}' 120) \
-	&& pass "motel's push arrived (job=\"motel\")" || fail "no series of motel's in the store after 120 s"
+a=$(wait_result push 'process_start_time_seconds{job="moteld"}' 120) \
+	&& pass "motel's push arrived (job=\"moteld\")" || fail "no series of motel's in the store after 120 s"
 a=$(wait_result up 'motel_app_up{app="blog"} == 1' 90) \
 	&& pass "motel_app_up{app=\"blog\"} is 1" || fail "no motel_app_up for blog: $(q 'motel_app_up')"
 a=$(wait_result release 'motel_app_release_info{app="blog",release="v1"}' 30) \
@@ -319,20 +319,20 @@ else
 fi
 
 case_2b() {
-echo "=== metrics 2b: motel monitor rules ==="
+echo "=== metrics 2b: moteld monitor rules ==="
 # The listing a screen reads: the store's rules with their value's
 # MetricsQL, which runs on the store's socket at the listed offset; the
 # checks with the number each last read. deno parses the JSON (the box
 # has no jq).
 pick() { deno eval --quiet "const l = JSON.parse(await new Response(Deno.stdin.readable).text()); $1"; }
-if motel monitor rules --json >/tmp/rules.json 2>/tmp/rules.err; then
+if moteld monitor rules --json >/tmp/rules.json 2>/tmp/rules.err; then
 	got=$(pick 'const by = Object.fromEntries(l.alerts.map((a) => [a.name, a]));
 		const ok = l.store?.query_offset_seconds === 65 && by.errors_high?.kind === "guarded" && by.blog_slow?.app === "blog"
 			&& by.app_memory_high?.value_query && by.disk_low?.readings?.length > 0 && by.Watchdog === undefined
 			&& !JSON.stringify(l).includes("summary") && !JSON.stringify(l).includes("http") && l.rules_file === undefined;
 		console.log(ok ? "ok" : JSON.stringify(l).slice(0, 400));' </tmp/rules.json)
-	[ "$got" = ok ] && pass "motel monitor rules --json lists the store's rules with their queries and the checks with their readings, no summary, no URL, and rules.yml as this config's render (no rules_file)" \
-		|| fail "motel monitor rules --json: $got"
+	[ "$got" = ok ] && pass "moteld monitor rules --json lists the store's rules with their queries and the checks with their readings, no summary, no URL, and rules.yml as this config's render (no rules_file)" \
+		|| fail "moteld monitor rules --json: $got"
 	# errors_high's floor counts blog's responses sent, pushed at zero
 	# since metrics 2: its query at now - offset has blog's series.
 	gq=$(pick 'console.log(l.alerts.find((a) => a.name === "errors_high").guards[0].query)' </tmp/rules.json)
@@ -346,11 +346,11 @@ if motel monitor rules --json >/tmp/rules.json 2>/tmp/rules.err; then
 	printf '%s' "$a" | grep -q '"app":"blog"' && pass "a listed guard's query runs on vm.sock at the listed offset: $(printf '%s' "$a" | cut -c1-160)" \
 		|| fail "the listed guard's query on vm.sock: $(printf '%s' "$a" | cut -c1-300)"
 else
-	fail "motel monitor rules --json: $(cat /tmp/rules.json /tmp/rules.err | head -c 300)"
+	fail "moteld monitor rules --json: $(cat /tmp/rules.json /tmp/rules.err | head -c 300)"
 fi
-motel monitor rules >/tmp/rules.txt 2>&1 && head -1 /tmp/rules.txt | grep -q '^NAME *SOURCE *KIND *SEVERITY *SCOPE *CONDITION *NOW$' \
+moteld monitor rules >/tmp/rules.txt 2>&1 && head -1 /tmp/rules.txt | grep -q '^NAME *SOURCE *KIND *SEVERITY *SCOPE *CONDITION *NOW$' \
 	&& grep -q '^disk_low  *motel check  *threshold' /tmp/rules.txt \
-	&& pass "motel monitor rules prints the table" || fail "motel monitor rules: $(head -c 400 /tmp/rules.txt)"
+	&& pass "moteld monitor rules prints the table" || fail "moteld monitor rules: $(head -c 400 /tmp/rules.txt)"
 }
 
 case_3() {
@@ -491,7 +491,7 @@ a=$(wait_result am-up 'up{job="alertmanager"} == 1' 90) && pass "the store scrap
 # A box event reaches ops and oncall; oncall answers 400, Alertmanager
 # counts the failure on event-warning-oncall, its discord, and both motel and
 # vmalert post ChannelFailed to ops with suspects=oncall.
-motel monitor send --source e2e --name nightly_job_failed --severity warning --summary "e2e: the nightly job failed" >/tmp/send.out 2>&1 \
+moteld monitor send --source e2e --name nightly_job_failed --severity warning --summary "e2e: the nightly job failed" >/tmp/send.out 2>&1 \
 	|| fail "monitor send: $(cat /tmp/send.out)"
 sel='ALERTS{alertname="ChannelFailed",alertstate="firing",notify_channel="ops",integration="discord",suspects="oncall",severity="warning",subject="box"}'
 a=$(wait_result channel-failed "$sel" 300) \
@@ -754,32 +754,32 @@ i=0
 until [ "$(vm http://vm/health)" = OK ]; do i=$((i + 1)); [ "$i" -ge 15 ] && break; sleep 2; done
 [ "$i" -lt 15 ] && pass "the fault gone, the store answers through vm.sock again" \
 	|| fail "$(( $(date +%s) - t1 )) s more, the store does not answer through vm.sock: $(systemctl is-active motel-vm.socket motel-vm.service victoria-metrics | tr '\n' ' ')"
-# With motel down, the namespace stopped and started by hand, then the
+# With moteld down, the namespace stopped and started by hand, then the
 # store: nothing reads am.sock, so only vmalert's start (its Wants=)
 # starts the socket in the namespace again, and the store's scrape
 # starts Alertmanager through it. Without that line the socket and
-# Alertmanager stayed inactive until motel came back (150 s measured),
+# Alertmanager stayed inactive until moteld came back (150 s measured),
 # and vmalert's posts were refused.
-systemctl stop motel
+systemctl stop moteld
 systemctl stop motel-metrics-netns
 systemctl start motel-metrics-netns victoria-metrics
 t0=$(stamp)
 i=0
 until systemctl is-active -q motel-am-metrics.socket; do i=$((i + 1)); [ "$i" -ge 20 ] && break; sleep 0.5; done
 systemctl is-active -q motel-vmalert && systemctl is-active -q motel-am-metrics.socket \
-	&& pass "motel down, the namespace stopped and started by hand, the store started: vmalert's start started Alertmanager's socket there" \
-	|| fail "motel down, the namespace and the store started by hand: $(systemctl is-active motel-vmalert motel-am-metrics.socket prometheus-alertmanager | tr '\n' ' ')"
+	&& pass "moteld down, the namespace stopped and started by hand, the store started: vmalert's start started Alertmanager's socket there" \
+	|| fail "moteld down, the namespace and the store started by hand: $(systemctl is-active motel-vmalert motel-am-metrics.socket prometheus-alertmanager | tr '\n' ' ')"
 # A fresh up of 1 is a scrape Alertmanager answered after t0, so it is
 # running when the checks after the wait read it; the store's next
 # scrape of it is at most 30 s on.
 a=$(wait_result am-up-nomotel "(timestamp(up{job=\"alertmanager\"}) > $t0) and (up{job=\"alertmanager\"} == 1)" 90) \
 	&& systemctl is-active -q prometheus-alertmanager && held "$(ampid)" \
-	&& pass "and the store's scrape started Alertmanager through it, with motel still down, on both listeners" \
-	|| fail "motel down: no fresh up{job=\"alertmanager\"} (after $t0), or Alertmanager not on both listeners: $(systemctl is-active motel-am-metrics.socket prometheus-alertmanager | tr '\n' ' '), up $(val 'up{job="alertmanager"}'), stamped $(q 'timestamp(up{job="alertmanager"})' | grep -o '"value":\[[^]]*\]')"
-systemctl start motel
+	&& pass "and the store's scrape started Alertmanager through it, with moteld still down, on both listeners" \
+	|| fail "moteld down: no fresh up{job=\"alertmanager\"} (after $t0), or Alertmanager not on both listeners: $(systemctl is-active motel-am-metrics.socket prometheus-alertmanager | tr '\n' ' '), up $(val 'up{job="alertmanager"}'), stamped $(q 'timestamp(up{job="alertmanager"})' | grep -o '"value":\[[^]]*\]')"
+systemctl start moteld
 i=0
-until systemctl is-active -q motel && [ -S /run/motel/admin.sock ]; do i=$((i + 1)); [ "$i" -ge 120 ] && break; sleep 0.5; done
-systemctl is-active -q motel || fail "motel did not start again: $(systemctl is-active motel)"
+until systemctl is-active -q moteld && [ -S /run/motel/admin.sock ]; do i=$((i + 1)); [ "$i" -ge 120 ] && break; sleep 0.5; done
+systemctl is-active -q moteld || fail "moteld did not start again: $(systemctl is-active moteld)"
 
 }
 
@@ -823,9 +823,9 @@ echo "=== metrics 4f: a store that fails at its start backs off ==="
 # drop-in's Wants= of vmalert, vmalert's failed start asked for the
 # store again at once, past RestartSec=: 237 to 384 restarts in 6 s
 # (#470). The drop-in backs off (RestartSteps=) and starts vmalert once
-# the store's process has started (ExecStartPost=). motel is stopped
+# the store's process has started (ExecStartPost=). moteld is stopped
 # meanwhile, so that no push adds a start of its own to the count.
-systemctl stop motel
+systemctl stop moteld
 dropin=/etc/systemd/system/victoria-metrics.service.d
 printf '[Service]\nExecStartPre=/bin/false\n' >"$dropin/99-e2e-fail.conf"
 systemctl daemon-reload
@@ -852,10 +852,10 @@ i=0
 until [ "$(vm http://vm/health)" = OK ] && systemctl is-active -q motel-vmalert; do i=$((i + 1)); [ "$i" -ge 15 ] && break; sleep 2; done
 [ "$i" -lt 15 ] && pass "the fault gone, the store answers through vm.sock after $(( $(date +%s) - t1 )) s, vmalert beside it" \
 	|| fail "$(( $(date +%s) - t1 )) s after the fault went: $(systemctl is-active motel-vm.socket victoria-metrics motel-vmalert | tr '\n' ' ')"
-systemctl start motel
+systemctl start moteld
 i=0
-until systemctl is-active -q motel && [ -S /run/motel/admin.sock ]; do i=$((i + 1)); [ "$i" -ge 120 ] && break; sleep 0.5; done
-systemctl is-active -q motel || fail "motel did not start again: $(systemctl is-active motel)"
+until systemctl is-active -q moteld && [ -S /run/motel/admin.sock ]; do i=$((i + 1)); [ "$i" -ge 120 ] && break; sleep 0.5; done
+systemctl is-active -q moteld || fail "moteld did not start again: $(systemctl is-active moteld)"
 
 }
 
@@ -886,10 +886,10 @@ printf '%s' "$m" | grep -q '"metrics":{"error":"the metrics store did not answer
 	|| fail "GET /blog with the store gone ($((t1 - t0)) ms): $(printf '%s' "$m" | cut -c1-300)"
 json_str "$m" current_version | grep -q sb1 && pass "the status is otherwise whole" || fail "the status: $(printf '%s' "$m" | cut -c1-200)"
 i=0
-until journalctl -u motel -o cat --no-pager | grep -q 'monitor metrics: push failed'; do
+until journalctl -u moteld -o cat --no-pager | grep -q 'monitor metrics: push failed'; do
 	i=$((i + 1)); [ "$i" -ge 40 ] && break; sleep 1
 done
-journalctl -u motel -o cat --no-pager | grep -q 'monitor metrics: push failed' \
+journalctl -u moteld -o cat --no-pager | grep -q 'monitor metrics: push failed' \
 	&& pass "journal: monitor metrics: push failed" || fail "no push failed line"
 systemctl start motel-vm.socket
 
@@ -916,7 +916,7 @@ if grep -qE '^[[:space:]]*(channel|operator|bind|heartbeat|allow_insecure_channe
 	fail "could not cut the monitor block down to its metrics line: $(sed -n '/monitor {/,/^\t}/p' /tmp/Caddyfile.nonotify)"
 fi
 cp /tmp/Caddyfile.nonotify /etc/motel/Caddyfile
-systemctl reload motel && pass "reloaded with the metrics line alone" || fail "the reload with the metrics line alone failed"
+systemctl reload moteld && pass "reloaded with the metrics line alone" || fail "the reload with the metrics line alone failed"
 i=0
 until ! grep -q 'alert:' "$STATE/rules.yml"; do i=$((i + 1)); [ "$i" -ge 40 ] && break; sleep 0.5; done
 grep -q 'alert:' "$STATE/rules.yml" && fail "rules.yml still has alerting rules: $(grep -c 'alert:' "$STATE/rules.yml")" \
@@ -930,25 +930,25 @@ done
 printf '%s' "$rules" | grep -q '"status":"success"' && ! printf '%s' "$rules" | grep -q '"type":"alerting"' \
 	&& pass "vmalert re-read the rules: zero alerting rules loaded" \
 	|| fail "vmalert still loads alerting rules: $(printf '%s' "$rules" | grep -o '"name":"[^"]*","type":"alerting"' | head -5 | tr '\n' ' ')"
-journalctl -u motel -o cat --no-pager | grep -q 'monitor metrics: the monitor block has no channel, only its metrics line: vmalert is given no rule' \
+journalctl -u moteld -o cat --no-pager | grep -q 'monitor metrics: the monitor block has no channel, only its metrics line: vmalert is given no rule' \
 	&& pass "journal: no channel, no rule" || fail "no 'the monitor block has no channel' line"
 
 }
 
 case_8() {
-echo "=== metrics 8: motel's shutdown keeps the rules; the metrics line removed retires them ==="
+echo "=== metrics 8: moteld's shutdown keeps the rules; the metrics line removed retires them ==="
 # A shutdown leaves the rules, so the store's alerts reach the operator
-# while motel is down; a reload to a config with no metrics line writes
+# while moteld is down; a reload to a config with no metrics line writes
 # the groups empty, as vmalert and the store still run.
 cp /tmp/Caddyfile.both /etc/motel/Caddyfile
-systemctl reload motel && pass "reloaded with the channels and the metrics line again" || fail "the reload with the whole monitor block failed"
+systemctl reload moteld && pass "reloaded with the channels and the metrics line again" || fail "the reload with the whole monitor block failed"
 i=0
 until grep -q 'alert:' "$STATE/rules.yml"; do i=$((i + 1)); [ "$i" -ge 40 ] && break; sleep 0.5; done
 grep -q 'alert:' "$STATE/rules.yml" && pass "the whole block again: rules.yml has alerting rules" || fail "rules.yml has no alerting rule with the whole block"
-systemctl stop motel
-grep -q 'alert:' "$STATE/rules.yml" && pass "motel stopped: rules.yml keeps its alerting rules" \
-	|| fail "motel's shutdown retired the rules: $(head -c 300 "$STATE/rules.yml")"
-systemctl start motel && pass "motel started again" || fail "motel did not start again"
+systemctl stop moteld
+grep -q 'alert:' "$STATE/rules.yml" && pass "moteld stopped: rules.yml keeps its alerting rules" \
+	|| fail "moteld's shutdown retired the rules: $(head -c 300 "$STATE/rules.yml")"
+systemctl start moteld && pass "moteld started again" || fail "moteld did not start again"
 # The rule lines go with it: they need the metrics line.
 awk '/^\t\tmetrics( |$)/ { next } /^\t\trule / { if ($0 ~ /\{$/) inr = 1; next } inr { if ($0 ~ /^\t\t\}$/) inr = 0; next } { print }' \
 	/tmp/Caddyfile.both >/tmp/Caddyfile.nostore
@@ -956,12 +956,12 @@ if grep -qE '^[[:space:]]*(metrics|rule|window|max_5xx_share)( |$)' /tmp/Caddyfi
 	fail "could not cut the metrics and rule lines out of the Caddyfile: $(sed -n '/monitor {/,/^\t}/p' /tmp/Caddyfile.nostore)"
 fi
 cp /tmp/Caddyfile.nostore /etc/motel/Caddyfile
-systemctl reload motel && pass "reloaded without the metrics line" || fail "the reload without the metrics line failed"
+systemctl reload moteld && pass "reloaded without the metrics line" || fail "the reload without the metrics line failed"
 i=0
 until ! grep -q 'alert:' "$STATE/rules.yml"; do i=$((i + 1)); [ "$i" -ge 40 ] && break; sleep 0.5; done
 grep -q 'alert:' "$STATE/rules.yml" && fail "the metrics line is gone, yet rules.yml has alerting rules: $(grep -c 'alert:' "$STATE/rules.yml")" \
 	|| pass "the metrics line is gone: rules.yml has no alerting rule"
-journalctl -u motel -o cat --no-pager | grep -q 'monitor metrics: the metrics line is gone: vmalert is given no rule' \
+journalctl -u moteld -o cat --no-pager | grep -q 'monitor metrics: the metrics line is gone: vmalert is given no rule' \
 	&& pass "journal: the metrics line is gone, no rule" || fail "no 'the metrics line is gone' line"
 
 }
@@ -971,7 +971,7 @@ echo "=== metrics 9: the metrics line removed, then a restart, not a reload ==="
 # A config with no metrics line builds no MetricsStore, so the boot's
 # gate retires the rules a config with one wrote.
 cp /tmp/Caddyfile.both /etc/motel/Caddyfile
-systemctl reload motel && pass "reloaded with the whole monitor block again" || fail "the reload with the whole monitor block failed"
+systemctl reload moteld && pass "reloaded with the whole monitor block again" || fail "the reload with the whole monitor block failed"
 i=0
 until grep -q 'alert:' "$STATE/rules.yml"; do i=$((i + 1)); [ "$i" -ge 40 ] && break; sleep 0.5; done
 grep -q 'alert:' "$STATE/rules.yml" && pass "the whole block again: rules.yml has alerting rules" || fail "rules.yml has no alerting rule with the whole block"
@@ -996,7 +996,7 @@ counted=$(curl -s --max-time 5 --unix-socket /run/motel/admin.sock http://localh
 	| awk '/^motel_app_requests_total\{.*app="blog"/ { s += $NF } END { printf "%d", s }')
 since=$(date '+%Y-%m-%d %H:%M:%S')
 stop_at=$(date +%s.%N)
-systemctl restart motel && pass "restarted without the metrics line" || fail "the restart without the metrics line failed"
+systemctl restart moteld && pass "restarted without the metrics line" || fail "the restart without the metrics line failed"
 # The sample's time first, then its sum: read the other way round, a
 # sum from before the push at stop could pair with its time.
 if wait_result push-at-stop "max(tlast_over_time(motel_app_requests_total{app=\"blog\"}[1m])) >= $stop_at" "$RELOAD_WAIT" >/dev/null; then
@@ -1009,7 +1009,7 @@ else
 fi
 grep -q 'alert:' "$STATE/rules.yml" && fail "restarted with no metrics line, yet rules.yml has alerting rules: $(grep -c 'alert:' "$STATE/rules.yml")" \
 	|| pass "restarted with no metrics line: rules.yml has no alerting rule"
-journalctl -u motel --since "$since" -o cat --no-pager | grep -q 'monitor metrics: the metrics line is gone: vmalert is given no rule' \
+journalctl -u moteld --since "$since" -o cat --no-pager | grep -q 'monitor metrics: the metrics line is gone: vmalert is given no rule' \
 	&& pass "journal: the boot retired the rules" || fail "no 'the metrics line is gone' line at the boot"
 end=$(( $(date +%s) + RELOAD_WAIT ))
 while [ "$(date +%s)" -lt "$end" ]; do
@@ -1021,7 +1021,7 @@ printf '%s' "$rules" | grep -q '"status":"success"' && ! printf '%s' "$rules" | 
 	&& pass "vmalert re-read the rules after the restart: zero alerting rules loaded" \
 	|| fail "vmalert still loads alerting rules after the restart: $(printf '%s' "$rules" | grep -o '"name":"[^"]*","type":"alerting"' | head -5 | tr '\n' ' ')"
 cp /tmp/Caddyfile.both /etc/motel/Caddyfile
-systemctl restart motel && pass "restored: the whole monitor block, restarted" || fail "the restart with the whole monitor block failed"
+systemctl restart moteld && pass "restored: the whole monitor block, restarted" || fail "the restart with the whole monitor block failed"
 # Post-deploy's queryAt asks for its own offset (latency_offset): a time
 # 3 s back is answered as given at 1 s, where the unit's 5 s would move it.
 t3=$(( $(date +%s) - 3 ))
@@ -1081,7 +1081,7 @@ done
 # within 15 s of the push's, and blog and shop were in it throughout
 # (115 of the 120 seconds, the subquery's edges aside).
 present='max by (app) (tlast_over_time(motel_app_observed[75s]))'
-pushed="$present > scalar(max(tlast_over_time(process_start_time_seconds{job=\"motel\"}[75s]))) - 15"
+pushed="$present > scalar(max(tlast_over_time(process_start_time_seconds{job=\"moteld\"}[75s]))) - 15"
 out=$(q "(count_over_time(($present)[2m:1s]) - (count_over_time(($pushed)[2m:1s]) or count_over_time(($present)[2m:1s]) * 0)) > 0")
 inq=$(q "count_over_time(($pushed)[2m:1s]) >= 115")
 printf '%s' "$out" | grep -q '"result":\[\]' && printf '%s' "$inq" | grep -q '"app":"blog"' && printf '%s' "$inq" | grep -q '"app":"shop"' \
@@ -1094,7 +1094,7 @@ done
 sinklog | grep -q '/blog [a-z]* post_deploy_regressed blog ' && sinklog | grep -q '/ops [a-z]* post_deploy_regressed blog ' \
 	&& pass "post_deploy_regressed reached the operator's channel and blog's deployer's" \
 	|| fail "the sink: $(sinklog | grep post_deploy | tail -5 | tr '\n' ';')"
-n=$(journalctl -u motel -o cat --no-pager | grep -c 'rules/app:blog/post_deploy_regressed' || true)
+n=$(journalctl -u moteld -o cat --no-pager | grep -c 'rules/app:blog/post_deploy_regressed' || true)
 [ "$n" -eq 1 ] && pass "one post_deploy_regressed, journalled once" || fail "post_deploy_regressed journalled $n times"
 
 }
@@ -1121,7 +1121,7 @@ nsready && ! held "$(ampid)" && systemctl is-active -q motel-am-proxy.service \
 inv=$(aminv)
 sleep 1
 since=$(date '+%Y-%m-%d %H:%M:%S')
-motel monitor setup --metrics >/tmp/msetup3.out 2>&1 || fail "monitor setup --metrics over the proxy shape: $(cat /tmp/msetup3.out)"
+moteld monitor setup --metrics >/tmp/msetup3.out 2>&1 || fail "monitor setup --metrics over the proxy shape: $(cat /tmp/msetup3.out)"
 grep -q '^retired motel-am-proxy.socket and motel-am-proxy.service: Alertmanager listens in the namespace itself' /tmp/msetup3.out \
 	&& [ ! -e "$U/motel-am-proxy.socket" ] && [ ! -e "$U/motel-am-proxy.service" ] \
 	&& ! systemctl is-active -q motel-am-proxy.socket && ! systemctl is-active -q motel-am-proxy.service \

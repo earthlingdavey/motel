@@ -135,7 +135,7 @@ type viewRequests struct{ classes, p50, p95, cache string }
 // them: an app's series appears with its first push, already at that
 // push's count, which the store's increase drops when it is large (22
 // responses read as 0, e2e metrics 3a), and increase_pure alone would
-// read a series' every count since motel began as the window's own
+// read a series' every count since moteld began as the window's own
 // after a gap in the pushes or when the metrics line is first loaded
 // on a box whose observer has counted.
 func requestQueries(sel string, span time.Duration) viewRequests {

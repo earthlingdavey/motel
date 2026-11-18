@@ -107,7 +107,7 @@ Transitions: **install** (fresh) · **upgrade** (`prerm upgrade` → unpack → 
 | B15 | `/etc/motel/backup.env`, from before this version | not the package's | kept | kept | kept | kept: the operator's |
 | B16 | The journal | not the package's to remove | | | | |
 
-**Not rows of their own:** `abort-upgrade`, `abort-remove` and `failed-upgrade`. postinstall takes one path whatever its first argument (`$2` alone chooses start or restart), and preremove takes `failed-upgrade` as `upgrade`. motel's own service, drop-ins and lingering are the package's from before backups, and their rows are the smoke's stages 1–4.
+**Not rows of their own:** `abort-upgrade`, `abort-remove` and `failed-upgrade`. postinstall takes one path whatever its first argument (`$2` alone chooses start or restart), and preremove takes `failed-upgrade` as `upgrade`. moteld's own service, drop-ins and lingering are the package's from before backups, and their rows are the smoke's stages 1–4.
 
 ## 3. Measured first (numbers continue `PLAN-backups.md` §0)
 

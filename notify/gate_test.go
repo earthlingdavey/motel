@@ -50,7 +50,7 @@ func TestLoadWarningsSayStaleUnits(t *testing.T) {
 	}
 	// A comment changed, a blank line and CRLF endings, and nothing
 	// else: not stale.
-	reformatted := bytes.ReplaceAll(append([]byte("# Written by an older motel monitor setup\n\n"), uncommented(unitDropIn)...), []byte("\n"), []byte("\r\n"))
+	reformatted := bytes.ReplaceAll(append([]byte("# Written by an older moteld monitor setup\n\n"), uncommented(unitDropIn)...), []byte("\n"), []byte("\r\n"))
 	put(dropInPath, reformatted)
 	if got := stale("run"); got != "" {
 		t.Fatalf("a comment alone: %s", got)
@@ -58,8 +58,8 @@ func TestLoadWarningsSayStaleUnits(t *testing.T) {
 	put(socketPath, []byte("[Socket]\nListenStream=/run/old.sock\n"))
 	put(metricsUnits()[5].path, []byte("[Service]\nUser=root\n"))
 	got := stale("run")
-	if !strings.Contains(got, "("+socketPath+"): run motel monitor setup as root") ||
-		!strings.Contains(got, "("+metricsUnits()[5].path+"): run motel monitor setup --metrics as root") {
+	if !strings.Contains(got, "("+socketPath+"): run moteld monitor setup as root") ||
+		!strings.Contains(got, "("+metricsUnits()[5].path+"): run moteld monitor setup --metrics as root") {
 		t.Fatalf("stale units: %s", got)
 	}
 	// A block with channels alone is told of Alertmanager's units alone.
@@ -75,7 +75,7 @@ func TestLoadWarningsSayStaleUnits(t *testing.T) {
 	put(metricsUnits()[5].path, metricsUnits()[5].data)
 	scrape := filepath.Join(DefaultMetricsStateDir, scrapeName)
 	put(scrape, []byte("global:\n  scrape_interval: 30s\nscrape_configs:\n  - job_name: vmalert\n    static_configs: [{targets: [\"127.0.0.1:8880\"]}]\n"))
-	if got := stale("run"); !strings.Contains(got, "("+scrape+"): run motel monitor setup --metrics as root") {
+	if got := stale("run"); !strings.Contains(got, "("+scrape+"): run moteld monitor setup --metrics as root") {
 		t.Fatalf("an old scrape.yml: %s", got)
 	}
 	put(scrape, append([]byte("# a comment of an older setup\n"), scrapeConfig...))
@@ -100,7 +100,7 @@ func TestLoadWarningsSayStaleUnits(t *testing.T) {
 		t.Fatal(err)
 	}
 	if w := LoadWarnings("run", both); !slices.ContainsFunc(w, func(s string) bool {
-		return strings.Contains(s, scrape+" could not be compared with this motel's (is a directory)") && strings.Count(s, scrape) == 1
+		return strings.Contains(s, scrape+" could not be compared with this moteld's (is a directory)") && strings.Count(s, scrape) == 1
 	}) {
 		t.Fatalf("an unreadable scrape.yml: %v", w)
 	}
@@ -143,12 +143,12 @@ func TestLoadWarningsSayTheProxyGoes(t *testing.T) {
 	// Setup restarts Alertmanager only when it does not listen in the
 	// namespace yet (a retirement cut short may have left it listening).
 	const restarts = " and, unless Alertmanager listens in the store's namespace already, restarts (or starts) Alertmanager once so that it does"
-	want := "monitor: the proxy an older setup wrote for Alertmanager (" + sock + ", " + svc + ") is still in place: run motel monitor setup --metrics as root, which retires it" + restarts
+	want := "monitor: the proxy an older setup wrote for Alertmanager (" + sock + ", " + svc + ") is still in place: run moteld monitor setup --metrics as root, which retires it" + restarts
 	if w := LoadWarnings("run", store); len(w) != 1 || w[0] != want {
 		t.Fatalf("the proxy alone:\n%v\nwant\n%s", w, want)
 	}
 	put(metricsUnits()[1].path, []byte("[Service]\nType=oneshot\n"))
-	want = "monitor: the files motel monitor setup --metrics wrote differ from this motel's (" + metricsUnits()[1].path + "), and the proxy an older setup wrote for Alertmanager (" + sock + ", " + svc + ") is still in place: run motel monitor setup --metrics as root to put this version's in place; it retires the proxy" + restarts
+	want = "monitor: the files moteld monitor setup --metrics wrote differ from this moteld's (" + metricsUnits()[1].path + "), and the proxy an older setup wrote for Alertmanager (" + sock + ", " + svc + ") is still in place: run moteld monitor setup --metrics as root to put this version's in place; it retires the proxy" + restarts
 	if w := LoadWarnings("run", store); len(w) != 1 || w[0] != want {
 		t.Fatalf("a stale unit and the proxy:\n%v\nwant\n%s", w, want)
 	}
@@ -157,7 +157,7 @@ func TestLoadWarningsSayTheProxyGoes(t *testing.T) {
 	if err := os.Remove(filepath.Join(root, sock)); err != nil {
 		t.Fatal(err)
 	}
-	want = "monitor: the proxy an older setup wrote for Alertmanager (" + svc + ") is still in place: run motel monitor setup --metrics as root, which retires it" + restarts
+	want = "monitor: the proxy an older setup wrote for Alertmanager (" + svc + ") is still in place: run moteld monitor setup --metrics as root, which retires it" + restarts
 	if w := LoadWarnings("run", store); len(w) != 1 || w[0] != want {
 		t.Fatalf("the proxy's service alone:\n%v\nwant\n%s", w, want)
 	}

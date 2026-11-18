@@ -192,7 +192,7 @@ secretscan:
 	$(COMPOSE) run --rm gitleaks detect --source /src --redact -v $(GITLEAKS_FLAGS)
 
 # motel's release, linked in as Caddy's CustomVersion. Caddy puts it
-# in front of its full version (`motel version`, `--version`,
+# in front of its full version (`moteld version`, `--version`,
 # `environ`), which otherwise names only the Caddy built in. The short
 # version, in Caddy's ACME User-Agent, metrics, tracing and FastCGI
 # SERVER_SOFTWARE, stays Caddy's own.
@@ -249,7 +249,7 @@ usage-check: pin-watch-check ci-changes-check
 
 # Cross-compiles the product binary for the release targets. GOFLAGS is
 # cleared so -buildvcs is back on: Go records the commit, and on a tag
-# the release, in the build info `motel build-info` prints (the dev
+# the release, in the build info `moteld build-info` prints (the dev
 # service disables it for test cache friendliness). safe.directory is
 # needed because /src is a bind mount owned by a different uid than the
 # container's root.
@@ -261,8 +261,8 @@ usage-check: pin-watch-check ci-changes-check
 build:
 	$(COMPOSE) run --rm -e GOFLAGS= -e CGO_ENABLED=0 dev sh -c '\
 		git config --global --add safe.directory /src; \
-		GOOS=linux GOARCH=amd64 go build -trimpath -ldflags "$(GO_LDFLAGS)" -o build/motel-linux-amd64 ./cmd/motel & p1=$$!; \
-		GOOS=linux GOARCH=arm64 go build -trimpath -ldflags "$(GO_LDFLAGS)" -o build/motel-linux-arm64 ./cmd/motel & p2=$$!; \
+		GOOS=linux GOARCH=amd64 go build -trimpath -ldflags "$(GO_LDFLAGS)" -o build/moteld-linux-amd64 ./cmd/moteld & p1=$$!; \
+		GOOS=linux GOARCH=arm64 go build -trimpath -ldflags "$(GO_LDFLAGS)" -o build/moteld-linux-arm64 ./cmd/moteld & p2=$$!; \
 		(cd backups && GOOS=linux GOARCH=amd64 go build -trimpath -ldflags "-s -w" -o ../build/motel-backup-linux-amd64 ./cmd/motel-backup) & p3=$$!; \
 		(cd backups && GOOS=linux GOARCH=arm64 go build -trimpath -ldflags "-s -w" -o ../build/motel-backup-linux-arm64 ./cmd/motel-backup) & p4=$$!; \
 		wait $$p1 || exit 1; wait $$p2 || exit 1; wait $$p3 || exit 1; wait $$p4 || exit 1; \
@@ -273,7 +273,7 @@ build:
 
 # Builds .deb for both arches into dist/. .deb only, and no .apk
 # planned: liveswap runs apps as transient systemd units with no
-# fallback runner, so an Alpine/OpenRC package would install a motel
+# fallback runner, so an Alpine/OpenRC package would install a moteld
 # that serves but refuses any Caddyfile defining an app — see
 # packaging/nfpm.yaml. The packages carry the systemd unit, the starter
 # config (in /usr/share/motel) and the data dirs, and motel-backup
@@ -292,17 +292,17 @@ package: clean-debs build
 	$(COMPOSE) run --rm --entrypoint sh -e NFPM_VERSION=$(VERSION) nfpm -c '\
 		set -e; \
 		for a in amd64 arm64; do \
-			rm -f build/motel build/motel-backup; \
-			cp build/motel-linux-$$a build/motel; \
+			rm -f build/moteld build/motel-backup; \
+			cp build/moteld-linux-$$a build/moteld; \
 			cp build/motel-backup-linux-$$a build/motel-backup; \
 			for f in deb; do \
 				NFPM_ARCH=$$a nfpm package -f packaging/nfpm.yaml -p $$f -t dist/; \
 			done; \
 		done; \
-		rm -f build/motel build/motel-backup'
+		rm -f build/moteld build/motel-backup'
 
 clean-debs:
-	rm -f dist/motel_*.deb
+	rm -f dist/moteld_*.deb
 
 # Installs the freshly built .deb inside a systemd container (DISTRO
 # picks the base image) and runs the staged smoke test: install, unit
@@ -329,14 +329,14 @@ install-test:
 		motel-install-test-$(subst :,-,$(DISTRO))
 	docker exec motel-smoke /bin/bash /smoke.sh; status=$$?; \
 	if [ $$status -ne 0 ]; then \
-		docker exec motel-smoke journalctl -u motel --no-pager || true; \
+		docker exec motel-smoke journalctl -u moteld --no-pager || true; \
 	fi; \
 	docker rm -f motel-smoke >/dev/null; \
 	exit $$status
 
 # The main suites run via the e2e-runner entrypoint. Then the systemd
 # suite runs INSIDE the motel container (it needs systemctl,
-# journalctl and the process tree): restart survival, motel's own
+# journalctl and the process tree): restart survival, moteld's own
 # crashes (SIGKILL, exit 2, OOM) undone by the unit + reattach, a
 # refused start staying down, cgroup teardown of a worker tree, crash
 # cleanup, journal output. The recovery suite is the runner's view
@@ -353,7 +353,7 @@ e2e:
 	$(COMPOSE) run --rm e2e-runner || status=1; \
 	echo "════ systemd suite: restart survival, reattach, cgroup teardown ════"; \
 	$(COMPOSE) exec -T e2e-motel /bin/sh /suite-systemd.sh || status=1; \
-	echo "════ recovery suite: the runner's view after motel's unclean death ════"; \
+	echo "════ recovery suite: the runner's view after moteld's unclean death ════"; \
 	$(COMPOSE) run --rm --entrypoint "/bin/sh /suite-recovery.sh" e2e-runner || status=1; \
 	echo "════ box apply suite: signed pushes through box_webhook to the root applier ════"; \
 	$(COMPOSE) exec -T e2e-motel /bin/sh /suite-box.sh || status=1; \
@@ -401,7 +401,7 @@ e2e-notify:
 		if [ "$$rc" != 0 ]; then \
 			status=1; \
 			echo "════ notify split $$s failed: box $$i's journal ════"; \
-			$(COMPOSE) exec -T --index $$i e2e-notify-box journalctl --no-pager -n 200 -u motel -u prometheus-alertmanager -u motel-am.socket || true; \
+			$(COMPOSE) exec -T --index $$i e2e-notify-box journalctl --no-pager -n 200 -u moteld -u prometheus-alertmanager -u motel-am.socket || true; \
 		fi; \
 	done; \
 	rm -rf $$logs; \
@@ -445,7 +445,7 @@ e2e-metrics:
 		if [ "$$rc" != 0 ]; then \
 			status=1; \
 			echo "════ metrics split $$s failed: box $$i's journal ════"; \
-			$(COMPOSE) exec -T --index $$i e2e-metrics-box journalctl --no-pager -n 200 -u motel -u victoria-metrics -u motel-vmalert -u motel-vm.socket -u motel-vm.service -u motel-am-metrics.socket -u prometheus-alertmanager -u motel-metrics-netns || true; \
+			$(COMPOSE) exec -T --index $$i e2e-metrics-box journalctl --no-pager -n 200 -u moteld -u victoria-metrics -u motel-vmalert -u motel-vm.socket -u motel-vm.service -u motel-am-metrics.socket -u prometheus-alertmanager -u motel-metrics-netns || true; \
 		fi; \
 	done; \
 	rm -rf $$logs; \
@@ -479,7 +479,7 @@ SUITE_LIMIT ?= 600
 e2e-backup:
 	$(cgroup2_preflight)
 	$(COMPOSE) run --rm -e CGO_ENABLED=0 dev sh -c '\
-		go build -trimpath -o build/e2e-backup/motel ./cmd/motel & p1=$$!; \
+		go build -trimpath -o build/e2e-backup/moteld ./cmd/moteld & p1=$$!; \
 		(cd backups && go build -trimpath -tags e2e -o ../build/e2e-backup/motel-backup ./cmd/motel-backup) & p2=$$!; \
 		wait $$p1 || exit 1; wait $$p2 || exit 1; \
 		chmod -R a+rwX build'
@@ -515,7 +515,7 @@ e2e-backup:
 # SOAK_RELOADS, SOAK_CLIENTS, SOAK_REQS. Runs per merge to main and
 # weekly in CI (soak.yml); never in the PR path.
 #
-# On failure: motel runs under systemd inside e2e-motel, so that
+# On failure: moteld runs under systemd inside e2e-motel, so that
 # container's console carries nothing from it and the journal is the
 # evidence — same as the e2e target above, tail-bounded here because a
 # soak pushes 15-20 minutes of churn through the stub servers.

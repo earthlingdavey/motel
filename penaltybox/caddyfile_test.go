@@ -173,7 +173,7 @@ func TestProvisionAppliesDefaults(t *testing.T) {
 // Inside a handle block it sorts before the proxy, whatever the source
 // order; inside a route block the written order holds. (Where it sorts
 // against Souin's cache is pinned by the motel build, which compiles
-// cache in: cmd/motel.)
+// cache in: cmd/moteld.)
 func TestCaddyfileDirectiveOrder(t *testing.T) {
 	cases := []struct {
 		name string

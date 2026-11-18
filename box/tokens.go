@@ -17,7 +17,7 @@ import (
 // block's signers. It is read from the raw tokens, never from the
 // adapted configuration — which is what makes the reading safe to do
 // as root on pushed input, and the same whoever does it: `init`, the
-// handler's pre-check, the applier and `motel box webhook` cannot
+// handler's pre-check, the applier and `moteld box webhook` cannot
 // disagree about which address a file names or who may sign for it.
 type Shape struct {
 	// Host is the address of the one site carrying box_webhook, which
@@ -370,7 +370,7 @@ func walk(input []byte) (*Shape, error) {
 				child.kind = kindLiveswap
 			}
 			// The blocks the monitor block replaced, refused here by name
-			// as motel validate refuses them (notify/caddyfile.go): the
+			// as moteld validate refuses them (notify/caddyfile.go): the
 			// walk would read no monitor block, and the slot's check
 			// below would refuse the push in words that name neither.
 			switch first.Text {

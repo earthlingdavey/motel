@@ -81,7 +81,7 @@ func (App) CaddyModule() caddy.ModuleInfo {
 // Provision checks the block against the apps liveswap configures and
 // the box's secrets (resolve), and wires the store into this config
 // when the block has a metrics line. It writes nothing and connects to
-// nothing, so `motel validate` runs every refusal and leaves the box as
+// nothing, so `moteld validate` runs every refusal and leaves the box as
 // it was. notify's part comes first: the store's rules are rendered
 // from its receivers.
 func (a *App) Provision(ctx caddy.Context) error {
@@ -154,7 +154,7 @@ func (a *App) provisionNotify(ctx caddy.Context, ls *liveswap.App) error {
 		// A boot serves: a file it cannot read or parse drops every line
 		// that reads a secret, as a missing secret does ("Secrets at
 		// load"), and the error is the file's, never a value.
-		a.logger.Error("monitor: the box's secrets file cannot be used: every channel that reads a secret is dropped from this load; motel validate and motel reload refuse the config until it is mended",
+		a.logger.Error("monitor: the box's secrets file cannot be used: every channel that reads a secret is dropped from this load; moteld validate and moteld reload refuse the config until it is mended",
 			zap.String("secrets_file", a.secretsFile()), zap.Error(unusable))
 		secrets = map[string]string{}
 	}
@@ -165,7 +165,7 @@ func (a *App) provisionNotify(ctx caddy.Context, ls *liveswap.App) error {
 	}
 	for _, why := range dropped {
 		// The reason names the line and the key, never a value.
-		a.logger.Error("monitor: a channel is dropped from this load: its secret cannot be used; motel validate and motel reload refuse the config until it is mended",
+		a.logger.Error("monitor: a channel is dropped from this load: its secret cannot be used; moteld validate and moteld reload refuse the config until it is mended",
 			zap.String("reason", why.Error()), zap.String("secrets_file", a.secretsFile()))
 	}
 	if len(dropped) > 0 && len(a.cfg.operator) == 0 {
@@ -213,9 +213,9 @@ func (a *App) warnAtLoad(heartbeat string) {
 		a.logger.Warn("monitor: allow_insecure_channels is on: channel URLs may be http and private addresses, which Alertmanager reaches from the network namespace every app shares; for test rigs only")
 	}
 	// Without a heartbeat the Watchdog goes to the blackhole: a box,
-	// motel or Alertmanager that stops is told by no one (requirement 6).
+	// moteld or Alertmanager that stops is told by no one (requirement 6).
 	if heartbeat == "" {
-		a.logger.Warn("monitor: no heartbeat in this load: nothing outside the box hears that it, motel or Alertmanager stopped; add heartbeat {secret.NOTIFY_<NAME>} with a dead-man check's ping URL, or mend its secret (notify/DESIGN-notify.md, \"Dead-man and uptime\")")
+		a.logger.Warn("monitor: no heartbeat in this load: nothing outside the box hears that it, moteld or Alertmanager stopped; add heartbeat {secret.NOTIFY_<NAME>} with a dead-man check's ping URL, or mend its secret (notify/DESIGN-notify.md, \"Dead-man and uptime\")")
 	}
 }
 
@@ -327,7 +327,7 @@ func (a *App) startNotify() {
 	// filter, whatever line names it.
 	theEngine.configure(a, am, a.known, a.logger)
 	// What liveswap's watchdogs reported and has not ended, again: after
-	// a motel restart the table is empty, and nothing else would report
+	// a moteld restart the table is empty, and nothing else would report
 	// a loop already under way or a refused relaunch (DESIGN-notify.md,
 	// "Behaviour"). Pulled here, once the engine serves this config,
 	// whichever app Caddy starts first.
@@ -346,7 +346,7 @@ func (a *App) applyRender(am *amClient) {
 	reloaded, err := apply(ctx, theStateDir, a.rendered, a.files, am)
 	switch {
 	case errors.Is(err, errNotSetUp):
-		a.logger.Warn("monitor: Alertmanager is not set up on this box (run motel monitor setup as root); events are journal lines only until it is", zap.String("state_dir", theStateDir))
+		a.logger.Warn("monitor: Alertmanager is not set up on this box (run moteld monitor setup as root); events are journal lines only until it is", zap.String("state_dir", theStateDir))
 	case errors.Is(err, errUnanswered):
 		a.logger.Warn("monitor: "+errUnanswered.Error(), zap.String("state_dir", theStateDir), zap.Error(err))
 	case err != nil:

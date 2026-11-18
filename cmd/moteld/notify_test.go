@@ -13,7 +13,7 @@ import (
 	"github.com/smallhoursorg/motel/notify"
 )
 
-// The box handler names a push's secrets/_box/ to `motel validate` by a
+// The box handler names a push's secrets/_box/ to `moteld validate` by a
 // variable notify reads: neither module imports the other, so the name
 // is written in each and held equal here, where both are linked.
 func TestNotifyPushedSecretsEnvAgrees(t *testing.T) {
@@ -37,19 +37,19 @@ func TestBoxSecretsPathsAgree(t *testing.T) {
 	}
 }
 
-// motel notify and motel metrics are hidden, run nothing, and fail
-// with the new spelling; motel monitor holds the commands.
+// moteld notify and moteld metrics are hidden, run nothing, and fail
+// with the new spelling; moteld monitor holds the commands.
 func TestTheOldCommandsSayTheNewSpelling(t *testing.T) {
 	for _, c := range []struct {
 		name string
 		args []string
 		want string
 	}{
-		{"notify", []string{"setup"}, "motel notify is now motel monitor: motel monitor setup"},
-		{"notify", []string{"send", "--source", "cron"}, "motel monitor send --source cron"},
-		{"notify", []string{"send", "--summary", "the nightly job failed", "--detail", "who=it's"}, `motel monitor send --summary 'the nightly job failed' --detail 'who=it'\''s'`},
-		{"notify", []string{"send", "--summary", ""}, "motel monitor send --summary ''"},
-		{"metrics", []string{"setup"}, "motel metrics setup is now motel monitor setup --metrics"},
+		{"notify", []string{"setup"}, "moteld notify is now moteld monitor: moteld monitor setup"},
+		{"notify", []string{"send", "--source", "cron"}, "moteld monitor send --source cron"},
+		{"notify", []string{"send", "--summary", "the nightly job failed", "--detail", "who=it's"}, `moteld monitor send --summary 'the nightly job failed' --detail 'who=it'\''s'`},
+		{"notify", []string{"send", "--summary", ""}, "moteld monitor send --summary ''"},
+		{"metrics", []string{"setup"}, "moteld metrics setup is now moteld monitor setup --metrics"},
 	} {
 		def, ok := caddycmd.Commands()[c.name]
 		if !ok {
@@ -61,7 +61,7 @@ func TestTheOldCommandsSayTheNewSpelling(t *testing.T) {
 			t.Errorf("%s is listed in the help", c.name)
 		}
 		if err := cmd.RunE(cmd, c.args); err == nil || !strings.Contains(err.Error(), c.want) {
-			t.Errorf("motel %s %v: %v, want %q", c.name, c.args, err, c.want)
+			t.Errorf("moteld %s %v: %v, want %q", c.name, c.args, err, c.want)
 		}
 	}
 	def, ok := caddycmd.Commands()["monitor"]
@@ -75,10 +75,10 @@ func TestTheOldCommandsSayTheNewSpelling(t *testing.T) {
 		names = append(names, sub.Name())
 	}
 	if strings.Join(names, " ") != "rules send setup silence test" {
-		t.Errorf("motel monitor has %v", names)
+		t.Errorf("moteld monitor has %v", names)
 	}
 	setup, _, err := cmd.Find([]string{"setup"})
 	if err != nil || setup.Flags().Lookup("metrics") == nil {
-		t.Errorf("motel monitor setup has no --metrics: %v", err)
+		t.Errorf("moteld monitor setup has no --metrics: %v", err)
 	}
 }

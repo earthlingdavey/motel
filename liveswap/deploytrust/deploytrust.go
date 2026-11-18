@@ -454,7 +454,7 @@ func WarnUnboundSource(logger *zap.Logger, tc TrustConfig, where ...zap.Field) {
 		}
 		logger.Warn("deploy_trust local has no audience: a token minted for any box that trusts this key is accepted here",
 			append(where, zap.String("public_key", tc.PublicKey),
-				zap.String("fix", "add `audience <a name for this box>` and mint with `motel deploy-token --audience <the same>`"))...)
+				zap.String("fix", "add `audience <a name for this box>` and mint with `moteld deploy-token --audience <the same>`"))...)
 	}
 }
 
@@ -504,7 +504,7 @@ func (t httpsOnlyTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 }
 
 // loadEd25519PublicKey reads a PKIX PEM file (as emitted by
-// `motel deploy-keygen`) and returns the ed25519 public key.
+// `moteld deploy-keygen`) and returns the ed25519 public key.
 func loadEd25519PublicKey(path string) (ed25519.PublicKey, error) {
 	data, err := os.ReadFile(path) //nolint:gosec // operator-configured public-key path, not request input
 	if err != nil {
@@ -745,7 +745,7 @@ func authorize(ctx context.Context, verifiers []Verifier, rawToken string) (who 
 // limit allows, in 16 ms (arm64, measured 2026-10-20). The cap keeps
 // that difference to a fraction of a millisecond per source, the
 // timing residual DESIGN-threat-model.md accepts (#306). A GitHub or
-// GitLab OIDC token is 1–2 KiB, a `motel deploy-token` one smaller.
+// GitLab OIDC token is 1–2 KiB, a `moteld deploy-token` one smaller.
 const MaxTokenLen = 8 << 10
 
 // MaxRefusalLen bounds one source's reason in the journal. A reason

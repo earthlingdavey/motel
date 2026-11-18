@@ -43,15 +43,15 @@ one you mean: `BOX=deploy.example.com`.
 ## The box's key
 
 The package makes the box's key when it is installed or upgraded on a
-running system, and `motel init` makes it if it is missing. Root on
+running system, and `moteld init` makes it if it is missing. Root on
 the box prints it:
 
 ```sh
-ssh root@box.example.com motel box key
+ssh root@box.example.com moteld box key
 ```
 
 The output is the key alone, one `age1…` line, so `BOX_KEY=$(ssh
-root@box.example.com motel box key)` passes it to a command. It is
+root@box.example.com moteld box key)` passes it to a command. It is
 public: the first line of `recipients` that is not a comment is this
 key. The private half is `/etc/motel/age/identity`, readable by root
 alone; it never leaves the box, and losing it loses nothing a reader
@@ -65,7 +65,7 @@ The box's first secret also needs the box's key, so that `make secret`
 can write `recipients`:
 
 ```sh
-make secret APP=example VAR=DATABASE_URL BOX_KEY=$(ssh root@box.example.com motel box key)
+make secret APP=example VAR=DATABASE_URL BOX_KEY=$(ssh root@box.example.com moteld box key)
 ```
 
 After that, `BOX_KEY` is not needed:
@@ -176,7 +176,7 @@ make secret APP=_box VAR=NOTIFY_OPS_URL
 ```
 
 The box writes these to `/etc/motel/secrets/_box.env`, which notify
-reads and no app is given, and reloads motel when they change: a
+reads and no app is given, and reloads moteld when they change: a
 channel's new URL is in use once the push is applied. The block reads
 each by name:
 
@@ -250,11 +250,11 @@ it, so every reader who runs `make secret` or `make rekey` needs it too.
 
 ### A rebuilt box
 
-A new box has a new key. Install motel and run `motel init` from
+A new box has a new key. Install motel and run `moteld init` from
 the box's directory, as the first deploy did; then, as a reader:
 
 ```sh
-make rekey BOX=deploy.example.com BOX_KEY=$(ssh root@box.example.com motel box key)
+make rekey BOX=deploy.example.com BOX_KEY=$(ssh root@box.example.com moteld box key)
 ```
 
 encrypts every value again, to the new key in place of the old one.
@@ -275,11 +275,11 @@ original's place and the original is gone, nothing needs doing. If it
 becomes a second box:
 
 1. Give it a key of its own, as root on it:
-   `rm /etc/motel/age/identity && motel box key`.
+   `rm /etc/motel/age/identity && moteld box key`.
 2. Remove the env files of the apps it will not run, under
    `/etc/motel/secrets/`.
 3. Set it up as any new box, with a directory of its own and
-   `motel init` from it. Its first secret takes its new key:
+   `moteld init` from it. Its first secret takes its new key:
    `make secret APP=… VAR=… BOX=<its host> BOX_KEY=…`.
 
 ### A lost laptop
@@ -294,7 +294,7 @@ known.
    each app.
 
 If the lost key was the only signer, the way back is root on the box:
-put a new key in the Caddyfile and run `motel init` again from the
+put a new key in the Caddyfile and run `moteld init` again from the
 box's directory, copied over (the box README's
 [At 3am](../examples/box/README.md#at-3am)). If it was also the only
 reader, nobody can run `make rekey`, and nothing needs it: remove the
@@ -312,7 +312,7 @@ comes into the repository without passing through the laptop's disk:
 ssh root@box.example.com cat /etc/motel/example.env | make secrets-import APP=example
 ```
 
-(with `BOX_KEY=$(ssh root@box.example.com motel box key)` too, if it
+(with `BOX_KEY=$(ssh root@box.example.com moteld box key)` too, if it
 is the box's first secret). Then:
 
 1. Change the app's block to `env_file /etc/motel/secrets/example.env`,
@@ -331,7 +331,7 @@ push.
 motel reads an app's env file each time the app launches: a
 deploy, a rollback, or a relaunch after a crash or a reboot. A push
 never restarts a running app, and a push of apps' secrets alone reloads
-nothing (the box's own, `_box/`, reload motel: [A notify channel's
+nothing (the box's own, `_box/`, reload moteld: [A notify channel's
 URL](#a-notify-channels-url)). So a value that must change now — a leaked key, say — is
 `make secret`, a push, and then a launch of the app. The quickest is a
 rollback to the version that is running: in the app's repository,
@@ -411,14 +411,14 @@ first line of `recipients`, and stops, with nothing sent, on:
 
 - another key on the box: `the box's key is <age1…>, but the first
   recipient in <host>/secrets/recipients is <age1…>: a rebuilt box has
-  a new key. Confirm it with ssh root@<host> motel box key, then
+  a new key. Confirm it with ssh root@<host> moteld box key, then
   make rekey BOX_KEY=<age1…>, commit and push; nothing was sent`
   ([A rebuilt box](#a-rebuilt-box));
 - no key on the box: `the box names no key for secrets (no recipient in
-  GET /): run motel box key as root on it; nothing was sent`;
+  GET /): run moteld box key as root on it; nothing was sent`;
 - values with no recipients file: `<host>/secrets holds values but no
   recipients file names a key: make secret APP=… VAR=… BOX_KEY=$(ssh
-  root@<host> motel box key) makes one; nothing was sent`.
+  root@<host> moteld box key) makes one; nothing was sent`.
 
 ## Who can read what
 
@@ -427,7 +427,7 @@ first line of `recipients`, and stops, with nothing sent, on:
 | Root on the box | Yes | The box's key, and the env files it writes |
 | A reader: each key in `recipients` | Every value encrypted to that key, in all of the repository's history | `make secret-show`, or `age -d` on any clone |
 | A signer | Yes, whatever `recipients` says | One signed commit can add a site that serves any file the `motel` user reads, env files included, so a signer's key is every app's secrets ([box README](../examples/box/README.md#secrets)). The template makes every signer whose key age can use a reader too |
-| The `motel` user, and so a compromised motel | The env files | It reads them at each launch, as it always has; it cannot read the box's key |
+| The `motel` user, and so a compromised moteld | The env files | It reads them at each launch, as it always has; it cannot read the box's key |
 | An app | Its own values, in its environment | motel passes them at launch; `/etc/motel` is in no app's sandbox |
 | GitHub, the workflow, any token or app with read access to the repository, a fork | Never a value | Ciphertext only; see the next section |
 | An administrator in the `adm` group ([Hardening](hardening.md#3-an-administrator-if-you-want-one)) | No, unless an app writes one to its own output | The journal only, which holds every app's output |

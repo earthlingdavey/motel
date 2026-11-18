@@ -2410,7 +2410,7 @@ func TestDeploySweepsBeforePreStart(t *testing.T) {
 }
 
 func TestDestructBeforeStartTouchesNothing(t *testing.T) {
-	// `motel validate`, and a candidate config that never became
+	// `moteld validate`, and a candidate config that never became
 	// the serving one (another app's Start failed): no started config
 	// is live, so whatever the manager runs belongs to whoever is or
 	// will be serving it and must be left alone.

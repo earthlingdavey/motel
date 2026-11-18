@@ -1,20 +1,20 @@
-# motel systemd unit, modeled on Caddy's official dist unit.
+# moteld systemd unit, modeled on Caddy's official dist unit.
 #
 # Write every absolute path in these comments in backticks.
-# `systemctl cat motel` prints each file under a line that is "# "
+# `systemctl cat moteld` prints each file under a line that is "# "
 # and its path, and docs/upgrading.md tells the operator to read the
 # output by those lines: a comment line that opened with a bare path
-# would read as one more file (a test in cmd/motel fails on such a
+# would read as one more file (a test in cmd/moteld fails on such a
 # line).
 #
 # Note on hardening: deployed apps do NOT run inside this unit. liveswap
 # starts them as transient units under the motel user's own systemd
 # manager (user@<uid>.service; postinstall enables lingering and adds a
-# drop-in that starts it with this unit), so they outlive motel
-# restarts, upgrades and crashes — the unit brings a crashed motel
+# drop-in that starts it with this unit), so they outlive moteld
+# restarts, upgrades and crashes — the unit brings a crashed moteld
 # back (Restart= below) and it reattaches to the running apps — and
-# PrivateTmp/ProtectSystem here apply to motel alone. TimeoutStopSec
-# bounds only motel's own shutdown; each app's stop budget is its
+# PrivateTmp/ProtectSystem here apply to moteld alone. TimeoutStopSec
+# bounds only moteld's own shutdown; each app's stop budget is its
 # `grace`. `/var/lib/liveswap` (releases, shared data, state) and
 # `/var/lib/motel` (TLS certificates etc.) stay writable — that is
 # where motel and the apps keep their files.
@@ -32,11 +32,11 @@ Group=motel
 # A failed deploy's response carries the app's last journal lines
 # (liveswap/journal.go reads them with journalctl). journald keeps a
 # system user's output in the system journal, readable by the
-# systemd-journal group, so motel's own process joins it — this
+# systemd-journal group, so moteld's own process joins it — this
 # process only, not the account: the apps run under the user manager
 # with the account's groups, which stay as they are, and their sandbox
 # has no journal in its view either way. What this widens is what a
-# compromised motel can read: every unit's lines, which the units
+# compromised moteld can read: every unit's lines, which the units
 # here keep free of secrets (no --environ, see below).
 SupplementaryGroups=systemd-journal
 # Caddy resolves its dirs to $XDG_.../caddy, so both land inside
@@ -55,9 +55,9 @@ RuntimeDirectoryMode=0750
 # environment variable — ACME DNS tokens and any other supervisor
 # secrets — into the journal at each start, and journals get pasted
 # into bug reports. Add it back temporarily to debug environment issues.
-ExecStart=/usr/bin/motel run --config /etc/motel/Caddyfile
-ExecReload=/usr/bin/motel reload --config /etc/motel/Caddyfile --force
-# A crashed motel comes back on its own; a start it refused stays
+ExecStart=/usr/bin/moteld run --config /etc/motel/Caddyfile
+ExecReload=/usr/bin/moteld reload --config /etc/motel/Caddyfile --force
+# A crashed moteld comes back on its own; a start it refused stays
 # down. Every exit is Caddy's: a start that is refused — a rejected
 # config, a host that cannot deliver the per-app sandbox, no user
 # manager — exits 1 (Caddy's failed-startup code, which Caddy itself
@@ -78,7 +78,7 @@ ExecReload=/usr/bin/motel reload --config /etc/motel/Caddyfile --force
 # Caddy never sends WATCHDOG=1, so it would be killed on schedule.
 # The start limit stays at systemd's default (5 starts in 10 s): a
 # crash on every start ends in `start-limit-hit`, cleared by
-# `systemctl reset-failed motel`; a slower loop retries for as long
+# `systemctl reset-failed moteld`; a slower loop retries for as long
 # as it takes, like the liveswap watchdog does for an app — the loop
 # is the signal. RestartSec keeps that loop legible, one attempt (and
 # one probe unit) a second, and costs a one-off crash nothing next to
@@ -107,9 +107,9 @@ PrivateTmp=true
 ProtectSystem=full
 AmbientCapabilities=CAP_NET_BIND_SERVICE
 # And nothing else, as SECURITY.md says: the bounding set is that one
-# capability, so nothing motel execs holds another; NoNewPrivileges
+# capability, so nothing moteld execs holds another; NoNewPrivileges
 # keeps a setuid or setgid binary on the host from granting any (an
-# ambient capability survives it), and RestrictSUIDSGID keeps motel from
+# ambient capability survives it), and RestrictSUIDSGID keeps moteld from
 # making one. Every other unit the package ships had these already.
 CapabilityBoundingSet=CAP_NET_BIND_SERVICE
 NoNewPrivileges=yes

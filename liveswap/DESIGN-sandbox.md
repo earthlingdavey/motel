@@ -201,7 +201,7 @@ below as a contract the sandbox path must keep.
   Pinned by `TestEveryLaunchIsSandboxed`.
 - A reattach MUST verify rather than trust: a recorded unit that is
   running without `PrivateUsers=`/`PrivatePIDs=` was not started by
-  this motel (a development build, or another same-uid process) and
+  this moteld (a development build, or another same-uid process) and
   is refused, logged at ERROR, and replaced by a sandboxed relaunch
   through the ordinary sweep (`TestSystemdRunnerReattach`). That
   catches an honest stale unit, not a same-uid process starting units
@@ -459,7 +459,7 @@ the rest do ("What this does NOT stop").
 
 One attempt, one retry on timeout only (the shape a
 capable host under boot load produces; a refused start exits 1, which
-motel.service deliberately never retries, so without it one slow
+moteld.service deliberately never retries, so without it one slow
 attempt keeps a capable box down until someone starts it by hand),
 30 s each, and a hung attempt is then stopped with its grace and the
 runner's stop slack: 190 s bounded with the manager connection's two
@@ -537,10 +537,10 @@ The governing asymmetry an operator should know:
 Before restarting into a new box or binary, establish that the host
 can deliver the sandbox. A reload is the safe place to find out — a
 config that cannot activate leaves the running one serving, where a
-restart does not. `motel validate` does not measure the host (it
+restart does not. `moteld validate` does not measure the host (it
 never starts a unit). The verdict is cached per manager connection, so
 a reload measures the host only the first time after motel dialled
-the manager; a namespace policy changed underneath a running motel
+the manager; a namespace policy changed underneath a running moteld
 (a sysctl, an LSM policy load) is not seen until the next restart.
 There is deliberately no uncached preflight: the cache is what keeps a
 throwaway unit off Caddy's reload path.
@@ -548,7 +548,7 @@ throwaway unit off Caddy's reload path.
 Nothing here is destructive: the release, `shared/` and the
 instance's `run/<nonce>/` are bind-mounted at their real paths and everything else is simply absent
 from the unit's view — `state.json` included, which the supervisor
-still reads and writes as itself. motel itself is never sandboxed.
+still reads and writes as itself. moteld itself is never sandboxed.
 
 ## Testing acceptance criteria
 

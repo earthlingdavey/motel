@@ -463,7 +463,7 @@ func TestEveryUnitCarriesASibling(t *testing.T) {
 	argv := []string{"./server", "--flag"}
 	got := withSibling(argv)
 	// The script is pinned to the byte: appArgv recognises the units of
-	// this motel by it, so a reworded script would make every unit a
+	// this moteld by it, so a reworded script would make every unit a
 	// previous binary started read back as the shell's argv in status
 	// and state.json after an upgrade, with this test still green if
 	// it only looked for the parts.
@@ -809,7 +809,7 @@ func TestSystemdRunnerReattach(t *testing.T) {
 		t.Fatalf("a reattached handle must report the unit's command %v, got %v", adopted, st.Command)
 	}
 	// A running unit WITHOUT the sandbox is never adopted: nothing
-	// this motel starts lacks it, so it is something else's unit —
+	// this moteld starts lacks it, so it is something else's unit —
 	// a development build that still had `sandbox off`, say — and
 	// adopting it would serve an app bare with no signal. It is
 	// stopped here and now, not left for the relaunch's sweep (which
@@ -1171,7 +1171,7 @@ func TestSystemdRunnerSweepLeavesARunningPreStartToFinish(t *testing.T) {
 }
 
 func TestSystemdRunnerRunOnceCarriesItsOwnDeadline(t *testing.T) {
-	// A pre_start outlives a motel that stops during it, and with it
+	// A pre_start outlives a moteld that stops during it, and with it
 	// the context that bounded it: the unit's own TimeoutStartSec= is
 	// what still ends it on time.
 	r, conn := newTestSystemdRunner(t)

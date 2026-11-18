@@ -1,34 +1,34 @@
 #!/bin/sh
 # Checks that every box in this repository is one motel will take,
-# with the motel on PATH (bin/install-motel puts the latest stable
+# with the moteld on PATH (bin/install-moteld puts the latest stable
 # release there in the workflow, or the one its MOTEL_VERSION variable
 # names; there is no macOS build, so on a Mac the workflow is where this
 # runs). A box with a MOTEL_VERSION file beside its Caddyfile — one
 # line, 0.3.1 or v0.3.1-rc1: the release that box runs — is checked
-# with motel-<version> instead, which bin/install-motel installs
+# with moteld-<version> instead, which bin/install-moteld installs
 # for each such file. It reads the files as they are in the checkout.
 #
 # A box is a directory at the top of the repository named for the box's
 # deploy host, holding its whole config as Caddyfile:
-# deploy.example.com/Caddyfile. `motel init` on the box records
+# deploy.example.com/Caddyfile. `moteld init` on the box records
 # exactly that path, and the workflow posts the file to that host. So:
 #
 #   - every Caddyfile in the repository is <dir>/Caddyfile, one level down;
-#   - each reads as a box's file, as the box reads it (`motel box
+#   - each reads as a box's file, as the box reads it (`moteld box
 #     describe`: a box block with signers, one site with box_webhook),
 #     and its box_webhook host, in lower case, is <dir>;
-#   - each passes `motel validate`, the box's own check before it
+#   - each passes `moteld validate`, the box's own check before it
 #     applies a push;
 #   - every box lists the same signers (keys): each commit is on every
 #     box's history, so a key one box lacks would stop that box's pushes;
 #   - a box's secrets (<dir>/secrets/) are laid out as the box takes
 #     them, each for an app the file declares and whose env_file reads
-#     them, within the box's caps (`motel box describe` again: it
+#     them, within the box's caps (`moteld box describe` again: it
 #     reads each value's length from its ciphertext, no key needed, and
 #     warns at 75% of a cap), with a recipients file that names the keys
 #     they are encrypted to;
 #   - a box's MOTEL_VERSION file, when it has one, names a release
-#     (bin/install-motel's rule: an empty file is refused, never read
+#     (bin/install-moteld's rule: an empty file is refused, never read
 #     as the latest), and that release's binary is on PATH. The file is
 #     this repository's alone: bin/apply never sends it to the box.
 #
@@ -37,17 +37,17 @@
 #
 #   deploy.example.com/Caddyfile → https://deploy.example.com/ (1 app, 1 signer)
 #   deploy.example.com/Caddyfile → https://deploy.example.com/ (1 app, 1 signer, 2 secrets)
-#   deploy.example.com/Caddyfile → https://deploy.example.com/ (1 app, 1 signer), checked with motel-0.3.1-rc1
+#   deploy.example.com/Caddyfile → https://deploy.example.com/ (1 app, 1 signer), checked with moteld-0.3.1-rc1
 #
 # and a warning for what the box takes but is near a cap, or would trip
 # up a checkout on a Mac's case-insensitive disk.
 #
-#   MOTEL  the motel command (default: motel); a box whose file
-#             names a release is checked with $MOTEL-<version>
+#   MOTELD  the moteld command (default: moteld); a box whose file
+#             names a release is checked with $MOTELD-<version>
 set -eu
 cd "$(dirname "$0")/.."
-MOTEL=${MOTEL:-motel}
-default=$MOTEL
+MOTELD=${MOTELD:-moteld}
+default=$MOTELD
 actions=${GITHUB_ACTIONS:-}
 
 tmpd=$(mktemp -d)
@@ -92,14 +92,14 @@ for f in $files; do
 	fi
 	checked=$((checked + 1))
 	dir=${f%/Caddyfile}
-	# The box's binary: $MOTEL, or $MOTEL-<version> when the box's
-	# MOTEL_VERSION file names one. The shape is bin/install-motel's
+	# The box's binary: $MOTELD, or $MOTELD-<version> when the box's
+	# MOTEL_VERSION file names one. The shape is bin/install-moteld's
 	# `release`: nothing outside the set (a newline included) before the
 	# grep, which matches per line; the v comes off after the check, so a
 	# file of just "v" is refused. $(...) drops the line's newline. A
 	# dangling link is a file too (-L), one that cannot be read; so is a
 	# directory, or a pipe, which cat would wait on (-f first).
-	MOTEL=$default
+	MOTELD=$default
 	vf=$dir/MOTEL_VERSION
 	picked=
 	if [ -e "$vf" ] || [ -L "$vf" ]; then
@@ -117,16 +117,16 @@ for f in $files; do
 			bad "$f: $vf does not name a motel release: '$v' is not a release's version, 0.3.1 or v0.3.1-rc1, on one line$hint"
 			continue
 		fi
-		MOTEL=$default-${v#v}
-		if ! command -v "$MOTEL" >/dev/null 2>&1; then
-			bad "$f: $vf names ${v#v}, and $MOTEL is not here to check it with: bin/install-motel installs one for each box's file (in the workflow; there is no macOS build), and says when a release has no build to install"
+		MOTELD=$default-${v#v}
+		if ! command -v "$MOTELD" >/dev/null 2>&1; then
+			bad "$f: $vf names ${v#v}, and $MOTELD is not here to check it with: bin/install-moteld installs one for each box's file (in the workflow; there is no macOS build), and says when a release has no build to install"
 			continue
 		fi
-		picked=", checked with $MOTEL"
+		picked=", checked with $MOTELD"
 	fi
-	if ! "$MOTEL" box describe "$f" >"$tmpd/describe" 2>&1; then
+	if ! "$MOTELD" box describe "$f" >"$tmpd/describe" 2>&1; then
 		# One that said nothing (killed, or crashed) is named for it.
-		[ -s "$tmpd/describe" ] || printf '%s: %s box describe failed, and said nothing\n' "$f" "$MOTEL" >"$tmpd/describe"
+		[ -s "$tmpd/describe" ] || printf '%s: %s box describe failed, and said nothing\n' "$f" "$MOTELD" >"$tmpd/describe"
 		hint=
 		grep -q 'has no signer' "$tmpd/describe" && hint=" (make signer adds yours)"
 		bad "$(cat "$tmpd/describe")$hint"
@@ -141,9 +141,9 @@ for f in $files; do
 	# their names, as the box's handler tells it (box/DESIGN-box.md,
 	# "The box's own slot"), names only.
 	pushed=$(sed -n 's/^secret _box \([^ ]*\) .*/\1/p' "$tmpd/describe" | paste -s -d , -)
-	if ! MOTEL_NOTIFY_PUSHED_SECRETS=$pushed "$MOTEL" validate --adapter caddyfile --config "$f" >"$tmpd/validate" 2>&1; then
+	if ! MOTEL_NOTIFY_PUSHED_SECRETS=$pushed "$MOTELD" validate --adapter caddyfile --config "$f" >"$tmpd/validate" 2>&1; then
 		bad "$f does not validate:"
-		[ -s "$tmpd/validate" ] || printf '%s validate failed, and said nothing\n' "$MOTEL" >"$tmpd/validate"
+		[ -s "$tmpd/validate" ] || printf '%s validate failed, and said nothing\n' "$MOTELD" >"$tmpd/validate"
 		sed 's/^/  /' "$tmpd/validate" >&2
 		continue
 	fi
@@ -151,20 +151,20 @@ for f in $files; do
 	signers=$(grep -c '^signer ' "$tmpd/describe" || true)
 	secrets=$(grep -c '^secret ' "$tmpd/describe" || true)
 	# A value is a file in an app's directory under <dir>/secrets/, as
-	# the box counts them: a motel that names none has never heard
+	# the box counts them: a moteld that names none has never heard
 	# of secrets, and would pass them unread. The refusal names no
-	# release: `motel version` prints Caddy's.
+	# release: `moteld version` prints Caddy's.
 	values=$(find "$dir/secrets" -mindepth 2 -maxdepth 2 -name '[!.]*.age' 2>/dev/null | grep -c . || true)
 	if [ "$values" -gt 0 ] && [ "$secrets" = 0 ] && ! grep -q '^recipients ' "$tmpd/describe"; then
 		if [ -n "$picked" ]; then
-			bad "$f: $dir/secrets holds values, and $MOTEL, the release $vf names, does not read secrets: upgrade the box to a release that does and name that one in the file, or remove the values"
+			bad "$f: $dir/secrets holds values, and $MOTELD, the release $vf names, does not read secrets: upgrade the box to a release that does and name that one in the file, or remove the values"
 		else
-			bad "$f: $dir/secrets holds values, and this motel does not read secrets: check with a release that does ($vf would name this box's; without it, the workflow takes the latest stable release, or the one its MOTEL_VERSION variable names)"
+			bad "$f: $dir/secrets holds values, and this moteld does not read secrets: check with a release that does ($vf would name this box's; without it, the workflow takes the latest stable release, or the one its MOTEL_VERSION variable names)"
 		fi
 		continue
 	fi
 	if [ "$secrets" -gt 0 ] && ! grep -q '^recipients ' "$tmpd/describe"; then
-		bad "$f: $dir/secrets holds values but no recipients file, so no one can read them back or encrypt them again, and bin/apply cannot check the box's key: make secret APP=… VAR=… BOX_KEY=\$(ssh root@$dir motel box key) makes one"
+		bad "$f: $dir/secrets holds values but no recipients file, so no one can read them back or encrypt them again, and bin/apply cannot check the box's key: make secret APP=… VAR=… BOX_KEY=\$(ssh root@$dir moteld box key) makes one"
 		continue
 	fi
 	sed -n 's/^warning //p' "$tmpd/describe" >"$tmpd/warnings"

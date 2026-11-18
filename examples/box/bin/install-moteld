@@ -1,18 +1,18 @@
 #!/bin/sh
-# Installs the motel the workflow checks with: each release's bare
+# Installs the moteld the workflow checks with: each release's bare
 # binary for this Linux machine's architecture (amd64 or arm64), verified
-# against the release's checksums.txt, as /usr/local/bin/motel-<version>
+# against the release's checksums.txt, as /usr/local/bin/moteld-<version>
 # for every release this repository's boxes need, and the default one as
-# /usr/local/bin/motel too. Which releases:
+# /usr/local/bin/moteld too. Which releases:
 #
-#   - the default, motel: MOTEL_VERSION (the repository variable,
+#   - the default, moteld: MOTEL_VERSION (the repository variable,
 #     of the form 0.3.0 or 0.3.0-rc1: examples of the format, not
 #     releases to pin) when it is set, else the latest stable one. A
 #     box with no MOTEL_VERSION file is checked with it;
 #   - each box's own: <host>/MOTEL_VERSION beside its Caddyfile, one
 #     line of the same shape, pins that box to a release of its own (the
 #     one it runs: a candidate on one box, the stable release on the
-#     rest). bin/check runs that box's files with motel-<version>.
+#     rest). bin/check runs that box's files with moteld-<version>.
 #
 # Each release is downloaded once however many boxes name it. The
 # default is installed or nothing is. A box's file that does not name a
@@ -23,8 +23,8 @@
 # Each box validates what it is sent with its own binary whatever this
 # installs, so this is only the early check.
 #
-#   bin/install-motel           every release the repository needs
-#   bin/install-motel default   the default alone: the apply job's,
+#   bin/install-moteld           every release the repository needs
+#   bin/install-moteld default   the default alone: the apply job's,
 #                                  which reads each box's address and
 #                                  nothing else
 #
@@ -36,15 +36,15 @@ cd "$(dirname "$0")/.."
 case ${1:-} in
 '') boxes=1 ;;
 default) boxes= ;;
-*) echo "install-motel: '$1'? bin/install-motel installs every release the boxes need; bin/install-motel default the default alone" >&2; exit 1 ;;
+*) echo "install-moteld: '$1'? bin/install-moteld installs every release the boxes need; bin/install-moteld default the default alone" >&2; exit 1 ;;
 esac
 
 # The releases ship linux/amd64 and linux/arm64 binaries only.
-[ "$(uname -s)" = Linux ] || { echo "install-motel: motel releases are Linux binaries; this is $(uname -s)" >&2; exit 1; }
+[ "$(uname -s)" = Linux ] || { echo "install-moteld: motel releases are Linux binaries; this is $(uname -s)" >&2; exit 1; }
 case $(uname -m) in
 x86_64 | amd64) arch=amd64 ;;
 aarch64 | arm64) arch=arm64 ;;
-*) echo "install-motel: no motel release for $(uname -m): amd64 and arm64 only" >&2; exit 1 ;;
+*) echo "install-moteld: no motel release for $(uname -m): amd64 and arm64 only" >&2; exit 1 ;;
 esac
 
 # release <value>: whether it is a release's version, v or no v. Nothing
@@ -60,7 +60,7 @@ release() {
 not_release() {
 	hint=
 	[ -n "$1" ] || hint="; an empty file pins nothing: name a release, or delete it"
-	echo "install-motel: not a motel release: '$1' (from $2): a release's version, 0.3.1 or v0.3.1-rc1, on one line$hint" >&2
+	echo "install-moteld: not a motel release: '$1' (from $2): a release's version, 0.3.1 or v0.3.1-rc1, on one line$hint" >&2
 }
 
 v=${MOTEL_VERSION:-}
@@ -93,12 +93,12 @@ if [ -n "$boxes" ]; then
 		# $(...) drops the line's newline; anything else is refused. A
 		# regular file first: cat would wait on a pipe.
 		if ! [ -f "$f" ] || ! v=$(cat "$f" 2>/dev/null); then
-			echo "install-motel: $f cannot be read: a box's MOTEL_VERSION is a regular file of one line, 0.3.1 or v0.3.1-rc1; skipped, and make check refuses this box" >&2
+			echo "install-moteld: $f cannot be read: a box's MOTEL_VERSION is a regular file of one line, 0.3.1 or v0.3.1-rc1; skipped, and make check refuses this box" >&2
 			continue
 		fi
 		if ! release "$v"; then
 			not_release "$v" "$f"
-			echo "install-motel: $f skipped; make check refuses this box" >&2
+			echo "install-moteld: $f skipped; make check refuses this box" >&2
 			continue
 		fi
 		v=${v#v}
@@ -120,29 +120,29 @@ for v in $versions; do
 	mkdir "$v"
 	cd "$v"
 	base=https://github.com/smallhoursorg/motel/releases/download/v$v
-	f=motel_${v}_linux_${arch}.tar.gz
+	f=moteld_${v}_linux_${arch}.tar.gz
 	# No build at that address (a release that does not exist, or one
 	# without Linux binaries): the default has nothing to fall back to;
 	# a box's release is skipped, naming the files that asked for it.
 	if ! curl -fsSLO "$base/$f" || ! curl -fsSLO "$base/checksums.txt"; then
 		if [ "$v" = "$default" ]; then
-			echo "install-motel: no release at $base/$f (from $from)" >&2
+			echo "install-moteld: no release at $base/$f (from $from)" >&2
 			exit 1
 		fi
-		echo "install-motel: no release at $base/$f, which $(printf '%s' "$named" | awk -v v="$v" '$1 == v { print $2 }' | paste -s -d , - | sed 's/,/, /g') names; skipped, and make check refuses that box" >&2
+		echo "install-moteld: no release at $base/$f, which $(printf '%s' "$named" | awk -v v="$v" '$1 == v { print $2 }' | paste -s -d , - | sed 's/,/, /g') names; skipped, and make check refuses that box" >&2
 		cd ..
 		continue
 	fi
 	# A download that does not match the release's own checksums is
 	# nobody's to skip.
 	sha256sum -c --ignore-missing checksums.txt
-	tar -xzf "$f" motel
-	sudo install -m 0755 motel "/usr/local/bin/motel-$v"
+	tar -xzf "$f" moteld
+	sudo install -m 0755 moteld "/usr/local/bin/moteld-$v"
 	cd ..
 	if [ "$v" = "$default" ]; then
-		sudo install -m 0755 "$v/motel" /usr/local/bin/motel
-		echo "install-motel: motel $v ($arch), and motel-$v"
+		sudo install -m 0755 "$v/moteld" /usr/local/bin/moteld
+		echo "install-moteld: moteld $v ($arch), and moteld-$v"
 	else
-		echo "install-motel: motel-$v ($arch), for the boxes whose MOTEL_VERSION names it"
+		echo "install-moteld: moteld-$v ($arch), for the boxes whose MOTEL_VERSION names it"
 	fi
 done

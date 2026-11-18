@@ -1,4 +1,4 @@
-// Command motel is the smallhours app server: Caddy with
+// Command moteld is the smallhours app server: Caddy with
 // zero-downtime app deploys (liveswap), rate-limit hint enforcement
 // (penaltybox), the config channel (box, being built: see
 // box/DESIGN-box.md), notify (who motel tells, through Alertmanager:
@@ -32,22 +32,22 @@ import (
 	_ "github.com/darkweak/storages/otter/caddy"
 )
 
-// longDescription is `motel --help`'s text above the commands.
-const longDescription = `motel is the smallhours app server: Caddy with zero-downtime app
+// longDescription is `moteld --help`'s text above the commands.
+const longDescription = `moteld is the smallhours app server: Caddy with zero-downtime app
 deploys (liveswap), rate-limit hint enforcement (penaltybox), backups,
 the box's config channel, monitor (who motel tells, and the numbers)
 and HTTP caching compiled in. Its commands, Caddyfile and admin API are
-Caddy's, under the name motel.
+Caddy's, under the name moteld.
 
-On a box, motel runs as motel.service from /etc/motel/Caddyfile, and
+On a box, moteld runs as moteld.service from /etc/motel/Caddyfile, and
 systemctl starts, stops and reloads it. With a box repository, change
 the Caddyfile by a push: the next push replaces an edit made here.
 Without one, after an edit:
 
-	motel validate --config /etc/motel/Caddyfile
-	systemctl reload motel
+	moteld validate --config /etc/motel/Caddyfile
+	systemctl reload moteld
 
-motel's own commands are listed below beside Caddy's; the motel
+moteld's own commands are listed below beside Caddy's; the motel
 repository's README and docs/ describe them. The examples are Caddy's.
 `
 
@@ -60,18 +60,18 @@ func main() {
 		os.Exit(1)
 	}
 	os.Args = append(os.Args[:1], args...)
-	// Provisioning cannot tell `motel validate` from a load; notify's
+	// Provisioning cannot tell `moteld validate` from a load; notify's
 	// refusals of the box's secrets differ between the two
 	// (notify/DESIGN-notify.md, "Secrets at load").
 	if len(os.Args) > 1 {
 		notify.SetCommand(os.Args[1])
 	}
 	// The binary's name in every usage line Caddy's CLI prints
-	// (`motel monitor setup [--metrics]`, not `caddy monitor …`), and
-	// motel's own description at the root's help in place of Caddy's,
+	// (`moteld monitor setup [--metrics]`, not `caddy monitor …`), and
+	// moteld's own description at the root's help in place of Caddy's,
 	// which tells the reader to run `caddy run`. The root's examples are
 	// Caddy's, fixed in its command, and still say `caddy`.
-	caddy.CustomBinaryName = "motel"
+	caddy.CustomBinaryName = "moteld"
 	caddy.CustomLongDescription = longDescription
 	caddycmd.Main()
 }

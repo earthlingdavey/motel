@@ -16,7 +16,7 @@ func silenceCommand() *cobra.Command {
 	c := &cobra.Command{
 		Use:   "silence <command>",
 		Short: "Silence alerts in Alertmanager for a while, and end a silence (root)",
-		Long: `Writes silences through the running motel's admin socket (root and the
+		Long: `Writes silences through the running moteld's admin socket (root and the
 motel user reach it), which checks each one, writes it to Alertmanager
 and leaves a monitor: silence line in the journal. To list silences,
 ask Alertmanager itself (docs/monitor.md, "Silence an alert").`,
@@ -41,9 +41,9 @@ post_deploy_regressed. A refused deploy, or one that failed with no
 record written (before it began, or the write failed), is silenced by
 --alert and --app.
 
-    motel monitor silence add --comment "resizing the volume" --duration 4h \
+    moteld monitor silence add --comment "resizing the volume" --duration 4h \
         --alert disk_low
-    motel monitor silence add --comment "v42 is slow, a fix is coming" \
+    moteld monitor silence add --comment "v42 is slow, a fix is coming" \
         --alert post_deploy_regressed --app shop --release v42
 
 Refused: neither --alert nor --app; an alert motel does not raise here
@@ -53,7 +53,7 @@ nor recorded, each
 answered with the names it takes; a pair that would match nothing (a
 box alert with --app); a comment empty, over 200 characters or with a
 control character; a duration under 1m or over 24h. The comment is masked as a summary is.
-The silence's createdBy is "motel monitor: <user>", the user from
+The silence's createdBy is "moteld monitor: <user>", the user from
 SUDO_USER, else USER.`,
 		Args: cobra.NoArgs,
 		RunE: func(c *cobra.Command, _ []string) error {
@@ -106,7 +106,7 @@ func silenceExpireCommand() *cobra.Command {
 
 // printAnswer prints run's answer as text, or as JSON with --json. An
 // error with --json is {"error":…} on stdout and exit 1, with cobra's
-// own line silenced. `motel monitor rules` prints the same way.
+// own line silenced. `moteld monitor rules` prints the same way.
 func printAnswer[T any](c *cobra.Command, asJSON bool, run func() (T, error), text func(io.Writer, T) error) error {
 	res, err := run()
 	w := c.OutOrStdout()
@@ -129,7 +129,7 @@ func printAnswer[T any](c *cobra.Command, asJSON bool, run func() (T, error), te
 func silencePost(c *cobra.Command, uri string, body any, add bool) (SilenceResult, error) {
 	out, err := adminPost(c, uri, body)
 	if err != nil {
-		return SilenceResult{}, notAdmitted(c, err, "motel monitor silence")
+		return SilenceResult{}, notAdmitted(c, err, "moteld monitor silence")
 	}
 	var res SilenceResult
 	if json.Unmarshal(out, &res) != nil || res.ID == "" || add && res.EndsAt == "" {

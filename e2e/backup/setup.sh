@@ -153,7 +153,7 @@ expect_class shop ok "after setup"
 echo "=== setup 4: a Caddyfile a run could not plan from is refused before any prompt ==="
 # shellcheck disable=SC2016 # the Caddyfile's own {$NAME}, not the shell's
 sed 's#root /var/lib/liveswap#root {$LIVESWAP_ROOT:/var/lib/liveswap}#' /root/Caddyfile.base >"$CADDYFILE"
-motel validate --config "$CADDYFILE" --adapter caddyfile >/dev/null 2>&1 && pass "fixture: motel accepts the file" || fail "fixture: motel rejects the file: the scenario proves nothing"
+moteld validate --config "$CADDYFILE" --adapter caddyfile >/dev/null 2>&1 && pass "fixture: motel accepts the file" || fail "fixture: motel rejects the file: the scenario proves nothing"
 before=$(sum)
 at_tty motel-backup setup "$S3/other" >"$OUT" 2>&1 && fail "setup exited 0 with a Caddyfile a run cannot plan from" || { says "could not be turned into a plan (exit 1): .*LIVESWAP_ROOT" && ! says "Storage key id" && pass "refused with the adapter's reason, naming the variable, before any prompt" || fail "said: $(cat "$OUT")"; }
 [ "$(sum)" = "$before" ] && pass "the working file is as it was" || fail "the working file changed"
@@ -223,7 +223,7 @@ readonly_storage() { # <the status a write gets> [<the methods refused: PUT POST
 	# against the first proxy.
 	systemctl stop readonly-storage.service 2>/dev/null
 	systemctl reset-failed readonly-storage.service 2>/dev/null
-	systemd-run --quiet --collect --unit=readonly-storage.service /usr/bin/motel run --config /root/readonly.Caddyfile --adapter caddyfile || { fail "the read-only proxy ($1) could not be started"; return 1; }
+	systemd-run --quiet --collect --unit=readonly-storage.service /usr/bin/moteld run --config /root/readonly.Caddyfile --adapter caddyfile || { fail "the read-only proxy ($1) could not be started"; return 1; }
 	i=0
 	until curl -s -o /dev/null http://127.0.0.1:9100/ || [ "$i" -ge 100 ]; do
 		i=$((i + 1))

@@ -45,7 +45,7 @@ func journalStates(te *testEngine) string {
 	return strings.Join(out, ",")
 }
 
-// A producer's state outlives a restart of motel: the new process tells
+// A producer's state outlives a restart of moteld: the new process tells
 // it again as a standing report (Alertmanager merges it with the alert
 // it holds), and the producer's later resolve finds it and ends it
 // after the hold.

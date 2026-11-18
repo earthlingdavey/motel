@@ -288,7 +288,7 @@ func programsInstalled(cfg Config) error {
 	for _, p := range []struct{ name, path, fix string }{
 		{"restic, the backup program motel-backup runs,", cfg.Restic, ": apt install restic"},
 		{"sqlite3", dump.Program(), ": apt install sqlite3"},
-		{"motel", plan.Program(), ""},
+		{"moteld", plan.Program(), ""},
 		{"motel-backup", cfg.Self, ", where the units run it"},
 	} {
 		if !haveProgram(p.path) {

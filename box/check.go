@@ -105,7 +105,7 @@ func check(ctx context.Context, v *proof.Verifier, b *proof.Bundle, installed []
 		// layout's path, once the file is there.
 		fix := "move it there"
 		if base.Path != cur.Host+"/Caddyfile" {
-			fix = "motel init, run again from that directory, records it"
+			fix = "moteld init, run again from that directory, records it"
 		}
 		return nil, refused("this box's file is %s; the bundle is %s — a box's file is %s/Caddyfile at the top of the repository: %s", proof.Bound(base.Path), proof.Bound(b.Path), cur.Host, fix)
 	}

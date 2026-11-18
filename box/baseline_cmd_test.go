@@ -67,7 +67,7 @@ func TestBaselineRefusals(t *testing.T) {
 		sha  string
 		want string
 	}{
-		{"not root", b, 1000, sha, "motel box baseline runs as root: it rewrites the box's baseline"},
+		{"not root", b, 1000, sha, "moteld box baseline runs as root: it rewrites the box's baseline"},
 		{"short", b, 0, sha[:12], sha[:12] + " is not a commit id: 40 lowercase hex, as git rev-parse HEAD prints one"},
 		{"upper case", b, 0, strings.ToUpper(sha), strings.ToUpper(sha) + " is not a commit id"},
 		{"not hex", b, 0, strings.Repeat("g", 40), "is not a commit id"},

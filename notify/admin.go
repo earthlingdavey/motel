@@ -50,7 +50,7 @@ func (adminAPI) Routes() []caddy.AdminRoute {
 	}
 }
 
-// SendRequest is `motel monitor send`'s body.
+// SendRequest is `moteld monitor send`'s body.
 type SendRequest struct {
 	// Source is the producer's name; motel stamps it external:<source>.
 	Source  string `json:"source"`
@@ -89,7 +89,7 @@ var reservedNames = []string{
 
 const maxDetails = 2 << 10
 
-// Check is the validation `motel monitor send` makes before it posts and
+// Check is the validation `moteld monitor send` makes before it posts and
 // the admin route makes again: the route is the gate, the command's
 // check a courtesy that names the mistake first. No refusal echoes a
 // value given: Caddy journals the route's (`admin.api` `request error`).
@@ -213,7 +213,7 @@ func serveSend(w http.ResponseWriter, r *http.Request) error {
 	return writeJSON(w, res)
 }
 
-// SendResult is `motel monitor send`'s answer: the event's key; whether
+// SendResult is `moteld monitor send`'s answer: the event's key; whether
 // a resolve found no state under it; and, when the event goes nowhere
 // but the journal, why.
 type SendResult struct {
@@ -222,14 +222,14 @@ type SendResult struct {
 	Undelivered     string `json:"undelivered,omitempty"`
 }
 
-// setUp reports whether `motel monitor setup` has made the state
+// setUp reports whether `moteld monitor setup` has made the state
 // directory: without it there is no Alertmanager to post to, and every
 // event is a journal line only (errNotSetUp).
 func (a *App) setUp() bool {
 	return !missing(theStateDir)
 }
 
-// TestRequest is `motel monitor test`'s body.
+// TestRequest is `moteld monitor test`'s body.
 type TestRequest struct {
 	Channel string `json:"channel"`
 }
@@ -264,7 +264,7 @@ func serveTest(w http.ResponseWriter, r *http.Request) error {
 	if _, ok := active.cfg.channels[req.Channel]; !ok {
 		if slices.ContainsFunc(active.Channels, func(c Channel) bool { return c.Name == req.Channel }) {
 			// A boot drops a channel whose secret it cannot use, and serves.
-			return unprocessable(fmt.Errorf("channel %s was dropped from this load: its secret could not be used, and motel's journal says why (monitor: a channel is dropped from this load); mend the box's secrets file (%s), then systemctl reload motel", req.Channel, active.secretsFile()))
+			return unprocessable(fmt.Errorf("channel %s was dropped from this load: its secret could not be used, and moteld's journal says why (monitor: a channel is dropped from this load); mend the box's secrets file (%s), then systemctl reload moteld", req.Channel, active.secretsFile()))
 		}
 		names := strings.Join(active.cfg.order, ", ")
 		if names == "" {
@@ -297,7 +297,7 @@ func serveTest(w http.ResponseWriter, r *http.Request) error {
 	alert := amAlert{
 		Labels: map[string]string{"alertname": alertNotifyTest, labelChannel: req.Channel, "severity": SeverityInfo,
 			"subject": "box", "test": hex.EncodeToString(nonce)},
-		Annotations: map[string]string{"summary": "a test from motel monitor test: if you can read this, the channel " + req.Channel + " works"},
+		Annotations: map[string]string{"summary": "a test from moteld monitor test: if you can read this, the channel " + req.Channel + " works"},
 		StartsAt:    now, EndsAt: now.Add(oneShotLife),
 	}
 	logger.Info("monitor: test", zap.String("channel", req.Channel))

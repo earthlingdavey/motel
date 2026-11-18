@@ -74,7 +74,7 @@ func TestApplyTrustChain(t *testing.T) {
 				return b.repo.bundleFiles(b.repo.commit(f, &b.alice, b.base), b.base)
 			}},
 		{name: "11: another path", phase: phaseRefused, msg: func(*testBox, map[string][]byte) string {
-			return "this box's file is box2/Caddyfile; the bundle is box1/Caddyfile — a box's file is deploy.example.com/Caddyfile at the top of the repository: motel init, run again from that directory, records it"
+			return "this box's file is box2/Caddyfile; the bundle is box1/Caddyfile — a box's file is deploy.example.com/Caddyfile at the top of the repository: moteld init, run again from that directory, records it"
 		},
 			setup: func(b *testBox) map[string][]byte {
 				a := b.applied()

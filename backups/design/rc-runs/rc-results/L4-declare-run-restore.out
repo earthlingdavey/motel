@@ -2,14 +2,14 @@
 bob@box1:~$ sudo sed -i "s|^\t\tapp demo {$|&\n\t\t\tbackup {\n\t\t\t\tsqlite app.db\n\t\t\t\tfiles  uploads\n\t\t\t}|" /etc/motel/Caddyfile; grep -c "sqlite app.db" /etc/motel/Caddyfile
 ^@1
 [exit 0, 0.0349131s, 2026-10-05T18:01:41Z]
-bob@box1:~$ motel validate --config /etc/motel/Caddyfile 2>&1 | tail -2
+bob@box1:~$ moteld validate --config /etc/motel/Caddyfile 2>&1 | tail -2
 {"level":"info","ts":1791223301.895461,"logger":"tls.cache.maintenance","msg":"stopped background certificate maintenance","cache":"0x6821f3c37b80"}
 Valid configuration
 [exit 0, 0.0395691s, 2026-10-05T18:01:41Z]
 bob@box1:~$ motel-backup validate /etc/motel/Caddyfile
 a run would back up demo, under /var/lib/liveswap
 [exit 0, 0.0390863s, 2026-10-05T18:01:42Z]
-bob@box1:~$ sudo systemctl reload motel
+bob@box1:~$ sudo systemctl reload moteld
 [exit 0, 0.077723s, 2026-10-05T18:01:42Z]
 bob@box1:~$ sudo systemctl start motel-backup.service
 [exit 0, 4.59731s, 2026-10-05T18:01:46Z]

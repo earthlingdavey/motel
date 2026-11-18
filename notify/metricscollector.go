@@ -105,7 +105,7 @@ func (c appCollector) Collect(ch chan<- prometheus.Metric) {
 // collectRequests is one app's request series. A release with no
 // response yet has none, but the current release of an app an observer
 // counts for: its zeros are the app's numbers, so that a request_rate
-// rule's `<` holds for an app that has had no request since motel
+// rule's `<` holds for an app that has had no request since moteld
 // started (the counts start from zero), as it does once its series is
 // in the store. An app with no observer pushes nothing, whatever it
 // counted while one named it: pushed unchanged, its counts would read

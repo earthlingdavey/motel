@@ -22,7 +22,7 @@ import (
 	caddycmd "github.com/caddyserver/caddy/v2/cmd"
 )
 
-// The files `motel monitor setup` writes, which ship in the binary: the
+// The files `moteld monitor setup` writes, which ship in the binary: the
 // package installs nothing of notify's until root asks.
 var (
 	//go:embed units/motel-am.socket
@@ -49,7 +49,7 @@ type system interface {
 	chown(path string, uid, gid int) error
 	lookupUser(name string) (uid, gid int, err error)
 	lookupGroup(name string) (gid int, err error)
-	// loadedMonitor is the running motel's monitor app, as its admin API
+	// loadedMonitor is the running moteld's monitor app, as its admin API
 	// answers after setup's reload: nil for a config with none, an error
 	// when motel does not answer.
 	loadedMonitor() ([]byte, error)
@@ -160,7 +160,7 @@ func (hostSystem) lookupGroup(name string) (int, error) {
 }
 
 // loadedWait bounds setup's read of the running config: Caddy's admin
-// client has no deadline of its own, and a motel holding a load would
+// client has no deadline of its own, and a moteld holding a load would
 // otherwise keep setup waiting after its work is done.
 const loadedWait = 10 * time.Second
 
@@ -196,7 +196,7 @@ func (hostSystem) loadedMonitor() ([]byte, error) {
 	}
 }
 
-// loadedSays is what setup says once it has reloaded motel, by what the
+// loadedSays is what setup says once it has reloaded moteld, by what the
 // running config's monitor block holds (sys.loadedMonitor): it renders
 // or pushes, or it has no such line and setup says what to add, or motel
 // does not answer.
@@ -204,24 +204,24 @@ func loadedSays(sys system, metrics bool) string {
 	raw, err := sys.loadedMonitor()
 	if err != nil {
 		if metrics {
-			return "motel did not answer on its admin socket, " + defaultAdmin + " (" + err.Error() + "): it is not running, or its Caddyfile sets another admin address or none; once it runs a monitor block with a metrics line, it renders the store's rules and pushes"
+			return "moteld did not answer on its admin socket, " + defaultAdmin + " (" + err.Error() + "): it is not running, or its Caddyfile sets another admin address or none; once it runs a monitor block with a metrics line, it renders the store's rules and pushes"
 		}
-		return "motel did not answer on its admin socket, " + defaultAdmin + " (" + err.Error() + "): it is not running, or its Caddyfile sets another admin address or none; once it runs a monitor block with channels, it renders them into " + filepath.Join(DefaultStateDir, ConfigName)
+		return "moteld did not answer on its admin socket, " + defaultAdmin + " (" + err.Error() + "): it is not running, or its Caddyfile sets another admin address or none; once it runs a monitor block with channels, it renders them into " + filepath.Join(DefaultStateDir, ConfigName)
 	}
 	var a App
 	has := raw != nil && json.Unmarshal(raw, &a) == nil
 	switch {
 	case metrics && has && a.Metrics != nil:
-		return "reloaded motel, which renders the store's rules into " + filepath.Join(DefaultMetricsStateDir, RulesName) + " and pushes"
+		return "reloaded moteld, which renders the store's rules into " + filepath.Join(DefaultMetricsStateDir, RulesName) + " and pushes"
 	case metrics:
-		return "reloaded motel, whose config has no monitor block with a metrics line: nothing is pushed until there is one (docs/monitor.md); add it, then systemctl reload motel"
+		return "reloaded moteld, whose config has no monitor block with a metrics line: nothing is pushed until there is one (docs/monitor.md); add it, then systemctl reload moteld"
 	case has && !a.storeAlone():
-		return "reloaded motel, which renders the monitor block's channels into " + filepath.Join(DefaultStateDir, ConfigName)
+		return "reloaded moteld, which renders the monitor block's channels into " + filepath.Join(DefaultStateDir, ConfigName)
 	}
-	return "reloaded motel, whose config has no monitor block with channels: Alertmanager sends nothing until there is one (docs/monitor.md); add it, then systemctl reload motel"
+	return "reloaded moteld, whose config has no monitor block with channels: Alertmanager sends nothing until there is one (docs/monitor.md); add it, then systemctl reload moteld"
 }
 
-// setup is `motel monitor setup`: Debian's Alertmanager, installed so
+// setup is `moteld monitor setup`: Debian's Alertmanager, installed so
 // that it never listens on a port, even for a moment. Debian's unit
 // starts on install on :9093 and gossips on 0.0.0.0:9094, and a host
 // with no firewall would put both on the internet; a `Depends` cannot
@@ -241,7 +241,7 @@ func setup(sys system, root string, out io.Writer) (err error) {
 
 	motelUID, _, err := sys.lookupUser("motel")
 	if err != nil {
-		return fmt.Errorf("the motel user: %w (is motel installed?)", err)
+		return fmt.Errorf("the motel user: %w (is moteld installed?)", err)
 	}
 	// Asked before the mask, so that the mask's line names its reason.
 	installs := !sys.installed(amPackage)
@@ -332,7 +332,7 @@ func setup(sys system, root string, out io.Writer) (err error) {
 		}
 	}
 	say("Alertmanager listens on %s only, started by its first connection", DefaultSocket)
-	if err := sys.run("systemctl", "try-reload-or-restart", "motel.service"); err != nil {
+	if err := sys.run("systemctl", "try-reload-or-restart", "moteld.service"); err != nil {
 		return err
 	}
 	say("%s", loadedSays(sys, false))

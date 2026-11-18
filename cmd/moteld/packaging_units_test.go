@@ -32,7 +32,7 @@ func TestNoShippedUnitLineReadsAsSystemctlCatsHeader(t *testing.T) {
 		}
 		for i, line := range strings.Split(string(data), "\n") {
 			if strings.HasPrefix(line, "# /") {
-				t.Errorf("%s:%d opens with \"# /\", the shape of the \"# <path>\" line systemctl cat prints above each file it shows; docs/upgrading.md tells the operator to read that output by those lines, so this one reads as a file in play. Write the path in backticks, as the note at the top of motel.service says: %q",
+				t.Errorf("%s:%d opens with \"# /\", the shape of the \"# <path>\" line systemctl cat prints above each file it shows; docs/upgrading.md tells the operator to read that output by those lines, so this one reads as a file in play. Write the path in backticks, as the note at the top of moteld.service says: %q",
 					unit, i+1, line)
 			}
 		}

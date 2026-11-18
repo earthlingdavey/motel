@@ -16,9 +16,9 @@ import (
 // in: whether this machine has one is not the test's business.
 var liveswapDefaultRoot = backupdecl.DefaultRoot
 
-// refuseRunByHand refuses a `motel run` by root whose config has a
+// refuseRunByHand refuses a `moteld run` by root whose config has a
 // liveswap block with a root root does not own: on a box, root starting
-// a second motel beside motel.service, whose motel user owns the root
+// a second moteld beside moteld.service, whose motel user owns the root
 // (packaging/postinstall.sh). Such a run takes the service's admin
 // socket before it fails on the ports, and liveswap's start can retire
 // the sockets the service's apps are routed through
@@ -29,7 +29,7 @@ var liveswapDefaultRoot = backupdecl.DefaultRoot
 // and a service user that can write a root it does not own (a group's,
 // an ACL's) starts as before. So do a config with no liveswap block, a
 // root that does not exist yet (a first start), and root's own root, as
-// in a container that runs motel as root (notify.NotOwner). A config
+// in a container that runs moteld as root (notify.NotOwner). A config
 // that is not JSON is Caddy's to refuse.
 func refuseRunByHand(cfg []byte, stderr io.Writer) (stop bool) {
 	var c struct {
@@ -52,6 +52,6 @@ func refuseRunByHand(cfg []byte, stderr io.Writer) (stop bool) {
 	if why == "" {
 		return false
 	}
-	_, _ = fmt.Fprintf(stderr, "Error: this `motel run` is refused, and nothing was changed: the liveswap root %s. On a box, motel runs as motel.service: systemctl starts and restarts it. To check a config, run `motel validate --config <file>`; to see why motel will not start, `journalctl -u motel`.\n", why)
+	_, _ = fmt.Fprintf(stderr, "Error: this `moteld run` is refused, and nothing was changed: the liveswap root %s. On a box, moteld runs as moteld.service: systemctl starts and restarts it. To check a config, run `moteld validate --config <file>`; to see why moteld will not start, `journalctl -u moteld`.\n", why)
 	return true
 }

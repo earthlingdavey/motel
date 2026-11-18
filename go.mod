@@ -1,4 +1,4 @@
-// The motel product module: builds the shipped binary (cmd/motel).
+// The motel product module: builds the shipped binary (cmd/moteld).
 // The liveswap and penaltybox modules stay independent so standalone
 // xcaddy users don't inherit Souin/Otter's dependency graphs; replace
 // directives are fine here because this module is only ever built from
