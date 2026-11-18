@@ -1129,7 +1129,9 @@ func takeKind(e *model.Engine, now time.Time, k model.Kind) bool {
 }
 
 // TestWhoAmIBeforeARecordAfterAStop: r's whoami goes before a record
-// the person had open.
+// the person had open, though both are due at that instant: the record
+// read before, its 5 s floor long past, asked again by ctrl-r while
+// the read that was refused was in flight.
 func TestWhoAmIBeforeARecordAfterAStop(t *testing.T) {
 	e := model.NewEngine(t0)
 	sim(e, names(1), t0, time.Second, time.Millisecond, ok)
@@ -1137,13 +1139,23 @@ func TestWhoAmIBeforeARecordAfterAStop(t *testing.T) {
 	e.Touch(now)
 	rec := model.Job{Kind: model.KDeploy, App: "app-0", Version: "v1"}
 	e.Once(rec, now)
-	j, _, _ := e.Take(now)
-	e.Done(j, now, fail(model.FailSignedOut))
-	e.Once(rec, now)
-	if !e.Retry(now) {
+	if !takeRec(e, now, rec) {
+		t.Fatal("the record was not read")
+	}
+	e.Done(rec, now, nil)
+	later := now.Add(time.Minute)
+	e.Touch(later)
+	e.Focus("app-0", later)
+	j, took, _ := e.Take(later)
+	if !took || j != (model.Job{Kind: model.KStatus, App: "app-0"}) {
+		t.Fatalf("took %v %v, want the open app", j, took)
+	}
+	e.Again(later, rec, j) // ctrl-r on the record, its status in flight
+	e.Done(j, later, fail(model.FailSignedOut))
+	if !e.Retry(later) {
 		t.Fatal("r refused")
 	}
-	if j, ok, _ := e.Take(now); !ok || j.Kind != model.KWhoAmI {
+	if j, ok, _ := e.Take(later); !ok || j.Kind != model.KWhoAmI {
 		t.Fatalf("after r the first read is %v, not whoami", j)
 	}
 }
