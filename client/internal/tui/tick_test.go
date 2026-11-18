@@ -149,7 +149,7 @@ func TestRunNoticesASleep(t *testing.T) {
 		t.Fatal("Run's reads did not go to sleep after the twelve statuses")
 	}
 	clk.add(2 * time.Minute) // asleep: no tick for two minutes
-	until("saying every row is stale", func(s string) bool { return stale(s) == 12 })
+	until("saying every row is stale", func(s string) bool { return stale(s) >= 12 }) // the rows, and any strip line that says it too
 }
 
 // TestRealClockIsTheWall: the TUI's clock carries no monotonic reading,
