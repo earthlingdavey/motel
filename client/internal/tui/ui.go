@@ -313,19 +313,28 @@ func (u *UI) shown(v model.View) []model.Job {
 }
 
 // step opens the record next to this one in the app's deploys: p the
-// one before (older), n the one after.
+// one before (older), n the one after. This one is the deploys table's
+// row when it holds this version (several rows can: the filter's
+// placeholder), else the first that does; the table's cursor goes to
+// the row stepped to, so esc returns there.
 func (u *UI) step(by int) {
 	v := u.top()
 	rows := u.S.Overview(v.App, u.now()).Deploys
-	for i, r := range rows {
-		if r.Version == v.Version && i+by >= 0 && i+by < len(rows) {
-			// The record left, as esc leaves it: its read is not wanted.
-			u.S.Engine.Drop(model.Job{Kind: model.KDeploy, App: v.App, Version: v.Version})
-			u.stack[len(u.stack)-1].Version = rows[i+by].Version
-			u.show()
-			return
-		}
+	i, _ := u.deploys.GetSelection()
+	if i--; i < 0 || i >= len(rows) || rows[i].Version != v.Version {
+		i = slices.IndexFunc(rows, func(r model.DeployRow) bool { return r.Version == v.Version })
 	}
+	if i < 0 || i+by < 0 || i+by >= len(rows) {
+		return
+	}
+	// The record left, as esc leaves it: its read is not wanted.
+	u.S.Engine.Drop(model.Job{Kind: model.KDeploy, App: v.App, Version: v.Version})
+	u.stack[len(u.stack)-1].Version = rows[i+by].Version
+	u.deploys.Select(i+by+1, 0)
+	// Opened, though its view may be the one left (one version on two
+	// rows): show reads it again.
+	u.inFront = model.View{}
+	u.show()
 }
 
 func (u *UI) openApp(row int) {
