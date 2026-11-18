@@ -70,6 +70,10 @@ const (
 	// ctrl-r held on the apps screen asks for it at each key repeat, and
 	// the statuses must still have their turn.
 	ListAgainAfter = 5 * time.Second
+	// RecordAgainAfter is the least time between two reads of a record
+	// on opening it: enter and esc held, or p and n, open it at each key
+	// repeat.
+	RecordAgainAfter = 5 * time.Second
 	// RetryEvery is the least time between two r: each may be a touch
 	// of a hardware key, and a signature that fails fast must not be
 	// asked for as fast as a key repeats.
@@ -129,8 +133,9 @@ type entry struct {
 	phase  time.Duration
 	misses int
 	// held is a read not asked again until the person asks (a 403, a
-	// 404, a record already read); failed says its last read failed,
-	// so asking again (ctrl-r, opening it again) reads it.
+	// 404, a record read, whatever its read ended in); failed says its
+	// last read failed, so asking again (ctrl-r, opening it again)
+	// reads it.
 	held, failed bool
 	once         bool
 	// slowed is the read a 429 answered: the first after the wait.
@@ -142,6 +147,8 @@ type entry struct {
 	// answer came.
 	every    time.Duration
 	answered time.Time
+	// asked is when a record's read was last taken.
+	asked time.Time
 }
 
 // Stop is why every read stopped, and zero while they run.
@@ -321,25 +328,38 @@ func (e *Engine) meEvery() time.Duration {
 	return MeAlways
 }
 
-// Once asks for a read now, once: a deploy's record, which does not
-// change.
+// Once is a deploy's record opened: read now, and read again each time
+// it is opened, since a rollback or a redeploy rewrites a version's
+// record on the box. Not while a read of it is due or in flight (one
+// left and cancelled is not), and not again within RecordAgainAfter of
+// the last asked.
 func (e *Engine) Once(j Job, now time.Time) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	if en, ok := e.jobs[j]; ok && (en.held && !en.failed || !en.held && !en.due.After(now)) {
-		return // read, or about to be: the same entry, which a read in flight is for
+	en, ok := e.jobs[j]
+	switch {
+	case !ok:
+		e.jobs[j] = &entry{due: now, once: true}
+	case !en.held || now.Sub(en.asked) < RecordAgainAfter:
+		return // due, or in flight (the same entry, which a read in flight is for), or asked just now
+	default:
+		en.held, en.due = false, now
 	}
-	e.jobs[j] = &entry{due: now, once: true}
 	e.poke()
 }
 
-// Drop forgets a one-off read the person left before it came, and
-// cancels it when it is in flight: its answer is not wanted.
+// Drop is a record left: a read of it not yet answered is not wanted,
+// and is cancelled when it is in flight. A record never read is
+// forgotten; one read before is held as its last read left it.
 func (e *Engine) Drop(j Job) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	if en, ok := e.jobs[j]; ok && en.once && !en.held {
-		delete(e.jobs, j)
+		if en.answered.IsZero() && !en.failed {
+			delete(e.jobs, j)
+		} else {
+			en.held = true
+		}
 	}
 	e.dropLocked(j)
 }
@@ -351,8 +371,8 @@ func (e *Engine) dropLocked(j Job) {
 }
 
 // Again is ctrl-r: the reads of what the screen shows, and nothing
-// else, come due now, a held one too (a 403 is asked again only so): a
-// record, which is read once, is read again. A read already due keeps
+// else, come due now, a held one too (a 403 is asked again only so),
+// and a record, whenever it was asked last. A read already due keeps
 // its time, so a held ctrl-r (a press at each key repeat) never puts a
 // read that waits behind one just asked; the list is held to
 // ListAgainAfter, the open app to FocusEvery (next).
@@ -441,6 +461,9 @@ func (e *Engine) Take(now time.Time) (Job, bool, time.Duration) {
 	}
 	e.tokens--
 	e.inflight, e.taken = &j, e.jobs[j]
+	if e.taken.once {
+		e.taken.asked = now
+	}
 	if j.Kind == KStatus && j.App == e.focus {
 		e.lastFocus = now
 	}
@@ -602,14 +625,27 @@ func (e *Engine) Done(j Job, now time.Time, err error) Outcome {
 			}
 		}
 	case Cancelled:
-		delete(e.jobs, j)
+		// A record read before stays as Drop left it, or as opening it
+		// again since asks.
+		if en.answered.IsZero() && !en.failed {
+			delete(e.jobs, j)
+		}
 		e.poke()
 		return out
 	case NoAnswer:
 		en.misses++
 		e.misses++
 		e.retryAt = now.Add(min(maxBackoff, time.Second<<min(e.misses, 6)))
+		// A record is held as a refused one is: a 5xx is no answer too,
+		// and a record asked again after each backoff, ahead of every
+		// other read, would be the only read made while its screen is
+		// open. Opening it again or ctrl-r asks it again.
+		if en.once {
+			en.failed = true
+		}
 	case Refused:
+		// The box answered, if not with this: a run of no answer ends.
+		e.misses = 0
 		en.misses++
 		en.failed = true
 		en.held = en.once || Forbidden(err) || NotFound(err)
@@ -628,6 +664,9 @@ func (e *Engine) Done(j Job, now time.Time, err error) Outcome {
 			wait = NoRetryAfter
 		}
 		e.slowUntil = now.Add(wait)
+		// A 429 is an answer: a run of no answer ends, and the wait
+		// stands in for its backoff.
+		e.misses = 0
 		// The bucket is spent and does not fill during the wait, so the
 		// reads resume at the rate, not in a burst.
 		e.tokens, e.filled = 0, e.slowUntil
@@ -646,9 +685,9 @@ func (e *Engine) Done(j Job, now time.Time, err error) Outcome {
 	}
 	switch {
 	case en.once:
-		if out == Answered || en.held {
-			en.held = true
-		}
+		// Answered, refused or not answered: not asked again until the
+		// person asks.
+		en.held = true
 
 	case j.Kind == KStatus && j.App == e.focus:
 		en.due, en.every = now.Add(FocusEvery), FocusEvery
@@ -735,12 +774,23 @@ const WakeAfter = 30 * time.Second
 // at once, whoami is asked again (the box may have changed meanwhile),
 // and the bucket starts empty. now is wall-clock time: a monotonic
 // reading stops while the machine sleeps.
+//
+// A tick before the last is the wall clock set back: every time the
+// engine keeps is moved back with it, or no read would be due, and the
+// bucket would not fill, for the length of the step; a step back past
+// WakeAfter is a wake too, since how old each row is is not known.
 func (e *Engine) Tick(now time.Time) bool {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	last := e.ticked
 	e.ticked = now
-	if last.IsZero() || now.Sub(last) <= WakeAfter {
+	if last.IsZero() {
+		return false
+	}
+	if now.Before(last) {
+		e.shift(now.Sub(last))
+	}
+	if gap := now.Sub(last); gap <= WakeAfter && gap >= -WakeAfter {
 		return false
 	}
 	every := e.background()
@@ -759,9 +809,27 @@ func (e *Engine) Tick(now time.Time) bool {
 		en.due = now
 	}
 	e.askMe(now)
-	e.tokens, e.filled = 0, now
+	// Empty, and filling from now, or from the end of a 429's wait that
+	// still runs, as the 429 left it.
+	e.tokens, e.filled = 0, maxTime(now, e.slowUntil)
 	e.poke()
 	return true
+}
+
+// shift moves every time the engine keeps by d: due times, answers,
+// waits and the bucket's fill time.
+func (e *Engine) shift(d time.Duration) {
+	move := func(ts ...*time.Time) {
+		for _, t := range ts {
+			if !t.IsZero() {
+				*t = t.Add(d)
+			}
+		}
+	}
+	move(&e.filled, &e.meAnswered, &e.me403, &e.retryAt, &e.slowUntil, &e.touched, &e.lastFocus, &e.lastList, &e.lastRetry)
+	for _, en := range e.jobs {
+		move(&en.due, &en.answered, &en.asked)
+	}
 }
 
 // CanAskAgain says whether ctrl-r would ask now: not while every read

@@ -447,10 +447,14 @@ func (s *Session) MeAsOf(now time.Time) Line {
 }
 
 // RecordAsOf is how old a deploy's record is, for its crumb: it is read
-// once, as a record does not change, and ctrl-r reads it again.
+// on opening it, and by ctrl-r, and kept when a later read fails.
 func (s *Session) RecordAsOf(app, version string, now time.Time) Line {
-	if g, _, ok := s.Record(app, version); ok && g != nil {
-		return s.asOf(g.At, now)
+	if g, err, ok := s.Record(app, version); ok && g != nil {
+		l := s.asOf(g.At, now)
+		if err != nil {
+			l = append(l, ownC(" · the last read failed", Warn))
+		}
+		return l
 	}
 	return nil
 }
