@@ -539,7 +539,7 @@ func TestObservedWhileItProvisions(t *testing.T) {
 // TestObserveAfterNoneStartsFromZero: while no handler names the app its
 // counts are not pushed, so the first handler after none starts them
 // from zero, as a restart does; resumed, their first push after the gap
-// would read as every response since motel started, in one window. A
+// would read as every response since moteld started, in one window. A
 // reload's handlers, provisioned before the old ones' Cleanup, keep the
 // counts, and so does the instance's socket its counters.
 func TestObserveAfterNoneStartsFromZero(t *testing.T) {

@@ -172,7 +172,7 @@ func neverStarted(t *testing.T, b *box, m *term) {
 }
 
 // What setup refuses, a run refuses, in setup's words and before any
-// unit: a missing restic, sqlite3 or motel (a unit whose command is
+// unit: a missing restic, sqlite3 or moteld (a unit whose command is
 // not there ends 203/EXEC, which says nothing of what to install), and
 // the account restic runs as — not there, or one someone else can be
 // (Copilot on #153: the credential reaches restic's environment on
@@ -190,7 +190,7 @@ func TestARunRefusesWhatSetupRefusesWithSetupsWords(t *testing.T) {
 	}{
 		{"restic", func(b *box) { b.haveProgram = func(path string) bool { return path != "/usr/bin/restic" } }, "restic, the backup program motel-backup runs, is not installed at /usr/bin/restic: apt install restic"},
 		{"sqlite3", func(b *box) { b.haveProgram = func(path string) bool { return path != "/usr/bin/sqlite3" } }, "sqlite3 is not installed at /usr/bin/sqlite3: apt install sqlite3"},
-		{"motel", func(b *box) { b.haveProgram = func(path string) bool { return path != "/usr/bin/motel" } }, "motel is not installed at /usr/bin/motel"},
+		{"moteld", func(b *box) { b.haveProgram = func(path string) bool { return path != "/usr/bin/moteld" } }, "moteld is not installed at /usr/bin/moteld"},
 		{"motel-backup", func(b *box) { b.haveProgram = func(path string) bool { return path != "/usr/bin/motel-backup" } }, "motel-backup is not installed at /usr/bin/motel-backup, where the units run it"},
 		{"the account", func(b *box) { b.account = false }, "the motel-backup account is not there: motel-backup setup <repository>, as root, makes it (" + useraddArgv() + ")"},
 		// A b2: repository, which setup refuses: one written by hand, or

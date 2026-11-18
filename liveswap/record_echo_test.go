@@ -82,7 +82,7 @@ func TestRecordNotReadTellsNothingOfTheEnv(t *testing.T) {
 		must(t, os.Mkdir(filepath.Join(dir, "wrongguess12.json"), 0o700))
 		r.apps[name].logger = zap.New(core)
 	}
-	const unread = `{"error":"this deploy's record could not be read; the box's journal says why (journalctl -u motel)"}` + "\n"
+	const unread = `{"error":"this deploy's record could not be read; the box's journal says why (journalctl -u moteld)"}` + "\n"
 	for who, ask := range callers {
 		for _, name := range []string{secret, plain} {
 			for _, guess := range []string{"correcthorse", "wrongguess12"} {

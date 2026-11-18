@@ -1,9 +1,9 @@
 ### apt-config: APT::Install-Recommends "false";
-### apt install ./motel_0.3.0.rc1_arm64.deb
+### apt install ./moteld_0.3.0.rc1_arm64.deb
 Recommended packages:
   restic  sqlite3  dbus-user-session
 Setting up libpam-systemd:arm64 (257.13-1~deb13u1) ...
-Setting up motel (0.3.0~rc1) ...
+Setting up moteld (0.3.0~rc1) ...
 Backups: the hourly timer and the Sunday restore drill are enabled, and run nothing until:
   sudo motel-backup setup <repository>
 ### restic: none; sqlite3: none

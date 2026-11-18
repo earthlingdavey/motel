@@ -56,7 +56,7 @@ settings, which do not need the box.
 
 An account that is not root, for reading the logs: for a second
 person, or to keep root's key for when it is needed. It reads
-motel's journal and every app's through the `adm` group, and that
+moteld's journal and every app's through the `adm` group, and that
 is all it holds. It needs no `sudo`: the config changes only by signed
 pushes from the box's repository, and so do the apps' secrets kept
 there ([Secrets](secrets.md)).
@@ -80,11 +80,11 @@ usermod -aG adm alice
 Check from the laptop:
 
 ```sh
-ssh alice@box.example.com journalctl -u motel -n 5   # the journal, through adm
+ssh alice@box.example.com journalctl -u moteld -n 5   # the journal, through adm
 ```
 
 What this grants: `adm` reads the whole system journal, not only
-motel's lines, so it is a trust grant in its own right. An app that
+moteld's lines, so it is a trust grant in its own right. An app that
 writes a secret to its own output puts it there too.
 
 ## 4. Debian's updates on their own, if you want them
@@ -106,7 +106,7 @@ at its next launch (a deploy, a rollback, a relaunch after a crash),
 each SSH login, and the `ssh-keygen` a push to the box's repository
 runs.
 
-What it does not do: update motel, whose `.deb` comes from no
+What it does not do: update moteld, whose `.deb` comes from no
 repository ([Upgrading](upgrading.md) is how), or an app's runtime
 that did not come from Debian, such as the Deno under
 `/usr/local/bin` or the Node example's own executable
@@ -204,7 +204,7 @@ Each app can be bounded on its own (`memory_max`, `tasks_max` and
 `cpu_quota` in its block — [liveswap/README.md](../liveswap/README.md#resource-caps)),
 and that is what keeps one app's burst from stalling another. What
 that does not set is a ceiling for the apps *as a whole* against
-motel itself, which shares the box with them: motel runs in
+moteld itself, which shares the box with them: moteld runs in
 `system.slice` and every app under the `motel` user's slice, and
 the two halves already split the CPU evenly under load, but nothing
 bounds the apps' memory as a set. If you want that, set it on the

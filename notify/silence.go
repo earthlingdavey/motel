@@ -19,14 +19,14 @@ import (
 	"github.com/smallhoursorg/motel/liveswap"
 )
 
-// Silences: `motel monitor silence add` and `expire` post to
+// Silences: `moteld monitor silence add` and `expire` post to
 // POST /notify/silences and POST /notify/silences/expire on the admin
 // socket, and the route, not the command, writes to Alertmanager's
 // silence API and the journal line (DESIGN-notify.md, "Silences").
 // There are no free-form matchers: motel builds equality matchers from
 // names it checks against closed sets.
 
-// SilenceRequest is `motel monitor silence add`'s body.
+// SilenceRequest is `moteld monitor silence add`'s body.
 type SilenceRequest struct {
 	// Alert is one of the alert names motel raises on this box
 	// (silenceableAlerts); App one of the apps it runs; Release a
@@ -38,11 +38,11 @@ type SilenceRequest struct {
 	// Duration is Go's (2h, 90m), from now.
 	Duration string `json:"duration"`
 	// By is the invoking user's name, as the command finds it; the
-	// silence's createdBy is `motel monitor: <by>`.
+	// silence's createdBy is `moteld monitor: <by>`.
 	By string `json:"by"`
 }
 
-// ExpireRequest is `motel monitor silence expire`'s body.
+// ExpireRequest is `moteld monitor silence expire`'s body.
 type ExpireRequest struct {
 	ID string `json:"id"`
 	By string `json:"by"`
@@ -222,7 +222,7 @@ func (r ExpireRequest) Check() error {
 	return nil
 }
 
-func createdBy(by string) string { return "motel monitor: " + by }
+func createdBy(by string) string { return "moteld monitor: " + by }
 
 // amSilence is a silence in Alertmanager's v2 API
 // (POST /api/v2/silences).

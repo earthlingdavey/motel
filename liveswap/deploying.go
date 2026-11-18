@@ -13,7 +13,7 @@ import (
 
 // The deploy marker, <app>/deploying.json: a URL or push deploy in
 // flight. Such a deploy extracts a release that it removes again if
-// it fails; a motel that stops during it (a crash, a restart, an
+// it fails; a moteld that stops during it (a crash, a restart, an
 // upgrade) removes nothing, and the release would stay under the
 // version's name — a redeploy refused as "already exists", a rollback
 // launching it without its pre_start (#318). The marker says which
@@ -92,10 +92,10 @@ func clearDeployMarker(d appDirs) error {
 	return nil
 }
 
-// interruptedDeployError is what a deploy cut short by a motel stop
+// interruptedDeployError is what a deploy cut short by a moteld stop
 // is recorded as; a release that could not be removed adds why, in the
 // words a failed deploy's cleanup uses.
-const interruptedDeployError = "the deploy was cut short: motel stopped or restarted during it"
+const interruptedDeployError = "the deploy was cut short: moteld stopped or restarted during it"
 
 // settleInterrupted settles a marker a deploy no motel finished
 // left, under the rules above. The caller holds deployMu and has just

@@ -321,7 +321,7 @@ func TestDeployShSaysWhatARefusedRunMustBeTrustedFor(t *testing.T) {
 		"audience          motel",
 		"claim repository  org/blog",
 		"claim ref         refs/heads/main",
-		"journalctl -u motel",
+		"journalctl -u moteld",
 		"::error title=motel%3A demo v1 failed::invalid or missing deploy token (Authorization: Bearer \\u003cjwt\\u003e); the log says what the box must trust",
 	} {
 		if !strings.Contains(out, want) {

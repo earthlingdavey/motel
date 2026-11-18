@@ -92,7 +92,7 @@ func (r *boxRepo) secrets(shell, stdin, cmd string, env ...string) (string, int)
 	return string(out), 0
 }
 
-// boxKey makes an age identity, as motel box key would on a box, and
+// boxKey makes an age identity, as moteld box key would on a box, and
 // returns its file and its recipient.
 func (r *boxRepo) boxKey(name string) (string, string) {
 	r.t.Helper()
@@ -186,7 +186,7 @@ func TestBoxSecretSet(t *testing.T) {
 
 	// The box's first secret needs the box's own key.
 	if out, code := r.secrets("", "v\n", "set", app...); code != 1 ||
-		!strings.Contains(out, "this first one needs the box's own key: BOX_KEY=$(ssh root@<your box> motel box key)") {
+		!strings.Contains(out, "this first one needs the box's own key: BOX_KEY=$(ssh root@<your box> moteld box key)") {
 		t.Fatalf("no BOX_KEY: exit %d\n%s", code, out)
 	}
 	for _, bad := range []string{"age1nope", "ssh-ed25519 AAAA", "age1pq1" + strings.Repeat("q", 55), "AGE-SECRET-KEY-1" + strings.Repeat("Q", 58)} {
@@ -1209,11 +1209,11 @@ func TestBoxSecretsImport(t *testing.T) {
 
 // TestBoxCheckSecrets is make check over a box with secrets: describe's
 // lines read, its refusals and warnings shown (annotated in Actions),
-// what make secret leaves to it checked, and a motel too old to read
+// what make secret leaves to it checked, and a moteld too old to read
 // secrets named.
 func TestBoxCheckSecrets(t *testing.T) {
 	t.Parallel()
-	bin := motelBinary(t)
+	bin := moteldBinary(t)
 	r := secretsRepo(t)
 	r.key("id_ed25519")
 	if out, code := r.run("signer"); code != 0 {
@@ -1221,7 +1221,7 @@ func TestBoxCheckSecrets(t *testing.T) {
 	}
 	_, box := r.boxKey("box")
 	check := func(env ...string) (string, int) {
-		return r.run("check", append([]string{"MOTEL=" + bin}, env...)...)
+		return r.run("check", append([]string{"MOTELD=" + bin}, env...)...)
 	}
 	r.write(boxFile, strings.Replace(r.read(boxFile), "# env_file /etc/motel/secrets/example.env", "env_file /etc/motel/secrets/example.env", 1))
 	// A managed env_file and no secret: describe's consistency check.
@@ -1274,8 +1274,8 @@ func TestBoxCheckSecrets(t *testing.T) {
 	}
 	r.write(recipientsFile, recipients)
 
-	// A motel from before secrets: its describe reads none of them.
-	old := filepath.Join(r.home, "old-motel")
+	// A moteld from before secrets: its describe reads none of them.
+	old := filepath.Join(r.home, "old-moteld")
 	script := "#!/bin/sh\n" +
 		"if [ \"$1 $2\" = \"box describe\" ]; then\n" +
 		"\t\"" + bin + "\" box describe \"$3\" | grep -v -E '^(recipients|secret|warning) '\n" +
@@ -1285,13 +1285,13 @@ func TestBoxCheckSecrets(t *testing.T) {
 	if err := os.WriteFile(old, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	tooOld := "deploy.example.com/Caddyfile: deploy.example.com/secrets holds values, and this motel does not read secrets: check with a release that does (deploy.example.com/MOTEL_VERSION would name this box's; without it, the workflow takes the latest stable release, or the one its MOTEL_VERSION variable names)\n"
-	if out, code := r.run("check", "MOTEL="+old); code != 1 || !strings.Contains(out, tooOld) {
-		t.Fatalf("an old motel: exit %d\n%s", code, out)
+	tooOld := "deploy.example.com/Caddyfile: deploy.example.com/secrets holds values, and this moteld does not read secrets: check with a release that does (deploy.example.com/MOTEL_VERSION would name this box's; without it, the workflow takes the latest stable release, or the one its MOTEL_VERSION variable names)\n"
+	if out, code := r.run("check", "MOTELD="+old); code != 1 || !strings.Contains(out, tooOld) {
+		t.Fatalf("an old moteld: exit %d\n%s", code, out)
 	}
 	// The same release, picked by the box's own MOTEL_VERSION file:
 	// the file is not the remedy, so the refusal says what is.
-	hs := filepath.Join(r.home, "bins", "motel")
+	hs := filepath.Join(r.home, "bins", "moteld")
 	if err := os.MkdirAll(filepath.Dir(hs), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -1303,7 +1303,7 @@ func TestBoxCheckSecrets(t *testing.T) {
 	}
 	r.write("deploy.example.com/MOTEL_VERSION", "0.2.9\n")
 	pinnedOld := "deploy.example.com/Caddyfile: deploy.example.com/secrets holds values, and " + hs + "-0.2.9, the release deploy.example.com/MOTEL_VERSION names, does not read secrets: upgrade the box to a release that does and name that one in the file, or remove the values\n"
-	if out, code := r.run("check", "MOTEL="+hs); code != 1 || !strings.Contains(out, pinnedOld) {
-		t.Fatalf("an old motel, pinned by the file: exit %d\n%s", code, out)
+	if out, code := r.run("check", "MOTELD="+hs); code != 1 || !strings.Contains(out, pinnedOld) {
+		t.Fatalf("an old moteld, pinned by the file: exit %d\n%s", code, out)
 	}
 }

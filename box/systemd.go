@@ -12,7 +12,7 @@ import (
 )
 
 // Systemd is what the applier asks of the service manager about
-// motel.service: is it active, and reload it. An interface so the
+// moteld.service: is it active, and reload it. An interface so the
 // Failure-mode table is testable without a manager; production is
 // systemctl.
 type Systemd interface {
@@ -48,7 +48,7 @@ func (realClock) Sleep(ctx context.Context, d time.Duration) error {
 
 const (
 	// activatingWait is step 16's bound on `activating` (DESIGN-box.md,
-	// "Caps"): motel's TimeoutStartSec=240s plus RestartSec, elapsed,
+	// "Caps"): moteld's TimeoutStartSec=240s plus RestartSec, elapsed,
 	// since Restart=on-failure can keep a unit activating across
 	// attempts.
 	activatingWait = 300 * time.Second
@@ -58,7 +58,7 @@ const (
 	// PID 1 answers from memory.
 	isActiveTimeout = 30 * time.Second
 	// reloadTimeout bounds one `systemctl reload`. The reload is bounded
-	// by motel.service's own 240 s, and the applier sets no shorter
+	// by moteld.service's own 240 s, and the applier sets no shorter
 	// one (DESIGN-box.md, "Caps"): this deadline only ends a systemctl
 	// that outlives the job it waits for.
 	reloadTimeout = 300 * time.Second
@@ -74,7 +74,7 @@ const (
 // one unit. Each call is a direct child with a deadline and a WaitDelay;
 // systemctl starts no unit of its own, so there is no grandchild holding
 // its pipes to stop (the reload job runs in PID 1, which a killed
-// systemctl does not cancel; motel.service's own timeout bounds it).
+// systemctl does not cancel; moteld.service's own timeout bounds it).
 type systemctl struct {
 	unit string
 }
@@ -161,10 +161,10 @@ func (a *Applier) running(ctx context.Context) (string, error) {
 	}
 }
 
-// transient is a state the wait sits out: motel on its way to active.
+// transient is a state the wait sits out: moteld on its way to active.
 func transient(state string) bool { return state == "activating" || state == "reloading" }
 
-// up is running's answer classified, for every caller alike: motel
+// up is running's answer classified, for every caller alike: moteld
 // serves and a reload reaches it — `active`, or a reload still in
 // flight after the wait (a reload then queues behind it). Anything else
 // — `activating` after the wait (a start, or a restart loop, which

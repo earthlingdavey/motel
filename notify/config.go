@@ -24,7 +24,7 @@ const (
 	// bound into no unit.
 	DefaultSecretsFile = "/etc/motel/secrets/_box.env" //nolint:gosec // G101: a path, not a credential
 	// DefaultStateDir holds what motel renders for Alertmanager: the
-	// config and one file per channel URL. Made by `motel monitor setup`,
+	// config and one file per channel URL. Made by `moteld monitor setup`,
 	// 2750 motel:prometheus, so what motel writes is born group
 	// prometheus and Alertmanager reads it without motel holding that
 	// group. Not under /var/lib/motel, which is 0750 motel:motel: the
@@ -32,8 +32,8 @@ const (
 	DefaultStateDir = "/var/lib/motel-notify"
 	// DefaultSocket is Alertmanager's listener in the host's namespace, a
 	// systemd socket unit (motel-am.socket), 0660 root:motel, in a
-	// runtime directory of its own: /run/motel is motel.service's
-	// RuntimeDirectory, removed whenever motel stops. Its one other, with
+	// runtime directory of its own: /run/motel is moteld.service's
+	// RuntimeDirectory, removed whenever moteld stops. Its one other, with
 	// the store, is inside the metrics namespace (motel-am-metrics.socket).
 	DefaultSocket = "/run/motel-notify/am.sock"
 )
@@ -229,7 +229,7 @@ type resolved struct {
 }
 
 // resolve checks the whole block against the apps' trust and the
-// secrets file's values, and is every refusal `motel validate` makes
+// secrets file's values, and is every refusal `moteld validate` makes
 // for it: an operator line naming no channel, a channel named twice, a
 // binding to a channel that does not exist or to an identity no app
 // trusts, a secret the box does not hold, a URL that is not https to a
@@ -244,7 +244,7 @@ func (a *App) resolve(trust map[string][]TrustSource, secrets map[string]string)
 //
 //   - held are the secrets a box push carries (pushedSecrets): each is
 //     taken as held by the box without its value being read or checked,
-//     and is given no URL. Only `motel validate` passes any, and only for
+//     and is given no URL. Only `moteld validate` passes any, and only for
 //     the box's own secrets file, which is where root writes a push's
 //     secrets/_box/.
 //   - drop, a boot's load (dropsChannels), drops a channel whose secret

@@ -602,7 +602,7 @@ func TestPushPreVerification(t *testing.T) {
 		{"not a descendant", elsewhere, p.repo.bundleFiles(elsewhere, p.base), elsewhere + " does not descend from the commit this box runs (" + p.base + ") along main's first-parent line. " +
 			"If the box already runs a later commit, nothing is wrong. " +
 			"If a branch merged main into itself before it was fast-forwarded, rebase it onto main and force-push. " +
-			"Only if main was rewritten below " + p.base + " does motel box baseline " + elsewhere + ", as root on the box, reset trust to " + elsewhere + ", whose ancestors the box will then never examine"},
+			"Only if main was rewritten below " + p.base + " does moteld box baseline " + elsewhere + ", as root on the box, reset trust to " + elsewhere + ", whose ancestors the box will then never examine"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			id := randomID(t)
@@ -627,7 +627,7 @@ func TestPushPreVerification(t *testing.T) {
 func TestPushValidate(t *testing.T) {
 	p := newPushRig(t)
 	c2, bundle := p.change()
-	p.val.msg = "motel validate: unrecognized directive: nope"
+	p.val.msg = "moteld validate: unrecognized directive: nope"
 	id := randomID(t)
 	m := wantResult(t, p.post(t, p.h, push{id: id, token: p.token(t, c2), body: bytes.NewReader(bundle)}), http.StatusUnprocessableEntity, id, phaseRefused)
 	if m["error"] != p.val.msg || !bytes.Equal(p.val.got, boxFile(2, p.alice)) {
@@ -651,7 +651,7 @@ func TestPushValidate(t *testing.T) {
 	}
 	p.untouched(t)
 
-	p.val.msg, p.val.err = "", errors.New("fork/exec /usr/bin/motel: no such file or directory")
+	p.val.msg, p.val.err = "", errors.New("fork/exec /usr/bin/moteld: no such file or directory")
 	w := p.post(t, p.h, push{id: randomID(t), token: p.token(t, c2), body: bytes.NewReader(bundle)})
 	wantError(t, w, http.StatusInternalServerError, msgCheckFailed(p.val.err))
 	p.untouched(t)

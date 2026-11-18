@@ -1,10 +1,10 @@
-# Builds the exact artifact an operator ships: the motel binary from
-# cmd/motel (caddy standard + liveswap + penaltybox + Souin + Otter).
+# Builds the exact artifact an operator ships: the moteld binary from
+# cmd/moteld (caddy standard + liveswap + penaltybox + Souin + Otter).
 # The e2e-motel container then plays the production VPS: systemd as
-# PID 1 running the packaged motel.service as the motel user,
+# PID 1 running the packaged moteld.service as the motel user,
 # with deployed apps as transient units under that user's own systemd
 # manager — exactly the layout the .deb's postinstall produces.
-# (e2e-upstream reuses the image as a plain `motel run` container.)
+# (e2e-upstream reuses the image as a plain `moteld run` container.)
 
 # The Deno runtime for the examples/deno lane, installed under
 # /usr/local, inside every app's sandbox view. A FROM, so Dependabot
@@ -21,21 +21,21 @@ FROM denoland/deno:bin-2.9.8 AS deno
 # The mount is writable because go may write go.work.sum; what it writes
 # is dropped with the step. The cache ids are motel's, shared by its
 # worktrees and no other build. A builder pruned, or CI's, starts cold.
-# motel links a release as `make build` links one (Caddy's
+# moteld links a release as `make build` links one (Caddy's
 # CustomVersion), so whoami names one as a shipped box does; the people
 # suite (e2e/box/people.sh) reads it there, and holds each answer's
 # headers it checks, accepted or refused, to naming none.
-# motelctl is the laptop client that suite runs on the box, as a
-# laptop would, over the box's own TLS.
+# client/ builds motel, the laptop client that suite runs on the box,
+# as a laptop would, over the box's own TLS.
 FROM golang:1.27-trixie AS builder
 WORKDIR /src
 RUN --mount=type=bind,target=/src,rw \
 	--mount=type=cache,id=motel-gomod,target=/go/pkg/mod \
 	--mount=type=cache,id=motel-gobuild,target=/root/.cache/go-build \
 	CGO_ENABLED=0 GOFLAGS=-buildvcs=false go build -trimpath \
-		-ldflags "-X github.com/caddyserver/caddy/v2.CustomVersion=v0.0.0-e2e" -o /motel ./cmd/motel \
+		-ldflags "-X github.com/caddyserver/caddy/v2.CustomVersion=v0.0.0-e2e" -o /moteld ./cmd/moteld \
 	&& cd backups && CGO_ENABLED=0 GOFLAGS=-buildvcs=false go build -trimpath -o /motel-backup ./cmd/motel-backup \
-	&& cd ../motelctl && CGO_ENABLED=0 GOFLAGS=-buildvcs=false go build -trimpath -o /motelctl .
+	&& cd ../client && CGO_ENABLED=0 GOFLAGS=-buildvcs=false go build -trimpath -o /motel ./cmd/motel
 
 # notify's tests that run vmalert and vmalert-tool over the rendered
 # rules, compiled for the metrics box, which has both (Debian's
@@ -76,12 +76,12 @@ RUN systemctl mask \
 	console-getty.service \
 	|| true
 
-COPY --from=builder /motel /usr/bin/motel
+COPY --from=builder /moteld /usr/bin/moteld
 # The box channel's step 6 asks it whether a backup run could plan
 # from the Caddyfile being pushed; nothing here runs a backup.
 COPY --from=builder /motel-backup /usr/bin/motel-backup
 # Not the package's: the laptop's client, for the people suite.
-COPY --from=builder /motelctl /usr/local/bin/motelctl
+COPY --from=builder /motel /usr/local/bin/motel
 COPY --from=deno /deno /usr/local/bin/deno
 # The example pins the Deno its workflow builds with in .deno-version;
 # the FROM above is Dependabot's to bump. Refuse to build when the two
@@ -93,19 +93,19 @@ RUN [ "$(deno --version | sed -n 's/^deno \([0-9.]*\).*/\1/p')" = "$(cat /tmp/.d
 # Fail the build outright if any module didn't link in. (Otter is
 # additionally proven at startup: the `otter` cache option makes config
 # load fail if the storage module is absent.)
-RUN motel list-modules | grep -qx liveswap \
-	&& motel list-modules | grep -qx http.handlers.liveswap_webhook \
-	&& motel list-modules | grep -qx http.reverse_proxy.upstreams.liveswap \
-	&& motel list-modules | grep -qx http.handlers.hint_penaltybox \
-	&& motel list-modules | grep -qx http.handlers.cache \
-	&& motel list-modules | grep -qx storages.cache.otter
+RUN moteld list-modules | grep -qx liveswap \
+	&& moteld list-modules | grep -qx http.handlers.liveswap_webhook \
+	&& moteld list-modules | grep -qx http.reverse_proxy.upstreams.liveswap \
+	&& moteld list-modules | grep -qx http.handlers.hint_penaltybox \
+	&& moteld list-modules | grep -qx http.handlers.cache \
+	&& moteld list-modules | grep -qx storages.cache.otter
 
 # The production layout, produced by the package's own postinstall
 # (user, data dirs, lingering, the user@<uid> drop-ins) so the e2e
 # container is what a .deb install is — never a re-implementation.
 # systemd is not running at build time; postinstall tolerates that
 # (linger-file fallback, daemon-reload/try-restart ignored).
-COPY packaging/motel.service /etc/systemd/system/motel.service
+COPY packaging/moteld.service /etc/systemd/system/moteld.service
 # The box applier's units and exchange tree, where the package puts
 # them (packaging/nfpm.yaml); postinstall makes the tree.
 COPY packaging/motel-box-apply.path packaging/motel-box-apply.service /lib/systemd/system/
@@ -118,11 +118,11 @@ RUN mkdir -p /var/lib/motel /var/lib/liveswap /etc/motel /var/lib/motel-package 
 	&& chmod 750 /var/lib/motel /var/lib/liveswap \
 	&& chmod 755 /etc/motel && chmod 700 /var/lib/motel-package \
 	&& sh /tmp/postinstall.sh && rm /tmp/postinstall.sh
-COPY e2e/systemd/e2e.conf /etc/systemd/system/motel.service.d/e2e.conf
+COPY e2e/systemd/e2e.conf /etc/systemd/system/moteld.service.d/e2e.conf
 COPY e2e/systemd/e2e-token.service /etc/systemd/system/e2e-token.service
 # postinstall enables the path unit only through deb-systemd-helper,
 # which needs a dpkg install to remember; enabled here as it would be.
-RUN systemctl enable motel.service e2e-token.service motel-box-apply.path
+RUN systemctl enable moteld.service e2e-token.service motel-box-apply.path
 COPY e2e/Caddyfile /etc/motel/Caddyfile
 # The demo app's env file, as the box README says to make one: root
 # and the motel user can read it, nothing else. The crash scenario
@@ -145,7 +145,7 @@ STOPSIGNAL SIGRTMIN+3
 CMD ["/sbin/init"]
 
 # The notify suite's box (make e2e-notify, e2e/notify/run.sh): the same
-# box with Debian's Alertmanager installed as `motel monitor setup` would
+# box with Debian's Alertmanager installed as `moteld monitor setup` would
 # install it, masked first so that nothing it enables starts; the suite
 # runs setup itself, which finds the package installed and does the
 # rest. iproute2: the suite's `ss`, for what listens.
@@ -158,7 +158,7 @@ RUN systemctl mask prometheus-alertmanager.service \
 # e2e-token.service mints blog's (no volume: this box shares it with no
 # runner).
 RUN mkdir -p /shared \
-	&& motel deploy-keygen --out /etc/motel/shop.key >/dev/null 2>&1 \
+	&& moteld deploy-keygen --out /etc/motel/shop.key >/dev/null 2>&1 \
 	&& cp /etc/motel/shop.key.pub /etc/motel/shop.pub && chmod 644 /etc/motel/shop.pub
 COPY e2e/notify/Caddyfile /etc/motel/Caddyfile
 # The box tier's secrets, as the applier would write secrets/_box/: one
@@ -174,9 +174,9 @@ RUN install -d -m 2750 -o root -g motel /etc/motel/secrets \
 
 # The metrics suite's box (make e2e-metrics, e2e/metrics/run.sh): the
 # notify suite's box with Debian's victoria-metrics (the store and
-# vmalert) installed as `motel monitor setup --metrics` would install
+# vmalert) installed as `moteld monitor setup --metrics` would install
 # it, masked first so that its unit, which listens on 0.0.0.0:8428, never
-# starts; the suite runs `motel monitor setup`, then `motel monitor
+# starts; the suite runs `moteld monitor setup`, then `moteld monitor
 # setup --metrics`, the store's setup, which finds the package installed
 # and does the rest.
 FROM notify-box AS metrics-box

@@ -1,8 +1,8 @@
 package box
 
 // Step 6 (DESIGN-box.md, "The trust chain"): the pushed file validated
-// as the serving process would load it — by `motel validate`, then
-// its adaptation read by `motel adapt` for reachability
+// as the serving process would load it — by `moteld validate`, then
+// its adaptation read by `moteld adapt` for reachability
 // ("Reachability", reach.go), then `motel-backup validate` when
 // backups are installed — three bounded children with the service's
 // own environment. Root runs none of them: validate provisions every
@@ -39,7 +39,7 @@ const (
 
 // The programs, by absolute path: the package installs both there.
 const (
-	motelProgram  = "/usr/bin/motel"
+	moteldProgram = "/usr/bin/moteld"
 	backupProgram = "/usr/bin/motel-backup"
 )
 
@@ -56,25 +56,25 @@ const xOK = 0x1
 // that does not read). boxSecrets are the variables of the push's
 // secrets/_box/: values the box does not hold yet, which root writes
 // into the monitor block's secrets file only once the push is installed,
-// so `motel validate` is told their names (NotifyPushedSecretsEnv) and
+// so `moteld validate` is told their names (NotifyPushedSecretsEnv) and
 // does not refuse them as missing.
 type validator interface {
 	validate(ctx context.Context, id string, caddyfile []byte, host string, door, boxSecrets []string) (msg string, err error)
 }
 
-// NotifyPushedSecretsEnv names, to `motel validate`, the secrets a push
+// NotifyPushedSecretsEnv names, to `moteld validate`, the secrets a push
 // carries in its secrets/_box/: a comma-separated list of names, never
-// a value. notify's Provision, in `motel validate` alone, takes each as
+// a value. notify's Provision, in `moteld validate` alone, takes each as
 // held by the box without reading its value, which only root can open
-// (notify.PushedSecretsEnv, which cmd/motel's test holds equal to this).
+// (notify.PushedSecretsEnv, which cmd/moteld's test holds equal to this).
 const NotifyPushedSecretsEnv = "MOTEL_NOTIFY_PUSHED_SECRETS" //nolint:gosec // G101: a variable's name, not a credential
 
 // childValidator runs the real children.
 type childValidator struct {
-	stage         string // where the staged copy is written
-	motel, backup string
-	env           []string
-	timeout       time.Duration
+	stage          string // where the staged copy is written
+	moteld, backup string
+	env            []string
+	timeout        time.Duration
 	// redactor is primed with the service's environment: validate's
 	// errors quote expanded values.
 	redactor *liveswap.Redactor
@@ -83,7 +83,7 @@ type childValidator struct {
 func newChildValidator(stage string) *childValidator {
 	env := os.Environ()
 	return &childValidator{
-		stage: stage, motel: motelProgram, backup: backupProgram,
+		stage: stage, moteld: moteldProgram, backup: backupProgram,
 		env: env, timeout: validateTimeout, redactor: liveswap.NewRedactor(secretCandidates(env), nil),
 	}
 }
@@ -131,7 +131,7 @@ func (c *childValidator) validate(ctx context.Context, id string, caddyfile []by
 	// service's own environment is never what validate reads.
 	v := *c
 	v.env = append(slices.Clone(c.env), NotifyPushedSecretsEnv+"="+strings.Join(boxSecrets, ","))
-	if msg, err := v.run(ctx, "motel validate", loadError, c.motel, "validate", "--adapter", "caddyfile", "--config", staged); msg != "" || err != nil {
+	if msg, err := v.run(ctx, "moteld validate", loadError, c.moteld, "validate", "--adapter", "caddyfile", "--config", staged); msg != "" || err != nil {
 		return msg, err
 	}
 	if msg, err := c.adapt(ctx, staged, host, door); msg != "" || err != nil {
@@ -182,7 +182,7 @@ func (c *childValidator) run(ctx context.Context, what string, saysWhyLast func(
 	return what + ": " + bound(line), nil
 }
 
-// loadError reports whether `motel validate`'s error line says why
+// loadError reports whether `moteld validate`'s error line says why
 // last, so is bounded by its tail. A load error walks the module path
 // first (`loading http app module: provision http: server srv1: ...:
 // provision liveswap: app <name>: <why>`), and the path alone outruns
@@ -205,14 +205,14 @@ func loadError(line string) bool {
 // function (a moved door is named, its addresses are not).
 func (c *childValidator) adapt(ctx context.Context, staged, host string, door []string) (string, error) {
 	out := newCappedBuffer(maxAdaptation)
-	exit, timedOut, err := c.exec(ctx, c.motel, out, nil, "adapt", "--adapter", "caddyfile", "--config", staged)
+	exit, timedOut, err := c.exec(ctx, c.moteld, out, nil, "adapt", "--adapter", "caddyfile", "--config", staged)
 	switch {
 	case err != nil:
-		return "", fmt.Errorf("motel adapt: %w", err)
+		return "", fmt.Errorf("moteld adapt: %w", err)
 	case timedOut:
-		return fmt.Sprintf("motel adapt: did not finish within %s", c.timeout), nil
+		return fmt.Sprintf("moteld adapt: did not finish within %s", c.timeout), nil
 	case exit != nil:
-		return "", fmt.Errorf("motel adapt: %w", exit)
+		return "", fmt.Errorf("moteld adapt: %w", exit)
 	case out.over():
 		return msgAdaptationTooLarge, nil
 	}
@@ -222,7 +222,7 @@ func (c *childValidator) adapt(ctx context.Context, staged, host string, door []
 	case errors.As(err, &r):
 		return r.msg, nil
 	case err != nil:
-		return "", fmt.Errorf("motel adapt: %w", err)
+		return "", fmt.Errorf("moteld adapt: %w", err)
 	}
 	return "", nil
 }

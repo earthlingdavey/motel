@@ -1,7 +1,7 @@
 docker compose run --rm -e GOFLAGS= -e CGO_ENABLED=0 dev sh -c '\
 		git config --global --add safe.directory /src; \
-		GOOS=linux GOARCH=amd64 go build -trimpath -ldflags "-s -w" -o build/motel-linux-amd64 ./cmd/motel & p1=$!; \
-		GOOS=linux GOARCH=arm64 go build -trimpath -ldflags "-s -w" -o build/motel-linux-arm64 ./cmd/motel & p2=$!; \
+		GOOS=linux GOARCH=amd64 go build -trimpath -ldflags "-s -w" -o build/moteld-linux-amd64 ./cmd/moteld & p1=$!; \
+		GOOS=linux GOARCH=arm64 go build -trimpath -ldflags "-s -w" -o build/moteld-linux-arm64 ./cmd/moteld & p2=$!; \
 		(cd backups && GOOS=linux GOARCH=amd64 go build -trimpath -ldflags "-s -w" -o ../build/motel-backup-linux-amd64 ./cmd/motel-backup) & p3=$!; \
 		(cd backups && GOOS=linux GOARCH=arm64 go build -trimpath -ldflags "-s -w" -o ../build/motel-backup-linux-arm64 ./cmd/motel-backup) & p4=$!; \
 		wait $p1 || exit 1; wait $p2 || exit 1; wait $p3 || exit 1; wait $p4 || exit 1; \
@@ -15,17 +15,17 @@ mkdir -p dist
 docker compose run --rm --entrypoint sh -e NFPM_VERSION=0.3.0-rc1 nfpm -c '\
 		set -e; \
 		for a in amd64 arm64; do \
-			rm -f build/motel build/motel-backup; \
-			cp build/motel-linux-$a build/motel; \
+			rm -f build/moteld build/motel-backup; \
+			cp build/moteld-linux-$a build/moteld; \
 			cp build/motel-backup-linux-$a build/motel-backup; \
 			for f in deb; do \
 				NFPM_ARCH=$a nfpm package -f packaging/nfpm.yaml -p $f -t dist/; \
 			done; \
 		done; \
-		rm -f build/motel build/motel-backup'
+		rm -f build/moteld build/motel-backup'
  Container motel-backups-v2-nfpm-run-b9aafcc49ea7 Creating 
  Container motel-backups-v2-nfpm-run-b9aafcc49ea7 Created 
 using deb packager...
-created package: dist/motel_0.3.0~rc1_amd64.deb
+created package: dist/moteld_0.3.0~rc1_amd64.deb
 using deb packager...
-created package: dist/motel_0.3.0~rc1_arm64.deb
+created package: dist/moteld_0.3.0~rc1_arm64.deb

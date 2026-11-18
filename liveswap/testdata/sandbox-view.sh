@@ -26,7 +26,7 @@
 #
 # Each lane wraps it in its own ./server, which SOURCES this file and
 # then becomes whatever that lane needs (a sleep, the demo app,
-# `motel respond`). Sourced rather than run as a child so that `$$`
+# `moteld respond`). Sourced rather than run as a child so that `$$`
 # below is the unit's main pid — which is the assertion that the PID
 # namespace is in effect at all.
 #
@@ -37,7 +37,7 @@
 #
 #   MGR_PID         the user manager's pid, as seen on the host
 #   PROBE_DNS_NAME  a name to resolve, proving DNS works from inside
-#   MOTEL_UID    the uid motel runs as
+#   MOTEL_UID    the uid moteld runs as
 #
 # MOTEL_UID is the one with a defensible default: apps run as the
 # motel user and PrivateUsers= maps that uid to itself, so `id -u`
@@ -146,7 +146,7 @@ emit varlib_listing "$(ls /var/lib 2>/dev/null | tr '\n' ' ')"
 # by a unit that has nothing in it at all.
 [ -x /bin/sh ] && emit binsh ok || emit binsh MISSING
 [ -x /usr/bin/env ] && emit usrbinenv ok || emit usrbinenv MISSING
-[ -x /usr/bin/motel ] && emit hsbin ok || emit hsbin MISSING
+[ -x /usr/bin/moteld ] && emit hsbin ok || emit hsbin MISSING
 [ -e /etc/ssl/certs ] && emit etcssl ok || emit etcssl MISSING
 # The trust store is named, not the tree that contains it: /etc/ssl
 # also holds /etc/ssl/private, which nothing in an app needs and which

@@ -66,7 +66,7 @@ func (m *MetricsStore) stateDir() string {
 // GET /<app>'s source into this config: App.Provision's, after notify's
 // part, with this config's liveswap (nil for none) and the block's
 // notify, nil for a metrics line alone. It writes nothing and connects
-// to nothing, so `motel validate` leaves the box as it was.
+// to nothing, so `moteld validate` leaves the box as it was.
 func (m *MetricsStore) provision(ctx caddy.Context, ls *liveswap.App, n *App, logger *zap.Logger) error {
 	m.logger = logger
 	if m.Store != "" && !filepath.IsAbs(m.Store) {
@@ -167,9 +167,9 @@ func (m *MetricsStore) applyRules() {
 
 // What a config with no metrics line says when it retires the rules a
 // config with one wrote, at a reload (pusher.release) or at the boot of
-// one (cmd/motel's gate, RetireRules).
+// one (cmd/moteld's gate, RetireRules).
 const (
-	RulesRetiredMessage    = "monitor metrics: the metrics line is gone: vmalert is given no rule; the store and vmalert, which motel monitor setup --metrics started, run until their units are stopped"
+	RulesRetiredMessage    = "monitor metrics: the metrics line is gone: vmalert is given no rule; the store and vmalert, which moteld monitor setup --metrics started, run until their units are stopped"
 	RulesNotRetiredMessage = "monitor metrics: the metrics line is gone, and its rules were not retired: vmalert still evaluates them"
 )
 
@@ -177,7 +177,7 @@ const (
 // dir, the state directory setup made: what vmalert must read once no
 // config has a metrics line. It reports whether the file changed; a box
 // the store is not set up on has nothing to retire, and is no error.
-// cmd/motel's gate calls it at `motel run` with a config that has no
+// cmd/moteld's gate calls it at `moteld run` with a config that has no
 // metrics line, which builds no MetricsStore to do it (Copilot round 4
 // on #423); a reload's is pusher.release's.
 func RetireRules(dir string) (bool, error) {
@@ -200,7 +200,7 @@ func (m *MetricsStore) retireRules() {
 	}
 }
 
-var errMetricsNotSetUp = errors.New("the metrics store is not set up on this box (run motel monitor setup --metrics as root)")
+var errMetricsNotSetUp = errors.New("the metrics store is not set up on this box (run moteld monitor setup --metrics as root)")
 
 // writeRules writes the rule file into the state directory setup made.
 func writeRules(dir string, rules []byte) (bool, error) {

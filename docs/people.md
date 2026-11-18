@@ -20,15 +20,15 @@ with either, so an agent that makes only P-256 keys, such as one that
 keeps its keys in the Secure Enclave, cannot be used for now. A later
 release may take ECDSA keys too. Someone without an Ed25519 key makes
 one with `ssh-keygen -t ed25519`, or `ssh-keygen -t ed25519-sk` for a
-hardware key. Ask them for the line `motelctl key
+hardware key. Ask them for the line `motel key
 --name <their name>` prints: the `person` line for their key, ready to
-paste (`motelctl` is the laptop client, experimental; without it, the
-one line of their `.pub` file, with `person <name>` in front). Once you
-have pushed, `motelctl whoami` tells them who the box takes them to be
-and what they may read from where they are. If their key lives in an
-agent (a password manager's, say), `motelctl` reaches it through
+paste (the `motel` command is the laptop client, experimental; without
+it, the one line of their `.pub` file, with `person <name>` in front).
+Once you have pushed, `motel whoami` tells them who the box takes them
+to be and what they may read from where they are. If their key lives in
+an agent (a password manager's, say), `motel` reaches it through
 `SSH_AUTH_SOCK` only, not through an `IdentityAgent` line in
-`~/.ssh/config` (motelctl/README.md, "A key an agent holds").
+`~/.ssh/config` (client/README.md, "A key an agent holds").
 
 ## Add them
 
@@ -68,20 +68,20 @@ box {
   `trusted_proxies_unix`) to it **and** `trusted_proxies_strict` in
   the global `servers` options: without `trusted_proxies_strict`
   Caddy takes the address from the left of `X-Forwarded-For`, which
-  the client writes, so `motel validate` refuses a `from` list and the
+  the client writes, so `moteld validate` refuses a `from` list and the
   box matches no list for a forwarded request. With it, the list holds
   only if your proxy sets the address header itself (also any other
   you name in `client_ip_headers`, such as `X-Real-IP`) rather than
   passing on the client's; and on a listener with `proxy_protocol`,
   the address is whatever the PROXY header says, so it is only as good
-  as that listener's `allow` list. `motel validate` warns of both.
+  as that listener's `allow` list. `moteld validate` warns of both.
 
 Check the file, then push it as any change to the box (a signed
 commit):
 
 ```sh
-motel validate --config Caddyfile
-motel box describe Caddyfile
+moteld validate --config Caddyfile
+moteld box describe Caddyfile
 ```
 
 `describe` prints a `person` line per key with its fingerprint, which
@@ -107,8 +107,8 @@ journal's line at each load says why when it is not). For people to
 reach more than the box's status, that same site needs
 `liveswap_webhook` too, as the template's has. Edit
 `/etc/motel/Caddyfile` as root,
-`motel validate --config /etc/motel/Caddyfile`, and `systemctl reload
-motel`. The box reads who it admits from that file at each load; the
+`moteld validate --config /etc/motel/Caddyfile`, and `systemctl reload
+moteld`. The box reads who it admits from that file at each load; the
 journal says `box: people admitted from the Caddyfile this machine
 runs (/etc/motel/Caddyfile)`, or why no one is.
 
@@ -125,10 +125,10 @@ signed:
 | `/<app>?deploy=<version>` | one deploy's record |
 | `/` | the box's status, for a viewer of the box |
 
-`motelctl` (in no release yet: built from a clone of this repository,
-motelctl/README.md, "Getting it") makes the token and asks: `motelctl whoami --box
-deploy.example.com`, `motelctl apps`, `motelctl status <app>`,
-`motelctl deploys <app> [<version>]`, `motelctl box status`. Without
+The `motel` command (in no release yet: built from a clone of this
+repository, client/README.md, "Getting it") makes the token and asks:
+`motel whoami --box deploy.example.com`, `motel apps`, `motel status
+<app>`, `motel deploys <app> [<version>]`, `motel box status`. Without
 it, this makes one by hand and asks who they are (`box` is the box's
 name; the key is theirs; GNU or macOS `base64`):
 
@@ -145,7 +145,7 @@ curl -fsS -H "Authorization: Motel $token" "https://$box/_motel/whoami"
 A token lasts at most ten minutes and is good for reads only. Every
 refusal is the same `401`, whatever the cause: a key the box does not
 list, an address outside a `from` list, a clock more than a minute off,
-or a box whose motel is too old for people. An app they may not read
+or a box whose moteld is too old for people. An app they may not read
 is a `403` saying which role it needs, the same whether the app exists
 or not. Too many requests (more than 60 at once, then 2 a second) is a
 `429` with `Retry-After`.

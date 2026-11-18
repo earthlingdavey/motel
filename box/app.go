@@ -27,7 +27,7 @@ func init() {
 //
 // The verifiers are what box_webhook authenticates against. The
 // signers are held here only so that a bad line fails config load, and
-// with it `motel validate`; the signer list the box trusts is read
+// with it `moteld validate`; the signer list the box trusts is read
 // from the installed file's raw tokens (Walk), never from the running
 // configuration (step 10). People and Grants, the person and grant
 // lines, are held for the same reason: the people the box admits are
@@ -161,7 +161,7 @@ func registryFile() string {
 // channel) is said here too.
 func (a *App) loadRegistry(logger *zap.Logger, path string) *access.Registry {
 	declares := len(a.People) > 0 || len(a.Grants) > 0
-	// Every line names the file this machine runs: at `motel validate`
+	// Every line names the file this machine runs: at `moteld validate`
 	// of a candidate, the registry is still this machine's, not the
 	// candidate's.
 	running := "the Caddyfile this machine runs (" + path + ")"
@@ -261,7 +261,7 @@ func (a *App) provision(logger *zap.Logger) error {
 // checkLines holds the person and grant lines to the rules across lines
 // with the signers, and a grant on an app to the apps the config runs
 // once Provision knows them. Whether the file has a monitor channel is
-// not this reader's to see: validate and the load say it (cmd/motel's
+// not this reader's to see: validate and the load say it (cmd/moteld's
 // warnPeople, loadRegistry), so it is not asked here.
 func (a *App) checkLines(logger *zap.Logger, signers proof.Signers) error {
 	lines, err := a.lines(signers)

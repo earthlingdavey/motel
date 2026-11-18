@@ -72,7 +72,7 @@ type App struct {
 	// Default false (https only). Exists for test rigs and LAN setups.
 	AllowInsecureHTTP bool `json:"allow_insecure_http,omitempty"`
 
-	// AllowTCPAdmin tells motel's own command gate (cmd/motel) that the
+	// AllowTCPAdmin tells motel's own command gate (cmd/moteld) that the
 	// admin API is meant to listen on TCP though apps run: every app
 	// shares the box's network namespace, so a TCP admin API is theirs
 	// to reconfigure the server with, and validate and reload refuse
@@ -608,7 +608,7 @@ func (a *App) MemoryCapped() map[string]bool {
 }
 
 // Releases are the release versions on disk for app, newest first
-// (listReleases): with RecordedVersions, what notify's `motel monitor
+// (listReleases): with RecordedVersions, what notify's `moteld monitor
 // silence add --release` takes. Nil for an app this config does not run, or when the
 // directory cannot be read. The paths read are the app's spec's, built
 // from its configured name, never from app: the name comes off the
@@ -799,7 +799,7 @@ func (a *App) Start() error {
 	// Apps run as transient units under this user's systemd manager.
 	// Prove it answers before anything runs, with an error that says
 	// what to fix; there is deliberately no fallback runner. Checked
-	// here rather than in Provision so `motel validate` — which
+	// here rather than in Provision so `moteld validate` — which
 	// provisions and cleans up without starting — works as any user.
 	if len(a.managed) > 0 {
 		if err := a.probeManager(); err != nil {
@@ -834,7 +834,7 @@ func (a *App) Start() error {
 	names := slices.Sorted(maps.Keys(a.managed))
 	a.logger.Info("liveswap started", zap.Int("apps", len(names)), zap.Strings("app_names", names))
 	// Units of apps no loaded config names have no managedApp to sweep
-	// them (removed or renamed while motel was down): settle them
+	// them (removed or renamed while moteld was down): settle them
 	// against the manager's own listing. Background, like recovery;
 	// the sweep judges each app against the pool right before acting,
 	// so neither a reload racing it nor a candidate config that later
@@ -907,7 +907,7 @@ func (a *App) sharedManager() managerClient {
 
 // probeManager fails loudly when the manager is unreachable, so Start
 // reports what to fix rather than every deploy failing later. Called
-// from Start rather than Provision so `motel validate` — which
+// from Start rather than Provision so `moteld validate` — which
 // provisions and cleans up without starting — works as any user.
 func (a *App) probeManager() error {
 	if a.managerProbe != nil {

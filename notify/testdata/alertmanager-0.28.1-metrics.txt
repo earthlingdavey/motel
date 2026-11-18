@@ -1,6 +1,6 @@
 # Alertmanager 0.28.1+ds (Debian 13, arm64) GET /metrics over its unix socket, with
 # --enable-feature=receiver-name-in-metrics: hotserve-1, 2026-11-10, after one
-# motel notify test to one channel, whose name is changed to operator here
+# moteld notify test to one channel, whose name is changed to operator here
 # (receiver ch-operator); nothing else is edited. The fixture for parseAMMetrics.
 # HELP alertmanager_alerts How many alerts by state.
 # TYPE alertmanager_alerts gauge

@@ -165,7 +165,7 @@ func TestProvisionChecksTheRootBeforeResolvingIt(t *testing.T) {
 	}
 }
 
-// The declaration reaches its reader as the JSON `motel adapt`
+// The declaration reaches its reader as the JSON `moteld adapt`
 // prints, so the shape is part of the contract.
 func TestBackupJSONShape(t *testing.T) {
 	a, err := unmarshalApps(t, "backup {\n sqlite app.db\n files uploads\n}")

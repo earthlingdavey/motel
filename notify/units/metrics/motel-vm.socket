@@ -1,11 +1,11 @@
-# Written by `motel monitor setup --metrics` (notify/DESIGN-metrics.md, "The shape").
+# Written by `moteld monitor setup --metrics` (notify/DESIGN-metrics.md, "The shape").
 # The metrics store's only listener in the host's namespace: a unix socket
 # in a runtime directory of its own, 0660 root:motel. Every app runs as the
 # motel uid, so the group is not what keeps apps out: no app's sandbox has
 # /run/motel-metrics in its view. The group keeps out every other system
 # user. Its service bridges it to the store inside its namespace.
 [Unit]
-Description=The metrics store's unix socket, for root and motel (motel monitor setup --metrics)
+Description=The metrics store's unix socket, for root and motel (moteld monitor setup --metrics)
 
 [Socket]
 ListenStream=/run/motel-metrics/vm.sock
@@ -25,7 +25,7 @@ RemoveOnStop=yes
 # for good under a burst of them during the fault: so no limit. The
 # cost: a connection queued as the proxy exits (5 idle minutes, or
 # stopped with the store) is closed, not started again; motel pushes
-# every 30 s, so the proxy does not idle while motel runs. Measured on
+# every 30 s, so the proxy does not idle while moteld runs. Measured on
 # systemd 257 (notify/DESIGN-metrics.md, "The shape").
 FlushPending=yes
 TriggerLimitIntervalSec=0

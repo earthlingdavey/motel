@@ -1,4 +1,4 @@
-# motel-box-apply.service — the box applier: one run of `motel
+# motel-box-apply.service — the box applier: one run of `moteld
 # box apply`, as root, started by motel-box-apply.path and never
 # enabled on its own. Every line here, and why it is here, is a row of
 # the table in box/DESIGN-box.md, "The applier unit", and what is left
@@ -8,12 +8,12 @@
 [Unit]
 Description=motel box applier
 Documentation=https://github.com/smallhoursorg/motel/blob/main/box/DESIGN-box.md
-After=motel.service
+After=moteld.service
 StartLimitIntervalSec=0
 
 [Service]
 Type=oneshot
-ExecStart=/usr/bin/motel box apply
+ExecStart=/usr/bin/moteld box apply
 TimeoutStartSec=infinity
 
 # CAP_SETUID: ssh-keygen runs as uid 65534 (step 12)

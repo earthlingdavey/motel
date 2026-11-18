@@ -52,14 +52,14 @@ docker run -d --name motel-smoke --privileged --cgroupns=host \
 54be60a88aa1ede52b13d1cc0f71810326d3d8af13c0590f440cf10132e2512f
 docker exec motel-smoke /bin/bash /smoke.sh; status=$?; \
 	if [ $status -ne 0 ]; then \
-		docker exec motel-smoke journalctl -u motel --no-pager || true; \
+		docker exec motel-smoke journalctl -u moteld --no-pager || true; \
 	fi; \
 	docker rm -f motel-smoke >/dev/null; \
 	exit $status
 
 ════ stage 0: wait for systemd, locate the package ════
 systemd is running after 1s
-package under test: /dist/motel_0.3.0~rc1_arm64.deb
+package under test: /dist/moteld_0.3.0~rc1_arm64.deb
 
 ════ stage 1: install, service basics, reload ════
 Reading package lists...
@@ -72,13 +72,13 @@ Suggested packages:
 Recommended packages:
   dbus-user-session fuse libjs-jquery libjs-sphinxdoc sphinx-rtd-theme-common
 The following NEW packages will be installed:
-  motel libpam-systemd libreadline8t64 readline-common restic sqlite3
+  moteld libpam-systemd libreadline8t64 readline-common restic sqlite3
 The following packages will be upgraded:
   libsqlite3-0
 1 upgraded, 6 newly installed, 0 to remove and 14 not upgraded.
 Need to get 9016 kB/29.7 MB of archives.
 After this operation, 84.7 MB of additional disk space will be used.
-Get:1 /dist/motel_0.3.0~rc1_arm64.deb motel arm64 0.3.0~rc1 [20.7 MB]
+Get:1 /dist/moteld_0.3.0~rc1_arm64.deb moteld arm64 0.3.0~rc1 [20.7 MB]
 Get:2 http://deb.debian.org/debian trixie/main arm64 libsqlite3-0 arm64 3.46.1-7+deb13u2 [854 kB]
 Get:3 http://deb.debian.org/debian trixie/main arm64 readline-common all 8.2-6 [69.4 kB]
 Get:4 http://deb.debian.org/debian trixie/main arm64 libpam-systemd arm64 257.13-1~deb13u1 [276 kB]
@@ -110,17 +110,17 @@ Unpacking libreadline8t64:arm64 (8.2-6) ...
 Selecting previously unselected package sqlite3.
 Preparing to unpack .../4-sqlite3_3.46.1-7+deb13u2_arm64.deb ...
 Unpacking sqlite3 (3.46.1-7+deb13u2) ...
-Selecting previously unselected package motel.
-Preparing to unpack .../5-motel_0.3.0~rc1_arm64.deb ...
-Unpacking motel (0.3.0~rc1) ...
+Selecting previously unselected package moteld.
+Preparing to unpack .../5-moteld_0.3.0~rc1_arm64.deb ...
+Unpacking moteld (0.3.0~rc1) ...
 Setting up restic (0.18.0-1+b4) ...
 Setting up libpam-systemd:arm64 (257.13-1~deb13u1) ...
 Setting up readline-common (8.2-6) ...
 Setting up libreadline8t64:arm64 (8.2-6) ...
 Setting up sqlite3 (3.46.1-7+deb13u2) ...
-Setting up motel (0.3.0~rc1) ...
-motel installed. Start it with:
-  sudo systemctl enable --now motel
+Setting up moteld (0.3.0~rc1) ...
+moteld installed. Start it with:
+  sudo systemctl enable --now moteld
 Created symlink '/etc/systemd/system/timers.target.wants/motel-backup.timer' → '/usr/lib/systemd/system/motel-backup.timer'.
 Created symlink '/etc/systemd/system/timers.target.wants/motel-backup-drill.timer' → '/usr/lib/systemd/system/motel-backup-drill.timer'.
 Backups: the hourly timer and the Sunday restore drill are enabled, and run nothing until:
@@ -129,7 +129,7 @@ Processing triggers for libc-bin (2.41-12+deb13u3) ...
 user/group and data dir ownership OK
 v2.11.6 h1:sWxeamdlCZvcH4qeDz8bB0mdxgfYTeqV7HxOjXyIRas=
 all product modules linked
-Created symlink '/etc/systemd/system/multi-user.target.wants/motel.service' → '/usr/lib/systemd/system/motel.service'.
+Created symlink '/etc/systemd/system/multi-user.target.wants/moteld.service' → '/usr/lib/systemd/system/moteld.service'.
 unit started and starter config answers on :80
 user manager user@996 active with lingering
 reload OK, journal clean
@@ -185,7 +185,7 @@ app NOFILE 1048576 = user@996 DefaultLimitNOFILE = the drop-in's 1048576 (system
 deployed as unit motel-demo.s1.25c9f4b00bb1e404.service under user@996; app output in the journal
 host: 7.0.12-linuxkit; apparmor_restrict_unprivileged_userns=absent; virt=docker
 in-unit routes closed: manager /proc root+environ, manager socket, admin socket, state.json, /etc/motel, /run/motel, the app's tmp and current
-in-unit base view: /bin/sh, /usr/bin/env, /usr/bin/motel, /etc/ssl/certs, /etc/resolv.conf; /etc=alternatives ca-certificates group hostname hosts ld.so.cache ld.so.conf ld.so.conf.d localtime nsswitch.conf passwd resolv.conf ssl  /var/lib=liveswap 
+in-unit base view: /bin/sh, /usr/bin/env, /usr/bin/moteld, /etc/ssl/certs, /etc/resolv.conf; /etc=alternatives ca-certificates group hostname hosts ld.so.cache ld.so.conf ld.so.conf.d localtime nsswitch.conf passwd resolv.conf ssl  /var/lib=liveswap 
 sandbox (systemd 257): uid_map range 1, pid 1, 4 pids visible, /var/lib/motel closed
 validate (root and motel) left the running app alone
 journal is free of the deploy token
@@ -199,7 +199,7 @@ the package's own: restic and sqlite3 by Depends, the account, the units, the ti
 docs/backups.md: sudo motel-backup setup s3:http://127.0.0.1:9000/motel
 after setup: timers enabled, active; credential file 32977b8d3c5b54a556e68b121a68b9bd04fce432f25e9d0407edfcb7baca927c — as the table says
 docs/backups.md: motel-backup validate /etc/motel/Caddyfile
-docs/backups.md: sudo systemctl reload motel
+docs/backups.md: sudo systemctl reload moteld
 the timer fired (5s after the minute), and its run ended success under the unit's hardening
 docs/backups.md: sudo systemctl start motel-backup.service
 docs/backups.md: motel-backup status
@@ -209,11 +209,11 @@ the guide's lines ran as written, as the administrator: validate, reload, setup,
 
 ════ stage 3: reinstall — upgrade path, conffile preservation, app survival ════
 (Reading database ... 7141 files and directories currently installed.)
-Preparing to unpack .../motel_0.3.0~rc1_arm64.deb ...
-Unpacking motel (0.3.0~rc1) over (0.3.0~rc1) ...
-Setting up motel (0.3.0~rc1) ...
-motel installed. Start it with:
-  sudo systemctl enable --now motel
+Preparing to unpack .../moteld_0.3.0~rc1_arm64.deb ...
+Unpacking moteld (0.3.0~rc1) over (0.3.0~rc1) ...
+Setting up moteld (0.3.0~rc1) ...
+moteld installed. Start it with:
+  sudo systemctl enable --now moteld
 Backups: the hourly timer and the Sunday restore drill are enabled, and run nothing until:
   sudo motel-backup setup <repository>
 reinstall preserved config and user; motel restarted and reattached to the running app (pid 567)
@@ -251,11 +251,11 @@ The following packages were automatically installed and are no longer required:
   libreadline8t64 readline-common restic sqlite3
 Use 'apt autoremove' to remove them.
 The following packages will be REMOVED:
-  motel
+  moteld
 0 upgraded, 0 newly installed, 1 to remove and 14 not upgraded.
 After this operation, 59.1 MB disk space will be freed.
 (Reading database ... (Reading database ... 5%(Reading database ... 10%(Reading database ... 15%(Reading database ... 20%(Reading database ... 25%(Reading database ... 30%(Reading database ... 35%(Reading database ... 40%(Reading database ... 45%(Reading database ... 50%(Reading database ... 55%(Reading database ... 60%(Reading database ... 65%(Reading database ... 70%(Reading database ... 75%(Reading database ... 80%(Reading database ... 85%(Reading database ... 90%(Reading database ... 95%(Reading database ... 100%(Reading database ... 7141 files and directories currently installed.)
-Removing motel (0.3.0~rc1) ...
+Removing moteld (0.3.0~rc1) ...
 remove took the timers' stamps, and the engine's sweep a killed run's mount and its directory, and nothing of the app's
 removal stopped the service and the apps, kept the conffile
 after remove: timers masked, inactive; credential file 32977b8d3c5b54a556e68b121a68b9bd04fce432f25e9d0407edfcb7baca927c — as the table says
@@ -263,7 +263,7 @@ after remove: timers masked, inactive; credential file 32977b8d3c5b54a556e68b121
 ════ stage 5: reinstall after remove, and purge ════
 reinstalled after remove: timers enabled, active; credential file 32977b8d3c5b54a556e68b121a68b9bd04fce432f25e9d0407edfcb7baca927c — as the table says
 reinstalled after remove: the stamps are new, and nothing caught up
-Created symlink '/etc/systemd/system/multi-user.target.wants/motel.service' → '/usr/lib/systemd/system/motel.service'.
+Created symlink '/etc/systemd/system/multi-user.target.wants/moteld.service' → '/usr/lib/systemd/system/moteld.service'.
 reinstalled after remove: the timers enabled and running again, the same credential file, a run works
 Reading package lists...
 Building dependency tree...
@@ -272,22 +272,22 @@ The following packages were automatically installed and are no longer required:
   libreadline8t64 readline-common restic sqlite3
 Use 'apt autoremove' to remove them.
 The following packages will be REMOVED:
-  motel*
+  moteld*
 0 upgraded, 0 newly installed, 1 to remove and 14 not upgraded.
 After this operation, 59.1 MB disk space will be freed.
 (Reading database ... (Reading database ... 5%(Reading database ... 10%(Reading database ... 15%(Reading database ... 20%(Reading database ... 25%(Reading database ... 30%(Reading database ... 35%(Reading database ... 40%(Reading database ... 45%(Reading database ... 50%(Reading database ... 55%(Reading database ... 60%(Reading database ... 65%(Reading database ... 70%(Reading database ... 75%(Reading database ... 80%(Reading database ... 85%(Reading database ... 90%(Reading database ... 95%(Reading database ... 100%(Reading database ... 7141 files and directories currently installed.)
-Removing motel (0.3.0~rc1) ...
+Removing moteld (0.3.0~rc1) ...
 (Reading database ... (Reading database ... 5%(Reading database ... 10%(Reading database ... 15%(Reading database ... 20%(Reading database ... 25%(Reading database ... 30%(Reading database ... 35%(Reading database ... 40%(Reading database ... 45%(Reading database ... 50%(Reading database ... 55%(Reading database ... 60%(Reading database ... 65%(Reading database ... 70%(Reading database ... 75%(Reading database ... 80%(Reading database ... 85%(Reading database ... 90%(Reading database ... 95%(Reading database ... 100%(Reading database ... 7134 files and directories currently installed.)
-Purging configuration files for motel (0.3.0~rc1) ...
+Purging configuration files for moteld (0.3.0~rc1) ...
 motel: /etc/motel-backup/repository.env is kept: it holds the repository password, the only way to read the backups already made. Remove it yourself once those backups are not needed: sudo rm -r /etc/motel-backup
-dpkg: warning: while removing motel, directory '/var/lib/liveswap' not empty so not removed
-dpkg: warning: while removing motel, directory '/var/lib/motel' not empty so not removed
-dpkg: warning: while removing motel, directory '/lib/systemd/system' not empty so not removed
-dpkg: warning: while removing motel, directory '/etc/motel' not empty so not removed
+dpkg: warning: while removing moteld, directory '/var/lib/liveswap' not empty so not removed
+dpkg: warning: while removing moteld, directory '/var/lib/motel' not empty so not removed
+dpkg: warning: while removing moteld, directory '/lib/systemd/system' not empty so not removed
+dpkg: warning: while removing moteld, directory '/etc/motel' not empty so not removed
 purge kept the credential file and said why, removed the package's own state, the cache, the stamps and a killed run's mounts, kept the account
 
 ════ stage 6: an account that cannot be made, a command under way at purge, and what purge keeps ════
-Created symlink '/etc/systemd/system/multi-user.target.wants/motel.service' → '/usr/lib/systemd/system/motel.service'.
+Created symlink '/etc/systemd/system/multi-user.target.wants/moteld.service' → '/usr/lib/systemd/system/moteld.service'.
 installed where the account cannot be made: timers enabled, active; credential file 32977b8d3c5b54a556e68b121a68b9bd04fce432f25e9d0407edfcb7baca927c — as the table says
 Job for motel-backup.service failed because the control process exited with error code.
 See "systemctl status motel-backup.service" and "journalctl -xeu motel-backup.service" for details.
@@ -299,22 +299,22 @@ The following packages were automatically installed and are no longer required:
   libreadline8t64 readline-common restic sqlite3
 Use 'apt autoremove' to remove them.
 The following packages will be REMOVED:
-  motel*
+  moteld*
 0 upgraded, 0 newly installed, 1 to remove and 14 not upgraded.
 After this operation, 59.1 MB disk space will be freed.
 (Reading database ... (Reading database ... 5%(Reading database ... 10%(Reading database ... 15%(Reading database ... 20%(Reading database ... 25%(Reading database ... 30%(Reading database ... 35%(Reading database ... 40%(Reading database ... 45%(Reading database ... 50%(Reading database ... 55%(Reading database ... 60%(Reading database ... 65%(Reading database ... 70%(Reading database ... 75%(Reading database ... 80%(Reading database ... 85%(Reading database ... 90%(Reading database ... 95%(Reading database ... 100%(Reading database ... 7141 files and directories currently installed.)
-Removing motel (0.3.0~rc1) ...
+Removing moteld (0.3.0~rc1) ...
 motel: what a backup command left was not swept, and is left: another backup run is in progress: pid 5614, since 2026-09-27T00:00:00Z
 (Reading database ... (Reading database ... 5%(Reading database ... 10%(Reading database ... 15%(Reading database ... 20%(Reading database ... 25%(Reading database ... 30%(Reading database ... 35%(Reading database ... 40%(Reading database ... 45%(Reading database ... 50%(Reading database ... 55%(Reading database ... 60%(Reading database ... 65%(Reading database ... 70%(Reading database ... 75%(Reading database ... 80%(Reading database ... 85%(Reading database ... 90%(Reading database ... 95%(Reading database ... 100%(Reading database ... 7134 files and directories currently installed.)
-Purging configuration files for motel (0.3.0~rc1) ...
+Purging configuration files for moteld (0.3.0~rc1) ...
 motel: kept /var/lib/motel-backup/staging: not empty — copies of an app's data a backup run or a restore left there; look, then remove them yourself
 motel: kept /var/lib/motel-backup: it holds what this package did not make (notes.txt)
 motel: kept /run/motel-backup: something is mounted at or under it, or what is mounted cannot be read; nothing under it is removed — it is gone at the next boot, and is not to be rm -r'd before
 motel: /etc/motel-backup/repository.env is kept: it holds the repository password, the only way to read the backups already made. Remove it yourself once those backups are not needed: sudo rm -r /etc/motel-backup
-dpkg: warning: while removing motel, directory '/var/lib/liveswap' not empty so not removed
-dpkg: warning: while removing motel, directory '/var/lib/motel' not empty so not removed
-dpkg: warning: while removing motel, directory '/lib/systemd/system' not empty so not removed
-dpkg: warning: while removing motel, directory '/etc/motel' not empty so not removed
+dpkg: warning: while removing moteld, directory '/var/lib/liveswap' not empty so not removed
+dpkg: warning: while removing moteld, directory '/var/lib/motel' not empty so not removed
+dpkg: warning: while removing moteld, directory '/lib/systemd/system' not empty so not removed
+dpkg: warning: while removing moteld, directory '/etc/motel' not empty so not removed
 purge under a command's lock: said, its mount left; what is kept is said for what it is
 Reading package lists...
 Building dependency tree...
@@ -323,18 +323,18 @@ The following packages were automatically installed and are no longer required:
   libreadline8t64 readline-common restic sqlite3
 Use 'apt autoremove' to remove them.
 The following packages will be REMOVED:
-  motel*
+  moteld*
 0 upgraded, 0 newly installed, 1 to remove and 14 not upgraded.
 After this operation, 59.1 MB disk space will be freed.
 (Reading database ... (Reading database ... 5%(Reading database ... 10%(Reading database ... 15%(Reading database ... 20%(Reading database ... 25%(Reading database ... 30%(Reading database ... 35%(Reading database ... 40%(Reading database ... 45%(Reading database ... 50%(Reading database ... 55%(Reading database ... 60%(Reading database ... 65%(Reading database ... 70%(Reading database ... 75%(Reading database ... 80%(Reading database ... 85%(Reading database ... 90%(Reading database ... 95%(Reading database ... 100%(Reading database ... 7141 files and directories currently installed.)
-Removing motel (0.3.0~rc1) ...
+Removing moteld (0.3.0~rc1) ...
 (Reading database ... (Reading database ... 5%(Reading database ... 10%(Reading database ... 15%(Reading database ... 20%(Reading database ... 25%(Reading database ... 30%(Reading database ... 35%(Reading database ... 40%(Reading database ... 45%(Reading database ... 50%(Reading database ... 55%(Reading database ... 60%(Reading database ... 65%(Reading database ... 70%(Reading database ... 75%(Reading database ... 80%(Reading database ... 85%(Reading database ... 90%(Reading database ... 95%(Reading database ... 100%(Reading database ... 7134 files and directories currently installed.)
-Purging configuration files for motel (0.3.0~rc1) ...
+Purging configuration files for moteld (0.3.0~rc1) ...
 motel: /etc/motel-backup/repository.env is kept: it holds the repository password, the only way to read the backups already made. Remove it yourself once those backups are not needed: sudo rm -r /etc/motel-backup
-dpkg: warning: while removing motel, directory '/var/lib/liveswap' not empty so not removed
-dpkg: warning: while removing motel, directory '/var/lib/motel' not empty so not removed
-dpkg: warning: while removing motel, directory '/lib/systemd/system' not empty so not removed
-dpkg: warning: while removing motel, directory '/etc/motel' not empty so not removed
+dpkg: warning: while removing moteld, directory '/var/lib/liveswap' not empty so not removed
+dpkg: warning: while removing moteld, directory '/var/lib/motel' not empty so not removed
+dpkg: warning: while removing moteld, directory '/lib/systemd/system' not empty so not removed
+dpkg: warning: while removing moteld, directory '/etc/motel' not empty so not removed
 mounts of other names under the run directory: taken away by the engine's sweep, and nothing of the app's with them
 
 ════ stage 7: purge where the mount table cannot be read ════
@@ -345,4 +345,4 @@ a killed command's units after a remove: stopped by purge, by their recorded nam
 a unit that would not stop: said by name, and its record kept
 the manager unreachable: said, and the record kept
 
-ALL PACKAGE SMOKE STAGES PASSED (/dist/motel_0.3.0~rc1_arm64.deb on Debian GNU/Linux 13 (trixie))
+ALL PACKAGE SMOKE STAGES PASSED (/dist/moteld_0.3.0~rc1_arm64.deb on Debian GNU/Linux 13 (trixie))

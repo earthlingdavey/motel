@@ -97,21 +97,21 @@ func TestMain(m *testing.M) {
 	os.Exit(code)
 }
 
-// motelBinary is this tree's motel, built once: the scripts' `box
+// moteldBinary is this tree's moteld, built once: the scripts' `box
 // describe`, `box webhook` and `validate` are the code under test.
-func motelBinary(t *testing.T) string {
+func moteldBinary(t *testing.T) string {
 	t.Helper()
 	buildOnce.Do(func() {
 		if buildErr = statMotelSources(); buildErr != nil {
 			return
 		}
-		dir, err := os.MkdirTemp("", "motel-bin")
+		dir, err := os.MkdirTemp("", "moteld-bin")
 		if err != nil {
 			buildErr = err
 			return
 		}
-		builtBin = filepath.Join(dir, "motel")
-		out, err := exec.Command("go", "build", "-o", builtBin, "github.com/smallhoursorg/motel/cmd/motel").CombinedOutput()
+		builtBin = filepath.Join(dir, "moteld")
+		out, err := exec.Command("go", "build", "-o", builtBin, "github.com/smallhoursorg/motel/cmd/moteld").CombinedOutput()
 		if err != nil {
 			buildErr = fmt.Errorf("go build: %w\n%s", err, out)
 		}
@@ -122,14 +122,14 @@ func motelBinary(t *testing.T) string {
 	return builtBin
 }
 
-// statMotelSources stats every file of this workspace the motel binary
+// statMotelSources stats every file of this workspace the moteld binary
 // is built from, with go.work and each module's go.mod and go.sum. Go's
 // test cache keys a package's results on its imports and on the files
-// its tests open or stat; motelBinary builds the binary in a
-// subprocess, which the cache cannot see, so a change to cmd/motel, or
+// its tests open or stat; moteldBinary builds the binary in a
+// subprocess, which the cache cannot see, so a change to cmd/moteld, or
 // to a package of another module that only it imports, left this
 // package's results "(cached)" [measured: a line added to
-// cmd/motel/main.go, and a test that runs the binary answered
+// cmd/moteld/main.go, and a test that runs the binary answered
 // (cached)]. Each package's directory is stated too, whose time moves
 // when a file is added to it or taken out. A module-cache package is
 // fixed by its version, which go.sum holds.
@@ -139,7 +139,7 @@ func statMotelSources() error {
 		`{{range .SFiles}}{{$d}}/{{.}}{{"\n"}}{{end}}{{range .EmbedFiles}}{{$d}}/{{.}}{{"\n"}}{{end}}` +
 		`{{.Module.GoMod}}{{"\n"}}{{end}}`
 	var stderr bytes.Buffer
-	list := exec.Command("go", "list", "-deps", "-f", files, "github.com/smallhoursorg/motel/cmd/motel")
+	list := exec.Command("go", "list", "-deps", "-f", files, "github.com/smallhoursorg/motel/cmd/moteld")
 	list.Stderr = &stderr
 	out, err := list.Output()
 	if err != nil {
@@ -433,9 +433,9 @@ func TestBoxSigner(t *testing.T) {
 
 func TestBoxCheck(t *testing.T) {
 	t.Parallel()
-	bin := motelBinary(t)
+	bin := moteldBinary(t)
 	r := newBoxRepo(t)
-	check := func() (string, int) { return r.run("check", "MOTEL="+bin) }
+	check := func() (string, int) { return r.run("check", "MOTELD="+bin) }
 	// The template as it ships: no signer yet.
 	if out, code := check(); code != 1 || !strings.Contains(out, "has no signer (make signer adds yours)") {
 		t.Fatalf("the template as it ships: exit %d\n%s", code, out)
@@ -523,7 +523,7 @@ func TestBoxCheck(t *testing.T) {
 	// A describe or a validate that fails and says nothing (killed, or
 	// crashed): the file and the command that failed are named.
 	r.write(boxFile, good)
-	silent := filepath.Join(r.home, "silent-motel")
+	silent := filepath.Join(r.home, "silent-moteld")
 	script := "#!/bin/sh\n" +
 		"case \"$FAIL $1\" in\n" +
 		"\"describe box\"|\"validate validate\") exit 1 ;;\n" +
@@ -536,7 +536,7 @@ func TestBoxCheck(t *testing.T) {
 		"describe": "check: " + boxFile + ": " + silent + " box describe failed, and said nothing\n",
 		"validate": "check: " + boxFile + " does not validate:\n  " + silent + " validate failed, and said nothing\n",
 	} {
-		if out, code := r.run("check", "MOTEL="+silent, "REAL="+bin, "FAIL="+fail); code != 1 || !strings.Contains(out, want) {
+		if out, code := r.run("check", "MOTELD="+silent, "REAL="+bin, "FAIL="+fail); code != 1 || !strings.Contains(out, want) {
 			t.Errorf("%s fails and says nothing: exit %d\n%s", fail, code, out)
 		}
 	}
@@ -687,7 +687,7 @@ func (s *standIn) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		case "front401":
 			proxied(w, 401)
 		case "nobaseline":
-			reply(w, 409, map[string]string{"error": "this box has no baseline; motel init <sha>, as root inside the box's directory, sets one"})
+			reply(w, 409, map[string]string{"error": "this box has no baseline; moteld init <sha>, as root inside the box's directory, sets one"})
 		default:
 			st := map[string]string{"commit": s.baseline, "box_webhook": "deploy.example.com", "sha256": digest(s.installed)}
 			if s.recipient != "" {
@@ -902,7 +902,7 @@ func encode(v any) []byte {
 }
 
 // applyRig is a repository whose box runs its first signed commit — as
-// after `motel init` — and the stand-ins its boxes are reached at.
+// after `moteld init` — and the stand-ins its boxes are reached at.
 type applyRig struct {
 	*boxRepo
 	bin      string
@@ -913,7 +913,7 @@ type applyRig struct {
 
 func newApplyRig(t *testing.T) *applyRig {
 	t.Helper()
-	g := &applyRig{boxRepo: newBoxRepo(t), bin: motelBinary(t)}
+	g := &applyRig{boxRepo: newBoxRepo(t), bin: moteldBinary(t)}
 	g.key("id_ed25519")
 	if out, code := g.run("signer"); code != 0 {
 		t.Fatalf("signer: exit %d\n%s", code, out)
@@ -947,7 +947,7 @@ func (g *applyRig) route(hosts map[string]*standIn) {
 // apply runs bin/apply from a laptop: a fixed token.
 func (g *applyRig) apply(env ...string) (string, int) {
 	g.t.Helper()
-	return g.run("apply", append([]string{"MOTEL=" + g.bin, "CURL_HOME=" + g.curlHome, "MOTEL_TOKEN=laptop"}, env...)...)
+	return g.run("apply", append([]string{"MOTELD=" + g.bin, "CURL_HOME=" + g.curlHome, "MOTEL_TOKEN=laptop"}, env...)...)
 }
 
 // runArgs runs bin/apply from a laptop with arguments.
@@ -955,7 +955,7 @@ func (g *applyRig) runArgs(args []string) (string, int) {
 	g.t.Helper()
 	cmd := exec.Command(filepath.Join(g.dir, "bin", "apply"), args...)
 	cmd.Dir = g.dir
-	cmd.Env = append(append([]string{}, g.env...), "MOTEL="+g.bin, "CURL_HOME="+g.curlHome, "MOTEL_TOKEN=laptop")
+	cmd.Env = append(append([]string{}, g.env...), "MOTELD="+g.bin, "CURL_HOME="+g.curlHome, "MOTEL_TOKEN=laptop")
 	out, err := cmd.CombinedOutput()
 	var exit *exec.ExitError
 	if errors.As(err, &exit) {
@@ -1129,7 +1129,7 @@ func TestBoxApply(t *testing.T) {
 	t.Run("refused before anything is sent", func(t *testing.T) {
 		g := newApplyRig(t)
 		g.box.set(func(s *standIn) { s.onGet = "nobaseline" })
-		if out, code := g.apply(); code != 1 || !strings.Contains(out, "HTTP 409: this box has no baseline; motel init <sha>, as root") {
+		if out, code := g.apply(); code != 1 || !strings.Contains(out, "HTTP 409: this box has no baseline; moteld init <sha>, as root") {
 			t.Fatalf("no baseline: exit %d\n%s", code, out)
 		}
 		g.box.set(func(s *standIn) { s.onGet = "401" })
@@ -1151,7 +1151,7 @@ func TestBoxApply(t *testing.T) {
 		}
 		inShallow := exec.Command(script)
 		inShallow.Dir = shallow
-		inShallow.Env = append(append([]string{}, g.env...), "MOTEL="+g.bin, "CURL_HOME="+g.curlHome, "MOTEL_TOKEN=laptop")
+		inShallow.Env = append(append([]string{}, g.env...), "MOTELD="+g.bin, "CURL_HOME="+g.curlHome, "MOTEL_TOKEN=laptop")
 		if out, err := inShallow.CombinedOutput(); err == nil || !strings.Contains(string(out), "this clone is shallow") {
 			t.Fatalf("a shallow clone: %v\n%s", err, out)
 		}
@@ -1175,7 +1175,7 @@ func TestBoxApply(t *testing.T) {
 		if out, err := cmd.CombinedOutput(); err != nil {
 			t.Fatalf("fast-import: %v\n%s", err, out)
 		}
-		if out, code := g.apply(); code != 1 || !strings.Contains(out, "is longer than 500 commits; run motel box baseline") {
+		if out, code := g.apply(); code != 1 || !strings.Contains(out, "is longer than 500 commits; run moteld box baseline") {
 			t.Fatalf("past the cap: exit %d\n%s", code, out)
 		}
 		if g.box.seen().bundles != 0 {
@@ -1382,7 +1382,7 @@ func TestBoxApply(t *testing.T) {
 		}
 		// A box that names no key.
 		g.box.set(func(s *standIn) { s.recipient = "" })
-		if out, code := g.apply(); code != 1 || !strings.Contains(out, "the box names no key for secrets (no recipient in GET /): run motel box key as root on it; nothing was sent") || g.box.seen().bundles != sent {
+		if out, code := g.apply(); code != 1 || !strings.Contains(out, "the box names no key for secrets (no recipient in GET /): run moteld box key as root on it; nothing was sent") || g.box.seen().bundles != sent {
 			t.Fatalf("no key on the box: exit %d\n%s", code, out)
 		}
 		// Values, and no recipients file to check the key against.
@@ -1464,7 +1464,7 @@ func TestBoxApply(t *testing.T) {
 	})
 }
 
-// recorder is a motel that writes a tag to $MOTEL_RAN each time
+// recorder is a moteld that writes a tag to $MOTEL_RAN each time
 // it runs, then runs this tree's: what a stub release looks like.
 func recorder(t *testing.T, path, tag, bin string) {
 	t.Helper()
@@ -1475,27 +1475,27 @@ func recorder(t *testing.T, path, tag, bin string) {
 }
 
 // TestBoxCheckVersionFile: a box with a MOTEL_VERSION file is checked
-// with $MOTEL-<version>; one without, with $MOTEL; a file that
+// with $MOTELD-<version>; one without, with $MOTELD; a file that
 // names no release is refused and named, never read as the latest.
 func TestBoxCheckVersionFile(t *testing.T) {
 	t.Parallel()
-	bin := motelBinary(t)
+	bin := moteldBinary(t)
 	r := newBoxRepo(t)
 	r.key("id_ed25519")
 	if out, code := r.run("signer"); code != 0 {
 		t.Fatalf("signer: exit %d\n%s", code, out)
 	}
-	// $MOTEL and its releases, each a recorder, in a directory of
+	// $MOTELD and its releases, each a recorder, in a directory of
 	// this test's own.
 	bins := t.TempDir()
-	hs := filepath.Join(bins, "motel")
+	hs := filepath.Join(bins, "moteld")
 	recorder(t, hs, "default", bin)
 	recorder(t, hs+"-0.3.1", "0.3.1", bin)
 	recorder(t, hs+"-0.3.1-rc1", "0.3.1-rc1", bin)
 	ran := filepath.Join(t.TempDir(), "ran")
 	check := func() (string, int) {
 		_ = os.Remove(ran)
-		return r.run("check", "MOTEL="+hs, "MOTEL_RAN="+ran)
+		return r.run("check", "MOTELD="+hs, "MOTEL_RAN="+ran)
 	}
 	runs := func() string {
 		b, _ := os.ReadFile(ran)
@@ -1525,7 +1525,7 @@ func TestBoxCheckVersionFile(t *testing.T) {
 	// A release that is not here: refused, naming the binary and what
 	// installs it; nothing ran.
 	r.write(vfile, "0.3.0\n")
-	if out, code := check(); code != 1 || !strings.Contains(out, "check: deploy.example.com/Caddyfile: "+vfile+" names 0.3.0, and "+hs+"-0.3.0 is not here to check it with: bin/install-motel installs one") || runs() != "" {
+	if out, code := check(); code != 1 || !strings.Contains(out, "check: deploy.example.com/Caddyfile: "+vfile+" names 0.3.0, and "+hs+"-0.3.0 is not here to check it with: bin/install-moteld installs one") || runs() != "" {
 		t.Fatalf("a release not installed: exit %d\n%s\nran:\n%s", code, out, runs())
 	}
 	// Not a release: refused and named, the file empty included; the
@@ -1570,7 +1570,7 @@ func TestBoxCheckVersionFile(t *testing.T) {
 
 // releases is a stand-in for github.com's release pages: the latest's
 // redirect, and each release's tarball and checksums.txt. The tarball's
-// motel is a recorder tagged with its version.
+// moteld is a recorder tagged with its version.
 type releases struct {
 	t      *testing.T
 	srv    *httptest.Server
@@ -1623,7 +1623,7 @@ func (g *releases) tarball(v string) []byte {
 	zw := gzip.NewWriter(&buf)
 	tw := tar.NewWriter(zw)
 	script := "#!/bin/sh\nprintf '%s\\n' '" + v + "' >>\"$MOTEL_RAN\"\nexec \"" + g.bin + "\" \"$@\"\n"
-	for _, f := range []struct{ name, body string }{{"LICENSE", "a licence\n"}, {"motel", script}} {
+	for _, f := range []struct{ name, body string }{{"LICENSE", "a licence\n"}, {"moteld", script}} {
 		if err := tw.WriteHeader(&tar.Header{Name: f.name, Mode: 0o755, Size: int64(len(f.body))}); err != nil {
 			g.t.Fatal(err)
 		}
@@ -1659,7 +1659,7 @@ func (g *releases) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	tgz := "motel_" + v + "_linux_" + g.arch + ".tar.gz"
+	tgz := "moteld_" + v + "_linux_" + g.arch + ".tar.gz"
 	switch name {
 	case tgz:
 		g.mu.Lock()
@@ -1674,8 +1674,8 @@ func (g *releases) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if corrupt {
 			sum = digest([]byte("other bytes"))
 		}
-		other := "motel_" + v + "_linux_" + map[string]string{"amd64": "arm64", "arm64": "amd64"}[g.arch] + ".tar.gz"
-		_, _ = fmt.Fprintf(w, "%s  %s\n%s  %s\n%s  motel_%s_%s.deb\n", sum, tgz, digest([]byte(other)), other, digest([]byte("deb")), v, g.arch)
+		other := "moteld_" + v + "_linux_" + map[string]string{"amd64": "arm64", "arm64": "amd64"}[g.arch] + ".tar.gz"
+		_, _ = fmt.Fprintf(w, "%s  %s\n%s  %s\n%s  moteld_%s_%s.deb\n", sum, tgz, digest([]byte(other)), other, digest([]byte("deb")), v, g.arch)
 	default:
 		http.NotFound(w, r)
 	}
@@ -1693,22 +1693,22 @@ func (g *releases) reset() {
 	g.downloads = map[string]int{}
 }
 
-// TestBoxInstallMotel: bin/install-motel against a stand-in
+// TestBoxInstallMoteld: bin/install-moteld against a stand-in
 // github.com, with sudo a script that puts /usr/local/bin under a
 // directory of the test's. Every release the boxes name is installed
-// once, verified, as motel-<version>; the default as motel too;
+// once, verified, as moteld-<version>; the default as moteld too;
 // and bin/check then picks each box's.
-func TestBoxInstallMotel(t *testing.T) {
+func TestBoxInstallMoteld(t *testing.T) {
 	t.Parallel()
 	if runtime.GOOS != "linux" {
-		t.Skip("bin/install-motel installs Linux binaries, and refuses elsewhere")
+		t.Skip("bin/install-moteld installs Linux binaries, and refuses elsewhere")
 	}
 	for _, tool := range []string{"sha256sum", "tar"} {
 		if _, err := exec.LookPath(tool); err != nil {
-			t.Fatalf("bin/install-motel needs %s on PATH", tool)
+			t.Fatalf("bin/install-moteld needs %s on PATH", tool)
 		}
 	}
-	bin := motelBinary(t)
+	bin := moteldBinary(t)
 	r := newBoxRepo(t)
 	r.key("id_ed25519")
 	if out, code := r.run("signer"); code != 0 {
@@ -1746,7 +1746,7 @@ func TestBoxInstallMotel(t *testing.T) {
 		if err := os.MkdirAll(usrLocalBin, 0o755); err != nil {
 			t.Fatal(err)
 		}
-		cmd := exec.Command(filepath.Join(r.dir, "bin", "install-motel"), args...)
+		cmd := exec.Command(filepath.Join(r.dir, "bin", "install-moteld"), args...)
 		cmd.Dir, cmd.Env = r.dir, append(append(append([]string{}, r.env...), env...), extra...)
 		out, err := cmd.CombinedOutput()
 		var exit *exec.ExitError
@@ -1754,7 +1754,7 @@ func TestBoxInstallMotel(t *testing.T) {
 			return string(out), exit.ExitCode()
 		}
 		if err != nil {
-			t.Fatalf("bin/install-motel: %v\n%s", err, out)
+			t.Fatalf("bin/install-moteld: %v\n%s", err, out)
 		}
 		return string(out), 0
 	}
@@ -1781,7 +1781,7 @@ func TestBoxInstallMotel(t *testing.T) {
 		}
 		return names
 	}
-	// tagOf runs an installed motel and returns the version its
+	// tagOf runs an installed moteld and returns the version its
 	// recorder wrote: which release's bytes it is.
 	tagOf := func(name string) string {
 		t.Helper()
@@ -1797,25 +1797,25 @@ func TestBoxInstallMotel(t *testing.T) {
 	}
 	arch := runtime.GOARCH
 	// ok is sha256sum's line for a verified tarball, before the install's.
-	ok := func(v string) string { return "motel_" + v + "_linux_" + arch + ".tar.gz: OK\n" }
+	ok := func(v string) string { return "moteld_" + v + "_linux_" + arch + ".tar.gz: OK\n" }
 	stable := func(v string) string {
-		return ok(v) + "install-motel: motel " + v + " (" + arch + "), and motel-" + v + "\n"
+		return ok(v) + "install-moteld: moteld " + v + " (" + arch + "), and moteld-" + v + "\n"
 	}
 	pinned := func(v string) string {
-		return ok(v) + "install-motel: motel-" + v + " (" + arch + "), for the boxes whose MOTEL_VERSION names it\n"
+		return ok(v) + "install-moteld: moteld-" + v + " (" + arch + "), for the boxes whose MOTEL_VERSION names it\n"
 	}
 
-	// No file and no variable: the latest, once, as motel and
-	// motel-<latest>.
+	// No file and no variable: the latest, once, as moteld and
+	// moteld-<latest>.
 	out, code := install()
 	if code != 0 || out != stable("0.3.1") {
 		t.Fatalf("the latest: exit %d\n%s", code, out)
 	}
-	if got := installed(); !slices.Equal(got, []string{"motel", "motel-0.3.1"}) {
+	if got := installed(); !slices.Equal(got, []string{"moteld", "moteld-0.3.1"}) {
 		t.Fatalf("installed %v", got)
 	}
-	if !maps.Equal(gh.served(), map[string]int{"0.3.1": 1}) || tagOf("motel") != "0.3.1" || tagOf("motel-0.3.1") != "0.3.1" {
-		t.Fatalf("downloads %v; motel is %s", gh.served(), tagOf("motel"))
+	if !maps.Equal(gh.served(), map[string]int{"0.3.1": 1}) || tagOf("moteld") != "0.3.1" || tagOf("moteld-0.3.1") != "0.3.1" {
+		t.Fatalf("downloads %v; moteld is %s", gh.served(), tagOf("moteld"))
 	}
 
 	// Four boxes, three releases between them: each release once,
@@ -1836,21 +1836,21 @@ func TestBoxInstallMotel(t *testing.T) {
 	if code != 0 || out != want {
 		t.Fatalf("three releases: exit %d\n%s", code, out)
 	}
-	if got := installed(); !slices.Equal(got, []string{"motel", "motel-0.3.0", "motel-0.3.1", "motel-0.3.1-rc1"}) {
+	if got := installed(); !slices.Equal(got, []string{"moteld", "moteld-0.3.0", "moteld-0.3.1", "moteld-0.3.1-rc1"}) {
 		t.Fatalf("installed %v", got)
 	}
 	if !maps.Equal(gh.served(), map[string]int{"0.3.1": 1, "0.3.0": 1, "0.3.1-rc1": 1}) {
 		t.Fatalf("downloads %v", gh.served())
 	}
-	for name, tag := range map[string]string{"motel": "0.3.1", "motel-0.3.0": "0.3.0", "motel-0.3.1": "0.3.1", "motel-0.3.1-rc1": "0.3.1-rc1"} {
+	for name, tag := range map[string]string{"moteld": "0.3.1", "moteld-0.3.0": "0.3.0", "moteld-0.3.1": "0.3.1", "moteld-0.3.1-rc1": "0.3.1-rc1"} {
 		if got := tagOf(name); got != tag {
 			t.Fatalf("%s is release %s, not %s", name, got, tag)
 		}
 	}
 	// And bin/check picks each box's.
 	_ = os.Remove(ran)
-	hs := filepath.Join(usrLocalBin, "motel")
-	out, code = r.run("check", "MOTEL="+hs, "MOTEL_RAN="+ran)
+	hs := filepath.Join(usrLocalBin, "moteld")
+	out, code = r.run("check", "MOTELD="+hs, "MOTEL_RAN="+ran)
 	want = "deploy.example.com/Caddyfile → https://deploy.example.com/ (1 app, 1 signer)\n" +
 		"deploy2.example.com/Caddyfile → https://deploy2.example.com/ (1 app, 1 signer), checked with " + hs + "-0.3.0\n" +
 		"deploy3.example.com/Caddyfile → https://deploy3.example.com/ (1 app, 1 signer), checked with " + hs + "-0.3.1-rc1\n" +
@@ -1866,8 +1866,8 @@ func TestBoxInstallMotel(t *testing.T) {
 	if code != 0 || out != stable("0.3.0")+pinned("0.3.1-rc1") {
 		t.Fatalf("the variable: exit %d\n%s", code, out)
 	}
-	if !maps.Equal(gh.served(), map[string]int{"0.3.0": 1, "0.3.1-rc1": 1}) || tagOf("motel") != "0.3.0" {
-		t.Fatalf("downloads %v; motel is %s", gh.served(), tagOf("motel"))
+	if !maps.Equal(gh.served(), map[string]int{"0.3.0": 1, "0.3.1-rc1": 1}) || tagOf("moteld") != "0.3.0" {
+		t.Fatalf("downloads %v; moteld is %s", gh.served(), tagOf("moteld"))
 	}
 
 	// A box's file that names no release is said, naming the file, and
@@ -1875,7 +1875,7 @@ func TestBoxInstallMotel(t *testing.T) {
 	// make check is what refuses the box. The variable's shape is the
 	// same, and its refusal is the run's: nothing to check with.
 	three := map[string]int{"0.3.1": 1, "0.3.0": 1, "0.3.1-rc1": 1}
-	four := []string{"motel", "motel-0.3.0", "motel-0.3.1", "motel-0.3.1-rc1"}
+	four := []string{"moteld", "moteld-0.3.0", "moteld-0.3.1", "moteld-0.3.1-rc1"}
 	for _, c := range []struct{ file, said string }{
 		{"", "'' (from deploy2.example.com/MOTEL_VERSION): a release's version, 0.3.1 or v0.3.1-rc1, on one line; an empty file pins nothing: name a release, or delete it\n"},
 		{"\n", "'' (from deploy2.example.com/MOTEL_VERSION): a release's version, 0.3.1 or v0.3.1-rc1, on one line; an empty file pins nothing"},
@@ -1886,8 +1886,8 @@ func TestBoxInstallMotel(t *testing.T) {
 	} {
 		r.write("deploy2.example.com/MOTEL_VERSION", c.file)
 		out, code := install()
-		if code != 0 || !strings.Contains(out, "install-motel: not a motel release: "+c.said) ||
-			!strings.Contains(out, "install-motel: deploy2.example.com/MOTEL_VERSION skipped; make check refuses this box\n") ||
+		if code != 0 || !strings.Contains(out, "install-moteld: not a motel release: "+c.said) ||
+			!strings.Contains(out, "install-moteld: deploy2.example.com/MOTEL_VERSION skipped; make check refuses this box\n") ||
 			!maps.Equal(gh.served(), three) || !slices.Equal(installed(), four) {
 			t.Fatalf("file %q: exit %d\n%s\ndownloads %v, installed %v", c.file, code, out, gh.served(), installed())
 		}
@@ -1897,7 +1897,7 @@ func TestBoxInstallMotel(t *testing.T) {
 		t.Fatal(err)
 	}
 	out, code = install()
-	if code != 0 || !strings.Contains(out, "install-motel: deploy2.example.com/MOTEL_VERSION cannot be read: a box's MOTEL_VERSION is a regular file of one line, 0.3.1 or v0.3.1-rc1; skipped, and make check refuses this box\n") ||
+	if code != 0 || !strings.Contains(out, "install-moteld: deploy2.example.com/MOTEL_VERSION cannot be read: a box's MOTEL_VERSION is a regular file of one line, 0.3.1 or v0.3.1-rc1; skipped, and make check refuses this box\n") ||
 		strings.Contains(out, "not a motel release") || !maps.Equal(gh.served(), three) {
 		t.Fatalf("a directory: exit %d\n%s\ndownloads %v", code, out, gh.served())
 	}
@@ -1907,13 +1907,13 @@ func TestBoxInstallMotel(t *testing.T) {
 		t.Fatal(err)
 	}
 	out, code = install()
-	if code != 0 || !strings.Contains(out, "install-motel: deploy2.example.com/MOTEL_VERSION cannot be read: a box's MOTEL_VERSION is a regular file of one line, 0.3.1 or v0.3.1-rc1; skipped, and make check refuses this box\n") || !maps.Equal(gh.served(), three) {
+	if code != 0 || !strings.Contains(out, "install-moteld: deploy2.example.com/MOTEL_VERSION cannot be read: a box's MOTEL_VERSION is a regular file of one line, 0.3.1 or v0.3.1-rc1; skipped, and make check refuses this box\n") || !maps.Equal(gh.served(), three) {
 		t.Fatalf("a pipe: exit %d\n%s\ndownloads %v", code, out, gh.served())
 	}
 	r.remove("deploy2.example.com/MOTEL_VERSION")
 	for _, v := range []string{"v", "0.3", "latest"} {
 		out, code := install("MOTEL_VERSION=" + v)
-		if code != 1 || !strings.Contains(out, "install-motel: not a motel release: '"+v+"' (from MOTEL_VERSION): a release's version, 0.3.1 or v0.3.1-rc1, on one line\n") || len(gh.served()) != 0 {
+		if code != 1 || !strings.Contains(out, "install-moteld: not a motel release: '"+v+"' (from MOTEL_VERSION): a release's version, 0.3.1 or v0.3.1-rc1, on one line\n") || len(gh.served()) != 0 {
 			t.Fatalf("MOTEL_VERSION=%s: exit %d\n%s", v, code, out)
 		}
 	}
@@ -1923,23 +1923,23 @@ func TestBoxInstallMotel(t *testing.T) {
 	// refuses that box and the others still pass. The default's is the
 	// run's.
 	tgz := func(v string) string {
-		return "https://github.com/smallhoursorg/motel/releases/download/v" + v + "/motel_" + v + "_linux_" + arch + ".tar.gz"
+		return "https://github.com/smallhoursorg/motel/releases/download/v" + v + "/moteld_" + v + "_linux_" + arch + ".tar.gz"
 	}
 	r.write("deploy2.example.com/MOTEL_VERSION", "0.3.9\n")
 	r.write("deploy4.example.com/MOTEL_VERSION", "v0.3.9\n")
 	out, code = install()
-	if code != 0 || !strings.Contains(out, "install-motel: no release at "+tgz("0.3.9")+", which deploy2.example.com/MOTEL_VERSION, deploy4.example.com/MOTEL_VERSION names; skipped, and make check refuses that box\n") ||
-		!maps.Equal(gh.served(), map[string]int{"0.3.1": 1, "0.3.1-rc1": 1}) || !slices.Equal(installed(), []string{"motel", "motel-0.3.1", "motel-0.3.1-rc1"}) {
+	if code != 0 || !strings.Contains(out, "install-moteld: no release at "+tgz("0.3.9")+", which deploy2.example.com/MOTEL_VERSION, deploy4.example.com/MOTEL_VERSION names; skipped, and make check refuses that box\n") ||
+		!maps.Equal(gh.served(), map[string]int{"0.3.1": 1, "0.3.1-rc1": 1}) || !slices.Equal(installed(), []string{"moteld", "moteld-0.3.1", "moteld-0.3.1-rc1"}) {
 		t.Fatalf("a release with no build: exit %d\n%s\ndownloads %v, installed %v", code, out, gh.served(), installed())
 	}
-	out, code = r.run("check", "MOTEL="+hs, "MOTEL_RAN="+ran)
-	if code != 1 || !strings.Contains(out, "check: deploy2.example.com/Caddyfile: deploy2.example.com/MOTEL_VERSION names 0.3.9, and "+hs+"-0.3.9 is not here to check it with: bin/install-motel installs one for each box's file (in the workflow; there is no macOS build), and says when a release has no build to install\n") ||
+	out, code = r.run("check", "MOTELD="+hs, "MOTEL_RAN="+ran)
+	if code != 1 || !strings.Contains(out, "check: deploy2.example.com/Caddyfile: deploy2.example.com/MOTEL_VERSION names 0.3.9, and "+hs+"-0.3.9 is not here to check it with: bin/install-moteld installs one for each box's file (in the workflow; there is no macOS build), and says when a release has no build to install\n") ||
 		!strings.Contains(out, "check: deploy4.example.com/Caddyfile: deploy4.example.com/MOTEL_VERSION names 0.3.9, and ") ||
 		!strings.Contains(out, "deploy.example.com/Caddyfile → https://deploy.example.com/ (1 app, 1 signer)\n") ||
 		!strings.Contains(out, "deploy3.example.com/Caddyfile → https://deploy3.example.com/ (1 app, 1 signer), checked with "+hs+"-0.3.1-rc1\n") {
 		t.Fatalf("check after a skipped release: exit %d\n%s", code, out)
 	}
-	if out, code := install("MOTEL_VERSION=0.3.9"); code != 1 || !strings.Contains(out, "install-motel: no release at "+tgz("0.3.9")+" (from MOTEL_VERSION)\n") || len(installed()) != 0 {
+	if out, code := install("MOTEL_VERSION=0.3.9"); code != 1 || !strings.Contains(out, "install-moteld: no release at "+tgz("0.3.9")+" (from MOTEL_VERSION)\n") || len(installed()) != 0 {
 		t.Fatalf("a default with no build: exit %d\n%s\ninstalled %v", code, out, installed())
 	}
 	r.write("deploy4.example.com/MOTEL_VERSION", "0.3.0")
@@ -1947,10 +1947,10 @@ func TestBoxInstallMotel(t *testing.T) {
 	// `default`: the default alone, the boxes' files unread — the
 	// apply job's, which one box's bad file must not stop.
 	out, code = installArgs([]string{"default"})
-	if code != 0 || out != stable("0.3.1") || !maps.Equal(gh.served(), map[string]int{"0.3.1": 1}) || !slices.Equal(installed(), []string{"motel", "motel-0.3.1"}) {
+	if code != 0 || out != stable("0.3.1") || !maps.Equal(gh.served(), map[string]int{"0.3.1": 1}) || !slices.Equal(installed(), []string{"moteld", "moteld-0.3.1"}) {
 		t.Fatalf("default: exit %d\n%s\ndownloads %v", code, out, gh.served())
 	}
-	if out, code := installArgs([]string{"all"}); code != 1 || !strings.Contains(out, "install-motel: 'all'?") {
+	if out, code := installArgs([]string{"all"}); code != 1 || !strings.Contains(out, "install-moteld: 'all'?") {
 		t.Fatalf("an unknown argument: exit %d\n%s", code, out)
 	}
 	r.write("deploy2.example.com/MOTEL_VERSION", "0.3.0\n")
@@ -1961,7 +1961,7 @@ func TestBoxInstallMotel(t *testing.T) {
 	gh.corrupt = "0.3.0"
 	gh.mu.Unlock()
 	out, code = install()
-	if code == 0 || !strings.Contains(out, "FAILED") || slices.Contains(installed(), "motel-0.3.0") {
+	if code == 0 || !strings.Contains(out, "FAILED") || slices.Contains(installed(), "moteld-0.3.0") {
 		t.Fatalf("a corrupt tarball: exit %d\n%s\ninstalled %v", code, out, installed())
 	}
 }

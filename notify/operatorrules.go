@@ -510,7 +510,7 @@ func checkRules(rules []Rule, apps map[string]bool) error {
 
 // ReadsResponses is whether the rule reads an app's response series,
 // which only an `observe` handler in the app's route counts: a request
-// threshold, or post_deploy. cmd/motel's gate refuses one naming an app
+// threshold, or post_deploy. cmd/moteld's gate refuses one naming an app
 // that no route observes, which only the whole config can tell.
 func (r Rule) ReadsResponses() bool {
 	switch r.Kind {
@@ -588,7 +588,7 @@ func thresholdRule(r Rule) vmRule {
 
 // pushSeries is a series every push carries: the store had motel's
 // push before a time when this series has a sample before it.
-const pushSeries = `process_start_time_seconds{job="motel"}`
+const pushSeries = `process_start_time_seconds{job="moteld"}`
 
 // counterLookback is how far back counterIncrease looks for a series'
 // earlier sample: a release name the store saw within it, rolled back
@@ -635,7 +635,7 @@ const pushApart = pushEvery / 2
 // one that came with the push's first sample (the metrics line first
 // loaded on a box whose observer had counted for hours, or one born or
 // restarted in a gap over the window's start) holds every count since
-// motel began, or since it was born, which increase_pure would read as
+// moteld began, or since it was born, which increase_pure would read as
 // the window's own. With
 // no push in the store at all, scalar is NaN, nothing compares above
 // it, and every series goes through increase. Where a sample comes
@@ -691,7 +691,7 @@ const pushFresh = 2*pushEvery + pushApart
 // leave out an app no one reaches, resolving its `request_rate <`. Its
 // last sample is held to the push's last less pushApart, since one
 // push's samples are milliseconds apart. With no push in pushFresh
-// (motel down, or every push failing) scalar is NaN and every app is
+// (moteld down, or every push failing) scalar is NaN and every app is
 // out: the readings fall alike then. The 45 s of the fall inside
 // pushFresh holds for one of vmalert's minutely evaluations at most,
 // and no rule's for is under a minute.
@@ -713,7 +713,7 @@ const prevReach = 5 * time.Minute
 // window, within prevReach, to its last in it, the two samples the
 // store's increase reads each counter between. Divided by win instead,
 // a steady rate read up to a push's worth (a tenth of 300 s) high or
-// low for part of each 30 s while a motel restart sat in the window,
+// low for part of each 30 s while a moteld restart sat in the window,
 // since the old process's pushes and the new one's are on grids apart
 // by the stop's distance from the last tick (DESIGN-metrics.md, "The
 // push at stop"); without a restart the span is win, the pushes being
@@ -722,7 +722,7 @@ const prevReach = 5 * time.Minute
 // NaN and the rate is none, so the rule does not judge until the
 // pushes have run a window (pushBefore, its guard, says so): the
 // store's increase then drops each series' first value, the counts
-// since motel began, and over win a steady rate read from nothing up,
+// since moteld began, and over win a steady rate read from nothing up,
 // firing a `request_rate <` after setup on a running box.
 func windowSpan(win time.Duration) string {
 	return "scalar(max(tlast_over_time(" + pushSeries + "[" + promDuration(win) + "])) - " + pushBefore(win) + ")"
@@ -744,7 +744,7 @@ func pushBefore(win time.Duration) string {
 // minutes, firing a `request_rate <`; motel was pushing all along, so
 // pushBefore holds. The app is out until five minutes after its first
 // push, and after a gap in its own series for as long as the gap, five
-// minutes at most, ending five minutes after its return. A motel
+// minutes at most, ending five minutes after its return. A moteld
 // restart, or the store down, leaves the push series and the app's
 // alike, so across those the app is out only while pushBefore is none.
 func observedBefore(sel string, win time.Duration) string {
@@ -758,7 +758,7 @@ func observedBefore(sel string, win time.Duration) string {
 // further terms joined with "and". A guard is a condition that is not
 // the closeness (a sample floor: too few requests to judge), and one
 // with no op holds when its value has a series at all (disk_fill's
-// history). expr is the one join: what `motel monitor rules` lists and
+// history). expr is the one join: what `moteld monitor rules` lists and
 // what rules.yml holds are the same text.
 type ruleTerm struct {
 	value     string
@@ -863,7 +863,7 @@ func thresholdTerm(r Rule) ruleTerm {
 // series' last sample as far back as the query's step (vmalert's 5m),
 // so a stopped app's memory_share and app_memory_high kept firing for
 // five minutes after it stopped. One push lost leaves the app in, and
-// so does a motel restart's first push, which can come before liveswap
+// so does a moteld restart's first push, which can come before liveswap
 // has reattached the unit (its recovery runs after Start) and carries
 // motel_app_up 0 for an app that runs.
 func memoryShare(sel string) string {
@@ -889,7 +889,7 @@ func memoryShare(sel string) string {
 // leaves the app in: the old unit is past pushFresh before the new one
 // has a rate (/code-review pass 2 on the unit series). One push lost
 // leaves the app in, as memoryShare does; an app no push has carried a
-// unit of for pushFresh (stopped, motel down, every push failing) is
+// unit of for pushFresh (stopped, moteld down, every push failing) is
 // not read.
 func unitCPU(sel, win string) string {
 	series := "motel_app_cpu_seconds_total" + sel

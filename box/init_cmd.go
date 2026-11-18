@@ -14,7 +14,7 @@ import (
 	"github.com/smallhoursorg/motel/box/proof"
 )
 
-// runInitCmd is `motel init <sha>` (DESIGN-box.md, "`motel
+// runInitCmd is `moteld init <sha>` (DESIGN-box.md, "`moteld
 // init`"), run as root inside the box's directory, dir: the Caddyfile
 // there read once, walked, its path derived from its host, then the
 // transaction with origin init, whose reload is the only check of the
@@ -26,7 +26,7 @@ func runInitCmd(ctx context.Context, euid int, a *Applier, dir, sha string, out 
 		ctx = context.Background()
 	}
 	if euid != 0 {
-		return errors.New("motel init runs as root: it installs " + installedFile)
+		return errors.New("moteld init runs as root: it installs " + installedFile)
 	}
 	if err := commitArg(sha); err != nil {
 		return err
@@ -119,9 +119,9 @@ func runInitCmd(ctx context.Context, euid int, a *Applier, dir, sha string, out 
 func initKey(a *Applier, out io.Writer) error {
 	recipient, _, err := a.boxKey()
 	if err != nil {
-		return printf(out, "init: could not make the box's key for secrets: %s; motel box key, as root, makes it\n", proof.Bound(err.Error()))
+		return printf(out, "init: could not make the box's key for secrets: %s; moteld box key, as root, makes it\n", proof.Bound(err.Error()))
 	}
-	return printf(out, "init: secrets for this box encrypt to %s; motel box key prints it again\n", recipient)
+	return printf(out, "init: secrets for this box encrypt to %s; moteld box key prints it again\n", recipient)
 }
 
 // counted is "no apps", "1 app (example)", "2 apps (a, b)": names held

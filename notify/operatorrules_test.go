@@ -279,7 +279,7 @@ func TestOperatorRulesRender(t *testing.T) {
 	// The request thresholds hold for the apps in motel's last push.
 	pushed := func(sel string) string {
 		return ` and on (app) (max by (app) (tlast_over_time(motel_app_observed` + sel + `[75s]))` +
-			` > scalar(max(tlast_over_time(process_start_time_seconds{job="motel"}[75s]))) - 15)`
+			` > scalar(max(tlast_over_time(process_start_time_seconds{job="moteld"}[75s]))) - 15)`
 	}
 	for name, want := range map[string]string{
 		"errors_high": "(" + every(`class="5xx"`) + " / " + every(`class!="aborted"`) + ") > 0.05 and " + every(`class!="aborted"`) + " >= 20" + pushed(""),
@@ -287,12 +287,12 @@ func TestOperatorRulesRender(t *testing.T) {
 			shop("motel_app_response_seconds_count", "") + " >= 50" + pushed(`{app="shop"}`),
 		// Over the time the window's samples cover: the push's last
 		// sample in it less its last before it.
-		"blog_quiet": `sum by (app) (` + inc(`motel_app_requests_total{app="blog"}`) + `) / scalar(max(tlast_over_time(process_start_time_seconds{job="motel"}[5m]))` +
-			` - max(tlast_over_time(process_start_time_seconds{job="motel"}[5m] offset 5m))) < 0.1` +
-			` and on () max(tlast_over_time(process_start_time_seconds{job="motel"}[5m] offset 5m))` +
+		"blog_quiet": `sum by (app) (` + inc(`motel_app_requests_total{app="blog"}`) + `) / scalar(max(tlast_over_time(process_start_time_seconds{job="moteld"}[5m]))` +
+			` - max(tlast_over_time(process_start_time_seconds{job="moteld"}[5m] offset 5m))) < 0.1` +
+			` and on () max(tlast_over_time(process_start_time_seconds{job="moteld"}[5m] offset 5m))` +
 			// And for an app that push observed.
 			` and on (app) (max by (app) (tlast_over_time(motel_app_observed{app="blog"}[5m] offset 5m))` +
-			` > scalar(max(tlast_over_time(process_start_time_seconds{job="motel"}[5m] offset 5m))) - 15)` + pushed(`{app="blog"}`),
+			` > scalar(max(tlast_over_time(process_start_time_seconds{job="moteld"}[5m] offset 5m))) - 15)` + pushed(`{app="blog"}`),
 		"hits_low": `(sum by (app) (` + inc(`motel_app_cache_responses_total{result=~"hit|stale"}`) + `) or sum by (app) (` + inc(`motel_app_cache_responses_total`) + `) * 0)` +
 			` / sum by (app) (` + inc(`motel_app_cache_responses_total`) + `) < 0.5 and sum by (app) (` + inc(`motel_app_cache_responses_total`) + `) >= 20` + pushed(""),
 		// The running unit's: its last push within 75 s, and the newest
@@ -317,14 +317,14 @@ func TestOperatorRulesRender(t *testing.T) {
 	if got, want := counterIncrease(`m{app="a"}`, 150*time.Second, 90*time.Second),
 		`((increase_pure(m{app="a"}[150s] offset 90s) unless (present_over_time(m{app="a"}[1d] offset 4m)`+
 			` unless (last_over_time(m{app="a"}[1d] offset 4m) > first_over_time(m{app="a"}[150s] offset 90s))))`+
-			` and (tfirst_over_time(m{app="a"}[150s] offset 90s) > scalar(min(tfirst_over_time(process_start_time_seconds{job="motel"}[270s] offset 90s))) + 15))`+
+			` and (tfirst_over_time(m{app="a"}[150s] offset 90s) > scalar(min(tfirst_over_time(process_start_time_seconds{job="moteld"}[270s] offset 90s))) + 15))`+
 			` or increase(m{app="a"}[150s] offset 90s)`; got != want {
 		t.Errorf("counterIncrease =\n%s\nwant\n%s", got, want)
 	}
 	if got, want := histogramIncrease("h", `{app="a"}`, 5*time.Minute, 0),
 		`((increase_pure(h_bucket{app="a"}[5m]) unless ignoring(le) (present_over_time(h_count{app="a"}[1d] offset 5m)`+
 			` unless (last_over_time(h_count{app="a"}[1d] offset 5m) > first_over_time(h_count{app="a"}[5m]))))`+
-			` and ignoring(le) (tfirst_over_time(h_count{app="a"}[5m]) > scalar(min(tfirst_over_time(process_start_time_seconds{job="motel"}[7m]))) + 15))`+
+			` and ignoring(le) (tfirst_over_time(h_count{app="a"}[5m]) > scalar(min(tfirst_over_time(process_start_time_seconds{job="moteld"}[7m]))) + 15))`+
 			` or increase(h_bucket{app="a"}[5m])`; got != want {
 		t.Errorf("histogramIncrease =\n%s\nwant\n%s", got, want)
 	}
@@ -411,27 +411,27 @@ evaluation_interval: 1m
 tests:
   - interval: 1m
     input_series:
-      - series: 'process_start_time_seconds{job="motel"}'
+      - series: 'process_start_time_seconds{job="moteld"}'
         values: '1x480'
-      - series: 'motel_app_requests_total{app="shop",release="",class="5xx",job="motel"}'
+      - series: 'motel_app_requests_total{app="shop",release="",class="5xx",job="moteld"}'
         values: '30+30x20'
-      - series: 'motel_app_requests_total{app="shop",release="",class="2xx",job="motel"}'
+      - series: 'motel_app_requests_total{app="shop",release="",class="2xx",job="moteld"}'
         values: '0x20'
-      - series: 'motel_app_requests_total{app="shop",release="",class="aborted",job="motel"}'
+      - series: 'motel_app_requests_total{app="shop",release="",class="aborted",job="moteld"}'
         values: '0+5x20'
-      - series: 'motel_app_requests_total{app="blog",release="v1",class="5xx",job="motel"}'
+      - series: 'motel_app_requests_total{app="blog",release="v1",class="5xx",job="moteld"}'
         values: '2x20'
-      - series: 'motel_app_requests_total{app="blog",release="v1",class="2xx",job="motel"}'
+      - series: 'motel_app_requests_total{app="blog",release="v1",class="2xx",job="moteld"}'
         values: '1x20'
-      - series: 'motel_app_observed{app="shop",job="motel"}'
+      - series: 'motel_app_observed{app="shop",job="moteld"}'
         values: '1x20'
-      - series: 'motel_app_observed{app="blog",job="motel"}'
+      - series: 'motel_app_observed{app="blog",job="moteld"}'
         values: '1x20'
-      - series: 'motel_app_cache_responses_total{app="shop",release="",result="miss",job="motel"}'
+      - series: 'motel_app_cache_responses_total{app="shop",release="",result="miss",job="moteld"}'
         values: '10+10x20'
-      - series: 'motel_disk_avail_bytes{path="/var/lib/liveswap",job="motel"}'
+      - series: 'motel_disk_avail_bytes{path="/var/lib/liveswap",job="moteld"}'
         values: '100000000000-1000000000x480'
-      - series: 'motel_disk_avail_bytes{path="/var/lib/caddy",job="motel"}'
+      - series: 'motel_disk_avail_bytes{path="/var/lib/caddy",job="moteld"}'
         values: '50000000000-1000000000x480'
     alert_rule_test:
       - eval_time: 4m
@@ -516,33 +516,33 @@ evaluation_interval: 1m
 tests:
   - interval: 1m
     input_series:
-      - series: 'process_start_time_seconds{job="motel"}'
+      - series: 'process_start_time_seconds{job="moteld"}'
         values: '1x90'
-      - series: 'motel_app_requests_total{app="fresh",release="v2",class="2xx",job="motel"}'
+      - series: 'motel_app_requests_total{app="fresh",release="v2",class="2xx",job="moteld"}'
         values: '_x30 400x60'
-      - series: 'motel_app_requests_total{app="gapped",release="v1",class="2xx",job="motel"}'
+      - series: 'motel_app_requests_total{app="gapped",release="v1",class="2xx",job="moteld"}'
         values: '0+10x30 _x20 500+10x40'
-      - series: 'motel_app_requests_total{app="reused",release="v1",class="2xx",job="motel"}'
+      - series: 'motel_app_requests_total{app="reused",release="v1",class="2xx",job="moteld"}'
         values: '0+100x10 _x30 400x50'
     metricsql_expr_test:
 ` + counts("33m", "fresh", "400", "gapped", "20") + counts("44m", "fresh", "0", "reused", "400") + counts("54m", "fresh", "0", "gapped", "30", "reused", "0") + `
   - interval: 1m
     input_series:
-      - series: 'process_start_time_seconds{job="motel"}'
+      - series: 'process_start_time_seconds{job="moteld"}'
         values: '_x30 1x60'
-      - series: 'motel_app_requests_total{app="old",release="v1",class="2xx",job="motel"}'
+      - series: 'motel_app_requests_total{app="old",release="v1",class="2xx",job="moteld"}'
         values: '_x30 5000+10x60'
     metricsql_expr_test:
 ` + counts("34m", "old", "40") + `
   - interval: 1m
     input_series:
-      - series: 'process_start_time_seconds{job="motel"}'
+      - series: 'process_start_time_seconds{job="moteld"}'
         values: '1x59 _x20 1x40'
-      - series: 'motel_app_requests_total{app="born",release="v2",class="2xx",job="motel"}'
+      - series: 'motel_app_requests_total{app="born",release="v2",class="2xx",job="moteld"}'
         values: '_x80 900+50x40'
-      - series: 'motel_app_requests_total{app="restarted",release="v1",class="2xx",job="motel"}'
+      - series: 'motel_app_requests_total{app="restarted",release="v1",class="2xx",job="moteld"}'
         values: '0+50x59 _x20 750+50x40'
-      - series: 'motel_app_requests_total{app="after",release="v3",class="2xx",job="motel"}'
+      - series: 'motel_app_requests_total{app="after",release="v3",class="2xx",job="moteld"}'
         values: '_x90 400x30'
     metricsql_expr_test:
 ` + counts("84m", "born", "200", "restarted", "200") + counts("93m", "after", "400", "born", "250", "restarted", "250")
@@ -571,15 +571,15 @@ evaluation_interval: 1m
 tests:
   - interval: 1m
     input_series:
-      - series: 'process_start_time_seconds{job="motel"}'
+      - series: 'process_start_time_seconds{job="moteld"}'
         values: '_x30 1x30'
-      - series: 'motel_app_requests_total{app="fresh",release="v1",class="5xx",job="motel"}'
+      - series: 'motel_app_requests_total{app="fresh",release="v1",class="5xx",job="moteld"}'
         values: '_x31 22x29'
-      - series: 'motel_app_observed{app="fresh",job="motel"}'
+      - series: 'motel_app_observed{app="fresh",job="moteld"}'
         values: '_x31 1x29'
-      - series: 'motel_app_requests_total{app="steady",release="v1",class="2xx",job="motel"}'
+      - series: 'motel_app_requests_total{app="steady",release="v1",class="2xx",job="moteld"}'
         values: '_x30 0+30x30'
-      - series: 'motel_app_observed{app="steady",job="motel"}'
+      - series: 'motel_app_observed{app="steady",job="moteld"}'
         values: '_x30 1x30'
     alert_rule_test:
       - eval_time: 34m
@@ -600,9 +600,9 @@ tests:
             exp_annotations: {summary: "steady: its requests a second over 5 minutes has been above 0.05 for 2m (rule busy); now 500m"}
   - interval: 1m
     input_series:
-      - series: 'motel_app_requests_total{app="nopush",release="v1",class="5xx",job="motel"}'
+      - series: 'motel_app_requests_total{app="nopush",release="v1",class="5xx",job="moteld"}'
         values: '_x31 22x29'
-      - series: 'motel_app_observed{app="nopush",job="motel"}'
+      - series: 'motel_app_observed{app="nopush",job="moteld"}'
         values: '_x31 1x29'
     alert_rule_test:
       - eval_time: 34m
@@ -652,23 +652,23 @@ evaluation_interval: 1m
 tests:
   - interval: 30s
     input_series:
-      - series: 'process_start_time_seconds{job="motel"}'
+      - series: 'process_start_time_seconds{job="moteld"}'
         values: '1x10 _ _ 1x40'
-      - series: 'motel_app_observed{app="live",job="motel"}'
+      - series: 'motel_app_observed{app="live",job="moteld"}'
         values: '1x10 _ _ 1x40'
-      - series: 'motel_app_requests_total{app="live",release="v1",class="2xx",job="motel"}'
+      - series: 'motel_app_requests_total{app="live",release="v1",class="2xx",job="moteld"}'
         values: '0+60x10 _ _ 780+60x40'
-      - series: 'motel_app_observed{app="quiet",job="motel"}'
+      - series: 'motel_app_observed{app="quiet",job="moteld"}'
         values: '1x10 _ _ 1x40'
-      - series: 'motel_app_requests_total{app="quiet",release="v1",class="2xx",job="motel"}'
+      - series: 'motel_app_requests_total{app="quiet",release="v1",class="2xx",job="moteld"}'
         values: '0x10 _ _ 0x40'
-      - series: 'motel_app_observed{app="reattached",job="motel"}'
+      - series: 'motel_app_observed{app="reattached",job="moteld"}'
         values: '1x10 _ _ 1x40'
-      - series: 'motel_app_requests_total{app="reattached",release="v1",class="2xx",job="motel"}'
+      - series: 'motel_app_requests_total{app="reattached",release="v1",class="2xx",job="moteld"}'
         values: '0x10 _ _ 0x4 _ 0x34'
-      - series: 'motel_app_observed{app="gone",job="motel"}'
+      - series: 'motel_app_observed{app="gone",job="moteld"}'
         values: '1x25'
-      - series: 'motel_app_requests_total{app="gone",release="v1",class="2xx",job="motel"}'
+      - series: 'motel_app_requests_total{app="gone",release="v1",class="2xx",job="moteld"}'
         values: '0+60x25'
     metricsql_expr_test:
       - expr: '` + near + `'
@@ -697,11 +697,11 @@ tests:
         exp_alerts:` + firing + `
   - interval: 30s
     input_series:
-      - series: 'process_start_time_seconds{job="motel"}'
+      - series: 'process_start_time_seconds{job="moteld"}'
         values: '1x24'
-      - series: 'motel_app_observed{app="all",job="motel"}'
+      - series: 'motel_app_observed{app="all",job="moteld"}'
         values: '1x24'
-      - series: 'motel_app_requests_total{app="all",release="v1",class="2xx",job="motel"}'
+      - series: 'motel_app_requests_total{app="all",release="v1",class="2xx",job="moteld"}'
         values: '0+60x24'
     alert_rule_test:
       - eval_time: 15m
@@ -714,11 +714,11 @@ tests:
         exp_alerts: []
   - interval: 30s
     input_series:
-      - series: 'process_start_time_seconds{job="motel"}'
+      - series: 'process_start_time_seconds{job="moteld"}'
         values: '1x20 _ 650x20'
-      - series: 'motel_app_observed{app="idle",job="motel"}'
+      - series: 'motel_app_observed{app="idle",job="moteld"}'
         values: '1x20 _ 1x20'
-      - series: 'motel_app_requests_total{app="idle",release="v1",class="4xx",job="motel"}'
+      - series: 'motel_app_requests_total{app="idle",release="v1",class="4xx",job="moteld"}'
         values: '0+3x20 _ _ _ 0+3x18'
     alert_rule_test:
       - eval_time: 10m
@@ -792,33 +792,33 @@ evaluation_interval: 1m
 tests:
   - interval: 1m
     input_series:
-      - series: 'process_start_time_seconds{job="motel"}'
+      - series: 'process_start_time_seconds{job="moteld"}'
         values: '1x50'
-      - series: 'motel_app_observed{app="steady",job="motel"}'
+      - series: 'motel_app_observed{app="steady",job="moteld"}'
         values: '1x50'
-      - series: 'motel_app_requests_total{app="steady",release="v1",class="2xx",job="motel"}'
+      - series: 'motel_app_requests_total{app="steady",release="v1",class="2xx",job="moteld"}'
         values: '0+120x50'
-      - series: 'motel_app_observed{app="new",job="motel"}'
+      - series: 'motel_app_observed{app="new",job="moteld"}'
         values: '_x20 1x30'
-      - series: 'motel_app_requests_total{app="new",release="v1",class="2xx",job="motel"}'
+      - series: 'motel_app_requests_total{app="new",release="v1",class="2xx",job="moteld"}'
         values: '_x20 0+120x30'
-      - series: 'motel_app_observed{app="back",job="motel"}'
+      - series: 'motel_app_observed{app="back",job="moteld"}'
         values: '1x10 _x10 1x29'
-      - series: 'motel_app_requests_total{app="back",release="v1",class="2xx",job="motel"}'
+      - series: 'motel_app_requests_total{app="back",release="v1",class="2xx",job="moteld"}'
         values: '0+120x10 _x10 0+120x29'
-      - series: 'motel_app_observed{app="seven",job="motel"}'
+      - series: 'motel_app_observed{app="seven",job="moteld"}'
         values: '1x10 _x6 1x33'
-      - series: 'motel_app_requests_total{app="seven",release="v1",class="2xx",job="motel"}'
+      - series: 'motel_app_requests_total{app="seven",release="v1",class="2xx",job="moteld"}'
         values: '0+120x10 _x6 0+120x33'
-      - series: 'motel_app_observed{app="brief",job="motel"}'
+      - series: 'motel_app_observed{app="brief",job="moteld"}'
         values: '1x10 _x2 1x37'
-      - series: 'motel_app_requests_total{app="brief",release="v1",class="2xx",job="motel"}'
+      - series: 'motel_app_requests_total{app="brief",release="v1",class="2xx",job="moteld"}'
         values: '0+120x10 _x2 0+120x37'
-      - series: 'motel_app_observed{app="deployed",job="motel"}'
+      - series: 'motel_app_observed{app="deployed",job="moteld"}'
         values: '1x50'
-      - series: 'motel_app_requests_total{app="deployed",release="v1",class="2xx",job="motel"}'
+      - series: 'motel_app_requests_total{app="deployed",release="v1",class="2xx",job="moteld"}'
         values: '0+120x20 2400x30'
-      - series: 'motel_app_requests_total{app="deployed",release="v2",class="2xx",job="motel"}'
+      - series: 'motel_app_requests_total{app="deployed",release="v2",class="2xx",job="moteld"}'
         values: '_x20 0+120x30'
     metricsql_expr_test:
 ` + samples("19m", "brief", "deployed", "steady") + samples("22m", "brief", "deployed", "seven", "steady") +
@@ -837,11 +837,11 @@ tests:
             exp_annotations: {summary: "new: its requests a second over 5 minutes has been above 1 for 1m (rule busy); now 2"}
   - interval: 1m
     input_series:
-      - series: 'process_start_time_seconds{job="motel"}'
+      - series: 'process_start_time_seconds{job="moteld"}'
         values: '1x10 _x6 1x33'
-      - series: 'motel_app_observed{app="gap",job="motel"}'
+      - series: 'motel_app_observed{app="gap",job="moteld"}'
         values: '1x10 _x6 1x33'
-      - series: 'motel_app_requests_total{app="gap",release="v1",class="2xx",job="motel"}'
+      - series: 'motel_app_requests_total{app="gap",release="v1",class="2xx",job="moteld"}'
         values: '0+120x10 _x6 2040+120x33'
     metricsql_expr_test:
 ` + samples("17m", "gap") + samples("19m", "gap") + samples("20m") + samples("21m") + samples("22m", "gap") + `    alert_rule_test:
@@ -864,7 +864,7 @@ func pushedSeries(pushes []int, value func(at int) int) string {
 	return strings.TrimSpace(b.String())
 }
 
-// A steady 2 a second across a motel restart, on the store's own
+// A steady 2 a second across a moteld restart, on the store's own
 // arithmetic (pushes placed to the second): the old process pushes
 // every 30 s, its stop pushes what it counted since (stop - gp after
 // its last tick), and the new one pushes from zero a second after the
@@ -922,11 +922,11 @@ func TestOperatorRulesRateAcrossARestart(t *testing.T) {
 		}
 		g := `  - interval: 1s
     input_series:
-      - series: 'process_start_time_seconds{job="motel"}'
+      - series: 'process_start_time_seconds{job="moteld"}'
         values: '` + pushedSeries(pushes, start) + `'
-      - series: 'motel_app_observed{app="` + app + `",job="motel"}'
+      - series: 'motel_app_observed{app="` + app + `",job="moteld"}'
         values: '` + pushedSeries(pushes, one) + `'
-      - series: 'motel_app_requests_total{app="` + app + `",release="v1",class="2xx",job="motel"}'
+      - series: 'motel_app_requests_total{app="` + app + `",release="v1",class="2xx",job="moteld"}'
         values: '` + pushedSeries(pushes, count) + `'
     metricsql_expr_test:
 `
@@ -1007,27 +1007,27 @@ evaluation_interval: 1m
 tests:
   - interval: 30s
     input_series:
-      - series: 'process_start_time_seconds{job="motel"}'
+      - series: 'process_start_time_seconds{job="moteld"}'
         values: '1x60'
-      - series: 'motel_app_cpu_seconds_total{app="deployed",unit="app-deployed-u1.service",job="motel"}'
+      - series: 'motel_app_cpu_seconds_total{app="deployed",unit="app-deployed-u1.service",job="moteld"}'
         values: '0+15x20'
-      - series: 'motel_app_cpu_seconds_total{app="deployed",unit="app-deployed-u2.service",job="motel"}'
+      - series: 'motel_app_cpu_seconds_total{app="deployed",unit="app-deployed-u2.service",job="moteld"}'
         values: '_x21 15+15x38'
-      - series: 'motel_app_cpu_seconds_total{app="redeployed",unit="app-redeployed-r1.service",job="motel"}'
+      - series: 'motel_app_cpu_seconds_total{app="redeployed",unit="app-redeployed-r1.service",job="moteld"}'
         values: '0+15x20'
-      - series: 'motel_app_cpu_seconds_total{app="redeployed",unit="app-redeployed-r2.service",job="motel"}'
+      - series: 'motel_app_cpu_seconds_total{app="redeployed",unit="app-redeployed-r2.service",job="moteld"}'
         values: '_x21 15 _ 45+15x36'
-      - series: 'motel_app_cpu_seconds_total{app="stopped",unit="app-stopped-s1.service",job="motel"}'
+      - series: 'motel_app_cpu_seconds_total{app="stopped",unit="app-stopped-s1.service",job="moteld"}'
         values: '0+30x20'
-      - series: 'motel_app_memory_bytes{app="stopped",job="motel"}'
+      - series: 'motel_app_memory_bytes{app="stopped",job="moteld"}'
         values: '95x20'
-      - series: 'motel_app_memory_max_bytes{app="stopped",job="motel"}'
+      - series: 'motel_app_memory_max_bytes{app="stopped",job="moteld"}'
         values: '100x20'
-      - series: 'motel_app_cpu_seconds_total{app="lossy",unit="app-lossy-l1.service",job="motel"}'
+      - series: 'motel_app_cpu_seconds_total{app="lossy",unit="app-lossy-l1.service",job="moteld"}'
         values: '0+30x20 _ 660+30x38'
-      - series: 'motel_app_memory_bytes{app="lossy",job="motel"}'
+      - series: 'motel_app_memory_bytes{app="lossy",job="moteld"}'
         values: '95x20 _ 95x38'
-      - series: 'motel_app_memory_max_bytes{app="lossy",job="motel"}'
+      - series: 'motel_app_memory_max_bytes{app="lossy",job="moteld"}'
         values: '100x20 _ 100x38'
     metricsql_expr_test:`
 	for _, at := range []string{"10m40s", "11m10s", "13m", "14m50s"} {
@@ -1093,37 +1093,37 @@ evaluation_interval: 1m
 tests:
   - interval: 1m
     input_series:
-      - series: 'process_start_time_seconds{job="motel"}'
+      - series: 'process_start_time_seconds{job="moteld"}'
         values: '1x90'
-      - series: 'motel_app_response_seconds_bucket{app="reused",release="v1",le="0.1",job="motel"}'
+      - series: 'motel_app_response_seconds_bucket{app="reused",release="v1",le="0.1",job="moteld"}'
         values: '0+1x10 _x30 380x50'
-      - series: 'motel_app_response_seconds_bucket{app="reused",release="v1",le="1",job="motel"}'
+      - series: 'motel_app_response_seconds_bucket{app="reused",release="v1",le="1",job="moteld"}'
         values: '0+50x10 _x30 395x50'
-      - series: 'motel_app_response_seconds_bucket{app="reused",release="v1",le="+Inf",job="motel"}'
+      - series: 'motel_app_response_seconds_bucket{app="reused",release="v1",le="+Inf",job="moteld"}'
         values: '0+100x10 _x30 400x50'
-      - series: 'motel_app_response_seconds_count{app="reused",release="v1",job="motel"}'
+      - series: 'motel_app_response_seconds_count{app="reused",release="v1",job="moteld"}'
         values: '0+100x10 _x30 400x50'
-      - series: 'motel_app_observed{app="reused",job="motel"}'
+      - series: 'motel_app_observed{app="reused",job="moteld"}'
         values: '1x10 _x30 1x50'
-      - series: 'motel_app_response_seconds_bucket{app="slow",release="v1",le="0.1",job="motel"}'
+      - series: 'motel_app_response_seconds_bucket{app="slow",release="v1",le="0.1",job="moteld"}'
         values: '_x40 0x50'
-      - series: 'motel_app_response_seconds_bucket{app="slow",release="v1",le="1",job="motel"}'
+      - series: 'motel_app_response_seconds_bucket{app="slow",release="v1",le="1",job="moteld"}'
         values: '_x40 50x50'
-      - series: 'motel_app_response_seconds_bucket{app="slow",release="v1",le="+Inf",job="motel"}'
+      - series: 'motel_app_response_seconds_bucket{app="slow",release="v1",le="+Inf",job="moteld"}'
         values: '_x40 50x50'
-      - series: 'motel_app_response_seconds_count{app="slow",release="v1",job="motel"}'
+      - series: 'motel_app_response_seconds_count{app="slow",release="v1",job="moteld"}'
         values: '_x40 50x50'
-      - series: 'motel_app_observed{app="slow",job="motel"}'
+      - series: 'motel_app_observed{app="slow",job="moteld"}'
         values: '_x40 1x50'
-      - series: 'motel_app_response_seconds_bucket{app="kept",release="v1",le="0.1",job="motel"}'
+      - series: 'motel_app_response_seconds_bucket{app="kept",release="v1",le="0.1",job="moteld"}'
         values: '0x10 _x30 0+10x50'
-      - series: 'motel_app_response_seconds_bucket{app="kept",release="v1",le="1",job="motel"}'
+      - series: 'motel_app_response_seconds_bucket{app="kept",release="v1",le="1",job="moteld"}'
         values: '0x10 _x30 0+10x50'
-      - series: 'motel_app_response_seconds_bucket{app="kept",release="v1",le="+Inf",job="motel"}'
+      - series: 'motel_app_response_seconds_bucket{app="kept",release="v1",le="+Inf",job="moteld"}'
         values: '0+100x10 _x30 1000+10x50'
-      - series: 'motel_app_response_seconds_count{app="kept",release="v1",job="motel"}'
+      - series: 'motel_app_response_seconds_count{app="kept",release="v1",job="moteld"}'
         values: '0+100x10 _x30 1000+10x50'
-      - series: 'motel_app_observed{app="kept",job="motel"}'
+      - series: 'motel_app_observed{app="kept",job="moteld"}'
         values: '1x10 _x30 1x50'
     alert_rule_test:
       - eval_time: 44m
@@ -1175,7 +1175,7 @@ evaluation_interval: 1m
 tests:
   - interval: 1m
     input_series:
-      - series: 'motel_disk_avail_bytes{path="/var/lib/liveswap",job="motel"}'
+      - series: 'motel_disk_avail_bytes{path="/var/lib/liveswap",job="moteld"}'
         values: '1440000000000-1000000000x599 _x120 720000000000-1000000000x480'
     alert_rule_test:
       - eval_time: 5h20m
@@ -1208,9 +1208,9 @@ evaluation_interval: 1m
 tests:
   - interval: 1m
     input_series:
-      - series: 'motel_disk_avail_bytes{path="/var/lib/liveswap",job="motel"}'
+      - series: 'motel_disk_avail_bytes{path="/var/lib/liveswap",job="moteld"}'
         values: '20000000000x3000 16000000000x600'
-      - series: 'motel_disk_avail_bytes{path="/var/lib/caddy",job="motel"}'
+      - series: 'motel_disk_avail_bytes{path="/var/lib/caddy",job="moteld"}'
         values: '100000000000-20000000x3600'
     alert_rule_test:
       - eval_time: 50h55m
@@ -1278,7 +1278,7 @@ evaluation_interval: 1m
 tests:
   - interval: 30s
     input_series:
-      - series: 'motel_disk_avail_bytes{path="/var/lib/liveswap",job="motel"}'
+      - series: 'motel_disk_avail_bytes{path="/var/lib/liveswap",job="moteld"}'
         values: '` + values + `'
     alert_rule_test:
 ` + none.String() + `      - eval_time: ` + mins(full-c.lead) + `
@@ -1327,7 +1327,7 @@ evaluation_interval: 1m
 tests:
   - interval: 30s
     input_series:
-      - series: 'motel_disk_avail_bytes{path="/var/lib/liveswap",job="motel"}'
+      - series: 'motel_disk_avail_bytes{path="/var/lib/liveswap",job="moteld"}'
         values: '` + strings.Join(values, " ") + `'
     alert_rule_test:
 ` + firing.String()

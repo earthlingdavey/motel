@@ -61,7 +61,7 @@ func refusedOption(msg string) func(*caddyfile.Dispenser, any) (any, error) {
 // its numbers (operatorrules.go), and needs the metrics line. The grammar is checked here, line by line; what needs
 // the whole configuration (an operator line naming a channel, a binding
 // no app trusts, a secret the box does not hold) is checked in
-// Provision, so that `motel validate` refuses it with the rest.
+// Provision, so that `moteld validate` refuses it with the rest.
 func (a *App) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
 	d.Next() // the option's name
 	if d.NextArg() {
@@ -142,12 +142,12 @@ func (a *App) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
 			// Not a line: Alertmanager reads the directory its drop-in
 			// names, which setup makes, so a directory of the line's own
 			// would be written and never read.
-			return d.Errf("state_dir is not a monitor line: the state directory is fixed at %s, the one motel monitor setup makes and Alertmanager reads; remove the line", DefaultStateDir)
+			return d.Errf("state_dir is not a monitor line: the state directory is fixed at %s, the one moteld monitor setup makes and Alertmanager reads; remove the line", DefaultStateDir)
 		case "alertmanager":
 			// Not a line either: motel-am.socket, which setup writes,
 			// is where Alertmanager listens, so another path reaches
 			// nothing.
-			return d.Errf("alertmanager is not a monitor line: Alertmanager's socket is fixed at %s, the one motel monitor setup's motel-am.socket listens on; remove the line", DefaultSocket)
+			return d.Errf("alertmanager is not a monitor line: Alertmanager's socket is fixed at %s, the one moteld monitor setup's motel-am.socket listens on; remove the line", DefaultSocket)
 		case "secrets_file", "backup_record":
 			name := d.Val()
 			if !d.NextArg() {

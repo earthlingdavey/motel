@@ -15,20 +15,20 @@ import (
 	"syscall"
 )
 
-// errNotSetUp is a state directory that is not there: `motel monitor
+// errNotSetUp is a state directory that is not there: `moteld monitor
 // setup` has not run, so there is no Alertmanager to configure.
-var errNotSetUp = errors.New("alertmanager is not set up on this box (run motel monitor setup as root)")
+var errNotSetUp = errors.New("alertmanager is not set up on this box (run moteld monitor setup as root)")
 
 // NotOwner is why a process running as uid must leave dir, a state
-// directory setup made the motel user's, alone: only motel.service's
+// directory setup made the motel user's, alone: only moteld.service's
 // process runs as its owner. Another, such as root trying a file by
-// hand on a live box (`motel run --config …`), would replace or retire
+// hand on a live box (`moteld run --config …`), would replace or retire
 // what the running service put there without telling it, post to the
 // service's Alertmanager or store, and leave files of its own user,
 // which the service cannot read. "" when uid owns dir, or when its owner
 // is not known: dir missing (setup has not run), which each caller says
 // as before, or another error, which the write that follows reports.
-// Both of motel's writers at a start ask it: cmd/motel's gate, and
+// Both of motel's writers at a start ask it: cmd/moteld's gate, and
 // Start.
 func NotOwner(dir string, uid int) string {
 	fi, err := os.Stat(dir)

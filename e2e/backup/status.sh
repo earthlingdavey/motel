@@ -127,7 +127,7 @@ st_exits 0 "the record back"
 echo "=== status 5c: an app that leaves the Caddyfile with snapshots in the repository is said, once ==="
 sed '/app shop {/,/^\t\t}/d' /root/Caddyfile.base >"$CADDYFILE"
 grep -q "app shop" "$CADDYFILE" && fail "fixture: shop is still in the Caddyfile: the scenario proves nothing" || pass "fixture: shop's block is gone from the Caddyfile"
-motel validate --config "$CADDYFILE" --adapter caddyfile >/dev/null 2>&1 && pass "fixture: and motel accepts what is left" || fail "fixture: motel rejects the file: the scenario proves nothing"
+moteld validate --config "$CADDYFILE" --adapter caddyfile >/dev/null 2>&1 && pass "fixture: and motel accepts what is left" || fail "fixture: motel rejects the file: the scenario proves nothing"
 run || fail "the run without shop: $(cat "$OUT")"
 grep -q "warning: .*shop no longer declares a backup" "$OUT" && pass "the run that finds shop gone says so" || fail "the run said: $(cat "$OUT")"
 st_exits 0 "an app that left the plan, which is a warning"
@@ -177,13 +177,13 @@ mkdir -p "$V" && chmod 0755 "$V"
 if validate "$CADDYFILE"; then says "^a run would back up blog, notyet, shop, under /var/lib/liveswap$" && pass "the box's own Caddyfile validates, and the apps it backs up are named" || fail "said: $(cat "$OUT")"; else fail "the box's own Caddyfile: $(cat "$OUT")"; fi
 
 sed 's/# Declared, never deployed./app cart {\n\t\t\tcommand .\/server\n\t\t}\n/' /root/Caddyfile.base >"$V/cart"
-motel validate --config "$V/cart" --adapter caddyfile >/dev/null 2>&1 && pass "fixture: motel accepts an app with no backup block" || fail "fixture: motel rejects the file: the scenario proves nothing"
+moteld validate --config "$V/cart" --adapter caddyfile >/dev/null 2>&1 && pass "fixture: motel accepts an app with no backup block" || fail "fixture: motel rejects the file: the scenario proves nothing"
 if validate "$V/cart"; then says "^cart declares no backup" && pass "an app that declares no backup is named, and is no refusal" || fail "said: $(cat "$OUT")"; else fail "an app with no backup block was refused: $(cat "$OUT")"; fi
 if as_nobody motel-backup validate "$V/cart" >"$OUT" 2>&1; then says "^cart declares no backup" && pass "validate needs no root" || fail "as nobody: $(cat "$OUT")"; else fail "as nobody: $(cat "$OUT")"; fi
 
 # shellcheck disable=SC2016 # the Caddyfile's own {$NAME}, not the shell's
 sed 's#root /var/lib/liveswap#root {$LIVESWAP_ROOT:/var/lib/liveswap}#' /root/Caddyfile.base >"$V/envroot"
-motel validate --config "$V/envroot" --adapter caddyfile >/dev/null 2>&1 && pass "fixture: motel accepts a root from the environment: push would let it through" || fail "fixture: motel rejects the file: the scenario proves nothing"
+moteld validate --config "$V/envroot" --adapter caddyfile >/dev/null 2>&1 && pass "fixture: motel accepts a root from the environment: push would let it through" || fail "fixture: motel rejects the file: the scenario proves nothing"
 if validate "$V/envroot"; then fail "a root that depends on the environment validated"; else says "LIVESWAP_ROOT" && pass "a root that depends on the environment is refused, by the variable's name" || fail "said: $(cat "$OUT")"; fi
 # The same root on a box where no app declares a backup is no refusal:
 # a run backs nothing up there, and step 6 must not refuse a config
@@ -201,7 +201,7 @@ if validate "$V/envroot-nobackup"; then says "^no app declares a backup: a run w
 # where it matches nothing on the box either, and inside
 # /etc/motel, where a run would see nothing more than validate does.
 { echo "import $V/apps/*.caddy"; cat /root/Caddyfile.base; } >/etc/motel/Caddyfile.new
-motel validate --config /etc/motel/Caddyfile.new --adapter caddyfile >/dev/null 2>&1 && pass "fixture: motel accepts a glob import that matches nothing" || fail "fixture: motel rejects the file: the scenario proves nothing"
+moteld validate --config /etc/motel/Caddyfile.new --adapter caddyfile >/dev/null 2>&1 && pass "fixture: motel accepts a glob import that matches nothing" || fail "fixture: motel rejects the file: the scenario proves nothing"
 if validate /etc/motel/Caddyfile.new; then fail "a glob import that matches nothing validated"; else says "imports $V/apps/\*.caddy, which matches no file" && pass "a glob import that matches nothing is refused, by its pattern" || fail "said: $(cat "$OUT")"; fi
 { echo "import sites/*.caddy"; cat /root/Caddyfile.base; } >/etc/motel/Caddyfile.new
 if validate /etc/motel/Caddyfile.new; then fail "an empty glob under /etc/motel validated"; else says "imports sites/\*.caddy, which matches no file" && pass "and so is one under /etc/motel" || fail "said: $(cat "$OUT")"; fi

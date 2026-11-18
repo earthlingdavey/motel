@@ -15,7 +15,7 @@ import (
 func TestSweepUnknownApps(t *testing.T) {
 	conn := newFakeSystemdConn()
 	root := t.TempDir()
-	// What the removed app left on disk while motel was down: no
+	// What the removed app left on disk while moteld was down: no
 	// managedApp will ever sweep it, so this sweep must. The configured
 	// app's are left alone (its own sweeps own them).
 	for _, app := range []string{"old", "demo"} {

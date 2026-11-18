@@ -1,9 +1,9 @@
 # The box the backup suite runs on: Debian 13 with systemd as PID 1, the
-# motel binary (the engine's plan unit runs `motel adapt`),
+# moteld binary (the engine's plan unit runs `moteld adapt`),
 # motel-backup, and Debian's own restic and sqlite3 — the two
 # programs whose behaviour the suite is about — and curl, with which the
 # check suite deletes a pack through the storage's own API, as someone
-# holding a key that may delete would, off the box. motel itself is
+# holding a key that may delete would, off the box. moteld itself is
 # not started: nothing in a backup talks to it. The two binaries come
 # built, from build/e2e-backup (the bin context, docker-compose.yml),
 # which `make e2e-backup` fills first. Build this image through that
@@ -23,7 +23,7 @@ RUN systemctl mask \
 	getty.target \
 	console-getty.service \
 	|| true
-COPY --from=bin motel motel-backup /usr/bin/
+COPY --from=bin moteld motel-backup /usr/bin/
 # The package's unit files, where the .deb puts them: the units suite
 # starts the services from them, and the timers' schedule is read off
 # them.

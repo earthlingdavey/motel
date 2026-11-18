@@ -4,6 +4,10 @@ dist/
 .DS_Store
 reference/
 build/
+# The client, built where its README or `go build ./client/cmd/motel`
+# leaves it.
+/motel
+/client/motel
 /to-do
 __pycache__/
 # Claude Code: the triage skill is shared; worktrees, plans and local

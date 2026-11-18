@@ -271,7 +271,7 @@ func (t *txn) files() bool { return len(t.rec.Secrets) > 0 }
 // then is it written.
 func (t *txn) caddyfileInSet() bool { return t.rec.PrevSHA256 != t.rec.NewSHA256 }
 
-// reloads reports whether the set reloads motel: when the Caddyfile
+// reloads reports whether the set reloads moteld: when the Caddyfile
 // changes, or the box's own env file (_box.env) does, which notify reads
 // at a config load and not, as an app reads its env file, at a launch
 // (DESIGN-box.md, "The box's own slot"). An env file rewritten for its
@@ -392,7 +392,7 @@ func (a *Applier) writeApplied(rec *record) error {
 }
 
 // putApplied writes applied.json whole (I8): writeApplied's write, and
-// `motel box baseline`'s.
+// `moteld box baseline`'s.
 func (a *Applier) putApplied(v applied) error {
 	if err := v.valid(); err != nil {
 		return fmt.Errorf("the baseline would not read back: %w", err)
@@ -509,7 +509,7 @@ func firstNot(fs []fileAt, want func(fileAt) bool) (app string, ok bool) {
 
 // install runs the transaction from the buffer comparison (Transitions
 // table, from "checking → no_change" and "checking → verified" on). The
-// caller has run steps 10–15a (init: the walk) and found motel
+// caller has run steps 10–15a (init: the walk) and found moteld
 // active (init: up). It returns errFullDisk or errUnsettled when the run
 // must stop with the record on disk, nil once a terminal result is
 // written (or journaled).
@@ -764,9 +764,9 @@ func (a *Applier) rollingBack(ctx context.Context, t *txn, recovering bool) erro
 		a.finish(t, phaseRolledBack, why)
 		return nil
 	}
-	// Nothing to reload on a motel that is not running: the previous
+	// Nothing to reload on a moteld that is not running: the previous
 	// bytes load at its next start. Recovery asks (a crash may have been
-	// a reboot); a live run found motel up before it swapped.
+	// a reboot); a live run found moteld up before it swapped.
 	if recovering {
 		state, err := a.running(ctx)
 		if err != nil {
@@ -774,7 +774,7 @@ func (a *Applier) rollingBack(ctx context.Context, t *txn, recovering bool) erro
 		}
 		if !up(state) {
 			if t.rec.Error != "" {
-				a.logger.Warn("box rollback on a motel that is not running", zap.String("id", t.rec.ID), zap.String("why", t.rec.Error))
+				a.logger.Warn("box rollback on a moteld that is not running", zap.String("id", t.rec.ID), zap.String("why", t.rec.Error))
 			}
 			a.finish(t, phaseFailed, msgInterruptedStopped)
 			return nil
@@ -949,15 +949,15 @@ type initRun struct {
 	was *applied
 }
 
-// notUpError is init's refusal on a motel that is not up once the
+// notUpError is init's refusal on a moteld that is not up once the
 // wait is over. Nothing is written, and the message is the applier's for
 // the same state (DESIGN-box.md, "Console commands").
 type notUpError struct{ msg string }
 
 func (e *notUpError) Error() string { return e.msg }
 
-// runInit is `motel init`'s way into the transaction (DESIGN-box.md,
-// "`motel init`"): under root's lock, after recovery, step 16's
+// runInit is `moteld init`'s way into the transaction (DESIGN-box.md,
+// "`moteld init`"): under root's lock, after recovery, step 16's
 // question once — anything but up refuses before anything is written,
 // since the reload is the only check init makes of the file — then the
 // same state machine with origin init and no result files. The caller

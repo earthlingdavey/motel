@@ -72,10 +72,10 @@ func (o *Observe) Provision(ctx caddy.Context) error {
 
 // observe makes ma the app observed, by one handler more, and by a's
 // config (App.observed, what its pushes read). The first handler after
-// none starts the counts from zero, as a motel restart does: while none
+// none starts the counts from zero, as a moteld restart does: while none
 // named the app its counts were not pushed (notify's collector), and,
 // resumed where they stopped, their first push after the gap would be
-// read as every response the app had counted since motel started, in
+// read as every response the app had counted since moteld started, in
 // one window. A reload provisions the new config's handlers before it
 // cleans up the old's, so an app observed by both is never at none and
 // keeps its counts.

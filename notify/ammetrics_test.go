@@ -22,7 +22,7 @@ func fixture(t *testing.T) []byte {
 // served on hotserve-1: with receiver-name-in-metrics, a failed counter
 // pre-made at zero for each receiver and reason of the integrations the
 // config uses (there, only webhook: the operator's channel is ntfy), and
-// the one attempt `motel monitor test` made to ch-operator.
+// the one attempt `moteld monitor test` made to ch-operator.
 func TestParseAMMetricsRealBody(t *testing.T) {
 	m, err := parseAMMetrics(fixture(t))
 	if err != nil {
@@ -200,7 +200,7 @@ func TestScrapeFailedKeepsTheBaselineOverABadRead(t *testing.T) {
 // in flight and counts it failed with reason contextCanceled, after
 // (with receiver-name-in-metrics) the reload has reset the counters.
 // That is no channel's failure: it raises no ChannelFailed, and is not
-// the failed count `motel monitor test` reads; a rise of another reason
+// the failed count `moteld monitor test` reads; a rise of another reason
 // beside it still raises one. bob's receiver is webhook's, as pager's
 // is: the named receiver gives bob alone, the fallback would add pager.
 func TestReloadCancelIsNoFailure(t *testing.T) {

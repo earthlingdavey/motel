@@ -10,7 +10,7 @@ import (
 // motelAlert is one alert motel's own detectors raise: the severity it
 // is first raised at (disk_low and cert_failed go on to critical), and
 // whether a number the detector already holds stands behind it, which
-// `motel monitor rules` lists as a threshold with that number
+// `moteld monitor rules` lists as a threshold with that number
 // (ruleslist.go). Every other is an event: a happening, or a state with
 // no number to be close to.
 type motelAlert struct {
@@ -92,11 +92,11 @@ func raisedBy(name string) (motelAlert, bool) {
 
 // notSilenceable are names motel posts that no silence may take:
 // Watchdog is the heartbeat, whose silence would make the check off the
-// box report the box down; NotifyTest is `motel monitor test`'s own,
+// box report the box down; NotifyTest is `moteld monitor test`'s own,
 // and deploy_in_progress the deploy mute, which reaches no channel.
 var notSilenceable = []string{alertWatchdog, alertNotifyTest, alertDeployMute}
 
-// silenceableAlerts are the alert names `motel monitor silence add
+// silenceableAlerts are the alert names `moteld monitor silence add
 // --alert` takes on the config a: sorted, each once.
 func silenceableAlerts(a *App) []string {
 	names := slices.Clone(raisedAlerts)

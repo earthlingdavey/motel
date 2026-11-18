@@ -58,7 +58,7 @@ func (a *App) AppSamples() []AppSample {
 
 // WatchdogBudget is one app's restart budget as its watchdog holds it
 // now: the restarts inside the sliding window, against the budget a
-// restart loop (watchdog_throttled) spends. notify's `motel monitor
+// restart loop (watchdog_throttled) spends. notify's `moteld monitor
 // rules` lists it, read when asked: nothing is polled for it.
 type WatchdogBudget struct {
 	App      string

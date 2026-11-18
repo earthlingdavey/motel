@@ -185,7 +185,7 @@ As root on the box:
 #    /etc/motel/Caddyfile, then, before it goes live, ask whether a
 #    run could plan from it:
 motel-backup validate /etc/motel/Caddyfile
-systemctl reload motel
+systemctl reload moteld
 # 2. The repository, once: the storage key is asked for at the terminal,
 #    and a new repository's password is shown once, to store elsewhere.
 motel-backup setup s3:https://s3.example.com/my-backups
@@ -389,7 +389,7 @@ A new box, or the same one reinstalled; the `motel` user may get
 another uid, which a restore does not mind:
 
 1. Install the package ([Your first deploy](first-deploy.md), step 2)
-   and give it the box's Caddyfile with `motel init` from the box
+   and give it the box's Caddyfile with `moteld init` from the box
    repository, as the first deploy did (step 3; with secrets,
    [A rebuilt box](secrets.md#a-rebuilt-box)).
 2. `motel-backup setup --existing <the same URL>`, with the box's
@@ -439,13 +439,13 @@ needs before it can run, no env file, and no `deploy_trust local`
 public key file. The Caddyfile and the secrets come back from the box
 repo, which the first deploy makes
 ([examples/box](../examples/box/README.md)): the Caddyfile with
-`motel init` in step 1; the secrets with `make rekey`, pushed and
+`moteld init` in step 1; the secrets with `make rekey`, pushed and
 applied before step 4, since until then the box has no env file for
 the app ([A rebuilt box](secrets.md#a-rebuilt-box)). A `deploy_trust
 local` public key is a file the Caddyfile names, not a commit, and
-`motel init` refuses a Caddyfile whose key file is missing: in
-step 1, after the install and before `motel init`, put the `.pub`
-back from where the pair is kept. Or make a new pair with `motel
+`moteld init` refuses a Caddyfile whose key file is missing: in
+step 1, after the install and before `moteld init`, put the `.pub`
+back from where the pair is kept. Or make a new pair with `moteld
 deploy-keygen`: its private key then replaces the old one wherever
 tokens are minted — the CI secret, or your own machine — and only the
 `.pub` goes to the box. Until the private key is replaced, a deploy

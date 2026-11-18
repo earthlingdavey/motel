@@ -264,7 +264,7 @@ func SecretFileTooLarge(shown string, size int64) string {
 // The layout of a secrets directory and of an app's (DESIGN-box.md,
 // "Layout in the repository") is one rule set, fed one entry at a time
 // in git's order — by a commit's trees (ProveSecrets) and by a working
-// tree (`motel box describe`) alike — so the two refuse the same
+// tree (`moteld box describe`) alike — so the two refuse the same
 // entries, in the same words and in the same order. commit is where the
 // entries were read, for the refusals' " in <sha>": a commit's id, or ""
 // for a working tree. An entry's name becomes a string only once it is

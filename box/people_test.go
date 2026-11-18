@@ -574,7 +574,7 @@ func TestPersonNotRefusedAfterAStart(t *testing.T) {
 }
 
 // TestGrantOnAnAppNotRunRefusedAtLoad: a grant on an app the config's
-// liveswap block does not run fails the load, and so `motel validate`,
+// liveswap block does not run fails the load, and so `moteld validate`,
 // as the walk refuses it: the box app asks the liveswap app which apps
 // it runs. A config with no liveswap block runs none.
 func TestGrantOnAnAppNotRunRefusedAtLoad(t *testing.T) {
@@ -720,7 +720,7 @@ func TestRemovedPersonRefusedAfterReload(t *testing.T) {
 // proxy appends the client's real one, on bob's. Without
 // trusted_proxies_strict, Caddy's client_ip is the client's choice, so
 // no from list holds a forwarded request at all: both are refused (and
-// motel validate refuses such a config). With it, client_ip is the
+// moteld validate refuses such a config). With it, client_ip is the
 // right-most address outside the ranges, the real one: bob is admitted,
 // alice is not. A request from a peer that is no proxy is judged by the
 // peer in either mode, whatever header it writes. Each asks who they

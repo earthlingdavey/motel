@@ -12,7 +12,7 @@ Outputs live in the scratchpad (`runs/`), pasted here as observed.
 The fresh boxes are the install-test image (`motel-install-test-debian-13`,
 Debian 13, systemd 257.13-1~deb13u1, arm64, built from `packaging/test`
 at `2f613e8`), started by hand with the `.deb` from `make package` at
-`2f613e8` (`motel_0.0.0~dev_arm64.deb`, 07:44 CEST), the root mount
+`2f613e8` (`moteld_0.0.0~dev_arm64.deb`, 07:44 CEST), the root mount
 made shared as the smoke does. Beside them:
 
 - `hsb-docs-s3`: the e2e fixture image (`rclone serve s3`), **over TLS**
@@ -31,9 +31,9 @@ pty, `e2e/backup/tty.sh`'s `converse`).
 
 | # | Procedure | Box | As | Output (`runs/`) | Result |
 |---|---|---|---|---|---|
-| P1 | first-deploy.md step 2: `apt install ./motel_…deb`, `systemctl enable --now motel`; an app `demo` deployed, a WAL database and `uploads/` under its `shared/` | box1 | root | `P01-install.out` | as written; postinstall says the timers wait for `setup` |
-| P2 | README "On a fresh box", every line | box1 | **alice** | `P02-alice.out`, `P02b-alice-pw.out` | **fails as written (F1)**: every `sudo` line but `systemctl reload motel` is "Sorry, user alice is not allowed to execute …"; `motel-backup validate` without `sudo` works |
-| P3 | `sudo motel-backup validate …`, `sudo systemctl reload motel`, `sudo motel-backup setup s3:https://…/box1` (a bucket not there yet), `systemctl list-timers` | box1 | bob | `P03-bob-setup.out` | as written, over TLS; 13.0 s; the 10 s look gives up on the missing bucket, init makes it |
+| P1 | first-deploy.md step 2: `apt install ./moteld_…deb`, `systemctl enable --now moteld`; an app `demo` deployed, a WAL database and `uploads/` under its `shared/` | box1 | root | `P01-install.out` | as written; postinstall says the timers wait for `setup` |
+| P2 | README "On a fresh box", every line | box1 | **alice** | `P02-alice.out`, `P02b-alice-pw.out` | **fails as written (F1)**: every `sudo` line but `systemctl reload moteld` is "Sorry, user alice is not allowed to execute …"; `motel-backup validate` without `sudo` works |
+| P3 | `sudo motel-backup validate …`, `sudo systemctl reload moteld`, `sudo motel-backup setup s3:https://…/box1` (a bucket not there yet), `systemctl list-timers` | box1 | bob | `P03-bob-setup.out` | as written, over TLS; 13.0 s; the 10 s look gives up on the missing bucket, init makes it |
 | P4 | `motel-backup status` before any run (bob, and under sudo) | box1 | bob | `P04-status-before-run.out` | `no run yet: pending first run`, exit 0 |
 | P5 | the hourly timer firing, untouched: elapse 07:01:34 UTC (the box's fixed offset), journal, `list-timers`, `status` | box1 | bob | `P05-timer-fired.out` | ran 5 s, `ok`; the run's first drill proved the snapshot |
 | P6 | `sudo systemctl start motel-backup.service`; `restore demo --to /root/demo-restored`; `restore demo` into place, typing `demo` | box1 | bob | `P06-run-restore.out` | as written; `backed up first: snapshot 66e09572 (restore --snapshot 66e09572 puts back what was there)` |
@@ -209,7 +209,7 @@ the smoke's lines read as `docs/backups.md: …`, `validate` without
 | 5 | R8 | A prune during the drill leaves `damaged` until the next drill (a week); a run waiting ≤ 2 h for a prune holds the run lock, so the hours after fail | **genuine** | say both; `sudo motel-backup drill` checks again at once |
 | 6 | R6 | A first backup over 1 GiB: `status` exits 1 (`restore not proven`, `restore.go:1139-1141`, `status.go:201-207`) until a drill | **genuine** | say it, and `sudo motel-backup drill` |
 | 7 | R4 | Two `forget`s keep each set's newest per period; where a period's newest backup has no record (exit 3, a record not written) the record kept vouches for a backup that goes | **genuine** as an unstated limit (records and backups were separate groups before this PR too) | say it |
-| 8 | R7 | `sudo systemctl reload motel` is `alice`'s (`examples/box/sudoers:25`) — "every `sudo` line is root's" is wrong for it, here and in after-first-deploy | **genuine** | "every `sudo` line but the reload" |
+| 8 | R7 | `sudo systemctl reload moteld` is `alice`'s (`examples/box/sudoers:25`) — "every `sudo` line is root's" is wrong for it, here and in after-first-deploy | **genuine** | "every `sudo` line but the reload" |
 | 9 | R10 | `read -rs` in a block fenced `sh`: dash has no `-s` | **genuine** | fence `bash`, say bash |
 | 10 | R9 | `status` shows `c4f0d7c1` as last complete, the restore restores `39021de9`: a run in between is not shown | **genuine**, minor | say the second run |
 | 11 | R12 | The `--to` warning and the two-`forget` reasoning are in both pages | **genuine**, minor | the guide says each in a sentence and links the README |

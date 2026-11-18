@@ -12,7 +12,7 @@ import (
 // What validate says beyond the plan: the apps that declare no backup —
 // a new app's block with the two lines forgotten is otherwise silent.
 func TestInspectNamesTheAppsThatDeclareNoBackup(t *testing.T) {
-	fakeMotel(t)
+	fakeMoteld(t)
 	file := filepath.Join(t.TempDir(), "Caddyfile")
 	write(t, file, "app blog\napp shop\n")
 	got, err := Inspect(context.Background(), file, filepath.Dir(file))
@@ -32,7 +32,7 @@ func TestInspectNamesTheAppsThatDeclareNoBackup(t *testing.T) {
 }
 
 func TestInspectWithEveryAppDeclared(t *testing.T) {
-	fakeMotel(t)
+	fakeMoteld(t)
 	file := filepath.Join(t.TempDir(), "Caddyfile")
 	write(t, file, "app blog\n")
 	got, err := Inspect(context.Background(), file, filepath.Dir(file))
@@ -48,7 +48,7 @@ func TestInspectWithEveryAppDeclared(t *testing.T) {
 // comes after its own snippets, heredocs and {$NAME} [measured with the
 // real one; the stand-in here warns for the file's own lines].
 func TestAnImportGlobThatMatchesNothingIsRefused(t *testing.T) {
-	fakeMotel(t)
+	fakeMoteld(t)
 	dir := t.TempDir()
 	file := filepath.Join(dir, "Caddyfile")
 	for _, line := range []string{"import /srv/apps/*.caddy", "import sites/*.caddy"} {
@@ -71,7 +71,7 @@ func TestAnImportGlobThatMatchesNothingIsRefused(t *testing.T) {
 // An empty glob with no variable in it is not the variables' doing: it
 // is said as it is, and no made-up value is tried in its place.
 func TestAnEmptyGlobIsNotBlamedOnAVariable(t *testing.T) {
-	fakeMotel(t)
+	fakeMoteld(t)
 	file := filepath.Join(t.TempDir(), "Caddyfile")
 	write(t, file, "email {$ACME_EMAIL}\nimport /srv/none/*.caddy\napp blog\n")
 	_, err := Make(context.Background(), file)
@@ -84,7 +84,7 @@ func TestAnEmptyGlobIsNotBlamedOnAVariable(t *testing.T) {
 // words — a literal path that is not there — whatever variables the
 // file has besides: the hint about imports is for a path made of one.
 func TestALiteralImportThatIsNotThereIsNotBlamedOnAVariable(t *testing.T) {
-	fakeMotel(t)
+	fakeMoteld(t)
 	file := filepath.Join(t.TempDir(), "Caddyfile")
 	write(t, file, "import sites/missing.caddy\nemail {$ACME_EMAIL}\n")
 	_, err := Make(context.Background(), file)
@@ -124,7 +124,7 @@ No files matching import glob pattern: not JSON, not the adapter's
 // copy checked away from its directory, read alone, is refused the same
 // way where a file beside it holds the variable.
 func TestAProbeReachesWhatTheCaddyfileImports(t *testing.T) {
-	fakeMotel(t)
+	fakeMoteld(t)
 	for name, tc := range map[string]struct {
 		imports, site, refused string // the import line; sites/x.caddy; what the refusal names, "" for a plan made
 		away                   bool   // checked as a copy away from its directory
@@ -269,7 +269,7 @@ func TestTheAdaptersWordsAreReadAsItWritesThem(t *testing.T) {
 // environment is named as the server names it only by luck: it is said
 // as that, not under the name a default gives it here.
 func TestAnUndeclaredAppNamedThroughTheEnvironment(t *testing.T) {
-	fakeMotel(t)
+	fakeMoteld(t)
 	file := filepath.Join(t.TempDir(), "Caddyfile")
 	write(t, file, "app blog\napp {$SHOP_NAME:shop}\n")
 	got, err := Inspect(context.Background(), file, filepath.Dir(file))
@@ -303,7 +303,7 @@ func second[T any](_ T, err error) error { return err }
 // import through a variable, a glob that matches nothing — is refused
 // as before, backup or no backup.
 func TestAPlaceholderRootIsRefusedOnlyWhereABackupIsDeclared(t *testing.T) {
-	fakeMotel(t)
+	fakeMoteld(t)
 	for _, tc := range []struct {
 		name, caddyfile string
 		refused         string // in the error; empty means the plan is made

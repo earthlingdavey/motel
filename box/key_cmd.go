@@ -11,7 +11,7 @@ import (
 	"github.com/smallhoursorg/motel/box/proof"
 )
 
-// `motel box key` (DESIGN-box.md, "The box's key"): the box's key
+// `moteld box key` (DESIGN-box.md, "The box's key"): the box's key
 // for secrets, made when there is none, and its recipient printed. Run
 // by postinstall on a live system, by init after its transaction, and
 // by the console. The rules:
@@ -28,15 +28,15 @@ import (
 //     runs never write it from different keys; a temporary a crashed run
 //     left is removed first.
 //  3. Standard output is the `age1…` line alone, so that
-//     `$(ssh root@box motel box key)` is the key; what it did goes to
+//     `$(ssh root@box moteld box key)` is the key; what it did goes to
 //     standard error.
 
-const msgKeyNotRoot = "motel box key runs as root: it reads the box's key for secrets"
+const msgKeyNotRoot = "moteld box key runs as root: it reads the box's key for secrets"
 
 // agePubTemp is the pattern of age.pub's temporaries, beside it (Paths).
 const agePubTemp = ".age.pub.box-*"
 
-// runKey is `motel box key`.
+// runKey is `moteld box key`.
 func runKey(euid int, a *Applier, out, errOut io.Writer) error {
 	if euid != 0 {
 		return errors.New(msgKeyNotRoot)

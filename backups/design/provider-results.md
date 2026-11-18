@@ -306,7 +306,7 @@ Each line below says which run it is. What is still to be read says
   (`b2_get_upload_url: 401:`, from restic's own `b2:` backend), as did
   the drill after it, after 14 minutes.
 - **A rebuilt box** with another uid and gid for `motel`: through
-  the S3 endpoint, the guide's way back — `motel init` from the box
+  the S3 endpoint, the guide's way back — `moteld init` from the box
   repo's file, `setup` on the same URL, and the restore before the
   first deploy — put back 501 MiB in 17 s, every file the new ids'. The
   first run and the drill after the deploy were `ok` and proven.

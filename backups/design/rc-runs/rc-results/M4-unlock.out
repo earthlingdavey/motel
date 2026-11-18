@@ -23,7 +23,7 @@
 # Run inside an e2e-backup-box (make e2e-backup's image: debian:trixie,
 # Debian's restic, systemd as PID 1), against the suite's S3 server at
 # e2e-s3 (rclone serve s3) and, where a DELETE is to be refused or fail,
-# a proxy of the box's own in front of it (motel run, as setup.sh's
+# a proxy of the box's own in front of it (moteld run, as setup.sh's
 # readonly_storage and M3's ro-proxy.sh do).
 #
 # Every restic measured runs in a transient unit shaped as setup's are:
@@ -125,7 +125,7 @@ proxy() { # <status> <methods>: the box's own proxy to e2e-s3, answering those m
 	sed 's/^/  /' "$M/proxy.Caddyfile"
 	systemctl stop m4-proxy.service 2>/dev/null
 	systemctl reset-failed m4-proxy.service 2>/dev/null
-	systemd-run --quiet --collect --unit=m4-proxy.service /usr/bin/motel run --config "$M/proxy.Caddyfile" --adapter caddyfile
+	systemd-run --quiet --collect --unit=m4-proxy.service /usr/bin/moteld run --config "$M/proxy.Caddyfile" --adapter caddyfile
 	i=0
 	until curl -s -o /dev/null http://127.0.0.1:9100/ || [ "$i" -ge 100 ]; do
 		i=$((i + 1))
@@ -618,7 +618,7 @@ proxy() { # <status> <methods>: the box's own proxy to e2e-s3, answering those m
 	sed 's/^/  /' "$M/proxy.Caddyfile"
 	systemctl stop m4-proxy.service 2>/dev/null
 	systemctl reset-failed m4-proxy.service 2>/dev/null
-	systemd-run --quiet --collect --unit=m4-proxy.service /usr/bin/motel run --config "$M/proxy.Caddyfile" --adapter caddyfile
+	systemd-run --quiet --collect --unit=m4-proxy.service /usr/bin/moteld run --config "$M/proxy.Caddyfile" --adapter caddyfile
 	i=0
 	until curl -s -o /dev/null http://127.0.0.1:9100/ || [ "$i" -ge 100 ]; do
 		i=$((i + 1))

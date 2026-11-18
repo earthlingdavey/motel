@@ -157,7 +157,7 @@ echo "=== backup 5b: an ordinary production Caddyfile: variables with no default
 # values of the kind each place takes, and the plan is what it would be.
 sed -e 's#admin off#admin off\n\temail {$ACME_EMAIL}#' -e 's#^:8080 {#:{$METRICS_PORT} {\n\trespond metrics\n}\n\n{$SITE_DOMAIN} {#' /root/Caddyfile.base >"$CADDYFILE"
 grep -q '{$ACME_EMAIL}' "$CADDYFILE" && grep -q '^:{$METRICS_PORT} {' "$CADDYFILE" && grep -q '^{$SITE_DOMAIN} {' "$CADDYFILE" || fail "the scenario's Caddyfile does not hold the three variables"
-env -i /usr/bin/motel adapt --adapter caddyfile --config "$CADDYFILE" >/dev/null 2>&1 && fail "this Caddyfile adapts with an empty environment: the scenario proves nothing" || pass "with an empty environment this Caddyfile does not adapt"
+env -i /usr/bin/moteld adapt --adapter caddyfile --config "$CADDYFILE" >/dev/null 2>&1 && fail "this Caddyfile adapts with an empty environment: the scenario proves nothing" || pass "with an empty environment this Caddyfile does not adapt"
 run && pass "the run exits 0 all the same" || fail "the run failed: $(cat "$OUT"; journalctl --no-pager -o cat | grep 'motel-backup:' | tail -2)"
 expect_class blog ok "variables with no default"
 expect_class shop ok "variables with no default"

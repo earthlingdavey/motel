@@ -9,7 +9,7 @@ import (
 	"time"
 
 	// The `timeouts` directive, so the adapter here writes the handler
-	// as motel's binary (Caddy's standard modules) does: its keys
+	// as moteld's binary (Caddy's standard modules) does: its keys
 	// and the shape of each value are then the real adapter's to prove.
 	_ "github.com/caddyserver/caddy/v2/modules/caddyhttp/timeouts"
 )

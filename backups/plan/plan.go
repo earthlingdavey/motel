@@ -91,7 +91,7 @@ func Decode(raw []byte) (*Plan, error) {
 	return p, nil
 }
 
-// extractAll reads a Plan out of what `motel adapt` prints — the
+// extractAll reads a Plan out of what `moteld adapt` prints — the
 // config as written, in which an unset root is absent rather than
 // defaulted — not yet validated, and the apps that declare no backup,
 // sorted.

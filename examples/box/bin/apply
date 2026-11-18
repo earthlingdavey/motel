@@ -31,13 +31,13 @@
 #      recovered the same way: the id was chosen here.
 #
 #   MOTEL_TOKEN     a token the box block's deploy_trust accepts, naming
-#                      HEAD in a sha claim: motel deploy-token --claims
+#                      HEAD in a sha claim: moteld deploy-token --claims
 #                      sha=$(git rev-parse HEAD) --ttl 1h ... Not needed in
 #                      GitHub Actions: with `permissions: id-token: write` a
 #                      fresh one is minted for each request
 #   MOTEL_AUDIENCE  the audience the box block's deploy_trust expects
 #                      (default: motel)
-#   MOTEL           the motel command (default: motel); `motel
+#   MOTELD          the moteld command (default: moteld); `moteld
 #                      box webhook` names the address as the box reads the file
 #
 # In GitHub Actions the output is also dressed for the job page: each
@@ -47,13 +47,13 @@
 # others are still sent.
 set -eu
 cd "$(dirname "$0")/.."
-MOTEL=${MOTEL:-motel}
+MOTELD=${MOTELD:-moteld}
 audience=${MOTEL_AUDIENCE:-motel}
 actions=${GITHUB_ACTIONS:-}
 # A request's bound. A push's (post) is 600 s: before the box waits up
 # to 30 s for the first result, it checks the chain, bounded at 10
 # minutes, then runs up to three children on the file, each bounded at
-# 120 s: motel validate, motel adapt, and motel-backup validate
+# 120 s: moteld validate, moteld adapt, and motel-backup validate
 # when backups are installed (box/DESIGN-box.md, Caps). A legitimate
 # push takes seconds. A POST cut short is no answer, and the poll asks
 # for its result.
@@ -84,7 +84,7 @@ if [ -n "${GITHUB_SHA:-}" ] && [ "$GITHUB_SHA" != "$head" ]; then
 	exit 1
 fi
 if [ -z "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ] && [ -z "${MOTEL_TOKEN:-}" ]; then
-	echo "apply: set MOTEL_TOKEN (motel deploy-token --claims sha=$head ...), or run in GitHub Actions with id-token: write" >&2
+	echo "apply: set MOTEL_TOKEN (moteld deploy-token --claims sha=$head ...), or run in GitHub Actions with id-token: write" >&2
 	exit 1
 fi
 
@@ -238,11 +238,11 @@ refused401() {
 		printf '  %-18s%s\n' 'audience' "$audience" 'claim repository' "${GITHUB_REPOSITORY:-?}" 'claim ref' "${GITHUB_REF:-?}"
 	else
 		echo "  the key this token was minted with (deploy_trust local { public_key ... })"
-		echo "  the audience, subject or claim it pins, against what motel deploy-token was given"
-		echo "A box token must also name the commit: motel deploy-token --claims sha=$head."
+		echo "  the audience, subject or claim it pins, against what moteld deploy-token was given"
+		echo "A box token must also name the commit: moteld deploy-token --claims sha=$head."
 	fi
 	echo "Or the box could not consult the token's issuer (an outage there), or had fetched its keys in the"
-	echo "minute before the issuer changed them. On the box, journalctl -u motel ('webhook auth failed')"
+	echo "minute before the issuer changed them. On the box, journalctl -u moteld ('webhook auth failed')"
 	echo "names the check that refused it, and for those two, when a re-run goes through."
 }
 
@@ -394,7 +394,7 @@ poll() {
 		esac
 	done
 	if [ "$last" = 404 ] && [ "${1:-}" = resend ]; then
-		red "no result for push $id after 30 minutes, and no sign the box took it: journalctl -u motel -u motel-box-apply on the box"
+		red "no result for push $id after 30 minutes, and no sign the box took it: journalctl -u moteld -u motel-box-apply on the box"
 	else
 		red "no result for push $id after 30 minutes: journalctl -u motel-box-apply on the box"
 	fi
@@ -427,7 +427,7 @@ send() {
 	*) red "$path is not a file: a box's file is a regular file"; return 0 ;;
 	esac
 	git cat-file blob "$head:$path" >"$tmpd/Caddyfile" || { red "$path is not in HEAD"; return 0; }
-	url=$("$MOTEL" box webhook "$tmpd/Caddyfile" 2>"$tmpd/err") || { red "$path: $(cat "$tmpd/err")"; return 0; }
+	url=$("$MOTELD" box webhook "$tmpd/Caddyfile" 2>"$tmpd/err") || { red "$path: $(cat "$tmpd/err")"; return 0; }
 
 	req "$url"
 	case $code in
@@ -445,7 +445,7 @@ send() {
 	parents=
 	if [ "$base" != "$head" ]; then
 		if ! git cat-file -e "$base^{commit}" 2>/dev/null; then
-			red "the box runs $base, which this repository's history does not hold: if main was rewritten below it, motel box baseline $head, as root on the box, resets trust to $head, whose ancestors the box will then never examine"
+			red "the box runs $base, which this repository's history does not hold: if main was rewritten below it, moteld box baseline $head, as root on the box, resets trust to $head, whose ancestors the box will then never examine"
 			return 0
 		fi
 		if git merge-base --is-ancestor "$head" "$base"; then
@@ -458,7 +458,7 @@ send() {
 		# a trust reset on the box moves it on.
 		n=$(git rev-list --first-parent --count "$base..$head")
 		if [ "$n" -gt 500 ]; then
-			red "the chain from $base to $head is longer than 500 commits; run motel box baseline $head as root on the box"
+			red "the chain from $base to $head is longer than 500 commits; run moteld box baseline $head as root on the box"
 			return 0
 		fi
 		parents=$(git rev-list --first-parent "$base..$head" | tail -n +2)
@@ -483,15 +483,15 @@ send() {
 		# ending's, not the key's.
 		first=$(git cat-file blob "$head:$dir/secrets/recipients" 2>/dev/null | awk '{ sub(/\r$/, "") } !/^[[:space:]]*(#|$)/ { print; exit }')
 		if [ -z "$first" ]; then
-			red "$dir/secrets holds values but no recipients file names a key: make secret APP=… VAR=… BOX_KEY=\$(ssh root@$box motel box key) makes one; nothing was sent"
+			red "$dir/secrets holds values but no recipients file names a key: make secret APP=… VAR=… BOX_KEY=\$(ssh root@$box moteld box key) makes one; nothing was sent"
 			return 0
 		fi
 		if [ -z "$key" ]; then
-			red "the box names no key for secrets (no recipient in GET /): run motel box key as root on it; nothing was sent"
+			red "the box names no key for secrets (no recipient in GET /): run moteld box key as root on it; nothing was sent"
 			return 0
 		fi
 		if [ "$key" != "$first" ]; then
-			red "the box's key is $key, but the first recipient in $dir/secrets/recipients is $first: a rebuilt box has a new key. Confirm it with ssh root@$box motel box key, then make rekey BOX_KEY=$key, commit and push; nothing was sent"
+			red "the box's key is $key, but the first recipient in $dir/secrets/recipients is $first: a rebuilt box has a new key. Confirm it with ssh root@$box moteld box key, then make rekey BOX_KEY=$key, commit and push; nothing was sent"
 			return 0
 		fi
 	fi

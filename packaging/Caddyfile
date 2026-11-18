@@ -6,14 +6,14 @@
 #
 # A box whose config lives in a repository of its own (motel's
 # docs/first-deploy.md, step 3) never has this file edited by hand:
-# `motel init` replaces it, and signed pushes change it after that.
+# `moteld init` replaces it, and signed pushes change it after that.
 # Edit it here on a box without one, or, as root on the box, when a
 # push cannot reach it.
 #
 # Check before reloading: a file that fails to load leaves the old config
 # running, but it also stops the next restart or upgrade from starting.
-#   motel validate --config /etc/motel/Caddyfile
-#   systemctl reload motel
+#   moteld validate --config /etc/motel/Caddyfile
+#   systemctl reload moteld
 
 {
 	# Admin API on a unix socket instead of the default localhost:2019.
@@ -21,7 +21,7 @@
 	# deployed app could otherwise be steered at the TCP admin API and
 	# reconfigure the whole server. HTTP clients can't be steered at a
 	# unix socket, and /run/motel is absent from every app's sandbox.
-	# `systemctl reload motel` finds the socket via this config; keep
+	# `systemctl reload moteld` finds the socket via this config; keep
 	# the line if you edit this block.
 	admin unix//run/motel/admin.sock
 
@@ -43,7 +43,7 @@
 	# 	# Who may deploy (required). CI sends an OIDC token; the box
 	# 	# verifies it against the provider's public keys — no shared
 	# 	# secret on the server. For non-CI deploys use a local key:
-	# 	# `motel deploy-keygen`, then `deploy_trust local { public_key …; audience … }`.
+	# 	# `moteld deploy-keygen`, then `deploy_trust local { public_key …; audience … }`.
 	# 	deploy_trust github {
 	# 		audience motel
 	# 		claim repository your-org/myapp
@@ -73,7 +73,7 @@
 	#
 	# 		# There is no setting that turns the sandbox off or widens
 	# 		# it. On a host that cannot deliver it — a container, an
-	# 		# LXC VPS, a kernel without user namespaces — motel does
+	# 		# LXC VPS, a kernel without user namespaces — moteld does
 	# 		# NOT start, and says what is missing. That is deliberate:
 	# 		# the alternative is an app running with no isolation, which
 	# 		# on a shared uid means every other app's data and
@@ -102,7 +102,7 @@
 # ── Replace with your domain once DNS points here — motel then
 #    provisions TLS automatically. ──
 :80 {
-	respond "motel is running. To serve your apps: motel init from your box's repository, or edit /etc/motel/Caddyfile."
+	respond "moteld is running. To serve your apps: moteld init from your box's repository, or edit /etc/motel/Caddyfile."
 }
 
 # ── Example: the sites for the app above ──

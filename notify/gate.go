@@ -16,9 +16,9 @@ import (
 	"go.yaml.in/yaml/v3"
 )
 
-// What cmd/motel's gate says of a config's monitor block before Caddy's
+// What cmd/moteld's gate says of a config's monitor block before Caddy's
 // own command runs: what a load would say in the journal alone, said
-// also to whoever runs `motel validate` or `motel reload`.
+// also to whoever runs `moteld validate` or `moteld reload`.
 
 // unitRoot prefixes the paths of setup's units (tests).
 var unitRoot = "/"
@@ -37,17 +37,17 @@ func LoadWarnings(cmd string, monitor []byte) []string {
 	var out []string
 	if cmd != "run" {
 		if notifies && !a.setUp() {
-			out = append(out, "monitor: Alertmanager is not set up on this box: motel journals every event and delivers none until root runs motel monitor setup")
+			out = append(out, "monitor: Alertmanager is not set up on this box: motel journals every event and delivers none until root runs moteld monitor setup")
 		}
 		if a.Metrics != nil {
 			if missing(a.Metrics.stateDir()) {
-				out = append(out, "monitor: the metrics store is not set up on this box: nothing is pushed or evaluated until root runs motel monitor setup --metrics")
+				out = append(out, "monitor: the metrics store is not set up on this box: nothing is pushed or evaluated until root runs moteld monitor setup --metrics")
 			}
 		}
 	}
 	if notifies {
 		if stale := staleUnits(amUnits()); len(stale) > 0 {
-			out = append(out, "monitor: the units motel monitor setup wrote differ from this motel's ("+strings.Join(stale, ", ")+"): run motel monitor setup as root to put this version's in place")
+			out = append(out, "monitor: the units moteld monitor setup wrote differ from this moteld's ("+strings.Join(stale, ", ")+"): run moteld monitor setup as root to put this version's in place")
 		}
 	}
 	if a.Metrics != nil {
@@ -63,7 +63,7 @@ func LoadWarnings(cmd string, monitor []byte) []string {
 			if errors.As(err, &pe) {
 				err = pe.Err
 			}
-			out = append(out, "monitor: "+scrape+" could not be compared with this motel's ("+err.Error()+"): whether motel monitor setup --metrics is due is not known")
+			out = append(out, "monitor: "+scrape+" could not be compared with this moteld's ("+err.Error()+"): whether moteld monitor setup --metrics is due is not known")
 		case !same:
 			stale = append(stale, scrape)
 		}
@@ -77,13 +77,13 @@ func LoadWarnings(cmd string, monitor []byte) []string {
 		}
 		var what []string
 		if len(stale) > 0 {
-			what = append(what, "the files motel monitor setup --metrics wrote differ from this motel's ("+strings.Join(stale, ", ")+")")
+			what = append(what, "the files moteld monitor setup --metrics wrote differ from this moteld's ("+strings.Join(stale, ", ")+")")
 		}
 		if len(proxy) > 0 {
 			what = append(what, "the proxy an older setup wrote for Alertmanager ("+strings.Join(proxy, ", ")+") is still in place")
 		}
 		if len(what) > 0 {
-			msg := "monitor: " + strings.Join(what, ", and ") + ": run motel monitor setup --metrics as root"
+			msg := "monitor: " + strings.Join(what, ", and ") + ": run moteld monitor setup --metrics as root"
 			switch {
 			case len(proxy) == 0:
 				msg += " to put this version's in place"
@@ -114,11 +114,11 @@ func ReadsSecrets(monitor []byte) bool {
 	return !a.storeAlone()
 }
 
-// SendNothing is the gate's at `motel run` with a config that runs no
+// SendNothing is the gate's at `moteld run` with a config that runs no
 // notify (no monitor block, or a metrics line alone): such a config
 // starts no notify App, so nothing in it would take back the render a
 // config with channels left in the state directory, and Alertmanager,
-// still running it across motel's restart, would end what it holds at
+// still running it across moteld's restart, would end what it holds at
 // resolve_timeout with a recovery that did not happen on every channel
 // (the reload's case is engine.release's). It writes setup's config
 // that sends nothing into dir, setup's state directory, removes the URL
@@ -202,7 +202,7 @@ func sameYAML(path string, want []byte) (bool, error) {
 	}
 	if err := yaml.Unmarshal(want, &exp); err != nil {
 		// Tests parse the embedded file; a load warns, never panics.
-		return false, fmt.Errorf("this motel's own copy is not YAML: %w", err)
+		return false, fmt.Errorf("this moteld's own copy is not YAML: %w", err)
 	}
 	return reflect.DeepEqual(got, exp), nil
 }

@@ -1,12 +1,12 @@
 #!/bin/sh
-# motel package post-remove. dpkg runs it once the package's files
+# moteld package post-remove. dpkg runs it once the package's files
 # are gone: `postrm remove`, then `postrm purge` when the removal is a
 # purge, and on upgrades (`upgrade`, `failed-upgrade`) and their aborts
 # (`abort-install`, `abort-upgrade`, `disappear`), which do nothing
 # here: postinstall's `configure` reloads the manager.
 #
 # remove, and the purge that follows one: the manager drops the removed
-# unit files (motel.service, motel-box-apply.path and .service,
+# unit files (moteld.service, motel-box-apply.path and .service,
 # motel-backup's two services and two timers), and the path unit and
 # the backup timers are masked, as dh_installsystemd has it, so that
 # nothing of them comes back until an install unmasks and enables them

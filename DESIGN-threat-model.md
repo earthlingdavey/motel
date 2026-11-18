@@ -13,7 +13,7 @@ isolation closes or bounds each one.
 for the sandbox's behaviour specification; this document places that
 work in the wider attack surface rather than restating it.
 
-Scope: a single Debian 13 box running `motel` (a Caddy distribution)
+Scope: a single Debian 13 box running `moteld` (a Caddy distribution)
 as the `motel` system user, supervising deployed apps as transient
 systemd units under the motel user's own service manager via
 liveswap's `systemdRunner` (liveswap/runner_systemd.go). Backups add
@@ -68,7 +68,7 @@ scope by product design.
 6. **The box's configuration at rest** — `/etc/motel/Caddyfile`:
    which repository may deploy each app, each app's command and
    flags, which hosts are served, and who may change the file itself.
-   Root-owned, 0644; written only by root — `motel init`, the `box`
+   Root-owned, 0644; written only by root — `moteld init`, the `box`
    applier, the console ([box/DESIGN-box.md](box/DESIGN-box.md)), and
    the package's postinstall, which puts the starter there only where
    nothing stands or while the file is byte-identical to the starter
@@ -171,11 +171,11 @@ Properties that matter to the model:
   box; the exit status and the probe's status code are motel's
   observations and stay. Reading
   the journal is a grant: journald keeps a system user's output in the
-  system journal, so the packaged unit puts motel's process in
+  system journal, so the packaged unit puts moteld's process in
   `systemd-journal` (`SupplementaryGroups=`, the process and not the
   account, so the apps under the user manager keep the account's
   groups and see no journal in their sandbox anyway). What that
-  widens is what a compromised motel reads — every unit's lines —
+  widens is what a compromised moteld reads — every unit's lines —
   which the shipped units keep free of secrets (no `--environ`, the
   smoke test asserts it). Every body passes
   four layers before it is written. A streamed deploy (`Accept:
@@ -263,7 +263,7 @@ Properties that matter to the model:
   a secret the app fetched at runtime and printed in a low-entropy
   form, an inline `env` value (not a secret by policy: the Caddyfile
   is in a repo), or a value the still-running instance was launched
-  with before a motel restart if the file has changed since. Nor that
+  with before a moteld restart if the file has changed since. Nor that
   a deploy source cannot confirm a guess of a value: a deploy's
   refusals echo its version and URL through the app's filter, and a
   version it deploys is named in the status; it can read the app's
@@ -524,10 +524,10 @@ entire liveswap/webhook block ships commented out
 (packaging/Caddyfile) — a fresh install has no deploy endpoint. Admin
 is off TCP, on `unix//run/motel/admin.sock` (the `admin` directive,
 same file), `RuntimeDirectoryMode=0750` owned by the service user
-(packaging/motel.service) — so admin access is gated on *being the
+(packaging/moteld.service) — so admin access is gated on *being the
 `motel` user*. Every deployed app is that user, but a sandboxed app
 cannot reach `/run/motel` at all (the path is not in its view), so
-the gate holds against apps and only motel itself can connect. The
+the gate holds against apps and only moteld itself can connect. The
 commented-out `deploy.example.com` example is a public TLS vhost with
 `liveswap_webhook` behind `deploy_trust`; nothing rate-limits requests
 in front of it, and the handler's own per-address auth-failure throttle
@@ -560,7 +560,7 @@ rule" and "The shipped mechanism". The network namespace is shared, by
 design. The unit environment is the user manager's defaults
 (`INVOCATION_ID`, …; `XDG_RUNTIME_DIR` and `DBUS_SESSION_BUS_ADDRESS`
 are unset because `/run/user` is not in the view) plus an allowlisted
-slice of motel's (`PATH`, `LANG`, `TZ`, `LC_*` — `envAllowlist`,
+slice of moteld's (`PATH`, `LANG`, `TZ`, `LC_*` — `envAllowlist`,
 liveswap/app.go; `HOME` is never inherited, `buildEnv` sets it to the
 app's shared dir) — closing *direct*
 inheritance of ACME tokens and any other supervisor secret
@@ -592,7 +592,7 @@ is closed by the unit's limit — enforced by the kernel under a file
   the other way, app to supervisor; this direction follows from the
   same `ptrace_may_access` rule, since the app's namespace is owned by
   the motel uid, which holds `CAP_SYS_PTRACE` in it. Not measured.
-- **motel's own memory**, which keeps every value it has read — for
+- **moteld's own memory**, which keeps every value it has read — for
   a launch, or for the response filter, which reads the file without
   one (`managedApp.secrets` and `redactorFor`, liveswap/app.go) — for
   as long as the app stays configured, behind the non-dumpable floor.
@@ -635,7 +635,7 @@ authoritative for its behaviour; this section places it. Status:
 released in v0.3.0, and the secrets it carries (below) in v0.3.1.
 On a box set up from the
 template (`examples/box`; docs/first-deploy.md, step 3) root writes
-the file once, with `motel init`, and the config repository's
+the file once, with `moteld init`, and the config repository's
 signed pushes write it after that. A box with no `box` block has no
 config webhook, and its file is root's to edit.
 
@@ -653,7 +653,7 @@ same entry point liveswap's handler uses — same 401, same budgets,
 same `refused` line — so an unauthenticated caller learns nothing it
 could not learn from a deploy webhook. It parses the bundle from
 memory under fixed names and caps, binds the bundle's commit to the
-token's `sha` claim, pre-checks the signature, runs `motel
+token's `sha` claim, pre-checks the signature, runs `moteld
 validate` (and `motel-backup validate` where installed) as bounded
 children with their output redacted, and drops the bundle as one
 regular file for root. It answers by the first result it reads within
@@ -680,7 +680,7 @@ in under the next signed one); proves the file is the committed file
 (commit, tree and blob hashes); requires first-parent descent from the
 recorded baseline; refuses a file that drops the `box` block, every
 signer, the `box_webhook` site or the key that signed it; and only
-then writes, reloads through `systemctl reload motel`, and rolls
+then writes, reloads through `systemctl reload moteld`, and rolls
 back — reloading again — on failure. It never runs Caddy's validate or
 adapter: both execute module code on the input and expand `{$VAR}`
 from root's environment.
@@ -890,7 +890,7 @@ box at least once every 90.
 - **A signer of the box repository** chooses what is backed up. A
   `backup` block reaches `/etc/motel/Caddyfile` by a signed push, as
   the rest of the file does ("Config webhook"): the handler, as the
-  motel uid, runs `motel-backup validate` on it after `motel
+  motel uid, runs `motel-backup validate` on it after `moteld
   validate` (box/validate.go), and the applier proves it and runs
   neither. On a box with no box repository, root edits the file by
   hand. Either way the run leans on no earlier check: the plan unit
@@ -956,7 +956,7 @@ box at least once every 90.
   residuals). What is in the repository stays: the box cannot remove
   it, and the look sees the snapshots stop. A declaration stays inside
   its app's `shared/`, whoever signed it: the run refuses an absolute,
-  unclean or escaping path, as `motel validate` does
+  unclean or escaping path, as `moteld validate` does
   (liveswap/README.md, "Declaring backups"). The credential does not
   ride the channel: `setup` writes it at a terminal into
   `/etc/motel-backup`, outside the channel's `/etc/motel`
@@ -1199,7 +1199,7 @@ to the rate per person (2 a second, 60 at once).
 
 ## The shared-UID rule
 
-Everything liveswap touches runs as one UID: motel, the motel
+Everything liveswap touches runs as one UID: moteld, the motel
 user's `systemd --user` manager, and every app. The kernel gates
 `/proc/<pid>/{environ,root,cwd,mem,fd,maps}` on
 `ptrace_may_access(PTRACE_MODE_READ)`, which any same-UID caller passes
@@ -1249,7 +1249,7 @@ the mechanism:
    namespace every app's problem.
 
 2. **A non-dumpable supervisor is the floor.**
-   `prctl(PR_SET_DUMPABLE, 0)` makes motel's `/proc` entries require
+   `prctl(PR_SET_DUMPABLE, 0)` makes moteld's `/proc` entries require
    `CAP_SYS_PTRACE`, which apps never hold — the unit's
    `CapabilityBoundingSet=` is empty and `NoNewPrivileges=` stops an
    `execve` from acquiring any — with or without user namespaces.
@@ -1258,9 +1258,9 @@ the mechanism:
    Caddy and every package depending on them; only
    `syscall`-closure-only leaves that sort earlier can precede it, and
    those cannot touch `/proc` (measured with `GODEBUG=inittrace=1`:
-   the 17th of 460 initializers on motel, two such leaves ahead of
+   the 17th of 460 initializers on moteld, two such leaves ahead of
    it; `TestInitRunsBeforeOS` pins `syscall < harden < os` in any
-   binary that runs it) — so any binary importing liveswap (motel or
+   binary that runs it) — so any binary importing liveswap (moteld or
    an xcaddy build) is non-dumpable before `main`; a failure is fatal.
    Pinned by a unit test and by the real-systemd e2e suite (scenario
    11). It closes the `/proc/<supervisor>/environ` and
@@ -1289,9 +1289,9 @@ the mechanism:
    transient unit, bounded at 30 s, so any process holding that uid can
    interfere with it. A failed probe fails the whole server start, so
    this is an availability attack on the supervisor, not a way to
-   weaken an app: interference cannot produce a running motel with
+   weaken an app: interference cannot produce a running moteld with
    a lesser sandbox. A probe made to fail, or to time out twice, keeps
-   motel down until an operator starts it — a refused start exits 1,
+   moteld down until an operator starts it — a refused start exits 1,
    which the unit never retries; a start stretched past the unit's
    `TimeoutStartSec` is restarted by systemd, which repeats the
    exposure rather than ending it. Either way the bound is the same
@@ -1389,7 +1389,7 @@ beside its `ExecStartEx`: the manager spawns one process per unit
   ships no host policy. Open by default; the modules a netlink socket
   or a `socketpair()` loads are in Residual risks (#315).
 - Lifecycle: `Restart=no` (the liveswap watchdog is the sole
-  restarter of apps; motel.service itself is restarted by systemd
+  restarter of apps; moteld.service itself is restarted by systemd
   after a crash, never after a refused start), `KillMode=control-group`,
   `TimeoutStopSec=` (the app's `grace`), no `ExecStopPost=` (the
   instance's socket goes with its run dir when motel retires it,
@@ -1413,7 +1413,7 @@ own seccomp set is in force (`Seccomp: 2`, and a user namespace
 cached against the manager connection's generation
 (`userManagerClient.cachedSandboxCapability`): later activations on
 the same connection read the cache, and a redial (a manager restart,
-or motel's own) starts a new generation that the next `Start`
+or moteld's own) starts a new generation that the next `Start`
 measures afresh. A unit launched between a redial and that next
 `Start` — a watchdog relaunch after the manager came back — is not
 preceded by a probe; if the host can no longer deliver the namespaces
@@ -1460,7 +1460,7 @@ only public material:
   otherwise do.
 - **Local key (no OIDC: a laptop, or a runner without it):** the box
   trusts a public key (`deploy_trust local`); the operator mints tokens with the private
-  half (`motel deploy-token`). The signing key never touches the
+  half (`moteld deploy-token`). The signing key never touches the
   box. The block's `audience` names the box a token is for; without
   one — warned about at load — a token minted for any box that trusts
   the same key is accepted.
@@ -1491,7 +1491,7 @@ the model:
   one its issuer set; for a local one, at most its block's
   `max_token_ttl` after its `iat` (24h unless the block sets one). The
   box refuses a local token minted to live longer, or without an `iat`,
-  and `motel deploy-token` warns above an hour.
+  and `moteld deploy-token` warns above an hour.
 
 What it does **not** do: ACME tokens and TLS keys still live on the box,
 so the sandbox is still required. Auth design shrinks the prize; it
@@ -1517,7 +1517,7 @@ does not isolate the runtime.
   applier marks a push `applied` on it. A compromised supervisor can
   say "loaded" and keep serving the old configuration until a restart;
   the file on disk is root's regardless, and `systemctl restart
-  motel` is the remedy. Reading the admin API from root to check
+  moteld` is the remedy. Reading the admin API from root to check
   would be the same trust in another form, and was rejected.
 - **Root's never-cut-the-branch guard is presence; reachability is the
   handler's.** A pushed Caddyfile that keeps a `box` block, a signer,
@@ -1530,9 +1530,9 @@ does not isolate the runtime.
   limit — the `servers` option's or a `timeouts` directive's — past
   what a push can meet, a floor or the rate's ceiling (box/DESIGN-box.md, step
   6) — a check a
-  supervisor RCE skips with the rest of the handler, and one `motel
+  supervisor RCE skips with the rest of the handler, and one `moteld
   init` does not run. Neither catches a mistyped `claim`, a host
-  without a certificate, or a key no laptop holds, any of which strands the box. The remedy is root on the box: `motel init`
+  without a certificate, or a key no laptop holds, any of which strands the box. The remedy is root on the box: `moteld init`
   again, or a hand edit the next signed push overwrites.
 - **A signer's software-held key is the box.** Nothing on the box
   distinguishes a signature made by the operator from one made by
@@ -1678,11 +1678,11 @@ does not isolate the runtime.
   when an app that wants no network exists (it would also cut the app
   off from any database): #57.
 - **Resource exhaustion** — a runaway app stalls its *siblings*: under
-  a fork bomb a second app's requests ran to 10 s while motel, in
+  a fork bomb a second app's requests ran to 10 s while moteld, in
   `system.slice`, kept a 5–9 ms median (the root splits CPU evenly
   between the two slices), a leak is taken by the global OOM killer
   (the app first: user-manager units run at `oom_score_adj` 200 and
-  motel.service at 0 — systemd's defaults, which motel does not
+  moteld.service at 0 — systemd's defaults, which motel does not
   set and no test holds) and forks
   are bounded by the user manager's default `TasksMax=` (measured;
   DESIGN-liveswap.md "Resource caps"). Per-app `memory_max`,
@@ -1781,7 +1781,7 @@ Dated one-liners; the full text of each is in git.
   status field removed; the runner refuses a spec without a sandbox;
   reattach verifies the live unit's namespaces. Closed by construction:
   the bind-source TOCTOU race (no attacker-controlled app runs outside
-  a sandbox; motel and the user manager still share the uid, and
+  a sandbox; moteld and the user manager still share the uid, and
   are the trust domain), the app-writable recorded tier (no record), and
   "what a bare app leaves behind in `shared/`" (nothing runs bare). The
   pre-#40 "reachable today" attack-path table described bare apps and
@@ -1809,7 +1809,7 @@ Dated one-liners; the full text of each is in git.
   leaves the model when the applier ships, the secrets grant when
   secrets ride the same channel.
 - 2026-10-11 — `box` built: the handler (step 6 reachability
-  included), the root applier, `motel init` and the template that
+  included), the root applier, `moteld init` and the template that
   applies by signed push (box/DESIGN-box.md, History). `bin/push` and the
   `MOTEL_CONFIG` grant are gone from the template; the tutorial sets
   up the config repository on day 0, an administrator is optional and

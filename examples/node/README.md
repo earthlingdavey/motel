@@ -52,8 +52,8 @@ apt install libatomic1
 [repo](https://github.com/smallhoursorg/motel/tree/main/examples/box#change-the-config)
 that is `<host>/Caddyfile`, committed signed and pushed to `main`; the
 box template ships this app's block already. On a box without one, it
-is `/etc/motel/Caddyfile`, as root: edit, `motel validate
---config` it, `systemctl reload motel`. Either way the app's part is the
+is `/etc/motel/Caddyfile`, as root: edit, `moteld validate
+--config` it, `systemctl reload moteld`. Either way the app's part is the
 same, and a box repo's file keeps its `box` block and the deploy
 host's `box_webhook` line as they are. Without those two, the file is:
 
@@ -121,7 +121,7 @@ the job asks for (`motel`, unless the job's `env:` sets
 it too) — or that `MOTEL_URL`
 names an app the box does not know, which answers the same 401. The
 step prints the values this run minted its token with; the box's
-journal (`journalctl -u motel`) names the app asked for and the
+journal (`journalctl -u moteld`) names the app asked for and the
 check that refused it, within the box's budget for failed
 authentications: ten a minute from one address and a hundred a
 minute in all; past either, a failure is not written until the
@@ -190,7 +190,7 @@ Roll forward the same way you deploy: push a commit.
 Given a local tarball instead of a URL, `scripts/deploy.sh` pushes it
 in the request body, so a laptop build needs no release — as long as
 the laptop is the box's architecture and OS (a Linux arm64 build, for
-an arm64 box). The token comes from `motel deploy-token`, and
+an arm64 box). The token comes from `moteld deploy-token`, and
 motel's release binaries are Linux only, so this is a path for a
 Linux machine that is not the box (the signing key must stay off the
 box).
@@ -201,7 +201,7 @@ box's deploy host, `deploy.example.com` here (see
 ```sh
 npm run bundle
 MOTEL_URL=https://deploy.example.com/example \
-MOTEL_TOKEN=$(motel deploy-token --key deploy.key --audience deploy.example.com) \
+MOTEL_TOKEN=$(moteld deploy-token --key deploy.key --audience deploy.example.com) \
 npm run deploy
 ```
 

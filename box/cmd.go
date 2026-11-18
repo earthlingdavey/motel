@@ -17,7 +17,7 @@ import (
 	"github.com/smallhoursorg/motel/box/proof"
 )
 
-// `motel box …` is one command with subcommands: webhook, describe,
+// `moteld box …` is one command with subcommands: webhook, describe,
 // apply, baseline and key.
 func init() {
 	caddycmd.RegisterCommand(caddycmd.Command{
@@ -37,7 +37,7 @@ site carrying box_webhook. It refuses the file's contents for every
 reason the box would, so the laptop, CI and the box cannot disagree about which
 address a file names. The file may be a pipe:
 
-    motel box webhook <(git show HEAD:deploy.example.com/Caddyfile)`,
+    moteld box webhook <(git show HEAD:deploy.example.com/Caddyfile)`,
 				Args: cobra.ExactArgs(1),
 				RunE: func(c *cobra.Command, args []string) error {
 					url, err := webhookURL(args[0])
@@ -51,7 +51,7 @@ address a file names. The file may be a pipe:
 			cmd.AddCommand(&cobra.Command{
 				Use:   "describe <Caddyfile>",
 				Short: "Print a Caddyfile's box_webhook host, apps, signers, people and grants, as the box reads them",
-				Long: `Reads the Caddyfile as "motel box webhook" does and prints one line
+				Long: `Reads the Caddyfile as "moteld box webhook" does and prints one line
 per fact, for a script to read: the host, then the apps, then the
 signers, each in file order:
 
@@ -84,7 +84,7 @@ warning for each cap past 75%.
 
 It refuses the file for every reason the box's reading of it would,
 the secrets for every reason their layout would, and an app whose
-env_file does not read its secrets; what only motel validate refuses
+env_file does not read its secrets; what only moteld validate refuses
 (a module's own errors) it does not check. The box template's make check prints its line for each box from this, and
 compares the signer lists of a repository's boxes. The file may be a
 pipe, as for webhook (a pipe has no secrets beside it).`,
@@ -98,7 +98,7 @@ pipe, as for webhook (a pipe has no secrets beside it).`,
 				Short: "Apply the config pushes waiting on this box (root; motel-box-apply.service runs it)",
 				Long: `Settles anything a crash left, takes every bundle box_webhook dropped
 into /var/lib/motel-box/in, proves each against the Caddyfile this box
-runs and installs it with systemctl reload motel, rolling back on a
+runs and installs it with systemctl reload moteld, rolling back on a
 failed reload; then writes each push's result for the workflow's poll
 and sweeps old results. One shot, as root: motel-box-apply.path starts
 it. It exits non-zero only when the previous Caddyfile could not be put
@@ -119,7 +119,7 @@ digest recorded at the last apply stay as they were, so an edit made
 on the box since then is still reported as one. It is not the fix
 for an unsigned commit above the commit the box runs: that is a rebase
 and a force-push, with nothing to do on the box. As root, after
-motel init; it waits while the applier holds its lock.`,
+moteld init; it waits while the applier holds its lock.`,
 				Args: cobra.ExactArgs(1),
 				RunE: func(c *cobra.Command, args []string) error {
 					return runBaseline(c.Context(), os.Geteuid(), newApplier(consoleLog("box.baseline")), args[0], c.OutOrStdout())
@@ -135,7 +135,7 @@ runs this on a running system, and init after its install), kept in
 /etc/motel/age/identity, root's alone; it is never replaced. On
 standard output the key alone, so that from the laptop
 
-    make secret APP=example VAR=DATABASE_URL BOX_KEY=$(ssh root@box.example.com motel box key)
+    make secret APP=example VAR=DATABASE_URL BOX_KEY=$(ssh root@box.example.com moteld box key)
 
 passes it; on standard error what it did. An identity that does not
 read is refused and left as it is: move it aside, run this again, then
@@ -149,7 +149,7 @@ make rekey BOX_KEY=<the new key> in the repository.`,
 	})
 }
 
-// `motel init` stands alone: the console's one step in a box's life
+// `moteld init` stands alone: the console's one step in a box's life
 // on the normal path, beside run and reload rather than under box.
 func init() {
 	caddycmd.RegisterCommand(caddycmd.Command{
@@ -163,14 +163,14 @@ $(...) is expanded (the box has no git), copying the commit's files
 rather than the working tree's:
 
     git archive HEAD deploy.example.com | ssh root@box.example.com tar -xf -
-    ssh root@box.example.com "cd deploy.example.com && motel init $(git rev-parse HEAD)"
+    ssh root@box.example.com "cd deploy.example.com && moteld init $(git rev-parse HEAD)"
 
 It reads ./Caddyfile the way the box reads every push, records its
 path in the repository (<host>/Caddyfile, from its box_webhook host),
-installs it as /etc/motel/Caddyfile and reloads motel. The reload
+installs it as /etc/motel/Caddyfile and reloads moteld. The reload
 is the check: a file motel will not load is rolled back, the old
-configuration serving throughout, and init exits non-zero. motel
-must be running (on a new box: systemctl enable --now motel); if it
+configuration serving throughout, and init exits non-zero. moteld
+must be running (on a new box: systemctl enable --now moteld); if it
 is not, init refuses and says how to start it and run init again. From then on the box applies only signed commits that descend
 from <sha>. Running it again re-seeds the box: a new host (its
 directory renamed with it), or the way back from a Caddyfile that
@@ -210,10 +210,10 @@ func printf(w io.Writer, format string, args ...any) error {
 // shortSHA is a commit id as the console's lines print it.
 func shortSHA(sha string) string { return sha[:min(len(sha), 7)] }
 
-// runApply is `motel box apply`: as root, one run.
+// runApply is `moteld box apply`: as root, one run.
 func runApply(ctx context.Context, euid int, a *Applier) error {
 	if euid != 0 {
-		return errors.New("motel box apply runs as root: it is motel-box-apply.service's command")
+		return errors.New("moteld box apply runs as root: it is motel-box-apply.service's command")
 	}
 	if ctx == nil {
 		ctx = context.Background()
@@ -221,7 +221,7 @@ func runApply(ctx context.Context, euid int, a *Applier) error {
 	return a.Run(ctx)
 }
 
-// webhookURL is `motel box webhook`: the walk on the file at path,
+// webhookURL is `moteld box webhook`: the walk on the file at path,
 // read whole at most the Caddyfile cap. The path is the operator's own
 // argument, so unlike the box's state files it may be a pipe — `<(git
 // show HEAD:deploy.example.com/Caddyfile)`, /dev/stdin — and is read
@@ -234,7 +234,7 @@ func webhookURL(path string) (string, error) {
 	return "https://" + shape.Host + "/", nil
 }
 
-// describe is `motel box describe`: the walk's reading of the file at
+// describe is `moteld box describe`: the walk's reading of the file at
 // path, one line per fact, then the secrets beside it in the working
 // tree (describe_secrets.go, whose header gives those lines). Every
 // value is held to a grammar by the walk (a lowercase hostname,

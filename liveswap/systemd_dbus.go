@@ -19,7 +19,7 @@ import (
 )
 
 // userManagerClient talks to the systemd service manager of the user
-// motel runs as, over that manager's private socket
+// moteld runs as, over that manager's private socket
 // ($XDG_RUNTIME_DIR/systemd/private; /run/user/<uid> by default) — the
 // same path `systemctl --user` takes when no session bus is around. No
 // session bus, no polkit: the socket is owned by our uid and answers
@@ -54,8 +54,8 @@ type userManagerClient struct {
 	// chased: the verdict is a start-time input (App.Start either
 	// comes up or refuses on it), so a measurement taken at the start
 	// that resolved it is the honest one to hold. A host whose
-	// namespace policy changes underneath a running motel is
-	// re-measured on the next dial — a manager restart, or motel's
+	// namespace policy changes underneath a running moteld is
+	// re-measured on the next dial — a manager restart, or moteld's
 	// own.
 	//
 	// Its own mutex, not mu: a measurement takes a unit start plus its
@@ -88,7 +88,7 @@ var userManager = &userManagerClient{}
 // reports the same thing whether the namespaces are genuinely
 // unavailable or the probe unit merely timed out under boot load, and
 // caching that would refuse the server for the life of a connection
-// that nothing will drop — a motel that will not come up until the
+// that nothing will drop — a moteld that will not come up until the
 // manager restarts. So a failed verdict is reported and re-measured
 // next time, which is what this code did before the cache existed.
 // The cost of re-measuring falls only on hosts that cannot sandbox at
@@ -174,7 +174,7 @@ func (c *userManagerClient) get() (*sddbus.Conn, error) {
 	}
 	// systemd gives services soft NOFILE 1024 by default however high
 	// the hard limit is; the exec runner's children inherited
-	// motel.service's soft=hard. Units are created with both set to
+	// moteld.service's soft=hard. Units are created with both set to
 	// the manager's hard ceiling (which the package raises via a
 	// user@<uid>.service.d drop-in), so a setrlimit can never exceed
 	// what the manager permits. Read while the handshake deadlines are
@@ -457,7 +457,7 @@ type execCommandEx struct {
 // caught: a sleep in /usr/bin that is not coreutils' is not Debian.)
 // no-env-expand still holds: the argv reaches the shell byte for
 // byte and "$@" hands it on. The script is a wire format: appArgv
-// recognises units of this motel by it, so a change here makes
+// recognises units of this moteld by it, so a change here makes
 // every running unit read back as the shell's argv until relaunched.
 const (
 	siblingShell  = "/bin/sh"
@@ -473,7 +473,7 @@ func withSibling(argv []string) []string {
 
 // appArgv is the app's argv from the one the manager reports, the
 // sibling shell stripped: what status, state.json and a reattach see.
-// An argv not in that shape (a unit of an older motel) is returned
+// An argv not in that shape (a unit of an older moteld) is returned
 // as it is.
 func appArgv(argv []string) []string {
 	if len(argv) >= 4 && argv[0] == siblingShell && argv[1] == "-c" && argv[2] == siblingScript && argv[3] == siblingArgv0 {

@@ -56,8 +56,8 @@ sha256sum -c "$f.sha256sum" &&
 that is `<host>/Caddyfile`, committed signed and pushed to `main`; the
 box template ships the Node app's block, and this app's `command`,
 `pre_start` and `env` lines replace those. On a box without one, it is
-`/etc/motel/Caddyfile`, as root: edit, `motel validate --config`
-it, `systemctl reload motel`. Either way the app's part is the
+`/etc/motel/Caddyfile`, as root: edit, `moteld validate --config`
+it, `systemctl reload moteld`. Either way the app's part is the
 same, and a box repo's file keeps its `box` block and the deploy
 host's `box_webhook` line as they are. Without those two, the file is:
 
@@ -123,7 +123,7 @@ beside `MOTEL_URL`, where the rollback step gets it too) — or that
 `MOTEL_URL` names an app
 the box does not know, which answers the same 401. The step prints
 the values this run minted its token with; the box's journal
-(`journalctl -u motel`) names the app asked for and the check that
+(`journalctl -u moteld`) names the app asked for and the check that
 refused it, within the box's budget for failed authentications: ten a
 minute from one address and a hundred a minute in all; past either,
 a failure is not written until the minute passes, and the answer
@@ -192,7 +192,7 @@ above). Roll forward the same way you deploy: push a commit.
 
 Given a local tarball instead of a URL, `scripts/deploy.sh` pushes it
 in the request body, so a laptop build needs no release. The token
-comes from `motel deploy-token`, and motel's release binaries
+comes from `moteld deploy-token`, and motel's release binaries
 are Linux only, so this is a path for a Linux machine that is not the
 box (the signing key must stay off the box). With a `deploy_trust local` block
 on the box whose `audience` is the box's deploy host,
@@ -202,7 +202,7 @@ on the box whose `audience` is the box's deploy host,
 ```sh
 deno task bundle
 MOTEL_URL=https://deploy.example.com/example \
-MOTEL_TOKEN=$(motel deploy-token --key deploy.key --audience deploy.example.com) \
+MOTEL_TOKEN=$(moteld deploy-token --key deploy.key --audience deploy.example.com) \
 deno task deploy
 ```
 

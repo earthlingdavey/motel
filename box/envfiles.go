@@ -73,7 +73,7 @@ const envNeither = "-"
 // The applier's texts for secrets, from DESIGN-box.md's Message
 // catalogue; <app> is filled in by fill.
 const (
-	msgNoKey       = "this box has no key for secrets (/etc/motel/age/identity): motel box key, as root, makes one; then make rekey BOX_KEY=<the key it prints> in the repository, and push; nothing changed"
+	msgNoKey       = "this box has no key for secrets (/etc/motel/age/identity): moteld box key, as root, makes one; then make rekey BOX_KEY=<the key it prints> in the repository, and push; nothing changed"
 	msgSecretsDir  = "/etc/motel/secrets is not the setgid root:motel directory tmpfiles.d makes: systemd-tmpfiles --create motel-box.conf, as root, puts it back; nothing changed" //nolint:gosec // a message naming a directory, not a credential
 	msgEnvTooLarge = "/etc/motel/secrets/<app>.env is larger than 66560 bytes, which no push writes: move it aside, as root, and push again; nothing changed"
 	// A directory, a FIFO or a socket at the name: no rename replaces it.

@@ -37,7 +37,7 @@ var forbidden = []string{"User", "Group", "DynamicUser", "Restart", "RemainAfter
 // that start it — a bundle in in/, and what a killed run left, in work/
 // and as the record — whatever the design's table comes to say.
 const (
-	applierCommand = "/usr/bin/motel box apply"
+	applierCommand = "/usr/bin/moteld box apply"
 	exchangeTree   = "/var/lib/motel-box"
 )
 

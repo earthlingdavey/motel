@@ -11,7 +11,7 @@ http://127.0.0.1:9100 {
 	}
 }
 C
-systemd-run --quiet --unit=ro-proxy /usr/bin/motel run --config /root/ro.Caddyfile --adapter caddyfile
+systemd-run --quiet --unit=ro-proxy /usr/bin/moteld run --config /root/ro.Caddyfile --adapter caddyfile
 sleep 2; systemctl is-active ro-proxy
 export RESTIC_REPOSITORY=s3:http://127.0.0.1:9100/box1 AWS_ACCESS_KEY_ID=BOXKEYID0000 AWS_SECRET_ACCESS_KEY=box-secret-not-a-secret RESTIC_PASSWORD=$(cat /root/repo.pw) RESTIC_CACHE_DIR=/root/suite-cache
 t() { s=$(date +%s.%N); timeout "$1" "${@:2}" 2>&1 | head -3; echo "[exit ${PIPESTATUS[0]}, $(awk "BEGIN{printf \"%.1f\", $(date +%s.%N)-$s}")s] ${*:2}"; }

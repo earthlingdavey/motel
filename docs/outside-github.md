@@ -7,7 +7,7 @@ takes more than that: a token from any other CI's OpenID Connect
 a key, from a runner that has no OIDC at all, or from a laptop. This
 page walks through those: choosing the trust, a key end to end, an
 app's deploy and the box's own config from another runner, and
-minting a token where there is no Linux `motel` to mint it with.
+minting a token where there is no Linux `moteld` to mint it with.
 
 Everything here is the box's `deploy_trust` block, whose reference is
 in [liveswap/README.md](../liveswap/README.md#deploy-authentication-deploy_trust).
@@ -24,7 +24,7 @@ and the box accepts it if a `deploy_trust` block for that app (or the
 | `github` | GitHub Actions, per run | nothing | `audience`, and `claim repository` with `claim ref` |
 | `gitlab` | GitLab CI, per job (`id_tokens:`); `issuer https://gitlab.example.com` for a self-hosted instance, `https://gitlab.com` otherwise | nothing | `audience`, and `claim project_path` with `claim ref_path` |
 | `oidc` | any other OIDC issuer: `issuer <url>` | nothing | `audience`, `issuer`, and `subject` (the issuer's own form of `sub`) |
-| `local` | you, with `motel deploy-token` and a private key | the public half of your key, a file on the box | `public_key`, and `audience` (the box's name) |
+| `local` | you, with `moteld deploy-token` and a private key | the public half of your key, a file on the box | `public_key`, and `audience` (the box's name) |
 
 What each costs:
 
@@ -57,11 +57,11 @@ not, and for a laptop.
 
 ## 2. A key, end to end
 
-On a Linux machine with `motel` on it, or in a container
-([section 5](#5-minting-without-a-linux-motel)):
+On a Linux machine with `moteld` on it, or in a container
+([section 5](#5-minting-without-a-linux-moteld)):
 
 ```sh
-motel deploy-keygen --out example.key
+moteld deploy-keygen --out example.key
 ```
 
 ```
@@ -102,7 +102,7 @@ variable of type *File*, say), or stays in a directory of your own on
 the laptop. Nowhere else: not in the app's repository, not on the
 box.
 
-**The check job.** The box repository's `make check` runs `motel
+**The check job.** The box repository's `make check` runs `moteld
 validate` on each box's file as it stands in the checkout, and
 validating loads every `public_key` from the path the file names. On
 the runner that path is empty, and the check fails naming it. The
@@ -119,7 +119,7 @@ sudo install -D -m 644 deploy.example.com/example.pub /etc/motel/example.pub
 **Minting.** One token per run, as late as the step that uses it:
 
 ```sh
-MOTEL_TOKEN=$(motel deploy-token --key example.key --audience deploy.example.com)
+MOTEL_TOKEN=$(moteld deploy-token --key example.key --audience deploy.example.com)
 ```
 
 The token lives for `--ttl` from now, five minutes unless you say
@@ -246,13 +246,13 @@ With a **key** on a runner without OIDC, the job mints its own token
 and the rest is the same:
 
 ```sh
-MOTEL_TOKEN=$(motel deploy-token --key "$DEPLOY_KEY" --audience deploy.example.com) \
+MOTEL_TOKEN=$(moteld deploy-token --key "$DEPLOY_KEY" --audience deploy.example.com) \
 MOTEL_URL=https://deploy.example.com/example scripts/deploy.sh app.tar.gz
 ```
 
 where `DEPLOY_KEY` is the path the secret store wrote the private key
-to, and `motel` is on the runner's `PATH`
-([section 5](#5-minting-without-a-linux-motel) has how it gets there).
+to, and `moteld` is on the runner's `PATH`
+([section 5](#5-minting-without-a-linux-moteld) has how it gets there).
 One token serves the one request, so the default five minutes is
 enough: the box checks it when the request arrives, however long the
 deploy then takes.
@@ -271,10 +271,10 @@ With an issuer's token there is a third cause, and a key's token never
 meets it: the box could not consult the token's issuer (an outage
 there), or had fetched its keys in the minute before the issuer
 changed them, and no token waits on an issuer, so the first OIDC token
-after a motel restart or reload can reach a box that holds no keys
+after a moteld restart or reload can reach a box that holds no keys
 yet. The box's journal says which, and a re-run goes through. The
 box's own answer says no more, by design; its journal names the check
-that refused it (`journalctl -u motel`, the `webhook auth failed`
+that refused it (`journalctl -u moteld`, the `webhook auth failed`
 lines).
 
 ## 4. The box's config from another runner
@@ -288,14 +288,14 @@ Actions job does can run it:
   bundles them from the checkout; a shallow clone is refused with a
   message saying so. On GitLab, that is the project's *Git shallow
   clone* setting, or `GIT_DEPTH` set to `0` on the job.
-- **`motel` on `PATH`.** `bin/apply` runs `motel box webhook` to
-  read each box's address from its file. `bin/install-motel
+- **`moteld` on `PATH`.** `bin/apply` runs `moteld box webhook` to
+  read each box's address from its file. `bin/install-moteld
   default` installs the latest release's binary on a Linux runner with
   `curl`, `sha256sum`, `tar` and `sudo` on it; a GitLab job on the
   Docker executor has no `sudo`, so `apt-get install -y sudo` first,
   or take the release tarball yourself as
-  [section 5](#5-minting-without-a-linux-motel) does and put the
-  binary on `PATH`. `MOTEL=/path/to/motel` names it when it is
+  [section 5](#5-minting-without-a-linux-moteld) does and put the
+  binary on `PATH`. `MOTELD=/path/to/moteld` names it when it is
   not on `PATH`.
 - **`MOTEL_TOKEN`**, a token the `box` block's `deploy_trust`
   accepts, carrying a `sha` claim that names the commit being sent.
@@ -308,7 +308,7 @@ With a key, the `box` block trusts it like an app's would, and the
 job mints:
 
 ```sh
-MOTEL_TOKEN=$(motel deploy-token --key "$BOX_KEY" --audience motel --ttl 1h --claims sha=$(git rev-parse HEAD)) bin/apply
+MOTEL_TOKEN=$(moteld deploy-token --key "$BOX_KEY" --audience motel --ttl 1h --claims sha=$(git rev-parse HEAD)) bin/apply
 ```
 
 The audience here is not one box's name, as an app's is in
@@ -337,7 +337,7 @@ box {
 ```
 
 and a job with `id_tokens: { MOTEL_TOKEN: { aud: motel } }`, a
-full clone, `motel` installed, and `bin/apply` as its script, is
+full clone, `moteld` installed, and `bin/apply` as its script, is
 the Actions job on GitLab. One more line it needs: GitLab sets the
 token's expiry to the job's `timeout:`, or to five minutes when the
 job sets none ([GitLab's ID token documentation](https://docs.gitlab.com/ci/secrets/id_token_authentication/)),
@@ -350,13 +350,13 @@ commit no listed key signed is refused, and so is a merge button that
 rewrites one. The runner sends config; the signatures decide whether
 it lands.
 
-## 5. Minting without a Linux `motel`
+## 5. Minting without a Linux `moteld`
 
-motel is built for Linux on amd64 and arm64, and nothing else:
-`motel deploy-token` does not run on a Mac. Two ways round it.
+moteld is built for Linux on amd64 and arm64, and nothing else:
+`moteld deploy-token` does not run on a Mac. Two ways round it.
 
 **A Linux container.** Each release's bare binary is on its releases
-page as `motel_<version>_linux_<arch>.tar.gz`, beside a
+page as `moteld_<version>_linux_<arch>.tar.gz`, beside a
 `checksums.txt`, and runs in any Debian 13 container. To mint, with
 the private key in the current directory, which the container sees
 read-only at `/w` and writes nothing into:
@@ -364,22 +364,22 @@ read-only at `/w` and writes nothing into:
 ```sh
 docker run --rm -v "$PWD:/w:ro" -w /tmp debian:13-slim sh -c '
   apt-get -qq update && apt-get -qq install -y curl ca-certificates >/dev/null &&
-  v=0.3.1 && arch=$(dpkg --print-architecture) &&
-  curl -fsSLO https://github.com/smallhoursorg/motel/releases/download/v$v/motel_${v}_linux_$arch.tar.gz &&
+  v=X.Y.Z && arch=$(dpkg --print-architecture) &&
+  curl -fsSLO https://github.com/smallhoursorg/motel/releases/download/v$v/moteld_${v}_linux_$arch.tar.gz &&
   curl -fsSLO https://github.com/smallhoursorg/motel/releases/download/v$v/checksums.txt &&
   sha256sum -c --ignore-missing checksums.txt >/dev/null &&
-  tar -xzf motel_${v}_linux_$arch.tar.gz motel &&
-  ./motel deploy-token --key /w/example.key --audience deploy.example.com'
+  tar -xzf moteld_${v}_linux_$arch.tar.gz moteld &&
+  ./moteld deploy-token --key /w/example.key --audience deploy.example.com'
 ```
 
 Set `v` to the release the box runs, from its releases page. The same
 command makes a key: mount the directory writable, `-v "$PWD:/w"`, and
-end with `./motel deploy-keygen --out /w/example.key` in place of
+end with `./moteld deploy-keygen --out /w/example.key` in place of
 the last line; the pair lands in the current directory, the private
 half mode 0600. Each run downloads the release again; a token a day is
 fine that way, a token an hour wants the binary kept in an image of
 your own. The same tarball is how a runner that is not Debian gets its
-`motel`: unpack it and put the binary on `PATH`.
+`moteld`: unpack it and put the binary on `PATH`.
 
 **Any JWT library.** A `local` token is a plain JSON Web Token, so
 anything that signs one can mint it, in any language on any machine:

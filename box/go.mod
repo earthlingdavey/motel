@@ -1,8 +1,8 @@
 // The box subsystem: config by signed push, applied on the box
 // (box/DESIGN-box.md). Its own module, as liveswap and penaltybox are,
 // so the proof core and the reading of the signed file are built,
-// tested and fuzzed on their own; cmd/motel imports it for the
-// `box` option, `box_webhook` and `motel box`.
+// tested and fuzzed on their own; cmd/moteld imports it for the
+// `box` option, `box_webhook` and `moteld box`.
 module github.com/smallhoursorg/motel/box
 
 // The Go toolchain is pinned by the golang image in docker-compose.yml —
@@ -20,7 +20,7 @@ require (
 	github.com/smallhoursorg/motel/liveswap v0.0.0-00010101000000-000000000000
 	github.com/spf13/cobra v1.10.2
 	go.uber.org/zap v1.28.0
-	golang.org/x/crypto v0.58.0
+	golang.org/x/crypto v0.59.0
 )
 
 require (
@@ -156,13 +156,13 @@ require (
 	golang.org/x/mod v0.42.0 // indirect
 	golang.org/x/net v0.62.0 // indirect
 	golang.org/x/oauth2 v0.37.0 // indirect
-	golang.org/x/sync v0.24.0 // indirect
+	golang.org/x/sync v0.25.0 // indirect
 	golang.org/x/sys v0.50.0 // indirect
-	golang.org/x/telemetry v0.0.0-20260924152758-ed294f943157 // indirect
-	golang.org/x/term v0.47.0 // indirect
-	golang.org/x/text v0.43.0 // indirect
+	golang.org/x/telemetry v0.0.0-20261009151841-97e8ea77aa2a // indirect
+	golang.org/x/term v0.48.0 // indirect
+	golang.org/x/text v0.44.0 // indirect
 	golang.org/x/time v0.16.0 // indirect
-	golang.org/x/tools v0.51.0 // indirect
+	golang.org/x/tools v0.52.0 // indirect
 	golang.org/x/vuln v1.8.0 // indirect
 	google.golang.org/api v0.310.0 // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20261012220534-4341edf3f941 // indirect

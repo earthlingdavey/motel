@@ -22,7 +22,7 @@ package harden
 import "syscall"
 
 // init runs Process before main and before every heavier initializer.
-// It has to be this early: app units outlive motel restarts, so an
+// It has to be this early: app units outlive moteld restarts, so an
 // app of the same UID is already running when a new supervisor process
 // starts, and any later hook (App.Start, Provision) would leave the
 // whole Go initialization window open — and is never reached at all
@@ -41,7 +41,7 @@ import "syscall"
 // time, and the window is a read race alone). Only the kernel closes
 // the window, and only from the app's side: app units in their own
 // PID namespace (PrivatePIDs= on the units, #35) cannot see the
-// supervisor at all — a namespace on motel.service would not help,
+// supervisor at all — a namespace on moteld.service would not help,
 // since a parent PID namespace sees its children's processes — or an
 // exec under AT_SECURE. DESIGN-threat-model.md records it as a
 // residual.
@@ -71,7 +71,7 @@ func init() {
 // own goroutine trace on a fatal error) and the per-process files
 // under /proc/<pid> become root-owned; the process's own reads of
 // /proc/self are unaffected. execve resets the flag, so a child
-// motel (`motel start`) sets it again through its own init.
+// motel (`moteld start`) sets it again through its own init.
 func Process() error {
 	if _, _, errno := syscall.RawSyscall(syscall.SYS_PRCTL, syscall.PR_SET_DUMPABLE, 0, 0); errno != 0 {
 		return errno

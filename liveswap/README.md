@@ -83,7 +83,7 @@ most container hosts will not give you.
 ```caddyfile
 {
 	# Keep the admin API off TCP: every app can reach localhost. This
-	# is the motel package's path (its unit creates /run/motel and
+	# is the moteld package's path (its unit creates /run/motel and
 	# `systemctl reload` finds the socket here); a self-managed unit
 	# needs RuntimeDirectory=motel, or another dir its user owns —
 	# never one under the liveswap root or the sandbox's base view
@@ -211,7 +211,7 @@ behind (below, "worker trees never outlive it"), so `env` and
 passed explicitly via `env` or `env_file`. Apps get the user manager's
 resource limits; each unit sets its open-files limit (soft and hard)
 to the manager's ceiling, which the package raises to match
-`motel.service` (1048576) via a `user@<uid>.service.d` drop-in —
+`moteld.service` (1048576) via a `user@<uid>.service.d` drop-in —
 effective from the manager's next start: an upgrade installs the
 drop-in but deliberately does not restart a running manager (that
 would stop every app), so the ceiling changes at the next boot or
@@ -301,7 +301,7 @@ resolved at config load.
 | `root` | `/var/lib/liveswap` | Releases, shared data, state per app. Plain characters: a space, a colon, a backslash, a quote or a control character in the path is refused, since a systemd unit file cannot carry one in a bind mount |
 | `deploy_trust <preset> { … }` | — (required) | Who may deploy; global default or per app (see [Deploy authentication](#deploy-authentication-deploy_trust)) |
 | `allow_insecure_http` | off | Permit plain-http artifact URLs |
-| `allow_tcp_admin` | off | Test rigs only. Every app shares the box's network namespace, so an admin API on TCP (Caddy's default, `localhost:2019`) is every app's to reconfigure the server with; `motel validate` and `reload` refuse a config that runs apps with one, and `run` serves it saying so; so is an abstract socket (`unix/@name`, the network namespace's), or a unix socket under the liveswap root or the sandbox's base view, which an app's view holds, or at a relative path, which Caddy's working directory places where the gate cannot see; and a config given as stdin or a pipe, which the gate cannot read before Caddy reads it once, is refused unread. The starter keeps the API on `admin unix//run/motel/admin.sock`. This says the TCP listener is meant — a rig whose runner drives `/load` over the network — and the refusal stands down |
+| `allow_tcp_admin` | off | Test rigs only. Every app shares the box's network namespace, so an admin API on TCP (Caddy's default, `localhost:2019`) is every app's to reconfigure the server with; `moteld validate` and `reload` refuse a config that runs apps with one, and `run` serves it saying so; so is an abstract socket (`unix/@name`, the network namespace's), or a unix socket under the liveswap root or the sandbox's base view, which an app's view holds, or at a relative path, which Caddy's working directory places where the gate cannot see; and a config given as stdin or a pipe, which the gate cannot read before Caddy reads it once, is refused unread. The starter keeps the API on `admin unix//run/motel/admin.sock`. This says the TCP listener is meant — a rig whose runner drives `/load` over the network — and the refusal stands down |
 | `artifact_allowlist` | — (required) | Where artifacts may be fetched from. Entries are a host (`artifacts.corp`) or a host + path prefix (`github.com/your-org/`). An entry admits only the scheme's default port unless it declares one (`minio.corp:9000`) — no wildcards; the port picks which service on the host answers, so it belongs to the operator, not the payload. Pin the path on multi-tenant hosts — a bare `github.com` admits anyone's artifacts. Query strings are refused unless the entry declares the parameter names it vouches for: `gitlab.com/api/v4/projects/42/?job` allows `?job=build`, `bucket.s3.corp/releases/?X-Amz-*` allows the presigned-URL family (a trailing `*` declares a prefix; values are never re-encoded — signed queries pass through byte-identical — but every query byte must be a legal RFC 3986 query character, so percent-encode anything exotic). Closed by default because on some servers a query *name* can override path routing entirely (WordPress-style `?p=2`), which would defeat the path pin. A refused URL fails the deploy with a 422 naming the offending parameter. First hop only, by design (GitHub asset URLs redirect to S3); every hop must still be https unless `allow_insecure_http`. Apps may override |
 | `command` | — (required) | argv to start the app, CWD = release dir |
 | `pre_start` | — | Run-to-completion hook; failure aborts deploy |
@@ -359,7 +359,7 @@ app blog {
 ```
 
 The block is a declaration: motel checks it when the config loads
-— so `motel validate` refuses a bad one — and does nothing else
+— so `moteld validate` refuses a bad one — and does nothing else
 with it. Nothing in the server reads, copies or schedules anything
 because of it.
 
@@ -394,14 +394,14 @@ Where a backup is declared matters as much as what. A backup run
 Caddyfile's own directory and nothing else, as an account that owns
 nothing there: an app whose `app` line, `backup` block or `root` it
 cannot read there is not in its plan, and is not backed up. So once
-any app declares a backup, `motel validate` and `motel reload`
+any app declares a backup, `moteld validate` and `moteld reload`
 refuse a Caddyfile in which one of those was read from a file outside
 its directory — an import, or the file a snippet is defined in — or
 from a file others may not read, or under a directory others may not
 enter — a link is followed to where it leads. A refused reload leaves
-the running config serving. `motel run` is never refused for it — a
+the running config serving. `moteld run` is never refused for it — a
 start that refused would take every site down — and logs the same
-error instead. `motel validate` of any file but
+error instead. `moteld validate` of any file but
 `/etc/motel/Caddyfile` does not ask that file for its own mode or
 the directories on its way: a candidate is not the file a run reads
 (the box applier's step 6 validates a copy it staged `0600` in a
@@ -410,15 +410,15 @@ What a candidate imports is asked, and so is every directory from the
 candidate's own down to it.
 
 motel-backup reads one Caddyfile, `/etc/motel/Caddyfile`. Where
-it is installed (`/usr/bin/motel-backup`), `motel reload` of any
+it is installed (`/usr/bin/motel-backup`), `moteld reload` of any
 other Caddyfile that declares a backup is refused as well: the server
 would run what no backup run reads, and an app only in it would never
 be backed up. The refusal names `motel-backup validate <file>` for a
 look at what a backup run would make of it, and `/etc/motel/Caddyfile`
 as where to put it (a signed push does). Where motel-backup is not
-installed, it is a warning. `motel validate` of a candidate file —
+installed, it is a warning. `moteld validate` of a candidate file —
 step 6 validates a staged copy before the applier puts it in place — is
-not asked; `motel run` logs it and serves.
+not asked; `moteld run` logs it and serves.
 
 The check adapts the Caddyfile in the environment the command was
 started in, with each `--envfile` loaded first as Caddy's own
@@ -453,7 +453,7 @@ app's unit has the same CPU weight; `cpu_quota` on each app is what
 bounds that. Caddy itself is not starved: `system.slice` and
 `user.slice` split CPU 50/50 at the root. A leak without `memory_max`
 is killed by the kernel's global OOM killer, the app first — a
-user-manager unit runs at `oom_score_adj` 200 and motel.service at
+user-manager unit runs at `oom_score_adj` 200 and moteld.service at
 0, which is systemd's default for user managers and their units, not
 a setting of motel's — after the box has spent its free memory on
 it.
@@ -663,25 +663,25 @@ fixing the host does take effect. Restarting the user manager
 re-measures either way.
 
 **The sandbox is an availability dependency.** A host that stops being
-able to deliver it will not start motel until the host is fixed,
-and systemd does not retry a start motel refused — fix the host,
-then `systemctl start motel`; there is no setting that runs apps
+able to deliver it will not start moteld until the host is fixed,
+and systemd does not retry a start moteld refused — fix the host,
+then `systemctl start moteld`; there is no setting that runs apps
 without one. That is deliberate —
 the alternative is a supervisor that silently runs every app with no
 isolation because the kernel changed its mind — so prove a box before
-you restart into it. `motel validate` does not measure the host (it
+you restart into it. `moteld validate` does not measure the host (it
 never starts an app); a reload does, once: the verdict is held for the
 life of motel's connection to the user manager, so the first start
 or reload after motel dials the manager is the measurement and a
 later reload reuses it. On a fresh box that first reload is the proof
 you want, and a reload that cannot activate leaves the running config
 serving where a restart does not. A host changed underneath a running
-motel — a sysctl, an LSM policy load — is not re-measured until the
+moteld — a sysctl, an LSM policy load — is not re-measured until the
 next restart, which is where it can refuse; there is deliberately no
 uncached preflight, because the cache is what keeps a throwaway unit
 off every reload.
 Every launch is sandboxed the same way — a deploy, a crash relaunch,
-boot recovery, a reattach after `systemctl restart motel` — so
+boot recovery, a reattach after `systemctl restart moteld` — so
 there is nothing per instance to roll out and nothing to watch in
 status: an app is running, or motel did not start.
 
@@ -716,7 +716,7 @@ by that user and nobody else: the box writes its files 0640
 then edit it — and keep it in place: a missing or unreadable file
 fails that launch.
 A world-readable or world-writable file is warned about — at config
-load (`motel validate` shows it when run as an account that can
+load (`moteld validate` shows it when run as an account that can
 reach the file, and says so when it cannot) and again at each launch,
 from the file the launch actually read — never refused: the launch
 still runs, and a mode changed between loads is not what takes an app
@@ -931,7 +931,7 @@ Presets:
   provider (CircleCI, Buildkite, k8s, …).
 - `deploy_trust local { public_key <path>; audience <a> }` — a key you
   control, for a laptop or a runner with no OIDC. Generate it with
-  `motel deploy-keygen`, mint tokens with `motel deploy-token`.
+  `moteld deploy-keygen`, mint tokens with `moteld deploy-token`.
 
 [docs/outside-github.md](../docs/outside-github.md) walks through the
 `gitlab`, `oidc` and `local` presets end to end: a key's two halves,
@@ -950,7 +950,7 @@ nothing on the box revokes one short of removing its key. So a
 `local` block accepts a token only while its lifetime, `exp - iat`, is
 at most `max_token_ttl <duration>` (default `24h`): a token without
 `iat`, or minted to live longer, is refused, and the journal's
-`refused` names the directive. `motel deploy-token` mints for
+`refused` names the directive. `moteld deploy-token` mints for
 `--ttl` (default `5m`) and warns above an hour. Mint one per deploy;
 a job that cannot raises the bound on its block.
 
@@ -962,7 +962,7 @@ source with only an audience would authorize the whole issuer. Config
 load fails without one.
 
 Two shapes load but are wider than they read, and config load warns
-about each (`motel validate` shows it). A `github` or `gitlab`
+about each (`moteld validate` shows it). A `github` or `gitlab`
 block that pins an identity but no branch accepts a token minted on
 **any** branch the identity admits — one repository's, or every
 repository's under a pinned owner or namespace — a workflow edited on
@@ -1037,7 +1037,7 @@ above needs `MOTEL_AUDIENCE: blog` in the job's `env:`, beside
 `MOTEL_URL`, so the rollback step gets it too, or the box answers
 401.
 
-Each dev runs `motel deploy-keygen` once and hands you the `.pub`
+Each dev runs `moteld deploy-keygen` once and hands you the `.pub`
 (public — safe to share); you add a block and reload. Use OIDC in CI
 wherever the runner has it: a `local` key there stores a long-lived
 private key in CI secrets — the thing OIDC exists to avoid. A runner
@@ -1060,7 +1060,7 @@ local:/etc/motel/alice.pub sub=alice
 
 That is your audit trail. For a `local` block the key path says whose
 key it was; `sub` is whatever the key's holder minted the token with
-(`motel deploy-token --subject`), unless the block pins `subject
+(`moteld deploy-token --subject`), unless the block pins `subject
 <name>`, which makes it a name the box checked.
 
 A refused token is recorded too — in the journal only. The response
@@ -1085,7 +1085,7 @@ holds one copy of each issuer's discovery and keys for every source
 that trusts it — every app's, the global ones, the box's — per
 `allow_insecure_http` setting (the box always fetches over https, so
 with that option set on liveswap an issuer is held twice), and no
-token waits on fetching them. When motel starts or reloads it runs
+token waits on fetching them. When moteld starts or reloads it runs
 each issuer's discovery and fetches its keys again in the background;
 on a reload the keys it already holds stay in use meanwhile, so a
 reload refuses no token it would have accepted before, unless it adds
@@ -1108,7 +1108,7 @@ too.) So the first deploy after the issuer rotates its key is
 refused, and its retry a few seconds later goes through — unless the
 keys were fetched in the minute before, when the retry is refused too,
 with `… fetched too soon for; a token from <time> on fetches them
-again, as does systemctl reload motel now` in `refused`; after an
+again, as does systemctl reload moteld now` in `refused`; after an
 outage,
 the first token past the minute is refused with the outage's error and
 the next goes through. The templates' scripts (`scripts/deploy.sh`,
@@ -1121,7 +1121,7 @@ box does hold costs it no request to the issuer, which is also why an
 issuer that replaces a key but keeps its kid is not picked up: tokens
 under the new key are refused, with `signature does not match the key
 held for kid "<kid>": the token is another issuer's, or, if the issuer
-replaced that key, systemctl reload motel` in `refused`, until a
+replaced that key, systemctl reload moteld` in `refused`, until a
 fetch for another kid or that
 reload fetches the issuer's keys again. Each
 entry's reason
@@ -1213,7 +1213,7 @@ time is its record's: the latest deploy or rollback of it. One whose
 latest deploy failed (a rollback to it that failed) comes after every
 one whose latest succeeded: it never served from that deploy, and
 takes no place from a version that did. A release with no record —
-deployed by a motel older than records, or its record could not
+deployed by a moteld older than records, or its record could not
 be written — sorts after every recorded one, ordered among those by
 its directory's modification time (which the app running from it can
 change), and `ordered_by_mtime` names it: it is the first release GC
@@ -1230,7 +1230,7 @@ existing on-disk release, so a version you can roll back to can't be
 silently replaced — re-deploying an existing version with other bytes
 is a `422`. Use a new version, or roll back to relaunch an existing
 one. (A deploy that *fails* before cutover is cleaned up, so that
-version stays retriable — one a motel restart cuts short too, at
+version stays retriable — one a moteld restart cuts short too, at
 the next start.) The running version is the one exception,
 relaunched rather than refused when the artifact is the same — see
 [Relaunching the running version](#relaunching-the-running-version).
@@ -1247,7 +1247,7 @@ The response is synchronous:
 | 409 | A deploy is already running for this app (retry) |
 | 413 | Pushed upload exceeded `max_artifact_size`, or a JSON body exceeded 64 KiB |
 | 422 | Bad request — missing/invalid version, the running version asked for again without a matching digest (see [Relaunching the running version](#relaunching-the-running-version)), **version already exists** (versions are immutable — deploy a new version or roll back to relaunch it), a rollback target no longer on disk, a pre-flight refusal (the command or `pre_start` does not resolve inside the sandbox view, or is an executable built for another machine — the body names the box's architecture and the `runs-on` to build on — or a 32-bit one, which names the architecture to build for), or (URL path) an artifact url refused by `artifact_allowlist` (host, path, port, or an undeclared query parameter; the body names exactly what tripped and how the entry would declare it) |
-| 503 with `Retry-After` | motel has just started, or a reload has just added this app, and it is not loaded yet (`motel is starting and has not loaded this app yet; retry after 1 s`): nothing was deployed and nothing failed. The token is good; send the request again after that many seconds, as the templates' `deploy.sh` does once |
+| 503 with `Retry-After` | moteld has just started, or a reload has just added this app, and it is not loaded yet (`motel is starting and has not loaded this app yet; retry after 1 s`): nothing was deployed and nothing failed. The token is good; send the request again after that many seconds, as the templates' `deploy.sh` does once |
 | 5xx | Deploy failed — **the old version, if there was one, is still serving**; body says why. An artifact over `max_artifact_entries` or the decompressed byte cap fails here, before anything is written |
 
 Because the response is synchronous through the whole pipeline, the
@@ -1270,15 +1270,15 @@ sooner than its `deadline`, stop its unit yourself; it is named
 `runuser -u motel -- env XDG_RUNTIME_DIR=/run/user/$(id -u motel) systemctl --user stop 'motel-blog.*.prestart.service'`. The deploy
 then fails as a failed `pre_start`.
 
-A motel stop or restart (a crash, `systemctl restart motel`, an
+A moteld stop or restart (a crash, `systemctl restart moteld`, an
 upgrade) does not stop a running `pre_start` either: the manager runs
-it on, bounded by `deadline` on its unit, and the motel that comes
+it on, bounded by `deadline` on its unit, and the moteld that comes
 back leaves it to finish. Until it has, that app takes no deploy (the
 refusal names the migration) and no relaunch; the running version
-serves on. The deploy itself ends with the motel that ran it (its
+serves on. The deploy itself ends with the moteld that ran it (its
 client sees the connection drop): the next start, or the next deploy,
 removes the release it extracted and records it failed — `the deploy
-was cut short: motel stopped or restarted during it` — so the same
+was cut short: moteld stopped or restarted during it` — so the same
 version can be deployed again. Re-run the job.
 
 **A failed deploy says why, from the app's side.** The 5xx body's
@@ -1311,7 +1311,7 @@ launch happened, `detail`:
   `journalctl` reads the tail; journald keeps a system user's output
   in the system journal, so the packaged unit gives motel's own
   process the `systemd-journal` group
-  (`SupplementaryGroups=` in `motel.service` — the process, not
+  (`SupplementaryGroups=` in `moteld.service` — the process, not
   the account, so the apps do not get it). A raw-binary install
   without that grant gets `log_tail_error` instead of a tail.
 
@@ -1410,7 +1410,7 @@ same artifact" is decided by digest, with nothing fetched: a URL
 deploy's `sha256` pin, or the digest of a push's upload, must equal
 the `sha256` in the version's deploy record. A request without a
 digest, a version whose record has none (an unpinned pull, or a push
-made by a motel older than this one, before pushes were hashed), or
+made by a moteld older than this one, before pushes were hashed), or
 a different digest is a `422` saying so and naming the way in — a
 rollback to the running version needs no digest, since it is the same
 release by definition. A URL deploy's `url` still has to pass the
@@ -1450,7 +1450,7 @@ every recorded version's outcome in `deploys`, newest first:
 the deploy was pinned to, and the times. `sha256` is what the
 deployer asserted and the download was checked against, or the digest
 of the bytes a push uploaded; absent for an unpinned pull (and for a
-push made by a motel older than this one). A rollback copies the
+push made by a moteld older than this one). A rollback copies the
 pin from the record it replaces: a version's release cannot be
 replaced while it is on disk, and its record is normally written
 with it. Not always — a version whose release GC pruned can be
@@ -1751,19 +1751,19 @@ its socket (see [Sandbox](#sandbox)).
   to the running instance; it applies at the next launch (a deploy, a
   rollback, a relaunch after a crash, a sustained health failure, or a reboot), which is why status
   reports the `command` the instance is actually running — and
-  neither do **motel restarts and upgrades**:
+  neither do **moteld restarts and upgrades**:
   on start, liveswap reattaches to the unit recorded in `state.json`
   and serves it without relaunching it (what visitors see while
-  motel itself restarts: [Upgrading](../docs/upgrading.md));
+  moteld itself restarts: [Upgrading](../docs/upgrading.md));
   only if that unit is gone (reboot, or it died meanwhile) is the
-  current version relaunched. Stopping motel
-  therefore leaves apps running until the next start, and a motel
+  current version relaunched. Stopping moteld
+  therefore leaves apps running until the next start, and a moteld
   that crashes is started again by systemd a second later and
   reattaches the same way (a start it refuses is not retried); removing
   the package stops them. Removing an app (or the whole `liveswap` block)
   via a **reload** stops its units, once any deploy of it already in
   flight has finished (the reload waits for it); if you instead edit the file and
-  *restart* motel with the whole block gone, nothing is left to
+  *restart* moteld with the whole block gone, nothing is left to
   judge the old units and they keep running — decommission them
   explicitly, as root:
   `runuser -u motel -- env XDG_RUNTIME_DIR=/run/user/$(id -u motel) systemctl --user stop 'motel-*'`. Units are created with `Restart=no` — the
@@ -1808,7 +1808,7 @@ Docker):
 ```sh
 make test              # unit tests, all modules (race + coverage)
 make test-integration  # real Caddy + real systemd units via caddytest (privileged systemd container)
-make e2e               # both module suites against the motel binary
+make e2e               # both module suites against the moteld binary
 make lint vet tidy
 ```
 

@@ -12,7 +12,7 @@ import (
 	"github.com/smallhoursorg/motel/liveswap/backupdecl"
 )
 
-// fromAdapted is what the plan step makes of `motel adapt`'s output:
+// fromAdapted is what the plan step makes of `moteld adapt`'s output:
 // the plan, validated.
 func fromAdapted(raw []byte) (*Plan, error) {
 	p, _, err := extractAll(raw)
@@ -41,7 +41,7 @@ func TestFromAdapted(t *testing.T) {
 	}
 }
 
-// Nothing is trusted because `motel validate` would have refused
+// Nothing is trusted because `moteld validate` would have refused
 // it: the file may never have been validated.
 func TestFromAdaptedRefuses(t *testing.T) {
 	for name, tc := range map[string]struct{ raw, want string }{
@@ -146,7 +146,7 @@ func TestEnvNamesReadsEveryFileBesideTheCaddyfile(t *testing.T) {
 	}
 }
 
-// fakeMotel stands in for `motel adapt`, failing where and how
+// fakeMoteld stands in for `moteld adapt`, failing where and how
 // the real one does [measured]: a variable with no default, unset or
 // empty, is a parse error ({$ACME_EMAIL}, {$ROOT_NO_DEFAULT}, {$MAGIC});
 // a port ({$METRICS_PORT}, {$ADMIN_PORT}, {$PORT:8080}) has to be a
@@ -169,9 +169,9 @@ func TestEnvNamesReadsEveryFileBesideTheCaddyfile(t *testing.T) {
 // carry; MAGIC is refused in words that are neither a directive's nor
 // an import's. It fails if anything of the caller's environment reaches
 // it.
-func fakeMotel(t *testing.T) {
+func fakeMoteld(t *testing.T) {
 	t.Helper()
-	script := filepath.Join(t.TempDir(), "motel")
+	script := filepath.Join(t.TempDir(), "moteld")
 	write(t, script, `#!/bin/sh
 [ -n "$CALLER_SECRET" ] && { echo "the caller's environment reached the adapter" >&2; exit 1; }
 for last; do :; done
@@ -308,13 +308,13 @@ grep -q "^app shop" "$text" && json="$json,\"cart\":{\"backup\":null}"
 grep -q '^# no app$' "$text" && json=""
 printf '{"apps":{"http":{"domain":"%s","headers":"%s"},"liveswap":{"root":"%s","apps":{%s}}}}' "${DOMAIN:-example.com}" "${headers# }" "$root" "${json#,}"
 `)
-	old := motel
-	motel = script
-	t.Cleanup(func() { motel = old })
+	old := moteld
+	moteld = script
+	t.Cleanup(func() { moteld = old })
 }
 
 func TestMakeRefusesAPlanThatDependsOnTheEnvironment(t *testing.T) {
-	fakeMotel(t)
+	fakeMoteld(t)
 	t.Setenv("CALLER_SECRET", "must not reach the adapter")
 	t.Setenv("LIVESWAP_ROOT", "/the/callers/own") // nor may this decide anything
 	for name, tc := range map[string]struct {

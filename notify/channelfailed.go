@@ -63,10 +63,10 @@ func sampleKey(s failedSample) string { return s.integration + "/" + s.receiver 
 // 0 at a config load since the last read, so that all of a count is
 // new. At the first read since this process started, a load after the
 // start says so too, and a failure before that read is told: the reload
-// motel's start asks for (reloaded, which needs no clock), or a stamp
+// moteld's start asks for (reloaded, which needs no clock), or a stamp
 // after the start (setup's start of Alertmanager, its socket's at
 // motel's first post). A load from before the start leaves the first
-// read a baseline, since an earlier motel may have told of what it
+// read a baseline, since an earlier moteld may have told of what it
 // counts.
 func (w *failWatch) loadSince(m amMetrics) bool {
 	if w.prev == nil {
@@ -217,9 +217,9 @@ func (e *engine) scrapeFailed(ctx context.Context, read func(context.Context) ([
 // receivers since, motel stops posting Watchdog; the alert ends within
 // heartbeatLife (its receiver sends no resolved), and the check off the
 // box reports the box down through its own channels. The next delivery
-// through a suspect's receivers (`motel monitor test` makes one) ends
+// through a suspect's receivers (`moteld monitor test` makes one) ends
 // the hold. It is in memory, as the counter's baseline is: a restart
-// of motel ends it.
+// of moteld ends it.
 
 // heartbeatHoldAfter is how long a failure told to no channel stands
 // before the heartbeat is held: a failed notification is not logged,
@@ -284,7 +284,7 @@ func (e *engine) untoldFor(key, receiver string, sus []string, m amMetrics, now 
 // heartbeatHoldAfter without one holds the heartbeat. After a config
 // load (load: loadSince's answer) Alertmanager counts from 0, so any
 // delivery counted is since it: the documented mend, a reload, then
-// `motel monitor test`. A receiver with no count from an earlier read
+// `moteld monitor test`. A receiver with no count from an earlier read
 // (a reload renamed it) is otherwise counted from this one, as is a
 // count lower than the last. With mu held.
 func (e *engine) watchUntold(m amMetrics, now time.Time, load bool) {
@@ -314,7 +314,7 @@ func (e *engine) watchUntold(m amMetrics, now time.Time, load bool) {
 			u.held = true
 			e.logger.Warn("monitor: heartbeat held: a failed delivery no channel was told of; the heartbeat's check off the box will report this box down",
 				zap.Strings("suspects", u.suspects), zap.Time("failed_at", u.since),
-				zap.String("resumes", "at the next delivery through the channel: mend it, then motel monitor test "+u.suspects[0]))
+				zap.String("resumes", "at the next delivery through the channel: mend it, then moteld monitor test "+u.suspects[0]))
 		}
 	}
 }

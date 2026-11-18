@@ -1309,7 +1309,7 @@ func TestReleaseOfTheLastConfigClearsTheTable(t *testing.T) {
 
 // A standing report (liveswap's ReportStanding at Start) is what a
 // detector told before: ignored for a key the table holds, taken as
-// told for one it does not, after a motel restart emptied the table
+// told for one it does not, after a moteld restart emptied the table
 // while Alertmanager kept the alert.
 func TestStandingReports(t *testing.T) {
 	standing := func(firing bool) Event {

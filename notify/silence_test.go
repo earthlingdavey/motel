@@ -216,7 +216,7 @@ func TestServeSilence(t *testing.T) {
 		`{"name":"app","value":"shop","isRegex":false,"isEqual":true},` +
 		`{"name":"release","value":"` + testSha + `","isRegex":false,"isEqual":true}],` +
 		`"startsAt":"2026-11-10T12:00:00Z","endsAt":"2026-11-10T12:01:00.5Z",` +
-		`"createdBy":"motel monitor: alice","comment":` + string(must(json.Marshal(sent.Comment))) + `}`
+		`"createdBy":"moteld monitor: alice","comment":` + string(must(json.Marshal(sent.Comment))) + `}`
 	if reqs[0] != want {
 		t.Fatalf("Alertmanager got:\n %s\nwant %s", reqs[0], want)
 	}
@@ -227,7 +227,7 @@ func TestServeSilence(t *testing.T) {
 	fields := lines[0].ContextMap()
 	if fields["id"] != testSilenceID || fields["ends_at"] != "2026-11-10T12:01:00.5Z" || fields["alert"] != "rollback" ||
 		fields["app"] != "shop" || fields["release"] != testSha ||
-		fields["created_by"] != "motel monitor: alice" || fields["comment"] != sent.Comment {
+		fields["created_by"] != "moteld monitor: alice" || fields["comment"] != sent.Comment {
 		t.Fatalf("journal fields: %v", fields)
 	}
 
@@ -411,7 +411,7 @@ func TestSilenceAnswerLost(t *testing.T) {
 		t.Fatalf("journal lines: %v", lines)
 	}
 	fields := lines[0].ContextMap()
-	if _, ok := fields["id"]; ok || fields["alert"] != "disk_low" || fields["created_by"] != "motel monitor: alice" ||
+	if _, ok := fields["id"]; ok || fields["alert"] != "disk_low" || fields["created_by"] != "moteld monitor: alice" ||
 		fields["ends_at"] != "2026-11-10T14:00:00Z" || !strings.HasPrefix(fields["comment"].(string), "resizing, see ") ||
 		strings.Contains(fields["comment"].(string), "secretpart") || !strings.Contains(fields["error"].(string), "deadline exceeded") {
 		t.Fatalf("journal fields: %v", fields)
@@ -575,7 +575,7 @@ func TestServeExpire(t *testing.T) {
 		t.Fatalf("Alertmanager got %q", got)
 	}
 	lines := te.lines("monitor: silence expired")
-	if len(lines) != 1 || lines[0].ContextMap()["id"] != testSilenceID || lines[0].ContextMap()["expired_by"] != "motel monitor: alice" {
+	if len(lines) != 1 || lines[0].ContextMap()["id"] != testSilenceID || lines[0].ContextMap()["expired_by"] != "moteld monitor: alice" {
 		t.Fatalf("journal: %+v", lines)
 	}
 	// Already expired: Alertmanager would answer 200 to the DELETE.
@@ -699,7 +699,7 @@ func TestSilenceCommandOutput(t *testing.T) {
 		})
 	}
 	reqs := f.take()
-	if len(reqs) != 6 || !strings.Contains(reqs[0], `"createdBy":"motel monitor: alice"`) {
+	if len(reqs) != 6 || !strings.Contains(reqs[0], `"createdBy":"moteld monitor: alice"`) {
 		t.Fatalf("Alertmanager got %q", reqs)
 	}
 
@@ -707,7 +707,7 @@ func TestSilenceCommandOutput(t *testing.T) {
 	// Alertmanager's socket) is passed on, not taken for the caller's.
 	f.set(http.StatusForbidden, `"connect: permission denied"`)
 	out, err := runSilence(t, addr, "add", "--comment", "x", "--alert", "disk_low")
-	if err == nil || !strings.Contains(err.Error(), "silencing in Alertmanager") || strings.Contains(err.Error(), "run motel monitor silence as root") {
+	if err == nil || !strings.Contains(err.Error(), "silencing in Alertmanager") || strings.Contains(err.Error(), "run moteld monitor silence as root") {
 		t.Fatalf("a 502 naming permission: %q, %v", out, err)
 	}
 
@@ -738,7 +738,7 @@ func TestSilenceCommandNotAdmitted(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, err = runSilence(t, "unix/"+path, "add", "--comment", "x", "--alert", "disk_low")
-	if err == nil || !strings.Contains(err.Error(), "admits root and the motel user: run motel monitor silence as root") {
+	if err == nil || !strings.Contains(err.Error(), "admits root and the motel user: run moteld monitor silence as root") {
 		t.Fatalf("err = %v", err)
 	}
 }

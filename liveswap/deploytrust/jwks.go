@@ -96,7 +96,7 @@ func (ks *keySet) VerifySignature(_ context.Context, raw string) ([]byte, error)
 		// here, in the journal's refused field, in the README's words.
 		// The signature is checked before the issuer (go-oidc), so the
 		// commoner cause comes first: a source trusting the wrong issuer.
-		return nil, fmt.Errorf("signature does not match the key held for kid %q: the token is another issuer's, or, if the issuer replaced that key, systemctl reload motel", kid)
+		return nil, fmt.Errorf("signature does not match the key held for kid %q: the token is another issuer's, or, if the issuer replaced that key, systemctl reload moteld", kid)
 	}
 	fetching, next, err := ks.refresh(false)
 	if err != nil {
@@ -108,7 +108,7 @@ func (ks *keySet) VerifySignature(_ context.Context, raw string) ([]byte, error)
 	// Fetched within the interval: say so and when the next may be, so
 	// a refused rotation is not read as a trust mismatch, nor a trust
 	// mismatch as a rotation.
-	return nil, fmt.Errorf("the issuer's keys hold none that verifies it (kid %q): the token is another issuer's, or is under a new key they were fetched too soon for; a token from %s on fetches them again, as does systemctl reload motel now", kid, next.UTC().Format(time.RFC3339))
+	return nil, fmt.Errorf("the issuer's keys hold none that verifies it (kid %q): the token is another issuer's, or is under a new key they were fetched too soon for; a token from %s on fetches them again, as does systemctl reload moteld now", kid, next.UTC().Format(time.RFC3339))
 }
 
 // verifyWith is the payload of the first of keys that verifies jws —

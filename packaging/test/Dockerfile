@@ -5,7 +5,7 @@
 # release can be tried against a newer Debian without editing this file.
 #
 # networkd/resolved are deliberately NOT installed: with no wait-online
-# unit enabled, network-online.target (which motel.service Requires=)
+# unit enabled, network-online.target (which moteld.service Requires=)
 # is reached trivially inside the container. dbus is here because
 # logind (loginctl enable-linger in postinstall) needs the system bus;
 # libpam-systemd is NOT — it is a package Depends, and the smoke test

@@ -143,7 +143,7 @@ var ownerLocks sync.Map // app name → *sync.Mutex; one per name ever seen
 // and the one being launched, whose run dir already exists. retire
 // removes an instance's run dir and pin (the unit removes nothing
 // itself: it has one Exec*=, #311); this is the belt for anything left behind — an
-// instance that died while motel was down — run when the manager's
+// instance that died while moteld was down — run when the manager's
 // word is that nothing else is running. Best-effort: what cannot be
 // removed is logged, and the next launch's fresh nonce never collides
 // with it anyway.

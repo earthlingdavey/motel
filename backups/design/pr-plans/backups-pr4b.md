@@ -64,7 +64,7 @@ Events are recorded in order (`terminal` fake: prompts asked, what was shown; `b
 | Row | Must | Never |
 |---|---|---|
 | not root (main.go, not engine) | names `sudo motel-backup setup` | — |
-| `/usr/bin/restic` or `/usr/bin/sqlite3` or `/usr/bin/motel` missing | names the package / program, exit 1 | a prompt asked; a unit started |
+| `/usr/bin/restic` or `/usr/bin/sqlite3` or `/usr/bin/moteld` missing | names the package / program, exit 1 | a prompt asked; a unit started |
 | manager version < 257 | says which systemd is needed | a prompt |
 | scheme `sftp:`, `local:`, `/srv/x`, `rclone:`, `gs:`, `swift:`; a URL with `user:pass@` | refused with the reason, before any prompt | a prompt; the file touched |
 | the plan unit fails | the adapter's reason (cleaned), exit 1 | a prompt |
@@ -102,7 +102,7 @@ Own bucket `setuprepo`; `write_env` gains `mkdir -p /etc/motel-backup`; `ENVFILE
 | 2 | no terminal (`compose exec -T`): refused, says a terminal is needed; nothing written, no unit | output holds "terminal", not the usage text |
 | 3 | account absent (the Dockerfile no longer makes it: `! id motel-backup` asserted first); `restic` moved aside → names the package, no prompt; `restic` back | guard: the prompt text absent from the capture |
 | 4 | `sftp:`, `/srv/backups`, `local:/x`, `rclone:r:b`, `gs:b`, `s3:http://u:p@h/b` → each refused before any prompt; nothing created at `/srv/backups` | the refusal names the scheme |
-| 5 | the Caddyfile with `root {$LIVESWAP_ROOT}` (no default): refused, names the variable, no prompt; Caddyfile restored | guard: `motel validate` accepts that file |
+| 5 | the Caddyfile with `root {$LIVESWAP_ROOT}` (no default): refused, names the variable, no prompt; Caddyfile restored | guard: `moteld validate` accepts that file |
 | 6 | **fresh setup at a tty**: key id (echo on), secret (sent 3 s after), `stored`; capture shows the key id and not the secret; the password line is shown; the account exists (`getent`, shell `nologin`, home `/nonexistent`); `/etc/motel-backup` `755 root`, the file `600 root`, exactly four keys; `rr snapshots` answers (repository exists); no temp file; no unit left; `status` → `pending first run`, exit 0; `run` → both apps `ok` | guard: the key id shows (else the echo check is vacuous) |
 | 7 | old-path file: write a `/etc/motel/backup.env`, remove the new → `run` and `status` say not set up, name the new path **and** say the old one is not read; remove it | — |
 | 8 | **mistakes over a working setup** (file's sha256 before): wrong secret on a new bucket → answers < 60 s, class said, file byte-identical, no `repository.env.*`, no unit; wrong password on the existing repository (rebuilt-box path: same URL, `stored` never asked) → "cannot open it", same invariants | guard: the capture holds "already exists"/asks for the password |

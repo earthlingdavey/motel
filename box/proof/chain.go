@@ -41,7 +41,7 @@ func Chain(head *Commit, parents []*Commit, baseline string) ([]*Commit, error) 
 			return nil, refuse("bundle: parents/%04d is not the first parent of %s", i+1, oid(cur.ID))
 		}
 		if len(chain) == MaxChain {
-			return nil, refuse("the chain from %s to %s is longer than %d commits; run motel box baseline %s as root on the box", oid(baseline), oid(head.ID), MaxChain, oid(head.ID))
+			return nil, refuse("the chain from %s to %s is longer than %d commits; run moteld box baseline %s as root on the box", oid(baseline), oid(head.ID), MaxChain, oid(head.ID))
 		}
 		chain = append(chain, p)
 		cur = p
@@ -53,7 +53,7 @@ func Chain(head *Commit, parents []*Commit, baseline string) ([]*Commit, error) 
 	// than the cap fills the chain exactly and ends here, still naming
 	// a parent: that is the cap, not a missing baseline.
 	if len(chain) == MaxChain && len(cur.Parents) > 0 {
-		return nil, refuse("the chain from %s to %s is longer than %d commits; run motel box baseline %s as root on the box", oid(baseline), oid(head.ID), MaxChain, oid(head.ID))
+		return nil, refuse("the chain from %s to %s is longer than %d commits; run moteld box baseline %s as root on the box", oid(baseline), oid(head.ID), MaxChain, oid(head.ID))
 	}
 	return nil, descendRefusal(head.ID, baseline)
 }
@@ -62,7 +62,7 @@ func descendRefusal(head, baseline string) error {
 	return refuse("%s does not descend from the commit this box runs (%s) along main's first-parent line. "+
 		"If the box already runs a later commit, nothing is wrong. "+
 		"If a branch merged main into itself before it was fast-forwarded, rebase it onto main and force-push. "+
-		"Only if main was rewritten below %s does motel box baseline %s, as root on the box, reset trust to %s, whose ancestors the box will then never examine",
+		"Only if main was rewritten below %s does moteld box baseline %s, as root on the box, reset trust to %s, whose ancestors the box will then never examine",
 		oid(head), oid(baseline), oid(baseline), oid(head), oid(head))
 }
 

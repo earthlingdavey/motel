@@ -310,7 +310,7 @@ func TestNoChangeRechecksTheFile(t *testing.T) {
 }
 
 // An init record a crash left after its swap recovers as the applier's
-// does: on a motel still activating after the wait — not running —
+// does: on a moteld still activating after the wait — not running —
 // the previous bytes go back and it ends failed, never counted applied
 // for the next start, and nothing is reloaded.
 func TestInitRecordRecoversLikeTheApplier(t *testing.T) {
@@ -379,7 +379,7 @@ func TestReloadingIsWaitedOut(t *testing.T) {
 	})
 }
 
-// Bundles queued behind a motel that never settles share one wait.
+// Bundles queued behind a moteld that never settles share one wait.
 func TestOneWaitPerRun(t *testing.T) {
 	b := newTestBox(t)
 	b.sd.states = []string{"activating"}
@@ -401,9 +401,9 @@ func TestOneWaitPerRun(t *testing.T) {
 	}
 }
 
-// init on a motel still reloading after the wait reloads (the
+// init on a moteld still reloading after the wait reloads (the
 // reload queues behind the one in flight), never records `applied`
-// for bytes the running motel may not have read.
+// for bytes the running moteld may not have read.
 func TestInitOnReloadingMotelReloads(t *testing.T) {
 	b := newTestBox(t)
 	b.sd.states = []string{"reloading"}
@@ -419,7 +419,7 @@ func TestInitOnReloadingMotelReloads(t *testing.T) {
 }
 
 // init's rollback after a write that failed past the swap reloads the
-// previous bytes, as the applier's does: init found motel up before
+// previous bytes, as the applier's does: init found moteld up before
 // it swapped.
 func TestInitRollbackReloads(t *testing.T) {
 	b := newTestBox(t)

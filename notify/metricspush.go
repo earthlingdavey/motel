@@ -39,8 +39,8 @@ const (
 )
 
 // finalPushTimeout bounds the import of the push when the pusher stops
-// (release): a store that does not answer must not hold motel's stop,
-// which the unit gives 5 s in all (packaging/motel.service,
+// (release): a store that does not answer must not hold moteld's stop,
+// which the unit gives 5 s in all (packaging/moteld.service,
 // TimeoutStopSec) before its SIGKILL. A push over the socket takes
 // milliseconds. The gather before it has its own bound, diskStatWait,
 // and is outside this one, so a hung disk does not cost the import its
@@ -82,7 +82,7 @@ type pusher struct {
 	rulesBad     int
 	rulesDown    bool
 	// pushedAt and rulesReadAt are when the last push ended and the
-	// last read of vmalert's up was answered: `motel monitor rules`
+	// last read of vmalert's up was answered: `moteld monitor rules`
 	// lists failingSince and rulesBad as of them.
 	pushedAt    time.Time
 	rulesReadAt time.Time
@@ -356,7 +356,7 @@ func (p *pusher) run(ctx context.Context) {
 }
 
 // finalPush is release's push of what was counted since the last tick.
-// Without it a motel restart lost up to a push of every app's counts,
+// Without it a moteld restart lost up to a push of every app's counts,
 // and the store's request_rate read up to a tenth low for the five
 // minutes the restart sat in its window: a `request_rate <` rule fired
 // and recovered on the hotserve-1 deploy of ecb829a. Its import has its
@@ -461,7 +461,7 @@ func (p *pusher) release(m *MetricsStore) {
 	// vmalert and the store still run (setup's units), and the
 	// stopped config's rules would go on reaching the channels. motel's
 	// own shutdown leaves them, so the store's alerts reach the operator
-	// while motel is down: Caddy empties its running context before it
+	// while moteld is down: Caddy empties its running context before it
 	// stops the last config's apps (caddy.Stop), so configRunning
 	// (load.go) is a reload's alone here.
 	if configRunning() {

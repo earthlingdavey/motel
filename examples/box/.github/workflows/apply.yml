@@ -11,7 +11,7 @@ permissions:
   contents: read
 
 env:
-  # Empty: the latest stable release (bin/install-motel). The
+  # Empty: the latest stable release (bin/install-moteld). The
   # repository variable pins one instead, for every box at once (its
   # form: 0.3.0, or 0.3.0-rc1 for a candidate; examples of the format,
   # not releases to pin); a box on a release of its own has a
@@ -26,8 +26,8 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Install motel (each release the boxes need, bare binaries)
-        run: bin/install-motel
+      - name: Install moteld (each release the boxes need, bare binaries)
+        run: bin/install-moteld
       - run: make check
 
   # Not after check: each box validates what it is sent, and one box's
@@ -54,6 +54,6 @@ jobs:
       # Caddyfile, which any release with `box` reads alike: the default
       # alone, so that one box's MOTEL_VERSION file cannot hold the
       # others' pushes back.
-      - name: Install motel (the release's bare binary)
-        run: bin/install-motel default
+      - name: Install moteld (the release's bare binary)
+        run: bin/install-moteld default
       - run: bin/apply

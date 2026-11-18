@@ -1,0 +1,119 @@
+# moteld systemd unit, modeled on Caddy's official dist unit.
+#
+# Write every absolute path in these comments in backticks.
+# `systemctl cat moteld` prints each file under a line that is "# "
+# and its path, and docs/upgrading.md tells the operator to read the
+# output by those lines: a comment line that opened with a bare path
+# would read as one more file (a test in cmd/moteld fails on such a
+# line).
+#
+# Note on hardening: deployed apps do NOT run inside this unit. liveswap
+# starts them as transient units under the motel user's own systemd
+# manager (user@<uid>.service; postinstall enables lingering and adds a
+# drop-in that starts it with this unit), so they outlive moteld
+# restarts, upgrades and crashes — the unit brings a crashed moteld
+# back (Restart= below) and it reattaches to the running apps — and
+# PrivateTmp/ProtectSystem here apply to moteld alone. TimeoutStopSec
+# bounds only moteld's own shutdown; each app's stop budget is its
+# `grace`. `/var/lib/liveswap` (releases, shared data, state) and
+# `/var/lib/motel` (TLS certificates etc.) stay writable — that is
+# where motel and the apps keep their files.
+
+[Unit]
+Description=motel — zero-downtime app deploys, powered by Caddy
+Documentation=https://github.com/smallhoursorg/motel
+After=network.target network-online.target
+Requires=network-online.target
+
+[Service]
+Type=notify
+User=motel
+Group=motel
+# A failed deploy's response carries the app's last journal lines
+# (liveswap/journal.go reads them with journalctl). journald keeps a
+# system user's output in the system journal, readable by the
+# systemd-journal group, so moteld's own process joins it — this
+# process only, not the account: the apps run under the user manager
+# with the account's groups, which stay as they are, and their sandbox
+# has no journal in its view either way. What this widens is what a
+# compromised moteld can read: every unit's lines, which the units
+# here keep free of secrets (no --environ, see below).
+SupplementaryGroups=systemd-journal
+# Caddy resolves its dirs to $XDG_.../caddy, so both land inside
+# `/var/lib/motel` (which the package owns and chowns): TLS material
+# and storage in `/var/lib/motel/caddy`, config autosave alongside it.
+# Pointing these anywhere the motel user cannot write breaks ACME
+# cert persistence.
+Environment=XDG_DATA_HOME=/var/lib/motel
+Environment=XDG_CONFIG_HOME=/var/lib/motel
+# `/run/motel` holds the admin API's unix socket (see the starter
+# Caddyfile for why the admin API is not on TCP). Created at start,
+# owned by the service user, removed on stop.
+RuntimeDirectory=motel
+RuntimeDirectoryMode=0750
+# No --environ (unlike Caddy's dist unit): it would print every
+# environment variable — ACME DNS tokens and any other supervisor
+# secrets — into the journal at each start, and journals get pasted
+# into bug reports. Add it back temporarily to debug environment issues.
+ExecStart=/usr/bin/moteld run --config /etc/motel/Caddyfile
+ExecReload=/usr/bin/moteld reload --config /etc/motel/Caddyfile --force
+# A crashed moteld comes back on its own; a start it refused stays
+# down. Every exit is Caddy's: a start that is refused — a rejected
+# config, a host that cannot deliver the per-app sandbox, no user
+# manager — exits 1 (Caddy's failed-startup code, which Caddy itself
+# says never to restart on), and nothing exits 1 once serving. A Go
+# panic exits 2, a stop that fails exits 3 (a SIGTERM Caddy handles
+# exits 0, clean, whoever sent it — a stray `kill` is not restarted any
+# more than `systemctl stop` is; only a stop that fails outside a stop
+# job is), SIGKILL is a signal, the kernel's OOM killer is `oom-kill`,
+# a start past TimeoutStartSec is `timeout`:
+# on-failure
+# restarts all of those and RestartPreventExitStatus=1 keeps a refusal
+# from looping — it is final until an operator fixes the cause and
+# starts the unit (the sandbox probe's own retry in liveswap/sandbox.go
+# exists for this reason). The one refusal that is not exit 1 is the
+# pre-main panic in liveswap/harden when PR_SET_DUMPABLE fails, which
+# cannot happen on Linux; it would stop at the start limit. Not
+# on-abnormal: that leaves a panic's exit 2 down. No WatchdogSec=:
+# Caddy never sends WATCHDOG=1, so it would be killed on schedule.
+# The start limit stays at systemd's default (5 starts in 10 s): a
+# crash on every start ends in `start-limit-hit`, cleared by
+# `systemctl reset-failed moteld`; a slower loop retries for as long
+# as it takes, like the liveswap watchdog does for an app — the loop
+# is the signal. RestartSec keeps that loop legible, one attempt (and
+# one probe unit) a second, and costs a one-off crash nothing next to
+# the start itself.
+Restart=on-failure
+RestartPreventExitStatus=1
+RestartSec=1s
+# Type=notify counts the start until READY=1, which comes after
+# liveswap has connected to the user manager (two sockets, each 10 s to
+# connect and 10 s more to authenticate), asked it a question twice
+# (10 s each: once before anything runs, once more before the sandbox
+# probe) and run the sandbox probe: 30 s an attempt, twice on a
+# timeout, each hung attempt then stopped with its 5 s grace and
+# liveswap's 30 s stop slack — 40 + 20 + 130 = 190 s bounded, on a host
+# under boot load, before Caddy's own start.
+# Sized above that with a margin, so the whole path reaches its own
+# verdict (an exit 1, which is final) rather than being cut off by
+# systemd's 90 s default, whose `timeout` restart would start the
+# sequence over. Re-derive when any of those budgets moves. A start
+# that somehow outlives even this is restarted, and that restart is
+# the retry then.
+TimeoutStartSec=240s
+TimeoutStopSec=5s
+LimitNOFILE=1048576
+PrivateTmp=true
+ProtectSystem=full
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+# And nothing else, as SECURITY.md says: the bounding set is that one
+# capability, so nothing moteld execs holds another; NoNewPrivileges
+# keeps a setuid or setgid binary on the host from granting any (an
+# ambient capability survives it), and RestrictSUIDSGID keeps moteld from
+# making one. Every other unit the package ships had these already.
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+NoNewPrivileges=yes
+RestrictSUIDSGID=yes
+
+[Install]
+WantedBy=multi-user.target

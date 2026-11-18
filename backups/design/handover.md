@@ -29,14 +29,14 @@ before it is relied on.
 - restic and sqlite3 are **Debian's packages** (restic 0.18.0 — 0.19 is in
   forky/sid only). kopia, rustic and bupstash are not in Debian.
 - **polkit is not installed** on a minimal Debian 13 (systemd only Suggests it).
-- motel runs as the `motel` user; every app runs as that same uid, each in
+- moteld runs as the `motel` user; every app runs as that same uid, each in
   its own sandboxed transient unit under that user's systemd manager. motel's
   admin API is a unix socket that Caddy makes writable by its owner alone.
 - What an app declares is config in the Caddyfile, and the admin API serves config
   **as loaded, not as provisioned** (liveswap's default `root` and `{env.*}`
   placeholders are not resolved in what the API returns). The process answering
   that API is the first thing an attacker on the internet reaches.
-- The package does not start motel on install (`try-restart` only).
+- The package does not start moteld on install (`try-restart` only).
 - The project's rules for any PR: doc claims are traced to code before they are
   written; comments are present tense (history lives in git); new limits that could
   fail a legitimate operation are discussed first; one PR per feature; no

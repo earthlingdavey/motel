@@ -23,7 +23,7 @@
 version: 2
 updates:
   - package-ecosystem: gomod
-    directories: ["/", "/backups", "/box", "/liveswap", "/motelctl", "/notify", "/penaltybox"]
+    directories: ["/", "/backups", "/box", "/client", "/liveswap", "/notify", "/penaltybox"]
     schedule:
       interval: daily
     cooldown:
@@ -34,7 +34,7 @@ updates:
       # Security updates are grouped across the same directories (a
       # group takes one applies-to, hence two groups). Ungrouped, each
       # would be a one-directory PR, and the root module (and box,
-      # notify, backups and motelctl) replace the sibling modules they
+      # notify, backups and client) replace the sibling modules they
       # import with their local directories: a bump in only one of those
       # can leave an importer's go.mod untidy, which ci.yml's tidy-check
       # fails.

@@ -22,7 +22,7 @@ import (
 	"github.com/smallhoursorg/motel/liveswap"
 )
 
-// `motel monitor rules` (DESIGN-metrics.md, "How close each alert
+// `moteld monitor rules` (DESIGN-metrics.md, "How close each alert
 // is"): GET /notify/rules on the admin socket lists every alert motel
 // can raise on the loaded config (silenceableAlerts, the one list of
 // names), each with what a screen needs to show how close it is to
@@ -32,7 +32,7 @@ import (
 // annotation is listed: an operator's text, and what vmalert sends to
 // a channel, is not a status screen's.
 
-// RulesListing is `motel monitor rules --json`.
+// RulesListing is `moteld monitor rules --json`.
 type RulesListing struct {
 	// Store is how to read the store-backed rules; absent with no
 	// metrics line, and so are those rules.

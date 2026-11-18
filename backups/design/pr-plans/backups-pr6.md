@@ -105,7 +105,7 @@ pinned.
 | Y18 | The shipped units: capabilities and hardening, `ConditionPathExists=`, `After=`, the timers [M54–M57, M60, M61] | none | e2e units 0–5, smoke |
 | Y19 | `deb-systemd-helper`/`-invoke`, `policy-rc.d` [M58, M68, M69] | none | smoke |
 
-### Caddy (this repository's `motel adapt`), and the box's own programs
+### Caddy (this repository's `moteld adapt`), and the box's own programs
 
 | # | Fact | Integration | Verdict |
 |---|---|---|---|
@@ -297,7 +297,7 @@ owner's answer, on the one that went back on an approved option:
 | 11 | the adapter built twice a package run | genuine (~2.5 s) | once, by the first test that asks (`sync.Once`), removed in `TestMain` | test only |
 | 12 | the README procedure leaves out the dev image | **not genuine**: both builds are `CGO_ENABLED=0`, and `make test` needs neither restic nor sqlite3 — the dev image's release reaches nothing a lane holds | answered | — |
 
-A printed line changes (6): `motel validate`'s refusal of a path
+A printed line changes (6): `moteld validate`'s refusal of a path
 over 400 bytes — for the PR body.
 
 ## 4d. PR #162, and Copilot
@@ -548,11 +548,11 @@ Where backups lean on Caddy, what each buys, what holds it:
 
 | Coupling | What it buys | Held by | Verdict |
 |---|---|---|---|
-| The plan is `motel adapt --adapter caddyfile`: Caddy's own reading of imports, snippets, heredocs and `{$NAME}`, from any depth (`plan.Inspect`) | Exactness. The import reader it replaced (#146) was where that PR's findings clustered | the adapted JSON is liveswap's own schema under `apps.liveswap` (ours); e2e every run | keep |
+| The plan is `moteld adapt --adapter caddyfile`: Caddy's own reading of imports, snippets, heredocs and `{$NAME}`, from any depth (`plan.Inspect`) | Exactness. The import reader it replaced (#146) was where that PR's findings clustered | the adapted JSON is liveswap's own schema under `apps.liveswap` (ours); e2e every run | keep |
 | Caddy's empty-glob warning, as JSON on stderr (`emptyGlobs`) | Refusing an import a run's view cannot see — the silent shrink of the plan | C1 | keep |
 | `{$NAME}` substituted in the text before any token; unset with no default is empty; `:default` | Refusing a root or backup path that depends on the server's environment; adapting an ordinary production Caddyfile with no environment | C2 (new), e2e backup 5, 5b | keep |
 | The placeholder trials: one adapt per variable, after the base, every run; the next kind of value chosen by whether Caddy's error quotes the last | as above | Caddy's error quoting a value only speeds the choice — correctness does not rest on it | **measured: ~25 ms an adapt (63 ms the first, cold)**, so (1 + N) × 25 ms a run. Costs nothing worth removing. The one reduction — D10(b), the plan unit given motel's own `EnvironmentFile=` so that no trial is needed — puts the server's secrets in that unit's memory: **a change to the security model, the owner's** |
-| `cmd/motel`'s check at `validate`/`reload` (#147): `caddycmd.Commands()[name].CobraFunc`, `caddycmd.LoadConfig`, tokens' `File()` | Refusing, before it goes live, a declaration a run would not see | its own tests (the hooks are there), e2e status 8, 8b | keep |
+| `cmd/moteld`'s check at `validate`/`reload` (#147): `caddycmd.Commands()[name].CobraFunc`, `caddycmd.LoadConfig`, tokens' `File()` | Refusing, before it goes live, a declaration a run would not see | its own tests (the hooks are there), e2e status 8, 8b | keep |
 | liveswap's package-level record of where each `backup` and `root` came from | as above | decided to stay (2026-09-25) | keep |
 
 **Nothing found that buys nothing.** The coupling that remains is

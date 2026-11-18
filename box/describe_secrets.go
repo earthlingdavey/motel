@@ -22,7 +22,7 @@ import (
 	"github.com/smallhoursorg/motel/box/proof"
 )
 
-// `motel box describe`'s reading of the secrets beside a Caddyfile
+// `moteld box describe`'s reading of the secrets beside a Caddyfile
 // (DESIGN-box.md, "`box describe`", "Which checks run where"): the
 // working tree's `<dir>/secrets/`, held to the layout table by the code
 // that holds the commit's (proof.SecretsLayout, proof.AppLayout), so the
@@ -430,7 +430,7 @@ func countRecipients(path, shown string, ts *treeSecrets) (int, error) {
 		}
 		if n == 0 {
 			if _, err := age.ParseX25519Recipient(s); err != nil {
-				return 0, refused("%s:%d: the first recipient is not the box's key, an age1… X25519 recipient (motel box key prints it)", shown, line)
+				return 0, refused("%s:%d: the first recipient is not the box's key, an age1… X25519 recipient (moteld box key prints it)", shown, line)
 			}
 			n++
 			continue
@@ -461,7 +461,7 @@ func countRecipients(path, shown string, ts *treeSecrets) (int, error) {
 		return 0, err
 	}
 	if n == 0 {
-		return 0, refused("%s has no recipient: its first is the box's key (motel box key prints it)", shown)
+		return 0, refused("%s has no recipient: its first is the box's key (moteld box key prints it)", shown)
 	}
 	return n, nil
 }

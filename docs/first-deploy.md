@@ -80,30 +80,30 @@ v=${v##*/v}                         # the latest release's tag, without the v
 arch=$(dpkg --print-architecture)   # amd64 or arm64
 base=https://github.com/smallhoursorg/motel/releases/download/v$v
 mkdir -p /var/local/motel && cd /var/local/motel
-curl -fsSLO "$base/motel_${v}_${arch}.deb" && curl -fsSLO "$base/checksums.txt" &&
+curl -fsSLO "$base/moteld_${v}_${arch}.deb" && curl -fsSLO "$base/checksums.txt" &&
   sha256sum -c --ignore-missing checksums.txt &&
-  apt install ./motel_${v}_${arch}.deb
-systemctl enable --now motel
+  apt install ./moteld_${v}_${arch}.deb
+systemctl enable --now moteld
 ```
 
 <details>
 <summary><b>To install a release candidate</b></summary>
 
 A release candidate's `.deb` has a dot where its tag has a hyphen —
-`motel_X.Y.Z.rcN_arm64.deb` under `vX.Y.Z-rcN` — so the block above
+`moteld_X.Y.Z.rcN_arm64.deb` under `vX.Y.Z-rcN` — so the block above
 does not fit it as it stands. This one does, with `<tag>` replaced by
 the tag the maintainer announced, without its `v`:
 
 ```sh
 v='<tag>'                           # the announced tag, without the v
 arch=$(dpkg --print-architecture)   # amd64 or arm64
-deb=motel_$(echo "$v" | tr - .)_${arch}.deb
+deb=moteld_$(echo "$v" | tr - .)_${arch}.deb
 base=https://github.com/smallhoursorg/motel/releases/download/v$v
 mkdir -p /var/local/motel && cd /var/local/motel
 curl -fsSLO "$base/$deb" && curl -fsSLO "$base/checksums.txt" &&
   sha256sum -c --ignore-missing checksums.txt &&
   apt install "./$deb"
-systemctl enable --now motel
+systemctl enable --now moteld
 ```
 
 The box's repository (step 3) then needs its Actions variable
@@ -120,20 +120,20 @@ upgrade is on the box already; `/tmp` would not survive a reboot.
 `enable --now` prints only `Created symlink …`; that is success.)
 
 On a release older than Debian 13, `apt install` stops with
-`motel : Depends: systemd (>= 257)`, and the `systemctl` line after
-it finds no motel unit. Each app's sandbox is built on systemd 257,
+`moteld : Depends: systemd (>= 257)`, and the `systemctl` line after
+it finds no moteld unit. Each app's sandbox is built on systemd 257,
 so the fix is a Debian 13 image, not a setting. That is the first half
 of the step 1 check.
 
 Check it:
 
 ```sh
-systemctl status motel          # active (running); press q to exit
-curl -s localhost                  # "motel is running. To serve your apps: motel init …"
+systemctl status moteld          # active (running); press q to exit
+curl -s localhost                  # "moteld is running. To serve your apps: moteld init …"
 systemd-detect-virt --container    # none
 ```
 
-If it is not running, `journalctl -u motel -n 50 --no-pager` says
+If it is not running, `journalctl -u moteld -n 50 --no-pager` says
 why.
 
 The block's last line, `systemd-detect-virt`, is the other half of the
@@ -335,7 +335,7 @@ git add -A && git commit -m "$host: the box's config"
 ```
 
 **Tell the box which repository it belongs to.** Copy the box's
-directory to it, as the commit has it, and run `motel init` there
+directory to it, as the commit has it, and run `moteld init` there
 as root with that commit. The first two lines check the commit: that
 it has `$host/Caddyfile`, and then the placeholder check above. While
 one is left it prints its line and sends nothing, so change it,
@@ -345,7 +345,7 @@ commit, and run the four lines again.
 git cat-file -e HEAD:${host%/}/Caddyfile &&
   ! git show HEAD:${host%/}/Caddyfile | grep -En '^([^#]*[^#A-Za-z0-9-])?(your-org|example\.com)([^A-Za-z0-9.-]|$)' &&
   git archive HEAD $host | ssh root@box.example.com tar -xf - &&
-  ssh root@box.example.com "cd $host && motel init $(git rev-parse HEAD)"
+  ssh root@box.example.com "cd $host && moteld init $(git rev-parse HEAD)"
 ```
 
 ```
@@ -360,8 +360,8 @@ It refuses, writing nothing, a file with no `box` block, no signer or
 no site carrying `box_webhook` — any of them would leave the box
 unreachable by its own channel — and a directory not named for that
 site. Otherwise it installs the file over the starter config and
-reloads motel. A file that does not load is put back, the starter
-keeps serving, and `init` says so; `journalctl -u motel -n 50
+reloads moteld. A file that does not load is put back, the starter
+keeps serving, and `init` says so; `journalctl -u moteld -n 50
 --no-pager` on the box says why. Fix it, commit, and run the four
 lines again. The reload is also liveswap's first start, which tries the
 sandbox: on a host that cannot give one, the journal names what is
@@ -403,7 +403,7 @@ has how. With nothing deployed yet, a correct box looks like this:
   `{"error":"invalid or missing deploy token …"}`, in a browser or with
   `curl -i`. That is the webhook working: a deploy carries a token, and
   nothing without one gets further than this.
-- `journalctl -u motel | grep 'liveswap started'`, on the box, gains
+- `journalctl -u moteld | grep 'liveswap started'`, on the box, gains
   a line with `"apps":1,"app_names":["example"]`.
 - The workflow run is green.
 
@@ -488,7 +488,7 @@ typo in `MOTEL_URL` — since an unknown app answers the same 401
 unless a global `deploy_trust` accepts the token. The step prints the
 values the run minted its token with, so you can hold them against
 the app block; the box's answer deliberately says no more, and
-`journalctl -u motel` on the box names the app that was asked for
+`journalctl -u moteld` on the box names the app that was asked for
 and the check that refused it — within the box's budget for failed
 authentications: ten a minute from one address and a hundred a minute
 in all; past either, the answer is the same 401 and the failure is

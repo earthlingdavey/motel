@@ -1,6 +1,6 @@
 # The metrics suite's box (e2e/metrics/run.sh): the notify suite's
 # Caddyfile (e2e/notify/Caddyfile) with a metrics line in the monitor
-# block, which takes both defaults: the socket motel monitor setup
+# block, which takes both defaults: the socket moteld monitor setup
 # --metrics makes, and its state directory; and the operator's rule
 # lines beside it. The channels are the same:
 # the store's rules route through their tree, and vmalert's ChannelFailed

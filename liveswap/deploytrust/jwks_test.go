@@ -96,7 +96,7 @@ func TestKeySetNeverFetchesForAKidItHolds(t *testing.T) {
 		c.Advance(RefetchInterval)
 		_, err := v.verify(ctx, iss.Mint(t, forger, "motel", map[string]string{"sub": "ci"}, time.Now().Add(5*time.Minute)))
 		refusedPlainly(t, err, "bad signature under a held kid")
-		if want := `signature does not match the key held for kid "` + iss.KID + `": the token is another issuer's, or, if the issuer replaced that key, systemctl reload motel`; !strings.Contains(err.Error(), want) {
+		if want := `signature does not match the key held for kid "` + iss.KID + `": the token is another issuer's, or, if the issuer replaced that key, systemctl reload moteld`; !strings.Contains(err.Error(), want) {
 			t.Fatalf("bad signature under a held kid: reason = %q, want %q", err, want)
 		}
 	}
@@ -155,7 +155,7 @@ func TestKeySetFetchesForAnUnknownKidOncePerInterval(t *testing.T) {
 	// may, and the reload that fetches now: a rotation in that minute is
 	// not read as a trust mismatch.
 	next := c.Now().Add(time.Second).UTC().Format(time.RFC3339)
-	if want := `kid "forged-2"): the token is another issuer's, or is under a new key they were fetched too soon for; a token from ` + next + ` on fetches them again, as does systemctl reload motel now`; !strings.Contains(err.Error(), want) {
+	if want := `kid "forged-2"): the token is another issuer's, or is under a new key they were fetched too soon for; a token from ` + next + ` on fetches them again, as does systemctl reload moteld now`; !strings.Contains(err.Error(), want) {
 		t.Fatalf("unknown kid within the interval: reason = %q, want %q", err, want)
 	}
 	fetches(t, iss, 1, "unknown kids within the interval")

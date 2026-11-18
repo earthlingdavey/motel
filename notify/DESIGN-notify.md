@@ -63,9 +63,9 @@ Alertmanager beside it 42.6 MB RSS (24 MB cgroup).
 | Piece | What | Where |
 |---|---|---|
 | Alertmanager | Debian 13's `prometheus-alertmanager` 0.28.1: routing, grouping, dedupe, repeat, resolved-once, inhibition, retries, the notification log, 18 receiver kinds | Debian's unit with motel's drop-in (`notify/units/10-motel.conf`): socket-activated, `--cluster.listen-address=` (no gossip), `--enable-feature=receiver-name-in-metrics`, `MemoryMax=128M` |
-| Its listener | `/run/motel-notify/am.sock`, 0660 root:motel, a systemd socket unit (`notify/units/motel-am.socket`); no TCP port in the host's namespace. With the store, a second socket, `127.0.0.1:9093` inside the store's namespace, for vmalert (DESIGN-metrics.md, "The shape") | its own runtime directory: `/run/motel` is motel.service's `RuntimeDirectory`, removed whenever motel stops |
+| Its listener | `/run/motel-notify/am.sock`, 0660 root:motel, a systemd socket unit (`notify/units/motel-am.socket`); no TCP port in the host's namespace. With the store, a second socket, `127.0.0.1:9093` inside the store's namespace, for vmalert (DESIGN-metrics.md, "The shape") | its own runtime directory: `/run/motel` is moteld.service's `RuntimeDirectory`, removed whenever moteld stops |
 | Its config | `alertmanager.yml` and one `url-<KEY>` file per channel secret, 0640, rendered by motel at every config load | `/var/lib/motel-notify`, 2750 motel:prometheus (setup makes it); not `/var/lib/motel`, which is 0750 motel:motel and the prometheus uid cannot traverse |
-| motel's part | the `monitor` block's notify lines and their refusals, the renderer, the engine (state table, flapping guard, mute, heartbeat, retry queue), the detectors, `channel_failed`, two admin routes, `motel monitor send`, `test` and `setup` | `notify/` |
+| motel's part | the `monitor` block's notify lines and their refusals, the renderer, the engine (state table, flapping guard, mute, heartbeat, retry queue), the detectors, `channel_failed`, two admin routes, `moteld monitor send`, `test` and `setup` | `notify/` |
 
 **Who reaches the socket, and why.** Every deployed app runs as the
 motel uid, so the socket's group is not what keeps apps out. Their
@@ -134,14 +134,14 @@ the source pins every named claim to the same value
 carries (`ref=`, `actor=`) matches nothing, and an oidc identity with no
 claim is refused, since it would match every repository on the issuer.
 
-What `motel validate` refuses (Provision, which writes nothing and
+What `moteld validate` refuses (Provision, which writes nothing and
 connects to nothing), each naming keys and channels, never a value:
 
 | Condition | Refused as |
 |---|---|
 | a `notify` global option (refused at the adapt, before Provision) | ``the notify block is now `monitor { … }`, with the same lines but state_dir and alertmanager, whose paths are fixed; to move a box onto it, docs/upgrading.md, "From the notify and metrics_store blocks"`` |
-| a `state_dir` line (at the adapt, naming its line) | `state_dir is not a monitor line: the state directory is fixed at /var/lib/motel-notify, the one motel monitor setup makes and Alertmanager reads; remove the line` |
-| an `alertmanager` line (at the adapt, naming its line) | `alertmanager is not a monitor line: Alertmanager's socket is fixed at /run/motel-notify/am.sock, the one motel monitor setup's motel-am.socket listens on; remove the line` |
+| a `state_dir` line (at the adapt, naming its line) | `state_dir is not a monitor line: the state directory is fixed at /var/lib/motel-notify, the one moteld monitor setup makes and Alertmanager reads; remove the line` |
+| an `alertmanager` line (at the adapt, naming its line) | `alertmanager is not a monitor line: Alertmanager's socket is fixed at /run/motel-notify/am.sock, the one moteld monitor setup's motel-am.socket listens on; remove the line` |
 | a literal URL, or `{env.*}` | `a channel URL is written {secret.NOTIFY_<NAME>}, its value in the box's secrets, never in the Caddyfile` |
 | a secret not named `NOTIFY_…` | `the secret's name is NOTIFY_ followed by capitals, digits and underscores` |
 | no `operator` line | `no operator line: name the channels that receive every event with operator <channel>` |
@@ -159,20 +159,20 @@ private address would reach a listener an app opened.
 ### Secrets at load
 
 The last two rows are a secret's, and a boot does not refuse them.
-Provisioning cannot tell `motel validate` from a config load (Caddy's
-`Context` says neither), so cmd/motel tells notify the command it runs
+Provisioning cannot tell `moteld validate` from a config load (Caddy's
+`Context` says neither), so cmd/moteld tells notify the command it runs
 (`SetCommand`, before Caddy's own command), and a load reads Caddy's
 running config (`caddy.ActiveContext`):
 
 | Load | A channel whose secret is missing, or whose value is refused |
 |---|---|
-| `motel validate` (by hand, CI's `make check`, the box handler's step 6) | refused, as the table says; the handler and `make check` name the secrets in `secrets/_box/` (`MOTEL_NOTIFY_PUSHED_SECRETS`), taken as held ("Secrets"). validate runs as root, who reads any file, so it also refuses a secrets file the motel user could not read, by its owner, group and mode against motel's uid and groups (`motelCannotRead`): root:root 0600 after an `mv`, which the server's own read would refuse at a reload and drop every channel over at a boot |
-| a reload (`motel reload`, `systemctl reload`, the box applier's): a config is running | refused; the running config serves on, and the box applier rolls its push back |
-| the first load of `motel run` (a boot, a restart, an unattended upgrade's): nothing running | the channel is **dropped** from that load (from the operator line, each binding, the route tree; the heartbeat, if it is its secret), each a `monitor: a channel is dropped from this load` error line naming every line that reads the key, and the key, never a value; and one more if no operator channel is left. A secrets file that cannot be read or parsed (a line without `=`, over 1 MiB, unreadable) is every secret unusable: one error line names the file and its error, and every line that reads a secret is dropped. A malformed line is named by the file and its line number; its text is quoted only when it looks like a mistyped name (liveswap's `invalidEnvKeyMsg`), so a channel URL written without its `NOTIFY_…=` is not. motel serves |
+| `moteld validate` (by hand, CI's `make check`, the box handler's step 6) | refused, as the table says; the handler and `make check` name the secrets in `secrets/_box/` (`MOTEL_NOTIFY_PUSHED_SECRETS`), taken as held ("Secrets"). validate runs as root, who reads any file, so it also refuses a secrets file the motel user could not read, by its owner, group and mode against motel's uid and groups (`motelCannotRead`): root:root 0600 after an `mv`, which the server's own read would refuse at a reload and drop every channel over at a boot |
+| a reload (`moteld reload`, `systemctl reload`, the box applier's): a config is running | refused; the running config serves on, and the box applier rolls its push back |
+| the first load of `moteld run` (a boot, a restart, an unattended upgrade's): nothing running | the channel is **dropped** from that load (from the operator line, each binding, the route tree; the heartbeat, if it is its secret), each a `monitor: a channel is dropped from this load` error line naming every line that reads the key, and the key, never a value; and one more if no operator channel is left. A secrets file that cannot be read or parsed (a line without `=`, over 1 MiB, unreadable) is every secret unusable: one error line names the file and its error, and every line that reads a secret is dropped. A malformed line is named by the file and its line number; its text is quoted only when it looks like a mistyped name (liveswap's `invalidEnvKeyMsg`), so a channel URL written without its `NOTIFY_…=` is not. motel serves |
 
 Refusing a boot would take every site down for an alert channel; a
 dropped channel is the one cost, said in the journal, and the next
-`motel validate` or reload says it again. This is the rule cmd/motel's
+`moteld validate` or reload says it again. This is the rule cmd/moteld's
 gate keeps for its own checks (an admin API on TCP, an unread backup
 declaration): validate and reload refuse, run serves. The box makes
 the case rare: its consistency check refuses a push whose `monitor`
@@ -195,7 +195,7 @@ a fixed suffix (ntfy's `/publish`, `/send`, `/trigger`; Discord's
 parameter as a whole: a topic on public ntfy.sh, a hook's token, the
 `auth` value; and the heartbeat's ping URL's the same way, past
 Healthchecks' `/start`, `/fail`, `/log` and exit status (0 to 255):
-its check UUID. Each is `partial:<KEY>=<part>`: typed alone in a `motel monitor
+its check UUID. Each is `partial:<KEY>=<part>`: typed alone in a `moteld monitor
 send` summary or a detail it is masked as
 `[redacted:partial:<KEY>]`, and the whole URL, a longer form taken
 first, still as `[redacted:<KEY>]` (notify/app.go, `knownValues`, the
@@ -213,10 +213,10 @@ the prometheus uid reads, and the config itself holds paths only.
 `secrets/_box/NOTIFY_*.age` (#418's reserved slot; box/DESIGN-box.md,
 "The box's own slot", which reverses its open question 5 for this one
 use) is decrypted by root into `_box.env` as an app's secrets are into
-its env file, and a push that changes the file reloads motel, so a new
+its env file, and a push that changes the file reloads moteld, so a new
 URL is rendered at once (`make secret APP=_box VAR=NOTIFY_OPS_URL` in
 the box's repository; docs/secrets.md). The box handler validates a
-push before root writes its values, and cannot read them: `motel
+push before root writes its values, and cannot read them: `moteld
 validate` is told the names the push carries
 (`MOTEL_NOTIFY_PUSHED_SECRETS`, names only, read in `validate` alone and
 for the default `secrets_file` alone, `PushedSecretsEnv`) and takes each
@@ -235,7 +235,7 @@ hand-made file, named as edited out of band.
 in the env file the box writes under `/etc/motel/secrets`) is withheld
 from the app unit's environment, named in a warning at each launch, and
 stays a known value to the filter (liveswap, `notifyOwnedEnvKey`); `make
-check` warns of it before the push (`motel box describe`) and `make
+check` warns of it before the push (`moteld box describe`) and `make
 secret` as it is set. An inline `env` line and an env file the operator
 keeps elsewhere are the operator's, and pass: refusing them would refuse
 a boot over an app's own variable name (/code-review of this change).
@@ -485,34 +485,34 @@ whichever config serves when it clears.
   then, so a fallback finds it as it was: Caddy has no hook that says
   a config serves. When the last config running
   notify stops, the engine's table, mutes and buckets are emptied, and
-  each post still queued is given up as above (at motel's shutdown
+  each post still queued is given up as above (at moteld's shutdown
   too): a block added back later starts clean. When that stop is a reload's
   (a config serves on without notify: the block or its channels taken
   out), Alertmanager is given setup's config that sends nothing and
   the URL files are removed (`applyNothing`): what it holds ends at
   `resolve_timeout` through the blackhole, where the last render's
   receivers would have told every channel a recovery that did not
-  happen. motel's own shutdown leaves the render, so that a restart
+  happen. moteld's own shutdown leaves the render, so that a restart
   keeps what fired: Caddy empties its running context before it stops
   the last config's apps, so `configRunning` is a reload's alone at
   Stop, as for the store's rules (DESIGN-metrics.md, "The metrics
   line"). A restart or a boot into a config that runs no notify starts
-  no App to do it, so cmd/motel's gate does it at `motel run`, as it
+  no App to do it, so cmd/moteld's gate does it at `moteld run`, as it
   retires the store's rules (`notify.SendNothing`), reloading
   Alertmanager only when the state directory changed, so that a box
   whose block never had channels starts no Alertmanager for it.
   Both of a start's writers act on the state directory only as its
-  owner, the motel user motel.service runs as (`notify.NotOwner`):
+  owner, the motel user moteld.service runs as (`notify.NotOwner`):
   the gate, for a config that runs no notify, and Start, for one that
   does, which then starts no engine, so it writes, reloads and posts
   nothing. Root trying a file by hand on a live box leaves this
   directory and Alertmanager as they are, whatever the file's monitor
   block, and is told so; the motel user by hand is not told apart
   (Accepted residuals).
-  `motel reload` of a Caddyfile with a monitor block passes
+  `moteld reload` of a Caddyfile with a monitor block passes
   `--force`, as `systemctl reload` does: the block reads the secrets
   file, which the config does not hold, so a mended `_box.env` would
-  otherwise load nothing (cmd/motel's gate, `reloadForces`).
+  otherwise load nothing (cmd/moteld's gate, `reloadForces`).
 - **A certificate no config names** is never obtained and never
   reported again, so no `cert_obtained` clears it. CertMagic reports
   `cert_failed` on every failed attempt for a name it manages, and its
@@ -521,7 +521,7 @@ whichever config serves when it clears.
   hold.
 - **The watchdog turned off** while a restart loop is reported ends the
   report (`watchdog_recovered`): no probe would ever say so.
-- **A motel restart** empties the table while Alertmanager keeps each
+- **A moteld restart** empties the table while Alertmanager keeps each
   firing alert until `resolve_timeout`. The backup, disk and TLS
   sources re-detect within a poll, before it; liveswap's watchdog would
   not, since a fresh process does not know a loop it was already in,
@@ -546,7 +546,7 @@ whichever config serves when it clears.
   no alerts across its own restart (a reboot), and what it holds says
   nothing to liveswap, whose watchdog would still not report the
   loop's end, leaving an adopted key firing for good.
-- **A producer's state** (`motel monitor send --state`) has no detector
+- **A producer's state** (`moteld monitor send --state`) has no detector
   in motel to tell it again, so the engine keeps it the same way
   (notify/external.go): `external.json` in the state directory (0600,
   motel's alone) holds each producer's key with its severity, its
@@ -564,9 +564,9 @@ whichever config serves when it clears.
   not read, or holds an entry that is not a producer's, is said in the
   journal, taken as nothing and removed; a failed write is said, and the
   file stays as it was until the next change. A reload that takes the
-  block out removes it with the table, and so does cmd/motel's gate at a
+  block out removes it with the table, and so does cmd/moteld's gate at a
   start without the block (`SendNothing`): a later block must not tell
-  them again. motel's shutdown keeps it.
+  them again. moteld's shutdown keeps it.
 
 ## Failed delivery
 
@@ -602,15 +602,15 @@ that fails does neither. So a read whose stamp is not the last
 read's (`loadSince`; an earlier stamp too, after a clock step back) has a baseline of 0: every count is since the
 load, and 1, a load, then one failure before the next read (1 again)
 is a rise, where comparing with the last read alone saw none. The
-first read after motel starts is a baseline, unless Alertmanager
-loaded after motel's start, when it too counts from 0: the reload
-motel's start asks for (`noteReload`, which needs no clock), or a
+first read after moteld starts is a baseline, unless Alertmanager
+loaded after moteld's start, when it too counts from 0: the reload
+moteld's start asks for (`noteReload`, which needs no clock), or a
 stamp after the start (setup's start of Alertmanager, or its socket's
 at motel's first post); a load from before
-the start may have been told of by the motel before. Otherwise a
+the start may have been told of by the moteld before. Otherwise a
 value lower than the last started again at a load the read gives no
 stamp of (an Alertmanager without `receiver-name-in-metrics`, restarted),
-and counts from 0. The hold's deliveries and `motel monitor test`'s
+and counts from 0. The hold's deliveries and `moteld monitor test`'s
 baseline read the same stamp, and vmalert's rule reads it beside the
 counter (DESIGN-metrics.md, "Rules"). A key's
 bucket bounds the storm. A failure with no
@@ -628,10 +628,10 @@ when its last send's log entry, stamped after the send returned, is
 older than the repeat, so an equal repeat skipped every other flush and
 pinged every ten minutes (Fable review of #422, from Alertmanager
 0.28.1's dedupe stage). Silence means the box,
-motel or Alertmanager is down, which is the chain that delivers
+moteld or Alertmanager is down, which is the chain that delivers
 everything else. Uptime stays an external keyword check per host.
 A block with no `heartbeat` line loads, with its `Watchdog` routed to
-the blackhole receiver, and every load (`motel validate` too) warns
+the blackhole receiver, and every load (`moteld validate` too) warns
 `monitor: no heartbeat in this load`, as for `allow_insecure_channels`:
 nothing outside the box would hear that it stopped. A boot that drops
 the line for its secret ("Secrets at load") warns the same.
@@ -654,7 +654,7 @@ not fail, read from `alertmanager_notification_requests_total` and
 `…_requests_failed_total` by receiver, which motel reads from
 Alertmanager's own `/metrics` over the socket with the failed counter
 (not from the store). The pings resume at the next delivery through
-the suspect's receivers (`motel monitor test <channel>` makes one), at
+the suspect's receivers (`moteld monitor test <channel>` makes one), at
 a load whose config no longer has the channel, once it serves
 ("Reloads"), or at a restart of
 motel: the hold is in memory, as the counter's baseline is.
@@ -679,13 +679,13 @@ state, and a render change. The state is one map in the engine
 
 ## External producers and tests
 
-(`motel monitor rules`, on the same admin socket, lists
+(`moteld monitor rules`, on the same admin socket, lists
 every alert this file's detectors raise beside the store's rules, with
 the number each detector last read: DESIGN-metrics.md, "How close each
 alert is". The alert names and their first severities are one table,
 notify/silenceable.go, which silence and the listing share.)
 
-`motel monitor send` posts to `POST /notify/events`, and `motel monitor
+`moteld monitor send` posts to `POST /notify/events`, and `moteld monitor
 test <channel>` to `POST /notify/test`, both `admin.api.notify` routes
 on the admin socket: root and the motel uid reach it, no app does.
 External producers never post to Alertmanager's socket on the
@@ -702,7 +702,7 @@ and the route check (`SendRequest.Check`):
 | a name, instance or source the filter would mask (a channel URL or its topic or token, the heartbeat's URL or its last path segment, a secret-shaped token) | each is part of the key, the labels and the answer, which the filter does not rewrite |
 
 Accepted, an external event is one like motel's own: the filter, the
-bucket, the journal line, the queue. `motel monitor test` posts one
+bucket, the journal line, the queue. `moteld monitor test` posts one
 `NotifyTest` alert with a nonce label, routed to the channel alone,
 then reads the channel's receiver's counters for 15 s: delivered when
 an attempt did not fail (`notification_requests_total` rose more than
@@ -716,8 +716,8 @@ filter.
 What a load would say in the journal alone, the commands say too. On a
 box setup has not run on (no state directory), `send` journals the
 event and exits 1 (`journalled as <key>, and delivered nowhere`), and
-`test` answers 503, both naming `motel monitor setup`; `motel validate`
-and `motel reload` warn (cmd/motel's gate, `notify.LoadWarnings`). A
+`test` answers 503, both naming `moteld monitor setup`; `moteld validate`
+and `moteld reload` warn (cmd/moteld's gate, `notify.LoadWarnings`). A
 `resolved` that finds nothing firing under its key answers `resolved
 nothing` with exit 0, since a producer may resolve whatever it last
 said. `test` on a channel a boot dropped names it dropped, and the
@@ -732,16 +732,16 @@ to run again: an upgraded box keeps the old units until root does.
 
 ## Silences
 
-`motel monitor silence add [--alert <name>] [--app <name>] [--release
+`moteld monitor silence add [--alert <name>] [--app <name>] [--release
 <version>] --comment <text> [--duration 2h]` posts to `POST
-/notify/silences`, and `motel monitor silence expire <id>` to `POST
+/notify/silences`, and `moteld monitor silence expire <id>` to `POST
 /notify/silences/expire`, two more `admin.api.notify` routes. The route
 checks the request again (the command's check names a mistake of shape
 first, as `send`'s does), holds each name to a closed set of the loaded
 config, builds the matchers itself, writes the silence to
 Alertmanager's v2 API (`POST /api/v2/silences`, `DELETE
 /api/v2/silence/{id}`) over the socket, and once Alertmanager has taken
-it writes one line in motel's journal: `monitor: silence added` (`id`,
+it writes one line in moteld's journal: `monitor: silence added` (`id`,
 `alert`, `app`, `release`, `ends_at`, `created_by`, `comment`) or
 `monitor: silence expired` (`id`, `expired_by`, in `created_by`'s
 form). A refused or failed write leaves no line; the command says why
@@ -751,9 +751,9 @@ a caller gone once motel has the request (Ctrl-C, a dropped `ssh`),
 during the dial or while Alertmanager answers, does not cut it: the
 route runs to Alertmanager's answer and writes `silence added` with the
 id whether or not anyone reads the reply. Caddy cancels no admin
-request at a reload; at motel's stop it stops the apps, then waits up
+request at a reload; at moteld's stop it stops the apps, then waits up
 to 10 s for admin requests before it exits, and systemd kills it at
-`TimeoutStopSec=5s` (packaging/motel.service): an add Alertmanager has
+`TimeoutStopSec=5s` (packaging/moteld.service): an add Alertmanager has
 not answered by then writes no line ("Accepted residuals"). It is not
 tied to the engine, which it does not post through: the silence is
 Alertmanager's, which outlives a stop of the engine, and a cut at a
@@ -776,7 +776,7 @@ how `send` and `test` write, and so one code path holds every write
 motel documents: the line is motel's, in its unit's journal beside the
 events, written by the process that holds the filter's known values and
 the loaded config. A command that posted to `am.sock` itself would log
-to its own stderr, which over `ssh root@box motel monitor silence …` is
+to its own stderr, which over `ssh root@box moteld monitor silence …` is
 the laptop's terminal, not the box's journal. A later laptop client
 runs these commands over ssh with `--json`, so it gets the same checks
 and the same line, and never Alertmanager's raw API. root can still
@@ -811,7 +811,7 @@ carry (`labelsFor`, `oneShotAlert`):
 | a body with unknown fields (a `matchers` list among them), a field of the wrong type, or not JSON: one fixed 400, `the body is not this route's JSON request` (`readJSON`, which every notify route uses, `send`'s and `test`'s too) | the route takes the request, never Alertmanager's shape; Go's decoder names an unknown or mistyped field, which the journalled refusal must not carry |
 
 Not taken yet, and adding them later breaks nothing: an external
-producer's own names (`motel monitor send --name`), which no config
+producer's own names (`moteld monitor send --name`), which no config
 lists; regexes; other labels.
 
 The comment is the one free text, and it is **masked, not refused**:
@@ -827,7 +827,7 @@ guess; a masked comment in Alertmanager shows the filter's marker where
 the secret was, which reads as what it is. The bare-ntfy-topic limit of
 the filter ("Owed") applies to it as to every summary.
 
-`createdBy` is `motel monitor: <user>`, the user being `SUDO_USER`, else
+`createdBy` is `moteld monitor: <user>`, the user being `SUDO_USER`, else
 `USER`, else the uid's name: what the caller's environment says, from a
 caller the admin socket already admits as root or motel, so a label for
 whoever reads the silence, not an identity checked. Over `ssh root@box`
@@ -845,7 +845,7 @@ There is no `list`: reads go to Alertmanager's own v2 API (`GET
 /api/v2/silences`, `GET /api/v2/silence/{id}`), whose shape motel would
 only copy ("Viewing"). Who runs them: root (and the motel uid, which
 the admin socket admits); any other user is told `the admin socket
-(unix//run/motel/admin.sock) admits root and the motel user: run motel
+(unix//run/motel/admin.sock) admits root and the motel user: run moteld
 monitor silence as root`.
 
 ## Packaging and setup
@@ -856,7 +856,7 @@ gossip on `0.0.0.0:9094`): apt may configure a dependency, and run its
 postinst, before motel's own scripts run, and `Pre-Depends` makes that
 order certain rather than preventing it. On a box with no firewall
 (hotserve-1 has none) that is the alert and silence API on the
-internet. So **`motel monitor setup`**, run by root, does it in an order
+internet. So **`moteld monitor setup`**, run by root, does it in an order
 motel controls (`--metrics` adds the store's setup, after this one
 only where this one has not run to its end: DESIGN-metrics.md,
 "Packaging and setup"):
@@ -878,7 +878,7 @@ only where this one has not run to its end: DESIGN-metrics.md,
    0.28.1, and the postinst only chowns it);
 4. `daemon-reload`, `unmask`, `disable` the service (its socket starts
    it), `enable --now motel-am.socket`;
-5. `try-reload-or-restart motel.service`, which renders.
+5. `try-reload-or-restart moteld.service`, which renders.
 
 Run again, it puts the units back as the binary ships them. A re-run
 that fails after the mask unmasks the service on its way out and starts its socket
@@ -893,13 +893,13 @@ upgrading or reinstalling the package, whose postinst restarts the
 unit directly, was measured on hotserve-1 (2026-11-10, 0.28.1
 reinstalled under motel 0.6.2~notifypoc1): the socket's fd is passed
 (`Listening on systemd activated listeners`), nothing listens on 9093
-or 9094, and `motel monitor test` delivers at once; the postinst
+or 9094, and `moteld monitor test` delivers at once; the postinst
 re-enables the service, so it then starts at boot rather than at its
 socket's first connection, still on the socket alone. A reboot with motel rendering (2026-11-10, hotserve-1,
 13.2 s to multi-user): `motel-am.socket` listening at 11.9 s,
 Alertmanager started at 12.0 s on the rendered file left from before,
-motel's render and reload at 12.8 s, motel ready at 12.9 s; no ordering
-cycle, no listener on 9093 or 9094, a heartbeat at once and `motel
+motel's render and reload at 12.8 s, moteld ready at 12.9 s; no ordering
+cycle, no listener on 9093 or 9094, a heartbeat at once and `moteld
 monitor test` delivered. Two unit facts were measured too: `motel-am.socket` must name its service
 (`Service=prometheus-alertmanager.service`), or systemd refuses it; and
 Alertmanager needs Debian's `/usr/share/prometheus` templates, so the
@@ -964,7 +964,7 @@ No new listener, no new credential kind, no session, and no UI.
 Alertmanager's API has no authentication of its own and is reached
 only through the socket. Debian's package ships no web application: its
 `/` is a page that says so and points to `amtool` (measured on 0.28.1
-in the e2e box, 2026-11-12). On the box, root uses the `motel monitor`
+in the e2e box, 2026-11-12). On the box, root uses the `moteld monitor`
 commands or `curl --unix-socket /run/motel-notify/am.sock
 http://am/api/v2/alerts`. `amtool`, which the package ships, speaks TCP
 only: on a box with the store it runs inside the store's namespace,
@@ -984,7 +984,7 @@ whatever the user's config says), another user's `curl` is refused,
 and a socket file left by an ended ssh makes the next forward fail
 `Address already in use` unless `StreamLocalBindUnlink=yes`. Not
 measured against a real box. Writes from the laptop go through `ssh
-root@box motel monitor silence …` ("Silences"), not this forward.
+root@box moteld monitor silence …` ("Silences"), not this forward.
 Slack's title link, which Alertmanager's defaults point at its external
 URL (`http://<hostname>:9093/#/alerts…`, where nothing answers), is
 rendered empty, and its fallback is motel's title. A deployer
@@ -997,7 +997,7 @@ docs/monitor.md.
 | Decision | Why |
 |---|---|
 | Every occurrence of a one-shot is delivered, bounded only by motel's limit per key; grouping or digesting repeats is the receiving service's (whatever takes the webhook), not motel's: no monitor line groups, and none is promised | the owner's decision of 2026-11-14: an app that fails twice within two minutes is to be heard twice, and grouping is done at the service that receives the alerts. It reversed an accepted row of the same day, under which a one-shot posted again with the same labels was told once until five to six minutes after the last ("Events", `occurred_at`) |
-| One block, `monitor`, for notify and the metrics store | notify, the numbers and the rules over them are one idea to the person configuring the box; `metrics` is Caddy's own global option, so the store cannot be a block of that name; one global option yields one Caddy app, so the store is a part of the monitor app (`App.Metrics`), not an app of its own. A `notify` or `metrics_store` block is refused by name, and `motel notify` and `motel metrics` exit 1 with the new spelling: everything here is unreleased, so there is no alias |
+| One block, `monitor`, for notify and the metrics store | notify, the numbers and the rules over them are one idea to the person configuring the box; `metrics` is Caddy's own global option, so the store cannot be a block of that name; one global option yields one Caddy app, so the store is a part of the monitor app (`App.Metrics`), not an app of its own. A `notify` or `metrics_store` block is refused by name, and `moteld notify` and `moteld metrics` exit 1 with the new spelling: everything here is unreleased, so there is no alias |
 
 ## Triage
 
@@ -1019,25 +1019,25 @@ on its general scales. notify's examples:
 | `releaseAlerts` and `lifecycleAlerts` copy lifecycleSink's cases by hand: a new liveswap one-shot added there and not here is silenceable only once `raisedAlerts` names it (`TestSilenceableAlertsAreWhatMotelRaises` fails until it does), and never by `--release` until `releaseAlerts` does | notify/silenceable.go | 2 | 5 | 1 | 10; the scan names the missing alert loudly; `--release` refused for it is a refusal, not a silent miss. /code-review pass 2 of the closed-set shape |
 | `--alert deploy_refused --release` is refused though a refusal's release can be known: the commonest refusal is a version already on disk ("version v2 already exists"), whose `deploy_refused` carries `release=v2`, so a CI pushing v2 again can be quieted only by `--alert deploy_refused --app`, every refusal of the app | notify/silenceable.go (`releaseAlerts`) | 2 | 5 | 1 | 10; refused loudly, and the wider silence works. Kept refused as the approved scope of the change that let `deploy_failed` take a recorded version said (a refusal writes no record); adding `deploy_refused` to `releaseAlerts` is size 1, risk 1, the owner's call. /code-review pass 1 on monitor/silence-release-records |
 | The e2e row for `--release` posts a hand-built copy of liveswap's `deploy_failed` labels rather than failing a real deploy of v3 under the silence: a rename of `oneShotAlert`'s `release` label would leave the row green while real alerts of v3 page | e2e/notify/run.sh (notify 7a) | 2 | 1 | 3 | 6; `TestServeSilence` pins the matcher and the one-shot's labels are pinned by the engine's tests; a real redeploy adds a deploy's time and its own late-delivery race to notify 9's count. /code-review pass 2 on monitor/silence-release-records |
-| A refused admin body names no field: after an upgrade, a new `motel monitor` command posting to a motel not yet restarted (a field the old binary does not know) reads as a plain `the body is not this route's JSON request` rather than naming the version skew | notify/admin.go (`readJSON`) | 2 | 3 | 1 | 6; refused loudly, and `systemctl restart motel` mends it; naming the field safely would mean listing the struct's fields by reflection to tell a known name from input (size 2, risk 1). /code-review of the Copilot round 2 fixes on #444 |
+| A refused admin body names no field: after an upgrade, a new `moteld monitor` command posting to a moteld not yet restarted (a field the old binary does not know) reads as a plain `the body is not this route's JSON request` rather than naming the version skew | notify/admin.go (`readJSON`) | 2 | 3 | 1 | 6; refused loudly, and `systemctl restart moteld` mends it; naming the field safely would mean listing the struct's fields by reflection to tell a known name from input (size 2, risk 1). /code-review of the Copilot round 2 fixes on #444 |
 | `created_by` and `expired_by` in the journal are what the caller's environment says (`SUDO_USER`, `USER`): root can name anyone | notify/silencecmd.go (`invokingUser`) | 1 | 5 | 5 | a label for whoever reads the silence, from a caller already root or motel, who could write the journal or Alertmanager directly; no identity is checked, and the doc says so. /code-review of the closed-set shape |
-| Two `motel monitor silence expire` of one silence at once, or one as the silence reaches its end: both pass the route's state check (`GET`) before either `DELETE`, which Alertmanager 0.28.1 answers 200 for an expired silence, so the journal has two `monitor: silence expired` lines, or one for a silence that ended on its own | notify/silence.go (`serveExpire`) | 2 | 3 | 3 | 18; the silence ends expired either way; only the journal's count is off, and Alertmanager's own `endsAt` says when it ended. A lock across both requests would hold the engine's lock over Alertmanager's answer, or add a lock of its own (size 3). /code-review pass 1 on monitor/silence |
+| Two `moteld monitor silence expire` of one silence at once, or one as the silence reaches its end: both pass the route's state check (`GET`) before either `DELETE`, which Alertmanager 0.28.1 answers 200 for an expired silence, so the journal has two `monitor: silence expired` lines, or one for a silence that ended on its own | notify/silence.go (`serveExpire`) | 2 | 3 | 3 | 18; the silence ends expired either way; only the journal's count is off, and Alertmanager's own `endsAt` says when it ended. A lock across both requests would hold the engine's lock over Alertmanager's answer, or add a lock of its own (size 3). /code-review pass 1 on monitor/silence |
 | An add that Alertmanager answers 2xx with a body holding no silence id (not its API's `{"silenceID":…}`) is told as a plain failure, `silencing in Alertmanager: alertmanager answered "…"`, though Alertmanager took the silence: the operator may add it again | notify/silence.go (`postSilence`, `answerLost`) | 2 | 2 | 3 | 12; Alertmanager outside its own API, and a body cut short is a read error, which `answerLost` takes. Telling it apart needs a sentinel error from `postSilence` and a third message (size 2, risk 1). /code-review pass 1 of monitor/two-messages-say-what-happened |
 | An expire whose answer is lost (the client's 10 s, after Alertmanager ended the silence) is a plain 502, `expiring in Alertmanager: … deadline exceeded`, with no `silence expired` line; the retry answers `silence <id> has already expired`, which writes none either | notify/silence.go (`serveExpire`) | 2 | 3 | 1 | 6; ends correct and named under the one fault: the silence is ended, the 502 names the timeout and Caddy journals it, and the retry says the state the operator wanted. The add's `answerLost` branch for expire is a branch and a message (size 2, risk 1). /code-review pass 1 of monitor/two-messages-say-what-happened |
 | `answerLost` judges by the error, not by whether Alertmanager read the request: a deadline before the POST was written (the client's 10 s spent in the dial; the caller's cancel no longer reaches the POST) and a non-2xx answer whose body is cut off or stalls are told as `may have taken the silence`, with the `silence add unanswered` warning, though Alertmanager took nothing; and a reset after Alertmanager read the request and began its answer (killed while it writes) is told as a plain failure | notify/silence.go (`answerLost`), notify/amclient.go (`do` reads the body before it looks at the status) | 2 | 2 | 3 | 12 at most (the reset; the other two say `may` and give the command that lists the silences, which shows none: D1); each is a timeout or a kill inside a window of milliseconds, or a non-2xx with a dropped connection. A `WroteRequest` flag from `httptrace` in `postSilence` and the status read before the body (size 2, risk 2). /code-review pass 2 of monitor/two-messages-say-what-happened: recorded, the review rule stops at two passes |
-| A `systemctl stop` or `restart` of motel while an add waits on Alertmanager (socket activation starting it, or Alertmanager slow up to the client's 10 s): Caddy stops the apps, then waits for admin requests, and systemd kills motel at `TimeoutStopSec=5s`, so an add Alertmanager answers after the kill writes neither `silence added` nor the unanswered warning, though Alertmanager may hold the silence. Likewise a reload that drops a `log` output the old config opened (a file or net sink) closes the logger the route writes its line with | notify/silence.go (`serveSilence`), packaging/motel.service | 2 | 2 | 3 | 12; a stop and a slow Alertmanager at once, or a log output changed in the reload the add spans; the silence, if taken, is in Alertmanager's list, and a caller who stayed sees the connection drop. As before this change for a caller who stays. Holding the stop for the add would be a longer `TimeoutStopSec` for every stop (Wide), or a drain of the silence routes before Caddy stops the apps (size 3). And an add whose caller left now holds a stop issued within its 10 s the same way, to the 5 s kill, where its cancel ended it at once: systemd names the timeout (S2 O2 D1, 4). /code-review passes 1 and 2 of monitor/silence-add-outlives-its-caller |
+| A `systemctl stop` or `restart` of moteld while an add waits on Alertmanager (socket activation starting it, or Alertmanager slow up to the client's 10 s): Caddy stops the apps, then waits for admin requests, and systemd kills moteld at `TimeoutStopSec=5s`, so an add Alertmanager answers after the kill writes neither `silence added` nor the unanswered warning, though Alertmanager may hold the silence. Likewise a reload that drops a `log` output the old config opened (a file or net sink) closes the logger the route writes its line with | notify/silence.go (`serveSilence`), packaging/moteld.service | 2 | 2 | 3 | 12; a stop and a slow Alertmanager at once, or a log output changed in the reload the add spans; the silence, if taken, is in Alertmanager's list, and a caller who stayed sees the connection drop. As before this change for a caller who stays. Holding the stop for the add would be a longer `TimeoutStopSec` for every stop (Wide), or a drain of the silence routes before Caddy stops the apps (size 3). And an add whose caller left now holds a stop issued within its 10 s the same way, to the 5 s kill, where its cancel ended it at once: systemd names the timeout (S2 O2 D1, 4). /code-review passes 1 and 2 of monitor/silence-add-outlives-its-caller |
 | `TestSilenceAnswerLost` shortens the client's timeout (`silenceTimeout`) to 300 ms, which runs from the dial: a runner too slow to dial a unix socket and write the POST within it fails the test with `Alertmanager never got the request` | notify/silence_test.go | 2 | 1 | 1 | 2; a local dial and write take microseconds. Through the route, whose POST no longer takes the caller's cancel, the client's timeout is the one way to lose an answer, so it cannot start at the stub's `got` as `TestAnswerLost`'s cancel, on a client of its own, does. /code-review pass 2 of monitor/two-messages-say-what-happened: recorded, the review rule stops at two passes |
-| A UUID-shaped secret this box does not hold, pasted for a silence id (another box's heartbeat check UUID, given to `motel monitor silence expire` on this one): the filter does not know it, so it passes the masked check and reaches Alertmanager's per-id `GET`, and Alertmanager 0.28.1 journals it (`Failed to find silence`, with the id, at error level; read in `getSilenceHandler`, not observed on a box) in prometheus-alertmanager's journal, readable by group adm. motel's own refusal does not echo it | notify/silence.go (`serveExpire`) | 3 | 5 | 5 | 75: over 20, so the rule says fix; recorded instead as second-pass hardening (the review rule stops at two passes), outside what the filter promises, which is this box's own known values, and those are refused before Alertmanager is asked. S3 as for the slug-form ping key above: a ping key alone, readable where it should not be. The fix, for the owner to ask for: read `GET /api/v2/silences` and look for the id in the list, so an id Alertmanager does not hold is never sent to a per-id endpoint (a list logs nothing); size 2, risk 2. Second /code-review pass on monitor/test-no-echo |
+| A UUID-shaped secret this box does not hold, pasted for a silence id (another box's heartbeat check UUID, given to `moteld monitor silence expire` on this one): the filter does not know it, so it passes the masked check and reaches Alertmanager's per-id `GET`, and Alertmanager 0.28.1 journals it (`Failed to find silence`, with the id, at error level; read in `getSilenceHandler`, not observed on a box) in prometheus-alertmanager's journal, readable by group adm. motel's own refusal does not echo it | notify/silence.go (`serveExpire`) | 3 | 5 | 5 | 75: over 20, so the rule says fix; recorded instead as second-pass hardening (the review rule stops at two passes), outside what the filter promises, which is this box's own known values, and those are refused before Alertmanager is asked. S3 as for the slug-form ping key above: a ping key alone, readable where it should not be. The fix, for the owner to ask for: read `GET /api/v2/silences` and look for the id in the list, so an id Alertmanager does not hold is never sent to a per-id endpoint (a list logs nothing); size 2, risk 2. Second /code-review pass on monitor/test-no-echo |
 | A public host name that resolves, or rebinds, to a private address is posted to: the check is on the URL as written | notify/config.go (`checkURL`) | 1 | 5 | 5 | a channel URL is a signer's line today, and a signer can already run any code as an app that reaches the same addresses; scored by what T6 gains (nothing). Rescore when #417 lets a deployer choose a URL |
-| motel stopped for longer than `resolve_timeout` after its last re-post (re-posts come each minute, so from about four minutes): Alertmanager resolves each firing state alert at `resolve_timeout`, and the channels get a recovery that did not happen (at motel's start the watchdog's standing reports fire its alerts again, the producers' kept states theirs, and the pollers theirs) | notify/engine.go (no `endsAt` on re-posts) | 2 | 3 | 3 | 18; a stop that long is itself a fault the heartbeat reports (Watchdog's silence pages first); keeping Alertmanager's alerts alive across a stop would need a poster outside motel; a restart (seconds) is "Behaviour"'s, and keeps them |
+| moteld stopped for longer than `resolve_timeout` after its last re-post (re-posts come each minute, so from about four minutes): Alertmanager resolves each firing state alert at `resolve_timeout`, and the channels get a recovery that did not happen (at moteld's start the watchdog's standing reports fire its alerts again, the producers' kept states theirs, and the pollers theirs) | notify/engine.go (no `endsAt` on re-posts) | 2 | 3 | 3 | 18; a stop that long is itself a fault the heartbeat reports (Watchdog's silence pages first); keeping Alertmanager's alerts alive across a stop would need a poster outside motel; a restart (seconds) is "Behaviour"'s, and keeps them |
 | A box on the feature branch's `notify` or `metrics_store` block cannot move to the `monitor` block in one load: the new binary refuses the old blocks and the old binary the new one, so the upgrade runs with no notify between two pushes (docs/upgrading.md, "From the notify and metrics_store blocks"): no event is delivered, the heartbeat stops (the dead-man check pages), Alertmanager ends what fired at `resolve_timeout` with a recovery that did not happen, and the store's rules are retired at the first push's reload | notify/caddyfile.go (`refusedOption`) | 3 | 5 | 1 | 15; once per box, only for boxes that ran the unreleased feature branch, in an order the doc names and the refusal points at, and the dead-man check reports the gap; a transitional alias (the old names loading, warned, for one release) is a second grammar and a new state to retire (size 3, risk 2). /code-review pass 1 on the monitor block, finding 1; the user chose the documented order over a transitional alias |
 | A recovery on an ntfy channel carries its alert's priority: a critical state's `[RESOLVED]` is sent at ntfy's 5 (urgent) too | notify/render.go (`ntfyPriority`) | 2 | 5 | 1 | 10; the header is fixed per receiver, and a receiver takes an alert and its end alike; the body says `resolved`. A priority by status needs a receiver per status (size 3, risk 2). #433 |
 | Two producers send a `firing` and a `resolved` of one key at once: the resolve's answer (`resolved nothing`, or `sent`) is read before its report runs, so it can say the opposite of what the report did | notify/admin.go (`serveSend`) | 2 | 2 | 3 | 12; two producers racing on one key, and the state ends as the reports leave it; the answer alone is wrong, and the journal lines say what happened. The report returning what it found changes a function the pusher takes as a value (size 2, risk 2). /code-review pass 2 on #433 |
-| `motel --help` and its commands' usage say `caddy` and link caddyserver.com's docs | Caddy's root command (binary-wide) | 2 | 5 | 1 | 10; the commands themselves are motel's and work as printed under `motel`; renaming Caddy's root command is a change to every command's help, not monitor's (size 2, risk 2). The deploy of 01b2fd5 to hotserve-1 |
-| `motel monitor test` reads the counters for 15 s; a slow receiver answers "neither yet" | notify/admin.go (`testWait`) | 2 | 2 | 1 | the answer says so; Alertmanager's retries continue |
+| `moteld --help` and its commands' usage say `caddy` and link caddyserver.com's docs | Caddy's root command (binary-wide) | 2 | 5 | 1 | 10; the commands themselves are motel's and work as printed under `moteld`; renaming Caddy's root command is a change to every command's help, not monitor's (size 2, risk 2). The deploy of 01b2fd5 to hotserve-1 |
+| `moteld monitor test` reads the counters for 15 s; a slow receiver answers "neither yet" | notify/admin.go (`testWait`) | 2 | 2 | 1 | the answer says so; Alertmanager's retries continue |
 | At a boot, an event liveswap reports before notify's Start (Caddy starts the apps in no fixed order) is dropped, the engine serving no config yet: a recovery at that instant ends its alert at `resolve_timeout`, up to five minutes late | notify/engine.go (`report`, `active == nil`) | 2 | 3 | 3 | 18; what stands is told again at notify's Start (`ReportStanding`), and an end told meanwhile is told again after it; holding events for a config not yet started adds a queue with its own lifetime (size 3). /code-review of the Owed rows |
 | After the wall clock steps back by a second or more, a one-shot read at exactly the nanosecond of an earlier occurrence of the same key that Alertmanager still holds (five minutes; at most four per key) gets the same `occurred_at`, so the same labels: Alertmanager merges it into the earlier one and sends nothing. The journal has its `monitor: event` line, and the earlier, identical one was delivered | notify/engine.go (`occurrence`: a nanosecond bump only within a second of the last reading) | 2 | 2 | 5 | 20, the bar, which rule 3 would fix; rule 4 stops it. A clock step is one rare fault, and the coincidence it needs as well is counted as a second, as for vmalert's clock-step row in DESIGN-metrics.md (a coincidence is no fault, but scoring the step alone would rank it with failures that follow from the step every time). The engine reads CLOCK_REALTIME through the vDSO in nanoseconds: a reading every 41 to 42 ns on an arm64 VM's 24 MHz counter (measured 2026-11-14), every nanosecond on x86's TSC. A coarse reading needs a kernel left on the jiffies clocksource, 4 ms at Debian's HZ=250 (a machine with no working timer); none reads whole seconds. So the reading must fall in the same 42 ns tick as one of at most four live values: for a one-shot at a time independent of the clock, at most about 1.7 × 10⁻⁷ (4 × 42 ns over a re-traversed second), and about 6 × 10⁻¹⁰ over the five minutes a value lives; a producer a scheduler starts again at the same wall instant is still apart by its own start-up jitter (a process start and a post over the admin socket, tens of microseconds at least), about 10⁻³ per such re-run at most. Alert times are not pushed ahead to avoid it: a bump past a step of a second or more would. The fix is a memory of the values still alive, or a sequence where a reading revisits one: new state, size 3, risk 2. Copilot on #487 |
-| The last config running notify stops (a reload that takes the block out, or motel's shutdown) while a post is in flight: the cancel cuts the POST after Alertmanager has taken the body and before its answer, the post is still at the queue's head, and `release` gives it up: a `monitor: delivery failed` line and the counter for a post that was delivered | notify/engine.go (`release`: the queue given up after `cancel`) | 2 | 2 | 3 | 12; a stop that lands inside one POST's answer, and the alert reaches its channels; before, the same post was lost unsaid, or posted again by a later config whatever its age. Letting the last attempt finish before the cancel waits on Alertmanager inside the stop (size 2, risk 2). /code-review pass 1 of monitor/queue-no-stale-posts |
+| The last config running notify stops (a reload that takes the block out, or moteld's shutdown) while a post is in flight: the cancel cuts the POST after Alertmanager has taken the body and before its answer, the post is still at the queue's head, and `release` gives it up: a `monitor: delivery failed` line and the counter for a post that was delivered | notify/engine.go (`release`: the queue given up after `cancel`) | 2 | 2 | 3 | 12; a stop that lands inside one POST's answer, and the alert reaches its channels; before, the same post was lost unsaid, or posted again by a later config whatever its age. Letting the last attempt finish before the cancel waits on Alertmanager inside the stop (size 2, risk 2). /code-review pass 1 of monitor/queue-no-stale-posts |
 | Caddy's `finishSettingUp` fails after every app of a reload's candidate started: `run` returns the error and stops none of them, so the candidate is never released while the old config serves on. Alertmanager keeps the candidate's render and the engine its audience (`point`), the pollers the old config's sources (no `settle`); and the candidate stays in `live`, so a later Stop of the config serving falls back to it: its render is put back, and the engine keeps posting even after a reload that takes the block out | notify/engine.go (`configure`, `release`); Caddy's caddy.go (`run`, `finishSettingUp`) | 3 | 1 | 3 | 9; only `admin.identity`, `admin.remote` or `admin.config.load` can fail it, which motel's Caddyfile and tools do not write; Caddy leaks every started app of that candidate there (its listeners too), so the fix is upstream; telling the stuck candidate apart in the engine is a new state (size 2, risk 2). /code-review of the failed-reload fix |
 | A restart after notify has resolved a recovery but before the next healthy probe clears `alerts.json` (with `health_interval 2m` and a 30 s hold, up to about 90 s) replays the recovery: the emptied engine posts the alert held, then resolved, and the operator sees the firing and recovery messages again. A reload does the same when it lengthens the hold (the standing report judges it with the candidate's `watchdog_grace`), and so does a push just after a restart (the watchdog's own `healthySince` is new) | liveswap/watchdog.go (`reportedAlerts` keeps `Recovering`, not when the hold began); liveswap/lifecycle.go (`reportStanding`) | 2 | 2 | 1 | 4; a duplicate the operator sees, only for a restart or reload inside one health interval after a hold ends; persisting the hold's start, and the engine honouring it, is size 3 (risk 2). Copilot round 1 on #424, widened by /code-review xhigh on #424 |
 | A restart inside a recovery's hold, then a relaunch that fails for good (no instance runs after the restart): the persisted `recovering` is re-reported as a held recovery, so the engine resolves the alert of an app that is down, and the flags stay for the next restart | liveswap/lifecycle.go (`reportStanding`) | 3 | 2 | 3 | 18; two faults, a restart inside a hold and then a relaunch that fails; the journal names the failed relaunch and status shows the app down; telling it apart needs a branch on whether an instance runs after recovery (size 2, risk 2). /code-review xhigh on #424 |
@@ -1051,32 +1051,33 @@ on its general scales. notify's examples:
 | A restart mid-deploy into a config that no longer runs that app: the engine ends the mutes of the apps it runs, not that one's, and if the app's kept-alive `watchdog_*` alert reaches its `resolve_timeout` before the mute does, Alertmanager drops the end unsent | notify/engine.go (`configure`: `a.cfg.apps`) | 3 | 1 | 5 | 15; a restart, inside that app's deploy, into a config without it, while its watchdog fires; its alert and its mute were re-posted in the same minutes, so both end within a minute of each other. The last process's apps are not known at the start (a new state, size 3, risk 2). /code-review pass 1 of the deploy mute's held recovery |
 | A failed write of `alerts.json` (EIO, a read-only remount) leaves the old file until the next change, and a restart before it reports what the file still says | liveswap/watchdog.go (`alertsChanged`) | 3 | 3 | 1 | 9; the warning at the failure names the file and the consequence; a retry needs a timer outside the transitions (size 2, risk 2). /code-review of the Owed rows |
 | A failed write of `external.json` (EIO, a read-only remount) leaves the old file until the next change of a producer's state, and a restart before it tells what the file still says: a state resolved since fires again, or one fired since is lost | notify/external.go (`persistExternal`) | 3 | 3 | 1 | 9; the warning at the failure names the file and the consequence, as for `alerts.json` (the row above); a retry at each tick would repeat the warning every 5 s, or need a backoff of its own (size 2, risk 1). Scored at the change that keeps the producers' states |
-| A producer's `resolved`, then motel stopped inside the 30 s hold for longer than `resolve_timeout` after its last re-post (from about four minutes): Alertmanager has told the recovery at `resolve_timeout`, and the start tells the held state again with no `endsAt`, which Alertmanager takes as a new alert: `[FIRING]` after `group_wait`, then `[RESOLVED]` after the hold, for a condition already recovered | notify/external.go (`externalState` keeps no `clearSince`) | 2 | 2 | 3 | 12; a stop inside a hold and a stop longer than resolve_timeout (itself the accepted row "motel stopped for more than five minutes"); liveswap's held recovery does the same. Keeping when the hold began and dropping a hold already past is a new field and a branch at the restore (size 3, risk 2). /code-review pass 1 of the producers' states |
+| A producer's `resolved`, then moteld stopped inside the 30 s hold for longer than `resolve_timeout` after its last re-post (from about four minutes): Alertmanager has told the recovery at `resolve_timeout`, and the start tells the held state again with no `endsAt`, which Alertmanager takes as a new alert: `[FIRING]` after `group_wait`, then `[RESOLVED]` after the hold, for a condition already recovered | notify/external.go (`externalState` keeps no `clearSince`) | 2 | 2 | 3 | 12; a stop inside a hold and a stop longer than resolve_timeout (itself the accepted row "moteld stopped for more than five minutes"); liveswap's held recovery does the same. Keeping when the hold began and dropping a hold already past is a new field and a branch at the restore (size 3, risk 2). /code-review pass 1 of the producers' states |
 | A restart into a config that no longer runs an app a producer's kept state names: the restore tells it as a standing firing (a journal line and a post Alertmanager merges), then resolves it as a reload would, with `why: the config no longer has its source` | notify/external.go (`restoreExternal`, then `prune`) | 2 | 3 | 1 | 6; ends correct and named, one extra `firing` line and post; resolving it without the standing report is a branch in the restore (size 2, risk 1). /code-review pass 1 of the producers' states |
 | At a start without the block, a failed removal of `external.json` (EACCES, a read-only remount) is joined into `SendNothing`'s error, which the gate prints under "Alertmanager was not given the config that sends nothing", and the line saying it was given is not printed | notify/gate.go (`SendNothing`) | 2 | 3 | 1 | 6; the error names the file and the cause; a message of its own needs a second error the gate tells apart (size 2, risk 2). /code-review pass 1 of the producers' states |
-| `motel run` by hand as the motel user, the owner of both state directories (`sudo -u motel motel run --config <a file>` on a live box), is not told from motel.service's start. A file with no monitor block: the gate gives the running service's Alertmanager the config that sends nothing, removes the URL files and `external.json`, and empties vmalert's rules. A file with another block: Start renders its channels and rules and reloads Alertmanager onto them, and its engine reads `external.json` and posts a resolve for each live alert of an app the file does not run (a `[RESOLVED]` that did not happen); a start that then fails on the ports leaves that render. The service is not told, so until its next load every alert goes nowhere or to the file's channels. A heartbeat line on the box has its check go red off the box once the pings stop (not while the file's render pings the same check); a block without one sends the Watchdog to the blackhole, and nothing off the box sees the silence | cmd/motel/monitorcheck.go, metricscheck.go (the gate); notify/app.go (`Start`); both through `NotOwner`, notify/state.go | 4 | 5 | 3 | 60, which the rule would fix; accepted by the owner's decision, over a probe of the admin socket at every start. Without a heartbeat line nothing off the box sees the silence, which is close to severity 5, which rule 1 fixes whatever the occurrence; the score rests on what the by-hand run itself prints, and the outcome stays the owner's recorded decision. What it prints, with a heartbeat line or without one: the gate's lines, or Start's journal lines on its stderr, say what was done to Alertmanager and the rules, though not that they were the running service's; what it writes is the motel user's, so the service's next load renders its own again. Root by hand, the case found, changes neither directory, whatever its file. /code-review of the gate at `motel run`, and its second pass |
-| A state directory no longer owned by the motel user (root chowned it, or a `chown -R` over /var/lib) while motel.service runs as motel: each start's gate and Start leave it alone with a WARNING naming the directory, its owner and the process's user, where the write's EACCES was an ERROR; and Start starts no engine, so no event or heartbeat is posted, where before the posts went on through the render Alertmanager last loaded; and with no engine serving, an event ends before its `monitor: event` journal line (`reportLocked`) and the disk and backup polls do not run, so events leave the journal too, where before such a box journalled every event even when it could not deliver | notify/state.go (`NotOwner`), app.go (`Start`) | 4 | 1 | 1 | 4; state only root can write, found changed, and every start names it; with a heartbeat line its check goes red. Posting on while writing nothing, or an ERROR for it, needs telling the service's start from a run by hand, the probe the owner declined. Second /code-review pass of the gate at `motel run` |
+| `moteld run` by hand as the motel user, the owner of both state directories (`sudo -u motel moteld run --config <a file>` on a live box), is not told from moteld.service's start. A file with no monitor block: the gate gives the running service's Alertmanager the config that sends nothing, removes the URL files and `external.json`, and empties vmalert's rules. A file with another block: Start renders its channels and rules and reloads Alertmanager onto them, and its engine reads `external.json` and posts a resolve for each live alert of an app the file does not run (a `[RESOLVED]` that did not happen); a start that then fails on the ports leaves that render. The service is not told, so until its next load every alert goes nowhere or to the file's channels. A heartbeat line on the box has its check go red off the box once the pings stop (not while the file's render pings the same check); a block without one sends the Watchdog to the blackhole, and nothing off the box sees the silence | cmd/moteld/monitorcheck.go, metricscheck.go (the gate); notify/app.go (`Start`); both through `NotOwner`, notify/state.go | 4 | 5 | 3 | 60, which the rule would fix; accepted by the owner's decision, over a probe of the admin socket at every start. Without a heartbeat line nothing off the box sees the silence, which is close to severity 5, which rule 1 fixes whatever the occurrence; the score rests on what the by-hand run itself prints, and the outcome stays the owner's recorded decision. What it prints, with a heartbeat line or without one: the gate's lines, or Start's journal lines on its stderr, say what was done to Alertmanager and the rules, though not that they were the running service's; what it writes is the motel user's, so the service's next load renders its own again. Root by hand, the case found, changes neither directory, whatever its file. /code-review of the gate at `moteld run`, and its second pass |
+| A state directory no longer owned by the motel user (root chowned it, or a `chown -R` over /var/lib) while moteld.service runs as motel: each start's gate and Start leave it alone with a WARNING naming the directory, its owner and the process's user, where the write's EACCES was an ERROR; and Start starts no engine, so no event or heartbeat is posted, where before the posts went on through the render Alertmanager last loaded; and with no engine serving, an event ends before its `monitor: event` journal line (`reportLocked`) and the disk and backup polls do not run, so events leave the journal too, where before such a box journalled every event even when it could not deliver | notify/state.go (`NotOwner`), app.go (`Start`) | 4 | 1 | 1 | 4; state only root can write, found changed, and every start names it; with a heartbeat line its check goes red. Posting on while writing nothing, or an ERROR for it, needs telling the service's start from a run by hand, the probe the owner declined. Second /code-review pass of the gate at `moteld run` |
 | A power loss soon after a write of `external.json` (written with no flush) can leave it empty: the next start says it could not be read, takes it as none and removes it, so every producer's state is lost, not just the last change, and each one's later `resolved` answers `resolved nothing` | notify/external.go (`writeExternalFile`) | 3 | 3 | 1 | 9; named in the journal at the start, and Alertmanager keeps no alerts across the reboot either, so no false recovery is sent; a flush puts the disk's latency under the engine's lock (pass 1 of this change removed it), and writing outside the lock needs liveswap's generation ordering (size 3, risk 2). /code-review pass 2 of the producers' states |
 | A write that fails with anything but a missing state directory is not retried: on the setup run where a tick lands between setup's `mkdir` and its `chown` (EACCES), or after setup failed at its `chown`, a state sent before setup stays unwritten until it changes, and a restart then loses it | notify/external.go (`writeExternal`: only `fs.ErrNotExist` retries) | 3 | 2 | 1 | 6; a window of one system call, or a setup that failed and says so, and the warning names the file; retrying every failure with the warning said once (a flag cleared on success) is size 2, risk 1, and would retire the failed-write row above. /code-review pass 2 of the producers' states |
 | An app that read a `NOTIFY_` variable from an env file in `/etc/motel/secrets/` — the box's `secrets/<app>/`, or an operator's own file kept in that directory — loses it from the app's environment at the next launch after the upgrade | liveswap/app.go (`notifyOwnedEnvKey`, `boxWritten`: a test of the directory) | 3 | 5 | 1 | 15; each launch names the withheld keys and the directory in the journal, and `make check` warns before a push; the prefix is what keeps a channel URL from an app. /code-review of the Owed rows, widened by /code-review xhigh on #424 |
 | Alertmanager refuses a reload: motel puts the previous config back, but the URL files are already the new ones (a changed value rewritten, a dropped channel's removed), so the old config in memory sends a changed channel to its new URL, and Alertmanager's next start fails on a removed file until motel's next load | notify/state.go (`apply`) | 4 | 2 | 1 | 8; two faults (a render Alertmanager refuses, which the amtool tests rule out for every shape, then a restart before the next load), and Alertmanager names the missing file; a new URL is the one the signer committed; keeping the old files until a reload succeeds adds state to the write (size 2, risk 2). /code-review of slice one, passes 1 and 2 |
-| A channel named after its own topic (`ops-alerts` posting to `https://ntfy.sh/ops-alerts`): motel's summaries that name the channel (`ChannelFailed`'s `failing channel: …`) carry `[redacted:partial:NOTIFY_<NAME>]` in its place, and `motel monitor send` refuses a name, instance or source that contains the topic | notify/app.go (`knownValues`), admin.go (`serveSend`) | 2 | 5 | 1 | 10; the marker names the channel's secret, the refusal says why, and docs/monitor.md says to pick a random topic and name the channel, never the topic; keeping a channel's name whole needs the filter to tell a name from the same text as a credential, which it cannot (size 2, risk 2). /code-review of the partial mask, finding 1 |
-| A heartbeat's ping URL in a slug form (Healthchecks' `hc-ping.com/<ping-key>/<slug>`, Cronitor's `/p/<key>/<monitor>`): its last segment is the slug, so the key is not masked alone (only within the whole URL) and the slug is masked instead, wherever it appears: a slug that is the box's name (Healthchecks derives it from the check's name) turns that name into `[redacted:partial:<KEY>]` in summaries, and `motel monitor send` refuses a name, instance or source that contains it; a reader of a summary that holds the key alone could ping any check of that project. Likewise any other service's URL gives its last segment (past a segment that is a number from 0 to 255, read as Healthchecks' exit status on any host) | notify/app.go (`knownValues`, `urlCredentials`) | 3 | 1 | 5 | 15; the key going out alone gives no sign (the marker and the refusal show only the slug's masking). It needs the slug form, which docs/monitor.md ("A heartbeat") steers away from: it says to use the UUID form, masked alone, and to treat the URL as a password; taking the key needs each service's form by host (size 2, risk 1), and any other service's URL has no fixed place for its credential, as for json channels. The heartbeat's partial mask, from the owed row of the partial mask's finding 5 |
+| A channel named after its own topic (`ops-alerts` posting to `https://ntfy.sh/ops-alerts`): motel's summaries that name the channel (`ChannelFailed`'s `failing channel: …`) carry `[redacted:partial:NOTIFY_<NAME>]` in its place, and `moteld monitor send` refuses a name, instance or source that contains the topic | notify/app.go (`knownValues`), admin.go (`serveSend`) | 2 | 5 | 1 | 10; the marker names the channel's secret, the refusal says why, and docs/monitor.md says to pick a random topic and name the channel, never the topic; keeping a channel's name whole needs the filter to tell a name from the same text as a credential, which it cannot (size 2, risk 2). /code-review of the partial mask, finding 1 |
+| A heartbeat's ping URL in a slug form (Healthchecks' `hc-ping.com/<ping-key>/<slug>`, Cronitor's `/p/<key>/<monitor>`): its last segment is the slug, so the key is not masked alone (only within the whole URL) and the slug is masked instead, wherever it appears: a slug that is the box's name (Healthchecks derives it from the check's name) turns that name into `[redacted:partial:<KEY>]` in summaries, and `moteld monitor send` refuses a name, instance or source that contains it; a reader of a summary that holds the key alone could ping any check of that project. Likewise any other service's URL gives its last segment (past a segment that is a number from 0 to 255, read as Healthchecks' exit status on any host) | notify/app.go (`knownValues`, `urlCredentials`) | 3 | 1 | 5 | 15; the key going out alone gives no sign (the marker and the refusal show only the slug's masking). It needs the slug form, which docs/monitor.md ("A heartbeat") steers away from: it says to use the UUID form, masked alone, and to treat the URL as a password; taking the key needs each service's form by host (size 2, risk 1), and any other service's URL has no fixed place for its credential, as for json channels. The heartbeat's partial mask, from the owed row of the partial mask's finding 5 |
 | A JSON config (or a `/load`) with `"state_dir"` or `"alertmanager"` is refused as Caddy's `json: unknown field "state_dir"`, not with the Caddyfile's sentence that names the fixed path | notify/app.go (no field; Caddy's `StrictUnmarshalJSON`) | 2 | 5 | 1 | 10; refused, naming the field, and the Caddyfile is what a box loads; the sentence in JSON needs a field kept only to refuse it, or an `UnmarshalJSON` (size 2, risk 2). /code-review of #438 |
-| `motel monitor setup` from a new binary while an old motel still serves a config with a `state_dir` line names `/var/lib/motel-notify/alertmanager.yml`, where that motel does not render | notify/setup.go (`loadedSays`) | 3 | 2 | 3 | 18; the install restarts motel onto the new binary, which refuses the line, so this needs setup run from an unpacked `.deb` before the install (docs/upgrading.md suggests only `validate` there) on a box that kept the line the upgrade note says to remove; saying so needs a branch on the raw JSON (size 2, risk 2). /code-review of #438 |
+| `moteld monitor setup` from a new binary while an old moteld still serves a config with a `state_dir` line names `/var/lib/motel-notify/alertmanager.yml`, where that moteld does not render | notify/setup.go (`loadedSays`) | 3 | 2 | 3 | 18; the install restarts moteld onto the new binary, which refuses the line, so this needs setup run from an unpacked `.deb` before the install (docs/upgrading.md suggests only `validate` there) on a box that kept the line the upgrade note says to remove; saying so needs a branch on the raw JSON (size 2, risk 2). /code-review of #438 |
 | The journal lines of `applyRender` and `applyNothing`, and the metrics store's not-set-up warning, name their directory under the key `state_dir`, a line this version refuses: an operator who adds one to move it is refused at the next load | notify/app.go, metrics.go (`zap.String("state_dir", …)`) | 2 | 5 | 1 | 10; the refusal names the fixed path and says to remove the line; renaming the key changes what a journal search for it finds, and no test reads it (size 1, risk 2). /code-review of #438 |
 | The first load on a release with a receiver per channel (the upgrade, and a downgrade back) gives every alert Alertmanager holds a new route and receiver, so no notification-log entry matches it: each state still firing, and each one-shot inside its 5 m life, is sent once more to each of its channels as `[FIRING]`, about 30 s after (0 s for an event). Resolved alerts are not re-sent (a group with no entry and nothing firing sends nothing); `ChannelFailed`, `NotifyTest` and the heartbeat keep their routes and receivers, and are not | notify/render.go (receiver names and routes); Alertmanager's nflog (group key and receiver) | 2 | 5 | 1 | 10; a duplicate the operator sees once per standing alert, named in docs/upgrading.md; the log's key is the receiver, so no rename keeps it (none to make). Scored before the build of #449 |
-| A passing fault (one 5xx from ntfy.sh) on the only channel that `failureAudience` holds stops the heartbeat when no delivery through that channel follows motel's read of the failure within 5 minutes: no other alert to it, or the retry that delivered came before that read (Alertmanager gives a notification up at the flush's deadline and the next flush follows at once, and the read that sees the rise takes that delivery into its baseline). The dead-man check reports the box down while it runs, and stays red until the operator runs `motel monitor test` or the next alert is delivered | notify/channelfailed.go (`untoldFor`, `watchUntold`) | 2 | 3 | 1 | 6; the page names nothing wrong with the box, but the `monitor: heartbeat held` line names the channel and the test that resumes it. Probing the channel unasked would post to it (size 3, risk 2); taking the baseline from the read before the rise keeps every receiver's last count (a new state, size 3, risk 2). Scored before the build of #449; the retry before the read, /code-review of #449 |
+| A passing fault (one 5xx from ntfy.sh) on the only channel that `failureAudience` holds stops the heartbeat when no delivery through that channel follows motel's read of the failure within 5 minutes: no other alert to it, or the retry that delivered came before that read (Alertmanager gives a notification up at the flush's deadline and the next flush follows at once, and the read that sees the rise takes that delivery into its baseline). The dead-man check reports the box down while it runs, and stays red until the operator runs `moteld monitor test` or the next alert is delivered | notify/channelfailed.go (`untoldFor`, `watchUntold`) | 2 | 3 | 1 | 6; the page names nothing wrong with the box, but the `monitor: heartbeat held` line names the channel and the test that resumes it. Probing the channel unasked would post to it (size 3, risk 2); taking the baseline from the read before the rise keeps every receiver's last count (a new state, size 3, risk 2). Scored before the build of #449; the retry before the read, /code-review of #449 |
 | Every operator channel that takes warnings fails at once (two webhooks revoked): each one's `ChannelFailed` goes to another that fails too, so each rise has someone to tell, no hold comes, and the heartbeat stays green while nothing is heard | notify/channelfailed.go (`scrapeFailed`: a hold only when no one is told) | 3 | 2 | 3 | 18; two faults, or one cause that takes the box's egress with it, when the heartbeat's own pings fail too and the check pages; holding when every told channel is itself failing reads the told channels' receivers too (size 3, risk 2). /code-review of #449 |
 | A channel that refuses one message (a Slack or Discord 400 for one alert's text) and delivers the rest: each delivery ends the hold, the failing message's next retry starts another, so the heartbeat flaps between held and pinging and the dead-man check between down and up | notify/channelfailed.go (`watchUntold`: any delivery through the channel) | 2 | 3 | 1 | 6; red, though flapping, and each hold's line names the channel; telling a refused message from a refused channel needs the failing notification's own outcome, which Alertmanager's counters do not give. /code-review of #449 |
 | A reload that adds an operator channel taking warnings, while a hold stands, leaves the hold until a delivery through the failed channel, and the new channel hears of the failure only at its next rise (Alertmanager's next failing re-send, while the alert lives), not at the load | notify/channelfailed.go (`keepUntold`: drops only a hold whose channel went) | 2 | 5 | 1 | 10; the check stays red and the `heartbeat held` line still names the channel; ending the hold at a rise told to someone, or posting `ChannelFailed` to the new audience at the load, is a branch (size 2, risk 2). /code-review of #449 |
-| Alertmanager without `--enable-feature=receiver-name-in-metrics` (the drop-in's flag gone): a failure names no receiver, its suspects are every channel of the integration, and a failure no channel can be told of holds nothing, so with a single operator channel the heartbeat stays green while its alerts fail. A reload then resets no counter, so the load's stamp is not read (`parseAMMetrics`), and a restart of Alertmanager that brings a count back to the last read's is missed | notify/channelfailed.go (`untoldFor`: a receiver this config knows) | 3 | 1 | 3 | 9; the drop-in is setup's file, which only root writes, and `motel validate` warns when it differs from the one this motel would write; a hold on a guessed suspect could only end at a reload or a restart, since requests are then counted under no receiver (summing them by integration is size 2, risk 2). /code-review of #449, pass 2 |
+| Alertmanager without `--enable-feature=receiver-name-in-metrics` (the drop-in's flag gone): a failure names no receiver, its suspects are every channel of the integration, and a failure no channel can be told of holds nothing, so with a single operator channel the heartbeat stays green while its alerts fail. A reload then resets no counter, so the load's stamp is not read (`parseAMMetrics`), and a restart of Alertmanager that brings a count back to the last read's is missed | notify/channelfailed.go (`untoldFor`: a receiver this config knows) | 3 | 1 | 3 | 9; the drop-in is setup's file, which only root writes, and `moteld validate` warns when it differs from the one this moteld would write; a hold on a guessed suspect could only end at a reload or a restart, since requests are then counted under no receiver (summing them by integration is size 2, risk 2). /code-review of #449, pass 2 |
 | A channel whose first attempt hangs (it takes the connection and never answers) is named late when config-changing loads come more often than its flush deadline (a minute for events, five for the heartbeat): each load cancels the hung attempt before it fails, which counts as `contextCanceled`, a reason neither motel nor vmalert reads, and the new config's attempt hangs again | notify/ammetrics.go (`parseAMMetrics`), notify/metricsrules.go (`channelFailedRules`) | 2 | 2 | 3 | 12; two faults (a hanging channel and loads that keep coming), and late, not lost: the first flush the loads leave alone ends at its deadline as `contextDeadlineExceeded`, which is read. Counting a cancel only after a failed attempt is what Alertmanager already does; counting every cancel brings back the false `ChannelFailed` of #468 (size 2, risk 2). /code-review pass 1 of the reload cancel (#468) |
-| A failure Alertmanager counts after motel's last read before motel stops is not read: every start of motel has Alertmanager reload (nothing is acknowledged yet in the new process, notify/state.go `apply`), which resets the counter before the new motel's first read. It is told only if Alertmanager still holds the alert, when the new config sends it again and that failure is counted since the load | notify/channelfailed.go (`loadSince`) | 3 | 1 | 4 | 12; a failure inside the minute before a restart of motel, of an alert gone by then (a state is re-posted while it fires; a one-shot lives five minutes); the count before the reset cannot be read after it, so telling it needs a read at motel's stop (size 2, risk 2). What is left of the second miss the removed S5 Owed row named (a failure before motel's first read was its baseline): a first read whose load is after motel's start now counts from 0. The config-load rows' PR |
-| `motel monitor test` across a config load: after it the baseline is 0, so what the load's cancels count on the channel's own receiver is read as the test's. A cancelled attempt of the test, or of another notification to the channel, is a failed request, and if the new config has not sent the test again by the end of the 15 s the answer is `every attempt failed so far, and Alertmanager is still retrying`; a cancel that keeps an earlier attempt's reason (a ChannelFailed to the channel retrying after a 5xx) answers `failed` with that reason at once. A test delivered just before the load and not yet read is answered `neither` | notify/admin.go (`serveTest`) | 2 | 2 | 3 | 12; a load during the test's 15 s, and then the channel's own retry or the test's last moments: the new config sends the test at once (a channel's own route waits 0 s), and a reason kept from a failed attempt is the channel's failure, if not the test's. A failed request carries no reason that would tell a cancel apart (size 2, risk 2). The config-load rows' PR, widened by its /code-review pass 1 |
-| A read that lands between Alertmanager's reset of its counters and its setting of the load's stamp (within one load, microseconds) takes the reset counts with the old stamp: a failure counted in that instant is told twice, at that read (a value below the last) and at the next (a load since, from 0) | notify/channelfailed.go (`rises`) | 2 | 1 | 1 | 2; a read once a minute against a window of microseconds, and a duplicate `ChannelFailed` is the worst of it. Likewise a first read whose body was taken before a reload this process asked for and judged after it (`noteReload`; only when a reload of motel first brings the block, within its first minute) counts that body from 0. The config-load rows' PR |
-| A restart of motel while a notification is retried after a failed attempt (one 5xx): the start's reload cancels the retry, which Alertmanager counts after the reset under the failed attempt's reason, and the new motel's first read, counting from 0 since the load came after its start, tells a `ChannelFailed` (or records a hold) for a channel whose next attempt would have delivered | notify/channelfailed.go (`loadSince`) | 2 | 2 | 1 | 4; a restart that lands on a retry, and the attempt did fail: the same as any reload between two reads already did (a cancel after a failed attempt keeps its reason, #468), and the new config sends the notification again, so a hold ends at its delivery. Before, the first read was a baseline, which missed real failures instead. /code-review pass 1 of the config-load rows' PR |
+| A failure Alertmanager counts after motel's last read before moteld stops is not read: every start of moteld has Alertmanager reload (nothing is acknowledged yet in the new process, notify/state.go `apply`), which resets the counter before the new moteld's first read. It is told only if Alertmanager still holds the alert, when the new config sends it again and that failure is counted since the load | notify/channelfailed.go (`loadSince`) | 3 | 1 | 4 | 12; a failure inside the minute before a restart of moteld, of an alert gone by then (a state is re-posted while it fires; a one-shot lives five minutes); the count before the reset cannot be read after it, so telling it needs a read at moteld's stop (size 2, risk 2). What is left of the second miss the removed S5 Owed row named (a failure before motel's first read was its baseline): a first read whose load is after moteld's start now counts from 0. The config-load rows' PR |
+| `moteld monitor test` across a config load: after it the baseline is 0, so what the load's cancels count on the channel's own receiver is read as the test's. A cancelled attempt of the test, or of another notification to the channel, is a failed request, and if the new config has not sent the test again by the end of the 15 s the answer is `every attempt failed so far, and Alertmanager is still retrying`; a cancel that keeps an earlier attempt's reason (a ChannelFailed to the channel retrying after a 5xx) answers `failed` with that reason at once. A test delivered just before the load and not yet read is answered `neither` | notify/admin.go (`serveTest`) | 2 | 2 | 3 | 12; a load during the test's 15 s, and then the channel's own retry or the test's last moments: the new config sends the test at once (a channel's own route waits 0 s), and a reason kept from a failed attempt is the channel's failure, if not the test's. A failed request carries no reason that would tell a cancel apart (size 2, risk 2). The config-load rows' PR, widened by its /code-review pass 1 |
+| A read that lands between Alertmanager's reset of its counters and its setting of the load's stamp (within one load, microseconds) takes the reset counts with the old stamp: a failure counted in that instant is told twice, at that read (a value below the last) and at the next (a load since, from 0) | notify/channelfailed.go (`rises`) | 2 | 1 | 1 | 2; a read once a minute against a window of microseconds, and a duplicate `ChannelFailed` is the worst of it. Likewise a first read whose body was taken before a reload this process asked for and judged after it (`noteReload`; only when a reload of moteld first brings the block, within its first minute) counts that body from 0. The config-load rows' PR |
+| A restart of moteld while a notification is retried after a failed attempt (one 5xx): the start's reload cancels the retry, which Alertmanager counts after the reset under the failed attempt's reason, and the new moteld's first read, counting from 0 since the load came after its start, tells a `ChannelFailed` (or records a hold) for a channel whose next attempt would have delivered | notify/channelfailed.go (`loadSince`) | 2 | 2 | 1 | 4; a restart that lands on a retry, and the attempt did fail: the same as any reload between two reads already did (a cancel after a failed attempt keeps its reason, #468), and the new config sends the notification again, so a hold ends at its delivery. Before, the first read was a baseline, which missed real failures instead. /code-review pass 1 of the config-load rows' PR |
 | Going back to v0.6.1 (docs/upgrading.md, step 1) stops Alertmanager and its sockets before step 2 takes the block out, the reverse of Monitor's own order: an event motel posts in between is given up (`delivery failed`), and step 2's reload says the config that sends nothing `is in place for Alertmanager` where monitor.md quotes `was given` | docs/upgrading.md ("Going back to v0.6.1 or earlier") | 2 | 5 | 1 | 10; the events are about a monitor being turned off, and the journal names both outcomes (each given-up post as a `delivery failed` error). Either order ends silent: step 2 writes the config that sends nothing whether or not Alertmanager answers, and a stop sends nothing. Monitor's order has no gap, but would renumber the steps the paragraphs after it cite. /code-review passes 1 and 2 of the going-back docs PR |
+| A box whose monitor units were written before the binary was `moteld`: their `Description=` lines name the command as it was then, so every validate, reload and start warns that the units differ and to run setup again, though nothing about how they run changed; `moteld monitor setup` restarts Alertmanager, which forgets the alerts it holds, and `--metrics` restarts the store and vmalert | notify/gate.go (`staleUnits` leaves out comments and layout, nothing else) | 2 | 5 | 1 | 10; loud and named, with the remedy: one run of `moteld monitor setup` (and `--metrics`) ends it, and the release's notes ask for it; telling a description from a setting is a new branch in the comparison (size 2, risk 2) for one release's change |
 
 ### Owed
 
@@ -1093,8 +1094,8 @@ on its general scales. notify's examples:
 `make e2e-notify` (e2e/notify/run.sh): a box built from e2e-motel's
 image with Debian's Alertmanager installed and masked
 (e2e/Dockerfile, `notify-box`), and a stub receiver (`e2e-sink`). The
-suite runs `motel monitor setup` itself, and before it asserts that
-`motel validate` warns Alertmanager is not set up, `send` exits 1 and
+suite runs `moteld monitor setup` itself, and before it asserts that
+`moteld validate` warns Alertmanager is not set up, `send` exits 1 and
 `test` fails, each naming setup; after it, it asserts: no TCP listener on
 9093 or 9094; the socket `srw-rw---- root motel` and the state
 directory `drwxr-s--- motel prometheus`; Alertmanager's storage
@@ -1114,26 +1115,26 @@ motel's hold and one tick; a channel answering 400 named in
 `ChannelFailed` to the other operator channel, Alertmanager's failed
 counter naming that channel's receivers alone; the deployer's ntfy
 channel failing beside the operator's json (one integration, the
-webhook) named alone and told to both operator channels; `motel monitor test`
+webhook) named alone and told to both operator channels; `moteld monitor test`
 delivered and failed; the view probe's three keys closed from inside a
 sandboxed app; no URL in either journal; a channel whose secret is
-missing refused by `motel validate` and `systemctl reload`, dropped at
+missing refused by `moteld validate` and `systemctl reload`, dropped at
 `systemctl restart` with its journal line while the other channels
-deliver, named dropped by `motel monitor test`, and back after its key
-is added to `_box.env` and a plain `motel reload` of the unchanged
-Caddyfile; a root:root 0600 `_box.env` refused by root's `motel
-validate`; a relaunch refused, then motel restarted: told again,
+deliver, named dropped by `moteld monitor test`, and back after its key
+is added to `_box.env` and a plain `moteld reload` of the unchanged
+Caddyfile; a root:root 0600 `_box.env` refused by root's `moteld
+validate`; a relaunch refused, then moteld restarted: told again,
 standing, Alertmanager's alert kept alive (its `endsAt` moves) and no
 recovery told, then the cause mended and a reload: the recovery after
-the hold, and `alerts.json` gone; a `notify` block refused by `motel
-validate` naming `monitor`, and `motel notify setup` exiting 1 with
-`motel monitor setup`; the block taken out by a reload while a state
+the hold, and `alerts.json` gone; a `notify` block refused by `moteld
+validate` naming `monitor`, and `moteld notify setup` exiting 1 with
+`moteld monitor setup`; the block taken out by a reload while a state
 fires: the state directory holds the config that sends nothing and no
 URL file, the journal says so, and the alert's end, posted by root at
 once rather than awaited at `resolve_timeout`, reaches no channel; a
 reload that drops blog, while its refused relaunch and a producer's
 state for it fire, and fails at the http app's Start (a site bound to
-an address the box does not have, which `motel validate` passes),
+an address the box does not have, which `moteld validate` passes),
 tried until notify's Start ran before the failure twice (the
 fallback's journal line; at most sixteen tries, and fewer than two
 fail the case): after each, the old
@@ -1145,14 +1146,14 @@ with the journal line, and `external.json` lets the state go; and
 with the failing channel the operator's only one, the heartbeat held
 about six minutes after the failure (`monitor: heartbeat held` naming
 it, `ChannelFailed` told to no channel, no `Watchdog` posted after),
-and resumed once the channel is mended and `motel monitor test`
+and resumed once the channel is mended and `moteld monitor test`
 delivers through it. The metrics suite runs the two `amtool` tests
 (the rendered tree through Alertmanager's own router). Not
 in e2e (unit-tested only): the
 five-minute give-up of an undeliverable post, the bucket's hour.
-Section 7a: `motel monitor silence add --json --alert rollback --app
+Section 7a: `moteld monitor silence add --json --alert rollback --app
 blog` answers its id and end, Alertmanager holds the silence active
-(`alertname=rollback`, `app=blog`, `createdBy` `motel monitor: root`)
+(`alertname=rollback`, `app=blog`, `createdBy` `moteld monitor: root`)
 and lists it, the journal has `monitor: silence added` with the id,
 blog's rollback (posted by root with liveswap's labels) reaches no
 channel, `--alert Watchdog` and an unknown alert are refused with the
@@ -1182,18 +1183,18 @@ box; the suite refuses to start when a part is in no split.
 Slice two, the metrics store (Debian's `victoria-metrics` in a private
 network namespace behind a `systemd-socket-proxyd` unix socket), motel's
 push, rules over its series, `metrics` in `GET /<app>`, the monitor
-block's `metrics` line and `motel monitor setup --metrics`, is
+block's `metrics` line and `moteld monitor setup --metrics`, is
 notify/DESIGN-metrics.md. Its vmalert renders a
 second `ChannelFailed` with motel's labels, which Alertmanager
 deduplicates; it posts no `Watchdog`, which this section once promised:
 with motel's labels it would either keep the heartbeat pinging while
-motel is down or resolve motel's own (DESIGN-metrics.md, "Rules").
+moteld is down or resolve motel's own (DESIGN-metrics.md, "Rules").
 
 ## History
 
 Dated one-liners; the full text of each is in git.
 
-- 2026-11-08 — #418 filed (on hold): notify in the motel process, no
+- 2026-11-08 — #418 filed (on hold): notify in the moteld process, no
   new unit, four hand-written webhook formats, an in-memory state table
   with `group_wait` and `repeat_interval`, a dead-man recipe as a root
   timer; metrics later as an in-process window.
@@ -1218,7 +1219,7 @@ Dated one-liners; the full text of each is in git.
 - 2026-11-10 — Slice one built on `poc/notify-alertmanager`: the block
   and its refusals, the renderer, the engine, liveswap's `Notifier`,
   the backup, TLS and disk sources, the heartbeat and `channel_failed`,
-  `motel notify send`, `test` and `setup`, the package's `Suggests`,
+  `moteld notify send`, `test` and `setup`, the package's `Suggests`,
   and the e2e suite. The state directory is `/var/lib/motel-notify`,
   not the draft's `/var/lib/motel/notify`: `/var/lib/motel` is 0750
   motel:motel and the prometheus uid cannot traverse it.
@@ -1251,8 +1252,8 @@ Dated one-liners; the full text of each is in git.
   storage to the 0750 this document gave it at every start (Debian
   ships 0755).
 - 2026-11-11 — One block, `monitor`: the notify block's lines and the
-  metrics store's `metrics` line, one Caddy app; `motel notify` is
-  `motel monitor`, and `notify` and `metrics_store` are refused by name
+  metrics store's `metrics` line, one Caddy app; `moteld notify` is
+  `moteld monitor`, and `notify` and `metrics_store` are refused by name
   ("Decisions").
 - 2026-11-11 — The operator's `rule` lines (DESIGN-metrics.md,
   "Operator rules"): `source: rules`, the `post_deploy_regressed` event,
@@ -1303,7 +1304,7 @@ Dated one-liners; the full text of each is in git.
   `alertmanager_config_last_reload_success_timestamp_seconds`, which
   0.28.1 sets after every load that resets its counters ("Failed
   delivery"). A read whose stamp is not the last read's counts
-  from 0, for `ChannelFailed`, the hold's release and `motel monitor
+  from 0, for `ChannelFailed`, the hold's release and `moteld monitor
   test`; vmalert's rule fires on any count for five minutes after a
   load (measured in vmalert-tool: the blind spot fires 11m to 15m, a
   failure before the load does not fire again). docs/monitor.md no

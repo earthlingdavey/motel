@@ -94,9 +94,9 @@ services:
       context: .
       dockerfile: e2e/liveswap/artifacts.Dockerfile
 
-  # The motel product binary under test (built from cmd/motel).
+  # The moteld binary under test (built from cmd/moteld).
   # This container plays the production VPS: systemd as PID 1 running
-  # the packaged motel.service as the motel user; it terminates
+  # the packaged moteld.service as the motel user; it terminates
   # HTTP, receives deploy webhooks, runs the deployed demo app as a
   # transient unit under the motel user's systemd manager,
   # rate-limits and caches. Privileged + host cgroup namespace + the
@@ -117,7 +117,7 @@ services:
       - /run
       - /run/lock
     # e2e-token.service mints a local deploy keypair + token into the
-    # shared volume before motel starts (no OIDC provider on the
+    # shared volume before moteld starts (no OIDC provider on the
     # offline compose network); the runner reads the token as its
     # deploy bearer. lib.sh + the systemd, box apply and people suites
     # are for `make e2e`'s in-container steps.
@@ -144,8 +144,8 @@ services:
       context: .
       dockerfile: e2e/Dockerfile
       target: box
-    command: ["/usr/bin/motel", "run", "--config", "/etc/motel/Caddyfile"]
-    # Plain `motel run`, not systemd: the image's SIGRTMIN+3 stop
+    command: ["/usr/bin/moteld", "run", "--config", "/etc/motel/Caddyfile"]
+    # Plain `moteld run`, not systemd: the image's SIGRTMIN+3 stop
     # signal would be ignored and cost a 10s SIGKILL wait on teardown.
     stop_signal: SIGTERM
     volumes:

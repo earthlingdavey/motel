@@ -18,7 +18,7 @@ and signs.
 |---|---|
 | `deploy.example.com/Caddyfile` | One box's whole config; becomes `/etc/motel/Caddyfile` on the box whose deploy host names the directory |
 | `deploy.example.com/MOTEL_VERSION` | Optional: the release that box runs, one line (`0.3.1`, `v0.3.1-rc1`), when it is not the one the workflow checks with ([A box on another release](#a-box-on-another-release)); never sent to the box |
-| `.github/workflows/apply.yml` | `make check` on every push and pull request, with the latest stable motel (a `MOTEL_VERSION` repository variable pins another, such as a prerelease, for every box; a box's own `MOTEL_VERSION` file pins that box's); on `main`, sends the commit to each box (`bin/apply`) |
+| `.github/workflows/apply.yml` | `make check` on every push and pull request, with the latest stable moteld (a `MOTEL_VERSION` repository variable pins another, such as a prerelease, for every box; a box's own `MOTEL_VERSION` file pins that box's); on `main`, sends the commit to each box (`bin/apply`) |
 | `Makefile` | `make signer`, `make check`, `make wip`; for secrets, `make secret`, `make secrets`, `make secret-show`, `make rekey`, `make secrets-import` |
 | `bin/` | What the Makefile and the workflow run |
 
@@ -55,7 +55,7 @@ which repo and branch, and the commit's signature says which person.
 
 ## Set it up
 
-These steps start from a box with motel installed and running, and
+These steps start from a box with moteld installed and running, and
 root still able to log in: step 2 of
 [Your first deploy](https://github.com/smallhoursorg/motel/blob/main/docs/first-deploy.md),
 whose step 3 walks a fresh box through them. A box that already serves
@@ -148,7 +148,7 @@ what it runs.
 
 6. Tell the box which repo it belongs to. Copy the box's directory to
    it, as the commit has it rather than as your checkout does, and run
-   `motel init` there, as root, with this commit. The first two
+   `moteld init` there, as root, with this commit. The first two
    lines check the commit: that it has the directory's `Caddyfile`, and
    then step 3's check. While a placeholder is left it prints its line
    and sends nothing, so change it, commit, and run the four lines
@@ -158,12 +158,12 @@ what it runs.
    git cat-file -e HEAD:deploy.yourdomain.com/Caddyfile &&
      ! git show HEAD:deploy.yourdomain.com/Caddyfile | grep -En '^([^#]*[^#A-Za-z0-9-])?(your-org|example\.com)([^A-Za-z0-9.-]|$)' &&
      git archive HEAD deploy.yourdomain.com | ssh root@box.example.com tar -xf - &&
-     ssh root@box.example.com "cd deploy.yourdomain.com && motel init $(git rev-parse HEAD)"
+     ssh root@box.example.com "cd deploy.yourdomain.com && moteld init $(git rev-parse HEAD)"
    ```
 
-   It installs the file, reloads motel, and records the commit; the
+   It installs the file, reloads moteld, and records the commit; the
    box then applies only commits that descend from it. It refuses when
-   motel is not running, and says how to start it.
+   moteld is not running, and says how to start it.
 7. Push:
 
    ```sh
@@ -263,10 +263,10 @@ The run prints the box's reason; it changed nothing. The common ones:
   then push the rest.
 - **Does not descend from the commit the box runs:** a branch that
   merged `main` into itself — rebase it onto `main` and force-push. If
-  `main` itself was rewritten below that commit, `motel box baseline
+  `main` itself was rewritten below that commit, `moteld box baseline
   <sha>`, as root on the box, resets trust to `<sha>` (the box will
   never examine its ancestors).
-- **Longer than 500 commits** since the one the box runs: `motel box
+- **Longer than 500 commits** since the one the box runs: `moteld box
   baseline <sha>` as root on the box.
 - **A run says "superseded"**: a later run already brought the box
   past this commit. Nothing is wrong.
@@ -280,8 +280,8 @@ The run prints the box's reason; it changed nothing. The common ones:
 If a change broke the deploy host itself, the next push cannot reach
 the box. The way back is root on the box, over SSH (the provider's
 console only if SSH itself is down): edit `/etc/motel/Caddyfile`
-and `systemctl reload motel`, or copy the box's directory over as
-step 6 did and `motel init` again from it. The next
+and `systemctl reload moteld`, or copy the box's directory over as
+step 6 did and `moteld init` again from it. The next
 signed push overwrites a hand edit — the run warns that it did — which
 is the point: the repo is the truth and the edit is a bridge back to
 it, so a fix that must outlive the night is a commit.
@@ -299,8 +299,8 @@ Only the workflow file is GitHub's. `bin/apply` is what talks to the
 boxes, and any CI that gives it what the Actions job does can run it:
 
 - a checkout of the commit being pushed, with its full history;
-- a `motel` on `PATH`, and a `motel-<version>` for each box whose
-  `MOTEL_VERSION` file names one (`bin/install-motel` installs
+- a `moteld` on `PATH`, and a `moteld-<version>` for each box whose
+  `MOTEL_VERSION` file names one (`bin/install-moteld` installs
   them, with `sudo`; `make check` needs them too);
 - `MOTEL_TOKEN`: a token that the `box` block's `deploy_trust`
   accepts and whose `sha` claim names that commit. `bin/apply` sends
@@ -314,8 +314,8 @@ boxes, and any CI that gives it what the Actions job does can run it:
   - From a runner without OIDC: a key the box block trusts with a
     `deploy_trust local` holding `public_key …` and `audience motel`,
     a line each
-    (`motel deploy-keygen` makes the pair), and a token minted each
-    run with `motel deploy-token --key … --audience motel --ttl 1h --claims sha=<commit>`.
+    (`moteld deploy-keygen` makes the pair), and a token minted each
+    run with `moteld deploy-token --key … --audience motel --ttl 1h --claims sha=<commit>`.
     motel's own end-to-end tests run `bin/apply` this way. The
     private key is then a stored secret, which OIDC avoids; the
     signatures still bound what it can push. `motel` is one name
@@ -333,12 +333,12 @@ walks through both ways, and an app's deploy from the same runner.
 One directory per box, each named for its deploy host. Every push goes
 to every box: each one's history must keep up, even when its own file
 did not change, and then the box answers that it already runs that
-Caddyfile. Each box is set up with `motel init` from its own
+Caddyfile. Each box is set up with `moteld init` from its own
 directory.
 
 ### A box on another release
 
-The workflow checks every box's files with one motel: the latest
+The workflow checks every box's files with one moteld: the latest
 stable release, or the one the `MOTEL_VERSION` repository variable
 names. Each box validates what it is sent with the release it runs, so
 while one box tries a release candidate and the rest stay on the stable
@@ -348,22 +348,22 @@ them, named, with nothing changed. A file beside the box's Caddyfile
 pins that box to its own release:
 
 ```
-deploy.example.com/MOTEL_VERSION     one line: 0.3.1-rc1, or v0.3.1-rc1
+deploy.example.com/MOTEL_VERSION     one line, of the form 0.3.1-rc1 or v0.3.1-rc1
 ```
 
-`bin/install-motel` then installs that release too, as
-`motel-0.3.1-rc1`, verified against its `checksums.txt` like the
+`bin/install-moteld` then installs that release too, as
+`moteld-0.3.1-rc1`, verified against its `checksums.txt` like the
 rest, and `make check` checks that box's files with it, saying so in
 its line:
 
 ```
-deploy.example.com/Caddyfile → https://deploy.example.com/ (1 app, 1 signer), checked with motel-0.3.1-rc1
+deploy.example.com/Caddyfile → https://deploy.example.com/ (1 app, 1 signer), checked with moteld-0.3.1-rc1
 ```
 
 For each box, in this order: its file; else the `MOTEL_VERSION`
 repository variable; else the latest stable release. An empty file, one
 that does not name a release, or one that names a release with nothing
-to download, never means "the latest": `bin/install-motel` says so,
+to download, never means "the latest": `bin/install-moteld` says so,
 naming the file, and skips it, so the other boxes are still checked;
 `make check` then refuses that box, naming the file again. The file is
 this repo's alone: `bin/apply` never sends it, and the box has no use
@@ -390,7 +390,7 @@ box's first secret also needs the box's own key, which root prints on
 the box:
 
 ```sh
-make secret APP=example VAR=DATABASE_URL BOX_KEY=$(ssh root@box.example.com motel box key)
+make secret APP=example VAR=DATABASE_URL BOX_KEY=$(ssh root@box.example.com moteld box key)
 ```
 
 ```
@@ -430,7 +430,7 @@ next deploy of a new version, or a relaunch after a crash or a reboot.
 | Set a notify channel's URL, the box's own (its `monitor` block reads it as `{secret.NOTIFY_OPS_URL}`) | `make secret APP=_box VAR=NOTIFY_OPS_URL` |
 
 A box's first secret, by `make secret` or `make secrets-import`, also
-takes `BOX_KEY=$(ssh root@box.example.com motel box key)`: it makes
+takes `BOX_KEY=$(ssh root@box.example.com moteld box key)`: it makes
 the recipients file. With more than one box, name the one you mean:
 `BOX=deploy.example.com`.
 `make check`, on every push and pull request, holds the secrets to
@@ -439,7 +439,7 @@ what the box takes, and warns as one nears a cap. A Deno app also needs
 
 The box's own secrets, `APP=_box`, are notify's channel URLs: the box
 writes them to `/etc/motel/secrets/_box.env`, which no app is given,
-and reloads motel when they change, so a new URL is in use once the
+and reloads moteld when they change, so a new URL is in use once the
 push is applied; a `NOTIFY_` name among an app's own secrets is
 withheld from the app (motel's [Secrets](https://github.com/smallhoursorg/motel/blob/main/docs/secrets.md#a-notify-channels-url)
 page).

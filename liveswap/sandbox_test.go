@@ -491,8 +491,8 @@ func TestMeasureSandboxProvesTheManagerBeforeMeasuring(t *testing.T) {
 }
 
 // TestProbeSandboxCapabilityRetriesTimeout pins the one retry, and
-// its shape. The probe's verdict decides whether motel starts at
-// all, and a refused start (exit 1) is the one exit motel.service
+// its shape. The probe's verdict decides whether moteld starts at
+// all, and a refused start (exit 1) is the one exit moteld.service
 // never retries — so a transient timeout under boot load must get a
 // second attempt in-process before it becomes a refusal to start.
 // Only a timeout: a probe that FAILED measured the host, and retrying
@@ -1714,7 +1714,7 @@ func TestUnitForAcceptsACommandUnderASymlinkedRoot(t *testing.T) {
 // nothing binds it — but a mandatory bind that resolves onto such a
 // path *names* it, and naming is what puts something in the view. So
 // here the list must be both canonical and derived from where this
-// motel actually keeps its state, not a set of literals.
+// moteld actually keeps its state, not a set of literals.
 func TestPlantedBindOntoTheSupervisorsRealStateRefused(t *testing.T) {
 	base, err := os.MkdirTemp("/var", "supervisor-")
 	if err != nil {
@@ -1753,7 +1753,7 @@ func TestPlantedBindOntoTheSupervisorsRealStateRefused(t *testing.T) {
 		t.Skipf("caddy.AppDataDir() does not follow XDG_DATA_HOME here (%s)", dataDir)
 	}
 	if err := refusedAsBindSource(dataDir); err == nil {
-		t.Errorf("a bind onto %s was accepted: that is where this motel keeps its TLS keys", dataDir)
+		t.Errorf("a bind onto %s was accepted: that is where this moteld keeps its TLS keys", dataDir)
 	}
 
 	// (c) The admin socket directory as systemd actually made it.
@@ -1997,7 +1997,7 @@ func TestSandboxFailedMeasurementIsNotCached(t *testing.T) {
 		}
 	}
 	if measured != 3 {
-		t.Fatalf("measured %d times, want 3: a failed verdict must not keep motel down until a redial", measured)
+		t.Fatalf("measured %d times, want 3: a failed verdict must not keep moteld down until a redial", measured)
 	}
 	if c.sandboxGen != 0 {
 		t.Fatal("a failed verdict was cached")

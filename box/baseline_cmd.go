@@ -7,7 +7,7 @@ import (
 	"io/fs"
 )
 
-// runBaseline is `motel box baseline <sha>` (DESIGN-box.md, "`box
+// runBaseline is `moteld box baseline <sha>` (DESIGN-box.md, "`box
 // baseline`"): a trust reset, for a history rewritten below the commit
 // the box runs or a chain past the cap. Under root's lock, after
 // recovery has settled any record, one atomic write of applied.json and
@@ -20,7 +20,7 @@ func runBaseline(ctx context.Context, euid int, a *Applier, sha string, out io.W
 		ctx = context.Background()
 	}
 	if euid != 0 {
-		return errors.New("motel box baseline runs as root: it rewrites the box's baseline")
+		return errors.New("moteld box baseline runs as root: it rewrites the box's baseline")
 	}
 	if err := commitArg(sha); err != nil {
 		return err

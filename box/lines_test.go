@@ -119,7 +119,7 @@ deploy.example.com {
 	return []byte(strings.NewReplacer(pairs...).Replace(in))
 }
 
-// readModule is `motel validate`'s reading of the box block: the
+// readModule is `moteld validate`'s reading of the box block: the
 // Caddyfile adapter, which runs the module's parser, then the box
 // app's Provision. It returns what Provision warned about the lines.
 func readModule(t *testing.T, in []byte) ([]string, error) {
@@ -172,7 +172,7 @@ func adaptRaw(in []byte) ([]byte, []caddyconfig.Warning, error) {
 const noChannel = "people are declared and no monitor channel is"
 
 // TestLinesBothReaders feeds one table of person and grant lines to
-// both readers, the module's (adapter and Provision: `motel validate`
+// both readers, the module's (adapter and Provision: `moteld validate`
 // and the load) and the walk's (a push, GET /, the applier, describe),
 // and fails if they disagree on any row: taken or refused, and the
 // message.

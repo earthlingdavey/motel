@@ -13,7 +13,7 @@ body:
   - type: input
     attributes:
       label: Version
-      description: The release you installed, and the output of `motel version`. Skip it if you have not installed motel yet.
+      description: The release you installed, and the output of `moteld version`. Skip it if you have not installed motel yet.
   - type: input
     attributes:
       label: Host
@@ -21,5 +21,5 @@ body:
   - type: textarea
     attributes:
       label: Journal
-      description: Run as root, or as the [administrator](https://github.com/smallhoursorg/motel/blob/main/docs/hardening.md#3-an-administrator-if-you-want-one). The relevant lines from `journalctl -u motel -n 50 --no-pager`, for an app's own output `journalctl -t motel-<app> -n 50 --no-pager`, and for a box push `journalctl -u motel-box-apply -n 50 --no-pager`. Redact secrets.
+      description: Run as root, or as the [administrator](https://github.com/smallhoursorg/motel/blob/main/docs/hardening.md#3-an-administrator-if-you-want-one). The relevant lines from `journalctl -u moteld -n 50 --no-pager`, for an app's own output `journalctl -t motel-<app> -n 50 --no-pager`, and for a box push `journalctl -u motel-box-apply -n 50 --no-pager`. Redact secrets.
       render: text

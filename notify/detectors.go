@@ -147,7 +147,7 @@ type backupPoller struct {
 	last time.Time
 	set  stateSet
 	// read is each app's last complete backup as the last record read
-	// that could be read held it, and readAt when: what `motel monitor
+	// that could be read held it, and readAt when: what `moteld monitor
 	// rules` lists beside backup_stale. A new map at each read.
 	read   map[string]time.Time
 	readAt time.Time
@@ -233,7 +233,7 @@ type diskPoller struct {
 	// filesystem's, whichever path stands for it as the path list changes
 	stat func(path string) (diskNumbers, error)
 	// read is the last poll's measure of each filesystem, under the
-	// path that stood for it: what `motel monitor rules` lists beside
+	// path that stood for it: what `moteld monitor rules` lists beside
 	// disk_low. A new slice at each poll.
 	read []diskReading
 }

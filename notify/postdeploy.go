@@ -172,7 +172,7 @@ func (c *comparator) ruleFor(app string) (Rule, bool) {
 }
 
 // postDeployRuleFor is the post_deploy rule of m that judges app's
-// deploys: the app's own, else the every-app one. Also what `motel
+// deploys: the app's own, else the every-app one. Also what `moteld
 // monitor silence add --alert post_deploy_regressed --app` holds to.
 func postDeployRuleFor(m *MetricsStore, app string) (Rule, bool) {
 	if m == nil {
@@ -602,7 +602,7 @@ func firstPushAfter(ctx context.Context, store instantQuerier, cutover, at time.
 // cutover, or none. Every push after the cutover carries the old
 // release's final counts while the comparison lasts (liveswap's
 // requestCounts keeps it beside the current release until the next
-// deploy, and a motel restart ends the comparison). With no outage that
+// deploy, and a moteld restart ends the comparison). With no outage that
 // push is the first or the second after the cutover, within
 // storeRequestTimeout + pushEvery of it. Not to the check's time: the
 // old instance drains

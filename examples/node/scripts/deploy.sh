@@ -161,7 +161,7 @@ if [ -n "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ]; then
 	printf '::add-mask::%s\n' "$token"
 	minted=1
 else
-	token=${MOTEL_TOKEN:?set MOTEL_TOKEN (mint one with: motel deploy-token) or run in GitHub Actions with id-token: write}
+	token=${MOTEL_TOKEN:?set MOTEL_TOKEN (mint one with: moteld deploy-token) or run in GitHub Actions with id-token: write}
 	minted=
 fi
 
@@ -292,13 +292,13 @@ refused() {
 		printf '  %-18s%s\n' 'audience' "${MOTEL_AUDIENCE:-motel}" 'claim repository' "${GITHUB_REPOSITORY:-?}" 'claim ref' "${GITHUB_REF:-?}"
 	else
 		echo "  the key this token was minted with (deploy_trust local { public_key ... })"
-		echo "  the audience, subject or claim it pins, against what motel deploy-token was given"
+		echo "  the audience, subject or claim it pins, against what moteld deploy-token was given"
 	fi
 	echo "Or the URL's app name is not one the box knows: an unknown app answers the same 401."
 	echo "Or the box could not consult the token's issuer (an outage there), or had fetched its keys in the"
 	echo "minute before the issuer changed them: its journal says which, and when a re-run goes through."
 	echo "Check the app's deploy_trust block in the box's Caddyfile. The box's journal"
-	echo "(journalctl -u motel, 'webhook auth failed') names the app asked for and the"
+	echo "(journalctl -u moteld, 'webhook auth failed') names the app asked for and the"
 	echo "check that refused it, unless the box's budget for logging failed authentications is spent."
 }
 finish() { # <what>: dresses the outcome, exits on failure

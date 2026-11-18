@@ -4,8 +4,8 @@ use (
 	.
 	./backups
 	./box
+	./client
 	./liveswap
-	./motelctl
 	./notify
 	./penaltybox
 )

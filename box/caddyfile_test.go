@@ -42,7 +42,7 @@ func TestBoxOptionParses(t *testing.T) {
 			`{"deploy_trust":[{"kind":"local","audience":"box1","public_key":"/etc/motel/deploy.pub"},{"kind":"gitlab","audience":"motel","claims":{"sub":"project_path:g/p:ref_type:branch:ref:main"}}],"signers":[{"principal":"a","type":"ssh-ed25519","key":"K1"}]}`,
 		},
 		// An empty block parses; Provision refuses it (no signer, no
-		// source), so `motel validate` does.
+		// source), so `moteld validate` does.
 		"empty": {"box {\n}", `{}`},
 		"bare":  {"box", `{}`},
 	} {
@@ -84,7 +84,7 @@ func TestBoxOptionRefuses(t *testing.T) {
 	if _, err := parseGlobalOption(caddyfile.NewTestDispenser("box {\n}"), httpcaddyfile.App{Name: "box"}); err == nil || !strings.Contains(err.Error(), "more than once") {
 		t.Errorf("a second box option: %v", err)
 	}
-	// Through the adapter, as `motel validate` meets it.
+	// Through the adapter, as `moteld validate` meets it.
 	twice := strings.Replace(good, "\tbox {\n", "\tbox {\n\t}\n\tbox {\n", 1)
 	if _, _, err := adapt(t, twice); err == nil || !strings.Contains(err.Error(), "the box option is given more than once") {
 		t.Errorf("two box blocks adapted: %v", err)
@@ -121,7 +121,7 @@ func TestWebhookDirective(t *testing.T) {
 }
 
 // adapt runs the Caddyfile adapter on a template (file's K1/K2), as
-// `motel validate` does before it provisions.
+// `moteld validate` does before it provisions.
 func adapt(t testing.TB, in string) ([]byte, []caddyconfig.Warning, error) {
 	t.Helper()
 	return caddyconfig.GetAdapter("caddyfile").Adapt(file(in), map[string]any{"filename": "Caddyfile"})
@@ -266,7 +266,7 @@ func TestAppProvision(t *testing.T) {
 	}
 }
 
-// TestValidate is `motel validate` on a box file: the adapter, then
+// TestValidate is `moteld validate` on a box file: the adapter, then
 // Provision of every app — so a box_webhook without the box option is
 // a config error, not a webhook that refuses every request.
 func TestValidate(t *testing.T) {
