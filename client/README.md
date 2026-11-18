@@ -260,7 +260,7 @@ takes two, a combining mark none, and a character the door writes as
 an escape as many as the escape has): a line too wide is cut, `…` its
 last cell, and the title bar's and the crumb's right side is never
 cut. `:` goes to a view in the command words (`:status blog`,
-`:deploys blog <version>`, `:me`, `:box`); what is typed is held to the client's grammars before anything is asked, and
+`:deploys blog <version>`, `:me`, `:box`); what is typed is held to the client's grammars, and a version to the box's own (at most 64 characters; `motel deploys` sends a longer one for the box to refuse), before anything is asked, and
 what is wrong is said on the prompt's line; Enter runs what is typed,
 Tab takes a completion. `?` lists the keys of the screen below it,
 written from the table the keys are bound from. On a screen that reads
