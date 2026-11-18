@@ -312,6 +312,8 @@ func (u *UI) step(by int) {
 	rows := u.S.Overview(v.App, u.now()).Deploys
 	for i, r := range rows {
 		if r.Version == v.Version && i+by >= 0 && i+by < len(rows) {
+			// The record left, as esc leaves it: its read is not wanted.
+			u.S.Engine.Drop(model.Job{Kind: model.KDeploy, App: v.App, Version: v.Version})
 			u.stack[len(u.stack)-1].Version = rows[i+by].Version
 			u.show()
 			return

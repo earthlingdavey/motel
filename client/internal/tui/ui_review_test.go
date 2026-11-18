@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"context"
 	"strings"
 	"testing"
 
@@ -60,5 +61,31 @@ func TestRecordReadOnOpening(t *testing.T) {
 	}
 	if s := h.screen(); strings.Contains(s, "the last read failed") {
 		t.Fatalf("the failure is still said after a read that answered:\n%s", s)
+	}
+}
+
+// TestStepDropsTheRecordLeft: p (or n) leaves a record as esc does: its
+// read in flight is cancelled, and the record stepped to is read next.
+func TestStepDropsTheRecordLeft(t *testing.T) {
+	h := start(t, 100, 30, nil)
+	h.open(app("shop"))
+	left := model.Job{Kind: model.KDeploy, App: "shop", Version: "e9a0b3f2c118"}
+	h.on(func() { h.u.open(model.View{Screen: model.ScreenRecord, App: "shop", Version: left.Version}) }) // its read not made yet
+	j, took, _ := h.s.Engine.Take(h.now)
+	if !took || j != left {
+		t.Fatalf("took %v %v, want the record's read", j, took)
+	}
+	cancelled := false
+	h.s.Engine.Started(func() { cancelled = true })
+	h.press("p")
+	if v := h.top(); v.Version != "7c1e55d0a913" {
+		t.Fatalf("p opened %+v", v)
+	}
+	if !cancelled {
+		t.Fatal("p left a record whose read was in flight, and did not cancel it")
+	}
+	h.s.Engine.Done(left, h.now, context.Canceled)
+	if j, took, _ := h.s.Engine.Take(h.now); !took || j != (model.Job{Kind: model.KDeploy, App: "shop", Version: "7c1e55d0a913"}) {
+		t.Fatalf("after the read left was cancelled, took %v %v", j, took)
 	}
 }
