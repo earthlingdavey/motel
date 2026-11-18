@@ -273,7 +273,7 @@ func (s *Session) Title(now time.Time) (Line, Line) {
 		if r := s.Me.V.Version; r != "" {
 			left = append(left, own(" · "+r))
 		}
-		left = append(left, own(" │ "+s.Me.V.Name+" · "+s.scopes()))
+		left = append(append(left, own(" │ "+s.Me.V.Name+" · ")), s.scopes()...)
 	case s.MeErr != nil && s.Engine.Stopped() == Running:
 		// The box answers the other reads, but not whoami as the client
 		// takes it (a release that is not N.N.N): signed in, as no one
@@ -286,7 +286,7 @@ func (s *Session) Title(now time.Time) (Line, Line) {
 }
 
 // scopes says the roles held: "viewer of the box", "viewer of blog, shop".
-func (s *Session) scopes() string {
+func (s *Session) scopes() Line {
 	byRole := map[string][]string{}
 	var roles []string
 	for _, r := range s.Me.V.Roles {
@@ -300,13 +300,26 @@ func (s *Session) scopes() string {
 		byRole[r.Role] = append(byRole[r.Role], on)
 	}
 	if len(roles) == 0 {
-		return "no grant here"
+		return Line{own("no grant here")}
 	}
-	var parts []string
-	for _, r := range roles {
-		parts = append(parts, r+" of "+strings.Join(byRole[r], ", "))
+	var out Line
+	for i, r := range roles {
+		if i > 0 {
+			out = append(out, own("; "))
+		}
+		out = append(out, roleSeg(r), own(" of "+strings.Join(byRole[r], ", ")))
 	}
-	return strings.Join(parts, "; ")
+	return out
+}
+
+// roleSeg is a role as the whoami command says it: viewer, the one role
+// a box grants today, as a word; any other is the box's own word, which
+// the client took by its shape alone, and is quoted.
+func roleSeg(role string) Seg {
+	if role == "viewer" {
+		return own(role)
+	}
+	return quoted(role)
 }
 
 func (s *Session) freshness(now time.Time) Line {
@@ -407,11 +420,11 @@ func (s *Session) MeView(now time.Time) []Line {
 		if n, ok := strings.CutPrefix(r.Scope, "app:"); ok {
 			on = "app " + n
 		}
-		verb := r.Role
-		if verb == "viewer" {
-			verb = "view"
+		verb := roleSeg(r.Role)
+		if r.Role == "viewer" {
+			verb = own("view")
 		}
-		out = append(out, Line{own("  " + pad(verb, 10) + " " + on)})
+		out = append(out, Line{own("  "), verb, own(pad("", 10-len([]rune(verb.T.String()))) + " " + on)})
 	}
 	out = append(out, nil,
 		field("you may not", own("roll back, relaunch, deploy or push: no person may yet. Deploys come from CI.")),

@@ -2,12 +2,14 @@ package model_test
 
 import (
 	"os"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/smallhoursorg/motel/client/internal/tui/demo"
 	"github.com/smallhoursorg/motel/client/internal/tui/model"
+	"github.com/smallhoursorg/motel/liveswap/wire"
 )
 
 // TestStaleRunningIsRunning: a running app whose row went stale is
@@ -81,5 +83,26 @@ func TestWhoAmIFailedIsSaid(t *testing.T) {
 	}
 	if me := s.MeView(now); len(me) == 0 || me[0].Text() != "who you are is not known: "+why {
 		t.Errorf("who am I says %v", me)
+	}
+}
+
+// TestRolesQuoted: a role other than viewer is the box's word, and is
+// quoted, in the title bar and on who am I, as the whoami command
+// quotes it.
+func TestRolesQuoted(t *testing.T) {
+	s := &model.Session{Host: demo.Host, Key: demo.Key, Now: func() time.Time { return t0 }, Engine: model.NewEngine(t0)}
+	s.Me = &model.Got[wire.WhoAmI]{V: wire.WhoAmI{Name: "alice", Key: demo.Key.Fingerprint, Box: demo.Host,
+		Roles: []wire.RoleHeld{{Role: "all-healthy", Scope: "box"}, {Role: "viewer", Scope: "app:blog"}}}, At: t0}
+	if left, _ := s.Title(t0); !strings.HasSuffix(left.Text(), `│ alice · "all-healthy" of the box; viewer of blog`) {
+		t.Errorf("the title says %q", left.Text())
+	}
+	var mine []string
+	for _, l := range s.MeView(t0) {
+		if strings.HasPrefix(l.Text(), "  ") && !strings.HasPrefix(l.Text(), "   ") {
+			mine = append(mine, l.Text())
+		}
+	}
+	if want := []string{`  "all-healthy" the box`, "  view       app blog"}; !slices.Equal(mine, want) {
+		t.Errorf("who am I says %q, want %q", mine, want)
 	}
 }
