@@ -12,7 +12,8 @@ import (
 )
 
 // TestCtrlROnlyWhatIsShown: ctrl-r on who am I asks whoami alone, on
-// help nothing, on the box the box alone.
+// help nothing, on the box the box alone, each pressed AgainAfter and
+// more after the last read of it.
 func TestCtrlROnlyWhatIsShown(t *testing.T) {
 	h := start(t, 100, 30, nil)
 	h.press(":", "me", tcell.KeyEnter)
@@ -24,7 +25,7 @@ func TestCtrlROnlyWhatIsShown(t *testing.T) {
 		if c.where != "me" {
 			h.press(tcell.KeyEscape, ":", c.where, tcell.KeyEnter)
 		}
-		h.now = h.now.Add(model.MeEvery / 2)
+		h.now = h.now.Add(model.AgainAfter + time.Second)
 		h.pump()
 		before := len(h.fake.Calls)
 		h.press(tcell.KeyCtrlR)
@@ -69,6 +70,7 @@ func TestNotThisKeyScreen(t *testing.T) {
 	h := start(t, 100, 30, nil)
 	h.press(":", "me", tcell.KeyEnter, "y")
 	h.fake.Body("whoami.json", `{"name":"mallory@example.com","key":"SHA256:OTHER00000000000000000000000000000000000000","roles":[{"role":"viewer","scope":"box"}],"box":"deploy.example.com","version":"v0.7.0","protocol":1,"token_expires_at":"@9m"}`)
+	h.now = h.now.Add(model.AgainAfter) // ctrl-r reads whoami again no sooner
 	h.press(tcell.KeyCtrlR)
 	s := h.screen()
 	if h.top().Screen != model.ScreenRefused || h.u.overlay != 0 || !strings.Contains(s, `"SHA256:OTHER`) || strings.Contains(s, "mallory") || strings.Contains(s, "P quit") {
