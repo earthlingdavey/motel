@@ -106,6 +106,10 @@ func (k Keygen) Sign(ctx context.Context, key Key, namespace string, message []b
 		if last == "" {
 			last = err.Error()
 		}
+		if k.NoTerminal && key.Path == "" {
+			// A key the agent alone holds: there is no file to add to it.
+			return nil, fmt.Errorf("%s did not sign: the TUI asks for no passphrase or PIN while its screen holds the terminal. r tries again; a hardware key that requires its PIN cannot be used in the TUI for now. ssh-keygen says: %s", key.Shown, termtext.From(last))
+		}
 		// With no terminal, ssh-keygen asks a key file's passphrase on
 		// stdin, reads the token's claims as it, and fails. Told by
 		// three things together: it failed signing from a private key
