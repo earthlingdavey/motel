@@ -528,8 +528,13 @@ fi
 case "$s" in *'"current_version":"sd-final"'*) pass "the relaunched instance is the recorded version" ;; *) fail "unexpected version after relaunch: $s" ;; esac
 # Recovery routes a relaunch once it accepts on its socket (no health
 # gate on a relaunch), so the requests the start held, and the first
-# after it, reach the app.
+# after it, reach the app. The loop is for a runner slow enough that the
+# app takes longer than that wait (2 s) to bind: it is routed anyway.
 no503_check "relaunch at a start"
+i=0
+until case "$(body)" in "hello v1"*) true ;; *) false ;; esac; do
+	i=$((i + 1)); [ "$i" -ge 20 ] && break; sleep 0.5
+done
 case "$(body)" in "hello v1"*) pass "proxy serves the relaunched instance" ;; *) fail "proxy not serving after relaunch" ;; esac
 
 # removal_config writes a Caddyfile without any app — and without the

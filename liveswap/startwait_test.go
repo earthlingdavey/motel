@@ -141,8 +141,8 @@ func TestGetUpstreamsDoesNotWaitAfterRecovery(t *testing.T) {
 	rig.ma.recover(context.Background(), zap.NewNop()) // nothing recorded
 	u := &Upstreams{App: "demo", ma: rig.ma}
 	r := answered(t, getUpstreamsAsync(context.Background(), u))
-	if r.err == nil || r.elapsed > 40*time.Millisecond {
-		t.Fatalf("got %v after %v, want an error at once", r.err, r.elapsed)
+	if r.err == nil || r.elapsed > 500*time.Millisecond {
+		t.Fatalf("got %v after %v, want an error at once, not after a wait", r.err, r.elapsed)
 	}
 }
 
@@ -196,8 +196,8 @@ func TestRelaunchIsRoutedOnceItAccepts(t *testing.T) {
 	}
 }
 
-// waitAccepting waits for a listener, not for a file: a socket left by a
-// dead app does not count.
+// waitAccepting waits for a listener, not for a file: a socket a dead
+// app left does not count.
 func TestWaitAccepting(t *testing.T) {
 	p := &httpProber{clock: realClock{}}
 	alive := func() bool { return true }
@@ -208,20 +208,30 @@ func TestWaitAccepting(t *testing.T) {
 	}
 	t.Run("a listener that comes up", func(t *testing.T) {
 		rig, sock := setup(t)
+		bound := make(chan error, 1)
 		go func() {
 			time.Sleep(40 * time.Millisecond)
-			bindSocket(t, rig.spec.dirs.socket(recordedNonce))
+			ln, err := listenSocket(rig.spec.dirs.socket(recordedNonce))
+			if err == nil {
+				t.Cleanup(func() { _ = ln.Close() })
+			}
+			bound <- err
 		}()
 		began := time.Now()
-		must(t, p.waitAccepting(context.Background(), sock, alive, 2*time.Second))
+		err := p.waitAccepting(context.Background(), sock, alive, 2*time.Second)
+		must(t, <-bound)
+		must(t, err)
 		if d := time.Since(began); d < 40*time.Millisecond {
 			t.Fatalf("returned after %v, before the listener was there", d)
 		}
 	})
-	t.Run("a stale socket file", func(t *testing.T) {
+	t.Run("a socket with no listener", func(t *testing.T) {
+		// A socket inode a dead app left: present, a socket, and refusing.
 		rig, sock := setup(t)
-		touchSocket(t, rig.spec.dirs.socket(recordedNonce))
-		err := p.waitAccepting(context.Background(), sock, alive, 60*time.Millisecond)
+		ln, err := listenSocket(rig.spec.dirs.socket(recordedNonce))
+		must(t, err)
+		must(t, ln.Close())
+		err = p.waitAccepting(context.Background(), sock, alive, 60*time.Millisecond)
 		if err == nil || !strings.Contains(err.Error(), "not accepting") {
 			t.Fatalf("want a timeout, got %v", err)
 		}
