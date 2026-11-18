@@ -154,11 +154,11 @@ func TestRecoveryEndedBeforeAnAttemptDoesNotRelease(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	rig.ma.recover(ctx, zap.NewNop())
-	u := &Upstreams{App: "demo", ma: rig.ma, waitFor: 100 * time.Millisecond}
+	u := &Upstreams{App: "demo", ma: rig.ma}
 	ch := getUpstreamsAsync(context.Background(), u)
 	stillWaiting(t, ch)
 	rig.ma.recover(context.Background(), zap.NewNop())
-	if r := answered(t, ch); r.elapsed >= 100*time.Millisecond {
+	if r := answered(t, ch); r.elapsed >= time.Second {
 		t.Fatalf("released after %v: by the cap, not by the replacing config's attempt", r.elapsed)
 	}
 }

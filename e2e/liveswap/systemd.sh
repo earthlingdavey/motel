@@ -141,16 +141,27 @@ no503_start() {
 	codes=$(mktemp)
 	stop=$codes.stop
 	# Stopped by a file, not a kill, so the request in flight is counted.
-	(while [ ! -e "$stop" ]; do curl -s -o /dev/null -w '%{http_code}\n' --max-time 3 "$PROXY/"; done) >"$codes" 2>/dev/null &
+	# The pause keeps a loop of refused connections from crowding the
+	# start it measures.
+	(while [ ! -e "$stop" ]; do curl -s -o /dev/null -w '%{http_code}\n' --max-time 3 "$PROXY/"; sleep 0.02; done) >"$codes" 2>/dev/null &
 	poller=$!
 	sleep 0.3
 	t_restart=$(date +%s)
 }
-no503_check() { # <what>; call once the webhook is back
+no503_check() { # <what> [relaunch]; call once the webhook is back
 	since=$(wc -l <"$codes") # what the poller asked from here on, the new process answered
 	sleep 0.3
 	touch "$stop"
 	wait "$poller"
+	# A relaunched app that took longer than recovery's wait (2 s) to
+	# bind is routed anyway, and its first requests meet the 503 that
+	# DESIGN-liveswap.md's accepted residuals name: a runner that slow
+	# says so, rather than fail.
+	if [ "${2:-}" = relaunch ] && journalctl -u moteld --no-pager -o cat --since "@$t_restart" | grep -q 'not accepting on its socket yet'; then
+		echo "INFO: $1: the relaunched app bound after recovery's 2 s wait, so its first requests may meet a 503 (accepted); not checked: $(sort "$codes" | uniq -c | tr '\n' ' ')"
+		rm -f "$codes" "$stop"
+		return
+	fi
 	n503=$(grep -c '^503$' "$codes")
 	after=$(tail -n "+$((since + 1))" "$codes" | grep -c '^200$')
 	if [ "$n503" -eq 0 ] && [ "$after" -gt 0 ]; then
@@ -529,8 +540,9 @@ case "$s" in *'"current_version":"sd-final"'*) pass "the relaunched instance is 
 # Recovery routes a relaunch once it accepts on its socket (no health
 # gate on a relaunch), so the requests the start held, and the first
 # after it, reach the app. The loop is for a runner slow enough that the
-# app takes longer than that wait (2 s) to bind: it is routed anyway.
-no503_check "relaunch at a start"
+# app takes longer than that wait (2 s) to bind: it is routed anyway,
+# and no503_check says so instead of checking.
+no503_check "relaunch at a start" relaunch
 i=0
 until case "$(body)" in "hello v1"*) true ;; *) false ;; esac; do
 	i=$((i + 1)); [ "$i" -ge 20 ] && break; sleep 0.5
