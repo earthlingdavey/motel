@@ -610,6 +610,8 @@ func (e *Engine) Done(j Job, now time.Time, err error) Outcome {
 		e.misses++
 		e.retryAt = now.Add(min(maxBackoff, time.Second<<min(e.misses, 6)))
 	case Refused:
+		// The box answered, if not with this: a run of no answer ends.
+		e.misses = 0
 		en.misses++
 		en.failed = true
 		en.held = en.once || Forbidden(err) || NotFound(err)
@@ -628,6 +630,9 @@ func (e *Engine) Done(j Job, now time.Time, err error) Outcome {
 			wait = NoRetryAfter
 		}
 		e.slowUntil = now.Add(wait)
+		// A 429 is an answer: a run of no answer ends, and the wait
+		// stands in for its backoff.
+		e.misses = 0
 		// The bucket is spent and does not fill during the wait, so the
 		// reads resume at the rate, not in a burst.
 		e.tokens, e.filled = 0, e.slowUntil
