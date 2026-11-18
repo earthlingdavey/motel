@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -25,6 +26,27 @@ func rowsShown(scr string) []string {
 		}
 	}
 	return names
+}
+
+// TestFilterShownAgain: / pressed again on a filtered list shows the
+// filter for editing, and the list stays filtered until it changes.
+func TestFilterShownAgain(t *testing.T) {
+	h := start(t, 100, 30, nil)
+	h.press("/", "sho", tcell.KeyEnter)
+	if got := rowsShown(h.screen()); len(got) != 1 || got[0] != "shop" {
+		t.Fatalf("filter sho shows %v", got)
+	}
+	h.press("/")
+	var typed, filter string
+	h.on(func() { typed, filter = h.u.prompt.GetText(), h.u.filter })
+	if got := rowsShown(h.screen()); typed != "sho" || filter != "sho" || len(got) != 1 {
+		t.Fatalf("/ again: the prompt holds %q, the filter is %q, rows %v", typed, filter, got)
+	}
+	h.press(tcell.KeyBackspace2, tcell.KeyEnter)
+	h.on(func() { filter = h.u.filter })
+	if got := rowsShown(h.screen()); filter != "sh" || !slices.Contains(got, "shop") {
+		t.Fatalf("the filter edited to %q shows %v", filter, got)
+	}
 }
 
 // TestKeys walks the screens by key: filter, open, back, :, help and
