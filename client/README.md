@@ -352,7 +352,9 @@ operator, which `P` prints.
 - **Every value shows its age** (on a screen too narrow for the AGE
   column, in its state: `running · 12s`), and a row whose last three
   reads, by its own interval, failed or did not come says `stale` in
-  its state; the strip counts the stale rows, and does not say every
+  its state; the apps screen's crumb counts the stale rows, the strip
+  says a stale row's reason as old and stale (`1h old, stale: stopped: …`)
+  and counts them when no row needs a look, and does not say every
   app runs beside one. Ages are on the wall clock, so a laptop's sleep
   counts. A step of the clock back is seen at the first time read after
   it, and every time kept of the reads moves back by it, to within the

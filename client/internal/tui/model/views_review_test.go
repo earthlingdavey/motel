@@ -213,3 +213,34 @@ func textsOfLines(ls []model.Line) []string {
 	}
 	return out
 }
+
+// TestStripBesideStaleRows: one app stopped, then an hour with no
+// answer: the strip's line of that stale row says it is stale and how
+// old, and the summary counts the stale rows beside a row that needs a
+// look.
+func TestStripBesideStaleRows(t *testing.T) {
+	now := t0
+	f := &demo.Fake{Now: func() time.Time { return now }}
+	f.Body("apps.json", `{"apps": [{"name": "docs"}, {"name": "mailer"}, {"name": "blog"}]}`)
+	s := &model.Session{Host: demo.Host, Now: f.Now, Engine: model.NewEngine(t0)}
+	for range 8 {
+		step(t, s, f, &now)
+	}
+	v := s.AppsView(now, "", 0, 0)
+	if len(v.Strip) != 1 || strings.Contains(v.Strip[0].Text(), "stale") || strings.Contains(v.Summary.Text(), "stale") {
+		t.Fatalf("answering: strip %q, summary %q", textsOfLines(v.Strip), v.Summary.Text())
+	}
+	for _, k := range []string{"docs", "mailer", "blog", "apps", "whoami"} {
+		f.Set(k, fail(model.FailNoAnswer))
+	}
+	for now.Before(t0.Add(time.Hour)) {
+		step(t, s, f, &now)
+	}
+	v = s.AppsView(now, "", 0, 0)
+	if len(v.Strip) != 1 || !strings.HasPrefix(v.Strip[0].Text(), "✖ mailer       1h old, stale: stopped: ") {
+		t.Errorf("the strip of a stale row: %q", textsOfLines(v.Strip))
+	}
+	if got := v.Summary.Text(); got != "3 apps · 1 need a look · 3 stale · by attention" {
+		t.Errorf("the summary: %q", got)
+	}
+}

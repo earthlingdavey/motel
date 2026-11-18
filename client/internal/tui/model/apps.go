@@ -47,8 +47,10 @@ type AppRow struct {
 	// Failed is the newest deploy's version when it failed.
 	Failed string
 	// state is STATE's word before a stale row's suffix: what the
-	// strip counts by.
+	// strip counts by. age is how old the row's answer is, which a
+	// stale row's AGE says only as "stale".
 	state string
+	age   string
 	mem   float64
 	share float64
 }
@@ -152,12 +154,23 @@ func (s *Session) AppsView(now time.Time, filter string, sort int, width int) Ap
 	}
 	for _, r := range v.Rows {
 		if len(r.Why) > 0 {
-			v.Strip = append(v.Strip, append(Line{ownC(r.Mark.Glyph()+" ", r.Mark.Class()), own(pad(r.Cells[ColName].String(), 12) + " ")}, r.Why...))
+			l := Line{ownC(r.Mark.Glyph()+" ", r.Mark.Class()), own(pad(r.Cells[ColName].String(), 12) + " ")}
+			if r.Stale {
+				// Its reason is what the box said last, not known to hold
+				// now: said with its age before it, as the title bar says
+				// a failed whoami's answer.
+				l = append(l, ownC(r.age+" old, stale: ", Warn))
+			}
+			v.Strip = append(v.Strip, append(l, r.Why...))
 		}
+	}
+	stales := ""
+	if stale > 0 {
+		stales = "; " + strconv.Itoa(stale) + " of " + strconv.Itoa(all) + " apps are stale"
 	}
 	switch {
 	case asking > 0 && need == 0:
-		v.AllWell = Line{own("asking the box for " + strconv.Itoa(asking) + " of " + strconv.Itoa(all) + " apps…")}
+		v.AllWell = Line{own("asking the box for " + strconv.Itoa(asking) + " of " + strconv.Itoa(all) + " apps…" + stales)}
 	case need == 0 && notRunning == 0 && stale == 0:
 		v.AllWell = Line{own("all " + strconv.Itoa(all) + " apps running; every newest deploy succeeded")}
 	case need == 0:
@@ -166,12 +179,14 @@ func (s *Session) AppsView(now time.Time, filter string, sort int, width int) Ap
 		if notRunning > 0 {
 			l += "; " + strconv.Itoa(notRunning) + " of " + strconv.Itoa(all) + " apps are not deployed or not yours to view"
 		}
-		if stale > 0 {
-			l += "; " + strconv.Itoa(stale) + " of " + strconv.Itoa(all) + " apps are stale"
-		}
-		v.AllWell = Line{own(l)}
+		v.AllWell = Line{own(l + stales)}
 	}
-	sum := strconv.Itoa(all) + " apps · " + strconv.Itoa(need) + " need a look · by " + Sorts[sort%len(Sorts)]
+	sum := strconv.Itoa(all) + " apps · " + strconv.Itoa(need) + " need a look · "
+	if stale > 0 {
+		// Beside a strip of reasons too, which says no count.
+		sum += strconv.Itoa(stale) + " stale · "
+	}
+	sum += "by " + Sorts[sort%len(Sorts)]
 	if filter != "" || marked {
 		sum = strconv.Itoa(len(v.Rows)) + " of " + sum
 	}
@@ -272,7 +287,8 @@ func (s *Session) row(name string, now time.Time) (r AppRow) {
 	// cycle). A held row is not being asked, so it is never stale.
 	misses, held, every, woke := s.Engine.Row(name)
 	r.Stale = !held && (woke || misses >= StaleAfter || Stale(now.Sub(at), every))
-	r.Cells[ColAge] = termtext.From(Ago(now.Sub(at)))
+	r.age = Ago(now.Sub(at))
+	r.Cells[ColAge] = termtext.From(r.age)
 	if r.Stale {
 		r.Cells[ColAge] = termtext.From("stale")
 		// The word goes in STATE too, which no width drops: a dimmed

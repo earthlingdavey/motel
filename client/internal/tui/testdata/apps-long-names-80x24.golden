@@ -1,5 +1,5 @@
 motel · deploy.example.com · v0.7.0 │ alice@example.com · viewer… slow · 10s ago
-apps                                       4 apps · 2 need a look · by attention
+apps                             4 apps · 2 need a look · 1 stale · by attention
 ✖ aaaaaaaaaaaa…staging stopped: 9f02bb1c4e7a is not running · +1 more (/!ok)
 ────────────────────────────────────────────────────────────────────────────────
   NAME                 STATE           VERSION      LAST DEPLOY    MEM  OF CAP
