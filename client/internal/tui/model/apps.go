@@ -42,8 +42,11 @@ type AppRow struct {
 	Why Line
 	// Failed is the newest deploy's version when it failed.
 	Failed string
-	mem    float64
-	share  float64
+	// state is STATE's word before a stale row's suffix: what the
+	// strip counts by.
+	state string
+	mem   float64
+	share float64
 }
 
 // Sorts are the apps screen's orders, which s cycles.
@@ -94,7 +97,7 @@ func (s *Session) AppsView(now time.Time, filter string, sort int) AppsView {
 		if r.Mark < MarkNone {
 			need++
 		}
-		switch r.Cells[ColState].String() {
+		switch r.state {
 		case "running":
 		case "asking…":
 			asking++
@@ -163,7 +166,7 @@ func (s *Session) row(name string, now time.Time) (r AppRow) {
 	}
 	a := s.apps[name]
 	if a == nil || a.st == nil && a.err == nil {
-		r.Cells[ColState] = termtext.From("asking…")
+		r.state, r.Cells[ColState] = "asking…", termtext.From("asking…")
 		return r
 	}
 	at := a.errAt
@@ -185,7 +188,7 @@ func (s *Session) row(name string, now time.Time) (r AppRow) {
 		defer func() { r.Cells[ColState] = termtext.From(r.Cells[ColState].String() + " · stale") }()
 	}
 	set := func(m Mark, state string, why ...Seg) {
-		r.Mark, r.Cells[ColState], r.Why = m, termtext.From(state), why
+		r.Mark, r.state, r.Cells[ColState], r.Why = m, state, termtext.From(state), why
 	}
 	out, _ := Classify(a.err)
 	switch {
