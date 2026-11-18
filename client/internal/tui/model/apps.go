@@ -146,6 +146,21 @@ func (s *Session) AppsView(now time.Time, filter string, sort int) AppsView {
 	return v
 }
 
+// NameMax is the most of an app's name the apps table shows. A longer
+// one (63 characters are allowed) is cut in the middle, its start and
+// its end kept, so that names which share a start still differ on
+// screen; the whole name is what is opened, filtered and completed.
+const NameMax = 20
+
+func cutName(name string) string {
+	r := []rune(name)
+	if len(r) <= NameMax {
+		return name
+	}
+	const end = 7
+	return string(r[:NameMax-1-end]) + "…" + string(r[len(r)-end:])
+}
+
 func cmpDesc(a, b float64) int {
 	switch {
 	case a > b:
@@ -167,7 +182,7 @@ func pad(s string, n int) string {
 // holds giving its state.
 func (s *Session) row(name string, now time.Time) (r AppRow) {
 	r = AppRow{Name: name, Mark: MarkNone}
-	r.Cells[ColName] = termtext.From(name)
+	r.Cells[ColName] = termtext.From(cutName(name))
 	for c := ColVersion; c < ColAge; c++ {
 		r.Cells[c] = termtext.From("-")
 	}
