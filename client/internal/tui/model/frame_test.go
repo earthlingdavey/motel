@@ -28,6 +28,10 @@ func session(t *testing.T) (*model.Session, *demo.Fake, *time.Time) {
 // screens hand Overlay their library's (door.Width).
 func runes(t termtext.Text) int { return utf8.RuneCountInString(t.String()) }
 
+// asIs says every text is drawn as it is, for these tests: the screens
+// hand Overlay the door's (door.AsIs).
+func asIs(termtext.Text) bool { return true }
+
 // TestCommandsAreShellSafe runs each printed command through a real sh,
 // with a stub motel on PATH, and compares the arguments it got with
 // the ones meant: versions like flags, hostile key paths and a box
@@ -82,7 +86,7 @@ func TestCommandsAreShellSafe(t *testing.T) {
 // the command and the JSON, and nothing on a screen that reads nothing.
 func TestOverlayWords(t *testing.T) {
 	s, f, now := session(t)
-	apps := s.Overlay(model.View{Screen: model.ScreenApps}, false, 98, runes)
+	apps := s.Overlay(model.View{Screen: model.ScreenApps}, false, 98, runes, asIs)
 	text := ""
 	for _, l := range apps {
 		text += l.Text() + "\n"
@@ -90,7 +94,7 @@ func TestOverlayWords(t *testing.T) {
 	if !strings.Contains(text, "motel apps --box deploy.example.com") || !strings.Contains(text, "each row is") || !strings.Contains(text, "motel status --box deploy.example.com -- <app>") {
 		t.Errorf("the apps overlay says:\n%s", text)
 	}
-	if l := s.Overlay(model.View{Screen: model.ScreenApp, App: "blog"}, true, 98, runes); len(l) != 1 || l[0].Text() != "no answer yet to show" {
+	if l := s.Overlay(model.View{Screen: model.ScreenApp, App: "blog"}, true, 98, runes, asIs); len(l) != 1 || l[0].Text() != "no answer yet to show" {
 		t.Errorf("before any answer the JSON overlay says %v", l)
 	}
 	if _, ok := s.Printable(model.View{Screen: model.ScreenRefused}, 0); ok {
@@ -127,7 +131,7 @@ func TestAppsRowTemplateKey(t *testing.T) {
 		s, _, _ := session(t)
 		s.Key.Source, s.Key.Shown = c.source, "~/.ssh/my key"
 		found := false
-		for _, l := range s.Overlay(model.View{Screen: model.ScreenApps}, false, 98, runes) {
+		for _, l := range s.Overlay(model.View{Screen: model.ScreenApps}, false, 98, runes, asIs) {
 			found = found || l.Text() == c.want
 		}
 		if !found {
@@ -145,7 +149,7 @@ func TestJSONMadeOnce(t *testing.T) {
 	step(t, s, f, now)
 	start := time.Now()
 	for range 50 {
-		s.Overlay(model.View{Screen: model.ScreenApps}, true, 98, runes)
+		s.Overlay(model.View{Screen: model.ScreenApps}, true, 98, runes, asIs)
 	}
 	if d := time.Since(start); d > 2*time.Second {
 		t.Errorf("50 frames of a 4 MB answer took %s", d)
@@ -302,7 +306,7 @@ func TestOverlayFollowsTheAnswer(t *testing.T) {
 	v := model.View{Screen: model.ScreenApps}
 	text := func() string {
 		out := ""
-		for _, l := range s.Overlay(v, true, 98, runes) {
+		for _, l := range s.Overlay(v, true, 98, runes, asIs) {
 			out += l.Text() + "\n"
 		}
 		return out

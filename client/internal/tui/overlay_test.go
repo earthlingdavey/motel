@@ -347,3 +347,44 @@ func TestOverlayRowCut(t *testing.T) {
 		})
 	}
 }
+
+// TestOverlayOffersSelection: the c overlay over who am I, with a
+// --key path that holds a [ (drawn with an unseen space after it), one
+// that holds a skin tone (drawn as an escape) and a plain one, at 100
+// columns, where the command lines fit, and at 60, where they are cut,
+// offers selecting a line only when it is drawn as it runs: with the
+// plain key at 100. Otherwise it says not to copy a line, why, and
+// that P prints the command.
+func TestOverlayOffersSelection(t *testing.T) {
+	const (
+		selects = "select it with the mouse, or press P to quit and print it below your prompt"
+		cutSays = "a line above is cut at the window's edge, marked …: do not copy it."
+		asRuns  = "a line above is not drawn as it runs (an unseen space after a [, or a character written as an escape): do not copy it."
+		prints  = "P quits and prints the first command whole below your prompt; the second is it with --json among its flags."
+	)
+	keys := map[string]string{"plain": "~/.ssh/id_ed25519", "bracket": "~/.ssh/[work]/id_ed25519", "skin tone": "~/.ssh/" + thumbsUp + "/id_ed25519"}
+	for _, w := range []int{100, 60} {
+		for _, k := range []string{"plain", "bracket", "skin tone"} {
+			name := strconv.Itoa(w) + "/" + k
+			h := start(t, w, 30, nil)
+			h.on(func() { h.s.Key.Source, h.s.Key.Shown = "--key", keys[k] })
+			h.open(model.View{Screen: model.ScreenMe})
+			h.press("c")
+			text := joinRows(overlayCells(h), " ")
+			cut, other := w == 60, k != "plain"
+			for _, c := range []struct {
+				says string
+				want bool
+			}{
+				{selects, !cut && !other},
+				{cutSays, cut},
+				{asRuns, other},
+				{prints, cut || other},
+			} {
+				if strings.Contains(text, c.says) != c.want {
+					t.Errorf("%s: the overlay says %q: %v, want %v\n%s", name, c.says, !c.want, c.want, joinRows(overlayCells(h), "\n"))
+				}
+			}
+		}
+	}
+}

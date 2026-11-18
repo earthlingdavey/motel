@@ -155,14 +155,23 @@ func (s *Session) Body(v View) ([]byte, time.Time, bool) {
 // the screens hand it in.
 type Cells func(termtext.Text) int
 
+// AsIs says whether the screens draw a text as it is, character for
+// character. They do not always: the door puts an unseen zero-width
+// space after each [ and writes some characters as escapes (an emoji
+// modifier as \U0001f3fd), and a command line so drawn, selected and
+// copied, is another command. The screens hand it in, as Cells.
+type AsIs func(termtext.Text) bool
+
 // Overlay is the command and JSON overlay for v: the command, then,
 // when json, the box's answer. The JSON is indented once per answer and
 // width, not at every frame: a large body would make every frame slow.
 // width is the room inside the overlay's border, in cells; every row is
 // laid out to it by lay. A command line wider than it is cut there, the
 // cut marked, and the overlay says not to copy it and what prints it
-// whole, in place of asking to select it.
-func (s *Session) Overlay(v View, json bool, width int, cells Cells) []Line {
+// whole, in place of asking to select it; so it does of a command line
+// the screens do not draw as it is (asIs), which copied would be
+// another command.
+func (s *Session) Overlay(v View, json bool, width int, cells Cells, asIs AsIs) []Line {
 	c, ok := s.Command(v)
 	switch {
 	case !ok && hiddenVersion(v):
@@ -172,31 +181,43 @@ func (s *Session) Overlay(v View, json bool, width int, cells Cells) []Line {
 	}
 	body, at, have := s.Body(v)
 	if !json {
-		cmds := []oRow{command("  " + c), command("  " + s.commandJSON(v))}
+		cmdJSON := s.commandJSON(v)
+		cmds := []oRow{command("  " + c), command("  " + cmdJSON)}
 		rows := append([]oRow{words("the same read from a shell:"), blank}, append(cmds, blank)...)
-		first, second, row := !cmds[0].fits(width, cells), !cmds[1].fits(width, cells), false
+		// Of the command, its --json form and a row's: each cut at the
+		// window's edge, and each the screens do not draw as it is.
+		cut := [3]bool{!cmds[0].fits(width, cells), !cmds[1].fits(width, cells)}
+		other := [3]bool{!drawnAsIs(c, asIs), !drawnAsIs(cmdJSON, asIs)}
 		if v.Screen == ScreenApps {
 			// A row's command as commandArgs makes it, --key among its
 			// flags, the app left as the placeholder <app>, unquoted.
 			args, _ := s.commandArgs(View{Screen: ScreenApp}, false)
-			tmpl := command("  " + ShellLine(args[:len(args)-1]) + " <app>")
-			row = !tmpl.fits(width, cells)
+			line := ShellLine(args[:len(args)-1]) + " <app>"
+			tmpl := command("  " + line)
+			cut[2], other[2] = !tmpl.fits(width, cells), !drawnAsIs(line, asIs)
 			rows = append(rows, words("This screen is that list, and a row for each app: each row is"), tmpl, blank)
 		}
-		if first || second || row {
+		bad := func(i int) bool { return cut[i] || other[i] }
+		if bad(0) || bad(1) || bad(2) {
 			// P prints the first command alone (Printable).
-			w := "a line above is cut at the window's edge, marked …: do not copy it."
-			if first || second {
-				w += " P quits and prints the first command whole below your prompt"
-				if second {
-					w += "; the second is it with --json among its flags"
+			var w []string
+			if cut[0] || cut[1] || cut[2] {
+				w = append(w, "a line above is cut at the window's edge, marked …: do not copy it.")
+			}
+			if other[0] || other[1] || other[2] {
+				w = append(w, "a line above is not drawn as it runs (an unseen space after a [, or a character written as an escape): do not copy it.")
+			}
+			if bad(0) || bad(1) {
+				p := "P quits and prints the first command whole below your prompt"
+				if bad(1) {
+					p += "; the second is it with --json among its flags"
 				}
-				w += "."
+				w = append(w, p+".")
 			}
-			if row {
-				w += " c then P on an app's own screen prints a row's command whole."
+			if bad(2) {
+				w = append(w, "c then P on an app's own screen prints a row's command whole.")
 			}
-			rows = append(rows, warn(w))
+			rows = append(rows, warn(strings.Join(w, " ")))
 		} else {
 			rows = append(rows, words("select it with the mouse, or press P to quit and print it below your prompt"))
 		}
@@ -289,6 +310,14 @@ func lay(rows []oRow, width int, cells Cells) []Line {
 		}
 	}
 	return out
+}
+
+// drawnAsIs says whether a command line is drawn as it is, character
+// for character: made safe to show, it is unchanged, and the screens
+// draw it so (asIs).
+func drawnAsIs(line string, asIs AsIs) bool {
+	t := termtext.From(line)
+	return t.String() == line && asIs(t)
 }
 
 // cutCells is s cut to width cells, the cut marked with "…".
