@@ -178,6 +178,26 @@ func TestBoxErrorClears(t *testing.T) {
 	}
 }
 
+// TestBoxViewIsTheBoxsAnswer: the box screen, under the box answer's
+// age, shows nothing from whoami's answer, which may be minutes older:
+// not the release it names.
+func TestBoxViewIsTheBoxsAnswer(t *testing.T) {
+	s, f, now := session(t)
+	s.Engine.BoxOpen(true, *now)
+	for s.BoxSt == nil || s.Me == nil {
+		step(t, s, f, now)
+	}
+	rel := s.Me.V.Version
+	if rel == "" {
+		t.Fatal("the sample whoami names no release")
+	}
+	for _, l := range s.BoxView(*now) {
+		if strings.Contains(l.Text(), rel) || strings.Contains(l.Text(), "protocol") {
+			t.Errorf("the box screen shows whoami's answer: %q", l.Text())
+		}
+	}
+}
+
 // TestTailCap: a log tail line past TailMax is cut and marked.
 func TestTailCap(t *testing.T) {
 	s, f, now := session(t)

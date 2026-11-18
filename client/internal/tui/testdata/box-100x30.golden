@@ -1,6 +1,5 @@
 motel · deploy.example.com · v0.7.0 │ alice@example.com · viewer of the box            live · 0s ago
 :box                                                                     as of 14:12:40 UTC · 0s ago
-moteld      v0.7.0 (protocol 1)
 runs commit 3f9c2a1e8b7d6c5f4e3d2c1b0a9f8e7d6c5b4a39
 Caddyfile   sha256 1f38639fad43624b85cdc2cac1778918713a061084bca6487683ec73f2b29fea
 secrets key age1qyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqs3290gq
@@ -9,6 +8,7 @@ deploy host deploy.example.com
 Not shown here, root's over ssh: moteld's journal (journalctl -u moteld),
 the last push's log (journalctl -u motel-box-apply), systemctl --failed,
 host load (btop).
+
 
 
 
