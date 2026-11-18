@@ -264,11 +264,15 @@ func (s *Session) RecordView(app, version string, now time.Time) RecordView {
 	case !ok:
 		v.Note = []Line{{own("asking " + s.Host + " for the record of " + version + "…")}}
 		return v
-	case g == nil:
+	case g == nil || Forbidden(err) || NotFound(err):
+		// A 403 (the grant removed) or a 404 (the record gone) is said
+		// alone, as an app's screen says it: the record read before is
+		// not one to show beside it.
 		v.Note = []Line{{Seg{T: Capped(failureText(err), 4*LineMax)}}}
 		return v
 	case err != nil:
-		// The record read before stays; the crumb says how old it is.
+		// The record read before stays beside a read that got no answer
+		// or could not be made; the crumb says how old it is.
 		v.Head = append(v.Head, Line{ownC("the last read failed: ", Warn), Seg{T: Capped(failureText(err), 2*LineMax)}})
 	}
 	d := g.V

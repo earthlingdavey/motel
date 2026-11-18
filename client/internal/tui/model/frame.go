@@ -463,10 +463,11 @@ func (s *Session) MeAsOf(now time.Time) Line {
 }
 
 // RecordAsOf is how old a deploy's record is, for its crumb: it is read
-// on opening it, and by ctrl-r, and kept when a later read fails.
+// on opening it, and by ctrl-r, and kept when a later read fails, but
+// for a 403 or a 404, which the screen says alone (RecordView).
 func (s *Session) RecordAsOf(app, version string, now time.Time) Line {
 	s.seen(now)
-	if g, err, ok := s.Record(app, version); ok && g != nil {
+	if g, err, ok := s.Record(app, version); ok && g != nil && !Forbidden(err) && !NotFound(err) {
 		l := s.asOf(g.At, now)
 		if err != nil {
 			l = append(l, ownC(" · the last read failed", Warn))

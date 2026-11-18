@@ -151,3 +151,50 @@ func TestMeLastReadFailed(t *testing.T) {
 		t.Errorf("about another key, who am I says %v", v)
 	}
 }
+
+// TestRecordRefusedAlone: a record read before, read again by ctrl-r,
+// is kept beside a read that got no answer, and not beside a 403 or a
+// 404: the box refused it, and the screen says that alone, as an app's
+// screen does.
+func TestRecordRefusedAlone(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		err  error
+		kept bool
+	}{
+		{"no answer", fail(model.FailNoAnswer), true},
+		{"403", fail(model.FailForbidden), false},
+		{"404", fail(model.FailNotFound), false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			now := t0
+			f := &demo.Fake{Now: func() time.Time { return now }}
+			s := &model.Session{Host: demo.Host, Now: f.Now, Engine: model.NewEngine(t0)}
+			e := s.Engine
+			for range 20 {
+				step(t, s, f, &now)
+			}
+			rec := model.Job{Kind: model.KDeploy, App: "blog", Version: "e9a0b3f2c118"}
+			e.Focus("blog", now)
+			e.Once(rec, now)
+			for step(t, s, f, &now) != rec {
+			}
+			f.Set("blog@e9a0b3f2c118", c.err)
+			now = now.Add(model.RecordAgainAfter)
+			e.Again(now, rec)
+			for step(t, s, f, &now) != rec {
+			}
+			v := s.RecordView("blog", rec.Version, now)
+			shown := false
+			for _, l := range v.Head {
+				shown = shown || strings.Contains(l.Text(), "FAILED")
+			}
+			if shown != c.kept || (v.Note != nil) == c.kept {
+				t.Errorf("after a %s the record is shown: %v, the note %v", c.name, shown, v.Note)
+			}
+			if crumb := s.RecordAsOf("blog", rec.Version, now); (crumb != nil) != c.kept {
+				t.Errorf("after a %s the crumb says %q", c.name, crumb.Text())
+			}
+		})
+	}
+}
