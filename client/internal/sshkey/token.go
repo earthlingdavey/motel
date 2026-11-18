@@ -182,11 +182,9 @@ func encryptedKeyFile(path string) bool {
 }
 
 // privatePath is the private key file ssh-keygen reads for key: its
-// Path, without the .pub when the key was named by it.
+// Path, without the .pub when the key was named by it. Every caller has
+// a Path: a key the agent alone holds has no file.
 func privatePath(key Key) string {
-	if key.Path == "" {
-		return "the agent's key"
-	}
 	return strings.TrimSuffix(key.Path, ".pub")
 }
 
