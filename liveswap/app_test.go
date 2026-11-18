@@ -2191,7 +2191,7 @@ func TestRecoverRetriesTransientErrorsUntilReattached(t *testing.T) {
 	rig.runner.reattachErrs = []error{errTest, errTest}
 	rig.runner.reattachOK = true
 	done := make(chan struct{})
-	go func() { rig.ma.recover(context.Background(), zap.NewNop()); close(done) }()
+	go func() { rig.ma.recover(context.Background(), zap.NewNop(), nil); close(done) }()
 	advanceUntil(t, rig, recoveryBackoffFloor, "reattach after two transient failures", func() bool {
 		return activeSocketIs(rig)
 	})
@@ -2235,7 +2235,7 @@ func TestRecoverGivesUpOnPermanentErrors(t *testing.T) {
 	rig.store.state = appState{CurrentVersion: "v7", Nonce: recordedNonce, Handle: handleState{PID: 1}}
 	rig.store.ok = true // release dir deliberately missing: not something a retry fixes
 	done := make(chan struct{})
-	go func() { rig.ma.recover(context.Background(), zap.NewNop()); close(done) }()
+	go func() { rig.ma.recover(context.Background(), zap.NewNop(), nil); close(done) }()
 	select {
 	case <-done:
 	case <-time.After(2 * time.Second):
@@ -2251,7 +2251,7 @@ func TestRecoveryWithNothingRecordedClearsAGivenUpReason(t *testing.T) {
 	rig.store.state = appState{CurrentVersion: "v7", Nonce: recordedNonce, Handle: handleState{PID: 1}}
 	rig.store.ok = true // the release dir missing: recovery gives up
 	rig.startWatchdogT(t)
-	rig.ma.recover(context.Background(), zap.NewNop())
+	rig.ma.recover(context.Background(), zap.NewNop(), nil)
 	waitUntil(t, "status to name why recovery gave up", func() bool {
 		wd := rig.ma.status().Watchdog
 		return wd != nil && strings.Contains(wd.LastFailure, "release dir is missing")
@@ -2301,7 +2301,7 @@ func TestCleanupJoinsRecoveryBeforeReleasing(t *testing.T) {
 	a.recoverWG = new(sync.WaitGroup)
 	a.recoverWG.Add(1)
 	exited := make(chan struct{})
-	go func() { defer a.recoverWG.Done(); rig.ma.recover(ctx, zap.NewNop()); close(exited) }()
+	go func() { defer a.recoverWG.Done(); rig.ma.recover(ctx, zap.NewNop(), nil); close(exited) }()
 	waitUntil(t, "first attempt", func() bool { return rig.runner.reattachCount() >= 1 })
 	// The config is cleaned up while recovery is parked in backoff:
 	// Cleanup must end it before anything else happens.

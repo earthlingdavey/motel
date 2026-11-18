@@ -25,6 +25,17 @@
 	# the line if you edit this block.
 	admin unix//run/motel/admin.sock
 
+	# Hold the first connections after moteld starts, at most 2 s, until
+	# liveswap has picked the running apps back up and the certificates
+	# already on disk are loaded. Without it a restart's first visitors
+	# can get a 503 or a TLS error (motel's liveswap/README.md,
+	# "Restarts"). Keep it if you edit this block.
+	servers {
+		listener_wrappers {
+			liveswap_ready
+		}
+	}
+
 	# ── Example: the Node.js app in motel's examples/node, with
 	#    zero-downtime deploys. Its tarball holds two executables,
 	#    server and migrate, each with Node inside; its README says

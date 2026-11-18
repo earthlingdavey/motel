@@ -323,7 +323,7 @@ func TestRecoveryRefusesAPlantedStateFile(t *testing.T) {
 			core, logs := observer.New(zap.ErrorLevel)
 			ctx, cancel := context.WithCancel(context.Background())
 			done := make(chan struct{})
-			go func() { rig.ma.recover(ctx, zap.New(core)); close(done) }()
+			go func() { rig.ma.recover(ctx, zap.New(core), nil); close(done) }()
 			// Should a regression block on the FIFO or retry, the
 			// goroutine would outlive this test holding — or coming
 			// back for — ownerLock("demo"), every rig's, and hang some

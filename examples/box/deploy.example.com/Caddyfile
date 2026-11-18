@@ -7,6 +7,17 @@
 	# `systemctl reload` finds the socket here.
 	admin unix//run/motel/admin.sock
 
+	# Hold the first connections after moteld starts, at most 2 s, until
+	# liveswap has picked the running apps back up and the certificates
+	# already on disk are loaded. Without it a restart's first visitors
+	# can get a 503 or a TLS error (motel's liveswap/README.md,
+	# "Restarts"). Keep it.
+	servers {
+		listener_wrappers {
+			liveswap_ready
+		}
+	}
+
 	# Who may change this file. A push reaches the box only with a token
 	# from this repo's workflow on main, and the box applies it only if
 	# every commit since the one it runs is signed by a key listed here.

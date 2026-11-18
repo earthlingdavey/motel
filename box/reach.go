@@ -525,6 +525,10 @@ func (s serverSettings) connection(host string) string {
 			// A connection without a PROXY header is served as sent
 			// unless the policy for its address requires one; the
 			// address is not the file's to know.
+		case name == "liveswap_ready":
+			// It only holds a start's first connections, at most
+			// liveswap's startGateMaxWait, and then accepts them all; it
+			// refuses none, and later configs are not wrapped by it.
 		default:
 			return "the " + named(name) + " listener wrapper may refuse the connection"
 		}

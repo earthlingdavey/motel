@@ -858,14 +858,39 @@ func (a *App) Start() error {
 	ctx, cancel := context.WithCancel(context.Background())
 	a.recoverCancel = cancel
 	a.recoverWG = new(sync.WaitGroup)
+	a.recoverApps(ctx, processStart)
+	return nil
+}
+
+// recoverApps starts every app's recovery for this config, and settles
+// s once every app's first attempt has returned — what the start gate
+// (startgate.go) holds a start's first connections for. Only the first
+// config a process starts settles it; a later one finds it settled.
+func (a *App) recoverApps(ctx context.Context, s *startState) {
+	var firstAttempts *sync.WaitGroup
+	if !s.appsSettled() {
+		firstAttempts = new(sync.WaitGroup)
+	}
 	for name, ma := range a.managed {
 		a.recoverWG.Add(1)
+		var firstDone func()
+		if firstAttempts != nil {
+			firstAttempts.Add(1)
+			firstDone = firstAttempts.Done
+		}
 		go func(name string, ma *managedApp) {
 			defer a.recoverWG.Done()
-			ma.recover(ctx, a.logger.Named(name))
+			ma.recover(ctx, a.logger.Named(name), firstDone)
 		}(name, ma)
 	}
-	return nil
+	if firstAttempts != nil {
+		// Joined by nothing, and needs no join: it ends when the last
+		// first attempt returns, and Cleanup's cancel ends those.
+		go func() {
+			firstAttempts.Wait()
+			s.settleApps()
+		}()
+	}
 }
 
 // systemdConn returns the manager connection this config uses. Apps

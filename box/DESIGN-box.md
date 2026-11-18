@@ -789,6 +789,7 @@ shares them.
 | `tls` | passes | where the TLS handshake stands among the wrappers |
 | `http_redirect` ahead of `tls` | passes | it answers only a connection whose first bytes are plaintext HTTP; the workflow's are a TLS ClientHello |
 | `proxy_protocol` whose `fallback_policy` is not `REQUIRE` | passes | a connection without a PROXY header is served as sent: of the policies, only `REQUIRE` refuses one |
+| `liveswap_ready`, anywhere | passes | it holds a start's first connections until liveswap has picked the apps back up and the stored certificates are loaded, at most 2 s, then accepts every one; it refuses none (liveswap/DESIGN-liveswap.md, "The start gate") |
 | anything else — `http_redirect` behind `tls`, or with no `tls` listed (Caddy then puts every wrapper behind the handshake), `proxy_protocol` with `fallback_policy REQUIRE`, a wrapper this table does not list | refused: `the <wrapper> listener wrapper may refuse the connection` | behind the handshake `http_redirect` reads the request and redirects an HTTP/1.1 one; `REQUIRE` closes a connection without a header, and whether the workflow's address is in `allow` is not the file's to know |
 
 Caddy hands the handshake to the first TLS connection policy whose

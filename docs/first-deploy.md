@@ -238,6 +238,12 @@ What is new beside the app is at the top and the bottom:
 {
 	admin unix//run/motel/admin.sock
 
+	servers {
+		listener_wrappers {
+			liveswap_ready # a restart's first visitors wait for the apps, not a 503
+		}
+	}
+
 	box {
 		deploy_trust github {
 			audience motel

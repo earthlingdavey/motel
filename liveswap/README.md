@@ -286,6 +286,41 @@ re-bind.) A stale socket file is never your problem either: motel removes
 it with the instance's run dir once the instance is retired, and
 every launch gets a fresh path.
 
+### Restarts
+
+When moteld restarts (an upgrade, `systemctl restart moteld`), the
+new process serves as soon as it listens, and liveswap picks the
+running apps back up a moment later: about a tenth of a second on a
+small box. A request in between finds no running version and is
+answered 503. One line in the global options makes the new process
+hold its first connections until then instead:
+
+```caddyfile
+{
+	servers {
+		listener_wrappers {
+			liveswap_ready
+		}
+	}
+}
+```
+
+The packaged starter Caddyfile and the box template
+(`examples/box/`) have it. It holds the connections a start accepts
+first until every app's first recovery attempt has returned —
+reattached, relaunched, or failed and said why — and the certificates
+already on disk are loaded, at most 2 seconds. Then it accepts every
+connection it held and stays out of the way until the next start:
+reloads are not held. It holds every site on the server, not only
+liveswap's, and not HTTP/3. A held visitor waits rather than fails;
+the holds measured on a test box were 60–80 ms. The journal says
+`start gate open` and how long it waited, or warns when it opened at
+its 2-second cap and on what.
+
+It does not close the rest of a restart's gap: between the old
+process closing its listeners and the new one opening them, nothing
+listens, and connections are refused ([Upgrading](../docs/upgrading.md)).
+
 ### Placeholders
 
 `command`, `pre_start` and `env` values may use deploy-time

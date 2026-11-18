@@ -129,9 +129,29 @@ fi
 [ "$(hs_prop RestartPreventExitStatus)" = "1" ] \
 	&& pass "moteld.service never retries an exit 1" || fail "moteld.service RestartPreventExitStatus is '$(hs_prop RestartPreventExitStatus)'"
 
-echo "=== systemd 2: systemctl restart moteld keeps the app running ==="
+echo "=== systemd 2: systemctl restart moteld keeps the app running, and answers no request 503 ==="
+# Across the restart a poller asks the app's site for / over and over.
+# With the start gate (liveswap_ready, e2e/Caddyfile) the new process
+# holds its first connections until liveswap has picked the app back
+# up, so none is answered 503 (#489). A refused connection (000) is
+# the restart's other half: nothing listens between the two processes.
+codes=$(mktemp)
+(while :; do curl -s -o /dev/null -w '%{http_code}\n' --max-time 3 "$PROXY/"; done) >"$codes" 2>/dev/null &
+poller=$!
+sleep 0.3
 systemctl restart moteld || fail "systemctl restart moteld failed"
 wait_hook || fail "webhook not back within 30s of restart"
+sleep 0.3
+kill "$poller"
+wait "$poller" 2>/dev/null
+n503=$(grep -c '^503$' "$codes")
+n200=$(grep -c '^200$' "$codes")
+if [ "$n503" -eq 0 ] && [ "$n200" -gt 0 ]; then
+	pass "no request answered 503 across the restart ($n200 answered 200, $(grep -c '^000$' "$codes") refused)"
+else
+	fail "the restart answered $n503 request(s) 503 and $n200 200: $(sort "$codes" | uniq -c | tr '\n' ' ')"
+fi
+rm -f "$codes"
 s=$(status)
 if [ "$(json_num "$s" pid)" = "$pid" ] && [ "$(json_str "$s" unit)" = "$unit" ]; then
 	pass "same pid and unit after restart (reattached, not relaunched)"

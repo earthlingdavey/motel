@@ -27,6 +27,11 @@
 		# its X-Forwarded-For is trusted and {client_ip} resolves to it —
 		# this exercises penaltybox's real client-key path.
 		trusted_proxies static private_ranges
+		# The start gate: e2e/liveswap/systemd.sh's restart asserts no
+		# request meets a 503 while liveswap picks the apps back up.
+		listener_wrappers {
+			liveswap_ready
+		}
 	}
 
 	liveswap {

@@ -80,6 +80,14 @@ Concept map from the Nomad-era stack:
   until the new config's Start installs its own (an accepted residual
   when the reload changes them). An OIDC token under a key the process
   has not fetched yet is still refused at once, as the first rule says.
+- On a start of moteld, a server whose `listener_wrappers` include
+  `liveswap_ready` MUST NOT accept a connection until every app of the
+  first config liveswap starts has had its first recovery attempt
+  return, and every name the tls app will load a stored certificate
+  for has it in the cache, or 2 s have passed, whichever is first; and
+  MUST then accept every connection it held. It holds only once per
+  process: a config loaded after it opened is not held ("The start
+  gate", #489).
 - Config load MUST fail if any app resolves to zero `deploy_trust`
   sources.
 - Config load and every launch MUST warn when an app's `env_file` is
@@ -685,6 +693,47 @@ method, path and query for each kind of caller (`FuzzNoRouteNoAnswer`,
 in each webhook): a request that matches no row is answered 401, 404
 or 405 where it was before, and reaches no row's function.
 
+### The start gate (`startgate.go`)
+
+`liveswap_ready` (`caddy.listeners.liveswap_ready`) is a listener
+wrapper the operator writes in the `servers` global option. Caddy
+starts its apps in map order, so the http app can serve before
+liveswap's Start has reattached the running apps; in that window an
+app's upstream has no socket and `reverse_proxy` answers 503, for
+about 100 ms at every restart (#489). The wrapper holds `Accept`
+instead: the connections queue in the kernel's backlog and are
+answered once the process can answer them.
+
+It holds for two things, then opens for good:
+
+- **The apps.** `App.Start` hands each app's `recover` a callback that
+  runs once the first attempt has returned, whatever it returned
+  (`recoverApps`). When every app's has run, the process's start
+  (`processStart`) is settled. Only the first config a process starts
+  settles it. A gate in a config without liveswap waits for no apps.
+- **The certificates already in storage.** Caddy's http app serves
+  before `automaticHTTPSPhase2` loads the managed certificates, in
+  goroutines (caddyserver/certmagic#374), and a handshake in between
+  fails with `no certificate available` (caddyserver/caddy#8431).
+  With the socket closed across a restart, almost no connection lands
+  in that millisecond; a socket kept open across it would hand it
+  every queued one. The names are the ones automatic HTTPS manages,
+  collected by Caddy v2.11.9's own rules (`managedNames`), less those
+  with nothing stored under any issuer (`storedNames`): a name being
+  issued for the first time takes seconds and is not waited for. A
+  name is ready when `HasCertificateForSubject` says so, which counts
+  a managed wildcard that covers it.
+
+The first `Accept` of any wrapped listener starts the opening, which
+runs once per process. It waits for the apps, then polls the cache
+every millisecond, all within 2 s (`startGateMaxWait`); at the cap it
+opens anyway and warns, naming what it capped on and up to ten names
+still not cached. A listener closed while held ends its `Accept` with
+`net.ErrClosed`. Once open, `WrapListener` returns a new listener
+unwrapped, so a reload's servers pay nothing. HTTP/3 is not a
+`net.Listener` and is not held. The `handler.go` waits for the install
+(#473) stay: they cover a config that leaves the line out.
+
 ### The response observer (`observe.go`)
 
 `observe <app>` is a handler the operator writes first in an
@@ -772,6 +821,7 @@ plugin's handler can take its ID.
 | `deploytrust/` | leaf package: deploy auth — the `deploy_trust` grammar (`Parse`), its sources and verifiers (OIDC + local-key JWT verification), the webhook preamble (`Limiter.Authenticate`) and what a failed attempt costs the journal (`Limiter`, on an injected clock). Imports nothing of liveswap's; the box webhook authenticates through it too. `trusttest/` beside it mints tokens and runs an issuer for tests |
 | `internal/dispenser/` | leaf package: the one Caddyfile rule the parsers here and `deploytrust.Parse` apply alike — a repeated subdirective is refused — in one place so the two cannot drift |
 | `upstreams.go` | dynamic upstream source (the cutover read side) |
+| `startgate.go` | `liveswap_ready`: the listener wrapper that holds a start's first connections until the apps' first recovery attempts have returned and the stored certificates are cached ("The start gate") |
 | `observe.go` | `observe`: the response observer's handler and writer, and the per-release counters on `managedApp` ("The response observer") |
 | `appmetrics.go` | what the metrics store reads of liveswap: `AppSamples` (each app's instance and its request counts) and the `MetricsSource` hook that adds `metrics` to `GET /<app>`, with the `?range=` windows |
 | `runner.go` / `runner_systemd.go` / `systemd_dbus.go` | runner interface + the systemd transient-unit implementation + its D-Bus client |
@@ -869,7 +919,11 @@ author's beliefs about systemd, and only the real thing corrects them.
    step), with every lock holder waking the watchdog as it lets go; env
    precedence, placeholders and key validation; malicious-tar table;
    download caps/allowlist/redaction; prober soak/flap/deadline;
-   parser and Validate tables.
+   parser and Validate tables; the start gate (a held Accept over a
+   real socket, released when the apps settle and the stored
+   certificates are cached, or at its cap; once per process; a close
+   ending a held Accept; recovery's first-attempt callback; the names
+   it waits for).
 2. Fuzz (`make fuzz`, weekly in CI; seed corpora run in `make test`):
    artifact extraction, path containment, URL redaction — and, for the
    runner: unit-name round-trip (a name parses back to exactly its app
@@ -906,7 +960,9 @@ author's beliefs about systemd, and only the real thing corrects them.
    motel's back is relaunched on start; removing the app via reload
    stops its units and re-adding it relaunches; an app removed while
    moteld was down is swept on the next start; app output is in the
-   journal. Finally the recovery suite from the runner's side.
+   journal; and the restart's poller, with `liveswap_ready` in the
+   config, sees no request answered 503 while the app is picked back
+   up. Finally the recovery suite from the runner's side.
 5. Package (`make install-test`, the built `.deb` on debian:13 — the
    support matrix, on both arches): Depends resolution (`libpam-systemd`,
    `dbus`), user manager active with lingering, a deploy under the

@@ -140,7 +140,7 @@ func TestRecoveryGivesUpOnARelaunchItsPreflightRefuses(t *testing.T) {
 	rig.runner.setPreflightErr(&preflightError{wrongArch})
 	rig.startWatchdogT(t) // nothing to supervise: it parks, and status reads it
 	done := make(chan struct{})
-	go func() { rig.ma.recover(context.Background(), zap.NewNop()); close(done) }()
+	go func() { rig.ma.recover(context.Background(), zap.NewNop(), nil); close(done) }()
 	select {
 	case <-done:
 	case <-time.After(2 * time.Second):

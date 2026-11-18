@@ -405,6 +405,8 @@ func TestReachConnectionJSON(t *testing.T) {
 		"proxy_protocol requiring a header":                {settings: `"listener_wrappers":[{"wrapper":"proxy_protocol","allow":["10.0.0.0/8"],"fallback_policy":"REQUIRE"},{"wrapper":"tls"}],`, want: fmt.Sprintf(wrapper, "proxy_protocol")},
 		"proxy_protocol requiring a header, in lower case": {settings: `"listener_wrappers":[{"wrapper":"proxy_protocol","fallback_policy":"require"},{"wrapper":"tls"}],`, want: fmt.Sprintf(wrapper, "proxy_protocol")},
 		"http_redirect behind tls":                         {settings: `"listener_wrappers":[{"wrapper":"proxy_protocol"},{"wrapper":"tls"},{"wrapper":"http_redirect"}],`, want: fmt.Sprintf(wrapper, "http_redirect")},
+		"liveswap_ready ahead of tls":                      {settings: `"listener_wrappers":[{"wrapper":"liveswap_ready"},{"wrapper":"tls"}],`},
+		"liveswap_ready with no tls listed":                {settings: `"listener_wrappers":[{"wrapper":"liveswap_ready"}],`},
 		"a wrapper the table does not name":                {settings: `"listener_wrappers":[{"wrapper":"layer4"},{"wrapper":"tls"}],`, want: fmt.Sprintf(wrapper, "layer4")},
 		"a nameless wrapper":                               {settings: `"listener_wrappers":[{},{"wrapper":"tls"}],`, want: fmt.Sprintf(wrapper, "nameless")},
 		"h2c alone":                                        {settings: `"protocols":["h2c"],`, want: "a listener's protocols include neither h1 nor h2"},
