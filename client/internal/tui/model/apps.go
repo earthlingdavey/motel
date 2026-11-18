@@ -12,7 +12,7 @@ import (
 )
 
 // The apps table's columns, in the order a narrow screen drops them:
-// last the first (AGE folds into the title bar's word).
+// last the first (AGE then goes into STATE, as StateAged).
 const (
 	ColName = iota
 	ColState
@@ -37,7 +37,11 @@ type AppRow struct {
 	Name  string
 	Mark  Mark
 	Cells [NCols]termtext.Text
-	Stale bool
+	// StateAged is STATE with the row's age after it ("running · 12s"),
+	// for a screen too narrow for AGE; a stale row's STATE says stale
+	// already, and a row not yet answered has no age.
+	StateAged termtext.Text
+	Stale     bool
 	// Why is the "needs a look" line, empty when the row needs none.
 	Why Line
 	// Failed is the newest deploy's version when it failed.
@@ -101,6 +105,10 @@ func (s *Session) AppsView(now time.Time, filter string, sort int) AppsView {
 	need, all, notRunning, asking := 0, 0, 0, 0
 	for _, n := range names {
 		r := s.row(n, now)
+		r.StateAged = r.Cells[ColState]
+		if age := r.Cells[ColAge].String(); age != "" && !r.Stale {
+			r.StateAged = termtext.From(r.Cells[ColState].String() + " · " + age)
+		}
 		if r.Mark < MarkNone {
 			need++
 		}

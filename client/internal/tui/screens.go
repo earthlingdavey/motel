@@ -135,8 +135,9 @@ var footers = map[model.Screen]string{
 }
 
 // The apps table's columns, dropped in this order when the screen is
-// too narrow: AGE first (the title bar's word says how fresh), then
-// P95, 5xx and OF CAP. NAME, STATE, VERSION and LAST DEPLOY stay.
+// too narrow: AGE first, each row's age then going in its STATE cell,
+// then P95, 5xx, OF CAP and MEM. NAME, STATE, VERSION and LAST DEPLOY
+// stay.
 var dropOrder = []int{model.ColAge, model.ColP95, model.Col5xx, model.ColOfCap, model.ColMem}
 
 func (u *UI) renderApps() {
@@ -188,6 +189,14 @@ func (u *UI) renderApps() {
 			break
 		}
 		keep[c], total = false, total-wd[c]-1
+		if c == model.ColAge {
+			// Every value shows its age: STATE takes it, and widens.
+			aged := wd[model.ColState]
+			for _, r := range view.Rows {
+				aged = max(aged, door.Width(r.StateAged))
+			}
+			total, wd[model.ColState] = total+aged-wd[model.ColState], aged
+		}
 	}
 	selName := ""
 	if r, _ := u.apps.GetSelection(); r >= 1 && r-1 < len(u.appRows) {
@@ -214,7 +223,11 @@ func (u *UI) renderApps() {
 			if !keep[c] {
 				continue
 			}
-			cl := door.Cell(r.Cells[c])
+			t := r.Cells[c]
+			if c == model.ColState && !keep[model.ColAge] {
+				t = r.StateAged
+			}
+			cl := door.Cell(t)
 			if r.Stale {
 				cl.SetAttributes(tcell.AttrDim)
 			}
