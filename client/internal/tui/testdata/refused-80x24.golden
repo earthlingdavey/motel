@@ -21,4 +21,4 @@ r  try again (once; each refusal counts against the box's budget)     q  quit
 
 
 
-r ask again  P quit and print the person line  ? keys  q quit
+↑↓ scroll  r ask again  P print person line  ? keys  q quit

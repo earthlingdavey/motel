@@ -309,8 +309,8 @@ every read, like a refusal, and the session drops everything the
 box said, before it too (who you are, the list, every status and
 record, the box's answer): a box that does not answer about this key
 gives no grounds to show any of its answers as yours. After `r`, the
-session fills again from empty. A stop screen takes `r`, `?` and `q`
-alone, and `P` on a refused key's; help over it takes esc, `r` and `q`
+session fills again from empty. A stop screen takes `r`, `?`, `q` and
+the keys that scroll it alone, and `P` on a refused key's; help over it takes esc, `r` and `q`
 alone; nothing opens from either. A refused key's screen names every
 cause the client cannot tell apart and the person line to send the
 operator, which `P` prints.

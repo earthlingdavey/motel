@@ -39,7 +39,7 @@ func (u *UI) render() {
 	door.SetText(u.crumb, door.Line(spread(crumbL, crumbR, u.w), u.Colour))
 	foot := footers[v.Screen]
 	if v.Screen == model.ScreenRefused && u.S.CanPrint(v, 0) {
-		foot = "r ask again  P quit and print the person line  ? keys  q quit"
+		foot = "↑↓ scroll  r ask again  P print person line  ? keys  q quit"
 	}
 	if !u.S.Engine.CanAskAgain(now) {
 		foot = strings.Replace(foot, "  ctrl-r ask again", "", 1)
@@ -132,7 +132,7 @@ var footers = map[model.Screen]string{
 	model.ScreenMe:       "y json  c command  esc back  ? more",
 	model.ScreenBox:      "y json  c command  esc back  ? more",
 	model.ScreenHelp:     "esc close  q quit",
-	model.ScreenRefused:  "r ask again  ? keys  q quit",
+	model.ScreenRefused:  "↑↓ scroll  r ask again  ? keys  q quit",
 	model.ScreenStopHelp: "esc back  r ask again  q quit",
 }
 
