@@ -764,7 +764,9 @@ func (e *Engine) Tick(now time.Time) bool {
 		en.due = now
 	}
 	e.askMe(now)
-	e.tokens, e.filled = 0, now
+	// Empty, and filling from now, or from the end of a 429's wait that
+	// still runs, as the 429 left it.
+	e.tokens, e.filled = 0, maxTime(now, e.slowUntil)
 	e.poke()
 	return true
 }

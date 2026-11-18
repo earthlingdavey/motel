@@ -51,3 +51,36 @@ func TestRefusalEndsAnOutage(t *testing.T) {
 		})
 	}
 }
+
+// TestWakeDuringA429: a wake from sleep while a 429's wait runs leaves
+// the bucket empty until the wait ends, as the 429 did: the reads
+// resume at the rate, not in a burst.
+func TestWakeDuringA429(t *testing.T) {
+	apps := names(60)
+	e := model.NewEngine(t0)
+	sim(e, apps, t0, 30*time.Second, 10*time.Millisecond, ok)
+	now := t0.Add(30 * time.Second)
+	e.Touch(now)
+	j, took, _ := e.Take(now)
+	for !took {
+		now = now.Add(100 * time.Millisecond)
+		j, took, _ = e.Take(now)
+	}
+	e.Done(j, now, &model.Failure{Kind: model.FailSlowed, RetryAfter: 2 * time.Minute})
+	until := e.SlowUntil(now)
+	e.Tick(now)
+	now = now.Add(time.Minute)
+	if !e.Tick(now) {
+		t.Fatal("a minute between two ticks not taken for a wake")
+	}
+	calls := sim(e, apps, until, 2*time.Second, 10*time.Millisecond, ok)
+	n := 0
+	for _, c := range calls {
+		if c.at.Before(until.Add(time.Second)) {
+			n++
+		}
+	}
+	if n > 2 {
+		t.Errorf("%d reads in the first second after the wait: a burst", n)
+	}
+}
