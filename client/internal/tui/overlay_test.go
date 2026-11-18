@@ -338,3 +338,21 @@ func TestOverlayScreens(t *testing.T) {
 		})
 	}
 }
+
+// TestOverlayResize: the y overlay, open over a record with --key
+// while the window is made narrower, wider, and narrower again, is laid
+// out for the window's width each time: its command cut at the edge at
+// 80 and 60 columns, and whole at 100.
+func TestOverlayResize(t *testing.T) {
+	h := start(t, 80, 24, nil)
+	h.on(func() { h.s.Key.Source, h.s.Key.Shown = "--key", "~/.ssh/id_ed25519" })
+	v := record("blog", "7c1e55d0a913")
+	h.open(v)
+	h.press("y")
+	for _, w := range []int{80, 60, 100, 80} {
+		h.on(func() { h.scr.(*sizedSim).SetSize(w, 24) })
+		if cut, _ := checkOverlay(t, h, v, true, w); cut != (w < 100) {
+			t.Errorf("at %d columns: the command cut: %v, want %v", w, cut, w < 100)
+		}
+	}
+}
