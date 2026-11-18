@@ -710,7 +710,9 @@ It holds for two things, then opens for good:
   runs once the first attempt has returned, whatever it returned
   (`recoverApps`). When every app's has run, the process's start
   (`processStart`) is settled. Only the first config a process starts
-  settles it. A gate in a config without liveswap waits for no apps.
+  settles it, unless a reload replaced it before some app's first
+  attempt began: then the config that replaced it does. A gate in a
+  config without liveswap waits for no apps.
 - **The certificates already in storage.** Caddy's http app serves
   before `automaticHTTPSPhase2` loads the managed certificates, in
   goroutines (caddyserver/certmagic#374), and a handshake in between
@@ -721,12 +723,17 @@ It holds for two things, then opens for good:
   collected by Caddy v2.11.9's own rules (`managedNames`), less those
   with nothing stored under any issuer (`storedNames`): a name being
   issued for the first time takes seconds and is not waited for. A
-  name is ready when `HasCertificateForSubject` says so, which counts
-  a managed wildcard that covers it.
+  name is ready when the cache holds a certificate that covers it, a
+  wildcard included (`caddytls.AllMatchingCertificates`, under the
+  cache's lock). Not `HasCertificateForSubject`: it also reads the tls
+  app's map of managed names, which `Manage` writes, unlocked, while
+  the servers already serve.
 
 The first `Accept` of any wrapped listener starts the opening, which
-runs once per process. It waits for the apps, then polls the cache
-every millisecond, all within 2 s (`startGateMaxWait`); at the cap it
+runs once per process. It waits for the apps, then reads the stored
+names and polls the cache every millisecond, one name at a time, all
+within 2 s (`startGateMaxWait`; storage that answers slowly can stretch
+it, an accepted residual); at the cap it
 opens anyway and warns, naming what it capped on and up to ten names
 still not cached. A listener closed while held ends its `Accept` with
 `net.ErrClosed`. Once open, `WrapListener` returns a new listener
@@ -1097,6 +1104,9 @@ severity × occurrence × detection, then the fix's size and risk.
 | A client decoding a body into `liveswap/wire`'s types fails on the whole body when the response filter replaced text inside a timestamp (an `env_file` value that equals part of one): `DeployResult`'s and `PhaseTiming`'s times, `Watchdog.LastRestartAt`, `PhaseEvent.At` and `Metrics.At` are `time.Time`, where `DeploySummary` carries its times raw for this reason. The decode error names the field. | `liveswap/wire` | 2 | 5 | 1 | 10 | size 3, risk 2 (raw times in every type, and the pipeline's `deployResult` parted from the wire's) | Under 20, and not a size-1, risk-1 fix (rule 3). The server's bytes are as before; no client exists yet, and the one #212 plans can decode a body that fails leniently (a `map`) and show it raw. |
 | A marker names its key, so where the filter replaces a value inside text the reader already has, the reader learns that key's value by difference: `"app":"blog-[redacted:APP_ENV]"` for the app they asked for as `blog-production`, a unit or a socket path named after the app (`DB_NAME=<app>`), a version named after a value, one of the filter's own sentences. What is learnt is that a key holds a string the reader could already see; a value that appears in no text they know stays unknown. (For a version a deployer named after a value, a viewer can also confirm a guess of that whole version while its record is kept: `?deploy=<guess>` answers 200 for it (500 if its record does not read) and 404 for any other.) | `replaceKnown`, `chooseMarker` (redact.go) | 2 | 5 | 5 | 50 | size 3, risk 3 (markers that do not name their key, with `redacted_env` no longer placing each; or a rule per field, as rule 5 is for `"app"`) | Scores to fix. Older than people's reads: a marker has named its key since the filter was written, so that a CI log tells the operator which variable an app printed. Accepted by the owner, 2026-11-17 (the review of #538), the design question held as #552: for a deploy source it tells nothing the env's owner does not know; a viewer of the app is the new reader. |
 | An env file's malformed line whose text before the first `=` is a secret or part of one, at most 21 bytes of letters, digits, `_`, `.`, `-` and spaces and not a valid name, is quoted in the parse error. That text can be: a generated secret under 128 bits that ends in `=` padding and starts with a digit (`openssl rand -base64` of 8, 10, 11, 13 or 14 bytes, or fewer); the part before the first `=` of a longer generated password whose characters include `=` (`pwgen -sy`, KeePass's special characters); a key and a padded value with a space where the `=` belongs (`API_KEY 3q2x8w==` is quoted as `"API_KEY 3q2x8w"`); or a short secret the operator chose and wrote with no key. It surfaces at each launch (the journal, the deploy's answer); while the file does not parse, in the reason every webhook and status answer is withheld with (`withhold`, redact.go); and for the box's own secrets file in notify's journal lines and in the refusal `moteld validate` and a reload return, which the box handler sends to the pusher. Nothing masks it: a file that does not parse gives the filter no values. | `invalidEnvKeyMsg` (app.go) | 5 | 5 | 5 | 125 | size 1, risk 1 (never quote the text) | Rule 1 would fix it; the repository's owner chose to keep the quote for a mistyped name (`MY-KEY`, `my.key`, `9LIVES`), the common case, so the error says what to mend, and confirmed it on 2026-11-14. The bound keeps out every generated secret of 128 bits or more, which takes at least 22 characters in that alphabet however it is encoded, and the alphabet keeps out every URL, so no channel URL is quoted whole. |
+| The start gate counts a name as stored when a certificate for it is under any issuer's directory, but the tls app loads one only from the issuers of the name's automation policy: a box whose stored certificate is under an issuer its config dropped (`tls internal` once, a staging CA), for a name its current issuer cannot get yet (DNS not pointed, a rate limit), holds every start's first connections for the full 2 s | `storedNames` | 2 | 4 | 1 | 8 | size 3, risk 2 (the policy's issuer keys per name, and the default policies' issuers, which the tls app keeps unexported) | Under 20, rule 3; rule 2 holds: it ends correct, at the cap, red and named (the warning `start gate open at its cap` names the certificate). The connections wait, not fail; the issuer that cannot issue is already its own error in the journal. Once the name is issued under the current issuer, the next start does not wait (the start gate review, 2026-11-18). |
+| The start gate reads storage (a List, then an Exists per name and issuer) after the apps have settled, inside the same 2 s, and the file storage's calls take no deadline: on a disk that answers slowly the hold can run past 2 s, and the certificate wait is cut short more often | `opening`, `storedNames` | 2 | 3 | 3 | 18 | size 2, risk 2 (read the names concurrently with the apps' wait, and stop waiting for them at the cap) | Under 20, rule 3; rule 2 holds: it ends correct (the gate opens; `waited` in the journal says how long). The only storage moteld is built with is Caddy's file storage, a few stats per site on a local disk (the start gate review, 2026-11-18). |
+| The start gate's names copy Caddy v2.11.9's rules for which names automatic HTTPS manages (`automaticHTTPSPhase1`, `getAutomationPolicyForName`): a Caddy upgrade that changes them (a new skip rule, the `automate` loader, a Tailscale name) skews the list with nothing failing. A name Caddy no longer loads is waited for to the cap at every start; a name it now loads and the list misses meets the TLS race the gate exists for, which needs a socket kept across the restart to matter | `managedNames`, `onDemand` | 2 | 5 | 1 | 10 | size 3, risk 2 (an integration test comparing the list with the domains Caddy logs as `enabling automatic TLS certificate management`, on every bump) | Under 20, rule 3. The waiting case is red and named (the cap's warning names the names); the missing case is silent but has no effect while the socket closes across a restart. caddyserver/caddy#8431, if fixed upstream, removes the half that needs the list (the start gate review, 2026-11-18). |
 
 **Owed** (over the bar, not yet fixed):
 

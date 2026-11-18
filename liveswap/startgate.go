@@ -121,7 +121,10 @@ func (g *StartGate) Provision(ctx caddy.Context) error {
 		return err
 	}
 	t := tlsApp.(*caddytls.TLS)
-	g.cached = t.HasCertificateForSubject
+	// The cache itself, under its lock. Not HasCertificateForSubject:
+	// it also reads the tls app's map of managed names, which Manage
+	// writes, unlocked, while the servers already serve.
+	g.cached = func(name string) bool { return len(caddytls.AllMatchingCertificates(name)) > 0 }
 	g.certNames = func(c context.Context) []string { return storedCertNames(c, ctx, t) }
 	return nil
 }
@@ -164,15 +167,21 @@ func (g *StartGate) opening() {
 		ctx, cancel := context.WithDeadline(context.Background(), began.Add(g.maxWait))
 		names = g.certNames(ctx)
 		cancel()
-		missing = g.uncached(names)
+		missing = names
 		tick := time.NewTicker(time.Millisecond)
 	wait:
+		// One lookup a tick: the first name not yet cached, and the
+		// ones after it as soon as it is.
 		for len(missing) > 0 {
+			if g.cached(missing[0]) {
+				missing = missing[1:]
+				continue
+			}
 			select {
 			case <-tick.C:
-				missing = g.uncached(missing)
 			case <-deadline.C:
 				capped = "certificate cache"
+				missing = g.uncached(missing)
 				break wait
 			}
 		}

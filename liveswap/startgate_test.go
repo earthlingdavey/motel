@@ -45,8 +45,10 @@ func newGateRig(t *testing.T, waitApps bool, maxWait time.Duration, names []stri
 	r := &gateRig{g: g, logs: logs, raw: raw, ln: g.WrapListener(raw)}
 	t.Cleanup(func() {
 		_ = r.ln.Close()
-		// The opening goroutine ends at the latest at the cap; the
+		// A test that never accepted started no opening: take its turn.
+		// One that did ends at the latest at the cap, and the
 		// package's leak check needs it gone.
+		g.state.openOnce.Do(func() { close(g.state.open) })
 		<-g.state.open
 	})
 	return r
@@ -246,9 +248,30 @@ func TestRecoverAppsSettlesTheStart(t *testing.T) {
 	waitUntil(t, "the start to settle", s.appsSettled)
 }
 
-// recover's firstDone is called once, when the first attempt returns,
-// whatever it returned, and not after a retry; and also when recovery
-// ends before making one.
+// A config whose recovery ended before its first attempt — a reload
+// replaced it within a start's first moments — does not settle the
+// start: the gate waits for the config that replaced it.
+func TestRecoverAppsCancelledBeforeAnAttemptDoesNotSettle(t *testing.T) {
+	rig := newTestRig(t)
+	a := &App{logger: zap.NewNop(), managed: map[string]*managedApp{"demo": rig.ma}, recoverWG: new(sync.WaitGroup)}
+	s := newStartState()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	a.recoverApps(ctx, s)
+	a.recoverWG.Wait()
+	time.Sleep(50 * time.Millisecond) // the settling goroutine's turn
+	if s.appsSettled() {
+		t.Fatal("a config that made no attempt settled the start")
+	}
+	b := &App{logger: zap.NewNop(), managed: map[string]*managedApp{"demo": rig.ma}, recoverWG: new(sync.WaitGroup)}
+	b.recoverApps(context.Background(), s)
+	b.recoverWG.Wait()
+	waitUntil(t, "the replacing config to settle the start", s.appsSettled)
+}
+
+// recover's firstDone is called once: with true when the first attempt
+// returns, whatever it returned, and not again after a retry; with
+// false when recovery ends before making one.
 func TestRecoverCallsFirstDoneOnce(t *testing.T) {
 	recordV7 := func(rig *testRig) {
 		bindSocket(t, rig.spec.dirs.socket(recordedNonce))
@@ -261,9 +284,9 @@ func TestRecoverCallsFirstDoneOnce(t *testing.T) {
 		recordV7(rig)
 		rig.runner.reattachOK = true
 		var calls atomic.Int32
-		rig.ma.recover(context.Background(), zap.NewNop(), func() {
-			if !activeSocketIs(rig) {
-				t.Error("firstDone was called before the attempt routed the app")
+		rig.ma.recover(context.Background(), zap.NewNop(), func(attempted bool) {
+			if !attempted || !activeSocketIs(rig) {
+				t.Errorf("firstDone(%v) was called before the attempt routed the app", attempted)
 			}
 			calls.Add(1)
 		})
@@ -280,7 +303,13 @@ func TestRecoverCallsFirstDoneOnce(t *testing.T) {
 		first := make(chan struct{})
 		done := make(chan struct{})
 		go func() {
-			rig.ma.recover(context.Background(), zap.NewNop(), func() { calls.Add(1); close(first) })
+			rig.ma.recover(context.Background(), zap.NewNop(), func(attempted bool) {
+				if !attempted {
+					t.Error("firstDone(false) after a first attempt")
+				}
+				calls.Add(1)
+				close(first)
+			})
 			close(done)
 		}()
 		select {
@@ -299,7 +328,12 @@ func TestRecoverCallsFirstDoneOnce(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
 		var calls atomic.Int32
-		rig.ma.recover(ctx, zap.NewNop(), func() { calls.Add(1) })
+		rig.ma.recover(ctx, zap.NewNop(), func(attempted bool) {
+			if attempted {
+				t.Error("firstDone(true) with no attempt made")
+			}
+			calls.Add(1)
+		})
 		if n := calls.Load(); n != 1 {
 			t.Fatalf("firstDone called %d times, want once", n)
 		}

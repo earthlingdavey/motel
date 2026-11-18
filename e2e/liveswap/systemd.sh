@@ -136,22 +136,25 @@ echo "=== systemd 2: systemctl restart moteld keeps the app running, and answers
 # up, so none is answered 503 (#489). A refused connection (000) is
 # the restart's other half: nothing listens between the two processes.
 codes=$(mktemp)
-(while :; do curl -s -o /dev/null -w '%{http_code}\n' --max-time 3 "$PROXY/"; done) >"$codes" 2>/dev/null &
+stop=$codes.stop
+# Stopped by a file, not a kill, so the request in flight is counted.
+(while [ ! -e "$stop" ]; do curl -s -o /dev/null -w '%{http_code}\n' --max-time 3 "$PROXY/"; done) >"$codes" 2>/dev/null &
 poller=$!
 sleep 0.3
 systemctl restart moteld || fail "systemctl restart moteld failed"
 wait_hook || fail "webhook not back within 30s of restart"
+since=$(wc -l <"$codes") # what the poller asked from here on, the new process answered
 sleep 0.3
-kill "$poller"
-wait "$poller" 2>/dev/null
+touch "$stop"
+wait "$poller"
 n503=$(grep -c '^503$' "$codes")
-n200=$(grep -c '^200$' "$codes")
-if [ "$n503" -eq 0 ] && [ "$n200" -gt 0 ]; then
-	pass "no request answered 503 across the restart ($n200 answered 200, $(grep -c '^000$' "$codes") refused)"
+after=$(tail -n "+$((since + 1))" "$codes" | grep -c '^200$')
+if [ "$n503" -eq 0 ] && [ "$after" -gt 0 ]; then
+	pass "no request answered 503 across the restart ($(grep -c '^200$' "$codes") answered 200, $after of them after it; $(grep -c '^000$' "$codes") refused)"
 else
-	fail "the restart answered $n503 request(s) 503 and $n200 200: $(sort "$codes" | uniq -c | tr '\n' ' ')"
+	fail "the restart answered $n503 request(s) 503, and $after 200 once it was back: $(sort "$codes" | uniq -c | tr '\n' ' ')"
 fi
-rm -f "$codes"
+rm -f "$codes" "$stop"
 s=$(status)
 if [ "$(json_num "$s" pid)" = "$pid" ] && [ "$(json_str "$s" unit)" = "$unit" ]; then
 	pass "same pid and unit after restart (reattached, not relaunched)"

@@ -1468,25 +1468,26 @@ const (
 // where the user manager is briefly unresponsive must not leave a
 // healthy app unrouted until an operator reloads. ctx belongs to the
 // config that started it and ends at that config's Cleanup.
-func (ma *managedApp) recover(ctx context.Context, logger *zap.Logger, firstDone func()) {
-	// firstDone (nil for none) is called once, when the first attempt
-	// has returned — whatever it returned — or recovery ends before
-	// making one: the start gate's signal (startgate.go) that a request
-	// for this app now meets what recovery settled, not a race with it.
+func (ma *managedApp) recover(ctx context.Context, logger *zap.Logger, firstDone func(attempted bool)) {
+	// firstDone (nil for none) is called once: with true when the first
+	// attempt has returned, whatever it returned — the start gate's
+	// signal (startgate.go) that a request for this app now meets what
+	// recovery settled, not a race with it — or with false when
+	// recovery ends before making one.
 	var once sync.Once
-	first := func() {
+	first := func(attempted bool) {
 		if firstDone != nil {
-			once.Do(firstDone)
+			once.Do(func() { firstDone(attempted) })
 		}
 	}
-	defer first()
+	defer first(false)
 	delay := recoveryBackoffFloor
 	for attempt := 1; ; attempt++ {
 		if ctx.Err() != nil {
 			return // destructed before this attempt
 		}
 		err := ma.ensureRunning()
-		first()
+		first(true)
 		if err == nil {
 			return
 		}
