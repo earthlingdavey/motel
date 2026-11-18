@@ -59,7 +59,8 @@ const (
 	// answered for it (a gateway's 5xx): every read backs off.
 	FailNoAnswer Fail = iota
 	// FailThis: this read alone (a 409, a record whose version the
-	// box's filter hid); asked again in its turn.
+	// box's filter hid, an app or a version outside the client's
+	// grammar); asked again in its turn.
 	FailThis
 	// FailForbidden and FailNotFound: a 403, a 404; not asked again
 	// until the person asks (ctrl-r).

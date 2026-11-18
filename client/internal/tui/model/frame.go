@@ -453,7 +453,7 @@ func (s *Session) BoxView(now time.Time) []Line {
 	b := s.BoxSt.V
 	var out []Line
 	if s.Me != nil && s.Me.V.Version != "" {
-		out = append(out, field("motel", own(s.Me.V.Version+" (protocol "+strconv.Itoa(s.Me.V.Protocol)+")")))
+		out = append(out, field("moteld", own(s.Me.V.Version+" (protocol "+strconv.Itoa(s.Me.V.Protocol)+")")))
 	}
 	out = append(out, field("runs commit", own(b.Commit)), field("Caddyfile", own("sha256 "+b.SHA256)))
 	if b.Recipient != "" {
