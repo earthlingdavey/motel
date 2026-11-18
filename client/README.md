@@ -223,7 +223,7 @@ made by hand. Accepted:
 | An answer's time is taken when it is applied on the UI's goroutine: after a terminal that stalled its output, the one answer that waited shows an age short by the stall, until that value is next read | 2 | 3 | 3 | 18 | 2 | accepted |
 | After a 403 or a 404 on an app or a record, `y` and `P` still give the last answer the box did send for it, with the time it was fetched | 2 | 5 | 1 | 10 | 2 | accepted |
 | When whoami alone gets no answer (a gateway's 5xx on that one route) while other reads answer, each answer ends the run and asks whoami again: about half the reads are whoami, within the rate, and the title bar goes between slow and back | 2 | 2 | 3 | 12 | 2 | accepted |
-| After the wall clock steps back, who am I's token line says the token is good for longer than it is, by the step, and the client keeps it that much too long; the box's 401 then has it signed again, and the line is right from there | 2 | 3 | 3 | 18 | 3 (the signer's clock moved with the TUI's) | accepted |
+| The crumb cuts a long app name from its end, so two names that share a long start read alike there on a narrow screen: of a 63-character name it keeps the first 24 characters at 60 columns and 44 at 80 (fewer when the age beside it is longer), and a record's crumb loses its version | 2 | 5 | 1 | 10 | 1 | accepted |
 
 Owed, from the reviews of the TUI's first part (#558; scored there) and of
 their fixes; the others are fixed:
@@ -231,7 +231,7 @@ their fixes; the others are fixed:
 | Owed | S | O | D | Score | Size of a fix | Outcome |
 |---|---|---|---|---|---|---|
 | A record's and an app's details are cut to the window, with no way to scroll them | 2 | 5 | 3 | 30 | 3 | owed, the owner's call: the second part's `y` shows the whole answer; a header that scrolls is new screen behaviour |
-| Two names over 20 characters that differ only in their middle are shown longer until they differ, which can take the room of VERSION and LAST DEPLOY on every row (two 57-character names at 80 columns). Where the width cannot hold both whole beside STATE (at 60 columns, names of 37 to 63 characters alike but for their middle; at 80, of 57 or more) they are shown alike, and enter on one may open the other, whose crumb then names it | 2 | 5 | 3 | 30 | 3 | the owner's call: over the bar, and no cut within the width tells every such pair apart |
+| Two names over 20 characters that differ only in their middle are shown longer until they differ, which can take the room of VERSION and LAST DEPLOY on every row. Where the width cannot hold both whole beside the widest STATE (with `running · 12s`, from 44 characters at 60 columns, none at 80; with `not deployed · stale`, from 37 at 60, 57 at 80) they are shown alike, and enter on one may open the other, whose crumb then names it | 2 | 5 | 3 | 30 | 3 | the owner's call: over the bar, and no cut within the width tells every such pair apart |
 
 ## The TUI
 
@@ -302,7 +302,10 @@ line to send the operator, which `P` prints.
   screen. Ten idle minutes pause it.
 - **The token** lasts 600 s, the longest a box takes, and is signed
   again a minute before it ends: a hardware key is touched about every
-  nine minutes, and the title bar says when. The TUI never asks for a
+  nine minutes, and the title bar says when. A step of the clock back
+  past 30 s drops it, and the next read signs afresh: the client judges
+  the token's life on its own clock, which after the step gives it the
+  step's length more than it has. The TUI never asks for a
   passphrase or a PIN: every signature runs ssh-keygen in a session of
   its own, with no controlling terminal, and with
   `SSH_ASKPASS_REQUIRE=force` and an `SSH_ASKPASS` that fails, so a key
