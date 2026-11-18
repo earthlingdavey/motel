@@ -359,6 +359,24 @@ Before you upgrade:
   moteld refused to start, root edits the lines out of
   `/etc/motel/Caddyfile` and runs `systemctl restart moteld`; the next
   push, without them, applies.
+- **Going back to a release without the start gate** (any release
+  before the one that added `liveswap_ready`) needs that line out of
+  the Caddyfile first. Those releases refuse it: `validate` with the
+  old binary says `module not registered:
+  caddy.listeners.liveswap_ready`, and the install's restart fails
+  with nothing served until the file is mended. While the box still
+  runs the newer release:
+  1. **Take out the `liveswap_ready` line** (and its
+     `listener_wrappers` block, and the `servers` block if nothing else
+     is left in it). On a box that takes pushes, push a commit without
+     it. On a box with no push channel, root edits it out of
+     `/etc/motel/Caddyfile` and runs `systemctl reload moteld`. A
+     restart's first visitors meet the 503s again from then on.
+  2. **Go back** with the `.deb`, as above.
+
+  On a box already back whose moteld refused to start, root edits the
+  line out of `/etc/motel/Caddyfile` and runs `systemctl restart
+  moteld`; the next push, without it, applies.
 - **Upgrade moteld and the host separately.** moteld measures what
   the host can sandbox at every start and refuses to start on a host
   that cannot deliver it ([liveswap/README.md](../liveswap/README.md#sandbox)),
