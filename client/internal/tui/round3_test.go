@@ -41,9 +41,66 @@ func TestCtrlROnlyWhatIsShown(t *testing.T) {
 	}
 }
 
+// TestRefusedAtTheSmallest: a refused key's screen in the smallest
+// window, 60x16, with the client's own sentences for a 401 (its words,
+// client.refused's, written out: no test of the TUI imports the
+// client), the plain one and the one that names the clock. The footer
+// is drawn whole, naming ↓; and ↓ brings every line of the page on
+// screen, read from the screen's cells as it scrolls.
+func TestRefusedAtTheSmallest(t *testing.T) {
+	const (
+		fp     = "SHA256:SAMPLE0000000000000000000000000000000000000"
+		causes = "no person or signer line on the box lists it; your address is outside the from list on every grant you hold; deploy.example.com is not the box's main name; or the box's moteld is too old to take a key's token at all. Send the operator the line `motel key` prints."
+		plain  = "deploy.example.com did not accept your key " + fp + " (~/.ssh/id_ed25519.pub). The box says no more to a key it does not accept, so it is one of these: " + causes
+		clock  = "deploy.example.com did not accept your key " + fp + " (~/.ssh/id_ed25519.pub). This machine's clock differs from the box's by 3600 s (behind it; the box's Date is Sun, 15 Nov 2026 15:12:40 GMT), more than a token made here can bridge: if the box's Date is right, set this machine's clock. Or, as the box says no more, one of these: " + causes
+		foot   = "↑↓ scroll  r ask again  P print person line  ? keys  q quit"
+	)
+	unspaced := func(s string) string { return strings.Join(strings.Fields(s), "") }
+	for name, msg := range map[string]string{"plain": plain, "clock": clock} {
+		h := start(t, 60, 16, func(f *demo.Fake) {
+			f.Set("whoami", &model.Failure{Kind: model.FailSignedOut, Message: msg})
+		})
+		if h.top().Screen != model.ScreenRefused {
+			t.Fatalf("%s: on %+v, not the refusal screen", name, h.top())
+		}
+		// The page's rows by where they stand in it, as ↓ scrolls it: the
+		// body is the rows between the crumb and the footer.
+		page := map[int]string{}
+		var rows []drawnRow
+		for range 60 {
+			var off int
+			h.on(func() { off, _ = h.u.page.GetScrollOffset() })
+			rows = screenRows(h)
+			for i, r := range rows[2 : len(rows)-1] {
+				page[off+i] = r.text
+			}
+			h.press(tcell.KeyDown)
+		}
+		if got := rows[len(rows)-1].text; got != foot {
+			t.Errorf("%s: the footer is drawn %q, want %q", name, got, foot)
+		}
+		var all strings.Builder
+		for i := range len(page) {
+			all.WriteString(page[i])
+		}
+		var want []model.Line
+		h.on(func() { want = h.s.RefusedView(h.now) })
+		for _, l := range want {
+			var b strings.Builder
+			for _, s := range l {
+				b.WriteString(s.T.String())
+			}
+			if !strings.Contains(unspaced(all.String()), unspaced(b.String())) {
+				t.Errorf("%s: ↓ does not bring this line on screen: %q", name, b.String())
+			}
+		}
+	}
+}
+
 // TestStopClosesTheLine: a stop closes the : line and any overlay; on
-// the stop screen only r, q and ? act; its crumb says stopped; P is not
-// offered for a stop that shows no person line.
+// the stop screen only r, q, ? and the keys that scroll it act; its
+// crumb says stopped; P is not offered for a stop that shows no person
+// line.
 func TestStopClosesTheLine(t *testing.T) {
 	h := start(t, 100, 30, nil)
 	h.press("y", ":", "sta")

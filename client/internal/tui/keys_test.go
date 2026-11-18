@@ -1,12 +1,17 @@
 package tui
 
 import (
+	"encoding/json"
+	"maps"
+	"os"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/gdamore/tcell/v2"
 
+	"github.com/smallhoursorg/motel/client/internal/tui/demo"
 	"github.com/smallhoursorg/motel/client/internal/tui/model"
 )
 
@@ -25,6 +30,95 @@ func rowsShown(scr string) []string {
 		}
 	}
 	return names
+}
+
+// TestFilterShownAgain: / pressed again on a filtered list shows the
+// filter for editing, and the list stays filtered until it changes.
+func TestFilterShownAgain(t *testing.T) {
+	h := start(t, 100, 30, nil)
+	h.press("/", "sho", tcell.KeyEnter)
+	if got := rowsShown(h.screen()); len(got) != 1 || got[0] != "shop" {
+		t.Fatalf("filter sho shows %v", got)
+	}
+	h.press("/")
+	var typed, filter string
+	h.on(func() { typed, filter = h.u.prompt.GetText(), h.u.filter })
+	if got := rowsShown(h.screen()); typed != "sho" || filter != "sho" || len(got) != 1 {
+		t.Fatalf("/ again: the prompt holds %q, the filter is %q, rows %v", typed, filter, got)
+	}
+	h.press(tcell.KeyBackspace2, tcell.KeyEnter)
+	h.on(func() { filter = h.u.filter })
+	if got := rowsShown(h.screen()); filter != "sh" || !slices.Contains(got, "shop") {
+		t.Fatalf("the filter edited to %q shows %v", filter, got)
+	}
+}
+
+// TestStepPassesOneVersionTwice: two deploys whose versions the box's
+// filter hid, between two real ones. p from the newest walks every row
+// to the oldest, the deploys table's cursor with it, each record read
+// as it is arrived at; n walks back; esc returns to the row stepped to.
+func TestStepPassesOneVersionTwice(t *testing.T) {
+	const hidden = "[hidden by the box's filter]"
+	raw, err := os.ReadFile("demo/fixtures/status/shop.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m map[string]any
+	if err := json.Unmarshal(raw, &m); err != nil {
+		t.Fatal(err)
+	}
+	ds := m["deploys"].([]any)
+	hid := func() any {
+		d := maps.Clone(ds[1].(map[string]any))
+		d["version"] = hidden
+		return d
+	}
+	m["deploys"] = []any{ds[0], hid(), hid(), ds[1]}
+	body, err := json.Marshal(m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := start(t, 100, 30, func(f *demo.Fake) { f.Body("status/shop.json", string(body)) })
+	h.press(":", "status shop", tcell.KeyEnter, tcell.KeyEnter) // the newest deploy's record
+	versions := []string{"e9a0b3f2c118", hidden, hidden, "7c1e55d0a913"}
+	at := func(want int, key string) {
+		t.Helper()
+		var v model.View
+		var row int
+		h.on(func() { v = h.u.top(); row, _ = h.u.deploys.GetSelection() })
+		if v.Screen != model.ScreenRecord || v.Version != versions[want] || row != want+1 {
+			t.Fatalf("%s: on %+v, the table's row %d; want the record of row %d, %q", key, v, row, want+1, versions[want])
+		}
+	}
+	read := func(key string, want int, step func()) {
+		t.Helper()
+		before := len(h.fake.Calls)
+		step()
+		h.now = h.now.Add(model.RecordAgainAfter)
+		h.pump()
+		at(want, key)
+		for _, c := range h.fake.Calls[before:] {
+			if c.Job == (model.Job{Kind: model.KDeploy, App: "shop", Version: versions[want]}) {
+				return
+			}
+		}
+		t.Fatalf("%s to row %d: its record was not read", key, want+1)
+	}
+	at(0, "enter")
+	for i := 1; i < len(versions); i++ {
+		read("p", i, func() { h.press("p") })
+	}
+	h.press("p")
+	at(len(versions)-1, "p on the oldest")
+	for i := len(versions) - 2; i >= 0; i-- {
+		read("n", i, func() { h.press("n") })
+	}
+	h.press("p", "p", tcell.KeyEscape)
+	var row int
+	h.on(func() { row, _ = h.u.deploys.GetSelection() })
+	if v := h.top(); v.Screen != model.ScreenApp || row != 3 {
+		t.Fatalf("esc after p p is %+v on row %d, want the app on row 3", v, row)
+	}
 }
 
 // TestKeys walks the screens by key: filter, open, back, :, help and

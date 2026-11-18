@@ -220,3 +220,65 @@ func runes(c string) string {
 	}
 	return strings.Join(out, " ")
 }
+
+// TestAsIsIsWhatIsDrawn: AsIs says a text is drawn as it is exactly
+// when the cells a text view draws for it (the overlays' kind, given
+// the text as the screens give it, by Lines), read back from the
+// simulation screen, are the text: for 'x, then each code point, then
+// y' (as termtext leaves it or escapes it), a few thousand at a time
+// on one screen, a quarter of them in each of four parts at once.
+// tview draws nothing for a character of no width (a soft hyphen, a
+// zero-width space, the one the door puts after a [), and draws the
+// escape for one the door escapes.
+func TestAsIsIsWhatIsDrawn(t *testing.T) {
+	var cases []termtext.Text
+	for r := rune(0); r <= unicode.MaxRune; r++ {
+		if r < 0xd800 || r > 0xdfff {
+			cases = append(cases, termtext.From("'x"+string(r)+"y'"))
+		}
+	}
+	const batch, parts, w = 2000, 4, 24
+	for p := range parts {
+		t.Run(strconv.Itoa(p+1), func(t *testing.T) {
+			t.Parallel()
+			scr := sim(w, batch)
+			wrong := 0
+			for i := p * batch; i < len(cases); i += parts * batch {
+				b := cases[i:min(i+batch, len(cases))]
+				ls := make([]model.Line, len(b))
+				for j, c := range b {
+					ls[j] = model.Line{{T: c}}
+				}
+				tv := tview.NewTextView().SetDynamicColors(true).SetWrap(false)
+				SetText(tv, Lines(ls, false))
+				scr.Clear()
+				tv.SetRect(0, 0, w, batch)
+				tv.Draw(scr)
+				for y, c := range b {
+					drawn := cellsOf(scr, y, w)
+					if as := drawn == c.String(); AsIs(c) != as {
+						if wrong++; wrong <= 20 {
+							t.Errorf("%s: drawn %q for %q, but AsIs says %v", runes(c.String()), drawn, c.String(), !as)
+						}
+					}
+				}
+			}
+			if wrong > 20 {
+				t.Errorf("and %d more", wrong-20)
+			}
+		})
+	}
+}
+
+// cellsOf is row y of scr as its cells hold it, w cells of it: a wide
+// character once, as the screen says how wide each is; trailing spaces
+// cut.
+func cellsOf(scr tcell.Screen, y, w int) string {
+	var b strings.Builder
+	for x := 0; x < w; {
+		s, _, cw := scr.Get(x, y)
+		b.WriteString(s)
+		x += max(cw, 1)
+	}
+	return strings.TrimRight(b.String(), " ")
+}

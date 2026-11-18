@@ -23,7 +23,7 @@ var helpKeys = map[model.Screen][]string{
 	model.ScreenMe:       {"PgUp PgDn Home End", "↑ ↓", "↑ ↓", "c", "y", "P", "ctrl-r", ":", "esc", "?", "q"},
 	model.ScreenBox:      {"PgUp PgDn Home End", "↑ ↓", "↑ ↓", "c", "y", "P", "ctrl-r", ":", "esc", "?", "q"},
 	model.ScreenHelp:     {"PgUp PgDn Home End", "↑ ↓", ":", "esc", "?", "q"},
-	model.ScreenRefused:  {"P", "r", "?", "q"},
+	model.ScreenRefused:  {"PgUp PgDn Home End", "↑ ↓", "P", "r", "?", "q"},
 	model.ScreenStopHelp: {"r", "esc", "q"},
 }
 

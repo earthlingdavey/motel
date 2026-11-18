@@ -37,7 +37,7 @@ motel box status                    the commit the box runs, its Caddyfile's dig
 motel tui                           screens over the same reads (below)
 ```
 
-Each takes `--json`. `whoami` and `apps` are asked with your own key
+Each but `tui` takes `--json`. `whoami` and `apps` are asked with your own key
 only: with `MOTEL_TOKEN` set, name the key with `--key` (else exit 2,
 nothing sent). `<app>` is a name, or the app's URL
 (`https://deploy.example.com/blog`, as `MOTEL_URL` holds it), which names
@@ -274,9 +274,10 @@ screen's cells, is cut at its edge (it is not wrapped: a line drawn on
 two rows copies with a line feed in it), the cut marked `…`, and the
 overlay says not to copy it and what prints it whole: `P` for the
 screen's command (its `--json` line is that with `--json` added), `c`
-then `P` on an app's screen for a row's. A command line the door does
-not draw as it runs (with a `[`, drawn with an unseen space after it,
-or a character it writes as an escape, as below) copies as another
+then `P` on an app's screen for a row's. A command line not drawn as
+it runs (a character the door writes as an escape, as below, or one of
+no width, which tview draws as nothing: a soft hyphen, a zero-width
+space; a `[` is drawn as it is) copies as another
 command: the overlay says so, and not to copy it, and what prints it,
 in the same way; it offers selecting the lines only when every one is
 drawn as it is. The overlays' own words are laid on more rows to fit
@@ -308,8 +309,8 @@ every read, like a refusal, and the session drops everything the
 box said, before it too (who you are, the list, every status and
 record, the box's answer): a box that does not answer about this key
 gives no grounds to show any of its answers as yours. After `r`, the
-session fills again from empty. A stop screen takes `r`, `?` and `q`
-alone, and `P` on a refused key's; help over it takes esc, `r` and `q`
+session fills again from empty. A stop screen takes `r`, `?`, `q` and
+the keys that scroll it alone, and `P` on a refused key's; help over it takes esc, `r` and `q`
 alone; nothing opens from either. A refused key's screen names every
 cause the client cannot tell apart and the person line to send the
 operator, which `P` prints.

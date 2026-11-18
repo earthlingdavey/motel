@@ -16,10 +16,13 @@ import (
 func (u *UI) ask(mode rune) {
 	u.promptMode = mode
 	door.SetLabel(u.prompt, string(mode))
-	door.SetInput(u.prompt, "")
+	// Set once: setting the field runs its changed handler, which in /
+	// mode makes the filter what the field holds.
+	text := ""
 	if mode == '/' {
-		door.SetInput(u.prompt, u.filter)
+		text = u.filter
 	}
+	door.SetInput(u.prompt, text)
 	u.row2.SwitchToPage("prompt")
 	u.App.SetFocus(u.prompt)
 }
