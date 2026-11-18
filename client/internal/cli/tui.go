@@ -53,7 +53,8 @@ func (r *runner) tui() *cobra.Command {
 			}
 			// A closed terminal window (SIGHUP) ends it as SIGTERM does:
 			// through the screen's event loop, which gives the terminal
-			// back.
+			// back, and with an interrupt's exit code (errInterrupted:
+			// Main's context does not carry it).
 			ctx, stop := signal.NotifyContext(cmd.Context(), tuiSignals...)
 			defer stop()
 			o := tui.Options{Clock: tui.RealClock{}, Colour: r.env.Color, Tick: time.Second}
@@ -86,10 +87,10 @@ func (r *runner) tui() *cobra.Command {
 			s.Engine = model.NewEngine(wall())
 			o.Session = s
 			start := tui.Prime(ctx, o)
-			if err := ctx.Err(); err != nil {
+			if ctx.Err() != nil {
 				// Interrupted at the first read (a touch not given): no
 				// screen with nothing refreshing behind it.
-				return err
+				return errInterrupted
 			}
 			print, err := tui.Run(ctx, o, start)
 			if err != nil {
@@ -98,7 +99,10 @@ func (r *runner) tui() *cobra.Command {
 			if err := r.printed(print); err != nil {
 				return err
 			}
-			return ctx.Err()
+			if ctx.Err() != nil {
+				return errInterrupted
+			}
+			return nil
 		},
 	}
 	t.flags(c)

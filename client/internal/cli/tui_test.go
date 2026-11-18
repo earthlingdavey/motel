@@ -13,9 +13,13 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
@@ -274,6 +278,91 @@ func TestInterruptedAtTheFirstRead(t *testing.T) {
 	})
 	if code != client.ExitInterrupted || strings.Contains(errOut.String(), "screen") {
 		t.Errorf("exit %d, stderr %q", code, errOut.String())
+	}
+}
+
+// hangUp runs motel tui on the fake box and sends this process SIGHUP,
+// as a closed terminal window does, at the TUI's read number at
+// (from 1), which then waits to be cancelled; and says the exit code
+// and what stderr holds.
+func hangUp(t *testing.T, at int32) (int, string) {
+	t.Helper()
+	fb := newFakeBox(t)
+	home := t.TempDir()
+	if err := os.WriteFile(filepath.Join(home, "me.pub"), []byte(meLine+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	env := map[string]string{"MOTEL_KEY": "~/me.pub", "MOTEL_URL": fb.srv.URL + "/blog"}
+	var n atomic.Int32
+	var once sync.Once
+	rt := roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		if n.Add(1) < at {
+			return fb.srv.Client().Transport.RoundTrip(r)
+		}
+		once.Do(func() { _ = syscall.Kill(os.Getpid(), syscall.SIGHUP) })
+		select {
+		case <-r.Context().Done():
+			return nil, r.Context().Err()
+		case <-time.After(20 * time.Second): // a guard: the signal ended nothing
+			t.Error("SIGHUP did not end the read")
+			return nil, context.DeadlineExceeded
+		}
+	})
+	var out, errOut bytes.Buffer
+	code := Main(context.Background(), []string{"tui"}, Env{
+		Getenv: func(k string) string { return env[k] }, Stdout: &out, Stderr: &errOut, Dir: t.TempDir(), Home: home,
+		Now: time.Now, Sleep: func(context.Context, time.Duration) error { return nil },
+		Transport: rt, Run: noPrograms{}, Signer: &fixedSigner{}, Version: "test",
+	})
+	return code, errOut.String()
+}
+
+// TestHangUpAtTheFirstRead: SIGHUP during the first read ends motel tui
+// as an interrupt does: exit 130, nothing said.
+func TestHangUpAtTheFirstRead(t *testing.T) {
+	if code, stderr := hangUp(t, 1); code != client.ExitInterrupted || stderr != "" {
+		t.Errorf("exit %d, stderr %q; want %d and nothing said", code, stderr, client.ExitInterrupted)
+	}
+}
+
+// TestHangUpHelper is not a test of its own: TestHangUpWithTheScreenUp
+// runs the test binary with it under a pty, where the screen can open.
+// Its third read is the first the screens make (whoami and the list
+// are read before).
+func TestHangUpHelper(t *testing.T) {
+	if os.Getenv("MOTEL_TEST_HANGUP_HELPER") == "" {
+		t.Skip("run by TestHangUpWithTheScreenUp")
+	}
+	code, stderr := hangUp(t, 3)
+	_, _ = os.Stdout.WriteString("RESULT exit " + strconv.Itoa(code) + ", stderr " + strconv.Quote(stderr) + "\n")
+}
+
+// TestHangUpWithTheScreenUp: SIGHUP while the screen is up ends motel
+// tui as an interrupt does: exit 130, nothing said. Under a real pty
+// (script(1) makes one), as the screen needs a terminal.
+func TestHangUpWithTheScreenUp(t *testing.T) {
+	script, err := exec.LookPath("script")
+	if err != nil {
+		t.Skip("NOT RUN: no script(1) to make a pty with; SIGHUP with the screen up is not held here")
+	}
+	self, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, script, "-qec", self+" -test.run=^TestHangUpHelper$ -test.count=1 -test.v", "/dev/null")
+	cmd.Env = append(os.Environ(), "MOTEL_TEST_HANGUP_HELPER=1", "TERM=xterm")
+	out, _ := cmd.CombinedOutput()
+	tty := string(out)
+	// The alternate screen, which the TUI's screen opens on.
+	if !strings.Contains(tty, "\x1b[?1049h") {
+		t.Fatalf("the screen did not open:\n%q", tty)
+	}
+	_, got, _ := strings.Cut(tty, "RESULT ")
+	got, _, _ = strings.Cut(got, "\n")
+	if want := `exit 130, stderr ""`; strings.TrimSpace(got) != want {
+		t.Errorf("after SIGHUP with the screen up: %s; want %s", got, want)
 	}
 }
 

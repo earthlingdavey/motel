@@ -74,7 +74,7 @@ func Main(ctx context.Context, args []string, env Env) int {
 	if err == nil {
 		return client.ExitOK
 	}
-	if ctx.Err() != nil {
+	if ctx.Err() != nil || errors.Is(err, errInterrupted) {
 		return client.ExitInterrupted
 	}
 	var f *client.Failure
@@ -98,6 +98,11 @@ func Main(ctx context.Context, args []string, env Env) int {
 	_, _ = fmt.Fprintf(env.Stderr, "motel: %s\n", f.Message)
 	return f.Exit
 }
+
+// errInterrupted is a command ended by a signal its context alone
+// carries, not Main's (SIGHUP, which the TUI takes): it exits as an
+// interrupt does, saying nothing.
+var errInterrupted = errors.New("interrupted")
 
 // wantsJSON says whether args ask for --json, read as cobra would
 // read it, for an error cobra returned before reading it.
