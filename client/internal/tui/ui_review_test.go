@@ -2,11 +2,13 @@ package tui
 
 import (
 	"context"
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/gdamore/tcell/v2"
 
+	"github.com/smallhoursorg/motel/client/internal/tui/demo"
 	"github.com/smallhoursorg/motel/client/internal/tui/model"
 )
 
@@ -87,5 +89,66 @@ func TestStepDropsTheRecordLeft(t *testing.T) {
 	h.s.Engine.Done(left, h.now, context.Canceled)
 	if j, took, _ := h.s.Engine.Take(h.now); !took || j != (model.Job{Kind: model.KDeploy, App: "shop", Version: "7c1e55d0a913"}) {
 		t.Fatalf("after the read left was cancelled, took %v %v", j, took)
+	}
+}
+
+// TestOneAppStart: a person with one app opens on its screen, with the
+// list under it: esc goes back to the list, whose crumb and footer are
+// the apps screen's, and an app granted later is listed there. A stop
+// still comes over the app's screen and goes when the reads run again;
+// an answer about another key still leaves the stop screen alone.
+func TestOneAppStart(t *testing.T) {
+	one := func(f *demo.Fake) { f.Body("apps.json", `{"apps": [{"name": "blog"}]}`) }
+	h := start(t, 100, 30, one)
+	opened := []model.View{{Screen: model.ScreenApps}, app("blog")}
+	if st := h.stack(); !slices.Equal(st, opened) {
+		t.Errorf("one app opens on %+v", st)
+	}
+	foot := func() string {
+		lines := strings.Split(strings.TrimRight(h.screen(), "\n"), "\n")
+		return strings.TrimSpace(lines[len(lines)-1])
+	}
+	if f := foot(); !strings.Contains(f, "esc back") {
+		t.Fatalf("the app's footer: %q", f)
+	}
+	h.press(tcell.KeyEscape)
+	if v := h.top(); v.Screen != model.ScreenApps {
+		t.Fatalf("esc on the app opened at the start left %+v", v)
+	}
+	lines := strings.Split(h.screen(), "\n")
+	if c := strings.Fields(lines[1]); len(c) == 0 || c[0] != "apps" {
+		t.Errorf("the crumb after esc: %q", lines[1])
+	}
+	if f := foot(); f != footers[model.ScreenApps] {
+		t.Errorf("the footer after esc: %q", f)
+	}
+	h.fake.Body("apps.json", `{"apps": [{"name": "blog"}, {"name": "shop"}]}`)
+	h.now = h.now.Add(model.AppsEvery)
+	h.pump()
+	if got := rowsShown(h.screen()); !slices.Equal(got, []string{"shop", "blog"}) && !slices.Equal(got, []string{"blog", "shop"}) {
+		t.Errorf("an app granted later, the list shows %v", got)
+	}
+
+	// A stop over the app's screen, and back.
+	h = start(t, 100, 30, one)
+	refused := &model.Failure{Kind: model.FailSignedOut, Message: "deploy.example.com did not accept your key"}
+	h.fake.Set("blog", refused)
+	h.press(tcell.KeyCtrlR)
+	if st := h.stack(); !slices.Equal(st, append(slices.Clone(opened), model.View{Screen: model.ScreenRefused})) {
+		t.Fatalf("a 401 on the app opened at the start: %+v", st)
+	}
+	h.fake.Set("blog", nil)
+	h.now = h.now.Add(model.RetryEvery)
+	h.press("r")
+	if st := h.stack(); !slices.Equal(st, opened) {
+		t.Fatalf("after r: %+v", st)
+	}
+
+	// An answer about another key: the stop screen alone.
+	h.fake.Body("whoami.json", otherKey)
+	h.now = h.now.Add(model.MeAlways)
+	h.pump()
+	if st := h.stack(); !slices.Equal(st, []model.View{{Screen: model.ScreenRefused}}) {
+		t.Fatalf("an answer about another key: %+v", st)
 	}
 }

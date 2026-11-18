@@ -77,10 +77,16 @@ func textView() *tview.TextView {
 	return tview.NewTextView().SetDynamicColors(true).SetWrap(false)
 }
 
-// New builds the screens, opening on start.
+// New builds the screens, opening on start. An app's screen opens with
+// the apps list under it, so esc goes back to the list, as the footer
+// says, and an app granted later is reached from there.
 func New(s *model.Session, colour bool, start model.View) *UI {
 	door.TerminalColours()
-	u := &UI{App: tview.NewApplication(), S: s, Colour: colour, stack: []model.View{start}, ended: make(chan struct{})}
+	stack := []model.View{start}
+	if start.Screen == model.ScreenApp {
+		stack = []model.View{{Screen: model.ScreenApps}, start}
+	}
+	u := &UI{App: tview.NewApplication(), S: s, Colour: colour, stack: stack, ended: make(chan struct{})}
 	u.title, u.crumb, u.foot = textView(), textView(), textView()
 	u.prompt = tview.NewInputField().SetFieldStyle(tcell.StyleDefault).SetLabelStyle(tcell.StyleDefault).
 		SetAutocompleteUseTags(false)
