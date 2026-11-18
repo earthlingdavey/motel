@@ -43,6 +43,8 @@ type UI struct {
 	wrap        bool
 	w, h        int
 	lastFocused string
+	// inFront is the view show last put in front.
+	inFront model.View
 	// notice is what the : line said of what was typed, shown in the
 	// crumb's place until the next key.
 	notice model.Line
@@ -186,7 +188,11 @@ func (u *UI) show() {
 		u.App.SetFocus(u.deploys)
 	case model.ScreenRecord:
 		focus = v.App
-		u.S.Engine.Once(model.Job{Kind: model.KDeploy, App: v.App, Version: v.Version}, now)
+		if v != u.inFront {
+			// Opened, not shown again for an overlay or the : line: read
+			// again, since the box may have rewritten it.
+			u.S.Engine.Once(model.Job{Kind: model.KDeploy, App: v.App, Version: v.Version}, now)
+		}
 		u.body.SwitchToPage("record")
 		u.tail.ScrollToBeginning()
 		u.App.SetFocus(u.tail)
@@ -199,6 +205,7 @@ func (u *UI) show() {
 		u.S.Engine.Focus(focus, now)
 		u.lastFocused = focus
 	}
+	u.inFront = v
 	u.S.Engine.BoxOpen(v.Screen == model.ScreenBox, now)
 	u.S.Engine.MeOpen(v.Screen == model.ScreenMe, now)
 	if u.overlay != 0 {

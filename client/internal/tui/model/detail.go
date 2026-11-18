@@ -248,9 +248,12 @@ func (s *Session) RecordView(app, version string, now time.Time) RecordView {
 	case !ok:
 		v.Note = []Line{{own("asking " + s.Host + " for the record of " + version + "…")}}
 		return v
-	case err != nil:
+	case g == nil:
 		v.Note = []Line{{Seg{T: Capped(failureText(err), 4*LineMax)}}}
 		return v
+	case err != nil:
+		// The record read before stays; the crumb says how old it is.
+		v.Head = append(v.Head, Line{ownC("the last read failed: ", Warn), Seg{T: Capped(failureText(err), 2*LineMax)}})
 	}
 	d := g.V
 	took := secs(d.FinishedAt.Sub(d.StartedAt))

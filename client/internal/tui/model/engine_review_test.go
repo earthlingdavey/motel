@@ -1,6 +1,7 @@
 package model_test
 
 import (
+	"context"
 	"strings"
 	"testing"
 	"time"
@@ -165,5 +166,57 @@ func TestRecordNoAnswerHeld(t *testing.T) {
 	s.Engine.Once(rec, now)
 	if j := step(t, s, f, &now); j != rec {
 		t.Errorf("opening the record again read %v", j)
+	}
+}
+
+// TestRecordLeftInFlight: a record read before is asked again on
+// opening it, never twice at once: opened again while that read is in
+// flight, it is read once. Left while the read is in flight, the read is
+// cancelled and the record held as it was, not read with nothing asking;
+// opened again before the cancelled read ended, it is read once after.
+func TestRecordLeftInFlight(t *testing.T) {
+	e := model.NewEngine(t0)
+	sim(e, names(1), t0, time.Second, time.Millisecond, ok)
+	now := t0.Add(time.Minute)
+	rec := model.Job{Kind: model.KDeploy, App: "app-0", Version: "v1"}
+	e.Once(rec, now)
+	if !takeRec(e, now, rec) {
+		t.Fatal("the record was not read")
+	}
+	e.Done(rec, now, nil)
+	for i, left := range []bool{false, true, true} {
+		now = now.Add(time.Minute)
+		e.Once(rec, now)
+		if !takeRec(e, now, rec) {
+			t.Fatalf("%d: the record was not read again on opening it", i)
+		}
+		later := now.Add(model.RecordAgainAfter)
+		if !left {
+			e.Once(rec, later) // opened again, the read in flight
+			e.Done(rec, later, nil)
+			if takeRec(e, later, rec) {
+				t.Fatalf("%d: opened again while its read was in flight: read twice", i)
+			}
+			continue
+		}
+		cancelled := false
+		e.Started(func() { cancelled = true })
+		e.Drop(rec) // esc
+		if !cancelled {
+			t.Fatalf("%d: esc did not cancel the read in flight", i)
+		}
+		if i == 2 {
+			e.Once(rec, later) // enter, the cancelled read not yet ended
+		}
+		e.Done(rec, later, context.Canceled)
+		if read := takeRec(e, later, rec); read != (i == 2) {
+			t.Fatalf("%d: after the read left was cancelled, read again: %v", i, read)
+		}
+		if i == 2 {
+			e.Done(rec, later, nil)
+			if takeRec(e, later, rec) {
+				t.Fatalf("%d: read twice", i)
+			}
+		}
 	}
 }

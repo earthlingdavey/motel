@@ -91,12 +91,17 @@ func readDeploy(ctx context.Context, _ *Session, c Client, j Job) (func(*Session
 		if s.records == nil {
 			s.records = map[Job]*recData{}
 		}
+		r := s.records[j]
+		if r == nil {
+			r = &recData{}
+			s.records[j] = r
+		}
 		if err != nil {
-			s.records[j] = &recData{err: err}
+			r.err = err // a record read before is kept beside it
 			return
 		}
 		g.At = at
-		s.records[j] = &recData{d: &g}
+		r.d, r.err = &g, nil
 	}, err
 }
 

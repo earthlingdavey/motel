@@ -142,7 +142,9 @@ func (s *Session) app(name string) *appData {
 	return a
 }
 
-// Record is the deploy record read for app and version, if any.
+// Record is the deploy record read for app and version, if any, and the
+// failure of its last read when that failed: a record read before is
+// kept beside it.
 func (s *Session) Record(app, version string) (*Got[wire.DeployResult], error, bool) {
 	r, ok := s.records[Job{Kind: KDeploy, App: app, Version: version}]
 	if !ok {

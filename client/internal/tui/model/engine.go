@@ -70,6 +70,10 @@ const (
 	// ctrl-r held on the apps screen asks for it at each key repeat, and
 	// the statuses must still have their turn.
 	ListAgainAfter = 5 * time.Second
+	// RecordAgainAfter is the least time between two reads of a record
+	// on opening it: enter and esc held, or p and n, open it at each key
+	// repeat.
+	RecordAgainAfter = 5 * time.Second
 	// RetryEvery is the least time between two r: each may be a touch
 	// of a hardware key, and a signature that fails fast must not be
 	// asked for as fast as a key repeats.
@@ -143,6 +147,8 @@ type entry struct {
 	// answer came.
 	every    time.Duration
 	answered time.Time
+	// asked is when a record's read was last taken.
+	asked time.Time
 }
 
 // Stop is why every read stopped, and zero while they run.
@@ -322,25 +328,38 @@ func (e *Engine) meEvery() time.Duration {
 	return MeAlways
 }
 
-// Once asks for a read now, once: a deploy's record, which does not
-// change.
+// Once is a deploy's record opened: read now, and read again each time
+// it is opened, since a rollback or a redeploy rewrites a version's
+// record on the box. Not while a read of it is due or in flight (one
+// left and cancelled is not), and not again within RecordAgainAfter of
+// the last asked.
 func (e *Engine) Once(j Job, now time.Time) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	if en, ok := e.jobs[j]; ok && (en.held && !en.failed || !en.held && !en.due.After(now)) {
-		return // read, or about to be: the same entry, which a read in flight is for
+	en, ok := e.jobs[j]
+	switch {
+	case !ok:
+		e.jobs[j] = &entry{due: now, once: true}
+	case !en.held || now.Sub(en.asked) < RecordAgainAfter:
+		return // due, or in flight (the same entry, which a read in flight is for), or asked just now
+	default:
+		en.held, en.due = false, now
 	}
-	e.jobs[j] = &entry{due: now, once: true}
 	e.poke()
 }
 
-// Drop forgets a one-off read the person left before it came, and
-// cancels it when it is in flight: its answer is not wanted.
+// Drop is a record left: a read of it not yet answered is not wanted,
+// and is cancelled when it is in flight. A record never read is
+// forgotten; one read before is held as its last read left it.
 func (e *Engine) Drop(j Job) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	if en, ok := e.jobs[j]; ok && en.once && !en.held {
-		delete(e.jobs, j)
+		if en.answered.IsZero() && !en.failed {
+			delete(e.jobs, j)
+		} else {
+			en.held = true
+		}
 	}
 	e.dropLocked(j)
 }
@@ -352,8 +371,8 @@ func (e *Engine) dropLocked(j Job) {
 }
 
 // Again is ctrl-r: the reads of what the screen shows, and nothing
-// else, come due now, a held one too (a 403 is asked again only so): a
-// record, which is read once, is read again. A read already due keeps
+// else, come due now, a held one too (a 403 is asked again only so),
+// and a record, whenever it was asked last. A read already due keeps
 // its time, so a held ctrl-r (a press at each key repeat) never puts a
 // read that waits behind one just asked; the list is held to
 // ListAgainAfter, the open app to FocusEvery (next).
@@ -442,6 +461,9 @@ func (e *Engine) Take(now time.Time) (Job, bool, time.Duration) {
 	}
 	e.tokens--
 	e.inflight, e.taken = &j, e.jobs[j]
+	if e.taken.once {
+		e.taken.asked = now
+	}
 	if j.Kind == KStatus && j.App == e.focus {
 		e.lastFocus = now
 	}
@@ -603,7 +625,11 @@ func (e *Engine) Done(j Job, now time.Time, err error) Outcome {
 			}
 		}
 	case Cancelled:
-		delete(e.jobs, j)
+		// A record read before stays as Drop left it, or as opening it
+		// again since asks.
+		if en.answered.IsZero() && !en.failed {
+			delete(e.jobs, j)
+		}
 		e.poke()
 		return out
 	case NoAnswer:
@@ -802,7 +828,7 @@ func (e *Engine) shift(d time.Duration) {
 	}
 	move(&e.filled, &e.meAnswered, &e.me403, &e.retryAt, &e.slowUntil, &e.touched, &e.lastFocus, &e.lastList, &e.lastRetry)
 	for _, en := range e.jobs {
-		move(&en.due, &en.answered)
+		move(&en.due, &en.answered, &en.asked)
 	}
 }
 
