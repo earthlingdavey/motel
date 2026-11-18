@@ -221,6 +221,11 @@ func Head(s string) *tview.TableCell {
 // Width is how many cells t takes on screen.
 func Width(t termtext.Text) int { return tview.TaggedStringWidth(Inert(t).s) }
 
+// AsIs says whether t is handed to tview as it is: the door puts no
+// zero-width space in it (it holds no [) and writes none of it as an
+// escape, so what is drawn is t, character for character.
+func AsIs(t termtext.Text) bool { return Inert(t).s == t.String() }
+
 // LitLines is the TUI's own lines: each made safe as Lit makes it,
 // the line breaks kept.
 func LitLines(s string) Shown {

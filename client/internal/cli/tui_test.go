@@ -3,12 +3,15 @@ package cli
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"encoding/pem"
 	"errors"
 	"go/ast"
 	"go/parser"
 	"go/token"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"slices"
@@ -214,7 +217,7 @@ func TestFailureForTheTUI(t *testing.T) {
 func TestHiddenVersionFailsItsReadAlone(t *testing.T) {
 	_, err := live{}.Deploy(context.Background(), "blog", client.Filtered)
 	var m *model.Failure
-	if !errors.As(err, &m) || m.Kind != model.FailThis || !strings.Contains(m.Message, "filter hid this deploy's version") {
+	if !errors.As(err, &m) || m.Kind != model.FailNotSent || !strings.Contains(m.Message, "filter hid this deploy's version") {
 		t.Errorf("a record asked by a hidden version: %+v (%v), want this read alone to fail", m, err)
 	}
 }
@@ -407,5 +410,132 @@ func TestTUISessionBox(t *testing.T) {
 		if line, _ := s.Command(model.View{Screen: model.ScreenApps}); line != "motel apps --box deploy.example.test:8443" {
 			t.Errorf("%s: the command printed is %q", name, line)
 		}
+	}
+}
+
+// TestTUIClockSetBack: the TUI's client and session as tui builds them,
+// the real PersonToken and its signer, and a box whose clock is right:
+// it takes a token from 60 s before its iat to 60 s after its exp, as
+// liveswap/access does, and sends its Date. This machine's clock is
+// set back after the first token is signed. Set back by more than a
+// token bridges (2 m: it is sent until a minute before its exp on this
+// clock, and taken until a minute after on the box's), that token is
+// still sent when the box stops taking it, within its ten minutes:
+// every read stops at the first read after, and the refusal screen
+// names the clock first; until then who am I's token line says the
+// step's length too much. Set back 2 m, or from 50 s fast to right, no
+// read is refused, and the step asks the key for no signature.
+func TestTUIClockSetBack(t *testing.T) {
+	for _, c := range []struct {
+		name       string
+		fast, back time.Duration
+		differs    string // "" when no read is refused
+	}{
+		{"back 1h", 0, time.Hour, "differs from the box's by 3600 s (behind it;"},
+		{"back 3m", 0, 3 * time.Minute, "differs from the box's by 180 s (behind it;"},
+		{"back 2m", 0, 2 * time.Minute, ""},
+		{"fast 50s, set right", 50 * time.Second, 50 * time.Second, ""},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			truth := whoamiNow // the box's clock
+			off := c.fast
+			wall := func() time.Time { return truth.Add(off) }
+			fb := newFakeBox(t)
+			fb.apps = wire.Apps{Apps: []wire.AppEntry{{Name: "blog"}}} // the one app this fake answers for
+			box := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Date", truth.UTC().Format(http.TimeFormat))
+				var times struct{ Iat, Exp int64 }
+				tok, _ := strings.CutPrefix(r.Header.Get("Authorization"), sshkey.Scheme+" "+sshkey.Envelope)
+				claims, _, _ := strings.Cut(tok, ".")
+				b, _ := base64.RawURLEncoding.DecodeString(claims)
+				at := truth.Unix()
+				if json.Unmarshal(b, &times) != nil || times.Iat-60 > at || at-60 > times.Exp {
+					w.WriteHeader(http.StatusUnauthorized)
+					_, _ = w.Write([]byte(`{"error":"invalid or missing deploy token (Authorization: Bearer <jwt>)"}` + "\n"))
+					return
+				}
+				fb.srv.Config.Handler.ServeHTTP(w, r)
+			}))
+			t.Cleanup(box.Close)
+			home := t.TempDir()
+			if err := os.WriteFile(filepath.Join(home, "me.pub"), []byte(meLine+"\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			env := map[string]string{"MOTEL_KEY": "~/me.pub", "MOTEL_URL": box.URL + "/blog"}
+			signs := &fixedSigner{}
+			r := &runner{env: Env{Getenv: func(k string) string { return env[k] }, Stderr: &bytes.Buffer{}, Dir: t.TempDir(), Home: home,
+				Now: wall, Sleep: func(context.Context, time.Duration) error { return nil },
+				Transport: box.Client().Transport, Run: noPrograms{}, Signer: signs, Version: "test"}}
+			cl, err := r.client(context.Background(), &target{}, nil, "", "tui")
+			if err != nil {
+				t.Fatal(err)
+			}
+			sig := forTUI(cl, wall)
+			s := &model.Session{Now: wall, Engine: model.NewEngine(wall())}
+			boxSession(s, cl, cl.Cred.(*client.PersonToken))
+			s.TokenExpires = sig.Expires
+			// read makes the next read the engine gives, as Drive does,
+			// with a key pressed so that polling never pauses.
+			read := func() {
+				t.Helper()
+				for range 10000 {
+					s.Engine.Touch(wall())
+					j, ok, wait := s.Engine.Take(wall())
+					if !ok {
+						truth = truth.Add(max(wait, time.Second))
+						continue
+					}
+					apply, err := s.Fetch(context.Background(), live{cl}, j)
+					apply()
+					s.Engine.Done(j, wall(), err)
+					truth = truth.Add(100 * time.Millisecond)
+					return
+				}
+				t.Fatal("no read")
+			}
+			for start := truth; truth.Sub(start) < time.Minute; {
+				read()
+			}
+			if s.Engine.Stopped() != model.Running || signs.calls != 1 {
+				t.Fatalf("before the step: %v, %d signatures (%v)", s.Engine.Stopped(), signs.calls, s.StopErr)
+			}
+			exp := sig.Expires() // the first token's, on the box's clock too
+			off -= c.back
+			read()
+			if signs.calls != 1 {
+				t.Errorf("the first read after the step made signature %d", signs.calls)
+			}
+			if c.differs != "" {
+				want := "(" + model.Ago(exp.Sub(wall())) + " left)"
+				var lines []string
+				for _, l := range s.MeView(wall()) {
+					lines = append(lines, l.Text())
+				}
+				if got := strings.Join(lines, "\n"); exp.Sub(wall()) < c.back || !strings.Contains(got, want) {
+					t.Errorf("who am I does not say %q, the step too much:\n%s", want, got)
+				}
+			}
+			for end := truth.Add(25 * time.Minute); truth.Before(end) && s.Engine.Stopped() == model.Running; {
+				read()
+			}
+			if c.differs == "" {
+				if s.Engine.Stopped() != model.Running {
+					t.Fatalf("stopped (%v): %v", s.Engine.Stopped(), s.StopErr)
+				}
+				return
+			}
+			if s.Engine.Stopped() != model.SignedOut {
+				t.Fatalf("after 25 m, %v, want SignedOut", s.Engine.Stopped())
+			}
+			if signs.calls != 1 || truth.Before(exp.Add(sshkey.BoxSkew)) || truth.After(exp.Add(sshkey.BoxSkew+time.Minute)) {
+				t.Errorf("stopped at %s with %d signatures; the first token was taken until %s", truth.Format(time.TimeOnly), signs.calls, exp.Add(sshkey.BoxSkew).Format(time.TimeOnly))
+			}
+			// What the refusal screen shows: its first line is the stop's
+			// failure, the clock named before the other causes.
+			shown := s.RefusedView(wall())[0].Text()
+			if i, j := strings.Index(shown, "This machine's clock "+c.differs), strings.Index(shown, "no person or signer line"); i < 0 || j < i {
+				t.Errorf("the refusal screen does not name the clock first:\n%s", shown)
+			}
+		})
 	}
 }

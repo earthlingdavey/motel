@@ -156,25 +156,48 @@ func secs(d time.Duration) string {
 	return strconv.Itoa(int(d.Round(time.Second)/time.Second)) + " s"
 }
 
-// Width is the line's width in runes: every rune the client shows takes
-// one cell, but for the box's own, which tview measures.
-func (l Line) Width() int { return len([]rune(l.Text())) }
+// Width is the line's width in cells, as cells measures the whole line
+// as the screens draw it: a wide character takes two, a combining mark
+// none, and the door writes some characters as escapes (an emoji
+// modifier as \U0001f3fd), so a line can be wider than its runes.
+func (l Line) Width(cells Cells) int { return cells(termtext.From(l.Text())) }
 
-// Cut is the line cut to n runes, the cut marked with "…".
-func (l Line) Cut(n int) Line {
-	if l.Width() <= n {
+// Cut is the line cut to n cells as cells measures them, the cut marked
+// with "…" as its last cell; a line that fits is as it is. The cut is
+// at the last character after which the line, with "…", still fits.
+func (l Line) Cut(n int, cells Cells) Line {
+	t := l.Text()
+	if cells(termtext.From(t)) <= n {
 		return l
 	}
+	fits := func(end int) bool { return cells(termtext.From(t[:end]+"…")) <= n }
+	if !fits(0) {
+		return nil
+	}
+	// Where each character begins; a longer start never takes fewer
+	// cells, so the last that fits is found by halves.
+	var at []int
+	for i := range t {
+		at = append(at, i)
+	}
+	lo, hi := 0, len(at)-1
+	for lo < hi {
+		mid := (lo + hi + 1) / 2
+		if fits(at[mid]) {
+			lo = mid
+		} else {
+			hi = mid - 1
+		}
+	}
+	end := at[lo]
 	var out Line
-	left := max(n-1, 0)
 	for _, s := range l {
-		r := []rune(s.T.String())
-		if len(r) >= left {
-			out = append(out, Seg{T: termtext.From(string(r[:left]) + "…"), C: s.C})
-			return out
+		st := s.T.String()
+		if end <= len(st) {
+			return append(out, Seg{T: termtext.From(st[:end] + "…"), C: s.C})
 		}
 		out = append(out, s)
-		left -= len(r)
+		end -= len(st)
 	}
 	return out
 }

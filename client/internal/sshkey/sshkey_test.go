@@ -791,6 +791,21 @@ func TestPassphraseAdviceOnlyForAKeyFile(t *testing.T) {
 	}
 }
 
+// TestNoTerminalAdviceForAnAgentKey: in the TUI (no terminal), a key
+// the agent alone holds that fails to sign is not told to ssh-add a
+// file it has none of; r is still offered, and ssh-keygen's words.
+func TestNoTerminalAdviceForAnAgentKey(t *testing.T) {
+	pk, err := ParsePublic(lineOf(newSigner(t, "ed25519")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	k := Key{Public: pk, Shown: "the agent's key", Source: SourceAgent}
+	_, err = Keygen{Run: failRun{}, NoTerminal: true}.Sign(context.Background(), k, Namespace, []byte("{}"))
+	if err == nil || strings.Contains(err.Error(), "ssh-add") || !strings.Contains(err.Error(), "r tries again") || !strings.Contains(err.Error(), "ssh-keygen says: Load key") {
+		t.Errorf("an agent's key that did not sign: %v", err)
+	}
+}
+
 // failRun is ssh-keygen failing as it does on a wrong passphrase.
 type failRun struct{}
 

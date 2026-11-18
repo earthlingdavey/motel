@@ -106,6 +106,10 @@ func (k Keygen) Sign(ctx context.Context, key Key, namespace string, message []b
 		if last == "" {
 			last = err.Error()
 		}
+		if k.NoTerminal && key.Path == "" {
+			// A key the agent alone holds: there is no file to add to it.
+			return nil, fmt.Errorf("%s did not sign: the TUI asks for no passphrase or PIN while its screen holds the terminal. r tries again; a hardware key that requires its PIN cannot be used in the TUI for now. ssh-keygen says: %s", key.Shown, termtext.From(last))
+		}
 		// With no terminal, ssh-keygen asks a key file's passphrase on
 		// stdin, reads the token's claims as it, and fails. Told by
 		// three things together: it failed signing from a private key
@@ -178,11 +182,9 @@ func encryptedKeyFile(path string) bool {
 }
 
 // privatePath is the private key file ssh-keygen reads for key: its
-// Path, without the .pub when the key was named by it.
+// Path, without the .pub when the key was named by it. Every caller has
+// a Path: a key the agent alone holds has no file.
 func privatePath(key Key) string {
-	if key.Path == "" {
-		return "the agent's key"
-	}
 	return strings.TrimSuffix(key.Path, ".pub")
 }
 

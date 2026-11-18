@@ -44,6 +44,8 @@ type UI struct {
 	wrap        bool
 	w, h        int
 	lastFocused string
+	// inFront is the view show last put in front.
+	inFront model.View
 	// notice is what the : line said of what was typed, shown in the
 	// crumb's place until the next key.
 	notice model.Line
@@ -76,10 +78,16 @@ func textView() *tview.TextView {
 	return tview.NewTextView().SetDynamicColors(true).SetWrap(false)
 }
 
-// New builds the screens, opening on start.
+// New builds the screens, opening on start. An app's screen opens with
+// the apps list under it, so esc goes back to the list, as the footer
+// says, and an app granted later is reached from there.
 func New(s *model.Session, colour bool, start model.View) *UI {
 	door.TerminalColours()
-	u := &UI{App: tview.NewApplication(), S: s, Colour: colour, stack: []model.View{start}, ended: make(chan struct{})}
+	stack := []model.View{start}
+	if start.Screen == model.ScreenApp {
+		stack = []model.View{{Screen: model.ScreenApps}, start}
+	}
+	u := &UI{App: tview.NewApplication(), S: s, Colour: colour, stack: stack, ended: make(chan struct{})}
 	u.title, u.crumb, u.foot = textView(), textView(), textView()
 	u.prompt = tview.NewInputField().SetFieldStyle(tcell.StyleDefault).SetLabelStyle(tcell.StyleDefault).
 		SetAutocompleteUseTags(false)
@@ -187,7 +195,11 @@ func (u *UI) show() {
 		u.App.SetFocus(u.deploys)
 	case model.ScreenRecord:
 		focus = v.App
-		u.S.Engine.Once(model.Job{Kind: model.KDeploy, App: v.App, Version: v.Version}, now)
+		if v != u.inFront {
+			// Opened, not shown again for an overlay or the : line: read
+			// again, since the box may have rewritten it.
+			u.S.Engine.Once(model.Job{Kind: model.KDeploy, App: v.App, Version: v.Version}, now)
+		}
 		u.body.SwitchToPage("record")
 		u.tail.ScrollToBeginning()
 		u.App.SetFocus(u.tail)
@@ -200,6 +212,7 @@ func (u *UI) show() {
 		u.S.Engine.Focus(focus, now)
 		u.lastFocused = focus
 	}
+	u.inFront = v
 	u.S.Engine.BoxOpen(v.Screen == model.ScreenBox, now)
 	u.S.Engine.MeOpen(v.Screen == model.ScreenMe, now)
 	if u.overlay != 0 {
@@ -306,6 +319,8 @@ func (u *UI) step(by int) {
 	rows := u.S.Overview(v.App, u.now()).Deploys
 	for i, r := range rows {
 		if r.Version == v.Version && i+by >= 0 && i+by < len(rows) {
+			// The record left, as esc leaves it: its read is not wanted.
+			u.S.Engine.Drop(model.Job{Kind: model.KDeploy, App: v.App, Version: v.Version})
 			u.stack[len(u.stack)-1].Version = rows[i+by].Version
 			u.show()
 			return

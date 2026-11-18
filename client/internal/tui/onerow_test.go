@@ -60,8 +60,8 @@ func TestRecordOneRow(t *testing.T) {
 // TestKeyOverlayOneRow: with --key ~/.ssh/👍🏽/id_ed25519.pub, the c
 // overlay on the apps screen and on a record, at 100 and at 60
 // columns, draws each command line on one row: whole, the modifier
-// escaped, or cut at the window's edge with … there, and then the
-// overlay says not to copy it.
+// escaped, or cut at the window's edge with … there; and the overlay
+// says not to copy them, as none is drawn as it runs.
 func TestKeyOverlayOneRow(t *testing.T) {
 	const key = "~/.ssh/" + thumbsUp + "/id_ed25519.pub"
 	for _, w := range []int{100, 60} {
@@ -106,8 +106,10 @@ func TestKeyOverlayOneRow(t *testing.T) {
 				if w == 60 && !cut {
 					t.Errorf("60/%v: no command line cut: the case proves nothing of the cut", v.Screen)
 				}
-				if says := strings.Contains(joinRows(rows, " "), "do not copy it"); says != cut {
-					t.Errorf("%d/%v: a command line cut: %v; the overlay says not to copy it: %v\n%s", w, v.Screen, cut, says, joinRows(rows, "\n"))
+				// Every command line holds the key, whose skin tone is drawn
+				// as an escape: none is to be copied, cut or not.
+				if !strings.Contains(joinRows(rows, " "), "do not copy it") {
+					t.Errorf("%d/%v: the overlay does not say not to copy a line drawn with an escape\n%s", w, v.Screen, joinRows(rows, "\n"))
 				}
 				h.press(tcell.KeyEscape)
 			}

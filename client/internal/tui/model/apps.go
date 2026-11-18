@@ -12,7 +12,7 @@ import (
 )
 
 // The apps table's columns, in the order a narrow screen drops them:
-// last the first (AGE folds into the title bar's word).
+// last the first (AGE then goes into STATE, as StateAged).
 const (
 	ColName = iota
 	ColState
@@ -37,13 +37,20 @@ type AppRow struct {
 	Name  string
 	Mark  Mark
 	Cells [NCols]termtext.Text
-	Stale bool
+	// StateAged is STATE with the row's age after it ("running · 12s"),
+	// for a screen too narrow for AGE; a stale row's STATE says stale
+	// already, and a row not yet answered has no age.
+	StateAged termtext.Text
+	Stale     bool
 	// Why is the "needs a look" line, empty when the row needs none.
 	Why Line
 	// Failed is the newest deploy's version when it failed.
 	Failed string
-	mem    float64
-	share  float64
+	// state is STATE's word before a stale row's suffix: what the
+	// strip counts by.
+	state string
+	mem   float64
+	share float64
 }
 
 // Sorts are the apps screen's orders, which s cycles.
@@ -60,12 +67,16 @@ type AppsView struct {
 	Summary Line
 	// Empty is said in place of the table when the box lists no app.
 	Empty Line
+	// ListFailed says, above the strip, how old the list held is and
+	// why the last read of it failed; nil while it reads.
+	ListFailed Line
 }
 
-// AppsView is the apps screen at now, filtered and sorted. A filter of
-// "!" or "!ok", with or without a name after it, keeps only marked
-// rows.
-func (s *Session) AppsView(now time.Time, filter string, sort int) AppsView {
+// AppsView is the apps screen at now, filtered and sorted, for a screen
+// width wide (0: of any width). A filter of "!" or "!ok", with or
+// without a name after it, keeps only marked rows.
+func (s *Session) AppsView(now time.Time, filter string, sort int, width int) AppsView {
+	s.seen(now)
 	var v AppsView
 	switch {
 	case s.List == nil && s.ListErr != nil:
@@ -78,6 +89,10 @@ func (s *Session) AppsView(now time.Time, filter string, sort int) AppsView {
 		v.Empty = Line{own("asking " + s.Host + " for the apps you may view…")}
 		return v
 	}
+	if s.ListErr != nil {
+		v.ListFailed = append(Line{ownC("list as of "+hms(s.List.At)+" UTC, "+Ago(now.Sub(s.List.At))+" ago · the last read failed: ", Warn),
+			Seg{T: Capped(failureText(s.ListErr), 2*LineMax)}}, s.askAgain(now)...)
+	}
 	names := s.List.V
 	if len(names) == 0 {
 		v.Empty = Line{own("You may view no app on " + s.Host + ". "), own("Ask the operator for a grant line.")}
@@ -88,13 +103,22 @@ func (s *Session) AppsView(now time.Time, filter string, sort int) AppsView {
 		marked, filter = true, strings.TrimPrefix(rest, "ok")
 	}
 	filter = strings.TrimSpace(filter)
-	need, all, notRunning, asking := 0, 0, 0, 0
+	need, all, notRunning, asking, stale := 0, 0, 0, 0, 0
+	stateW := len([]rune(ColHeads[ColState]))
 	for _, n := range names {
 		r := s.row(n, now)
+		r.StateAged = r.Cells[ColState]
+		if age := r.Cells[ColAge].String(); age != "" && !r.Stale {
+			r.StateAged = termtext.From(r.Cells[ColState].String() + " · " + age)
+		}
+		stateW = max(stateW, len([]rune(r.StateAged.String())))
 		if r.Mark < MarkNone {
 			need++
 		}
-		switch r.Cells[ColState].String() {
+		if r.Stale {
+			stale++
+		}
+		switch r.state {
 		case "running":
 		case "asking…":
 			asking++
@@ -107,6 +131,17 @@ func (s *Session) AppsView(now time.Time, filter string, sort int) AppsView {
 		}
 		v.Rows = append(v.Rows, r)
 	}
+	// The mark, NAME and STATE fit the width, as the table lays them out
+	// (a column and a space each, the mark's two cells), STATE with an
+	// age in it.
+	most := 64
+	if width > 0 {
+		most = width - 4 - stateW
+	}
+	shown := shownNames(names, most)
+	for i := range v.Rows {
+		v.Rows[i].Cells[ColName] = termtext.From(shown[v.Rows[i].Name])
+	}
 	switch Sorts[sort%len(Sorts)] {
 	case "attention":
 		slices.SortStableFunc(v.Rows, func(a, b AppRow) int { return int(a.Mark) - int(b.Mark) })
@@ -117,16 +152,24 @@ func (s *Session) AppsView(now time.Time, filter string, sort int) AppsView {
 	}
 	for _, r := range v.Rows {
 		if len(r.Why) > 0 {
-			v.Strip = append(v.Strip, append(Line{ownC(r.Mark.Glyph()+" ", r.Mark.Class()), own(pad(r.Name, 12) + " ")}, r.Why...))
+			v.Strip = append(v.Strip, append(Line{ownC(r.Mark.Glyph()+" ", r.Mark.Class()), own(pad(r.Cells[ColName].String(), 12) + " ")}, r.Why...))
 		}
 	}
 	switch {
 	case asking > 0 && need == 0:
 		v.AllWell = Line{own("asking the box for " + strconv.Itoa(asking) + " of " + strconv.Itoa(all) + " apps…")}
-	case need == 0 && notRunning == 0:
+	case need == 0 && notRunning == 0 && stale == 0:
 		v.AllWell = Line{own("all " + strconv.Itoa(all) + " apps running; every newest deploy succeeded")}
 	case need == 0:
-		v.AllWell = Line{own("nothing needs a look; " + strconv.Itoa(notRunning) + " of " + strconv.Itoa(all) + " apps are not deployed or not yours to view")}
+		// A stale row is not known to be as it was: not said to run.
+		l := "nothing needs a look"
+		if notRunning > 0 {
+			l += "; " + strconv.Itoa(notRunning) + " of " + strconv.Itoa(all) + " apps are not deployed or not yours to view"
+		}
+		if stale > 0 {
+			l += "; " + strconv.Itoa(stale) + " of " + strconv.Itoa(all) + " apps are stale"
+		}
+		v.AllWell = Line{own(l)}
 	}
 	sum := strconv.Itoa(all) + " apps · " + strconv.Itoa(need) + " need a look · by " + Sorts[sort%len(Sorts)]
 	if filter != "" || marked {
@@ -134,6 +177,57 @@ func (s *Session) AppsView(now time.Time, filter string, sort int) AppsView {
 	}
 	v.Summary = Line{own(sum)}
 	return v
+}
+
+// NameMax is the most of an app's name the apps table and its strip
+// show, but for names that would be shown alike (shownNames). A longer
+// one (63 characters are allowed) is cut in the middle, its start and
+// its end kept, so that names which share a start still differ on
+// screen; the whole name is what is opened, filtered and completed.
+const NameMax = 20
+
+// cutName is name cut in its middle to n runes, the cut marked: 12 of
+// its start and 7 of its end at NameMax, one more of each in turn for
+// each rune n is longer.
+func cutName(name string, n int) string {
+	r := []rune(name)
+	if len(r) <= n {
+		return name
+	}
+	end := 7 + (n-NameMax)/2
+	return string(r[:n-1-end]) + "…" + string(r[len(r)-end:])
+}
+
+// shownNames is each of names as the apps table and its strip show it:
+// cut to NameMax, and those that would then be shown alike shown
+// longer, alike, until they differ or are whole, but never longer than
+// most. A name is never shown as another is: a cut holds "…", which no
+// name does, and once two cuts differ, longer ones of them do.
+func shownNames(names []string, most int) map[string]string {
+	n := make(map[string]int, len(names))
+	out := make(map[string]string, len(names))
+	for _, x := range names {
+		n[x], out[x] = NameMax, cutName(x, NameMax)
+	}
+	for {
+		alike := map[string][]string{}
+		for _, x := range names {
+			alike[out[x]] = append(alike[out[x]], x)
+		}
+		grew := false
+		for _, xs := range alike {
+			for _, x := range xs {
+				if len(xs) > 1 && n[x] < most && n[x] < len([]rune(x)) {
+					n[x]++
+					out[x] = cutName(x, n[x])
+					grew = true
+				}
+			}
+		}
+		if !grew {
+			return out
+		}
+	}
 }
 
 func cmpDesc(a, b float64) int {
@@ -156,14 +250,15 @@ func pad(s string, n int) string {
 // row derives an app's row from the box's facts, the first rule that
 // holds giving its state.
 func (s *Session) row(name string, now time.Time) (r AppRow) {
+	s.seen(now)
 	r = AppRow{Name: name, Mark: MarkNone}
-	r.Cells[ColName] = termtext.From(name)
+	r.Cells[ColName] = termtext.From(cutName(name, NameMax))
 	for c := ColVersion; c < ColAge; c++ {
 		r.Cells[c] = termtext.From("-")
 	}
 	a := s.apps[name]
 	if a == nil || a.st == nil && a.err == nil {
-		r.Cells[ColState] = termtext.From("asking…")
+		r.state, r.Cells[ColState] = "asking…", termtext.From("asking…")
 		return r
 	}
 	at := a.errAt
@@ -185,7 +280,7 @@ func (s *Session) row(name string, now time.Time) (r AppRow) {
 		defer func() { r.Cells[ColState] = termtext.From(r.Cells[ColState].String() + " · stale") }()
 	}
 	set := func(m Mark, state string, why ...Seg) {
-		r.Mark, r.Cells[ColState], r.Why = m, termtext.From(state), why
+		r.Mark, r.state, r.Cells[ColState], r.Why = m, state, termtext.From(state), why
 	}
 	out, _ := Classify(a.err)
 	switch {

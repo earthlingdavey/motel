@@ -233,7 +233,7 @@ func (l live) Deploy(ctx context.Context, app, version string) (model.Got[wire.D
 	// words, which name no deploy: nothing is sent, and this read
 	// alone fails, saying so.
 	if version == client.Filtered {
-		return model.Got[wire.DeployResult]{}, &model.Failure{Kind: model.FailThis, Message: "the box's filter hid this deploy's version, so its record cannot be asked for"}
+		return model.Got[wire.DeployResult]{}, &model.Failure{Kind: model.FailNotSent, Message: "the box's filter hid this deploy's version, so its record cannot be asked for"}
 	}
 	a, err := client.ParseApp(app)
 	if err == nil {
@@ -266,7 +266,7 @@ func argument(err error) error {
 	if !errors.As(err, &f) {
 		return err
 	}
-	return &model.Failure{Kind: model.FailThis, Message: f.Message}
+	return &model.Failure{Kind: model.FailNotSent, Message: f.Message}
 }
 
 // failure is a client failure as the TUI's engine reads it. A usage

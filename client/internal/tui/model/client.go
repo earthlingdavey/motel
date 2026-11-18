@@ -58,9 +58,7 @@ const (
 	// FailNoAnswer: the box did not answer, or something in front of it
 	// answered for it (a gateway's 5xx): every read backs off.
 	FailNoAnswer Fail = iota
-	// FailThis: this read alone (a 409, a record whose version the
-	// box's filter hid, an app or a version outside the client's
-	// grammar); asked again in its turn.
+	// FailThis: this read alone (a 409, say); asked again in its turn.
 	FailThis
 	// FailForbidden and FailNotFound: a 403, a 404; not asked again
 	// until the person asks (ctrl-r).
@@ -84,4 +82,10 @@ const (
 	// shape). Said on its row or screen; nothing else backs off, and the
 	// box is not said to be silent.
 	FailUnusable
+	// FailNotSent: the client failed this read alone without sending
+	// anything (a record whose version the box's filter hid, an app or a
+	// version outside the client's grammar, a read no command makes).
+	// Nothing came from the box, so nothing is known of it: a run of no
+	// answer goes on.
+	FailNotSent
 )

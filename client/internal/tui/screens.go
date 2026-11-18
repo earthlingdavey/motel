@@ -15,7 +15,10 @@ import (
 
 // render lays out every screen from the session, before each frame: a
 // frame is drawn after a key, an answer, or the clock's tick, so every
-// age on screen is the age now.
+// age on screen is the age now. A frame reads the clock once: the
+// session and the engine take a time earlier than the last they saw
+// for a step of the clock back, and two readings in one frame, handed
+// to them out of order, would be one at every frame.
 //
 // It runs inside tview's draw, which holds the application's lock: it
 // must not change the focus or show a page (both take the lock), so it
@@ -28,7 +31,7 @@ func (u *UI) render() {
 	// Only the refusal is prose; the other pages are labelled lines,
 	// which a wrap would break under the labels.
 	u.page.SetWrap(v.Screen == model.ScreenRefused)
-	crumbL, crumbR := u.crumbs(v)
+	crumbL, crumbR := u.crumbs(v, now)
 	if u.notice != nil {
 		// What the : line said of what was typed, until the next key.
 		crumbL = u.notice
@@ -44,11 +47,11 @@ func (u *UI) render() {
 	door.SetText(u.foot, door.Lit(foot))
 	switch v.Screen {
 	case model.ScreenApps:
-		u.renderApps()
+		u.renderApps(now)
 	case model.ScreenApp:
-		u.renderApp(v)
+		u.renderApp(v, now)
 	case model.ScreenRecord:
-		u.renderRecord(v)
+		u.renderRecord(v, now)
 	case model.ScreenMe:
 		door.SetText(u.page, door.Lines(u.S.MeView(now), u.Colour))
 	case model.ScreenBox:
@@ -58,7 +61,7 @@ func (u *UI) render() {
 	case model.ScreenStopHelp:
 		door.SetText(u.page, door.LitLines(stopHelp()))
 	case model.ScreenRefused:
-		door.SetText(u.page, door.Lines(u.S.RefusedView(), u.Colour))
+		door.SetText(u.page, door.Lines(u.S.RefusedView(now), u.Colour))
 	}
 	if u.overlay != 0 {
 		door.SetTitle(u.over.Box, map[int]string{1: "command", 2: "the box's answer"}[u.overlay])
@@ -68,7 +71,7 @@ func (u *UI) render() {
 		key := overKey{v, u.overlay, at, len(body), u.w}
 		if key != u.overKey {
 			u.overKey = key
-			door.SetText(u.over, door.Lines(u.S.Overlay(v, u.overlay == 2, u.w-2, door.Width), u.Colour))
+			door.SetText(u.over, door.Lines(u.S.Overlay(v, u.overlay == 2, u.w-2, door.Width, door.AsIs), u.Colour))
 		}
 		foot := "esc close  c command  y json"
 		if u.S.CanPrint(v, u.overlay) {
@@ -86,13 +89,13 @@ type overKey struct {
 	n, w int
 }
 
-// spread puts left at the start and right at the end of a row w wide,
-// cutting left first: the right side is the freshness word, which is
-// never cut.
+// spread puts left at the start and right at the end of a row w cells
+// wide, cutting left first: the right side is the freshness word, which
+// is never cut.
 func spread(left, right model.Line, w int) model.Line {
-	room := w - right.Width() - 1
-	left = left.Cut(max(room, 0))
-	gap := max(w-left.Width()-right.Width(), 1)
+	room := w - right.Width(door.Width) - 1
+	left = left.Cut(max(room, 0), door.Width)
+	gap := max(w-left.Width(door.Width)-right.Width(door.Width), 1)
 	out := append(model.Line{}, left...)
 	out = append(out, model.Seg{T: termtext.From(strings.Repeat(" ", gap))})
 	return append(out, right...)
@@ -100,11 +103,10 @@ func spread(left, right model.Line, w int) model.Line {
 
 func ownLine(s string) model.Line { return model.Line{{T: termtext.From(s)}} }
 
-func (u *UI) crumbs(v model.View) (model.Line, model.Line) {
-	now := u.now()
+func (u *UI) crumbs(v model.View, now time.Time) (model.Line, model.Line) {
 	switch v.Screen {
 	case model.ScreenApps:
-		return ownLine("apps"), u.S.AppsView(now, u.filter, u.sort).Summary
+		return ownLine("apps"), u.S.AppsView(now, u.filter, u.sort, u.w).Summary
 	case model.ScreenApp:
 		return ownLine("apps › " + v.App), u.S.Overview(v.App, now).AsOf
 	case model.ScreenRecord:
@@ -135,12 +137,15 @@ var footers = map[model.Screen]string{
 }
 
 // The apps table's columns, dropped in this order when the screen is
-// too narrow: AGE first (the title bar's word says how fresh), then
-// P95, 5xx and OF CAP. NAME, STATE, VERSION and LAST DEPLOY stay.
+// too narrow: AGE first, each row's age then going in its STATE cell,
+// then P95, 5xx, OF CAP and MEM. NAME, STATE, VERSION and LAST DEPLOY
+// stay, but that two long names shown longer to be told apart (the
+// model's shownNames) may take VERSION's and LAST DEPLOY's room: only
+// STATE is kept beside them.
 var dropOrder = []int{model.ColAge, model.ColP95, model.Col5xx, model.ColOfCap, model.ColMem}
 
-func (u *UI) renderApps() {
-	view := u.S.AppsView(u.now(), u.filter, u.sort)
+func (u *UI) renderApps(now time.Time) {
+	view := u.S.AppsView(now, u.filter, u.sort, u.w)
 	n := 4
 	if u.h < 30 {
 		n = 1
@@ -158,9 +163,12 @@ func (u *UI) renderApps() {
 	default:
 		strip = view.Strip
 	}
+	if view.ListFailed != nil {
+		strip = append([]model.Line{view.ListFailed}, strip...)
+	}
 	strip = u.withStop(strip)
 	for i := range strip {
-		strip[i] = strip[i].Cut(u.w)
+		strip[i] = strip[i].Cut(u.w, door.Width)
 	}
 	strip = append(strip, ownLine(strings.Repeat("─", u.w)))
 	door.SetText(u.strip, door.Lines(strip, u.Colour))
@@ -185,6 +193,14 @@ func (u *UI) renderApps() {
 			break
 		}
 		keep[c], total = false, total-wd[c]-1
+		if c == model.ColAge {
+			// Every value shows its age: STATE takes it, and widens.
+			aged := wd[model.ColState]
+			for _, r := range view.Rows {
+				aged = max(aged, door.Width(r.StateAged))
+			}
+			total, wd[model.ColState] = total+aged-wd[model.ColState], aged
+		}
 	}
 	selName := ""
 	if r, _ := u.apps.GetSelection(); r >= 1 && r-1 < len(u.appRows) {
@@ -211,7 +227,11 @@ func (u *UI) renderApps() {
 			if !keep[c] {
 				continue
 			}
-			cl := door.Cell(r.Cells[c])
+			t := r.Cells[c]
+			if c == model.ColState && !keep[model.ColAge] {
+				t = r.StateAged
+			}
+			cl := door.Cell(t)
 			if r.Stale {
 				cl.SetAttributes(tcell.AttrDim)
 			}
@@ -247,20 +267,28 @@ func colourOf(c model.Class) tcell.Color {
 	return tcell.ColorDefault
 }
 
-func (u *UI) renderApp(v model.View) {
-	view := u.S.Overview(v.App, u.now())
+func (u *UI) renderApp(v model.View, now time.Time) {
+	view := u.S.Overview(v.App, now)
 	fs := view.Fields
 	if view.Note != nil {
 		fs = view.Note
 	}
 	fs = u.withStop(fs)
 	for i := range fs {
-		fs[i] = fs[i].Cut(u.w)
+		fs[i] = fs[i].Cut(u.w, door.Width)
 	}
 	door.SetText(u.fields, door.Lines(fs, u.Colour))
 	u.appFlex.ResizeItem(u.fields, min(len(fs), u.h/2), 0)
-	u.deployRows = view.Deploys
+	// The cursor stays on its deploy, by version, as the apps table's
+	// stays on its app by name: a new deploy lands above it. Among rows
+	// of one version (the filter's placeholder for several), it stays on
+	// its row while that row's version is the same, else on the first.
 	sel, _ := u.deploys.GetSelection()
+	selVersion := ""
+	if sel >= 1 && sel-1 < len(u.deployRows) {
+		selVersion = u.deployRows[sel-1].Version
+	}
+	u.deployRows = view.Deploys
 	u.deploys.Clear()
 	if len(view.Deploys) == 0 {
 		door.SetText(u.onDisk, door.Lit(""))
@@ -271,7 +299,11 @@ func (u *UI) renderApp(v model.View) {
 	for c, h := range model.DeployCols {
 		u.deploys.SetCell(0, c+1, door.Head(h))
 	}
+	kept := sel >= 1 && sel-1 < len(view.Deploys) && view.Deploys[sel-1].Version == selVersion
 	for i, r := range view.Deploys {
+		if !kept && r.Version == selVersion {
+			sel, kept = i+1, true
+		}
 		u.deploys.SetCell(i+1, 0, u.markCell(r.Mark))
 		for c, t := range r.Cells {
 			u.deploys.SetCell(i+1, c+1, door.Cell(t))
@@ -280,22 +312,22 @@ func (u *UI) renderApp(v model.View) {
 	u.deploys.Select(min(max(sel, 1), len(view.Deploys)), 0)
 }
 
-func (u *UI) renderRecord(v model.View) {
-	view := u.S.RecordView(v.App, v.Version, u.now())
+func (u *UI) renderRecord(v model.View, now time.Time) {
+	view := u.S.RecordView(v.App, v.Version, now)
 	hd := view.Head
 	if view.Note != nil {
 		hd = view.Note
 	}
 	hd = u.withStop(hd)
 	for i := range hd {
-		hd[i] = hd[i].Cut(u.w)
+		hd[i] = hd[i].Cut(u.w, door.Width)
 	}
 	door.SetText(u.recHead, door.Lines(hd, u.Colour))
 	u.recFlex.ResizeItem(u.recHead, min(len(hd), u.h/2), 0)
 	title := model.Line{}
 	if view.TailTitle != nil {
-		title = append(ownLine("── "), view.TailTitle...).Cut(u.w)
-		title = append(title, ownLine(" "+strings.Repeat("─", max(u.w-title.Width()-1, 0)))...)
+		title = append(ownLine("── "), view.TailTitle...).Cut(u.w, door.Width)
+		title = append(title, ownLine(" "+strings.Repeat("─", max(u.w-title.Width(door.Width)-1, 0)))...)
 	}
 	door.SetText(u.recTailTitle, door.Line(title, u.Colour))
 	door.SetText(u.tail, door.Texts(view.Tail))

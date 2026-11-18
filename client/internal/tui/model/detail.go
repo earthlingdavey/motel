@@ -50,6 +50,7 @@ func (s *Session) asOf(at time.Time, now time.Time) Line {
 
 // Overview is app's screen at now.
 func (s *Session) Overview(app string, now time.Time) OverviewView {
+	s.seen(now)
 	var v OverviewView
 	a := s.apps[app]
 	switch {
@@ -68,8 +69,42 @@ func (s *Session) Overview(app string, now time.Time) OverviewView {
 	if a.err != nil {
 		v.AsOf = append(v.AsOf, ownC(" · the last read failed", Warn))
 	}
+	// The deploys first: an app whose first deploy failed has no
+	// version, and its failed deploys are what there is to show.
+	if len(st.AvailableVersions) > 0 {
+		vs := make([]string, 0, 3)
+		for i, ver := range st.AvailableVersions {
+			if i == 3 {
+				vs = append(vs, "+"+strconv.Itoa(len(st.AvailableVersions)-3))
+				break
+			}
+			if slices.Contains(st.OrderedByMtime, ver) {
+				ver = "~" + ver
+			}
+			vs = append(vs, short(ver))
+		}
+		v.OnDisk = Line{own("on disk: " + strings.Join(vs, " "))}
+	}
+	for _, d := range st.Deploys {
+		r := DeployRow{Version: d.Version, Mark: MarkNone}
+		if d.Status == "failed" {
+			r.Mark = MarkLook
+		}
+		fin, took := "(unreadable)", "(unreadable)"
+		if f, ok := rawTime(d.FinishedAt); ok {
+			fin = f.UTC().Format("01-02 15:04")
+			if b, ok := rawTime(d.StartedAt); ok {
+				took = secs(f.Sub(b))
+			}
+		}
+		r.Cells = []termtext.Text{termtext.From(d.Version), termtext.From(d.Status), termtext.From(d.Phase), termtext.From(fin), termtext.From(took), Capped(d.By, 60)}
+		v.Deploys = append(v.Deploys, r)
+	}
 	if st.CurrentVersion == "" {
 		v.Note = []Line{{own(app + " has no version yet. Its first deploy comes from CI. Nothing to show until then.")}}
+		if len(v.Deploys) > 0 || st.LastDeploy != nil {
+			v.Note = append([]Line{{own(app + " has no version yet: no deploy of it serves.")}}, lastDeploy(st.LastDeploy, now)...)
+		}
 		return v
 	}
 	row := s.row(app, now)
@@ -104,57 +139,36 @@ func (s *Session) Overview(app string, now time.Time) OverviewView {
 			v.Fields = append(v.Fields, field("last check", boxT(wd.LastFailure)))
 		}
 	}
-	if d := st.LastDeploy; d != nil {
-		l := Line{ownC(d.Status, statusClass(d.Status))}
-		if d.Phase != "" {
-			l = append(l, own(" in "+d.Phase))
-		}
-		l = append(l, own(" "+Ago(now.Sub(d.FinishedAt))+" ago ("+hm(d.FinishedAt)+" UTC, "+secs(d.FinishedAt.Sub(d.StartedAt))+")"))
-		if d.By != "" {
-			l = append(l, own(" by "), boxT(d.By))
-		}
-		v.Fields = append(v.Fields, field("deployed", l...))
-		if d.Error != "" {
-			v.Fields = append(v.Fields, field("error", boxT(d.Error)))
-		}
-		if d.Note != "" {
-			v.Fields = append(v.Fields, field("note", boxT(d.Note)))
-		}
-	}
+	v.Fields = append(v.Fields, lastDeploy(st.LastDeploy, now)...)
 	v.Fields = append(v.Fields, s.metricLines(st)...)
 	if d := st.LastDeploy; d != nil && d.ArtifactEntries > 0 {
 		v.Fields = append(v.Fields, field("artifact", own(strconv.Itoa(d.ArtifactEntries)+" entries · "+mib(float64(d.ArtifactBytes))+" (the last deploy's)")))
 	}
-	if len(st.AvailableVersions) > 0 {
-		vs := make([]string, 0, 3)
-		for i, ver := range st.AvailableVersions {
-			if i == 3 {
-				vs = append(vs, "+"+strconv.Itoa(len(st.AvailableVersions)-3))
-				break
-			}
-			if slices.Contains(st.OrderedByMtime, ver) {
-				ver = "~" + ver
-			}
-			vs = append(vs, short(ver))
-		}
-		v.OnDisk = Line{own("on disk: " + strings.Join(vs, " "))}
-	}
-	for _, d := range st.Deploys {
-		r := DeployRow{Version: d.Version, Mark: MarkNone}
-		if d.Status == "failed" {
-			r.Mark = MarkLook
-		}
-		fin, took := "(unreadable)", "(unreadable)"
-		if f, ok := rawTime(d.FinishedAt); ok {
-			fin = f.UTC().Format("01-02 15:04")
-			if b, ok := rawTime(d.StartedAt); ok {
-				took = secs(f.Sub(b))
-			}
-		}
-		r.Cells = []termtext.Text{termtext.From(d.Version), termtext.From(d.Status), termtext.From(d.Phase), termtext.From(fin), termtext.From(took), Capped(d.By, 60)}
-		v.Deploys = append(v.Deploys, r)
-	}
 	return v
+}
+
+// lastDeploy is the overview's lines of the last deploy, none when the
+// box sends none.
+func lastDeploy(d *wire.DeployResult, now time.Time) []Line {
+	if d == nil {
+		return nil
+	}
+	l := Line{ownC(d.Status, statusClass(d.Status))}
+	if d.Phase != "" {
+		l = append(l, own(" in "+d.Phase))
+	}
+	l = append(l, own(" "+Ago(now.Sub(d.FinishedAt))+" ago ("+hm(d.FinishedAt)+" UTC, "+secs(d.FinishedAt.Sub(d.StartedAt))+")"))
+	if d.By != "" {
+		l = append(l, own(" by "), boxT(d.By))
+	}
+	out := []Line{field("deployed", l...)}
+	if d.Error != "" {
+		out = append(out, field("error", boxT(d.Error)))
+	}
+	if d.Note != "" {
+		out = append(out, field("note", boxT(d.Note)))
+	}
+	return out
 }
 
 func statusClass(status string) Class {
@@ -188,7 +202,9 @@ func (s *Session) metricLines(st wire.Status) []Line {
 				l = append(l, own(" (not enforced)"))
 			}
 			if mem.Now != nil {
-				f := min(*mem.Now/cap, 1)
+				// A share outside 0 to 1 (moteld sends none below 0) is
+				// drawn at its end of the bar.
+				f := min(max(*mem.Now/cap, 0), 1)
 				n := int(f*20 + 0.5)
 				l = append(l, own("  "+strings.Repeat("█", n)+strings.Repeat("░", 20-n)+" "+pct(*mem.Now/cap)+" of cap"))
 			}
@@ -248,9 +264,16 @@ func (s *Session) RecordView(app, version string, now time.Time) RecordView {
 	case !ok:
 		v.Note = []Line{{own("asking " + s.Host + " for the record of " + version + "…")}}
 		return v
-	case err != nil:
+	case g == nil || Forbidden(err) || NotFound(err):
+		// A 403 (the grant removed) or a 404 (the record gone) is said
+		// alone, as an app's screen says it: the record read before is
+		// not one to show beside it.
 		v.Note = []Line{{Seg{T: Capped(failureText(err), 4*LineMax)}}}
 		return v
+	case err != nil:
+		// The record read before stays beside a read that got no answer
+		// or could not be made; the crumb says how old it is.
+		v.Head = append(v.Head, Line{ownC("the last read failed: ", Warn), Seg{T: Capped(failureText(err), 2*LineMax)}})
 	}
 	d := g.V
 	took := secs(d.FinishedAt.Sub(d.StartedAt))

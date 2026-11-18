@@ -57,13 +57,15 @@ var screenReads = map[Screen]Kind{ScreenApps: KApps, ScreenApp: KStatus, ScreenR
 // its arguments: the command's words, --box so it works pasted
 // anywhere, --key only when the person named it, then -- and the
 // positional arguments, so a version that begins with - is not read as
-// a flag.
+// a flag. A record whose version is outside the version grammar (one
+// the box's filter hid, which the deploys table lists in the client's
+// words) has none: no command could ask for it.
 func (s *Session) CommandArgs(v View) ([]string, bool) { return s.commandArgs(v, false) }
 
 func (s *Session) commandArgs(v View, json bool) ([]string, bool) {
 	k, reads := screenReads[v.Screen]
 	a, ok := ActionFor(k)
-	if !reads || !ok {
+	if !reads || !ok || hiddenVersion(v) {
 		return nil, false
 	}
 	args := []string{"motel"}
@@ -90,6 +92,12 @@ func (s *Session) commandArgs(v View, json bool) ([]string, bool) {
 	}
 	return args, true
 }
+
+// hiddenVersion says whether v is a record whose version no command
+// can name: only one the box's filter hid reaches a screen so, since
+// the client refuses any other outside the grammar, and so does the :
+// line.
+func hiddenVersion(v View) bool { return v.Screen == ScreenRecord && !ValidVersion(v.Version) }
 
 // boxArg is the box as the printed command's --box gives it.
 func (s *Session) boxArg() string {
@@ -147,45 +155,69 @@ func (s *Session) Body(v View) ([]byte, time.Time, bool) {
 // the screens hand it in.
 type Cells func(termtext.Text) int
 
+// AsIs says whether the screens draw a text as it is, character for
+// character. They do not always: the door puts an unseen zero-width
+// space after each [ and writes some characters as escapes (an emoji
+// modifier as \U0001f3fd), and a command line so drawn, selected and
+// copied, is another command. The screens hand it in, as Cells.
+type AsIs func(termtext.Text) bool
+
 // Overlay is the command and JSON overlay for v: the command, then,
 // when json, the box's answer. The JSON is indented once per answer and
 // width, not at every frame: a large body would make every frame slow.
 // width is the room inside the overlay's border, in cells; every row is
 // laid out to it by lay. A command line wider than it is cut there, the
 // cut marked, and the overlay says not to copy it and what prints it
-// whole, in place of asking to select it.
-func (s *Session) Overlay(v View, json bool, width int, cells Cells) []Line {
+// whole, in place of asking to select it; so it does of a command line
+// the screens do not draw as it is (asIs), which copied would be
+// another command.
+func (s *Session) Overlay(v View, json bool, width int, cells Cells, asIs AsIs) []Line {
 	c, ok := s.Command(v)
-	if !ok {
+	switch {
+	case !ok && hiddenVersion(v):
+		return lay([]oRow{words("the box's filter hid this deploy's version: no motel command can ask for its record")}, width, cells)
+	case !ok:
 		return lay([]oRow{words("this screen reads nothing from the box")}, width, cells)
 	}
 	body, at, have := s.Body(v)
 	if !json {
-		cmds := []oRow{command("  " + c), command("  " + s.commandJSON(v))}
+		cmdJSON := s.commandJSON(v)
+		cmds := []oRow{command("  " + c), command("  " + cmdJSON)}
 		rows := append([]oRow{words("the same read from a shell:"), blank}, append(cmds, blank)...)
-		first, second, row := !cmds[0].fits(width, cells), !cmds[1].fits(width, cells), false
+		// Of the command, its --json form and a row's: each cut at the
+		// window's edge, and each the screens do not draw as it is.
+		cut := [3]bool{!cmds[0].fits(width, cells), !cmds[1].fits(width, cells)}
+		other := [3]bool{!drawnAsIs(c, asIs), !drawnAsIs(cmdJSON, asIs)}
 		if v.Screen == ScreenApps {
 			// A row's command as commandArgs makes it, --key among its
 			// flags, the app left as the placeholder <app>, unquoted.
 			args, _ := s.commandArgs(View{Screen: ScreenApp}, false)
-			tmpl := command("  " + ShellLine(args[:len(args)-1]) + " <app>")
-			row = !tmpl.fits(width, cells)
+			line := ShellLine(args[:len(args)-1]) + " <app>"
+			tmpl := command("  " + line)
+			cut[2], other[2] = !tmpl.fits(width, cells), !drawnAsIs(line, asIs)
 			rows = append(rows, words("This screen is that list, and a row for each app: each row is"), tmpl, blank)
 		}
-		if first || second || row {
+		bad := func(i int) bool { return cut[i] || other[i] }
+		if bad(0) || bad(1) || bad(2) {
 			// P prints the first command alone (Printable).
-			w := "a line above is cut at the window's edge, marked …: do not copy it."
-			if first || second {
-				w += " P quits and prints the first command whole below your prompt"
-				if second {
-					w += "; the second is it with --json among its flags"
+			var w []string
+			if cut[0] || cut[1] || cut[2] {
+				w = append(w, "a line above is cut at the window's edge, marked …: do not copy it.")
+			}
+			if other[0] || other[1] || other[2] {
+				w = append(w, "a line above is not drawn as it runs (an unseen space after a [, or a character written as an escape): do not copy it.")
+			}
+			if bad(0) || bad(1) {
+				p := "P quits and prints the first command whole below your prompt"
+				if bad(1) {
+					p += "; the second is it with --json among its flags"
 				}
-				w += "."
+				w = append(w, p+".")
 			}
-			if row {
-				w += " c then P on an app's own screen prints a row's command whole."
+			if bad(2) {
+				w = append(w, "c then P on an app's own screen prints a row's command whole.")
 			}
-			rows = append(rows, warn(w))
+			rows = append(rows, warn(strings.Join(w, " ")))
 		} else {
 			rows = append(rows, words("select it with the mouse, or press P to quit and print it below your prompt"))
 		}
@@ -207,8 +239,17 @@ func (s *Session) Overlay(v View, json bool, width int, cells Cells) []Line {
 		}
 		cmd := command("  " + c)
 		rows := []oRow{words("the box's answer to"), cmd}
+		var w []string
 		if !cmd.fits(width, cells) {
-			rows = append(rows, warn("the line above is cut at the window's edge, marked …: do not copy it. c then P prints it whole."))
+			w = append(w, "the line above is cut at the window's edge, marked …: do not copy it.")
+		}
+		if !drawnAsIs(c, asIs) {
+			w = append(w, "the line above is not drawn as it runs (an unseen space after a [, or a character written as an escape): do not copy it.")
+		}
+		if len(w) > 0 {
+			// c works with this overlay open, and P there prints the
+			// command (Printable).
+			rows = append(rows, warn(strings.Join(append(w, "c then P prints it whole."), " ")))
 		}
 		rows = append(rows, words(head),
 			words("lines over "+strconv.Itoa(TailMax)+" characters, and answers over "+strconv.Itoa(OverlayLines)+" lines, are cut for display"),
@@ -278,6 +319,14 @@ func lay(rows []oRow, width int, cells Cells) []Line {
 		}
 	}
 	return out
+}
+
+// drawnAsIs says whether a command line is drawn as it is, character
+// for character: made safe to show, it is unchanged, and the screens
+// draw it so (asIs).
+func drawnAsIs(line string, asIs AsIs) bool {
+	t := termtext.From(line)
+	return t.String() == line && asIs(t)
 }
 
 // cutCells is s cut to width cells, the cut marked with "…".
@@ -370,7 +419,7 @@ func (s *Session) CanPrint(v View, overlay int) bool {
 		return s.Engine.Stopped() == SignedOut
 	case overlay == 1:
 		_, ok := screenReads[v.Screen]
-		return ok
+		return ok && !hiddenVersion(v)
 	case overlay == 2:
 		_, ok := screenReads[v.Screen]
 		_, _, have := s.Body(v)
@@ -389,6 +438,7 @@ func size(n int) string {
 // Title is the title bar at now: who and where on the left, and the
 // freshness word on the right, which is never colour alone.
 func (s *Session) Title(now time.Time) (Line, Line) {
+	s.seen(now)
 	left := Line{ownC("motel", Strong)}
 	if s.Demo {
 		left = append(left, ownC(" · SAMPLE DATA", Warn))
@@ -399,11 +449,27 @@ func (s *Session) Title(now time.Time) (Line, Line) {
 		// The command's rule: an answer about another key or box names
 		// no one here, and nothing said before it is kept (forget).
 		left = append(left, ownC(" │ the box answered about another key or box", Warn))
+	case s.Me != nil && s.MeErr != nil && s.Engine.Stopped() == Running:
+		// whoami's newest read failed while the other reads answer: the
+		// answer held is said with its age, and that the read failed,
+		// before it, so the mark is cut after the host and not before
+		// (at 60 columns little else of the answer fits). Who am I says
+		// why.
+		left = append(left, own(" │ "), ownC(Ago(now.Sub(s.Me.At))+" old, failed", Warn), own(": "))
+		if r := s.Me.V.Version; r != "" {
+			left = append(left, own(r+" · "))
+		}
+		left = append(append(left, own(s.Me.V.Name+" · ")), s.scopes()...)
 	case s.Me != nil:
 		if r := s.Me.V.Version; r != "" {
 			left = append(left, own(" · "+r))
 		}
-		left = append(left, own(" │ "+s.Me.V.Name+" · "+s.scopes()))
+		left = append(append(left, own(" │ "+s.Me.V.Name+" · ")), s.scopes()...)
+	case s.MeErr != nil && s.Engine.Stopped() == Running:
+		// The box answers the other reads, but not whoami as the client
+		// takes it (a release that is not N.N.N): signed in, as no one
+		// known.
+		left = append(left, ownC(" │ who you are is not known: ", Warn), Seg{T: Capped(failureText(s.MeErr), 2*LineMax)})
 	default:
 		left = append(left, own(" │ not signed in"))
 	}
@@ -411,7 +477,7 @@ func (s *Session) Title(now time.Time) (Line, Line) {
 }
 
 // scopes says the roles held: "viewer of the box", "viewer of blog, shop".
-func (s *Session) scopes() string {
+func (s *Session) scopes() Line {
 	byRole := map[string][]string{}
 	var roles []string
 	for _, r := range s.Me.V.Roles {
@@ -425,16 +491,30 @@ func (s *Session) scopes() string {
 		byRole[r.Role] = append(byRole[r.Role], on)
 	}
 	if len(roles) == 0 {
-		return "no grant here"
+		return Line{own("no grant here")}
 	}
-	var parts []string
-	for _, r := range roles {
-		parts = append(parts, r+" of "+strings.Join(byRole[r], ", "))
+	var out Line
+	for i, r := range roles {
+		if i > 0 {
+			out = append(out, own("; "))
+		}
+		out = append(out, roleSeg(r), own(" of "+strings.Join(byRole[r], ", ")))
 	}
-	return strings.Join(parts, "; ")
+	return out
+}
+
+// roleSeg is a role as the whoami command says it: viewer, the one role
+// a box grants today, as a word; any other is the box's own word, which
+// the client took by its shape alone, and is quoted.
+func roleSeg(role string) Seg {
+	if role == "viewer" {
+		return own(role)
+	}
+	return quoted(role)
 }
 
 func (s *Session) freshness(now time.Time) Line {
+	s.seen(now)
 	h := s.Engine.Health(now)
 	if h.Back {
 		s.backAt = now
@@ -470,9 +550,9 @@ func (s *Session) freshness(now time.Time) Line {
 		return Line{ownC("slow · "+ago, Warn)}
 	case !s.backAt.IsZero() && now.Sub(s.backAt) < 5*time.Second:
 		return Line{ownC("back · "+hms(s.backAt), Good)}
-	case !s.refusedAt.IsZero() && s.last.IsZero():
+	case s.refused && s.last.IsZero():
 		return Line{ownC("REFUSED: no read answered yet", Bad)}
-	case !s.refusedAt.IsZero() && !s.refusedAt.Before(s.last):
+	case s.refused:
 		// The last read was refused, and the screen says why: the word
 		// does not say live of answers that stopped coming.
 		return Line{ownC("refused · last answer "+ago, Warn)}
@@ -484,7 +564,10 @@ func (s *Session) freshness(now time.Time) Line {
 
 // MeView is who am I.
 func (s *Session) MeView(now time.Time) []Line {
-	if s.Me == nil {
+	switch {
+	case s.Me == nil && s.MeErr != nil:
+		return []Line{{own("who you are is not known: "), Seg{T: Capped(failureText(s.MeErr), 4*LineMax)}}}
+	case s.Me == nil:
 		return []Line{{own("asking " + s.Host + " who your key is…")}}
 	}
 	me := s.Me.V
@@ -529,17 +612,20 @@ func (s *Session) MeView(now time.Time) []Line {
 		if n, ok := strings.CutPrefix(r.Scope, "app:"); ok {
 			on = "app " + n
 		}
-		verb := r.Role
-		if verb == "viewer" {
-			verb = "view"
+		verb := roleSeg(r.Role)
+		if r.Role == "viewer" {
+			verb = own("view")
 		}
-		out = append(out, Line{own("  " + pad(verb, 10) + " " + on)})
+		out = append(out, Line{own("  "), verb, own(pad("", 10-len([]rune(verb.T.String()))) + " " + on)})
 	}
 	out = append(out, nil,
 		field("you may not", own("roll back, relaunch, deploy or push: no person may yet. Deploys come from CI.")),
 		Line{own("             Read logs, alerts and backups: this client does not offer them yet.")}, nil,
 		Line{own("What the box knows of you is in its Caddyfile (person and grant lines), which the")},
 		Line{own("operator keeps. `motel key` prints the line to send them.")})
+	if s.MeErr != nil {
+		out = append(out, nil, Line{ownC("the last read failed: ", Warn), Seg{T: Capped(failureText(s.MeErr), 2*LineMax)}})
+	}
 	return out
 }
 
@@ -549,6 +635,7 @@ func (s *Session) Answered() bool { return !s.last.IsZero() }
 
 // MeAsOf is how old who am I's answer is, for its crumb.
 func (s *Session) MeAsOf(now time.Time) Line {
+	s.seen(now)
 	if s.Me == nil {
 		return nil
 	}
@@ -556,16 +643,23 @@ func (s *Session) MeAsOf(now time.Time) Line {
 }
 
 // RecordAsOf is how old a deploy's record is, for its crumb: it is read
-// once, as a record does not change, and ctrl-r reads it again.
+// on opening it, and by ctrl-r, and kept when a later read fails, but
+// for a 403 or a 404, which the screen says alone (RecordView).
 func (s *Session) RecordAsOf(app, version string, now time.Time) Line {
-	if g, _, ok := s.Record(app, version); ok && g != nil {
-		return s.asOf(g.At, now)
+	s.seen(now)
+	if g, err, ok := s.Record(app, version); ok && g != nil && !Forbidden(err) && !NotFound(err) {
+		l := s.asOf(g.At, now)
+		if err != nil {
+			l = append(l, ownC(" · the last read failed", Warn))
+		}
+		return l
 	}
 	return nil
 }
 
 // BoxAsOf is how old the box's answer is, for its crumb.
 func (s *Session) BoxAsOf(now time.Time) Line {
+	s.seen(now)
 	if s.BoxSt == nil {
 		return nil
 	}
@@ -601,13 +695,13 @@ func (s *Session) BoxView(now time.Time) []Line {
 // RefusedView is the first-run and refusal screen: the client's own
 // message for what happened, and for a refused key the facts to send
 // the operator.
-func (s *Session) RefusedView() []Line {
+func (s *Session) RefusedView(now time.Time) []Line {
 	err := s.StopErr
 	if err == nil {
 		err = s.MeErr
 	}
 	out := []Line{{Seg{T: termtext.From(failureText(err))}}, nil}
-	h := s.Engine.Health(s.Now())
+	h := s.Engine.Health(now)
 	if h.Stop == SignedOut {
 		out = append(out, field("your key", own(s.Key.Fingerprint)),
 			Line{own("            " + s.Key.Shown + " (" + s.Key.Source + ")")}, nil,

@@ -344,7 +344,7 @@ func step(t *testing.T, s *model.Session, f *demo.Fake, now *time.Time) model.Jo
 }
 
 func row(s *model.Session, now time.Time, name string) model.AppRow {
-	for _, r := range s.AppsView(now, "", 1).Rows {
+	for _, r := range s.AppsView(now, "", 1, 0).Rows {
 		if r.Name == name {
 			return r
 		}
@@ -413,7 +413,7 @@ func TestListRefused(t *testing.T) {
 	s := &model.Session{Host: demo.Host, Now: f.Now, Engine: model.NewEngine(t0)}
 	step(t, s, f, &now) // whoami
 	step(t, s, f, &now) // apps, refused
-	if v := s.AppsView(now, "", 0); !strings.Contains(v.Empty.Text(), "does not allow your key this") {
+	if v := s.AppsView(now, "", 0, 0); !strings.Contains(v.Empty.Text(), "does not allow your key this") {
 		t.Errorf("the screen says %q", v.Empty.Text())
 	}
 	if _, right := s.Title(now.Add(time.Minute)); strings.HasPrefix(right.Text(), "live") {
@@ -661,7 +661,9 @@ func takeRec(e *model.Engine, now time.Time, rec model.Job) bool {
 
 // TestRecordOnceAndAgain: a record asked for twice while in flight is
 // read once; one that failed is read again on opening it again and on
-// ctrl-r; ctrl-r asks again the record on the screen.
+// ctrl-r; one answered is read again on opening it again, but not
+// within RecordAgainAfter; ctrl-r asks again the record on the screen,
+// within RecordAgainAfter of its last read only once that has passed.
 func TestRecordOnceAndAgain(t *testing.T) {
 	for _, k := range []model.Fail{model.FailNotFound, model.FailThis} {
 		e := model.NewEngine(t0)
@@ -693,8 +695,21 @@ func TestRecordOnceAndAgain(t *testing.T) {
 			t.Fatal("an answered record read again with nothing asking")
 		}
 		last := later.Add(2 * time.Hour)
-		e.Again(last, rec)
+		e.Once(rec, last) // left and opened again: the box may have rewritten it
 		if !takeRec(e, last, rec) {
+			t.Fatal("an answered record not read again on opening it")
+		}
+		e.Done(rec, last, nil)
+		soon := last.Add(model.RecordAgainAfter - time.Second)
+		e.Once(rec, soon)
+		if takeRec(e, soon, rec) {
+			t.Fatalf("a record read again on opening it within %s", model.RecordAgainAfter)
+		}
+		e.Again(soon, rec)
+		if takeRec(e, soon, rec) {
+			t.Fatalf("ctrl-r read a record again within %s", model.RecordAgainAfter)
+		}
+		if !takeRec(e, last.Add(model.RecordAgainAfter), rec) {
 			t.Fatal("ctrl-r on the record's screen did not ask it again")
 		}
 	}
@@ -720,14 +735,16 @@ func TestNotStaleWhenNotDue(t *testing.T) {
 	for range 20 {
 		step(t, s, f, &now)
 	}
-	later := now.Add(10 * time.Minute)
-	if r := row(s, later, "blog"); r.Stale || strings.Contains(r.Cells[model.ColState].String(), "stale") {
-		t.Errorf("a held row says %q", r.Cells[model.ColState])
-	}
+	// In the clock's order: a time before one given is the clock set
+	// back.
 	at := now.Add(25 * time.Second)
 	s.Engine.Focus("docs", at)
 	if r := row(s, at, "docs"); r.Stale {
 		t.Errorf("an app just opened is stale by the open app's interval")
+	}
+	later := now.Add(10 * time.Minute)
+	if r := row(s, later, "blog"); r.Stale || strings.Contains(r.Cells[model.ColState].String(), "stale") {
+		t.Errorf("a held row says %q", r.Cells[model.ColState])
 	}
 }
 
@@ -939,7 +956,7 @@ func TestWords(t *testing.T) {
 	s2 := &model.Session{Host: demo.Host, Now: f.Now, Engine: model.NewEngine(t0)}
 	f.Set("whoami", fail(model.FailSignedOut))
 	step(t, s2, f, &now)
-	if v := s2.AppsView(now, "", 0); !strings.HasPrefix(v.Empty.Text(), "not asking") {
+	if v := s2.AppsView(now, "", 0, 0); !strings.HasPrefix(v.Empty.Text(), "not asking") {
 		t.Errorf("an empty apps screen while stopped says %q", v.Empty.Text())
 	}
 }

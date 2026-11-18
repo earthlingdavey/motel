@@ -217,36 +217,27 @@ made by hand. Accepted:
 | A `Retry-After` of an hour makes the TUI wait an hour: the box's word; the title bar says until when. A longer one is cut to an hour: the client's cap, and meant (moteld's 429 says 1 s) | 1 | 1 | 1 | 1 | 1 | accepted |
 | A labelled value under the cap keeps its runs of spaces, so on a narrow terminal a long run can wrap the rest of the value to the start of the next row, where it can look like a label (the `hostile-status` golden shows one). Log lines keep their spacing on purpose | 2 | 1 | 3 | 6 | 2 (wrap-aware printing) | accepted |
 | An apps-list read that got no answer is asked again at the list's own interval, 60 s, not at the 2 s backoff a status gets; while no read is answered the title bar says STALE and the time of the last answer | 2 | 4 | 1 | 8 | 2 | accepted |
+| Enter and esc held on a record no read of which has yet ended (a slow box) send a read at each enter and cancel it at each esc: leaving a record that never answered forgets it. The reads stay within the engine's rate, and it was so before the review's fixes | 2 | 4 | 1 | 8 | 3 | accepted |
+| A record every read of which the box refused (a 403, a 404, a 409) is read again by ctrl-r, esc, enter in turn, a read for every three keys: leaving it after ctrl-r forgets it, as the row above. The reads stay within the engine's rate | 2 | 5 | 1 | 10 | 2 | accepted |
+| A step of the wall clock back that lands between two readings handed to the engine out of order (two goroutines, microseconds apart) moves the engine's times twice: the title bar can say PAUSED until a key, and a 429's wait can end early by the step | 2 | 2 | 3 | 12 | 3 | accepted |
+| An answer's time is taken when it is applied on the UI's goroutine: after a terminal that stalled its output, the one answer that waited shows an age short by the stall, until that value is next read | 2 | 3 | 3 | 18 | 2 | accepted |
+| After a 403 or a 404 on an app or a record, `y` and `P` still give the last answer the box did send for it, with the time it was fetched | 2 | 5 | 1 | 10 | 2 | accepted |
+| When whoami alone gets no answer (a gateway's 5xx on that one route) while other reads answer, each answer ends the run and asks whoami again: about half the reads are whoami, within the rate, and the title bar goes between slow and back | 2 | 2 | 3 | 12 | 2 | accepted |
+| The crumb cuts a long app name from its end, so two names that share a long start read alike there on a narrow screen: of a 63-character name it keeps the first 24 characters at 60 columns and 44 at 80 (fewer when the age beside it is longer), and a record's crumb loses its version | 2 | 5 | 1 | 10 | 1 | accepted |
+| After this machine's clock is set back and is then wrong by more than a token can bridge (2 minutes: the client sends a token until a minute before its exp on its own clock, and the box takes it until a minute after on the box's), the box refuses the token within its ten minutes, every read stops, and the refusal screen names the clock first ("This machine's clock differs from the box's by 3600 s (behind it; …"). Until then who am I's token line says the token has the step's length more left than it has. A token signed afresh is stamped on the same clock (`r`'s too: past about 10.5 minutes it is refused at once). A clock that was fast and is set right loses nothing | 2 | 3 | 1 | 6 | 3 (none on this side: the clock is wrong) | accepted |
+| After an answer about another key or box and `r`, the title bar's word can say `refused`, or `live` with the age of an answer from before the drop, until whoami answers, as it could before the review's fixes: the session drops what the box said, but not when it last answered or whether it refused | 2 | 2 | 3 | 12 | 1 | accepted |
 | The `--key` of a printed command (`c`, `P`) is the key's path as the TUI shows it (`Key.Shown`: the home directory as `~`, made safe by `termtext`), so a path holding a control character or bytes that are not UTF-8 prints as a path naming another file, and a relative path works only from the directory the TUI was started in; running the line then fails naming the path | 2 | 5 | 1 | 10 | 2 | accepted: the line fails, and says which path, rather than reading another key |
 | After an answer about another key and `r`, a whoami that comes back refused (a 403, or a release that is not `N.N.N`, as in the row on such a build above) leaves the stop screen up, saying `stopped` and the old reason until another read is answered, then the whoami's refusal, and offering `r`, while the reads run behind it (the list and every status; the title bar says `live`); `r` does nothing there, since no read is stopped; `q` leaves | 3 | 2 | 3 | 18 | 2 | accepted: it takes a box that answers about another key and then refuses whoami, and the screen still says what was refused |
 | Opening and closing who am I again and again (`?` then esc: each esc opens it again) reads whoami at each opening while its last answer is over a minute old, or it has never answered, and its newest read failed without being held (a release that is not `N.N.N`, as in the row on such a build above): 41 reads in 10 s were measured, within the engine's rate | 2 | 5 | 1 | 10 | 2 | accepted |
 
-Owed, from the two reviews of the TUI's first part (#558; scored there). The fix PR goes
-into `tui` after the TUI's second part, and `tui` does not go to `main` before it:
+Owed, from the reviews of the TUI's first part (#558; scored there), of
+their fixes, and of its second part; the others are fixed:
 
 | Owed | S | O | D | Score | Size of a fix | Outcome |
 |---|---|---|---|---|---|---|
-| A deploy's record is read once and kept for the session: after a rollback or a redeploy rewrites it on the box, the TUI can still show FAILED for a version that succeeded | 3 | 5 | 3 | 45 | 2 | owed: the fix PR |
-| A failed ctrl-r on a record replaces the record on screen with the failure, though the session is meant to keep the last answer | 2 | 4 | 1 | 8 | 2 | owed: the fix PR, with the row above: once a record is read at each open, a lost connection would blank it without ctrl-r |
-| Once the apps list is held, a later failure of its read is not shown, and the list shows no age | 2 | 4 | 5 | 40 | 2 | owed: the fix PR |
-| A running app whose row is stale is counted as not running: the strip can say "2 of 2 apps are not deployed or not yours to view" | 2 | 5 | 3 | 30 | 1 | owed: the fix PR |
-| The deploys table keeps its cursor by row number: when a new deploy lands, enter opens the deploy above the one meant | 2 | 5 | 3 | 30 | 2 | owed: the fix PR |
-| A person with one app starts on its screen with nothing under it: the footer says `esc back`, and esc does nothing (`:apps` goes to the list) | 2 | 5 | 3 | 30 | 1 | owed: the fix PR |
-| A whoami that fails without stopping the session (a release string that is not `N.N.N`, the row in the table above) leaves the title bar at "not signed in" and `live` for a key the box accepts; the reason is held and not shown | 2 | 5 | 3 | 30 | 2 | owed: the fix PR |
-| An app whose first deploy failed opens to "Nothing to show", though the box sends its failed deploys | 2 | 5 | 3 | 30 | 2 | owed: the fix PR |
-| A long app name (63 characters are allowed) pushes STATE, and `stale` with it, off a 60- or 80-column screen | 2 | 5 | 3 | 30 | 2 | owed: the fix PR |
-| Under about 91 columns the apps table drops AGE first, so a row shows no age there, against "Every value shows its age" below | 2 | 5 | 3 | 30 | 2 | owed: the fix PR (a short age in the state cell), or that sentence, by the owner's call |
-| After the wall clock steps back, nothing is read for the length of the step, and the title bar says `live` | 3 | 3 | 3 | 27 | 2 | owed: the fix PR |
-| Stepping to the next or the previous record does not drop the read of the one left: a slow one holds the new screen up to 30 s | 2 | 4 | 3 | 24 | 1 | owed: the fix PR |
-| A record whose read gets a 5xx is asked again ahead of every other read after each backoff: nothing else is read while its screen is open, and the title bar says STALE for a box that answers | 2 | 3 | 3 | 18 | 2 | owed: the fix PR |
-| A role the box sends is shown in the title bar unquoted, as the client's own word; `motel whoami` quotes every role but `viewer` | 2 | 2 | 3 | 12 | 1 | owed: the fix PR |
-| After an outage that ends in refusals (a 403, a 404) the title bar stays STALE: only a 200 clears the count of misses | 2 | 2 | 3 | 12 | 1 | owed: the fix PR |
-| With a key only the agent holds, the advice after a failed signature reads "ssh-add the agent's key" | 2 | 3 | 1 | 6 | 1 | owed: the fix PR |
-| A wake from sleep during a 429 wait refills the bucket from that moment, so a burst follows the wait (the wait must pass 30 s; moteld's 429 says 1 s) | 1 | 1 | 5 | 5 | 1 | owed: the fix PR |
-| A negative `memory_bytes.now` (moteld never sends one) panics the memory bar: the TUI ends, exit 3, the terminal given back | 2 | 2 | 1 | 4 | 1 | owed: the fix PR |
-| `c` and `P` on a record whose version the box's filter hid give `motel deploys … -- <app> '[hidden by the box's filter]'`, a line that exits 2 when run | 2 | 5 | 3 | 30 | 2 | owed: the fix PR |
 | A record's and an app's details are cut to the window, with no way to scroll them | 2 | 5 | 3 | 30 | 3 | owed, the owner's call: the second part's `y` shows the whole answer; a header that scrolls is new screen behaviour |
-| The title bar's name, roles and release are whoami's last answer, shown beside the freshness of the newest answer to any read: while whoami answers (every 5 minutes) they can be up to 5 minutes older than that word says, and while it fails and other reads answer they stay whoami's last answer for as long as that goes on, since a failed whoami keeps it (refused, an answer the client cannot use, or a 403, which holds whoami until asked again; seen 21 minutes on beside `live · 0s ago`) | 2 | 5 | 3 | 30 | 2 | the owner's call: over the bar; whoami's schedule is the owner's, and who am I shows the answer under its own age |
+| Two names over 20 characters that differ only in their middle are shown longer until they differ, which can take the room of VERSION and LAST DEPLOY on every row. Where the width cannot hold both whole beside the widest STATE (with `running · 12s`, from 44 characters at 60 columns, none at 80; with `not deployed · stale`, from 37 at 60, 57 at 80) they are shown alike, and enter on one may open the other (at 80 columns its crumb then names it; at 60 the crumb is cut before the place they differ) | 2 | 5 | 3 | 30 | 3 | the owner's call: over the bar, and no cut within the width tells every such pair apart |
+| The title bar's name, roles and release are whoami's last answer, shown beside the freshness of the newest answer to any read: while whoami answers (every 5 minutes) they can be up to 5 minutes older than that word says, unmarked. While its newest read has failed, the title bar says so and the answer's age before it (below) | 2 | 5 | 3 | 30 | 2 | the owner's call: over the bar; whoami's schedule is the owner's, and who am I shows the answer under its own age |
 
 ## The TUI
 
@@ -258,50 +249,71 @@ package of the TUI reaches the client, a transport or a program
 each entry naming the command whose read it makes
 (`TestActionsAreCommands`). It only reads. The apps screen is sorted by
 what needs a look, with a strip that says why; a person with one app
-opens on it. An app's screen shows its state and deploys; a deploy's
-record is laid out for reading a failure, its log tail last. `:` goes
-to a view in the command words (`:status blog`, `:deploys blog
-<version>`, `:me`, `:box`); what is typed is held to the client's
-grammars before anything is asked, and what is wrong is said on the
-prompt's line; Enter runs what is typed, Tab takes a completion. `?`
-lists the keys of the screen below it, written from the table the keys
-are bound from. On a screen that reads the box (not help or a stop
-screen), `c` shows the `motel` line for it, every argument quoted
-for a POSIX shell, `--box` naming the port when it is not 443 and
-`--key` the key when it was named with `--key` (on the apps screen, a
-row's line too, `<app>` for the app). A command line wider than the
-window, in the screen's cells, is cut at its edge (it is not wrapped: a
-line drawn on two rows copies with a line feed in it), the cut marked
-`…`, and the overlay says not to copy it and what prints it whole: `P`
-for the screen's command (its `--json` line is that with `--json`
-added), `c` then `P` on an app's screen for a row's. The overlays' own
-words are laid on more rows to fit the window. `y` shows the box's
-answer under its command, which is cut as `c` cuts it and which `c`
-then `P` prints whole; the answer is indented, its strings made safe
-to show; its long lines and long answers are cut for display (a line
-wider than the window at its edge, as there is no scrolling sideways;
-lines over 2000 characters and answers over 2000 lines here), and the
-overlay says so and that `P` prints it whole. `P` quits and prints
-what the overlay names: the command line, or
-the answer. Into a pipe or a file the answer goes as the command's
-`--json` prints it: the box's JSON, with the characters a terminal acts
-on that JSON lets a string carry raw (C1 controls, bidi overrides, DEL)
-written as JSON's own escapes, since a pipe may end at a terminal; to a
-terminal it goes indented and made safe, every line whole, and stderr
-says so. ctrl-r asks again for what the screen shows, and nothing else;
-held down, it reads the list, whoami or the box at most once in 5 s,
-and the statuses keep their turn. whoami is read every 5 minutes,
-every minute while who am I is open, and soon after a 403, so a
-removed grant shows in the title bar. An answer about another key or
-box (the `whoami` command's rule) stops every read, like a refusal, and
-the session drops everything the box said, before it too (who you
-are, the list, every status and record, the box's answer): a box that
-does not answer about this key gives no grounds to show any of its
-answers as yours. After `r`, the session fills again from empty. A
-stop screen takes `r`, `?` and `q` alone, and `P` on a refused key's;
-help over it takes esc, `r` and `q` alone; nothing opens from either.
-A refused key's screen names every cause the client cannot tell apart
-and the person line to send the operator, which `P` prints.
+opens on it, with the list under it. A name longer than 20 characters is
+cut in its middle, in the table and the strip, its start and its end
+kept; two names that would be cut alike are shown longer, alike, until
+they differ, as far as the screen leaves room for STATE beside them;
+the whole name is what is opened, searched and printed. An app's
+screen shows its state and deploys; a deploy's record is laid out for
+reading a failure, its log tail last. The title bar, the crumb, the
+apps strip, an app's fields and a record's head are fitted to the
+window in the screen's cells, as the door draws them (a wide character
+takes two, a combining mark none, and a character the door writes as
+an escape as many as the escape has): a line too wide is cut, `…` its
+last cell, and the title bar's and the crumb's right side is never
+cut. `:` goes to a view in the command words (`:status blog`,
+`:deploys blog <version>`, `:me`, `:box`); what is typed is held to the client's grammars before anything is asked, and
+what is wrong is said on the prompt's line; Enter runs what is typed,
+Tab takes a completion. `?` lists the keys of the screen below it,
+written from the table the keys are bound from. On a screen that reads
+the box (not help or a stop screen), `c` shows the `motel` line for it
+(a record whose version the box's filter hid has none, and `c` and `y`
+say so, and `P` prints nothing there), every argument quoted for a
+POSIX shell, `--box` naming the port when it is not 443 and `--key` the
+key when it was named with `--key` (on the apps screen, a row's line
+too, `<app>` for the app). A command line wider than the window, in the
+screen's cells, is cut at its edge (it is not wrapped: a line drawn on
+two rows copies with a line feed in it), the cut marked `…`, and the
+overlay says not to copy it and what prints it whole: `P` for the
+screen's command (its `--json` line is that with `--json` added), `c`
+then `P` on an app's screen for a row's. A command line the door does
+not draw as it runs (with a `[`, drawn with an unseen space after it,
+or a character it writes as an escape, as below) copies as another
+command: the overlay says so, and not to copy it, and what prints it,
+in the same way; it offers selecting the lines only when every one is
+drawn as it is. The overlays' own words are laid on more rows to fit
+the window. `y` shows the box's answer under
+its command, which is cut as `c` cuts it, which it says not to copy, as
+`c` does, when it is cut or not drawn as it runs, and which `c` then
+`P` prints whole; the answer is indented, its strings made safe to show; its long
+lines and long answers are cut for display (a line wider than the
+window at its edge, as there is no scrolling sideways; lines over 2000
+characters and answers over 2000 lines here), and the overlay says so
+and that `P` prints it whole. `P` quits and prints what the overlay
+names: the command line, or the answer. Into a pipe or a file the
+answer goes as the command's `--json` prints it: the box's JSON, with
+the characters a terminal acts on that JSON lets a string carry raw (C1
+controls, bidi overrides, DEL) written as JSON's own escapes, since a
+pipe may end at a terminal; to a terminal it goes indented and made
+safe, every line whole, and stderr says so. ctrl-r asks again for what
+the screen shows, and nothing else; held down, it reads the list, a
+record, whoami or the box at most once in 5 s, and the other reads keep
+their turn. whoami is read every 5 minutes, every minute while who am I
+is open, and soon after a 403, so a removed grant shows in the title
+bar. While the session runs and whoami's newest read has failed (an
+answer the client cannot use, a 403, a 409, no answer), the title bar
+puts the age of its last answer, and that the read failed, before it
+(`21m old, failed: v0.7.0 · alice@…`), and who am I says why. An
+answer about another key or box (the `whoami` command's rule) stops
+every read, like a refusal, and the session drops everything the
+box said, before it too (who you are, the list, every status and
+record, the box's answer): a box that does not answer about this key
+gives no grounds to show any of its answers as yours. After `r`, the
+session fills again from empty. A stop screen takes `r`, `?` and `q`
+alone, and `P` on a refused key's; help over it takes esc, `r` and `q`
+alone; nothing opens from either. A refused key's screen names every
+cause the client cannot tell apart and the person line to send the
+operator, which `P` prints.
 
 - **The rate.** A box allows a person 2 requests a second with a burst
   of 60. The TUI keeps to 1.5 a second and 30 at once. The open app is
@@ -310,25 +322,43 @@ and the person line to send the operator, which `P` prints.
   55 s for 60 apps, 3 minutes for 200), each at its own place in the
   cycle. A 429 is waited out for every read, by its `Retry-After`, or
   30 s with none (the time the box's whole burst takes to refill), and
-  slows the rest of the session; no answer backs off from 2 s to 60 s.
+  slows the rest of the session; no answer backs off from 2 s to 60 s,
+  until any answer from the box ends the run and whoami is asked again
+  (a read the client fails without sending, such as a record whose
+  version the box's filter hid, ends nothing).
   A 401, a token not signed, or a certificate that did not verify stops
   every read and says why; `r` asks once more. A 403 or a 404 stops
-  that read alone until `ctrl-r`. Ten idle minutes pause it.
+  that read alone until `ctrl-r`. A deploy's record is read each time it
+  is opened, and by `ctrl-r`, at most once in 5 s once the box has
+  answered with it (asked sooner, it is read when the 5 s have passed,
+  if it is still open); a read of it that fails, a 5xx too, is not asked again by
+  itself, and the record read before stays on screen beside a failure
+  that is not a refusal: a 403 or a 404 is said alone, as on an app's
+  screen. Ten idle minutes pause it.
 - **The token** lasts 600 s, the longest a box takes, and is signed
   again a minute before it ends: a hardware key is touched about every
   nine minutes, and the title bar says when. The TUI never asks for a
   passphrase or a PIN: every signature runs ssh-keygen in a session of
-  its own, with no controlling terminal, and with `SSH_ASKPASS_REQUIRE=force`
-  and an `SSH_ASKPASS` that fails, so a key that needs one fails at
-  once. That stops the reads with the advice to add the key to the agent
-  (`ssh-add <path>`); `r` signs again, afresh, at most once in 5 s. A
-  key file with a passphrase the agent does not hold (matched by its
-  bytes) is refused before the screen opens, exit 2. A hardware key
-  that requires its PIN cannot be used in the TUI for now: the agent
-  does not stop the PIN being asked for each signature. The commands
-  may still ask on a terminal. Nothing is written to disk.
-- **Every value shows its age**, and a row whose last three reads, by
-  its own interval, failed or did not come says `stale` in its state.
+  its own, with no controlling terminal, and with
+  `SSH_ASKPASS_REQUIRE=force` and an `SSH_ASKPASS` that fails, so a key
+  that needs one fails at once. That stops the reads with the advice to
+  add the key to the agent (`ssh-add <path>`; a key the agent alone
+  holds is given no such advice); `r` signs again, afresh, at most once
+  in 5 s. A key file with a passphrase the agent does not hold (matched
+  by its bytes) is refused before the screen opens, exit 2. A hardware
+  key that requires its PIN cannot be used in the TUI for now: the agent
+  does not stop the PIN being asked for each signature. The commands may
+  still ask on a terminal. Nothing is written to disk.
+- **Every value shows its age** (on a screen too narrow for the AGE
+  column, in its state: `running · 12s`), and a row whose last three
+  reads, by its own interval, failed or did not come says `stale` in
+  its state; the strip counts the stale rows, and does not say every
+  app runs beside one. Ages are on the wall clock, so a laptop's sleep
+  counts. A step of the clock back is seen at the first time read after
+  it, and every time kept of the reads moves back by it, to within the
+  second between two readings; a sleep, or a step back past 30 s, makes
+  every row that is still being read stale until read again (one held
+  by a 403 or a 404 waits for `ctrl-r`).
   Colour only repeats a mark (`✖ ▲ ⟳ ? ·`) or a word; `NO_COLOR`
   turns it off.
 - **Box text on tview.** tview reads `[...]` as tags in table cells,
