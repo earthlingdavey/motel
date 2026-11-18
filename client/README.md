@@ -211,8 +211,35 @@ made by hand. Accepted:
 | A box string could reach a tview widget by a writer (`io.Copy`, `WriteTo` into a text view), by reflection, through a type alias, or by a function or method value of a setter, and the TUI's structural tests (`TestOneDoor`, `TestTUIImports`, `TestActionsAreCommands`) be got round the same ways, without a test failing; held by review and the hostile goldens | 2 | 1 | 3 | 6 | 2 | accepted |
 | A hardware key that requires its PIN cannot be used in the TUI: the TUI never asks for one, and the agent does not keep it | 2 | 1 | 1 | 2 | 3 (a PIN prompt outside the screen) | accepted |
 | The TUI's `post` may leave a few short-lived goroutines after quit | 1 | 2 | 3 | 6 | 1 | accepted |
-| A `Retry-After` of an hour makes the TUI wait an hour: the box's word; the title bar says until when | 1 | 1 | 1 | 1 | 1 | accepted |
+| A `Retry-After` of an hour makes the TUI wait an hour: the box's word; the title bar says until when. A longer one is cut to an hour: the client's cap, and meant (moteld's 429 says 1 s) | 1 | 1 | 1 | 1 | 1 | accepted |
 | A labelled value under the cap keeps its runs of spaces, so on a narrow terminal a long run can wrap the rest of the value to the start of the next row, where it can look like a label (the `hostile-status` golden shows one). Log lines keep their spacing on purpose | 2 | 1 | 3 | 6 | 2 (wrap-aware printing) | accepted |
+| An apps-list read that got no answer is asked again at the list's own interval, 60 s, not at the 2 s backoff a status gets; while no read is answered the title bar says STALE and the time of the last answer | 2 | 4 | 1 | 8 | 2 | accepted |
+
+Owed, from the two reviews of the TUI's first part (#558; scored there). The fix PR goes
+into `tui` after the TUI's second part, and `tui` does not go to `main` before it:
+
+| Owed | S | O | D | Score | Size of a fix | Outcome |
+|---|---|---|---|---|---|---|
+| A deploy's record is read once and kept for the session: after a rollback or a redeploy rewrites it on the box, the TUI can still show FAILED for a version that succeeded | 3 | 5 | 3 | 45 | 2 | owed: the fix PR |
+| A failed ctrl-r on a record replaces the record on screen with the failure, though the session is meant to keep the last answer | 2 | 4 | 1 | 8 | 2 | owed: the fix PR, with the row above: once a record is read at each open, a lost connection would blank it without ctrl-r |
+| Once the apps list is held, a later failure of its read is not shown, and the list shows no age | 2 | 4 | 5 | 40 | 2 | owed: the fix PR |
+| A running app whose row is stale is counted as not running: the strip can say "2 of 2 apps are not deployed or not yours to view" | 2 | 5 | 3 | 30 | 1 | owed: the fix PR |
+| The deploys table keeps its cursor by row number: when a new deploy lands, enter opens the deploy above the one meant | 2 | 5 | 3 | 30 | 2 | owed: the fix PR |
+| A person with one app starts on its screen with nothing under it: the footer says `esc back`, esc does nothing, and an app granted later is not reached from it | 2 | 5 | 3 | 30 | 1 | owed: the fix PR |
+| A whoami that fails without stopping the session (a release string that is not `N.N.N`, the row in the table above) leaves the title bar at "not signed in" and `live` for a key the box accepts; the reason is held and not shown | 2 | 5 | 3 | 30 | 2 | owed: the fix PR |
+| An app whose first deploy failed opens to "Nothing to show", though the box sends its failed deploys | 2 | 5 | 3 | 30 | 2 | owed: the fix PR |
+| A long app name (63 characters are allowed) pushes STATE, and `stale` with it, off a 60- or 80-column screen | 2 | 5 | 3 | 30 | 2 | owed: the fix PR |
+| Under about 91 columns the apps table drops AGE first, so a row shows no age there, against "Every value shows its age" below | 2 | 5 | 3 | 30 | 2 | owed: the fix PR (a short age in the state cell), or that sentence, by the owner's call |
+| After the wall clock steps back, nothing is read for the length of the step, and the title bar says `live` | 3 | 3 | 3 | 27 | 2 | owed: the fix PR |
+| Stepping to the next or the previous record does not drop the read of the one left: a slow one holds the new screen up to 30 s | 2 | 4 | 3 | 24 | 1 | owed: the fix PR |
+| A record whose read gets a 5xx is asked again ahead of every other read after each backoff: nothing else is read while its screen is open, and the title bar says STALE for a box that answers | 2 | 3 | 3 | 18 | 2 | owed: the fix PR |
+| A role the box sends is shown in the title bar unquoted, as the client's own word; `motel whoami` quotes every role but `viewer` | 2 | 2 | 3 | 12 | 1 | owed: the fix PR |
+| After an outage that ends in refusals (a 403, a 404) the title bar stays STALE: only a 200 clears the count of misses | 2 | 2 | 3 | 12 | 1 | owed: the fix PR |
+| With a key only the agent holds, the advice after a failed signature reads "ssh-add the agent's key" | 2 | 3 | 1 | 6 | 1 | owed: the fix PR |
+| A wake from sleep during a 429 wait refills the bucket from that moment, so a burst follows the wait (the wait must pass 30 s; moteld's 429 says 1 s) | 1 | 1 | 5 | 5 | 1 | owed: the fix PR |
+| A negative `memory_bytes.now` (moteld never sends one) panics the memory bar: the TUI ends, exit 3, the terminal given back | 2 | 2 | 1 | 4 | 1 | owed: the fix PR |
+| whoami is read once, so the title bar's roles go stale when grants change | 2 | 5 | 3 | 30 | 3 | owed: the TUI's second part (every 5 minutes, and soon after a 403) |
+| A record's and an app's details are cut to the window, with no way to scroll them | 2 | 5 | 3 | 30 | 3 | owed, the owner's call: the second part's `y` shows the whole answer; a header that scrolls is new screen behaviour |
 
 ## The TUI
 
