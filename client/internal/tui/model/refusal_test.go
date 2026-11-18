@@ -104,8 +104,8 @@ func TestRefusalDropsTheAnswer(t *testing.T) {
 				if st := rw.Cells[model.ColState].String(); strings.Contains(st, "running") || rw.Cells[model.ColVersion].String() != "-" {
 					t.Errorf("the row shows the status the box refused: %q, version %q", st, rw.Cells[model.ColVersion])
 				}
-				if st := rw.Cells[model.ColState].String(); st != "unknown" || !strings.Contains(model.Line(rw.Why).Text(), "cannot tell: deploy.example.com timed out") {
-					t.Errorf("the row after the read with no answer: %q, why %q", st, model.Line(rw.Why).Text())
+				if st := rw.Cells[model.ColState].String(); st != "unknown" || !strings.Contains(rw.Why.Text(), "cannot tell: deploy.example.com timed out") {
+					t.Errorf("the row after the read with no answer: %q, why %q", st, rw.Why.Text())
 				}
 				v := s.AppsView(now, "", 0, 0)
 				if all := linesText(v.Strip...) + v.Summary.Text(); strings.Contains(all, "running") {
