@@ -158,6 +158,9 @@ func (u *UI) renderApps() {
 	default:
 		strip = view.Strip
 	}
+	if view.ListFailed != nil {
+		strip = append([]model.Line{view.ListFailed}, strip...)
+	}
 	strip = u.withStop(strip)
 	for i := range strip {
 		strip[i] = strip[i].Cut(u.w)

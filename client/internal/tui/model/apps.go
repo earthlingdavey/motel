@@ -63,6 +63,9 @@ type AppsView struct {
 	Summary Line
 	// Empty is said in place of the table when the box lists no app.
 	Empty Line
+	// ListFailed says, above the strip, how old the list held is and
+	// why the last read of it failed; nil while it reads.
+	ListFailed Line
 }
 
 // AppsView is the apps screen at now, filtered and sorted. A filter of
@@ -80,6 +83,10 @@ func (s *Session) AppsView(now time.Time, filter string, sort int) AppsView {
 	case s.List == nil:
 		v.Empty = Line{own("asking " + s.Host + " for the apps you may view…")}
 		return v
+	}
+	if s.ListErr != nil {
+		v.ListFailed = append(Line{ownC("list as of "+hms(s.List.At)+" UTC, "+Ago(now.Sub(s.List.At))+" ago · the last read failed: ", Warn),
+			Seg{T: Capped(failureText(s.ListErr), 2*LineMax)}}, s.askAgain(now)...)
 	}
 	names := s.List.V
 	if len(names) == 0 {
