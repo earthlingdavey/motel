@@ -89,13 +89,13 @@ type overKey struct {
 	n, w int
 }
 
-// spread puts left at the start and right at the end of a row w wide,
-// cutting left first: the right side is the freshness word, which is
-// never cut.
+// spread puts left at the start and right at the end of a row w cells
+// wide, cutting left first: the right side is the freshness word, which
+// is never cut.
 func spread(left, right model.Line, w int) model.Line {
-	room := w - right.Width() - 1
-	left = left.Cut(max(room, 0))
-	gap := max(w-left.Width()-right.Width(), 1)
+	room := w - right.Width(door.Width) - 1
+	left = left.Cut(max(room, 0), door.Width)
+	gap := max(w-left.Width(door.Width)-right.Width(door.Width), 1)
 	out := append(model.Line{}, left...)
 	out = append(out, model.Seg{T: termtext.From(strings.Repeat(" ", gap))})
 	return append(out, right...)
@@ -168,7 +168,7 @@ func (u *UI) renderApps(now time.Time) {
 	}
 	strip = u.withStop(strip)
 	for i := range strip {
-		strip[i] = strip[i].Cut(u.w)
+		strip[i] = strip[i].Cut(u.w, door.Width)
 	}
 	strip = append(strip, ownLine(strings.Repeat("─", u.w)))
 	door.SetText(u.strip, door.Lines(strip, u.Colour))
@@ -275,7 +275,7 @@ func (u *UI) renderApp(v model.View, now time.Time) {
 	}
 	fs = u.withStop(fs)
 	for i := range fs {
-		fs[i] = fs[i].Cut(u.w)
+		fs[i] = fs[i].Cut(u.w, door.Width)
 	}
 	door.SetText(u.fields, door.Lines(fs, u.Colour))
 	u.appFlex.ResizeItem(u.fields, min(len(fs), u.h/2), 0)
@@ -320,14 +320,14 @@ func (u *UI) renderRecord(v model.View, now time.Time) {
 	}
 	hd = u.withStop(hd)
 	for i := range hd {
-		hd[i] = hd[i].Cut(u.w)
+		hd[i] = hd[i].Cut(u.w, door.Width)
 	}
 	door.SetText(u.recHead, door.Lines(hd, u.Colour))
 	u.recFlex.ResizeItem(u.recHead, min(len(hd), u.h/2), 0)
 	title := model.Line{}
 	if view.TailTitle != nil {
-		title = append(ownLine("── "), view.TailTitle...).Cut(u.w)
-		title = append(title, ownLine(" "+strings.Repeat("─", max(u.w-title.Width()-1, 0)))...)
+		title = append(ownLine("── "), view.TailTitle...).Cut(u.w, door.Width)
+		title = append(title, ownLine(" "+strings.Repeat("─", max(u.w-title.Width(door.Width)-1, 0)))...)
 	}
 	door.SetText(u.recTailTitle, door.Line(title, u.Colour))
 	door.SetText(u.tail, door.Texts(view.Tail))
