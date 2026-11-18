@@ -78,6 +78,11 @@ func readStatus(ctx context.Context, _ *Session, c Client, j Job) (func(*Session
 		a := s.app(j.App)
 		if err != nil {
 			a.err, a.errAt = err, at
+			if Forbidden(err) || NotFound(err) {
+				// The box's last word on it is a refusal: what was held of
+				// it goes, so no later failure can bring it back.
+				a.st = nil
+			}
 			return
 		}
 		g.At = at
@@ -97,7 +102,12 @@ func readDeploy(ctx context.Context, _ *Session, c Client, j Job) (func(*Session
 			s.records[j] = r
 		}
 		if err != nil {
-			r.err = err // a record read before is kept beside it
+			// A record read before is kept beside a failure, but for a 403
+			// or a 404, which drops it as a status's does.
+			r.err = err
+			if Forbidden(err) || NotFound(err) {
+				r.d = nil
+			}
 			return
 		}
 		g.At = at
