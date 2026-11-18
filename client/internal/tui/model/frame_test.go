@@ -285,15 +285,20 @@ func TestJSONLinesCut(t *testing.T) {
 
 // TestForbiddenAsksWhoAmI: a 403 asks whoami again (a grant may be
 // gone), at most once in MeEvery; and whoami is read every MeAlways.
+// The whoami a 403 asks is refused, so its last answer stays old and
+// only the once in MeEvery holds back the 403s of the other apps.
 func TestForbiddenAsksWhoAmI(t *testing.T) {
 	e := model.NewEngine(t0)
 	sim(e, names(3), t0, time.Second, time.Millisecond, ok)
 	at := t0.Add(2 * time.Minute)
 	n := 0
 	calls := sim(e, names(3), at, 2*time.Minute, 10*time.Millisecond, func(j model.Job, _ time.Time) error {
-		if j.Kind == model.KStatus {
+		switch j.Kind {
+		case model.KStatus:
 			n++
 			return fail(model.FailForbidden)
+		case model.KWhoAmI:
+			return fail(model.FailThis)
 		}
 		return nil
 	})
