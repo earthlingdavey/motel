@@ -47,6 +47,102 @@ func overlayRows(h *harness) (rows []string) {
 	return rows
 }
 
+// drawnRow is a row inside the overlay's border as the screen holds
+// it: its text (a wide character once, trailing spaces cut), the
+// cells from the border to the end of its last drawn cell, and that
+// cell's text.
+type drawnRow struct {
+	text, last string
+	end        int
+}
+
+// cellRow is row y of scr from column x0 to x1 (not included), read
+// from the screen's own cells: the screen says how wide each is.
+func cellRow(scr tcell.Screen, y, x0, x1 int) drawnRow {
+	var r drawnRow
+	var b strings.Builder
+	for x := x0; x < x1; {
+		s, _, cw := scr.Get(x, y)
+		b.WriteString(s)
+		if s != " " && s != "" {
+			r.last, r.end = s, x-x0+max(cw, 1)
+		}
+		x += max(cw, 1)
+	}
+	r.text = strings.TrimRight(b.String(), " ")
+	return r
+}
+
+// screenRows is every row of the screen, read from its cells.
+func screenRows(h *harness) (rows []drawnRow) {
+	done := make(chan struct{})
+	h.u.App.QueueUpdate(func() {
+		defer close(done)
+		w, hgt := h.scr.Size()
+		for y := range hgt {
+			rows = append(rows, cellRow(h.scr, y, 0, w))
+		}
+	})
+	<-done
+	return rows
+}
+
+// overlayCells is the open overlay's rows inside its border, read from
+// the screen's own cells.
+func overlayCells(h *harness) (rows []drawnRow) {
+	done := make(chan struct{})
+	h.u.App.QueueUpdate(func() {
+		defer close(done)
+		w, hgt := h.scr.Size()
+		in := false
+		for y := range hgt {
+			switch s, _, _ := h.scr.Get(0, y); s {
+			case "╔":
+				in = true
+				continue
+			case "╚":
+				return
+			}
+			if in {
+				rows = append(rows, cellRow(h.scr, y, 1, w-1))
+			}
+		}
+	})
+	<-done
+	return rows
+}
+
+// joinRows is the rows' text, joined by sep.
+func joinRows(rows []drawnRow, sep string) string {
+	var out []string
+	for _, r := range rows {
+		out = append(out, r.text)
+	}
+	return strings.Join(out, sep)
+}
+
+// cutAtEdge says whether a row that ends in … after prefix, a part of
+// the command line want as drawn, is cut at the edge of a window room
+// cells wide: the row ends at the edge, or the next of want's
+// characters is too wide to stand there before the mark. Widths are
+// the test's own, of the only characters its command lines hold: one
+// cell for ASCII, two for any other character, and ten for a skin tone
+// the door writes as an escape (shownUp).
+func cutAtEdge(r drawnRow, prefix, want string, room int) bool {
+	rest, ok := strings.CutPrefix(want, prefix)
+	if !ok || rest == "" || r.last != "…" || r.end > room {
+		return false
+	}
+	next := 2
+	switch {
+	case strings.HasPrefix(rest, `\U0001f3fd`):
+		next = 10
+	case rest[0] < 0x80:
+		next = 1
+	}
+	return r.end == room || r.end+next > room
+}
+
 // wantCommands is every command line the overlay over v shows, whole:
 // the command, and in the command overlay its --json form and, on the
 // apps screen, a row's.
