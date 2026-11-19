@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"errors"
+	"io"
 	"testing"
 	"time"
 
@@ -82,5 +83,29 @@ func TestPanicOnTheLoop(t *testing.T) {
 		}
 	case <-time.After(10 * time.Second):
 		t.Fatal("a panic on the event loop did not end the screen")
+	}
+}
+
+// TestClosedTerminal: a read of the terminal that fails while the
+// screen holds it (tcell's EventError: a closed window reads as an end
+// of file) ends Run with ErrClosed, which the command says as an
+// interrupt, not as a screen that could not start.
+func TestClosedTerminal(t *testing.T) {
+	now := t0
+	clock := fixedClock{&now}
+	f := &demo.Fake{Now: clock.Now}
+	s := &model.Session{Host: demo.Host, Now: clock.Now, Engine: model.NewEngine(t0)}
+	scr := &sizedSim{tcell.NewSimulationScreen("UTF-8"), 100, 30}
+	o := Options{Session: s, Client: f, Clock: clock, Screen: scr}
+	o.Started = func() { _ = scr.PostEvent(tcell.NewEventError(io.EOF)) }
+	done := make(chan error, 1)
+	go func() { _, err := Run(context.Background(), o, model.View{Screen: model.ScreenApps}); done <- err }()
+	select {
+	case err := <-done:
+		if !errors.Is(err, ErrClosed) {
+			t.Fatalf("Run ended with %v, want ErrClosed", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("a failed read of the terminal did not end the screen")
 	}
 }
