@@ -330,6 +330,10 @@ func (u *UI) step(by int) {
 	// The record left, as esc leaves it: its read is not wanted.
 	u.S.Engine.Drop(model.Job{Kind: model.KDeploy, App: v.App, Version: v.Version})
 	u.stack[len(u.stack)-1].Version = rows[i+by].Version
+	// The cursor is set against these rows, which may not be the ones
+	// the table was last drawn with (a status read since): renderApp
+	// reads the cursor's version from deployRows.
+	u.deployRows = rows
 	u.deploys.Select(i+by+1, 0)
 	// Opened, though its view may be the one left (one version on two
 	// rows): show reads it again.

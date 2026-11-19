@@ -121,6 +121,116 @@ func TestStepPassesOneVersionTwice(t *testing.T) {
 	}
 }
 
+// TestStepAfterANewDeploy: a status read that lands a new deploy while
+// a record is open moves every row down one. p or n then steps by the
+// rows as they are now, and esc must return to the row of the record
+// left, as the screen shows it: enter there opens that record again.
+// With no new deploy, the same.
+func TestStepAfterANewDeploy(t *testing.T) {
+	raw, err := os.ReadFile("demo/fixtures/status/shop.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m map[string]any
+	if err := json.Unmarshal(raw, &m); err != nil {
+		t.Fatal(err)
+	}
+	d0 := m["deploys"].([]any)[1].(map[string]any)
+	body := func(vs ...string) string {
+		var ds []any
+		for i, v := range vs {
+			d := maps.Clone(d0)
+			d["version"], d["started_at"] = v, "@-"+itoa(100*(i+1))+"s"
+			ds = append(ds, d)
+		}
+		m["deploys"] = ds
+		b, err := json.Marshal(m)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(b)
+	}
+	const v4, v3, v2, v1 = "dddd00000004", "cccc00000003", "bbbb00000002", "aaaa00000001"
+	for _, c := range []struct {
+		name  string
+		down  []any // from the table's first row to the record opened
+		from  string
+		newer bool
+		key   string
+		to    string
+	}{
+		{"p after a new deploy", nil, v3, true, "p", v2},
+		{"n after a new deploy", []any{"j", "j"}, v1, true, "n", v2},
+		{"p p after a new deploy", nil, v3, true, "pp", v1}, // a row the table was not drawn with
+		{"p, no new deploy", nil, v3, false, "p", v2},
+		{"n, no new deploy", []any{"j", "j"}, v1, false, "n", v2},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			h := start(t, 100, 30, func(f *demo.Fake) { f.Body("status/shop.json", body(v3, v2, v1)) })
+			h.open(app("shop"))
+			h.press(append(c.down, tcell.KeyEnter)...)
+			if v := h.top(); v.Screen != model.ScreenRecord || v.Version != c.from {
+				t.Fatalf("opened %+v, want the record of %s", v, c.from)
+			}
+			if c.newer {
+				h.fake.Body("status/shop.json", body(v4, v3, v2, v1))
+				before := len(h.fake.Calls)
+				h.now = h.now.Add(model.FocusEvery)
+				h.pump()
+				if !slices.ContainsFunc(h.fake.Calls[before:], func(c demo.Call) bool {
+					return c.Job == model.Job{Kind: model.KStatus, App: "shop"}
+				}) {
+					t.Fatal("no status read while the record was open")
+				}
+			}
+			h.press(c.key)
+			if v := h.top(); v.Version != c.to {
+				t.Fatalf("%s opened %+v, want %s", c.key, v, c.to)
+			}
+			h.press(tcell.KeyEscape)
+			if got := cursorOn(h, v4, v3, v2, v1); got != c.to {
+				t.Fatalf("esc after %s: the screen's cursor is on %q, want %q\n%s", c.key, got, c.to, h.screen())
+			}
+			h.press(tcell.KeyEnter)
+			if v := h.top(); v.Screen != model.ScreenRecord || v.Version != c.to {
+				t.Fatalf("enter after esc opened %+v, want the record of %s", v, c.to)
+			}
+		})
+	}
+}
+
+// cursorOn is the one of versions on the screen's reversed row: the
+// table's cursor, as drawn.
+func cursorOn(h *harness, versions ...string) string {
+	h.t.Helper()
+	var got []string
+	done := make(chan struct{})
+	h.u.App.QueueUpdate(func() {
+		defer close(done)
+		cells, w, hgt := h.scr.(tcell.SimulationScreen).GetContents()
+		for y := range hgt {
+			var l strings.Builder
+			rev := false
+			for x := range w {
+				c := cells[y*w+x]
+				l.WriteString(string(c.Runes))
+				_, _, a := c.Style.Decompose()
+				rev = rev || a&tcell.AttrReverse != 0
+			}
+			for _, v := range versions {
+				if rev && strings.Contains(l.String(), v) {
+					got = append(got, v)
+				}
+			}
+		}
+	})
+	<-done
+	if len(got) != 1 {
+		h.t.Fatalf("reversed rows hold %v, want one version", got)
+	}
+	return got[0]
+}
+
 // TestKeys walks the screens by key: filter, open, back, :, help and
 // the overlay, each landing where the footer says.
 func TestKeys(t *testing.T) {
