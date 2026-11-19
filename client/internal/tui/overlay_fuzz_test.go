@@ -152,6 +152,7 @@ func FuzzOverlay(f *testing.F) {
 		{"~/.ssh/id_ed25519\u0d4e", "blog", "v1", "deploy.example.com", 15, 0x03},
 		{"~/.ssh/\u1100\u1161\u0903\U0001f1e6\U0001f1e8", "blog", "v1", "deploy.example.com", 13, 0x00 | 0x20},
 		{"/tmp/a;rm -rf x", "blog", strings.Repeat("v", 65), "deploy.example.com", 0, 0x02 | 0x08},
+		{"--", "blog", "v1", "deploy.example.com", 140, 0x02},
 	} {
 		f.Add(s.key, s.app, s.version, s.box, s.width, s.pick)
 	}

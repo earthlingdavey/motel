@@ -120,9 +120,12 @@ func wantCommands(h *harness, v model.View, json bool) (out []string) {
 			return
 		}
 		args, _ := h.s.CommandArgs(v)
-		i := slices.Index(args, "--")
-		if i < 0 {
-			i = len(args)
+		// --json goes among the flags: before the -- that the app, and a
+		// record's version, follow, which is not the first -- when the
+		// key's path is one.
+		i := len(args)
+		if n := map[model.Screen]int{model.ScreenApp: 1, model.ScreenRecord: 2}[v.Screen]; n > 0 {
+			i = len(args) - n - 1
 		}
 		out = append(out, model.ShellLine(slices.Insert(slices.Clone(args), i, "--json")))
 		if v.Screen == model.ScreenApps {
