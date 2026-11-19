@@ -152,6 +152,7 @@ func FuzzNoRouteNoAnswer(f *testing.F) {
 		{"POST", "/_motel/apps", "", "", ""},
 		{"GET", "/ghost", "deploy=v1", "", ""},
 		{"POST", "/demo/", "", "", ""},
+		{"GET", "/_motel/backups", "", "", ""},
 		{"GET", "/_motel/apps/demo/alerts", "", "", ""},
 		{"GET", "/_motel/apps/ghost/alerts", "", "", ""},
 		{"GET", "/_motel/apps/demo/alerts", "lines=50", "", ""},

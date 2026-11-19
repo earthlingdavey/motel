@@ -32,7 +32,9 @@ func (s *Session) alertLines(app string, now time.Time) []Line {
 	}
 	if a.alerts == nil {
 		if NotFound(a.alertsErr) {
-			return []Line{field("alerts", own("this box does not offer an app's alerts"))}
+			// A box older than the read, or (to a viewer of the box) no
+			// app of this name now: the box's words say which.
+			return []Line{field("alerts", own("none read: "), Seg{T: Capped(failureText(a.alertsErr), 2*LineMax)})}
 		}
 		return []Line{field("alerts", ownC("not read: ", Warn), Seg{T: Capped(failureText(a.alertsErr), 2*LineMax)})}
 	}
@@ -65,8 +67,10 @@ func (s *Session) alertLines(app string, now time.Time) []Line {
 			out = append(out, field("", own("and "+strconv.Itoa(len(g.V.Alerts)-AlertsShown)+" more: "+s.alertsCommand(app)+" lists them")))
 			break
 		}
+		// A name of motel's own shape is a word; any other the client
+		// took (a Prometheus rule's, root's by hand) is the box's text.
 		name := boxT(al.Name)
-		if alertName.MatchString(al.Name) {
+		if motelAlertName.MatchString(al.Name) {
 			name = own(al.Name)
 		}
 		l := Line{name}
@@ -114,9 +118,10 @@ func (s *Session) alertsCommand(app string) string {
 	return ShellLine(append(args, "--app", app))
 }
 
-// alertName is the client's grammar of an alert's name (its client
-// package holds an answer to it): a name of it is a word shown as is.
-var alertName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_:.-]{0,63}$`)
+// motelAlertName is the shape of the names motel's own alerts take
+// (its events, notify's ruleNameRe and alertRe, Watchdog's and
+// ChannelFailed's capitals).
+var motelAlertName = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_]{0,63}$`)
 
 // boxWord is a word the client knows, shown as its own, or the box's.
 func boxWord(w string, known map[string]bool) Seg { return boxWordC(w, known, Plain) }

@@ -235,7 +235,7 @@ func (e *Engine) background() time.Duration {
 	if e.focus != "" {
 		left -= 1 / FocusEvery.Seconds()
 	}
-	if e.alertsApp != "" {
+	if en, ok := e.jobs[Job{Kind: KAlerts, App: e.alertsApp}]; e.alertsApp != "" && ok && !en.held {
 		left -= 1 / AlertsEvery.Seconds()
 	}
 	n := len(e.apps)
@@ -368,10 +368,10 @@ func (e *Engine) AlertsOpen(app string, now time.Time) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.seen(now)
-	if app == e.alertsApp {
+	if _, ok := e.jobs[Job{Kind: KAlerts, App: app}]; app == e.alertsApp && (ok || app == "") {
 		return
 	}
-	if old := e.alertsApp; old != "" {
+	if old := e.alertsApp; old != "" && old != app {
 		e.dropLocked(Job{Kind: KAlerts, App: old})
 	}
 	e.alertsApp = app
@@ -380,7 +380,9 @@ func (e *Engine) AlertsOpen(app string, now time.Time) {
 		switch en, ok := e.jobs[j]; {
 		case !ok:
 			e.jobs[j] = &entry{due: now}
-		case en.held:
+		case en.held, en.misses > 0:
+			// Refused, or waiting out its backoff: opening the screen does
+			// not ask sooner (ctrl-r asks a refused one).
 		case en.answered.IsZero() || now.Sub(en.answered) >= AlertsEvery:
 			en.due = minTime(en.due, now)
 		default:
@@ -804,6 +806,15 @@ func (e *Engine) Done(j Job, now time.Time, err error) Outcome {
 			}
 		}
 	}
+	if e.dropped && j.Kind == KAlerts && (out == Answered || out == Refused) {
+		// An app's alerts whose screen closed while the box answered them:
+		// the session does not apply the answer (Drive drops it with the
+		// read's context), so nothing of it is kept on the entry either,
+		// which stays as it was, due again if the screen opens once more.
+		// That the box answered is kept, above.
+		e.poke()
+		return out
+	}
 	alone := false
 	switch out {
 	case Answered:
@@ -813,8 +824,9 @@ func (e *Engine) Done(j Job, now time.Time, err error) Outcome {
 		}
 	case Cancelled:
 		// A record read before stays as Drop left it, or as opening it
-		// again since asks.
-		if en.answered.IsZero() && !en.failed {
+		// again since asks. An app's alerts left and opened again while
+		// their read was in flight are due again, not forgotten.
+		if en.answered.IsZero() && !en.failed && (j.Kind != KAlerts || j.App != e.alertsApp) {
 			delete(e.jobs, j)
 		}
 		e.poke()
@@ -934,7 +946,7 @@ func backoff(n int) time.Duration { return min(maxBackoff, time.Second<<min(n, 6
 // key or box: the apps it listed and what was due for them. After r,
 // whoami first, then the list, as at the start.
 func (e *Engine) forgetBox(now time.Time) {
-	e.apps, e.lastFocus, e.lastList = nil, time.Time{}, time.Time{}
+	e.apps, e.lastFocus, e.lastList, e.alertsApp = nil, time.Time{}, time.Time{}, ""
 	for j := range e.jobs {
 		if j.Kind != KWhoAmI {
 			delete(e.jobs, j)

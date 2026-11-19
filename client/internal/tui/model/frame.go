@@ -689,7 +689,7 @@ func (s *Session) MeViewFit(now time.Time, width int, cells Cells) []Line {
 	}
 	out = append(out, laid(width, cells, nil,
 		field("you may not", own("roll back, relaunch, deploy or push: no person may yet. Deploys come from CI.")),
-		Line{own("             Read logs and backups, or the box's own alerts: this client does not offer them yet.")}, nil,
+		Line{own("             Read logs, or the box's own alerts: this client does not offer them yet.")}, nil,
 		Line{own("What the box knows of you is in its Caddyfile (person and grant lines), which the operator keeps. `motel key` prints the line to send them.")})...)
 	if s.MeErr != nil {
 		out = append(append(out, nil), Sentence(Line{ownC("the last read failed: ", Warn), Seg{T: Capped(failureText(s.MeErr), 2*LineMax)}}, width, cells)...)
