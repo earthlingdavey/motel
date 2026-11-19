@@ -345,3 +345,45 @@ func TestUploadInFlight(t *testing.T) {
 		}
 	}
 }
+
+// TestFirstDeployInFlight: an app with no version yet and a deploy in
+// flight says the deploy on its screen, the "deploying" line under a
+// sentence that is true while it runs, and its apps row says it (⟳ and
+// its phase), as `motel status` does; the screen said "no version
+// yet: no deploy of it serves" and nothing of the deploy, the row "not
+// deployed". With no deploy before it, the screen said its first
+// deploy comes from CI and there is nothing to show.
+func TestFirstDeployInFlight(t *testing.T) {
+	b, err := os.ReadFile("demo/fixtures/status/api.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	first := strings.Replace(strings.Replace(string(b), `"current_version": "3b8812aa0c4f",`, ``, 1), `"running": true`, `"running": false`, 1)
+	none := strings.Replace(strings.Replace(first, `"deploys": [`, `"x_deploys": [`, 1), `"last_deploy"`, `"x_last_deploy"`, 1)
+	if first == string(b) || none == first {
+		t.Fatal("the api fixture moved")
+	}
+	for name, body := range map[string]string{"after a deploy": first, "the first": none} {
+		for _, sz := range [][2]int{{60, 16}, {80, 24}} {
+			h := start(t, sz[0], sz[1], func(f *demo.Fake) { f.Body("status/api.json", body) })
+			h.open(app("api"))
+			rows := screenRows(h)
+			if got, want := rows[2].text, "api has no version yet: a deploy of it is in flight."; got != want {
+				t.Errorf("%s %dx%d: the sentence is drawn %q, want %q", name, sz[0], sz[1], got, want)
+			}
+			if got, want := rows[3].text, "deploying   4c2d9e7b1a05 soaking started 25s ago (14:12"; !strings.HasPrefix(got, want) {
+				t.Errorf("%s %dx%d: the row under it is drawn %q, want it to begin %q", name, sz[0], sz[1], got, want)
+			}
+			h.open(model.View{Screen: model.ScreenApps})
+			var row string
+			for _, r := range screenRows(h)[2:] {
+				if f := strings.Fields(r.text); len(f) > 2 && f[1] == "api" {
+					row = r.text
+				}
+			}
+			if f := strings.Fields(row); len(f) < 4 || f[0] != "⟳" || f[2] != "soaking" {
+				t.Errorf("%s %dx%d: the api row is drawn %q, want ⟳ and soaking", name, sz[0], sz[1], row)
+			}
+		}
+	}
+}

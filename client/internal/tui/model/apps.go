@@ -54,7 +54,7 @@ type AppRow struct {
 	mem   float64
 	share float64
 	// moving is that STATE says a deploy in flight (inFlight's word)
-	// where it would say running.
+	// where it would say running, or not deployed.
 	moving bool
 }
 
@@ -338,7 +338,18 @@ func (s *Session) row(name string, now time.Time) (r AppRow) {
 		wd = *st.Watchdog
 	}
 	flight, flying := inFlight(st)
+	setFlight := func() {
+		why := "deploying: " + flight
+		if flight == "deploying" {
+			why = flight
+		}
+		set(MarkMoving, flight, own(why+" (seen "+Ago(now.Sub(at))+" ago)"))
+		r.moving = true
+	}
 	switch {
+	case st.CurrentVersion == "" && flying:
+		// Its first version on its way: no state of a version yet.
+		setFlight()
 	case st.CurrentVersion == "":
 		set(MarkNothing, "not deployed")
 	case wd.State == "throttled":
@@ -352,12 +363,7 @@ func (s *Session) row(name string, now time.Time) (r AppRow) {
 	case wd.State == "backoff":
 		set(MarkLook, "backoff", own("backoff: the watchdog waits to restart it; "+strconv.Itoa(wd.Failures)+" failed checks in a row"))
 	case flying:
-		why := "deploying: " + flight
-		if flight == "deploying" {
-			why = flight
-		}
-		set(MarkMoving, flight, own(why+" (seen "+Ago(now.Sub(at))+" ago)"))
-		r.moving = true
+		setFlight()
 	default:
 		set(MarkNone, "running")
 	}
