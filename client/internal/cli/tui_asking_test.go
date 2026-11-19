@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"context"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -104,8 +105,9 @@ func TestSayAsking(t *testing.T) {
 // for, the box's name made safe; stdout holds nothing. An interrupt or
 // a closed terminal then ends it as before: exit 130, nothing more said.
 func TestSaidWhileTheBoxWaits(t *testing.T) {
+	was := askingAfter
 	askingAfter = time.Millisecond
-	t.Cleanup(func() { askingAfter = time.Second })
+	t.Cleanup(func() { askingAfter = was })
 	fb := newFakeBox(t)
 	home := t.TempDir()
 	if err := os.WriteFile(filepath.Join(home, "me.pub"), []byte(meLine+"\n"), 0o600); err != nil {
@@ -145,5 +147,62 @@ func TestSaidWhileTheBoxWaits(t *testing.T) {
 				t.Errorf("exit %d, stderr %q, stdout %q; want %d, %q and nothing", code, errOut.String(), out.String(), client.ExitInterrupted, want)
 			}
 		})
+	}
+}
+
+// TestNotSaidWhileTheClientPauses: a box that refuses the key (401)
+// answers at once, and the client pauses before its one retry with the
+// same token (retryPerson); that pause is the client's own, not the
+// box waited for, so nothing is said before the screen, though it
+// lasts longer than askingAfter.
+func TestNotSaidWhileTheClientPauses(t *testing.T) {
+	was := askingAfter
+	askingAfter = 100 * time.Millisecond
+	t.Cleanup(func() { askingAfter = was })
+	home := t.TempDir()
+	if err := os.WriteFile(filepath.Join(home, "me.pub"), []byte(meLine+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	env := map[string]string{"MOTEL_KEY": "~/me.pub", "MOTEL_URL": "https://deploy.example.com/blog"}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	errOut := newHeard()
+	var mu sync.Mutex
+	var paused, asked int
+	rt := roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		mu.Lock()
+		asked++
+		if asked == 2 {
+			// The retry: the screen would open now, on SIGNED OUT; the
+			// test ends before it.
+			cancel()
+		}
+		mu.Unlock()
+		return &http.Response{StatusCode: http.StatusUnauthorized, Header: http.Header{"Content-Type": {"application/json"}},
+			Body: io.NopCloser(strings.NewReader(`{"error":"unknown key"}` + "\n")), Request: r}, nil
+	})
+	var out bytes.Buffer
+	code := Main(ctx, []string{"tui"}, Env{
+		Getenv: func(k string) string { return env[k] }, Stdout: &out, Stderr: errOut, Dir: t.TempDir(), Home: home,
+		Now: time.Now,
+		Sleep: func(context.Context, time.Duration) error {
+			mu.Lock()
+			paused++
+			mu.Unlock()
+			// The client's pause, five times askingAfter, or until the
+			// line is said.
+			select {
+			case <-errOut.first:
+			case <-time.After(5 * askingAfter):
+			}
+			return nil
+		},
+		Transport: rt, Run: noPrograms{}, Signer: &fixedSigner{}, Version: "test",
+	})
+	if paused != 1 || asked != 2 {
+		t.Fatalf("asked %d times, paused %d: want the 401's one retry after a pause", asked, paused)
+	}
+	if code != client.ExitInterrupted || errOut.String() != "" || out.Len() != 0 {
+		t.Errorf("exit %d, stderr %q, stdout %q; want %d and nothing said", code, errOut.String(), out.String(), client.ExitInterrupted)
 	}
 }

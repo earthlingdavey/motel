@@ -70,7 +70,8 @@ func (r *runner) tui() *cobra.Command {
 			wall := func() time.Time { return r.env.Now().Round(0) }
 			s := &model.Session{Version: r.env.Version, Now: wall}
 			// Where the line that says the first reads wait goes (sayAsking),
-			// and what tells it a signature is being made.
+			// and what tells it a signature is being made or the client
+			// pauses.
 			errW := r.env.Stderr
 			var notify func(func(bool))
 			if sample {
@@ -94,7 +95,10 @@ func (r *runner) tui() *cobra.Command {
 				boxSession(s, c, pt)
 				s.TokenExpires = sig.Expires
 				o.Client, o.Signing, o.Started, o.Resign = live{c}, sig.Notify, gt.Close, pt.Forget
-				errW, notify = gt, sig.Notify
+				ps := &pauser{sleep: c.Sleep}
+				c.Sleep = ps.Sleep
+				errW = gt
+				notify = func(f func(bool)) { sig.Notify(f); ps.Notify(f) }
 			}
 			s.Engine = model.NewEngine(wall())
 			o.Session = s
@@ -156,9 +160,13 @@ func (r *runner) printed(p tui.Printed) error {
 var tuiSignals = []os.Signal{syscall.SIGHUP}
 
 // askingAfter is how long the first reads wait for the box before a
-// line says so (sayAsking): an answer from a box that answers takes
-// well under a second.
-var askingAfter = time.Second
+// line says so (sayAsking). An ordinary start waits about four round
+// trips for the box (TCP, TLS, whoami, the list; five with TLS 1.2):
+// well under a second near it, 1 to 1.25 s at 250 ms a round trip,
+// 2.4 to 3 s at 600 ms (a satellite link). A box that does not answer
+// holds each of the two reads for the client's 30 s, so the line comes
+// with most of that minute still to wait.
+var askingAfter = 3 * time.Second
 
 // runFailure is how the TUI's end is said: a panic, already one line
 // and safe, exits 3; a screen that would not start, 2.
@@ -369,13 +377,15 @@ func (s *signer) Sign(ctx context.Context, key sshkey.Key, namespace string, mes
 }
 
 // sayAsking writes line to w once the first reads, before the screen
-// opens, have waited a second for the box (after gives each second): a
+// opens, have waited askingAfter for the box (after gives each wait): a
 // box that does not answer holds each for the client's 30 s, and the
 // terminal would show nothing meanwhile. A signature's time is not
-// counted (notify, when not nil, tells it one is being made): a
-// hardware key's touch is ssh-keygen's to ask for. An ordinary start
-// says nothing. The func it returns stops it, and returns once nothing
-// more can be written.
+// counted, nor the client's own pause before it asks again (notify,
+// when not nil, tells it one of them runs, and the wait starts again
+// at its end): a hardware key's touch is ssh-keygen's to ask for, and
+// the client waits a second before its retry of a 401, which the box
+// answered at once. An ordinary start says nothing. The func it returns
+// stops it, and returns once nothing more can be written.
 func sayAsking(ctx context.Context, w io.Writer, line string, after func() <-chan time.Time, notify func(func(bool))) func() {
 	ctx, cancel := context.WithCancel(ctx)
 	signing, done := make(chan bool), make(chan struct{})
@@ -412,6 +422,32 @@ func sayAsking(ctx context.Context, w io.Writer, line string, after func() <-cha
 			notify(nil)
 		}
 	}
+}
+
+// pauser is the client's Sleep, telling sayAsking while it runs.
+type pauser struct {
+	sleep func(context.Context, time.Duration) error
+	mu    sync.Mutex
+	note  func(bool)
+}
+
+// Notify sets what is told; nil tells nothing.
+func (p *pauser) Notify(f func(bool)) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.note = f
+}
+
+// Sleep sleeps as the client's Sleep, saying so before and after.
+func (p *pauser) Sleep(ctx context.Context, d time.Duration) error {
+	p.mu.Lock()
+	note := p.note
+	p.mu.Unlock()
+	if note != nil {
+		note(true)
+		defer note(false)
+	}
+	return p.sleep(ctx, d)
 }
 
 // gate is stderr until the screen takes the terminal, and nothing
