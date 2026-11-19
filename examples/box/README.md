@@ -182,6 +182,18 @@ what it runs.
      `{"error":"invalid or missing deploy token …"}`, in a browser or
      with `curl -i`. That is the webhook working: a deploy carries a
      token, and nothing without one gets further than this.
+   - If UDP 443 is open at the provider's firewall
+     ([Your first deploy](https://github.com/smallhoursorg/motel/blob/main/docs/first-deploy.md),
+     step 1), this, run from outside the box, answers 503 over HTTP/3:
+
+     ```sh
+     curl --http3-only --max-time 10 -sS -o /dev/null -w '%{http_code}\n' https://example.com/
+     ```
+
+     A timeout (`curl: (28)`) or `Connection refused` (`curl: (7)`)
+     instead means UDP 443 does not reach the box. The check needs a
+     curl built with HTTP/3, which `curl -V` lists as `HTTP3` under
+     `Features`; without one, skip it.
 
 An app's secrets are commits too, encrypted so that only the box
 and its readers can read them: see [Secrets](#secrets). Hardening the box — SSH by key only, the

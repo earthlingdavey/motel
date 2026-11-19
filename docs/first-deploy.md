@@ -407,17 +407,17 @@ has how. With nothing deployed yet, a correct box looks like this:
   `{"error":"invalid or missing deploy token …"}`, in a browser or with
   `curl -i`. That is the webhook working: a deploy carries a token, and
   nothing without one gets further than this.
-- If you opened UDP 443 in step 1, this answers 503 over HTTP/3, run
-  from outside the box:
+- If UDP 443 is open (step 1), this, run from outside the box, answers
+  503 over HTTP/3:
 
   ```sh
   curl --http3-only --max-time 10 -sS -o /dev/null -w '%{http_code}\n' https://example.com/
   ```
 
-  `curl: (28) Connection timed out` instead means UDP 443 is still
-  shut at the provider's firewall; any other error is about something
-  else. It needs a curl built with HTTP/3: `curl -V` lists `HTTP3`
-  under `Features`.
+  A timeout (`curl: (28)`) or `Connection refused` (`curl: (7)`)
+  instead means UDP 443 does not reach the box. The check needs a curl
+  built with HTTP/3, which `curl -V` lists as `HTTP3` under
+  `Features`; without one, skip it.
 - `journalctl -u moteld | grep 'liveswap started'`, on the box, gains
   a line with `"apps":1,"app_names":["example"]`.
 - The workflow run is green.
