@@ -346,6 +346,41 @@ func TestMemoryLineJoins(t *testing.T) {
 	}
 }
 
+// TestMetricsLineAgeWithoutNow: the metrics line says the window's
+// newest point and its age only when the answer has no memory now (the
+// app stopped, or the pushes failing), so that the window's numbers
+// carry their age; with a now, the window alone, whose age would read
+// as now's (review round two of #577).
+func TestMetricsLineAgeWithoutNow(t *testing.T) {
+	for _, c := range []struct {
+		mem  string
+		aged bool
+	}{
+		{`{"max":2097152}`, true},
+		{`{"now":1048576,"max":2097152}`, false},
+	} {
+		fields, _, _, _, _ := timesOf(t, `{"app":"blog","phase":"idle","running":true,"current_version":"v2","available_versions":["v2"],
+			"metrics":{"window":"1h","at":"@-50m","memory_bytes":`+c.mem+`},
+			"deploys":[{"version":"v2","status":"succeeded","started_at":"@-1m","finished_at":"@-0s"}],
+			"last_deploy":{"version":"v2","status":"succeeded","started_at":"@-1m","finished_at":"@-0s"}}`,
+			`{"version":"v2","status":"succeeded","started_at":"@-1m","finished_at":"@-0s"}`)
+		got := ""
+		for _, l := range strings.Split(fields, "\n") {
+			if strings.HasPrefix(l, "metrics ") {
+				got = l
+			}
+		}
+		ok := got == "metrics     over 1h"
+		if c.aged {
+			ok = strings.HasPrefix(got, "metrics     over 1h, newest point ") && strings.HasSuffix(got, " UTC (50m ago)")
+		}
+		if !ok {
+			t.Errorf("memory %s: the metrics line is %q", c.mem, got)
+		}
+		t.Log(got)
+	}
+}
+
 // TestTimesCarryTheirDay: a box's time shown as a time of day carries
 // its date when it is not today (the date in UTC), and its year when
 // not this year; a missing time is said as missing, not as year 1 or a
