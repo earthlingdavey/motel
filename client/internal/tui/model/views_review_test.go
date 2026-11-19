@@ -77,6 +77,32 @@ func TestIndentIsJSONIndent(t *testing.T) {
 	}
 }
 
+// TestIndentLongStrings: strings long enough to pass the overlay's cut
+// of a line, escapes and quotes inside them and a multi-byte character
+// at the cut, come out as json.Indent makes them: whole as P prints
+// them, and on the overlay each line capped as Capped caps it.
+func TestIndentLongStrings(t *testing.T) {
+	long := strings.Repeat(`ab\"c\\é`, 3*model.TailMax)
+	for _, body := range []string{
+		`{"a":"` + long + `","b":["` + long + `", "x"],"c":"` + strings.Repeat("y", 4*model.TailMax+3) + `é"}`,
+		`"` + long + `"`,
+	} {
+		want := shownByIndent([]byte(body))
+		if got := model.JSONShown([]byte(body)); got != strings.Join(append(want, ""), "\n") {
+			t.Errorf("P prints a body of long strings otherwise than json.Indent: %d bytes, want %d", len(got), len(strings.Join(want, "\n"))+1)
+		}
+		lines, cut, _ := model.JSONLines([]byte(body))
+		if cut != 0 || len(lines) != len(want) {
+			t.Fatalf("the overlay has %d lines (%d cut), want %d", len(lines), cut, len(want))
+		}
+		for i, l := range lines {
+			if w := model.Capped(want[i], model.TailMax); l.String() != w.String() {
+				t.Errorf("the overlay's line %d is\n%q\nwant\n%q", i, l.String(), w.String())
+			}
+		}
+	}
+}
+
 // TestDeepJSONBounded: a small body nested thousands deep (the review's)
 // is indented no deeper than IndentMax, on the overlay and as P prints
 // it, in under 50 MB and a second each; P still prints every line, and

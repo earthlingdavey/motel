@@ -1,6 +1,7 @@
 package model
 
 import (
+	"bytes"
 	"encoding/json"
 	"slices"
 	"strconv"
@@ -527,6 +528,20 @@ func (w *indenter) put(c byte) {
 	}
 }
 
+// putRun is put of each byte of b, which holds no line feed: a string's
+// own bytes, which JSON lets hold none raw, or an indent.
+func (w *indenter) putRun(b []byte) {
+	w.endsNL = false
+	if w.lines > 0 && w.n >= w.lines {
+		return
+	}
+	if w.lineBytes > 0 {
+		b = b[:min(len(b), max(w.lineBytes-w.cur, 0))]
+	}
+	w.b = append(w.b, b...)
+	w.cur += len(b)
+}
+
 func (w *indenter) newline(depth int) {
 	w.put('\n')
 	if w.lines > 0 && w.n >= w.lines {
@@ -535,10 +550,11 @@ func (w *indenter) newline(depth int) {
 	if depth > IndentMax {
 		w.deep, depth = true, IndentMax
 	}
-	for range 2 * depth {
-		w.put(' ')
-	}
+	w.putRun(indents[:2*depth])
 }
+
+// indents is the most a line is indented by.
+var indents = []byte(strings.Repeat(" ", 2*IndentMax))
 
 // indent writes body, which json.Valid holds valid: white space outside
 // strings is dropped, as json.Indent drops it, but for what follows the
@@ -548,7 +564,16 @@ func (w *indenter) indent(body []byte) {
 	// object or an array is found not empty; nest is the brackets open.
 	depth, nest := 0, 0
 	need, inStr, esc, begun := false, false, false, false
-	for i, c := range body {
+	for i := 0; i < len(body); i++ {
+		c := body[i]
+		if inStr && !esc && c != '\\' && c != '"' {
+			// A string's bytes up to its next backslash or quote are
+			// written at once: a body's long string is most of its bytes.
+			n := bytes.IndexAny(body[i:], `\"`)
+			w.putRun(body[i : i+n])
+			i += n - 1
+			continue
+		}
 		if inStr {
 			w.put(c)
 			switch {
