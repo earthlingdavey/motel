@@ -38,12 +38,32 @@ func TestDeployInFlight(t *testing.T) {
 			if want := "state       running 3b8812aa0c4f"; !strings.HasPrefix(state, want) {
 				t.Errorf("the state is drawn %q, want it to begin %q", state, want)
 			}
-			if want := "deploying   4c2d9e7b1a05 soaking started 25s ago (14:12"; !strings.HasPrefix(deploying, want) {
+			if want := "deploying   4c2d9e7b1a05 soaking · started 25s ago (14:12"; !strings.HasPrefix(deploying, want) {
 				t.Errorf("the deploy in flight is drawn %q, want it to begin %q", deploying, want)
 			}
 			golden(t, name, h.screen())
+			// While the upload is received (no phase yet) nothing stands
+			// between the version and its start.
+			h.fake.Body("status/api.json", strings.Replace(apiStatus(t), `"phase": "soaking"`, `"phase": "idle"`, 1))
+			h.press(tcell.KeyCtrlR)
+			for _, r := range screenRows(h) {
+				if strings.HasPrefix(r.text, "deploying ") {
+					deploying = r.text
+				}
+			}
+			if want := "deploying   4c2d9e7b1a05 started 25s ago (14:12"; !strings.HasPrefix(deploying, want) {
+				t.Errorf("uploading: the deploy in flight is drawn %q, want it to begin %q", deploying, want)
+			}
 		})
 	}
+}
+
+func apiStatus(t *testing.T) string {
+	b, err := os.ReadFile("demo/fixtures/status/api.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(b)
 }
 
 // TestMetricsSayOnlyWhatTheClientKnows: the metrics line says the
@@ -372,7 +392,7 @@ func TestFirstDeployInFlight(t *testing.T) {
 			if got, want := rows[2].text, "api has no version yet: a deploy of it is in flight."; got != want {
 				t.Errorf("%s %dx%d: the sentence is drawn %q, want %q", name, sz[0], sz[1], got, want)
 			}
-			if got, want := rows[3].text, "deploying   4c2d9e7b1a05 soaking started 25s ago (14:12"; !strings.HasPrefix(got, want) {
+			if got, want := rows[3].text, "deploying   4c2d9e7b1a05 soaking · started 25s ago (14:12"; !strings.HasPrefix(got, want) {
 				t.Errorf("%s %dx%d: the row under it is drawn %q, want it to begin %q", name, sz[0], sz[1], got, want)
 			}
 			h.open(model.View{Screen: model.ScreenApps})

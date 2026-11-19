@@ -188,6 +188,11 @@ func deploying(st wire.Status, now time.Time) Line {
 		words = append(words, st.Phase)
 	}
 	if d != nil && !d.StartedAt.IsZero() {
+		// The deploy's start, not the phase's: set off from a phase by
+		// the screen's "·", so the phase does not read as what started.
+		if st.Phase != "idle" {
+			words = append(words, "·")
+		}
 		words = append(words, "started "+since(d.StartedAt, now)+" ("+clock(d.StartedAt, now, false)+" UTC)")
 	}
 	l := Line{own(strings.Join(words, " "))}
