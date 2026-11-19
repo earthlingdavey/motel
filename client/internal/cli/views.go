@@ -22,12 +22,31 @@ var tx = termtext.From
 // when the box's app is that one (and its other head values only in
 // their grammars, client's hold).
 func statusView(st wire.Status, asked string) render.Status {
+	// The app's state first, as the TUI's row says it; the phase only
+	// beside a deploy in flight.
+	state := "running"
+	switch {
+	case st.CurrentVersion == "":
+		state = "not deployed"
+	case !st.Running:
+		state = "stopped"
+	}
 	v := render.Status{
 		App:     tx(asked),
-		Phase:   tx(st.Phase),
+		State:   tx(state),
 		Version: tx(st.CurrentVersion),
 		Unit:    tx(st.Unit),
 		PID:     st.PID,
+	}
+	if d := st.Deploying; d != nil || st.Phase != "idle" {
+		f := &render.InFlight{}
+		if st.Phase != "idle" {
+			f.Phase = tx(st.Phase)
+		}
+		if d != nil {
+			f.Version, f.By, f.Started = tx(d.Version), tx(d.By), d.StartedAt
+		}
+		v.Deploying = f
 	}
 	if wd := st.Watchdog; wd != nil {
 		v.Watchdog = &render.Watchdog{State: tx(wd.State), Failures: wd.Failures, Restarts: wd.RestartsInWindow, LastFailure: tx(wd.LastFailure)}

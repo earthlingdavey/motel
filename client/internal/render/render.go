@@ -43,9 +43,12 @@ func (s Style) word(t termtext.Text) string {
 
 // Status is GET /<app>'s body, as a person reads it.
 type Status struct {
-	App      termtext.Text
-	Phase    termtext.Text
-	Version  termtext.Text
+	App termtext.Text
+	// State is the client's word for the app: running, stopped, or not
+	// deployed. A deploy in flight is Deploying's line.
+	State     termtext.Text
+	Deploying *InFlight
+	Version   termtext.Text
 	Unit     termtext.Text
 	PID      int
 	Watchdog *Watchdog
@@ -53,6 +56,15 @@ type Status struct {
 	Last     *Deploy
 	// Versions are the releases on the box, the running one first.
 	Versions []termtext.Text
+}
+
+// InFlight is a deploy the app is running: its version (empty when the
+// box names none) and its phase, who started it and when.
+type InFlight struct {
+	Version termtext.Text
+	Phase   termtext.Text
+	By      termtext.Text
+	Started time.Time
 }
 
 // Watchdog is the app's watchdog.
@@ -193,7 +205,7 @@ func (p *printer) line(format string, args ...any) {
 // WriteStatus writes an app's status.
 func WriteStatus(w io.Writer, s Style, st Status) error {
 	p := &printer{w: w}
-	head := st.App.String() + "  " + s.word(st.Phase)
+	head := st.App.String() + "  " + st.State.String()
 	if !st.Version.Empty() {
 		head += " " + st.Version.String()
 	}
@@ -204,6 +216,22 @@ func WriteStatus(w io.Writer, s Style, st Status) error {
 		head += "  pid " + strconv.Itoa(st.PID)
 	}
 	p.line("%s", head)
+	if d := st.Deploying; d != nil {
+		var words []string
+		for _, t := range []termtext.Text{d.Version, d.Phase} {
+			if !t.Empty() {
+				words = append(words, t.String())
+			}
+		}
+		line := strings.Join(words, " ")
+		if !d.Started.IsZero() {
+			line += ", started " + d.Started.UTC().Format("2006-01-02 15:04 UTC")
+		}
+		if !d.By.Empty() {
+			line += "  by " + capped(d.By)
+		}
+		p.line("deploying    %s", line)
+	}
 	if wd := st.Watchdog; wd != nil {
 		line := s.word(wd.State)
 		if wd.Failures > 0 {
