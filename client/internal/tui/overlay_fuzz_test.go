@@ -39,7 +39,8 @@ func asDrawn(line string) string {
 // when it fits the room inside the border, and otherwise cut, its last
 // visible cell the mark … (a Prepend character before the mark takes it
 // into its own cell), within the room and less than an escape's ten
-// cells from its edge; the overlay says a line is cut exactly when one
+// cells from its edge, what stands before the mark the start of the
+// line as it is drawn whole; the overlay says a line is cut exactly when one
 // is, says one is not drawn as it runs exactly when one is not (its
 // cells alone, asDrawn, are not the line), offers selecting the lines
 // exactly when neither, and says what prints each such line whole (P
@@ -89,6 +90,11 @@ func checkAnyOverlay(t *testing.T, h *harness, v model.View, json bool, w int) {
 			t.Errorf("%q fits the %d cells and is drawn %q, not whole", want[k], room, r.text)
 		case !fits && (!strings.HasSuffix(r.last, "…") || r.end > room || r.end < room-9):
 			t.Errorf("%q is wider than the %d cells and is drawn %q, its last cell %q ending at %d: not cut at the edge with the mark", want[k], room, r.text, r.last, r.end)
+		case !fits && !strings.HasPrefix(whole, strings.TrimSuffix(r.text, "…")):
+			// What stands before the mark is the start of the line as it
+			// is drawn whole: a cut inside a cluster keeps its first part,
+			// which begins the cluster's text too.
+			t.Errorf("%q is cut and drawn %q, which does not begin it as it is drawn whole, %q", want[k], r.text, whole)
 		}
 		cut[k] = !fits
 		k++
