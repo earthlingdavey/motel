@@ -885,7 +885,10 @@ author's beliefs about systemd, and only the real thing corrects them.
    push and rollback deploys; watchdog restart and throttle recovery;
    a relaunch of a release built for another machine refused once by
    the watchdog and by recovery, with no unit started; a reload that
-   removes an app mid-deploy leaves no unit of it running.
+   removes an app mid-deploy leaves no unit of it running. Caddy
+   outlives each scenario, so each one ends by loading a config that
+   names no app (`integrationServer`): its apps stop before its root
+   is removed, and none is alive at the next one's start (#534).
    The runner's own suite: a leader+worker tree is gone after Stop and
    after a leader crash; SIGKILL lands after grace, not before; exit
    statuses as systemd reports them; a second runner adopts a live
