@@ -44,13 +44,21 @@ func asDrawn(line string) string {
 // cells alone, asDrawn, are not the line), offers selecting the lines
 // exactly when neither, and says what prints each such line whole (P
 // the first and the --json one, c then P an apps row's); and its own
-// words are drawn whole (each sentence is found on its rows read as one
-// line). A record whose version the grammar does not take has no
+// words are drawn whole (each sentence is found on its rows other than
+// the command lines, read as one line). A record whose version the grammar does not take has no
 // command, and says so.
 func checkAnyOverlay(t *testing.T, h *harness, v model.View, json bool, w int) {
 	t.Helper()
 	rows := overlayCells(h)
-	text := joinRows(rows, " ")
+	// The overlay's own words are looked for on its other rows only: a
+	// key path may spell any of them inside a command line.
+	var prose []drawnRow
+	for _, r := range rows {
+		if !strings.HasPrefix(r.text, "  motel ") {
+			prose = append(prose, r)
+		}
+	}
+	text := joinRows(prose, " ")
 	says := func(s string) bool { return strings.Contains(text, s) }
 	var ok bool
 	h.on(func() { _, ok = h.s.Command(v) })
@@ -153,6 +161,9 @@ func FuzzOverlay(f *testing.F) {
 		{"~/.ssh/\u1100\u1161\u0903\U0001f1e6\U0001f1e8", "blog", "v1", "deploy.example.com", 13, 0x00 | 0x20},
 		{"/tmp/a;rm -rf x", "blog", strings.Repeat("v", 65), "deploy.example.com", 0, 0x02 | 0x08},
 		{"--", "blog", "v1", "deploy.example.com", 140, 0x02},
+		// Key paths that spell the overlay's own words (Copilot's on #591).
+		{"c then P prints it whole.", "blog", "v1", "deploy.example.com", 140, 0x0c},
+		{"a line above is not drawn as it runs (a character written as an escape, or one not drawn at all): do not copy it.", "blog", "v1", "deploy.example.com", 140, 0x03},
 	} {
 		f.Add(s.key, s.app, s.version, s.box, s.width, s.pick)
 	}
