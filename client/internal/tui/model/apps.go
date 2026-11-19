@@ -361,8 +361,9 @@ func (s *Session) row(name string, now time.Time) (r AppRow) {
 	// A row in flight says the version in flight in VERSION, marked as
 	// one on its way ("→ 4c2d9e7b1a05"), so its phase is not read as the
 	// running version's (the app's screen says that one); an older box
-	// names none, and VERSION stays the running one.
-	setFlight := func() {
+	// names none, and VERSION stays the running one. deploy is the
+	// strip's words for it.
+	deploy := func() Seg {
 		why := "deploying"
 		if d := st.Deploying; d != nil && d.Version != "" {
 			why += " " + short(d.Version)
@@ -371,8 +372,24 @@ func (s *Session) row(name string, now time.Time) (r AppRow) {
 		if flight != "deploying" {
 			why += ": " + flight
 		}
-		set(MarkMoving, flight, own(why+" (seen "+Ago(now.Sub(at))+" ago)"))
+		return own(why + " (seen " + Ago(now.Sub(at)) + " ago)")
+	}
+	setFlight := func() {
+		set(MarkMoving, flight, deploy())
 		r.moving = true
+	}
+	// A row stopped, throttled or in backoff keeps that state and its
+	// mark while a deploy that may mend it is in flight (it is what
+	// holds until the deploy ends, and the row sorts by it), and says
+	// the deploy before its reason: the strip is cut at the screen's
+	// width, and at 80 columns a reason (backoff's is 68 characters)
+	// leaves no room after it. It is not moving: STATE does not say the
+	// deploy, and the app's screen says the state it names.
+	broken := func(m Mark, state string, why ...Seg) {
+		if flying {
+			why = append(Line{deploy(), own("; ")}, why...)
+		}
+		set(m, state, why...)
 	}
 	switch {
 	case st.CurrentVersion == "" && flying:
@@ -385,11 +402,11 @@ func (s *Session) row(name string, now time.Time) (r AppRow) {
 		if wd.LastRestartCause != "" {
 			why = append(why, own("; last cause "), quoted(wd.LastRestartCause))
 		}
-		set(MarkBroken, "throttled", why...)
+		broken(MarkBroken, "throttled", why...)
 	case !st.Running:
-		set(MarkBroken, "stopped", own("stopped: "+short(st.CurrentVersion)+" is not running"))
+		broken(MarkBroken, "stopped", own("stopped: "+short(st.CurrentVersion)+" is not running"))
 	case wd.State == "backoff":
-		set(MarkLook, "backoff", own("backoff: the watchdog waits to restart it; "+some(wd.Failures, "failed check")+" in a row"))
+		broken(MarkLook, "backoff", own("backoff: the watchdog waits to restart it; "+some(wd.Failures, "failed check")+" in a row"))
 	case flying:
 		setFlight()
 	default:

@@ -303,8 +303,9 @@ func (u *UI) renderApp(v model.View, now time.Time) {
 	for i := range fs {
 		fs[i] = fs[i].Cut(u.w, door.Width)
 	}
+	fs = fitRows(fs, u.h/2, u.w)
 	door.SetText(u.fields, door.Lines(fs, u.Colour))
-	u.appFlex.ResizeItem(u.fields, min(len(fs), u.h/2), 0)
+	u.appFlex.ResizeItem(u.fields, len(fs), 0)
 	// The cursor stays on its deploy, by version, as the apps table's
 	// stays on its app by name: a new deploy lands above it. Among rows
 	// of one version (the filter's placeholder for several), it stays on
@@ -348,8 +349,9 @@ func (u *UI) renderRecord(v model.View, now time.Time) {
 	for i := range hd {
 		hd[i] = hd[i].Cut(u.w, door.Width)
 	}
+	hd = fitRows(hd, u.h/2, u.w)
 	door.SetText(u.recHead, door.Lines(hd, u.Colour))
-	u.recFlex.ResizeItem(u.recHead, min(len(hd), u.h/2), 0)
+	u.recFlex.ResizeItem(u.recHead, len(hd), 0)
 	title := model.Line{}
 	if view.TailTitle != nil {
 		title = append(ownLine("── "), view.TailTitle...).Cut(u.w, door.Width)
@@ -366,6 +368,23 @@ func (u *UI) renderRecord(v model.View, now time.Time) {
 		}
 	}
 	door.SetText(u.tail, door.Texts(tail))
+}
+
+// fitRows keeps the lines that fit in rows, the room a screen gives
+// its details above a table or a log tail. When some do not fit, the
+// last row that shows says how many are not shown (that row's own line
+// among them) and where they all are, in the colour the overlay's own
+// cut is said in; a line cut at the width is already marked by its "…".
+func fitRows(ls []model.Line, rows, w int) []model.Line {
+	switch {
+	case len(ls) <= rows:
+		return ls
+	case rows <= 0:
+		return nil
+	}
+	n := len(ls) - rows + 1
+	more := model.Line{{T: termtext.From("… " + strconv.Itoa(n) + " more lines: y shows the answer; then P prints it whole"), C: model.Warn}}
+	return append(ls[:rows-1:rows-1], more.Cut(w, door.Width))
 }
 
 // withStop puts why every read stopped above a screen's lines, so the

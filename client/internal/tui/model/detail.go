@@ -143,7 +143,7 @@ func (s *Session) Overview(app string, now time.Time) OverviewView {
 		state = append(state, own(" · unit "+st.Unit))
 	}
 	v.Fields = append(v.Fields, field("state", state...))
-	if st.Deploying != nil || moving {
+	if _, ok := inFlight(st); ok {
 		v.Fields = append(v.Fields, deploying(st, now))
 	}
 	v.Fields = append(v.Fields, s.alertLines(app, now)...)
