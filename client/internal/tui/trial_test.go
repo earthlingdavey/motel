@@ -39,3 +39,21 @@ func TestDeployInFlight(t *testing.T) {
 		})
 	}
 }
+
+// TestMetricsSayOnlyWhatTheClientKnows: the metrics line says the
+// newest point's time and its age, and nothing of how far behind the
+// store runs, which the box does not say (the trial's ran 5 s behind;
+// the screen said 30).
+func TestMetricsSayOnlyWhatTheClientKnows(t *testing.T) {
+	h := start(t, 60, 16, nil)
+	h.open(app("blog"))
+	var got string
+	for _, r := range screenRows(h) {
+		if strings.HasPrefix(r.text, "metrics ") {
+			got = r.text
+		}
+	}
+	if want := "metrics     over 1h, newest point 14:12:10 UTC (30s ago)"; got != want {
+		t.Errorf("the metrics line is drawn %q, want %q", got, want)
+	}
+}

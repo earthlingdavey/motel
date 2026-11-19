@@ -288,7 +288,7 @@ func (s *Session) metricLines(st wire.Status, now time.Time) []Line {
 	}
 	l := Line{own("over "), boxT(m.Window)}
 	if m.At != nil && !m.At.IsZero() {
-		l = append(l, own(", newest point "+clock(*m.At, now, true)+" UTC (the store runs 30 s behind)"))
+		l = append(l, own(", newest point "+clock(*m.At, now, true)+" UTC ("+since(*m.At, now)+")"))
 	}
 	return append(out, field("metrics", l...))
 }
