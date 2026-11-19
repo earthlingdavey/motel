@@ -6,7 +6,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/gdamore/tcell/v2"
+
 	"github.com/smallhoursorg/motel/client/internal/tui/demo"
+	"github.com/smallhoursorg/motel/client/internal/tui/model"
 )
 
 // The fixes for what the trial of the TUI against a real box found.
@@ -103,5 +106,28 @@ func TestLongTailLineCut(t *testing.T) {
 		if n < 2 {
 			t.Errorf("%dx%d: with w on, the long line is on %d rows", sz[0], sz[1], n)
 		}
+	}
+}
+
+// TestScrollingFootersSaySo: who am I and the box screen, which can be
+// longer than the window and scroll by ↑ ↓, say so in their footers, as
+// the stop screens and help do (the trial: who am I at 60x16 scrolled,
+// and its footer named no key that scrolls it).
+func TestScrollingFootersSaySo(t *testing.T) {
+	for name, v := range map[string]model.View{"who am I": {Screen: model.ScreenMe}, "the box": {Screen: model.ScreenBox}} {
+		h := start(t, 60, 16, nil)
+		h.open(v)
+		rows := screenRows(h)
+		if got := rows[len(rows)-1].text; !strings.HasPrefix(got, "↑↓ scroll  ") {
+			t.Errorf("%s: the footer is drawn %q, naming no key that scrolls it", name, got)
+		}
+	}
+	// Who am I is longer than the window there, and ↓ scrolls it.
+	h := start(t, 60, 16, nil)
+	h.open(model.View{Screen: model.ScreenMe})
+	before := screenRows(h)[2].text
+	h.press(tcell.KeyDown)
+	if after := screenRows(h)[2].text; after == before {
+		t.Errorf("↓ on who am I at 60x16 did not scroll it: its first row stays %q", after)
 	}
 }

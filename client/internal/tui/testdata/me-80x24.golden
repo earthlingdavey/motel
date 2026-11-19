@@ -21,4 +21,4 @@ What the box knows of you is in its Caddyfile (person and grant lines), which
 
 
 
-y json  c command  esc back  ? more
+↑↓ scroll  y json  c command  esc back  ? more

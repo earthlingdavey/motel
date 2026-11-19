@@ -27,4 +27,4 @@ Not shown here, root's over ssh: moteld's journal (journalctl -u moteld), the la
 
 
 
-y json  c command  esc back  ? more
+↑↓ scroll  y json  c command  esc back  ? more
