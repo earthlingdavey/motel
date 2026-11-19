@@ -44,8 +44,9 @@ func (s Style) word(t termtext.Text) string {
 // Status is GET /<app>'s body, as a person reads it.
 type Status struct {
 	App termtext.Text
-	// State is the client's word for the app: running, stopped, or not
-	// deployed. A deploy in flight is Deploying's line.
+	// State is the client's word for the app, as the TUI's row says
+	// it: running, stopped, throttled, backoff, or not deployed. A
+	// deploy in flight is Deploying's line.
 	State     termtext.Text
 	Deploying *InFlight
 	Version   termtext.Text
@@ -54,7 +55,8 @@ type Status struct {
 	Watchdog  *Watchdog
 	Metrics   *Metrics
 	Last      *Deploy
-	// Versions are the releases on the box, the running one first.
+	// Versions are the releases on the box; the current one, when it
+	// is first, is marked with State.
 	Versions []termtext.Text
 }
 
@@ -272,7 +274,8 @@ func WriteStatus(w io.Writer, s Style, st Status) error {
 		for i, v := range st.Versions {
 			vs[i] = v.String()
 			if i == 0 && v == st.Version {
-				vs[i] += " (running)"
+				// The state of the first line, so the two agree.
+				vs[i] += " (" + st.State.String() + ")"
 			}
 		}
 		p.line("versions     %s", strings.Join(vs, " "))
