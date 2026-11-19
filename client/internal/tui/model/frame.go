@@ -492,12 +492,14 @@ func (s *Session) Title(now time.Time) (Line, Line) {
 		// no one here, and nothing said before it is kept (forget).
 		left = append(left, ownC(" │ the box answered about another key or box", Warn))
 	case s.Me != nil && s.MeErr != nil && s.Engine.Stopped() == Running:
-		// whoami's newest read failed while the other reads answer: the
-		// answer held is said with its age, and that the read failed,
-		// before it, so the mark is cut after the host and not before
-		// (at 60 columns little else of the answer fits). Who am I says
-		// why.
-		left = append(left, own(" │ "), ownC(Ago(now.Sub(s.Me.At))+" old, failed", Warn), own(": "))
+		// whoami's newest read failed while the other reads answer: that
+		// it failed, then the age of the answer held, before it, so the
+		// mark is cut after the host and not before (at 60 columns
+		// little else of the answer fits). The mark names whoami, so it
+		// is not read as the release's or the person's. "failed" is true
+		// of each way it can: no answer, a refusal, an answer the client
+		// cannot use. Who am I says which.
+		left = append(left, own(" │ "), ownC("whoami failed", Warn), own("; "+Ago(now.Sub(s.Me.At))+" old: "))
 		if r := s.Me.V.Version; r != "" {
 			left = append(left, own(r+" · "))
 		}
