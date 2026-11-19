@@ -134,8 +134,11 @@ func (h *harness) wait() {
 }
 
 // press sends keys as tview would: the capture first, then the focused
-// widget. A string is typed rune by rune; a tcell.Key is that key.
+// widget, then one frame. A string is typed rune by rune; a tcell.Key
+// is that key. The reads the keys make due are made, each answer with
+// its frame; with no key at all, one frame is drawn.
 func (h *harness) press(keys ...any) {
+	sent := false
 	for _, k := range keys {
 		var evs []*tcell.EventKey
 		switch k := k.(type) {
@@ -147,6 +150,7 @@ func (h *harness) press(keys ...any) {
 			evs = append(evs, tcell.NewEventKey(k, 0, tcell.ModNone))
 		}
 		for _, ev := range evs {
+			sent = true
 			h.on(func() {
 				if ev = h.u.key(ev); ev != nil {
 					if p := h.u.App.GetFocus(); p != nil {
@@ -157,7 +161,9 @@ func (h *harness) press(keys ...any) {
 		}
 	}
 	h.pump()
-	h.sync()
+	if !sent {
+		h.sync()
+	}
 }
 
 // quit sends a key that ends the event loop (q, P), and waits only for
@@ -172,11 +178,11 @@ func (h *harness) quit(r rune) {
 	<-done
 }
 
-// open goes to v as the screens do, by enter and esc.
+// open goes to v as the screens do, by enter and esc: one frame, and
+// the reads it makes due.
 func (h *harness) open(v model.View) {
 	h.on(func() { h.u.open(v) })
 	h.pump()
-	h.sync()
 }
 
 func app(a string) model.View { return model.View{Screen: model.ScreenApp, App: a} }

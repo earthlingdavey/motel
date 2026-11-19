@@ -173,5 +173,4 @@ func (h *harness) pressAll(ps []probe) {
 		}
 	})
 	h.pump()
-	h.sync()
 }
