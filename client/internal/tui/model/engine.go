@@ -143,8 +143,10 @@ type Engine struct {
 	// waited for since then (Health).
 	noneAsked time.Time
 	// waitFrom is when the read in flight began to wait for the box:
-	// when it was taken, or the wake from a sleep it was in flight
-	// through, since the box is not waited for while the machine sleeps.
+	// when it was taken, when its token was signed, or the wake from a
+	// sleep it was in flight through, since the box is not waited for
+	// while a key is touched or the machine sleeps; zero while its token
+	// is being signed (Signing).
 	waitFrom time.Time
 	// dropped is the read in flight cancelled (Drop): no longer waited
 	// for.
@@ -495,6 +497,19 @@ func (e *Engine) Touch(now time.Time) {
 	e.poke()
 }
 
+// Signing is a token being signed inside the read in flight (on), and
+// signed: a hardware key's touch is not the box waited for, so the read
+// waits for it from when signing ends (Health).
+func (e *Engine) Signing(on bool, now time.Time) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.seen(now)
+	e.waitFrom = now
+	if on {
+		e.waitFrom = time.Time{}
+	}
+}
+
 // Take returns the read to make now, or false and how long to wait
 // before asking again (zero: until woken).
 func (e *Engine) Take(now time.Time) (Job, bool, time.Duration) {
@@ -740,7 +755,7 @@ func (e *Engine) Done(j Job, now time.Time, err error) Outcome {
 			// say live between the two. A quick failure (a 5xx on one
 			// route) is not carried on.
 			e.noneAsked = time.Time{}
-			if now.Sub(waited) >= WaitingAfter {
+			if !waited.IsZero() && now.Sub(waited) >= WaitingAfter {
 				e.noneAsked = waited
 			}
 		}
@@ -883,7 +898,7 @@ func (e *Engine) Health(now time.Time) Health {
 		// From the read that got none, between it and the next too: the
 		// frame after its failure is drawn before the next is taken.
 		h.Waiting = now.Sub(e.noneAsked)
-	case e.inflight != nil && !e.dropped:
+	case e.inflight != nil && !e.dropped && !e.waitFrom.IsZero():
 		h.Waiting = now.Sub(e.waitFrom)
 	}
 	return h
@@ -985,7 +1000,10 @@ func (e *Engine) wakeLocked(now time.Time) {
 	// flight through the sleep waits for it from now, and a read that
 	// waited and got none before the sleep is not carried on past it
 	// (Health), as nothing has been asked since the wake.
-	e.waitFrom, e.noneAsked = now, time.Time{}
+	if !e.waitFrom.IsZero() {
+		e.waitFrom = now
+	}
+	e.noneAsked = time.Time{}
 	// Empty, and filling from now, or from the end of a 429's wait that
 	// still runs, as the 429 left it.
 	e.tokens, e.filled = 0, maxTime(now, e.slowUntil)

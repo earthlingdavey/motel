@@ -25,6 +25,7 @@ type Options struct {
 	Started func()
 	// Signing, when set, is given the function that tells the title
 	// bar a token is being signed (a hardware key waits for a touch),
+	// and the engine, which does not count it as the box waited for;
 	// and nil when the screen is gone.
 	Signing func(func(bool))
 	// Resign drops the token last signed, for r.
@@ -109,7 +110,10 @@ func Run(ctx context.Context, o Options, start model.View) (Printed, error) {
 		go u.post(o.Started)
 	}
 	if o.Signing != nil {
-		o.Signing(func(on bool) { u.post(func() { u.S.Signing = on }) })
+		o.Signing(func(on bool) {
+			u.S.Engine.Signing(on, o.Clock.Now())
+			u.post(func() { u.S.Signing = on })
+		})
 		defer o.Signing(nil)
 	}
 	err := u.runLoop()

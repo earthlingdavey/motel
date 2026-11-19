@@ -273,3 +273,58 @@ func TestWaitingAfterAWake(t *testing.T) {
 		}
 	}
 }
+
+// TestWaitingNotSigning: a token signed inside a read (a hardware key
+// touched after 10 s) is not the box waited for: the count begins when
+// signing ends. A read that then gets none at once is not carried on;
+// one that then waits 6 s says so, counted from the end of the touch.
+func TestWaitingNotSigning(t *testing.T) {
+	touched := func() (*model.Session, *demo.Fake, *time.Time, model.Job) {
+		s, f, now, j := settled(t)
+		s.Key.Hardware = true
+		s.Engine.Signing(true, *now)
+		for d := time.Duration(0); d <= 10*time.Second; d += time.Second {
+			if h := s.Engine.Health(now.Add(d)); h.Waiting != 0 {
+				t.Errorf("%v into the touch: waiting %v", d, h.Waiting)
+			}
+		}
+		*now = now.Add(10 * time.Second)
+		s.Engine.Signing(false, *now)
+		return s, f, now, j
+	}
+
+	s, f, now, j := touched()
+	if w := word(s, *now); !strings.HasPrefix(w, "live · ") {
+		t.Errorf("touched at 10 s, the request just sent: %q", w)
+	}
+	*now = now.Add(300 * time.Millisecond)
+	end(s, f, j, *now, nil)
+	if w := word(s, *now); w != "live · 0s ago" {
+		t.Errorf("answered 0.3 s after the touch: %q", w)
+	}
+
+	s, f, now, j = touched()
+	*now = now.Add(500 * time.Millisecond)
+	end(s, f, j, *now, fail(model.FailNoAnswer))
+	if w := word(s, *now); !strings.HasPrefix(w, "live · ") {
+		t.Errorf("no answer 0.5 s after the touch: %q", w)
+	}
+	next(t, s, now)
+	if w := word(s, now.Add(4500*time.Millisecond)); !strings.HasPrefix(w, "live · ") {
+		t.Errorf("4.5 s into the read after a quick failure that followed a touch: %q", w)
+	}
+
+	s, f, now, j = touched()
+	signed := *now
+	if w := word(s, signed.Add(4900*time.Millisecond)); !strings.HasPrefix(w, "live · ") {
+		t.Errorf("4.9 s after the touch: %q", w)
+	}
+	*now = signed.Add(6 * time.Second)
+	if w := word(s, *now); !strings.HasPrefix(w, "waiting 6s for an answer") {
+		t.Errorf("6 s after the touch: %q", w)
+	}
+	end(s, f, j, *now, fail(model.FailNoAnswer))
+	if w := word(s, *now); !strings.HasPrefix(w, "waiting 6s for an answer") {
+		t.Errorf("no answer 6 s after the touch: %q", w)
+	}
+}

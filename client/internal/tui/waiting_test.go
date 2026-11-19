@@ -4,11 +4,15 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/gdamore/tcell/v2"
+
 	"github.com/smallhoursorg/motel/client/internal/tui/demo"
 	"github.com/smallhoursorg/motel/client/internal/tui/model"
+	"github.com/smallhoursorg/motel/liveswap/wire"
 )
 
 // fakeKey is the key demo.Fake fails a read by.
@@ -234,5 +238,61 @@ func TestWaitingAt60(t *testing.T) {
 	})
 	if want := "… waiting 56s for an answer · 1m ago"; !strings.HasSuffix(title, want) || len([]rune(title)) != 60 {
 		t.Errorf("at 60 columns the title bar is %q, want it to end with %q at the edge", title, want)
+	}
+}
+
+// signingFake is the fixtures, its first status read signing a token
+// inside it, a touch of 10 s on the clock, as the client's signer does
+// through Options.Signing; waited is how long the engine says the box
+// has been waited for once signing has ended.
+type signingFake struct {
+	*demo.Fake
+	clk    *sleepClock
+	notes  chan func(bool)
+	waited chan time.Duration
+	e      *model.Engine
+	once   sync.Once
+}
+
+func (f *signingFake) Status(ctx context.Context, app string) (model.Got[wire.Status], error) {
+	f.once.Do(func() {
+		note := <-f.notes
+		note(true)
+		f.clk.add(10 * time.Second)
+		note(false)
+		f.waited <- f.e.Health(f.clk.Now()).Waiting
+	})
+	return f.Fake.Status(ctx, app)
+}
+
+// TestRunSigningNotWaited: Run tells the engine while a token is signed
+// inside a read, so a touch of 10 s is not counted as the box waited
+// for.
+func TestRunSigningNotWaited(t *testing.T) {
+	clk := &sleepClock{t: t0, ready: func() bool { return false }}
+	s := &model.Session{Host: demo.Host, Version: "v0.7.0", Key: demo.Key, Now: clk.Now, Engine: model.NewEngine(t0),
+		TokenExpires: func() time.Time { return t0.Add(9 * time.Minute) }}
+	f := &signingFake{Fake: &demo.Fake{Now: clk.Now}, clk: clk, notes: make(chan func(bool), 1), waited: make(chan time.Duration, 1), e: s.Engine}
+	o := Options{Session: s, Client: f, Clock: clk, Screen: &sizedSim{tcell.NewSimulationScreen("UTF-8"), 100, 30},
+		Signing: func(note func(bool)) {
+			if note != nil {
+				f.notes <- note
+			}
+		}}
+	start := Prime(context.Background(), o)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { _, err := Run(ctx, o, start); done <- err }()
+	select {
+	case w := <-f.waited:
+		if w != 0 {
+			t.Errorf("signing ended 10 s into the read: waited for %v", w)
+		}
+	case <-time.After(20 * time.Second): // a guard
+		t.Error("no status read signed")
+	}
+	cancel()
+	if err := <-done; err != nil {
+		t.Errorf("Run ended with %v", err)
 	}
 }
