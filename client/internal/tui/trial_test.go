@@ -313,7 +313,7 @@ func TestUploadInFlight(t *testing.T) {
 		t.Fatal("the api fixture moved")
 	}
 	for _, c := range []struct{ name, body, word, strip string }{
-		{"uploading", idle, "deploying", "deploying (seen 0s ago)"},
+		{"uploading", idle, "deploying", "deploying 4c2d9e7b1a05 (seen 0s ago)"},
 		{"an older box", old, "soaking", "deploying: soaking (seen 0s ago)"},
 	} {
 		for _, sz := range [][2]int{{60, 16}, {80, 24}} {
@@ -474,12 +474,85 @@ func TestDeployAfterAFailure(t *testing.T) {
 				row = r.text
 			}
 		}
-		if f := strings.Fields(row); len(f) < 5 || f[0] != "⟳" || f[2] != "soaking" || !strings.Contains(row, " failed") {
+		if f := strings.Fields(row); len(f) < 5 || f[0] != "⟳" || f[2] != "soaking" || !strings.Contains(row, " → e9a0b3f2c118 failed") {
 			t.Errorf("%dx%d: the shop row is drawn %q, want ⟳, soaking and its failed newest deploy", sz[0], sz[1], row)
 		}
 		h.press("/", "shop", tcell.KeyEnter)
+		t.Logf("%dx%d:\n%s\n%s", sz[0], sz[1], screenRows(h)[2].text, row)
 		if strip := screenRows(h)[2].text; !strings.HasPrefix(strip, "⟳ shop         deploying") {
 			t.Errorf("%dx%d: the strip says %q, want the deploy in flight", sz[0], sz[1], strip)
 		}
 	}
+}
+
+// TestRowVersionInFlight: while a deploy is in flight the apps row's
+// VERSION says the version in flight, marked as on its way ("→ "), and
+// not the running one, so the phase in STATE is not read as the running
+// version's; the strip's line names it too. An older box, which sends a
+// phase and no "deploying", is shown as before; a version the box's
+// filter hid is shown as hidden. The trial saw "⟳ example soaking
+// a2b3326f1c84" with a2b3326f1c84 serving and another version soaking.
+func TestRowVersionInFlight(t *testing.T) {
+	b, err := os.ReadFile("demo/fixtures/status/api.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	api := string(b)
+	edit := func(s, old, new string) string {
+		out := strings.Replace(s, old, new, 1)
+		if out == s {
+			t.Fatalf("the api fixture moved: no %q", old)
+		}
+		return out
+	}
+	const hidden = "[hidden by the box's filter]"
+	for _, c := range []struct {
+		name, body, version, strip string
+	}{
+		{"in flight", api, "→ 4c2d9e7b1a05", "deploying 4c2d9e7b1a05: soaking (seen 0s ago)"},
+		{"uploading", edit(api, `"phase": "soaking"`, `"phase": "idle"`), "→ 4c2d9e7b1a05", "deploying 4c2d9e7b1a05 (seen 0s ago)"},
+		{"a relaunch", edit(api, `"version": "4c2d9e7b1a05"`, `"version": "3b8812aa0c4f"`), "→ 3b8812aa0c4f", "deploying 3b8812aa0c4f: soaking (seen 0s ago)"},
+		{"the first", edit(edit(api, `"current_version": "3b8812aa0c4f",`, ``), `"running": true`, `"running": false`), "→ 4c2d9e7b1a05", "deploying 4c2d9e7b1a05: soaking (seen 0s ago)"},
+		{"hidden", edit(api, `"version": "4c2d9e7b1a05"`, `"version": "`+hidden+`"`), "→ [hidden by …", "deploying [hidden by …: soaking (seen 0s ago)"},
+		{"an older box", edit(api, `"deploying"`, `"x_deploying"`), "3b8812aa0c4f", "deploying: soaking (seen 0s ago)"},
+	} {
+		for _, sz := range [][2]int{{60, 16}, {80, 24}} {
+			h := start(t, sz[0], sz[1], func(f *demo.Fake) { f.Body("status/api.json", c.body) })
+			h.open(model.View{Screen: model.ScreenApps})
+			row := find(screenRows(h)[3:], "⟳ api ")
+			h.press("/", "api", tcell.KeyEnter)
+			rows := screenRows(h)
+			strip := rows[2].text
+			t.Logf("%s %dx%d:\n%s\n%s", c.name, sz[0], sz[1], strip, row)
+			if !strings.HasPrefix(row, "⟳ api ") || !strings.Contains(row, " "+c.version+" ") {
+				t.Errorf("%s %dx%d: the api row is drawn %q, want VERSION %q", c.name, sz[0], sz[1], row, c.version)
+			}
+			if c.version[0] != '3' && strings.Contains(row, "3b8812aa0c4f") && c.name != "a relaunch" {
+				t.Errorf("%s %dx%d: the api row names the running version beside the phase: %q", c.name, sz[0], sz[1], row)
+			}
+			if want := "⟳ api          " + c.strip; strip != want && (rows[2].last != "…" || !strings.HasPrefix(want, strings.TrimSuffix(strip, "…"))) {
+				t.Errorf("%s %dx%d: the strip says %q, want %q", c.name, sz[0], sz[1], strip, want)
+			}
+		}
+	}
+	// A row with no deploy in flight keeps its running version, unmarked.
+	for _, sz := range [][2]int{{60, 16}, {80, 24}} {
+		h := start(t, sz[0], sz[1], nil)
+		h.open(model.View{Screen: model.ScreenApps})
+		row := find(screenRows(h)[3:], "  blog ")
+		t.Logf("no deploy %dx%d:\n%s", sz[0], sz[1], row)
+		if !strings.Contains(row, " 7c1e55d0a913 ") || strings.Contains(row, "→") {
+			t.Errorf("no deploy %dx%d: the blog row is drawn %q", sz[0], sz[1], row)
+		}
+	}
+}
+
+// find is the text of the first row that begins with prefix.
+func find(rows []drawnRow, prefix string) string {
+	for _, r := range rows {
+		if strings.HasPrefix(r.text, prefix) {
+			return r.text
+		}
+	}
+	return ""
 }

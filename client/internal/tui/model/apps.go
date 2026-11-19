@@ -358,10 +358,18 @@ func (s *Session) row(name string, now time.Time) (r AppRow) {
 		wd = *st.Watchdog
 	}
 	flight, flying := inFlight(st)
+	// A row in flight says the version in flight in VERSION, marked as
+	// one on its way ("→ 4c2d9e7b1a05"), so its phase is not read as the
+	// running version's (the app's screen says that one); an older box
+	// names none, and VERSION stays the running one.
 	setFlight := func() {
-		why := "deploying: " + flight
-		if flight == "deploying" {
-			why = flight
+		why := "deploying"
+		if d := st.Deploying; d != nil && d.Version != "" {
+			why += " " + short(d.Version)
+			r.Cells[ColVersion] = termtext.From("→ " + short(d.Version))
+		}
+		if flight != "deploying" {
+			why += ": " + flight
 		}
 		set(MarkMoving, flight, own(why+" (seen "+Ago(now.Sub(at))+" ago)"))
 		r.moving = true
