@@ -88,8 +88,10 @@ type kind struct {
 // text is drawn there, or, in an input field, which shows the row of
 // its cursor, on top: the cursor is put at the start of the text's
 // last row.
-func (k kind) one(cases []string) bool {
-	const w = 32
+func (k kind) one(cases []string) bool { return k.oneAt(cases, 32) }
+
+// oneAt is one on a screen w cells wide.
+func (k kind) oneAt(cases []string, w int) bool {
 	scr := sim(w, k.top+3)
 	k.draw(scr, cases)
 	r := row(scr, k.top, w)
