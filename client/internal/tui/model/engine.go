@@ -830,8 +830,14 @@ func (e *Engine) Health(now time.Time) Health {
 	e.seen(now)
 	h := Health{Stop: e.stopped, Paused: now.Sub(e.touched) >= Idle, Misses: e.misses, Back: e.recovering}
 	e.recovering = false
-	if e.misses > 0 && e.retryAt.After(now) {
-		h.RetryIn = e.retryAt.Sub(now)
+	if e.misses > 0 {
+		// The next read, as Take would make it: the retry, or the first
+		// read due after it, which may be long after it (the list's 60 s).
+		at := maxTime(now, e.retryAt)
+		if _, due, ok := e.next(at, nil); ok {
+			at = maxTime(at, due)
+		}
+		h.RetryIn = at.Sub(now)
 	}
 	if e.slowUntil.After(now) {
 		h.SlowIn = e.slowUntil.Sub(now)

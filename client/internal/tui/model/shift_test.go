@@ -42,16 +42,19 @@ func TestStepBackKeepsTheBackoff(t *testing.T) {
 	if n := len(sim(e, names(3), out, time.Second, 10*time.Millisecond, noAnswer)); n != 2 {
 		t.Fatalf("%d reads in the first second with no answer, want 2 and then the backoff", n)
 	}
+	all := []model.Job{{Kind: model.KApps}}
+	for _, a := range names(3) {
+		all = append(all, model.Job{Kind: model.KStatus, App: a})
+	}
+	// ctrl-r: reads due, held to the backoff, which the title bar's
+	// retry then counts down to (it counts to the next read).
+	e.Again(out.Add(time.Second), all...)
 	h := e.Health(out.Add(time.Second))
 	if h.RetryIn <= 0 || h.RetryIn > 4*time.Second {
 		t.Fatalf("after no answer the retry is in %s", h.RetryIn)
 	}
 	from := out.Add(time.Second - back)
 	e.Touch(from)
-	all := []model.Job{{Kind: model.KApps}}
-	for _, a := range names(3) {
-		all = append(all, model.Job{Kind: model.KStatus, App: a})
-	}
 	e.Again(from, all...) // ctrl-r: reads due, held to the backoff
 	calls := sim(e, names(3), from, 5*time.Second, 10*time.Millisecond, noAnswer)
 	if len(calls) == 0 || calls[0].at.Sub(from) > h.RetryIn+200*time.Millisecond {
