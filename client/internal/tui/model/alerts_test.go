@@ -1,6 +1,7 @@
 package model_test
 
 import (
+	"context"
 	"strings"
 	"testing"
 	"time"
@@ -11,7 +12,7 @@ import (
 
 // TestAlertsReadWhileTheAppIsOpen: an app's alerts are read only while
 // its screen is open, at once when it opens, then every AlertsEvery;
-// opening another app's screen forgets the first's; closing every
+// opening another app's screen stops the first's; closing every
 // app's stops them; ctrl-r asks them again no sooner than AgainAfter;
 // and the box's limit is never passed.
 func TestAlertsReadWhileTheAppIsOpen(t *testing.T) {
@@ -141,7 +142,7 @@ func TestAlertLines(t *testing.T) {
 	s.Engine.Again(now.Add(model.AgainAfter), model.Job{Kind: model.KAlerts, App: "blog"})
 	now = now.Add(model.AlertsEvery)
 	readAll()
-	if got := lines(); len(got) != 1 || got[0] != "alerts      this box does not offer an app's alerts" {
+	if got := lines(); len(got) != 1 || got[0] != "alerts      none read: deploy.example.com answered 404" {
 		t.Errorf("a 404: %q", got)
 	}
 }
@@ -171,13 +172,18 @@ func TestAlertsReopened(t *testing.T) {
 	e.AlertsOpen("", at)
 	e.AlertsOpen("app-1", at.Add(3*time.Second))
 	calls = sim(e, names(3), at.Add(3*time.Second), 20*time.Second, 10*time.Millisecond, ok)
+	again := false
 	for _, c := range calls {
 		if c.j == j {
 			if d := c.at.Sub(answered); d < model.AlertsEvery {
 				t.Errorf("read again %s after its answer, on opening the screen again", d)
 			}
+			again = true
 			break
 		}
+	}
+	if !again {
+		t.Error("not read again once the screen was opened again")
 	}
 	at = at.Add(23 * time.Second)
 	notFound := func(k model.Job, _ time.Time) error {
@@ -229,5 +235,146 @@ func TestOldBoxAlertsNotRefused(t *testing.T) {
 	a, b := s.Title(now)
 	if title := a.Text() + b.Text(); strings.Contains(title, "refused") {
 		t.Errorf("the title bar says %q after the alerts' 404", title)
+	}
+}
+
+// TestAlertsLeftWhileInFlight: an app's screen left and opened again
+// while its alerts' first read is in flight: the read is cancelled, and
+// the alerts are read again, not forgotten for as long as the screen
+// stays open.
+func TestAlertsLeftWhileInFlight(t *testing.T) {
+	e := model.NewEngine(t0)
+	sim(e, names(3), t0, 10*time.Second, 10*time.Millisecond, ok)
+	now := t0.Add(10 * time.Second)
+	j := model.Job{Kind: model.KAlerts, App: "app-1"}
+	e.Focus("app-1", now)
+	e.AlertsOpen("app-1", now)
+	var taken model.Job
+	for range 20 {
+		k, okTake, _ := e.Take(now)
+		if !okTake {
+			now = now.Add(100 * time.Millisecond)
+			continue
+		}
+		if k == j {
+			taken = k
+			break
+		}
+		e.Done(k, now, nil)
+	}
+	if taken != j {
+		t.Fatal("the alerts were not taken")
+	}
+	e.AlertsOpen("", now)
+	e.AlertsOpen("app-1", now)
+	e.Done(j, now, context.Canceled)
+	calls := sim(e, names(3), now, 3*time.Second, 10*time.Millisecond, ok)
+	n := 0
+	for _, c := range calls {
+		if c.j == j {
+			n++
+		}
+	}
+	if n != 1 {
+		t.Errorf("the alerts read %d times after the cancelled read, want once", n)
+	}
+}
+
+// TestHeldAlertsTakeNoShare: the other apps' interval leaves room for
+// the open app's alerts only while they are read: refused and held (an
+// older box's 404), the share is given back.
+func TestHeldAlertsTakeNoShare(t *testing.T) {
+	apps := names(60)
+	e := model.NewEngine(t0)
+	sim(e, apps, t0, 10*time.Second, 10*time.Millisecond, ok)
+	now := t0.Add(10 * time.Second)
+	e.Focus("app-1", now)
+	plain := e.Interval("app-2")
+	e.AlertsOpen("app-1", now)
+	if e.Interval("app-2") <= plain {
+		t.Fatalf("with the alerts read, the others' interval is %s, not over %s", e.Interval("app-2"), plain)
+	}
+	notFound := func(k model.Job, _ time.Time) error {
+		if k.Kind == model.KAlerts {
+			return fail(model.FailNotFound)
+		}
+		return nil
+	}
+	sim(e, apps, now, 5*time.Second, 10*time.Millisecond, notFound)
+	if got := e.Interval("app-2"); got != plain {
+		t.Errorf("with the alerts held, the others' interval is %s, want %s", got, plain)
+	}
+}
+
+// TestAlertsClosedAsAnswered: an app's alerts whose screen closed as
+// their answer came (a 403 here) keep nothing of it, as the session
+// keeps nothing: opened again, they are read, not held unseen.
+func TestAlertsClosedAsAnswered(t *testing.T) {
+	e := model.NewEngine(t0)
+	sim(e, names(3), t0, 10*time.Second, 10*time.Millisecond, ok)
+	now := t0.Add(10 * time.Second)
+	j := model.Job{Kind: model.KAlerts, App: "app-1"}
+	e.Focus("app-1", now)
+	e.AlertsOpen("app-1", now)
+	for range 20 {
+		k, okTake, _ := e.Take(now)
+		if !okTake {
+			now = now.Add(100 * time.Millisecond)
+			continue
+		}
+		if k == j {
+			e.Started(func() {}) // as Drive gives the read its context's cancel
+			break
+		}
+		e.Done(k, now, nil)
+	}
+	e.AlertsOpen("", now)
+	e.Done(j, now, fail(model.FailForbidden))
+	now = now.Add(time.Second)
+	e.AlertsOpen("app-1", now)
+	calls := sim(e, names(3), now, 3*time.Second, 10*time.Millisecond, ok)
+	n := 0
+	for _, c := range calls {
+		if c.j == j {
+			n++
+		}
+	}
+	if n != 1 {
+		t.Errorf("the alerts read %d times on opening the screen again, want once", n)
+	}
+}
+
+// TestAlertsReopenedKeepTheBackoff: a failing alerts read is not asked
+// sooner than its backoff by opening the screen again and again.
+func TestAlertsReopenedKeepTheBackoff(t *testing.T) {
+	e := model.NewEngine(t0)
+	sim(e, names(3), t0, 10*time.Second, 10*time.Millisecond, ok)
+	now := t0.Add(10 * time.Second)
+	j := model.Job{Kind: model.KAlerts, App: "app-1"}
+	e.Focus("app-1", now)
+	e.AlertsOpen("app-1", now)
+	unusable := func(k model.Job, _ time.Time) error {
+		if k == j {
+			return fail(model.FailUnusable)
+		}
+		return nil
+	}
+	calls := sim(e, names(3), now, time.Second, 10*time.Millisecond, unusable)
+	now = now.Add(time.Second)
+	n := 0
+	for range 20 {
+		e.AlertsOpen("", now)
+		e.AlertsOpen("app-1", now)
+		c := sim(e, names(3), now, 50*time.Millisecond, 10*time.Millisecond, unusable)
+		calls = append(calls, c...)
+		now = now.Add(50 * time.Millisecond)
+	}
+	for _, c := range calls {
+		if c.j == j {
+			n++
+		}
+	}
+	if n > 2 {
+		t.Errorf("the failing alerts read %d times in a second of opening its screen again and again", n)
 	}
 }

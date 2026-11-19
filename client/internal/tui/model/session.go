@@ -119,8 +119,10 @@ func (s *Session) Fetch(ctx context.Context, c Client, j Job) (func(), error) {
 				s.last, s.refused = at, false // an answer came, if not one to use
 			case FailNotFound:
 				if j.Kind == KAlerts {
-					// A box older than the read: it answered, and refused
-					// nothing this key may read; the app's screen says it.
+					// A box older than the read, most likely: it answered,
+					// and refused nothing this key may read; the app's
+					// screen says the box's words. (An app gone is said by
+					// its status's 404 too, a refusal.)
 					s.last, s.refused = at, false
 					break
 				}

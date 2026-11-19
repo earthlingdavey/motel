@@ -79,7 +79,9 @@ box could not ask its Alertmanager (`"monitor":"unanswered"`) or names
 its monitor in a word the client does not know: `--json` then prints
 the client's own sentence. Without `--app` it is refused, exit 2: the
 box-wide list is not read yet. It is asked with your own key only, as
-`whoami` is. An alert's name is held to `^[A-Za-z_][A-Za-z0-9_:.-]{0,63}$`
+`whoami` is. An alert's name is held to `^[A-Za-z_][A-Za-z0-9_:.-]{0,63}$` (an app's
+screen shows one outside motel's own shape, `^[A-Za-z][A-Za-z0-9_]{0,63}$`,
+as the box's text)
 and its severity, its state and the monitor to `^[a-z][a-z0-9_]{0,31}$`; a
 severity or a state the client does not know is shown as the box's
 word, not refused.
@@ -393,9 +395,9 @@ the whole name is what is opened, searched and printed. An app's
 screen shows its state and deploys, and under its state its alerts,
 read while the screen is open (the first three listed, each with what
 holds it, when it began and, on a `summary` line, its summary, and the
-rest counted; the client's own words when the box has no monitor,
-could not ask its Alertmanager, or is older than the read and answers
-404); while a deploy is in flight its
+rest counted; the client's own words when the box has no monitor or
+could not ask its Alertmanager, and on a 404 the box's own (a box older
+than the read, or no app of that name now); while a deploy is in flight its
 state names the current version as running (one stopped, throttled or
 in backoff by its row's word), and a `deploying` line
 under it the version in flight, its phase, when the deploy started and

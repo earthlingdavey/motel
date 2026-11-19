@@ -11,8 +11,8 @@ import (
 )
 
 // TestRetryInIsTheNextRead: through an outage on the apps screen and
-// on the box screen (one app; the list, its status and alerts, whoami,
-// the box's status and its backups all answering 500), the title bar's `retry in` counts
+// on the box screen (one app; the list, its status, whoami, the box's
+// status and its backups all answering 500), the title bar's `retry in` counts
 // down, second by second, to the next read the engine really makes:
 // not to the run's retry alone, which can pass long before any read is
 // due (the list's 60 s, the box's 30 s), the title bar then saying
@@ -28,7 +28,7 @@ func TestRetryInIsTheNextRead(t *testing.T) {
 		h.watch(61*time.Second, model.Job{})
 		// Every read the screens make: the box screen reads the backups
 		// too (#601), whose answer would end the run.
-		for _, k := range []string{"blog", "apps", "whoami", "box", "backups", "alerts:blog"} {
+		for _, k := range []string{"blog", "apps", "whoami", "box", "backups"} {
 			h.fake.Set(k, fiveHundred())
 		}
 		type said struct {
