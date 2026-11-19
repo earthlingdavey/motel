@@ -167,9 +167,10 @@ func tags(c model.Class, colour bool) (string, string) {
 // time and reads a tag only at a cluster's start, so where a tag (a
 // dressed segment's, one tags dresses) stands inside a cluster of the
 // line's text, a character beside it joining the one across it, that
-// cluster is drawn twice, wider than Width says; and a Prepend
-// character before a tag takes its [ into its cluster, so the tag is
-// drawn as text and its style is not closed. No screen puts box text
+// cluster is drawn twice, wider than Width says unless the character
+// adds no cell (a combining mark); and a Prepend character before a
+// tag takes its [ into its cluster, so the tag is drawn as text and
+// its style is not closed. No screen puts box text
 // beside a tag today, only the client's own words (and, in the stop
 // line after a key failed to sign, the key's path as the person named
 // it, after the closing tag of "not asking: "), and no test would
