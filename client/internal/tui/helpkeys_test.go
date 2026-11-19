@@ -24,7 +24,7 @@ var helpKeys = map[model.Screen][]string{
 	model.ScreenBox:      {"PgUp PgDn Home End", "↑ ↓", "↑ ↓", "c", "y", "P", "ctrl-r", ":", "esc", "?", "q"},
 	model.ScreenHelp:     {"PgUp PgDn Home End", "↑ ↓", ":", "esc", "?", "q"},
 	model.ScreenRefused:  {"PgUp PgDn Home End", "↑ ↓", "P", "r", "?", "q"},
-	model.ScreenStopHelp: {"r", "esc", "q"},
+	model.ScreenStopHelp: {"PgUp PgDn Home End", "↑ ↓", "r", "esc", "q"},
 }
 
 // listedKeys is the keys help lists for s, each by the name it gives.

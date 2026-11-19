@@ -194,3 +194,49 @@ func TestBigOverlay(t *testing.T) {
 		t.Errorf("open %s, a key %s: too slow", opened, keys)
 	}
 }
+
+// TestStopHelpAtTheSmallest: the keys overlay (?) over a stop screen in
+// the smallest window, 60x16, after a 401 and after an answer about
+// another key: the footer is drawn whole, naming ↑↓, and ↓ brings every
+// line of the overlay on screen, read from the screen's cells as it
+// scrolls, no row past the window.
+func TestStopHelpAtTheSmallest(t *testing.T) {
+	const foot = "↑↓ scroll  esc back  r ask again  q quit"
+	unspaced := func(s string) string { return strings.Join(strings.Fields(s), "") }
+	for name, fail := range map[string]error{
+		"401":           &model.Failure{Kind: model.FailSignedOut, Message: "deploy.example.com did not accept your key."},
+		"another key":   &model.Failure{Kind: model.FailAboutAnother, Message: "the box answered about another key."},
+	} {
+		h := start(t, 60, 16, func(f *demo.Fake) { f.Set("whoami", fail) })
+		h.press("?")
+		if h.top().Screen != model.ScreenStopHelp {
+			t.Fatalf("%s: on %+v, not help over the stop screen", name, h.top())
+		}
+		page := map[int]string{}
+		var rows []drawnRow
+		for range 60 {
+			var off int
+			h.on(func() { off, _ = h.u.page.GetScrollOffset() })
+			rows = screenRows(h)
+			for i, r := range rows[2 : len(rows)-1] {
+				page[off+i] = r.text
+				if r.end > 60 {
+					t.Errorf("%s: a row past the window: %q", name, r.text)
+				}
+			}
+			h.press(tcell.KeyDown)
+		}
+		if got := rows[len(rows)-1].text; got != foot {
+			t.Errorf("%s: the footer is drawn %q, want %q", name, got, foot)
+		}
+		var all strings.Builder
+		for i := range len(page) {
+			all.WriteString(page[i])
+		}
+		for _, l := range strings.Split(stopHelp(), "\n") {
+			if !strings.Contains(unspaced(all.String()), unspaced(l)) {
+				t.Errorf("%s: ↓ does not bring this line on screen: %q", name, l)
+			}
+		}
+	}
+}

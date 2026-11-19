@@ -39,7 +39,7 @@ var (
 	browse  = []model.Screen{model.ScreenApps, model.ScreenApp, model.ScreenRecord, model.ScreenMe, model.ScreenBox, model.ScreenHelp}
 	every   = append(append([]model.Screen{}, browse...), model.ScreenRefused)
 	// stops are a stop screen and help over it, where nothing is asked
-	// and so nothing opens: only leaving help, r and q.
+	// and so nothing opens: only scrolling, leaving help, r and q.
 	stops = []model.Screen{model.ScreenRefused, model.ScreenStopHelp}
 	all   = append(append([]model.Screen{}, every...), model.ScreenStopHelp)
 )
@@ -98,8 +98,8 @@ var bindings = []binding{
 		}
 		return ev
 	}},
-	{"PgUp PgDn Home End", "move by a page, to the start or the end", every, either, keys(tcell.KeyPgUp, tcell.KeyPgDn, tcell.KeyHome, tcell.KeyEnd), pass},
-	{"↑ ↓", "scroll", []model.Screen{model.ScreenMe, model.ScreenBox, model.ScreenHelp, model.ScreenRefused}, closed, keys(tcell.KeyUp, tcell.KeyDown), pass},
+	{"PgUp PgDn Home End", "move by a page, to the start or the end", all, either, keys(tcell.KeyPgUp, tcell.KeyPgDn, tcell.KeyHome, tcell.KeyEnd), pass},
+	{"↑ ↓", "scroll", []model.Screen{model.ScreenMe, model.ScreenBox, model.ScreenHelp, model.ScreenRefused, model.ScreenStopHelp}, closed, keys(tcell.KeyUp, tcell.KeyDown), pass},
 	{"↑ ↓", "scroll the overlay", reading, open, keys(tcell.KeyUp, tcell.KeyDown), pass},
 	{"c", "the motel command for this view", reading, either, rune1('c'), done(func(u *UI, _ model.View) { u.overlay = 1; u.show() })},
 	{"y", "what the box said, as JSON", reading, either, rune1('y'), done(func(u *UI, _ model.View) { u.overlay = 2; u.show() })},

@@ -28,10 +28,10 @@ func (u *UI) render() {
 	left, right := u.S.Title(now)
 	door.SetText(u.title, door.Line(spread(left, right, u.w), u.Colour))
 	v := u.top()
-	// Only the refusal is prose; the other pages are labelled lines,
-	// which a wrap would break under the labels: who am I and the box
-	// screen lay a failure's sentence on rows themselves.
-	u.page.SetWrap(v.Screen == model.ScreenRefused)
+	// Only the refusal, and help over it, are prose; the other pages are
+	// labelled lines, which a wrap would break under the labels: who am I
+	// and the box screen lay a failure's sentence on rows themselves.
+	u.page.SetWrap(v.Screen == model.ScreenRefused || v.Screen == model.ScreenStopHelp)
 	crumbL, crumbR := u.crumbs(v, now)
 	if u.notice != nil {
 		// What the : line said of what was typed, until the next key.
@@ -134,7 +134,7 @@ var footers = map[model.Screen]string{
 	model.ScreenBox:      "y json  c command  esc back  ? more",
 	model.ScreenHelp:     "esc close  q quit",
 	model.ScreenRefused:  "↑↓ scroll  r ask again  ? keys  q quit",
-	model.ScreenStopHelp: "esc back  r ask again  q quit",
+	model.ScreenStopHelp: "↑↓ scroll  esc back  r ask again  q quit",
 }
 
 // The apps table's columns, dropped in this order when the screen is
@@ -351,9 +351,7 @@ func (u *UI) withStop(ls []model.Line) []model.Line {
 func stopHelp() string {
 	return "KEYS OF THE SCREEN BELOW\n" + keyHelp(model.ScreenRefused) + "\n\nKEYS HERE\n" + keyHelp(model.ScreenStopHelp) + `
 
-Every read is stopped, so nothing opens from here: no view, no command or
-answer overlay, no : line. r asks again; once the box answers, about this
-key and this box, the screens come back.`
+Every read is stopped, so nothing opens from here: no view, no command or answer overlay, no : line. r asks again; once the box answers, about this key and this box, the screens come back.`
 }
 
 // help is the help page: the keys of the screen below it, from the
