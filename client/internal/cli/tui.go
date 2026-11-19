@@ -45,7 +45,7 @@ const screenLong = "motel alone shows them on screens in the terminal, over the 
 	"reads the box, y the box's answer as JSON. It is asked with your own key only,\n" +
 	"and takes no --json. With no arguments at all it prints this help instead when\n" +
 	"stdout is not a terminal, and, with a line under it saying why, when it finds\n" +
-	"no box or key to read with."
+	"no box or key to read with, or no screen to draw on."
 
 // screen makes motel alone, the root, open the screens: with its own
 // --box and --key, as every command that asks the box has, and the

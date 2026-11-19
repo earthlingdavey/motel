@@ -71,7 +71,7 @@ func TestBareIntoAPipeIsTheHelp(t *testing.T) {
 	if r.code != 0 || r.stdout != help.stdout || r.stderr != "" || r.signed != 0 || r.sent != 0 {
 		t.Errorf("exit %d, stderr %q, %d signed, %d sent, help printed %v; want 0, nothing said, signed or sent, and the help", r.code, r.stderr, r.signed, r.sent, r.stdout == help.stdout)
 	}
-	if !strings.Contains(help.stdout, "motel [flags]") || !strings.Contains(help.stdout, "--box") || !strings.Contains(help.stdout, "With no arguments at all") {
+	if !strings.Contains(help.stdout, "motel [flags]") || !strings.Contains(help.stdout, "--box") || !strings.Contains(help.stdout, "With no arguments at all") || !strings.Contains(help.stdout, "no box or key to read with, or no screen to draw on.") {
 		t.Errorf("the help does not say what motel alone does:\n%s", help.stdout)
 	}
 }
