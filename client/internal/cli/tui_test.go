@@ -844,8 +844,9 @@ func setLocale(t *testing.T, l locale) {
 
 // TestCharsetIsTcells: localeCharset reads the locale as tcell's own
 // Init does, on its real terminfo screen over a terminal that records
-// bytes: Init fails with ErrNoCharset for exactly the locales CanDraw
-// refuses. A tcell that reads it otherwise fails here.
+// bytes: Init takes the same character set's name, and fails with
+// ErrNoCharset for exactly the locales CanDraw refuses. A tcell that
+// reads it otherwise fails here.
 func TestCharsetIsTcells(t *testing.T) {
 	for _, l := range locales {
 		setLocale(t, l)
@@ -854,6 +855,12 @@ func TestCharsetIsTcells(t *testing.T) {
 			t.Fatal(err)
 		}
 		err = scr.Init()
+		// Init keeps getCharset's name as it is, before it refuses it.
+		if err == nil || errors.Is(err, tcell.ErrNoCharset) {
+			if got := scr.CharacterSet(); got != localeCharset() {
+				t.Errorf("%+v: tcell's Init took the character set %q, and CanDraw's check reads %q", l, got, localeCharset())
+			}
+		}
 		if err == nil {
 			scr.Fini()
 		}
