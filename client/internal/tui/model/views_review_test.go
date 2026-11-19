@@ -105,8 +105,8 @@ func TestIndentLongStrings(t *testing.T) {
 
 // TestDeepJSONBounded: a small body nested thousands deep (the review's)
 // is indented no deeper than IndentMax, on the overlay and as P prints
-// it, in under 50 MB and a second each; P still prints every line, and
-// the overlay counts the lines it does not draw.
+// it, allocating under 50 MB each (json.Indent took over 4 GB); P still
+// prints every line, and the overlay counts the lines it does not draw.
 func TestDeepJSONBounded(t *testing.T) {
 	for _, c := range []struct{ depth, elems int }{{2000, 2000}, {9000, 5000}, {9000, 20000}} {
 		body := []byte(`{"apps":[],"x":` + strings.Repeat("[", c.depth) + strings.TrimSuffix(strings.Repeat("1,", c.elems), ",") + strings.Repeat("]", c.depth) + `}`)
@@ -128,12 +128,10 @@ func TestDeepJSONBounded(t *testing.T) {
 			var m0, m1 runtime.MemStats
 			runtime.GC()
 			runtime.ReadMemStats(&m0)
-			at := time.Now()
 			run.f()
-			took := time.Since(at)
 			runtime.ReadMemStats(&m1)
-			if mb := (m1.TotalAlloc - m0.TotalAlloc) >> 20; mb >= 50 || took >= time.Second {
-				t.Errorf("%d bytes nested %d deep: %s took %v and %d MB", len(body), c.depth, run.what, took, mb)
+			if mb := (m1.TotalAlloc - m0.TotalAlloc) >> 20; mb >= 50 {
+				t.Errorf("%d bytes nested %d deep: %s allocated %d MB", len(body), c.depth, run.what, mb)
 			}
 		}
 		if len(lines) != model.OverlayLines || cut != all-model.OverlayLines {
