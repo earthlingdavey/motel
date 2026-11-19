@@ -1042,10 +1042,11 @@ func TestMetricsViewCapIsTheLastPush(t *testing.T) {
 // hour's did. Read as one instant rate of the newest unit, it covered
 // that unit's life alone: 60 s after a deploy, the boot's 0.9 cores
 // (review of #577). It is said only with a point in the last two steps:
-// an app stopped three minutes ago has none, and neither has one at 0.5
-// cores down for three or four minutes and started again 20 s ago,
-// whose new unit has no rate yet, though the old unit's last point is
-// among the five minutes' (review round two of #577).
+// an app whose newest point is three minutes back has none (stopped, or
+// at 0.5 cores down for three minutes and started again 20 s ago, its
+// new unit with no rate yet), nor one down for four minutes; one whose
+// newest point is two minutes back still has it, the accepted row's
+// 3 m 15 s (review round two of #577).
 func TestMetricsViewAvg5mSpansACutover(t *testing.T) {
 	end := time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC)
 	// pts is the hour's points at the minutes back given, each 0.5 but
@@ -1068,16 +1069,12 @@ func TestMetricsViewAvg5mSpansACutover(t *testing.T) {
 	for _, c := range []struct {
 		name   string
 		recent []point
-		// pushed: a unit pushed within 75 s, so the store has an
-		// instant rate of the newest unit (the old unit's, the new one
-		// having none yet), which nothing asks for any more
-		pushed bool
 		want   string // cpu_cores, at both windows
 	}{
-		{"running across a cutover", pts(5, 4, 3, 2, 1, 0), true, `{"avg_5m":0.3,"avg":0.25}`},
-		{"stopped three minutes ago", pts(5, 4, 3), false, `{"avg":0.25}`},
-		{"down four minutes, started 20 s ago", pts(5, 4), true, `{"avg":0.25}`},
-		{"down three minutes, started 20 s ago", pts(5, 4, 3), true, `{"avg":0.25}`},
+		{"running across a cutover", pts(5, 4, 3, 2, 1, 0), `{"avg_5m":0.3,"avg":0.25}`},
+		{"the newest point two minutes back", pts(5, 4, 3, 2), `{"avg_5m":0.5,"avg":0.25}`},
+		{"the newest point three minutes back", pts(5, 4, 3), `{"avg":0.25}`},
+		{"down four minutes, started 20 s ago", pts(5, 4), `{"avg":0.25}`},
 	} {
 		for _, window := range []string{"1h", "24h"} {
 			t.Run(c.name+" "+window, func(t *testing.T) {
@@ -1093,12 +1090,6 @@ func TestMetricsViewAvg5mSpansACutover(t *testing.T) {
 							t.Errorf("the five minutes asked as %s, want %s", q, want)
 						}
 						return []series{{points: c.recent}}
-					},
-					requests: func(q string) []series {
-						if !c.pushed || !strings.HasPrefix(q, "sum(rate(") {
-							return nil
-						}
-						return []series{{points: []point{{t: end, v: 0.5}}}}
 					},
 				}
 				v := newMetricsView(f, zap.NewNop())

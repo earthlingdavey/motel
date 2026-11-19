@@ -116,7 +116,7 @@ func (v *metricsView) AppMetrics(ctx context.Context, app, window string) *wire.
 	return &val
 }
 
-// viewAnswers is the eleven queries' answers.
+// viewAnswers is the ten queries' answers.
 type viewAnswers struct {
 	mem, cpu, peak, memNow, capNow, cpuRecent, classes, p50, p95, cache []series
 }
