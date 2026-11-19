@@ -254,7 +254,7 @@ they differ, as far as the screen leaves room for STATE beside them;
 the whole name is what is opened, searched and printed. An app's
 screen shows its state and deploys; a deploy's record is laid out for
 reading a failure, its log tail last. The title bar, the crumb, the
-apps strip, an app's fields and a record's head are fitted to the
+apps strip, an app's fields, a record's head and who am I's and the box screen's lines holding a box's value are fitted to the
 window in the screen's cells, as the door draws them (a wide character
 takes two, a combining mark none, and a character the door writes as
 an escape as many as the escape has): a line too wide is cut, `…` its
@@ -302,8 +302,8 @@ is open, and soon after a 403, so a removed grant shows in the title
 bar. While the session runs and whoami's newest read has failed (an
 answer the client cannot use, a 403, a 409, no answer), the title bar
 puts the age of its last answer, and that the read failed, before it
-(`21m old, failed: v0.7.0 · alice@…`), and who am I says why (a
-failure's sentence there and on the box screen is laid on rows to fit the window). An
+(`21m old, failed: v0.7.0 · alice@…`), and who am I says why (the
+client's own lines there and on the box screen, a failure's sentence among them, are laid on rows to fit the window). An
 answer about another key or box (the `whoami` command's rule) stops
 every read, like a refusal, and the session drops everything the
 box said, before it too (who you are, the list, every status and

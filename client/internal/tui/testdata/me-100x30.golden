@@ -13,8 +13,8 @@ from here you may
 you may not roll back, relaunch, deploy or push: no person may yet. Deploys come from CI.
              Read logs, alerts and backups: this client does not offer them yet.
 
-What the box knows of you is in its Caddyfile (person and grant lines), which the
-operator keeps. `motel key` prints the line to send them.
+What the box knows of you is in its Caddyfile (person and grant lines), which the operator keeps.
+  `motel key` prints the line to send them.
 
 
 

@@ -269,3 +269,57 @@ func TestBoxRefusalDropsTheAnswer(t *testing.T) {
 		}
 	}
 }
+
+// TestMeAndBoxFitTheWindow: who am I and the box screen at 60x16 and
+// 80x24, read from the screen's cells as ↓ scrolls them: every line of
+// the client's own words is on screen whole, laid on rows, and a line
+// that holds a box's value is whole or cut with … as its last cell;
+// none is cut at the window's edge with no mark.
+func TestMeAndBoxFitTheWindow(t *testing.T) {
+	unspaced := func(s string) string { return strings.Join(strings.Fields(s), "") }
+	for _, size := range [][2]int{{60, 16}, {80, 24}} {
+		for _, c := range []struct {
+			name  string
+			open  string
+			lines func(h *harness) []model.Line
+		}{
+			{"who am I", "me", func(h *harness) []model.Line { return h.s.MeView(h.now) }},
+			{"the box", "box", func(h *harness) []model.Line { return h.s.BoxView(h.now) }},
+		} {
+			name := c.name + " at " + strconv.Itoa(size[0])
+			h := start(t, size[0], size[1], nil)
+			h.press(":", c.open, tcell.KeyEnter)
+			page := map[int]drawnRow{}
+			for range 40 {
+				var off int
+				h.on(func() { off, _ = h.u.page.GetScrollOffset() })
+				rows := screenRows(h)
+				for i, r := range rows[2 : len(rows)-1] {
+					page[off+i] = r
+				}
+				h.press(tcell.KeyDown)
+			}
+			var all strings.Builder
+			for i := range len(page) {
+				all.WriteString(page[i].text)
+			}
+			var whole []model.Line
+			h.on(func() { whole = c.lines(h) })
+			for _, l := range whole {
+				want := unspaced(l.Text())
+				if strings.Contains(unspaced(all.String()), want) {
+					continue
+				}
+				cut := false
+				for _, r := range page {
+					if r.last == "…" && strings.HasPrefix(want, unspaced(strings.TrimSuffix(r.text, "…"))) {
+						cut = true
+					}
+				}
+				if !cut {
+					t.Errorf("%s: neither whole on screen nor cut with …: %q", name, l.Text())
+				}
+			}
+		}
+	}
+}

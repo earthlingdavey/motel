@@ -5,9 +5,9 @@ Caddyfile   sha256 1f38639fad43624b85cdc2cac1778918713a061084bca6487683ec73f2b29
 secrets key age1qyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqs3290gq
 deploy host deploy.example.com
 
-Not shown here, root's over ssh: moteld's journal (journalctl -u moteld),
-the last push's log (journalctl -u motel-box-apply), systemctl --failed,
-host load (btop).
+Not shown here, root's over ssh: moteld's journal (journalctl -u moteld), the last push's log
+  (journalctl -u motel-box-apply), systemctl --failed, host load (btop).
+
 
 
 

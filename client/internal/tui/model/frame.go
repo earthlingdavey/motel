@@ -600,14 +600,14 @@ func (s *Session) freshness(now time.Time) Line {
 // MeView is who am I, its lines whole.
 func (s *Session) MeView(now time.Time) []Line { return s.MeViewFit(now, 0, nil) }
 
-// MeViewFit is who am I with a failure's sentence laid on rows of width
-// cells (Sentence); 0 leaves it one line.
+// MeViewFit is who am I laid to width cells (laid); 0 leaves each line
+// one line.
 func (s *Session) MeViewFit(now time.Time, width int, cells Cells) []Line {
 	switch {
 	case s.Me == nil && s.MeErr != nil:
 		return Sentence(Line{own("who you are is not known: "), Seg{T: Capped(failureText(s.MeErr), 4*LineMax)}}, width, cells)
 	case s.Me == nil:
-		return []Line{{own("asking " + s.Host + " who your key is…")}}
+		return Sentence(Line{own("asking " + s.Host + " who your key is…")}, width, cells)
 	}
 	me := s.Me.V
 	if keyDiffers, boxDiffers := AboutAnother(me, s.Key.Fingerprint, s.Host); keyDiffers || boxDiffers {
@@ -620,31 +620,33 @@ func (s *Session) MeViewFit(now time.Time, width int, cells Cells) []Line {
 		}
 		return append(out, nil, Line{own("An answer that is not about this key here is not one to act on: nothing in it is shown as who you are.")})
 	}
-	out := []Line{field("you are", own(me.Name))}
-	out = append(out, field("your key", own(s.Key.Fingerprint)))
+	// The lines that hold the box's values (the name, the release and
+	// protocol, the grants) are cut; the rest are the client's words.
+	out := []Line{cutTo(field("you are", own(me.Name)), width, cells)}
+	out = append(out, Sentence(field("your key", own(s.Key.Fingerprint)), width, cells)...)
 	k := "             " + s.Key.Shown + " (" + s.Key.Source + ")"
 	if s.Key.Hardware {
 		k += " · a hardware key: each signing needs a touch"
 	}
-	out = append(out, Line{own(k)})
+	out = append(out, Sentence(Line{own(k)}, width, cells)...)
 	rel := "moteld " + me.Version
 	if me.Version == "" {
 		rel = "a moteld build that names no release"
 	}
-	out = append(out, field("box", own(s.Host+" · "+rel+" · protocol "+strconv.Itoa(me.Protocol)+" · client motel "+s.Version)))
+	out = append(out, cutTo(field("box", own(s.Host+" · "+rel+" · protocol "+strconv.Itoa(me.Protocol)+" · client motel "+s.Version)), width, cells))
 	if s.TokenExpires != nil {
 		if exp := s.TokenExpires(); !exp.IsZero() {
 			if left := exp.Sub(now); left > 0 {
-				out = append(out, field("token", own("good until "+hms(exp)+" UTC ("+Ago(left)+" left)")),
-					Line{own("             signed again a minute before it ends, and only while you use the screen")})
+				out = append(out, laid(width, cells, field("token", own("good until "+hms(exp)+" UTC ("+Ago(left)+" left)")),
+					Line{own("             signed again a minute before it ends, and only while you use the screen")})...)
 			} else {
-				out = append(out, field("token", own("expired at "+hms(exp)+" UTC; signed again on the next read")))
+				out = append(out, Sentence(field("token", own("expired at "+hms(exp)+" UTC; signed again on the next read")), width, cells)...)
 			}
 		}
 	}
 	out = append(out, nil, Line{ownC("from here you may", Label)})
 	if len(me.Roles) == 0 {
-		out = append(out, Line{own("  nothing yet: signed in as " + me.Name + ", you hold no grant here")})
+		out = append(out, cutTo(Line{own("  nothing yet: signed in as " + me.Name + ", you hold no grant here")}, width, cells))
 	}
 	for _, r := range me.Roles {
 		on := "the box"
@@ -655,13 +657,12 @@ func (s *Session) MeViewFit(now time.Time, width int, cells Cells) []Line {
 		if r.Role == "viewer" {
 			verb = own("view")
 		}
-		out = append(out, Line{own("  "), verb, own(pad("", 10-len([]rune(verb.T.String()))) + " " + on)})
+		out = append(out, cutTo(Line{own("  "), verb, own(pad("", 10-len([]rune(verb.T.String()))) + " " + on)}, width, cells))
 	}
-	out = append(out, nil,
+	out = append(out, laid(width, cells, nil,
 		field("you may not", own("roll back, relaunch, deploy or push: no person may yet. Deploys come from CI.")),
 		Line{own("             Read logs, alerts and backups: this client does not offer them yet.")}, nil,
-		Line{own("What the box knows of you is in its Caddyfile (person and grant lines), which the")},
-		Line{own("operator keeps. `motel key` prints the line to send them.")})
+		Line{own("What the box knows of you is in its Caddyfile (person and grant lines), which the operator keeps. `motel key` prints the line to send them.")})...)
 	if s.MeErr != nil {
 		out = append(append(out, nil), Sentence(Line{ownC("the last read failed: ", Warn), Seg{T: Capped(failureText(s.MeErr), 2*LineMax)}}, width, cells)...)
 	}
@@ -708,41 +709,61 @@ func (s *Session) BoxAsOf(now time.Time) Line {
 // BoxView is the box screen, its lines whole.
 func (s *Session) BoxView(now time.Time) []Line { return s.BoxViewFit(now, 0, nil) }
 
-// BoxViewFit is the box screen with a failure's sentence laid on rows
-// of width cells (Sentence); 0 leaves it one line.
+// BoxViewFit is the box screen laid to width cells (laid); 0 leaves each
+// line one line.
 func (s *Session) BoxViewFit(now time.Time, width int, cells Cells) []Line {
 	switch {
 	case s.BoxSt == nil && s.BoxErr != nil:
 		return Sentence(Line{{T: Capped(failureText(s.BoxErr), 4*LineMax)}}, width, cells)
 	case s.BoxSt == nil:
-		return []Line{{own("asking " + s.Host + " what it runs…")}}
+		return Sentence(Line{own("asking " + s.Host + " what it runs…")}, width, cells)
 	}
 	// The box's answer alone, whose age the crumb gives (BoxAsOf). The
 	// release is whoami's: who am I shows it under whoami's own age, and
 	// the title bar beside the session's freshness word.
 	b := s.BoxSt.V
-	out := []Line{field("runs commit", own(b.Commit)), field("Caddyfile", own("sha256 "+b.SHA256))}
+	// The box's values are cut; the rest are the client's words.
+	out := []Line{cutTo(field("runs commit", own(b.Commit)), width, cells), cutTo(field("Caddyfile", own("sha256 "+b.SHA256)), width, cells)}
 	if b.Recipient != "" {
-		out = append(out, field("secrets key", boxT(b.Recipient)))
+		out = append(out, cutTo(field("secrets key", boxT(b.Recipient)), width, cells))
 	}
-	out = append(out, field("deploy host", own(s.Host)), nil,
-		Line{own("Not shown here, root's over ssh: moteld's journal (journalctl -u moteld),")},
-		Line{own("the last push's log (journalctl -u motel-box-apply), systemctl --failed,")},
-		Line{own("host load (btop).")})
+	out = append(out, laid(width, cells, field("deploy host", own(s.Host)), nil,
+		Line{own("Not shown here, root's over ssh: moteld's journal (journalctl -u moteld), the last push's log (journalctl -u motel-box-apply), systemctl --failed, host load (btop).")})...)
 	if s.BoxErr != nil {
 		out = append(append(out, nil), Sentence(Line{ownC("the last read failed: ", Warn), Seg{T: Capped(failureText(s.BoxErr), 2*LineMax)}}, width, cells)...)
 	}
 	return out
 }
 
+// laid is each of ls laid on rows of width cells (Sentence). A line that
+// holds a box's value is cut to width before it is given here (cutTo),
+// so it fits, and box text never begins a row.
+func laid(width int, cells Cells, ls ...Line) []Line {
+	var out []Line
+	for _, l := range ls {
+		out = append(out, Sentence(l, width, cells)...)
+	}
+	return out
+}
+
+// cutTo is l cut to width cells, … its last cell (Line.Cut); 0 leaves it
+// whole.
+func cutTo(l Line, width int, cells Cells) Line {
+	if width <= 0 {
+		return l
+	}
+	return l.Cut(width, cells)
+}
+
 // Sentence is a sentence of the client's (a failure's, which may quote
 // the box) laid on rows of at most width cells, broken at spaces as lay
 // breaks the overlays' words, and a word wider than a row broken where
 // the row ends; a line that fits, or a width of 0, is the line as it
-// is. Every row after the first is indented two spaces: a row that
-// goes on inside a quotation then never begins where a line of the
-// screen's own does, so it reads as the sentence's, and the quotation
-// as one.
+// is. The spaces the line begins with, and those between two words on
+// one row, are kept (a label's padding). Every row after the first is
+// indented two spaces more than the line begins: a row that goes on
+// inside a quotation then never begins where a line of the screen's
+// own does, so it reads as the sentence's, and the quotation as one.
 func Sentence(l Line, width int, cells Cells) []Line {
 	if width <= 0 || l.Width(cells) <= width {
 		return []Line{l}
@@ -751,25 +772,40 @@ func Sentence(l Line, width int, cells Cells) []Line {
 		s string
 		c Class
 	}
-	// The words, each its pieces of one class or more, in order.
-	var words [][]piece
-	var word []piece
+	// The words, each its pieces of one class or more and the spaces
+	// before it, in order.
+	type word struct {
+		gap string
+		ps  []piece
+	}
+	var words []word
+	var w word
 	for _, sg := range l {
 		for i, p := range strings.Split(sg.T.String(), " ") {
-			if i > 0 && len(word) > 0 {
-				words, word = append(words, word), nil
+			if i > 0 {
+				if len(w.ps) > 0 {
+					words, w = append(words, w), word{}
+				}
+				w.gap += " "
 			}
 			if p != "" {
-				word = append(word, piece{p, sg.C})
+				w.ps = append(w.ps, piece{p, sg.C})
 			}
 		}
 	}
-	if len(word) > 0 {
-		words = append(words, word)
+	if len(w.ps) > 0 {
+		words = append(words, w)
 	}
-	const indent = "  "
+	if len(words) == 0 {
+		return []Line{l}
+	}
+	lead := words[0].gap
+	indent := lead + "  "
 	var out []Line
 	row := Line{}
+	if lead != "" {
+		row = Line{own(lead)}
+	}
 	add := func(p piece) {
 		if n := len(row); n > 0 && row[n-1].C == p.c {
 			row[n-1].T = termtext.From(row[n-1].T.String() + p.s)
@@ -784,16 +820,16 @@ func Sentence(l Line, width int, cells Cells) []Line {
 	}
 	for _, w := range words {
 		whole := ""
-		for _, p := range w {
+		for _, p := range w.ps {
 			whole += p.s
 		}
-		if !empty() && !fits(" "+whole) {
+		if !empty() && !fits(w.gap+whole) {
 			next()
 		}
 		if !empty() {
-			add(piece{" ", Plain})
+			add(piece{w.gap, Plain})
 		}
-		for _, p := range w {
+		for _, p := range w.ps {
 			// A word wider than a row is broken where the row ends.
 			for rest := p.s; rest != ""; {
 				end := 0
