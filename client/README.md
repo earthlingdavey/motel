@@ -43,6 +43,14 @@ nothing sent). `<app>` is a name, or the app's URL
 (`https://deploy.example.com/blog`, as `MOTEL_URL` holds it), which names
 the box too.
 
+`status` says the app's state first (`running`, `throttled`, `stopped`,
+`backoff`, `not deployed`) and the version that serves, and while a
+deploy is in flight a `deploying` line under it: the version in flight,
+its phase once it has one, when the deploy started and by whom
+(`deploying    4c2d9e7b1a05 soaking, started 2026-11-19 14:12 UTC  by …`);
+its versions line marks the first version with that state when it is
+the one serving (`7c1e55d0a913 (running)`).
+
 **Which box:** an app URL as `<app>`, else `--box`, `MOTEL_BOX`, the host
 of `MOTEL_URL`, or the box repository the shell is in (inside
 `<host>/`, or at its top when it holds one box). `--box` and `MOTEL_BOX`
@@ -209,7 +217,7 @@ made by hand. Accepted:
 | A 5xx in moteld's own words (a box still starting, a box status that cannot read its files) is said as not known to be moteld's and exits 3, not 1: no header tells it from a gateway's, by the owner's decision that no answer names motel. Its code and its quoted sentence are still shown | 2 | 4 | 1 | 8 | 3 (a stamp on the wire again) | accepted |
 | A gateway's JSON 4xx (a 403, 404, 409) is said as "the box says", as motel's would be: no header tells them apart, and none ever did for a 4xx | 2 | 5 | 3 | 30 | 1 (say a 4xx's sentence as "it says", not "the box says") | owed: older than this change, and it rewrites every 4xx sentence and its goldens |
 | A box built with a release string that is not `N.N.N` with an optional suffix (`make build VERSION=<another shape>`: the Makefile's own default and every tag fit) has every `whoami` called "not moteld's answer: its version is not a release", exit 3 | 2 | 5 | 3 | 30 | 1 (print another shape quoted) | accepted: over the bar, and no doc asks for such a build; the client holds the release to the shape the Makefile links in so that it can print it unquoted |
-| The TUI's marks (`▲ ✖ ⟳`) and box-drawing characters may be double width in some terminals, and misalign its columns (a plain-character mode is a later addition) | 1 | 2 | 1 | 2 | 2 | accepted |
+| The TUI's marks (`▲ ✖ ⟳`, and the `→` of a version in flight) and box-drawing characters may be double width in some terminals, and misalign its columns (a plain-character mode is a later addition) | 1 | 2 | 1 | 2 | 2 | accepted |
 | The client's one retry of a 401 is a request the TUI's engine does not count against its rate | 1 | 1 | 3 | 3 | 2 | accepted |
 | A box string could reach a tview widget by a writer (`io.Copy`, `WriteTo` into a text view), by reflection, through a type alias, or by a function or method value of a setter, and the TUI's structural tests (`TestOneDoor`, `TestTUIImports`, `TestActionsAreCommands`) be got round the same ways, without a test failing; held by review and the hostile goldens | 2 | 1 | 3 | 6 | 2 | accepted |
 | A hardware key that requires its PIN cannot be used in the TUI: the TUI never asks for one, and the agent does not keep it | 2 | 1 | 1 | 2 | 3 (a PIN prompt outside the screen) | accepted |
@@ -242,6 +250,8 @@ made by hand. Accepted:
 | At 60x16 the `y` overlay's own words (what the answer is to, how it is shown and cut, and that `P` prints it whole) take 7 of its 11 rows over the apps screen, 9 and a blank over an app's, and all 11 over a record whose command line is cut, so the answer shows on three rows, one, or none until it is scrolled; the footer says `↑↓ scroll` | 2 | 5 | 1 | 10 | 2 | accepted |
 | A refusal said alone on a record's screen or an app's (a 403, a 404) is one row, cut at the window's edge with `…`: a long one (a 403 that did not say what it needs, or one quoting a value long in escapes) loses the box's words past the edge and the client's own after them (`motel whoami` lists the roles you hold from here.). Laid on rows instead (62d41e87, reverted), it took at most half the window's height and lost its end with no mark | 2 | 4 | 1 | 8 | 2 | accepted |
 | An app's "the last read failed" sentence is laid on rows within half the window's height, the fields under it: at 60x16 one quoting a value long in escapes (a 409 quoting 200 bidi overrides) fills those 8 rows, and its end (its cap's `…[cut]`) and every field under it, the state among them, are dropped with no mark; the deploys stay below it | 2 | 2 | 3 | 12 | 2 | accepted |
+| With `--key` in it (whenever the key was named by `--key` or by `MOTEL_KEY`), `c`'s command lines are wider than the overlay at 80 columns for an ordinary key path and box name: `motel status --box deploy.smallhours.org --key '~/.ssh/id_ed25519.pub' -- example` is 81 characters and its `--json` line 88, where the overlay leaves a command line 76 cells (78 inside its border, 2 of indent). Both are cut at the edge and marked, and the overlay says not to copy them and that `P` prints the first whole; with a longer key path (`'~/tui1-trial/keys/trial.pub'`) both are cut before they differ, so they look alike as far as they show | 2 | 5 | 1 | 10 | 3 (a command laid on rows cannot be copied as one line) | accepted |
+| A mistyped `:` command is said on the crumb's row, cut where the apps screen's summary beside it begins: at 60 columns `? lists the : views;…`, the remedy whole and what was wrong cut away, the cut marked; at 80 `? lists the : views; no command "bogus" …`, what was wrong but its last word | 2 | 5 | 1 | 10 | 2 | accepted |
 
 Owed, from the reviews of the TUI's first part (#558; scored there), of
 their fixes, and of its second part; the others are fixed:
@@ -263,12 +273,25 @@ package of the TUI reaches the client, a transport or a program
 each entry naming the command whose read it makes
 (`TestActionsAreCommands`). It only reads. The apps screen is sorted by
 what needs a look, with a strip that says why; a person with one app
-opens on it, with the list under it. A name longer than 20 characters is
+opens on it, with the list under it. While a deploy is in flight an
+app's row (one not stopped, throttled or in backoff, which it says
+instead) is marked `⟳`, whatever its newest record says (a failed one
+stays in LAST DEPLOY, `d` still opens it, and the row still counts as
+needing a look), STATE says the deploy's phase (`deploying` while its
+upload is received), VERSION the version in flight, as on its way
+(`→ 4c2d9e7b1a05`), and the strip `deploying 4c2d9e7b1a05: soaking`; a
+box that names no version in flight (one older than `deploying`) has
+VERSION keep the running one and the strip say `deploying: soaking`. A name longer than 20 characters is
 cut in its middle, in the table and the strip, its start and its end
 kept; two names that would be cut alike are shown longer, alike, until
 they differ, as far as the screen leaves room for STATE beside them;
 the whole name is what is opened, searched and printed. An app's
-screen shows its state and deploys; a deploy's record is laid out for
+screen shows its state and deploys; while a deploy is in flight its
+state names the version that serves as running, and a `deploying` line
+under it the version in flight, its phase, when the deploy started and
+by whom (`4c2d9e7b1a05 soaking · started 25s ago (14:12 UTC) by …`;
+under "has no version yet: a deploy of it is in flight." before a first
+version serves); a deploy's record is laid out for
 reading a failure, its log tail last. The title bar, the crumb, the
 apps strip, an app's fields, a record's head and its log tail (while `w` is off) and who am I's and the box screen's lines holding a box's value are fitted to the
 window in the screen's cells, as the door draws them (a wide character
@@ -317,8 +340,8 @@ their turn. whoami is read every 5 minutes, every minute while who am I
 is open, and soon after a 403, so a removed grant shows in the title
 bar; one that got no answer is asked again at its backoff (below), not at its turn, until it answers. While the session runs and whoami's newest read has failed (an
 answer the client cannot use, a 403, a 409, no answer), the title bar
-puts the age of its last answer, and that the read failed, before it
-(`21m old, failed: v0.7.0 · alice@…`), and who am I says why (the
+puts that the read failed, and the age of its last answer, before it
+(`whoami failed; 21m old: v0.7.0 · alice@…`), and who am I says why (the
 client's own lines there and on the box screen, a failure's sentence among them, are laid on rows to fit the window). An
 answer about another key or box (the `whoami` command's rule) stops
 every read, like a refusal, and the session drops everything the
