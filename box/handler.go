@@ -241,9 +241,15 @@ func (h *Handler) status(w http.ResponseWriter, _ *http.Request, _ deploytrust.I
 	}
 	sum := digest(file) // what the fast path compares
 	h.crash("status:read")
-	// After `moteld box baseline` the recorded digest is the record
-	// before's, kept as found: no claim about the commit it names.
-	edited := sum != base.SHA256 && base.Signer != signerBaseline && !busy && !h.inFlight()
+	// After `moteld box baseline` the sha256 is the record before's, no
+	// claim about the commit it names: the file is held to the one the
+	// baseline found, and to none when a baseline of an older release
+	// recorded none.
+	want := base.SHA256
+	if base.Signer == signerBaseline {
+		want = base.Found
+	}
+	edited := want != "" && sum != want && !busy && !h.inFlight()
 	body := wire.BoxStatus{Commit: base.SHA, BoxWebhook: shape.Host, SHA256: sum, Recipient: h.recipient(), OutOfBand: edited}
 	safe := []string{base.SHA, shape.Host, sum}
 	if body.Recipient != "" { // a bech32 key is what the entropy layer catches

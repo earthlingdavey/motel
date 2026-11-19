@@ -349,12 +349,15 @@ func (p *pushRig) status(t *testing.T) map[string]any {
 }
 
 // After `moteld box baseline`, applied.json keeps the record before's
-// sha256, no claim about the commit it names: GET / says nothing of an
-// edit (review of #577). (a) A push applied whose baseline could not be
+// sha256, no claim about the commit it names, and records the installed
+// file's digest apart (found_sha256): GET / holds the file to that
+// (review of #577). (a) A push applied whose baseline could not be
 // recorded, then the baseline its result asks for: the file is that
-// commit's, and was said edited on every read. (b) A trust reset to a
-// commit whose file differs, the old file still installed: the digests
-// match, and nothing is said, as before.
+// commit's, and was said edited on every read. Then the same commit
+// pushed again, which the fast path answers no_change with nothing
+// written, and a console edit: said. (b) A trust reset over the file
+// before: nothing said. (c) A baseline of an older release, with no
+// found_sha256: nothing said, edit or not.
 func TestHandlerStatusAfterABaseline(t *testing.T) {
 	t.Run("the unrecorded push", func(t *testing.T) {
 		p := newPushRig(t)
@@ -366,6 +369,16 @@ func TestHandlerStatusAfterABaseline(t *testing.T) {
 		if got := p.status(t); got["commit"] != c2 || got["sha256"] != digest(p.repo.files[c2]) || got["caddyfile_edited_out_of_band"] != nil {
 			t.Errorf("GET / after the baseline: %v", got)
 		}
+		id := randomID(t)
+		w := p.post(t, p.h, push{id: id, token: p.token(t, c2), body: bytes.NewReader(tgz(t, p.repo.bundleFiles(c2, p.base)))})
+		wantResult(t, w, http.StatusOK, id, phaseNoChange)
+		if a := p.applied(); a.Signer != signerBaseline {
+			t.Fatalf("the fast path wrote applied.json: %+v", a)
+		}
+		p.writeInstalled(append(p.installed(), "# 3am\n"...))
+		if got := p.status(t); got["caddyfile_edited_out_of_band"] != true {
+			t.Errorf("GET / after a console edit since the baseline: %v", got)
+		}
 	})
 	t.Run("a trust reset", func(t *testing.T) {
 		p := newPushRig(t)
@@ -375,6 +388,15 @@ func TestHandlerStatusAfterABaseline(t *testing.T) {
 		}
 		if got := p.status(t); got["commit"] != reset || got["sha256"] != digest(p.v1) || got["caddyfile_edited_out_of_band"] != nil {
 			t.Errorf("GET / after the reset: %v", got)
+		}
+	})
+	t.Run("an older baseline", func(t *testing.T) {
+		p := newPushRig(t)
+		reset := p.repo.commit(boxFile(7, p.alice), &p.alice)
+		p.writeApplied(applied{SHA: reset, Path: testPath, SHA256: digest(p.v1), Signer: signerBaseline, When: p.clock.Now()})
+		p.writeInstalled(append(p.installed(), "# 3am\n"...))
+		if got := p.status(t); got["commit"] != reset || got["caddyfile_edited_out_of_band"] != nil {
+			t.Errorf("GET / with an older baseline's record: %v", got)
 		}
 	})
 }

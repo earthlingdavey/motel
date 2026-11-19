@@ -107,6 +107,12 @@ type applied struct {
 	When        time.Time         `json:"when"`
 	SecretsTree string            `json:"secrets_tree,omitempty"`
 	Secrets     map[string]string `json:"secrets,omitempty"`
+	// Found is the installed Caddyfile's digest as `moteld box
+	// baseline` found it, beside the sha256 it keeps from the record
+	// before; only GET / reads it, to say a console edit since the
+	// baseline. No other writer sets it, and a baseline of a release
+	// before it has none.
+	Found string `json:"found_sha256,omitempty"`
 }
 
 var errNotRegular = errors.New("not a regular file")
