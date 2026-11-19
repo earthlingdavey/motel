@@ -117,7 +117,9 @@ type Engine struct {
 	// answers the rest (a 5xx on one route), backs off alone and slows
 	// nothing else. A job's first read in a row with no answer brings
 	// the next-due read of another job forward to now, once (Done), so
-	// the run begins at once when the box answers nothing. Any answer
+	// the run begins at once when the box answers nothing. In a run one
+	// read is tried at each retry, and it goes round the jobs (next), so
+	// one whose own route fails is not tried at every retry. Any answer
 	// from the box ends the run, and a run that had begun ends with
 	// whoami asked again.
 	misses     int
@@ -165,8 +167,9 @@ type entry struct {
 	// answer came.
 	every    time.Duration
 	answered time.Time
-	// asked is when a record's, whoami's or the box's read was last
-	// taken (Take): each kind's floor is measured from it.
+	// asked is when the read was last taken (Take): a record's, whoami's
+	// and the box's floors are measured from it, and in a run of no
+	// answer the retry goes to the one tried longest ago (next).
 	asked time.Time
 }
 
@@ -504,9 +507,7 @@ func (e *Engine) Take(now time.Time) (Job, bool, time.Duration) {
 	}
 	e.tokens--
 	e.inflight, e.taken = &j, e.jobs[j]
-	if e.taken.once || j.Kind == KWhoAmI || j.Kind == KBox {
-		e.taken.asked = now
-	}
+	e.taken.asked = now
 	if j.Kind == KStatus && j.App == e.focus {
 		e.lastFocus = now
 	}
@@ -525,11 +526,17 @@ func maxTime(a, b time.Time) time.Time {
 
 // next is the job to run first of those due by at: a one-off the
 // person asked for, then whoami, the open app, the list, and the most
-// overdue of the rest. With none due, it is the one due soonest. skip,
-// when not nil, is a job left out.
+// overdue of the rest. In a run of no answer, a due job whose last read
+// failed goes after every due job whose last read did not, and among
+// those that failed the one tried longest ago goes first: the run's one
+// read a retry goes round them, so within as many retries as there are
+// jobs each due one has had its try, and a job whose own route fails
+// cannot take every retry while the box would answer another. With
+// none due, it is the one due soonest. skip, when not nil, is a job
+// left out.
 func (e *Engine) next(at time.Time, skip *Job) (Job, time.Time, bool) {
 	var best Job
-	var bestDue time.Time
+	var bestDue, bestKey time.Time
 	bestRank, found := 99, false
 	for j, en := range e.jobs {
 		if en.held || j.Kind == KBox && !e.boxOpen || skip != nil && j == *skip {
@@ -552,8 +559,12 @@ func (e *Engine) next(at time.Time, skip *Job) (Job, time.Time, bool) {
 			// the wait for the next read of any kind.
 			r = 100
 		}
-		if !found || r < bestRank || r == bestRank && due.Before(bestDue) || r == bestRank && due.Equal(bestDue) && j.App < best.App {
-			best, bestDue, bestRank, found = j, due, r, true
+		key := due
+		if r < 100 && e.misses > 0 && en.misses > 0 {
+			r, key = 50, en.asked
+		}
+		if !found || r < bestRank || r == bestRank && key.Before(bestKey) || r == bestRank && key.Equal(bestKey) && j.App < best.App {
+			best, bestDue, bestKey, bestRank, found = j, due, key, r, true
 		}
 	}
 	return best, bestDue, found
