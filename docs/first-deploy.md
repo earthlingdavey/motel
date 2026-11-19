@@ -407,17 +407,20 @@ has how. With nothing deployed yet, a correct box looks like this:
   `{"error":"invalid or missing deploy token …"}`, in a browser or with
   `curl -i`. That is the webhook working: a deploy carries a token, and
   nothing without one gets further than this.
-- If UDP 443 is open (step 1), this, run from outside the box, answers
-  503 over HTTP/3:
+- If UDP 443 is open (step 1) and the Caddyfile leaves HTTP/3 on (it
+  is on unless a `protocols` option leaves out `h3`), this, run from
+  outside the box, answers 503 over HTTP/3:
 
   ```sh
   curl --http3-only --max-time 10 -sS -o /dev/null -w '%{http_code}\n' https://example.com/
   ```
 
-  A timeout (`curl: (28)`) or `Connection refused` (`curl: (7)`)
-  instead means UDP 443 does not reach the box. The check needs a curl
-  built with HTTP/3, which `curl -V` lists as `HTTP3` under
-  `Features`; without one, skip it.
+  An error instead, such as a timeout (`curl: (28)`) or `Connection
+  refused` (`curl: (7)`), means no HTTP/3 answer came back. Check the
+  UDP 443 rule at the provider's firewall first; on the box,
+  `ss -ulnp 'sport = :443'` shows whether moteld listens on UDP 443.
+  The check needs a curl built with HTTP/3, which `curl -V` lists as
+  `HTTP3` under `Features`; without one, skip it.
 - `journalctl -u moteld | grep 'liveswap started'`, on the box, gains
   a line with `"apps":1,"app_names":["example"]`.
 - The workflow run is green.
