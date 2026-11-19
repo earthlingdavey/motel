@@ -443,6 +443,16 @@ SIGINT, SIGTERM or SIGHUP sent to the process, or the terminal closed under the 
   `TestOneRow` has tview draw every code point, every
   Extended_Pictographic character with each modifier, and a modifier
   after a combining mark, in every widget kind used, each on one row.
+  `TestClassesOnOneRow` draws one character of each Unicode line
+  breaking and grapheme cluster class beside each other in pairs (and
+  in triples in the widgets that can begin a row or are measured), on
+  one row, and as wide as `door.Width` says in the widgets that hold
+  the box's text; `FuzzInert` holds any string so in the same widgets,
+  and that no tag in it is read; and `FuzzLine` and
+  `TestClassesBesideATag` hold whole lines (the accepted row on
+  `door.Line`). `FuzzOverlay` and `FuzzPrintedCommand` hold the
+  overlays and the printed command to the rules above, the second
+  reading the line back as a POSIX shell does.
   `TestOneDoor` fails if the screens hand tview text or make a widget
   off a short list, and `TestSafeBytes` draws the hostile fixture on a
   real terminfo screen and finds none of its attacks in the bytes.
