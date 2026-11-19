@@ -204,8 +204,8 @@ func TestStopHelpAtTheSmallest(t *testing.T) {
 	const foot = "↑↓ scroll  esc back  r ask again  q quit"
 	unspaced := func(s string) string { return strings.Join(strings.Fields(s), "") }
 	for name, fail := range map[string]error{
-		"401":           &model.Failure{Kind: model.FailSignedOut, Message: "deploy.example.com did not accept your key."},
-		"another key":   &model.Failure{Kind: model.FailAboutAnother, Message: "the box answered about another key."},
+		"401":         &model.Failure{Kind: model.FailSignedOut, Message: "deploy.example.com did not accept your key."},
+		"another key": &model.Failure{Kind: model.FailAboutAnother, Message: "the box answered about another key."},
 	} {
 		h := start(t, 60, 16, func(f *demo.Fake) { f.Set("whoami", fail) })
 		h.press("?")
