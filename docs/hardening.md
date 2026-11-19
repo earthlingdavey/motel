@@ -50,8 +50,11 @@ At the provider's firewall, allow **22 only from your own address**
 (home, VPN). TCP 80 and 443, and UDP 443 (HTTP/3), stay open to the
 world; nothing else on the box listens on a port, since every app is
 reached over a unix socket. UDP 443 may stay shut if you prefer: it
-costs only HTTP/3, and browsers fall back to HTTP/2 over TCP without
-saying so.
+costs only HTTP/3, and browsers fall back to HTTP/2 or HTTP/1.1 over
+TCP without saying so. The fallback needs the site served over TCP as
+well, as every site is unless a `protocols` line in the `servers`
+option or in a `bind` leaves out both `h1` and `h2`; a site served
+over HTTP/3 alone needs UDP 443 open.
 If your address changes, change the rule in the provider's firewall
 settings, which do not need the box.
 
