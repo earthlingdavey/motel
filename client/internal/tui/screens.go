@@ -84,6 +84,18 @@ func (u *UI) render() {
 		}
 		door.SetText(u.foot, door.Lit(foot+"  ↑↓ scroll"))
 	}
+	if name, _ := u.row2.GetFrontPage(); name == "prompt" {
+		// The line takes every key typed but these: the screen's own
+		// would be typed into it.
+		door.SetText(u.foot, door.Lit(promptFooters[u.promptMode]))
+	}
+}
+
+// promptFooters are the keys of the : line and the / filter while
+// open, whole at 60 columns as the screens' footers are.
+var promptFooters = map[rune]string{
+	':': "enter run it  tab complete  esc close",
+	'/': "enter keep the filter  esc clear it and close",
 }
 
 // overKey names what the overlay was last made of: with no answer

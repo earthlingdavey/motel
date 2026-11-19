@@ -131,3 +131,28 @@ func TestScrollingFootersSaySo(t *testing.T) {
 		t.Errorf("↓ on who am I at 60x16 did not scroll it: its first row stays %q", after)
 	}
 }
+
+// TestPromptFooters: while the : line or the / filter is open, the
+// footer says the keys that work there, not the screen's own, which
+// would be typed into the line (the trial: "enter open  / filter  : go
+// to …" under an open filter).
+func TestPromptFooters(t *testing.T) {
+	for _, c := range []struct {
+		keys []any
+		want string
+	}{
+		{[]any{"/"}, "enter keep the filter  esc clear it and close"},
+		{[]any{"/", "bl"}, "enter keep the filter  esc clear it and close"},
+		{[]any{":"}, "enter run it  tab complete  esc close"},
+		{[]any{":", "st"}, "enter run it  tab complete  esc close"},
+		{[]any{"/", tcell.KeyEscape}, "enter open  / filter  : go to  y json  c cmd  ? more  q quit"},
+		{[]any{":", tcell.KeyEscape}, "enter open  / filter  : go to  y json  c cmd  ? more  q quit"},
+	} {
+		h := start(t, 60, 16, nil)
+		h.press(c.keys...)
+		rows := screenRows(h)
+		if got := rows[len(rows)-1].text; got != c.want {
+			t.Errorf("after %q: the footer is drawn %q, want %q", c.keys, got, c.want)
+		}
+	}
+}
