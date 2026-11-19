@@ -52,7 +52,9 @@ func ValidVersion(v string) bool { return versionRe.MatchString(v) }
 var shellSafe = regexp.MustCompile(`^[A-Za-z0-9@%+=:,./_-]+$`)
 
 // ShellQuote is s as one argument to a POSIX shell: bare when it holds
-// only safe characters, else in single quotes, each ' written '\”.
+// only safe characters, else in single quotes, each ' in it written as
+// the quotation closed, a backslash and the ', and the quotation opened
+// again.
 //
 // A leading = or ~ is quoted too: zsh expands =cmd, and every shell ~.
 func ShellQuote(s string) string {
