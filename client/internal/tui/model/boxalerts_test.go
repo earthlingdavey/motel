@@ -158,3 +158,24 @@ func TestBoxAlertsWithheldRows(t *testing.T) {
 		}
 	}
 }
+
+// TestBoxAlertsLineCounts: the box screen's line counts as the screen
+// marks: an info alert that fires (a deploy that succeeded) is counted
+// apart and does not dress the line as needing a look.
+func TestBoxAlertsLineCounts(t *testing.T) {
+	s, f, now := session(t)
+	s.Engine.BoxAlertsOpen(true, *now)
+	f.Body("box-alerts.json", `{"monitor":"on","alerts":[{"name":"deploy_succeeded","severity":"info","summary":"deployed v2","starts_at":"@-1m","state":"active","app":"demo"}],"silences":[]}`)
+	for range 3 {
+		step(t, s, f, now)
+	}
+	l := s.BoxAlertsLine(*now)
+	if !strings.Contains(l.Text(), ":alerts · 0 firing, 0 held quiet, 1 info · 0 silences") {
+		t.Errorf("the line: %q", l.Text())
+	}
+	for _, sg := range l {
+		if sg.C == model.Warn {
+			t.Errorf("the line is dressed as needing a look: %q", l.Text())
+		}
+	}
+}

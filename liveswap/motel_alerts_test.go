@@ -170,7 +170,8 @@ func TestBoxAlertsBody(t *testing.T) {
 
 // TestBoxAlertsTimesPassNoFilter: an env_file value that is a piece of
 // an alert's time (a date) is masked in the summary and leaves the
-// times whole, so the list still reads; the silences come active first.
+// times whole, so the list still reads; the silences come active first,
+// newest first, then pending, soonest first.
 func TestBoxAlertsTimesPassNoFilter(t *testing.T) {
 	h, people := alertsRig(t)
 	must(t, os.WriteFile(h.app.managed["demo"].spec.envFile, []byte("API_VERSION=2026-11-19\n"), 0o600))
@@ -182,6 +183,7 @@ func TestBoxAlertsTimesPassNoFilter(t *testing.T) {
 			{ID: "11111111-1111-4111-8111-111111111111", State: wire.SilenceActive, StartsAt: t0.Add(-time.Hour), EndsAt: until, Matchers: []wire.Matcher{}},
 			{ID: "22222222-2222-4222-8222-222222222222", State: wire.SilencePending, StartsAt: until, EndsAt: until.Add(time.Hour), Matchers: []wire.Matcher{}},
 			{ID: "33333333-3333-4333-8333-333333333333", State: wire.SilenceActive, StartsAt: t0, EndsAt: until, Matchers: []wire.Matcher{}},
+			{ID: "44444444-4444-4444-8444-444444444444", State: wire.SilencePending, StartsAt: until.Add(time.Hour), EndsAt: until.Add(2 * time.Hour), Matchers: []wire.Matcher{}},
 		},
 	}})
 	w := sendTo(t, h, "GET", "/_motel/alerts", token(people.carol))
@@ -197,8 +199,8 @@ func TestBoxAlertsTimesPassNoFilter(t *testing.T) {
 	for _, s := range got.Silences {
 		ids = append(ids, s.ID[:1])
 	}
-	if strings.Join(ids, "") != "312" {
-		t.Errorf("the silences in the order %v, want the active ones first, newest first", ids)
+	if strings.Join(ids, "") != "3124" {
+		t.Errorf("the silences in the order %v, want the active ones newest first, then the pending ones soonest first", ids)
 	}
 }
 

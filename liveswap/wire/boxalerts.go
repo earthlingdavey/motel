@@ -13,10 +13,12 @@ type BoxAlerts struct {
 	// nothing).
 	Monitor string     `json:"monitor"`
 	Alerts  []BoxAlert `json:"alerts"`
-	// Silences are the active and pending ones, never an expired one.
+	// Silences are the active and pending ones, never an expired one:
+	// the active newest first, then the pending soonest first.
 	Silences []Silence `json:"silences"`
 	// MoreAlerts and MoreSilences are that the box held more than it
-	// sends (BoxAlertsMax, SilencesMax): the newest are sent.
+	// sends (BoxAlertsMax, SilencesMax): the newest alerts are sent, and
+	// the active silences and the pending ones soonest to start.
 	MoreAlerts   bool `json:"more_alerts,omitempty"`
 	MoreSilences bool `json:"more_silences,omitempty"`
 }

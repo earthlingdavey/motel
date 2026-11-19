@@ -14,8 +14,9 @@ import (
 
 // boxAlerts is what the box's Alertmanager holds, as GET /_motel/alerts
 // sends it before the filter: every alert and every silence that has
-// not ended, newest first (the active silences before the pending
-// ones), each list cut to its cap. The source's own
+// not ended, the alerts newest first, the silences that hold now
+// (active) newest first and then those to come (pending) soonest
+// first, each list cut to its cap. The source's own
 // answer is the box's whole one; the route only orders and cuts it.
 func (b boxHandle) boxAlerts(ctx context.Context) wire.BoxAlerts {
 	out := wire.BoxAlerts{Monitor: wire.MonitorOff, Alerts: []wire.BoxAlert{}, Silences: []wire.Silence{}}
@@ -42,8 +43,9 @@ func (b boxHandle) boxAlerts(ctx context.Context) wire.BoxAlerts {
 		}
 		return cmp.Or(cmp.Compare(x.Name, y.Name), cmp.Compare(x.App, y.App), cmp.Compare(x.Instance, y.Instance), cmp.Compare(x.Summary, y.Summary))
 	})
-	// The active ones first, which hold alerts now, so that a cut at the
-	// cap drops silences that start later before any that hold.
+	// The active ones first, which hold alerts now, newest first; then
+	// the pending ones, soonest first: a cut at the cap drops the
+	// silences that start last.
 	slices.SortStableFunc(out.Silences, func(x, y wire.Silence) int {
 		if xa, ya := x.State == wire.SilenceActive, y.State == wire.SilenceActive; xa != ya {
 			if xa {
@@ -51,7 +53,11 @@ func (b boxHandle) boxAlerts(ctx context.Context) wire.BoxAlerts {
 			}
 			return 1
 		}
-		if c := y.StartsAt.Compare(x.StartsAt); c != 0 {
+		c := y.StartsAt.Compare(x.StartsAt)
+		if x.State != wire.SilenceActive {
+			c = -c
+		}
+		if c != 0 {
 			return c
 		}
 		return cmp.Compare(x.ID, y.ID)

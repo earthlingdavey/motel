@@ -42,7 +42,7 @@ func monitorSays(b wire.BoxAlerts) Line {
 	case wire.MonitorOn:
 		l := Line{own("on · " + nOf(len(b.Alerts), "alert") + ", " + nOf(len(b.Silences), "silence") + ", as the box's Alertmanager holds them")}
 		if b.MoreAlerts || b.MoreSilences {
-			l = Line{own("on · " + nOf(len(b.Alerts), "alert") + ", " + nOf(len(b.Silences), "silence") + " sent, the newest; the box's Alertmanager holds more")}
+			l = Line{own("on · " + nOf(len(b.Alerts), "alert") + ", " + nOf(len(b.Silences), "silence") + " sent; the box's Alertmanager holds more")}
 		}
 		return l
 	case wire.MonitorOff:
@@ -172,7 +172,9 @@ func (s *Session) BoxAlertsViewFit(now time.Time, width int, cells Cells) []Line
 			if a.Instance != "" {
 				out = append(out, cutTo(boxField("instance", boxT(a.Instance)), width, cells))
 			}
-			out = append(out, cutTo(boxField("summary", boxT(a.Summary)), width, cells))
+			if a.Summary != "" {
+				out = append(out, cutTo(boxField("summary", boxT(a.Summary)), width, cells))
+			}
 		}
 		if b.MoreAlerts {
 			out = append(out, Sentence(Line{ownC("  the box holds more alerts than it sends: the newest "+strconv.Itoa(len(b.Alerts))+" are shown", Warn)}, width, cells)...)
@@ -193,7 +195,7 @@ func (s *Session) BoxAlertsViewFit(now time.Time, width int, cells Cells) []Line
 			}
 		}
 		if b.MoreSilences {
-			out = append(out, Sentence(Line{ownC("  the box holds more silences than it sends: the newest "+strconv.Itoa(len(b.Silences))+" are shown", Warn)}, width, cells)...)
+			out = append(out, Sentence(Line{ownC("  the box holds more silences than it sends: "+strconv.Itoa(len(b.Silences))+" are shown, the active ones and the soonest to start", Warn)}, width, cells)...)
 		}
 		out = append(out, nil)
 		out = append(out, Sentence(Line{own(SilenceAdvice)}, width, cells)...)
@@ -252,11 +254,17 @@ func (s *Session) BoxAlertsLine(now time.Time) Line {
 		if b.Monitor != wire.MonitorOn {
 			return field("alerts", append(l, monitorSays(b)...)...)
 		}
-		firing, quiet := 0, 0
+		// Counted as the screen marks them: firing, an alert it marks
+		// (critical, warning, or a word it does not know); held quiet, a
+		// suppressed one; an info one that fires, apart, unmarked.
+		firing, quiet, info := 0, 0, 0
 		for _, a := range b.Alerts {
-			if a.State == "suppressed" {
+			switch {
+			case a.State == "suppressed":
 				quiet++
-			} else {
+			case alertMark(a) == MarkNone:
+				info++
+			default:
 				firing++
 			}
 		}
@@ -264,7 +272,11 @@ func (s *Session) BoxAlertsLine(now time.Time) Line {
 		if firing > 0 {
 			c = Warn
 		}
-		return field("alerts", append(l, ownC(strconv.Itoa(firing)+" firing", c), own(", "+strconv.Itoa(quiet)+" held quiet · "+nOf(len(b.Silences), "silence")))...)
+		rest := ", " + strconv.Itoa(quiet) + " held quiet"
+		if info > 0 {
+			rest += ", " + strconv.Itoa(info) + " info"
+		}
+		return field("alerts", append(l, ownC(strconv.Itoa(firing)+" firing", c), own(rest+" · "+nOf(len(b.Silences), "silence")))...)
 	case NotFound(s.BoxAlertsErr):
 		return field("alerts", own("not said here (it answered 404: a moteld older than this read)"))
 	case s.BoxAlertsErr != nil:

@@ -105,8 +105,9 @@ time (`"monitor":"unanswered"`), or the box names a monitor word this
 client does not know, 3; a monitor that is not a lowercase word is not
 moteld's answer, 3. A silence's state the client does not know is said
 as not known, the box's word quoted, and an operator it does not know
-as `?`. The box sends at most 500 alerts and 200 silences, the newest,
-and says when it held more: the first line then says so.
+as `?`. The box sends at most 500 alerts, the newest, and 200 silences,
+the active ones first and then the soonest to start, and says when it
+held more: the first line then says so.
 
 **Which box:** an app URL as `<app>`, else `--box`, `MOTEL_BOX`, the host
 of `MOTEL_URL`, or the box repository the shell is in (inside
@@ -448,7 +449,8 @@ each time with its age, the box's own lines after their levels, and
 that it is the box's own claim, only as honest as the box (look from a
 machine of your own: docs/backups.md). The box screen has a line of
 the box's alerts as well, read beside its status: the answer's age, how
-many fire, how many a silence or the deploy mute holds quiet, and how
+many fire (those `:alerts` marks), how many a silence or the deploy
+mute holds quiet, how many of severity `info` fire when any do, and how
 many silences there are. `:alerts` (a viewer of the box) shows what the
 box's Alertmanager holds, as `monitor alerts` says it: each alert's
 head in the client's words, marked by its severity while it fires (`✖`
