@@ -24,11 +24,14 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gdamore/tcell/v2"
+
 	"github.com/smallhoursorg/motel/client/internal/client"
 	"github.com/smallhoursorg/motel/client/internal/local"
 	"github.com/smallhoursorg/motel/client/internal/sshkey"
 	"github.com/smallhoursorg/motel/client/internal/tui"
 	"github.com/smallhoursorg/motel/client/internal/tui/demo"
+	tuihostile "github.com/smallhoursorg/motel/client/internal/tui/hostile"
 	"github.com/smallhoursorg/motel/client/internal/tui/model"
 	"github.com/smallhoursorg/motel/liveswap/wire"
 )
@@ -771,12 +774,109 @@ func TestNoScreenNothingSent(t *testing.T) {
 }
 
 // TestCanDraw: the check finds the TERM the screen could not draw
-// with, whether or not this process has a terminal.
+// with, and the locale whose character set it could not write, whether
+// or not this process has a terminal: a locale it can write passes the
+// charset step, and then fails at /dev/tty or passes.
 func TestCanDraw(t *testing.T) {
+	setLocale(t, locale{lang: "C.UTF-8"})
 	for term, want := range map[string]string{"dumb": "not cursor addressable", "": "term not set"} {
 		t.Setenv("TERM", term)
 		if err := CanDraw(); err == nil || !strings.Contains(err.Error(), want) {
 			t.Errorf("TERM=%q: %v, want %q", term, err, want)
+		}
+	}
+	t.Setenv("TERM", "xterm-256color") // tcell's own, built in
+	for _, l := range locales {
+		setLocale(t, l)
+		if got := localeCharset(); got != l.charset {
+			t.Errorf("%+v: the character set is %q, want %q", l, got, l.charset)
+		}
+		if err := CanDraw(); errors.Is(err, tcell.ErrNoCharset) != l.refused {
+			t.Errorf("%+v: %v; want it refused for its character set: %v", l, err, l.refused)
+		}
+	}
+}
+
+// locale is LC_ALL, LC_CTYPE and LANG, the character set tcell reads
+// from them, and whether tcell (which knows UTF-8 and ASCII alone, as
+// the client registers no other) refuses it.
+type locale struct {
+	all, ctype, lang string
+	charset          string
+	refused          bool
+}
+
+var locales = []locale{
+	{charset: "UTF-8"}, // none set
+	{lang: "en_US.UTF-8", charset: "UTF-8"},
+	{lang: "C.UTF-8", charset: "UTF-8"},
+	{lang: "de_DE.utf8", charset: "utf8"},
+	{lang: "C", charset: "US-ASCII"},
+	{lang: "POSIX", charset: "US-ASCII"},
+	{lang: "en_US", charset: "UTF-8"},
+	{lang: "de_DE@euro", charset: "UTF-8"},
+	{lang: "de_DE.UTF-8@euro", charset: "UTF-8"},
+	{lang: "de_DE.ISO-8859-15@euro", charset: "ISO-8859-15", refused: true},
+	{lang: "en_US.ISO-8859-1", charset: "ISO-8859-1", refused: true},
+	{lang: "ja_JP.eucJP", charset: "eucJP", refused: true},
+	{lang: "ru_RU.KOI8-R", charset: "KOI8-R", refused: true},
+	{all: "en_US.UTF-8", lang: "en_US.ISO-8859-1", charset: "UTF-8"},
+	{all: "en_US.ISO-8859-1", lang: "en_US.UTF-8", charset: "ISO-8859-1", refused: true},
+	{ctype: "ru_RU.KOI8-R", lang: "en_US.UTF-8", charset: "KOI8-R", refused: true},
+	{all: "C", ctype: "ru_RU.KOI8-R", charset: "US-ASCII"},
+}
+
+func setLocale(t *testing.T, l locale) {
+	t.Helper()
+	t.Setenv("LC_ALL", l.all)
+	t.Setenv("LC_CTYPE", l.ctype)
+	t.Setenv("LANG", l.lang)
+}
+
+// TestCharsetIsTcells: localeCharset reads the locale as tcell's own
+// Init does, on its real terminfo screen over a terminal that records
+// bytes: Init fails with ErrNoCharset for exactly the locales CanDraw
+// refuses. A tcell that reads it otherwise fails here.
+func TestCharsetIsTcells(t *testing.T) {
+	for _, l := range locales {
+		setLocale(t, l)
+		scr, err := tuihostile.Screen(tuihostile.NewTTY())
+		if err != nil {
+			t.Fatal(err)
+		}
+		err = scr.Init()
+		if err == nil {
+			scr.Fini()
+		}
+		if errors.Is(err, tcell.ErrNoCharset) != (tcell.GetEncoding(localeCharset()) == nil) {
+			t.Errorf("%+v: tcell's Init says %v, and CanDraw's check reads %q", l, err, localeCharset())
+		}
+		if err != nil && !errors.Is(err, tcell.ErrNoCharset) {
+			t.Errorf("%+v: tcell's Init failed otherwise: %v", l, err)
+		}
+	}
+}
+
+// TestUnknownCharsetNothingSent: a locale whose character set the
+// screen cannot write ends motel before anything is signed or sent,
+// exit 2, in tcell's own words, with the check main makes; typed
+// alone, under the help.
+func TestUnknownCharsetNothingSent(t *testing.T) {
+	setLocale(t, locale{lang: "en_US.ISO-8859-1"})
+	t.Setenv("TERM", "xterm-256color")
+	fb := newFakeBox(t)
+	home := keyHome(t)
+	help := run(t, nil, nil, "--help")
+	env := map[string]string{"MOTEL_KEY": "~/me.pub", "MOTEL_URL": fb.srv.URL + "/blog"}
+	want := "motel: the screen could not start: character set not supported\n"
+	for _, args := range [][]string{nil, {"--key", "~/me.pub"}, {"--demo"}} {
+		r := startMotel(t, fb, env, home, true, CanDraw, args...)
+		wantOut := ""
+		if args == nil {
+			wantOut = help.stdout
+		}
+		if r.code != client.ExitUsage || r.stderr != want || r.stdout != wantOut || r.signed != 0 || r.sent != 0 {
+			t.Errorf("%q: exit %d, stderr %q, %d signed, %d sent, stdout as wanted %v; want 2, %q, nothing signed or sent, and the help alone typed alone", args, r.code, r.stderr, r.signed, r.sent, r.stdout == wantOut, want)
 		}
 	}
 }

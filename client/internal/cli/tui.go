@@ -225,20 +225,52 @@ func screenFailure(err error) error {
 	return &client.Failure{Exit: client.ExitUsage, Message: "the screen could not start: " + termtext.From(err.Error()).String()}
 }
 
-// CanDraw is Env.Draw on a real terminal. The screen draws on /dev/tty,
-// whatever stdin and stdout are, with the terminfo entry TERM names:
-// either missing fails here, before the first reads, and not once they
-// have been made. (tcell's own NewDevTty would do, but its Close before
-// a Start closes nothing and fails.)
+// CanDraw is Env.Draw on a real terminal. It asks the three things the
+// screen's start needs, in this order: a terminfo entry for TERM, a
+// character set of the locale that tcell can write (localeCharset;
+// tcell's own ErrNoCharset when not), and /dev/tty, which the screen
+// draws on whatever stdin and stdout are. A missing one fails here,
+// before the first reads, and not once they have been made. (tcell's
+// own NewDevTty would do for the last, but its Close before a Start
+// closes nothing and fails.)
 func CanDraw() error {
 	if _, err := tcell.NewScreen(); err != nil {
 		return err
+	}
+	if tcell.GetEncoding(localeCharset()) == nil {
+		return tcell.ErrNoCharset
 	}
 	tty, err := os.OpenFile("/dev/tty", os.O_RDWR, 0)
 	if err != nil {
 		return err
 	}
 	return tty.Close()
+}
+
+// localeCharset is the character set tcell's screen takes from the
+// locale when it starts, read as tcell v2.13.10 reads it on a Unix
+// (getCharset, charset_unix.go), which it does not export: LC_ALL, else
+// LC_CTYPE, else LANG, the first set; C and POSIX are US-ASCII; else,
+// of the locale cut at its first @, what follows its first ., and
+// UTF-8 when it has no . there. TestCharsetIsTcells holds it to tcell's
+// Init.
+func localeCharset() string {
+	locale := os.Getenv("LC_ALL")
+	if locale == "" {
+		locale = os.Getenv("LC_CTYPE")
+	}
+	if locale == "" {
+		locale = os.Getenv("LANG")
+	}
+	if locale == "POSIX" || locale == "C" {
+		return "US-ASCII"
+	}
+	locale, _, _ = strings.Cut(locale, "@")
+	_, set, found := strings.Cut(locale, ".")
+	if !found {
+		return "UTF-8"
+	}
+	return set
 }
 
 func panicText(v any) string {
