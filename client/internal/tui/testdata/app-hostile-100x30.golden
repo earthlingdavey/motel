@@ -2,6 +2,7 @@ motel · deploy.example.com · v0.7.0 │ alice@example.com · viewer of the box
 apps › hostile                                                           as of 14:12:40 UTC · 0s ago
 state       running v6 · pid 41233 · unit motel-hostile.v6.3f9a0c21d4e8b7a6.service
 alerts      2 held · as of 0s ago
+            all: motel monitor alerts --box deploy.example.com --app hostile
 alert       x\x1b[2J[red]FAKE[-] · critical\x1b]0;pwned\x07 · active[green]ok[-] · since 1m ago (14…
 summary     start failed: \x1b[2J\x1b[H\x1b]0;motel: all healthy\x07 [:::https://evil.example/tag]m…
 alert       watchdog_throttled · critical · held while a deploy runs · since 2h ago (12:12 UTC)
@@ -13,8 +14,7 @@ deployed    failed in starting 1h ago (13:02 UTC, 20 s) by ci:\x1b]8;;https://ev
 error       start failed: \x1b[2J\x1b[H\x1b]0;motel: all healthy\x07probe 500 [red]FAKE[-] ["region…
 note        note [:::https://evil.example/tag]motel login[:::-] \x1b[5A\x1b[2K\x1b[10C
 memory      67 MiB now · 77 MiB max · cap 512 MiB  ███░░░░░░░░░░░░░░░░░ 13% of cap
-cpu         0.03 cores (last 5 m) · 0.02 avg · cap 100% of one CPU
-… 3 more lines: y shows the answer; then P prints it whole
+… 4 more lines: y shows the answer; then P prints it whole
 ─ DEPLOYS, newest first                                                               on disk: v6 v7
   VERSION RESULT    WHERE    FINISHED (UTC) TOOK BY
 ▲ v7      failed    starting 11-15 13:02    20 s ci:\x1b]8;;https://evil.example/login\x1b\motel lo…
