@@ -544,7 +544,7 @@ func WriteBackups(w io.Writer, b Backups) error {
 func WriteBoxAlerts(w io.Writer, a BoxAlerts) error {
 	p := &printer{w: w}
 	if !a.On {
-		p.line("%s raises no alerts: its config has no monitor block", a.Host)
+		p.line("%s raises no alerts: its monitor block sends nothing to anyone, or it has none", a.Host)
 		return p.err
 	}
 	if a.MoreAlerts || a.MoreSilences {

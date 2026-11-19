@@ -45,9 +45,11 @@ func hostileBoxAlerts() wire.BoxAlerts {
 // every value of the box's on a labelled line of its own, and is what
 // the golden says; a box with no monitor block says so, exit 0; one
 // whose Alertmanager did not answer it, or that says a monitor word the
-// client does not know, could not tell (3); a matcher's operator or a
-// silence's state outside its words is not moteld's answer; and it is
-// asked with a person's key alone.
+// client does not know, could not tell (3), and a monitor that is not a
+// word is not moteld's answer; a matcher's operator or a silence's
+// state the client does not know is said as not known; at the cap the
+// first line says the box holds more; and it is asked with a person's
+// key alone.
 func TestMonitorBoxAlerts(t *testing.T) {
 	fb := newFakeBox(t)
 	body := func() string { return string(withNewline(termtext.JSON(fb.bodies["/_motel/alerts"]))) }
@@ -81,7 +83,7 @@ func TestMonitorBoxAlerts(t *testing.T) {
 	golden(t, "hostile-box-alerts", r.stdout)
 
 	fb.boxAlerts = wire.BoxAlerts{Monitor: wire.MonitorOff, Alerts: []wire.BoxAlert{}, Silences: []wire.Silence{}}
-	if r := runKey(t, fb, nil, "monitor", "alerts"); r.code != 0 || r.stdout != "127.0.0.1 raises no alerts: its config has no monitor block\n" {
+	if r := runKey(t, fb, nil, "monitor", "alerts"); r.code != 0 || r.stdout != "127.0.0.1 raises no alerts: its monitor block sends nothing to anyone, or it has none\n" {
 		t.Errorf("off: exit %d, stdout %q, stderr %q", r.code, r.stdout, r.stderr)
 	}
 	for _, c := range []struct{ monitor, says string }{
@@ -110,7 +112,7 @@ func TestMonitorBoxAlerts(t *testing.T) {
 	fb.boxAlerts = hostileBoxAlerts()
 	fb.boxAlerts.Silences[0].Matchers[0].Op = "=="
 	fb.boxAlerts.Silences[0].State = "dormant"
-	if r := runKey(t, fb, nil, "monitor", "alerts"); r.code != 0 || !strings.Contains(r.stdout, "\n  in a state not known, \"dormant\",  from ") || !strings.Contains(r.stdout, `matches   alertname ? "disk_low"`) {
+	if r := runKey(t, fb, nil, "monitor", "alerts"); r.code != 0 || !strings.Contains(r.stdout, "\n  in a state not known (\"dormant\"): from ") || !strings.Contains(r.stdout, `matches   alertname ? "disk_low"`) {
 		t.Errorf("an unknown state and operator: exit %d, stdout %q, stderr %q", r.code, r.stdout, r.stderr)
 	}
 	// At the cap the head says the box holds more than it sends.

@@ -14,7 +14,8 @@ import (
 
 // boxAlerts is what the box's Alertmanager holds, as GET /_motel/alerts
 // sends it before the filter: every alert and every silence that has
-// not ended, newest first, each list cut to its cap. The source's own
+// not ended, newest first (the active silences before the pending
+// ones), each list cut to its cap. The source's own
 // answer is the box's whole one; the route only orders and cuts it.
 func (b boxHandle) boxAlerts(ctx context.Context) wire.BoxAlerts {
 	out := wire.BoxAlerts{Monitor: wire.MonitorOff, Alerts: []wire.BoxAlert{}, Silences: []wire.Silence{}}
@@ -41,7 +42,15 @@ func (b boxHandle) boxAlerts(ctx context.Context) wire.BoxAlerts {
 		}
 		return cmp.Or(cmp.Compare(x.Name, y.Name), cmp.Compare(x.App, y.App), cmp.Compare(x.Instance, y.Instance), cmp.Compare(x.Summary, y.Summary))
 	})
+	// The active ones first, which hold alerts now, so that a cut at the
+	// cap drops silences that start later before any that hold.
 	slices.SortStableFunc(out.Silences, func(x, y wire.Silence) int {
+		if xa, ya := x.State == wire.SilenceActive, y.State == wire.SilenceActive; xa != ya {
+			if xa {
+				return -1
+			}
+			return 1
+		}
 		if c := y.StartsAt.Compare(x.StartsAt); c != 0 {
 			return c
 		}
@@ -151,18 +160,48 @@ func (h *Handler) alerts(w http.ResponseWriter, r *http.Request, p *Person) erro
 // when own: an app this config runs, the route's word, as an apps list
 // row's name; another label's value passed no filter. Never the
 // alert's name or instance, which a value may be part of.
+//
+// The row's times are Alertmanager's, never the app's bytes: they pass
+// no filter and are put back after its last pass, so that an env_file
+// value that is a piece of one (a date) cannot leave a time no client
+// reads and with it the whole list unread. Every row then has its keys
+// sorted, as a row the filter changed has.
 func alertRow(a wire.BoxAlert, f *Redactor, own bool) string {
 	raw, err := json.Marshal(a)
-	if err != nil {
-		raw = []byte(`{}`) // strings and times: nothing to fail
+	var fields map[string]json.RawMessage
+	if err == nil {
+		err = json.Unmarshal(raw, &fields)
 	}
+	if err != nil {
+		fields = map[string]json.RawMessage{} // strings and times: nothing to fail
+	}
+	times := map[string]json.RawMessage{}
+	for _, k := range []string{"starts_at", "silenced_until"} {
+		if v, ok := fields[k]; ok {
+			times[k] = v
+			delete(fields, k)
+		}
+	}
+	raw, _ = json.Marshal(fields) // raw values from a marshal: nothing to fail
 	out := f.redactJSON(raw)
 	why, ok := withheld(out, "name")
 	if !ok {
-		return out
+		var row map[string]json.RawMessage
+		if json.Unmarshal([]byte(out), &row) == nil {
+			for k, v := range times {
+				row[k] = v
+			}
+			if b, err := json.Marshal(row); err == nil {
+				return string(b)
+			}
+		}
+		why = "response withheld"
 	}
-	kept := wire.BoxAlert{Alert: wire.Alert{Summary: why, StartsAt: a.StartsAt, State: a.State,
+	kept := wire.BoxAlert{Alert: wire.Alert{Summary: why, StartsAt: a.StartsAt,
 		SilencedUntil: a.SilencedUntil, Inhibited: a.Inhibited}}
+	if slices.Contains(alertStates, a.State) {
+		kept.State = a.State
+	}
 	if own {
 		kept.App = a.App
 	}
@@ -217,8 +256,12 @@ func withheld(out, key string) (string, bool) {
 	return why, true
 }
 
-// severities are the words motel's alerts carry for severity.
-var severities = []string{"critical", "warning", "info"}
+// severities are the words motel's alerts carry for severity, and
+// alertStates Alertmanager's for an alert's state.
+var (
+	severities  = []string{"critical", "warning", "info"}
+	alertStates = []string{"active", "suppressed", "unprocessed"}
+)
 
 // boxSafe are the names the rows that pass no app's filter hold, which
 // the entropy layer would mask: the apps named (as the backups body's),
@@ -233,7 +276,9 @@ func boxSafe(b wire.BoxAlerts) []string {
 		}
 	}
 	for _, s := range b.Silences {
-		safe = append(safe, s.ID)
+		if silenceIDRe.MatchString(s.ID) {
+			safe = append(safe, s.ID)
+		}
 		for _, m := range s.Matchers {
 			switch {
 			case m.Name == "app" && appNameRe.MatchString(m.Value):

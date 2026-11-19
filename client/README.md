@@ -97,8 +97,8 @@ made it, its comment and its id. An expired silence is not listed, nor
 the heartbeat, the test alert or the deploy mute itself. Silences are
 added and expired as root on the box (`moteld monitor silence`,
 docs/monitor.md). It exits 0 when the box answered, whatever fires or
-is silenced; on a box with no monitor block it says the box raises no
-alerts, exit 0; when the box's Alertmanager did not answer the box in
+is silenced; on a box whose monitor block sends nothing to anyone, or
+that has none, it says the box raises no alerts, exit 0; when the box's Alertmanager did not answer the box in
 time (`"monitor":"unanswered"`), or the box names a monitor word this
 client does not know, 3; a monitor that is not a lowercase word is not
 moteld's answer, 3. A silence's state the client does not know is said
@@ -450,7 +450,8 @@ many fire, how many a silence or the deploy mute holds quiet, and how
 many silences there are. `:alerts` (a viewer of the box) shows what the
 box's Alertmanager holds, as `monitor alerts` says it: each alert's
 head in the client's words, marked by its severity while it fires (`✖`
-critical, `▲` warning) and unmarked while held quiet, and the box's
+critical, `▲` warning, `?` a severity or a state the client does not
+know) and unmarked while held quiet, and the box's
 words under it, each on a row of its own after the client's label and
 cut at the window's edge; then the silences the same way, and that
 adding and ending one is root's on the box. An alert's or a

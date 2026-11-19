@@ -211,11 +211,11 @@ func boxAlertsView(b wire.BoxAlerts, asked string) render.BoxAlerts {
 		v.Alerts = append(v.Alerts, al)
 	}
 	for _, s := range b.Silences {
-		state := s.State
-		if state != wire.SilenceActive && state != wire.SilencePending {
-			state = "in a state not known, " + termtext.Quote(s.State).String() + ","
+		head := s.State + "  from "
+		if s.State != wire.SilenceActive && s.State != wire.SilencePending {
+			head = "in a state not known (" + termtext.Quote(s.State).String() + "): from "
 		}
-		head := state + "  from " + at(s.StartsAt) + " until " + at(s.EndsAt)
+		head += at(s.StartsAt) + " until " + at(s.EndsAt)
 		v.Silences = append(v.Silences, render.BoxSilence{Head: termtext.From(head),
 			Matchers: termtext.From(model.Matchers(s.Matchers).Text()), By: tx(s.CreatedBy), Comment: tx(s.Comment), ID: tx(s.ID)})
 	}

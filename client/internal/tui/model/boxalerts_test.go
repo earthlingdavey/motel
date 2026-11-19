@@ -74,7 +74,7 @@ func TestBoxAlertsSays(t *testing.T) {
 	// No monitor block, and an Alertmanager that did not answer: said,
 	// and nothing listed.
 	for body, want := range map[string]string{
-		`{"monitor":"off","alerts":[],"silences":[]}`:        "monitor     off: this box raises no alerts (its config has no monitor block)",
+		`{"monitor":"off","alerts":[],"silences":[]}`:        "monitor     off: this box raises no alerts (its monitor block sends nothing to anyone, or it has none)",
 		`{"monitor":"unanswered","alerts":[],"silences":[]}`: "monitor     not known: the box's Alertmanager did not answer it in time",
 		`{"monitor":"asleep","alerts":[],"silences":[]}`:     `monitor     not known: the box said "asleep"`,
 	} {
@@ -138,5 +138,23 @@ func TestOldBoxBoxWideReadsNotRefused(t *testing.T) {
 	}
 	if v := joined(s.BoxAlertsView(now)); !strings.Contains(v, "its moteld is older than this read") {
 		t.Errorf(":alerts after a 404 says\n%s", v)
+	}
+}
+
+// TestBoxAlertsWithheldRows: a row the box's filter withheld (no name,
+// no severity; a silence with no maker) shows its head and what it has,
+// and no labelled row with nothing after it.
+func TestBoxAlertsWithheldRows(t *testing.T) {
+	s, f, now := session(t)
+	s.Engine.BoxAlertsOpen(true, *now)
+	f.Body("box-alerts.json", `{"monitor":"on","alerts":[{"name":"","severity":"","summary":"response withheld: the app's env_file could not be read","starts_at":"@-1m","state":"active","app":"demo"}],`+
+		`"silences":[{"id":"","state":"active","matchers":[],"starts_at":"@-1m","ends_at":"@1h","created_by":"","comment":"response withheld"}]}`)
+	for range 3 {
+		step(t, s, f, now)
+	}
+	for _, l := range s.BoxAlertsView(*now) {
+		if row := l.Text(); strings.HasPrefix(row, "    ") && strings.TrimSpace(row[14:]) == "" {
+			t.Errorf("a labelled row with nothing after it: %q", row)
+		}
 	}
 }

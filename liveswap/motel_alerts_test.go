@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"reflect"
 	"strings"
 	"sync"
@@ -104,7 +105,8 @@ func TestBoxAlertsRoute(t *testing.T) {
 }
 
 // TestBoxAlertsBody: every alert and every silence that has not ended,
-// newest first; an app's alert through that app's filter, so its
+// newest first (the active silences first), each alert row's keys
+// sorted; an app's alert through that app's filter, so its
 // env_file value is masked and a version its status names stands; a box
 // event, an alert of an app this config does not run, and every silence
 // through a filter with no app's values, a generated token masked and
@@ -150,19 +152,53 @@ func TestBoxAlertsBody(t *testing.T) {
 	}})
 	code, body := read()
 	const want = `{"monitor":"on","alerts":[` +
-		`{"name":"disk_low","severity":"warning","summary":"the disk said [masked, 32 chars] and hunter2-of-demo","starts_at":"2026-11-19T14:03:00Z","state":"active","instance":"/var/lib/liveswap"},` +
+		`{"instance":"/var/lib/liveswap","name":"disk_low","severity":"warning","starts_at":"2026-11-19T14:03:00Z","state":"active","summary":"the disk said [masked, 32 chars] and hunter2-of-demo"},` +
 		`{"app":"demo","name":"deploy_failed","redacted_env":["DB_PASSWORD"],"severity":"warning","silenced_until":"2026-11-19T16:00:00Z","starts_at":"2026-11-19T14:02:00Z","state":"suppressed","summary":"deploy of 4c2d9e7b1a054c2d9e7b1a054c2d9e7b1a050f9e failed; the env said [redacted:DB_PASSWORD]"},` +
-		`{"name":"errors_high","severity":"warning","summary":"gone: hunter2-of-demo","starts_at":"2026-11-19T14:01:00Z","state":"active","app":"gone"},` +
-		`{"name":"watchdog_throttled","severity":"critical","summary":"demo: throttled","starts_at":"2026-11-19T14:00:00Z","state":"suppressed","inhibited":true,"app":"demo"}],` +
+		`{"app":"gone","name":"errors_high","severity":"warning","starts_at":"2026-11-19T14:01:00Z","state":"active","summary":"gone: hunter2-of-demo"},` +
+		`{"app":"demo","inhibited":true,"name":"watchdog_throttled","severity":"critical","starts_at":"2026-11-19T14:00:00Z","state":"suppressed","summary":"demo: throttled"}],` +
 		`"silences":[` +
-		`{"id":"33333333-3333-4333-8333-333333333333","state":"pending","matchers":[{"name":"alertname","op":"=~","value":"cert_.*"},{"name":"instance","op":"!=","value":"b.example"}],"starts_at":"2026-11-19T16:00:00Z","ends_at":"2026-11-19T17:00:00Z","created_by":"root","comment":"later"},` +
-		`{"id":"11111111-1111-4111-8111-111111111111","state":"active","matchers":[{"name":"app","op":"=","value":"demo"},{"name":"release","op":"=","value":"4c2d9e7b1a054c2d9e7b1a054c2d9e7b1a050f9e"}],"starts_at":"2026-11-19T14:00:00Z","ends_at":"2026-11-19T16:00:00Z","created_by":"moteld monitor: root","comment":"known [masked, 32 chars]"}]}` + "\n"
+		`{"id":"11111111-1111-4111-8111-111111111111","state":"active","matchers":[{"name":"app","op":"=","value":"demo"},{"name":"release","op":"=","value":"4c2d9e7b1a054c2d9e7b1a054c2d9e7b1a050f9e"}],"starts_at":"2026-11-19T14:00:00Z","ends_at":"2026-11-19T16:00:00Z","created_by":"moteld monitor: root","comment":"known [masked, 32 chars]"},` +
+		`{"id":"33333333-3333-4333-8333-333333333333","state":"pending","matchers":[{"name":"alertname","op":"=~","value":"cert_.*"},{"name":"instance","op":"!=","value":"b.example"}],"starts_at":"2026-11-19T16:00:00Z","ends_at":"2026-11-19T17:00:00Z","created_by":"root","comment":"later"}]}` + "\n"
 	if code != http.StatusOK || body != want {
 		t.Errorf("the box's alerts:\n got %d %s\nwant %s", code, body, want)
 	}
 	var got wire.BoxAlerts
 	if err := json.Unmarshal([]byte(body), &got); err != nil || got.Monitor != wire.MonitorOn || len(got.Alerts) != 4 || len(got.Silences) != 2 {
 		t.Errorf("decoded: %v %+v", err, got)
+	}
+}
+
+// TestBoxAlertsTimesPassNoFilter: an env_file value that is a piece of
+// an alert's time (a date) is masked in the summary and leaves the
+// times whole, so the list still reads; the silences come active first.
+func TestBoxAlertsTimesPassNoFilter(t *testing.T) {
+	h, people := alertsRig(t)
+	must(t, os.WriteFile(h.app.managed["demo"].spec.envFile, []byte("API_VERSION=2026-11-19\n"), 0o600))
+	t0 := time.Date(2026, 11, 19, 14, 0, 0, 0, time.UTC)
+	until := t0.Add(time.Hour)
+	h.app.SetAlertsSource(&fakeHeld{ok: true, held: HeldAlerts{
+		Alerts: []AppAlert{{App: "demo", Alert: wire.Alert{Name: "deploy_failed", Severity: "warning", Summary: "on 2026-11-19", StartsAt: t0, State: "suppressed", SilencedUntil: &until}}},
+		Silences: []wire.Silence{
+			{ID: "11111111-1111-4111-8111-111111111111", State: wire.SilenceActive, StartsAt: t0.Add(-time.Hour), EndsAt: until, Matchers: []wire.Matcher{}},
+			{ID: "22222222-2222-4222-8222-222222222222", State: wire.SilencePending, StartsAt: until, EndsAt: until.Add(time.Hour), Matchers: []wire.Matcher{}},
+			{ID: "33333333-3333-4333-8333-333333333333", State: wire.SilenceActive, StartsAt: t0, EndsAt: until, Matchers: []wire.Matcher{}},
+		},
+	}})
+	w := sendTo(t, h, "GET", "/_motel/alerts", token(people.carol))
+	var got wire.BoxAlerts
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil || w.Code != http.StatusOK || len(got.Alerts) != 1 {
+		t.Fatalf("%v: %d %s", err, w.Code, w.Body)
+	}
+	a := got.Alerts[0]
+	if a.Summary != "on [redacted:API_VERSION]" || !a.StartsAt.Equal(t0) || a.SilencedUntil == nil || !a.SilencedUntil.Equal(until) {
+		t.Errorf("the row: %s", w.Body)
+	}
+	var ids []string
+	for _, s := range got.Silences {
+		ids = append(ids, s.ID[:1])
+	}
+	if strings.Join(ids, "") != "312" {
+		t.Errorf("the silences in the order %v, want the active ones first, newest first", ids)
 	}
 }
 

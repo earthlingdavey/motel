@@ -46,7 +46,7 @@ func monitorSays(b wire.BoxAlerts) Line {
 		}
 		return l
 	case wire.MonitorOff:
-		return Line{own("off: this box raises no alerts (its config has no monitor block)")}
+		return Line{own("off: this box raises no alerts (its monitor block sends nothing to anyone, or it has none)")}
 	case wire.MonitorUnanswered:
 		return Line{ownC("not known", Warn), own(": the box's Alertmanager did not answer it in time")}
 	}
@@ -159,8 +159,11 @@ func (s *Session) BoxAlertsViewFit(now time.Time, width int, cells Cells) []Line
 		for _, a := range b.Alerts {
 			m := alertMark(a)
 			head := append(Line{ownC(m.Glyph()+" ", m.Class()), ownC(pad(SeverityWord(a.Severity), 9), m.Class())}, boxAlertHold(a, now)...)
-			out = append(out, cutTo(head, width, cells), cutTo(boxField("alert", boxT(a.Name)), width, cells))
-			if SeverityWord(a.Severity) != a.Severity {
+			out = append(out, cutTo(head, width, cells))
+			if a.Name != "" {
+				out = append(out, cutTo(boxField("alert", boxT(a.Name)), width, cells))
+			}
+			if a.Severity != "" && SeverityWord(a.Severity) != a.Severity {
 				out = append(out, cutTo(boxField("severity", boxT(a.Severity)), width, cells))
 			}
 			if a.App != "" {
@@ -183,9 +186,11 @@ func (s *Session) BoxAlertsViewFit(now time.Time, width int, cells Cells) []Line
 			if len(sl.Matchers) > 0 {
 				out = append(out, cutTo(boxField("matches", Matchers(sl.Matchers)...), width, cells))
 			}
-			out = append(out, cutTo(boxField("by", boxT(sl.CreatedBy)), width, cells),
-				cutTo(boxField("comment", boxT(sl.Comment)), width, cells),
-				cutTo(boxField("id", boxT(sl.ID)), width, cells))
+			for _, f := range [][2]string{{"by", sl.CreatedBy}, {"comment", sl.Comment}, {"id", sl.ID}} {
+				if f[1] != "" {
+					out = append(out, cutTo(boxField(f[0], boxT(f[1])), width, cells))
+				}
+			}
 		}
 		if b.MoreSilences {
 			out = append(out, Sentence(Line{ownC("  the box holds more silences than it sends: the newest "+strconv.Itoa(len(b.Silences))+" are shown", Warn)}, width, cells)...)
