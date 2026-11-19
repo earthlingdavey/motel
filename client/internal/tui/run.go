@@ -2,7 +2,6 @@ package tui
 
 import (
 	"context"
-	"errors"
 	"runtime/debug"
 	"sync"
 	"time"
@@ -63,7 +62,11 @@ type Printed struct{ Raw, Shown string }
 // ErrClosed is Run's end when the terminal went away while the screen
 // held it: a read of it failed (a terminal window closed reads as an
 // end of file, often before its SIGHUP arrives).
-var ErrClosed = errors.New("the terminal went away")
+var ErrClosed error = goneTTY{}
+
+type goneTTY struct{}
+
+func (goneTTY) Error() string { return "the terminal went away" }
 
 // Run shows the screens until the person quits or ctx ends, and
 // returns what P asked to print below the prompt.
@@ -128,8 +131,7 @@ func Run(ctx context.Context, o Options, start model.View) (Printed, error) {
 	}
 	// tcell says a failed read of the terminal as an EventError, which
 	// tview's Run returns; a screen that could not start returns another.
-	var ee *tcell.EventError
-	if errors.As(err, &ee) {
+	if _, ok := err.(*tcell.EventError); ok {
 		err = ErrClosed
 	}
 	return Printed{u.Print, u.Shown}, err
