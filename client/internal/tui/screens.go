@@ -92,9 +92,11 @@ type overKey struct {
 }
 
 // spread puts left at the start and right at the end of a row w cells
-// wide, cutting left first: the right side is the freshness word, which
-// is never cut.
+// wide, cutting left first: the right side is the freshness word, or the
+// apps' summary, cut only when it alone takes the whole row or more
+// (the summary of hundreds of apps at 60 columns).
 func spread(left, right model.Line, w int) model.Line {
+	right = right.Cut(max(w-1, 0), door.Width)
 	room := w - right.Width(door.Width) - 1
 	left = left.Cut(max(room, 0), door.Width)
 	gap := max(w-left.Width(door.Width)-right.Width(door.Width), 1)
