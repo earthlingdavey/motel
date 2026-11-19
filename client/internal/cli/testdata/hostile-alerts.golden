@@ -1,0 +1,25 @@
+127.0.0.1 says 12 alerts of blog are held, newest first:
+alert    deploy_failed  warning  since 2026-11-19 14:02 UTC  suppressed, silenced until 2026-11-19 16:02 UTC
+summary  deploy of v2 failed at starting
+alert    watchdog_throttled  critical  since 2026-11-19 13:02 UTC  suppressed, held while a deploy of the app runs
+summary  ssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssss…[cut]
+alert    errors_high  info  since 2026-11-19 12:02 UTC  active
+summary  blog: osc52 \x1b]52;c;cHduZWQ=\x07
+alert    errors_high  info  since 2026-11-19 12:02 UTC  active
+summary  blog: csi \x1b[2J\x1b[H
+alert    errors_high  info  since 2026-11-19 12:02 UTC  active
+summary  blog: osc8 \x1b]8;;https://evil.example/\x1b\click\x1b]8;;\x1b\
+alert    errors_high  info  since 2026-11-19 12:02 UTC  active
+summary  blog: title \x1b]0;pwned\x07
+alert    errors_high  info  since 2026-11-19 12:02 UTC  active
+summary  blog: tags [red]alert[-] ["region"]
+alert    errors_high  info  since 2026-11-19 12:02 UTC  active
+summary  blog: bidi abc\u202edef
+alert    errors_high  info  since 2026-11-19 12:02 UTC  active
+summary  blog: c1 \u009b31mred
+alert    errors_high  info  since 2026-11-19 12:02 UTC  active
+summary  blog: fake ::error::file=x::owned
+alert    errors_high  info  since 2026-11-19 12:02 UTC  active
+summary  blog: bad utf8 ��
+alert    errors_high  info  since 2026-11-19 12:02 UTC  active
+summary  blog: marks alm\u061c lrm\u200e rlm\u200f

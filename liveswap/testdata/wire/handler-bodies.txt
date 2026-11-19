@@ -100,3 +100,21 @@ application/json OK
 # GET before liveswap's Start installed the app, past the wait
 application/json Service Unavailable
 {"error":"motel is starting and has not loaded this app yet; retry after 1 s"}
+# GET /_motel/apps/demo/alerts as a viewer of demo, no monitor block
+application/json OK
+{"monitor":"off","alerts":[]}
+# GET /_motel/apps/demo/alerts as a viewer of demo, Alertmanager unanswered
+application/json OK
+{"monitor":"unanswered","alerts":[]}
+# GET /_motel/apps/demo/alerts as a viewer of demo
+application/json OK
+{"monitor":"on","alerts":[{"name":"deploy_failed","severity":"warning","summary":"deploy of v2 failed at starting","starts_at":"<time>","state":"suppressed","silenced_until":"<time>"},{"name":"errors_high","severity":"warning","summary":"demo: 5xx over 5 %","starts_at":"<time>","state":"active"},{"name":"watchdog_throttled","severity":"critical","summary":"demo: the watchdog spent its restart budget (5 in 10m)","starts_at":"<time>","state":"suppressed","inhibited":true}]}
+# GET /_motel/apps/demo/alerts?lines=50 as a viewer of demo
+application/json Unprocessable Entity
+{"error":"GET /_motel/apps/{app}/alerts takes no query"}
+# GET /_motel/apps/demo/alerts with a deploy token
+application/json Forbidden
+{"error":"this needs a token signed by a declared key","needs":"key","scope":"app"}
+# GET /_motel/apps/demo/alerts as a person with no grant
+application/json Forbidden
+{"error":"this needs the viewer role on this app","needs":"viewer","scope":"app"}

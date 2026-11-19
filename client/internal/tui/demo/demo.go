@@ -35,7 +35,7 @@ type Fake struct {
 
 	mu sync.Mutex
 	// Errs makes a read fail: keyed "whoami", "apps", "box", "backups", an app's
-	// name, or "<app>@<version>".
+	// name, "<app>@<version>", or "alerts:<app>".
 	Errs map[string]error
 	// Bodies replaces a fixture's body, keyed by its path in fixtures/.
 	Bodies map[string]string
@@ -172,6 +172,23 @@ func (f *Fake) BoxStatus(ctx context.Context) (model.Got[wire.BoxStatus], error)
 func (f *Fake) Backups(ctx context.Context) (model.Got[wire.Backups], error) {
 	var g model.Got[wire.Backups]
 	b, err := f.load(ctx, model.Job{Kind: model.KBackups}, "backups", "backups.json", &g.V)
+	g.Body = b
+	return g, err
+}
+
+// Alerts answers alerts/<app>.json, or no alert held for an app with
+// none: every app of the fixtures is on a box with a monitor.
+func (f *Fake) Alerts(ctx context.Context, app string) (model.Got[wire.Alerts], error) {
+	var g model.Got[wire.Alerts]
+	j := model.Job{Kind: model.KAlerts, App: app}
+	path := "alerts/" + app + ".json"
+	f.mu.Lock()
+	_, replaced := f.Bodies[path]
+	f.mu.Unlock()
+	if _, err := fs.Stat(fixtures, "fixtures/"+path); err != nil && !replaced {
+		f.Body(path, `{"monitor":"on","alerts":[]}`)
+	}
+	b, err := f.load(ctx, j, "alerts:"+app, path, &g.V)
 	g.Body = b
 	return g, err
 }

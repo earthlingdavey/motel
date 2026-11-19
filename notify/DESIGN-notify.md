@@ -989,7 +989,23 @@ Slack's title link, which Alertmanager's defaults point at its external
 URL (`http://<hostname>:9093/#/alerts…`, where nothing answers), is
 rendered empty, and its fallback is motel's title. A deployer
 sees notifications at their channel; not Alertmanager, other apps, box
-events or silences. The operator's guide to all of this is
+events or silences. A person with the viewer role on an app (`grant
+<name> viewer app <app>`, docs/people.md) also reads, over HTTPS, that
+app's alerts as Alertmanager holds them, each with whether a silence or
+the deploy mute holds it and when the last such silence ends: `GET
+/_motel/apps/<app>/alerts` (liveswap/access/DESIGN-access.md). Not the
+silences themselves, their comments or creators, and no box event, even
+one naming the app in its instance. motel reads them through
+`alertsView` (alertsview.go): `GET /api/v2/alerts` with no parameter,
+which gives active, silenced and inhibited alerts alike and no resolved
+one (measured on Debian's 0.28.1 in the e2e image), and `GET
+/api/v2/silences` only when an alert names a silence, for its end; at
+most once per 5 s for the process, within 2 s, a failure kept as long
+and journalled once. The heartbeat, `NotifyTest` and the deploy mute
+are left out. liveswap chooses the app's alerts by their `app` label
+after the fetch; no matcher reaches Alertmanager. A config whose monitor
+block runs no notify (none, or a metrics line alone) installs no source,
+and the read says `"monitor":"off"`. The operator's guide to all of this is
 docs/monitor.md.
 
 ## Decisions

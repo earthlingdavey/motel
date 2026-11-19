@@ -28,31 +28,32 @@ func TestDecideTable(t *testing.T) {
 	on := map[Action]string{
 		AppStatus: "blog", AppDeployRecord: "blog", AppDeploy: "blog", AppRollback: "blog",
 		BoxStatus: "", BoxPushResult: "", BoxPush: "", BoxWhoami: "", BoxApps: "", BoxBackups: "",
+		AppAlerts: "blog",
 	}
 	want := map[string]map[Action]bool{
 		"none": {
 			AppStatus: false, AppDeployRecord: false, AppDeploy: false, AppRollback: false,
-			BoxStatus: false, BoxPushResult: false, BoxPush: false, BoxWhoami: false, BoxApps: false, BoxBackups: false,
+			BoxStatus: false, BoxPushResult: false, BoxPush: false, BoxWhoami: false, BoxApps: false, BoxBackups: false, AppAlerts: false,
 		},
 		"deployer of blog": {
 			AppStatus: true, AppDeployRecord: true, AppDeploy: true, AppRollback: true,
-			BoxStatus: false, BoxPushResult: false, BoxPush: false, BoxWhoami: false, BoxApps: false, BoxBackups: false,
+			BoxStatus: false, BoxPushResult: false, BoxPush: false, BoxWhoami: false, BoxApps: false, BoxBackups: false, AppAlerts: false,
 		},
 		"box channel": {
 			AppStatus: false, AppDeployRecord: false, AppDeploy: false, AppRollback: false,
-			BoxStatus: true, BoxPushResult: true, BoxPush: true, BoxWhoami: false, BoxApps: false, BoxBackups: false,
+			BoxStatus: true, BoxPushResult: true, BoxPush: true, BoxWhoami: false, BoxApps: false, BoxBackups: false, AppAlerts: false,
 		},
 		"viewer of blog": {
 			AppStatus: true, AppDeployRecord: true, AppDeploy: false, AppRollback: false,
-			BoxStatus: false, BoxPushResult: false, BoxPush: false, BoxWhoami: true, BoxApps: true, BoxBackups: false,
+			BoxStatus: false, BoxPushResult: false, BoxPush: false, BoxWhoami: true, BoxApps: true, BoxBackups: false, AppAlerts: true,
 		},
 		"viewer of the box": {
 			AppStatus: true, AppDeployRecord: true, AppDeploy: false, AppRollback: false,
-			BoxStatus: true, BoxPushResult: false, BoxPush: false, BoxWhoami: true, BoxApps: true, BoxBackups: true,
+			BoxStatus: true, BoxPushResult: false, BoxPush: false, BoxWhoami: true, BoxApps: true, BoxBackups: true, AppAlerts: true,
 		},
 		"person with no grant": {
 			AppStatus: false, AppDeployRecord: false, AppDeploy: false, AppRollback: false,
-			BoxStatus: false, BoxPushResult: false, BoxPush: false, BoxWhoami: true, BoxApps: true, BoxBackups: false,
+			BoxStatus: false, BoxPushResult: false, BoxPush: false, BoxWhoami: true, BoxApps: true, BoxBackups: false, AppAlerts: false,
 		},
 	}
 	for _, k := range kinds {
@@ -96,6 +97,7 @@ func TestAllowedCells(t *testing.T) {
 		{Person, BoxWhoami},
 		{Person, BoxApps},
 		{Person, BoxBackups},
+		{Person, AppAlerts},
 	}
 	for _, c := range allowed {
 		if !slices.Contains(want, c) {
@@ -175,6 +177,13 @@ func TestDecidePersonRefusals(t *testing.T) {
 		{"no views", Principal{Kind: Person, Name: "dave"}, AppStatus, "blog", &Forbidden{"viewer", "app"}},
 		{"a deployer asks who it is", Principal{Kind: AppDeployer}, BoxWhoami, "", &Forbidden{"key", "box"}},
 		{"the box channel lists apps", Principal{Kind: BoxChannel}, BoxApps, "", &Forbidden{"key", "box"}},
+		{"another app's alerts", bob, AppAlerts, "shop", &Forbidden{"viewer", "app"}},
+		{"alerts of an app that does not exist", bob, AppAlerts, "ghost", &Forbidden{"viewer", "app"}},
+		{"alerts with no views", Principal{Kind: Person, Name: "dave"}, AppAlerts, "blog", &Forbidden{"viewer", "app"}},
+		{"a global deployer reads an app's alerts", Principal{Kind: AppDeployer}, AppAlerts, "blog", &Forbidden{"key", "app"}},
+		{"a deployer reads its own app's alerts", Principal{Kind: AppDeployer, App: "blog"}, AppAlerts, "blog", &Forbidden{"key", "app"}},
+		{"the box channel reads an app's alerts", Principal{Kind: BoxChannel}, AppAlerts, "blog", &Forbidden{"key", "app"}},
+		{"an app's alerts on the box", bob, AppAlerts, "", nil},
 		{"an app action on the box", bob, AppStatus, "", nil},
 		{"a box action on an app", bob, BoxWhoami, "blog", nil},
 		{"no name", Principal{Kind: Person, Views: &Views{Box: true}}, BoxStatus, "", nil},
@@ -192,7 +201,7 @@ func TestDecidePersonRefusals(t *testing.T) {
 			t.Errorf("%s: %v, want %+v", c.name, err, *c.want)
 		}
 	}
-	for _, f := range []Forbidden{{"viewer", "app"}, {"viewer", "box"}, {"deployer", "app"}, {"deployer", "box"}, {"key", "box"}} {
+	for _, f := range []Forbidden{{"viewer", "app"}, {"viewer", "box"}, {"deployer", "app"}, {"deployer", "box"}, {"key", "box"}, {"key", "app"}} {
 		if msg := f.Error(); strings.Contains(msg, "person") || strings.Contains(msg, "motel") {
 			t.Errorf("%+v says %q", f, msg)
 		}

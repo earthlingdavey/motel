@@ -37,14 +37,16 @@ func TestEveryRouteHasAnAction(t *testing.T) {
 }
 
 // TestEveryActionHasARoute is the reverse: every app action Decide
-// allows to someone has a row, so a row cannot be removed and leave
-// its action allowed with no route. The box actions are box's to hold.
+// allows to someone has a row, on /<app> or under /_motel/apps/<app>/,
+// so a row cannot be removed and leave its action allowed with no
+// route. The box actions are box's to hold.
 func TestEveryActionHasARoute(t *testing.T) {
 	for _, a := range access.Actions() {
 		if !strings.HasPrefix(string(a), "app.") {
 			continue
 		}
-		if !slices.ContainsFunc(routes, func(rt route) bool { return rt.action == a }) {
+		if !slices.ContainsFunc(routes, func(rt route) bool { return rt.action == a }) &&
+			!slices.ContainsFunc(motelAppRoutes, func(rt motelAppRoute) bool { return rt.action == a }) {
 			t.Errorf("action %q has no route on liveswap_webhook", a)
 		}
 	}
@@ -115,7 +117,10 @@ func TestRouteActions(t *testing.T) {
 // sources refuse (an unknown name and a stranger alike), 404 for a
 // global source on a name that is no app whatever the method, 405 for
 // a deployer of the app with no row. A path under /_motel/ names no app:
-// a global source is told 403 on its rows and 404 elsewhere. People
+// a global source is told 403 on its rows and 404 elsewhere; an
+// app-scoped row there (/_motel/apps/<app>/<read>) is a person's, told
+// 403 where their grants do not cover the name, 404 to a viewer of the
+// box for a name that is no app, and 422 for any query. People
 // too: a viewer of demo, of the box, and a person with no grant, whose
 // tokens are refused on anything but a GET, reach a row only where
 // Decide's table and their grants allow, and are told 403 or 404
@@ -147,8 +152,19 @@ func FuzzNoRouteNoAnswer(f *testing.F) {
 		{"POST", "/_motel/apps", "", "", ""},
 		{"GET", "/ghost", "deploy=v1", "", ""},
 		{"POST", "/demo/", "", "", ""},
+		{"GET", "/_motel/apps/demo/alerts", "", "", ""},
+		{"GET", "/_motel/apps/ghost/alerts", "", "", ""},
+		{"GET", "/_motel/apps/demo/alerts", "lines=50", "", ""},
+		{"GET", "/_motel/apps/demo/alerts", "%ZZ", "", ""},
+		{"GET", "/_motel/apps/demo/alerts/", "", "", ""},
+		{"GET", "/_motel/apps/Demo/alerts", "", "", ""},
+		{"GET", "/_motel/apps//alerts", "", "", ""},
+		{"GET", "/_motel/apps/demo/../demo/alerts", "", "", ""},
+		{"POST", "/_motel/apps/demo/alerts", "", "", ""},
+		{"GET", "/_motel/apps/demo/logs", "", "", ""},
 	}
 	reached := map[*route]bool{}
+	reachedApp := map[*motelAppRoute]bool{}
 	for _, seed := range seeds {
 		f.Add(seed[0], seed[1], seed[2], seed[3], seed[4])
 		req := httptest.NewRequest(http.MethodGet, "/", nil)
@@ -157,10 +173,17 @@ func FuzzNoRouteNoAnswer(f *testing.F) {
 			req.Header.Set("Content-Type", seed[3])
 		}
 		reached[findRoute(req)] = true
+		rt, _ := findMotelAppRoute(req)
+		reachedApp[rt] = true
 	}
 	for i := range routes {
 		if !reached[&routes[i]] {
 			f.Fatalf("no seed reaches the row %s %s", routes[i].method, routes[i].shape)
+		}
+	}
+	for i := range motelAppRoutes {
+		if !reachedApp[&motelAppRoutes[i]] {
+			f.Fatalf("no seed reaches the row %s<app>/%s", motelAppsPrefix, motelAppRoutes[i].read)
 		}
 	}
 
@@ -220,13 +243,17 @@ func FuzzNoRouteNoAnswer(f *testing.F) {
 			row := findRoute(req)
 			_, person := personKeys[caller]
 			get := method == http.MethodGet
+			// An app-scoped row under /_motel/: Decide on the app its path
+			// names, then the app looked for, then the query (none taken).
+			appRow, named := findMotelAppRoute(req)
+			mayView := caller == "viewer of the box" || caller == "viewer of demo" && named == "demo"
 			want := http.StatusUnauthorized
 			switch {
 			case caller == "deployer of demo" && app && row != nil:
 				want = http.StatusOK // the recording function's
 			case caller == "deployer of demo" && app:
 				want = http.StatusMethodNotAllowed
-			case caller == "global source" && motel && findMotelRoute(req) != nil:
+			case caller == "global source" && motel && (findMotelRoute(req) != nil || appRow != nil):
 				want = http.StatusForbidden
 			case caller == "global source" && !app:
 				want = http.StatusNotFound
@@ -234,6 +261,15 @@ func FuzzNoRouteNoAnswer(f *testing.F) {
 			// rows answer every person and nothing else does; on an app's
 			// path Decide comes before the app is looked for.
 			case person && !get:
+			case person && appRow != nil && !mayView:
+				want = http.StatusForbidden
+			case person && appRow != nil && named != "demo":
+				want = http.StatusNotFound // a viewer of the box: no app of that name
+			case person && appRow != nil && query != "":
+				want = http.StatusUnprocessableEntity
+			case person && appRow != nil:
+				want = http.StatusOK
+				row = nil // answered by its own function, not a recorded row
 			case person && motel && findMotelRoute(req) != nil:
 				want = http.StatusOK
 				row = nil // answered by its own function, not a recorded row

@@ -563,6 +563,15 @@ var (
 	// run): lowercase words, printed as the box's word in a column of
 	// their own, so a class a later box adds is shown, not refused.
 	backupResultRe = regexp.MustCompile(`^[a-z]{1,16}( [a-z]{1,16}){0,3}$`)
+	// alertNameRe is an alertname as motel's alerts carry one: its own
+	// events (notify/DESIGN-notify.md, "Events"), an operator's rule
+	// (notify's ruleNameRe), an external producer's (notify/admin.go's
+	// alertRe), and the store's chain events. It is printed as a word.
+	alertNameRe = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_]{0,63}$`)
+	// alertWordRe is the shape of the words an alerts answer says
+	// (monitor, an alert's severity and state): printed as a word, and
+	// one the client does not know is said as such, not refused.
+	alertWordRe = regexp.MustCompile(`^[a-z]{1,16}$`)
 )
 
 // The box's response filter writes a marker where it replaced text
@@ -846,6 +855,22 @@ func hold(v any) string {
 				return "a name in it is no app name"
 			}
 		}
+	case *wire.Alerts:
+		// What the client prints of an app's alerts as a token: the
+		// monitor's word, and each alert's name, severity and state. The
+		// summary is free text, labelled and capped.
+		if !alertWordRe.MatchString(a.Monitor) {
+			return "its monitor is not a word"
+		}
+		for i := range a.Alerts {
+			al := &a.Alerts[i]
+			if !held(&al.Name, alertNameRe.MatchString) {
+				return "an alert's name in it is not one an alert has"
+			}
+			if al.Severity != "" && !held(&al.Severity, alertWordRe.MatchString) || !held(&al.State, alertWordRe.MatchString) {
+				return "an alert's severity or state in it is not a word"
+			}
+		}
 	case *wire.Apps:
 		for _, e := range a.Apps {
 			if !appRe.MatchString(e.Name) {
@@ -1058,6 +1083,8 @@ func identity(v any) shape {
 		return shape{lists: []string{"apps"}}
 	case *wire.Backups:
 		return shape{lists: []string{"apps", "lines"}, times: []string{"at"}}
+	case *wire.Alerts:
+		return shape{strs: []string{"monitor"}, lists: []string{"alerts"}}
 	}
 	return shape{}
 }

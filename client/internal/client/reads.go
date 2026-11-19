@@ -96,6 +96,16 @@ func (c *Client) Backups(ctx context.Context) (wire.Backups, *Answer, error) {
 	return b, ans, err
 }
 
+// Alerts is `motel monitor alerts --app <app>`: GET
+// /_motel/apps/<app>/alerts, the app's alerts as the box's Alertmanager
+// holds them, for a person whose grants cover the app. The route is on
+// the box's own name, whatever path an app URL names.
+func (c *Client) Alerts(ctx context.Context, app App) (wire.Alerts, *Answer, error) {
+	var a wire.Alerts
+	ans, err := c.read(ctx, "/_motel/apps/"+app.Name+"/alerts", nil, &a)
+	return a, ans, err
+}
+
 // read is Get, then Read into v. An error is a *Failure, or the
 // context's own when it ended; a signing error, which sent nothing,
 // is a usage failure, as the commands have always said it.
