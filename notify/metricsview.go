@@ -12,22 +12,16 @@ import (
 	"github.com/smallhoursorg/motel/liveswap/wire"
 )
 
-// metrics in GET /<app> (DESIGN-metrics.md): nine fixed queries over
+// metrics in GET /<app> (DESIGN-metrics.md): ten fixed queries over
 // the store's socket, scoped to the app the route resolved, over one of
 // wire.MetricsRanges: two query_range templates (memory, CPU), the
-// window's memory peak, the memory's last push, the CPU of the last
-// five minutes, and four instant queries over the requests observe
-// counted; run at once within one budget, and cached per app and
-// window.
+// window's memory peak, the memory's and the cap's last push, the CPU
+// of the last five minutes, and four instant queries over the requests
+// observe counted; run at once within one budget, and cached per app
+// and window.
 const (
 	// viewRecent is avg_5m's rate window, up to now.
 	viewRecent = 5 * time.Minute
-	// viewFreshSteps is how many of the window's steps old the newest
-	// point may be and still be the present (3 m for the hour, 15 m for
-	// the day, whose newest step can be over 5 m old): a series that
-	// stopped (an app stopped, a cap a later release dropped) keeps its
-	// last point in the window, which is history, not now.
-	viewFreshSteps = 3
 	// viewBudget bounds the queries together: the route never waits longer.
 	viewBudget = 2 * time.Second
 	// viewCache is how long an answer, or a failure, is reused: a
@@ -122,9 +116,9 @@ func (v *metricsView) AppMetrics(ctx context.Context, app, window string) *wire.
 	return &val
 }
 
-// viewAnswers is the nine queries' answers.
+// viewAnswers is the ten queries' answers.
 type viewAnswers struct {
-	mem, cpu, peak, memNow, cpuNow, classes, p50, p95, cache []series
+	mem, cpu, peak, memNow, capNow, cpuNow, classes, p50, p95, cache []series
 }
 
 // viewRequests is the view's four request queries over a window.
@@ -173,7 +167,7 @@ func (v *metricsView) ask(ctx context.Context, app, window string, w viewWindow,
 	}
 	jobs := []job{
 		{&a.mem, func() ([]series, error) {
-			return v.store.queryRange(ctx, `{__name__=~"motel_app_memory_bytes|motel_app_memory_max_bytes",`+sel+`}`, start, end, w.step)
+			return v.store.queryRange(ctx, `motel_app_memory_bytes{`+sel+`}`, start, end, w.step)
 		}},
 		{&a.cpu, func() ([]series, error) {
 			return v.store.queryRange(ctx, cpuQuery(sel, w.rate), start, end, w.step)
@@ -185,9 +179,11 @@ func (v *metricsView) ask(ctx context.Context, app, window string, w viewWindow,
 		// now is the last push's, as app_memory_high reads it
 		// (memoryShare), whatever the window: the range's newest point
 		// is on its step's grid, 5 m apart for the day, and holds a
-		// sample the store carried onto it, so an app that stopped
-		// within the three steps fresh allows read as running.
+		// sample the store carried onto it for steps after the app
+		// stopped. memory_max_bytes, the cap, is read alike: a release
+		// that changes or drops it is the present at its next push.
 		{&a.memNow, instant(`max(last_over_time(motel_app_memory_bytes{` + sel + `}[` + promDuration(pushFresh) + `]))`)},
+		{&a.capNow, instant(`max(last_over_time(motel_app_memory_max_bytes{` + sel + `}[` + promDuration(pushFresh) + `]))`)},
 		// avg_5m is the running unit's rate over the five minutes up to
 		// now, whatever the window, for now's reason: the day's newest
 		// point is a 5 m rate up to 5 m old. An app with no push within
@@ -198,7 +194,7 @@ func (v *metricsView) ask(ctx context.Context, app, window string, w viewWindow,
 		{&a.p95, instant(rq.p95)},
 		{&a.cache, instant(rq.cache)},
 	}
-	// At once: nine one after another would not fit the budget on a
+	// At once: ten one after another would not fit the budget on a
 	// slow store. Each writes its own answer; the first error is the
 	// answer's.
 	errs := make([]error, len(jobs))
@@ -223,22 +219,11 @@ func (v *metricsView) ask(ctx context.Context, app, window string, w viewWindow,
 			newest = t
 		}
 	}
-	var memPts, maxPts []point
+	var memPts []point
 	for _, s := range a.mem {
-		switch s.labels["__name__"] {
-		case "motel_app_memory_bytes":
-			memPts = append(memPts, s.points...)
-		case "motel_app_memory_max_bytes":
-			maxPts = append(maxPts, s.points...)
-		}
+		memPts = append(memPts, s.points...)
 	}
-	fresh := func(p point) bool { return !p.t.Before(end.Add(-viewFreshSteps * w.step)) }
-	var memNow *float64
-	for _, s := range a.memNow {
-		if v, ok := instantValue(s); ok {
-			memNow = &v
-		}
-	}
+	memNow, capNow := lastPush(a.memNow), lastPush(a.capNow)
 	// A unit started since the day's newest step has a push and no point.
 	if last, ok := latest(memPts); ok || memNow != nil {
 		m := &wire.MemorySummary{Now: memNow}
@@ -258,9 +243,7 @@ func (v *metricsView) ask(ctx context.Context, app, window string, w viewWindow,
 			seen(last.t)
 		}
 	}
-	if last, ok := latest(maxPts); ok && fresh(last) {
-		out.MemoryMax = &last.v
-	}
+	out.MemoryMax = capNow
 	var cpuPts []point
 	for _, s := range a.cpu {
 		cpuPts = append(cpuPts, s.points...)
@@ -272,11 +255,9 @@ func (v *metricsView) ask(ctx context.Context, app, window string, w viewWindow,
 			sum += p.v
 		}
 		c.Avg = roundTo(sum/float64(len(cpuPts)), 1e6)
-		for _, s := range a.cpuNow {
-			if v, ok := instantValue(s); ok {
-				avg := roundTo(v, 1e6)
-				c.Avg5m = &avg
-			}
+		if v := lastPush(a.cpuNow); v != nil {
+			avg := roundTo(*v, 1e6)
+			c.Avg5m = &avg
 		}
 		out.CPU = c
 		seen(last.t)
@@ -359,6 +340,17 @@ func quantileMs(ss []series) *float64 {
 // reads as a generated secret and masks inside the number; the body is
 // then no JSON, and the whole status is withheld.
 func roundTo(v, per float64) float64 { return math.Round(v*per) / per }
+
+// lastPush is an instant answer of the present's value (memory's and
+// the cap's last push, the last five minutes' CPU); nil with none.
+func lastPush(ss []series) *float64 {
+	for _, s := range ss {
+		if v, ok := instantValue(s); ok {
+			return &v
+		}
+	}
+	return nil
+}
 
 // latest is the newest point.
 func latest(pts []point) (point, bool) {

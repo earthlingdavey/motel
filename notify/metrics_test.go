@@ -746,10 +746,10 @@ func TestReleaseRetiresTheRulesOnAReloadAlone(t *testing.T) {
 }
 
 // fakeRange is query_range and the instant queries, scripted per
-// query: instant answers the memory peak (max_over_time), memNow the
-// memory's last push (last_over_time), cpuNow the CPU of the last five
-// minutes (the range's CPU query, instant), requests the four request
-// queries.
+// query: instant answers the memory peak (max_over_time), memNow and
+// capNow the memory's and the cap's last push (last_over_time), cpuNow
+// the CPU of the last five minutes (the range's CPU query, instant),
+// requests the four request queries.
 type fakeRange struct {
 	mu       sync.Mutex
 	calls    int
@@ -758,6 +758,7 @@ type fakeRange struct {
 	ans      func(q string) []series
 	instant  func(q string) []series
 	memNow   func(q string) []series
+	capNow   func(q string) []series
 	cpuNow   func(q string) []series
 	requests func(q string) []series
 }
@@ -767,6 +768,8 @@ func (f *fakeRange) query(ctx context.Context, q string) ([]series, error) {
 	switch {
 	case strings.HasPrefix(q, "max_over_time("):
 		script = f.instant
+	case strings.HasPrefix(q, "max(last_over_time(motel_app_memory_max_bytes"):
+		script = f.capNow
 	case strings.HasPrefix(q, "max(last_over_time("):
 		script = f.memNow
 	case strings.HasPrefix(q, "sum(rate("):
@@ -816,16 +819,16 @@ func TestMetricsViewSummary(t *testing.T) {
 		if strings.HasPrefix(q, "sum(rate(") {
 			return []series{{labels: map[string]string{"app": "blog"}, points: pts(0.25, 0.25, 0.25, 0.5, 0.5, 0.5, 0.5, 0.5)}}
 		}
-		return []series{
-			{labels: map[string]string{"__name__": "motel_app_memory_bytes"}, points: pts(10, 40, 30)},
-			{labels: map[string]string{"__name__": "motel_app_memory_max_bytes"}, points: pts(100, 100, 100)},
-		}
+		return []series{{labels: map[string]string{"__name__": "motel_app_memory_bytes"}, points: pts(10, 40, 30)}}
 	}, instant: func(q string) []series {
 		asked = append(asked, q)
 		return []series{{points: []point{{t: end, v: 40}}}}
 	}, memNow: func(q string) []series {
 		asked = append(asked, q)
 		return []series{{points: []point{{t: end, v: 30}}}}
+	}, capNow: func(q string) []series {
+		asked = append(asked, q)
+		return []series{{points: []point{{t: end, v: 100}}}}
 	}, cpuNow: func(q string) []series {
 		asked = append(asked, q)
 		return []series{{points: []point{{t: end, v: 0.5}}}}
@@ -837,8 +840,8 @@ func TestMetricsViewSummary(t *testing.T) {
 	if string(got) != want {
 		t.Fatalf("metrics:\n got %s\nwant %s", got, want)
 	}
-	if len(asked) != 5 {
-		t.Errorf("%d memory and CPU queries, want 5: %v", len(asked), asked)
+	if len(asked) != 6 {
+		t.Errorf("%d memory and CPU queries, want 6: %v", len(asked), asked)
 	}
 	for _, q := range asked {
 		if !strings.Contains(q, `app="blog"`) {
@@ -868,10 +871,7 @@ func TestMetricsViewStaleIsHistory(t *testing.T) {
 		if strings.HasPrefix(q, "sum(rate(") {
 			return []series{{points: old(0.5)}}
 		}
-		return []series{
-			{labels: map[string]string{"__name__": "motel_app_memory_bytes"}, points: old(30)},
-			{labels: map[string]string{"__name__": "motel_app_memory_max_bytes"}, points: old(100)},
-		}
+		return []series{{labels: map[string]string{"__name__": "motel_app_memory_bytes"}, points: old(30)}}
 	}, instant: func(string) []series { return []series{{points: []point{{t: end, v: 30}}}} }}
 	v := newMetricsView(f, zap.NewNop())
 	v.now = func() time.Time { return end }
@@ -883,8 +883,9 @@ func TestMetricsViewStaleIsHistory(t *testing.T) {
 }
 
 // The day's range steps 5 m, so its newest point can be over 5 m old
-// for a running app: still the present for the cap. Twenty minutes is
-// history, for the day too.
+// for a running app: at names it, and the present (now, the cap,
+// avg_5m) is the instants'. Stopped twenty minutes ago, the instants
+// have none: history, for the day too.
 func TestMetricsViewDayFreshness(t *testing.T) {
 	end := time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC)
 	for _, c := range []struct {
@@ -906,14 +907,12 @@ func TestMetricsViewDayFreshness(t *testing.T) {
 				if strings.HasPrefix(q, "sum(rate(") {
 					return []series{{points: two(0.25, 0.5)}}
 				}
-				return []series{
-					{labels: map[string]string{"__name__": "motel_app_memory_bytes"}, points: two(40, 30)},
-					{labels: map[string]string{"__name__": "motel_app_memory_max_bytes"}, points: two(100, 100)},
-				}
+				return []series{{labels: map[string]string{"__name__": "motel_app_memory_bytes"}, points: two(40, 30)}}
 			}, instant: func(string) []series { return []series{{points: []point{{t: end, v: 40}}}} }}
 			if c.name == "running" {
 				f.memNow = func(string) []series { return []series{{points: []point{{t: end, v: 30}}}} }
 				f.cpuNow = func(string) []series { return []series{{points: []point{{t: end, v: 0.5}}}} }
+				f.capNow = func(string) []series { return []series{{points: []point{{t: end, v: 100}}}} }
 			}
 			v := newMetricsView(f, zap.NewNop())
 			v.now = func() time.Time { return end }
@@ -977,6 +976,60 @@ func TestMetricsViewNowIsTheLastPush(t *testing.T) {
 			got, _ := json.Marshal(v.AppMetrics(context.Background(), "blog", c.window))
 			if string(got) != c.want {
 				t.Fatalf("memory:\n got %s\nwant %s", got, c.want)
+			}
+		})
+	}
+}
+
+// memory_max_bytes, the cap, is its last push within 75 s, whatever
+// the window: the range's newest point held the cap of up to a step
+// before, so under the day a release that raised it from 256 MiB to
+// 512 still read 256, and one that dropped it read it for three steps.
+// The memory range asks for memory alone.
+func TestMetricsViewCapIsTheLastPush(t *testing.T) {
+	end := time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC)
+	const mib = 1 << 20
+	for _, c := range []struct {
+		name, window string
+		cap          float64 // the last push's; 0 none
+		want         string
+	}{
+		{"raised hour", "1h", 512 * mib, `{"window":"1h","at":"2026-11-10T11:58:00Z","memory_bytes":{"max":31457280},"memory_max_bytes":536870912}`},
+		{"raised day", "24h", 512 * mib, `{"window":"24h","at":"2026-11-10T11:58:00Z","memory_bytes":{"max":31457280},"memory_max_bytes":536870912}`},
+		{"dropped hour", "1h", 0, `{"window":"1h","at":"2026-11-10T11:58:00Z","memory_bytes":{"max":31457280}}`},
+		{"dropped day", "24h", 0, `{"window":"24h","at":"2026-11-10T11:58:00Z","memory_bytes":{"max":31457280}}`},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			at := end.Add(-2 * time.Minute)
+			f := &fakeRange{
+				ans: func(q string) []series {
+					if strings.HasPrefix(q, "sum(rate(") {
+						return nil
+					}
+					// The store answers what is asked: the cap only to a
+					// query that names it.
+					out := []series{{labels: map[string]string{"__name__": "motel_app_memory_bytes"}, points: []point{{t: at, v: 30 * mib}}}}
+					if strings.Contains(q, "motel_app_memory_max_bytes") {
+						out = append(out, series{labels: map[string]string{"__name__": "motel_app_memory_max_bytes"}, points: []point{{t: at, v: 256 * mib}}})
+					}
+					return out
+				},
+				instant: func(string) []series { return []series{{points: []point{{t: end, v: 30 * mib}}}} },
+				capNow: func(q string) []series {
+					if want := `max(last_over_time(motel_app_memory_max_bytes{app="blog"}[75s]))`; q != want {
+						t.Errorf("the cap asked as %s, want %s", q, want)
+					}
+					if c.cap == 0 {
+						return nil
+					}
+					return []series{{points: []point{{t: end, v: c.cap}}}}
+				},
+			}
+			v := newMetricsView(f, zap.NewNop())
+			v.now = func() time.Time { return end }
+			got, _ := json.Marshal(v.AppMetrics(context.Background(), "blog", c.window))
+			if string(got) != c.want {
+				t.Fatalf("the cap:\n got %s\nwant %s", got, c.want)
 			}
 		})
 	}

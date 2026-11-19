@@ -17,9 +17,12 @@ var MetricsRanges = []string{"1h", "24h"}
 type Metrics struct {
 	Window string `json:"window,omitempty"`
 	// At is the newest point of the window's range, of memory or CPU,
-	// not the time of Memory.Now; absent with no point.
-	At        *time.Time      `json:"at,omitempty"`
-	Memory    *MemorySummary  `json:"memory_bytes,omitempty"`
+	// not the time of a push; absent with no point.
+	At     *time.Time     `json:"at,omitempty"`
+	Memory *MemorySummary `json:"memory_bytes,omitempty"`
+	// MemoryMax is the cap's last push within 75 s, whatever the
+	// window; absent with none (no cap, the app stopped, or the pushes
+	// failing).
 	MemoryMax *float64        `json:"memory_max_bytes,omitempty"`
 	CPU       *CPUSummary     `json:"cpu_cores,omitempty"`
 	Requests  *RequestSummary `json:"requests,omitempty"`
