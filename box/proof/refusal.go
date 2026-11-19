@@ -7,7 +7,9 @@
 // removed, against the signer list of the Caddyfile the box runs.
 //
 // The package is stdlib plus golang.org/x/crypto/ssh (key parsing) and
-// imports nothing of Caddy's, so the applier's root-side checks and the
+// liveswap/access's Ed25519 point check (UnusableEd25519, which a
+// person line uses too; it brings filippo.io/edwards25519), and imports
+// nothing of Caddy's, so the applier's root-side checks and the
 // handler's pre-check (DESIGN-box.md, steps 5 and 11–14) run the same
 // code with the same messages.
 package proof

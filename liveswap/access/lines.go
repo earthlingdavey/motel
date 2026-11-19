@@ -161,14 +161,14 @@ func SignerKey(name, keyType, b64 string, wire []byte) Key {
 // UnusableEd25519 is why wire, an Ed25519 key in either form, can be
 // no one's key, "" when it can (or is not Ed25519); a person line
 // (ParsePerson) and a signer line (box/proof's ParseSigner) refuse it
-// with the reason. Its bytes are no
-// point on the curve, which nothing verifies under, or a point of small
-// order (the identity, and the seven others whose multiple by the
-// cofactor 8 is the identity), in any encoding, canonical or not: the
-// points libsodium's crypto_sign_ed25519 refuses as public keys (its
-// blocklist, ge25519_has_small_order). Under such a key a signature
-// anyone can make without a private key (R the base point, S = 1, for
-// the identity) verifies for every message with crypto/ed25519 and with
+// with the reason. Its bytes are no point on the curve, which nothing
+// verifies under, or a point of small order (the identity, and the
+// seven others whose multiple by the cofactor 8 is the identity), in
+// any encoding, canonical or not: the points libsodium's
+// crypto_sign_ed25519 refuses as public keys (its blocklist,
+// ge25519_has_small_order). Under such a key a signature anyone can
+// make without a private key (R the base point, S = 1, for the
+// identity) verifies for every message with crypto/ed25519 and with
 // ssh-keygen -Y verify.
 func UnusableEd25519(wire []byte) string {
 	pub, err := ssh.ParsePublicKey(wire)

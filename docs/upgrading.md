@@ -295,7 +295,11 @@ Before you upgrade:
   push applies, and a second push removes the old line. Upgrading
   first stops the site as for an ECDSA signer above, until root edits
   the line out of `/etc/motel/Caddyfile` at the console and runs
-  `systemctl start moteld`.
+  `systemctl start moteld`. Anyone could sign as that signer while the
+  line was listed, so read every push the box applied under its name
+  as unvetted: `journalctl -u motel-box-apply | grep '"signer": *"<principal>"'`
+  lists them, each with its commit, and what those commits changed in
+  the Caddyfile or the secrets wants a check by a signer you trust.
 - **The `.deb` you are upgrading from is still in `/var/local/motel`.**
   `apt install --allow-downgrades ./moteld_<old>_$(dpkg --print-architecture).deb`
   puts it back — the same restart, in reverse, and nothing to download
