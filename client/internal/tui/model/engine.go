@@ -776,14 +776,6 @@ func (e *Engine) Done(j Job, now time.Time, err error) Outcome {
 		e.poke()
 		return out
 	}
-	if e.dropped && j.Kind == KAlerts && out != Stopped && out != Slowed {
-		// An app's alerts whose screen closed while they were read: the
-		// session does not apply what came back (Drive drops it with the
-		// read's context), so nothing of it is kept here either, and the
-		// entry is as it was, due again if the screen is open once more.
-		e.poke()
-		return out
-	}
 	if fromBox := out == Answered || out == Slowed || out == Refused && !notSent(err); fromBox {
 		// A failure the client made without sending anything says
 		// nothing of the box, and a run of no answer goes on.
@@ -797,6 +789,15 @@ func (e *Engine) Done(j Job, now time.Time, err error) Outcome {
 				e.askMe(now)
 			}
 		}
+	}
+	if e.dropped && j.Kind == KAlerts && (out == Answered || out == Refused) {
+		// An app's alerts whose screen closed while the box answered them:
+		// the session does not apply the answer (Drive drops it with the
+		// read's context), so nothing of it is kept on the entry either,
+		// which stays as it was, due again if the screen opens once more.
+		// That the box answered is kept, above.
+		e.poke()
+		return out
 	}
 	alone := false
 	switch out {

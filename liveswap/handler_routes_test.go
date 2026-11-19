@@ -152,6 +152,7 @@ func FuzzNoRouteNoAnswer(f *testing.F) {
 		{"POST", "/_motel/apps", "", "", ""},
 		{"GET", "/ghost", "deploy=v1", "", ""},
 		{"POST", "/demo/", "", "", ""},
+		{"GET", "/_motel/backups", "", "", ""},
 		{"GET", "/_motel/apps/demo/alerts", "", "", ""},
 		{"GET", "/_motel/apps/ghost/alerts", "", "", ""},
 		{"GET", "/_motel/apps/demo/alerts", "lines=50", "", ""},
@@ -270,6 +271,8 @@ func FuzzNoRouteNoAnswer(f *testing.F) {
 			case person && appRow != nil:
 				want = http.StatusOK
 				row = nil // answered by its own function, not a recorded row
+			case person && motel && findMotelRoute(req) != nil && findMotelRoute(req).action == access.BoxBackups && caller != "viewer of the box":
+				want = http.StatusForbidden // the box's backups: a viewer of the box's alone
 			case person && motel && findMotelRoute(req) != nil:
 				want = http.StatusOK
 				row = nil // answered by its own function, not a recorded row

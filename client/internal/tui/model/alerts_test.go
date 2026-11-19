@@ -258,6 +258,7 @@ func TestAlertsLeftWhileInFlight(t *testing.T) {
 		}
 		if k == j {
 			taken = k
+			e.Started(func() {}) // as Drive gives the read its context's cancel
 			break
 		}
 		e.Done(k, now, nil)
@@ -376,5 +377,40 @@ func TestAlertsReopenedKeepTheBackoff(t *testing.T) {
 	}
 	if n > 2 {
 		t.Errorf("the failing alerts read %d times in a second of opening its screen again and again", n)
+	}
+}
+
+// TestAlertsClosedAsTheBoxAnswersEndsTheRun: an app's alerts the box
+// answered as their screen closed, in a run of no answer: the answer is
+// not kept on the entry, but the run ends, as for any answer.
+func TestAlertsClosedAsTheBoxAnswersEndsTheRun(t *testing.T) {
+	e := model.NewEngine(t0)
+	sim(e, names(3), t0, 10*time.Second, 10*time.Millisecond, ok)
+	now := t0.Add(10 * time.Second)
+	j := model.Job{Kind: model.KAlerts, App: "app-1"}
+	e.Focus("app-1", now)
+	e.AlertsOpen("app-1", now)
+	var taken bool
+	for range 6000 {
+		k, okTake, _ := e.Take(now)
+		if !okTake {
+			now = now.Add(100 * time.Millisecond)
+			continue
+		}
+		if k == j && e.Health(now).Misses >= 2 {
+			e.Started(func() {})
+			taken = true
+			break
+		}
+		e.Started(func() {})
+		e.Done(k, now, fail(model.FailNoAnswer))
+	}
+	if !taken {
+		t.Fatal("no alerts read in a run of no answer")
+	}
+	e.AlertsOpen("", now)
+	e.Done(j, now, nil)
+	if h := e.Health(now); h.Misses != 0 {
+		t.Errorf("after the box answered, the run goes on: %+v", h)
 	}
 }
