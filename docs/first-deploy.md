@@ -47,7 +47,7 @@ Names used throughout — replace them with yours as you go:
 | `your-org/boxes` | The private GitHub repository that holds the box's config |
 | `example` | The app's name on the box |
 
-## 1. A box, two names, two ports
+## 1. A box, two names, open ports
 
 You need a real virtual machine, not a container. Providers call the
 kind you want **KVM**; at Hetzner, say, the cheapest KVM tier is enough
@@ -66,16 +66,7 @@ minute. At the provider:
    such as Hetzner Cloud's, that is a rule for each. If it has none,
    there is nothing to do. Leaving UDP 443 closed is a fine choice:
    everything works, and browsers fall back to HTTP/2 over TCP without
-   saying so. Once `https://example.com` answers (the end of step 3),
-   this, run from outside the box, prints a status such as `503` if
-   UDP 443 is open, and `000` after ten seconds if it is not:
-
-   ```sh
-   curl --http3-only --max-time 10 -s -o /dev/null -w '%{http_code}\n' https://example.com/
-   ```
-
-   It needs a curl built with HTTP/3: `curl -V` lists `HTTP3` under
-   `Features`.
+   saying so. The end of step 3 checks it.
 3. Point two DNS names at the server's address: `example.com` and
    `deploy.example.com`. motel gets certificates for both itself,
    once the names resolve and the ports are open.
@@ -416,6 +407,17 @@ has how. With nothing deployed yet, a correct box looks like this:
   `{"error":"invalid or missing deploy token …"}`, in a browser or with
   `curl -i`. That is the webhook working: a deploy carries a token, and
   nothing without one gets further than this.
+- If you opened UDP 443 in step 1, this answers 503 over HTTP/3, run
+  from outside the box:
+
+  ```sh
+  curl --http3-only --max-time 10 -sS -o /dev/null -w '%{http_code}\n' https://example.com/
+  ```
+
+  `curl: (28) Connection timed out` instead means UDP 443 is still
+  shut at the provider's firewall; any other error is about something
+  else. It needs a curl built with HTTP/3: `curl -V` lists `HTTP3`
+  under `Features`.
 - `journalctl -u moteld | grep 'liveswap started'`, on the box, gains
   a line with `"apps":1,"app_names":["example"]`.
 - The workflow run is green.
