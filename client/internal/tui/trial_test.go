@@ -241,3 +241,21 @@ func TestOneApp(t *testing.T) {
 		t.Errorf("under a filter, the crumb is drawn %q", got)
 	}
 }
+
+// TestCaddyfileDigestWhole: at 80 columns the box screen shows the
+// Caddyfile's sha256 whole, the one value there a person compares with
+// something (the trial: 60 of its 64 characters, cut).
+func TestCaddyfileDigestWhole(t *testing.T) {
+	h := start(t, 80, 24, nil)
+	h.open(model.View{Screen: model.ScreenBox})
+	const digest = "1f38639fad43624b85cdc2cac1778918713a061084bca6487683ec73f2b2"
+	for _, r := range screenRows(h) {
+		if strings.HasPrefix(r.text, "Caddyfile ") {
+			if f := strings.Fields(r.text); len(f[len(f)-1]) != 64 || !strings.HasPrefix(f[len(f)-1], digest) {
+				t.Errorf("the Caddyfile's line is drawn %q, its digest not whole", r.text)
+			}
+			return
+		}
+	}
+	t.Error("no Caddyfile line on the box screen")
+}

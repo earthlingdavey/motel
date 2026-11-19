@@ -729,8 +729,10 @@ func (s *Session) BoxViewFit(now time.Time, width int, cells Cells) []Line {
 	// release is whoami's: who am I shows it under whoami's own age, and
 	// the title bar beside the session's freshness word.
 	b := s.BoxSt.V
-	// The box's values are cut; the rest are the client's words.
-	out := []Line{cutTo(field("runs commit", own(b.Commit)), width, cells), cutTo(field("Caddyfile", own("sha256 "+b.SHA256)), width, cells)}
+	// The box's values are cut; the rest are the client's words. The
+	// Caddyfile's sha256 stands alone after its label, so that at 80
+	// columns it is whole.
+	out := []Line{cutTo(field("runs commit", own(b.Commit)), width, cells), cutTo(field("Caddyfile", own(b.SHA256)), width, cells)}
 	if b.Recipient != "" {
 		out = append(out, cutTo(field("secrets key", boxT(b.Recipient)), width, cells))
 	}
