@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -189,5 +190,34 @@ func TestRunFailureSays(t *testing.T) {
 	var f *client.Failure
 	if err := runFailure(errors.New("open /dev/tty: no such device or address")); !errors.As(err, &f) || f.Exit != client.ExitUsage || !strings.HasPrefix(f.Message, "the screen could not start: ") {
 		t.Errorf("a screen that could not start is said as %v", err)
+	}
+}
+
+// TestCanDrawHelper is not a test of its own: TestCanDrawNoTerminal
+// runs the test binary with it in a session of its own, which has no
+// controlling terminal, and reads what CanDraw said.
+func TestCanDrawHelper(t *testing.T) {
+	if os.Getenv("MOTEL_TEST_CANDRAW_HELPER") == "" {
+		t.Skip("run by TestCanDrawNoTerminal")
+	}
+	_, _ = os.Stdout.WriteString("CANDRAW " + strconv.Quote(fmt.Sprint(CanDraw())) + "\n")
+}
+
+// TestCanDrawNoTerminal: with a TERM and a locale the screen can draw
+// with, and no controlling terminal (a CI job, cron, ssh without -t),
+// CanDraw fails at /dev/tty.
+func TestCanDrawNoTerminal(t *testing.T) {
+	self, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command(self, "-test.run=^TestCanDrawHelper$", "-test.count=1", "-test.timeout=20s")
+	cmd.Env = append(os.Environ(), "MOTEL_TEST_CANDRAW_HELPER=1", "TERM=xterm-256color", "LC_ALL=", "LC_CTYPE=", "LANG=C.UTF-8")
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	out, _ := cmd.CombinedOutput()
+	_, got, _ := strings.Cut(string(out), "CANDRAW ")
+	got, _, _ = strings.Cut(got, "\n")
+	if want := strconv.Quote("open /dev/tty: no such device or address"); got != want {
+		t.Errorf("CanDraw with no controlling terminal said %s, want %s\n%s", got, want, out)
 	}
 }
