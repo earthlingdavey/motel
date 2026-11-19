@@ -13,6 +13,8 @@ import (
 	"syscall"
 	"time"
 
+	"golang.org/x/term"
+
 	"github.com/smallhoursorg/motel/client/internal/cli"
 	"github.com/smallhoursorg/motel/client/internal/local"
 )
@@ -61,11 +63,13 @@ func env() cli.Env {
 		},
 		Run:     local.Exec{},
 		Version: v,
+		Draw:    cli.CanDraw,
 	}
 }
 
-// terminal says whether f is a terminal: a character device.
+// terminal says whether f is a terminal, as the terminal's own ioctl
+// says: /dev/null is a character device and no terminal, and motel
+// alone into it prints the help.
 func terminal(f *os.File) bool {
-	fi, err := f.Stat()
-	return err == nil && fi.Mode()&os.ModeCharDevice != 0
+	return term.IsTerminal(int(f.Fd()))
 }

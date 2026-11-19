@@ -108,7 +108,7 @@ type tuiSession struct {
 	c *client.Client
 }
 
-// tuiOn is the TUI's client and session as tui builds them, on fb.
+// tuiOn is the TUI's client and session as the screen builds them, on fb.
 func tuiOn(t *testing.T, fb *fakeBox) tuiSession {
 	t.Helper()
 	home := t.TempDir()
@@ -120,7 +120,7 @@ func tuiOn(t *testing.T, fb *fakeBox) tuiSession {
 	r := &runner{env: Env{Getenv: func(k string) string { return env[k] }, Stderr: &bytes.Buffer{}, Dir: t.TempDir(), Home: home,
 		Now: now, Sleep: func(context.Context, time.Duration) error { return nil },
 		Transport: fb.srv.Client().Transport, Run: noPrograms{}, Signer: &fixedSigner{}, Version: "test"}}
-	cl, err := r.client(context.Background(), &target{}, nil, "", "tui")
+	cl, err := r.client(context.Background(), &target{}, nil, "", "the screen")
 	if err != nil {
 		t.Fatal(err)
 	}

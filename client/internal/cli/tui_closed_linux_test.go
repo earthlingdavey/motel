@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -37,7 +38,7 @@ func TestClosedTerminalHelper(t *testing.T) {
 	}
 	env := map[string]string{"MOTEL_KEY": "~/me.pub", "MOTEL_URL": fb.srv.URL + "/blog"}
 	var stdout, stderr bytes.Buffer
-	code := Main(context.Background(), []string{"tui"}, Env{
+	code := Main(context.Background(), nil, Env{Terminal: true,
 		Getenv: func(k string) string { return env[k] }, Stdout: &stdout, Stderr: &stderr, Dir: t.TempDir(), Home: home,
 		Now: time.Now, Sleep: func(context.Context, time.Duration) error { return nil },
 		Transport: fb.srv.Client().Transport, Run: noPrograms{}, Signer: &fixedSigner{}, Version: "test",
@@ -79,7 +80,7 @@ func ioctl(fd uintptr, req uintptr, arg unsafe.Pointer) error {
 
 // TestClosedTerminalWithTheScreenUp: the pty's master closed while the
 // screen is up, as a terminal emulator does when its window is closed,
-// ends motel tui as an interrupt does: exit 130, nothing said. The TUI
+// ends motel as an interrupt does: exit 130, nothing said. The TUI
 // runs under a leader of the pty's session that ignores SIGHUP
 // (TestClosedTerminalLeader), so the kernel's SIGHUP (sent to the
 // session's leader alone) never reaches it: what it sees is the read of
@@ -189,5 +190,36 @@ func TestRunFailureSays(t *testing.T) {
 	var f *client.Failure
 	if err := runFailure(errors.New("open /dev/tty: no such device or address")); !errors.As(err, &f) || f.Exit != client.ExitUsage || !strings.HasPrefix(f.Message, "the screen could not start: ") {
 		t.Errorf("a screen that could not start is said as %v", err)
+	}
+}
+
+// TestCanDrawHelper is not a test of its own: TestCanDrawNoTerminal
+// runs the test binary with it in a session of its own, which has no
+// controlling terminal, and reads what CanDraw said.
+func TestCanDrawHelper(t *testing.T) {
+	if os.Getenv("MOTEL_TEST_CANDRAW_HELPER") == "" {
+		t.Skip("run by TestCanDrawNoTerminal")
+	}
+	_, _ = os.Stdout.WriteString("CANDRAW " + strconv.Quote(fmt.Sprint(CanDraw())) + "\n")
+}
+
+// TestCanDrawNoTerminal: with a TERM and a locale the screen can draw
+// with, and no controlling terminal (a CI job, cron, ssh without -t),
+// CanDraw fails at /dev/tty: for whatever reason opening it fails, ENXIO
+// where the node exists, ENOENT in a sandbox that has none.
+func TestCanDrawNoTerminal(t *testing.T) {
+	self, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command(self, "-test.run=^TestCanDrawHelper$", "-test.count=1", "-test.timeout=20s")
+	cmd.Env = append(os.Environ(), "MOTEL_TEST_CANDRAW_HELPER=1", "TERM=xterm-256color", "LC_ALL=", "LC_CTYPE=", "LANG=C.UTF-8")
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	out, _ := cmd.CombinedOutput()
+	_, line, found := strings.Cut(string(out), "CANDRAW ")
+	line, _, _ = strings.Cut(line, "\n")
+	got, err := strconv.Unquote(line)
+	if want := "open /dev/tty: "; !found || err != nil || !strings.HasPrefix(got, want) || got == want {
+		t.Errorf("CanDraw with no controlling terminal said %s, want a refusal beginning %q\n%s", line, want, out)
 	}
 }

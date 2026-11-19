@@ -1,6 +1,6 @@
-// Package tui is `motel tui`: k9s-style screens over the model. It
-// sees the box only through model, which reads it only through the
-// Client it is given, and it hands tview no text but through
+// Package tui is the screens `motel` alone opens: k9s-style, over the
+// model. It sees the box only through model, which reads it only
+// through the Client it is given, and it hands tview no text but through
 // boxtext.go. It acts on nothing: every screen reads.
 package tui
 
@@ -137,7 +137,7 @@ func New(s *model.Session, colour bool, start model.View) *UI {
 		u.w, u.h = scr.Size()
 		if u.w < minW || u.h < minH {
 			// Below this nothing lays out; say what is needed instead.
-			door.PrintAt(scr, 0, 0, u.w, "window too small: motel tui needs "+itoa(minW)+"x"+itoa(minH)+
+			door.PrintAt(scr, 0, 0, u.w, "window too small: the screen needs "+itoa(minW)+"x"+itoa(minH)+
 				", this one is "+itoa(u.w)+"x"+itoa(u.h)+". q quits.")
 			return true
 		}

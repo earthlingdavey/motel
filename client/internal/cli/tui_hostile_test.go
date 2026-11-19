@@ -99,7 +99,7 @@ func newHostileRun(t *testing.T, bodies map[string]any) *hostileRun {
 	r := &runner{env: Env{Getenv: func(k string) string { return env[k] }, Stderr: &bytes.Buffer{}, Dir: t.TempDir(), Home: home,
 		Now: wall, Sleep: func(context.Context, time.Duration) error { return nil },
 		Transport: srv.Client().Transport, Run: noPrograms{}, Signer: &fixedSigner{}, Version: "test"}}
-	cl, err := r.client(context.Background(), &target{}, nil, "", "tui")
+	cl, err := r.client(context.Background(), &target{}, nil, "", "the screen")
 	if err != nil {
 		t.Fatal(err)
 	}

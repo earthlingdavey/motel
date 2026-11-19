@@ -24,11 +24,14 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gdamore/tcell/v2"
+
 	"github.com/smallhoursorg/motel/client/internal/client"
 	"github.com/smallhoursorg/motel/client/internal/local"
 	"github.com/smallhoursorg/motel/client/internal/sshkey"
 	"github.com/smallhoursorg/motel/client/internal/tui"
 	"github.com/smallhoursorg/motel/client/internal/tui/demo"
+	tuihostile "github.com/smallhoursorg/motel/client/internal/tui/hostile"
 	"github.com/smallhoursorg/motel/client/internal/tui/model"
 	"github.com/smallhoursorg/motel/liveswap/wire"
 )
@@ -246,7 +249,7 @@ func TestTUIRefusesAPassphraseKey(t *testing.T) {
 		sent++
 		return fb.srv.Client().Transport.RoundTrip(r)
 	})
-	code := Main(context.Background(), []string{"tui"}, Env{
+	code := Main(context.Background(), nil, Env{Terminal: true,
 		Getenv: func(k string) string { return env[k] }, Stdout: &out, Stderr: &errOut, Dir: t.TempDir(), Home: home,
 		Now: time.Now, Sleep: func(context.Context, time.Duration) error { return nil },
 		Transport: rt, Run: noPrograms{}, Signer: &fixedSigner{}, Version: "test",
@@ -261,7 +264,7 @@ func TestTUIRefusesAPassphraseKey(t *testing.T) {
 
 // TestDemoHidden: --demo is not in the help, and it runs with no box.
 func TestDemoHidden(t *testing.T) {
-	r := run(t, nil, nil, "tui", "--help")
+	r := run(t, nil, nil, "--help")
 	if r.code != 0 || strings.Contains(r.stdout, "demo") {
 		t.Errorf("exit %d; help shows --demo:\n%s", r.code, r.stdout)
 	}
@@ -273,7 +276,7 @@ func TestInterruptedAtTheFirstRead(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	var out, errOut bytes.Buffer
-	code := Main(ctx, []string{"tui", "--demo"}, Env{
+	code := Main(ctx, []string{"--demo"}, Env{
 		Getenv: func(string) string { return "" }, Stdout: &out, Stderr: &errOut, Dir: t.TempDir(), Home: t.TempDir(),
 		Now: time.Now, Sleep: func(context.Context, time.Duration) error { return nil }, Run: noPrograms{}, Version: "test",
 	})
@@ -282,7 +285,7 @@ func TestInterruptedAtTheFirstRead(t *testing.T) {
 	}
 }
 
-// hangUp runs motel tui on the fake box and sends this process SIGHUP,
+// hangUp runs motel on the fake box and sends this process SIGHUP,
 // as a closed terminal window does, at the TUI's read number at
 // (from 1), which then waits to be cancelled; and says the exit code
 // and what stderr holds.
@@ -310,7 +313,7 @@ func hangUp(t *testing.T, at int32) (int, string) {
 		}
 	})
 	var out, errOut bytes.Buffer
-	code := Main(context.Background(), []string{"tui"}, Env{
+	code := Main(context.Background(), nil, Env{Terminal: true,
 		Getenv: func(k string) string { return env[k] }, Stdout: &out, Stderr: &errOut, Dir: t.TempDir(), Home: home,
 		Now: time.Now, Sleep: func(context.Context, time.Duration) error { return nil },
 		Transport: rt, Run: noPrograms{}, Signer: &fixedSigner{}, Version: "test",
@@ -318,7 +321,7 @@ func hangUp(t *testing.T, at int32) (int, string) {
 	return code, errOut.String()
 }
 
-// TestHangUpAtTheFirstRead: SIGHUP during the first read ends motel tui
+// TestHangUpAtTheFirstRead: SIGHUP during the first read ends motel
 // as an interrupt does: exit 130, nothing said.
 func TestHangUpAtTheFirstRead(t *testing.T) {
 	if code, stderr := hangUp(t, 1); code != client.ExitInterrupted || stderr != "" {
@@ -350,7 +353,7 @@ func (e endAt) Output(ctx context.Context, c local.Cmd) ([]byte, error) {
 }
 
 // TestSignalBeforeTheScreen: a closed terminal (SIGHUP) or an interrupt
-// (Main's context ends, as SIGINT and SIGTERM end it) while motel tui
+// (Main's context ends, as SIGINT and SIGTERM end it) while motel
 // sets up (the box found from the repository, the key from the agent,
 // the passphrase check) ends it as an interrupt does: exit 130, nothing
 // said, not the advice a failed step would give.
@@ -382,13 +385,15 @@ func TestSignalBeforeTheScreen(t *testing.T) {
 					end = func() { _ = syscall.Kill(os.Getpid(), syscall.SIGHUP) }
 				}
 				var out, errOut bytes.Buffer
-				code := Main(ctx, []string{"tui"}, Env{
+				code := Main(ctx, nil, Env{Terminal: true,
 					Getenv: func(k string) string { return s.env[k] }, Stdout: &out, Stderr: &errOut, Dir: t.TempDir(), Home: home,
 					Now: time.Now, Sleep: func(context.Context, time.Duration) error { return nil },
 					Run: endAt{name: s.program, end: end, once: &sync.Once{}}, Signer: &fixedSigner{}, Version: "test",
 				})
-				if code != client.ExitInterrupted || errOut.String() != "" {
-					t.Errorf("exit %d, stderr %q; want %d and nothing said", code, errOut.String(), client.ExitInterrupted)
+				// Typed alone, too: not the help a step that found nothing
+				// prints (an interrupted command prints nothing on stdout).
+				if code != client.ExitInterrupted || errOut.String() != "" || out.Len() != 0 {
+					t.Errorf("exit %d, stderr %q, %d bytes on stdout; want %d and nothing said", code, errOut.String(), out.Len(), client.ExitInterrupted)
 				}
 			})
 		}
@@ -425,7 +430,7 @@ func ptyScript(t *testing.T, notHeld string) string {
 }
 
 // TestHangUpWithTheScreenUp: SIGHUP while the screen is up ends motel
-// tui as an interrupt does: exit 130, nothing said. Under a real pty
+// as an interrupt does: exit 130, nothing said. Under a real pty
 // (script(1) makes one), as the screen needs a terminal.
 func TestHangUpWithTheScreenUp(t *testing.T) {
 	script := ptyScript(t, "SIGHUP with the screen up is not held here")
@@ -596,7 +601,7 @@ func TestTUISessionBox(t *testing.T) {
 	} {
 		r := &runner{env: Env{Getenv: func(k string) string { return c.env[k] }, Stderr: &bytes.Buffer{}, Dir: t.TempDir(), Home: home,
 			Now: time.Now, Run: noPrograms{}, Signer: &fixedSigner{}}}
-		cl, err := r.client(context.Background(), &target{box: c.flag}, nil, "", "tui")
+		cl, err := r.client(context.Background(), &target{box: c.flag}, nil, "", "the screen")
 		if err != nil {
 			t.Fatalf("%s: %v", name, err)
 		}
@@ -612,7 +617,7 @@ func TestTUISessionBox(t *testing.T) {
 	}
 }
 
-// TestTUIClockSetBack: the TUI's client and session as tui builds them,
+// TestTUIClockSetBack: the TUI's client and session as the screen builds them,
 // the real PersonToken and its signer, and a box whose clock is right:
 // it takes a token from 60 s before its iat to 60 s after its exp, as
 // liveswap/access does, and sends its Date. This machine's clock is
@@ -665,7 +670,7 @@ func TestTUIClockSetBack(t *testing.T) {
 			r := &runner{env: Env{Getenv: func(k string) string { return env[k] }, Stderr: &bytes.Buffer{}, Dir: t.TempDir(), Home: home,
 				Now: wall, Sleep: func(context.Context, time.Duration) error { return nil },
 				Transport: box.Client().Transport, Run: noPrograms{}, Signer: signs, Version: "test"}}
-			cl, err := r.client(context.Background(), &target{}, nil, "", "tui")
+			cl, err := r.client(context.Background(), &target{}, nil, "", "the screen")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -736,5 +741,158 @@ func TestTUIClockSetBack(t *testing.T) {
 				t.Errorf("the refusal screen does not name the clock first:\n%s", shown)
 			}
 		})
+	}
+}
+
+// TestNoScreenNothingSent: where the screen cannot be drawn (no
+// terminal, a TERM it cannot draw with), the TUI ends before anything
+// is signed or sent, exit 2, saying why; the --demo screen too.
+func TestNoScreenNothingSent(t *testing.T) {
+	fb := newFakeBox(t)
+	home := t.TempDir()
+	if err := os.WriteFile(filepath.Join(home, "me.pub"), []byte(meLine+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	env := map[string]string{"MOTEL_KEY": "~/me.pub", "MOTEL_URL": fb.srv.URL + "/blog"}
+	for _, args := range [][]string{{"--key", "~/me.pub"}, {"--demo"}} {
+		sent := 0
+		rt := roundTripFunc(func(r *http.Request) (*http.Response, error) {
+			sent++
+			return fb.srv.Client().Transport.RoundTrip(r)
+		})
+		s := &fixedSigner{}
+		var out, errOut bytes.Buffer
+		code := Main(context.Background(), args, Env{
+			Getenv: func(k string) string { return env[k] }, Stdout: &out, Stderr: &errOut, Dir: t.TempDir(), Home: home,
+			Now: time.Now, Sleep: func(context.Context, time.Duration) error { return nil },
+			Transport: rt, Run: noPrograms{}, Signer: s, Version: "test",
+			Draw: func() error { return errors.New("open /dev/tty: no such device or address") },
+		})
+		want := "motel: the screen could not start: open /dev/tty: no such device or address\n"
+		if code != client.ExitUsage || errOut.String() != want || out.Len() != 0 || sent != 0 || s.calls != 0 {
+			t.Errorf("%v: exit %d, stderr %q, stdout %q, %d sent, %d signed; want 2, %q, nothing sent or signed", args, code, errOut.String(), out.String(), sent, s.calls, want)
+		}
+	}
+}
+
+// TestCanDraw: the check finds the TERM the screen could not draw
+// with, and the locale whose character set it could not write, whether
+// or not this process has a terminal: a locale it can write passes the
+// charset step, and then fails at /dev/tty or passes.
+func TestCanDraw(t *testing.T) {
+	setLocale(t, locale{lang: "C.UTF-8"})
+	t.Setenv("TERM", "")
+	if err := CanDraw(); err == nil || !strings.Contains(err.Error(), "term not set") {
+		t.Errorf("TERM unset: %v, want %q", err, "term not set")
+	}
+	// tcell has no dumb of its own: it asks infocmp, which says dumb is
+	// not cursor addressable, and where there is no infocmp the lookup
+	// fails otherwise.
+	t.Setenv("TERM", "dumb")
+	err := CanDraw()
+	_, lerr := exec.LookPath("infocmp")
+	if err == nil || lerr == nil && !strings.Contains(err.Error(), "not cursor addressable") {
+		t.Errorf("TERM=dumb: %v, want a refusal (with infocmp: %q)", err, "not cursor addressable")
+	}
+	t.Setenv("TERM", "xterm-256color") // tcell's own, built in
+	for _, l := range locales {
+		setLocale(t, l)
+		if got := localeCharset(); got != l.charset {
+			t.Errorf("%+v: the character set is %q, want %q", l, got, l.charset)
+		}
+		if err := CanDraw(); errors.Is(err, tcell.ErrNoCharset) != l.refused {
+			t.Errorf("%+v: %v; want it refused for its character set: %v", l, err, l.refused)
+		}
+	}
+}
+
+// locale is LC_ALL, LC_CTYPE and LANG, the character set tcell reads
+// from them, and whether tcell (which knows UTF-8 and ASCII alone, as
+// the client registers no other) refuses it.
+type locale struct {
+	all, ctype, lang string
+	charset          string
+	refused          bool
+}
+
+var locales = []locale{
+	{charset: "UTF-8"}, // none set
+	{lang: "en_US.UTF-8", charset: "UTF-8"},
+	{lang: "C.UTF-8", charset: "UTF-8"},
+	{lang: "de_DE.utf8", charset: "utf8"},
+	{lang: "C", charset: "US-ASCII"},
+	{lang: "POSIX", charset: "US-ASCII"},
+	{lang: "en_US", charset: "UTF-8"},
+	{lang: "de_DE@euro", charset: "UTF-8"},
+	{lang: "de_DE.UTF-8@euro", charset: "UTF-8"},
+	{lang: "de_DE.ISO-8859-15@euro", charset: "ISO-8859-15", refused: true},
+	{lang: "en_US.ISO-8859-1", charset: "ISO-8859-1", refused: true},
+	{lang: "ja_JP.eucJP", charset: "eucJP", refused: true},
+	{lang: "ru_RU.KOI8-R", charset: "KOI8-R", refused: true},
+	{all: "en_US.UTF-8", lang: "en_US.ISO-8859-1", charset: "UTF-8"},
+	{all: "en_US.ISO-8859-1", lang: "en_US.UTF-8", charset: "ISO-8859-1", refused: true},
+	{ctype: "ru_RU.KOI8-R", lang: "en_US.UTF-8", charset: "KOI8-R", refused: true},
+	{all: "C", ctype: "ru_RU.KOI8-R", charset: "US-ASCII"},
+}
+
+func setLocale(t *testing.T, l locale) {
+	t.Helper()
+	t.Setenv("LC_ALL", l.all)
+	t.Setenv("LC_CTYPE", l.ctype)
+	t.Setenv("LANG", l.lang)
+}
+
+// TestCharsetIsTcells: localeCharset reads the locale as tcell's own
+// Init does, on its real terminfo screen over a terminal that records
+// bytes: Init takes the same character set's name, and fails with
+// ErrNoCharset for exactly the locales CanDraw refuses. A tcell that
+// reads it otherwise fails here.
+func TestCharsetIsTcells(t *testing.T) {
+	for _, l := range locales {
+		setLocale(t, l)
+		scr, err := tuihostile.Screen(tuihostile.NewTTY())
+		if err != nil {
+			t.Fatal(err)
+		}
+		err = scr.Init()
+		// Init keeps getCharset's name as it is, before it refuses it.
+		if err == nil || errors.Is(err, tcell.ErrNoCharset) {
+			if got := scr.CharacterSet(); got != localeCharset() {
+				t.Errorf("%+v: tcell's Init took the character set %q, and CanDraw's check reads %q", l, got, localeCharset())
+			}
+		}
+		if err == nil {
+			scr.Fini()
+		}
+		if errors.Is(err, tcell.ErrNoCharset) != (tcell.GetEncoding(localeCharset()) == nil) {
+			t.Errorf("%+v: tcell's Init says %v, and CanDraw's check reads %q", l, err, localeCharset())
+		}
+		if err != nil && !errors.Is(err, tcell.ErrNoCharset) {
+			t.Errorf("%+v: tcell's Init failed otherwise: %v", l, err)
+		}
+	}
+}
+
+// TestUnknownCharsetNothingSent: a locale whose character set the
+// screen cannot write ends motel before anything is signed or sent,
+// exit 2, in tcell's own words, with the check main makes; typed
+// alone, under the help.
+func TestUnknownCharsetNothingSent(t *testing.T) {
+	setLocale(t, locale{lang: "en_US.ISO-8859-1"})
+	t.Setenv("TERM", "xterm-256color")
+	fb := newFakeBox(t)
+	home := keyHome(t)
+	help := run(t, nil, nil, "--help")
+	env := map[string]string{"MOTEL_KEY": "~/me.pub", "MOTEL_URL": fb.srv.URL + "/blog"}
+	want := "motel: the screen could not start: character set not supported\n"
+	for _, args := range [][]string{nil, {"--key", "~/me.pub"}, {"--demo"}} {
+		r := startMotel(t, fb, env, home, true, CanDraw, args...)
+		wantOut := ""
+		if args == nil {
+			wantOut = help.stdout
+		}
+		if r.code != client.ExitUsage || r.stderr != want || r.stdout != wantOut || r.signed != 0 || r.sent != 0 {
+			t.Errorf("%q: exit %d, stderr %q, %d signed, %d sent, stdout as wanted %v; want 2, %q, nothing signed or sent, and the help alone typed alone", args, r.code, r.stderr, r.signed, r.sent, r.stdout == wantOut, want)
+		}
 	}
 }

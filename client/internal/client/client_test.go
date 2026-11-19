@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -295,6 +296,41 @@ func TestGetNothingAnswers(t *testing.T) {
 	_, err := c.Get(context.Background(), "/blog", nil)
 	f := failure(t, err)
 	want := "127.0.0.1 did not answer on " + port + " (connection refused). If moteld is down, as root on the box: systemctl status moteld; journalctl -u moteld -n 50. The box's off-box heartbeat also reports a stopped moteld."
+	if f.Exit != ExitUnknown || f.Message != want {
+		t.Fatalf("exit %d\n%s\nwant 3\n%s", f.Exit, f.Message, want)
+	}
+}
+
+// TestGetNoTLSTimesOut: a host that takes the connection and never
+// speaks TLS ends at the transport's TLS handshake timeout (Go's 10 s,
+// a tenth of a second here), not at the request's 30 s, and the
+// sentence says no number that timer did not reach.
+func TestGetNoTLSTimesOut(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = ln.Close() })
+	go func() {
+		var held []net.Conn
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				for _, c := range held {
+					_ = c.Close()
+				}
+				return
+			}
+			held = append(held, conn)
+		}
+	}()
+	_, port, _ := net.SplitHostPort(ln.Addr().String())
+	tr := http.DefaultTransport.(*http.Transport).Clone()
+	tr.TLSHandshakeTimeout = 100 * time.Millisecond
+	c := &Client{Box: Box{Host: "127.0.0.1", Port: port}, Cred: DeployToken("tok"), HTTP: NewHTTP(tr), Now: time.Now}
+	_, err = c.Get(context.Background(), "/blog", nil)
+	f := failure(t, err)
+	want := "127.0.0.1 timed out on " + port + ": no whole answer came, and motel waits at most 30 s for one. If moteld is down, as root on the box: systemctl status moteld; journalctl -u moteld -n 50. The box's off-box heartbeat also reports a stopped moteld."
 	if f.Exit != ExitUnknown || f.Message != want {
 		t.Fatalf("exit %d\n%s\nwant 3\n%s", f.Exit, f.Message, want)
 	}

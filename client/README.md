@@ -34,10 +34,10 @@ motel status <app> [--range 1h|24h] an app's status
 motel deploys <app>                 its deploys, newest first
 motel deploys <app> <version>       one deploy's whole record
 motel box status                    the commit the box runs, its Caddyfile's digest, its key for secrets
-motel tui                           screens over the same reads (below)
+motel                               on a terminal, screens over the same reads (below)
 ```
 
-Each but `tui` takes `--json`. `whoami` and `apps` are asked with your own key
+Each command takes `--json`; `motel` alone, the screens, does not. `whoami` and `apps` are asked with your own key
 only: with `MOTEL_TOKEN` set, name the key with `--key` (else exit 2,
 nothing sent). `<app>` is a name, or the app's URL
 (`https://deploy.example.com/blog`, as `MOTEL_URL` holds it), which names
@@ -253,6 +253,15 @@ made by hand. Accepted:
 | With `--key` in it (whenever the key was named by `--key` or by `MOTEL_KEY`), `c`'s command lines are wider than the overlay at 80 columns for an ordinary key path and box name: `motel status --box deploy.smallhours.org --key '~/.ssh/id_ed25519.pub' -- example` is 81 characters and its `--json` line 88, where the overlay leaves a command line 76 cells (78 inside its border, 2 of indent). Both are cut at the edge and marked, and the overlay says not to copy them and that `P` prints the first whole; with a longer key path (`'~/tui1-trial/keys/trial.pub'`) both are cut before they differ, so they look alike as far as they show | 2 | 5 | 1 | 10 | 3 (a command laid on rows cannot be copied as one line) | accepted |
 | A mistyped `:` command is said on the crumb's row, cut where the apps screen's summary beside it begins: at 60 columns `? lists the : views;…`, the remedy whole and what was wrong cut away, the cut marked; at 80 `? lists the : views; no command "bogus" …`, what was wrong but its last word | 2 | 5 | 1 | 10 | 2 | accepted |
 | A hardware key's touch on the read made after one that waited 5 s or more and got no answer is counted in `waiting`'s seconds: the count goes on from the read that got none until the box answers, and the time a token is signed is left out only of the read in flight's own count, so after a 10 s touch the title bar says the box has been waited for 10 s longer than it has been asked. The word is true (the box has not answered); the number is long by the touch. Starting the count again at the signature would put `live` back for 5 s in an outage | 2 | 2 | 3 | 12 | 2 | accepted |
+| `motel` alone on a terminal, with a box and a key found (in a box repository, git's `user.signingkey` among them), signs a token before the screen opens, as every command that asks the box does: a person with a hardware key who typed `motel` to see its commands is asked for a touch, then gets the screen (`motel -h` prints the commands and signs nothing) | 2 | 5 | 1 | 10 | 3 (a screen that opens before its first reads, or a key press before the first signature at every start) | accepted, by the owner's decision of 2026-11-19 that `motel` alone is the screen |
+| `motel` alone waits for its first reads before the screen opens ("The TUI" below): where the box's host does not answer, a person who typed `motel` gets one line on stderr after 3 s and the screen within a minute, where the help came at once before `motel` alone was the screen; ctrl-c quits, and `motel -h` asks nothing | 2 | 4 | 1 | 8 | 3 | accepted |
+| `motel tui`, the screen's command before `motel` alone opened it, is refused as any word that is no command (`unknown command "tui" for "motel"`, exit 2), and nothing says that `motel` alone is the screen | 2 | 5 | 1 | 10 | 2 (a hidden command that says so) | accepted, by the owner's decision of 2026-11-19: no release said `motel tui`, and a pointer would keep the name |
+| `motel \| jq`, or `motel > file`, meant for the screen and its `P`, prints the help into the pipe or the file, exit 0: with no arguments at all, stdout not being a terminal is how a script's `motel` is told from a person's, and a pipe meant for `P` looks the same. `jq` then fails on the help, whose own words say why only to someone who reads them. With a flag the screen opens (`motel --box <host> \| jq`, "The TUI" below) | 2 | 5 | 3 | 30 | 3 (none within the rule: any other test of a pipe gives a script the screen) | accepted over the bar, by the owner's decision of 2026-11-19 on what `motel` alone does |
+| `motel --json` with no command is refused, exit 2 (`motel alone has no --json: it draws screens, and every command takes --json`, and `{"error":"…"}` on stdout), where it printed the help, exit 0, before `motel` alone was the screen: a flag asks for the screen, and the screen prints no JSON | 2 | 5 | 1 | 10 | 2 | accepted |
+| What says a screen can be drawn (`cli.CanDraw`) asks only for a terminfo entry for `TERM` that can move the cursor, a locale that names no character set, or one under a name tcell knows for UTF-8 or ASCII (tcell's own rule, which `TestCharsetIsTcells` holds the client's copy to), and `/dev/tty`: in a terminal that draws otherwise than its entry says, or under a locale that names no character set and is not UTF-8 (`LANG=en_US`, which glibc reads as ISO-8859-1), `motel` alone opens a screen drawn wrongly, where it printed its help before `motel` alone was the screen; and ASCII under a name tcell does not know (`LANG=en_US.ANSI_X3.4-1968`) is refused as a character set not supported, before anything is signed. `motel -h` still prints the help | 2 | 2 | 1 | 4 | 3 | accepted |
+| `motel 2>/dev/null` alone, on a terminal where no box or key is found: the help, exit 2, and the line that says what was not found is lost with stderr, though the help says a line under it says why | 2 | 5 | 1 | 10 | 2 (the line on stdout too) | accepted |
+| `motel help tui`, as `motel help` with any word that is no command, says ``Unknown help topic [`tui`]`` and prints the usage, exit 0, where `motel tui` is refused, exit 2: cobra's own answer, and older than `motel` alone as the screen | 2 | 5 | 1 | 10 | 2 | accepted |
+| `motel` alone, where no box or key is found, interrupted (ctrl-c, the terminal closed) in the moment its help is being written: the help is on stdout, the line under it is not said, and the exit is 130, where an interrupted command prints nothing on stdout. The interrupt is looked for before the help is written (`TestSignalBeforeTheScreen`), not during: about 3.5 kB to a terminal, a few milliseconds unless the terminal is held (ctrl-s) | 2 | 2 | 3 | 12 | 2 (the help built whole, then written only if not interrupted) | accepted |
 
 Owed, from the reviews of the TUI's first part (#558; scored there), of
 their fixes, and of its second part; the others are fixed:
@@ -267,7 +276,7 @@ their fixes, and of its second part; the others are fixed:
 
 ## The TUI
 
-`motel tui` is a view over the reads above, in the same process. Its
+`motel` alone, on a terminal, is a view over the reads above, in the same process. With no arguments at all it prints its help instead when stdout is not a terminal (a pipe, a file, `$(…)`), exit 0, and, with a line under it saying why, exit 2, when it finds no box or key to read with or no screen to draw on; either way nothing is signed or sent. A flag (`--box`, `--key`) asks for the screen, which then fails as a command does. A word that is no command, after `--` or empty (`motel "$CMD"` with `CMD` unset) too, is refused, exit 2, whatever stdout is (after `--` with no nearest command named; with `-h` beside an empty word the help is still printed). Its
 packages see the box through `model.Client`, one method per command,
 which `internal/cli/tui.go` alone builds over the client's reads; no
 package of the TUI reaches the client, a transport or a program
@@ -275,7 +284,7 @@ package of the TUI reaches the client, a transport or a program
 each entry naming the command whose read it makes
 (`TestActionsAreCommands`). It only reads. The apps screen is sorted by
 what needs a look, with a strip that says why; a person with one app
-opens on it, with the list under it. Its first reads, whoami and the list, are made before the screen opens: once they have waited 3 s for the box (a signature, a hardware key's touch among them, and the client's own pause before it asks again after a 401 not counted), one line on stderr says what is asked and that the screen opens when the box answers, or within a minute; an ordinary start, about four round trips of the box, says nothing.
+opens on it, with the list under it. Its first reads, whoami and the list, are made before the screen opens: once they have waited 3 s for the box (a signature, a hardware key's touch among them, and the client's own pause before it asks again after a 401 not counted), one line on stderr says what is asked and that the screen opens when the box answers, or within a minute; an ordinary start, about four round trips of the box, says nothing. Where no screen can be drawn (no terminal, as in a CI job, a `TERM` with no entry or none that moves the cursor, such as `dumb`, or a locale that names a character set other than UTF-8 or ASCII, as `LANG=en_US.ISO-8859-1` does; one that names none, `LANG=en_US`, is taken for UTF-8, which is tcell's rule) it stops before anything is signed or sent, exit 2.
 While a deploy is in flight an
 app's row (one not stopped, throttled or in backoff, which it says
 instead) is marked `⟳`, whatever its newest record says (a failed one
@@ -332,8 +341,9 @@ lines and long answers are cut for display (a line wider than the
 window at its edge, as there is no scrolling sideways; lines over 2000
 characters and answers over 2000 lines here), and the overlay says so
 and that `P` prints it whole. `P` quits and prints what the overlay
-names: the command line, or the answer. Into a pipe or a file the
-answer goes as the command's `--json` prints it: the box's JSON, with
+names: the command line, or the answer. Into a pipe or a file (the
+screen started with a flag, `motel --box <host> | jq`, since `motel`
+alone prints its help there) the answer goes as the command's `--json` prints it: the box's JSON, with
 the characters a terminal acts on that JSON lets a string carry raw (C1
 controls, bidi overrides, DEL) written as JSON's own escapes, since a
 pipe may end at a terminal; to a terminal it goes indented (as on the overlay) and made
@@ -437,7 +447,7 @@ SIGINT, SIGTERM or SIGHUP sent to the process, or the terminal closed under the 
   off a short list, and `TestSafeBytes` draws the hostile fixture on a
   real terminfo screen and finds none of its attacks in the bytes.
 
-`motel tui --demo` (hidden) shows the test fixtures, marked SAMPLE
+`motel --demo` (hidden) shows the test fixtures, marked SAMPLE
 DATA in the title bar, with no box.
 
 ## Layout

@@ -364,7 +364,7 @@ the scanner.)
 | [age](https://github.com/FiloSottile/age) (`filippo.io/age`) | +4 | ✓ | — | — | ✓ | — | — | Secrets: each value in the box repository is an age file encrypted to the box's own key, which root decrypts on the box into the app's env file. Chosen over SOPS, whose library measured 80 more modules in a binary root runs ([box/DESIGN-box.md](box/DESIGN-box.md), "Decisions and rejected alternatives"). |
 | [x/crypto](https://pkg.go.dev/golang.org/x/crypto) (`ssh`) + [edwards25519](https://github.com/FiloSottile/edwards25519) | 0 (already in Caddy's tree) | ✓ | ✓ | — | ✓ | — | — | The ssh formats. box reads `signer` keys and takes a commit's ssh signature apart with it (the check itself is the system `ssh-keygen -Y verify`). liveswap's `access` checks in-process the signature a person's token is, only when the token's key is of a type some listed key has (a box that declares no one lists none), and refuses an Ed25519 key of small order (edwards25519, liveswap alone). The client's binary links neither: it reads a key with the standard library and signs with the system `ssh-keygen`. The Go team's and Filippo Valsorda's; Caddy's own go.mod requires both. |
 | [cobra](https://github.com/spf13/cobra) + [pflag](https://github.com/spf13/pflag) | 0 (already in Caddy's tree) | ✓ | — | — | ✓ | — | ✓ | Caddy's own CLI is cobra, so anything that adds a subcommand speaks it: box registers `moteld box ...` through Caddy's command API, and `cmd/moteld` parses a command's flags with Caddy's own definition of them before its backup check runs. The client, `motel`, parses its commands with cobra too. |
-| [tview](https://github.com/rivo/tview) + [tcell](https://github.com/gdamore/tcell) | +4 (tview, tcell, gdamore/encoding, go-colorful; uniseg) | — | — | — | — | — | ✓ | `motel tui` only, in the laptop client; no server links them. tview has one maintainer and no release since 2025-08, and it stays on tcell v2: the TUI keeps its screens thin over a model with no terminal library (`internal/tui/model`), so a move to another library costs the screens alone. tview reads `[...]` tags in box text, which `internal/tui/door` makes inert (client/README.md, "The TUI"). |
+| [tview](https://github.com/rivo/tview) + [tcell](https://github.com/gdamore/tcell) | +4 (tview, tcell, gdamore/encoding, go-colorful; uniseg) | — | — | — | — | — | ✓ | the screens `motel` alone opens only, in the laptop client; no server links them. tview has one maintainer and no release since 2025-08, and it stays on tcell v2: the TUI keeps its screens thin over a model with no terminal library (`internal/tui/model`), so a move to another library costs the screens alone. tview reads `[...]` tags in box text, which `internal/tui/door` makes inert (client/README.md, "The TUI"). |
 
 A ✓ in the liveswap, penaltybox and box columns means that module's own
 code requires the dependency. A "—" there is not "absent from that
@@ -379,9 +379,11 @@ own ([backups/README.md](backups/README.md)).
 
 The motel (client) column is the laptop client, which no server
 installs: it too links no Caddy, and its binary holds the client's own
-packages, `liveswap/wire`, cobra and pflag, and for `motel tui` tview,
+packages, `liveswap/wire`, cobra and pflag, and for its screens tview,
 tcell and the modules they bring (gdamore/encoding, go-colorful,
-uniseg, x/term and x/text), and nothing else (`TestLinksNoCaddy`). Its
+uniseg, x/term, the x/sys it brings, and x/text; x/term is also what
+the client itself asks whether stdout is a terminal), and nothing else
+(`TestLinksNoCaddy`). Its
 module graph is larger than that (about 180 modules) only because
 `liveswap/wire` is a package of the liveswap module, whose go.mod
 requires Caddy.

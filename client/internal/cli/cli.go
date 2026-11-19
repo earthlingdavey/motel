@@ -1,7 +1,7 @@
 // Package cli is the client's command tree: what each command reads,
-// asks and prints, and the exit code it ends with. The commands are
-// the client's whole surface; a later screen is a view over the same
-// functions.
+// asks and prints, and the exit code it ends with. motel alone, the
+// root, opens the screens, a view over the same reads the commands
+// make.
 package cli
 
 import (
@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -41,6 +42,10 @@ type Env struct {
 	Signer sshkey.Signer
 	// Version is the client's own release.
 	Version string
+	// Draw says why the screen could not be drawn here (CanDraw), and
+	// is asked before anything is signed or sent; nil asks nothing, as
+	// for a test's own screen.
+	Draw func() error
 }
 
 const experimental = "Every command is experimental: its flags, output and exit codes can change\n" +
@@ -81,7 +86,7 @@ func Main(ctx context.Context, args []string, env Env) int {
 	if !errors.As(err, &f) {
 		// Anything else is cobra's own: a flag, an argument or a
 		// command it could not read.
-		f = &client.Failure{Exit: client.ExitUsage, Message: termtext.From(err.Error()).String()}
+		f = &client.Failure{Exit: client.ExitUsage, Message: cobraLine(err.Error())}
 	}
 	// A refusal of the arguments themselves comes before --json is
 	// read, so it is looked for here too.
@@ -97,6 +102,28 @@ func Main(ctx context.Context, args []string, env Env) int {
 	}
 	_, _ = fmt.Fprintf(env.Stderr, "motel: %s\n", f.Message)
 	return f.Exit
+}
+
+// cobraLine is cobra's own refusal as one line. To an unknown command
+// cobra adds the nearest commands on lines of their own, after a blank
+// one: they follow its first line as a sentence. The word typed is in
+// that first line, written with %q, so a line break typed in it is
+// \n there and cannot be taken for cobra's; whatever else the line
+// holds is made visible with termtext.From.
+func cobraLine(msg string) string {
+	head, near, found := strings.Cut(msg, "\n\nDid you mean this?\n")
+	line := termtext.From(head).String()
+	if !found {
+		return line
+	}
+	var names []string
+	for _, n := range strings.Fields(near) {
+		names = append(names, termtext.From(n).String())
+	}
+	if len(names) > 1 {
+		names = append(names[:len(names)-2], names[len(names)-2]+" or "+names[len(names)-1])
+	}
+	return line + ". Did you mean this? " + strings.Join(names, ", ")
 }
 
 // errInterrupted is a command ended by a signal its context alone
@@ -127,7 +154,7 @@ func (r *runner) tree() *cobra.Command {
 	root := &cobra.Command{
 		Use:           "motel",
 		Short:         "Read a motel box over HTTPS (experimental)",
-		Long:          "motel reads a box over HTTPS: who your key is there and the apps it may view,\nan app's status and deploys, and the box's own state.\n\n" + experimental,
+		Long:          "motel reads a box over HTTPS: who your key is there and the apps it may view,\nan app's status and deploys, and the box's own state.\n\n" + screenLong + "\n\n" + experimental,
 		SilenceErrors: true,
 		SilenceUsage:  true,
 	}
@@ -137,6 +164,11 @@ func (r *runner) tree() *cobra.Command {
 	root.SetFlagErrorFunc(func(_ *cobra.Command, err error) error {
 		return &client.Failure{Exit: client.ExitUsage, Message: termtext.From(err.Error()).String()}
 	})
+	// The root runs the screens. Its Args stay unset, so cobra still
+	// refuses a word that is not a command, naming the nearest; a word
+	// cobra does not look at, after -- or empty, the root refuses itself
+	// in cobra's words.
+	r.screen(root)
 
 	box := &cobra.Command{
 		Use:     "box",
@@ -148,7 +180,7 @@ func (r *runner) tree() *cobra.Command {
 		},
 	}
 	box.AddCommand(r.boxStatus())
-	for _, c := range []*cobra.Command{r.version(), r.key(), r.whoami(), r.apps(), r.status(), r.deploys(), box, r.tui()} {
+	for _, c := range []*cobra.Command{r.version(), r.key(), r.whoami(), r.apps(), r.status(), r.deploys(), box} {
 		c.GroupID = "experimental"
 		root.AddCommand(c)
 	}

@@ -100,7 +100,7 @@ func TestSayAsking(t *testing.T) {
 	}
 }
 
-// TestSaidWhileTheBoxWaits: motel tui started while the box does not
+// TestSaidWhileTheBoxWaits: motel started while the box does not
 // answer says on stderr, once the first read has waited, what it waits
 // for, the box's name made safe; stdout holds nothing. An interrupt or
 // a closed terminal then ends it as before: exit 130, nothing more said.
@@ -137,7 +137,7 @@ func TestSaidWhileTheBoxWaits(t *testing.T) {
 				return nil, r.Context().Err()
 			})
 			var out bytes.Buffer
-			code := Main(ctx, []string{"tui"}, Env{
+			code := Main(ctx, nil, Env{Terminal: true,
 				Getenv: func(k string) string { return env[k] }, Stdout: &out, Stderr: errOut, Dir: t.TempDir(), Home: home,
 				Now: time.Now, Sleep: func(context.Context, time.Duration) error { return nil },
 				Transport: rt, Run: noPrograms{}, Signer: &fixedSigner{}, Version: "test",
@@ -182,7 +182,7 @@ func TestNotSaidWhileTheClientPauses(t *testing.T) {
 			Body: io.NopCloser(strings.NewReader(`{"error":"unknown key"}` + "\n")), Request: r}, nil
 	})
 	var out bytes.Buffer
-	code := Main(ctx, []string{"tui"}, Env{
+	code := Main(ctx, nil, Env{Terminal: true,
 		Getenv: func(k string) string { return env[k] }, Stdout: &out, Stderr: errOut, Dir: t.TempDir(), Home: home,
 		Now: time.Now,
 		Sleep: func(context.Context, time.Duration) error {

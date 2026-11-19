@@ -368,7 +368,9 @@ func (c *Client) unreachable(ctx context.Context, err error) error {
 		}
 		return &Failure{Exit: ExitUnknown, Message: fmt.Sprintf("%s did not answer on %s (%s). %s", c.Box.Host, c.Box.PortOr443(), why, down)}
 	case errors.As(err, &netErr) && netErr.Timeout():
-		return &Failure{Exit: ExitUnknown, Message: fmt.Sprintf("%s timed out on %s: no whole answer in %d s. %s", c.Box.Host, c.Box.PortOr443(), int(timeout/time.Second), down)}
+		// Whichever timer ended it: the request's 30 s, or the
+		// transport's own 10 s for a TLS handshake.
+		return &Failure{Exit: ExitUnknown, Message: fmt.Sprintf("%s timed out on %s: no whole answer came, and motel waits at most %d s for one. %s", c.Box.Host, c.Box.PortOr443(), int(timeout/time.Second), down)}
 	case errors.Is(err, syscall.ECONNRESET), errors.Is(err, io.EOF), errors.Is(err, io.ErrUnexpectedEOF):
 		return &Failure{Exit: ExitUnknown, Message: fmt.Sprintf("%s closed the connection on %s before a whole answer came. %s", c.Box.Host, c.Box.PortOr443(), down)}
 	}

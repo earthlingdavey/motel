@@ -1,10 +1,32 @@
 package main
 
 import (
+	"os"
 	"os/exec"
 	"strings"
 	"testing"
 )
+
+// TestNotATerminal: stdout into /dev/null, a character device, or a
+// pipe is no terminal, so motel alone prints its help there and asks
+// nothing (TestPtyIsATerminal holds the other side).
+func TestNotATerminal(t *testing.T) {
+	null, err := os.OpenFile(os.DevNull, os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = null.Close() }()
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = r.Close(); _ = w.Close() }()
+	for name, f := range map[string]*os.File{os.DevNull: null, "a pipe": w} {
+		if terminal(f) {
+			t.Errorf("%s is taken for a terminal", name)
+		}
+	}
+}
 
 // The client links no Caddy package, for any system it is built for:
 // its whole point is a small binary with nothing of the server's
