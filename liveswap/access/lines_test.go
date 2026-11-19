@@ -309,7 +309,6 @@ func fixture(t *testing.T, lines ...string) Lines {
 // TestCheckLines is each rule across lines, taken and refused.
 func TestCheckLines(t *testing.T) {
 	k1, k2, k3, k4, rsa1, rsa2 := edKey(t), skEdKey(t), skEdKey(t), edKey(t), rsaKey(t), rsaKey(t)
-	identity := smallOrder(t, "0100000000000000000000000000000000000000000000000000000000000000", false)
 	ed, edSK, edSKOther := edForms(t)
 	apps := &Around{Apps: []string{"example", "blog"}, Channels: true}
 	noWarning := []string(nil)
@@ -423,10 +422,6 @@ func TestCheckLines(t *testing.T) {
 		"two ssh-rsa signer keys for one name, warned once": {
 			lines: []string{"signer carol ssh-rsa " + rsa1, "signer carol ssh-rsa " + rsa2, "person bob ssh-ed25519 " + k1, "grant bob viewer box"}, around: apps,
 			warnings: []string{"signer carol: an ssh-rsa key signs commits but cannot sign a person's token; to reach this box over HTTPS, add a person line for carol with an ed25519 key (ssh-keygen -t ed25519)"},
-		},
-		"a signer key of small order is no person's key": {
-			lines: []string{"signer mallory ssh-ed25519 " + identity, "grant mallory viewer box"},
-			want:  "grant mallory viewer box: mallory has no key a person's token can use (an ssh-rsa signer key signs commits only); add a person line with an ed25519 key",
 		},
 		"an ssh-rsa signer beside people": {
 			lines: []string{"signer carol ssh-rsa " + rsa1, "person bob ssh-ed25519 " + k1, "grant bob viewer box"}, around: apps,

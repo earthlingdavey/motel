@@ -8,6 +8,8 @@ import (
 	"regexp"
 
 	"golang.org/x/crypto/ssh"
+
+	"github.com/smallhoursorg/motel/liveswap/access"
 )
 
 // Signer is one `signer <principal> <key-type> <base64>` line of the
@@ -52,8 +54,10 @@ var ecdsaTypes = map[string]bool{
 const MaxPrincipal = 256
 
 // ParseSigner checks one signer line's three arguments: the principal's
-// charset and length, the key type against the list, and that the
-// base64 decodes to a public key whose wire type is the declared one.
+// charset and length, the key type against the list, that the base64
+// decodes to a public key whose wire type is the declared one, and that
+// the key is one only its holder can sign for (an Ed25519 point of
+// large order, an RSA key OpenSSH reads).
 func ParseSigner(principal, keyType, b64 string) (Signer, error) {
 	if !principalRE.MatchString(principal) {
 		return Signer{}, fmt.Errorf("signer principal %q may only contain letters, digits and . _ @ + -", Bound(principal))
@@ -83,6 +87,12 @@ func ParseSigner(principal, keyType, b64 string) (Signer, error) {
 	}
 	if pub.Type() != keyType {
 		return Signer{}, fmt.Errorf("signer %s: the key is %s, not %s", principal, pub.Type(), keyType)
+	}
+	// ssh.ParsePublicKey checks an Ed25519 key's length, not its point:
+	// under a point of small order anyone can make a signature that
+	// verifies, so such a line would list everybody (#536).
+	if why := access.UnusableEd25519(key); why != "" {
+		return Signer{}, fmt.Errorf("signer %s: the key is not a usable ed25519 key: %s", principal, why)
 	}
 	// OpenSSH refuses RSA keys under its minimum when it reads an
 	// allowed_signers file; a line it would refuse must not be one the

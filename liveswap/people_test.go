@@ -552,19 +552,9 @@ func TestHostRefusalNamesTheHost(t *testing.T) {
 }
 
 // TestSignerKeysNoPersonMayUse: once a block declares people, a signer
-// line's ed25519 key is a person's, but an ssh-rsa signer key and an
-// Ed25519 key of small order are not, and the registry lists neither.
-// For the small-order key the reason is a forgery: under the identity
-// point, R the base point and S = 1 verify for any claims, with no
-// private key. The test first shows that forgery verifies, then that a
-// handler refuses it end to end, as it would a stranger.
+// line's ed25519 key is a person's, but an ssh-rsa signer key is not,
+// and the registry does not list it.
 func TestSignerKeysNoPersonMayUse(t *testing.T) {
-	identity := make([]byte, ed25519.PublicKeySize)
-	identity[0] = 1 // the identity point's encoding
-	smallWire := ssh.Marshal(struct {
-		Type string
-		Key  []byte
-	}{ssh.KeyAlgoED25519, identity})
 	rsaPriv, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
 		t.Fatal(err)
@@ -580,7 +570,6 @@ func TestSignerKeysNoPersonMayUse(t *testing.T) {
 	}
 	b64 := base64.StdEncoding.EncodeToString
 	l := access.Lines{Keys: []access.Key{
-		access.SignerKey("mallory", ssh.KeyAlgoED25519, b64(smallWire), smallWire),
 		access.SignerKey("carol", ssh.KeyAlgoRSA, b64(rsaPub.Marshal()), rsaPub.Marshal()),
 		aliceKey,
 	}}
@@ -588,20 +577,30 @@ func TestSignerKeysNoPersonMayUse(t *testing.T) {
 		t.Fatal(err)
 	}
 	reg := access.NewRegistry(personBox, l)
-	small, err := ssh.ParsePublicKey(smallWire)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for name, k := range map[string]ssh.PublicKey{"the small-order key": small, "the ssh-rsa key": rsaPub} {
-		if _, listed := reg.Lookup(ssh.FingerprintSHA256(k)); listed {
-			t.Errorf("%s is listed", name)
-		}
+	if _, listed := reg.Lookup(ssh.FingerprintSHA256(rsaPub)); listed {
+		t.Error("the ssh-rsa key is listed")
 	}
 	if _, listed := reg.Lookup(alice.Fingerprint()); !listed || reg.Keys() != 1 {
 		t.Fatalf("alice listed %v, %d keys", listed, reg.Keys())
 	}
+}
 
-	// The forgery: no private key, any claims.
+// TestSmallOrderKeyForgery is why no line takes an Ed25519 key of small
+// order: under the identity point, R the base point and S = 1 verify
+// for any claims, with no private key. The test shows that forgery
+// verifies, then that a person line with the key is refused (a signer
+// line is refused alike, by box/proof's ParseSigner).
+func TestSmallOrderKeyForgery(t *testing.T) {
+	identity := make([]byte, ed25519.PublicKeySize)
+	identity[0] = 1 // the identity point's encoding
+	smallWire := ssh.Marshal(struct {
+		Type string
+		Key  []byte
+	}{ssh.KeyAlgoED25519, identity})
+	small, err := ssh.ParsePublicKey(smallWire)
+	if err != nil {
+		t.Fatal(err)
+	}
 	now := time.Now()
 	claims := fmt.Sprintf(`{"aud":"%s","iat":%d,"exp":%d}`, personBox, now.Unix(), now.Add(time.Minute).Unix())
 	base := append([]byte{0x58}, bytes.Repeat([]byte{0x66}, 31)...)
@@ -621,14 +620,8 @@ func TestSignerKeysNoPersonMayUse(t *testing.T) {
 		func(string) (ssh.PublicKey, bool) { return small, true }, nil); err != nil {
 		t.Fatalf("the forgery does not verify under the small-order key, so this test shows nothing: %v", err)
 	}
-	h, _ := newTestHandler(t)
-	h.people = reg
-	stranger := sendTo(t, h, "GET", "/_motel/whoami")
-	if w := sendTo(t, h, "GET", "/_motel/whoami", forged); w.Code != http.StatusUnauthorized || w.Body.String() != stranger.Body.String() {
-		t.Errorf("the forged token: %d %s", w.Code, w.Body)
-	}
-	if w := sendTo(t, h, "GET", "/_motel/whoami", token(alice)); w.Code != http.StatusOK {
-		t.Errorf("alice beside them: %d %s", w.Code, w.Body)
+	if _, err := access.ParsePerson([]string{"mallory", ssh.KeyAlgoED25519, base64.StdEncoding.EncodeToString(smallWire)}); err == nil || !strings.Contains(err.Error(), "its point has small order") {
+		t.Errorf("a person line with the key: %v", err)
 	}
 }
 

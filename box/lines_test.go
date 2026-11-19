@@ -260,6 +260,10 @@ func TestLinesBothReaders(t *testing.T) {
 		"a zone":           {lines: "\t\tgrant bob viewer box from fe80::1%eth0", want: `grant bob viewer box: "fe80::1%eth0" has a zone; an address on a grant has none`},
 		"a name for host":  {lines: "\t\tgrant bob viewer box from office.example.com", want: `grant bob viewer box: "office.example.com" is not an address or a prefix`},
 		"a grant, a block": {lines: "\t\tgrant bob viewer box {\n\t\t\tx\n\t\t}", want: "grant line: it takes no block"},
+		"a signer of small order": {lines: "\t\tsigner mallory ssh-ed25519 @SO1@",
+			want: "signer mallory: the key is not a usable ed25519 key: its point has small order, so anyone can sign for it"},
+		"a signer of small order, as an sk key": {lines: "\t\tsigner mallory sk-ssh-ed25519@openssh.com @SKSO@",
+			want: "signer mallory: the key is not a usable ed25519 key: its point has small order, so anyone can sign for it"},
 		"a grant, an empty block": {lines: "\t\tgrant bob viewer box {\n\t\t}\n\t\tgrant alice@example.com viewer box",
 			want: "grant line: it takes no block"},
 

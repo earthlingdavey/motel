@@ -111,8 +111,10 @@ one; taking one away would. RSA stays refused, whatever its size.
 **Only keys a person may sign with are listed**: a `person` line's, and
 a `signer` line's ed25519 key once the block declares people (a
 `signer` line takes no ECDSA key: box/proof refuses one).
-An `ssh-rsa` signer key, and an Ed25519 key of small order, are no
-person's key. The lookup never returns a nil key as listed.
+An `ssh-rsa` signer key is no person's key. No line takes an Ed25519
+key of small order: `ParsePerson` refuses one on a `person` line,
+box/proof's `ParseSigner` on a `signer` line, with the same check
+(`UnusableEd25519`). The lookup never returns a nil key as listed.
 
 **A reload reads the file again.** Removing a person is removing their
 lines; the push's reload builds a registry without them, and from then
