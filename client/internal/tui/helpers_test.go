@@ -42,14 +42,15 @@ type harness struct {
 }
 
 // start opens the TUI on the fixtures at w x h, after setup has had
-// its say on the fake, and reads every app's status first.
-func start(t *testing.T, w, h int, setup func(*demo.Fake)) *harness {
+// its say on the fake, and each of with on the session, and reads
+// every app's status first.
+func start(t *testing.T, w, h int, setup func(*demo.Fake), with ...func(*model.Session)) *harness {
 	t.Helper()
-	return startOn(t, &sizedSim{tcell.NewSimulationScreen("UTF-8"), w, h}, setup)
+	return startOn(t, &sizedSim{tcell.NewSimulationScreen("UTF-8"), w, h}, setup, with...)
 }
 
 // startOn is start on a screen of the test's own.
-func startOn(t *testing.T, scr tcell.Screen, setup func(*demo.Fake)) *harness {
+func startOn(t *testing.T, scr tcell.Screen, setup func(*demo.Fake), with ...func(*model.Session)) *harness {
 	t.Helper()
 	hs := &harness{t: t, now: t0}
 	hs.clock = fixedClock{&hs.now}
@@ -59,6 +60,9 @@ func startOn(t *testing.T, scr tcell.Screen, setup func(*demo.Fake)) *harness {
 	}
 	s := &model.Session{Host: demo.Host, Version: "v0.7.0", Key: demo.Key, Now: hs.clock.Now, Engine: model.NewEngine(t0),
 		TokenExpires: func() time.Time { return t0.Add(9 * time.Minute) }}
+	for _, f := range with {
+		f(s)
+	}
 	hs.s = s
 	o := Options{Session: s, Client: hs.fake, Clock: hs.clock}
 	v := Prime(context.Background(), o)
