@@ -181,7 +181,11 @@ func (s *Session) AppsView(now time.Time, filter string, sort int, width int) Ap
 		}
 		v.AllWell = Line{own(l + stales)}
 	}
-	sum := strconv.Itoa(all) + " apps · " + strconv.Itoa(need) + " need a look · "
+	noun := " apps · "
+	if all == 1 {
+		noun = " app · "
+	}
+	sum := strconv.Itoa(all) + noun + strconv.Itoa(need) + " need a look · "
 	if stale > 0 {
 		// Beside a strip of reasons too, which says no count.
 		sum += strconv.Itoa(stale) + " stale · "

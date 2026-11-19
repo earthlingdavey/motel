@@ -227,3 +227,17 @@ func TestHelpHangs(t *testing.T) {
 		}
 	}
 }
+
+// TestOneApp: the apps screen's crumb counts one app as "1 app", and
+// "1 of 1 app" under a filter.
+func TestOneApp(t *testing.T) {
+	h := start(t, 80, 24, func(f *demo.Fake) { f.Body("apps.json", `{"apps": [{"name": "blog"}]}`) })
+	h.open(model.View{Screen: model.ScreenApps})
+	if got := screenRows(h)[1].text; !strings.HasSuffix(got, " 1 app · 0 need a look · by attention") {
+		t.Errorf("the crumb is drawn %q", got)
+	}
+	h.press("/", "bl", tcell.KeyEnter)
+	if got := screenRows(h)[1].text; !strings.HasSuffix(got, " 1 of 1 app · 0 need a look · by attention") {
+		t.Errorf("under a filter, the crumb is drawn %q", got)
+	}
+}
