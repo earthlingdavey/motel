@@ -212,8 +212,9 @@ func (h *Handler) authenticate(w http.ResponseWriter, r *http.Request, route str
 // the host and digest of the file it runs, read now — the digest a
 // push's no_change fast path compares (step 4) — so a console edit since the
 // last apply shows, and is said when the digest is not the one
-// applied.json records, as a push says it (check); and the box's key
-// for secrets, when it has one.
+// applied.json records, as a push says it (check), unless a
+// transaction's record stands (inFlight); and the box's key for
+// secrets, when it has one.
 func (h *Handler) status(w http.ResponseWriter, _ *http.Request, _ deploytrust.Identity) error {
 	base, file, what, err := h.readState()
 	switch {
@@ -235,13 +236,22 @@ func (h *Handler) status(w http.ResponseWriter, _ *http.Request, _ deploytrust.I
 		return respond(w, http.StatusConflict, errorBody(runningRefused(ref).Error()))
 	}
 	sum := digest(file) // what the fast path compares
-	body := wire.BoxStatus{Commit: base.SHA, BoxWebhook: shape.Host, SHA256: sum, Recipient: h.recipient(), OutOfBand: sum != base.SHA256}
+	body := wire.BoxStatus{Commit: base.SHA, BoxWebhook: shape.Host, SHA256: sum, Recipient: h.recipient(), OutOfBand: sum != base.SHA256 && !h.inFlight()}
 	safe := []string{base.SHA, shape.Host, sum}
 	if body.Recipient != "" { // a bech32 key is what the entropy layer catches
 		safe = append(safe, body.Recipient)
 	}
 	return respond(w, http.StatusOK, body, safe...)
 }
+
+// inFlight says a transaction's record (txn.json) stands: from before
+// the applier's swap until applied.json names the new commit, and while
+// a run stopped past its swap waits for recovery. The installed file
+// may then be the transaction's own bytes, under the commit before, and
+// the record that says so is root's (0600), so status says nothing of
+// an edit while it stands. A lookup that fails counts as one standing:
+// the answer then says less, never an edit no one made.
+func (h *Handler) inFlight() bool { return exists(h.x("txn.json")) }
 
 // readingKey is what the journal names when age.pub cannot be read.
 const readingKey = "the box's key for secrets (age.pub)"

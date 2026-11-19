@@ -318,7 +318,9 @@ type BoxStatus struct {
 	// OutOfBand is true when SHA256 is not the digest the box recorded
 	// for Commit: its Caddyfile has been edited on the box since, as a
 	// push would report it (caddyfile_edited_out_of_band). Absent when
-	// they are the same, and from a box older than the field.
+	// they are the same, while a push is being applied (the file may be
+	// its new bytes under the commit before), and from a box older than
+	// the field.
 	OutOfBand bool `json:"caddyfile_edited_out_of_band,omitempty"`
 }
 

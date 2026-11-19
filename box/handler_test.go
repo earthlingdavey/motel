@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -269,6 +270,50 @@ func TestHandlerStatus(t *testing.T) {
 	r.write(t, r.installed, file(good))
 	if got := body(t, r.do(t, req{target: "/", token: r.token(t)})); len(got) != len(want) {
 		t.Fatalf("the applied file again: %v", got)
+	}
+}
+
+// While a push that changes the Caddyfile is applied, the installed
+// file is its new bytes and applied.json still names the commit before,
+// until the applier advances it after the reload: GET / then says
+// nothing of an edit, since the bytes are the applier's own (review of
+// #577). The record (txn.json) stands for that window, and for a run
+// stopped past its swap until recovery.
+func TestHandlerStatusSaysNoEditDuringAnApply(t *testing.T) {
+	p := newPushRig(t)
+	get := func() map[string]any {
+		t.Helper()
+		hr := httptest.NewRequest(http.MethodGet, "/", nil)
+		hr.Header.Set("Authorization", "Bearer "+p.token(t, ""))
+		w := httptest.NewRecorder()
+		if err := p.h.ServeHTTP(w, hr, nextFunc(func(http.ResponseWriter, *http.Request) error { return errors.New("passed on") })); err != nil || w.Code != http.StatusOK {
+			t.Fatalf("GET /: %v %d %s", err, w.Code, w.Body)
+		}
+		return body(t, w)
+	}
+	c2, _ := p.change()
+	var during map[string]any
+	p.sd.onReload = func(int) {
+		// The swap is done and the reload under way: the new file is
+		// installed, the record stands, applied.json names the base.
+		if !exists(p.x("txn.json")) || p.applied().SHA != p.base || !bytes.Equal(p.installed(), p.repo.files[c2]) {
+			t.Errorf("the window is not open: record %v, applied %s", exists(p.x("txn.json")), p.applied().SHA)
+		}
+		during = get()
+	}
+	if r := p.pushOne(p.repo.bundleFiles(c2, p.base)); r.Phase != phaseApplied {
+		t.Fatalf("the push: %+v", r)
+	}
+	if during["commit"] != p.base || during["sha256"] != digest(p.repo.files[c2]) || during["caddyfile_edited_out_of_band"] != nil {
+		t.Errorf("GET / during the apply: %v", during)
+	}
+	if after := get(); after["commit"] != c2 || after["caddyfile_edited_out_of_band"] != nil {
+		t.Errorf("GET / after the apply: %v", after)
+	}
+	// A console edit with no record standing is said.
+	p.writeInstalled(append(p.installed(), "# edited\n"...))
+	if edited := get(); edited["caddyfile_edited_out_of_band"] != true {
+		t.Errorf("GET / after a console edit: %v", edited)
 	}
 }
 
