@@ -18,12 +18,13 @@ import (
 // code point before one, an Arabic number sign (a Prepend character,
 // which takes the next character, a tag's [ too, into its cluster), a
 // zero width joiner pair, half a flag and a whole one, a Hangul vowel
-// after a leading consonant, a spacing mark, and a URL tag.
+// after a leading consonant, a spacing mark, a URL tag, and a colour
+// tag and a bold one.
 var bad = []string{
 	"\U0001f44d\U0001f3fd", "ci\U0001f44d\U0001f3fd", "\u034f\U0001f3fd", "\U0001f44d\u034f\U0001f3fd",
 	"\U0001faff\U0001f3fd", "\U0001faff", "\u0600", "x\u0600", "\u0d4e", "\u200d❤", "\U0001f468\u200d\U0001f469",
 	"\U0001f1e6", "\U0001f1e6\U0001f1e8", "\u1100\u1161", "\u1161", "a\u0903", "\u0903",
-	"[:::https://evil.example/x]link[:::-]", "[red]x[-]", "\x1b]8;;https://evil.example\x07x", "a\nb", "",
+	"[:::https://evil.example/x]link[:::-]", "[red]x[-]", "[::b]x[::-]", "\x1b]8;;https://evil.example\x07x", "a\nb", "",
 }
 
 // drawn is the screen k draws text on, w cells wide and its row
@@ -101,9 +102,10 @@ var measured = map[string]func(string) string{
 
 // checkInert holds what the door hands tview of s, between < and >, in
 // every kind of widget it serves: it is drawn on one row (TestOneRow's
-// check); in no style the kind does not draw its own words in, so no
-// tag in it is read, a URL tag's link among them; and, where the
-// screens measure it, as many cells wide as Width says.
+// check); in no style the kind does not draw its own words in, and in
+// one style from its < to its >, so no tag in it is read, a URL tag's
+// link among them; and, where the screens measure it, as many cells
+// wide as Width says.
 func checkInert(t *testing.T, s string) {
 	t.Helper()
 	c := "<" + s + ">"
@@ -127,10 +129,21 @@ func checkInert(t *testing.T, s string) {
 				break
 			}
 		}
+		// And in one style from its < to its >: a tag read would change
+		// it there, even to a style the kind draws elsewhere.
+		from, to, ok := span(scr, k.top)
+		if ok {
+			_, first, _ := scr.Get(from, k.top)
+			for x := from; x < to; x++ {
+				if _, st, _ := scr.Get(x, k.top); st != first {
+					t.Errorf("%s: %s (%q) changes style at cell %d", k.name, runes(s), s, x-from)
+					break
+				}
+			}
+		}
 		if hand == nil {
 			continue
 		}
-		from, to, ok := span(scr, k.top)
 		if want := Width(termtext.From(hand(c))); !ok || to-from != want {
 			t.Errorf("%s: %s (%q) is drawn %d cells wide (from %d), and Width says %d", k.name, runes(s), s, to-from, from, want)
 		}
