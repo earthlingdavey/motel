@@ -753,6 +753,10 @@ func (e *Engine) Done(j Job, now time.Time, err error) Outcome {
 		en.due = now.Add(AppsEvery)
 	case j.Kind == KBox:
 		en.due = now.Add(BoxEvery)
+	case j.Kind == KWhoAmI && out == NoAnswer:
+		// Who this key is stays unknown until whoami answers: it is asked
+		// again at its own backoff, not at its turn.
+		en.due = now.Add(backoff(en.misses))
 	case j.Kind == KWhoAmI:
 		en.due = now.Add(e.meEvery())
 	}

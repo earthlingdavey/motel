@@ -78,8 +78,9 @@ func backsOff(t *testing.T, ts []time.Time) {
 // TestOneRouteDoesNotSlowTheRest: one read the box does not answer (a
 // 5xx on its route: an app's status, open or not, the box's status, or
 // whoami's) while the rest are answered backs off alone: the title bar
-// says neither slow nor back, whoami is not asked again, and the
-// screen says the read failed.
+// says neither slow nor back, whoami is not asked again for it (but at
+// its own turn, or, when it is the read that fails, at its backoff from
+// then), and the screen says the read failed.
 func TestOneRouteDoesNotSlowTheRest(t *testing.T) {
 	blog := model.Job{Kind: model.KStatus, App: "blog"}
 	for _, c := range []struct {
@@ -88,12 +89,13 @@ func TestOneRouteDoesNotSlowTheRest(t *testing.T) {
 		job   model.Job
 		open  func(h *harness)
 		says  string
-		reads int // most whoami reads in the 9 minutes, by its own turn
+		reads int // most whoami reads in the 9 minutes: by its own turn, then its backoff when it fails
 	}{
 		{"an app's status, open", "blog", blog, func(h *harness) { h.open(app("blog")) }, "the last read failed", 2},
 		{"an app's status, not open", "blog", blog, func(*harness) {}, "stale", 2},
 		{"the box's status, on the box screen", "box", model.Job{Kind: model.KBox}, func(h *harness) { h.press(":", "box", tcell.KeyEnter) }, "answered 500", 2},
-		{"whoami", "whoami", model.Job{Kind: model.KWhoAmI}, func(*harness) {}, "failed", 3},
+		// At 5 minutes, then 2 s, 4, 8, 16, 32 and 60 s apart.
+		{"whoami", "whoami", model.Job{Kind: model.KWhoAmI}, func(*harness) {}, "failed", 9},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			h := start(t, 100, 30, nil)
@@ -112,11 +114,7 @@ func TestOneRouteDoesNotSlowTheRest(t *testing.T) {
 					t.Errorf("%s was slowed: read %d times in 9 minutes", a, w.jobs[j])
 				}
 			}
-			if c.key != "whoami" {
-				backsOff(t, w.reads)
-			} else if len(w.reads) < 1 || len(w.reads) > c.reads {
-				t.Errorf("whoami read %d times", len(w.reads))
-			}
+			backsOff(t, w.reads)
 			if scr := h.screen(); !strings.Contains(scr, c.says) {
 				t.Errorf("the screen does not say %q:\n%s", c.says, scr)
 			}

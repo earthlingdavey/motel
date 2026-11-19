@@ -216,7 +216,7 @@ made by hand. Accepted:
 | The TUI's `post` may leave a few short-lived goroutines after quit | 1 | 2 | 3 | 6 | 1 | accepted |
 | A `Retry-After` of an hour makes the TUI wait an hour: the box's word; the title bar says until when. A longer one is cut to an hour: the client's cap, and meant (moteld's 429 says 1 s) | 1 | 1 | 1 | 1 | 1 | accepted |
 | A labelled value under the cap keeps its runs of spaces, so on a narrow terminal a long run can wrap the rest of the value to the start of the next row, where it can look like a label (the `hostile-status` golden shows one). Log lines keep their spacing on purpose | 2 | 1 | 3 | 6 | 2 (wrap-aware printing) | accepted |
-| An apps-list read that got no answer is asked again at the list's own interval, 60 s: every read that gets none is asked again at its own interval or its backoff (2 s, doubling, to 60 s) when that is longer, and the backoff is never longer than the list's, so the list is not asked sooner for having failed (ctrl-r asks it, at most once in 5 s); while no read is answered the title bar says STALE and the time of the last answer | 2 | 4 | 1 | 8 | 2 | accepted |
+| An apps-list read that got no answer is asked again at the list's own interval, 60 s: every read that gets none is asked again at its own interval or its backoff (2 s, doubling, to 60 s) when that is longer (whoami at its backoff), and the backoff is never longer than the list's, so the list is not asked sooner for having failed (ctrl-r asks it, at most once in 5 s); while no read is answered the title bar says STALE and the time of the last answer | 2 | 4 | 1 | 8 | 2 | accepted |
 | Enter and esc held on a record no read of which has yet ended (a slow box) send a read at each enter and cancel it at each esc: leaving a record that never answered forgets it. The reads stay within the engine's rate, and it was so before the review's fixes | 2 | 4 | 1 | 8 | 3 | accepted |
 | A record every read of which the box refused (a 403, a 404, a 409) is read again by ctrl-r, esc, enter in turn, a read for every three keys: leaving it after ctrl-r forgets it, as the row above. The reads stay within the engine's rate | 2 | 5 | 1 | 10 | 2 | accepted |
 | A step of the wall clock back that lands between two readings handed to the engine out of order (two goroutines, microseconds apart) moves the engine's times twice: the title bar can say PAUSED until a key, and a 429's wait can end early by the step | 2 | 2 | 3 | 12 | 3 | accepted |
@@ -307,7 +307,7 @@ the screen shows, and nothing else; held down, it reads the list, a
 record, whoami or the box at most once in 5 s, and the other reads keep
 their turn. whoami is read every 5 minutes, every minute while who am I
 is open, and soon after a 403, so a removed grant shows in the title
-bar. While the session runs and whoami's newest read has failed (an
+bar; one that got no answer is asked again at its backoff (below), not at its turn, until it answers. While the session runs and whoami's newest read has failed (an
 answer the client cannot use, a 403, a 409, no answer), the title bar
 puts the age of its last answer, and that the read failed, before it
 (`21m old, failed: v0.7.0 · alice@…`), and who am I says why (the
@@ -331,7 +331,7 @@ operator, which `P` prints.
   cycle. A 429 is waited out for every read, by its `Retry-After`, or
   30 s with none (the time the box's whole burst takes to refill), and
   slows the rest of the session; no answer backs off from 2 s to 60 s:
-  that read alone, at its own interval or the backoff when longer, while
+  that read alone, at its own interval or the backoff when longer (whoami at the backoff), while
   the box answers others (a 5xx on one route); every read, the title bar
   saying slow, then STALE, once reads of two different things got none,
   none answered between (a thing's first read in a row to get none brings the read of another thing next due forward to then, once, so a box that answers nothing is seen within seconds),
