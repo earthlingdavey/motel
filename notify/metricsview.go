@@ -12,12 +12,12 @@ import (
 	"github.com/smallhoursorg/motel/liveswap/wire"
 )
 
-// metrics in GET /<app> (DESIGN-metrics.md): seven fixed queries over
+// metrics in GET /<app> (DESIGN-metrics.md): eight fixed queries over
 // the store's socket, scoped to the app the route resolved, over one of
 // wire.MetricsRanges: two query_range templates (memory, CPU), the
-// window's memory peak, and four instant queries over the requests
-// observe counted; run at once within one budget, and cached
-// per app and window.
+// window's memory peak, the memory's last push, and four instant
+// queries over the requests observe counted; run at once within one
+// budget, and cached per app and window.
 const (
 	// viewRecent is what avg_5m averages over, up to the newest point.
 	viewRecent = 5 * time.Minute
@@ -121,9 +121,9 @@ func (v *metricsView) AppMetrics(ctx context.Context, app, window string) *wire.
 	return &val
 }
 
-// viewAnswers is the seven queries' answers.
+// viewAnswers is the eight queries' answers.
 type viewAnswers struct {
-	mem, cpu, peak, classes, p50, p95, cache []series
+	mem, cpu, peak, memNow, classes, p50, p95, cache []series
 }
 
 // viewRequests is the view's four request queries over a window.
@@ -181,12 +181,18 @@ func (v *metricsView) ask(ctx context.Context, app, window string, w viewWindow,
 		// every 30 s: the range above holds one sample a step, and a peak
 		// between two steps would be lost.
 		{&a.peak, instant(`max_over_time(motel_app_memory_bytes{` + sel + `}[` + window + `])`)},
+		// now is the last push's, as app_memory_high reads it
+		// (memoryShare), whatever the window: the range's newest point
+		// is on its step's grid, 5 m apart for the day, and holds a
+		// sample the store carried onto it, so an app that stopped
+		// within the three steps fresh allows read as running.
+		{&a.memNow, instant(`max(last_over_time(motel_app_memory_bytes{` + sel + `}[` + promDuration(pushFresh) + `]))`)},
 		{&a.classes, instant(rq.classes)},
 		{&a.p50, instant(rq.p50)},
 		{&a.p95, instant(rq.p95)},
 		{&a.cache, instant(rq.cache)},
 	}
-	// At once: seven one after another would not fit the budget on a
+	// At once: eight one after another would not fit the budget on a
 	// slow store. Each writes its own answer; the first error is the
 	// answer's.
 	errs := make([]error, len(jobs))
@@ -221,11 +227,15 @@ func (v *metricsView) ask(ctx context.Context, app, window string, w viewWindow,
 		}
 	}
 	fresh := func(p point) bool { return !p.t.Before(end.Add(-viewFreshSteps * w.step)) }
-	if last, ok := latest(memPts); ok {
-		m := &wire.MemorySummary{}
-		if fresh(last) {
-			m.Now = &last.v
+	var memNow *float64
+	for _, s := range a.memNow {
+		if v, ok := instantValue(s); ok {
+			memNow = &v
 		}
+	}
+	// A unit started since the day's newest step has a push and no point.
+	if last, ok := latest(memPts); ok || memNow != nil {
+		m := &wire.MemorySummary{Now: memNow}
 		// The max is the raw peak's alone: the range's first step can
 		// carry a sample from before the window, which max_over_time
 		// rightly leaves out.
@@ -238,7 +248,9 @@ func (v *metricsView) ask(ctx context.Context, app, window string, w viewWindow,
 			}
 		}
 		out.Memory = m
-		seen(last.t)
+		if ok {
+			seen(last.t)
+		}
 	}
 	if last, ok := latest(maxPts); ok && fresh(last) {
 		out.MemoryMax = &last.v

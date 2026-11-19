@@ -16,8 +16,8 @@ var MetricsRanges = []string{"1h", "24h"}
 // answer is the object with Error alone.
 type Metrics struct {
 	Window string `json:"window,omitempty"`
-	// At is the newest point in the window, of memory or CPU; absent
-	// with neither.
+	// At is the newest point of the window's range, of memory or CPU,
+	// not the time of Memory.Now; absent with no point.
 	At        *time.Time      `json:"at,omitempty"`
 	Memory    *MemorySummary  `json:"memory_bytes,omitempty"`
 	MemoryMax *float64        `json:"memory_max_bytes,omitempty"`
@@ -28,8 +28,8 @@ type Metrics struct {
 
 // MemorySummary is the app's memory over the window, in bytes.
 type MemorySummary struct {
-	// Now is absent when the series has no point in the window's last
-	// three steps.
+	// Now is the last push's within 75 s, whatever the window; absent
+	// with none (the app stopped, or the pushes failing).
 	Now *float64 `json:"now,omitempty"`
 	// Max is absent when the window holds no raw sample: the range's
 	// first step can still carry one from just before it.

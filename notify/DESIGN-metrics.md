@@ -115,8 +115,8 @@ motel's next push after the fault starts the chain. With no retrigger
 of its own left, each trigger is a client's connection, and the default
 limit, 20 in 2 s, still failed the socket for good under a burst of
 them during the fault: 25 connections back to back did, and so did 25
-waves of seven at once (a `GET /<app>` asks the store seven things at
-once). So the socket has no limit; what bounds its triggers is its
+waves of seven at once (a `GET /<app>` asked the store seven things at
+once then; eight since #577). So the socket has no limit; what bounds its triggers is its
 clients. A higher limit only moves the burst that fails it (200 in 2 s:
 300 back to back failed it). The proxy's own start limit did the same
 by another way: a store that starts and then exits (it is
@@ -1371,7 +1371,7 @@ The deployer's route and credential, unchanged (the fresh-slate draft,
 
 The window is `?range=`: `1h`, the default, or `24h`, a fixed set
 (`MetricsRanges` in liveswap/wire, beside the object's type, `Metrics`); any other is a 422, on a box with no
-store too. Seven fixed queries over the socket, scoped to `app="<name>"`
+store too. Eight fixed queries over the socket, scoped to `app="<name>"`
 and run at once. Two `query_range` templates over the window, at a 60 s
 step for the hour and 5 m for the day, the memory
 pair (`{__name__=~"motel_app_memory_bytes|motel_app_memory_max_bytes",app=…}`)
@@ -1382,16 +1382,26 @@ double, and a stopped app had points for the rate's window after its
 last push, now for 75 s (whether the newest point is the present is
 judged as below); one instant `max_over_time(motel_app_memory_bytes{app=…}[<window>])` for `max`, since a
 60 s step holds one of the two samples a minute the push writes and a
-peak between steps would be lost (Copilot on #423). `at` is the newest
-point; `max` and `avg` are over the window; `now`, `avg_5m` and
-`memory_max_bytes` come only from a newest point at most three steps
-old (3 minutes for the hour, 15 for the day, whose newest step can be
-over 5 minutes old for a running app), `avg_5m` being the mean of the
-points in the five minutes up to it (the day's newest alone, a 5 m
-rate already), so an app that stopped, or a cap a later release
-dropped, is history in `max` and `avg` and never reported as the
-present; a number with no points is absent (`max` too, when the window
-holds no raw sample). The CPU averages are rounded to a millionth of a core: an
+peak between steps would be lost (Copilot on #423); and one instant
+`max(last_over_time(motel_app_memory_bytes{app=…}[75s]))` for `now`,
+the last push within 75 s as `app_memory_high` reads it (`memoryShare`),
+whatever the window. The range's newest point is on its step's grid
+and holds a sample the store carried onto it: read as `now`, the day's
+was the memory of up to 5 minutes before (24 MiB where the hour said
+13, #577), and an app stopped within the three steps below read as
+running. `at` is the range's newest point, of memory or CPU, not the
+time of `now`'s push; `max` and `avg` are over the window; `now` is
+absent with no push in the 75 s (the app stopped, or the pushes
+failing), and present with one when the range has no point yet (a unit
+started since the day's newest step). `avg_5m` and `memory_max_bytes`
+come only from a newest point at most three steps old (3 minutes for
+the hour, 15 for the day, whose newest step can be over 5 minutes old
+for a running app), `avg_5m` being the mean of the points in the five
+minutes up to it (the day's newest alone, a 5 m rate already), so an
+app that stopped, or a cap a later release dropped, is history in
+`max` and `avg` and not reported as the present past that; a number
+with no points is absent (`max` too, when the window holds no raw
+sample). The CPU averages are rounded to a millionth of a core: an
 unrounded float is a run of twenty digits the response filter masks as
 a generated value, and the status would be withheld.
 
@@ -1449,10 +1459,10 @@ before the 5 s, until setup runs again)
 box series, no other app: the name is the configured app the route
 already resolved.
 
-The answer is best-effort: one 2 s budget for the seven queries, run at
+The answer is best-effort: one 2 s budget for the eight queries, run at
 once, and cached per app and window for 30 s, so a token (a stolen one,
-T2) cannot drive the store harder than seven queries per app and window
-per 30 s, fourteen with both windows. A store that does not
+T2) cannot drive the store harder than eight queries per app and window
+per 30 s, sixteen with both windows. A store that does not
 answer is `"metrics": {"error": "the metrics store did not answer"}`,
 fixed text, and the status is otherwise the same; the route never waits
 longer or fails for it. The cause is a warning in moteld's journal
@@ -1583,8 +1593,8 @@ handler on every observed app's request path.
   a class, a bucket and one of four results: an app can make its own
   numbers read badly, and no label of its choosing reaches the store.
 - **T2** (a stolen deploy token): reads that app's `metrics` object,
-  far less than the deploy it can already do, at most fourteen queries
-  per 30 s (seven per window); nothing of the box or of other apps; it cannot write to the
+  far less than the deploy it can already do, at most sixteen queries
+  per 30 s (eight per window); nothing of the box or of other apps; it cannot write to the
   store or reach vmalert.
 - **T5** (RCE in motel): full read and write of the store (including
   its delete API) and the ability to rewrite `rules.yml`, which can make
@@ -1725,7 +1735,7 @@ or a line of theirs the facts overturned:
 | Its counts follow the selected instance's release, else `current`, not `activeSocket` | a request selected after a cutover is the new release's, one selected before it the old's, however long it runs; and a release that crashed owns the errors that follow it (502s while its socket is routed, then 503s with no socket, so `current`), which is what a post-deploy comparison must see |
 | Latency is to the headers, of the responses that went to the app or that the cache fetched from it | a streamed body or an upgrade has no response time to speak of; a hit is the cache's, a refusal penaltybox's |
 | `metrics` is a summary, not a series; `?range=` is `1h` or `24h` | the smallest object that answers "is my app well", over the two spans a deployer asks about; a fixed set, so a token cannot ask the store for any span |
-| `metrics`' queries run at once | seven one after another would not fit the 2 s budget on a slow store (the residual row this replaced) |
+| `metrics`' queries run at once | eight one after another would not fit the 2 s budget on a slow store (the residual row this replaced) |
 
 ## Triage
 
@@ -1772,7 +1782,7 @@ on its general scales. metrics' examples:
 | vmalert's rules have no flapping guard: a condition that flaps around its threshold fires and resolves at each crossing | notify/metricsrules.go | 2 | 3 | 3 | 18; every rule has a `for:` of 2 to 30 minutes, which bounds a flap to one pair per `for:` |
 | `GET /<app>`'s p50 and p95 each run the guarded histogram expression over every bucket, the view's heaviest, where `histogram_quantiles("phi", 0.5, 0.95, …)` would run it once | notify/metricsview.go (`requestQueries`) | 2 | 2 | 1 | 4; on a store of two days of ten apps at the push's 30 s (401 series, 2.3 million samples), one p95 took 1.6 ms at the day and 2.0 ms at the hour, both quantiles in one 1.3 ms and 1.8 ms (2026-11-12, uncached), against the 2 s budget; a view over it answers `the metrics store did not answer`. One query is a `phi` label to read (size 2, risk 2). /code-review of the view's guard |
 | `GET /<app>?range=24h` reads two days through the guard (`[1d] offset 1d` for the series' earlier sample) and three more rollups a series | notify/operatorrules.go (`guardedIncrease`), notify/metricsview.go | 2 | 2 | 1 | 4; on the same store, the day's request query took 1.4 ms against 0.4 ms for `increase_pure` alone, the p95 1.6 ms against 0.7 ms, against the 2 s budget, and a view over it says so; a lookback sized to the window, or no guard when the push is older than the window, is a second expression to prove against the store (size 2, risk 2). /code-review of the view's guard |
-| `now` and `at` in `GET /<app>` are judged by the range's step timestamps, not the samples': the store carries a sample forward onto the step grid, so a stopped app's or a dropped cap's last value can read as now for up to about one step past the three steps `fresh` allows (3 m for the hour, 15 m for the day) | notify/metricsview.go (`fresh`) | 2 | 3 | 3 | 18; the status beside it says whether the app runs; the source timestamps need a `timestamp()` query per series (size 2, risk 2). Copilot round 2 on #423 |
+| `at`, `avg_5m` and `memory_max_bytes` in `GET /<app>` are judged by the range's step timestamps, not the samples': the store carries a sample forward onto the step grid, so a stopped app's CPU or a dropped cap's last value can read as the present for up to about one step past the three steps `fresh` allows (3 m for the hour, 15 m for the day), and `at` names a step later than the sample under it. Memory's `now` no longer is (an instant query of the last push, #577) | notify/metricsview.go (`fresh`) | 2 | 3 | 3 | 18; the status beside it says whether the app runs; the source timestamps need a `timestamp()` query per series, or an instant query of the last push each as `now` has (size 2, risk 2). Copilot round 2 on #423; narrowed by #577 |
 | vmalert's `ChannelFailed` has no baseline: the store's `increase()` counts a series' first sample from zero (measured on 1.112.0: first seen at 3 gives 3, and again after a 17-minute gap), so a failure Alertmanager counted before `moteld monitor setup --metrics`, or before a store outage of over ten minutes, is told once as new, for five minutes | notify/metricsrules.go | 2 | 2 | 3 | 12; one late warning to the operator's other channels about a channel that did fail; motel's own source keeps its baseline unless Alertmanager loaded after moteld started (then its first read counts from 0 too, `loadSince`). A gate on the counter's age changes the expression every channel's rule shares (risk 2) and wants a run against the store to prove. /code-review pass 3 on #423 |
 | vmalert's `ChannelFailed` reads a config load's stamp against its own clock (`time() - max(alertmanager_config_last_reload_success_timestamp_seconds) < 300`): a clock stepped back by D after a load keeps a failure counted since it firing for D and five minutes, not five; one stepped forward by over five minutes just after a load leaves the count that came back to its value before the load unseen by the store, as before this rule read the stamp | notify/metricsrules.go (`channelFailedRules`) | 2 | 2 | 3 | 12; a clock step and a failure across a load: a real failure told too long, or the second source missing what motel's own reads (its stamp is compared by change, `newLoad`, with no clock). `changes()` over the stamp needs no clock but misses a load whose earlier sample is out of the window (a store outage), and was measured the same otherwise (size 1, risk 2). /code-review pass 2 of the config-load rows' PR |
 | A failed re-run's put-back starts `motel-vm.socket` (and `motel-am.socket`) whether or not it was active when setup began: one an operator had stopped to keep the store stopped is started, and a re-run after a first run that failed past the drop-in starts the socket of a stack that never ran | notify/setup.go (`putBackOnFailure`) | 2 | 2 | 3 | 12; a setup that succeeds enables and starts the same socket, which is what the operator ran it for; with the drop-in in place the store it can start is confined to the namespace. /code-review pass 2 on #425 |
@@ -2163,3 +2173,9 @@ Dated one-liners; the full text of each is in git.
   of the stop's distance from the last tick). With no push before the
   window the rule has no value, where over 300 it read from nothing up
   after setup. The fixed divisor's Owed row (24, #461's) is closed.
+- 2026-11-19 — `GET /<app>`'s memory `now` from an instant query of
+  the last push within 75 s, as `app_memory_high` reads it (#577): read
+  from the range's newest point it was the memory of up to 5 minutes
+  before under `?range=24h` (24 MiB where the hour said 13, on a real
+  box), and a stopped app's carried sample read as now. Eight queries;
+  the step-timestamp row narrowed to `at`, `avg_5m` and the cap.

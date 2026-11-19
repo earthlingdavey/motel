@@ -746,8 +746,9 @@ func TestReleaseRetiresTheRulesOnAReloadAlone(t *testing.T) {
 }
 
 // fakeRange is query_range and the instant queries, scripted per
-// query: instant answers the memory peak (max_over_time), requests the
-// four request queries.
+// query: instant answers the memory peak (max_over_time), memNow the
+// memory's last push (last_over_time), requests the four request
+// queries.
 type fakeRange struct {
 	mu       sync.Mutex
 	calls    int
@@ -755,13 +756,17 @@ type fakeRange struct {
 	block    chan struct{}
 	ans      func(q string) []series
 	instant  func(q string) []series
+	memNow   func(q string) []series
 	requests func(q string) []series
 }
 
 func (f *fakeRange) query(ctx context.Context, q string) ([]series, error) {
 	script := f.requests
-	if strings.HasPrefix(q, "max_over_time(") {
+	switch {
+	case strings.HasPrefix(q, "max_over_time("):
 		script = f.instant
+	case strings.HasPrefix(q, "max(last_over_time("):
+		script = f.memNow
 	}
 	if script == nil {
 		return nil, f.err // not counted: calls is query_range's
@@ -814,6 +819,9 @@ func TestMetricsViewSummary(t *testing.T) {
 	}, instant: func(q string) []series {
 		asked = append(asked, q)
 		return []series{{points: []point{{t: end, v: 40}}}}
+	}, memNow: func(q string) []series {
+		asked = append(asked, q)
+		return []series{{points: []point{{t: end, v: 30}}}}
 	}}
 	v := newMetricsView(f, zap.NewNop())
 	v.now = func() time.Time { return end }
@@ -821,6 +829,9 @@ func TestMetricsViewSummary(t *testing.T) {
 	want := `{"window":"1h","at":"2026-11-10T12:00:00Z","memory_bytes":{"now":30,"max":40},"memory_max_bytes":100,"cpu_cores":{"avg_5m":0.5,"avg":0.40625}}`
 	if string(got) != want {
 		t.Fatalf("metrics:\n got %s\nwant %s", got, want)
+	}
+	if len(asked) != 4 {
+		t.Errorf("%d memory and CPU queries, want 4: %v", len(asked), asked)
 	}
 	for _, q := range asked {
 		if !strings.Contains(q, `app="blog"`) {
@@ -865,8 +876,9 @@ func TestMetricsViewStaleIsHistory(t *testing.T) {
 }
 
 // The day's range steps 5 m, so its newest point can be over 5 m old
-// for a running app: still now, and avg_5m is that point alone (a 5 m
-// rate already). Twenty minutes is history, for the day too.
+// for a running app: still the present for the cap and avg_5m, which is
+// that point alone (a 5 m rate already). Twenty minutes is history, for
+// the day too.
 func TestMetricsViewDayFreshness(t *testing.T) {
 	end := time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC)
 	for _, c := range []struct {
@@ -893,11 +905,71 @@ func TestMetricsViewDayFreshness(t *testing.T) {
 					{labels: map[string]string{"__name__": "motel_app_memory_max_bytes"}, points: two(100, 100)},
 				}
 			}, instant: func(string) []series { return []series{{points: []point{{t: end, v: 40}}}} }}
+			if c.name == "running" {
+				f.memNow = func(string) []series { return []series{{points: []point{{t: end, v: 30}}}} }
+			}
 			v := newMetricsView(f, zap.NewNop())
 			v.now = func() time.Time { return end }
 			got, _ := json.Marshal(v.AppMetrics(context.Background(), "blog", "24h"))
 			if string(got) != c.want {
 				t.Fatalf("the day:\n got %s\nwant %s", got, c.want)
+			}
+		})
+	}
+}
+
+// Memory's now is the last push within 75 s, as app_memory_high reads
+// it, whatever the window (#577): the range's newest point is on its
+// step's grid, and under the day it read the memory of up to five
+// minutes before (24 MiB now where the hour said 13). An app that
+// stopped two minutes ago has no now, though its range still carries a
+// point the three steps call fresh; one started since the day's newest
+// step has one, though its range has no point yet.
+func TestMetricsViewNowIsTheLastPush(t *testing.T) {
+	end := time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC)
+	const mib = 1 << 20
+	inner := `last_over_time(motel_app_memory_bytes{app="blog"}[75s])`
+	if !strings.Contains(memoryShare(`{app="blog"}`), inner) {
+		t.Fatalf("app_memory_high reads %s, not %s", memoryShare(`{app="blog"}`), inner)
+	}
+	for _, c := range []struct {
+		name, window string
+		newest       time.Duration // the range's newest point, before end; <0 none
+		pushed       bool          // a push within 75 s
+		want         string
+	}{
+		{"running hour", "1h", 0, true, `{"window":"1h","at":"2026-11-10T12:00:00Z","memory_bytes":{"now":13631488,"max":39845888}}`},
+		{"running day", "24h", 4 * time.Minute, true, `{"window":"24h","at":"2026-11-10T11:56:00Z","memory_bytes":{"now":13631488,"max":39845888}}`},
+		{"stopped hour", "1h", 2 * time.Minute, false, `{"window":"1h","at":"2026-11-10T11:58:00Z","memory_bytes":{"max":39845888}}`},
+		{"stopped day", "24h", 4 * time.Minute, false, `{"window":"24h","at":"2026-11-10T11:56:00Z","memory_bytes":{"max":39845888}}`},
+		{"started day", "24h", -1, true, `{"window":"24h","memory_bytes":{"now":13631488,"max":39845888}}`},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			f := &fakeRange{
+				ans: func(q string) []series {
+					if strings.HasPrefix(q, "sum(rate(") || c.newest < 0 {
+						return nil
+					}
+					at := end.Add(-c.newest)
+					return []series{{labels: map[string]string{"__name__": "motel_app_memory_bytes"},
+						points: []point{{t: at.Add(-5 * time.Minute), v: 38 * mib}, {t: at, v: 24 * mib}}}}
+				},
+				instant: func(string) []series { return []series{{points: []point{{t: end, v: 38 * mib}}}} },
+				memNow: func(q string) []series {
+					if q != "max("+inner+")" {
+						t.Errorf("memory's now asked as %s", q)
+					}
+					if !c.pushed {
+						return nil
+					}
+					return []series{{points: []point{{t: end, v: 13 * mib}}}}
+				},
+			}
+			v := newMetricsView(f, zap.NewNop())
+			v.now = func() time.Time { return end }
+			got, _ := json.Marshal(v.AppMetrics(context.Background(), "blog", c.window))
+			if string(got) != c.want {
+				t.Fatalf("memory:\n got %s\nwant %s", got, c.want)
 			}
 		})
 	}
@@ -922,6 +994,7 @@ func TestMetricsViewMaxKeepsAPeakBetweenSteps(t *testing.T) {
 			}
 			return []series{{points: []point{{t: end, v: 1000}}}}
 		},
+		memNow: func(string) []series { return []series{{points: []point{{t: end, v: 10}}}} },
 	}
 	v := newMetricsView(f, zap.NewNop())
 	v.now = func() time.Time { return end }
@@ -945,6 +1018,7 @@ func TestMetricsViewMaxLeavesOutASampleBeforeTheHour(t *testing.T) {
 				points: []point{{t: end.Add(-time.Hour), v: 1000}, {t: end, v: 10}}}}
 		},
 		instant: func(string) []series { return []series{{points: []point{{t: end, v: 10}}}} },
+		memNow:  func(string) []series { return []series{{points: []point{{t: end, v: 10}}}} },
 	}
 	v := newMetricsView(f, zap.NewNop())
 	v.now = func() time.Time { return end }
