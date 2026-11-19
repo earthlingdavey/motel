@@ -70,7 +70,7 @@ func TestClosedTerminalWithTheScreenUp(t *testing.T) {
 	if err != nil {
 		t.Skip("NOT RUN: no /dev/ptmx (" + err.Error() + "); a closed terminal is not held here")
 	}
-	defer master.Close()
+	defer func() { _ = master.Close() }()
 	var unlock int32
 	var n uint32
 	if err := ioctl(master.Fd(), syscall.TIOCSPTLCK, unsafe.Pointer(&unlock)); err != nil {

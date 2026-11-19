@@ -131,7 +131,7 @@ func Run(ctx context.Context, o Options, start model.View) (Printed, error) {
 	}
 	// tcell says a failed read of the terminal as an EventError, which
 	// tview's Run returns; a screen that could not start returns another.
-	if _, ok := err.(*tcell.EventError); ok {
+	if _, ok := err.(*tcell.EventError); ok { //nolint:errorlint // tview returns the event itself; errors is not on this package's list (TestTUIImports)
 		err = ErrClosed
 	}
 	return Printed{u.Print, u.Shown}, err

@@ -49,11 +49,11 @@ type Status struct {
 	State     termtext.Text
 	Deploying *InFlight
 	Version   termtext.Text
-	Unit     termtext.Text
-	PID      int
-	Watchdog *Watchdog
-	Metrics  *Metrics
-	Last     *Deploy
+	Unit      termtext.Text
+	PID       int
+	Watchdog  *Watchdog
+	Metrics   *Metrics
+	Last      *Deploy
 	// Versions are the releases on the box, the running one first.
 	Versions []termtext.Text
 }
