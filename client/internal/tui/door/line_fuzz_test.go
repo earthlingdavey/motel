@@ -2,6 +2,7 @@ package door
 
 import (
 	"strings"
+	"sync"
 	"testing"
 	"unicode/utf8"
 
@@ -49,12 +50,24 @@ func written(scr tcell.Screen, y int) (n int) {
 var classes = []model.Class{model.Plain, model.Label, model.Dim, model.Strong, model.Bad, model.Warn, model.Good}
 
 // classStyle is the style a segment of class c is drawn in, with
-// colour or without: drawn on "x" alone.
+// colour or without: drawn on "x" alone, once.
 func classStyle(c model.Class, colour bool) tcell.Style {
+	type key struct {
+		c      model.Class
+		colour bool
+	}
+	k := key{c, colour}
+	if st, ok := classStyles.Load(k); ok {
+		return st.(tcell.Style)
+	}
 	scr := drawLines([]model.Line{{{T: termtext.From("x"), C: c}}}, colour, 4, 1)
 	_, st, _ := scr.Get(0, 0)
+	classStyles.Store(k, st)
 	return st
 }
+
+// classStyles are the styles classStyle has drawn.
+var classStyles sync.Map
 
 // doorSegs is l's segments as Line hands them to tview, the tags left
 // out: each made inert, and the characters before a row tview would
@@ -134,7 +147,6 @@ func checkLine(t *testing.T, l model.Line, colour bool) {
 	// The clusters in order, each from the cell the one before ended
 	// at, as wide as uniseg says (tview draws one of no width nowhere).
 	segs := doorSegs(l)
-	own := map[model.Class]tcell.Style{}
 	x, at, seg, end := 0, 0, 0, 0
 	for rest, state := strings.Join(segs, ""), -1; rest != ""; {
 		var c string
@@ -150,10 +162,7 @@ func checkLine(t *testing.T, l model.Line, colour bool) {
 			continue
 		}
 		cls := l[seg].C
-		if _, ok := own[cls]; !ok {
-			own[cls] = classStyle(cls, colour)
-		}
-		if _, st, _ := scr.Get(x, 0); st != own[cls] {
+		if _, st, _ := scr.Get(x, 0); st != classStyle(cls, colour) {
 			t.Errorf("%s (colour %v): cell %d (%q) is drawn %v, not as its segment, %s", lineName(l), colour, x, c, st, className[cls])
 			return
 		}
