@@ -165,3 +165,29 @@ func TestNoAnswerBeforeAStopForgotten(t *testing.T) {
 		}
 	}
 }
+
+// TestWhoAmIMissNotPutOffByClosingMe: who am I opened, its whoami gets
+// no answer, and who am I is closed a second later: whoami is still
+// asked again at its backoff, not put off to its 5-minute turn.
+func TestWhoAmIMissNotPutOffByClosingMe(t *testing.T) {
+	e := model.NewEngine(t0)
+	sim(e, []string{"blog"}, t0, 2*time.Minute, 0, ok)
+	now := t0.Add(2 * time.Minute)
+	e.MeOpen(true, now)
+	if !takeKind(e, now, model.KWhoAmI) {
+		t.Fatal("opening who am I asks no whoami")
+	}
+	e.Done(model.Job{Kind: model.KWhoAmI}, now, fail(model.FailNoAnswer))
+	now = now.Add(time.Second)
+	e.MeOpen(false, now)
+	calls := sim(e, []string{"blog"}, now, time.Minute, 0, ok)
+	for _, c := range calls {
+		if c.j.Kind == model.KWhoAmI {
+			if d := c.at.Sub(now); d > 2*time.Second {
+				t.Errorf("whoami asked again %v after who am I closed", d)
+			}
+			return
+		}
+	}
+	t.Error("whoami not asked again within a minute of who am I closed")
+}

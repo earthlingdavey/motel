@@ -321,7 +321,9 @@ func (e *Engine) MeOpen(open bool, now time.Time) {
 	switch {
 	case open && (e.meAnswered.IsZero() || now.Sub(e.meAnswered) >= MeEvery):
 		en.due = now
-	case !e.meAnswered.IsZero():
+	case !e.meAnswered.IsZero() && en.misses == 0:
+		// Closed: back to its turn, but a whoami whose newest read
+		// failed keeps the time that failure gave it (its backoff).
 		en.due = e.meAnswered.Add(e.meEvery())
 	}
 	e.poke()
