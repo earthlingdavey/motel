@@ -2,6 +2,7 @@ package box
 
 import (
 	"bytes"
+	"context"
 	"crypto/ed25519"
 	"crypto/sha256"
 	"encoding/hex"
@@ -281,16 +282,7 @@ func TestHandlerStatus(t *testing.T) {
 // stopped past its swap until recovery.
 func TestHandlerStatusSaysNoEditDuringAnApply(t *testing.T) {
 	p := newPushRig(t)
-	get := func() map[string]any {
-		t.Helper()
-		hr := httptest.NewRequest(http.MethodGet, "/", nil)
-		hr.Header.Set("Authorization", "Bearer "+p.token(t, ""))
-		w := httptest.NewRecorder()
-		if err := p.h.ServeHTTP(w, hr, nextFunc(func(http.ResponseWriter, *http.Request) error { return errors.New("passed on") })); err != nil || w.Code != http.StatusOK {
-			t.Fatalf("GET /: %v %d %s", err, w.Code, w.Body)
-		}
-		return body(t, w)
-	}
+	get := func() map[string]any { return p.status(t) }
 	c2, _ := p.change()
 	var during map[string]any
 	p.sd.onReload = func(int) {
@@ -315,6 +307,49 @@ func TestHandlerStatusSaysNoEditDuringAnApply(t *testing.T) {
 	if edited := get(); edited["caddyfile_edited_out_of_band"] != true {
 		t.Errorf("GET / after a console edit: %v", edited)
 	}
+}
+
+// status is GET / on the rig's handler, answered 200.
+func (p *pushRig) status(t *testing.T) map[string]any {
+	t.Helper()
+	hr := httptest.NewRequest(http.MethodGet, "/", nil)
+	hr.Header.Set("Authorization", "Bearer "+p.token(t, ""))
+	w := httptest.NewRecorder()
+	if err := p.h.ServeHTTP(w, hr, nextFunc(func(http.ResponseWriter, *http.Request) error { return errors.New("passed on") })); err != nil || w.Code != http.StatusOK {
+		t.Fatalf("GET /: %v %d %s", err, w.Code, w.Body)
+	}
+	return body(t, w)
+}
+
+// After `moteld box baseline`, applied.json keeps the record before's
+// sha256, no claim about the commit it names: GET / says nothing of an
+// edit (review of #577). (a) A push applied whose baseline could not be
+// recorded, then the baseline its result asks for: the file is that
+// commit's, and was said edited on every read. (b) A trust reset to a
+// commit whose file differs, the old file still installed: the digests
+// match, and nothing is said, as before.
+func TestHandlerStatusAfterABaseline(t *testing.T) {
+	t.Run("the unrecorded push", func(t *testing.T) {
+		p := newPushRig(t)
+		c2, _ := p.change()
+		p.writeInstalled(p.repo.files[c2]) // the push installed it; applied.json still names the base
+		if err := runBaseline(context.Background(), 0, p.applier(hooks{}), c2, &bytes.Buffer{}); err != nil {
+			t.Fatal(err)
+		}
+		if got := p.status(t); got["commit"] != c2 || got["sha256"] != digest(p.repo.files[c2]) || got["caddyfile_edited_out_of_band"] != nil {
+			t.Errorf("GET / after the baseline: %v", got)
+		}
+	})
+	t.Run("a trust reset", func(t *testing.T) {
+		p := newPushRig(t)
+		reset := p.repo.commit(boxFile(7, p.alice), &p.alice)
+		if err := runBaseline(context.Background(), 0, p.applier(hooks{}), reset, &bytes.Buffer{}); err != nil {
+			t.Fatal(err)
+		}
+		if got := p.status(t); got["commit"] != reset || got["sha256"] != digest(p.v1) || got["caddyfile_edited_out_of_band"] != nil {
+			t.Errorf("GET / after the reset: %v", got)
+		}
+	})
 }
 
 func TestHandlerStatusBoxErrors(t *testing.T) {

@@ -319,8 +319,9 @@ type BoxStatus struct {
 	// for Commit: its Caddyfile has been edited on the box since, as a
 	// push would report it (caddyfile_edited_out_of_band). Absent when
 	// they are the same, while a push is being applied (the file may be
-	// its new bytes under the commit before), and from a box older than
-	// the field.
+	// its new bytes under the commit before), after `moteld box
+	// baseline` until the next push (the digest it keeps is no claim
+	// about Commit), and from a box older than the field.
 	OutOfBand bool `json:"caddyfile_edited_out_of_band,omitempty"`
 }
 

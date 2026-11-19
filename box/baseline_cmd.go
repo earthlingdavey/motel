@@ -7,6 +7,11 @@ import (
 	"io/fs"
 )
 
+// signerBaseline is applied.json's signer after a baseline, whose
+// sha256 is the record before's and no claim about the commit it
+// names: the mark the handler's status reads.
+const signerBaseline = "baseline"
+
 // runBaseline is `moteld box baseline <sha>` (DESIGN-box.md, "`box
 // baseline`"): a trust reset, for a history rewritten below the commit
 // the box runs or a chain past the cap. Under root's lock, after
@@ -54,7 +59,7 @@ func runBaseline(ctx context.Context, euid int, a *Applier, sha string, out io.W
 	}
 	// The env files it manages are kept as found, as the digest is: the
 	// next push decides them by the full chain.
-	if err := a.putApplied(applied{SHA: sha, Path: old.Path, SHA256: old.SHA256, Signer: "baseline", When: a.clock.Now().UTC(),
+	if err := a.putApplied(applied{SHA: sha, Path: old.Path, SHA256: old.SHA256, Signer: signerBaseline, When: a.clock.Now().UTC(),
 		SecretsTree: old.SecretsTree, Secrets: old.Secrets}); err != nil {
 		return err
 	}
