@@ -779,11 +779,18 @@ func TestNoScreenNothingSent(t *testing.T) {
 // charset step, and then fails at /dev/tty or passes.
 func TestCanDraw(t *testing.T) {
 	setLocale(t, locale{lang: "C.UTF-8"})
-	for term, want := range map[string]string{"dumb": "not cursor addressable", "": "term not set"} {
-		t.Setenv("TERM", term)
-		if err := CanDraw(); err == nil || !strings.Contains(err.Error(), want) {
-			t.Errorf("TERM=%q: %v, want %q", term, err, want)
-		}
+	t.Setenv("TERM", "")
+	if err := CanDraw(); err == nil || !strings.Contains(err.Error(), "term not set") {
+		t.Errorf("TERM unset: %v, want %q", err, "term not set")
+	}
+	// tcell has no dumb of its own: it asks infocmp, which says dumb is
+	// not cursor addressable, and where there is no infocmp the lookup
+	// fails otherwise.
+	t.Setenv("TERM", "dumb")
+	err := CanDraw()
+	_, lerr := exec.LookPath("infocmp")
+	if err == nil || lerr == nil && !strings.Contains(err.Error(), "not cursor addressable") {
+		t.Errorf("TERM=dumb: %v, want a refusal (with infocmp: %q)", err, "not cursor addressable")
 	}
 	t.Setenv("TERM", "xterm-256color") // tcell's own, built in
 	for _, l := range locales {
