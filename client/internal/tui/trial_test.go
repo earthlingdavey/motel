@@ -67,9 +67,10 @@ func apiStatus(t *testing.T) string {
 }
 
 // TestMetricsSayOnlyWhatTheClientKnows: the metrics line says the
-// newest point's time and its age, and nothing of how far behind the
-// store runs, which the box does not say (the trial's ran 5 s behind;
-// the screen said 30).
+// window, nothing of how far behind the store runs, which the box does
+// not say (the trial's ran 5 s behind; the screen said 30), and not the
+// window's newest point, whose age beside "now" read as the age of now,
+// the cap and the last 5 m, which are the last pushes' (review of #577).
 func TestMetricsSayOnlyWhatTheClientKnows(t *testing.T) {
 	h := start(t, 60, 16, nil)
 	h.open(app("blog"))
@@ -79,7 +80,7 @@ func TestMetricsSayOnlyWhatTheClientKnows(t *testing.T) {
 			got = r.text
 		}
 	}
-	if want := "metrics     over 1h, newest point 14:12:10 UTC (30s ago)"; got != want {
+	if want := "metrics     over 1h"; got != want {
 		t.Errorf("the metrics line is drawn %q, want %q", got, want)
 	}
 }

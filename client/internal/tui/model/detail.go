@@ -168,7 +168,7 @@ func (s *Session) Overview(app string, now time.Time) OverviewView {
 		}
 	}
 	v.Fields = append(v.Fields, lastDeploy(st.LastDeploy, now)...)
-	v.Fields = append(v.Fields, s.metricLines(st, now)...)
+	v.Fields = append(v.Fields, s.metricLines(st)...)
 	if d := st.LastDeploy; d != nil && d.ArtifactEntries > 0 {
 		v.Fields = append(v.Fields, field("artifact", own(strconv.Itoa(d.ArtifactEntries)+" entries · "+mib(float64(d.ArtifactBytes))+" (the last deploy's)")))
 	}
@@ -241,7 +241,7 @@ func statusClass(status string) Class {
 	return Plain
 }
 
-func (s *Session) metricLines(st wire.Status, now time.Time) []Line {
+func (s *Session) metricLines(st wire.Status) []Line {
 	m := st.Metrics
 	switch {
 	case m == nil:
@@ -301,11 +301,11 @@ func (s *Session) metricLines(st wire.Status, now time.Time) []Line {
 		}
 		out = append(out, field("requests", l...))
 	}
-	l := Line{own("over "), boxT(m.Window)}
-	if m.At != nil && !m.At.IsZero() {
-		l = append(l, own(", newest point "+clock(*m.At, now, true)+" UTC ("+since(*m.At, now)+")"))
-	}
-	return append(out, field("metrics", l...))
+	// The window alone, not metrics.at: at is the window's newest step,
+	// up to 5 minutes old at the day, while now, the cap and the last
+	// 5 m are the last pushes', and its age beside "13 MiB now" read
+	// as theirs (review of #577).
+	return append(out, field("metrics", own("over "), boxT(m.Window)))
 }
 
 // RecordView is one deploy's record, laid out for reading a failure:

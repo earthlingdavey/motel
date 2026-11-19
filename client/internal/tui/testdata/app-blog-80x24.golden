@@ -6,7 +6,7 @@ deployed    succeeded 2h ago (12:12 UTC, 41 s) by github:example/blog@refs/head�
 memory      182 MiB now · 210 MiB max · cap 512 MiB  ███████░░░░░░░░░░░░░ 36% o…
 cpu         0.03 cores (last 5 m) · 0.02 avg · cap 100% of one CPU
 requests    1234 · 0.34/s · 5xx 0.1% · p50 18 ms · p95 120 ms · cache hits 62%
-metrics     over 1h, newest point 14:12:10 UTC (30s ago)
+metrics     over 1h
 artifact    1842 entries · 38 MiB (the last deploy's)
 ─ DEPLOYS, newest first       on disk: 7c1e55d0a913 e9a0b3f2c118 5be2c0f1a8d0 +2
   VERSION      RESULT    WHERE    FINISHED (UTC) TOOK  BY

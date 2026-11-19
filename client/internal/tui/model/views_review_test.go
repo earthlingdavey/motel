@@ -324,7 +324,7 @@ func TestTimesCarryTheirDay(t *testing.T) {
 		"deploys":[{"version":"v2","status":"succeeded","started_at":"@-400d","finished_at":"@-400d"}],
 		"last_deploy":{"version":"v2","status":"succeeded","started_at":"@-400d","finished_at":"@-400d"}}`,
 		`{"version":"v2","status":"failed","phase":"starting","started_at":"@-21d","finished_at":"@-21d"}`)
-	for _, want := range []string{"last restart 10-25 14:00 UTC", "newest point 10-25 14:00:", "deployed    succeeded 400d ago (2025-10-11 14:00 UTC, 0.0 s)"} {
+	for _, want := range []string{"last restart 10-25 14:00 UTC", "deployed    succeeded 400d ago (2025-10-11 14:00 UTC, 0.0 s)"} {
 		if !strings.Contains(fields, want) {
 			t.Errorf("old times: no %q in\n%s", want, fields)
 		}
