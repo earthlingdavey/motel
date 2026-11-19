@@ -69,6 +69,11 @@ func (r *runner) tui() *cobra.Command {
 			// sleeps, and ages and due times would leave the sleep out.
 			wall := func() time.Time { return r.env.Now().Round(0) }
 			s := &model.Session{Version: r.env.Version, Now: wall}
+			// Where the line that says the first reads wait goes (sayAsking),
+			// and what tells it a signature is being made or the client
+			// pauses.
+			errW := r.env.Stderr
+			var notify func(func(bool))
 			if sample {
 				s.Host, s.Demo, s.Key = demo.Host, true, demo.Key
 				s.TokenExpires = func() time.Time { return wall().Add(9 * time.Minute) }
@@ -90,10 +95,17 @@ func (r *runner) tui() *cobra.Command {
 				boxSession(s, c, pt)
 				s.TokenExpires = sig.Expires
 				o.Client, o.Signing, o.Started, o.Resign = live{c}, sig.Notify, gt.Close, pt.Forget
+				ps := &pauser{sleep: c.Sleep}
+				c.Sleep = ps.Sleep
+				errW = gt
+				notify = func(f func(bool)) { sig.Notify(f); ps.Notify(f) }
 			}
 			s.Engine = model.NewEngine(wall())
 			o.Session = s
+			said := sayAsking(ctx, errW, "motel: asking "+termtext.From(s.Host).String()+" who you are and for its apps; the screen opens when it answers, or within a minute if it does not (ctrl-c quits)\n",
+				func() <-chan time.Time { return o.Clock.After(askingAfter) }, notify)
 			start := tui.Prime(ctx, o)
+			said()
 			if ctx.Err() != nil {
 				// Interrupted at the first read (a touch not given): no
 				// screen with nothing refreshing behind it.
@@ -146,6 +158,15 @@ func (r *runner) printed(p tui.Printed) error {
 // tuiSignals end the TUI as SIGINT and SIGTERM do (main's): a closed
 // terminal window sends SIGHUP.
 var tuiSignals = []os.Signal{syscall.SIGHUP}
+
+// askingAfter is how long the first reads wait for the box before a
+// line says so (sayAsking). An ordinary start waits about four round
+// trips for the box (TCP, TLS, whoami, the list; five with TLS 1.2):
+// well under a second near it, 1 to 1.25 s at 250 ms a round trip,
+// 2.4 to 3 s at 600 ms (a satellite link). A box that does not answer
+// holds each of the two reads for the client's 30 s, so the line comes
+// with most of that minute still to wait.
+var askingAfter = 3 * time.Second
 
 // runFailure is how the TUI's end is said: a panic, already one line
 // and safe, exits 3; a terminal that went away while the screen held it
@@ -358,6 +379,80 @@ func (s *signer) Sign(ctx context.Context, key sshkey.Key, namespace string, mes
 		s.mu.Unlock()
 	}
 	return out, err
+}
+
+// sayAsking writes line to w once the first reads, before the screen
+// opens, have waited askingAfter for the box (after gives each wait): a
+// box that does not answer holds each for the client's 30 s, and the
+// terminal would show nothing meanwhile. A signature's time is not
+// counted, nor the client's own pause before it asks again (notify,
+// when not nil, tells it one of them runs, and the wait starts again
+// at its end): a hardware key's touch is ssh-keygen's to ask for, and
+// the client waits a second before its retry of a 401, which the box
+// answered at once. An ordinary start says nothing. The func it returns
+// stops it, and returns once nothing more can be written.
+func sayAsking(ctx context.Context, w io.Writer, line string, after func() <-chan time.Time, notify func(func(bool))) func() {
+	ctx, cancel := context.WithCancel(ctx)
+	signing, done := make(chan bool), make(chan struct{})
+	if notify != nil {
+		notify(func(on bool) {
+			select {
+			case signing <- on:
+			case <-done:
+			}
+		})
+	}
+	go func() {
+		defer close(done)
+		wait := after()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case on := <-signing:
+				wait = nil
+				if !on {
+					wait = after()
+				}
+			case <-wait:
+				_, _ = io.WriteString(w, line)
+				return
+			}
+		}
+	}()
+	return func() {
+		cancel()
+		<-done
+		if notify != nil {
+			notify(nil)
+		}
+	}
+}
+
+// pauser is the client's Sleep, telling sayAsking while it runs.
+type pauser struct {
+	sleep func(context.Context, time.Duration) error
+	mu    sync.Mutex
+	note  func(bool)
+}
+
+// Notify sets what is told; nil tells nothing.
+func (p *pauser) Notify(f func(bool)) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.note = f
+}
+
+// Sleep sleeps as the client's Sleep, saying so before and after.
+func (p *pauser) Sleep(ctx context.Context, d time.Duration) error {
+	p.mu.Lock()
+	note := p.note
+	p.mu.Unlock()
+	if note != nil {
+		note(true)
+		defer note(false)
+	}
+	return p.sleep(ctx, d)
 }
 
 // gate is stderr until the screen takes the terminal, and nothing

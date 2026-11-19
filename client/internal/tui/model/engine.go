@@ -83,6 +83,12 @@ const (
 	// of a hardware key, and a signature that fails fast must not be
 	// asked for as fast as a key repeats.
 	RetryEvery = 5 * time.Second
+	// WaitingAfter is how long a read waits for its answer before the
+	// title bar says so (Health.Waiting): the open app's whole interval,
+	// so its next answer is already late. An answer from a box that
+	// answers takes well under a second; a slow link's new connection a
+	// few round trips; the client gives up at 30 s.
+	WaitingAfter = 5 * time.Second
 	// share is the part of what is left of the rate after the open app
 	// and the list that the other apps are given: the rest is room for
 	// a record the person opens and for whoami.
@@ -132,6 +138,19 @@ type Engine struct {
 	taken      *entry // the entry the read in flight was taken from
 	cancel     context.CancelFunc
 	recovering bool
+	// noneAsked is when none's read began to wait for the box, when it
+	// waited WaitingAfter or longer for no answer: the box has been
+	// waited for since then (Health).
+	noneAsked time.Time
+	// waitFrom is when the read in flight began to wait for the box:
+	// when it was taken, when its token was signed, or the wake from a
+	// sleep it was in flight through, since the box is not waited for
+	// while a key is touched or the machine sleeps; zero while its token
+	// is being signed (Signing).
+	waitFrom time.Time
+	// dropped is the read in flight cancelled (Drop): no longer waited
+	// for.
+	dropped bool
 	// lastFocus is when the open app was last read: focus reads, the
 	// ones opening an app causes among them, come out of its share.
 	lastFocus time.Time
@@ -397,6 +416,7 @@ func (e *Engine) Drop(j Job) {
 func (e *Engine) dropLocked(j Job) {
 	if e.inflight != nil && *e.inflight == j && e.cancel != nil {
 		e.cancel()
+		e.dropped = true
 	}
 }
 
@@ -477,6 +497,19 @@ func (e *Engine) Touch(now time.Time) {
 	e.poke()
 }
 
+// Signing is a token being signed inside the read in flight (on), and
+// signed: a hardware key's touch is not the box waited for, so the read
+// waits for it from when signing ends (Health).
+func (e *Engine) Signing(on bool, now time.Time) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.seen(now)
+	e.waitFrom = now
+	if on {
+		e.waitFrom = time.Time{}
+	}
+}
+
 // Take returns the read to make now, or false and how long to wait
 // before asking again (zero: until woken).
 func (e *Engine) Take(now time.Time) (Job, bool, time.Duration) {
@@ -510,8 +543,8 @@ func (e *Engine) Take(now time.Time) (Job, bool, time.Duration) {
 		return Job{}, false, gate.Sub(now)
 	}
 	e.tokens--
-	e.inflight, e.taken = &j, e.jobs[j]
-	e.taken.asked = now
+	e.inflight, e.taken, e.dropped = &j, e.jobs[j], false
+	e.taken.asked, e.waitFrom = now, now
 	if j.Kind == KStatus && j.App == e.focus {
 		e.lastFocus = now
 	}
@@ -661,7 +694,7 @@ func (e *Engine) Done(j Job, now time.Time, err error) Outcome {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.seen(now)
-	taken := e.taken
+	taken, waited := e.taken, e.waitFrom
 	e.inflight, e.taken, e.cancel = nil, nil, nil
 	if taken != nil {
 		taken.slowed = false
@@ -716,6 +749,15 @@ func (e *Engine) Done(j Job, now time.Time, err error) Outcome {
 			// before any is answered.
 			jj := j
 			e.none, alone = &jj, true
+			// Waited for and not answered: the box goes on being waited
+			// for since this read began to wait for it, through the read
+			// made next (brought forward, below), so the title bar does not
+			// say live between the two. A quick failure (a 5xx on one
+			// route) is not carried on.
+			e.noneAsked = time.Time{}
+			if !waited.IsZero() && now.Sub(waited) >= WaitingAfter {
+				e.noneAsked = waited
+			}
 		}
 		// A record is held as a refused one is: a 5xx is no answer too,
 		// and a record asked again after each backoff, ahead of every
@@ -825,6 +867,11 @@ type Health struct {
 	SlowIn  time.Duration
 	// Back is set once, on the first answer after a run of none.
 	Back bool
+	// Waiting is how long the box has been waited for: since the read in
+	// flight began to wait for it (not one cancelled); or, when a read
+	// waited WaitingAfter or longer and got no answer, none answered
+	// since, since that one began to. A wake from sleep starts it again.
+	Waiting time.Duration
 }
 
 // Health is the engine's state at now.
@@ -845,6 +892,14 @@ func (e *Engine) Health(now time.Time) Health {
 	}
 	if e.slowUntil.After(now) {
 		h.SlowIn = e.slowUntil.Sub(now)
+	}
+	switch {
+	case e.none != nil && !e.noneAsked.IsZero():
+		// From the read that got none, between it and the next too: the
+		// frame after its failure is drawn before the next is taken.
+		h.Waiting = now.Sub(e.noneAsked)
+	case e.inflight != nil && !e.dropped && !e.waitFrom.IsZero():
+		h.Waiting = now.Sub(e.waitFrom)
 	}
 	return h
 }
@@ -941,6 +996,14 @@ func (e *Engine) wakeLocked(now time.Time) {
 		en.due = now
 	}
 	e.askMe(now)
+	// The box was not waited for while the machine slept: a read in
+	// flight through the sleep waits for it from now, and a read that
+	// waited and got none before the sleep is not carried on past it
+	// (Health), as nothing has been asked since the wake.
+	if !e.waitFrom.IsZero() {
+		e.waitFrom = now
+	}
+	e.noneAsked = time.Time{}
 	// Empty, and filling from now, or from the end of a 429's wait that
 	// still runs, as the 429 left it.
 	e.tokens, e.filled = 0, maxTime(now, e.slowUntil)
@@ -957,7 +1020,7 @@ func (e *Engine) shift(d time.Duration) {
 			}
 		}
 	}
-	move(&e.filled, &e.meAnswered, &e.me403, &e.retryAt, &e.slowUntil, &e.touched, &e.lastFocus, &e.lastList, &e.lastRetry, &e.ticked)
+	move(&e.filled, &e.meAnswered, &e.me403, &e.retryAt, &e.slowUntil, &e.touched, &e.lastFocus, &e.lastList, &e.lastRetry, &e.ticked, &e.noneAsked, &e.waitFrom)
 	for _, en := range e.jobs {
 		move(&en.due, &en.answered, &en.asked)
 	}
