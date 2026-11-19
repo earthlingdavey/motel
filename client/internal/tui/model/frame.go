@@ -81,7 +81,9 @@ func (s *Session) commandArgs(v View, json bool) ([]string, bool) {
 		}
 	}
 	args = append(args, "--box", s.boxArg())
-	if s.Key.Source == "--key" { // sshkey.SourceFlag: the person named it
+	// sshkey.SourceFlag and SourceEnv: the person named it, and a shell
+	// without the TUI's MOTEL_KEY would find another key, or none.
+	if s.Key.Source == "--key" || s.Key.Source == "MOTEL_KEY" {
 		args = append(args, "--key", s.Key.Shown)
 	}
 	if json {

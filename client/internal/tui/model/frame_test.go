@@ -120,12 +120,14 @@ func TestOverlayWords(t *testing.T) {
 
 // TestAppsRowTemplateKey: the apps screen's command overlay teaches a
 // row's command with the session's key, --key when the person named it
-// with --key, and no --key otherwise, as every other printed command.
+// with --key or MOTEL_KEY, and no --key otherwise, as every other
+// printed command.
 func TestAppsRowTemplateKey(t *testing.T) {
 	for _, c := range []struct {
 		source, want string
 	}{
 		{"--key", "  motel status --box deploy.example.com --key '~/.ssh/my key' -- <app>"},
+		{"MOTEL_KEY", "  motel status --box deploy.example.com --key '~/.ssh/my key' -- <app>"},
 		{"the default file", "  motel status --box deploy.example.com -- <app>"},
 	} {
 		s, _, _ := session(t)
@@ -278,16 +280,19 @@ func TestNotThisKey(t *testing.T) {
 }
 
 // TestPrintedBox: the printed command names the port the session asks,
-// and --key exactly when the person named the key with it; a leading =
-// or ~ is quoted.
+// and --key exactly when the person named the key, with --key or
+// MOTEL_KEY (pasted into a shell without the variable, a line with no
+// --key failed: "motel: name your key"); a leading = or ~ is quoted.
 func TestPrintedBox(t *testing.T) {
-	s := &model.Session{Host: "deploy.example.com", Addr: "deploy.example.com:8443", Key: model.Key{Source: "MOTEL_KEY", Shown: "~/k.pub"}, Now: func() time.Time { return t0 }, Engine: model.NewEngine(t0)}
+	s := &model.Session{Host: "deploy.example.com", Addr: "deploy.example.com:8443", Key: model.Key{Source: "the default file", Shown: "~/k.pub"}, Now: func() time.Time { return t0 }, Engine: model.NewEngine(t0)}
 	if c, _ := s.Command(model.View{Screen: model.ScreenApps}); c != "motel apps --box deploy.example.com:8443" {
 		t.Errorf("printed %q", c)
 	}
-	s.Key.Source = "--key"
-	if c, _ := s.Command(model.View{Screen: model.ScreenApps}); c != "motel apps --box deploy.example.com:8443 --key '~/k.pub'" {
-		t.Errorf("printed %q", c)
+	for _, source := range []string{"--key", "MOTEL_KEY"} {
+		s.Key.Source = source
+		if c, _ := s.Command(model.View{Screen: model.ScreenApps}); c != "motel apps --box deploy.example.com:8443 --key '~/k.pub'" {
+			t.Errorf("the key from %s: printed %q", source, c)
+		}
 	}
 	for _, a := range []string{"=ls", "~root", "~"} {
 		if q := model.ShellQuote(a); q == a {
