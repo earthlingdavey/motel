@@ -83,6 +83,12 @@ const (
 	// of a hardware key, and a signature that fails fast must not be
 	// asked for as fast as a key repeats.
 	RetryEvery = 5 * time.Second
+	// WaitingAfter is how long a read waits for its answer before the
+	// title bar says so (Health.Waiting): the open app's whole interval,
+	// so its next answer is already late. An answer from a box that
+	// answers takes well under a second; a slow link's new connection a
+	// few round trips; the client gives up at 30 s.
+	WaitingAfter = 5 * time.Second
 	// share is the part of what is left of the rate after the open app
 	// and the list that the other apps are given: the rest is room for
 	// a record the person opens and for whoami.
@@ -132,6 +138,13 @@ type Engine struct {
 	taken      *entry // the entry the read in flight was taken from
 	cancel     context.CancelFunc
 	recovering bool
+	// noneAsked is when none's read was asked, when it waited
+	// WaitingAfter or longer for no answer: the box has been waited for
+	// since then (Health).
+	noneAsked time.Time
+	// dropped is the read in flight cancelled (Drop): no longer waited
+	// for.
+	dropped bool
 	// lastFocus is when the open app was last read: focus reads, the
 	// ones opening an app causes among them, come out of its share.
 	lastFocus time.Time
@@ -397,6 +410,7 @@ func (e *Engine) Drop(j Job) {
 func (e *Engine) dropLocked(j Job) {
 	if e.inflight != nil && *e.inflight == j && e.cancel != nil {
 		e.cancel()
+		e.dropped = true
 	}
 }
 
@@ -510,7 +524,7 @@ func (e *Engine) Take(now time.Time) (Job, bool, time.Duration) {
 		return Job{}, false, gate.Sub(now)
 	}
 	e.tokens--
-	e.inflight, e.taken = &j, e.jobs[j]
+	e.inflight, e.taken, e.dropped = &j, e.jobs[j], false
 	e.taken.asked = now
 	if j.Kind == KStatus && j.App == e.focus {
 		e.lastFocus = now
@@ -716,6 +730,15 @@ func (e *Engine) Done(j Job, now time.Time, err error) Outcome {
 			// before any is answered.
 			jj := j
 			e.none, alone = &jj, true
+			// Waited for and not answered: the box goes on being waited
+			// for since this read was asked, through the read made next
+			// (brought forward, below), so the title bar does not say live
+			// between the two. A quick failure (a 5xx on one route) is not
+			// carried on.
+			e.noneAsked = time.Time{}
+			if now.Sub(en.asked) >= WaitingAfter {
+				e.noneAsked = en.asked
+			}
 		}
 		// A record is held as a refused one is: a 5xx is no answer too,
 		// and a record asked again after each backoff, ahead of every
@@ -825,6 +848,11 @@ type Health struct {
 	SlowIn  time.Duration
 	// Back is set once, on the first answer after a run of none.
 	Back bool
+	// Waiting is how long the box has been waited for: since the read in
+	// flight was asked (not one cancelled); or, when a read waited
+	// WaitingAfter or longer and got no answer, none answered since,
+	// since that one was.
+	Waiting time.Duration
 }
 
 // Health is the engine's state at now.
@@ -845,6 +873,14 @@ func (e *Engine) Health(now time.Time) Health {
 	}
 	if e.slowUntil.After(now) {
 		h.SlowIn = e.slowUntil.Sub(now)
+	}
+	switch {
+	case e.none != nil && !e.noneAsked.IsZero():
+		// From the read that got none, between it and the next too: the
+		// frame after its failure is drawn before the next is taken.
+		h.Waiting = now.Sub(e.noneAsked)
+	case e.inflight != nil && !e.dropped:
+		h.Waiting = now.Sub(e.taken.asked)
 	}
 	return h
 }
@@ -957,7 +993,7 @@ func (e *Engine) shift(d time.Duration) {
 			}
 		}
 	}
-	move(&e.filled, &e.meAnswered, &e.me403, &e.retryAt, &e.slowUntil, &e.touched, &e.lastFocus, &e.lastList, &e.lastRetry, &e.ticked)
+	move(&e.filled, &e.meAnswered, &e.me403, &e.retryAt, &e.slowUntil, &e.touched, &e.lastFocus, &e.lastList, &e.lastRetry, &e.ticked, &e.noneAsked)
 	for _, en := range e.jobs {
 		move(&en.due, &en.answered, &en.asked)
 	}

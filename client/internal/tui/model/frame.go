@@ -590,6 +590,9 @@ func (s *Session) freshness(now time.Time) Line {
 		return Line{ownC(l+", retry in "+Ago(h.RetryIn), Bad)}
 	case h.Misses > 0:
 		return Line{ownC("slow · "+ago, Warn)}
+	case h.Waiting >= WaitingAfter:
+		// A read not answered yet: not live while the box is waited for.
+		return Line{ownC("waiting "+Ago(h.Waiting)+" for an answer · "+ago, Warn)}
 	case !s.backAt.IsZero() && now.Sub(s.backAt) < 5*time.Second:
 		return Line{ownC("back · "+hms(s.backAt), Good)}
 	case s.refused && s.last.IsZero():
