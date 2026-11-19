@@ -261,3 +261,66 @@ func TestOwnCountForgottenAtR(t *testing.T) {
 		})
 	}
 }
+
+// TestBackoffForgottenAtR: r is a new start for a read's backoff too,
+// not only for its count. A status the box does not answer, while it
+// answers the rest, backs off to 60 s; a 401 then stops every read,
+// and r a few seconds later. Its read is due at once after r, behind
+// whoami, rather than waiting out the rest of the backoff it had before
+// the stop.
+func TestBackoffForgottenAtR(t *testing.T) {
+	me := model.Job{Kind: model.KWhoAmI}
+	blog := model.Job{Kind: model.KStatus, App: "blog"}
+	apps := []string{"blog", "shop"}
+	e := model.NewEngine(t0)
+	sim(e, apps, t0, time.Minute, 0, ok)
+	// The box stops answering blog's status, and answers the rest, until
+	// blog's sixth read in a row gets none: its next is then 60 s away.
+	now, last := t0.Add(time.Minute), time.Time{}
+	for last.IsZero() {
+		if now.After(t0.Add(10 * time.Minute)) {
+			t.Fatalf("blog got no answer %d times in a row by +10m, want 6", e.Misses(blog))
+		}
+		e.Touch(now)
+		j, took, wait := e.Take(now)
+		if !took {
+			now = now.Add(min(max(wait, 100*time.Millisecond), time.Second))
+			continue
+		}
+		var err error
+		if j == blog {
+			err = fail(model.FailNoAnswer)
+		}
+		if j.Kind == model.KApps {
+			e.SetApps(apps, now)
+		}
+		e.Done(j, now, err)
+		if j == blog && e.Misses(blog) >= 6 {
+			last = now
+		}
+	}
+	now = last.Add(time.Second)
+	e.Again(now, me)
+	if !takeMe(e, now) {
+		t.Fatal("no whoami taken")
+	}
+	e.Done(me, now, fail(model.FailSignedOut))
+	now = now.Add(5 * time.Second)
+	e.Touch(now)
+	if !e.Retry(now) {
+		t.Fatal("r did not ask")
+	}
+	after := sim(e, apps, now, time.Minute, 0, ok)
+	if len(after) == 0 || after[0].j != me {
+		t.Fatalf("r's first read is not whoami: %v", after)
+	}
+	for _, c := range after {
+		if c.j == blog {
+			if d := c.at.Sub(now); d > 2*time.Second {
+				t.Errorf("blog read %v after r, its backoff from before the stop kept (its last read before was %v before r)", d, now.Sub(last))
+			}
+			return
+		}
+	}
+	t.Error("blog not read within a minute of r")
+}

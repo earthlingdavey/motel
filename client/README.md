@@ -343,7 +343,7 @@ operator, which `P` prints.
   (a read the client fails without sending, such as a record whose
   version the box's filter hid, ends nothing).
   A 401, a token not signed, or a certificate that did not verify stops
-  every read and says why; `r` asks once more, as a new start: no read before it counts as one in a row after it (for the backoff, the read brought forward, or `stale`). A 403 or a 404 stops
+  every read and says why; `r` asks once more, as a new start: no read before it counts as one in a row after it (for the backoff, the read brought forward, or `stale`), and one that failed before it is due at once, after whoami, not at the end of its backoff. A 403 or a 404 stops
   that read alone until `ctrl-r`. A deploy's record is read each time it
   is opened, and by `ctrl-r`, at most once in 5 s once the box has
   answered with it (asked sooner, it is read when the 5 s have passed,

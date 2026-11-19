@@ -444,9 +444,13 @@ func (e *Engine) Retry(now time.Time) bool {
 	e.lastRetry = now
 	e.stopped = Running
 	// A new start: no read before the stop counts toward a run of no
-	// answer after it, nor toward a job's own reads failed in a row.
+	// answer after it, nor toward a job's own reads failed in a row, nor
+	// keeps a job that failed waiting out its backoff: it is due now.
 	e.misses, e.none = 0, nil
 	for _, en := range e.jobs {
+		if en.misses > 0 && en.due.After(now) {
+			en.due = now
+		}
 		en.misses = 0
 	}
 	e.askMe(now)
