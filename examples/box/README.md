@@ -185,9 +185,10 @@ what it runs.
    - If UDP 443 is open
      ([Your first deploy](https://github.com/smallhoursorg/motel/blob/main/docs/first-deploy.md),
      step 1) and the Caddyfile leaves HTTP/3 on (it is on unless a
-     `protocols` line in the `servers` option or in a `bind` leaves out
-     `h3`; the one in `tls` is TLS versions), this, run from outside
-     the box, prints the same status as the first item, over HTTP/3:
+     `protocols` line in the `servers` option, a `bind` or
+     `default_bind` leaves out `h3`; the one in `tls` is TLS versions),
+     this, run from outside the box, prints the same status as the
+     first item, over HTTP/3:
 
      ```sh
      curl --http3-only --max-time 10 -sS -o /dev/null -w '%{http_code}\n' https://example.com/

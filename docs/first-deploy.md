@@ -408,10 +408,10 @@ has how. With nothing deployed yet, a correct box looks like this:
   `curl -i`. That is the webhook working: a deploy carries a token, and
   nothing without one gets further than this.
 - If UDP 443 is open (step 1) and the Caddyfile leaves HTTP/3 on (it
-  is on unless a `protocols` line in the `servers` option or in a
-  `bind` leaves out `h3`; the one in `tls` is TLS versions), this, run
-  from outside the box, prints the same status as the first item, over
-  HTTP/3:
+  is on unless a `protocols` line in the `servers` option, a `bind` or
+  `default_bind` leaves out `h3`; the one in `tls` is TLS versions),
+  this, run from outside the box, prints the same status as the first
+  item, over HTTP/3:
 
   ```sh
   curl --http3-only --max-time 10 -sS -o /dev/null -w '%{http_code}\n' https://example.com/

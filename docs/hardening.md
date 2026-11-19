@@ -53,8 +53,8 @@ reached over a unix socket. UDP 443 may stay shut if you prefer: it
 costs only HTTP/3, and browsers fall back to HTTP/2 or HTTP/1.1 over
 TCP without saying so. The fallback needs the site served over TCP as
 well, as every site is unless a `protocols` line in the `servers`
-option or in a `bind` leaves out both `h1` and `h2`; a site served
-over HTTP/3 alone needs UDP 443 open.
+option, a `bind` or `default_bind` leaves out both `h1` and `h2`; a
+site served over HTTP/3 alone needs UDP 443 open.
 If your address changes, change the rule in the provider's firewall
 settings, which do not need the box.
 
