@@ -1,7 +1,6 @@
 package access_test
 
 import (
-	"encoding/base64"
 	"errors"
 	"net/netip"
 	"testing"
@@ -9,7 +8,6 @@ import (
 
 	"github.com/smallhoursorg/motel/liveswap/access"
 	"github.com/smallhoursorg/motel/liveswap/access/accesstest"
-	"golang.org/x/crypto/ssh"
 )
 
 const box = "deploy.example.test"
@@ -181,17 +179,10 @@ func TestRegistryListsTypes(t *testing.T) {
 }
 
 // TestRegistryListsPersonKeyTypesOnly: a key type is listed only for a
-// key a person may sign with: a box whose only ed25519 key is a signer's
-// of small order lists no ed25519, so no dummy check runs for that type;
-// and a key of a deferred ECDSA type, which no reader takes from a line,
-// lists nothing even when a Key is made of one by hand.
+// key a person may sign with: a key of a deferred ECDSA type, which no
+// reader takes from a line, lists nothing even when a Key is made of
+// one by hand.
 func TestRegistryListsPersonKeyTypesOnly(t *testing.T) {
-	identity := make([]byte, 32)
-	identity[0] = 1
-	wire := ssh.Marshal(struct {
-		Type string
-		Key  []byte
-	}{ssh.KeyAlgoED25519, identity})
 	bob, eve := accesstest.SKEd25519(), accesstest.P521()
 	pk, err := access.ParsePerson([]string{"bob", bob.Type(), bob.B64()})
 	if err != nil {
@@ -201,10 +192,8 @@ func TestRegistryListsPersonKeyTypesOnly(t *testing.T) {
 	if ek.Person() {
 		t.Errorf("a %s key is a person's", eve.Type())
 	}
-	reg := access.NewRegistry(box, access.Lines{Keys: []access.Key{
-		access.SignerKey("mallory", ssh.KeyAlgoED25519, base64.StdEncoding.EncodeToString(wire), wire), pk, ek,
-	}})
-	if reg.ListsType(ssh.KeyAlgoED25519) || !reg.ListsType(bob.Type()) || reg.ListsType(eve.Type()) || reg.Keys() != 1 {
-		t.Errorf("lists ed25519 %v, sk-ed25519 %v, p521 %v, %d keys; want only sk-ed25519", reg.ListsType(ssh.KeyAlgoED25519), reg.ListsType(bob.Type()), reg.ListsType(eve.Type()), reg.Keys())
+	reg := access.NewRegistry(box, access.Lines{Keys: []access.Key{pk, ek}})
+	if !reg.ListsType(bob.Type()) || reg.ListsType(eve.Type()) || reg.Keys() != 1 {
+		t.Errorf("lists sk-ed25519 %v, p521 %v, %d keys; want only sk-ed25519", reg.ListsType(bob.Type()), reg.ListsType(eve.Type()), reg.Keys())
 	}
 }

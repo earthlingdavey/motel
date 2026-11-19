@@ -152,7 +152,11 @@ deploy.example.com {
   alike, so one signed commit would have two ids (step 12). The base64 must
   decode to a key of the declared type and be that key's one canonical
   line (the decoder forgives a newline inside a quoted token; the
-  allowed_signers file would not). The principal is at most 256 bytes.
+  allowed_signers file would not). An Ed25519 key, in either form,
+  whose bytes are no point or whose point has small order is refused
+  with the reason, as a `person` line's is: anyone can make a signature
+  that verifies under it, so the line would list everybody (#536). The
+  principal is at most 256 bytes.
 - `box_webhook` takes no arguments and no matcher: a matcher is an
   argument to Caddy, and `box_webhook /hook` would adapt and leave `/`
   unserved, so the directive's parser and the walk both refuse one by
@@ -219,8 +223,7 @@ box {
   point has small order is refused: anyone can sign for it.
 - A `signer` line also declares its name as a person, and its key as
   one of that person's keys, unless the key is `ssh-rsa`, which keeps
-  signing commits and is no person's key, or an Ed25519 key of small
-  order, which is no person's key either. Signer lines keep their
+  signing commits and is no person's key. Signer lines keep their
   grammar and their meaning for pushes exactly.
 - `grant <name> <role> box [from <prefix>…]` or `grant <name> <role>
   app <app> [from <prefix>…]`: the name first, as on every line about

@@ -282,6 +282,20 @@ Before you upgrade:
   naming it, until root edits the line out of `/etc/motel/Caddyfile`
   at the console and runs `systemctl start moteld` (the next push then
   reports the file as edited out of band and applies over it).
+- **A box with an Ed25519 signer key of small order replaces it
+  first** (upgrading from v0.8.0 or earlier). A `signer` line whose
+  `ssh-ed25519` or `sk-ssh-ed25519@openssh.com` key is no point on the
+  curve or a point of small order is refused from this release on, as
+  a `person` line with one already was, since anyone can make a
+  signature that verifies under such a key; the `validate` above names
+  such a line (`the key is not a usable ed25519 key`). No such key is
+  anyone's own, so whoever the line was meant for makes an ed25519 key
+  (`ssh-keygen -t ed25519`, or `-t ed25519-sk` for a hardware key)
+  while the box still runs the old release, `make signer` adds it, one
+  push applies, and a second push removes the old line. Upgrading
+  first stops the site as for an ECDSA signer above, until root edits
+  the line out of `/etc/motel/Caddyfile` at the console and runs
+  `systemctl start moteld`.
 - **The `.deb` you are upgrading from is still in `/var/local/motel`.**
   `apt install --allow-downgrades ./moteld_<old>_$(dpkg --print-architecture).deb`
   puts it back — the same restart, in reverse, and nothing to download

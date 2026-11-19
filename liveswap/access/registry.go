@@ -38,10 +38,10 @@ type Source interface {
 // NewRegistry is the registry of lines the walk read and CheckLines
 // took, for the box whose identity is identity (its box_webhook host,
 // a lowercase bare hostname). Only the keys a person may sign with are
-// listed (Key.Person): an ssh-rsa signer key, or an Ed25519 key of
-// small order, lists nothing. A grant is kept only for a name with a
-// listed key. Lines without a person or a grant line declare no one
-// (Lines.Declared), so a block of signers alone lists no key.
+// listed (Key.Person): an ssh-rsa signer key lists nothing. A grant
+// is kept only for a name with a listed key. Lines without a person or
+// a grant line declare no one (Lines.Declared), so a block of signers
+// alone lists no key.
 func NewRegistry(identity string, l Lines) *Registry {
 	r := &Registry{identity: identity, keys: map[string]listedKey{}, types: map[string]bool{}, grants: map[string][]Grant{}}
 	if !l.Declared() {

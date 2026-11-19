@@ -96,16 +96,12 @@ type Key struct {
 	// it in: an Ed25519 key is the same key as ssh-ed25519 and as
 	// sk-ssh-ed25519@openssh.com under any application string.
 	material string
-	// smallOrder is an Ed25519 key, in either form, that is no point or
-	// a point of small order (unusableEd25519).
-	smallOrder bool
 }
 
 // Person reports whether a person's token may be signed with the key.
 // Every person line's key may; a signer line's unless it is ssh-rsa,
-// which signs commits only, or an Ed25519 key of small order, which
-// anyone can sign for.
-func (k Key) Person() bool { return personKeyTypes[k.Type] && !k.smallOrder }
+// which signs commits only.
+func (k Key) Person() bool { return personKeyTypes[k.Type] }
 
 // identity is the key the one-key rule compares: its material, or its
 // wire bytes for a Key not made by ParsePerson or SignerKey.
@@ -159,11 +155,13 @@ func keyFingerprint(wire []byte) string {
 // checked by its own parser (box/proof's ParseSigner), which this
 // package cannot import.
 func SignerKey(name, keyType, b64 string, wire []byte) Key {
-	return Key{Name: name, Type: keyType, B64: b64, Wire: wire, Fingerprint: keyFingerprint(wire), Signer: true, material: keyMaterial(wire), smallOrder: unusableEd25519(wire) != ""}
+	return Key{Name: name, Type: keyType, B64: b64, Wire: wire, Fingerprint: keyFingerprint(wire), Signer: true, material: keyMaterial(wire)}
 }
 
-// unusableEd25519 is why wire, an Ed25519 key in either form, can be
-// no person's key, "" when it can (or is not Ed25519): its bytes are no
+// UnusableEd25519 is why wire, an Ed25519 key in either form, can be
+// no one's key, "" when it can (or is not Ed25519); a person line
+// (ParsePerson) and a signer line (box/proof's ParseSigner) refuse it
+// with the reason. Its bytes are no
 // point on the curve, which nothing verifies under, or a point of small
 // order (the identity, and the seven others whose multiple by the
 // cofactor 8 is the identity), in any encoding, canonical or not: the
@@ -172,7 +170,7 @@ func SignerKey(name, keyType, b64 string, wire []byte) Key {
 // anyone can make without a private key (R the base point, S = 1, for
 // the identity) verifies for every message with crypto/ed25519 and with
 // ssh-keygen -Y verify.
-func unusableEd25519(wire []byte) string {
+func UnusableEd25519(wire []byte) string {
 	pub, err := ssh.ParsePublicKey(wire)
 	if err != nil {
 		return ""
@@ -238,7 +236,7 @@ func ParsePerson(args []string) (Key, error) {
 	if string(pub.Marshal()) != string(wire) {
 		return Key{}, fmt.Errorf("person %s: the key is not in its one wire form", name)
 	}
-	if why := unusableEd25519(wire); why != "" {
+	if why := UnusableEd25519(wire); why != "" {
 		return Key{}, fmt.Errorf("person %s: the key is not a usable ed25519 key: %s", name, why)
 	}
 	return Key{Name: name, Type: keyType, B64: b64, Wire: wire, Fingerprint: keyFingerprint(wire), material: keyMaterial(wire)}, nil

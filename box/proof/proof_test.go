@@ -500,6 +500,19 @@ func TestParseSigner(t *testing.T) {
 	if _, err := ParseSigner("bob", ecType, ecB64); err == nil || !strings.Contains(err.Error(), "an ecdsa-sha2-nistp384 key, which the box no longer takes: an ECDSA signature has two forms") || !strings.Contains(err.Error(), "ssh-keygen -t ed25519") {
 		t.Fatalf("an ECDSA signer: %v", err)
 	}
+	// An Ed25519 key of small order is refused by name in either form:
+	// anyone can sign for it (#536). The identity point, encoded as 1
+	// and 31 zero bytes, is one of libsodium's blocklist.
+	identity := "\x01" + strings.Repeat("\x00", 31)
+	for typ, wire := range map[string][]byte{
+		"ssh-ed25519":                ssh.Marshal(struct{ Type, Key string }{"ssh-ed25519", identity}),
+		"sk-ssh-ed25519@openssh.com": ssh.Marshal(struct{ Type, Key, Application string }{"sk-ssh-ed25519@openssh.com", identity, "ssh:"}),
+	} {
+		_, err := ParseSigner("mallory", typ, base64.StdEncoding.EncodeToString(wire))
+		if want := "signer mallory: the key is not a usable ed25519 key: its point has small order, so anyone can sign for it"; err == nil || err.Error() != want {
+			t.Errorf("a signer of small order, %s: got %v, want %q", typ, err, want)
+		}
+	}
 	for _, ok := range [][3]string{
 		{"alice@example.com", edType, edB64},
 		{"bob", rsaType, rsaB64},
