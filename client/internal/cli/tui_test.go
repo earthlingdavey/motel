@@ -425,7 +425,7 @@ func ptyScript(t *testing.T, notHeld string) string {
 }
 
 // TestHangUpWithTheScreenUp: SIGHUP while the screen is up ends motel
-// tui as an interrupt does: exit 130, nothing said. Under a real pty
+// as an interrupt does: exit 130, nothing said. Under a real pty
 // (script(1) makes one), as the screen needs a terminal.
 func TestHangUpWithTheScreenUp(t *testing.T) {
 	script := ptyScript(t, "SIGHUP with the screen up is not held here")
@@ -596,7 +596,7 @@ func TestTUISessionBox(t *testing.T) {
 	} {
 		r := &runner{env: Env{Getenv: func(k string) string { return c.env[k] }, Stderr: &bytes.Buffer{}, Dir: t.TempDir(), Home: home,
 			Now: time.Now, Run: noPrograms{}, Signer: &fixedSigner{}}}
-		cl, err := r.client(context.Background(), &target{box: c.flag}, nil, "", "tui")
+		cl, err := r.client(context.Background(), &target{box: c.flag}, nil, "", "the screen")
 		if err != nil {
 			t.Fatalf("%s: %v", name, err)
 		}
@@ -612,7 +612,7 @@ func TestTUISessionBox(t *testing.T) {
 	}
 }
 
-// TestTUIClockSetBack: the TUI's client and session as tui builds them,
+// TestTUIClockSetBack: the TUI's client and session as the screen builds them,
 // the real PersonToken and its signer, and a box whose clock is right:
 // it takes a token from 60 s before its iat to 60 s after its exp, as
 // liveswap/access does, and sends its Date. This machine's clock is
@@ -665,7 +665,7 @@ func TestTUIClockSetBack(t *testing.T) {
 			r := &runner{env: Env{Getenv: func(k string) string { return env[k] }, Stderr: &bytes.Buffer{}, Dir: t.TempDir(), Home: home,
 				Now: wall, Sleep: func(context.Context, time.Duration) error { return nil },
 				Transport: box.Client().Transport, Run: noPrograms{}, Signer: signs, Version: "test"}}
-			cl, err := r.client(context.Background(), &target{}, nil, "", "tui")
+			cl, err := r.client(context.Background(), &target{}, nil, "", "the screen")
 			if err != nil {
 				t.Fatal(err)
 			}
