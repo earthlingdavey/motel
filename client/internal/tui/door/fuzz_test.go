@@ -112,9 +112,10 @@ func checkInert(t *testing.T, s string) {
 	ref := plainStyles()
 	for _, k := range kinds() {
 		hand := measured[k.name]
-		w := 16 + 10*utf8.RuneCountInString(c) // an escape is at most ten cells
+		w, want := 16+10*utf8.RuneCountInString(c), 0 // an escape is at most ten cells
 		if hand != nil {
-			w = 16 + Width(termtext.From(hand(c)))
+			want = Width(termtext.From(hand(c)))
+			w = 16 + want
 		}
 		scr := k.drawn(c, w)
 		if !k.oneOn(scr, w) {
@@ -144,7 +145,7 @@ func checkInert(t *testing.T, s string) {
 		if hand == nil {
 			continue
 		}
-		if want := Width(termtext.From(hand(c))); !ok || to-from != want {
+		if !ok || to-from != want {
 			t.Errorf("%s: %s (%q) is drawn %d cells wide (from %d), and Width says %d", k.name, runes(s), s, to-from, from, want)
 		}
 	}
