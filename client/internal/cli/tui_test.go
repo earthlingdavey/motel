@@ -390,8 +390,10 @@ func TestSignalBeforeTheScreen(t *testing.T) {
 					Now: time.Now, Sleep: func(context.Context, time.Duration) error { return nil },
 					Run: endAt{name: s.program, end: end, once: &sync.Once{}}, Signer: &fixedSigner{}, Version: "test",
 				})
-				if code != client.ExitInterrupted || errOut.String() != "" {
-					t.Errorf("exit %d, stderr %q; want %d and nothing said", code, errOut.String(), client.ExitInterrupted)
+				// Typed alone, too: not the help a step that found nothing
+				// prints (an interrupted command prints nothing on stdout).
+				if code != client.ExitInterrupted || errOut.String() != "" || out.Len() != 0 {
+					t.Errorf("exit %d, stderr %q, %d bytes on stdout; want %d and nothing said", code, errOut.String(), out.Len(), client.ExitInterrupted)
 				}
 			})
 		}
