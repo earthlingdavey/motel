@@ -247,11 +247,29 @@ func integrationServer(t *testing.T) (string, *caddytest.Tester) {
 // answers. It then waits for the manager to hold no unit of any app
 // under root. The config keeps liveswap itself: a load with no
 // liveswap at all would leave the units running for a later start to
-// reattach (Destruct when no started config holds liveswap).
+// reattach (Destruct when no started config holds liveswap). The idle
+// config's start-time sweep of unknown apps still runs over root in
+// the background after the load; it only reads and removes, which
+// RemoveAll tolerates.
+//
+// Only an app's first deploy or launch makes its dir under root
+// (appDirs.ensure), so a root with none ran nothing: a test that
+// failed or was skipped before it deployed has nothing to end, and
+// Caddy may never have started.
 func endApps(t *testing.T, root string) {
 	t.Helper()
-	if t.Skipped() {
-		return // skipped before or at its first InitServer
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var apps []string
+	for _, e := range entries {
+		if e.IsDir() && appNameRe.MatchString(e.Name()) {
+			apps = append(apps, e.Name())
+		}
+	}
+	if len(apps) == 0 {
+		return
 	}
 	idle := fmt.Sprintf(`{
 	admin localhost:2999
@@ -275,15 +293,7 @@ func endApps(t *testing.T, root string) {
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("loading a config with no app, to end the test's apps: %d %s", resp.StatusCode, body)
 	}
-	entries, err := os.ReadDir(root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, e := range entries {
-		app := e.Name()
-		if !e.IsDir() || !appNameRe.MatchString(app) {
-			continue
-		}
+	for _, app := range apps {
 		pollUntil(t, 10*time.Second, "no unit of "+app+" left", func() bool { return appUnits(t, app) == "" })
 	}
 }
