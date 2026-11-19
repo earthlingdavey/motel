@@ -72,7 +72,9 @@ func apiStatus(t *testing.T) string {
 // window's newest point, whose age beside "now" read as the age of now,
 // the cap and the last 5 m, which are the last pushes' (review of #577).
 func TestMetricsSayOnlyWhatTheClientKnows(t *testing.T) {
-	h := start(t, 60, 16, nil)
+	// 24 rows: at 16, blog's alerts above the metrics push them below
+	// the window (the owed row on details cut to the window).
+	h := start(t, 60, 24, nil)
 	h.open(app("blog"))
 	var got string
 	for _, r := range screenRows(h) {

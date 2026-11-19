@@ -555,6 +555,15 @@ var (
 	// state is printed as a word, with the client's own words after it.
 	watchdogStates = map[string]bool{"disabled": true, "idle": true, "grace": true, "watching": true, "backoff": true, "throttled": true}
 	outcomePhases  = map[string]bool{"downloading": true, "extracting": true, "preparing": true, "starting": true, "soaking": true, "promoting": true, "draining": true, "stopping_old": true}
+	// alertNameRe is an alertname as motel's alerts carry one: its own
+	// events (notify/DESIGN-notify.md, "Events"), an operator's rule
+	// (notify's ruleNameRe), an external producer's (notify/admin.go's
+	// alertRe), and the store's chain events. It is printed as a word.
+	alertNameRe = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_]{0,63}$`)
+	// alertWordRe is the shape of the words an alerts answer says
+	// (monitor, an alert's severity and state): printed as a word, and
+	// one the client does not know is said as such, not refused.
+	alertWordRe = regexp.MustCompile(`^[a-z]{1,16}$`)
 )
 
 // The box's response filter writes a marker where it replaced text
@@ -816,6 +825,22 @@ func hold(v any) string {
 		if !digestRe.MatchString(a.SHA256) {
 			return "its sha256 is not a digest"
 		}
+	case *wire.Alerts:
+		// What the client prints of an app's alerts as a token: the
+		// monitor's word, and each alert's name, severity and state. The
+		// summary is free text, labelled and capped.
+		if !alertWordRe.MatchString(a.Monitor) {
+			return "its monitor is not a word"
+		}
+		for i := range a.Alerts {
+			al := &a.Alerts[i]
+			if !held(&al.Name, alertNameRe.MatchString) {
+				return "an alert's name in it is not one an alert has"
+			}
+			if al.Severity != "" && !held(&al.Severity, alertWordRe.MatchString) || !held(&al.State, alertWordRe.MatchString) {
+				return "an alert's severity or state in it is not a word"
+			}
+		}
 	case *wire.Apps:
 		for _, e := range a.Apps {
 			if !appRe.MatchString(e.Name) {
@@ -1026,6 +1051,8 @@ func identity(v any) shape {
 		return shape{strs: []string{"name", "key", "box"}, lists: []string{"roles"}, counts: []string{"protocol"}, times: []string{"token_expires_at"}}
 	case *wire.Apps:
 		return shape{lists: []string{"apps"}}
+	case *wire.Alerts:
+		return shape{strs: []string{"monitor"}, lists: []string{"alerts"}}
 	}
 	return shape{}
 }

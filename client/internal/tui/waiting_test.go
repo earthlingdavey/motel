@@ -26,6 +26,8 @@ func fakeKey(j model.Job) string {
 		return "box"
 	case model.KDeploy:
 		return j.App + "@" + j.Version
+	case model.KAlerts:
+		return "alerts:" + j.App
 	}
 	return j.App
 }
@@ -159,7 +161,9 @@ func TestWaitingHostGone(t *testing.T) {
 			t.Errorf("+%d s: %q, want waiting", s, at(s).title)
 		}
 	}
-	if !strings.HasPrefix(at(7).title, "waiting 5s for an answer · 10s ago") || !strings.HasPrefix(at(40).title, "waiting 38s for an answer · 43s ago") {
+	// The last answer before the outage is the open app's alerts', a
+	// second after its status.
+	if !strings.HasPrefix(at(7).title, "waiting 5s for an answer · 9s ago") || !strings.HasPrefix(at(40).title, "waiting 38s for an answer · 42s ago") {
 		t.Errorf("waiting says %q at +7 s, %q at +40 s", at(7).title, at(40).title)
 	}
 	if w := at(62).word(); w != "slow" {
@@ -232,11 +236,13 @@ func TestWaitingAt60(t *testing.T) {
 	h.slowly(70*time.Second, func(model.Job, time.Time) (time.Duration, error) {
 		return 30 * time.Second, timedOut()
 	}, func(sec int, scr string) {
-		if sec == 61 {
+		// At 45 s: the app's status and its alerts both wait out the
+		// client's 30 s, so the run begins (slow) at a minute.
+		if sec == 45 {
 			title, _, _ = strings.Cut(scr, "\n")
 		}
 	})
-	if want := "… waiting 56s for an answer · 1m ago"; !strings.HasSuffix(title, want) || len([]rune(title)) != 60 {
+	if want := "… waiting 44s for an answer · 45s ago"; !strings.HasSuffix(title, want) || len([]rune(title)) != 60 {
 		t.Errorf("at 60 columns the title bar is %q, want it to end with %q at the edge", title, want)
 	}
 }

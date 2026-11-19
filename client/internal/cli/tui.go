@@ -377,6 +377,15 @@ func (l live) BoxStatus(ctx context.Context) (model.Got[wire.BoxStatus], error) 
 	return got(v, ans, err)
 }
 
+func (l live) Alerts(ctx context.Context, app string) (model.Got[wire.Alerts], error) {
+	a, err := client.ParseApp(app)
+	if err != nil {
+		return model.Got[wire.Alerts]{}, argument(err)
+	}
+	v, ans, err := l.c.Alerts(ctx, a)
+	return got(v, ans, err)
+}
+
 func got[T any](v T, ans *client.Answer, err error) (model.Got[T], error) {
 	if err != nil {
 		return model.Got[T]{}, failure(err)

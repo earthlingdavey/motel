@@ -25,6 +25,7 @@ var Actions = []Action{
 	{KStatus, "status <app>", "an app's row and screen", readStatus},
 	{KDeploy, "deploys <app> <version>", "a deploy's record", readDeploy},
 	{KBox, "box status", "the box screen", readBox},
+	{KAlerts, "monitor alerts --app <app>", "the alerts on an app's screen", readAlerts},
 }
 
 // ActionFor is the action that reads k.
@@ -112,6 +113,24 @@ func readDeploy(ctx context.Context, _ *Session, c Client, j Job) (func(*Session
 		}
 		g.At = at
 		r.d, r.err = &g, nil
+	}, err
+}
+
+func readAlerts(ctx context.Context, _ *Session, c Client, j Job) (func(*Session, time.Time), error) {
+	g, err := c.Alerts(ctx, j.App)
+	return func(s *Session, at time.Time) {
+		a := s.app(j.App)
+		if err != nil {
+			a.alertsErr = err
+			if Forbidden(err) || NotFound(err) {
+				// Dropped, as a status's is (readStatus): a box older than
+				// the read answers 404.
+				a.alerts = nil
+			}
+			return
+		}
+		g.At = at
+		a.alerts, a.alertsErr = &g, nil
 	}, err
 }
 

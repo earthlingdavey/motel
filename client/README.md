@@ -35,10 +35,11 @@ motel deploys <app>                 its deploys, newest first
 motel deploys <app> <version>       one deploy's whole record
 motel box status                    the commit the box runs, its Caddyfile's digest, its key for secrets,
                                     and whether that Caddyfile is the one that commit installed
+motel monitor alerts --app <app>    an app's alerts, as the box's Alertmanager holds them
 motel                               on a terminal, screens over the same reads (below)
 ```
 
-Each command takes `--json`; `motel` alone, the screens, does not. `whoami` and `apps` are asked with your own key
+Each command takes `--json`; `motel` alone, the screens, does not. `whoami`, `apps` and `monitor alerts` are asked with your own key
 only: with `MOTEL_TOKEN` set, name the key with `--key` (else exit 2,
 nothing sent). `<app>` is a name, or the app's URL
 (`https://deploy.example.com/blog`, as `MOTEL_URL` holds it), which names
@@ -51,6 +52,24 @@ its phase once it has one, when the deploy started and by whom
 (`deploying    4c2d9e7b1a05 soaking, started 2026-11-19 14:12 UTC  by …`);
 its versions line marks the first version with that state when it is
 the one serving (`7c1e55d0a913 (running)`).
+
+`monitor alerts --app <app>` reads `GET /_motel/apps/<app>/alerts`, for
+a viewer of the app or of the box: the alerts the box's Alertmanager
+holds about the app, newest first, each on an `alert` line (its name,
+severity, when it began, its state, and when the last silence that holds
+it ends or that a deploy of the app holds it) with its summary, the
+box's free text, on a `summary` line under it. Not the box's own alerts,
+and not the silences. The box asks Alertmanager at most every 5 s, so
+an answer can be that old. It exits 0 when it read them, alerts or none,
+and when the box has no monitor (nothing is raised there); 3 when the
+box could not ask its Alertmanager (`"monitor":"unanswered"`) or names
+its monitor in a word the client does not know: `--json` then prints
+the client's own sentence. Without `--app` it is refused, exit 2: the
+box-wide list is not read yet. It is asked with your own key only, as
+`whoami` is. An alert's name is held to `^[A-Za-z][A-Za-z0-9_]{0,63}$`
+and its severity, its state and the monitor to a lowercase word; a
+severity or a state the client does not know is shown as the box's
+word, not refused.
 
 **Which box:** an app URL as `<app>`, else `--box`, `MOTEL_BOX`, the host
 of `MOTEL_URL`, or the box repository the shell is in (inside
@@ -343,7 +362,11 @@ cut in its middle, in the table and the strip, its start and its end
 kept; two names that would be cut alike are shown longer, alike, until
 they differ, as far as the screen leaves room for STATE beside them;
 the whole name is what is opened, searched and printed. An app's
-screen shows its state and deploys; while a deploy is in flight its
+screen shows its state and deploys, and under its state its alerts,
+read while the screen is open (the first three listed, each with what
+holds it, when it began and its summary, and the rest counted; the
+box's word when it has no monitor, could not ask its Alertmanager, or
+is older than the read and answers 404); while a deploy is in flight its
 state names the version that serves as running, and a `deploying` line
 under it the version in flight, its phase, when the deploy started and
 by whom (`4c2d9e7b1a05 soaking · started 25s ago (14:12 UTC) by …`;
@@ -425,9 +448,13 @@ SIGINT, SIGTERM or SIGHUP sent to the process, or the terminal closed under the 
 
 - **The rate.** A box allows a person 2 requests a second with a burst
   of 60. The TUI keeps to 1.5 a second and 30 at once. The open app is
-  read every 5 s; every other app takes its turn in the rest of the
+  read every 5 s, and its alerts every 15 s while its screen is open
+  (`AlertsEvery`, after the box's own 5 s of Alertmanager's answer);
+  every other app takes its turn in the rest of the
   budget, every 30 s, or longer with more apps than that covers (about
-  55 s for 60 apps, 3 minutes for 200), each at its own place in the
+  55 s for 60 apps, 3 minutes for 200; 57 s and a little over 3
+  minutes while an app's screen is open, its alerts read too), each at
+  its own place in the
   cycle. A 429 is waited out for every read, by its `Retry-After`, or
   30 s with none (the time the box's whole burst takes to refill), and
   slows the rest of the session; no answer backs off from 2 s to 60 s:

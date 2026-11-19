@@ -75,6 +75,10 @@ type appData struct {
 	st    *Got[wire.Status]
 	err   error
 	errAt time.Time
+	// alerts is the app's alerts, read while its screen is open, and
+	// alertsErr their newest read's failure.
+	alerts    *Got[wire.Alerts]
+	alertsErr error
 }
 
 type recData struct {
@@ -152,6 +156,9 @@ func (s *Session) seen(now time.Time) {
 		for _, a := range s.apps {
 			if a.st != nil {
 				move(&a.st.At)
+			}
+			if a.alerts != nil {
+				move(&a.alerts.At)
 			}
 			move(&a.errAt)
 		}

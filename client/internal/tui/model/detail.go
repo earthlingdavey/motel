@@ -115,12 +115,14 @@ func (s *Session) Overview(app string, now time.Time) OverviewView {
 	if st.CurrentVersion == "" {
 		if _, ok := inFlight(st); ok {
 			v.Note = append([]Line{{own(app + " has no version yet: a deploy of it is in flight.")}, deploying(st, now)}, lastDeploy(st.LastDeploy, now)...)
+			v.Note = append(v.Note, s.alertLines(app, now)...)
 			return v
 		}
 		v.Note = []Line{{own(app + " has no version yet. Its first deploy comes from CI. Nothing to show until then.")}}
 		if len(v.Deploys) > 0 || st.LastDeploy != nil {
 			v.Note = append([]Line{{own(app + " has no version yet: no deploy of it serves.")}}, lastDeploy(st.LastDeploy, now)...)
 		}
+		v.Note = append(v.Note, s.alertLines(app, now)...)
 		return v
 	}
 	row := s.row(app, now)
@@ -144,6 +146,7 @@ func (s *Session) Overview(app string, now time.Time) OverviewView {
 	if st.Deploying != nil || moving {
 		v.Fields = append(v.Fields, deploying(st, now))
 	}
+	v.Fields = append(v.Fields, s.alertLines(app, now)...)
 	if wd := st.Watchdog; wd != nil {
 		// The client's check lets through the states it knows and its
 		// own words for one the box's filter hid; anything else would

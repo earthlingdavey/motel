@@ -80,6 +80,7 @@ type fakeBox struct {
 	deploy wire.DeployResult
 	whoami wire.WhoAmI
 	apps   wire.Apps
+	alerts wire.Alerts
 	auth   []string
 	bodies map[string][]byte // what each target was answered
 }
@@ -105,6 +106,8 @@ func newFakeBox(t *testing.T) *fakeBox {
 			body = encode(fb.whoami)
 		case r.URL.Path == "/_motel/apps":
 			body = encode(fb.apps)
+		case r.URL.Path == "/_motel/apps/blog/alerts":
+			body = encode(fb.alerts)
 		case r.URL.Path == "/":
 			body = encode(wire.BoxStatus{Commit: "3f9c2a1e" + strings.Repeat("0", 32), BoxWebhook: "127.0.0.1", SHA256: strings.Repeat("9b", 32), Recipient: "age1" + hostile[0]})
 		case r.URL.Path != "/blog":
