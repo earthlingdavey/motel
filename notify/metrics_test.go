@@ -746,16 +746,18 @@ func TestReleaseRetiresTheRulesOnAReloadAlone(t *testing.T) {
 }
 
 // fakeRange is query_range and the instant queries, scripted per
-// query: instant answers the memory peak (max_over_time), memNow and
-// capNow the memory's and the cap's last push (last_over_time), cpuNow
-// the CPU of the last five minutes (the range's CPU query, instant),
-// requests the four request queries.
+// query: ans answers the window's range queries, and recent the last
+// five minutes' (ans when nil); instant the memory peak
+// (max_over_time), memNow and capNow the memory's and the cap's last
+// push (last_over_time), cpuNow the newest unit's CPU (the range's CPU
+// query, instant), requests the four request queries.
 type fakeRange struct {
 	mu       sync.Mutex
 	calls    int
 	err      error
 	block    chan struct{}
 	ans      func(q string) []series
+	recent   func(q string) []series
 	instant  func(q string) []series
 	memNow   func(q string) []series
 	capNow   func(q string) []series
@@ -784,7 +786,7 @@ func (f *fakeRange) query(ctx context.Context, q string) ([]series, error) {
 	return script(q), nil
 }
 
-func (f *fakeRange) queryRange(ctx context.Context, q string, _, _ time.Time, _ time.Duration) ([]series, error) {
+func (f *fakeRange) queryRange(ctx context.Context, q string, start, end time.Time, _ time.Duration) ([]series, error) {
 	f.mu.Lock()
 	f.calls++
 	block := f.block
@@ -801,6 +803,9 @@ func (f *fakeRange) queryRange(ctx context.Context, q string, _, _ time.Time, _ 
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.recent != nil && end.Sub(start) == viewRecent {
+		return f.recent(q), nil
+	}
 	return f.ans(q), nil
 }
 
@@ -840,8 +845,8 @@ func TestMetricsViewSummary(t *testing.T) {
 	if string(got) != want {
 		t.Fatalf("metrics:\n got %s\nwant %s", got, want)
 	}
-	if len(asked) != 6 {
-		t.Errorf("%d memory and CPU queries, want 6: %v", len(asked), asked)
+	if len(asked) != 7 {
+		t.Errorf("%d memory and CPU queries, want 7: %v", len(asked), asked)
 	}
 	for _, q := range asked {
 		if !strings.Contains(q, `app="blog"`) {
@@ -850,13 +855,13 @@ func TestMetricsViewSummary(t *testing.T) {
 	}
 	// Cached: the second ask within 30 s queries nothing.
 	v.AppMetrics(context.Background(), "blog", "1h")
-	if f.calls != 2 {
+	if f.calls != 3 {
 		t.Fatalf("%d queries for two asks inside the cache", f.calls)
 	}
 	v.now = func() time.Time { return end.Add(viewCache) }
 	v.AppMetrics(context.Background(), "blog", "1h")
-	if f.calls != 4 {
-		t.Fatalf("%d queries after the cache expired, want 4", f.calls)
+	if f.calls != 6 {
+		t.Fatalf("%d queries after the cache expired, want 6", f.calls)
 	}
 }
 
@@ -913,6 +918,9 @@ func TestMetricsViewDayFreshness(t *testing.T) {
 				f.memNow = func(string) []series { return []series{{points: []point{{t: end, v: 30}}}} }
 				f.cpuNow = func(string) []series { return []series{{points: []point{{t: end, v: 0.5}}}} }
 				f.capNow = func(string) []series { return []series{{points: []point{{t: end, v: 100}}}} }
+				f.recent = func(string) []series {
+					return []series{{points: []point{{t: end.Add(-time.Minute), v: 0.5}, {t: end, v: 0.5}}}}
+				}
 			}
 			v := newMetricsView(f, zap.NewNop())
 			v.now = func() time.Time { return end }
@@ -1035,24 +1043,25 @@ func TestMetricsViewCapIsTheLastPush(t *testing.T) {
 	}
 }
 
-// avg_5m is the running unit's rate over the five minutes up to now,
-// the range's own CPU query asked as an instant, whatever the window:
-// the day's newest point is a 5 m rate up to 5 m old, and read as the
-// last five minutes it was 0.25 cores where they were 0.5. An app with
-// no push in 75 s has none (unitCPU), though its range still carries a
-// point the three steps call fresh.
-func TestMetricsViewAvg5mIsTheLastFiveMinutes(t *testing.T) {
+// avg_5m is the mean of the hour's own CPU points (the running unit's
+// 2 m rate, a 60 s step) over the five minutes up to now, whatever the
+// window: each point is the unit that ran at its step, so it spans a
+// cutover as the hour's did. Read as one instant rate of the newest
+// unit, it covered that unit's life alone: 60 s after a deploy, the
+// boot's 0.9 cores where the five minutes averaged 0.34 (review of
+// #577). It is said only while the instant has a unit pushed within
+// 75 s: an app that stopped has none, though its points stand.
+func TestMetricsViewAvg5mSpansACutover(t *testing.T) {
 	end := time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC)
 	for _, c := range []struct {
 		name, window string
-		newest       time.Duration // the range's newest point, before end
 		pushed       bool
 		want         string
 	}{
-		{"running hour", "1h", 0, true, `{"window":"1h","at":"2026-11-10T12:00:00Z","cpu_cores":{"avg_5m":0.5,"avg":0.25}}`},
-		{"running day", "24h", 4 * time.Minute, true, `{"window":"24h","at":"2026-11-10T11:56:00Z","cpu_cores":{"avg_5m":0.5,"avg":0.25}}`},
-		{"stopped hour", "1h", 2 * time.Minute, false, `{"window":"1h","at":"2026-11-10T11:58:00Z","cpu_cores":{"avg":0.25}}`},
-		{"stopped day", "24h", 4 * time.Minute, false, `{"window":"24h","at":"2026-11-10T11:56:00Z","cpu_cores":{"avg":0.25}}`},
+		{"running hour", "1h", true, `{"window":"1h","at":"2026-11-10T12:00:00Z","cpu_cores":{"avg_5m":0.34,"avg":0.25}}`},
+		{"running day", "24h", true, `{"window":"24h","at":"2026-11-10T12:00:00Z","cpu_cores":{"avg_5m":0.34,"avg":0.25}}`},
+		{"stopped hour", "1h", false, `{"window":"1h","at":"2026-11-10T12:00:00Z","cpu_cores":{"avg":0.25}}`},
+		{"stopped day", "24h", false, `{"window":"24h","at":"2026-11-10T12:00:00Z","cpu_cores":{"avg":0.25}}`},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			f := &fakeRange{
@@ -1060,17 +1069,29 @@ func TestMetricsViewAvg5mIsTheLastFiveMinutes(t *testing.T) {
 					if !strings.HasPrefix(q, "sum(rate(") {
 						return nil
 					}
-					at := end.Add(-c.newest)
-					return []series{{points: []point{{t: at.Add(-viewWindows[c.window].step), v: 0.25}, {t: at, v: 0.25}}}}
+					return []series{{points: []point{{t: end.Add(-viewWindows[c.window].step), v: 0.25}, {t: end, v: 0.25}}}}
+				},
+				// The old unit at 0.5 to its cutover two minutes ago, the
+				// new one at 0.1 since; the point at the start is the
+				// sixth minute's, outside the five.
+				recent: func(q string) []series {
+					if want := cpuQuery(`app="blog"`, "2m"); q != want {
+						t.Errorf("the five minutes asked as %s, want %s", q, want)
+					}
+					pts := []point{{t: end.Add(-5 * time.Minute), v: 9}}
+					for i, v := range []float64{0.5, 0.5, 0.5, 0.1, 0.1} {
+						pts = append(pts, point{t: end.Add(time.Duration(i-4) * time.Minute), v: v})
+					}
+					return []series{{points: pts}}
 				},
 				cpuNow: func(q string) []series {
 					if want := cpuQuery(`app="blog"`, "5m"); q != want {
-						t.Errorf("avg_5m asked as %s, want %s", q, want)
+						t.Errorf("the running unit asked as %s, want %s", q, want)
 					}
 					if !c.pushed {
 						return nil
 					}
-					return []series{{points: []point{{t: end, v: 0.5}}}}
+					return []series{{points: []point{{t: end, v: 0.9}}}}
 				},
 			}
 			v := newMetricsView(f, zap.NewNop())
@@ -1243,9 +1264,9 @@ func TestMetricsViewBudgetAndOneQueryInFlight(t *testing.T) {
 			t.Fatalf("answers = %+v", answers)
 		}
 	}
-	// One ask in flight for the three: its two range queries, at once.
-	if f.calls != 2 {
-		t.Fatalf("%d range queries for three concurrent asks, want 2", f.calls)
+	// One ask in flight for the three: its three range queries, at once.
+	if f.calls != 3 {
+		t.Fatalf("%d range queries for three concurrent asks, want 3", f.calls)
 	}
 	// A request that gives up before the store answers gets the error at
 	// once.
@@ -1418,13 +1439,13 @@ func TestMetricsViewRequests(t *testing.T) {
 		t.Fatalf("a run the response filter's entropy layer would read: %s", got)
 	}
 	// The windows are cached apart.
-	if f.calls != 2 {
+	if f.calls != 3 {
 		t.Fatalf("%d range queries", f.calls)
 	}
 	asked = nil
 	v.AppMetrics(context.Background(), "blog", "1h")
-	if f.calls != 4 {
-		t.Fatalf("%d range queries after asking the hour too, want 4", f.calls)
+	if f.calls != 6 {
+		t.Fatalf("%d range queries after asking the hour too, want 6", f.calls)
 	}
 	// The hour's, whole.
 	hour := `((increase_pure(%[1]s{app="blog"}[1h]) unless%[3]s (present_over_time(%[2]s{app="blog"}[1d] offset 1h)` +
