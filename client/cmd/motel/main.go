@@ -61,6 +61,7 @@ func env() cli.Env {
 		},
 		Run:     local.Exec{},
 		Version: v,
+		Draw:    cli.CanDraw,
 	}
 }
 

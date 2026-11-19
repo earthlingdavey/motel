@@ -19,6 +19,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/gdamore/tcell/v2"
 	"github.com/spf13/cobra"
 
 	"github.com/smallhoursorg/motel/client/internal/client"
@@ -64,6 +65,14 @@ func (r *runner) tui() *cobra.Command {
 					err = errInterrupted
 				}
 			}()
+			// A start with no terminal to draw on (a CI job, cron, ssh
+			// without -t) or a TERM the screen cannot draw with ends
+			// here, with nothing signed or sent, as exit 2 says.
+			if r.env.Draw != nil {
+				if err := r.env.Draw(); err != nil {
+					return screenFailure(err)
+				}
+			}
 			o := tui.Options{Clock: tui.RealClock{}, Colour: r.env.Color, Tick: time.Second}
 			// Wall-clock time: a monotonic reading stops while a laptop
 			// sleeps, and ages and due times would leave the sleep out.
@@ -182,7 +191,26 @@ func runFailure(err error) error {
 		// functions it went through, innermost first, at most eight.
 		return &client.Failure{Exit: client.ExitUnknown, Message: "the TUI failed: " + termtext.Quote(panicText(p.Value)).String() + " in " + shortStack(p.Stack)}
 	}
+	return screenFailure(err)
+}
+
+func screenFailure(err error) error {
 	return &client.Failure{Exit: client.ExitUsage, Message: "the screen could not start: " + termtext.From(err.Error()).String()}
+}
+
+// CanDraw is Env.Draw on a real terminal. The screen draws on /dev/tty,
+// whatever stdin and stdout are, with the terminfo entry TERM names:
+// either missing fails here, before the first reads, and not once they
+// have been made.
+func CanDraw() error {
+	if _, err := tcell.NewScreen(); err != nil {
+		return err
+	}
+	tty, err := tcell.NewDevTty()
+	if err != nil {
+		return err
+	}
+	return tty.Close()
 }
 
 func panicText(v any) string {

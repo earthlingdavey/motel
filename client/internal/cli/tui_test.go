@@ -738,3 +738,45 @@ func TestTUIClockSetBack(t *testing.T) {
 		})
 	}
 }
+
+// TestNoScreenNothingSent: where the screen cannot be drawn (no
+// terminal, a TERM it cannot draw with), the TUI ends before anything
+// is signed or sent, exit 2, saying why; the --demo screen too.
+func TestNoScreenNothingSent(t *testing.T) {
+	fb := newFakeBox(t)
+	home := t.TempDir()
+	if err := os.WriteFile(filepath.Join(home, "me.pub"), []byte(meLine+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	env := map[string]string{"MOTEL_KEY": "~/me.pub", "MOTEL_URL": fb.srv.URL + "/blog"}
+	for _, args := range [][]string{{"tui"}, {"tui", "--demo"}} {
+		sent := 0
+		rt := roundTripFunc(func(r *http.Request) (*http.Response, error) {
+			sent++
+			return fb.srv.Client().Transport.RoundTrip(r)
+		})
+		s := &fixedSigner{}
+		var out, errOut bytes.Buffer
+		code := Main(context.Background(), args, Env{
+			Getenv: func(k string) string { return env[k] }, Stdout: &out, Stderr: &errOut, Dir: t.TempDir(), Home: home,
+			Now: time.Now, Sleep: func(context.Context, time.Duration) error { return nil },
+			Transport: rt, Run: noPrograms{}, Signer: s, Version: "test",
+			Draw: func() error { return errors.New("open /dev/tty: no such device or address") },
+		})
+		want := "motel: the screen could not start: open /dev/tty: no such device or address\n"
+		if code != client.ExitUsage || errOut.String() != want || out.Len() != 0 || sent != 0 || s.calls != 0 {
+			t.Errorf("%v: exit %d, stderr %q, stdout %q, %d sent, %d signed; want 2, %q, nothing sent or signed", args, code, errOut.String(), out.String(), sent, s.calls, want)
+		}
+	}
+}
+
+// TestCanDraw: the check finds the TERM the screen could not draw
+// with, whether or not this process has a terminal.
+func TestCanDraw(t *testing.T) {
+	for term, want := range map[string]string{"dumb": "not cursor addressable", "": "term not set"} {
+		t.Setenv("TERM", term)
+		if err := CanDraw(); err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("TERM=%q: %v, want %q", term, err, want)
+		}
+	}
+}

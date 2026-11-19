@@ -275,7 +275,7 @@ package of the TUI reaches the client, a transport or a program
 each entry naming the command whose read it makes
 (`TestActionsAreCommands`). It only reads. The apps screen is sorted by
 what needs a look, with a strip that says why; a person with one app
-opens on it, with the list under it. Its first reads, whoami and the list, are made before the screen opens: once they have waited 3 s for the box (a signature, a hardware key's touch among them, and the client's own pause before it asks again after a 401 not counted), one line on stderr says what is asked and that the screen opens when the box answers, or within a minute; an ordinary start, about four round trips of the box, says nothing.
+opens on it, with the list under it. Its first reads, whoami and the list, are made before the screen opens: once they have waited 3 s for the box (a signature, a hardware key's touch among them, and the client's own pause before it asks again after a 401 not counted), one line on stderr says what is asked and that the screen opens when the box answers, or within a minute; an ordinary start, about four round trips of the box, says nothing. Where no screen can be drawn (no terminal, as in a CI job, or a `TERM` with no entry or none that moves the cursor, such as `dumb`) it stops before anything is signed or sent, exit 2.
 While a deploy is in flight an
 app's row (one not stopped, throttled or in backoff, which it says
 instead) is marked `⟳`, whatever its newest record says (a failed one

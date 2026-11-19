@@ -41,6 +41,10 @@ type Env struct {
 	Signer sshkey.Signer
 	// Version is the client's own release.
 	Version string
+	// Draw says why the screen could not be drawn here (CanDraw), and
+	// is asked before anything is signed or sent; nil asks nothing, as
+	// for a test's own screen.
+	Draw func() error
 }
 
 const experimental = "Every command is experimental: its flags, output and exit codes can change\n" +
