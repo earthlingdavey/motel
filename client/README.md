@@ -307,6 +307,8 @@ made by hand. Accepted:
 | `motel help tui`, as `motel help` with any word that is no command, says ``Unknown help topic [`tui`]`` and prints the usage, exit 0, where `motel tui` is refused, exit 2: cobra's own answer, and older than `motel` alone as the screen | 2 | 5 | 1 | 10 | 2 | accepted |
 | `motel` alone, where no box or key is found, interrupted (ctrl-c, the terminal closed) in the moment its help is being written: the help is on stdout, the line under it is not said, and the exit is 130, where an interrupted command prints nothing on stdout. The interrupt is looked for before the help is written (`TestSignalBeforeTheScreen`), not during: about 3.5 kB to a terminal, a few milliseconds unless the terminal is held (ctrl-s) | 2 | 2 | 3 | 12 | 2 (the help built whole, then written only if not interrupted) | accepted |
 | A client with #577's change reading a box on v0.8.0 or earlier: that box's `memory_bytes.now` is the range's newest point, kept while it is at most three steps old, so under `--range 24h` up to 15 minutes old (three 5-minute steps; 3 minutes at the hour), and its `avg_5m` and `memory_max_bytes` alike. The app's screen shows it as `now` beside `metrics     over 24h` with no age, where the client before this change said `newest point 14:00:10 UTC (12m ago)` under it | 2 | 5 | 3 | 30 | 2 | accepted over the bar, pending the owner (the skill's rule 4): it ends when the box takes this release, and telling the two kinds of box apart needs the client to judge the box's release |
+| A row stopped, throttled or in backoff with a deploy in flight can have the state's word cut from its strip at 80 columns, the deploy before it taking the room: when the row is stale (`1m old, stale: ` before it), its name is near 20 characters, or its phase is a long one (`stopping_old`). Its mark and STATE still say it, on the row below the strip | 2 | 5 | 1 | 10 | 2 | accepted |
+| Such a row's VERSION says only the version in flight (`stopped  → 9a1b2c3d4e5f`), so the table does not name the version that is stopped, throttled or in backoff, and the row can be read as the new version being the stopped one; the `→` marks it as on its way ("The TUI", below), and the strip and the app's screen name the stopped one | 2 | 4 | 3 | 24 | 1 (keep the running version in VERSION on these rows) | accepted over the bar, pending the owner (the skill's rule 4): VERSION said as a row in flight says it was the owner's chosen fix for #584's item 4 |
 
 Owed, from the reviews of the TUI's first part (#558; scored there), of
 their fixes, and of its second part; the others are fixed:
@@ -316,7 +318,6 @@ their fixes, and of its second part; the others are fixed:
 | Two names over 20 characters that differ only in their middle are shown longer until they differ, which can take the room of VERSION and LAST DEPLOY on every row. Where the width cannot hold both whole beside the widest STATE (with `running · 12s`, from 44 characters at 60 columns, none at 80; with `not deployed · stale`, from 37 at 60, 57 at 80) they are shown alike, and enter on one may open the other (at 80 columns its crumb then names it; at 60 the crumb is cut before the place they differ) | 2 | 5 | 3 | 30 | 3 | the owner's call: over the bar, and no cut within the width tells every such pair apart |
 | The title bar's name, roles and release are whoami's last answer, shown beside the freshness of the newest answer to any read: while whoami answers (every 5 minutes) they can be up to 5 minutes older than that word says, unmarked. While its newest read has failed, the title bar says so and the answer's age before it (below) | 2 | 5 | 3 | 30 | 2 | the owner's call: over the bar; whoami's schedule is the owner's, and who am I shows the answer under its own age |
 | Between reads nothing is waited for, so after a box stops answering the title bar says `live`, its age growing, until 5 s into the first read made after it (from the end of its signature, when it signs a token; then `waiting`, as "The rate" under "## The TUI" below says): for the time to the next read due and 5 s more, as long as between two reads of a box that answers and 5 s. Measured on the fake clock: 7 s on an app's screen (its read every 5 s: at most 10 s), 14 s on the apps screen with one app and refusals that come 10 s late (its app read every 30 s: at most 35 s), at most 65 s on an apps screen with no app (the list every 60 s); with more apps their reads are spread over the cycle and it is shorter | 2 | 4 | 3 | 24 | 3 (a read made only to see that the box answers, when nothing else is due: a new schedule, and requests against the rate) | the owner's call: over the bar, and closing it costs requests, which this change was held not to add; the age beside the word is never more than 5 s past what the same screen shows of a box that answers |
-| A deploy in flight to an app that is stopped, throttled or in backoff is not said on the apps screen: the row's state and mark are chosen in that order (`throttled`, `stopped`, `backoff`, then a deploy in flight), so its row and the strip go on saying `stopped` while the deploy that may mend it runs; the app's own screen has the `deploying` line | 2 | 4 | 3 | 24 | 2 | owed: older than the trial's fixes; with the deploy watch, which reworks what a row says during a deploy |
 
 ## The TUI
 
@@ -330,21 +331,30 @@ each entry naming the command whose read it makes
 what needs a look, with a strip that says why; a person with one app
 opens on it, with the list under it. Its first reads, whoami and the list, are made before the screen opens: once they have waited 3 s for the box (a signature, a hardware key's touch among them, and the client's own pause before it asks again after a 401 not counted), one line on stderr says what is asked and that the screen opens when the box answers, or within a minute; an ordinary start, about four round trips of the box, says nothing. Where no screen can be drawn (no terminal, as in a CI job, a `TERM` with no entry or none that moves the cursor, such as `dumb`, or a locale that names a character set other than UTF-8 or ASCII, as `LANG=en_US.ISO-8859-1` does; one that names none, `LANG=en_US`, is taken for UTF-8, which is tcell's rule) it stops before anything is signed or sent, exit 2.
 While a deploy is in flight an
-app's row (one not stopped, throttled or in backoff, which it says
-instead) is marked `⟳`, whatever its newest record says (a failed one
+app's row (one not stopped, throttled or in backoff) is marked `⟳`,
+whatever its newest record says (a failed one
 stays in LAST DEPLOY, `d` still opens it, and the row still counts as
 needing a look), STATE says the deploy's phase (`deploying` while its
 upload is received), VERSION the version in flight, as on its way
 (`→ 4c2d9e7b1a05`), and the strip `deploying 4c2d9e7b1a05: soaking`; a
 box that names no version in flight (one older than `deploying`) has
 VERSION keep the running one and the strip say `deploying: soaking`.
+A row stopped, throttled or in backoff keeps that state and its mark
+(`✖`, `✖`, `▲`), and sorts by it, while a deploy that may mend it is
+in flight; VERSION says the version in flight as above, and the strip
+says the deploy before the row's reason (`deploying 4c2d9e7b1a05:
+soaking; stopped: 3b8812aa0c4f is not running`): the strip is cut at
+the screen's width, and a reason after which it came would leave it
+out at 80 columns. Its app's screen says the same
+state, with the `deploying` line under it.
 A name longer than 20 characters is
 cut in its middle, in the table and the strip, its start and its end
 kept; two names that would be cut alike are shown longer, alike, until
 they differ, as far as the screen leaves room for STATE beside them;
 the whole name is what is opened, searched and printed. An app's
 screen shows its state and deploys; while a deploy is in flight its
-state names the version that serves as running, and a `deploying` line
+state names the current version as running (one stopped, throttled or
+in backoff by its row's word), and a `deploying` line
 under it the version in flight, its phase, when the deploy started and
 by whom (`4c2d9e7b1a05 soaking · started 25s ago (14:12 UTC) by …`;
 under "has no version yet: a deploy of it is in flight." before a first
