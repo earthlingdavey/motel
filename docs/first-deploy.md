@@ -60,9 +60,22 @@ minute. At the provider:
 1. Create a server with **Debian 13** as the image and your SSH public
    key. Architecture is your choice; note it, since the release `.deb`
    and the Node example's executable are per-architecture.
-2. Ports **80 and 443** must be reachable from the internet. If the
-   provider has a firewall, allow both from anywhere. If it has none,
-   there is nothing to do.
+2. **TCP 80 and 443** must be reachable from the internet, and
+   **UDP 443** too for HTTP/3. If the provider has a firewall, allow
+   all three from anywhere; on one where each rule names a protocol,
+   such as Hetzner Cloud's, that is a rule for each. If it has none,
+   there is nothing to do. Leaving UDP 443 closed is a fine choice:
+   everything works, and browsers fall back to HTTP/2 over TCP without
+   saying so. Once `https://example.com` answers (the end of step 3),
+   this, run from outside the box, prints a status such as `503` if
+   UDP 443 is open, and `000` after ten seconds if it is not:
+
+   ```sh
+   curl --http3-only --max-time 10 -s -o /dev/null -w '%{http_code}\n' https://example.com/
+   ```
+
+   It needs a curl built with HTTP/3: `curl -V` lists `HTTP3` under
+   `Features`.
 3. Point two DNS names at the server's address: `example.com` and
    `deploy.example.com`. motel gets certificates for both itself,
    once the names resolve and the ports are open.

@@ -47,8 +47,11 @@ console is a poor substitute. Treat root's key accordingly.
 ## 2. Shut the port you are not using
 
 At the provider's firewall, allow **22 only from your own address**
-(home, VPN). 80 and 443 stay open to the world; nothing else on the
-box listens on a port, since every app is reached over a unix socket.
+(home, VPN). TCP 80 and 443, and UDP 443 (HTTP/3), stay open to the
+world; nothing else on the box listens on a port, since every app is
+reached over a unix socket. UDP 443 may stay shut if you prefer: it
+costs only HTTP/3, and browsers fall back to HTTP/2 over TCP without
+saying so.
 If your address changes, change the rule in the provider's firewall
 settings, which do not need the box.
 
