@@ -10,6 +10,7 @@ package cli
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -53,7 +54,13 @@ const screenLong = "motel alone shows them on screens in the terminal, over the 
 func (r *runner) screen(root *cobra.Command) {
 	var t target
 	var sample bool
-	root.RunE = func(cmd *cobra.Command, _ []string) (err error) {
+	root.RunE = func(cmd *cobra.Command, args []string) (err error) {
+		// A word cobra does not look at for a command, one after -- or
+		// an empty one (a script's motel "$CMD"), is refused as cobra
+		// refuses a word that is not a command, before anything else.
+		if len(args) > 0 {
+			return &client.Failure{Exit: client.ExitUsage, Message: cobraLine(fmt.Sprintf("unknown command %q for %q", args[0], cmd.CommandPath()))}
+		}
 		// motel with no arguments at all may be typed to see what it
 		// can do: into a pipe or a file it prints its help, as before
 		// there was a screen, and asks nothing. Any flag asks for the

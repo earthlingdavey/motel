@@ -136,9 +136,15 @@ func TestFlagsAskForTheScreen(t *testing.T) {
 // line naming the nearest commands; tui is no command. A word typed with
 // a line break or an escape in it, even one that copies cobra's own
 // suggestions, prints them visible, inside its quotes, as %q writes
-// them; a flag typed so, as termtext.From writes them. With --json,
-// stdout's error is that line after "motel: ".
+// them; a flag typed so, as termtext.From writes them. A word cobra
+// does not look at, after -- or empty (motel "$CMD" with CMD empty), is
+// refused in the same words, into a pipe too (no help), and on a
+// terminal before anything is signed or sent. With --json, stdout's
+// error is that line after "motel: ".
 func TestNotACommandStaysRefused(t *testing.T) {
+	fb := newFakeBox(t)
+	home := keyHome(t)
+	found := map[string]string{"MOTEL_KEY": "~/me.pub", "MOTEL_URL": fb.srv.URL + "/blog"}
 	for _, c := range []struct {
 		args []string
 		want string
@@ -149,10 +155,19 @@ func TestNotACommandStaysRefused(t *testing.T) {
 		{[]string{"st\nauts\x1b]0;t\x07\u202e"}, `unknown command "st\nauts\x1b]0;t\a\u202e" for "motel"`},
 		{[]string{"x\n\nDid you mean this?\n\trm\n"}, `unknown command "x\n\nDid you mean this?\n\trm\n" for "motel"`},
 		{[]string{"--fo\no\x1b[2J"}, `unknown flag: --fo\x0ao\x1b[2J`},
+		{[]string{"--", "stauts"}, `unknown command "stauts" for "motel"`},
+		{[]string{"--", "status", "blog"}, `unknown command "status" for "motel"`},
+		{[]string{""}, `unknown command "" for "motel"`},
+		{[]string{"--box", "deploy.example.com", "--", "x\x1b[2J"}, `unknown command "x\x1b[2J" for "motel"`},
+		{[]string{"--demo", "--", "foo"}, `unknown command "foo" for "motel"`},
 	} {
 		r := run(t, nil, nil, c.args...)
 		if r.code != client.ExitUsage || r.stderr != "motel: "+c.want+"\n" || r.stdout != "" {
 			t.Errorf("%q: exit %d, stdout %q, stderr\n%q\nwant 2, nothing on stdout, and\n%q", c.args, r.code, r.stdout, r.stderr, "motel: "+c.want+"\n")
+		}
+		st := startMotel(t, fb, found, home, true, nil, c.args...)
+		if st.code != client.ExitUsage || st.stderr != "motel: "+c.want+"\n" || st.stdout != "" || st.signed != 0 || st.sent != 0 {
+			t.Errorf("%q on a terminal: exit %d, stdout %q, stderr %q, %d signed, %d sent; want 2, nothing on stdout, nothing signed or sent, and %q", c.args, st.code, st.stdout, st.stderr, st.signed, st.sent, "motel: "+c.want+"\n")
 		}
 		r = run(t, nil, nil, append([]string{"--json"}, c.args...)...)
 		var e struct{ Error string }

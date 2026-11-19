@@ -164,8 +164,10 @@ func (r *runner) tree() *cobra.Command {
 	root.SetFlagErrorFunc(func(_ *cobra.Command, err error) error {
 		return &client.Failure{Exit: client.ExitUsage, Message: termtext.From(err.Error()).String()}
 	})
-	// The root runs the screens; its Args stay unset, so cobra still
-	// refuses a word that is not a command, naming the nearest.
+	// The root runs the screens. Its Args stay unset, so cobra still
+	// refuses a word that is not a command, naming the nearest; a word
+	// cobra does not look at, after -- or empty, the root refuses itself
+	// in cobra's words.
 	r.screen(root)
 
 	box := &cobra.Command{
