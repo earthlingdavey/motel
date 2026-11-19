@@ -212,9 +212,11 @@ func (h *Handler) authenticate(w http.ResponseWriter, r *http.Request, route str
 // the host and digest of the file it runs, read now — the digest a
 // push's no_change fast path compares (step 4) — so a console edit since the
 // last apply shows, and is said when the digest is not the one
-// applied.json records, as a push says it (check), unless a
-// transaction's record stands (inFlight) or a baseline wrote it; and
-// the box's key for secrets, when it has one.
+// applied.json records, the comparison a push makes (check), unless a
+// transaction's record stands (inFlight); after a baseline, against the
+// file the baseline found, where a push still compares the kept sha256
+// (DESIGN-box.md, Accepted residuals); and the box's key for secrets,
+// when it has one.
 func (h *Handler) status(w http.ResponseWriter, _ *http.Request, _ deploytrust.Identity) error {
 	// The record is looked up before the reads and again after them: an
 	// apply that ends between (applied.json read before its advance, the

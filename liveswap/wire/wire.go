@@ -316,14 +316,18 @@ type BoxStatus struct {
 	// Absent when the box has none.
 	Recipient string `json:"recipient,omitempty"`
 	// OutOfBand is true when SHA256 is not the digest the box recorded
-	// for Commit, as a push would report it (caddyfile_edited_out_of_band):
-	// an edit at the console, or a push whose baseline could not be
-	// recorded, which the box cannot tell apart. Absent when
-	// they are the same, while a push is being applied (the file may be
-	// its new bytes under the commit before), and from a box older than
-	// the field. After `moteld box baseline` the file is held to the one
-	// the baseline found, until a push applies a new commit; a baseline
-	// of an older release recorded none, and nothing is said then.
+	// for Commit, the comparison a push's own
+	// caddyfile_edited_out_of_band makes: an edit at the console, or a
+	// push whose baseline could not be recorded, which the box cannot
+	// tell apart. Absent when they are the same, while a push is being
+	// applied (the file may be its new bytes under the commit before),
+	// and from a box older than the field. After `moteld box baseline`
+	// the file is held to the one the baseline found, until a push
+	// applies a new commit, while a push still compares the digest the
+	// baseline kept, so the two can differ: an edit made before the
+	// baseline is a push's and not this field's, and the file of a push
+	// whose baseline was unrecorded is the reverse. A baseline of an
+	// older release recorded no file, and nothing is said then.
 	OutOfBand bool `json:"caddyfile_edited_out_of_band,omitempty"`
 }
 
