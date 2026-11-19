@@ -205,7 +205,8 @@ func TestCanDrawHelper(t *testing.T) {
 
 // TestCanDrawNoTerminal: with a TERM and a locale the screen can draw
 // with, and no controlling terminal (a CI job, cron, ssh without -t),
-// CanDraw fails at /dev/tty.
+// CanDraw fails at /dev/tty: for whatever reason opening it fails, ENXIO
+// where the node exists, ENOENT in a sandbox that has none.
 func TestCanDrawNoTerminal(t *testing.T) {
 	self, err := os.Executable()
 	if err != nil {
@@ -215,9 +216,10 @@ func TestCanDrawNoTerminal(t *testing.T) {
 	cmd.Env = append(os.Environ(), "MOTEL_TEST_CANDRAW_HELPER=1", "TERM=xterm-256color", "LC_ALL=", "LC_CTYPE=", "LANG=C.UTF-8")
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	out, _ := cmd.CombinedOutput()
-	_, got, _ := strings.Cut(string(out), "CANDRAW ")
-	got, _, _ = strings.Cut(got, "\n")
-	if want := strconv.Quote("open /dev/tty: no such device or address"); got != want {
-		t.Errorf("CanDraw with no controlling terminal said %s, want %s\n%s", got, want, out)
+	_, line, found := strings.Cut(string(out), "CANDRAW ")
+	line, _, _ = strings.Cut(line, "\n")
+	got, err := strconv.Unquote(line)
+	if want := "open /dev/tty: "; !found || err != nil || !strings.HasPrefix(got, want) || got == want {
+		t.Errorf("CanDraw with no controlling terminal said %s, want a refusal beginning %q\n%s", line, want, out)
 	}
 }
