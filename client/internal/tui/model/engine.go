@@ -115,8 +115,11 @@ type Engine struct {
 	// and no read was answered since (none is that other job, whose read
 	// is the run's first): one read the box does not answer, while it
 	// answers the rest (a 5xx on one route), backs off alone and slows
-	// nothing else. Any answer from the box ends the run, and a run that
-	// had begun ends with whoami asked again.
+	// nothing else. A job's first read in a row with no answer brings
+	// the next-due read of another job forward to now, once (Done), so
+	// the run begins at once when the box answers nothing. Any answer
+	// from the box ends the run, and a run that had begun ends with
+	// whoami asked again.
 	misses     int
 	none       *Job
 	retryAt    time.Time
@@ -477,7 +480,7 @@ func (e *Engine) Take(now time.Time) (Job, bool, time.Duration) {
 	if e.misses > 0 && e.retryAt.After(gate) {
 		gate = e.retryAt
 	}
-	j, due, ok := e.next(gate)
+	j, due, ok := e.next(gate, nil)
 	if !ok {
 		return Job{}, false, 0
 	}
@@ -515,13 +518,14 @@ func maxTime(a, b time.Time) time.Time {
 
 // next is the job to run first of those due by at: a one-off the
 // person asked for, then whoami, the open app, the list, and the most
-// overdue of the rest. With none due, it is the one due soonest.
-func (e *Engine) next(at time.Time) (Job, time.Time, bool) {
+// overdue of the rest. With none due, it is the one due soonest. skip,
+// when not nil, is a job left out.
+func (e *Engine) next(at time.Time, skip *Job) (Job, time.Time, bool) {
 	var best Job
 	var bestDue time.Time
 	bestRank, found := 99, false
 	for j, en := range e.jobs {
-		if en.held || j.Kind == KBox && !e.boxOpen {
+		if en.held || j.Kind == KBox && !e.boxOpen || skip != nil && j == *skip {
 			continue
 		}
 		r := e.rank(j, en)
@@ -754,6 +758,16 @@ func (e *Engine) Done(j Job, now time.Time, err error) Outcome {
 	}
 	if alone {
 		en.due = maxTime(en.due, now.Add(backoff(en.misses)))
+		if en.misses == 1 {
+			// Its first in a row: the read of another job that next comes
+			// due is made now, once, so a box that answers nothing is not
+			// taken for one route for as long as the others wait their
+			// turn (a minute for the list, with one app). Answered, the box
+			// is up; not, two jobs got none and the run begins (above).
+			if k, _, ok := e.next(now, &j); ok && e.jobs[k].due.After(now) {
+				e.jobs[k].due = now
+			}
+		}
 	}
 	e.poke()
 	return out

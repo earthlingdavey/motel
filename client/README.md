@@ -326,7 +326,8 @@ operator, which `P` prints.
   that read alone, at its own interval or the backoff when longer, while
   the box answers others (a 5xx on one route); every read, the title bar
   saying slow, then STALE, once reads of two different things got none,
-  none answered between, until any answer from the box ends that run, the
+  none answered between (a thing's first read in a row to get none brings the read of another thing next due forward to then, once, so a box that answers nothing is seen within seconds),
+  until any answer from the box ends that run, the
   title bar says back, and whoami is asked again
   (a read the client fails without sending, such as a record whose
   version the box's filter hid, ends nothing).
