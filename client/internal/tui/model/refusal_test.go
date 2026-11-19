@@ -14,8 +14,9 @@ import (
 // answer (ctrl-r in an outage, or the record opened again) cannot bring
 // the answer from before the refusal back: not on the row, the app's
 // screen, the record's screen, y and P, the strip and summary, or p and
-// n. y says the box refused the read while that is its newest word. A
-// later answer is shown again.
+// n. y says what the box answered, a 403 as refused and a 404 as a 404,
+// in the screen's words, while that is its newest word. A later answer
+// is shown again.
 func TestRefusalDropsTheAnswer(t *testing.T) {
 	const version = "e9a0b3f2c118"
 	rec := model.Job{Kind: model.KDeploy, App: "blog", Version: version}
@@ -40,7 +41,11 @@ func TestRefusalDropsTheAnswer(t *testing.T) {
 				if len(s.Overview("blog", now).Fields) == 0 || len(s.RecordView("blog", version, now).Head) == 0 {
 					t.Fatal("the status and the record were not read")
 				}
-				refusal := &model.Failure{Kind: kind, Message: "deploy.example.com does not allow your key this: it needs the viewer role on this app."}
+				says := map[model.Fail]string{
+					model.FailForbidden: "deploy.example.com does not allow your key this: it needs the viewer role on this app.",
+					model.FailNotFound:  `deploy.example.com answered 404; the box says: "no such record"`,
+				}[kind]
+				refusal := &model.Failure{Kind: kind, Message: says}
 				f.Set("blog", refusal)
 				f.Set("blog@"+version, refusal)
 				now = now.Add(10 * time.Second)
@@ -50,12 +55,17 @@ func TestRefusalDropsTheAnswer(t *testing.T) {
 				}
 				// The app's screen says the refusal alone, and no "the last
 				// read failed" beside fields held.
-				if o := s.Overview("blog", now); o.Failed != nil || !strings.Contains(linesText(o.Note...), "does not allow your key") {
+				if o := s.Overview("blog", now); o.Failed != nil || !strings.Contains(linesText(o.Note...), says) {
 					t.Errorf("after the refusal the app's screen says %q, failed %q", linesText(o.Note...), o.Failed.Text())
 				}
-				// y says the box refused it, not that no answer came yet.
+				// y says what the box answered, as the screen does (a 403 as
+				// refused, a 404 as answered 404), not that no answer came yet.
+				y := map[model.Fail]string{
+					model.FailForbidden: "no answer to show: the box refused this read, as the screen says",
+					model.FailNotFound:  "no answer to show: the box answered this read 404, as the screen says",
+				}[kind]
 				for _, v := range []model.View{appV, recV} {
-					if l := s.Overlay(v, true, 98, runes, asIs); linesText(l...) != "no answer to show: the box refused this read, as the screen says" {
+					if l := s.Overlay(v, true, 98, runes, asIs); linesText(l...) != y {
 						t.Errorf("after the refusal y on screen %d says %q", v.Screen, linesText(l...))
 					}
 				}

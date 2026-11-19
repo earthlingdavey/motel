@@ -248,10 +248,14 @@ func (s *Session) Overlay(v View, json bool, width int, cells Cells, asIs AsIs) 
 		return lay(rows, width, cells)
 	}
 	if !have {
-		if err := s.readErr(v); Forbidden(err) || NotFound(err) {
-			// A refusal drops what was held (readStatus, readDeploy): the
-			// box did answer, so not "yet".
+		switch err := s.readErr(v); {
+		case Forbidden(err):
+			// A 403 or a 404 drops what was held (readStatus, readDeploy):
+			// the box did answer, so not "yet". Each is said in the
+			// screen's own words for it.
 			return lay([]oRow{words("no answer to show: the box refused this read, as the screen says")}, width, cells)
+		case NotFound(err):
+			return lay([]oRow{words("no answer to show: the box answered this read 404, as the screen says")}, width, cells)
 		}
 		return lay([]oRow{words("no answer yet to show")}, width, cells)
 	}
