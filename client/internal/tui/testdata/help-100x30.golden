@@ -27,4 +27,4 @@ VIEWS (type after :)
 
 MARKS   ✖ broken now   ▲ look   ⟳ deploying   ? cannot tell   · nothing to show
 AGE     how old each row's answer is; "stale" after three missed reads
-esc close  q quit
+↑↓ scroll  esc close  q quit

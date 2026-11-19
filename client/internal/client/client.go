@@ -459,7 +459,9 @@ func retryAfter(h http.Header, now time.Time) (int64, bool) {
 // another 4xx with an error sentence, each said as the box's with the
 // sentence quoted), a 5xx, said as not known to be moteld's, a body the
 // box's response filter withheld (a 200 whose one sentence says so,
-// quoted), or an answer that is not moteld's. No message carries a
+// quoted), or an answer that is not moteld's; but a whoami answer about
+// another key or box is taken, v holding its key and box alone
+// (aboutAnother), for the caller to say so. No message carries a
 // decoder's error, which quotes what the body holds: a field that does
 // not read is named by the client's own name for it, and nothing of
 // its value. A value held to a grammar that the box's filter replaced
@@ -467,6 +469,9 @@ func retryAfter(h http.Header, now time.Time) (int64, bool) {
 // which the caller compares with what was asked (Same), are as sent.
 func (c *Client) Read(ans *Answer, v any) error {
 	if ans.Code == http.StatusOK {
+		if c.aboutAnother(ans, v) {
+			return nil
+		}
 		missing := identity(v).missing(ans.Body)
 		err := decodeObject(ans, v)
 		var syntax *json.SyntaxError
@@ -698,6 +703,55 @@ func held(s *string, in func(string) bool) bool {
 		return false
 	}
 	return true
+}
+
+// aboutAnother says whether ans is a whoami answer naming another key
+// than the one this client signs with, or another box than the one it
+// asks, whatever else it holds: the whoami command's rule
+// (model.AboutAnother, the same comparison, which the command and the
+// TUI make again on the value returned, and say). The key and the box
+// are read on their own, each compared when it is there and a string,
+// and are all v is given; nothing else of the answer is read or held to
+// its grammar (hold): neither shows anything else of such an answer,
+// and a value missing or outside its grammar, the other of the two
+// among them, would otherwise hide that it is about another. One of the
+// two not there, or not a string, is given as this side's own, so that
+// only the one named is said to differ; an answer with neither is not
+// about another.
+func (c *Client) aboutAnother(ans *Answer, v any) bool {
+	me, ok := v.(*wire.WhoAmI)
+	pt, person := c.Cred.(*PersonToken)
+	var named struct {
+		Key json.RawMessage `json:"key"`
+		Box json.RawMessage `json:"box"`
+	}
+	if !ok || !person || decodeObject(ans, &named) != nil {
+		return false
+	}
+	key, keyNamed := jsonString(named.Key)
+	box, boxNamed := jsonString(named.Box)
+	fp := pt.Key.Public.Fingerprint()
+	if !keyNamed {
+		key = fp
+	}
+	if !boxNamed {
+		box = c.Box.Host
+	}
+	if key == fp && box == c.Box.Host {
+		return false
+	}
+	*me = wire.WhoAmI{Key: key, Box: box}
+	return true
+}
+
+// jsonString is raw as a JSON string, and false when it is absent, null
+// or not a string.
+func jsonString(raw json.RawMessage) (string, bool) {
+	var s *string
+	if json.Unmarshal(raw, &s) != nil || s == nil {
+		return "", false
+	}
+	return *s, true
 }
 
 // hold says why a body that decoded is still not one an honest box

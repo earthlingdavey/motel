@@ -16,10 +16,13 @@ import (
 func (u *UI) ask(mode rune) {
 	u.promptMode = mode
 	door.SetLabel(u.prompt, string(mode))
-	door.SetInput(u.prompt, "")
+	// Set once: setting the field runs its changed handler, which in /
+	// mode makes the filter what the field holds.
+	text := ""
 	if mode == '/' {
-		door.SetInput(u.prompt, u.filter)
+		text = u.filter
 	}
+	door.SetInput(u.prompt, text)
 	u.row2.SwitchToPage("prompt")
 	u.App.SetFocus(u.prompt)
 }
@@ -45,7 +48,9 @@ func (u *UI) promptDone(k tcell.Key) {
 
 // run is a command line: the motel command words, which mean here
 // what they mean in a shell. What is typed is held to the grammars the
-// client holds it to before anything is asked, and what is wrong is
+// client holds it to, and a version to the box's own (at most 64
+// characters; the command sends a longer one for the box to refuse),
+// before anything is asked, and what is wrong is
 // said on the prompt's line, the typing echoed only as a quotation.
 func (u *UI) run(text string) {
 	w := strings.Fields(text)

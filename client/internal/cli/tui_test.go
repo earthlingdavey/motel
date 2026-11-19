@@ -13,14 +13,19 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
 
 	"github.com/smallhoursorg/motel/client/internal/client"
+	"github.com/smallhoursorg/motel/client/internal/local"
 	"github.com/smallhoursorg/motel/client/internal/sshkey"
 	"github.com/smallhoursorg/motel/client/internal/tui"
 	"github.com/smallhoursorg/motel/client/internal/tui/demo"
@@ -277,6 +282,174 @@ func TestInterruptedAtTheFirstRead(t *testing.T) {
 	}
 }
 
+// hangUp runs motel tui on the fake box and sends this process SIGHUP,
+// as a closed terminal window does, at the TUI's read number at
+// (from 1), which then waits to be cancelled; and says the exit code
+// and what stderr holds.
+func hangUp(t *testing.T, at int32) (int, string) {
+	t.Helper()
+	fb := newFakeBox(t)
+	home := t.TempDir()
+	if err := os.WriteFile(filepath.Join(home, "me.pub"), []byte(meLine+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	env := map[string]string{"MOTEL_KEY": "~/me.pub", "MOTEL_URL": fb.srv.URL + "/blog"}
+	var n atomic.Int32
+	var once sync.Once
+	rt := roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		if n.Add(1) < at {
+			return fb.srv.Client().Transport.RoundTrip(r)
+		}
+		once.Do(func() { _ = syscall.Kill(os.Getpid(), syscall.SIGHUP) })
+		select {
+		case <-r.Context().Done():
+			return nil, r.Context().Err()
+		case <-time.After(20 * time.Second): // a guard: the signal ended nothing
+			t.Error("SIGHUP did not end the read")
+			return nil, context.DeadlineExceeded
+		}
+	})
+	var out, errOut bytes.Buffer
+	code := Main(context.Background(), []string{"tui"}, Env{
+		Getenv: func(k string) string { return env[k] }, Stdout: &out, Stderr: &errOut, Dir: t.TempDir(), Home: home,
+		Now: time.Now, Sleep: func(context.Context, time.Duration) error { return nil },
+		Transport: rt, Run: noPrograms{}, Signer: &fixedSigner{}, Version: "test",
+	})
+	return code, errOut.String()
+}
+
+// TestHangUpAtTheFirstRead: SIGHUP during the first read ends motel tui
+// as an interrupt does: exit 130, nothing said.
+func TestHangUpAtTheFirstRead(t *testing.T) {
+	if code, stderr := hangUp(t, 1); code != client.ExitInterrupted || stderr != "" {
+		t.Errorf("exit %d, stderr %q; want %d and nothing said", code, stderr, client.ExitInterrupted)
+	}
+}
+
+// endAt is local.Runner that, when the program named runs, ends the
+// command as end does, once, and waits for the command's context to
+// end, as a program a signal stopped; every other program is not
+// installed.
+type endAt struct {
+	name string
+	end  func()
+	once *sync.Once
+}
+
+func (e endAt) Output(ctx context.Context, c local.Cmd) ([]byte, error) {
+	if c.Name != e.name {
+		return nil, exec.ErrNotFound
+	}
+	e.once.Do(e.end)
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case <-time.After(20 * time.Second): // a guard: the signal ended nothing
+		return nil, errors.New("the signal ended nothing")
+	}
+}
+
+// TestSignalBeforeTheScreen: a closed terminal (SIGHUP) or an interrupt
+// (Main's context ends, as SIGINT and SIGTERM end it) while motel tui
+// sets up (the box found from the repository, the key from the agent,
+// the passphrase check) ends it as an interrupt does: exit 130, nothing
+// said, not the advice a failed step would give.
+func TestSignalBeforeTheScreen(t *testing.T) {
+	home := t.TempDir()
+	if err := os.WriteFile(filepath.Join(home, "me.pub"), []byte(meLine+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	enc := pem.EncodeToMemory(&pem.Block{Type: "OPENSSH PRIVATE KEY", Bytes: []byte("openssh-key-v1\x00\x00\x00\x00\x0aaes256-ctr")})
+	if err := os.WriteFile(filepath.Join(home, "me"), enc, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	url := newFakeBox(t).srv.URL + "/blog"
+	steps := []struct {
+		name, program string
+		env           map[string]string
+	}{
+		{"the box", "git", map[string]string{"MOTEL_KEY": "~/me.pub"}},
+		{"the key", "ssh-add", map[string]string{"MOTEL_URL": url}},
+		{"the passphrase check", "ssh-add", map[string]string{"MOTEL_KEY": "~/me", "MOTEL_URL": url}},
+	}
+	for _, s := range steps {
+		for _, sig := range []string{"SIGHUP", "interrupt"} {
+			t.Run(s.name+"/"+sig, func(t *testing.T) {
+				ctx, cancel := context.WithCancel(context.Background())
+				defer cancel()
+				end := cancel
+				if sig == "SIGHUP" {
+					end = func() { _ = syscall.Kill(os.Getpid(), syscall.SIGHUP) }
+				}
+				var out, errOut bytes.Buffer
+				code := Main(ctx, []string{"tui"}, Env{
+					Getenv: func(k string) string { return s.env[k] }, Stdout: &out, Stderr: &errOut, Dir: t.TempDir(), Home: home,
+					Now: time.Now, Sleep: func(context.Context, time.Duration) error { return nil },
+					Run: endAt{name: s.program, end: end, once: &sync.Once{}}, Signer: &fixedSigner{}, Version: "test",
+				})
+				if code != client.ExitInterrupted || errOut.String() != "" {
+					t.Errorf("exit %d, stderr %q; want %d and nothing said", code, errOut.String(), client.ExitInterrupted)
+				}
+			})
+		}
+	}
+}
+
+// TestHangUpHelper is not a test of its own: TestHangUpWithTheScreenUp
+// runs the test binary with it under a pty, where the screen can open.
+// Its third read is the first the screens make (whoami and the list
+// are read before).
+func TestHangUpHelper(t *testing.T) {
+	if os.Getenv("MOTEL_TEST_HANGUP_HELPER") == "" {
+		t.Skip("run by TestHangUpWithTheScreenUp")
+	}
+	code, stderr := hangUp(t, 3)
+	_, _ = os.Stdout.WriteString("RESULT exit " + strconv.Itoa(code) + ", stderr " + strconv.Quote(stderr) + "\n")
+}
+
+// ptyScript is util-linux's script(1), which these tests run as
+// script -qec <command> /dev/null to make a pty; the test is skipped,
+// saying what is not held, where there is none. Another script (BSD's,
+// on macOS, or busybox's) takes neither -e nor -c so: util-linux's
+// alone says so to --version.
+func ptyScript(t *testing.T, notHeld string) string {
+	t.Helper()
+	script, err := exec.LookPath("script")
+	if err != nil {
+		t.Skip("NOT RUN: no script(1) to make a pty with; " + notHeld)
+	}
+	if v, err := exec.Command(script, "--version").Output(); err != nil || !strings.Contains(string(v), "util-linux") {
+		t.Skip("NOT RUN: " + script + " is not util-linux's script(1), whose -qec makes the pty these tests use; " + notHeld)
+	}
+	return script
+}
+
+// TestHangUpWithTheScreenUp: SIGHUP while the screen is up ends motel
+// tui as an interrupt does: exit 130, nothing said. Under a real pty
+// (script(1) makes one), as the screen needs a terminal.
+func TestHangUpWithTheScreenUp(t *testing.T) {
+	script := ptyScript(t, "SIGHUP with the screen up is not held here")
+	self, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, script, "-qec", self+" -test.run=^TestHangUpHelper$ -test.count=1 -test.v", "/dev/null")
+	cmd.Env = append(os.Environ(), "MOTEL_TEST_HANGUP_HELPER=1", "TERM=xterm")
+	out, _ := cmd.CombinedOutput()
+	tty := string(out)
+	// The alternate screen, which the TUI's screen opens on.
+	if !strings.Contains(tty, "\x1b[?1049h") {
+		t.Fatalf("the screen did not open:\n%q", tty)
+	}
+	_, got, _ := strings.Cut(tty, "RESULT ")
+	got, _, _ = strings.Cut(got, "\n")
+	if want := `exit 130, stderr ""`; strings.TrimSpace(got) != want {
+		t.Errorf("after SIGHUP with the screen up: %s; want %s", got, want)
+	}
+}
+
 // TestPanicSaid: a panic is said on one line, its value made safe and
 // cut, with a short stack, and the command exits non-zero.
 func TestPanicSaid(t *testing.T) {
@@ -297,12 +470,33 @@ func TestTUISignals(t *testing.T) {
 	}
 }
 
-// TestVersionGrammarIsTheClients: the : line's version check is the
-// client's, on every edge the grammar has.
+// TestVersionGrammarIsTheClients: the : line takes a version (its
+// check, model.ValidVersion, which prompt.go runs on :deploys' third
+// word) exactly when `motel deploys <app> <version>` sends it to the
+// box, on every edge the grammar has, but one difference, written out
+// here as the one there is: a version over 64 characters is refused on
+// the : line (the box's own grammar, liveswap's versionRe), and sent by
+// the command, whose check (client.CheckVersion) leaves its length to
+// the box's 422. A change to either side fails here.
 func TestVersionGrammarIsTheClients(t *testing.T) {
-	for _, v := range []string{"v1", "-v1", "_x", ".v1", "v1,", "v 1", "", "a.b-c_d", strings.Repeat("a", 64), strings.Repeat("a", 65), "v1\n", "ünï"} {
-		if model.ValidVersion(v) != (client.CheckVersion(v) == nil && len(v) <= 64) {
-			t.Errorf("%q: the TUI says %v, the client %v", v, model.ValidVersion(v), client.CheckVersion(v))
+	fb := newFakeBox(t)
+	env := map[string]string{"MOTEL_TOKEN": "tok", "MOTEL_URL": fb.srv.URL + "/blog"}
+	sends := func(v string) bool {
+		r := run(t, fb, env, "deploys", "--", appURL(fb, "blog"), v)
+		return r.code != client.ExitUsage
+	}
+	long, longer := strings.Repeat("a", 65), strings.Repeat("a", 300)
+	differs := map[string]bool{long: true, longer: true} // refused on the line, sent by the command
+	for _, v := range []string{"v1", "v41", "-v1", "_x", ".v1", "v1,", "a.b-c_d", "v1/x", "[x]", strings.Repeat("a", 64), long, longer, "v1\n", "ünï"} {
+		line, command := model.ValidVersion(v), sends(v)
+		if differs[v] {
+			if line || !command {
+				t.Errorf("%q: the : line takes it %v, the command sends it %v: the one known difference has changed", v, line, command)
+			}
+			continue
+		}
+		if line != command {
+			t.Errorf("%q: the : line takes it %v, the command sends it %v", v, line, command)
 		}
 	}
 }
@@ -353,6 +547,9 @@ func TestPrintedByTerminal(t *testing.T) {
 	raw, _ := s.Printable(v, 2)
 	shown, _ := s.PrintShown(v, 2)
 	p := tui.Printed{Raw: string(raw), Shown: shown}
+	if model.IndentMax != 10 {
+		t.Fatalf("stderr's sentence names 10 levels, and IndentMax is %d", model.IndentMax)
+	}
 	var flag bytes.Buffer
 	if err := (&runner{env: Env{Stdout: &flag}}).emit([]byte(body)); err != nil {
 		t.Fatal(err)
@@ -365,7 +562,7 @@ func TestPrintedByTerminal(t *testing.T) {
 		p            tui.Printed
 		stdout, warn string
 	}{
-		{true, p, model.JSONShown([]byte(body)), "motel: the box's answer was indented and made safe for the terminal; redirect stdout (> file, or | cat) for what the command's --json prints\n"},
+		{true, p, model.JSONShown([]byte(body)), "motel: the box's answer was indented (at most 10 levels deep) and made safe for the terminal; redirect stdout (> file, or | cat) for what the command's --json prints\n"},
 		{false, p, flag.String(), ""},
 		{true, tui.Printed{Raw: "motel apps --box deploy.example.com\n"}, "motel apps --box deploy.example.com\n", ""},
 		{false, tui.Printed{}, "", ""},

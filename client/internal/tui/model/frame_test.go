@@ -140,19 +140,19 @@ func TestAppsRowTemplateKey(t *testing.T) {
 	}
 }
 
-// TestJSONMadeOnce: a large answer is indented once, not at each frame.
+// TestJSONMadeOnce: a large answer is indented once, not at each frame:
+// every frame after the first hands back the very lines the first made.
 func TestJSONMadeOnce(t *testing.T) {
 	s, f, now := session(t)
 	big := `{"apps": [{"name": "blog"}], "pad": "` + strings.Repeat("x", 4<<20) + `"}`
 	f.Body("apps.json", big)
 	step(t, s, f, now)
 	step(t, s, f, now)
-	start := time.Now()
-	for range 50 {
-		s.Overlay(model.View{Screen: model.ScreenApps}, true, 98, runes, asIs)
-	}
-	if d := time.Since(start); d > 2*time.Second {
-		t.Errorf("50 frames of a 4 MB answer took %s", d)
+	first := s.Overlay(model.View{Screen: model.ScreenApps}, true, 98, runes, asIs)
+	for i := range 50 {
+		if l := s.Overlay(model.View{Screen: model.ScreenApps}, true, 98, runes, asIs); len(l) != len(first) || &l[0] != &first[0] {
+			t.Fatalf("frame %d made the answer's lines again", i+2)
+		}
 	}
 }
 

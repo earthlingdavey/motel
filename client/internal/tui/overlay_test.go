@@ -348,67 +348,127 @@ func TestOverlayRowCut(t *testing.T) {
 	}
 }
 
-// TestOverlayOffersSelection: the c overlay over who am I, with a
-// --key path that holds a [ (drawn with an unseen space after it), one
-// that holds a skin tone (drawn as an escape) and a plain one, at 100
-// columns, where the command lines fit, and at 60, where they are cut,
-// offers selecting a line only when it is drawn as it runs: with the
-// plain key at 100. Otherwise it says not to copy a line, why, and
-// that P prints the command.
+// asRunsKeys are --key paths for the overlays' tests, and whether a
+// command line that holds one is drawn as the line that runs: a plain
+// path, and one with a [ (the zero-width space the door puts after it
+// is not drawn), are; one with an emoji modifier, drawn as an escape,
+// and ones with a character of no width, which is not drawn, are not.
+var asRunsKeys = map[string]struct {
+	path string
+	runs bool
+}{
+	"plain":            {"~/.ssh/id_ed25519", true},
+	"bracket":          {"~/.ssh/[work]/id_ed25519", true},
+	"skin tone":        {"~/.ssh/" + thumbsUp + "/id_ed25519", false},
+	"soft hyphen":      {"~/.ssh/wo\u00adrk/id_ed25519", false},
+	"zero-width space": {"~/.ssh/work\u200b/id_ed25519", false},
+	"word joiner":      {"~/.ssh/work\u2060/id_ed25519", false},
+	"BOM":              {"~/.ssh/work\ufeff/id_ed25519", false},
+}
+
+// drawnAsRuns says, from the screen's cells, whether the c overlay over
+// v, with key as --key, draws every command line as the line that runs,
+// in a window wide enough that none is cut.
+func drawnAsRuns(t *testing.T, key string, v model.View) bool {
+	t.Helper()
+	h := start(t, 200, 30, nil)
+	h.on(func() { h.s.Key.Source, h.s.Key.Shown = "--key", key })
+	if v.Screen != model.ScreenApps {
+		h.open(v)
+	}
+	h.press("c")
+	want := wantCommands(h, v, false)
+	k, runs := 0, true
+	for _, r := range overlayCells(h) {
+		if !strings.HasPrefix(r.text, "  motel ") {
+			continue
+		}
+		if strings.HasSuffix(r.text, "…") {
+			t.Fatalf("%q: a command line cut at 200 columns: %q", key, r.text)
+		}
+		runs = runs && k < len(want) && r.text == "  "+want[k]
+		k++
+	}
+	if k != len(want) {
+		t.Fatalf("%q: %d command lines drawn, want %d", key, k, len(want))
+	}
+	return runs
+}
+
+// TestOverlayOffersSelection: the c overlay over who am I, with each of
+// asRunsKeys as --key, at 100 columns, where the command lines fit,
+// and at 60, where they are cut, offers selecting the lines exactly
+// when the screen's cells hold each as the line that runs: with the
+// plain key and the [ at 100. Otherwise it says not to copy a line,
+// why, and that P prints the command.
 func TestOverlayOffersSelection(t *testing.T) {
 	const (
 		selects = "select it with the mouse, or press P to quit and print it below your prompt"
 		cutSays = "a line above is cut at the window's edge, marked …: do not copy it."
-		asRuns  = "a line above is not drawn as it runs (an unseen space after a [, or a character written as an escape): do not copy it."
+		asRuns  = "a line above is not drawn as it runs (a character written as an escape, or one not drawn at all): do not copy it."
 		prints  = "P quits and prints the first command whole below your prompt; the second is it with --json among its flags."
 	)
-	keys := map[string]string{"plain": "~/.ssh/id_ed25519", "bracket": "~/.ssh/[work]/id_ed25519", "skin tone": "~/.ssh/" + thumbsUp + "/id_ed25519"}
-	for _, w := range []int{100, 60} {
-		for _, k := range []string{"plain", "bracket", "skin tone"} {
+	v := model.View{Screen: model.ScreenMe}
+	for k, key := range asRunsKeys {
+		runs := drawnAsRuns(t, key.path, v)
+		if runs != key.runs {
+			t.Errorf("%s: the screen's cells hold the lines as they run: %v, want %v", k, runs, key.runs)
+		}
+		for _, w := range []int{100, 60} {
 			name := strconv.Itoa(w) + "/" + k
 			h := start(t, w, 30, nil)
-			h.on(func() { h.s.Key.Source, h.s.Key.Shown = "--key", keys[k] })
-			h.open(model.View{Screen: model.ScreenMe})
+			h.on(func() { h.s.Key.Source, h.s.Key.Shown = "--key", key.path })
+			h.open(v)
 			h.press("c")
-			text := joinRows(overlayCells(h), " ")
-			cut, other := w == 60, k != "plain"
+			rows := overlayCells(h)
+			text := joinRows(rows, " ")
+			cut := false
+			for _, r := range rows {
+				cut = cut || strings.HasPrefix(r.text, "  motel ") && strings.HasSuffix(r.text, "…")
+			}
+			if cut != (w == 60) {
+				t.Fatalf("%s: a command line cut: %v\n%s", name, cut, joinRows(rows, "\n"))
+			}
 			for _, c := range []struct {
 				says string
 				want bool
 			}{
-				{selects, !cut && !other},
+				{selects, !cut && runs},
 				{cutSays, cut},
-				{asRuns, other},
-				{prints, cut || other},
+				{asRuns, !runs},
+				{prints, cut || !runs},
 			} {
 				if strings.Contains(text, c.says) != c.want {
-					t.Errorf("%s: the overlay says %q: %v, want %v\n%s", name, c.says, !c.want, c.want, joinRows(overlayCells(h), "\n"))
+					t.Errorf("%s: the overlay says %q: %v, want %v\n%s", name, c.says, !c.want, c.want, joinRows(rows, "\n"))
 				}
 			}
 		}
 	}
 }
 
-// TestJSONHeaderAsRuns: y over a record with a --key path holding a [,
-// one holding a skin tone, and a plain one, at 100 columns and 60: the
-// header says not to copy its command when it is cut or not drawn as it
-// runs, each once, and c then P once; c then P, from there, prints the
-// command whole. The command is cut at 60, and at 100 with the skin
-// tone, whose escape is drawn ten cells wide: so a line both cut and
-// not drawn as it runs is held too.
+// TestJSONHeaderAsRuns: y over a record with each of asRunsKeys as
+// --key, at 100 columns and 60: the header says not to copy its command
+// when it is cut, or when the screen's cells do not hold it as the line
+// that runs (read where it is not cut), each once, and c then P once;
+// c then P, from there, prints the command whole. The command is cut
+// at 60, and at 100 with the skin tone, whose escape is drawn ten cells
+// wide: so a line both cut and not drawn as it runs is held too.
 func TestJSONHeaderAsRuns(t *testing.T) {
 	const (
 		cutSays = "the line above is cut at the window's edge, marked …: do not copy it."
-		asRuns  = "the line above is not drawn as it runs (an unseen space after a [, or a character written as an escape): do not copy it."
+		asRuns  = "the line above is not drawn as it runs (a character written as an escape, or one not drawn at all): do not copy it."
 		prints  = "c then P prints it whole."
 	)
-	keys := map[string]string{"plain": "~/.ssh/id_ed25519", "bracket": "~/.ssh/[work]/id_ed25519", "skin tone": "~/.ssh/" + thumbsUp + "/id_ed25519"}
 	v := record("blog", "7c1e55d0a913")
-	for _, w := range []int{100, 60} {
-		for _, k := range []string{"plain", "bracket", "skin tone"} {
+	for k, key := range asRunsKeys {
+		runs := drawnAsRuns(t, key.path, v)
+		if runs != key.runs {
+			t.Errorf("%s: the screen's cells hold the lines as they run: %v, want %v", k, runs, key.runs)
+		}
+		for _, w := range []int{100, 60} {
 			name := strconv.Itoa(w) + "/" + k
 			h := start(t, w, 30, nil)
-			h.on(func() { h.s.Key.Source, h.s.Key.Shown = "--key", keys[k] })
+			h.on(func() { h.s.Key.Source, h.s.Key.Shown = "--key", key.path })
 			h.open(v)
 			h.press("y")
 			rows := overlayCells(h)
@@ -420,15 +480,14 @@ func TestJSONHeaderAsRuns(t *testing.T) {
 			if want := w == 60 || k == "skin tone"; cut != want {
 				t.Fatalf("%s: the command cut: %v, want %v\n%s", name, cut, want, joinRows(rows, "\n"))
 			}
-			other := k != "plain"
 			for _, c := range []struct {
 				says string
 				want int
 			}{
 				{cutSays, map[bool]int{true: 1}[cut]},
-				{asRuns, map[bool]int{true: 1}[other]},
-				{prints, map[bool]int{true: 1}[cut || other]},
-				{"do not copy it", map[bool]int{true: 1}[cut] + map[bool]int{true: 1}[other]},
+				{asRuns, map[bool]int{true: 1}[!runs]},
+				{prints, map[bool]int{true: 1}[cut || !runs]},
+				{"do not copy it", map[bool]int{true: 1}[cut] + map[bool]int{true: 1}[!runs]},
 			} {
 				if n := strings.Count(text, c.says); n != c.want {
 					t.Errorf("%s: the header says %q %d times, want %d\n%s", name, c.says, n, c.want, joinRows(rows, "\n"))
@@ -441,6 +500,76 @@ func TestJSONHeaderAsRuns(t *testing.T) {
 			if h.u.Print != want+"\n" {
 				t.Errorf("%s: c then P with y open prints %q, want %q", name, h.u.Print, want+"\n")
 			}
+		}
+	}
+}
+
+// TestYSaysTheReadsOutcome: y, open on an app, a record or the box
+// while its read gets no answer or is not yet made, says what the read
+// ends as when it ends (the box refused it, or answered 404), from the
+// screen's cells; and after it, an answer, a read with no answer and a
+// refusal again: at each step its first row is the first row of what
+// Session.Overlay says now.
+func TestYSaysTheReadsOutcome(t *testing.T) {
+	forbidden := &model.Failure{Kind: model.FailForbidden, Message: "deploy.example.com does not allow your key this: it needs the viewer role on the box."}
+	notFound := &model.Failure{Kind: model.FailNotFound, Message: `deploy.example.com answered 404; the box says: "not found"`}
+	says := map[*model.Failure]string{forbidden: "no answer to show: the box refused this read, as the screen says", notFound: "no answer to show: the box answered this read 404, as the screen says"}
+	yKey := tcell.NewEventKey(tcell.KeyRune, 'y', tcell.ModNone)
+	for _, c := range []struct {
+		name, key string
+		v         model.View
+	}{
+		{"an app", "blog", app("blog")},
+		// Not the app's last deploy, whose record the fake answers on a 404.
+		{"a record", "blog@e9a0b3f2c118", record("blog", "e9a0b3f2c118")},
+		{"the box", "box", model.View{Screen: model.ScreenBox}},
+	} {
+		for _, fail := range []*model.Failure{forbidden, notFound} {
+			name := c.name + ", " + strconv.Itoa(map[*model.Failure]int{forbidden: 403, notFound: 404}[fail])
+			h := start(t, 100, 30, func(f *demo.Fake) {
+				// An app's status is read at the start: it gets no answer
+				// there, so it has none held when y opens.
+				if c.v.Screen == model.ScreenApp {
+					f.Set(c.key, fiveHundred())
+				}
+			})
+			ySays := func(step, want string) {
+				t.Helper()
+				var now string
+				h.on(func() {
+					if l := h.s.Overlay(c.v, true, h.u.w-2, door.Width, door.AsIs); len(l) > 0 {
+						now = l[0].Text()
+					}
+				})
+				rows := overlayCells(h)
+				if len(rows) == 0 || rows[0].text != now || !strings.HasPrefix(now, want) {
+					t.Errorf("%s, %s: y says %q; Session.Overlay says %q, want %q", name, step, joinRows(rows, " | "), now, want)
+				}
+			}
+			again := func(err error) {
+				h.fake.Set(c.key, err)
+				h.now = h.now.Add(model.AgainAfter)
+				h.press(tcell.KeyCtrlR)
+			}
+			h.fake.Set(c.key, fail)
+			// The view opened and y pressed with no read made between.
+			h.on(func() { h.u.open(c.v) })
+			h.on(func() { h.u.key(yKey) })
+			ySays("its read not yet ended", "no answer yet to show")
+			if c.v.Screen == model.ScreenApp {
+				again(fail) // its first read was made at the start
+			} else {
+				h.pump()
+			}
+			ySays("its read refused", says[fail])
+			again(nil)
+			ySays("then answered", "the box's answer to")
+			again(fiveHundred())
+			ySays("then no answer", "the box's answer to")
+			again(fail)
+			ySays("then refused again", says[fail])
+			again(fiveHundred())
+			ySays("then no answer again", "")
 		}
 	}
 }

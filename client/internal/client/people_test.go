@@ -321,3 +321,44 @@ func TestWhoamiNameAndRelease(t *testing.T) {
 		}
 	}
 }
+
+// TestWhoamiAboutAnotherByEither: a whoami answer is about another when
+// either its key or its box is a string that differs from this side's,
+// whatever the other holds (missing, null, not a string): v holds the
+// one named and this side's own for the other. An answer naming neither
+// (a gateway's page) is not about another, nor one naming this key and
+// no box: each is an answer that is not moteld's.
+func TestWhoamiAboutAnotherByEither(t *testing.T) {
+	pt, _ := personCred(t)
+	fp := pt.Key.Public.Fingerprint()
+	cl := &Client{Box: Box{Host: "127.0.0.1"}, Cred: pt}
+	other := "SHA256:OTHEROTHEROTHEROTHEROTHEROTHEROTHEROTHEROTH"
+	rest := `"name":"alice","roles":[],"version":"v0.7.0","protocol":1,"token_expires_at":"2026-11-15T10:00:00Z"`
+	for _, c := range []struct {
+		body     string
+		key, box string // what v holds of an answer about another; "" for none
+	}{
+		{`{"key":"` + other + `",` + rest + `}`, other, "127.0.0.1"},
+		{`{"key":"` + other + `","box":null,` + rest + `}`, other, "127.0.0.1"},
+		{`{"key":"` + other + `","box":5}`, other, "127.0.0.1"},
+		{`{"Key":"` + other + `"}`, other, "127.0.0.1"},
+		{`{"box":"evil.example.com",` + rest + `}`, fp, "evil.example.com"},
+		{`{"key":null,"box":"evil.example.com"}`, fp, "evil.example.com"},
+		{`{"key":["x"],"box":"evil.example.com"}`, fp, "evil.example.com"},
+		{`{"key":"","box":"127.0.0.1"}`, "", "127.0.0.1"},
+		{`{"error":"bad gateway"}`, "", ""},
+		{`{"key":"` + fp + `",` + rest + `}`, "", ""},
+		{`{"key":null,"box":null,` + rest + `}`, "", ""},
+	} {
+		var me wire.WhoAmI
+		err := cl.Read(&Answer{Code: http.StatusOK, Header: http.Header{"Content-Type": {"application/json"}}, Body: []byte(c.body)}, &me)
+		switch {
+		case c.box != "" && (err != nil || me.Key != c.key || me.Box != c.box || me.Name != ""):
+			t.Errorf("%s: not about another: %v, %+v", c.body, err, me)
+		case c.box == "" && err == nil:
+			t.Errorf("%s: taken as %+v", c.body, me)
+		case c.box == "" && failure(t, err).Exit != ExitUnknown:
+			t.Errorf("%s: %v", c.body, err)
+		}
+	}
+}

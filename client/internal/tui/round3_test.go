@@ -41,9 +41,66 @@ func TestCtrlROnlyWhatIsShown(t *testing.T) {
 	}
 }
 
+// TestRefusedAtTheSmallest: a refused key's screen in the smallest
+// window, 60x16, with the client's own sentences for a 401 (its words,
+// client.refused's, written out: no test of the TUI imports the
+// client), the plain one and the one that names the clock. The footer
+// is drawn whole, naming ↓; and ↓ brings every line of the page on
+// screen, read from the screen's cells as it scrolls.
+func TestRefusedAtTheSmallest(t *testing.T) {
+	const (
+		fp     = "SHA256:SAMPLE0000000000000000000000000000000000000"
+		causes = "no person or signer line on the box lists it; your address is outside the from list on every grant you hold; deploy.example.com is not the box's main name; or the box's moteld is too old to take a key's token at all. Send the operator the line `motel key` prints."
+		plain  = "deploy.example.com did not accept your key " + fp + " (~/.ssh/id_ed25519.pub). The box says no more to a key it does not accept, so it is one of these: " + causes
+		clock  = "deploy.example.com did not accept your key " + fp + " (~/.ssh/id_ed25519.pub). This machine's clock differs from the box's by 3600 s (behind it; the box's Date is Sun, 15 Nov 2026 15:12:40 GMT), more than a token made here can bridge: if the box's Date is right, set this machine's clock. Or, as the box says no more, one of these: " + causes
+		foot   = "↑↓ scroll  r ask again  P print person line  ? keys  q quit"
+	)
+	unspaced := func(s string) string { return strings.Join(strings.Fields(s), "") }
+	for name, msg := range map[string]string{"plain": plain, "clock": clock} {
+		h := start(t, 60, 16, func(f *demo.Fake) {
+			f.Set("whoami", &model.Failure{Kind: model.FailSignedOut, Message: msg})
+		})
+		if h.top().Screen != model.ScreenRefused {
+			t.Fatalf("%s: on %+v, not the refusal screen", name, h.top())
+		}
+		// The page's rows by where they stand in it, as ↓ scrolls it: the
+		// body is the rows between the crumb and the footer.
+		page := map[int]string{}
+		var rows []drawnRow
+		for range 60 {
+			var off int
+			h.on(func() { off, _ = h.u.page.GetScrollOffset() })
+			rows = screenRows(h)
+			for i, r := range rows[2 : len(rows)-1] {
+				page[off+i] = r.text
+			}
+			h.press(tcell.KeyDown)
+		}
+		if got := rows[len(rows)-1].text; got != foot {
+			t.Errorf("%s: the footer is drawn %q, want %q", name, got, foot)
+		}
+		var all strings.Builder
+		for i := range len(page) {
+			all.WriteString(page[i])
+		}
+		var want []model.Line
+		h.on(func() { want = h.s.RefusedView(h.now) })
+		for _, l := range want {
+			var b strings.Builder
+			for _, s := range l {
+				b.WriteString(s.T.String())
+			}
+			if !strings.Contains(unspaced(all.String()), unspaced(b.String())) {
+				t.Errorf("%s: ↓ does not bring this line on screen: %q", name, b.String())
+			}
+		}
+	}
+}
+
 // TestStopClosesTheLine: a stop closes the : line and any overlay; on
-// the stop screen only r, q and ? act; its crumb says stopped; P is not
-// offered for a stop that shows no person line.
+// the stop screen only r, q, ? and the keys that scroll it act; its
+// crumb says stopped; P is not offered for a stop that shows no person
+// line.
 func TestStopClosesTheLine(t *testing.T) {
 	h := start(t, 100, 30, nil)
 	h.press("y", ":", "sta")
@@ -135,5 +192,158 @@ func TestBigOverlay(t *testing.T) {
 	}
 	if opened > 20*time.Second || keys > 5*time.Second {
 		t.Errorf("open %s, a key %s: too slow", opened, keys)
+	}
+}
+
+// TestStopHelpAtTheSmallest: the keys overlay (?) over a stop screen in
+// the smallest window, 60x16, after a 401 and after an answer about
+// another key: the footer is drawn whole, naming ↑↓, and ↓ brings every
+// line of the overlay on screen, read from the screen's cells as it
+// scrolls, no row past the window.
+func TestStopHelpAtTheSmallest(t *testing.T) {
+	const foot = "↑↓ scroll  esc back  r ask again  q quit"
+	unspaced := func(s string) string { return strings.Join(strings.Fields(s), "") }
+	for name, fail := range map[string]error{
+		"401":         &model.Failure{Kind: model.FailSignedOut, Message: "deploy.example.com did not accept your key."},
+		"another key": &model.Failure{Kind: model.FailAboutAnother, Message: "the box answered about another key."},
+	} {
+		h := start(t, 60, 16, func(f *demo.Fake) { f.Set("whoami", fail) })
+		h.press("?")
+		if h.top().Screen != model.ScreenStopHelp {
+			t.Fatalf("%s: on %+v, not help over the stop screen", name, h.top())
+		}
+		page := map[int]string{}
+		var rows []drawnRow
+		for range 60 {
+			var off int
+			h.on(func() { off, _ = h.u.page.GetScrollOffset() })
+			rows = screenRows(h)
+			for i, r := range rows[2 : len(rows)-1] {
+				page[off+i] = r.text
+				if r.end > 60 {
+					t.Errorf("%s: a row past the window: %q", name, r.text)
+				}
+			}
+			h.press(tcell.KeyDown)
+		}
+		if got := rows[len(rows)-1].text; got != foot {
+			t.Errorf("%s: the footer is drawn %q, want %q", name, got, foot)
+		}
+		var all strings.Builder
+		for i := range len(page) {
+			all.WriteString(page[i])
+		}
+		for _, l := range strings.Split(stopHelp(), "\n") {
+			if !strings.Contains(unspaced(all.String()), unspaced(l)) {
+				t.Errorf("%s: ↓ does not bring this line on screen: %q", name, l)
+			}
+		}
+	}
+}
+
+// TestHelpAtTheSmallest: the keys overlay (?) over each screen it opens
+// from, in the smallest window, 60x16: the footer is drawn whole,
+// naming ↑↓, and ↓ brings every line of the overlay on screen whole,
+// read from the screen's cells as it scrolls, no row past the window.
+func TestHelpAtTheSmallest(t *testing.T) {
+	const foot = "↑↓ scroll  esc close  q quit"
+	unspaced := func(s string) string { return strings.Join(strings.Fields(s), "") }
+	for _, c := range []struct {
+		name string
+		v    *model.View
+	}{
+		{"apps", nil},
+		{"an app", &model.View{Screen: model.ScreenApp, App: "blog"}},
+		{"a record", &model.View{Screen: model.ScreenRecord, App: "blog", Version: "e9a0b3f2c118"}},
+		{"who am I", &model.View{Screen: model.ScreenMe}},
+		{"the box", &model.View{Screen: model.ScreenBox}},
+	} {
+		h := start(t, 60, 16, nil)
+		if c.v != nil {
+			h.open(*c.v)
+		}
+		h.press("?")
+		if h.top().Screen != model.ScreenHelp {
+			t.Fatalf("%s: on %+v, not help", c.name, h.top())
+		}
+		var help string
+		h.on(func() { help = h.u.help() })
+		page := map[int]string{}
+		var rows []drawnRow
+		for range 60 {
+			var off int
+			h.on(func() { off, _ = h.u.page.GetScrollOffset() })
+			rows = screenRows(h)
+			for i, r := range rows[2 : len(rows)-1] {
+				page[off+i] = r.text
+				if r.end > 60 {
+					t.Errorf("%s: a row past the window: %q", c.name, r.text)
+				}
+			}
+			h.press(tcell.KeyDown)
+		}
+		if got := rows[len(rows)-1].text; got != foot {
+			t.Errorf("%s: the footer is drawn %q, want %q", c.name, got, foot)
+		}
+		var all strings.Builder
+		for i := range len(page) {
+			all.WriteString(page[i])
+		}
+		for _, l := range strings.Split(help, "\n") {
+			if !strings.Contains(unspaced(all.String()), unspaced(l)) {
+				t.Errorf("%s: ↓ does not bring this line on screen whole: %q", c.name, l)
+			}
+		}
+	}
+}
+
+// TestFootersWholeAtTheSmallest: in the smallest window, 60x16, every
+// screen's footer, in its widest state, is drawn whole: the screen's
+// last row, read from its cells, is the footer the screen set, no cell
+// of it cut. The apps screen, an app, a record, who am I, the box, the
+// keys overlay over the apps screen, the command and the answer
+// overlays with P offered, and a stop screen with P offered (a 401) and
+// without it (a certificate), and the keys overlay over it.
+func TestFootersWholeAtTheSmallest(t *testing.T) {
+	const rec = "e9a0b3f2c118"
+	signedOut := func(f *demo.Fake) {
+		f.Set("whoami", &model.Failure{Kind: model.FailSignedOut, Message: "deploy.example.com did not accept your key"})
+	}
+	for _, c := range []struct {
+		name   string
+		setup  func(*demo.Fake)
+		then   func(h *harness)
+		screen model.Screen
+		// has is the part of the footer only its widest state names.
+		has string
+	}{
+		{"apps", nil, func(*harness) {}, model.ScreenApps, ""},
+		{"an app", nil, func(h *harness) { h.open(app("blog")) }, model.ScreenApp, ""},
+		{"a record", nil, func(h *harness) { h.open(record("blog", rec)) }, model.ScreenRecord, ""},
+		{"who am I", nil, func(h *harness) { h.open(model.View{Screen: model.ScreenMe}) }, model.ScreenMe, ""},
+		{"the box", nil, func(h *harness) { h.open(model.View{Screen: model.ScreenBox}) }, model.ScreenBox, ""},
+		{"the keys", nil, func(h *harness) { h.press("?") }, model.ScreenHelp, ""},
+		{"the command", nil, func(h *harness) { h.press("c") }, model.ScreenApps, "P quit and print"},
+		{"the answer", nil, func(h *harness) { h.open(record("blog", rec)); h.press("y") }, model.ScreenRecord, "P quit and print"},
+		{"a refused key", signedOut, func(*harness) {}, model.ScreenRefused, "P print person line"},
+		{"a certificate", func(f *demo.Fake) {
+			f.Set("whoami", &model.Failure{Kind: model.FailCertificate, Message: "the certificate did not verify"})
+		}, func(*harness) {}, model.ScreenRefused, ""},
+		{"the keys over a stop", signedOut, func(h *harness) { h.press("?") }, model.ScreenStopHelp, ""},
+	} {
+		h := start(t, 60, 16, c.setup)
+		c.then(h)
+		if got := h.top().Screen; got != c.screen {
+			t.Fatalf("%s: on %v, want %v", c.name, got, c.screen)
+		}
+		var meant string
+		h.on(func() { meant = h.u.foot.GetText(true) })
+		if !strings.Contains(meant, c.has) {
+			t.Fatalf("%s: the footer meant %q does not name %q", c.name, meant, c.has)
+		}
+		rows := screenRows(h)
+		if got := rows[len(rows)-1].text; got != meant {
+			t.Errorf("%s: the footer is drawn %q (%d cells), meant %q (%d)", c.name, got, len([]rune(got)), meant, len([]rune(meant)))
+		}
 	}
 }

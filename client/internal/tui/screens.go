@@ -28,9 +28,11 @@ func (u *UI) render() {
 	left, right := u.S.Title(now)
 	door.SetText(u.title, door.Line(spread(left, right, u.w), u.Colour))
 	v := u.top()
-	// Only the refusal is prose; the other pages are labelled lines,
-	// which a wrap would break under the labels.
-	u.page.SetWrap(v.Screen == model.ScreenRefused)
+	// Only the refusal and help (over it or over any screen) are prose;
+	// the other pages are labelled lines, which a wrap would break under
+	// the labels: who am I and the box screen lay a failure's sentence on
+	// rows themselves.
+	u.page.SetWrap(v.Screen == model.ScreenRefused || v.Screen == model.ScreenStopHelp || v.Screen == model.ScreenHelp)
 	crumbL, crumbR := u.crumbs(v, now)
 	if u.notice != nil {
 		// What the : line said of what was typed, until the next key.
@@ -39,7 +41,7 @@ func (u *UI) render() {
 	door.SetText(u.crumb, door.Line(spread(crumbL, crumbR, u.w), u.Colour))
 	foot := footers[v.Screen]
 	if v.Screen == model.ScreenRefused && u.S.CanPrint(v, 0) {
-		foot = "r ask again  P quit and print the person line  ? keys  q quit"
+		foot = "↑↓ scroll  r ask again  P print person line  ? keys  q quit"
 	}
 	if !u.S.Engine.CanAskAgain(now) {
 		foot = strings.Replace(foot, "  ctrl-r ask again", "", 1)
@@ -53,9 +55,9 @@ func (u *UI) render() {
 	case model.ScreenRecord:
 		u.renderRecord(v, now)
 	case model.ScreenMe:
-		door.SetText(u.page, door.Lines(u.S.MeView(now), u.Colour))
+		door.SetText(u.page, door.Lines(u.S.MeViewFit(now, u.w, door.Width), u.Colour))
 	case model.ScreenBox:
-		door.SetText(u.page, door.Lines(u.S.BoxView(now), u.Colour))
+		door.SetText(u.page, door.Lines(u.S.BoxViewFit(now, u.w, door.Width), u.Colour))
 	case model.ScreenHelp:
 		door.SetText(u.page, door.LitLines(u.help()))
 	case model.ScreenStopHelp:
@@ -67,8 +69,11 @@ func (u *UI) render() {
 		door.SetTitle(u.over.Box, map[int]string{1: "command", 2: "the box's answer"}[u.overlay])
 		// Made once per answer and mode: a large body made every frame
 		// slow when it was indented and set again at each.
-		body, at, _ := u.S.Body(v)
-		key := overKey{v, u.overlay, at, len(body), u.w}
+		body, at, have := u.S.Body(v)
+		key := overKey{v: v, mode: u.overlay, at: at, n: len(body), w: u.w}
+		if !have {
+			key.none = u.S.NoAnswer(v)
+		}
 		if key != u.overKey {
 			u.overKey = key
 			door.SetText(u.over, door.Lines(u.S.Overlay(v, u.overlay == 2, u.w-2, door.Width, door.AsIs), u.Colour))
@@ -81,18 +86,22 @@ func (u *UI) render() {
 	}
 }
 
-// overKey names what the overlay was last made of.
+// overKey names what the overlay was last made of: with no answer
+// held, what it says of the read in place of one.
 type overKey struct {
 	v    model.View
 	mode int
 	at   time.Time
 	n, w int
+	none string
 }
 
 // spread puts left at the start and right at the end of a row w cells
-// wide, cutting left first: the right side is the freshness word, which
-// is never cut.
+// wide, cutting left first: the right side is the freshness word, or the
+// apps' summary, cut only when it alone takes the whole row or more
+// (the summary of hundreds of apps at 60 columns).
 func spread(left, right model.Line, w int) model.Line {
+	right = right.Cut(max(w-1, 0), door.Width)
 	room := w - right.Width(door.Width) - 1
 	left = left.Cut(max(room, 0), door.Width)
 	gap := max(w-left.Width(door.Width)-right.Width(door.Width), 1)
@@ -124,16 +133,18 @@ func (u *UI) crumbs(v model.View, now time.Time) (model.Line, model.Line) {
 	return ownLine("first run"), nil
 }
 
-// footers are each screen's keys: at most six, then "? more".
+// footers are each screen's keys: at most six, then "? more", each
+// footer whole at 60 columns, the smallest window
+// (TestFootersWholeAtTheSmallest); a key left out is listed by ?.
 var footers = map[model.Screen]string{
-	model.ScreenApps:     "enter open  / filter  : go to  y json  c command  ? more  q quit",
+	model.ScreenApps:     "enter open  / filter  : go to  y json  c cmd  ? more  q quit",
 	model.ScreenApp:      "enter record  y json  c command  esc back  ? more",
-	model.ScreenRecord:   "↑↓ scroll  w wrap  p previous  n next  y json  c command  esc back  ? more",
+	model.ScreenRecord:   "↑↓ scroll  w wrap  p previous  n next  esc back  ? more",
 	model.ScreenMe:       "y json  c command  esc back  ? more",
 	model.ScreenBox:      "y json  c command  esc back  ? more",
-	model.ScreenHelp:     "esc close  q quit",
-	model.ScreenRefused:  "r ask again  ? keys  q quit",
-	model.ScreenStopHelp: "esc back  r ask again  q quit",
+	model.ScreenHelp:     "↑↓ scroll  esc close  q quit",
+	model.ScreenRefused:  "↑↓ scroll  r ask again  ? keys  q quit",
+	model.ScreenStopHelp: "↑↓ scroll  esc back  r ask again  q quit",
 }
 
 // The apps table's columns, dropped in this order when the screen is
@@ -273,6 +284,9 @@ func (u *UI) renderApp(v model.View, now time.Time) {
 	if view.Note != nil {
 		fs = view.Note
 	}
+	if view.Failed != nil {
+		fs = append(model.Sentence(view.Failed, u.w, door.Width), fs...)
+	}
 	fs = u.withStop(fs)
 	for i := range fs {
 		fs[i] = fs[i].Cut(u.w, door.Width)
@@ -347,9 +361,7 @@ func (u *UI) withStop(ls []model.Line) []model.Line {
 func stopHelp() string {
 	return "KEYS OF THE SCREEN BELOW\n" + keyHelp(model.ScreenRefused) + "\n\nKEYS HERE\n" + keyHelp(model.ScreenStopHelp) + `
 
-Every read is stopped, so nothing opens from here: no view, no command or
-answer overlay, no : line. r asks again; once the box answers, about this
-key and this box, the screens come back.`
+Every read is stopped, so nothing opens from here: no view, no command or answer overlay, no : line. r asks again; once the box answers, about this key and this box, the screens come back.`
 }
 
 // help is the help page: the keys of the screen below it, from the

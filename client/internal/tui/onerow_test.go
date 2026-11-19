@@ -61,7 +61,8 @@ func TestRecordOneRow(t *testing.T) {
 // overlay on the apps screen and on a record, at 100 and at 60
 // columns, draws each command line on one row: whole, the modifier
 // escaped, or cut at the window's edge with … there; and the overlay
-// says not to copy them, as none is drawn as it runs.
+// says not to copy them, as the screen's cells hold none as the line
+// that runs.
 func TestKeyOverlayOneRow(t *testing.T) {
 	const key = "~/.ssh/" + thumbsUp + "/id_ed25519.pub"
 	for _, w := range []int{100, 60} {
@@ -74,7 +75,8 @@ func TestKeyOverlayOneRow(t *testing.T) {
 				}
 				h.press("c")
 				var want []string
-				for _, c := range wantCommands(h, v, false) {
+				runs := wantCommands(h, v, false)
+				for _, c := range runs {
 					want = append(want, "  "+strings.ReplaceAll(c, thumbsUp, shownUp))
 				}
 				rows := overlayCells(h)
@@ -85,6 +87,11 @@ func TestKeyOverlayOneRow(t *testing.T) {
 							t.Errorf("%d/%v: a row of a command line's own: %q", w, v.Screen, r.text)
 						}
 						continue
+					}
+					for _, c := range runs {
+						if r.text == "  "+c {
+							t.Errorf("%d/%v: a command line drawn as it runs, which the case needs not to be: %q", w, v.Screen, r.text)
+						}
 					}
 					whole, edge := false, false
 					for _, c := range want {
@@ -107,7 +114,8 @@ func TestKeyOverlayOneRow(t *testing.T) {
 					t.Errorf("60/%v: no command line cut: the case proves nothing of the cut", v.Screen)
 				}
 				// Every command line holds the key, whose skin tone is drawn
-				// as an escape: none is to be copied, cut or not.
+				// as an escape, so the cells hold none as it runs (above):
+				// none is to be copied, cut or not.
 				if !strings.Contains(joinRows(rows, " "), "do not copy it") {
 					t.Errorf("%d/%v: the overlay does not say not to copy a line drawn with an escape\n%s", w, v.Screen, joinRows(rows, "\n"))
 				}

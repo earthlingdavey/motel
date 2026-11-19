@@ -47,15 +47,23 @@ func (r *runner) tui() *cobra.Command {
 			"be used here yet. ? lists the keys; c shows the command for a screen that reads\n" +
 			"the box, y the box's answer as JSON. It is asked with your own key only.\n\n" + experimental,
 		Args: usageArgs(cobra.NoArgs),
-		RunE: func(cmd *cobra.Command, _ []string) error {
+		RunE: func(cmd *cobra.Command, _ []string) (err error) {
 			if r.json {
 				return &client.Failure{Exit: client.ExitUsage, Message: "tui has no --json: it draws screens, and every other command takes --json"}
 			}
 			// A closed terminal window (SIGHUP) ends it as SIGTERM does:
 			// through the screen's event loop, which gives the terminal
-			// back.
+			// back, and with an interrupt's exit code (errInterrupted:
+			// Main's context does not carry it), whatever step it cut
+			// short said that step failed (a box, a key or a passphrase
+			// not found).
 			ctx, stop := signal.NotifyContext(cmd.Context(), tuiSignals...)
 			defer stop()
+			defer func() {
+				if ctx.Err() != nil {
+					err = errInterrupted
+				}
+			}()
 			o := tui.Options{Clock: tui.RealClock{}, Colour: r.env.Color, Tick: time.Second}
 			// Wall-clock time: a monotonic reading stops while a laptop
 			// sleeps, and ages and due times would leave the sleep out.
@@ -86,19 +94,16 @@ func (r *runner) tui() *cobra.Command {
 			s.Engine = model.NewEngine(wall())
 			o.Session = s
 			start := tui.Prime(ctx, o)
-			if err := ctx.Err(); err != nil {
+			if ctx.Err() != nil {
 				// Interrupted at the first read (a touch not given): no
 				// screen with nothing refreshing behind it.
-				return err
+				return errInterrupted
 			}
 			print, err := tui.Run(ctx, o, start)
 			if err != nil {
 				return runFailure(err)
 			}
-			if err := r.printed(print); err != nil {
-				return err
-			}
-			return ctx.Err()
+			return r.printed(print)
 		},
 	}
 	t.flags(c)
@@ -127,7 +132,7 @@ func (r *runner) printed(p tui.Printed) error {
 	out := p.Raw
 	if r.env.Terminal && p.Shown != "" {
 		out = p.Shown
-		if _, err := io.WriteString(r.env.Stderr, "motel: the box's answer was indented and made safe for the terminal; redirect stdout (> file, or | cat) for what the command's --json prints\n"); err != nil {
+		if _, err := io.WriteString(r.env.Stderr, "motel: the box's answer was indented (at most 10 levels deep) and made safe for the terminal; redirect stdout (> file, or | cat) for what the command's --json prints\n"); err != nil {
 			return err
 		}
 	}

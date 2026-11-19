@@ -162,7 +162,13 @@ func tags(c model.Class, colour bool) (string, string) {
 	return "", ""
 }
 
-// Line is a model line as tview text.
+// Line is a model line as tview text. It does not hold its own tags
+// against the text beside them: unbreak asks about the segments with
+// the tags left out, and tview steps otherwise at a tag, so box free
+// text put directly after a dressed segment (one tags dresses) could
+// begin a row, keep a style open, or be drawn wider than Width says. No
+// screen puts it there today, and no test would fail if one did: put
+// box free text only after a plain or label segment.
 func Line(l model.Line, colour bool) Shown {
 	var b strings.Builder
 	segs := make([]string, len(l))
@@ -221,10 +227,49 @@ func Head(s string) *tview.TableCell {
 // Width is how many cells t takes on screen.
 func Width(t termtext.Text) int { return tview.TaggedStringWidth(Inert(t).s) }
 
-// AsIs says whether t is handed to tview as it is: the door puts no
-// zero-width space in it (it holds no [) and writes none of it as an
-// escape, so what is drawn is t, character for character.
-func AsIs(t termtext.Text) bool { return Inert(t).s == t.String() }
+// AsIs says whether t is drawn as it is, character for character: the
+// cells tview draws for it in a text view, as the overlays are drawn,
+// read back from a screen, are t. It asks tview, as Width and unbreak
+// do, rather than listing characters: one the door writes as an escape
+// is drawn as the escape, and tview draws nothing for one of no width
+// (a soft hyphen, a zero-width space), which is then not there to
+// select. The zero-width space the door puts after a [ is one of
+// these, so a [ is drawn as it is.
+func AsIs(t termtext.Text) bool {
+	s := Inert(t).s
+	w := tview.TaggedStringWidth(s)
+	if w == 0 {
+		return t.String() == ""
+	}
+	var scr tcell.SimulationScreen
+	select {
+	case scr = <-screens:
+	default:
+		scr = tcell.NewSimulationScreen("UTF-8")
+		_ = scr.Init()
+	}
+	defer func() {
+		select {
+		case screens <- scr:
+		default:
+		}
+	}()
+	scr.SetSize(w, 1)
+	tv := tview.NewTextView().SetDynamicColors(true).SetWrap(false).SetText(s)
+	tv.SetRect(0, 0, w, 1)
+	tv.Draw(scr)
+	var b strings.Builder
+	for x := 0; x < w; {
+		c, _, cw := scr.Get(x, 0)
+		b.WriteString(c)
+		x += max(cw, 1)
+	}
+	return b.String() == t.String()
+}
+
+// screens are the screens AsIs has drawn on, kept to draw on again,
+// each taken by one AsIs at a time.
+var screens = make(chan tcell.SimulationScreen, 4)
 
 // LitLines is the TUI's own lines: each made safe as Lit makes it,
 // the line breaks kept.

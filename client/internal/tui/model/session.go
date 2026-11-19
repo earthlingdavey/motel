@@ -10,7 +10,8 @@ import (
 
 // Session is what the TUI knows of the box: the last answer to each
 // read and when it came, kept when a later read fails, so nothing on
-// screen is blanked by a lost connection. It is touched only on the
+// screen is blanked by a lost connection; a 403 or a 404 on a status, a
+// record or the box's status drops what was held of it. It is touched only on the
 // UI's goroutine; Fetch makes the read off it and returns the change
 // to apply on it.
 type Session struct {
@@ -196,7 +197,7 @@ func (s *Session) app(name string) *appData {
 
 // Record is the deploy record read for app and version, if any, and the
 // failure of its last read when that failed: a record read before is
-// kept beside it.
+// kept beside it, but for a 403 or a 404.
 func (s *Session) Record(app, version string) (*Got[wire.DeployResult], error, bool) {
 	r, ok := s.records[Job{Kind: KDeploy, App: app, Version: version}]
 	if !ok {
