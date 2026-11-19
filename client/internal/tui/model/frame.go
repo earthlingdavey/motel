@@ -170,6 +170,22 @@ func (s *Session) readErr(v View) error {
 	return nil
 }
 
+// NoAnswer is what the JSON overlay over v says when no answer to it
+// is held (Body's false): it changes as a read ends, when Body does
+// not, so the screens make the overlay again when it does.
+func (s *Session) NoAnswer(v View) string {
+	switch err := s.readErr(v); {
+	case Forbidden(err):
+		// A 403 or a 404 drops what was held (readStatus, readDeploy):
+		// the box did answer, so not "yet". Each is said in the
+		// screen's own words for it.
+		return "no answer to show: the box refused this read, as the screen says"
+	case NotFound(err):
+		return "no answer to show: the box answered this read 404, as the screen says"
+	}
+	return "no answer yet to show"
+}
+
 // Cells is how many cells of the screen a text takes. The screens'
 // library knows (a wide character takes two); model draws nothing, so
 // the screens hand it in.
@@ -248,16 +264,7 @@ func (s *Session) Overlay(v View, json bool, width int, cells Cells, asIs AsIs) 
 		return lay(rows, width, cells)
 	}
 	if !have {
-		switch err := s.readErr(v); {
-		case Forbidden(err):
-			// A 403 or a 404 drops what was held (readStatus, readDeploy):
-			// the box did answer, so not "yet". Each is said in the
-			// screen's own words for it.
-			return lay([]oRow{words("no answer to show: the box refused this read, as the screen says")}, width, cells)
-		case NotFound(err):
-			return lay([]oRow{words("no answer to show: the box answered this read 404, as the screen says")}, width, cells)
-		}
-		return lay([]oRow{words("no answer yet to show")}, width, cells)
+		return lay([]oRow{words(s.NoAnswer(v))}, width, cells)
 	}
 	key := jsonKey{v, at, len(body), width}
 	if s.json.key != key || s.json.lines == nil {

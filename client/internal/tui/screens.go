@@ -69,8 +69,11 @@ func (u *UI) render() {
 		door.SetTitle(u.over.Box, map[int]string{1: "command", 2: "the box's answer"}[u.overlay])
 		// Made once per answer and mode: a large body made every frame
 		// slow when it was indented and set again at each.
-		body, at, _ := u.S.Body(v)
-		key := overKey{v, u.overlay, at, len(body), u.w}
+		body, at, have := u.S.Body(v)
+		key := overKey{v: v, mode: u.overlay, at: at, n: len(body), w: u.w}
+		if !have {
+			key.none = u.S.NoAnswer(v)
+		}
 		if key != u.overKey {
 			u.overKey = key
 			door.SetText(u.over, door.Lines(u.S.Overlay(v, u.overlay == 2, u.w-2, door.Width, door.AsIs), u.Colour))
@@ -83,12 +86,14 @@ func (u *UI) render() {
 	}
 }
 
-// overKey names what the overlay was last made of.
+// overKey names what the overlay was last made of: with no answer
+// held, what it says of the read in place of one.
 type overKey struct {
 	v    model.View
 	mode int
 	at   time.Time
 	n, w int
+	none string
 }
 
 // spread puts left at the start and right at the end of a row w cells

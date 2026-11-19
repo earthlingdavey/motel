@@ -503,3 +503,73 @@ func TestJSONHeaderAsRuns(t *testing.T) {
 		}
 	}
 }
+
+// TestYSaysTheReadsOutcome: y, open on an app, a record or the box
+// while its read gets no answer or is not yet made, says what the read
+// ends as when it ends (the box refused it, or answered 404), from the
+// screen's cells; and after it, an answer, a read with no answer and a
+// refusal again: at each step its first row is the first row of what
+// Session.Overlay says now.
+func TestYSaysTheReadsOutcome(t *testing.T) {
+	forbidden := &model.Failure{Kind: model.FailForbidden, Message: "deploy.example.com does not allow your key this: it needs the viewer role on the box."}
+	notFound := &model.Failure{Kind: model.FailNotFound, Message: `deploy.example.com answered 404; the box says: "not found"`}
+	says := map[*model.Failure]string{forbidden: "no answer to show: the box refused this read, as the screen says", notFound: "no answer to show: the box answered this read 404, as the screen says"}
+	yKey := tcell.NewEventKey(tcell.KeyRune, 'y', tcell.ModNone)
+	for _, c := range []struct {
+		name, key string
+		v         model.View
+	}{
+		{"an app", "blog", app("blog")},
+		// Not the app's last deploy, whose record the fake answers on a 404.
+		{"a record", "blog@e9a0b3f2c118", record("blog", "e9a0b3f2c118")},
+		{"the box", "box", model.View{Screen: model.ScreenBox}},
+	} {
+		for _, fail := range []*model.Failure{forbidden, notFound} {
+			name := c.name + ", " + strconv.Itoa(map[*model.Failure]int{forbidden: 403, notFound: 404}[fail])
+			h := start(t, 100, 30, func(f *demo.Fake) {
+				// An app's status is read at the start: it gets no answer
+				// there, so it has none held when y opens.
+				if c.v.Screen == model.ScreenApp {
+					f.Set(c.key, fiveHundred())
+				}
+			})
+			ySays := func(step, want string) {
+				t.Helper()
+				var now string
+				h.on(func() {
+					if l := h.s.Overlay(c.v, true, h.u.w-2, door.Width, door.AsIs); len(l) > 0 {
+						now = l[0].Text()
+					}
+				})
+				rows := overlayCells(h)
+				if len(rows) == 0 || rows[0].text != now || !strings.HasPrefix(now, want) {
+					t.Errorf("%s, %s: y says %q; Session.Overlay says %q, want %q", name, step, joinRows(rows, " | "), now, want)
+				}
+			}
+			again := func(err error) {
+				h.fake.Set(c.key, err)
+				h.now = h.now.Add(model.AgainAfter)
+				h.press(tcell.KeyCtrlR)
+			}
+			h.fake.Set(c.key, fail)
+			// The view opened and y pressed with no read made between.
+			h.on(func() { h.u.open(c.v) })
+			h.on(func() { h.u.key(yKey) })
+			ySays("its read not yet ended", "no answer yet to show")
+			if c.v.Screen == model.ScreenApp {
+				again(fail) // its first read was made at the start
+			} else {
+				h.pump()
+			}
+			ySays("its read refused", says[fail])
+			again(nil)
+			ySays("then answered", "the box's answer to")
+			again(fiveHundred())
+			ySays("then no answer", "the box's answer to")
+			again(fail)
+			ySays("then refused again", says[fail])
+			again(fiveHundred())
+			ySays("then no answer again", "")
+		}
+	}
+}
