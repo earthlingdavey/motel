@@ -409,7 +409,10 @@ func (s *Session) row(name string, now time.Time) (r AppRow) {
 			last += " " + d.Phase
 		}
 		r.Cells[ColLast] = termtext.From(last)
-		if d.Status == "failed" && r.Mark > MarkLook {
+		// A deploy in flight is said as one over a failed newest record
+		// (the usual next deploy after a failure): LAST DEPLOY still says
+		// the failure, d still opens it, and both marks need a look.
+		if d.Status == "failed" && r.Mark > MarkLook && !r.moving {
 			why := Line{own("newest deploy " + short(d.Version) + " failed")}
 			if d.Phase != "" {
 				why[0] = own(why[0].T.String() + " in " + d.Phase)

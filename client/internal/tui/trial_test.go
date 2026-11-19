@@ -443,3 +443,43 @@ func TestCountsOfOne(t *testing.T) {
 		}
 	}
 }
+
+// TestDeployAfterAFailure: a deploy in flight is said as one on the apps
+// screen whatever the newest record says: with a failed record the
+// newest (shop's), the row is marked ⟳ and the strip says the deploy,
+// as it does after a success; the failure stays in LAST DEPLOY, and the
+// row still counts in "need a look". The trial saw the row marked ▲ and
+// the strip saying the old failure through a relaunch and a rollback.
+func TestDeployAfterAFailure(t *testing.T) {
+	b, err := os.ReadFile("demo/fixtures/status/shop.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	inFlight := `"phase": "soaking",
+ "deploying": {"version": "e9a0b3f2c118", "deployed_by": "local:bob-laptop", "started_at": "@-20s"},`
+	body := strings.Replace(string(b), `"phase": "idle",`, inFlight, 1)
+	if body == string(b) {
+		t.Fatal("the shop fixture moved")
+	}
+	for _, sz := range [][2]int{{60, 16}, {80, 24}} {
+		h := start(t, sz[0], sz[1], func(f *demo.Fake) { f.Body("status/shop.json", body) })
+		h.open(model.View{Screen: model.ScreenApps})
+		rows := screenRows(h)
+		if got := rows[1].text; !strings.Contains(got, " 12 apps · 5 need a look · ") {
+			t.Errorf("%dx%d: the crumb is drawn %q", sz[0], sz[1], got)
+		}
+		var row string
+		for _, r := range rows[3:] {
+			if f := strings.Fields(r.text); len(f) > 2 && f[1] == "shop" {
+				row = r.text
+			}
+		}
+		if f := strings.Fields(row); len(f) < 5 || f[0] != "⟳" || f[2] != "soaking" || !strings.Contains(row, " failed") {
+			t.Errorf("%dx%d: the shop row is drawn %q, want ⟳, soaking and its failed newest deploy", sz[0], sz[1], row)
+		}
+		h.press("/", "shop", tcell.KeyEnter)
+		if strip := screenRows(h)[2].text; !strings.HasPrefix(strip, "⟳ shop         deploying") {
+			t.Errorf("%dx%d: the strip says %q, want the deploy in flight", sz[0], sz[1], strip)
+		}
+	}
+}
