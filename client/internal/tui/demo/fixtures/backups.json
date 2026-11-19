@@ -1,0 +1,25 @@
+{
+ "at": "@-8s",
+ "healthy": false,
+ "apps": [
+  {"name": "blog", "healthy": true, "result": "ok", "last_complete_backup": "@-42m", "fresh": true, "restore_proven": "@-3d", "restore_proven_lately": true},
+  {"name": "images", "healthy": false, "result": "ok", "last_complete_backup": "@-42m", "fresh": true, "restore_proven": null, "restore_proven_lately": false},
+  {"name": "shop", "healthy": true, "result": "ok", "last_complete_backup": "@-42m", "fresh": true, "restore_proven": "@-3d", "restore_proven_lately": true},
+  {"name": "wiki", "healthy": true, "result": "pending", "last_complete_backup": null, "fresh": false, "restore_proven": null, "restore_proven_lately": false}
+ ],
+ "running": [],
+ "unrecognised_units": [],
+ "lines": [
+  {"level": "info", "text": "last run 2026-11-15 07:01 UTC"},
+  {"level": "info", "text": "last drill 2026-11-12 03:10 UTC"},
+  {"level": "info", "text": "repository last checked 2026-11-12 03:10 UTC: its structure, and data group 46/52: clean"},
+  {"app": "blog", "level": "info", "text": "blog: ok: last complete backup 2026-11-15 07:01 UTC, snapshot c4f0d7c1 (data at /var/lib/liveswap/blog/shared)"},
+  {"app": "blog", "level": "info", "text": "blog: restore last proven: 2026-11-12 03:10 UTC, snapshot 9a1e33b0"},
+  {"app": "images", "level": "info", "text": "images: ok: last complete backup 2026-11-15 07:01 UTC, snapshot 51c0aa9e (data at /var/lib/liveswap/images/shared)"},
+  {"app": "images", "level": "problem", "text": "images: restore not proven: no drill of it has run; `motel-backup drill`, as root, proves it"},
+  {"app": "shop", "level": "info", "text": "shop: ok: last complete backup 2026-11-15 07:01 UTC, snapshot 7d2b9e40 (data at /var/lib/liveswap/shop/shared)"},
+  {"app": "shop", "level": "info", "text": "shop: restore last proven: 2026-11-12 03:10 UTC, snapshot 0c7e5d12"},
+  {"app": "wiki", "level": "info", "text": "wiki: pending first run: no data at /var/lib/liveswap/wiki/shared yet"},
+  {"level": "info", "text": "no backup unit running now"}
+ ]
+}

@@ -249,6 +249,59 @@ func (r *runner) boxStatus() *cobra.Command {
 	return c
 }
 
+func (r *runner) backupStatus() *cobra.Command {
+	var t target
+	c := &cobra.Command{
+		Use:   "status",
+		Short: "What the box says of its backups: fresh, and a restore proven (experimental)",
+		Long: "backup status reads GET /_motel/backups, for a viewer of the box: what\n" +
+			"motel-backup status says on the box, as any account there sees it. Each app's\n" +
+			"last complete backup, whether a restore of it was proven lately, and the box's\n" +
+			"own lines. It is the box's own claim, only as honest as the box: look from a\n" +
+			"machine of your own with restic too (docs/backups.md, \"Look from your own\n" +
+			"machine\"). It exits 0 when the box says its backups are healthy, 1 when it\n" +
+			"says they are not, and 3 when it could not tell, as motel-backup status does;\n" +
+			"--json prints the box's answer on 0 and 1. It is asked with your own key only:\n" +
+			"with MOTEL_TOKEN set, name the key with --key.\n\n" + experimental,
+		Args: usageArgs(cobra.NoArgs),
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			c, err := r.client(cmd.Context(), &t, nil, "", "backup status")
+			if err != nil {
+				return err
+			}
+			b, ans, err := c.Backups(cmd.Context())
+			if err != nil {
+				return fail(err)
+			}
+			// The box's verdict is its exit, as motel-backup status's is.
+			var verdict *client.Failure
+			switch {
+			case b.CouldNotTell != "":
+				verdict = &client.Failure{Exit: client.ExitUnknown, Message: fmt.Sprintf(
+					"%s could not tell how its backups are; the box says: %s", c.Box.Host, termtext.Quote(b.CouldNotTell))}
+			case !b.Healthy:
+				verdict = &client.Failure{Exit: client.ExitFailed, Status: ans.Code, Body: ans.Body, Message: fmt.Sprintf(
+					"%s says its backups are not healthy: the box's own claim, and its problem lines say why", c.Box.Host)}
+			}
+			switch {
+			case r.json && verdict == nil:
+				return r.emit(ans.Body)
+			case r.json:
+				return verdict
+			}
+			if err := render.WriteBackups(r.env.Stdout, backupsView(b, c.Box.Host)); err != nil {
+				return err
+			}
+			if verdict != nil {
+				return verdict
+			}
+			return nil
+		},
+	}
+	t.flags(c)
+	return c
+}
+
 func (r *runner) whoami() *cobra.Command {
 	var t target
 	c := &cobra.Command{

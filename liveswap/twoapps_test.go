@@ -217,7 +217,11 @@ func TestTwoAppsTwoPeople(t *testing.T) {
 				t.Fatal(err)
 			}
 			want := http.StatusUnauthorized // a deploy token is judged against the global sources: none here
-			if person(caller) {
+			switch {
+			case person(caller) && rt.action == access.BoxBackups && caller != "viewer of the box":
+				// The box's backups name every app: a viewer of the box's alone.
+				want = http.StatusForbidden
+			case person(caller):
 				want = http.StatusOK
 			}
 			if w.Code != want {

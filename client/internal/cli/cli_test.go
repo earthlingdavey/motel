@@ -75,13 +75,14 @@ func hostileDeploy() wire.DeployResult {
 // fakeBox answers as liveswap_webhook and box_webhook do, from the
 // wire types, encoded as the handlers encode them.
 type fakeBox struct {
-	srv    *httptest.Server
-	status wire.Status
-	deploy wire.DeployResult
-	whoami wire.WhoAmI
-	apps   wire.Apps
-	auth   []string
-	bodies map[string][]byte // what each target was answered
+	srv     *httptest.Server
+	status  wire.Status
+	deploy  wire.DeployResult
+	whoami  wire.WhoAmI
+	apps    wire.Apps
+	backups wire.Backups
+	auth    []string
+	bodies  map[string][]byte // what each target was answered
 }
 
 func encode(v any) []byte {
@@ -96,7 +97,7 @@ func encode(v any) []byte {
 
 func newFakeBox(t *testing.T) *fakeBox {
 	t.Helper()
-	fb := &fakeBox{status: hostileStatus(), deploy: hostileDeploy(), whoami: hostileWhoAmI(), apps: wire.Apps{Apps: []wire.AppEntry{{Name: "blog"}, {Name: "shop-2"}}}, bodies: map[string][]byte{}}
+	fb := &fakeBox{status: hostileStatus(), deploy: hostileDeploy(), whoami: hostileWhoAmI(), apps: wire.Apps{Apps: []wire.AppEntry{{Name: "blog"}, {Name: "shop-2"}}}, backups: hostileBackups(), bodies: map[string][]byte{}}
 	fb.srv = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		fb.auth = append(fb.auth, r.Header.Get("Authorization"))
 		code, body := http.StatusOK, []byte(nil)
@@ -105,6 +106,8 @@ func newFakeBox(t *testing.T) *fakeBox {
 			body = encode(fb.whoami)
 		case r.URL.Path == "/_motel/apps":
 			body = encode(fb.apps)
+		case r.URL.Path == "/_motel/backups":
+			body = encode(fb.backups)
 		case r.URL.Path == "/":
 			body = encode(wire.BoxStatus{Commit: "3f9c2a1e" + strings.Repeat("0", 32), BoxWebhook: "127.0.0.1", SHA256: strings.Repeat("9b", 32), Recipient: "age1" + hostile[0]})
 		case r.URL.Path != "/blog":

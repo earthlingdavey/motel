@@ -1111,6 +1111,23 @@ func TestMeAndBoxReads(t *testing.T) {
 	if n := count(sim(e, names(2), now, 2*time.Minute, 10*time.Millisecond, ok), model.KBox); len(n) != 0 {
 		t.Errorf("the box read %d times with its screen closed", len(n))
 	}
+	// The backups: read as the box is, while a screen that shows them is
+	// open (the backups screen, the box screen), and not otherwise.
+	now = now.Add(2 * time.Minute)
+	if n := count(sim(e, names(2), now, 2*time.Minute, 10*time.Millisecond, ok), model.KBackups); len(n) != 0 {
+		t.Errorf("the backups read %d times with no screen of them open", len(n))
+	}
+	now = now.Add(2 * time.Minute)
+	e.BackupsOpen(true, now)
+	backups := count(sim(e, names(2), now, 2*time.Minute, 10*time.Millisecond, ok), model.KBackups)
+	if len(backups) != 4 || backups[0].Sub(now) > time.Second || backups[1].Sub(backups[0]) < model.BoxEvery-time.Second {
+		t.Errorf("the backups open 2 minutes: read at %v", backups)
+	}
+	now = now.Add(2 * time.Minute)
+	e.BackupsOpen(false, now)
+	if n := count(sim(e, names(2), now, 2*time.Minute, 10*time.Millisecond, ok), model.KBackups); len(n) != 0 {
+		t.Errorf("the backups read %d times with their screen closed", len(n))
+	}
 }
 
 // takeMe takes reads at now, answering each, until whoami's is taken.

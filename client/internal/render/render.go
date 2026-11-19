@@ -177,6 +177,38 @@ type Role struct {
 	Scope termtext.Text
 }
 
+// Backups is GET /_motel/backups: what the box says of its own
+// backups, which is the box's claim and is said as such.
+type Backups struct {
+	// Host is the box asked; At is when the box decided.
+	Host termtext.Text
+	At   time.Time
+	// Healthy is the box's verdict, when it could tell: Why is then
+	// empty. Why is why it could not, as the box says it, quoted.
+	Healthy bool
+	Why     termtext.Text
+	Apps    []BackupApp
+	Lines   []BackupLine
+	// Claim is the client's sentence that this is the box's own claim,
+	// said last (model.OwnClaim, which the screen says too).
+	Claim string
+}
+
+// BackupApp is one app's row: its name and its last run's result as
+// the box's words (held to their grammars), and the client's own words
+// for the rest.
+type BackupApp struct {
+	Name, Result  termtext.Text
+	Last, Proven  string
+	Fresh, Lately bool
+}
+
+// BackupLine is one line of the box's text, and its level (info,
+// warning or problem; held to the three).
+type BackupLine struct {
+	Level, Text termtext.Text
+}
+
 // LineMax is the most of a box's free-text value, or of one line of a
 // log tail or a probe body, that a labelled line prints, in runes: the
 // rest is cut and the cut marked "…[cut]", so no value runs on for
@@ -429,6 +461,48 @@ func WriteBox(w io.Writer, b Box) error {
 	if !b.Recipient.Empty() {
 		p.line("key for secrets  %s", capped(b.Recipient))
 	}
+	return p.err
+}
+
+// WriteBackups writes what the box says of its backups: the verdict
+// first, as the box's, then a row an app, the box's lines, each
+// labelled by its level and capped, and that it is the box's claim.
+// The table's cells are words of their grammars (an app's name, a
+// result) or the client's own: no cell holds free text.
+func WriteBackups(w io.Writer, b Backups) error {
+	p := &printer{w: w}
+	at := b.At.UTC().Format("2006-01-02 15:04:05")
+	switch {
+	case !b.Why.Empty():
+		p.line("%s could not tell how its backups are (at %s UTC); the box says: %s", b.Host, at, b.Why)
+	case b.Healthy:
+		p.line("%s says its backups are healthy (at %s UTC)", b.Host, at)
+	default:
+		p.line("%s says its backups are not healthy (at %s UTC): a problem line below says why", b.Host, at)
+	}
+	if len(b.Apps) > 0 {
+		tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+		t := &printer{w: tw}
+		yes := map[bool]string{true: "yes", false: "no"}
+		t.line("APP\tRESULT\tLAST COMPLETE BACKUP (UTC)\tFRESH\tRESTORE PROVEN (UTC)\tLATELY")
+		for _, a := range b.Apps {
+			result := a.Result.String()
+			if result == "" {
+				result = "none"
+			}
+			t.line("%s\t%s\t%s\t%s\t%s\t%s", a.Name, result, a.Last, yes[a.Fresh], a.Proven, yes[a.Lately])
+		}
+		if p.err == nil {
+			p.err = t.err
+		}
+		if p.err == nil {
+			p.err = tw.Flush()
+		}
+	}
+	for _, l := range b.Lines {
+		p.line("%-8s %s", l.Level, capped(l.Text))
+	}
+	p.line("%s", b.Claim)
 	return p.err
 }
 

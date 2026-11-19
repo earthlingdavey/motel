@@ -245,6 +245,7 @@ func TestHeldCtrlRFloorsAcrossAStepBack(t *testing.T) {
 		{"a record", rec, func(e *model.Engine, now time.Time) { e.Focus("app-0", now); e.Once(rec, now) }},
 		{"who am I", model.Job{Kind: model.KWhoAmI}, func(e *model.Engine, now time.Time) { e.MeOpen(true, now) }},
 		{"the box", model.Job{Kind: model.KBox}, func(e *model.Engine, now time.Time) { e.BoxOpen(true, now) }},
+		{"the backups", model.Job{Kind: model.KBackups}, func(e *model.Engine, now time.Time) { e.BackupsOpen(true, now) }},
 		// The list's floor is its own (ListAgainAfter, from its last read).
 		{"the list", model.Job{Kind: model.KApps}, func(*model.Engine, time.Time) {}},
 	}

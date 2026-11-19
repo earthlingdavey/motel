@@ -37,6 +37,11 @@ type Session struct {
 	ListErr error
 	BoxSt   *Got[wire.BoxStatus]
 	BoxErr  error
+	// BackupsSt is the box's answer about its backups, BackupsErr its
+	// newest read's failure: read while the backups screen or the box
+	// screen is open.
+	BackupsSt  *Got[wire.Backups]
+	BackupsErr error
 	// Signing is set while a token is being signed: a hardware key
 	// waits for its touch.
 	Signing bool
@@ -149,6 +154,9 @@ func (s *Session) seen(now time.Time) {
 		if s.BoxSt != nil {
 			move(&s.BoxSt.At)
 		}
+		if s.BackupsSt != nil {
+			move(&s.BackupsSt.At)
+		}
 		for _, a := range s.apps {
 			if a.st != nil {
 				move(&a.st.At)
@@ -166,13 +174,15 @@ func (s *Session) seen(now time.Time) {
 
 // forget drops everything the box said, after it answered about another
 // key or box: who it said you are, its list, every status and record,
-// the box's own answer, and the JSON made of one. Nothing it said before
+// the box's own answers (its status, its backups), and the JSON made of
+// one. Nothing it said before
 // can be told from what such a box would say, so none of it is shown;
 // after r, the session fills again from empty.
 func (s *Session) forget() {
 	s.Me, s.MeErr = nil, nil
 	s.List, s.ListErr = nil, nil
 	s.BoxSt, s.BoxErr = nil, nil
+	s.BackupsSt, s.BackupsErr = nil, nil
 	s.apps, s.records = nil, nil
 	s.json.key, s.json.lines = jsonKey{}, nil
 }
@@ -180,7 +190,7 @@ func (s *Session) forget() {
 // Forgotten says whether the session holds nothing the box said: true
 // at the start, and after an answer about another key or box.
 func (s *Session) Forgotten() bool {
-	return s.Me == nil && s.List == nil && s.ListErr == nil && s.BoxSt == nil && s.BoxErr == nil && len(s.apps) == 0 && len(s.records) == 0 && s.json.lines == nil
+	return s.Me == nil && s.List == nil && s.ListErr == nil && s.BoxSt == nil && s.BoxErr == nil && s.BackupsSt == nil && s.BackupsErr == nil && len(s.apps) == 0 && len(s.records) == 0 && s.json.lines == nil
 }
 
 func (s *Session) app(name string) *appData {

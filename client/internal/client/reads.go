@@ -87,6 +87,15 @@ func (c *Client) BoxStatus(ctx context.Context) (wire.BoxStatus, *Answer, error)
 	return b, ans, err
 }
 
+// Backups is `motel backup status`: GET /_motel/backups, what the box
+// says of its own backups (`motel-backup status --json` as any account
+// on the box looks), for a viewer of the box.
+func (c *Client) Backups(ctx context.Context) (wire.Backups, *Answer, error) {
+	var b wire.Backups
+	ans, err := c.read(ctx, "/_motel/backups", nil, &b)
+	return b, ans, err
+}
+
 // read is Get, then Read into v. An error is a *Failure, or the
 // context's own when it ended; a signing error, which sent nothing,
 // is a usage failure, as the commands have always said it.

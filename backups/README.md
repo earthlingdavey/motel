@@ -786,7 +786,13 @@ goes to stdout, and what goes to stderr is what goes there without the
 flag. A stdout that takes none of it (a full disk) is named on stderr,
 with or without the flag: a report its reader never got exits 1, not
 0, and could not tell stays 3. The text and the JSON are printed from one `status.Result`
-(`backups/status/status.go`): the text is its `lines`, one per line.
+(`backups/status/status.go`; the type is `liveswap/wire`'s `Backups`,
+so a client decodes it without linking this module): the text is its
+`lines`, one per line. moteld answers the same object over HTTPS, at
+`GET /_motel/backups`, to a person with the viewer role on the box
+(docs/people.md; `motel backup status` on a laptop): it looks as the
+motel user, the same way (`backups/look`), so with no `warning:` lines
+of the credential file, and keeps its answer 10 s.
 This object is the contract; `status.json`, the record it is read
 from, is not, and its fields may change in any release. The shape is
 pinned whole by `backups/cmd/motel-backup/testdata/status-*.json`:

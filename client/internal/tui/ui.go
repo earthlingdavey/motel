@@ -226,6 +226,7 @@ func (u *UI) show() {
 	}
 	u.inFront = v
 	u.S.Engine.BoxOpen(v.Screen == model.ScreenBox, now)
+	u.S.Engine.BackupsOpen(v.Screen == model.ScreenBackups || v.Screen == model.ScreenBox, now)
 	u.S.Engine.MeOpen(v.Screen == model.ScreenMe, now)
 	if u.overlay != 0 {
 		u.root.ShowPage("overlay")
@@ -302,7 +303,8 @@ func (u *UI) retry() {
 
 // shown is the reads behind what v shows, for ctrl-r: the list and every
 // app's row; an app's status; a record, and the status beside it;
-// whoami; the box; nothing on help.
+// whoami; the box and its backups (the box screen has a line of them);
+// the backups; nothing on help.
 func (u *UI) shown(v model.View) []model.Job {
 	st := func(a string) model.Job { return model.Job{Kind: model.KStatus, App: a} }
 	switch v.Screen {
@@ -319,7 +321,9 @@ func (u *UI) shown(v model.View) []model.Job {
 	case model.ScreenMe:
 		return []model.Job{{Kind: model.KWhoAmI}}
 	case model.ScreenBox:
-		return []model.Job{{Kind: model.KBox}}
+		return []model.Job{{Kind: model.KBox}, {Kind: model.KBackups}}
+	case model.ScreenBackups:
+		return []model.Job{{Kind: model.KBackups}}
 	}
 	return nil
 }

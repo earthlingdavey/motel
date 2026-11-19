@@ -151,6 +151,30 @@ func boxView(b wire.BoxStatus, asked string) render.Box {
 	return render.Box{Host: tx(asked), Commit: tx(b.Commit), SHA256: tx(b.SHA256), Recipient: tx(b.Recipient), Edited: b.OutOfBand}
 }
 
+// backupsView names the host asked for. Every name, result and level
+// in b was held to its grammar (client's hold); the times are the
+// client's own words.
+func backupsView(b wire.Backups, asked string) render.Backups {
+	when := func(t *time.Time, none string) string {
+		if t == nil {
+			return none
+		}
+		return t.UTC().Format("2006-01-02 15:04")
+	}
+	v := render.Backups{Host: tx(asked), At: b.At, Healthy: b.Healthy && b.CouldNotTell == "", Claim: model.OwnClaim}
+	if b.CouldNotTell != "" {
+		v.Why = termtext.Quote(b.CouldNotTell)
+	}
+	for _, a := range b.Apps {
+		v.Apps = append(v.Apps, render.BackupApp{Name: tx(a.Name), Result: tx(a.Result),
+			Last: when(a.LastCompleteBackup, "none"), Proven: when(a.RestoreProven, "never"), Fresh: a.Fresh, Lately: a.RestoreProvenLately})
+	}
+	for _, l := range b.Lines {
+		v.Lines = append(v.Lines, render.BackupLine{Level: tx(l.Level), Text: tx(model.LineText(l))})
+	}
+	return v
+}
+
 // whoamiView is the box's answer beside what this side knows: the box
 // asked, the key that signed and where it came from, and the clock the
 // expiry is told against. The key and box shown are this side's; the

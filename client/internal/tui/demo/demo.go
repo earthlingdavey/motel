@@ -34,7 +34,7 @@ type Fake struct {
 	Delay time.Duration
 
 	mu sync.Mutex
-	// Errs makes a read fail: keyed "whoami", "apps", "box", an app's
+	// Errs makes a read fail: keyed "whoami", "apps", "box", "backups", an app's
 	// name, or "<app>@<version>".
 	Errs map[string]error
 	// Bodies replaces a fixture's body, keyed by its path in fixtures/.
@@ -164,6 +164,14 @@ func (f *Fake) Deploy(ctx context.Context, app, version string) (model.Got[wire.
 func (f *Fake) BoxStatus(ctx context.Context) (model.Got[wire.BoxStatus], error) {
 	var g model.Got[wire.BoxStatus]
 	b, err := f.load(ctx, model.Job{Kind: model.KBox}, "box", "box.json", &g.V)
+	g.Body = b
+	return g, err
+}
+
+// Backups answers backups.json.
+func (f *Fake) Backups(ctx context.Context) (model.Got[wire.Backups], error) {
+	var g model.Got[wire.Backups]
+	b, err := f.load(ctx, model.Job{Kind: model.KBackups}, "backups", "backups.json", &g.V)
 	g.Body = b
 	return g, err
 }

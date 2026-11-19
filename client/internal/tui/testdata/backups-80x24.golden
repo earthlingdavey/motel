@@ -1,0 +1,24 @@
+motel · deploy.example.com · v0.7.0 │ alice@example.com · viewer … live · 0s ago
+:backups                                             as of 14:12:40 UTC · 0s ago
+backups     not healthy, the box says
+            decided 14:12:32 UTC, 8s ago · the box's claim
+
+  APP     RESULT   LAST COMPLETE BACKUP  FRESH  RESTORE PROVEN        LATELY
+  blog    ok       13:30 (42m ago)       yes    11-12 14:12 (3d ago)  yes
+▲ images  ok       13:30 (42m ago)       yes    never                 no
+  shop    ok       13:30 (42m ago)       yes    11-12 14:12 (3d ago)  yes
+  wiki    pending  none                  no     never                 no
+
+what the box says
+  info     last run 2026-11-15 07:01 UTC
+  info     last drill 2026-11-12 03:10 UTC
+  info     repository last checked 2026-11-12 03:10 UTC: its structure, and dat…
+  info     blog: ok: last complete backup 2026-11-15 07:01 UTC, snapshot c4f0d7…
+  info     blog: restore last proven: 2026-11-12 03:10 UTC, snapshot 9a1e33b0
+  info     images: ok: last complete backup 2026-11-15 07:01 UTC, snapshot 51c0…
+▲ problem  images: restore not proven: no drill of it has run; `motel-backup dr…
+  info     shop: ok: last complete backup 2026-11-15 07:01 UTC, snapshot 7d2b9e…
+  info     shop: restore last proven: 2026-11-12 03:10 UTC, snapshot 0c7e5d12
+  info     wiki: pending first run: no data at /var/lib/liveswap/wiki/shared yet
+  info     no backup unit running now
+↑↓ scroll  y json  c command  esc back  ? more

@@ -33,6 +33,7 @@ type motelRoute struct {
 var motelRoutes = []motelRoute{
 	{motelPrefix + "/whoami", access.BoxWhoami, (*Handler).whoami},
 	{motelPrefix + "/apps", access.BoxApps, (*Handler).apps},
+	{motelPrefix + "/backups", access.BoxBackups, (*Handler).backups},
 }
 
 // findMotelRoute is the request's row, or nil: any other method, path

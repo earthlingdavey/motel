@@ -16,7 +16,8 @@ import (
 )
 
 // Client is one method per command the TUI reads with: whoami, apps,
-// status <app>, deploys <app> <version>, box status. Each returns the box's value
+// status <app>, deploys <app> <version>, box status, backup status.
+// Each returns the box's value
 // and its body as received. An error is a *Failure, or the context's
 // own when it ended.
 type Client interface {
@@ -27,6 +28,8 @@ type Client interface {
 	Status(ctx context.Context, app string) (Got[wire.Status], error)
 	Deploy(ctx context.Context, app, version string) (Got[wire.DeployResult], error)
 	BoxStatus(ctx context.Context) (Got[wire.BoxStatus], error)
+	// Backups is what the box says of its backups: its own claim.
+	Backups(ctx context.Context) (Got[wire.Backups], error)
 }
 
 // Got is one answer: the value, the body as received, and when it

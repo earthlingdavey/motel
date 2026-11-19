@@ -41,6 +41,8 @@ restored=
 restore() {
 	[ -n "$restored" ] && return 0
 	restored=1
+	# What people 2b put in place for a backups read, and nothing else.
+	[ -n "${backups_made:-}" ] && rm -rf /etc/motel-backup /var/lib/motel-backup
 	cat "$work/hosts" >/etc/hosts
 	cp "$work/original" "$LIVE.e2e-tmp" && chmod 0644 "$LIVE.e2e-tmp" && mv "$LIVE.e2e-tmp" "$LIVE" \
 		&& rm -f "$BOXDIR/applied.json" \
@@ -363,6 +365,34 @@ expect "nora: apps --json" 0
 client whoami --json --box "$HOST" --key "$work/nora"
 [ "$(jget "$work/out" 'j.name + " " + JSON.stringify(j.roles)')" = "nora@e2e.test []" ] && pass "nora: whoami --json holds her name and no role" \
 	|| fail "nora: whoami --json: $(cat "$work/out")"
+
+echo "=== people 2b: the box's backups, read as the motel user inside moteld.service ==="
+# What a set-up box has, in setup's and a run's modes: the credential
+# file (only its name is looked at: whether it is there, and since
+# when) in a root-owned 0755 directory, 0600; the record a run leaves,
+# 0644 in a 0755 directory. moteld looks as the motel user, inside the
+# unit: the Lstat, the record read and the system manager's listing.
+if [ -e /etc/motel-backup ] || [ -e /var/lib/motel-backup ]; then
+	fail "the e2e box already has backups' files: this case would change them"
+else
+	backups_made=1
+	install -d -o root -g root -m 0755 /etc/motel-backup /var/lib/motel-backup
+	install -o root -g root -m 0600 /dev/null /etc/motel-backup/repository.env
+	at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+	printf '{"started":"%s","finished":"%s","apps":{}}\n' "$at" "$at" >/var/lib/motel-backup/status.json
+	chmod 0644 /var/lib/motel-backup/status.json
+	client backup status --json --box "$HOST" --key "$work/vera"
+	expect "vera: backup status --json, the box's verdict healthy" 0
+	# Each step by a line only it gives: "last run" only a record read
+	# and parsed (one not there reads as no run yet), "no backup unit
+	# running now" only a listing the manager answered.
+	[ "$(jget "$work/out" '(j.could_not_tell === undefined) + " " + j.healthy + " " + j.lines.some(l => l.text.startsWith("last run ")) + " " + j.lines.some(l => l.text === "no backup unit running now")')" = "true true true true" ] \
+		&& pass "vera: the box looked as the motel user: set up, the record read, the manager asked" \
+		|| fail "vera: backup status --json: $(head -c 600 "$work/out")"
+	client backup status --box "$HOST" --key "$work/otto"
+	expect "otto, a viewer of demo alone: backup status is refused" 5
+	has "otto: told it needs the viewer role on the box" "$work/err" "it needs the viewer role on the box"
+fi
 
 echo "=== people 3: every refusal is the flat 401, byte for byte, and names no motel ==="
 moteld deploy-keygen --out "$work/other.key" >/dev/null 2>&1

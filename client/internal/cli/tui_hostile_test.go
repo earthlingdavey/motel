@@ -114,6 +114,7 @@ func newHostileRun(t *testing.T, bodies map[string]any) *hostileRun {
 	h.s.Engine.Focus("blog", h.now)
 	h.s.Engine.Once(model.Job{Kind: model.KDeploy, App: "blog", Version: "v7"}, h.now)
 	h.s.Engine.BoxOpen(true, h.now)
+	h.s.Engine.BackupsOpen(true, h.now)
 	h.read()
 	return h
 }
@@ -187,7 +188,8 @@ func TestHostileThroughTheClient(t *testing.T) {
 
 	// The fixture as it is: the client does not take its status (a
 	// watchdog state outside the grammar), and does take its record.
-	asIs := map[string]any{"/_motel/whoami": who, "/_motel/apps": apps, "/blog": status, "/blog?deploy=v7": record, "/": box}
+	backups := fixture(t, "backups.json")
+	asIs := map[string]any{"/_motel/whoami": who, "/_motel/apps": apps, "/blog": status, "/blog?deploy=v7": record, "/": box, "/_motel/backups": backups}
 
 	// Taken: the status held to its grammars, and every free-text field
 	// of each answer the client takes carrying every attack.
@@ -215,7 +217,12 @@ func TestHostileThroughTheClient(t *testing.T) {
 	free(taken["last_deploy"].(map[string]any))
 	takenBox := fixture(t, "box.json")
 	takenBox["box_webhook"], takenBox["recipient"] = "127.0.0.1", a
-	every := map[string]any{"/_motel/whoami": who, "/_motel/apps": apps, "/blog": taken, "/blog?deploy=v7": free(fixture(t, "deploys/hostile/v7.json")), "/": takenBox}
+	takenBackups := fixture(t, "backups.json")
+	for _, l := range takenBackups["lines"].([]any) {
+		l.(map[string]any)["text"] = a
+	}
+	takenBackups["could_not_tell"] = a
+	every := map[string]any{"/_motel/whoami": who, "/_motel/apps": apps, "/blog": taken, "/blog?deploy=v7": free(fixture(t, "deploys/hostile/v7.json")), "/": takenBox, "/_motel/backups": takenBackups}
 
 	views := []struct {
 		name string
@@ -229,6 +236,8 @@ func TestHostileThroughTheClient(t *testing.T) {
 		{"the record's answer", model.View{Screen: model.ScreenRecord, App: "blog", Version: "v7"}, "y"},
 		{"the box", model.View{Screen: model.ScreenBox}, ""},
 		{"the box's answer", model.View{Screen: model.ScreenBox}, "y"},
+		{"the backups", model.View{Screen: model.ScreenBackups}, ""},
+		{"the backups' answer", model.View{Screen: model.ScreenBackups}, "y"},
 	}
 	for _, c := range []struct {
 		name   string
@@ -241,7 +250,8 @@ func TestHostileThroughTheClient(t *testing.T) {
 			"blog": "not moteld's answer", "the record": "evil.example", "the record's answer": "evil.example"}},
 		{"every free-text field", every, map[string]string{
 			"blog": "evil.example", "blog's answer": "evil.example",
-			"the record": "evil.example", "the record's answer": "evil.example", "the box's answer": "evil.example"}},
+			"the record": "evil.example", "the record's answer": "evil.example", "the box's answer": "evil.example",
+			"the backups": "evil.example", "the backups' answer": "evil.example"}},
 	} {
 		h := newHostileRun(t, c.bodies)
 		if h.s.Engine.Stopped() != model.Running || h.s.Me == nil || len(h.s.Names()) != 1 {

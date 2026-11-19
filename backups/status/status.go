@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/smallhoursorg/motel/backups/record"
+	"github.com/smallhoursorg/motel/liveswap/wire"
 )
 
 const (
@@ -55,36 +56,19 @@ type Input struct {
 }
 
 // Result is what status decides: the lines it prints, and the facts of
-// each, for whoever reads it as JSON (`motel-backup status --json`).
-// Its JSON is a contract (backups/README.md "Status"); the record it
-// is read from is not.
-type Result struct {
-	// At is when it was decided, which every age is reckoned from.
-	At time.Time `json:"at"`
-	// Healthy is what the exit status says: 0, where it is.
-	Healthy bool `json:"healthy"`
-	// CouldNotTell is why status could not look, where it could not:
-	// the exit status 3.
-	CouldNotTell string `json:"could_not_tell,omitempty"`
-	Apps         []App  `json:"apps"`
-	Running      []Unit `json:"running"`
-	// UnrecognisedUnits are units the manager holds whose name says
-	// nothing here.
-	UnrecognisedUnits []string `json:"unrecognised_units"`
-	// Lines are what the text says, in its order.
-	Lines []Line `json:"lines"`
-}
-
-// Line is one line of the text.
-type Line struct {
-	// App is the app the line is of; none for the run, the repository
-	// and a unit of no app.
-	App string `json:"app,omitempty"`
-	// Level is problem for a line that makes status unhealthy, warning
-	// for a warning: line, info for any other.
-	Level string `json:"level"`
-	Text  string `json:"text"`
-}
+// each, for whoever reads it as JSON (`motel-backup status --json`), and
+// GET /_motel/backups's body, which a person with the viewer role on the
+// box reads over HTTPS. Its JSON is a contract (backups/README.md
+// "Status"); the record it is read from is not. The types are
+// liveswap/wire's, which imports only the standard library, so that a
+// client decodes the answer into the very type marshalled here; their
+// fields are documented there.
+type (
+	Result = wire.Backups
+	Line   = wire.BackupLine
+	App    = wire.BackupApp
+	Unit   = wire.BackupUnit
+)
 
 // The levels of a Line.
 const (
@@ -93,35 +77,8 @@ const (
 	Problem = "problem"
 )
 
-// App is what status decides of one app.
-type App struct {
-	Name string `json:"name"`
-	// Healthy is that no line of this app is a problem.
-	Healthy bool `json:"healthy"`
-	// Result is how the last run ended for it (record.Class); empty
-	// where the record holds no result for it.
-	Result string `json:"result"`
-	// LastCompleteBackup is when it was made; Fresh that it is no more
-	// than StaleAfter old and no listing since has missed it.
-	LastCompleteBackup *time.Time `json:"last_complete_backup"`
-	Fresh              bool       `json:"fresh"`
-	// RestoreProven is when a drill last proved a restore of it;
-	// RestoreProvenLately that it is no more than ProvenOldAfter ago and
-	// no drill since failed.
-	RestoreProven       *time.Time `json:"restore_proven"`
-	RestoreProvenLately bool       `json:"restore_proven_lately"`
-}
-
-// Unit is one unit of Running, as said.
-type Unit struct {
-	Role  string     `json:"role"`
-	App   string     `json:"app,omitempty"`
-	State string     `json:"state"`
-	Since *time.Time `json:"since,omitempty"`
-}
-
 // Text is the lines as status prints them.
-func (r Result) Text() []string {
+func Text(r Result) []string {
 	out := make([]string, len(r.Lines))
 	for i, l := range r.Lines {
 		out[i] = l.Text
