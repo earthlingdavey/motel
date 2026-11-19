@@ -27,25 +27,38 @@ type watched struct {
 
 // watch lets the clock run for d, a second at a time, a key pressed at
 // each so that polling never pauses, making every read due; it reads
-// the title bar's word off the screen each second, and counts the reads
-// made of each kind, and when j was read.
+// the title bar's word off the screen each second, from a frame drawn
+// once that second's reads are applied, and counts the reads made of
+// each kind, and when j was read. No frame is drawn between: none is
+// read.
 func (h *harness) watch(d time.Duration, j model.Job) watched {
+	return h.letRun(d, j, true)
+}
+
+// walk is watch for a test that reads no screen while the clock runs:
+// the same reads at the same seconds, each answer applied on the event
+// loop, and one frame drawn at the end, when the title bar's word is
+// read once, as last (words is left empty).
+func (h *harness) walk(d time.Duration, j model.Job) watched {
+	return h.letRun(d, j, false)
+}
+
+func (h *harness) letRun(d time.Duration, j model.Job, each bool) watched {
 	w := watched{words: map[string]int{}, kinds: map[model.Kind]int{}, jobs: map[model.Job]int{}}
 	before := len(h.fake.Calls)
 	for end := h.now.Add(d); h.now.Before(end); {
 		h.now = h.now.Add(time.Second)
 		h.loop(func() { h.u.S.Engine.Touch(h.now) })
-		h.pump()
-		h.sync()
-		title, _, _ := strings.Cut(h.screen(), "\n")
-		word := "?"
-		for _, x := range []string{"live ·", "slow ·", "back ·", "STALE ·"} {
-			if strings.Contains(title, x) {
-				word = strings.TrimSuffix(x, " ·")
-			}
+		h.pumpUnseen()
+		if each {
+			h.sync()
+			w.last = h.titleWord()
+			w.words[w.last]++
 		}
-		w.words[word]++
-		w.last = word
+	}
+	if !each {
+		h.sync()
+		w.last = h.titleWord()
 	}
 	for _, c := range h.fake.Calls[before:] {
 		w.kinds[c.Job.Kind]++
@@ -55,6 +68,19 @@ func (h *harness) watch(d time.Duration, j model.Job) watched {
 		}
 	}
 	return w
+}
+
+// titleWord is the title bar's freshness word on screen now: live,
+// slow, back, STALE, or ? for none.
+func (h *harness) titleWord() string {
+	title, _, _ := strings.Cut(h.screen(), "\n")
+	word := "?"
+	for _, x := range []string{"live ·", "slow ·", "back ·", "STALE ·"} {
+		if strings.Contains(title, x) {
+			word = strings.TrimSuffix(x, " ·")
+		}
+	}
+	return word
 }
 
 // backsOff says whether the reads at ts come further apart, to 60 s.

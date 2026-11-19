@@ -77,8 +77,15 @@ func startOn(t *testing.T, scr tcell.Screen, setup func(*demo.Fake)) *harness {
 	return hs
 }
 
-// pump makes every read the engine would make now, in its order.
-func (h *harness) pump() {
+// pump makes every read the engine would make now, in its order, each
+// answer applied on the event loop with its frame.
+func (h *harness) pump() { h.reads(true) }
+
+// pumpUnseen is pump with no frame drawn, for a step no one reads the
+// screen after.
+func (h *harness) pumpUnseen() { h.reads(false) }
+
+func (h *harness) reads(frames bool) {
 	s := h.s
 	for range 200 {
 		j, ok, _ := s.Engine.Take(h.now)
@@ -89,9 +96,12 @@ func (h *harness) pump() {
 		// applied and the screen looks for a stop.
 		apply, err := s.Fetch(context.Background(), h.fake, j)
 		s.Engine.Done(j, h.now, err)
-		if h.u != nil {
+		switch {
+		case h.u != nil && frames:
 			h.on(func() { apply(); h.u.stopped() })
-		} else {
+		case h.u != nil:
+			h.loop(func() { apply(); h.u.stopped() })
+		default:
 			apply()
 		}
 	}

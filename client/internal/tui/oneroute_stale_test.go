@@ -15,7 +15,7 @@ import (
 func TestOneRouteStaleCounted(t *testing.T) {
 	h := start(t, 100, 30, nil)
 	h.fake.Set("blog", fiveHundred())
-	w := h.watch(5*time.Minute, model.Job{Kind: model.KStatus, App: "blog"})
+	w := h.walk(5*time.Minute, model.Job{Kind: model.KStatus, App: "blog"})
 	if w.last != "live" {
 		t.Errorf("the title bar's word at the end: %q (%v)", w.last, w.words)
 	}
