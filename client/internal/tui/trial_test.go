@@ -259,3 +259,17 @@ func TestCaddyfileDigestWhole(t *testing.T) {
 	}
 	t.Error("no Caddyfile line on the box screen")
 }
+
+// TestColonRemedyFirst: what a mistyped : command gets back begins with
+// where to find what : takes, so the remedy is on screen beside the
+// crumb's right side at 60 columns, where the trial saw the sentence
+// cut before it.
+func TestColonRemedyFirst(t *testing.T) {
+	for _, w := range []int{60, 80} {
+		h := start(t, w, 16, nil)
+		h.press(":", "bogus", tcell.KeyEnter)
+		if got := screenRows(h)[1].text; !strings.HasPrefix(got, "? lists the : views") {
+			t.Errorf("%d columns: the crumb's row is drawn %q", w, got)
+		}
+	}
+}
