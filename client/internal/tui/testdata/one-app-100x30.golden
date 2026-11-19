@@ -3,9 +3,9 @@ apps › blog                                                              as of
 state       running 7c1e55d0a913 · pid 41233 · unit motel-blog.7c1e55d0a913.3f9a0c21d4e8b7a6.service
 alerts      2 held · as of 0s ago
 alert       deploy_failed · warning · silenced until 15:12 UTC · since 3m ago (14:09 UTC)
-            deploy of e9a0b3f2c118 failed at starting
+summary     deploy of e9a0b3f2c118 failed at starting
 alert       errors_high · warning · since 25m ago (13:47 UTC)
-            blog: 5xx_share has been above 5 % for 10m (rule errors_high); now 7.2 %
+summary     blog: 5xx_share has been above 5 % for 10m (rule errors_high); now 7.2 %
 watchdog    watching · 0 restarts in its window
 deployed    succeeded 2h ago (12:12 UTC, 41 s) by github:example/blog@refs/heads/main
 memory      182 MiB now · 210 MiB max · cap 512 MiB  ███████░░░░░░░░░░░░░ 36% of cap

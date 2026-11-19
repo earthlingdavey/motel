@@ -91,7 +91,7 @@ func TestAlertLines(t *testing.T) {
 	lines := func() []string {
 		var out []string
 		for _, l := range s.Overview("blog", now).Fields {
-			if t := l.Text(); strings.HasPrefix(t, "alert") || strings.HasPrefix(t, "            ") {
+			if t := l.Text(); strings.HasPrefix(t, "alert") || strings.HasPrefix(t, "summary") || strings.HasPrefix(t, "            ") {
 				out = append(out, t)
 			}
 		}
@@ -108,7 +108,7 @@ func TestAlertLines(t *testing.T) {
 	for _, want := range []string{
 		"alerts      2 held · as of ",
 		"alert       deploy_failed · warning · silenced until 15:",
-		"            deploy of e9a0b3f2c118 failed at starting",
+		"summary     deploy of e9a0b3f2c118 failed at starting",
 		"alert       errors_high · warning · since 25m ago",
 	} {
 		if !strings.Contains(got, want) {
@@ -121,7 +121,7 @@ func TestAlertLines(t *testing.T) {
 		{`{"monitor":"later","alerts":[]}`, "alerts      not known: the box says later of its monitor"},
 		{`{"monitor":"on","alerts":[]}`, "alerts      none held"},
 		{`{"monitor":"on","alerts":[` + strings.Repeat(`{"name":"a","severity":"info","summary":"","starts_at":"@-1m","state":"unprocessed"},`, 4) +
-			`{"name":"a","severity":"info","summary":"","starts_at":"@-1m","state":"unprocessed"}]}`, "            and 2 more: motel monitor alerts --app blog lists them"},
+			`{"name":"a","severity":"info","summary":"","starts_at":"@-1m","state":"unprocessed"}]}`, "            and 2 more: motel monitor alerts --box deploy.example.com --app blog lists them"},
 		{`{"monitor":"on","alerts":[{"name":"a","severity":"info","summary":"","starts_at":"@-1m","state":"unprocessed"}]}`, "alert       a · info · unprocessed · since 1m ago"},
 	} {
 		f.Body("alerts/blog.json", c.body)
@@ -143,5 +143,91 @@ func TestAlertLines(t *testing.T) {
 	readAll()
 	if got := lines(); len(got) != 1 || got[0] != "alerts      this box does not offer an app's alerts" {
 		t.Errorf("a 404: %q", got)
+	}
+}
+
+// TestAlertsReopened: an app's screen opened again within AlertsEvery
+// of its alerts' answer reads them when that answer is AlertsEvery old,
+// not at once; refused (a box older than the read answers 404) they
+// are not asked again by opening the screen, only by ctrl-r.
+func TestAlertsReopened(t *testing.T) {
+	e := model.NewEngine(t0)
+	j := model.Job{Kind: model.KAlerts, App: "app-1"}
+	sim(e, names(3), t0, 10*time.Second, 10*time.Millisecond, ok)
+	open := t0.Add(10 * time.Second)
+	e.Focus("app-1", open)
+	e.AlertsOpen("app-1", open)
+	calls := sim(e, names(3), open, 2*time.Second, 10*time.Millisecond, ok)
+	var answered time.Time
+	for _, c := range calls {
+		if c.j == j {
+			answered = c.at
+		}
+	}
+	if answered.IsZero() {
+		t.Fatal("the alerts were not read on opening the screen")
+	}
+	at := open.Add(2 * time.Second)
+	e.AlertsOpen("", at)
+	e.AlertsOpen("app-1", at.Add(3*time.Second))
+	calls = sim(e, names(3), at.Add(3*time.Second), 20*time.Second, 10*time.Millisecond, ok)
+	for _, c := range calls {
+		if c.j == j {
+			if d := c.at.Sub(answered); d < model.AlertsEvery {
+				t.Errorf("read again %s after its answer, on opening the screen again", d)
+			}
+			break
+		}
+	}
+	at = at.Add(23 * time.Second)
+	notFound := func(k model.Job, _ time.Time) error {
+		if k == j {
+			return fail(model.FailNotFound)
+		}
+		return nil
+	}
+	sim(e, names(3), at, 20*time.Second, 10*time.Millisecond, notFound)
+	at = at.Add(20 * time.Second)
+	e.AlertsOpen("", at)
+	e.AlertsOpen("app-1", at)
+	calls = sim(e, names(3), at, time.Minute, 10*time.Millisecond, notFound)
+	for _, c := range calls {
+		if c.j == j {
+			t.Fatalf("a refused read asked again by opening the screen, at +%s", c.at.Sub(at))
+		}
+	}
+	at = at.Add(time.Minute)
+	e.Again(at, j)
+	calls = sim(e, names(3), at, 2*time.Second, 10*time.Millisecond, notFound)
+	n := 0
+	for _, c := range calls {
+		if c.j == j {
+			n++
+		}
+	}
+	if n != 1 {
+		t.Errorf("ctrl-r asked the refused read %d times", n)
+	}
+}
+
+// TestOldBoxAlertsNotRefused: a box older than the alerts read answers
+// it 404, which the app's screen says; the title bar does not call it a
+// refusal.
+func TestOldBoxAlertsNotRefused(t *testing.T) {
+	now := t0
+	f := &demo.Fake{Now: func() time.Time { return now }}
+	f.Body("apps.json", `{"apps": [{"name": "blog"}]}`)
+	f.Set("alerts:blog", &model.Failure{Kind: model.FailNotFound, Message: "deploy.example.com answered 404"})
+	s := &model.Session{Host: demo.Host, Now: f.Now, Engine: model.NewEngine(t0)}
+	s.Engine.Focus("blog", now)
+	s.Engine.AlertsOpen("blog", now)
+	for range 8 {
+		if j := step(t, s, f, &now); j.Kind == model.KAlerts {
+			break
+		}
+	}
+	a, b := s.Title(now)
+	if title := a.Text() + b.Text(); strings.Contains(title, "refused") {
+		t.Errorf("the title bar says %q after the alerts' 404", title)
 	}
 }

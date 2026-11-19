@@ -79,18 +79,14 @@ func (r *runner) monitorAlerts() *cobra.Command {
 					"%s answered about %s's alerts in a word for its monitor this client does not know (%s): it cannot tell what fires", c.Box.Host, app.Name, a.Monitor)}
 			}
 			switch {
-			case r.json && unknown == nil:
-				return r.emit(ans.Body)
+			case unknown != nil:
+				// Said once, as the client's own sentence: stderr's last
+				// line, and --json's object.
+				return unknown
 			case r.json:
-				return unknown
+				return r.emit(ans.Body)
 			}
-			if err := render.WriteAlerts(r.env.Stdout, alertsView(a, app.Name, c.Box.Host)); err != nil {
-				return err
-			}
-			if unknown != nil {
-				return unknown
-			}
-			return nil
+			return render.WriteAlerts(r.env.Stdout, alertsView(a, app.Name, c.Box.Host))
 		},
 	}
 	t.flags(c)

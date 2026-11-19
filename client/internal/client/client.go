@@ -566,15 +566,17 @@ var (
 	// run): lowercase words, printed as the box's word in a column of
 	// their own, so a class a later box adds is shown, not refused.
 	backupResultRe = regexp.MustCompile(`^[a-z]{1,16}( [a-z]{1,16}){0,3}$`)
-	// alertNameRe is an alertname as motel's alerts carry one: its own
-	// events (notify/DESIGN-notify.md, "Events"), an operator's rule
-	// (notify's ruleNameRe), an external producer's (notify/admin.go's
-	// alertRe), and the store's chain events. It is printed as a word.
-	alertNameRe = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_]{0,63}$`)
+	// alertNameRe is an alertname as motel's alerts carry one (its own
+	// events, notify/DESIGN-notify.md "Events"; an operator's rule,
+	// notify's ruleNameRe; an external producer's, notify/admin.go's
+	// alertRe; the store's chain events), widened to the names a
+	// Prometheus rule takes, with a dot and a hyphen: printed as a word,
+	// it holds no space, bracket or quote.
+	alertNameRe = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_:.-]{0,63}$`)
 	// alertWordRe is the shape of the words an alerts answer says
 	// (monitor, an alert's severity and state): printed as a word, and
 	// one the client does not know is said as such, not refused.
-	alertWordRe = regexp.MustCompile(`^[a-z]{1,16}$`)
+	alertWordRe = regexp.MustCompile(`^[a-z][a-z0-9_]{0,31}$`)
 )
 
 // The box's response filter writes a marker where it replaced text

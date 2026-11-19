@@ -62,7 +62,7 @@ func (s *Session) alertLines(app string, now time.Time) []Line {
 	out := []Line{field("alerts", head...)}
 	for i, al := range g.V.Alerts {
 		if i == AlertsShown {
-			out = append(out, field("", own("and "+strconv.Itoa(len(g.V.Alerts)-AlertsShown)+" more: motel monitor alerts --app "+app+" lists them")))
+			out = append(out, field("", own("and "+strconv.Itoa(len(g.V.Alerts)-AlertsShown)+" more: "+s.alertsCommand(app)+" lists them")))
 			break
 		}
 		name := boxT(al.Name)
@@ -97,15 +97,26 @@ func (s *Session) alertLines(app string, now time.Time) []Line {
 		l = append(l, own(" · since "+since(al.StartsAt, now)+" ("+clock(al.StartsAt, now, false)+" UTC)"))
 		out = append(out, field("alert", l...))
 		if al.Summary != "" {
-			out = append(out, field("", boxT(al.Summary)))
+			out = append(out, field("summary", boxT(al.Summary)))
 		}
 	}
 	return out
 }
 
+// alertsCommand is the command that lists app's alerts on the box this
+// session reads, with the key it signs with when the person named it,
+// as the printed commands are (commandArgs).
+func (s *Session) alertsCommand(app string) string {
+	args := []string{"motel", "monitor", "alerts", "--box", s.boxArg()}
+	if s.Key.Source == "--key" || s.Key.Source == "MOTEL_KEY" {
+		args = append(args, "--key", s.Key.Shown)
+	}
+	return ShellLine(append(args, "--app", app))
+}
+
 // alertName is the client's grammar of an alert's name (its client
 // package holds an answer to it): a name of it is a word shown as is.
-var alertName = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_]{0,63}$`)
+var alertName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_:.-]{0,63}$`)
 
 // boxWord is a word the client knows, shown as its own, or the box's.
 func boxWord(w string, known map[string]bool) Seg { return boxWordC(w, known, Plain) }

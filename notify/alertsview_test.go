@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net"
 	"net/http"
+	"path/filepath"
 	"sync"
 	"testing"
 	"time"
@@ -286,6 +288,74 @@ func TestAlertsView(t *testing.T) {
 	}
 	if !<-first || count() != 4 {
 		t.Errorf("one fetch at a time: %d fetches, want 4", count())
+	}
+}
+
+// TestAlertsViewReusesItsConnection: the fetches over the socket share
+// one client, so one connection serves them, not one left open each.
+func TestAlertsViewReusesItsConnection(t *testing.T) {
+	am := &fakeAMReads{alerts: `[]`, silences: `[]`, alertsCode: 200, silCode: 200}
+	var mu sync.Mutex
+	conns := 0
+	sock := filepath.Join(t.TempDir(), "am.sock")
+	l, err := net.Listen("unix", sock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	am.asked = map[string]int{}
+	srv := &http.Server{ReadHeaderTimeout: time.Second, Handler: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(am.alerts))
+	}), ConnState: func(_ net.Conn, st http.ConnState) {
+		if st == http.StateNew {
+			mu.Lock()
+			conns++
+			mu.Unlock()
+		}
+	}}
+	go func() { _ = srv.Serve(l) }()
+	t.Cleanup(func() { _ = srv.Close() })
+	useSocket(t, sock)
+	now := time.Date(2026, 11, 19, 12, 0, 0, 0, time.UTC)
+	v := &alertsView{now: func() time.Time { return now }}
+	for range 4 {
+		if _, ok := v.get(context.Background(), zap.NewNop()); !ok {
+			t.Fatal("not answered")
+		}
+		now = now.Add(alertsEvery)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if conns != 1 {
+		t.Errorf("four fetches opened %d connections, want 1", conns)
+	}
+}
+
+// TestAlertsViewAfterAPanic: a fetch that panics still ends its entry,
+// so a request that waited on it is told no answer rather than held.
+func TestAlertsViewAfterAPanic(t *testing.T) {
+	inFetch, release := make(chan struct{}), make(chan struct{})
+	v := &alertsView{now: time.Now, fetch: func(context.Context) (liveswap.HeldAlerts, error) {
+		close(inFetch)
+		<-release
+		panic("a fetch that panics")
+	}}
+	go func() {
+		defer func() { _ = recover() }()
+		v.get(context.Background(), zap.NewNop())
+	}()
+	<-inFetch
+	got := make(chan bool, 1)
+	go func() { _, ok := v.get(context.Background(), zap.NewNop()); got <- ok }()
+	time.Sleep(20 * time.Millisecond) // the waiter on the entry
+	close(release)
+	select {
+	case ok := <-got:
+		if ok {
+			t.Error("a waiter on a fetch that panicked was told an answer")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("a waiter on a fetch that panicked is still held")
 	}
 }
 

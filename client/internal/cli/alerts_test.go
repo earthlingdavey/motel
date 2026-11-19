@@ -70,12 +70,12 @@ func TestMonitorAlerts(t *testing.T) {
 		code          int
 	}{
 		{wire.MonitorOff, "127.0.0.1 has no monitor for blog: nothing is raised there\n", 0},
-		{wire.MonitorUnanswered, "127.0.0.1 could not ask its Alertmanager about blog's alerts\n", 3},
-		{"later", "127.0.0.1 answered about blog's alerts with a monitor word this client does not know: later\n", 3},
+		{wire.MonitorUnanswered, "", 3},
+		{"later", "", 3},
 	} {
 		fb.alerts = wire.Alerts{Monitor: c.monitor, Alerts: []wire.Alert{}}
 		r := runKey(t, fb, nil, "monitor", "alerts", "--app", "blog")
-		if r.code != c.code || r.stdout != c.line || (c.code == 0) != (r.stderr == "") {
+		if r.code != c.code || r.stdout != c.line || (c.code == 0) != (r.stderr == "") || strings.Count(r.stderr, "\n") > 1 {
 			t.Errorf("%s: exit %d, stdout %q, stderr %q", c.monitor, r.code, r.stdout, r.stderr)
 		}
 		r = runKey(t, fb, nil, "monitor", "alerts", "--app", "blog", "--json")
