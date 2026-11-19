@@ -36,7 +36,7 @@ func TestStaleRunningIsStale(t *testing.T) {
 	if st := row(s, now, "docs").Cells[model.ColState].String(); st != "running · stale" {
 		t.Fatalf("docs says %q", st)
 	}
-	if got := s.AppsView(now, "", 0, 0).AllWell.Text(); got != "nothing needs a look; 1 of 2 apps are stale" {
+	if got := s.AppsView(now, "", 0, 0).AllWell.Text(); got != "nothing needs a look; 1 of 2 apps is stale" {
 		t.Errorf("beside a stale running row the strip says %q", got)
 	}
 }

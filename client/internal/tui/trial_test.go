@@ -261,7 +261,7 @@ func TestCaddyfileDigestWhole(t *testing.T) {
 }
 
 // TestColonRemedyFirst: what a mistyped : command gets back begins with
-// where to find what : takes, so the remedy is on screen beside the
+// where the : views are listed, so the remedy is on screen beside the
 // crumb's right side at 60 columns, where the trial saw the sentence
 // cut before it.
 func TestColonRemedyFirst(t *testing.T) {
@@ -384,6 +384,61 @@ func TestFirstDeployInFlight(t *testing.T) {
 			}
 			if f := strings.Fields(row); len(f) < 4 || f[0] != "⟳" || f[2] != "soaking" {
 				t.Errorf("%s %dx%d: the api row is drawn %q, want ⟳ and soaking", name, sz[0], sz[1], row)
+			}
+		}
+	}
+}
+
+// TestCountsOfOne: every count in the apps screen's own sentences (the
+// crumb and the strip) reads as English at one: "1 needs a look", "1 app
+// running", "1 of 2 apps is", "1 failed check", "1 restart", where
+// they said "1 need a look", "all 1 apps running", "1 of 2 apps are",
+// "1 failed checks" and "1 restarts".
+func TestCountsOfOne(t *testing.T) {
+	read := func(path string) string {
+		b, err := os.ReadFile("demo/fixtures/" + path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(b)
+	}
+	blog, billing := read("status/blog.json"), read("status/billing.json")
+	backoff := strings.Replace(blog, `"state": "watching"`, `"state": "backoff", "consecutive_failures": 1`, 1)
+	throttled := strings.Replace(billing, `"restarts_in_window": 5`, `"restarts_in_window": 1`, 1)
+	if backoff == blog || throttled == billing {
+		t.Fatal("the fixtures moved")
+	}
+	for _, c := range []struct {
+		name, apps, crumb, strip string
+		setup                    func(*demo.Fake)
+	}{
+		{"one app running", `["blog"]`, " 1 app · 0 need a look · by attention", "1 app running; its newest deploy succeeded", nil},
+		{"one to look at", `["mailer", "blog"]`, " 2 apps · 1 needs a look · by attention", "✖ mailer       stopped: 9f02bb1c4e7a is not running", nil},
+		{"one not deployed", `["blog", "wiki"]`, " 2 apps · 0 need a look · by attention", "nothing needs a look; 1 of 2 apps is not deployed or not yours to view", nil},
+		{"one failed check", `["blog"]`, " 1 app · 1 needs a look · by attention", "▲ blog         backoff: the watchdog waits to restart it; 1 failed check in a row",
+			func(f *demo.Fake) { f.Body("status/blog.json", backoff) }},
+		{"one restart", `["billing"]`, " 1 app · 1 needs a look · by attention", `✖ billing      throttled: 1 restart in its window; last cause "probe: timeout"`,
+			func(f *demo.Fake) { f.Body("status/billing.json", throttled) }},
+	} {
+		var names []string
+		for _, n := range strings.Split(strings.Trim(c.apps, "[]"), ", ") {
+			names = append(names, `{"name": `+n+`}`)
+		}
+		for _, sz := range [][2]int{{60, 16}, {80, 24}} {
+			h := start(t, sz[0], sz[1], func(f *demo.Fake) {
+				f.Body("apps.json", `{"apps": [`+strings.Join(names, ", ")+`]}`)
+				if c.setup != nil {
+					c.setup(f)
+				}
+			})
+			h.open(model.View{Screen: model.ScreenApps})
+			rows := screenRows(h)
+			if got := rows[1].text; !strings.HasSuffix(got, c.crumb) {
+				t.Errorf("%s %dx%d: the crumb is drawn %q, want it to end %q", c.name, sz[0], sz[1], got, c.crumb)
+			}
+			// At 60 columns the strip's row is cut at the window's edge.
+			if got := rows[2].text; got != c.strip && (rows[2].last != "…" || !strings.HasPrefix(c.strip, strings.TrimSuffix(got, "…"))) {
+				t.Errorf("%s %dx%d: the strip is drawn %q, want %q", c.name, sz[0], sz[1], got, c.strip)
 			}
 		}
 	}

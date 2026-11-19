@@ -264,7 +264,7 @@ func TestStripBesideStaleRows(t *testing.T) {
 	if len(v.Strip) != 1 || !strings.HasPrefix(v.Strip[0].Text(), "✖ mailer       1h old, stale: stopped: ") {
 		t.Errorf("the strip of a stale row: %q", textsOfLines(v.Strip))
 	}
-	if got := v.Summary.Text(); got != "3 apps · 1 need a look · 3 stale · by attention" {
+	if got := v.Summary.Text(); got != "3 apps · 1 needs a look · 3 stale · by attention" {
 		t.Errorf("the summary: %q", got)
 	}
 }

@@ -183,26 +183,30 @@ func (s *Session) AppsView(now time.Time, filter string, sort int, width int) Ap
 	}
 	stales := ""
 	if stale > 0 {
-		stales = "; " + strconv.Itoa(stale) + " of " + strconv.Itoa(all) + " apps are stale"
+		stales = "; " + ofApps(stale, all) + " stale"
 	}
 	switch {
 	case asking > 0 && need == 0:
-		v.AllWell = Line{own("asking the box for " + strconv.Itoa(asking) + " of " + strconv.Itoa(all) + " apps…" + stales)}
+		v.AllWell = Line{own("asking the box for " + strconv.Itoa(asking) + " of " + some(all, "app") + "…" + stales)}
 	case need == 0 && notRunning == 0 && stale == 0:
-		v.AllWell = Line{own("all " + strconv.Itoa(all) + " apps running; every newest deploy succeeded")}
+		l := "all " + some(all, "app") + " running; every newest deploy succeeded"
+		if all == 1 {
+			l = "1 app running; its newest deploy succeeded"
+		}
+		v.AllWell = Line{own(l)}
 	case need == 0:
 		// A stale row is not known to be as it was: not said to run.
 		l := "nothing needs a look"
 		if notRunning > 0 {
-			l += "; " + strconv.Itoa(notRunning) + " of " + strconv.Itoa(all) + " apps are not deployed or not yours to view"
+			l += "; " + ofApps(notRunning, all) + " not deployed or not yours to view"
 		}
 		v.AllWell = Line{own(l + stales)}
 	}
-	noun := " apps · "
-	if all == 1 {
-		noun = " app · "
+	needs := " need a look · "
+	if need == 1 {
+		needs = " needs a look · "
 	}
-	sum := strconv.Itoa(all) + noun + strconv.Itoa(need) + " need a look · "
+	sum := some(all, "app") + " · " + strconv.Itoa(need) + needs
 	if stale > 0 {
 		// Beside a strip of reasons too, which says no count.
 		sum += strconv.Itoa(stale) + " stale · "
@@ -213,6 +217,22 @@ func (s *Session) AppsView(now time.Time, filter string, sort int, width int) Ap
 	}
 	v.Summary = Line{own(sum)}
 	return v
+}
+
+// some is n of a noun, as English counts it: "1 app", "3 apps".
+func some(n int, noun string) string {
+	if n == 1 {
+		return "1 " + noun
+	}
+	return strconv.Itoa(n) + " " + noun + "s"
+}
+
+// ofApps is "n of all apps" and the verb that agrees with n.
+func ofApps(n, all int) string {
+	if n == 1 {
+		return "1 of " + some(all, "app") + " is"
+	}
+	return strconv.Itoa(n) + " of " + some(all, "app") + " are"
 }
 
 // NameMax is the most of an app's name the apps table and its strip
@@ -353,7 +373,7 @@ func (s *Session) row(name string, now time.Time) (r AppRow) {
 	case st.CurrentVersion == "":
 		set(MarkNothing, "not deployed")
 	case wd.State == "throttled":
-		why := Line{own("throttled: " + strconv.Itoa(wd.RestartsInWindow) + " restarts in its window")}
+		why := Line{own("throttled: " + some(wd.RestartsInWindow, "restart") + " in its window")}
 		if wd.LastRestartCause != "" {
 			why = append(why, own("; last cause "), quoted(wd.LastRestartCause))
 		}
@@ -361,7 +381,7 @@ func (s *Session) row(name string, now time.Time) (r AppRow) {
 	case !st.Running:
 		set(MarkBroken, "stopped", own("stopped: "+short(st.CurrentVersion)+" is not running"))
 	case wd.State == "backoff":
-		set(MarkLook, "backoff", own("backoff: the watchdog waits to restart it; "+strconv.Itoa(wd.Failures)+" failed checks in a row"))
+		set(MarkLook, "backoff", own("backoff: the watchdog waits to restart it; "+some(wd.Failures, "failed check")+" in a row"))
 	case flying:
 		setFlight()
 	default:
