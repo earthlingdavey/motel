@@ -113,6 +113,10 @@ func (s *Session) Overview(app string, now time.Time) OverviewView {
 		v.Deploys = append(v.Deploys, r)
 	}
 	if st.CurrentVersion == "" {
+		if _, ok := inFlight(st); ok {
+			v.Note = append([]Line{{own(app + " has no version yet: a deploy of it is in flight.")}, deploying(st, now)}, lastDeploy(st.LastDeploy, now)...)
+			return v
+		}
 		v.Note = []Line{{own(app + " has no version yet. Its first deploy comes from CI. Nothing to show until then.")}}
 		if len(v.Deploys) > 0 || st.LastDeploy != nil {
 			v.Note = append([]Line{{own(app + " has no version yet: no deploy of it serves.")}}, lastDeploy(st.LastDeploy, now)...)
@@ -120,7 +124,16 @@ func (s *Session) Overview(app string, now time.Time) OverviewView {
 		return v
 	}
 	row := s.row(app, now)
-	state := Line{ownC(row.Cells[ColState].String(), row.Mark.Class()), own(" " + st.CurrentVersion)}
+	// A deploy in flight is its own line: the version beside the state
+	// is the one serving, which is running while another is deployed.
+	word, moving := row.state, row.moving
+	if moving {
+		word = "running"
+	}
+	if row.Stale {
+		word += " · stale"
+	}
+	state := Line{ownC(word, row.Mark.Class()), own(" " + st.CurrentVersion)}
 	if st.PID != 0 {
 		state = append(state, own(" · pid "+strconv.Itoa(st.PID)))
 	}
@@ -128,6 +141,9 @@ func (s *Session) Overview(app string, now time.Time) OverviewView {
 		state = append(state, own(" · unit "+st.Unit))
 	}
 	v.Fields = append(v.Fields, field("state", state...))
+	if st.Deploying != nil || moving {
+		v.Fields = append(v.Fields, deploying(st, now))
+	}
 	if wd := st.Watchdog; wd != nil {
 		// The client's check lets through the states it knows and its
 		// own words for one the box's filter hid; anything else would
@@ -157,6 +173,33 @@ func (s *Session) Overview(app string, now time.Time) OverviewView {
 		v.Fields = append(v.Fields, field("artifact", own(strconv.Itoa(d.ArtifactEntries)+" entries · "+mib(float64(d.ArtifactBytes))+" (the last deploy's)")))
 	}
 	return v
+}
+
+// deploying is the overview's line of a deploy in flight: its version,
+// its phase, when it started, by whom: each a token of its grammar or
+// the client's words, but who, the box's free text.
+func deploying(st wire.Status, now time.Time) Line {
+	d := st.Deploying
+	var words []string
+	if d != nil {
+		words = append(words, d.Version)
+	}
+	if st.Phase != "idle" {
+		words = append(words, st.Phase)
+	}
+	if d != nil && !d.StartedAt.IsZero() {
+		// The deploy's start, not the phase's: set off from a phase by
+		// the screen's "·", so the phase does not read as what started.
+		if st.Phase != "idle" {
+			words = append(words, "·")
+		}
+		words = append(words, "started "+since(d.StartedAt, now)+" ("+clock(d.StartedAt, now, false)+" UTC)")
+	}
+	l := Line{own(strings.Join(words, " "))}
+	if d != nil && d.By != "" {
+		l = append(l, own(" by "), boxT(d.By))
+	}
+	return field("deploying", l...)
 }
 
 // lastDeploy is the overview's lines of the last deploy, none when the
@@ -260,7 +303,7 @@ func (s *Session) metricLines(st wire.Status, now time.Time) []Line {
 	}
 	l := Line{own("over "), boxT(m.Window)}
 	if m.At != nil && !m.At.IsZero() {
-		l = append(l, own(", newest point "+clock(*m.At, now, true)+" UTC (the store runs 30 s behind)"))
+		l = append(l, own(", newest point "+clock(*m.At, now, true)+" UTC ("+since(*m.At, now)+")"))
 	}
 	return append(out, field("metrics", l...))
 }

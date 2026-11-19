@@ -59,9 +59,9 @@ func (u *UI) render() {
 	case model.ScreenBox:
 		door.SetText(u.page, door.Lines(u.S.BoxViewFit(now, u.w, door.Width), u.Colour))
 	case model.ScreenHelp:
-		door.SetText(u.page, door.LitLines(u.help()))
+		door.SetText(u.page, door.LitLines(hang(u.help(), u.w)))
 	case model.ScreenStopHelp:
-		door.SetText(u.page, door.LitLines(stopHelp()))
+		door.SetText(u.page, door.LitLines(hang(stopHelp(), u.w)))
 	case model.ScreenRefused:
 		door.SetText(u.page, door.Lines(u.S.RefusedView(now), u.Colour))
 	}
@@ -84,6 +84,18 @@ func (u *UI) render() {
 		}
 		door.SetText(u.foot, door.Lit(foot+"  ↑↓ scroll"))
 	}
+	if name, _ := u.row2.GetFrontPage(); name == "prompt" {
+		// The line takes every key typed but these: the screen's own
+		// would be typed into it.
+		door.SetText(u.foot, door.Lit(promptFooters[u.promptMode]))
+	}
+}
+
+// promptFooters are the keys of the : line and the / filter while
+// open, whole at 60 columns as the screens' footers are.
+var promptFooters = map[rune]string{
+	':': "enter run it  tab complete  esc close",
+	'/': "enter keep the filter  esc clear it and close",
 }
 
 // overKey names what the overlay was last made of: with no answer
@@ -140,8 +152,8 @@ var footers = map[model.Screen]string{
 	model.ScreenApps:     "enter open  / filter  : go to  y json  c cmd  ? more  q quit",
 	model.ScreenApp:      "enter record  y json  c command  esc back  ? more",
 	model.ScreenRecord:   "↑↓ scroll  w wrap  p previous  n next  esc back  ? more",
-	model.ScreenMe:       "y json  c command  esc back  ? more",
-	model.ScreenBox:      "y json  c command  esc back  ? more",
+	model.ScreenMe:       "↑↓ scroll  y json  c command  esc back  ? more",
+	model.ScreenBox:      "↑↓ scroll  y json  c command  esc back  ? more",
 	model.ScreenHelp:     "↑↓ scroll  esc close  q quit",
 	model.ScreenRefused:  "↑↓ scroll  r ask again  ? keys  q quit",
 	model.ScreenStopHelp: "↑↓ scroll  esc back  r ask again  q quit",
@@ -344,7 +356,16 @@ func (u *UI) renderRecord(v model.View, now time.Time) {
 		title = append(title, ownLine(" "+strings.Repeat("─", max(u.w-title.Width(door.Width)-1, 0)))...)
 	}
 	door.SetText(u.recTailTitle, door.Line(title, u.Colour))
-	door.SetText(u.tail, door.Texts(view.Tail))
+	tail := view.Tail
+	if !u.wrap {
+		// A line stays a line, cut at the window's edge as every other
+		// line is, the cut marked.
+		tail = make([]termtext.Text, len(view.Tail))
+		for i, t := range view.Tail {
+			tail[i] = termtext.From(model.Line{{T: t}}.Cut(u.w, door.Width).Text())
+		}
+	}
+	door.SetText(u.tail, door.Texts(tail))
 }
 
 // withStop puts why every read stopped above a screen's lines, so the
@@ -354,6 +375,59 @@ func (u *UI) withStop(ls []model.Line) []model.Line {
 		return append([]model.Line{l}, ls...)
 	}
 	return ls
+}
+
+// hang lays each of help's entries (a name, two spaces or more, its
+// words) that is wider than width on rows of its own, the words after
+// the first row under the first's, so that no part of one reads as a
+// new entry at the left edge. Prose, with no such column, is left for
+// the page's own wrap.
+func hang(text string, width int) string {
+	var out []string
+	for _, l := range strings.Split(text, "\n") {
+		col := entryCol(l)
+		if door.Width(termtext.From(l)) <= width || col < 0 || width-col < 20 {
+			out = append(out, l)
+			continue
+		}
+		indent := strings.Repeat(" ", door.Width(termtext.From(l[:col])))
+		// Split at each space, so a run of them between words (the marks'
+		// groups) stays a run on its row.
+		row, words := l[:col], ""
+		for _, w := range strings.Split(l[col:], " ") {
+			if words != "" && door.Width(termtext.From(strings.TrimRight(row+words+" "+w, " "))) > width {
+				out = append(out, strings.TrimRight(row+words, " "))
+				row, words = indent, ""
+			}
+			if words == "" && w == "" {
+				continue
+			}
+			if words != "" {
+				words += " "
+			}
+			words += w
+		}
+		out = append(out, row+words)
+	}
+	return strings.Join(out, "\n")
+}
+
+// entryCol is where an entry's words begin, after its name and the run
+// of two spaces or more that ends it; -1 for a line with none.
+func entryCol(l string) int {
+	name := strings.TrimLeft(l, " ")
+	i := strings.Index(name, "  ")
+	if i <= 0 {
+		return -1
+	}
+	i += len(l) - len(name)
+	for i < len(l) && l[i] == ' ' {
+		i++
+	}
+	if i == len(l) {
+		return -1
+	}
+	return i
 }
 
 // stopHelp is help over a stop screen: its keys, and those of help

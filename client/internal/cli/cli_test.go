@@ -376,7 +376,7 @@ func TestStatusTheFilterReplacedValuesIn(t *testing.T) {
 	}
 	r := run(t, fb, deployToken, "status", appURL(fb, "blog"))
 	const hidden = "[hidden by the box's filter]"
-	if r.code != 0 || r.stderr != "" || !strings.HasPrefix(r.stdout, "blog  idle v42  unit "+hidden+"  pid 41233\n") ||
+	if r.code != 0 || r.stderr != "" || !strings.HasPrefix(r.stdout, "blog  running v42  unit "+hidden+"  pid 41233\n") ||
 		!strings.Contains(r.stdout, "versions     v42 (running) "+hidden+"\n") || strings.Contains(r.stdout, "redacted:") || strings.Contains(r.stdout, "forged") {
 		t.Fatalf("status: %+v", r)
 	}

@@ -1,4 +1,4 @@
-blog  idle v42  unit motel-blog.v42.0123456789abcdef.service  pid 41233
+blog  running v42  unit motel-blog.v42.0123456789abcdef.service  pid 41233
 watchdog     watching: tags [red]alert[-] ["region"]                                                            error        forged
 memory       182 MiB now, 210 MiB max  (1h)
 cpu          0.02 cores on average  (1h)

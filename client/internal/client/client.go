@@ -792,6 +792,13 @@ func hold(v any) string {
 				return why
 			}
 		}
+		// The deploy in flight is printed beside the running version: its
+		// version to the grammar of a record's. Its phases are neither
+		// printed nor read (the status's phase is the one shown), so a
+		// phase a newer box names there refuses nothing.
+		if d := a.Deploying; d != nil && !held(&d.Version, isVersion) {
+			return "a version in it is not a version"
+		}
 		if d := a.LastDeploy; d != nil {
 			return holdOutcome(&d.Version, d.Status, d.Phase, d.Phases)
 		}

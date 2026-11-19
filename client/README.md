@@ -43,6 +43,14 @@ nothing sent). `<app>` is a name, or the app's URL
 (`https://deploy.example.com/blog`, as `MOTEL_URL` holds it), which names
 the box too.
 
+`status` says the app's state first (`running`, `throttled`, `stopped`,
+`backoff`, `not deployed`) and the version that serves, and while a
+deploy is in flight a `deploying` line under it: the version in flight,
+its phase once it has one, when the deploy started and by whom
+(`deploying    4c2d9e7b1a05 soaking, started 2026-11-19 14:12 UTC  by …`);
+its versions line marks the first version with that state when it is
+the one serving (`7c1e55d0a913 (running)`).
+
 **Which box:** an app URL as `<app>`, else `--box`, `MOTEL_BOX`, the host
 of `MOTEL_URL`, or the box repository the shell is in (inside
 `<host>/`, or at its top when it holds one box). `--box` and `MOTEL_BOX`
@@ -209,7 +217,7 @@ made by hand. Accepted:
 | A 5xx in moteld's own words (a box still starting, a box status that cannot read its files) is said as not known to be moteld's and exits 3, not 1: no header tells it from a gateway's, by the owner's decision that no answer names motel. Its code and its quoted sentence are still shown | 2 | 4 | 1 | 8 | 3 (a stamp on the wire again) | accepted |
 | A gateway's JSON 4xx (a 403, 404, 409) is said as "the box says", as motel's would be: no header tells them apart, and none ever did for a 4xx | 2 | 5 | 3 | 30 | 1 (say a 4xx's sentence as "it says", not "the box says") | owed: older than this change, and it rewrites every 4xx sentence and its goldens |
 | A box built with a release string that is not `N.N.N` with an optional suffix (`make build VERSION=<another shape>`: the Makefile's own default and every tag fit) has every `whoami` called "not moteld's answer: its version is not a release", exit 3 | 2 | 5 | 3 | 30 | 1 (print another shape quoted) | accepted: over the bar, and no doc asks for such a build; the client holds the release to the shape the Makefile links in so that it can print it unquoted |
-| The TUI's marks (`▲ ✖ ⟳`) and box-drawing characters may be double width in some terminals, and misalign its columns (a plain-character mode is a later addition) | 1 | 2 | 1 | 2 | 2 | accepted |
+| The TUI's marks (`▲ ✖ ⟳`, and the `→` of a version in flight) and box-drawing characters may be double width in some terminals, and misalign its columns (a plain-character mode is a later addition) | 1 | 2 | 1 | 2 | 2 | accepted |
 | The client's one retry of a 401 is a request the TUI's engine does not count against its rate | 1 | 1 | 3 | 3 | 2 | accepted |
 | A box string could reach a tview widget by a writer (`io.Copy`, `WriteTo` into a text view), by reflection, through a type alias, or by a function or method value of a setter, and the TUI's structural tests (`TestOneDoor`, `TestTUIImports`, `TestActionsAreCommands`) be got round the same ways, without a test failing; held by review and the hostile goldens | 2 | 1 | 3 | 6 | 2 | accepted |
 | A hardware key that requires its PIN cannot be used in the TUI: the TUI never asks for one, and the agent does not keep it | 2 | 1 | 1 | 2 | 3 (a PIN prompt outside the screen) | accepted |
@@ -239,6 +247,11 @@ made by hand. Accepted:
 | A read whose last read was refused without being held (a 409, or an answer the client cannot use) and whose next read gets no answer is not counted as its first in a row to get none: its own count is already 1, so it brings no read of another thing forward and its backoff starts at 4 s, not 2. Measured with one app open, its status answered 409 once and then the box answering nothing: the title bar first says slow 56 s after the box stopped answering (the list's turn), not 1 s after; with 3 apps 6 s. And in a run of no answer such a read counts as failed: it goes after every due read none of whose reads has failed since its last answer, as one that got none does, though the box would answer it | 2 | 2 | 3 | 12 | 2 | accepted |
 | With every route but one failing (the box answering one read alone, an app's status), that read waits behind the others: in a run of no answer a read never tried in the run keeps its old due time and goes ahead of it, one at each retry, the retries up to 60 s apart. Measured on the fake clock with the box answering only the last app's status: 12 apps, its first read 9 minutes after, then at most 1 minute apart; 60 apps, 28 minutes, then gaps up to 27; 300 apps, 1 h 42 min, then gaps up to 3 h 13 min. The title bar says STALE throughout, but for the seconds after each answer (back, then slow) | 2 | 1 | 1 | 2 | 3 | accepted |
 | A wake into a run of no answer keeps the run's count (by design: the box did not answer before the sleep), so the title bar says at once what it said before the sleep (slow, or STALE), and when the first read after waking gets no answer because the network is not back yet, the next waits out the run's backoff: 60 s once the run had five reads or more before the sleep (measured on the fake clock: 60 s after a 5-minute outage, 32 s after 30 s, 8 s after 10 s), the title bar saying STALE for that long on a network that then works | 2 | 2 | 1 | 4 | 2 | accepted |
+| At 60x16 the `y` overlay's own words (what the answer is to, how it is shown and cut, and that `P` prints it whole) take 7 of its 11 rows over the apps screen, 9 and a blank over an app's, and all 11 over a record whose command line is cut, so the answer shows on three rows, one, or none until it is scrolled; the footer says `↑↓ scroll` | 2 | 5 | 1 | 10 | 2 | accepted |
+| A refusal said alone on a record's screen or an app's (a 403, a 404) is one row, cut at the window's edge with `…`: a long one (a 403 that did not say what it needs, or one quoting a value long in escapes) loses the box's words past the edge and the client's own after them (`motel whoami` lists the roles you hold from here.). Laid on rows instead (62d41e87, reverted), it took at most half the window's height and lost its end with no mark | 2 | 4 | 1 | 8 | 2 | accepted |
+| An app's "the last read failed" sentence is laid on rows within half the window's height, the fields under it: at 60x16 one quoting a value long in escapes (a 409 quoting 200 bidi overrides) fills those 8 rows, and its end (its cap's `…[cut]`) and every field under it, the state among them, are dropped with no mark; the deploys stay below it | 2 | 2 | 3 | 12 | 2 | accepted |
+| With `--key` in it (whenever the key was named by `--key` or by `MOTEL_KEY`), `c`'s command lines are wider than the overlay at 80 columns for an ordinary key path and box name: `motel status --box deploy.smallhours.org --key '~/.ssh/id_ed25519.pub' -- example` is 81 characters and its `--json` line 88, where the overlay leaves a command line 76 cells (78 inside its border, 2 of indent). Both are cut at the edge and marked, and the overlay says not to copy them and that `P` prints the first whole; with a longer key path (`'~/tui1-trial/keys/trial.pub'`) both are cut before they differ, so they look alike as far as they show | 2 | 5 | 1 | 10 | 3 (a command laid on rows cannot be copied as one line) | accepted |
+| A mistyped `:` command is said on the crumb's row, cut where the apps screen's summary beside it begins: at 60 columns `? lists the : views;…`, the remedy whole and what was wrong cut away, the cut marked; at 80 `? lists the : views; no command "bogus" …`, what was wrong but its last word | 2 | 5 | 1 | 10 | 2 | accepted |
 | A hardware key's touch on the read made after one that waited 5 s or more and got no answer is counted in `waiting`'s seconds: the count goes on from the read that got none until the box answers, and the time a token is signed is left out only of the read in flight's own count, so after a 10 s touch the title bar says the box has been waited for 10 s longer than it has been asked. The word is true (the box has not answered); the number is long by the touch. Starting the count again at the signature would put `live` back for 5 s in an outage | 2 | 2 | 3 | 12 | 2 | accepted |
 
 Owed, from the reviews of the TUI's first part (#558; scored there), of
@@ -250,6 +263,7 @@ their fixes, and of its second part; the others are fixed:
 | Two names over 20 characters that differ only in their middle are shown longer until they differ, which can take the room of VERSION and LAST DEPLOY on every row. Where the width cannot hold both whole beside the widest STATE (with `running · 12s`, from 44 characters at 60 columns, none at 80; with `not deployed · stale`, from 37 at 60, 57 at 80) they are shown alike, and enter on one may open the other (at 80 columns its crumb then names it; at 60 the crumb is cut before the place they differ) | 2 | 5 | 3 | 30 | 3 | the owner's call: over the bar, and no cut within the width tells every such pair apart |
 | The title bar's name, roles and release are whoami's last answer, shown beside the freshness of the newest answer to any read: while whoami answers (every 5 minutes) they can be up to 5 minutes older than that word says, unmarked. While its newest read has failed, the title bar says so and the answer's age before it (below) | 2 | 5 | 3 | 30 | 2 | the owner's call: over the bar; whoami's schedule is the owner's, and who am I shows the answer under its own age |
 | Between reads nothing is waited for, so after a box stops answering the title bar says `live`, its age growing, until 5 s into the first read made after it (from the end of its signature, when it signs a token; then `waiting`, as "The rate" under "## The TUI" below says): for the time to the next read due and 5 s more, as long as between two reads of a box that answers and 5 s. Measured on the fake clock: 7 s on an app's screen (its read every 5 s: at most 10 s), 14 s on the apps screen with one app and refusals that come 10 s late (its app read every 30 s: at most 35 s), at most 65 s on an apps screen with no app (the list every 60 s); with more apps their reads are spread over the cycle and it is shorter | 2 | 4 | 3 | 24 | 3 (a read made only to see that the box answers, when nothing else is due: a new schedule, and requests against the rate) | the owner's call: over the bar, and closing it costs requests, which this change was held not to add; the age beside the word is never more than 5 s past what the same screen shows of a box that answers |
+| A deploy in flight to an app that is stopped, throttled or in backoff is not said on the apps screen: the row's state and mark are chosen in that order (`throttled`, `stopped`, `backoff`, then a deploy in flight), so its row and the strip go on saying `stopped` while the deploy that may mend it runs; the app's own screen has the `deploying` line | 2 | 4 | 3 | 24 | 2 | owed: older than the trial's fixes; with the deploy watch, which reworks what a row says during a deploy |
 
 ## The TUI
 
@@ -262,14 +276,28 @@ each entry naming the command whose read it makes
 (`TestActionsAreCommands`). It only reads. The apps screen is sorted by
 what needs a look, with a strip that says why; a person with one app
 opens on it, with the list under it. Its first reads, whoami and the list, are made before the screen opens: once they have waited 3 s for the box (a signature, a hardware key's touch among them, and the client's own pause before it asks again after a 401 not counted), one line on stderr says what is asked and that the screen opens when the box answers, or within a minute; an ordinary start, about four round trips of the box, says nothing.
+While a deploy is in flight an
+app's row (one not stopped, throttled or in backoff, which it says
+instead) is marked `⟳`, whatever its newest record says (a failed one
+stays in LAST DEPLOY, `d` still opens it, and the row still counts as
+needing a look), STATE says the deploy's phase (`deploying` while its
+upload is received), VERSION the version in flight, as on its way
+(`→ 4c2d9e7b1a05`), and the strip `deploying 4c2d9e7b1a05: soaking`; a
+box that names no version in flight (one older than `deploying`) has
+VERSION keep the running one and the strip say `deploying: soaking`.
 A name longer than 20 characters is
 cut in its middle, in the table and the strip, its start and its end
 kept; two names that would be cut alike are shown longer, alike, until
 they differ, as far as the screen leaves room for STATE beside them;
 the whole name is what is opened, searched and printed. An app's
-screen shows its state and deploys; a deploy's record is laid out for
+screen shows its state and deploys; while a deploy is in flight its
+state names the version that serves as running, and a `deploying` line
+under it the version in flight, its phase, when the deploy started and
+by whom (`4c2d9e7b1a05 soaking · started 25s ago (14:12 UTC) by …`;
+under "has no version yet: a deploy of it is in flight." before a first
+version serves); a deploy's record is laid out for
 reading a failure, its log tail last. The title bar, the crumb, the
-apps strip, an app's fields, a record's head and who am I's and the box screen's lines holding a box's value are fitted to the
+apps strip, an app's fields, a record's head and its log tail (while `w` is off) and who am I's and the box screen's lines holding a box's value are fitted to the
 window in the screen's cells, as the door draws them (a wide character
 takes two, a combining mark none, and a character the door writes as
 an escape as many as the escape has): a line too wide is cut, `…` its
@@ -278,12 +306,12 @@ when it alone takes the whole window or more (the apps' summary of hundreds of a
 `:deploys blog <version>`, `:me`, `:box`); what is typed is held to the client's grammars, and a version to the box's own (at most 64 characters; `motel deploys` sends a longer one for the box to refuse), before anything is asked, and
 what is wrong is said on the prompt's line; Enter runs what is typed,
 Tab takes a completion. `?` lists the keys of the screen below it,
-written from the table the keys are bound from, its rows wrapped to the window, and scrolls, as its footer says. On a screen that reads
+written from the table the keys are bound from, its rows wrapped to the window (an entry's words under its words), and scrolls, as its footer says. On a screen that reads
 the box (not help or a stop screen), `c` shows the `motel` line for it
 (a record whose version the box's filter hid has none, and `c` and `y`
 say so, and `P` prints nothing there), every argument quoted for a
 POSIX shell, `--box` naming the port when it is not 443 and `--key` the
-key when it was named with `--key` (on the apps screen, a row's line
+key when it was named with `--key` or `MOTEL_KEY` (on the apps screen, a row's line
 too, `<app>` for the app). A command line wider than the window, in the
 screen's cells, is cut at its edge (it is not wrapped: a line drawn on
 two rows copies with a line feed in it), the cut marked `…`, and the
@@ -316,8 +344,8 @@ their turn. whoami is read every 5 minutes, every minute while who am I
 is open, and soon after a 403, so a removed grant shows in the title
 bar; one that got no answer is asked again at its backoff (below), not at its turn, until it answers. While the session runs and whoami's newest read has failed (an
 answer the client cannot use, a 403, a 409, no answer), the title bar
-puts the age of its last answer, and that the read failed, before it
-(`21m old, failed: v0.7.0 · alice@…`), and who am I says why (the
+puts that the read failed, and the age of its last answer, before it
+(`whoami failed; 21m old: v0.7.0 · alice@…`), and who am I says why (the
 client's own lines there and on the box screen, a failure's sentence among them, are laid on rows to fit the window). An
 answer about another key or box (the `whoami` command's rule) stops
 every read, like a refusal, and the session drops everything the
@@ -328,7 +356,8 @@ session fills again from empty. A stop screen takes `r`, `?`, `q` and
 the keys that scroll it alone, and `P` on a refused key's; help over it takes esc, `r`, `q` and the keys that
 scroll it alone; nothing opens from either. A refused key's screen names every
 cause the client cannot tell apart and the person line to send the
-operator, which `P` prints.
+operator, which `P` prints. ctrl-c is a key while the screen holds the terminal, and quits as `q` does, exit 0; a
+SIGINT, SIGTERM or SIGHUP sent to the process, or the terminal closed under the screen, ends it as an interrupt, 130, nothing said.
 
 - **The rate.** A box allows a person 2 requests a second with a burst
   of 60. The TUI keeps to 1.5 a second and 30 at once. The open app is

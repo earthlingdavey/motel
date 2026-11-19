@@ -169,8 +169,13 @@ var tuiSignals = []os.Signal{syscall.SIGHUP}
 var askingAfter = 3 * time.Second
 
 // runFailure is how the TUI's end is said: a panic, already one line
-// and safe, exits 3; a screen that would not start, 2.
+// and safe, exits 3; a terminal that went away while the screen held it
+// (a closed window's end of file, whether or not its SIGHUP came
+// first) as an interrupt, nothing said; a screen that would not start, 2.
 func runFailure(err error) error {
+	if errors.Is(err, tui.ErrClosed) {
+		return errInterrupted
+	}
 	var p *tui.Panic
 	if errors.As(err, &p) {
 		// The value quoted and cut (it may hold what a box sent), and the

@@ -108,7 +108,9 @@ func (u *UI) run(text string) {
 	case "help", "keys":
 		u.open(model.View{Screen: model.ScreenHelp})
 	default:
-		say(own("no command "), quoted(w[0]), own(" here: : takes apps, status <app>, deploys <app> [<version>], whoami, box, help, q"))
+		// The remedy first: beside the crumb's right side at 60 columns
+		// about 20 cells are left, and help lists the views : takes.
+		say(own("? lists the : views; no command "), quoted(w[0]), own(" here"))
 	}
 }
 

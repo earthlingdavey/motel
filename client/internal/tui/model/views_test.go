@@ -36,7 +36,7 @@ func TestStaleRunningIsStale(t *testing.T) {
 	if st := row(s, now, "docs").Cells[model.ColState].String(); st != "running · stale" {
 		t.Fatalf("docs says %q", st)
 	}
-	if got := s.AppsView(now, "", 0, 0).AllWell.Text(); got != "nothing needs a look; 1 of 2 apps are stale" {
+	if got := s.AppsView(now, "", 0, 0).AllWell.Text(); got != "nothing needs a look; 1 of 2 apps is stale" {
 		t.Errorf("beside a stale running row the strip says %q", got)
 	}
 }
@@ -170,10 +170,10 @@ func TestTitleHeldWhoAmIFailed(t *testing.T) {
 		err  *model.Failure
 		want string
 	}{
-		{"a release that is not N.N.N", &model.Failure{Kind: model.FailUnusable, Message: "not moteld's answer"}, "motel · deploy.example.com │ 21m old, failed: v0.7.0 · alice@example.com · viewer of the box"},
-		{"409", &model.Failure{Kind: model.FailThis, Message: "deploy.example.com answered 409"}, "motel · deploy.example.com │ 21m old, failed: v0.7.0 · alice@example.com · viewer of the box"},
-		{"no answer", &model.Failure{Kind: model.FailNoAnswer, Message: "deploy.example.com closed the connection"}, "motel · deploy.example.com │ 21m old, failed: v0.7.0 · alice@example.com · viewer of the box"},
-		{"403", &model.Failure{Kind: model.FailForbidden, Message: "deploy.example.com does not allow your key this"}, "motel · deploy.example.com │ 21m old, failed: v0.7.0 · alice@example.com · viewer of the box"},
+		{"a release that is not N.N.N", &model.Failure{Kind: model.FailUnusable, Message: "not moteld's answer"}, "motel · deploy.example.com │ whoami failed; 21m old: v0.7.0 · alice@example.com · viewer of the box"},
+		{"409", &model.Failure{Kind: model.FailThis, Message: "deploy.example.com answered 409"}, "motel · deploy.example.com │ whoami failed; 21m old: v0.7.0 · alice@example.com · viewer of the box"},
+		{"no answer", &model.Failure{Kind: model.FailNoAnswer, Message: "deploy.example.com closed the connection"}, "motel · deploy.example.com │ whoami failed; 21m old: v0.7.0 · alice@example.com · viewer of the box"},
+		{"403", &model.Failure{Kind: model.FailForbidden, Message: "deploy.example.com does not allow your key this"}, "motel · deploy.example.com │ whoami failed; 21m old: v0.7.0 · alice@example.com · viewer of the box"},
 		{"a stop: 401", &model.Failure{Kind: model.FailSignedOut, Message: "deploy.example.com refused the key (401)"}, held},
 		{"none", nil, held},
 	} {

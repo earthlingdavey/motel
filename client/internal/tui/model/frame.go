@@ -81,7 +81,9 @@ func (s *Session) commandArgs(v View, json bool) ([]string, bool) {
 		}
 	}
 	args = append(args, "--box", s.boxArg())
-	if s.Key.Source == "--key" { // sshkey.SourceFlag: the person named it
+	// sshkey.SourceFlag and SourceEnv: the person named it, and a shell
+	// without the TUI's MOTEL_KEY would find another key, or none.
+	if s.Key.Source == "--key" || s.Key.Source == "MOTEL_KEY" {
 		args = append(args, "--key", s.Key.Shown)
 	}
 	if json {
@@ -490,12 +492,14 @@ func (s *Session) Title(now time.Time) (Line, Line) {
 		// no one here, and nothing said before it is kept (forget).
 		left = append(left, ownC(" │ the box answered about another key or box", Warn))
 	case s.Me != nil && s.MeErr != nil && s.Engine.Stopped() == Running:
-		// whoami's newest read failed while the other reads answer: the
-		// answer held is said with its age, and that the read failed,
-		// before it, so the mark is cut after the host and not before
-		// (at 60 columns little else of the answer fits). Who am I says
-		// why.
-		left = append(left, own(" │ "), ownC(Ago(now.Sub(s.Me.At))+" old, failed", Warn), own(": "))
+		// whoami's newest read failed while the other reads answer: that
+		// it failed, then the age of the answer held, before it, so the
+		// mark is cut after the host and not before (at 60 columns
+		// little else of the answer fits). The mark names whoami, so it
+		// is not read as the release's or the person's. "failed" is true
+		// of each way it can: no answer, a refusal, an answer the client
+		// cannot use. Who am I says which.
+		left = append(left, own(" │ "), ownC("whoami failed", Warn), own("; "+Ago(now.Sub(s.Me.At))+" old: "))
 		if r := s.Me.V.Version; r != "" {
 			left = append(left, own(r+" · "))
 		}
@@ -732,8 +736,10 @@ func (s *Session) BoxViewFit(now time.Time, width int, cells Cells) []Line {
 	// release is whoami's: who am I shows it under whoami's own age, and
 	// the title bar beside the session's freshness word.
 	b := s.BoxSt.V
-	// The box's values are cut; the rest are the client's words.
-	out := []Line{cutTo(field("runs commit", own(b.Commit)), width, cells), cutTo(field("Caddyfile", own("sha256 "+b.SHA256)), width, cells)}
+	// The box's values are cut; the rest are the client's words. The
+	// Caddyfile's sha256 stands alone after its label, so that at 80
+	// columns it is whole.
+	out := []Line{cutTo(field("runs commit", own(b.Commit)), width, cells), cutTo(field("Caddyfile", own(b.SHA256)), width, cells)}
 	if b.Recipient != "" {
 		out = append(out, cutTo(field("secrets key", boxT(b.Recipient)), width, cells))
 	}

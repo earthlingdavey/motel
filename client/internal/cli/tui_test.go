@@ -580,7 +580,8 @@ func TestPrintedByTerminal(t *testing.T) {
 
 // TestTUISessionBox: the TUI's client is built for the box --box or
 // MOTEL_BOX names, port and all; its session names the host alone (the
-// token's aud, the title) and prints commands that ask where it asks.
+// token's aud, the title) and prints commands that ask where it asks,
+// with the key it signs with.
 func TestTUISessionBox(t *testing.T) {
 	home := t.TempDir()
 	if err := os.WriteFile(filepath.Join(home, "me.pub"), []byte(meLine+"\n"), 0o600); err != nil {
@@ -604,7 +605,8 @@ func TestTUISessionBox(t *testing.T) {
 		if cl.Box.Addr() != "deploy.example.test:8443" || s.Host != "deploy.example.test" || s.Addr != "deploy.example.test:8443" {
 			t.Errorf("%s: the client asks %s; the session's host %q, addr %q", name, cl.Box.Addr(), s.Host, s.Addr)
 		}
-		if line, _ := s.Command(model.View{Screen: model.ScreenApps}); line != "motel apps --box deploy.example.test:8443" {
+		// The key MOTEL_KEY named is named in it too (sshkey.SourceEnv).
+		if line, _ := s.Command(model.View{Screen: model.ScreenApps}); line != "motel apps --box deploy.example.test:8443 --key '~/me.pub'" {
 			t.Errorf("%s: the command printed is %q", name, line)
 		}
 	}

@@ -332,7 +332,8 @@ func TestDeployCursorAmongAlike(t *testing.T) {
 // TestTitleHeldWhoAmIFailedFits: the mark of an answer of whoami held
 // whose newest read failed is drawn whole beside the box's name and the
 // freshness word, at 60 and at 80 columns, as the simulation screen
-// shows them.
+// shows them; it names whoami, so the failure is not read as the
+// release's beside it (the trial: "5m old, failed: v0.8.0-tui1 · …").
 func TestTitleHeldWhoAmIFailedFits(t *testing.T) {
 	for _, w := range []int{60, 80} {
 		h := start(t, w, 25, nil)
@@ -343,7 +344,11 @@ func TestTitleHeldWhoAmIFailedFits(t *testing.T) {
 		h.pump()
 		h.sync()
 		top := strings.SplitN(h.screen(), "\n", 2)[0]
-		if !strings.HasPrefix(top, "motel · deploy.example.com │ 21m old, failed") || !strings.HasSuffix(top, " live · 0s ago") {
+		if !strings.HasPrefix(top, "motel · deploy.example.com │ whoami failed") || !strings.HasSuffix(top, " live · 0s ago") {
+			t.Errorf("at %d columns the title bar is %q", w, top)
+		}
+		// Whose age it is, after whose failure, where there is room.
+		if w == 80 && !strings.HasPrefix(top, "motel · deploy.example.com │ whoami failed; 21m old: v0.7.0 · ") {
 			t.Errorf("at %d columns the title bar is %q", w, top)
 		}
 	}
