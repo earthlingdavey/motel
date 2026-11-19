@@ -163,12 +163,18 @@ func tags(c model.Class, colour bool) (string, string) {
 }
 
 // Line is a model line as tview text. It does not hold its own tags
-// against the text beside them: unbreak asks about the segments with
-// the tags left out, and tview steps otherwise at a tag, so box free
-// text put directly after a dressed segment (one tags dresses) could
-// begin a row, keep a style open, or be drawn wider than Width says. No
-// screen puts it there today, and no test would fail if one did: put
-// box free text only after a plain or label segment.
+// against the text beside them: tview steps a grapheme cluster at a
+// time and reads a tag only at a cluster's start, so where a tag (a
+// dressed segment's, one tags dresses) stands inside a cluster of the
+// line's text, a character beside it joining the one across it, that
+// cluster is drawn twice, wider than Width says; and a Prepend
+// character before a tag takes its [ into its cluster, so the tag is
+// drawn as text and its style is not closed. No screen puts box text
+// beside a tag today, only the client's own words, and no test would
+// fail if one did: put box free text only between plain or label
+// segments, or inside a dressed one between words of the client's own.
+// FuzzLine and TestClassesBesideATag hold every line to one row, and
+// to its styles and Width wherever no tag stands inside a cluster.
 func Line(l model.Line, colour bool) Shown {
 	var b strings.Builder
 	segs := make([]string, len(l))
