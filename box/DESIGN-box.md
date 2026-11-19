@@ -1143,7 +1143,7 @@ can do both by other means.
 
 | Finding | S | O | D | Where the fix lands |
 |---|---|---|---|---|
-| (none at present; the last, the ECDSA twin signature, is paid by dropping the ECDSA key types — History, 2026-11-06) | | | | |
+| A signer whose principal is `baseline` (the grammar allows it) is written to `applied.json` as `signer: baseline` by every push it verifies, the mark `moteld box baseline` writes: `GET /` then never says `caddyfile_edited_out_of_band` while the box runs a commit that signer verified, as before #577 (review of #577) | 3 | 5 | 3 | `proof.ParseSigner`: refuse the principals `baseline` and `init`, the applier's own marks, with a named refusal (size 1, risk 2; a change to which signer lines every box takes, so the owner's call) |
 
 ## Admission
 
