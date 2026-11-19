@@ -253,14 +253,22 @@ func (s *Session) metricLines(st wire.Status, now time.Time) []Line {
 	cap := memCap(st)
 	if mem := m.Memory; mem != nil && (mem.Now != nil || mem.Max != nil) {
 		var l Line
+		// Each part after the first is joined with " · ": a stopped app
+		// has no now.
+		part := func(s string) {
+			if len(l) > 0 {
+				s = " · " + s
+			}
+			l = append(l, own(s))
+		}
 		if mem.Now != nil {
-			l = append(l, own(mib(*mem.Now)+" now"))
+			part(mib(*mem.Now) + " now")
 		}
 		if mem.Max != nil {
-			l = append(l, own(" · "+mib(*mem.Max)+" max"))
+			part(mib(*mem.Max) + " max")
 		}
 		if cap > 0 {
-			l = append(l, own(" · cap "+mib(cap)))
+			part("cap " + mib(cap))
 			if slices.Contains(st.CapsUnenforced, "memory_max") {
 				l = append(l, own(" (not enforced)"))
 			}
@@ -301,8 +309,14 @@ func (s *Session) metricLines(st wire.Status, now time.Time) []Line {
 		}
 		out = append(out, field("requests", l...))
 	}
+	// The window, and its newest point only with no memory now: at is
+	// the window's newest step, up to 5 minutes old at the day, while
+	// now, the cap and the last 5 m are the last pushes', and its age
+	// beside "13 MiB now" read as theirs (review of #577). With no now
+	// (the app stopped, or the pushes failing) it is what says how old
+	// the window's numbers are.
 	l := Line{own("over "), boxT(m.Window)}
-	if m.At != nil && !m.At.IsZero() {
+	if (m.Memory == nil || m.Memory.Now == nil) && m.At != nil && !m.At.IsZero() {
 		l = append(l, own(", newest point "+clock(*m.At, now, true)+" UTC ("+since(*m.At, now)+")"))
 	}
 	return append(out, field("metrics", l...))

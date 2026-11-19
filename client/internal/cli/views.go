@@ -148,7 +148,7 @@ func rawTime(raw json.RawMessage) termtext.Text {
 // boxView names the host asked for, which the client checked the
 // box's box_webhook against.
 func boxView(b wire.BoxStatus, asked string) render.Box {
-	return render.Box{Host: tx(asked), Commit: tx(b.Commit), SHA256: tx(b.SHA256), Recipient: tx(b.Recipient)}
+	return render.Box{Host: tx(asked), Commit: tx(b.Commit), SHA256: tx(b.SHA256), Recipient: tx(b.Recipient), Edited: b.OutOfBand}
 }
 
 // whoamiView is the box's answer beside what this side knows: the box

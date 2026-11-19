@@ -364,7 +364,7 @@ echo "=== metrics 3: GET /<app> ==="
 # for that point in the store (a cap, not a timing), then gives the view
 # its cache and a margin.
 rq='sum(rate(motel_app_cpu_seconds_total{app="blog"}[2m]) and topk by (app) (1, tlast_over_time(motel_app_cpu_seconds_total{app="blog"}[2m]) and rate(motel_app_cpu_seconds_total{app="blog"}[2m])) and on (app) tlast_over_time(motel_app_cpu_seconds_total{app="blog"}[75s]))'
-[ "$MEMORY" = 1 ] && rq='{__name__=~"motel_app_memory_bytes|motel_app_memory_max_bytes",app="blog"}'
+[ "$MEMORY" = 1 ] && rq='motel_app_memory_bytes{app="blog"}'
 end=$(( $(date +%s) + 180 ))
 while [ "$(date +%s)" -lt "$end" ]; do
 	now=$(date +%s)

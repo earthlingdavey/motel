@@ -2,10 +2,12 @@ package box
 
 import (
 	"bytes"
+	"context"
 	"crypto/ed25519"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -238,9 +240,11 @@ func TestHandlerStatus(t *testing.T) {
 	r := newRig(t)
 	wantError(t, r.do(t, req{target: "/", token: r.token(t)}), http.StatusConflict, msgNoBaseline)
 
-	r.applied(t, sha)
-	w := r.do(t, req{target: "/", token: r.token(t)})
+	// applied.json records the file installed: nothing is said of an
+	// edit.
 	sum := sha256.Sum256(file(good))
+	r.writeJSON(t, filepath.Join(r.dir, "applied.json"), applied{SHA: sha, Path: "box1/Caddyfile", SHA256: hex.EncodeToString(sum[:]), Signer: "alice", When: r.clock.Now()})
+	w := r.do(t, req{target: "/", token: r.token(t)})
 	want := map[string]any{"commit": sha, "box_webhook": "deploy.example.com", "sha256": hex.EncodeToString(sum[:])}
 	if got := body(t, w); w.Code != http.StatusOK || len(got) != len(want) || got["commit"] != want["commit"] || got["box_webhook"] != want["box_webhook"] || got["sha256"] != want["sha256"] {
 		t.Fatalf("%d %v, want %v", w.Code, got, want)
@@ -253,11 +257,148 @@ func TestHandlerStatus(t *testing.T) {
 		t.Fatalf("an escaped 4 KiB path: %d %s", w.Code, w.Body)
 	}
 
-	// A console edit since the last apply shows in the digest.
-	r.write(t, r.installed, append(file(good), "# edited\n"...))
-	if got := body(t, r.do(t, req{target: "/", token: r.token(t)})); got["sha256"] == want["sha256"] {
-		t.Fatal("the digest is not the installed file's")
+	// A console edit since the last apply shows in the digest, and is
+	// said: the digest is not the one applied.json records for the
+	// commit, as a push would report it (#577).
+	r.writeJSON(t, filepath.Join(r.dir, "applied.json"), applied{SHA: sha, Path: "box1/Caddyfile", SHA256: hex.EncodeToString(sum[:]), Signer: "alice", When: r.clock.Now()})
+	edited := append(file(good), "# edited\n"...)
+	r.write(t, r.installed, edited)
+	w = r.do(t, req{target: "/", token: r.token(t)})
+	if got := body(t, w); got["sha256"] == want["sha256"] || got["caddyfile_edited_out_of_band"] != true || got["commit"] != sha {
+		t.Fatalf("an edited file: %v", got)
 	}
+	// Edited back to the bytes applied: nothing is said again.
+	r.write(t, r.installed, file(good))
+	if got := body(t, r.do(t, req{target: "/", token: r.token(t)})); len(got) != len(want) {
+		t.Fatalf("the applied file again: %v", got)
+	}
+}
+
+// While a push that changes the Caddyfile is applied, the installed
+// file is its new bytes and applied.json still names the commit before,
+// until the applier advances it after the reload: GET / then says
+// nothing of an edit, since the bytes are the applier's own (review of
+// #577). The record (txn.json) stands for that window, and for a run
+// stopped past its swap until recovery.
+func TestHandlerStatusSaysNoEditDuringAnApply(t *testing.T) {
+	p := newPushRig(t)
+	get := func() map[string]any { return p.status(t) }
+	c2, _ := p.change()
+	var during map[string]any
+	p.sd.onReload = func(int) {
+		// The swap is done and the reload under way: the new file is
+		// installed, the record stands, applied.json names the base.
+		if !exists(p.x("txn.json")) || p.applied().SHA != p.base || !bytes.Equal(p.installed(), p.repo.files[c2]) {
+			t.Errorf("the window is not open: record %v, applied %s", exists(p.x("txn.json")), p.applied().SHA)
+		}
+		during = get()
+	}
+	if r := p.pushOne(p.repo.bundleFiles(c2, p.base)); r.Phase != phaseApplied {
+		t.Fatalf("the push: %+v", r)
+	}
+	if during["commit"] != p.base || during["sha256"] != digest(p.repo.files[c2]) || during["caddyfile_edited_out_of_band"] != nil {
+		t.Errorf("GET / during the apply: %v", during)
+	}
+	if after := get(); after["commit"] != c2 || after["caddyfile_edited_out_of_band"] != nil {
+		t.Errorf("GET / after the apply: %v", after)
+	}
+	// A console edit with no record standing is said.
+	p.writeInstalled(append(p.installed(), "# edited\n"...))
+	if edited := get(); edited["caddyfile_edited_out_of_band"] != true {
+		t.Errorf("GET / after a console edit: %v", edited)
+	}
+}
+
+// An apply that ends while GET / reads, its applied.json read before
+// the advance and its record gone by the lookup after: still no edit,
+// the record having stood when the reads began.
+func TestHandlerStatusSaysNoEditAsAnApplyEnds(t *testing.T) {
+	p := newPushRig(t)
+	c2, _ := p.change()
+	v2 := p.repo.files[c2]
+	p.writeInstalled(v2) // swapped, the reload under way
+	if err := os.WriteFile(p.x("txn.json"), []byte("{}"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	p.h.hooks.crash = func(point string) {
+		if point != "status:read" {
+			return
+		}
+		// The applier advances and ends between the reads and the
+		// lookup after them.
+		p.writeApplied(applied{SHA: c2, Path: testPath, SHA256: digest(v2), Signer: p.alice.principal, When: p.clock.Now()})
+		if err := os.Remove(p.x("txn.json")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := p.status(t); got["commit"] != p.base || got["caddyfile_edited_out_of_band"] != nil {
+		t.Errorf("GET / as the apply ends: %v", got)
+	}
+}
+
+// status is GET / on the rig's handler, answered 200.
+func (p *pushRig) status(t *testing.T) map[string]any {
+	t.Helper()
+	hr := httptest.NewRequest(http.MethodGet, "/", nil)
+	hr.Header.Set("Authorization", "Bearer "+p.token(t, ""))
+	w := httptest.NewRecorder()
+	if err := p.h.ServeHTTP(w, hr, nextFunc(func(http.ResponseWriter, *http.Request) error { return errors.New("passed on") })); err != nil || w.Code != http.StatusOK {
+		t.Fatalf("GET /: %v %d %s", err, w.Code, w.Body)
+	}
+	return body(t, w)
+}
+
+// After `moteld box baseline`, applied.json keeps the record before's
+// sha256, no claim about the commit it names, and records the installed
+// file's digest apart (found_sha256): GET / holds the file to that
+// (review of #577). (a) A push applied whose baseline could not be
+// recorded, then the baseline its result asks for: the file is that
+// commit's, and was said edited on every read. Then the same commit
+// pushed again, which the fast path answers no_change with nothing
+// written, and a console edit: said. (b) A trust reset over the file
+// before: nothing said. (c) A baseline of an older release, with no
+// found_sha256: nothing said, edit or not.
+func TestHandlerStatusAfterABaseline(t *testing.T) {
+	t.Run("the unrecorded push", func(t *testing.T) {
+		p := newPushRig(t)
+		c2, _ := p.change()
+		p.writeInstalled(p.repo.files[c2]) // the push installed it; applied.json still names the base
+		if err := runBaseline(context.Background(), 0, p.applier(hooks{}), c2, &bytes.Buffer{}); err != nil {
+			t.Fatal(err)
+		}
+		if got := p.status(t); got["commit"] != c2 || got["sha256"] != digest(p.repo.files[c2]) || got["caddyfile_edited_out_of_band"] != nil {
+			t.Errorf("GET / after the baseline: %v", got)
+		}
+		id := randomID(t)
+		w := p.post(t, p.h, push{id: id, token: p.token(t, c2), body: bytes.NewReader(tgz(t, p.repo.bundleFiles(c2, p.base)))})
+		wantResult(t, w, http.StatusOK, id, phaseNoChange)
+		if a := p.applied(); a.Signer != signerBaseline {
+			t.Fatalf("the fast path wrote applied.json: %+v", a)
+		}
+		p.writeInstalled(append(p.installed(), "# 3am\n"...))
+		if got := p.status(t); got["caddyfile_edited_out_of_band"] != true {
+			t.Errorf("GET / after a console edit since the baseline: %v", got)
+		}
+	})
+	t.Run("a trust reset", func(t *testing.T) {
+		p := newPushRig(t)
+		reset := p.repo.commit(boxFile(7, p.alice), &p.alice)
+		if err := runBaseline(context.Background(), 0, p.applier(hooks{}), reset, &bytes.Buffer{}); err != nil {
+			t.Fatal(err)
+		}
+		if got := p.status(t); got["commit"] != reset || got["sha256"] != digest(p.v1) || got["caddyfile_edited_out_of_band"] != nil {
+			t.Errorf("GET / after the reset: %v", got)
+		}
+	})
+	t.Run("an older baseline", func(t *testing.T) {
+		p := newPushRig(t)
+		reset := p.repo.commit(boxFile(7, p.alice), &p.alice)
+		p.writeApplied(applied{SHA: reset, Path: testPath, SHA256: digest(p.v1), Signer: signerBaseline, When: p.clock.Now()})
+		p.writeInstalled(append(p.installed(), "# 3am\n"...))
+		if got := p.status(t); got["commit"] != reset || got["caddyfile_edited_out_of_band"] != nil {
+			t.Errorf("GET / with an older baseline's record: %v", got)
+		}
+	})
 }
 
 func TestHandlerStatusBoxErrors(t *testing.T) {

@@ -31,7 +31,7 @@ func init() {
 // answers on exactly the path `/` of its site and passes every other
 // path to the next handler:
 //
-//	GET  /              the baseline: {commit, box_webhook, sha256, recipient}
+//	GET  /              the baseline: {commit, box_webhook, sha256, recipient, caddyfile_edited_out_of_band}
 //	GET  /?result=<id>  a push's result (push.go)
 //	POST /              a push (push.go, admission.go, validate.go)
 //
@@ -211,8 +211,19 @@ func (h *Handler) authenticate(w http.ResponseWriter, r *http.Request, route str
 // status is `GET /`: the commit the box runs, from applied.json, and
 // the host and digest of the file it runs, read now — the digest a
 // push's no_change fast path compares (step 4) — so a console edit since the
-// last apply shows; and the box's key for secrets, when it has one.
+// last apply shows, and is said when the digest is not the one
+// applied.json records, the comparison a push makes (check), unless a
+// transaction's record stands (inFlight); after a baseline, against the
+// file the baseline found, where a push still compares the kept sha256
+// (DESIGN-box.md, Accepted residuals); and the box's key for secrets,
+// when it has one.
 func (h *Handler) status(w http.ResponseWriter, _ *http.Request, _ deploytrust.Identity) error {
+	// The record is looked up before the reads and again after them: an
+	// apply that ends between (applied.json read before its advance, the
+	// record gone by the second lookup) still read as one in flight. One
+	// that runs wholly between the lookups reads as a mismatch, which is
+	// what was read: no further guard.
+	busy := h.inFlight()
 	base, file, what, err := h.readState()
 	switch {
 	case what == readingBaseline && errors.Is(err, fs.ErrNotExist):
@@ -233,13 +244,32 @@ func (h *Handler) status(w http.ResponseWriter, _ *http.Request, _ deploytrust.I
 		return respond(w, http.StatusConflict, errorBody(runningRefused(ref).Error()))
 	}
 	sum := digest(file) // what the fast path compares
-	body := wire.BoxStatus{Commit: base.SHA, BoxWebhook: shape.Host, SHA256: sum, Recipient: h.recipient()}
+	h.crash("status:read")
+	// After `moteld box baseline` the sha256 is the record before's, no
+	// claim about the commit it names: the file is held to the one the
+	// baseline found, and to none when a baseline of an older release
+	// recorded none.
+	want := base.SHA256
+	if base.Signer == signerBaseline {
+		want = base.Found
+	}
+	edited := want != "" && sum != want && !busy && !h.inFlight()
+	body := wire.BoxStatus{Commit: base.SHA, BoxWebhook: shape.Host, SHA256: sum, Recipient: h.recipient(), OutOfBand: edited}
 	safe := []string{base.SHA, shape.Host, sum}
 	if body.Recipient != "" { // a bech32 key is what the entropy layer catches
 		safe = append(safe, body.Recipient)
 	}
 	return respond(w, http.StatusOK, body, safe...)
 }
+
+// inFlight says a transaction's record (txn.json) stands: from before
+// the applier's swap until applied.json names the new commit, and while
+// a run stopped past its swap waits for recovery. The installed file
+// may then be the transaction's own bytes, under the commit before, and
+// the record that says so is root's (0600), so status says nothing of
+// an edit while it stands. A lookup that fails counts as one standing:
+// the answer then says less, never an edit no one made.
+func (h *Handler) inFlight() bool { return exists(h.x("txn.json")) }
 
 // readingKey is what the journal names when age.pub cannot be read.
 const readingKey = "the box's key for secrets (age.pub)"

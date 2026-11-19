@@ -12,21 +12,16 @@ import (
 	"github.com/smallhoursorg/motel/liveswap/wire"
 )
 
-// metrics in GET /<app> (DESIGN-metrics.md): seven fixed queries over
+// metrics in GET /<app> (DESIGN-metrics.md): ten fixed queries over
 // the store's socket, scoped to the app the route resolved, over one of
 // wire.MetricsRanges: two query_range templates (memory, CPU), the
-// window's memory peak, and four instant queries over the requests
-// observe counted; run at once within one budget, and cached
-// per app and window.
+// window's memory peak, the memory's and the cap's last push, the
+// hour's CPU reading over the last minutes, and four instant queries
+// over the requests observe counted; run at once within one budget,
+// and cached per app and window.
 const (
-	// viewRecent is what avg_5m averages over, up to the newest point.
+	// viewRecent is the span avg_5m covers, up to its newest point.
 	viewRecent = 5 * time.Minute
-	// viewFreshSteps is how many of the window's steps old the newest
-	// point may be and still be the present (3 m for the hour, 15 m for
-	// the day, whose newest step can be over 5 m old): a series that
-	// stopped (an app stopped, a cap a later release dropped) keeps its
-	// last point in the window, which is history, not now.
-	viewFreshSteps = 3
 	// viewBudget bounds the queries together: the route never waits longer.
 	viewBudget = 2 * time.Second
 	// viewCache is how long an answer, or a failure, is reused: a
@@ -121,9 +116,9 @@ func (v *metricsView) AppMetrics(ctx context.Context, app, window string) *wire.
 	return &val
 }
 
-// viewAnswers is the seven queries' answers.
+// viewAnswers is the ten queries' answers.
 type viewAnswers struct {
-	mem, cpu, peak, classes, p50, p95, cache []series
+	mem, cpu, peak, memNow, capNow, cpuRecent, classes, p50, p95, cache []series
 }
 
 // viewRequests is the view's four request queries over a window.
@@ -152,14 +147,16 @@ func requestQueries(sel string, span time.Duration) viewRequests {
 // point the running unit's rate over rate (unitCPU): summed over every
 // unit, a point after a cutover read the stopped unit's rate beside the
 // new one's, and a stopped app had points for the rate's window after
-// its last push; now for pushFresh. Whether the newest point is the
-// present is still judged by viewFreshSteps.
+// its last push; now for pushFresh. avg_5m is the hour's points of it
+// over viewRecent.
 func cpuQuery(sel, rate string) string {
 	return "sum(" + unitCPU("{"+sel+"}", rate) + ")"
 }
 
 func (v *metricsView) ask(ctx context.Context, app, window string, w viewWindow, now time.Time) (wire.Metrics, error) {
 	start, end := now.Add(-w.span), now
+	hour := viewWindows["1h"]
+	recentFrom := end.Add(hour.step - viewRecent)
 	sel := fmt.Sprintf(`app=%q`, app)
 	var a viewAnswers
 	rq := requestQueries(sel, w.span)
@@ -172,7 +169,7 @@ func (v *metricsView) ask(ctx context.Context, app, window string, w viewWindow,
 	}
 	jobs := []job{
 		{&a.mem, func() ([]series, error) {
-			return v.store.queryRange(ctx, `{__name__=~"motel_app_memory_bytes|motel_app_memory_max_bytes",`+sel+`}`, start, end, w.step)
+			return v.store.queryRange(ctx, `motel_app_memory_bytes{`+sel+`}`, start, end, w.step)
 		}},
 		{&a.cpu, func() ([]series, error) {
 			return v.store.queryRange(ctx, cpuQuery(sel, w.rate), start, end, w.step)
@@ -181,12 +178,30 @@ func (v *metricsView) ask(ctx context.Context, app, window string, w viewWindow,
 		// every 30 s: the range above holds one sample a step, and a peak
 		// between two steps would be lost.
 		{&a.peak, instant(`max_over_time(motel_app_memory_bytes{` + sel + `}[` + window + `])`)},
+		// now is the last push's, as app_memory_high reads it
+		// (memoryShare), whatever the window: the range's newest point
+		// is on its step's grid, 5 m apart for the day, and holds a
+		// sample the store carried onto it for steps after the app
+		// stopped. memory_max_bytes, the cap, is read alike: a release
+		// that changes or drops it is the present at its next push.
+		{&a.memNow, instant(`max(last_over_time(motel_app_memory_bytes{` + sel + `}[` + promDuration(pushFresh) + `]))`)},
+		{&a.capNow, instant(`max(last_over_time(motel_app_memory_max_bytes{` + sel + `}[` + promDuration(pushFresh) + `]))`)},
+		// avg_5m is the mean of the hour's points (each a 2 m rate, a
+		// step apart) after recentFrom, whatever the window: at most four,
+		// which cover the five minutes up to the newest, each the unit
+		// that ran at its step, so it spans a cutover. The day's newest
+		// point is a 5 m rate up to 5 m old, and one instant rate of the
+		// newest unit covers that unit's life alone (a boot's burst, 60 s
+		// after a deploy).
+		{&a.cpuRecent, func() ([]series, error) {
+			return v.store.queryRange(ctx, cpuQuery(sel, hour.rate), recentFrom, end, hour.step)
+		}},
 		{&a.classes, instant(rq.classes)},
 		{&a.p50, instant(rq.p50)},
 		{&a.p95, instant(rq.p95)},
 		{&a.cache, instant(rq.cache)},
 	}
-	// At once: seven one after another would not fit the budget on a
+	// At once: ten one after another would not fit the budget on a
 	// slow store. Each writes its own answer; the first error is the
 	// answer's.
 	errs := make([]error, len(jobs))
@@ -211,21 +226,14 @@ func (v *metricsView) ask(ctx context.Context, app, window string, w viewWindow,
 			newest = t
 		}
 	}
-	var memPts, maxPts []point
+	var memPts []point
 	for _, s := range a.mem {
-		switch s.labels["__name__"] {
-		case "motel_app_memory_bytes":
-			memPts = append(memPts, s.points...)
-		case "motel_app_memory_max_bytes":
-			maxPts = append(maxPts, s.points...)
-		}
+		memPts = append(memPts, s.points...)
 	}
-	fresh := func(p point) bool { return !p.t.Before(end.Add(-viewFreshSteps * w.step)) }
-	if last, ok := latest(memPts); ok {
-		m := &wire.MemorySummary{}
-		if fresh(last) {
-			m.Now = &last.v
-		}
+	memNow, capNow := lastPush(a.memNow), lastPush(a.capNow)
+	// A unit started since the day's newest step has a push and no point.
+	if last, ok := latest(memPts); ok || memNow != nil {
+		m := &wire.MemorySummary{Now: memNow}
 		// The max is the raw peak's alone: the range's first step can
 		// carry a sample from before the window, which max_over_time
 		// rightly leaves out.
@@ -238,29 +246,41 @@ func (v *metricsView) ask(ctx context.Context, app, window string, w viewWindow,
 			}
 		}
 		out.Memory = m
-		seen(last.t)
+		if ok {
+			seen(last.t)
+		}
 	}
-	if last, ok := latest(maxPts); ok && fresh(last) {
-		out.MemoryMax = &last.v
-	}
+	out.MemoryMax = capNow
 	var cpuPts []point
 	for _, s := range a.cpu {
 		cpuPts = append(cpuPts, s.points...)
 	}
 	if last, ok := latest(cpuPts); ok {
 		c := &wire.CPUSummary{}
-		var sum, recent float64
-		var n int
+		var sum float64
 		for _, p := range cpuPts {
 			sum += p.v
-			if fresh(last) && p.t.After(last.t.Add(-viewRecent)) {
-				recent += p.v
-				n++
-			}
 		}
 		c.Avg = roundTo(sum/float64(len(cpuPts)), 1e6)
-		if n > 0 {
-			avg := roundTo(recent/float64(n), 1e6)
+		var recent []point
+		for _, s := range a.cpuRecent {
+			for _, p := range s.points {
+				if p.t.After(recentFrom) {
+					recent = append(recent, p)
+				}
+			}
+		}
+		// Only with a point in the last two steps: unitCPU gives none
+		// once a unit's last push is pushFresh older than the point, so a
+		// stopped app has none from about 75 s and two steps after its
+		// last push, and one down for minutes and started again seconds
+		// ago (no rate yet) is not read from its old unit's points alone.
+		if top, ok := latest(recent); ok && !top.t.Before(end.Add(-2*hour.step)) {
+			var sum float64
+			for _, p := range recent {
+				sum += p.v
+			}
+			avg := roundTo(sum/float64(len(recent)), 1e6)
 			c.Avg5m = &avg
 		}
 		out.CPU = c
@@ -344,6 +364,17 @@ func quantileMs(ss []series) *float64 {
 // reads as a generated secret and masks inside the number; the body is
 // then no JSON, and the whole status is withheld.
 func roundTo(v, per float64) float64 { return math.Round(v*per) / per }
+
+// lastPush is a last_over_time answer's value (memory's or the cap's
+// last push); nil with none.
+func lastPush(ss []series) *float64 {
+	for _, s := range ss {
+		if v, ok := instantValue(s); ok {
+			return &v
+		}
+	}
+	return nil
+}
 
 // latest is the newest point.
 func latest(pts []point) (point, bool) {

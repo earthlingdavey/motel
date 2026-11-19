@@ -33,7 +33,8 @@ motel apps                          the apps your key may view, one a line
 motel status <app> [--range 1h|24h] an app's status
 motel deploys <app>                 its deploys, newest first
 motel deploys <app> <version>       one deploy's whole record
-motel box status                    the commit the box runs, its Caddyfile's digest, its key for secrets
+motel box status                    the commit the box runs, its Caddyfile's digest, its key for secrets,
+                                    and whether that Caddyfile is the one that commit installed
 motel                               on a terminal, screens over the same reads (below)
 ```
 
@@ -304,6 +305,7 @@ made by hand. Accepted:
 | `motel 2>/dev/null` alone, on a terminal where no box or key is found: the help, exit 2, and the line that says what was not found is lost with stderr, though the help says a line under it says why | 2 | 5 | 1 | 10 | 2 (the line on stdout too) | accepted |
 | `motel help tui`, as `motel help` with any word that is no command, says ``Unknown help topic [`tui`]`` and prints the usage, exit 0, where `motel tui` is refused, exit 2: cobra's own answer, and older than `motel` alone as the screen | 2 | 5 | 1 | 10 | 2 | accepted |
 | `motel` alone, where no box or key is found, interrupted (ctrl-c, the terminal closed) in the moment its help is being written: the help is on stdout, the line under it is not said, and the exit is 130, where an interrupted command prints nothing on stdout. The interrupt is looked for before the help is written (`TestSignalBeforeTheScreen`), not during: about 3.5 kB to a terminal, a few milliseconds unless the terminal is held (ctrl-s) | 2 | 2 | 3 | 12 | 2 (the help built whole, then written only if not interrupted) | accepted |
+| A client with #577's change reading a box on v0.8.0 or earlier: that box's `memory_bytes.now` is the range's newest point, kept while it is at most three steps old, so under `--range 24h` up to 15 minutes old (three 5-minute steps; 3 minutes at the hour), and its `avg_5m` and `memory_max_bytes` alike. The app's screen shows it as `now` beside `metrics     over 24h` with no age, where the client before this change said `newest point 14:00:10 UTC (12m ago)` under it | 2 | 5 | 3 | 30 | 2 | accepted over the bar, pending the owner (the skill's rule 4): it ends when the box takes this release, and telling the two kinds of box apart needs the client to judge the box's release |
 
 Owed, from the reviews of the TUI's first part (#558; scored there), of
 their fixes, and of its second part; the others are fixed:
@@ -347,7 +349,17 @@ under it the version in flight, its phase, when the deploy started and
 by whom (`4c2d9e7b1a05 soaking · started 25s ago (14:12 UTC) by …`;
 under "has no version yet: a deploy of it is in flight." before a first
 version serves); a deploy's record is laid out for
-reading a failure, its log tail last. The title bar, the crumb, the
+reading a failure, its log tail last. The box screen shows the commit
+the box runs, its Caddyfile's digest and its key for secrets, and, when
+the box says the Caddyfile is not the one that commit installed, a line
+under the digest that says so, as `motel box status`'s first line does.
+The box says it when the installed file's digest is not the one it
+recorded for the commit: an edit at the console since (the usual case),
+or a push whose record could not be written (its result said `unknown`
+and named `moteld box baseline`), which the box cannot tell apart;
+after `moteld box baseline`, the file is compared with the one the
+baseline found. A box older than that answer says nothing of it, and
+nor does the screen. The title bar, the crumb, the
 apps strip, an app's fields, a record's head and its log tail (while `w` is off) and who am I's and the box screen's lines holding a box's value are fitted to the
 window in the screen's cells, as the door draws them (a wide character
 takes two, a combining mark none, and a character the door writes as

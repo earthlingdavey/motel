@@ -740,6 +740,9 @@ func (s *Session) BoxViewFit(now time.Time, width int, cells Cells) []Line {
 	// Caddyfile's sha256 stands alone after its label, so that at 80
 	// columns it is whole.
 	out := []Line{cutTo(field("runs commit", own(b.Commit)), width, cells), cutTo(field("Caddyfile", own(b.SHA256)), width, cells)}
+	if b.OutOfBand {
+		out = append(out, laid(width, cells, field("", ownC("is not the file that commit installed", Warn)))...)
+	}
 	if b.Recipient != "" {
 		out = append(out, cutTo(field("secrets key", boxT(b.Recipient)), width, cells))
 	}

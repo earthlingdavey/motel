@@ -16,10 +16,13 @@ var MetricsRanges = []string{"1h", "24h"}
 // answer is the object with Error alone.
 type Metrics struct {
 	Window string `json:"window,omitempty"`
-	// At is the newest point in the window, of memory or CPU; absent
-	// with neither.
-	At        *time.Time      `json:"at,omitempty"`
-	Memory    *MemorySummary  `json:"memory_bytes,omitempty"`
+	// At is the newest point of the window's range, of memory or CPU,
+	// not the time of a push; absent with no point.
+	At     *time.Time     `json:"at,omitempty"`
+	Memory *MemorySummary `json:"memory_bytes,omitempty"`
+	// MemoryMax is the cap's last push within 75 s, whatever the
+	// window; absent with none (no cap, the app stopped, or the pushes
+	// failing).
 	MemoryMax *float64        `json:"memory_max_bytes,omitempty"`
 	CPU       *CPUSummary     `json:"cpu_cores,omitempty"`
 	Requests  *RequestSummary `json:"requests,omitempty"`
@@ -28,8 +31,8 @@ type Metrics struct {
 
 // MemorySummary is the app's memory over the window, in bytes.
 type MemorySummary struct {
-	// Now is absent when the series has no point in the window's last
-	// three steps.
+	// Now is the last push's within 75 s, whatever the window; absent
+	// with none (the app stopped, or the pushes failing).
 	Now *float64 `json:"now,omitempty"`
 	// Max is absent when the window holds no raw sample: the range's
 	// first step can still carry one from just before it.
@@ -38,9 +41,12 @@ type MemorySummary struct {
 
 // CPUSummary is the app's CPU over the window, in cores.
 type CPUSummary struct {
-	// Avg5m is the mean of the points in the five minutes up to the
-	// newest (the newest alone for the day, a 5 m rate already); absent
-	// when the newest is not fresh.
+	// Avg5m is the mean of the hour's CPU points (2 m rates, a minute
+	// apart) covering the five minutes up to the newest, whatever the
+	// window, each the unit that ran at its minute (so it spans a
+	// deploy); absent when the newest is over two minutes old, about
+	// 3 m 15 s after the last push (the app stopped, or the pushes
+	// failing).
 	Avg5m *float64 `json:"avg_5m,omitempty"`
 	Avg   float64  `json:"avg"`
 }

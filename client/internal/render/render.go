@@ -138,6 +138,11 @@ type Box struct {
 	Commit    termtext.Text
 	SHA256    termtext.Text
 	Recipient termtext.Text
+	// Edited says the box answered that its Caddyfile is not the one
+	// it recorded for Commit (caddyfile_edited_out_of_band): an edit at
+	// the console, or a push whose baseline could not be recorded,
+	// which the box cannot tell apart.
+	Edited bool
 }
 
 // WhoAmI is GET /_motel/whoami's body, beside what this side knows:
@@ -414,7 +419,11 @@ func WriteBox(w io.Writer, b Box) error {
 	if r := []rune(short); len(r) > 12 {
 		short = string(r[:12])
 	}
-	p.line("%s  runs %s", b.Host, short)
+	if b.Edited {
+		p.line("%s  runs %s, and its Caddyfile is not the one that commit installed", b.Host, short)
+	} else {
+		p.line("%s  runs %s", b.Host, short)
+	}
 	p.line("commit           %s", commit)
 	p.line("Caddyfile sha256 %s", b.SHA256)
 	if !b.Recipient.Empty() {

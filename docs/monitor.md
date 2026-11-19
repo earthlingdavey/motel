@@ -660,8 +660,19 @@ a deploy uses it: [liveswap/README.md](../liveswap/README.md)) gains a
 Any other range is refused: `{"error":"range must be one of 1h, 24h"}`
 (HTTP 422). `requests` appears only for an app whose site has
 `observe <app>` in front of it ([liveswap/README.md](../liveswap/README.md)).
-`memory_max_bytes` appears only for an app with a memory cap. A number
-with nothing behind it in the window is left out. When the store does
+`memory_bytes.max`, `cpu_cores.avg` and `requests` are over the range.
+`memory_bytes.now`, `memory_max_bytes` (the memory cap) and
+`cpu_cores.avg_5m` are the present, whatever the range: the app's last
+push within 75 seconds, and for `avg_5m` the mean of its CPU over the
+five minutes up to its newest minute, read a minute at a time. `now`
+and `memory_max_bytes` are left out when no push of the app came in
+those 75 seconds (it stopped, or its pushes are failing), and `avg_5m`
+when its newest minute is over two minutes old, about three minutes
+after the last push; so a missing `memory_max_bytes` means no cap only
+while the app runs. `at` is the time of the range's newest point, which the
+view reads a minute apart over the hour and five minutes apart over
+the day, not the time of those three. A number with nothing behind it
+in the range is left out. When the store does
 not answer the view's queries, `metrics` is `{"error":"the metrics
 store did not answer"}`, and moteld's journal has the cause as a
 warning, `monitor metrics: GET /<app> answered without metrics: the

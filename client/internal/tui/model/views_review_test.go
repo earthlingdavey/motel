@@ -311,6 +311,75 @@ func timesOf(t *testing.T, status, rec string) (fields, finished, took, last, ve
 		row(s, now, "blog").Cells[model.ColLast].String(), r.Head[0].Text()
 }
 
+// TestMemoryLineJoins: the memory line joins what it has with " · ",
+// whatever of now, max and the cap is there; a stopped app has no now
+// (review round two of #577), and its line began with the separator.
+// With neither now nor max there is no line.
+func TestMemoryLineJoins(t *testing.T) {
+	const bar = "  █████░░░░░░░░░░░░░░░ 25% of cap"
+	for _, c := range []struct {
+		mem, caps, want string
+	}{
+		{`{"now":1048576,"max":2097152}`, `{"memory_max":4194304}`, "memory      1 MiB now · 2 MiB max · cap 4 MiB" + bar},
+		{`{"now":1048576,"max":2097152}`, `{}`, "memory      1 MiB now · 2 MiB max"},
+		{`{"now":1048576}`, `{"memory_max":4194304}`, "memory      1 MiB now · cap 4 MiB" + bar},
+		{`{"now":1048576}`, `{}`, "memory      1 MiB now"},
+		{`{"max":2097152}`, `{"memory_max":4194304}`, "memory      2 MiB max · cap 4 MiB"},
+		{`{"max":2097152}`, `{}`, "memory      2 MiB max"},
+		{`{}`, `{"memory_max":4194304}`, ""},
+		{`{}`, `{}`, ""},
+	} {
+		fields, _, _, _, _ := timesOf(t, `{"app":"blog","phase":"idle","running":true,"current_version":"v2","available_versions":["v2"],"caps":`+c.caps+`,
+			"metrics":{"window":"1h","at":"@-0s","memory_bytes":`+c.mem+`},
+			"deploys":[{"version":"v2","status":"succeeded","started_at":"@-1m","finished_at":"@-0s"}],
+			"last_deploy":{"version":"v2","status":"succeeded","started_at":"@-1m","finished_at":"@-0s"}}`,
+			`{"version":"v2","status":"succeeded","started_at":"@-1m","finished_at":"@-0s"}`)
+		got := ""
+		for _, l := range strings.Split(fields, "\n") {
+			if strings.HasPrefix(l, "memory ") {
+				got = l
+			}
+		}
+		if got != c.want {
+			t.Errorf("memory %s, caps %s:\n got %q\nwant %q", c.mem, c.caps, got, c.want)
+		}
+	}
+}
+
+// TestMetricsLineAgeWithoutNow: the metrics line says the window's
+// newest point and its age only when the answer has no memory now (the
+// app stopped, or the pushes failing), so that the window's numbers
+// carry their age; with a now, the window alone, whose age would read
+// as now's (review round two of #577).
+func TestMetricsLineAgeWithoutNow(t *testing.T) {
+	for _, c := range []struct {
+		mem  string
+		aged bool
+	}{
+		{`{"max":2097152}`, true},
+		{`{"now":1048576,"max":2097152}`, false},
+	} {
+		fields, _, _, _, _ := timesOf(t, `{"app":"blog","phase":"idle","running":true,"current_version":"v2","available_versions":["v2"],
+			"metrics":{"window":"1h","at":"@-50m","memory_bytes":`+c.mem+`},
+			"deploys":[{"version":"v2","status":"succeeded","started_at":"@-1m","finished_at":"@-0s"}],
+			"last_deploy":{"version":"v2","status":"succeeded","started_at":"@-1m","finished_at":"@-0s"}}`,
+			`{"version":"v2","status":"succeeded","started_at":"@-1m","finished_at":"@-0s"}`)
+		got := ""
+		for _, l := range strings.Split(fields, "\n") {
+			if strings.HasPrefix(l, "metrics ") {
+				got = l
+			}
+		}
+		ok := got == "metrics     over 1h"
+		if c.aged {
+			ok = strings.HasPrefix(got, "metrics     over 1h, newest point ") && strings.HasSuffix(got, " UTC (50m ago)")
+		}
+		if !ok {
+			t.Errorf("memory %s: the metrics line is %q", c.mem, got)
+		}
+	}
+}
+
 // TestTimesCarryTheirDay: a box's time shown as a time of day carries
 // its date when it is not today (the date in UTC), and its year when
 // not this year; a missing time is said as missing, not as year 1 or a
@@ -320,10 +389,11 @@ func TestTimesCarryTheirDay(t *testing.T) {
 	// before is 2025-10-11.
 	fields, fin, _, _, verdict := timesOf(t, `{"app":"blog","phase":"idle","running":true,"current_version":"v2","available_versions":["v2"],
 		"watchdog":{"state":"watching","restarts_in_window":0,"last_restart_at":"@-21d"},
-		"metrics":{"window":"1h","at":"@-21d","memory_bytes":{"now":1048576}},
+		"metrics":{"window":"1h","at":"@-21d","memory_bytes":{"max":1048576}},
 		"deploys":[{"version":"v2","status":"succeeded","started_at":"@-400d","finished_at":"@-400d"}],
 		"last_deploy":{"version":"v2","status":"succeeded","started_at":"@-400d","finished_at":"@-400d"}}`,
 		`{"version":"v2","status":"failed","phase":"starting","started_at":"@-21d","finished_at":"@-21d"}`)
+	// No memory now, so the metrics line says its newest point.
 	for _, want := range []string{"last restart 10-25 14:00 UTC", "newest point 10-25 14:00:", "deployed    succeeded 400d ago (2025-10-11 14:00 UTC, 0.0 s)"} {
 		if !strings.Contains(fields, want) {
 			t.Errorf("old times: no %q in\n%s", want, fields)

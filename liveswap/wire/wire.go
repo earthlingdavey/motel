@@ -305,7 +305,8 @@ type DoneEvent struct {
 
 // BoxStatus is the box webhook's GET / body: the commit the box runs,
 // the host its box_webhook answers on, the digest of the Caddyfile it
-// runs, and the box's key for secrets.
+// runs, the box's key for secrets, and whether that Caddyfile is not the
+// one the box recorded for the commit.
 type BoxStatus struct {
 	Commit     string `json:"commit"`
 	BoxWebhook string `json:"box_webhook"`
@@ -314,6 +315,20 @@ type BoxStatus struct {
 	// compares with the first line of recipients ("The box's key").
 	// Absent when the box has none.
 	Recipient string `json:"recipient,omitempty"`
+	// OutOfBand is true when SHA256 is not the digest the box recorded
+	// for Commit, the comparison a push's own
+	// caddyfile_edited_out_of_band makes: an edit at the console, or a
+	// push whose baseline could not be recorded, which the box cannot
+	// tell apart. Absent when they are the same, while a push is being
+	// applied (the file may be its new bytes under the commit before),
+	// and from a box older than the field. After `moteld box baseline`
+	// the file is held to the one the baseline found, until a push
+	// applies a new commit, while a push still compares the digest the
+	// baseline kept, so the two can differ: an edit made before the
+	// baseline is a push's and not this field's, and the file of a push
+	// whose baseline was unrecorded is the reverse. A baseline of an
+	// older release recorded no file, and nothing is said then.
+	OutOfBand bool `json:"caddyfile_edited_out_of_band,omitempty"`
 }
 
 // WhoAmI is GET /_motel/whoami's body: who the box takes a token's
