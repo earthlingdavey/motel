@@ -1096,7 +1096,7 @@ func TestMeAndBoxReads(t *testing.T) {
 	}
 	now = now.Add(3*time.Minute + time.Second + model.AgainAfter)
 	e.Again(now, model.Job{Kind: model.KWhoAmI})
-	if !takeKind(e, now, model.KWhoAmI) {
+	if !takeMe(e, now) {
 		t.Error("ctrl-r on who am I did not read whoami")
 	}
 	e.Done(model.Job{Kind: model.KWhoAmI}, now, nil)
@@ -1113,14 +1113,15 @@ func TestMeAndBoxReads(t *testing.T) {
 	}
 }
 
-func takeKind(e *model.Engine, now time.Time, k model.Kind) bool {
+// takeMe takes reads at now, answering each, until whoami's is taken.
+func takeMe(e *model.Engine, now time.Time) bool {
 	e.Touch(now)
 	for range 50 {
 		j, ok, _ := e.Take(now)
 		if !ok {
 			return false
 		}
-		if j.Kind == k {
+		if j.Kind == model.KWhoAmI {
 			return true
 		}
 		e.Done(j, now, nil)

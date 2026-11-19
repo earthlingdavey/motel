@@ -23,7 +23,7 @@ func TestWhoAmIMissAskedAtItsBackoff(t *testing.T) {
 			sim(e, apps, *now, time.Minute, 0, ok)
 			*now = now.Add(time.Minute)
 			e.Again(*now, model.Job{Kind: model.KWhoAmI})
-			if !takeKind(e, *now, model.KWhoAmI) {
+			if !takeMe(e, *now) {
 				t.Fatal("no whoami taken")
 			}
 			e.Done(model.Job{Kind: model.KWhoAmI}, *now, fail(model.FailAboutAnother))
@@ -146,7 +146,7 @@ func TestNoAnswerBeforeAStopForgotten(t *testing.T) {
 		e.Done(blog, now, fail(model.FailNoAnswer))
 		e.Again(now, model.Job{Kind: model.KWhoAmI})
 		now = now.Add(5 * time.Second)
-		if !takeKind(e, now, model.KWhoAmI) {
+		if !takeMe(e, now) {
 			t.Fatal("no whoami taken")
 		}
 		e.Done(model.Job{Kind: model.KWhoAmI}, now, fail(stop))
@@ -174,7 +174,7 @@ func TestWhoAmIMissNotPutOffByClosingMe(t *testing.T) {
 	sim(e, []string{"blog"}, t0, 2*time.Minute, 0, ok)
 	now := t0.Add(2 * time.Minute)
 	e.MeOpen(true, now)
-	if !takeKind(e, now, model.KWhoAmI) {
+	if !takeMe(e, now) {
 		t.Fatal("opening who am I asks no whoami")
 	}
 	e.Done(model.Job{Kind: model.KWhoAmI}, now, fail(model.FailNoAnswer))
