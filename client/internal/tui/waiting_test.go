@@ -120,7 +120,7 @@ func table(rows []said, from int) string {
 }
 
 func timedOut() error {
-	return &model.Failure{Kind: model.FailNoAnswer, Message: "deploy.example.com timed out on 443: no whole answer in 30 s"}
+	return &model.Failure{Kind: model.FailNoAnswer, Message: "deploy.example.com timed out on 443: no whole answer came, and motel waits at most 30 s for one"}
 }
 
 // oneApp is a box with one app, blog: the TUI opens on its screen.

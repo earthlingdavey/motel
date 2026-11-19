@@ -70,7 +70,7 @@ func TestRefusalDropsTheAnswer(t *testing.T) {
 					}
 				}
 
-				none := &model.Failure{Kind: model.FailNoAnswer, Message: "deploy.example.com timed out on 443: no whole answer in 30 s."}
+				none := &model.Failure{Kind: model.FailNoAnswer, Message: "deploy.example.com timed out on 443: no whole answer came, and motel waits at most 30 s for one."}
 				f.Set("blog", none)
 				f.Set("blog@"+version, none)
 				now = now.Add(10 * time.Minute)

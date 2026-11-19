@@ -146,7 +146,7 @@ func TestTitleWordsAt60(t *testing.T) {
 // row after its first indented, none past the window; labelled lines
 // stay one row each. Read from the screen's cells.
 func TestFailureSentenceWrapped(t *testing.T) {
-	const timeout = "deploy.example.com timed out on port 443: no whole answer in 30 s. If moteld is down, as root on the box: systemctl status moteld; journalctl -u moteld -n 50. The box's off-box heartbeat also reports a stopped moteld."
+	const timeout = "deploy.example.com timed out on port 443: no whole answer came, and motel waits at most 30 s for one. If moteld is down, as root on the box: systemctl status moteld; journalctl -u moteld -n 50. The box's off-box heartbeat also reports a stopped moteld."
 	const busy = `deploy.example.com answered 409; the box says: "the app is being installed; the installer has not finished its work yet, try again in a minute or two"`
 	for _, w := range []int{60, 80} {
 		for _, c := range []struct {
