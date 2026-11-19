@@ -315,8 +315,8 @@ func TestHumanOutputOfHostileStrings(t *testing.T) {
 	}
 }
 
-// box status says, on its first line, that the Caddyfile has been
-// edited on the box since the commit, when the box says so (#577); a
+// box status says, on its first line, that the Caddyfile is not the
+// one the commit installed, when the box says so (#577); a
 // box that says nothing (one older than the field, or a file as
 // applied) is said as before. --json is the box's body, the field in it.
 func TestBoxStatusSaysAnEditedCaddyfile(t *testing.T) {
@@ -324,7 +324,7 @@ func TestBoxStatusSaysAnEditedCaddyfile(t *testing.T) {
 		edited bool
 		first  string
 	}{
-		{true, "runs aaaaaaaaaaaa, and its Caddyfile has been edited on the box since\n"},
+		{true, "runs aaaaaaaaaaaa, and its Caddyfile is not the one that commit installed\n"},
 		{false, "runs aaaaaaaaaaaa\n"},
 	} {
 		var body []byte

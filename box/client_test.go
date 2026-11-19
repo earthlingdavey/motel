@@ -102,9 +102,9 @@ func TestClientBoxStatus(t *testing.T) {
 		t.Fatalf("human: %+v", c)
 	}
 	// The rig's applied.json records another digest than the installed
-	// file's: the box says the file has been edited, and so does the
+	// file's: the box says the file is not the commit's, and so does the
 	// client's first line (#577). Recorded as installed, neither does.
-	if first := strings.SplitN(c.stdout, "\n", 2)[0]; first != "127.0.0.1  runs "+sha[:12]+", and its Caddyfile has been edited on the box since" {
+	if first := strings.SplitN(c.stdout, "\n", 2)[0]; first != "127.0.0.1  runs "+sha[:12]+", and its Caddyfile is not the one that commit installed" {
 		t.Fatalf("an edited Caddyfile, the first line: %q", first)
 	}
 	installed, err := os.ReadFile(r.installed)

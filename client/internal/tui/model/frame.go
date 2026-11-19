@@ -741,7 +741,7 @@ func (s *Session) BoxViewFit(now time.Time, width int, cells Cells) []Line {
 	// columns it is whole.
 	out := []Line{cutTo(field("runs commit", own(b.Commit)), width, cells), cutTo(field("Caddyfile", own(b.SHA256)), width, cells)}
 	if b.OutOfBand {
-		out = append(out, laid(width, cells, field("", ownC("has been edited on the box since that commit", Warn)))...)
+		out = append(out, laid(width, cells, field("", ownC("is not the file that commit installed", Warn)))...)
 	}
 	if b.Recipient != "" {
 		out = append(out, cutTo(field("secrets key", boxT(b.Recipient)), width, cells))

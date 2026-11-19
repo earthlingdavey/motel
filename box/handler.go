@@ -218,7 +218,9 @@ func (h *Handler) authenticate(w http.ResponseWriter, r *http.Request, route str
 func (h *Handler) status(w http.ResponseWriter, _ *http.Request, _ deploytrust.Identity) error {
 	// The record is looked up before the reads and again after them: an
 	// apply that ends between (applied.json read before its advance, the
-	// record gone by the second lookup) still read as one in flight.
+	// record gone by the second lookup) still read as one in flight. One
+	// that runs wholly between the lookups reads as a mismatch, which is
+	// what was read: no further guard.
 	busy := h.inFlight()
 	base, file, what, err := h.readState()
 	switch {

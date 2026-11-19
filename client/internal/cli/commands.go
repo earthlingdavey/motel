@@ -227,8 +227,8 @@ func (r *runner) boxStatus() *cobra.Command {
 		Short: "The commit the box runs, its host, its Caddyfile's digest, its key for secrets (experimental)",
 		Long: "box status reads the box webhook's GET / on the box's host: the commit the box\n" +
 			"runs, its box_webhook host, the sha256 of the Caddyfile it runs, and its key\n" +
-			"for secrets; and, when the box says so, that the Caddyfile has been edited on\n" +
-			"the box since that commit. A box with no baseline yet answers 409, which exits 1.\n\n" + experimental,
+			"for secrets; and, when the box says so, that the Caddyfile is not the one that\n" +
+			"commit installed. A box with no baseline yet answers 409, which exits 1.\n\n" + experimental,
 		Args: usageArgs(cobra.NoArgs),
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			c, err := r.client(cmd.Context(), &t, nil, "the box block's", "")
