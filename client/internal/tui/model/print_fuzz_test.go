@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/smallhoursorg/motel/client/internal/client"
 	"github.com/smallhoursorg/motel/client/internal/termtext"
@@ -146,6 +147,9 @@ func FuzzPrintedCommand(f *testing.F) {
 		f.Add(c[0], c[1], "deploy.example.com:8443", c[2], byte(1))
 		f.Add(c[0], c[1], "box-1.example.com:443", c[2], byte(2))
 	}
+	// A key path whose line, each ' written as four characters, is longer
+	// than a fixed window of 1<<20 cells (Copilot's on #591).
+	f.Add("blog", "v1", "deploy.example.com", strings.Repeat("'", 262144), byte(0))
 	f.Fuzz(func(t *testing.T, app, version, box, key string, source byte) {
 		if a, err := client.ParseApp(app); err != nil || a.Name != app {
 			return
@@ -182,8 +186,12 @@ func FuzzPrintedCommand(f *testing.F) {
 			if p, ok := s.Printable(v, 1); !ok || string(p) != line+"\n" {
 				t.Fatalf("P prints %q, not %q", p, line+"\n")
 			}
+			// A window wide enough that no line c shows is cut, however
+			// long the key's path: cutting is FuzzOverlay's. runes gives a
+			// rune a cell, so the line's runes, and room for the indent,
+			// --json and the apps row's "-- <app>", are enough.
 			var shownLines []string
-			for _, l := range s.Overlay(v, false, 1<<20, runes, asIs) {
+			for _, l := range s.Overlay(v, false, utf8.RuneCountInString(line)+64, runes, asIs) {
 				if t := l.Text(); strings.HasPrefix(t, "  motel ") {
 					shownLines = append(shownLines, strings.TrimPrefix(t, "  "))
 				}
