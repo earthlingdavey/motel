@@ -31,7 +31,7 @@ func init() {
 // answers on exactly the path `/` of its site and passes every other
 // path to the next handler:
 //
-//	GET  /              the baseline: {commit, box_webhook, sha256, recipient}
+//	GET  /              the baseline: {commit, box_webhook, sha256, recipient, caddyfile_edited_out_of_band}
 //	GET  /?result=<id>  a push's result (push.go)
 //	POST /              a push (push.go, admission.go, validate.go)
 //
@@ -211,7 +211,9 @@ func (h *Handler) authenticate(w http.ResponseWriter, r *http.Request, route str
 // status is `GET /`: the commit the box runs, from applied.json, and
 // the host and digest of the file it runs, read now — the digest a
 // push's no_change fast path compares (step 4) — so a console edit since the
-// last apply shows; and the box's key for secrets, when it has one.
+// last apply shows, and is said when the digest is not the one
+// applied.json records, as a push says it (check); and the box's key
+// for secrets, when it has one.
 func (h *Handler) status(w http.ResponseWriter, _ *http.Request, _ deploytrust.Identity) error {
 	base, file, what, err := h.readState()
 	switch {
@@ -233,7 +235,7 @@ func (h *Handler) status(w http.ResponseWriter, _ *http.Request, _ deploytrust.I
 		return respond(w, http.StatusConflict, errorBody(runningRefused(ref).Error()))
 	}
 	sum := digest(file) // what the fast path compares
-	body := wire.BoxStatus{Commit: base.SHA, BoxWebhook: shape.Host, SHA256: sum, Recipient: h.recipient()}
+	body := wire.BoxStatus{Commit: base.SHA, BoxWebhook: shape.Host, SHA256: sum, Recipient: h.recipient(), OutOfBand: sum != base.SHA256}
 	safe := []string{base.SHA, shape.Host, sum}
 	if body.Recipient != "" { // a bech32 key is what the entropy layer catches
 		safe = append(safe, body.Recipient)

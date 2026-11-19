@@ -238,9 +238,11 @@ func TestHandlerStatus(t *testing.T) {
 	r := newRig(t)
 	wantError(t, r.do(t, req{target: "/", token: r.token(t)}), http.StatusConflict, msgNoBaseline)
 
-	r.applied(t, sha)
-	w := r.do(t, req{target: "/", token: r.token(t)})
+	// applied.json records the file installed: nothing is said of an
+	// edit.
 	sum := sha256.Sum256(file(good))
+	r.writeJSON(t, filepath.Join(r.dir, "applied.json"), applied{SHA: sha, Path: "box1/Caddyfile", SHA256: hex.EncodeToString(sum[:]), Signer: "alice", When: r.clock.Now()})
+	w := r.do(t, req{target: "/", token: r.token(t)})
 	want := map[string]any{"commit": sha, "box_webhook": "deploy.example.com", "sha256": hex.EncodeToString(sum[:])}
 	if got := body(t, w); w.Code != http.StatusOK || len(got) != len(want) || got["commit"] != want["commit"] || got["box_webhook"] != want["box_webhook"] || got["sha256"] != want["sha256"] {
 		t.Fatalf("%d %v, want %v", w.Code, got, want)
@@ -253,10 +255,20 @@ func TestHandlerStatus(t *testing.T) {
 		t.Fatalf("an escaped 4 KiB path: %d %s", w.Code, w.Body)
 	}
 
-	// A console edit since the last apply shows in the digest.
-	r.write(t, r.installed, append(file(good), "# edited\n"...))
-	if got := body(t, r.do(t, req{target: "/", token: r.token(t)})); got["sha256"] == want["sha256"] {
-		t.Fatal("the digest is not the installed file's")
+	// A console edit since the last apply shows in the digest, and is
+	// said: the digest is not the one applied.json records for the
+	// commit, as a push would report it (#577).
+	r.writeJSON(t, filepath.Join(r.dir, "applied.json"), applied{SHA: sha, Path: "box1/Caddyfile", SHA256: hex.EncodeToString(sum[:]), Signer: "alice", When: r.clock.Now()})
+	edited := append(file(good), "# edited\n"...)
+	r.write(t, r.installed, edited)
+	w = r.do(t, req{target: "/", token: r.token(t)})
+	if got := body(t, w); got["sha256"] == want["sha256"] || got["caddyfile_edited_out_of_band"] != true || got["commit"] != sha {
+		t.Fatalf("an edited file: %v", got)
+	}
+	// Edited back to the bytes applied: nothing is said again.
+	r.write(t, r.installed, file(good))
+	if got := body(t, r.do(t, req{target: "/", token: r.token(t)})); len(got) != len(want) {
+		t.Fatalf("the applied file again: %v", got)
 	}
 }
 

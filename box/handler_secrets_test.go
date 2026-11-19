@@ -26,7 +26,8 @@ import (
 // key.
 func TestHandlerStatusRecipient(t *testing.T) {
 	r := newRig(t)
-	r.applied(t, sha)
+	sum := sha256.Sum256(file(good))
+	r.writeJSON(t, filepath.Join(r.dir, "applied.json"), applied{SHA: sha, Path: "box1/Caddyfile", SHA256: hex.EncodeToString(sum[:]), Signer: "alice", When: r.clock.Now()})
 	key := newIdentity(t).Recipient().String()
 	for name, c := range map[string]struct {
 		pub  []byte // nil: no file
@@ -56,7 +57,6 @@ func TestHandlerStatusRecipient(t *testing.T) {
 			}
 			// The body byte for byte, as a client reads it: the keys in
 			// their order, the recipient last and only when there is one.
-			sum := sha256.Sum256(file(good))
 			want := fmt.Sprintf(`{"commit":%q,"box_webhook":"deploy.example.com","sha256":%q`, sha, hex.EncodeToString(sum[:]))
 			if c.want != "" {
 				want += fmt.Sprintf(`,"recipient":%q`, c.want)
