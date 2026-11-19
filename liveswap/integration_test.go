@@ -222,9 +222,87 @@ func socketFromStatus(t *testing.T, status string) string {
 	return m[1]
 }
 
+// integrationServer makes a test's liveswap root and the tester that
+// loads its configs into the in-process Caddy, and ends the test's
+// apps before the root is removed (#534).
+//
+// Caddy outlives each test: its config stays loaded until the next
+// test's InitServer replaces it, so the test's apps, their watchdogs
+// and their units would carry on under root after it returns. A
+// watchdog restart makes a run dir and a socket there, and one made
+// while t.TempDir's RemoveAll is emptying the tree fails the test
+// with "directory not empty". Cleanups run last-registered first, and
+// this one is registered after t.TempDir's, so it runs before the
+// removal.
+func integrationServer(t *testing.T) (string, *caddytest.Tester) {
+	t.Helper()
+	root := t.TempDir()
+	t.Cleanup(func() { endApps(t, root) })
+	return root, caddytest.NewTester(t)
+}
+
+// endApps loads a config that names no app, which removes every app
+// the test configured: their Destruct stops the watchdog and waits for
+// it, then stops the units and prunes the sockets, all before the load
+// answers. It then waits for the manager to hold no unit of any app
+// under root. The config keeps liveswap itself: a load with no
+// liveswap at all would leave the units running for a later start to
+// reattach (Destruct when no started config holds liveswap). The idle
+// config's start-time sweep of unknown apps still runs in the
+// background after the load: under root it only reads and removes,
+// which RemoveAll tolerates, and it stops the units of every app no
+// config names, which integrationRunner keeps away from the runner
+// suite's.
+//
+// Only an app's first deploy or launch makes its dir under root
+// (appDirs.ensure), so a root with none ran nothing: a test that
+// failed or was skipped before it deployed has nothing to end, and
+// Caddy may never have started.
+func endApps(t *testing.T, root string) {
+	t.Helper()
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var apps []string
+	for _, e := range entries {
+		if e.IsDir() && appNameRe.MatchString(e.Name()) {
+			apps = append(apps, e.Name())
+		}
+	}
+	if len(apps) == 0 {
+		return
+	}
+	idle := fmt.Sprintf(`{
+	admin localhost:2999
+	liveswap {
+		root %s
+	}
+}
+`, root)
+	req, err := http.NewRequest(http.MethodPost, "http://localhost:2999/load", strings.NewReader(idle))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "text/caddyfile")
+	// Destruct waits for a deploy of the app still in flight.
+	resp, err := (&http.Client{Timeout: 60 * time.Second}).Do(req)
+	if err != nil {
+		t.Fatalf("loading a config with no app, to end the test's apps: %v", err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("loading a config with no app, to end the test's apps: %d %s", resp.StatusCode, body)
+	}
+	for _, app := range apps {
+		pollUntil(t, 10*time.Second, "no unit of "+app+" left", func() bool { return appUnits(t, app) == "" })
+	}
+}
+
 func TestIntegrationDeployLifecycle(t *testing.T) {
 	bin := buildTestApp(t)
-	root := t.TempDir()
+	root, tester := integrationServer(t)
 
 	// Artifact "release storage": one tarball per version, like a
 	// forge's release assets.
@@ -241,7 +319,6 @@ func TestIntegrationDeployLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	tester := caddytest.NewTester(t)
 	tester.InitServer(integrationConfig(root, artifactURL.Port()), "caddyfile")
 
 	t.Run("proxy errors before first deploy", func(t *testing.T) {
@@ -543,7 +620,7 @@ func pollUntil(t *testing.T, timeout time.Duration, desc string, cond func() boo
 
 func TestIntegrationWatchdogRestarts(t *testing.T) {
 	bin := buildTestApp(t)
-	root := t.TempDir()
+	root, tester := integrationServer(t)
 	artifactSrv := serveArtifacts(t, map[string][]byte{
 		"/demo-v1.tar.gz": packRelease(t, bin, "v1", false),
 	})
@@ -552,7 +629,6 @@ func TestIntegrationWatchdogRestarts(t *testing.T) {
 		t.Fatal(err)
 	}
 	const app = "wdcrash"
-	tester := caddytest.NewTester(t)
 	tester.InitServer(watchdogConfig(root, artifactURL.Port(), app, 50, "10m"), "caddyfile")
 
 	if resp, body := postDeployApp(t, app, artifactSrv.URL+"/demo-v1.tar.gz", "v1"); resp.StatusCode != http.StatusOK {
@@ -607,7 +683,7 @@ func TestIntegrationWatchdogRestarts(t *testing.T) {
 
 func TestIntegrationWatchdogThrottleAutoRecovers(t *testing.T) {
 	bin := buildTestApp(t)
-	root := t.TempDir()
+	root, tester := integrationServer(t)
 	artifactSrv := serveArtifacts(t, map[string][]byte{
 		"/demo-v1.tar.gz": packRelease(t, bin, "v1", false),
 	})
@@ -616,7 +692,6 @@ func TestIntegrationWatchdogThrottleAutoRecovers(t *testing.T) {
 		t.Fatal(err)
 	}
 	const app = "wdex"
-	tester := caddytest.NewTester(t)
 	tester.InitServer(watchdogConfig(root, artifactURL.Port(), app, 1, "10s"), "caddyfile")
 
 	if resp, body := postDeployApp(t, app, artifactSrv.URL+"/demo-v1.tar.gz", "v1"); resp.StatusCode != http.StatusOK {
@@ -717,7 +792,7 @@ http://localhost:9081 {
 
 func TestIntegrationOIDCDeploy(t *testing.T) {
 	bin := buildTestApp(t)
-	root := t.TempDir()
+	root, tester := integrationServer(t)
 	artifacts := map[string][]byte{"/demo-v1.tar.gz": packRelease(t, bin, "v1", false)}
 	artifactSrv := serveArtifacts(t, artifacts)
 	artifactURL, err := url.Parse(artifactSrv.URL)
@@ -729,7 +804,6 @@ func TestIntegrationOIDCDeploy(t *testing.T) {
 	// signs tokens, standing in for GitHub/GitLab.
 	iss := trusttest.NewIssuer(t)
 
-	tester := caddytest.NewTester(t)
 	tester.InitServer(oidcConfig(root, artifactURL.Port(), iss.URL), "caddyfile")
 
 	hook := "http://localhost:9081/oidcdemo"
@@ -841,9 +915,8 @@ http://localhost:9081 {
 
 func TestIntegrationPushDeploy(t *testing.T) {
 	bin := buildTestApp(t)
-	root := t.TempDir()
+	root, tester := integrationServer(t)
 
-	tester := caddytest.NewTester(t)
 	// No artifact server: push provides the bytes directly. The
 	// allowlist entry is required by config but unused on this path.
 	tester.InitServer(appConfig(root, "9999", "pushdemo"), "caddyfile")
@@ -885,7 +958,7 @@ func TestIntegrationPushDeploy(t *testing.T) {
 
 func TestIntegrationRollback(t *testing.T) {
 	bin := buildTestApp(t)
-	root := t.TempDir()
+	root, tester := integrationServer(t)
 	artifacts := map[string][]byte{
 		"/demo-v1.tar.gz": packRelease(t, bin, "v1", false),
 		"/demo-v2.tar.gz": packRelease(t, bin, "v2", false),
@@ -895,7 +968,6 @@ func TestIntegrationRollback(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	tester := caddytest.NewTester(t)
 	tester.InitServer(appConfig(root, artifactURL.Port(), "rollbackdemo"), "caddyfile")
 
 	rollback := func(version string) (int, string) {
@@ -943,7 +1015,7 @@ func TestIntegrationRollback(t *testing.T) {
 // waits for the deploy itself, then stops and sweeps what it left.
 func TestIntegrationRemovingAnAppMidDeployLeavesNoUnit(t *testing.T) {
 	bin := buildTestApp(t)
-	root := t.TempDir()
+	root, tester := integrationServer(t)
 	tarball := packRelease(t, bin, "v1", false)
 	inFetch := make(chan struct{}, 1)
 	artifactSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -960,7 +1032,6 @@ func TestIntegrationRemovingAnAppMidDeployLeavesNoUnit(t *testing.T) {
 		t.Fatal(err)
 	}
 	const app = "rmdemo"
-	tester := caddytest.NewTester(t)
 	tester.InitServer(appConfig(root, artifactURL.Port(), app), "caddyfile")
 
 	token := itestToken(t)
@@ -1042,7 +1113,7 @@ func TestIntegrationRelaunchRefusedAtPreflight(t *testing.T) {
 		t.Skipf("no hosted box is %s", runtime.GOARCH)
 	}
 	bin := buildTestApp(t)
-	root := t.TempDir()
+	root, tester := integrationServer(t)
 	artifactSrv := serveArtifacts(t, map[string][]byte{
 		"/demo-v1.tar.gz": packRelease(t, bin, "v1", false),
 		"/demo-v2.tar.gz": packRelease(t, bin, "v2", false),
@@ -1053,7 +1124,6 @@ func TestIntegrationRelaunchRefusedAtPreflight(t *testing.T) {
 	}
 	const app = "archdemo"
 	config := watchdogConfig(root, artifactURL.Port(), app, 50, "10m")
-	tester := caddytest.NewTester(t)
 	tester.InitServer(config, "caddyfile")
 	if resp, body := postDeployApp(t, app, artifactSrv.URL+"/demo-v1.tar.gz", "v1"); resp.StatusCode != http.StatusOK {
 		t.Fatalf("deploy v1: %d %s", resp.StatusCode, body)
