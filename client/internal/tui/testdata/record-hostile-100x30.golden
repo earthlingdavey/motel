@@ -27,4 +27,4 @@ title \x1b]0;motel: all healthy\x07 end
 urltag [:::https://evil.example/tag]motel login[:::-] end
 multi
 line
-↑↓ scroll  w wrap  p previous  n next  y json  c command  esc back  ? more
+↑↓ scroll  w wrap  p previous  n next  esc back  ? more

@@ -296,3 +296,54 @@ func TestHelpAtTheSmallest(t *testing.T) {
 		}
 	}
 }
+
+// TestFootersWholeAtTheSmallest: in the smallest window, 60x16, every
+// screen's footer, in its widest state, is drawn whole: the screen's
+// last row, read from its cells, is the footer the screen set, no cell
+// of it cut. The apps screen, an app, a record, who am I, the box, the
+// keys overlay over the apps screen, the command and the answer
+// overlays with P offered, and a stop screen with P offered (a 401) and
+// without it (a certificate), and the keys overlay over it.
+func TestFootersWholeAtTheSmallest(t *testing.T) {
+	const rec = "e9a0b3f2c118"
+	signedOut := func(f *demo.Fake) {
+		f.Set("whoami", &model.Failure{Kind: model.FailSignedOut, Message: "deploy.example.com did not accept your key"})
+	}
+	for _, c := range []struct {
+		name   string
+		setup  func(*demo.Fake)
+		then   func(h *harness)
+		screen model.Screen
+		// has is the part of the footer only its widest state names.
+		has string
+	}{
+		{"apps", nil, func(*harness) {}, model.ScreenApps, ""},
+		{"an app", nil, func(h *harness) { h.open(app("blog")) }, model.ScreenApp, ""},
+		{"a record", nil, func(h *harness) { h.open(record("blog", rec)) }, model.ScreenRecord, ""},
+		{"who am I", nil, func(h *harness) { h.open(model.View{Screen: model.ScreenMe}) }, model.ScreenMe, ""},
+		{"the box", nil, func(h *harness) { h.open(model.View{Screen: model.ScreenBox}) }, model.ScreenBox, ""},
+		{"the keys", nil, func(h *harness) { h.press("?") }, model.ScreenHelp, ""},
+		{"the command", nil, func(h *harness) { h.press("c") }, model.ScreenApps, "P quit and print"},
+		{"the answer", nil, func(h *harness) { h.open(record("blog", rec)); h.press("y") }, model.ScreenRecord, "P quit and print"},
+		{"a refused key", signedOut, func(*harness) {}, model.ScreenRefused, "P print person line"},
+		{"a certificate", func(f *demo.Fake) {
+			f.Set("whoami", &model.Failure{Kind: model.FailCertificate, Message: "the certificate did not verify"})
+		}, func(*harness) {}, model.ScreenRefused, ""},
+		{"the keys over a stop", signedOut, func(h *harness) { h.press("?") }, model.ScreenStopHelp, ""},
+	} {
+		h := start(t, 60, 16, c.setup)
+		c.then(h)
+		if got := h.top().Screen; got != c.screen {
+			t.Fatalf("%s: on %v, want %v", c.name, got, c.screen)
+		}
+		var meant string
+		h.on(func() { meant = h.u.foot.GetText(true) })
+		if !strings.Contains(meant, c.has) {
+			t.Fatalf("%s: the footer meant %q does not name %q", c.name, meant, c.has)
+		}
+		rows := screenRows(h)
+		if got := rows[len(rows)-1].text; got != meant {
+			t.Errorf("%s: the footer is drawn %q (%d cells), meant %q (%d)", c.name, got, len([]rune(got)), meant, len([]rune(meant)))
+		}
+	}
+}

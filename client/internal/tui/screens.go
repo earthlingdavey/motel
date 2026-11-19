@@ -128,11 +128,13 @@ func (u *UI) crumbs(v model.View, now time.Time) (model.Line, model.Line) {
 	return ownLine("first run"), nil
 }
 
-// footers are each screen's keys: at most six, then "? more".
+// footers are each screen's keys: at most six, then "? more", each
+// footer whole at 60 columns, the smallest window
+// (TestFootersWholeAtTheSmallest); a key left out is listed by ?.
 var footers = map[model.Screen]string{
-	model.ScreenApps:     "enter open  / filter  : go to  y json  c command  ? more  q quit",
+	model.ScreenApps:     "enter open  / filter  : go to  y json  c cmd  ? more  q quit",
 	model.ScreenApp:      "enter record  y json  c command  esc back  ? more",
-	model.ScreenRecord:   "↑↓ scroll  w wrap  p previous  n next  y json  c command  esc back  ? more",
+	model.ScreenRecord:   "↑↓ scroll  w wrap  p previous  n next  esc back  ? more",
 	model.ScreenMe:       "y json  c command  esc back  ? more",
 	model.ScreenBox:      "y json  c command  esc back  ? more",
 	model.ScreenHelp:     "↑↓ scroll  esc close  q quit",
