@@ -85,6 +85,8 @@ func TestTUIPtyHelper(t *testing.T) {
 		Getenv: func(k string) string { return env[k] }, Stdout: os.Stdout, Stderr: os.Stderr, Terminal: true,
 		Dir: t.TempDir(), Home: home, Now: time.Now, Sleep: func(context.Context, time.Duration) error { return nil },
 		Transport: box.Client().Transport, Run: &standInKeygen{}, Version: "test",
+		// The check main makes, on the pty: it finds the screen it can draw.
+		Draw: CanDraw,
 	})
 	fmt.Printf("\r\nHELPER EXIT %d\r\n", code)
 }

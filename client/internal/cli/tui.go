@@ -228,12 +228,13 @@ func screenFailure(err error) error {
 // CanDraw is Env.Draw on a real terminal. The screen draws on /dev/tty,
 // whatever stdin and stdout are, with the terminfo entry TERM names:
 // either missing fails here, before the first reads, and not once they
-// have been made.
+// have been made. (tcell's own NewDevTty would do, but its Close before
+// a Start closes nothing and fails.)
 func CanDraw() error {
 	if _, err := tcell.NewScreen(); err != nil {
 		return err
 	}
-	tty, err := tcell.NewDevTty()
+	tty, err := os.OpenFile("/dev/tty", os.O_RDWR, 0)
 	if err != nil {
 		return err
 	}
