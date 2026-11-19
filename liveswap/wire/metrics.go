@@ -41,10 +41,12 @@ type MemorySummary struct {
 
 // CPUSummary is the app's CPU over the window, in cores.
 type CPUSummary struct {
-	// Avg5m is the mean of the hour's CPU points over the five minutes
-	// up to now, whatever the window, each the unit that ran at its
-	// minute (so it spans a deploy); absent with no push of a unit
-	// within 75 s (the app stopped, or the pushes failing).
+	// Avg5m is the mean of the hour's CPU points (2 m rates, a minute
+	// apart) covering the five minutes up to the newest, whatever the
+	// window, each the unit that ran at its minute (so it spans a
+	// deploy); absent when the newest is over two minutes old, about
+	// 3 m 15 s after the last push (the app stopped, or the pushes
+	// failing).
 	Avg5m *float64 `json:"avg_5m,omitempty"`
 	Avg   float64  `json:"avg"`
 }

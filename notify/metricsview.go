@@ -12,16 +12,15 @@ import (
 	"github.com/smallhoursorg/motel/liveswap/wire"
 )
 
-// metrics in GET /<app> (DESIGN-metrics.md): eleven fixed queries over
+// metrics in GET /<app> (DESIGN-metrics.md): ten fixed queries over
 // the store's socket, scoped to the app the route resolved, over one of
 // wire.MetricsRanges: two query_range templates (memory, CPU), the
-// window's memory peak, the memory's and the cap's last push, the CPU
-// of the last five minutes (the hour's reading over them, and whether
-// a unit runs now), and four instant queries over the requests observe
-// counted; run at once within one budget, and cached per app and
-// window.
+// window's memory peak, the memory's and the cap's last push, the
+// hour's CPU reading over the last minutes, and four instant queries
+// over the requests observe counted; run at once within one budget,
+// and cached per app and window.
 const (
-	// viewRecent is what avg_5m averages over, up to now.
+	// viewRecent is the span avg_5m covers, up to its newest point.
 	viewRecent = 5 * time.Minute
 	// viewBudget bounds the queries together: the route never waits longer.
 	viewBudget = 2 * time.Second
@@ -119,7 +118,7 @@ func (v *metricsView) AppMetrics(ctx context.Context, app, window string) *wire.
 
 // viewAnswers is the eleven queries' answers.
 type viewAnswers struct {
-	mem, cpu, peak, memNow, capNow, cpuRecent, cpuNow, classes, p50, p95, cache []series
+	mem, cpu, peak, memNow, capNow, cpuRecent, classes, p50, p95, cache []series
 }
 
 // viewRequests is the view's four request queries over a window.
@@ -149,7 +148,7 @@ func requestQueries(sel string, span time.Duration) viewRequests {
 // unit, a point after a cutover read the stopped unit's rate beside the
 // new one's, and a stopped app had points for the rate's window after
 // its last push; now for pushFresh. avg_5m is the hour's points of it
-// over viewRecent, and it instant, at viewRecent, says a unit runs.
+// over viewRecent.
 func cpuQuery(sel, rate string) string {
 	return "sum(" + unitCPU("{"+sel+"}", rate) + ")"
 }
@@ -157,6 +156,7 @@ func cpuQuery(sel, rate string) string {
 func (v *metricsView) ask(ctx context.Context, app, window string, w viewWindow, now time.Time) (wire.Metrics, error) {
 	start, end := now.Add(-w.span), now
 	hour := viewWindows["1h"]
+	recentFrom := end.Add(hour.step - viewRecent)
 	sel := fmt.Sprintf(`app=%q`, app)
 	var a viewAnswers
 	rq := requestQueries(sel, w.span)
@@ -186,23 +186,22 @@ func (v *metricsView) ask(ctx context.Context, app, window string, w viewWindow,
 		// that changes or drops it is the present at its next push.
 		{&a.memNow, instant(`max(last_over_time(motel_app_memory_bytes{` + sel + `}[` + promDuration(pushFresh) + `]))`)},
 		{&a.capNow, instant(`max(last_over_time(motel_app_memory_max_bytes{` + sel + `}[` + promDuration(pushFresh) + `]))`)},
-		// avg_5m is the mean of the hour's points over the five minutes
-		// up to now, whatever the window, each the unit that ran at its
-		// step, so it spans a cutover: the day's newest point is a 5 m
-		// rate up to 5 m old, and one instant rate of the newest unit
-		// covers that unit's life alone (a boot's burst, 60 s after a
-		// deploy). It is said only while the instant has a unit pushed
-		// within pushFresh (unitCPU): a stopped app has none.
+		// avg_5m is the mean of the hour's points (each a 2 m rate, a
+		// step apart) after recentFrom, whatever the window: at most four,
+		// which cover the five minutes up to the newest, each the unit
+		// that ran at its step, so it spans a cutover. The day's newest
+		// point is a 5 m rate up to 5 m old, and one instant rate of the
+		// newest unit covers that unit's life alone (a boot's burst, 60 s
+		// after a deploy).
 		{&a.cpuRecent, func() ([]series, error) {
-			return v.store.queryRange(ctx, cpuQuery(sel, hour.rate), end.Add(-viewRecent), end, hour.step)
+			return v.store.queryRange(ctx, cpuQuery(sel, hour.rate), recentFrom, end, hour.step)
 		}},
-		{&a.cpuNow, instant(cpuQuery(sel, promDuration(viewRecent)))},
 		{&a.classes, instant(rq.classes)},
 		{&a.p50, instant(rq.p50)},
 		{&a.p95, instant(rq.p95)},
 		{&a.cache, instant(rq.cache)},
 	}
-	// At once: eleven one after another would not fit the budget on a
+	// At once: ten one after another would not fit the budget on a
 	// slow store. Each writes its own answer; the first error is the
 	// answer's.
 	errs := make([]error, len(jobs))
@@ -263,18 +262,25 @@ func (v *metricsView) ask(ctx context.Context, app, window string, w viewWindow,
 			sum += p.v
 		}
 		c.Avg = roundTo(sum/float64(len(cpuPts)), 1e6)
-		var recent float64
-		var n int
+		var recent []point
 		for _, s := range a.cpuRecent {
 			for _, p := range s.points {
-				if p.t.After(end.Add(-viewRecent)) {
-					recent += p.v
-					n++
+				if p.t.After(recentFrom) {
+					recent = append(recent, p)
 				}
 			}
 		}
-		if lastPush(a.cpuNow) != nil && n > 0 {
-			avg := roundTo(recent/float64(n), 1e6)
+		// Only with a point in the last two steps: unitCPU gives none
+		// once a unit's last push is pushFresh older than the point, so a
+		// stopped app has none from about 75 s and two steps after its
+		// last push, and one down for minutes and started again seconds
+		// ago (no rate yet) is not read from its old unit's points alone.
+		if top, ok := latest(recent); ok && !top.t.Before(end.Add(-2*hour.step)) {
+			var sum float64
+			for _, p := range recent {
+				sum += p.v
+			}
+			avg := roundTo(sum/float64(len(recent)), 1e6)
 			c.Avg5m = &avg
 		}
 		out.CPU = c
@@ -359,8 +365,8 @@ func quantileMs(ss []series) *float64 {
 // then no JSON, and the whole status is withheld.
 func roundTo(v, per float64) float64 { return math.Round(v*per) / per }
 
-// lastPush is an instant answer of the present's value (memory's and
-// the cap's last push, the newest unit's CPU); nil with none.
+// lastPush is a last_over_time answer's value (memory's or the cap's
+// last push); nil with none.
 func lastPush(ss []series) *float64 {
 	for _, s := range ss {
 		if v, ok := instantValue(s); ok {

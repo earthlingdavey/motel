@@ -664,10 +664,12 @@ Any other range is refused: `{"error":"range must be one of 1h, 24h"}`
 `memory_bytes.now`, `memory_max_bytes` (the memory cap) and
 `cpu_cores.avg_5m` are the present, whatever the range: the app's last
 push within 75 seconds, and for `avg_5m` the mean of its CPU over the
-five minutes up to now, a minute at a time. They are left out when no
-push of the app came in those 75 seconds (it stopped, or its pushes
-are failing), so a missing `memory_max_bytes` means no cap only while
-the app runs. `at` is the time of the range's newest point, which the
+five minutes up to its newest minute, read a minute at a time. `now`
+and `memory_max_bytes` are left out when no push of the app came in
+those 75 seconds (it stopped, or its pushes are failing), and `avg_5m`
+when its newest minute is over two minutes old, about three minutes
+after the last push; so a missing `memory_max_bytes` means no cap only
+while the app runs. `at` is the time of the range's newest point, which the
 view reads a minute apart over the hour and five minutes apart over
 the day, not the time of those three. A number with nothing behind it
 in the range is left out. When the store does

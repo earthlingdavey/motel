@@ -746,11 +746,10 @@ func TestReleaseRetiresTheRulesOnAReloadAlone(t *testing.T) {
 }
 
 // fakeRange is query_range and the instant queries, scripted per
-// query: ans answers the window's range queries, and recent the last
-// five minutes' (ans when nil); instant the memory peak
+// query: ans answers the window's range queries, and recent avg_5m's,
+// the last minutes' (ans when nil); instant the memory peak
 // (max_over_time), memNow and capNow the memory's and the cap's last
-// push (last_over_time), cpuNow the newest unit's CPU (the range's CPU
-// query, instant), requests the four request queries.
+// push (last_over_time), requests the four request queries.
 type fakeRange struct {
 	mu       sync.Mutex
 	calls    int
@@ -761,7 +760,6 @@ type fakeRange struct {
 	instant  func(q string) []series
 	memNow   func(q string) []series
 	capNow   func(q string) []series
-	cpuNow   func(q string) []series
 	requests func(q string) []series
 }
 
@@ -774,8 +772,6 @@ func (f *fakeRange) query(ctx context.Context, q string) ([]series, error) {
 		script = f.capNow
 	case strings.HasPrefix(q, "max(last_over_time("):
 		script = f.memNow
-	case strings.HasPrefix(q, "sum(rate("):
-		script = f.cpuNow
 	}
 	if script == nil {
 		return nil, f.err // not counted: calls is query_range's
@@ -803,7 +799,7 @@ func (f *fakeRange) queryRange(ctx context.Context, q string, start, end time.Ti
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if f.recent != nil && end.Sub(start) == viewRecent {
+	if f.recent != nil && end.Sub(start) < time.Hour {
 		return f.recent(q), nil
 	}
 	return f.ans(q), nil
@@ -834,9 +830,6 @@ func TestMetricsViewSummary(t *testing.T) {
 	}, capNow: func(q string) []series {
 		asked = append(asked, q)
 		return []series{{points: []point{{t: end, v: 100}}}}
-	}, cpuNow: func(q string) []series {
-		asked = append(asked, q)
-		return []series{{points: []point{{t: end, v: 0.5}}}}
 	}}
 	v := newMetricsView(f, zap.NewNop())
 	v.now = func() time.Time { return end }
@@ -845,8 +838,8 @@ func TestMetricsViewSummary(t *testing.T) {
 	if string(got) != want {
 		t.Fatalf("metrics:\n got %s\nwant %s", got, want)
 	}
-	if len(asked) != 7 {
-		t.Errorf("%d memory and CPU queries, want 7: %v", len(asked), asked)
+	if len(asked) != 6 {
+		t.Errorf("%d memory and CPU queries, want 6: %v", len(asked), asked)
 	}
 	for _, q := range asked {
 		if !strings.Contains(q, `app="blog"`) {
@@ -916,7 +909,6 @@ func TestMetricsViewDayFreshness(t *testing.T) {
 			}, instant: func(string) []series { return []series{{points: []point{{t: end, v: 40}}}} }}
 			if c.name == "running" {
 				f.memNow = func(string) []series { return []series{{points: []point{{t: end, v: 30}}}} }
-				f.cpuNow = func(string) []series { return []series{{points: []point{{t: end, v: 0.5}}}} }
 				f.capNow = func(string) []series { return []series{{points: []point{{t: end, v: 100}}}} }
 				f.recent = func(string) []series {
 					return []series{{points: []point{{t: end.Add(-time.Minute), v: 0.5}, {t: end, v: 0.5}}}}
@@ -1044,63 +1036,80 @@ func TestMetricsViewCapIsTheLastPush(t *testing.T) {
 }
 
 // avg_5m is the mean of the hour's own CPU points (the running unit's
-// 2 m rate, a 60 s step) over the five minutes up to now, whatever the
-// window: each point is the unit that ran at its step, so it spans a
-// cutover as the hour's did. Read as one instant rate of the newest
-// unit, it covered that unit's life alone: 60 s after a deploy, the
-// boot's 0.9 cores where the five minutes averaged 0.34 (review of
-// #577). It is said only while the instant has a unit pushed within
-// 75 s: an app that stopped has none, though its points stand.
+// 2 m rate, a 60 s step) after the fifth minute back, the four that
+// cover the five minutes up to the newest, whatever the window: each
+// point is the unit that ran at its step, so it spans a cutover as the
+// hour's did. Read as one instant rate of the newest unit, it covered
+// that unit's life alone: 60 s after a deploy, the boot's 0.9 cores
+// (review of #577). It is said only with a point in the last two steps:
+// an app stopped three minutes ago has none, and neither has one at 0.5
+// cores down for three or four minutes and started again 20 s ago,
+// whose new unit has no rate yet, though the old unit's last point is
+// among the five minutes' (review round two of #577).
 func TestMetricsViewAvg5mSpansACutover(t *testing.T) {
 	end := time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC)
+	// pts is the hour's points at the minutes back given, each 0.5 but
+	// those after a cutover two minutes ago (0.1); the one at five
+	// minutes back is outside the span.
+	pts := func(back ...int) []point {
+		var out []point
+		for _, m := range back {
+			v := 0.5
+			switch {
+			case m == 5:
+				v = 9
+			case m < 2:
+				v = 0.1
+			}
+			out = append(out, point{t: end.Add(-time.Duration(m) * time.Minute), v: v})
+		}
+		return out
+	}
 	for _, c := range []struct {
-		name, window string
-		pushed       bool
-		want         string
+		name   string
+		recent []point
+		// pushed: a unit pushed within 75 s, so the store has an
+		// instant rate of the newest unit (the old unit's, the new one
+		// having none yet), which nothing asks for any more
+		pushed bool
+		want   string // cpu_cores, at both windows
 	}{
-		{"running hour", "1h", true, `{"window":"1h","at":"2026-11-10T12:00:00Z","cpu_cores":{"avg_5m":0.34,"avg":0.25}}`},
-		{"running day", "24h", true, `{"window":"24h","at":"2026-11-10T12:00:00Z","cpu_cores":{"avg_5m":0.34,"avg":0.25}}`},
-		{"stopped hour", "1h", false, `{"window":"1h","at":"2026-11-10T12:00:00Z","cpu_cores":{"avg":0.25}}`},
-		{"stopped day", "24h", false, `{"window":"24h","at":"2026-11-10T12:00:00Z","cpu_cores":{"avg":0.25}}`},
+		{"running across a cutover", pts(5, 4, 3, 2, 1, 0), true, `{"avg_5m":0.3,"avg":0.25}`},
+		{"stopped three minutes ago", pts(5, 4, 3), false, `{"avg":0.25}`},
+		{"down four minutes, started 20 s ago", pts(5, 4), true, `{"avg":0.25}`},
+		{"down three minutes, started 20 s ago", pts(5, 4, 3), true, `{"avg":0.25}`},
 	} {
-		t.Run(c.name, func(t *testing.T) {
-			f := &fakeRange{
-				ans: func(q string) []series {
-					if !strings.HasPrefix(q, "sum(rate(") {
-						return nil
-					}
-					return []series{{points: []point{{t: end.Add(-viewWindows[c.window].step), v: 0.25}, {t: end, v: 0.25}}}}
-				},
-				// The old unit at 0.5 to its cutover two minutes ago, the
-				// new one at 0.1 since; the point at the start is the
-				// sixth minute's, outside the five.
-				recent: func(q string) []series {
-					if want := cpuQuery(`app="blog"`, "2m"); q != want {
-						t.Errorf("the five minutes asked as %s, want %s", q, want)
-					}
-					pts := []point{{t: end.Add(-5 * time.Minute), v: 9}}
-					for i, v := range []float64{0.5, 0.5, 0.5, 0.1, 0.1} {
-						pts = append(pts, point{t: end.Add(time.Duration(i-4) * time.Minute), v: v})
-					}
-					return []series{{points: pts}}
-				},
-				cpuNow: func(q string) []series {
-					if want := cpuQuery(`app="blog"`, "5m"); q != want {
-						t.Errorf("the running unit asked as %s, want %s", q, want)
-					}
-					if !c.pushed {
-						return nil
-					}
-					return []series{{points: []point{{t: end, v: 0.9}}}}
-				},
-			}
-			v := newMetricsView(f, zap.NewNop())
-			v.now = func() time.Time { return end }
-			got, _ := json.Marshal(v.AppMetrics(context.Background(), "blog", c.window))
-			if string(got) != c.want {
-				t.Fatalf("cpu:\n got %s\nwant %s", got, c.want)
-			}
-		})
+		for _, window := range []string{"1h", "24h"} {
+			t.Run(c.name+" "+window, func(t *testing.T) {
+				f := &fakeRange{
+					ans: func(q string) []series {
+						if !strings.HasPrefix(q, "sum(rate(") {
+							return nil
+						}
+						return []series{{points: []point{{t: end.Add(-viewWindows[window].step), v: 0.25}, {t: end, v: 0.25}}}}
+					},
+					recent: func(q string) []series {
+						if want := cpuQuery(`app="blog"`, "2m"); q != want {
+							t.Errorf("the five minutes asked as %s, want %s", q, want)
+						}
+						return []series{{points: c.recent}}
+					},
+					requests: func(q string) []series {
+						if !c.pushed || !strings.HasPrefix(q, "sum(rate(") {
+							return nil
+						}
+						return []series{{points: []point{{t: end, v: 0.5}}}}
+					},
+				}
+				v := newMetricsView(f, zap.NewNop())
+				v.now = func() time.Time { return end }
+				got, _ := json.Marshal(v.AppMetrics(context.Background(), "blog", window))
+				want := `{"window":"` + window + `","at":"2026-11-10T12:00:00Z","cpu_cores":` + c.want + `}`
+				if string(got) != want {
+					t.Fatalf("cpu:\n got %s\nwant %s", got, want)
+				}
+			})
+		}
 	}
 }
 
@@ -1196,7 +1205,7 @@ func TestMetricsViewCPUIsRounded(t *testing.T) {
 			{t: end.Add(-time.Minute), v: 0.00001234567890123456},
 			{t: end, v: 0.0000000912345678901234},
 		}}}
-	}, cpuNow: func(string) []series { return []series{{points: []point{{t: end, v: 0.0000061234567890123}}}} }}
+	}}
 	v := newMetricsView(f, zap.NewNop())
 	v.now = func() time.Time { return end }
 	got, _ := json.Marshal(v.AppMetrics(context.Background(), "blog", "1h"))
