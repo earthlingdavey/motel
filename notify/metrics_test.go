@@ -747,7 +747,8 @@ func TestReleaseRetiresTheRulesOnAReloadAlone(t *testing.T) {
 
 // fakeRange is query_range and the instant queries, scripted per
 // query: instant answers the memory peak (max_over_time), memNow the
-// memory's last push (last_over_time), requests the four request
+// memory's last push (last_over_time), cpuNow the CPU of the last five
+// minutes (the range's CPU query, instant), requests the four request
 // queries.
 type fakeRange struct {
 	mu       sync.Mutex
@@ -757,6 +758,7 @@ type fakeRange struct {
 	ans      func(q string) []series
 	instant  func(q string) []series
 	memNow   func(q string) []series
+	cpuNow   func(q string) []series
 	requests func(q string) []series
 }
 
@@ -767,6 +769,8 @@ func (f *fakeRange) query(ctx context.Context, q string) ([]series, error) {
 		script = f.instant
 	case strings.HasPrefix(q, "max(last_over_time("):
 		script = f.memNow
+	case strings.HasPrefix(q, "sum(rate("):
+		script = f.cpuNow
 	}
 	if script == nil {
 		return nil, f.err // not counted: calls is query_range's
@@ -822,6 +826,9 @@ func TestMetricsViewSummary(t *testing.T) {
 	}, memNow: func(q string) []series {
 		asked = append(asked, q)
 		return []series{{points: []point{{t: end, v: 30}}}}
+	}, cpuNow: func(q string) []series {
+		asked = append(asked, q)
+		return []series{{points: []point{{t: end, v: 0.5}}}}
 	}}
 	v := newMetricsView(f, zap.NewNop())
 	v.now = func() time.Time { return end }
@@ -830,8 +837,8 @@ func TestMetricsViewSummary(t *testing.T) {
 	if string(got) != want {
 		t.Fatalf("metrics:\n got %s\nwant %s", got, want)
 	}
-	if len(asked) != 4 {
-		t.Errorf("%d memory and CPU queries, want 4: %v", len(asked), asked)
+	if len(asked) != 5 {
+		t.Errorf("%d memory and CPU queries, want 5: %v", len(asked), asked)
 	}
 	for _, q := range asked {
 		if !strings.Contains(q, `app="blog"`) {
@@ -876,9 +883,8 @@ func TestMetricsViewStaleIsHistory(t *testing.T) {
 }
 
 // The day's range steps 5 m, so its newest point can be over 5 m old
-// for a running app: still the present for the cap and avg_5m, which is
-// that point alone (a 5 m rate already). Twenty minutes is history, for
-// the day too.
+// for a running app: still the present for the cap. Twenty minutes is
+// history, for the day too.
 func TestMetricsViewDayFreshness(t *testing.T) {
 	end := time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC)
 	for _, c := range []struct {
@@ -907,6 +913,7 @@ func TestMetricsViewDayFreshness(t *testing.T) {
 			}, instant: func(string) []series { return []series{{points: []point{{t: end, v: 40}}}} }}
 			if c.name == "running" {
 				f.memNow = func(string) []series { return []series{{points: []point{{t: end, v: 30}}}} }
+				f.cpuNow = func(string) []series { return []series{{points: []point{{t: end, v: 0.5}}}} }
 			}
 			v := newMetricsView(f, zap.NewNop())
 			v.now = func() time.Time { return end }
@@ -970,6 +977,54 @@ func TestMetricsViewNowIsTheLastPush(t *testing.T) {
 			got, _ := json.Marshal(v.AppMetrics(context.Background(), "blog", c.window))
 			if string(got) != c.want {
 				t.Fatalf("memory:\n got %s\nwant %s", got, c.want)
+			}
+		})
+	}
+}
+
+// avg_5m is the running unit's rate over the five minutes up to now,
+// the range's own CPU query asked as an instant, whatever the window:
+// the day's newest point is a 5 m rate up to 5 m old, and read as the
+// last five minutes it was 0.25 cores where they were 0.5. An app with
+// no push in 75 s has none (unitCPU), though its range still carries a
+// point the three steps call fresh.
+func TestMetricsViewAvg5mIsTheLastFiveMinutes(t *testing.T) {
+	end := time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC)
+	for _, c := range []struct {
+		name, window string
+		newest       time.Duration // the range's newest point, before end
+		pushed       bool
+		want         string
+	}{
+		{"running hour", "1h", 0, true, `{"window":"1h","at":"2026-11-10T12:00:00Z","cpu_cores":{"avg_5m":0.5,"avg":0.25}}`},
+		{"running day", "24h", 4 * time.Minute, true, `{"window":"24h","at":"2026-11-10T11:56:00Z","cpu_cores":{"avg_5m":0.5,"avg":0.25}}`},
+		{"stopped hour", "1h", 2 * time.Minute, false, `{"window":"1h","at":"2026-11-10T11:58:00Z","cpu_cores":{"avg":0.25}}`},
+		{"stopped day", "24h", 4 * time.Minute, false, `{"window":"24h","at":"2026-11-10T11:56:00Z","cpu_cores":{"avg":0.25}}`},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			f := &fakeRange{
+				ans: func(q string) []series {
+					if !strings.HasPrefix(q, "sum(rate(") {
+						return nil
+					}
+					at := end.Add(-c.newest)
+					return []series{{points: []point{{t: at.Add(-viewWindows[c.window].step), v: 0.25}, {t: at, v: 0.25}}}}
+				},
+				cpuNow: func(q string) []series {
+					if want := cpuQuery(`app="blog"`, "5m"); q != want {
+						t.Errorf("avg_5m asked as %s, want %s", q, want)
+					}
+					if !c.pushed {
+						return nil
+					}
+					return []series{{points: []point{{t: end, v: 0.5}}}}
+				},
+			}
+			v := newMetricsView(f, zap.NewNop())
+			v.now = func() time.Time { return end }
+			got, _ := json.Marshal(v.AppMetrics(context.Background(), "blog", c.window))
+			if string(got) != c.want {
+				t.Fatalf("cpu:\n got %s\nwant %s", got, c.want)
 			}
 		})
 	}
@@ -1067,7 +1122,7 @@ func TestMetricsViewCPUIsRounded(t *testing.T) {
 			{t: end.Add(-time.Minute), v: 0.00001234567890123456},
 			{t: end, v: 0.0000000912345678901234},
 		}}}
-	}}
+	}, cpuNow: func(string) []series { return []series{{points: []point{{t: end, v: 0.0000061234567890123}}}} }}
 	v := newMetricsView(f, zap.NewNop())
 	v.now = func() time.Time { return end }
 	got, _ := json.Marshal(v.AppMetrics(context.Background(), "blog", "1h"))
