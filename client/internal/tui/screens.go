@@ -342,7 +342,11 @@ func (u *UI) renderRecord(v model.View, now time.Time) {
 	view := u.S.RecordView(v.App, v.Version, now)
 	hd := view.Head
 	if view.Note != nil {
-		hd = view.Note
+		// A refusal's sentence, laid on rows as an app's failure is.
+		hd = nil
+		for _, l := range view.Note {
+			hd = append(hd, model.Sentence(l, u.w, door.Width)...)
+		}
 	}
 	hd = u.withStop(hd)
 	for i := range hd {

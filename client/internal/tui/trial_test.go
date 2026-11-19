@@ -273,3 +273,25 @@ func TestColonRemedyFirst(t *testing.T) {
 		}
 	}
 }
+
+// TestRefusedRecordLaid: a record the box refused (a 404 for a version
+// it has no record of) says why on rows that fit the window, the whole
+// sentence on screen, not one row cut with "…" (the trial, at 80x24).
+func TestRefusedRecordLaid(t *testing.T) {
+	for _, sz := range [][2]int{{60, 16}, {80, 24}} {
+		h := start(t, sz[0], sz[1], func(f *demo.Fake) {
+			f.Set("blog@nosuch", &model.Failure{Kind: model.FailNotFound, Message: demo.Host + ` answered 404; the box says: "no deploy recorded for version nosuch"`})
+		})
+		h.open(record("blog", "nosuch"))
+		var said strings.Builder
+		for _, r := range screenRows(h)[2:] {
+			if r.end > sz[0] || strings.HasSuffix(r.text, "…") {
+				t.Errorf("%dx%d: a row cut or past the window: %q", sz[0], sz[1], r.text)
+			}
+			said.WriteString(r.text)
+		}
+		if want := `answered 404; the box says: "no deploy recorded for version nosuch"`; !strings.Contains(strings.Join(strings.Fields(said.String()), " "), want) {
+			t.Errorf("%dx%d: the screen does not say %q:\n%s", sz[0], sz[1], want, h.screen())
+		}
+	}
+}
