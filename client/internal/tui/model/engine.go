@@ -808,9 +808,10 @@ func (e *Engine) Done(j Job, now time.Time, err error) Outcome {
 		}
 	case Cancelled:
 		// A record read before stays as Drop left it, or as opening it
-		// again since asks. An app's alerts left and opened again while
-		// their read was in flight are due again, not forgotten.
-		if en.answered.IsZero() && !en.failed && (j.Kind != KAlerts || j.App != e.alertsApp) {
+		// again since asks. An app's alerts are never forgotten so: their
+		// entry keeps its backoff, and is due again when their screen is
+		// open once more.
+		if en.answered.IsZero() && !en.failed && j.Kind != KAlerts {
 			delete(e.jobs, j)
 		}
 		e.poke()

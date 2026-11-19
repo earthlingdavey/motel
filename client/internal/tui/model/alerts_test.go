@@ -414,3 +414,49 @@ func TestAlertsClosedAsTheBoxAnswersEndsTheRun(t *testing.T) {
 		t.Errorf("after the box answered, the run goes on: %+v", h)
 	}
 }
+
+// TestAlertsCancelledKeepTheBackoff: a failing alerts read cancelled by
+// leaving its screen keeps its count of failures, so its backoff goes
+// on growing once the screen is open again.
+func TestAlertsCancelledKeepTheBackoff(t *testing.T) {
+	e := model.NewEngine(t0)
+	sim(e, names(3), t0, 10*time.Second, 10*time.Millisecond, ok)
+	now := t0.Add(10 * time.Second)
+	j := model.Job{Kind: model.KAlerts, App: "app-1"}
+	e.Focus("app-1", now)
+	e.AlertsOpen("app-1", now)
+	failing := func(k model.Job, _ time.Time) error {
+		if k == j {
+			return fail(model.FailNoAnswer)
+		}
+		return nil
+	}
+	sim(e, names(3), now, 40*time.Second, 10*time.Millisecond, failing)
+	now = now.Add(40 * time.Second)
+	for range 2000 {
+		k, okTake, _ := e.Take(now)
+		if !okTake {
+			now = now.Add(100 * time.Millisecond)
+			continue
+		}
+		if k == j {
+			e.Started(func() {})
+			break
+		}
+		e.Done(k, now, nil)
+	}
+	e.AlertsOpen("", now)
+	e.Done(j, now, context.Canceled)
+	e.AlertsOpen("app-1", now)
+	var at []time.Time
+	for _, c := range sim(e, names(3), now, 2*time.Minute, 10*time.Millisecond, failing) {
+		if c.j == j {
+			at = append(at, c.at)
+		}
+	}
+	// Read again at once (the cancelled read was never answered), then
+	// past its grown backoff, not every AlertsEvery as a first failure.
+	if len(at) < 2 || at[1].Sub(at[0]) <= model.AlertsEvery+time.Second {
+		t.Errorf("after the cancelled read, the failing reads at %v", at)
+	}
+}
