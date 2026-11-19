@@ -1,7 +1,7 @@
 // Package cli is the client's command tree: what each command reads,
-// asks and prints, and the exit code it ends with. The commands are
-// the client's whole surface; a later screen is a view over the same
-// functions.
+// asks and prints, and the exit code it ends with. motel alone, the
+// root, opens the screens, a view over the same reads the commands
+// make.
 package cli
 
 import (
