@@ -31,12 +31,13 @@ env:
 jobs:
   fuzz:
     runs-on: ubuntu-latest
-    # Targets run serially at FUZZTIME each (45 targets x 5m = 225m of
-    # fuzzing alone, past this cap: it was 205m at 41), plus a
-    # per-target instrumented build — box's includes Caddy, cold; the
-    # cap must clear that or the tail targets never get their budget:
-    # today at least the last five (liveswap's last three, penaltybox's
-    # two) do not. `make fuzz-list` prints the current count.
+    # Targets run one after another at FUZZTIME each, plus a per-target
+    # instrumented build (box's includes Caddy, cold). `make fuzz-list`
+    # prints the current count: 45, and 45 x 5m is 225m of fuzzing
+    # before any build, past this cap. Until the cap or FUZZTIME
+    # changes, the job is cancelled at the cap, and the targets after
+    # that point (the last modules in FUZZ_MODULES's order) do not run
+    # that week.
     timeout-minutes: 200
     steps:
       # Before checkout; floor and why: ci.yml's lint job.
