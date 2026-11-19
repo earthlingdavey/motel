@@ -239,6 +239,7 @@ made by hand. Accepted:
 | A read whose last read was refused without being held (a 409, or an answer the client cannot use) and whose next read gets no answer is not counted as its first in a row to get none: its own count is already 1, so it brings no read of another thing forward and its backoff starts at 4 s, not 2. Measured with one app open, its status answered 409 once and then the box answering nothing: the title bar first says slow 56 s after the box stopped answering (the list's turn), not 1 s after; with 3 apps 6 s. And in a run of no answer such a read counts as failed: it goes after every due read none of whose reads has failed since its last answer, as one that got none does, though the box would answer it | 2 | 2 | 3 | 12 | 2 | accepted |
 | With every route but one failing (the box answering one read alone, an app's status), that read waits behind the others: in a run of no answer a read never tried in the run keeps its old due time and goes ahead of it, one at each retry, the retries up to 60 s apart. Measured on the fake clock with the box answering only the last app's status: 12 apps, its first read 9 minutes after, then at most 1 minute apart; 60 apps, 28 minutes, then gaps up to 27; 300 apps, 1 h 42 min, then gaps up to 3 h 13 min. The title bar says STALE throughout, but for the seconds after each answer (back, then slow) | 2 | 1 | 1 | 2 | 3 | accepted |
 | A wake into a run of no answer keeps the run's count (by design: the box did not answer before the sleep), so the title bar says at once what it said before the sleep (slow, or STALE), and when the first read after waking gets no answer because the network is not back yet, the next waits out the run's backoff: 60 s once the run had five reads or more before the sleep (measured on the fake clock: 60 s after a 5-minute outage, 32 s after 30 s, 8 s after 10 s), the title bar saying STALE for that long on a network that then works | 2 | 2 | 1 | 4 | 2 | accepted |
+| At 60x16 the `y` overlay's own words (what the answer is to, how it is shown and cut, and that `P` prints it whole) take 7 of its 11 rows over the apps screen, 9 and a blank over an app's, and all 11 over a record whose command line is cut, so the answer shows on three rows, one, or none until it is scrolled; the footer says `↑↓ scroll` | 2 | 5 | 1 | 10 | 2 | accepted |
 
 Owed, from the reviews of the TUI's first part (#558; scored there), of
 their fixes, and of its second part; the others are fixed:
@@ -267,7 +268,7 @@ they differ, as far as the screen leaves room for STATE beside them;
 the whole name is what is opened, searched and printed. An app's
 screen shows its state and deploys; a deploy's record is laid out for
 reading a failure, its log tail last. The title bar, the crumb, the
-apps strip, an app's fields, a record's head and who am I's and the box screen's lines holding a box's value are fitted to the
+apps strip, an app's fields, a record's head and its log tail (while `w` is off) and who am I's and the box screen's lines holding a box's value are fitted to the
 window in the screen's cells, as the door draws them (a wide character
 takes two, a combining mark none, and a character the door writes as
 an escape as many as the escape has): a line too wide is cut, `…` its
@@ -276,12 +277,12 @@ when it alone takes the whole window or more (the apps' summary of hundreds of a
 `:deploys blog <version>`, `:me`, `:box`); what is typed is held to the client's grammars, and a version to the box's own (at most 64 characters; `motel deploys` sends a longer one for the box to refuse), before anything is asked, and
 what is wrong is said on the prompt's line; Enter runs what is typed,
 Tab takes a completion. `?` lists the keys of the screen below it,
-written from the table the keys are bound from, its rows wrapped to the window, and scrolls, as its footer says. On a screen that reads
+written from the table the keys are bound from, its rows wrapped to the window (an entry's words under its words), and scrolls, as its footer says. On a screen that reads
 the box (not help or a stop screen), `c` shows the `motel` line for it
 (a record whose version the box's filter hid has none, and `c` and `y`
 say so, and `P` prints nothing there), every argument quoted for a
 POSIX shell, `--box` naming the port when it is not 443 and `--key` the
-key when it was named with `--key` (on the apps screen, a row's line
+key when it was named with `--key` or `MOTEL_KEY` (on the apps screen, a row's line
 too, `<app>` for the app). A command line wider than the window, in the
 screen's cells, is cut at its edge (it is not wrapped: a line drawn on
 two rows copies with a line feed in it), the cut marked `…`, and the
@@ -326,7 +327,8 @@ session fills again from empty. A stop screen takes `r`, `?`, `q` and
 the keys that scroll it alone, and `P` on a refused key's; help over it takes esc, `r`, `q` and the keys that
 scroll it alone; nothing opens from either. A refused key's screen names every
 cause the client cannot tell apart and the person line to send the
-operator, which `P` prints.
+operator, which `P` prints. ctrl-c is a key while the screen holds the terminal, and quits as `q` does, exit 0; a
+SIGINT, SIGTERM or SIGHUP sent to the process, or the terminal closed under the screen, ends it as an interrupt, 130, nothing said.
 
 - **The rate.** A box allows a person 2 requests a second with a burst
   of 60. The TUI keeps to 1.5 a second and 30 at once. The open app is
