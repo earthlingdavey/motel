@@ -344,7 +344,16 @@ func (u *UI) renderRecord(v model.View, now time.Time) {
 		title = append(title, ownLine(" "+strings.Repeat("─", max(u.w-title.Width(door.Width)-1, 0)))...)
 	}
 	door.SetText(u.recTailTitle, door.Line(title, u.Colour))
-	door.SetText(u.tail, door.Texts(view.Tail))
+	tail := view.Tail
+	if !u.wrap {
+		// A line stays a line, cut at the window's edge as every other
+		// line is, the cut marked.
+		tail = make([]termtext.Text, len(view.Tail))
+		for i, t := range view.Tail {
+			tail[i] = termtext.From(model.Line{{T: t}}.Cut(u.w, door.Width).Text())
+		}
+	}
+	door.SetText(u.tail, door.Texts(tail))
 }
 
 // withStop puts why every read stopped above a screen's lines, so the

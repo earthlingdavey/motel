@@ -1,9 +1,12 @@
 package tui
 
 import (
+	"os"
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/smallhoursorg/motel/client/internal/tui/demo"
 )
 
 // The fixes for what the trial of the TUI against a real box found.
@@ -55,5 +58,50 @@ func TestMetricsSayOnlyWhatTheClientKnows(t *testing.T) {
 	}
 	if want := "metrics     over 1h, newest point 14:12:10 UTC (30s ago)"; got != want {
 		t.Errorf("the metrics line is drawn %q, want %q", got, want)
+	}
+}
+
+// TestLongTailLineCut: a log tail's line wider than the window is cut
+// at its edge, "…" its last cell, as every other cut line is (the trial
+// saw a 300-character line stop at column 80 unmarked); with w on, it
+// wraps whole onto the rows below.
+func TestLongTailLineCut(t *testing.T) {
+	const rec = "deploys/blog/e9a0b3f2c118.json"
+	b, err := os.ReadFile("demo/fixtures/" + rec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	long := strings.Repeat("x", 300)
+	body := strings.Replace(string(b), `"> blog@1.4.0 start"`, `"`+long+`"`, 1)
+	if body == string(b) {
+		t.Fatal("the fixture's first log line moved")
+	}
+	for _, sz := range [][2]int{{60, 16}, {80, 24}} {
+		h := start(t, sz[0], sz[1], func(f *demo.Fake) { f.Body(rec, body) })
+		h.open(record("blog", "e9a0b3f2c118"))
+		h.on(func() { h.u.tail.ScrollToBeginning() })
+		var row drawnRow
+		for _, r := range screenRows(h) {
+			if strings.HasPrefix(r.text, "xxxx") {
+				row = r
+				break
+			}
+		}
+		if want := strings.Repeat("x", sz[0]-1) + "…"; row.text != want {
+			t.Errorf("%dx%d: the long line is drawn %q, want %q", sz[0], sz[1], row.text, want)
+		}
+		h.press("w")
+		n := 0
+		for _, r := range screenRows(h) {
+			if strings.HasPrefix(r.text, "xxxx") {
+				n++
+				if strings.HasSuffix(r.text, "…") {
+					t.Errorf("%dx%d: with w on, a row of the long line is cut: %q", sz[0], sz[1], r.text)
+				}
+			}
+		}
+		if n < 2 {
+			t.Errorf("%dx%d: with w on, the long line is on %d rows", sz[0], sz[1], n)
+		}
 	}
 }
