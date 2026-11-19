@@ -38,6 +38,18 @@ func integrationRunner(t *testing.T) *systemdRunner {
 	r := newSystemdRunner(userManager, logger.Named(t.Name()))
 	r.poll = 50 * time.Millisecond
 	t.Cleanup(r.close)
+	// The caddytest scenarios run before this suite in the same binary,
+	// and each ends (endApps) by starting a liveswap whose start-time
+	// sweep of unknown apps nothing joins. One still listing units when
+	// a test here starts its own would stop them, since no config names
+	// itest: the sweep counts itest as configured while a test here runs.
+	swapSeam(t, &appConfiguredSeam, func(app string) bool {
+		if app == "itest" {
+			return true
+		}
+		refs, ok := appPool.References(poolKey(app))
+		return ok && refs > 0
+	})
 	return r
 }
 

@@ -248,9 +248,11 @@ func integrationServer(t *testing.T) (string, *caddytest.Tester) {
 // under root. The config keeps liveswap itself: a load with no
 // liveswap at all would leave the units running for a later start to
 // reattach (Destruct when no started config holds liveswap). The idle
-// config's start-time sweep of unknown apps still runs over root in
-// the background after the load; it only reads and removes, which
-// RemoveAll tolerates.
+// config's start-time sweep of unknown apps still runs in the
+// background after the load: under root it only reads and removes,
+// which RemoveAll tolerates, and it stops the units of every app no
+// config names, which integrationRunner keeps away from the runner
+// suite's.
 //
 // Only an app's first deploy or launch makes its dir under root
 // (appDirs.ensure), so a root with none ran nothing: a test that
