@@ -170,7 +170,9 @@ func tags(c model.Class, colour bool) (string, string) {
 // cluster is drawn twice, wider than Width says; and a Prepend
 // character before a tag takes its [ into its cluster, so the tag is
 // drawn as text and its style is not closed. No screen puts box text
-// beside a tag today, only the client's own words, and no test would
+// beside a tag today, only the client's own words (and, in the stop
+// line after a key failed to sign, the key's path as the person named
+// it, after the closing tag of "not asking: "), and no test would
 // fail if one did: put box free text only between plain or label
 // segments, or inside a dressed one between words of the client's own.
 // FuzzLine and TestClassesBesideATag hold every line to one row, and
