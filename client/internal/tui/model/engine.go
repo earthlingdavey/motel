@@ -138,10 +138,14 @@ type Engine struct {
 	taken      *entry // the entry the read in flight was taken from
 	cancel     context.CancelFunc
 	recovering bool
-	// noneAsked is when none's read was asked, when it waited
-	// WaitingAfter or longer for no answer: the box has been waited for
-	// since then (Health).
+	// noneAsked is when none's read began to wait for the box, when it
+	// waited WaitingAfter or longer for no answer: the box has been
+	// waited for since then (Health).
 	noneAsked time.Time
+	// waitFrom is when the read in flight began to wait for the box:
+	// when it was taken, or the wake from a sleep it was in flight
+	// through, since the box is not waited for while the machine sleeps.
+	waitFrom time.Time
 	// dropped is the read in flight cancelled (Drop): no longer waited
 	// for.
 	dropped bool
@@ -525,7 +529,7 @@ func (e *Engine) Take(now time.Time) (Job, bool, time.Duration) {
 	}
 	e.tokens--
 	e.inflight, e.taken, e.dropped = &j, e.jobs[j], false
-	e.taken.asked = now
+	e.taken.asked, e.waitFrom = now, now
 	if j.Kind == KStatus && j.App == e.focus {
 		e.lastFocus = now
 	}
@@ -675,7 +679,7 @@ func (e *Engine) Done(j Job, now time.Time, err error) Outcome {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.seen(now)
-	taken := e.taken
+	taken, waited := e.taken, e.waitFrom
 	e.inflight, e.taken, e.cancel = nil, nil, nil
 	if taken != nil {
 		taken.slowed = false
@@ -731,13 +735,13 @@ func (e *Engine) Done(j Job, now time.Time, err error) Outcome {
 			jj := j
 			e.none, alone = &jj, true
 			// Waited for and not answered: the box goes on being waited
-			// for since this read was asked, through the read made next
-			// (brought forward, below), so the title bar does not say live
-			// between the two. A quick failure (a 5xx on one route) is not
-			// carried on.
+			// for since this read began to wait for it, through the read
+			// made next (brought forward, below), so the title bar does not
+			// say live between the two. A quick failure (a 5xx on one
+			// route) is not carried on.
 			e.noneAsked = time.Time{}
-			if now.Sub(en.asked) >= WaitingAfter {
-				e.noneAsked = en.asked
+			if now.Sub(waited) >= WaitingAfter {
+				e.noneAsked = waited
 			}
 		}
 		// A record is held as a refused one is: a 5xx is no answer too,
@@ -849,9 +853,9 @@ type Health struct {
 	// Back is set once, on the first answer after a run of none.
 	Back bool
 	// Waiting is how long the box has been waited for: since the read in
-	// flight was asked (not one cancelled); or, when a read waited
-	// WaitingAfter or longer and got no answer, none answered since,
-	// since that one was.
+	// flight began to wait for it (not one cancelled); or, when a read
+	// waited WaitingAfter or longer and got no answer, none answered
+	// since, since that one began to. A wake from sleep starts it again.
 	Waiting time.Duration
 }
 
@@ -880,7 +884,7 @@ func (e *Engine) Health(now time.Time) Health {
 		// frame after its failure is drawn before the next is taken.
 		h.Waiting = now.Sub(e.noneAsked)
 	case e.inflight != nil && !e.dropped:
-		h.Waiting = now.Sub(e.taken.asked)
+		h.Waiting = now.Sub(e.waitFrom)
 	}
 	return h
 }
@@ -977,6 +981,11 @@ func (e *Engine) wakeLocked(now time.Time) {
 		en.due = now
 	}
 	e.askMe(now)
+	// The box was not waited for while the machine slept: a read in
+	// flight through the sleep waits for it from now, and a read that
+	// waited and got none before the sleep is not carried on past it
+	// (Health), as nothing has been asked since the wake.
+	e.waitFrom, e.noneAsked = now, time.Time{}
 	// Empty, and filling from now, or from the end of a 429's wait that
 	// still runs, as the 429 left it.
 	e.tokens, e.filled = 0, maxTime(now, e.slowUntil)
@@ -993,7 +1002,7 @@ func (e *Engine) shift(d time.Duration) {
 			}
 		}
 	}
-	move(&e.filled, &e.meAnswered, &e.me403, &e.retryAt, &e.slowUntil, &e.touched, &e.lastFocus, &e.lastList, &e.lastRetry, &e.ticked, &e.noneAsked)
+	move(&e.filled, &e.meAnswered, &e.me403, &e.retryAt, &e.slowUntil, &e.touched, &e.lastFocus, &e.lastList, &e.lastRetry, &e.ticked, &e.noneAsked, &e.waitFrom)
 	for _, en := range e.jobs {
 		move(&en.due, &en.answered, &en.asked)
 	}

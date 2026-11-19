@@ -211,3 +211,65 @@ func TestWaitingBetweenTwo(t *testing.T) {
 		t.Errorf("the read brought forward answered: %q", w)
 	}
 }
+
+// asleep lets the clock tick at now, then the machine sleep for d: the
+// clock's next tick, and a key, come d later.
+func asleep(s *model.Session, now *time.Time, d time.Duration) {
+	s.Engine.Tick(*now)
+	*now = now.Add(d)
+	s.Engine.Tick(*now)
+	s.Engine.Touch(*now)
+}
+
+// TestWaitingAfterAWake: the box is not waited for while the machine
+// sleeps (2 h), or across a step of the clock forward past WakeAfter,
+// which is taken for a sleep. A read in flight through it is waited for
+// from the wake: nothing is said of waiting until 5 s after it, then
+// the count is from it, and carried on from it when the read gets
+// none; one that fails at once after the wake is not carried on; and a
+// read that waited and got none before the sleep is not carried on past
+// it.
+func TestWaitingAfterAWake(t *testing.T) {
+	for _, gap := range []time.Duration{2 * time.Hour, model.WakeAfter + time.Second} {
+		s, f, now, j := settled(t)
+		asleep(s, now, gap)
+		woke := *now
+		for d := time.Duration(0); d < model.WaitingAfter; d += 500 * time.Millisecond {
+			if w := word(s, woke.Add(d)); strings.HasPrefix(w, "waiting") {
+				t.Errorf("in flight through a sleep of %v, %v after the wake: %q", gap, d, w)
+			}
+		}
+		*now = woke.Add(6 * time.Second)
+		if w := word(s, *now); !strings.HasPrefix(w, "waiting 6s for an answer") {
+			t.Errorf("in flight through a sleep of %v, 6 s after the wake: %q", gap, w)
+		}
+		end(s, f, j, *now, fail(model.FailNoAnswer))
+		if w := word(s, *now); !strings.HasPrefix(w, "waiting 6s for an answer") {
+			t.Errorf("in flight through a sleep of %v, no answer 6 s after the wake: %q", gap, w)
+		}
+
+		s, f, now, j = settled(t)
+		asleep(s, now, gap)
+		*now = now.Add(time.Second)
+		end(s, f, j, *now, fail(model.FailNoAnswer))
+		if w := word(s, *now); strings.HasPrefix(w, "waiting") {
+			t.Errorf("in flight through a sleep of %v, no answer 1 s after the wake: %q", gap, w)
+		}
+
+		s, f, now, j = settled(t)
+		*now = now.Add(30 * time.Second)
+		end(s, f, j, *now, fail(model.FailNoAnswer))
+		asleep(s, now, gap)
+		if w := word(s, *now); strings.HasPrefix(w, "waiting") {
+			t.Errorf("no answer before a sleep of %v, at the wake: %q", gap, w)
+		}
+		next(t, s, now)
+		woke = *now
+		if w := word(s, woke.Add(4900*time.Millisecond)); strings.HasPrefix(w, "waiting") {
+			t.Errorf("no answer before a sleep of %v, 4.9 s into the read after the wake: %q", gap, w)
+		}
+		if w := word(s, woke.Add(5*time.Second)); !strings.HasPrefix(w, "waiting 5s for an answer") {
+			t.Errorf("no answer before a sleep of %v, 5 s into the read after the wake: %q", gap, w)
+		}
+	}
+}
