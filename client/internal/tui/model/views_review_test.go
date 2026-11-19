@@ -311,6 +311,41 @@ func timesOf(t *testing.T, status, rec string) (fields, finished, took, last, ve
 		row(s, now, "blog").Cells[model.ColLast].String(), r.Head[0].Text()
 }
 
+// TestMemoryLineJoins: the memory line joins what it has with " · ",
+// whatever of now, max and the cap is there; a stopped app has no now
+// (review round two of #577), and its line began with the separator.
+// With neither now nor max there is no line.
+func TestMemoryLineJoins(t *testing.T) {
+	const bar = "  █████░░░░░░░░░░░░░░░ 25% of cap"
+	for _, c := range []struct {
+		mem, caps, want string
+	}{
+		{`{"now":1048576,"max":2097152}`, `{"memory_max":4194304}`, "memory      1 MiB now · 2 MiB max · cap 4 MiB" + bar},
+		{`{"now":1048576,"max":2097152}`, `{}`, "memory      1 MiB now · 2 MiB max"},
+		{`{"now":1048576}`, `{"memory_max":4194304}`, "memory      1 MiB now · cap 4 MiB" + bar},
+		{`{"now":1048576}`, `{}`, "memory      1 MiB now"},
+		{`{"max":2097152}`, `{"memory_max":4194304}`, "memory      2 MiB max · cap 4 MiB"},
+		{`{"max":2097152}`, `{}`, "memory      2 MiB max"},
+		{`{}`, `{"memory_max":4194304}`, ""},
+		{`{}`, `{}`, ""},
+	} {
+		fields, _, _, _, _ := timesOf(t, `{"app":"blog","phase":"idle","running":true,"current_version":"v2","available_versions":["v2"],"caps":`+c.caps+`,
+			"metrics":{"window":"1h","at":"@-0s","memory_bytes":`+c.mem+`},
+			"deploys":[{"version":"v2","status":"succeeded","started_at":"@-1m","finished_at":"@-0s"}],
+			"last_deploy":{"version":"v2","status":"succeeded","started_at":"@-1m","finished_at":"@-0s"}}`,
+			`{"version":"v2","status":"succeeded","started_at":"@-1m","finished_at":"@-0s"}`)
+		got := ""
+		for _, l := range strings.Split(fields, "\n") {
+			if strings.HasPrefix(l, "memory ") {
+				got = l
+			}
+		}
+		if got != c.want {
+			t.Errorf("memory %s, caps %s:\n got %q\nwant %q", c.mem, c.caps, got, c.want)
+		}
+	}
+}
+
 // TestTimesCarryTheirDay: a box's time shown as a time of day carries
 // its date when it is not today (the date in UTC), and its year when
 // not this year; a missing time is said as missing, not as year 1 or a

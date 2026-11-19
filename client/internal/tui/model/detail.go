@@ -253,14 +253,22 @@ func (s *Session) metricLines(st wire.Status) []Line {
 	cap := memCap(st)
 	if mem := m.Memory; mem != nil && (mem.Now != nil || mem.Max != nil) {
 		var l Line
+		// Each part after the first is joined with " · ": a stopped app
+		// has no now.
+		part := func(s string) {
+			if len(l) > 0 {
+				s = " · " + s
+			}
+			l = append(l, own(s))
+		}
 		if mem.Now != nil {
-			l = append(l, own(mib(*mem.Now)+" now"))
+			part(mib(*mem.Now) + " now")
 		}
 		if mem.Max != nil {
-			l = append(l, own(" · "+mib(*mem.Max)+" max"))
+			part(mib(*mem.Max) + " max")
 		}
 		if cap > 0 {
-			l = append(l, own(" · cap "+mib(cap)))
+			part("cap " + mib(cap))
 			if slices.Contains(st.CapsUnenforced, "memory_max") {
 				l = append(l, own(" (not enforced)"))
 			}
