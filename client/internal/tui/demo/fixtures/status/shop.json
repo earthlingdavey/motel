@@ -1,0 +1,160 @@
+{
+ "app": "shop",
+ "phase": "idle",
+ "running": true,
+ "available_versions": [
+  "7c1e55d0a913",
+  "e9a0b3f2c118"
+ ],
+ "current_version": "7c1e55d0a913",
+ "pid": 41233,
+ "unit": "motel-shop.7c1e55d0a913.3f9a0c21d4e8b7a6.service",
+ "socket": "/srv/motel/shop/run/app.sock",
+ "command": [
+  "node",
+  "server.js"
+ ],
+ "caps": {
+  "memory_max": 536870912,
+  "tasks_max": 64,
+  "cpu_quota": 100
+ },
+ "deploys": [
+  {
+   "version": "e9a0b3f2c118",
+   "status": "failed",
+   "deployed_by": "github:example/shop@refs/heads/main",
+   "sha256": "08e1fce8c19ab833769916ef9876b6fdedeebeba74518d4a0006a81be36268c9",
+   "started_at": "@-782s",
+   "finished_at": "@-12m",
+   "phase": "soaking"
+  },
+  {
+   "version": "7c1e55d0a913",
+   "status": "succeeded",
+   "deployed_by": "github:example/shop@refs/heads/main",
+   "sha256": "ce0d1aac022608624a22f13a97c5ed6538f08ed6996cd2a817e06e4998620f75",
+   "started_at": "@-86444s",
+   "finished_at": "@-1d"
+  }
+ ],
+ "last_deploy": {
+  "version": "e9a0b3f2c118",
+  "status": "failed",
+  "deployed_by": "github:example/shop@refs/heads/main",
+  "sha256": "08e1fce8c19ab833769916ef9876b6fdedeebeba74518d4a0006a81be36268c9",
+  "started_at": "@-782s",
+  "finished_at": "@-12m",
+  "phase": "soaking",
+  "artifact_entries": 1842,
+  "artifact_bytes": 39845888,
+  "phases": [
+   {
+    "name": "downloading",
+    "started_at": "@-782s",
+    "seconds": 1.2
+   },
+   {
+    "name": "extracting",
+    "started_at": "@-780s",
+    "seconds": 0.8
+   },
+   {
+    "name": "preparing",
+    "started_at": "@-780s",
+    "seconds": 4.1
+   },
+   {
+    "name": "starting",
+    "started_at": "@-775s",
+    "seconds": 1.0
+   },
+   {
+    "name": "soaking",
+    "started_at": "@-774s",
+    "seconds": 54.9
+   }
+  ],
+  "error": "the health check at /healthz answered 500 for 60 s",
+  "detail": {
+   "probe": {
+    "status": 500,
+    "location": "/healthz",
+    "body": "{\"ok\":false,\"db\":\"connection refused (127.0.0.1:5432)\"}"
+   },
+   "log_tail": [
+    "> blog@1.4.0 start",
+    "> node server.js",
+    "listening on /srv/motel/blog/run/app.sock",
+    "migrations: 14 applied, 1 pending",
+    "migration 0015_add_index: connecting to [redacted: DATABASE_URL]",
+    "Error: connect ECONNREFUSED 127.0.0.1:5432",
+    "    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1606:16)",
+    "health: db check failed: connection refused",
+    "health: db check failed: connection refused",
+    "health: db check failed: connection refused",
+    "health: db check failed: connection refused",
+    "health: db check failed: connection refused",
+    "health: db check failed: connection refused",
+    "health: db check failed: connection refused",
+    "health: db check failed: connection refused",
+    "health: db check failed: connection refused",
+    "health: db check failed: connection refused",
+    "health: db check failed: connection refused",
+    "health: db check failed: connection refused",
+    "health: db check failed: connection refused",
+    "health: db check failed: connection refused",
+    "health: db check failed: connection refused",
+    "health: db check failed: connection refused",
+    "health: db check failed: connection refused",
+    "health: db check failed: connection refused",
+    "health: db check failed: connection refused",
+    "health: db check failed: connection refused",
+    "health: db check failed: connection refused",
+    "health: db check failed: connection refused",
+    "health: db check failed: connection refused",
+    "health: db check failed: connection refused",
+    "health: db check failed: connection refused",
+    "health: db check failed: connection refused",
+    "health: db check failed: connection refused",
+    "health: db check failed: connection refused",
+    "health: db check failed: connection refused",
+    "health: db check failed: connection refused",
+    "health: db check failed: connection refused",
+    "health: db check failed: connection refused",
+    "health: db check failed: connection refused"
+   ],
+   "log_tail_truncated": true
+  },
+  "redacted_env": [
+   "DATABASE_URL"
+  ]
+ },
+ "watchdog": {
+  "state": "watching"
+ },
+ "metrics": {
+  "window": "1h",
+  "at": "@-30s",
+  "memory_bytes": {
+   "now": 210763776,
+   "max": 241172480
+  },
+  "cpu_cores": {
+   "avg_5m": 0.03,
+   "avg": 0.02
+  },
+  "requests": {
+   "total": 1234,
+   "per_second": 0.34,
+   "by_class": {
+    "2xx": 1224,
+    "5xx": 10
+   },
+   "5xx_share": 0.002,
+   "p50_ms": 18,
+   "p95_ms": 140,
+   "cache_hit_share": 0.62
+  }
+ }
+}

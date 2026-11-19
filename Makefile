@@ -16,7 +16,7 @@ VERSION ?= $(shell (git describe --tags --exact-match 2>/dev/null || echo v0.0.0
 # Distro image for the package install smoke test (install-test).
 DISTRO ?= debian:13
 
-.PHONY: test test-integration vet tidy tidy-check lint fuzz fuzz-list vulncheck pin-watch-check ci-changes-check secretscan usage usage-claude usage-check build package clean-debs install-test e2e e2e-backup e2e-notify e2e-metrics soak e2e-logs clean
+.PHONY: test test-integration vet tidy tidy-check lint fuzz fuzz-list vulncheck pin-watch-check ci-changes-check secretscan usage usage-claude usage-check build build-client package clean-debs install-test e2e e2e-backup e2e-notify e2e-metrics soak e2e-logs clean
 
 test:
 	$(COMPOSE) run --rm dev go test -race -cover $(PKGS)
@@ -270,6 +270,22 @@ build:
 			echo "build/motel-backup-linux-*: built with -tags e2e, which shortens the setup clock for the e2e box: not a binary to ship"; exit 1; \
 		fi; \
 		chmod -R a+rwX build'
+
+# Builds the laptop client as a release must: in client/, with the
+# workspace off (GOWORK=off), so the binary links exactly the versions
+# client/go.mod records (TestWorkspaceAgrees holds the two builds
+# equal), CGO off, -trimpath, and the release stamped where `motel
+# version` reads it. It runs in the dev container, so by default it
+# builds for Linux on the container's architecture; GOOS= and GOARCH= on
+# the command line cross-build: make build-client GOOS=darwin GOARCH=arm64.
+# Nothing in the release workflow builds the client yet.
+# GOFLAGS is cleared as for build, so Go records the commit too.
+build-client:
+	$(COMPOSE) run --rm -e GOFLAGS= -e CGO_ENABLED=0 -e GOWORK=off $(if $(GOOS),-e GOOS=$(GOOS)) $(if $(GOARCH),-e GOARCH=$(GOARCH)) dev sh -c '\
+		git config --global --add safe.directory /src; \
+		os=$$(go env GOOS); arch=$$(go env GOARCH); \
+		cd client && go build -trimpath -ldflags "-s -w -X main.version=v$(VERSION)" -o ../build/motel-$$os-$$arch ./cmd/motel && \
+		chmod -R a+rwX ../build && echo build/motel-$$os-$$arch'
 
 # Builds .deb for both arches into dist/. .deb only, and no .apk
 # planned: liveswap runs apps as transient systemd units with no

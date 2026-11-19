@@ -1,0 +1,481 @@
+package model
+
+import (
+	"errors"
+	"slices"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/smallhoursorg/motel/client/internal/termtext"
+	"github.com/smallhoursorg/motel/liveswap/wire"
+)
+
+// The apps table's columns, in the order a narrow screen drops them:
+// last the first (AGE then goes into STATE, as StateAged).
+const (
+	ColName = iota
+	ColState
+	ColVersion
+	ColLast
+	ColMem
+	ColOfCap
+	Col5xx
+	ColP95
+	ColAge
+	NCols
+)
+
+// ColHeads are the columns' headings.
+var ColHeads = [NCols]string{"NAME", "STATE", "VERSION", "LAST DEPLOY", "MEM", "OF CAP", "5xx", "P95", "AGE"}
+
+// AppRow is one app on the apps screen. Its state is the box's facts
+// only: the client judges nothing the box does not (no threshold of
+// its own on memory or latency).
+type AppRow struct {
+	// Name is the app, a token of the box's app grammar.
+	Name  string
+	Mark  Mark
+	Cells [NCols]termtext.Text
+	// StateAged is STATE with the row's age after it ("running · 12s"),
+	// for a screen too narrow for AGE; a stale row's STATE says stale
+	// already, and a row not yet answered has no age.
+	StateAged termtext.Text
+	Stale     bool
+	// Why is the "needs a look" line, empty when the row needs none.
+	Why Line
+	// Failed is the newest deploy's version when it failed.
+	Failed string
+	// state is STATE's word before a stale row's suffix: what the
+	// strip counts by. age is how old the row's answer is, which a
+	// stale row's AGE says only as "stale".
+	state string
+	age   string
+	mem   float64
+	share float64
+	// moving is that STATE says a deploy in flight (inFlight's word)
+	// where it would say running, or not deployed.
+	moving bool
+}
+
+// inFlight is the word for a deploy in flight, and whether one is: its
+// phase, or "deploying" while the box names one ("deploying") whose
+// phase is still idle (its upload is being received). An older box,
+// which sends no "deploying", says one only by its phase.
+func inFlight(st wire.Status) (string, bool) {
+	switch {
+	case st.Phase != "idle":
+		return st.Phase, true
+	case st.Deploying != nil:
+		return "deploying", true
+	}
+	return "", false
+}
+
+// Sorts are the apps screen's orders, which s cycles.
+var Sorts = []string{"attention", "name", "memory", "5xx"}
+
+// AppsView is the apps screen.
+type AppsView struct {
+	Rows []AppRow
+	// Strip is every row's reason, in the rows' order; AllWell the line
+	// said when none has one.
+	Strip   []Line
+	AllWell Line
+	// Summary is the crumb's right side.
+	Summary Line
+	// Empty is said in place of the table when the box lists no app.
+	Empty Line
+	// ListFailed says, above the strip, how old the list held is and
+	// why the last read of it failed; nil while it reads.
+	ListFailed Line
+}
+
+// AppsView is the apps screen at now, filtered and sorted, for a screen
+// width wide (0: of any width). A filter of "!" or "!ok", with or
+// without a name after it, keeps only marked rows.
+func (s *Session) AppsView(now time.Time, filter string, sort int, width int) AppsView {
+	s.seen(now)
+	var v AppsView
+	switch {
+	case s.List == nil && s.ListErr != nil:
+		v.Empty = append(Line{own("no apps list: "), Seg{T: Capped(failureText(s.ListErr), 2*LineMax)}}, s.askAgain(now)...)
+		return v
+	case s.List == nil && s.Engine.Stopped() != Running:
+		v.Empty = Line{own("not asking " + s.Host + " for the apps you may view: every read has stopped (above).")}
+		return v
+	case s.List == nil:
+		v.Empty = Line{own("asking " + s.Host + " for the apps you may view…")}
+		return v
+	}
+	if s.ListErr != nil {
+		v.ListFailed = append(Line{ownC("list as of "+hms(s.List.At)+" UTC, "+Ago(now.Sub(s.List.At))+" ago · the last read failed: ", Warn),
+			Seg{T: Capped(failureText(s.ListErr), 2*LineMax)}}, s.askAgain(now)...)
+	}
+	names := s.List.V
+	if len(names) == 0 {
+		v.Empty = Line{own("You may view no app on " + s.Host + ". "), own("Ask the operator for a grant line.")}
+		return v
+	}
+	marked := false
+	if rest, ok := strings.CutPrefix(filter, "!"); ok {
+		marked, filter = true, strings.TrimPrefix(rest, "ok")
+	}
+	filter = strings.TrimSpace(filter)
+	need, all, notRunning, asking, stale := 0, 0, 0, 0, 0
+	stateW := len([]rune(ColHeads[ColState]))
+	for _, n := range names {
+		r := s.row(n, now)
+		r.StateAged = r.Cells[ColState]
+		if age := r.Cells[ColAge].String(); age != "" && !r.Stale {
+			r.StateAged = termtext.From(r.Cells[ColState].String() + " · " + age)
+		}
+		stateW = max(stateW, len([]rune(r.StateAged.String())))
+		if r.Mark < MarkNone {
+			need++
+		}
+		if r.Stale {
+			stale++
+		}
+		switch r.state {
+		case "running":
+		case "asking…":
+			asking++
+		default:
+			notRunning++
+		}
+		all++
+		if marked && r.Mark >= MarkNone || filter != "" && !strings.Contains(n, filter) {
+			continue
+		}
+		v.Rows = append(v.Rows, r)
+	}
+	// The mark, NAME and STATE fit the width, as the table lays them out
+	// (a column and a space each, the mark's two cells), STATE with an
+	// age in it.
+	most := 64
+	if width > 0 {
+		most = width - 4 - stateW
+	}
+	shown := shownNames(names, most)
+	for i := range v.Rows {
+		v.Rows[i].Cells[ColName] = termtext.From(shown[v.Rows[i].Name])
+	}
+	switch Sorts[sort%len(Sorts)] {
+	case "attention":
+		slices.SortStableFunc(v.Rows, func(a, b AppRow) int { return int(a.Mark) - int(b.Mark) })
+	case "memory":
+		slices.SortStableFunc(v.Rows, func(a, b AppRow) int { return cmpDesc(a.mem, b.mem) })
+	case "5xx":
+		slices.SortStableFunc(v.Rows, func(a, b AppRow) int { return cmpDesc(a.share, b.share) })
+	}
+	for _, r := range v.Rows {
+		if len(r.Why) > 0 {
+			l := Line{ownC(r.Mark.Glyph()+" ", r.Mark.Class()), own(pad(r.Cells[ColName].String(), 12) + " ")}
+			if r.Stale {
+				// Its reason is what the box said last, not known to hold
+				// now: said with its age before it, as the title bar says
+				// a failed whoami's answer.
+				l = append(l, ownC(r.age+" old, stale: ", Warn))
+			}
+			v.Strip = append(v.Strip, append(l, r.Why...))
+		}
+	}
+	stales := ""
+	if stale > 0 {
+		stales = "; " + ofApps(stale, all) + " stale"
+	}
+	switch {
+	case asking > 0 && need == 0:
+		v.AllWell = Line{own("asking the box for " + strconv.Itoa(asking) + " of " + some(all, "app") + "…" + stales)}
+	case need == 0 && notRunning == 0 && stale == 0:
+		l := "all " + some(all, "app") + " running; every newest deploy succeeded"
+		if all == 1 {
+			l = "1 app running; its newest deploy succeeded"
+		}
+		v.AllWell = Line{own(l)}
+	case need == 0:
+		// A stale row is not known to be as it was: not said to run.
+		l := "nothing needs a look"
+		if notRunning > 0 {
+			l += "; " + ofApps(notRunning, all) + " not deployed or not yours to view"
+		}
+		v.AllWell = Line{own(l + stales)}
+	}
+	needs := " need a look · "
+	if need == 1 {
+		needs = " needs a look · "
+	}
+	sum := some(all, "app") + " · " + strconv.Itoa(need) + needs
+	if stale > 0 {
+		// Beside a strip of reasons too, which says no count.
+		sum += strconv.Itoa(stale) + " stale · "
+	}
+	sum += "by " + Sorts[sort%len(Sorts)]
+	if filter != "" || marked {
+		sum = strconv.Itoa(len(v.Rows)) + " of " + sum
+	}
+	v.Summary = Line{own(sum)}
+	return v
+}
+
+// some is n of a noun, as English counts it: "1 app", "3 apps".
+func some(n int, noun string) string {
+	if n == 1 {
+		return "1 " + noun
+	}
+	return strconv.Itoa(n) + " " + noun + "s"
+}
+
+// ofApps is "n of all apps" and the verb that agrees with n.
+func ofApps(n, all int) string {
+	if n == 1 {
+		return "1 of " + some(all, "app") + " is"
+	}
+	return strconv.Itoa(n) + " of " + some(all, "app") + " are"
+}
+
+// NameMax is the most of an app's name the apps table and its strip
+// show, but for names that would be shown alike (shownNames). A longer
+// one (63 characters are allowed) is cut in the middle, its start and
+// its end kept, so that names which share a start still differ on
+// screen; the whole name is what is opened, filtered and completed.
+const NameMax = 20
+
+// cutName is name cut in its middle to n runes, the cut marked: 12 of
+// its start and 7 of its end at NameMax, one more of each in turn for
+// each rune n is longer.
+func cutName(name string, n int) string {
+	r := []rune(name)
+	if len(r) <= n {
+		return name
+	}
+	end := 7 + (n-NameMax)/2
+	return string(r[:n-1-end]) + "…" + string(r[len(r)-end:])
+}
+
+// shownNames is each of names as the apps table and its strip show it:
+// cut to NameMax, and those that would then be shown alike shown
+// longer, alike, until they differ or are whole, but never longer than
+// most. A name is never shown as another is: a cut holds "…", which no
+// name does, and once two cuts differ, longer ones of them do.
+func shownNames(names []string, most int) map[string]string {
+	n := make(map[string]int, len(names))
+	out := make(map[string]string, len(names))
+	for _, x := range names {
+		n[x], out[x] = NameMax, cutName(x, NameMax)
+	}
+	for {
+		alike := map[string][]string{}
+		for _, x := range names {
+			alike[out[x]] = append(alike[out[x]], x)
+		}
+		grew := false
+		for _, xs := range alike {
+			for _, x := range xs {
+				if len(xs) > 1 && n[x] < most && n[x] < len([]rune(x)) {
+					n[x]++
+					out[x] = cutName(x, n[x])
+					grew = true
+				}
+			}
+		}
+		if !grew {
+			return out
+		}
+	}
+}
+
+func cmpDesc(a, b float64) int {
+	switch {
+	case a > b:
+		return -1
+	case a < b:
+		return 1
+	}
+	return 0
+}
+
+func pad(s string, n int) string {
+	if r := len([]rune(s)); r < n {
+		return s + strings.Repeat(" ", n-r)
+	}
+	return s
+}
+
+// row derives an app's row from the box's facts, the first rule that
+// holds giving its state.
+func (s *Session) row(name string, now time.Time) (r AppRow) {
+	s.seen(now)
+	r = AppRow{Name: name, Mark: MarkNone}
+	r.Cells[ColName] = termtext.From(cutName(name, NameMax))
+	for c := ColVersion; c < ColAge; c++ {
+		r.Cells[c] = termtext.From("-")
+	}
+	a := s.apps[name]
+	if a == nil || a.st == nil && a.err == nil {
+		r.state, r.Cells[ColState] = "asking…", termtext.From("asking…")
+		return r
+	}
+	at := a.errAt
+	if a.st != nil {
+		at = a.st.At
+	}
+	// Stale is judged against the interval the row's next read was due
+	// by when its last answer came: three reads that failed, or three
+	// that should have come and did not (an interval's grace: the first
+	// read after an app's first answer waits for its place in the
+	// cycle). A held row is not being asked, so it is never stale.
+	misses, held, every, woke := s.Engine.Row(name)
+	r.Stale = !held && (woke || misses >= StaleAfter || Stale(now.Sub(at), every))
+	r.age = Ago(now.Sub(at))
+	r.Cells[ColAge] = termtext.From(r.age)
+	if r.Stale {
+		r.Cells[ColAge] = termtext.From("stale")
+		// The word goes in STATE too, which no width drops: a dimmed
+		// row alone would say it by style only.
+		defer func() { r.Cells[ColState] = termtext.From(r.Cells[ColState].String() + " · stale") }()
+	}
+	set := func(m Mark, state string, why ...Seg) {
+		r.Mark, r.state, r.Cells[ColState], r.Why = m, state, termtext.From(state), why
+	}
+	out, _ := Classify(a.err)
+	switch {
+	case Forbidden(a.err):
+		set(MarkNothing, "no access")
+		return r
+	case a.err != nil && (a.st == nil || out == Refused):
+		set(MarkUnknown, "unknown", own("cannot tell: "), Seg{T: Capped(failureText(a.err), LineMax)})
+		return r
+	}
+	st := a.st.V
+	r.Cells[ColVersion] = termtext.From(short(st.CurrentVersion))
+	if st.CurrentVersion == "" {
+		r.Cells[ColVersion] = termtext.From("-")
+	}
+	var wd wire.Watchdog
+	if st.Watchdog != nil {
+		wd = *st.Watchdog
+	}
+	flight, flying := inFlight(st)
+	// A row in flight says the version in flight in VERSION, marked as
+	// one on its way ("→ 4c2d9e7b1a05"), so its phase is not read as the
+	// running version's (the app's screen says that one); an older box
+	// names none, and VERSION stays the running one.
+	setFlight := func() {
+		why := "deploying"
+		if d := st.Deploying; d != nil && d.Version != "" {
+			why += " " + short(d.Version)
+			r.Cells[ColVersion] = termtext.From("→ " + short(d.Version))
+		}
+		if flight != "deploying" {
+			why += ": " + flight
+		}
+		set(MarkMoving, flight, own(why+" (seen "+Ago(now.Sub(at))+" ago)"))
+		r.moving = true
+	}
+	switch {
+	case st.CurrentVersion == "" && flying:
+		// Its first version on its way: no state of a version yet.
+		setFlight()
+	case st.CurrentVersion == "":
+		set(MarkNothing, "not deployed")
+	case wd.State == "throttled":
+		why := Line{own("throttled: " + some(wd.RestartsInWindow, "restart") + " in its window")}
+		if wd.LastRestartCause != "" {
+			why = append(why, own("; last cause "), quoted(wd.LastRestartCause))
+		}
+		set(MarkBroken, "throttled", why...)
+	case !st.Running:
+		set(MarkBroken, "stopped", own("stopped: "+short(st.CurrentVersion)+" is not running"))
+	case wd.State == "backoff":
+		set(MarkLook, "backoff", own("backoff: the watchdog waits to restart it; "+some(wd.Failures, "failed check")+" in a row"))
+	case flying:
+		setFlight()
+	default:
+		set(MarkNone, "running")
+	}
+	if len(st.Deploys) > 0 {
+		d := st.Deploys[0]
+		// The box's own word: a status is a token of its grammar.
+		word := d.Status
+		if d.Status == "failed" {
+			r.Failed = d.Version
+		}
+		// How long ago it finished; "-" when the box gives no time, and
+		// "?" for one that does not read.
+		ago, said := "?", ""
+		switch t, ok := rawTime(d.FinishedAt); {
+		case noTime(d.FinishedAt) || ok && t.IsZero():
+			ago = "-"
+		case ok:
+			said = since(t, now)
+			ago = strings.TrimSuffix(said, " ago")
+		}
+		last := pad(word, 10) + pad(ago, 4)
+		if d.Phase != "" {
+			last += " " + d.Phase
+		}
+		r.Cells[ColLast] = termtext.From(last)
+		// A deploy in flight is said as one over a failed newest record
+		// (the usual next deploy after a failure): LAST DEPLOY still says
+		// the failure, d still opens it, and both marks need a look.
+		if d.Status == "failed" && r.Mark > MarkLook && !r.moving {
+			why := Line{own("newest deploy " + short(d.Version) + " failed")}
+			if d.Phase != "" {
+				why[0] = own(why[0].T.String() + " in " + d.Phase)
+			}
+			if said != "" {
+				why = append(why, own(" "+said))
+			}
+			if st.CurrentVersion != "" && st.Running {
+				why = append(why, own("; "+short(st.CurrentVersion)+" serves"))
+			}
+			r.Mark, r.Why = MarkLook, why
+		}
+	}
+	if m := st.Metrics; m != nil && m.Error == "" {
+		if m.Memory != nil && m.Memory.Now != nil {
+			r.mem = *m.Memory.Now
+			r.Cells[ColMem] = termtext.From(num(r.mem/(1<<20), 0) + "M")
+			if c := memCap(st); c > 0 {
+				r.Cells[ColOfCap] = termtext.From(pct(r.mem / c))
+			}
+		}
+		if q := m.Requests; q != nil {
+			if q.Share5xx != nil {
+				r.share = *q.Share5xx
+				r.Cells[Col5xx] = termtext.From(pct(r.share))
+			}
+			if q.P95 != nil {
+				r.Cells[ColP95] = termtext.From(num(*q.P95, 0) + "ms")
+			}
+		}
+	}
+	return r
+}
+
+// Stale says whether an answer this old is stale for a row read every
+// every: older than StaleAfter intervals and one of grace.
+func Stale(age, every time.Duration) bool { return age > (StaleAfter+1)*every }
+
+// memCap is the memory cap in bytes: the unit's, else the store's.
+func memCap(st wire.Status) float64 {
+	if st.Caps != nil && st.Caps.MemoryMax > 0 {
+		return float64(st.Caps.MemoryMax)
+	}
+	if m := st.Metrics; m != nil && m.MemoryMax != nil {
+		return *m.MemoryMax
+	}
+	return 0
+}
+
+// failureText is what the client says of err: its own sentence, with
+// what the box sent in it already made safe or quoted.
+func failureText(err error) string {
+	var f *Failure
+	if errors.As(err, &f) {
+		return f.Message
+	}
+	return "no answer"
+}

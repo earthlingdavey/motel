@@ -1,0 +1,52 @@
+{
+ "version": "7c1e55d0a913",
+ "status": "succeeded",
+ "deployed_by": "github:example/blog@refs/heads/main",
+ "sha256": "ce0d1aac022608624a22f13a97c5ed6538f08ed6996cd2a817e06e4998620f75",
+ "started_at": "@-7241s",
+ "finished_at": "@-2h",
+ "artifact_entries": 1842,
+ "artifact_bytes": 39845888,
+ "phases": [
+  {
+   "name": "downloading",
+   "started_at": "@-7241s",
+   "seconds": 1.2
+  },
+  {
+   "name": "extracting",
+   "started_at": "@-7239s",
+   "seconds": 0.8
+  },
+  {
+   "name": "preparing",
+   "started_at": "@-7239s",
+   "seconds": 4.1
+  },
+  {
+   "name": "starting",
+   "started_at": "@-7234s",
+   "seconds": 1.0
+  },
+  {
+   "name": "soaking",
+   "started_at": "@-7233s",
+   "seconds": 15.0
+  },
+  {
+   "name": "promoting",
+   "started_at": "@-7218s",
+   "seconds": 0.4
+  },
+  {
+   "name": "draining",
+   "started_at": "@-7218s",
+   "seconds": 5.0
+  },
+  {
+   "name": "stopping_old",
+   "started_at": "@-7213s",
+   "seconds": 0.2
+  }
+ ]
+}

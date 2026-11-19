@@ -7,6 +7,7 @@ import (
 	"github.com/smallhoursorg/motel/client/internal/render"
 	"github.com/smallhoursorg/motel/client/internal/sshkey"
 	"github.com/smallhoursorg/motel/client/internal/termtext"
+	"github.com/smallhoursorg/motel/client/internal/tui/model"
 	"github.com/smallhoursorg/motel/liveswap/wire"
 )
 
@@ -21,12 +22,36 @@ var tx = termtext.From
 // when the box's app is that one (and its other head values only in
 // their grammars, client's hold).
 func statusView(st wire.Status, asked string) render.Status {
+	// The app's state first, in the TUI's row's words and order
+	// (model/apps.go); the phase only beside a deploy in flight.
+	state := "running"
+	wd := st.Watchdog
+	switch {
+	case st.CurrentVersion == "":
+		state = "not deployed"
+	case wd != nil && wd.State == "throttled":
+		state = "throttled"
+	case !st.Running:
+		state = "stopped"
+	case wd != nil && wd.State == "backoff":
+		state = "backoff"
+	}
 	v := render.Status{
 		App:     tx(asked),
-		Phase:   tx(st.Phase),
+		State:   tx(state),
 		Version: tx(st.CurrentVersion),
 		Unit:    tx(st.Unit),
 		PID:     st.PID,
+	}
+	if d := st.Deploying; d != nil || st.Phase != "idle" {
+		f := &render.InFlight{}
+		if st.Phase != "idle" {
+			f.Phase = tx(st.Phase)
+		}
+		if d != nil {
+			f.Version, f.By, f.Started = tx(d.Version), tx(d.By), d.StartedAt
+		}
+		v.Deploying = f
 	}
 	if wd := st.Watchdog; wd != nil {
 		v.Watchdog = &render.Watchdog{State: tx(wd.State), Failures: wd.Failures, Restarts: wd.RestartsInWindow, LastFailure: tx(wd.LastFailure)}
@@ -133,21 +158,21 @@ func boxView(b wire.BoxStatus, asked string) render.Box {
 func whoamiView(me wire.WhoAmI, asked string, key sshkey.Key, now time.Time) render.WhoAmI {
 	fp := key.Public.Fingerprint()
 	v := render.WhoAmI{
-		Name:       tx(me.Name),
-		Box:        tx(asked),
-		Release:    tx(me.Version),
-		Protocol:   me.Protocol,
-		Key:        tx(fp),
-		KeyShown:   tx(key.Shown),
-		KeySource:  tx(key.Source),
-		BoxKey:     termtext.Quote(me.Key),
-		BoxName:    termtext.Quote(me.Box),
-		KeyDiffers: me.Key != fp,
-		BoxDiffers: me.Box != asked,
-		HasExpiry:  true, // Read takes no whoami without it
-		Expires:    me.TokenExpiresAt,
-		Now:        now,
+		Name:      tx(me.Name),
+		Box:       tx(asked),
+		Release:   tx(me.Version),
+		Protocol:  me.Protocol,
+		Key:       tx(fp),
+		KeyShown:  tx(key.Shown),
+		KeySource: tx(key.Source),
+		BoxKey:    termtext.Quote(me.Key),
+		BoxName:   termtext.Quote(me.Box),
+		HasExpiry: true, // Read takes no whoami without it
+		Expires:   me.TokenExpiresAt,
+		Now:       now,
 	}
+	// The TUI's rule too: one function, so the two cannot differ.
+	v.KeyDiffers, v.BoxDiffers = model.AboutAnother(me, fp, asked)
 	for _, r := range me.Roles {
 		// viewer is the one role a box grants today (liveswap/access,
 		// lines.go), and is said as a word. Any other word the box

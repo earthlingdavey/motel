@@ -121,3 +121,27 @@ func TestBoxRepoHere(t *testing.T) {
 		}
 	}
 }
+
+// TestNoTerminal: a program run with NoTerminal leads a session of its
+// own, which has no controlling terminal, and finds OpenSSH told to ask
+// only a program that fails (SSH_ASKPASS_REQUIRE=force).
+func TestNoTerminal(t *testing.T) {
+	if _, err := os.Stat("/proc/self/stat"); err != nil {
+		t.Skip("NOT RUN: no /proc to read a session from")
+	}
+	out, err := Exec{}.Output(context.Background(), Cmd{Name: "sh", NoTerminal: true,
+		Args: []string{"-c", `printf '%s|%s|' "$SSH_ASKPASS_REQUIRE" "$SSH_ASKPASS"; read -r line < /proc/$$/stat; echo "$line"`}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	parts := strings.SplitN(string(out), "|", 3)
+	if len(parts) != 3 || parts[0] != "force" || filepath.Base(parts[1]) != "false" {
+		t.Fatalf("the program sees %q", out)
+	}
+	// /proc/<pid>/stat: pid (comm) state ppid pgrp session …
+	f := strings.Fields(parts[2][strings.LastIndexByte(parts[2], ')')+1:])
+	pid := strings.Fields(parts[2])[0]
+	if len(f) < 4 || f[3] != pid {
+		t.Errorf("the program is not the leader of its own session: pid %s, session %v", pid, f)
+	}
+}

@@ -69,7 +69,7 @@ func TestResolveBox(t *testing.T) {
 		{"not two at the top", BoxLookup{Dir: two, Run: gitAt(two)}, nil, "", "this repository has 2 boxes (a.example.com, b.example.com): name one with --box, or run inside its directory"},
 		{"not from elsewhere in the repository", BoxLookup{Dir: filepath.Join(one, "docs"), Run: gitAt(one)}, nil, "", "name the box: --box deploy.example.com, MOTEL_BOX, or run inside the box repository"},
 		{"nothing names one", BoxLookup{Dir: one, Run: gitAt("")}, nil, "", "name the box: --box deploy.example.com, MOTEL_BOX, or run inside the box repository"},
-		{"--box takes a name alone", BoxLookup{Flag: "deploy.example.com:8443"}, nil, "", `--box "deploy.example.com:8443" is not a box's name: give its host name, deploy.example.com`},
+		{"--box takes a name, and :port alone", BoxLookup{Flag: "deploy.example.com/blog"}, nil, "", `--box "deploy.example.com/blog" is not a box's name: give its host name, deploy.example.com, and :port when it is not 443`},
 		{"MOTEL_URL is https", BoxLookup{}, map[string]string{"MOTEL_URL": "http://url.example.com/blog"}, "", `MOTEL_URL "http://url.example.com/blog" is not an https:// URL, e.g. https://deploy.example.com/blog`},
 	}
 	for _, c := range cases {
@@ -89,5 +89,42 @@ func TestResolveBox(t *testing.T) {
 				t.Fatalf("box %q, %v, want %q", b.Addr(), err, c.want)
 			}
 		})
+	}
+}
+
+// TestBoxWithPort: --box and MOTEL_BOX take host:port, as an app URL
+// with a port names the box; 443 is no port; a port is digits alone,
+// read as a number, 1 to 65535.
+func TestBoxWithPort(t *testing.T) {
+	for _, c := range []struct {
+		in         string
+		host, port string
+		bad        bool
+	}{
+		{"deploy.example.com", "deploy.example.com", "", false},
+		{"Deploy.Example.com:8443", "deploy.example.com", "8443", false},
+		{"deploy.example.com:443", "deploy.example.com", "", false},
+		{"deploy.example.com:08443", "deploy.example.com", "8443", false},
+		{"deploy.example.com:0008443", "deploy.example.com", "8443", false},
+		{"deploy.example.com:0443", "deploy.example.com", "", false},
+		{"deploy.example.com:065536", "", "", true},
+		{"deploy.example.com:99999999999999999999", "", "", true},
+		{"deploy.example.com:0", "", "", true},
+		{"deploy.example.com:65536", "", "", true},
+		{"deploy.example.com:123456", "", "", true},
+		{"deploy.example.com:+80", "", "", true},
+		{"deploy.example.com:", "", "", true},
+		{":8443", "", "", true},
+		{"deploy.example.com:84:43", "", "", true},
+	} {
+		b, err := bareBox(c.in, "--box")
+		if c.bad != (err != nil) || !c.bad && (b.Host != c.host || b.Port != c.port) {
+			t.Errorf("%q: %+v, %v", c.in, b, err)
+		}
+	}
+	// The token is for the host alone.
+	b, _ := bareBox("deploy.example.com:8443", "--box")
+	if b.Addr() != "deploy.example.com:8443" || b.Host != "deploy.example.com" {
+		t.Errorf("addr %q host %q", b.Addr(), b.Host)
 	}
 }

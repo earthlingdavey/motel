@@ -38,3 +38,56 @@ func TestLinksNoCaddy(t *testing.T) {
 		t.Logf("%s: modules linked besides the standard library: %d", goos, len(modules))
 	}
 }
+
+// linked is the module versions go list says a build of . links, with
+// the workspace as env leaves it or off.
+func linked(t *testing.T, gobin, goos string, env ...string) map[string]string {
+	t.Helper()
+	cmd := exec.Command(gobin, "list", "-deps", "-f", "{{with .Module}}{{if not .Main}}{{.Path}} {{.Version}}{{end}}{{end}}", ".")
+	// GOFLAGS is the test's own, not the environment's (a -mod there
+	// would change what is linked), with -buildvcs=false: the versions
+	// linked do not depend on the checkout, and a checkout git will not
+	// read (owned by another user, as in CI's container) must not fail
+	// the list.
+	cmd.Env = append(cmd.Environ(), append([]string{"GOOS=" + goos, "GOARCH=arm64", "CGO_ENABLED=0", "GOFLAGS=-buildvcs=false"}, env...)...)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("go list for %s %v: %v\n%s", goos, env, err, out)
+	}
+	mods := map[string]string{}
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		if p, v, ok := strings.Cut(line, " "); ok && p != "" {
+			mods[p] = v
+		}
+	}
+	return mods
+}
+
+// TestWorkspaceAgrees: a build inside the repository's workspace links
+// the very module versions client/go.mod records. In workspace mode
+// Go takes, for each module, the highest version any workspace module
+// requires, so without this the binary built here could hold versions
+// the client's own go.mod (which Dependabot, govulncheck and a reader
+// go by, and a GOWORK=off release builds from) does not record.
+func TestWorkspaceAgrees(t *testing.T) {
+	gobin, err := exec.LookPath("go")
+	if err != nil {
+		t.Fatal("the go command is not on PATH, and this test is the check that the workspace and go.mod agree")
+	}
+	for _, goos := range []string{"linux", "darwin"} {
+		work, off := linked(t, gobin, goos), linked(t, gobin, goos, "GOWORK=off")
+		for m, v := range work {
+			if m == "github.com/smallhoursorg/motel/liveswap" {
+				continue // the directory next door: a workspace module, or a replace
+			}
+			if off[m] != v {
+				t.Errorf("%s: %s is %s in the workspace build and %q in client/go.mod's (GOWORK=off): raise it there (go get %s@%s with GOWORK=off)", goos, m, v, off[m], m, v)
+			}
+		}
+		for m := range off {
+			if _, ok := work[m]; !ok && m != "github.com/smallhoursorg/motel/liveswap" {
+				t.Errorf("%s: %s is linked with GOWORK=off and not in the workspace build", goos, m)
+			}
+		}
+	}
+}

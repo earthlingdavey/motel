@@ -223,7 +223,7 @@ func TestClientReadsWhatTheFilterChanged(t *testing.T) {
 	const hidden = "[hidden by the box's filter]"
 	for _, name := range []string{named, staged, keyed, shaped, nested, angled} {
 		got := runClient(t, bin, env, "status", box.url+"/"+name)
-		if got.code != 0 || !strings.HasPrefix(got.stdout, name+"  idle v1  unit "+hidden+"  pid 4242\n") || strings.Contains(got.stdout, "redacted:") || strings.Contains(got.stdout, "REDACTED:") || strings.Contains(got.stdout, "[#") || strings.Contains(got.stdout, "removed>") {
+		if got.code != 0 || !strings.HasPrefix(got.stdout, name+"  running v1  unit "+hidden+"  pid 4242\n") || strings.Contains(got.stdout, "redacted:") || strings.Contains(got.stdout, "REDACTED:") || strings.Contains(got.stdout, "[#") || strings.Contains(got.stdout, "removed>") {
 			t.Errorf("status %s: exit %d\n%s%s", name, got.code, got.stdout, got.stderr)
 		}
 		if got := runClient(t, bin, env, "deploys", box.url+"/"+name); got.code != 0 || !strings.Contains(got.stdout, "v1") {

