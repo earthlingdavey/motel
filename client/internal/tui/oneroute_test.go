@@ -34,7 +34,7 @@ func (h *harness) watch(d time.Duration, j model.Job) watched {
 	before := len(h.fake.Calls)
 	for end := h.now.Add(d); h.now.Before(end); {
 		h.now = h.now.Add(time.Second)
-		h.on(func() { h.u.S.Engine.Touch(h.now) })
+		h.loop(func() { h.u.S.Engine.Touch(h.now) })
 		h.pump()
 		h.sync()
 		title, _, _ := strings.Cut(h.screen(), "\n")

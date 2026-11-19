@@ -97,19 +97,28 @@ func (h *harness) pump() {
 	}
 }
 
-// on runs f on the event loop and waits until it and its frame are done.
+// on runs f on the event loop and waits until it and its frame are done:
+// one frame, as the product draws one after each key and each answer.
 func (h *harness) on(f func()) {
 	h.u.App.QueueUpdateDraw(f)
-	h.sync()
+	h.wait()
 }
 
-// sync waits for every update queued before it, and its frame.
-func (h *harness) sync() {
+// loop runs f on the event loop and waits for it, drawing no frame: for
+// a step no one reads the screen after.
+func (h *harness) loop(f func()) {
+	h.u.App.QueueUpdate(f)
+	h.wait()
+}
+
+// sync waits for every update queued before it, then draws a frame and
+// waits for it.
+func (h *harness) sync() { h.on(func() {}) }
+
+// wait waits for every update queued before it, and their frames: tview
+// runs its updates in the order queued, each update's frame inside it.
+func (h *harness) wait() {
 	done := make(chan struct{})
-	h.u.App.QueueUpdate(func() { close(done) })
-	<-done
-	h.u.App.QueueUpdateDraw(func() {})
-	done = make(chan struct{})
 	h.u.App.QueueUpdate(func() { close(done) })
 	<-done
 }
