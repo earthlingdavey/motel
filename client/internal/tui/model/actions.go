@@ -120,6 +120,10 @@ func readBox(ctx context.Context, _ *Session, c Client, _ Job) (func(*Session, t
 	return func(s *Session, at time.Time) {
 		if err != nil {
 			s.BoxErr = err
+			if Forbidden(err) || NotFound(err) {
+				// Dropped, as a status's is (readStatus).
+				s.BoxSt = nil
+			}
 			return
 		}
 		g.At = at

@@ -10,8 +10,8 @@ import (
 
 // Session is what the TUI knows of the box: the last answer to each
 // read and when it came, kept when a later read fails, so nothing on
-// screen is blanked by a lost connection; a 403 or a 404 on a status or
-// a record drops what was held of it. It is touched only on the
+// screen is blanked by a lost connection; a 403 or a 404 on a status, a
+// record or the box's status drops what was held of it. It is touched only on the
 // UI's goroutine; Fetch makes the read off it and returns the change
 // to apply on it.
 type Session struct {

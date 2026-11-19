@@ -339,7 +339,7 @@ operator, which `P` prints.
   if it is still open); a read of it that fails, a 5xx too, is not asked again by
   itself, and the record read before stays on screen beside a failure
   that is not a refusal: a 403 or a 404 is said alone, as on an app's
-  screen, and drops the status or record held, so `y` and `P` have no answer of it to give (`y` says the box refused the read, or answered it 404). Ten idle minutes pause it.
+  screen and the box screen, and drops the status, record or box's status held (not who am I's: the title bar and who am I say its age and that it failed), so `y` and `P` have no answer of it to give (`y` says the box refused the read, or answered it 404). Ten idle minutes pause it.
 - **The token** lasts 600 s, the longest a box takes, and is signed
   again a minute before it ends: a hardware key is touched about every
   nine minutes, and the title bar says when. The TUI never asks for a

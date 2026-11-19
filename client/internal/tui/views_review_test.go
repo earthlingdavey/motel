@@ -218,3 +218,54 @@ func TestFailureSentenceWrapped(t *testing.T) {
 		}
 	}
 }
+
+// TestBoxRefusalDropsTheAnswer: a 403 or a 404 on the box's status
+// drops the answer held, as it does a status's or a record's: the box
+// screen, read from its cells, says the refusal alone, with no field
+// and no age of the answer before it; y says what the box answered and
+// offers no answer, and P prints nothing; a later read that gets no
+// answer does not bring it back.
+func TestBoxRefusalDropsTheAnswer(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		fail *model.Failure
+		y    string
+	}{
+		{"403", &model.Failure{Kind: model.FailForbidden, Message: "deploy.example.com does not allow your key this: it needs the viewer role on the box."}, "the box refused this read"},
+		{"404", &model.Failure{Kind: model.FailNotFound, Message: `deploy.example.com answered 404; the box says: "not found"`}, "the box answered this read 404"},
+	} {
+		h := start(t, 100, 30, nil)
+		h.press(":", "box", tcell.KeyEnter)
+		if scr := h.screen(); !strings.Contains(scr, "runs commit") || !strings.Contains(scr, "as of ") {
+			t.Fatalf("%s: the box's status was not read:\n%s", c.name, scr)
+		}
+		held := func(when string) {
+			t.Helper()
+			scr := h.screen()
+			for _, gone := range []string{"runs commit", "Caddyfile", "as of ", "the last read failed"} {
+				if strings.Contains(scr, gone) {
+					t.Errorf("%s, %s: the box screen shows %q:\n%s", c.name, when, gone, scr)
+				}
+			}
+		}
+		h.fake.Set("box", c.fail)
+		h.now = h.now.Add(model.AgainAfter)
+		h.press(tcell.KeyCtrlR)
+		held("after it")
+		if scr := h.screen(); !strings.Contains(strings.Join(strings.Fields(scr), " "), c.fail.Message) {
+			t.Errorf("%s: the box screen does not say it:\n%s", c.name, scr)
+		}
+		h.press("y")
+		if scr := h.screen(); !strings.Contains(scr, "no answer to show: "+c.y) || strings.Contains(scr, "P quit and print") || strings.Contains(scr, "3f9c2a1e8b7d") {
+			t.Errorf("%s: y after it:\n%s", c.name, scr)
+		}
+		h.press(tcell.KeyEscape)
+		h.fake.Set("box", fiveHundred())
+		h.now = h.now.Add(model.AgainAfter)
+		h.press(tcell.KeyCtrlR)
+		held("after a read with no answer")
+		if scr := h.screen(); !strings.Contains(scr, "answered 500") {
+			t.Errorf("%s: the read with no answer is not said:\n%s", c.name, scr)
+		}
+	}
+}
