@@ -120,6 +120,10 @@ type App struct {
 	// metricsSource is the metrics store's (SetMetricsSource),
 	// which adds `metrics` to GET /<app>; nil adds nothing.
 	metricsSource MetricsSource
+	// alertsSource is notify's (SetAlertsSource): what Alertmanager
+	// holds, which GET /_motel/apps/<app>/alerts reads; nil, with no
+	// monitor block that raises anything, is "monitor":"off".
+	alertsSource AlertsSource
 	// manager is the manager connection everything this config starts
 	// talks to — its apps' runners, its unknown-app sweep, and (when
 	// the seams below are nil) its capability measurement. Typed as

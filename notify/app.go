@@ -185,6 +185,10 @@ func (a *App) provisionNotify(ctx caddy.Context, ls *liveswap.App) error {
 	if ls != nil {
 		a.ls = ls
 		ls.SetNotifier(lifecycleSink{e: theEngine, c: theComparator})
+		// A person's read of an app's alerts reads Alertmanager through
+		// the process's one view: only a config that runs notify raises
+		// anything, so with none the read says "monitor":"off".
+		ls.SetAlertsSource(alertsSource{view: theAlerts, logger: a.logger})
 		a.diskPaths = append([]string{ls.Root}, a.diskPaths...)
 	}
 	evApp, err := ctx.App("events")
