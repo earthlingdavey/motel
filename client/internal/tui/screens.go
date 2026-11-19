@@ -60,6 +60,8 @@ func (u *UI) render() {
 		door.SetText(u.page, door.Lines(u.S.BoxViewFit(now, u.w, door.Width), u.Colour))
 	case model.ScreenBackups:
 		door.SetText(u.page, door.Lines(u.S.BackupsViewFit(now, u.w, door.Width), u.Colour))
+	case model.ScreenAlerts:
+		door.SetText(u.page, door.Lines(u.S.BoxAlertsViewFit(now, u.w, door.Width), u.Colour))
 	case model.ScreenHelp:
 		door.SetText(u.page, door.LitLines(hang(u.help(), u.w)))
 	case model.ScreenStopHelp:
@@ -140,6 +142,8 @@ func (u *UI) crumbs(v model.View, now time.Time) (model.Line, model.Line) {
 		return ownLine(":box"), u.S.BoxAsOf(now)
 	case model.ScreenBackups:
 		return ownLine(":backups"), u.S.BackupsAsOf(now)
+	case model.ScreenAlerts:
+		return ownLine(":alerts"), u.S.BoxAlertsAsOf(now)
 	case model.ScreenHelp, model.ScreenStopHelp:
 		return ownLine("help"), ownLine("esc closes")
 	}
@@ -159,6 +163,7 @@ var footers = map[model.Screen]string{
 	model.ScreenMe:       "↑↓ scroll  y json  c command  esc back  ? more",
 	model.ScreenBox:      "↑↓ scroll  y json  c command  esc back  ? more",
 	model.ScreenBackups:  "↑↓ scroll  y json  c command  esc back  ? more",
+	model.ScreenAlerts:   "↑↓ scroll  y json  c command  esc back  ? more",
 	model.ScreenHelp:     "↑↓ scroll  esc close  q quit",
 	model.ScreenRefused:  "↑↓ scroll  r ask again  ? keys  q quit",
 	model.ScreenStopHelp: "↑↓ scroll  esc back  r ask again  q quit",
@@ -478,12 +483,13 @@ VIEWS (type after :)
  whoami                       who you are here (also: me)
  box                          what the box runs (viewers of the box)
  backups                      what the box says of its backups (viewers of the box)
+ alerts                       what fires on the box, and its silences (viewers of the box)
  help                         this
 
 MARKS   ✖ broken now   ▲ look   ⟳ deploying   ? cannot tell   · nothing to show
 AGE     how old each row's answer is; "stale" after three missed reads
 
-This client only reads. Rolling back, silences and logs arrive when the box offers them.
+This client only reads. Rolling back, adding silences and logs arrive when the box offers them.
 Backups are the box's own claim: look from a machine of your own with restic too.
 Deploys come from CI; config and secrets from signed pushes; root's work is over ssh.`
 }

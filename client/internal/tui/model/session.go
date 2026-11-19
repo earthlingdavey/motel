@@ -42,6 +42,11 @@ type Session struct {
 	// screen is open.
 	BackupsSt  *Got[wire.Backups]
 	BackupsErr error
+	// BoxAlertsSt is what the box's Alertmanager holds, BoxAlertsErr its
+	// newest read's failure: read while the alerts screen or the box
+	// screen is open.
+	BoxAlertsSt  *Got[wire.BoxAlerts]
+	BoxAlertsErr error
 	// Signing is set while a token is being signed: a hardware key
 	// waits for its touch.
 	Signing bool
@@ -161,6 +166,9 @@ func (s *Session) seen(now time.Time) {
 		if s.BackupsSt != nil {
 			move(&s.BackupsSt.At)
 		}
+		if s.BoxAlertsSt != nil {
+			move(&s.BoxAlertsSt.At)
+		}
 		for _, a := range s.apps {
 			if a.st != nil {
 				move(&a.st.At)
@@ -181,8 +189,8 @@ func (s *Session) seen(now time.Time) {
 
 // forget drops everything the box said, after it answered about another
 // key or box: who it said you are, its list, every status and record,
-// the box's own answers (its status, its backups), and the JSON made of
-// one. Nothing it said before
+// the box's own answers (its status, its backups, its alerts), and the
+// JSON made of one. Nothing it said before
 // can be told from what such a box would say, so none of it is shown;
 // after r, the session fills again from empty.
 func (s *Session) forget() {
@@ -190,6 +198,7 @@ func (s *Session) forget() {
 	s.List, s.ListErr = nil, nil
 	s.BoxSt, s.BoxErr = nil, nil
 	s.BackupsSt, s.BackupsErr = nil, nil
+	s.BoxAlertsSt, s.BoxAlertsErr = nil, nil
 	s.apps, s.records = nil, nil
 	s.json.key, s.json.lines = jsonKey{}, nil
 }
@@ -197,7 +206,7 @@ func (s *Session) forget() {
 // Forgotten says whether the session holds nothing the box said: true
 // at the start, and after an answer about another key or box.
 func (s *Session) Forgotten() bool {
-	return s.Me == nil && s.List == nil && s.ListErr == nil && s.BoxSt == nil && s.BoxErr == nil && s.BackupsSt == nil && s.BackupsErr == nil && len(s.apps) == 0 && len(s.records) == 0 && s.json.lines == nil
+	return s.Me == nil && s.List == nil && s.ListErr == nil && s.BoxSt == nil && s.BoxErr == nil && s.BackupsSt == nil && s.BackupsErr == nil && s.BoxAlertsSt == nil && s.BoxAlertsErr == nil && len(s.apps) == 0 && len(s.records) == 0 && s.json.lines == nil
 }
 
 func (s *Session) app(name string) *appData {

@@ -175,6 +175,45 @@ func backupsView(b wire.Backups, asked string) render.Backups {
 	return v
 }
 
+// boxAlertsView names the host asked for. A head is the client's words,
+// its times absolute (UTC), and quotes a word the client does not
+// know; every other value is the box's text, labelled and capped where
+// it is printed.
+func boxAlertsView(b wire.BoxAlerts, asked string) render.BoxAlerts {
+	at := func(t time.Time) string { return t.UTC().Format("2006-01-02 15:04") + " UTC" }
+	v := render.BoxAlerts{Host: tx(asked), On: b.Monitor == wire.MonitorOn, MoreAlerts: b.MoreAlerts, MoreSilences: b.MoreSilences, Advice: model.SilenceAdvice}
+	for _, a := range b.Alerts {
+		head := model.SeverityWord(a.Severity) + "  "
+		switch a.State {
+		case "active":
+			head += "firing"
+		case "unprocessed":
+			head += "just received, not yet judged; firing"
+		case "suppressed":
+			switch {
+			case a.SilencedUntil != nil && a.Inhibited:
+				head += "silenced until " + at(*a.SilencedUntil) + ", and held while a deploy runs; firing"
+			case a.SilencedUntil != nil:
+				head += "silenced until " + at(*a.SilencedUntil) + "; firing"
+			case a.Inhibited:
+				head += "held while a deploy of its app runs; firing"
+			default:
+				head += "held quiet by Alertmanager; firing"
+			}
+		default:
+			head += "in a state not known, " + termtext.Quote(a.State).String() + "; firing"
+		}
+		head += " since " + at(a.StartsAt)
+		v.Alerts = append(v.Alerts, render.BoxAlert{Head: termtext.From(head), Name: tx(a.Name), App: tx(a.App), Instance: tx(a.Instance), Summary: tx(a.Summary)})
+	}
+	for _, s := range b.Silences {
+		head := s.State + "  from " + at(s.StartsAt) + " until " + at(s.EndsAt) // active or pending: held by the client's read
+		v.Silences = append(v.Silences, render.BoxSilence{Head: termtext.From(head),
+			Matchers: termtext.From(model.Matchers(s.Matchers).Text()), By: tx(s.CreatedBy), Comment: tx(s.Comment), ID: tx(s.ID)})
+	}
+	return v
+}
+
 // whoamiView is the box's answer beside what this side knows: the box
 // asked, the key that signed and where it came from, and the clock the
 // expiry is told against. The key and box shown are this side's; the

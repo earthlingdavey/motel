@@ -841,9 +841,12 @@ argument, stay text). Without it: `silence <id> added; it ends at
 `TestSilenceCommandOutput`, and the request Alertmanager is sent by
 `TestServeSilence`.
 
-There is no `list`: reads go to Alertmanager's own v2 API (`GET
-/api/v2/silences`, `GET /api/v2/silence/{id}`), whose shape motel would
-only copy ("Viewing"). Who runs them: root (and the motel uid, which
+There is no `moteld monitor silence list`: on the box, reads go to
+Alertmanager's own v2 API (`GET /api/v2/silences`, `GET
+/api/v2/silence/{id}`), whose shape motel would only copy ("Viewing").
+A viewer of the box reads the silences that are active or wait to
+start over HTTPS instead, with every alert: `GET /_motel/alerts`,
+`motel monitor alerts` ("Viewing"). Who runs the commands: root (and the motel uid, which
 the admin socket admits); any other user is told `the admin socket
 (unix//run/motel/admin.sock) admits root and the motel user: run moteld
 monitor silence as root`.
@@ -999,14 +1002,26 @@ one naming the app in its instance. motel reads them through
 `alertsView` (alertsview.go): `GET /api/v2/alerts` with no parameter,
 which gives active, silenced and inhibited alerts alike and no resolved
 one (measured on Debian's 0.28.1 in the e2e image), and `GET
-/api/v2/silences` only when an alert names a silence, for its end; at
-most once per 5 s for the process, within 2 s, a failure kept as long
-and journalled once. The heartbeat, `NotifyTest` and the deploy mute
+/api/v2/silences`, for the end of each alert's silences and for the
+box-wide read's list; both on every fetch, at most once per 5 s for the
+process, within 2 s, a failure of either kept as long and journalled
+once. The silence list holds expired silences too, until Alertmanager's
+retention drops them (`"expired"`, measured on 0.28.1 in a Debian 13
+container, 2026-11-19); the source leaves them out. The heartbeat, `NotifyTest` and the deploy mute
 are left out. liveswap chooses the app's alerts by their `app` label
 after the fetch; no matcher reaches Alertmanager. A config whose monitor
 block runs no notify (none, or a metrics line alone) installs no source,
-and the read says `"monitor":"off"`. The operator's guide to all of this is
-docs/monitor.md.
+and the read says `"monitor":"off"`. A person with the viewer role on
+the box (`grant <name> viewer box`) reads the whole answer: every alert,
+the box's own among them, with the app its label names and its
+instance, and every silence that is active or waits to start, with its
+matchers, maker and comment: `GET /_motel/alerts`, `motel monitor
+alerts` and the client's `:alerts` (liveswap/access/DESIGN-access.md).
+A viewer of the box's alone, since a comment and a maker are the
+operator's own words and an instance names paths and other sites. The
+same fetch serves both; no matcher, label or query of the client's
+reaches Alertmanager, and nothing is written to it. The operator's
+guide to all of this is docs/monitor.md.
 
 ## Decisions
 

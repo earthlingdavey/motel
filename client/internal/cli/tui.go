@@ -37,7 +37,7 @@ import (
 const screenLong = "motel alone shows them on screens in the terminal, over the same reads the\n" +
 	"commands make: the apps you may view sorted by what needs a look, an app's state\n" +
 	"and deploys, a deploy's record laid out for reading a failure, who you are, the\n" +
-	"box and its backups. It only reads, well inside the box's limit of 2 requests a\n" +
+	"box, its backups and its alerts. It only reads, well inside the box's limit of 2 requests a\n" +
 	"second and 60 at once: up to 30 at once to start, then at most 1.5 a second. It\n" +
 	"signs one token for ten minutes at a time, so a hardware key is touched about\n" +
 	"every nine, and never asks for a passphrase or a PIN: a key with a passphrase\n" +
@@ -388,6 +388,11 @@ func (l live) Alerts(ctx context.Context, app string) (model.Got[wire.Alerts], e
 		return model.Got[wire.Alerts]{}, argument(err)
 	}
 	v, ans, err := l.c.Alerts(ctx, a)
+	return got(v, ans, err)
+}
+
+func (l live) BoxAlerts(ctx context.Context) (model.Got[wire.BoxAlerts], error) {
+	v, ans, err := l.c.BoxAlerts(ctx)
 	return got(v, ans, err)
 }
 

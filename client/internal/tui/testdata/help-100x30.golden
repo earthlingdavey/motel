@@ -24,7 +24,7 @@ VIEWS (type after :)
  whoami                       who you are here (also: me)
  box                          what the box runs (viewers of the box)
  backups                      what the box says of its backups (viewers of the box)
+ alerts                       what fires on the box, and its silences (viewers of the box)
  help                         this
 
-MARKS   ✖ broken now   ▲ look   ⟳ deploying   ? cannot tell   · nothing to show
 ↑↓ scroll  esc close  q quit

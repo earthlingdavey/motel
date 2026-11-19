@@ -101,7 +101,8 @@ func TestMonitorAlerts(t *testing.T) {
 	}
 
 	asked := len(fb.auth)
-	for _, args := range [][]string{{"monitor", "alerts"}, {"monitor"}, {"monitor", "alerts", "--app", "Blog"}, {"monitor", "alerts", "blog"}} {
+	// Without --app it is the box-wide read (TestMonitorBoxAlerts).
+	for _, args := range [][]string{{"monitor"}, {"monitor", "alerts", "--app", "Blog"}, {"monitor", "alerts", "blog"}} {
 		if r := runKey(t, fb, nil, args...); r.code != 2 || len(fb.auth) != asked {
 			t.Errorf("%v: exit %d, %d requests, stderr %q", args, r.code, len(fb.auth)-asked, r.stderr)
 		}

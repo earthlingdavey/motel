@@ -27,6 +27,7 @@ var Actions = []Action{
 	{KBox, "box status", "the box screen", readBox},
 	{KBackups, "backup status", "the backups screen, and its line on the box screen", readBackups},
 	{KAlerts, "monitor alerts --app <app>", "the alerts on an app's screen", readAlerts},
+	{KBoxAlerts, "monitor alerts", "the alerts screen, and its line on the box screen", readBoxAlerts},
 }
 
 // ActionFor is the action that reads k.
@@ -149,6 +150,23 @@ func readAlerts(ctx context.Context, _ *Session, c Client, j Job) (func(*Session
 		}
 		g.At = at
 		a.alerts, a.alertsErr = &g, nil
+	}, err
+}
+
+func readBoxAlerts(ctx context.Context, _ *Session, c Client, _ Job) (func(*Session, time.Time), error) {
+	g, err := c.BoxAlerts(ctx)
+	return func(s *Session, at time.Time) {
+		if err != nil {
+			s.BoxAlertsErr = err
+			if Forbidden(err) || NotFound(err) {
+				// Dropped, as the backups' are: a box older than the read
+				// answers 404.
+				s.BoxAlertsSt = nil
+			}
+			return
+		}
+		g.At = at
+		s.BoxAlertsSt, s.BoxAlertsErr = &g, nil
 	}, err
 }
 

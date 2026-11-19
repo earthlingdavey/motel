@@ -558,6 +558,9 @@ var (
 	// backupLevels are backups/status's levels of a line (Info, Warning,
 	// Problem): what the client marks a line with, so held to the three.
 	backupLevels = map[string]bool{"info": true, "warning": true, "problem": true}
+	// matchOps are the operators of a silence's matcher, as the box
+	// spells them (wire.MatchEqual and the three others).
+	matchOps = map[string]bool{wire.MatchEqual: true, wire.MatchNotEqual: true, wire.MatchRegexp: true, wire.MatchNotRegexp: true}
 	// backupResultRe is the shape of backups/record's classes (ok,
 	// incomplete, pending, data missing, failed, not attempted, not
 	// run): lowercase words, printed as the box's word in a column of
@@ -871,6 +874,25 @@ func hold(v any) string {
 				return "an alert's severity or state in it is not a word"
 			}
 		}
+	case *wire.BoxAlerts:
+		// What the client prints of the box's alerts as its own words: a
+		// silence's state and each matcher's operator, which the box
+		// writes (liveswap's route keeps only the active and pending
+		// silences, and spells the operator from Alertmanager's two
+		// flags). Everything else is the box's text, each on a row after
+		// the client's label and capped, or a word the client reads as
+		// not knowing when it does not know it (monitor, an alert's
+		// state and severity).
+		for _, s := range a.Silences {
+			if s.State != wire.SilenceActive && s.State != wire.SilencePending {
+				return "a silence's state in it is not active or pending"
+			}
+			for _, m := range s.Matchers {
+				if !matchOps[m.Op] {
+					return "a matcher's operator in it is not =, !=, =~ or !~"
+				}
+			}
+		}
 	case *wire.Apps:
 		for _, e := range a.Apps {
 			if !appRe.MatchString(e.Name) {
@@ -1085,6 +1107,8 @@ func identity(v any) shape {
 		return shape{lists: []string{"apps", "lines"}, times: []string{"at"}}
 	case *wire.Alerts:
 		return shape{strs: []string{"monitor"}, lists: []string{"alerts"}}
+	case *wire.BoxAlerts:
+		return shape{strs: []string{"monitor"}, lists: []string{"alerts", "silences"}}
 	}
 	return shape{}
 }

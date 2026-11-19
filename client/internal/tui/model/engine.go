@@ -20,6 +20,7 @@ const (
 	KBox
 	KBackups
 	KAlerts
+	KBoxAlerts
 )
 
 // Job is one read.
@@ -118,8 +119,9 @@ type Engine struct {
 	// boxOpen is the box screen open: GET / is read only then; meOpen,
 	// who am I's, whose whoami is then read every MeEvery; backupsOpen,
 	// the backups screen or the box screen, which shows a line of them:
-	// GET /_motel/backups is read only then.
-	boxOpen, meOpen, backupsOpen bool
+	// GET /_motel/backups is read only then; boxAlertsOpen, the alerts
+	// screen or the box screen, likewise for GET /_motel/alerts.
+	boxOpen, meOpen, backupsOpen, boxAlertsOpen bool
 	// alertsApp is the app whose screen is open, whose alerts are read
 	// only then, every AlertsEvery; "" when none is.
 	alertsApp string
@@ -380,6 +382,20 @@ func (e *Engine) AlertsOpen(app string, now time.Time) {
 	e.poke()
 }
 
+// BoxAlertsOpen says whether a screen that shows the box's alerts is open
+// (the alerts screen, the box screen): GET /_motel/alerts is read only
+// then, every BoxEvery, as the box's status is.
+func (e *Engine) BoxAlertsOpen(open bool, now time.Time) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.seen(now)
+	e.boxAlertsOpen = open
+	if _, ok := e.jobs[Job{Kind: KBoxAlerts}]; open && !ok {
+		e.jobs[Job{Kind: KBoxAlerts}] = &entry{due: now}
+	}
+	e.poke()
+}
+
 // MeOpen says whether who am I's screen is open. whoami is always
 // read, every MeAlways; while who am I is open, every MeEvery, and at
 // once on opening it if its answer is older than that.
@@ -492,7 +508,7 @@ func (e *Engine) Again(now time.Time, shown ...Job) {
 		}
 		en.held, en.failed = false, false
 		due := now
-		if j.Kind == KWhoAmI || j.Kind == KBox || j.Kind == KBackups || j.Kind == KAlerts {
+		if j.Kind == KWhoAmI || j.Kind == KBox || j.Kind == KBackups || j.Kind == KAlerts || j.Kind == KBoxAlerts {
 			due = maxTime(now, en.asked.Add(AgainAfter))
 		}
 		if en.due.After(due) {
@@ -628,7 +644,7 @@ func (e *Engine) next(at time.Time, skip *Job) (Job, time.Time, bool) {
 	var bestDue, bestKey time.Time
 	bestRank, found := 99, false
 	for j, en := range e.jobs {
-		if en.held || j.Kind == KBox && !e.boxOpen || j.Kind == KBackups && !e.backupsOpen || j.Kind == KAlerts && j.App != e.alertsApp || skip != nil && j == *skip {
+		if en.held || j.Kind == KBox && !e.boxOpen || j.Kind == KBackups && !e.backupsOpen || j.Kind == KBoxAlerts && !e.boxAlertsOpen || j.Kind == KAlerts && j.App != e.alertsApp || skip != nil && j == *skip {
 			continue
 		}
 		r := e.rank(j, en)
@@ -673,7 +689,7 @@ func (e *Engine) rank(j Job, en *entry) int {
 		return 2
 	case j.Kind == KApps:
 		return 3
-	case j.Kind == KBox, j.Kind == KBackups, j.Kind == KAlerts:
+	case j.Kind == KBox, j.Kind == KBackups, j.Kind == KAlerts, j.Kind == KBoxAlerts:
 		return 4
 	}
 	return 5
@@ -867,7 +883,7 @@ func (e *Engine) Done(j Job, now time.Time, err error) Outcome {
 		en.due, en.every = e.nextSlot(en, now), e.background()
 	case j.Kind == KApps:
 		en.due = now.Add(AppsEvery)
-	case j.Kind == KBox, j.Kind == KBackups:
+	case j.Kind == KBox, j.Kind == KBackups, j.Kind == KBoxAlerts:
 		en.due = now.Add(BoxEvery)
 	case j.Kind == KAlerts:
 		en.due = now.Add(AlertsEvery)

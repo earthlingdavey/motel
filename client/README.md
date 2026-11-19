@@ -37,6 +37,7 @@ motel box status                    the commit the box runs, its Caddyfile's dig
                                     and whether that Caddyfile is the one that commit installed
 motel backup status                 what the box says of its backups, for a viewer of the box: the box's own claim
 motel monitor alerts --app <app>    an app's alerts, as the box's Alertmanager holds them
+motel monitor alerts                what the box's Alertmanager holds, for a viewer of the box: every alert, and the silences
 motel                               on a terminal, screens over the same reads (below)
 ```
 
@@ -77,12 +78,30 @@ an answer can be that old. It exits 0 when it read them, alerts or none,
 and when the box has no monitor (nothing is raised there); 3 when the
 box could not ask its Alertmanager (`"monitor":"unanswered"`) or names
 its monitor in a word the client does not know: `--json` then prints
-the client's own sentence. Without `--app` it is refused, exit 2: the
-box-wide list is not read yet. It is asked with your own key only, as
+the client's own sentence. It is asked with your own key only, as
 `whoami` is. An alert's name is held to `^[A-Za-z][A-Za-z0-9_]{0,63}$`
 and its severity, its state and the monitor to a lowercase word; a
 severity or a state the client does not know is shown as the box's
 word, not refused.
+
+`monitor alerts` without `--app` reads `GET /_motel/alerts`, for a viewer
+of the box, and says how many alerts and silences the box's
+Alertmanager holds, then each alert: its severity, what holds it (a
+silence, until when; the deploy mute, while a deploy of its app runs)
+or that it fires, and since when, in the client's words, then the box's
+words on labelled lines of their own (its name, the app its `app` label
+names, its instance and its summary), each capped; then each silence
+that is active or waits to start: its state and times, its matchers
+(each label's name, `=`, `!=`, `=~` or `!~`, the value quoted), who
+made it, its comment and its id. An expired silence is not listed, nor
+the heartbeat, the test alert or the deploy mute itself. Silences are
+added and expired as root on the box (`moteld monitor silence`,
+docs/monitor.md). It exits 0 when the box answered, whatever fires or
+is silenced; on a box with no monitor block it says the box raises no
+alerts, exit 0; when the box's Alertmanager did not answer the box in
+time (`"monitor":"unanswered"`), or the box names a monitor word this
+client does not know, 3. The box sends at most 500 alerts and 200
+silences, the newest, and says when it held more.
 
 **Which box:** an app URL as `<app>`, else `--box`, `MOTEL_BOX`, the host
 of `MOTEL_URL`, or the box repository the shell is in (inside
@@ -163,7 +182,7 @@ other than the 401, 403, 404 and 429 below, a 409 for one; said as the
 box's: no header tells a gateway's from motel's; and `backup status`'s
 not healthy); 2 nothing was
 sent (usage, no box or key, an RSA or ECDSA key); 3 could not tell (no answer, not
-moteld's answer, any 5xx, a 429 that stood, and the box's could not tell of `backup status`); 4 not accepted (a 401 after one
+moteld's answer, any 5xx, a 429 that stood, the box's could not tell of `backup status`, and an Alertmanager that did not answer the box, for `monitor alerts`); 4 not accepted (a 401 after one
 retry); 5 not allowed (403); 6 not found (404); 8 the certificate did not
 verify (the client never continues past one); 130 interrupted. 7 is held
 for a box too old for people's tokens.
@@ -418,7 +437,18 @@ verdict, when it decided (its answer is kept 10 s on the box), a row an
 app with its result, its last complete backup and a restore proven,
 each time with its age, the box's own lines after their levels, and
 that it is the box's own claim, only as honest as the box (look from a
-machine of your own: docs/backups.md). The apps screen's marks and its
+machine of your own: docs/backups.md). The box screen has a line of
+the box's alerts as well, read beside its status: the answer's age, how
+many fire, how many a silence or the deploy mute holds quiet, and how
+many silences there are. `:alerts` (a viewer of the box) shows what the
+box's Alertmanager holds, as `monitor alerts` says it: each alert's
+head in the client's words, marked by its severity while it fires (`✖`
+critical, `▲` warning) and unmarked while held quiet, and the box's
+words under it, each on a row of its own after the client's label and
+cut at the window's edge; then the silences the same way, and that
+adding and ending one is root's on the box. A state, severity or
+monitor word the client does not know is said as not known, the box's
+word quoted. The apps screen's marks and its
 strip are judged from the statuses alone, as before. The title bar, the crumb, the
 apps strip, an app's fields, a record's head and its log tail (while `w` is off) and who am I's and the box screen's lines holding a box's value are fitted to the
 window in the screen's cells, as the door draws them (a wide character
@@ -426,7 +456,7 @@ takes two, a combining mark none, and a character the door writes as
 an escape as many as the escape has): a line too wide is cut, `…` its
 last cell, and the title bar's and the crumb's right side is cut only
 when it alone takes the whole window or more (the apps' summary of hundreds of apps at 60 columns), the same way. `:` goes to a view in the command words (`:status blog`,
-`:deploys blog <version>`, `:me`, `:box`, `:backups`); what is typed is held to the client's grammars, and a version to the box's own (at most 64 characters; `motel deploys` sends a longer one for the box to refuse), before anything is asked, and
+`:deploys blog <version>`, `:me`, `:box`, `:backups`, `:alerts`); what is typed is held to the client's grammars, and a version to the box's own (at most 64 characters; `motel deploys` sends a longer one for the box to refuse), before anything is asked, and
 what is wrong is said on the prompt's line; Enter runs what is typed,
 Tab takes a completion. `?` lists the keys of the screen below it,
 written from the table the keys are bound from, its rows wrapped to the window (an entry's words under its words), and scrolls, as its footer says. On a screen that reads
@@ -484,12 +514,12 @@ operator, which `P` prints. ctrl-c is a key while the screen holds the terminal,
 SIGINT, SIGTERM or SIGHUP sent to the process, or the terminal closed under the screen, ends it as an interrupt, 130, nothing said.
 
 - **The rate.** A box allows a person 2 requests a second with a burst
-  of 60. The TUI keeps to 1.5 a second and 30 at once. The box's status
-  and its backups are read every 30 s, each only while a screen that
-  shows it is open (the box screen shows both). The open app is
-  read every 5 s, and its alerts every 15 s while its screen is open
-  (`AlertsEvery`, after the box's own 5 s of Alertmanager's answer);
-  every other app takes its turn in the rest of the
+  of 60. The TUI keeps to 1.5 a second and 30 at once. The box's status,
+  its backups and its alerts are read every 30 s, each only while a
+  screen that shows it is open (the box screen shows all three). The
+  open app is read every 5 s, and its alerts every 15 s while its screen
+  is open (`AlertsEvery`, after the box's own 5 s of Alertmanager's
+  answer); every other app takes its turn in the rest of the
   budget, every 30 s, or longer with more apps than that covers (about
   55 s for 60 apps, 3 minutes for 200; 57 s and a little over 3
   minutes while an app's screen is open, its alerts read too), each at

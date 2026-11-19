@@ -50,7 +50,8 @@ box {
 
 - `grant <name> viewer app <app>` lets them read that app: its status,
   its deploys, and its alerts. `grant <name> viewer box` lets them read every app,
-  the box's own status, and what the box says of its backups.
+  the box's own status, what the box says of its backups, and every
+  alert and silence the box's Alertmanager holds.
 - A `signer` line's ed25519 key is already that signer's key as a
   person: `alice` above needs no `person` line, only a `grant`. Once
   the block names anyone in a `person` or `grant` line, every signer
@@ -117,6 +118,7 @@ signed:
 | `/` | the box's status, for a viewer of the box |
 | `/_motel/backups` | what the box says of its backups, for a viewer of the box: `motel-backup status --json` as any account on the box sees it (every app's name, data paths and snapshot ids; nothing of the credentials). It is the box's own claim: look from a machine of your own too (docs/backups.md, "Look from your own machine") |
 | `/_motel/apps/<app>/alerts` | the app's alerts, as the box's Alertmanager holds them: each one's name, severity, summary, when it began, and whether a silence holds it and until when, or a deploy of the app; and whether the box could ask (`"monitor"`: `on`, `off` with no monitor block, `unanswered`). Only alerts about that app: not the box's own (disks, certificates, backups), not the silences or who wrote them. Up to 5 s old |
+| `/_motel/alerts` | every alert the box's Alertmanager holds, for a viewer of the box: as for an app's, and with each the app it names and its instance (a path, a certificate's name, another site's); and every silence that is active or waits to start: its matchers, when it starts and ends, who made it and why (the operator's own words). Not the heartbeat, the test alert or the deploy mute itself, and no expired silence. At most 500 alerts and 200 silences, the newest, with `more_alerts` or `more_silences` when the box held more. Up to 5 s old |
 
 The `motel` command (for an M-series Mac, an archive on each release
 after v0.8.0; elsewhere, built from a clone of this repository:
@@ -124,7 +126,7 @@ client/README.md, "Getting it") makes
 the token and asks:
 `motel whoami --box deploy.example.com`, `motel apps`, `motel status
 <app>`, `motel deploys <app> [<version>]`, `motel box status`, `motel backup
-status`; and
+status`, `motel monitor alerts [--app <app>]`; and
 `motel` alone, on a terminal, shows the same on screens. Without
 it, this makes one by hand and asks who they are (`box` is the box's
 name; the key is theirs; GNU or macOS `base64`):

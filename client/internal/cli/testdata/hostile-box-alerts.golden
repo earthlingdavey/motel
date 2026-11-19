@@ -1,0 +1,123 @@
+127.0.0.1's Alertmanager holds 14 alerts and 11 silences
+warning  firing since 2026-11-19 13:54 UTC
+    alert     deploy_refused
+    app       shop-2
+    summary   deploy of v41 refused: sssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssss…[cut]
+warning  silenced until 2026-11-19 16:00 UTC; firing since 2026-11-19 11:00 UTC
+    alert     disk_low
+    instance  /var/lib/liveswap
+    summary   the filesystem holding /var/lib/liveswap is 84% full
+critical  held while a deploy of its app runs; firing since 2026-11-19 10:00 UTC
+    alert     watchdog_throttled
+    app       blog
+    summary   blog: the watchdog spent its restart budget
+other  in a state not known, "weird title \x1b]0;pwned\x07"; firing since 2026-11-19 09:00 UTC
+    alert     odd
+    summary   posted by hand
+info  firing since 2026-11-19 08:00 UTC
+    alert     osc52 \x1b]52;c;cHduZWQ=\x07
+    app       xosc52 \x1b]52;c;cHduZWQ=\x07
+    instance  osc52 \x1b]52;c;cHduZWQ=\x07
+    summary   osc52 \x1b]52;c;cHduZWQ=\x07
+info  firing since 2026-11-19 07:00 UTC
+    alert     csi \x1b[2J\x1b[H
+    app       xcsi \x1b[2J\x1b[H
+    instance  csi \x1b[2J\x1b[H
+    summary   csi \x1b[2J\x1b[H
+info  firing since 2026-11-19 06:00 UTC
+    alert     osc8 \x1b]8;;https://evil.example/\x1b\click\x1b]8;;\x1b\
+    app       xosc8 \x1b]8;;https://evil.example/\x1b\click\x1b]8;;\x1b\
+    instance  osc8 \x1b]8;;https://evil.example/\x1b\click\x1b]8;;\x1b\
+    summary   osc8 \x1b]8;;https://evil.example/\x1b\click\x1b]8;;\x1b\
+info  firing since 2026-11-19 05:00 UTC
+    alert     title \x1b]0;pwned\x07
+    app       xtitle \x1b]0;pwned\x07
+    instance  title \x1b]0;pwned\x07
+    summary   title \x1b]0;pwned\x07
+info  firing since 2026-11-19 04:00 UTC
+    alert     tags [red]alert[-] ["region"]
+    app       xtags [red]alert[-] ["region"]
+    instance  tags [red]alert[-] ["region"]
+    summary   tags [red]alert[-] ["region"]
+info  firing since 2026-11-19 03:00 UTC
+    alert     bidi abc\u202edef
+    app       xbidi abc\u202edef
+    instance  bidi abc\u202edef
+    summary   bidi abc\u202edef
+info  firing since 2026-11-19 02:00 UTC
+    alert     c1 \u009b31mred
+    app       xc1 \u009b31mred
+    instance  c1 \u009b31mred
+    summary   c1 \u009b31mred
+info  firing since 2026-11-19 01:00 UTC
+    alert     fake ::error::file=x::owned
+    app       xfake ::error::file=x::owned
+    instance  fake ::error::file=x::owned
+    summary   fake ::error::file=x::owned
+info  firing since 2026-11-19 00:00 UTC
+    alert     bad utf8 ��
+    app       xbad utf8 ��
+    instance  bad utf8 ��
+    summary   bad utf8 ��
+info  firing since 2026-11-18 23:00 UTC
+    alert     marks alm\u061c lrm\u200e rlm\u200f
+    app       xmarks alm\u061c lrm\u200e rlm\u200f
+    instance  marks alm\u061c lrm\u200e rlm\u200f
+    summary   marks alm\u061c lrm\u200e rlm\u200f
+SILENCES
+  active  from 2026-11-19 13:00 UTC until 2026-11-19 16:00 UTC
+    matches   alertname = "disk_low", instance csi \x1b[2J\x1b[H =~ "/var/.*osc8 \x1b]8;;https://evil.example/\x1b\\click\x1b]8;;\x1b\\"
+    by        moteld monitor: root
+    comment   resizing the volume
+    id        22e1715e-5a1b-4c7e-9f3d-0a8b6c4d2e1f
+  pending  from 2026-11-19 15:00 UTC until 2026-11-19 16:00 UTC
+    matches   osc52 \x1b]52;c;cHduZWQ=\x07 != "osc52 \x1b]52;c;cHduZWQ=\x07"
+    by        osc52 \x1b]52;c;cHduZWQ=\x07
+    comment   osc52 \x1b]52;c;cHduZWQ=\x07
+    id        osc52 \x1b]52;c;cHduZWQ=\x07
+  pending  from 2026-11-19 15:00 UTC until 2026-11-19 16:00 UTC
+    matches   csi \x1b[2J\x1b[H != "csi \x1b[2J\x1b[H"
+    by        csi \x1b[2J\x1b[H
+    comment   csi \x1b[2J\x1b[H
+    id        csi \x1b[2J\x1b[H
+  pending  from 2026-11-19 15:00 UTC until 2026-11-19 16:00 UTC
+    matches   osc8 \x1b]8;;https://evil.example/\x1b\click\x1b]8;;\x1b\ != "osc8 \x1b]8;;https://evil.example/\x1b\\click\x1b]8;;\x1b\\"
+    by        osc8 \x1b]8;;https://evil.example/\x1b\click\x1b]8;;\x1b\
+    comment   osc8 \x1b]8;;https://evil.example/\x1b\click\x1b]8;;\x1b\
+    id        osc8 \x1b]8;;https://evil.example/\x1b\click\x1b]8;;\x1b\
+  pending  from 2026-11-19 15:00 UTC until 2026-11-19 16:00 UTC
+    matches   title \x1b]0;pwned\x07 != "title \x1b]0;pwned\x07"
+    by        title \x1b]0;pwned\x07
+    comment   title \x1b]0;pwned\x07
+    id        title \x1b]0;pwned\x07
+  pending  from 2026-11-19 15:00 UTC until 2026-11-19 16:00 UTC
+    matches   tags [red]alert[-] ["region"] != "tags [red]alert[-] [\"region\"]"
+    by        tags [red]alert[-] ["region"]
+    comment   tags [red]alert[-] ["region"]
+    id        tags [red]alert[-] ["region"]
+  pending  from 2026-11-19 15:00 UTC until 2026-11-19 16:00 UTC
+    matches   bidi abc\u202edef != "bidi abc\u202edef"
+    by        bidi abc\u202edef
+    comment   bidi abc\u202edef
+    id        bidi abc\u202edef
+  pending  from 2026-11-19 15:00 UTC until 2026-11-19 16:00 UTC
+    matches   c1 \u009b31mred != "c1 \u009b31mred"
+    by        c1 \u009b31mred
+    comment   c1 \u009b31mred
+    id        c1 \u009b31mred
+  pending  from 2026-11-19 15:00 UTC until 2026-11-19 16:00 UTC
+    matches   fake ::error::file=x::owned != "fake ::error::file=x::owned"
+    by        fake ::error::file=x::owned
+    comment   fake ::error::file=x::owned
+    id        fake ::error::file=x::owned
+  pending  from 2026-11-19 15:00 UTC until 2026-11-19 16:00 UTC
+    matches   bad utf8 �� != "bad utf8 \ufffd\ufffd"
+    by        bad utf8 ��
+    comment   bad utf8 ��
+    id        bad utf8 ��
+  pending  from 2026-11-19 15:00 UTC until 2026-11-19 16:00 UTC
+    matches   marks alm\u061c lrm\u200e rlm\u200f != "marks alm\u061c lrm\u200e rlm\u200f"
+    by        marks alm\u061c lrm\u200e rlm\u200f
+    comment   marks alm\u061c lrm\u200e rlm\u200f
+    id        marks alm\u061c lrm\u200e rlm\u200f
+Silences are added and expired as root on the box: moteld monitor silence add, moteld monitor silence expire <id> (docs/monitor.md, "Silence an alert").
