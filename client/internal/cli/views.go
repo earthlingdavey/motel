@@ -204,10 +204,18 @@ func boxAlertsView(b wire.BoxAlerts, asked string) render.BoxAlerts {
 			head += "in a state not known, " + termtext.Quote(a.State).String() + "; firing"
 		}
 		head += " since " + at(a.StartsAt)
-		v.Alerts = append(v.Alerts, render.BoxAlert{Head: termtext.From(head), Name: tx(a.Name), App: tx(a.App), Instance: tx(a.Instance), Summary: tx(a.Summary)})
+		al := render.BoxAlert{Head: termtext.From(head), Name: tx(a.Name), App: tx(a.App), Instance: tx(a.Instance), Summary: tx(a.Summary)}
+		if model.SeverityWord(a.Severity) != a.Severity {
+			al.Severity = tx(a.Severity) // a word not motel's: the box's, on a line of its own
+		}
+		v.Alerts = append(v.Alerts, al)
 	}
 	for _, s := range b.Silences {
-		head := s.State + "  from " + at(s.StartsAt) + " until " + at(s.EndsAt) // active or pending: held by the client's read
+		state := s.State
+		if state != wire.SilenceActive && state != wire.SilencePending {
+			state = "in a state not known, " + termtext.Quote(s.State).String() + ","
+		}
+		head := state + "  from " + at(s.StartsAt) + " until " + at(s.EndsAt)
 		v.Silences = append(v.Silences, render.BoxSilence{Head: termtext.From(head),
 			Matchers: termtext.From(model.Matchers(s.Matchers).Text()), By: tx(s.CreatedBy), Comment: tx(s.Comment), ID: tx(s.ID)})
 	}

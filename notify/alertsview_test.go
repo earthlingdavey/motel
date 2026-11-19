@@ -169,7 +169,8 @@ func TestHeldSilences(t *testing.T) {
 
 // TestHeldAlertsFailures: any answer that cannot be read whole is a
 // failure, never a part: an alerts read refused or not JSON, and a
-// silence list refused or not JSON when an alert names a silence.
+// silence list refused or not JSON, whether an alert names a silence or
+// none does (the list is the box-wide read's too).
 func TestHeldAlertsFailures(t *testing.T) {
 	for _, c := range []struct {
 		name                string
@@ -180,6 +181,8 @@ func TestHeldAlertsFailures(t *testing.T) {
 		{"the alerts not JSON", `[{"labels":`, silencesAnswer, 200, 200},
 		{"the silences refused", heldAnswer, silencesAnswer, 200, 503},
 		{"the silences not JSON", heldAnswer, `{`, 200, 200},
+		{"the silences refused, no alert naming one", `[]`, silencesAnswer, 200, 503},
+		{"the silences not JSON, no alert naming one", `[]`, `{`, 200, 200},
 	} {
 		am := &fakeAMReads{alerts: c.alerts, silences: c.silences, alertsCode: c.alertsCode, silCode: c.silCode}
 		held, err := newAMClient(am.serve(t)).heldAlerts(context.Background())

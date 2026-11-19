@@ -2,7 +2,7 @@
 warning  firing since 2026-11-19 13:54 UTC
     alert     deploy_refused
     app       shop-2
-    summary   deploy of v41 refused: sssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssss…[cut]
+    summary   deploy of v41 refused:\x0acritical  firing since 1999-01-01 00:00 UTC ssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssss…[cut]
 warning  silenced until 2026-11-19 16:00 UTC; firing since 2026-11-19 11:00 UTC
     alert     disk_low
     instance  /var/lib/liveswap
@@ -13,6 +13,7 @@ critical  held while a deploy of its app runs; firing since 2026-11-19 10:00 UTC
     summary   blog: the watchdog spent its restart budget
 other  in a state not known, "weird title \x1b]0;pwned\x07"; firing since 2026-11-19 09:00 UTC
     alert     odd
+    severity  page
     summary   posted by hand
 info  firing since 2026-11-19 08:00 UTC
     alert     osc52 \x1b]52;c;cHduZWQ=\x07

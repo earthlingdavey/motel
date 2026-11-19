@@ -21,7 +21,7 @@ func hostileBoxAlerts() wire.BoxAlerts {
 	until := at.Add(2 * time.Hour)
 	b := wire.BoxAlerts{Monitor: wire.MonitorOn, Alerts: []wire.BoxAlert{
 		{App: "shop-2", Alert: wire.Alert{Name: "deploy_refused", Severity: "warning", StartsAt: at.Add(-6 * time.Minute), State: "active",
-			Summary: "deploy of v41 refused: " + strings.Repeat("s", 300) + strings.Repeat(" ", 60) + "critical  forged"}},
+			Summary: "deploy of v41 refused:\ncritical  firing since 1999-01-01 00:00 UTC " + strings.Repeat("s", 300)}},
 		{Instance: "/var/lib/liveswap", Alert: wire.Alert{Name: "disk_low", Severity: "warning", Summary: "the filesystem holding /var/lib/liveswap is 84% full",
 			StartsAt: at.Add(-3 * time.Hour), State: "suppressed", SilencedUntil: &until}},
 		{App: "blog", Alert: wire.Alert{Name: "watchdog_throttled", Severity: "critical", Summary: "blog: the watchdog spent its restart budget",
@@ -68,14 +68,14 @@ func TestMonitorBoxAlerts(t *testing.T) {
 	for _, l := range strings.Split(strings.TrimSuffix(r.stdout, "\n"), "\n") {
 		// A line is the client's (a head, at the margin, or a heading),
 		// or a box's value after the client's label, four spaces in.
-		if strings.HasPrefix(l, " ") && !strings.HasPrefix(l, "    alert     ") && !strings.HasPrefix(l, "    app       ") &&
+		if strings.HasPrefix(l, " ") && !strings.HasPrefix(l, "    alert     ") && !strings.HasPrefix(l, "    severity  ") && !strings.HasPrefix(l, "    app       ") &&
 			!strings.HasPrefix(l, "    instance  ") && !strings.HasPrefix(l, "    summary   ") && !strings.HasPrefix(l, "    matches   ") &&
 			!strings.HasPrefix(l, "    by        ") && !strings.HasPrefix(l, "    comment   ") && !strings.HasPrefix(l, "    id        ") &&
 			!strings.HasPrefix(l, "  active  ") && !strings.HasPrefix(l, "  pending  ") {
 			t.Errorf("a line that is neither the client's nor a labelled value: %q", l)
 		}
 	}
-	if strings.Contains(r.stdout, "\ncritical  forged") || !strings.Contains(r.stdout, "other  in a state not known, \"weird title \\x1b]0;pwned\\x07\"; firing since 2026-11-19 09:00 UTC") {
+	if strings.Contains(r.stdout, "\ncritical  firing since 1999") || !strings.Contains(r.stdout, "\n    severity  page\n") || !strings.Contains(r.stdout, "other  in a state not known, \"weird title \\x1b]0;pwned\\x07\"; firing since 2026-11-19 09:00 UTC") {
 		t.Errorf("the output:\n%s", r.stdout)
 	}
 	golden(t, "hostile-box-alerts", r.stdout)
@@ -86,7 +86,7 @@ func TestMonitorBoxAlerts(t *testing.T) {
 	}
 	for _, c := range []struct{ monitor, says string }{
 		{wire.MonitorUnanswered, "127.0.0.1 could not tell what fires: its Alertmanager did not answer it in time"},
-		{"sleeping " + hostile[0], `127.0.0.1 could not be told: it says its monitor is "sleeping osc52 \x1b]52;c;cHduZWQ=\x07", a word this client does not know`},
+		{"asleep", `127.0.0.1 could not be told: it says its monitor is "asleep", a word this client does not know`},
 	} {
 		fb.boxAlerts.Monitor = c.monitor
 		r := runKey(t, fb, nil, "monitor", "alerts", "--json")
@@ -99,19 +99,25 @@ func TestMonitorBoxAlerts(t *testing.T) {
 		}
 	}
 
-	for _, c := range []struct {
-		name string
-		bad  func(*wire.BoxAlerts)
-		says string
-	}{
-		{"a matcher's operator", func(b *wire.BoxAlerts) { b.Silences[0].Matchers[0].Op = "==" }, "a matcher's operator in it is not =, !=, =~ or !~"},
-		{"a silence's state", func(b *wire.BoxAlerts) { b.Silences[0].State = "expired" }, "a silence's state in it is not active or pending"},
-	} {
-		fb.boxAlerts = hostileBoxAlerts()
-		c.bad(&fb.boxAlerts)
-		if r := runKey(t, fb, nil, "monitor", "alerts"); r.code != 3 || r.stdout != "" || !strings.Contains(r.stderr, "not moteld's answer: "+c.says) {
-			t.Errorf("%s outside its words: exit %d, stdout %q, stderr %q", c.name, r.code, r.stdout, r.stderr)
-		}
+	// A monitor that is not a word is not moteld's answer, and none of it
+	// is printed.
+	fb.boxAlerts.Monitor = "sleeping " + hostile[0]
+	if r := runKey(t, fb, nil, "monitor", "alerts"); r.code != 3 || r.stdout != "" || !strings.Contains(r.stderr, "not moteld's answer: its monitor is not a word") {
+		t.Errorf("a monitor outside its grammar: exit %d, stdout %q, stderr %q", r.code, r.stdout, r.stderr)
+	}
+	// A silence's state and a matcher's operator the client does not know
+	// are said as not known, never refused: a later box may add one.
+	fb.boxAlerts = hostileBoxAlerts()
+	fb.boxAlerts.Silences[0].Matchers[0].Op = "=="
+	fb.boxAlerts.Silences[0].State = "dormant"
+	if r := runKey(t, fb, nil, "monitor", "alerts"); r.code != 0 || !strings.Contains(r.stdout, "\n  in a state not known, \"dormant\",  from ") || !strings.Contains(r.stdout, `matches   alertname ? "disk_low"`) {
+		t.Errorf("an unknown state and operator: exit %d, stdout %q, stderr %q", r.code, r.stdout, r.stderr)
+	}
+	// At the cap the head says the box holds more than it sends.
+	fb.boxAlerts = hostileBoxAlerts()
+	fb.boxAlerts.MoreSilences = true
+	if r := runKey(t, fb, nil, "monitor", "alerts"); r.code != 0 || !strings.HasPrefix(r.stdout, "127.0.0.1's Alertmanager holds more than it sends: 14 alerts and 11 silences, the newest\n") {
+		t.Errorf("at the cap: exit %d, stdout %q", r.code, r.stdout)
 	}
 
 	asked := len(fb.auth)

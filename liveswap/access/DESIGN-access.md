@@ -322,8 +322,14 @@ own `redacted_env`. Every other alert (the box's own, and one whose
 label names an app this config does not run) and every silence pass a
 filter with no app's values, with the app names, silence ids and
 release names they hold safe. A row the filter withholds keeps what
-holds the alert, its times and its app, and its summary is the filter's
-sentence; it loses its name and instance. The list then adds only its
+holds the alert and its times, and its app only when the app's own
+filter withheld it; its summary is the filter's sentence; it loses its
+name and instance. A silence the filter withholds keeps its state, its
+times and an id Alertmanager made (a UUID), the filter's sentence as
+its comment, and loses its matchers and maker. An app this config runs
+whose handle the box viewer is refused (the table and the grants
+falling apart) has its rows withheld, never filtered without its
+values. The list then adds only its
 punctuation and the box's own words (`monitor`, `more_*`).
 `TestTwoAppsTwoPeople` holds the row to 403 for every person but the
 box's viewer, and to holding every alert, the box's among them, for
@@ -518,6 +524,7 @@ access's examples:
 
 | Residual | S | O | D | Size, risk of a fix | Why accepted |
 |---|---|---|---|---|---|
+| `GET /_motel/alerts` passes a filter with no app's values over every silence and every box event (an alert with no `app` label, or one naming an app this config does not run), so an app's env_file value in a silence's comment, or in a box event's summary, would reach a viewer of the box unmasked, where an app's own alert masks it | 3 | 1 | 5 | 2, 2 (a silence whose matchers name one app here through that app's filter; a box event cannot be given one) | a comment posted through `moteld monitor silence add` is masked with every value the config knows when it is written (notify, "Silences"), and liveswap masks its events' summaries with the app's filter when it raises them; what is left is text root writes past motel (to Alertmanager's socket, as a producer), and the audience is a viewer of the box, who reads every app. Found in the self-review of the box-wide alerts read (#581) |
 | A removed person reads until the reload that applies the push removing their lines | 2 | 5 | 1 | — | the reload follows the push; a deny list would be state for that window |
 | A person's lines edited at the console are seen at the next reload, not at once | 2 | 3 | 3 | 1, 1 | as for every other line of the file; the operator reloads after an edit |
 | A grant on an app named through a placeholder loads (the module sees the name resolved), and leaves an installed file the walk refuses: no person is admitted and every push is refused until root mends it, with a journal line at each load saying why | 2 | 2 | 1 | 2, 2 | the walk names the line; refusing placeholders in the `liveswap` block's app names at load is a change to liveswap's grammar, not this one's |

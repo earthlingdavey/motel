@@ -558,9 +558,6 @@ var (
 	// backupLevels are backups/status's levels of a line (Info, Warning,
 	// Problem): what the client marks a line with, so held to the three.
 	backupLevels = map[string]bool{"info": true, "warning": true, "problem": true}
-	// matchOps are the operators of a silence's matcher, as the box
-	// spells them (wire.MatchEqual and the three others).
-	matchOps = map[string]bool{wire.MatchEqual: true, wire.MatchNotEqual: true, wire.MatchRegexp: true, wire.MatchNotRegexp: true}
 	// backupResultRe is the shape of backups/record's classes (ok,
 	// incomplete, pending, data missing, failed, not attempted, not
 	// run): lowercase words, printed as the box's word in a column of
@@ -877,23 +874,14 @@ func hold(v any) string {
 			}
 		}
 	case *wire.BoxAlerts:
-		// What the client prints of the box's alerts as its own words: a
-		// silence's state and each matcher's operator, which the box
-		// writes (liveswap's route keeps only the active and pending
-		// silences, and spells the operator from Alertmanager's two
-		// flags). Everything else is the box's text, each on a row after
-		// the client's label and capped, or a word the client reads as
-		// not knowing when it does not know it (monitor, an alert's
-		// state and severity).
-		for _, s := range a.Silences {
-			if s.State != wire.SilenceActive && s.State != wire.SilencePending {
-				return "a silence's state in it is not active or pending"
-			}
-			for _, m := range s.Matchers {
-				if !matchOps[m.Op] {
-					return "a matcher's operator in it is not =, !=, =~ or !~"
-				}
-			}
+		// What the client prints of the box's alerts as a word: the
+		// monitor's, which a client reads as not knowing when it does not
+		// know it, quoted. Everything else is the box's text, each on a
+		// row after the client's label and capped, or a word the client
+		// says as not known when it does not know it (an alert's state
+		// and severity, a silence's state, a matcher's operator).
+		if !alertWordRe.MatchString(a.Monitor) {
+			return "its monitor is not a word"
 		}
 	case *wire.Apps:
 		for _, e := range a.Apps {

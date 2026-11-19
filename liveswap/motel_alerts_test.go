@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"reflect"
 	"strings"
 	"sync"
@@ -205,23 +206,76 @@ func TestBoxAlertsCaps(t *testing.T) {
 	}
 }
 
-// TestBoxAlertsRowWithheld: a row the app's filter withholds keeps
-// what holds the alert and its app, says the filter's sentence in its
-// summary, and loses its name and instance, which a value may be part
-// of; the rest of the body is as it would be.
+// TestBoxAlertsRowWithheld: a row the filter withholds keeps what holds
+// the alert, says the filter's sentence in its summary, and loses its
+// name and instance, which a value may be part of; it keeps its app
+// only when the filter was that app's, an app this config runs, since
+// another label's value passed no filter. A silence the filter
+// withholds keeps its state, its times and an id Alertmanager made, the
+// filter's sentence its comment, and loses its matchers and maker.
 func TestBoxAlertsRowWithheld(t *testing.T) {
 	t0 := time.Date(2026, 11, 19, 14, 0, 0, 0, time.UTC)
 	until := t0.Add(time.Hour)
 	a := wire.BoxAlert{App: "demo", Instance: "x", Alert: wire.Alert{Name: "n", Severity: "warning", Summary: "s", StartsAt: t0, State: "suppressed", SilencedUntil: &until}}
 	withholds := &Redactor{withhold: "the app's env_file could not be read"}
-	row := alertRow(a, withholds)
+	row := alertRow(a, withholds, true)
 	const want = `{"name":"","severity":"warning","summary":"response withheld: the app's env_file could not be read","starts_at":"2026-11-19T14:00:00Z","state":"suppressed","silenced_until":"2026-11-19T15:00:00Z","app":"demo"}`
 	if row != want {
 		t.Errorf("withheld:\n got %s\nwant %s", row, want)
 	}
 	a.Severity = "page"
-	if row := alertRow(a, withholds); !strings.Contains(row, `"severity":""`) {
+	if row := alertRow(a, withholds, true); !strings.Contains(row, `"severity":""`) {
 		t.Errorf("a severity not motel's, withheld: %s", row)
+	}
+	a.App = "Xk29fQa7Lm3Zp8Rt5Wn1Yc6Vb4Hd0Jg2" // gitleaks:allow — made up for this test
+	if row := alertRow(a, withholds, false); strings.Contains(row, a.App) || strings.Contains(row, `"app"`) {
+		t.Errorf("a label of no app here, withheld: %s", row)
+	}
+
+	s := wire.Silence{ID: "11111111-1111-4111-8111-111111111111", State: wire.SilencePending, StartsAt: t0, EndsAt: until, CreatedBy: "root",
+		Comment: "c", Matchers: []wire.Matcher{{Name: "app", Op: wire.MatchEqual, Value: "demo"}}}
+	const wantSilence = `{"id":"11111111-1111-4111-8111-111111111111","state":"pending","matchers":[],"starts_at":"2026-11-19T14:00:00Z","ends_at":"2026-11-19T15:00:00Z","created_by":"","comment":"response withheld: the app's env_file could not be read"}`
+	if row := silenceRow(s, withholds); row != wantSilence {
+		t.Errorf("a silence withheld:\n got %s\nwant %s", row, wantSilence)
+	}
+	s.ID = "not-an-id " + generated
+	if row := silenceRow(s, withholds); strings.Contains(row, generated) || !strings.Contains(row, `"id":""`) {
+		t.Errorf("a silence withheld, its id not Alertmanager's: %s", row)
+	}
+	// Not withheld: the row as marshalled, through the filter.
+	if row := silenceRow(wire.Silence{ID: "i", State: wire.SilenceActive, Matchers: []wire.Matcher{}, StartsAt: t0, EndsAt: until}, NewRedactor(nil, nil)); !strings.HasPrefix(row, `{"id":"i","state":"active"`) {
+		t.Errorf("a silence not withheld: %s", row)
+	}
+}
+
+// TestBoxAlertsEachAppItsFilter: with two apps, each alert of an app is
+// filtered by that app's filter alone: each app's env_file value is
+// masked in its own alert, and an alert of one app carrying the other's
+// value keeps it (the filter of one app never sees the other's values),
+// as GET /_motel/apps/<app>/alerts would send each.
+func TestBoxAlertsEachAppItsFilter(t *testing.T) {
+	r := newTwoAppsRig(t)
+	alpha, bravo := r.canary["appalpha"], r.canary["appbravo"]
+	r.h.app.SetAlertsSource(&fakeHeld{ok: true, held: HeldAlerts{Alerts: []AppAlert{
+		{App: "appalpha", Alert: wire.Alert{Name: "errors_high", Severity: "warning", Summary: "alpha said " + alpha, State: "active"}},
+		{App: "appbravo", Alert: wire.Alert{Name: "errors_high", Severity: "warning", Summary: "bravo said " + bravo + " and " + alpha, State: "active"}},
+	}}})
+	req := httptest.NewRequest(http.MethodGet, "http://"+personBox+"/_motel/alerts", nil)
+	req.Header.Set("Authorization", r.authorization(t, "viewer of the box"))
+	w := httptest.NewRecorder()
+	if err := r.h.ServeHTTP(w, req, nil); err != nil {
+		t.Fatal(err)
+	}
+	var got wire.BoxAlerts
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil || w.Code != http.StatusOK || len(got.Alerts) != 2 {
+		t.Fatalf("%d %s", w.Code, w.Body)
+	}
+	byApp := map[string]string{}
+	for _, a := range got.Alerts {
+		byApp[a.App] = a.Summary
+	}
+	if byApp["appalpha"] != "alpha said [redacted:SECRET_TOKEN]" || byApp["appbravo"] != "bravo said [redacted:SECRET_TOKEN] and "+alpha {
+		t.Errorf("each app's alert: %s", w.Body)
 	}
 }
 

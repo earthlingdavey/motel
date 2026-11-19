@@ -3,7 +3,9 @@ package model_test
 import (
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/smallhoursorg/motel/client/internal/tui/demo"
 	"github.com/smallhoursorg/motel/client/internal/tui/model"
 )
 
@@ -54,6 +56,7 @@ func TestBoxAlertsSays(t *testing.T) {
 		"  critical held while a deploy of its app runs",
 		"  warning  silenced until ",
 		"? other    state not known · firing since ",
+		"    severity  page\n",
 		"    instance  /var/lib/liveswap\n",
 		"    matches   alertname = \"disk_low\"\n",
 		"    by        moteld monitor: root\n",
@@ -106,5 +109,34 @@ func TestBoxAlertsSays(t *testing.T) {
 	}
 	if s.BoxAlertsSt != nil || !strings.Contains(joined(s.BoxAlertsView(*now)), "ctrl-r") {
 		t.Errorf("after a 403: held %v, the screen says\n%s", s.BoxAlertsSt != nil, joined(s.BoxAlertsView(*now)))
+	}
+}
+
+// TestOldBoxBoxWideReadsNotRefused: a box older than the box-wide
+// reads (the alerts, the backups) answers them 404, which their screens
+// and the box screen's lines say; the title bar does not call it a
+// refusal, open as the box screen keeps them.
+func TestOldBoxBoxWideReadsNotRefused(t *testing.T) {
+	now := t0
+	f := &demo.Fake{Now: func() time.Time { return now }}
+	nf := &model.Failure{Kind: model.FailNotFound, Message: "deploy.example.com answered 404"}
+	f.Set("box-alerts", nf)
+	f.Set("backups", nf)
+	s := &model.Session{Host: demo.Host, Now: f.Now, Engine: model.NewEngine(t0)}
+	s.Engine.BoxAlertsOpen(true, now)
+	s.Engine.BackupsOpen(true, now)
+	read := map[model.Kind]bool{}
+	for range 12 {
+		read[step(t, s, f, &now).Kind] = true
+	}
+	if !read[model.KBoxAlerts] || !read[model.KBackups] {
+		t.Fatalf("read %v", read)
+	}
+	a, b := s.Title(now)
+	if title := a.Text() + b.Text(); strings.Contains(title, "refused") {
+		t.Errorf("the title bar says %q after the box-wide reads' 404", title)
+	}
+	if v := joined(s.BoxAlertsView(now)); !strings.Contains(v, "its moteld is older than this read") {
+		t.Errorf(":alerts after a 404 says\n%s", v)
 	}
 }

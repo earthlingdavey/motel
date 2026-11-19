@@ -40,7 +40,11 @@ func (s *Session) BoxAlertsAsOf(now time.Time) Line {
 func monitorSays(b wire.BoxAlerts) Line {
 	switch b.Monitor {
 	case wire.MonitorOn:
-		return Line{own("on · " + nOf(len(b.Alerts), "alert") + ", " + nOf(len(b.Silences), "silence") + ", as the box's Alertmanager holds them")}
+		l := Line{own("on · " + nOf(len(b.Alerts), "alert") + ", " + nOf(len(b.Silences), "silence") + ", as the box's Alertmanager holds them")}
+		if b.MoreAlerts || b.MoreSilences {
+			l = Line{own("on · " + nOf(len(b.Alerts), "alert") + ", " + nOf(len(b.Silences), "silence") + " sent, the newest; the box's Alertmanager holds more")}
+		}
+		return l
 	case wire.MonitorOff:
 		return Line{own("off: this box raises no alerts (its config has no monitor block)")}
 	case wire.MonitorUnanswered:
@@ -134,6 +138,8 @@ func (s *Session) BoxAlertsView(now time.Time) []Line { return s.BoxAlertsViewFi
 func (s *Session) BoxAlertsViewFit(now time.Time, width int, cells Cells) []Line {
 	s.seen(now)
 	switch {
+	case NotFound(s.BoxAlertsErr):
+		return Sentence(Line{own("Not said here: the box answered 404, so its moteld is older than this read (GET /_motel/alerts).")}, width, cells)
 	case s.BoxAlertsSt == nil && s.BoxAlertsErr != nil:
 		l := Line{{T: Capped(failureText(s.BoxAlertsErr), 4*LineMax)}}
 		if Forbidden(s.BoxAlertsErr) {
@@ -154,6 +160,9 @@ func (s *Session) BoxAlertsViewFit(now time.Time, width int, cells Cells) []Line
 			m := alertMark(a)
 			head := append(Line{ownC(m.Glyph()+" ", m.Class()), ownC(pad(SeverityWord(a.Severity), 9), m.Class())}, boxAlertHold(a, now)...)
 			out = append(out, cutTo(head, width, cells), cutTo(boxField("alert", boxT(a.Name)), width, cells))
+			if SeverityWord(a.Severity) != a.Severity {
+				out = append(out, cutTo(boxField("severity", boxT(a.Severity)), width, cells))
+			}
 			if a.App != "" {
 				out = append(out, cutTo(boxField("app", boxT(a.App)), width, cells))
 			}
@@ -163,7 +172,7 @@ func (s *Session) BoxAlertsViewFit(now time.Time, width int, cells Cells) []Line
 			out = append(out, cutTo(boxField("summary", boxT(a.Summary)), width, cells))
 		}
 		if b.MoreAlerts {
-			out = append(out, Sentence(Line{ownC("  the box holds more alerts than it sends: the newest "+strconv.Itoa(wire.BoxAlertsMax)+" are shown", Warn)}, width, cells)...)
+			out = append(out, Sentence(Line{ownC("  the box holds more alerts than it sends: the newest "+strconv.Itoa(len(b.Alerts))+" are shown", Warn)}, width, cells)...)
 		}
 		out = append(out, nil, Line{ownC("SILENCES", Label)})
 		if len(b.Silences) == 0 {
@@ -179,7 +188,7 @@ func (s *Session) BoxAlertsViewFit(now time.Time, width int, cells Cells) []Line
 				cutTo(boxField("id", boxT(sl.ID)), width, cells))
 		}
 		if b.MoreSilences {
-			out = append(out, Sentence(Line{ownC("  the box holds more silences than it sends: the newest "+strconv.Itoa(wire.SilencesMax)+" are shown", Warn)}, width, cells)...)
+			out = append(out, Sentence(Line{ownC("  the box holds more silences than it sends: the newest "+strconv.Itoa(len(b.Silences))+" are shown", Warn)}, width, cells)...)
 		}
 		out = append(out, nil)
 		out = append(out, Sentence(Line{own(SilenceAdvice)}, width, cells)...)

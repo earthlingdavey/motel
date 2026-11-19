@@ -195,7 +195,7 @@ func (v *alertsView) get(ctx context.Context, logger *zap.Logger) (liveswap.Held
 		if err != nil {
 			// A person is told only that it did not answer: the cause is the
 			// operator's, at most one line per alertsEvery, as kept.
-			logger.Warn("monitor: a person's read of an app's alerts was answered \"monitor\":\"unanswered\": Alertmanager did not answer", zap.Error(err))
+			logger.Warn("monitor: a person's read of alerts (an app's, or the box's) was answered \"monitor\":\"unanswered\": Alertmanager did not answer", zap.Error(err))
 			held = liveswap.HeldAlerts{}
 		}
 		e.held, e.ok = held, err == nil

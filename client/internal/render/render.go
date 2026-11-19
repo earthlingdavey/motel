@@ -228,6 +228,9 @@ type BoxAlerts struct {
 type BoxAlert struct {
 	Head                         termtext.Text
 	Name, App, Instance, Summary termtext.Text
+	// Severity is the box's word for it when it is not one of motel's
+	// three, which the head says as "other".
+	Severity termtext.Text
 }
 
 // BoxSilence is one silence: its head in the client's words (its state
@@ -544,7 +547,11 @@ func WriteBoxAlerts(w io.Writer, a BoxAlerts) error {
 		p.line("%s raises no alerts: its config has no monitor block", a.Host)
 		return p.err
 	}
-	p.line("%s's Alertmanager holds %s and %s", a.Host, plural(len(a.Alerts), "alert"), plural(len(a.Silences), "silence"))
+	if a.MoreAlerts || a.MoreSilences {
+		p.line("%s's Alertmanager holds more than it sends: %s and %s, the newest", a.Host, plural(len(a.Alerts), "alert"), plural(len(a.Silences), "silence"))
+	} else {
+		p.line("%s's Alertmanager holds %s and %s", a.Host, plural(len(a.Alerts), "alert"), plural(len(a.Silences), "silence"))
+	}
 	field := func(label string, v termtext.Text) {
 		if !v.Empty() {
 			p.line("    %-10s%s", label, capped(v))
@@ -553,6 +560,7 @@ func WriteBoxAlerts(w io.Writer, a BoxAlerts) error {
 	for _, al := range a.Alerts {
 		p.line("%s", al.Head)
 		field("alert", al.Name)
+		field("severity", al.Severity)
 		field("app", al.App)
 		field("instance", al.Instance)
 		field("summary", al.Summary)

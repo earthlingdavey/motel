@@ -100,8 +100,11 @@ docs/monitor.md). It exits 0 when the box answered, whatever fires or
 is silenced; on a box with no monitor block it says the box raises no
 alerts, exit 0; when the box's Alertmanager did not answer the box in
 time (`"monitor":"unanswered"`), or the box names a monitor word this
-client does not know, 3. The box sends at most 500 alerts and 200
-silences, the newest, and says when it held more.
+client does not know, 3; a monitor that is not a lowercase word is not
+moteld's answer, 3. A silence's state the client does not know is said
+as not known, the box's word quoted, and an operator it does not know
+as `?`. The box sends at most 500 alerts and 200 silences, the newest,
+and says when it held more: the first line then says so.
 
 **Which box:** an app URL as `<app>`, else `--box`, `MOTEL_BOX`, the host
 of `MOTEL_URL`, or the box repository the shell is in (inside
@@ -363,6 +366,9 @@ made by hand. Accepted:
 | `motel backup status` whose stdout takes none of its human output (a full disk, a closed pipe) exits 2 with the write's error, not the box's verdict (1, 3): every command's human output fails so | 2 | 3 | 1 | 6 | 2 | accepted: red and named; `--json` and the verdict's exit are what a script reads |
 | On the backups screen in a window 14 columns wide or less, far below the smallest the screens are laid for (60), a could not tell's quoted why is laid one character a row, each past its 14 columns of indent, so the rows show blank | 2 | 5 | 1 | 10 | 2 | accepted: no screen is laid for such a width; `y` shows the answer |
 | After a 404 to the backups (a moteld older than the read) the read is held until ctrl-r, and the screen does not say ctrl-r asks again, as an app's screen does not after a 404: once the box is upgraded it says the 404 until ctrl-r or `r` | 2 | 5 | 1 | 10 | 1 | accepted: the sentence names the cause, and ctrl-r is among the screen's keys (`?`) |
+| The box screen's alerts line counts an alert in a state the client does not know (none Alertmanager 0.28 has: `active`, `suppressed`, `unprocessed`) as firing, and marks the line as one that needs a look | 2 | 1 | 3 | 6 | 2 | accepted: `:alerts` says the state as not known, the box's word quoted; counting such a state apart is a third count on the line for a state no Alertmanager sends |
+| A silence's matcher's label name is the box's text, unquoted, so a name that holds `" = "x", `, which Alertmanager 0.28 takes in a UTF-8 label name, reads on the `matches` row as one more matcher | 2 | 1 | 3 | 6 | 2 | accepted: only root (or the motel user) writes a silence past motel's own route, which takes no label name; the row is labelled and cut, and `y` shows the answer |
+| The alerts screen's "the last read failed: …" sentence, which quotes the box's words in the client's sentence, is laid on rows as every screen's failure sentence is, so a quotation in it may go on at column 2 of a row, where an alert's head without a mark begins | 2 | 1 | 3 | 6 | 2 | accepted: as on every screen; the quotation is the client's, its runs of spaces collapsed, and the failure is the client's own sentence (a refusal's, a 5xx's) |
 | The backups screen's lines of the box's are cut at the window's edge, the cut marked `…` (an advice at a line's end, `` `motel-backup drill`, as root, … ``, is cut at 80 columns): the screen scrolls up and down, not sideways | 2 | 5 | 1 | 10 | 3 | accepted: the cut is marked, and `y` shows the whole answer |
 | A row stopped, throttled or in backoff with a deploy in flight can have the state's word cut from its strip at 80 columns, the deploy before it taking the room: when the row is stale (`1m old, stale: ` before it), its name is near 20 characters, or its phase is a long one (`stopping_old`). Its mark and STATE still say it, on the row below the strip | 2 | 5 | 1 | 10 | 2 | accepted |
 | Such a row's VERSION says only the version in flight (`stopped  → 9a1b2c3d4e5f`), so the table does not name the version that is stopped, throttled or in backoff, and the row can be read as the new version being the stopped one; the `→` marks it as on its way ("The TUI", below), and the strip and the app's screen name the stopped one | 2 | 4 | 3 | 24 | 1 (keep the running version in VERSION on these rows) | accepted over the bar, pending the owner (the skill's rule 4): VERSION said as a row in flight says it was the owner's chosen fix for #584's item 4 |
@@ -447,9 +453,14 @@ head in the client's words, marked by its severity while it fires (`✖`
 critical, `▲` warning) and unmarked while held quiet, and the box's
 words under it, each on a row of its own after the client's label and
 cut at the window's edge; then the silences the same way, and that
-adding and ending one is root's on the box. A state, severity or
-monitor word the client does not know is said as not known, the box's
-word quoted. The apps screen's marks and its
+adding and ending one is root's on the box. An alert's or a
+silence's state and a monitor word the client does not know are said
+as not known, the box's word quoted (a monitor that is not a lowercase
+word is not moteld's answer); a severity that is not motel's is
+`other` in the head and the box's word on a `severity` line; an
+operator the client does not know is `?`. Against a moteld older than
+the read (a 404) the screen and the box screen's line say so, and the
+title bar does not call it a refusal. The apps screen's marks and its
 strip are judged from the statuses alone, as before. The title bar, the crumb, the
 apps strip, an app's fields, a record's head and its log tail (while `w` is off) and who am I's and the box screen's lines holding a box's value are fitted to the
 window in the screen's cells, as the door draws them (a wide character

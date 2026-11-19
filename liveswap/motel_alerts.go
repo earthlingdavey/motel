@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"regexp"
 	"slices"
 
 	"github.com/smallhoursorg/motel/liveswap/access"
@@ -101,7 +102,11 @@ func (h *Handler) alerts(w http.ResponseWriter, r *http.Request, p *Person) erro
 		}
 		app, err := h.allowApp(p.Principal, access.AppAlerts, a.App)
 		if err != nil {
-			continue // its rows pass the filter with no app's values
+			// Decide allowed the box, which covers every app, and refused
+			// one: the table and the grants falling apart. Its rows are
+			// withheld, never filtered without its values.
+			apps[a.App] = appHandle{}
+			continue
 		}
 		apps[a.App] = app
 		named = append(named, app.ma)
@@ -113,24 +118,24 @@ func (h *Handler) alerts(w http.ResponseWriter, r *http.Request, p *Person) erro
 	}
 	filters := map[string]*Redactor{}
 	for name, app := range apps {
+		if app.ma == nil {
+			filters[name] = &Redactor{withhold: "the box did not allow this app's alerts to be read"}
+			continue
+		}
 		filters[name] = app.ma.redactorFor(app.ma.status())
 	}
 	body := boxAlertsBody{Monitor: held.Monitor, MoreAlerts: held.MoreAlerts, MoreSilences: held.MoreSilences,
 		Alerts: make([]json.RawMessage, 0, len(held.Alerts)), Silences: make([]json.RawMessage, 0, len(held.Silences))}
 	none := NewRedactor(nil, boxSafe(held))
 	for _, a := range held.Alerts {
-		f, ok := filters[a.App]
-		if !ok {
+		f, own := filters[a.App]
+		if !own {
 			f = none
 		}
-		body.Alerts = append(body.Alerts, json.RawMessage(alertRow(a, f)))
+		body.Alerts = append(body.Alerts, json.RawMessage(alertRow(a, f, own)))
 	}
 	for _, s := range held.Silences {
-		raw, err := json.Marshal(s)
-		if err != nil {
-			return err // strings and times: nothing to fail
-		}
-		body.Silences = append(body.Silences, json.RawMessage(none.redactJSON(raw)))
+		body.Silences = append(body.Silences, json.RawMessage(silenceRow(s, none)))
 	}
 	b, err := json.Marshal(body)
 	if err != nil {
@@ -139,36 +144,77 @@ func (h *Handler) alerts(w http.ResponseWriter, r *http.Request, p *Person) erro
 	return respondFiltered(w, http.StatusOK, string(b))
 }
 
-// alertRow is one alert's row, as the bytes sent, through f. A row the
-// filter withheld keeps the words of motel's and Alertmanager's that
-// say what holds it, its app (the route's word, as an apps list row's
-// name) and in its summary the filter's sentence, which passed that
-// filter: never the alert's name or instance, which a value may be
-// part of.
-func alertRow(a wire.BoxAlert, f *Redactor) string {
+// alertRow is one alert's row, as the bytes sent, through f, which is
+// its app's filter when own. A row the filter withheld keeps the words
+// of motel's and Alertmanager's that say what holds it, in its summary
+// the filter's sentence, which passed that filter, and its app only
+// when own: an app this config runs, the route's word, as an apps list
+// row's name; another label's value passed no filter. Never the
+// alert's name or instance, which a value may be part of.
+func alertRow(a wire.BoxAlert, f *Redactor, own bool) string {
 	raw, err := json.Marshal(a)
 	if err != nil {
 		raw = []byte(`{}`) // strings and times: nothing to fail
 	}
 	out := f.redactJSON(raw)
-	var row map[string]json.RawMessage
-	if json.Unmarshal([]byte(out), &row) == nil {
-		if _, ok := row["name"]; ok {
-			return out
-		}
+	why, ok := withheld(out, "name")
+	if !ok {
+		return out
 	}
-	var why wire.Error
-	_ = json.Unmarshal(row["error"], &why.Error)
-	if why.Error == "" {
-		why.Error = "response withheld"
-	}
-	kept := wire.BoxAlert{App: a.App, Alert: wire.Alert{Summary: why.Error, StartsAt: a.StartsAt, State: a.State,
+	kept := wire.BoxAlert{Alert: wire.Alert{Summary: why, StartsAt: a.StartsAt, State: a.State,
 		SilencedUntil: a.SilencedUntil, Inhibited: a.Inhibited}}
+	if own {
+		kept.App = a.App
+	}
 	if slices.Contains(severities, a.Severity) {
 		kept.Severity = a.Severity
 	}
 	b, _ := json.Marshal(kept) // strings and times: nothing to fail
 	return string(b)
+}
+
+// silenceRow is one silence's row, as the bytes sent, through f. A row
+// the filter withheld keeps its state and times, Alertmanager's words,
+// and its id when it is one Alertmanager makes (a UUID), so that root
+// can still expire it; its comment is the filter's sentence, and it
+// loses its matchers and maker, which a value may be part of.
+func silenceRow(s wire.Silence, f *Redactor) string {
+	raw, err := json.Marshal(s)
+	if err != nil {
+		raw = []byte(`{}`) // strings and times: nothing to fail
+	}
+	out := f.redactJSON(raw)
+	why, ok := withheld(out, "id")
+	if !ok {
+		return out
+	}
+	kept := wire.Silence{State: s.State, Matchers: []wire.Matcher{}, StartsAt: s.StartsAt, EndsAt: s.EndsAt, Comment: why}
+	if silenceIDRe.MatchString(s.ID) {
+		kept.ID = s.ID
+	}
+	b, _ := json.Marshal(kept) // strings and times: nothing to fail
+	return string(b)
+}
+
+// silenceIDRe is a silence's id as Alertmanager makes one.
+var silenceIDRe = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
+
+// withheld is the filter's sentence when out is the body a filter
+// withheld in place of a row, which has key: true when the row has it
+// not.
+func withheld(out, key string) (string, bool) {
+	var row map[string]json.RawMessage
+	if json.Unmarshal([]byte(out), &row) == nil {
+		if _, ok := row[key]; ok {
+			return "", false
+		}
+	}
+	var why string
+	_ = json.Unmarshal(row["error"], &why)
+	if why == "" {
+		why = "response withheld"
+	}
+	return why, true
 }
 
 // severities are the words motel's alerts carry for severity.
