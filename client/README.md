@@ -271,7 +271,7 @@ cut. `:` goes to a view in the command words (`:status blog`,
 `:deploys blog <version>`, `:me`, `:box`); what is typed is held to the client's grammars, and a version to the box's own (at most 64 characters; `motel deploys` sends a longer one for the box to refuse), before anything is asked, and
 what is wrong is said on the prompt's line; Enter runs what is typed,
 Tab takes a completion. `?` lists the keys of the screen below it,
-written from the table the keys are bound from. On a screen that reads
+written from the table the keys are bound from, its rows wrapped to the window, and scrolls, as its footer says. On a screen that reads
 the box (not help or a stop screen), `c` shows the `motel` line for it
 (a record whose version the box's filter hid has none, and `c` and `y`
 say so, and `P` prints nothing there), every argument quoted for a

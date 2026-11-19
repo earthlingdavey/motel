@@ -28,10 +28,11 @@ func (u *UI) render() {
 	left, right := u.S.Title(now)
 	door.SetText(u.title, door.Line(spread(left, right, u.w), u.Colour))
 	v := u.top()
-	// Only the refusal, and help over it, are prose; the other pages are
-	// labelled lines, which a wrap would break under the labels: who am I
-	// and the box screen lay a failure's sentence on rows themselves.
-	u.page.SetWrap(v.Screen == model.ScreenRefused || v.Screen == model.ScreenStopHelp)
+	// Only the refusal and help (over it or over any screen) are prose;
+	// the other pages are labelled lines, which a wrap would break under
+	// the labels: who am I and the box screen lay a failure's sentence on
+	// rows themselves.
+	u.page.SetWrap(v.Screen == model.ScreenRefused || v.Screen == model.ScreenStopHelp || v.Screen == model.ScreenHelp)
 	crumbL, crumbR := u.crumbs(v, now)
 	if u.notice != nil {
 		// What the : line said of what was typed, until the next key.
@@ -132,7 +133,7 @@ var footers = map[model.Screen]string{
 	model.ScreenRecord:   "↑↓ scroll  w wrap  p previous  n next  y json  c command  esc back  ? more",
 	model.ScreenMe:       "y json  c command  esc back  ? more",
 	model.ScreenBox:      "y json  c command  esc back  ? more",
-	model.ScreenHelp:     "esc close  q quit",
+	model.ScreenHelp:     "↑↓ scroll  esc close  q quit",
 	model.ScreenRefused:  "↑↓ scroll  r ask again  ? keys  q quit",
 	model.ScreenStopHelp: "↑↓ scroll  esc back  r ask again  q quit",
 }

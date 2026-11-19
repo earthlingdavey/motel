@@ -240,3 +240,59 @@ func TestStopHelpAtTheSmallest(t *testing.T) {
 		}
 	}
 }
+
+// TestHelpAtTheSmallest: the keys overlay (?) over each screen it opens
+// from, in the smallest window, 60x16: the footer is drawn whole,
+// naming ↑↓, and ↓ brings every line of the overlay on screen whole,
+// read from the screen's cells as it scrolls, no row past the window.
+func TestHelpAtTheSmallest(t *testing.T) {
+	const foot = "↑↓ scroll  esc close  q quit"
+	unspaced := func(s string) string { return strings.Join(strings.Fields(s), "") }
+	for _, c := range []struct {
+		name string
+		v    *model.View
+	}{
+		{"apps", nil},
+		{"an app", &model.View{Screen: model.ScreenApp, App: "blog"}},
+		{"a record", &model.View{Screen: model.ScreenRecord, App: "blog", Version: "e9a0b3f2c118"}},
+		{"who am I", &model.View{Screen: model.ScreenMe}},
+		{"the box", &model.View{Screen: model.ScreenBox}},
+	} {
+		h := start(t, 60, 16, nil)
+		if c.v != nil {
+			h.open(*c.v)
+		}
+		h.press("?")
+		if h.top().Screen != model.ScreenHelp {
+			t.Fatalf("%s: on %+v, not help", c.name, h.top())
+		}
+		var help string
+		h.on(func() { help = h.u.help() })
+		page := map[int]string{}
+		var rows []drawnRow
+		for range 60 {
+			var off int
+			h.on(func() { off, _ = h.u.page.GetScrollOffset() })
+			rows = screenRows(h)
+			for i, r := range rows[2 : len(rows)-1] {
+				page[off+i] = r.text
+				if r.end > 60 {
+					t.Errorf("%s: a row past the window: %q", c.name, r.text)
+				}
+			}
+			h.press(tcell.KeyDown)
+		}
+		if got := rows[len(rows)-1].text; got != foot {
+			t.Errorf("%s: the footer is drawn %q, want %q", c.name, got, foot)
+		}
+		var all strings.Builder
+		for i := range len(page) {
+			all.WriteString(page[i])
+		}
+		for _, l := range strings.Split(help, "\n") {
+			if !strings.Contains(unspaced(all.String()), unspaced(l)) {
+				t.Errorf("%s: ↓ does not bring this line on screen whole: %q", c.name, l)
+			}
+		}
+	}
+}

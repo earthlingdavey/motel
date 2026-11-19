@@ -21,4 +21,4 @@ VIEWS (type after :)
  apps                         every app you may view
  status <app>                 one app's overview (also: app <app>)
  deploys <app> [<version>]    one app's deploys, or one record
-esc close  q quit
+↑↓ scroll  esc close  q quit
