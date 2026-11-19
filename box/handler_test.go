@@ -309,6 +309,33 @@ func TestHandlerStatusSaysNoEditDuringAnApply(t *testing.T) {
 	}
 }
 
+// An apply that ends while GET / reads, its applied.json read before
+// the advance and its record gone by the lookup after: still no edit,
+// the record having stood when the reads began.
+func TestHandlerStatusSaysNoEditAsAnApplyEnds(t *testing.T) {
+	p := newPushRig(t)
+	c2, _ := p.change()
+	v2 := p.repo.files[c2]
+	p.writeInstalled(v2) // swapped, the reload under way
+	if err := os.WriteFile(p.x("txn.json"), []byte("{}"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	p.h.hooks.crash = func(point string) {
+		if point != "status:read" {
+			return
+		}
+		// The applier advances and ends between the reads and the
+		// lookup after them.
+		p.writeApplied(applied{SHA: c2, Path: testPath, SHA256: digest(v2), Signer: p.alice.principal, When: p.clock.Now()})
+		if err := os.Remove(p.x("txn.json")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := p.status(t); got["commit"] != p.base || got["caddyfile_edited_out_of_band"] != nil {
+		t.Errorf("GET / as the apply ends: %v", got)
+	}
+}
+
 // status is GET / on the rig's handler, answered 200.
 func (p *pushRig) status(t *testing.T) map[string]any {
 	t.Helper()

@@ -216,6 +216,10 @@ func (h *Handler) authenticate(w http.ResponseWriter, r *http.Request, route str
 // transaction's record stands (inFlight) or a baseline wrote it; and
 // the box's key for secrets, when it has one.
 func (h *Handler) status(w http.ResponseWriter, _ *http.Request, _ deploytrust.Identity) error {
+	// The record is looked up before the reads and again after them: an
+	// apply that ends between (applied.json read before its advance, the
+	// record gone by the second lookup) still read as one in flight.
+	busy := h.inFlight()
 	base, file, what, err := h.readState()
 	switch {
 	case what == readingBaseline && errors.Is(err, fs.ErrNotExist):
@@ -236,9 +240,10 @@ func (h *Handler) status(w http.ResponseWriter, _ *http.Request, _ deploytrust.I
 		return respond(w, http.StatusConflict, errorBody(runningRefused(ref).Error()))
 	}
 	sum := digest(file) // what the fast path compares
+	h.crash("status:read")
 	// After `moteld box baseline` the recorded digest is the record
 	// before's, kept as found: no claim about the commit it names.
-	edited := sum != base.SHA256 && base.Signer != signerBaseline && !h.inFlight()
+	edited := sum != base.SHA256 && base.Signer != signerBaseline && !busy && !h.inFlight()
 	body := wire.BoxStatus{Commit: base.SHA, BoxWebhook: shape.Host, SHA256: sum, Recipient: h.recipient(), OutOfBand: edited}
 	safe := []string{base.SHA, shape.Host, sum}
 	if body.Recipient != "" { // a bech32 key is what the entropy layer catches
