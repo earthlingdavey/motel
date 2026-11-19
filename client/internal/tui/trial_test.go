@@ -156,3 +156,74 @@ func TestPromptFooters(t *testing.T) {
 		}
 	}
 }
+
+// TestHelpHangs: at 60 columns, an entry of the keys overlay wider than
+// the window goes on under its own words, not at the left edge where it
+// reads as a new entry (the trial: "else the app" under "d …"), read
+// from the screen's cells as ↓ scrolls it, over the apps screen and
+// over a stop screen.
+func TestHelpHangs(t *testing.T) {
+	signedOut := func(f *demo.Fake) {
+		f.Set("whoami", &model.Failure{Kind: model.FailSignedOut, Message: "deploy.example.com did not accept your key"})
+	}
+	for name, setup := range map[string]func(*demo.Fake){"over the apps": nil, "over a stop": signedOut} {
+		h := start(t, 60, 16, setup)
+		h.press("?")
+		text := stopHelp()
+		if h.top().Screen != model.ScreenStopHelp {
+			h.on(func() { text = h.u.help() })
+		}
+		page := map[int]string{}
+		for range 60 {
+			var off int
+			h.on(func() { off, _ = h.u.page.GetScrollOffset() })
+			rows := screenRows(h)
+			for i, r := range rows[2 : len(rows)-1] {
+				page[off+i] = r.text
+			}
+			h.press(tcell.KeyDown)
+		}
+		rows := make([]string, len(page))
+		for i := range rows {
+			rows[i] = page[i]
+		}
+		long := 0
+		for _, l := range strings.Split(text, "\n") {
+			// Where the entry's words begin: after its name and the run of
+			// two spaces or more that ends it.
+			entry := strings.TrimLeft(l, " ")
+			i := strings.Index(entry, "  ")
+			if i <= 0 || len([]rune(l)) <= 60 {
+				continue
+			}
+			col := i + len(l) - len(entry) + len(entry[i:]) - len(strings.TrimLeft(entry[i:], " "))
+			long++
+			words := strings.Fields(l[col:])
+			at := -1
+			for i, r := range rows {
+				if strings.HasPrefix(r, l[:col]+words[0]) {
+					at = i
+					break
+				}
+			}
+			if at < 0 {
+				t.Errorf("%s: %q is not on the page", name, l)
+				continue
+			}
+			got := strings.Fields(rows[at][col:])
+			for i := at + 1; len(got) < len(words) && i < len(rows); i++ {
+				if !strings.HasPrefix(rows[i], strings.Repeat(" ", col)) {
+					t.Errorf("%s: %q goes on at the left edge: %q", name, l, rows[i])
+					break
+				}
+				got = append(got, strings.Fields(rows[i])...)
+			}
+			if strings.Join(got, " ") != strings.Join(words, " ") {
+				t.Errorf("%s: %q is drawn as %q", name, l, strings.Join(got, " "))
+			}
+		}
+		if long == 0 {
+			t.Errorf("%s: no entry is wider than 60 columns: the test holds nothing", name)
+		}
+	}
+}

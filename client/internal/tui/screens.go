@@ -59,9 +59,9 @@ func (u *UI) render() {
 	case model.ScreenBox:
 		door.SetText(u.page, door.Lines(u.S.BoxViewFit(now, u.w, door.Width), u.Colour))
 	case model.ScreenHelp:
-		door.SetText(u.page, door.LitLines(u.help()))
+		door.SetText(u.page, door.LitLines(hang(u.help(), u.w)))
 	case model.ScreenStopHelp:
-		door.SetText(u.page, door.LitLines(stopHelp()))
+		door.SetText(u.page, door.LitLines(hang(stopHelp(), u.w)))
 	case model.ScreenRefused:
 		door.SetText(u.page, door.Lines(u.S.RefusedView(now), u.Colour))
 	}
@@ -375,6 +375,59 @@ func (u *UI) withStop(ls []model.Line) []model.Line {
 		return append([]model.Line{l}, ls...)
 	}
 	return ls
+}
+
+// hang lays each of help's entries (a name, two spaces or more, its
+// words) that is wider than width on rows of its own, the words after
+// the first row under the first's, so that no part of one reads as a
+// new entry at the left edge. Prose, with no such column, is left for
+// the page's own wrap.
+func hang(text string, width int) string {
+	var out []string
+	for _, l := range strings.Split(text, "\n") {
+		col := entryCol(l)
+		if door.Width(termtext.From(l)) <= width || col < 0 || width-col < 20 {
+			out = append(out, l)
+			continue
+		}
+		indent := strings.Repeat(" ", door.Width(termtext.From(l[:col])))
+		// Split at each space, so a run of them between words (the marks'
+		// groups) stays a run on its row.
+		row, words := l[:col], ""
+		for _, w := range strings.Split(l[col:], " ") {
+			if words != "" && door.Width(termtext.From(strings.TrimRight(row+words+" "+w, " "))) > width {
+				out = append(out, strings.TrimRight(row+words, " "))
+				row, words = indent, ""
+			}
+			if words == "" && w == "" {
+				continue
+			}
+			if words != "" {
+				words += " "
+			}
+			words += w
+		}
+		out = append(out, row+words)
+	}
+	return strings.Join(out, "\n")
+}
+
+// entryCol is where an entry's words begin, after its name and the run
+// of two spaces or more that ends it; -1 for a line with none.
+func entryCol(l string) int {
+	name := strings.TrimLeft(l, " ")
+	i := strings.Index(name, "  ")
+	if i <= 0 {
+		return -1
+	}
+	i += len(l) - len(name)
+	for i < len(l) && l[i] == ' ' {
+		i++
+	}
+	if i == len(l) {
+		return -1
+	}
+	return i
 }
 
 // stopHelp is help over a stop screen: its keys, and those of help
