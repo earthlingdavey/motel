@@ -19,6 +19,7 @@ import (
 	"github.com/smallhoursorg/motel/liveswap/access/accesstest"
 	"github.com/smallhoursorg/motel/liveswap/deploytrust"
 	"github.com/smallhoursorg/motel/liveswap/deploytrust/trusttest"
+	"github.com/smallhoursorg/motel/liveswap/wire"
 )
 
 // The two-apps-two-people test (DESIGN-access.md, "Scoping as
@@ -28,7 +29,9 @@ import (
 // action table gives, and that no 200 holds the name, the canary or
 // the socket path of an app the caller may not view; and that each row
 // of the app list holds nothing of the other app, and its own canary
-// only as its filter's marker. It reads the route tables, and a row
+// only as its filter's marker. Alertmanager holds an alert of each app
+// and a box event naming the first: an app-scoped row's answer holds
+// its own app's alert alone. It reads the route tables, and a row
 // whose shape it does not know fails it, so a route added without its
 // expectations fails here.
 
@@ -127,8 +130,25 @@ func newTwoAppsRig(t *testing.T) *twoAppsRig {
 		t.Fatal(err)
 	}
 	r.h = &Handler{app: app, logger: zap.NewNop(), limiter: deploytrust.NewLimiter(newFakeClock()), people: access.NewRegistry(personBox, l)}
+	// Alertmanager holds an alert of each app, its summary holding the
+	// app's alert canary, and a box event that names appalpha in its
+	// instance and summary, as backup_stale/<app> does: no answer to any
+	// caller may hold another app's alert, and none the box's.
+	held := []AppAlert{{Alert: wire.Alert{Name: "backup_stale", Severity: "critical",
+		Summary: "the backup of appalpha is stale: " + boxAlertCanary, State: "active"}}}
+	for _, name := range twoApps {
+		held = append(held, AppAlert{App: name, Alert: wire.Alert{Name: "errors_high", Severity: "warning",
+			Summary: name + ": " + alertCanary(name), State: "active"}})
+	}
+	app.SetAlertsSource(&fakeAlerts{held: held, ok: true})
 	return r
 }
+
+// boxAlertCanary is in the box's own alert, which no app's read holds.
+const boxAlertCanary = "box-canary-0c41e5"
+
+// alertCanary is in app's alert, which only a read of app holds.
+func alertCanary(app string) string { return "alert-canary-" + app + "-77e2" }
 
 // authorization is a caller's header: a person's token, a deploy
 // source's, the box channel's (a source liveswap does not trust), or
@@ -147,6 +167,15 @@ func (r *twoAppsRig) authorization(t *testing.T, caller string) string {
 		return "Bearer " + trusttest.Mint(t, priv, "box", nil)
 	}
 	return ""
+}
+
+// motelAppRequest is a request of an app-scoped row under /_motel/ on
+// app, or nil for a read this test does not know.
+func motelAppRequest(rt motelAppRoute, app string) *http.Request {
+	if rt.read == "alerts" {
+		return httptest.NewRequest(http.MethodGet, "http://"+personBox+motelAppsPrefix+app+"/alerts", nil)
+	}
+	return nil
 }
 
 // rowRequest is a request of the row's shape on app, or nil for a shape
@@ -228,6 +257,51 @@ func TestTwoAppsTwoPeople(t *testing.T) {
 			}
 			if w.Code == http.StatusOK && rt.action == access.BoxApps {
 				r.rowsKeepToTheirApp(t, caller, w.Body.Bytes(), r.views[caller])
+			}
+		}
+	}
+	// The app-scoped rows under /_motel/: each app's for every caller,
+	// a person's only, as far as their grants cover it.
+	for _, rt := range motelAppRoutes {
+		for _, app := range twoApps {
+			for _, caller := range callers {
+				req := motelAppRequest(rt, app)
+				if req == nil {
+					t.Fatalf("the row %s<app>/%s has no request in this test: write its expectations", motelAppsPrefix, rt.read)
+				}
+				if auth := r.authorization(t, caller); auth != "" {
+					req.Header.Set("Authorization", auth)
+				}
+				w := httptest.NewRecorder()
+				if err := r.h.ServeHTTP(w, req, nil); err != nil {
+					t.Fatal(err)
+				}
+				what := "GET " + req.URL.Path
+				want := http.StatusUnauthorized // a deploy token is judged against the global sources: none here
+				switch {
+				case person(caller) && views(caller, app):
+					want = http.StatusOK
+				case person(caller):
+					want = http.StatusForbidden
+				}
+				if w.Code != want {
+					t.Errorf("%s, %s: %d %s, want %d", caller, what, w.Code, w.Body, want)
+				}
+				body := w.Body.String()
+				for _, other := range twoApps {
+					if other != app && strings.Contains(body, alertCanary(other)) {
+						t.Errorf("%s, %s: the answer holds %s's alert: %s", caller, what, other, body)
+					}
+				}
+				if strings.Contains(body, boxAlertCanary) {
+					t.Errorf("%s, %s: the answer holds the box's alert: %s", caller, what, body)
+				}
+				if w.Code == http.StatusOK {
+					leaks(what, caller, body, func(other string) bool { return other == app })
+					if !strings.Contains(body, alertCanary(app)) {
+						t.Errorf("%s, %s: the 200 does not hold its own app's alert: %s", caller, what, body)
+					}
+				}
 			}
 		}
 	}

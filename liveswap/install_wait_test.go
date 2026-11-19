@@ -316,6 +316,7 @@ func TestPersonBeforeStartReadsTheInstalledApp(t *testing.T) {
 		{"/demo", http.StatusOK, `"deploys":[{"version":"v1","status":"succeeded"}]`},
 		{"/_motel/apps", http.StatusOK, `"newest_deploy":{"version":"v1","status":"succeeded"}`},
 		{"/demo?deploy=v1", http.StatusOK, `"status":"succeeded"`},
+		{"/_motel/apps/demo/alerts", http.StatusOK, `{"monitor":"off","alerts":[]}`},
 	} {
 		people := newTestPeople(t)
 		h, rig := notInstalled(t)
@@ -346,7 +347,7 @@ func TestPersonBeforeStartReadsTheInstalledApp(t *testing.T) {
 // name. On a fake clock: not answered a millisecond before the bound,
 // answered at it.
 func TestPersonBeforeStartPastTheBound(t *testing.T) {
-	for _, target := range []string{"/demo", "/demo?deploy=v1", "/_motel/apps"} {
+	for _, target := range []string{"/demo", "/demo?deploy=v1", "/_motel/apps", "/_motel/apps/demo/alerts"} {
 		people := newTestPeople(t)
 		h, _ := notInstalled(t)
 		h.people = people.reg

@@ -48,8 +48,8 @@ box {
 }
 ```
 
-- `grant <name> viewer app <app>` lets them read that app: its status
-  and its deploys. `grant <name> viewer box` lets them read every app
+- `grant <name> viewer app <app>` lets them read that app: its status,
+  its deploys, and its alerts. `grant <name> viewer box` lets them read every app
   and the box's own status.
 - A `signer` line's ed25519 key is already that signer's key as a
   person: `alice` above needs no `person` line, only a `grant`. Once
@@ -115,6 +115,7 @@ signed:
 | `/<app>` | an app's status, as a deploy workflow reads it, with the deploy in flight when one runs: its version, who started it, when, and the phases so far with their times |
 | `/<app>?deploy=<version>` | one deploy's record |
 | `/` | the box's status, for a viewer of the box |
+| `/_motel/apps/<app>/alerts` | the app's alerts, as the box's Alertmanager holds them: each one's name, severity, summary, when it began, and whether a silence holds it and until when, or a deploy of the app; and whether the box could ask (`"monitor"`: `on`, `off` with no monitor block, `unanswered`). Only alerts about that app: not the box's own (disks, certificates, backups), not the silences or who wrote them. Up to 5 s old |
 
 The `motel` command (for an M-series Mac, an archive on each release
 after v0.8.0; elsewhere, built from a clone of this repository:
