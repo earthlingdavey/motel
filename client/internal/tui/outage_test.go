@@ -16,7 +16,7 @@ import (
 // it says back, then live, and whoami is asked once.
 func TestOneAppOutageSeen(t *testing.T) {
 	h := start(t, 100, 30, func(f *demo.Fake) { f.Body("apps.json", `{"apps": [{"name": "blog"}]}`) })
-	h.watch(61*time.Second, model.Job{})
+	h.walk(61*time.Second, model.Job{})
 	keys := []string{"blog", "apps", "whoami"}
 	for _, k := range keys {
 		h.fake.Set(k, fiveHundred())
@@ -48,7 +48,7 @@ func TestOneRouteProbesOnce(t *testing.T) {
 		if fail {
 			h.fake.Set("blog", fiveHundred())
 		}
-		w := h.watch(9*time.Minute, blog)
+		w := h.walk(9*time.Minute, blog)
 		n := 0
 		for j, c := range w.jobs {
 			if j != blog {
