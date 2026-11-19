@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -85,7 +86,7 @@ func Main(ctx context.Context, args []string, env Env) int {
 	if !errors.As(err, &f) {
 		// Anything else is cobra's own: a flag, an argument or a
 		// command it could not read.
-		f = &client.Failure{Exit: client.ExitUsage, Message: termtext.From(err.Error()).String()}
+		f = &client.Failure{Exit: client.ExitUsage, Message: cobraLine(err.Error())}
 	}
 	// A refusal of the arguments themselves comes before --json is
 	// read, so it is looked for here too.
@@ -101,6 +102,28 @@ func Main(ctx context.Context, args []string, env Env) int {
 	}
 	_, _ = fmt.Fprintf(env.Stderr, "motel: %s\n", f.Message)
 	return f.Exit
+}
+
+// cobraLine is cobra's own refusal as one line. To an unknown command
+// cobra adds the nearest commands on lines of their own, after a blank
+// one: they follow its first line as a sentence. The word typed is in
+// that first line, written with %q, so a line break typed in it is
+// \n there and cannot be taken for cobra's; whatever else the line
+// holds is made visible with termtext.From.
+func cobraLine(msg string) string {
+	head, near, found := strings.Cut(msg, "\n\nDid you mean this?\n")
+	line := termtext.From(head).String()
+	if !found {
+		return line
+	}
+	var names []string
+	for _, n := range strings.Fields(near) {
+		names = append(names, termtext.From(n).String())
+	}
+	if len(names) > 1 {
+		names = append(names[:len(names)-2], names[len(names)-2]+" or "+names[len(names)-1])
+	}
+	return line + ". Did you mean this? " + strings.Join(names, ", ")
 }
 
 // errInterrupted is a command ended by a signal its context alone

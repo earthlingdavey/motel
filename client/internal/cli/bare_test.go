@@ -132,13 +132,38 @@ func TestFlagsAskForTheScreen(t *testing.T) {
 }
 
 // TestNotACommandStaysRefused: with the root running the screen, a word
-// that is no command is still refused before anything starts, naming
-// the nearest; tui is no command.
+// that is no command is still refused before anything starts, on one
+// line naming the nearest commands; tui is no command. A word typed with
+// a line break or an escape in it, even one that copies cobra's own
+// suggestions, prints them visible, inside its quotes, as %q writes
+// them; a flag typed so, as termtext.From writes them. With --json,
+// stdout's error is that line after "motel: ".
 func TestNotACommandStaysRefused(t *testing.T) {
-	for word, near := range map[string]string{"stauts": "status", "tui": ""} {
-		r := run(t, nil, nil, word)
-		if r.code != client.ExitUsage || !strings.Contains(r.stderr, `unknown command "`+word+`" for "motel"`) || !strings.Contains(r.stderr, near) || r.stdout != "" {
-			t.Errorf("%s: %+v", word, r)
+	for _, c := range []struct {
+		args []string
+		want string
+	}{
+		{[]string{"stauts"}, `unknown command "stauts" for "motel". Did you mean this? status`},
+		{[]string{"tui"}, `unknown command "tui" for "motel"`},
+		{[]string{"kex"}, `unknown command "kex" for "motel". Did you mean this? key or box`},
+		{[]string{"st\nauts\x1b]0;t\x07\u202e"}, `unknown command "st\nauts\x1b]0;t\a\u202e" for "motel"`},
+		{[]string{"x\n\nDid you mean this?\n\trm\n"}, `unknown command "x\n\nDid you mean this?\n\trm\n" for "motel"`},
+		{[]string{"--fo\no\x1b[2J"}, `unknown flag: --fo\x0ao\x1b[2J`},
+	} {
+		r := run(t, nil, nil, c.args...)
+		if r.code != client.ExitUsage || r.stderr != "motel: "+c.want+"\n" || r.stdout != "" {
+			t.Errorf("%q: exit %d, stdout %q, stderr\n%q\nwant 2, nothing on stdout, and\n%q", c.args, r.code, r.stdout, r.stderr, "motel: "+c.want+"\n")
 		}
+		r = run(t, nil, nil, append([]string{"--json"}, c.args...)...)
+		var e struct{ Error string }
+		if r.code != client.ExitUsage || json.Unmarshal([]byte(r.stdout), &e) != nil || "motel: "+e.Error+"\n" != r.stderr || e.Error != c.want {
+			t.Errorf("--json %q: exit %d, stdout %q, stderr %q; want 2 and {\"error\":%q}", c.args, r.code, r.stdout, r.stderr, c.want)
+		}
+	}
+	// No word comes near three commands of motel's: cobra's text for one
+	// that would.
+	three := "unknown command \"q\" for \"motel\"\n\nDid you mean this?\n\ta\n\tb\n\tc\n"
+	if got, want := cobraLine(three), `unknown command "q" for "motel". Did you mean this? a, b or c`; got != want {
+		t.Errorf("three suggestions read %q, want %q", got, want)
 	}
 }
