@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/smallhoursorg/motel/client/internal/client"
+	"github.com/smallhoursorg/motel/client/internal/local"
 	"github.com/smallhoursorg/motel/client/internal/sshkey"
 	"github.com/smallhoursorg/motel/client/internal/tui"
 	"github.com/smallhoursorg/motel/client/internal/tui/demo"
@@ -322,6 +323,75 @@ func hangUp(t *testing.T, at int32) (int, string) {
 func TestHangUpAtTheFirstRead(t *testing.T) {
 	if code, stderr := hangUp(t, 1); code != client.ExitInterrupted || stderr != "" {
 		t.Errorf("exit %d, stderr %q; want %d and nothing said", code, stderr, client.ExitInterrupted)
+	}
+}
+
+// endAt is local.Runner that, when the program named runs, ends the
+// command as end does, once, and waits for the command's context to
+// end, as a program a signal stopped; every other program is not
+// installed.
+type endAt struct {
+	name string
+	end  func()
+	once *sync.Once
+}
+
+func (e endAt) Output(ctx context.Context, c local.Cmd) ([]byte, error) {
+	if c.Name != e.name {
+		return nil, exec.ErrNotFound
+	}
+	e.once.Do(e.end)
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case <-time.After(20 * time.Second): // a guard: the signal ended nothing
+		return nil, errors.New("the signal ended nothing")
+	}
+}
+
+// TestSignalBeforeTheScreen: a closed terminal (SIGHUP) or an interrupt
+// (Main's context ends, as SIGINT and SIGTERM end it) while motel tui
+// sets up (the box found from the repository, the key from the agent,
+// the passphrase check) ends it as an interrupt does: exit 130, nothing
+// said, not the advice a failed step would give.
+func TestSignalBeforeTheScreen(t *testing.T) {
+	home := t.TempDir()
+	if err := os.WriteFile(filepath.Join(home, "me.pub"), []byte(meLine+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	enc := pem.EncodeToMemory(&pem.Block{Type: "OPENSSH PRIVATE KEY", Bytes: []byte("openssh-key-v1\x00\x00\x00\x00\x0aaes256-ctr")})
+	if err := os.WriteFile(filepath.Join(home, "me"), enc, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	url := newFakeBox(t).srv.URL + "/blog"
+	steps := []struct {
+		name, program string
+		env           map[string]string
+	}{
+		{"the box", "git", map[string]string{"MOTEL_KEY": "~/me.pub"}},
+		{"the key", "ssh-add", map[string]string{"MOTEL_URL": url}},
+		{"the passphrase check", "ssh-add", map[string]string{"MOTEL_KEY": "~/me", "MOTEL_URL": url}},
+	}
+	for _, s := range steps {
+		for _, sig := range []string{"SIGHUP", "interrupt"} {
+			t.Run(s.name+"/"+sig, func(t *testing.T) {
+				ctx, cancel := context.WithCancel(context.Background())
+				defer cancel()
+				end := cancel
+				if sig == "SIGHUP" {
+					end = func() { _ = syscall.Kill(os.Getpid(), syscall.SIGHUP) }
+				}
+				var out, errOut bytes.Buffer
+				code := Main(ctx, []string{"tui"}, Env{
+					Getenv: func(k string) string { return s.env[k] }, Stdout: &out, Stderr: &errOut, Dir: t.TempDir(), Home: home,
+					Now: time.Now, Sleep: func(context.Context, time.Duration) error { return nil },
+					Run: endAt{name: s.program, end: end, once: &sync.Once{}}, Signer: &fixedSigner{}, Version: "test",
+				})
+				if code != client.ExitInterrupted || errOut.String() != "" {
+					t.Errorf("exit %d, stderr %q; want %d and nothing said", code, errOut.String(), client.ExitInterrupted)
+				}
+			})
+		}
 	}
 }
 
