@@ -3,9 +3,7 @@ package model_test
 import (
 	"context"
 	"errors"
-	"os"
 	"os/exec"
-	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -70,19 +68,19 @@ func shellWords(line string) ([]string, error) {
 
 // TestShellWordsIsSh: what shellWords reads of a line, a real sh reads
 // too, for lines of each shape it takes (bare words, quoted runs, an
-// empty word, a quote written '\”, a backslash, a tab) and printed
-// commands with hostile key paths; and it refuses lines a shell may
-// read otherwise. Skipped where no sh is installed.
+// empty word, a quote written as ShellQuote writes one (the quotation
+// closed, a backslash and the quote, and opened again), a backslash, a
+// tab) and printed commands with hostile key paths; and it refuses
+// lines a shell may read otherwise. Skipped where no sh is installed.
 func TestShellWordsIsSh(t *testing.T) {
 	sh, err := exec.LookPath("sh")
 	if err != nil {
 		t.Skip("NOT RUN: no sh")
 	}
-	dir := t.TempDir()
-	stub := filepath.Join(dir, "motel")
-	if err := os.WriteFile(stub, []byte("#!/bin/sh\nfor a in \"$@\"; do printf '%s\\0' \"$a\"; done\n"), 0o700); err != nil {
-		t.Fatal(err)
-	}
+	// motel is a function of the shell's own, which prints each argument
+	// it got: no file is written, so a temporary directory that cannot
+	// run one does not matter.
+	const motel = "motel() { for a in \"$@\"; do printf '%s\\0' \"$a\"; done; }\n"
 	lines := []string{
 		`motel a b`, `motel 'a b' ''`, `motel 'it'\''s' x`, `motel a\ b`, "motel\ta\t'b\tc'",
 		`motel '$(id)' '~' '#x' '=ls' 'a*?[' '"q"' '\' 'é'`, `motel a=b c:d %1 @x +y`, `motel a'b'c`,
@@ -97,9 +95,7 @@ func TestShellWordsIsSh(t *testing.T) {
 		if err != nil {
 			t.Fatalf("%q: %v", line, err)
 		}
-		cmd := exec.Command(sh, "-c", line)
-		cmd.Env = append(os.Environ(), "PATH="+dir+":"+os.Getenv("PATH"))
-		out, err := cmd.Output()
+		out, err := exec.Command(sh, "-c", motel+line).Output()
 		if err != nil {
 			t.Fatalf("%q: %v", line, err)
 		}
