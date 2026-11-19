@@ -16,7 +16,7 @@ VERSION ?= $(shell (git describe --tags --exact-match 2>/dev/null || echo v0.0.0
 # Distro image for the package install smoke test (install-test).
 DISTRO ?= debian:13
 
-.PHONY: test test-integration vet tidy tidy-check lint fuzz fuzz-list vulncheck pin-watch-check ci-changes-check secretscan usage usage-claude usage-check build build-client package clean-debs install-test e2e e2e-backup e2e-notify e2e-metrics soak e2e-logs clean
+.PHONY: test test-integration vet tidy tidy-check lint fuzz fuzz-list vulncheck pin-watch-check ci-changes-check secretscan usage usage-claude usage-check build build-client package clean-dist install-test e2e e2e-backup e2e-notify e2e-metrics soak e2e-logs clean
 
 test:
 	$(COMPOSE) run --rm dev go test -race -cover $(PKGS)
@@ -278,7 +278,7 @@ build:
 # version` reads it. It runs in the dev container, so by default it
 # builds for Linux on the container's architecture; GOOS= and GOARCH= on
 # the command line cross-build: make build-client GOOS=darwin GOARCH=arm64.
-# Nothing in the release workflow builds the client yet.
+# package builds each of CLIENT_TARGETS this way, for the release.
 # GOFLAGS is cleared as for build, so Go records the commit too.
 build-client:
 	$(COMPOSE) run --rm -e GOFLAGS= -e CGO_ENABLED=0 -e GOWORK=off $(if $(GOOS),-e GOOS=$(GOOS)) $(if $(GOARCH),-e GOARCH=$(GOARCH)) dev sh -c '\
@@ -287,7 +287,18 @@ build-client:
 		cd client && go build -trimpath -ldflags "-s -w -X main.version=v$(VERSION)" -o ../build/motel-$$os-$$arch ./cmd/motel && \
 		chmod -R a+rwX ../build && echo build/motel-$$os-$$arch'
 
-# Builds .deb for both arches into dist/. .deb only, and no .apk
+# The laptop client's release targets, each GOOS/GOARCH. package builds
+# each with build-client and packs it as
+# dist/motel_$(VERSION)_<os>_<arch>.tar.gz, with `motel` (0755) and
+# LICENSE (0644) at the archive's root; the release checksums and
+# attaches everything in dist/. A target is one more word here. A
+# linux one would take the name the server's own archive had up to
+# v0.7.0, which a box repository made from that release's template
+# still asks the latest release for (docs/upgrading.md).
+CLIENT_TARGETS = darwin/arm64
+
+# Builds .deb for both arches into dist/, then the client's archives
+# (CLIENT_TARGETS above). .deb only, and no .apk
 # planned: liveswap runs apps as transient systemd units with no
 # fallback runner, so an Alpine/OpenRC package would install a moteld
 # that serves but refuses any Caddyfile defining an app — see
@@ -301,9 +312,14 @@ build-client:
 # bind-mount attribute cache, and nfpm wrote a tar header of the amd64
 # size over the arm64 content ("missed writing 286720 bytes").
 #
-# clean-debs runs before build, so a run that fails anywhere leaves no
-# .deb behind for install-test to certify in place of this one.
-package: clean-debs build
+# clean-dist runs before build, so a run that fails anywhere leaves no
+# .deb behind for install-test to certify in place of this one, and no
+# client archive of an earlier run for a release to attach.
+#
+# The client's archives are packed in the dev container, not by the
+# host's tar: GNU tar on every host, so a Mac's tar adds none of
+# macOS's own metadata to them.
+package: clean-dist build
 	mkdir -p dist
 	$(COMPOSE) run --rm --entrypoint sh -e NFPM_VERSION=$(VERSION) nfpm -c '\
 		set -e; \
@@ -316,9 +332,21 @@ package: clean-debs build
 			done; \
 		done; \
 		rm -f build/moteld build/motel-backup'
+	for t in $(CLIENT_TARGETS); do \
+		$(MAKE) --no-print-directory build-client GOOS=$${t%/*} GOARCH=$${t#*/} VERSION=$(VERSION) || exit 1; \
+	done
+	$(COMPOSE) run --rm dev sh -c '\
+		set -e; \
+		for t in $(CLIENT_TARGETS); do \
+			os=$${t%/*}; arch=$${t#*/}; s=$$(mktemp -d); \
+			cp build/motel-$$os-$$arch $$s/motel; cp LICENSE $$s/LICENSE; \
+			chmod 0755 $$s/motel; chmod 0644 $$s/LICENSE; \
+			tar -czf dist/motel_$(VERSION)_$${os}_$${arch}.tar.gz -C $$s motel LICENSE; \
+			rm -rf $$s; \
+		done'
 
-clean-debs:
-	rm -f dist/moteld_*.deb
+clean-dist:
+	rm -f dist/moteld_*.deb dist/motel_*.tar.gz
 
 # Installs the freshly built .deb inside a systemd container (DISTRO
 # picks the base image) and runs the staged smoke test: install, unit

@@ -111,6 +111,12 @@ without the feature it exists for.
 
 (A hosted APT repository with automatic updates is on the roadmap.)
 
+The laptop client, `motel` (experimental; [client/](client/README.md)),
+is on the same page for an M-series Mac from the first release after
+v0.8.0 on: `motel_<version>_darwin_arm64.tar.gz`, with the release's
+own number. Its README's "Getting it" fetches and checks it, and
+builds it from a clone on Linux and on an Intel Mac.
+
 **Installing and upgrading need root; everyday administering does
 not.** Checking a config
 (`moteld validate`) needs no privilege, and reading the journal —
@@ -270,7 +276,7 @@ make fuzz              # fuzz the untrusted-input surfaces (FUZZTIME=2m per targ
 make fuzz-list         # what fuzz will run (discovered per module, not listed by hand); CI runs it on every PR that changes code
 make soak              # ~20min leak hunt: deploy/reload churn, goroutine/fd assertions; CI runs it per merge to main and weekly
 make build             # cross-compile linux amd64/arm64
-make package           # .deb via nfpm, into dist/
+make package           # .deb via nfpm, and the client's archive for an M-series Mac, into dist/
 make install-test      # install dist/'s .deb under real systemd (Debian 13);
                        #   run `make package` first — dist/ is not rebuilt
 ```

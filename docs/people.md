@@ -116,8 +116,9 @@ signed:
 | `/<app>?deploy=<version>` | one deploy's record |
 | `/` | the box's status, for a viewer of the box |
 
-The `motel` command (no release ships it as a binary: it is built
-from a clone of this repository, client/README.md, "Getting it") makes
+The `motel` command (for an M-series Mac, an archive on each release
+after v0.8.0; elsewhere, built from a clone of this repository:
+client/README.md, "Getting it") makes
 the token and asks:
 `motel whoami --box deploy.example.com`, `motel apps`, `motel status
 <app>`, `motel deploys <app> [<version>]`, `motel box status`; and

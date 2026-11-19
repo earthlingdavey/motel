@@ -136,11 +136,45 @@ for a box too old for people's tokens.
 
 ## Getting it
 
-No release ships the client as a binary yet, and
-`go install …/client/cmd/motel@<version>` does not work (the module
-names its sibling `liveswap` by a local `replace`, which `go install`
-refuses). Build it from a clone of this repository, with Go 1.27.1 or
-later:
+Each release after v0.8.0 carries the client for an M-series Mac,
+`motel_<version>_darwin_arm64.tar.gz`, on the same
+[releases](https://github.com/smallhoursorg/motel/releases) page as
+the server and in the same `checksums.txt`, with the release's own
+number: `motel version` prints `motel v<version>`. Releases up to
+v0.8.0 carry no client. In Terminal, this fetches the latest
+release's, checks it, and puts `motel` in `~/.local/bin`:
+
+```sh
+v=$(curl -fsSL -o /dev/null -w '%{url_effective}' \
+  https://github.com/smallhoursorg/motel/releases/latest)
+v=${v##*/v}
+f=motel_${v}_darwin_arm64.tar.gz
+base=https://github.com/smallhoursorg/motel/releases/download/v$v
+cd "$(mktemp -d)" &&
+  curl -fsSLO "$base/$f" && curl -fsSLO "$base/checksums.txt" &&
+  grep " $f\$" checksums.txt | shasum -a 256 -c - &&
+  tar -xzf "$f" motel && mkdir -p ~/.local/bin && mv motel ~/.local/bin/ &&
+  ~/.local/bin/motel version
+```
+
+The first two lines take the latest release's tag without its `v`;
+for a release candidate, or any other release, write the tag in their
+place instead, without its `v` and with its hyphen: `v=0.8.1-rc1`.
+The `&&`s stop the block at the first step that fails, and `shasum`
+checks the one line of `checksums.txt` that names the archive: with
+no such line it fails, rather than passing with nothing checked. When
+`motel` alone is then not found, `~/.local/bin` is not on your PATH:
+`echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zprofile`, and open
+a new Terminal window. Unpack the archive with `tar`, as above: a
+browser's download unpacked by a double-click in Finder gives `motel`
+macOS's quarantine mark, and macOS refuses to run it until `xattr -d
+com.apple.quarantine ~/.local/bin/motel` clears the mark.
+
+On Linux and on an Intel Mac, where no release carries a client, build
+it from a clone of this repository, with Go 1.27.1 or later. `go
+install …/client/cmd/motel@<version>` does not work: the module names
+its sibling `liveswap` by a local `replace`, which `go install`
+refuses.
 
 ```sh
 git clone https://github.com/smallhoursorg/motel && cd motel/client
@@ -150,6 +184,14 @@ go build -o motel ./cmd/motel
 
 A build made this way carries no release: `version` prints `(devel)`,
 or a version Go derives from the commit.
+
+Accepted, for the release's archive and the block above:
+
+| Residual | S | O | D | Score | Size of a fix | Outcome |
+|---|---|---|---|---|---|---|
+| Until the first release after v0.8.0 is out, the block reads v0.8.0 as the latest, whose release has no client, and `curl` stops it at a 404 that names only the address; the paragraph above it says releases up to v0.8.0 carry none | 2 | 5 | 1 | 10 | 1 (text), risk 2 | accepted: it lasts until the next release |
+| The archive's line in `checksums.txt` is picked by `grep`, where each `.` of the name matches any character: an asset whose name differed from the archive's only there would be picked too, and `shasum` would fail on the file not downloaded | 2 | 2 | 1 | 4 | 1 (`awk`'s exact match), risk 2 | accepted: no release has such an asset; it fails red, naming the file |
+| That `tar` in Terminal leaves the unpacked `motel` without the quarantine mark of a browser's download rests on Apple's forum answer (the 2026-11-16 research), not a run on a Mac: were it wrong, macOS refuses `motel` and the `xattr` line above clears it | 2 | 5 | 1 | 10 | 1 (text), risk 2 | accepted: the block's own path, `curl` then `tar`, is not concerned; to be tried on a Mac with the first release that has the archive |
 
 ## How box text is kept out of the client's voice
 
@@ -468,8 +510,8 @@ DATA in the title bar, with no box.
 | `internal/tui/hostile` | test support: the hostile fixture's attacks, and a terminal that records bytes |
 
 A release build must be made with the workspace off (`make
-build-client`, `GOWORK=off`; nothing in the release workflow builds
-the client yet), so the binary links exactly the versions this go.mod
+build-client`, `GOWORK=off`, which `make package` runs for each
+release's archive), so the binary links exactly the versions this go.mod
 records, the ones Dependabot, govulncheck and a reader go by: in the
 workspace Go takes each module at the highest version any workspace
 module requires, which can be another. `TestWorkspaceAgrees` fails, naming
