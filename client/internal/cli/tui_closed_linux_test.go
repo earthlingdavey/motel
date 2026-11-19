@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -21,7 +22,8 @@ import (
 
 // TestClosedTerminalHelper is not a test of its own:
 // TestClosedTerminalWithTheScreenUp runs the test binary with it on a
-// pty, and closes the pty's master once the screen is up. What it says
+// pty, under TestClosedTerminalLeader, and closes the pty's master once
+// the screen is up. What it says
 // goes to a file, since the terminal is gone by then.
 func TestClosedTerminalHelper(t *testing.T) {
 	out := os.Getenv("MOTEL_TEST_CLOSED_HELPER")
@@ -45,6 +47,28 @@ func TestClosedTerminalHelper(t *testing.T) {
 	}
 }
 
+// TestClosedTerminalLeader is not a test of its own either: it leads
+// the pty's session for TestClosedTerminalWithTheScreenUp, ignoring
+// SIGHUP, and runs the helper as its child, in its process group, on
+// the terminal, so the kernel's hang-up, sent to the session's leader
+// alone, never reaches the TUI. A shell would not do: bash runs the
+// last command of -c in its own place, which makes the TUI the leader.
+// (The TUI cannot ignore SIGHUP itself: it listens for it.)
+func TestClosedTerminalLeader(t *testing.T) {
+	if os.Getenv("MOTEL_TEST_CLOSED_LEADER") == "" {
+		t.Skip("run by TestClosedTerminalWithTheScreenUp")
+	}
+	signal.Ignore(syscall.SIGHUP)
+	self, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command(self, "-test.run=^TestClosedTerminalHelper$", "-test.count=1", "-test.timeout=40s")
+	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
+	// How it ended is in the helper's file.
+	_ = cmd.Run()
+}
+
 // ioctl is the ioctl(2) of fd with a pointer argument.
 func ioctl(fd uintptr, req uintptr, arg unsafe.Pointer) error {
 	if _, _, e := syscall.Syscall(syscall.SYS_IOCTL, fd, req, uintptr(arg)); e != 0 {
@@ -56,16 +80,13 @@ func ioctl(fd uintptr, req uintptr, arg unsafe.Pointer) error {
 // TestClosedTerminalWithTheScreenUp: the pty's master closed while the
 // screen is up, as a terminal emulator does when its window is closed,
 // ends motel tui as an interrupt does: exit 130, nothing said. The TUI
-// runs under a shell that leads the pty's session and ignores SIGHUP,
-// so the kernel's SIGHUP (sent to the session's leader alone) never
-// reaches it: what it sees is the read of the terminal ending, which a
-// closed window's often wins the race against the signal (the trial: 18
-// of 20 ended with exit 2 and "the screen could not start: EOF").
+// runs under a leader of the pty's session that ignores SIGHUP
+// (TestClosedTerminalLeader), so the kernel's SIGHUP (sent to the
+// session's leader alone) never reaches it: what it sees is the read of
+// the terminal ending, which a closed window's often wins the race
+// against the signal (the trial: 18 of 20 ended with exit 2 and "the
+// screen could not start: EOF").
 func TestClosedTerminalWithTheScreenUp(t *testing.T) {
-	sh, err := exec.LookPath("sh")
-	if err != nil {
-		t.Skip("NOT RUN: no sh to lead the pty's session; a closed terminal is not held here")
-	}
 	master, err := os.OpenFile("/dev/ptmx", os.O_RDWR, 0)
 	if err != nil {
 		t.Skip("NOT RUN: no /dev/ptmx (" + err.Error() + "); a closed terminal is not held here")
@@ -94,13 +115,24 @@ func TestClosedTerminalWithTheScreenUp(t *testing.T) {
 	result := filepath.Join(t.TempDir(), "result")
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, sh, "-c", `trap "" HUP; "$0" -test.run='^TestClosedTerminalHelper$' -test.count=1`, self)
-	cmd.Env = append(os.Environ(), "MOTEL_TEST_CLOSED_HELPER="+result, "TERM=xterm")
+	cmd := exec.CommandContext(ctx, self, "-test.run=^TestClosedTerminalLeader$", "-test.count=1", "-test.timeout=50s")
+	cmd.Env = append(os.Environ(), "MOTEL_TEST_CLOSED_LEADER=1", "MOTEL_TEST_CLOSED_HELPER="+result, "TERM=xterm")
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = pts, pts, pts
+	// The leader leads a process group of its own (a session's leader
+	// does), the helper in it: the group goes when ctx ends, and when
+	// the test does, so nothing either started outlives the test.
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true, Setctty: true, Ctty: 0}
+	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
 	}
+	waited := false
+	t.Cleanup(func() {
+		if !waited {
+			_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+			_ = cmd.Wait()
+		}
+	})
 	_ = pts.Close()
 	var mu sync.Mutex
 	var tty bytes.Buffer
@@ -133,7 +165,9 @@ func TestClosedTerminalWithTheScreenUp(t *testing.T) {
 	if err := master.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if err := cmd.Wait(); err != nil && !errors.As(err, new(*exec.ExitError)) {
+	err = cmd.Wait()
+	waited = true
+	if err != nil && !errors.As(err, new(*exec.ExitError)) {
 		t.Fatal(err)
 	}
 	got, err := os.ReadFile(result)
