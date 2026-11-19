@@ -128,3 +128,40 @@ func TestWhoAmIAloneNeverAnswers(t *testing.T) {
 		}
 	}
 }
+
+// TestNoAnswerBeforeAStopForgotten: a read that got no answer before a
+// stop (a 401) and r does not count toward a run after it: the first
+// read after r that gets none backs off alone, as at a start.
+func TestNoAnswerBeforeAStopForgotten(t *testing.T) {
+	for name, stop := range map[string]model.Fail{"401": model.FailSignedOut, "an answer about another key": model.FailAboutAnother} {
+		e := model.NewEngine(t0)
+		now := t0
+		sim(e, []string{"blog", "shop"}, now, time.Minute, 0, ok)
+		now = now.Add(time.Minute)
+		blog := model.Job{Kind: model.KStatus, App: "blog"}
+		e.Again(now, blog)
+		if !takeApp(e, now, "blog") {
+			t.Fatal("blog not taken")
+		}
+		e.Done(blog, now, fail(model.FailNoAnswer))
+		e.Again(now, model.Job{Kind: model.KWhoAmI})
+		now = now.Add(5 * time.Second)
+		if !takeKind(e, now, model.KWhoAmI) {
+			t.Fatal("no whoami taken")
+		}
+		e.Done(model.Job{Kind: model.KWhoAmI}, now, fail(stop))
+		now = now.Add(10 * time.Second)
+		e.Touch(now)
+		if !e.Retry(now) {
+			t.Fatal("r did not ask")
+		}
+		j, took, _ := e.Take(now)
+		if !took || j.Kind != model.KWhoAmI {
+			t.Fatalf("after r %v %v", j, took)
+		}
+		e.Done(j, now, fail(model.FailNoAnswer))
+		if h := e.Health(now); h.Misses != 0 {
+			t.Errorf("after a stop on %s and r, one whoami with no answer begins a run: %d misses, retry in %v", name, h.Misses, h.RetryIn)
+		}
+	}
+}

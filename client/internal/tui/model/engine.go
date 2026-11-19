@@ -438,7 +438,9 @@ func (e *Engine) Retry(now time.Time) bool {
 	}
 	e.lastRetry = now
 	e.stopped = Running
-	e.misses = 0
+	// A new start: no read before the stop counts toward a run of no
+	// answer after it.
+	e.misses, e.none = 0, nil
 	e.askMe(now)
 	e.poke()
 	return true
