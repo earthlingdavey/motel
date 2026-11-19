@@ -203,18 +203,24 @@ func TestRunGoesRound(t *testing.T) {
 
 // TestRunWithOneJobAnswering is the rule's worst honest case: J jobs
 // (whoami, the list, n apps), from +60 s the box answering one read
-// alone, the last app's status. The run's retry takes a due job whose
-// last read was answered before any whose last read failed, by rank
-// and then by when it was due; so at worst the one that answers waits
-// for its own turn to come due (30 s) and for each of the J-1 others to
-// fail once, a retry each, the retries 4 s, 8, 16, 32, then 60 s apart:
-// for 12 apps, J = 14, 630 s. Its
+// alone, the last app's status. The run's retry takes a due job none of
+// whose reads has failed since its last answer before any whose has,
+// by rank and then by when it was due; so at worst the one that
+// answers waits for its own turn to come due (30 s) and for each of the
+// J-1 others to fail once, a retry each, the retries 4 s, 8, 16, 32,
+// then 60 s apart: for 12 apps, J = 14, 630 s (9 minutes measured). Its
 // answer ends the run, which the next two reads that get none begin
-// again within the second (the title bar says STALE throughout, as it
-// should of a box that answers one read in J); every other job having
-// failed since, it is then tried at the first retry at which it is
-// due: at least once in its interval (30 s) and the longest gap
-// between two retries (60 s), 90 s.
+// again within the second (from 3 apps the title bar says STALE but
+// for a few seconds after each answer, as it should of a box that
+// answers one read in J; with 1 app, J = 3, it was measured never to);
+// once every other job has failed since, it is then tried at the first
+// retry at which it is due: at least once in its interval (30 s) and
+// the longest gap between two retries (60 s), 90 s. The test holds both
+// bounds for 1, 3 and 12 apps. The 90 s was measured to hold to 30
+// apps, not with 60: there a job not yet tried in the run keeps its old
+// due time and goes ahead of the one that answers each time it is due,
+// and gaps of 27 minutes were measured (3 h 13 min with 300 apps; the
+// README's accepted row).
 func TestRunWithOneJobAnswering(t *testing.T) {
 	for _, n := range []int{1, 3, 12} {
 		apps := names(n)

@@ -16,8 +16,11 @@ import (
 // down, second by second, to the next read the engine really makes:
 // not to the run's retry alone, which can pass long before any read is
 // due (the list's 60 s, the box's 30 s), the title bar then saying
-// `retry in 0s` for as long. The harness makes each read in the second
-// it comes due, before the frame, so 0s is never drawn.
+// `retry in 0s` for as long. The harness's reads take no time, and each
+// is made in the second it comes due, before the frame, so a 0s drawn
+// here is counted wrong. On a box whose reads take time, 0s is drawn
+// while the retry is in flight (up to the client's 30 s timeout on a
+// host that does not answer), which is so: it is being tried.
 func TestRetryInIsTheNextRead(t *testing.T) {
 	for name, scr := range map[string]model.Screen{"the apps screen": model.ScreenApps, "the box screen": model.ScreenBox} {
 		h := start(t, 120, 30, func(f *demo.Fake) { f.Body("apps.json", `{"apps": [{"name": "blog"}]}`) })
