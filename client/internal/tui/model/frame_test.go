@@ -217,6 +217,32 @@ func TestBoxErrorClears(t *testing.T) {
 	}
 }
 
+// TestBoxViewSaysAnEditedCaddyfile: when the box says its Caddyfile has
+// been edited since the commit it runs (#577), the line under the
+// digest says so; a box that says nothing (one older than the field,
+// or a file as applied) has no such line.
+func TestBoxViewSaysAnEditedCaddyfile(t *testing.T) {
+	for _, edited := range []bool{true, false} {
+		s, f, now := session(t)
+		if edited {
+			f.Body("box.json", `{"commit":"3f9c2a1e8b7d6c5f4e3d2c1b0a9f8e7d6c5b4a39","box_webhook":"deploy.example.com",`+
+				`"sha256":"1f38639fad43624b85cdc2cac1778918713a061084bca6487683ec73f2b29fea","caddyfile_edited_out_of_band":true}`)
+		}
+		s.Engine.BoxOpen(true, *now)
+		for s.BoxSt == nil {
+			step(t, s, f, now)
+		}
+		v := s.BoxViewFit(*now, 80, runes)
+		if !strings.HasPrefix(v[1].Text(), "Caddyfile   ") {
+			t.Fatalf("edited %v: the second line is %q", edited, v[1].Text())
+		}
+		said := v[2].Text() == "            has been edited on the box since that commit"
+		if said != edited {
+			t.Errorf("edited %v: the line under the digest is %q", edited, v[2].Text())
+		}
+	}
+}
+
 // TestBoxViewIsTheBoxsAnswer: the box screen, under the box answer's
 // age, shows nothing from whoami's answer, which may be minutes older:
 // not the release it names.

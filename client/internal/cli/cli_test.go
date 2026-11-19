@@ -315,6 +315,38 @@ func TestHumanOutputOfHostileStrings(t *testing.T) {
 	}
 }
 
+// box status says, on its first line, that the Caddyfile has been
+// edited on the box since the commit, when the box says so (#577); a
+// box that says nothing (one older than the field, or a file as
+// applied) is said as before. --json is the box's body, the field in it.
+func TestBoxStatusSaysAnEditedCaddyfile(t *testing.T) {
+	for _, c := range []struct {
+		edited bool
+		first  string
+	}{
+		{true, "runs aaaaaaaaaaaa, and its Caddyfile has been edited on the box since\n"},
+		{false, "runs aaaaaaaaaaaa\n"},
+	} {
+		var body []byte
+		srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write(body)
+		}))
+		t.Cleanup(srv.Close)
+		body = encode(wire.BoxStatus{Commit: strings.Repeat("a", 40), BoxWebhook: "127.0.0.1", SHA256: strings.Repeat("b", 64), OutOfBand: c.edited})
+		fb := &fakeBox{srv: srv, bodies: map[string][]byte{}}
+		env := map[string]string{"MOTEL_TOKEN": "a.deploy.token", "MOTEL_URL": srv.URL + "/blog"}
+		r := run(t, fb, env, "box", "status")
+		want := "127.0.0.1  " + c.first + "commit           " + strings.Repeat("a", 40) + "\nCaddyfile sha256 " + strings.Repeat("b", 64) + "\n"
+		if r.code != 0 || r.stdout != want {
+			t.Errorf("edited %v: exit %d, stdout\n%s\nwant\n%s", c.edited, r.code, r.stdout, want)
+		}
+		if r := run(t, fb, env, "box", "status", "--json"); r.code != 0 || r.stdout != string(body) || strings.Contains(r.stdout, "caddyfile_edited_out_of_band") != c.edited {
+			t.Errorf("edited %v, --json: %+v, want %s", c.edited, r, body)
+		}
+	}
+}
+
 // unsafeOutput is any C0 control but the line feed, DEL, a C1 control,
 // a bidi control (the whole Bidi_Control set), U+2028 or U+2029.
 var unsafeOutput = regexp.MustCompile(`[\x00-\x09\x0b-\x1f\x7f\x{80}-\x{9f}\x{061c}\x{200e}\x{200f}\x{202a}-\x{202e}\x{2066}-\x{2069}\x{2028}\x{2029}]`)

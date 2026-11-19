@@ -101,4 +101,18 @@ func TestClientBoxStatus(t *testing.T) {
 	if c.code != 0 || !strings.Contains(c.stdout, "commit           "+sha+"\n") {
 		t.Fatalf("human: %+v", c)
 	}
+	// The rig's applied.json records another digest than the installed
+	// file's: the box says the file has been edited, and so does the
+	// client's first line (#577). Recorded as installed, neither does.
+	if first := strings.SplitN(c.stdout, "\n", 2)[0]; first != "127.0.0.1  runs "+sha[:12]+", and its Caddyfile has been edited on the box since" {
+		t.Fatalf("an edited Caddyfile, the first line: %q", first)
+	}
+	installed, err := os.ReadFile(r.installed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.writeJSON(t, filepath.Join(r.dir, "applied.json"), applied{SHA: sha, Path: "box1/Caddyfile", SHA256: digest(installed), Signer: "alice", When: r.clock.Now()})
+	if c = runClient(t, bin, env, "box", "status"); c.code != 0 || strings.SplitN(c.stdout, "\n", 2)[0] != "127.0.0.1  runs "+sha[:12] {
+		t.Fatalf("the file as applied: %+v", c)
+	}
 }

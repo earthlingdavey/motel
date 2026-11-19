@@ -33,7 +33,8 @@ motel apps                          the apps your key may view, one a line
 motel status <app> [--range 1h|24h] an app's status
 motel deploys <app>                 its deploys, newest first
 motel deploys <app> <version>       one deploy's whole record
-motel box status                    the commit the box runs, its Caddyfile's digest, its key for secrets
+motel box status                    the commit the box runs, its Caddyfile's digest, its key for secrets,
+                                    and whether that Caddyfile has been edited on the box since
 motel                               on a terminal, screens over the same reads (below)
 ```
 
@@ -305,7 +306,11 @@ under it the version in flight, its phase, when the deploy started and
 by whom (`4c2d9e7b1a05 soaking · started 25s ago (14:12 UTC) by …`;
 under "has no version yet: a deploy of it is in flight." before a first
 version serves); a deploy's record is laid out for
-reading a failure, its log tail last. The title bar, the crumb, the
+reading a failure, its log tail last. The box screen shows the commit
+the box runs, its Caddyfile's digest and its key for secrets, and, when
+the box says the Caddyfile has been edited on the box since that
+commit, a line under the digest that says so; a box older than that
+answer says nothing of it, and nor does the screen. The title bar, the crumb, the
 apps strip, an app's fields, a record's head and its log tail (while `w` is off) and who am I's and the box screen's lines holding a box's value are fitted to the
 window in the screen's cells, as the door draws them (a wide character
 takes two, a combining mark none, and a character the door writes as
