@@ -281,6 +281,11 @@ motel-backup[9377]: demo: ok: snapshot c4f0d7c1 holds sqlite app.db, files uploa
 motel-backup[9377]: demo: restore proven: snapshot c4f0d7c1 was fetched and checked whole
 ```
 
+A person with the viewer role on the box reads the same from their
+own laptop, without ssh: `motel backup status`, or `:backups` in
+`motel` (docs/people.md). It is what `status` says on the box, so it is
+the box's claim about itself, as the next section says.
+
 What every line of `status` means is under
 [Status](../backups/README.md#status). `motel-backup status --json` says the
 same as one JSON object, with the same exit status, for a program to

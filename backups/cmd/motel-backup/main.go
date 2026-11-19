@@ -48,7 +48,6 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"io/fs"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -61,6 +60,7 @@ import (
 	"github.com/smallhoursorg/motel/backups/dump"
 	"github.com/smallhoursorg/motel/backups/engine"
 	"github.com/smallhoursorg/motel/backups/envfile"
+	"github.com/smallhoursorg/motel/backups/look"
 	"github.com/smallhoursorg/motel/backups/plan"
 	"github.com/smallhoursorg/motel/backups/record"
 	"github.com/smallhoursorg/motel/backups/restore"
@@ -416,53 +416,32 @@ func report(st *record.Status) {
 // status.
 func showStatus(ctx context.Context, asJSON bool) error {
 	cfg := config()
-	now := time.Now()
+	// As root, the credential file itself, once it is known to be there,
+	// before anything else can end the look: where a line of it is not
+	// read as it was written, the manager's rules being what they are.
+	// Said, and nothing more: what the run makes of the file the run
+	// says.
+	var warnings func() []string
+	if os.Geteuid() == 0 {
+		warnings = func() []string {
+			raw, err := os.ReadFile(cfg.EnvFile)
+			return envWarnings(cfg.EnvFile, raw, err)
+		}
+	}
+	r, lookErr := look.Look(ctx, look.Paths{EnvFile: cfg.EnvFile, OldEnvFile: cfg.OldEnvFile, Record: filepath.Join(cfg.StateDir, "status.json")}, time.Now(), warnings)
 	// A stdout that takes none of it (a full disk; a closed pipe where
 	// SIGPIPE is ignored, which otherwise ends the command) is said, on
 	// stderr: could not tell is still 3, and a report is not 0 that its
 	// reader never got, but 1.
-	cannot := func(warnings []string, err error) error {
-		if werr := printStatus(os.Stdout, status.CouldNotTell(now, warnings, err.Error()), asJSON); werr != nil {
-			err = fmt.Errorf("%w; and it could not be printed: %w", err, werr)
-		}
-		return couldNotTell{err}
-	}
-	// Only a file that is not there says so. Any other answer — a
-	// directory this user may not search — is not "not set up".
-	env, err := os.Lstat(cfg.EnvFile)
-	if errors.Is(err, fs.ErrNotExist) {
-		return cannot(nil, fmt.Errorf("backups are not set up: %s is not there%s", cfg.EnvFile, engine.OldEnvFileNote(cfg)))
-	} else if err != nil {
-		return cannot(nil, fmt.Errorf("whether backups are set up cannot be told from here: %w", err))
-	}
-	// As root, the file itself, before anything else can end the look:
-	// where a line of it is not read as it was written, the manager's
-	// rules being what they are. Said, and nothing more: what the run
-	// makes of the file the run says.
-	var warnings []string
-	if os.Geteuid() == 0 {
-		raw, err := os.ReadFile(cfg.EnvFile)
-		warnings = envWarnings(cfg.EnvFile, raw, err)
-	}
-	st, err := record.Read(filepath.Join(cfg.StateDir, "status.json"))
-	if err != nil {
-		return cannot(warnings, fmt.Errorf("the record of the last run could not be read: %w", err))
-	}
-	in := status.Input{Record: st, Now: now, SetUp: env.ModTime(), Warnings: warnings}
-	var active []unit.Active
-	active, in.RunningErr = unit.ListActive(ctx, engine.UnitPattern)
-	for _, a := range active {
-		if role, app, ok := engine.ParseUnitName(a.Name); ok {
-			in.Running = append(in.Running, status.Running{Role: role, App: app, State: a.State, Since: a.Since})
-		} else {
-			in.Unrecognised = append(in.Unrecognised, a.Name)
-		}
-	}
-	r := status.Report(in)
-	if err := printStatus(os.Stdout, r, asJSON); err != nil {
-		return fmt.Errorf("the report could not be printed: %w", err)
-	}
-	if !r.Healthy {
+	werr := printStatus(os.Stdout, r, asJSON)
+	switch {
+	case lookErr != nil && werr != nil:
+		return couldNotTell{fmt.Errorf("%w; and it could not be printed: %w", lookErr, werr)}
+	case lookErr != nil:
+		return couldNotTell{lookErr}
+	case werr != nil:
+		return fmt.Errorf("the report could not be printed: %w", werr)
+	case !r.Healthy:
 		return errors.New("not every app has a fresh backup and a restore proven lately")
 	}
 	return nil
@@ -504,7 +483,7 @@ func printStatus(w io.Writer, r status.Result, asJSON bool) error {
 		enc.SetIndent("", "  ")
 		return enc.Encode(r)
 	}
-	for _, l := range r.Text() {
+	for _, l := range status.Text(r) {
 		if _, err := fmt.Fprintln(w, l); err != nil {
 			return err
 		}

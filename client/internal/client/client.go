@@ -555,6 +555,14 @@ var (
 	// state is printed as a word, with the client's own words after it.
 	watchdogStates = map[string]bool{"disabled": true, "idle": true, "grace": true, "watching": true, "backoff": true, "throttled": true}
 	outcomePhases  = map[string]bool{"downloading": true, "extracting": true, "preparing": true, "starting": true, "soaking": true, "promoting": true, "draining": true, "stopping_old": true}
+	// backupLevels are backups/status's levels of a line (Info, Warning,
+	// Problem): what the client marks a line with, so held to the three.
+	backupLevels = map[string]bool{"info": true, "warning": true, "problem": true}
+	// backupResultRe is the shape of backups/record's classes (ok,
+	// incomplete, pending, data missing, failed, not attempted, not
+	// run): lowercase words, printed as the box's word in a column of
+	// their own, so a class a later box adds is shown, not refused.
+	backupResultRe = regexp.MustCompile(`^[a-z]{1,16}( [a-z]{1,16}){0,3}$`)
 	// alertNameRe is an alertname as motel's alerts carry one (its own
 	// events, notify/DESIGN-notify.md "Events"; an operator's rule,
 	// notify's ruleNameRe; an external producer's, notify/admin.go's
@@ -827,6 +835,28 @@ func hold(v any) string {
 		if !digestRe.MatchString(a.SHA256) {
 			return "its sha256 is not a digest"
 		}
+	case *wire.Backups:
+		// What the client prints of the box's backups as a token: each
+		// app's name, its result, and each line's level and app. The
+		// lines' text and could_not_tell are free text, labelled and
+		// capped; the units running are in the lines, and not read.
+		for i := range a.Apps {
+			if !held(&a.Apps[i].Name, appRe.MatchString) {
+				return "a name in it is no app name"
+			}
+			if r := a.Apps[i].Result; r != "" && !backupResultRe.MatchString(r) {
+				return "an app's result in it is not one a backup run says"
+			}
+		}
+		for i := range a.Lines {
+			l := &a.Lines[i]
+			if !backupLevels[l.Level] {
+				return "a line's level in it is not info, warning or problem"
+			}
+			if l.App != "" && !held(&l.App, appRe.MatchString) {
+				return "a name in it is no app name"
+			}
+		}
 	case *wire.Alerts:
 		// What the client prints of an app's alerts as a token: the
 		// monitor's word, and each alert's name, severity and state. The
@@ -1053,6 +1083,8 @@ func identity(v any) shape {
 		return shape{strs: []string{"name", "key", "box"}, lists: []string{"roles"}, counts: []string{"protocol"}, times: []string{"token_expires_at"}}
 	case *wire.Apps:
 		return shape{lists: []string{"apps"}}
+	case *wire.Backups:
+		return shape{lists: []string{"apps", "lines"}, times: []string{"at"}}
 	case *wire.Alerts:
 		return shape{strs: []string{"monitor"}, lists: []string{"alerts"}}
 	}

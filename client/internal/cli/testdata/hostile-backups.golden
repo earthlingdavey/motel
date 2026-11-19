@@ -1,0 +1,17 @@
+127.0.0.1 says its backups are not healthy (at 2026-11-15 09:59:52 UTC): a problem line below says why
+APP     RESULT        LAST COMPLETE BACKUP (UTC)  FRESH  RESTORE PROVEN (UTC)  LATELY
+blog    ok            2026-11-15 09:17            yes    2026-11-12 09:59      yes
+shop-2  data missing  none                        no     never                 no
+info     last run 2026-11-15 09:17 UTC
+problem  shop-2: failed: osc52 \x1b]52;c;cHduZWQ=\x07
+problem  shop-2: failed: csi \x1b[2J\x1b[H
+problem  shop-2: failed: osc8 \x1b]8;;https://evil.example/\x1b\click\x1b]8;;\x1b\
+problem  shop-2: failed: title \x1b]0;pwned\x07
+problem  shop-2: failed: tags [red]alert[-] ["region"]
+problem  shop-2: failed: bidi abc\u202edef
+problem  shop-2: failed: c1 \u009b31mred
+problem  shop-2: failed: fake ::error::file=x::owned
+problem  shop-2: failed: bad utf8 ��
+problem  shop-2: failed: marks alm\u061c lrm\u200e rlm\u200f
+warning  wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww…[cut]
+This is the box's own claim, only as honest as the box: look from a machine of your own with restic too (docs/backups.md, "Look from your own machine").

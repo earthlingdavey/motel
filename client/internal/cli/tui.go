@@ -35,16 +35,16 @@ import (
 // screenLong is what motel alone does: the root's help, above the
 // experimental block.
 const screenLong = "motel alone shows them on screens in the terminal, over the same reads the\n" +
-	"commands make: the apps you may view sorted by what needs a look, an app's\n" +
-	"state and deploys, a deploy's record laid out for reading a failure, who you\n" +
-	"are, and the box. It only reads, well inside the box's limit of 2 requests a\n" +
+	"commands make: the apps you may view sorted by what needs a look, an app's state\n" +
+	"and deploys, a deploy's record laid out for reading a failure, who you are, the\n" +
+	"box and its backups. It only reads, well inside the box's limit of 2 requests a\n" +
 	"second and 60 at once: up to 30 at once to start, then at most 1.5 a second. It\n" +
 	"signs one token for ten minutes at a time, so a hardware key is touched about\n" +
 	"every nine, and never asks for a passphrase or a PIN: a key with a passphrase\n" +
 	"must be in the agent (ssh-add), and a hardware key that requires its PIN cannot\n" +
-	"be used there yet. ? lists the keys; c shows the command for a screen that\n" +
-	"reads the box, y the box's answer as JSON. It is asked with your own key only,\n" +
-	"and takes no --json. With no arguments at all it prints this help instead when\n" +
+	"be used there yet. ? lists the keys; c shows the command for a screen that reads\n" +
+	"the box, y the box's answer as JSON. It is asked with your own key only, and\n" +
+	"takes no --json. With no arguments at all it prints this help instead when\n" +
 	"stdout is not a terminal, and, with a line under it saying why, when it finds\n" +
 	"no box or key to read with, or no screen to draw on."
 
@@ -374,6 +374,11 @@ func (l live) Deploy(ctx context.Context, app, version string) (model.Got[wire.D
 
 func (l live) BoxStatus(ctx context.Context) (model.Got[wire.BoxStatus], error) {
 	v, ans, err := l.c.BoxStatus(ctx)
+	return got(v, ans, err)
+}
+
+func (l live) Backups(ctx context.Context) (model.Got[wire.Backups], error) {
+	v, ans, err := l.c.Backups(ctx)
 	return got(v, ans, err)
 }
 

@@ -20,8 +20,8 @@ func (h *harness) top() model.View {
 
 // TestColonSays: what the : line cannot run is said on its line and asks
 // nothing: a version outside the grammar, an app not in the list (one
-// sentence, whether it exists or not), an unknown command, the box for
-// a viewer of apps alone. A mistyped version stops nothing.
+// sentence, whether it exists or not), an unknown command, the box and
+// its backups for a viewer of apps alone. A mistyped version stops nothing.
 func TestColonSays(t *testing.T) {
 	h := start(t, 100, 30, nil)
 	before := len(h.fake.Calls)
@@ -52,6 +52,19 @@ func TestColonSays(t *testing.T) {
 	}
 	if s := h2.screen(); !strings.Contains(s, "the box screen is for a viewer of the box") {
 		t.Errorf(":box for a viewer of apps says:\n%s", s)
+	}
+	before = len(h2.fake.Calls)
+	h2.press("j", ":", "backups", tcell.KeyEnter)
+	if v := h2.top(); v.Screen == model.ScreenBackups {
+		t.Error(":backups opened for a viewer of an app alone")
+	}
+	if s := h2.screen(); !strings.Contains(s, "the backups screen is for a viewer of the box") {
+		t.Errorf(":backups for a viewer of apps says:\n%s", s)
+	}
+	for _, c := range h2.fake.Calls[before:] {
+		if c.Job.Kind == model.KBackups {
+			t.Errorf(":backups for a viewer of apps read %v", c.Job)
+		}
 	}
 }
 

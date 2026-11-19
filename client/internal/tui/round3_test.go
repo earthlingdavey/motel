@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -13,16 +14,16 @@ import (
 )
 
 // TestCtrlROnlyWhatIsShown: ctrl-r on who am I asks whoami alone, on
-// help nothing, on the box the box alone, each pressed AgainAfter and
-// more after the last read of it.
+// help nothing, on the box the box and its backups (the screen has a
+// line of them), on the backups those alone, each pressed AgainAfter
+// and more after the last read of it.
 func TestCtrlROnlyWhatIsShown(t *testing.T) {
 	h := start(t, 100, 30, nil)
 	h.press(":", "me", tcell.KeyEnter)
 	for _, c := range []struct {
 		where string
-		want  model.Kind
-		none  bool
-	}{{"me", model.KWhoAmI, false}, {"help", 0, true}, {"box", model.KBox, false}} {
+		want  []model.Kind
+	}{{"me", []model.Kind{model.KWhoAmI}}, {"help", nil}, {"box", []model.Kind{model.KBox, model.KBackups}}, {"backups", []model.Kind{model.KBackups}}} {
 		if c.where != "me" {
 			h.press(tcell.KeyEscape, ":", c.where, tcell.KeyEnter)
 		}
@@ -30,13 +31,17 @@ func TestCtrlROnlyWhatIsShown(t *testing.T) {
 		h.pump()
 		before := len(h.fake.Calls)
 		h.press(tcell.KeyCtrlR)
+		read := map[model.Kind]bool{}
 		for _, call := range h.fake.Calls[before:] {
-			if c.none || call.Job.Kind != c.want {
+			if !slices.Contains(c.want, call.Job.Kind) {
 				t.Errorf("ctrl-r on %s read %v", c.where, call.Job)
 			}
+			read[call.Job.Kind] = true
 		}
-		if !c.none && len(h.fake.Calls) == before {
-			t.Errorf("ctrl-r on %s read nothing", c.where)
+		for _, k := range c.want {
+			if !read[k] {
+				t.Errorf("ctrl-r on %s did not read kind %d", c.where, k)
+			}
 		}
 	}
 }

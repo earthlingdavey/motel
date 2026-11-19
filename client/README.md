@@ -35,11 +35,12 @@ motel deploys <app>                 its deploys, newest first
 motel deploys <app> <version>       one deploy's whole record
 motel box status                    the commit the box runs, its Caddyfile's digest, its key for secrets,
                                     and whether that Caddyfile is the one that commit installed
+motel backup status                 what the box says of its backups, for a viewer of the box: the box's own claim
 motel monitor alerts --app <app>    an app's alerts, as the box's Alertmanager holds them
 motel                               on a terminal, screens over the same reads (below)
 ```
 
-Each command takes `--json`; `motel` alone, the screens, does not. `whoami`, `apps` and `monitor alerts` are asked with your own key
+Each command takes `--json`; `motel` alone, the screens, does not. `whoami`, `apps`, `backup status` and `monitor alerts` are asked with your own key
 only: with `MOTEL_TOKEN` set, name the key with `--key` (else exit 2,
 nothing sent). `<app>` is a name, or the app's URL
 (`https://deploy.example.com/blog`, as `MOTEL_URL` holds it), which names
@@ -52,6 +53,18 @@ its phase once it has one, when the deploy started and by whom
 (`deploying    4c2d9e7b1a05 soaking, started 2026-11-19 14:12 UTC  by …`);
 its versions line marks the first version with that state when it is
 the one serving (`7c1e55d0a913 (running)`).
+
+`backup status` prints the box's verdict on its backups first, as the
+box's (`<host> says its backups are not healthy (at … UTC)`), then a
+row an app (its last run's result, its last complete backup, a restore
+proven), the box's own lines, each after its level (`info`, `warning`,
+`problem`) and capped, and last that it is the box's own claim, only
+as honest as the box: `docs/backups.md` sends the operator to look
+from a machine of their own with restic. Its exit is the box's
+verdict, as `motel-backup status`'s is: 0 healthy, 1 not (stdout the
+box's body under `--json`), 3 could not tell (`could_not_tell`, quoted
+in the client's sentence: on a box without backups, `backups are not
+set up`).
 
 `monitor alerts --app <app>` reads `GET /_motel/apps/<app>/alerts`, for
 a viewer of the app or of the box: the alerts the box's Alertmanager
@@ -147,9 +160,10 @@ read).
 
 **Exit codes:** 0 read; 1 a failure answered with a sentence (a 4xx
 other than the 401, 403, 404 and 429 below, a 409 for one; said as the
-box's: no header tells a gateway's from motel's); 2 nothing was
+box's: no header tells a gateway's from motel's; and `backup status`'s
+not healthy); 2 nothing was
 sent (usage, no box or key, an RSA or ECDSA key); 3 could not tell (no answer, not
-moteld's answer, any 5xx, a 429 that stood); 4 not accepted (a 401 after one
+moteld's answer, any 5xx, a 429 that stood, and the box's could not tell of `backup status`); 4 not accepted (a 401 after one
 retry); 5 not allowed (403); 6 not found (404); 8 the certificate did not
 verify (the client never continues past one); 130 interrupted. 7 is held
 for a box too old for people's tokens.
@@ -224,6 +238,7 @@ only:
    (an app or version name, a phase, a deploy's status, a unit, the
    watchdog's state, the metrics' window, a
    commit, a digest, a role and its scope, whoami's name and release,
+   a backup's app, the shape of its result and a line's level,
    each with the server code it mirrors cited beside its pattern in
    `internal/client/client.go`), or compared with what was asked (the
    app, the version, the host, the key, the box). A value outside its
@@ -326,6 +341,10 @@ made by hand. Accepted:
 | `motel help tui`, as `motel help` with any word that is no command, says ``Unknown help topic [`tui`]`` and prints the usage, exit 0, where `motel tui` is refused, exit 2: cobra's own answer, and older than `motel` alone as the screen | 2 | 5 | 1 | 10 | 2 | accepted |
 | `motel` alone, where no box or key is found, interrupted (ctrl-c, the terminal closed) in the moment its help is being written: the help is on stdout, the line under it is not said, and the exit is 130, where an interrupted command prints nothing on stdout. The interrupt is looked for before the help is written (`TestSignalBeforeTheScreen`), not during: about 3.5 kB to a terminal, a few milliseconds unless the terminal is held (ctrl-s) | 2 | 2 | 3 | 12 | 2 (the help built whole, then written only if not interrupted) | accepted |
 | A client with #577's change reading a box on v0.8.0 or earlier: that box's `memory_bytes.now` is the range's newest point, kept while it is at most three steps old, so under `--range 24h` up to 15 minutes old (three 5-minute steps; 3 minutes at the hour), and its `avg_5m` and `memory_max_bytes` alike. The app's screen shows it as `now` beside `metrics     over 24h` with no age, where the client before this change said `newest point 14:00:10 UTC (12m ago)` under it | 2 | 5 | 3 | 30 | 2 | accepted over the bar, pending the owner (the skill's rule 4): it ends when the box takes this release, and telling the two kinds of box apart needs the client to judge the box's release |
+| `motel backup status` whose stdout takes none of its human output (a full disk, a closed pipe) exits 2 with the write's error, not the box's verdict (1, 3): every command's human output fails so | 2 | 3 | 1 | 6 | 2 | accepted: red and named; `--json` and the verdict's exit are what a script reads |
+| On the backups screen in a window 14 columns wide or less, far below the smallest the screens are laid for (60), a could not tell's quoted why is laid one character a row, each past its 14 columns of indent, so the rows show blank | 2 | 5 | 1 | 10 | 2 | accepted: no screen is laid for such a width; `y` shows the answer |
+| After a 404 to the backups (a moteld older than the read) the read is held until ctrl-r, and the screen does not say ctrl-r asks again, as an app's screen does not after a 404: once the box is upgraded it says the 404 until ctrl-r or `r` | 2 | 5 | 1 | 10 | 1 | accepted: the sentence names the cause, and ctrl-r is among the screen's keys (`?`) |
+| The backups screen's lines of the box's are cut at the window's edge, the cut marked `…` (an advice at a line's end, `` `motel-backup drill`, as root, … ``, is cut at 80 columns): the screen scrolls up and down, not sideways | 2 | 5 | 1 | 10 | 3 | accepted: the cut is marked, and `y` shows the whole answer |
 | A row stopped, throttled or in backoff with a deploy in flight can have the state's word cut from its strip at 80 columns, the deploy before it taking the room: when the row is stale (`1m old, stale: ` before it), its name is near 20 characters, or its phase is a long one (`stopping_old`). Its mark and STATE still say it, on the row below the strip | 2 | 5 | 1 | 10 | 2 | accepted |
 | Such a row's VERSION says only the version in flight (`stopped  → 9a1b2c3d4e5f`), so the table does not name the version that is stopped, throttled or in backoff, and the row can be read as the new version being the stopped one; the `→` marks it as on its way ("The TUI", below), and the strip and the app's screen name the stopped one | 2 | 4 | 3 | 24 | 1 (keep the running version in VERSION on these rows) | accepted over the bar, pending the owner (the skill's rule 4): VERSION said as a row in flight says it was the owner's chosen fix for #584's item 4 |
 
@@ -393,14 +412,22 @@ or a push whose record could not be written (its result said `unknown`
 and named `moteld box baseline`), which the box cannot tell apart;
 after `moteld box baseline`, the file is compared with the one the
 baseline found. A box older than that answer says nothing of it, and
-nor does the screen. The title bar, the crumb, the
+nor does the screen. The box screen has a line of the box's backups
+too, read beside its status: the box's verdict and the answer's age.
+`:backups` (a viewer of the box) shows what the box says of them: its
+verdict, when it decided (its answer is kept 10 s on the box), a row an
+app with its result, its last complete backup and a restore proven,
+each time with its age, the box's own lines after their levels, and
+that it is the box's own claim, only as honest as the box (look from a
+machine of your own: docs/backups.md). The apps screen's marks and its
+strip are judged from the statuses alone, as before. The title bar, the crumb, the
 apps strip, an app's fields, a record's head and its log tail (while `w` is off) and who am I's and the box screen's lines holding a box's value are fitted to the
 window in the screen's cells, as the door draws them (a wide character
 takes two, a combining mark none, and a character the door writes as
 an escape as many as the escape has): a line too wide is cut, `…` its
 last cell, and the title bar's and the crumb's right side is cut only
 when it alone takes the whole window or more (the apps' summary of hundreds of apps at 60 columns), the same way. `:` goes to a view in the command words (`:status blog`,
-`:deploys blog <version>`, `:me`, `:box`); what is typed is held to the client's grammars, and a version to the box's own (at most 64 characters; `motel deploys` sends a longer one for the box to refuse), before anything is asked, and
+`:deploys blog <version>`, `:me`, `:box`, `:backups`); what is typed is held to the client's grammars, and a version to the box's own (at most 64 characters; `motel deploys` sends a longer one for the box to refuse), before anything is asked, and
 what is wrong is said on the prompt's line; Enter runs what is typed,
 Tab takes a completion. `?` lists the keys of the screen below it,
 written from the table the keys are bound from, its rows wrapped to the window (an entry's words under its words), and scrolls, as its footer says. On a screen that reads
@@ -458,7 +485,9 @@ operator, which `P` prints. ctrl-c is a key while the screen holds the terminal,
 SIGINT, SIGTERM or SIGHUP sent to the process, or the terminal closed under the screen, ends it as an interrupt, 130, nothing said.
 
 - **The rate.** A box allows a person 2 requests a second with a burst
-  of 60. The TUI keeps to 1.5 a second and 30 at once. The open app is
+  of 60. The TUI keeps to 1.5 a second and 30 at once. The box's status
+  and its backups are read every 30 s, each only while a screen that
+  shows it is open (the box screen shows both). The open app is
   read every 5 s, and its alerts every 15 s while its screen is open
   (`AlertsEvery`, after the box's own 5 s of Alertmanager's answer);
   every other app takes its turn in the rest of the

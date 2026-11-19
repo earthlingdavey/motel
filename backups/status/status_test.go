@@ -398,7 +398,7 @@ func TestWhatStatusSays(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			r := Report(Input{Record: tc.st, Now: now, SetUp: tc.setUp, Running: tc.running, Unrecognised: tc.unknown, RunningErr: tc.runningErr})
-			out, healthy := strings.Join(r.Text(), "\n"), r.Healthy
+			out, healthy := strings.Join(Text(r), "\n"), r.Healthy
 			sameVerdict(t, r)
 			if healthy != tc.healthy {
 				t.Errorf("healthy = %v, want %v:\n%s", healthy, tc.healthy, out)
@@ -428,7 +428,7 @@ func TestAReportHoldsNoControlCharacters(t *testing.T) {
 	})
 	st.Apps["sh\x1bop"] = sound()
 	st.LastCheck = &record.Check{Time: ago(time.Hour), Group: "3\x1b[2J8/52", Class: "dam\x1b[2Jaged", Detail: "\x1b]0;x\x07found"}
-	lines := Report(Input{Record: st, Now: now}).Text()
+	lines := Text(Report(Input{Record: st, Now: now}))
 	if len(lines) == 0 {
 		t.Fatal("nothing was said")
 	}
@@ -531,8 +531,8 @@ func TestTheVerdictIsTheTrueAgesNotTheSeconds(t *testing.T) {
 	})
 	r := Report(Input{Record: st, Now: when})
 	sameVerdict(t, r)
-	if a := r.Apps[0]; a.Fresh || a.Healthy || !strings.Contains(strings.Join(r.Text(), "\n"), "blog: stale") {
-		t.Errorf("half a second past stale: fresh %v, healthy %v:\n%s", a.Fresh, a.Healthy, strings.Join(r.Text(), "\n"))
+	if a := r.Apps[0]; a.Fresh || a.Healthy || !strings.Contains(strings.Join(Text(r), "\n"), "blog: stale") {
+		t.Errorf("half a second past stale: fresh %v, healthy %v:\n%s", a.Fresh, a.Healthy, strings.Join(Text(r), "\n"))
 	}
 	if age := r.At.Sub(*r.Apps[0].LastCompleteBackup); age != StaleAfter {
 		t.Errorf("the seconds read %v", age)

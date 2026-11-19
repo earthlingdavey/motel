@@ -87,6 +87,15 @@ func (c *Client) BoxStatus(ctx context.Context) (wire.BoxStatus, *Answer, error)
 	return b, ans, err
 }
 
+// Backups is `motel backup status`: GET /_motel/backups, what the box
+// says of its own backups (`motel-backup status --json` as any account
+// on the box looks), for a viewer of the box.
+func (c *Client) Backups(ctx context.Context) (wire.Backups, *Answer, error) {
+	var b wire.Backups
+	ans, err := c.read(ctx, "/_motel/backups", nil, &b)
+	return b, ans, err
+}
+
 // Alerts is `motel monitor alerts --app <app>`: GET
 // /_motel/apps/<app>/alerts, the app's alerts as the box's Alertmanager
 // holds them, for a person whose grants cover the app. The route is on

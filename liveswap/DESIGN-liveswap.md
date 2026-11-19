@@ -662,7 +662,7 @@ row's function (box/DESIGN-box.md, "Handler contract").
 
 `access/` holds the actions (`app.status`, `app.deploy_record`,
 `app.deploy`, `app.rollback`, `box.status`, `box.push_result`,
-`box.push`, and `box.whoami`, `box.apps` and `app.alerts`, served
+`box.push`, and `box.whoami`, `box.apps`, `box.backups` and `app.alerts`, served
 here under `/_motel/`), the principal kinds and `Decide`, which refuses every pair
 its table does not list. A deploy token's principals: a deploy source
 of the app in the path, which may take every app action on that app

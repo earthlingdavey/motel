@@ -25,6 +25,7 @@ var Actions = []Action{
 	{KStatus, "status <app>", "an app's row and screen", readStatus},
 	{KDeploy, "deploys <app> <version>", "a deploy's record", readDeploy},
 	{KBox, "box status", "the box screen", readBox},
+	{KBackups, "backup status", "the backups screen, and its line on the box screen", readBackups},
 	{KAlerts, "monitor alerts --app <app>", "the alerts on an app's screen", readAlerts},
 }
 
@@ -131,6 +132,23 @@ func readAlerts(ctx context.Context, _ *Session, c Client, j Job) (func(*Session
 		}
 		g.At = at
 		a.alerts, a.alertsErr = &g, nil
+	}, err
+}
+
+func readBackups(ctx context.Context, _ *Session, c Client, _ Job) (func(*Session, time.Time), error) {
+	g, err := c.Backups(ctx)
+	return func(s *Session, at time.Time) {
+		if err != nil {
+			s.BackupsErr = err
+			if Forbidden(err) || NotFound(err) {
+				// Dropped, as a status's is (readStatus): a box older than
+				// the read answers 404.
+				s.BackupsSt = nil
+			}
+			return
+		}
+		g.At = at
+		s.BackupsSt, s.BackupsErr = &g, nil
 	}, err
 }
 

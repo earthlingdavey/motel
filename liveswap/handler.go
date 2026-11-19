@@ -84,6 +84,9 @@ type Handler struct {
 	// waitClock times awaitInstalled's bound; nil is the real clock. A
 	// test seam, so the bound itself is what a test runs against.
 	waitClock clock
+	// backupsCache is GET /_motel/backups's cache; nil is the process's
+	// (theBackups). A test seam.
+	backupsCache *backupsCache
 }
 
 // CaddyModule returns the Caddy module information.

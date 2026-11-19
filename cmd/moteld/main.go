@@ -23,7 +23,7 @@ import (
 	// motel modules. Importing liveswap also makes this process
 	// non-dumpable before main runs (see liveswap/harden).
 	_ "github.com/smallhoursorg/motel/box"
-	_ "github.com/smallhoursorg/motel/liveswap"
+	"github.com/smallhoursorg/motel/liveswap"
 	"github.com/smallhoursorg/motel/notify"
 	_ "github.com/smallhoursorg/motel/penaltybox"
 
@@ -66,6 +66,9 @@ func main() {
 	if len(os.Args) > 1 {
 		notify.SetCommand(os.Args[1])
 	}
+	// GET /_motel/backups reads the backups through this binary, which
+	// links both modules (backups.go).
+	liveswap.SetBackupsSource(backupsLook{})
 	// The binary's name in every usage line Caddy's CLI prints
 	// (`moteld monitor setup [--metrics]`, not `caddy monitor …`), and
 	// moteld's own description at the root's help in place of Caddy's,

@@ -1,0 +1,30 @@
+motel · deploy.example.com · v0.7.0 │ alice@example.com · viewer of the box            live · 0s ago
+:backups                                                                 as of 14:12:40 UTC · 0s ago
+backups     not healthy, the box says
+            decided 14:12:32 UTC, 8s ago · the box's claim
+
+  APP     RESULT   LAST COMPLETE BACKUP  FRESH  RESTORE PROVEN        LATELY
+  blog    ok       13:30 (42m ago)       yes    11-12 14:12 (3d ago)  yes
+▲ images  ok       13:30 (42m ago)       yes    never                 no
+  shop    ok       13:30 (42m ago)       yes    11-12 14:12 (3d ago)  yes
+  wiki    pending  none                  no     never                 no
+
+what the box says
+  info     last run 2026-11-15 07:01 UTC
+  info     last drill 2026-11-12 03:10 UTC
+  info     repository last checked 2026-11-12 03:10 UTC: its structure, and data group 46/52: clean
+  info     blog: ok: last complete backup 2026-11-15 07:01 UTC, snapshot c4f0d7c1 (data at /var/lib…
+  info     blog: restore last proven: 2026-11-12 03:10 UTC, snapshot 9a1e33b0
+  info     images: ok: last complete backup 2026-11-15 07:01 UTC, snapshot 51c0aa9e (data at /var/l…
+▲ problem  images: restore not proven: no drill of it has run; `motel-backup drill`, as root, prove…
+  info     shop: ok: last complete backup 2026-11-15 07:01 UTC, snapshot 7d2b9e40 (data at /var/lib…
+  info     shop: restore last proven: 2026-11-12 03:10 UTC, snapshot 0c7e5d12
+  info     wiki: pending first run: no data at /var/lib/liveswap/wiki/shared yet
+  info     no backup unit running now
+
+This is the box's own claim, only as honest as the box: look from a machine of your own with restic
+  too (docs/backups.md, "Look from your own machine").
+
+
+
+↑↓ scroll  y json  c command  esc back  ? more

@@ -30,6 +30,7 @@ func TestScreens(t *testing.T) {
 		{"record-hostile", nil, []any{":", "deploys hostile v7", tcell.KeyEnter}},
 		{"me", nil, []any{":", "me", tcell.KeyEnter}},
 		{"box", nil, []any{":", "box", tcell.KeyEnter}},
+		{"backups", nil, []any{":", "backups", tcell.KeyEnter}},
 		{"help", nil, []any{"?"}},
 		{"command", nil, []any{":", "status blog", tcell.KeyEnter, "c"}},
 		{"json", nil, []any{":", "deploys hostile v7", tcell.KeyEnter, "y"}},

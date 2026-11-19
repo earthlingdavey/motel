@@ -49,8 +49,8 @@ box {
 ```
 
 - `grant <name> viewer app <app>` lets them read that app: its status,
-  its deploys, and its alerts. `grant <name> viewer box` lets them read every app
-  and the box's own status.
+  its deploys, and its alerts. `grant <name> viewer box` lets them read every app,
+  the box's own status, and what the box says of its backups.
 - A `signer` line's ed25519 key is already that signer's key as a
   person: `alice` above needs no `person` line, only a `grant`. Once
   the block names anyone in a `person` or `grant` line, every signer
@@ -116,13 +116,15 @@ signed:
 | `/<app>?deploy=<version>` | one deploy's record |
 | `/` | the box's status, for a viewer of the box |
 | `/_motel/apps/<app>/alerts` | the app's alerts, as the box's Alertmanager holds them: each one's name, severity, summary, when it began, and whether a silence holds it and until when, or a deploy of the app; and whether the box could ask (`"monitor"`: `on`, `off` when the box's monitor block sends nothing to anyone or there is none, `unanswered`). Only alerts about that app: not the box's own (disks, certificates, backups), not the silences or who wrote them. Up to 5 s old |
+| `/_motel/backups` | what the box says of its backups, for a viewer of the box: `motel-backup status --json` as any account on the box sees it (every app's name, data paths and snapshot ids; nothing of the credentials). It is the box's own claim: look from a machine of your own too (docs/backups.md, "Look from your own machine") |
 
 The `motel` command (for an M-series Mac, an archive on each release
 after v0.8.0; elsewhere, built from a clone of this repository:
 client/README.md, "Getting it") makes
 the token and asks:
 `motel whoami --box deploy.example.com`, `motel apps`, `motel status
-<app>`, `motel deploys <app> [<version>]`, `motel box status`; and
+<app>`, `motel deploys <app> [<version>]`, `motel box status`, `motel backup
+status`; and
 `motel` alone, on a terminal, shows the same on screens. Without
 it, this makes one by hand and asks who they are (`box` is the box's
 name; the key is theirs; GNU or macOS `base64`):
