@@ -122,7 +122,7 @@ func (s *Session) Overview(app string, now time.Time) OverviewView {
 	row := s.row(app, now)
 	// A deploy in flight is its own line: the version beside the state
 	// is the one serving, which is running while another is deployed.
-	word, moving := row.state, row.state == st.Phase
+	word, moving := row.state, row.moving
 	if moving {
 		word = "running"
 	}

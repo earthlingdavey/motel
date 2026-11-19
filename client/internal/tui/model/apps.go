@@ -53,6 +53,23 @@ type AppRow struct {
 	age   string
 	mem   float64
 	share float64
+	// moving is that STATE says a deploy in flight (inFlight's word)
+	// where it would say running.
+	moving bool
+}
+
+// inFlight is the word for a deploy in flight, and whether one is: its
+// phase, or "deploying" while the box names one ("deploying") whose
+// phase is still idle (its upload is being received). An older box,
+// which sends no "deploying", says one only by its phase.
+func inFlight(st wire.Status) (string, bool) {
+	switch {
+	case st.Phase != "idle":
+		return st.Phase, true
+	case st.Deploying != nil:
+		return "deploying", true
+	}
+	return "", false
 }
 
 // Sorts are the apps screen's orders, which s cycles.
@@ -320,6 +337,7 @@ func (s *Session) row(name string, now time.Time) (r AppRow) {
 	if st.Watchdog != nil {
 		wd = *st.Watchdog
 	}
+	flight, flying := inFlight(st)
 	switch {
 	case st.CurrentVersion == "":
 		set(MarkNothing, "not deployed")
@@ -333,8 +351,13 @@ func (s *Session) row(name string, now time.Time) (r AppRow) {
 		set(MarkBroken, "stopped", own("stopped: "+short(st.CurrentVersion)+" is not running"))
 	case wd.State == "backoff":
 		set(MarkLook, "backoff", own("backoff: the watchdog waits to restart it; "+strconv.Itoa(wd.Failures)+" failed checks in a row"))
-	case st.Phase != "idle":
-		set(MarkMoving, st.Phase, own("deploying: "+st.Phase+" (seen "+Ago(now.Sub(at))+" ago)"))
+	case flying:
+		why := "deploying: " + flight
+		if flight == "deploying" {
+			why = flight
+		}
+		set(MarkMoving, flight, own(why+" (seen "+Ago(now.Sub(at))+" ago)"))
+		r.moving = true
 	default:
 		set(MarkNone, "running")
 	}

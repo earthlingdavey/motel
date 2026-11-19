@@ -295,3 +295,53 @@ func TestRefusedRecordLaid(t *testing.T) {
 		}
 	}
 }
+
+// TestUploadInFlight: while a push is uploading (the box sends
+// "deploying" with its phase still idle), the apps row says the deploy
+// as the app's screen does: ⟳ and "deploying", in the strip and counted
+// in the crumb as a row in any other phase is, not "running". An older
+// box, which sends a phase and no "deploying", is shown as before.
+func TestUploadInFlight(t *testing.T) {
+	b, err := os.ReadFile("demo/fixtures/status/api.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	idle := strings.Replace(string(b), `"phase": "soaking"`, `"phase": "idle"`, 1)
+	old := strings.Replace(string(b), `"deploying"`, `"x_deploying"`, 1)
+	if idle == string(b) || old == string(b) {
+		t.Fatal("the api fixture moved")
+	}
+	for _, c := range []struct{ name, body, word, strip string }{
+		{"uploading", idle, "deploying", "deploying (seen 0s ago)"},
+		{"an older box", old, "soaking", "deploying: soaking (seen 0s ago)"},
+	} {
+		for _, sz := range [][2]int{{60, 16}, {80, 24}} {
+			h := start(t, sz[0], sz[1], func(f *demo.Fake) { f.Body("status/api.json", c.body) })
+			h.open(model.View{Screen: model.ScreenApps})
+			rows := screenRows(h)
+			if got := rows[1].text; !strings.Contains(got, " 12 apps · 5 need a look · ") {
+				t.Errorf("%s %dx%d: the crumb is drawn %q", c.name, sz[0], sz[1], got)
+			}
+			var row string
+			for _, r := range rows[2:] {
+				if f := strings.Fields(r.text); len(f) > 2 && f[1] == "api" && !strings.Contains(r.text, "(seen") {
+					row = r.text
+				}
+			}
+			if f := strings.Fields(row); len(f) < 3 || f[0] != "⟳" || f[2] != c.word {
+				t.Errorf("%s %dx%d: the api row is drawn %q, want ⟳ and %q", c.name, sz[0], sz[1], row, c.word)
+			}
+			// The strip shows its first reason: under a filter, api's.
+			h.press("/", "api", tcell.KeyEnter)
+			if strip := screenRows(h)[2].text; !strings.HasPrefix(strip, "⟳ api") || !strings.Contains(strip, c.strip) {
+				t.Errorf("%s %dx%d: the strip says %q, want %q", c.name, sz[0], sz[1], strip, c.strip)
+			}
+			h.open(app("api"))
+			for _, r := range screenRows(h) {
+				if strings.HasPrefix(r.text, "state ") && !strings.HasPrefix(r.text, "state       running 3b8812aa0c4f") {
+					t.Errorf("%s %dx%d: the app's state is drawn %q", c.name, sz[0], sz[1], r.text)
+				}
+			}
+		}
+	}
+}
