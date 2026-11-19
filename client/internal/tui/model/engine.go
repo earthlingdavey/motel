@@ -340,9 +340,11 @@ func (e *Engine) BoxOpen(open bool, now time.Time) {
 }
 
 // AlertsOpen says whose app screen is open, "" for none: that app's
-// alerts are read only then, every AlertsEvery, and at once on opening
-// it when they were never read or are older than that. Another app's
-// read is forgotten, and cancelled when it is in flight.
+// alerts are read only then, every AlertsEvery, and on opening it at
+// once when they were never answered or their answer is older than
+// that, else when it is that old. Another app's read in flight is
+// cancelled; its entry is kept, so one refused (a 403, a box older
+// than the read's 404) is asked again only by ctrl-r, as a status is.
 func (e *Engine) AlertsOpen(app string, now time.Time) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -350,17 +352,30 @@ func (e *Engine) AlertsOpen(app string, now time.Time) {
 	if app == e.alertsApp {
 		return
 	}
+	if old := e.alertsApp; old != "" {
+		e.dropLocked(Job{Kind: KAlerts, App: old})
+	}
 	e.alertsApp = app
-	for j := range e.jobs {
-		if j.Kind == KAlerts && j.App != app {
-			delete(e.jobs, j)
-			e.dropLocked(j)
+	if app != "" {
+		j := Job{Kind: KAlerts, App: app}
+		switch en, ok := e.jobs[j]; {
+		case !ok:
+			e.jobs[j] = &entry{due: now}
+		case en.held:
+		case en.answered.IsZero() || now.Sub(en.answered) >= AlertsEvery:
+			en.due = minTime(en.due, now)
+		default:
+			en.due = en.answered.Add(AlertsEvery)
 		}
 	}
-	if app != "" {
-		e.jobs[Job{Kind: KAlerts, App: app}] = &entry{due: now}
-	}
 	e.poke()
+}
+
+func minTime(a, b time.Time) time.Time {
+	if b.Before(a) {
+		return b
+	}
+	return a
 }
 
 // MeOpen says whether who am I's screen is open. whoami is always

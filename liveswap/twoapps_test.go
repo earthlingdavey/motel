@@ -31,7 +31,8 @@ import (
 // of the app list holds nothing of the other app, and its own canary
 // only as its filter's marker. Alertmanager holds an alert of each app
 // and a box event naming the first: an app-scoped row's answer holds
-// its own app's alert alone. It reads the route tables, and a row
+// its own app's alert alone. (That a box event carries no app label,
+// whatever its instance names, is notify's: TestHeldAlerts.) It reads the route tables, and a row
 // whose shape it does not know fails it, so a route added without its
 // expectations fails here.
 

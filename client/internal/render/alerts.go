@@ -38,12 +38,10 @@ func WriteAlerts(w io.Writer, a Alerts) error {
 	case "off":
 		p.line("%s has no monitor for %s: nothing is raised there", a.Host, a.App)
 		return p.err
-	case "unanswered":
-		p.line("%s could not ask its Alertmanager about %s's alerts", a.Host, a.App)
-		return p.err
 	case "on":
 	default:
-		p.line("%s answered about %s's alerts with a monitor word this client does not know: %s", a.Host, a.App, a.Monitor)
+		// The command says a monitor that did not answer, or a word it
+		// does not know, as its failure, not here.
 		return p.err
 	}
 	switch n := len(a.Alerts); n {

@@ -32,6 +32,8 @@ func TestReadAlerts(t *testing.T) {
 		{"a state a later box says", strings.Replace(whole, `"state":"suppressed"`, `"state":"muted"`, 1)},
 		{"no severity", strings.Replace(whole, `"severity":"warning",`, "", 1)},
 		{"a name of capitals", strings.Replace(whole, `"deploy_failed"`, `"ChannelFailed"`, 1)},
+		{"a Prometheus rule's name", strings.Replace(whole, `"deploy_failed"`, `"job:latency.p99-high"`, 1)},
+		{"a monitor word with an underscore", strings.Replace(whole, `"monitor":"on"`, `"monitor":"not_set_up"`, 1)},
 	} {
 		if _, err := read(c.body); err != nil {
 			t.Errorf("%s: %v", c.name, err)

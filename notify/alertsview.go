@@ -118,11 +118,14 @@ type alertsEntry struct {
 
 // alertsView is the process's one fetch at a time and its answer.
 type alertsView struct {
-	fetch alertsFetch // nil: heldAlerts over theSocket
+	fetch alertsFetch // nil: heldAlerts over theSocket, by am
 	now   func() time.Time
 
 	mu   sync.Mutex
 	last *alertsEntry
+	// am is the client of theSocket the fetches share, so they reuse its
+	// idle connection rather than each leaving one open for its 30 s.
+	am *amClient
 }
 
 // theAlerts is the process's: every config's source reads through it,
@@ -142,11 +145,17 @@ func (v *alertsView) get(ctx context.Context, logger *zap.Logger) (liveswap.Held
 		v.last = e
 		fetch := v.fetch
 		if fetch == nil {
-			fetch = newAMClient(theSocket).heldAlerts
+			if v.am == nil || v.am.socket != theSocket {
+				v.am = newAMClient(theSocket)
+			}
+			fetch = v.am.heldAlerts
 		}
 		v.mu.Unlock()
 		// The fetch is the box's, not this request's: a person who goes
 		// away does not end it for the next.
+		// The entry is closed however the fetch ends, a panic too: the
+		// requests waiting on it are told it did not answer.
+		defer close(e.done)
 		fctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), alertsBudget)
 		held, err := fetch(fctx)
 		cancel()
@@ -154,12 +163,9 @@ func (v *alertsView) get(ctx context.Context, logger *zap.Logger) (liveswap.Held
 			// A person is told only that it did not answer: the cause is the
 			// operator's, at most one line per alertsEvery, as kept.
 			logger.Warn("monitor: a person's read of an app's alerts was answered \"monitor\":\"unanswered\": Alertmanager did not answer", zap.Error(err))
-		}
-		if err != nil {
 			held = liveswap.HeldAlerts{}
 		}
 		e.held, e.ok = held, err == nil
-		close(e.done)
 		return e.held, e.ok
 	}
 	v.mu.Unlock()
