@@ -116,13 +116,13 @@ func checkInert(t *testing.T, s string) {
 		if hand != nil {
 			w = 16 + Width(termtext.From(hand(c)))
 		}
-		if !k.oneAt([]string{c}, w) {
+		scr := k.drawn(c, w)
+		if !k.oneOn(scr, w) {
 			t.Errorf("%s: %s (%q) is not drawn on one row", k.name, runes(s), s)
 		}
 		if k.name == "text view, a line" {
 			continue
 		}
-		scr := k.drawn(c, w)
 		for st := range styles(scr) {
 			if !ref[k.name][st] {
 				t.Errorf("%s: %s (%q) is drawn in a style of its own: %v", k.name, runes(s), s, st)

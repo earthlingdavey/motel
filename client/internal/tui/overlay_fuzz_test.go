@@ -88,14 +88,6 @@ func checkAnyOverlay(t *testing.T, h *harness, v model.View, json bool, w int) {
 	if k < len(want) {
 		t.Errorf("%d of the %d command lines drawn:\n%s", k, len(want), joinRows(rows, "\n"))
 	}
-	some := func(b []bool) bool {
-		for _, x := range b {
-			if x {
-				return true
-			}
-		}
-		return false
-	}
 	bad := func(i int) bool { return i < len(want) && (cut[i] || other[i]) }
 	var sentences []struct {
 		says string
@@ -109,9 +101,9 @@ func checkAnyOverlay(t *testing.T, h *harness, v model.View, json bool, w int) {
 	}
 	if !json {
 		add("the same read from a shell:", true)
-		add("a line above is cut at the window's edge, marked …: do not copy it.", some(cut))
-		add("a line above is not drawn as it runs (a character written as an escape, or one not drawn at all): do not copy it.", some(other))
-		add("select it with the mouse, or press P to quit and print it below your prompt", !some(cut) && !some(other))
+		add("a line above is cut at the window's edge, marked …: do not copy it.", slices.Contains(cut, true))
+		add("a line above is not drawn as it runs (a character written as an escape, or one not drawn at all): do not copy it.", slices.Contains(other, true))
+		add("select it with the mouse, or press P to quit and print it below your prompt", !slices.Contains(cut, true) && !slices.Contains(other, true))
 		add("P quits and prints the first command whole below your prompt", bad(0) || bad(1))
 		add("the second is it with --json among its flags", bad(1))
 		add("c then P on an app's own screen prints a row's command whole.", bad(2))

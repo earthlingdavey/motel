@@ -107,20 +107,28 @@ func TestClassesOnOneRow(t *testing.T) {
 		if triplesIn[k.name] {
 			cases = append(slices.Clip(pairs), triples...)
 		}
-		for p := range parts {
+		for p := range min(parts, (len(cases)+batch-1)/batch) {
 			t.Run(k.name+"/"+strconv.Itoa(p+1), func(t *testing.T) {
 				t.Parallel()
 				for i := p * batch; i < len(cases); i += parts * batch {
 					b := cases[i:min(i+batch, len(cases))]
 					text := strings.Join(b, "")
-					if !k.one(b) {
+					notOne := func() {
 						t.Errorf("the cases from %s to %s are not drawn on one row: %s", runes(b[0]), runes(b[len(b)-1]), culprit(b, func(c string) bool { return k.one([]string{c}) }))
 					}
 					if !boxWidths[k.name] {
+						if !k.one(b) {
+							notOne()
+						}
 						continue
 					}
+					// Drawn once, as wide as it is, for both checks.
 					want := Width(termtext.From(hand(text)))
-					if from, to, ok := span(k.drawn(text, 16+want), k.top); !ok || to-from != want {
+					scr := k.drawn(text, 16+want)
+					if !k.oneOn(scr, 16+want) {
+						notOne()
+					}
+					if from, to, ok := span(scr, k.top); !ok || to-from != want {
 						t.Errorf("the cases from %s to %s are drawn %d cells wide, and Width says %d: %s", runes(b[0]), runes(b[len(b)-1]), to-from, want, culprit(b, func(c string) bool {
 							f, to, ok := span(k.drawn(c, 16+Width(termtext.From(hand(c)))), k.top)
 							return ok && to-f == Width(termtext.From(hand(c)))
