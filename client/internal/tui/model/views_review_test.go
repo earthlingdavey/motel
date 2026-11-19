@@ -377,7 +377,6 @@ func TestMetricsLineAgeWithoutNow(t *testing.T) {
 		if !ok {
 			t.Errorf("memory %s: the metrics line is %q", c.mem, got)
 		}
-		t.Log(got)
 	}
 }
 
@@ -390,11 +389,12 @@ func TestTimesCarryTheirDay(t *testing.T) {
 	// before is 2025-10-11.
 	fields, fin, _, _, verdict := timesOf(t, `{"app":"blog","phase":"idle","running":true,"current_version":"v2","available_versions":["v2"],
 		"watchdog":{"state":"watching","restarts_in_window":0,"last_restart_at":"@-21d"},
-		"metrics":{"window":"1h","at":"@-21d","memory_bytes":{"now":1048576}},
+		"metrics":{"window":"1h","at":"@-21d","memory_bytes":{"max":1048576}},
 		"deploys":[{"version":"v2","status":"succeeded","started_at":"@-400d","finished_at":"@-400d"}],
 		"last_deploy":{"version":"v2","status":"succeeded","started_at":"@-400d","finished_at":"@-400d"}}`,
 		`{"version":"v2","status":"failed","phase":"starting","started_at":"@-21d","finished_at":"@-21d"}`)
-	for _, want := range []string{"last restart 10-25 14:00 UTC", "deployed    succeeded 400d ago (2025-10-11 14:00 UTC, 0.0 s)"} {
+	// No memory now, so the metrics line says its newest point.
+	for _, want := range []string{"last restart 10-25 14:00 UTC", "newest point 10-25 14:00:", "deployed    succeeded 400d ago (2025-10-11 14:00 UTC, 0.0 s)"} {
 		if !strings.Contains(fields, want) {
 			t.Errorf("old times: no %q in\n%s", want, fields)
 		}
