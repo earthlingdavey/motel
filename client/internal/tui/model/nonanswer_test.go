@@ -191,3 +191,73 @@ func TestWhoAmIMissNotPutOffByClosingMe(t *testing.T) {
 	}
 	t.Error("whoami not asked again within a minute of who am I closed")
 }
+
+// TestOwnCountForgottenAtR: a read's own count of failed reads in a
+// row does not outlive a stop and r, which is a new start. A status
+// that got no answer before a 401, and whoami that got none before a
+// 401 or an answer about another key (which keeps whoami's read alone),
+// each gets no answer again after r: it counts 1 in a row, the first,
+// which is what brings the read of another job forward (Done's probe)
+// and starts its backoff at 2 s: whoami is asked again 2 s later, not 4.
+func TestOwnCountForgottenAtR(t *testing.T) {
+	me := model.Job{Kind: model.KWhoAmI}
+	blog := model.Job{Kind: model.KStatus, App: "blog"}
+	for _, c := range []struct {
+		name string
+		j    model.Job
+		stop model.Fail
+	}{
+		{"a status, then a 401", blog, model.FailSignedOut},
+		{"whoami, then a 401", me, model.FailSignedOut},
+		{"whoami, then an answer about another key", me, model.FailAboutAnother},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			e := model.NewEngine(t0)
+			now := t0
+			sim(e, []string{"blog", "shop"}, now, time.Minute, 0, ok)
+			now = now.Add(time.Minute)
+			// take is c.j's read at now, the others answered.
+			take := func() {
+				t.Helper()
+				e.Touch(now)
+				e.Again(now, c.j)
+				if c.j.Kind == model.KWhoAmI && !takeMe(e, now) || c.j.Kind == model.KStatus && !takeApp(e, now, c.j.App) {
+					t.Fatalf("%v not taken at %v", c.j, now.Sub(t0))
+				}
+			}
+			take()
+			e.Done(c.j, now, fail(model.FailNoAnswer))
+			e.Again(now, me)
+			now = now.Add(5 * time.Second)
+			if !takeMe(e, now) {
+				t.Fatal("no whoami taken")
+			}
+			e.Done(me, now, fail(c.stop))
+			now = now.Add(10 * time.Second)
+			e.Touch(now)
+			if !e.Retry(now) {
+				t.Fatal("r did not ask")
+			}
+			if !takeMe(e, now) {
+				t.Fatal("r asked no whoami")
+			}
+			if c.j == me {
+				e.Done(me, now, fail(model.FailNoAnswer))
+			} else {
+				e.Done(me, now, nil)
+				now = now.Add(5 * time.Second)
+				take()
+				e.Done(c.j, now, fail(model.FailNoAnswer))
+			}
+			if n := e.Misses(c.j); n != 1 {
+				t.Errorf("after r, the first read with no answer counts %d in a row, want 1", n)
+			}
+			if c.j == me {
+				j, took, wait := e.Take(now.Add(2 * time.Second))
+				if !took || j != me {
+					t.Errorf("2 s after r's whoami got no answer, whoami is not taken: %+v (taken %v, wait %v)", j, took, wait)
+				}
+			}
+		})
+	}
+}
