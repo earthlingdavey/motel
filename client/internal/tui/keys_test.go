@@ -199,6 +199,73 @@ func TestStepAfterANewDeploy(t *testing.T) {
 	}
 }
 
+// TestBackToTheRecordLeft: d and the : line open an app's screen and
+// a record in one step, so the app's screen is never drawn before the
+// record is in front, and the deploys table still holds another app's
+// rows and cursor, or none. esc from the record must put the cursor on
+// the row of the record left, as the screen shows it: enter there
+// opens that record again.
+func TestBackToTheRecordLeft(t *testing.T) {
+	raw, err := os.ReadFile("demo/fixtures/status/shop.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m map[string]any
+	if err := json.Unmarshal(raw, &m); err != nil {
+		t.Fatal(err)
+	}
+	// Every deploy failed, so d opens the newest's record; no version
+	// is one of blog's.
+	d0 := m["deploys"].([]any)[0].(map[string]any)
+	const v4, v3, v2, v1 = "dddd00000004", "cccc00000003", "bbbb00000002", "aaaa00000001"
+	var ds []any
+	for i, v := range []string{v4, v3, v2, v1} {
+		d := maps.Clone(d0)
+		d["version"], d["started_at"] = v, "@-"+itoa(100*(i+1))+"s"
+		ds = append(ds, d)
+	}
+	m["deploys"] = ds
+	body, err := json.Marshal(m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct {
+		name string
+		blog []any // blog's screen first, its cursor moved by these; nil: no app's screen opened
+		keys []any // from the apps screen to shop's record
+		to   string
+	}{
+		{"d after blog on row 3", []any{"j", "j"}, []any{"/", "shop", tcell.KeyEnter, "d"}, v4},
+		{"d, no app opened before", nil, []any{"/", "shop", tcell.KeyEnter, "d"}, v4},
+		{": after blog on row 1", []any{}, []any{":", "deploys shop " + v2, tcell.KeyEnter}, v2},
+		{": after blog on row 4", []any{"j", "j", "j"}, []any{":", "deploys shop " + v2, tcell.KeyEnter}, v2},
+		{": no app opened before", nil, []any{":", "deploys shop " + v2, tcell.KeyEnter}, v2},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			h := start(t, 100, 30, func(f *demo.Fake) { f.Body("status/shop.json", string(body)) })
+			if c.blog != nil {
+				h.open(app("blog"))
+				h.press(append(c.blog, tcell.KeyEscape)...)
+			}
+			h.press(c.keys...)
+			if v := h.top(); v.Screen != model.ScreenRecord || v.App != "shop" || v.Version != c.to {
+				t.Fatalf("opened %+v, want shop's record of %s", v, c.to)
+			}
+			h.press(tcell.KeyEscape)
+			if v := h.top(); v.Screen != model.ScreenApp || v.App != "shop" {
+				t.Fatalf("esc went to %+v, want shop's screen", v)
+			}
+			if got := cursorOn(h, v4, v3, v2, v1); got != c.to {
+				t.Fatalf("esc: the screen's cursor is on %q, want %q\n%s", got, c.to, h.screen())
+			}
+			h.press(tcell.KeyEnter)
+			if v := h.top(); v.Screen != model.ScreenRecord || v.Version != c.to {
+				t.Fatalf("enter after esc opened %+v, want the record of %s", v, c.to)
+			}
+		})
+	}
+}
+
 // cursorOn is the one of versions on the screen's reversed row: the
 // table's cursor, as drawn.
 func cursorOn(h *harness, versions ...string) string {

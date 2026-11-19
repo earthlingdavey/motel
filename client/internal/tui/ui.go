@@ -172,10 +172,22 @@ func (u *UI) back() {
 	case u.overlay != 0:
 		u.overlay = 0
 	case len(u.stack) > 1:
-		if v := u.top(); v.Screen == model.ScreenRecord {
+		v := u.top()
+		if v.Screen == model.ScreenRecord {
 			u.S.Engine.Drop(model.Job{Kind: model.KDeploy, App: v.App, Version: v.Version})
 		}
 		u.stack = u.stack[:len(u.stack)-1]
+		if b := u.top(); v.Screen == model.ScreenRecord && b.Screen == model.ScreenApp && b.App == v.App {
+			// The cursor goes to the record left. d and the : line open
+			// the record with its app's screen, never drawn between: the
+			// table may still hold another app's rows and cursor.
+			// renderApp keeps it on these rows' version.
+			rows := u.S.Overview(v.App, u.now()).Deploys
+			if i := u.deployRow(rows, v.Version); i >= 0 {
+				u.deployRows = rows
+				u.deploys.Select(i+1, 0)
+			}
+		}
 	}
 	u.show()
 }
@@ -320,10 +332,7 @@ func (u *UI) shown(v model.View) []model.Job {
 func (u *UI) step(by int) {
 	v := u.top()
 	rows := u.S.Overview(v.App, u.now()).Deploys
-	i, _ := u.deploys.GetSelection()
-	if i--; i < 0 || i >= len(rows) || rows[i].Version != v.Version {
-		i = slices.IndexFunc(rows, func(r model.DeployRow) bool { return r.Version == v.Version })
-	}
+	i := u.deployRow(rows, v.Version)
 	if i < 0 || i+by < 0 || i+by >= len(rows) {
 		return
 	}
@@ -339,6 +348,17 @@ func (u *UI) step(by int) {
 	// rows): show reads it again.
 	u.inFront = model.View{}
 	u.show()
+}
+
+// deployRow is the index in rows of version's row: the deploys table's
+// cursor's when it holds version, else the first that does; -1 when
+// none does.
+func (u *UI) deployRow(rows []model.DeployRow, version string) int {
+	i, _ := u.deploys.GetSelection()
+	if i--; i < 0 || i >= len(rows) || rows[i].Version != version {
+		i = slices.IndexFunc(rows, func(r model.DeployRow) bool { return r.Version == version })
+	}
+	return i
 }
 
 func (u *UI) openApp(row int) {
