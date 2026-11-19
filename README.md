@@ -381,7 +381,9 @@ The motel (client) column is the laptop client, which no server
 installs: it too links no Caddy, and its binary holds the client's own
 packages, `liveswap/wire`, cobra and pflag, and for its screens tview,
 tcell and the modules they bring (gdamore/encoding, go-colorful,
-uniseg, x/term and x/text), and nothing else (`TestLinksNoCaddy`). Its
+uniseg, x/term, the x/sys it brings, and x/text; x/term is also what
+the client itself asks whether stdout is a terminal), and nothing else
+(`TestLinksNoCaddy`). Its
 module graph is larger than that (about 180 modules) only because
 `liveswap/wire` is a package of the liveswap module, whose go.mod
 requires Caddy.
