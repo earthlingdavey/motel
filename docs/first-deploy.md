@@ -47,7 +47,7 @@ Names used throughout — replace them with yours as you go:
 | `your-org/boxes` | The private GitHub repository that holds the box's config |
 | `example` | The app's name on the box |
 
-## 1. A box, two names, two ports
+## 1. A box, two names, open ports
 
 You need a real virtual machine, not a container. Providers call the
 kind you want **KVM**; at Hetzner, say, the cheapest KVM tier is enough
@@ -60,9 +60,13 @@ minute. At the provider:
 1. Create a server with **Debian 13** as the image and your SSH public
    key. Architecture is your choice; note it, since the release `.deb`
    and the Node example's executable are per-architecture.
-2. Ports **80 and 443** must be reachable from the internet. If the
-   provider has a firewall, allow both from anywhere. If it has none,
-   there is nothing to do.
+2. **TCP 80 and 443** must be reachable from the internet, and
+   **UDP 443** too for HTTP/3. If the provider has a firewall, allow
+   all three from anywhere; on one where each rule names a protocol,
+   such as Hetzner Cloud's, that is a rule for each. If it has none,
+   there is nothing to do. Leaving UDP 443 closed is a fine choice:
+   everything works, and browsers fall back to HTTP/2 over TCP without
+   saying so. The end of step 3 checks it.
 3. Point two DNS names at the server's address: `example.com` and
    `deploy.example.com`. motel gets certificates for both itself,
    once the names resolve and the ports are open.
@@ -403,6 +407,22 @@ has how. With nothing deployed yet, a correct box looks like this:
   `{"error":"invalid or missing deploy token …"}`, in a browser or with
   `curl -i`. That is the webhook working: a deploy carries a token, and
   nothing without one gets further than this.
+- If UDP 443 is open (step 1) and the Caddyfile leaves HTTP/3 on (it
+  is on unless a `protocols` line in the `servers` option, a `bind` or
+  `default_bind` leaves out `h3`; the one in `tls` is TLS versions),
+  this, run from outside the box, prints the same status as the first
+  item, over HTTP/3:
+
+  ```sh
+  curl --http3-only --max-time 10 -sS -o /dev/null -w '%{http_code}\n' https://example.com/
+  ```
+
+  An error instead, such as a timeout (`curl: (28)`) or `Connection
+  refused` (`curl: (7)`), means no HTTP/3 answer came back. Check the
+  UDP 443 rule at the provider's firewall first; on the box,
+  `ss -ulnp 'sport = :443'` shows whether moteld listens on UDP 443.
+  The check needs a curl built with HTTP/3, which `curl -V` lists as
+  `HTTP3` under `Features`; without one, skip it.
 - `journalctl -u moteld | grep 'liveswap started'`, on the box, gains
   a line with `"apps":1,"app_names":["example"]`.
 - The workflow run is green.

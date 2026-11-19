@@ -182,6 +182,24 @@ what it runs.
      `{"error":"invalid or missing deploy token …"}`, in a browser or
      with `curl -i`. That is the webhook working: a deploy carries a
      token, and nothing without one gets further than this.
+   - If UDP 443 is open
+     ([Your first deploy](https://github.com/smallhoursorg/motel/blob/main/docs/first-deploy.md),
+     step 1) and the Caddyfile leaves HTTP/3 on (it is on unless a
+     `protocols` line in the `servers` option, a `bind` or
+     `default_bind` leaves out `h3`; the one in `tls` is TLS versions),
+     this, run from outside the box, prints the same status as the
+     first item, over HTTP/3:
+
+     ```sh
+     curl --http3-only --max-time 10 -sS -o /dev/null -w '%{http_code}\n' https://example.com/
+     ```
+
+     An error instead, such as a timeout (`curl: (28)`) or `Connection
+     refused` (`curl: (7)`), means no HTTP/3 answer came back. Check
+     the UDP 443 rule at the provider's firewall first; on the box,
+     `ss -ulnp 'sport = :443'` shows whether moteld listens on UDP 443.
+     The check needs a curl built with HTTP/3, which `curl -V` lists as
+     `HTTP3` under `Features`; without one, skip it.
 
 An app's secrets are commits too, encrypted so that only the box
 and its readers can read them: see [Secrets](#secrets). Hardening the box — SSH by key only, the
