@@ -710,23 +710,48 @@ func held(s *string, in func(string) bool) bool {
 // asks, whatever else it holds: the whoami command's rule
 // (model.AboutAnother, the same comparison, which the command and the
 // TUI make again on the value returned, and say). The key and the box
-// are read on their own, as strings, and are all v is given; nothing
-// else of the answer is read or held to its grammar (hold): neither
-// shows anything else of such an answer, and a value missing or outside
-// its grammar would otherwise hide that it is about another.
+// are read on their own, each compared when it is there and a string,
+// and are all v is given; nothing else of the answer is read or held to
+// its grammar (hold): neither shows anything else of such an answer,
+// and a value missing or outside its grammar, the other of the two
+// among them, would otherwise hide that it is about another. One of the
+// two not there, or not a string, is given as this side's own, so that
+// only the one named is said to differ; an answer with neither is not
+// about another.
 func (c *Client) aboutAnother(ans *Answer, v any) bool {
 	me, ok := v.(*wire.WhoAmI)
 	pt, person := c.Cred.(*PersonToken)
 	var named struct {
-		Key *string `json:"key"`
-		Box *string `json:"box"`
+		Key json.RawMessage `json:"key"`
+		Box json.RawMessage `json:"box"`
 	}
-	if !ok || !person || decodeObject(ans, &named) != nil || named.Key == nil || named.Box == nil ||
-		*named.Key == pt.Key.Public.Fingerprint() && *named.Box == c.Box.Host {
+	if !ok || !person || decodeObject(ans, &named) != nil {
 		return false
 	}
-	*me = wire.WhoAmI{Key: *named.Key, Box: *named.Box}
+	key, keyNamed := jsonString(named.Key)
+	box, boxNamed := jsonString(named.Box)
+	fp := pt.Key.Public.Fingerprint()
+	if !keyNamed {
+		key = fp
+	}
+	if !boxNamed {
+		box = c.Box.Host
+	}
+	if key == fp && box == c.Box.Host {
+		return false
+	}
+	*me = wire.WhoAmI{Key: key, Box: box}
 	return true
+}
+
+// jsonString is raw as a JSON string, and false when it is absent, null
+// or not a string.
+func jsonString(raw json.RawMessage) (string, bool) {
+	var s *string
+	if json.Unmarshal(raw, &s) != nil || s == nil {
+		return "", false
+	}
+	return *s, true
 }
 
 // hold says why a body that decoded is still not one an honest box

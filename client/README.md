@@ -103,7 +103,7 @@ quote is the client's own), and no message carries a decoder's error,
 which would quote the body. `whoami` takes an answer only when its name,
 release, roles and scopes are of the box's grammars and no required
 field is missing or `null`; it shows the key this command signed with
-and the box it asked, and an answer naming another key or box, whatever else it holds, prints
+and the box it asked, and an answer naming another key or box, whatever else it holds (the other of the two missing, `null` or not a string among it), prints
 only a warning quoting the box's value, and exits 3. The release and
 the box's protocol are read from whoami's body alone: no header names
 motel. So nothing tells a box's own 5xx from a gateway's in front of
