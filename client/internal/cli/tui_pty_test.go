@@ -97,10 +97,7 @@ func TestTUIPtyHelper(t *testing.T) {
 // terminal before the screen holds it (the first signature) and not
 // once it does (r's).
 func TestTUIRSignsAfresh(t *testing.T) {
-	script, err := exec.LookPath("script")
-	if err != nil {
-		t.Skip("NOT RUN: no script(1) to make a pty with; r's new token and the stderr gate are not held here")
-	}
+	script := ptyScript(t, "r's new token and the stderr gate are not held here")
 	self, err := os.Executable()
 	if err != nil {
 		t.Fatal(err)

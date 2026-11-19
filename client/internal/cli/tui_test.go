@@ -337,14 +337,28 @@ func TestHangUpHelper(t *testing.T) {
 	_, _ = os.Stdout.WriteString("RESULT exit " + strconv.Itoa(code) + ", stderr " + strconv.Quote(stderr) + "\n")
 }
 
+// ptyScript is util-linux's script(1), which these tests run as
+// script -qec <command> /dev/null to make a pty; the test is skipped,
+// saying what is not held, where there is none. Another script (BSD's,
+// on macOS, or busybox's) takes neither -e nor -c so: util-linux's
+// alone says so to --version.
+func ptyScript(t *testing.T, notHeld string) string {
+	t.Helper()
+	script, err := exec.LookPath("script")
+	if err != nil {
+		t.Skip("NOT RUN: no script(1) to make a pty with; " + notHeld)
+	}
+	if v, err := exec.Command(script, "--version").Output(); err != nil || !strings.Contains(string(v), "util-linux") {
+		t.Skip("NOT RUN: " + script + " is not util-linux's script(1), whose -qec makes the pty these tests use; " + notHeld)
+	}
+	return script
+}
+
 // TestHangUpWithTheScreenUp: SIGHUP while the screen is up ends motel
 // tui as an interrupt does: exit 130, nothing said. Under a real pty
 // (script(1) makes one), as the screen needs a terminal.
 func TestHangUpWithTheScreenUp(t *testing.T) {
-	script, err := exec.LookPath("script")
-	if err != nil {
-		t.Skip("NOT RUN: no script(1) to make a pty with; SIGHUP with the screen up is not held here")
-	}
+	script := ptyScript(t, "SIGHUP with the screen up is not held here")
 	self, err := os.Executable()
 	if err != nil {
 		t.Fatal(err)
