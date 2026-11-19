@@ -162,7 +162,13 @@ func tags(c model.Class, colour bool) (string, string) {
 	return "", ""
 }
 
-// Line is a model line as tview text.
+// Line is a model line as tview text. It does not hold its own tags
+// against the text beside them: unbreak asks about the segments with
+// the tags left out, and tview steps otherwise at a tag, so box free
+// text put directly after a dressed segment (one tags dresses) could
+// begin a row, keep a style open, or be drawn wider than Width says. No
+// screen puts it there today, and no test would fail if one did: put
+// box free text only after a plain or label segment.
 func Line(l model.Line, colour bool) Shown {
 	var b strings.Builder
 	segs := make([]string, len(l))
