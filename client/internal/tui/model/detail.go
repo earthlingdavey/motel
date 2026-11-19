@@ -120,7 +120,16 @@ func (s *Session) Overview(app string, now time.Time) OverviewView {
 		return v
 	}
 	row := s.row(app, now)
-	state := Line{ownC(row.Cells[ColState].String(), row.Mark.Class()), own(" " + st.CurrentVersion)}
+	// A deploy in flight is its own line: the version beside the state
+	// is the one serving, which is running while another is deployed.
+	word, moving := row.state, row.state == st.Phase
+	if moving {
+		word = "running"
+	}
+	if row.Stale {
+		word += " · stale"
+	}
+	state := Line{ownC(word, row.Mark.Class()), own(" " + st.CurrentVersion)}
 	if st.PID != 0 {
 		state = append(state, own(" · pid "+strconv.Itoa(st.PID)))
 	}
@@ -128,6 +137,25 @@ func (s *Session) Overview(app string, now time.Time) OverviewView {
 		state = append(state, own(" · unit "+st.Unit))
 	}
 	v.Fields = append(v.Fields, field("state", state...))
+	if d := st.Deploying; d != nil || moving {
+		// Its version, its phase, when it started, by whom: each a token of
+		// its grammar or the client's words, but who, the box's free text.
+		var words []string
+		if d != nil {
+			words = append(words, d.Version)
+		}
+		if st.Phase != "idle" {
+			words = append(words, st.Phase)
+		}
+		if d != nil && !d.StartedAt.IsZero() {
+			words = append(words, "started "+since(d.StartedAt, now)+" ("+clock(d.StartedAt, now, false)+" UTC)")
+		}
+		l := Line{own(strings.Join(words, " "))}
+		if d != nil && d.By != "" {
+			l = append(l, own(" by "), boxT(d.By))
+		}
+		v.Fields = append(v.Fields, field("deploying", l...))
+	}
 	if wd := st.Watchdog; wd != nil {
 		// The client's check lets through the states it knows and its
 		// own words for one the box's filter hid; anything else would

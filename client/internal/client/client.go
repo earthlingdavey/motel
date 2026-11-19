@@ -792,6 +792,18 @@ func hold(v any) string {
 				return why
 			}
 		}
+		// The deploy in flight is printed beside the running version: its
+		// version and phases to the grammars of a record's.
+		if d := a.Deploying; d != nil {
+			if !held(&d.Version, isVersion) {
+				return "a version in it is not a version"
+			}
+			for _, p := range d.Phases {
+				if !outcomePhases[p.Name] {
+					return "a deploy's phase in it is not one a deploy has"
+				}
+			}
+		}
 		if d := a.LastDeploy; d != nil {
 			return holdOutcome(&d.Version, d.Status, d.Phase, d.Phases)
 		}

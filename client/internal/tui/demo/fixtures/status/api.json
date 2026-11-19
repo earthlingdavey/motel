@@ -18,6 +18,38 @@
   "tasks_max": 64,
   "cpu_quota": 100
  },
+ "deploying": {
+  "version": "4c2d9e7b1a05",
+  "deployed_by": "github:example/api@refs/heads/main",
+  "started_at": "@-25s",
+  "phases": [
+   {
+    "name": "downloading",
+    "started_at": "@-25s",
+    "seconds": 1.1
+   },
+   {
+    "name": "extracting",
+    "started_at": "@-24s",
+    "seconds": 0.7
+   },
+   {
+    "name": "preparing",
+    "started_at": "@-23s",
+    "seconds": 3.9
+   },
+   {
+    "name": "starting",
+    "started_at": "@-19s",
+    "seconds": 1.0
+   },
+   {
+    "name": "soaking",
+    "started_at": "@-18s",
+    "seconds": 18.0
+   }
+  ]
+ },
  "deploys": [
   {
    "version": "3b8812aa0c4f",
