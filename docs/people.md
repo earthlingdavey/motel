@@ -120,7 +120,8 @@ The `motel` command (no release ships it as a binary: it is built
 from a clone of this repository, client/README.md, "Getting it") makes
 the token and asks:
 `motel whoami --box deploy.example.com`, `motel apps`, `motel status
-<app>`, `motel deploys <app> [<version>]`, `motel box status`. Without
+<app>`, `motel deploys <app> [<version>]`, `motel box status`; and
+`motel` alone, on a terminal, shows the same on screens. Without
 it, this makes one by hand and asks who they are (`box` is the box's
 name; the key is theirs; GNU or macOS `base64`):
 

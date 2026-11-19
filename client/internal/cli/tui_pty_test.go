@@ -47,7 +47,7 @@ func (k *standInKeygen) Output(_ context.Context, c local.Cmd) ([]byte, error) {
 	return []byte("-----BEGIN SSH SIGNATURE-----\n" + sig + "\n-----END SSH SIGNATURE-----\n"), nil
 }
 
-// TestTUIPtyHelper is the TUI as `motel tui` starts it, on the pty
+// TestTUIPtyHelper is the TUI as `motel` starts it, on the pty
 // TestTUIRSignsAfresh runs it under: a box that refuses the first token
 // signed (as one refused for its times), and answers every later one.
 func TestTUIPtyHelper(t *testing.T) {
@@ -81,7 +81,7 @@ func TestTUIPtyHelper(t *testing.T) {
 		t.Fatal(err)
 	}
 	env := map[string]string{"MOTEL_KEY": "~/me.pub", "MOTEL_URL": box.URL + "/blog"}
-	code := Main(context.Background(), []string{"tui"}, Env{
+	code := Main(context.Background(), nil, Env{
 		Getenv: func(k string) string { return env[k] }, Stdout: os.Stdout, Stderr: os.Stderr, Terminal: true,
 		Dir: t.TempDir(), Home: home, Now: time.Now, Sleep: func(context.Context, time.Duration) error { return nil },
 		Transport: box.Client().Transport, Run: &standInKeygen{}, Version: "test",
@@ -89,7 +89,7 @@ func TestTUIPtyHelper(t *testing.T) {
 	fmt.Printf("\r\nHELPER EXIT %d\r\n", code)
 }
 
-// TestTUIRSignsAfresh: `motel tui` as a person runs it, on a pty, with
+// TestTUIRSignsAfresh: `motel` as a person runs it, on a pty, with
 // the client, the signer and ssh-keygen's stderr as tui.go builds them.
 // The box refuses the token first signed, and the screen says so; r
 // signs a new token, from the key, which the box takes, and the screen
@@ -172,7 +172,7 @@ func TestTUIRSignsAfresh(t *testing.T) {
 	_ = cmd.Wait()
 	tty := seen()
 	if !strings.Contains(tty, "HELPER EXIT 0") {
-		t.Errorf("motel tui did not exit 0:\n%q", tty)
+		t.Errorf("motel did not exit 0:\n%q", tty)
 	}
 	if !strings.Contains(tty, keygenWords(1)) {
 		t.Errorf("ssh-keygen's words at the first signature, before the screen, did not reach the terminal:\n%q", tty)

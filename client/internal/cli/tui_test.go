@@ -246,7 +246,7 @@ func TestTUIRefusesAPassphraseKey(t *testing.T) {
 		sent++
 		return fb.srv.Client().Transport.RoundTrip(r)
 	})
-	code := Main(context.Background(), []string{"tui"}, Env{
+	code := Main(context.Background(), nil, Env{Terminal: true,
 		Getenv: func(k string) string { return env[k] }, Stdout: &out, Stderr: &errOut, Dir: t.TempDir(), Home: home,
 		Now: time.Now, Sleep: func(context.Context, time.Duration) error { return nil },
 		Transport: rt, Run: noPrograms{}, Signer: &fixedSigner{}, Version: "test",
@@ -261,7 +261,7 @@ func TestTUIRefusesAPassphraseKey(t *testing.T) {
 
 // TestDemoHidden: --demo is not in the help, and it runs with no box.
 func TestDemoHidden(t *testing.T) {
-	r := run(t, nil, nil, "tui", "--help")
+	r := run(t, nil, nil, "--help")
 	if r.code != 0 || strings.Contains(r.stdout, "demo") {
 		t.Errorf("exit %d; help shows --demo:\n%s", r.code, r.stdout)
 	}
@@ -273,7 +273,7 @@ func TestInterruptedAtTheFirstRead(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	var out, errOut bytes.Buffer
-	code := Main(ctx, []string{"tui", "--demo"}, Env{
+	code := Main(ctx, []string{"--demo"}, Env{
 		Getenv: func(string) string { return "" }, Stdout: &out, Stderr: &errOut, Dir: t.TempDir(), Home: t.TempDir(),
 		Now: time.Now, Sleep: func(context.Context, time.Duration) error { return nil }, Run: noPrograms{}, Version: "test",
 	})
@@ -282,7 +282,7 @@ func TestInterruptedAtTheFirstRead(t *testing.T) {
 	}
 }
 
-// hangUp runs motel tui on the fake box and sends this process SIGHUP,
+// hangUp runs motel on the fake box and sends this process SIGHUP,
 // as a closed terminal window does, at the TUI's read number at
 // (from 1), which then waits to be cancelled; and says the exit code
 // and what stderr holds.
@@ -310,7 +310,7 @@ func hangUp(t *testing.T, at int32) (int, string) {
 		}
 	})
 	var out, errOut bytes.Buffer
-	code := Main(context.Background(), []string{"tui"}, Env{
+	code := Main(context.Background(), nil, Env{Terminal: true,
 		Getenv: func(k string) string { return env[k] }, Stdout: &out, Stderr: &errOut, Dir: t.TempDir(), Home: home,
 		Now: time.Now, Sleep: func(context.Context, time.Duration) error { return nil },
 		Transport: rt, Run: noPrograms{}, Signer: &fixedSigner{}, Version: "test",
@@ -318,7 +318,7 @@ func hangUp(t *testing.T, at int32) (int, string) {
 	return code, errOut.String()
 }
 
-// TestHangUpAtTheFirstRead: SIGHUP during the first read ends motel tui
+// TestHangUpAtTheFirstRead: SIGHUP during the first read ends motel
 // as an interrupt does: exit 130, nothing said.
 func TestHangUpAtTheFirstRead(t *testing.T) {
 	if code, stderr := hangUp(t, 1); code != client.ExitInterrupted || stderr != "" {
@@ -350,7 +350,7 @@ func (e endAt) Output(ctx context.Context, c local.Cmd) ([]byte, error) {
 }
 
 // TestSignalBeforeTheScreen: a closed terminal (SIGHUP) or an interrupt
-// (Main's context ends, as SIGINT and SIGTERM end it) while motel tui
+// (Main's context ends, as SIGINT and SIGTERM end it) while motel
 // sets up (the box found from the repository, the key from the agent,
 // the passphrase check) ends it as an interrupt does: exit 130, nothing
 // said, not the advice a failed step would give.
@@ -382,7 +382,7 @@ func TestSignalBeforeTheScreen(t *testing.T) {
 					end = func() { _ = syscall.Kill(os.Getpid(), syscall.SIGHUP) }
 				}
 				var out, errOut bytes.Buffer
-				code := Main(ctx, []string{"tui"}, Env{
+				code := Main(ctx, nil, Env{Terminal: true,
 					Getenv: func(k string) string { return s.env[k] }, Stdout: &out, Stderr: &errOut, Dir: t.TempDir(), Home: home,
 					Now: time.Now, Sleep: func(context.Context, time.Duration) error { return nil },
 					Run: endAt{name: s.program, end: end, once: &sync.Once{}}, Signer: &fixedSigner{}, Version: "test",
@@ -749,7 +749,7 @@ func TestNoScreenNothingSent(t *testing.T) {
 		t.Fatal(err)
 	}
 	env := map[string]string{"MOTEL_KEY": "~/me.pub", "MOTEL_URL": fb.srv.URL + "/blog"}
-	for _, args := range [][]string{{"tui"}, {"tui", "--demo"}} {
+	for _, args := range [][]string{{"--key", "~/me.pub"}, {"--demo"}} {
 		sent := 0
 		rt := roundTripFunc(func(r *http.Request) (*http.Response, error) {
 			sent++

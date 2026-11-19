@@ -34,10 +34,10 @@ motel status <app> [--range 1h|24h] an app's status
 motel deploys <app>                 its deploys, newest first
 motel deploys <app> <version>       one deploy's whole record
 motel box status                    the commit the box runs, its Caddyfile's digest, its key for secrets
-motel tui                           screens over the same reads (below)
+motel                               on a terminal, screens over the same reads (below)
 ```
 
-Each but `tui` takes `--json`. `whoami` and `apps` are asked with your own key
+Each command takes `--json`; `motel` alone, the screens, does not. `whoami` and `apps` are asked with your own key
 only: with `MOTEL_TOKEN` set, name the key with `--key` (else exit 2,
 nothing sent). `<app>` is a name, or the app's URL
 (`https://deploy.example.com/blog`, as `MOTEL_URL` holds it), which names
@@ -267,7 +267,7 @@ their fixes, and of its second part; the others are fixed:
 
 ## The TUI
 
-`motel tui` is a view over the reads above, in the same process. Its
+`motel` alone, on a terminal, is a view over the reads above, in the same process. With no arguments at all it prints its help instead when stdout is not a terminal (a pipe, a file, `$(…)`), exit 0, and, with a line under it saying why, exit 2, when it finds no box or key to read with or no screen to draw on; either way nothing is signed or sent. A flag (`--box`, `--key`) asks for the screen, which then fails as a command does. Its
 packages see the box through `model.Client`, one method per command,
 which `internal/cli/tui.go` alone builds over the client's reads; no
 package of the TUI reaches the client, a transport or a program
@@ -437,7 +437,7 @@ SIGINT, SIGTERM or SIGHUP sent to the process, or the terminal closed under the 
   off a short list, and `TestSafeBytes` draws the hostile fixture on a
   real terminfo screen and finds none of its attacks in the bytes.
 
-`motel tui --demo` (hidden) shows the test fixtures, marked SAMPLE
+`motel --demo` (hidden) shows the test fixtures, marked SAMPLE
 DATA in the title bar, with no box.
 
 ## Layout

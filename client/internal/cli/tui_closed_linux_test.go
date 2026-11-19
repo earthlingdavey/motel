@@ -37,7 +37,7 @@ func TestClosedTerminalHelper(t *testing.T) {
 	}
 	env := map[string]string{"MOTEL_KEY": "~/me.pub", "MOTEL_URL": fb.srv.URL + "/blog"}
 	var stdout, stderr bytes.Buffer
-	code := Main(context.Background(), []string{"tui"}, Env{
+	code := Main(context.Background(), nil, Env{Terminal: true,
 		Getenv: func(k string) string { return env[k] }, Stdout: &stdout, Stderr: &stderr, Dir: t.TempDir(), Home: home,
 		Now: time.Now, Sleep: func(context.Context, time.Duration) error { return nil },
 		Transport: fb.srv.Client().Transport, Run: noPrograms{}, Signer: &fixedSigner{}, Version: "test",
@@ -79,7 +79,7 @@ func ioctl(fd uintptr, req uintptr, arg unsafe.Pointer) error {
 
 // TestClosedTerminalWithTheScreenUp: the pty's master closed while the
 // screen is up, as a terminal emulator does when its window is closed,
-// ends motel tui as an interrupt does: exit 130, nothing said. The TUI
+// ends motel as an interrupt does: exit 130, nothing said. The TUI
 // runs under a leader of the pty's session that ignores SIGHUP
 // (TestClosedTerminalLeader), so the kernel's SIGHUP (sent to the
 // session's leader alone) never reaches it: what it sees is the read of

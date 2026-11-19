@@ -31,106 +31,133 @@ import (
 	"github.com/smallhoursorg/motel/liveswap/wire"
 )
 
-func (r *runner) tui() *cobra.Command {
+// screenLong is what motel alone does: the root's help, above the
+// experimental block.
+const screenLong = "motel alone shows them on screens in the terminal, over the same reads the\n" +
+	"commands make: the apps you may view sorted by what needs a look, an app's\n" +
+	"state and deploys, a deploy's record laid out for reading a failure, who you\n" +
+	"are, and the box. It only reads, well inside the box's limit of 2 requests a\n" +
+	"second and 60 at once: up to 30 at once to start, then at most 1.5 a second. It\n" +
+	"signs one token for ten minutes at a time, so a hardware key is touched about\n" +
+	"every nine, and never asks for a passphrase or a PIN: a key with a passphrase\n" +
+	"must be in the agent (ssh-add), and a hardware key that requires its PIN cannot\n" +
+	"be used there yet. ? lists the keys; c shows the command for a screen that\n" +
+	"reads the box, y the box's answer as JSON. It is asked with your own key only,\n" +
+	"and takes no --json. With no arguments at all it prints this help instead when\n" +
+	"stdout is not a terminal, and, with a line under it saying why, when it finds\n" +
+	"no box or key to read with."
+
+// screen makes motel alone, the root, open the screens: with its own
+// --box and --key, as every command that asks the box has, and the
+// hidden --demo.
+func (r *runner) screen(root *cobra.Command) {
 	var t target
 	var sample bool
-	c := &cobra.Command{
-		Use:   "tui",
-		Short: "Screens over the reads: the apps, an app and its deploys, a deploy's record (experimental)",
-		Long: "tui shows the box on screens in the terminal, over the same reads the other\n" +
-			"commands make: the apps you may view sorted by what needs a look, an app's\n" +
-			"state and deploys, a deploy's record laid out for reading a failure, who you\n" +
-			"are, and the box. It only reads, well inside the box's limit of 2 requests a\n" +
-			"second and 60 at once: up to 30 at once to start, then at most 1.5 a second. It\n" +
-			"signs one token for ten minutes at a time, so a hardware key is touched about\n" +
-			"every nine, and never asks for a passphrase or a PIN: a key with a passphrase\n" +
-			"must be in the agent (ssh-add), and a hardware key that requires its PIN cannot\n" +
-			"be used here yet. ? lists the keys; c shows the command for a screen that reads\n" +
-			"the box, y the box's answer as JSON. It is asked with your own key only.\n\n" + experimental,
-		Args: usageArgs(cobra.NoArgs),
-		RunE: func(cmd *cobra.Command, _ []string) (err error) {
-			if r.json {
-				return &client.Failure{Exit: client.ExitUsage, Message: "tui has no --json: it draws screens, and every other command takes --json"}
-			}
-			// A closed terminal window (SIGHUP) ends it as SIGTERM does:
-			// through the screen's event loop, which gives the terminal
-			// back, and with an interrupt's exit code (errInterrupted:
-			// Main's context does not carry it), whatever step it cut
-			// short said that step failed (a box, a key or a passphrase
-			// not found).
-			ctx, stop := signal.NotifyContext(cmd.Context(), tuiSignals...)
-			defer stop()
-			defer func() {
-				if ctx.Err() != nil {
-					err = errInterrupted
-				}
-			}()
-			// A start with no terminal to draw on (a CI job, cron, ssh
-			// without -t) or a TERM the screen cannot draw with ends
-			// here, with nothing signed or sent, as exit 2 says.
-			if r.env.Draw != nil {
-				if err := r.env.Draw(); err != nil {
-					return screenFailure(err)
-				}
-			}
-			o := tui.Options{Clock: tui.RealClock{}, Colour: r.env.Color, Tick: time.Second}
-			// Wall-clock time: a monotonic reading stops while a laptop
-			// sleeps, and ages and due times would leave the sleep out.
-			wall := func() time.Time { return r.env.Now().Round(0) }
-			s := &model.Session{Version: r.env.Version, Now: wall}
-			// Where the line that says the first reads wait goes (sayAsking),
-			// and what tells it a signature is being made or the client
-			// pauses.
-			errW := r.env.Stderr
-			var notify func(func(bool))
-			if sample {
-				s.Host, s.Demo, s.Key = demo.Host, true, demo.Key
-				s.TokenExpires = func() time.Time { return wall().Add(9 * time.Minute) }
-				o.Client = &demo.Fake{Now: wall}
-			} else {
-				gt := &gate{w: r.env.Stderr}
-				rr := *r
-				rr.env.Stderr = gt
-				c, err := rr.client(ctx, &t, nil, "", "tui")
-				if err != nil {
-					return err
-				}
-				pt := c.Cred.(*client.PersonToken)
-				if sshkey.Passphrased(ctx, r.env.Run, pt.Key) {
-					shown := termtext.From(strings.TrimSuffix(pt.Key.Shown, ".pub"))
-					return &client.Failure{Exit: client.ExitUsage, Message: shown.String() + " is protected by a passphrase, and the agent does not hold it: the TUI signs again about every nine minutes while its screen holds the terminal, where ssh-keygen could not ask for it. Add the key to the agent (ssh-add " + shown.String() + ") and run motel tui again."}
-				}
-				sig := forTUI(c, wall)
-				boxSession(s, c, pt)
-				s.TokenExpires = sig.Expires
-				o.Client, o.Signing, o.Started, o.Resign = live{c}, sig.Notify, gt.Close, pt.Forget
-				ps := &pauser{sleep: c.Sleep}
-				c.Sleep = ps.Sleep
-				errW = gt
-				notify = func(f func(bool)) { sig.Notify(f); ps.Notify(f) }
-			}
-			s.Engine = model.NewEngine(wall())
-			o.Session = s
-			said := sayAsking(ctx, errW, "motel: asking "+termtext.From(s.Host).String()+" who you are and for its apps; the screen opens when it answers, or within a minute if it does not (ctrl-c quits)\n",
-				func() <-chan time.Time { return o.Clock.After(askingAfter) }, notify)
-			start := tui.Prime(ctx, o)
-			said()
+	root.RunE = func(cmd *cobra.Command, _ []string) (err error) {
+		// motel with no arguments at all may be typed to see what it
+		// can do: into a pipe or a file it prints its help, as before
+		// there was a screen, and asks nothing. Any flag asks for the
+		// screen, and fails as a command does.
+		bare := cmd.Flags().NFlag() == 0
+		if bare && !r.env.Terminal {
+			return cmd.Help()
+		}
+		if r.json {
+			return &client.Failure{Exit: client.ExitUsage, Message: "motel alone has no --json: it draws screens, and every command takes --json"}
+		}
+		// A closed terminal window (SIGHUP) ends it as SIGTERM does:
+		// through the screen's event loop, which gives the terminal
+		// back, and with an interrupt's exit code (errInterrupted:
+		// Main's context does not carry it), whatever step it cut
+		// short said that step failed (a box, a key or a passphrase
+		// not found).
+		ctx, stop := signal.NotifyContext(cmd.Context(), tuiSignals...)
+		defer stop()
+		defer func() {
 			if ctx.Err() != nil {
-				// Interrupted at the first read (a touch not given): no
-				// screen with nothing refreshing behind it.
-				return errInterrupted
+				err = errInterrupted
 			}
-			print, err := tui.Run(ctx, o, start)
+		}()
+		// unopened is a step that stopped the screen before anything
+		// was signed or sent. Typed alone, motel then prints its help,
+		// and the line under it says what it did not find.
+		unopened := func(err error) error {
+			var f *client.Failure
+			if !bare || ctx.Err() != nil || !errors.As(err, &f) {
+				return err
+			}
+			if herr := cmd.Help(); herr != nil {
+				return herr
+			}
+			if !strings.HasPrefix(f.Message, "the screen") {
+				f = &client.Failure{Exit: f.Exit, Message: "the screen did not open: " + f.Message, Body: f.Body}
+			}
+			return f
+		}
+		// A start with no terminal to draw on (a CI job, cron, ssh
+		// without -t) or a TERM the screen cannot draw with ends
+		// here, with nothing signed or sent, as exit 2 says.
+		if r.env.Draw != nil {
+			if err := r.env.Draw(); err != nil {
+				return unopened(screenFailure(err))
+			}
+		}
+		o := tui.Options{Clock: tui.RealClock{}, Colour: r.env.Color, Tick: time.Second}
+		// Wall-clock time: a monotonic reading stops while a laptop
+		// sleeps, and ages and due times would leave the sleep out.
+		wall := func() time.Time { return r.env.Now().Round(0) }
+		s := &model.Session{Version: r.env.Version, Now: wall}
+		// Where the line that says the first reads wait goes (sayAsking),
+		// and what tells it a signature is being made or the client
+		// pauses.
+		errW := r.env.Stderr
+		var notify func(func(bool))
+		if sample {
+			s.Host, s.Demo, s.Key = demo.Host, true, demo.Key
+			s.TokenExpires = func() time.Time { return wall().Add(9 * time.Minute) }
+			o.Client = &demo.Fake{Now: wall}
+		} else {
+			gt := &gate{w: r.env.Stderr}
+			rr := *r
+			rr.env.Stderr = gt
+			c, err := rr.client(ctx, &t, nil, "", "the screen")
 			if err != nil {
-				return runFailure(err)
+				return unopened(err)
 			}
-			return r.printed(print)
-		},
+			pt := c.Cred.(*client.PersonToken)
+			if sshkey.Passphrased(ctx, r.env.Run, pt.Key) {
+				shown := termtext.From(strings.TrimSuffix(pt.Key.Shown, ".pub"))
+				return unopened(&client.Failure{Exit: client.ExitUsage, Message: shown.String() + " is protected by a passphrase, and the agent does not hold it: the screen signs again about every nine minutes while it holds the terminal, where ssh-keygen could not ask for it. Add the key to the agent (ssh-add " + shown.String() + ") and run motel again."})
+			}
+			sig := forTUI(c, wall)
+			boxSession(s, c, pt)
+			s.TokenExpires = sig.Expires
+			o.Client, o.Signing, o.Started, o.Resign = live{c}, sig.Notify, gt.Close, pt.Forget
+			ps := &pauser{sleep: c.Sleep}
+			c.Sleep = ps.Sleep
+			errW = gt
+			notify = func(f func(bool)) { sig.Notify(f); ps.Notify(f) }
+		}
+		s.Engine = model.NewEngine(wall())
+		o.Session = s
+		said := sayAsking(ctx, errW, "motel: asking "+termtext.From(s.Host).String()+" who you are and for its apps; the screen opens when it answers, or within a minute if it does not (ctrl-c quits)\n",
+			func() <-chan time.Time { return o.Clock.After(askingAfter) }, notify)
+		start := tui.Prime(ctx, o)
+		said()
+		if ctx.Err() != nil {
+			// Interrupted at the first read (a touch not given): no
+			// screen with nothing refreshing behind it.
+			return errInterrupted
+		}
+		print, err := tui.Run(ctx, o, start)
+		if err != nil {
+			return runFailure(err)
+		}
+		return r.printed(print)
 	}
-	t.flags(c)
-	c.Flags().BoolVar(&sample, "demo", false, "show sample data, with no box")
-	_ = c.Flags().MarkHidden("demo")
-	return c
+	t.flags(root)
+	root.Flags().BoolVar(&sample, "demo", false, "show sample data, with no box")
+	_ = root.Flags().MarkHidden("demo")
 }
 
 // boxSession is the box and key a live session shows: the host alone

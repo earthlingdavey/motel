@@ -131,7 +131,7 @@ func (r *runner) tree() *cobra.Command {
 	root := &cobra.Command{
 		Use:           "motel",
 		Short:         "Read a motel box over HTTPS (experimental)",
-		Long:          "motel reads a box over HTTPS: who your key is there and the apps it may view,\nan app's status and deploys, and the box's own state.\n\n" + experimental,
+		Long:          "motel reads a box over HTTPS: who your key is there and the apps it may view,\nan app's status and deploys, and the box's own state.\n\n" + screenLong + "\n\n" + experimental,
 		SilenceErrors: true,
 		SilenceUsage:  true,
 	}
@@ -141,6 +141,9 @@ func (r *runner) tree() *cobra.Command {
 	root.SetFlagErrorFunc(func(_ *cobra.Command, err error) error {
 		return &client.Failure{Exit: client.ExitUsage, Message: termtext.From(err.Error()).String()}
 	})
+	// The root runs the screens; its Args stay unset, so cobra still
+	// refuses a word that is not a command, naming the nearest.
+	r.screen(root)
 
 	box := &cobra.Command{
 		Use:     "box",
@@ -152,7 +155,7 @@ func (r *runner) tree() *cobra.Command {
 		},
 	}
 	box.AddCommand(r.boxStatus())
-	for _, c := range []*cobra.Command{r.version(), r.key(), r.whoami(), r.apps(), r.status(), r.deploys(), box, r.tui()} {
+	for _, c := range []*cobra.Command{r.version(), r.key(), r.whoami(), r.apps(), r.status(), r.deploys(), box} {
 		c.GroupID = "experimental"
 		root.AddCommand(c)
 	}
