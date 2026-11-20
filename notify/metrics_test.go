@@ -178,7 +178,9 @@ func TestStoreClient(t *testing.T) {
 			}
 			_, _ = io.WriteString(w, `{"status":"success","data":{"resultType":"vector","result":[{"metric":{"job":"vmalert"},"value":[1762776000,"1"]}]}}`)
 		case "/api/v1/query_range":
-			if r.URL.Query().Get("step") != "60" || r.URL.Query().Get("start") == "" {
+			// The latency offset asked for: a store set up before setup's
+			// 5 s keeps 30 s, past a series' newest step.
+			if r.URL.Query().Get("step") != "60" || r.URL.Query().Get("start") == "" || r.URL.Query().Get("latency_offset") != "5s" {
 				http.Error(w, "bad range", http.StatusBadRequest)
 				return
 			}

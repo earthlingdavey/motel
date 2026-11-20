@@ -155,8 +155,9 @@ func (v *seriesView) get(ctx context.Context, store rangeQuerier, socket, app, w
 // rounded down to the step, which lets it reuse what it computed for
 // the last one), so the newest point is of the last whole step, up to a
 // step old (the body's end says which); and a step that ended inside
-// the latency offset may not hold its last push yet, or is filled with
-// the one before it, so it is left for the next answer.
+// the latency offset may not hold its last push yet, so it is left for
+// the next answer. The store client asks for that offset (queryRange),
+// whatever the store's own.
 func askSeries(ctx context.Context, store rangeQuerier, app, window string, w seriesWindow, now time.Time) (wire.Series, error) {
 	step := int64(w.step / time.Second)
 	end := time.Unix(now.Add(-storeLatencyOffset).Unix()/step*step, 0).UTC()

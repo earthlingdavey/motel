@@ -429,7 +429,8 @@ made by hand. Accepted:
 | On the backups screen in a window 14 columns wide or less, far below the smallest the screens are laid for (60), a could not tell's quoted why is laid one character a row, each past its 14 columns of indent, so the rows show blank | 2 | 5 | 1 | 10 | 2 | accepted: no screen is laid for such a width; `y` shows the answer |
 | After a 404 to the backups (a moteld older than the read) the read is held until ctrl-r, and the screen does not say ctrl-r asks again, as an app's screen does not after a 404: once the box is upgraded it says the 404 until ctrl-r or `r` | 2 | 5 | 1 | 10 | 1 | accepted: the sentence names the cause, and ctrl-r is among the screen's keys (`?`) |
 | The metrics screen's plots are braille dots (U+2801 to U+28FF), which every East Asian width table gives one cell, and its axes and marks ASCII; but a terminal whose font has no braille draws each as its fallback glyph, and the plot reads as a row of boxes. The numbers above each plot (newest, highest, lowest, each with its time) still say what it shows | 2 | 2 | 1 | 4 | 2 (an ASCII plot, `.` and `'`, at half the height) | accepted: `motel metrics` prints the same numbers in words; the plots are checked on tcell's simulation screen alone, not yet in a real terminal or on a Mac |
-| A series point the box sends as other than a pair (`[t]`, `[t, v, x]`) is decoded as `[t, 0]` or its first two (Go's decoding into `[2]float64`), and drawn or printed as such. moteld sends pairs alone | 2 | 1 | 3 | 6 | 2 (the points decoded as lists of any length and refused unless pairs) | accepted: it takes a box that is not moteld's, which the answer's other grammars mostly catch; found in the series read's first self-review |
+| A series point the box sends as other than a pair of numbers (`[t]`, `[t, null]`, `[t, v, x]`) is decoded as `[t, 0]` or its first two (Go's decoding into `[2]float64`), and drawn or printed as such, a zero where moteld would have sent no pair. moteld sends pairs of numbers alone | 2 | 1 | 3 | 6 | 2 (the points decoded as lists of any length and refused unless pairs) | accepted: it takes a box that is not moteld's, which the answer's other grammars mostly catch; found in the series read's first self-review |
+| After the box refuses an app's status and then answers it again, a window of the app's series shown again within 30 s of its last answer says "asking…" until that answer is 30 s old, when it is read: the refusal dropped the answer held, and the engine waits out the answer's age | 3 | 2 | 3 | 18 | 2 (the engine told the answer was dropped) | accepted: it takes a refusal and a window shown again within 30 s; the read comes within 30 s. Found in the series read's second self-review |
 | A deploy mark on the metrics screen is a column of the window (28 minutes at 60 columns over a day, almost 5 hours over 14 days): two deploys in one column are one mark, and a mark says the deploy was within that column, not at its start. The legend line says how long a column is | 2 | 5 | 1 | 10 | 2 | accepted: the record's own time is on the app's screen (enter on its row) |
 | The metrics screen marks the latest deploy of each version the box keeps a record of, from the app's status: a version deployed twice is marked at its last deploy alone, a deploy older than the oldest record the box keeps is not marked, and a failed deploy never is. The legend says "a version's latest deploy that succeeded", and "records from <time>" when the oldest is inside the window | 2 | 5 | 1 | 10 | 3 (a read of every deploy, which the owner's M2 decision rules out) | accepted, by the owner's decision of 2026-11-20 that marks need no new read |
 | The box screen's alerts line counts an alert in a state the client does not know (none Alertmanager 0.28 has: `active`, `suppressed`, `unprocessed`) as firing, and marks the line as one that needs a look | 2 | 1 | 3 | 6 | 2 | accepted: `:alerts` says the state as not known, the box's word quoted; counting such a state apart is a fourth count on the line for a state no Alertmanager sends |
@@ -522,14 +523,16 @@ again opens the window last shown, and `:metrics <app> [<window>]` goes
 there from anywhere. It says the window, its step and its end with
 that end's age, and what its deploy marks are; then a plot a panel the
 box sent and the client knows, as tall as lets the first be whole on
-the page (at 60x16, six rows of four dots each), above each its
+the page, three rows at the least (at 60x16, six rows of four dots
+each), above each its
 newest value with its time and age and, on a row of its own, its
 highest and lowest with their times, those two again at the top and
 the bottom of its axis, and under it the time axis with a `^` in each column that holds a
 version's latest deploy that succeeded (from the app's status, which
 the screen goes on reading), broken (a space) in each column whose span
-holds a step with no point, and under it the window's two ends and how
-many of its steps have a point. Points a step apart are joined; a step
+holds part of a step with no point (a deploy's `^` stands over a
+break), and under it the window's two ends and how many of its steps
+have a point. Points a step apart are joined; a step
 with no point is a gap, never a zero or a line across it, and where a
 column holds several steps the axis's break says it. A panel absent says why (no point in the window; the request
 panels only for an app behind `observe`), and one the client does not

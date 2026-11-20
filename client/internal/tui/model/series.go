@@ -62,6 +62,8 @@ func SeriesValue(name string, v float64, compact bool) string {
 	switch name {
 	case wire.PanelMemory:
 		switch {
+		case compact && v < 1<<20:
+			return strconv.FormatFloat(v/(1<<10), 'f', 0, 64) + "K"
 		case v >= 1<<30:
 			if compact {
 				return trimZero(strconv.FormatFloat(v/(1<<30), 'f', 1, 64)) + "G"
@@ -78,6 +80,12 @@ func SeriesValue(name string, v float64, compact bool) string {
 		}
 		return s + " cores"
 	case wire.PanelRequests:
+		switch {
+		case compact && v >= 1e6:
+			return trimZero(strconv.FormatFloat(v/1e6, 'f', 1, 64)) + "M/s"
+		case compact && v >= 1e3:
+			return trimZero(strconv.FormatFloat(v/1e3, 'f', 1, 64)) + "k/s"
+		}
 		return small(v, 0.01, 2) + "/s"
 	case wire.Panel5xx:
 		if v > 0 && v < 0.001 {
@@ -274,10 +282,16 @@ func (s *Session) MetricsViewFit(app, rng string, now time.Time, width, height i
 		out = append(out, heads[i]...)
 		out = append(out, panelPlot(p, inWindow(findPanel(v.Panels, p).Points, start, end), start, end, step, now, plotW, rows, marks, width, cells)...)
 	}
-	if !has[wire.PanelMemory] && !has[wire.PanelCPU] && known {
+	ran := has[wire.PanelMemory] || has[wire.PanelCPU]
+	switch {
+	case !ran && known:
 		out = append(out, nil, cutTo(field("memory, cpu", own("no point in this window: the app did not run, or the box kept none")), width, cells))
+	case !ran:
+		out = append(out, nil, cutTo(field("memory, cpu", own("none drawn in this window")), width, cells))
 	}
 	switch {
+	case !has[wire.PanelRequests] && known && !ran:
+		out = append(out, nil, cutTo(field("requests", own("none in this window")), width, cells))
 	case !has[wire.PanelRequests] && known:
 		out = append(out, nil, cutTo(field("requests", own("none in this window: the box counts them only for an app behind observe")), width, cells))
 	case !has[wire.PanelRequests]:
@@ -325,10 +339,14 @@ func panelHead(p seriesPanel, in [][2]float64, now time.Time, width int, cells C
 	lo, hi := extremes(in)
 	newest := in[len(in)-1]
 	at := func(pt [2]float64) string { return clock(time.Unix(int64(pt[0]), 0), now, false) }
-	return []Line{
-		cutTo(field(p.label, own("newest "+SeriesValue(p.name, newest[1], false)+" at "+at(newest)+" ("+since(time.Unix(int64(newest[0]), 0), now)+")")), width, cells),
-		cutTo(field("", own("max "+SeriesValue(p.name, hi[1], true)+" "+at(hi)+" · min "+SeriesValue(p.name, lo[1], true)+" "+at(lo))), width, cells),
+	out := []Line{cutTo(field(p.label, own("newest "+SeriesValue(p.name, newest[1], false)+" at "+at(newest)+" ("+since(time.Unix(int64(newest[0]), 0), now)+")")), width, cells)}
+	maxS, minS := "max "+SeriesValue(p.name, hi[1], true)+" "+at(hi), "min "+SeriesValue(p.name, lo[1], true)+" "+at(lo)
+	if both := field("", own(maxS+" · "+minS)); width <= 0 || both.Width(cells) <= width {
+		return append(out, both)
 	}
+	// Too wide for one row (a year in the times): a row each, neither
+	// losing its time.
+	return append(out, cutTo(field("", own(maxS)), width, cells), cutTo(field("", own(minS)), width, cells))
 }
 
 // extremes is the lowest and the highest point.
@@ -364,6 +382,9 @@ func panelPlot(p seriesPanel, in [][2]float64, start, end time.Time, step time.D
 		case len(plot) - 1:
 			label = SeriesValue(p.name, lo[1], true)
 		}
+		if r := []rune(label); len(r) > plotLabel {
+			label = string(r[:plotLabel-1]) + "…"
+		}
 		out = append(out, cutTo(Line{ownC(padLeft(label, plotLabel)+" |", Dim), own(r)}, width, cells))
 	}
 	axis := []byte(strings.Repeat("-", plotW))
@@ -371,9 +392,18 @@ func panelPlot(p seriesPanel, in [][2]float64, start, end time.Time, step time.D
 	for _, pt := range in {
 		have[int64(pt[0])] = true
 	}
-	for t := start; !t.After(end); t = t.Add(step) {
-		if !have[t.Unix()] {
-			axis[cellOf(t, start, end, plotW)] = ' '
+	// Each step with no point breaks every cell its span (the step up to
+	// its time) is drawn in. A window of more steps than any box's (a
+	// fixture's step of a second over 14 days) is left unbroken.
+	if end.Sub(start)/step <= 4096 {
+		for t := start; !t.After(end); t = t.Add(step) {
+			if have[t.Unix()] {
+				continue
+			}
+			from := cellOf(maxTime(start, t.Add(-step+time.Second)), start, end, plotW)
+			for c := from; c <= cellOf(t, start, end, plotW); c++ {
+				axis[c] = ' '
+			}
 		}
 	}
 	for _, m := range marks {

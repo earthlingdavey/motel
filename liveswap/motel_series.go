@@ -18,9 +18,9 @@ import (
 func (h *Handler) appSeries(w http.ResponseWriter, r *http.Request, app appHandle, q appQuery) error {
 	// The window as the set spells it: parseQuery took one of it.
 	window := wire.SeriesRanges[0]
-	for _, w := range wire.SeriesRanges {
-		if w == q["range"] {
-			window = w
+	for _, rng := range wire.SeriesRanges {
+		if rng == q["range"] {
+			window = rng
 		}
 	}
 	body := wire.Series{Store: wire.StoreOff, Window: window, Panels: []wire.Panel{}}

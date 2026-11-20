@@ -608,6 +608,9 @@ func TestSeriesValue(t *testing.T) {
 		{wire.PanelP95, 80.1, false, "80.1 ms"},
 		{wire.PanelP95, 1250, true, "1.2s"},
 		{wire.PanelP95, 80.1, true, "80ms"},
+		{wire.PanelMemory, 400 << 10, true, "400K"},
+		{wire.PanelRequests, 150000, true, "150k/s"},
+		{wire.PanelRequests, 2.5e6, true, "2.5M/s"},
 	} {
 		if got := model.SeriesValue(c.name, c.v, c.compact); got != c.want {
 			t.Errorf("%s %v %v: %q, want %q", c.name, c.v, c.compact, got, c.want)
@@ -653,7 +656,15 @@ func TestMetricsAxisBreaks(t *testing.T) {
 			break
 		}
 	}
-	want := map[int]byte{cell(end.Add(-100 * 5 * time.Minute)): ' ', cell(end.Add(-101 * 5 * time.Minute)): ' ', cell(deploy): '^'}
+	// Each missing step breaks the cells of its span, the step up to it.
+	want := map[int]byte{}
+	for _, k := range []int{100, 101} {
+		at := end.Add(-time.Duration(k) * 5 * time.Minute)
+		for c := cell(at.Add(-5*time.Minute + time.Second)); c <= cell(at); c++ {
+			want[c] = ' '
+		}
+	}
+	want[cell(deploy)] = '^'
 	for i := 0; i < len(axis); i++ {
 		c, ok := want[i]
 		if !ok {
@@ -665,5 +676,90 @@ func TestMetricsAxisBreaks(t *testing.T) {
 	}
 	if cell(deploy) != 39 || !strings.Contains(times, "287 of 289 steps") {
 		t.Errorf("the deploy's column %d, want 39 (not 40); times %q", cell(deploy), times)
+	}
+}
+
+// TestMetricsHeadsAndBreaksAtTheEdges: a head too wide for one row of
+// its highest and lowest (a year in their times, across New Year) is
+// two rows, each whole at 60 columns with its time; a step with no
+// point breaks every cell its span is drawn in, where the window has
+// fewer steps than the plot has cells (the hour at 100 columns); with
+// no point of the app at all, no cause is said for the request panels;
+// and an axis label longer than its room is cut, marked.
+func TestMetricsHeadsAndBreaksAtTheEdges(t *testing.T) {
+	now := time.Date(2027, 1, 1, 0, 30, 0, 0, time.UTC)
+	f := &demo.Fake{Now: func() time.Time { return now }}
+	f.Body("apps.json", `{"apps": [{"name": "blog"}]}`)
+	end := now.Truncate(30 * time.Minute)
+	pts := func(step time.Duration, n int, skip int, v func(i int) float64) [][2]float64 {
+		var out [][2]float64
+		for i := n; i >= 0; i-- {
+			if i != skip {
+				out = append(out, [2]float64{float64(end.Add(-time.Duration(i) * step).Unix()), v(i)})
+			}
+		}
+		return out
+	}
+	week := wire.Series{Store: wire.StoreOn, Window: "7d", StepSeconds: 1800, End: &end, Panels: []wire.Panel{
+		{Name: wire.PanelRequests, Unit: wire.UnitPerSecond, Points: pts(30*time.Minute, 336, -1, func(i int) float64 { return float64(i%201) * 0.00001 })},
+	}}
+	b, _ := json.Marshal(week)
+	f.Body("series/blog/7d.json", string(b))
+	s := seriesSession(t, "blog", "7d", f, &now)
+	ls := s.MetricsViewFit("blog", "7d", now, 60, 30, runes)
+	var max, min string
+	for _, l := range ls {
+		if n := utf8.RuneCountInString(l.Text()); n > 60 {
+			t.Errorf("a row of %d cells: %q", n, l.Text())
+		}
+		switch {
+		case strings.HasPrefix(l.Text(), "            max "):
+			max = l.Text()
+		case strings.HasPrefix(l.Text(), "            min "):
+			min = l.Text()
+		}
+	}
+	if !strings.Contains(max, "max <0.01/s 2026-12-27 20:30") || !strings.Contains(min, "min 0.00/s 2026-12-27 20:00") || strings.Contains(max+min, "…") {
+		t.Errorf("max %q, min %q", max, min)
+	}
+
+	// The hour at 100 columns: 61 steps on 91 cells; the step 30 back is
+	// missing, so the cells from the step before it to it are broken.
+	hourEnd := now.Truncate(time.Minute).Add(-time.Minute)
+	hour := wire.Series{Store: wire.StoreOn, Window: "1h", StepSeconds: 60, End: &hourEnd, Panels: []wire.Panel{
+		{Name: wire.PanelMemory, Unit: wire.UnitBytes, Points: nil}}}
+	for i := 60; i >= 0; i-- {
+		if i != 30 {
+			hour.Panels[0].Points = append(hour.Panels[0].Points, [2]float64{float64(hourEnd.Add(-time.Duration(i) * time.Minute).Unix()), 1 << 30})
+		}
+	}
+	b, _ = json.Marshal(hour)
+	f.Body("series/blog/1h.json", string(b))
+	s.Engine.SeriesOpen("blog", "1h", now)
+	for range 6 {
+		if j := step(t, s, f, &now); j.Kind == model.KSeries {
+			break
+		}
+	}
+	var axis string
+	for _, l := range s.MetricsViewFit("blog", "1h", now, 100, 30, runes) {
+		if strings.HasPrefix(l.Text(), "        +") {
+			axis = strings.TrimPrefix(l.Text(), "        +")
+		}
+	}
+	if gap := strings.Count(strings.TrimSpace(axis), " "); gap < 2 || strings.Count(axis, " ") != gap {
+		t.Errorf("the hour's missing step breaks %d cells: %q", gap, axis)
+	}
+
+	// No point of the app at all: no cause said.
+	f.Body("series/blog/24h.json", `{"store":"on","window":"24h","step_seconds":300,"end":"`+now.Truncate(5*time.Minute).Format(time.RFC3339)+`","panels":[]}`)
+	s.Engine.SeriesOpen("blog", "24h", now)
+	for range 6 {
+		if j := step(t, s, f, &now); j.Kind == model.KSeries {
+			break
+		}
+	}
+	if got := text(s.MetricsViewFit("blog", "24h", now, 0, 30, nil)); strings.Contains(got, "observe") || !strings.Contains(got, "requests    none in this window") {
+		t.Errorf("no point at all: %q", got)
 	}
 }

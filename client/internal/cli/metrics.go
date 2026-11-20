@@ -82,7 +82,17 @@ func (r *runner) metrics() *cobra.Command {
 // name and unit to a word's; every value is the client's own writing of
 // a number.
 func seriesView(s wire.Series, app, host string) render.Series {
-	v := render.Series{Host: tx(host), App: tx(app), Window: tx(s.Window), Store: tx(s.Store), Step: time.Duration(s.StepSeconds) * time.Second, NoRequests: s.Store == wire.StoreOn}
+	v := render.Series{Host: tx(host), App: tx(app), Window: tx(s.Window), Store: tx(s.Store), Step: time.Duration(s.StepSeconds) * time.Second}
+	// The request panels' absence is said as observe's only beside the
+	// app's memory or cpu, every panel known: with no point of the app at
+	// all, or a panel the box's filter may have renamed, no cause is.
+	ran := false
+	for _, p := range s.Panels {
+		if (p.Name == wire.PanelMemory || p.Name == wire.PanelCPU) && len(p.Points) > 0 {
+			ran = true
+		}
+	}
+	v.NoRequests = s.Store == wire.StoreOn && ran
 	if s.End != nil {
 		v.End = *s.End
 	}

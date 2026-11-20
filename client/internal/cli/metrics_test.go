@@ -70,6 +70,12 @@ other      the box's disk_bytes in bytes: not one this client draws
 		!strings.Contains(r.stdout, "requests   none in the window: the box counts requests only for an app behind observe") {
 		t.Errorf("1h, no requests: exit %d, stdout %q, stderr %q", r.code, r.stdout, r.stderr)
 	}
+	// No point of the app at all: no cause said for the request panels.
+	fb.series.Panels = []wire.Panel{}
+	if r := runKey(t, fb, nil, "metrics", "blog"); r.code != 0 || strings.Contains(r.stdout, "observe") || !strings.Contains(r.stdout, "none: the store holds no point of blog") {
+		t.Errorf("no point: exit %d, stdout %q, stderr %q", r.code, r.stdout, r.stderr)
+	}
+	fb.series.Panels = []wire.Panel{{Name: wire.PanelMemory, Unit: wire.UnitBytes, Points: [][2]float64{{float64(end.Unix()), 1 << 20}}}}
 	// Beside a panel this client does not know (one the box's filter may
 	// have renamed), no cause is said for the request panels' absence.
 	fb.series.Panels = append(fb.series.Panels, wire.Panel{Name: "requests_hidden", Unit: "per_second", Points: [][2]float64{}})

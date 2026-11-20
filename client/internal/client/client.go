@@ -606,7 +606,8 @@ func holdSeries(s *wire.Series) string {
 		return ""
 	}
 	step := time.Duration(s.StepSeconds) * time.Second
-	if s.StepSeconds <= 0 || step > span || s.End == nil {
+	// No window a box keeps has a thousand steps (337 at the most).
+	if s.StepSeconds <= 0 || step > span || span/step > 1000 || s.End == nil {
 		return "its step or its end is not one a window has"
 	}
 	start, end := s.End.Add(-span).Unix(), s.End.Unix()

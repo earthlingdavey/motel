@@ -1526,7 +1526,9 @@ what it computed for the last one, so the newest point is of the last
 whole step, up to a step old (an hour over 14 days), and the body's
 `end` says which; and the end is at least the store's latency offset
 old (5 s), since a step that ended inside it may not hold its last push
-yet, or is filled with the one before it. A step with no sample is no point: a gap, never a
+yet; the store client asks for that offset on every range query, as on
+its instant queries at a time (a store set up before setup's 5 s keeps
+the 30 s default, which would leave the newest step out). A step with no sample is no point: a gap, never a
 zero (measured with vmalert-tool: no point inside a ten-minute gap in
 the pushes at the hour's step; the first step after the gap counts its
 own push alone, the store keeping no sample from before the gap as its
