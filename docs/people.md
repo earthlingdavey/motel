@@ -91,7 +91,8 @@ moteld box describe Caddyfile
 `describe` prints a `person` line per key with its fingerprint, which
 is what they will see as their key, and a `grant` line per grant. A
 `warning` line names anything taken with a doubt: a person with no
-grant, an app grant a box grant already covers, people with no monitor channel.
+grant, an app grant a box grant already covers, people with no monitor
+channel to tell you when their key is used from somewhere new ([below](#when-their-key-is-used-from-somewhere-new)).
 
 On a box whose Caddyfile you edit at the console and do not push, the
 file must still be one the box can read its people from, as the
@@ -122,7 +123,7 @@ signed:
 | `/_motel/apps/<app>/alerts` | the app's alerts, as the box's Alertmanager holds them: each one's name, severity, summary, when it began, and whether a silence holds it and until when, or a deploy of the app; and whether the box could ask (`"monitor"`: `on`, `off` when the box's monitor block sends nothing to anyone or there is none, `unanswered`). Only alerts about that app: not the box's own (disks, certificates, backups), not the silences or who wrote them. Up to 5 s old |
 | `/_motel/apps/<app>/rules` | the rules the box alerts on that apply to the app: those of every app and the app's own `rule` lines, not one pinned to another app and none of the box's own checks (disks, backups, certificates). Each with what it fires on (its op, threshold, unit, `for`, and each guard's meaning) and the app's numbers alone: a check's last reading (its watchdog's restarts), and for a rule the metrics store evaluates, its value and whether vmalert holds it `pending` or `firing`, and since when; and whether the box could read the store (`"store"`: `on`, `off` with no `metrics` line, `unanswered`), and `rules_file` when the file vmalert reads is not this config's (a state is vmalert's). No query and no socket. The store's numbers are up to 30 s old, of an evaluation about a minute behind (as vmalert compared them) |
 | `/_motel/rules` | every rule the box alerts on, for a viewer of the box: as for an app's, with every app's numbers, the box's own checks (each filesystem's use, each app's backup age) and rules (a `disk_fill`'s prediction for each filesystem). `moteld monitor rules --json` from a laptop, without the store's socket and the queries |
-| `/_motel/alerts` | every alert the box's Alertmanager holds, for a viewer of the box: as for an app's, and with each the app it names and its instance (a path, a certificate's name, another site's); and every silence that is active or waits to start: its matchers, when it starts and ends, who made it and why (the operator's own words). Not the heartbeat, the test alert or the deploy mute itself, and no expired silence. At most 500 alerts, the newest, and 200 silences, the active ones and then the soonest to start, with `more_alerts` or `more_silences` when the box held more. Up to 5 s old |
+| `/_motel/alerts` | every alert the box's Alertmanager holds, for a viewer of the box: as for an app's, and with each the app it names and its instance (a path, a certificate's name, another site's); and every silence that is active or waits to start: its matchers, when it starts and ends, who made it and why (the operator's own words). Not the heartbeat, the test alert or the deploy mute itself, nor the two about a person's key (below), and no expired silence. At most 500 alerts, the newest, and 200 silences, the active ones and then the soonest to start, with `more_alerts` or `more_silences` when the box held more. Up to 5 s old |
 
 The `motel` command (for an M-series Mac, an archive on each release
 after v0.8.0; elsewhere, built from a clone of this repository:
@@ -152,6 +153,88 @@ or a box whose moteld is too old for people. An app they may not read
 is a `403` saying which role it needs, the same whether the app exists
 or not. Too many requests (more than 60 at once, then 2 a second) is a
 `429` with `Retry-After`.
+
+## When their key is used from somewhere new
+
+A stolen key reads before anything else, so the box tells your
+monitor channels (the `operator` ones) when a person's key is used in a
+way that suggests it is in someone else's hands. It tells, and lets
+the read go on.
+
+- **`person_new_network`**, a warning, the first time a key is
+  accepted from a network: the request's address cut to a /24 for
+  IPv4 or a /48 for IPv6. Every request counts once its token is good,
+  a read included:
+
+  ```
+  bob@example.com (key SHA256:…) used this box from 203.0.113.0/24 for the first time
+  bob@example.com (key SHA256:…) used this box for the first time, from 203.0.113.0/24
+  ```
+
+  The second is a key's first use the box knows of: you will see one
+  for each person soon after you add them, and one for each key after
+  the upgrade that brings this. A key keeps its last 16 networks; a
+  network it has not used since sixteen others is told again.
+- **`person_outside_list`**, a warning, when a key's signature is good
+  but the address is outside every `from` list on that person's grants.
+  The box refuses it, as above; this is at most once per key an hour:
+
+  ```
+  a valid signature by bob@example.com (key SHA256:…) from 203.0.113.9, outside every address list on their grants; refused
+  ```
+
+Both go to your channels alone: no one reads them over HTTPS, not even
+a viewer of the box, nor a silence `moteld monitor silence add
+--alert` makes of them. The message shows the key's fingerprint by its start, as `moteld box
+describe` prints it on the `person` line; the alert's `instance` label
+and the journal hold it whole. When one of these comes:
+
+1. **Ask the person** whether it was them: a train, a café, a new
+   phone's hotspot or a VPN is a new network.
+2. **If it was not, or you cannot reach them, remove the key now**:
+   take its `person` line (and, if it was their only key, their `grant`
+   lines) out of the box's Caddyfile and push, as in [Remove
+   them](#remove-them). Their tokens are refused from the reload on,
+   and a token already made dies within ten minutes. They make a new
+   key, and you add its `person` line and push again.
+3. **If it was them, nothing to do.** To refuse their key from
+   anywhere but the addresses you expect, put a `from` list on every
+   grant they hold (a grant without one still lets them in from
+   anywhere): from elsewhere their key is then refused, and you get
+   `person_outside_list`. A network inside the list that the key has
+   not used before is still told as `person_new_network`.
+
+Each one-shot also has a line in moteld's journal, `access: a key used
+from a new network` or `access: a valid signature from outside every
+address list`, with the person, the key and the network or address:
+`journalctl -u moteld -o cat | grep '"access: a'`. On a box with no
+monitor channel that line is all there is (`moteld validate` warns of
+such a box). A thief who keeps changing networks is told four times at
+once, then once a quarter-hour per key, and the journal has every one
+(`"suppressed"`). While you add many people at once, `moteld monitor
+silence add --alert person_new_network --duration 1h --comment "adding
+the team"` quiets their first uses; the journal still has them.
+
+Behind a proxy of yours that `trusted_proxies` names, the box reads a
+request's address only with `trusted_proxies_strict` too: without it,
+every request the proxy forwards is from "an address the box could not
+read", one network for all of them, so after a key's first use through
+the proxy nothing more is told of it. `moteld validate` warns of that.
+A proxy the box is not told of at all makes every request come from
+the proxy's own network, and a listener on a unix socket makes every
+request one the box could not read.
+
+What is kept: in `/var/lib/motel/people-networks.json` (moteld's own,
+`0600`), each key's fingerprint and its last 16 networks, never a time
+or a whole address. A key whose lines you remove is dropped from it at
+the next person's request after the reload; if you removed everyone,
+it stays until a person is admitted again. The file stays when the
+package is removed, `apt purge` too. To forget them, stop moteld
+first (`systemctl stop moteld`; it keeps the record in memory and
+writes it back), delete the file, and start it: each key's next use is
+then told again as its first. The journal and your
+channels keep each message (the person's name, the key's fingerprint,
+the network or the whole address) as long as they keep anything.
 
 ## Remove them
 

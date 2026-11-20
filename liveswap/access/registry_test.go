@@ -197,3 +197,16 @@ func TestRegistryListsPersonKeyTypesOnly(t *testing.T) {
 		t.Errorf("lists sk-ed25519 %v, p521 %v, %d keys; want only sk-ed25519", reg.ListsType(bob.Type()), reg.ListsType(eve.Type()), reg.Keys())
 	}
 }
+
+// TestRegistryGeneration: a registry built later has the greater
+// generation, and a nil one has none, so what keeps state by the
+// newest load's keys can tell a reload's old handlers from its new.
+func TestRegistryGeneration(t *testing.T) {
+	a, b := access.NewRegistry("box.example.test", access.Lines{}), access.NewRegistry("box.example.test", access.Lines{})
+	if a.Generation() == 0 || b.Generation() <= a.Generation() {
+		t.Errorf("generations %d then %d", a.Generation(), b.Generation())
+	}
+	if (*access.Registry)(nil).Generation() != 0 {
+		t.Error("a nil registry has a generation")
+	}
+}

@@ -7,6 +7,7 @@
 package examples
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -205,7 +206,13 @@ func deployShIn(t *testing.T, srv *httptest.Server, dir string, args []string, e
 	if _, err := os.Stat(script); err != nil {
 		t.Fatal(err)
 	}
-	cmd := exec.Command("sh", append([]string{script}, args...)...)
+	// A bound, so a script stuck in its own shell (a slow expansion, a
+	// loop) fails its test, not the run. It kills sh alone: a child
+	// still holding the output pipe (a stalled curl) is left to go
+	// test's -timeout.
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "sh", append([]string{script}, args...)...)
 	cmd.Dir = dir
 	// Later entries win, so a developer's own MOTEL_AUDIENCE, or the
 	// job summary of an Actions run this test runs in, never reaches
@@ -322,7 +329,7 @@ func TestDeployShSaysWhatARefusedRunMustBeTrustedFor(t *testing.T) {
 		"claim repository  org/blog",
 		"claim ref         refs/heads/main",
 		"journalctl -u moteld",
-		"::error title=motel%3A demo v1 failed::invalid or missing deploy token (Authorization: Bearer \\u003cjwt\\u003e); the log says what the box must trust",
+		"::error title=motel%3A demo v1 failed::invalid or missing deploy token (Authorization: Bearer <jwt>); the log says what the box must trust",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("output lacks %q:\n%s", want, out)
@@ -763,4 +770,124 @@ func gitCheckout(t *testing.T, files map[string]string) (string, func(...string)
 	git("add", ".")
 	git("commit", "-q", "-m", "initial")
 	return repo, git
+}
+
+// The bodies a box answers a failed deploy with, as liveswap writes
+// them (paths shortened), and what the script names as the failure
+// (#533): the body's own cause, and last_deploy's phase only when it is
+// a deploy of the version sent.
+const (
+	linkRefusal = `refusing to deploy: /srv/motel/demo/tmp is a link, which is not followed under the liveswap root`
+	// A failure body whose last_deploy and deploys are another
+	// version's, v2's, failed in starting: a URL deploy's or rollback's
+	// status read after another deploy took the lock (the race in
+	// DESIGN-liveswap.md's accepted residuals).
+	otherVersionsLastDeploy = `{"error":"` + linkRefusal + `","status":{"app":"demo","phase":"idle","current_version":"v1","running":true,"deploys":[{"version":"v2","status":"failed","phase":"starting","started_at":"t","finished_at":"t"},{"version":"v1","status":"succeeded","started_at":"t","finished_at":"t"}],"last_deploy":{"version":"v2","status":"failed","error":"start failed: boom","phase":"starting","started_at":"t","finished_at":"t","artifact_entries":0,"artifact_bytes":0,"phases":[{"name":"downloading","started_at":"t","seconds":0},{"name":"starting","started_at":"t","seconds":0}]},"available_versions":["v1"]}}`
+	// v3 failed in the pipeline before its first phase: last_deploy is
+	// its own, with no phase; v2's failed record is in deploys.
+	failedBeforeAnyPhase = `{"error":"` + linkRefusal + `","status":{"app":"demo","phase":"idle","current_version":"v1","running":true,"deploys":[{"version":"v2","status":"failed","phase":"starting","started_at":"t","finished_at":"t"}],"last_deploy":{"version":"v3","status":"failed","error":"` + linkRefusal + `","started_at":"t","finished_at":"t","artifact_entries":0,"artifact_bytes":0},"available_versions":["v1"]}}`
+	// v3 failed in starting, as a stream's last line.
+	failedInStarting = `{"at":"t","event":"phase","phase":"downloading"}` + "\n" + `{"error":"start failed: boom","status":{"app":"demo","phase":"idle","current_version":"v1","running":true,"deploys":[{"version":"v3","status":"failed","phase":"starting","started_at":"t","finished_at":"t"}],"last_deploy":{"version":"v3","status":"failed","error":"start failed: boom","phase":"starting","started_at":"t","finished_at":"t","artifact_entries":0,"artifact_bytes":0},"available_versions":["v1"]},"event":"done","http_status":500}`
+	// A body the filter changed: its top level re-marshalled with its
+	// keys sorted, redacted_env among them; v1 failed in starting.
+	failedRedacted = `{"error":"start failed: [redacted]","redacted_env":["API_KEY"],"status":{"app":"demo","phase":"idle","current_version":"v0","running":true,"deploys":[{"version":"v0","status":"failed","phase":"soaking","started_at":"t","finished_at":"t"}],"last_deploy":{"version":"v1","status":"failed","error":"start failed: [redacted]","phase":"starting","started_at":"t","finished_at":"t","artifact_entries":0,"artifact_bytes":0},"available_versions":["v0"]}}`
+)
+
+func TestDeployShNamesTheFailureOfTheVersionSent(t *testing.T) {
+	t.Parallel()
+	if _, err := exec.LookPath("curl"); err != nil {
+		t.Fatal("deploy.sh needs curl; install it to run this test")
+	}
+	for _, tc := range []struct {
+		name, body, version string
+		rollback            string // --rollback's version; none is a deploy of version
+		stream              bool
+		annotation          string // the ::error message
+		summary             string // the job summary's first line, after "**motel:** "
+	}{
+		{"a body whose last_deploy is another version's", otherVersionsLastDeploy, "v3", "", false, linkRefusal, "demo v3 failed, "},
+		{"a refusal alone", `{"error":"` + linkRefusal + `"}`, "v3", "", false, linkRefusal, "demo v3 failed, "},
+		{"a failure before the first phase", failedBeforeAnyPhase, "v3", "", false, linkRefusal, "demo v3 failed, "},
+		{"a failure in starting, streamed", failedInStarting, "v3", "", true, "in starting: start failed: boom", "demo v3 failed in `starting`, "},
+		{"a filtered body", failedRedacted, "v1", "", false, "in starting: start failed: [redacted]", "demo v1 failed in `starting`, "},
+		{"a rollback to last_deploy's version", failedRedacted, "v3", "v1", false, "in starting: start failed: [redacted]", "demo rollback to v1 failed in `starting`, "},
+		{"a rollback to another version", failedRedacted, "v3", "v0", false, "start failed: [redacted]", "demo rollback to v0 failed, "},
+		// What Go's JSON escapes reads as written; an escaped backslash
+		// before such a sequence stays a backslash.
+		{"a cause with escapes", `{"error":"probe: \u003cb\u003e \u0026 \\u003c\nnext"}`, "v3", "", false, `probe: <b> & \u003c next`, "demo v3 failed, "},
+		// Not the box's: its cause is not the first key, so the
+		// annotation points at the body, which the log printed.
+		{"JSON that is not the box's", `{"code":7,"error":"bad gateway","phase":"x"}`, "v3", "", false, "see the response above", "demo v3 failed, "},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if tc.stream {
+					w.Header().Set("Content-Type", "application/x-ndjson")
+					w.WriteHeader(http.StatusOK)
+				} else {
+					w.Header().Set("Content-Type", "application/json")
+					w.WriteHeader(http.StatusInternalServerError)
+				}
+				_, _ = w.Write([]byte(tc.body + "\n"))
+			}))
+			defer srv.Close()
+			args := []string{"https://example.test/a.tgz"}
+			if tc.rollback != "" {
+				args = []string{"--rollback", tc.rollback}
+			}
+			summary := filepath.Join(t.TempDir(), "summary.md")
+			out, code := deployShArgs(t, srv, args, "VERSION="+tc.version, "MOTEL_TOKEN=x", "GITHUB_ACTIONS=true",
+				"ACTIONS_ID_TOKEN_REQUEST_URL=", "GITHUB_STEP_SUMMARY="+summary)
+			var annotation string
+			for _, l := range strings.Split(out, "\n") {
+				if strings.HasPrefix(l, "::error ") {
+					annotation = l[strings.LastIndex(l, "::")+2:]
+				}
+			}
+			sum, err := os.ReadFile(summary)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if code != 1 || annotation != tc.annotation || !strings.HasPrefix(string(sum), "**motel:** "+tc.summary) {
+				t.Errorf("exit %d, annotation %q (want %q), summary %q (want it to begin %q)\n%s", code, annotation, tc.annotation, sum, tc.summary, out)
+			}
+			// The summary's second paragraph is the cause, as Markdown
+			// that GitHub renders with its HTML: <, > and & as text.
+			cause := tc.annotation
+			if _, after, ok := strings.Cut(cause, ": "); ok && strings.HasPrefix(cause, "in ") {
+				cause = after
+			}
+			if cause == "see the response above" {
+				cause = "see the log"
+			}
+			cause = strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;").Replace(cause)
+			if !strings.Contains(string(sum), "\n\n"+cause+"\n") {
+				t.Errorf("summary %q lacks the cause %q", sum, cause)
+			}
+		})
+	}
+}
+
+// A long one-line answer that is not the box's (a wrong MOTEL_URL
+// serving a minified page) is read in time linear in its length: a
+// strip with the shell's own pattern match took 11 s for 100 KB in
+// dash, and four times that for each doubling.
+func TestDeployShReadsALongAnswerQuickly(t *testing.T) {
+	t.Parallel()
+	if _, err := exec.LookPath("curl"); err != nil {
+		t.Fatal("deploy.sh needs curl; install it to run this test")
+	}
+	long := strings.Repeat("a", 1<<20)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadGateway)
+		_, _ = w.Write([]byte(long + "\n"))
+	}))
+	defer srv.Close()
+	began := time.Now()
+	out, code := deploySh(t, srv, "MOTEL_TOKEN=x", "GITHUB_ACTIONS=true", "ACTIONS_ID_TOKEN_REQUEST_URL=")
+	if took := time.Since(began); code != 1 || took > 30*time.Second || !strings.Contains(out, "::see the response above") {
+		t.Errorf("exit %d after %s, output ending %q", code, took, out[max(0, len(out)-300):])
+	}
 }

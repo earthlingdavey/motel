@@ -33,9 +33,9 @@ jobs:
     runs-on: ubuntu-latest
     # Targets run one after another at FUZZTIME each, plus a per-target
     # instrumented build (box's includes Caddy, cold). `make fuzz-list`
-    # counts 45: 225m of fuzzing at 5m. The run of 2026-11-16 (about 34
-    # targets) took 180m, about 5.3m a target with its build, so 45 come
-    # to about 240m, an estimate the first run at 45 measures. A target
+    # counts 46: 230m of fuzzing at 5m. The run of 2026-11-16 (about 34
+    # targets) took 180m, about 5.3m a target with its build, so 46 come
+    # to about 245m, an estimate the first run at 46 measures. A target
     # added costs about 5.3m more: check that make fuzz-list's count x
     # FUZZTIME, plus the builds, still clears this cap.
     timeout-minutes: 270

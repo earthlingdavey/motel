@@ -20,6 +20,12 @@
 #   oncall (answers 400)          → ChannelFailed to /ops, naming oncall
 #   blog-deployer failing         → ChannelFailed to /ops (json beside its ntfy), naming it alone
 #   oncall the only operator      → the heartbeat held after 5 m, resumed by a delivery
+#   a person's key's first use      → person_new_network to /ops, at warning, its summary
+#   the same network again          → nothing
+#   another /24                     → person_new_network again, as a new network
+#   a valid signature from outside
+#   its grant's from list           → person_outside_list to /ops, once; neither in a
+#                                     box viewer's GET /_motel/alerts
 #   a reload dropping blog that fails at the http app's Start, after
 #   notify's                      → no recovery of blog's alerts; the reload that serves ends them
 #
@@ -92,7 +98,7 @@ failing_receivers() {
 # 6 and 9 count every delivery since the box began, 7a silences 3's
 # failed v3. 15, five minutes of a held heartbeat and its resume, is a
 # split alone; 11 to 14 are another, near core's length.
-split_core="3 4 5 6 6b 7 7a 8 9 10 10a" split_reload="11 12 13 14 14a" split_heartbeat="15"
+split_core="3 4 5 6 6b 7 7a 8 9 10 10a 10b" split_reload="11 12 13 14 14a" split_heartbeat="15"
 split_all="$split_core $split_reload $split_heartbeat"
 case "${SPLIT:=all}" in
 all) parts=$split_all ;;
@@ -456,6 +462,118 @@ moteld validate --adapter caddyfile --config /tmp/Caddyfile.nohb >/tmp/validate-
 moteld validate --adapter caddyfile --config /etc/motel/Caddyfile >/tmp/validate-hb.out 2>&1
 grep -q 'no heartbeat' /tmp/validate-hb.out && fail "validate warns of no heartbeat with the line in place" \
 	|| pass "and with the line, no such warning"
+
+}
+
+case_10b() {
+echo "=== notify 10b: a person's key, from a new network and from outside its list, told to the operator ==="
+# The box takes people, as docs/people.md says for a box edited at the
+# console: a box block (a signer; pat, a viewer of the box; fay, one from
+# 198.51.100.0/24 alone, an address this box does not have) and one site
+# under a bare hostname with both webhooks, on 443 with Caddy's own CA
+# (people.sh's box, e2e/box/people.sh). Every request goes to 127.0.0.1,
+# so its network is 127.0.0.0/24; one is sent from 127.0.1.1, another
+# loopback /24. The file goes back as it was at the end.
+P=/tmp/people10b
+PHOST=people.e2e.test
+CA=/var/lib/motel/caddy/pki/authorities/local/root.crt
+rm -rf "$P" && mkdir -p "$P"
+cp /etc/motel/Caddyfile "$P/Caddyfile.was"
+for k in ops pat fay; do ssh-keygen -q -t ed25519 -N '' -C "$k" -f "$P/$k"; done
+pkey() { cut -d' ' -f1,2 "$P/$1.pub"; }
+pfp() { ssh-keygen -lf "$P/$1.pub" | cut -d' ' -f2; }
+# shown <who>: the key's fingerprint as a summary shows it, its first 12
+# characters after SHA256: and an ellipsis.
+shown() { printf '%s…' "$(pfp "$1" | cut -c1-19)"; }
+L="		signer ops@e2e.test $(pkey ops)
+		person pat@e2e.test $(pkey pat)
+		grant pat@e2e.test viewer box
+		person fay@e2e.test $(pkey fay)
+		grant fay@e2e.test viewer box from 198.51.100.0/24" H=$PHOST awk '
+/^[ \t]*auto_https off[ \t]*$/ {
+	print "\tlocal_certs"; print "\tskip_install_trust"; print "\tauto_https disable_redirects"
+	print "\tbox {"; print "\t\tdeploy_trust local {"; print "\t\t\tpublic_key /shared/deploy.pub"
+	print "\t\t\taudience e2e-box"; print "\t\t}"; print ENVIRON["L"]; print "\t}"
+	next
+}
+{ print }
+END { print ""; print ENVIRON["H"] " {"; print "\tliveswap_webhook"; print "\tbox_webhook"; print "}" }
+' "$P/Caddyfile.was" >"$P/Caddyfile"
+grep -q '^people.e2e.test {$' "$P/Caddyfile" && grep -q 'grant fay@e2e.test' "$P/Caddyfile" || fail "fixture: the box block or the site is not in the file"
+if moteld validate --adapter caddyfile --config "$P/Caddyfile" >"$P/validate.out" 2>&1; then
+	pass "moteld validate takes the file with people"
+else
+	fail "validate with people: $(tail -3 "$P/validate.out")"
+fi
+since=$(date +%s)
+cp "$P/Caddyfile" /etc/motel/Caddyfile.10b-tmp && chmod 0644 /etc/motel/Caddyfile.10b-tmp && mv /etc/motel/Caddyfile.10b-tmp /etc/motel/Caddyfile
+moteld reload --config /etc/motel/Caddyfile >"$P/reload.out" 2>&1 || fail "the reload with people: $(tail -3 "$P/reload.out")"
+journalctl -u moteld --since "@$since" -o cat --no-pager | grep -qF 'people admitted from the Caddyfile this machine runs' \
+	&& pass "the journal says people are admitted" || fail "no person admitted: $(journalctl -u moteld --since "@$since" -o cat --no-pager | grep -F 'box:' | tail -2)"
+# pget <name> <who> [<curl args>]: GET /_motel/<name>'s path as <who>,
+# over the box's TLS; status in $CODE, the body in $P/<who>.b.
+pget() {
+	path=$1 who=$2
+	shift 2
+	CODE=$(curl -s -o "$P/$who.b" -w '%{http_code}' --max-time 10 --cacert "$CA" --resolve "$PHOST:443:127.0.0.1" \
+		-H "Authorization: Motel $(person_token "$P/$who" "$PHOST")" "$@" "https://$PHOST$path")
+}
+# The certificate is Caddy's to issue after the reload: up to 30 s.
+t_first=$(now_ms)
+i=0
+until pget /_motel/whoami pat && [ "$CODE" = 200 ]; do
+	i=$((i + 1)); [ "$i" -ge 60 ] && break; sleep 0.5
+done
+[ "$CODE" = 200 ] && pass "pat, a viewer of the box, asks who she is: 200" || fail "pat's whoami: $CODE $(head -c 300 "$P/pat.b")"
+t=$(first_arrival /ops person_new_network "$t_first" 30)
+within "pat's first use, to the operator" "$t" "$t_first" 0 30
+fullsince() { curl -s --max-time 5 "$SINK/full?mine=1" | awk -v p="$1" -v a="$2" -v s="$3" '$2==p && $3==a && $1>=s'; }
+want="pat@e2e.test (key $(shown pat)) used this box for the first time, from 127.0.0.0/24"
+got=$(fullsince /ops person_new_network "$t_first" | head -1)
+[ "$(printf '%s' "$got" | cut -d' ' -f4)" = warning ] && [ "$(printf '%s' "$got" | cut -d' ' -f5-)" = "$want" ] \
+	&& pass "as person_new_network at warning: $want" || fail "what reached the operator: '$got', want warning '$want'"
+none "a box event reaches no deployer" /blog person_new_network "$t_first"
+# Again from the same network, twice: nothing more.
+pget /_motel/whoami pat
+pget /_motel/apps pat
+sleep 5
+n=$(arrivals /ops person_new_network "$t_first" | wc -l)
+[ "$n" -eq 1 ] && pass "the same network again: still one delivery" || fail "the same network again: $n deliveries"
+# From another network: told as new, not as the first use.
+t_new=$(now_ms)
+pget /_motel/whoami pat --interface 127.0.1.1
+[ "$CODE" = 200 ] || fail "pat from 127.0.1.1: $CODE"
+t=$(first_arrival /ops person_new_network "$t_new" 30)
+within "pat from another network, to the operator" "$t" "$t_new" 0 30
+want="pat@e2e.test (key $(shown pat)) used this box from 127.0.1.0/24 for the first time"
+got=$(fullsince /ops person_new_network "$t_new" | head -1 | cut -d' ' -f5-)
+[ "$got" = "$want" ] && pass "told as a new network: $want" || fail "the second network: '$got', want '$want'"
+# fay's signature is good, her address outside her one grant's list:
+# the flat 401, told once.
+t_out=$(now_ms)
+pget /_motel/whoami fay
+[ "$CODE" = 401 ] && pass "fay, outside her from list: 401" || fail "fay outside her list: $CODE"
+pget /_motel/whoami fay
+t=$(first_arrival /ops person_outside_list "$t_out" 30)
+within "fay's signature from outside her list, to the operator" "$t" "$t_out" 0 30
+want="a valid signature by fay@e2e.test (key $(shown fay)) from 127.0.0.1, outside every address list on their grants; refused"
+got=$(fullsince /ops person_outside_list "$t_out")
+[ "$(printf '%s\n' "$got" | grep -c .)" = 1 ] && [ "$(printf '%s' "$got" | cut -d' ' -f4)" = warning ] && [ "$(printf '%s' "$got" | cut -d' ' -f5-)" = "$want" ] \
+	&& pass "as person_outside_list at warning, once: $want" || fail "what reached the operator: '$got', want warning '$want' once"
+n=$(arrivals /ops person_new_network "$t_out" | wc -l)
+[ "$n" -eq 0 ] && pass "a refusal is no use of a network" || fail "fay's refusal was told as a use: $n"
+# Alertmanager holds both; a viewer of the box reads neither (the
+# people's reads leave them out, their alerts cache 5 s old at most).
+held=$(am http://am/api/v2/alerts)
+printf '%s' "$held" | grep -q '"alertname":"person_new_network"' && printf '%s' "$held" | grep -q '"alertname":"person_outside_list"' \
+	&& pass "Alertmanager holds both" || fail "Alertmanager does not hold both: $(printf '%s' "$held" | head -c 300)"
+sleep 6
+pget /_motel/alerts pat
+[ "$CODE" = 200 ] && grep -q '"monitor":"on"' "$P/pat.b" && ! grep -q 'person_' "$P/pat.b" \
+	&& pass "pat's GET /_motel/alerts holds neither" || fail "pat's alerts: $CODE $(head -c 400 "$P/pat.b")"
+cp "$P/Caddyfile.was" /etc/motel/Caddyfile
+moteld reload --config /etc/motel/Caddyfile >"$P/reload-back.out" 2>&1 \
+	&& pass "the Caddyfile put back" || fail "the reload that puts the Caddyfile back: $(tail -3 "$P/reload-back.out")"
 
 }
 
