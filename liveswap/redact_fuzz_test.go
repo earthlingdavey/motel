@@ -92,9 +92,10 @@ func FuzzRedactor(f *testing.F) {
 			// form may be a piece of — and the key is reported unless
 			// the body had to fall back to the one marker that can carry
 			// nothing.
-			// The hoisted field whole: its brackets beside a held token
-			// are the body's own JSON, as rule 7's hoist residual says.
-			rest := redactedEnvField.ReplaceAllString(js, "\x00")
+			// The hoisted field's name and brackets, its key names
+			// kept: the brackets beside a held token are the body's
+			// own JSON, as rule 7's hoist residual says.
+			rest := redactedEnvField.ReplaceAllString(js, "\x00$1\x00")
 			if outcomeStatuses[value] || outcomePhases[value] {
 				rest = strings.NewReplacer(`"status":"succeeded"`, "", `"phase":"starting"`, "").Replace(rest)
 			}
@@ -141,8 +142,9 @@ func outsideHeld(s, f string, held ...[3]string) bool {
 	}
 }
 
-// redactedEnvField is the hoisted report field, its key names with it.
-var redactedEnvField = regexp.MustCompile(`"redacted_env":\[[^\]]*\]`)
+// redactedEnvField is the hoisted report field, its key names (the
+// fuzz's one, SECRET) the group.
+var redactedEnvField = regexp.MustCompile(`"redacted_env":\[((?:"[A-Za-z0-9_]+",?)*)\]`)
 
 func mustQuote(t *testing.T, s string) []byte {
 	t.Helper()

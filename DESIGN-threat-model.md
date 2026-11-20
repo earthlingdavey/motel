@@ -266,10 +266,11 @@ Properties that matter to the model:
   digits of a time's fraction, an app's memory limit in bytes equal
   to its `memory_max`) stands there whole, naming no key, where a
   marker inside a time, or a body withheld for a number with the key
-  named, said the value was a piece of it (beside a marker of the same
-  value in the body's text, the token shows the value by difference,
-  as the marker paragraph below says); it is replaced everywhere else, digits in a string included, and a
-  body in which a value would stand across a token's edge goes
+  named, said the value was a piece of it; it is replaced everywhere
+  else, digits in a string included; a number that holds a value the
+  filter replaced elsewhere in the body (beside which it would show the
+  value by difference) has the body withheld as before; and a body in
+  which a value would stand across a token's edge goes
   through whole as before (liveswap/redact.go, rule 7). A figure the
   app's behaviour drives (its memory, its request counts) is a channel
   only for an app that means to send its secret, which can answer any
@@ -291,9 +292,8 @@ Properties that matter to the model:
   environment by deploying code, so it learns nothing it could not.
   Nor that a marker hides which key it stands for: it names the key,
   so where a value is replaced inside text the reader already has (the
-  app's name when a value is part of it, the unit named after the app,
-  a time or a number rule 7 sends whole) the reader learns that key's
-  value by difference
+  app's name when a value is part of it, the unit named after the app)
+  the reader learns that key's value by difference
   (liveswap/DESIGN-liveswap.md, "Accepted residuals").
   Tested from both sides — a fuzz property that no known value or
   form survives outside the texts above and the JSON stays valid

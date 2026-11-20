@@ -73,17 +73,19 @@ func TestDeployRecordNumbersPassNoFilter(t *testing.T) {
 // TestHeldNumbersAreTheBodysOwn: a number is held whole, byte for byte,
 // in every form encoding/json writes (negative, a fraction, an
 // exponent), at any depth; digits in a string, a number-shaped string
-// included, are text and filtered, at any depth.
+// included, are text and filtered, at any depth. K's value is in the
+// numbers, S's in the strings.
 func TestHeldNumbersAreTheBodysOwn(t *testing.T) {
-	r := NewRedactor([]string{"K=12345678"}, nil)
+	r := NewRedactor([]string{"K=12345678", "S=87654321"}, nil)
 	for _, c := range []struct{ in, want string }{
 		{`{"a":123456789,"b":[-0.123456789,1.2345678e+21,9123456789e-7],"c":{"d":{"e":[[912345678]]}}}`,
 			`{"a":123456789,"b":[-0.123456789,1.2345678e+21,9123456789e-7],"c":{"d":{"e":[[912345678]]}}}`},
 		{`{"n": 123456789 , "m" :-123456789}`, `{"n": 123456789 , "m" :-123456789}`},
-		{`{"s":"123456789","n":123456789}`, `{"n":123456789,"redacted_env":["K"],"s":"[redacted:K]9"}`},
-		{`{"a":[{"b":"memory 123456789 bytes"}],"n":1}`, `{"a":[{"b":"memory [redacted:K]9 bytes"}],"n":1,"redacted_env":["K"]}`},
-		{`{"log_tail":["12345678","x"]}`, `{"log_tail":["[redacted:K]","x"],"redacted_env":["K"]}`},
-		{`{"version":"v12345678","seconds":12345678.5}`, `{"redacted_env":["K"],"seconds":12345678.5,"version":"v[redacted:K]"}`},
+		{`{"s":"987654321","n":123456789}`, `{"n":123456789,"redacted_env":["S"],"s":"9[redacted:S]"}`},
+		{`{"a":[{"b":"memory 987654321 bytes"}],"n":123456789}`, `{"a":[{"b":"memory 9[redacted:S] bytes"}],"n":123456789,"redacted_env":["S"]}`},
+		{`{"log_tail":["87654321","x"],"n":12345678}`, `{"log_tail":["[redacted:S]","x"],"n":12345678,"redacted_env":["S"]}`},
+		{`{"version":"v87654321","seconds":12345678.5}`, `{"redacted_env":["S"],"seconds":12345678.5,"version":"v[redacted:S]"}`},
+		{`{"s":"12345678"}`, `{"redacted_env":["K"],"s":"[redacted:K]"}`},
 	} {
 		if got := r.redactJSON([]byte(c.in)); got != c.want {
 			t.Errorf("%s:\n got %s\nwant %s", c.in, got, c.want)
@@ -91,9 +93,26 @@ func TestHeldNumbersAreTheBodysOwn(t *testing.T) {
 	}
 }
 
+// TestHeldNumbersNotByDifference: a number that holds a value the
+// filter replaced elsewhere in the body (the app printed it) sends the
+// body through whole, which is withheld, as on main: the number whole
+// beside the marker would show the value. A time keeps its hold, its
+// marker having said as much.
+func TestHeldNumbersNotByDifference(t *testing.T) {
+	r := NewRedactor([]string{"NODE_MEMORY_LIMIT=268435456", "API_VERSION=2023-11-14"}, nil)
+	got := r.redactJSON([]byte(`{"caps":{"memory_max":268435456},"log_tail":["limit 268435456"]}`))
+	if want := `{"error":"response withheld: a redacted value overlapped the response's own structure","redacted_env":["NODE_MEMORY_LIMIT"]}`; got != want {
+		t.Errorf("a number beside its value's marker:\n got %s\nwant %s", got, want)
+	}
+	got = r.redactJSON([]byte(`{"started_at":"2023-11-14T22:13:20Z","log_tail":["on 2023-11-14"],"n":268435456}`))
+	if want := `{"log_tail":["on [redacted:API_VERSION]"],"n":268435456,"redacted_env":["API_VERSION"],"started_at":"2023-11-14T22:13:20Z"}`; got != want {
+		t.Errorf("a time beside its value's marker:\n got %s\nwant %s", got, want)
+	}
+}
+
 // TestHeldNumbersManyTokens: a value of digits alone is no piece of a
 // placeholder, whatever the number of tokens a body holds (the
-// 1235th's is "\u0000#1234"), so a body of thousands of numbers is
+// 1235th's is "\u0000;1234"), so a body of thousands of numbers is
 // held whole.
 func TestHeldNumbersManyTokens(t *testing.T) {
 	nums := make([]int, 2000)

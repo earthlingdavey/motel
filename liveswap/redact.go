@@ -187,19 +187,22 @@ import (
 //     the bytes it returns: putBack looks for every known form across
 //     each edge, and a body with one, or whose placeholders the filter
 //     changed, or that holds a placeholder's shape already (a string
-//     that is a NUL, a # and digits), goes through whole as before, times,
-//     numbers and all (TestHeldTimesFallBack, TestHeldNumbersFallBack).
-//     After the filter, the hoist's sort of the top level (withField)
-//     and the stream's spliced fields can set a held token beside other
-//     JSON, and a value made of a token's end and that JSON stands in
-//     the bytes written, as one made of any field's end and the splice
-//     could before: it is the body's own text. A token whole names no
-//     key, where a marker inside a time said the value was a piece of
-//     it and a body withheld for a number said the key's value was
-//     digits of one; but beside a marker of the same value elsewhere in
-//     the body (the app printed it) it shows the value by difference,
-//     as a marker inside text the reader has does (DESIGN-liveswap.md,
-//     "Accepted residuals"). Rule 7 is the hold of a filter that knows
+//     that is a NUL, a ; and digits), goes through whole as before,
+//     times, numbers and all (TestHeldTimesFallBack,
+//     TestHeldNumbersFallBack); a value across a number's edge so sends
+//     the body's times through the layers too. After the filter, the
+//     hoist's sort of the top level (withField) and the stream's spliced
+//     fields can set a held token beside other JSON, and a value made of
+//     a token's end and that JSON stands in the bytes written: it is the
+//     body's own text (and for a body whose number held a value, which
+//     was withheld before, takes a second value). A token whole names
+//     no key, where a marker inside a time said the value was a piece
+//     of it and a body withheld for a number said the key's value was
+//     digits of one. A number that holds a value the filter replaced
+//     elsewhere in the body (the app printed it) would show it beside
+//     that marker by difference, so such a body goes through whole,
+//     and is withheld as before (TestHeldNumbersNotByDifference); a time
+//     keeps its hold, its marker having said as much. Rule 7 is the hold of a filter that knows
 //     a value: one that knows none replaces nothing a token could hold,
 //     and its tokens pass its later layers as before.
 const (
@@ -798,7 +801,7 @@ func (r *Redactor) filterBody(raw string, seen map[string]bool) string {
 	if r != nil && len(r.secrets) > 0 {
 		if body, held := holdOut(raw); len(held) > 0 {
 			found := map[string]bool{}
-			if out, ok := r.putBack(r.filterWhole(body, found), held); ok {
+			if out, ok := r.putBack(r.filterWhole(body, found), held, found); ok {
 				for k := range found {
 					seen[k] = true
 				}
@@ -841,18 +844,21 @@ var heldTimeKeys = map[string]bool{`"at"`: true, `"started_at"`: true, `"finishe
 var heldTimeRe = regexp.MustCompile(`^"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]{1,9})?(?:Z|[+-][0-9]{2}:[0-9]{2})"$`)
 
 // heldMark opens the placeholder a held time or number stands as while
-// the body is filtered: a string that is a NUL, escaped, a # and then
-// the held token's number ("\u0000#3"), which placeholderRe matches;
-// the # parts the NUL's zeros from the number, so that no value of
-// digits alone is a piece of a placeholder however many tokens a body
-// holds. No layer makes such a string (a marker is key names in
+// the body is filtered: a string that is a NUL, escaped, a ; and then
+// the held token's number ("\u0000;3"), which placeholderRe matches.
+// The ; parts the NUL's zeros from the number, so that no value of
+// digits alone is a piece of a placeholder below ten million tokens,
+// and ends the value a credential assignment's rule (layer 3) would
+// take after a key such as "secret_…", which a placeholder then never
+// fills. No layer makes such a string (a marker is key names in
 // brackets or angles), and a body that holds one already, an app's line
-// that is a NUL, a # and digits, has nothing held. Placeholders are found as whole strings of the JSON,
-// so an app's text that only holds the bytes (a binary probe body's
-// quote before a NUL, a literal \u0000) is no placeholder.
-const heldMark = `"\u0000`
+// that is a NUL, a ; and digits, has nothing held. Placeholders are
+// found as whole strings of the JSON, so an app's text that only holds
+// the bytes (a binary probe body's quote before a NUL, a literal
+// \u0000) is no placeholder.
+const heldMark = `"\u0000;`
 
-var placeholderRe = regexp.MustCompile(`^"\\u0000#[0-9]+"$`)
+var placeholderRe = regexp.MustCompile(`^"\\u0000;[0-9]+"$`)
 
 // eachToken calls str with the bounds of each string of the JSON text s,
 // in order, and whether it is a key, and num with the bounds of each
@@ -888,11 +894,13 @@ func eachToken(s string, str func(i, j int, key bool), num func(i, j int)) bool 
 }
 
 // heldToken is a time or a number held out of the layers: its text as
-// the body had it, and the part of it no form of a known value may
-// cross the edge of (a time's text inside its quotes, a number whole).
+// the body had it, the part of it no form of a known value may cross
+// the edge of (a time's text inside its quotes, a number whole), and
+// whether it is a number.
 type heldToken struct {
 	text   string
 	lo, hi int
+	number bool
 }
 
 // holdOut is raw with each number, and each time under one of
@@ -905,10 +913,10 @@ func holdOut(raw string) (string, []heldToken) {
 	var held []heldToken
 	var key string
 	at, clash := 0, false
-	hold := func(i, j, lo, hi int) {
+	hold := func(i, j, lo, hi int, number bool) {
 		b.WriteString(raw[at:i])
-		b.WriteString(heldMark + "#" + strconv.Itoa(len(held)) + `"`)
-		held = append(held, heldToken{raw[i:j], lo, hi})
+		b.WriteString(heldMark + strconv.Itoa(len(held)) + `"`)
+		held = append(held, heldToken{raw[i:j], lo, hi, number})
 		at = j
 	}
 	ended := eachToken(raw, func(i, j int, isKey bool) {
@@ -919,9 +927,9 @@ func holdOut(raw string) (string, []heldToken) {
 		case isKey:
 			key = s
 		case heldTimeKeys[key] && heldTimeRe.MatchString(s) && strings.HasSuffix(strings.TrimRight(raw[:i], " \t\n\r"), ":"):
-			hold(i, j, 1, j-i-1)
+			hold(i, j, 1, j-i-1, false)
 		}
-	}, func(i, j int) { hold(i, j, 0, j-i) })
+	}, func(i, j int) { hold(i, j, 0, j-i, true) })
 	if !ended || clash || len(held) == 0 {
 		return raw, nil
 	}
@@ -937,23 +945,30 @@ func holdOut(raw string) (string, []heldToken) {
 // token's last characters and the JSON after them, or the JSON before
 // it and its first, which the filter never saw side by side, or one
 // that holds a time's quote. A form wholly inside a time's text or a
-// number is the token's own, and stays (rule 7). These are the bytes
-// the filter returns: what redactJSON's hoist and the stream's splices
-// do after is rule 2's.
-func (r *Redactor) putBack(out string, held []heldToken) (string, bool) {
+// number is the token's own, and stays (rule 7), but in a number when
+// the filter replaced the same key's value elsewhere (found): the
+// number whole beside that marker would show the value by difference,
+// where the body was withheld (a time's marker said as much). These
+// are the bytes the filter returns: what redactJSON's hoist and the
+// stream's splices do after is rule 2's.
+func (r *Redactor) putBack(out string, held []heldToken, found map[string]bool) (string, bool) {
 	var b strings.Builder
-	spans := make([][2]int, 0, len(held))
+	type span struct {
+		lo, hi int
+		number bool
+	}
+	spans := make([]span, 0, len(held))
 	n, at, misplaced := 0, 0, false
 	ended := eachToken(out, func(i, j int, _ bool) {
 		if !placeholderRe.MatchString(out[i:j]) {
 			return
 		}
-		if misplaced || n == len(held) || out[i:j] != heldMark+"#"+strconv.Itoa(n)+`"` {
+		if misplaced || n == len(held) || out[i:j] != heldMark+strconv.Itoa(n)+`"` {
 			misplaced = true
 			return
 		}
 		b.WriteString(out[at:i])
-		spans = append(spans, [2]int{b.Len() + held[n].lo, b.Len() + held[n].hi})
+		spans = append(spans, span{b.Len() + held[n].lo, b.Len() + held[n].hi, held[n].number})
 		b.WriteString(held[n].text)
 		at, n = j, n+1
 	}, func(int, int) {})
@@ -963,6 +978,10 @@ func (r *Redactor) putBack(out string, held []heldToken) (string, bool) {
 	b.WriteString(out[at:])
 	s := b.String()
 	for _, sec := range r.secrets {
+		elsewhere := false
+		for _, k := range sec.keys {
+			elsewhere = elsewhere || found[k]
+		}
 		for from := 0; ; {
 			i := strings.Index(s[from:], sec.text)
 			if i < 0 {
@@ -970,7 +989,7 @@ func (r *Redactor) putBack(out string, held []heldToken) (string, bool) {
 			}
 			start, end := from+i, from+i+len(sec.text)
 			for _, sp := range spans {
-				if start < sp[1] && end > sp[0] && (start < sp[0] || end > sp[1]) {
+				if start < sp.hi && end > sp.lo && (start < sp.lo || end > sp.hi || sp.number && elsewhere) {
 					return "", false
 				}
 			}

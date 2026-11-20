@@ -134,9 +134,9 @@ func TestHeldTimesFallBack(t *testing.T) {
 		// A placeholder the filter replaced a value inside: the body
 		// whole, which does not hold the value.
 		{`0","error":"b`, body, body},
-		// A string of the body's shaped as a placeholder (a NUL, a #
+		// A string of the body's shaped as a placeholder (a NUL, a ;
 		// and digits): nothing held.
-		{`2023-11-14`, `{"started_at":"2023-11-14T22:13:20Z","error":"\u0000#1"}`, `{"error":"\u0000#1","redacted_env":["K"],"started_at":"[redacted:K]T22:13:20Z"}`},
+		{`2023-11-14`, `{"started_at":"2023-11-14T22:13:20Z","error":"\u0000;1"}`, `{"error":"\u0000;1","redacted_env":["K"],"started_at":"[redacted:K]T22:13:20Z"}`},
 	} {
 		got := NewRedactor([]string{"K=" + c.value}, nil).redactJSON([]byte(c.in))
 		if got != c.want || !json.Valid([]byte(got)) {
@@ -151,7 +151,7 @@ func TestHeldTimesFallBack(t *testing.T) {
 // text"), is no placeholder: the times are held.
 func TestHeldTimesBesideANul(t *testing.T) {
 	r := NewRedactor([]string{"API_VERSION=2023-11-14"}, nil)
-	for _, line := range []string{"a\x00b", "\x00\x01binary", "ab\"\x00cd", "\x001x", "\x001", `DETAIL: \u0000 cannot be converted to text.`} {
+	for _, line := range []string{"a\x00b", "\x00\x01binary", "ab\"\x00cd", "\x001x", "\x001", "\x00#1", `DETAIL: \u0000 cannot be converted to text.`} {
 		raw, _ := json.Marshal(map[string]any{"log_tail": []string{line}, "started_at": time.Unix(1_700_000_000, 0).UTC()})
 		if got := r.redactJSON(raw); got != string(raw) {
 			t.Errorf("%q:\n got %s\nwant %s", line, got, raw)
