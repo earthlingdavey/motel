@@ -9,6 +9,8 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
+	"regexp/syntax"
 	"slices"
 	"strings"
 	"sync"
@@ -377,8 +379,8 @@ func TestQueryKeyGrammar(t *testing.T) {
 		{"after with a raw ;", "?after=" + testCursor, nil},
 		{"after with a raw ;, after lines", "?lines=50&after=" + testCursor, nil},
 		{"after with a raw ;, before lines", "?after=" + testCursor + "&lines=50", nil},
-		{"after with + for a space", "?after=" + strings.Replace(esc(testCursor), "i%3D826", "i%3D%2B826", 1), nil},
-		{"after with + in place of a digit", "?after=" + strings.Replace(esc(testCursor), "i%3D826", "i%3D82+", 1), nil},
+		{"after with %2B, a +", "?after=" + strings.Replace(esc(testCursor), "i%3D826", "i%3D%2B826", 1), nil},
+		{"after with a raw +, a space", "?after=" + strings.Replace(esc(testCursor), "i%3D826", "i%3D82+", 1), nil},
 		{"after empty", "?after=", nil},
 		{"after with no =", "?after", nil},
 		{"after with a NUL", "?after=" + esc(testCursor) + "%00", nil},
@@ -431,12 +433,34 @@ func TestQueryKeyGrammarSays(t *testing.T) {
 	}
 }
 
+// anchored is whether re matches whole values alone: its pattern, as
+// parsed, one sequence from the start of the text to its end, so that
+// no alternative at the top escapes either anchor (`^a|b$` matches any
+// value ending in b).
+func anchored(re *regexp.Regexp) bool {
+	p, err := syntax.Parse(re.String(), syntax.Perl)
+	if err != nil {
+		return false
+	}
+	p = p.Simplify()
+	return p.Op == syntax.OpConcat && len(p.Sub) >= 2 &&
+		p.Sub[0].Op == syntax.OpBeginText && p.Sub[len(p.Sub)-1].Op == syntax.OpEndText
+}
+
 // TestAppRouteKeys: every key of every row, the probe's among them, has
 // a name no other key of its row has, and exactly one of a closed set of
 // distinct, non-empty values or a grammar; a grammar is anchored, takes
 // no empty value (so a key not named is told from one named) and has
 // its words. A key with neither would panic on its row's first request.
 func TestAppRouteKeys(t *testing.T) {
+	for pattern, want := range map[string]bool{
+		`^[a-z]{3}$`: true, `^(?:a|b)$`: true, `^(a|bc)$`: true,
+		`^a|b$`: false, `^a$|^b$`: false, `(?m)^a$`: false, `^a`: false, `a$`: false, `a`: false, `^a\z`: true,
+	} {
+		if anchored(regexp.MustCompile(pattern)) != want {
+			t.Errorf("anchored(%s) = %v", pattern, !want)
+		}
+	}
 	withProbeRow(t)
 	for _, rt := range motelAppRoutes {
 		seen := map[string]bool{}
@@ -446,7 +470,7 @@ func TestAppRouteKeys(t *testing.T) {
 				t.Errorf("%s: key %q empty or twice", rt.read, k.name)
 			case (g == nil) == (len(k.values) == 0):
 				t.Errorf("%s: key %q has %d values and a grammar %v: it needs one of the two", rt.read, k.name, len(k.values), g)
-			case g != nil && (!strings.HasPrefix(g.re.String(), "^") || !strings.HasSuffix(g.re.String(), "$") || g.re.MatchString("") || g.says == ""):
+			case g != nil && (!anchored(g.re) || g.re.MatchString("") || g.says == ""):
 				t.Errorf("%s: key %q's grammar %s is not anchored, takes \"\" or has no words", rt.read, k.name, g.re)
 			case g == nil && (slices.Contains(k.values, "") || len(slices.Compact(slices.Sorted(slices.Values(k.values)))) != len(k.values)):
 				t.Errorf("%s: key %q's values %q are not distinct and non-empty", rt.read, k.name, k.values)
