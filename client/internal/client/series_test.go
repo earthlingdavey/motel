@@ -51,6 +51,8 @@ func TestReadSeries(t *testing.T) {
 		{"no step", strings.Replace(whole, `"step_seconds":60,`, "", 1), "its step or its end is not one a window has)"},
 		{"no end", strings.Replace(whole, `"end":"2026-11-19T14:00:00Z",`, "", 1), "its step or its end is not one a window has)"},
 		{"a step longer than the window", strings.Replace(whole, `"step_seconds":60`, `"step_seconds":3601`, 1), "its step or its end is not one a window has)"},
+		{"a step that wraps a Duration", strings.Replace(whole, `"step_seconds":60`, `"step_seconds":9223372037`, 1), "its step or its end is not one a window has)"},
+		{"a point off the step's grid", strings.Replace(whole, `[1795096740,2]`, `[1795096741,2]`, 1), "a point in it is not one of its window, oldest first)"},
 		{"a step of a second over the hour", strings.Replace(whole, `"step_seconds":60`, `"step_seconds":1`, 1), "its step or its end is not one a window has)"},
 		{"a name not a word", strings.Replace(whole, `"memory_bytes"`, `"memory bytes\u001b[2J"`, 1), "a panel's name or unit in it is not a word)"},
 		{"a unit not a word", strings.Replace(whole, `"unit":"bytes"`, `"unit":"Bytes!"`, 1), "a panel's name or unit in it is not a word)"},

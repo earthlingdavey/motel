@@ -96,7 +96,8 @@ import (
 //     series (GET /_motel/apps/<app>/series) and its alerts are one
 //     app's bodies whose words pass its filter and whose numbers and
 //     times are put back after the last pass: the store's points, its
-//     step and the window's end (motel_series.go, filterSeries), and
+//     step, the window's end and the box's own words of closed sets
+//     (the store's word, the window) (motel_series.go, filterSeries), and
 //     Alertmanager's times (filterAlerts), never the app's bytes.
 //  3. The outcome vocabulary is structural, never textual. A pair
 //     "status":"<word>", "phase":"<word>" or "name":"<word>", the

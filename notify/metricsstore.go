@@ -187,17 +187,13 @@ func (c *storeClient) queryAt(ctx context.Context, q string, t time.Time) ([]ser
 	return parseQueryAnswer(data)
 }
 
-// queryRange is a range query over [start, end] at step, the latency
-// offset asked for as queryAt asks it: a store set up before setup's 5 s
-// keeps the 30 s default, and a series' newest step, ended 5 s back,
-// would be left out or read short there.
+// queryRange is a range query over [start, end] at step.
 func (c *storeClient) queryRange(ctx context.Context, q string, start, end time.Time, step time.Duration) ([]series, error) {
 	v := url.Values{
-		"query":          {q},
-		"start":          {strconv.FormatInt(start.Unix(), 10)},
-		"end":            {strconv.FormatInt(end.Unix(), 10)},
-		"step":           {strconv.Itoa(int(step / time.Second))},
-		"latency_offset": {promDuration(storeLatencyOffset)},
+		"query": {q},
+		"start": {strconv.FormatInt(start.Unix(), 10)},
+		"end":   {strconv.FormatInt(end.Unix(), 10)},
+		"step":  {strconv.Itoa(int(step / time.Second))},
 	}
 	data, err := c.do(ctx, http.MethodGet, "/api/v1/query_range?"+v.Encode(), nil, "")
 	if err != nil {

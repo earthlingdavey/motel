@@ -199,9 +199,10 @@ const plotLabel = 7
 func (s *Session) MetricsViewFit(app, rng string, now time.Time, width, height int, cells Cells) []Line {
 	s.seen(now)
 	g, err := s.Series(app, rng)
-	if a := s.apps[app]; g == nil && a != nil && a.st == nil && (Forbidden(a.err) || NotFound(a.err)) {
+	if a := s.apps[app]; a != nil && a.st == nil && (Forbidden(a.err) || NotFound(a.err)) {
 		// The box refused the app's status: nothing of the app is shown,
-		// and the refusal is said, whatever the series' own read did.
+		// and the refusal is said, whatever the series' own read did, an
+		// answer of it since among it.
 		l := Line{{T: Capped(failureText(a.err), 4*LineMax)}}
 		if Forbidden(a.err) {
 			l = append(l, s.askAgain(now)...)
@@ -329,9 +330,9 @@ func inWindow(pts [][2]float64, start, end time.Time) [][2]float64 {
 	return in
 }
 
-// panelHead is a panel's head, two rows, each whole at 60 columns: its
-// newest value with its time and age; its highest and lowest, as the
-// axis writes them, with their times.
+// panelHead is a panel's head: its newest value with its time and age;
+// its highest and lowest, as the axis writes them, with their times, on
+// one row when it holds both, else a row each.
 func panelHead(p seriesPanel, in [][2]float64, now time.Time, width int, cells Cells) []Line {
 	if len(in) == 0 {
 		return []Line{cutTo(field(p.label, own("no point in this window")), width, cells)}
@@ -383,7 +384,8 @@ func panelPlot(p seriesPanel, in [][2]float64, start, end time.Time, step time.D
 			label = SeriesValue(p.name, lo[1], true)
 		}
 		if r := []rune(label); len(r) > plotLabel {
-			label = string(r[:plotLabel-1]) + "…"
+			// Cut, marked in ASCII: an ellipsis is of ambiguous width.
+			label = string(r[:plotLabel-1]) + "~"
 		}
 		out = append(out, cutTo(Line{ownC(padLeft(label, plotLabel)+" |", Dim), own(r)}, width, cells))
 	}
@@ -392,12 +394,14 @@ func panelPlot(p seriesPanel, in [][2]float64, start, end time.Time, step time.D
 	for _, pt := range in {
 		have[int64(pt[0])] = true
 	}
+	hits := 0
 	// Each step with no point breaks every cell its span (the step up to
 	// its time) is drawn in. A window of more steps than any box's (a
 	// fixture's step of a second over 14 days) is left unbroken.
 	if end.Sub(start)/step <= 4096 {
 		for t := start; !t.After(end); t = t.Add(step) {
 			if have[t.Unix()] {
+				hits++
 				continue
 			}
 			from := cellOf(maxTime(start, t.Add(-step+time.Second)), start, end, plotW)
@@ -413,7 +417,7 @@ func panelPlot(p seriesPanel, in [][2]float64, start, end time.Time, step time.D
 	// The window's ends, and between them how many of its steps have a
 	// point, which the breaks in the axis show where.
 	from, to := clock(start, now, false), clock(end, now, false)
-	count := strconv.Itoa(len(have)) + " of " + strconv.Itoa(int(end.Sub(start)/step)+1) + " steps"
+	count := strconv.Itoa(hits) + " of " + strconv.Itoa(int(end.Sub(start)/step)+1) + " steps"
 	room := plotW - len(from) - len(to)
 	mid := strings.Repeat(" ", max(room, 1))
 	if room >= len(count)+2 {

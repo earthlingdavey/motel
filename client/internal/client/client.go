@@ -605,9 +605,14 @@ func holdSeries(s *wire.Series) string {
 		}
 		return ""
 	}
+	// No window a box keeps has a thousand steps (337 at the most). The
+	// seconds compared before they are a Duration, which a huge one
+	// would wrap.
+	if s.StepSeconds <= 0 || s.StepSeconds > int(span/time.Second) || s.End == nil {
+		return "its step or its end is not one a window has"
+	}
 	step := time.Duration(s.StepSeconds) * time.Second
-	// No window a box keeps has a thousand steps (337 at the most).
-	if s.StepSeconds <= 0 || step > span || span/step > 1000 || s.End == nil {
+	if span/step > 1000 {
 		return "its step or its end is not one a window has"
 	}
 	start, end := s.End.Add(-span).Unix(), s.End.Unix()
@@ -627,8 +632,9 @@ func holdSeries(s *wire.Series) string {
 		}
 		for j, pt := range p.Points {
 			t := pt[0]
+			// Each at a multiple of the step back from the end, as moteld's.
 			if math.IsNaN(t) || math.IsInf(pt[1], 0) || math.IsNaN(pt[1]) || t < float64(start) || t > float64(end) || t != math.Trunc(t) ||
-				j > 0 && t <= p.Points[j-1][0] {
+				(end-int64(t))%int64(s.StepSeconds) != 0 || j > 0 && t <= p.Points[j-1][0] {
 				return "a point in it is not one of its window, oldest first"
 			}
 		}

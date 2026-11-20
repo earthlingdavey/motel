@@ -309,6 +309,20 @@ func TestSeriesWordsPassTheFilter(t *testing.T) {
 		t.Errorf("the value is in the body: %s", w.Body)
 	}
 
+	// The store's word and the window are the box's own: a value equal
+	// to one leaves them as they are, and the answer read.
+	for _, c := range []struct{ value, store string }{{"unanswered", wire.StoreUnanswered}, {"unanswered", wire.StoreOn}} {
+		h, people := alertsRig(t)
+		must(t, os.WriteFile(h.app.managed["demo"].spec.envFile, []byte("WORD="+c.value+"\n"), 0o600))
+		src := &fakeSeries{byApp: map[string]wire.Series{"demo": demoSeries()}, unanswered: c.store == wire.StoreUnanswered}
+		h.app.SetSeriesSource(src)
+		w := sendTo(t, h, "GET", "/_motel/apps/demo/series?range=24h", token(people.alice))
+		var got wire.Series
+		if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil || got.Store != c.store || got.Window != "24h" || strings.Contains(w.Body.String(), "redacted") {
+			t.Errorf("WORD=%s, the store %s: %v %s", c.value, c.store, err, w.Body)
+		}
+	}
+
 	must(t, os.Remove(ma.spec.envFile))
 	ma.secretsLoaded = false
 	w = sendTo(t, h, "GET", "/_motel/apps/demo/series?range=24h", token(people.alice))

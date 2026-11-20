@@ -365,9 +365,10 @@ alert or the box's, and that each 200 holds its own app's.
 window the query named, from the closed set; the source builds every
 query from those two alone (notify/DESIGN-metrics.md, "An app's
 series"), so nothing of the request's reaches the store but a word of
-the set. The body is about that app alone, and its words (the store's
-word, the window, each panel's name and unit) pass the app's filter;
-its numbers (the step, the end, every point) pass none: they are taken
+the set. The body is about that app alone, and its words (each panel's
+name and unit) pass the app's filter; the store's word and the window,
+the box's own of closed sets, and its numbers (the step, the end, every
+point) pass none: they are taken
 out before the filter and put back after its last pass, as an app's
 alerts' times are (`filterSeries`), since an env_file value that is a
 run of digits, a unix time or a date would otherwise be replaced inside

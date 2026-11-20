@@ -376,6 +376,18 @@ func TestStatusRefusedDropsTheSeries(t *testing.T) {
 	if got := text(s.MetricsViewFit("blog", "24h", now, 0, 27, nil)); strings.Contains(got, "asking") || !strings.Contains(got, "no") {
 		t.Errorf("the screen after the status was refused: %q", got)
 	}
+	// A series answer that comes after the status's refusal is not shown
+	// under it either.
+	s.Engine.Again(now.Add(time.Minute), seriesJob("blog", "24h"))
+	now = now.Add(time.Minute)
+	for range 6 {
+		if j := step(t, s, f, &now); j.Kind == model.KSeries {
+			break
+		}
+	}
+	if got := text(s.MetricsViewFit("blog", "24h", now, 0, 27, nil)); strings.Contains(got, "memory") || !strings.Contains(got, "no") {
+		t.Errorf("a series answered after the status was refused is shown: %q", got)
+	}
 	// Refused first, the series is held; the status refused after drops
 	// nothing that would let the screen say it is asking.
 	f2 := &demo.Fake{Now: func() time.Time { return now }}

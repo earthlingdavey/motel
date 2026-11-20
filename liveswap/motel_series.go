@@ -42,9 +42,9 @@ func (h *Handler) appSeries(w http.ResponseWriter, r *http.Request, app appHandl
 }
 
 // filterSeries is the series body through the app's filter, its numbers
-// passing none: the filter is given the body's words alone (the store's
-// word, the window, each panel's name and unit) and the step, the end
-// and every point are put back after its last pass. They are the
+// passing none: the filter is given each panel's name and unit, and the
+// store's word, the window (the box's own words, of closed sets), the
+// step, the end and every point are put back after its last pass. They are the
 // store's numbers and the box's clock, never the app's bytes, and an
 // env_file value that is a run of digits (a port range, a unix time, an
 // id), a date or a piece of one would otherwise be replaced inside a
@@ -65,20 +65,18 @@ func filterSeries(body wire.Series, f *Redactor) (string, bool) {
 		rows[i] = words{p.Name, p.Unit}
 	}
 	raw, _ := json.Marshal(struct {
-		Store  string  `json:"store"`
-		Window string  `json:"window"`
 		Panels []words `json:"panels"`
-	}{body.Store, body.Window, rows}) // strings: nothing to fail
+	}{rows}) // strings: nothing to fail
 	var got map[string]json.RawMessage
 	var panels []words
 	if json.Unmarshal([]byte(f.redactJSON(raw)), &got) != nil || json.Unmarshal(got["panels"], &panels) != nil ||
 		len(panels) != len(body.Panels) {
 		return "", false
 	}
-	var store, window string
-	if json.Unmarshal(got["store"], &store) != nil || json.Unmarshal(got["window"], &window) != nil {
-		return "", false
-	}
+	// The store's word and the window are the box's own, of closed sets,
+	// put back as the numbers are: an env_file value "unanswered" would
+	// otherwise make the answer no client takes.
+	store, window := body.Store, body.Window
 	// Each panel as its wire type writes it: what the filter left of its
 	// words, the store's points.
 	out := make([]wire.Panel, len(panels))
@@ -90,13 +88,19 @@ func filterSeries(body wire.Series, f *Redactor) (string, bool) {
 	}
 	var b []byte
 	var err error
-	if len(got) == 3 {
+	if len(got) == 1 {
 		// The filter changed nothing at the top: the wire type's order.
 		b, err = json.Marshal(wire.Series{Store: store, Window: window, StepSeconds: body.StepSeconds, End: body.End, Panels: out})
 	} else {
 		// A changed body's keys sorted, its redacted_env with them, as
 		// redactJSON writes one.
 		got["panels"], err = json.Marshal(out)
+		if err == nil {
+			got["store"], err = json.Marshal(store)
+		}
+		if err == nil {
+			got["window"], err = json.Marshal(window)
+		}
 		if err == nil && body.StepSeconds != 0 {
 			got["step_seconds"], err = json.Marshal(body.StepSeconds)
 		}
