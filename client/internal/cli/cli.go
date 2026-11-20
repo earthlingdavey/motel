@@ -52,7 +52,7 @@ const experimental = "Every command is experimental: its flags, output and exit 
 	"in any release until a release's notes say otherwise. The human output is\n" +
 	"never a contract. --json prints the box's own JSON for a read of it (deploys\n" +
 	"<app>: its deploys array alone; version and key: motel's own), and on\n" +
-	"exit 1 or 6, or 5 when the 403 was JSON; on exit 2, 3, 4, 8 or another 5,\n" +
+	"exit 1, 6 or 9, or 5 when the 403 was JSON; on exit 2, 3, 4, 8 or another 5,\n" +
 	"{\"error\":...} holding motel's own sentence, the one stderr prints.\n\n" +
 	"The box: an app's URL as <app>, else --box, MOTEL_BOX, the host of MOTEL_URL,\n" +
 	"or the box repository the shell is in. The credential: a token your ssh key\n" +
@@ -64,8 +64,8 @@ const experimental = "Every command is experimental: its flags, output and exit 
 	"Exit codes: 0 read; 1 the box answered with a failure; 2 nothing sent (usage,\n" +
 	"no box or key, an RSA or ECDSA key); 3 could not tell (no answer, not moteld's\n" +
 	"answer, any 5xx, a 429 that stood); 4 not accepted (a 401 after one retry);\n" +
-	"5 not allowed (403); 6 not found (404); 8 the certificate did not verify; 130\n" +
-	"interrupted."
+	"5 not allowed (403); 6 not found (404); 8 the certificate did not verify; 9 the\n" +
+	"deploy status --follow followed failed; 130 interrupted."
 
 // Main runs the client with args (without the program's name) and
 // returns the exit code.

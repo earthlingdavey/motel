@@ -97,6 +97,10 @@ type appData struct {
 	// screen is open, and rulesErr their newest read's failure.
 	rules    *Got[wire.Rules]
 	rulesErr error
+	// flight is the deploy the status held shows in flight, and ended
+	// the last one seen in flight that has since ended (follow).
+	flight *wire.DeployInFlight
+	ended  *ended
 }
 
 type recData struct {

@@ -73,6 +73,11 @@ var bindings = []binding{
 	{"enter", "open the app", []model.Screen{model.ScreenApps}, closed, keys(tcell.KeyEnter), pass},
 	{"enter", "open the deploy's record", []model.Screen{model.ScreenApp}, closed, keys(tcell.KeyEnter), pass},
 	{"d", "its newest deploy record if it failed, else the app", []model.Screen{model.ScreenApps}, closed, rune1('d'), done(func(u *UI, _ model.View) { u.openNewest() })},
+	{"d", "the newest deploy's record", []model.Screen{model.ScreenApp}, closed, rune1('d'), done(func(u *UI, v model.View) {
+		if ver, ok := u.S.Newest(v.App); ok {
+			u.open(model.View{Screen: model.ScreenRecord, App: v.App, Version: ver})
+		}
+	})},
 	{"/", "filter by name; /! keeps only marked rows", []model.Screen{model.ScreenApps}, closed, rune1('/'), done(func(u *UI, _ model.View) { u.ask('/') })},
 	{"s", "sort: attention, name, memory, 5xx", []model.Screen{model.ScreenApps}, closed, rune1('s'), done(func(u *UI, _ model.View) { u.sort++ })},
 	{"w", "wrap long lines (off: a line stays a line)", []model.Screen{model.ScreenRecord}, closed, rune1('w'), done(func(u *UI, _ model.View) {

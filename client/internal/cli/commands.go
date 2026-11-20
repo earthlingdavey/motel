@@ -124,12 +124,18 @@ func validName(s string) bool {
 func (r *runner) status() *cobra.Command {
 	var t target
 	var rng string
+	var follow bool
 	c := &cobra.Command{
 		Use:   "status <app>",
 		Short: "An app's status: phase, version, watchdog, metrics, last deploy (experimental)",
 		Long: "status reads an app's status: GET /<app> on the box. <app> is a name, or the\n" +
 			"app's URL (https://deploy.example.com/blog), which names the box too.\n" +
-			"It exits 0 when it read the status, whatever the app's phase.\n\n" + experimental,
+			"It exits 0 when it read the status, whatever the app's phase.\n\n" +
+			"--follow, with a deploy in flight, reads the status every 5 s until that\n" +
+			"deploy ends, printing each phase as the box lists it, then its outcome: exit\n" +
+			"0 when it succeeded, 9 when it failed, 3 when the box gives no outcome of it.\n" +
+			"With none in flight it prints the status, exit 0. With --json it prints the\n" +
+			"last status read alone on exit 0 and 9, and on 3 motel's own {\"error\":...}.\n\n" + experimental,
 		Args: usageArgs(cobra.ExactArgs(1)),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			app, err := client.ParseApp(args[0])
@@ -149,6 +155,9 @@ func (r *runner) status() *cobra.Command {
 			if err != nil {
 				return fail(err)
 			}
+			if follow {
+				return r.follow(cmd.Context(), c, app, rng, st, ans)
+			}
 			if r.json {
 				return r.emit(ans.Body)
 			}
@@ -157,6 +166,7 @@ func (r *runner) status() *cobra.Command {
 	}
 	t.flags(c)
 	c.Flags().StringVar(&rng, "range", "", "the metrics' range: "+strings.Join(wire.MetricsRanges, " or ")+" (the box's default is "+wire.MetricsRanges[0]+")")
+	c.Flags().BoolVar(&follow, "follow", false, "with a deploy in flight, read until it ends and exit by its outcome")
 	return c
 }
 
