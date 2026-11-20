@@ -80,6 +80,10 @@ type appData struct {
 	st    *Got[wire.Status]
 	err   error
 	errAt time.Time
+	// alerts is the app's alerts, read while its screen is open, and
+	// alertsErr their newest read's failure.
+	alerts    *Got[wire.Alerts]
+	alertsErr error
 }
 
 type recData struct {
@@ -113,6 +117,16 @@ func (s *Session) Fetch(ctx context.Context, c Client, j Job) (func(), error) {
 			switch k, _ := failKind(err); k {
 			case FailUnusable:
 				s.last, s.refused = at, false // an answer came, if not one to use
+			case FailNotFound:
+				if j.Kind == KAlerts {
+					// A box older than the read, most likely: it answered,
+					// and refused nothing this key may read; the app's
+					// screen says the box's words. (An app gone is said by
+					// its status's 404 too, a refusal.)
+					s.last, s.refused = at, false
+					break
+				}
+				s.refused = true
 			case FailNotSent: // nothing was asked of the box
 			default:
 				s.refused = true
@@ -160,6 +174,9 @@ func (s *Session) seen(now time.Time) {
 		for _, a := range s.apps {
 			if a.st != nil {
 				move(&a.st.At)
+			}
+			if a.alerts != nil {
+				move(&a.alerts.At)
 			}
 			move(&a.errAt)
 		}

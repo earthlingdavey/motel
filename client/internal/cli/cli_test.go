@@ -81,6 +81,7 @@ type fakeBox struct {
 	whoami  wire.WhoAmI
 	apps    wire.Apps
 	backups wire.Backups
+	alerts  wire.Alerts
 	auth    []string
 	bodies  map[string][]byte // what each target was answered
 }
@@ -106,6 +107,8 @@ func newFakeBox(t *testing.T) *fakeBox {
 			body = encode(fb.whoami)
 		case r.URL.Path == "/_motel/apps":
 			body = encode(fb.apps)
+		case r.URL.Path == "/_motel/apps/blog/alerts":
+			body = encode(fb.alerts)
 		case r.URL.Path == "/_motel/backups":
 			body = encode(fb.backups)
 		case r.URL.Path == "/":

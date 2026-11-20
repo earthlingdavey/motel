@@ -14,11 +14,13 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"go.uber.org/zap"
 	"golang.org/x/crypto/ssh"
 
 	"github.com/smallhoursorg/motel/liveswap/access"
+	"github.com/smallhoursorg/motel/liveswap/wire"
 )
 
 // The client with a person's token against the real liveswap_webhook,
@@ -166,6 +168,10 @@ func TestClientPeople(t *testing.T) {
 		t.Fatal(err)
 	}
 	h.people = access.NewRegistry(boxIdentity, l)
+	h.app.SetAlertsSource(&fakeAlerts{ok: true, held: []AppAlert{
+		{App: "demo", Alert: wire.Alert{Name: "deploy_failed", Severity: "warning", Summary: "deploy of v2 failed at soaking " + hostileProbe, StartsAt: time.Date(2026, 11, 19, 14, 2, 0, 0, time.UTC), State: "active"}},
+		{App: "blog", Alert: wire.Alert{Name: "errors_high", Severity: "warning", Summary: "blog: errors", StartsAt: time.Date(2026, 11, 19, 14, 0, 0, 0, time.UTC), State: "active"}},
+	}})
 
 	var last lastBody
 	box := serveClient(t, last.serve(webhook(h)))
@@ -175,13 +181,16 @@ func TestClientPeople(t *testing.T) {
 	}
 
 	commands := map[string][]string{
-		"whoami":      {"whoami"},
-		"apps":        {"apps"},
-		"status":      {"status", app},
-		"deploys":     {"deploys", app},
-		"one deploy":  {"deploys", app, "v2"},
-		"another app": {"status", box.url + "/blog"},
-		"no such app": {"status", box.url + "/ghost"},
+		"whoami":               {"whoami"},
+		"apps":                 {"apps"},
+		"status":               {"status", app},
+		"deploys":              {"deploys", app},
+		"one deploy":           {"deploys", app, "v2"},
+		"another app":          {"status", box.url + "/blog"},
+		"no such app":          {"status", box.url + "/ghost"},
+		"alerts":               {"monitor", "alerts", "--app", app},
+		"another app's alerts": {"monitor", "alerts", "--app", "blog"},
+		"no such app's alerts": {"monitor", "alerts", "--app", "ghost"},
 	}
 	type want struct {
 		code   int
@@ -196,14 +205,17 @@ func TestClientPeople(t *testing.T) {
 		{"a viewer of demo", alice, map[string]want{
 			"whoami": {0, ""}, "apps": {0, "demo\n"}, "status": {0, ""}, "deploys": {0, ""}, "one deploy": {0, ""},
 			"another app": forbidden, "no such app": forbidden,
+			"alerts": {0, ""}, "another app's alerts": forbidden, "no such app's alerts": forbidden,
 		}},
 		{"a viewer of the box", carol, map[string]want{
 			"whoami": {0, ""}, "apps": {0, "blog\ndemo\n"}, "status": {0, ""}, "deploys": {0, ""}, "one deploy": {0, ""},
 			"another app": {0, ""}, "no such app": {6, ""},
+			"alerts": {0, ""}, "another app's alerts": {0, ""}, "no such app's alerts": {6, ""},
 		}},
 		{"a person with no grant", dave, map[string]want{
 			"whoami": {0, ""}, "apps": {0, ""}, "status": forbidden, "deploys": forbidden, "one deploy": forbidden,
 			"another app": forbidden, "no such app": forbidden,
+			"alerts": forbidden, "another app's alerts": forbidden, "no such app's alerts": forbidden,
 		}},
 	} {
 		for name, args := range commands {

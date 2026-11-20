@@ -312,17 +312,31 @@ func TestOneHandleMaker(t *testing.T) {
 	}
 }
 
-// TestEveryMotelRouteHasAnAction: the rows under /_motel/ and the box
-// actions served there are the same set, both ways, and every row is a
-// GET of an exact path under the prefix.
+// TestEveryMotelRouteHasAnAction: the rows under /_motel/ and the
+// actions served there are the same set, both ways; every box row is a
+// GET of an exact path under the prefix with a box action, and every
+// app-scoped row a read of one segment under /_motel/apps/<app>/ with
+// an app action, one row a read.
 func TestEveryMotelRouteHasAnAction(t *testing.T) {
 	var actions []access.Action
 	for _, rt := range motelRoutes {
 		if !strings.HasPrefix(rt.path, motelPrefix+"/") || rt.serve == nil {
 			t.Errorf("row %s: not under %s/, or no function", rt.path, motelPrefix)
 		}
-		if !slices.Contains(access.MotelActions, rt.action) {
-			t.Errorf("row %s: action %s is not one served under /_motel/", rt.path, rt.action)
+		if !slices.Contains(access.MotelActions, rt.action) || !strings.HasPrefix(string(rt.action), "box.") {
+			t.Errorf("row %s: action %s is not a box action served under /_motel/", rt.path, rt.action)
+		}
+		actions = append(actions, rt.action)
+	}
+	reads := map[string]bool{}
+	for _, rt := range motelAppRoutes {
+		where := motelAppsPrefix + "<app>/" + rt.read
+		if !regexp.MustCompile(`^[a-z]+$`).MatchString(rt.read) || rt.serve == nil || reads[rt.read] {
+			t.Errorf("row %s: not one lowercase segment, no function, or a read twice", where)
+		}
+		reads[rt.read] = true
+		if !slices.Contains(access.MotelActions, rt.action) || !strings.HasPrefix(string(rt.action), "app.") {
+			t.Errorf("row %s: action %s is not an app action served under /_motel/", where, rt.action)
 		}
 		actions = append(actions, rt.action)
 	}

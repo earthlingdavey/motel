@@ -64,6 +64,11 @@ func (r *recorder) BoxStatus(context.Context) (model.Got[wire.BoxStatus], error)
 	return model.Got[wire.BoxStatus]{}, nil
 }
 
+func (r *recorder) Alerts(context.Context, string) (model.Got[wire.Alerts], error) {
+	r.called = "Alerts"
+	return model.Got[wire.Alerts]{}, nil
+}
+
 func (r *recorder) Backups(context.Context) (model.Got[wire.Backups], error) {
 	r.called = "Backups"
 	return model.Got[wire.Backups]{}, nil
@@ -73,12 +78,13 @@ func (r *recorder) Backups(context.Context) (model.Got[wire.Backups], error) {
 // an action names, and the model.Client method its read must call,
 // which live maps to the client's read of the same name.
 var wantRead = map[string]string{
-	"whoami":                  "WhoAmI",
-	"apps":                    "Apps",
-	"status <app>":            "Status",
-	"deploys <app> <version>": "Deploy",
-	"box status":              "BoxStatus",
-	"backup status":           "Backups",
+	"whoami":                     "WhoAmI",
+	"apps":                       "Apps",
+	"status <app>":               "Status",
+	"deploys <app> <version>":    "Deploy",
+	"box status":                 "BoxStatus",
+	"backup status":              "Backups",
+	"monitor alerts --app <app>": "Alerts",
 }
 
 // TestActionsAreCommands: every read the TUI makes is an action naming
@@ -91,10 +97,15 @@ func TestActionsAreCommands(t *testing.T) {
 	for _, a := range model.Actions {
 		words := strings.Fields(a.Command)
 		var path, args []string
-		for _, w := range words {
-			if strings.HasPrefix(w, "<") {
+		var flags []string // a flag and the word after it, its value
+		for i := 0; i < len(words); i++ {
+			switch w := words[i]; {
+			case strings.HasPrefix(w, "--") && i+1 < len(words):
+				flags = append(flags, w, words[i+1])
+				i++
+			case strings.HasPrefix(w, "<"):
 				args = append(args, w)
-			} else {
+			default:
 				path = append(path, w)
 			}
 		}
@@ -105,6 +116,11 @@ func TestActionsAreCommands(t *testing.T) {
 		}
 		if err := cmd.Args(cmd, args); err != nil {
 			t.Errorf("%q: %s does not take %v: %v", a.Command, cmd.CommandPath(), args, err)
+		}
+		for i := 0; i < len(flags); i += 2 {
+			if cmd.Flags().Lookup(strings.TrimPrefix(flags[i], "--")) == nil {
+				t.Errorf("%q: %s has no flag %s", a.Command, cmd.CommandPath(), flags[i])
+			}
 		}
 		want, ok := wantRead[a.Command]
 		if !ok {

@@ -36,10 +36,11 @@ motel deploys <app> <version>       one deploy's whole record
 motel box status                    the commit the box runs, its Caddyfile's digest, its key for secrets,
                                     and whether that Caddyfile is the one that commit installed
 motel backup status                 what the box says of its backups, for a viewer of the box: the box's own claim
+motel monitor alerts --app <app>    an app's alerts, as the box's Alertmanager holds them
 motel                               on a terminal, screens over the same reads (below)
 ```
 
-Each command takes `--json`; `motel` alone, the screens, does not. `whoami`, `apps` and `backup status` are asked with your own key
+Each command takes `--json`; `motel` alone, the screens, does not. `whoami`, `apps`, `backup status` and `monitor alerts` are asked with your own key
 only: with `MOTEL_TOKEN` set, name the key with `--key` (else exit 2,
 nothing sent). `<app>` is a name, or the app's URL
 (`https://deploy.example.com/blog`, as `MOTEL_URL` holds it), which names
@@ -64,6 +65,26 @@ verdict, as `motel-backup status`'s is: 0 healthy, 1 not (stdout the
 box's body under `--json`), 3 could not tell (`could_not_tell`, quoted
 in the client's sentence: on a box without backups, `backups are not
 set up`).
+
+`monitor alerts --app <app>` reads `GET /_motel/apps/<app>/alerts`, for
+a viewer of the app or of the box: the alerts the box's Alertmanager
+holds about the app, newest first, each on an `alert` line (its name,
+severity, when it began, its state, and when the last silence that holds
+it ends or that a deploy of the app holds it) with its summary, the
+box's free text, on a `summary` line under it. Not the box's own alerts,
+and not the silences. The box asks Alertmanager at most every 5 s, so
+an answer can be that old. It exits 0 when it read them, alerts or none,
+and when the box has no monitor (nothing is raised there); 3 when the
+box could not ask its Alertmanager (`"monitor":"unanswered"`) or names
+its monitor in a word the client does not know: `--json` then prints
+the client's own sentence. Without `--app` it is refused, exit 2: the
+box-wide list is not read yet. It is asked with your own key only, as
+`whoami` is. An alert's name is held to `^[A-Za-z_][A-Za-z0-9_:.-]{0,63}$` (an app's
+screen shows one outside motel's own shape, `^[A-Za-z][A-Za-z0-9_]{0,63}$`,
+as the box's text)
+and its severity, its state and the monitor to `^[a-z][a-z0-9_]{0,31}$`; a
+severity or a state the client does not know is shown as the box's
+word, not refused.
 
 **Which box:** an app URL as `<app>`, else `--box`, `MOTEL_BOX`, the host
 of `MOTEL_URL`, or the box repository the shell is in (inside
@@ -306,6 +327,7 @@ made by hand. Accepted:
 | With every route but one failing (the box answering one read alone, an app's status), that read waits behind the others: in a run of no answer a read never tried in the run keeps its old due time and goes ahead of it, one at each retry, the retries up to 60 s apart. Measured on the fake clock with the box answering only the last app's status: 12 apps, its first read 9 minutes after, then at most 1 minute apart; 60 apps, 28 minutes, then gaps up to 27; 300 apps, 1 h 42 min, then gaps up to 3 h 13 min. The title bar says STALE throughout, but for the seconds after each answer (back, then slow) | 2 | 1 | 1 | 2 | 3 | accepted |
 | A wake into a run of no answer keeps the run's count (by design: the box did not answer before the sleep), so the title bar says at once what it said before the sleep (slow, or STALE), and when the first read after waking gets no answer because the network is not back yet, the next waits out the run's backoff: 60 s once the run had five reads or more before the sleep (measured on the fake clock: 60 s after a 5-minute outage, 32 s after 30 s, 8 s after 10 s), the title bar saying STALE for that long on a network that then works | 2 | 2 | 1 | 4 | 2 | accepted |
 | At 60x16 the `y` overlay's own words (what the answer is to, how it is shown and cut, and that `P` prints it whole) take 7 of its 11 rows over the apps screen, 9 and a blank over an app's, and all 11 over a record whose command line is cut, so the answer shows on three rows, one, or none until it is scrolled; the footer says `↑↓ scroll` | 2 | 5 | 1 | 10 | 2 | accepted |
+| An app's screen gives its alerts' command (`all: motel monitor alerts --box <host> [--key <path>] --app <app>`) on one row, cut at the window's edge like any line: at 60 columns, or with a long box or app name, its end is lost (`…`), and the screen's `c`, `y` and `P` give the status's command and answer, not the alerts'. Found by Copilot on #602, which asked for a way to the alerts the window cuts | 2 | 5 | 1 | 10 | 3 (the alerts in `c`'s overlay, or a screen of their own) | accepted: the cut is marked, the command is the status's with `monitor alerts` and `--app`. A screen of the alerts' own is a viewer of the box's only (the alerts-screen PR's `:alerts`), so a viewer of one app has the command alone |
 | A refusal said alone on a record's screen or an app's (a 403, a 404) is one row, cut at the window's edge with `…`: a long one (a 403 that did not say what it needs, or one quoting a value long in escapes) loses the box's words past the edge and the client's own after them (`motel whoami` lists the roles you hold from here.). Laid on rows instead (62d41e87, reverted), it took at most half the window's height and lost its end with no mark | 2 | 4 | 1 | 8 | 2 | accepted |
 | An app's "the last read failed" sentence is laid on rows within half the window's height, the fields under it: at 60x16 one quoting a value long in escapes (a 409 quoting 200 bidi overrides) fills those 8 rows, the last of them saying how many lines are not shown (`… 10 more lines: y shows the answer; then P prints it whole`), and its end (its cap's `…[cut]`) and every field under it, the state among them, are not on the screen. `y` shows the answer held, fetched before the failure, with the fields' values, but not the sentence's end, which nothing then shows; the deploys stay below it | 2 | 2 | 3 | 12 | 2 (a notice worded by whether the sentence is among the lines cut) | accepted |
 | A record's and an app's details are cut to the window, and cannot be scrolled: each line at the window's width, marked by its `…`, and the block to half the window's height, its last row then saying how many lines are not shown, that row's own among them (`… 2 more lines: y shows the answer; then P prints it whole`, an app at 60x16, where the cut was unmarked before #566). The half holds on an app with no deploys too, the rows under it then blank. `y` shows the box's answer as JSON, not laid out as the screen lays it, and itself cut past 2000 lines, said there, where `P` prints it whole | 2 | 5 | 1 | 10 | 3 (a header that scrolls is new screen behaviour) | accepted, by the owner's choice in #566 of the first of its options: the cut is said, the layout left |
@@ -371,7 +393,14 @@ cut in its middle, in the table and the strip, its start and its end
 kept; two names that would be cut alike are shown longer, alike, until
 they differ, as far as the screen leaves room for STATE beside them;
 the whole name is what is opened, searched and printed. An app's
-screen shows its state and deploys; while a deploy is in flight its
+screen shows its state and deploys, and under its state its alerts,
+read while the screen is open (under their count the command that
+lists them whole, `motel monitor alerts --box <host> --app <app>`,
+since the screen's `y` and `P` give the status; then the first three,
+each with what holds it, when it began and, on a `summary` line, its
+summary, and the rest counted; the client's own words when the box has no monitor or
+could not ask its Alertmanager, and on a 404 the box's own (a box older
+than the read, or no app of that name now); while a deploy is in flight its
 state names the current version as running (one stopped, throttled or
 in backoff by its row's word), and a `deploying` line
 under it the version in flight, its phase, when the deploy started and
@@ -464,9 +493,13 @@ SIGINT, SIGTERM or SIGHUP sent to the process, or the terminal closed under the 
   of 60. The TUI keeps to 1.5 a second and 30 at once. The box's status
   and its backups are read every 30 s, each only while a screen that
   shows it is open (the box screen shows both). The open app is
-  read every 5 s; every other app takes its turn in the rest of the
+  read every 5 s, and its alerts every 15 s while its screen is open
+  (`AlertsEvery`, after the box's own 5 s of Alertmanager's answer);
+  every other app takes its turn in the rest of the
   budget, every 30 s, or longer with more apps than that covers (about
-  55 s for 60 apps, 3 minutes for 200), each at its own place in the
+  55 s for 60 apps, 3 minutes for 200; 57 s and a little over 3
+  minutes while an app's screen is open, its alerts read too), each at
+  its own place in the
   cycle. A 429 is waited out for every read, by its `Retry-After`, or
   30 s with none (the time the box's whole burst takes to refill), and
   slows the rest of the session; no answer backs off from 2 s to 60 s:

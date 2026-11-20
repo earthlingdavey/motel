@@ -154,7 +154,7 @@ func (r *runner) tree() *cobra.Command {
 	root := &cobra.Command{
 		Use:           "motel",
 		Short:         "Read a motel box over HTTPS (experimental)",
-		Long:          "motel reads a box over HTTPS: who your key is there and the apps it may view,\nan app's status and deploys, and the box's own state and backups.\n\n" + screenLong + "\n\n" + experimental,
+		Long:          "motel reads a box over HTTPS: who your key is there and the apps it may view,\nan app's status, deploys and alerts, and the box's own state and backups.\n\n" + screenLong + "\n\n" + experimental,
 		SilenceErrors: true,
 		SilenceUsage:  true,
 	}
@@ -190,7 +190,7 @@ func (r *runner) tree() *cobra.Command {
 		},
 	}
 	backup.AddCommand(r.backupStatus())
-	for _, c := range []*cobra.Command{r.version(), r.key(), r.whoami(), r.apps(), r.status(), r.deploys(), box, backup} {
+	for _, c := range []*cobra.Command{r.version(), r.key(), r.whoami(), r.apps(), r.status(), r.deploys(), box, backup, r.monitor()} {
 		c.GroupID = "experimental"
 		root.AddCommand(c)
 	}

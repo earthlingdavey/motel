@@ -190,6 +190,8 @@ func decodesAsWire(t *testing.T, what string, w *httptest.ResponseRecorder) {
 		}
 	case w.Code == http.StatusOK && strings.Contains(what, "/_motel/whoami"):
 		check(body, new(wire.WhoAmI))
+	case w.Code == http.StatusOK && strings.Contains(what, "/alerts"):
+		check(body, new(wire.Alerts))
 	case w.Code == http.StatusOK && strings.Contains(what, "/_motel/apps"):
 		check(body, new(wire.Apps))
 	case w.Code == http.StatusForbidden && strings.Contains(body, `"needs":`):
@@ -304,6 +306,25 @@ func TestWireHandlerBodies(t *testing.T) {
 	ended, cancel := context.WithCancel(context.Background())
 	cancel()
 	add("GET before liveswap's Start installed the app, past the wait", send(t, starting, demoGet(appToken(t)).WithContext(ended)))
+
+	// An app's alerts, for a person: with no monitor block, Alertmanager
+	// unanswered, and what it holds of demo (silenced, held by the mute);
+	// a query, a deploy token, and a person whose grants do not cover it.
+	add("GET /_motel/apps/demo/alerts as a viewer of demo, no monitor block", person("/_motel/apps/demo/alerts", people.alice))
+	h.app.SetAlertsSource(&fakeAlerts{})
+	add("GET /_motel/apps/demo/alerts as a viewer of demo, Alertmanager unanswered", person("/_motel/apps/demo/alerts", people.alice))
+	began := time.Date(2026, 11, 19, 14, 0, 0, 0, time.UTC)
+	until := began.Add(2 * time.Hour)
+	h.app.SetAlertsSource(&fakeAlerts{ok: true, held: []AppAlert{
+		{App: "demo", Alert: wire.Alert{Name: "watchdog_throttled", Severity: "critical", Summary: "demo: the watchdog spent its restart budget (5 in 10m)", StartsAt: began, State: "suppressed", Inhibited: true}},
+		{App: "demo", Alert: wire.Alert{Name: "deploy_failed", Severity: "warning", Summary: "deploy of v2 failed at starting", StartsAt: began.Add(time.Minute), State: "suppressed", SilencedUntil: &until}},
+		{App: "demo", Alert: wire.Alert{Name: "errors_high", Severity: "warning", Summary: "demo: 5xx over 5 %", StartsAt: began, State: "active"}},
+		{App: "blog", Alert: wire.Alert{Name: "errors_high", Severity: "warning", Summary: "blog: 5xx over 5 %", StartsAt: began, State: "active"}},
+	}})
+	add("GET /_motel/apps/demo/alerts as a viewer of demo", person("/_motel/apps/demo/alerts", people.alice))
+	add("GET /_motel/apps/demo/alerts?lines=50 as a viewer of demo", person("/_motel/apps/demo/alerts?lines=50", people.alice))
+	add("GET /_motel/apps/demo/alerts with a deploy token", do(t, h, http.MethodGet, "/_motel/apps/demo/alerts", globalToken(t), ""))
+	add("GET /_motel/apps/demo/alerts as a person with no grant", person("/_motel/apps/demo/alerts", people.dave))
 
 	checkWireGolden(t, "handler-bodies.txt", out.String())
 }
