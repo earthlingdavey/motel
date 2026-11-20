@@ -297,3 +297,24 @@ func TestAlertsTimesPassNoFilter(t *testing.T) {
 		t.Errorf("withheld: %d %s", w.Code, w.Body)
 	}
 }
+
+// TestAlertsFilterFallsBack: a value of the app's that spans two
+// alerts changes the body's structure: the body then goes whole through
+// the filter, as before the times were kept out of it, and the value is
+// not in the bytes sent.
+func TestAlertsFilterFallsBack(t *testing.T) {
+	t0 := time.Date(2026, 11, 19, 13, 0, 0, 0, time.UTC)
+	held := []AppAlert{
+		{App: "demo", Alert: wire.Alert{Name: "deploy_failed", Severity: "warning", Summary: "deploy of v2 failed at starting", StartsAt: t0.Add(time.Minute), State: "suppressed"}},
+		{App: "demo", Alert: wire.Alert{Name: "errors_high", Severity: "warning", Summary: "demo: 5xx over 5 %", StartsAt: t0, State: "active"}},
+	}
+	for _, value := range []string{`"},{"name":"errors_high`, `"},{"name":"errors_high","severity":"warning","summary":"demo`} {
+		h, people := alertsRig(t)
+		must(t, os.WriteFile(h.app.managed["demo"].spec.envFile, []byte("K="+value+"\n"), 0o600))
+		h.app.SetAlertsSource(&fakeAlerts{ok: true, held: held})
+		w := sendTo(t, h, "GET", "/_motel/apps/demo/alerts", token(people.alice))
+		if strings.Contains(w.Body.String(), value) || !strings.Contains(w.Body.String(), "redacted:K") || !strings.Contains(w.Body.String(), `"starts_at":"2026-11-19T13:01:00Z"`) {
+			t.Errorf("K=%s: %d %s", value, w.Code, w.Body)
+		}
+	}
+}

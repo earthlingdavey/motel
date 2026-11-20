@@ -110,47 +110,48 @@ func (h *Handler) serveMotelApp(w http.ResponseWriter, r *http.Request, who acce
 // release a deploy failed at.
 func (h *Handler) appAlerts(w http.ResponseWriter, r *http.Request, app appHandle) error {
 	body := app.alerts(r.Context(), h.app.alertsSource)
-	return respondFiltered(w, http.StatusOK, filterAlerts(body, app.ma.redactorFor(app.ma.status())))
+	f := app.ma.redactorFor(app.ma.status())
+	if out, ok := filterAlerts(body, f); ok {
+		return respondFiltered(w, http.StatusOK, out)
+	}
+	// The filter withheld the body, or changed its structure, or the
+	// bytes with the times put back hold a value of the app's: the body
+	// whole through the filter, as it always was, times and all.
+	return RespondJSON(w, http.StatusOK, body, f)
 }
-
-// alertTimes are an alert's times: Alertmanager's, never the app's
-// bytes.
-var alertTimes = []string{"starts_at", "silenced_until"}
-
-// lastResort is the response filter's own body for one it could not
-// make JSON of (redactJSON).
-const lastResort = `{"error":"[#0]"}`
 
 // filterAlerts is the alerts body through the app's filter, its times
 // passing none: they are taken out of each alert and put back after the
 // filter's last pass, so that an env_file value that is a piece of one
 // (a date) cannot leave a time no client reads, and with it the answer
-// unread. A body the filter
-// withheld (its env_file unreadable) is sent as the filter left it.
-func filterAlerts(body wire.Alerts, f *Redactor) string {
-	rows := make([]map[string]json.RawMessage, len(body.Alerts))
+// unread. It reports false, for the caller to send the body whole
+// through the filter as before, when the filter withheld the body (its
+// env_file unreadable) or changed its structure (a value spanning two
+// alerts). The filter runs over the words without the times between
+// them, so a value made of JSON's own punctuation and a time's last
+// characters can stand in the bytes sent (an accepted row in
+// DESIGN-access.md).
+func filterAlerts(body wire.Alerts, f *Redactor) (string, bool) {
+	// Each alert's words in the wire type's order, its times left out.
+	type words struct {
+		Name      string `json:"name"`
+		Severity  string `json:"severity"`
+		Summary   string `json:"summary"`
+		State     string `json:"state"`
+		Inhibited bool   `json:"inhibited,omitempty"`
+	}
+	rows := make([]words, len(body.Alerts))
 	for i, a := range body.Alerts {
-		raw, _ := json.Marshal(a) // strings, times and a bool: nothing to fail
-		_ = json.Unmarshal(raw, &rows[i])
-		for _, k := range alertTimes {
-			delete(rows[i], k)
-		}
+		rows[i] = words{a.Name, a.Severity, a.Summary, a.State, a.Inhibited}
 	}
 	raw, _ := json.Marshal(struct {
-		Monitor string                       `json:"monitor"`
-		Alerts  []map[string]json.RawMessage `json:"alerts"`
-	}{body.Monitor, rows}) // raw values from a marshal: nothing to fail
-	out := f.redactJSON(raw)
+		Monitor string  `json:"monitor"`
+		Alerts  []words `json:"alerts"`
+	}{body.Monitor, rows}) // strings and bools: nothing to fail
 	var got map[string]json.RawMessage
-	if json.Unmarshal([]byte(out), &got) != nil {
-		return lastResort // redactJSON returns JSON whatever it is given
-	}
 	var alerts []wire.Alert
-	if json.Unmarshal(got["alerts"], &alerts) != nil || len(alerts) != len(body.Alerts) {
-		// Withheld: the filter's own sentence, written again from what it
-		// left (one key, so the same bytes).
-		b, _ := json.Marshal(got) // raw values from a decode: nothing to fail
-		return string(b)
+	if json.Unmarshal([]byte(f.redactJSON(raw)), &got) != nil || json.Unmarshal(got["alerts"], &alerts) != nil || len(alerts) != len(body.Alerts) {
+		return "", false
 	}
 	// Each alert as its wire type writes it, its times put back: what the
 	// filter left of its words, Alertmanager's times.
@@ -175,9 +176,9 @@ func filterAlerts(body wire.Alerts, f *Redactor) string {
 		}
 	}
 	if err != nil {
-		return lastResort
+		return "", false
 	}
-	return string(b)
+	return string(b), true
 }
 
 // alerts is what src holds of the handle's app, newest first.
