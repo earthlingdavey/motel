@@ -26,7 +26,6 @@ LIVE=/etc/motel/Caddyfile
 BOXDIR=/var/lib/motel-box
 FILE=$HOST/Caddyfile
 ART=http://e2e-artifacts:8080/artifacts
-NS=motel-access-v1@motel.smallhours.org
 CA=/var/lib/motel/caddy/pki/authorities/local/root.crt
 RELEASE=v0.0.0-e2e # e2e/Dockerfile links it
 
@@ -156,16 +155,9 @@ boxtok() {
 	fi
 }
 
-# ptok <who> [<aud>]: a person's token signed with <who>'s key, made as
-# docs/people.md makes one by hand.
-b64url() { base64 | tr -d '\n=' | tr '+/' '-_'; }
-ptok() {
-	now=$(date +%s)
-	printf '{"aud":"%s","iat":%d,"exp":%d}' "${2:-$HOST}" "$now" "$((now + 300))" >"$work/claims"
-	rm -f "$work/claims.sig"
-	ssh-keygen -q -Y sign -n "$NS" -f "$work/$1" "$work/claims" || return 1
-	printf 'm1.%s.%s' "$(b64url <"$work/claims")" "$(sed '1d;$d' "$work/claims.sig" | tr -d '\n' | base64 -d | b64url)"
-}
+# ptok <who> [<aud>]: a person's token signed with <who>'s key
+# (lib.sh's person_token).
+ptok() { person_token "$work/$1" "${2:-$HOST}"; }
 
 # get <name> <curl args...>: one request over the box's TLS, the root
 # verified. Status in $CODE, the HTTP version curl spoke in $PROTO; the
