@@ -404,11 +404,14 @@ module graph is larger than that (about 180 modules) only because
 `liveswap/wire` is a package of the liveswap module, whose go.mod
 requires Caddy.
 
-Build and CI tooling never ships to users and is pinned by image tag
-in `docker-compose.yml`: `golang` (toolchain), `golangci-lint`,
-`gitleaks` (secret scan), `nfpm` (deb packaging), `python` (the usage
-ledger and pin-watch) and `curl` (the e2e runner). GitHub Actions are
-pinned to commit SHAs.
+Build and CI tooling is pinned in `docker-compose.yml`. Two of its
+images shape what ships, and are pinned by digest (the tag beside it
+is for Dependabot and for people): `golang` (the toolchain that
+compiles moteld, motel-backup and the client) and `nfpm` (writes the
+`.deb`). The rest never ship to users and are
+pinned by image tag: `golangci-lint`, `gitleaks` (secret scan),
+`python` (the usage ledger and pin-watch) and `curl` (the e2e runner).
+GitHub Actions are pinned to commit SHAs.
 
 What keeps this honest: `govulncheck` gates every PR that changes code and runs weekly
 against the fresh vulnerability database (reachable-code analysis, all

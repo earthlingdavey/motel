@@ -14,8 +14,8 @@
 #     updates BYPASS the cooldown and arrive immediately; gomod's are
 #     grouped across its directories too (go-security below).
 #   - Patch/minor updates auto-merge once the full CI graph (tests,
-#     e2e, package install matrix, govulncheck) passes; majors stay
-#     open for human review.
+#     e2e, package install matrix, govulncheck) passes; majors, and
+#     an update with no type, stay open for human review.
 #
 # GitHub-side switches this file cannot set (do once, in repo
 # Settings): "Allow auto-merge"; a branch ruleset on main requiring

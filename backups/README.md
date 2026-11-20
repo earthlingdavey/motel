@@ -1737,7 +1737,9 @@ restic, sqlite3 and systemd are Debian's, so a new release is new
 programs under the same code.
 
 1. Name the release where the backup lanes' images are:
-   `test/systemd/Dockerfile` (`golang:<version>-<codename>`),
+   `test/systemd/Dockerfile` (`golang:<version>-<codename>@sha256:<digest>`,
+   the reference `docker-compose.yml`'s dev image and the e2e
+   Dockerfiles have too),
    `e2e/backup/Dockerfile` (`debian:<codename>-slim`), and the package
    lanes' `DISTRO` — the `Makefile`, `ci.yml`'s install-test matrix,
    `packaging/test/Dockerfile`.

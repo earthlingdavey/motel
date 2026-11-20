@@ -376,8 +376,8 @@ jobs:
       # little: Go's build cache is keyed by content, so only what
       # changed is compiled again [measured: 0.9 s over all of PR 5's
       # changes, against 34.5 s from nothing]. One left by another Go is
-      # no build cache at all, and the dev image follows Go's patch
-      # releases: so its Go is in the key, and no cache of another Go is
+      # no build cache at all, and the dev image's Go moves with each
+      # bump of its pin: so its Go is in the key, and no cache of another Go is
       # restored — its build half (721 MiB of 1.7 GiB unpacked) would be
       # saved again, unused, under the new Go's key. A new Go starts
       # cold, once an arch. The Go is asked of plain `docker compose`,
