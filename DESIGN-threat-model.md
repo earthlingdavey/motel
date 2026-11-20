@@ -209,9 +209,9 @@ Properties that matter to the model:
   known value (a key named for its own value gets a number in
   brackets), and the first layer runs once more over the finished
   bytes — any fallback included — so the promise holds for the bytes
-  written, not only for the body as filtered (a body's times are put
-  back after that pass, and a check across each time's edge holds the
-  promise for them: the fifth text below); the safe strings are
+  written, not only for the body as filtered (a body's times and
+  numbers are put back after that pass, and a check across each one's
+  edge holds the promise for them: the fifth text below); the safe strings are
   held out of the heuristic layers as spans, so a version shaped like
   a token survives them. The one text outside the promise is the
   report field's own name, `redacted_env`: it is fixed, in every such
@@ -255,14 +255,30 @@ Properties that matter to the model:
   string's: a string is not safe because a request named it, and text
   an earlier request stored, a deployed version in a status or a
   record, passes the app's filter with the app's bytes. The fifth is
-  a body's times: each time a status, a deploy's answer and its
-  stream's lines, a record or an apps list's row holds under a time's
-  key, written as `encoding/json` writes one, is the box's clock and
-  passes no layer, so a value that is a piece of a time's text (a
-  date, a clock time, digits of its fraction) stands there whole, which says less than a marker inside the
-  time did; it is replaced everywhere else, and a body in which a
-  value would stand across a time's edge goes through whole, times
-  and all (liveswap/redact.go, rule 7). A
+  a body's times and numbers: each time a status, a deploy's answer
+  and its stream's lines, a record or an apps list's row holds under
+  a time's key, written as `encoding/json` writes one, is the box's
+  clock, and each number in a JSON body is a figure `encoding/json`
+  wrote from a Go number (the box's counts, the operator's caps, the
+  metrics store's summary, an artifact's size, a probe's status code),
+  never the app's bytes, which are always in a string. Both pass no
+  layer, so a value that is a piece of one (a date, a clock time,
+  digits of a time's fraction, an app's memory limit in bytes equal
+  to its `memory_max`) stands there whole, naming no key, where a
+  marker inside a time, or a body withheld for a number with the key
+  named, said the value was a piece of it; it is replaced everywhere
+  else, digits in a string included; a number that holds a value
+  replaced elsewhere in the same body (by the filter, or in a failed
+  deploy's detail as it was built), beside which it would show the
+  value by difference, has the body withheld as before, though across
+  two answers (a marker in one deploy's record, the number in the
+  status once that deploy is no longer its last: a later deploy, or a
+  moteld restart) a reader can still set them side by side (an accepted row in
+  liveswap/DESIGN-liveswap.md); and a body in which a value would stand across a token's edge goes
+  through whole as before (liveswap/redact.go, rule 7). A figure the
+  app's behaviour drives (its memory, its request counts) is a channel
+  only for an app that means to send its secret, which can answer any
+  request with it. A
   body the first layer would leave unparsable (a value made of JSON's
   own punctuation matching the structure rather than a string) is
   withheld, with the keys still reported; and while an app's

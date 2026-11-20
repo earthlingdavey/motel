@@ -44,11 +44,12 @@ import (
 //     order that retention and available_versions follow (state.go) —
 //     a key the app cannot write.
 //  2. Nothing from disk reaches a response except through the filter
-//     as body text, but a record's times: held out of its layers while
-//     they have a time's shape (rule 3). A recorded version is a safe
+//     as body text, but a record's times and numbers: held out of its
+//     layers, a time while it has a time's shape (rule 3). A recorded
+//     version is a safe
 //     string like any other name, and no safe string equals a known
 //     value (redact.go, rule 1). Nothing is appended to a body after
-//     the filter's final pass but the times it held, put back
+//     the filter's final pass but the times and numbers it held, put back
 //     (redact.go, rule 7), and withField's merge of what the filtered
 //     body already reports, which adds nothing else.
 //  3. Whatever the filter does to a body, the record on disk names
@@ -58,9 +59,15 @@ import (
 //     are not all known), vocabulary, timestamps. The times are the
 //     box's clock, which the filter holds out of its layers (redact.go,
 //     rule 7): an env_file value that is a piece of one (a date)
-//     rewrites none, but in the bodies that rule sends whole. Read back, a record's time is held out of the
-//     filter only while it has a time's shape (heldTimeRe), as a
-//     version read off disk is used only once it is valid.
+//     rewrites none, but in the bodies that rule sends whole. Read
+//     back, a record's time is held out of the filter only while it
+//     has a time's shape (heldTimeRe), as a version read off disk is
+//     used only once it is valid. Its numbers (an artifact's size, a
+//     phase's seconds, a probe's status) are held too, so a value that
+//     is a piece of one no longer leaves the record no JSON, which was
+//     written as the envelope below; but when the record's detail holds
+//     the same value's marker, the record is the envelope as before
+//     (the filter's rule 7).
 //     The vocabulary (status, phase) stands outside the filter in
 //     every body (redact.go, rule 3), so a value equal to a word of
 //     it rewrites nothing; a record the filter leaves unreadable as
@@ -76,11 +83,13 @@ import (
 //     (resolveBindSources, sandbox.go).
 //
 // The file holds the result as the record filter left it, with the
-// env_file values known at the time already replaced, but in its times:
-// a secret rotated later is not in an old record for the new filter to
-// miss. A record written before the filter held times (#604) keeps the
-// marker it put in a time, the date gone from it, until the version is
-// deployed again or the record is pruned. Records
+// env_file values known at the time already replaced, but where a time
+// or a number holds one, which stays on disk as in a response (the
+// filter's rule 7): a secret rotated later is not in an old record for
+// the new filter to miss, but in such a token. A record written before
+// the filter held times (#604) keeps the marker it put in a time, the
+// date gone from it, until the version is deployed again or the record
+// is pruned. Records
 // are pruned with the releases: one is kept for every version still on
 // disk, plus the newest `keep` others — failed deploys, whose release
 // is removed at once, and versions release GC has pruned — so the

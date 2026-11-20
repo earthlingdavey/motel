@@ -16,10 +16,15 @@
 // Every body passes the app's response filter after it is marshalled
 // (liveswap/redact.go): any string can come back as a marker, a time
 // only in a deploy record written before #604 or in a body the filter's
-// rule 7 sends whole (a value across a time's edge or holding a time's
-// quote, the filter changing what held a time, a string of the app's
-// that is a NUL and digits alone), or from a box older than #604, and a
-// body the filter changed gains a top-level "redacted_env" naming the
+// rule 7 sends whole (a value across a time's or a number's edge, or
+// holding a time's quote, the filter changing what held a time, a
+// string of the app's that is a NUL, a ; and digits alone), or from a
+// box older than #604, and a
+// number never: rule 7 holds numbers too, and a body it sends whole
+// with a value in a number is withheld, as every such body was before,
+// or, for a value made of JSON punctuation that runs from a string
+// across a number into the next, sent without that key and number.
+// A body the filter changed gains a top-level "redacted_env" naming the
 // env keys whose values it replaced, which only DeployResult has a
 // field for. Apps is made of bodies, one per app: each entry is
 // filtered by its own app's filter, and gains its own "redacted_env".
