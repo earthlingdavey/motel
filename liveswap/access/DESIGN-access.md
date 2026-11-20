@@ -216,6 +216,8 @@ names no app (`_` is outside the app grammar).
 | `GET /_motel/backups` | `box.backups` | a viewer of the box |
 | `GET /_motel/apps/<app>/alerts` | `app.alerts`, on `<app>` | a viewer of that app or of the box |
 | `GET /_motel/alerts` | `box.alerts`, and `app.alerts` for each row of an app this config runs | a viewer of the box |
+| `GET /_motel/apps/<app>/rules` | `app.rules`, on `<app>` | a viewer of that app or of the box |
+| `GET /_motel/rules` | `box.rules` | a viewer of the box |
 | any other path, method or query under `/_motel/` | none | 404 once authenticated, the flat 401 before; but a query on an app-scoped row is its 422, once `Decide` allowed it and the app is one here |
 
 **App-scoped rows.** A row of the form `GET /_motel/apps/<app>/<read>`
@@ -271,6 +273,8 @@ names a declared key, or the 404; an app's source's is the flat 401.
 | `box.backups` | `GET /_motel/backups` | as for `box.whoami` | as for `box.whoami` | a viewer of the box |
 | `box.alerts` | `GET /_motel/alerts` | as for `box.whoami` | as for `box.whoami` | a viewer of the box |
 | `app.alerts` | `GET /_motel/apps/<app>/alerts` | 403, needs a declared key, scope `app`, for a token a global source accepts; the flat 401 for one only an app's own sources accept, as under every row of `/_motel/` | as for `box.whoami` | a viewer of that app or of the box |
+| `box.rules` | `GET /_motel/rules` | as for `box.whoami` | as for `box.whoami` | a viewer of the box |
+| `app.rules` | `GET /_motel/apps/<app>/rules` | as for `app.alerts` | as for `box.whoami` | a viewer of that app or of the box |
 
 A box grant covers every app. A pair the table does not hold is
 refused. Three things are structural: no person's cell holds an act; no
@@ -365,6 +369,32 @@ two-apps test gives each app a newest deploy whose version and
 row holds its own canary only as its filter's marker and nothing of the
 other app.
 
+The rules (`motel_rules.go`) are notify's listing, the one `moteld
+monitor rules --json` prints (`wire.RulesListing`), with each store
+rule's numbers from the process's one evaluation (notify/DESIGN-metrics.md,
+"How close each alert is"), installed as `RulesSource` beside the
+alerts' source. `GET /_motel/rules` reads it through the box handle
+(`allowBox`, `box.rules`): every rule, with every app's numbers, the
+disks' paths and the box's own checks, a viewer of the box's alone. `GET
+/_motel/apps/<app>/rules` reads it through the app's handle (`allowApp`,
+`app.rules`) and keeps, in Go, the alerts whose subject is an app, every
+app's or the handle's own (a rule pinned to another app is left out),
+each with the readings of the handle's app alone: no box check, no other
+app's number, and not the box's `rules_file`. Neither answer holds the
+store's socket or a query (`value_query`, a guard's `query` and `match`):
+the box's alone. A rules body holds no byte of an app's: the rule names
+and thresholds are the Caddyfile's (in the box's repository, not a
+secret by policy), the words motel's, the numbers the store's and the
+detectors', the times the box's. So both pass a filter with no app's
+values, as the backups body does, its shape and entropy layers running
+and the alert and app names safe: an env_file value shaped like a date,
+a number or a word of the body masks nothing in it, and so cannot leave
+an answer no client reads (`TestRulesPassNoAppValue`).
+`TestTwoAppsTwoPeople` gives the rules source a rule of every app with
+each app's number, a rule pinned to each app and a box rule, and asserts
+that an app's read holds its own number and pinned rule alone and the
+box's read holds them all.
+
 ## The answers
 
 | Answer | When | Body |
@@ -379,6 +409,9 @@ other app.
 | 200 | `GET /_motel/backups` | `wire.Backups`, which is `backups/status`'s `Result`: what `motel-backup status --json` says as any account on the box looks, the motel user's here (no warnings of the credential file, which only root's look reads), whether the backups are healthy, not, or could not be told (`could_not_tell`: on a box without backups, `backups are not set up: … is not there`; on a server that is not moteld, that it does not read them). One look every 10 s at most, shared by every person: a request in that time is given the answer kept, whose `at` says when it was decided. The box's own claim (docs/backups.md, "Look from your own machine") |
 | 200 | `GET /_motel/alerts` | `wire.BoxAlerts`: `monitor` (as for an app's), `alerts`, newest first, each a `wire.BoxAlert`: an app's alert's fields, then `app` (its `app` label; none for a box event, which names an app, if any, in its instance) and `instance`; `silences`, the active ones newest first, then the pending ones soonest first, each a `wire.Silence`: `id`, `state` (`active` or `pending`; never an expired one), `matchers` (`name`, `op`, one of `=`, `!=`, `=~`, `!~` spelled from Alertmanager's `isRegex` and `isEqual`, `value`), `starts_at`, `ends_at`, `created_by` and `comment`, as Alertmanager holds them; and `more_alerts`, `more_silences` when a list was cut at its cap (500, 200). With `off` or `unanswered`, both lists are `[]`. Every alert row has its keys sorted, and an app's its own `redacted_env` when its filter changed it; its times are Alertmanager's, put back after the filter's last pass, so an env_file value that is a piece of a time (a date) cannot leave the list unread. From the same fetch as an app's, up to 5 s old |
 | 200 | `GET /_motel/apps/<app>/alerts` | `wire.Alerts`: `monitor`, then `alerts` (a body the app's filter changed comes with its keys sorted and its own `redacted_env`, as `GET /<app>`'s does), the alerts newest first, each a `wire.Alert`: `name` (its alertname), `severity`, `summary` (motel's sentence, through the app's filter), `starts_at`, `state` (Alertmanager's: `active`, `suppressed`, `unprocessed`), `silenced_until` (when the last silence that suppresses it ends, when the box knows it) and `inhibited` (the deploy mute holds it). `monitor` is `on` (Alertmanager answered), `off` (the config's monitor block runs no notify, or there is none: nothing is raised) or `unanswered` (Alertmanager did not answer within 2 s), the last two with `[]`. Not the silences, their comments or creators; not the box's own alerts, even one naming the app in its instance; not the heartbeat, the test alert or the deploy mute. One fetch of Alertmanager every 5 s at most for the process, shared by every person: an answer can be up to 5 s old |
+| 200 | `GET /_motel/rules` | `wire.Rules`: `store`, `on` (the store answered the box's evaluation: each store rule's `readings` are its numbers, maybe none), `off` (no `metrics` line: no store rule is listed; with no monitor block that raises anything, no rule at all) or `unanswered` (no store rule has readings); `rules_file` as `moteld monitor rules --json` has it; `alerts`, every alert motel can raise, each a `wire.AlertListing` as the command lists it but with no `value_query` and no guard `query` or `match`: `name`, `source`, `severity`, `subject`, `app`, `kind`, `op`, `threshold`, `unit`, `for_seconds`, `guards` (`op`, `value`, `meaning`), `levels`, `readings` (`instance` or `app`, `value`, `threshold`, `window_seconds`, `level`, `measured_at`, and a store rule's `state`, `inactive`, `pending` or `firing`, and `active_since`). A client reads a `store` or `state` word it does not know as not knowing. The store's numbers from one evaluation every 30 s at most for the process: up to 30 s old, of the time vmalert compared (about a minute behind). Experimental |
+| 200 | `GET /_motel/apps/<app>/rules` | `wire.Rules`, as above, holding the alerts whose subject is an app, every app's or this one's, each with this app's readings alone; no `rules_file` |
+| 500 | `GET /_motel/rules`, `GET /_motel/apps/<app>/rules`, when the box could not make its listing (vmalert's unit unreadable) | `{"error":"the box could not list its rules: moteld's journal says why"}` |
 | 200 | `GET /_motel/apps` | `wire.Apps`: the apps this config runs that the person may view, sorted by name, each an object, `wire.AppEntry`: `name`, then `summary` (`phase`, `running`, `current_version`, `watchdog`, the watchdog's state, `newest_deploy`, the status's first `deploys` entry, and `deploying`, the version of a deploy in flight), each value as `GET /<app>` gives it at the same moment; or, for a row the app's filter withheld, `error` in place of `summary`. A row the filter changed has its own `redacted_env`. No socket, pid, unit or command. A client reads an absent key as "not known" |
 
 No answer says "person": a later kind of declared key changes no field.
@@ -526,6 +559,11 @@ access's examples:
 | 31 | an app's alerts | an Alertmanager that does not answer holds the read, or each read asks it | 2 | 4 | 1 | fix | one fetch per 5 s for the process, a failure kept as long, a 2 s budget a caller going away does not cut, `"monitor":"unanswered"` (`TestAlertsView`) |
 | 32 | an app's alerts | a query taken loosely, or echoed | 3 | 5 | 3 | fix | no row takes one: any query, an empty `?` and one that does not parse among them, is the 422 in the route's own words (`TestAlertsRouteTakesNoQuery`) |
 | 33 | an app's alerts | an `env_file` value that is a piece of a time (a date, `API_VERSION=2026-11-19`) replaced inside an alert's `starts_at` or `silenced_until`, so no client reads the answer; the TUI kept the last answer ("none held") beside "the last read failed". Found by the alerts-screen PR's review | 3 | 5 | 3 | fix: size 2, risk 1 | the times pass no filter: taken out of each alert before the app's filter and put back after its last pass (`filterAlerts`; the alerts-screen PR's box-wide rows do the same), and a body the filter withheld or whose structure it changed (a value spanning two alerts) sent whole through the filter as before (`TestAlertsFilterFallsBack`); the app's screen says why a read failed beside the answer it keeps (`TestAlertsTimesPassNoFilter`, `TestAlertLines`). `GET /<app>`'s `last_deploy`, `deploying`, `watchdog` and `metrics` times go through its filter as they always have |
+| 34 | the rules reads | a rule pinned to another app, another app's number, or a box check (a disk's path, the backups' ages naming every app) in an app's answer | 5 | 5 | 5 | fix | the listing chosen in Go by the handle's app (`appHandle.rules`): subject an app, every app's or the handle's, readings of the handle's app alone; `TestAppRulesBody`, `TestRulesChosenByTheHandle`, `TestTwoAppsTwoPeople` with a number and a pinned rule per app and a box rule |
+| 35 | the rules reads | the store's socket or MetricsQL reaching a person | 2 | 5 | 5 | fix | `peopleRules` leaves out `store`'s object and every `value_query`, guard `query` and `match`, in a type (`wire.Rules`) with no field for the socket; `TestRulesBody`, `TestAppRulesBody` |
+| 36 | the rules reads | an env_file value shaped like a date, a number or a word of the body (`API_VERSION=2026-11-13`, `RATIO=0.0612346`, `STATE=inactive`) replaced inside it, so no client reads the answer (row 33's failure) | 3 | 5 | 3 | fix | the body holds no byte of an app's, so it passes a filter with no app's values (`respondRules`); `TestRulesPassNoAppValue` |
+| 37 | the rules reads | the store loaded by evaluation at the rate, or a read held on a store that does not answer | 2 | 5 | 3 | fix | one evaluation per 30 s for the process, shared by the admin route and every person, four queries at once, within 2 s a reader going away does not cut; a failure kept as long; `TestRulesViewShared`, `TestRulesViewBudget`, `TestEvaluateFailsWhole` |
+| 38 | the rules reads | a query taken loosely, or a path trick reaching the row | 3 | 5 | 3 | fix | the rows of #581's alerts: any query on the app row is the 422, on the box row the 404; `TestRulesRoute`, `TestAppRulesRoute`, `FuzzNoRouteNoAnswer` |
 
 ### Accepted residuals
 

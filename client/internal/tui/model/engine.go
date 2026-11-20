@@ -21,6 +21,9 @@ const (
 	KBackups
 	KAlerts
 	KBoxAlerts
+	// KRules is an app's rules (Job.App), KBoxRules the box's.
+	KRules
+	KBoxRules
 )
 
 // Job is one read.
@@ -122,6 +125,13 @@ type Engine struct {
 	// GET /_motel/backups is read only then; boxAlertsOpen, the alerts
 	// screen or the box screen, likewise for GET /_motel/alerts.
 	boxOpen, meOpen, backupsOpen, boxAlertsOpen bool
+	// boxRulesOpen is the box's rules screen open: GET /_motel/rules is
+	// read only then; rulesApp is the app whose rules screen is open,
+	// whose GET /_motel/apps/<app>/rules is read only then, "" when none
+	// is. Each every BoxEvery: the box evaluates the store's numbers at
+	// most every 30 s for everyone.
+	boxRulesOpen bool
+	rulesApp     string
 	// alertsApp is the app whose screen is open, whose alerts are read
 	// only then, every AlertsEvery; "" when none is.
 	alertsApp string
@@ -406,6 +416,39 @@ func (e *Engine) BoxAlertsOpen(open bool, now time.Time) {
 	e.poke()
 }
 
+// BoxRulesOpen says whether the box's rules screen is open: GET
+// /_motel/rules is read only then, every BoxEvery, as the box's alerts
+// are.
+func (e *Engine) BoxRulesOpen(open bool, now time.Time) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.seen(now)
+	e.boxRulesOpen = open
+	if _, ok := e.jobs[Job{Kind: KBoxRules}]; open && !ok {
+		e.jobs[Job{Kind: KBoxRules}] = &entry{due: now}
+	}
+	e.poke()
+}
+
+// RulesOpen says whose rules screen is open, "" for none: that app's
+// rules are read only then, every BoxEvery, as the box's are. Each
+// app's entry is kept when its screen closes, so one refused (a 403, a
+// box older than the read's 404) is asked again only by ctrl-r, and one
+// answered is read again when its turn comes; a read in flight for an
+// app whose screen closed ends as it would, its answer kept for it.
+func (e *Engine) RulesOpen(app string, now time.Time) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.seen(now)
+	e.rulesApp = app
+	if j := (Job{Kind: KRules, App: app}); app != "" {
+		if _, ok := e.jobs[j]; !ok {
+			e.jobs[j] = &entry{due: now}
+		}
+	}
+	e.poke()
+}
+
 func minTime(a, b time.Time) time.Time {
 	if b.Before(a) {
 		return b
@@ -525,7 +568,7 @@ func (e *Engine) Again(now time.Time, shown ...Job) {
 		}
 		en.held, en.failed = false, false
 		due := now
-		if j.Kind == KWhoAmI || j.Kind == KBox || j.Kind == KBackups || j.Kind == KAlerts || j.Kind == KBoxAlerts {
+		if j.Kind == KWhoAmI || j.Kind == KBox || j.Kind == KBackups || j.Kind == KAlerts || j.Kind == KBoxAlerts || j.Kind == KRules || j.Kind == KBoxRules {
 			due = maxTime(now, en.asked.Add(AgainAfter))
 		}
 		if en.due.After(due) {
@@ -661,7 +704,8 @@ func (e *Engine) next(at time.Time, skip *Job) (Job, time.Time, bool) {
 	var bestDue, bestKey time.Time
 	bestRank, found := 99, false
 	for j, en := range e.jobs {
-		if en.held || j.Kind == KBox && !e.boxOpen || j.Kind == KBackups && !e.backupsOpen || j.Kind == KBoxAlerts && !e.boxAlertsOpen || j.Kind == KAlerts && j.App != e.alertsApp || skip != nil && j == *skip {
+		if en.held || j.Kind == KBox && !e.boxOpen || j.Kind == KBackups && !e.backupsOpen || j.Kind == KBoxAlerts && !e.boxAlertsOpen || j.Kind == KAlerts && j.App != e.alertsApp ||
+			j.Kind == KBoxRules && !e.boxRulesOpen || j.Kind == KRules && j.App != e.rulesApp || skip != nil && j == *skip {
 			continue
 		}
 		r := e.rank(j, en)
@@ -706,7 +750,7 @@ func (e *Engine) rank(j Job, en *entry) int {
 		return 2
 	case j.Kind == KApps:
 		return 3
-	case j.Kind == KBox, j.Kind == KBackups, j.Kind == KAlerts, j.Kind == KBoxAlerts:
+	case j.Kind == KBox, j.Kind == KBackups, j.Kind == KAlerts, j.Kind == KBoxAlerts, j.Kind == KRules, j.Kind == KBoxRules:
 		return 4
 	}
 	return 5
@@ -911,7 +955,7 @@ func (e *Engine) Done(j Job, now time.Time, err error) Outcome {
 		en.due, en.every = e.nextSlot(en, now), e.background()
 	case j.Kind == KApps:
 		en.due = now.Add(AppsEvery)
-	case j.Kind == KBox, j.Kind == KBackups, j.Kind == KBoxAlerts:
+	case j.Kind == KBox, j.Kind == KBackups, j.Kind == KBoxAlerts, j.Kind == KRules, j.Kind == KBoxRules:
 		en.due = now.Add(BoxEvery)
 	case j.Kind == KAlerts:
 		en.due = now.Add(AlertsEvery)
@@ -947,7 +991,7 @@ func backoff(n int) time.Duration { return min(maxBackoff, time.Second<<min(n, 6
 // key or box: the apps it listed and what was due for them. After r,
 // whoami first, then the list, as at the start.
 func (e *Engine) forgetBox(now time.Time) {
-	e.apps, e.lastFocus, e.lastList, e.alertsApp = nil, time.Time{}, time.Time{}, ""
+	e.apps, e.lastFocus, e.lastList, e.alertsApp, e.rulesApp = nil, time.Time{}, time.Time{}, "", ""
 	for j := range e.jobs {
 		if j.Kind != KWhoAmI {
 			delete(e.jobs, j)

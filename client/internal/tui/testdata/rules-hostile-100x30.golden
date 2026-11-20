@@ -1,0 +1,30 @@
+motel · deploy.example.com · v0.7.0 │ alice@example.com · viewer of the box            live · 0s ago
+apps › hostile › rules                                                   as of 14:12:40 UTC · 0s ago
+store       on · numbers as the box last read the store (at most every 30 s)
+
+RULES that apply to hostile, with its numbers alone
+? other    kind not known · every app · ? 0.05 (in "share\x1b[2J") for 10m
+    rule      x\x1b[2J[red]FAKE[-]\x0a✖ critical firing · every app · > 0 %
+    severity  critical\x1b]0;pwned\x07
+    guard     >= 20: \x1b[2J\x1b[H [:::https://evil.example/tag]motel login[:::-] [red]FAKE[-]\x0a✖…
+    now       hostile 0.5 (in "share\x1b[2J") (1m ago) · at the level "critical \u25b2 forged" · st…
+  critical threshold · every app · >= each number's own threshold
+    rule      watchdog_throttled
+    now       hostile 5 of 5 restarts in 10m (5s ago)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+↑↓ scroll  y json  c command  esc back  ? more

@@ -1,0 +1,15 @@
+{
+ "store": "on",
+ "alerts": [
+  {"name": "app_memory_high", "source": "builtin", "severity": "warning", "subject": "app", "kind": "threshold", "op": ">", "threshold": 0.9, "unit": "share", "for_seconds": 600,
+   "readings": [{"app": "shop", "value": 0.552, "measured_at": "@-65s", "state": "inactive"}]},
+  {"name": "deploy_failed", "source": "motel check", "severity": "warning", "subject": "app", "kind": "event"},
+  {"name": "errors_high", "source": "operator", "severity": "warning", "subject": "app", "kind": "guarded", "op": ">", "threshold": 0.05, "unit": "share", "for_seconds": 600,
+   "guards": [{"op": ">=", "value": 20, "meaning": "at least 20 responses sent over 5m: under it, too few to judge"}],
+   "readings": [{"app": "shop", "value": 0.0612, "measured_at": "@-65s", "state": "pending", "active_since": "@-4m"}]},
+  {"name": "shop_slow", "source": "operator", "severity": "critical", "subject": "app", "app": "shop", "kind": "guarded", "op": ">", "threshold": 1.5, "unit": "seconds", "for_seconds": 900,
+   "guards": [{"op": ">=", "value": 50, "meaning": "at least 50 timed responses over 5m: under it, too few to judge"}],
+   "readings": [{"app": "shop", "value": 0.21, "measured_at": "@-65s", "state": "inactive"}]},
+  {"name": "watchdog_throttled", "source": "motel check", "severity": "critical", "subject": "app", "kind": "threshold", "op": ">=", "unit": "restarts"}
+ ]
+}

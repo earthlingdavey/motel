@@ -19,10 +19,10 @@ func (r *runner) monitor() *cobra.Command {
 		Short: "What the box's monitor holds (experimental)",
 		Args:  usageArgs(cobra.NoArgs),
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return &client.Failure{Exit: client.ExitUsage, Message: "monitor needs a command: motel monitor alerts [--app <app>]"}
+			return &client.Failure{Exit: client.ExitUsage, Message: "monitor needs a command: motel monitor alerts [--app <app>], or motel monitor rules [--app <app>]"}
 		},
 	}
-	m.AddCommand(r.monitorAlerts())
+	m.AddCommand(r.monitorAlerts(), r.monitorRules())
 	return m
 }
 

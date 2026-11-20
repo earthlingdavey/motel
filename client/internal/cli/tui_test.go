@@ -79,6 +79,16 @@ func (r *recorder) BoxAlerts(context.Context) (model.Got[wire.BoxAlerts], error)
 	return model.Got[wire.BoxAlerts]{}, nil
 }
 
+func (r *recorder) Rules(context.Context, string) (model.Got[wire.Rules], error) {
+	r.called = "Rules"
+	return model.Got[wire.Rules]{}, nil
+}
+
+func (r *recorder) BoxRules(context.Context) (model.Got[wire.Rules], error) {
+	r.called = "BoxRules"
+	return model.Got[wire.Rules]{}, nil
+}
+
 // wantRead is the read each command makes, written out: the command
 // an action names, and the model.Client method its read must call,
 // which live maps to the client's read of the same name.
@@ -91,6 +101,8 @@ var wantRead = map[string]string{
 	"backup status":              "Backups",
 	"monitor alerts --app <app>": "Alerts",
 	"monitor alerts":             "BoxAlerts",
+	"monitor rules --app <app>":  "Rules",
+	"monitor rules":              "BoxRules",
 }
 
 // TestActionsAreCommands: every read the TUI makes is an action naming

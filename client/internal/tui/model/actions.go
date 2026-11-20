@@ -28,6 +28,8 @@ var Actions = []Action{
 	{KBackups, "backup status", "the backups screen, and its line on the box screen", readBackups},
 	{KAlerts, "monitor alerts --app <app>", "the alerts on an app's screen", readAlerts},
 	{KBoxAlerts, "monitor alerts", "the alerts screen, and its line on the box screen", readBoxAlerts},
+	{KRules, "monitor rules --app <app>", "an app's rules screen", readRules},
+	{KBoxRules, "monitor rules", "the rules screen", readBoxRules},
 }
 
 // ActionFor is the action that reads k.
@@ -83,9 +85,9 @@ func readStatus(ctx context.Context, _ *Session, c Client, j Job) (func(*Session
 			a.err, a.errAt = err, at
 			if Forbidden(err) || NotFound(err) {
 				// The box's last word on it is a refusal: what was held of
-				// it goes, its alerts too, so no later failure can bring
-				// them back.
-				a.st, a.alerts = nil, nil
+				// it goes, its alerts and rules too, so no later failure
+				// can bring them back.
+				a.st, a.alerts, a.rules = nil, nil, nil
 			}
 			return
 		}
@@ -184,5 +186,40 @@ func readBox(ctx context.Context, _ *Session, c Client, _ Job) (func(*Session, t
 		}
 		g.At = at
 		s.BoxSt, s.BoxErr = &g, nil
+	}, err
+}
+
+func readRules(ctx context.Context, _ *Session, c Client, j Job) (func(*Session, time.Time), error) {
+	g, err := c.Rules(ctx, j.App)
+	return func(s *Session, at time.Time) {
+		a := s.app(j.App)
+		if err != nil {
+			a.rulesErr = err
+			if Forbidden(err) || NotFound(err) {
+				// Dropped, as a status's is (readStatus): a box older than
+				// the read answers 404.
+				a.rules = nil
+			}
+			return
+		}
+		g.At = at
+		a.rules, a.rulesErr = &g, nil
+	}, err
+}
+
+func readBoxRules(ctx context.Context, _ *Session, c Client, _ Job) (func(*Session, time.Time), error) {
+	g, err := c.BoxRules(ctx)
+	return func(s *Session, at time.Time) {
+		if err != nil {
+			s.BoxRulesErr = err
+			if Forbidden(err) || NotFound(err) {
+				// Dropped, as the alerts' are: a box older than the read
+				// answers 404.
+				s.BoxRulesSt = nil
+			}
+			return
+		}
+		g.At = at
+		s.BoxRulesSt, s.BoxRulesErr = &g, nil
 	}, err
 }

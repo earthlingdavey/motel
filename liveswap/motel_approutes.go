@@ -37,6 +37,7 @@ type motelAppRoute struct {
 
 var motelAppRoutes = []motelAppRoute{
 	{"alerts", access.AppAlerts, (*Handler).appAlerts},
+	{"rules", access.AppRules, (*Handler).appRules},
 }
 
 // findMotelAppRoute is the request's app-scoped row and the app its

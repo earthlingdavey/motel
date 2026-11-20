@@ -1,0 +1,24 @@
+motel · deploy.example.com · v0.7.0 │ alice@example.com · viewer … live · 0s ago
+apps › shop › rules                                  as of 14:12:40 UTC · 0s ago
+store       on · numbers as the box last read the store (at most every 30 s)
+
+RULES that apply to shop, with its numbers alone
+  warning  threshold · every app · > 90 % for 10m
+    rule      app_memory_high
+    now       shop 55.2 % (1m ago) · inactive
+  warning  event · every app · an event: nothing to be close to
+    rule      deploy_failed
+▲ warning  threshold with guards · every app · > 5 % for 10m
+    rule      errors_high
+    guard     >= 20: at least 20 responses sent over 5m: under it, too few to j…
+    now       shop 6.12 % (1m ago) · pending since 14:08 UTC (4m ago)
+  critical threshold with guards · app shop · > 1.5 s for 15m
+    rule      shop_slow
+    guard     >= 50: at least 50 timed responses over 5m: under it, too few to …
+    now       shop 210 ms (1m ago) · inactive
+  critical threshold · every app · >= each number's own threshold
+    rule      watchdog_throttled
+    now       no number
+
+
+↑↓ scroll  y json  c command  esc back  ? more

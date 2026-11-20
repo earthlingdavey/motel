@@ -1,0 +1,69 @@
+store       on · numbers as the box last read the store (at most every 30 s)
+rules file  the file vmalert reads is not this config's render: the store's rules listed may not be the ones it runs (the box's journal says why)
+127.0.0.1 alerts on these rules:
+▲ warning  threshold with guards · every app · > 5 % for 10m
+    rule      errors_high
+    guard     >= 20: at least 20 responses sent over 5m:\x0a▲ warning  threshold · every app · > 0 %
+    now       blog 6.12 % (<age>) · pending since <time> UTC (<age>)
+    now       shop-2 0.4 % (<age>) · inactive
+▲ warning  threshold · the box · >= 80 % warning, >= 90 % critical, each clears 5 % under
+    rule      disk_low
+    now       /srv/motel 84.2 % (<age>) · firing at warning
+✖ critical threshold · app blog · > 1.5 s for 15m
+    rule      blog_slow
+    now       blog no number (<age>) · firing since <time> UTC (<age>)
+  critical threshold · every app · >= each number's own threshold
+    rule      watchdog_throttled
+    now       blog 2 of 5 restarts in 10m (<age>)
+  warning  event · every app · an event: nothing to be close to
+    rule      deploy_failed
+? other    kind not known · the box · ? 0 (in "osc52 \x1b]52;c;cHduZWQ=\x07")
+    rule      osc52 \x1b]52;c;cHduZWQ=\x07\x0a✖ critical threshold · the box · < 0 bytes
+    severity  osc52 \x1b]52;c;cHduZWQ=\x07
+    guard     osc52 \x1b]52;c;cHduZWQ=\x07
+    now       osc52 \x1b]52;c;cHduZWQ=\x07 1 (in "osc52 \x1b]52;c;cHduZWQ=\x07") (<age>) · at the level "osc52 \x1b]52;c;cHduZWQ=\x07" · state not known, the box said "osc52 \x1b]52;c;cHduZWQ=\x07"
+? other    kind not known · the box · ? 1 (in "csi \x1b[2J\x1b[H")
+    rule      csi \x1b[2J\x1b[H\x0a✖ critical threshold · the box · < 0 bytes
+    severity  csi \x1b[2J\x1b[H
+    guard     csi \x1b[2J\x1b[H
+    now       csi \x1b[2J\x1b[H 1 (in "csi \x1b[2J\x1b[H") (<age>) · at the level "csi \x1b[2J\x1b[H" · state not known, the box said "csi \x1b[2J\x1b[H"
+? other    kind not known · the box · ? 2 (in "osc8 \x1b]8;;https://evil.example/\x1b\\click\x1b]8;;\x1b\\")
+    rule      osc8 \x1b]8;;https://evil.example/\x1b\click\x1b]8;;\x1b\\x0a✖ critical threshold · the box · < 0 bytes
+    severity  osc8 \x1b]8;;https://evil.example/\x1b\click\x1b]8;;\x1b\
+    guard     osc8 \x1b]8;;https://evil.example/\x1b\click\x1b]8;;\x1b\
+    now       osc8 \x1b]8;;https://evil.example/\x1b\click\x1b]8;;\x1b\ 1 (in "osc8 \x1b]8;;https://evil.example/\x1b\\click\x1b]8;;\x1b\\") (<age>) · at the level "osc8 \x1b]8;;https://evil.example/\x1b\\click\x1b]8;;\x1b\\" · state not known, the box said "osc8 \x1b]8;;https://evil.example/\x1b\\click\x1b]8;;\x1b\\"
+? other    kind not known · the box · ? 3 (in "title \x1b]0;pwned\x07")
+    rule      title \x1b]0;pwned\x07\x0a✖ critical threshold · the box · < 0 bytes
+    severity  title \x1b]0;pwned\x07
+    guard     title \x1b]0;pwned\x07
+    now       title \x1b]0;pwned\x07 1 (in "title \x1b]0;pwned\x07") (<age>) · at the level "title \x1b]0;pwned\x07" · state not known, the box said "title \x1b]0;pwned\x07"
+? other    kind not known · the box · ? 4 (in "tags [red]alert[-] [\"region\"]")
+    rule      tags [red]alert[-] ["region"]\x0a✖ critical threshold · the box · < 0 bytes
+    severity  tags [red]alert[-] ["region"]
+    guard     tags [red]alert[-] ["region"]
+    now       tags [red]alert[-] ["region"] 1 (in "tags [red]alert[-] [\"region\"]") (<age>) · at the level "tags [red]alert[-] [\"region\"]" · state not known, the box said "tags [red]alert[-] [\"region\"]"
+? other    kind not known · the box · ? 5 (in "bidi abc\u202edef")
+    rule      bidi abc\u202edef\x0a✖ critical threshold · the box · < 0 bytes
+    severity  bidi abc\u202edef
+    guard     bidi abc\u202edef
+    now       bidi abc\u202edef 1 (in "bidi abc\u202edef") (<age>) · at the level "bidi abc\u202edef" · state not known, the box said "bidi abc\u202edef"
+? other    kind not known · the box · ? 6 (in "c1 \u009b31mred")
+    rule      c1 \u009b31mred\x0a✖ critical threshold · the box · < 0 bytes
+    severity  c1 \u009b31mred
+    guard     c1 \u009b31mred
+    now       c1 \u009b31mred 1 (in "c1 \u009b31mred") (<age>) · at the level "c1 \u009b31mred" · state not known, the box said "c1 \u009b31mred"
+? other    kind not known · the box · ? 7 (in "fake ::error::file=x::owned")
+    rule      fake ::error::file=x::owned\x0a✖ critical threshold · the box · < 0 bytes
+    severity  fake ::error::file=x::owned
+    guard     fake ::error::file=x::owned
+    now       fake ::error::file=x::owned 1 (in "fake ::error::file=x::owned") (<age>) · at the level "fake ::error::file=x::owned" · state not known, the box said "fake ::error::file=x::owned"
+? other    kind not known · the box · ? 8 (in "bad utf8 \ufffd\ufffd")
+    rule      bad utf8 ��\x0a✖ critical threshold · the box · < 0 bytes
+    severity  bad utf8 ��
+    guard     bad utf8 ��
+    now       bad utf8 �� 1 (in "bad utf8 \ufffd\ufffd") (<age>) · at the level "bad utf8 \ufffd\ufffd" · state not known, the box said "bad utf8 \ufffd\ufffd"
+? other    kind not known · the box · ? 9 (in "marks alm\u061c lrm\u200e rlm\u200f")
+    rule      marks alm\u061c lrm\u200e rlm\u200f\x0a✖ critical threshold · the box · < 0 bytes
+    severity  marks alm\u061c lrm\u200e rlm\u200f
+    guard     marks alm\u061c lrm\u200e rlm\u200f
+    now       marks alm\u061c lrm\u200e rlm\u200f 1 (in "marks alm\u061c lrm\u200e rlm\u200f") (<age>) · at the level "marks alm\u061c lrm\u200e rlm\u200f" · state not known, the box said "marks alm\u061c lrm\u200e rlm\u200f"

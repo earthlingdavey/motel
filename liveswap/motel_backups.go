@@ -92,6 +92,9 @@ type boxHandle struct {
 	// alerts is the config's source of what Alertmanager holds
 	// (SetAlertsSource); nil with no monitor block that raises anything.
 	alerts AlertsSource
+	// rules is the config's source of the rules it alerts on
+	// (SetRulesSource); nil likewise.
+	rules RulesSource
 }
 
 // allowBox asks Decide whether p may take a on the box, and is the one
@@ -104,7 +107,7 @@ func (h *Handler) allowBox(p access.Principal, a access.Action) (boxHandle, erro
 	if c == nil {
 		c = theBackups
 	}
-	return boxHandle{backups: c, alerts: h.app.alertsSource}, nil
+	return boxHandle{backups: c, alerts: h.app.alertsSource, rules: h.app.rulesSource}, nil
 }
 
 // backupsStatus is what the box says of its backups.

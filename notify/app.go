@@ -189,6 +189,10 @@ func (a *App) provisionNotify(ctx caddy.Context, ls *liveswap.App) error {
 		// the process's one view: only a config that runs notify raises
 		// anything, so with none the read says "monitor":"off".
 		ls.SetAlertsSource(alertsSource{view: theAlerts, logger: a.logger})
+		// A person's read of the rules is this config's listing, with the
+		// store's numbers from the process's one evaluation: with no
+		// notify nothing is raised, and the read says "store":"off".
+		ls.SetRulesSource(rulesSource{a: a})
 		a.diskPaths = append([]string{ls.Root}, a.diskPaths...)
 	}
 	evApp, err := ctx.App("events")

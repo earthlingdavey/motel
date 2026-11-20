@@ -1,0 +1,27 @@
+{
+ "store": "on",
+ "alerts": [
+  {"name": "app_memory_high", "source": "builtin", "severity": "warning", "subject": "app", "kind": "threshold", "op": ">", "threshold": 0.9, "unit": "share", "for_seconds": 600,
+   "readings": [
+    {"app": "images", "value": 0.934, "measured_at": "@-65s", "state": "firing", "active_since": "@-14m"},
+    {"app": "shop", "value": 0.552, "measured_at": "@-65s", "state": "inactive"}
+   ]},
+  {"name": "backup_stale", "source": "motel check", "severity": "critical", "subject": "box", "kind": "threshold", "op": ">", "threshold": 10800, "unit": "seconds",
+   "readings": [{"instance": "shop", "value": 3480, "measured_at": "@-2m"}, {"instance": "wiki", "value": 9600, "measured_at": "@-2m"}]},
+  {"name": "deploy_failed", "source": "motel check", "severity": "warning", "subject": "app", "kind": "event"},
+  {"name": "disk_low", "source": "motel check", "severity": "warning", "subject": "box", "kind": "threshold", "op": ">=", "unit": "percent",
+   "levels": [{"severity": "warning", "threshold": 80, "clears_below": 75}, {"severity": "critical", "threshold": 90, "clears_below": 85}],
+   "readings": [{"instance": "/var/lib/liveswap", "value": 84.2, "level": "warning", "measured_at": "@-40s"}]},
+  {"name": "errors_high", "source": "operator", "severity": "warning", "subject": "app", "kind": "guarded", "op": ">", "threshold": 0.05, "unit": "share", "for_seconds": 600,
+   "guards": [{"op": ">=", "value": 20, "meaning": "at least 20 responses sent over 5m: under it, too few to judge"}],
+   "readings": [
+    {"app": "shop", "value": 0.0612, "measured_at": "@-65s", "state": "pending", "active_since": "@-4m"},
+    {"app": "wiki", "value": 0.004, "measured_at": "@-65s", "state": "inactive"}
+   ]},
+  {"name": "shop_slow", "source": "operator", "severity": "critical", "subject": "app", "app": "shop", "kind": "guarded", "op": ">", "threshold": 1.5, "unit": "seconds", "for_seconds": 900,
+   "guards": [{"op": ">=", "value": 50, "meaning": "at least 50 timed responses over 5m: under it, too few to judge"}],
+   "readings": [{"app": "shop", "value": 0.21, "measured_at": "@-65s", "state": "inactive"}]},
+  {"name": "watchdog_throttled", "source": "motel check", "severity": "critical", "subject": "app", "kind": "threshold", "op": ">=", "unit": "restarts",
+   "readings": [{"app": "images", "value": 5, "threshold": 5, "window_seconds": 600, "measured_at": "@-5s"}]}
+ ]
+}

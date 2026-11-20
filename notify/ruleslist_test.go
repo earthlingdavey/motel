@@ -2,7 +2,9 @@ package notify
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"net"
 	"net/http"
 	"os"
@@ -14,6 +16,7 @@ import (
 
 	"github.com/smallhoursorg/motel/backups/record"
 	"github.com/smallhoursorg/motel/liveswap"
+	"github.com/smallhoursorg/motel/liveswap/wire"
 )
 
 // listingLines are a config with every kind of rule line: each
@@ -63,7 +66,8 @@ func listingJSON(t *testing.T, l RulesListing) []byte {
 }
 
 // TestRulesListingGolden pins the listing's JSON, every field, for a
-// config with every kind of rule and every check read.
+// config with every kind of rule, every check read, and the store
+// rules' numbers as the box evaluated them.
 func TestRulesListingGolden(t *testing.T) {
 	seen, chain, budgets := listingReads()
 	a := rulesApp(t, listingLines...)
@@ -72,6 +76,11 @@ func TestRulesListingGolden(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	values, err := evaluate(context.Background(), listingStore(l), l.Store, valueAsks(l), listingAt.Add(65*time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	attachValues(&l, values, true)
 	got := listingJSON(t, l)
 	golden := filepath.Join("testdata", "rules-listing.golden.json")
 	if *update {
@@ -394,7 +403,7 @@ func TestServeRules(t *testing.T) {
 	}
 	i := slices.IndexFunc(l.Alerts, func(e AlertListing) bool { return e.Name == alertDiskLow })
 	j := slices.IndexFunc(l.Alerts, func(e AlertListing) bool { return e.Name == liveswap.EventWatchdogThrottled })
-	if l.Store != nil || i < 0 || len(l.Alerts[i].Readings) != 1 || l.Alerts[i].Readings[0].Value != 12 || j < 0 || len(l.Alerts[j].Readings) != 1 {
+	if l.Store != nil || i < 0 || len(l.Alerts[i].Readings) != 1 || *l.Alerts[i].Readings[0].Value != 12 || j < 0 || len(l.Alerts[j].Readings) != 1 {
 		t.Fatalf("%s", w.Body.String())
 	}
 	if _, err := callAdmin(t, serveRules, http.MethodPost, ""); apiStatus(err) != http.StatusMethodNotAllowed {
@@ -432,6 +441,11 @@ func TestRulesCommandOutput(t *testing.T) {
 	savedNow := rulesNow
 	rulesNow = func() time.Time { return listingAt.Add(5 * time.Minute) }
 	t.Cleanup(func() { rulesNow = savedNow })
+	listed, err := listRules(te.active, polled{}, chainRead{}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	standIn(t, listingStore(listed))
 	addr := adminServe(t)
 	out, err := runRules(t, addr)
 	if err != nil {
@@ -439,36 +453,37 @@ func TestRulesCommandOutput(t *testing.T) {
 	}
 	want := `NAME                     SOURCE       KIND       SEVERITY  SCOPE      CONDITION                                                            NOW
 ChannelFailed            motel check  event      warning   box        -                                                                    -
-app_memory_high          builtin      threshold  warning   every app  > 0.9 share for 10m                                                  (the store)
+app_memory_high          builtin      threshold  warning   every app  > 0.9 share for 10m                                                  blog 0.55 share, shop 0.93104 share (firing for 17m)
 backup_run_failed        motel check  event      warning   box        -                                                                    -
 backup_stale             motel check  threshold  critical  box        > 3h                                                                 blog 58m, shop 3h59m30s
 backup_unreadable        motel check  event      warning   box        -                                                                    -
-blog_quiet               operator     guarded    warning   app blog   < 0.1 requests/s for 1h, 3 guards                                    (the store)
-busy                     operator     threshold  warning   app shop   > 1.5 cores for 10m                                                  (the store)
+blog_quiet               operator     guarded    warning   app blog   < 0.1 requests/s for 1h, 3 guards                                    no value
+busy                     operator     threshold  warning   app shop   > 1.5 cores for 10m                                                  no value
 cert_failed              motel check  event      warning   box        -                                                                    -
 deploy_failed            motel check  event      warning   every app  -                                                                    -
 deploy_refused           motel check  event      warning   every app  -                                                                    -
 deploy_succeeded         motel check  event      info      every app  -                                                                    -
-disk_filling             operator     guarded    critical  box        < 0 bytes for 3h30m, 2 guards                                        (the store)
+disk_filling             operator     guarded    critical  box        < 0 bytes for 3h30m, 2 guards                                        /srv/motel -1234570000 bytes
 disk_low                 motel check  threshold  warning   box        >= 80% warning, >= 90% critical, each clears 5 points under          /srv/motel 79.9% (warning) (as of 5m20s ago), /var/lib/caddy 41.2% (as of 6m20s ago)
-disk_soon                operator     guarded    warning   box        < 0 bytes for 5m, 2 guards                                           (the store)
+disk_soon                operator     guarded    warning   box        < 0 bytes for 5m, 2 guards                                           no value
 drill_failed             motel check  event      critical  box        -                                                                    -
-errors_high              operator     guarded    warning   every app  > 0.05 share for 10m, 2 guards                                       (the store)
-hits_low                 operator     guarded    warning   every app  < 0.5 share for 30m, 2 guards                                        (the store)
-median                   operator     guarded    warning   every app  > 200ms for 10m, 2 guards                                            (the store)
-mem                      operator     threshold  warning   every app  > 0.8 share for 5m                                                   (the store)
+errors_high              operator     guarded    warning   every app  > 0.05 share for 10m, 2 guards                                       blog 0 share, shop 0.0612346 share (pending for 9m)
+hits_low                 operator     guarded    warning   every app  < 0.5 share for 30m, 2 guards                                        no value
+median                   operator     guarded    warning   every app  > 200ms for 10m, 2 guards                                            no value
+mem                      operator     threshold  warning   every app  > 0.8 share for 5m                                                   blog 0.55 share, shop 0.93104 share
 metrics_rules_down       motel check  threshold  warning   box        >= 3 reads                                                           nothing read
-metrics_store_disk_fill  builtin      guarded    warning   box        < 0 bytes for 30m, 2 guards                                          (the store)
+metrics_store_disk_fill  builtin      guarded    warning   box        < 0 bytes for 30m, 2 guards                                          53687100000 bytes
 metrics_store_down       motel check  threshold  warning   box        >= 5m                                                                nothing read
 metrics_store_read_only  motel check  event      critical  box        -                                                                    -
 post_deploy_regressed    operator     event      warning   every app  -                                                                    -
 relaunch_refused         motel check  event      critical  every app  -                                                                    -
 rollback                 motel check  event      warning   every app  -                                                                    -
-shop_slow                operator     guarded    critical  app shop   > 1.5s for 15m, 2 guards                                             (the store)
+shop_slow                operator     guarded    critical  app shop   > 1.5s for 15m, 2 guards                                             shop no value (firing for 35m)
 watchdog_throttled       motel check  threshold  critical  every app  a further restart needed while >= its budget in its window is spent  shop 2 of 5 in 10m (as of 5m ago)
 
-NOW for the store's rules: run each value_query (--json) on /run/motel-metrics/vm.sock at now - 65s;
-pending and firing are last_over_time(ALERTS[2m]) (firing over pending; a resolved alert shows within the lookback).
+NOW for the store's rules is each value_query (--json) as moteld ran it on /run/motel-metrics/vm.sock at now - 65s,
+at most every 30s; pending and firing are last_over_time(ALERTS[2m]) (firing over pending;
+a resolved alert shows within the lookback).
 `
 	if out != want {
 		t.Fatalf("text:\n%s\nwant\n%s", out, want)
@@ -478,8 +493,15 @@ pending and firing are last_over_time(ALERTS[2m]) (firing over pending; a resolv
 		t.Fatal(err)
 	}
 	var l RulesListing
-	if err := json.Unmarshal([]byte(out), &l); err != nil || len(l.Alerts) != 28 || l.Store == nil {
+	if err := json.Unmarshal([]byte(out), &l); err != nil || len(l.Alerts) != 28 || l.Store == nil || l.Store.Values != wire.StoreOn {
 		t.Fatalf("--json: %v %s", err, out)
+	}
+	// A store that does not answer: the store rules say so, the checks
+	// read as before.
+	standIn(t, &rulesStore{q: listed.Store, err: errors.New("store down")})
+	if out, err = runRules(t, addr); err != nil || !strings.Contains(out, "> 0.9 share for 10m                                                  (the store did not answer)\n") ||
+		!strings.Contains(out, "blog 58m, shop 3h59m30s\n") {
+		t.Fatalf("unanswered: %v\n%s", err, out)
 	}
 	te.active = nil
 	if out, err := runRules(t, addr, "--json"); err == nil || !strings.Contains(out, `{"error":"this box's Caddyfile has no monitor block with channels"}`) {
@@ -656,11 +678,11 @@ func TestBackupReadingsFollowTheRecord(t *testing.T) {
 // check's cadence says so; a fresh one does not.
 func TestTableSaysHowOldAReadingIs(t *testing.T) {
 	e := AlertListing{Name: alertDiskLow, Kind: kindThreshold, Unit: "percent",
-		Readings: []Reading{{Instance: "/srv", Value: 50, MeasuredAt: listingAt}}}
-	if got := readings(e, listingAt.Add(time.Minute)); got != "/srv 50%" {
+		Readings: []Reading{{Instance: "/srv", Value: ptr(50), MeasuredAt: listingAt}}}
+	if got := readings(e, nil, listingAt.Add(time.Minute)); got != "/srv 50%" {
 		t.Errorf("fresh: %q", got)
 	}
-	if got := readings(e, listingAt.Add(7*time.Minute)); got != "/srv 50% (as of 7m ago)" {
+	if got := readings(e, nil, listingAt.Add(7*time.Minute)); got != "/srv 50% (as of 7m ago)" {
 		t.Errorf("old: %q", got)
 	}
 }
@@ -686,7 +708,7 @@ func TestWatchdogListingSaysWhenItFires(t *testing.T) {
 	if e.Readings[0].WindowSeconds != 1.5 || e.Readings[1].WindowSeconds != 0.5 {
 		t.Errorf("windows: %+v", e.Readings)
 	}
-	if got := readings(e, listingAt); got != "blog 5 of 5 in 1.5s, shop 1 of 2 in 500ms" {
+	if got := readings(e, nil, listingAt); got != "blog 5 of 5 in 1.5s, shop 1 of 2 in 500ms" {
 		t.Errorf("readings: %q", got)
 	}
 	b, _ := json.Marshal(e.Readings[1])
@@ -787,7 +809,7 @@ func TestBackupAgePastItsThresholdReadsPastIt(t *testing.T) {
 		t.Fatal(err)
 	}
 	i := slices.IndexFunc(l.Alerts, func(e AlertListing) bool { return e.Name == "backup_stale" })
-	if got := readings(l.Alerts[i], listingAt); got != "blog 3h0.5s" {
+	if got := readings(l.Alerts[i], nil, listingAt); got != "blog 3h0.5s" {
 		t.Errorf("readings: %q", got)
 	}
 }

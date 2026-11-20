@@ -1223,6 +1223,35 @@ took `for` plus about a minute. The price of the lookback: a resolved
 alert shows for up to two minutes, and at the change both its pending
 and firing series show (docs/monitor.md says how to read them).
 
+**Evaluated on the box** (rulesvalues.go). A laptop cannot reach
+`vm.sock`, so moteld runs the listing's own queries itself, for
+`moteld monitor rules` and for a person's read of the rules over HTTPS
+(`GET /_motel/rules`, `GET /_motel/apps/<app>/rules`,
+liveswap/access/DESIGN-access.md) alike: one evaluation at a time for
+the whole process, kept 30 s (`rulesEvery`) for every reader, the
+failure too, within 2 s (`rulesBudget`) that a reader going away does
+not cut short, journalled once. An evaluation is each distinct value
+query at now − `query_offset_seconds` (what vmalert compared: the
+readings' `measured_at`), and `state_query` and `active_since_query`
+once each at the store's present: N store rules cost at most N + 2
+instant queries per 30 s, whatever the number of people, run four at
+once (`rulesAtOnce`), since the store, capped at 96 MiB, also answers
+vmalert, the pusher and `GET /<app>`'s metrics. Each series of a value
+is one reading (`app`, or `path` as `instance`, or neither), the value
+rounded to six significant digits (a longer run of digits reads as a
+generated secret to a response filter, `metricsview.go`'s `roundTo`); a
+point that is NaN or an infinity (a share of no responses, a cap of 0)
+is left out of its series, not a failure of the whole answer. Its
+`state` is the `ALERTS` series of that alert name and subject, firing
+over pending, else `inactive`; `active_since` is `ALERTS_FOR_STATE`'s
+value. A subject vmalert holds pending or firing that the value query
+gave no series of at that time is a reading with its state and no
+value. Any query that fails fails the whole evaluation: the listing's
+`store.values` is then `unanswered` and no store rule has readings, so
+none reads `inactive` for a state not read. The cache is keyed by the
+socket, the timing and every query, so a config whose rules differ
+never reads another's numbers.
+
 **What a check lists.** For motel's own detectors, the number each
 already holds, with `measured_at`: nothing is polled for the listing.
 `disk_low`: each filesystem's used percent at the last minute's statfs,

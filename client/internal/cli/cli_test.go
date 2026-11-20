@@ -83,6 +83,8 @@ type fakeBox struct {
 	backups   wire.Backups
 	alerts    wire.Alerts
 	boxAlerts wire.BoxAlerts
+	rules     wire.Rules  // the box's; blog's is its rules of blog
+	appRules  *wire.Rules // blog's as sent, when set
 	auth      []string
 	bodies    map[string][]byte // what each target was answered
 }
@@ -99,7 +101,7 @@ func encode(v any) []byte {
 
 func newFakeBox(t *testing.T) *fakeBox {
 	t.Helper()
-	fb := &fakeBox{status: hostileStatus(), deploy: hostileDeploy(), whoami: hostileWhoAmI(), apps: wire.Apps{Apps: []wire.AppEntry{{Name: "blog"}, {Name: "shop-2"}}}, backups: hostileBackups(), boxAlerts: hostileBoxAlerts(), bodies: map[string][]byte{}}
+	fb := &fakeBox{status: hostileStatus(), deploy: hostileDeploy(), whoami: hostileWhoAmI(), apps: wire.Apps{Apps: []wire.AppEntry{{Name: "blog"}, {Name: "shop-2"}}}, backups: hostileBackups(), boxAlerts: hostileBoxAlerts(), rules: hostileRules(), bodies: map[string][]byte{}}
 	fb.srv = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		fb.auth = append(fb.auth, r.Header.Get("Authorization"))
 		code, body := http.StatusOK, []byte(nil)
@@ -114,6 +116,12 @@ func newFakeBox(t *testing.T) *fakeBox {
 			body = encode(fb.alerts)
 		case r.URL.Path == "/_motel/alerts":
 			body = encode(fb.boxAlerts)
+		case r.URL.Path == "/_motel/rules":
+			body = encode(fb.rules)
+		case r.URL.Path == "/_motel/apps/blog/rules" && fb.appRules != nil:
+			body = encode(*fb.appRules)
+		case r.URL.Path == "/_motel/apps/blog/rules":
+			body = encode(rulesOf(fb.rules, "blog"))
 		case r.URL.Path == "/":
 			body = encode(wire.BoxStatus{Commit: "3f9c2a1e" + strings.Repeat("0", 32), BoxWebhook: "127.0.0.1", SHA256: strings.Repeat("9b", 32), Recipient: "age1" + hostile[0]})
 		case r.URL.Path != "/blog":
