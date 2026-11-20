@@ -193,7 +193,7 @@ func TestHeldTimeKeysAreTheWireTimes(t *testing.T) {
 			walk(f.Type)
 		}
 	}
-	for _, v := range []any{wire.Status{}, wire.Failure{}, wire.DeployResult{}, wire.PhaseEvent{}, wire.AppEntry{}, wire.Error{}} {
+	for _, v := range []any{wire.Status{}, wire.Failure{}, wire.DeployResult{}, wire.PhaseEvent{}, wire.AppEntry{}, wire.Error{}, wire.Logs{}} {
 		walk(reflect.TypeOf(v))
 	}
 	for k := range heldTimeKeys {

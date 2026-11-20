@@ -33,24 +33,24 @@ import (
 const personBox = "deploy.example.test"
 
 // testPeople are the people of the handler's tests: alice views demo,
-// carol views the box, dave has no grant.
+// carol views the box, erin reads demo's logs, dave has no grant.
 type testPeople struct {
-	alice, carol, dave, stranger accesstest.Key
-	reg                          *access.Registry
+	alice, carol, dave, erin, stranger accesstest.Key
+	reg                                *access.Registry
 }
 
 func newTestPeople(t testing.TB) *testPeople {
 	t.Helper()
-	p := &testPeople{alice: accesstest.Ed25519(), carol: accesstest.SKEd25519(), dave: accesstest.Ed25519(), stranger: accesstest.Ed25519()}
+	p := &testPeople{alice: accesstest.Ed25519(), carol: accesstest.SKEd25519(), dave: accesstest.Ed25519(), erin: accesstest.Ed25519(), stranger: accesstest.Ed25519()}
 	var l access.Lines
-	for name, k := range map[string]accesstest.Key{"alice": p.alice, "carol": p.carol, "dave": p.dave} {
+	for name, k := range map[string]accesstest.Key{"alice": p.alice, "carol": p.carol, "dave": p.dave, "erin": p.erin} {
 		key, err := access.ParsePerson([]string{name, k.Type(), k.B64()})
 		if err != nil {
 			t.Fatal(err)
 		}
 		l.Keys = append(l.Keys, key)
 	}
-	for _, args := range [][]string{{"alice", "viewer", "app", "demo"}, {"carol", "viewer", "box"}} {
+	for _, args := range [][]string{{"alice", "viewer", "app", "demo"}, {"carol", "viewer", "box"}, {"erin", "logs", "app", "demo"}} {
 		g, err := access.ParseGrant(args)
 		if err != nil {
 			t.Fatal(err)

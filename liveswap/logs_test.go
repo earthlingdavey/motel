@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"slices"
 	"strconv"
 	"strings"
@@ -15,8 +16,9 @@ import (
 	"unicode/utf8"
 )
 
-// logsUID is the uid the scripted journal's entries are of.
-const logsUID = 996
+// logsUID is the uid the scripted journal's entries are of: this
+// process's, which the route holds them to as moteld's.
+var logsUID = os.Getuid()
 
 // scriptEntry is one entry of a scripted journal: what -o json prints of
 // it, decoded by the test's own hand.
@@ -391,13 +393,13 @@ func TestLogsPassesOverAnotherUnitsEntry(t *testing.T) {
 	j[2].userUnit = "motel-sandboxprobe_0a1b2c3d0a1b2c3d.service"
 	j[3].unit, j[3].userUnit = "motel_backup_dump_demo.service", ""
 	j[4].unit, j[4].userUnit = "", ""
-	j[5].unit = "user@0.service"
+	j[5].unit = "user@" + strconv.Itoa(logsUID+4242) + ".service" // another uid's manager
 	j[6].userUnit = "motel-demo.v7.0a1b2c3d0a1b2c3d.prestart.service"
 	read, err := readLogs(context.Background(), &scriptedLogs{journal: j}, demoQuery(50, ""))
 	if err != nil || !slices.Equal(texts(read.lines), []string{"line 0", "line 4", "line 6", "line 7"}) || read.passedOver != 4 {
 		t.Fatalf("%q passed over %d, %v", texts(read.lines), read.passedOver, err)
 	}
-	if read.passedUnit != "user@0.service motel-demo.v0.0a1b2c3d0a1b2c3d.service" {
+	if read.passedUnit != "user@"+strconv.Itoa(logsUID+4242)+".service motel-demo.v0.0a1b2c3d0a1b2c3d.service" {
 		t.Errorf("the first passed over, newest first: %q", read.passedUnit)
 	}
 	for i, l := range read.lines {

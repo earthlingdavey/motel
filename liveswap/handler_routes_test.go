@@ -39,12 +39,12 @@ func TestEveryRouteHasAnAction(t *testing.T) {
 }
 
 // arrivesWithItsRead are the actions Decide's table holds whose row
-// arrives with the read itself, in the next change: app.logs, whose
-// cell, case and 403 were reviewed with the grant that gives it. The
-// two tests that hold every action to a row pass over these, and
+// arrives with the read itself, in the next change, reviewed with the
+// grant that gives it: none now (app.logs's row is here). The two tests
+// that hold every action to a row pass over these, and
 // TestArrivesWithItsReadHasNoRow fails once a row for one exists, so
 // the list is emptied by the change that adds the row.
-var arrivesWithItsRead = []access.Action{access.AppLogs}
+var arrivesWithItsRead []access.Action
 
 // hasRow reports whether liveswap_webhook has a row for the action, on
 // /<app> or under /_motel/.
@@ -152,10 +152,11 @@ func TestRouteActions(t *testing.T) {
 // 403 where their grants do not cover the name, 404 to a viewer of the
 // box for a name that is no app, and 422 for a query the row does not
 // take (queryTaken). People
-// too: a viewer of demo, of the box, and a person with no grant, whose
-// tokens are refused on anything but a GET, reach a row only where
-// Decide's table and their grants allow, and are told 403 or 404
-// everywhere else, as "Unknown names" says.
+// too: a viewer of demo, of the box, a logs reader of demo and a person
+// with no grant, whose tokens are refused on anything but a GET, reach a
+// row only where Decide's table and their grants allow (demo's logs a
+// logs reader's alone), and are told 403 or 404 everywhere else, as
+// "Unknown names" says.
 func FuzzNoRouteNoAnswer(f *testing.F) {
 	// Every row of the table is reached by some seed (checked below,
 	// against the real table): the gzip push only with its content type.
@@ -194,6 +195,12 @@ func FuzzNoRouteNoAnswer(f *testing.F) {
 		{"GET", "/_motel/apps/demo/../demo/alerts", "", "", ""},
 		{"POST", "/_motel/apps/demo/alerts", "", "", ""},
 		{"GET", "/_motel/apps/demo/logs", "", "", ""},
+		{"GET", "/_motel/apps/demo/logs", "lines=50", "", ""},
+		{"GET", "/_motel/apps/demo/logs", "lines=1000&after=" + url.QueryEscape(testCursor), "", ""},
+		{"GET", "/_motel/apps/demo/logs", "after=" + testCursor, "", ""},
+		{"GET", "/_motel/apps/demo/logs", "after=t%3D5f0000000000", "", ""},
+		{"GET", "/_motel/apps/demo/logs", "after=" + url.QueryEscape(testCursor) + "&after=" + url.QueryEscape(testCursor), "", ""},
+		{"GET", "/_motel/apps/ghost/logs", "lines=50", "", ""},
 		{"GET", "/_motel/backups", "", "", ""},
 		{"GET", "/_motel/alerts", "", "", ""},
 		{"GET", "/_motel/alerts", "app=demo", "", ""},
@@ -247,6 +254,7 @@ func FuzzNoRouteNoAnswer(f *testing.F) {
 	personKeys := map[string]accesstest.Key{
 		"viewer of demo":       people.alice,
 		"viewer of the box":    people.carol,
+		"logs of demo":         people.erin,
 		"person with no grant": people.dave,
 	}
 
@@ -258,7 +266,10 @@ func FuzzNoRouteNoAnswer(f *testing.F) {
 		h.people = people.reg
 		networks := newPeopleNetworks("", time.Now)
 		h.networks = networks
-		for _, caller := range []string{"stranger", "deployer of demo", "global source", "viewer of demo", "viewer of the box", "person with no grant"} {
+		// demo keeps its lines in a journal of three, its own.
+		rig.spec.deployLogLines = 200
+		rig.ma.logs = &scriptedLogs{journal: appJournal(3, lineN)}
+		for _, caller := range []string{"stranger", "deployer of demo", "global source", "viewer of demo", "viewer of the box", "logs of demo", "person with no grant"} {
 			h.limiter = deploytrust.NewLimiter(rig.clock)
 			req := httptest.NewRequest(http.MethodGet, "http://"+personBox+"/", strings.NewReader(body))
 			req.Method = method
@@ -300,7 +311,10 @@ func FuzzNoRouteNoAnswer(f *testing.F) {
 			// names, then the app looked for, then the query (the keys the
 			// row takes: queryTaken).
 			appRow, named := findMotelAppRoute(req)
-			mayView := caller == "viewer of the box" || caller == "viewer of demo" && named == "demo"
+			mayView := caller == "viewer of the box" || (caller == "viewer of demo" || caller == "logs of demo") && named == "demo"
+			if appRow != nil && appRow.action == access.AppLogs {
+				mayView = caller == "logs of demo" && named == "demo"
+			}
 			want := http.StatusUnauthorized
 			switch {
 			case caller == "deployer of demo" && app && row != nil:
@@ -354,7 +368,7 @@ func FuzzNoRouteNoAnswer(f *testing.F) {
 		networks.mu.Lock()
 		defer networks.mu.Unlock()
 		for fp := range networks.keys {
-			if method != http.MethodGet || !slices.ContainsFunc([]accesstest.Key{people.alice, people.carol, people.dave}, func(k accesstest.Key) bool { return k.Fingerprint() == fp }) {
+			if method != http.MethodGet || !slices.ContainsFunc([]accesstest.Key{people.alice, people.carol, people.erin, people.dave}, func(k accesstest.Key) bool { return k.Fingerprint() == fp }) {
 				t.Fatalf("%s %q ?%q: the key %s was counted as used", method, target, query, fp)
 			}
 		}
@@ -372,7 +386,14 @@ func queryTaken(rt *motelAppRoute, raw string) bool {
 	if raw == "" {
 		return true
 	}
-	if rt.read != "series" {
+	takes := map[string]func(string) bool{}
+	switch rt.read {
+	case "series":
+		takes["range"] = func(v string) bool { return slices.Contains([]string{"1h", "24h", "7d", "14d"}, v) }
+	case "logs":
+		takes["lines"] = func(v string) bool { return slices.Contains([]string{"200", "50", "1000"}, v) }
+		takes["after"] = cursorShaped
+	default:
 		return false
 	}
 	q, err := url.ParseQuery(raw)
@@ -380,7 +401,28 @@ func queryTaken(rt *motelAppRoute, raw string) bool {
 		return false
 	}
 	for k, vs := range q {
-		if k != "range" || len(vs) != 1 || !slices.Contains([]string{"1h", "24h", "7d", "14d"}, vs[0]) {
+		if takes[k] == nil || len(vs) != 1 || !takes[k](vs[0]) {
+			return false
+		}
+	}
+	return true
+}
+
+// cursorShaped is whether v is a journal cursor as journalctl writes
+// one, said apart from journalCursor: s, i, b, m, t and x in that order,
+// the ids 32 lower-case hex digits, the numbers lower-case hex of at most
+// 16 digits with no leading zero.
+func cursorShaped(v string) bool {
+	parts := strings.Split(v, ";")
+	if len(parts) != 6 {
+		return false
+	}
+	for i, p := range parts {
+		name, val, ok := strings.Cut(p, "=")
+		if !ok || name != string("sibmtx"[i]) || val == "" || strings.Trim(val, "0123456789abcdef") != "" {
+			return false
+		}
+		if id := name == "s" || name == "b"; id && len(val) != 32 || !id && (len(val) > 16 || len(val) > 1 && val[0] == '0') {
 			return false
 		}
 	}
