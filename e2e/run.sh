@@ -1,7 +1,9 @@
 #!/bin/sh
-# Orchestrates both modules' e2e suites against the one moteld
-# binary. Each suite prints its own PASS/FAIL lines and summary; this
-# script's exit code (the gate for `make e2e`) fails if either fails.
+# Orchestrates the e2e runner's two suites, liveswap's and
+# penaltybox's, against the one moteld binary. Each suite prints its own
+# PASS/FAIL lines and summary; this script's exit code fails if either
+# fails. `make e2e` runs it, then the systemd, recovery, box and people
+# suites (the Makefile's e2e target).
 set -u
 
 TOTAL=0

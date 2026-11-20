@@ -10,7 +10,7 @@ import (
 )
 
 // The timings the route tree carries (DESIGN-notify.md, "The route
-// tree"), each measured on hotserve-1 (alertmanager_edge_tests.md):
+// tree"), each measured on hotserve-1:
 const (
 	// One-shots: every event its own group (group_by ['...']) and no
 	// wait, so a second distinct one-shot is never held for a tick and
@@ -100,8 +100,8 @@ type amRecv struct {
 
 // The *_file fields keep every URL out of the YAML, out of
 // Alertmanager's /api/v2/status echo and out of its failure log
-// (measured: alertmanager_delivery_test.md). send_resolved is never
-// omitted: its default differs by integration.
+// (measured). send_resolved is never omitted: its default differs by
+// integration.
 type amWebhook struct {
 	URLFile      string        `yaml:"url_file"`
 	SendResolved bool          `yaml:"send_resolved"`

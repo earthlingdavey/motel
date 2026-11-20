@@ -65,7 +65,7 @@ Alertmanager beside it 42.6 MB RSS (24 MB cgroup).
 | Alertmanager | Debian 13's `prometheus-alertmanager` 0.28.1: routing, grouping, dedupe, repeat, resolved-once, inhibition, retries, the notification log, 18 receiver kinds | Debian's unit with motel's drop-in (`notify/units/10-motel.conf`): socket-activated, `--cluster.listen-address=` (no gossip), `--enable-feature=receiver-name-in-metrics`, `MemoryMax=128M` |
 | Its listener | `/run/motel-notify/am.sock`, 0660 root:motel, a systemd socket unit (`notify/units/motel-am.socket`); no TCP port in the host's namespace. With the store, a second socket, `127.0.0.1:9093` inside the store's namespace, for vmalert (DESIGN-metrics.md, "The shape") | its own runtime directory: `/run/motel` is moteld.service's `RuntimeDirectory`, removed whenever moteld stops |
 | Its config | `alertmanager.yml` and one `url-<KEY>` file per channel secret, 0640, rendered by motel at every config load | `/var/lib/motel-notify`, 2750 motel:prometheus (setup makes it); not `/var/lib/motel`, which is 0750 motel:motel and the prometheus uid cannot traverse |
-| motel's part | the `monitor` block's notify lines and their refusals, the renderer, the engine (state table, flapping guard, mute, heartbeat, retry queue), the detectors, `channel_failed`, two admin routes, `moteld monitor send`, `test` and `setup` | `notify/` |
+| motel's part | the `monitor` block's notify lines and their refusals, the renderer, the engine (state table, flapping guard, mute, heartbeat, retry queue), the detectors, `channel_failed`, five admin routes, `moteld monitor send`, `test`, `setup`, `silence` and `rules` | `notify/` |
 
 **Who reaches the socket, and why.** Every deployed app runs as the
 motel uid, so the socket's group is not what keeps apps out. Their
@@ -953,9 +953,9 @@ Alertmanager answering on both (measured in the e2e box, 2026-11-12).
 
 New: a resident daemon motel did not write, reachable by unix-socket
 permission alone, holding outbound credentials in files only it and
-motel read; and four admin routes (the silence routes give the admin
+motel read; and five admin routes (the silence routes give the admin
 socket's callers, root and motel, nothing the Alertmanager socket did
-not already give them).
+not already give them; the rules route only reads).
 
 - **T1** (a poisoned dependency in an app): the socket, the state
   directory and the admin socket are not in its view; it runs as the

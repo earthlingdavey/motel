@@ -757,7 +757,8 @@ access's examples:
 ## Not in this release
 
 Any act by a person; a second role for people; every box-level read but
-the box's status, who am I and the list of apps; the nonce store; a
+the box's status, who am I, the list of apps, backups, alerts and
+rules; the nonce store; a
 read held back from a new network (the announcements tell, and never
 gate); people on a box with no
 `box` block or no `box_webhook` site, or on any name but the box's

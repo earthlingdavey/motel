@@ -86,6 +86,21 @@ There is no deploy secret on the box. Deploys are authenticated by a
 verified JWT (CI OIDC or a local public key); the verifier holds only
 public material — see "Reducing the asset".
 
+A pull may bring credentials with it: `auth_header`, the token that
+reads a private artifact, and a presigned URL's query. The
+`auth_header` of liveswap/README.md's recipes is, for a GitHub release
+asset, the job's own token, which expires when the job ends, and for
+GitLab a project access token with `read_api`, which lasts until it
+expires or is revoked. moteld holds them in memory for the deploy that
+carries them, sends `auth_header` verbatim as `Authorization` to the
+allowlisted host and its subdomains and to nothing past a redirect off
+them (`downloadArtifact`, liveswap/download.go; "Artifact fetching"),
+and writes neither anywhere: its errors name the URL's host and path
+alone (`redactURL`), and no deploy record, marker or response holds
+them. A compromised moteld reads every such credential that reaches it
+while it runs, and gains each one's own scope for as long as it is
+good.
+
 ## Trust boundaries and entry points
 
 Source is cited by symbol, not line: `Type.Method` or a package-level
@@ -97,8 +112,12 @@ can be found by search.
 ### Webhook endpoint — `liveswap/handler.go`
 
 The first of two application-level authenticated entry points (the
-other is `box_webhook`, "Config webhook" below). Auth is a
-verified JWT in `Authorization: Bearer` (see "Reducing the asset"):
+other is `box_webhook`, "Config webhook" below). Both also take a
+person's token, `Authorization: Motel`, for the reads people may make:
+here an app's status and deploy records and the routes under
+`/_motel/`, there `GET /` (liveswap/access/DESIGN-access.md; T7 and T8
+below). A deploy's auth is a verified JWT in `Authorization: Bearer`
+(see "Reducing the asset"):
 `deploy_trust` sources verify the token's signature and standard claims
 against public material, then a claim allowlist. Auth happens **before**
 existence is revealed: an unknown app name is verified against the
@@ -155,11 +174,15 @@ Properties that matter to the model:
   The caller is trusted to run code on the box; the log's readers are
   not. A failed deploy's body carries the app's own bytes on purpose
   (liveswap/journal.go, `deployDetail` in liveswap/app.go): the last
-  lines its units wrote, read back with `journalctl` — the one
-  external program motel runs, with argument lists of its own
-  making — bounded by `deploy_log_lines` (default 40) and 8 KiB; the
-  first 512 bytes of a failing health probe's body; and the exit status
-  the runner recorded. A line is the units' when journald named one of
+  lines its units wrote, read back with `journalctl`, run with
+  argument lists of motel's own making, bounded by `deploy_log_lines`
+  (default 40) and 8 KiB; the first 512 bytes of a failing health
+  probe's body; and the exit status the runner recorded. (`journalctl`
+  is the one program the serving process runs for a deploy; it runs
+  others only for a push to `box_webhook`: `ssh-keygen` for the
+  signature, and `moteld validate`, `moteld adapt` and `motel-backup
+  validate` on the staged Caddyfile, box/validate.go. The root applier
+  runs `ssh-keygen` and `systemctl`, "Config webhook".) A line is the units' when journald named one of
   them on it, or when it is in one of their output streams —
   journald's `_STREAM_ID`, which no client can set and only the unit's
   processes hold — learnt from the lines that name a unit and from
@@ -388,17 +411,48 @@ Properties that matter to the model:
   it answers no question about what is running. Artifact URLs *are*
   redacted before logs/errors (`redactURL`, liveswap/download.go), so
   query signatures do not leak.
+  A viewer reads most of this too, through the same filter: `GET /<app>`
+  is the body a deploy token reads (liveswap/access/DESIGN-access.md,
+  "The answers"), for one app with the viewer role on it, for every app
+  with the role on the box. That is the status snapshot above — the
+  socket, the PID, the unit, the argv the unit runs (so a credential
+  passed as a flag), the caps, the watchdog's state and last failure —
+  and the on-disk versions and the metrics; and `last_deploy` and each
+  version's record (`?deploy=<v>`, liveswap/deploys.go): a failed
+  deploy's `err.Error()` (the paths, entry names and allowlist above),
+  its log tail and its probe's status and body (`deploy_log_lines 0`
+  keeps the tail and the body off, as above), and for every deploy its
+  `deployed_by` (the trust source and the token's attribution claims)
+  and its pin.
+  Not the environment, and not a deploy's own response, which goes to
+  its deployer alone: a person cannot deploy. A viewer is trusted to
+  read, not to run code on the box.
 - **Replay / downgrade is bounded.** The bearer JWT expires (`exp`) —
   an OIDC token at the expiry its issuer set, a local one at most its
   block's `max_token_ttl` after its `iat`, 24h unless the block sets
   one (`localVerifier.verify`, liveswap/deploytrust/deploytrust.go) —
-  so a captured request is replayable only within that window.
-  Versions are immutable: re-deploying an existing version (running or
-  not) is refused 422, so replaying an *older* deploy's payload does not
-  downgrade the app. A token-holder can still downgrade deliberately
+  so a captured request is replayable only within that window. A
+  release on disk is never overwritten: a deploy of a version whose
+  release directory exists is refused 422 (the release-directory check
+  in `managedApp.deployLocked`, liveswap/app.go), so replaying the
+  payload of an older version still on disk does not downgrade the app.
+  Besides a rollback (below), two cases pass that check. The running
+  version asked for again while its instance is alive, with the same
+  artifact (the request's `sha256` equal to its record's, and its URL
+  still one the allowlist takes; `relaunchRefusal`), is relaunched from
+  its release on disk, nothing fetched: a replay of it restarts the
+  bytes already running; with its instance dead, it is the 422 above. A
+  version whose release is gone (pruned past `keep`, removed after its
+  deploy failed, or removed by hand) is fetched and admitted again: a
+  replay of its payload within the token's lifetime deploys it, a
+  downgrade when it is older than what runs, with the bytes its
+  `sha256` names when it carries one, else what the allowlisted URL
+  serves then. A token-holder can still downgrade deliberately
   via `?rollback=<version>` — an explicit, audited operation
-  (`deployed_by` + a `source:rollback` log), not a silent replay
-  side-effect.
+  (`deployed_by` + a `source:rollback` log) that skips the check by
+  design. A captured rollback request replays like any other within the
+  token's lifetime: a downgrade to a release still on disk, recorded as
+  a rollback.
 
 ### Artifact fetching — `liveswap/download.go` + `allowlist.go`
 
@@ -1188,7 +1242,8 @@ scope for the runtime model, in scope for release signing (roadmap).
   copied from a laptop, or an agent socket used by malware on it, of a
   person whose only grant is `viewer` on one app
   (liveswap/access/DESIGN-access.md). Can read that app's status,
-  deploys and deploy records, from any address their grant's `from`
+  deploys and deploy records, its alerts, the rules that apply to it
+  and its numbers over time, from any address their grant's `from`
   list allows (any address, with no list), until a push removes the
   key's line and the box reloads. Cannot read another app (each read
   takes the app handle `Decide` allowed for the path's app, and the
@@ -1207,11 +1262,18 @@ scope for the runtime model, in scope for release signing (roadmap).
   be used without a touch.
 - **T8 — A person's key, stolen, with a role on the box.** As T7, for
   every app and the box's status: the commit, the host, the
-  Caddyfile's digest, the box's key for secrets. This is the operator's
-  viewing key, and the one an address list is most worth having on. It
-  reads what the box webhooks answer through the same filtered bodies,
-  and nothing root alone reads (the journal, backups, the admin
-  socket).
+  Caddyfile's digest, the box's key for secrets; and the box-wide reads:
+  the backups' status as any account looks at them, every alert but the
+  heartbeat, the test alert, the deploy mute and the people
+  announcements (so not those its own use set off), every active or
+  pending silence but one that names a people announcement
+  (`ofPersonAlert`, notify/alertsview.go), its creator and comment
+  included, and every rule.
+  This is the operator's viewing key, and the one an address list is
+  most worth having on. It reads what the box webhooks answer through
+  the same filtered bodies, and nothing the webhooks do not answer: not
+  the journal, the backup repository and its credential, or the admin
+  socket.
 
 For **T2**: deploy-arbitrary-code (a push is contained by nothing but
 the claim scope; a pull additionally by the allowlist); deliberate

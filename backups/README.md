@@ -1719,11 +1719,12 @@ severity × occurrence × detection, then the fix's size and risk.
   them, nothing before setup, a failed run a failed unit, the drill
   ordered behind a run, the timers as written and one firing, an
   upload shown another directory than the one given), the
-  status suite (`status` and `validate`) and the restore suite, mostly
-  failure paths. The box image runs the package's postinstall and then
-  undoes two things of it: the `motel-backup` account, which the
-  setup suite shows `setup` making, and the timers' enable state, so
-  that no timer fires into a scenario.
+  status suite (`status` and `validate`), the restore suite, mostly
+  failure paths, and the check suite (the drill's check of the
+  repository, and its verdicts). The box image runs the package's
+  postinstall and then undoes two things of it: the `motel-backup`
+  account, which the setup suite shows `setup` making, and the timers'
+  enable state, so that no timer fires into a scenario.
 - `make package` and `make install-test` — the `.deb` built and
   installed under real systemd on a fresh Debian 13: the "Set it up"
   lines of `docs/backups.md` as root (`validate` and `status` as an

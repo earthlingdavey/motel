@@ -329,7 +329,7 @@ Concept map from the Nomad-era stack:
 
 ## Architecture
 
-Three cooperating modules, flat package `liveswap`:
+Four cooperating modules, flat package `liveswap`:
 
 1. **`liveswap`** (`liveswap.go`) — a `caddy.App`, registered as a
    Caddyfile global option. Owns app definitions, defaults
@@ -345,6 +345,11 @@ Three cooperating modules, flat package `liveswap`:
    rewriting config via the admin API — a reload per deploy, config
    drift, races with operator edits — and (b) a bespoke proxy handler —
    reimplementing reverse_proxy badly.
+4. **`http.handlers.liveswap_observe`** (`observe.go`) — the response
+   observer, the `observe <app>` directive: counts an app's responses
+   by status class, times them to their headers and reads the cache's
+   verdict, per release (notify/DESIGN-metrics.md, "The response
+   observer").
 
 ### The reload trap (the one Caddy-specific thing you must not break)
 
@@ -767,18 +772,29 @@ plugin's handler can take its ID.
 | `handler.go` | the webhook: payload validation, deploy dispatch, the status endpoint, and every body's filter (`RespondJSON`); authentication is `deploytrust`'s |
 | `access/` | leaf package: the webhooks' actions, the principal kinds and `Decide`, the one table of who may take which action; the `person` and `grant` lines, the registry of people and the person token's checker (access/DESIGN-access.md); `handler.go` and the box webhook each hold a route table that names an action per row ("Who may take which action") |
 | `people.go` | `AdmitPerson`: a person's way in on both webhooks (the token, the address list, the failure budgets, the rate) |
-| `motel_routes.go` | the rows under `/_motel/`: `whoami` and `apps` |
+| `people_networks.go` | the networks each person's key was used from, and the two events a stolen key should set off; told, never a gate (access/DESIGN-access.md, "A key used from somewhere new") |
+| `motel_routes.go` | the box-wide rows under `/_motel/`: `whoami`, `apps`, `backups`, `alerts` and `rules`, and the dispatch to the app-scoped rows |
+| `motel_approutes.go` | the app-scoped rows, `/_motel/apps/<app>/<read>`: `alerts` (served here), `rules` and `series`, and the query keys each row takes |
+| `motel_series.go` / `series.go` | `GET /_motel/apps/<app>/series`, an app's numbers over time; `SeriesSource`, the metrics store's, which notify installs |
+| `motel_alerts.go` / `alerts.go` | `GET /_motel/alerts`, the alerts and silences a viewer of the box reads (access/DESIGN-access.md, "The answers"); `AlertsSource`, what Alertmanager holds, which notify installs |
+| `motel_rules.go` | `RulesSource`, the rules the box alerts on, which notify installs, and the two rules rows |
+| `motel_backups.go` | `GET /_motel/backups`; `BackupsSource`, which moteld installs (cmd/moteld/main.go); `allowBox` and `boxHandle`, which the backups, alerts and rules rows are given |
+| `wiretypes.go` | liveswap's names for the bodies, which are package `wire`'s types |
+| `wire/` | leaf package: every body liveswap's webhook answers with, and the box webhook's `GET /`, which a client decodes into without linking Caddy; `testdata/wire` pins the bytes |
 | `redact.go` | the response filter (`Redactor`) that `RespondJSON` applies: known `env_file` values in their encoded forms, a safe list, shape rules, entropy; the four rules every writer of a body holds head the file |
 | `deploytrust/` | leaf package: deploy auth — the `deploy_trust` grammar (`Parse`), its sources and verifiers (OIDC + local-key JWT verification), the webhook preamble (`Limiter.Authenticate`) and what a failed attempt costs the journal (`Limiter`, on an injected clock). Imports nothing of liveswap's; the box webhook authenticates through it too. `trusttest/` beside it mints tokens and runs an issuer for tests |
 | `internal/dispenser/` | leaf package: the one Caddyfile rule the parsers here and `deploytrust.Parse` apply alike — a repeated subdirective is refused — in one place so the two cannot drift |
 | `upstreams.go` | dynamic upstream source (the cutover read side) |
 | `observe.go` | `observe`: the response observer's handler and writer, and the per-release counters on `managedApp` ("The response observer") |
+| `lifecycle.go` | the lifecycle events liveswap tells a `Notifier` (notify's), the alerts an app stands in (`<app>/alerts.json`) and `ReportStanding` |
 | `appmetrics.go` | what the metrics store reads of liveswap: `AppSamples` (each app's instance and its request counts) and the `MetricsSource` hook that adds `metrics` to `GET /<app>`, with the `?range=` windows |
 | `runner.go` / `runner_systemd.go` / `systemd_dbus.go` | runner interface + the systemd transient-unit implementation + its D-Bus client |
 | `sweep.go` | `App.Start`'s reconciliation against the manager: stop the units, and prune the dirs, of apps no loaded config names. Module-layer (the pool is the ledger), driving the runner |
-| `socket.go` | the per-instance socket: nonce, path checks, stale-socket pruning, the unix dialer |
+| `socket.go` / `socket_linux.go` / `socket_other.go` | the per-instance socket: nonce, path checks, stale-socket pruning, the unix dialer; the link that never follows a symlink is Linux's (elsewhere, an error) |
 | `sandbox.go` | the per-unit sandbox: view spec, base view, bind-source checks, capability probe (see DESIGN-sandbox.md) |
 | `harden/` | leaf package: the supervisor goes non-dumpable at init, before `os` |
+| `backupsources.go` | the files a backup declaration was read from, which validate and reload hold to the backup run's view |
+| `backupdecl/` | leaf package: what an app declares about its backups (its SQLite databases and plain files), standard library only |
 | `allowlist.go` | `artifact_allowlist` parsing, canonicalisation and URL pinning |
 | `download.go` | capped, redacted artifact download; `releaseFetcher` (download+extract orchestration) |
 | `extract.go` | validate-then-extract hardened tar handling |
