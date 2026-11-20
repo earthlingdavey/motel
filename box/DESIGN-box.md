@@ -118,6 +118,7 @@ exactly one site carries `box_webhook`:
 			audience motel
 			claim repository your-org/boxes
 			claim ref refs/heads/main
+			claim workflow_ref your-org/boxes/.github/workflows/apply.yml@refs/heads/main
 		}
 		# signers
 		signer alice@example.com ssh-ed25519 AAAAC3Nz…

@@ -58,18 +58,21 @@ func testNetworks(t testing.TB, file string) (*PeopleNetworks, *heard) {
 	return k, h
 }
 
-// settle waits until the record has read its file and has no write in
-// flight or, unless pending is false, due; with stop, a write still due
-// is cancelled.
+// settle waits until the record has read its file, has told what it
+// was telling, and has no write in flight or, unless stop, due; with
+// stop, a write still due is cancelled.
 func (k *PeopleNetworks) settle(t testing.TB, stop bool) {
 	t.Helper()
 	deadline := time.Now().Add(10 * time.Second)
 	for {
 		k.mu.Lock()
-		busy := k.state == networksReading || k.writing || (!stop && k.timer != nil)
+		busy := k.state == networksReading || k.telling > 0 || k.writing || (!stop && k.timer != nil)
 		if !busy && stop && k.timer != nil {
-			k.timer.Stop()
-			k.timer = nil
+			// A timer that has fired already has its flush to come,
+			// which clears it: waited for, so none runs past the test.
+			if busy = !k.timer.Stop(); !busy {
+				k.timer = nil
+			}
 		}
 		k.mu.Unlock()
 		if !busy {
@@ -775,6 +778,308 @@ func TestNetworksFlushWaitsForTheRead(t *testing.T) {
 	k2.flushWithin(200 * time.Millisecond)
 	if took := time.Since(began); took > 2*time.Second {
 		t.Errorf("a stop waited %s on a read that hangs", took)
+	}
+}
+
+// steppingClock is a clock an hour later at each reading: no write
+// waits for networksUrgentEvery after the last.
+func steppingClock() func() time.Time {
+	var mu sync.Mutex
+	now := time.Now()
+	return func() time.Time {
+		mu.Lock()
+		defer mu.Unlock()
+		now = now.Add(time.Hour)
+		return now
+	}
+}
+
+// gatedNetwork is the network whose announcements a gated announcer
+// holds.
+const gatedNetwork = "203.0.113.0/24"
+
+// gated is an Announcer that keeps what it is told and holds the
+// announcements of gatedNetwork until opened: a journal or a notify
+// slow at the moment a stop or a write comes.
+type gated struct {
+	heard
+	all     bool // every network's announcements held, not gatedNetwork's alone
+	entered chan struct{}
+	release chan struct{}
+	once    sync.Once
+}
+
+// gate installs a gated announcer on k, opened when the test ends,
+// before the record settles.
+func gate(t testing.TB, k *PeopleNetworks) *gated {
+	g := &gated{entered: make(chan struct{}, 1024), release: make(chan struct{})}
+	k.mu.Lock()
+	k.announcer = g
+	k.mu.Unlock()
+	t.Cleanup(g.open)
+	return g
+}
+
+func (g *gated) Announce(a Announcement) {
+	g.heard.Announce(a)
+	if g.all || a.From == gatedNetwork {
+		g.entered <- struct{}{}
+		<-g.release
+	}
+}
+
+func (g *gated) open() { g.once.Do(func() { close(g.release) }) }
+
+// held waits until the gated network's announcement is being made.
+func (g *gated) held(t testing.TB) {
+	t.Helper()
+	select {
+	case <-g.entered:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the announcement was never made")
+	}
+}
+
+// TestNetworksStopWaitsForTheTelling: a stop while an announcement is
+// being made (the file's load telling a held use, or a request telling
+// its new network) waits for it, then for its write, so the exit cuts
+// off neither; an announcement that does not end holds a stop no
+// longer than its bound.
+func TestNetworksStopWaitsForTheTelling(t *testing.T) {
+	people := newTestPeople(t)
+	fp := people.alice.Fingerprint()
+	for _, c := range []struct {
+		name string
+		load bool
+	}{{"the load's", true}, {"a request's", false}} {
+		t.Run(c.name, func(t *testing.T) {
+			file := filepath.Join(t.TempDir(), "people-networks.json")
+			k, _ := testNetworks(t, file)
+			k.now = steppingClock()
+			g := gate(t, k)
+			if !c.load {
+				k.seen(people.reg, fp, "alice", addr("198.51.100.9"), zap.NewNop())
+				k.settle(t, false)
+				g.take()
+			}
+			go k.seen(people.reg, fp, "alice", addr("203.0.113.9"), zap.NewNop())
+			g.held(t)
+			stopped := make(chan struct{})
+			go func() { k.flushWithin(5 * time.Second); close(stopped) }()
+			select {
+			case <-stopped:
+				t.Fatalf("the stop returned while the announcement was being made: told %+v", g.take())
+			case <-time.After(200 * time.Millisecond):
+			}
+			g.open()
+			select {
+			case <-stopped:
+			case <-time.After(5 * time.Second):
+				t.Fatal("the stop did not return once told")
+			}
+			if got := g.take(); len(got) != 1 || got[0].From != "203.0.113.0/24" || got[0].First != c.load {
+				t.Errorf("told %+v", got)
+			}
+			if b, err := os.ReadFile(file); err != nil || !strings.Contains(string(b), "203.0.113.0/24") {
+				t.Errorf("written %q, %v", b, err)
+			}
+		})
+	}
+	t.Run("one that does not end", func(t *testing.T) {
+		k, _ := testNetworks(t, filepath.Join(t.TempDir(), "people-networks.json"))
+		g := gate(t, k)
+		go k.seen(people.reg, fp, "alice", addr("203.0.113.9"), zap.NewNop())
+		g.held(t)
+		began := time.Now()
+		k.flushWithin(200 * time.Millisecond)
+		if took := time.Since(began); took > 2*time.Second {
+			t.Errorf("a stop waited %s on an announcement that does not end", took)
+		}
+	})
+	// A request's announcer that panics (the http server recovers the
+	// request) leaves no stop waiting.
+	t.Run("an announcer that panics", func(t *testing.T) {
+		k, _ := testNetworks(t, filepath.Join(t.TempDir(), "people-networks.json"))
+		k.now = steppingClock()
+		for i := range networksPerKey {
+			k.seen(people.reg, fp, "alice", addr(fmt.Sprintf("198.51.%d.1", i)), zap.NewNop())
+		}
+		k.settle(t, false)
+		k.announcer = panics{}
+		func() {
+			defer func() { _ = recover() }()
+			k.seen(people.reg, fp, "alice", addr("203.0.113.9"), zap.NewNop())
+		}()
+		began := time.Now()
+		k.flushWithin(5 * time.Second)
+		if took := time.Since(began); took > time.Second {
+			t.Errorf("a stop waited %s after an announcer panicked", took)
+		}
+		// Not told, so neither kept nor written: its next use tells it.
+		// And the key's sixteen told before it are all kept, the one used
+		// longest ago among them.
+		if n := k.nets(fp); slices.Contains(n, gatedNetwork) || len(n) != networksPerKey || n[len(n)-1] != "198.51.0.0/24" {
+			t.Errorf("kept %v", n)
+		}
+		k.mu.Lock()
+		k.dirty = true
+		k.mu.Unlock()
+		k.flushWithin(5 * time.Second)
+		if b, err := os.ReadFile(k.file); err != nil || strings.Contains(string(b), gatedNetwork) || !strings.Contains(string(b), "198.51.0.0/24") {
+			t.Errorf("written %q, %v", b, err)
+		}
+		h := &heard{}
+		k.mu.Lock()
+		k.announcer = h
+		k.mu.Unlock()
+		k.seen(people.reg, fp, "alice", addr("203.0.113.10"), zap.NewNop())
+		if got := h.take(); len(got) != 1 || got[0].From != gatedNetwork {
+			t.Errorf("its next use: told %+v", got)
+		}
+	})
+}
+
+type panics struct{}
+
+func (panics) Announce(Announcement) { panic("announcer") }
+
+// TestNetworksToldBeforeWritten: tell, then remember. While a new
+// network's announcement is being made (a held use at the load, or a
+// request's), a write (another key's new network) leaves it out, so a
+// crash then tells it again at the next start rather than never; once
+// told, it is written.
+func TestNetworksToldBeforeWritten(t *testing.T) {
+	people := newTestPeople(t)
+	fp, carol := people.alice.Fingerprint(), people.carol.Fingerprint()
+	for _, c := range []struct {
+		name string
+		load bool
+	}{{"the load's", true}, {"a request's", false}} {
+		t.Run(c.name, func(t *testing.T) {
+			file := filepath.Join(t.TempDir(), "people-networks.json")
+			k, _ := testNetworks(t, file)
+			k.now = steppingClock()
+			writes := make(chan string, 64)
+			k.write = func(path string, data []byte) error {
+				writes <- string(data)
+				return writeOwnFile(path, networksPattern, data)
+			}
+			g := gate(t, k)
+			if !c.load {
+				k.seen(people.reg, fp, "alice", addr("198.51.100.9"), zap.NewNop())
+				k.settle(t, false)
+				for len(writes) > 0 {
+					<-writes
+				}
+				g.take()
+			}
+			go k.seen(people.reg, fp, "alice", addr("203.0.113.9"), zap.NewNop())
+			g.held(t)
+			k.seen(people.reg, carol, "carol", addr("192.0.2.9"), zap.NewNop())
+			select {
+			case w := <-writes:
+				if strings.Contains(w, "203.0.113.0/24") {
+					t.Fatalf("written before it was told: %s", w)
+				}
+				if !strings.Contains(w, "192.0.2.0/24") {
+					t.Errorf("carol's network, told, not written: %s", w)
+				}
+			case <-time.After(5 * time.Second):
+				t.Fatal("carol's network was never written")
+			}
+			g.open()
+			k.settle(t, false)
+			if got := g.take(); len(got) != 2 {
+				t.Errorf("told %+v", got)
+			}
+			if b, err := os.ReadFile(file); err != nil || !strings.Contains(string(b), "203.0.113.0/24") || !strings.Contains(string(b), "192.0.2.0/24") {
+				t.Errorf("once told, written %q, %v", b, err)
+			}
+		})
+	}
+}
+
+// TestNetworksUntoldBounded: a key's requests from more new networks
+// than a key holds, at once, while every announcement blocks, keep at
+// most networksHeldPerKey of them in memory; once told, each is told
+// and the key keeps its sixteen.
+func TestNetworksUntoldBounded(t *testing.T) {
+	people := newTestPeople(t)
+	fp := people.alice.Fingerprint()
+	k, _ := testNetworks(t, filepath.Join(t.TempDir(), "people-networks.json"))
+	k.now = steppingClock()
+	k.seen(people.reg, fp, "alice", addr("198.51.100.9"), zap.NewNop())
+	k.settle(t, false)
+	g := gate(t, k)
+	g.all = true
+	const burst = 2 * networksHeldPerKey
+	var wg sync.WaitGroup
+	for i := range burst {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			k.seen(people.reg, fp, "alice", addr(fmt.Sprintf("10.0.%d.1", i)), zap.NewNop())
+		}()
+	}
+	for range burst {
+		g.held(t)
+	}
+	if n := len(k.nets(fp)); n > networksHeldPerKey {
+		t.Errorf("%d networks kept while their announcements block", n)
+	}
+	g.open()
+	wg.Wait()
+	k.settle(t, false)
+	if got := g.take(); len(got) != burst {
+		t.Errorf("told %d of %d", len(got), burst)
+	}
+	if n := len(k.nets(fp)); n != networksPerKey {
+		t.Errorf("kept %d", n)
+	}
+}
+
+// TestNetworksToldOnceAtOnce: requests from one new network at once,
+// one of them telling it while the others come, tell it once: memory
+// holds it from the first, before its announcement is made.
+func TestNetworksToldOnceAtOnce(t *testing.T) {
+	people := newTestPeople(t)
+	fp := people.alice.Fingerprint()
+	k, _ := testNetworks(t, filepath.Join(t.TempDir(), "people-networks.json"))
+	k.now = steppingClock()
+	g := gate(t, k)
+	k.seen(people.reg, fp, "alice", addr("198.51.100.9"), zap.NewNop())
+	k.settle(t, false)
+	g.take()
+	go k.seen(people.reg, fp, "alice", addr("203.0.113.9"), zap.NewNop())
+	g.held(t)
+	second := make(chan struct{})
+	go func() { k.seen(people.reg, fp, "alice", addr("203.0.113.10"), zap.NewNop()); close(second) }()
+	select {
+	case <-second:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the second request waited on the first's announcement")
+	}
+	g.open()
+	k.settle(t, false)
+	if got := g.take(); len(got) != 1 {
+		t.Fatalf("told %+v", got)
+	}
+	// A burst, all released at once.
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	for i := range 16 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			k.seen(people.reg, fp, "alice", addr(fmt.Sprintf("192.0.2.%d", i)), zap.NewNop())
+		}()
+	}
+	close(start)
+	wg.Wait()
+	k.settle(t, false)
+	if got := g.take(); len(got) != 1 || got[0].From != "192.0.2.0/24" {
+		t.Errorf("a burst from one new network: told %+v", got)
 	}
 }
 

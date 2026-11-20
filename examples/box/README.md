@@ -30,8 +30,8 @@ that commit, with the commit and the
 commits before it back to the one the box runs. The box applies the
 file only if:
 
-- the workflow's token says it ran for this repo's `main` (the box
-  block's `deploy_trust`);
+- the workflow's token says it ran from this repo's `apply.yml` on
+  `main` (the box block's `deploy_trust`);
 - a key the box's own Caddyfile lists signed that commit and every
   commit between it and the one the box runs (`signer` lines);
 - the file is the one in that commit, for this box's host and path;
@@ -115,15 +115,17 @@ what it runs.
    anything it `import`s, since a box refuses a file that imports, and
    delete `template.caddy`. On a fresh box there is nothing to bring
    over. Either way, replace `your-org/boxes`, in the `box`
-   block's `claim repository`, with this repo's `owner/name`: the box
-   takes pushes from that repository's workflow alone, so a placeholder
-   left there refuses the first one. On a fresh box, also replace
-   `example.com`, `deploy.example.com` and `your-org/example`
-   with yours — `your-org` (your organization, or your username if the
-   repos are in your own account) twice more: the `artifact_allowlist`
-   entry pins the organization or account alone, and the app's
-   `deploy_trust` its repo. This lists the lines left to change,
-   comments aside, and prints nothing once all are changed:
+   block's `claim repository` and `claim workflow_ref`, with this
+   repo's `owner/name`: the box takes pushes from that repository's
+   apply workflow alone, so a placeholder left there refuses the first
+   one. On a fresh box, also replace `example.com`,
+   `deploy.example.com` and `your-org/example` with yours — `your-org`
+   (your organization, or your username if the repos are in your own
+   account) three times more: the `artifact_allowlist` entry pins the
+   organization or account alone, and the app's `deploy_trust` its
+   repo and its deploy workflow, in its `claim repository` and `claim
+   workflow_ref`. This lists the lines left to change, comments aside,
+   and prints nothing once all are changed:
 
    ```sh
    grep -En '^([^#]*[^#A-Za-z0-9-])?(your-org|example\.com)([^A-Za-z0-9.-]|$)' */Caddyfile

@@ -24,7 +24,7 @@ which runs it under rules that do not show up when you run it locally.
   executable.
 - **Build on the box's architecture.** The executable is the Node
   binary it was built with; the workflow's runner (the variable
-  `MOTEL_RUNS_ON`, arm64 when unset) must match the box.
+  `MOTEL_RUNS_ON`, amd64 when unset) must match the box.
 - **Only its own dirs exist in production.** The app's sandbox holds
   its release dir, `$DATA_DIR`, the directory `$SOCKET` is in, a
   private `/tmp` and the OS runtime under `/usr`. `/opt`, `/srv`, `/home` and host unix sockets (a local
