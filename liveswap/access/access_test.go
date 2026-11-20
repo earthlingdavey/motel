@@ -256,3 +256,25 @@ func TestDecidePersonRefusals(t *testing.T) {
 		}
 	}
 }
+
+// TestEveryPersonCellHasACase: decidePerson refuses a person's cell
+// that has no case of its own, to every person, a viewer and a logs
+// reader of the box included; before, such a cell was allowed to every
+// person, one with no grant among them.
+func TestEveryPersonCellHasACase(t *testing.T) {
+	const madeUp Action = "app.made_up"
+	saved := allowed
+	allowed = append(slices.Clone(allowed), cell{Person, madeUp})
+	t.Cleanup(func() { allowed = saved })
+	for _, p := range []Principal{
+		{Kind: Person, Name: "carol", Views: &Views{Viewer: Scopes{Box: true}, Logs: Scopes{Box: true}}},
+		{Kind: Person, Name: "bob", Views: &Views{Viewer: Scopes{Apps: []string{"blog"}}, Logs: Scopes{Apps: []string{"blog"}}}},
+		{Kind: Person, Name: "dave", Views: &Views{}},
+		{Kind: Person, Name: "erin"},
+	} {
+		var f *Forbidden
+		if err := Decide(p, madeUp, "blog"); err == nil || errors.As(err, &f) {
+			t.Errorf("%s: %v, want refused with no body to name", p.Name, err)
+		}
+	}
+}

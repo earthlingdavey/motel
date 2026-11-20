@@ -183,7 +183,9 @@ func Decide(p Principal, a Action, resource string) error {
 // decidePerson is Decide for a person: the table's cells, narrowed by
 // the views. An app action on an app no view covers is the 403 naming
 // viewer on an app, the same whether the app exists or not; an act, or
-// a box read only the box's source takes, names the deployer.
+// a box read only the box's source takes, names the deployer. Every
+// person's cell has its case here: a cell with none is refused to every
+// person, so a cell added without saying who may take it allows no one.
 func decidePerson(p Principal, a Action, resource string) error {
 	app := strings.HasPrefix(string(a), "app.")
 	switch {
@@ -212,6 +214,11 @@ func decidePerson(p Principal, a Action, resource string) error {
 		if !p.Views.CoversBox() {
 			return &Forbidden{Needs: "viewer", Scope: "box"}
 		}
+	case BoxWhoami, BoxApps:
+		// Every person: who they are here, and the apps their views
+		// cover, none for a person with no grant.
+	default:
+		return fmt.Errorf("no person's case for %s", a)
 	}
 	return nil
 }
