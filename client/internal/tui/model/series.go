@@ -153,11 +153,12 @@ func (s *Session) Series(app, rng string) (*Got[wire.Series], error) {
 }
 
 // dropSeries forgets every window of app's series: its status was
-// refused, so nothing of the app is shown.
+// refused, so nothing of the app is shown. A read's failure is kept: a
+// window refused before is held so, and asked again only by ctrl-r.
 func (s *Session) dropSeries(app string) {
-	for j := range s.series {
+	for j, d := range s.series {
 		if j.App == app {
-			delete(s.series, j)
+			d.g = nil
 		}
 	}
 }
@@ -190,6 +191,15 @@ const plotLabel = 7
 func (s *Session) MetricsViewFit(app, rng string, now time.Time, width, height int, cells Cells) []Line {
 	s.seen(now)
 	g, err := s.Series(app, rng)
+	if a := s.apps[app]; g == nil && a != nil && a.st == nil && (Forbidden(a.err) || NotFound(a.err)) {
+		// The box refused the app's status: nothing of the app is shown,
+		// and the refusal is said, whatever the series' own read did.
+		l := Line{{T: Capped(failureText(a.err), 4*LineMax)}}
+		if Forbidden(a.err) {
+			l = append(l, s.askAgain(now)...)
+		}
+		return Sentence(l, width, cells)
+	}
 	switch {
 	case g == nil && err == nil:
 		return Sentence(Line{own("asking " + s.Host + " for " + app + "'s numbers over " + rng + "…")}, width, cells)
@@ -236,25 +246,44 @@ func (s *Session) MetricsViewFit(app, rng string, now time.Time, width, height i
 	head := Line{own("over " + rng + " · a point every " + SeriesStep(step) + " · to " + clock(end, now, false) + " UTC (" + since(end, now) + ") · t: another window")}
 	out = append(out, cutTo(head, width, cells))
 	marks, legend := s.deployMarks(app, start, end, plotW, now)
-	out = append(out, cutTo(legend, width, cells))
-	// Each plot as tall as lets the page show the first whole: its head,
-	// its rows, the axis, the times, under the two lines above.
-	rows := min(max(height-len(out)-4, 3), 10)
-	drawn := map[string]bool{}
+	out = append(out, Sentence(legend, width, cells)...)
+	// Each plot as tall as lets the page show the first whole under the
+	// lines above: its head, its rows, the axis, the times.
+	var heads [][]Line
+	var drawn []seriesPanel
 	for _, p := range seriesPanels {
-		pn := findPanel(v.Panels, p)
-		if pn == nil {
-			continue
+		if pn := findPanel(v.Panels, p); pn != nil {
+			drawn = append(drawn, p)
+			heads = append(heads, panelHead(p, inWindow(pn.Points, start, end), now, width, cells))
 		}
-		drawn[p.name] = true
-		out = append(out, nil)
-		out = append(out, panelLines(p, pn.Points, start, end, step, now, plotW, rows, marks, width, cells)...)
 	}
-	if !drawn[wire.PanelMemory] && !drawn[wire.PanelCPU] {
+	rows := 3
+	if len(heads) > 0 {
+		rows = min(max(height-len(out)-1-len(heads[0])-2, 3), 10)
+	}
+	known := true
+	for _, pn := range v.Panels {
+		if _, ok := SeriesLabel(pn.Name, pn.Unit); !ok {
+			known = false
+		}
+	}
+	has := map[string]bool{}
+	for i, p := range drawn {
+		has[p.name] = true
+		out = append(out, nil)
+		out = append(out, heads[i]...)
+		out = append(out, panelPlot(p, inWindow(findPanel(v.Panels, p).Points, start, end), start, end, step, now, plotW, rows, marks, width, cells)...)
+	}
+	if !has[wire.PanelMemory] && !has[wire.PanelCPU] && known {
 		out = append(out, nil, cutTo(field("memory, cpu", own("no point in this window: the app did not run, or the box kept none")), width, cells))
 	}
-	if !drawn[wire.PanelRequests] {
+	switch {
+	case !has[wire.PanelRequests] && known:
 		out = append(out, nil, cutTo(field("requests", own("none in this window: the box counts them only for an app behind observe")), width, cells))
+	case !has[wire.PanelRequests]:
+		// A panel the client does not know may be one the box's filter
+		// renamed: no cause is said.
+		out = append(out, nil, cutTo(field("requests", own("none drawn in this window")), width, cells))
 	}
 	for _, pn := range v.Panels {
 		if _, known := SeriesLabel(pn.Name, pn.Unit); !known {
@@ -274,21 +303,37 @@ func findPanel(ps []wire.Panel, p seriesPanel) *wire.Panel {
 	return nil
 }
 
-// panelLines is one panel: its head (newest, highest, lowest, each with
-// its time), its plot with the highest and lowest at the top and the
-// bottom of its axis, the time axis with the deploy marks, and the
-// window's two ends under it.
-func panelLines(p seriesPanel, pts [][2]float64, start, end time.Time, step time.Duration, now time.Time, plotW, rows int, marks []int, width int, cells Cells) []Line {
+// inWindow is the points inside [start, end] with a value that is a
+// number, oldest first as the box sent them.
+func inWindow(pts [][2]float64, start, end time.Time) [][2]float64 {
 	in := make([][2]float64, 0, len(pts))
 	for _, pt := range pts {
 		if t := pt[0]; t >= float64(start.Unix()) && t <= float64(end.Unix()) && finite(pt[1]) {
 			in = append(in, pt)
 		}
 	}
+	return in
+}
+
+// panelHead is a panel's head, two rows, each whole at 60 columns: its
+// newest value with its time and age; its highest and lowest, as the
+// axis writes them, with their times.
+func panelHead(p seriesPanel, in [][2]float64, now time.Time, width int, cells Cells) []Line {
 	if len(in) == 0 {
 		return []Line{cutTo(field(p.label, own("no point in this window")), width, cells)}
 	}
-	lo, hi := in[0], in[0]
+	lo, hi := extremes(in)
+	newest := in[len(in)-1]
+	at := func(pt [2]float64) string { return clock(time.Unix(int64(pt[0]), 0), now, false) }
+	return []Line{
+		cutTo(field(p.label, own("newest "+SeriesValue(p.name, newest[1], false)+" at "+at(newest)+" ("+since(time.Unix(int64(newest[0]), 0), now)+")")), width, cells),
+		cutTo(field("", own("max "+SeriesValue(p.name, hi[1], true)+" "+at(hi)+" · min "+SeriesValue(p.name, lo[1], true)+" "+at(lo))), width, cells),
+	}
+}
+
+// extremes is the lowest and the highest point.
+func extremes(in [][2]float64) (lo, hi [2]float64) {
+	lo, hi = in[0], in[0]
 	for _, pt := range in {
 		if pt[1] < lo[1] {
 			lo = pt
@@ -297,14 +342,19 @@ func panelLines(p seriesPanel, pts [][2]float64, start, end time.Time, step time
 			hi = pt
 		}
 	}
-	newest := in[len(in)-1]
-	at := func(pt [2]float64) string {
-		t := time.Unix(int64(pt[0]), 0)
-		return clock(t, now, false)
+	return lo, hi
+}
+
+// panelPlot is a panel's plot, its highest and lowest at the top and
+// the bottom of its axis; then the time axis, broken (a space) in each
+// column whose span holds a step with no point and marked ^ at each
+// deploy; and the window's two ends under it.
+func panelPlot(p seriesPanel, in [][2]float64, start, end time.Time, step time.Duration, now time.Time, plotW, rows int, marks []int, width int, cells Cells) []Line {
+	if len(in) == 0 {
+		return nil
 	}
-	head := field(p.label, own("newest "+SeriesValue(p.name, newest[1], false)+" at "+at(newest)+" ("+since(time.Unix(int64(newest[0]), 0), now)+")"+
-		" · max "+SeriesValue(p.name, hi[1], false)+" at "+at(hi)+" · min "+SeriesValue(p.name, lo[1], false)+" at "+at(lo)))
-	out := []Line{cutTo(head, width, cells)}
+	lo, hi := extremes(in)
+	var out []Line
 	plot := Plot(in, start, end, step, lo[1], hi[1], plotW, rows)
 	for i, r := range plot {
 		label := ""
@@ -317,15 +367,45 @@ func panelLines(p seriesPanel, pts [][2]float64, start, end time.Time, step time
 		out = append(out, cutTo(Line{ownC(padLeft(label, plotLabel)+" |", Dim), own(r)}, width, cells))
 	}
 	axis := []byte(strings.Repeat("-", plotW))
+	have := make(map[int64]bool, len(in))
+	for _, pt := range in {
+		have[int64(pt[0])] = true
+	}
+	for t := start; !t.After(end); t = t.Add(step) {
+		if !have[t.Unix()] {
+			axis[cellOf(t, start, end, plotW)] = ' '
+		}
+	}
 	for _, m := range marks {
 		axis[m] = '^'
 	}
 	out = append(out, cutTo(Line{ownC(strings.Repeat(" ", plotLabel)+" +", Dim), own(string(axis))}, width, cells))
+	// The window's ends, and between them how many of its steps have a
+	// point, which the breaks in the axis show where.
 	from, to := clock(start, now, false), clock(end, now, false)
-	gap := max(plotW-len(from)-len(to), 1)
-	out = append(out, cutTo(Line{ownC(strings.Repeat(" ", plotLabel+2)+from+strings.Repeat(" ", gap)+to, Dim)}, width, cells))
+	count := strconv.Itoa(len(have)) + " of " + strconv.Itoa(int(end.Sub(start)/step)+1) + " steps"
+	room := plotW - len(from) - len(to)
+	mid := strings.Repeat(" ", max(room, 1))
+	if room >= len(count)+2 {
+		left := (room - len(count)) / 2
+		mid = strings.Repeat(" ", left) + count + strings.Repeat(" ", room-left-len(count))
+	}
+	out = append(out, cutTo(Line{ownC(strings.Repeat(" ", plotLabel+2)+from+mid+to, Dim)}, width, cells))
 	return out
 }
+
+// dotOf is the dot column of t on a plot w cells wide over [start, end],
+// two a cell: the one mapping the plot, its axis and its marks share.
+func dotOf(t float64, start, end time.Time, w int) int {
+	t0, t1 := float64(start.Unix()), float64(end.Unix())
+	if t1 <= t0 || w <= 0 {
+		return 0
+	}
+	return min(max(int(math.Round((t-t0)/(t1-t0)*float64(2*w-1))), 0), 2*w-1)
+}
+
+// cellOf is the cell t's dot is in.
+func cellOf(t, start, end time.Time, w int) int { return dotOf(float64(t.Unix()), start, end, w) / 2 }
 
 func padLeft(s string, n int) string {
 	if r := len([]rune(s)); r < n {
@@ -368,7 +448,7 @@ func (s *Session) deployMarks(app string, start, end time.Time, plotW int, now t
 		if d.Status != "succeeded" || t.Before(start) || t.After(end) {
 			continue
 		}
-		c := min(int(t.Sub(start)/col), plotW-1)
+		c := cellOf(t, start, end, plotW)
 		if !slices.Contains(marks, c) {
 			marks = append(marks, c)
 		}
@@ -413,12 +493,11 @@ func Plot(pts [][2]float64, start, end time.Time, step time.Duration, lo, hi flo
 	for i := range grid {
 		grid[i] = make([]bool, dx)
 	}
-	t0, t1 := float64(start.Unix()), float64(end.Unix())
 	x := func(t float64) int {
-		if t1 <= t0 {
+		if math.IsNaN(t) {
 			return 0
 		}
-		return min(max(int(math.Round((t-t0)/(t1-t0)*float64(dx-1))), 0), dx-1)
+		return dotOf(t, start, end, w)
 	}
 	y := func(v float64) int {
 		f := 0.5

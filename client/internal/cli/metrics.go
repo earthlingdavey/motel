@@ -93,7 +93,9 @@ func seriesView(s wire.Series, app, host string) render.Series {
 	at := func(pt [2]float64) time.Time { return time.Unix(int64(pt[0]), 0) }
 	for _, p := range s.Panels {
 		label, known := model.SeriesLabel(p.Name, p.Unit)
-		if p.Name == wire.PanelRequests && known {
+		// A panel this client does not know may be one the box's filter
+		// renamed: no cause is said for one absent then.
+		if p.Name == wire.PanelRequests && known || !known {
 			v.NoRequests = false
 		}
 		pn := render.SeriesPanel{Label: label, Name: tx(p.Name), Unit: tx(p.Unit), Known: known, Points: len(p.Points), Steps: steps}

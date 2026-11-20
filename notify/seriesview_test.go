@@ -91,7 +91,7 @@ func TestSeriesViewAsks(t *testing.T) {
 	} {
 		store := &seriesStore{}
 		v := newSeriesView(&now)
-		got := v.get(context.Background(), store, "blog", window, zap.NewNop())
+		got := v.get(context.Background(), store, "sock", "blog", window, zap.NewNop())
 		if got.Store != wire.StoreOn || got.Window != window || got.StepSeconds != int(want.step/time.Second) || got.End == nil || !got.End.Equal(want.end) || got.Panels == nil || len(got.Panels) != 0 {
 			t.Errorf("%s: %+v", window, got)
 		}
@@ -123,9 +123,18 @@ func TestSeriesViewAsks(t *testing.T) {
 			t.Errorf("%s: memory is %s", window, mem)
 		}
 	}
+	// A step that ended inside the store's latency offset is left for
+	// the next answer: at 10:00:02 the hour ends at 09:59, 14 days at
+	// 09:00.
+	late := time.Date(2026, 11, 20, 10, 0, 2, 0, time.UTC)
+	for window, want := range map[string]time.Time{"1h": late.Add(-62 * time.Second), "14d": late.Add(-time.Hour - 2*time.Second)} {
+		if got := newSeriesView(&late).get(context.Background(), &seriesStore{}, "sock", "blog", window, zap.NewNop()); got.End == nil || !got.End.Equal(want) {
+			t.Errorf("%s at 10:00:02: end %v, want %v", window, got.End, want)
+		}
+	}
 	// A window liveswap does not take: the store is not asked.
 	store := &seriesStore{}
-	if got := newSeriesView(&now).get(context.Background(), store, "blog", "2h", zap.NewNop()); got.Store != wire.StoreUnanswered || len(store.calls()) != 0 {
+	if got := newSeriesView(&now).get(context.Background(), store, "sock", "blog", "2h", zap.NewNop()); got.Store != wire.StoreUnanswered || len(store.calls()) != 0 {
 		t.Errorf("2h: %+v, %d calls", got, len(store.calls()))
 	}
 }
@@ -138,8 +147,8 @@ func TestSeriesViewAsks(t *testing.T) {
 // the 5xx share leaves aborted out and has no point where nothing was
 // sent; an app with no request series has no request panel.
 func TestSeriesViewPanels(t *testing.T) {
-	now := time.Date(2026, 11, 20, 10, 0, 0, 0, time.UTC)
-	end := now
+	now := time.Date(2026, 11, 20, 10, 0, 5, 0, time.UTC)
+	end := now.Truncate(time.Minute)
 	at := func(min int) time.Time { return end.Add(time.Duration(min) * time.Minute) }
 	ts := func(min int) float64 { return float64(at(min).Unix()) }
 	answers := func(q string, _, _ time.Time, _ time.Duration) []series {
@@ -160,7 +169,7 @@ func TestSeriesViewPanels(t *testing.T) {
 		return nil
 	}
 	v := newSeriesView(&now)
-	got := v.get(context.Background(), &seriesStore{ans: answers}, "blog", "1h", zap.NewNop())
+	got := v.get(context.Background(), &seriesStore{ans: answers}, "sock", "blog", "1h", zap.NewNop())
 	want := []wire.Panel{
 		{Name: "memory_bytes", Unit: "bytes", Points: [][2]float64{{ts(-3), 190840832}, {ts(-1), 191889408}, {ts(0), 12345678902}}},
 		{Name: "cpu_cores", Unit: "cores", Points: [][2]float64{{ts(-3), 0.000123}, {ts(0), 0.5}}},
@@ -177,7 +186,7 @@ func TestSeriesViewPanels(t *testing.T) {
 			return nil
 		}
 		return answers(q, s, e, st)
-	}}, "shop", "1h", zap.NewNop())
+	}}, "sock", "shop", "1h", zap.NewNop())
 	if len(got.Panels) != 2 || got.Panels[0].Name != wire.PanelMemory || got.Panels[1].Name != wire.PanelCPU {
 		t.Errorf("an app with no observe: %+v", got.Panels)
 	}
@@ -200,7 +209,7 @@ func TestSeriesViewShares(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			got[i] = v.get(context.Background(), store, "blog", "24h", zap.NewNop())
+			got[i] = v.get(context.Background(), store, "sock", "blog", "24h", zap.NewNop())
 		}()
 	}
 	// The first is in flight (its four queries asked) before the store
@@ -219,14 +228,14 @@ func TestSeriesViewShares(t *testing.T) {
 		}
 	}
 	store.block = nil
-	v.get(context.Background(), store, "blog", "24h", zap.NewNop())
-	v.get(context.Background(), store, "blog", "7d", zap.NewNop())
-	v.get(context.Background(), store, "shop", "24h", zap.NewNop())
+	v.get(context.Background(), store, "sock", "blog", "24h", zap.NewNop())
+	v.get(context.Background(), store, "sock", "blog", "7d", zap.NewNop())
+	v.get(context.Background(), store, "sock", "shop", "24h", zap.NewNop())
 	if n := len(store.calls()); n != 12 {
 		t.Errorf("the same app and window, and two others: %d queries, want 12", n)
 	}
 	now = now.Add(seriesEvery)
-	v.get(context.Background(), store, "blog", "24h", zap.NewNop())
+	v.get(context.Background(), store, "sock", "blog", "24h", zap.NewNop())
 	if n := len(store.calls()); n != 16 {
 		t.Errorf("after seriesEvery: %d queries, want 16", n)
 	}
@@ -237,13 +246,22 @@ func TestSeriesViewShares(t *testing.T) {
 		t.Errorf("the cache holds %d entries after the others' time, want 1", held)
 	}
 
+	// Two configs' clients of one socket share the answers: a reload
+	// asks the store no sooner; another socket is another store.
+	other := &seriesStore{}
+	v.get(context.Background(), other, "sock", "blog", "24h", zap.NewNop())
+	v.get(context.Background(), other, "another.sock", "blog", "24h", zap.NewNop())
+	if n := len(other.calls()); n != 4 {
+		t.Errorf("another client of the same socket asked %d queries, another socket's 4: want 4 in all", n)
+	}
+
 	// A failure: unanswered, kept, journalled once, the store's words in
 	// the journal alone.
 	core, logs := observer.New(zap.WarnLevel)
 	logger := zap.New(core)
 	bad := &seriesStore{err: errors.New("the metrics store answered 503 to /api/v1/query_range: secret-ish words")}
 	for range 3 {
-		g := v.get(context.Background(), bad, "blog", "1h", logger)
+		g := v.get(context.Background(), bad, "sock", "blog", "1h", logger)
 		if g.Store != wire.StoreUnanswered || g.Window != "1h" || len(g.Panels) != 0 || g.Panels == nil || g.End != nil || g.StepSeconds != 0 {
 			t.Errorf("a failure: %+v", g)
 		}
@@ -260,14 +278,14 @@ func TestSeriesViewShares(t *testing.T) {
 	slow := &seriesStore{block: make(chan struct{})}
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan wire.Series)
-	go func() { done <- v.get(ctx, slow, "blog", "14d", zap.NewNop()) }()
+	go func() { done <- v.get(ctx, slow, "sock", "blog", "14d", zap.NewNop()) }()
 	for len(slow.calls()) < 4 {
 		time.Sleep(time.Millisecond)
 	}
 	// A second caller waits on the first's queries; it goes away too.
 	ctx2, cancel2 := context.WithCancel(context.Background())
 	done2 := make(chan wire.Series)
-	go func() { done2 <- v.get(ctx2, slow, "blog", "14d", zap.NewNop()) }()
+	go func() { done2 <- v.get(ctx2, slow, "sock", "blog", "14d", zap.NewNop()) }()
 	cancel2()
 	if g := <-done2; g.Store != wire.StoreUnanswered {
 		t.Errorf("a waiter gone: %+v", g)
@@ -282,7 +300,7 @@ func TestSeriesViewShares(t *testing.T) {
 			t.Errorf("a query was asked with the caller's context: %+v", c)
 		}
 	}
-	if g := v.get(context.Background(), slow, "blog", "14d", zap.NewNop()); g.Store != wire.StoreOn || len(slow.calls()) != 4 {
+	if g := v.get(context.Background(), slow, "sock", "blog", "14d", zap.NewNop()); g.Store != wire.StoreOn || len(slow.calls()) != 4 {
 		t.Errorf("the next caller: %+v, %d queries", g, len(slow.calls()))
 	}
 }

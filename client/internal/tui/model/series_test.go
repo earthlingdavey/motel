@@ -373,6 +373,25 @@ func TestStatusRefusedDropsTheSeries(t *testing.T) {
 	if g, _ := s.Series("blog", "24h"); g != nil {
 		t.Error("the series is kept after the status was refused")
 	}
+	if got := text(s.MetricsViewFit("blog", "24h", now, 0, 27, nil)); strings.Contains(got, "asking") || !strings.Contains(got, "no") {
+		t.Errorf("the screen after the status was refused: %q", got)
+	}
+	// Refused first, the series is held; the status refused after drops
+	// nothing that would let the screen say it is asking.
+	f2 := &demo.Fake{Now: func() time.Time { return now }}
+	f2.Body("apps.json", `{"apps": [{"name": "blog"}]}`)
+	f2.Set("series:blog", fail(model.FailForbidden))
+	s2 := seriesSession(t, "blog", "24h", f2, &now)
+	f2.Set("blog", fail(model.FailForbidden))
+	s2.Engine.Again(now, model.Job{Kind: model.KStatus, App: "blog"})
+	for range 4 {
+		if j := step(t, s2, f2, &now); j.Kind == model.KStatus {
+			break
+		}
+	}
+	if got := text(s2.MetricsViewFit("blog", "24h", now, 0, 27, nil)); strings.Contains(got, "asking") {
+		t.Errorf("a held series beside a refused status says it is asking: %q", got)
+	}
 }
 
 // seriesBody is a 24 h body of blog's, ending at end, whose memory has
@@ -408,7 +427,8 @@ func TestMetricsDeployMarks(t *testing.T) {
 	if got := text(s.MetricsViewFit("blog", "24h", now, 0, 13, nil)); !strings.Contains(got, "^ a version's latest deploy that succeeded (a column is 15m); records from 11-14 18:00; 1 not marked: the box's filter hid when") {
 		t.Errorf("legend: %q", got)
 	}
-	if got := ls[1].Text(); got != "^ a version's latest deploy that succeeded (a column is 28m…" {
+	// Laid on rows at 60 columns, the rest indented under it.
+	if got := ls[1].Text() + "|" + ls[2].Text(); got != "^ a version's latest deploy that succeeded (a column is|  28m); records from 11-14 18:00; 1 not marked: the box's" {
 		t.Errorf("legend at 60 columns: %q", got)
 	}
 	var axis string
@@ -452,9 +472,19 @@ func TestMetricsAt60x16(t *testing.T) {
 		}
 	}
 	got := text(ls)
+	// The first plot whole in 13 rows: its head's two rows, its rows,
+	// the axis, the times with the count of steps.
 	head := strings.Split(got, "\n")
-	if len(head) < 13 || !strings.HasPrefix(head[3], "memory") || !strings.HasPrefix(head[12], "         ") || !strings.HasPrefix(head[11], "        +") {
-		t.Errorf("the first plot is not whole in 13 rows:\n%s", got)
+	first := -1
+	for i, l := range head {
+		if strings.HasPrefix(l, "memory") {
+			first = i
+			break
+		}
+	}
+	if first < 0 || len(head) < 13 || !strings.HasPrefix(head[first+1], "            max ") || !strings.HasPrefix(head[11], "        +") ||
+		!strings.HasPrefix(head[12], "         ") || !strings.Contains(head[12], " of 289 steps") || 11-first-2 < 5 {
+		t.Errorf("the first plot is not whole in 13 rows, with five rows or more:\n%s", got)
 	}
 	if got := text(s.MetricsViewFit("docs", "24h", now, 0, 13, nil)); !strings.Contains(got, "requests    none in this window: the box counts them only for an app behind observe") {
 		t.Errorf("no request panels unsaid:\n%s", got)
@@ -474,10 +504,14 @@ func TestMetricsAt60x16(t *testing.T) {
 		}
 	}
 	got = text(s.MetricsViewFit("docs", "24h", now, 0, 13, nil))
-	for _, want := range []string{"other       the box's disk_bytes in bytes: not one this client draws", "other       the box's cpu_cores in millicores: not one this client draws", "memory, cpu no point in this window"} {
+	for _, want := range []string{"other       the box's disk_bytes in bytes: not one this client draws", "other       the box's cpu_cores in millicores: not one this client draws", "requests    none drawn in this window"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("want %q in:\n%s", want, got)
 		}
+	}
+	// A panel it does not know may be one the filter renamed: no cause.
+	if strings.Contains(got, "observe") || strings.Contains(got, "did not run") {
+		t.Errorf("a cause said beside a panel the client does not know:\n%s", got)
 	}
 }
 
@@ -581,5 +615,55 @@ func TestSeriesValue(t *testing.T) {
 	}
 	if model.NextRange("1h") != "24h" || model.NextRange("14d") != "1h" || model.NextRange("bogus") != "1h" {
 		t.Error("NextRange")
+	}
+}
+
+// TestMetricsAxisBreaks: the time axis is broken (a space) in each
+// column whose span holds a step with no point, so a gap of a step or
+// two shows where the plot's dots run on (several steps a column), and
+// the count of steps with a point is under it; a deploy's mark is in
+// the column its time's dot is in, as the plot draws it (the mark was
+// one column right of it in the window's right half).
+func TestMetricsAxisBreaks(t *testing.T) {
+	now := t0
+	f := &demo.Fake{Now: func() time.Time { return now }}
+	f.Body("apps.json", `{"apps": [{"name": "blog"}]}`)
+	end := now.Truncate(5 * time.Minute)
+	var back []int
+	for k := 0; k <= 288; k++ {
+		if k != 100 && k != 101 {
+			back = append(back, k)
+		}
+	}
+	f.Body("series/blog/24h.json", seriesBody(end, back...))
+	start := end.Add(-24 * time.Hour)
+	deploy := start.Add(67765 * time.Second)
+	f.Body("status/blog.json", `{"app":"blog","phase":"idle","running":true,"current_version":"v3","available_versions":["v3"],"deploys":[`+
+		`{"version":"v3","status":"succeeded","finished_at":"`+deploy.Format(time.RFC3339)+`"}]}`)
+	s := seriesSession(t, "blog", "24h", f, &now)
+	const w = 51
+	cell := func(at time.Time) int {
+		return int(math.Round(at.Sub(start).Seconds()/end.Sub(start).Seconds()*float64(2*w-1))) / 2
+	}
+	var axis, times string
+	ls := s.MetricsViewFit("blog", "24h", now, 60, 13, runes)
+	for i, l := range ls {
+		if strings.HasPrefix(l.Text(), "        +") {
+			axis, times = strings.TrimPrefix(l.Text(), "        +"), ls[i+1].Text()
+			break
+		}
+	}
+	want := map[int]byte{cell(end.Add(-100 * 5 * time.Minute)): ' ', cell(end.Add(-101 * 5 * time.Minute)): ' ', cell(deploy): '^'}
+	for i := 0; i < len(axis); i++ {
+		c, ok := want[i]
+		if !ok {
+			c = '-'
+		}
+		if axis[i] != c {
+			t.Errorf("axis column %d is %q, want %q: %q", i, axis[i], c, axis)
+		}
+	}
+	if cell(deploy) != 39 || !strings.Contains(times, "287 of 289 steps") {
+		t.Errorf("the deploy's column %d, want 39 (not 40); times %q", cell(deploy), times)
 	}
 }

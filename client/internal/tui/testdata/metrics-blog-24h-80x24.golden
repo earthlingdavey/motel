@@ -3,7 +3,8 @@ apps › blog › metrics 24h                            as of 14:12:40 UTC · 0
 over 24h · a point every 5 m · to 14:10 UTC (2m ago) · t: another window
 ^ a version's latest deploy that succeeded (a column is 20m)
 
-memory      newest 186.1 MiB at 14:10 (2m ago) · max 200.0 MiB at 11-14 18:00 ·…
+memory      newest 186.1 MiB at 14:10 (2m ago)
+            max 200M 11-14 18:00 · min 140M 06:00
    200M |    ⢀⣠⠴⠒⠚⠉⠉⠉⠉⠙⠒⠲⠤⣄⡀
         | ⣠⠴⠚⠉             ⠉⠓⢦⣀
         |⠋⠁                   ⠈⠓⢦⡀                                            ⣠⠖
@@ -14,11 +15,10 @@ memory      newest 186.1 MiB at 14:10 (2m ago) · max 200.0 MiB at 11-14 18:00 �
         |                                 ⠈⠓⢦⡀                   ⢀⣠⠖⠃
         |                                    ⠉⠳⢤⣀             ⣀⡤⠖⠋
    140M |                                       ⠈⠙⠒⠦⠤⣄⣀⣀⣀⣀    ⠁
-        +^----------------------------------------------------------------^-----
-         11-14 14:10                                                       14:10
+        +^-----------------------------------------------     ------------^-----
+         11-14 14:10                   272 of 289 steps                    14:10
 
-cpu         newest 0.021 cores at 14:10 (2m ago) · max 0.070 cores at 01:00 · m…
+cpu         newest 0.021 cores at 14:10 (2m ago)
+            max 0.070 01:00 · min 0.020 13:00
   0.070 |                         ⣀⡤⠖⠒⠋⠉⠉⠉⠉⠙⠒⠦⢤⣀
-        |                     ⢀⣠⠖⠋⠁            ⠈⠙⠲⣄⡀
-        |                   ⣠⠖⠋                    ⠙⠲⣄
 ↑↓ scroll  t window  y json  c cmd  esc back  ? more

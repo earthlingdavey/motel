@@ -88,6 +88,41 @@ func TestMetricsScreen(t *testing.T) {
 	}
 }
 
+// TestMetricsFromTheLine: :metrics opens the app's screen under the
+// metrics screen without showing it on the way (which would ask the
+// app's alerts); typed on that app's metrics screen it shows the other
+// window in its place, the stack as it was.
+func TestMetricsFromTheLine(t *testing.T) {
+	h := start(t, 80, 24, nil)
+	alerts := func() int {
+		n := 0
+		h.on(func() {
+			for _, c := range h.fake.Calls {
+				if c.Job.Kind == model.KAlerts {
+					n++
+				}
+			}
+		})
+		return n
+	}
+	before := alerts()
+	h.press(":", "metrics blog 7d", tcell.KeyEnter)
+	var stack []model.View
+	h.on(func() { stack = append(stack, h.u.stack...) })
+	if len(stack) != 3 || stack[1] != app("blog") || stack[2].Screen != model.ScreenMetrics || stack[2].Range != "7d" || alerts() != before {
+		t.Errorf(":metrics blog 7d: stack %+v, %d alerts reads", stack, alerts()-before)
+	}
+	h.press(":", "metrics blog 14d", tcell.KeyEnter)
+	h.on(func() { stack = append([]model.View(nil), h.u.stack...) })
+	if len(stack) != 3 || stack[2].Range != "14d" {
+		t.Errorf("on the metrics screen, :metrics blog 14d: stack %+v", stack)
+	}
+	h.press(tcell.KeyEscape)
+	if v := h.top(); v != app("blog") {
+		t.Errorf("esc went to %+v", v)
+	}
+}
+
 // TestMetricsOldBox: against a moteld older than the read (a 404), the
 // screen says so, and the title bar does not call it a refusal.
 func TestMetricsOldBox(t *testing.T) {

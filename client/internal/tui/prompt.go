@@ -111,8 +111,21 @@ func (u *UI) run(text string) {
 			rng = w[2]
 		}
 		u.metricsRange = rng
-		u.open(model.View{Screen: model.ScreenApp, App: a})
-		u.open(model.View{Screen: model.ScreenMetrics, App: a, Range: rng})
+		mv := model.View{Screen: model.ScreenMetrics, App: a, Range: rng}
+		switch top := u.top(); {
+		case top.Screen == model.ScreenMetrics && top.App == a:
+			// Another window in this one's place, as t gives it.
+			u.stack[len(u.stack)-1] = mv
+			u.overlay = 0
+			u.show()
+		case top.Screen == model.ScreenApp && top.App == a:
+			u.open(mv)
+		default:
+			// The app's screen under it, for esc, never shown on the way:
+			// shown, it would ask the app's alerts and cancel a series read.
+			u.stack = append(u.stack, model.View{Screen: model.ScreenApp, App: a})
+			u.open(mv)
+		}
 	case "whoami", "me":
 		u.open(model.View{Screen: model.ScreenMe})
 	case "box":

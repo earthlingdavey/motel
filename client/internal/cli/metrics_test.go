@@ -51,7 +51,7 @@ func TestMetrics(t *testing.T) {
 		t.Errorf("the output holds %q, or is not UTF-8:\n%s", bad, r.stdout)
 	}
 	const want = `127.0.0.1 holds blog's numbers over 24h, a point every 5 m, to 2026-11-19 14:00 UTC:
-memory     min 150.0 MiB (14:05 UTC)  max 306.0 MiB (05:40 UTC)  newest 182.0 MiB (14:00 UTC)  3 of 289 steps
+memory     min 150.0 MiB (11-18 14:05 UTC)  max 306.0 MiB (05:40 UTC)  newest 182.0 MiB (14:00 UTC)  3 of 289 steps
 cpu        min <0.001 cores (13:10 UTC)  max 0.250 cores (14:00 UTC)  newest 0.250 cores (14:00 UTC)  2 of 289 steps
 requests   min 2.50/s (14:00 UTC)  max 2.50/s (14:00 UTC)  newest 2.50/s (14:00 UTC)  1 of 289 steps
 5xx share  min 1.2% (14:00 UTC)  max 1.2% (14:00 UTC)  newest 1.2% (14:00 UTC)  1 of 289 steps
@@ -69,6 +69,12 @@ other      the box's disk_bytes in bytes: not one this client draws
 	if r := runKey(t, fb, nil, "metrics", "blog"); r.code != 0 || !strings.Contains(r.stdout, "over 1h, a point every 1 m") ||
 		!strings.Contains(r.stdout, "requests   none in the window: the box counts requests only for an app behind observe") {
 		t.Errorf("1h, no requests: exit %d, stdout %q, stderr %q", r.code, r.stdout, r.stderr)
+	}
+	// Beside a panel this client does not know (one the box's filter may
+	// have renamed), no cause is said for the request panels' absence.
+	fb.series.Panels = append(fb.series.Panels, wire.Panel{Name: "requests_hidden", Unit: "per_second", Points: [][2]float64{}})
+	if r := runKey(t, fb, nil, "metrics", "blog"); r.code != 0 || strings.Contains(r.stdout, "observe") {
+		t.Errorf("an unknown panel: exit %d, stdout %q, stderr %q", r.code, r.stdout, r.stderr)
 	}
 	for _, c := range []struct {
 		store, line string

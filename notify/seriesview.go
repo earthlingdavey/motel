@@ -84,9 +84,10 @@ type seriesView struct {
 	cache map[seriesKey]*seriesEntry
 }
 
+// seriesKey is an answer's store, by its socket, not the client: each
+// config's provision makes a client of its own for the same socket.
 type seriesKey struct {
-	store       rangeQuerier
-	app, window string
+	socket, app, window string
 }
 
 // theSeries is the process's: every config's source reads through it,
@@ -100,14 +101,14 @@ var theSeries = &seriesView{now: time.Now, cache: map[seriesKey]*seriesEntry{}}
 // the entry for the next. Entries past seriesEvery are dropped as
 // another is made, so what is held is at most the answers asked for in
 // the last seriesEvery.
-func (v *seriesView) get(ctx context.Context, store rangeQuerier, app, window string, logger *zap.Logger) wire.Series {
+func (v *seriesView) get(ctx context.Context, store rangeQuerier, socket, app, window string, logger *zap.Logger) wire.Series {
 	w, ok := seriesWindows[window]
 	if !ok {
 		// liveswap refuses any other; a window it adds that this does not
 		// know is told as the store not answering, never guessed at.
 		return wire.Series{Store: wire.StoreUnanswered, Window: window, Panels: []wire.Panel{}}
 	}
-	k := seriesKey{store, app, window}
+	k := seriesKey{socket, app, window}
 	v.mu.Lock()
 	now := v.now()
 	if e := v.cache[k]; e != nil && now.Sub(e.at) < seriesEvery && !now.Before(e.at) {
@@ -148,15 +149,17 @@ func (v *seriesView) get(ctx context.Context, store rangeQuerier, app, window st
 }
 
 // askSeries runs the four queries at once over [end - span, end], end
-// being now down to a multiple of the step, and reads their answers
-// into the panels. The store aligns a range query so itself (measured
-// on Debian's 1.112.0: start and end rounded down to the step, which
-// lets it reuse what it computed for the last one), so the newest point
-// is of the last whole step, up to a step old: the body's end says
-// which.
+// being the last multiple of the step at least the store's latency
+// offset old, and reads their answers into the panels. The store aligns
+// a range query so itself (measured on Debian's 1.112.0: start and end
+// rounded down to the step, which lets it reuse what it computed for
+// the last one), so the newest point is of the last whole step, up to a
+// step old (the body's end says which); and a step that ended inside
+// the latency offset may not hold its last push yet, or is filled with
+// the one before it, so it is left for the next answer.
 func askSeries(ctx context.Context, store rangeQuerier, app, window string, w seriesWindow, now time.Time) (wire.Series, error) {
 	step := int64(w.step / time.Second)
-	end := time.Unix(now.Unix()/step*step, 0).UTC()
+	end := time.Unix(now.Add(-storeLatencyOffset).Unix()/step*step, 0).UTC()
 	start := end.Add(-w.span)
 	memQ, cpuQ, classesQ, p95Q := seriesQueries(fmt.Sprintf(`app=%q`, app), w)
 	qs := []string{memQ, cpuQ, classesQ, p95Q}
@@ -192,9 +195,10 @@ func askSeries(ctx context.Context, store rangeQuerier, app, window string, w se
 }
 
 // seriesPoints is a range answer's one series as points, oldest first,
-// each value through round: a point that is not a number (NaN, an
-// infinity, or below zero: no response in the step, for a quantile) is
-// a gap, as is a time outside [start, end]. The queries aggregate to
+// each value through round: a point below zero, or a time outside
+// [start, end], is a gap. (The store leaves a step with no response out
+// of a quantile's answer, measured; a NaN or an infinity in an answer
+// fails the store client's read, parsePoint, so none reaches here.) The queries aggregate to
 // one series; were there more, the points of a time are the highest.
 func seriesPoints(ss []series, start, end time.Time, round func(float64) float64) [][2]float64 {
 	at := map[int64]float64{}
@@ -259,13 +263,15 @@ func usable(p point, start, end time.Time) bool {
 }
 
 // seriesSource is liveswap's SeriesSource for one config: the process's
-// view, the config's store, and its logger for what goes wrong.
+// view, the config's store and its socket, and its logger for what goes
+// wrong.
 type seriesSource struct {
 	view   *seriesView
 	store  rangeQuerier
+	socket string
 	logger *zap.Logger
 }
 
 func (s seriesSource) AppSeries(ctx context.Context, app, window string) wire.Series {
-	return s.view.get(ctx, s.store, app, window, s.logger)
+	return s.view.get(ctx, s.store, s.socket, app, window, s.logger)
 }

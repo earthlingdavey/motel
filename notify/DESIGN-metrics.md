@@ -1524,19 +1524,23 @@ range query so itself (measured on 1.112.0: start and end rounded down
 to the step unless the query asks `nocache=1`), which lets it reuse
 what it computed for the last one, so the newest point is of the last
 whole step, up to a step old (an hour over 14 days), and the body's
-`end` says which. A step with no sample is no point: a gap, never a
+`end` says which; and the end is at least the store's latency offset
+old (5 s), since a step that ended inside it may not hold its last push
+yet, or is filled with the one before it. A step with no sample is no point: a gap, never a
 zero (measured with vmalert-tool: no point inside a ten-minute gap in
 the pushes at the hour's step; the first step after the gap counts its
 own push alone, the store keeping no sample from before the gap as its
-base, so a gap is no spike; over an hour the gap's counts are in). A
-point that is not a number (a quantile of no response) is none. Values
+base, so a gap is no spike; over an hour the gap's counts are in). The
+store leaves a step with no response out of a quantile's answer.
+Values
 are rounded as the summary's are (bytes whole, cores and rates to a
 millionth, shares to 1/10 000, milliseconds to a tenth). A panel with
 no point in the window is absent: the request panels for an app no
 observe handler names.
 
 One set of queries per app and window every 30 s at most for the
-process (`theSeries`), whatever the number of people and configs, one
+process (`theSeries`, keyed by the store's socket, not a config's
+client of it), whatever the number of people and configs, one
 at a time (the others wait on it), within a 3 s budget that a caller
 going away does not cut; a failure is kept as long as an answer, told
 as `"store":"unanswered"` and journalled once (`monitor metrics: a
@@ -1869,6 +1873,7 @@ on its general scales. metrics' examples:
 | vmalert's `ChannelFailed` resolves 5 minutes after the last failure and re-sends the resolve for 15; with motel's labels it ends motel's own alert early, and a rise after that is told again | notify/metricsrules.go | 2 | 3 | 3 | 18; direct alerts never send a recovery, so the early end is silent; a second rise is a second failure, told |
 | A cache hit after a cutover counts under the new release though the page was the old one's: the new release's 5xx and hit shares carry the old's cached answers until they expire | liveswap/observe.go | 2 | 3 | 3 | 18; latency leaves hits out, and a cache's TTL bounds the mix (30 s in the starter); telling a stored page's release needs a header the cache would store, a change to every app's responses |
 | An app's threshold beside an every-app one on the same metric both fire for that app: the app's line adds a rule and cannot loosen or silence the every-app one, so when both hold its channels get two alerts | notify/operatorrules.go | 2 | 5 | 1 | 10; each alert is true and names its own rule; replacement (an app's rule taking the app out of the every-app one's selectors) is a feature for the operator to weigh, an explicit `replaces <rule>` the shape that neither breaks layered severities nor drops coverage silently; not built here (Copilot round 3 on #429) |
+| A point that is not a number (NaN, an infinity) in the store's answer to a series query fails the store client's read (`parsePoint`), so the app's series in that window is `"store":"unanswered"` for 30 s, not drawn with a gap there | notify/seriesview.go | 2 | 1 | 1 | 2; the store leaves out a step with no response from a quantile's answer (measured, `TestSeriesViewOverTheStore`), so none is known to come; the read is loud and journalled with the cause (the series read's first self-review) |
 | An app whose route has no `observe` has no request numbers, and nothing says so at load | liveswap/observe.go | 2 | 3 | 2 | 12; `metrics` then has no `requests`, which a deployer sees; a load-time check needs the HTTP app's routes, which the liveswap app cannot read. A rule naming such an app is refused by cmd/moteld's gate ("Operator rules") |
 | An every-app `request_rate <` alert firing for an app whose `observe` line is taken out resolves at the first push without its `motel_app_observed` (`PUSHED`), a recovery the traffic did not make | notify/metricscollector.go (`collectRequests`), notify/operatorrules.go (`pushedNow`) | 2 | 5 | 3 | 30, accepted under the skill's rule 4: the rule no longer covers the app, and the alert ends rather than firing on numbers nobody measures any more, which it did before #434; telling the two apart needs a rule per app for an absent series (size 3, risk 2). /code-review pass 2 on #434 |
 | The upgrade to the buckets under 5 ms (#434): a window that spans it holds the responses before it in the 5 ms bucket alone, so for up to a day `GET /<app>`'s p50 and p95 of a fast app read between 2.5 and 5 ms, and a post_deploy baseline read across the restart is high, so a regression right after the upgrade can read as no worse | liveswap/observe.go (`ResponseBuckets`) | 3 | 4 | 3 | 36, accepted under the skill's rule 4: once per box, at this upgrade, for at most the 24 h range; leaving the earlier samples out needs the store to know when a series' bucket set began (size 3, risk 2). /code-review pass 1 on #434 |

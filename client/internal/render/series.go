@@ -56,8 +56,10 @@ func WriteSeries(w io.Writer, s Series) error {
 		p.line("%s keeps no numbers of its apps: its monitor block has no metrics line", s.Host)
 		return p.err
 	}
+	// A time of another day than the window's end, and every time of the
+	// 7 and 14 days, with its date.
 	at := func(t time.Time) string {
-		if s.Step >= 30*time.Minute {
+		if e := s.End.UTC(); s.Step >= 30*time.Minute || t.UTC().YearDay() != e.YearDay() || t.UTC().Year() != e.Year() {
 			return t.UTC().Format("01-02 15:04 UTC")
 		}
 		return t.UTC().Format("15:04 UTC")
