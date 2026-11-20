@@ -2,6 +2,7 @@ package liveswap
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -104,10 +105,47 @@ func TestHeldNumbersNotByDifference(t *testing.T) {
 	if want := `{"error":"response withheld: a redacted value overlapped the response's own structure","redacted_env":["NODE_MEMORY_LIMIT"]}`; got != want {
 		t.Errorf("a number beside its value's marker:\n got %s\nwant %s", got, want)
 	}
+	// The marker an earlier pass put there, which a nested redacted_env
+	// names (a failed deploy's detail): the filter finds nothing itself.
+	got = r.redactJSON([]byte(`{"artifact_bytes":268435456,"detail":{"log_tail":["heap limit [redacted:NODE_MEMORY_LIMIT] exceeded"]},"redacted_env":["NODE_MEMORY_LIMIT"]}`))
+	if want := `{"error":"response withheld: a redacted value overlapped the response's own structure","redacted_env":["NODE_MEMORY_LIMIT"]}`; got != want {
+		t.Errorf("a number beside an earlier pass's marker:\n got %s\nwant %s", got, want)
+	}
 	got = r.redactJSON([]byte(`{"started_at":"2023-11-14T22:13:20Z","log_tail":["on 2023-11-14"],"n":268435456}`))
 	if want := `{"log_tail":["on [redacted:API_VERSION]"],"n":268435456,"redacted_env":["API_VERSION"],"started_at":"2023-11-14T22:13:20Z"}`; got != want {
 		t.Errorf("a time beside its value's marker:\n got %s\nwant %s", got, want)
 	}
+}
+
+// TestFailedDeployNumberNotByDifference: a failed deploy whose app
+// printed its memory limit, which equals its memory_max, has the marker
+// in its detail before the filter runs; the deploy's answer, the status
+// and the record are withheld or the envelope, as on main, never the
+// number beside the marker.
+func TestFailedDeployNumberNotByDifference(t *testing.T) {
+	h, rig := newTestHandler(t)
+	rig.spec.envFile = filepath.Join(t.TempDir(), "demo.env")
+	rig.spec.caps = resourceCaps{memoryMax: 256 << 20}
+	rig.spec.deployLogLines = 40
+	must(t, os.WriteFile(rig.spec.envFile, []byte("NODE_MEMORY_LIMIT=268435456\n"), 0o600))
+	rig.ma.journal = &fakeJournal{lines: []string{"node: heap limit 268435456 exceeded"}}
+	rig.prober.err = fmt.Errorf("not healthy within deadline 5m: %w", &probeError{status: 500, body: "limit 268435456"})
+	rig.fetch.stats = archiveStats{entries: 3, bytes: 268435456}
+	check := func(what, body string) {
+		t.Helper()
+		if strings.Contains(body, "268435456") {
+			t.Errorf("%s: the value stands in a number: %s", what, body)
+		}
+	}
+	w := do(t, h, http.MethodPost, "/demo", appToken(t), `{"url":"https://x/1.tgz","version":"v1"}`)
+	check("the deploy's answer", w.Body.String())
+	check("the status", do(t, h, http.MethodGet, "/demo", appToken(t), "").Body.String())
+	b, _ := os.ReadFile(deployRecordPath(rig.spec.dirs.deploys, "v1"))
+	check("the record on disk", string(b))
+	check("the record read", do(t, h, http.MethodGet, "/demo?deploy=v1", appToken(t), "").Body.String())
+	_, lines := streamLinesOf(t, h, `{"url":"https://x/2.tgz","version":"v2"}`)
+	last, _ := json.Marshal(lines[len(lines)-1])
+	check("the stream's last line", string(last))
 }
 
 // TestHeldNumbersManyTokens: a value of digits alone is no piece of a

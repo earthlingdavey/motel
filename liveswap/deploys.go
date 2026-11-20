@@ -65,7 +65,9 @@ import (
 //     used only once it is valid. Its numbers (an artifact's size, a
 //     phase's seconds, a probe's status) are held too, so a value that
 //     is a piece of one no longer leaves the record no JSON, which was
-//     written as the envelope below.
+//     written as the envelope below; but when the record's detail holds
+//     the same value's marker, the record is the envelope as before
+//     (the filter's rule 7).
 //     The vocabulary (status, phase) stands outside the filter in
 //     every body (redact.go, rule 3), so a value equal to a word of
 //     it rewrites nothing; a record the filter leaves unreadable as
@@ -84,9 +86,10 @@ import (
 // env_file values known at the time already replaced, but where a time
 // or a number holds one, which stays on disk as in a response (the
 // filter's rule 7): a secret rotated later is not in an old record for
-// the new filter to miss, but in such a token. A record written before the filter held times (#604) keeps the
-// marker it put in a time, the date gone from it, until the version is
-// deployed again or the record is pruned. Records
+// the new filter to miss, but in such a token. A record written before
+// the filter held times (#604) keeps the marker it put in a time, the
+// date gone from it, until the version is deployed again or the record
+// is pruned. Records
 // are pruned with the releases: one is kept for every version still on
 // disk, plus the newest `keep` others — failed deploys, whose release
 // is removed at once, and versions release GC has pruned — so the

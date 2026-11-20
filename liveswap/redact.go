@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"maps"
 	"math"
 	"net/url"
 	"regexp"
@@ -198,13 +199,19 @@ import (
 //     was withheld before, takes a second value). A token whole names
 //     no key, where a marker inside a time said the value was a piece
 //     of it and a body withheld for a number said the key's value was
-//     digits of one. A number that holds a value the filter replaced
-//     elsewhere in the body (the app printed it) would show it beside
-//     that marker by difference, so such a body goes through whole,
-//     and is withheld as before (TestHeldNumbersNotByDifference); a time
-//     keeps its hold, its marker having said as much. Rule 7 is the hold of a filter that knows
-//     a value: one that knows none replaces nothing a token could hold,
-//     and its tokens pass its later layers as before.
+//     digits of one. A number that holds a value replaced elsewhere in
+//     the body (the app printed it: replaced by this filter, or by an
+//     earlier pass a nested redacted_env names, a failed deploy's
+//     detail) would show it beside that marker by difference, so such
+//     a body goes through whole, and is withheld as before
+//     (TestHeldNumbersNotByDifference,
+//     TestFailedDeployNumberNotByDifference); a time keeps its hold, its
+//     marker having said as much. Across two answers (a marker in one
+//     record, the number in the status) the reader can still set them
+//     side by side: an accepted row (DESIGN-liveswap.md). Rule 7 is the
+//     hold of a filter that knows a value: one that knows none
+//     replaces nothing a token could hold, and its tokens pass its
+//     later layers as before.
 const (
 	secretMinLen  = 8
 	entropyMinLen = 20
@@ -801,7 +808,20 @@ func (r *Redactor) filterBody(raw string, seen map[string]bool) string {
 	if r != nil && len(r.secrets) > 0 {
 		if body, held := holdOut(raw); len(held) > 0 {
 			found := map[string]bool{}
-			if out, ok := r.putBack(r.filterWhole(body, found), held, found); ok {
+			out := r.filterWhole(body, found)
+			// Replaced in this body: what this pass found, and what an
+			// earlier pass did, which a nested redacted_env names (a
+			// failed deploy's detail, replaced as it was built,
+			// failureDetail in app.go).
+			replaced := maps.Clone(found)
+			if strings.Contains(raw, `"redacted_env"`) {
+				var tree any
+				_ = json.Unmarshal([]byte(raw), &tree)
+				for _, k := range nestedStrings(tree, "redacted_env", nil) {
+					replaced[k] = true
+				}
+			}
+			if out, ok := r.putBack(out, held, replaced); ok {
 				for k := range found {
 					seen[k] = true
 				}
@@ -946,12 +966,14 @@ func holdOut(raw string) (string, []heldToken) {
 // it and its first, which the filter never saw side by side, or one
 // that holds a time's quote. A form wholly inside a time's text or a
 // number is the token's own, and stays (rule 7), but in a number when
-// the filter replaced the same key's value elsewhere (found): the
-// number whole beside that marker would show the value by difference,
-// where the body was withheld (a time's marker said as much). These
+// the same key's value was replaced elsewhere in the body (replaced:
+// by this filter, or by an earlier pass a nested redacted_env names):
+// the number whole beside that marker would show the value by
+// difference, where the body was withheld (a time's marker said as
+// much). These
 // are the bytes the filter returns: what redactJSON's hoist and the
 // stream's splices do after is rule 2's.
-func (r *Redactor) putBack(out string, held []heldToken, found map[string]bool) (string, bool) {
+func (r *Redactor) putBack(out string, held []heldToken, replaced map[string]bool) (string, bool) {
 	var b strings.Builder
 	type span struct {
 		lo, hi int
@@ -980,16 +1002,27 @@ func (r *Redactor) putBack(out string, held []heldToken, found map[string]bool) 
 	for _, sec := range r.secrets {
 		elsewhere := false
 		for _, k := range sec.keys {
-			elsewhere = elsewhere || found[k]
+			elsewhere = elsewhere || replaced[k]
 		}
+		// The spans are in order, as the occurrences are found: the
+		// first span that ends past an occurrence's start is the only
+		// one it can begin in or before, and the spans it can reach
+		// follow it.
+		first := 0
 		for from := 0; ; {
 			i := strings.Index(s[from:], sec.text)
 			if i < 0 {
 				break
 			}
 			start, end := from+i, from+i+len(sec.text)
-			for _, sp := range spans {
-				if start < sp.hi && end > sp.lo && (start < sp.lo || end > sp.hi || sp.number && elsewhere) {
+			for first < len(spans) && spans[first].hi <= start {
+				first++
+			}
+			for _, sp := range spans[first:] {
+				if sp.lo >= end {
+					break
+				}
+				if start < sp.lo || end > sp.hi || sp.number && elsewhere {
 					return "", false
 				}
 			}

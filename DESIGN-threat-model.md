@@ -267,10 +267,13 @@ Properties that matter to the model:
   to its `memory_max`) stands there whole, naming no key, where a
   marker inside a time, or a body withheld for a number with the key
   named, said the value was a piece of it; it is replaced everywhere
-  else, digits in a string included; a number that holds a value the
-  filter replaced elsewhere in the body (beside which it would show the
-  value by difference) has the body withheld as before; and a body in
-  which a value would stand across a token's edge goes
+  else, digits in a string included; a number that holds a value
+  replaced elsewhere in the same body (by the filter, or in a failed
+  deploy's detail as it was built), beside which it would show the
+  value by difference, has the body withheld as before, though across
+  two answers (a marker in one deploy's record, the number in the
+  status) a reader can still set them side by side (an accepted row in
+  liveswap/DESIGN-liveswap.md); and a body in which a value would stand across a token's edge goes
   through whole as before (liveswap/redact.go, rule 7). A figure the
   app's behaviour drives (its memory, its request counts) is a channel
   only for an app that means to send its secret, which can answer any

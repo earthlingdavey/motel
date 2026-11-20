@@ -11,7 +11,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"net/url"
-	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -33,8 +32,7 @@ func FuzzRedactor(f *testing.F) {
 		{`20Z","error":"`, "", ""},
 		{`"2023-11-14`, "", ""},
 		{"17000000", "", ""},
-		{`00.25,"started`, "", ""},
-		{`"],"seconds":1700`, "", ""},
+		{`00.25,"error`, "", ""},
 	} {
 		f.Add(s[0], s[1], s[2])
 	}
@@ -78,7 +76,7 @@ func FuzzRedactor(f *testing.F) {
 			if string(mustQuote(t, form)) != form && form != value {
 				continue
 			}
-			body, _ := json.Marshal(map[string]any{"error": prefix + form + suffix, "versions": []string{"x", "y"}, "status": "succeeded", "phase": "starting", "started_at": time.Unix(1_700_000_000, 0).UTC(), "seconds": 1700000000.25})
+			body, _ := json.Marshal(map[string]any{"error": prefix + form + suffix, "versions": []string{"x", "y"}, "status": "succeeded", "phase": "starting", "at": time.Unix(1_700_000_000, 0).UTC(), "count": 1700000000.25})
 			js := r.redactJSON(body)
 			if !json.Valid([]byte(js)) {
 				t.Fatalf("form %q: redactJSON produced invalid JSON: %s", form, js)
@@ -92,15 +90,15 @@ func FuzzRedactor(f *testing.F) {
 			// form may be a piece of — and the key is reported unless
 			// the body had to fall back to the one marker that can carry
 			// nothing.
-			// The hoisted field's name and brackets, its key names
-			// kept: the brackets beside a held token are the body's
-			// own JSON, as rule 7's hoist residual says.
-			rest := redactedEnvField.ReplaceAllString(js, "\x00$1\x00")
+			// The held tokens' keys sort before the hoisted field, so
+			// the hoist sets no held token beside other JSON here (rule
+			// 7's hoist residual).
+			rest := strings.Replace(js, `"redacted_env":`, "", 1)
 			if outcomeStatuses[value] || outcomePhases[value] {
 				rest = strings.NewReplacer(`"status":"succeeded"`, "", `"phase":"starting"`, "").Replace(rest)
 			}
 			for _, f := range []string{string(mustQuote(t, form)), form} {
-				if outsideHeld(rest, f, [3]string{`"started_at":"`, "2023-11-14T22:13:20Z", `"`}, [3]string{`"seconds":`, "1700000000.25", `,`}) {
+				if outsideHeld(rest, f, [3]string{`"at":"`, "2023-11-14T22:13:20Z", `"`}, [3]string{`"count":`, "1700000000.25", `,`}) {
 					t.Fatalf("form %q: survived in JSON body %s", form, js)
 				}
 			}
@@ -141,10 +139,6 @@ func outsideHeld(s, f string, held ...[3]string) bool {
 		from = start + 1
 	}
 }
-
-// redactedEnvField is the hoisted report field, its key names (the
-// fuzz's one, SECRET) the group.
-var redactedEnvField = regexp.MustCompile(`"redacted_env":\[((?:"[A-Za-z0-9_]+",?)*)\]`)
 
 func mustQuote(t *testing.T, s string) []byte {
 	t.Helper()
