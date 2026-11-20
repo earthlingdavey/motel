@@ -9,6 +9,7 @@ import (
 	"os"
 	"slices"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 	"unicode/utf8"
@@ -19,8 +20,9 @@ import (
 	"github.com/smallhoursorg/motel/liveswap/wire"
 )
 
-// logsReadsAtOnce bounds the journal reads the process runs at once, for
-// every app and both webhooks: each is a journalctl of 11 to 13 MB
+// logsReadsAtOnce bounds the logs reads the process runs at once, for
+// every app and both webhooks (a failed deploy's tail, journal.go, takes
+// none): each is a journalctl of 11 to 13 MB
 // (measured) and the read's own few MB in moteld, for at most
 // journalTailTimeout, on a unit with no MemoryMax. A read that finds
 // them all taken waits logsSlotWait for one, then is told to come back.
@@ -105,6 +107,10 @@ func (h *Handler) appLogs(w http.ResponseWriter, r *http.Request, app appHandle,
 	ctx, cancel := context.WithTimeout(r.Context(), journalTailTimeout)
 	defer cancel()
 	read, err := readLogs(ctx, src, logsQuery{app: app.ma.name, ident: syslogIdentifier(app.ma.name), uid: os.Getuid(), n: n, after: q["after"]})
+	if err != nil && r.Context().Err() != nil {
+		// The client went away, and its read with it: nothing to say.
+		return nil
+	}
 	if err != nil {
 		h.logger.Error("logs: an app's journal could not be read", zap.String("app", app.ma.name), zap.String("person", app.who), zap.Error(err))
 		return RespondJSON(w, http.StatusInternalServerError, wire.Error{Error: logsUnreadMessage}, NewRedactor(nil, nil))
@@ -273,19 +279,28 @@ func filterLogsWhole(f *Redactor, body wire.Logs) (out string, keys []string, se
 	return string(bytes.TrimSuffix(b.Bytes(), []byte("\n"))), had, true
 }
 
+// logsCutMargin is the least the filter sees of a cut line past what is
+// sent: the reach of a credential the shape and entropy layers know (a
+// provider token, a JWT's segments, a 20-character generated run).
+const logsCutMargin = 256
+
+// tokenAlphabet is layer 4's (entropyTokenRe in redact.go).
+const tokenAlphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+=_-"
+
 // filterLogLine is one line's text through the app's filter, at most
 // logsLineMax bytes of it sent. The filter sees the text cut to
-// logsLineMax and the longest form it knows, so every value that begins
-// inside what is sent is whole when it is looked for. Where that cut
-// fell, a value it split is a piece the filter cannot know, at the end
-// of what the filter returns and shorter than the longest form: those
-// last bytes go. Then what is left is cut to logsLineMax with "…" (a
-// marker or plain text may be cut there, no value). The keys it
-// replaced are added to seen.
+// logsLineMax and a margin, the longest form it knows or logsCutMargin
+// if more, so every value or credential that begins inside what is sent
+// is whole when it is looked for. Where that cut fell, a value or token
+// it split is a piece no layer can know, at the end of what the filter
+// returns and, but for a token longer than the margin, shorter than it:
+// the margin's bytes go, and the rest of such a token. Then what is left is cut to logsLineMax with
+// "…" (a marker or plain text may be cut there, nothing a layer would
+// have replaced). The keys it replaced are added to seen.
 func filterLogLine(f *Redactor, text string, seen map[string]bool) string {
-	longest := 0
+	longest := logsCutMargin
 	if f != nil && len(f.secrets) > 0 {
-		longest = len(f.secrets[0].text) // longest first
+		longest = max(longest, len(f.secrets[0].text)) // longest first
 	}
 	pre := logsLineMax + longest
 	cut := len(text) > pre
@@ -297,7 +312,9 @@ func filterLogLine(f *Redactor, text string, seen map[string]bool) string {
 		seen[k] = true
 	}
 	if cut {
-		out = cutText(out, max(len(out)-longest, 0))
+		// And what is left of a token longer than the margin: a run of
+		// layer 4's alphabet the cut ended, too short now to be judged.
+		out = strings.TrimRight(cutText(out, max(len(out)-longest, 0)), tokenAlphabet)
 	}
 	if cut || len(out) > logsLineMax {
 		out = cutText(out, logsLineMax-len("…")) + "…"

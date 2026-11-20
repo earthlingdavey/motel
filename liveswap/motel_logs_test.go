@@ -301,7 +301,7 @@ func TestLogsLongLineWithNoSpace(t *testing.T) {
 		text := strings.Repeat("{", at) + value + strings.Repeat("}", 3000)
 		seen := map[string]bool{}
 		out := filterLogLine(f, text, seen)
-		if len(out) > logsLineMax || len(out) < logsLineMax-3-66-len("[redacted:V]") || !strings.HasSuffix(out, "…") || !utf8.ValidString(out) {
+		if len(out) > logsLineMax || len(out) < logsLineMax-3-logsCutMargin-len("[redacted:V]") || !strings.HasSuffix(out, "…") || !utf8.ValidString(out) {
 			t.Errorf("value at %d: %d bytes, ends %q", at, len(out), out[max(0, len(out)-20):])
 		}
 		for n := 8; n <= len(value); n++ {
@@ -309,6 +309,24 @@ func TestLogsLongLineWithNoSpace(t *testing.T) {
 				t.Errorf("value at %d: a piece of %d bytes is sent", at, n)
 				break
 			}
+		}
+	}
+	// A credential only the shape layer knows, split by the first cut, by
+	// an app with no env_file: no piece of it is sent.
+	token := "ghp_" + strings.Repeat("aB3dE5", 6) // gitleaks:allow — made up for this test
+	for _, at := range []int{logsLineMax - 20, logsLineMax + logsCutMargin - 10} {
+		out := filterLogLine(NewRedactor(nil, nil), strings.Repeat("x", at)+" "+token+" after", map[string]bool{})
+		if strings.Contains(out, "ghp_") || strings.Contains(out, "aB3dE5") || len(out) > logsLineMax {
+			t.Errorf("a token at %d: …%q", at, out[max(0, len(out)-40):])
+		}
+	}
+	// A generated token longer than the margin, split by the first cut:
+	// no piece of its start is sent either.
+	long := strings.Repeat("Zq9", 200) // gitleaks:allow — made up for this test
+	for _, at := range []int{logsLineMax - 300, logsLineMax + 100} {
+		out := filterLogLine(NewRedactor(nil, nil), strings.Repeat("x", at)+" "+long+" after", map[string]bool{})
+		if strings.Contains(out, "Zq9") {
+			t.Errorf("a long token at %d: …%q", at, out[max(0, len(out)-40):])
 		}
 	}
 	// Whitespace changes nothing: the cut is by bytes.
@@ -414,6 +432,23 @@ func TestLogsRefusedLine(t *testing.T) {
 	}
 	if logs.FilterMessage("access: person read logs").Len() != 0 {
 		t.Error("a refusal wrote a read's line")
+	}
+}
+
+// TestLogsClientGone: a reader that goes away mid-read ends it, and that
+// is no failure of the journal's for moteld to log.
+func TestLogsClientGone(t *testing.T) {
+	h, people, src, logs := logsRig(t, demoJournal(3, lineN))
+	src.hold = make(chan struct{})
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	req := httptest.NewRequest(http.MethodGet, "http://"+personBox+"/_motel/apps/demo/logs", nil).WithContext(ctx)
+	req.Header.Set("Authorization", token(people.erin))
+	if err := h.ServeHTTP(httptest.NewRecorder(), req, nil); err != nil {
+		t.Fatal(err)
+	}
+	if n := logs.FilterMessage("logs: an app's journal could not be read").Len(); n != 0 {
+		t.Errorf("a reader gone is logged as a journal not read: %d", n)
 	}
 }
 

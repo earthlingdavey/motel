@@ -31,7 +31,8 @@ type Logs struct {
 	Kept  string    `json:"kept"`
 	Lines []LogLine `json:"lines"`
 	// More is true when the read stopped with a line left unsent: the
-	// count asked for, or the box's 64 KiB of text, was reached. After a
+	// count asked for, or 64 KiB of the lines' text as the journal holds
+	// it, was reached. After a
 	// follow (after sent, Gap false) the lines left are after the last
 	// one sent: a follower asks again at once, with Cursor. After a tail
 	// (no after, or Gap true) they are older than the first one sent,
@@ -39,7 +40,9 @@ type Logs struct {
 	More bool `json:"more"`
 	// Gap is true when the after a request sent was not honoured (it is
 	// no entry of this app's that the journal still holds): Lines are
-	// then a fresh tail, and lines between the two may be missing.
+	// then a fresh tail, and lines between the two may be missing. With
+	// no Cursor beside it (the app has no line the journal holds), the
+	// client forgets its after and tails, or every poll is a gap.
 	Gap bool `json:"gap"`
 	// Cursor is the journal's cursor of the last entry this read took,
 	// the after of the next read; absent when the read took none, and

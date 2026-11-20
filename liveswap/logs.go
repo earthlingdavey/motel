@@ -42,8 +42,10 @@ const (
 	// logsLineMax is the most of a line's text an answer sends, after the
 	// filter; a longer one is cut and ends in "…".
 	logsLineMax = 4096
-	// logsTextMax is the most text one answer holds: a read stops before
-	// the line that would pass it, each line counted at most logsLineMax.
+	// logsTextMax is the most of the journal's text one answer holds: a
+	// read stops before the line that would pass it, each line counted at
+	// most logsLineMax, as the journal holds it (the filter's markers and
+	// JSON's escapes can make what is sent longer).
 	logsTextMax = 64 << 10
 	// logsEntryMax bounds one entry of journalctl's output. journald
 	// stores at most 48 KiB of a line (LineMax=), which -o json writes,
@@ -339,7 +341,7 @@ func takeLogs(ctx context.Context, src logsSource, q logsQuery, after string) (r
 			read.more = true
 			return false
 		}
-		if legacy := e.unit == "" && e.userUnit == "" && legacyIdentifiers[q.ident]; legacy || !belongsTo(e, q.app, q.uid) {
+		if legacy := legacyIdentifiers[q.ident] && legacyEntry(e); legacy || !belongsTo(e, q.app, q.uid) {
 			if !legacy {
 				// Counted for the journal: no app's line has another unit.
 				if read.passedOver == 0 {
@@ -397,6 +399,13 @@ func takeLogs(ctx context.Context, src logsSource, q logsQuery, after string) (r
 // with no unit field, which could be one of them, is passed over too:
 // their crash loops' lines with it, the cost of an app of that name.
 var legacyIdentifiers = map[string]bool{"motel-sandbox-probe": true, "motel-backup": true}
+
+// legacyEntry is whether e could be one of those old lines: one with no
+// unit field, or one of motel's own units' (a backup unit's, the
+// probe's), which are passed over without being told as another unit's.
+func legacyEntry(e logEntry) bool {
+	return e.unit == "" && e.userUnit == "" || strings.HasPrefix(e.unit, "motel_backup_") || strings.HasPrefix(e.userUnit, unitPrefix+"sandboxprobe_")
+}
 
 // belongsTo is whether an entry's units, which journald sets from the
 // writer's cgroup and no writer can, are none, or the app's: a user unit

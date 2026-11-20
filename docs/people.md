@@ -259,7 +259,8 @@ app. A cursor holds `;`, which a query must escape: `curl -G
   `env_file` in the forms the box knows, and some shapes of
   credential. `redacted_env` names the keys it replaced.
 - `more` is `true` when there was more than was sent: the count, or
-  64 KiB of text in one answer. After a follow the lines left are after
+  64 KiB of the lines' text as the journal holds it (what is sent can be
+  longer: the filter's markers, JSON's escapes). After a follow the lines left are after
   the last one sent: ask again at once with the cursor. After a tail
   (no `after`, or `gap`) they are older than the first one sent, and no
   read reaches them.
@@ -271,7 +272,8 @@ app. A cursor holds `;`, which a query must escape: `curl -G
 - `gap` is `true` when the `after` you sent was not honoured: a cursor
   of another app's, of a line the journal no longer holds, or one the
   box never gave. The lines are then a fresh tail, as with no `after`,
-  and lines between may be missing.
+  and lines between may be missing. With no `cursor` beside it, forget
+  yours and tail, or every poll is a `gap`.
 
 At most four logs reads run at once on the box; a fifth waits a
 second, then is a `503` with `Retry-After: 1`. A journal that cannot be
@@ -281,8 +283,11 @@ read is a `500`, and moteld's journal says why.
 moteld's journal, `access: person read logs`, naming the person, the
 app, how many lines, the cursors of the first and the last
 (`first`, `last`), `gap` when there was one and the keys the filter
-replaced. From it you can read on the box exactly what was sent, as
-the app wrote it, while the journal holds it:
+replaced. From it you can read on the box what was sent, as the app
+wrote it, while the journal holds it: the lines from `first` to
+`last`. An entry the read passed over as another unit's (moteld's
+journal says when, `lines under an app's identifier from a unit that
+is not the app's were not sent`) is among them, so read on to `last`:
 
 ```sh
 journalctl --cursor='<first>' -n <lines> SYSLOG_IDENTIFIER=motel-<app> _UID=$(id -u motel) _TRANSPORT=stdout
