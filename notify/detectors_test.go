@@ -133,6 +133,17 @@ func TestPeopleSinkBeforeNotifyRuns(t *testing.T) {
 	if got := te.drain(); len(got) != 0 {
 		t.Errorf("told again: %v", got)
 	}
+	// One key cycling networks keeps a bucket's worth, and leaves room
+	// for another key's first use.
+	te.active = nil
+	for i := range earlyMax {
+		s.Announce(liveswap.Announcement{Name: liveswap.EventPersonNewNetwork, Person: "mallory@example.com", Key: fp + "cycling", From: fmt.Sprintf("198.51.%d.0/24", i)})
+	}
+	s.Announce(liveswap.Announcement{Name: liveswap.EventPersonNewNetwork, Person: "bob@example.com", Key: fp + "bob", From: "203.0.113.0/24", First: true})
+	te.point(&App{}, te.p, te.known, te.logger)
+	if got := te.drain(); len(got) != bucketSize+1 || got[bucketSize].Labels["instance"] != fp+"bob" {
+		t.Errorf("told %d, want %d of the cycling key and bob's: %v", len(got), bucketSize, got)
+	}
 	// Kept past earlyFor (a box with no monitor block for a while), it is
 	// not told late as if it were now; and a full buffer of such old ones
 	// leaves room for a fresh one, which is told.

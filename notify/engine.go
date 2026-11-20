@@ -332,7 +332,16 @@ func (e *engine) reportLocked(ev Event) {
 	if e.active == nil {
 		now := e.now()
 		e.early = slices.DeleteFunc(e.early, func(x earlyEvent) bool { return now.Sub(x.at) > earlyFor })
-		if ev.Source == sourceAccess && len(e.early) < earlyMax {
+		// At most a bucket's worth per key, which is all the limit per
+		// key would let through once told: one key cycling networks
+		// leaves room for the others.
+		perKey := 0
+		for _, x := range e.early {
+			if x.ev.key() == ev.key() {
+				perKey++
+			}
+		}
+		if ev.Source == sourceAccess && len(e.early) < earlyMax && perKey < bucketSize {
 			e.early = append(e.early, earlyEvent{ev, now})
 		}
 		return
