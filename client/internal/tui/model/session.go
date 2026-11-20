@@ -142,7 +142,7 @@ func (s *Session) Fetch(ctx context.Context, c Client, j Job) (func(), error) {
 					// A box older than the read, most likely: it answered,
 					// and refused nothing this key may read; the screen of
 					// the read says it (an app's, the alerts', the
-					// backups', the rules', the box's lines). (An app gone is said by
+					// backups', the rules', the metrics', the box's lines). (An app gone is said by
 					// its status's 404 too, a refusal.)
 					s.last, s.refused = at, false
 					break

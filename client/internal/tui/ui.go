@@ -332,7 +332,8 @@ func (u *UI) retry() {
 // app's row; an app's status; a record, and the status beside it;
 // whoami; the box, its backups and its alerts (the box screen has a
 // line of each); the backups; the alerts; the rules, the box's or an
-// app's; nothing on help.
+// app's; an app's series over the window shown, and its status; nothing
+// on help.
 func (u *UI) shown(v model.View) []model.Job {
 	st := func(a string) model.Job { return model.Job{Kind: model.KStatus, App: a} }
 	switch v.Screen {

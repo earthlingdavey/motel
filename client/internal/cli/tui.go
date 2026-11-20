@@ -36,16 +36,17 @@ import (
 // experimental block.
 const screenLong = "motel alone shows them on screens in the terminal, over the same reads the\n" +
 	"commands make: the apps you may view sorted by what needs a look, an app's state\n" +
-	"and deploys, a deploy's record laid out for reading a failure, who you are, the\n" +
-	"box, its backups, its alerts and its rules. It only reads, well inside the box's\n" +
-	"limit of 2 requests a second and 60 at once: up to 30 at once to start, then at\n" +
-	"most 1.5 a second. It signs one token for ten minutes at a time, so a hardware\n" +
-	"key is touched about every nine, and never asks for a passphrase or a PIN: a key\n" +
-	"with a passphrase must be in the agent (ssh-add), and a hardware key that\n" +
-	"requires its PIN cannot be used there yet. ? lists the keys; c shows the command\n" +
-	"for a screen that reads the box, y the box's answer as JSON. It is asked with\n" +
-	"your own key only, and takes no --json. With no arguments at all it prints this\n" +
-	"help instead when stdout is not a terminal, and, with a line under it saying\n" +
+	"and deploys and its numbers over time drawn, a deploy's record laid out for\n" +
+	"reading a failure, who you are, the box, its backups, its alerts and its rules.\n" +
+	"It only reads, well inside the box's limit of 2 requests a second and 60 at\n" +
+	"once: up to 30 at once to start, then at most 1.5 a second. It signs one token\n" +
+	"for ten minutes at a time, so a hardware key is touched about every nine, and\n" +
+	"never asks for a passphrase or a PIN: a key with a passphrase must be in the\n" +
+	"agent (ssh-add), and a hardware key that requires its PIN cannot be used there\n" +
+	"yet. ? lists the keys; c shows the command for a screen that reads the box, y\n" +
+	"the box's answer as JSON. It is asked with your own key only, and takes no\n" +
+	"--json. With no arguments at all it prints this help instead when stdout is not\n" +
+	"a terminal, and, with a line under it saying\n" +
 	"why, when it finds no box or key to read with, or no screen to draw on."
 
 // screen makes motel alone, the root, open the screens: with its own

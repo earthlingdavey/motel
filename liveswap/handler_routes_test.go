@@ -266,7 +266,8 @@ func FuzzNoRouteNoAnswer(f *testing.F) {
 			_, person := personKeys[caller]
 			get := method == http.MethodGet
 			// An app-scoped row under /_motel/: Decide on the app its path
-			// names, then the app looked for, then the query (none taken).
+			// names, then the app looked for, then the query (the keys the
+			// row takes: queryTaken).
 			appRow, named := findMotelAppRoute(req)
 			mayView := caller == "viewer of the box" || caller == "viewer of demo" && named == "demo"
 			want := http.StatusUnauthorized
