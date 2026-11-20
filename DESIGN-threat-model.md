@@ -1268,7 +1268,9 @@ scope for the runtime model, in scope for release signing (roadmap).
   grant never reads logs. With a listed `logs` grant beside an unlisted
   `viewer` grant, the key read from outside the list is told only as a
   new network, never `person_outside_list` (a grant applies there), and
-  its logs read is refused.
+  its logs read is refused, which moteld's journal tells
+  (`access: person refused logs`). Every logs read that sends lines is a
+  journal line naming the person and the cursor range sent.
 - **T8 — A person's key, stolen, with a role on the box.** As T7, for
   every app and the box's status: the commit, the host, the
   Caddyfile's digest, the box's key for secrets; and the box-wide reads:
@@ -1615,6 +1617,19 @@ does not isolate the runtime.
 
 - **An app's own secrets and its own database are reachable by
   definition** — not a bug, stated so operators do not expect otherwise.
+- **A logs reader is sent what the app printed** (`GET
+  /_motel/apps/<app>/logs`, a `logs` grant): its customers' data and
+  the secrets it made or fetched while it ran, which the box was never
+  told are secret. The response filter is a net under who may read, not
+  the safeguard: each line passes it on its own, which masks the app's
+  `env_file` values in the forms it knows and some shapes of
+  credential, and nothing else (a value escaped as another runtime
+  escapes it, one split across two lines, journald's 48 KiB split
+  among them, one under 8 characters, another app's). Who reads is the
+  safeguard: the operator's grant, its `from` list, and the journal
+  line each read writes, from which the operator re-reads on the box
+  exactly what was sent. The same residual as a failed deploy's journal
+  tail in a public CI log, for a reader the operator chose.
 - **Install-time supply chain** (motel's own build) is a CI concern;
   release signing is the roadmap answer, not a runtime control.
 - **T5 is contained, not prevented** — a supervisor RCE holds every

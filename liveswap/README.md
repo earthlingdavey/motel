@@ -1568,6 +1568,11 @@ What's yours to handle:
   And with a **public repository**, the Actions log is public: if
   your app's output is not something you would post, set
   `deploy_log_lines 0` and read the journal on the box instead.
+- **A person with a `logs` grant reads the app's lines over HTTPS**
+  (`GET /_motel/apps/<app>/logs`, docs/people.md, "Reading an app's
+  logs"): each line through the same filter, so the same two things
+  hold, and each read is a line in moteld's journal. `deploy_log_lines
+  0` keeps the app's output from them too.
 
 ## Deploying from CI
 

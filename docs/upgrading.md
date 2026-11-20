@@ -414,6 +414,19 @@ finds the file in a form it does not read (one written by a later
 release) says so in the journal, starts afresh and writes over it: each
 key's next use is told once more as its first.
 
+## Journal identifiers of the sandbox probe and the backup units
+
+From the release that serves an app's logs to people ([Reading an
+app's logs](people.md#reading-an-apps-logs)), two of motel's own units
+write under new identifiers, with an underscore no app's name can
+have: the sandbox probe's line is `journalctl -t motel_sandboxprobe`
+(it was `motel-sandbox-probe`), and every backup unit's output is
+`journalctl -t motel_backup` (the units that ran as the motel user
+wrote as `motel-backup`, their command's name). `journalctl -u
+motel-backup.service` and `-u motel_backup_…` are as before. Nothing to
+do, but a search of yours for the old names. Lines written before the
+install keep the names they were written under.
+
 ## A producer's state across the install
 
 A box built from the notify-and-metrics feature branch before motel

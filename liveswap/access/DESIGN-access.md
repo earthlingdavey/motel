@@ -236,6 +236,7 @@ names no app (`_` is outside the app grammar).
 | `GET /_motel/apps/<app>/rules` | `app.rules`, on `<app>` | a viewer of that app or of the box |
 | `GET /_motel/rules` | `box.rules` | a viewer of the box |
 | `GET /_motel/apps/<app>/series[?range=1h\|24h\|7d\|14d]` | `app.series`, on `<app>` | a viewer of that app or of the box |
+| `GET /_motel/apps/<app>/logs[?lines=200\|50\|1000][&after=<cursor>]` | `app.logs`, on `<app>` | a logs reader of that app or of the box, never a viewer |
 | any other path, method or query under `/_motel/` | none | 404 once authenticated, the flat 401 before; but a query on an app-scoped row is its 422, once `Decide` allowed it and the app is one here |
 
 **App-scoped rows.** A row of the form `GET /_motel/apps/<app>/<read>`
@@ -269,12 +270,15 @@ never by the value. A raw `;` is no separator `url.ParseQuery` takes,
 so a value sent with one unescaped is the 422, never a key dropped (the
 client's `url.Values` escapes it). The one grammar is `journalCursor`
 (`journal.go`), a cursor as journalctl writes one, at most 145 bytes
-and one argument that never begins with `-`; no row reads it yet.
+and one argument that never begins with `-`; the logs row's `after`
+reads it.
 journalctl takes far more than that grammar, and seeks by any time or
 sequence number a cursor names, a cursor of the full form with made-up
 ids among them, so the grammar keeps out what is no cursor and does
-not make a cursor one the box gave: the row that reads one must check
-that against the cursor's own entry. Then the read waits
+not make a cursor one the box gave: the logs read reads from the
+cursor's own entry and keeps the read only when that entry's cursor is
+the one sent, byte for byte, and is otherwise a fresh tail marked `gap`
+(`readLogs`, liveswap/logs.go). Then the read waits
 for the app's install as `GET /<app>` does. A global deploy source's
 token is told the 403 naming a declared key (`scope` `app`); an app's
 own deploy token and the box channel's are the flat 401, as on every
@@ -315,7 +319,7 @@ names a declared key, or the 404; an app's source's is the flat 401.
 | `box.rules` | `GET /_motel/rules` | as for `box.whoami` | as for `box.whoami` | a viewer of the box |
 | `app.rules` | `GET /_motel/apps/<app>/rules` | as for `app.alerts` | as for `box.whoami` | a viewer of that app or of the box |
 | `app.series` | `GET /_motel/apps/<app>/series[?range=1h\|24h\|7d\|14d]` | as for `app.alerts` | as for `box.whoami` | a viewer of that app or of the box |
-| `app.logs` | `GET /_motel/apps/<app>/logs`, the row arriving with the logs read | as for `app.alerts` | as for `box.whoami` | a logs reader of that app or of the box, never a viewer grant (403, `needs` `logs`, scope `app`, the same for an app and a name that is no app) |
+| `app.logs` | `GET /_motel/apps/<app>/logs[?lines=200\|50\|1000][&after=<cursor>]` | as for `app.alerts` | as for `box.whoami` | a logs reader of that app or of the box, never a viewer grant (403, `needs` `logs`, scope `app`, the same for an app and a name that is no app) |
 
 A box grant covers every app. A pair the table does not hold is
 refused. Three things are structural: no person's cell holds an act; no
@@ -330,8 +334,8 @@ The tests: `TestDecideTable` writes every cell out for every kind,
 people included; `TestAllowedCells` pins the table both ways;
 `TestEveryRouteHasAnAction`, `TestEveryActionHasARoute` and
 `TestEveryMotelRouteHasAnAction` hold the route tables and the actions
-to each other, but for the actions `arrivesWithItsRead` names
-(`app.logs`, whose row comes with the read), which
+to each other, but for the actions `arrivesWithItsRead` names (none
+now: `app.logs`'s row came with its read), which
 `TestArrivesWithItsReadHasNoRow` fails once a row for one exists;
 `TestViewsByRole` holds what each set of grants gives, and
 `TestTwoAppsTwoPeople` has a logs reader of one app and of the box
@@ -480,6 +484,9 @@ box's read holds them all.
 | 404 | a viewer of the box asking for a name that is no app (`unknown app "<name>"`, as a global deploy source is told); a path under `/_motel/` with no row (`not found`) | `wire.Error` |
 | 429 | a person past their rate | `{"error":"too many requests; retry after <n> s"}`, with `Retry-After` |
 | 503 | a deploy token that verified for an app liveswap's `Start` has not installed within 5 s, or whose request ended first (#473); a person's read of such an app, or a list that names one | `{"error":"motel is starting and has not loaded this app yet; retry after 1 s"}`, with `Retry-After: 1` |
+| 503 | `GET /_motel/apps/<app>/logs` when four logs reads already run in the process and none ends within a second | `{"error":"the box is running as many logs reads as it runs at once; retry after 1 s"}`, with `Retry-After: 1` |
+| 200 | `GET /_motel/apps/<app>/logs` | `wire.Logs`: `kept` (`on`; `off` for an app whose `deploy_log_lines` is 0, with no line, nothing read and no journal line), `lines` oldest first, each a `wire.LogLine`: `at` (the journal's time of the line), `release` (the version of the unit that wrote it, `""` when journald did not keep the unit) and `text` (the line through the app's filter on its own, at most 4 KiB, cut with `…`, valid UTF-8); `more` (a line was left unsent: the count, or 64 KiB of text); `gap` (the `after` sent was not honoured, and the lines are a fresh tail); `cursor` (the last entry the read took, absent when it took none: the client keeps its own); `redacted_env`. A body whose filter fell back (below) has its keys sorted. Experimental |
+| 500 | `GET /_motel/apps/<app>/logs` when the journal could not be read (journalctl failed or timed out at 5 s, an entry that is not one, an entry over 256 KiB, a cursor out of the grammar) | `{"error":"the app's journal could not be read; the box's journal says why"}`, and a moteld line with the reason |
 | 200 | `GET /<app>` | `wire.Status`, the body a deploy token reads too. `deploying` is the deploy in flight: `version`, `deployed_by`, `started_at` (when the box took it: for a push, before its upload) and `phases`, those entered so far in order, the last one's `seconds` running to the answer; absent when none runs. It is set when the box takes a deploy (a rollback and a relaunch are deploys; the watchdog's restarts are not) and cleared in the step that sets `last_deploy`, so a read shows one or the other. It sits before `last_deploy`: the templates' `deploy.sh` reads the failing phase from `last_deploy` on |
 | 200 | `GET /_motel/whoami` | `wire.WhoAmI`: `name`, `key` (its fingerprint), `roles` (the grants that apply from here, one per role and scope: `{"role":"viewer"\|"logs","scope":"box"\|"app:<name>"}`, the box's first, then each app by name, viewer before logs on one scope; no address list shown), `box`, `version`, `protocol`, `token_expires_at` |
 | 200 | `GET /_motel/backups` | `wire.Backups`, which is `backups/status`'s `Result`: what `motel-backup status --json` says as any account on the box looks, the motel user's here (no warnings of the credential file, which only root's look reads), whether the backups are healthy, not, or could not be told (`could_not_tell`: on a box without backups, `backups are not set up: … is not there`; on a server that is not moteld, that it does not read them). One look every 10 s at most, shared by every person: a request in that time is given the answer kept, whose `at` says when it was decided. The box's own claim (docs/backups.md, "Look from your own machine") |
@@ -573,6 +580,20 @@ provisioning cycle. Where each way of loading a config stands:
 | a signed push | refused at the handler's validate (it runs `moteld validate`): the push's run is red, nothing installed |
 | `moteld run` (a start, a boot) | an `ERROR` line, and served all the same, as for the gate's other refusals; the handler fails closed: no list holds a forwarded request |
 | the admin socket, by hand | no gate: loaded, and the handler fails closed as above |
+
+**An app's logs read is recorded.** Each read of an app's logs that
+sends lines writes one Info line, `access: person read logs`, with the
+person, the app, the count, the cursors of the first and the last line
+sent, `gap` when true and the keys the filter replaced: the operator
+can read on the box exactly what was sent (docs/people.md, "Reading an
+app's logs"). A read that sends nothing (a follow with nothing new,
+`kept` `off`) writes none. A person `Decide` refuses an app's logs is a
+Warn line, `access: person refused logs`, with the address and what was
+needed, at most once a minute for a person and an app; a logs grant
+with a `from` list asked from outside it is told only there (row 80).
+Four logs reads run at once in the process, each journalctl bounded by
+5 s and killed once the read has what it sends, each entry by 256 KiB,
+and an answer by its count and 64 KiB of text (liveswap/logs.go).
 
 **A box with people and no monitor channel** is allowed, with a warning
 from `moteld validate` and in the journal at each load: a key used from
@@ -765,6 +786,22 @@ access's examples:
 | 78 | the views | an existing viewer losing a read, or a logs reader of the box refused a box read, through a reader of the old `Box` and `Apps` fields left behind | 3 | 5 | 1 | fix: size 1, risk 1 | the fields removed, so the compiler named every reader (two: `decidePerson`'s box reads, now `CoversBox`, and whoami); `TestTwoAppsTwoPeople` and box's `TestTwoAppsTwoPeopleOnTheBoxWebhook` with every existing caller's status unchanged |
 | 79 | `CheckLines` | a "covers it" warning that is untrue: given whatever the covering grant's `from` list, so `viewer box from <office>` beside `viewer app blog` was told the app grant adds nothing, and an operator who removed it lost blog from outside the office; with `logs` three more pairs | 3 | 5 | 3 | fix: size 1, risk 1 | each warning only when the covering grant has no list (`TestCheckLines`: every pair, listed and not; `TestLinesBothReaders`) |
 | 80 | the announcements | a valid signature from outside a logs grant's list, beside a viewer grant with none, told only as a new network, never as `person_outside_list`, and its refused logs read told to no channel | 2 | 5 | 5 | fix by naming: size 1, risk 2 (the owner's decision of 2026-11-20: as it is, said in the docs) | docs/people.md ("When their key is used from somewhere new") and "A listed logs grant beside an unlisted viewer grant" above; `TestLogsListThroughTheGate` holds what is told |
+| 81 | an app's logs | another app's lines in an app's answer | 5 | 5 | 5 | fix | the selection built from the handle's name, an exact match of `SYSLOG_IDENTIFIER=motel-<app>`, beside moteld's uid and the stdout transport (`logsArgs`); `TestTwoAppsTwoPeople` reading each app's logs from a journal of both; `TestIntegrationLogsTwoAppsNeverMix` (apps `x` and `x-2`, a canary) |
+| 82 | an app's logs | an app named `backup` sent the backup roles' stderr about every app, or one named `sandbox-probe` the probe's line: both wrote under `motel-<name>` from the uid every app runs as. Found in the logs read's plan (measured with stand-in units, then with the real unit builder: a data user's unit's line is `SYSLOG_IDENTIFIER=motel-backup`, its command's name, without the property) | 5 | 5 | 5 | fix: size 1, risk 2; **one-way** (two identifiers an operator may grep for) | motel's own units write under `motel_backup` (every unit `backups/unit` makes) and `motel_sandboxprobe`, which no app's name makes (`TestEveryUnitWritesUnderAnIdentifierNoAppHas`, `TestOwnIdentifiersAreNoAppsName`, `TestIntegrationStderrIsStoredUnderTheUnitsIdentifier`); and a second net: the reader passes over an entry whose unit fields, which journald sets, name a unit not the app's (`belongsTo`; measured: an app's lines carry `user@<uid>.service` and the app's unit, or neither; a data user's unit's, `motel_backup_<…>.service` and no user unit), with a moteld Warn line (`TestLogsPassesOverAnotherUnitsEntry`) |
+| 83 | an app's logs | an app forging another app's identifier from inside its sandbox | 5 | 5 | 5 | fix | the view has no journald socket (`/run/systemd/journal` in `sandboxNeverReachable`, `TestSandboxViewHoldsNoJournalSocket`); from inside a real unit `logger`, `logger --journald`, `systemd-cat` and a redirect write nothing anywhere (`TestIntegrationLogsNothingForgedFromTheSandbox`). A process of the uid outside every sandbox is T5's (DESIGN-threat-model.md) |
+| 84 | an app's logs | a forged or partial cursor (a time alone, made-up ids, another app's, one vacuumed away) makes journalctl read from where the client chose | 3 | 5 | 5 | fix | `--cursor=` and the read kept only when its first entry's cursor is the one sent, byte for byte; otherwise a fresh tail with `gap` (`TestLogsFollowHonoursOnlyTheCursorSent`; the other app's cursor in `TestIntegrationLogsTwoAppsNeverMix`). A genuine old cursor is honoured however old (the owner's decision of 2026-11-20) |
+| 85 | an app's logs | an env_file value the app logged JSON-escaped (a quote in it) sent: in a whole body it is escaped again, no form layer 1 knows | 5 | 5 | 5 | fix | each line through the filter on its own, then the body the final pass (`filterLogs`, `lastPass`; `TestLogsLineFilteredBeforeItIsCut`) |
+| 86 | an app's logs | a known value split by the 4 KiB cut, its piece sent | 5 | 5 | 5 | fix | the filter sees the line cut to 4 KiB and its longest form, and what it returns is cut, the split token dropped (`filterLogLine`; the same test, showing the other order sends the piece) |
+| 87 | an app's logs | the cursor masked by the filter (its 32-hex ids), so no follow works; or a time broken by a value that is a date | 3 | 5 | 3 | fix | the cursor out of the body while it is filtered, put back after the final pass, checked against `journalCursor` before it is given out; `at` held by rule 7 (`TestLogsBodyTimesAndCursorPassNoFilter`; `TestHeldTimeKeysAreTheWireTimes` walks `wire.Logs`) |
+| 88 | an app's logs | `deploy_log_lines 0` served anyway | 3 | 5 | 5 | fix | `kept` `off`, nothing read, no journal line (`TestLogsKeptOff`) |
+| 89 | an app's logs | a follow that keeps the newest lines under the 64 KiB cap skips lines its follower never sees (984 of 1,000 of 10 KiB, measured) | 3 | 5 | 5 | fix | a follow keeps the oldest, its cursor the last entry taken (`TestLogsFollowNeverSkipsOrRepeats`, `TestIntegrationLogsFollowNeverSkipsOrRepeats`) |
+| 90 | an app's logs | journal reads starving the box: children of 11 to 13 MB on a unit with no `MemoryMax`, and a tail that read every entry it asked for (1,001 of 30 KB: 98 MB, 339 ms) | 2 | 5 | 3 | fix | four reads at once (a fifth waits 1 s, then the 503), 5 s each, a tail newest first stopped at the cap (12 MB, 9 ms), 256 KiB an entry, the person's rate (`TestLogsFourAtOnce`, `TestLogsTailKeepsTheNewest`) |
+| 91 | an app's logs | a crash loop's lines missing: journald stores a line with no unit when its writer is gone, every line while it is behind | 3 | 5 | 3 | fix | selected by identifier, uid and transport, not by unit; `release` `""` then (`TestIntegrationLogsCrashLoopWhileJournaldIsBehind`: every line, all with no unit, none passed over) |
+| 92 | an app's logs | a line of 4 KiB or more printed `null` by journalctl, sent empty; a `MESSAGE` that is not UTF-8 dropping the line | 3 | 5 | 3 | fix | `--all`; byte arrays read as bytes, each bad run one U+FFFD (`TestLogsEntryDecodes`, `TestIntegrationLogsOddLines`) |
+| 93 | an app's logs | journalctl's output unreadable: an operator's `SYSTEMD_COLORS=1` in moteld's environment wraps its JSON in colour codes (measured) | 2 | 5 | 1 | fix | journalctl with an empty environment (`journalctlCommand`, #616) |
+| 94 | an app's logs | an entry over the bound (journald's `LineMax=` raised), or a cursor a later systemd writes in another form, given out and refused (422) at the next poll | 2 | 5 | 1 | fix: size 1, risk 1 | the read fails, named, a 500 and a moteld line (`TestLogsEntryBound`, `TestLogsReadFailsLoudly`); every real cursor of the lane held to the grammar (`TestIntegrationLogsReadsTheAppsOwnLines`) |
+| 95 | an app's logs | a refused logs read heard by no one: a logs grant's `from` list held, from outside it, told to no channel (row 80) | 2 | 5 | 5 | fix: size 2, risk 1 (the owner's decision of 2026-11-20) | `access: person refused logs`, a Warn line, at most once a minute for a person and an app (`TestLogsRefusedLine`) |
+| 96 | an app's logs | no record of what a person was sent | 3 | 5 | 5 | fix | one Info line per read that sends lines, with its cursor range (`TestLogsJournalLine`) |
 
 ### Accepted residuals
 
