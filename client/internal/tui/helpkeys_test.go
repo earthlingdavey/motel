@@ -18,7 +18,7 @@ import (
 // table, or moved off a screen, fails TestHelpIsTheKeys.
 var helpKeys = map[model.Screen][]string{
 	model.ScreenApps:     {"enter", "d", "/", "s", "j k ↑ ↓", "PgUp PgDn Home End", "↑ ↓", "c", "y", "P", "ctrl-r", ":", "esc", "?", "q"},
-	model.ScreenApp:      {"enter", "g", "j k ↑ ↓", "PgUp PgDn Home End", "↑ ↓", "c", "y", "P", "ctrl-r", ":", "esc", "?", "q"},
+	model.ScreenApp:      {"enter", "d", "g", "j k ↑ ↓", "PgUp PgDn Home End", "↑ ↓", "c", "y", "P", "ctrl-r", ":", "esc", "?", "q"},
 	model.ScreenMetrics:  {"t", "PgUp PgDn Home End", "↑ ↓", "↑ ↓", "c", "y", "P", "ctrl-r", ":", "esc", "?", "q"},
 	model.ScreenRecord:   {"w", "p n", "j k ↑ ↓", "PgUp PgDn Home End", "↑ ↓", "c", "y", "P", "ctrl-r", ":", "esc", "?", "q"},
 	model.ScreenMe:       {"PgUp PgDn Home End", "↑ ↓", "↑ ↓", "c", "y", "P", "ctrl-r", ":", "esc", "?", "q"},

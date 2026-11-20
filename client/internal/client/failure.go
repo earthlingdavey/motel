@@ -32,6 +32,10 @@ const (
 	// ExitCertificate: the box's certificate did not verify. The
 	// client never continues past one.
 	ExitCertificate = 8
+	// ExitDeployFailed: the deploy status --follow followed failed. The
+	// status was read; what it says is a deploy's failure, which a
+	// script waiting on a deploy branches on.
+	ExitDeployFailed = 9
 	// ExitInterrupted: SIGINT.
 	ExitInterrupted = 130
 )

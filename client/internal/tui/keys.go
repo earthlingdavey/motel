@@ -73,6 +73,11 @@ var bindings = []binding{
 	{"enter", "open the app", []model.Screen{model.ScreenApps}, closed, keys(tcell.KeyEnter), pass},
 	{"enter", "open the deploy's record", []model.Screen{model.ScreenApp}, closed, keys(tcell.KeyEnter), pass},
 	{"d", "its newest deploy record if it failed, else the app", []model.Screen{model.ScreenApps}, closed, rune1('d'), done(func(u *UI, _ model.View) { u.openNewest() })},
+	{"d", "the newest deploy's record", []model.Screen{model.ScreenApp}, closed, rune1('d'), done(func(u *UI, v model.View) {
+		if ver, ok := u.S.Newest(v.App); ok {
+			u.open(model.View{Screen: model.ScreenRecord, App: v.App, Version: ver})
+		}
+	})},
 	{"g", "its numbers over time: memory, cpu, requests, 5xx share, p95", []model.Screen{model.ScreenApp}, closed, rune1('g'), done(func(u *UI, v model.View) { u.openMetrics(v.App) })},
 	{"t", "another window: 1h, 24h, 7d, 14d", []model.Screen{model.ScreenMetrics}, closed, rune1('t'), done(func(u *UI, _ model.View) { u.nextRange() })},
 	{"/", "filter by name; /! keeps only marked rows", []model.Screen{model.ScreenApps}, closed, rune1('/'), done(func(u *UI, _ model.View) { u.ask('/') })},
