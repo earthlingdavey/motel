@@ -72,6 +72,20 @@ type amHeldSilence struct {
 	Comment   string    `json:"comment"`
 }
 
+// ofPersonAlert reports whether the silence holds one of personAlerts by
+// name: an equality matcher on alertname, as `moteld monitor silence add
+// --alert` makes it.
+func (s amHeldSilence) ofPersonAlert() bool {
+	return slices.ContainsFunc(s.Matchers, func(m struct {
+		Name    string `json:"name"`
+		Value   string `json:"value"`
+		IsRegex bool   `json:"isRegex"`
+		IsEqual *bool  `json:"isEqual"`
+	}) bool {
+		return m.Name == "alertname" && !m.IsRegex && (m.IsEqual == nil || *m.IsEqual) && slices.Contains(personAlerts, m.Value)
+	})
+}
+
 // wireSilence is s as the reads carry it, its times in UTC and each
 // matcher's operator spelled from Alertmanager's two flags.
 func (s amHeldSilence) wireSilence() wire.Silence {
@@ -88,6 +102,10 @@ func (s amHeldSilence) wireSilence() wire.Silence {
 // heldAlerts is every alert Alertmanager holds, as the people's reads
 // take them: the heartbeat, the test alert and the deploy mute left out
 // (notSilenceable: they say nothing of an app or of the box's health),
+// and the two about a person's key (personAlerts: they name people's
+// networks and addresses, and would tell a thief who holds a box
+// viewer's key that it was seen; a silence of either is left out of the
+// list too, for the same reasons: its comment, its key and its end),
 // and each alert's silences read for when the last of them ends; and
 // every silence that has not expired, which the box-wide read lists, so
 // the silence list is asked for on every fetch, whatever the alerts.
@@ -100,7 +118,9 @@ func (c *amClient) heldAlerts(ctx context.Context) (liveswap.HeldAlerts, error) 
 	if err := json.Unmarshal(data, &held); err != nil {
 		return liveswap.HeldAlerts{}, fmt.Errorf("alertmanager at %s: GET /api/v2/alerts: %w", c.socket, err)
 	}
-	held = slices.DeleteFunc(held, func(a amHeld) bool { return slices.Contains(notSilenceable, a.Labels["alertname"]) })
+	held = slices.DeleteFunc(held, func(a amHeld) bool {
+		return slices.Contains(notSilenceable, a.Labels["alertname"]) || slices.Contains(personAlerts, a.Labels["alertname"])
+	})
 	data, err = c.do(ctx, http.MethodGet, "/api/v2/silences", nil)
 	if err != nil {
 		return liveswap.HeldAlerts{}, err
@@ -113,7 +133,7 @@ func (c *amClient) heldAlerts(ctx context.Context) (liveswap.HeldAlerts, error) 
 	kept := make([]wire.Silence, 0, len(silences))
 	for _, s := range silences {
 		ends[s.ID] = s.EndsAt
-		if s.Status.State != "expired" {
+		if s.Status.State != "expired" && !s.ofPersonAlert() {
 			kept = append(kept, s.wireSilence())
 		}
 	}

@@ -31,11 +31,14 @@ import (
 // PersonGate is what a webhook admits a person through: the registry
 // of this load (nil admits no one), the shared failure budgets, the
 // rate per person (access.SharedRate; nil, in a test, takes every
-// request), the webhook's journal, and the clock (nil is time.Now).
+// request), the record of the networks each key was used from
+// (SharedPeopleNetworks; nil, in a test, keeps none and tells nothing),
+// the webhook's journal, and the clock (nil is time.Now).
 type PersonGate struct {
 	Registry *access.Registry
 	Limiter  *deploytrust.Limiter
 	Rate     *access.Rate
+	Networks *PeopleNetworks
 	Logger   *zap.Logger
 	Now      func() time.Time
 }
@@ -87,6 +90,9 @@ func AdmitPerson(w http.ResponseWriter, r *http.Request, g PersonGate, scopeKey,
 	addr, why := clientAddr(r)
 	views, granted := g.Registry.Views(name, addr)
 	if granted && views.Empty() {
+		// Told to the operator's channels too, at most once an hour per
+		// key: the signature verified, so the key is in someone's hands.
+		g.Networks.outsideList(g.Registry, v.Fingerprint, name, addr, g.Logger)
 		shown := why
 		if addr.IsValid() {
 			shown = addr.String()
@@ -95,6 +101,10 @@ func AdmitPerson(w http.ResponseWriter, r *http.Request, g PersonGate, scopeKey,
 			zap.String("key", v.Fingerprint), zap.String("person", name), zap.String("address", shown), zap.String("peer", r.RemoteAddr)).Write(write)
 	}
 	g.Limiter.Admit(r)
+	// A network this key was never accepted from is told, reads
+	// included: a thief reads first. Before the rate, so a throttled
+	// request counts as a use. It never refuses or waits.
+	g.Networks.seen(g.Registry, v.Fingerprint, name, addr, g.Logger)
 	// The rate, after the address and before Decide: a person's own
 	// budget of accepted requests, told when to come back.
 	if g.Rate != nil {

@@ -1141,7 +1141,12 @@ scope for the runtime model, in scope for release signing (roadmap).
   shipped mechanism"). It holds the people's public keys and grants and
   could answer any person's request with anything, as it answers any
   deploy's; it holds no private key and so can mint no person's token
-  for another box.
+  for another box. It can rewrite the record of the networks each person's
+  key was used from (`/var/lib/motel/people-networks.json`, motel's
+  own) to hold any network, which silences `person_new_network` for it
+  on this box only (deleting it has every key told again):
+  nothing it could not already do, since it answers every request and
+  could post or drop any alert.
 - **T6 — Compromised identity of the box's config repository.** Three
   distinct holders, in descending likelihood: a credential that can
   push to the repository (a leaked PAT, a stolen session, an OAuth or
@@ -1175,8 +1180,15 @@ scope for the runtime model, in scope for release signing (roadmap).
   person may act in this release; a person's token is good on a `GET`
   alone), cannot reach the box webhook's `GET /` without a box grant.
   Its use from outside a `from` list is refused with the flat 401 and
-  a journal line; from elsewhere with no list on the grant it is not
-  noticed. A hardware-held key cannot be used without a touch.
+  a journal line, and told to the operator's channels at most once an
+  hour (`person_outside_list`); its first use from a network the key
+  was never accepted from (a /24 or a /48) is told too
+  (`person_new_network`), reads included. Neither holds the read back:
+  the thief reads until the key's line is removed. Behind a proxy
+  trusted without `trusted_proxies_strict` every forwarded request is
+  one network, so only its first use through the proxy is told
+  (`moteld validate` warns of such a server). A hardware-held key cannot
+  be used without a touch.
 - **T8 — A person's key, stolen, with a role on the box.** As T7, for
   every app and the box's status: the commit, the host, the
   Caddyfile's digest, the box's key for secrets. This is the operator's

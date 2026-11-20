@@ -973,7 +973,12 @@ func (a *App) probeSandboxOver(conn systemdConn) error {
 // the old config is stopped after the new one starts, and the whole
 // point of the pool is that apps keep serving across reloads. Real
 // shutdown reaches the apps via Cleanup → pool release → Destruct.
-func (a *App) Stop() error { return nil }
+// It writes what the record of people's networks has pending
+// (FlushPeopleNetworks), so a restart tells no network again.
+func (a *App) Stop() error {
+	FlushPeopleNetworks()
+	return nil
+}
 
 // Cleanup releases this config's pool references. When the last
 // reference goes (shutdown, or an app removed from the config), the

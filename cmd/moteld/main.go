@@ -69,6 +69,10 @@ func main() {
 	// GET /_motel/backups reads the backups through this binary, which
 	// links both modules (backups.go).
 	liveswap.SetBackupsSource(backupsLook{})
+	// The networks people's keys were used from, kept across a restart
+	// (liveswap/people_networks.go): read and written only by a process
+	// that admits a person, so validate and reload never touch it.
+	liveswap.KeepPeopleNetworksIn(liveswap.PeopleNetworksFile)
 	// The binary's name in every usage line Caddy's CLI prints
 	// (`moteld monitor setup [--metrics]`, not `caddy monitor …`), and
 	// moteld's own description at the root's help in place of Caddy's,

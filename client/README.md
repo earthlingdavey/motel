@@ -121,7 +121,8 @@ names, its instance and its summary), each capped; then each silence
 that is active or waits to start: its state and times, its matchers
 (each label's name, `=`, `!=`, `=~` or `!~`, the value quoted), who
 made it, its comment and its id. An expired silence is not listed, nor
-the heartbeat, the test alert or the deploy mute itself. Silences are
+the heartbeat, the test alert or the deploy mute itself, nor the two
+alerts about a person's key, which go to the operator's channels alone. Silences are
 added and expired as root on the box (`moteld monitor silence`,
 docs/monitor.md). It exits 0 when the box answered, whatever fires or
 is silenced; on a box whose monitor block sends nothing to anyone, or

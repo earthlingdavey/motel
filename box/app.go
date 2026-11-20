@@ -316,8 +316,17 @@ func (a *App) lines(signers proof.Signers) (access.Lines, error) {
 // Start is a no-op: the app is configuration box_webhook reads.
 func (*App) Start() error { return nil }
 
-// Stop is a no-op.
-func (*App) Stop() error { return nil }
+// Stop writes what the record of people's networks has pending, as
+// liveswap's Stop does: a config with a box block and no liveswap block
+// admits people on box_webhook alone, and has no other stop to do it.
+func (*App) Stop() error {
+	flushPeopleNetworks()
+	return nil
+}
+
+// flushPeopleNetworks is liveswap.FlushPeopleNetworks, a variable so a
+// test can see Stop call it.
+var flushPeopleNetworks = liveswap.FlushPeopleNetworks
 
 var (
 	_ caddy.App         = (*App)(nil)

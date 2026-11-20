@@ -78,6 +78,9 @@ type Handler struct {
 	// rate is the rate per person, access.SharedRate; nil in a test
 	// that does not ask for one.
 	rate *access.Rate
+	// networks is the record of the networks people's keys were used
+	// from, SharedPeopleNetworks; nil in a test that does not ask for one.
+	networks *PeopleNetworks
 	// stage is a test seam for stageUpload; nil is stageUpload. A full
 	// disk cannot be made in a test that runs as root.
 	stage func(body io.Reader, tmpDir string, maxBytes int64) (string, string, error)
@@ -110,6 +113,7 @@ func (h *Handler) Provision(ctx caddy.Context) error {
 	}
 	h.limiter = deploytrust.Shared()
 	h.rate = access.SharedRate()
+	h.networks = SharedPeopleNetworks()
 	// The box app builds the registry; this package reaches it through
 	// an interface of its own, so it imports nothing of box. With no box
 	// block there is none, and no person is admitted.
@@ -363,7 +367,7 @@ func (h *Handler) servePerson(w http.ResponseWriter, r *http.Request, name strin
 
 // gate is what a person is admitted through on this handler.
 func (h *Handler) gate() PersonGate {
-	return PersonGate{Registry: h.people, Limiter: h.limiter, Rate: h.rate, Logger: h.logger}
+	return PersonGate{Registry: h.people, Limiter: h.limiter, Rate: h.rate, Networks: h.networks, Logger: h.logger}
 }
 
 // Protocol is the number of the forms of person token this box takes:
