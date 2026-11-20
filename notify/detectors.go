@@ -63,6 +63,29 @@ func (s lifecycleSink) Lifecycle(ev liveswap.LifecycleEvent) {
 	}
 }
 
+// sourceAccess is the source of the two events about a person's key.
+const sourceAccess = "access"
+
+// peopleSink is liveswap's Announcer: a person's key used from a
+// network it was never accepted from, or a valid signature from outside
+// every address list on their grants (liveswap/people_networks.go), as
+// a one-shot box event at warning to the operator's channels. Its key
+// is the key's fingerprint (access/box/<name>/<fingerprint>), so the
+// limit per key bounds a thief who cycles networks: four at once, then
+// one a quarter-hour, each refused one a journal line.
+type peopleSink struct{ e *engine }
+
+func (s peopleSink) Announce(a liveswap.Announcement) {
+	oneShot := func(name string) {
+		s.e.report(Event{Name: name, Kind: kindEvent, Severity: SeverityWarning, Source: sourceAccess,
+			Instance: a.Key, Summary: a.Summary(), Safe: []string{a.Key, a.Person}})
+	}
+	switch a.Name {
+	case liveswap.EventPersonNewNetwork, liveswap.EventPersonOutsideList:
+		oneShot(a.Name)
+	}
+}
+
 // tlsHandler is subscribed by name to CertMagic's cert_failed and
 // cert_obtained, which Caddy's tls app emits through the events app.
 type tlsHandler struct{ e *engine }
@@ -364,5 +387,6 @@ func diskLevel(prev string, used float64) string {
 }
 
 var (
-	_ liveswap.Notifier = lifecycleSink{}
+	_ liveswap.Notifier  = lifecycleSink{}
+	_ liveswap.Announcer = peopleSink{}
 )

@@ -117,7 +117,7 @@ func TestRulesListingWithoutMetrics(t *testing.T) {
 			t.Errorf("%s: %+v", e.Name, e)
 		}
 	}
-	want := "backup_run_failed backup_stale backup_unreadable cert_failed ChannelFailed deploy_failed deploy_refused deploy_succeeded disk_low drill_failed relaunch_refused rollback watchdog_throttled"
+	want := "backup_run_failed backup_stale backup_unreadable cert_failed ChannelFailed deploy_failed deploy_refused deploy_succeeded disk_low drill_failed person_new_network person_outside_list relaunch_refused rollback watchdog_throttled"
 	slices.SortFunc(names, func(x, y string) int { return strings.Compare(strings.ToLower(x), strings.ToLower(y)) })
 	if got := strings.Join(names, " "); got != want {
 		t.Fatalf("names:\n got %s\nwant %s", got, want)
@@ -475,6 +475,8 @@ metrics_rules_down       motel check  threshold  warning   box        >= 3 reads
 metrics_store_disk_fill  builtin      guarded    warning   box        < 0 bytes for 30m, 2 guards                                          53687100000 bytes
 metrics_store_down       motel check  threshold  warning   box        >= 5m                                                                nothing read
 metrics_store_read_only  motel check  event      critical  box        -                                                                    -
+person_new_network       motel check  event      warning   box        -                                                                    -
+person_outside_list      motel check  event      warning   box        -                                                                    -
 post_deploy_regressed    operator     event      warning   every app  -                                                                    -
 relaunch_refused         motel check  event      critical  every app  -                                                                    -
 rollback                 motel check  event      warning   every app  -                                                                    -
@@ -493,7 +495,7 @@ a resolved alert shows within the lookback).
 		t.Fatal(err)
 	}
 	var l RulesListing
-	if err := json.Unmarshal([]byte(out), &l); err != nil || len(l.Alerts) != 28 || l.Store == nil || l.Store.Values != wire.StoreOn {
+	if err := json.Unmarshal([]byte(out), &l); err != nil || len(l.Alerts) != 30 || l.Store == nil || l.Store.Values != wire.StoreOn {
 		t.Fatalf("--json: %v %s", err, out)
 	}
 	// A store that does not answer: the store rules say so, the checks

@@ -9,7 +9,9 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -21,6 +23,7 @@ import (
 	"go.uber.org/zap/zapcore"
 	"go.uber.org/zap/zaptest/observer"
 
+	"github.com/smallhoursorg/motel/liveswap"
 	"github.com/smallhoursorg/motel/liveswap/access"
 	"github.com/smallhoursorg/motel/liveswap/access/accesstest"
 	"github.com/smallhoursorg/motel/liveswap/deploytrust/trusttest"
@@ -712,6 +715,51 @@ func TestRemovedPersonRefusedAfterReload(t *testing.T) {
 	if w := b.get("/_motel/whoami", carol.Token(peopleIdentity, now, time.Minute)); w.Code != http.StatusOK {
 		t.Errorf("carol after the reload: %d %s", w.Code, w.Body)
 	}
+}
+
+// TestBothWebhooksTellANewNetwork: through a provisioned server, the
+// box webhook's GET / and liveswap's rows count a person's use alike, in
+// the process's one record: a key's first use is told as such, the same
+// network on the other webhook is not told again, another network is.
+func TestBothWebhooksTellANewNetwork(t *testing.T) {
+	b := newPeopleBox(t)
+	b.install()
+	b.load()
+	heard := &announcements{}
+	liveswap.SetAnnouncer(heard)
+	t.Cleanup(func() { liveswap.SetAnnouncer(nil) })
+	carol := b.people["carol@example.test"]
+	now := time.Now()
+	for _, c := range []struct{ target, remote string }{
+		{"/", "203.0.113.9:1"},
+		{"/_motel/whoami", "203.0.113.10:1"},
+		{"/_motel/whoami", "[2001:db8:5::1]:1"},
+		{"/", "[2001:db8:5:1::1]:1"},
+	} {
+		// GET / is answered 409 here (no baseline), once admitted.
+		if w := b.getFrom(c.target, carol.Token(peopleIdentity, now, time.Minute), c.remote, ""); w.Code != http.StatusOK && w.Code != http.StatusConflict {
+			t.Fatalf("GET %s from %s: %d %s", c.target, c.remote, w.Code, w.Body)
+		}
+	}
+	fp := carol.Fingerprint()
+	want := []liveswap.Announcement{
+		{Name: liveswap.EventPersonNewNetwork, Person: "carol@example.test", Key: fp, From: "203.0.113.0/24", First: true},
+		{Name: liveswap.EventPersonNewNetwork, Person: "carol@example.test", Key: fp, From: "2001:db8:5::/48"},
+	}
+	if !slices.Equal(heard.got, want) {
+		t.Errorf("told %+v\nwant %+v", heard.got, want)
+	}
+}
+
+type announcements struct {
+	mu  sync.Mutex
+	got []liveswap.Announcement
+}
+
+func (a *announcements) Announce(x liveswap.Announcement) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.got = append(a.got, x)
 }
 
 // TestFromBehindATrustedProxy drives a request with a forged

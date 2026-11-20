@@ -3,6 +3,7 @@ package access
 import (
 	"net/netip"
 	"slices"
+	"sync/atomic"
 
 	"golang.org/x/crypto/ssh"
 )
@@ -15,10 +16,13 @@ import (
 // from the running configuration, and both webhooks read it. A nil
 // Registry admits no one.
 type Registry struct {
-	identity string
-	keys     map[string]listedKey
-	types    map[string]bool
-	grants   map[string][]Grant
+	// generation orders registries by when they were built: a later
+	// load's is greater (Generation).
+	generation uint64
+	identity   string
+	keys       map[string]listedKey
+	types      map[string]bool
+	grants     map[string][]Grant
 }
 
 // listedKey is one key a token may be signed with, parsed once.
@@ -43,7 +47,7 @@ type Source interface {
 // a grant line declare no one (Lines.Declared), so a block of signers
 // alone lists no key.
 func NewRegistry(identity string, l Lines) *Registry {
-	r := &Registry{identity: identity, keys: map[string]listedKey{}, types: map[string]bool{}, grants: map[string][]Grant{}}
+	r := &Registry{generation: built.Add(1), identity: identity, keys: map[string]listedKey{}, types: map[string]bool{}, grants: map[string][]Grant{}}
 	if !l.Declared() {
 		return r
 	}
@@ -68,6 +72,20 @@ func NewRegistry(identity string, l Lines) *Registry {
 		}
 	}
 	return r
+}
+
+// built counts the registries the process has built.
+var built atomic.Uint64
+
+// Generation is greater for a registry built later, 0 for a nil one: a
+// reload's handlers and the old config's may serve side by side for a
+// moment, and what keeps state by the newest load's keys (liveswap's
+// record of the networks each key was used from) moves forward only.
+func (r *Registry) Generation() uint64 {
+	if r == nil {
+		return 0
+	}
+	return r.generation
 }
 
 // Identity is the box's identity, "" for a nil Registry, which no

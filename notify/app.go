@@ -195,6 +195,10 @@ func (a *App) provisionNotify(ctx caddy.Context, ls *liveswap.App) error {
 		ls.SetRulesSource(rulesSource{a: a})
 		a.diskPaths = append([]string{ls.Root}, a.diskPaths...)
 	}
+	// A person's key used from a new network, or from outside every
+	// address list: liveswap's record is the process's, across loads,
+	// and so is the engine that takes its announcements.
+	liveswap.SetAnnouncer(peopleSink{e: theEngine})
 	evApp, err := ctx.App("events")
 	if err != nil {
 		return fmt.Errorf("monitor: the events app: %w", err)

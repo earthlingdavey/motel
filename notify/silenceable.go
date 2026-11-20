@@ -22,7 +22,8 @@ type motelAlert struct {
 // The alerts motel's detectors raise, by where they come from.
 // lifecycle are liveswap's, about one app (detectors.go, lifecycleSink:
 // a recovery resolves its firing's name); box the tls, backup and disk
-// pollers' and channel_failed's; store the metrics store's chain
+// pollers', channel_failed's and the two about a person's key
+// (peopleSink); store the metrics store's chain
 // (metricspush.go), which a block raises only with a metrics line.
 // postDeploy is the operator's post_deploy rules' event (postdeploy.go).
 var (
@@ -36,6 +37,7 @@ var (
 		{"backup_unreadable", SeverityWarning, false}, {"backup_stale", SeverityCritical, true},
 		{"backup_run_failed", SeverityWarning, false}, {"drill_failed", SeverityCritical, false},
 		{alertChannelFailed, SeverityWarning, false},
+		{liveswap.EventPersonNewNetwork, SeverityWarning, false}, {liveswap.EventPersonOutsideList, SeverityWarning, false},
 	}
 	storeRaised = []motelAlert{
 		{eventStoreDown, SeverityWarning, true}, {eventRulesDown, SeverityWarning, true}, {eventStoreReadOnly, SeverityCritical, false},

@@ -598,6 +598,24 @@ restarts() {
 restarts https
 restarts plain
 
+echo "=== people 7b: a key's first use is told once, across restarts ==="
+# Every client here is on 127.0.0.1, one network. Each key's first use
+# was told in the journal, as its first; ten restarts later (people 7)
+# it has not been told again, since the record of each key's networks
+# is kept in a file moteld writes, motel's own and 0600. otto, removed
+# by the push of people 6, is no longer in it.
+NETS=/var/lib/motel/people-networks.json
+newnet() { journalctl -u moteld --since "@$since" --no-pager -o cat | grep -F '"access: a key used from a new network"' | grep -F "\"key\":\"$(fp "$1")\""; }
+for who in vera lena; do
+	lines=$(newnet "$who")
+	[ "$(printf '%s\n' "$lines" | grep -c .)" = 1 ] && printf '%s' "$lines" | grep -qF '"network":"127.0.0.0/24"' && printf '%s' "$lines" | grep -qF '"first_use":true' \
+		&& pass "$who: the first use was told once, as the first, from 127.0.0.0/24, through ten restarts" \
+		|| fail "$who: the journal's new-network lines: $(printf '%s' "$lines" | head -c 600)"
+done
+[ "$(stat -c '%a %U' "$NETS" 2>&1)" = "600 motel" ] && pass "$NETS is motel's own, 0600" || fail "$NETS: $(stat -c '%a %U' "$NETS" 2>&1)"
+grep -qF "\"$(fp vera)\":[\"127.0.0.0/24\"]" "$NETS" && pass "the file holds vera's key and its one network" || fail "the file: $(head -c 600 "$NETS")"
+! grep -qF "$(fp otto)" "$NETS" && pass "otto, whose lines a push removed, is not in the file" || fail "otto is still in the file: $(head -c 600 "$NETS")"
+
 echo "=== people 8: put the e2e config back ==="
 restore && pass "restored the original config" || fail "could not load the original config"
 

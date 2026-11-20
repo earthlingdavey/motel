@@ -31,7 +31,8 @@ person can deploy, roll back or push, whatever the lines say.
 | The token checker | `CheckToken`: checks 1 to 13 below; writes nothing, journals nothing, knows no person | `token.go` |
 | `Decide` | the cells of who may take which action, narrowed for a person by their grants | `access.go` |
 | The rate | a token bucket per person name, for the process | `rate.go` |
-| The way in | `AdmitPerson`: the checker with the registry as its lookup, the address list, the failure budgets, the rate | `liveswap/people.go`, called by both webhooks |
+| The way in | `AdmitPerson`: the checker with the registry as its lookup, the address list, the failure budgets, the record of networks, the rate | `liveswap/people.go`, called by both webhooks |
+| The record of networks | the networks each key was used from, kept in `/var/lib/motel/people-networks.json`, and the two announcements, through `Announcer`, which notify installs | `liveswap/people_networks.go` ("A key used from somewhere new") |
 | The routes | liveswap's route table and its rows under `/_motel/`; box's table on `/` | `liveswap/handler.go`, `liveswap/motel_routes.go`, `box/handler.go` |
 
 `access` is a leaf package in the liveswap module: it imports nothing
@@ -193,12 +194,17 @@ through `AdmitPerson`, in this order:
    list: Caddy then takes the left-most address in `X-Forwarded-For`,
    which the client writes. A person who holds grants
    and has none left from here gets the flat 401, and the journal names
-   the key, the person, the address and the peer. A person with no
-   grant at all goes on: they may ask who they are.
+   the key, the person, the address and the peer; the operator's
+   channels are told, at most once an hour per key
+   (`person_outside_list`, "A key used from somewhere new"). A person
+   with no grant at all goes on: they may ask who they are.
 3. The address's failures are forgotten, as for an accepted deploy
    token.
-4. **The rate**: 429 past the person's budget.
-5. `Decide`, then the route's function.
+4. **The network**: the request's network is recorded as one this key
+   was used from, and told to the operator's channels when it is new
+   (`person_new_network`). It never refuses or waits.
+5. **The rate**: 429 past the person's budget.
+6. `Decide`, then the route's function.
 
 Any other request takes the path it always took, untouched.
 
@@ -499,9 +505,74 @@ provisioning cycle. Where each way of loading a config stands:
 | the admin socket, by hand | no gate: loaded, and the handler fails closed as above |
 
 **A box with people and no monitor channel** is allowed, with a warning
-from `moteld validate` and in the journal at each load: in this release
-nothing a person does is announced anyway; the announcements of later
-steps would reach no one.
+from `moteld validate` and in the journal at each load: a key used from
+a new network, or from outside every address list, is then a journal
+line only ("A key used from somewhere new").
+
+## A key used from somewhere new
+
+Two one-shot events tell the operator's channels that a person's key is
+in someone's hands where it was not before, the sign of a key stolen
+(T7, T8 in DESIGN-threat-model.md). They announce and never gate: a
+read goes on as before, whatever the record says or fails at (the
+owner's decision; no waiting period, no 403 of its own).
+
+| | |
+|---|---|
+| A network | the request's address as the address lists read it (`clientAddr`: Caddy's `client_ip`, IPv4 written as IPv6 taken as IPv4, no zone), cut to a /24 for IPv4 or a /48 for IPv6. An address the box could not read (a request a proxy in `trusted_proxies` forwarded, on a server without `trusted_proxies_strict`, or one that does not parse) is one network of its own, told as "an address the box could not read" |
+| New | the key was never accepted from that network, as far as the record goes. A key's first use the box knows of is a new network, told as its first |
+| Counted | only a request whose token verified (checks 1 to 13) and that the address list let through: after `Limiter.Admit` and before the rate, so a throttled request counts as a use. Reads count: a thief reads first. Nothing a stranger sends reaches the record (`TestOnlyAVerifiedTokenCounts`; `FuzzNoRouteNoAnswer` holds every input to it) |
+| `person_new_network` | a one-shot box event at `warning`: `alice@example.com (key SHA256:…) used this box from 203.0.113.0/24 for the first time`; a key's first use `… used this box for the first time, from 203.0.113.0/24` |
+| `person_outside_list` | a one-shot box event at `warning`, for a valid signature from outside every address list on the person's grants (the flat 401): `a valid signature by alice@example.com (key SHA256:…) from 203.0.113.9, outside every address list on their grants; refused`. At most once per key an hour, kept in memory alone |
+| How | `liveswap.Announcer`, installed by notify's Provision (`SetAnnouncer`) for the process, as the record is the process's. notify's `peopleSink` raises each as an event of source `access`, its instance the key's fingerprint (`access/box/person_new_network/<fingerprint>`), so notify's limit per key (four at once, then one a quarter-hour) bounds a thief who cycles networks; each held back is a `monitor: event` line with `suppressed`. The fingerprint and the name are safe strings to the summary's filter: it masks a fingerprint, which looks generated, otherwise |
+| The journal | every announcement is also a line of its own, whatever notify does: `access: a key used from a new network` (`person`, `key`, `network`, `first_use`, `summary`), `access: a valid signature from outside every address list (told at most once an hour per key)` (`person`, `key`, `address`, `summary`). On a box with no monitor block, or no channel, that line is all there is |
+| The record | per key fingerprint, its last 16 networks, the most recently used first; a seventeenth drops the one used longest ago. No time is kept: the order is the record. Keys the newest registry does not list are dropped (a registry's `Generation` orders the loads, so a reload's old handlers drop nothing); a person removed is forgotten, and told as a first use if added back |
+| The file | `/var/lib/motel/people-networks.json`, motel's own, 0600, written by rename (`writeOwnFile`). `{"version":1,"keys":{"SHA256:…":["203.0.113.0/24","2001:db8:5::/48","unknown"]}}`. A new network or a key dropped is written at once, in the background, one write at a time; a change of order alone at most once a minute. Named by moteld's main (`KeepPeopleNetworksIn`), so a test's handlers keep the record in memory alone |
+
+**Nothing a person waits for touches the disk.** The file is read in
+the background at the first person's request a process admits. Until it
+has been read, or for 5 s if the read does not come back, uses are
+recorded and their announcements held (up to 64 networks a key, not
+16, so a burst after a start loses none), then told for each network
+the file did not hold. A write runs on its timer's goroutine, outside
+the lock a request takes. Each fault ends right, or said:
+
+| Fault | What happens |
+|---|---|
+| no file (the first start with people, the first after the upgrade) | `access: no record yet …` at information; each key's next use is told, as its first |
+| a file that does not parse (one a power loss emptied: there is no fsync), of a newer version, of none, a link at the name, larger than 1 MiB, or that cannot be read | one warning naming the file and why; moteld starts afresh and writes over it; each key's next use is told again as its first |
+| a read that does not come back within 5 s | the same warning (`it was not read within 5s`); the held uses are told; the read that comes back later is dropped |
+| a write that fails (a full disk, `EIO` at the rename) | one warning until a write succeeds again, then an information line; the record stays right in memory and is tried again each minute, no sooner for a new network; a restart before it is written tells again the networks used since |
+| a crash or a restart | a change of order alone in the last minute is lost (the next use moves it again); a new network is on disk within the write's own time, so at most one announcement in that moment is made again |
+| two requests at once, on either webhook | one lock; each network told once (`TestNetworksConcurrent`, under `-race`) |
+| the clock stepping | nothing on disk holds a time; the hour of `person_outside_list` is on the monotonic clock |
+
+**The cost on every admitted request**, measured (go1.27.3, arm64,
+one core, `BenchmarkPersonGate`, `BenchmarkNetworksSeen`): for a network
+the key was used from, 18 ns and no allocation, against 51 µs for
+`AdmitPerson` as a whole (the token's signature check is most of it)
+and about 0.8 ms for a status read; a request from a new network adds
+about 1.3 µs here, and about 34 µs more in notify's engine, whose
+filter runs over the summary (a scratch benchmark of `peopleSink`, not
+kept).
+
+**Behind proxies** trusted without `trusted_proxies_strict`, every
+request such a proxy forwards is the one network the box could not
+read: after a key's first use through it, its use through the proxy
+from anywhere is not told. `moteld validate` says so for each such
+server when people are declared (`ForwardedNetworksWarning`), and the
+announcement itself names an address the box could not read. A proxy
+the box is not told of (no `trusted_proxies` at all) is one network
+too, the proxy's, which motel cannot see.
+
+**What is kept, where, for how long.** The file holds, per key
+fingerprint, up to 16 networks: never a time, never an address whole.
+It stays until the key's lines are removed and a person's next request
+comes under that load, and survives `apt purge`, which keeps
+`/var/lib/motel`. The journal and the operator's channels hold, per
+announcement, the person's name, the key's fingerprint, and the network
+or the whole address; they keep them as long as the journal and the
+channels keep anything.
 
 ## Upgrade
 
@@ -519,8 +590,8 @@ access's examples:
 |---|---|
 | **Severity 5** | a person reads an app they hold no grant on; a person's token acts, deploys or pushes; a token for one box accepted at another; a stranger's request answered as a person's; a key no line lists accepted |
 | **Severity 4** | every person locked out until the console, with no line saying why |
-| **Severity 3** | a refusal that tells a stranger something (a key is listed, a name is an app); a grant that grants more or less than `describe` prints; a person told the wrong role in a 403 |
-| **Severity 2** | a 401 for a valid token, retried and named; a 429 to a person inside their budget |
+| **Severity 3** | a refusal that tells a stranger something (a key is listed, a name is an app); a grant that grants more or less than `describe` prints; a person told the wrong role in a 403; an announcement that does not come |
+| **Severity 2** | a 401 for a valid token, retried and named; a 429 to a person inside their budget; a duplicate announcement |
 | **Severity 1** | a journal line's wording |
 
 ### The changes of this release, scored
@@ -565,6 +636,23 @@ access's examples:
 | 36 | the rules reads | an env_file value shaped like a date, a number or a word of the body (`API_VERSION=2026-11-13`, `RATIO=0.0612346`, `STATE=inactive`) replaced inside it, so no client reads the answer (row 33's failure) | 3 | 5 | 3 | fix | the body holds no byte of an app's, so it passes a filter with no app's values (`respondRules`); `TestRulesPassNoAppValue` |
 | 37 | the rules reads | the store loaded by evaluation at the rate, or a read held on a store that does not answer | 2 | 5 | 3 | fix | one evaluation per 30 s for the process, shared by the admin route and every person, four queries at once, within 2 s a reader going away does not cut; a failure kept as long; `TestRulesViewShared`, `TestRulesViewBudget`, `TestEvaluateFailsWhole` |
 | 38 | the rules reads | a query taken loosely, or a path trick reaching the row | 3 | 5 | 3 | fix | the rows of #581's alerts: any query on the app row is the 422, on the box row the 404; `TestRulesRoute`, `TestAppRulesRoute`, `FuzzNoRouteNoAnswer` |
+| 39 | the announcements | a request without a valid token records a network or is told: a stranger fills a key's 16 networks, or has the operator's channel name a person | 3 | 5 | 5 | fix: size 1, risk 1 | the record is reached after the token's checks and the address list alone; `TestOnlyAVerifiedTokenCounts` (every kind of refusal, from many addresses, and a person's `POST`), `FuzzNoRouteNoAnswer` (only a person's `GET` is counted, whatever the method, path and query) |
+| 40 | the announcements | the bookkeeping holds or refuses a person's read: a read of the file under the lock a request takes, and a disk that hangs holds every person | 4 | 3 | 5 | fix: size 3, risk 2; **Wide** (every admitted request) | no I/O on a request's path: the file read in the background at the first person's request, the uses held until it is read or 5 s have passed, the writes on their timer's goroutine; `TestNetworksFileHangs` (fifty requests while the read hangs, the held use told past the wait, the late read dropped) |
+| 41 | the record on disk | a crash or a restart inside the minute tells a network again "for the first time" | 2 | 4 | 3 | fix: size 2, risk 1 | a new network or a key dropped is written at once; a change of order alone waits its minute (`TestNetworksReorderWithinTheMinute`); e2e people 7b, ten restarts and each key told once |
+| 42 | the record on disk | a write fails (a full disk, `EIO` at the rename): the file falls behind, and a restart tells again what it missed | 2 | 3 | 1 | fix (rule 2): size 2, risk 1 | one warning until a write succeeds, an information line then; memory stays right; tried again each minute and no sooner, so a full disk is not written to at every new network (`TestNetworksWriteFails`) |
+| 43 | the record on disk | no file (the first start, the upgrade): every key's next use is told as its first | 2 | 5 | 1 | fix by naming: size 1, risk 1 | an information line; docs/upgrading.md says it before the install (`TestNetworksFileMissing`) |
+| 44 | the record on disk | a file that does not parse, empty after a power loss, of a newer version or none, a link, too large, or unreadable | 2 | 4 | 1 | fix (rule 2): size 1, risk 1 | one warning naming why; started afresh and written over by rename (a link is replaced, never followed); `TestNetworksFileUnusable` |
+| 45 | the record on disk | a file's content that the reader does not expect panics the read's goroutine, and moteld exits at the first person's request after every start | 4 | 4 | 1 | fix (rule 2): size 1, risk 1 | every entry checked (a network as this release writes it, at most 16 a key, each once); `FuzzNetworksFile` |
+| 46 | the record | two requests at once (either webhook, or both) lose a network or tell it twice | 3 | 5 | 5 | fix: size 1, risk 1 | one lock; the announcement made after the change, outside it; `TestNetworksConcurrent` under `-race` |
+| 47 | the record | the clock stepping reorders the networks or tells one again | 2 | 3 | 3 | fix: size 1, risk 1 | no time is kept on disk: the order is the record; the hour of `person_outside_list` on the monotonic clock |
+| 48 | the announcements | a thief cycling networks floods the operator's channels | 2 | 3 | 1 | fix: size 1, risk 1 | the event's key per fingerprint, under notify's limit per key: four, then one a quarter-hour, each held back a journal line (`TestPeopleSinkRaisesBoxEvents`) |
+| 49 | the announcements | behind proxies trusted without `trusted_proxies_strict`, every forwarded request is one network: a stolen key used through the proxy is not told after its first use | 3 | 5 | 3 | fix by naming: size 1, risk 1 | `moteld validate` warns for each such server (`TestWarnPeopleForwardedIsOneNetwork`); the announcement names "an address the box could not read" (`TestForwardedNotStrictIsUnknown`); docs/people.md |
+| 50 | the announcements | an IPv4 address written as IPv6, or an address with a zone, is another network: a duplicate, or a key's 16 filled with one network's spellings | 2 | 5 | 3 | fix: size 1, risk 1 | `networkOf` unmaps and drops the zone, as the address lists compare (`TestNetworkOf`) |
+| 51 | the announcements | the summary's filter masks the key's fingerprint (measured: `SHA256:[masked, 43 chars]`), so the operator cannot tell which key | 2 | 5 | 3 | fix: size 1, risk 1 | the fingerprint and the name are safe strings to it (notify's `Event.Safe`); `TestPeopleSinkRaisesBoxEvents` |
+| 52 | the announcements | a long name pushes the network out of the channels' 200 runes | 2 | 5 | 3 | fix: size 1, risk 1 | the name cut to 64 runes in the summary, whole in the journal's line (`TestAnnouncementSummary`) |
+| 53 | the record | a person removed keeps their networks on disk, and is not told as a first use when added back | 2 | 5 | 5 | fix: size 2, risk 1 | keys a newer registry does not list are dropped, from memory and the file; an older registry drops nothing (`TestNetworksRemovedKeyDropped`, `TestNetworksFileDropsUnlisted`; e2e people 7b) |
+| 54 | the announcements | on a box with no monitor block or no channel, or while notify runs no config, an announcement reaches no one | 3 | 5 | 1 | fix by naming: size 1, risk 1 | the journal's own line for each announcement, always; the warning at load and from `moteld validate` (row 11) |
+| 55 | the announcements | uses held while the file is read are cut at 16 a key, so a burst from more networks after a start drops some untold | 3 | 2 | 5 | fix: size 1, risk 1 | the cut is 64 a key until the file is read, 16 after (`TestNetworksHeldUntilRead`) |
 
 ### Accepted residuals
 
@@ -581,6 +669,9 @@ access's examples:
 | The time of a refusal tells a stranger which key types the box lists (a type no listed key has costs no verification) | 1 | 3 | 5 | — | it says nothing of who; hiding it would mean verifying every type for anyone, which is the cost row 16 removes |
 | A box too old for people and a key the box does not list both answer the flat 401 | 2 | 5 | 3 | — | the owner's decision: no answer names motel in a header; the client's message names both |
 | A legitimate burst over 60 requests is told to wait | 2 | 3 | 1 | — | `Retry-After` names the wait |
+| A crash in the moment between a new network's record and its write (the write's own time, milliseconds) tells it again after the restart | 2 | 4 | 3 | 2, 2 (the announcement held until the write) | a single fault, which rule 2 would fix, but the two orders trade a duplicate for a miss: told only after the write, a crash between the write and the announcement leaves a network recorded and never told (severity 3). The duplicate errs towards telling, and the crash is in the journal beside it |
+| A key's `person_outside_list` can be told again within the hour after a restart: the hour is kept in memory alone | 2 | 4 | 1 | 3, 2 (the hours in the file) | the second message is true: a valid signature came from outside the lists again. One more line in the file's form, and a time on disk the clock can step, for a rate bound |
+| More than 64 networks of one key in the first moments after a start, before the file is read (normally milliseconds, at most 5 s), drop the earliest untold | 3 | 1 | 5 | 2, 2 | it takes a stolen key, a burst of that size from that many networks, and a start, at once; the 64 networks told still say it |
 | The rate table holds more than its 2,048 names while more than that have each asked in the last 30 s: only buckets that have refilled are dropped | 1 | 5 | 5 | 2, 2 | a load declares at most 1,024 people and only a verified token of a declared name adds a bucket, so it takes loads that replace every person in use, twice in 30 s; dropping a bucket in use would refill a throttled person. A bucket can be dropped once 30 s have passed since its name last asked |
 | A person whose only key is ECDSA (for example from an agent that makes only P-256 keys) cannot be declared until a later release admits that type | 2 | 2 | 1 | — | the owner's decision of 2026-11-15: a stranger presenting a listed public key buys one check of its type, 0.04 ms for Ed25519 against 0.5 to 1.3 ms for the larger ECDSA curves, and widening later breaks no one where narrowing would; the line's refusal names the remedy |
 | A token sent by hand over plain HTTP, to a site the operator serves in clear under the box's name, is answered like any other; no webhook checks that a request came over TLS | 3 | 1 | 3 | 2, 2 | the owner's decision: a hand-made plain-HTTP request is not catered for. The client, `motel`, speaks https only and follows no redirect; `deploy.sh` refuses an `http://` address unless `MOTEL_ALLOW_HTTP=1`, for a test box; the template's deploy host is served over https |
@@ -598,8 +689,8 @@ access's examples:
 ## Not in this release
 
 Any act by a person; a second role for people; every box-level read but
-the box's status, who am I and the list of apps; the nonce store; the
-announcements of a key's first use from a new network and of a valid
-signature from outside every address list; people on a box with no
+the box's status, who am I and the list of apps; the nonce store; a
+read held back from a new network (the announcements tell, and never
+gate); people on a box with no
 `box` block or no `box_webhook` site, or on any name but the box's
 main one; RSA keys for people; a push's result for a viewer of the box.

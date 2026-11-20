@@ -432,6 +432,20 @@
       "kind": "event"
     },
     {
+      "name": "person_new_network",
+      "source": "motel check",
+      "severity": "warning",
+      "subject": "box",
+      "kind": "event"
+    },
+    {
+      "name": "person_outside_list",
+      "source": "motel check",
+      "severity": "warning",
+      "subject": "box",
+      "kind": "event"
+    },
+    {
       "name": "post_deploy_regressed",
       "source": "operator",
       "severity": "warning",

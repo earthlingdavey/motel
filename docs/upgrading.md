@@ -374,6 +374,28 @@ There is no APT repository yet, so nothing upgrades moteld behind
 your back; the hosted repository on the [roadmap](../README.md#roadmap) is what
 will change that.
 
+## A person's key, told once after the install
+
+On a box with `person` or `grant` lines, the first release that tells
+the operator's channels of a key used from a new network
+(`person_new_network`; [Giving a person
+access](people.md#when-their-key-is-used-from-somewhere-new)) has no
+record yet of where each key was used: **each key's next use after
+the install is told once, as its first**, and the journal says why
+(`access: no record yet of the networks people's keys were used
+from`). Nothing to do. To keep the channels quiet, silence it for the
+hour around the install: `moteld monitor silence add --alert
+person_new_network --duration 1h --comment "the upgrade"` once the new
+release runs (the older one does not know the name).
+
+Going back to a release without it leaves
+`/var/lib/motel/people-networks.json` where it is, unread, and nothing
+is told while that release runs; coming forward again reads it, and a
+network a key used in between is told at its next use. A release that
+finds the file in a form it does not read (one written by a later
+release) says so in the journal, starts afresh and writes over it: each
+key's next use is told once more as its first.
+
 ## A producer's state across the install
 
 A box built from the notify-and-metrics feature branch before motel

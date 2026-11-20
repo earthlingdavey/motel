@@ -3,6 +3,7 @@ package notify
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/smallhoursorg/motel/backups/record"
 	"github.com/smallhoursorg/motel/liveswap"
+	"github.com/smallhoursorg/motel/liveswap/access/accesstest"
 )
 
 func TestLifecycleSinkMapsLiveswapsEvents(t *testing.T) {
@@ -50,6 +52,52 @@ func TestLifecycleSinkMapsLiveswapsEvents(t *testing.T) {
 	s.Lifecycle(liveswap.LifecycleEvent{Name: liveswap.EventWatchdogRecovered, App: "blog", Hold: 2 * time.Minute})
 	if st := te.states["liveswap/app:blog/watchdog_throttled"]; st == nil || st.firing || st.hold != 2*time.Minute {
 		t.Fatalf("state = %+v", st)
+	}
+}
+
+// TestPeopleSinkRaisesBoxEvents: liveswap's two announcements about a
+// person's key are one-shot box events at warning, from source access,
+// keyed by the key's fingerprint, with the summary liveswap wrote and
+// the fingerprint in it as written (it looks generated, and the filter
+// would mask it); a thief cycling networks is held to the limit per key
+// (four, then a journal line each), and another key is not held by it.
+func TestPeopleSinkRaisesBoxEvents(t *testing.T) {
+	te := newTestEngine(t)
+	s := peopleSink{e: te.engine}
+	alice, bob := accesstest.Ed25519().Fingerprint(), accesstest.Ed25519().Fingerprint()
+	first := liveswap.Announcement{Name: liveswap.EventPersonNewNetwork, Person: "alice@example.com", Key: alice, From: "203.0.113.0/24", First: true}
+	s.Announce(first)
+	got := te.drain()
+	if len(got) != 1 {
+		t.Fatalf("posts %v", got)
+	}
+	want := map[string]string{"alertname": "person_new_network", "kind": "event", "severity": "warning", "subject": "box", "source": "access",
+		"key": "access/box/person_new_network/" + alice, "instance": alice}
+	for k, v := range want {
+		if got[0].Labels[k] != v {
+			t.Errorf("label %s = %q, want %q", k, got[0].Labels[k], v)
+		}
+	}
+	if _, ok := got[0].Labels["app"]; ok {
+		t.Errorf("a box event with an app label: %v", got[0].Labels)
+	}
+	if sum := got[0].Annotations["summary"]; sum != first.Summary() || !strings.Contains(sum, alice) {
+		t.Errorf("summary %q, want %q", sum, first.Summary())
+	}
+	for i := range 6 {
+		s.Announce(liveswap.Announcement{Name: liveswap.EventPersonNewNetwork, Person: "alice@example.com", Key: alice, From: fmt.Sprintf("198.51.%d.0/24", i)})
+	}
+	s.Announce(liveswap.Announcement{Name: liveswap.EventPersonOutsideList, Person: "bob@example.com", Key: bob, From: "203.0.113.9"})
+	got = te.drain()
+	if len(got) != 4 || got[3].Labels["alertname"] != "person_outside_list" || got[3].Labels["key"] != "access/box/person_outside_list/"+bob {
+		t.Fatalf("posts %v", got)
+	}
+	if l := te.lines("monitor: event"); len(l) != 8 || l[5].ContextMap()["suppressed"] == nil || l[7].ContextMap()["suppressed"] != nil {
+		t.Errorf("journal %v", l)
+	}
+	s.Announce(liveswap.Announcement{Name: "something_else", Person: "x", Key: alice})
+	if got := te.drain(); len(got) != 0 {
+		t.Errorf("an unknown announcement posted %v", got)
 	}
 }
 

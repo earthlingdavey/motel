@@ -102,6 +102,34 @@ func TestWarnPeople(t *testing.T) {
 	}
 }
 
+// TestWarnPeopleForwardedIsOneNetwork: a box with people and a server
+// that trusts proxies without trusted_proxies_strict (by range or on
+// its unix socket, strict unset or -1) is told that the requests such a
+// proxy forwards are one network to the record of where each key was
+// used; a strict server, one that trusts no proxy, and a box with no
+// people are not.
+func TestWarnPeopleForwardedIsOneNetwork(t *testing.T) {
+	box := `"box":{"signers":[{"principal":"ops","type":"ssh-ed25519","key":"x"}],"people":[{"name":"bob","type":"ssh-ed25519","key":"x"}],"grants":[{"name":"bob","role":"viewer","scope":"box"}]}`
+	signers := `"box":{"signers":[{"principal":"ops","type":"ssh-ed25519","key":"x"}]}`
+	for _, c := range []struct {
+		name, box, server string
+		warn              bool
+	}{
+		{"loose", box, `{"trusted_proxies":{"source":"static","ranges":["10.0.0.0/8"]}}`, true},
+		{"loose, strict -1", box, `{"trusted_proxies":{"source":"static","ranges":["10.0.0.0/8"]},"trusted_proxies_strict":-1}`, true},
+		{"a unix socket's proxy", box, `{"trusted_proxies_unix":true}`, true},
+		{"strict", box, `{"trusted_proxies":{"source":"static","ranges":["10.0.0.0/8"]},"trusted_proxies_strict":1}`, false},
+		{"no proxy", box, `{}`, false},
+		{"loose, no people", signers, `{"trusted_proxies":{"source":"static","ranges":["10.0.0.0/8"]}}`, false},
+	} {
+		var stderr bytes.Buffer
+		warnPeople([]byte(`{"apps":{`+c.box+`,"http":{"servers":{"srv0":`+c.server+`}}}}`), &stderr)
+		if got := strings.Contains(stderr.String(), access.ForwardedNetworksWarning("srv0")); got != c.warn {
+			t.Errorf("%s: warned %v: %s", c.name, got, stderr.String())
+		}
+	}
+}
+
 // TestTheGateRefusesFromBehindLooseProxies: through the gate itself, a
 // Caddyfile with a from list behind trusted_proxies without
 // trusted_proxies_strict stops validate and reload, naming the remedy.

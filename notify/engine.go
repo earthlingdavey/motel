@@ -38,6 +38,10 @@ type Event struct {
 	// happened) and annotations on a state alert, whose identity is
 	// what is wrong, never when or by whom (#418).
 	Release, DeployedBy string
+	// Safe are names the summary carries that the filter's heuristics
+	// must leave as written, beside Release: a key's fingerprint, which
+	// looks generated, and a person's name.
+	Safe []string
 	// Firing is a state alert's condition: true while it holds, false
 	// when it has cleared.
 	Firing bool
@@ -315,7 +319,7 @@ func (e *engine) reportLocked(ev Event) {
 	if e.active == nil {
 		return
 	}
-	ev.Summary = e.clean(ev.Summary, ev.Release)
+	ev.Summary = e.clean(ev.Summary, append([]string{ev.Release}, ev.Safe...)...)
 	if len(ev.Details) > 0 {
 		d := make(map[string]string, len(ev.Details))
 		for k, v := range ev.Details {

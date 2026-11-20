@@ -104,7 +104,10 @@ func checkPeople(cfg []byte) error {
 
 // warnPeople says, at validate, what the box module's own reading of
 // its block cannot see, because it sees the block alone: people with
-// no monitor channel to tell of them; and, for a grant's address list,
+// no monitor channel to tell of them; a server whose forwarded requests
+// are all one network to the record of where each key was used (it
+// trusts proxies without trusted_proxies_strict); and, for a grant's
+// address list,
 // each server whose client's address comes from something a peer
 // sends: strictly trusted proxies (the headers named), and the PROXY
 // protocol. The serving process says the first at each load too, from
@@ -116,6 +119,11 @@ func warnPeople(cfg []byte, stderr io.Writer) {
 	}
 	if len(c.Apps.Monitor.Channels) == 0 {
 		_, _ = fmt.Fprintf(stderr, "WARNING: box: %s\n", access.NoChannelWarning)
+	}
+	for _, name := range c.servers() {
+		if s := c.Apps.HTTP.Servers[name]; s.trusts() && s.TrustedProxiesStrict <= 0 { // Caddy's own test of strict is > 0
+			_, _ = fmt.Fprintf(stderr, "WARNING: box: %s\n", access.ForwardedNetworksWarning(name))
+		}
 	}
 	if !from {
 		return
