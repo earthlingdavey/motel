@@ -730,10 +730,9 @@ func (s *Session) MeViewFit(now time.Time, width int, cells Cells) []Line {
 		}
 		out = append(out, cutTo(Line{own("  "), verbs[i], own(pad("", col-len([]rune(verbs[i].T.String()))) + " " + on)}, width, cells))
 	}
-	// What may not be read here: logs, by anyone yet; the box's own
-	// alerts and silences, by anyone but a viewer of the box. A logs
-	// grant gives every read viewer gives on its scope, which its line
-	// says as "view" too.
+	// What may not be read here: logs, which this client shows no one
+	// yet (a holder of a logs grant is told the grant reads them); the
+	// box's own alerts and silences, by anyone but a viewer of the box.
 	cannot := "             Read logs: this client does not offer them yet."
 	for _, r := range me.Roles {
 		if r.Role == "logs" {
