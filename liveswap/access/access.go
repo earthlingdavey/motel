@@ -15,7 +15,8 @@
 // (liveswap/DESIGN-liveswap.md, "Who may take which action"). A person may read: an app's status, deploys, alerts, rules and
 // series where a grant covers the app, the box's status, its backups', every
 // alert and silence and every rule with a grant on the box, and who they are and which apps they may view
-// whatever their grants (DESIGN-access.md).
+// whatever their grants; and an app's logs with a logs grant on the app
+// or the box, which a viewer grant never gives (DESIGN-access.md).
 package access
 
 import (
@@ -47,13 +48,14 @@ const (
 	AppRules        Action = "app.rules"         // GET /_motel/apps/<app>/rules
 	BoxRules        Action = "box.rules"         // GET /_motel/rules
 	AppSeries       Action = "app.series"        // GET /_motel/apps/<app>/series
+	AppLogs         Action = "app.logs"          // GET /_motel/apps/<app>/logs
 )
 
 // MotelActions are the actions liveswap_webhook serves under /_motel/,
 // beside the apps' routes: box actions, and app actions on the app the
 // path names after /_motel/apps/. box_webhook serves the other box
 // actions.
-var MotelActions = []Action{BoxWhoami, BoxApps, BoxBackups, AppAlerts, BoxAlerts, AppRules, BoxRules, AppSeries}
+var MotelActions = []Action{BoxWhoami, BoxApps, BoxBackups, AppAlerts, BoxAlerts, AppRules, BoxRules, AppSeries, AppLogs}
 
 // Kind is which sort of principal a verified token stands for.
 type Kind int
@@ -67,7 +69,7 @@ const (
 	// it may present pushes.
 	BoxChannel
 	// Person is a person whose token the box verified (CheckToken):
-	// Principal.Name, who may view Principal.Views.
+	// Principal.Name, who holds Principal.Views.
 	Person
 )
 
@@ -77,9 +79,9 @@ type Principal struct {
 	// App is the app an AppDeployer deploys: the name in the path its
 	// token was verified for. Empty for every other kind.
 	App string
-	// Name is a Person's name, and Views what their grants let them view
-	// from where the request came from (Registry.Views). Empty and nil
-	// for every other kind.
+	// Name is a Person's name, and Views what their grants give them,
+	// role by role, from where the request came from (Registry.Views).
+	// Empty and nil for every other kind.
 	Name  string
 	Views *Views
 }
@@ -113,6 +115,8 @@ var allowed = []cell{
 	{Person, AppRules},
 	{Person, BoxRules},
 	{Person, AppSeries},
+	// A logs grant's alone: no viewer grant reads logs.
+	{Person, AppLogs},
 }
 
 // Forbidden is Decide's refusal of a principal the box verified, for
@@ -121,8 +125,9 @@ var allowed = []cell{
 // request, so one answer serves an app that exists and one that does
 // not. Its words are neutral: a declared key, not a kind of signer.
 type Forbidden struct {
-	// Needs is "viewer" (a grant), "deployer" (a deploy token of the
-	// app, or the box's) or "key" (a token a declared key signed).
+	// Needs is "viewer" (a viewer or a logs grant), "logs" (a logs
+	// grant), "deployer" (a deploy token of the app, or the box's) or
+	// "key" (a token a declared key signed).
 	Needs string
 	// Scope is "app" or "box".
 	Scope string
@@ -134,6 +139,8 @@ func (f *Forbidden) Error() string {
 		return "this needs the viewer role on this app"
 	case "viewer box":
 		return "this needs the viewer role on the box"
+	case "logs app":
+		return "this needs the logs role on this app"
 	case "deployer app":
 		return "this needs a deploy token of this app"
 	case "deployer box":
@@ -182,10 +189,12 @@ func Decide(p Principal, a Action, resource string) error {
 
 // decidePerson is Decide for a person: the table's cells, narrowed by
 // the views. An app action on an app no view covers is the 403 naming
-// viewer on an app, the same whether the app exists or not; an act, or
-// a box read only the box's source takes, names the deployer. Every
-// person's cell has its case here: a cell with none is refused to every
-// person, so a cell added without saying who may take it allows no one.
+// viewer on an app, and an app's logs without a logs grant on the app
+// or the box the 403 naming logs, each the same whether the app exists
+// or not; an act, or a box read only the box's source takes, names the
+// deployer. Every person's cell has its case here: a cell with none is
+// refused to every person, so a cell added without saying who may take
+// it allows no one.
 func decidePerson(p Principal, a Action, resource string) error {
 	app := strings.HasPrefix(string(a), "app.")
 	switch {
@@ -209,6 +218,10 @@ func decidePerson(p Principal, a Action, resource string) error {
 	case AppStatus, AppDeployRecord, AppAlerts, AppRules, AppSeries:
 		if !p.Views.Covers(resource) {
 			return &Forbidden{Needs: "viewer", Scope: "app"}
+		}
+	case AppLogs:
+		if !p.Views.ReadsLogs(resource) {
+			return &Forbidden{Needs: "logs", Scope: "app"}
 		}
 	case BoxStatus, BoxBackups, BoxAlerts, BoxRules:
 		if !p.Views.CoversBox() {

@@ -260,7 +260,7 @@ type Error struct {
 
 // Forbidden is the 403 to a caller whose token the box verified and
 // who may not take the request: the lowest role that would ("viewer",
-// "deployer", or "key", a token a declared key signed), and on what
+// "logs", "deployer", or "key", a token a declared key signed), and on what
 // kind of scope ("app" or "box"). It names no app and echoes nothing of
 // the request, so one body answers an app that exists and one that
 // does not. Error comes first, so a client decoding Error reads the

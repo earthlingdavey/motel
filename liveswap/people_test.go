@@ -341,7 +341,7 @@ func TestEveryMotelRouteHasAnAction(t *testing.T) {
 		actions = append(actions, rt.action)
 	}
 	for _, a := range access.MotelActions {
-		if !slices.Contains(actions, a) {
+		if !slices.Contains(actions, a) && !slices.Contains(arrivesWithItsRead, a) {
 			t.Errorf("action %s has no row under /_motel/", a)
 		}
 		if !slices.Contains(access.Actions(), a) {

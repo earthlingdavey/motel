@@ -30,49 +30,50 @@ func TestDecideTable(t *testing.T) {
 	on := map[Action]string{
 		AppStatus: "blog", AppDeployRecord: "blog", AppDeploy: "blog", AppRollback: "blog",
 		BoxStatus: "", BoxPushResult: "", BoxPush: "", BoxWhoami: "", BoxApps: "", BoxBackups: "",
-		AppAlerts: "blog", BoxAlerts: "", AppRules: "blog", BoxRules: "", AppSeries: "blog",
+		AppAlerts: "blog", BoxAlerts: "", AppRules: "blog", BoxRules: "", AppSeries: "blog", AppLogs: "blog",
 	}
 	want := map[string]map[Action]bool{
 		"none": {
 			AppStatus: false, AppDeployRecord: false, AppDeploy: false, AppRollback: false,
 			BoxStatus: false, BoxPushResult: false, BoxPush: false, BoxWhoami: false, BoxApps: false, BoxBackups: false, AppAlerts: false, BoxAlerts: false,
-			AppRules: false, BoxRules: false, AppSeries: false,
+			AppRules: false, BoxRules: false, AppSeries: false, AppLogs: false,
 		},
 		"deployer of blog": {
 			AppStatus: true, AppDeployRecord: true, AppDeploy: true, AppRollback: true,
 			BoxStatus: false, BoxPushResult: false, BoxPush: false, BoxWhoami: false, BoxApps: false, BoxBackups: false, AppAlerts: false, BoxAlerts: false,
-			AppRules: false, BoxRules: false, AppSeries: false,
+			AppRules: false, BoxRules: false, AppSeries: false, AppLogs: false,
 		},
 		"box channel": {
 			AppStatus: false, AppDeployRecord: false, AppDeploy: false, AppRollback: false,
 			BoxStatus: true, BoxPushResult: true, BoxPush: true, BoxWhoami: false, BoxApps: false, BoxBackups: false, AppAlerts: false, BoxAlerts: false,
-			AppRules: false, BoxRules: false, AppSeries: false,
+			AppRules: false, BoxRules: false, AppSeries: false, AppLogs: false,
 		},
 		"viewer of blog": {
 			AppStatus: true, AppDeployRecord: true, AppDeploy: false, AppRollback: false,
 			BoxStatus: false, BoxPushResult: false, BoxPush: false, BoxWhoami: true, BoxApps: true, BoxBackups: false, AppAlerts: true, BoxAlerts: false,
-			AppRules: true, BoxRules: false, AppSeries: true,
+			AppRules: true, BoxRules: false, AppSeries: true, AppLogs: false,
 		},
 		"viewer of the box": {
 			AppStatus: true, AppDeployRecord: true, AppDeploy: false, AppRollback: false,
 			BoxStatus: true, BoxPushResult: false, BoxPush: false, BoxWhoami: true, BoxApps: true, BoxBackups: true, AppAlerts: true, BoxAlerts: true,
-			AppRules: true, BoxRules: true, AppSeries: true,
+			AppRules: true, BoxRules: true, AppSeries: true, AppLogs: false,
 		},
-		// A logs grant gives what viewer gives on the same scope.
+		// A logs grant gives what viewer gives on the same scope, and the
+		// app's logs; no viewer grant gives logs.
 		"logs of blog": {
 			AppStatus: true, AppDeployRecord: true, AppDeploy: false, AppRollback: false,
 			BoxStatus: false, BoxPushResult: false, BoxPush: false, BoxWhoami: true, BoxApps: true, BoxBackups: false, AppAlerts: true, BoxAlerts: false,
-			AppRules: true, BoxRules: false, AppSeries: true,
+			AppRules: true, BoxRules: false, AppSeries: true, AppLogs: true,
 		},
 		"logs of the box": {
 			AppStatus: true, AppDeployRecord: true, AppDeploy: false, AppRollback: false,
 			BoxStatus: true, BoxPushResult: false, BoxPush: false, BoxWhoami: true, BoxApps: true, BoxBackups: true, AppAlerts: true, BoxAlerts: true,
-			AppRules: true, BoxRules: true, AppSeries: true,
+			AppRules: true, BoxRules: true, AppSeries: true, AppLogs: true,
 		},
 		"person with no grant": {
 			AppStatus: false, AppDeployRecord: false, AppDeploy: false, AppRollback: false,
 			BoxStatus: false, BoxPushResult: false, BoxPush: false, BoxWhoami: true, BoxApps: true, BoxBackups: false, AppAlerts: false, BoxAlerts: false,
-			AppRules: false, BoxRules: false, AppSeries: false,
+			AppRules: false, BoxRules: false, AppSeries: false, AppLogs: false,
 		},
 	}
 	for _, k := range kinds {
@@ -121,6 +122,7 @@ func TestAllowedCells(t *testing.T) {
 		{Person, AppRules},
 		{Person, BoxRules},
 		{Person, AppSeries},
+		{Person, AppLogs},
 	}
 	for _, c := range allowed {
 		if !slices.Contains(want, c) {
@@ -152,7 +154,7 @@ func TestDecideScope(t *testing.T) {
 		{"a deployer on the box", blog, AppStatus, ""},
 		{"a deployer of no app on the box", Principal{Kind: AppDeployer}, AppStatus, ""},
 		{"the box channel on an app", Principal{Kind: BoxChannel}, BoxStatus, "blog"},
-		{"an unknown action", blog, "app.logs", "blog"},
+		{"an unknown action", blog, "app.made_up", "blog"},
 		{"no action", Principal{Kind: BoxChannel}, "", ""},
 		{"an unknown kind", Principal{Kind: BoxChannel + 1}, BoxStatus, ""},
 	} {
@@ -184,6 +186,8 @@ func TestActionsAreAppOrBox(t *testing.T) {
 func TestDecidePersonRefusals(t *testing.T) {
 	bob := Principal{Kind: Person, Name: "bob", Views: &Views{Viewer: Scopes{Apps: []string{"blog"}}}}
 	erin := Principal{Kind: Person, Name: "erin", Views: &Views{Logs: Scopes{Apps: []string{"blog"}}}}
+	carol := Principal{Kind: Person, Name: "carol", Views: &Views{Viewer: Scopes{Box: true}}}
+	frank := Principal{Kind: Person, Name: "frank", Views: &Views{Logs: Scopes{Box: true}}}
 	for _, c := range []struct {
 		name     string
 		p        Principal
@@ -235,8 +239,20 @@ func TestDecidePersonRefusals(t *testing.T) {
 		{"a logs reader of an app reads the box's status", erin, BoxStatus, "", &Forbidden{"viewer", "box"}},
 		{"a logs reader of an app reads the box's backups", erin, BoxBackups, "", &Forbidden{"viewer", "box"}},
 		{"a logs reader of an app deploys it", erin, AppDeploy, "blog", &Forbidden{"deployer", "app"}},
+		{"a viewer of the app reads its logs", bob, AppLogs, "blog", &Forbidden{"logs", "app"}},
+		{"a viewer of the box reads an app's logs", carol, AppLogs, "blog", &Forbidden{"logs", "app"}},
+		{"a viewer of the box reads the logs of an app that does not exist", carol, AppLogs, "ghost", &Forbidden{"logs", "app"}},
+		{"a logs reader of an app reads another app's logs", erin, AppLogs, "shop", &Forbidden{"logs", "app"}},
+		{"a logs reader of an app reads the logs of an app that does not exist", erin, AppLogs, "ghost", &Forbidden{"logs", "app"}},
+		{"logs with no grant", Principal{Kind: Person, Name: "dave", Views: &Views{}}, AppLogs, "blog", &Forbidden{"logs", "app"}},
+		{"logs with no views", Principal{Kind: Person, Name: "dave"}, AppLogs, "blog", &Forbidden{"logs", "app"}},
+		{"logs from a viewer of the app and the box", Principal{Kind: Person, Name: "gus", Views: &Views{Viewer: Scopes{Box: true, Apps: []string{"blog"}}}}, AppLogs, "blog", &Forbidden{"logs", "app"}},
+		{"a global deployer reads an app's logs", Principal{Kind: AppDeployer}, AppLogs, "blog", &Forbidden{"key", "app"}},
+		{"a deployer reads its own app's logs", Principal{Kind: AppDeployer, App: "blog"}, AppLogs, "blog", &Forbidden{"key", "app"}},
+		{"the box channel reads an app's logs", Principal{Kind: BoxChannel}, AppLogs, "blog", &Forbidden{"key", "app"}},
+		{"an app's logs on the box", frank, AppLogs, "", nil},
 		{"no name", Principal{Kind: Person, Views: &Views{Viewer: Scopes{Box: true}}}, BoxStatus, "", nil},
-		{"an unknown action", bob, "app.logs", "blog", nil},
+		{"an unknown action", bob, "app.made_up", "blog", nil},
 		{"a kind past the table", Principal{Kind: Person + 1}, BoxWhoami, "", nil},
 	} {
 		err := Decide(c.p, c.a, c.resource)
@@ -250,7 +266,7 @@ func TestDecidePersonRefusals(t *testing.T) {
 			t.Errorf("%s: %v, want %+v", c.name, err, *c.want)
 		}
 	}
-	for _, f := range []Forbidden{{"viewer", "app"}, {"viewer", "box"}, {"deployer", "app"}, {"deployer", "box"}, {"key", "box"}, {"key", "app"}} {
+	for _, f := range []Forbidden{{"viewer", "app"}, {"viewer", "box"}, {"logs", "app"}, {"deployer", "app"}, {"deployer", "box"}, {"key", "box"}, {"key", "app"}} {
 		if msg := f.Error(); strings.Contains(msg, "person") || strings.Contains(msg, "motel") {
 			t.Errorf("%+v says %q", f, msg)
 		}
@@ -276,5 +292,32 @@ func TestEveryPersonCellHasACase(t *testing.T) {
 		if err := Decide(p, madeUp, "blog"); err == nil || errors.As(err, &f) {
 			t.Errorf("%s: %v, want refused with no body to name", p.Name, err)
 		}
+	}
+}
+
+// TestAppLogsAllowed: the logs of an app are read with a logs grant on
+// that app or on the box, whatever else the person holds, an app that
+// is not here included for a logs reader of the box (the route's lookup
+// answers it 404).
+func TestAppLogsAllowed(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		v    Views
+		app  string
+	}{
+		{"a logs reader of the app", Views{Logs: Scopes{Apps: []string{"blog"}}}, "blog"},
+		{"a logs reader of the app and a viewer of it", Views{Viewer: Scopes{Apps: []string{"blog"}}, Logs: Scopes{Apps: []string{"blog"}}}, "blog"},
+		{"a logs reader of two apps", Views{Logs: Scopes{Apps: []string{"blog", "shop"}}}, "shop"},
+		{"a logs reader of the box", Views{Logs: Scopes{Box: true}}, "blog"},
+		{"a logs reader of the box, a name that is no app", Views{Logs: Scopes{Box: true}}, "ghost"},
+		{"a viewer of the box and a logs reader of the app", Views{Viewer: Scopes{Box: true}, Logs: Scopes{Apps: []string{"blog"}}}, "blog"},
+	} {
+		v := c.v
+		if err := Decide(Principal{Kind: Person, Name: "bob", Views: &v}, AppLogs, c.app); err != nil {
+			t.Errorf("%s, the logs of %s: %v", c.name, c.app, err)
+		}
+	}
+	if got := (&Forbidden{"logs", "app"}).Error(); got != "this needs the logs role on this app" {
+		t.Errorf("the 403's sentence: %q", got)
 	}
 }
