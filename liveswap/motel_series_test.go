@@ -253,8 +253,12 @@ func TestSeriesChosenByTheHandle(t *testing.T) {
 // number or a time of the body (a point's unix time, a run of digits
 // inside a memory value, a date, the end's hour, a short number) leaves
 // every point, the step and the end as the source gave them, and the
-// read whole; the same body whole through the app's filter would not
-// be (the reason the numbers are kept out of it).
+// read whole. The points and the step are numbers, which rule 7 of
+// redact.go holds in any body but in its fallbacks (a value across a
+// number's edge, or one replaced elsewhere in the body), and
+// filterSeries holds even then; the end is a time under a key rule 7
+// does not hold, so a date value or a piece of one would be replaced
+// inside it but for filterSeries.
 func TestSeriesNumbersPassNoFilter(t *testing.T) {
 	for _, value := range []string{"1795096800", "19084083", "12345678901", "2026-11-19", "2026-11-19T14:00:00Z", "T14:00:00", "0.000123", "42", "300", "191889408,"} {
 		h, people := alertsRig(t)
@@ -267,17 +271,6 @@ func TestSeriesNumbersPassNoFilter(t *testing.T) {
 		}
 		if strings.Contains(w.Body.String(), "redacted") {
 			t.Errorf("NUMBERISH=%s: the filter found the value in the body's words: %s", value, w.Body)
-		}
-	}
-	// Through the filter whole, as GET /<app>'s metrics pass, the first
-	// three replace a point or withhold the body.
-	for _, value := range []string{"1795096800", "19084083", "12345678901"} {
-		h, _ := alertsRig(t)
-		must(t, os.WriteFile(h.app.managed["demo"].spec.envFile, []byte("NUMBERISH="+value+"\n"), 0o600))
-		raw, _ := json.Marshal(demoSeries())
-		var got wire.Series
-		if out := h.app.managed["demo"].redactorFor(statusSnapshot{}).redactJSON(raw); json.Unmarshal([]byte(out), &got) == nil && reflect.DeepEqual(got, demoSeries()) {
-			t.Errorf("NUMBERISH=%s: the whole body came through the filter whole, so this test shows nothing: %s", value, out)
 		}
 	}
 }
