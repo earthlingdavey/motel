@@ -2,6 +2,7 @@ package liveswap
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -92,20 +93,38 @@ func TestDeployAnswerTimesPassNoFilter(t *testing.T) {
 	}
 }
 
-// TestStatusNumbersWithheldNamed is the accepted row's behaviour
-// (DESIGN-liveswap.md, "Accepted residuals"): an env_file value of
-// eight or more digits that equals digits of a number in the status (a
-// memory figure the metrics store answered) is replaced inside the
-// number, so the body is withheld whole, saying why and naming the key,
-// and the value is not in it.
+// TestStatusNumbersWithheldNamed pins what an owed fix will change
+// (DESIGN-liveswap.md, "Owed"): an env_file value of eight or more
+// digits that is a piece of a number in the status is replaced inside
+// the number, so the body is withheld whole, saying why and naming the
+// key, and the value is not in it. For a memory figure the store
+// answered, while the figure holds it; for the app's own memory limit
+// in bytes, equal to its memory_max (NODE_MEMORY_LIMIT=268435456 under
+// memory_max 256MiB), on every status read and every deploy's answer,
+// and on after the value leaves the env_file, until moteld restarts:
+// the filter forgets no value it was handed (rememberSecrets).
 func TestStatusNumbersWithheldNamed(t *testing.T) {
+	const want = `{"error":"response withheld: a redacted value overlapped the response's own structure","redacted_env":["%s"]}` + "\n"
 	h, _ := heldRig(t, "ACCOUNT_ID=12345678\n")
 	now := 123456789.0
 	h.app.SetMetricsSource(&fakeMetricsSource{reply: &wire.Metrics{Window: "1h", Memory: &wire.MemorySummary{Now: &now}}})
-	w := do(t, h, http.MethodGet, "/demo", appToken(t), "")
-	const want = `{"error":"response withheld: a redacted value overlapped the response's own structure","redacted_env":["ACCOUNT_ID"]}` + "\n"
-	if w.Code != http.StatusOK || w.Body.String() != want {
-		t.Errorf("got %d %s\nwant %s", w.Code, w.Body, want)
+	if w := do(t, h, http.MethodGet, "/demo", appToken(t), ""); w.Code != http.StatusOK || w.Body.String() != fmt.Sprintf(want, "ACCOUNT_ID") {
+		t.Errorf("a metrics figure: %d %s", w.Code, w.Body)
+	}
+
+	h, rig := newTestHandler(t)
+	rig.spec.envFile = filepath.Join(t.TempDir(), "demo.env")
+	rig.spec.caps = resourceCaps{memoryMax: 256 << 20}
+	must(t, os.WriteFile(rig.spec.envFile, []byte("NODE_MEMORY_LIMIT=268435456\n"), 0o600))
+	limit := fmt.Sprintf(want, "NODE_MEMORY_LIMIT")
+	if w := do(t, h, http.MethodPost, "/demo", appToken(t), `{"url":"https://x/1.tgz","version":"v1"}`); w.Body.String() != limit {
+		t.Errorf("the deploy's answer: %d %s", w.Code, w.Body)
+	}
+	must(t, os.WriteFile(rig.spec.envFile, []byte("OTHER=x\n"), 0o600))
+	for i := range 2 {
+		if w := do(t, h, http.MethodGet, "/demo", appToken(t), ""); w.Body.String() != limit {
+			t.Errorf("read %d, the value gone from the env_file: %d %s", i, w.Code, w.Body)
+		}
 	}
 }
 
