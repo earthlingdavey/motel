@@ -439,3 +439,17 @@ func TestRulesChosenByTheHandle(t *testing.T) {
 		}
 	}
 }
+
+// TestRulesSafeNames: an app's name the body holds (an alert's app, the
+// apps a pinned alert names, a reading's app or backup) stands through
+// the entropy layer, however generated it looks.
+func TestRulesSafeNames(t *testing.T) {
+	h, people := alertsRig(t)
+	name := "k3x9q2m7v8w1z4p6r5t0"
+	h.app.SetRulesSource(&fakeRules{l: wire.RulesListing{Alerts: []wire.AlertListing{
+		{Name: "post_deploy_regressed", Source: "operator", Severity: "warning", Subject: "app", Kind: "event", Apps: []string{"blog", name}},
+	}}})
+	if w := sendTo(t, h, "GET", "/_motel/rules", token(people.carol)); !strings.Contains(w.Body.String(), `"apps":["blog","`+name+`"]`) {
+		t.Errorf("%d %s", w.Code, w.Body)
+	}
+}

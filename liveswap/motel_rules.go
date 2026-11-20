@@ -130,8 +130,10 @@ func rulesSafe(b wire.Rules) []string {
 	var safe []string
 	for _, al := range b.Alerts {
 		safe = append(safe, al.Name)
-		if appNameRe.MatchString(al.App) {
-			safe = append(safe, al.App)
+		for _, s := range append([]string{al.App}, al.Apps...) {
+			if appNameRe.MatchString(s) {
+				safe = append(safe, s)
+			}
 		}
 		for _, r := range al.Readings {
 			for _, s := range []string{r.App, r.Instance} {

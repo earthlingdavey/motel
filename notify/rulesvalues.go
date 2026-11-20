@@ -3,6 +3,7 @@ package notify
 import (
 	"cmp"
 	"context"
+	"errors"
 	"slices"
 	"strconv"
 	"strings"
@@ -99,6 +100,11 @@ func evaluate(ctx context.Context, store rulesQuerier, q *StoreQueries, asks []v
 			jobs = append(jobs, job{answers[a.query], a.query, at})
 		}
 	}
+	// The first failure ends the rest: their slots go to another set's
+	// evaluation (rulesSlots is the process's), not to queries whose
+	// answer is no longer read.
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
 	errs := make([]error, len(jobs))
 	sem := rulesSlots
 	var wg sync.WaitGroup
@@ -113,14 +119,23 @@ func evaluate(ctx context.Context, store rulesQuerier, q *StoreQueries, asks []v
 				return
 			}
 			defer func() { <-sem }()
-			*j.dst, errs[i] = store.instantAt(ctx, j.q, j.when)
+			if *j.dst, errs[i] = store.instantAt(ctx, j.q, j.when); errs[i] != nil {
+				cancel()
+			}
 		}()
 	}
 	wg.Wait()
+	// The first failure, not a cancellation it caused.
+	var first error
 	for _, err := range errs {
-		if err != nil {
-			return nil, err
+		switch {
+		case err == nil:
+		case first == nil, errors.Is(first, context.Canceled) && !errors.Is(err, context.Canceled):
+			first = err
 		}
+	}
+	if first != nil {
+		return nil, first
 	}
 	// Firing over pending: both can be in the lookback as one turns into
 	// the other.

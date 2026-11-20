@@ -13,12 +13,12 @@ RULES that apply to shop, with its numbers alone
 ▲ warning  threshold with guards · every app
     rule      errors_high
     fires     > 5 % for 10m
-    guard     >= 20: at least 20 responses sent over 5m: under it, too few to j…
+    guard     >= 20: at least 20 responses sent over 5m: under it, too few to
+      judge
     now       shop 6.12 % (1m ago) · pending since 14:08 UTC (4m ago)
   critical threshold with guards · app shop
     rule      shop_slow
     fires     > 1.5 s for 15m
-    guard     >= 50: at least 50 timed responses over 5m: under it, too few to …
-    now       shop 210 ms (1m ago) · inactive
-  critical threshold · every app
+    guard     >= 50: at least 50 timed responses over 5m: under it, too few to
+      judge
 ↑↓ scroll  y json  c command  esc back  ? more

@@ -46,7 +46,9 @@ func TestRulesSays(t *testing.T) {
 		if l.Width(runes) > 60 {
 			t.Errorf("a row wider than 60: %q", row)
 		}
-		if strings.Contains(row, "xxx") && !strings.HasPrefix(row, "    rule      ") && !strings.HasPrefix(row, "    guard     ") ||
+		// A guard's meaning goes on at column 6, where no row of the
+		// screen's begins.
+		if strings.Contains(row, "xxx") && !strings.HasPrefix(row, "    rule      ") && !strings.HasPrefix(row, "    guard     ") && !strings.HasPrefix(row, "      ") ||
 			strings.HasPrefix(strings.TrimLeft(row, " "), "✖ critical threshold") || strings.ContainsAny(row, "\x1b\x07") {
 			t.Errorf("a row the box's words begin, or with an escape: %q", row)
 		}
@@ -89,8 +91,8 @@ func TestRulesSays(t *testing.T) {
 	// No store, none raising anything, a store that did not answer and a
 	// word not known: said, the rules listed as they are.
 	for body, want := range map[string]string{
-		`{"store":"off","rules_file":"differs","alerts":[]}`: "store       off: this box raises no alerts (its monitor block sends nothing to anyone, or it has none)\nrules file  the file vmalert reads is not this config's render: vmalert may run rules not listed here (the box's journal says why)\n",
-		`{"store":"off","alerts":[]}`:                        "store       off: this box raises no alerts (its monitor block sends nothing to anyone, or it has none)\n",
+		`{"store":"off","rules_file":"differs","alerts":[{"name":"rollback","source":"motel check","severity":"warning","subject":"app","kind":"event"}]}`: "store       off: this box has no metrics store, so no rule of the store's is listed\nrules file  the file vmalert reads is not this config's render: vmalert may run rules not listed here (the box's journal says why)\n",
+		`{"store":"off","alerts":[]}`: "store       off: this box raises no alerts (its monitor block sends nothing to anyone, or it has none)\n",
 		`{"store":"off","alerts":[{"name":"rollback","source":"motel check","severity":"warning","subject":"app","kind":"event"}]}`: "store       off: this box has no metrics store, so no rule of the store's is listed\n",
 		`{"store":"unanswered","alerts":[]}`:                "store       not known: the store did not answer the box in time, so the store's rules have no numbers\n",
 		`{"store":"later","alerts":[],"rules_file":"gone"}`: "store       not known: the box said \"later\", so the store's rules' numbers are not known\nrules file  not this config's, maybe: the box said \"gone\" of the file vmalert reads\n",
@@ -250,5 +252,50 @@ func TestRulesReadWhileOpen(t *testing.T) {
 	e.RulesOpen("", at)
 	if c = run(2 * time.Minute); count(c, box)+count(c, shop)+count(c, wiki) != 0 {
 		t.Errorf("rules read once their screens closed: %v", c)
+	}
+}
+
+// TestRuleWords: numbers are written plainly at every size, never in an
+// exponent's form; the watchdog's condition is the box's (a spent
+// budget is not firing); a reading of both an app and a filesystem
+// names both; and a guard's meaning, motel's sentence, is laid whole on
+// rows two columns in from its label's, never cut at the window.
+func TestRuleWords(t *testing.T) {
+	for _, c := range []struct {
+		v    float64
+		unit string
+		want string
+	}{
+		{1000.4 * (1 << 20), "bytes", "1000 MiB"}, {0.9996, "seconds", "1000 ms"}, {12345, "requests/s", "12340 requests/s"},
+		{0.0001234, "", "0.0001234"}, {-1234570000, "bytes", "-1.15 GiB"}, {0.0612, "share", "6.12 %"}, {79.96, "percent", "79.9 %"},
+	} {
+		if got := model.Amount(c.v, c.unit); got != c.want {
+			t.Errorf("%v %s: %q, want %q", c.v, c.unit, got, c.want)
+		}
+	}
+	s, f, now := session(t)
+	s.Engine.BoxRulesOpen(true, *now)
+	meaning := "the 6h line predicts it full too: a one-off write tilts the long line alone, and so on to the end"
+	f.Body("box-rules.json", `{"store":"on","alerts":[`+
+		`{"name":"watchdog_throttled","source":"motel check","severity":"critical","subject":"app","kind":"threshold","op":">=","unit":"restarts",`+
+		`"readings":[{"app":"shop","value":5,"threshold":5,"window_seconds":600,"measured_at":"@-5s"}]},`+
+		`{"name":"usage","source":"operator","severity":"warning","subject":"app","kind":"guarded","op":">","threshold":0.9,"unit":"share",`+
+		`"guards":[{"op":"<","value":0,"meaning":"`+meaning+`"}],"readings":[{"app":"shop","instance":"/srv/a","value":0.41,"measured_at":"@-65s","state":"inactive"}]}]}`)
+	for range 3 {
+		step(t, s, f, now)
+	}
+	text := joined(s.RulesViewFit("", *now, 60, runes))
+	for _, want := range []string{
+		"    fires     a further restart needed while >= its budget\n      in its window is spent\n",
+		"    now       shop 5 of 5 restarts in 10m (5s ago)\n",
+		"    now       /srv/a shop 41 % (1m ago) · inactive\n",
+		"    guard     < 0: the 6h line predicts it full too: a\n      one-off write",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("the screen does not say %q:\n%s", want, text)
+		}
+	}
+	if strings.Contains(text, "…") && strings.Contains(text, "guard") && !strings.Contains(strings.Join(strings.Fields(text), " "), "and so on to the end") {
+		t.Errorf("a guard's meaning cut:\n%s", text)
 	}
 }

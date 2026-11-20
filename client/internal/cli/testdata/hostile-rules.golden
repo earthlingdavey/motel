@@ -17,7 +17,7 @@ rules file  the file vmalert reads is not this config's render: the store's rule
     now       blog no number (<age>) · firing since <time> UTC (<age>)
   critical threshold · every app
     rule      watchdog_throttled
-    fires     >= each number's own threshold
+    fires     a further restart needed while >= its budget in its window is spent
     now       blog 2 of 5 restarts in 10m (<age>)
   warning  event · every app
     rule      deploy_failed

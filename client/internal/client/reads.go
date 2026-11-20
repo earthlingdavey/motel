@@ -132,10 +132,10 @@ func (c *Client) Rules(ctx context.Context, app App) (wire.Rules, *Answer, error
 			// backup) is not an app's either.
 			other := a.Subject != "app" || a.App != "" && another(a.App) || len(a.Apps) > 0
 			for _, rd := range a.Readings {
-				other = other || rd.Instance != "" || rd.App != "" && another(rd.App)
+				other = other || rd.Instance != "" || rd.App == "" || another(rd.App)
 			}
 			if other {
-				err = c.NotMotel(ans, "it holds another app's rules")
+				err = c.NotMotel(ans, "it holds rules or numbers not of this app")
 				break
 			}
 		}

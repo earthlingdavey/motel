@@ -285,18 +285,20 @@ func TestRulesViewShared(t *testing.T) {
 	}
 	now = now.Add(time.Second)
 	f.err = errors.New("store down")
-	if _, ok := v.get(context.Background(), zap.NewNop(), f, l.Store, asks); ok || f.count() != 2*per {
+	if _, ok := v.get(context.Background(), zap.NewNop(), f, l.Store, asks); ok || f.count() <= per {
 		t.Errorf("after rulesEvery: %v, %d queries", ok, f.count())
 	}
+	// A failing evaluation ends its other queries, so it asks fewer.
+	failed := f.count()
 	f.err = nil
 	now = now.Add(rulesEvery - time.Second)
-	if _, ok := v.get(context.Background(), zap.NewNop(), f, l.Store, asks); ok || f.count() != 2*per {
+	if _, ok := v.get(context.Background(), zap.NewNop(), f, l.Store, asks); ok || f.count() != failed {
 		t.Errorf("a failure is kept for rulesEvery: %v, %d queries", ok, f.count())
 	}
 	// Other queries (another config's rules) are another evaluation,
 	// and each set keeps its own: two configs read in turn evaluate once
 	// each per rulesEvery, not at every read.
-	if _, ok := v.get(context.Background(), zap.NewNop(), f, l.Store, asks[1:]); !ok || f.count() != 2*per+queriesOf(asks[1:]) {
+	if _, ok := v.get(context.Background(), zap.NewNop(), f, l.Store, asks[1:]); !ok || f.count() != failed+queriesOf(asks[1:]) {
 		t.Errorf("other queries: %v, %d queries", ok, f.count())
 	}
 	now = now.Add(time.Second)
@@ -304,7 +306,7 @@ func TestRulesViewShared(t *testing.T) {
 		v.get(context.Background(), zap.NewNop(), f, l.Store, asks)
 		v.get(context.Background(), zap.NewNop(), f, l.Store, asks[1:])
 	}
-	if f.count() != 3*per+queriesOf(asks[1:]) {
+	if f.count() != failed+queriesOf(asks[1:])+per {
 		t.Errorf("two sets read in turn: %d queries, want one more evaluation of the first", f.count())
 	}
 }
@@ -491,4 +493,36 @@ func TestRulesSourceIsTheCommand(t *testing.T) {
 	if n := f.count(); n != queriesOf(valueAsks(l)) {
 		t.Errorf("the two made %d queries, want one evaluation's %d", n, queriesOf(valueAsks(l)))
 	}
+}
+
+// TestEvaluateEndsOnItsFirstFailure: a query that fails ends the
+// evaluation's others at once, so their slots, the process's, go to
+// another set's evaluation; the failure said is that query's.
+func TestEvaluateEndsOnItsFirstFailure(t *testing.T) {
+	l, err := listRules(rulesApp(t, listingLines...), polled{}, chainRead{}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f := listingStore(l)
+	f.wait = make(chan struct{}) // every query waits, but the state query fails at once
+	defer close(f.wait)
+	bad := &failingFirst{rulesStore: f, fail: l.Store.StateQuery}
+	start := time.Now()
+	_, err = evaluate(context.Background(), bad, l.Store, valueAsks(l), listingAt)
+	if err == nil || !strings.Contains(err.Error(), "store down") || time.Since(start) > time.Second {
+		t.Errorf("%v after %v, want the state query's failure at once", err, time.Since(start))
+	}
+}
+
+// failingFirst is rulesStore with one query failing before any waits.
+type failingFirst struct {
+	*rulesStore
+	fail string
+}
+
+func (f *failingFirst) instantAt(ctx context.Context, q string, t time.Time) ([]series, error) {
+	if q == f.fail {
+		return nil, errors.New("store down")
+	}
+	return f.rulesStore.instantAt(ctx, q, t)
 }

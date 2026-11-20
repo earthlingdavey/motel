@@ -95,27 +95,45 @@ func RulesFileSays(r wire.Rules) Line {
 // a severity that is not motel's, each guard's meaning, and each number
 // with its age and state.
 func RuleBlock(a wire.AlertListing, now time.Time) []Line {
+	var out []Line
+	for _, r := range ruleRows(a, now) {
+		out = append(out, r.l)
+	}
+	return out
+}
+
+// ruleRow is one of a rule's rows, and whether a window too narrow for
+// it lays it on more rows (the condition, the client's words; a guard's
+// meaning, motel's sentence), each two columns in from where its label
+// begins, a column no row of the screen begins at, rather than cutting
+// it.
+type ruleRow struct {
+	l    Line
+	wrap bool
+}
+
+func ruleRows(a wire.AlertListing, now time.Time) []ruleRow {
 	m := ruleMark(a)
 	head := Line{ownC(m.Glyph()+" ", m.Class()), ownC(pad(SeverityWord(a.Severity), 9), m.Class()), own(ruleKind(a.Kind) + " · " + ruleScope(a))}
-	rows := []Line{head, boxField("rule", boxT(a.Name))}
+	rows := []ruleRow{{l: head}, {l: boxField("rule", boxT(a.Name))}}
 	if c := ruleCondition(a); c != "" {
-		rows = append(rows, boxField("fires", own(c)))
+		rows = append(rows, ruleRow{l: boxField("fires", own(c)), wrap: true})
 	}
 	if a.Severity != "" && SeverityWord(a.Severity) != a.Severity {
-		rows = append(rows, boxField("severity", boxT(a.Severity)))
+		rows = append(rows, ruleRow{l: boxField("severity", boxT(a.Severity))})
 	}
 	for _, g := range a.Guards {
 		l := Line{}
 		if g.Op != "" && g.Value != nil {
-			l = append(l, own(opWord(g.Op)+" "+strconv.FormatFloat(*g.Value, 'g', 6, 64)+": "))
+			l = append(l, own(opWord(g.Op)+" "+number(*g.Value, 6)+": "))
 		}
-		rows = append(rows, boxField("guard", append(l, boxT(g.Meaning))...))
+		rows = append(rows, ruleRow{l: boxField("guard", append(l, boxT(g.Meaning))...), wrap: true})
 	}
 	for _, r := range a.Readings {
-		rows = append(rows, boxField("now", reading(a, r, now)...))
+		rows = append(rows, ruleRow{l: boxField("now", reading(a, r, now)...)})
 	}
 	if len(a.Readings) == 0 && a.Kind != "event" {
-		rows = append(rows, boxField("now", ownC("no number", Dim)))
+		rows = append(rows, ruleRow{l: boxField("now", ownC("no number", Dim))})
 	}
 	return rows
 }
@@ -126,6 +144,8 @@ func RuleBlock(a wire.AlertListing, now time.Time) []Line {
 func reading(a wire.AlertListing, r wire.Reading, now time.Time) Line {
 	var l Line
 	switch {
+	case r.App != "" && r.Instance != "":
+		l = append(l, boxT(r.Instance), own(" "+r.App+" "))
 	case r.App != "":
 		l = append(l, own(r.App+" "))
 	case r.Instance != "":
@@ -135,7 +155,7 @@ func reading(a wire.AlertListing, r wire.Reading, now time.Time) Line {
 	switch {
 	case r.Value == nil:
 	case r.Threshold != nil:
-		v = strconv.FormatFloat(*r.Value, 'g', 6, 64) + " of " + Amount(*r.Threshold, a.Unit) + " in " + durWords(r.WindowSeconds)
+		v = number(*r.Value, 6) + " of " + Amount(*r.Threshold, a.Unit) + " in " + durWords(r.WindowSeconds)
 	default:
 		v = Amount(*r.Value, a.Unit)
 	}
@@ -251,6 +271,10 @@ func ruleCondition(a wire.AlertListing) string {
 		}
 	case a.Threshold != nil:
 		c = opWord(a.Op) + " " + Amount(*a.Threshold, a.Unit)
+	case a.Name == "watchdog_throttled":
+		// motel's own: a spent budget is not firing (liveswap/watchdog.go);
+		// it fires when a further restart is needed and the budget is spent.
+		return "a further restart needed while " + opWord(a.Op) + " its budget in its window is spent"
 	case a.Op != "":
 		c = opWord(a.Op) + " each number's own threshold"
 	default:
@@ -275,7 +299,7 @@ func opWord(op string) string {
 // percentage, seconds as a duration, bytes in binary units. A unit the
 // client does not know is quoted beside the number.
 func Amount(v float64, unit string) string {
-	g := func(v float64, n int) string { return strconv.FormatFloat(v, 'g', n, 64) }
+	g := number
 	switch unit {
 	case "share":
 		return g(v*100, 4) + " %"
@@ -386,8 +410,12 @@ func (s *Session) RulesViewFit(app string, now time.Time, width int, cells Cells
 		out = append(out, nil, cutTo(Line{ownC(heading, Label)}, width, cells))
 	}
 	for _, a := range r.Alerts {
-		for _, l := range RuleBlock(a, now) {
-			out = append(out, cutTo(l, width, cells))
+		for _, r := range ruleRows(a, now) {
+			if r.wrap {
+				out = append(out, Sentence(r.l, width, cells)...)
+				continue
+			}
+			out = append(out, cutTo(r.l, width, cells))
 		}
 	}
 	if err != nil {
@@ -401,4 +429,14 @@ func abs(v float64) float64 {
 		return -v
 	}
 	return v
+}
+
+// number is v to n significant digits, never in an exponent's form:
+// 1000, not 1e+03; 0.0001234, not 1.234e-04.
+func number(v float64, n int) string {
+	r, err := strconv.ParseFloat(strconv.FormatFloat(v, 'g', n, 64), 64)
+	if err != nil {
+		return strconv.FormatFloat(v, 'g', n, 64)
+	}
+	return strconv.FormatFloat(r, 'f', -1, 64)
 }
