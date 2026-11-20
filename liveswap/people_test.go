@@ -427,6 +427,90 @@ func TestWhoamiAndApps(t *testing.T) {
 	wantNoMotelHeader(t, w)
 }
 
+// TestWhoamiRoles: whoami lists one role per grant that applies from
+// the request's address: the box's first, then each app by name, viewer
+// before logs on one scope; a logs grant from a list only from inside
+// it. A logs grant lists its apps on GET /_motel/apps as a viewer grant
+// does.
+func TestWhoamiRoles(t *testing.T) {
+	lara, lars, gus := accesstest.Ed25519(), accesstest.Ed25519(), accesstest.SKEd25519()
+	var l access.Lines
+	for name, k := range map[string]accesstest.Key{"lara": lara, "lars": lars, "gus": gus} {
+		key, err := access.ParsePerson([]string{name, k.Type(), k.B64()})
+		if err != nil {
+			t.Fatal(err)
+		}
+		l.Keys = append(l.Keys, key)
+	}
+	for _, args := range [][]string{
+		{"lara", "viewer", "app", "demo"},
+		{"lara", "logs", "app", "demo", "from", "198.51.100.0/24"},
+		{"lars", "logs", "app", "demo"},
+		{"gus", "logs", "app", "zeta"},
+		{"gus", "viewer", "app", "blog"},
+		{"gus", "logs", "box", "from", "198.51.100.0/24"},
+		{"gus", "viewer", "box"},
+		{"gus", "logs", "app", "blog"},
+		{"gus", "viewer", "app", "alpha"},
+	} {
+		g, err := access.ParseGrant(args)
+		if err != nil {
+			t.Fatal(err)
+		}
+		l.Grants = append(l.Grants, g)
+	}
+	if _, err := access.CheckLines(l, nil); err != nil {
+		t.Fatal(err)
+	}
+	h, rig := newTestHandler(t)
+	h.people = access.NewRegistry(personBox, l)
+	blog := newManagedApp("blog")
+	blog.spec, blog.verifiers, blog.logger = rig.spec, rig.ma.verifiers, zap.NewNop()
+	h.app.managed["blog"] = blog
+	inside, outside := "198.51.100.7:1", "203.0.113.9:1"
+	for _, c := range []struct {
+		who   accesstest.Key
+		name  string
+		from  string
+		roles []string
+		apps  []string
+	}{
+		{lara, "lara", inside, []string{"viewer app:demo", "logs app:demo"}, []string{"demo"}},
+		{lara, "lara", outside, []string{"viewer app:demo"}, []string{"demo"}},
+		{lars, "lars", outside, []string{"logs app:demo"}, []string{"demo"}},
+		{gus, "gus", inside, []string{"viewer box", "logs box", "viewer app:alpha", "viewer app:blog", "logs app:blog", "logs app:zeta"}, []string{"blog", "demo"}},
+		{gus, "gus", outside, []string{"viewer box", "viewer app:alpha", "viewer app:blog", "logs app:blog", "logs app:zeta"}, []string{"blog", "demo"}},
+	} {
+		get := func(target string) *httptest.ResponseRecorder {
+			req := httptest.NewRequest(http.MethodGet, "http://"+personBox+target, nil)
+			req.RemoteAddr = c.from
+			req.Header.Set("Authorization", token(c.who))
+			w := httptest.NewRecorder()
+			if err := h.ServeHTTP(w, req, nil); err != nil {
+				t.Fatal(err)
+			}
+			return w
+		}
+		w := get("/_motel/whoami")
+		var me wire.WhoAmI
+		if err := json.Unmarshal(w.Body.Bytes(), &me); err != nil || w.Code != http.StatusOK {
+			t.Fatalf("%s from %s whoami: %d %s", c.name, c.from, w.Code, w.Body)
+		}
+		var roles []string
+		for _, r := range me.Roles {
+			roles = append(roles, r.Role+" "+r.Scope)
+		}
+		if !slices.Equal(roles, c.roles) {
+			t.Errorf("%s from %s: roles %q, want %q", c.name, c.from, roles, c.roles)
+		}
+		w = get("/_motel/apps")
+		var apps wire.Apps
+		if err := json.Unmarshal(w.Body.Bytes(), &apps); err != nil || w.Code != http.StatusOK || !slices.Equal(appNames(apps), c.apps) {
+			t.Errorf("%s from %s apps: %d %s, want %v", c.name, c.from, w.Code, w.Body, c.apps)
+		}
+	}
+}
+
 // TestAddressList: a grant with a from list holds only from the listed
 // networks, at their bounds: the first and the last address of a prefix
 // are in it and the ones either side are not. A person left with no
