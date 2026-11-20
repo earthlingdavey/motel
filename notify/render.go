@@ -67,6 +67,9 @@ type amConfig struct {
 
 type amGlobal struct {
 	ResolveTimeout string `yaml:"resolve_timeout"`
+	// HTTPConfig is every receiver's that has none of its own:
+	// Alertmanager copies the global one to those only.
+	HTTPConfig amHTTPConfig `yaml:"http_config"`
 }
 
 type amRoute struct {
@@ -105,10 +108,18 @@ type amWebhook struct {
 	HTTPConfig   *amHTTPConfig `yaml:"http_config,omitempty"`
 }
 
-// amHTTPConfig carries the fixed headers an ntfy channel's receiver
-// sends: ntfy reads a message's priority from X-Priority.
+// amHTTPConfig is the global http_config and an ntfy channel's own,
+// which carries the fixed headers its receiver sends: ntfy reads a
+// message's priority from X-Priority. FollowRedirects is never set and
+// never omitted: Alertmanager's default follows a redirect, a 307
+// replaying the POST to wherever the endpoint names, which would let
+// whoever runs it send a notification on to the box's loopback, past
+// checkURL. A receiver's own http_config starts from that default, not
+// from the global one, so each says false (DESIGN-notify.md, "The
+// monitor block").
 type amHTTPConfig struct {
-	Headers map[string]amHeader `yaml:"http_headers"`
+	FollowRedirects bool                `yaml:"follow_redirects"`
+	Headers         map[string]amHeader `yaml:"http_headers,omitempty"`
 }
 
 type amHeader struct {

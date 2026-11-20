@@ -2041,7 +2041,7 @@ the request thresholds over the pushed apps alone, a histogram read
 whole, disk history over a gap, a disk step, `GET /<app>`'s request
 queries over the store, a relaunch read past its stopped
 instance, and `scrape.yml` checked by `victoria-metrics` with unknown fields refused), every test that calls `vmTool`
-(`TestE2EMetricsListsEveryVMAlertTest` holds the list to them), and notify's two over `amtool` (Alertmanager's router over the rendered tree; that test holds their list too), run
+(`TestE2EMetricsListsEveryVMAlertTest` holds the list to them), and notify's three over `amtool` (Alertmanager's router over the rendered tree, and Alertmanager itself on it against a stub that redirects; that test holds their list too), run
 from a test binary built for the box (e2e/Dockerfile's `notify-tests`), none skipped; motel's push arrives
 (`job="moteld"`), with a deployed app's `motel_app_up`, release and CPU,
 and its memory where the host's memory controller reaches the user
