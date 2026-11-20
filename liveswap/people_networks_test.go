@@ -23,6 +23,7 @@ import (
 	"github.com/smallhoursorg/motel/liveswap/access"
 	"github.com/smallhoursorg/motel/liveswap/access/accesstest"
 	"github.com/smallhoursorg/motel/liveswap/deploytrust"
+	"github.com/smallhoursorg/motel/liveswap/wire"
 )
 
 // heard is an Announcer that keeps what it is told.
@@ -958,6 +959,91 @@ func TestOutsideListThroughTheGate(t *testing.T) {
 	}
 	if k.nets(alice.Fingerprint()) != nil {
 		t.Error("a refusal counted as a use")
+	}
+}
+
+// TestLogsListThroughTheGate: a person with a viewer grant from anywhere
+// and a logs grant from a list on one app. From outside the list the
+// viewer grant admits them, whoami lists viewer alone, and the operator
+// is told a new network, never person_outside_list: a grant applies, so
+// the key was not used outside every list. From inside it whoami lists
+// both, and the new network is told too. A person whose only grant is
+// a listed logs grant is refused from outside it, and told as outside
+// the lists, as with a listed viewer grant.
+func TestLogsListThroughTheGate(t *testing.T) {
+	lara, lars := accesstest.Ed25519(), accesstest.Ed25519()
+	var l access.Lines
+	for name, k := range map[string]accesstest.Key{"lara": lara, "lars": lars} {
+		key, err := access.ParsePerson([]string{name, k.Type(), k.B64()})
+		if err != nil {
+			t.Fatal(err)
+		}
+		l.Keys = append(l.Keys, key)
+	}
+	for _, args := range [][]string{
+		{"lara", "viewer", "app", "demo"},
+		{"lara", "logs", "app", "demo", "from", "198.51.100.0/24"},
+		{"lars", "logs", "app", "demo", "from", "198.51.100.0/24"},
+	} {
+		g, err := access.ParseGrant(args)
+		if err != nil {
+			t.Fatal(err)
+		}
+		l.Grants = append(l.Grants, g)
+	}
+	if w, err := access.CheckLines(l, nil); err != nil || len(w) != 0 {
+		t.Fatalf("the lines: %q %v", w, err)
+	}
+	h, _ := newTestHandler(t)
+	core, logs := observer.New(zap.InfoLevel)
+	h.logger = zap.New(core)
+	h.people = access.NewRegistry(personBox, l)
+	k, heard := testNetworks(t, "")
+	h.networks = k
+	get := func(who accesstest.Key, from, target string) (int, wire.WhoAmI) {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodGet, "http://"+personBox+target, nil)
+		req.RemoteAddr = from
+		req.Header.Set("Authorization", token(who))
+		w := httptest.NewRecorder()
+		if err := h.ServeHTTP(w, req, nil); err != nil {
+			t.Fatal(err)
+		}
+		var me wire.WhoAmI
+		if target == "/_motel/whoami" && w.Code == http.StatusOK {
+			if err := json.Unmarshal(w.Body.Bytes(), &me); err != nil {
+				t.Fatal(err)
+			}
+		}
+		return w.Code, me
+	}
+	if code, _ := get(lara, "203.0.113.9:1", "/demo"); code != http.StatusOK {
+		t.Fatalf("lara from outside, GET /demo: %d", code)
+	}
+	if code, me := get(lara, "203.0.113.9:1", "/_motel/whoami"); code != http.StatusOK || !slices.Equal(me.Roles, []wire.RoleHeld{{Role: "viewer", Scope: "app:demo"}}) {
+		t.Errorf("lara from outside, whoami: %d %+v", code, me.Roles)
+	}
+	if code, me := get(lara, "198.51.100.7:1", "/_motel/whoami"); code != http.StatusOK ||
+		!slices.Equal(me.Roles, []wire.RoleHeld{{Role: "viewer", Scope: "app:demo"}, {Role: "logs", Scope: "app:demo"}}) {
+		t.Errorf("lara from inside, whoami: %d %+v", code, me.Roles)
+	}
+	fp := lara.Fingerprint()
+	want := []Announcement{
+		{Name: EventPersonNewNetwork, Person: "lara", Key: fp, From: "203.0.113.0/24", First: true},
+		{Name: EventPersonNewNetwork, Person: "lara", Key: fp, From: "198.51.100.0/24"},
+	}
+	if got := heard.take(); !slices.Equal(got, want) {
+		t.Errorf("told %+v\nwant %+v", got, want)
+	}
+	if got := logs.FilterMessage("webhook auth failed").All(); len(got) != 0 {
+		t.Errorf("lara refused: %v", logs.All())
+	}
+
+	if code, _ := get(lars, "203.0.113.9:1", "/demo"); code != http.StatusUnauthorized {
+		t.Errorf("lars from outside, GET /demo: %d", code)
+	}
+	if got := heard.take(); len(got) != 1 || got[0].Name != EventPersonOutsideList || got[0].Person != "lars" {
+		t.Errorf("lars from outside: told %+v", got)
 	}
 }
 

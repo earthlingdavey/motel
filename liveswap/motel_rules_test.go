@@ -423,7 +423,7 @@ func TestRulesChosenByTheHandle(t *testing.T) {
 	src := &fakeRules{l: rulesListing()}
 	for app, pinned := range map[string]string{"demo": "demo_quiet", "blog": "blog_slow"} {
 		calls := recordDecide(t, nil)
-		hd, err := h.allowApp(access.Principal{Kind: access.Person, Name: "carol", Views: &access.Views{Box: true}}, access.AppRules, app)
+		hd, err := h.allowApp(access.Principal{Kind: access.Person, Name: "carol", Views: &access.Views{Viewer: access.Scopes{Box: true}}}, access.AppRules, app)
 		if err != nil || len(*calls) != 1 || (*calls)[0].resource != app {
 			t.Fatalf("%s: %v %+v", app, err, *calls)
 		}

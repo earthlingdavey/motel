@@ -3,6 +3,7 @@ package access_test
 import (
 	"errors"
 	"net/netip"
+	"reflect"
 	"testing"
 	"time"
 
@@ -107,57 +108,102 @@ func TestRegistryListsPersonKeysOnly(t *testing.T) {
 	}
 }
 
-// TestRegistryViews: what a person may view from an address is the
-// grants whose list holds it, a grant without one from anywhere; a box
-// grant covers every app; a person with grants and none from here is
-// told apart from one with none at all.
+// TestRegistryViews: what a person may do from an address is the
+// grants whose list holds it, a grant without one from anywhere, each
+// in its own role; a box grant covers every app; a person with grants
+// and none from here is told apart from one with none at all. A from
+// list on a logs grant beside a viewer grant without one keeps the logs
+// to the list and the viewer's reads from anywhere.
 func TestRegistryViews(t *testing.T) {
-	alice, bob, carol := accesstest.Ed25519(), accesstest.Ed25519(), accesstest.Ed25519()
+	alice, bob, carol, lara := accesstest.Ed25519(), accesstest.Ed25519(), accesstest.Ed25519(), accesstest.Ed25519()
 	reg := access.NewRegistry(box, lines(t, nil,
-		map[string]accesstest.Key{"alice": alice, "bob": bob, "carol": carol},
+		map[string]accesstest.Key{"alice": alice, "bob": bob, "carol": carol, "lara": lara},
 		[]string{"alice", "viewer", "box", "from", "198.51.100.0/24"},
 		[]string{"bob", "viewer", "app", "shop"},
 		[]string{"bob", "viewer", "app", "blog", "from", "2001:db8::/32", "192.0.2.7"},
+		[]string{"bob", "logs", "app", "shop", "from", "192.0.2.7"},
+		[]string{"lara", "viewer", "app", "blog"},
+		[]string{"lara", "logs", "app", "blog", "from", "203.0.113.0/24"},
+		[]string{"lara", "logs", "box", "from", "2001:db8::/32"},
 	))
+	scopes := func(box bool, apps ...string) access.Scopes { return access.Scopes{Box: box, Apps: apps} }
 	for _, c := range []struct {
-		name, addr string
-		box        bool
-		apps       []string
-		granted    bool
+		name, addr     string
+		viewer, logs   access.Scopes
+		granted, empty bool
 	}{
-		{"alice", "198.51.100.9", true, nil, true},
-		{"alice", "::ffff:198.51.100.9", true, nil, true},
-		{"alice", "198.51.101.9", false, nil, true},
-		{"alice", "", false, nil, true},
-		{"bob", "192.0.2.7", false, []string{"blog", "shop"}, true},
-		{"bob", "2001:db8::1", false, []string{"blog", "shop"}, true},
-		{"bob", "fe80::1%eth0", false, []string{"shop"}, true},
-		{"bob", "192.0.2.8", false, []string{"shop"}, true},
-		{"carol", "192.0.2.7", false, nil, false},
-		{"nobody", "192.0.2.7", false, nil, false},
+		{"alice", "198.51.100.9", scopes(true), scopes(false), true, false},
+		{"alice", "::ffff:198.51.100.9", scopes(true), scopes(false), true, false},
+		{"alice", "198.51.101.9", scopes(false), scopes(false), true, true},
+		{"alice", "", scopes(false), scopes(false), true, true},
+		{"bob", "192.0.2.7", scopes(false, "blog", "shop"), scopes(false, "shop"), true, false},
+		{"bob", "2001:db8::1", scopes(false, "blog", "shop"), scopes(false), true, false},
+		{"bob", "fe80::1%eth0", scopes(false, "shop"), scopes(false), true, false},
+		{"bob", "192.0.2.8", scopes(false, "shop"), scopes(false), true, false},
+		{"lara", "203.0.113.9", scopes(false, "blog"), scopes(false, "blog"), true, false},
+		{"lara", "::ffff:203.0.113.9", scopes(false, "blog"), scopes(false, "blog"), true, false},
+		{"lara", "198.51.100.9", scopes(false, "blog"), scopes(false), true, false},
+		{"lara", "2001:db8::1", scopes(false, "blog"), scopes(true), true, false},
+		{"lara", "", scopes(false, "blog"), scopes(false), true, false},
+		{"carol", "192.0.2.7", scopes(false), scopes(false), false, true},
+		{"nobody", "192.0.2.7", scopes(false), scopes(false), false, true},
 	} {
 		var addr netip.Addr
 		if c.addr != "" {
 			addr = netip.MustParseAddr(c.addr)
 		}
 		v, granted := reg.Views(c.name, addr)
-		if v.Box != c.box || len(v.Apps) != len(c.apps) || granted != c.granted {
-			t.Errorf("%s from %q: %+v granted %v, want box %v apps %v granted %v", c.name, c.addr, v, granted, c.box, c.apps, c.granted)
-			continue
-		}
-		for i := range c.apps {
-			if v.Apps[i] != c.apps[i] {
-				t.Errorf("%s from %q: apps %v, want %v", c.name, c.addr, v.Apps, c.apps)
-			}
+		if !reflect.DeepEqual(v.Viewer, c.viewer) || !reflect.DeepEqual(v.Logs, c.logs) || granted != c.granted || v.Empty() != c.empty {
+			t.Errorf("%s from %q: %+v granted %v empty %v, want viewer %+v logs %+v granted %v empty %v", c.name, c.addr, *v, granted, v.Empty(), c.viewer, c.logs, c.granted, c.empty)
 		}
 	}
 	v, _ := reg.Views("alice", netip.MustParseAddr("198.51.100.9"))
-	if !v.Covers("anything") || v.Covers("") {
-		t.Error("a box view covers every app and no empty name")
+	if !v.Covers("anything") || v.Covers("") || !v.CoversBox() || v.ReadsLogs("anything") {
+		t.Error("a viewer box grant covers every app and no empty name, and reads no logs")
+	}
+	v, _ = reg.Views("lara", netip.MustParseAddr("2001:db8::1"))
+	if !v.ReadsLogs("anything") || v.ReadsLogs("") || !v.CoversBox() {
+		t.Error("a logs box grant reads every app's logs and no empty name's, and covers the box")
 	}
 	var nilViews *access.Views
-	if nilViews.Covers("shop") || !nilViews.Empty() {
+	if nilViews.Covers("shop") || nilViews.CoversBox() || nilViews.ReadsLogs("shop") || !nilViews.Empty() {
 		t.Error("no views cover something")
+	}
+}
+
+// TestViewsByRole: what each set of grants gives, against the five
+// questions the actions ask: a viewer's reads on app a, on app b and
+// on the box, and the logs of a and of b. A logs grant gives a viewer's
+// reads on its scope; a viewer grant never gives logs; neither reaches
+// past its scope.
+func TestViewsByRole(t *testing.T) {
+	type answers struct{ a, b, box, logsA, logsB bool }
+	for _, c := range []struct {
+		grants [][]string
+		want   answers
+	}{
+		{[][]string{{"viewer", "app", "a"}}, answers{true, false, false, false, false}},
+		{[][]string{{"viewer", "box"}}, answers{true, true, true, false, false}},
+		{[][]string{{"logs", "app", "a"}}, answers{true, false, false, true, false}},
+		{[][]string{{"logs", "box"}}, answers{true, true, true, true, true}},
+		{[][]string{{"viewer", "app", "a"}, {"logs", "app", "a"}}, answers{true, false, false, true, false}},
+		{[][]string{{"viewer", "box"}, {"logs", "app", "a"}}, answers{true, true, true, true, false}},
+		{[][]string{{"viewer", "app", "b"}, {"logs", "app", "a"}}, answers{true, true, false, true, false}},
+		{[][]string{{"logs", "app", "a"}, {"logs", "app", "b"}}, answers{true, true, false, true, true}},
+		{[][]string{{"viewer", "box"}, {"logs", "box"}}, answers{true, true, true, true, true}},
+		{nil, answers{}},
+	} {
+		dora := accesstest.Ed25519()
+		var gs [][]string
+		for _, g := range c.grants {
+			gs = append(gs, append([]string{"dora"}, g...))
+		}
+		reg := access.NewRegistry(box, lines(t, nil, map[string]accesstest.Key{"dora": dora}, gs...))
+		v, _ := reg.Views("dora", netip.MustParseAddr("192.0.2.1"))
+		got := answers{v.Covers("a"), v.Covers("b"), v.CoversBox(), v.ReadsLogs("a"), v.ReadsLogs("b")}
+		if got != c.want {
+			t.Errorf("%v: %+v, want %+v", c.grants, got, c.want)
+		}
 	}
 }
 

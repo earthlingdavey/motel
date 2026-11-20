@@ -1259,7 +1259,16 @@ scope for the runtime model, in scope for release signing (roadmap).
   trusted without `trusted_proxies_strict` every forwarded request is
   one network, so only its first use through the proxy is told
   (`moteld validate` warns of such a server). A hardware-held key cannot
-  be used without a touch.
+  be used without a touch. A key whose grant is `logs` on the app reads
+  all that and the app's logs too: whatever the app printed, its
+  customers' data and secrets it made or fetched while it ran among
+  them, which the response filter cannot know to hide (it masks the
+  app's `env_file` values and some shapes of credential). That is why
+  docs/people.md advises a `from` list on every `logs` grant; a `viewer`
+  grant never reads logs. With a listed `logs` grant beside an unlisted
+  `viewer` grant, the key read from outside the list is told only as a
+  new network, never `person_outside_list` (a grant applies there), and
+  its logs read is refused.
 - **T8 — A person's key, stolen, with a role on the box.** As T7, for
   every app and the box's status: the commit, the host, the
   Caddyfile's digest, the box's key for secrets; and the box-wide reads:
@@ -1273,7 +1282,9 @@ scope for the runtime model, in scope for release signing (roadmap).
   most worth having on. It reads what the box webhooks answer through
   the same filtered bodies, and nothing the webhooks do not answer: not
   the journal, the backup repository and its credential, or the admin
-  socket.
+  socket. With `logs` on the box it also reads every app's logs (the
+  apps' own lines of the journal), as T7's `logs` key reads one app's,
+  and that key is worth a list most of all.
 
 For **T2**: deploy-arbitrary-code (a push is contained by nothing but
 the claim scope; a pull additionally by the allowlist); deliberate
@@ -1295,8 +1306,10 @@ no age-out and one in root's hands, and the handler's validate on a
 signer's file; a signer's software key gets the box, and — with secrets
 in the repository — every value encrypted to it, offline. For **T7** and
 **T8**: disclosure of what the grant reads, bounded by the response
-filter as every body is ("Webhook endpoint"), and the CPU of reads up
-to the rate per person (2 a second, 60 at once).
+filter as every body is ("Webhook endpoint"), but for an app's logs
+under a `logs` grant, which hold what the app printed and which the
+filter bounds only for the values it knows; and the CPU of reads up to
+the rate per person (2 a second, 60 at once).
 
 ## The shared-UID rule
 

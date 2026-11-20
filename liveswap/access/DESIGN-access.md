@@ -3,7 +3,7 @@
 `access` is how a person, not CI, reaches a box from a laptop. A person
 is declared once in the `box` block of the Caddyfile with their ssh key
 (`person` and `grant` lines, box/DESIGN-box.md "People and grants"), is
-given the `viewer` role on one app or on the whole box, and signs a
+given the `viewer` or the `logs` role on one app or on the whole box, and signs a
 short token with their own key, which the client sends over HTTPS to
 the box's own name. ssh stays root's. One function, `Decide`, says on
 every request either webhook serves whether the caller may take the
@@ -11,8 +11,19 @@ route's action.
 
 This release gives people reads only: an app's status, deploys,
 alerts and numbers over time, the box's status, backups, and every alert and silence, who
-they are here, and which apps they may view. No
-person can deploy, roll back or push, whatever the lines say.
+they are here, and which apps they may view; and, with a `logs` grant,
+an app's logs. No person can deploy, roll back or push, whatever the
+lines say.
+
+The two roles: `viewer` reads an app's reads on its scope (an app, or
+the box with every app and the box's own reads), and never logs;
+`logs` reads what `viewer` reads on the same scope, and the logs of
+the app, or on the box of every app. No role implies another in the
+code: the views keep each role's scopes apart (`Views{Viewer, Logs}`),
+and `decidePerson` says, action by action, which role takes it. Where
+this page says "a viewer of the box" or "of the app", a person with a
+`logs` grant there is one too; "a logs reader" is a person with a
+`logs` grant.
 
 - The person who runs a box is the operator.
 - The words `Motel` (the `Authorization` scheme) and `m1.` (the
@@ -283,7 +294,7 @@ names a declared key, or the 404; an app's source's is the flat 401.
 | a deploy source of an app | a `Bearer` token one of that app's `deploy_trust` sources accepted | `AppDeployer`, the app in the path |
 | a global deploy source | a `Bearer` token a global liveswap source accepted | `AppDeployer` of no app (404 on an app's path, before the table) |
 | the box channel's source | a `Bearer` token the `box` block's `deploy_trust` accepted | `BoxChannel` |
-| a person | a `Motel` token `CheckToken` accepted | `Person`: the name, and the views the grants that apply from here give (`Views`: the box, or a list of apps) |
+| a person | a `Motel` token `CheckToken` accepted | `Person`: the name, and the views the grants that apply from here give, role by role (`Views`: for `viewer` and for `logs`, the box, or a list of apps) |
 
 ### The table
 
@@ -304,17 +315,27 @@ names a declared key, or the 404; an app's source's is the flat 401.
 | `box.rules` | `GET /_motel/rules` | as for `box.whoami` | as for `box.whoami` | a viewer of the box |
 | `app.rules` | `GET /_motel/apps/<app>/rules` | as for `app.alerts` | as for `box.whoami` | a viewer of that app or of the box |
 | `app.series` | `GET /_motel/apps/<app>/series[?range=1h\|24h\|7d\|14d]` | as for `app.alerts` | as for `box.whoami` | a viewer of that app or of the box |
+| `app.logs` | `GET /_motel/apps/<app>/logs`, the row arriving with the logs read | as for `app.alerts` | as for `box.whoami` | a logs reader of that app or of the box, never a viewer grant (403, `needs` `logs`, scope `app`, the same for an app and a name that is no app) |
 
 A box grant covers every app. A pair the table does not hold is
 refused. Three things are structural: no person's cell holds an act; no
 deploy source's cell holds a person's route; and a person's token is
-refused off a `GET` by the checker, before `Decide`.
+refused off a `GET` by the checker, before `Decide`. And every
+person's cell has its own case in `decidePerson`, the two any person
+takes (`box.whoami`, `box.apps`) named too: a cell with no case is
+refused to every person (`TestEveryPersonCellHasACase`), where before
+it was allowed to every person, one with no grant included.
 
 The tests: `TestDecideTable` writes every cell out for every kind,
 people included; `TestAllowedCells` pins the table both ways;
 `TestEveryRouteHasAnAction`, `TestEveryActionHasARoute` and
 `TestEveryMotelRouteHasAnAction` hold the route tables and the actions
-to each other; `FuzzNoRouteNoAnswer`, in each webhook, drives any
+to each other, but for the actions `arrivesWithItsRead` names
+(`app.logs`, whose row comes with the read), which
+`TestArrivesWithItsReadHasNoRow` fails once a row for one exists;
+`TestViewsByRole` holds what each set of grants gives, and
+`TestTwoAppsTwoPeople` has a logs reader of one app and of the box
+among its callers, each reading every row as its viewer twin does; `FuzzNoRouteNoAnswer`, in each webhook, drives any
 method, path and query for every kind of caller, people included.
 
 ### Scoping as structure
@@ -455,12 +476,12 @@ box's read holds them all.
 | Answer | When | Body |
 |---|---|---|
 | 401 | every refusal of a token, a person's or a deploy token's, whatever the reason; a person outside every address list | the flat 401, byte for byte, headers included: `{"error":"invalid or missing deploy token (Authorization: Bearer <jwt>)"}`. No `Motel-*` header |
-| 403 | a verified caller `Decide` refuses | `wire.Forbidden`: `{"error":"this needs the viewer role on this app","needs":"viewer","scope":"app"}`; `needs` is `viewer`, `deployer` or `key` (a token a declared key signed), `scope` is `app` or `box`. It names no app and echoes nothing of the request |
+| 403 | a verified caller `Decide` refuses | `wire.Forbidden`: `{"error":"this needs the viewer role on this app","needs":"viewer","scope":"app"}`; `needs` is `viewer`, `logs` (`{"error":"this needs the logs role on this app","needs":"logs","scope":"app"}`), `deployer` or `key` (a token a declared key signed), `scope` is `app` or `box`. It names no app and echoes nothing of the request |
 | 404 | a viewer of the box asking for a name that is no app (`unknown app "<name>"`, as a global deploy source is told); a path under `/_motel/` with no row (`not found`) | `wire.Error` |
 | 429 | a person past their rate | `{"error":"too many requests; retry after <n> s"}`, with `Retry-After` |
 | 503 | a deploy token that verified for an app liveswap's `Start` has not installed within 5 s, or whose request ended first (#473); a person's read of such an app, or a list that names one | `{"error":"motel is starting and has not loaded this app yet; retry after 1 s"}`, with `Retry-After: 1` |
 | 200 | `GET /<app>` | `wire.Status`, the body a deploy token reads too. `deploying` is the deploy in flight: `version`, `deployed_by`, `started_at` (when the box took it: for a push, before its upload) and `phases`, those entered so far in order, the last one's `seconds` running to the answer; absent when none runs. It is set when the box takes a deploy (a rollback and a relaunch are deploys; the watchdog's restarts are not) and cleared in the step that sets `last_deploy`, so a read shows one or the other. It sits before `last_deploy`: the templates' `deploy.sh` reads the failing phase from `last_deploy` on |
-| 200 | `GET /_motel/whoami` | `wire.WhoAmI`: `name`, `key` (its fingerprint), `roles` (the grants that apply from here, no address list shown), `box`, `version`, `protocol`, `token_expires_at` |
+| 200 | `GET /_motel/whoami` | `wire.WhoAmI`: `name`, `key` (its fingerprint), `roles` (the grants that apply from here, one per role and scope: `{"role":"viewer"\|"logs","scope":"box"\|"app:<name>"}`, the box's first, then each app by name, viewer before logs on one scope; no address list shown), `box`, `version`, `protocol`, `token_expires_at` |
 | 200 | `GET /_motel/backups` | `wire.Backups`, which is `backups/status`'s `Result`: what `motel-backup status --json` says as any account on the box looks, the motel user's here (no warnings of the credential file, which only root's look reads), whether the backups are healthy, not, or could not be told (`could_not_tell`: on a box without backups, `backups are not set up: … is not there`; on a server that is not moteld, that it does not read them). One look every 10 s at most, shared by every person: a request in that time is given the answer kept, whose `at` says when it was decided. The box's own claim (docs/backups.md, "Look from your own machine") |
 | 200 | `GET /_motel/alerts` | `wire.BoxAlerts`: `monitor` (as for an app's), `alerts`, newest first, each a `wire.BoxAlert`: an app's alert's fields, then `app` (its `app` label; none for a box event, which names an app, if any, in its instance) and `instance`; `silences`, the active ones newest first, then the pending ones soonest first, each a `wire.Silence`: `id`, `state` (`active` or `pending`; never an expired one), `matchers` (`name`, `op`, one of `=`, `!=`, `=~`, `!~` spelled from Alertmanager's `isRegex` and `isEqual`, `value`), `starts_at`, `ends_at`, `created_by` and `comment`, as Alertmanager holds them; and `more_alerts`, `more_silences` when a list was cut at its cap (500, 200). With `off` or `unanswered`, both lists are `[]`. Every alert row has its keys sorted, and an app's its own `redacted_env` when its filter changed it; its times are Alertmanager's, put back after the filter's last pass, so an env_file value that is a piece of a time (a date) cannot leave the list unread. Not the heartbeat, the test alert, the deploy mute, nor `person_new_network` and `person_outside_list` ("A key used from somewhere new"), which name people's networks and addresses and go to the operator's channels alone. From the same fetch as an app's, up to 5 s old |
 | 200 | `GET /_motel/apps/<app>/series` | `wire.Series`: `store` (`on`, the store answered; `off`, the config's monitor block has no metrics line, or there is none; `unanswered`, the store did not answer within 3 s; a client reads another word as not knowing), `window` (one of `wire.SeriesRanges`), with `on` alone `step_seconds` and `end` (the window's end, a multiple of the step: the newest point is of the last whole step), then `panels`, each `name`, `unit` and `points` (`[unix seconds, value]` pairs, oldest first, a missing step no pair), in the fixed order `memory_bytes`, `cpu_cores`, `requests_per_second`, `5xx_share`, `p95_ms`, a panel with no point absent (the request panels for an app no observe names). A body the app's filter changed has its keys sorted and its own `redacted_env`. One set of queries per app and window every 30 s at most for the process, shared by every person: an answer can be up to 30 s old. Experimental |
@@ -578,6 +599,17 @@ owner's decision; no waiting period, no 403 of its own).
 | The record | per key fingerprint, its last 16 networks, the most recently used first; a seventeenth drops the one used longest ago. No time is kept: the order is the record. Keys the newest registry does not list are dropped at the first person's request under it (a registry's `Generation` orders the loads, so a reload's old handlers drop nothing, and a request they still serve for a removed key is neither recorded nor told); a person removed is forgotten, and told as a first use if added back. A load that admits no one leaves the record as it is, until a person is admitted again |
 | The file | `/var/lib/motel/people-networks.json`, motel's own, 0600, written by rename (`writeOwnFile`). `{"version":1,"keys":{"SHA256:…":["203.0.113.0/24","2001:db8:5::/48","unknown"]}}`. A new network or a key dropped is written within a second of the last write (so a thief cycling networks has it written once a second at most), in the background, one write at a time; a change of order alone at most once a minute; and liveswap's `Stop` and the box app's (a stop, an upgrade's restart, a reload's old config; the box app's for a config with no liveswap block) write what is pending, waiting for it at most 2 s (`FlushPeopleNetworks`). Named by moteld's main (`KeepPeopleNetworksIn`), so a test's handlers keep the record in memory alone |
 
+**A listed logs grant beside an unlisted viewer grant.** A person with
+`viewer app blog` and `logs app blog from 198.51.100.0/24` is admitted
+from anywhere on the viewer grant: from outside the list a new network
+is `person_new_network` as for anyone, and `person_outside_list` is
+not told, because a grant applies from there, so the key was not used
+outside every list; whoami lists `viewer` alone, and a logs read is
+the 403 naming `logs`, told to no channel (`TestLogsListThroughTheGate`,
+row 80). docs/people.md says so beside its advice of a `from` list on
+every logs grant; an operator who wants to hear of the key outside the
+office at all puts the list on the viewer grant too.
+
 **The record never touches the disk on a request's path.** The file is read in
 the background at the first person's request a process admits. Until it
 has been read, or for 30 s if the read does not come back, uses are
@@ -643,7 +675,7 @@ access's examples:
 
 | Axis | Examples |
 |---|---|
-| **Severity 5** | a person reads an app they hold no grant on; a person's token acts, deploys or pushes; a token for one box accepted at another; a stranger's request answered as a person's; a key no line lists accepted |
+| **Severity 5** | a person reads an app they hold no grant on; a person reads an app's logs without a `logs` grant on it or on the box; a person's token acts, deploys or pushes; a token for one box accepted at another; a stranger's request answered as a person's; a key no line lists accepted |
 | **Severity 4** | every person locked out until the console, with no line saying why |
 | **Severity 3** | a refusal that tells a stranger something (a key is listed, a name is an app); a grant that grants more or less than `describe` prints; a person told the wrong role in a 403; an announcement that does not come |
 | **Severity 2** | a 401 for a valid token, retried and named; a 429 to a person inside their budget; a duplicate announcement |
@@ -726,11 +758,19 @@ access's examples:
 | 71 | an app's series | an env_file value shaped like a number or time of the body (a unix time, digits inside a memory value, a date) replaced inside a point or the end, so no client reads the answer | 3 | 5 | 3 | fix | the numbers and the end pass no filter (`filterSeries`; since #612 rule 7 of `redact.go` holds every body's numbers but in its fallbacks, which `filterSeries` does not reach, and the end is a time it does not hold); `TestSeriesNumbersPassNoFilter` |
 | 72 | an app's series | the store loaded by series reads at the rate, or a store that does not answer holding the read | 2 | 5 | 3 | fix | four fixed range queries per app and window, shared for 30 s by every person and config, a 3 s budget a caller going away does not cut, a failure kept as long and journalled once, `"store":"unanswered"` (`TestSeriesViewShares`); measured under the box's caps (notify/DESIGN-metrics.md) |
 | 73 | a query key with a grammar | a value outside the grammar reaching the row's function, a raw `;` splitting the value or dropping the key, or the request's value echoed in the 422 | 5 | 5 | 5 | fix | the value matched whole against an anchored grammar, the key refused when `url.ParseQuery` errs, the 422 the row's words through a filter with no values (`TestQueryKeyGrammar`, `TestQueryKeyGrammarSays`, `TestAppRouteKeys`, `TestJournalCursorGrammar`) |
+| 74 | `decidePerson` | an action in a person's cells with no case of its own allowed to every person, one with no grant or no views included: on main the second switch had no default, so `app.logs` added with its cell and without its case would have let every person read every app's logs. Found in the logs grant's plan (measured) | 5 | 5 | 5 | fix: size 2, risk 1; **Wide** (every person's request) | the switch closed: `box.whoami` and `box.apps` a case of their own, a default that refuses with no 403 body (`TestEveryPersonCellHasACase`, with a made-up cell; `TestDecideTable`) |
+| 75 | the grant line | a `logs` line loaded as a viewer line: `ParseGrant` set every grant's role to `viewer`, so its holder would have no logs while describe printed `viewer` | 3 | 5 | 3 | fix: size 1, risk 1 | the role taken from the line (`TestParseGrant`'s re-print and role of each logs line; `FuzzParseGrant`'s oracle takes `viewer` or `logs`, seeded with both) |
+| 76 | the views | a viewer reading logs, or a logs reader gaining a scope (logs on app A reading app B, or the box's reads) | 5 | 5 | 5 | fix | the views by role, no role implying another (`Scopes.On` per role; `ReadsLogs` the logs grant's alone); `TestViewsByRole`, the `app.logs` column of `TestDecideTable`, `TestDecidePersonRefusals`; `TestTwoAppsTwoPeople` with a logs reader of one app and of the box reading every row as its viewer twin |
+| 77 | the views | a `from` list not applied to a logs grant: logs read from outside the list | 5 | 5 | 5 | fix | each grant whose list does not hold the address is dropped before its role is read, as before (`TestRegistryViews`' listed logs grant beside an unlisted viewer grant, inside and outside the list; `TestLogsListThroughTheGate`, through `ServeHTTP`) |
+| 78 | the views | an existing viewer losing a read, or a logs reader of the box refused a box read, through a reader of the old `Box` and `Apps` fields left behind | 3 | 5 | 1 | fix: size 1, risk 1 | the fields removed, so the compiler named every reader (two: `decidePerson`'s box reads, now `CoversBox`, and whoami); `TestTwoAppsTwoPeople` and box's `TestTwoAppsTwoPeopleOnTheBoxWebhook` with every existing caller's status unchanged |
+| 79 | `CheckLines` | a "covers it" warning that is untrue: given whatever the covering grant's `from` list, so `viewer box from <office>` beside `viewer app blog` was told the app grant adds nothing, and an operator who removed it lost blog from outside the office; with `logs` three more pairs | 3 | 5 | 3 | fix: size 1, risk 1 | each warning only when the covering grant has no list (`TestCheckLines`: every pair, listed and not; `TestLinesBothReaders`) |
+| 80 | the announcements | a valid signature from outside a logs grant's list, beside a viewer grant with none, told only as a new network, never as `person_outside_list`, and its refused logs read told to no channel | 2 | 5 | 5 | fix by naming: size 1, risk 2 (the owner's decision of 2026-11-20: as it is, said in the docs) | docs/people.md ("When their key is used from somewhere new") and "A listed logs grant beside an unlisted viewer grant" above; `TestLogsListThroughTheGate` holds what is told |
 
 ### Accepted residuals
 
 | Residual | S | O | D | Size, risk of a fix | Why accepted |
 |---|---|---|---|---|---|
+| A logs grant removed by a push reads on until the reload that applies it, as any removed grant does (the existing residual of a removed person, below) | 2 | 5 | 1 | — | the views are built from the newest registry on every request, a follow's poll among them, so the reload ends it; box's `TestRemovedLogsGrantAfterReload` holds that it does |
 | `GET /_motel/alerts` passes a filter with no app's values over every silence and every box event (an alert with no `app` label, or one naming an app this config does not run), so an app's env_file value in a silence's comment, or in a box event's summary, would reach a viewer of the box unmasked, where an app's own alert masks it | 3 | 1 | 5 | 2, 2 (a silence whose matchers name one app here through that app's filter; a box event cannot be given one) | a comment posted through `moteld monitor silence add` is masked with every value the config knows when it is written (notify, "Silences"), and liveswap masks its events' summaries with the app's filter when it raises them; what is left is text root writes past motel (to Alertmanager's socket, as a producer), and the audience is a viewer of the box, who reads every app. Found in the self-review of the box-wide alerts read (#581) |
 | A removed person reads until the reload that applies the push removing their lines | 2 | 5 | 1 | — | the reload follows the push; a deny list would be state for that window |
 | A person's lines edited at the console are seen at the next reload, not at once | 2 | 3 | 3 | 1, 1 | as for every other line of the file; the operator reloads after an edit |
@@ -772,7 +812,7 @@ access's examples:
 
 ## Not in this release
 
-Any act by a person; a second role for people; every box-level read but
+Any act by a person; a role beyond `viewer` and `logs`; every box-level read but
 the box's status, who am I, the list of apps, backups, alerts and
 rules; the nonce store; a
 read held back from a new network (the announcements tell, and never

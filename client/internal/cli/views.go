@@ -245,13 +245,13 @@ func whoamiView(me wire.WhoAmI, asked string, key sshkey.Key, now time.Time) ren
 	// The TUI's rule too: one function, so the two cannot differ.
 	v.KeyDiffers, v.BoxDiffers = model.AboutAnother(me, fp, asked)
 	for _, r := range me.Roles {
-		// viewer is the one role a box grants today (liveswap/access,
-		// lines.go), and is said as a word. Any other word the box
-		// names, a later motel's role among them, is the box's own and
-		// is quoted as such: the client took it by its shape alone
-		// (client's roleRe), and a box chooses it.
+		// viewer and logs are the roles a box grants today
+		// (liveswap/access, lines.go), and are said as words. Any other
+		// word the box names, a later motel's role among them, is the
+		// box's own and is quoted as such: the client took it by its
+		// shape alone (client's roleRe), and a box chooses it.
 		role := tx(r.Role)
-		if r.Role != "viewer" {
+		if r.Role != "viewer" && r.Role != "logs" {
 			role = termtext.Quote(r.Role)
 		}
 		v.Roles = append(v.Roles, render.Role{Role: role, Scope: tx(r.Scope)})

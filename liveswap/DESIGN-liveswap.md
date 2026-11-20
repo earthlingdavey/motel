@@ -667,8 +667,8 @@ row's function (box/DESIGN-box.md, "Handler contract").
 
 `access/` holds the actions (`app.status`, `app.deploy_record`,
 `app.deploy`, `app.rollback`, `box.status`, `box.push_result`,
-`box.push`, and `box.whoami`, `box.apps`, `box.backups`, `box.alerts`, `app.alerts`, `box.rules`, `app.rules` and `app.series`, served
-here under `/_motel/`), the principal kinds and `Decide`, which refuses every pair
+`box.push`, and `box.whoami`, `box.apps`, `box.backups`, `box.alerts`, `app.alerts`, `box.rules`, `app.rules`, `app.series` and `app.logs`, served
+here under `/_motel/`; `app.logs`'s row arrives with the logs read), the principal kinds and `Decide`, which refuses every pair
 its table does not list. A deploy token's principals: a deploy source
 of the app in the path, which may take every app action on that app
 and on no other, and the box channel's source, which may take the three
@@ -684,7 +684,9 @@ a deployer of no app, is refused the people's routes; and a person
 `Decide` refuses is told so. Each gets a 403 that names what is needed
 (`wire.Forbidden`). A refusal with no such word, which no principal
 meets, would be a 403 `forbidden`. The tests hold the tables to each other both ways
-(`TestEveryRouteHasAnAction`, `TestEveryActionHasARoute`), write the
+(`TestEveryRouteHasAnAction`, `TestEveryActionHasARoute`), but for the
+actions `arrivesWithItsRead` names, whose row arrives with their read
+and which `TestArrivesWithItsReadHasNoRow` fails once it has one; write the
 decide table out cell by cell (`TestDecideTable`), and drive every
 method, path and query for each kind of caller (`FuzzNoRouteNoAnswer`,
 in each webhook): a request that matches no row is answered 401, 404
