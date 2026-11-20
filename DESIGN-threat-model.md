@@ -209,7 +209,9 @@ Properties that matter to the model:
   known value (a key named for its own value gets a number in
   brackets), and the first layer runs once more over the finished
   bytes — any fallback included — so the promise holds for the bytes
-  written, not only for the body as filtered; the safe strings are
+  written, not only for the body as filtered (a body's times are put
+  back after that pass, and a check across each time's edge holds the
+  promise for them: the fifth text below); the safe strings are
   held out of the heuristic layers as spans, so a version shaped like
   a token survives them. The one text outside the promise is the
   report field's own name, `redacted_env`: it is fixed, in every such
@@ -252,7 +254,15 @@ Properties that matter to the model:
   directory, which a value may equal. The exemption is the body's and never the
   string's: a string is not safe because a request named it, and text
   an earlier request stored, a deployed version in a status or a
-  record, passes the app's filter with the app's bytes. A
+  record, passes the app's filter with the app's bytes. The fifth is
+  a body's times: each time a status, a deploy's answer and its
+  stream's lines, a record or an apps list's row holds under a time's
+  key, written as `encoding/json` writes one, is the box's clock and
+  passes no layer, so a value that is a piece of a time's text (a
+  date, a clock time, digits of its fraction) stands there whole, which says less than a marker inside the
+  time did; it is replaced everywhere else, and a body in which a
+  value would stand across a time's edge goes through whole, times
+  and all (liveswap/redact.go, rule 7). A
   body the first layer would leave unparsable (a value made of JSON's
   own punctuation matching the structure rather than a string) is
   withheld, with the keys still reported; and while an app's
@@ -274,7 +284,8 @@ Properties that matter to the model:
   the reader learns that key's value by difference
   (liveswap/DESIGN-liveswap.md, "Accepted residuals").
   Tested from both sides — a fuzz property that no known value or
-  form survives and the JSON stays valid (`FuzzRedactor`), and a
+  form survives outside the texts above and the JSON stays valid
+  (`FuzzRedactor`), and a
   corpus that the diagnostics a reader needs do (`TestRedactorCorpus`)
   — because a filter with only the first test drifts toward blanking
   everything.

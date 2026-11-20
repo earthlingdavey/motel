@@ -32,7 +32,8 @@ import (
 //     the forms it could appear in — as written, JSON-escaped, base64
 //     (standard and URL alphabets, padded and not), hex, URL-escaped —
 //     and, for a value that is a URL with a password, the password on
-//     its own in the same forms. Replaced with [redacted:KEY]. Inline
+//     its own in the same forms. Replaced with [redacted:KEY], but
+//     inside a body's times, which no layer sees (rule 7). Inline
 //     `env` values are not secrets by policy (the Caddyfile is in a
 //     repo) and are not redacted; SOCKET, HOME and the inherited PATH
 //     are paths a diagnostic needs.
@@ -64,7 +65,7 @@ import (
 // token the length-aware bar still misses (about half at 20 to 22
 // characters), all pass.
 //
-// Six rules hold across the layers and every writer of a body, and
+// Seven rules hold across the layers and every writer of a body, and
 // the code is judged against them, not the other way round:
 //
 //  1. No safe string ever equals a known value. A safe string exempts
@@ -77,11 +78,13 @@ import (
 //     redacted_env field (a fixed name, key names filtered, and the
 //     strings the filtered body already held). The stream's spliced
 //     event, phase and http_status fields (handler.go) are constants
-//     and a phase word. Nothing else appends to a body after that
-//     pass. A body about several apps (GET /_motel/apps) is made of
-//     rows, and each row's summary is a body here: filtered by its own
-//     app's filter, then given the app's name, the route's own word,
-//     and put in the list, which adds its punctuation alone; a row the
+//     and a phase word. The body's times are put back after it, the
+//     bytes they stood in held out of every layer (rule 7). Nothing
+//     else appends to a body after that pass. A body about several
+//     apps (GET /_motel/apps) is made of rows, and each row's summary
+//     is a body here: filtered by its own app's filter, then given
+//     the app's name, the route's own word, and put in the list,
+//     which adds its punctuation alone; a row the
 //     filter withheld is the name and the filter's sentence. The
 //     box's alerts (GET /_motel/alerts) are rows the same way: an
 //     app's alert is filtered by its app's filter, every other alert
@@ -156,6 +159,32 @@ import (
 //     the app's filter: only a deploy token reaches them, and it can
 //     read the app's environment by deploying
 //     (DESIGN-threat-model.md).
+//  7. A time is structural, never text. A JSON body's time under one
+//     of heldTimeKeys, shaped as encoding/json writes a time.Time
+//     (heldTimeRe), passes no layer: it is the box's clock (a deploy's
+//     and its phases', the watchdog's last restart, the metrics
+//     store's step, a record's as written, rule 1 of deploys.go), never
+//     the app's bytes, and an env_file value that is a piece of one
+//     (a date, API_VERSION=2026-11-19; a clock time; digits of its
+//     fraction) replaced there left a time no client reads. Held out
+//     (holdTimes), the rest filtered, then put back
+//     after the final pass (putTimesBack); the value it equals is
+//     replaced everywhere else, and a body that holds it only in a
+//     time reports no key. The filter so sees the body with
+//     placeholders where the times stood, and a value made of a time's
+//     last characters and the JSON after them could stand across a
+//     time's edge in the bytes it returns: putTimesBack looks for every
+//     known form across each edge, and a body with one, or whose
+//     placeholders the filter changed, or that holds a placeholder's
+//     shape already (a string that is a NUL and digits),
+//     goes through whole as before, times and all
+//     (TestHeldTimesFallBack). After the filter, the hoist's sort of
+//     the top level (withField) and the stream's spliced fields can set
+//     a time beside other JSON, and a value made of a time's end and
+//     that JSON stands in the bytes written, as one made of any field's
+//     end and the splice could before: it is the body's own text. A
+//     marker inside a time said that the value was a piece of that
+//     time; the time whole says less.
 const (
 	secretMinLen  = 8
 	entropyMinLen = 20
@@ -691,8 +720,9 @@ func (r *Redactor) holdOwnName(name string) {
 // each key name filtered on its own: the name is fixed public text in
 // every such response, and a value equal to it is not learned from
 // the response, whereas a field renamed by the filter would break the
-// one thing the field is for. That fixed name is the single text the
-// strict property (FuzzRedactor) does not cover.
+// one thing the field is for. That fixed name, and a body's times
+// (rule 7), are the texts the strict property (FuzzRedactor) does not
+// cover.
 //
 // Layer 1 is a plain substring replacement, so a value made of JSON's
 // own punctuation could match across a string's delimiters and leave
@@ -742,8 +772,28 @@ func (r *Redactor) redactJSON(raw []byte) string {
 // filterBody is the layers over a body as marshalled, then the final
 // pass; what it returns is the bytes written, or a withheld body when
 // a known value overlapped the body's structure or one of its
-// outcomes.
+// outcomes. The body's times pass none of it (rule 7): they are held
+// out and put back after the final pass, unless a value of the app's
+// stands across a time's edge in the bytes that would be sent, or the
+// filter changed what held them; then the body goes through whole,
+// times and all.
 func (r *Redactor) filterBody(raw string, seen map[string]bool) string {
+	if r != nil && len(r.secrets) > 0 {
+		if held, times := holdTimes(raw); len(times) > 0 {
+			found := map[string]bool{}
+			if out, ok := r.putTimesBack(r.filterWhole(held, found), times); ok {
+				for k := range found {
+					seen[k] = true
+				}
+				return out
+			}
+		}
+	}
+	return r.filterWhole(raw, seen)
+}
+
+// filterWhole is filterBody over every byte of the body.
+func (r *Redactor) filterWhole(raw string, seen map[string]bool) string {
 	outcomes := len(outcomePairRe.FindAllStringIndex(raw, -1))
 	body := r.filter(raw, seen, true)
 	if !json.Valid([]byte(body)) {
@@ -760,6 +810,134 @@ func (r *Redactor) filterBody(raw string, seen map[string]bool) string {
 		return r.replaceKnown(`{"error":"response withheld: a redacted value overlapped the response's own outcome"}`, seen, true)
 	}
 	return body
+}
+
+// heldTimeKeys are the keys a body passing an app's filter holds a
+// time under (wire's Status, Failure, DeployResult, PhaseEvent and the
+// apps list's rows; TestHeldTimeKeysAreTheWireTimes), each as it stands
+// quoted in the body. The alerts bodies keep their times out themselves
+// (filterAlerts, alertRow).
+var heldTimeKeys = map[string]bool{`"at"`: true, `"started_at"`: true, `"finished_at"`: true, `"last_restart_at"`: true}
+
+// heldTimeRe is a time as encoding/json writes a time.Time, quoted:
+// RFC 3339 with up to nine digits of the second.
+var heldTimeRe = regexp.MustCompile(`^"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]{1,9})?(?:Z|[+-][0-9]{2}:[0-9]{2})"$`)
+
+// heldMark opens the placeholder a held time stands as while the body
+// is filtered: a string that is a NUL, escaped, then the time's number
+// ("\u00003"), which placeholderRe matches. No layer makes such a
+// string (a marker is key names in brackets or angles), and a body that
+// holds one already, an app's line that is a NUL and digits, has no
+// time held. Placeholders are found as whole strings of the JSON, so an
+// app's text that only holds the bytes (a binary probe body's quote
+// before a NUL, a literal \u0000) is no placeholder.
+const heldMark = `"\u0000`
+
+var placeholderRe = regexp.MustCompile(`^"\\u0000[0-9]+"$`)
+
+// eachString calls f with the bounds of each string of the JSON text s,
+// in order, and whether it is a key; false when a string does not end.
+func eachString(s string, f func(i, j int, key bool)) bool {
+	for i := 0; i < len(s); i++ {
+		if s[i] != '"' {
+			continue
+		}
+		j := i + 1
+		for j < len(s) && s[j] != '"' {
+			if s[j] == '\\' {
+				j++
+			}
+			j++
+		}
+		if j >= len(s) {
+			return false
+		}
+		f(i, j+1, strings.HasPrefix(strings.TrimLeft(s[j+1:], " \t\n\r"), ":"))
+		i = j
+	}
+	return true
+}
+
+// holdTimes is raw with each time under one of heldTimeKeys, as that
+// key's value, swapped for its placeholder, and the times, in the order
+// they stood. raw is a JSON text (a marshalled body, or a record as
+// written); one that does not end its strings, or that holds a string
+// shaped as a placeholder, has nothing held.
+func holdTimes(raw string) (string, []string) {
+	var b strings.Builder
+	var times []string
+	var key string
+	at, clash := 0, false
+	ended := eachString(raw, func(i, j int, isKey bool) {
+		s := raw[i:j]
+		switch {
+		case placeholderRe.MatchString(s):
+			clash = true
+		case isKey:
+			key = s
+		case heldTimeKeys[key] && heldTimeRe.MatchString(s) && strings.HasSuffix(strings.TrimRight(raw[:i], " \t\n\r"), ":"):
+			b.WriteString(raw[at:i])
+			b.WriteString(heldMark + strconv.Itoa(len(times)) + `"`)
+			times = append(times, s)
+			at = j
+		}
+	})
+	if !ended || clash || len(times) == 0 {
+		return raw, nil
+	}
+	b.WriteString(raw[at:])
+	return b.String(), times
+}
+
+// putTimesBack is out, the filter's bytes of a body holdTimes held
+// times out of, with each placeholder replaced by its time; false when
+// the placeholders are not each where the filter found it, in order
+// (one gone, or the body withheld), or when a form of a known value
+// stands in the bytes it makes across a time's edge: one made of a
+// time's last characters and the JSON after them, which the filter
+// never saw side by side, or one that holds a time's quote. A form
+// wholly inside a time's text is the time's own, and stays (rule 7).
+// These are the bytes the filter returns: what redactJSON's hoist and
+// the stream's splices do after is rule 2's.
+func (r *Redactor) putTimesBack(out string, times []string) (string, bool) {
+	var b strings.Builder
+	spans := make([][2]int, 0, len(times))
+	n, at, misplaced := 0, 0, false
+	ended := eachString(out, func(i, j int, _ bool) {
+		if !placeholderRe.MatchString(out[i:j]) {
+			return
+		}
+		if misplaced || n == len(times) || out[i:j] != heldMark+strconv.Itoa(n)+`"` {
+			misplaced = true
+			return
+		}
+		b.WriteString(out[at:i])
+		// The time's text, inside its quotes: a quote is the body's.
+		spans = append(spans, [2]int{b.Len() + 1, b.Len() + len(times[n]) - 1})
+		b.WriteString(times[n])
+		at, n = j, n+1
+	})
+	if !ended || misplaced || n != len(times) {
+		return "", false
+	}
+	b.WriteString(out[at:])
+	s := b.String()
+	for _, sec := range r.secrets {
+		for from := 0; ; {
+			i := strings.Index(s[from:], sec.text)
+			if i < 0 {
+				break
+			}
+			start, end := from+i, from+i+len(sec.text)
+			for _, sp := range spans {
+				if start < sp[1] && end > sp[0] && (start < sp[0] || end > sp[1]) {
+					return "", false
+				}
+			}
+			from = start + 1
+		}
+	}
+	return s, true
 }
 
 // outcomePairRe is a status, phase or phase name standing as one: a
