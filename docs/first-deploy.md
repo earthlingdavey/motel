@@ -242,12 +242,14 @@ its config names, so the app is named here, before anything deploys
 it; step 4 makes its repository and deploys it. The file's comments
 say what each line does. Replace `example.com`, `deploy.example.com`
 and `your-org` (your organization, or your username) — the last one
-three times: the `box` block's `claim repository your-org/boxes` names
-this repository (the box takes config from its workflow alone, so a
-placeholder left there refuses the first push), `artifact_allowlist`
-pins the organization or account, and the app's `deploy_trust` its
-repository. This lists the five lines, comments aside, and prints
-nothing once all five are changed:
+five times: the `box` block's `claim repository your-org/boxes` and
+`claim workflow_ref your-org/boxes/.github/workflows/apply.yml@refs/heads/main`
+name this repository and its workflow (the box takes config from that
+workflow alone, so a placeholder left there refuses the first push),
+`artifact_allowlist` pins the organization or account, and the app's
+`deploy_trust` its repository and its workflow, in the same two
+lines. This lists the seven lines, comments aside, and prints nothing
+once all seven are changed:
 
 ```sh
 grep -En '^([^#]*[^#A-Za-z0-9-])?(your-org|example\.com)([^A-Za-z0-9.-]|$)' */Caddyfile
@@ -264,6 +266,7 @@ What is new beside the app is at the top and the bottom:
 			audience motel
 			claim repository your-org/boxes
 			claim ref refs/heads/main
+			claim workflow_ref your-org/boxes/.github/workflows/apply.yml@refs/heads/main
 		}
 		# signers
 		signer alice@example.com ssh-ed25519 AAAAC3Nz…
@@ -334,7 +337,7 @@ the above:
 When you reach step 4, make the app's repository from
 [motel-example-deno](https://github.com/smallhoursorg/motel-example-deno) instead — the same **Use this
 template** — and leave out the `MOTEL_RUNS_ON` variable that step
-asks an amd64 box for: the tarball has no native code, so any runner
+asks an arm64 box for: the tarball has no native code, so any runner
 builds it.
 
 </details>
@@ -473,8 +476,8 @@ Variables, add:
   nothing. It must be `https://`: the deploy request carries the
   run's token, so the deploy step refuses any other scheme before it
   mints one.
-- On an amd64 box, `MOTEL_RUNS_ON`, set to `ubuntu-24.04`. The
-  workflow builds on an arm64 runner otherwise, and the executable is
+- On an arm64 box, `MOTEL_RUNS_ON`, set to `ubuntu-24.04-arm`. The
+  workflow builds on an amd64 runner otherwise, and the executable is
   the runner's own Node binary, so this has to match the box; a
   mismatch is refused at deploy time with a message naming the right
   value.
@@ -515,12 +518,13 @@ If the deploy step is red, its output says which stage refused it and
 why — a token the box would not accept, a URL outside the allowlist, a
 health check that never passed. A 401 means the box's `deploy_trust`
 for this app does not accept the run: most often the `claim
-repository` or `claim ref` names another repository or branch, or the
-audience differs: the job asks for `motel`, so a block with another
-`audience` needs the same name as `MOTEL_AUDIENCE` in the job's
-`env:`, beside `MOTEL_URL`, so the rollback step gets it too (a
-repository variable alone does not reach the script). A `box` block's
-goes in the `env:` at the top of `apply.yml`.
+repository`, `claim ref` or `claim workflow_ref` names another
+repository, branch or workflow file, or the audience differs: the
+job asks for `motel`, so a block with another `audience` needs the
+same name as `MOTEL_AUDIENCE` in the job's `env:`, beside
+`MOTEL_URL`, so the rollback step gets it too (a repository variable
+alone does not reach the script). A `box` block's goes in the `env:`
+at the top of `apply.yml`.
 It also means an app the box does not know — a
 typo in `MOTEL_URL` — since an unknown app answers the same 401
 unless a global `deploy_trust` accepts the token. The step prints the
@@ -543,13 +547,15 @@ app block changes that, `0` keeps them on the box). The full journal
 is `journalctl -t motel-example` on the box. Nothing was serving
 before, so nothing changed.
 
-A re-run of the same workflow run rebuilds the tarball, and the box
-refuses it with a 422: versions are immutable on the box, that
-commit's version is already there, and the rebuilt bytes are not the
-ones it runs (the box relaunches a running version only for the very
-same artifact). Push a new commit to deploy again, or **Run workflow**
-with the running version as the rollback target to relaunch it as it
-is.
+A re-run of every job in the same workflow run rebuilds the tarball
+and replaces the release's asset with it, and the box refuses it with
+a 422: versions are immutable on the box, that commit's version is
+already there, and the rebuilt bytes are not the ones it runs (the
+box relaunches a running version only for the very same artifact). A
+re-run of the deploy job alone sends the run's last build again,
+which the box relaunches only if that build is the one it runs. Push
+a new commit to deploy again, or **Run workflow** with the running
+version as the rollback target to relaunch it as it is.
 
 ## What you have
 

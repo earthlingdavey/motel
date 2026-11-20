@@ -73,8 +73,9 @@ host's `box_webhook` line as they are. Without those two, the file is:
 
 			deploy_trust github {
 				audience motel
-				claim repository your-org/example
-				claim ref        refs/heads/main
+				claim repository   your-org/example
+				claim ref          refs/heads/main
+				claim workflow_ref your-org/example/.github/workflows/deploy.yml@refs/heads/main
 			}
 		}
 	}
@@ -108,16 +109,20 @@ any other scheme before it mints one (`MOTEL_ALLOW_HTTP=1` lifts
 that, for a local test box only). The workflow publishes the
 tarball as a GitHub release and the box fetches it — so every deployed
 version stays on GitHub. The box fetches the asset by its API URL with
-the job's own token, so a private repo deploys the same way as a
-public one, and the box's
+the deploy job's own token, so a private repo deploys the same way as
+a public one, and the box's
 `artifact_allowlist api.github.com/repos/your-org/` is what admits it.
-The job also sends the tarball's digest, taken before the upload, and
-the box refuses the asset unless it hashes to the same.
+That job's token only reads the repository: the release is published
+by a job of its own, the one whose token can write, and the build by
+another that cannot. The deploy job also sends the tarball's digest,
+taken in the build job before the upload, and the box refuses the
+asset unless it hashes to the same.
 The deploy step prints the app's status when the new version is live,
 or why it was refused; a refused deploy leaves the old version
 serving. A 401 means the box's `deploy_trust` for this app does not
-accept the run — most often `claim repository` or `claim ref` names
-another repository or branch, or its `audience` is not what the job
+accept the run — most often `claim repository`, `claim ref` or
+`claim workflow_ref` names another repository, branch or workflow
+file, or its `audience` is not what the job
 asks for (`motel`, unless the job's `env:` sets `MOTEL_AUDIENCE`
 beside `MOTEL_URL`, where the rollback step gets it too) — or that
 `MOTEL_URL` names an app
@@ -152,13 +157,15 @@ What a first deploy that worked looks like, from the laptop:
   [Hardening](https://github.com/smallhoursorg/motel/blob/main/docs/hardening.md#3-an-administrator-if-you-want-one),
   whose `adm` group is what reads it; root reads it too.
 
-A re-run of the same workflow run rebuilds the tarball, and the box
-refuses it with a 422: versions are immutable on the box, that
-commit's version is already there, and the rebuilt bytes are not the
-ones it runs (the box relaunches a running version only for the very
-same artifact). Push a new commit to deploy again, or **Run workflow**
-with the running version as the rollback target to relaunch it as it
-is.
+A re-run of every job in the same workflow run rebuilds the tarball
+and replaces the release's asset with it, and the box refuses it with
+a 422: versions are immutable on the box, that commit's version is
+already there, and the rebuilt bytes are not the ones it runs (the
+box relaunches a running version only for the very same artifact). A
+re-run of the deploy job alone sends the run's last build again,
+which the box relaunches only if that build is the one it runs. Push
+a new commit to deploy again, or **Run workflow** with the running
+version as the rollback target to relaunch it as it is.
 
 ## When the code needs a new permission
 

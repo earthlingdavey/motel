@@ -187,8 +187,8 @@ A job on **GitLab CI**, with the Node template's build and GitLab's
 own token (`id_tokens:` sets the variable it names to a fresh OIDC
 token for the job, with the audience given). The `tags:` line picks a
 runner of the box's architecture, here gitlab.com's hosted arm64
-runner for the first page's default box; gitlab.com's default runners
-are amd64, and an amd64 box needs no line:
+runner for an arm64 box; gitlab.com's default runners are amd64, and
+an amd64 box, the GitHub workflow's default too, needs no line:
 
 ```yaml
 deploy:

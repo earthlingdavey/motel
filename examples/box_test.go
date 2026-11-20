@@ -1190,6 +1190,7 @@ func TestBoxApply(t *testing.T) {
 		actions := []string{
 			"GITHUB_ACTIONS=true", "GITHUB_SHA=" + head, "GITHUB_STEP_SUMMARY=" + summary,
 			"GITHUB_REPOSITORY=your-org/boxes", "GITHUB_REF=refs/heads/main",
+			"GITHUB_WORKFLOW_REF=your-org/boxes/.github/workflows/apply.yml@refs/heads/main",
 			"ACTIONS_ID_TOKEN_REQUEST_URL=" + g.box.srv.URL + "/token?api-version=2.0", "ACTIONS_ID_TOKEN_REQUEST_TOKEN=req",
 			"MOTEL_TOKEN=",
 			// An audience with characters a query must encode.
@@ -1222,7 +1223,7 @@ func TestBoxApply(t *testing.T) {
 		// key while it fetches it); a second 401 stands.
 		mints := g.box.seen().mints
 		g.box.set(func(s *standIn) { s.onGet = "401" })
-		if out, code := g.apply(actions...); code != 1 || strings.Count(out, "the box refused the token; sending it once more in 3s (a box refuses the first token under a new signing key while it fetches the key)") != 1 || !strings.Contains(out, "claim repository  your-org/boxes") || !strings.Contains(out, "::error title=apply deploy.example.com failed::") {
+		if out, code := g.apply(actions...); code != 1 || strings.Count(out, "the box refused the token; sending it once more in 3s (a box refuses the first token under a new signing key while it fetches the key)") != 1 || !strings.Contains(out, "claim repository   your-org/boxes") || !strings.Contains(out, "claim workflow_ref your-org/boxes/.github/workflows/apply.yml@refs/heads/main") || !strings.Contains(out, "::error title=apply deploy.example.com failed::") {
 			t.Fatalf("401 in Actions: exit %d\n%s", code, out)
 		}
 		if got := g.box.seen().mints - mints; got != 2 {

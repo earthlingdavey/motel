@@ -235,7 +235,7 @@ refused401() {
 	echo "the box refused this token. Most often the deploy_trust in its box block — the Caddyfile the box"
 	echo "runs, not the one being sent — does not accept:"
 	if [ -n "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ]; then
-		printf '  %-18s%s\n' 'audience' "$audience" 'claim repository' "${GITHUB_REPOSITORY:-?}" 'claim ref' "${GITHUB_REF:-?}"
+		printf '  %-19s%s\n' 'audience' "$audience" 'claim repository' "${GITHUB_REPOSITORY:-?}" 'claim ref' "${GITHUB_REF:-?}" 'claim workflow_ref' "${GITHUB_WORKFLOW_REF:-?}"
 	else
 		echo "  the key this token was minted with (deploy_trust local { public_key ... })"
 		echo "  the audience, subject or claim it pins, against what moteld deploy-token was given"
