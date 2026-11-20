@@ -238,17 +238,32 @@ looked for, so a person whose grants do not cover the name is told the
 same 403 whether it is an app here or not, and only a viewer of the
 box is told 404 for a name that is no app, as on `GET /<app>`. Then the
 query, against the keys the row declares, each with the closed set of
-its values, the first the default (`queryKey`, `parseQuery`): as
-`url.ParseQuery` reads it, each key one the row takes, named once, with
-a value of its set; the value passed on is the row's own word, not the
-request's bytes. Anything else (a query that does not parse, a key the
-row does not take, a key twice, a value outside its set) is a 422 in
+its values, the first the default, or a grammar (`queryKey`,
+`parseQuery`): as `url.ParseQuery` reads it, each key one the row
+takes, named once, with a value of its set; the value passed on is the
+row's own word, not the request's bytes, or for a key with a grammar
+the value as sent, held whole to it. Anything else (a query that does
+not parse, a key the row does not take, a key twice, a value outside
+its set or its grammar) is a 422 in
 the route's own words that names what the row takes and echoes nothing
 of the request: `GET /_motel/apps/{app}/<read> takes no query` for a row
 with no key, which refuses an empty `?` too; `GET
 /_motel/apps/{app}/series takes only range (one of 1h, 24h, 7d, 14d),
-each once` for the series row. A key with a grammar rather than a closed
-set is not built: no row reads one. Then the read waits
+each once` for the series row. A key no set can hold is held to a
+grammar instead (`keyGrammar`): its value, as `url.ParseQuery` decoded
+it, must match the grammar whole; it has no default, so the row's
+function finds it only when the query named it; and the 422 names it by
+the grammar's words (`after (a journal cursor, as an answer gave it)`),
+never by the value. A raw `;` is no separator `url.ParseQuery` takes,
+so a value sent with one unescaped is the 422, never a key dropped (the
+client's `url.Values` escapes it). The one grammar is `journalCursor`
+(`journal.go`), a cursor as journalctl writes one, at most 145 bytes
+and one argument that never begins with `-`; no row reads it yet.
+journalctl takes far more than that grammar, and seeks by any time or
+sequence number a cursor names, a cursor of the full form with made-up
+ids among them, so the grammar keeps out what is no cursor and does
+not make a cursor one the box gave: the row that reads one must check
+that against the cursor's own entry. Then the read waits
 for the app's install as `GET /<app>` does. A global deploy source's
 token is told the 403 naming a declared key (`scope` `app`); an app's
 own deploy token and the box channel's are the flat 401, as on every
@@ -710,6 +725,7 @@ access's examples:
 | 70 | an app's series | a query taken loosely, a window outside the set reaching the store, or the request's text echoed | 5 | 5 | 3 | fix | the row's declared key and its closed set, parsed strictly, the row's own word passed on; any other query the 422 in the route's words (`TestSeriesRouteQuery`, `FuzzNoRouteNoAnswer` with an oracle of its own, `queryTaken`) |
 | 71 | an app's series | an env_file value shaped like a number or time of the body (a unix time, digits inside a memory value, a date) replaced inside a point or the end, so no client reads the answer | 3 | 5 | 3 | fix | the numbers and the end pass no filter (`filterSeries`; since #612 rule 7 of `redact.go` holds every body's numbers but in its fallbacks, which `filterSeries` does not reach, and the end is a time it does not hold); `TestSeriesNumbersPassNoFilter` |
 | 72 | an app's series | the store loaded by series reads at the rate, or a store that does not answer holding the read | 2 | 5 | 3 | fix | four fixed range queries per app and window, shared for 30 s by every person and config, a 3 s budget a caller going away does not cut, a failure kept as long and journalled once, `"store":"unanswered"` (`TestSeriesViewShares`); measured under the box's caps (notify/DESIGN-metrics.md) |
+| 73 | a query key with a grammar | a value outside the grammar reaching the row's function, a raw `;` splitting the value or dropping the key, or the request's value echoed in the 422 | 5 | 5 | 5 | fix | the value matched whole against an anchored grammar, the key refused when `url.ParseQuery` errs, the 422 the row's words through a filter with no values (`TestQueryKeyGrammar`, `TestQueryKeyGrammarSays`, `TestAppRouteKeys`, `TestJournalCursorGrammar`) |
 
 ### Accepted residuals
 
