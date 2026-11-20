@@ -2132,6 +2132,7 @@ table and holds both shipped files to it, line for line, and the
 | `.service` | `[Service]` | `ProtectControlGroups=yes` | the same for the cgroup tree, which `ProtectKernelTunables=` leaves writable. Measured without it: the unit opened `/sys/fs/cgroup/cgroup.procs` for writing; with it, "read-only file system" |
 | `.service` | `[Service]` | `PrivateTmp=yes` | the verifier's files for its 65534 child, in a `/tmp` of the unit's own |
 | `.service` | `[Service]` | `NoNewPrivileges=yes` | |
+| `.service` | `[Service]` | `RestrictSUIDSGID=yes` | nothing the applier creates or chmods asks for a set-user-id or set-group-id bit (0600, 0640, 0644; the verifier's directory 0700, then 0755), so the line refuses only a mistake of its own. The set-group-id of `out/` and `secrets/` is `tmpfiles.d`'s, outside the unit, and what root makes in them takes their group as before. The line also makes `openat2` fail (`ENOSYS`; backups/design/plan.md, M23), which neither moteld's code nor the Go it is built with calls; `systemctl` and `ssh-keygen` run under it in the install test (the reload, the verification as 65534) and in the e2e box suite's pushes |
 | `.service` | `[Service]` | `RestrictAddressFamilies=AF_UNIX` | the manager's socket (`systemctl reload`, `is-active`); no network. It filters `socket(2)` alone: the table's last two rows close two routes around it, and the third, `socketpair(2)`, gives no socket outside `AF_UNIX` (only `AF_TIPC` implements it besides, and `tipc` loads only by root's hand, which docs/hardening.md step 5 refuses where taken) but still loads any aliased family's module, as in app units, where it is an accepted residual (liveswap/DESIGN-sandbox.md, "Module-backed protocols"; #315). `AF_UNIX` admits no protocol module |
 | `.service` | `[Service]` | `SystemCallFilter=@system-service` | |
 | `.service` | `[Service]` | `SystemCallFilter=~io_uring_setup` | less `io_uring_setup`, which `@system-service` admits through `@aio`: a ring's `IORING_OP_SOCKET` (kernel 5.19+) opens a socket of any family without `socket(2)`, the one call `RestrictAddressFamilies=` filters. A deny line after the allow list takes the name out of it. Nothing the applier runs sets up a ring |
@@ -2151,7 +2152,9 @@ works, and the verifier, running `ssh-keygen -Y verify` as 65534 in a
 directory under the unit's `PrivateTmp`, verifies and refuses as it
 does outside. The install test repeats the reload and the 65534
 verification with `setpriv` and `ssh-keygen`, and runs the real
-applier in the unit.
+applier in the unit. `RestrictSUIDSGID=` came after that measurement:
+the install test's runs, and the e2e box suite's pushes through the
+packaged unit, are what hold it.
 
 What this sandbox is for: the applier's own mistakes — a wrong path, a
 write to the wrong place — stay inside what the unit may write: its two
@@ -2874,3 +2877,7 @@ Dated one-liners; the full text of each is in git.
   (#577): it named the commit beside the digest of a file edited at the
   console since, and only someone holding the commit's own digest could
   tell (S3 O5 D3, 45). A field added; nothing removed.
+- 2026-11-20 — The applier unit gets `RestrictSUIDSGID=yes`, which
+  moteld.service's comment and packaging's design already said every
+  unit the package installs had (review of 2026-11-20; S5 O1 D5, 25;
+  size 1, risk 2, fixed); the install test holds the unit to it.

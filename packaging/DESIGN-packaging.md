@@ -98,3 +98,7 @@ Dated one-liners; the full text of each is in git.
   until it next starts, as it keeps its limits: postinstall does not
   restart it, since that stops every app, and `docs/upgrading.md`
   names the restart for a quiet moment (a doc step: size 1, risk 2).
+- 2026-11-20 — The 2026-11-06 line's "as every other shipped unit
+  had" was not so for `motel-box-apply.service`, which had no
+  `RestrictSUIDSGID=` until now (box/DESIGN-box.md, "The applier
+  unit"); the smoke test holds it to the line.
