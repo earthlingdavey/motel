@@ -548,7 +548,7 @@ func WriteBoxAlerts(w io.Writer, a BoxAlerts) error {
 		return p.err
 	}
 	if a.MoreAlerts || a.MoreSilences {
-		p.line("%s's Alertmanager holds more than it sends: %s and %s here", a.Host, plural(len(a.Alerts), "alert"), plural(len(a.Silences), "silence"))
+		p.line("%s's Alertmanager holds more than it sends: %s and %s sent", a.Host, plural(len(a.Alerts), "alert"), plural(len(a.Silences), "silence"))
 	} else {
 		p.line("%s's Alertmanager holds %s and %s", a.Host, plural(len(a.Alerts), "alert"), plural(len(a.Silences), "silence"))
 	}

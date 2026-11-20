@@ -118,7 +118,7 @@ func TestMonitorBoxAlerts(t *testing.T) {
 	// At the cap the head says the box holds more than it sends.
 	fb.boxAlerts = hostileBoxAlerts()
 	fb.boxAlerts.MoreSilences = true
-	if r := runKey(t, fb, nil, "monitor", "alerts"); r.code != 0 || !strings.HasPrefix(r.stdout, "127.0.0.1's Alertmanager holds more than it sends: 14 alerts and 11 silences here\n") {
+	if r := runKey(t, fb, nil, "monitor", "alerts"); r.code != 0 || !strings.HasPrefix(r.stdout, "127.0.0.1's Alertmanager holds more than it sends: 14 alerts and 11 silences sent\n") {
 		t.Errorf("at the cap: exit %d, stdout %q", r.code, r.stdout)
 	}
 

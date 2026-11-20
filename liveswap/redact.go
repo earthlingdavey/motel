@@ -84,11 +84,14 @@ import (
 //     and put in the list, which adds its punctuation alone; a row the
 //     filter withheld is the name and the filter's sentence. The
 //     box's alerts (GET /_motel/alerts) are rows the same way: an
-//     app's alert is filtered by its app's filter, then given back its
-//     times, Alertmanager's and never the app's bytes (motel_alerts.go,
-//     alertRow); a row withheld keeps only motel's and Alertmanager's
-//     words from closed sets, its times, its app's name and the
-//     filter's sentence. So no filter is ever given two apps' values,
+//     app's alert is filtered by its app's filter, every other alert
+//     and every silence by one that knows no value, and an alert row is
+//     then given back its times, Alertmanager's and never the app's
+//     bytes (motel_alerts.go, alertRow); a row withheld keeps only
+//     motel's and Alertmanager's words from closed sets (a state, a
+//     severity, inhibited), its times, an id Alertmanager made, the
+//     filter's sentence, and its app's name when its own app's filter
+//     withheld it. So no filter is ever given two apps' values,
 //     and the outcome pairs of rule 3 are counted per row.
 //  3. The outcome vocabulary is structural, never textual. A pair
 //     "status":"<word>", "phase":"<word>" or "name":"<word>", the
