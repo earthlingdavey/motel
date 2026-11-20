@@ -461,3 +461,37 @@ func TestAlertsCancelledKeepTheBackoff(t *testing.T) {
 		t.Errorf("after the cancelled read, the failing reads at %v", at)
 	}
 }
+
+// TestAlertsBesideAStatusThatFailed: an app's alerts that answered are
+// shown while its status has not answered, or did not usably; not
+// beside a status the box refused.
+func TestAlertsBesideAStatusThatFailed(t *testing.T) {
+	for _, c := range []struct {
+		name  string
+		err   error
+		shown bool
+	}{
+		{"no answer", fail(model.FailNoAnswer), true},
+		{"unusable", fail(model.FailUnusable), true},
+		{"refused", fail(model.FailForbidden), false},
+		{"not found", fail(model.FailNotFound), false},
+	} {
+		now := t0
+		f := &demo.Fake{Now: func() time.Time { return now }}
+		f.Body("apps.json", `{"apps": [{"name": "blog"}]}`)
+		f.Set("blog", c.err)
+		s := &model.Session{Host: demo.Host, Now: f.Now, Engine: model.NewEngine(t0)}
+		s.Engine.Focus("blog", now)
+		s.Engine.AlertsOpen("blog", now)
+		for range 8 {
+			step(t, s, f, &now)
+		}
+		var got []string
+		for _, l := range s.Overview("blog", now).Note {
+			got = append(got, l.Text())
+		}
+		if shown := strings.Contains(strings.Join(got, "\n"), "alerts      2 held"); shown != c.shown {
+			t.Errorf("%s: the alerts shown %v, want %v: %q", c.name, shown, c.shown, got)
+		}
+	}
+}

@@ -59,12 +59,20 @@ func (s *Session) Overview(app string, now time.Time) OverviewView {
 	a := s.apps[app]
 	switch {
 	case a == nil || a.st == nil && a.err == nil:
-		v.Note = []Line{{own("asking " + s.Host + " for " + app + "…")}}
+		// The alerts are a read of their own, and may have answered
+		// first.
+		v.Note = append([]Line{{own("asking " + s.Host + " for " + app + "…")}}, s.alertLines(app, now)...)
 		return v
 	case a.st == nil || Forbidden(a.err) || NotFound(a.err):
 		v.Note = []Line{{Seg{T: Capped(failureText(a.err), 4*LineMax)}}}
 		if Forbidden(a.err) {
 			v.Note = append(v.Note, s.askAgain(now))
+		}
+		if !Forbidden(a.err) && !NotFound(a.err) {
+			// The status did not answer, or not usably; its alerts may
+			// have. A refusal of the status refuses the app: no alert is
+			// shown beside it.
+			v.Note = append(v.Note, s.alertLines(app, now)...)
 		}
 		return v
 	}
