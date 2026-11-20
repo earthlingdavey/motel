@@ -17,8 +17,10 @@ import (
 // box's, written in the client's words with its age. A rule's name, a
 // guard's meaning, a reading's filesystem and a word the client does
 // not know are the box's: each on a row of its own after the client's
-// label, or quoted, capped and cut at the window's edge, so none
-// begins a row.
+// label, or quoted, and capped, so none begins a row where the screen's
+// own do (a head at column 0, a label at column 4). A row is cut at the
+// window's edge, but a condition and a guard's meaning, which go on at
+// column 6 (Sentence) rather than lose their end.
 
 // RulesAsOf is how old the box's answer about the rules is, for the
 // crumb, and that the last read failed when it did; app is "" for the
@@ -94,9 +96,9 @@ func RulesFileSays(r wire.Rules) Line {
 // an 80-column window keeps the longest, disk_low's two levels, whole),
 // a severity that is not motel's, each guard's meaning, and each number
 // with its age and state.
-func RuleBlock(a wire.AlertListing, now time.Time) []Line {
+func RuleBlock(a wire.AlertListing, store string, now time.Time) []Line {
 	var out []Line
-	for _, r := range ruleRows(a, now) {
+	for _, r := range ruleRows(a, store, now) {
 		out = append(out, r.l)
 	}
 	return out
@@ -104,16 +106,23 @@ func RuleBlock(a wire.AlertListing, now time.Time) []Line {
 
 // ruleRow is one of a rule's rows, and whether a window too narrow for
 // it lays it on more rows (the condition, the client's words; a guard's
-// meaning, motel's sentence), each two columns in from where its label
-// begins, a column no row of the screen begins at, rather than cutting
-// it.
+// meaning, motel's sentence), going on at column 6, two in from its
+// label, where neither a head nor a labelled row begins, rather than
+// cutting it.
 type ruleRow struct {
 	l    Line
 	wrap bool
 }
 
-func ruleRows(a wire.AlertListing, now time.Time) []ruleRow {
+func ruleRows(a wire.AlertListing, store string, now time.Time) []ruleRow {
 	m := ruleMark(a)
+	// A rule the store evaluates (neither a check of motel's nor an
+	// event) has no number when the store was not read: not known, never
+	// a quiet "no number" beside the store's line.
+	unread := store != wire.StoreOn && a.Source != "motel check" && a.Kind != "event" && len(a.Readings) == 0
+	if unread {
+		m = MarkUnknown
+	}
 	head := Line{ownC(m.Glyph()+" ", m.Class()), ownC(pad(SeverityWord(a.Severity), 9), m.Class()), own(ruleKind(a.Kind) + " · " + ruleScope(a))}
 	rows := []ruleRow{{l: head}, {l: boxField("rule", boxT(a.Name))}}
 	if c := ruleCondition(a); c != "" {
@@ -132,7 +141,10 @@ func ruleRows(a wire.AlertListing, now time.Time) []ruleRow {
 	for _, r := range a.Readings {
 		rows = append(rows, ruleRow{l: boxField("now", reading(a, r, now)...)})
 	}
-	if len(a.Readings) == 0 && a.Kind != "event" {
+	switch {
+	case unread:
+		rows = append(rows, ruleRow{l: boxField("now", ownC("not known: the store's numbers were not read", Warn))})
+	case len(a.Readings) == 0 && a.Kind != "event":
 		rows = append(rows, ruleRow{l: boxField("now", ownC("no number", Dim))})
 	}
 	return rows
@@ -274,7 +286,7 @@ func ruleCondition(a wire.AlertListing) string {
 	case a.Name == "watchdog_throttled":
 		// motel's own: a spent budget is not firing (liveswap/watchdog.go);
 		// it fires when a further restart is needed and the budget is spent.
-		return "a further restart needed while " + opWord(a.Op) + " its budget in its window is spent"
+		return "a further restart needed while its budget in its window is spent"
 	case a.Op != "":
 		c = opWord(a.Op) + " each number's own threshold"
 	default:
@@ -328,7 +340,7 @@ func Amount(v float64, unit string) string {
 			name string
 		}{{1 << 40, "TiB"}, {1 << 30, "GiB"}, {1 << 20, "MiB"}, {1 << 10, "KiB"}} {
 			if v >= u.n {
-				return sign + g(v/u.n, 3) + " " + u.name
+				return sign + g(v/u.n, 4) + " " + u.name
 			}
 		}
 		return sign + g(v, 3) + " bytes"
@@ -371,9 +383,10 @@ func durWords(sec float64) string {
 func (s *Session) BoxRulesView(now time.Time) []Line { return s.RulesViewFit("", now, 0, nil) }
 
 // RulesViewFit is the rules screen of app ("" the box's), laid to width
-// cells; 0 leaves each line one line. Every line holding a box's value
-// is cut to the width, so a value never begins a row; the client's
-// sentences are laid on rows (Sentence).
+// cells; 0 leaves each line one line. A line holding a box's value is
+// cut to the width, but a condition and a guard's meaning, laid on rows
+// going on at column 6, so a value never begins a row where the
+// screen's own do; the client's sentences are laid on rows (Sentence).
 func (s *Session) RulesViewFit(app string, now time.Time, width int, cells Cells) []Line {
 	s.seen(now)
 	st, err := s.rules(app)
@@ -410,12 +423,12 @@ func (s *Session) RulesViewFit(app string, now time.Time, width int, cells Cells
 		out = append(out, nil, cutTo(Line{ownC(heading, Label)}, width, cells))
 	}
 	for _, a := range r.Alerts {
-		for _, r := range ruleRows(a, now) {
-			if r.wrap {
-				out = append(out, Sentence(r.l, width, cells)...)
+		for _, row := range ruleRows(a, r.Store, now) {
+			if row.wrap {
+				out = append(out, Sentence(row.l, width, cells)...)
 				continue
 			}
-			out = append(out, cutTo(r.l, width, cells))
+			out = append(out, cutTo(row.l, width, cells))
 		}
 	}
 	if err != nil {
@@ -431,9 +444,18 @@ func abs(v float64) float64 {
 	return v
 }
 
-// number is v to n significant digits, never in an exponent's form:
-// 1000, not 1e+03; 0.0001234, not 1.234e-04.
+// number is v to n significant digits, not in an exponent's form
+// (1000, not 1e+03; 0.0001234, not 1.234e-04), and a whole number under
+// 1e15 exactly (12345 restarts); outside 1e-9 to 1e15 a box's number is
+// left in the exponent's form, so a row cannot run to hundreds of
+// digits.
 func number(v float64, n int) string {
+	if a := abs(v); a >= 1e15 || a != 0 && a < 1e-9 {
+		return strconv.FormatFloat(v, 'g', n, 64)
+	}
+	if v == float64(int64(v)) {
+		return strconv.FormatInt(int64(v), 10)
+	}
 	r, err := strconv.ParseFloat(strconv.FormatFloat(v, 'g', n, 64), 64)
 	if err != nil {
 		return strconv.FormatFloat(v, 'g', n, 64)

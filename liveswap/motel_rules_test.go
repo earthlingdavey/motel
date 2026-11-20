@@ -453,3 +453,22 @@ func TestRulesSafeNames(t *testing.T) {
 		t.Errorf("%d %s", w.Code, w.Body)
 	}
 }
+
+// TestRulesCheckNumbersWhole: a check's number as its detector read it,
+// a long run of digits (a nearly empty filesystem's used percent, in
+// either of Go's forms), passes the box's filter whole: the entropy
+// layer masks nothing inside it, and the body stays JSON.
+func TestRulesCheckNumbersWhole(t *testing.T) {
+	h, people := alertsRig(t)
+	for _, v := range []float64{0.000123456789012345, 5.740305648246404e-05, 1.2345678901234567e-07} {
+		h.app.SetRulesSource(&fakeRules{l: wire.RulesListing{Alerts: []wire.AlertListing{
+			{Name: "disk_low", Source: "motel check", Severity: "warning", Subject: "box", Kind: "threshold", Op: ">=", Unit: "percent",
+				Readings: []wire.Reading{{Instance: "/srv/motel", Value: num(v), MeasuredAt: rulesAt}}},
+		}}})
+		w := sendTo(t, h, "GET", "/_motel/rules", token(people.carol))
+		var got wire.Rules
+		if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil || len(got.Alerts) != 1 || *got.Alerts[0].Readings[0].Value != v {
+			t.Errorf("%v: %v: %d %s", v, err, w.Code, w.Body)
+		}
+	}
+}

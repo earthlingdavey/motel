@@ -266,7 +266,7 @@ func TestRuleWords(t *testing.T) {
 		unit string
 		want string
 	}{
-		{1000.4 * (1 << 20), "bytes", "1000 MiB"}, {0.9996, "seconds", "1000 ms"}, {12345, "requests/s", "12340 requests/s"},
+		{1000.4 * (1 << 20), "bytes", "1000 MiB"}, {0.9996, "seconds", "1000 ms"}, {12345, "requests/s", "12345 requests/s"}, {12345, "reads", "12345 reads"}, {1048575, "bytes", "1024 KiB"}, {1e308, "", "1e+308"}, {123.456789, "cores", "123.5 cores"},
 		{0.0001234, "", "0.0001234"}, {-1234570000, "bytes", "-1.15 GiB"}, {0.0612, "share", "6.12 %"}, {79.96, "percent", "79.9 %"},
 	} {
 		if got := model.Amount(c.v, c.unit); got != c.want {
@@ -286,7 +286,7 @@ func TestRuleWords(t *testing.T) {
 	}
 	text := joined(s.RulesViewFit("", *now, 60, runes))
 	for _, want := range []string{
-		"    fires     a further restart needed while >= its budget\n      in its window is spent\n",
+		"    fires     a further restart needed while its budget in\n      its window is spent\n",
 		"    now       shop 5 of 5 restarts in 10m (5s ago)\n",
 		"    now       /srv/a shop 41 % (1m ago) · inactive\n",
 		"    guard     < 0: the 6h line predicts it full too: a\n      one-off write",
@@ -297,5 +297,28 @@ func TestRuleWords(t *testing.T) {
 	}
 	if strings.Contains(text, "…") && strings.Contains(text, "guard") && !strings.Contains(strings.Join(strings.Fields(text), " "), "and so on to the end") {
 		t.Errorf("a guard's meaning cut:\n%s", text)
+	}
+}
+
+// TestRulesUnreadStore: when the box's store did not answer, a rule the
+// store evaluates says its number is not known and is marked so, never
+// a quiet "no number"; a check keeps its reading.
+func TestRulesUnreadStore(t *testing.T) {
+	s, f, now := session(t)
+	s.Engine.BoxRulesOpen(true, *now)
+	f.Body("box-rules.json", `{"store":"unanswered","alerts":[`+
+		`{"name":"app_memory_high","source":"builtin","severity":"warning","subject":"app","kind":"threshold","op":">","threshold":0.9,"unit":"share","for_seconds":600},`+
+		`{"name":"disk_low","source":"motel check","severity":"warning","subject":"box","kind":"threshold","op":">=","unit":"percent","readings":[{"instance":"/srv","value":40,"measured_at":"@-40s"}]}]}`)
+	for range 3 {
+		step(t, s, f, now)
+	}
+	text := joined(s.BoxRulesView(*now))
+	for _, want := range []string{
+		"? warning  threshold · every app\n    rule      app_memory_high\n    fires     > 90 % for 10m\n    now       not known: the store's numbers were not read\n",
+		"    now       /srv 40 % (40s ago)\n",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("the screen does not say %q:\n%s", want, text)
+		}
 	}
 }

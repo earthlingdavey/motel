@@ -109,7 +109,7 @@ func rulesView(rules wire.Rules, app, host string, now time.Time) render.Rules {
 		add(model.Line{{T: termtext.From("the rules of " + app + " on " + host + ", with its numbers alone:")}})
 	}
 	for _, a := range rules.Alerts {
-		for _, l := range model.RuleBlock(a, now) {
+		for _, l := range model.RuleBlock(a, rules.Store, now) {
 			add(l)
 		}
 	}

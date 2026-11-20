@@ -22,7 +22,7 @@ RULES that apply to shop, with its numbers alone
     now       shop 210 ms (1m ago) · inactive
   critical threshold · every app
     rule      watchdog_throttled
-    fires     a further restart needed while >= its budget in its window is spent
+    fires     a further restart needed while its budget in its window is spent
     now       no number
 
 

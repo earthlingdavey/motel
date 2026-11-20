@@ -504,9 +504,10 @@ func TestEvaluateEndsOnItsFirstFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 	f := listingStore(l)
-	f.wait = make(chan struct{}) // every query waits, but the state query fails at once
-	defer close(f.wait)
-	bad := &failingFirst{rulesStore: f, fail: l.Store.StateQuery}
+	// One value query waits until its context ends; the state query fails
+	// at once; the rest answer, so the slots turn over and the failing
+	// query has one.
+	bad := &failingFirst{rulesStore: f, fail: l.Store.StateQuery, hang: valueAsks(l)[0].query}
 	start := time.Now()
 	_, err = evaluate(context.Background(), bad, l.Store, valueAsks(l), listingAt)
 	if err == nil || !strings.Contains(err.Error(), "store down") || time.Since(start) > time.Second {
@@ -514,15 +515,20 @@ func TestEvaluateEndsOnItsFirstFailure(t *testing.T) {
 	}
 }
 
-// failingFirst is rulesStore with one query failing before any waits.
+// failingFirst is rulesStore with one query failing at once, and one
+// waiting until its context ends.
 type failingFirst struct {
 	*rulesStore
-	fail string
+	fail, hang string
 }
 
 func (f *failingFirst) instantAt(ctx context.Context, q string, t time.Time) ([]series, error) {
-	if q == f.fail {
+	switch q {
+	case f.fail:
 		return nil, errors.New("store down")
+	case f.hang:
+		<-ctx.Done()
+		return nil, ctx.Err()
 	}
 	return f.rulesStore.instantAt(ctx, q, t)
 }

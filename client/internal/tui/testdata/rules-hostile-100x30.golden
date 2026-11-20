@@ -12,7 +12,7 @@ RULES that apply to hostile, with its numbers alone
     now       hostile 0.5 (in "share\x1b[2J") (1m ago) · at the level "critical \u25b2 forged" · st…
   critical threshold · every app
     rule      watchdog_throttled
-    fires     a further restart needed while >= its budget in its window is spent
+    fires     a further restart needed while its budget in its window is spent
     now       hostile 5 of 5 restarts in 10m (5s ago)
 
 
