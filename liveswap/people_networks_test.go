@@ -743,6 +743,40 @@ func TestNetworksFlushAtStop(t *testing.T) {
 	}
 }
 
+// TestNetworksFlushWaitsForTheRead: a stop while the file is being read
+// waits for the read (within its bound), so the held uses are told and
+// written then, not at their next use after the restart.
+func TestNetworksFlushWaitsForTheRead(t *testing.T) {
+	people := newTestPeople(t)
+	file := filepath.Join(t.TempDir(), "people-networks.json")
+	k, heard := testNetworks(t, file)
+	release := make(chan struct{})
+	read := k.read
+	k.read = func(p string) ([]byte, error) { <-release; return read(p) }
+	k.seen(people.reg, people.alice.Fingerprint(), "alice", addr("203.0.113.9"), zap.NewNop())
+	go func() { time.Sleep(100 * time.Millisecond); close(release) }()
+	k.flushWithin(5 * time.Second)
+	if got := heard.take(); len(got) != 1 || !got[0].First {
+		t.Errorf("told %+v", got)
+	}
+	if b, err := os.ReadFile(file); err != nil || !strings.Contains(string(b), "203.0.113.0/24") {
+		t.Errorf("written %q, %v", b, err)
+	}
+	// A read that does not come back holds a stop no longer than its
+	// bound.
+	k2, _ := testNetworks(t, filepath.Join(t.TempDir(), "people-networks.json"))
+	k2.wait = 500 * time.Millisecond
+	hang := make(chan struct{})
+	t.Cleanup(func() { close(hang) })
+	k2.read = func(string) ([]byte, error) { <-hang; return nil, errors.New("hung") }
+	k2.seen(people.reg, people.alice.Fingerprint(), "alice", addr("203.0.113.9"), zap.NewNop())
+	began := time.Now()
+	k2.flushWithin(200 * time.Millisecond)
+	if took := time.Since(began); took > 2*time.Second {
+		t.Errorf("a stop waited %s on a read that hangs", took)
+	}
+}
+
 // TestNetworksConcurrent: both webhooks' requests at once, and the
 // file's writes beside them: under -race, nothing lost, each network
 // told once.

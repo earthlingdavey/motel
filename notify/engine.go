@@ -330,8 +330,10 @@ func (e *engine) report(ev Event) {
 // reportLocked is report, with mu held.
 func (e *engine) reportLocked(ev Event) {
 	if e.active == nil {
+		now := e.now()
+		e.early = slices.DeleteFunc(e.early, func(x earlyEvent) bool { return now.Sub(x.at) > earlyFor })
 		if ev.Source == sourceAccess && len(e.early) < earlyMax {
-			e.early = append(e.early, earlyEvent{ev, e.now()})
+			e.early = append(e.early, earlyEvent{ev, now})
 		}
 		return
 	}

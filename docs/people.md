@@ -197,9 +197,12 @@ and the journal hold it whole. When one of these comes:
    them](#remove-them). Their tokens are refused from the reload on,
    and a token already made dies within ten minutes. They make a new
    key, and you add its `person` line and push again.
-3. **If it was them, nothing to do.** To be told only of addresses you
-   have not allowed, put a `from` list on their grants: from anywhere
-   else their key is refused, and you get `person_outside_list`.
+3. **If it was them, nothing to do.** To refuse their key from
+   anywhere but the addresses you expect, put a `from` list on every
+   grant they hold (a grant without one still lets them in from
+   anywhere): from elsewhere their key is then refused, and you get
+   `person_outside_list`. A network inside the list that the key has
+   not used before is still told as `person_new_network`.
 
 Each one-shot also has a line in moteld's journal, `access: a key used
 from a new network` or `access: a valid signature from outside every
@@ -226,8 +229,10 @@ What is kept: in `/var/lib/motel/people-networks.json` (moteld's own,
 or a whole address. A key whose lines you remove is dropped from it at
 the next person's request after the reload; if you removed everyone,
 it stays until a person is admitted again. The file stays when the
-package is removed, `apt purge` too; delete it to forget them, and
-each key's next use is told again as its first. The journal and your
+package is removed, `apt purge` too. To forget them, stop moteld
+first (`systemctl stop moteld`; it keeps the record in memory and
+writes it back), delete the file, and start it: each key's next use is
+then told again as its first. The journal and your
 channels keep each message (the person's name, the key's fingerprint,
 the network or the whole address) as long as they keep anything.
 

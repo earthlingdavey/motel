@@ -472,8 +472,11 @@ func (k *PeopleNetworks) flushWithin(wait time.Duration) {
 	deadline := time.Now().Add(wait)
 	for {
 		k.mu.Lock()
-		idle := k.file == "" || k.state != networksRead || k.failing || !k.dirty && !k.writing
-		if !idle && !k.writing && (k.timer == nil || k.timer.Stop()) {
+		// A read of the file under way holds uses not yet told nor
+		// written: waited for too, so they are told and written now
+		// rather than at their next use after the restart.
+		idle := k.file == "" || k.state == networksUnread || k.state == networksRead && (k.failing || !k.dirty && !k.writing)
+		if !idle && k.state == networksRead && !k.writing && (k.timer == nil || k.timer.Stop()) {
 			k.timer = time.AfterFunc(0, k.flush)
 		}
 		k.mu.Unlock()
