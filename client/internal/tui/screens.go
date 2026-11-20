@@ -62,6 +62,8 @@ func (u *UI) render() {
 		door.SetText(u.page, door.Lines(u.S.BackupsViewFit(now, u.w, door.Width), u.Colour))
 	case model.ScreenAlerts:
 		door.SetText(u.page, door.Lines(u.S.BoxAlertsViewFit(now, u.w, door.Width), u.Colour))
+	case model.ScreenRules, model.ScreenAppRules:
+		door.SetText(u.page, door.Lines(u.S.RulesViewFit(v.App, now, u.w, door.Width), u.Colour))
 	case model.ScreenHelp:
 		door.SetText(u.page, door.LitLines(hang(u.help(), u.w)))
 	case model.ScreenStopHelp:
@@ -144,6 +146,10 @@ func (u *UI) crumbs(v model.View, now time.Time) (model.Line, model.Line) {
 		return ownLine(":backups"), u.S.BackupsAsOf(now)
 	case model.ScreenAlerts:
 		return ownLine(":alerts"), u.S.BoxAlertsAsOf(now)
+	case model.ScreenRules:
+		return ownLine(":rules"), u.S.RulesAsOf("", now)
+	case model.ScreenAppRules:
+		return ownLine("apps › " + v.App + " › rules"), u.S.RulesAsOf(v.App, now)
 	case model.ScreenHelp, model.ScreenStopHelp:
 		return ownLine("help"), ownLine("esc closes")
 	}
@@ -164,6 +170,8 @@ var footers = map[model.Screen]string{
 	model.ScreenBox:      "↑↓ scroll  y json  c command  esc back  ? more",
 	model.ScreenBackups:  "↑↓ scroll  y json  c command  esc back  ? more",
 	model.ScreenAlerts:   "↑↓ scroll  y json  c command  esc back  ? more",
+	model.ScreenRules:    "↑↓ scroll  y json  c command  esc back  ? more",
+	model.ScreenAppRules: "↑↓ scroll  y json  c command  esc back  ? more",
 	model.ScreenHelp:     "↑↓ scroll  esc close  q quit",
 	model.ScreenRefused:  "↑↓ scroll  r ask again  ? keys  q quit",
 	model.ScreenStopHelp: "↑↓ scroll  esc back  r ask again  q quit",
@@ -484,6 +492,7 @@ VIEWS (type after :)
  box                          what the box runs (viewers of the box)
  backups                      what the box says of its backups (viewers of the box)
  alerts                       what fires on the box, and its silences (viewers of the box)
+ rules [<app>]                each rule the box alerts on, how close it is (no app: viewers of the box)
  help                         this
 
 MARKS   ✖ broken now   ▲ look   ⟳ deploying   ? cannot tell   · nothing to show

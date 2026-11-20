@@ -35,8 +35,9 @@ type Fake struct {
 	Delay time.Duration
 
 	mu sync.Mutex
-	// Errs makes a read fail: keyed "whoami", "apps", "box", "backups", "box-alerts", an app's
-	// name, "<app>@<version>", or "alerts:<app>".
+	// Errs makes a read fail: keyed "whoami", "apps", "box", "backups", "box-alerts",
+	// "box-rules", an app's name, "<app>@<version>", "alerts:<app>" or
+	// "rules:<app>".
 	Errs map[string]error
 	// Bodies replaces a fixture's body, keyed by its path in fixtures/.
 	Bodies map[string]string
@@ -217,6 +218,30 @@ func (f *Fake) Alerts(ctx context.Context, app string) (model.Got[wire.Alerts], 
 func (f *Fake) BoxAlerts(ctx context.Context) (model.Got[wire.BoxAlerts], error) {
 	var g model.Got[wire.BoxAlerts]
 	b, err := f.load(ctx, model.Job{Kind: model.KBoxAlerts}, "box-alerts", "box-alerts.json", &g.V)
+	g.Body = b
+	return g, err
+}
+
+// Rules answers rules/<app>.json, or the store on with no rule for an
+// app with none.
+func (f *Fake) Rules(ctx context.Context, app string) (model.Got[wire.Rules], error) {
+	var g model.Got[wire.Rules]
+	path := "rules/" + app + ".json"
+	f.mu.Lock()
+	_, replaced := f.Bodies[path]
+	f.mu.Unlock()
+	if _, err := fs.Stat(fixtures, "fixtures/"+path); err != nil && !replaced {
+		f.Body(path, `{"store":"on","alerts":[]}`)
+	}
+	b, err := f.load(ctx, model.Job{Kind: model.KRules, App: app}, "rules:"+app, path, &g.V)
+	g.Body = b
+	return g, err
+}
+
+// BoxRules answers box-rules.json.
+func (f *Fake) BoxRules(ctx context.Context) (model.Got[wire.Rules], error) {
+	var g model.Got[wire.Rules]
+	b, err := f.load(ctx, model.Job{Kind: model.KBoxRules}, "box-rules", "box-rules.json", &g.V)
 	g.Body = b
 	return g, err
 }

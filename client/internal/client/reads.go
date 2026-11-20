@@ -115,6 +115,43 @@ func (c *Client) BoxAlerts(ctx context.Context) (wire.BoxAlerts, *Answer, error)
 	return b, ans, err
 }
 
+// Rules is `motel monitor rules --app <app>`: GET
+// /_motel/apps/<app>/rules, the rules the box alerts on that apply to
+// the app, each with the app's numbers alone, for a person whose grants
+// cover the app. An answer that names another app, on a rule or a
+// reading, is not about the app asked for.
+func (c *Client) Rules(ctx context.Context, app App) (wire.Rules, *Answer, error) {
+	var r wire.Rules
+	ans, err := c.read(ctx, "/_motel/apps/"+app.Name+"/rules", nil, &r)
+	if err == nil {
+		// A name the box's filter hid (Filtered, from Read's hold) says
+		// nothing of which app it was: not taken for another.
+		another := func(name string) bool { return name != Filtered && !Same(name, app.Name) }
+		for _, a := range r.Alerts {
+			// A box's own (its subject, a reading of a filesystem or a
+			// backup) is not an app's either.
+			other := a.Subject != "app" || a.App != "" && another(a.App) || len(a.Apps) > 0
+			for _, rd := range a.Readings {
+				other = other || rd.Instance != "" || rd.App == "" || another(rd.App)
+			}
+			if other {
+				err = c.NotMotel(ans, "it holds rules or numbers not of this app")
+				break
+			}
+		}
+	}
+	return r, ans, err
+}
+
+// BoxRules is `motel monitor rules`: GET /_motel/rules, every rule the
+// box alerts on, each with every number it judges (an app's, a
+// filesystem's), for a viewer of the box.
+func (c *Client) BoxRules(ctx context.Context) (wire.Rules, *Answer, error) {
+	var r wire.Rules
+	ans, err := c.read(ctx, "/_motel/rules", nil, &r)
+	return r, ans, err
+}
+
 // read is Get, then Read into v. An error is a *Failure, or the
 // context's own when it ended; a signing error, which sent nothing,
 // is a usage failure, as the commands have always said it.

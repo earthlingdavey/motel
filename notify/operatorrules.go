@@ -753,7 +753,7 @@ func observedBefore(sel string, win time.Duration) string {
 }
 
 // ruleTerm is a store rule's expression in parts (DESIGN-metrics.md,
-// "How close each rule is"): value, the MetricsQL whose series are the
+// "How close each alert is"): value, the MetricsQL whose series are the
 // number compared (one per subject), op and threshold, and guards, the
 // further terms joined with "and". A guard is a condition that is not
 // the closeness (a sample floor: too few requests to judge), and one

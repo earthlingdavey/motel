@@ -168,6 +168,13 @@ func FuzzNoRouteNoAnswer(f *testing.F) {
 		{"GET", "/_motel/alerts", "app=demo", "", ""},
 		{"GET", "/_motel/alerts/", "", "", ""},
 		{"POST", "/_motel/alerts", "", "", ""},
+		{"GET", "/_motel/rules", "", "", ""},
+		{"GET", "/_motel/rules", "app=demo", "", ""},
+		{"GET", "/_motel/rules/", "", "", ""},
+		{"GET", "/_motel/apps/demo/rules", "", "", ""},
+		{"GET", "/_motel/apps/ghost/rules", "", "", ""},
+		{"GET", "/_motel/apps/demo/rules", "store=on", "", ""},
+		{"GET", "/_motel/apps/demo/rules/", "", "", ""},
 	}
 	reached := map[*route]bool{}
 	reachedApp := map[*motelAppRoute]bool{}
@@ -304,8 +311,11 @@ func FuzzNoRouteNoAnswer(f *testing.F) {
 }
 
 // boxViewersOnly are the rows under /_motel/ a viewer of the box alone
-// may read: what names every app (the backups, every alert and silence).
-func boxViewersOnly(a access.Action) bool { return a == access.BoxBackups || a == access.BoxAlerts }
+// may read: what names every app (the backups, every alert and silence,
+// every rule with every app's numbers).
+func boxViewersOnly(a access.Action) bool {
+	return a == access.BoxBackups || a == access.BoxAlerts || a == access.BoxRules
+}
 
 // recordRows swaps each row's function for one that records its row
 // in *served, until the test ends, so a test sees which row answered

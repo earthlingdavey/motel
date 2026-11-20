@@ -35,6 +35,7 @@ var motelRoutes = []motelRoute{
 	{motelPrefix + "/apps", access.BoxApps, (*Handler).apps},
 	{motelPrefix + "/backups", access.BoxBackups, (*Handler).backups},
 	{motelPrefix + "/alerts", access.BoxAlerts, (*Handler).alerts},
+	{motelPrefix + "/rules", access.BoxRules, (*Handler).rules},
 }
 
 // findMotelRoute is the request's row, or nil: any other method, path

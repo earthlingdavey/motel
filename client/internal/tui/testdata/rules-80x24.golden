@@ -1,0 +1,24 @@
+motel · deploy.example.com · v0.7.0 │ alice@example.com · viewer … live · 0s ago
+:rules                                               as of 14:12:40 UTC · 0s ago
+store       on · numbers as the box last read the store (at most every 30 s)
+
+RULES, as the box alerts on them
+▲ warning  threshold · every app
+    rule      app_memory_high
+    fires     > 90 % for 10m
+    now       images 93.4 % (1m ago) · firing since 13:58 UTC (14m ago)
+    now       shop 55.2 % (1m ago) · inactive
+  critical threshold · the box
+    rule      backup_stale
+    fires     > 3h
+    now       shop 58m (2m ago)
+    now       wiki 2h 40m (2m ago)
+  warning  event · every app
+    rule      deploy_failed
+    fires     an event: nothing to be close to
+▲ warning  threshold · the box
+    rule      disk_low
+    fires     >= 80 % warning, >= 90 % critical, each clears 5 % under
+    now       /var/lib/liveswap 84.2 % (40s ago) · firing at warning
+▲ warning  threshold with guards · every app
+↑↓ scroll  y json  c command  esc back  ? more

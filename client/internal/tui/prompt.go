@@ -74,7 +74,7 @@ func (u *UI) run(text string) {
 		return w[1], true
 	}
 	// Each word takes so many: more is not run, and said.
-	most, known := map[string]int{"status": 2, "app": 2, "deploys": 3, "q": 1, "quit": 1, "apps": 1, "whoami": 1, "me": 1, "box": 1, "backups": 1, "alerts": 1, "help": 1, "keys": 1}[w[0]]
+	most, known := map[string]int{"status": 2, "app": 2, "deploys": 3, "q": 1, "quit": 1, "apps": 1, "whoami": 1, "me": 1, "box": 1, "backups": 1, "alerts": 1, "rules": 2, "help": 1, "keys": 1}[w[0]]
 	if known && len(w) > most {
 		say(own("one word too many: "), quoted(strings.Join(w[most:], " ")), own(" is more than :"+w[0]+" takes"))
 		return
@@ -117,6 +117,20 @@ func (u *UI) run(text string) {
 			return
 		}
 		u.open(model.View{Screen: model.ScreenAlerts})
+	case "rules":
+		if len(w) == 1 {
+			if !u.S.BoxViewer() {
+				say(own("the box's rules are for a viewer of the box; :rules <app> lists an app's"))
+				return
+			}
+			u.open(model.View{Screen: model.ScreenRules})
+			return
+		}
+		a, ok := app()
+		if !ok {
+			return
+		}
+		u.open(model.View{Screen: model.ScreenAppRules, App: a})
 	case "help", "keys":
 		u.open(model.View{Screen: model.ScreenHelp})
 	default:
@@ -134,10 +148,10 @@ func (u *UI) complete(text string) []string {
 	}
 	all := []string{"apps", "whoami", "help", "quit"}
 	if u.S.BoxViewer() {
-		all = append(all, "box", "backups", "alerts")
+		all = append(all, "box", "backups", "alerts", "rules")
 	}
 	for _, a := range u.S.Names() {
-		all = append(all, "status "+a, "deploys "+a)
+		all = append(all, "status "+a, "deploys "+a, "rules "+a)
 	}
 	var out []string
 	for _, c := range all {

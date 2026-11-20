@@ -47,6 +47,10 @@ type Session struct {
 	// screen is open.
 	BoxAlertsSt  *Got[wire.BoxAlerts]
 	BoxAlertsErr error
+	// BoxRulesSt is the box's rules with their numbers, BoxRulesErr its
+	// newest read's failure: read while the rules screen is open.
+	BoxRulesSt  *Got[wire.Rules]
+	BoxRulesErr error
 	// Signing is set while a token is being signed: a hardware key
 	// waits for its touch.
 	Signing bool
@@ -89,6 +93,10 @@ type appData struct {
 	// alertsErr their newest read's failure.
 	alerts    *Got[wire.Alerts]
 	alertsErr error
+	// rules is the rules that apply to the app, read while its rules
+	// screen is open, and rulesErr their newest read's failure.
+	rules    *Got[wire.Rules]
+	rulesErr error
 	// flight is the deploy the status held shows in flight, and ended
 	// the last one seen in flight that has since ended (follow).
 	flight *wire.DeployInFlight
@@ -127,11 +135,11 @@ func (s *Session) Fetch(ctx context.Context, c Client, j Job) (func(), error) {
 			case FailUnusable:
 				s.last, s.refused = at, false // an answer came, if not one to use
 			case FailNotFound:
-				if j.Kind == KAlerts || j.Kind == KBoxAlerts || j.Kind == KBackups {
+				if j.Kind == KAlerts || j.Kind == KBoxAlerts || j.Kind == KBackups || j.Kind == KRules || j.Kind == KBoxRules {
 					// A box older than the read, most likely: it answered,
 					// and refused nothing this key may read; the screen of
 					// the read says it (an app's, the alerts', the
-					// backups', the box's lines). (An app gone is said by
+					// backups', the rules', the box's lines). (An app gone is said by
 					// its status's 404 too, a refusal.)
 					s.last, s.refused = at, false
 					break
@@ -184,12 +192,18 @@ func (s *Session) seen(now time.Time) {
 		if s.BoxAlertsSt != nil {
 			move(&s.BoxAlertsSt.At)
 		}
+		if s.BoxRulesSt != nil {
+			move(&s.BoxRulesSt.At)
+		}
 		for _, a := range s.apps {
 			if a.st != nil {
 				move(&a.st.At)
 			}
 			if a.alerts != nil {
 				move(&a.alerts.At)
+			}
+			if a.rules != nil {
+				move(&a.rules.At)
 			}
 			move(&a.errAt)
 		}
@@ -204,7 +218,8 @@ func (s *Session) seen(now time.Time) {
 
 // forget drops everything the box said, after it answered about another
 // key or box: who it said you are, its list, every status and record,
-// the box's own answers (its status, its backups, its alerts), and the
+// the box's own answers (its status, its backups, its alerts, its
+// rules), and the
 // JSON made of one. Nothing it said before
 // can be told from what such a box would say, so none of it is shown;
 // after r, the session fills again from empty.
@@ -214,6 +229,7 @@ func (s *Session) forget() {
 	s.BoxSt, s.BoxErr = nil, nil
 	s.BackupsSt, s.BackupsErr = nil, nil
 	s.BoxAlertsSt, s.BoxAlertsErr = nil, nil
+	s.BoxRulesSt, s.BoxRulesErr = nil, nil
 	s.apps, s.records = nil, nil
 	s.json.key, s.json.lines = jsonKey{}, nil
 }
@@ -221,7 +237,7 @@ func (s *Session) forget() {
 // Forgotten says whether the session holds nothing the box said: true
 // at the start, and after an answer about another key or box.
 func (s *Session) Forgotten() bool {
-	return s.Me == nil && s.List == nil && s.ListErr == nil && s.BoxSt == nil && s.BoxErr == nil && s.BackupsSt == nil && s.BackupsErr == nil && s.BoxAlertsSt == nil && s.BoxAlertsErr == nil && len(s.apps) == 0 && len(s.records) == 0 && s.json.lines == nil
+	return s.Me == nil && s.List == nil && s.ListErr == nil && s.BoxSt == nil && s.BoxErr == nil && s.BackupsSt == nil && s.BackupsErr == nil && s.BoxAlertsSt == nil && s.BoxAlertsErr == nil && s.BoxRulesSt == nil && s.BoxRulesErr == nil && len(s.apps) == 0 && len(s.records) == 0 && s.json.lines == nil
 }
 
 func (s *Session) app(name string) *appData {

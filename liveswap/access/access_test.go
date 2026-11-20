@@ -28,32 +28,38 @@ func TestDecideTable(t *testing.T) {
 	on := map[Action]string{
 		AppStatus: "blog", AppDeployRecord: "blog", AppDeploy: "blog", AppRollback: "blog",
 		BoxStatus: "", BoxPushResult: "", BoxPush: "", BoxWhoami: "", BoxApps: "", BoxBackups: "",
-		AppAlerts: "blog", BoxAlerts: "",
+		AppAlerts: "blog", BoxAlerts: "", AppRules: "blog", BoxRules: "",
 	}
 	want := map[string]map[Action]bool{
 		"none": {
 			AppStatus: false, AppDeployRecord: false, AppDeploy: false, AppRollback: false,
 			BoxStatus: false, BoxPushResult: false, BoxPush: false, BoxWhoami: false, BoxApps: false, BoxBackups: false, AppAlerts: false, BoxAlerts: false,
+			AppRules: false, BoxRules: false,
 		},
 		"deployer of blog": {
 			AppStatus: true, AppDeployRecord: true, AppDeploy: true, AppRollback: true,
 			BoxStatus: false, BoxPushResult: false, BoxPush: false, BoxWhoami: false, BoxApps: false, BoxBackups: false, AppAlerts: false, BoxAlerts: false,
+			AppRules: false, BoxRules: false,
 		},
 		"box channel": {
 			AppStatus: false, AppDeployRecord: false, AppDeploy: false, AppRollback: false,
 			BoxStatus: true, BoxPushResult: true, BoxPush: true, BoxWhoami: false, BoxApps: false, BoxBackups: false, AppAlerts: false, BoxAlerts: false,
+			AppRules: false, BoxRules: false,
 		},
 		"viewer of blog": {
 			AppStatus: true, AppDeployRecord: true, AppDeploy: false, AppRollback: false,
 			BoxStatus: false, BoxPushResult: false, BoxPush: false, BoxWhoami: true, BoxApps: true, BoxBackups: false, AppAlerts: true, BoxAlerts: false,
+			AppRules: true, BoxRules: false,
 		},
 		"viewer of the box": {
 			AppStatus: true, AppDeployRecord: true, AppDeploy: false, AppRollback: false,
 			BoxStatus: true, BoxPushResult: false, BoxPush: false, BoxWhoami: true, BoxApps: true, BoxBackups: true, AppAlerts: true, BoxAlerts: true,
+			AppRules: true, BoxRules: true,
 		},
 		"person with no grant": {
 			AppStatus: false, AppDeployRecord: false, AppDeploy: false, AppRollback: false,
 			BoxStatus: false, BoxPushResult: false, BoxPush: false, BoxWhoami: true, BoxApps: true, BoxBackups: false, AppAlerts: false, BoxAlerts: false,
+			AppRules: false, BoxRules: false,
 		},
 	}
 	for _, k := range kinds {
@@ -99,6 +105,8 @@ func TestAllowedCells(t *testing.T) {
 		{Person, BoxBackups},
 		{Person, AppAlerts},
 		{Person, BoxAlerts},
+		{Person, AppRules},
+		{Person, BoxRules},
 	}
 	for _, c := range allowed {
 		if !slices.Contains(want, c) {
@@ -189,6 +197,16 @@ func TestDecidePersonRefusals(t *testing.T) {
 		{"the box's alerts with no views", Principal{Kind: Person, Name: "dave"}, BoxAlerts, "", &Forbidden{"viewer", "box"}},
 		{"a deployer reads the box's alerts", Principal{Kind: AppDeployer}, BoxAlerts, "", &Forbidden{"key", "box"}},
 		{"the box channel reads the box's alerts", Principal{Kind: BoxChannel}, BoxAlerts, "", &Forbidden{"key", "box"}},
+		{"another app's rules", bob, AppRules, "shop", &Forbidden{"viewer", "app"}},
+		{"rules of an app that does not exist", bob, AppRules, "ghost", &Forbidden{"viewer", "app"}},
+		{"rules with no views", Principal{Kind: Person, Name: "dave"}, AppRules, "blog", &Forbidden{"viewer", "app"}},
+		{"a deployer reads its own app's rules", Principal{Kind: AppDeployer, App: "blog"}, AppRules, "blog", &Forbidden{"key", "app"}},
+		{"the box channel reads an app's rules", Principal{Kind: BoxChannel}, AppRules, "blog", &Forbidden{"key", "app"}},
+		{"an app's rules on the box", bob, AppRules, "", nil},
+		{"the box's rules", bob, BoxRules, "", &Forbidden{"viewer", "box"}},
+		{"the box's rules with no views", Principal{Kind: Person, Name: "dave"}, BoxRules, "", &Forbidden{"viewer", "box"}},
+		{"a deployer reads the box's rules", Principal{Kind: AppDeployer}, BoxRules, "", &Forbidden{"key", "box"}},
+		{"the box channel reads the box's rules", Principal{Kind: BoxChannel}, BoxRules, "", &Forbidden{"key", "box"}},
 		{"an app action on the box", bob, AppStatus, "", nil},
 		{"a box action on an app", bob, BoxWhoami, "blog", nil},
 		{"no name", Principal{Kind: Person, Views: &Views{Box: true}}, BoxStatus, "", nil},

@@ -40,10 +40,12 @@ motel box status                    the commit the box runs, its Caddyfile's dig
 motel backup status                 what the box says of its backups, for a viewer of the box: the box's own claim
 motel monitor alerts --app <app>    an app's alerts, as the box's Alertmanager holds them
 motel monitor alerts                what the box's Alertmanager holds, for a viewer of the box: every alert, and the silences
+motel monitor rules --app <app>     the rules that apply to an app, and how close each is, with its numbers alone
+motel monitor rules                 every rule the box alerts on, and how close each is, for a viewer of the box
 motel                               on a terminal, screens over the same reads (below)
 ```
 
-Each command takes `--json`; `motel` alone, the screens, does not. `whoami`, `apps`, `backup status` and `monitor alerts` are asked with your own key
+Each command takes `--json`; `motel` alone, the screens, does not. `whoami`, `apps`, `backup status`, `monitor alerts` and `monitor rules` are asked with your own key
 only: with `MOTEL_TOKEN` set, name the key with `--key` (else exit 2,
 nothing sent). `<app>` is a name, or the app's URL
 (`https://deploy.example.com/blog`, as `MOTEL_URL` holds it), which names
@@ -132,6 +134,41 @@ as `?`. The box sends at most 500 alerts, the newest, and 200 silences,
 the active ones first and then the soonest to start, and says when it
 held more: the first line then says so.
 
+`monitor rules` reads `GET /_motel/rules`, for a viewer of the box, the
+remote twin of `moteld monitor rules` (motelctl-spec, row 15) without
+the store's socket and queries, which are the box's alone; `--app
+<app>` reads `GET /_motel/apps/<app>/rules`, for a viewer of the app or
+of the box: the rules that apply to it (every app's, and its own `rule`
+lines) with its numbers alone, never the box's own checks. The first
+line says the box's word for its store (`on`; `off` with no `metrics`
+line, or with no monitor that raises anything), and the file vmalert
+reads when it is not the config's. Then each rule: a head in the
+client's words (its mark, which repeats only a state or a level the box
+said: `✖` firing and critical, `▲` firing and a warning, or pending,
+`?` a state or a severity the client does not know; its severity, its
+kind, its scope: every app, an app, the apps a pinned alert names, or
+the box), then on labelled lines under it its name (`rule`, the box's
+words), what it fires on (`fires`, the client's words: the op, the
+threshold in the rule's unit, `for`), and the box's words (`severity`,
+one not motel's; `guard`, each guard's op, value and meaning; `now`,
+each number: what it is of, an app or a
+filesystem, the number with its age, and for a store rule its state,
+`inactive`, `pending` or `firing`, and since when). A share is said as
+a percentage, seconds as a duration, bytes in binary units, a unit the
+client does not know quoted beside the number; a kind, an op or a
+scope it does not know as not known or `?`. The box reads the store's
+numbers at most every 30 s for everyone, as vmalert compared them, so a
+store rule's number is a minute old or more. It exits 0 when it read
+them, with the store `on` or `off`; 3 when the box's store did not
+answer it (`"store":"unanswered"`), or the box names its store in a
+word the client does not know: the sentence says that the readings of
+motel's own checks, which do not need the store, are not printed (the
+screens show any: `:rules`, or `:rules <app>` on `--app`), and `--json`
+prints that sentence; a store that is not a lowercase word, an app that is not of
+the app grammar, and on `--app` a rule or a number of another app, are
+not moteld's answer, 3. It is asked with your own key only, as
+`whoami` is.
+
 **Which box:** an app URL as `<app>`, else `--box`, `MOTEL_BOX`, the host
 of `MOTEL_URL`, or the box repository the shell is in (inside
 `<host>/`, or at its top when it holds one box). `--box` and `MOTEL_BOX`
@@ -211,7 +248,7 @@ other than the 401, 403, 404 and 429 below, a 409 for one; said as the
 box's: no header tells a gateway's from motel's; and `backup status`'s
 not healthy); 2 nothing was
 sent (usage, no box or key, an RSA or ECDSA key); 3 could not tell (no answer, not
-moteld's answer, any 5xx, a 429 that stood, the box's could not tell of `backup status`, and an Alertmanager that did not answer the box, for `monitor alerts`); 4 not accepted (a 401 after one
+moteld's answer, any 5xx, a 429 that stood, the box's could not tell of `backup status`, an Alertmanager that did not answer the box, for `monitor alerts`, and a metrics store that did not answer it, for `monitor rules`); 4 not accepted (a 401 after one
 retry); 5 not allowed (403); 6 not found (404); 8 the certificate did not
 verify (the client never continues past one); 9 the deploy `status
 --follow` followed failed; 130 interrupted. 7 is held for a box too old
@@ -518,7 +555,18 @@ word is not moteld's answer); a severity that is not motel's is
 `other` in the head and the box's word on a `severity` line; an
 operator the client does not know is `?`. Against a moteld older than
 the read (a 404) the screen and the box screen's line say so, and the
-title bar does not call it a refusal. The apps screen's marks and its
+title bar does not call it a refusal. `:rules` (a viewer of the box)
+and `:rules <app>` (a viewer of the app or of the box) show the rules
+as `monitor rules` says them, the box's or the app's, under the
+store's line: each rule's head in the client's words and the box's
+words under it, each on a row of its own after the client's label and
+cut at the window's edge. A rule is never marked by the client's own
+reading of a number against its threshold: only a state or a level the
+box said. Against a moteld older than the read (a 404) the screen says
+so (an app's: or no app of that name now), and the title bar does not
+call it a refusal. An app's screen does not list its rules: a box's
+listing is ten to thirty rules, more than its details have room for,
+and reading them would add a read to every app screen opened. The apps screen's marks and its
 strip are judged from the statuses alone, as before. The title bar, the crumb, the
 apps strip, an app's fields, a record's head and its log tail (while `w` is off) and who am I's and the box screen's lines holding a box's value are fitted to the
 window in the screen's cells, as the door draws them (a wide character
@@ -526,7 +574,7 @@ takes two, a combining mark none, and a character the door writes as
 an escape as many as the escape has): a line too wide is cut, `…` its
 last cell, and the title bar's and the crumb's right side is cut only
 when it alone takes the whole window or more (the apps' summary of hundreds of apps at 60 columns), the same way. `:` goes to a view in the command words (`:status blog`,
-`:deploys blog <version>`, `:me`, `:box`, `:backups`, `:alerts`); what is typed is held to the client's grammars, and a version to the box's own (at most 64 characters; `motel deploys` sends a longer one for the box to refuse), before anything is asked, and
+`:deploys blog <version>`, `:me`, `:box`, `:backups`, `:alerts`, `:rules`, `:rules blog`); what is typed is held to the client's grammars, and a version to the box's own (at most 64 characters; `motel deploys` sends a longer one for the box to refuse), before anything is asked, and
 what is wrong is said on the prompt's line; Enter runs what is typed,
 Tab takes a completion. `?` lists the keys of the screen below it,
 written from the table the keys are bound from, its rows wrapped to the window (an entry's words under its words), and scrolls, as its footer says. On a screen that reads
@@ -586,7 +634,9 @@ SIGINT, SIGTERM or SIGHUP sent to the process, or the terminal closed under the 
 - **The rate.** A box allows a person 2 requests a second with a burst
   of 60. The TUI keeps to 1.5 a second and 30 at once. The box's status,
   its backups and its alerts are read every 30 s, each only while a
-  screen that shows it is open (the box screen shows all three). The
+  screen that shows it is open (the box screen shows all three), and
+  the rules, the box's or one app's, every 30 s while their screen is
+  open (the box evaluates the store's numbers at most every 30 s). The
   open app is read every 5 s, and its alerts every 15 s while its screen
   is open (`AlertsEvery`, after the box's own 5 s of Alertmanager's
   answer). Following a deploy costs no read of its own: it is the open
