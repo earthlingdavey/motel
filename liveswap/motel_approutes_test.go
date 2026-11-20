@@ -253,7 +253,7 @@ func TestAlertsChosenByTheHandle(t *testing.T) {
 	for app, want := range map[string]string{"demo": "a", "blog": "b"} {
 		calls := recordDecide(t, nil)
 		req := httptest.NewRequest(http.MethodGet, "/", nil)
-		carol := access.Principal{Kind: access.Person, Name: "carol", Views: &access.Views{Box: true}}
+		carol := access.Principal{Kind: access.Person, Name: "carol", Views: &access.Views{Viewer: access.Scopes{Box: true}}}
 		hd, err := h.allowApp(carol, access.AppAlerts, app)
 		if err != nil || len(*calls) != 1 || (*calls)[0].resource != app {
 			t.Fatalf("%s: %v %+v", app, err, *calls)

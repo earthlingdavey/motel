@@ -53,6 +53,7 @@ type twoAppsRig struct {
 	sockets map[string]string // each app's run directory, which its socket is under
 	people  map[string]accesstest.Key
 	views   map[string][]string // the apps each caller may read
+	onBox   map[string]bool     // the callers whose grant is on the box
 }
 
 func newTwoAppsRig(t *testing.T) *twoAppsRig {
@@ -63,6 +64,8 @@ func newTwoAppsRig(t *testing.T) *twoAppsRig {
 			"viewer of appalpha":  accesstest.Ed25519(),
 			"viewer of appbravo":  accesstest.SKEd25519(),
 			"viewer of the box":   accesstest.Ed25519(),
+			"logs of appalpha":    accesstest.Ed25519(),
+			"logs of the box":     accesstest.SKEd25519(),
 			"no grant":            accesstest.Ed25519(),
 			"a key no line lists": accesstest.Ed25519(),
 		},
@@ -70,9 +73,12 @@ func newTwoAppsRig(t *testing.T) *twoAppsRig {
 			"viewer of appalpha":   {"appalpha"},
 			"viewer of appbravo":   {"appbravo"},
 			"viewer of the box":    twoApps,
+			"logs of appalpha":     {"appalpha"},
+			"logs of the box":      twoApps,
 			"deployer of appalpha": {"appalpha"},
 			"deployer of appbravo": {"appbravo"},
 		},
+		onBox: map[string]bool{"viewer of the box": true, "logs of the box": true},
 	}
 	app := &App{managed: map[string]*managedApp{}, observed: new(sync.Map)}
 	for _, name := range twoApps {
@@ -126,6 +132,8 @@ func newTwoAppsRig(t *testing.T) *twoAppsRig {
 		{"viewer-of-appalpha", "viewer", "app", "appalpha"},
 		{"viewer-of-appbravo", "viewer", "app", "appbravo"},
 		{"viewer-of-the-box", "viewer", "box"},
+		{"logs-of-appalpha", "logs", "app", "appalpha"},
+		{"logs-of-the-box", "logs", "box"},
 	} {
 		g, err := access.ParseGrant(args)
 		if err != nil {
@@ -282,7 +290,7 @@ func rowRequest(rt route, app string) *http.Request {
 
 func TestTwoAppsTwoPeople(t *testing.T) {
 	callers := []string{
-		"viewer of appalpha", "viewer of appbravo", "viewer of the box", "no grant", "a key no line lists",
+		"viewer of appalpha", "viewer of appbravo", "viewer of the box", "logs of appalpha", "logs of the box", "no grant", "a key no line lists",
 		"deployer of appalpha", "deployer of appbravo", "the box channel's source", "no token",
 	}
 	r := newTwoAppsRig(t)
@@ -327,10 +335,10 @@ func TestTwoAppsTwoPeople(t *testing.T) {
 			}
 			want := http.StatusUnauthorized // a deploy token is judged against the global sources: none here
 			switch {
-			case person(caller) && (rt.action == access.BoxBackups || rt.action == access.BoxAlerts || rt.action == access.BoxRules) && caller != "viewer of the box":
+			case person(caller) && (rt.action == access.BoxBackups || rt.action == access.BoxAlerts || rt.action == access.BoxRules) && !r.onBox[caller]:
 				// The box's backups, alerts and silences, and its rules with
-				// every app's numbers, name every app: a viewer of the box's
-				// alone.
+				// every app's numbers, name every app: a viewer or a logs
+				// reader of the box's alone.
 				want = http.StatusForbidden
 			case person(caller):
 				want = http.StatusOK

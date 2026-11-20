@@ -351,9 +351,10 @@ type WhoAmI struct {
 	// Key is the key that signed, SHA256:<base64> as ssh-keygen -l
 	// prints it.
 	Key string `json:"key"`
-	// Roles are the grants that apply from this request's address, the
-	// box's first; always present, [] for none. No address list is
-	// shown.
+	// Roles are the grants that apply from this request's address, one
+	// per role and scope, the box's first, then each app by name, viewer
+	// before logs on one scope; always present, [] for none. No address
+	// list is shown.
 	Roles []RoleHeld `json:"roles"`
 	// Box is the box's identity: the token's aud.
 	Box string `json:"box"`
@@ -367,7 +368,8 @@ type WhoAmI struct {
 	TokenExpiresAt time.Time `json:"token_expires_at"`
 }
 
-// RoleHeld is one role held here, on one scope: "box", or "app:<name>".
+// RoleHeld is one role held here, "viewer" or "logs", on one scope:
+// "box", or "app:<name>".
 type RoleHeld struct {
 	Role  string `json:"role"`
 	Scope string `json:"scope"`

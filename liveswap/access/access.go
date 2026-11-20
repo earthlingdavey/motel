@@ -209,7 +209,7 @@ func decidePerson(p Principal, a Action, resource string) error {
 			return &Forbidden{Needs: "viewer", Scope: "app"}
 		}
 	case BoxStatus, BoxBackups, BoxAlerts, BoxRules:
-		if p.Views == nil || !p.Views.Box {
+		if !p.Views.CoversBox() {
 			return &Forbidden{Needs: "viewer", Scope: "box"}
 		}
 	}

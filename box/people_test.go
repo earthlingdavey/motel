@@ -61,6 +61,7 @@ func newPeopleBox(t testing.TB) *peopleBox {
 			"bob@example.test":   accesstest.SKEd25519(),
 			"carol@example.test": accesstest.Ed25519(),
 			"dave@example.test":  accesstest.Ed25519(),
+			"erin@example.test":  accesstest.Ed25519(),
 			"ops@example.test":   accesstest.Ed25519(),
 		},
 		deploy: map[string]ed25519.PrivateKey{},
@@ -69,6 +70,7 @@ func newPeopleBox(t testing.TB) *peopleBox {
 			"grant alice@example.test viewer app a",
 			"grant bob@example.test viewer app b",
 			"grant carol@example.test viewer box",
+			"grant erin@example.test logs box",
 		},
 	}
 	for _, src := range []string{"a", "b", "box"} {
@@ -634,7 +636,7 @@ func TestTwoAppsTwoPeopleOnTheBoxWebhook(t *testing.T) {
 	reg := access.NewRegistry(peopleIdentity, l)
 	stranger := accesstest.Ed25519()
 	now := time.Now()
-	callers := []string{"alice@example.test", "bob@example.test", "carol@example.test", "dave@example.test", "ops@example.test",
+	callers := []string{"alice@example.test", "bob@example.test", "carol@example.test", "dave@example.test", "erin@example.test", "ops@example.test",
 		"a key no line lists", "deployer of a", "deployer of b", "the box channel", "no token"}
 	for _, rt := range routes {
 		for _, caller := range callers {
@@ -669,7 +671,8 @@ func TestTwoAppsTwoPeopleOnTheBoxWebhook(t *testing.T) {
 			case caller == "the box channel":
 				want = 0 // the row's own answer, whatever it is
 			case person && rt.method != http.MethodGet:
-			case person && caller == "carol@example.test" && rt.action == access.BoxStatus:
+			case person && (caller == "carol@example.test" || caller == "erin@example.test") && rt.action == access.BoxStatus:
+				// A viewer and a logs reader of the box.
 				want = http.StatusOK
 			case person:
 				want = http.StatusForbidden

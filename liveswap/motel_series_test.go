@@ -234,7 +234,7 @@ func TestSeriesChosenByTheHandle(t *testing.T) {
 	h.app.SetSeriesSource(src)
 	for _, app := range []string{"demo", "blog"} {
 		calls := recordDecide(t, nil)
-		carol := access.Principal{Kind: access.Person, Name: "carol", Views: &access.Views{Box: true}}
+		carol := access.Principal{Kind: access.Person, Name: "carol", Views: &access.Views{Viewer: access.Scopes{Box: true}}}
 		hd, err := h.allowApp(carol, access.AppSeries, app)
 		if err != nil || len(*calls) != 1 || (*calls)[0].resource != app || (*calls)[0].a != access.AppSeries {
 			t.Fatalf("%s: %v %+v", app, err, *calls)

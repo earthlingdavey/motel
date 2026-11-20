@@ -19,8 +19,10 @@ func TestDecideTable(t *testing.T) {
 		{"none", Principal{}},
 		{"deployer of blog", Principal{Kind: AppDeployer, App: "blog"}},
 		{"box channel", Principal{Kind: BoxChannel}},
-		{"viewer of blog", Principal{Kind: Person, Name: "bob", Views: &Views{Apps: []string{"blog"}}}},
-		{"viewer of the box", Principal{Kind: Person, Name: "carol", Views: &Views{Box: true}}},
+		{"viewer of blog", Principal{Kind: Person, Name: "bob", Views: &Views{Viewer: Scopes{Apps: []string{"blog"}}}}},
+		{"viewer of the box", Principal{Kind: Person, Name: "carol", Views: &Views{Viewer: Scopes{Box: true}}}},
+		{"logs of blog", Principal{Kind: Person, Name: "erin", Views: &Views{Logs: Scopes{Apps: []string{"blog"}}}}},
+		{"logs of the box", Principal{Kind: Person, Name: "frank", Views: &Views{Logs: Scopes{Box: true}}}},
 		{"person with no grant", Principal{Kind: Person, Name: "dave", Views: &Views{}}},
 	}
 	// The resource each action is taken on: the deployer's own app for
@@ -52,6 +54,17 @@ func TestDecideTable(t *testing.T) {
 			AppRules: true, BoxRules: false, AppSeries: true,
 		},
 		"viewer of the box": {
+			AppStatus: true, AppDeployRecord: true, AppDeploy: false, AppRollback: false,
+			BoxStatus: true, BoxPushResult: false, BoxPush: false, BoxWhoami: true, BoxApps: true, BoxBackups: true, AppAlerts: true, BoxAlerts: true,
+			AppRules: true, BoxRules: true, AppSeries: true,
+		},
+		// A logs grant gives what viewer gives on the same scope.
+		"logs of blog": {
+			AppStatus: true, AppDeployRecord: true, AppDeploy: false, AppRollback: false,
+			BoxStatus: false, BoxPushResult: false, BoxPush: false, BoxWhoami: true, BoxApps: true, BoxBackups: false, AppAlerts: true, BoxAlerts: false,
+			AppRules: true, BoxRules: false, AppSeries: true,
+		},
+		"logs of the box": {
 			AppStatus: true, AppDeployRecord: true, AppDeploy: false, AppRollback: false,
 			BoxStatus: true, BoxPushResult: false, BoxPush: false, BoxWhoami: true, BoxApps: true, BoxBackups: true, AppAlerts: true, BoxAlerts: true,
 			AppRules: true, BoxRules: true, AppSeries: true,
@@ -169,7 +182,8 @@ func TestActionsAreAppOrBox(t *testing.T) {
 // of /_motel/ is told it needs a declared key; and nothing a person
 // sends is taken on the wrong kind of resource.
 func TestDecidePersonRefusals(t *testing.T) {
-	bob := Principal{Kind: Person, Name: "bob", Views: &Views{Apps: []string{"blog"}}}
+	bob := Principal{Kind: Person, Name: "bob", Views: &Views{Viewer: Scopes{Apps: []string{"blog"}}}}
+	erin := Principal{Kind: Person, Name: "erin", Views: &Views{Logs: Scopes{Apps: []string{"blog"}}}}
 	for _, c := range []struct {
 		name     string
 		p        Principal
@@ -217,7 +231,11 @@ func TestDecidePersonRefusals(t *testing.T) {
 		{"the box channel reads the box's rules", Principal{Kind: BoxChannel}, BoxRules, "", &Forbidden{"key", "box"}},
 		{"an app action on the box", bob, AppStatus, "", nil},
 		{"a box action on an app", bob, BoxWhoami, "blog", nil},
-		{"no name", Principal{Kind: Person, Views: &Views{Box: true}}, BoxStatus, "", nil},
+		{"a logs reader of an app reads another app", erin, AppStatus, "shop", &Forbidden{"viewer", "app"}},
+		{"a logs reader of an app reads the box's status", erin, BoxStatus, "", &Forbidden{"viewer", "box"}},
+		{"a logs reader of an app reads the box's backups", erin, BoxBackups, "", &Forbidden{"viewer", "box"}},
+		{"a logs reader of an app deploys it", erin, AppDeploy, "blog", &Forbidden{"deployer", "app"}},
+		{"no name", Principal{Kind: Person, Views: &Views{Viewer: Scopes{Box: true}}}, BoxStatus, "", nil},
 		{"an unknown action", bob, "app.logs", "blog", nil},
 		{"a kind past the table", Principal{Kind: Person + 1}, BoxWhoami, "", nil},
 	} {

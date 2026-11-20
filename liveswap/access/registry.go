@@ -135,27 +135,55 @@ func (r *Registry) Keys() int {
 	return len(r.keys)
 }
 
-// Views is what a person may view from where one request came from:
-// the box, which covers every app, or the apps named, sorted. It is
-// built by Registry.Views, from the grants whose address list holds the
-// request's address.
-type Views struct {
+// Scopes is where one role is held: the box, which covers every app,
+// or the apps named, sorted.
+type Scopes struct {
 	Box  bool
 	Apps []string
 }
 
-// Covers reports whether the views include the app.
-func (v *Views) Covers(app string) bool {
-	return v != nil && app != "" && (v.Box || slices.Contains(v.Apps, app))
+// On reports whether the scopes include the app: the box, or the app
+// itself. No scope includes the empty name.
+func (s Scopes) On(app string) bool {
+	return app != "" && (s.Box || slices.Contains(s.Apps, app))
 }
 
-// Views is what name may view from addr: every grant of theirs whose
-// address list, if it has one, holds addr. An address that is not
-// valid (a request whose address could not be read) is held by no
-// list, so only the grants without one apply. granted is whether name
-// holds any grant at all, from anywhere: a person with grants and none
-// left from addr is refused as a stranger is, and a person with none is
-// still told who they are.
+func (s Scopes) empty() bool { return !s.Box && len(s.Apps) == 0 }
+
+// Views is what a person may do from where one request came from, role
+// by role: built by Registry.Views, from the grants whose address list
+// holds the request's address. No role implies another here; what each
+// action needs is decidePerson's.
+type Views struct {
+	Viewer Scopes
+	Logs   Scopes
+}
+
+// Covers reports whether the views give a viewer's reads on the app: a
+// viewer or a logs grant on the app or on the box.
+func (v *Views) Covers(app string) bool {
+	return v != nil && (v.Viewer.On(app) || v.Logs.On(app))
+}
+
+// CoversBox reports whether the views give a viewer's reads on the box:
+// a viewer or a logs grant on the box.
+func (v *Views) CoversBox() bool {
+	return v != nil && (v.Viewer.Box || v.Logs.Box)
+}
+
+// ReadsLogs reports whether the views give the app's logs: a logs grant
+// on the app or on the box. A viewer grant never does.
+func (v *Views) ReadsLogs(app string) bool {
+	return v != nil && v.Logs.On(app)
+}
+
+// Views is what name may do from addr: every grant of theirs whose
+// address list, if it has one, holds addr, each in its own role. An
+// address that is not valid (a request whose address could not be
+// read) is held by no list, so only the grants without one apply.
+// granted is whether name holds any grant at all, from anywhere: a
+// person with grants and none left from addr is refused as a stranger
+// is, and a person with none is still told who they are.
 func (r *Registry) Views(name string, addr netip.Addr) (v *Views, granted bool) {
 	v = &Views{}
 	if r == nil {
@@ -169,18 +197,28 @@ func (r *Registry) Views(name string, addr netip.Addr) (v *Views, granted bool) 
 		if !g.holds(addr) {
 			continue
 		}
+		var s *Scopes
+		switch g.Role {
+		case Viewer:
+			s = &v.Viewer
+		case Logs:
+			s = &v.Logs
+		default:
+			continue // ParseGrant takes no other role
+		}
 		if g.App == "" {
-			v.Box = true
-		} else if !slices.Contains(v.Apps, g.App) {
-			v.Apps = append(v.Apps, g.App)
+			s.Box = true
+		} else if !slices.Contains(s.Apps, g.App) {
+			s.Apps = append(s.Apps, g.App)
 		}
 	}
-	slices.Sort(v.Apps)
+	slices.Sort(v.Viewer.Apps)
+	slices.Sort(v.Logs.Apps)
 	return v, len(gs) > 0
 }
 
-// Empty reports whether the views cover nothing.
-func (v *Views) Empty() bool { return v == nil || (!v.Box && len(v.Apps) == 0) }
+// Empty reports whether the views give nothing.
+func (v *Views) Empty() bool { return v == nil || (v.Viewer.empty() && v.Logs.empty()) }
 
 // holds reports whether the grant applies to a request from addr: a
 // grant with no address list applies from anywhere.
