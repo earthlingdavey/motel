@@ -202,3 +202,57 @@ func TestHeldTimeKeysAreTheWireTimes(t *testing.T) {
 		}
 	}
 }
+
+// TestLastPass: the final pass alone over a body whose strings were each
+// filtered: every known form replaced, the one the body's own escaping
+// makes among them (a value with a quote), and the keys found named; a
+// time under a held key kept whole where the value it holds is replaced
+// in a text; no heuristic run (a long hex id stays); and false, for the
+// body to go whole through the filter, when the filter withholds, when a
+// value stands across a time's edge, and when the pass leaves no JSON.
+func TestLastPass(t *testing.T) {
+	f := NewRedactor([]string{"SMTP_PASSWORD=hunter\"2spike", "API_VERSION=2026-11-20"}, nil) // gitleaks:allow — made up for this test
+	type line struct {
+		At   time.Time `json:"at"`
+		Text string    `json:"text"`
+	}
+	at := time.Date(2026, 11, 20, 9, 30, 0, 0, time.UTC)
+	raw, _ := json.Marshal(struct {
+		Lines []line `json:"lines"`
+	}{[]line{{at, `{"smtp":"hunter"2spike"} on 2026-11-20, id 4c2d9e7b1a054c2d9e7b1a054c2d9e7b1a050f9e`}}})
+	seen := map[string]bool{}
+	out, ok := f.lastPass(raw, seen)
+	want := `{"lines":[{"at":"2026-11-20T09:30:00Z","text":"{\"smtp\":\"[redacted:SMTP_PASSWORD]\"} on [redacted:API_VERSION], id 4c2d9e7b1a054c2d9e7b1a054c2d9e7b1a050f9e"}]}`
+	if !ok || out != want || !seen["SMTP_PASSWORD"] || !seen["API_VERSION"] || len(seen) != 2 {
+		t.Errorf("%v %s\nwant %s\nseen %v", ok, out, want, seen)
+	}
+	// A value across a time's edge, a value of the body's punctuation, a
+	// filter that withholds: each false.
+	g := NewRedactor([]string{"EDGE=00Z\",\"text", "PUNCT=\"text\":\"a\"},"}, nil)
+	edge, _ := json.Marshal(struct {
+		Lines []line `json:"lines"`
+	}{[]line{{at, "x"}}})
+	punct := []byte(`{"lines":[{"text":"a"},{"text":"b"}]}`)
+	for name, body := range map[string][]byte{"across a time's edge": edge, "the body's punctuation": punct} {
+		if out, ok := g.lastPass(body, map[string]bool{}); ok {
+			t.Errorf("%s: %s", name, out)
+		}
+	}
+	// A value of JSON's punctuation can leave JSON of another shape: two
+	// lines made one. The pass does not judge a body's shape; its caller
+	// does (filterLogs).
+	merge := NewRedactor([]string{"PUNCT=\"},{\"text\":\""}, nil)
+	if out, ok := merge.lastPass(punct, map[string]bool{}); !ok || out != `{"lines":[{"text":"a[redacted:PUNCT]b"}]}` {
+		t.Errorf("two lines made one: %v %s", ok, out)
+	}
+	w := NewRedactor(nil, nil)
+	w.withhold = "the app's env_file could not be read"
+	if out, ok := w.lastPass([]byte(`{"lines":[]}`), map[string]bool{}); ok {
+		t.Errorf("a filter that withholds: %s", out)
+	}
+	// A filter that knows no value passes the body as it is.
+	var none *Redactor
+	if out, ok := none.lastPass(raw, map[string]bool{}); !ok || out != string(raw) {
+		t.Errorf("no filter: %v %s", ok, out)
+	}
+}
