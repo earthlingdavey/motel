@@ -53,7 +53,12 @@ import (
 //     its version and outcome, from values that cannot carry source
 //     data: the version the deployer named and the digest it was
 //     pinned to (unless the filter would change it, or the values
-//     are not all known), vocabulary, timestamps.
+//     are not all known), vocabulary, timestamps. The times are the
+//     box's clock, which the filter holds out of its layers (redact.go,
+//     rule 7): an env_file value that is a piece of one (a date)
+//     rewrites none. Read back, a record's time is held out of the
+//     filter only while it has a time's shape (heldTimeRe), as a
+//     version read off disk is used only once it is valid.
 //     The vocabulary (status, phase) stands outside the filter in
 //     every body (redact.go, rule 3), so a value equal to a word of
 //     it rewrites nothing; a record the filter leaves unreadable as
@@ -69,8 +74,11 @@ import (
 //     (resolveBindSources, sandbox.go).
 //
 // The file holds the result as the record filter left it, with the
-// env_file values known at the time already replaced: a secret rotated
-// later is not in an old record for the new filter to miss. Records
+// env_file values known at the time already replaced, but in its times:
+// a secret rotated later is not in an old record for the new filter to
+// miss. A record written before the filter held times (#604) keeps the
+// marker it put in a time, the date gone from it, until the version is
+// deployed again or the record is pruned. Records
 // are pruned with the releases: one is kept for every version still on
 // disk, plus the newest `keep` others — failed deploys, whose release
 // is removed at once, and versions release GC has pruned — so the

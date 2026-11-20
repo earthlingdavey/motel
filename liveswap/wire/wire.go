@@ -14,7 +14,9 @@
 // pins every body byte for byte.
 //
 // Every body passes the app's response filter after it is marshalled
-// (liveswap/redact.go): any string can come back as a marker, and a
+// (liveswap/redact.go): any string can come back as a marker, a time
+// only in a deploy record written before #604 or in a body sent whole
+// because a value stood across a time's edge (the filter's rule 7), and a
 // body the filter changed gains a top-level "redacted_env" naming the
 // env keys whose values it replaced, which only DeployResult has a
 // field for. Apps is made of bodies, one per app: each entry is
