@@ -320,8 +320,8 @@ func TestRulesBody(t *testing.T) {
 // TestAppRulesBody: an app's viewer reads the rules whose subject is an
 // app, every app's and their app's alone, each with their app's numbers
 // and no other's: no box check (the disks, the backups, the store's
-// disk), no rule pinned to another app, no other app's reading, and not
-// the box's rules file.
+// disk), no rule pinned to another app, no other app's reading; and the
+// rules file's word, which qualifies a state.
 func TestAppRulesBody(t *testing.T) {
 	h, people := alertsRig(t)
 	h.app.SetRulesSource(&fakeRules{l: rulesListing()})
@@ -331,13 +331,14 @@ func TestAppRulesBody(t *testing.T) {
 		t.Fatalf("%d %s", w.Code, body)
 	}
 	noQuery(t, "demo's rules", body)
-	for _, s := range []string{"blog", "/srv", "disk", "backup", "ChannelFailed", "rules_file", "differs", "0.93104", "0.0123", "1.75", "53687100000", `"instance"`} {
+	for _, s := range []string{"blog", "/srv", "disk", "backup", "ChannelFailed", "0.93104", "0.0123", "1.75", "53687100000", `"instance"`} {
 		if strings.Contains(body, s) {
 			t.Errorf("demo's rules hold %q: %s", s, body)
 		}
 	}
 	var got wire.Rules
-	if err := json.Unmarshal([]byte(body), &got); err != nil || got.Store != wire.StoreOn || got.RulesFile != "" {
+	// The rules file's word: a state is vmalert's, which reads the file.
+	if err := json.Unmarshal([]byte(body), &got); err != nil || got.Store != wire.StoreOn || got.RulesFile != wire.RulesFileDiffers {
 		t.Fatalf("%v: %s", err, body)
 	}
 	var names []string

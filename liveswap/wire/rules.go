@@ -64,8 +64,9 @@ type Rules struct {
 	// readings, and say nothing). A client reads a word it does not know
 	// as not knowing any store rule's value.
 	Store string `json:"store"`
-	// RulesFile is as RulesListing's: on the box's read alone, never an
-	// app's (the file is the box's).
+	// RulesFile is as RulesListing's, a word, on both reads: a reading's
+	// state is vmalert's, which evaluates the file, so a file that is not
+	// this config's qualifies every store rule's state.
 	RulesFile string `json:"rules_file,omitempty"`
 	// Alerts are the alerts motel can raise, in the listing's order: an
 	// app's read holds those whose subject is an app, every app's or that

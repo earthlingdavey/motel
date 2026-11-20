@@ -161,8 +161,9 @@ numbers at most every 30 s for everyone, as vmalert compared them, so a
 store rule's number is a minute old or more. It exits 0 when it read
 them, with the store `on` or `off`; 3 when the box's store did not
 answer it (`"store":"unanswered"`), or the box names its store in a
-word the client does not know: `--json` then prints the client's own
-sentence; a store that is not a lowercase word, an app that is not of
+word the client does not know: the sentence says that motel's own
+checks' readings came and are not printed (the screens show them), and
+`--json` prints that sentence; a store that is not a lowercase word, an app that is not of
 the app grammar, and on `--app` a rule or a number of another app, are
 not moteld's answer, 3. It is asked with your own key only, as
 `whoami` is.

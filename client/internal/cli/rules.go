@@ -64,21 +64,23 @@ func (r *runner) monitorRules() *cobra.Command {
 			if err != nil {
 				return fail(err)
 			}
-			of := "its rules"
+			of := "the store's rules"
 			if app.Name != "" {
-				of = app.Name + "'s rules"
+				of = app.Name + "'s rules of the store"
 			}
 			// Not knowing the store's numbers is could not tell, as for any
 			// read the box could not answer: a script would read a rule with
-			// no number as one nowhere near firing.
+			// no number as one nowhere near firing. The checks' own readings
+			// do not depend on the store, and came: said, not printed.
+			const checks = "; motel's own checks' readings came, and are not printed (the screens show them: motel, then :rules)"
 			switch rules.Store {
 			case wire.StoreOn, wire.StoreOff:
 			case wire.StoreUnanswered:
 				return &client.Failure{Exit: client.ExitUnknown, Message: fmt.Sprintf(
-					"%s could not tell how close %s are: its metrics store did not answer it in time", c.Box.Host, of)}
+					"%s could not tell how close %s are: its metrics store did not answer it in time%s", c.Box.Host, of, checks)}
 			default:
 				return &client.Failure{Exit: client.ExitUnknown, Message: fmt.Sprintf(
-					"%s could not tell how close %s are: it says its store is %s, a word this client does not know", c.Box.Host, of, termtext.Quote(rules.Store))}
+					"%s could not tell how close %s are: it says its store is %s, a word this client does not know%s", c.Box.Host, of, termtext.Quote(rules.Store), checks)}
 			}
 			if r.json {
 				return r.emit(ans.Body)

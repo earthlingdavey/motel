@@ -140,6 +140,15 @@ func TestAppRulesSays(t *testing.T) {
 	if !strings.Contains(text, "RULES that apply to shop, with its numbers alone\n") || !strings.Contains(text, "    now       shop 6.12 % (1m ago) · pending since ") {
 		t.Errorf("shop's rules:\n%s", text)
 	}
+	// The rules file's word, on an app's screen too.
+	*now = now.Add(model.BoxEvery)
+	f.Body("rules/shop.json", `{"store":"on","rules_file":"missing","alerts":[]}`)
+	for range 3 {
+		step(t, s, f, now)
+	}
+	if got := joined(s.RulesViewFit("shop", *now, 0, runes)); !strings.Contains(got, "rules file  the file vmalert reads is not there: the store's rules listed may not be the ones it runs") {
+		t.Errorf("shop's rules file:\n%s", got)
+	}
 	if got := joined(s.RulesViewFit("wiki", *now, 0, runes)); !strings.HasPrefix(got, "asking ") {
 		t.Errorf("wiki's, never read: %s", got)
 	}

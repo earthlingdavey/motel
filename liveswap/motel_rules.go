@@ -94,14 +94,15 @@ func (b boxHandle) boxRules(ctx context.Context, logger *zap.Logger) (wire.Rules
 // app or this one (a rule pinned to another app, or to apps this is not
 // among, is left out), with the
 // readings of this app. Not a box check (a disk, the backups, a
-// certificate, the store's own), not another app's number, and not the
-// box's rules file, which is the box's.
+// certificate, the store's own), and not another app's number. The
+// rules file's word is kept: a state is vmalert's, and when the file it
+// reads is not this config's, the app's viewer is told so too.
 func (a appHandle) rules(ctx context.Context, src RulesSource, logger *zap.Logger) (wire.Rules, bool) {
 	all, ok := listRules(ctx, src, logger)
 	if !ok {
 		return all, false
 	}
-	out := wire.Rules{Store: all.Store, Alerts: []wire.AlertListing{}}
+	out := wire.Rules{Store: all.Store, RulesFile: all.RulesFile, Alerts: []wire.AlertListing{}}
 	for _, al := range all.Alerts {
 		if al.Subject != "app" || al.App != "" && al.App != a.ma.name || len(al.Apps) > 0 && !slices.Contains(al.Apps, a.ma.name) {
 			continue
