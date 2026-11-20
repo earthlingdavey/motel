@@ -32,6 +32,22 @@ deploy() {
 
 body() { curl -s --max-time 5 "$PROXY/"; }
 
+# person_token <key file> <aud>: a person's token signed with the ssh
+# key at <key file> for the box <aud>, good for five minutes, made as
+# docs/people.md makes one by hand (the people and notify suites).
+b64url() { base64 | tr -d '\n=' | tr '+/' '-_'; }
+person_token() {
+	pt=$(mktemp -d) || return 1
+	now=$(date +%s)
+	printf '{"aud":"%s","iat":%d,"exp":%d}' "$2" "$now" "$((now + 300))" >"$pt/claims"
+	if ! ssh-keygen -q -Y sign -n motel-access-v1@motel.smallhours.org -f "$1" "$pt/claims"; then
+		rm -rf "$pt"
+		return 1
+	fi
+	printf 'm1.%s.%s' "$(b64url <"$pt/claims")" "$(sed '1d;$d' "$pt/claims.sig" | tr -d '\n' | base64 -d | b64url)"
+	rm -rf "$pt"
+}
+
 status() { curl -s --max-time 5 -H "Authorization: Bearer $TOKEN" "$HOOK"; }
 
 # json_str <json> <key> / json_num <json> <key>: one top-level scalar,

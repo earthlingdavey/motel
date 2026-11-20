@@ -7,7 +7,12 @@ per alert in it, as
     <epoch ms> <path> <group status> <alertname> <app|-> <alert status> <notify_channel|-> [<X-Priority>]
 
 and GET /log returns the lines so far; GET /log?mine=1 those that came
-from the asker's own address, which is how each of `make e2e-notify`'s
+from the asker's own address, and GET /full?mine=1 the asker's alerts as
+
+    <epoch ms> <path> <alertname> <severity|-> <summary annotation>
+
+for a part that checks what an alert said (the summary last: it holds
+spaces). The mine filter is how each of `make e2e-notify`'s
 boxes, sharing this sink, reads its own Alertmanager's deliveries and
 motel's. /broken answers 400, the way a revoked Discord hook does, so a
 channel pointed at it fails and Alertmanager counts the failure. Stdlib
@@ -21,6 +26,7 @@ import time
 import urllib.parse
 
 LINES = []
+FULL = []
 LOCK = threading.Lock()
 
 
@@ -40,9 +46,13 @@ class Sink(http.server.BaseHTTPRequestHandler):
         prio = self.headers.get("X-Priority")
         tail = " " + prio if prio else ""
         out = []
+        full = []
         if isinstance(alerts, list):
             for a in alerts:
                 labels = a.get("labels", {})
+                full.append("%d %s %s %s %s" % (
+                    now, self.path, labels.get("alertname", "-"), labels.get("severity", "-"),
+                    " ".join(str(a.get("annotations", {}).get("summary", "")).split())))
                 out.append("%d %s %s %s %s %s %s%s" % (
                     now, self.path, body.get("status", "-"),
                     labels.get("alertname", "-"), labels.get("app", "-"),
@@ -52,6 +62,7 @@ class Sink(http.server.BaseHTTPRequestHandler):
             out.append("%d %s - - - - -" % (now, self.path))
         with LOCK:
             LINES.extend((self.client_address[0], line) for line in out)
+            FULL.extend((self.client_address[0], line) for line in full)
         code = 400 if self.path.startswith("/broken") else 200
         self.send_response(code)
         self.send_header("Content-Length", "0")
@@ -62,17 +73,18 @@ class Sink(http.server.BaseHTTPRequestHandler):
         query = urllib.parse.parse_qs(url.query, keep_blank_values=True)
         # /log or /log?mine=1 alone: any other ask is refused, so a
         # misspelt filter is a 400, never every box's lines.
-        if url.path != "/log" or set(query) - {"mine"} or query.get("mine", ["1"]) != ["1"]:
+        if url.path not in ("/log", "/full") or set(query) - {"mine"} or query.get("mine", ["1"]) != ["1"]:
             self.send_response(400)
             self.send_header("Content-Length", "0")
             self.end_headers()
             return
         mine = "mine" in query
         with LOCK:
-            lines = [line for addr, line in LINES if not mine or addr == self.client_address[0]]
-        data = ("\n".join(lines) + "\n").encode() if lines else b""
+            src = FULL if url.path == "/full" else LINES
+            lines = [line for addr, line in src if not mine or addr == self.client_address[0]]
+        data = ("\n".join(lines) + "\n").encode("utf-8") if lines else b""
         self.send_response(200)
-        self.send_header("Content-Type", "text/plain")
+        self.send_header("Content-Type", "text/plain; charset=utf-8")
         self.send_header("Content-Length", str(len(data)))
         self.end_headers()
         self.wfile.write(data)

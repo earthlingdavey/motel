@@ -182,8 +182,7 @@ func (h *Handler) appAlerts(w http.ResponseWriter, r *http.Request, app appHandl
 	if out, ok := filterAlerts(body, f); ok {
 		return respondFiltered(w, http.StatusOK, out)
 	}
-	// The filter withheld the body, or changed its structure, or the
-	// bytes with the times put back hold a value of the app's: the body
+	// The filter withheld the body, or changed its structure: the body
 	// whole through the filter, as it always was, times and all.
 	return RespondJSON(w, http.StatusOK, body, f)
 }

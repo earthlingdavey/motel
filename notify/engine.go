@@ -38,6 +38,10 @@ type Event struct {
 	// happened) and annotations on a state alert, whose identity is
 	// what is wrong, never when or by whom (#418).
 	Release, DeployedBy string
+	// Safe are names the summary carries that the filter's heuristics
+	// must leave as written, beside Release: a key's fingerprint, which
+	// looks generated, and a person's name.
+	Safe []string
 	// Firing is a state alert's condition: true while it holds, false
 	// when it has cleared.
 	Firing bool
@@ -95,6 +99,11 @@ const (
 	retryFor = 5 * time.Minute
 	// queueMax bounds what waits for Alertmanager.
 	queueMax = 512
+	// earlyMax bounds the people's announcements kept while no config
+	// runs notify (engine.early), and earlyFor how long each is kept: a
+	// start's notify renders within amRequestTimeout.
+	earlyMax = 64
+	earlyFor = time.Minute
 	// maxSummary is the summary's length, in runes.
 	maxSummary = 200
 	// heartbeatEvery and heartbeatLife are the Watchdog's: posted every
@@ -214,6 +223,14 @@ type engine struct {
 	lastHeartbeat time.Time
 	// lastOccurrence is the last one-shot's occurred_at (occurrence).
 	lastOccurrence time.Time
+	// early are a person's key's announcements (source access) told
+	// while no config runs notify: a start's first seconds, when the
+	// http app can serve before notify's Start, and liveswap's record has
+	// already counted the network as told. At most earlyMax, told when a
+	// config next does (point) if they are no older than earlyFor: an
+	// older one (a box with no monitor block for a while) has its journal
+	// line, and is not told late as if it were now.
+	early []earlyEvent
 
 	queue    []*pending
 	wake     chan struct{}
@@ -313,9 +330,23 @@ func (e *engine) report(ev Event) {
 // reportLocked is report, with mu held.
 func (e *engine) reportLocked(ev Event) {
 	if e.active == nil {
+		now := e.now()
+		e.early = slices.DeleteFunc(e.early, func(x earlyEvent) bool { return now.Sub(x.at) > earlyFor })
+		// At most a bucket's worth per key, which is all the limit per
+		// key would let through once told: one key cycling networks
+		// leaves room for the others.
+		perKey := 0
+		for _, x := range e.early {
+			if x.ev.key() == ev.key() {
+				perKey++
+			}
+		}
+		if ev.Source == sourceAccess && len(e.early) < earlyMax && perKey < bucketSize {
+			e.early = append(e.early, earlyEvent{ev, now})
+		}
 		return
 	}
-	ev.Summary = e.clean(ev.Summary, ev.Release)
+	ev.Summary = e.clean(ev.Summary, append([]string{ev.Release}, ev.Safe...)...)
 	if len(ev.Details) > 0 {
 		d := make(map[string]string, len(ev.Details))
 		for k, v := range ev.Details {
@@ -932,6 +963,20 @@ func (e *engine) point(a *App, post poster, known []string, logger *zap.Logger) 
 			e.fail.kinds[name] = channelKinds[ch.Kind]
 		}
 	}
+	early := e.early
+	e.early = nil
+	now := e.now()
+	for _, x := range early {
+		if now.Sub(x.at) <= earlyFor {
+			e.reportLocked(x.ev)
+		}
+	}
+}
+
+// earlyEvent is one of engine.early, with when it was told.
+type earlyEvent struct {
+	ev Event
+	at time.Time
 }
 
 // settle points the pollers at a's sources and ends what a no longer

@@ -22,7 +22,7 @@ import (
 // answers it with no parameter (the shape measured in the e2e image,
 // trimmed of the fields not read): an active alert, one silenced by two
 // silences, one by a silence the list no longer holds, one the deploy
-// mute inhibits, a box event, and the three alerts the reads leave out.
+// mute inhibits, a box event, and the five alerts the reads leave out.
 const heldAnswer = `[
  {"labels":{"alertname":"errors_high","app":"blog","subject":"app:blog","severity":"warning"},"annotations":{"summary":"blog: errors"},"startsAt":"2026-11-19T14:00:00.123+01:00","endsAt":"2026-11-19T15:00:00Z","fingerprint":"a1","receivers":[{"name":"state-warning-ops"}],"updatedAt":"2026-11-19T14:00:01Z","status":{"state":"active","silencedBy":[],"inhibitedBy":[],"mutedBy":[]}},
  {"labels":{"alertname":"deploy_failed","app":"blog","severity":"warning","release":"v2"},"annotations":{"summary":"deploy of v2 failed"},"startsAt":"2026-11-19T13:01:00Z","status":{"state":"suppressed","silencedBy":["11111111-1111-4111-8111-111111111111","22222222-2222-4222-8222-222222222222"],"inhibitedBy":[],"mutedBy":[]}},
@@ -31,13 +31,17 @@ const heldAnswer = `[
  {"labels":{"alertname":"backup_stale","subject":"box","instance":"backup_stale/blog","severity":"critical"},"annotations":{"summary":"the backup of blog is stale"},"startsAt":"2026-11-19T13:04:00Z","status":{"state":"active","silencedBy":[],"inhibitedBy":[],"mutedBy":[]}},
  {"labels":{"alertname":"Watchdog"},"startsAt":"2026-11-19T13:05:00Z","status":{"state":"active","silencedBy":[],"inhibitedBy":[],"mutedBy":[]}},
  {"labels":{"alertname":"NotifyTest","notify_channel":"ops"},"startsAt":"2026-11-19T13:06:00Z","status":{"state":"active","silencedBy":[],"inhibitedBy":[],"mutedBy":[]}},
- {"labels":{"alertname":"deploy_in_progress","app":"blog"},"startsAt":"2026-11-19T13:07:00Z","status":{"state":"active","silencedBy":[],"inhibitedBy":[],"mutedBy":[]}}
+ {"labels":{"alertname":"deploy_in_progress","app":"blog"},"startsAt":"2026-11-19T13:07:00Z","status":{"state":"active","silencedBy":[],"inhibitedBy":[],"mutedBy":[]}},
+ {"labels":{"alertname":"person_new_network","subject":"box","source":"access","instance":"SHA256:example","severity":"warning"},"annotations":{"summary":"bob@example.com (key SHA256:example) used this box from 203.0.113.0/24 for the first time"},"startsAt":"2026-11-19T13:08:00Z","status":{"state":"active","silencedBy":[],"inhibitedBy":[],"mutedBy":[]}},
+ {"labels":{"alertname":"person_outside_list","subject":"box","source":"access","instance":"SHA256:example","severity":"warning"},"annotations":{"summary":"a valid signature by bob@example.com (key SHA256:example) from 203.0.113.9, outside every address list on their grants; refused"},"startsAt":"2026-11-19T13:09:00Z","status":{"state":"active","silencedBy":[],"inhibitedBy":[],"mutedBy":[]}}
 ]`
 
 const silencesAnswer = `[
  {"id":"11111111-1111-4111-8111-111111111111","status":{"state":"active"},"matchers":[],"startsAt":"2026-11-19T13:00:00Z","endsAt":"2026-11-19T15:00:00Z","createdBy":"moteld monitor: root","comment":"known"},
  {"id":"22222222-2222-4222-8222-222222222222","status":{"state":"active"},"matchers":[],"startsAt":"2026-11-19T13:00:00Z","endsAt":"2026-11-19T16:30:00+01:00","createdBy":"moteld monitor: root","comment":"later"},
- {"id":"33333333-3333-4333-8333-333333333333","status":{"state":"expired"},"matchers":[],"startsAt":"2026-11-18T13:00:00Z","endsAt":"2026-11-18T14:00:00Z","createdBy":"x","comment":"old"}
+ {"id":"33333333-3333-4333-8333-333333333333","status":{"state":"expired"},"matchers":[],"startsAt":"2026-11-18T13:00:00Z","endsAt":"2026-11-18T14:00:00Z","createdBy":"x","comment":"old"},
+ {"id":"44444444-4444-4444-8444-444444444444","status":{"state":"active"},"matchers":[{"name":"alertname","value":"person_new_network","isRegex":false,"isEqual":true},{"name":"instance","value":"SHA256:example","isRegex":false}],"startsAt":"2026-11-19T13:00:00Z","endsAt":"2026-11-19T15:00:00Z","createdBy":"moteld monitor: root","comment":"bob travelling"},
+ {"id":"55555555-5555-4555-8555-555555555555","status":{"state":"pending"},"matchers":[{"name":"alertname","value":"person_outside_list"}],"startsAt":"2026-11-20T13:00:00Z","endsAt":"2026-11-20T15:00:00Z","createdBy":"moteld monitor: root","comment":"adding the team"}
 ]`
 
 // fakeAMReads is Alertmanager's two read routes on a unix socket, counting

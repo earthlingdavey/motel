@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/caddyserver/caddy/v2/modules/caddyhttp"
 	"github.com/smallhoursorg/motel/liveswap/access"
@@ -227,6 +228,8 @@ func FuzzNoRouteNoAnswer(f *testing.F) {
 		}
 		h, rig := newTestHandler(t)
 		h.people = people.reg
+		networks := newPeopleNetworks("", time.Now)
+		h.networks = networks
 		for _, caller := range []string{"stranger", "deployer of demo", "global source", "viewer of demo", "viewer of the box", "person with no grant"} {
 			h.limiter = deploytrust.NewLimiter(rig.clock)
 			req := httptest.NewRequest(http.MethodGet, "http://"+personBox+"/", strings.NewReader(body))
@@ -316,6 +319,19 @@ func FuzzNoRouteNoAnswer(f *testing.F) {
 			case want != http.StatusOK && *served != nil:
 				t.Fatalf("%s: %s %q ?%q reached the row %s %s and was answered %d", caller, method, target, query, (*served).method, (*served).shape, w.Code)
 			}
+		}
+		// Only a token that verified is a use of a network: each person's
+		// GET, and no other caller's request, nor a person's on any other
+		// method, which the token's check refuses.
+		networks.mu.Lock()
+		defer networks.mu.Unlock()
+		for fp := range networks.keys {
+			if method != http.MethodGet || !slices.ContainsFunc([]accesstest.Key{people.alice, people.carol, people.dave}, func(k accesstest.Key) bool { return k.Fingerprint() == fp }) {
+				t.Fatalf("%s %q ?%q: the key %s was counted as used", method, target, query, fp)
+			}
+		}
+		if method == http.MethodGet && len(networks.keys) != len(personKeys) {
+			t.Fatalf("%s %q ?%q: %d of the %d people's GETs counted", method, target, query, len(networks.keys), len(personKeys))
 		}
 	})
 }

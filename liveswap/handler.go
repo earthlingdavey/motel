@@ -78,6 +78,9 @@ type Handler struct {
 	// rate is the rate per person, access.SharedRate; nil in a test
 	// that does not ask for one.
 	rate *access.Rate
+	// networks is the record of the networks people's keys were used
+	// from, SharedPeopleNetworks; nil in a test that does not ask for one.
+	networks *PeopleNetworks
 	// stage is a test seam for stageUpload; nil is stageUpload. A full
 	// disk cannot be made in a test that runs as root.
 	stage func(body io.Reader, tmpDir string, maxBytes int64) (string, string, error)
@@ -110,6 +113,7 @@ func (h *Handler) Provision(ctx caddy.Context) error {
 	}
 	h.limiter = deploytrust.Shared()
 	h.rate = access.SharedRate()
+	h.networks = SharedPeopleNetworks()
 	// The box app builds the registry; this package reaches it through
 	// an interface of its own, so it imports nothing of box. With no box
 	// block there is none, and no person is admitted.
@@ -363,7 +367,7 @@ func (h *Handler) servePerson(w http.ResponseWriter, r *http.Request, name strin
 
 // gate is what a person is admitted through on this handler.
 func (h *Handler) gate() PersonGate {
-	return PersonGate{Registry: h.people, Limiter: h.limiter, Rate: h.rate, Logger: h.logger}
+	return PersonGate{Registry: h.people, Limiter: h.limiter, Rate: h.rate, Networks: h.networks, Logger: h.logger}
 }
 
 // Protocol is the number of the forms of person token this box takes:
@@ -556,7 +560,10 @@ func (h *Handler) deployPush(w http.ResponseWriter, r *http.Request, app appHand
 		// failure, told as the pipeline's would be.
 		ma.lifecycle(c, LifecycleEvent{Name: EventDeployFailed, Release: version, DeployedBy: by,
 			Summary: "deploy of " + version + " failed before it began: the app's directories are not as motel made them"})
-		return h.mapDeployResult(w, ma, err)
+		// The refusal alone, as the staging failure below is answered:
+		// the status's last_deploy and deploys describe other deploys,
+		// which a client would read as this one's (#533).
+		return RespondJSON(w, http.StatusInternalServerError, wire.Error{Error: err.Error()}, ma.redactorFor(statusSnapshot{}))
 	}
 	// In flight from here, its upload included: each way out before the
 	// pipeline ends it before its response is written, which the status
@@ -835,9 +842,8 @@ func (s *deployStream) finish(ma *managedApp, err error) error {
 	// re-marshalled, so the line has the single response's order, which
 	// is whatever the filter left (a redaction re-marshals the top
 	// level, sorting its keys; a nested object keeps its order — see
-	// withField). A client reading "the last phase" by position relies
-	// on it: the examples' deploy.sh reads a failure's, and every phase
-	// in a failure body is inside "status", in statusSnapshot's order.
+	// withField). The examples' deploy.sh relies on it: it reads a
+	// failure's cause as the first key and its phase from last_deploy on.
 	// And after, so the outcome's markers survive a filter that
 	// withholds the whole body (an unreadable env_file). redactJSON
 	// always returns one JSON object, so the closing brace is where it

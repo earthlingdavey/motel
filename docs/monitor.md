@@ -265,7 +265,9 @@ monitor {
   `moteld monitor send --subject app:<name>`. The box's own alerts
   about the app, such as `backup_stale` and `drill_failed` for its
   backups and `cert_failed` for its domains, carry no `app` label and
-  go to the operator alone.
+  go to the operator alone, as do the two about a person's key,
+  `person_new_network` and `person_outside_list`
+  ([Giving a person access](people.md#when-their-key-is-used-from-somewhere-new)).
 - **`heartbeat`**: without it, every load warns `monitor: no heartbeat
   in this load: nothing outside the box hears that it, moteld or
   Alertmanager stopped`.

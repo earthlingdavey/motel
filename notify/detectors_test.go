@@ -3,6 +3,7 @@ package notify
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/smallhoursorg/motel/backups/record"
 	"github.com/smallhoursorg/motel/liveswap"
+	"github.com/smallhoursorg/motel/liveswap/access/accesstest"
 )
 
 func TestLifecycleSinkMapsLiveswapsEvents(t *testing.T) {
@@ -50,6 +52,110 @@ func TestLifecycleSinkMapsLiveswapsEvents(t *testing.T) {
 	s.Lifecycle(liveswap.LifecycleEvent{Name: liveswap.EventWatchdogRecovered, App: "blog", Hold: 2 * time.Minute})
 	if st := te.states["liveswap/app:blog/watchdog_throttled"]; st == nil || st.firing || st.hold != 2*time.Minute {
 		t.Fatalf("state = %+v", st)
+	}
+}
+
+// TestPeopleSinkRaisesBoxEvents: liveswap's two announcements about a
+// person's key are one-shot box events at warning, from source access,
+// keyed by the key's fingerprint, with the summary liveswap wrote, the
+// name and the fingerprint's start in it as written (a long name of hex
+// would be masked but for Announcement.Safe); a thief cycling networks is
+// held to the limit per key (four, then a journal line each), and
+// another key is not held by it.
+func TestPeopleSinkRaisesBoxEvents(t *testing.T) {
+	te := newTestEngine(t)
+	s := peopleSink{e: te.engine}
+	alice, bob := accesstest.Ed25519().Fingerprint(), accesstest.Ed25519().Fingerprint()
+	first := liveswap.Announcement{Name: liveswap.EventPersonNewNetwork, Person: "alice@example.com", Key: alice, From: "203.0.113.0/24", First: true}
+	s.Announce(first)
+	got := te.drain()
+	if len(got) != 1 {
+		t.Fatalf("posts %v", got)
+	}
+	want := map[string]string{"alertname": "person_new_network", "kind": "event", "severity": "warning", "subject": "box", "source": "access",
+		"key": "access/box/person_new_network/" + alice, "instance": alice}
+	for k, v := range want {
+		if got[0].Labels[k] != v {
+			t.Errorf("label %s = %q, want %q", k, got[0].Labels[k], v)
+		}
+	}
+	if _, ok := got[0].Labels["app"]; ok {
+		t.Errorf("a box event with an app label: %v", got[0].Labels)
+	}
+	if sum := got[0].Annotations["summary"]; sum != first.Summary() || !strings.Contains(sum, alice[:19]) {
+		t.Errorf("summary %q, want %q", sum, first.Summary())
+	}
+	// A long name that looks generated, cut in the summary: the cut is
+	// what the filter is told to leave.
+	long := liveswap.Announcement{Name: liveswap.EventPersonNewNetwork, Person: "svc-" + strings.Repeat("7f3e9d2a", 10), Key: bob, From: "203.0.113.0/24"}
+	s.Announce(long)
+	if got := te.drain(); len(got) != 1 || got[0].Annotations["summary"] != long.Summary() {
+		t.Errorf("a long name: %v, want %q", got, long.Summary())
+	}
+	for i := range 6 {
+		s.Announce(liveswap.Announcement{Name: liveswap.EventPersonNewNetwork, Person: "alice@example.com", Key: alice, From: fmt.Sprintf("198.51.%d.0/24", i)})
+	}
+	s.Announce(liveswap.Announcement{Name: liveswap.EventPersonOutsideList, Person: "bob@example.com", Key: bob, From: "203.0.113.9"})
+	got = te.drain()
+	if len(got) != 4 || got[3].Labels["alertname"] != "person_outside_list" || got[3].Labels["key"] != "access/box/person_outside_list/"+bob {
+		t.Fatalf("posts %v", got)
+	}
+	if l := te.lines("monitor: event"); len(l) != 9 || l[4].ContextMap()["suppressed"] != nil || l[5].ContextMap()["suppressed"] == nil || l[8].ContextMap()["suppressed"] != nil {
+		t.Errorf("journal %v", l)
+	}
+	s.Announce(liveswap.Announcement{Name: "something_else", Person: "x", Key: alice})
+	if got := te.drain(); len(got) != 0 {
+		t.Errorf("an unknown announcement posted %v", got)
+	}
+}
+
+// TestPeopleSinkBeforeNotifyRuns: an announcement made while no config
+// runs notify (a start's first seconds) is kept, and told when one does;
+// another event then is not, as before.
+func TestPeopleSinkBeforeNotifyRuns(t *testing.T) {
+	te := newTestEngine(t)
+	te.active = nil
+	s := peopleSink{e: te.engine}
+	fp := accesstest.Ed25519().Fingerprint()
+	for i := range earlyMax + 3 {
+		s.Announce(liveswap.Announcement{Name: liveswap.EventPersonNewNetwork, Person: "alice@example.com", Key: fmt.Sprint(fp, i), From: "203.0.113.0/24", First: true})
+	}
+	te.report(Event{Name: "deploy_failed", Kind: kindEvent, App: "blog", Source: "liveswap", Summary: "x"})
+	if got := te.drain(); len(got) != 0 {
+		t.Fatalf("posted while no config runs notify: %v", got)
+	}
+	te.point(&App{}, te.p, te.known, te.logger)
+	got := te.drain()
+	if len(got) != earlyMax || got[0].Labels["alertname"] != "person_new_network" || got[0].Labels["instance"] != fmt.Sprint(fp, 0) {
+		t.Fatalf("told %d once a config runs it: %v", len(got), got[:min(len(got), 1)])
+	}
+	te.point(&App{}, te.p, te.known, te.logger)
+	if got := te.drain(); len(got) != 0 {
+		t.Errorf("told again: %v", got)
+	}
+	// One key cycling networks keeps a bucket's worth, and leaves room
+	// for another key's first use.
+	te.active = nil
+	for i := range earlyMax {
+		s.Announce(liveswap.Announcement{Name: liveswap.EventPersonNewNetwork, Person: "mallory@example.com", Key: fp + "cycling", From: fmt.Sprintf("198.51.%d.0/24", i)})
+	}
+	s.Announce(liveswap.Announcement{Name: liveswap.EventPersonNewNetwork, Person: "bob@example.com", Key: fp + "bob", From: "203.0.113.0/24", First: true})
+	te.point(&App{}, te.p, te.known, te.logger)
+	if got := te.drain(); len(got) != bucketSize+1 || got[bucketSize].Labels["instance"] != fp+"bob" {
+		t.Errorf("told %d, want %d of the cycling key and bob's: %v", len(got), bucketSize, got)
+	}
+	// Kept past earlyFor (a box with no monitor block for a while), it is
+	// not told late as if it were now; and a full buffer of such old ones
+	// leaves room for a fresh one, which is told.
+	te.active = nil
+	for i := range earlyMax {
+		s.Announce(liveswap.Announcement{Name: liveswap.EventPersonNewNetwork, Person: "alice@example.com", Key: fmt.Sprint(fp, "old", i), From: "198.51.100.0/24"})
+	}
+	te.advance(earlyFor + time.Second)
+	s.Announce(liveswap.Announcement{Name: liveswap.EventPersonNewNetwork, Person: "alice@example.com", Key: fp + "fresh", From: "198.51.100.0/24"})
+	te.point(&App{}, te.p, te.known, te.logger)
+	if got := te.drain(); len(got) != 1 || got[0].Labels["instance"] != fp+"fresh" {
+		t.Errorf("told %d after %s, want the fresh one alone: %v", len(got), earlyFor, got)
 	}
 }
 

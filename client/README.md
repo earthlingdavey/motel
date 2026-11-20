@@ -123,7 +123,8 @@ names, its instance and its summary), each capped; then each silence
 that is active or waits to start: its state and times, its matchers
 (each label's name, `=`, `!=`, `=~` or `!~`, the value quoted), who
 made it, its comment and its id. An expired silence is not listed, nor
-the heartbeat, the test alert or the deploy mute itself. Silences are
+the heartbeat, the test alert or the deploy mute itself, nor the two
+alerts about a person's key, which go to the operator's channels alone. Silences are
 added and expired as root on the box (`moteld monitor silence`,
 docs/monitor.md). It exits 0 when the box answered, whatever fires or
 is silenced; on a box whose monitor block sends nothing to anyone, or
@@ -479,10 +480,12 @@ made by hand. Accepted:
 | Such a row's VERSION says only the version in flight (`stopped  → 9a1b2c3d4e5f`), so the table does not name the version that is stopped, throttled or in backoff, and the row can be read as the new version being the stopped one; the `→` marks it as on its way ("The TUI", below), and the strip and the app's screen name the stopped one | 2 | 4 | 3 | 24 | 1 (keep the running version in VERSION on these rows) | accepted over the bar, pending the owner (the skill's rule 4): VERSION said as a row in flight says it was the owner's chosen fix for #584's item 4 |
 
 Owed, from the reviews of the TUI's first part (#558; scored there), of
-their fixes, and of its second part; the others are fixed:
+their fixes, and of its second part, and from #604's triage; the others
+are fixed:
 
 | Owed | S | O | D | Score | Size of a fix | Outcome |
 |---|---|---|---|---|---|---|
+| The sentence for an answer of moteld's with a value that did not read (`… could not be read: the box's response filter may have replaced it. The box's journal says which key it replaced.`) sends a person to a journal that names no key (no line of moteld's logs the keys the filter replaced: read in `liveswap`, not run on a box), and one without ssh to a journal they cannot read, while the answer's `redacted_env` names the key; the failure carries no body, so `--json` does not print it either. Since #604 a box's times read, and the sentence is met for a deploy record written before it, an older box's answer, or a value across a time's edge (liveswap's accepted residuals) | 2 | 5 | 3 | 30 | 1 (the sentence, and the answer's body on the failure), risk 1 with the tests that pin the sentence | owed: its own client PR, independent of #604's server fix: the sentence says the answer's `redacted_env` names the key and `--json` prints the answer |
 | Two names over 20 characters that differ only in their middle are shown longer until they differ, which can take the room of VERSION and LAST DEPLOY on every row. Where the width cannot hold both whole beside the widest STATE (with `running · 12s`, from 44 characters at 60 columns, none at 80; with `not deployed · stale`, from 37 at 60, 57 at 80) they are shown alike, and enter on one may open the other (at 80 columns its crumb then names it; at 60 the crumb is cut before the place they differ) | 2 | 5 | 3 | 30 | 3 | the owner's call: over the bar, and no cut within the width tells every such pair apart |
 | The title bar's name, roles and release are whoami's last answer, shown beside the freshness of the newest answer to any read: while whoami answers (every 5 minutes) they can be up to 5 minutes older than that word says, unmarked. While its newest read has failed, the title bar says so and the answer's age before it (below) | 2 | 5 | 3 | 30 | 2 | the owner's call: over the bar; whoami's schedule is the owner's, and who am I shows the answer under its own age |
 | Between reads nothing is waited for, so after a box stops answering the title bar says `live`, its age growing, until 5 s into the first read made after it (from the end of its signature, when it signs a token; then `waiting`, as "The rate" under "## The TUI" below says): for the time to the next read due and 5 s more, as long as between two reads of a box that answers and 5 s. Measured on the fake clock: 7 s on an app's screen (its read every 5 s: at most 10 s), 14 s on the apps screen with one app and refusals that come 10 s late (its app read every 30 s: at most 35 s), at most 65 s on an apps screen with no app (the list every 60 s); with more apps their reads are spread over the cycle and it is shorter | 2 | 4 | 3 | 24 | 3 (a read made only to see that the box answers, when nothing else is due: a new schedule, and requests against the rate) | the owner's call: over the bar, and closing it costs requests, which this change was held not to add; the age beside the word is never more than 5 s past what the same screen shows of a box that answers |

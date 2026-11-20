@@ -567,6 +567,31 @@ func FromProxyProtocolWarning(server string) string {
 	return fmt.Sprintf("a grant has a from list, and server %s takes the PROXY protocol: the address a from list is held to is whatever the PROXY header names, so the list is only as good as proxy_protocol's allow list (a fallback_policy that takes the header from any peer lets a client name its own address)", server)
 }
 
+// ForwardedNetworksWarning is what `moteld validate` says of a box with
+// people and a server that trusts proxies without
+// trusted_proxies_strict: the serving process cannot read the address
+// of a request such a proxy forwards (liveswap's clientAddr), so every
+// such request is one network, and a key used from a new one behind the
+// proxy is not told.
+func ForwardedNetworksWarning(server string) string {
+	return fmt.Sprintf("people are declared, and server %s trusts proxies without trusted_proxies_strict: the box cannot read the address of a request such a proxy forwards, so all of them count as one network, and a person's key used through the proxy from a new network is not told; add trusted_proxies_strict to that servers block", server)
+}
+
+// NetworksFromHeadersWarning is what `moteld validate` says of a box with
+// people and no address list, whose server trusts proxies strictly: the
+// network a key is told as used from is the address in the headers
+// named, so a proxy that passes on a client's own header lets a thief
+// name a network the key is known from, and go untold.
+func NetworksFromHeadersWarning(server string, headers []string) string {
+	return fmt.Sprintf("people are declared, and server %s trusts proxies with trusted_proxies_strict: the network a person's key is told as used from is the right-most address outside the trusted ranges in %s, so it is only as true as your proxy makes it: it must set each of those headers itself, never pass on one the client sent, or a thief can name a network the key is known from and go untold", server, strings.Join(headers, ", "))
+}
+
+// NetworksFromProxyProtocolWarning is NetworksFromHeadersWarning for a
+// server that takes the PROXY protocol.
+func NetworksFromProxyProtocolWarning(server string) string {
+	return fmt.Sprintf("people are declared, and server %s takes the PROXY protocol: the network a person's key is told as used from is whatever the PROXY header names, so it is only as true as proxy_protocol's allow list (a fallback_policy that takes the header from any peer lets a thief name a network the key is known from, and go untold)", server)
+}
+
 // FromProxiesRefusal is why `moteld validate`, `moteld reload` and
 // `moteld run` refuse a grant with an address list on a box with a
 // server that trusts proxies (trusted_proxies, or trusted_proxies_unix)

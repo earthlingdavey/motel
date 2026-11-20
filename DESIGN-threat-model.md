@@ -209,7 +209,9 @@ Properties that matter to the model:
   known value (a key named for its own value gets a number in
   brackets), and the first layer runs once more over the finished
   bytes — any fallback included — so the promise holds for the bytes
-  written, not only for the body as filtered; the safe strings are
+  written, not only for the body as filtered (a body's times are put
+  back after that pass, and a check across each time's edge holds the
+  promise for them: the fifth text below); the safe strings are
   held out of the heuristic layers as spans, so a version shaped like
   a token survives them. The one text outside the promise is the
   report field's own name, `redacted_env`: it is fixed, in every such
@@ -252,7 +254,15 @@ Properties that matter to the model:
   directory, which a value may equal. The exemption is the body's and never the
   string's: a string is not safe because a request named it, and text
   an earlier request stored, a deployed version in a status or a
-  record, passes the app's filter with the app's bytes. A
+  record, passes the app's filter with the app's bytes. The fifth is
+  a body's times: each time a status, a deploy's answer and its
+  stream's lines, a record or an apps list's row holds under a time's
+  key, written as `encoding/json` writes one, is the box's clock and
+  passes no layer, so a value that is a piece of a time's text (a
+  date, a clock time, digits of its fraction) stands there whole, which says less than a marker inside the
+  time did; it is replaced everywhere else, and a body in which a
+  value would stand across a time's edge goes through whole, times
+  and all (liveswap/redact.go, rule 7). A
   body the first layer would leave unparsable (a value made of JSON's
   own punctuation matching the structure rather than a string) is
   withheld, with the keys still reported; and while an app's
@@ -274,7 +284,8 @@ Properties that matter to the model:
   the reader learns that key's value by difference
   (liveswap/DESIGN-liveswap.md, "Accepted residuals").
   Tested from both sides — a fuzz property that no known value or
-  form survives and the JSON stays valid (`FuzzRedactor`), and a
+  form survives outside the texts above and the JSON stays valid
+  (`FuzzRedactor`), and a
   corpus that the diagnostics a reader needs do (`TestRedactorCorpus`)
   — because a filter with only the first test drifts toward blanking
   everything.
@@ -1130,7 +1141,12 @@ scope for the runtime model, in scope for release signing (roadmap).
   shipped mechanism"). It holds the people's public keys and grants and
   could answer any person's request with anything, as it answers any
   deploy's; it holds no private key and so can mint no person's token
-  for another box.
+  for another box. It can rewrite the record of the networks each person's
+  key was used from (`/var/lib/motel/people-networks.json`, motel's
+  own) to hold any network, which silences `person_new_network` for it
+  on this box only (deleting it has every key told again):
+  nothing it could not already do, since it answers every request and
+  could post or drop any alert.
 - **T6 — Compromised identity of the box's config repository.** Three
   distinct holders, in descending likelihood: a credential that can
   push to the repository (a leaked PAT, a stolen session, an OAuth or
@@ -1164,8 +1180,15 @@ scope for the runtime model, in scope for release signing (roadmap).
   person may act in this release; a person's token is good on a `GET`
   alone), cannot reach the box webhook's `GET /` without a box grant.
   Its use from outside a `from` list is refused with the flat 401 and
-  a journal line; from elsewhere with no list on the grant it is not
-  noticed. A hardware-held key cannot be used without a touch.
+  a journal line, and told to the operator's channels at most once an
+  hour (`person_outside_list`); its first use from a network the key
+  was never accepted from (a /24 or a /48) is told too
+  (`person_new_network`), reads included. Neither holds the read back:
+  the thief reads until the key's line is removed. Behind a proxy
+  trusted without `trusted_proxies_strict` every forwarded request is
+  one network, so only its first use through the proxy is told
+  (`moteld validate` warns of such a server). A hardware-held key cannot
+  be used without a touch.
 - **T8 — A person's key, stolen, with a role on the box.** As T7, for
   every app and the box's status: the commit, the host, the
   Caddyfile's digest, the box's key for secrets. This is the operator's

@@ -26,7 +26,6 @@ LIVE=/etc/motel/Caddyfile
 BOXDIR=/var/lib/motel-box
 FILE=$HOST/Caddyfile
 ART=http://e2e-artifacts:8080/artifacts
-NS=motel-access-v1@motel.smallhours.org
 CA=/var/lib/motel/caddy/pki/authorities/local/root.crt
 RELEASE=v0.0.0-e2e # e2e/Dockerfile links it
 
@@ -156,16 +155,9 @@ boxtok() {
 	fi
 }
 
-# ptok <who> [<aud>]: a person's token signed with <who>'s key, made as
-# docs/people.md makes one by hand.
-b64url() { base64 | tr -d '\n=' | tr '+/' '-_'; }
-ptok() {
-	now=$(date +%s)
-	printf '{"aud":"%s","iat":%d,"exp":%d}' "${2:-$HOST}" "$now" "$((now + 300))" >"$work/claims"
-	rm -f "$work/claims.sig"
-	ssh-keygen -q -Y sign -n "$NS" -f "$work/$1" "$work/claims" || return 1
-	printf 'm1.%s.%s' "$(b64url <"$work/claims")" "$(sed '1d;$d' "$work/claims.sig" | tr -d '\n' | base64 -d | b64url)"
-}
+# ptok <who> [<aud>]: a person's token signed with <who>'s key
+# (lib.sh's person_token).
+ptok() { person_token "$work/$1" "${2:-$HOST}"; }
 
 # get <name> <curl args...>: one request over the box's TLS, the root
 # verified. Status in $CODE, the HTTP version curl spoke in $PROTO; the
@@ -597,6 +589,24 @@ restarts() {
 }
 restarts https
 restarts plain
+
+echo "=== people 7b: a key's first use is told once, across restarts ==="
+# Every client here is on 127.0.0.1, one network. Each key's first use
+# was told in the journal, as its first; ten restarts later (people 7)
+# it has not been told again, since the record of each key's networks
+# is kept in a file moteld writes, motel's own and 0600. otto, removed
+# by the push of people 6, is no longer in it.
+NETS=/var/lib/motel/people-networks.json
+newnet() { journalctl -u moteld --since "@$since" --no-pager -o cat | grep -F '"access: a key used from a new network"' | grep -F "\"key\":\"$(fp "$1")\""; }
+for who in vera lena; do
+	lines=$(newnet "$who")
+	[ "$(printf '%s\n' "$lines" | grep -c .)" = 1 ] && printf '%s' "$lines" | grep -qF '"network":"127.0.0.0/24"' && printf '%s' "$lines" | grep -qF '"first_use":true' \
+		&& pass "$who: the first use was told once, as the first, from 127.0.0.0/24, through ten restarts" \
+		|| fail "$who: the journal's new-network lines: $(printf '%s' "$lines" | head -c 600)"
+done
+[ "$(stat -c '%a %U' "$NETS" 2>&1)" = "600 motel" ] && pass "$NETS is motel's own, 0600" || fail "$NETS: $(stat -c '%a %U' "$NETS" 2>&1)"
+grep -qF "\"$(fp vera)\":[\"127.0.0.0/24\"]" "$NETS" && pass "the file holds vera's key and its one network" || fail "the file: $(head -c 600 "$NETS")"
+! grep -qF "$(fp otto)" "$NETS" && pass "otto, whose lines a push removed, is not in the file" || fail "otto is still in the file: $(head -c 600 "$NETS")"
 
 echo "=== people 8: put the e2e config back ==="
 restore && pass "restored the original config" || fail "could not load the original config"

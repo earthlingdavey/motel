@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 	"unicode/utf8"
 )
 
@@ -27,6 +28,9 @@ func FuzzRedactor(f *testing.F) {
 		{"ünïcödé-secret", "<", ">"},
 		{"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "aaaa", "aaaa"},
 		{"12345678", "00", "00"},
+		{"2023-11-14", "on ", ""},
+		{`20Z","error":"`, "", ""},
+		{`"2023-11-14`, "", ""},
 	} {
 		f.Add(s[0], s[1], s[2])
 	}
@@ -70,7 +74,7 @@ func FuzzRedactor(f *testing.F) {
 			if string(mustQuote(t, form)) != form && form != value {
 				continue
 			}
-			body, _ := json.Marshal(map[string]any{"error": prefix + form + suffix, "versions": []string{"x", "y"}, "status": "succeeded", "phase": "starting"})
+			body, _ := json.Marshal(map[string]any{"error": prefix + form + suffix, "versions": []string{"x", "y"}, "status": "succeeded", "phase": "starting", "started_at": time.Unix(1_700_000_000, 0).UTC()})
 			js := r.redactJSON(body)
 			if !json.Valid([]byte(js)) {
 				t.Fatalf("form %q: redactJSON produced invalid JSON: %s", form, js)
@@ -80,14 +84,18 @@ func FuzzRedactor(f *testing.F) {
 			// fixed name, which is in every such response and so reveals
 			// nothing, and (rule 3) a value that is a bare word of the
 			// outcome vocabulary, where it stands as the body's own
-			// outcome — and the key is reported unless the body had to
-			// fall back to the one marker that can carry nothing.
+			// outcome — and (rule 7) the body's time, whole, which a
+			// form may be a piece of — and the key is reported unless
+			// the body had to fall back to the one marker that can carry
+			// nothing.
 			rest := strings.Replace(js, `"redacted_env":`, "", 1)
 			if outcomeStatuses[value] || outcomePhases[value] {
 				rest = strings.NewReplacer(`"status":"succeeded"`, "", `"phase":"starting"`, "").Replace(rest)
 			}
-			if strings.Contains(rest, string(mustQuote(t, form))) || strings.Contains(rest, form) {
-				t.Fatalf("form %q: survived in JSON body %s", form, js)
+			for _, f := range []string{string(mustQuote(t, form)), form} {
+				if outsideTime(rest, f, `"started_at":"`, "2023-11-14T22:13:20Z") {
+					t.Fatalf("form %q: survived in JSON body %s", form, js)
+				}
 			}
 			if !strings.HasPrefix(js, `{"error":"response withheld`) && js != `{"error":"[#0]"}` && (!strings.Contains(js, `"status":"succeeded"`) || !strings.Contains(js, `"phase":"starting"`)) {
 				t.Fatalf("form %q: the outcome was rewritten in %s", form, js)
@@ -97,6 +105,28 @@ func FuzzRedactor(f *testing.F) {
 			}
 		}
 	})
+}
+
+// outsideTime reports whether f occurs in s anywhere but wholly inside
+// the text of the time tm where it stands as the value of key (rule 7):
+// the pair as written, which no string's text can spell, its quotes
+// being escaped there.
+func outsideTime(s, f, key, tm string) bool {
+	lo, hi := -1, -1
+	if i := strings.Index(s, key+tm+`"`); i >= 0 {
+		lo, hi = i+len(key), i+len(key)+len(tm)
+	}
+	for from := 0; ; {
+		i := strings.Index(s[from:], f)
+		if i < 0 {
+			return false
+		}
+		start := from + i
+		if start < lo || start+len(f) > hi {
+			return true
+		}
+		from = start + 1
+	}
 }
 
 func mustQuote(t *testing.T, s string) []byte {
