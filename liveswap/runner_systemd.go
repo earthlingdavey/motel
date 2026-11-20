@@ -493,6 +493,16 @@ func unitBelongsTo(name, app string) bool {
 	return ok && got == app
 }
 
+// unitRelease is the version of one of app's units, an instance's or a
+// pre_start's; false for any other name.
+func unitRelease(name, app string) (string, bool) {
+	m := unitNameRe.FindStringSubmatch(name)
+	if m == nil || m[1] != app {
+		return "", false
+	}
+	return m[2], true
+}
+
 // unitApp extracts the app name from one of our unit names.
 func unitApp(name string) (string, bool) {
 	m := unitNameRe.FindStringSubmatch(name)
