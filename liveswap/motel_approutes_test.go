@@ -3,10 +3,14 @@ package liveswap
 import (
 	"context"
 	"encoding/json"
+	"maps"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -316,5 +320,133 @@ func TestAlertsFilterFallsBack(t *testing.T) {
 		if strings.Contains(w.Body.String(), value) || !strings.Contains(w.Body.String(), "redacted:K") || !strings.Contains(w.Body.String(), `"starts_at":"2026-11-19T13:01:00Z"`) {
 			t.Errorf("K=%s: %d %s", value, w.Code, w.Body)
 		}
+	}
+}
+
+// probeGrammar is the grammar the probe row holds its after key to.
+var probeGrammar = &keyGrammar{re: regexp.MustCompile(`^[a-z]{3}$`), says: "three small letters"}
+
+// withProbeRow adds, until the test ends, a row probe that takes lines,
+// a closed set, and after, a key held to probeGrammar, whose function
+// records the query it is given and answers 204: the keys a read of
+// the journal declares, with no reader. It swaps the package's table,
+// as recordRows does, so no test that calls it may run in parallel.
+func withProbeRow(t *testing.T) *[]appQuery {
+	t.Helper()
+	saved := motelAppRoutes
+	t.Cleanup(func() { motelAppRoutes = saved })
+	got := new([]appQuery)
+	motelAppRoutes = append(slices.Clone(saved), motelAppRoute{
+		"probe", access.AppAlerts,
+		[]queryKey{{name: "lines", values: []string{"200", "50", "1000"}}, {name: "after", grammar: probeGrammar}},
+		func(_ *Handler, w http.ResponseWriter, _ *http.Request, _ appHandle, q appQuery) error {
+			*got = append(*got, q)
+			w.WriteHeader(http.StatusNoContent)
+			return nil
+		},
+	})
+	return got
+}
+
+// probe422 is the probe row's 422: each key in the row's own words.
+const probe422 = `{"error":"GET /_motel/apps/{app}/probe takes only lines (one of 200, 50, 1000) and after (three small letters), each once"}` + "\n"
+
+// TestQueryKeyGrammar: a key held to a grammar is in the query only
+// when named, and then with the value as url.ParseQuery decoded it,
+// taken only when the grammar takes it whole; the closed set beside it
+// keeps its default. Anything else is the row's 422, and the row's
+// function does not run.
+func TestQueryKeyGrammar(t *testing.T) {
+	h, people := alertsRig(t)
+	got := withProbeRow(t)
+	alice := token(people.alice)
+	for _, c := range []struct {
+		name, query string
+		want        appQuery // nil for the 422
+	}{
+		{"no query", "", appQuery{"lines": "200"}},
+		{"an empty query", "?", appQuery{"lines": "200"}},
+		{"lines alone", "?lines=50", appQuery{"lines": "50"}},
+		{"after alone", "?after=abc", appQuery{"lines": "200", "after": "abc"}},
+		{"after escaped", "?after=%61b%63", appQuery{"lines": "200", "after": "abc"}},
+		{"after and lines", "?lines=1000&after=xyz", appQuery{"lines": "1000", "after": "xyz"}},
+		{"after, then lines", "?after=xyz&lines=50", appQuery{"lines": "50", "after": "xyz"}},
+		{"after empty", "?after=", nil},
+		{"after with no =", "?after", nil},
+		{"after outside the grammar", "?after=ABC", nil},
+		{"after too long", "?after=abcd", nil},
+		{"after with + for a space", "?after=ab+", nil},
+		{"after with a trailing newline", "?after=abc%0A", nil},
+		{"after with a NUL", "?after=abc%00", nil},
+		{"after with a raw ;", "?after=ab;c", nil},
+		{"after with a raw ;, after lines", "?lines=50&after=abc;", nil},
+		{"after twice, the same", "?after=abc&after=abc", nil},
+		{"after twice", "?after=abc&after=xyz", nil},
+		{"after that does not parse", "?after=%ZZ", nil},
+		{"a key the row does not take", "?after=abc&since=1h", nil},
+		{"After (case)", "?After=abc", nil},
+		{"lines outside its set", "?lines=7&after=abc", nil},
+		{"4 KiB", "?after=" + strings.Repeat("a", 4096), nil},
+	} {
+		*got = nil
+		w := sendTo(t, h, "GET", "/_motel/apps/demo/probe"+c.query, alice)
+		switch {
+		case c.want == nil && (w.Code != http.StatusUnprocessableEntity || w.Body.String() != probe422):
+			t.Errorf("%s: %d %q, want 422 %q", c.name, w.Code, w.Body, probe422)
+		case c.want == nil && len(*got) != 0:
+			t.Errorf("%s: the row's function ran with %v", c.name, *got)
+		case c.want != nil && (w.Code != http.StatusNoContent || len(*got) != 1 || !maps.Equal((*got)[0], c.want)):
+			t.Errorf("%s: %d %s, the function given %v, want %v", c.name, w.Code, w.Body, *got, c.want)
+		}
+	}
+}
+
+// TestQueryKeyGrammarSays: the 422 of a row with a grammar key is the
+// row's words alone whatever the value: one holding the app's env_file
+// value is told no marker of it, and nothing of a long one comes back.
+func TestQueryKeyGrammarSays(t *testing.T) {
+	h, people := alertsRig(t)
+	withProbeRow(t)
+	for _, q := range []string{
+		"?after=hunter2-of-demo",
+		"?after=" + url.QueryEscape("abc hunter2-of-demo"),
+		"?lines=50&after=hunter2-of-demo",
+		"?hunter2-of-demo=abc",
+		"?after=" + strings.Repeat("hunter2-of-demo", 300),
+	} {
+		w := sendTo(t, h, "GET", "/_motel/apps/demo/probe"+q, token(people.alice))
+		if w.Code != http.StatusUnprocessableEntity || w.Body.String() != probe422 {
+			t.Errorf("%.40s: %d %q, want 422 %q", q, w.Code, w.Body, probe422)
+		}
+	}
+}
+
+// TestAppRouteKeys: every key of every row, the probe's among them, has
+// a name no other key of its row has, and exactly one of a closed set of
+// distinct, non-empty values or a grammar; a grammar is anchored, takes
+// no empty value (so a key not named is told from one named) and has
+// its words. A key with neither would panic on its row's first request.
+func TestAppRouteKeys(t *testing.T) {
+	withProbeRow(t)
+	for _, rt := range motelAppRoutes {
+		seen := map[string]bool{}
+		for _, k := range rt.keys {
+			switch g := k.grammar; {
+			case k.name == "" || seen[k.name]:
+				t.Errorf("%s: key %q empty or twice", rt.read, k.name)
+			case (g == nil) == (len(k.values) == 0):
+				t.Errorf("%s: key %q has %d values and a grammar %v: it needs one of the two", rt.read, k.name, len(k.values), g)
+			case g != nil && (!strings.HasPrefix(g.re.String(), "^") || !strings.HasSuffix(g.re.String(), "$") || g.re.MatchString("") || g.says == ""):
+				t.Errorf("%s: key %q's grammar %s is not anchored, takes \"\" or has no words", rt.read, k.name, g.re)
+			case g == nil && (slices.Contains(k.values, "") || len(slices.Compact(slices.Sorted(slices.Values(k.values)))) != len(k.values)):
+				t.Errorf("%s: key %q's values %q are not distinct and non-empty", rt.read, k.name, k.values)
+			}
+			seen[k.name] = true
+		}
+	}
+	if !slices.ContainsFunc(motelAppRoutes, func(rt motelAppRoute) bool {
+		return slices.ContainsFunc(rt.keys, func(k queryKey) bool { return k.grammar != nil })
+	}) {
+		t.Error("no row holds a key to a grammar: the probe row did not reach the table")
 	}
 }
