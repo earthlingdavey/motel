@@ -209,6 +209,37 @@ type BackupLine struct {
 	Level, Text termtext.Text
 }
 
+// BoxAlerts is GET /_motel/alerts: what the box's Alertmanager holds.
+type BoxAlerts struct {
+	// Host is the box asked; On that its monitor answered (else it has
+	// no monitor block, and nothing is raised).
+	Host                     termtext.Text
+	On                       bool
+	Alerts                   []BoxAlert
+	Silences                 []BoxSilence
+	MoreAlerts, MoreSilences bool
+	// Advice is the client's sentence on adding and ending a silence,
+	// said last (model.SilenceAdvice, which the screen says too).
+	Advice string
+}
+
+// BoxAlert is one alert: its head in the client's words (its severity,
+// what holds it, since when), then the box's words, each labelled.
+type BoxAlert struct {
+	Head                         termtext.Text
+	Name, App, Instance, Summary termtext.Text
+	// Severity is the box's word for it when it is not one of motel's
+	// three, which the head says as "other".
+	Severity termtext.Text
+}
+
+// BoxSilence is one silence: its head in the client's words (its state
+// and times), its matchers (the box's names and quoted values, the
+// client's operators), then the box's words, each labelled.
+type BoxSilence struct {
+	Head, Matchers, By, Comment, ID termtext.Text
+}
+
 // LineMax is the most of a box's free-text value, or of one line of a
 // log tail or a probe body, that a labelled line prints, in runes: the
 // rest is cut and the cut marked "…[cut]", so no value runs on for
@@ -504,6 +535,62 @@ func WriteBackups(w io.Writer, b Backups) error {
 	}
 	p.line("%s", b.Claim)
 	return p.err
+}
+
+// WriteBoxAlerts writes what the box's Alertmanager holds: a line that
+// says how much, then each alert, its head the client's words and each
+// of the box's values on a labelled line of its own, capped, then the
+// silences the same way, and how a silence is added or ended.
+func WriteBoxAlerts(w io.Writer, a BoxAlerts) error {
+	p := &printer{w: w}
+	if !a.On {
+		p.line("%s raises no alerts: its monitor block sends nothing to anyone, or it has none", a.Host)
+		return p.err
+	}
+	if a.MoreAlerts || a.MoreSilences {
+		p.line("%s's Alertmanager holds more than it sends: %s and %s sent", a.Host, plural(len(a.Alerts), "alert"), plural(len(a.Silences), "silence"))
+	} else {
+		p.line("%s's Alertmanager holds %s and %s", a.Host, plural(len(a.Alerts), "alert"), plural(len(a.Silences), "silence"))
+	}
+	field := func(label string, v termtext.Text) {
+		if !v.Empty() {
+			p.line("    %-10s%s", label, capped(v))
+		}
+	}
+	for _, al := range a.Alerts {
+		p.line("%s", al.Head)
+		field("alert", al.Name)
+		field("severity", al.Severity)
+		field("app", al.App)
+		field("instance", al.Instance)
+		field("summary", al.Summary)
+	}
+	if a.MoreAlerts {
+		p.line("the box holds more alerts than it sends: these are the newest")
+	}
+	if len(a.Silences) > 0 {
+		p.line("SILENCES")
+	}
+	for _, s := range a.Silences {
+		p.line("  %s", s.Head)
+		field("matches", s.Matchers)
+		field("by", s.By)
+		field("comment", s.Comment)
+		field("id", s.ID)
+	}
+	if a.MoreSilences {
+		p.line("the box holds more silences than it sends: these are the active ones and the soonest to start")
+	}
+	p.line("%s", a.Advice)
+	return p.err
+}
+
+// plural is n of a thing, said: "1 alert", "3 silences".
+func plural(n int, thing string) string {
+	if n == 1 {
+		return "1 " + thing
+	}
+	return fmt.Sprintf("%d %ss", n, thing)
 }
 
 // WriteWhoAmI writes who the box takes the key to be. The box's words

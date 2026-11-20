@@ -19,6 +19,7 @@ const (
 	ScreenMe
 	ScreenBox
 	ScreenBackups
+	ScreenAlerts
 	ScreenHelp
 	ScreenRefused
 	// ScreenStopHelp is help opened over a stop screen: it leaves, asks
@@ -52,7 +53,7 @@ func (s *Session) askAgain(now time.Time) Line {
 }
 
 // screenReads is the read behind each screen that has one.
-var screenReads = map[Screen]Kind{ScreenApps: KApps, ScreenApp: KStatus, ScreenRecord: KDeploy, ScreenMe: KWhoAmI, ScreenBox: KBox, ScreenBackups: KBackups}
+var screenReads = map[Screen]Kind{ScreenApps: KApps, ScreenApp: KStatus, ScreenRecord: KDeploy, ScreenMe: KWhoAmI, ScreenBox: KBox, ScreenBackups: KBackups, ScreenAlerts: KBoxAlerts}
 
 // CommandArgs is the motel command line that reads what v shows, as
 // its arguments: the command's words, --box so it works pasted
@@ -153,6 +154,10 @@ func (s *Session) Body(v View) ([]byte, time.Time, bool) {
 		if s.BackupsSt != nil {
 			return s.BackupsSt.Body, s.BackupsSt.At, true
 		}
+	case ScreenAlerts:
+		if s.BoxAlertsSt != nil {
+			return s.BoxAlertsSt.Body, s.BoxAlertsSt.At, true
+		}
 	}
 	return nil, time.Time{}, false
 }
@@ -175,6 +180,8 @@ func (s *Session) readErr(v View) error {
 		return s.BoxErr
 	case ScreenBackups:
 		return s.BackupsErr
+	case ScreenAlerts:
+		return s.BoxAlertsErr
 	}
 	return nil
 }
@@ -680,9 +687,15 @@ func (s *Session) MeViewFit(now time.Time, width int, cells Cells) []Line {
 		}
 		out = append(out, cutTo(Line{own("  "), verb, own(pad("", 10-len([]rune(verb.T.String()))) + " " + on)}, width, cells))
 	}
+	// What may not be read here: logs, by anyone yet; the box's own
+	// alerts and silences, by anyone but a viewer of the box.
+	cannot := "             Read logs: this client does not offer them yet."
+	if !s.BoxViewer() {
+		cannot += " Nor the box's own alerts and silences, which are a viewer of the box's: an app's are on its screen."
+	}
 	out = append(out, laid(width, cells, nil,
 		field("you may not", own("roll back, relaunch, deploy or push: no person may yet. Deploys come from CI.")),
-		Line{own("             Read logs, or the box's own alerts: this client does not offer them yet.")}, nil,
+		Line{own(cannot)}, nil,
 		Line{own("What the box knows of you is in its Caddyfile (person and grant lines), which the operator keeps. `motel key` prints the line to send them.")})...)
 	if s.MeErr != nil {
 		out = append(append(out, nil), Sentence(Line{ownC("the last read failed: ", Warn), Seg{T: Capped(failureText(s.MeErr), 2*LineMax)}}, width, cells)...)
@@ -753,7 +766,7 @@ func (s *Session) BoxViewFit(now time.Time, width int, cells Cells) []Line {
 	if b.Recipient != "" {
 		out = append(out, cutTo(field("secrets key", boxT(b.Recipient)), width, cells))
 	}
-	out = append(out, cutTo(s.BoxBackupsLine(now), width, cells))
+	out = append(out, cutTo(s.BoxBackupsLine(now), width, cells), cutTo(s.BoxAlertsLine(now), width, cells))
 	out = append(out, laid(width, cells, field("deploy host", own(s.Host)), nil,
 		Line{own("Not shown here, root's over ssh: moteld's journal (journalctl -u moteld), the last push's log (journalctl -u motel-box-apply), systemctl --failed, host load (btop).")})...)
 	if s.BoxErr != nil {

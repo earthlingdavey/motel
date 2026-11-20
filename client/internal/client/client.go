@@ -873,6 +873,16 @@ func hold(v any) string {
 				return "an alert's severity or state in it is not a word"
 			}
 		}
+	case *wire.BoxAlerts:
+		// What the client prints of the box's alerts as a word: the
+		// monitor's, which a client reads as not knowing when it does not
+		// know it, quoted. Everything else is the box's text, each on a
+		// row after the client's label and capped, or a word the client
+		// says as not known when it does not know it (an alert's state
+		// and severity, a silence's state, a matcher's operator).
+		if !alertWordRe.MatchString(a.Monitor) {
+			return "its monitor is not a word"
+		}
 	case *wire.Apps:
 		for _, e := range a.Apps {
 			if !appRe.MatchString(e.Name) {
@@ -1087,6 +1097,8 @@ func identity(v any) shape {
 		return shape{lists: []string{"apps", "lines"}, times: []string{"at"}}
 	case *wire.Alerts:
 		return shape{strs: []string{"monitor"}, lists: []string{"alerts"}}
+	case *wire.BoxAlerts:
+		return shape{strs: []string{"monitor"}, lists: []string{"alerts", "silences"}}
 	}
 	return shape{}
 }

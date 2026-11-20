@@ -64,14 +64,19 @@ func (r *recorder) BoxStatus(context.Context) (model.Got[wire.BoxStatus], error)
 	return model.Got[wire.BoxStatus]{}, nil
 }
 
+func (r *recorder) Backups(context.Context) (model.Got[wire.Backups], error) {
+	r.called = "Backups"
+	return model.Got[wire.Backups]{}, nil
+}
+
 func (r *recorder) Alerts(context.Context, string) (model.Got[wire.Alerts], error) {
 	r.called = "Alerts"
 	return model.Got[wire.Alerts]{}, nil
 }
 
-func (r *recorder) Backups(context.Context) (model.Got[wire.Backups], error) {
-	r.called = "Backups"
-	return model.Got[wire.Backups]{}, nil
+func (r *recorder) BoxAlerts(context.Context) (model.Got[wire.BoxAlerts], error) {
+	r.called = "BoxAlerts"
+	return model.Got[wire.BoxAlerts]{}, nil
 }
 
 // wantRead is the read each command makes, written out: the command
@@ -85,6 +90,7 @@ var wantRead = map[string]string{
 	"box status":                 "BoxStatus",
 	"backup status":              "Backups",
 	"monitor alerts --app <app>": "Alerts",
+	"monitor alerts":             "BoxAlerts",
 }
 
 // TestActionsAreCommands: every read the TUI makes is an action naming

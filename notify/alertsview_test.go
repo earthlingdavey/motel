@@ -2,6 +2,7 @@ package notify
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net"
 	"net/http"
@@ -116,9 +117,10 @@ func TestHeldAlerts(t *testing.T) {
 		t.Errorf("asked %v, want each read once, with no parameter", am.asked)
 	}
 
-	// No alert names a silence: the list is not asked for.
+	// No alert names a silence: the list is asked for all the same, for
+	// the box-wide read's silences.
 	am.alerts = `[{"labels":{"alertname":"errors_high","app":"blog"},"startsAt":"2026-11-19T13:00:00Z","status":{"state":"active","silencedBy":[],"inhibitedBy":[]}}]`
-	if held, err := c.heldAlerts(context.Background()); err != nil || len(held.Alerts) != 1 || am.count("GET /api/v2/silences") != 1 {
+	if held, err := c.heldAlerts(context.Background()); err != nil || len(held.Alerts) != 1 || len(held.Silences) != 2 || am.count("GET /api/v2/silences") != 2 {
 		t.Errorf("no silence named: %v %+v, asked %v", err, held, am.asked)
 	}
 	am.alerts = `[]`
@@ -127,9 +129,48 @@ func TestHeldAlerts(t *testing.T) {
 	}
 }
 
+// TestHeldSilences: every silence Alertmanager holds that has not
+// expired, as the box-wide read takes it: its id, state, matchers (the
+// operator spelled from isRegex and isEqual, a missing isEqual taken as
+// true), times in UTC, maker and comment; and each alert's instance
+// label. The answer is the shape Debian's 0.28.1 gives (measured: an
+// expired silence stays in the list, "expired", until its retention
+// ends).
+func TestHeldSilences(t *testing.T) {
+	am := &fakeAMReads{alertsCode: 200, silCode: 200,
+		alerts: `[{"labels":{"alertname":"disk_low","subject":"box","instance":"/var/lib/liveswap","severity":"warning"},"annotations":{"summary":"84% full"},"startsAt":"2026-11-19T13:00:00Z","status":{"state":"suppressed","silencedBy":["11111111-1111-4111-8111-111111111111"],"inhibitedBy":[],"mutedBy":[]}}]`,
+		silences: `[
+ {"id":"11111111-1111-4111-8111-111111111111","status":{"state":"active"},"updatedAt":"2026-11-19T13:00:00Z","matchers":[{"name":"alertname","value":"disk_low","isRegex":false,"isEqual":true},{"name":"app","value":"blog","isRegex":false,"isEqual":false}],"startsAt":"2026-11-19T13:00:00+01:00","endsAt":"2026-11-19T15:00:00Z","createdBy":"moteld monitor: root","comment":"resizing"},
+ {"id":"22222222-2222-4222-8222-222222222222","status":{"state":"pending"},"matchers":[{"name":"alertname","value":"cert_.*","isRegex":true,"isEqual":true},{"name":"instance","value":"b\\.example","isRegex":true,"isEqual":false},{"name":"app","value":"x","isRegex":false}],"startsAt":"2026-11-20T13:00:00Z","endsAt":"2026-11-20T15:00:00Z","createdBy":"root by hand","comment":"later"},
+ {"id":"33333333-3333-4333-8333-333333333333","status":{"state":"expired"},"matchers":[],"startsAt":"2026-11-18T13:00:00Z","endsAt":"2026-11-18T14:00:00Z","createdBy":"x","comment":"old"}
+]`}
+	held, err := newAMClient(am.serve(t)).heldAlerts(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(held.Alerts) != 1 || held.Alerts[0].Instance != "/var/lib/liveswap" || held.Alerts[0].App != "" || held.Alerts[0].SilencedUntil == nil {
+		t.Errorf("the alert: %+v", held.Alerts)
+	}
+	got, err := json.Marshal(held.Silences)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const want = `[{"id":"11111111-1111-4111-8111-111111111111","state":"active","matchers":[{"name":"alertname","op":"=","value":"disk_low"},{"name":"app","op":"!=","value":"blog"}],"starts_at":"2026-11-19T12:00:00Z","ends_at":"2026-11-19T15:00:00Z","created_by":"moteld monitor: root","comment":"resizing"},` +
+		`{"id":"22222222-2222-4222-8222-222222222222","state":"pending","matchers":[{"name":"alertname","op":"=~","value":"cert_.*"},{"name":"instance","op":"!~","value":"b\\.example"},{"name":"app","op":"=","value":"x"}],"starts_at":"2026-11-20T13:00:00Z","ends_at":"2026-11-20T15:00:00Z","created_by":"root by hand","comment":"later"}]`
+	if string(got) != want {
+		t.Errorf("the silences:\n got %s\nwant %s", got, want)
+	}
+	// None held: an empty list, not none.
+	am.silences = `[]`
+	if held, err := newAMClient(am.serve(t)).heldAlerts(context.Background()); err != nil || held.Silences == nil || len(held.Silences) != 0 {
+		t.Errorf("no silence: %v %+v", err, held.Silences)
+	}
+}
+
 // TestHeldAlertsFailures: any answer that cannot be read whole is a
 // failure, never a part: an alerts read refused or not JSON, and a
-// silence list refused or not JSON when an alert names a silence.
+// silence list refused or not JSON, whether an alert names a silence or
+// none does (the list is the box-wide read's too).
 func TestHeldAlertsFailures(t *testing.T) {
 	for _, c := range []struct {
 		name                string
@@ -140,6 +181,8 @@ func TestHeldAlertsFailures(t *testing.T) {
 		{"the alerts not JSON", `[{"labels":`, silencesAnswer, 200, 200},
 		{"the silences refused", heldAnswer, silencesAnswer, 200, 503},
 		{"the silences not JSON", heldAnswer, `{`, 200, 200},
+		{"the silences refused, no alert naming one", `[]`, silencesAnswer, 200, 503},
+		{"the silences not JSON, no alert naming one", `[]`, `{`, 200, 200},
 	} {
 		am := &fakeAMReads{alerts: c.alerts, silences: c.silences, alertsCode: c.alertsCode, silCode: c.silCode}
 		held, err := newAMClient(am.serve(t)).heldAlerts(context.Background())

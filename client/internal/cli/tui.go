@@ -37,16 +37,16 @@ import (
 const screenLong = "motel alone shows them on screens in the terminal, over the same reads the\n" +
 	"commands make: the apps you may view sorted by what needs a look, an app's state\n" +
 	"and deploys, a deploy's record laid out for reading a failure, who you are, the\n" +
-	"box and its backups. It only reads, well inside the box's limit of 2 requests a\n" +
-	"second and 60 at once: up to 30 at once to start, then at most 1.5 a second. It\n" +
-	"signs one token for ten minutes at a time, so a hardware key is touched about\n" +
-	"every nine, and never asks for a passphrase or a PIN: a key with a passphrase\n" +
-	"must be in the agent (ssh-add), and a hardware key that requires its PIN cannot\n" +
-	"be used there yet. ? lists the keys; c shows the command for a screen that reads\n" +
-	"the box, y the box's answer as JSON. It is asked with your own key only, and\n" +
-	"takes no --json. With no arguments at all it prints this help instead when\n" +
-	"stdout is not a terminal, and, with a line under it saying why, when it finds\n" +
-	"no box or key to read with, or no screen to draw on."
+	"box, its backups and its alerts. It only reads, well inside the box's limit of 2\n" +
+	"requests a second and 60 at once: up to 30 at once to start, then at most 1.5 a\n" +
+	"second. It signs one token for ten minutes at a time, so a hardware key is\n" +
+	"touched about every nine, and never asks for a passphrase or a PIN: a key with a\n" +
+	"passphrase must be in the agent (ssh-add), and a hardware key that requires its\n" +
+	"PIN cannot be used there yet. ? lists the keys; c shows the command for a screen\n" +
+	"that reads the box, y the box's answer as JSON. It is asked with your own key\n" +
+	"only, and takes no --json. With no arguments at all it prints this help instead\n" +
+	"when stdout is not a terminal, and, with a line under it saying why, when it\n" +
+	"finds no box or key to read with, or no screen to draw on."
 
 // screen makes motel alone, the root, open the screens: with its own
 // --box and --key, as every command that asks the box has, and the
@@ -388,6 +388,11 @@ func (l live) Alerts(ctx context.Context, app string) (model.Got[wire.Alerts], e
 		return model.Got[wire.Alerts]{}, argument(err)
 	}
 	v, ans, err := l.c.Alerts(ctx, a)
+	return got(v, ans, err)
+}
+
+func (l live) BoxAlerts(ctx context.Context) (model.Got[wire.BoxAlerts], error) {
+	v, ans, err := l.c.BoxAlerts(ctx)
 	return got(v, ans, err)
 }
 

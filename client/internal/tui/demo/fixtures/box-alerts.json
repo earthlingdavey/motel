@@ -1,0 +1,13 @@
+{
+ "monitor": "on",
+ "alerts": [
+  {"name": "deploy_refused", "severity": "warning", "summary": "deploy of 4c2d9e7b1a05 refused: the archive holds no index.html", "starts_at": "@-6m", "state": "active", "app": "shop"},
+  {"name": "watchdog_throttled", "severity": "critical", "summary": "images: the watchdog spent its restart budget (5 in 10m)", "starts_at": "@-2h", "state": "suppressed", "inhibited": true, "app": "images"},
+  {"name": "disk_low", "severity": "warning", "summary": "the filesystem holding /var/lib/liveswap is 84% full", "starts_at": "@-3h", "state": "suppressed", "silenced_until": "@2h", "instance": "/var/lib/liveswap"},
+  {"name": "cert_failed", "severity": "critical", "summary": "the certificate for wiki.example.com could not be renewed; it expires in 120h0m0s", "starts_at": "@-1d", "state": "active", "instance": "wiki.example.com"}
+ ],
+ "silences": [
+  {"id": "0b6f3c2a-8d4e-4f1a-9c7b-5e2d1a0f9b8c", "state": "pending", "matchers": [{"name": "app", "op": "=", "value": "wiki"}, {"name": "alertname", "op": "!=", "value": "deploy_in_progress"}], "starts_at": "@3h", "ends_at": "@5h", "created_by": "moteld monitor: root", "comment": "the wiki moves tonight"},
+  {"id": "22e1715e-5a1b-4c7e-9f3d-0a8b6c4d2e1f", "state": "active", "matchers": [{"name": "alertname", "op": "=", "value": "disk_low"}], "starts_at": "@-1h", "ends_at": "@2h", "created_by": "moteld monitor: root", "comment": "resizing the volume"}
+ ]
+}

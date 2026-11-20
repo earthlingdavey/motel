@@ -47,19 +47,50 @@ type amHeld struct {
 	} `json:"status"`
 }
 
-// amHeldSilence is one silence as GET /api/v2/silences gives it: its
-// id and its end, which is all an alert's "silenced until" needs.
+// amHeldSilence is one silence as GET /api/v2/silences gives it, cut
+// to what the reads take: its end for an alert's "silenced until", and
+// the rest for the box-wide read's list. The list holds expired
+// silences too, until Alertmanager's retention drops them (measured on
+// Debian's 0.28.1: "expired" beside "active" and "pending").
 type amHeldSilence struct {
-	ID     string    `json:"id"`
-	EndsAt time.Time `json:"endsAt"`
+	ID     string `json:"id"`
+	Status struct {
+		State string `json:"state"`
+	} `json:"status"`
+	Matchers []struct {
+		Name    string `json:"name"`
+		Value   string `json:"value"`
+		IsRegex bool   `json:"isRegex"`
+		// IsEqual absent is taken as true, Alertmanager's own default
+		// (measured on 0.28.1: a silence posted without it is held with
+		// it true).
+		IsEqual *bool `json:"isEqual"`
+	} `json:"matchers"`
+	StartsAt  time.Time `json:"startsAt"`
+	EndsAt    time.Time `json:"endsAt"`
+	CreatedBy string    `json:"createdBy"`
+	Comment   string    `json:"comment"`
+}
+
+// wireSilence is s as the reads carry it, its times in UTC and each
+// matcher's operator spelled from Alertmanager's two flags.
+func (s amHeldSilence) wireSilence() wire.Silence {
+	out := wire.Silence{ID: s.ID, State: s.Status.State, Matchers: make([]wire.Matcher, 0, len(s.Matchers)),
+		StartsAt: s.StartsAt.UTC(), EndsAt: s.EndsAt.UTC(), CreatedBy: s.CreatedBy, Comment: s.Comment}
+	for _, m := range s.Matchers {
+		equal := m.IsEqual == nil || *m.IsEqual
+		op := map[[2]bool]string{{false, true}: wire.MatchEqual, {false, false}: wire.MatchNotEqual, {true, true}: wire.MatchRegexp, {true, false}: wire.MatchNotRegexp}[[2]bool{m.IsRegex, equal}]
+		out.Matchers = append(out.Matchers, wire.Matcher{Name: m.Name, Op: op, Value: m.Value})
+	}
+	return out
 }
 
 // heldAlerts is every alert Alertmanager holds, as the people's reads
 // take them: the heartbeat, the test alert and the deploy mute left out
 // (notSilenceable: they say nothing of an app or of the box's health),
-// and each alert's silences read for when the last of them ends. The
-// silence list is asked for only when an alert names one, and only its
-// ids and ends are read.
+// and each alert's silences read for when the last of them ends; and
+// every silence that has not expired, which the box-wide read lists, so
+// the silence list is asked for on every fetch, whatever the alerts.
 func (c *amClient) heldAlerts(ctx context.Context) (liveswap.HeldAlerts, error) {
 	data, err := c.do(ctx, http.MethodGet, "/api/v2/alerts", nil)
 	if err != nil {
@@ -70,23 +101,25 @@ func (c *amClient) heldAlerts(ctx context.Context) (liveswap.HeldAlerts, error) 
 		return liveswap.HeldAlerts{}, fmt.Errorf("alertmanager at %s: GET /api/v2/alerts: %w", c.socket, err)
 	}
 	held = slices.DeleteFunc(held, func(a amHeld) bool { return slices.Contains(notSilenceable, a.Labels["alertname"]) })
+	data, err = c.do(ctx, http.MethodGet, "/api/v2/silences", nil)
+	if err != nil {
+		return liveswap.HeldAlerts{}, err
+	}
+	var silences []amHeldSilence
+	if err := json.Unmarshal(data, &silences); err != nil {
+		return liveswap.HeldAlerts{}, fmt.Errorf("alertmanager at %s: GET /api/v2/silences: %w", c.socket, err)
+	}
 	ends := map[string]time.Time{}
-	if slices.ContainsFunc(held, func(a amHeld) bool { return len(a.Status.SilencedBy) > 0 }) {
-		data, err := c.do(ctx, http.MethodGet, "/api/v2/silences", nil)
-		if err != nil {
-			return liveswap.HeldAlerts{}, err
-		}
-		var silences []amHeldSilence
-		if err := json.Unmarshal(data, &silences); err != nil {
-			return liveswap.HeldAlerts{}, fmt.Errorf("alertmanager at %s: GET /api/v2/silences: %w", c.socket, err)
-		}
-		for _, s := range silences {
-			ends[s.ID] = s.EndsAt
+	kept := make([]wire.Silence, 0, len(silences))
+	for _, s := range silences {
+		ends[s.ID] = s.EndsAt
+		if s.Status.State != "expired" {
+			kept = append(kept, s.wireSilence())
 		}
 	}
 	out := make([]liveswap.AppAlert, 0, len(held))
 	for _, a := range held {
-		al := liveswap.AppAlert{App: a.Labels["app"], Alert: wire.Alert{
+		al := liveswap.AppAlert{App: a.Labels["app"], Instance: a.Labels["instance"], Alert: wire.Alert{
 			Name: a.Labels["alertname"], Severity: a.Labels["severity"], Summary: a.Annotations["summary"],
 			StartsAt: a.StartsAt.UTC(), State: a.Status.State, Inhibited: len(a.Status.InhibitedBy) > 0,
 		}}
@@ -100,7 +133,7 @@ func (c *amClient) heldAlerts(ctx context.Context) (liveswap.HeldAlerts, error) 
 		}
 		out = append(out, al)
 	}
-	return liveswap.HeldAlerts{Alerts: out}, nil
+	return liveswap.HeldAlerts{Alerts: out, Silences: kept}, nil
 }
 
 // alertsFetch is one fetch of what Alertmanager holds: heldAlerts, a
@@ -162,7 +195,7 @@ func (v *alertsView) get(ctx context.Context, logger *zap.Logger) (liveswap.Held
 		if err != nil {
 			// A person is told only that it did not answer: the cause is the
 			// operator's, at most one line per alertsEvery, as kept.
-			logger.Warn("monitor: a person's read of an app's alerts was answered \"monitor\":\"unanswered\": Alertmanager did not answer", zap.Error(err))
+			logger.Warn("monitor: a person's read of alerts (an app's, or the box's) was answered \"monitor\":\"unanswered\": Alertmanager did not answer", zap.Error(err))
 			held = liveswap.HeldAlerts{}
 		}
 		e.held, e.ok = held, err == nil

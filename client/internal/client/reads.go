@@ -106,6 +106,15 @@ func (c *Client) Alerts(ctx context.Context, app App) (wire.Alerts, *Answer, err
 	return a, ans, err
 }
 
+// BoxAlerts is `motel monitor alerts`: GET /_motel/alerts, what the box's
+// Alertmanager holds (every alert, every silence that has not ended),
+// for a viewer of the box.
+func (c *Client) BoxAlerts(ctx context.Context) (wire.BoxAlerts, *Answer, error) {
+	var b wire.BoxAlerts
+	ans, err := c.read(ctx, "/_motel/alerts", nil, &b)
+	return b, ans, err
+}
+
 // read is Get, then Read into v. An error is a *Failure, or the
 // context's own when it ended; a signing error, which sent nothing,
 // is a usage failure, as the commands have always said it.

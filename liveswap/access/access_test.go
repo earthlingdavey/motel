@@ -28,32 +28,32 @@ func TestDecideTable(t *testing.T) {
 	on := map[Action]string{
 		AppStatus: "blog", AppDeployRecord: "blog", AppDeploy: "blog", AppRollback: "blog",
 		BoxStatus: "", BoxPushResult: "", BoxPush: "", BoxWhoami: "", BoxApps: "", BoxBackups: "",
-		AppAlerts: "blog",
+		AppAlerts: "blog", BoxAlerts: "",
 	}
 	want := map[string]map[Action]bool{
 		"none": {
 			AppStatus: false, AppDeployRecord: false, AppDeploy: false, AppRollback: false,
-			BoxStatus: false, BoxPushResult: false, BoxPush: false, BoxWhoami: false, BoxApps: false, BoxBackups: false, AppAlerts: false,
+			BoxStatus: false, BoxPushResult: false, BoxPush: false, BoxWhoami: false, BoxApps: false, BoxBackups: false, AppAlerts: false, BoxAlerts: false,
 		},
 		"deployer of blog": {
 			AppStatus: true, AppDeployRecord: true, AppDeploy: true, AppRollback: true,
-			BoxStatus: false, BoxPushResult: false, BoxPush: false, BoxWhoami: false, BoxApps: false, BoxBackups: false, AppAlerts: false,
+			BoxStatus: false, BoxPushResult: false, BoxPush: false, BoxWhoami: false, BoxApps: false, BoxBackups: false, AppAlerts: false, BoxAlerts: false,
 		},
 		"box channel": {
 			AppStatus: false, AppDeployRecord: false, AppDeploy: false, AppRollback: false,
-			BoxStatus: true, BoxPushResult: true, BoxPush: true, BoxWhoami: false, BoxApps: false, BoxBackups: false, AppAlerts: false,
+			BoxStatus: true, BoxPushResult: true, BoxPush: true, BoxWhoami: false, BoxApps: false, BoxBackups: false, AppAlerts: false, BoxAlerts: false,
 		},
 		"viewer of blog": {
 			AppStatus: true, AppDeployRecord: true, AppDeploy: false, AppRollback: false,
-			BoxStatus: false, BoxPushResult: false, BoxPush: false, BoxWhoami: true, BoxApps: true, BoxBackups: false, AppAlerts: true,
+			BoxStatus: false, BoxPushResult: false, BoxPush: false, BoxWhoami: true, BoxApps: true, BoxBackups: false, AppAlerts: true, BoxAlerts: false,
 		},
 		"viewer of the box": {
 			AppStatus: true, AppDeployRecord: true, AppDeploy: false, AppRollback: false,
-			BoxStatus: true, BoxPushResult: false, BoxPush: false, BoxWhoami: true, BoxApps: true, BoxBackups: true, AppAlerts: true,
+			BoxStatus: true, BoxPushResult: false, BoxPush: false, BoxWhoami: true, BoxApps: true, BoxBackups: true, AppAlerts: true, BoxAlerts: true,
 		},
 		"person with no grant": {
 			AppStatus: false, AppDeployRecord: false, AppDeploy: false, AppRollback: false,
-			BoxStatus: false, BoxPushResult: false, BoxPush: false, BoxWhoami: true, BoxApps: true, BoxBackups: false, AppAlerts: false,
+			BoxStatus: false, BoxPushResult: false, BoxPush: false, BoxWhoami: true, BoxApps: true, BoxBackups: false, AppAlerts: false, BoxAlerts: false,
 		},
 	}
 	for _, k := range kinds {
@@ -98,6 +98,7 @@ func TestAllowedCells(t *testing.T) {
 		{Person, BoxApps},
 		{Person, BoxBackups},
 		{Person, AppAlerts},
+		{Person, BoxAlerts},
 	}
 	for _, c := range allowed {
 		if !slices.Contains(want, c) {
@@ -184,6 +185,10 @@ func TestDecidePersonRefusals(t *testing.T) {
 		{"a deployer reads its own app's alerts", Principal{Kind: AppDeployer, App: "blog"}, AppAlerts, "blog", &Forbidden{"key", "app"}},
 		{"the box channel reads an app's alerts", Principal{Kind: BoxChannel}, AppAlerts, "blog", &Forbidden{"key", "app"}},
 		{"an app's alerts on the box", bob, AppAlerts, "", nil},
+		{"the box's alerts", bob, BoxAlerts, "", &Forbidden{"viewer", "box"}},
+		{"the box's alerts with no views", Principal{Kind: Person, Name: "dave"}, BoxAlerts, "", &Forbidden{"viewer", "box"}},
+		{"a deployer reads the box's alerts", Principal{Kind: AppDeployer}, BoxAlerts, "", &Forbidden{"key", "box"}},
+		{"the box channel reads the box's alerts", Principal{Kind: BoxChannel}, BoxAlerts, "", &Forbidden{"key", "box"}},
 		{"an app action on the box", bob, AppStatus, "", nil},
 		{"a box action on an app", bob, BoxWhoami, "blog", nil},
 		{"no name", Principal{Kind: Person, Views: &Views{Box: true}}, BoxStatus, "", nil},

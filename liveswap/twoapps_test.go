@@ -248,8 +248,9 @@ func TestTwoAppsTwoPeople(t *testing.T) {
 			}
 			want := http.StatusUnauthorized // a deploy token is judged against the global sources: none here
 			switch {
-			case person(caller) && rt.action == access.BoxBackups && caller != "viewer of the box":
-				// The box's backups name every app: a viewer of the box's alone.
+			case person(caller) && (rt.action == access.BoxBackups || rt.action == access.BoxAlerts) && caller != "viewer of the box":
+				// The box's backups, alerts and silences name every app: a
+				// viewer of the box's alone.
 				want = http.StatusForbidden
 			case person(caller):
 				want = http.StatusOK
@@ -262,6 +263,14 @@ func TestTwoAppsTwoPeople(t *testing.T) {
 			}
 			if w.Code == http.StatusOK && rt.action == access.BoxApps {
 				r.rowsKeepToTheirApp(t, caller, w.Body.Bytes(), r.views[caller])
+			}
+			if w.Code == http.StatusOK && rt.action == access.BoxAlerts {
+				// Every alert, the box's own among them.
+				for _, c := range []string{boxAlertCanary, alertCanary("appalpha"), alertCanary("appbravo")} {
+					if !strings.Contains(w.Body.String(), c) {
+						t.Errorf("%s, GET %s: the 200 does not hold %q: %s", caller, rt.path, c, w.Body)
+					}
+				}
 			}
 		}
 	}

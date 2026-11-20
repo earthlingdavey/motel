@@ -19,7 +19,7 @@ func (r *runner) monitor() *cobra.Command {
 		Short: "What the box's monitor holds (experimental)",
 		Args:  usageArgs(cobra.NoArgs),
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return &client.Failure{Exit: client.ExitUsage, Message: "monitor needs a command: motel monitor alerts --app <app>"}
+			return &client.Failure{Exit: client.ExitUsage, Message: "monitor needs a command: motel monitor alerts [--app <app>]"}
 		},
 	}
 	m.AddCommand(r.monitorAlerts())
@@ -30,9 +30,14 @@ func (r *runner) monitorAlerts() *cobra.Command {
 	var t target
 	var appArg string
 	c := &cobra.Command{
-		Use:   "alerts --app <app>",
-		Short: "An app's alerts, as the box's Alertmanager holds them (experimental)",
-		Long: "monitor alerts --app <app> reads GET /_motel/apps/<app>/alerts, for a viewer of\n" +
+		Use:   "alerts [--app <app>]",
+		Short: "What the box's Alertmanager holds: every alert and silence, or an app's alerts (experimental)",
+		Long: "monitor alerts reads GET /_motel/alerts, for a viewer of the box: every alert\n" +
+			"the box's Alertmanager holds, since when it fires, whether a silence or the\n" +
+			"deploy mute holds it and until when, and every silence that is active or waits\n" +
+			"to start, with its matchers, who made it and why. Silences are added and\n" +
+			"expired as root on the box (moteld monitor silence).\n\n" +
+			"monitor alerts --app <app> reads GET /_motel/apps/<app>/alerts, for a viewer of\n" +
 			"the app or of the box: the alerts the box's Alertmanager holds about the app,\n" +
 			"newest first, each with its severity, when it began, and whether a silence\n" +
 			"holds it and until when, or a deploy of the app. Not the box's own alerts, and\n" +
@@ -47,7 +52,7 @@ func (r *runner) monitorAlerts() *cobra.Command {
 		Args: usageArgs(cobra.NoArgs),
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if !cmd.Flags().Changed("app") {
-				return &client.Failure{Exit: client.ExitUsage, Message: "monitor alerts reads one app's alerts: name it with --app <app>"}
+				return r.boxAlerts(cmd, &t)
 			}
 			app, err := client.ParseApp(appArg)
 			if err != nil {

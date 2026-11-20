@@ -14,8 +14,9 @@ import (
 )
 
 // TestCtrlROnlyWhatIsShown: ctrl-r on who am I asks whoami alone, on
-// help nothing, on the box the box and its backups (the screen has a
-// line of them), on the backups those alone, each pressed AgainAfter
+// help nothing, on the box the box, its backups and its alerts (the
+// screen has a line of each), on the backups those alone, on the alerts
+// those alone, each pressed AgainAfter
 // and more after the last read of it.
 func TestCtrlROnlyWhatIsShown(t *testing.T) {
 	h := start(t, 100, 30, nil)
@@ -23,7 +24,7 @@ func TestCtrlROnlyWhatIsShown(t *testing.T) {
 	for _, c := range []struct {
 		where string
 		want  []model.Kind
-	}{{"me", []model.Kind{model.KWhoAmI}}, {"help", nil}, {"box", []model.Kind{model.KBox, model.KBackups}}, {"backups", []model.Kind{model.KBackups}}} {
+	}{{"me", []model.Kind{model.KWhoAmI}}, {"help", nil}, {"box", []model.Kind{model.KBox, model.KBackups, model.KBoxAlerts}}, {"backups", []model.Kind{model.KBackups}}, {"alerts", []model.Kind{model.KBoxAlerts}}} {
 		if c.where != "me" {
 			h.press(tcell.KeyEscape, ":", c.where, tcell.KeyEnter)
 		}

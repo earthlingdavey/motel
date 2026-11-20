@@ -767,6 +767,13 @@ nothing to evaluate.
 On a box with notifications only, ask the API over its socket:
 `curl -s --unix-socket /run/motel-notify/am.sock http://am/api/v2/alerts`.
 
+A person with the viewer role on the box (docs/people.md) reads what
+is firing over HTTPS, with no ssh and no forward: `motel monitor
+alerts` lists every alert (since when, and whether a silence or a
+deploy holds it, until when) and the silences, and `:alerts` in
+`motel` shows the same. A viewer of one app reads that app's alone:
+`motel monitor alerts --app <app>`. Neither can add or end a silence.
+
 From your laptop, forward the socket to a socket of your own, in a
 directory only you can open, and ask that:
 
@@ -877,6 +884,9 @@ user: run moteld monitor silence as root`.
 
 There is no `moteld monitor silence list`. Ask Alertmanager:
 `curl -s --unix-socket /run/motel-notify/am.sock http://am/api/v2/silences`.
+A person with the viewer role on the box reads the silences that are
+active or wait to start from their laptop, with every alert: `motel
+monitor alerts`, or `:alerts` in `motel` (docs/people.md).
 Silences you post to the socket yourself work too, but motel checks
 nothing of them and leaves no line in its journal.
 

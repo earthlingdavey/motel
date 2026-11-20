@@ -163,6 +163,11 @@ func FuzzNoRouteNoAnswer(f *testing.F) {
 		{"GET", "/_motel/apps/demo/../demo/alerts", "", "", ""},
 		{"POST", "/_motel/apps/demo/alerts", "", "", ""},
 		{"GET", "/_motel/apps/demo/logs", "", "", ""},
+		{"GET", "/_motel/backups", "", "", ""},
+		{"GET", "/_motel/alerts", "", "", ""},
+		{"GET", "/_motel/alerts", "app=demo", "", ""},
+		{"GET", "/_motel/alerts/", "", "", ""},
+		{"POST", "/_motel/alerts", "", "", ""},
 	}
 	reached := map[*route]bool{}
 	reachedApp := map[*motelAppRoute]bool{}
@@ -271,8 +276,8 @@ func FuzzNoRouteNoAnswer(f *testing.F) {
 			case person && appRow != nil:
 				want = http.StatusOK
 				row = nil // answered by its own function, not a recorded row
-			case person && motel && findMotelRoute(req) != nil && findMotelRoute(req).action == access.BoxBackups && caller != "viewer of the box":
-				want = http.StatusForbidden // the box's backups: a viewer of the box's alone
+			case person && motel && findMotelRoute(req) != nil && boxViewersOnly(findMotelRoute(req).action) && caller != "viewer of the box":
+				want = http.StatusForbidden
 			case person && motel && findMotelRoute(req) != nil:
 				want = http.StatusOK
 				row = nil // answered by its own function, not a recorded row
@@ -297,6 +302,10 @@ func FuzzNoRouteNoAnswer(f *testing.F) {
 		}
 	})
 }
+
+// boxViewersOnly are the rows under /_motel/ a viewer of the box alone
+// may read: what names every app (the backups, every alert and silence).
+func boxViewersOnly(a access.Action) bool { return a == access.BoxBackups || a == access.BoxAlerts }
 
 // recordRows swaps each row's function for one that records its row
 // in *served, until the test ends, so a test sees which row answered

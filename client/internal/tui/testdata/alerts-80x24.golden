@@ -1,0 +1,24 @@
+motel · deploy.example.com · v0.7.0 │ alice@example.com · viewer … live · 0s ago
+:alerts                                              as of 14:12:40 UTC · 0s ago
+monitor     on · 4 alerts, 2 silences, as the box's Alertmanager holds them
+
+ALERTS
+▲ warning  firing since 14:06 UTC (6m ago)
+    alert     deploy_refused
+    app       shop
+    summary   deploy of 4c2d9e7b1a05 refused: the archive holds no index.html
+  critical held while a deploy of its app runs · firing since 12:12 UTC (2h ago)
+    alert     watchdog_throttled
+    app       images
+    summary   images: the watchdog spent its restart budget (5 in 10m)
+  warning  silenced until 16:12 UTC (2h from now) · firing since 11:12 UTC (3h …
+    alert     disk_low
+    instance  /var/lib/liveswap
+    summary   the filesystem holding /var/lib/liveswap is 84% full
+✖ critical firing since 11-14 14:12 UTC (24h ago)
+    alert     cert_failed
+    instance  wiki.example.com
+    summary   the certificate for wiki.example.com could not be renewed; it exp…
+
+SILENCES
+↑↓ scroll  y json  c command  esc back  ? more

@@ -841,9 +841,12 @@ argument, stay text). Without it: `silence <id> added; it ends at
 `TestSilenceCommandOutput`, and the request Alertmanager is sent by
 `TestServeSilence`.
 
-There is no `list`: reads go to Alertmanager's own v2 API (`GET
-/api/v2/silences`, `GET /api/v2/silence/{id}`), whose shape motel would
-only copy ("Viewing"). Who runs them: root (and the motel uid, which
+There is no `moteld monitor silence list`: on the box, reads go to
+Alertmanager's own v2 API (`GET /api/v2/silences`, `GET
+/api/v2/silence/{id}`), whose shape motel would only copy ("Viewing").
+A viewer of the box reads the silences that are active or wait to
+start over HTTPS instead, with every alert: `GET /_motel/alerts`,
+`motel monitor alerts` ("Viewing"). Who runs the commands: root (and the motel uid, which
 the admin socket admits); any other user is told `the admin socket
 (unix//run/motel/admin.sock) admits root and the motel user: run moteld
 monitor silence as root`.
@@ -999,14 +1002,26 @@ one naming the app in its instance. motel reads them through
 `alertsView` (alertsview.go): `GET /api/v2/alerts` with no parameter,
 which gives active, silenced and inhibited alerts alike and no resolved
 one (measured on Debian's 0.28.1 in the e2e image), and `GET
-/api/v2/silences` only when an alert names a silence, for its end; at
-most once per 5 s for the process, within 2 s, a failure kept as long
-and journalled once. The heartbeat, `NotifyTest` and the deploy mute
+/api/v2/silences`, for the end of each alert's silences and for the
+box-wide read's list; both on every fetch, at most once per 5 s for the
+process, within 2 s, a failure of either kept as long and journalled
+once. The silence list holds expired silences too, until Alertmanager's
+retention drops them (`"expired"`, measured on 0.28.1 in a Debian 13
+container, 2026-11-19); the source leaves them out. The heartbeat, `NotifyTest` and the deploy mute
 are left out. liveswap chooses the app's alerts by their `app` label
 after the fetch; no matcher reaches Alertmanager. A config whose monitor
 block runs no notify (none, or a metrics line alone) installs no source,
-and the read says `"monitor":"off"`. The operator's guide to all of this is
-docs/monitor.md.
+and the read says `"monitor":"off"`. A person with the viewer role on
+the box (`grant <name> viewer box`) reads the whole answer: every alert,
+the box's own among them, with the app its label names and its
+instance, and every silence that is active or waits to start, with its
+matchers, maker and comment: `GET /_motel/alerts`, `motel monitor
+alerts` and the client's `:alerts` (liveswap/access/DESIGN-access.md).
+A viewer of the box's alone, since a comment and a maker are the
+operator's own words and an instance names paths and other sites. The
+same fetch serves both; no matcher, label or query of the client's
+reaches Alertmanager, and nothing is written to it. The operator's
+guide to all of this is docs/monitor.md.
 
 ## Decisions
 
@@ -1031,6 +1046,7 @@ on its general scales. notify's examples:
 
 | Residual | Where | S | O | D | Why accepted |
 |---|---|---|---|---|---|
+| The silence list is asked on every fetch, for the box-wide read, and a failure of it fails the whole fetch: for up to 5 s every read of alerts says `"monitor":"unanswered"`, an app viewer's `GET /_motel/apps/<app>/alerts` too, though no alert of the app is silenced and `GET /api/v2/alerts` answered | notify/alertsview.go (`heldAlerts`) | 2 | 3 | 1 | 6; red and named (the read says unanswered, the journal says why, once per 5 s), and it ends with the next fetch. The same for a list over the client's 4 MiB read (`amClient.do`), which Alertmanager's expired silences count towards until its retention drops them: some thousands of silences in five days. Keeping the alerts when the list fails is a state of its own ("the silences not known") in the source, the box-wide body and both clients: size 3. /code-review pass 1 of the box-wide alerts read (#581) |
 | A silence's comment may hold Unicode format characters (bidi overrides U+202A–U+202E and U+2066–U+2069, zero-width ones, U+FEFF), which a terminal shows reordered: the comment misstates why the silence exists to whoever reads it raw | notify/silence.go (`checkComment`) | 2 | 5 | 3 | 30 by product, but second-pass hardening (the review rule stops at two passes): the comment comes from root, and the silence's matchers, which decide what is quiet, are motel's own; refusing `unicode.Cf` is size 1, risk 1 for the next change. /code-review pass 2 of the closed-set shape |
 | `releaseAlerts` and `lifecycleAlerts` copy lifecycleSink's cases by hand: a new liveswap one-shot added there and not here is silenceable only once `raisedAlerts` names it (`TestSilenceableAlertsAreWhatMotelRaises` fails until it does), and never by `--release` until `releaseAlerts` does | notify/silenceable.go | 2 | 5 | 1 | 10; the scan names the missing alert loudly; `--release` refused for it is a refusal, not a silent miss. /code-review pass 2 of the closed-set shape |
 | `--alert deploy_refused --release` is refused though a refusal's release can be known: the commonest refusal is a version already on disk ("version v2 already exists"), whose `deploy_refused` carries `release=v2`, so a CI pushing v2 again can be quieted only by `--alert deploy_refused --app`, every refusal of the app | notify/silenceable.go (`releaseAlerts`) | 2 | 5 | 1 | 10; refused loudly, and the wider silence works. Kept refused as the approved scope of the change that let `deploy_failed` take a recorded version said (a refusal writes no record); adding `deploy_refused` to `releaseAlerts` is size 1, risk 1, the owner's call. /code-review pass 1 on monitor/silence-release-records |
