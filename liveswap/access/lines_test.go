@@ -151,6 +151,11 @@ func TestParsePerson(t *testing.T) {
 
 	wire, _ := base64.StdEncoding.DecodeString(ed)
 	skEd := skEdKey(t) // 74 bytes: its base64 ends in =
+	for line, want := range map[string]Role{"bob viewer box": Viewer, "bob logs box": Logs, "bob logs app blog from 10.0.0.0/8": Logs} {
+		if g, err := ParseGrant(strings.Fields(line)); err != nil || g.Role != want {
+			t.Errorf("%s: %+v %v, want role %s", line, g, err, want)
+		}
+	}
 	long := strings.Repeat("a", MaxName)
 	if _, err := ParsePerson([]string{long, "ssh-ed25519", ed}); err != nil {
 		t.Errorf("a name of %d bytes: %v", MaxName, err)
@@ -216,6 +221,11 @@ func TestParseGrant(t *testing.T) {
 		"bob viewer box from 198.51.100.7/32":        "bob viewer box from 198.51.100.7",
 		"bob viewer box from 2001:DB8:0:0::/48":      "bob viewer box from 2001:db8::/48",
 		"bob viewer box from 2001:db8::1 10.0.0.0/8": "bob viewer box from 2001:db8::1 10.0.0.0/8",
+		// A logs line keeps its role: it is no viewer line.
+		"bob logs box":                                    "bob logs box",
+		"bob logs app blog":                               "bob logs app blog",
+		"bob logs app blog from 203.0.113.0/24":           "bob logs app blog from 203.0.113.0/24",
+		"bob logs box from 198.51.100.7/32 2001:db8::/32": "bob logs box from 198.51.100.7 2001:db8::/32",
 	} {
 		g, err := ParseGrant(strings.Fields(line))
 		if err != nil {
@@ -237,8 +247,15 @@ func TestParseGrant(t *testing.T) {
 		"bob deployer box":                                     "grant bob deployer: deployer is held by a deploy_trust block, not granted",
 		"bob signer box":                                       "grant bob signer: signer is held by a signer line (signer bob <key-type> <base64>); this release takes it from no grant",
 		"bob root box":                                         "grant bob root: root is held by root's key on the box, not granted",
-		"bob admin box":                                        `grant bob "admin": unknown role; the one role a grant gives is viewer`,
+		"bob admin box":                                        `grant bob "admin": unknown role; a grant gives viewer or logs`,
 		"bob Viewer box":                                       `grant bob "Viewer": unknown role`,
+		"bob Logs box":                                         `grant bob "Logs": unknown role`,
+		"bob log box":                                          `grant bob "log": unknown role`,
+		"bob logs everything":                                  `grant bob logs "everything": the scope is box or app <app>`,
+		"bob logs app":                                         "grant bob logs app: app takes the app's name",
+		"bob logs app Blog":                                    `grant bob logs app "Blog": not an app name`,
+		"bob logs box please":                                  `grant bob logs box: "please" after the scope`,
+		"bob logs app blog from 198.51.100.7/24":               "grant bob logs app blog: 198.51.100.7/24 has host bits set",
 		"bob viewer everything":                                `grant bob viewer "everything": the scope is box or app <app>`,
 		"bob viewer app":                                       "grant bob viewer app: app takes the app's name",
 		"bob viewer app Blog":                                  `grant bob viewer app "Blog": not an app name (lowercase letters, digits and -, at most 63)`,
@@ -264,6 +281,11 @@ func TestParseGrant(t *testing.T) {
 		_, err := ParseGrant(strings.Fields(line))
 		if err == nil || !strings.Contains(err.Error(), want) {
 			t.Errorf("%q: got %v, want %q", line, err, want)
+		}
+	}
+	for line, want := range map[string]Role{"bob viewer box": Viewer, "bob logs box": Logs, "bob logs app blog from 10.0.0.0/8": Logs} {
+		if g, err := ParseGrant(strings.Fields(line)); err != nil || g.Role != want {
+			t.Errorf("%s: %+v %v, want role %s", line, g, err, want)
 		}
 	}
 	long := strings.Repeat("a", MaxName)
@@ -395,11 +417,73 @@ func TestCheckLines(t *testing.T) {
 
 		"two grants on one app": {
 			lines: []string{"person bob ssh-ed25519 " + k1, "grant bob viewer app example", "grant bob viewer app example from 10.0.0.0/8"}, around: apps,
-			want: "grant bob viewer app example: bob already has a grant on app example; one per scope",
+			want: "grant bob viewer app example: bob already has a viewer grant on app example; one per role and scope",
 		},
 		"two grants on the box": {
 			lines: []string{"person bob ssh-ed25519 " + k1, "grant bob viewer box", "grant bob viewer box"},
-			want:  "grant bob viewer box: bob already has a grant on the box; one per scope",
+			want:  "grant bob viewer box: bob already has a viewer grant on the box; one per role and scope",
+		},
+		"two logs grants on one app": {
+			lines: []string{"person bob ssh-ed25519 " + k1, "grant bob logs app example from 10.0.0.0/8", "grant bob logs app example"}, around: apps,
+			want: "grant bob logs app example: bob already has a logs grant on app example; one per role and scope",
+		},
+		"two logs grants on the box": {
+			lines: []string{"person bob ssh-ed25519 " + k1, "grant bob logs box", "grant bob logs box from 10.0.0.0/8"},
+			want:  "grant bob logs box: bob already has a logs grant on the box; one per role and scope",
+		},
+		"a logs grant on an app the file does not run": {
+			lines: []string{"person bob ssh-ed25519 " + k1, "grant bob logs app shop"}, around: apps,
+			want: "grant bob logs app shop: the liveswap block runs no app shop",
+		},
+		"a logs grant for no one": {
+			lines: []string{"signer alice ssh-ed25519 " + k1, "grant carol logs box"}, want: "grant carol logs box: no person or signer line declares carol",
+		},
+
+		// viewer and logs on one scope: the office case, a from list on
+		// the logs line alone, is taken with no word.
+		"viewer from anywhere, logs from a list, on one app": {
+			lines: []string{"person bob ssh-ed25519 " + k1, "grant bob viewer app example", "grant bob logs app example from 203.0.113.0/24"}, around: apps, warnings: noWarning,
+		},
+		"viewer from anywhere, logs from a list, on the box": {
+			lines: []string{"person bob ssh-ed25519 " + k1, "grant bob logs box from 203.0.113.0/24", "grant bob viewer box"}, around: apps, warnings: noWarning,
+		},
+		"viewer and logs on one app, both from lists": {
+			lines: []string{"person bob ssh-ed25519 " + k1, "grant bob viewer app example from 198.51.100.0/24", "grant bob logs app example from 203.0.113.0/24"}, around: apps, warnings: noWarning,
+		},
+		"a logs grant alone": {
+			lines: []string{"person bob ssh-ed25519 " + k1, "grant bob logs app example"}, around: apps, warnings: noWarning,
+		},
+		"logs from anywhere covers viewer on one app": {
+			lines: []string{"person bob ssh-ed25519 " + k1, "grant bob viewer app example from 10.0.0.0/8", "grant bob logs app example"}, around: apps,
+			warnings: []string{"grant bob viewer app example: the logs grant on app example already covers it"},
+		},
+		"logs on the box from anywhere covers viewer on the box": {
+			lines: []string{"person bob ssh-ed25519 " + k1, "grant bob viewer box", "grant bob logs box"}, around: apps,
+			warnings: []string{"grant bob viewer box: the logs grant on the box already covers it"},
+		},
+		"logs on the box from anywhere covers viewer on an app": {
+			lines: []string{"person bob ssh-ed25519 " + k1, "grant bob viewer app example", "grant bob logs box"}, around: apps,
+			warnings: []string{"grant bob viewer app example: the logs grant on the box already covers it"},
+		},
+		"logs on the box from anywhere covers logs on an app": {
+			lines: []string{"person bob ssh-ed25519 " + k1, "grant bob logs app example from 10.0.0.0/8", "grant bob logs box"}, around: apps,
+			warnings: []string{"grant bob logs app example: the logs grant on the box already covers it"},
+		},
+		"viewer on the box does not cover logs on an app": {
+			lines: []string{"person bob ssh-ed25519 " + k1, "grant bob logs app example", "grant bob viewer box"}, around: apps, warnings: noWarning,
+		},
+		"viewer on an app does not cover logs on it": {
+			lines: []string{"person bob ssh-ed25519 " + k1, "grant bob logs app example from 10.0.0.0/8", "grant bob viewer app example"}, around: apps, warnings: noWarning,
+		},
+		"logs on another app covers nothing": {
+			lines: []string{"person bob ssh-ed25519 " + k1, "grant bob viewer app example", "grant bob logs app blog"}, around: apps, warnings: noWarning,
+		},
+		"logs on the box from a list covers nothing": {
+			lines: []string{"person bob ssh-ed25519 " + k1, "grant bob viewer app example", "grant bob viewer box from 10.0.0.0/8", "grant bob logs box from 10.0.0.0/8", "grant bob logs app blog"}, around: apps, warnings: noWarning,
+		},
+		"viewer and logs on the box, both covering": {
+			lines: []string{"person bob ssh-ed25519 " + k1, "grant bob viewer app example", "grant bob viewer box", "grant bob logs box"}, around: apps,
+			warnings: []string{"grant bob viewer app example: the box grant already covers it", "grant bob viewer box: the logs grant on the box already covers it"},
 		},
 		"two names on one app": {
 			lines: []string{"person bob ssh-ed25519 " + k1, "person carol ssh-ed25519 " + k4, "grant bob viewer app example", "grant carol viewer app example"}, around: apps, warnings: noWarning,
@@ -414,6 +498,11 @@ func TestCheckLines(t *testing.T) {
 		"a box grant and an app grant": {
 			lines: []string{"person bob ssh-ed25519 " + k1, "grant bob viewer app example", "grant bob viewer box"}, around: apps,
 			warnings: []string{"grant bob viewer app example: the box grant already covers it"},
+		},
+		// Outside the box grant's list the app grant is all bob holds, so
+		// removing it would take a read away: not told it adds nothing.
+		"a box grant from a list and an app grant": {
+			lines: []string{"person bob ssh-ed25519 " + k1, "grant bob viewer app example", "grant bob viewer box from 198.51.100.0/24"}, around: apps, warnings: noWarning,
 		},
 		"a person with no grant": {
 			lines: []string{"signer alice ssh-ed25519 " + k1, "person carol sk-ssh-ed25519@openssh.com " + k2, "person carol sk-ssh-ed25519@openssh.com " + k3}, around: apps,
@@ -526,6 +615,8 @@ func FuzzParseGrant(f *testing.F) {
 	f.Add("bob\x00viewer\x00box\x00from\x00198.51.100.7/32\x00::1\x002001:DB8::/32")
 	f.Add("bob\x00signer\x00box")
 	f.Add("bob\x00viewer\x00box\x00from\x00::ffff:1.2.3.4")
+	f.Add("bob\x00logs\x00app\x00blog\x00from\x00203.0.113.0/24")
+	f.Add("bob\x00logs\x00box")
 	f.Fuzz(func(t *testing.T, s string) {
 		g, err := ParseGrant(fuzzArgs(s))
 		if err != nil {
@@ -535,7 +626,7 @@ func FuzzParseGrant(f *testing.F) {
 		if err != nil {
 			t.Fatalf("%q taken, its re-print %q refused: %v", s, g.Args(), err)
 		}
-		if !again.Equal(g) || !slices.Equal(again.Args(), g.Args()) || g.Role != Viewer {
+		if !again.Equal(g) || !slices.Equal(again.Args(), g.Args()) || (g.Role != Viewer && g.Role != Logs) {
 			t.Fatalf("%+v re-reads as %+v", g, again)
 		}
 	})

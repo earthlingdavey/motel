@@ -66,6 +66,7 @@ grants, then a warning line for each doubt the lines were taken with:
 
     person bob@example.com ssh-ed25519 SHA256:e2/1Bk...
     grant bob@example.com viewer app example
+    grant bob@example.com logs app example from 198.51.100.0/24
     warning person carol@example.com has no grant: their key is told only who they are here (/_motel/whoami)
 
 Together they say who may reach this box over HTTPS with a token their

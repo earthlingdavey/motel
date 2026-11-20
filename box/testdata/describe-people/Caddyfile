@@ -17,6 +17,7 @@
 		grant alice@example.com viewer box
 		grant bob@example.com   viewer app example
 		grant bob@example.com   viewer app blog from 198.51.100.0/24 2001:db8:5::/48
+		grant bob@example.com   logs app example from 198.51.100.0/24
 	}
 
 	monitor {

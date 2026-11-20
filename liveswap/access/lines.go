@@ -75,9 +75,17 @@ var deferredKeyTypes = map[string]bool{
 // Role is what a grant gives.
 type Role string
 
-// Viewer reads an app's status and deploys, and on the box also the
-// box's status. The one role a grant may name in this release.
-const Viewer Role = "viewer"
+// The roles a grant may name. No role implies another: what each
+// action needs is decidePerson's.
+const (
+	// Viewer reads an app's status, deploys, alerts, rules and series,
+	// and on the box every app's and the box's own reads. It never reads
+	// logs.
+	Viewer Role = "viewer"
+	// Logs reads what viewer reads on the same scope, and the logs of
+	// the app, or on the box of every app.
+	Logs Role = "logs"
+)
 
 // Key is one key line: a `person` line, or a `signer` line, which also
 // declares its name as a person.
@@ -300,8 +308,8 @@ const grantUsage = "grant line: it takes <name> <role> box|app <app> [from <pref
 
 // ParseGrant checks one grant line's arguments, `<name> <role> box
 // [from <prefix>...]` or `<name> <role> app <app> [from <prefix>...]`.
-// The only role is viewer; deployer, signer and root are refused by
-// name, saying who holds each today.
+// The roles are viewer and logs; deployer, signer and root are refused
+// by name, saying who holds each today.
 func ParseGrant(args []string) (Grant, error) {
 	if len(args) < 3 {
 		return Grant{}, errors.New(grantUsage)
@@ -311,7 +319,7 @@ func ParseGrant(args []string) (Grant, error) {
 		return Grant{}, err
 	}
 	switch Role(role) {
-	case Viewer:
+	case Viewer, Logs:
 	case "deployer":
 		return Grant{}, fmt.Errorf("grant %s deployer: deployer is held by a deploy_trust block, not granted", name)
 	case "signer":
@@ -322,22 +330,22 @@ func ParseGrant(args []string) (Grant, error) {
 	case "root":
 		return Grant{}, fmt.Errorf("grant %s root: root is held by root's key on the box, not granted", name)
 	default:
-		return Grant{}, fmt.Errorf("grant %s %s: unknown role; the one role a grant gives is viewer", name, lineQuote(role))
+		return Grant{}, fmt.Errorf("grant %s %s: unknown role; a grant gives viewer or logs", name, lineQuote(role))
 	}
-	g := Grant{Name: name, Role: Viewer}
+	g := Grant{Name: name, Role: Role(role)}
 	rest := args[3:]
 	switch args[2] {
 	case "box":
 	case "app":
 		if len(rest) == 0 {
-			return Grant{}, fmt.Errorf("grant %s viewer app: app takes the app's name", name)
+			return Grant{}, fmt.Errorf("grant %s %s app: app takes the app's name", name, role)
 		}
 		if !lineAppNameRE.MatchString(rest[0]) {
-			return Grant{}, fmt.Errorf("grant %s viewer app %s: not an app name (lowercase letters, digits and -, at most 63)", name, lineQuote(rest[0]))
+			return Grant{}, fmt.Errorf("grant %s %s app %s: not an app name (lowercase letters, digits and -, at most 63)", name, role, lineQuote(rest[0]))
 		}
 		g.App, rest = rest[0], rest[1:]
 	default:
-		return Grant{}, fmt.Errorf("grant %s viewer %s: the scope is box or app <app>", name, lineQuote(args[2]))
+		return Grant{}, fmt.Errorf("grant %s %s %s: the scope is box or app <app>", name, role, lineQuote(args[2]))
 	}
 	if len(rest) == 0 {
 		return g, nil
@@ -449,7 +457,8 @@ type Around struct {
 // CheckLines holds the lines to the rules across lines, after the
 // whole block is read: the bounds, one key on one line, a grant only
 // for a declared name with a key a token can use, on an app the file
-// runs (when around says which), and one grant per name and scope.
+// runs (when around says which), and one grant per name, role and
+// scope.
 // Every refusal names the lines. What it takes with a doubt is
 // returned as warnings, in file order. A block without a person or a
 // grant line (Declared) is not checked: its signer lines are held to
@@ -494,8 +503,12 @@ func CheckLines(l Lines, around *Around) (warnings []string, err error) {
 		}
 	}
 
-	type scoped struct{ name, app string }
-	granted := map[scoped]bool{}
+	type scoped struct {
+		name string
+		role Role
+		app  string
+	}
+	granted := map[scoped]Grant{}
 	hasGrant := map[string]bool{}
 	for _, g := range l.Grants {
 		switch {
@@ -510,14 +523,15 @@ func CheckLines(l Lines, around *Around) (warnings []string, err error) {
 				return nil, fmt.Errorf("%s: no app line in the liveswap block names %s as written; an app named through a placeholder cannot be granted", g.line(), g.App)
 			}
 			return nil, fmt.Errorf("%s: the liveswap block runs no app %s", g.line(), g.App)
-		case granted[scoped{g.Name, g.App}]:
+		}
+		if _, dup := granted[scoped{g.Name, g.Role, g.App}]; dup {
 			where := "the box"
 			if g.App != "" {
 				where = "app " + g.App
 			}
-			return nil, fmt.Errorf("%s: %s already has a grant on %s; one per scope", g.line(), g.Name, where)
+			return nil, fmt.Errorf("%s: %s already has a %s grant on %s; one per role and scope", g.line(), g.Name, g.Role, where)
 		}
-		granted[scoped{g.Name, g.App}] = true
+		granted[scoped{g.Name, g.Role, g.App}] = g
 		hasGrant[g.Name] = true
 	}
 
@@ -534,11 +548,23 @@ func CheckLines(l Lines, around *Around) (warnings []string, err error) {
 			warnings = append(warnings, fmt.Sprintf("person %s has no grant: their key is told only who they are here (/_motel/whoami)", k.Name))
 		}
 	}
+	// A grant another grant of the name gives from everywhere adds
+	// nothing: the same role on the box over one on an app, and logs over
+	// viewer, on the box or on the same app. A covering grant with a from
+	// list is not told, since outside its list the covered one is all the
+	// person holds.
 	for _, g := range l.Grants {
-		// With one people's role an app grant beside a box grant adds
-		// nothing; it would matter only once a second role exists.
-		if g.App != "" && granted[scoped{g.Name, ""}] {
+		covers := func(role Role, app string) bool {
+			c, ok := granted[scoped{g.Name, role, app}]
+			return ok && len(c.From) == 0
+		}
+		switch {
+		case g.App != "" && g.Role == Viewer && covers(Viewer, ""):
 			warnings = append(warnings, g.line()+": the box grant already covers it")
+		case (g.App != "" || g.Role == Viewer) && covers(Logs, ""):
+			warnings = append(warnings, g.line()+": the logs grant on the box already covers it")
+		case g.Role == Viewer && g.App != "" && covers(Logs, g.App):
+			warnings = append(warnings, g.line()+": the logs grant on app "+g.App+" already covers it")
 		}
 	}
 	if around != nil && !around.Channels && len(personKey) > 0 {
