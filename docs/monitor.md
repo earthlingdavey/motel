@@ -703,6 +703,35 @@ warning, `monitor metrics: a person's read of an app's series was
 answered "store":"unanswered"`, with the app, the window and the
 error (at most one per app and window every 30 seconds).
 
+The store's memory is capped at 384 MiB (`MemoryMax=384M` in motel's
+drop-in for its unit). What fills it is how many apps and windows
+people read, not how long the windows are: on a box of three apps, two
+people reading every window for an hour, with your rules running, it
+peaked at about 255 MiB; ten apps read by two people at once, or every
+app's four windows read at once, take it to the cap. There the kernel
+kills it, and systemd starts it again by itself, a second later the
+first time (longer after more kills, up to a minute), so the numbers
+are back at once. In its restart motel's push fails (its counts come
+with the next), the store's rules miss an evaluation, and a read says
+the store did not answer. The kill is said three ways:
+
+- under the store's unit, at err: `journalctl -u victoria-metrics -p
+  err` shows `The metrics store was killed by the kernel at its memory
+  limit (MemoryMax=384M)`, with a warning after it that says what was
+  missed and how to give it more;
+- to the operator's channels, `metrics_store_killed` (warning; a
+  one-shot), at most once an hour, with how many kills since the last;
+- in moteld's journal, `monitor metrics: the metrics store was killed
+  by the kernel at its memory limit`.
+
+If it keeps happening, give the store more on that box: `systemctl edit
+victoria-metrics`, then under `[Service]` a line `MemoryMax=512M` (your
+drop-in, `override.conf`, wins over motel's `10-motel.conf`, and motel's
+setup leaves it alone), then `systemctl restart victoria-metrics`. To
+see how close it runs: `systemctl show victoria-metrics -p MemoryPeak
+-p MemoryCurrent`, and the store's own `vm_cache_size_bytes` against
+`vm_cache_size_max_bytes` (PromQL over the socket, below).
+
 ### PromQL over the socket, as root
 
 The store answers Prometheus's query API on its socket:
@@ -1014,7 +1043,10 @@ app whose `observe` line is taken out drops out at the next push, and
 every app does while no push reaches the store for over 75 s, so an
 alert firing then resolves. That is moteld down, or the store refusing
 the pushes: `metrics_store_read_only` says so for a read-only store,
-and `metrics_store_down` once they have failed for five minutes.
+`metrics_store_down` once they have failed for five minutes, and
+`metrics_store_killed` when the kernel killed the store at its memory
+limit, which it is back from within seconds ([An app's numbers over
+time](#an-apps-numbers-over-time-from-a-laptop)).
 `request_rate` is over the time the store's samples cover, so a moteld
 restart in the window barely moves it. It has no value until the
 store holds a push from the five minutes before its window, and for an

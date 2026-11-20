@@ -57,7 +57,7 @@ their solutions:
 | Piece | What | Where |
 |---|---|---|
 | The namespace | `motel-metrics`, holding a loopback only | `motel-metrics-netns.service`, a oneshot (`ip netns add`, `lo up`) |
-| The store | Debian 13's `victoria-metrics` 1.112.0: storage, MetricsQL, its own scrapes (no vmui: Debian builds it without, "Viewing") | Debian's unit with motel's drop-in (`notify/units/metrics/10-motel.conf`): `NetworkNamespacePath=`, `-httpListenAddr=127.0.0.1:8428` inside it, `-retentionPeriod=14d`, `MemoryMax=256M`, `-memory.allowedBytes=96MiB` |
+| The store | Debian 13's `victoria-metrics` 1.112.0: storage, MetricsQL, its own scrapes (no vmui: Debian builds it without, "Viewing") | Debian's unit with motel's drop-in (`notify/units/metrics/10-motel.conf`): `NetworkNamespacePath=`, `-httpListenAddr=127.0.0.1:8428` inside it, `-retentionPeriod=14d`, `MemoryMax=384M`, `-memory.allowedBytes=96MiB`, an `ExecStopPost=` that names a kill at the limit ("An app's series") |
 | Its listener | `/run/motel-metrics/vm.sock`, 0660 root:motel (`motel-vm.socket`) → `systemd-socket-proxyd` in the namespace (`DynamicUser=yes`, no capability) → `127.0.0.1:8428` | no TCP port in the host namespace |
 | vmalert | from the same package (Debian 13 has no `vmalert` package): evaluates `rules.yml` every minute, keeps its alert state in the store | `motel-vmalert.service`, `User=_victoria-metrics`, in the namespace, `MemoryMax=128M` |
 | Its outlet | `127.0.0.1:9093` bound **inside** the namespace (`motel-am-metrics.socket`) and handed to Alertmanager itself, beside `/run/motel-notify/am.sock`; Alertmanager's drop-in `20-motel-metrics.conf` has `Wants=`, `After=` and `PartOf=` it | vmalert speaks TCP only, to its datasource and its notifier (unix_socket_test.md); Debian's Alertmanager 0.28.1 serves every listener systemd passes it (exporter-toolkit's `ServeMultiple`) |
@@ -1363,6 +1363,7 @@ rules, new series.
 | `metrics_store_down` | metrics | state | warning | every push has failed for 5 minutes | a push succeeds |
 | `metrics_store_read_only` | metrics | state | critical | the store's own `/metrics`, read over the socket once a minute, has `vm_storage_is_read_only` above 0: its disk is below its free-space floor and nothing new is kept | one read has it 0 |
 | `metrics_rules_down` | metrics | state | warning | the store has not seen vmalert up (`max(max_over_time(up{job="vmalert"}[3m]))` empty or 0) at three reads in a row, a minute apart | one read sees it up |
+| `metrics_store_killed` | metrics | event | warning | the kernel killed the store at its `MemoryMax=`: the drop-in's `ExecStopPost=` (only when `$SERVICE_RESULT` is `oom-kill`) adds a line to the state directory's `store-killed`, as motel (`runuser`), which motel reads at each push (30 s) and takes; one alert for every line there, at most one an hour (`killHold`): a store killed again and again is told once an hour with how many kills, its every kill in its own journal at err. A kill while moteld is down waits in the file for its start; a stop, a restart by hand, an upgrade or a failed start writes nothing | — |
 
 A read the store does not answer is no reading: `metrics_store_down`
 says so.
@@ -1627,30 +1628,60 @@ a histogram's day before each of 337 steps: 46 ms through the store's
 cache, 68 ms with `nocache=1`. So time is not the limit: the 3 s budget
 is 28 times one 14-day fetch and 3 times the 40 at once.
 
-**Memory is.** Under `MemoryMax=256M` the store was killed by the
-kernel twice, each time 7 to 9 minutes after a burst of every app's
-four windows at once (40 fetches), with only the push running after
-it; its log names nothing (an OOM kill). A controlled run from a fresh
-start: the push alone held the cgroup at 56 to 74 MiB for 8 minutes;
-every app's 1h and 24h at once (20 fetches) took it to 93 to 101 MiB,
-where it stayed; every app's 7d and 14d at once (20 fetches) took it
-to 211 MiB within a minute and to 254 MiB ten minutes later, 2 MiB
-under the cap, its caches 173 MiB of it (`vm_cache_size_bytes`, the
-query cache 29 MiB) against `-memory.allowedBytes=96MiB`. One viewer of
-a 14-day and a 24-hour window, read every 30 s for 28 minutes, held it
-at 205 to 211 MiB. Read one at a time (the same 20 fetches, 80 queries
-in 2 s, from a fresh start), the long windows took it the same way: 100
-MiB a minute after, 243 MiB three, 251 MiB at its peak, its caches 160
-MiB. So it is what the long windows read, not how many at once: they
-read every day's index of the 14, and the store's caches grow past the
-bytes allowed them over the minutes after. A box
-whose people read every app's long windows at once can lose its store
-to its cap: the store restarts (`Restart=on-failure`), the pushes and
-the rules' evaluation miss the restart, and `metrics_store_down` fires
-if it lasts. Owed, below; the choice is the owner's. Not measured on
-hotserve-1: real pushes compress worse than synthetic ones, and its
-store fills 30 s at a time rather than from a backfill, so both the
-memory and the times there are the numbers to check first.
+**Memory is, and it is breadth, not the long windows** (measured
+2026-11-20 on the same VM and dataset, the store under the box's flags
+with motel's own rules rendered for a config of six every-app rules,
+evaluated by vmalert every minute, and the box's `scrape.yml`; each run
+watched at least an hour after its last read; research notes beside
+this repository's, `series-long-window-memory/NOTES.md`). What fills
+the store is its caches, and what fills them is how many distinct
+series and (filter, time range) pairs a read touches, whatever the
+window: every app's 1h at once took it to 160 MiB, 24h to 181, both to
+200; 7d and 14d without p95 to 181, with it to 234. Three caches,
+metricIDs, metricName and rollupResult, fill to 64 MiB each and
+tagFiltersToMetricIDs can reach 128, whatever `-memory.allowedBytes`
+says: from 32 to 256 MiB it moves only tsid (64 to 128) and the small
+block caches, and 1.112.0 has no flag for those three
+(`-storage.cacheSizeStorageTSID` and `-storage.cacheSizeIndexDBTagFilters`
+at 16 MiB still report maxima of 64 and 128). The growth comes late:
+the cgroup holds near its first minute's level for 1 to 25 minutes
+after a read, then climbs 30 to 130 MiB in a minute or two with no
+read, to the Go runtime (80 to 90 MiB) plus the caches' reported size,
+and stays there after the caches expire. Under no cap, every app's four
+windows at once and then one person's screen moving through every
+app's windows for an hour peaked at 414 MiB with the rules (393
+without), flat for the hour after. With nobody reading, the rules and
+scrapes alone hold the store at 186 to 194 MiB. By the box's size, the
+broadest read alone peaked at 213 MiB for 5 apps, 277 for 10, 328 for
+20.
+
+So `MemoryMax=384M`, the owner's "300 and something" (2026-11-20),
+holds an ordinary box and not every reading of a large one:
+
+| Reading (rules and scrapes running) | Peak | Under `MemoryMax=384M` |
+|---|---|---|
+| 3 apps, two people's screens through every window for an hour | 251 to 257 (at 320M, 352M and 384M) | held, 133 MiB (34 %) free |
+| 3 apps, every app's four windows at once, then two people's screens | 240 (at 352M) | held |
+| 10 apps, one person's screen for an hour | 342 (at 352M, 2 % free) | inferred to hold, about 40 MiB free |
+| 10 apps, two people's screens for an hour | — | **killed**, 55 minutes in (and at 352M, 68 minutes in) |
+| 10 apps, every app's four windows at once, then one screen hour | 414 (at 1G) | **killed** at 64 minutes (at 320M at 17, at 256M at 18) |
+| Nobody reading | 186 to 194 | held, half free |
+
+A kill heals itself: systemd restarts the store (a second after the
+first kill, longer after each, up to a minute: `RestartSteps=`), and it
+comes back with the caches it saved at its last clean stop, not the
+ones it was killed with (measured: 30 MiB of caches and 45 MiB resident
+after, against 160 MiB before), so it is killed again only when the
+same reads come again. Fetch times did not slow near the cap (the
+broadest read's median 0.44 to 0.63 s, its slowest 1.05 s; a screen's
+poll 2 to 4 ms). A kill is told: the drop-in's `ExecStopPost=` names it
+at err under the store's unit with the limit, what is missed and how to
+raise it, and leaves a line motel tells the operator of
+(`metrics_store_killed`, "The chain"). Not measured on hotserve-1:
+real pushes, a box's own number of series, and its own readers are the
+numbers to check first (`systemctl show victoria-metrics -p MemoryPeak
+-p MemoryCurrent`, and the store's `/metrics`, `vm_cache_size_bytes`
+against `vm_cache_size_max_bytes`).
 
 ## Packaging and setup
 
@@ -1882,6 +1913,20 @@ after its cold boot. The caches'
 `vm_cache_size_bytes` is no longer a series the store keeps: a later
 measurement reads it from the store's `/metrics`.
 
+**From the series' follow-up (#607, 2026-11-20) the store's cap is
+`MemoryMax=384M`**, 128 MiB over the 256M every figure above was
+measured under. It is a ceiling, not a reservation: the store holds what
+its caches have reached. Measured on the dev VM with motel's rules and
+scrapes running and nobody reading, 186 to 194 MiB (the push alone, 66
+to 73); an ordinary box's reading (three apps, two people's screens for
+an hour) took it to 251 to 257, a ten-app box's one person to 342, and
+what kills it at 384 is ten apps read by two people, or every app's
+four windows at once ("An app's series"). So a box gives the store up
+to 128 MiB more than before, and only once its people read broadly;
+the stack beside motel's ~270 MB above can reach ~400 MB at the cap.
+`docs/footprint.md` is what building motel costs, not a box's memory,
+and does not change. Not measured on hotserve-1.
+
 ## Decisions
 
 Each is a choice the fresh-slate draft or DESIGN-notify.md left open,
@@ -1901,7 +1946,7 @@ or a line of theirs the facts overturned:
 | No vmalert `Watchdog` | the merge hazard above; motel watches the chain instead |
 | `ChannelFailed` from vmalert is rendered per told channel with motel's labels | the only form in which Alertmanager deduplicates the two sources |
 | The store keeps of its own scrapes only what motel reads (`scrape.yml`'s `metric_relabel_configs`), not the stack whole | a series kept later is a line added and breaks nothing; one dropped later loses its history. The kept list is held to motel's queries by a test ("What the store scrapes") |
-| `MemoryMax=256M`, `-memory.allowedBytes=96MiB`, 14 days | the measured working set above; both caps mandatory, since the store sizes its caches from what it can see |
+| `MemoryMax=384M`, `-memory.allowedBytes=96MiB`, 14 days | the owner's "300 and something" (2026-11-20), against the measured working sets ("An app's series"): an ordinary box (a few apps, a person or two, the rules running) holds a third of it free; the broadest reading of ten apps is still killed, and told. `-memory.allowedBytes` stays: it moves only tsid and the small block caches, and a lower one moved nothing measured (48 MiB, and tsid and tag-filter flags at 16 MiB, read 262 MiB where 96 MiB read 257) |
 | The operator's rules are a grammar of fixed kinds with parameters (`threshold`, `disk_fill`, `post_deploy`), never an expression or a template | the review's finding 17: a rule or template a config author writes could pull any app's series, or the box's, into a notification that reaches an app's deployers (T6); a kind reads only motel's own expression, of the app named or each app for itself, so a config author chooses a bound and a duration, never what is read |
 | disk_fill's windows and `for` scale with `within`, below a day as beyond it, the short window and the `for` no shorter than 5 m, and wait for their history | a regression extrapolated a hundred times past its window fires on a step; scaled, a step must be the same share of free space at every horizon ("Operator rules", disk_fill's shape). Not a bound on `within`, which would refuse the horizons a disk is watched over. /code-review pass 4 on operator rules. Below a day the day's 6 h line lagged a fill that began within it, and its 30 m hold was half of an hour's horizon: `within 1h` told no fill of 1 to 4 hours before the disk was full; the 5 m floors because a minute's `for` fired at 1 h on a third of what was free written in five minutes, and a 2 m short window under it never told a fill written every three minutes (a read-only review of af7a124, and /code-review round two on this shape; measured in vmalert-tool) |
 | A request metric is over a fixed five minutes, with a floor of 20 by default | long enough for a small app to reach a floor, short enough that a rule fires within its `for` and five minutes; one window keeps the expression motel's. The floor keeps two requests, one of them a 5xx, from being a 50 % share |
@@ -2005,6 +2050,7 @@ on its general scales. metrics' examples:
 | A store whose process exits after its start (`ExecStart=` failing, not `ExecStartPre=`) comes back at the backoff's pace once the fault is gone, not at the next connection: the proxy stays up, so connections do not start it | notify/units/metrics/10-motel.conf (`RestartSteps=`) | 2 | 3 | 1 | 6; measured 30 to 31 s after the fault went, against 1 to 2 s before the backoff; a minute at most, the pushes meanwhile failing and logged. A shorter `RestartMaxDelaySec=` trades it against the restarts of a fault that lasts (size 1, risk 2). The measurements of #470 |
 | A restart of moteld while `metrics_store_down` fires and the store stays down: the new process has no failure history, so it fires the alert again only once its own pushes have failed for five minutes (`storeDownAfter`), about five and a half minutes after the start with the state route's 30 s wait, while Alertmanager ends the old alert at `resolve_timeout`, five minutes after motel's last re-post (a minute apart; the resolve the stop reports is held and goes with the engine). So the old alert ends a little before the new one is posted: the channels may get `[RESOLVED]` (when a group flush falls in the gap), then `[FIRING]` again, for a store that never came back. The other chain events are told again inside the old alert's life: `metrics_store_read_only` at the start's first read, `metrics_rules_down` at the third read a minute apart (about two minutes). A `metrics_rules_down` or `metrics_store_read_only` firing beside a store that does not answer is not, since such a store gives no reading: each ends the same way, until the store answers | notify/metricspush.go (`pushOnce`: `failingSince` is in memory; `release`) | 3 | 2 | 3 | 18; two faults, the store down and a restart of motel; the new `[FIRING]` names the push failing, and the journal has `push failed` from the new process's first push. Keeping the failing-since time across a restart is state on disk (size 3, risk 2). Review of the feature branch, 2026-11-14 |
 | The push's label is `job="moteld"`; a store that holds pushes from before the binary took that name has them under `job="motel"`, so every read that asks whether the store had a push before a time (`pushSeries`) finds none before the upgrade, and every app's series starts again under the new label with the first push after it. For the request rules' window and the reach before it (about ten minutes after the upgrade) `request_rate` rules judge nothing, and the other request rules read every app through `increase`, which drops a series' first value when that is large beside the next step; the metrics view reads the same way for its span (up to 24 h) | notify/operatorrules.go (`pushSeries`), notify/metricsstore.go (`extra_label`) | 2 | 5 | 3 | 30, **accepted, the owner's decision** (2026-11-18, with this effect named: the label follows the binary): bounded as above, on a store that reads as one newly set up, a state every rule is written for; the alternative weighed was to keep `job="motel"` as a stored name, as restic's host and tag are kept |
+| A box read broadly still takes the store to its `MemoryMax=384M` and the kernel kills it: ten apps' windows read by two people's screens over an hour (killed 55 minutes in), or every app's four windows at once ("An app's series", measured); an ordinary box, three apps read by two people with the rules running, peaks a third under it. The store restarts by itself (a second after a first kill, up to a minute after more: `RestartSteps=`) with the caches of its last clean stop, so it is killed again only by the same reads; meanwhile pushes fail (their counts come with the next), vmalert misses an evaluation, and people's rules and metrics reads say `unanswered` (a series read for up to 30 s, its cache) | notify/units/metrics/10-motel.conf (`MemoryMax=`, `ExecStopPost=`), notify/metricspush.go (`checkKilled`) | 2 | 5 | 1 | 10; the kill is named at err under the store's unit with the limit held and how to raise it, and told to the operator's channels at most once an hour with the count (`metrics_store_killed`). Holding the broadest reading with a quarter free takes 640M (measured); the owner chose a modest cap (2026-11-20). Reading less on the long windows (no p95 on 7d and 14d) and a cap set from the Caddyfile are the owner's open choices. Was the Owed row of #586 (3 × 5 × 1, then 3 × 5 × 3 = 45 rescored on #607) |
 
 ### Owed
 
@@ -2012,7 +2058,6 @@ on its general scales. metrics' examples:
 |---|---|---|---|---|
 | vmalert refusing a `rules.yml` motel rendered (after a version change, say) keeps its old rules, and `up{job="vmalert"}` stays 1, so `metrics_rules_down` never fires and neither motel nor `moteld monitor rules` can tell (30, owed by the owner's decision of 2026-11-14): `scrape.yml` drops every vmalert series but `up`, and the chain (notify/metricspush.go) reads only `up`. The fix keeps `vmalert_config_last_reload_successful` in `scrape.yml` and reads it beside `up` (size 3, risk 2). The listing's `rules_file` speaks for the file, not for this. Read-only review at af7a124 | 3 | 2 | 5 | its own PR, with the `scrape.yml` change and the `moteld monitor setup --metrics` re-run on every box that docs/upgrading.md would order |
 | The old instance's stop is read as the old release's answers: a request it still held when its stop came (`drain`, 5 s by default, then SIGTERM, and SIGKILL after `grace`, 10 s) and that the stop cut before any header is a 502 counted under the old release, and timed as slow. The old window holds it whenever the first push the store took after the cutover came after the stop: with no outage, often at the defaults, since that push is anywhere in the 30 s after the cutover; with the store down over the cutover, whenever the store is back after the stop. Each such 502 raises the baseline's 5xx share and p95, so a regression's warning can be withheld (`old.share() > max_5xx_share`, `shareRose`, `p95Margin`), the more so the fewer the old release's responses in its window | 3 | 5 | 3 | its own change, the owner to choose how: liveswap counting the requests a stop cuts apart from the release's answers, or a window that ends before the stop, which the store cannot show when no push came between. Not this change: its window reads no more of the stop than the base's with no outage, and ends at the first push after the cutover, not at the check, which would read all of a long drain (/code-review of the old window's end; 15 5xx where 10 were due in `TestPostDeployTheBaselineOverTheStore`) |
-| Every app's 7-day and 14-day series read at once can take the store to its `MemoryMax=256M` and the kernel kill it ("An app's series", measured: killed twice 7 to 9 minutes after 40 fetches at once; 254 MiB of 256 after 20 long-window fetches; caches 173 MiB against `-memory.allowedBytes=96MiB`). It restarts on its own; the pushes and the rules' evaluation miss its restart, and every person's rules read (`GET /_motel/rules`, an app's) says `"store":"unanswered"` meanwhile. Wide: the store's budget is every box's | 3 | 5 | 1 | the owner's choice, its own change: a `MemoryMax=` and `-memory.allowedBytes` sized for the long windows (measured again under them), or no 7-day and 14-day windows until a box is measured. Reading them one at a time does not help (measured: 251 MiB after 20 fetches in series). Found measuring the series read (#586) |
 | The store's RSS on a 1 or 2 GB box (a day on hotserve-1's 3.8 GB is in "Footprint") | — | — | — | a deploy to a box of that size |
 | On a booted Debian host, the delete-a-leftover branch of the namespace unit's test before its delete (#430's `ExecStartPre`), measured in the e2e box alone. A reboot cannot reach it: a cold boot has an empty `/run`, so hotserve-1's of 2026-11-13 at a8038b4 took the nothing-to-delete branch alone (the unit's start took 165 ms, with no `Cannot remove namespace` line), and setup's re-run does not restart the namespace unit, which is active. #426's proxies have had their cold boot: the deploy of 01b2fd5 to hotserve-1 rebooted it at about 17:53 UTC on 2026-11-12, and both came back as no root | — | — | — | a start of the namespace unit on hotserve-1 with `/run/netns/motel-metrics` already there (a start after one that failed past its `ip netns add`), not a reboot |
 | Debian's security support for `victoria-metrics` 1.112.0 and `prometheus-alertmanager` 0.28.1 on trixie, whose binaries are built with Go 1.24.2 (the store, vmalert) and 1.24.1 (Alertmanager), and a dist-upgrade check of both drop-ins' flags | — | — | — | before any release |
@@ -2028,6 +2073,7 @@ and with it the store's setup alone (Alertmanager not masked), the
 first run restarting Alertmanager once (one start in its journal, 9093
 answering in the namespace after) and saying so, a second run leaving
 it as it runs (the same invocation, no start) and saying so;
+a store killed by the kernel at a limit lowered under it at runtime (part 4g) leaving the kill named at err under its unit with the limit and the remedy, and one `metrics_store_killed` at the operator's channel, a second kill within the hour held in `store-killed`, and none for the stops, restarts and failed starts of the parts before;
 no TCP listener on 8428, 8880 or 9093 in the host namespace, all three
 in the namespace; the socket `srw-rw---- root motel` and the state
 directory `drwxr-s--- motel _victoria-metrics`; the store's data

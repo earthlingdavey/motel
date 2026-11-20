@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"math"
 	"net"
 	"net/http"
@@ -1512,5 +1513,87 @@ func TestMetricsObjectEveryField(t *testing.T) {
 	want := `{"window":"24h","at":"2026-11-13T09:30:00Z","memory_bytes":{"now":30,"max":40},"memory_max_bytes":100,"cpu_cores":{"avg_5m":0.5,"avg":0.25},"requests":{"total":10,"per_second":0.000116,"by_class":{"2xx":9,"5xx":1},"5xx_share":0.1,"p50_ms":1.5,"p95_ms":20,"cache_hit_share":0.5},"error":"the metrics store did not answer"}`
 	if string(got) != want {
 		t.Fatalf("metrics object:\n got %s\nwant %s", got, want)
+	}
+}
+
+// The store's ExecStopPost= adds a line to store-killed at each kill at
+// its MemoryMax=: the next tick tells every line there as one
+// metrics_store_killed and takes them, so each kill is told once; a
+// kill within the hour after waits in the file and is told with the
+// others after it; no file is nothing.
+func TestStoreKillTold(t *testing.T) {
+	tp := newTestPusher(t)
+	dir := t.TempDir()
+	tp.m.stateDirOverride = dir
+	file := filepath.Join(dir, storeKilledName)
+	tp.checkKilled()
+	if got := tp.take(); len(got) != 0 {
+		t.Fatalf("no file told %+v", got)
+	}
+	kill := func(at time.Time) {
+		t.Helper()
+		f, err := os.OpenFile(file, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := fmt.Fprintf(f, "%d 369098752\n", at.Unix()); err != nil {
+			t.Fatal(err)
+		}
+		if err := f.Close(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	kill(tp.at.Add(-2 * time.Minute))
+	tp.checkKilled()
+	got := tp.take()
+	if len(got) != 1 || got[0].Name != eventStoreKilled || got[0].Kind != kindEvent || got[0].Severity != SeverityWarning || got[0].App != "" ||
+		got[0].Summary != "the metrics store was killed at its memory limit (352 MiB) once at 2026-11-10 11:58 UTC; it restarted by itself, and pushes, rule checks and reads missed its restarts" ||
+		got[0].Details["kills"] != "1" || got[0].Details["limit"] != "352 MiB" || !strings.Contains(got[0].Details["remedy"], "systemctl edit victoria-metrics") {
+		t.Fatalf("one kill told %+v", got)
+	}
+	if _, err := os.Stat(file); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("the kill was not taken: %v", err)
+	}
+	tp.checkKilled()
+	if got := tp.take(); len(got) != 0 {
+		t.Fatalf("a kill told twice: %+v", got)
+	}
+	// Two more within the hour: held, then told together.
+	tp.at = tp.at.Add(20 * time.Minute)
+	kill(tp.at)
+	tp.at = tp.at.Add(20 * time.Minute)
+	kill(tp.at)
+	tp.checkKilled()
+	if got := tp.take(); len(got) != 0 {
+		t.Fatalf("told within the hour: %+v", got)
+	}
+	tp.at = tp.at.Add(21 * time.Minute)
+	tp.checkKilled()
+	got = tp.take()
+	if len(got) != 1 || got[0].Details["kills"] != "2" ||
+		!strings.Contains(got[0].Summary, "(352 MiB) 2 times since 2026-11-10 12:20 UTC;") {
+		t.Fatalf("two held kills told %+v", got)
+	}
+	if !slices.ContainsFunc(tp.logs.All(), func(e observer.LoggedEntry) bool {
+		return e.Level == zap.WarnLevel && strings.Contains(e.Message, "the metrics store was killed by the kernel at its memory limit")
+	}) {
+		t.Error("no journal line for the kill")
+	}
+}
+
+// What the store-killed lines say: a line the store did not write as
+// expected is still a kill, and the summary fits the channels whatever
+// the count.
+func TestStoreKilledEvent(t *testing.T) {
+	ev, n := killedEvent([]byte("junk\n\n1795180000 infinity\n"))
+	if n != 2 || ev.Details["limit"] != "infinity" || !strings.Contains(ev.Summary, "(infinity) 2 times since") {
+		t.Fatalf("%d %+v", n, ev)
+	}
+	if _, n := killedEvent(nil); n != 0 {
+		t.Fatal("an empty file is a kill")
+	}
+	ev, _ = killedEvent([]byte(strings.Repeat("1795180000 18446744073709551615\n", 123456)))
+	if l := len([]rune(ev.Summary)); l > maxSummary {
+		t.Fatalf("summary of %d runes: %s", l, ev.Summary)
 	}
 }

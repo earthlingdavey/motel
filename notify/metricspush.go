@@ -4,7 +4,13 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
+	"io/fs"
+	"os"
+	"path/filepath"
 	"slices"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -35,7 +41,18 @@ const (
 	eventStoreDown     = "metrics_store_down"
 	eventRulesDown     = "metrics_rules_down"
 	eventStoreReadOnly = "metrics_store_read_only"
+	eventStoreKilled   = "metrics_store_killed"
 	sourceMetrics      = "metrics"
+
+	// storeKilledName is the state directory's file the store's
+	// ExecStopPost= adds a line to at each kill at its MemoryMax=
+	// (units/metrics/10-motel.conf): the kill's time and the limit, in
+	// seconds and bytes.
+	storeKilledName = "store-killed"
+	// killHold is how long after one metrics_store_killed the next
+	// waits: a store killed again and again by the same reads is told
+	// once an hour, with how many kills, not at each.
+	killHold = time.Hour
 )
 
 // finalPushTimeout bounds the import of the push when the pusher stops
@@ -90,6 +107,8 @@ type pusher struct {
 	// readOnlyMisses counts the asks it has not answered since.
 	readOnly       bool
 	readOnlyMisses int
+	// killToldAt is when metrics_store_killed was last told.
+	killToldAt time.Time
 
 	failed prometheus.Counter
 
@@ -339,6 +358,7 @@ func (p *pusher) run(ctx context.Context) {
 	defer ticker.Stop()
 	odd := false
 	for {
+		p.checkKilled()
 		pctx, cancel := context.WithTimeout(ctx, storeRequestTimeout)
 		p.pushOnce(pctx)
 		cancel()
@@ -353,6 +373,102 @@ func (p *pusher) run(ctx context.Context) {
 		case <-ticker.C:
 		}
 	}
+}
+
+// checkKilled tells of the store's kills at its memory limit that its
+// ExecStopPost= left in the state directory (storeKilledName): one
+// one-shot for all the lines there, at most one a killHold, and the
+// lines taken, so that each kill is told once. The file waits for a
+// moteld that was down at the kill, and for the hold: what the next
+// one-shot says is every kill since the last. Taken by a rename first,
+// so a kill that adds its line meanwhile starts a new file.
+func (p *pusher) checkKilled() {
+	p.mu.Lock()
+	a, log, now := p.active, p.logger, p.now()
+	held := !p.killToldAt.IsZero() && now.Sub(p.killToldAt) < killHold
+	p.mu.Unlock()
+	if a == nil || held {
+		return
+	}
+	path := filepath.Join(a.stateDir(), storeKilledName)
+	taken := path + ".taken"
+	if err := os.Rename(path, taken); err != nil {
+		if !errors.Is(err, fs.ErrNotExist) {
+			log.Warn("monitor metrics: could not read the store's kills", zap.String("file", path), zap.Error(err))
+		}
+		return
+	}
+	b, err := os.ReadFile(taken) //nolint:gosec // the state directory's own file
+	if err != nil {
+		log.Warn("monitor metrics: could not read the store's kills", zap.String("file", taken), zap.Error(err))
+		return
+	}
+	_ = os.Remove(taken)
+	ev, n := killedEvent(b)
+	if n == 0 {
+		return
+	}
+	log.Warn("monitor metrics: the metrics store was killed by the kernel at its memory limit; systemd restarted it",
+		zap.Int("kills", n), zap.String("limit", ev.Details["limit"]), zap.String("since", ev.Details["first"]))
+	p.mu.Lock()
+	p.killToldAt = now
+	p.mu.Unlock()
+	p.report(ev)
+}
+
+// killedEvent is metrics_store_killed for the store-killed lines b, and
+// how many kills they hold: each line is the kill's Unix time and the
+// limit in bytes (or systemd's word for none). A line that does not
+// read so is still a kill.
+func killedEvent(b []byte) (Event, int) {
+	var first time.Time
+	limit, n := "", 0
+	for line := range strings.Lines(string(b)) {
+		f := strings.Fields(line)
+		if len(f) == 0 {
+			continue
+		}
+		n++
+		if t, err := strconv.ParseInt(f[0], 10, 64); err == nil && (first.IsZero() || time.Unix(t, 0).Before(first)) {
+			first = time.Unix(t, 0)
+		}
+		if len(f) > 1 {
+			limit = f[1]
+			if v, err := strconv.ParseUint(f[1], 10, 64); err == nil {
+				limit = strconv.FormatUint(v>>20, 10) + " MiB"
+			}
+		}
+	}
+	times := "once"
+	if n > 1 {
+		times = strconv.Itoa(n) + " times"
+	}
+	at := ""
+	if !first.IsZero() {
+		at = first.UTC().Format(" since 2006-01-02 15:04 UTC")
+		if n == 1 {
+			at = first.UTC().Format(" at 2006-01-02 15:04 UTC")
+		}
+	}
+	of := ""
+	if limit != "" {
+		of = " (" + limit + ")"
+	}
+	ev := Event{
+		Name: eventStoreKilled, Kind: kindEvent, Severity: SeverityWarning, Source: sourceMetrics,
+		Summary: fmt.Sprintf("the metrics store was killed at its memory limit%s %s%s; it restarted by itself, and pushes, rule checks and reads missed its restarts", of, times, at),
+		Details: map[string]string{
+			"kills":  strconv.Itoa(n),
+			"remedy": "systemctl edit victoria-metrics, MemoryMax= under [Service], then systemctl restart victoria-metrics; reading every app's long windows at once is what fills it",
+		},
+	}
+	if limit != "" {
+		ev.Details["limit"] = limit
+	}
+	if !first.IsZero() {
+		ev.Details["first"] = first.UTC().Format(time.RFC3339)
+	}
+	return ev, n
 }
 
 // finalPush is release's push of what was counted since the last tick.

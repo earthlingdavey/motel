@@ -474,6 +474,7 @@ mem                      operator     threshold  warning   every app  > 0.8 shar
 metrics_rules_down       motel check  threshold  warning   box        >= 3 reads                                                           nothing read
 metrics_store_disk_fill  builtin      guarded    warning   box        < 0 bytes for 30m, 2 guards                                          53687100000 bytes
 metrics_store_down       motel check  threshold  warning   box        >= 5m                                                                nothing read
+metrics_store_killed     motel check  event      warning   box        -                                                                    -
 metrics_store_read_only  motel check  event      critical  box        -                                                                    -
 person_new_network       motel check  event      warning   box        -                                                                    -
 person_outside_list      motel check  event      warning   box        -                                                                    -
@@ -495,7 +496,7 @@ a resolved alert shows within the lookback).
 		t.Fatal(err)
 	}
 	var l RulesListing
-	if err := json.Unmarshal([]byte(out), &l); err != nil || len(l.Alerts) != 30 || l.Store == nil || l.Store.Values != wire.StoreOn {
+	if err := json.Unmarshal([]byte(out), &l); err != nil || len(l.Alerts) != 31 || l.Store == nil || l.Store.Values != wire.StoreOn {
 		t.Fatalf("--json: %v %s", err, out)
 	}
 	// A store that does not answer: the store rules say so, the checks

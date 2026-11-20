@@ -407,7 +407,7 @@ func TestMetricsUnitsAreTheMeasuredOnes(t *testing.T) {
 		}
 	}
 	has("the drop-in", unitVMDropIn, "ExecStart=\n", "-httpListenAddr=127.0.0.1:8428 ", "NetworkNamespacePath=/run/netns/motel-metrics",
-		"MemoryMax=256M", "-memory.allowedBytes=96MiB", "-retentionPeriod=14d", "-promscrape.config="+DefaultMetricsStateDir+"/"+scrapeName,
+		"MemoryMax=384M", "-memory.allowedBytes=96MiB", "-retentionPeriod=14d", "-promscrape.config="+DefaultMetricsStateDir+"/"+scrapeName,
 		"Requires=motel-metrics-netns.service",
 		// Debian's 0755 would let every local uid read the series.
 		"ExecStartPre=+/usr/bin/chmod 0750 /var/lib/victoria-metrics\n")
@@ -675,6 +675,93 @@ func TestStoreClocksAgree(t *testing.T) {
 	}
 	if storeLag <= storeLatencyOffset {
 		t.Errorf("storeLag %s does not read past the latency offset %s", storeLag, storeLatencyOffset)
+	}
+}
+
+// unitLines is a unit file's lines as systemd reads them: a line ending
+// in a backslash joined to the next with a space, comments dropped.
+func unitLines(b []byte) []string {
+	joined := strings.ReplaceAll(string(b), "\\\n", " ")
+	return strings.Split(string(uncommented([]byte(joined))), "\n")
+}
+
+// A store the kernel kills at its MemoryMax= is back within seconds, and
+// systemd says only "Failed with result 'oom-kill'": the drop-in's
+// ExecStopPost= names the kill and the limit systemd holds at err, says
+// what is missed and what to do, and leaves the kill's line in
+// store-killed for motel to tell (checkKilled); after any other stop it
+// does nothing. Its script is run here as systemd would run it ($$ and
+// %% are systemd's $ and %, %n the unit), with systemctl and runuser
+// stood in for; that systemd runs it after a kill, with
+// $SERVICE_RESULT oom-kill, files its lines under the unit, and that
+// runuser writes the line as motel, was measured on Debian 13's systemd
+// 257 (notify/DESIGN-metrics.md, "An app's series").
+func TestStoreKillIsNamed(t *testing.T) {
+	var limit, script string
+	for _, line := range unitLines(unitVMDropIn) {
+		if v, ok := strings.CutPrefix(line, "MemoryMax="); ok {
+			limit = v
+		}
+		if v, ok := strings.CutPrefix(line, "ExecStopPost=-+/bin/sh -c '"); ok {
+			script = strings.TrimSuffix(v, "'")
+		}
+	}
+	if limit == "" || script == "" {
+		t.Fatalf("the drop-in has MemoryMax=%q and an ExecStopPost= script %q", limit, script)
+	}
+	if strings.Count(script, "%") != strings.Count(script, "%n")+2*strings.Count(script, "%%") {
+		t.Errorf("a %% other than %%n and %%%% in the script is a specifier systemd would expand: %s", script)
+	}
+	script = strings.NewReplacer("$$", "$", "%%", "%", "%n", "victoria-metrics.service").Replace(script)
+	dir := t.TempDir()
+	killed := filepath.Join(dir, storeKilledName)
+	mib, err := strconv.Atoi(strings.TrimSuffix(limit, "M"))
+	if err != nil {
+		t.Fatalf("MemoryMax=%s is not in M", limit)
+	}
+	for from, to := range map[string]string{
+		"systemctl show -p MemoryMax --value victoria-metrics.service":                                    "echo " + strconv.Itoa(mib<<20),
+		"/usr/sbin/runuser -u motel -- /usr/bin/tee -a " + DefaultMetricsStateDir + "/" + storeKilledName: "tee -a " + killed,
+	} {
+		if !strings.Contains(script, from) {
+			t.Fatalf("the script lacks %q: %s", from, script)
+		}
+		script = strings.ReplaceAll(script, from, to)
+	}
+	run := func(result string) string {
+		t.Helper()
+		cmd := exec.Command("/bin/sh", "-c", script)
+		cmd.Env = []string{"SERVICE_RESULT=" + result, "PATH=/usr/bin:/bin"}
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("SERVICE_RESULT=%s: %v\n%s", result, err, out)
+		}
+		return string(out)
+	}
+	for _, result := range []string{"success", "exit-code", "signal", "core-dump", "timeout", "resources", "start-limit-hit"} {
+		if out := run(result); out != "" {
+			t.Errorf("after a stop with %s it says %q", result, out)
+		}
+	}
+	if _, err := os.Stat(killed); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("a stop that was no kill left %s: %v", killed, err)
+	}
+	lines := strings.Split(strings.TrimSuffix(run("oom-kill"), "\n"), "\n")
+	if len(lines) != 2 || !strings.HasPrefix(lines[0], "<3>The metrics store was killed by the kernel at its memory limit (MemoryMax="+limit+")") ||
+		!strings.HasPrefix(lines[1], "<4>") {
+		t.Fatalf("after a kill it says %q", lines)
+	}
+	for _, want := range []string{"restarts it", "unanswered", eventStoreKilled, "every app", "systemctl edit victoria-metrics", "MemoryMax="} {
+		if !strings.Contains(lines[0]+lines[1], want) {
+			t.Errorf("after a kill it does not say %q: %q", want, lines)
+		}
+	}
+	b, err := os.ReadFile(killed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ev, n := killedEvent(b); n != 1 || ev.Details["limit"] != strconv.Itoa(mib)+" MiB" {
+		t.Errorf("the kill's line %q reads as %d kills, %+v", b, n, ev)
 	}
 }
 
