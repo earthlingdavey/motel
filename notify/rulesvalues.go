@@ -15,7 +15,7 @@ import (
 )
 
 // The store rules' numbers, evaluated on the box (DESIGN-metrics.md,
-// "How close each rule is"): each store rule's value query at the time
+// "How close each alert is"): each store rule's value query at the time
 // vmalert's newest evaluation can have read (now less the listing's
 // query offset), and the state and active-since queries once each at
 // the store's present, at most once per rulesEvery for the whole
@@ -212,8 +212,12 @@ type rulesEntry struct {
 type rulesView struct {
 	now func() time.Time
 
-	mu   sync.Mutex
-	last *rulesEntry
+	mu sync.Mutex
+	// held is each set of queries' newest evaluation, by rulesKey: two
+	// configs whose rules differ (a reload's old and new, for a moment)
+	// each keep theirs, rather than each read evaluating again. An entry
+	// rulesEvery old is dropped at the next get.
+	held map[string]*rulesEntry
 }
 
 // theRuleValues is the process's: the admin route and every config's
@@ -231,10 +235,19 @@ func (v *rulesView) get(ctx context.Context, logger *zap.Logger, store rulesQuer
 	key := rulesKey(q, asks)
 	v.mu.Lock()
 	now := v.now()
-	e := v.last
-	if e == nil || e.key != key || now.Sub(e.at) >= rulesEvery || now.Before(e.at) {
+	stale := func(e *rulesEntry) bool { return now.Sub(e.at) >= rulesEvery || now.Before(e.at) }
+	if v.held == nil {
+		v.held = map[string]*rulesEntry{}
+	}
+	for k, old := range v.held {
+		if stale(old) {
+			delete(v.held, k)
+		}
+	}
+	e := v.held[key]
+	if e == nil {
 		e = &rulesEntry{key: key, at: now, done: make(chan struct{})}
-		v.last = e
+		v.held[key] = e
 		v.mu.Unlock()
 		// The evaluation is the box's, not this reader's: one who goes
 		// away does not end it for the next. The entry is closed however

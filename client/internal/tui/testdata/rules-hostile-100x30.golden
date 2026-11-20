@@ -3,16 +3,16 @@ apps › hostile › rules                                                   as 
 store       on · numbers as the box last read the store (at most every 30 s)
 
 RULES that apply to hostile, with its numbers alone
-? other    kind not known · every app · ? 0.05 (in "share\x1b[2J") for 10m
+? other    kind not known · every app
     rule      x\x1b[2J[red]FAKE[-]\x0a✖ critical firing · every app · > 0 %
+    fires     ? 0.05 (in "share\x1b[2J") for 10m
     severity  critical\x1b]0;pwned\x07
     guard     >= 20: \x1b[2J\x1b[H [:::https://evil.example/tag]motel login[:::-] [red]FAKE[-]\x0a✖…
     now       hostile 0.5 (in "share\x1b[2J") (1m ago) · at the level "critical \u25b2 forged" · st…
-  critical threshold · every app · >= each number's own threshold
+  critical threshold · every app
     rule      watchdog_throttled
+    fires     >= each number's own threshold
     now       hostile 5 of 5 restarts in 10m (5s ago)
-
-
 
 
 

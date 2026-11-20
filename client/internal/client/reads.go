@@ -124,10 +124,13 @@ func (c *Client) Rules(ctx context.Context, app App) (wire.Rules, *Answer, error
 	var r wire.Rules
 	ans, err := c.read(ctx, "/_motel/apps/"+app.Name+"/rules", nil, &r)
 	if err == nil {
+		// A name the box's filter hid (Filtered, from Read's hold) says
+		// nothing of which app it was: not taken for another.
+		another := func(name string) bool { return name != Filtered && !Same(name, app.Name) }
 		for _, a := range r.Alerts {
-			other := a.App != "" && !Same(a.App, app.Name)
+			other := a.App != "" && another(a.App)
 			for _, rd := range a.Readings {
-				other = other || !Same(rd.App, app.Name)
+				other = other || another(rd.App)
 			}
 			if other {
 				err = c.NotMotel(ans, "it holds another app's rules")

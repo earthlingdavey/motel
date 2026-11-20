@@ -2,8 +2,11 @@ package notify
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"math"
+	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -290,9 +293,19 @@ func TestRulesViewShared(t *testing.T) {
 	if _, ok := v.get(context.Background(), zap.NewNop(), f, l.Store, asks); ok || f.count() != 2*per {
 		t.Errorf("a failure is kept for rulesEvery: %v, %d queries", ok, f.count())
 	}
-	// Other queries (another config's rules) are another evaluation.
+	// Other queries (another config's rules) are another evaluation,
+	// and each set keeps its own: two configs read in turn evaluate once
+	// each per rulesEvery, not at every read.
 	if _, ok := v.get(context.Background(), zap.NewNop(), f, l.Store, asks[1:]); !ok || f.count() != 2*per+queriesOf(asks[1:]) {
 		t.Errorf("other queries: %v, %d queries", ok, f.count())
+	}
+	now = now.Add(time.Second)
+	for range 3 {
+		v.get(context.Background(), zap.NewNop(), f, l.Store, asks)
+		v.get(context.Background(), zap.NewNop(), f, l.Store, asks[1:])
+	}
+	if f.count() != 3*per+queriesOf(asks[1:]) {
+		t.Errorf("two sets read in turn: %d queries, want one more evaluation of the first", f.count())
 	}
 }
 
@@ -394,4 +407,79 @@ func queriesOf(asks []valueAsk) int {
 		distinct[a.query] = true
 	}
 	return len(distinct) + 2
+}
+
+// TestPostDeployPins: post_deploy_regressed, one name for every
+// post_deploy line, is listed for the one app its lines pin it to, or
+// with the apps when they pin it to several, so an app's read can leave
+// it out for any other; a line of every app makes it every app's.
+func TestPostDeployPins(t *testing.T) {
+	for _, c := range []struct {
+		lines []string
+		app   string
+		apps  []string
+		scope string
+	}{
+		{[]string{"rule shop_regress post_deploy app shop {\n\t\tmax_5xx_share 0.02\n\t}"}, "shop", []string{"shop"}, "app shop"},
+		{[]string{"rule shop_regress post_deploy app shop {\n\t\tmax_5xx_share 0.02\n\t}", "rule blog_regress post_deploy app blog {\n\t\tmax_5xx_share 0.02\n\t}"}, "", []string{"blog", "shop"}, "apps blog, shop"},
+		{[]string{"rule shop_regress post_deploy app shop {\n\t\tmax_5xx_share 0.02\n\t}", "rule regress post_deploy {\n\t\tmax_5xx_share 0.02\n\t}"}, "", nil, "every app"},
+	} {
+		l, err := listRules(rulesApp(t, c.lines...), polled{}, chainRead{}, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		i := slices.IndexFunc(l.Alerts, func(e AlertListing) bool { return e.Name == eventPostDeployRegressed })
+		if i < 0 || l.Alerts[i].App != c.app || !slices.Equal(l.Alerts[i].PinnedTo, c.apps) {
+			t.Errorf("%q: %+v", c.lines, l.Alerts[i])
+			continue
+		}
+		if row := rowOf(string(rulesText(l, listingAt)), eventPostDeployRegressed); !strings.Contains(row, "  "+c.scope+"  ") {
+			t.Errorf("%q: the table's row %q, want the scope %q", c.lines, row, c.scope)
+		}
+	}
+}
+
+func rowOf(table, name string) string {
+	for _, l := range strings.Split(table, "\n") {
+		if strings.HasPrefix(l, name+" ") {
+			return l
+		}
+	}
+	return ""
+}
+
+// TestRulesSourceIsTheCommand: the people's source gives the listing
+// the admin route answers, byte for byte, from the same one evaluation
+// of the store: the command and the people read one shape and one set
+// of numbers.
+func TestRulesSourceIsTheCommand(t *testing.T) {
+	te := withEngine(t)
+	te.active.Metrics = rulesApp(t, listingLines...).Metrics
+	rulesInForce(t, te.active)
+	l, err := listRules(te.active, polled{}, chainRead{}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f := listingStore(l)
+	standIn(t, f)
+	got, err := rulesSource{a: te.active}.Rules(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	w, err := callAdmin(t, serveRules, http.MethodGet, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var admin RulesListing
+	if err := json.Unmarshal(w.Body.Bytes(), &admin); err != nil {
+		t.Fatal(err)
+	}
+	a, _ := json.Marshal(admin)
+	b, _ := json.Marshal(got)
+	if string(a) != string(b) || got.Store.Values != wire.StoreOn {
+		t.Errorf("the source:\n%s\nthe admin route:\n%s", b, a)
+	}
+	if n := f.count(); n != queriesOf(valueAsks(l)) {
+		t.Errorf("the two made %d queries, want one evaluation's %d", n, queriesOf(valueAsks(l)))
+	}
 }

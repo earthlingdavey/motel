@@ -85,16 +85,18 @@ func RulesFileSays(r wire.Rules) Line {
 }
 
 // RuleBlock is one rule's rows: its head in the client's words (its
-// mark, severity, kind, scope and condition), then under it, each after
-// the client's label, its name, a severity that is not motel's, each
-// guard's meaning, and each number with its age and state.
+// mark, severity, kind and scope), then under it, each after the
+// client's label, its name, what it fires on (a row of its own, so that
+// an 80-column window keeps the longest, disk_low's two levels, whole),
+// a severity that is not motel's, each guard's meaning, and each number
+// with its age and state.
 func RuleBlock(a wire.AlertListing, now time.Time) []Line {
 	m := ruleMark(a)
 	head := Line{ownC(m.Glyph()+" ", m.Class()), ownC(pad(SeverityWord(a.Severity), 9), m.Class()), own(ruleKind(a.Kind) + " · " + ruleScope(a))}
-	if c := ruleCondition(a); c != "" {
-		head = append(head, own(" · "+c))
-	}
 	rows := []Line{head, boxField("rule", boxT(a.Name))}
+	if c := ruleCondition(a); c != "" {
+		rows = append(rows, boxField("fires", own(c)))
+	}
 	if a.Severity != "" && SeverityWord(a.Severity) != a.Severity {
 		rows = append(rows, boxField("severity", boxT(a.Severity)))
 	}

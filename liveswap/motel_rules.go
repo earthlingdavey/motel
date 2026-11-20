@@ -3,6 +3,7 @@ package liveswap
 import (
 	"context"
 	"net/http"
+	"slices"
 
 	"go.uber.org/zap"
 
@@ -90,7 +91,8 @@ func (b boxHandle) boxRules(ctx context.Context, logger *zap.Logger) (wire.Rules
 
 // rules is the rules that apply to the handle's app, and of their
 // numbers that app's alone: each alert whose subject is an app, every
-// app or this one (a rule pinned to another app is left out), with the
+// app or this one (a rule pinned to another app, or to apps this is not
+// among, is left out), with the
 // readings of this app. Not a box check (a disk, the backups, a
 // certificate, the store's own), not another app's number, and not the
 // box's rules file, which is the box's.
@@ -101,7 +103,7 @@ func (a appHandle) rules(ctx context.Context, src RulesSource, logger *zap.Logge
 	}
 	out := wire.Rules{Store: all.Store, Alerts: []wire.AlertListing{}}
 	for _, al := range all.Alerts {
-		if al.Subject != "app" || al.App != "" && al.App != a.ma.name {
+		if al.Subject != "app" || al.App != "" && al.App != a.ma.name || len(al.PinnedTo) > 0 && !slices.Contains(al.PinnedTo, a.ma.name) {
 			continue
 		}
 		var mine []wire.Reading

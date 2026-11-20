@@ -93,7 +93,7 @@ func TestMonitorRules(t *testing.T) {
 		// a heading), or a box's value after the client's label.
 		if strings.HasPrefix(l, " ") && !strings.HasPrefix(l, "  ") ||
 			strings.HasPrefix(l, "    ") && !strings.HasPrefix(l, "    rule      ") && !strings.HasPrefix(l, "    severity  ") &&
-				!strings.HasPrefix(l, "    guard     ") && !strings.HasPrefix(l, "    now       ") {
+				!strings.HasPrefix(l, "    guard     ") && !strings.HasPrefix(l, "    now       ") && !strings.HasPrefix(l, "    fires     ") {
 			t.Errorf("a line that is neither the client's nor a labelled value: %q", l)
 		}
 		if strings.HasPrefix(strings.TrimLeft(l, " "), "✖ critical threshold · the box · < 0") || strings.HasPrefix(l, "▲ warning  threshold · every app · > 0") {
@@ -103,12 +103,15 @@ func TestMonitorRules(t *testing.T) {
 	for _, want := range []string{
 		"store       on · numbers as the box last read the store (at most every 30 s)\n",
 		"rules file  the file vmalert reads is not this config's render: the store's rules listed may not be the ones it runs (the box's journal says why)\n",
-		"▲ warning  threshold with guards · every app · > 5 % for 10m\n",
+		"▲ warning  threshold with guards · every app\n",
+		"    fires     > 5 % for 10m\n",
 		"    now       blog 6.12 % (",
-		"✖ critical threshold · app blog · > 1.5 s for 15m\n",
+		"✖ critical threshold · app blog\n",
+		"    fires     > 1.5 s for 15m\n",
 		"    now       blog no number (",
 		"    now       blog 2 of 5 restarts in 10m (",
-		"▲ warning  threshold · the box · >= 80 % warning, >= 90 % critical, each clears 5 % under\n",
+		"▲ warning  threshold · the box\n",
+		"    fires     >= 80 % warning, >= 90 % critical, each clears 5 % under\n",
 	} {
 		if !strings.Contains(r.stdout, want) {
 			t.Errorf("the output does not say %q:\n%s", want, r.stdout)

@@ -3,7 +3,7 @@ package wire
 import "time"
 
 // The rules a box alerts on, and how close each is to firing
-// (notify/DESIGN-metrics.md, "How close each rule is"). RulesListing
+// (notify/DESIGN-metrics.md, "How close each alert is"). RulesListing
 // is `moteld monitor rules --json`, root's on the box; Rules is the
 // people's, GET /_motel/rules (every rule, for a viewer of the box) and
 // GET /_motel/apps/<app>/rules (the rules that apply to one app, with
@@ -91,6 +91,11 @@ type AlertListing struct {
 	// Subject is box or app; App the one app a rule line is pinned to.
 	Subject string `json:"subject"`
 	App     string `json:"app,omitempty"`
+	// PinnedTo is the apps an alert's rule lines pin it to when every
+	// one of them is pinned (post_deploy_regressed, one name for all of
+	// an operator's post_deploy lines), App when there is one: an app's
+	// read keeps it for those apps alone. Not on the wire.
+	PinnedTo []string `json:"-"`
 	// Kind is threshold, guarded (a threshold with guards) or event
 	// (nothing to be close to).
 	Kind string `json:"kind"`

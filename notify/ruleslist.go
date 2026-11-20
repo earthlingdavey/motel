@@ -221,6 +221,7 @@ func listRules(a *App, seen polled, chain chainRead, budgets []liveswap.Watchdog
 			e.Source, e.Severity, e.Kind = sourceCheck, m.severity, kindEvent
 			if name == eventPostDeployRegressed {
 				e.Source = sourceOperator
+				e.App, e.PinnedTo = postDeployPins(a)
 			}
 			if m.measured {
 				e.Kind = kindThreshold
@@ -232,6 +233,29 @@ func listRules(a *App, seen polled, chain chainRead, budgets []liveswap.Watchdog
 		l.Alerts = append(l.Alerts, e)
 	}
 	return l, nil
+}
+
+// postDeployPins are the apps the config's post_deploy lines pin
+// post_deploy_regressed to, when every line is pinned (one name for
+// them all): the app when they name one, and the apps, sorted; none
+// when a line is of every app.
+func postDeployPins(a *App) (string, []string) {
+	var apps []string
+	for _, r := range a.Metrics.Rules {
+		switch {
+		case r.Kind != rulePostDeploy:
+		case r.App == "":
+			return "", nil
+		default:
+			apps = append(apps, r.App)
+		}
+	}
+	slices.Sort(apps)
+	apps = slices.Compact(apps)
+	if len(apps) == 1 {
+		return apps[0], apps
+	}
+	return "", apps
 }
 
 func storeRuleListing(e *AlertListing, r vmRule) {
@@ -353,9 +377,12 @@ func rulesText(l RulesListing, now time.Time) []byte {
 	_, _ = fmt.Fprintln(tw, "NAME\tSOURCE\tKIND\tSEVERITY\tSCOPE\tCONDITION\tNOW")
 	for _, e := range l.Alerts {
 		scope := e.Subject
-		if e.App != "" {
+		switch {
+		case e.App != "":
 			scope = "app " + e.App
-		} else if e.Subject == "app" {
+		case len(e.PinnedTo) > 1:
+			scope = "apps " + strings.Join(e.PinnedTo, ", ")
+		case e.Subject == "app":
 			scope = "every app"
 		}
 		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", e.Name, e.Source, e.Kind, e.Severity, scope, condition(e), readings(e, l.Store, now))
@@ -461,7 +488,7 @@ func readings(e AlertListing, store *StoreQueries, now time.Time) string {
 				v = numberText(*r.Value) + " of " + numberText(*r.Threshold) + " in " + shortDuration(time.Duration(r.WindowSeconds*float64(time.Second)))
 			}
 		}
-		if who := r.Instance + r.App; who != "" {
+		if who := strings.TrimSpace(r.Instance + " " + r.App); who != "" {
 			v = who + " " + v
 		}
 		if r.Level != "" {

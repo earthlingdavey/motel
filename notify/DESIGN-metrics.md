@@ -1249,8 +1249,14 @@ gave no series of at that time is a reading with its state and no
 value. Any query that fails fails the whole evaluation: the listing's
 `store.values` is then `unanswered` and no store rule has readings, so
 none reads `inactive` for a state not read. The cache is keyed by the
-socket, the timing and every query, so a config whose rules differ
-never reads another's numbers.
+socket, the timing and every query, one entry a set, so a config whose
+rules differ never reads another's numbers, and two read in turn (a
+reload's old and new, for a moment) each evaluate once per 30 s.
+
+`post_deploy_regressed` is one name for every `post_deploy` line: when
+every line is pinned to an app, the listing names the app (`app`, one)
+or keeps the apps beside the entry, off the wire (`PinnedTo`), so a
+viewer of another app is not told it applies to theirs.
 
 **What a check lists.** For motel's own detectors, the number each
 already holds, with `measured_at`: nothing is polled for the listing.
