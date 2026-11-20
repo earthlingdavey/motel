@@ -46,7 +46,7 @@ func hostileRules() wire.Rules {
 // rulesOf is the rules of app as a box answers an app's read: those of
 // every app and app's own, with app's readings alone.
 func rulesOf(all wire.Rules, app string) wire.Rules {
-	out := wire.Rules{Store: all.Store, Alerts: []wire.AlertListing{}}
+	out := wire.Rules{Store: all.Store, RulesFile: all.RulesFile, Alerts: []wire.AlertListing{}}
 	for _, a := range all.Alerts {
 		if a.Subject != "app" || a.App != "" && a.App != app {
 			continue
@@ -134,8 +134,8 @@ func TestMonitorRules(t *testing.T) {
 		t.Errorf("off: exit %d, stdout %q, stderr %q", r.code, r.stdout, r.stderr)
 	}
 	for _, c := range []struct{ store, says string }{
-		{wire.StoreUnanswered, "127.0.0.1 could not tell how close the store's rules are: its metrics store did not answer it in time; motel's own checks' readings came, and are not printed (the screens show them: motel, then :rules)"},
-		{"asleep", `127.0.0.1 could not tell how close the store's rules are: it says its store is "asleep", a word this client does not know; motel's own checks' readings came, and are not printed (the screens show them: motel, then :rules)`},
+		{wire.StoreUnanswered, "127.0.0.1 could not tell how close the store's rules are: its metrics store did not answer it in time; the readings of motel's own checks, which do not need the store, are not printed (the screens show any: motel, then :rules)"},
+		{"asleep", `127.0.0.1 could not tell how close the store's rules are: it says its store is "asleep", a word this client does not know; the readings of motel's own checks, which do not need the store, are not printed (the screens show any: motel, then :rules)`},
 	} {
 		fb.rules.Store = c.store
 		r := runKey(t, fb, nil, "monitor", "rules", "--json")
@@ -149,7 +149,7 @@ func TestMonitorRules(t *testing.T) {
 	}
 	// On --app the sentence names the app's rules of the store.
 	fb.rules.Store = wire.StoreUnanswered
-	if r := runKey(t, fb, nil, "monitor", "rules", "--app", "blog"); r.code != 3 || !strings.Contains(r.stderr, "could not tell how close blog's rules of the store are: its metrics store did not answer it in time; motel's own checks' readings came") {
+	if r := runKey(t, fb, nil, "monitor", "rules", "--app", "blog"); r.code != 3 || !strings.Contains(r.stderr, "could not tell how close blog's rules of the store are: its metrics store did not answer it in time; the readings of motel's own checks, which do not need the store, are not printed (the screens show any: motel, then :rules blog)") {
 		t.Errorf("--app, unanswered: exit %d, stderr %q", r.code, r.stderr)
 	}
 	// A store that is not a word is not moteld's answer, and none of it

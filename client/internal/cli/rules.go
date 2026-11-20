@@ -70,9 +70,14 @@ func (r *runner) monitorRules() *cobra.Command {
 			}
 			// Not knowing the store's numbers is could not tell, as for any
 			// read the box could not answer: a script would read a rule with
-			// no number as one nowhere near firing. The checks' own readings
-			// do not depend on the store, and came: said, not printed.
-			const checks = "; motel's own checks' readings came, and are not printed (the screens show them: motel, then :rules)"
+			// no number as one nowhere near firing. The readings of motel's
+			// own checks do not need the store: said, whether the answer
+			// holds any or not, as not printed.
+			screen := ":rules"
+			if app.Name != "" {
+				screen = ":rules " + app.Name
+			}
+			checks := "; the readings of motel's own checks, which do not need the store, are not printed (the screens show any: motel, then " + screen + ")"
 			switch rules.Store {
 			case wire.StoreOn, wire.StoreOff:
 			case wire.StoreUnanswered:
