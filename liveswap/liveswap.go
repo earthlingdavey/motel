@@ -124,6 +124,11 @@ type App struct {
 	// holds, which GET /_motel/apps/<app>/alerts reads; nil, with no
 	// monitor block that raises anything, is "monitor":"off".
 	alertsSource AlertsSource
+	// rulesSource is notify's (SetRulesSource): the rules it alerts on,
+	// with the numbers each is judged by, which GET /_motel/rules and
+	// GET /_motel/apps/<app>/rules read; nil, with no monitor block that
+	// raises anything, is "store":"off" and no rule.
+	rulesSource RulesSource
 	// seriesSource is the metrics store's (SetSeriesSource), which GET
 	// /_motel/apps/<app>/series reads; nil, with no metrics line, is
 	// "store":"off".

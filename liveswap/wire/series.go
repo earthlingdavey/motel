@@ -35,13 +35,6 @@ type Series struct {
 	Panels []Panel `json:"panels"`
 }
 
-// The words of Series.Store.
-const (
-	StoreOn         = "on"
-	StoreOff        = "off"
-	StoreUnanswered = "unanswered"
-)
-
 // Panel is one number over the window.
 type Panel struct {
 	// Name is one of the Panel names below, and Unit its unit.

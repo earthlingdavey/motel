@@ -62,6 +62,8 @@ func (u *UI) render() {
 		door.SetText(u.page, door.Lines(u.S.BackupsViewFit(now, u.w, door.Width), u.Colour))
 	case model.ScreenAlerts:
 		door.SetText(u.page, door.Lines(u.S.BoxAlertsViewFit(now, u.w, door.Width), u.Colour))
+	case model.ScreenRules, model.ScreenAppRules:
+		door.SetText(u.page, door.Lines(u.S.RulesViewFit(v.App, now, u.w, door.Width), u.Colour))
 	case model.ScreenMetrics:
 		door.SetText(u.page, door.Lines(u.S.MetricsViewFit(v.App, v.Range, now, u.w, u.h-3, door.Width), u.Colour))
 	case model.ScreenHelp:
@@ -146,6 +148,10 @@ func (u *UI) crumbs(v model.View, now time.Time) (model.Line, model.Line) {
 		return ownLine(":backups"), u.S.BackupsAsOf(now)
 	case model.ScreenAlerts:
 		return ownLine(":alerts"), u.S.BoxAlertsAsOf(now)
+	case model.ScreenRules:
+		return ownLine(":rules"), u.S.RulesAsOf("", now)
+	case model.ScreenAppRules:
+		return ownLine("apps › " + v.App + " › rules"), u.S.RulesAsOf(v.App, now)
 	case model.ScreenMetrics:
 		return ownLine("apps › " + v.App + " › metrics " + v.Range), u.S.MetricsAsOf(v.App, v.Range, now)
 	case model.ScreenHelp, model.ScreenStopHelp:
@@ -168,6 +174,8 @@ var footers = map[model.Screen]string{
 	model.ScreenBox:      "↑↓ scroll  y json  c command  esc back  ? more",
 	model.ScreenBackups:  "↑↓ scroll  y json  c command  esc back  ? more",
 	model.ScreenAlerts:   "↑↓ scroll  y json  c command  esc back  ? more",
+	model.ScreenRules:    "↑↓ scroll  y json  c command  esc back  ? more",
+	model.ScreenAppRules: "↑↓ scroll  y json  c command  esc back  ? more",
 	model.ScreenMetrics:  "↑↓ scroll  t window  y json  c cmd  esc back  ? more",
 	model.ScreenHelp:     "↑↓ scroll  esc close  q quit",
 	model.ScreenRefused:  "↑↓ scroll  r ask again  ? keys  q quit",
@@ -489,6 +497,7 @@ VIEWS (type after :)
  box                          what the box runs (viewers of the box)
  backups                      what the box says of its backups (viewers of the box)
  alerts                       what fires on the box, and its silences (viewers of the box)
+ rules [<app>]                each rule the box alerts on, how close it is (no app: viewers of the box)
  metrics <app> [<window>]     one app's numbers over 1h (or 24h, 7d, 14d), drawn
  help                         this
 

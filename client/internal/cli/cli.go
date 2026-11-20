@@ -154,7 +154,7 @@ func (r *runner) tree() *cobra.Command {
 	root := &cobra.Command{
 		Use:           "motel",
 		Short:         "Read a motel box over HTTPS (experimental)",
-		Long:          "motel reads a box over HTTPS: who your key is there and the apps it may view,\nan app's status, deploys, alerts and numbers over time, and the box's own\nstate, backups and alerts.\n\n" + screenLong + "\n\n" + experimental,
+		Long:          "motel reads a box over HTTPS: who your key is there and the apps it may view,\nan app's status, deploys, alerts, rules and numbers over time, and the box's\nown state, backups, alerts and rules.\n\n" + screenLong + "\n\n" + experimental,
 		SilenceErrors: true,
 		SilenceUsage:  true,
 	}

@@ -3,7 +3,8 @@
     "socket": "/run/motel-metrics/vm.sock",
     "query_offset_seconds": 65,
     "state_query": "last_over_time(ALERTS[2m])",
-    "active_since_query": "last_over_time(ALERTS_FOR_STATE[2m])"
+    "active_since_query": "last_over_time(ALERTS_FOR_STATE[2m])",
+    "values": "on"
   },
   "alerts": [
     {
@@ -23,7 +24,22 @@
       "op": ">",
       "threshold": 0.9,
       "unit": "share",
-      "for_seconds": 600
+      "for_seconds": 600,
+      "readings": [
+        {
+          "app": "blog",
+          "value": 0.55,
+          "measured_at": "2026-11-13T12:00:00Z",
+          "state": "inactive"
+        },
+        {
+          "app": "shop",
+          "value": 0.93104,
+          "measured_at": "2026-11-13T12:00:00Z",
+          "state": "firing",
+          "active_since": "2026-11-13T11:48:00Z"
+        }
+      ]
     },
     {
       "name": "backup_run_failed",
@@ -154,6 +170,14 @@
           "query": "max by (path) (present_over_time(motel_disk_avail_bytes[42h] offset 35h))",
           "meaning": "the store holds a sample older than 35h: over less history the lines are too short to judge"
         }
+      ],
+      "readings": [
+        {
+          "instance": "/srv/motel",
+          "value": -1234570000,
+          "measured_at": "2026-11-13T12:00:00Z",
+          "state": "inactive"
+        }
       ]
     },
     {
@@ -244,6 +268,21 @@
           "match": "on (app)",
           "meaning": "motel's last push says this config observes the app: one whose observe line is gone is not read"
         }
+      ],
+      "readings": [
+        {
+          "app": "blog",
+          "value": 0,
+          "measured_at": "2026-11-13T12:00:00Z",
+          "state": "inactive"
+        },
+        {
+          "app": "shop",
+          "value": 0.0612346,
+          "measured_at": "2026-11-13T12:00:00Z",
+          "state": "pending",
+          "active_since": "2026-11-13T11:56:00Z"
+        }
       ]
     },
     {
@@ -306,7 +345,21 @@
       "op": ">",
       "threshold": 0.8,
       "unit": "share",
-      "for_seconds": 300
+      "for_seconds": 300,
+      "readings": [
+        {
+          "app": "blog",
+          "value": 0.55,
+          "measured_at": "2026-11-13T12:00:00Z",
+          "state": "inactive"
+        },
+        {
+          "app": "shop",
+          "value": 0.93104,
+          "measured_at": "2026-11-13T12:00:00Z",
+          "state": "inactive"
+        }
+      ]
     },
     {
       "name": "metrics_rules_down",
@@ -345,6 +398,13 @@
         {
           "query": "max(present_over_time(vm_free_disk_space_bytes[6h] offset 5h))",
           "meaning": "the store holds a sample older than 5h: over less history the lines are too short to judge"
+        }
+      ],
+      "readings": [
+        {
+          "value": 53687100000,
+          "measured_at": "2026-11-13T12:00:00Z",
+          "state": "inactive"
         }
       ]
     },
@@ -415,6 +475,14 @@
           "query": "(max by (app) (tlast_over_time(motel_app_observed{app=\"shop\"}[75s])) > scalar(max(tlast_over_time(process_start_time_seconds{job=\"moteld\"}[75s]))) - 15)",
           "match": "on (app)",
           "meaning": "motel's last push says this config observes the app: one whose observe line is gone is not read"
+        }
+      ],
+      "readings": [
+        {
+          "app": "shop",
+          "measured_at": "2026-11-13T12:00:00Z",
+          "state": "firing",
+          "active_since": "2026-11-13T11:30:00Z"
         }
       ]
     },

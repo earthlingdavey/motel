@@ -192,6 +192,8 @@ func decodesAsWire(t *testing.T, what string, w *httptest.ResponseRecorder) {
 		check(body, new(wire.WhoAmI))
 	case w.Code == http.StatusOK && strings.Contains(what, "/alerts"):
 		check(body, new(wire.Alerts))
+	case w.Code == http.StatusOK && strings.Contains(what, "/rules"):
+		check(body, new(wire.Rules))
 	case w.Code == http.StatusOK && strings.Contains(what, "/series"):
 		check(body, new(wire.Series))
 	case w.Code == http.StatusOK && strings.Contains(what, "/_motel/apps"):
@@ -328,6 +330,18 @@ func TestWireHandlerBodies(t *testing.T) {
 	add("GET /_motel/apps/demo/alerts with a deploy token", do(t, h, http.MethodGet, "/_motel/apps/demo/alerts", globalToken(t), ""))
 	add("GET /_motel/apps/demo/alerts as a person with no grant", person("/_motel/apps/demo/alerts", people.dave))
 
+	// The rules: with no monitor block; the store unanswered; what applies
+	// to demo, with demo's numbers; every rule, for the box's viewer; the
+	// box could not list them.
+	add("GET /_motel/apps/demo/rules as a viewer of demo, no monitor block", person("/_motel/apps/demo/rules", people.alice))
+	h.app.SetRulesSource(&fakeRules{l: wire.RulesListing{Store: &wire.StoreQueries{Values: wire.StoreUnanswered}, Alerts: []wire.AlertListing{}}})
+	add("GET /_motel/apps/demo/rules as a viewer of demo, the store unanswered", person("/_motel/apps/demo/rules", people.alice))
+	h.app.SetRulesSource(&fakeRules{l: rulesListing()})
+	add("GET /_motel/apps/demo/rules as a viewer of demo", person("/_motel/apps/demo/rules", people.alice))
+	add("GET /_motel/rules as a viewer of the box", person("/_motel/rules", people.carol))
+	add("GET /_motel/rules as a viewer of demo", person("/_motel/rules", people.alice))
+	h.app.SetRulesSource(&fakeRules{err: errors.New("reading vmalert's unit")})
+	add("GET /_motel/rules as a viewer of the box, no listing", person("/_motel/rules", people.carol))
 	// An app's series, for a person: with no metrics line, the store
 	// unanswered, and a day of demo's; a window refused, a deploy token,
 	// and a person whose grants do not cover it.

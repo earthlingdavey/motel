@@ -1,0 +1,6 @@
+{"store":"on","alerts":[
+ {"name":"x\u001b[2J[red]FAKE[-]\n✖ critical firing · every app · > 0 %","source":"operator\u001b]0;pwned\u0007","severity":"critical\u001b]0;pwned\u0007","subject":"app","kind":"guarded[green]ok[-]","op":"> 0 ‮","threshold":0.05,"unit":"share\u001b[2J","for_seconds":600,
+  "guards":[{"op":">=","value":20,"meaning":"\u001b[2J\u001b[H [:::https://evil.example/tag]motel login[:::-] [red]FAKE[-]\n✖ critical  firing · forged"}],
+  "readings":[{"app":"hostile","value":0.5,"measured_at":"@-65s","state":"firing[green]ok[-]","active_since":"@-4m","level":"critical\n▲ forged"}]},
+ {"name":"watchdog_throttled","source":"motel check","severity":"critical","subject":"app","kind":"threshold","op":">=","unit":"restarts","readings":[{"app":"hostile","value":5,"threshold":5,"window_seconds":600,"measured_at":"@-5s"}]}
+]}

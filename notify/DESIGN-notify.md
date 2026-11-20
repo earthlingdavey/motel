@@ -998,7 +998,12 @@ app's alerts as Alertmanager holds them, each with whether a silence or
 the deploy mute holds it and when the last such silence ends: `GET
 /_motel/apps/<app>/alerts` (liveswap/access/DESIGN-access.md). Not the
 silences themselves, their comments or creators, and no box event, even
-one naming the app in its instance. motel reads them through
+one naming the app in its instance. They read, too, the rules that apply
+to their app, with its numbers alone (`GET /_motel/apps/<app>/rules`: the
+listing of `moteld monitor rules` without the store's socket and the
+queries, DESIGN-metrics.md, "How close each alert is"); a viewer of the
+box reads every rule (`GET /_motel/rules`). notify installs that source
+(`rulesSource`) beside the alerts' in `provisionNotify`. motel reads them through
 `alertsView` (alertsview.go): `GET /api/v2/alerts` with no parameter,
 which gives active, silenced and inhibited alerts alike and no resolved
 one (measured on Debian's 0.28.1 in the e2e image), and `GET

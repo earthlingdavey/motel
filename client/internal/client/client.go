@@ -956,6 +956,33 @@ func hold(v any) string {
 		if !alertWordRe.MatchString(a.Monitor) {
 			return "its monitor is not a word"
 		}
+	case *wire.Rules:
+		// What the client prints of the rules as a word: the store's,
+		// which a client reads as not knowing when it does not know it,
+		// quoted, and a reading's app, held to the app grammar (an app's
+		// read is compared with the app asked for). Everything else is the
+		// box's text, each on a row after the client's label and capped,
+		// or a word the client says as not known when it does not know it
+		// (a kind, a state, an op, a unit), or a number the client writes.
+		if !alertWordRe.MatchString(a.Store) {
+			return "its store is not a word"
+		}
+		for i := range a.Alerts {
+			al := &a.Alerts[i]
+			if al.App != "" && !held(&al.App, appRe.MatchString) {
+				return "a name in it is no app name"
+			}
+			for j := range al.Apps {
+				if !held(&al.Apps[j], appRe.MatchString) {
+					return "a name in it is no app name"
+				}
+			}
+			for j := range al.Readings {
+				if r := &al.Readings[j]; r.App != "" && !held(&r.App, appRe.MatchString) {
+					return "a name in it is no app name"
+				}
+			}
+		}
 	case *wire.Series:
 		return holdSeries(a)
 	case *wire.Apps:
@@ -1174,6 +1201,8 @@ func identity(v any) shape {
 		return shape{strs: []string{"monitor"}, lists: []string{"alerts"}}
 	case *wire.BoxAlerts:
 		return shape{strs: []string{"monitor"}, lists: []string{"alerts", "silences"}}
+	case *wire.Rules:
+		return shape{strs: []string{"store"}, lists: []string{"alerts"}}
 	case *wire.Series:
 		return shape{strs: []string{"store", "window"}, lists: []string{"panels"}}
 	}

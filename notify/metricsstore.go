@@ -202,10 +202,32 @@ func (c *storeClient) queryRange(ctx context.Context, q string, start, end time.
 	return parseQueryAnswer(data)
 }
 
+// instantAt is an instant query at t, or at the store's present for
+// the zero t, as the rules' numbers are read (rulesvalues.go): a point
+// that is no number (NaN, an infinity: a share of no responses, a
+// working set over a cap of 0) is left out of its series, never a
+// failure of the whole answer.
+func (c *storeClient) instantAt(ctx context.Context, q string, t time.Time) ([]series, error) {
+	v := url.Values{"query": {q}}
+	if !t.IsZero() {
+		v.Set("time", strconv.FormatFloat(float64(t.UnixMilli())/1000, 'f', 3, 64))
+		v.Set("latency_offset", promDuration(storeLatencyOffset))
+	}
+	data, err := c.do(ctx, http.MethodGet, "/api/v1/query?"+v.Encode(), nil, "")
+	if err != nil {
+		return nil, err
+	}
+	return parseAnswer(data, true)
+}
+
 // parseQueryAnswer reads the Prometheus query API's answer, a vector or
 // a matrix; anything else, or a status that is not success, is an
 // error.
-func parseQueryAnswer(data []byte) ([]series, error) {
+func parseQueryAnswer(data []byte) ([]series, error) { return parseAnswer(data, false) }
+
+// parseAnswer is parseQueryAnswer; with finite, a point whose value is
+// no number is left out rather than failing the answer.
+func parseAnswer(data []byte, finite bool) ([]series, error) {
 	var ans struct {
 		Status string `json:"status"`
 		Error  string `json:"error"`
@@ -236,6 +258,9 @@ func parseQueryAnswer(data []byte) ([]series, error) {
 		}
 		for _, pr := range pairs {
 			p, err := parsePoint(pr)
+			if finite && errors.Is(err, errNotANumber) {
+				continue
+			}
 			if err != nil {
 				return nil, err
 			}
@@ -246,7 +271,11 @@ func parseQueryAnswer(data []byte) ([]series, error) {
 	return out, nil
 }
 
-var errBadPoint = errors.New("the metrics store's answer: a point is not [time, \"value\"]")
+var (
+	errBadPoint = errors.New("the metrics store's answer: a point is not [time, \"value\"]")
+	// errNotANumber is a point whose value is NaN or an infinity.
+	errNotANumber = fmt.Errorf("%w: its value is no number", errBadPoint)
+)
 
 func parsePoint(pr []any) (point, error) {
 	if len(pr) != 2 {
@@ -258,7 +287,10 @@ func parsePoint(pr []any) (point, error) {
 		return point{}, errBadPoint
 	}
 	v, err := strconv.ParseFloat(vs, 64)
-	if err != nil || math.IsNaN(v) || math.IsInf(v, 0) {
+	if err == nil && (math.IsNaN(v) || math.IsInf(v, 0)) {
+		return point{}, errNotANumber
+	}
+	if err != nil {
 		return point{}, errBadPoint
 	}
 	sec := int64(ts)

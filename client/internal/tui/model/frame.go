@@ -20,6 +20,9 @@ const (
 	ScreenBox
 	ScreenBackups
 	ScreenAlerts
+	// ScreenRules is the box's rules; ScreenAppRules an app's (View.App).
+	ScreenRules
+	ScreenAppRules
 	// ScreenMetrics is an app's numbers over a window, opened from its
 	// screen.
 	ScreenMetrics
@@ -58,7 +61,7 @@ func (s *Session) askAgain(now time.Time) Line {
 }
 
 // screenReads is the read behind each screen that has one.
-var screenReads = map[Screen]Kind{ScreenApps: KApps, ScreenApp: KStatus, ScreenRecord: KDeploy, ScreenMe: KWhoAmI, ScreenBox: KBox, ScreenBackups: KBackups, ScreenAlerts: KBoxAlerts, ScreenMetrics: KSeries}
+var screenReads = map[Screen]Kind{ScreenApps: KApps, ScreenApp: KStatus, ScreenRecord: KDeploy, ScreenMe: KWhoAmI, ScreenBox: KBox, ScreenBackups: KBackups, ScreenAlerts: KBoxAlerts, ScreenRules: KBoxRules, ScreenAppRules: KRules, ScreenMetrics: KSeries}
 
 // CommandArgs is the motel command line that reads what v shows, as
 // its arguments: the command's words, --box so it works pasted
@@ -77,13 +80,18 @@ func (s *Session) commandArgs(v View, json bool) ([]string, bool) {
 	}
 	args := []string{"motel"}
 	var pos []string
-	for _, w := range strings.Fields(a.Command) {
-		switch w {
-		case "<app>":
+	words := strings.Fields(a.Command)
+	for i := 0; i < len(words); i++ {
+		switch w := words[i]; {
+		case strings.HasPrefix(w, "--") && i+1 < len(words) && words[i+1] == "<app>":
+			// A flag's value: an app's name, which never begins with -.
+			args = append(args, w, v.App)
+			i++
+		case w == "<app>":
 			pos = append(pos, v.App)
-		case "<version>":
+		case w == "<version>":
 			pos = append(pos, v.Version)
-		case "<range>":
+		case w == "<range>":
 			args = append(args, v.Range)
 		default:
 			args = append(args, w)
@@ -165,6 +173,10 @@ func (s *Session) Body(v View) ([]byte, time.Time, bool) {
 		if s.BoxAlertsSt != nil {
 			return s.BoxAlertsSt.Body, s.BoxAlertsSt.At, true
 		}
+	case ScreenRules, ScreenAppRules:
+		if g, _ := s.rules(v.App); g != nil {
+			return g.Body, g.At, true
+		}
 	case ScreenMetrics:
 		// An answer held beside a refusal of the app's status is not
 		// shown, here as on the screen.
@@ -197,6 +209,9 @@ func (s *Session) readErr(v View) error {
 		return s.BackupsErr
 	case ScreenAlerts:
 		return s.BoxAlertsErr
+	case ScreenRules, ScreenAppRules:
+		_, err := s.rules(v.App)
+		return err
 	case ScreenMetrics:
 		_, err := s.Series(v.App, v.Range)
 		return err

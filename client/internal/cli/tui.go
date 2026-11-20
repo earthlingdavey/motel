@@ -37,16 +37,16 @@ import (
 const screenLong = "motel alone shows them on screens in the terminal, over the same reads the\n" +
 	"commands make: the apps you may view sorted by what needs a look, an app's state\n" +
 	"and deploys, a deploy's record laid out for reading a failure, who you are, the\n" +
-	"box, its backups and its alerts. It only reads, well inside the box's limit of 2\n" +
-	"requests a second and 60 at once: up to 30 at once to start, then at most 1.5 a\n" +
-	"second. It signs one token for ten minutes at a time, so a hardware key is\n" +
-	"touched about every nine, and never asks for a passphrase or a PIN: a key with a\n" +
-	"passphrase must be in the agent (ssh-add), and a hardware key that requires its\n" +
-	"PIN cannot be used there yet. ? lists the keys; c shows the command for a screen\n" +
-	"that reads the box, y the box's answer as JSON. It is asked with your own key\n" +
-	"only, and takes no --json. With no arguments at all it prints this help instead\n" +
-	"when stdout is not a terminal, and, with a line under it saying why, when it\n" +
-	"finds no box or key to read with, or no screen to draw on."
+	"box, its backups, its alerts and its rules. It only reads, well inside the box's\n" +
+	"limit of 2 requests a second and 60 at once: up to 30 at once to start, then at\n" +
+	"most 1.5 a second. It signs one token for ten minutes at a time, so a hardware\n" +
+	"key is touched about every nine, and never asks for a passphrase or a PIN: a key\n" +
+	"with a passphrase must be in the agent (ssh-add), and a hardware key that\n" +
+	"requires its PIN cannot be used there yet. ? lists the keys; c shows the command\n" +
+	"for a screen that reads the box, y the box's answer as JSON. It is asked with\n" +
+	"your own key only, and takes no --json. With no arguments at all it prints this\n" +
+	"help instead when stdout is not a terminal, and, with a line under it saying\n" +
+	"why, when it finds no box or key to read with, or no screen to draw on."
 
 // screen makes motel alone, the root, open the screens: with its own
 // --box and --key, as every command that asks the box has, and the
@@ -402,6 +402,20 @@ func (l live) Series(ctx context.Context, app, rng string) (model.Got[wire.Serie
 
 func (l live) BoxAlerts(ctx context.Context) (model.Got[wire.BoxAlerts], error) {
 	v, ans, err := l.c.BoxAlerts(ctx)
+	return got(v, ans, err)
+}
+
+func (l live) Rules(ctx context.Context, app string) (model.Got[wire.Rules], error) {
+	a, err := client.ParseApp(app)
+	if err != nil {
+		return model.Got[wire.Rules]{}, argument(err)
+	}
+	v, ans, err := l.c.Rules(ctx, a)
+	return got(v, ans, err)
+}
+
+func (l live) BoxRules(ctx context.Context) (model.Got[wire.Rules], error) {
+	v, ans, err := l.c.BoxRules(ctx)
 	return got(v, ans, err)
 }
 

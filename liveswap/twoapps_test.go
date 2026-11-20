@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"go.uber.org/zap"
 
@@ -37,7 +38,9 @@ import (
 // store holds a series of each app, its points carrying a number of
 // the app's: an app's series row holds its own app's number alone. It reads the route tables, and a row
 // whose shape it does not know fails it, so a route added without its
-// expectations fails here.
+// expectations fails here. The rules source lists a rule of every app
+// with each app's number, a rule pinned to each, and the box's own: an
+// app's read of the rules holds its own number and pinned rule alone.
 
 // twoApps are the test's apps: names no JSON key or word of a body
 // holds by chance.
@@ -145,6 +148,7 @@ func newTwoAppsRig(t *testing.T) *twoAppsRig {
 			Summary: name + ": " + alertCanary(name), State: "active"}})
 	}
 	app.SetAlertsSource(&fakeAlerts{held: held, ok: true})
+	app.SetRulesSource(&fakeRules{l: twoAppsRules()})
 	// The store holds a series of each app whose points carry the app's
 	// series canary, a number: no answer to any caller may hold another
 	// app's, and each app's 200 holds its own.
@@ -162,16 +166,40 @@ func seriesCanary(app string) float64 {
 	return map[string]float64{"appalpha": 731948265, "appbravo": 582017346}[app]
 }
 
-// ownCanary is what each app-scoped row's 200 holds of its own app:
-// the alerts' canary, the series' number.
-func ownCanary(read, app string) string {
-	switch read {
-	case "alerts":
-		return alertCanary(app)
-	case "series":
-		return strconv.FormatFloat(seriesCanary(app), 'f', -1, 64)
+// The rules canaries: each app's number of a rule of every app, and the
+// name of the rule pinned to it, which only a read of that app (or the
+// box's) holds; and the box's own rule's filesystem, which only the
+// box's holds.
+var (
+	ruleValueCanary = map[string]float64{"appalpha": 0.4417, "appbravo": 0.7731}
+	pinnedRule      = map[string]string{"appalpha": "pinned_first", "appbravo": "pinned_second"}
+)
+
+const boxRuleCanary = "/srv/box-rule-canary"
+
+// ruleCanaries are what a read of app's rules holds of app alone.
+func ruleCanaries(app string) []string {
+	return []string{strconv.FormatFloat(ruleValueCanary[app], 'f', -1, 64), pinnedRule[app]}
+}
+
+// twoAppsRules is the box's listing: a rule of every app with each
+// app's number, a rule pinned to each, a box rule and a box check whose
+// readings name each app in their instance.
+func twoAppsRules() wire.RulesListing {
+	at := time.Date(2026, 11, 13, 12, 0, 0, 0, time.UTC)
+	l := wire.RulesListing{Store: &wire.StoreQueries{Socket: "/run/motel-metrics/vm.sock", Values: wire.StoreOn}, Alerts: []wire.AlertListing{
+		{Name: "backup_stale", Source: "motel check", Severity: "critical", Subject: "box", Kind: "threshold"},
+		{Name: "disk_filling", Source: "operator", Severity: "critical", Subject: "box", Kind: "threshold", ValueQuery: "min by (path) (x)",
+			Readings: []wire.Reading{{Instance: boxRuleCanary, Value: num(-1), MeasuredAt: at, State: wire.RuleInactive}}},
+		{Name: "errors_high", Source: "operator", Severity: "warning", Subject: "app", Kind: "threshold", ValueQuery: "sum by (app) (x)"},
+	}}
+	for _, name := range twoApps {
+		l.Alerts[0].Readings = append(l.Alerts[0].Readings, wire.Reading{Instance: name, Value: num(60), MeasuredAt: at})
+		l.Alerts[2].Readings = append(l.Alerts[2].Readings, wire.Reading{App: name, Value: num(ruleValueCanary[name]), MeasuredAt: at, State: wire.RulePending, ActiveSince: &at})
+		l.Alerts = append(l.Alerts, wire.AlertListing{Name: pinnedRule[name], Source: "operator", Severity: "warning", Subject: "app", App: name, Kind: "threshold",
+			ValueQuery: `sum by (app) (x{app="` + name + `"})`, Readings: []wire.Reading{{App: name, Value: num(0.5), MeasuredAt: at, State: wire.RuleInactive}}})
 	}
-	return ""
+	return l
 }
 
 // boxAlertCanary is in the box's own alert, which no app's read holds.
@@ -203,12 +231,31 @@ func (r *twoAppsRig) authorization(t *testing.T, caller string) string {
 // app, or nil for a read this test does not know.
 func motelAppRequest(rt motelAppRoute, app string) *http.Request {
 	switch rt.read {
-	case "alerts":
-		return httptest.NewRequest(http.MethodGet, "http://"+personBox+motelAppsPrefix+app+"/alerts", nil)
+	case "alerts", "rules":
+		return httptest.NewRequest(http.MethodGet, "http://"+personBox+motelAppsPrefix+app+"/"+rt.read, nil)
 	case "series":
 		return httptest.NewRequest(http.MethodGet, "http://"+personBox+motelAppsPrefix+app+"/series?range=24h", nil)
 	}
 	return nil
+}
+
+// appReadCanaries are what an app-scoped read of app holds of app
+// alone, and boxReadCanaries what none holds: the box's own.
+func appReadCanaries(read, app string) []string {
+	switch read {
+	case "rules":
+		return ruleCanaries(app)
+	case "series":
+		return []string{strconv.FormatFloat(seriesCanary(app), 'f', -1, 64)}
+	}
+	return []string{alertCanary(app)}
+}
+
+func boxReadCanaries(read string) []string {
+	if read == "rules" {
+		return []string{boxRuleCanary}
+	}
+	return []string{boxAlertCanary}
 }
 
 // rowRequest is a request of the row's shape on app, or nil for a shape
@@ -280,9 +327,10 @@ func TestTwoAppsTwoPeople(t *testing.T) {
 			}
 			want := http.StatusUnauthorized // a deploy token is judged against the global sources: none here
 			switch {
-			case person(caller) && (rt.action == access.BoxBackups || rt.action == access.BoxAlerts) && caller != "viewer of the box":
-				// The box's backups, alerts and silences name every app: a
-				// viewer of the box's alone.
+			case person(caller) && (rt.action == access.BoxBackups || rt.action == access.BoxAlerts || rt.action == access.BoxRules) && caller != "viewer of the box":
+				// The box's backups, alerts and silences, and its rules with
+				// every app's numbers, name every app: a viewer of the box's
+				// alone.
 				want = http.StatusForbidden
 			case person(caller):
 				want = http.StatusOK
@@ -299,6 +347,14 @@ func TestTwoAppsTwoPeople(t *testing.T) {
 			if w.Code == http.StatusOK && rt.action == access.BoxAlerts {
 				// Every alert, the box's own among them.
 				for _, c := range []string{boxAlertCanary, alertCanary("appalpha"), alertCanary("appbravo")} {
+					if !strings.Contains(w.Body.String(), c) {
+						t.Errorf("%s, GET %s: the 200 does not hold %q: %s", caller, rt.path, c, w.Body)
+					}
+				}
+			}
+			if w.Code == http.StatusOK && rt.action == access.BoxRules {
+				// Every rule and every number, the box's own among them.
+				for _, c := range append(append([]string{boxRuleCanary}, ruleCanaries("appalpha")...), ruleCanaries("appbravo")...) {
 					if !strings.Contains(w.Body.String(), c) {
 						t.Errorf("%s, GET %s: the 200 does not hold %q: %s", caller, rt.path, c, w.Body)
 					}
@@ -335,19 +391,27 @@ func TestTwoAppsTwoPeople(t *testing.T) {
 				}
 				body := w.Body.String()
 				for _, other := range twoApps {
-					for _, read := range []string{"alerts", "series"} {
-						if c := ownCanary(read, other); other != app && strings.Contains(body, c) {
-							t.Errorf("%s, %s: the answer holds %s's %s canary %s: %s", caller, what, other, read, c, body)
+					// Every read's canaries of the other app: an alerts read
+					// holds no rule of it either.
+					for _, read := range []string{"alerts", "rules", "series"} {
+						for _, c := range appReadCanaries(read, other) {
+							if other != app && strings.Contains(body, c) {
+								t.Errorf("%s, %s: the answer holds %s's %q: %s", caller, what, other, c, body)
+							}
 						}
 					}
 				}
-				if strings.Contains(body, boxAlertCanary) {
-					t.Errorf("%s, %s: the answer holds the box's alert: %s", caller, what, body)
+				for _, c := range append(boxReadCanaries("alerts"), boxReadCanaries("rules")...) {
+					if strings.Contains(body, c) {
+						t.Errorf("%s, %s: the answer holds the box's %q: %s", caller, what, c, body)
+					}
 				}
 				if w.Code == http.StatusOK {
 					leaks(what, caller, body, func(other string) bool { return other == app })
-					if c := ownCanary(rt.read, app); c == "" || !strings.Contains(body, c) {
-						t.Errorf("%s, %s: the 200 does not hold its own app's canary %q: %s", caller, what, c, body)
+					for _, c := range appReadCanaries(rt.read, app) {
+						if !strings.Contains(body, c) {
+							t.Errorf("%s, %s: the 200 does not hold its own app's %q: %s", caller, what, c, body)
+						}
 					}
 				}
 			}

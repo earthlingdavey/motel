@@ -27,15 +27,19 @@ reach it) for every alert it can raise on this config: its source
 (builtin, operator or motel check), severity, scope and kind
 (threshold, guarded or event).
 
-A threshold the metrics store evaluates comes with the MetricsQL of
-its value (value_query), its op and threshold, its for, and its
-guards: what a screen runs on the store's socket to show how close it
-is. A check motel makes itself (disk_low, backup_stale,
-watchdog_throttled, metrics_store_down, metrics_rules_down) comes
-with the number it last read. With no metrics line in the monitor
-block, the store's rules are not listed. When rules.yml, the file
-vmalert reads, is not this config's (a write at a load that failed),
-the table ends with a line that says so, and --json has rules_file.
+A threshold the metrics store evaluates comes with its op and
+threshold, its for, its guards, and its numbers: moteld runs its value's
+MetricsQL (value_query) on the store's socket itself, at most every 30 s
+for this command and every person's read of the rules together, and
+lists for each app or filesystem the value, and whether vmalert holds it
+pending or firing and since when (--json: readings, and store.values,
+unanswered when the store did not answer). A check motel makes itself
+(disk_low, backup_stale, watchdog_throttled, metrics_store_down,
+metrics_rules_down) comes with the number it last read. With no metrics
+line in the monitor block, the store's rules are not listed. When
+rules.yml, the file vmalert reads, is not this config's (a write at a
+load that failed), the table ends with a line that says so, and --json
+has rules_file.
 docs/monitor.md, "How close is each alert", has an example.
 
     moteld monitor rules

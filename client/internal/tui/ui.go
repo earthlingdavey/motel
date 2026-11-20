@@ -248,6 +248,12 @@ func (u *UI) show() {
 		u.S.Engine.SeriesOpen("", "", now)
 	}
 	u.S.Engine.BoxAlertsOpen(v.Screen == model.ScreenAlerts || v.Screen == model.ScreenBox, now)
+	u.S.Engine.BoxRulesOpen(v.Screen == model.ScreenRules, now)
+	rules := ""
+	if v.Screen == model.ScreenAppRules {
+		rules = v.App
+	}
+	u.S.Engine.RulesOpen(rules, now)
 	u.S.Engine.MeOpen(v.Screen == model.ScreenMe, now)
 	if u.overlay != 0 {
 		u.root.ShowPage("overlay")
@@ -325,7 +331,8 @@ func (u *UI) retry() {
 // shown is the reads behind what v shows, for ctrl-r: the list and every
 // app's row; an app's status; a record, and the status beside it;
 // whoami; the box, its backups and its alerts (the box screen has a
-// line of each); the backups; the alerts; nothing on help.
+// line of each); the backups; the alerts; the rules, the box's or an
+// app's; nothing on help.
 func (u *UI) shown(v model.View) []model.Job {
 	st := func(a string) model.Job { return model.Job{Kind: model.KStatus, App: a} }
 	switch v.Screen {
@@ -347,6 +354,10 @@ func (u *UI) shown(v model.View) []model.Job {
 		return []model.Job{{Kind: model.KBackups}}
 	case model.ScreenAlerts:
 		return []model.Job{{Kind: model.KBoxAlerts}}
+	case model.ScreenRules:
+		return []model.Job{{Kind: model.KBoxRules}}
+	case model.ScreenAppRules:
+		return []model.Job{{Kind: model.KRules, App: v.App}}
 	case model.ScreenMetrics:
 		return []model.Job{{Kind: model.KSeries, App: v.App, Range: v.Range}, st(v.App)}
 	}

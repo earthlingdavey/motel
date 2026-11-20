@@ -79,6 +79,16 @@ func (r *recorder) BoxAlerts(context.Context) (model.Got[wire.BoxAlerts], error)
 	return model.Got[wire.BoxAlerts]{}, nil
 }
 
+func (r *recorder) Rules(context.Context, string) (model.Got[wire.Rules], error) {
+	r.called = "Rules"
+	return model.Got[wire.Rules]{}, nil
+}
+
+func (r *recorder) BoxRules(context.Context) (model.Got[wire.Rules], error) {
+	r.called = "BoxRules"
+	return model.Got[wire.Rules]{}, nil
+}
+
 func (r *recorder) Series(context.Context, string, string) (model.Got[wire.Series], error) {
 	r.called = "Series"
 	return model.Got[wire.Series]{}, nil
@@ -96,6 +106,8 @@ var wantRead = map[string]string{
 	"backup status":                 "Backups",
 	"monitor alerts --app <app>":    "Alerts",
 	"monitor alerts":                "BoxAlerts",
+	"monitor rules --app <app>":     "Rules",
+	"monitor rules":                 "BoxRules",
 	"metrics <app> --range <range>": "Series",
 }
 

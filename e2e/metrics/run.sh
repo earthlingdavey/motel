@@ -15,7 +15,8 @@
 #   stopped and back, failing once, stopped and started by hand with moteld
 #   down; an upgrade from the proxy shape
 #   motel's push (job="moteld"), with a deployed app's motel_app_*
-#   moteld monitor rules: the listing, and a listed query over vm.sock
+#   moteld monitor rules: the listing, a listed query over vm.sock, and
+#   the store rules' numbers moteld reads itself
 #   GET /<app> with the deploy token carries the app's metrics
 #   observe's counts in the store and in GET /<app>?range=
 #   vmalert's rules loaded; its ChannelFailed and motel's one alert
@@ -349,6 +350,21 @@ if moteld monitor rules --json >/tmp/rules.json 2>/tmp/rules.err; then
 else
 	fail "moteld monitor rules --json: $(cat /tmp/rules.json /tmp/rules.err | head -c 300)"
 fi
+# The store rules' numbers, which moteld evaluates itself: the store
+# answers it (one evaluation per 30 s, a failure kept as long, so up to
+# 75 s), and each reading is a subject's, with its time and a state word.
+end=$(( $(date +%s) + 75 ))
+got=""
+while [ "$(date +%s)" -lt "$end" ]; do
+	moteld monitor rules --json >/tmp/rules.json 2>/tmp/rules.err || true
+	got=$(pick 'const store = l.alerts.filter((a) => a.value_query);
+		const bad = store.flatMap((a) => a.readings ?? []).filter((r) => !(Date.parse(r.measured_at) > Date.now() - 600000) || !["inactive", "pending", "firing"].includes(r.state));
+		console.log(l.store?.values === "on" && store.length > 0 && bad.length === 0 ? "ok" : JSON.stringify({values: l.store?.values, bad}).slice(0, 300));' </tmp/rules.json 2>&1)
+	[ "$got" = ok ] && break
+	sleep 5
+done
+[ "$got" = ok ] && pass "moteld monitor rules --json says the store answered moteld's own reading of the store rules (store.values on), and each reading it holds has a recent time and a state word" \
+	|| fail "moteld monitor rules --json, the store's numbers: $got"
 moteld monitor rules >/tmp/rules.txt 2>&1 && head -1 /tmp/rules.txt | grep -q '^NAME *SOURCE *KIND *SEVERITY *SCOPE *CONDITION *NOW$' \
 	&& grep -q '^disk_low  *motel check  *threshold' /tmp/rules.txt \
 	&& pass "moteld monitor rules prints the table" || fail "moteld monitor rules: $(head -c 400 /tmp/rules.txt)"

@@ -20,6 +20,7 @@ import (
 
 	"github.com/smallhoursorg/motel/backups/status"
 	"github.com/smallhoursorg/motel/liveswap"
+	"github.com/smallhoursorg/motel/liveswap/wire"
 )
 
 // `moteld monitor rules` (DESIGN-metrics.md, "How close each alert
@@ -32,96 +33,17 @@ import (
 // annotation is listed: an operator's text, and what vmalert sends to
 // a channel, is not a status screen's.
 
-// RulesListing is `moteld monitor rules --json`.
-type RulesListing struct {
-	// Store is how to read the store-backed rules; absent with no
-	// metrics line, and so are those rules.
-	Store *StoreQueries `json:"store,omitempty"`
-	// RulesFile is set when rules.yml, the file vmalert reads, is not
-	// what this config renders into it (rulesFile): differs, missing or
-	// unreadable. It speaks for the file, not for what vmalert loaded.
-	RulesFile string         `json:"rules_file,omitempty"`
-	Alerts    []AlertListing `json:"alerts"`
-}
-
-// StoreQueries are the store's socket and how vmalert's evaluations
-// line up with a query a client makes there.
-type StoreQueries struct {
-	Socket string `json:"socket"`
-	// QueryOffsetSeconds is how far behind its run vmalert stamps an
-	// evaluation, at most: its interval and its -rule.evalDelay. A value
-	// query at now minus it reads no later than what vmalert compared.
-	QueryOffsetSeconds int `json:"query_offset_seconds"`
-	// StateQuery and ActiveSinceQuery are pending or firing, and since
-	// when: vmalert writes both series for an alert that is not
-	// inactive, with a gap at each evaluation that the lookback covers.
-	StateQuery       string `json:"state_query"`
-	ActiveSinceQuery string `json:"active_since_query"`
-}
-
-// AlertListing is one alert name.
-type AlertListing struct {
-	Name string `json:"name"`
-	// Source is builtin (a store rule motel ships), operator (a rule
-	// line) or motel check (motel's own detectors).
-	Source string `json:"source"`
-	// Severity is the one it is first raised at.
-	Severity string `json:"severity"`
-	// Subject is box or app; App the one app a rule line is pinned to.
-	Subject string `json:"subject"`
-	App     string `json:"app,omitempty"`
-	// Kind is threshold, guarded (a threshold with guards) or event
-	// (nothing to be close to).
-	Kind string `json:"kind"`
-
-	// A store rule's: ValueQuery Op Threshold is its condition, held
-	// for ForSeconds.
-	ValueQuery string         `json:"value_query,omitempty"`
-	Op         string         `json:"op,omitempty"`
-	Threshold  *float64       `json:"threshold,omitempty"`
-	Unit       string         `json:"unit,omitempty"`
-	ForSeconds int            `json:"for_seconds,omitempty"`
-	Guards     []GuardListing `json:"guards,omitempty"`
-
-	// A check's: disk_low's two levels, and the detector's last numbers.
-	Levels   []LevelListing `json:"levels,omitempty"`
-	Readings []Reading      `json:"readings,omitempty"`
-}
-
-// GuardListing is a term the rule's condition also needs: Query Op
-// Value, or with no Op, Query having a series at all.
-type GuardListing struct {
-	Query string   `json:"query"`
-	Op    string   `json:"op,omitempty"`
-	Value *float64 `json:"value,omitempty"`
-	// Match is how the guard's series are matched to the value's, such
-	// as "on (app)", or "on ()" for a guard with no labels, which holds
-	// for every series of the value; none for all their labels.
-	Match   string `json:"match,omitempty"`
-	Meaning string `json:"meaning"`
-}
-
-// LevelListing is one of disk_low's: fired at Threshold, cleared under
-// ClearsBelow.
-type LevelListing struct {
-	Severity    string  `json:"severity"`
-	Threshold   float64 `json:"threshold"`
-	ClearsBelow float64 `json:"clears_below"`
-}
-
-// Reading is a check's number at MeasuredAt: for one filesystem or one
-// backup (Instance, the alert's instance) or one app (App).
-type Reading struct {
-	Instance string  `json:"instance,omitempty"`
-	App      string  `json:"app,omitempty"`
-	Value    float64 `json:"value"`
-	// Threshold and WindowSeconds are the watchdog's, which differ by app.
-	Threshold     *float64 `json:"threshold,omitempty"`
-	WindowSeconds float64  `json:"window_seconds,omitempty"`
-	// Level is disk_low's severity firing now, which its gap decides.
-	Level      string    `json:"level,omitempty"`
-	MeasuredAt time.Time `json:"measured_at"`
-}
+// The listing's types are liveswap/wire's, so that a client that
+// links no Caddy decodes the very types the command prints, and the
+// people's read (wire.Rules) carries the same AlertListing.
+type (
+	RulesListing = wire.RulesListing
+	StoreQueries = wire.StoreQueries
+	AlertListing = wire.AlertListing
+	GuardListing = wire.GuardListing
+	LevelListing = wire.LevelListing
+	Reading      = wire.Reading
+)
 
 const (
 	sourceBuiltin  = "builtin"
@@ -225,9 +147,9 @@ func storeQueries(m *MetricsStore) (*StoreQueries, error) {
 
 // RulesListing.RulesFile's values.
 const (
-	rulesFileDiffers    = "differs"
-	rulesFileMissing    = "missing"
-	rulesFileUnreadable = "unreadable"
+	rulesFileDiffers    = wire.RulesFileDiffers
+	rulesFileMissing    = wire.RulesFileMissing
+	rulesFileUnreadable = wire.RulesFileUnreadable
 )
 
 // unlinedRulesDir is where rules.yml is for a config with no metrics
@@ -299,6 +221,7 @@ func listRules(a *App, seen polled, chain chainRead, budgets []liveswap.Watchdog
 			e.Source, e.Severity, e.Kind = sourceCheck, m.severity, kindEvent
 			if name == eventPostDeployRegressed {
 				e.Source = sourceOperator
+				e.App, e.Apps = postDeployPins(a)
 			}
 			if m.measured {
 				e.Kind = kindThreshold
@@ -310,6 +233,29 @@ func listRules(a *App, seen polled, chain chainRead, budgets []liveswap.Watchdog
 		l.Alerts = append(l.Alerts, e)
 	}
 	return l, nil
+}
+
+// postDeployPins are the apps the config's post_deploy lines pin
+// post_deploy_regressed to, when every line is pinned (one name for
+// them all): the app when they name one, or the apps, sorted, when
+// they name more; none when a line is of every app.
+func postDeployPins(a *App) (string, []string) {
+	var apps []string
+	for _, r := range a.Metrics.Rules {
+		switch {
+		case r.Kind != rulePostDeploy:
+		case r.App == "":
+			return "", nil
+		default:
+			apps = append(apps, r.App)
+		}
+	}
+	slices.Sort(apps)
+	apps = slices.Compact(apps)
+	if len(apps) == 1 {
+		return apps[0], nil
+	}
+	return "", apps
 }
 
 func storeRuleListing(e *AlertListing, r vmRule) {
@@ -346,29 +292,29 @@ func checkListing(e *AlertListing, seen polled, chain chainRead, budgets []lives
 			{Severity: SeverityCritical, Threshold: diskCrit, ClearsBelow: diskCrit - diskGap},
 		}
 		for _, d := range seen.disks {
-			e.Readings = append(e.Readings, Reading{Instance: d.path, Value: d.usedPct, Level: d.level, MeasuredAt: d.at})
+			e.Readings = append(e.Readings, Reading{Instance: d.path, Value: ptr(d.usedPct), Level: d.level, MeasuredAt: d.at})
 		}
 	case "backup_stale":
 		e.Op, e.Threshold, e.Unit = ">", ptr(status.StaleAfter.Seconds()), "seconds"
 		for _, app := range slices.Sorted(maps.Keys(seen.backups)) {
 			age := seen.backupsAt.Sub(seen.backups[app])
-			e.Readings = append(e.Readings, Reading{Instance: app, Value: age.Seconds(), MeasuredAt: seen.backupsAt})
+			e.Readings = append(e.Readings, Reading{Instance: app, Value: ptr(age.Seconds()), MeasuredAt: seen.backupsAt})
 		}
 	case liveswap.EventWatchdogThrottled:
 		e.Op, e.Unit = ">=", "restarts"
 		for _, b := range budgets {
-			e.Readings = append(e.Readings, Reading{App: b.App, Value: float64(b.Restarts), Threshold: ptr(float64(b.Budget)),
+			e.Readings = append(e.Readings, Reading{App: b.App, Value: ptr(float64(b.Restarts)), Threshold: ptr(float64(b.Budget)),
 				WindowSeconds: b.Window.Seconds(), MeasuredAt: b.At})
 		}
 	case eventStoreDown:
 		e.Op, e.Threshold, e.Unit = ">=", ptr(storeDownAfter.Seconds()), "seconds"
 		if !chain.pushedAt.IsZero() {
-			e.Readings = []Reading{{Value: chain.failingFor.Seconds(), MeasuredAt: chain.pushedAt}}
+			e.Readings = []Reading{{Value: ptr(chain.failingFor.Seconds()), MeasuredAt: chain.pushedAt}}
 		}
 	case eventRulesDown:
 		e.Op, e.Threshold, e.Unit = ">=", ptr(float64(rulesDownReads)), "reads"
 		if !chain.rulesAt.IsZero() {
-			e.Readings = []Reading{{Value: float64(chain.rulesBad), MeasuredAt: chain.rulesAt}}
+			e.Readings = []Reading{{Value: ptr(float64(chain.rulesBad)), MeasuredAt: chain.rulesAt}}
 		}
 	}
 }
@@ -399,22 +345,24 @@ func promSeconds(s string) int {
 }
 
 // serveRules is GET /notify/rules: the listing of the config notify's
-// Start configured, with what its detectors last read. It polls
-// nothing: the pollers' and the pusher's last numbers, and the
-// watchdogs' counts in memory; it reads vmalert's unit for its timing
-// (vmalertTiming) and rules.yml to compare it (rulesFile).
+// Start configured, with what its detectors last read and the store
+// rules' numbers. It polls no detector: the pollers' and the pusher's
+// last numbers, and the watchdogs' counts in memory; it reads vmalert's
+// unit for its timing (vmalertTiming) and rules.yml to compare it
+// (rulesFile); the store's numbers are the process's one evaluation
+// (rulesvalues.go), which the people's reads of the rules share.
 func serveRules(w http.ResponseWriter, r *http.Request) error {
 	if r.Method != http.MethodGet {
 		return caddy.APIError{HTTPStatus: http.StatusMethodNotAllowed, Err: errors.New("GET only")}
 	}
 	e := theEngine
 	e.mu.Lock()
-	active, seen := e.active, e.seen
+	active := e.active
 	e.mu.Unlock()
 	if active == nil || active.cfg == nil {
 		return caddy.APIError{HTTPStatus: http.StatusServiceUnavailable, Err: errors.New("this box's Caddyfile has no monitor block with channels")}
 	}
-	l, err := listRules(active, seen, thePusher.read(active.Metrics), watchdogBudgets(active))
+	l, err := listRulesNow(r.Context(), active)
 	if err != nil {
 		return err
 	}
@@ -429,17 +377,20 @@ func rulesText(l RulesListing, now time.Time) []byte {
 	_, _ = fmt.Fprintln(tw, "NAME\tSOURCE\tKIND\tSEVERITY\tSCOPE\tCONDITION\tNOW")
 	for _, e := range l.Alerts {
 		scope := e.Subject
-		if e.App != "" {
+		switch {
+		case e.App != "":
 			scope = "app " + e.App
-		} else if e.Subject == "app" {
+		case len(e.Apps) > 0:
+			scope = "apps " + strings.Join(e.Apps, ", ")
+		case e.Subject == "app":
 			scope = "every app"
 		}
-		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", e.Name, e.Source, e.Kind, e.Severity, scope, condition(e), readings(e, now))
+		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", e.Name, e.Source, e.Kind, e.Severity, scope, condition(e), readings(e, l.Store, now))
 	}
 	_ = tw.Flush()
 	if l.Store != nil {
-		_, _ = fmt.Fprintf(&b, "\nNOW for the store's rules: run each value_query (--json) on %s at now - %ds;\npending and firing are %s (firing over pending; a resolved alert shows within the lookback).\n",
-			l.Store.Socket, l.Store.QueryOffsetSeconds, l.Store.StateQuery)
+		_, _ = fmt.Fprintf(&b, "\nNOW for the store's rules is each value_query (--json) as moteld ran it on %s at now - %ds,\nat most every %s; pending and firing are %s (firing over pending;\na resolved alert shows within the lookback).\n",
+			l.Store.Socket, l.Store.QueryOffsetSeconds, shortDuration(rulesEvery), l.Store.StateQuery)
 	}
 	if l.RulesFile != "" {
 		_, _ = fmt.Fprintf(&b, "\n%s\n", rulesFileText(l))
@@ -520,23 +471,39 @@ var staleAfter = map[string]time.Duration{
 	eventStoreDown: 2 * pushEvery, eventRulesDown: 4 * pushEvery, liveswap.EventWatchdogThrottled: time.Minute,
 }
 
-func readings(e AlertListing, now time.Time) string {
-	if e.ValueQuery != "" {
-		return "(the store)"
+func readings(e AlertListing, store *StoreQueries, now time.Time) string {
+	fromStore := e.ValueQuery != ""
+	switch {
+	case fromStore && (store == nil || store.Values != wire.StoreOn):
+		return "(the store did not answer)"
+	case fromStore && len(e.Readings) == 0:
+		return "no value"
 	}
 	var rs []string
 	for _, r := range e.Readings {
-		v := amount(r.Value, e.Unit)
-		if r.Threshold != nil {
-			v = numberText(r.Value) + " of " + numberText(*r.Threshold) + " in " + shortDuration(time.Duration(r.WindowSeconds*float64(time.Second)))
+		v := "no value"
+		if r.Value != nil {
+			v = amount(*r.Value, e.Unit)
+			if r.Threshold != nil {
+				v = numberText(*r.Value) + " of " + numberText(*r.Threshold) + " in " + shortDuration(time.Duration(r.WindowSeconds*float64(time.Second)))
+			}
 		}
-		if who := r.Instance + r.App; who != "" {
+		if who := strings.TrimSpace(r.Instance + " " + r.App); who != "" {
 			v = who + " " + v
 		}
 		if r.Level != "" {
 			v += " (" + r.Level + ")"
 		}
-		if old := now.Sub(r.MeasuredAt); old > staleAfter[e.Name] {
+		if r.State == wire.RulePending || r.State == wire.RuleFiring {
+			v += " (" + r.State
+			if r.ActiveSince != nil {
+				v += " for " + shortDuration(max(0, now.Sub(*r.ActiveSince)))
+			}
+			v += ")"
+		}
+		// A store rule's numbers are all of one evaluation, as old as the
+		// footer says.
+		if old := now.Sub(r.MeasuredAt); !fromStore && old > staleAfter[e.Name] {
 			v += " (as of " + shortDuration(old) + " ago)"
 		}
 		rs = append(rs, v)

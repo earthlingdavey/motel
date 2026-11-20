@@ -1052,19 +1052,31 @@ while the condition still holds, then a new `[FIRING]`.
 
 `moteld monitor rules`, as root, lists every alert motel can raise on
 this box: motel's own checks, the store's rules and your `rule` lines.
-For each it shows what it fires on and, for a check motel makes itself,
-the number it last read:
+For each it shows what it fires on and how close it is: for a check
+motel makes itself, the number it last read; for a rule the store
+evaluates, its value for each app or filesystem, and whether vmalert
+holds it pending or firing, and for how long:
 
 ```
 $ moteld monitor rules
 NAME                     SOURCE       KIND       SEVERITY  SCOPE      CONDITION                                                            NOW
-app_memory_high          builtin      threshold  warning   every app  > 0.9 share for 10m                                                  (the store)
+app_memory_high          builtin      threshold  warning   every app  > 0.9 share for 10m                                                  blog 0.55 share, shop 0.93104 share (firing for 17m)
 backup_stale             motel check  threshold  critical  box        > 3h                                                                 blog 58m, shop 3h59m30s
 disk_low                 motel check  threshold  warning   box        >= 80% warning, >= 90% critical, each clears 5 points under          /srv/motel 79.9% (warning), /var/lib/caddy 41.2%
-errors_high              operator     guarded    warning   every app  > 0.05 share for 10m, 2 guards                                       (the store)
+errors_high              operator     guarded    warning   every app  > 0.05 share for 10m, 2 guards                                       blog 0 share, shop 0.0612346 share (pending for 9m)
 watchdog_throttled       motel check  threshold  critical  every app  a further restart needed while >= its budget in its window is spent  shop 2 of 5 in 10m
 …
 ```
+
+moteld reads the store's numbers at most every 30 s, for this command
+and every person's read of the rules together, within 2 s: a store
+rule's `NOW` is `(the store did not answer)` when it did not, and `no
+value` when the store holds no series of it (an app with no traffic, a
+history too short). From a laptop, a person with the viewer role reads
+the same with `motel monitor rules` (a viewer of the box: every rule)
+or `motel monitor rules --app <app>` (a viewer of the app: the rules
+that apply to it, with its numbers alone), or `:rules` in the client's
+screens (docs/people.md).
 
 (The shape is a test's, not a box's; the full table has every alert,
 deploys and other events among them, whose condition is `-`.)
@@ -1077,9 +1089,17 @@ Without the `metrics` line only motel's own checks are listed.
 
 With `--json` each store rule comes with the MetricsQL of its value,
 `value_query`, beside `op`, `threshold`, `unit`, `for_seconds` and
-`guards`; you run it on the store's socket yourself. vmalert evaluates
+`guards`, and with its numbers as `readings`: one for each series of
+its value (`app`, or a filesystem's path as `instance`, or neither),
+each with its `value`, `measured_at`, `state` (`inactive`, `pending`
+or `firing`) and `active_since`; `store.values` is `on`, or
+`unanswered` when the store did not answer (no `readings` then). A
+subject vmalert holds pending or firing that has no value at that time
+has a `state` and no `value`. You can run the queries on the store's
+socket yourself too. vmalert evaluates
 data up to `query_offset_seconds` (65 s) old, so query at that offset
-to see about what it compared:
+to see about what it compared (moteld does: `measured_at` is that
+time):
 
 ```sh
 q=$(moteld monitor rules --json | jq -r '.alerts[] | select(.name=="app_memory_high") | .value_query')

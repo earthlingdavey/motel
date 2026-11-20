@@ -49,9 +49,11 @@ box {
 ```
 
 - `grant <name> viewer app <app>` lets them read that app: its status,
-  its deploys, its alerts, and its numbers over time. `grant <name> viewer box` lets them read every app,
-  the box's own status, what the box says of its backups, and every
-  alert and silence the box's Alertmanager holds.
+  its deploys, its alerts, the rules that apply to it with its
+  numbers, and its numbers over time. `grant <name> viewer box` lets them read every app,
+  the box's own status, what the box says of its backups, every
+  alert and silence the box's Alertmanager holds, and every rule the box
+  alerts on with every number.
 - A `signer` line's ed25519 key is already that signer's key as a
   person: `alice` above needs no `person` line, only a `grant`. Once
   the block names anyone in a `person` or `grant` line, every signer
@@ -118,6 +120,8 @@ signed:
 | `/` | the box's status, for a viewer of the box |
 | `/_motel/backups` | what the box says of its backups, for a viewer of the box: `motel-backup status --json` as any account on the box sees it (every app's name, data paths and snapshot ids; nothing of the credentials). It is the box's own claim: look from a machine of your own too (docs/backups.md, "Look from your own machine") |
 | `/_motel/apps/<app>/alerts` | the app's alerts, as the box's Alertmanager holds them: each one's name, severity, summary, when it began, and whether a silence holds it and until when, or a deploy of the app; and whether the box could ask (`"monitor"`: `on`, `off` when the box's monitor block sends nothing to anyone or there is none, `unanswered`). Only alerts about that app: not the box's own (disks, certificates, backups), not the silences or who wrote them. Up to 5 s old |
+| `/_motel/apps/<app>/rules` | the rules the box alerts on that apply to the app: those of every app and the app's own `rule` lines, not one pinned to another app and none of the box's own checks (disks, backups, certificates). Each with what it fires on (its op, threshold, unit, `for`, and each guard's meaning) and the app's numbers alone: a check's last reading (its watchdog's restarts), and for a rule the metrics store evaluates, its value and whether vmalert holds it `pending` or `firing`, and since when; and whether the box could read the store (`"store"`: `on`, `off` with no `metrics` line, `unanswered`), and `rules_file` when the file vmalert reads is not this config's (a state is vmalert's). No query and no socket. The store's numbers are up to 30 s old, of an evaluation about a minute behind (as vmalert compared them) |
+| `/_motel/rules` | every rule the box alerts on, for a viewer of the box: as for an app's, with every app's numbers, the box's own checks (each filesystem's use, each app's backup age) and rules (a `disk_fill`'s prediction for each filesystem). `moteld monitor rules --json` from a laptop, without the store's socket and the queries |
 | `/_motel/apps/<app>/series[?range=1h\|24h\|7d\|14d]` | the app's numbers over the window (the hour when none is named), as the box's metrics store holds them, a point a step (a minute over the hour, 5 minutes over the day, 30 over 7 days, an hour over 14): its memory (each step's highest), CPU, and for an app behind `observe` its requests a second, 5xx share and p95; a step with no point is missing, never a zero; and whether the box could ask (`"store"`: `on`, `off` when the box's monitor block has no metrics line or there is none, `unanswered`). No panel, step or query of the reader's: the window is the one choice. Up to 30 s old. Experimental: the route and its JSON may change until a release's notes say otherwise |
 | `/_motel/alerts` | every alert the box's Alertmanager holds, for a viewer of the box: as for an app's, and with each the app it names and its instance (a path, a certificate's name, another site's); and every silence that is active or waits to start: its matchers, when it starts and ends, who made it and why (the operator's own words). Not the heartbeat, the test alert or the deploy mute itself, and no expired silence. At most 500 alerts, the newest, and 200 silences, the active ones and then the soonest to start, with `more_alerts` or `more_silences` when the box held more. Up to 5 s old |
 
@@ -127,8 +131,8 @@ client/README.md, "Getting it") makes
 the token and asks:
 `motel whoami --box deploy.example.com`, `motel apps`, `motel status
 <app>`, `motel deploys <app> [<version>]`, `motel box status`, `motel backup
-status`, `motel monitor alerts [--app <app>]`, `motel metrics <app>
-[--range 1h|24h|7d|14d]`; and
+status`, `motel monitor alerts [--app <app>]`, `motel monitor rules [--app <app>]`,
+`motel metrics <app> [--range 1h|24h|7d|14d]`; and
 `motel` alone, on a terminal, shows the same on screens. Without
 it, this makes one by hand and asks who they are (`box` is the box's
 name; the key is theirs; GNU or macOS `base64`):

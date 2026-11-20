@@ -53,6 +53,7 @@ type appQuery map[string]string
 
 var motelAppRoutes = []motelAppRoute{
 	{"alerts", access.AppAlerts, nil, (*Handler).appAlerts},
+	{"rules", access.AppRules, nil, (*Handler).appRules},
 	{"series", access.AppSeries, []queryKey{{"range", wire.SeriesRanges}}, (*Handler).appSeries},
 }
 

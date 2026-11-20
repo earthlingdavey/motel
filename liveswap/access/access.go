@@ -12,9 +12,9 @@
 // do before Decide existed, so on an app's path and on the box's own
 // Decide refuses nothing that its authentication accepted; under
 // /_motel/ it refuses a global source's token the people's routes
-// (liveswap/DESIGN-liveswap.md, "Who may take which action"). A person may read: an app's status, deploys, alerts and
-// series where a grant covers the app, the box's status, its backups' and every
-// alert and silence with a grant on the box, and who they are and which apps they may view
+// (liveswap/DESIGN-liveswap.md, "Who may take which action"). A person may read: an app's status, deploys, alerts, rules and
+// series where a grant covers the app, the box's status, its backups', every
+// alert and silence and every rule with a grant on the box, and who they are and which apps they may view
 // whatever their grants (DESIGN-access.md).
 package access
 
@@ -44,6 +44,8 @@ const (
 	BoxBackups      Action = "box.backups"       // GET /_motel/backups
 	AppAlerts       Action = "app.alerts"        // GET /_motel/apps/<app>/alerts
 	BoxAlerts       Action = "box.alerts"        // GET /_motel/alerts
+	AppRules        Action = "app.rules"         // GET /_motel/apps/<app>/rules
+	BoxRules        Action = "box.rules"         // GET /_motel/rules
 	AppSeries       Action = "app.series"        // GET /_motel/apps/<app>/series
 )
 
@@ -51,7 +53,7 @@ const (
 // beside the apps' routes: box actions, and app actions on the app the
 // path names after /_motel/apps/. box_webhook serves the other box
 // actions.
-var MotelActions = []Action{BoxWhoami, BoxApps, BoxBackups, AppAlerts, BoxAlerts, AppSeries}
+var MotelActions = []Action{BoxWhoami, BoxApps, BoxBackups, AppAlerts, BoxAlerts, AppRules, BoxRules, AppSeries}
 
 // Kind is which sort of principal a verified token stands for.
 type Kind int
@@ -108,6 +110,8 @@ var allowed = []cell{
 	{Person, BoxBackups},
 	{Person, AppAlerts},
 	{Person, BoxAlerts},
+	{Person, AppRules},
+	{Person, BoxRules},
 	{Person, AppSeries},
 }
 
@@ -200,11 +204,11 @@ func decidePerson(p Principal, a Action, resource string) error {
 		return &Forbidden{Needs: "deployer", Scope: scope}
 	}
 	switch a {
-	case AppStatus, AppDeployRecord, AppAlerts, AppSeries:
+	case AppStatus, AppDeployRecord, AppAlerts, AppRules, AppSeries:
 		if !p.Views.Covers(resource) {
 			return &Forbidden{Needs: "viewer", Scope: "app"}
 		}
-	case BoxStatus, BoxBackups, BoxAlerts:
+	case BoxStatus, BoxBackups, BoxAlerts, BoxRules:
 		if p.Views == nil || !p.Views.Box {
 			return &Forbidden{Needs: "viewer", Scope: "box"}
 		}
