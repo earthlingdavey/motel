@@ -129,7 +129,7 @@ func TestAlertLines(t *testing.T) {
 		f.Body("alerts/blog.json", c.body)
 		now = now.Add(model.AlertsEvery)
 		readAll()
-		if got := strings.Join(lines(), "\n"); !strings.Contains(got, c.want) {
+		if got := strings.Join(lines(), "\n"); !strings.Contains("\n"+got+"\n", "\n"+c.want) || strings.Contains(got, "more: ") {
 			t.Errorf("%s:\n%s\nwant a line holding %q", c.body, got, c.want)
 		}
 	}
