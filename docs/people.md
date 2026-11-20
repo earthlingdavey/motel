@@ -4,8 +4,8 @@
 Caddyfile can read, from their own laptop and over HTTPS, the status
 and deploys of the apps you choose, and the box's own status, with
 their own ssh key: no account on the box, no ssh access, and no deploy
-token. They cannot deploy, roll back or push, whatever you write. ssh
-stays root's.
+token. With a `logs` grant they also read the apps' logs. They cannot
+deploy, roll back or push, whatever you write. ssh stays root's.
 
 This needs a `box` block and a site with `box_webhook` (the template's
 deploy host), as a box with a box repository has. People reach the box
@@ -44,6 +44,7 @@ box {
 
 	person bob@example.com ssh-ed25519 AAAAC3Nz…
 	grant bob@example.com viewer app blog
+	grant bob@example.com logs app blog from 198.51.100.0/24
 	grant alice@example.com viewer box
 }
 ```
@@ -53,7 +54,14 @@ box {
   numbers, and its numbers over time. `grant <name> viewer box` lets them read every app,
   the box's own status, what the box says of its backups, every
   alert and silence the box's Alertmanager holds, and every rule the box
-  alerts on with every number.
+  alerts on with every number. `viewer` never reads logs, on an app or
+  on the box.
+- `grant <name> logs app <app>` lets them read everything `viewer`
+  reads on that app, and its logs; `grant <name> logs box` everything
+  `viewer` reads on the box, and every app's logs. Read [what a logs
+  reader reads](#what-a-logs-reader-reads) before you give it. Where
+  these pages say "a viewer of the box" or "of the app", a person with
+  a `logs` grant there is one too.
 - A `signer` line's ed25519 key is already that signer's key as a
   person: `alice` above needs no `person` line, only a `grant`. Once
   the block names anyone in a `person` or `grant` line, every signer
@@ -61,12 +69,16 @@ box {
   and is told an empty list of apps.
 - A second key for the same person is a second `person` line with the
   same name.
+- A person holds at most one grant of each role on each scope; a
+  `viewer` and a `logs` grant on the same app (or both on the box) are
+  two lines, each with its own `from` list or none.
 - `from` limits a grant to the addresses you list, last on the line:
   `grant bob@example.com viewer app blog from 198.51.100.0/24
   2001:db8:5::/48`. If every grant they hold has a `from` list, from
   anywhere else their key gets the same refusal as a stranger's; with
   a grant beside it that has none, they are still let in, and told
-  `403` for what only the limited grant covers.
+  `403` for what only the limited grant covers. bob above reads blog's
+  status from anywhere, and its logs only from 198.51.100.0/24.
 - A `from` list is as trustworthy as whatever tells Caddy the
   client's address. Behind a proxy of yours, set `trusted_proxies` (or
   `trusted_proxies_unix`) to it **and** `trusted_proxies_strict` in
@@ -91,8 +103,14 @@ moteld box describe Caddyfile
 `describe` prints a `person` line per key with its fingerprint, which
 is what they will see as their key, and a `grant` line per grant. A
 `warning` line names anything taken with a doubt: a person with no
-grant, an app grant a box grant already covers, people with no monitor
-channel to tell you when their key is used from somewhere new ([below](#when-their-key-is-used-from-somewhere-new)).
+grant, a grant that another grant of theirs already gives from
+everywhere (a `viewer` app grant beside a `viewer` box grant, a `viewer`
+grant beside a `logs` grant with no `from` list on the same app or on
+the box, a `logs` app grant beside a `logs` box grant), people with no
+monitor channel to tell you when their key is used from somewhere new
+([below](#when-their-key-is-used-from-somewhere-new)). A covering
+grant with a `from` list is not warned of: outside its list, the other
+grant is all they hold.
 
 On a box whose Caddyfile you edit at the console and do not push, the
 file must still be one the box can read its people from, as the
@@ -106,6 +124,30 @@ reach more than the box's status, that same site needs
 moteld`. The box reads who it admits from that file at each load; the
 journal says `box: people admitted from the Caddyfile this machine
 runs (/etc/motel/Caddyfile)`, or why no one is.
+
+### What a logs reader reads
+
+A `logs` grant reads far more than a `viewer` grant. An app's logs
+are what it writes to its output, as the box's journal
+holds them, and they hold whatever the app prints: your customers'
+e-mail addresses, names and orders, the addresses they came from, and
+secrets the app made or fetched while it ran (a session id, a reset
+link, a token from another service). The box masks the values in the
+app's `env_file` and some shapes of credential, but it cannot know what
+the app was never told is secret, so assume a logs reader reads all of
+it. Give `logs` only to someone you would show the app's output on
+your own screen.
+
+Put a `from` list on every `logs` grant, the addresses they read logs
+from (an office, a VPN), as on bob's line above. The box does not
+insist: someone who moves between networks may need none, and
+`moteld validate` says nothing of a `logs` grant without one. But a
+stolen key reads before anything else, and without a list it reads
+the logs from anywhere, while the one thing that tells you is the
+[new network it is used from](#when-their-key-is-used-from-somewhere-new),
+on your channels (`moteld validate` already warns of a box with people
+and no channel to tell). A `viewer` grant beside it, with no list,
+still lets them read the app's status from anywhere.
 
 ## What they reach
 
@@ -154,7 +196,18 @@ list, an address outside a `from` list, a clock more than a minute off,
 or a box whose moteld is too old for people. An app they may not read
 is a `403` saying which role it needs, the same whether the app exists
 or not. Too many requests (more than 60 at once, then 2 a second) is a
-`429` with `Retry-After`.
+`429` with `Retry-After`. An app's logs without a `logs` grant on it,
+or on the box, are a `403` that needs `logs`, a viewer of the box's too.
+
+Who reads what, by the grant that applies from where they are:
+
+| | no grant | `viewer` of app A | `logs` of app A | `viewer` of the box | `logs` of the box |
+|---|---|---|---|---|---|
+| who they are, the apps they may read | yes (none) | A | A | every app | every app |
+| an app's status, deploys, alerts, rules and numbers over time | no | A | A | every app | every app |
+| an app's logs | no | no | A | no | every app |
+| the box's status, backups, every alert and silence, every rule | no | no | no | yes | yes |
+| deploy, roll back, push | no | no | no | no | no |
 
 ## When their key is used from somewhere new
 
@@ -205,6 +258,16 @@ and the journal hold it whole. When one of these comes:
    anywhere): from elsewhere their key is then refused, and you get
    `person_outside_list`. A network inside the list that the key has
    not used before is still told as `person_new_network`.
+
+A person with a `logs` grant that has a `from` list, beside a `viewer`
+grant on the same app or on the box that has none (bob above), is let
+in from anywhere on the viewer grant. From outside the logs grant's
+list, a network the key has not used before is told as
+`person_new_network`, as always; `person_outside_list` is not told,
+since a grant applies, so the key was not used outside every list. A
+logs read from there is refused with a `403`, and is not told to your
+channels. To hear of their key used outside the office at all, put a
+`from` list on the viewer grant too.
 
 Each one-shot also has a line in moteld's journal, `access: a key used
 from a new network` or `access: a valid signature from outside every
