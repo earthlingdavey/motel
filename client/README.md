@@ -123,10 +123,12 @@ reads when it is not the config's. Then each rule: a head in the
 client's words (its mark, which repeats only a state or a level the box
 said: `✖` firing and critical, `▲` firing and a warning, or pending,
 `?` a state or a severity the client does not know; its severity, its
-kind, its scope, what it fires on: the op, the threshold in the rule's
-unit, `for`), then the box's words on labelled lines under it (`rule`,
-its name; `severity`, one not motel's; `guard`, each guard's op, value
-and meaning; `now`, each number: what it is of, an app or a
+kind, its scope: every app, an app, the apps a pinned alert names, or
+the box), then on labelled lines under it its name (`rule`, the box's
+words), what it fires on (`fires`, the client's words: the op, the
+threshold in the rule's unit, `for`), and the box's words (`severity`,
+one not motel's; `guard`, each guard's op, value and meaning; `now`,
+each number: what it is of, an app or a
 filesystem, the number with its age, and for a store rule its state,
 `inactive`, `pending` or `firing`, and since when). A share is said as
 a percentage, seconds as a duration, bytes in binary units, a unit the

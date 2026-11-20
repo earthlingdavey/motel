@@ -221,7 +221,7 @@ func listRules(a *App, seen polled, chain chainRead, budgets []liveswap.Watchdog
 			e.Source, e.Severity, e.Kind = sourceCheck, m.severity, kindEvent
 			if name == eventPostDeployRegressed {
 				e.Source = sourceOperator
-				e.App, e.PinnedTo = postDeployPins(a)
+				e.App, e.Apps = postDeployPins(a)
 			}
 			if m.measured {
 				e.Kind = kindThreshold
@@ -237,8 +237,8 @@ func listRules(a *App, seen polled, chain chainRead, budgets []liveswap.Watchdog
 
 // postDeployPins are the apps the config's post_deploy lines pin
 // post_deploy_regressed to, when every line is pinned (one name for
-// them all): the app when they name one, and the apps, sorted; none
-// when a line is of every app.
+// them all): the app when they name one, or the apps, sorted, when
+// they name more; none when a line is of every app.
 func postDeployPins(a *App) (string, []string) {
 	var apps []string
 	for _, r := range a.Metrics.Rules {
@@ -253,7 +253,7 @@ func postDeployPins(a *App) (string, []string) {
 	slices.Sort(apps)
 	apps = slices.Compact(apps)
 	if len(apps) == 1 {
-		return apps[0], apps
+		return apps[0], nil
 	}
 	return "", apps
 }
@@ -380,8 +380,8 @@ func rulesText(l RulesListing, now time.Time) []byte {
 		switch {
 		case e.App != "":
 			scope = "app " + e.App
-		case len(e.PinnedTo) > 1:
-			scope = "apps " + strings.Join(e.PinnedTo, ", ")
+		case len(e.Apps) > 0:
+			scope = "apps " + strings.Join(e.Apps, ", ")
 		case e.Subject == "app":
 			scope = "every app"
 		}

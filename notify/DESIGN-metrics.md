@@ -1254,9 +1254,10 @@ rules differ never reads another's numbers, and two read in turn (a
 reload's old and new, for a moment) each evaluate once per 30 s.
 
 `post_deploy_regressed` is one name for every `post_deploy` line: when
-every line is pinned to an app, the listing names the app (`app`, one)
-or keeps the apps beside the entry, off the wire (`PinnedTo`), so a
-viewer of another app is not told it applies to theirs.
+every line is pinned to an app, the listing names the app (`app`) or,
+when they name several, the apps (`apps`, an addition to the JSON), so a
+viewer of another app is not told it applies to theirs; an app's read
+holds it, as its own (`app`), only when the app is among them.
 
 **What a check lists.** For motel's own detectors, the number each
 already holds, with `measured_at`: nothing is polled for the listing.

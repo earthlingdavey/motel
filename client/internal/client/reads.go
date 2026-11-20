@@ -128,9 +128,11 @@ func (c *Client) Rules(ctx context.Context, app App) (wire.Rules, *Answer, error
 		// nothing of which app it was: not taken for another.
 		another := func(name string) bool { return name != Filtered && !Same(name, app.Name) }
 		for _, a := range r.Alerts {
-			other := a.App != "" && another(a.App)
+			// A box's own (its subject, a reading of a filesystem or a
+			// backup) is not an app's either.
+			other := a.Subject != "app" || a.App != "" && another(a.App) || len(a.Apps) > 0
 			for _, rd := range a.Readings {
-				other = other || another(rd.App)
+				other = other || rd.Instance != "" || rd.App != "" && another(rd.App)
 			}
 			if other {
 				err = c.NotMotel(ans, "it holds another app's rules")

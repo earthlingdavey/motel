@@ -39,6 +39,11 @@ const (
 	rulesAtOnce = 4
 )
 
+// rulesSlots holds the store's queries the rules run at once, for the
+// whole process: two sets evaluated together (a reload's old and new
+// configs) share the four.
+var rulesSlots = make(chan struct{}, rulesAtOnce)
+
 // rulesQuerier is the store's instant query at a time (the zero time:
 // the store's present), its answer's points that are no number left out
 // (storeClient.instantAt).
@@ -95,7 +100,7 @@ func evaluate(ctx context.Context, store rulesQuerier, q *StoreQueries, asks []v
 		}
 	}
 	errs := make([]error, len(jobs))
-	sem := make(chan struct{}, rulesAtOnce)
+	sem := rulesSlots
 	var wg sync.WaitGroup
 	for i, j := range jobs {
 		wg.Add(1)

@@ -81,6 +81,10 @@ func RulesFileSays(r wire.Rules) Line {
 	default:
 		return Line{ownC("not this config's, maybe", Warn), own(": the box said "), quoted(r.RulesFile), own(" of the file vmalert reads")}
 	}
+	if r.Store == wire.StoreOff {
+		// No store rule is listed: the file may still hold some.
+		return Line{ownC("the file vmalert reads "+why, Warn), own(": vmalert may run rules not listed here (the box's journal says why)")}
+	}
 	return Line{ownC("the file vmalert reads "+why, Warn), own(": the store's rules listed may not be the ones it runs (the box's journal says why)")}
 }
 
@@ -214,6 +218,8 @@ func ruleScope(a wire.AlertListing) string {
 		return "the box"
 	case a.Subject == "app" && a.App != "":
 		return "app " + a.App
+	case a.Subject == "app" && len(a.Apps) > 0:
+		return "apps " + strings.Join(a.Apps, ", ")
 	case a.Subject == "app":
 		return "every app"
 	}
@@ -221,7 +227,7 @@ func ruleScope(a wire.AlertListing) string {
 }
 
 // ruleCondition is what the rule fires on, in the client's words: ""
-// for an event.
+// for one that says no threshold or op.
 func ruleCondition(a wire.AlertListing) string {
 	var c string
 	switch {

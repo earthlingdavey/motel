@@ -89,7 +89,8 @@ func TestRulesSays(t *testing.T) {
 	// No store, none raising anything, a store that did not answer and a
 	// word not known: said, the rules listed as they are.
 	for body, want := range map[string]string{
-		`{"store":"off","alerts":[]}`: "store       off: this box raises no alerts (its monitor block sends nothing to anyone, or it has none)\n",
+		`{"store":"off","rules_file":"differs","alerts":[]}`: "store       off: this box raises no alerts (its monitor block sends nothing to anyone, or it has none)\nrules file  the file vmalert reads is not this config's render: vmalert may run rules not listed here (the box's journal says why)\n",
+		`{"store":"off","alerts":[]}`:                        "store       off: this box raises no alerts (its monitor block sends nothing to anyone, or it has none)\n",
 		`{"store":"off","alerts":[{"name":"rollback","source":"motel check","severity":"warning","subject":"app","kind":"event"}]}`: "store       off: this box has no metrics store, so no rule of the store's is listed\n",
 		`{"store":"unanswered","alerts":[]}`:                "store       not known: the store did not answer the box in time, so the store's rules have no numbers\n",
 		`{"store":"later","alerts":[],"rules_file":"gone"}`: "store       not known: the box said \"later\", so the store's rules' numbers are not known\nrules file  not this config's, maybe: the box said \"gone\" of the file vmalert reads\n",

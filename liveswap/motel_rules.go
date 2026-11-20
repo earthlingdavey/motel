@@ -103,8 +103,13 @@ func (a appHandle) rules(ctx context.Context, src RulesSource, logger *zap.Logge
 	}
 	out := wire.Rules{Store: all.Store, Alerts: []wire.AlertListing{}}
 	for _, al := range all.Alerts {
-		if al.Subject != "app" || al.App != "" && al.App != a.ma.name || len(al.PinnedTo) > 0 && !slices.Contains(al.PinnedTo, a.ma.name) {
+		if al.Subject != "app" || al.App != "" && al.App != a.ma.name || len(al.Apps) > 0 && !slices.Contains(al.Apps, a.ma.name) {
 			continue
+		}
+		if len(al.Apps) > 0 {
+			// Pinned to this app among others: said as this app's, and the
+			// others not named.
+			al.App, al.Apps = a.ma.name, nil
 		}
 		var mine []wire.Reading
 		for _, r := range al.Readings {

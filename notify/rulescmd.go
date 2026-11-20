@@ -36,9 +36,10 @@ pending or firing and since when (--json: readings, and store.values,
 unanswered when the store did not answer). A check motel makes itself
 (disk_low, backup_stale, watchdog_throttled, metrics_store_down,
 metrics_rules_down) comes with the number it last read. With no metrics
-line in the monitor block, the store's rules are not listed. When rules.yml, the file
-vmalert reads, is not this config's (a write at a load that failed),
-the table ends with a line that says so, and --json has rules_file.
+line in the monitor block, the store's rules are not listed. When
+rules.yml, the file vmalert reads, is not this config's (a write at a
+load that failed), the table ends with a line that says so, and --json
+has rules_file.
 docs/monitor.md, "How close is each alert", has an example.
 
     moteld monitor rules

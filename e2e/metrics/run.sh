@@ -357,12 +357,12 @@ got=""
 while [ "$(date +%s)" -lt "$end" ]; do
 	moteld monitor rules --json >/tmp/rules.json 2>/tmp/rules.err || true
 	got=$(pick 'const store = l.alerts.filter((a) => a.value_query);
-		const bad = store.flatMap((a) => a.readings ?? []).filter((r) => !r.measured_at || !["inactive", "pending", "firing"].includes(r.state));
+		const bad = store.flatMap((a) => a.readings ?? []).filter((r) => !(Date.parse(r.measured_at) > Date.now() - 600000) || !["inactive", "pending", "firing"].includes(r.state));
 		console.log(l.store?.values === "on" && store.length > 0 && bad.length === 0 ? "ok" : JSON.stringify({values: l.store?.values, bad}).slice(0, 300));' </tmp/rules.json 2>&1)
 	[ "$got" = ok ] && break
 	sleep 5
 done
-[ "$got" = ok ] && pass "moteld monitor rules --json carries the store rules' numbers, which moteld read itself (store.values on, each reading with its time and state)" \
+[ "$got" = ok ] && pass "moteld monitor rules --json says the store answered moteld's own reading of the store rules (store.values on), and each reading it holds has a recent time and a state word" \
 	|| fail "moteld monitor rules --json, the store's numbers: $got"
 moteld monitor rules >/tmp/rules.txt 2>&1 && head -1 /tmp/rules.txt | grep -q '^NAME *SOURCE *KIND *SEVERITY *SCOPE *CONDITION *NOW$' \
 	&& grep -q '^disk_low  *motel check  *threshold' /tmp/rules.txt \

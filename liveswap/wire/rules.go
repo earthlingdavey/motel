@@ -91,11 +91,12 @@ type AlertListing struct {
 	// Subject is box or app; App the one app a rule line is pinned to.
 	Subject string `json:"subject"`
 	App     string `json:"app,omitempty"`
-	// PinnedTo is the apps an alert's rule lines pin it to when every
-	// one of them is pinned (post_deploy_regressed, one name for all of
-	// an operator's post_deploy lines), App when there is one: an app's
-	// read keeps it for those apps alone. Not on the wire.
-	PinnedTo []string `json:"-"`
+	// Apps are the apps an alert's rule lines pin it to when every one
+	// of them is pinned and they name more than one (post_deploy_regressed,
+	// one name for all of an operator's post_deploy lines; one app is App).
+	// An app's read keeps such an alert for those apps alone, with App its
+	// own and no Apps.
+	Apps []string `json:"apps,omitempty"`
 	// Kind is threshold, guarded (a threshold with guards) or event
 	// (nothing to be close to).
 	Kind string `json:"kind"`

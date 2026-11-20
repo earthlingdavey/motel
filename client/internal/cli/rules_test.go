@@ -159,6 +159,8 @@ func TestMonitorRules(t *testing.T) {
 	at := time.Date(2026, 11, 19, 14, 0, 0, 0, time.UTC)
 	for _, other := range []wire.AlertListing{
 		{Name: "shop_slow", Subject: "app", App: "shop-2", Kind: "threshold"},
+		{Name: "disk_low", Subject: "box", Kind: "threshold"},
+		{Name: "backup_stale", Subject: "app", Kind: "threshold", Readings: []wire.Reading{{Instance: "shop-2", Value: pf(60), MeasuredAt: at}}},
 		{Name: "errors_high", Subject: "app", Kind: "threshold", Readings: []wire.Reading{{App: "blog", Value: pf(0.1), MeasuredAt: at}, {App: "shop-2", Value: pf(0.2), MeasuredAt: at}}},
 	} {
 		sent := wire.Rules{Store: wire.StoreOn, Alerts: []wire.AlertListing{other}}
@@ -166,6 +168,28 @@ func TestMonitorRules(t *testing.T) {
 		if r := runKey(t, fb, nil, "monitor", "rules", "--app", "blog"); r.code != 3 || r.stdout != "" || !strings.Contains(r.stderr, "not moteld's answer: it holds another app's rules") {
 			t.Errorf("%s: exit %d, stdout %q, stderr %q", other.Name, r.code, r.stdout, r.stderr)
 		}
+	}
+	// A name the box's filter hid says nothing of which app it was: not
+	// taken for another's, and shown as hidden.
+	hid := wire.Rules{Store: wire.StoreOn, Alerts: []wire.AlertListing{{Name: "errors_high", Subject: "app", Kind: "threshold",
+		Readings: []wire.Reading{{App: "[redacted:DB_NAME]", Value: pf(0.1), MeasuredAt: at}}}}}
+	hid.Alerts = append(hid.Alerts, wire.AlertListing{Name: "mem", Subject: "app", Kind: "threshold", Readings: []wire.Reading{{Value: pf(0.2), MeasuredAt: at}}})
+	fb.appRules = &hid
+	if r := runKey(t, fb, nil, "monitor", "rules", "--app", "blog"); r.code != 0 || !strings.Contains(r.stdout, "[hidden by the box's filter] 0.1 (") {
+		t.Errorf("a hidden name: exit %d, stdout %q, stderr %q", r.code, r.stdout, r.stderr)
+	}
+	// Apps an alert is pinned to, in the box's read: said; in an app's,
+	// not moteld's answer (the box names the app's own alone).
+	fb.appRules = nil
+	fb.rules = hostileRules()
+	fb.rules.Alerts = append(fb.rules.Alerts, wire.AlertListing{Name: "post_deploy_regressed", Source: "operator", Severity: "warning", Subject: "app", Apps: []string{"blog", "shop-2"}, Kind: "event"})
+	if r := runKey(t, fb, nil, "monitor", "rules"); r.code != 0 || !strings.Contains(r.stdout, "  warning  event · apps blog, shop-2\n") {
+		t.Errorf("pinned to apps: exit %d, stdout %s", r.code, r.stdout)
+	}
+	sent := wire.Rules{Store: wire.StoreOn, Alerts: []wire.AlertListing{{Name: "post_deploy_regressed", Subject: "app", Apps: []string{"blog", "shop-2"}, Kind: "event"}}}
+	fb.appRules = &sent
+	if r := runKey(t, fb, nil, "monitor", "rules", "--app", "blog"); r.code != 3 || !strings.Contains(r.stderr, "it holds another app's rules") {
+		t.Errorf("apps in an app's read: exit %d, stdout %q, stderr %q", r.code, r.stdout, r.stderr)
 	}
 	fb.appRules = nil
 	// A reading's app outside the app grammar is not moteld's answer.

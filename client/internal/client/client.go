@@ -899,6 +899,11 @@ func hold(v any) string {
 			if al.App != "" && !held(&al.App, appRe.MatchString) {
 				return "a name in it is no app name"
 			}
+			for j := range al.Apps {
+				if !held(&al.Apps[j], appRe.MatchString) {
+					return "a name in it is no app name"
+				}
+			}
 			for j := range al.Readings {
 				if r := &al.Readings[j]; r.App != "" && !held(&r.App, appRe.MatchString) {
 					return "a name in it is no app name"

@@ -420,7 +420,7 @@ func TestPostDeployPins(t *testing.T) {
 		apps  []string
 		scope string
 	}{
-		{[]string{"rule shop_regress post_deploy app shop {\n\t\tmax_5xx_share 0.02\n\t}"}, "shop", []string{"shop"}, "app shop"},
+		{[]string{"rule shop_regress post_deploy app shop {\n\t\tmax_5xx_share 0.02\n\t}"}, "shop", nil, "app shop"},
 		{[]string{"rule shop_regress post_deploy app shop {\n\t\tmax_5xx_share 0.02\n\t}", "rule blog_regress post_deploy app blog {\n\t\tmax_5xx_share 0.02\n\t}"}, "", []string{"blog", "shop"}, "apps blog, shop"},
 		{[]string{"rule shop_regress post_deploy app shop {\n\t\tmax_5xx_share 0.02\n\t}", "rule regress post_deploy {\n\t\tmax_5xx_share 0.02\n\t}"}, "", nil, "every app"},
 	} {
@@ -428,8 +428,17 @@ func TestPostDeployPins(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		// As moteld monitor rules reads it: through the admin route's JSON.
+		b, err := json.Marshal(l)
+		if err != nil {
+			t.Fatal(err)
+		}
+		l = RulesListing{}
+		if err := json.Unmarshal(b, &l); err != nil {
+			t.Fatal(err)
+		}
 		i := slices.IndexFunc(l.Alerts, func(e AlertListing) bool { return e.Name == eventPostDeployRegressed })
-		if i < 0 || l.Alerts[i].App != c.app || !slices.Equal(l.Alerts[i].PinnedTo, c.apps) {
+		if i < 0 || l.Alerts[i].App != c.app || !slices.Equal(l.Alerts[i].Apps, c.apps) {
 			t.Errorf("%q: %+v", c.lines, l.Alerts[i])
 			continue
 		}

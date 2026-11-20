@@ -361,13 +361,17 @@ func TestAppRulesBody(t *testing.T) {
 	// An event pinned to apps demo is not among (post_deploy_regressed,
 	// of blog's post_deploy lines alone) is not in demo's read.
 	l := rulesListing()
-	l.Alerts = append(l.Alerts, wire.AlertListing{Name: "post_deploy_regressed", Source: "operator", Severity: "warning", Subject: "app", Kind: "event", PinnedTo: []string{"blog", "shop"}})
+	l.Alerts = append(l.Alerts, wire.AlertListing{Name: "post_deploy_regressed", Source: "operator", Severity: "warning", Subject: "app", Kind: "event", Apps: []string{"blog", "shop"}})
 	h.app.SetRulesSource(&fakeRules{l: l})
 	if w := sendTo(t, h, "GET", "/_motel/apps/demo/rules", token(people.alice)); strings.Contains(w.Body.String(), "post_deploy_regressed") || w.Code != http.StatusOK {
 		t.Errorf("demo's rules hold an event pinned to other apps: %d %s", w.Code, w.Body)
 	}
-	if w := sendTo(t, h, "GET", "/_motel/rules", token(people.carol)); !strings.Contains(w.Body.String(), `{"name":"post_deploy_regressed","source":"operator","severity":"warning","subject":"app","kind":"event"}`) || strings.Contains(w.Body.String(), "pinned") {
+	if w := sendTo(t, h, "GET", "/_motel/rules", token(people.carol)); !strings.Contains(w.Body.String(), `{"name":"post_deploy_regressed","source":"operator","severity":"warning","subject":"app","apps":["blog","shop"],"kind":"event"}`) {
 		t.Errorf("the box's rules: %d %s", w.Code, w.Body)
+	}
+	// blog's read holds it as blog's, and names no other app.
+	if w := sendTo(t, h, "GET", "/_motel/apps/blog/rules", token(people.carol)); !strings.Contains(w.Body.String(), `{"name":"post_deploy_regressed","source":"operator","severity":"warning","subject":"app","app":"blog","kind":"event"}`) || strings.Contains(w.Body.String(), "shop") {
+		t.Errorf("blog's rules: %d %s", w.Code, w.Body)
 	}
 	// blog's viewer (the box's, here) reads blog's.
 	w = sendTo(t, h, "GET", "/_motel/apps/blog/rules", token(people.carol))
