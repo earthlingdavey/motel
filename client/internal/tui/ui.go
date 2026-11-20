@@ -72,6 +72,9 @@ type UI struct {
 	appRows                     []model.AppRow
 	deployRows                  []model.DeployRow
 	promptMode                  rune
+	// metricsRange is the window the metrics screen last showed: g
+	// opens it again.
+	metricsRange string
 }
 
 func textView() *tview.TextView {
@@ -205,6 +208,13 @@ func (u *UI) show() {
 		focus = v.App
 		u.body.SwitchToPage("app")
 		u.App.SetFocus(u.deploys)
+	case model.ScreenMetrics:
+		// The app's status goes on being read: its deploys are the
+		// plots' marks.
+		focus = v.App
+		u.body.SwitchToPage("page")
+		u.page.ScrollToBeginning()
+		u.App.SetFocus(u.page)
 	case model.ScreenRecord:
 		focus = v.App
 		if v != u.inFront {
@@ -232,6 +242,11 @@ func (u *UI) show() {
 		alerts = v.App
 	}
 	u.S.Engine.AlertsOpen(alerts, now)
+	if v.Screen == model.ScreenMetrics {
+		u.S.Engine.SeriesOpen(v.App, v.Range, now)
+	} else {
+		u.S.Engine.SeriesOpen("", "", now)
+	}
 	u.S.Engine.BoxAlertsOpen(v.Screen == model.ScreenAlerts || v.Screen == model.ScreenBox, now)
 	u.S.Engine.BoxRulesOpen(v.Screen == model.ScreenRules, now)
 	rules := ""
@@ -317,7 +332,8 @@ func (u *UI) retry() {
 // app's row; an app's status; a record, and the status beside it;
 // whoami; the box, its backups and its alerts (the box screen has a
 // line of each); the backups; the alerts; the rules, the box's or an
-// app's; nothing on help.
+// app's; an app's series over the window shown, and its status; nothing
+// on help.
 func (u *UI) shown(v model.View) []model.Job {
 	st := func(a string) model.Job { return model.Job{Kind: model.KStatus, App: a} }
 	switch v.Screen {
@@ -343,8 +359,30 @@ func (u *UI) shown(v model.View) []model.Job {
 		return []model.Job{{Kind: model.KBoxRules}}
 	case model.ScreenAppRules:
 		return []model.Job{{Kind: model.KRules, App: v.App}}
+	case model.ScreenMetrics:
+		return []model.Job{{Kind: model.KSeries, App: v.App, Range: v.Range}, st(v.App)}
 	}
 	return nil
+}
+
+// openMetrics is g on an app's screen: its numbers over the window last
+// shown, the hour at first.
+func (u *UI) openMetrics(app string) {
+	if u.metricsRange == "" {
+		u.metricsRange = model.SeriesRanges[0]
+	}
+	u.open(model.View{Screen: model.ScreenMetrics, App: app, Range: u.metricsRange})
+}
+
+// nextRange is t on the metrics screen: the next window, in the screen's
+// place, so esc still goes back to the app.
+func (u *UI) nextRange() {
+	v := u.top()
+	v.Range = model.NextRange(v.Range)
+	u.metricsRange = v.Range
+	u.stack[len(u.stack)-1] = v
+	u.overlay = 0
+	u.show()
 }
 
 // step opens the record next to this one in the app's deploys: p the

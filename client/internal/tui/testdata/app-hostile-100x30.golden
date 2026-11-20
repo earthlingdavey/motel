@@ -27,4 +27,4 @@ memory      67 MiB now · 77 MiB max · cap 512 MiB  ███░░░░░░
 
 
 
-enter record  y json  c command  esc back  ? more
+enter record  g metrics  y json  c cmd  esc back  ? more

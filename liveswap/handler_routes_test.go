@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"path"
 	"slices"
 	"strings"
@@ -121,7 +122,8 @@ func TestRouteActions(t *testing.T) {
 // a global source is told 403 on its rows and 404 elsewhere; an
 // app-scoped row there (/_motel/apps/<app>/<read>) is a person's, told
 // 403 where their grants do not cover the name, 404 to a viewer of the
-// box for a name that is no app, and 422 for any query. People
+// box for a name that is no app, and 422 for a query the row does not
+// take (queryTaken). People
 // too: a viewer of demo, of the box, and a person with no grant, whose
 // tokens are refused on anything but a GET, reach a row only where
 // Decide's table and their grants allow, and are told 403 or 404
@@ -176,6 +178,13 @@ func FuzzNoRouteNoAnswer(f *testing.F) {
 		{"GET", "/_motel/apps/ghost/rules", "", "", ""},
 		{"GET", "/_motel/apps/demo/rules", "store=on", "", ""},
 		{"GET", "/_motel/apps/demo/rules/", "", "", ""},
+		{"GET", "/_motel/apps/demo/series", "", "", ""},
+		{"GET", "/_motel/apps/demo/series", "range=14d", "", ""},
+		{"GET", "/_motel/apps/demo/series", "range=2h", "", ""},
+		{"GET", "/_motel/apps/demo/series", "range=24h&range=1h", "", ""},
+		{"GET", "/_motel/apps/demo/series", "range=7d&step=1", "", ""},
+		{"GET", "/_motel/apps/ghost/series", "range=24h", "", ""},
+		{"GET", "/_motel/apps/demo/series/", "range=24h", "", ""},
 	}
 	reached := map[*route]bool{}
 	reachedApp := map[*motelAppRoute]bool{}
@@ -260,7 +269,8 @@ func FuzzNoRouteNoAnswer(f *testing.F) {
 			_, person := personKeys[caller]
 			get := method == http.MethodGet
 			// An app-scoped row under /_motel/: Decide on the app its path
-			// names, then the app looked for, then the query (none taken).
+			// names, then the app looked for, then the query (the keys the
+			// row takes: queryTaken).
 			appRow, named := findMotelAppRoute(req)
 			mayView := caller == "viewer of the box" || caller == "viewer of demo" && named == "demo"
 			want := http.StatusUnauthorized
@@ -281,7 +291,7 @@ func FuzzNoRouteNoAnswer(f *testing.F) {
 				want = http.StatusForbidden
 			case person && appRow != nil && named != "demo":
 				want = http.StatusNotFound // a viewer of the box: no app of that name
-			case person && appRow != nil && query != "":
+			case person && appRow != nil && !queryTaken(appRow, query):
 				want = http.StatusUnprocessableEntity
 			case person && appRow != nil:
 				want = http.StatusOK
@@ -324,6 +334,29 @@ func FuzzNoRouteNoAnswer(f *testing.F) {
 			t.Fatalf("%s %q ?%q: %d of the %d people's GETs counted", method, target, query, len(networks.keys), len(personKeys))
 		}
 	})
+}
+
+// queryTaken is whether the row takes the query, said apart from the
+// row's own parse: for a row with no key, only none at all; for the
+// series row, the query as url.ParseQuery reads it, every key range,
+// once, with a value of wire.SeriesRanges.
+func queryTaken(rt *motelAppRoute, raw string) bool {
+	if raw == "" {
+		return true
+	}
+	if rt.read != "series" {
+		return false
+	}
+	q, err := url.ParseQuery(raw)
+	if err != nil {
+		return false
+	}
+	for k, vs := range q {
+		if k != "range" || len(vs) != 1 || !slices.Contains([]string{"1h", "24h", "7d", "14d"}, vs[0]) {
+			return false
+		}
+	}
+	return true
 }
 
 // boxViewersOnly are the rows under /_motel/ a viewer of the box alone

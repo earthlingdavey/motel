@@ -34,7 +34,9 @@ import (
 // only as its filter's marker. Alertmanager holds an alert of each app
 // and a box event naming the first: an app-scoped row's answer holds
 // its own app's alert alone. (That a box event carries no app label,
-// whatever its instance names, is notify's: TestHeldAlerts.) It reads the route tables, and a row
+// whatever its instance names, is notify's: TestHeldAlerts.) The
+// store holds a series of each app, its points carrying a number of
+// the app's: an app's series row holds its own app's number alone. It reads the route tables, and a row
 // whose shape it does not know fails it, so a route added without its
 // expectations fails here. The rules source lists a rule of every app
 // with each app's number, a rule pinned to each, and the box's own: an
@@ -147,7 +149,21 @@ func newTwoAppsRig(t *testing.T) *twoAppsRig {
 	}
 	app.SetAlertsSource(&fakeAlerts{held: held, ok: true})
 	app.SetRulesSource(&fakeRules{l: twoAppsRules()})
+	// The store holds a series of each app whose points carry the app's
+	// series canary, a number: no answer to any caller may hold another
+	// app's, and each app's 200 holds its own.
+	byApp := map[string]wire.Series{}
+	for _, name := range twoApps {
+		byApp[name] = wire.Series{Store: wire.StoreOn, Window: "24h", StepSeconds: 300, Panels: []wire.Panel{
+			{Name: wire.PanelMemory, Unit: wire.UnitBytes, Points: [][2]float64{{1794000000, seriesCanary(name)}}}}}
+	}
+	app.SetSeriesSource(&fakeSeries{byApp: byApp})
 	return r
+}
+
+// seriesCanary is in app's series, which only a read of app holds.
+func seriesCanary(app string) float64 {
+	return map[string]float64{"appalpha": 731948265, "appbravo": 582017346}[app]
 }
 
 // The rules canaries: each app's number of a rule of every app, and the
@@ -214,8 +230,11 @@ func (r *twoAppsRig) authorization(t *testing.T, caller string) string {
 // motelAppRequest is a request of an app-scoped row under /_motel/ on
 // app, or nil for a read this test does not know.
 func motelAppRequest(rt motelAppRoute, app string) *http.Request {
-	if rt.read == "alerts" || rt.read == "rules" {
+	switch rt.read {
+	case "alerts", "rules":
 		return httptest.NewRequest(http.MethodGet, "http://"+personBox+motelAppsPrefix+app+"/"+rt.read, nil)
+	case "series":
+		return httptest.NewRequest(http.MethodGet, "http://"+personBox+motelAppsPrefix+app+"/series?range=24h", nil)
 	}
 	return nil
 }
@@ -223,8 +242,11 @@ func motelAppRequest(rt motelAppRoute, app string) *http.Request {
 // appReadCanaries are what an app-scoped read of app holds of app
 // alone, and boxReadCanaries what none holds: the box's own.
 func appReadCanaries(read, app string) []string {
-	if read == "rules" {
+	switch read {
+	case "rules":
 		return ruleCanaries(app)
+	case "series":
+		return []string{strconv.FormatFloat(seriesCanary(app), 'f', -1, 64)}
 	}
 	return []string{alertCanary(app)}
 }
@@ -371,7 +393,7 @@ func TestTwoAppsTwoPeople(t *testing.T) {
 				for _, other := range twoApps {
 					// Every read's canaries of the other app: an alerts read
 					// holds no rule of it either.
-					for _, read := range []string{"alerts", "rules"} {
+					for _, read := range []string{"alerts", "rules", "series"} {
 						for _, c := range appReadCanaries(read, other) {
 							if other != app && strings.Contains(body, c) {
 								t.Errorf("%s, %s: the answer holds %s's %q: %s", caller, what, other, c, body)

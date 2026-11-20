@@ -136,3 +136,21 @@ application/json Forbidden
 # GET /_motel/rules as a viewer of the box, no listing
 application/json Internal Server Error
 {"error":"the box could not list its rules: moteld's journal says why"}
+# GET /_motel/apps/demo/series as a viewer of demo, no metrics line
+application/json OK
+{"store":"off","window":"1h","panels":[]}
+# GET /_motel/apps/demo/series?range=14d as a viewer of demo, the store unanswered
+application/json OK
+{"store":"unanswered","window":"14d","panels":[]}
+# GET /_motel/apps/demo/series?range=24h as a viewer of demo
+application/json OK
+{"store":"on","window":"24h","step_seconds":300,"end":"<time>","panels":[{"name":"memory_bytes","unit":"bytes","points":[[1795096200,190840832],[1795096500,191889408],[1795096800,12345678901]]},{"name":"cpu_cores","unit":"cores","points":[[1795096200,0.004],[1795096800,0.000123]]},{"name":"requests_per_second","unit":"per_second","points":[[1795096500,2.5],[1795096800,3]]},{"name":"5xx_share","unit":"share","points":[[1795096500,0],[1795096800,0.0123]]},{"name":"p95_ms","unit":"ms","points":[[1795096800,80.1]]}]}
+# GET /_motel/apps/demo/series?range=2h as a viewer of demo
+application/json Unprocessable Entity
+{"error":"GET /_motel/apps/{app}/series takes only range (one of 1h, 24h, 7d, 14d), each once"}
+# GET /_motel/apps/demo/series with a deploy token
+application/json Forbidden
+{"error":"this needs a token signed by a declared key","needs":"key","scope":"app"}
+# GET /_motel/apps/demo/series as a person with no grant
+application/json Forbidden
+{"error":"this needs the viewer role on this app","needs":"viewer","scope":"app"}

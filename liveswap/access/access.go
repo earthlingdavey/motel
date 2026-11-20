@@ -12,8 +12,8 @@
 // do before Decide existed, so on an app's path and on the box's own
 // Decide refuses nothing that its authentication accepted; under
 // /_motel/ it refuses a global source's token the people's routes
-// (liveswap/DESIGN-liveswap.md, "Who may take which action"). A person may read: an app's status, deploys, alerts and rules where
-// a grant covers the app, the box's status, its backups', every
+// (liveswap/DESIGN-liveswap.md, "Who may take which action"). A person may read: an app's status, deploys, alerts, rules and
+// series where a grant covers the app, the box's status, its backups', every
 // alert and silence and every rule with a grant on the box, and who they are and which apps they may view
 // whatever their grants (DESIGN-access.md).
 package access
@@ -46,13 +46,14 @@ const (
 	BoxAlerts       Action = "box.alerts"        // GET /_motel/alerts
 	AppRules        Action = "app.rules"         // GET /_motel/apps/<app>/rules
 	BoxRules        Action = "box.rules"         // GET /_motel/rules
+	AppSeries       Action = "app.series"        // GET /_motel/apps/<app>/series
 )
 
 // MotelActions are the actions liveswap_webhook serves under /_motel/,
 // beside the apps' routes: box actions, and app actions on the app the
 // path names after /_motel/apps/. box_webhook serves the other box
 // actions.
-var MotelActions = []Action{BoxWhoami, BoxApps, BoxBackups, AppAlerts, BoxAlerts, AppRules, BoxRules}
+var MotelActions = []Action{BoxWhoami, BoxApps, BoxBackups, AppAlerts, BoxAlerts, AppRules, BoxRules, AppSeries}
 
 // Kind is which sort of principal a verified token stands for.
 type Kind int
@@ -111,6 +112,7 @@ var allowed = []cell{
 	{Person, BoxAlerts},
 	{Person, AppRules},
 	{Person, BoxRules},
+	{Person, AppSeries},
 }
 
 // Forbidden is Decide's refusal of a principal the box verified, for
@@ -202,7 +204,7 @@ func decidePerson(p Principal, a Action, resource string) error {
 		return &Forbidden{Needs: "deployer", Scope: scope}
 	}
 	switch a {
-	case AppStatus, AppDeployRecord, AppAlerts, AppRules:
+	case AppStatus, AppDeployRecord, AppAlerts, AppRules, AppSeries:
 		if !p.Views.Covers(resource) {
 			return &Forbidden{Needs: "viewer", Scope: "app"}
 		}

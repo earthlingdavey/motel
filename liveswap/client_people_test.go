@@ -173,6 +173,13 @@ func TestClientPeople(t *testing.T) {
 		{App: "blog", Alert: wire.Alert{Name: "errors_high", Severity: "warning", Summary: "blog: errors", StartsAt: time.Date(2026, 11, 19, 14, 0, 0, 0, time.UTC), State: "active"}},
 	}})
 
+	end := time.Date(2026, 11, 19, 14, 0, 0, 0, time.UTC)
+	h.app.SetSeriesSource(&fakeSeries{byApp: map[string]wire.Series{
+		"demo": {Store: wire.StoreOn, StepSeconds: 3600, End: &end, Panels: []wire.Panel{
+			{Name: wire.PanelMemory, Unit: wire.UnitBytes, Points: [][2]float64{{float64(end.Unix()) - 3600, 190840832}, {float64(end.Unix()), 191889408}}}}},
+		"blog": {Store: wire.StoreOn, StepSeconds: 3600, End: &end, Panels: []wire.Panel{}},
+	}})
+
 	var last lastBody
 	box := serveClient(t, last.serve(webhook(h)))
 	app := box.url + "/demo"
@@ -181,16 +188,19 @@ func TestClientPeople(t *testing.T) {
 	}
 
 	commands := map[string][]string{
-		"whoami":               {"whoami"},
-		"apps":                 {"apps"},
-		"status":               {"status", app},
-		"deploys":              {"deploys", app},
-		"one deploy":           {"deploys", app, "v2"},
-		"another app":          {"status", box.url + "/blog"},
-		"no such app":          {"status", box.url + "/ghost"},
-		"alerts":               {"monitor", "alerts", "--app", app},
-		"another app's alerts": {"monitor", "alerts", "--app", "blog"},
-		"no such app's alerts": {"monitor", "alerts", "--app", "ghost"},
+		"whoami":                {"whoami"},
+		"apps":                  {"apps"},
+		"status":                {"status", app},
+		"deploys":               {"deploys", app},
+		"one deploy":            {"deploys", app, "v2"},
+		"another app":           {"status", box.url + "/blog"},
+		"no such app":           {"status", box.url + "/ghost"},
+		"alerts":                {"monitor", "alerts", "--app", app},
+		"another app's alerts":  {"monitor", "alerts", "--app", "blog"},
+		"no such app's alerts":  {"monitor", "alerts", "--app", "ghost"},
+		"metrics":               {"metrics", app, "--range", "14d"},
+		"another app's metrics": {"metrics", "blog"},
+		"no such app's metrics": {"metrics", "ghost", "--range", "7d"},
 	}
 	type want struct {
 		code   int
@@ -206,16 +216,20 @@ func TestClientPeople(t *testing.T) {
 			"whoami": {0, ""}, "apps": {0, "demo\n"}, "status": {0, ""}, "deploys": {0, ""}, "one deploy": {0, ""},
 			"another app": forbidden, "no such app": forbidden,
 			"alerts": {0, ""}, "another app's alerts": forbidden, "no such app's alerts": forbidden,
+			"metrics":               {0, "127.0.0.1 holds demo's numbers over 14d, a point every 1 h, to 2026-11-19 14:00 UTC:\nmemory     min 182.0 MiB (11-19 13:00 UTC)  max 183.0 MiB (11-19 14:00 UTC)  newest 183.0 MiB (11-19 14:00 UTC)  2 of 337 steps\nrequests   none in the window: the box counts requests only for an app behind observe\n"},
+			"another app's metrics": forbidden, "no such app's metrics": forbidden,
 		}},
 		{"a viewer of the box", carol, map[string]want{
 			"whoami": {0, ""}, "apps": {0, "blog\ndemo\n"}, "status": {0, ""}, "deploys": {0, ""}, "one deploy": {0, ""},
 			"another app": {0, ""}, "no such app": {6, ""},
 			"alerts": {0, ""}, "another app's alerts": {0, ""}, "no such app's alerts": {6, ""},
+			"metrics": {0, ""}, "another app's metrics": {0, ""}, "no such app's metrics": {6, ""},
 		}},
 		{"a person with no grant", dave, map[string]want{
 			"whoami": {0, ""}, "apps": {0, ""}, "status": forbidden, "deploys": forbidden, "one deploy": forbidden,
 			"another app": forbidden, "no such app": forbidden,
 			"alerts": forbidden, "another app's alerts": forbidden, "no such app's alerts": forbidden,
+			"metrics": forbidden, "another app's metrics": forbidden, "no such app's metrics": forbidden,
 		}},
 	} {
 		for name, args := range commands {

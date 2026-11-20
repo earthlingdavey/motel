@@ -74,7 +74,7 @@ type Rules struct {
 	Alerts []AlertListing `json:"alerts"`
 }
 
-// The words of Rules.Store and StoreQueries.Values.
+// The words of Rules.Store, StoreQueries.Values and Series.Store.
 const (
 	StoreOn         = "on"
 	StoreOff        = "off"

@@ -23,6 +23,9 @@ const (
 	// ScreenRules is the box's rules; ScreenAppRules an app's (View.App).
 	ScreenRules
 	ScreenAppRules
+	// ScreenMetrics is an app's numbers over a window, opened from its
+	// screen.
+	ScreenMetrics
 	ScreenHelp
 	ScreenRefused
 	// ScreenStopHelp is help opened over a stop screen: it leaves, asks
@@ -30,10 +33,12 @@ const (
 	ScreenStopHelp
 )
 
-// View is the screen open and what it is of.
+// View is the screen open and what it is of: the app, a record's
+// version, the metrics screen's window.
 type View struct {
 	Screen       Screen
 	App, Version string
+	Range        string
 }
 
 // StopLine says why every read stopped, in the client's words, for the
@@ -56,7 +61,7 @@ func (s *Session) askAgain(now time.Time) Line {
 }
 
 // screenReads is the read behind each screen that has one.
-var screenReads = map[Screen]Kind{ScreenApps: KApps, ScreenApp: KStatus, ScreenRecord: KDeploy, ScreenMe: KWhoAmI, ScreenBox: KBox, ScreenBackups: KBackups, ScreenAlerts: KBoxAlerts, ScreenRules: KBoxRules, ScreenAppRules: KRules}
+var screenReads = map[Screen]Kind{ScreenApps: KApps, ScreenApp: KStatus, ScreenRecord: KDeploy, ScreenMe: KWhoAmI, ScreenBox: KBox, ScreenBackups: KBackups, ScreenAlerts: KBoxAlerts, ScreenRules: KBoxRules, ScreenAppRules: KRules, ScreenMetrics: KSeries}
 
 // CommandArgs is the motel command line that reads what v shows, as
 // its arguments: the command's words, --box so it works pasted
@@ -86,6 +91,8 @@ func (s *Session) commandArgs(v View, json bool) ([]string, bool) {
 			pos = append(pos, v.App)
 		case w == "<version>":
 			pos = append(pos, v.Version)
+		case w == "<range>":
+			args = append(args, v.Range)
 		default:
 			args = append(args, w)
 		}
@@ -170,6 +177,14 @@ func (s *Session) Body(v View) ([]byte, time.Time, bool) {
 		if g, _ := s.rules(v.App); g != nil {
 			return g.Body, g.At, true
 		}
+	case ScreenMetrics:
+		// An answer held beside a refusal of the app's status is not
+		// shown, here as on the screen.
+		if g, _ := s.Series(v.App, v.Range); g != nil {
+			if _, refused := s.appRefused(v.App); !refused {
+				return g.Body, g.At, true
+			}
+		}
 	}
 	return nil, time.Time{}, false
 }
@@ -196,6 +211,9 @@ func (s *Session) readErr(v View) error {
 		return s.BoxAlertsErr
 	case ScreenRules, ScreenAppRules:
 		_, err := s.rules(v.App)
+		return err
+	case ScreenMetrics:
+		_, err := s.Series(v.App, v.Range)
 		return err
 	}
 	return nil

@@ -646,8 +646,8 @@ untested):
 ## Look at the numbers
 
 With the `metrics` line, motel pushes every 30 seconds. The store keeps
-each series for 14 days. There is no dashboard. You read the numbers in
-three ways.
+each series for 14 days. There is no dashboard in a browser. You read the
+numbers in four ways.
 
 ### `GET /<app>`, as a deployer
 
@@ -680,6 +680,28 @@ store did not answer"}`, and moteld's journal has the cause as a
 warning, `monitor metrics: GET /<app> answered without metrics: the
 metrics store did not answer the view's queries`, with the app, the
 range and the error (at most one per app and range every 30 seconds).
+
+### An app's numbers over time, from a laptop
+
+A person with the viewer role on the app or on the box
+([people.md](people.md)) reads its numbers over the last hour, day, 7
+days or 14 days with `motel metrics <app> --range 1h|24h|7d|14d`, and
+`motel` alone draws them: `g` on an app's screen, `t` for another
+window. Each is a point a step (a minute over the hour, 5 minutes over
+the day, 30 over 7 days, an hour over 14), the newest of the last whole
+step, so up to an hour old over 14 days: the memory (each step's
+highest push), the CPU, and for an app behind `observe` its requests a
+second, 5xx share and p95. A step with no point (the app stopped,
+moteld down, the store not yet holding the window) is a gap. The
+plots mark each version's latest deploy that succeeded, from the
+app's own deploy records, which reach back only as far as the box
+keeps them. The box asks the store four fixed queries per app and
+window, at most once every 30 seconds for everyone; the reader names
+the window and nothing else. When the store does not answer within 3
+seconds the reader is told so, and moteld's journal has the cause as a
+warning, `monitor metrics: a person's read of an app's series was
+answered "store":"unanswered"`, with the app, the window and the
+error (at most one per app and window every 30 seconds).
 
 ### PromQL over the socket, as root
 

@@ -129,6 +129,10 @@ type App struct {
 	// GET /_motel/apps/<app>/rules read; nil, with no monitor block that
 	// raises anything, is "store":"off" and no rule.
 	rulesSource RulesSource
+	// seriesSource is the metrics store's (SetSeriesSource), which GET
+	// /_motel/apps/<app>/series reads; nil, with no metrics line, is
+	// "store":"off".
+	seriesSource SeriesSource
 	// manager is the manager connection everything this config starts
 	// talks to — its apps' runners, its unknown-app sweep, and (when
 	// the seams below are nil) its capability measurement. Typed as

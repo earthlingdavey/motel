@@ -574,7 +574,73 @@ var (
 	// (monitor, an alert's severity and state): printed as a word, and
 	// one the client does not know is said as such, not refused.
 	alertWordRe = regexp.MustCompile(`^[a-z][a-z0-9_]{0,31}$`)
+	// seriesWordRe is the shape of a series panel's name and unit
+	// (liveswap/wire/series.go's Panel names and units, 5xx_share
+	// among them): printed as a word, and one the client does not know
+	// is not drawn, not refused.
+	seriesWordRe = regexp.MustCompile(`^[a-z0-9][a-z0-9_]{0,31}$`)
+	// seriesSpans are wire.SeriesRanges' spans, which bound a panel's
+	// points by the body's step.
+	seriesSpans = map[string]time.Duration{"1h": time.Hour, "24h": 24 * time.Hour, "7d": 7 * 24 * time.Hour, "14d": 14 * 24 * time.Hour}
 )
+
+// holdSeries holds a series answer to what the client draws: the
+// store's word and the window to their grammars; with the store's
+// answer, a step and an end; each panel's name and unit to a word's
+// shape, each name once; and each panel's points, oldest first, no
+// more than the window holds at the step, every time inside the
+// window. A value is drawn by the client from its own number, so a
+// point of any finite value is taken.
+func holdSeries(s *wire.Series) string {
+	if !alertWordRe.MatchString(s.Store) {
+		return "its store is not a word"
+	}
+	span, ok := seriesSpans[s.Window]
+	if !ok || !slices.Contains(wire.SeriesRanges, s.Window) {
+		return "its window is not one a box keeps"
+	}
+	if s.Store != wire.StoreOn {
+		if len(s.Panels) > 0 {
+			return "it holds points from a store that did not answer"
+		}
+		return ""
+	}
+	// No window a box keeps has a thousand steps (337 at the most). The
+	// seconds compared before they are a Duration, which a huge one
+	// would wrap.
+	if s.StepSeconds <= 0 || s.StepSeconds > int(span/time.Second) || int(span/time.Second)%s.StepSeconds != 0 || s.End == nil {
+		return "its step or its end is not one a window has"
+	}
+	step := time.Duration(s.StepSeconds) * time.Second
+	if span/step > 1000 {
+		return "its step or its end is not one a window has"
+	}
+	start, end := s.End.Add(-span).Unix(), s.End.Unix()
+	most := int(span/step) + 1
+	seen := map[string]bool{}
+	for i := range s.Panels {
+		p := &s.Panels[i]
+		if !held(&p.Name, seriesWordRe.MatchString) || !held(&p.Unit, seriesWordRe.MatchString) {
+			return "a panel's name or unit in it is not a word"
+		}
+		if p.Name != Filtered && seen[p.Name] {
+			return "it holds a panel twice"
+		}
+		seen[p.Name] = true
+		if len(p.Points) > most {
+			return "a panel in it holds more points than its window has steps"
+		}
+		for j, pt := range p.Points {
+			t := pt[0]
+			// Each at a multiple of the step back from the end, as moteld's.
+			if math.IsNaN(t) || math.IsInf(pt[1], 0) || math.IsNaN(pt[1]) || t < float64(start) || t > float64(end) || t != math.Trunc(t) ||
+				(end-int64(t))%int64(s.StepSeconds) != 0 || j > 0 && t <= p.Points[j-1][0] {
+				return "a point in it is not one of its window, oldest first"
+			}
+		}
+	}
+	return ""
+}
 
 // The box's response filter writes a marker where it replaced text
 // (liveswap/redact.go). For an env_file value of the app's, or a
@@ -917,6 +983,8 @@ func hold(v any) string {
 				}
 			}
 		}
+	case *wire.Series:
+		return holdSeries(a)
 	case *wire.Apps:
 		for _, e := range a.Apps {
 			if !appRe.MatchString(e.Name) {
@@ -1135,6 +1203,8 @@ func identity(v any) shape {
 		return shape{strs: []string{"monitor"}, lists: []string{"alerts", "silences"}}
 	case *wire.Rules:
 		return shape{strs: []string{"store"}, lists: []string{"alerts"}}
+	case *wire.Series:
+		return shape{strs: []string{"store", "window"}, lists: []string{"panels"}}
 	}
 	return shape{}
 }

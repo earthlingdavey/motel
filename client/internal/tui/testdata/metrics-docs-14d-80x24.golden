@@ -1,0 +1,24 @@
+motel · deploy.example.com · v0.7.0 │ alice@example.com · viewer … live · 0s ago
+apps › docs › metrics 14d                            as of 14:12:40 UTC · 0s ago
+over 14d · a point every 1 h · to 14:00 UTC (12m ago) · t: another window
+^ a version's latest deploy that succeeded (a column is 4h43m); records from
+  11-10 14:12
+
+memory      newest 204.0 MiB at 14:00 (12m ago)
+            max 205M 11-02 13:00 · min 145M 11-02 01:00
+   205M |⡆   ⣸⡇   ⣸⣇   ⢸⣇   ⢸⣇   ⢰⣇   ⢰⣇   ⢰⢳   ⢰⢳   ⢰⢳   ⢰⢳   ⢀⣷   ⢀⣷   ⢀⣿   ⢀⡟
+        |⢧   ⡇⢧   ⡇⢸   ⡼⢸   ⡼⢸   ⡼⢸   ⡼⢸   ⡼⢸   ⡼⢸   ⢸⢸   ⢸⠸⡄  ⢸⠸⡄  ⢸⠸⡄  ⢸⠸⡄  ⢸
+        |⢸   ⡇⢸   ⡇⢸   ⡇⢸   ⡇⠸⡄  ⡇⠸⡄  ⡇⠸⡄  ⡇⠸⡄  ⡇⠸⡄  ⡼⠸⡄  ⡼ ⡇  ⡼ ⡇  ⡼ ⡇  ⡼ ⡇  ⡼
+        |⠸⡄ ⢠⠇⠸⡄ ⢠⠇⠸⡄ ⢠⠇⠸⡄ ⢠⠇ ⡇ ⢠⠇ ⡇ ⢠⠇ ⡇  ⡇ ⡇  ⡇ ⡇  ⡇ ⡇  ⡇ ⡇  ⡇ ⡇  ⡇ ⢧  ⡇ ⢧  ⠇
+        | ⡇ ⢸  ⡇ ⢸  ⡇ ⢸  ⡇ ⢸  ⡇ ⢸  ⡇ ⢸  ⣇ ⢀⡇ ⣇ ⢀⡇ ⣇ ⢀⡇ ⣇ ⢀⡇ ⣇ ⢀⡇ ⣇  ⡇ ⢸  ⡇ ⢸
+        | ⡇ ⢸  ⡇ ⢸  ⡇ ⢸  ⡇ ⢸  ⡇ ⢸  ⡇ ⢸  ⢸ ⢸  ⢸ ⢸  ⢸ ⢸  ⢸ ⢸  ⢸ ⢸  ⢸  ⡇ ⢸  ⡇ ⢸
+        | ⢳ ⡞  ⢳ ⡞  ⢳ ⡞  ⢳ ⢸  ⢳ ⢸  ⢳ ⢸  ⢸ ⢸  ⢸ ⢸  ⢸ ⢸  ⢸ ⢸  ⢸ ⢸  ⢸ ⢰⠃ ⢸ ⢰⠃ ⢸ ⢰⠂
+        | ⢸ ⡇  ⢸ ⡇  ⢸ ⡇  ⢸ ⡞  ⢸ ⡞  ⢸ ⡞  ⢸ ⡞  ⢸ ⡞  ⠘⡆⡞  ⠘⡆⢸  ⠘⡆⢸  ⠘⡆⢸  ⠘⡆⢸  ⠘⡆⢸
+        | ⢸⢰⠃  ⢸ ⡇  ⠘⡆⡇  ⠘⡆⡇  ⠘⡆⡇  ⠘⡆⡇  ⠘⡆⡇  ⠘⡆⡇   ⡇⡇   ⡇⡞   ⡇⡞   ⡇⡞   ⡇⡞   ⡇⡞
+   145M | ⠈⣿   ⠈⣿⠁   ⣿⠁   ⣿⠁   ⣿⠁   ⢿⠁   ⢿⠁   ⢧⠇   ⢧⠇   ⢧⠇   ⢧⠇   ⢹⠇   ⢹⠇   ⢹⡇
+        +---------------------------------------------^----------------------- -
+         11-01 14:00                   336 of 337 steps                    14:00
+
+cpu         newest 0.045 cores at 14:00 (12m ago)
+            max 0.070 11-01 20:00 · min 0.020 11-02 08:00
+↑↓ scroll  t window  y json  c cmd  esc back  ? more

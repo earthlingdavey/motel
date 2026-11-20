@@ -28,38 +28,38 @@ func TestDecideTable(t *testing.T) {
 	on := map[Action]string{
 		AppStatus: "blog", AppDeployRecord: "blog", AppDeploy: "blog", AppRollback: "blog",
 		BoxStatus: "", BoxPushResult: "", BoxPush: "", BoxWhoami: "", BoxApps: "", BoxBackups: "",
-		AppAlerts: "blog", BoxAlerts: "", AppRules: "blog", BoxRules: "",
+		AppAlerts: "blog", BoxAlerts: "", AppRules: "blog", BoxRules: "", AppSeries: "blog",
 	}
 	want := map[string]map[Action]bool{
 		"none": {
 			AppStatus: false, AppDeployRecord: false, AppDeploy: false, AppRollback: false,
 			BoxStatus: false, BoxPushResult: false, BoxPush: false, BoxWhoami: false, BoxApps: false, BoxBackups: false, AppAlerts: false, BoxAlerts: false,
-			AppRules: false, BoxRules: false,
+			AppRules: false, BoxRules: false, AppSeries: false,
 		},
 		"deployer of blog": {
 			AppStatus: true, AppDeployRecord: true, AppDeploy: true, AppRollback: true,
 			BoxStatus: false, BoxPushResult: false, BoxPush: false, BoxWhoami: false, BoxApps: false, BoxBackups: false, AppAlerts: false, BoxAlerts: false,
-			AppRules: false, BoxRules: false,
+			AppRules: false, BoxRules: false, AppSeries: false,
 		},
 		"box channel": {
 			AppStatus: false, AppDeployRecord: false, AppDeploy: false, AppRollback: false,
 			BoxStatus: true, BoxPushResult: true, BoxPush: true, BoxWhoami: false, BoxApps: false, BoxBackups: false, AppAlerts: false, BoxAlerts: false,
-			AppRules: false, BoxRules: false,
+			AppRules: false, BoxRules: false, AppSeries: false,
 		},
 		"viewer of blog": {
 			AppStatus: true, AppDeployRecord: true, AppDeploy: false, AppRollback: false,
 			BoxStatus: false, BoxPushResult: false, BoxPush: false, BoxWhoami: true, BoxApps: true, BoxBackups: false, AppAlerts: true, BoxAlerts: false,
-			AppRules: true, BoxRules: false,
+			AppRules: true, BoxRules: false, AppSeries: true,
 		},
 		"viewer of the box": {
 			AppStatus: true, AppDeployRecord: true, AppDeploy: false, AppRollback: false,
 			BoxStatus: true, BoxPushResult: false, BoxPush: false, BoxWhoami: true, BoxApps: true, BoxBackups: true, AppAlerts: true, BoxAlerts: true,
-			AppRules: true, BoxRules: true,
+			AppRules: true, BoxRules: true, AppSeries: true,
 		},
 		"person with no grant": {
 			AppStatus: false, AppDeployRecord: false, AppDeploy: false, AppRollback: false,
 			BoxStatus: false, BoxPushResult: false, BoxPush: false, BoxWhoami: true, BoxApps: true, BoxBackups: false, AppAlerts: false, BoxAlerts: false,
-			AppRules: false, BoxRules: false,
+			AppRules: false, BoxRules: false, AppSeries: false,
 		},
 	}
 	for _, k := range kinds {
@@ -107,6 +107,7 @@ func TestAllowedCells(t *testing.T) {
 		{Person, BoxAlerts},
 		{Person, AppRules},
 		{Person, BoxRules},
+		{Person, AppSeries},
 	}
 	for _, c := range allowed {
 		if !slices.Contains(want, c) {
@@ -193,6 +194,13 @@ func TestDecidePersonRefusals(t *testing.T) {
 		{"a deployer reads its own app's alerts", Principal{Kind: AppDeployer, App: "blog"}, AppAlerts, "blog", &Forbidden{"key", "app"}},
 		{"the box channel reads an app's alerts", Principal{Kind: BoxChannel}, AppAlerts, "blog", &Forbidden{"key", "app"}},
 		{"an app's alerts on the box", bob, AppAlerts, "", nil},
+		{"another app's series", bob, AppSeries, "shop", &Forbidden{"viewer", "app"}},
+		{"the series of an app that does not exist", bob, AppSeries, "ghost", &Forbidden{"viewer", "app"}},
+		{"series with no views", Principal{Kind: Person, Name: "dave"}, AppSeries, "blog", &Forbidden{"viewer", "app"}},
+		{"a global deployer reads an app's series", Principal{Kind: AppDeployer}, AppSeries, "blog", &Forbidden{"key", "app"}},
+		{"a deployer reads its own app's series", Principal{Kind: AppDeployer, App: "blog"}, AppSeries, "blog", &Forbidden{"key", "app"}},
+		{"the box channel reads an app's series", Principal{Kind: BoxChannel}, AppSeries, "blog", &Forbidden{"key", "app"}},
+		{"an app's series on the box", bob, AppSeries, "", nil},
 		{"the box's alerts", bob, BoxAlerts, "", &Forbidden{"viewer", "box"}},
 		{"the box's alerts with no views", Principal{Kind: Person, Name: "dave"}, BoxAlerts, "", &Forbidden{"viewer", "box"}},
 		{"a deployer reads the box's alerts", Principal{Kind: AppDeployer}, BoxAlerts, "", &Forbidden{"key", "box"}},

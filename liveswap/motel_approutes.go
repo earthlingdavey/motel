@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"slices"
 	"strings"
 
@@ -21,23 +22,89 @@ const motelAppsPrefix = motelPrefix + "/apps/"
 // motelAppRoute is one row of the app-scoped routes under /_motel/
 // (DESIGN-access.md, "Routes that are not an app"): a GET of
 // /_motel/apps/<app>/<read>, the app action Decide is asked about on
-// that app, and the function that answers, which is given the app's
-// handle from allowApp and never its name.
+// that app, the query keys it takes, and the function that answers,
+// which is given the app's handle from allowApp and never its name,
+// and the query as parsed against the keys.
 //
-// No row takes a query yet, so any query is the 422 that says so and
-// echoes nothing. A row that comes to take one declares its keys and
-// the closed set or the grammar of each beside its read, and the
-// query is parsed strictly against them: an unknown key is still the
-// 422, naming the keys the row takes.
+// A row declares each key it takes and the closed set of its values,
+// the first the default; the query is parsed strictly against them
+// (parseQuery), after Decide. A query that does not parse, a key the
+// row does not take, a key given twice and a value outside its set are
+// each the 422 that names what the row takes, in the route's own
+// words, and echoes nothing of the request's; a row with no key takes
+// no query at all, an empty one among them.
 type motelAppRoute struct {
 	read   string
 	action access.Action
-	serve  func(h *Handler, w http.ResponseWriter, r *http.Request, app appHandle) error
+	keys   []queryKey
+	serve  func(h *Handler, w http.ResponseWriter, r *http.Request, app appHandle, q appQuery) error
 }
 
+// queryKey is one query key a row takes, and the closed set of its
+// values: the first is the value when the query does not name the key.
+type queryKey struct {
+	name   string
+	values []string
+}
+
+// appQuery is the value of each key a row takes, as the query named it
+// or its default: only those keys, and only values of their sets.
+type appQuery map[string]string
+
 var motelAppRoutes = []motelAppRoute{
-	{"alerts", access.AppAlerts, (*Handler).appAlerts},
-	{"rules", access.AppRules, (*Handler).appRules},
+	{"alerts", access.AppAlerts, nil, (*Handler).appAlerts},
+	{"rules", access.AppRules, nil, (*Handler).appRules},
+	{"series", access.AppSeries, []queryKey{{"range", wire.SeriesRanges}}, (*Handler).appSeries},
+}
+
+// parseQuery is the request's query against the keys rt takes, or
+// false, for the 422: as url.ParseQuery reads it (an empty query, and
+// empty pieces between the &s, name nothing), each key one rt takes,
+// named once, with a value of its set. A row with no key takes no
+// query, so any query, an empty one too, is refused.
+func (rt *motelAppRoute) parseQuery(r *http.Request) (appQuery, bool) {
+	out := appQuery{}
+	for _, k := range rt.keys {
+		out[k.name] = k.values[0]
+	}
+	if r.URL.RawQuery == "" && !r.URL.ForceQuery {
+		return out, true
+	}
+	if len(rt.keys) == 0 {
+		return nil, false
+	}
+	q, err := url.ParseQuery(r.URL.RawQuery)
+	if err != nil {
+		return nil, false
+	}
+	for name, vs := range q {
+		i := slices.IndexFunc(rt.keys, func(k queryKey) bool { return k.name == name })
+		if i < 0 || len(vs) != 1 {
+			return nil, false
+		}
+		j := slices.Index(rt.keys[i].values, vs[0])
+		if j < 0 {
+			return nil, false
+		}
+		// The row's own value, not the request's bytes: what goes on
+		// to the read and its body is the row's word.
+		out[rt.keys[i].name] = rt.keys[i].values[j]
+	}
+	return out, true
+}
+
+// takes is the 422's sentence: the route by its pattern, and the keys
+// it takes with their values, the row's own words alone.
+func (rt *motelAppRoute) takes() string {
+	route := "GET /_motel/apps/{app}/" + rt.read
+	if len(rt.keys) == 0 {
+		return route + " takes no query"
+	}
+	parts := make([]string, len(rt.keys))
+	for i, k := range rt.keys {
+		parts[i] = k.name + " (one of " + strings.Join(k.values, ", ") + ")"
+	}
+	return route + " takes only " + strings.Join(parts, " and ") + ", each once"
 }
 
 // findMotelAppRoute is the request's app-scoped row and the app its
@@ -86,18 +153,18 @@ func (h *Handler) serveMotelApp(w http.ResponseWriter, r *http.Request, who acce
 		// and the routes falling apart.
 		return RespondJSON(w, http.StatusForbidden, wire.Error{Error: "forbidden"}, nil)
 	}
-	if r.URL.RawQuery != "" || r.URL.ForceQuery {
-		// The route's own words, naming the keys it takes (none), and
-		// nothing of the request's or the app's (rule 6).
-		return RespondJSON(w, http.StatusUnprocessableEntity, wire.Error{
-			Error: "GET /_motel/apps/{app}/" + rt.read + " takes no query"}, NewRedactor(nil, nil))
+	q, ok := rt.parseQuery(r)
+	if !ok {
+		// The route's own words, naming the keys it takes, and nothing
+		// of the request's or the app's (rule 6).
+		return RespondJSON(w, http.StatusUnprocessableEntity, wire.Error{Error: rt.takes()}, NewRedactor(nil, nil))
 	}
 	// After Decide: what the read is about is the app a Start
 	// installed, whose filter knows the app's values.
 	if late := h.awaitRead(r, p.Name, app.ma); late != nil {
 		return h.installing(w, late)
 	}
-	return rt.serve(h, w, r, app)
+	return rt.serve(h, w, r, app, q)
 }
 
 // appAlerts is GET /_motel/apps/<app>/alerts: the alerts Alertmanager
@@ -109,7 +176,7 @@ func (h *Handler) serveMotelApp(w http.ResponseWriter, r *http.Request, who acce
 // app, so it passes that app's filter, as GET /<app> does, with the
 // versions its status names as safe strings: a summary names the
 // release a deploy failed at.
-func (h *Handler) appAlerts(w http.ResponseWriter, r *http.Request, app appHandle) error {
+func (h *Handler) appAlerts(w http.ResponseWriter, r *http.Request, app appHandle, _ appQuery) error {
 	body := app.alerts(r.Context(), h.app.alertsSource)
 	f := app.ma.redactorFor(app.ma.status())
 	if out, ok := filterAlerts(body, f); ok {

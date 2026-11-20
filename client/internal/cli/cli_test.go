@@ -85,8 +85,10 @@ type fakeBox struct {
 	boxAlerts wire.BoxAlerts
 	rules     wire.Rules  // the box's; blog's is its rules of blog
 	appRules  *wire.Rules // blog's as sent, when set
-	auth      []string
-	bodies    map[string][]byte // what each target was answered
+	// series is blog's numbers, its window set to the one asked.
+	series wire.Series
+	auth   []string
+	bodies map[string][]byte // what each target was answered
 }
 
 func encode(v any) []byte {
@@ -122,6 +124,15 @@ func newFakeBox(t *testing.T) *fakeBox {
 			body = encode(*fb.appRules)
 		case r.URL.Path == "/_motel/apps/blog/rules":
 			body = encode(rulesOf(fb.rules, "blog"))
+		case r.URL.Path == "/_motel/apps/blog/series":
+			s := fb.series
+			if s.Window == "" {
+				s.Window = r.URL.Query().Get("range")
+			}
+			if s.Window == "" {
+				s.Window = "1h"
+			}
+			body = encode(s)
 		case r.URL.Path == "/":
 			body = encode(wire.BoxStatus{Commit: "3f9c2a1e" + strings.Repeat("0", 32), BoxWebhook: "127.0.0.1", SHA256: strings.Repeat("9b", 32), Recipient: "age1" + hostile[0]})
 		case r.URL.Path != "/blog":

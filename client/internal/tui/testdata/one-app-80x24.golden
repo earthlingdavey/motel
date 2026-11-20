@@ -21,4 +21,4 @@ cpu         0.03 cores (last 5 m) · 0.02 avg · cap 100% of one CPU
 ▲ c9e1f3a7704b failed    starting 11-12 14:12    3.0 s local:bob-laptop
   a0b9c8d7e6f5 succeeded          11-11 14:12    36 s  github:example/blog@refs…
 
-enter record  y json  c command  esc back  ? more
+enter record  g metrics  y json  c cmd  esc back  ? more

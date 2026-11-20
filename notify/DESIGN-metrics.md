@@ -1526,6 +1526,132 @@ queries (the budget, the 4 MB cap, a point it cannot read) leaves
 anyone else sees. The whole body passes the app's response filter,
 as every status does.
 
+## An app's series
+
+`GET /_motel/apps/<app>/series[?range=1h|24h|7d|14d]` (liveswap's route,
+action `app.series`, for a viewer of the app or of the box:
+liveswap/access/DESIGN-access.md) gives a person the app's numbers over
+a window as points, which `motel metrics` prints and `motel` alone
+draws. Experimental. The window is the reader's one choice, from a
+closed set (`wire.SeriesRanges`); no panel, step or query is theirs.
+notify installs the source with the `metrics` line, beside the summary's
+(`seriesSource`, notify/seriesview.go); with none the route says
+`"store":"off"`.
+
+Four range queries over the socket, scoped to `app="<name>"` of the
+route's handle, at the window's fixed step, run at once:
+
+| Panel | Query (`STEP` the window's step) | Each point |
+|---|---|---|
+| `memory_bytes` | `max(max_over_time(motel_app_memory_bytes{app=…}[STEP]))` | the step's highest push: a peak between two points is not lost (a plain selector's point is the push at the step: 100 where the step held 500, `TestSeriesViewOverTheStore`) |
+| `cpu_cores` | `sum(increase(motel_app_cpu_seconds_total{app=…}[STEP])) / STEP_SECONDS` | the CPU every unit used in the step, a second of it: its average cores. Not the summary's `UNIT_CPU`, which gives a point only when a unit pushed in the 75 s before it, so over an hour's step an app stopped at ten to, or a moteld restarted then, had no point for an hour it ran (the series read's fourth review); the store's `increase` drops a large first sample (a unit pushed first after it ran for hours), so the line's first load is no spike (`TestSeriesViewOverTheStore`) |
+| `requests_per_second`, `5xx_share` | `sum by (class) (inc(motel_app_requests_total{app=…}))` over `[STEP]`, the summary's guard ("Operator rules") | every class over the step, per second; 5xx of those sent (`aborted` left out), no point where none was sent |
+| `p95_ms` | `histogram_quantile(0.95, sum by (le) (hinc(motel_app_response_seconds)))` over `[STEP]` | the step's responses, in ms; no point where there were none |
+
+| Window | Step | Points a panel, at most | Body, measured (below) |
+|---|---|---|---|
+| `1h` | 60 s | 61 | 6.2 KB |
+| `24h` | 5 m | 289 | 30.2 KB |
+| `7d` | 30 m | 337 | 35.6 KB |
+| `14d` | 1 h | 337 | 35.5 KB |
+
+The window ends at the last multiple of its step: the store aligns a
+range query so itself (measured on 1.112.0: start and end rounded down
+to the step unless the query asks `nocache=1`), which lets it reuse
+what it computed for the last one, so the newest point is of the last
+whole step, up to a step old (an hour over 14 days), and the body's
+`end` says which; and the end is at least the store's latency offset
+old (5 s), since a step that ended in the last seconds may not hold its
+last push yet. (The store's own offset changes nothing in these range
+queries: 1.112 applies it to a range query's last points only at a step
+under `-search.maxStepForPointsAdjustment`, a minute, and motel's
+smallest is a minute; read in its source by the series read's third
+review, not measured.) A step with no sample is no point: a gap, never a
+zero (measured with vmalert-tool: no point inside a ten-minute gap in
+the pushes at the hour's step; the first step after the gap counts its
+own push alone, the store keeping no sample from before the gap as its
+base, so a gap is no spike; over an hour the gap's counts are in). The
+store leaves a step with no response out of a quantile's answer.
+Values
+are rounded as the summary's are (bytes whole, cores and rates to a
+millionth, shares to 1/10 000, milliseconds to a tenth). A panel with
+no point in the window is absent: the request panels for an app no
+observe handler names.
+
+One set of queries per app and window every 30 s at most for the
+process (`theSeries`, keyed by the store's socket, not a config's
+client of it), whatever the number of people and configs, one
+at a time (the others wait on it), within a 3 s budget that a caller
+going away does not cut; a failure is kept as long as an answer, told
+as `"store":"unanswered"` and journalled once (`monitor metrics: a
+person's read of an app's series was answered "store":"unanswered"`,
+with the app, the window and the error). Entries past 30 s are dropped
+as the next is made, so what is held is at most the answers asked for
+in the last 30 s: up to 1,685 points (27 KB) an app and window, about
+1 MB for ten apps' four windows. The route marshals the body per
+request: its words pass the app's filter, its numbers none (DESIGN-access.md),
+so the filter sees a few hundred bytes. Measured per request with a
+14-day body of every panel's 337 points (45.8 KB, every value long):
+0.39 ms for the whole route, a token checked, 0.29 ms of it the body;
+through the filter whole, at the 2.2 to 2.5 MB/s step-2-reads design
+measured, it would be about 20 ms. So the cache holds the source's
+answer, not filtered bytes.
+
+**Measured 2026-11-20** on this repository's dev VM (arm64, Lima),
+against Debian's `victoria-metrics` 1.112.0 under the box's flags and
+caps (`-retentionPeriod=14d`, `-memory.allowedBytes=96MiB`,
+`-search.latencyOffset=5s`, `MemoryMax=256M`, and `CPUQuota=200%` with
+`GOMAXPROCS=2` for a two-core box), reached through
+`systemd-socket-proxyd` on a unix socket as `vm.sock` is, by notify's
+own `askSeries` and store client. The store held 14 days of synthetic
+pushes at 30 s for ten apps (seven behind observe, each with two
+releases' requests, histogram and cache series, deploys every one to
+three days, two stopped for hours, one moteld restart) and 1,000 filler
+series, pushed on live every 30 s: 2,741 series, 57.7 million samples,
+9.9 MB on disk. It was backfilled under a 2 GB cap (the import of 14
+days at once was killed at 256 MB twice; a box fills its store 30 s at
+a time) and restarted under the 256 MB one before the queries. Each
+fetch is the four queries of one app and window, the store up 40
+minutes:
+
+| Window | One fetch (median, max of 10 apps, one after another) | Again (store's cache warm) | An app with no observe |
+|---|---|---|---|
+| `1h` | 2 ms, 5 ms | 1 ms, 3 ms | 1 ms |
+| `24h` | 22 ms, 27 ms | 21 ms, 22 ms | 1 ms |
+| `7d` | 64 ms, 73 ms | 52 ms, 61 ms | 2 ms |
+| `14d` | 96 ms, 108 ms | 80 ms, 88 ms | 2 ms |
+
+Every app and window at once (40 fetches, 160 queries): 0.96 s, no
+error. The dearest query is the 14-day p95, the guard's three reads of
+a histogram's day before each of 337 steps: 46 ms through the store's
+cache, 68 ms with `nocache=1`. So time is not the limit: the 3 s budget
+is 28 times one 14-day fetch and 3 times the 40 at once.
+
+**Memory is.** Under `MemoryMax=256M` the store was killed by the
+kernel twice, each time 7 to 9 minutes after a burst of every app's
+four windows at once (40 fetches), with only the push running after
+it; its log names nothing (an OOM kill). A controlled run from a fresh
+start: the push alone held the cgroup at 56 to 74 MiB for 8 minutes;
+every app's 1h and 24h at once (20 fetches) took it to 93 to 101 MiB,
+where it stayed; every app's 7d and 14d at once (20 fetches) took it
+to 211 MiB within a minute and to 254 MiB ten minutes later, 2 MiB
+under the cap, its caches 173 MiB of it (`vm_cache_size_bytes`, the
+query cache 29 MiB) against `-memory.allowedBytes=96MiB`. One viewer of
+a 14-day and a 24-hour window, read every 30 s for 28 minutes, held it
+at 205 to 211 MiB. Read one at a time (the same 20 fetches, 80 queries
+in 2 s, from a fresh start), the long windows took it the same way: 100
+MiB a minute after, 243 MiB three, 251 MiB at its peak, its caches 160
+MiB. So it is what the long windows read, not how many at once: they
+read every day's index of the 14, and the store's caches grow past the
+bytes allowed them over the minutes after. A box
+whose people read every app's long windows at once can lose its store
+to its cap: the store restarts (`Restart=on-failure`), the pushes and
+the rules' evaluation miss the restart, and `metrics_store_down` fires
+if it lasts. Owed, below; the choice is the owner's. Not measured on
+hotserve-1: real pushes compress worse than synthetic ones, and its
+store fills 30 s at a time rather than from a backfill, so both the
+memory and the times there are the numbers to check first.
+
 ## Packaging and setup
 
 The `.deb` **Suggests** `victoria-metrics`, for the reason it Suggests
@@ -1698,7 +1824,9 @@ TCP forward is an unauthenticated full-power API for every process on
 the laptop, and for a browser page through DNS rebinding; not
 measured). A deployer
 reads `GET /<app>`'s `metrics`; not the store, not the rules, not
-other apps.
+other apps. A person with the viewer role on an app reads its series
+("An app's series"): four fixed queries of that app's, never a query
+of theirs, over the HTTPS route and its token, no listener of its own.
 
 ## Footprint
 
@@ -1806,6 +1934,7 @@ on its general scales. metrics' examples:
 | vmalert's `ChannelFailed` resolves 5 minutes after the last failure and re-sends the resolve for 15; with motel's labels it ends motel's own alert early, and a rise after that is told again | notify/metricsrules.go | 2 | 3 | 3 | 18; direct alerts never send a recovery, so the early end is silent; a second rise is a second failure, told |
 | A cache hit after a cutover counts under the new release though the page was the old one's: the new release's 5xx and hit shares carry the old's cached answers until they expire | liveswap/observe.go | 2 | 3 | 3 | 18; latency leaves hits out, and a cache's TTL bounds the mix (30 s in the starter); telling a stored page's release needs a header the cache would store, a change to every app's responses |
 | An app's threshold beside an every-app one on the same metric both fire for that app: the app's line adds a rule and cannot loosen or silence the every-app one, so when both hold its channels get two alerts | notify/operatorrules.go | 2 | 5 | 1 | 10; each alert is true and names its own rule; replacement (an app's rule taking the app out of the every-app one's selectors) is a feature for the operator to weigh, an explicit `replaces <rule>` the shape that neither breaks layered severities nor drops coverage silently; not built here (Copilot round 3 on #429) |
+| A point that is not a number (NaN, an infinity) in the store's answer to a series query fails the store client's read (`parsePoint`), so the app's series in that window is `"store":"unanswered"` for 30 s, not drawn with a gap there | notify/seriesview.go | 2 | 1 | 1 | 2; the store leaves out a step with no response from a quantile's answer (measured, `TestSeriesViewOverTheStore`), so none is known to come; the read is loud and journalled with the cause (the series read's first self-review) |
 | An app whose route has no `observe` has no request numbers, and nothing says so at load | liveswap/observe.go | 2 | 3 | 2 | 12; `metrics` then has no `requests`, which a deployer sees; a load-time check needs the HTTP app's routes, which the liveswap app cannot read. A rule naming such an app is refused by cmd/moteld's gate ("Operator rules") |
 | An every-app `request_rate <` alert firing for an app whose `observe` line is taken out resolves at the first push without its `motel_app_observed` (`PUSHED`), a recovery the traffic did not make | notify/metricscollector.go (`collectRequests`), notify/operatorrules.go (`pushedNow`) | 2 | 5 | 3 | 30, accepted under the skill's rule 4: the rule no longer covers the app, and the alert ends rather than firing on numbers nobody measures any more, which it did before #434; telling the two apart needs a rule per app for an absent series (size 3, risk 2). /code-review pass 2 on #434 |
 | The upgrade to the buckets under 5 ms (#434): a window that spans it holds the responses before it in the 5 ms bucket alone, so for up to a day `GET /<app>`'s p50 and p95 of a fast app read between 2.5 and 5 ms, and a post_deploy baseline read across the restart is high, so a regression right after the upgrade can read as no worse | liveswap/observe.go (`ResponseBuckets`) | 3 | 4 | 3 | 36, accepted under the skill's rule 4: once per box, at this upgrade, for at most the 24 h range; leaving the earlier samples out needs the store to know when a series' bucket set began (size 3, risk 2). /code-review pass 1 on #434 |
@@ -1883,6 +2012,7 @@ on its general scales. metrics' examples:
 |---|---|---|---|---|
 | vmalert refusing a `rules.yml` motel rendered (after a version change, say) keeps its old rules, and `up{job="vmalert"}` stays 1, so `metrics_rules_down` never fires and neither motel nor `moteld monitor rules` can tell (30, owed by the owner's decision of 2026-11-14): `scrape.yml` drops every vmalert series but `up`, and the chain (notify/metricspush.go) reads only `up`. The fix keeps `vmalert_config_last_reload_successful` in `scrape.yml` and reads it beside `up` (size 3, risk 2). The listing's `rules_file` speaks for the file, not for this. Read-only review at af7a124 | 3 | 2 | 5 | its own PR, with the `scrape.yml` change and the `moteld monitor setup --metrics` re-run on every box that docs/upgrading.md would order |
 | The old instance's stop is read as the old release's answers: a request it still held when its stop came (`drain`, 5 s by default, then SIGTERM, and SIGKILL after `grace`, 10 s) and that the stop cut before any header is a 502 counted under the old release, and timed as slow. The old window holds it whenever the first push the store took after the cutover came after the stop: with no outage, often at the defaults, since that push is anywhere in the 30 s after the cutover; with the store down over the cutover, whenever the store is back after the stop. Each such 502 raises the baseline's 5xx share and p95, so a regression's warning can be withheld (`old.share() > max_5xx_share`, `shareRose`, `p95Margin`), the more so the fewer the old release's responses in its window | 3 | 5 | 3 | its own change, the owner to choose how: liveswap counting the requests a stop cuts apart from the release's answers, or a window that ends before the stop, which the store cannot show when no push came between. Not this change: its window reads no more of the stop than the base's with no outage, and ends at the first push after the cutover, not at the check, which would read all of a long drain (/code-review of the old window's end; 15 5xx where 10 were due in `TestPostDeployTheBaselineOverTheStore`) |
+| Every app's 7-day and 14-day series read at once can take the store to its `MemoryMax=256M` and the kernel kill it ("An app's series", measured: killed twice 7 to 9 minutes after 40 fetches at once; 254 MiB of 256 after 20 long-window fetches; caches 173 MiB against `-memory.allowedBytes=96MiB`). It restarts on its own; the pushes and the rules' evaluation miss its restart, and every person's rules read (`GET /_motel/rules`, an app's) says `"store":"unanswered"` meanwhile. Wide: the store's budget is every box's | 3 | 5 | 1 | the owner's choice, its own change: a `MemoryMax=` and `-memory.allowedBytes` sized for the long windows (measured again under them), or no 7-day and 14-day windows until a box is measured. Reading them one at a time does not help (measured: 251 MiB after 20 fetches in series). Found measuring the series read (#586) |
 | The store's RSS on a 1 or 2 GB box (a day on hotserve-1's 3.8 GB is in "Footprint") | — | — | — | a deploy to a box of that size |
 | On a booted Debian host, the delete-a-leftover branch of the namespace unit's test before its delete (#430's `ExecStartPre`), measured in the e2e box alone. A reboot cannot reach it: a cold boot has an empty `/run`, so hotserve-1's of 2026-11-13 at a8038b4 took the nothing-to-delete branch alone (the unit's start took 165 ms, with no `Cannot remove namespace` line), and setup's re-run does not restart the namespace unit, which is active. #426's proxies have had their cold boot: the deploy of 01b2fd5 to hotserve-1 rebooted it at about 17:53 UTC on 2026-11-12, and both came back as no root | — | — | — | a start of the namespace unit on hotserve-1 with `/run/netns/motel-metrics` already there (a start after one that failed past its `ip netns add`), not a reboot |
 | Debian's security support for `victoria-metrics` 1.112.0 and `prometheus-alertmanager` 0.28.1 on trixie, whose binaries are built with Go 1.24.2 (the store, vmalert) and 1.24.1 (Alertmanager), and a dist-upgrade check of both drop-ins' flags | — | — | — | before any release |

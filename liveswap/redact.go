@@ -97,7 +97,13 @@ import (
 //     severity, inhibited), its times, an id Alertmanager made, the
 //     filter's sentence, and its app's name when its own app's filter
 //     withheld it. So no filter is ever given two apps' values,
-//     and the outcome pairs of rule 3 are counted per row.
+//     and the outcome pairs of rule 3 are counted per row. An app's
+//     series (GET /_motel/apps/<app>/series) and its alerts are one
+//     app's bodies whose words pass its filter and whose numbers and
+//     times are put back after the last pass: the store's points, its
+//     step, the window's end and the box's own words of closed sets
+//     (the store's word, the window) (motel_series.go, filterSeries), and
+//     Alertmanager's times (filterAlerts), never the app's bytes.
 //  3. The outcome vocabulary is structural, never textual. A pair
 //     "status":"<word>", "phase":"<word>" or "name":"<word>", the
 //     word one of the deploy vocabulary (app.go), is the one place

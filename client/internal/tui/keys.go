@@ -34,9 +34,9 @@ const (
 )
 
 var (
-	reading = []model.Screen{model.ScreenApps, model.ScreenApp, model.ScreenRecord, model.ScreenMe, model.ScreenBox, model.ScreenBackups, model.ScreenAlerts, model.ScreenRules, model.ScreenAppRules}
+	reading = []model.Screen{model.ScreenApps, model.ScreenApp, model.ScreenRecord, model.ScreenMe, model.ScreenBox, model.ScreenBackups, model.ScreenAlerts, model.ScreenRules, model.ScreenAppRules, model.ScreenMetrics}
 	lists   = []model.Screen{model.ScreenApps, model.ScreenApp, model.ScreenRecord}
-	browse  = []model.Screen{model.ScreenApps, model.ScreenApp, model.ScreenRecord, model.ScreenMe, model.ScreenBox, model.ScreenBackups, model.ScreenAlerts, model.ScreenRules, model.ScreenAppRules, model.ScreenHelp}
+	browse  = []model.Screen{model.ScreenApps, model.ScreenApp, model.ScreenRecord, model.ScreenMe, model.ScreenBox, model.ScreenBackups, model.ScreenAlerts, model.ScreenRules, model.ScreenAppRules, model.ScreenMetrics, model.ScreenHelp}
 	every   = append(append([]model.Screen{}, browse...), model.ScreenRefused)
 	// stops are a stop screen and help over it, where nothing is asked
 	// and so nothing opens: only scrolling, leaving help, r and q.
@@ -78,6 +78,8 @@ var bindings = []binding{
 			u.open(model.View{Screen: model.ScreenRecord, App: v.App, Version: ver})
 		}
 	})},
+	{"g", "its numbers over time: memory, cpu, requests, 5xx share, p95", []model.Screen{model.ScreenApp}, closed, rune1('g'), done(func(u *UI, v model.View) { u.openMetrics(v.App) })},
+	{"t", "another window: 1h, 24h, 7d, 14d", []model.Screen{model.ScreenMetrics}, closed, rune1('t'), done(func(u *UI, _ model.View) { u.nextRange() })},
 	{"/", "filter by name; /! keeps only marked rows", []model.Screen{model.ScreenApps}, closed, rune1('/'), done(func(u *UI, _ model.View) { u.ask('/') })},
 	{"s", "sort: attention, name, memory, 5xx", []model.Screen{model.ScreenApps}, closed, rune1('s'), done(func(u *UI, _ model.View) { u.sort++ })},
 	{"w", "wrap long lines (off: a line stays a line)", []model.Screen{model.ScreenRecord}, closed, rune1('w'), done(func(u *UI, _ model.View) {
@@ -104,7 +106,7 @@ var bindings = []binding{
 		return ev
 	}},
 	{"PgUp PgDn Home End", "move by a page, to the start or the end", all, either, keys(tcell.KeyPgUp, tcell.KeyPgDn, tcell.KeyHome, tcell.KeyEnd), pass},
-	{"↑ ↓", "scroll", []model.Screen{model.ScreenMe, model.ScreenBox, model.ScreenBackups, model.ScreenAlerts, model.ScreenRules, model.ScreenAppRules, model.ScreenHelp, model.ScreenRefused, model.ScreenStopHelp}, closed, keys(tcell.KeyUp, tcell.KeyDown), pass},
+	{"↑ ↓", "scroll", []model.Screen{model.ScreenMe, model.ScreenBox, model.ScreenBackups, model.ScreenAlerts, model.ScreenRules, model.ScreenAppRules, model.ScreenMetrics, model.ScreenHelp, model.ScreenRefused, model.ScreenStopHelp}, closed, keys(tcell.KeyUp, tcell.KeyDown), pass},
 	{"↑ ↓", "scroll the overlay", reading, open, keys(tcell.KeyUp, tcell.KeyDown), pass},
 	{"c", "the motel command for this view", reading, either, rune1('c'), done(func(u *UI, _ model.View) { u.overlay = 1; u.show() })},
 	{"y", "what the box said, as JSON", reading, either, rune1('y'), done(func(u *UI, _ model.View) { u.overlay = 2; u.show() })},

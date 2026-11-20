@@ -1,0 +1,30 @@
+motel · deploy.example.com · v0.7.0 │ alice@example.com · viewer of the box            live · 0s ago
+apps › blog › metrics 24h                                                as of 14:12:40 UTC · 0s ago
+over 24h · a point every 5 m · to 14:10 UTC (2m ago) · t: another window
+^ a version's latest deploy that succeeded (a column is 15m)
+
+memory      newest 186.1 MiB at 14:10 (2m ago)
+            max 200M 11-14 18:00 · min 140M 06:00
+   200M |     ⢀⣀⡤⠴⠒⠒⠋⠉⠉⠉⠉⠉⠙⠒⠒⠦⢤⣀⡀
+        | ⢀⡤⠖⠚⠉                 ⠉⠓⠲⢤⣀
+        |⠚⠉                         ⠈⠙⠦⣄⡀                                                        ⢀⡤⠖
+        |                               ⠙⠲⢤⡀                                                  ⣀⡴⠚⠉
+        |                                  ⠙⠲⣄⡀                                            ⣀⡴⠚⠁
+        |                                     ⠙⠲⢤⡀                                      ⣀⡤⠞⠁
+        |                                        ⠙⠲⣄⡀                                ⣀⡴⠚⠁
+        |                                           ⠙⠲⢤⣀                         ⢀⣠⠴⠚⠁
+        |                                              ⠈⠙⠲⢤⣀⡀                ⣀⣠⠴⠚⠉
+   140M |                                                   ⠉⠓⠲⠤⠤⣄⣀⣀⣀⣀⣀⡀     ⠁
+        +^-------------------------------------------------------------      ---------------^-------
+         11-14 14:10                             272 of 289 steps                              14:10
+
+cpu         newest 0.021 cores at 14:10 (2m ago)
+            max 0.070 01:00 · min 0.020 13:00
+  0.070 |                                ⣀⣠⠤⠖⠒⠚⠉⠉⠉⠉⠉⠉⠓⠒⠲⠤⣄⣀
+        |                           ⢀⣠⠴⠒⠋⠁                ⠈⠙⠒⠦⣄
+        |                        ⣀⡤⠞⠉                         ⠈⠙⠲⢤⡀
+        |                     ⣠⠴⠚⠁                                ⠉⠓⢦⣀
+        |                  ⣀⡴⠚⠁                                      ⠈⠓⠆
+        |               ⣠⠴⠚⠁
+        |            ⣀⡴⠚⠁                                                    ⢦⣀
+↑↓ scroll  t window  y json  c cmd  esc back  ? more

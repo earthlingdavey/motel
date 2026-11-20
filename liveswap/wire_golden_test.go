@@ -194,6 +194,8 @@ func decodesAsWire(t *testing.T, what string, w *httptest.ResponseRecorder) {
 		check(body, new(wire.Alerts))
 	case w.Code == http.StatusOK && strings.Contains(what, "/rules"):
 		check(body, new(wire.Rules))
+	case w.Code == http.StatusOK && strings.Contains(what, "/series"):
+		check(body, new(wire.Series))
 	case w.Code == http.StatusOK && strings.Contains(what, "/_motel/apps"):
 		check(body, new(wire.Apps))
 	case w.Code == http.StatusForbidden && strings.Contains(body, `"needs":`):
@@ -340,6 +342,17 @@ func TestWireHandlerBodies(t *testing.T) {
 	add("GET /_motel/rules as a viewer of demo", person("/_motel/rules", people.alice))
 	h.app.SetRulesSource(&fakeRules{err: errors.New("reading vmalert's unit")})
 	add("GET /_motel/rules as a viewer of the box, no listing", person("/_motel/rules", people.carol))
+	// An app's series, for a person: with no metrics line, the store
+	// unanswered, and a day of demo's; a window refused, a deploy token,
+	// and a person whose grants do not cover it.
+	add("GET /_motel/apps/demo/series as a viewer of demo, no metrics line", person("/_motel/apps/demo/series", people.alice))
+	h.app.SetSeriesSource(&fakeSeries{unanswered: true})
+	add("GET /_motel/apps/demo/series?range=14d as a viewer of demo, the store unanswered", person("/_motel/apps/demo/series?range=14d", people.alice))
+	h.app.SetSeriesSource(&fakeSeries{byApp: map[string]wire.Series{"demo": demoSeries()}})
+	add("GET /_motel/apps/demo/series?range=24h as a viewer of demo", person("/_motel/apps/demo/series?range=24h", people.alice))
+	add("GET /_motel/apps/demo/series?range=2h as a viewer of demo", person("/_motel/apps/demo/series?range=2h", people.alice))
+	add("GET /_motel/apps/demo/series with a deploy token", do(t, h, http.MethodGet, "/_motel/apps/demo/series", globalToken(t), ""))
+	add("GET /_motel/apps/demo/series as a person with no grant", person("/_motel/apps/demo/series", people.dave))
 
 	checkWireGolden(t, "handler-bodies.txt", out.String())
 }

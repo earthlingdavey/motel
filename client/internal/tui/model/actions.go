@@ -30,6 +30,7 @@ var Actions = []Action{
 	{KBoxAlerts, "monitor alerts", "the alerts screen, and its line on the box screen", readBoxAlerts},
 	{KRules, "monitor rules --app <app>", "an app's rules screen", readRules},
 	{KBoxRules, "monitor rules", "the rules screen", readBoxRules},
+	{KSeries, "metrics <app> --range <range>", "the metrics screen", readSeries},
 }
 
 // ActionFor is the action that reads k.
@@ -85,9 +86,10 @@ func readStatus(ctx context.Context, _ *Session, c Client, j Job) (func(*Session
 			a.err, a.errAt = err, at
 			if Forbidden(err) || NotFound(err) {
 				// The box's last word on it is a refusal: what was held of
-				// it goes, its alerts and rules too, and the deploy seen in
-				// flight, so no later failure can bring them back.
+				// it goes, its alerts, rules and series too, and the deploy
+				// seen in flight, so no later failure can bring them back.
 				a.st, a.alerts, a.rules, a.flight, a.ended = nil, nil, nil, nil, nil
+				s.dropSeries(j.App)
 			}
 			return
 		}
@@ -171,6 +173,32 @@ func readBoxAlerts(ctx context.Context, _ *Session, c Client, _ Job) (func(*Sess
 		}
 		g.At = at
 		s.BoxAlertsSt, s.BoxAlertsErr = &g, nil
+	}, err
+}
+
+func readSeries(ctx context.Context, _ *Session, c Client, j Job) (func(*Session, time.Time), error) {
+	g, err := c.Series(ctx, j.App, j.Range)
+	return func(s *Session, at time.Time) {
+		if s.series == nil {
+			s.series = map[Job]*seriesData{}
+		}
+		d := s.series[j]
+		if d == nil {
+			d = &seriesData{}
+			s.series[j] = d
+		}
+		if err != nil {
+			// An answer read before is kept beside a failure, but for a
+			// 403 or a 404 (a box older than the read), which drops it as
+			// a status's does.
+			d.err = err
+			if Forbidden(err) || NotFound(err) {
+				d.g = nil
+			}
+			return
+		}
+		g.At = at
+		d.g, d.err = &g, nil
 	}, err
 }
 

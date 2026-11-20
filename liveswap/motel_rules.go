@@ -181,7 +181,7 @@ func (h *Handler) rules(w http.ResponseWriter, r *http.Request, p *Person) error
 
 // appRules is GET /_motel/apps/<app>/rules: the rules that apply to the
 // handle's app, with its numbers alone.
-func (h *Handler) appRules(w http.ResponseWriter, r *http.Request, app appHandle) error {
+func (h *Handler) appRules(w http.ResponseWriter, r *http.Request, app appHandle, _ appQuery) error {
 	body, ok := app.rules(r.Context(), h.app.rulesSource, h.logger)
 	return respondRules(w, body, ok)
 }
