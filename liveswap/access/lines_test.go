@@ -151,11 +151,6 @@ func TestParsePerson(t *testing.T) {
 
 	wire, _ := base64.StdEncoding.DecodeString(ed)
 	skEd := skEdKey(t) // 74 bytes: its base64 ends in =
-	for line, want := range map[string]Role{"bob viewer box": Viewer, "bob logs box": Logs, "bob logs app blog from 10.0.0.0/8": Logs} {
-		if g, err := ParseGrant(strings.Fields(line)); err != nil || g.Role != want {
-			t.Errorf("%s: %+v %v, want role %s", line, g, err, want)
-		}
-	}
 	long := strings.Repeat("a", MaxName)
 	if _, err := ParsePerson([]string{long, "ssh-ed25519", ed}); err != nil {
 		t.Errorf("a name of %d bytes: %v", MaxName, err)

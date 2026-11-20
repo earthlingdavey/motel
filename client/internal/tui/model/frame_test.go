@@ -196,7 +196,8 @@ func TestMeRule(t *testing.T) {
 // TestMeLogsRole: logs is said as a word, as viewer is, in the title
 // and on the who-am-I screen, where its verb says the viewer's reads it
 // gives too, and the sentence on logs says the grant reads them; a logs
-// grant on the box offers the box screens, one on an app does not.
+// grant on the box offers the box screens, one on an app does not. The
+// scopes stand in one column past the longest verb.
 func TestMeLogsRole(t *testing.T) {
 	for _, c := range []struct {
 		roles     []wire.RoleHeld
@@ -205,7 +206,7 @@ func TestMeLogsRole(t *testing.T) {
 	}{
 		{[]wire.RoleHeld{{Role: "viewer", Scope: "app:blog"}, {Role: "logs", Scope: "app:blog"}}, "viewer of blog; logs of blog", "  view, read logs app blog", false},
 		{[]wire.RoleHeld{{Role: "logs", Scope: "box"}}, "logs of the box", "  view, read logs the box", true},
-		{[]wire.RoleHeld{{Role: "viewer", Scope: "box"}, {Role: "logs", Scope: "app:blog"}}, "viewer of the box; logs of blog", "  view       the box", true},
+		{[]wire.RoleHeld{{Role: "viewer", Scope: "box"}, {Role: "logs", Scope: "app:blog"}}, "viewer of the box; logs of blog", "  view            the box\n  view, read logs app blog", true},
 	} {
 		s, _, now := session(t)
 		s.Me = &model.Got[wire.WhoAmI]{V: wire.WhoAmI{Name: "bob@example.com", Key: demo.Key.Fingerprint, Box: demo.Host, Version: "v0.8.1", Protocol: 1, Roles: c.roles}, At: *now}

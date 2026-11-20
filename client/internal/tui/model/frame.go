@@ -709,19 +709,26 @@ func (s *Session) MeViewFit(now time.Time, width int, cells Cells) []Line {
 	if len(me.Roles) == 0 {
 		out = append(out, cutTo(Line{own("  nothing yet: signed in as " + me.Name + ", you hold no grant here")}, width, cells))
 	}
-	for _, r := range me.Roles {
+	// The scopes' column: past the longest of the client's own verbs
+	// shown, at least 10. A role the box names, quoted, never moves it.
+	verbs := make([]Seg, len(me.Roles))
+	col := 10
+	for i, r := range me.Roles {
+		verbs[i] = roleSeg(r.Role)
+		switch r.Role {
+		case "viewer":
+			verbs[i] = own("view")
+		case "logs":
+			verbs[i] = own("view, read logs")
+			col = max(col, len("view, read logs"))
+		}
+	}
+	for i, r := range me.Roles {
 		on := "the box"
 		if n, ok := strings.CutPrefix(r.Scope, "app:"); ok {
 			on = "app " + n
 		}
-		verb := roleSeg(r.Role)
-		switch r.Role {
-		case "viewer":
-			verb = own("view")
-		case "logs":
-			verb = own("view, read logs")
-		}
-		out = append(out, cutTo(Line{own("  "), verb, own(pad("", 10-len([]rune(verb.T.String()))) + " " + on)}, width, cells))
+		out = append(out, cutTo(Line{own("  "), verbs[i], own(pad("", col-len([]rune(verbs[i].T.String()))) + " " + on)}, width, cells))
 	}
 	// What may not be read here: logs, by anyone yet; the box's own
 	// alerts and silences, by anyone but a viewer of the box. A logs
