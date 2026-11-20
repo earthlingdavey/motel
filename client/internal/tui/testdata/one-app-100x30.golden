@@ -2,6 +2,7 @@ motel · deploy.example.com · v0.7.0 │ alice@example.com · viewer of the box
 apps › blog                                                              as of 14:12:40 UTC · 0s ago
 state       running 7c1e55d0a913 · pid 41233 · unit motel-blog.7c1e55d0a913.3f9a0c21d4e8b7a6.service
 alerts      2 held · as of 0s ago
+            all: motel monitor alerts --box deploy.example.com --app blog
 alert       deploy_failed · warning · silenced until 15:12 UTC · since 3m ago (14:09 UTC)
 summary     deploy of e9a0b3f2c118 failed at starting
 alert       errors_high · warning · since 25m ago (13:47 UTC)
@@ -21,7 +22,6 @@ artifact    1842 entries · 38 MiB (the last deploy's)
   0d41aa9e72c3 succeeded          11-13 14:12    40 s  github:example/blog@refs/heads/main
 ▲ c9e1f3a7704b failed    starting 11-12 14:12    3.0 s local:bob-laptop
   a0b9c8d7e6f5 succeeded          11-11 14:12    36 s  github:example/blog@refs/heads/main
-
 
 
 

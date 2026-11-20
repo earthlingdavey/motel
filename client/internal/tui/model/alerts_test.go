@@ -108,6 +108,7 @@ func TestAlertLines(t *testing.T) {
 	got := strings.Join(lines(), "\n")
 	for _, want := range []string{
 		"alerts      2 held · as of ",
+		"            all: motel monitor alerts --box deploy.example.com --app blog",
 		"alert       deploy_failed · warning · silenced until 15:",
 		"summary     deploy of e9a0b3f2c118 failed at starting",
 		"alert       errors_high · warning · since 25m ago",
@@ -122,13 +123,13 @@ func TestAlertLines(t *testing.T) {
 		{`{"monitor":"later","alerts":[]}`, "alerts      not known: the box says later of its monitor"},
 		{`{"monitor":"on","alerts":[]}`, "alerts      none held"},
 		{`{"monitor":"on","alerts":[` + strings.Repeat(`{"name":"a","severity":"info","summary":"","starts_at":"@-1m","state":"unprocessed"},`, 4) +
-			`{"name":"a","severity":"info","summary":"","starts_at":"@-1m","state":"unprocessed"}]}`, "            and 2 more: motel monitor alerts --box deploy.example.com --app blog lists them"},
+			`{"name":"a","severity":"info","summary":"","starts_at":"@-1m","state":"unprocessed"}]}`, "            and 2 more"},
 		{`{"monitor":"on","alerts":[{"name":"a","severity":"info","summary":"","starts_at":"@-1m","state":"unprocessed"}]}`, "alert       a · info · unprocessed · since 1m ago"},
 	} {
 		f.Body("alerts/blog.json", c.body)
 		now = now.Add(model.AlertsEvery)
 		readAll()
-		if got := strings.Join(lines(), "\n"); !strings.Contains(got, c.want) {
+		if got := strings.Join(lines(), "\n"); !strings.Contains("\n"+got+"\n", "\n"+c.want) || strings.Contains(got, "more: ") {
 			t.Errorf("%s:\n%s\nwant a line holding %q", c.body, got, c.want)
 		}
 	}

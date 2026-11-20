@@ -9,7 +9,7 @@ import (
 )
 
 // AlertsShown is the most alerts an app's screen lists: the rest are
-// counted, and `motel monitor alerts --app <app>` lists them all.
+// counted, and the command under the head lists them all.
 const AlertsShown = 3
 
 // alertSeverities and alertStates are the words the client shows as
@@ -62,9 +62,14 @@ func (s *Session) alertLines(app string, now time.Time) []Line {
 		head = append(head, ownC(" · the last read failed", Warn))
 	}
 	out := []Line{field("alerts", head...)}
+	if len(g.V.Alerts) > 0 {
+		// Under the head, where a window that cuts the details still
+		// shows it: the screen's y and P give the status, not these.
+		out = append(out, field("", own("all: "+s.alertsCommand(app))))
+	}
 	for i, al := range g.V.Alerts {
 		if i == AlertsShown {
-			out = append(out, field("", own("and "+strconv.Itoa(len(g.V.Alerts)-AlertsShown)+" more: "+s.alertsCommand(app)+" lists them")))
+			out = append(out, field("", own("and "+strconv.Itoa(len(g.V.Alerts)-AlertsShown)+" more")))
 			break
 		}
 		// A name of motel's own shape is a word; any other the client
