@@ -255,14 +255,25 @@ Properties that matter to the model:
   string's: a string is not safe because a request named it, and text
   an earlier request stored, a deployed version in a status or a
   record, passes the app's filter with the app's bytes. The fifth is
-  a body's times: each time a status, a deploy's answer and its
-  stream's lines, a record or an apps list's row holds under a time's
-  key, written as `encoding/json` writes one, is the box's clock and
-  passes no layer, so a value that is a piece of a time's text (a
-  date, a clock time, digits of its fraction) stands there whole, which says less than a marker inside the
-  time did; it is replaced everywhere else, and a body in which a
-  value would stand across a time's edge goes through whole, times
-  and all (liveswap/redact.go, rule 7). A
+  a body's times and numbers: each time a status, a deploy's answer
+  and its stream's lines, a record or an apps list's row holds under
+  a time's key, written as `encoding/json` writes one, is the box's
+  clock, and each number in a JSON body is a figure `encoding/json`
+  wrote from a Go number (the box's counts, the operator's caps, the
+  metrics store's summary, an artifact's size, a probe's status code),
+  never the app's bytes, which are always in a string. Both pass no
+  layer, so a value that is a piece of one (a date, a clock time,
+  digits of a time's fraction, an app's memory limit in bytes equal
+  to its `memory_max`) stands there whole, naming no key, where a
+  marker inside a time, or a body withheld for a number with the key
+  named, said the value was a piece of it (beside a marker of the same
+  value in the body's text, the token shows the value by difference,
+  as the marker paragraph below says); it is replaced everywhere else, digits in a string included, and a
+  body in which a value would stand across a token's edge goes
+  through whole as before (liveswap/redact.go, rule 7). A figure the
+  app's behaviour drives (its memory, its request counts) is a channel
+  only for an app that means to send its secret, which can answer any
+  request with it. A
   body the first layer would leave unparsable (a value made of JSON's
   own punctuation matching the structure rather than a string) is
   withheld, with the keys still reported; and while an app's
@@ -280,8 +291,9 @@ Properties that matter to the model:
   environment by deploying code, so it learns nothing it could not.
   Nor that a marker hides which key it stands for: it names the key,
   so where a value is replaced inside text the reader already has (the
-  app's name when a value is part of it, the unit named after the app)
-  the reader learns that key's value by difference
+  app's name when a value is part of it, the unit named after the app,
+  a time or a number rule 7 sends whole) the reader learns that key's
+  value by difference
   (liveswap/DESIGN-liveswap.md, "Accepted residuals").
   Tested from both sides — a fuzz property that no known value or
   form survives outside the texts above and the JSON stays valid

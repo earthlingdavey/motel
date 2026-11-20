@@ -11,6 +11,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"net/url"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -31,6 +32,9 @@ func FuzzRedactor(f *testing.F) {
 		{"2023-11-14", "on ", ""},
 		{`20Z","error":"`, "", ""},
 		{`"2023-11-14`, "", ""},
+		{"17000000", "", ""},
+		{`00.25,"started`, "", ""},
+		{`"],"seconds":1700`, "", ""},
 	} {
 		f.Add(s[0], s[1], s[2])
 	}
@@ -74,7 +78,7 @@ func FuzzRedactor(f *testing.F) {
 			if string(mustQuote(t, form)) != form && form != value {
 				continue
 			}
-			body, _ := json.Marshal(map[string]any{"error": prefix + form + suffix, "versions": []string{"x", "y"}, "status": "succeeded", "phase": "starting", "started_at": time.Unix(1_700_000_000, 0).UTC()})
+			body, _ := json.Marshal(map[string]any{"error": prefix + form + suffix, "versions": []string{"x", "y"}, "status": "succeeded", "phase": "starting", "started_at": time.Unix(1_700_000_000, 0).UTC(), "seconds": 1700000000.25})
 			js := r.redactJSON(body)
 			if !json.Valid([]byte(js)) {
 				t.Fatalf("form %q: redactJSON produced invalid JSON: %s", form, js)
@@ -84,16 +88,18 @@ func FuzzRedactor(f *testing.F) {
 			// fixed name, which is in every such response and so reveals
 			// nothing, and (rule 3) a value that is a bare word of the
 			// outcome vocabulary, where it stands as the body's own
-			// outcome — and (rule 7) the body's time, whole, which a
+			// outcome — and (rule 7) the body's time and number, whole, which a
 			// form may be a piece of — and the key is reported unless
 			// the body had to fall back to the one marker that can carry
 			// nothing.
-			rest := strings.Replace(js, `"redacted_env":`, "", 1)
+			// The hoisted field whole: its brackets beside a held token
+			// are the body's own JSON, as rule 7's hoist residual says.
+			rest := redactedEnvField.ReplaceAllString(js, "\x00")
 			if outcomeStatuses[value] || outcomePhases[value] {
 				rest = strings.NewReplacer(`"status":"succeeded"`, "", `"phase":"starting"`, "").Replace(rest)
 			}
 			for _, f := range []string{string(mustQuote(t, form)), form} {
-				if outsideTime(rest, f, `"started_at":"`, "2023-11-14T22:13:20Z") {
+				if outsideHeld(rest, f, [3]string{`"started_at":"`, "2023-11-14T22:13:20Z", `"`}, [3]string{`"seconds":`, "1700000000.25", `,`}) {
 					t.Fatalf("form %q: survived in JSON body %s", form, js)
 				}
 			}
@@ -107,27 +113,36 @@ func FuzzRedactor(f *testing.F) {
 	})
 }
 
-// outsideTime reports whether f occurs in s anywhere but wholly inside
-// the text of the time tm where it stands as the value of key (rule 7):
-// the pair as written, which no string's text can spell, its quotes
-// being escaped there.
-func outsideTime(s, f, key, tm string) bool {
-	lo, hi := -1, -1
-	if i := strings.Index(s, key+tm+`"`); i >= 0 {
-		lo, hi = i+len(key), i+len(key)+len(tm)
+// outsideHeld reports whether f occurs in s anywhere but wholly inside
+// one of the held tokens (rule 7): each given as the text before it,
+// itself and the text after, the pair as written, which no string's text
+// can spell, its quotes being escaped there; a time's text without its
+// quotes.
+func outsideHeld(s, f string, held ...[3]string) bool {
+	var spans [][2]int
+	for _, h := range held {
+		if i := strings.Index(s, h[0]+h[1]+h[2]); i >= 0 {
+			spans = append(spans, [2]int{i + len(h[0]), i + len(h[0]) + len(h[1])})
+		}
 	}
 	for from := 0; ; {
 		i := strings.Index(s[from:], f)
 		if i < 0 {
 			return false
 		}
-		start := from + i
-		if start < lo || start+len(f) > hi {
+		start, inside := from+i, false
+		for _, sp := range spans {
+			inside = inside || start >= sp[0] && start+len(f) <= sp[1]
+		}
+		if !inside {
 			return true
 		}
 		from = start + 1
 	}
 }
+
+// redactedEnvField is the hoisted report field, its key names with it.
+var redactedEnvField = regexp.MustCompile(`"redacted_env":\[[^\]]*\]`)
 
 func mustQuote(t *testing.T, s string) []byte {
 	t.Helper()

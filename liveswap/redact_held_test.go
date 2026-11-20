@@ -2,7 +2,6 @@ package liveswap
 
 import (
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -93,41 +92,6 @@ func TestDeployAnswerTimesPassNoFilter(t *testing.T) {
 	}
 }
 
-// TestStatusNumbersWithheldNamed pins what an owed fix will change
-// (DESIGN-liveswap.md, "Owed"): an env_file value of eight or more
-// digits that is a piece of a number in the status is replaced inside
-// the number, so the body is withheld whole, saying why and naming the
-// key, and the value is not in it. For a memory figure the store
-// answered, while the figure holds it; for the app's own memory limit
-// in bytes, equal to its memory_max (NODE_MEMORY_LIMIT=268435456 under
-// memory_max 256MiB), on every status read and every deploy's answer,
-// and on after the value leaves the env_file, until moteld restarts:
-// the filter forgets no value it was handed (rememberSecrets).
-func TestStatusNumbersWithheldNamed(t *testing.T) {
-	const want = `{"error":"response withheld: a redacted value overlapped the response's own structure","redacted_env":["%s"]}` + "\n"
-	h, _ := heldRig(t, "ACCOUNT_ID=12345678\n")
-	now := 123456789.0
-	h.app.SetMetricsSource(&fakeMetricsSource{reply: &wire.Metrics{Window: "1h", Memory: &wire.MemorySummary{Now: &now}}})
-	if w := do(t, h, http.MethodGet, "/demo", appToken(t), ""); w.Code != http.StatusOK || w.Body.String() != fmt.Sprintf(want, "ACCOUNT_ID") {
-		t.Errorf("a metrics figure: %d %s", w.Code, w.Body)
-	}
-
-	h, rig := newTestHandler(t)
-	rig.spec.envFile = filepath.Join(t.TempDir(), "demo.env")
-	rig.spec.caps = resourceCaps{memoryMax: 256 << 20}
-	must(t, os.WriteFile(rig.spec.envFile, []byte("NODE_MEMORY_LIMIT=268435456\n"), 0o600))
-	limit := fmt.Sprintf(want, "NODE_MEMORY_LIMIT")
-	if w := do(t, h, http.MethodPost, "/demo", appToken(t), `{"url":"https://x/1.tgz","version":"v1"}`); w.Body.String() != limit {
-		t.Errorf("the deploy's answer: %d %s", w.Code, w.Body)
-	}
-	must(t, os.WriteFile(rig.spec.envFile, []byte("OTHER=x\n"), 0o600))
-	for i := range 2 {
-		if w := do(t, h, http.MethodGet, "/demo", appToken(t), ""); w.Body.String() != limit {
-			t.Errorf("read %d, the value gone from the env_file: %d %s", i, w.Code, w.Body)
-		}
-	}
-}
-
 // TestHeldTimesAreTheBodysOwn: only a time the body holds as a time is
 // held: one under a time's key, as its value. The same text in an
 // error, in a list, or inside a string that spells a time's pair is
@@ -170,9 +134,9 @@ func TestHeldTimesFallBack(t *testing.T) {
 		// A placeholder the filter replaced a value inside: the body
 		// whole, which does not hold the value.
 		{`0","error":"b`, body, body},
-		// A string of the body's shaped as a placeholder (a NUL and
-		// digits): nothing held.
-		{`2023-11-14`, `{"started_at":"2023-11-14T22:13:20Z","error":"\u00001"}`, `{"error":"\u00001","redacted_env":["K"],"started_at":"[redacted:K]T22:13:20Z"}`},
+		// A string of the body's shaped as a placeholder (a NUL, a #
+		// and digits): nothing held.
+		{`2023-11-14`, `{"started_at":"2023-11-14T22:13:20Z","error":"\u0000#1"}`, `{"error":"\u0000#1","redacted_env":["K"],"started_at":"[redacted:K]T22:13:20Z"}`},
 	} {
 		got := NewRedactor([]string{"K=" + c.value}, nil).redactJSON([]byte(c.in))
 		if got != c.want || !json.Valid([]byte(got)) {
@@ -187,7 +151,7 @@ func TestHeldTimesFallBack(t *testing.T) {
 // text"), is no placeholder: the times are held.
 func TestHeldTimesBesideANul(t *testing.T) {
 	r := NewRedactor([]string{"API_VERSION=2023-11-14"}, nil)
-	for _, line := range []string{"a\x00b", "\x00\x01binary", "ab\"\x00cd", "\x001x", `DETAIL: \u0000 cannot be converted to text.`} {
+	for _, line := range []string{"a\x00b", "\x00\x01binary", "ab\"\x00cd", "\x001x", "\x001", `DETAIL: \u0000 cannot be converted to text.`} {
 		raw, _ := json.Marshal(map[string]any{"log_tail": []string{line}, "started_at": time.Unix(1_700_000_000, 0).UTC()})
 		if got := r.redactJSON(raw); got != string(raw) {
 			t.Errorf("%q:\n got %s\nwant %s", line, got, raw)
