@@ -80,10 +80,11 @@ import (
 //     event, phase and http_status fields (handler.go) are constants
 //     and a phase word. The body's times are put back after it, the
 //     bytes they stood in held out of every layer (rule 7). Nothing
-//     else appends to a body after that pass. A body about several apps (GET /_motel/apps) is made of
-//     rows, and each row's summary is a body here: filtered by its own
-//     app's filter, then given the app's name, the route's own word,
-//     and put in the list, which adds its punctuation alone; a row the
+//     else appends to a body after that pass. A body about several
+//     apps (GET /_motel/apps) is made of rows, and each row's summary
+//     is a body here: filtered by its own app's filter, then given
+//     the app's name, the route's own word, and put in the list,
+//     which adds its punctuation alone; a row the
 //     filter withheld is the name and the filter's sentence. The
 //     box's alerts (GET /_motel/alerts) are rows the same way: an
 //     app's alert is filtered by its app's filter, every other alert
@@ -164,18 +165,25 @@ import (
 //     and its phases', the watchdog's last restart, the metrics
 //     store's step, a record's as written, rule 1 of deploys.go), never
 //     the app's bytes, and an env_file value that is a piece of one
-//     (API_VERSION=2026-11-19) replaced there left a time no client
-//     reads. Held out (holdTimes), the rest filtered, then put back
+//     (a date, API_VERSION=2026-11-19; a clock time; digits of its
+//     fraction) replaced there left a time no client reads. Held out
+//     (holdTimes), the rest filtered, then put back
 //     after the final pass (putTimesBack); the value it equals is
 //     replaced everywhere else, and a body that holds it only in a
 //     time reports no key. The filter so sees the body with
 //     placeholders where the times stood, and a value made of a time's
-//     last characters and the JSON after them could stand in the bytes
-//     sent across a time's edge: putTimesBack looks for every known
-//     form across each edge, and a body with one, or whose placeholders
-//     the filter changed, goes through whole as before, times and all
-//     (TestHeldTimesFallBack). A marker inside a time said that the
-//     value was a piece of that time; the time whole says less.
+//     last characters and the JSON after them could stand across a
+//     time's edge in the bytes it returns: putTimesBack looks for every
+//     known form across each edge, and a body with one, or whose
+//     placeholders the filter changed, or that holds heldMark already,
+//     goes through whole as before, times and all
+//     (TestHeldTimesFallBack). After the filter, the hoist's sort of
+//     the top level (withField) and the stream's spliced fields can set
+//     a time beside other JSON, and a value made of a time's end and
+//     that JSON stands in the bytes written, as one made of any field's
+//     end and the splice could before: it is the body's own text. A
+//     marker inside a time said that the value was a piece of that
+//     time; the time whole says less.
 const (
 	secretMinLen  = 8
 	entropyMinLen = 20
@@ -815,10 +823,12 @@ var heldTimeKeys = map[string]bool{`"at"`: true, `"started_at"`: true, `"finishe
 var heldTimeRe = regexp.MustCompile(`^"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]{1,9})?(?:Z|[+-][0-9]{2}:[0-9]{2})"$`)
 
 // heldMark opens the placeholder a held time stands as while the body
-// is filtered, "\u0000<n>": a NUL, escaped, which encoding/json writes
-// only for a NUL in a string, and which no layer writes, a marker
-// being made of key names. A body that already holds the text has no
-// time held.
+// is filtered, "\u0000<n>": a string that begins with a NUL, escaped.
+// No layer writes a quote before a backslash (a marker ends with a
+// bracket or an angle), and encoding/json writes the text only for a
+// string that begins with a NUL or a quote before a NUL in one; a
+// body that already holds it has no time held. An app's literal
+// \u0000 is written \\u0000, which does not hold it.
 const heldMark = `"\u0000`
 
 // holdTimes is raw with each time under one of heldTimeKeys swapped for
@@ -826,7 +836,7 @@ const heldMark = `"\u0000`
 // JSON text (a marshalled body, or a record as written); one that does
 // not end its strings, or that holds heldMark, has nothing held.
 func holdTimes(raw string) (string, []string) {
-	if strings.Contains(raw, heldMark[1:]) {
+	if strings.Contains(raw, heldMark) {
 		return raw, nil
 	}
 	var b strings.Builder
@@ -877,8 +887,10 @@ func holdTimes(raw string) (string, []string) {
 // makes across a time's edge: one made of a time's last characters and
 // the JSON after them, which the filter never saw side by side. A form
 // wholly inside a time is the time's own text, and stays (rule 7).
+// These are the bytes the filter returns: what redactJSON's hoist and
+// the stream's splices do after is rule 2's.
 func (r *Redactor) putTimesBack(out string, times []string) (string, bool) {
-	if strings.Count(out, heldMark[1:]) != len(times) {
+	if strings.Count(out, heldMark) != len(times) {
 		return "", false
 	}
 	var b strings.Builder

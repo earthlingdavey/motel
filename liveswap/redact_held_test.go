@@ -68,13 +68,25 @@ func TestDeployRecordTimesPassNoFilter(t *testing.T) {
 }
 
 // TestDeployAnswerTimesPassNoFilter: a deploy's own answer, single and
-// streamed, keeps its times whole.
+// streamed, keeps its times whole: the status's, at the rig's clock,
+// and each phase line's, at the wall clock (today's date the value).
 func TestDeployAnswerTimesPassNoFilter(t *testing.T) {
-	h, _ := heldRig(t, "API_VERSION=2023-11-14\n")
+	h, _ := heldRig(t, "API_VERSION=2023-11-14\nTODAY="+time.Now().UTC().Format(time.DateOnly)+"\n")
 	w := do(t, h, http.MethodPost, "/demo", appToken(t), `{"url":"https://x/2.tgz","version":"v2"}`)
 	var s wire.Status
 	if err := json.Unmarshal(w.Body.Bytes(), &s); err != nil || w.Code != http.StatusOK || s.LastDeploy == nil || s.LastDeploy.Version != "v2" {
 		t.Fatalf("%v: %d %s", err, w.Code, w.Body)
+	}
+	w, _ = streamLinesOf(t, h, `{"url":"https://x/3.tgz","version":"v3"}`)
+	lines := strings.Split(strings.TrimRight(w.Body.String(), "\n"), "\n")
+	for _, line := range lines[:len(lines)-1] {
+		var ev wire.PhaseEvent
+		if err := json.Unmarshal([]byte(line), &ev); err != nil || ev.At.IsZero() || ev.Event != wire.EventPhase {
+			t.Errorf("a phase line: %v: %s", err, line)
+		}
+	}
+	if err := json.Unmarshal([]byte(lines[len(lines)-1]), &s); err != nil || s.LastDeploy == nil || s.LastDeploy.Version != "v3" || strings.Contains(w.Body.String(), "redacted") {
+		t.Errorf("the last line: %v: %s", err, w.Body)
 	}
 }
 
@@ -132,12 +144,26 @@ func TestHeldTimesFallBack(t *testing.T) {
 		// opening quote; and the body's structure: withheld either way.
 		{`at":"2023-11`, body, `{"error":"response withheld: a redacted value overlapped the response's own structure","redacted_env":["K"]}`},
 		{`Z","error"`, body, `{"error":"response withheld: a redacted value overlapped the response's own structure","redacted_env":["K"]}`},
-		// The placeholder's text in the body: nothing held.
-		{`2023-11-14`, `{"started_at":"2023-11-14T22:13:20Z","error":"a\u0000"}`, `{"error":"a\u0000","redacted_env":["K"],"started_at":"[redacted:K]T22:13:20Z"}`},
+		// The placeholder's text in the body (a string that begins with
+		// a NUL): nothing held.
+		{`2023-11-14`, `{"started_at":"2023-11-14T22:13:20Z","error":"\u0000a"}`, `{"error":"\u0000a","redacted_env":["K"],"started_at":"[redacted:K]T22:13:20Z"}`},
 	} {
 		got := NewRedactor([]string{"K=" + c.value}, nil).redactJSON([]byte(c.in))
 		if got != c.want || !json.Valid([]byte(got)) {
 			t.Errorf("K=%s:\n got %s\nwant %s", c.value, got, c.want)
+		}
+	}
+}
+
+// TestHeldTimesBesideANul: a NUL inside an app's line, or the text
+// \u0000 it printed (PostgreSQL's "\u0000 cannot be converted to
+// text"), is no placeholder: the times are held.
+func TestHeldTimesBesideANul(t *testing.T) {
+	r := NewRedactor([]string{"API_VERSION=2023-11-14"}, nil)
+	for _, line := range []string{"a\x00b", `DETAIL: \u0000 cannot be converted to text.`} {
+		raw, _ := json.Marshal(map[string]any{"log_tail": []string{line}, "started_at": time.Unix(1_700_000_000, 0).UTC()})
+		if got := r.redactJSON(raw); got != string(raw) {
+			t.Errorf("%q:\n got %s\nwant %s", line, got, raw)
 		}
 	}
 }

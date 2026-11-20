@@ -88,12 +88,13 @@ func FuzzRedactor(f *testing.F) {
 			// the body had to fall back to the one marker that can carry
 			// nothing.
 			rest := strings.Replace(js, `"redacted_env":`, "", 1)
-			rest = strings.Replace(rest, `"started_at":"2023-11-14T22:13:20Z"`, "\x00", 1)
 			if outcomeStatuses[value] || outcomePhases[value] {
 				rest = strings.NewReplacer(`"status":"succeeded"`, "", `"phase":"starting"`, "").Replace(rest)
 			}
-			if strings.Contains(rest, string(mustQuote(t, form))) || strings.Contains(rest, form) {
-				t.Fatalf("form %q: survived in JSON body %s", form, js)
+			for _, f := range []string{string(mustQuote(t, form)), form} {
+				if outsideTime(rest, f, `"2023-11-14T22:13:20Z"`) {
+					t.Fatalf("form %q: survived in JSON body %s", form, js)
+				}
 			}
 			if !strings.HasPrefix(js, `{"error":"response withheld`) && js != `{"error":"[#0]"}` && (!strings.Contains(js, `"status":"succeeded"`) || !strings.Contains(js, `"phase":"starting"`)) {
 				t.Fatalf("form %q: the outcome was rewritten in %s", form, js)
@@ -103,6 +104,29 @@ func FuzzRedactor(f *testing.F) {
 			}
 		}
 	})
+}
+
+// outsideTime reports whether f occurs in s anywhere but wholly inside
+// an occurrence of the time tm (rule 7).
+func outsideTime(s, f, tm string) bool {
+	for from := 0; ; {
+		i := strings.Index(s[from:], f)
+		if i < 0 {
+			return false
+		}
+		start := from + i
+		inside := false
+		for j := max(0, start+len(f)-len(tm)); j <= start && j+len(tm) <= len(s); j++ {
+			if s[j:j+len(tm)] == tm {
+				inside = true
+				break
+			}
+		}
+		if !inside {
+			return true
+		}
+		from = start + 1
+	}
 }
 
 func mustQuote(t *testing.T, s string) []byte {

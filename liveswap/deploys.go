@@ -44,8 +44,9 @@ import (
 //     order that retention and available_versions follow (state.go) —
 //     a key the app cannot write.
 //  2. Nothing from disk reaches a response except through the filter
-//     as body text. A recorded version is a safe string like any
-//     other name, and no safe string equals a known value (redact.go,
+//     as body text, but a record's times: held out of its layers while
+//     they have a time's shape (rule 3). A recorded version is a safe
+//     string like any other name, and no safe string equals a known value (redact.go,
 //     rule 1). Nothing is appended to a body after the filter's final
 //     pass (withField merges what the filtered body already reports;
 //     it adds nothing else).

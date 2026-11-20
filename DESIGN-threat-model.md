@@ -257,7 +257,7 @@ Properties that matter to the model:
   stream's lines, a record or an apps list's row holds under a time's
   key, written as `encoding/json` writes one, is the box's clock and
   passes no layer, so a value that is a piece of a time's text (a
-  date) stands there whole, which says less than a marker inside the
+  date, a clock time, digits of its fraction) stands there whole, which says less than a marker inside the
   time did; it is replaced everywhere else, and a body in which a
   value would stand across a time's edge goes through whole, times
   and all (liveswap/redact.go, rule 7). A
