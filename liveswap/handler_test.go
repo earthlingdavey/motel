@@ -1121,13 +1121,12 @@ func TestWebhookFailureBodyReportsTheDetailsKeys(t *testing.T) {
 	}
 }
 
-// The examples' deploy.sh reads the failing phase as the last "phase"
-// in a failure body, the stream's last line; with older records listed
-// in the status that must still be last_deploy's, so deploys is
-// serialized before it. A redaction does not move it: the
-// redacted_env it adds re-marshals only the body's top level, which
-// holds no phase.
-func TestFailureBodyEndsWithLastDeploysPhase(t *testing.T) {
+// The examples' deploy.sh reads a failure body, the stream's last line,
+// by its own functions: the cause, and last_deploy's phase, with an
+// older failed record listed in the status. A redaction does not move
+// them: the redacted_env it adds re-marshals only the body's top level,
+// sorted, which keeps error first.
+func TestFailureBodyReadsLastDeploysPhase(t *testing.T) {
 	for _, tc := range []struct {
 		name           string
 		secret, stream bool
@@ -1157,9 +1156,12 @@ func TestFailureBodyEndsWithLastDeploysPhase(t *testing.T) {
 				w := do(t, h, http.MethodPost, "/demo", appToken(t), `{"url":"https://x/a.tgz","version":"v1"}`)
 				code, body = w.Code, w.Body.String()
 			}
-			i := strings.LastIndex(body, `"phase":"`)
-			if code != 500 || i < 0 || !strings.HasPrefix(body[i:], `"phase":"starting"`) {
-				t.Fatalf("status %d, last phase in body is not last_deploy's: %s", code, body)
+			want := "start failed: boom"
+			if tc.secret {
+				want += " [redacted:SECRET]"
+			}
+			if phase, why := deployShReads(t, body, "v1"); code != 500 || phase != "starting" || why != want {
+				t.Fatalf("status %d, deploy.sh reads phase %q and cause %q: %s", code, phase, why, body)
 			}
 			// Each case takes the path it names: withField ran exactly
 			// when a known value was in the body.

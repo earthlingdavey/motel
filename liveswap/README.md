@@ -1282,9 +1282,12 @@ was cut short: moteld stopped or restarted during it` — so the same
 version can be deployed again. Re-run the job.
 
 **A failed deploy says why, from the app's side.** The 5xx body's
-`status.last_deploy` carries the phase it stopped in, `phases` — each
-phase the deploy passed through with how long it took — and, once a
-launch happened, `detail`:
+`error` is its cause, and comes first; a push refused before its
+upload is staged is answered with the `error` alone, like a 413.
+`status.last_deploy` is the failed deploy's when its `version` is the
+one sent, and carries the phase it stopped in (none when it failed
+before its first phase), `phases` — each phase the deploy passed
+through with how long it took — and, once a launch happened, `detail`:
 
 - `exit` — how the process ended, from systemd: `exit status 3`,
   `killed by signal 9 (killed)`. The `pre_start`'s when that failed;
@@ -1352,9 +1355,9 @@ app.tar.gz -C dist .`), with versions matching `[A-Za-z0-9._-]{1,64}` and not st
 **The bodies as Go types.** Every body this section describes is a
 type in [`liveswap/wire`](wire/), which imports only the standard
 library, so a client decodes them without linking Caddy: `Status`
-(`GET /<app>`, and a deploy's 200), `Failure` (a failed deploy's 5xx:
-`error`, and the `status` after it), `Error` (every other refusal,
-`{"error": …}`), `DeployResult` (`last_deploy`, and
+(`GET /<app>`, and a deploy's 200), `Failure` (the 5xx of a deploy
+that ran: `error`, and the `status` after it), `Error` (every other
+refusal, `{"error": …}`, a push refused before staging among them), `DeployResult` (`last_deploy`, and
 `GET /<app>?deploy=<version>`), `PhaseEvent` and `DoneEvent` (a
 streamed deploy's lines, below), `Metrics` (the status's `metrics`,
 over one of `MetricsRanges`) and `BoxStatus` (the box webhook's

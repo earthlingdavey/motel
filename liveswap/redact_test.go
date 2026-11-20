@@ -114,8 +114,8 @@ func TestOutcomeWordsSurviveEverywhere(t *testing.T) {
 			t.Errorf("missing %s in %s", want, out)
 		}
 	}
-	// In place: the body's order is as marshalled, so the last "phase"
-	// in a failure body is still last_deploy's.
+	// In place: the body's order is as marshalled, which deploy.sh
+	// reads a failure body by (last_deploy's phase after its version).
 	if i := strings.LastIndex(out, `"phase":"`); !strings.HasPrefix(out[i:], `"phase":"preparing","phases"`) {
 		t.Errorf("field order changed: %s", out)
 	}

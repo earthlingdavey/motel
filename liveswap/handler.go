@@ -556,7 +556,10 @@ func (h *Handler) deployPush(w http.ResponseWriter, r *http.Request, app appHand
 		// failure, told as the pipeline's would be.
 		ma.lifecycle(c, LifecycleEvent{Name: EventDeployFailed, Release: version, DeployedBy: by,
 			Summary: "deploy of " + version + " failed before it began: the app's directories are not as motel made them"})
-		return h.mapDeployResult(w, ma, err)
+		// The refusal alone, as the staging failure below is answered:
+		// the status's last_deploy and deploys describe other deploys,
+		// which a client would read as this one's (#533).
+		return RespondJSON(w, http.StatusInternalServerError, wire.Error{Error: err.Error()}, ma.redactorFor(statusSnapshot{}))
 	}
 	// In flight from here, its upload included: each way out before the
 	// pipeline ends it before its response is written, which the status
@@ -835,9 +838,8 @@ func (s *deployStream) finish(ma *managedApp, err error) error {
 	// re-marshalled, so the line has the single response's order, which
 	// is whatever the filter left (a redaction re-marshals the top
 	// level, sorting its keys; a nested object keeps its order — see
-	// withField). A client reading "the last phase" by position relies
-	// on it: the examples' deploy.sh reads a failure's, and every phase
-	// in a failure body is inside "status", in statusSnapshot's order.
+	// withField). The examples' deploy.sh relies on it: it reads a
+	// failure's cause as the first key and its phase from last_deploy on.
 	// And after, so the outcome's markers survive a filter that
 	// withholds the whole body (an unreadable env_file). redactJSON
 	// always returns one JSON object, so the closing brace is where it

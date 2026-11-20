@@ -8,9 +8,9 @@
 // The types are the shape and nothing else: no state, no behaviour.
 // Field order is part of the shape — the response filter keeps a
 // nested object's keys in the order they are marshalled (liveswap's
-// withField sorts only the top level), and a client reading "the last
-// phase" of a failure body by position relies on it — so a field is
-// added in the place it belongs, never moved. liveswap/testdata/wire
+// withField sorts only the top level), and the examples' deploy.sh
+// reads a failure body by position (Failure, Status.LastDeploy) — so a
+// field is added in the place it belongs, never moved. liveswap/testdata/wire
 // pins every body byte for byte.
 //
 // Every body passes the app's response filter after it is marshalled
@@ -65,22 +65,21 @@ type Status struct {
 	// cap is enforced.
 	CapsUnenforced []string `json:"caps_unenforced,omitempty"`
 	// Deploying is the deploy running now; absent when none is. Before
-	// deploys and last_deploy, for the reason deploys is before
-	// last_deploy: a client reads a failure body's last "phase" as the
-	// phase it failed in, and this object holds no "phase" key. It is
-	// gone from the status by the time a deploy's own response is
-	// written.
+	// last_deploy (see there). It is gone from the status by the time a
+	// deploy's own response is written.
 	Deploying *DeployInFlight `json:"deploying,omitempty"`
 	// Deploys is the outcome of the latest deploy of each version a
 	// record is kept for (liveswap/deploys.go), newest first; the whole
-	// record is GET /<app>?deploy=<version>. Serialized before
-	// last_deploy: the examples' deploy.sh reads the failing phase as
-	// the last "phase" in a failure body, which must stay last_deploy's.
-	// That body carries the status under "status", whose keys' order
-	// the filter keeps.
-	Deploys    []DeploySummary `json:"deploys,omitempty"`
-	LastDeploy *DeployResult   `json:"last_deploy,omitempty"`
-	Watchdog   *Watchdog       `json:"watchdog,omitempty"`
+	// record is GET /<app>?deploy=<version>.
+	Deploys []DeploySummary `json:"deploys,omitempty"`
+	// LastDeploy is the latest deploy's outcome. The examples' deploy.sh
+	// reads a failure body's phase from here on, when this is a deploy
+	// of the version it sent: so its first key is "version", and no
+	// "phase" key comes after its opening but its own, in the status or
+	// after it (a failure body carries the status under "status", whose
+	// keys' order the filter keeps).
+	LastDeploy *DeployResult `json:"last_deploy,omitempty"`
+	Watchdog   *Watchdog     `json:"watchdog,omitempty"`
 	// AvailableVersions lists the on-disk releases, the running version
 	// first, then most recently deployed first (liveswap/state.go,
 	// "Release order") — the versions `?rollback=<version>` can
@@ -268,7 +267,9 @@ type Forbidden struct {
 }
 
 // Failure is a deploy that failed once it ran (500): why, and the
-// status as it is after it — the old version still serving.
+// status as it is after it — the old version still serving. Error
+// comes first: the examples' deploy.sh reads the cause as the body's
+// first key.
 type Failure struct {
 	Error  string `json:"error"`
 	Status Status `json:"status"`

@@ -345,32 +345,37 @@ func TestDeployingFiltered(t *testing.T) {
 	}
 }
 
-// deployShField is the examples' deploy.sh reading one field out of a
-// body, by its own function: the last occurrence of the key.
-func deployShField(t *testing.T, body, key string) string {
+// deployShReads is the examples' deploy.sh reading a failure body, by
+// its own functions: the phase and the cause it names for a deploy of
+// sent.
+func deployShReads(t *testing.T, body, sent string) (phase, why string) {
 	t.Helper()
 	script, err := os.ReadFile(filepath.Join("..", "examples", "node", "scripts", "deploy.sh"))
 	must(t, err)
-	def := regexp.MustCompile(`(?m)^field\(\) \{\n.*\n\}\n`).Find(script)
-	if def == nil {
-		t.Fatal("deploy.sh has no field function of the shape this test reads")
+	var defs string
+	for _, name := range []string{"unjson", "field", "lead", "failed"} {
+		def := regexp.MustCompile(`(?ms)^` + name + `\(\) \{\n.*?^\}\n`).Find(script)
+		if def == nil {
+			t.Fatalf("deploy.sh has no %s function of the shape this test reads", name)
+		}
+		defs += string(def)
 	}
-	out, err := exec.Command("sh", "-c", string(def)+`field "$1" "$2"`, "sh", body, key).Output()
+	out, err := exec.Command("sh", "-c", defs+`failed "$1" "$2"; printf '%s\n%s' "$phase" "$why"`, "sh", body, sent).Output()
 	must(t, err)
-	return strings.TrimSuffix(string(out), "\n")
+	phase, why, _ = strings.Cut(string(out), "\n")
+	return phase, why
 }
 
 // TestFailureBodyPhaseWithADeployInFlight: deploy.sh names the phase a
-// deploy failed in by the last "phase" in the failure body. deploying
-// is gone from the status by the time a failed deploy's own body is
-// written, and a body that holds one (the status read once another
-// deploy began) still ends with last_deploy's phase, deploying being
-// before deploys and last_deploy and holding no "phase" key.
+// deploy failed in from last_deploy on. deploying is gone from the
+// status by the time a failed deploy's own body is written, and a body
+// that holds one (the status read once another deploy began) still
+// reads last_deploy's phase, deploying being before last_deploy.
 func TestFailureBodyPhaseWithADeployInFlight(t *testing.T) {
 	h, rig := newTestHandler(t)
 	rig.runner.startErr = errors.New("boom")
 	w := do(t, h, http.MethodPost, "/demo", appToken(t), `{"url":"https://x/1.tgz","version":"v1"}`)
-	if w.Code != http.StatusInternalServerError || strings.Contains(w.Body.String(), `"deploying"`) || deployShField(t, w.Body.String(), "phase") != "starting" {
+	if phase, why := deployShReads(t, w.Body.String(), "v1"); w.Code != http.StatusInternalServerError || strings.Contains(w.Body.String(), `"deploying"`) || phase != "starting" || why != "start failed: boom" {
 		t.Fatalf("the failure body: %d %s", w.Code, w.Body)
 	}
 	rig.runner.startErr = nil
@@ -392,11 +397,11 @@ func TestFailureBodyPhaseWithADeployInFlight(t *testing.T) {
 	if code != http.StatusInternalServerError {
 		t.Fatalf("code %d", code)
 	}
-	d, deploys, last := strings.Index(got, `"deploying":`), strings.Index(got, `"deploys":`), strings.Index(got, `"last_deploy":`)
-	if d < 0 || deploys < d || last < deploys || !strings.Contains(got[d:deploys], `"name":"extracting"`) {
-		t.Fatalf("deploying is not before deploys and last_deploy, with v2's phases: %s", got)
+	d, last := strings.Index(got, `"deploying":`), strings.Index(got, `"last_deploy":`)
+	if d < 0 || last < d || !strings.Contains(got[d:last], `"name":"extracting"`) {
+		t.Fatalf("deploying is not before last_deploy, with v2's phases: %s", got)
 	}
-	if phase := deployShField(t, got, "phase"); phase != "starting" {
+	if phase, _ := deployShReads(t, got, "v1"); phase != "starting" {
 		t.Fatalf("deploy.sh reads the failing phase as %q: %s", phase, got)
 	}
 }
