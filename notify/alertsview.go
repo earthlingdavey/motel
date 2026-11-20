@@ -52,6 +52,20 @@ type amHeld struct {
 // the rest for the box-wide read's list. The list holds expired
 // silences too, until Alertmanager's retention drops them (measured on
 // Debian's 0.28.1: "expired" beside "active" and "pending").
+// ofPersonAlert reports whether the silence holds one of personAlerts by
+// name: an equality matcher on alertname, as `moteld monitor silence add
+// --alert` makes it.
+func (s amHeldSilence) ofPersonAlert() bool {
+	return slices.ContainsFunc(s.Matchers, func(m struct {
+		Name    string `json:"name"`
+		Value   string `json:"value"`
+		IsRegex bool   `json:"isRegex"`
+		IsEqual *bool  `json:"isEqual"`
+	}) bool {
+		return m.Name == "alertname" && !m.IsRegex && (m.IsEqual == nil || *m.IsEqual) && slices.Contains(personAlerts, m.Value)
+	})
+}
+
 type amHeldSilence struct {
 	ID     string `json:"id"`
 	Status struct {
@@ -90,7 +104,8 @@ func (s amHeldSilence) wireSilence() wire.Silence {
 // (notSilenceable: they say nothing of an app or of the box's health),
 // and the two about a person's key (personAlerts: they name people's
 // networks and addresses, and would tell a thief who holds a box
-// viewer's key that it was seen),
+// viewer's key that it was seen; a silence of either is left out of the
+// list too, for the same reasons: its comment, its key and its end),
 // and each alert's silences read for when the last of them ends; and
 // every silence that has not expired, which the box-wide read lists, so
 // the silence list is asked for on every fetch, whatever the alerts.
@@ -118,7 +133,7 @@ func (c *amClient) heldAlerts(ctx context.Context) (liveswap.HeldAlerts, error) 
 	kept := make([]wire.Silence, 0, len(silences))
 	for _, s := range silences {
 		ends[s.ID] = s.EndsAt
-		if s.Status.State != "expired" {
+		if s.Status.State != "expired" && !s.ofPersonAlert() {
 			kept = append(kept, s.wireSilence())
 		}
 	}

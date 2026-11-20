@@ -121,7 +121,9 @@ func warnPeople(cfg []byte, stderr io.Writer) {
 		_, _ = fmt.Fprintf(stderr, "WARNING: box: %s\n", access.NoChannelWarning)
 	}
 	for _, name := range c.servers() {
-		if s := c.Apps.HTTP.Servers[name]; s.trusts() && s.TrustedProxiesStrict <= 0 { // Caddy's own test of strict is > 0
+		// With a from list such a server is refused (checkPeople), with
+		// the same remedy.
+		if s := c.Apps.HTTP.Servers[name]; !from && s.trusts() && s.TrustedProxiesStrict <= 0 { // Caddy's own test of strict is > 0
 			_, _ = fmt.Fprintf(stderr, "WARNING: box: %s\n", access.ForwardedNetworksWarning(name))
 		}
 	}

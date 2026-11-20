@@ -57,10 +57,11 @@ func TestLifecycleSinkMapsLiveswapsEvents(t *testing.T) {
 
 // TestPeopleSinkRaisesBoxEvents: liveswap's two announcements about a
 // person's key are one-shot box events at warning, from source access,
-// keyed by the key's fingerprint, with the summary liveswap wrote and
-// the fingerprint in it as written (it looks generated, and the filter
-// would mask it); a thief cycling networks is held to the limit per key
-// (four, then a journal line each), and another key is not held by it.
+// keyed by the key's fingerprint, with the summary liveswap wrote, the
+// name and the fingerprint's start in it as written (a long name of hex
+// would be masked but for Announcement.Safe); a thief cycling networks is
+// held to the limit per key (four, then a journal line each), and
+// another key is not held by it.
 func TestPeopleSinkRaisesBoxEvents(t *testing.T) {
 	te := newTestEngine(t)
 	s := peopleSink{e: te.engine}
@@ -105,6 +106,32 @@ func TestPeopleSinkRaisesBoxEvents(t *testing.T) {
 	s.Announce(liveswap.Announcement{Name: "something_else", Person: "x", Key: alice})
 	if got := te.drain(); len(got) != 0 {
 		t.Errorf("an unknown announcement posted %v", got)
+	}
+}
+
+// TestPeopleSinkBeforeNotifyRuns: an announcement made while no config
+// runs notify (a start's first seconds) is kept, and told when one does;
+// another event then is not, as before.
+func TestPeopleSinkBeforeNotifyRuns(t *testing.T) {
+	te := newTestEngine(t)
+	te.active = nil
+	s := peopleSink{e: te.engine}
+	fp := accesstest.Ed25519().Fingerprint()
+	for i := range earlyMax + 3 {
+		s.Announce(liveswap.Announcement{Name: liveswap.EventPersonNewNetwork, Person: "alice@example.com", Key: fmt.Sprint(fp, i), From: "203.0.113.0/24", First: true})
+	}
+	te.report(Event{Name: "deploy_failed", Kind: kindEvent, App: "blog", Source: "liveswap", Summary: "x"})
+	if got := te.drain(); len(got) != 0 {
+		t.Fatalf("posted while no config runs notify: %v", got)
+	}
+	te.point(&App{}, te.p, te.known, te.logger)
+	got := te.drain()
+	if len(got) != earlyMax || got[0].Labels["alertname"] != "person_new_network" || got[0].Labels["instance"] != fmt.Sprint(fp, 0) {
+		t.Fatalf("told %d once a config runs it: %v", len(got), got[:min(len(got), 1)])
+	}
+	te.point(&App{}, te.p, te.known, te.logger)
+	if got := te.drain(); len(got) != 0 {
+		t.Errorf("told again: %v", got)
 	}
 }
 

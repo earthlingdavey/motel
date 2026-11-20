@@ -99,6 +99,9 @@ const (
 	retryFor = 5 * time.Minute
 	// queueMax bounds what waits for Alertmanager.
 	queueMax = 512
+	// earlyMax bounds the people's announcements kept while no config
+	// runs notify (engine.early).
+	earlyMax = 64
 	// maxSummary is the summary's length, in runes.
 	maxSummary = 200
 	// heartbeatEvery and heartbeatLife are the Watchdog's: posted every
@@ -218,6 +221,12 @@ type engine struct {
 	lastHeartbeat time.Time
 	// lastOccurrence is the last one-shot's occurred_at (occurrence).
 	lastOccurrence time.Time
+	// early are a person's key's announcements (source access) told
+	// while no config runs notify: a start's first seconds, when the
+	// http app can serve before notify's Start, and liveswap's record has
+	// already counted the network as told. At most earlyMax, told when a
+	// config next does (point).
+	early []Event
 
 	queue    []*pending
 	wake     chan struct{}
@@ -317,6 +326,9 @@ func (e *engine) report(ev Event) {
 // reportLocked is report, with mu held.
 func (e *engine) reportLocked(ev Event) {
 	if e.active == nil {
+		if ev.Source == sourceAccess && len(e.early) < earlyMax {
+			e.early = append(e.early, ev)
+		}
 		return
 	}
 	ev.Summary = e.clean(ev.Summary, append([]string{ev.Release}, ev.Safe...)...)
@@ -935,6 +947,11 @@ func (e *engine) point(a *App, post poster, known []string, logger *zap.Logger) 
 		for name, ch := range a.cfg.channels {
 			e.fail.kinds[name] = channelKinds[ch.Kind]
 		}
+	}
+	early := e.early
+	e.early = nil
+	for _, ev := range early {
+		e.reportLocked(ev)
 	}
 }
 

@@ -147,6 +147,13 @@ func TestWarnPeopleNetworks(t *testing.T) {
 	if out := stderr.String(); !strings.Contains(out, "a grant has a from list") || strings.Contains(out, "the network a person's key is told as used from") {
 		t.Errorf("with a from list: %s", out)
 	}
+	// Nor beside the refusal of a from list behind loose proxies, which
+	// names the same remedy.
+	stderr.Reset()
+	warnPeople([]byte(`{"apps":{`+from+`,"http":{"servers":{"srv0":{"trusted_proxies":{"source":"static","ranges":["10.0.0.0/8"]}}}}}}`), &stderr)
+	if strings.Contains(stderr.String(), access.ForwardedNetworksWarning("srv0")) {
+		t.Errorf("beside the refusal: %s", stderr.String())
+	}
 }
 
 // TestTheGateRefusesFromBehindLooseProxies: through the gate itself, a

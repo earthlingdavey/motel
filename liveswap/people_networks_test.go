@@ -521,7 +521,7 @@ func TestNetworksFileHangs(t *testing.T) {
 	// The read that comes back after the wait is dropped: neither
 	// network it held is kept.
 	close(release)
-	time.Sleep(20 * time.Millisecond)
+	time.Sleep(300 * time.Millisecond) // the late read's own goroutine, done
 	k.settle(t, false)
 	if got := heard.take(); len(got) != 50 || !got[0].First || got[0].From != "10.0.0.0/24" || got[49].From != "10.0.49.0/24" {
 		t.Errorf("told %d: %+v", len(got), got)
@@ -609,7 +609,7 @@ func TestNetworksWriteFails(t *testing.T) {
 	people := newTestPeople(t)
 	file := filepath.Join(t.TempDir(), "people-networks.json")
 	k, heard := testNetworks(t, file)
-	k.every = time.Second
+	k.every = time.Hour // the retry comes when the test asks for it
 	var mu sync.Mutex
 	fail, writes := true, 0
 	k.write = func(path string, data []byte) error {
@@ -638,6 +638,7 @@ func TestNetworksWriteFails(t *testing.T) {
 	}
 	fail = false
 	mu.Unlock()
+	k.flushWithin(5 * time.Second) // as a stop does: the retry, now
 	k.settle(t, false)
 	if l := logs.FilterMessageSnippet("could not be written").All(); len(l) != 1 || !strings.Contains(l[0].ContextMap()["error"].(string), "no space left") {
 		t.Errorf("journal %v", logs.All())
@@ -660,7 +661,7 @@ func TestNetworksReorderWithinTheMinute(t *testing.T) {
 	people := newTestPeople(t)
 	file := filepath.Join(t.TempDir(), "people-networks.json")
 	k, _ := testNetworks(t, file)
-	k.every = 2 * time.Second
+	k.every = 3 * time.Second
 	var mu sync.Mutex
 	var at []time.Time
 	k.write = func(path string, data []byte) error {
@@ -678,14 +679,44 @@ func TestNetworksReorderWithinTheMinute(t *testing.T) {
 	k.settle(t, false)
 	mu.Lock()
 	defer mu.Unlock()
-	// The new network is written within its own moment, not the 2 s of
-	// a reorder; the reorder waits its 2 s after the last write.
-	if len(at) != 3 || at[1].Sub(at[0]) > 1500*time.Millisecond || at[2].Sub(at[1]) < 1900*time.Millisecond {
+	// The new network is written within networksUrgentEvery of the
+	// last write, not the 3 s of a reorder; the reorder waits its 3 s.
+	if len(at) != 3 || at[1].Sub(at[0]) > 2500*time.Millisecond || at[1].Sub(at[0]) < 900*time.Millisecond || at[2].Sub(at[1]) < 2900*time.Millisecond {
 		t.Errorf("writes at %v", at)
 	}
 	b, _ := os.ReadFile(file)
 	if !strings.Contains(string(b), `["203.0.113.0/24","198.51.100.0/24"]`) {
 		t.Errorf("written %s", b)
+	}
+}
+
+// TestNetworksFlushAtStop: a stop writes what is due at once, a change
+// of order that would wait its minute among it, and waits for it.
+func TestNetworksFlushAtStop(t *testing.T) {
+	people := newTestPeople(t)
+	file := filepath.Join(t.TempDir(), "people-networks.json")
+	k, _ := testNetworks(t, file)
+	k.every = time.Hour
+	fp := people.alice.Fingerprint()
+	k.seen(people.reg, fp, "alice", addr("203.0.113.9"), zap.NewNop())
+	k.settle(t, false)
+	k.seen(people.reg, fp, "alice", addr("198.51.100.9"), zap.NewNop()) // due within the second
+	k.seen(people.reg, fp, "alice", addr("203.0.113.9"), zap.NewNop())  // a reorder: due within the hour
+	began := time.Now()
+	k.flushWithin(5 * time.Second)
+	if took := time.Since(began); took > 900*time.Millisecond {
+		t.Errorf("the flush took %s", took)
+	}
+	b, _ := os.ReadFile(file)
+	if !strings.Contains(string(b), `["203.0.113.0/24","198.51.100.0/24"]`) {
+		t.Errorf("written %s", b)
+	}
+	// With nothing due, and with no file, it returns at once.
+	began = time.Now()
+	k.flushWithin(5 * time.Second)
+	newPeopleNetworks("", time.Now).flushWithin(5 * time.Second)
+	if took := time.Since(began); took > 100*time.Millisecond {
+		t.Errorf("a flush of nothing took %s", took)
 	}
 }
 

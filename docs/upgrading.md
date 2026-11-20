@@ -383,10 +383,9 @@ access](people.md#when-their-key-is-used-from-somewhere-new)) has no
 record yet of where each key was used: **each key's next use after
 the install is told once, as its first**, and the journal says why
 (`access: no record yet of the networks people's keys were used
-from`). Nothing to do. To keep the channels quiet, silence it for the
-hour around the install: `moteld monitor silence add --alert
-person_new_network --duration 1h --comment "the upgrade"` once the new
-release runs (the older one does not know the name).
+from`). Nothing to do: expect one `person_new_network` message per key,
+each as soon as that person's client next asks the box, which for a
+client left open is within seconds of the restart.
 
 Going back to a release without it leaves
 `/var/lib/motel/people-networks.json` where it is, unread, and nothing

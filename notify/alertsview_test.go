@@ -39,7 +39,9 @@ const heldAnswer = `[
 const silencesAnswer = `[
  {"id":"11111111-1111-4111-8111-111111111111","status":{"state":"active"},"matchers":[],"startsAt":"2026-11-19T13:00:00Z","endsAt":"2026-11-19T15:00:00Z","createdBy":"moteld monitor: root","comment":"known"},
  {"id":"22222222-2222-4222-8222-222222222222","status":{"state":"active"},"matchers":[],"startsAt":"2026-11-19T13:00:00Z","endsAt":"2026-11-19T16:30:00+01:00","createdBy":"moteld monitor: root","comment":"later"},
- {"id":"33333333-3333-4333-8333-333333333333","status":{"state":"expired"},"matchers":[],"startsAt":"2026-11-18T13:00:00Z","endsAt":"2026-11-18T14:00:00Z","createdBy":"x","comment":"old"}
+ {"id":"33333333-3333-4333-8333-333333333333","status":{"state":"expired"},"matchers":[],"startsAt":"2026-11-18T13:00:00Z","endsAt":"2026-11-18T14:00:00Z","createdBy":"x","comment":"old"},
+ {"id":"44444444-4444-4444-8444-444444444444","status":{"state":"active"},"matchers":[{"name":"alertname","value":"person_new_network","isRegex":false,"isEqual":true},{"name":"instance","value":"SHA256:example","isRegex":false}],"startsAt":"2026-11-19T13:00:00Z","endsAt":"2026-11-19T15:00:00Z","createdBy":"moteld monitor: root","comment":"bob travelling"},
+ {"id":"55555555-5555-4555-8555-555555555555","status":{"state":"pending"},"matchers":[{"name":"alertname","value":"person_outside_list"}],"startsAt":"2026-11-20T13:00:00Z","endsAt":"2026-11-20T15:00:00Z","createdBy":"moteld monitor: root","comment":"adding the team"}
 ]`
 
 // fakeAMReads is Alertmanager's two read routes on a unix socket, counting

@@ -74,8 +74,18 @@ const (
 	networksPattern  = ".people-networks-*.tmp"
 	// networksLoadWait is how long announcements wait for the file to be
 	// read: past it, a read that has not come back (a disk that hangs) is
-	// said, and moteld goes on as with a file it could not read.
-	networksLoadWait = 5 * time.Second
+	// said, and moteld goes on as with a file it could not read, and
+	// writes over it. Long enough that a disk merely busy at boot reads
+	// a file of at most a megabyte well within it.
+	networksLoadWait = 30 * time.Second
+	// networksUrgentEvery is the least time between two writes of a new
+	// network or a key dropped: a thief cycling networks, throttled or
+	// not, has the file written once a second at most, not once a
+	// request.
+	networksUrgentEvery = time.Second
+	// networksStopWait bounds how long a stop waits for what is pending
+	// to be written (FlushPeopleNetworks).
+	networksStopWait = 2 * time.Second
 	// networksReorderEvery is how often a change of order alone is
 	// written, and a failed write tried again.
 	networksReorderEvery = time.Minute
@@ -381,7 +391,9 @@ func (k *PeopleNetworks) announce(logger *zap.Logger, a Announcer, ann Announcem
 
 // dropUnlistedLocked drops every key a registry newer than the last
 // one seen does not list: a person removed is forgotten, and named
-// anew as a first use if added back. An older registry (a reload's old
+// anew as a first use if added back while the record still runs on
+// (a load that admits no one has no registry, and drops nothing until a
+// person is admitted again). An older registry (a reload's old
 // handlers, serving for a moment beside the new) changes nothing.
 func (k *PeopleNetworks) dropUnlistedLocked(reg *access.Registry) {
 	if reg == nil || reg.Generation() <= k.generation {
@@ -438,11 +450,35 @@ func (k *PeopleNetworks) changedLocked(urgent bool) {
 		}
 		k.timer = nil
 	}
-	var delay time.Duration
+	every := networksUrgentEvery
 	if !k.urgent || k.failing {
-		delay = max(0, k.lastWrite.Add(k.every).Sub(k.now()))
+		every = k.every
 	}
+	delay := max(0, k.lastWrite.Add(every).Sub(k.now()))
 	k.timer = time.AfterFunc(delay, k.flush)
+}
+
+// FlushPeopleNetworks writes what the process's record holds that its
+// file does not, and waits for it, or for a write already under way, at
+// most networksStopWait: liveswap's Stop, so that a restart (an upgrade,
+// a reload's old config) tells nothing again for want of a write that
+// was due. A write that hangs is left to itself past the wait.
+func FlushPeopleNetworks() { sharedNetworks.flushWithin(networksStopWait) }
+
+func (k *PeopleNetworks) flushWithin(wait time.Duration) {
+	deadline := time.Now().Add(wait)
+	for {
+		k.mu.Lock()
+		idle := k.file == "" || k.state != networksRead || !k.dirty && !k.writing
+		if !idle && !k.writing && (k.timer == nil || k.timer.Stop()) {
+			k.timer = time.AfterFunc(0, k.flush)
+		}
+		k.mu.Unlock()
+		if idle || time.Now().After(deadline) {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
 }
 
 // flush writes the record, on the timer's goroutine.
