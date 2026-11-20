@@ -40,7 +40,8 @@ Three things are needed before `setup`:
   expires current objects by age: a pack judged old can hold the only
   copy of data every backup uses. `setup` asks for an `s3:` URL, B2's
   included; `rest:`, `gs:` and `swift:` repositories are written
-  [by hand](../backups/README.md#by-hand), and restic's own `b2:`
+  [by hand](../backups/README.md#by-hand), into a file root's alone
+  (0600), which every run refuses otherwise, and restic's own `b2:`
   backend is refused: its B2 library retries a failed upload without
   end, and held a run for 27 hours with nothing said.
 - **Two keys**, neither able to destroy a version: the box's, which

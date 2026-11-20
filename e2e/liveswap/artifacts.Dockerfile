@@ -15,7 +15,9 @@
 # docker-compose.yml), which is why every COPY path is repo-relative:
 # the probe release carries liveswap/testdata/sandbox-view.sh, one view probe shared
 # with liveswap's integration test and packaging/test/smoke.sh (#52).
-FROM golang:1.27-trixie AS build
+# The Go is docker-compose.yml's dev image, by the same tag and digest:
+# the Go that builds what ships.
+FROM golang:1.27.4-trixie@sha256:f18c3d73a184fb0582828510722e723b63a93f7188d11dd223d9be6f6880e65d AS build
 # The box's architecture, from BuildKit; the wrongarch release is
 # built for the other one.
 ARG TARGETARCH

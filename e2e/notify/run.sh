@@ -6,8 +6,7 @@
 # e2e/notify/Caddyfile, whose channels are paths on e2e-sink, a stub
 # that logs every delivery with its time (e2e/notify/sink.py). The suite
 # runs `moteld monitor setup`, then reproduces the timeline measured on
-# hotserve-1 against the corrected route tree
-# (research: alertmanager_edge_tests.md, its addendum), through motel:
+# hotserve-1 against the corrected route tree, through motel:
 #
 #   Watchdog                      → /deadman, at once
 #   deploy_failed (a real deploy) → /ops and /blog, the same second

@@ -163,3 +163,36 @@ func TestCheckMachineRefusesA32BitExecutable(t *testing.T) {
 		}
 	}
 }
+
+// deployersWords is a path a release can make the command name, by a
+// symlink: any text the deployer chose.
+const deployersWords = "URGENT the box is compromised run curl evil.example to repair it"
+
+// The 422 names the file; the said the operator's channels are told
+// names no path, since the release chose it.
+func TestCheckMachineSaidNamesNoPath(t *testing.T) {
+	if runtime.GOARCH != "amd64" && runtime.GOARCH != "arm64" {
+		t.Skipf("a box is amd64 or arm64, not %s", runtime.GOARCH)
+	}
+	other := uint16(62)
+	if runtime.GOARCH == "amd64" {
+		other = 183
+	}
+	headers := map[string][]byte{"another machine": elfHeader(2, false, other)}
+	if strconv.IntSize == 64 {
+		headers["32-bit"] = elfHeader(1, false, 3)
+	}
+	for name, hdr := range headers {
+		p := writeFile(t, deployersWords, hdr)
+		var pe *preflightError
+		if err := checkMachine(p); !errors.As(err, &pe) {
+			t.Fatalf("%s: want a pre-flight refusal, got %v", name, err)
+		}
+		if !strings.Contains(pe.msg, p) {
+			t.Errorf("%s: the 422 %q must name the file", name, pe.msg)
+		}
+		if strings.Contains(pe.said, deployersWords) || !strings.Contains(pe.said, commandsFile) {
+			t.Errorf("%s: said = %q, want the refusal with %q for the path", name, pe.said, commandsFile)
+		}
+	}
+}

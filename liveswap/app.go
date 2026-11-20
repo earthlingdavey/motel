@@ -184,8 +184,13 @@ var (
 )
 
 // validationError is a bad request (422), as opposed to a deploy that
-// failed on its own merits (500).
-type validationError struct{ msg string }
+// failed on its own merits (500). msg is what the 422 and the journal
+// say. said is the same refusal without the free text in msg the
+// deployer chose — the artifact URL, a path inside the release — for
+// the operator's channels (reportDeploy); empty when msg quotes none.
+// A version or a digest is not free text: each passed its format
+// check (validVersion, sha256Re) before any refusal quotes it.
+type validationError struct{ msg, said string }
 
 func (e validationError) Error() string { return e.msg }
 
@@ -602,7 +607,11 @@ func preflightResult(what string, err error) error {
 	}
 	var pe *preflightError
 	if errors.As(err, &pe) {
-		return validationError{fmt.Sprintf("%s: %v", what, err)}
+		ve := validationError{msg: fmt.Sprintf("%s: %v", what, err)}
+		if pe.said != "" {
+			ve.said = what + ": " + pe.said
+		}
+		return ve
 	}
 	return fmt.Errorf("%s: %w", what, err)
 }
@@ -715,7 +724,7 @@ func (ma *managedApp) Deploy(ctx context.Context, req deployRequest) error {
 // success also ends a reported restart loop. The summary names the
 // version and the phase, never the error's text, which can quote what
 // the app printed; a refusal's is liveswap's own words, through the
-// filter.
+// filter: its said, where its message quotes the deployer's text.
 func (ma *managedApp) reportDeploy(c collaborators, req deployRequest, result deployResult, err error) {
 	ev := LifecycleEvent{Release: req.version, DeployedBy: req.by}
 	var ve validationError
@@ -725,7 +734,11 @@ func (ma *managedApp) reportDeploy(c collaborators, req deployRequest, result de
 	case err == nil:
 		ev.Name, ev.Summary = EventDeploySucceeded, "deployed "+req.version
 	case errors.As(err, &ve):
-		ev.Name, ev.Summary = EventDeployRefused, "deploy of "+req.version+" refused: "+firstLine(ve.msg)
+		why := ve.msg
+		if ve.said != "" {
+			why = ve.said
+		}
+		ev.Name, ev.Summary = EventDeployRefused, "deploy of "+req.version+" refused: "+firstLine(why)
 	default:
 		// What serves now is not said: a first deploy, or one to an app
 		// already down, leaves nothing serving.
@@ -953,7 +966,7 @@ func (ma *managedApp) deployLocked(ctx context.Context, req deployRequest, c col
 	if !req.rollback && !relaunch {
 		switch _, statErr := os.Stat(spec.dirs.release(req.version)); {
 		case statErr == nil:
-			return validationError{fmt.Sprintf("version %s already exists — versions are immutable; deploy a new version, or roll back to relaunch this one", req.version)}
+			return validationError{msg: fmt.Sprintf("version %s already exists — versions are immutable; deploy a new version, or roll back to relaunch this one", req.version)}
 		case !os.IsNotExist(statErr):
 			// A real I/O/permission error must not be read as "absent"
 			// and fall through to fetch, whose RemoveAll would then
@@ -1239,11 +1252,11 @@ func relaunchRefusal(spec *appSpec, req deployRequest, recorded string) error {
 	remedy := fmt.Sprintf("a rollback to %s relaunches it (that, or a new version, is also how a new secret reaches the app)", req.version)
 	switch {
 	case req.sha256 == "":
-		return validationError{fmt.Sprintf("version %s is already running and the request carries no sha256 to match its artifact by; %s", req.version, remedy)}
+		return validationError{msg: fmt.Sprintf("version %s is already running and the request carries no sha256 to match its artifact by; %s", req.version, remedy)}
 	case recorded == "":
-		return validationError{fmt.Sprintf("version %s is already running and its artifact's digest is not on record, so the request cannot be matched to it; %s", req.version, remedy)}
+		return validationError{msg: fmt.Sprintf("version %s is already running and its artifact's digest is not on record, so the request cannot be matched to it; %s", req.version, remedy)}
 	case req.sha256 != recorded:
-		return validationError{fmt.Sprintf("version %s is already running from a different artifact — versions are immutable; deploy a new version (a rollback to %s relaunches what is running, and either is how a new secret reaches the app)", req.version, req.version)}
+		return validationError{msg: fmt.Sprintf("version %s is already running from a different artifact — versions are immutable; deploy a new version (a rollback to %s relaunches what is running, and either is how a new secret reaches the app)", req.version, req.version)}
 	}
 	if req.localArchive == "" {
 		if _, err := pinArtifactURL(req.url, spec.allowInsecure, spec.allowlist); err != nil {

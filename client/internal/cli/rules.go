@@ -14,8 +14,7 @@ import (
 )
 
 // monitorRules is `motel monitor rules [--app <app>]`, the remote twin
-// of `moteld monitor rules` (motelctl-spec, row 15), with --app as
-// `monitor alerts` takes it.
+// of `moteld monitor rules`, with --app as `monitor alerts` takes it.
 func (r *runner) monitorRules() *cobra.Command {
 	var t target
 	var appArg string

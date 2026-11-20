@@ -65,7 +65,7 @@ Alertmanager beside it 42.6 MB RSS (24 MB cgroup).
 | Alertmanager | Debian 13's `prometheus-alertmanager` 0.28.1: routing, grouping, dedupe, repeat, resolved-once, inhibition, retries, the notification log, 18 receiver kinds | Debian's unit with motel's drop-in (`notify/units/10-motel.conf`): socket-activated, `--cluster.listen-address=` (no gossip), `--enable-feature=receiver-name-in-metrics`, `MemoryMax=128M` |
 | Its listener | `/run/motel-notify/am.sock`, 0660 root:motel, a systemd socket unit (`notify/units/motel-am.socket`); no TCP port in the host's namespace. With the store, a second socket, `127.0.0.1:9093` inside the store's namespace, for vmalert (DESIGN-metrics.md, "The shape") | its own runtime directory: `/run/motel` is moteld.service's `RuntimeDirectory`, removed whenever moteld stops |
 | Its config | `alertmanager.yml` and one `url-<KEY>` file per channel secret, 0640, rendered by motel at every config load | `/var/lib/motel-notify`, 2750 motel:prometheus (setup makes it); not `/var/lib/motel`, which is 0750 motel:motel and the prometheus uid cannot traverse |
-| motel's part | the `monitor` block's notify lines and their refusals, the renderer, the engine (state table, flapping guard, mute, heartbeat, retry queue), the detectors, `channel_failed`, two admin routes, `moteld monitor send`, `test` and `setup` | `notify/` |
+| motel's part | the `monitor` block's notify lines and their refusals, the renderer, the engine (state table, flapping guard, mute, heartbeat, retry queue), the detectors, `channel_failed`, five admin routes, `moteld monitor send`, `test`, `setup`, `silence` and `rules` | `notify/` |
 
 **Who reaches the socket, and why.** Every deployed app runs as the
 motel uid, so the socket's group is not what keeps apps out. Their
@@ -155,6 +155,24 @@ connects to nothing), each naming keys and channels, never a value:
 The URL check is every URL's, not only a deployer's: Alertmanager sends
 from the network namespace every app shares, so a URL to loopback or a
 private address would reach a listener an app opened.
+
+Nor does Alertmanager follow a redirect, which would take a notification
+past the check to wherever the endpoint names. Its default follows one:
+measured on Debian's 0.28.1 in the e2e box (2026-11-20, a stub answering
+307 to another port on loopback), a webhook, a Slack and a Discord
+receiver each replayed the POST, body and all, to the second port. The
+render writes `follow_redirects: false` in the global `http_config`,
+which every receiver without one of its own takes, and in every
+receiver's own (an ntfy channel's, for its `X-Priority`), which starts
+from Alertmanager's default and not from the global one (measured: with
+only the global line, that receiver still followed).
+`TestAlertmanagerFollowsNoRedirect` asks it of Alertmanager on every run
+of the metrics e2e box, a receiver of each kind against a redirecting
+stub. A channel whose endpoint redirects fails, named: Alertmanager
+counts the redirect as a failed notification (`unexpected status code
+307`, not retried; `reason="other"`), which motel journals and tells as
+any failed delivery ("Failed delivery"). The operator writes the URL the
+endpoint answers at.
 
 ### Secrets at load
 
@@ -359,9 +377,9 @@ only root and the motel uid can send.
 | Event | Source | Kind | Severity | Fires | Resolves |
 |---|---|---|---|---|---|
 | `watchdog_throttled` | liveswap | state | critical | the restart budget is spent; again on any failed probe or crash during a recovery's hold, below the restart threshold too | the first healthy probe after it, held `max(30s, watchdog_grace)`; a deploy that succeeds; `watchdog off` |
-| `relaunch_refused` | liveswap | state | critical | the watchdog's relaunch is refused at its pre-flight | any path publishes an instance |
+| `relaunch_refused` | liveswap | state | critical | the watchdog's relaunch is refused at its pre-flight (its reason without the deployer's text, as for `deploy_refused`) | any path publishes an instance |
 | `deploy_failed` | liveswap | event | warning | a 5xx outcome, a push's upload that could not be staged, or app dirs that are not motel's; the summary names the version and the phase, never the error's text, and says nothing of what serves now | — |
-| `deploy_refused` | liveswap | event | warning | a 422 (liveswap's own words, through the filter) | — |
+| `deploy_refused` | liveswap | event | warning | a 422 (liveswap's own words, through the filter: a refusal whose message quotes the deployer's text, the artifact URL or a path in the release, is told without it, which the 422 and the journal keep) | — |
 | `rollback` | liveswap | event | warning | `?rollback=` succeeds | — |
 | `deploy_succeeded` | liveswap | event | info | a deploy succeeds; dropped unless `deploy_succeeded on` | — |
 | `deploy_in_progress` | liveswap | the mute | none | a deploy starts; re-posted each minute while it runs | it ends, whatever it came to |
@@ -935,9 +953,9 @@ Alertmanager answering on both (measured in the e2e box, 2026-11-12).
 
 New: a resident daemon motel did not write, reachable by unix-socket
 permission alone, holding outbound credentials in files only it and
-motel read; and four admin routes (the silence routes give the admin
+motel read; and five admin routes (the silence routes give the admin
 socket's callers, root and motel, nothing the Alertmanager socket did
-not already give them).
+not already give them; the rules route only reads).
 
 - **T1** (a poisoned dependency in an app): the socket, the state
   directory and the admin socket are not in its view; it runs as the
@@ -1119,6 +1137,8 @@ on its general scales. notify's examples:
 | A read that lands between Alertmanager's reset of its counters and its setting of the load's stamp (within one load, microseconds) takes the reset counts with the old stamp: a failure counted in that instant is told twice, at that read (a value below the last) and at the next (a load since, from 0) | notify/channelfailed.go (`rises`) | 2 | 1 | 1 | 2; a read once a minute against a window of microseconds, and a duplicate `ChannelFailed` is the worst of it. Likewise a first read whose body was taken before a reload this process asked for and judged after it (`noteReload`; only when a reload of moteld first brings the block, within its first minute) counts that body from 0. The config-load rows' PR |
 | A restart of moteld while a notification is retried after a failed attempt (one 5xx): the start's reload cancels the retry, which Alertmanager counts after the reset under the failed attempt's reason, and the new moteld's first read, counting from 0 since the load came after its start, tells a `ChannelFailed` (or records a hold) for a channel whose next attempt would have delivered | notify/channelfailed.go (`loadSince`) | 2 | 2 | 1 | 4; a restart that lands on a retry, and the attempt did fail: the same as any reload between two reads already did (a cancel after a failed attempt keeps its reason, #468), and the new config sends the notification again, so a hold ends at its delivery. Before, the first read was a baseline, which missed real failures instead. /code-review pass 1 of the config-load rows' PR |
 | A box whose monitor units were written before the binary was `moteld`: their `Description=` lines name the command as it was then, so every validate, reload and start warns that the units differ and to run setup again, though nothing about how they run changed; `moteld monitor setup` restarts Alertmanager, which forgets the alerts it holds, and `--metrics` restarts the store and vmalert | notify/gate.go (`staleUnits` leaves out comments and layout, nothing else) | 2 | 5 | 1 | 10; loud and named, with the remedy: one run of `moteld monitor setup` (and `--metrics`) ends it, and the release's notes ask for it; telling a description from a setting is a new branch in the comparison (size 2, risk 2) for one release's change |
+| A channel or heartbeat URL that answers with a redirect: every delivery fails, and motel's words for it are Alertmanager's reason, `other` (`moteld monitor test`: `could not deliver (webhook: other); journalctl -u prometheus-alertmanager says more`; moteld's `ChannelFailed` `through webhook (other)`, the store's no reason at all), which does not say redirect | notify/render.go (`amHTTPConfig`), docs/monitor.md | 2 | 5 | 1 | 10; red, and the journal it names says `unexpected status code 307` (measured 2026-11-20), and docs/monitor.md's `channel` line says a URL that redirects fails. Telling a 3xx apart in motel's own text needs the status, which Alertmanager's counters do not carry: a read of its journal (size 3). /code-review pass 2 of the no-redirect render |
+| `TestAlertmanagerFollowsNoRedirect` picks Alertmanager's port by listening on `127.0.0.1:0` and closing it: another process that takes the port before Alertmanager binds it fails the test, red, after the 15 s the alerts' post waits, with Alertmanager's `address already in use` in its output | notify/render_test.go | 2 | 3 | 1 | 6; a flake of the metrics e2e lane that names itself. A start retried on that error is a new branch (size 2) for a window of milliseconds. /code-review pass 2 of the no-redirect render |
 
 ### Owed
 

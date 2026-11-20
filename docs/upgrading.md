@@ -374,6 +374,25 @@ There is no APT repository yet, so nothing upgrades moteld behind
 your back; the hosted repository on the [roadmap](../README.md#roadmap) is what
 will change that.
 
+## A backup credential file written by hand
+
+The first release that refuses a backup credential file that is not
+root's alone refuses one written [by hand](../backups/README.md#by-hand)
+with an editor under umask 022, which is 0644: every run, restore and
+drill stops before it starts anything, names the file, its mode and the
+command that puts it right, and `motel-backup status` goes unhealthy.
+A file `motel-backup setup` wrote is root's alone already. Before the
+install, as root:
+
+```sh
+stat -c '%n %U %a' /etc/motel-backup /etc/motel-backup/repository.env
+```
+
+It should say `root 755` of the directory, which every account looks
+into to see whether backups are set up, and `root 600` of the file
+(`root 400` passes too). For anything else:
+`chown root:root /etc/motel-backup /etc/motel-backup/repository.env && chmod 0755 /etc/motel-backup && chmod 0600 /etc/motel-backup/repository.env`.
+
 ## A person's key, told once after the install
 
 On a box with `person` or `grant` lines, the first release that tells

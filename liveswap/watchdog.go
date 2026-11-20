@@ -886,11 +886,17 @@ func (ma *managedApp) handleFailure(ctx context.Context, c collaborators, inst *
 		// cause is fixed, launches the app again.
 		ma.dropIf(inst)
 		ma.wd.setLastFailure(err.Error())
-		if ma.wd.setRefused(inst.version, err.Error()) {
-			// The refusal's own text names the release's machine or its
-			// command, never a log tail; the filter runs over it anyway.
+		// The operator's channels are told the refusal's said where it
+		// has one: its message names a path the release chose
+		// (validationError). Never a log tail; the filter runs over it
+		// anyway.
+		reason := err.Error()
+		if refused.said != "" {
+			reason = refused.said
+		}
+		if ma.wd.setRefused(inst.version, reason) {
 			ma.lifecycle(c, LifecycleEvent{Name: EventRelaunchRefused, Release: inst.version,
-				Summary: refusedSummary(inst.version, boundReason(err.Error()))})
+				Summary: refusedSummary(inst.version, boundReason(reason))})
 		}
 		c.logger.Error("watchdog: relaunch refused; the app stays down until a deploy of another version (or a rollback to one), or a reload once the cause is fixed, launches it",
 			zap.String("version", inst.version), zap.Error(err))

@@ -246,7 +246,9 @@ monitor {
 
 - **`channel`**: `severity warning` means a channel hears warnings and
   criticals but no info. A URL has to be https, to a public address and
-  host name; anything else is refused by name.
+  host name; anything else is refused by name. Alertmanager follows no
+  redirect, so a URL, the heartbeat's too, that answers with one fails
+  as any delivery does: write the URL the endpoint answers at.
 - **`operator`**: required. It names the channels that hear everything.
 - **`bind`**: `<identity>` starts as a deploy's `deployed_by` does in
   `GET /<app>`, and is not written as the `deploy_trust` block:

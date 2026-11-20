@@ -1,9 +1,9 @@
 // Command moteld is the smallhours app server: Caddy with
 // zero-downtime app deploys (liveswap), rate-limit hint enforcement
-// (penaltybox), the config channel (box, being built: see
-// box/DESIGN-box.md), notify (who motel tells, through Alertmanager:
-// notify/DESIGN-notify.md) and HTTP caching (Souin + Otter storage)
-// compiled in.
+// (penaltybox), backups (the declaration's gate and the box's backups
+// for a viewer), the config channel (box: box/DESIGN-box.md), notify
+// (who motel tells, through Alertmanager: notify/DESIGN-notify.md) and
+// HTTP caching (Souin + Otter storage) compiled in.
 // It is distributed as its own binary and OS packages — see the repo
 // README — and behaves exactly like a custom Caddy build: same CLI,
 // same Caddyfile, same admin API.

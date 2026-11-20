@@ -275,7 +275,10 @@ line.
   files it does not own, in a view that holds one app and nothing else.
   The run passes the *path* of `repository.env` to systemd, which reads
   it as root for each restic unit; the run itself reads it only to
-  refuse, before any unit, a file the manager would refuse whole, a
+  refuse, before any unit, a file that is not root's alone (another
+  uid's, or one its group or others may read, write or run, or in a
+  directory that is not root's or that others may write), a file
+  the manager would refuse whole, a
   `RESTIC_REPOSITORY_FILE` and a `b2:` repository (`repositoryInUse`) —
   not every repository `setup` refuses (Accepted residuals). `setup` is
   its one writer, and `status`, as root, its one other reader.
@@ -766,7 +769,8 @@ account on the box, and so are the app names, data paths, snapshot ids
 and cleaned error text in it; nothing of the credentials is, and of
 the repository's location only what a run's refusal of it names: the
 bucket and path of a `b2:` repository, in the S3 URL that moves it. Run as root, `status` also reads the credential file
-and says, as `warning:` lines, where a hand-edited line is not what the
+and says, as `warning:` lines, first what a run refuses of whose it is
+and its mode, or its directory's, in the run's words ("What it refuses"), then where a hand-edited line is not what the
 manager reads (a key with whitespace around it, a key set twice — the
 last wins — a line that is not `KEY=value` or whose name the manager
 does not take, a quote never closed, which takes the rest of the file,
@@ -1099,7 +1103,23 @@ It needs no privilege.
   quotes, so that the command pasted as it is reaches setup whole, the
   escaping leaving no `'` in it, and short enough that the record's
   300 runes keep all of it for a bucket and path of up to 58
-  characters as escaped. A credential file they cannot read is refused there
+  characters as escaped. A credential file that is not root's alone is
+  refused there before anything it holds is parsed, as ssh refuses a private key
+  others can read: one of another uid, "the credential file <path>
+  belongs to uid <n>, not root, and it holds the repository's password
+  and the storage key: chown root:root <path> && chmod 0600 <path>, as
+  root", and one its group or others may read, write or run, "the
+  credential file <path> is open to others than root (mode 0644), and
+  it holds the repository's password and the storage key: chmod 0600
+  <path>, as root" — asked of the descriptor the run read, not of the
+  name again (`CredentialRootsAlone`) — and one in a directory that is
+  not root's or that others may write, whose writer could put another
+  file in its place, "the credential file's directory <dir> is uid
+  <n>'s, mode <mode>: it has to be root's and writable by nobody else,
+  or someone else could put another file in the credential file's
+  place: chown root:root <dir> && chmod 0755 <dir>, as root". Setup makes both so, and so does
+  the "By hand" recipe; one made with an editor under umask 022 is
+  0644, which the `motel` uid could read. A credential file they cannot read is refused there
   too, "the credential file <path> could not be read: <why>", where
   every unit would otherwise fail to start — one that is not a
   regular file among them, "it is not a regular file (p---------)"
@@ -1585,7 +1605,19 @@ cron entry of your own, or `status` goes unhealthy after 3 hours.
 For `rest:`, `gs:` and `swift:`, or a provisioning tool, the file setup would
 have written — one `KEY=value` a line, a backslash doubled, a value
 with whitespace at an end or a leading quote in double quotes with `\`
-and `"` escaped, as systemd reads it:
+and `"` escaped, as systemd reads it. Make it root's alone, as root,
+before anything is written into it — a run, a restore and a drill
+refuse a file of another uid, or one its group or others may read, or
+one in a directory others may write ("What it refuses"), and an editor
+under umask 022 makes one 0644 — then write the lines into it (`touch`
+leaves a file already there as it is, its lines with it):
+
+```sh
+install -d -o root -g root -m 0755 /etc/motel-backup
+touch /etc/motel-backup/repository.env
+chown root:root /etc/motel-backup/repository.env
+chmod 0600 /etc/motel-backup/repository.env
+```
 
 ```
 # /etc/motel-backup/repository.env — root:root 0600, in a root 0755 directory
@@ -1658,9 +1690,9 @@ severity × occurrence × detection, then the fix's size and risk.
 | A run, a restore and a drill refuse a `b2:` repository and a `RESTIC_REPOSITORY_FILE`, not every repository setup refuses: a hand-written `sftp:`, `rclone:`, local path or URL with credentials in it starts its units, which fail. | `repositoryInUse` (`backups/engine/setup.go`) | 2 | 5 | 1 | 10 | size 2, risk 2 (calling `RepositoryUsable` here too: a by-hand `rest:`, `gs:` or `swift:` file must still run) | Rule 2 holds: each fails at its first unit in restic's own words, the run red, and `status` as root warns of the file in setup's words. A `b2:` one is refused because it does not fail: it can hang (#177). Under rule 3 the product is under 20 (2026-10-24, #357 review round 2; the plan's "refuse everything setup refuses", declined as wider than #354). |
 | The run's `b2:` refusal has 126 runes before its URL's bucket and 116 after its path, and the record keeps 300 (`record.Text`): a bucket and path (escaped, with the slash between them) over 58 characters lose the end of the reason, and over 173 the end of the command to paste, its closing quote first, cut with a "…" (59 and 185 before #323's `as root`; 184 before #389's `--existing`, eleven runes moved from after the path to before the bucket). | `b2RunRefused` (`backups/engine/setup.go`); `record.Text` | 3 | 5 | 1 | 15 | size 2, risk 2 (a wording for the record alone, or no URL in it past the cut; the wording was shortened in round 4 of #357's review, a fix to text a test checks) | Rule 2 holds: the cut is marked, and the journal keeps the whole line (`journalctl -u motel-backup.service`), since the error goes to stderr whole. A cut URL whose quote is closed and run points `setup --existing` at a shorter path, where it finds no repository and refuses it, nothing written (#389; before it, setup there showed a new one's password (`Repository password (new)`) and asked that it be stored, where a move asks for the repository's own, put the record aside, and ended `repository ready: … (new, …)`); `status` as root names the whole URL in its warning (severity 3 from round 13 of #357's review). The remedy is first by design, so the reason goes before it does. Under rule 3 the product is under 20 (2026-10-24, #357 review round 2; the bounds re-measured for #323's `as root`, four runes longer, scores unchanged, 2026-10-28). |
 | The run's remedy, pasted without its placeholder filled in (`<region>`, or `<bucket>` for a bare `b2:`), is taken by setup, which asks for the key and secret before restic refuses the host, and asks again up to its limit. | `backendOf` (`backups/engine/setup.go`) | 2 | 5 | 1 | 10 | size 2, risk 1 (a refusal of a URL holding `<` or `>` before any prompt) | Rule 2 holds: each look is refused at once in restic's words, which name the host with its `<region>` in it, and nothing is written. Under rule 3 the product is under 20 (2026-10-24, #357 review round 4). |
-| `status` as root reads the credential file with a plain read: a FIFO in its place, which the run refuses, holds `status` until interrupted. | `showStatus` (`backups/cmd/motel-backup/main.go`) | 2 | 1 | 5 | 10 | size 1, risk 2 (the run's `readRegular`, exported; no test of status's own read) | Only root makes the file anything but setup's regular one, and `status` is run at a terminal, where the wait is seen and interrupted; the run, which no one watches, refuses it. Under rule 3 the product is under 20 (2026-10-24, #357 review round 5). |
-| The run opens what the credential file's path leads to, a link followed as the manager follows it, before it asks whether it is a regular file: a device node there is opened by root (`O_RDONLY\|O_NONBLOCK`) before it is refused. | `readRegular` (`backups/engine/setup.go`) | 2 | 1 | 5 | 10 | size 2, risk 1 (a stat before the open, as `box/envfiles.go` reads its files) | Only root puts anything but setup's regular file there, and the open reads nothing; the run then refuses it, named. Under rule 3 the product is under 20 (2026-10-24, #357 review round 8). |
-| The run reads the credential file whole, with no cap on its size: a link at its path to a large regular file is read into root's memory and parsed on every run, restore and drill before it is refused or used. | `readRegular` (`backups/engine/setup.go`) | 2 | 1 | 3 | 6 | size 2, risk 2 (a cap on `fi.Size()`, a new limit, which is discussed before it is set) | Only root puts anything but setup's few-line file there, and the run still ends, reading it. Under rule 3 the product is under 20 (2026-10-24, #357 review round 9). |
+| The run, and `status` as root, open what the credential file's path leads to, a link followed as the manager follows it, before they ask whether it is a regular file: a device node there is opened by root (`O_RDONLY\|O_NONBLOCK`) before it is refused. | `ReadRegular` (`backups/engine/setup.go`) | 2 | 1 | 5 | 10 | size 2, risk 1 (a stat before the open, as `box/envfiles.go` reads its files) | Only root puts anything but setup's regular file there, and the open reads nothing; the run then refuses it, named. Under rule 3 the product is under 20 (2026-10-24, #357 review round 8). |
+| The run asks of the credential file's own directory, as the path names it, that it be root's and writable by nobody else, and of no directory above it or at the end of a link: a link at the path into a directory another account may write, or such a directory higher up, lets that account put another file in the credential file's place, and a run takes it. | `CredentialRootsAlone` (`backups/engine/setup.go`) | 5 | 1 | 5 | 25 | size 2, risk 2 (every directory from `/`, a link's target included, as `rootsOwnAsTyped` walks a restore's path, with words of its own and a seam for the unit tests' temporary directories) | Only root makes the path a link, or a directory above it writable: setup writes a regular file in a root 0755 directory, the "By hand" recipe does the same, and no doc makes a link there. The owner's rule for a by-hand layout no doc asks for is a row, not code (2026-11-20, round 3 of the self-review of the credential-mode refusal). Refusing a link at the path would be a new refusal on boxes, which is the owner's to decide. |
+| The run reads the credential file whole, with no cap on its size: a link at its path to a large regular file is read into root's memory and parsed on every run, restore and drill, and `status` as root, before it is refused or used. | `ReadRegular` (`backups/engine/setup.go`) | 2 | 1 | 3 | 6 | size 2, risk 2 (a cap on `fi.Size()`, a new limit, which is discussed before it is set) | Only root puts anything but setup's few-line file there, and the run still ends, reading it. Under rule 3 the product is under 20 (2026-10-24, #357 review round 9). |
 | `status` as root warns of a hand-written `s3:` repository whose object path holds an `@` — "the repository URL holds an @, which is refused: … a path with one is not supported" — though restic, and the run, use it. | `backendOf` through `RepositoryUsable` (`backups/engine/setup.go`) | 2 | 5 | 1 | 10 | size 2, risk 2 (a reading of the authority again, the shape three rounds of #357's review found ways past) | The warning says what it is about, its exit status unchanged, and setup's refusal of any `@` is what keeps a key and secret off a command line in every spelling. Under rule 3 the product is under 20 (2026-10-24, #357 review round 10). |
 | A run, restore or drill reads the credential file once, in `begin`; the manager reads it again for every unit after. A hand edit back to `b2:` while one is under way reaches that command's later units, restic's own B2 backend with them. | `repositoryInUse` through `begin` (`backups/engine/engine.go`) | 4 | 3 | 1 | 12 | size 3, risk 2 (the units given the values read at `begin`, not the file's path) | The edit is the operator's input, its timing with it; what hangs is restic's own B2 backend meeting a dead upload pod, one rare fault. Rule 2 holds: `status` exits 1 from the third hour naming the stuck unit, and as root warns of the `b2:` file; the next command refuses the file. Under rule 3 the product is under 20 (2026-10-24, #357 review round 12; occurrence corrected from 2 in the re-triage after round 13). |
 | A box on a `b2:` repository whose bucket or key is from before 4 May 2020, which B2's S3-compatible endpoint does not take [Backblaze's archived help, cited in the guide], has no motel-backup path to restore: the run, restore and drill refuse the `b2:` file, and the S3 URL they name cannot reach that bucket with that key. | `repositoryInUse` (`backups/engine/setup.go`), through `begin` | 4 | 5 | 1 | 20 | size 2, risk 2 (let `restore` alone run on a `b2:` file, said, since an operator watches a restore and can stop it where a hang is the run's) | **Owed to the owner's call, not fixed here:** the product clears rule 3, but the fix reverses the owner's choice that a restore refuses `b2:` too (2026-10-23, #354). Until then the remedy is restic by hand ("By hand", above), with the file's own `b2:` URL and keys, or copying the bucket to one made since. Only a box set up on `b2:` before #354 can meet it. |
@@ -1719,11 +1751,12 @@ severity × occurrence × detection, then the fix's size and risk.
   them, nothing before setup, a failed run a failed unit, the drill
   ordered behind a run, the timers as written and one firing, an
   upload shown another directory than the one given), the
-  status suite (`status` and `validate`) and the restore suite, mostly
-  failure paths. The box image runs the package's postinstall and then
-  undoes two things of it: the `motel-backup` account, which the
-  setup suite shows `setup` making, and the timers' enable state, so
-  that no timer fires into a scenario.
+  status suite (`status` and `validate`), the restore suite, mostly
+  failure paths, and the check suite (the drill's check of the
+  repository, and its verdicts). The box image runs the package's
+  postinstall and then undoes two things of it: the `motel-backup`
+  account, which the setup suite shows `setup` making, and the timers'
+  enable state, so that no timer fires into a scenario.
 - `make package` and `make install-test` — the `.deb` built and
   installed under real systemd on a fresh Debian 13: the "Set it up"
   lines of `docs/backups.md` as root (`validate` and `status` as an
@@ -1736,7 +1769,9 @@ restic, sqlite3 and systemd are Debian's, so a new release is new
 programs under the same code.
 
 1. Name the release where the backup lanes' images are:
-   `test/systemd/Dockerfile` (`golang:<version>-<codename>`),
+   `test/systemd/Dockerfile` (`golang:<version>-<codename>@sha256:<digest>`,
+   the reference `docker-compose.yml`'s dev image and the e2e
+   Dockerfiles have too),
    `e2e/backup/Dockerfile` (`debian:<codename>-slim`), and the package
    lanes' `DISTRO` — the `Makefile`, `ci.yml`'s install-test matrix,
    `packaging/test/Dockerfile`.

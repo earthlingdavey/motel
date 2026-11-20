@@ -359,6 +359,25 @@ func TestJournalArgs(t *testing.T) {
 	}
 }
 
+// journalctl runs with none of moteld's environment: the command it is
+// built as, made to run env(1) instead, prints nothing, though this
+// process holds a token.
+func TestJournalctlInheritsNoEnvironment(t *testing.T) {
+	t.Setenv("ACME_DNS_TOKEN", "made-up-for-this-test")
+	cmd := journalctlCommand(context.Background(), []string{"--user"})
+	if cmd.Path != journalctlPath {
+		t.Fatalf("path = %q, want %q", cmd.Path, journalctlPath)
+	}
+	cmd.Path, cmd.Args = "/usr/bin/env", []string{"env"}
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(out) != 0 {
+		t.Fatalf("journalctl's environment is %q, want none", out)
+	}
+}
+
 // The stream ids are read off journalctl's output, one an entry, each
 // kept once, in the order met; what is not one as journald prints one
 // is passed over.

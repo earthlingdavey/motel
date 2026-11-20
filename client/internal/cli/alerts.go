@@ -11,8 +11,9 @@ import (
 )
 
 // monitor is `motel monitor`, the group of the monitor's reads: the
-// server's twin is `moteld monitor`, whose words these take
-// (motelctl-spec: a word the client adds first is the twin's).
+// server's twin is `moteld monitor`, whose words these take where it
+// has the command (`rules`); `alerts`, which it has not, is the
+// client's.
 func (r *runner) monitor() *cobra.Command {
 	m := &cobra.Command{
 		Use:   "monitor",

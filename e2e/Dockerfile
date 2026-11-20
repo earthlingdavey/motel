@@ -27,7 +27,9 @@ FROM denoland/deno:bin-2.9.8 AS deno
 # headers it checks, accepted or refused, to naming none.
 # client/ builds motel, the laptop client that suite runs on the box,
 # as a laptop would, over the box's own TLS.
-FROM golang:1.27-trixie AS builder
+# The Go is docker-compose.yml's dev image, by the same tag and digest:
+# the Go that builds what ships.
+FROM golang:1.27.4-trixie@sha256:f18c3d73a184fb0582828510722e723b63a93f7188d11dd223d9be6f6880e65d AS builder
 WORKDIR /src
 RUN --mount=type=bind,target=/src,rw \
 	--mount=type=cache,id=motel-gomod,target=/go/pkg/mod \
@@ -42,7 +44,7 @@ RUN --mount=type=bind,target=/src,rw \
 # victoria-metrics); the dev image has neither, so `make test` skips
 # them. Built only for the metrics box, from the toolchain alone, so
 # BuildKit builds it beside the builder stage.
-FROM golang:1.27-trixie AS notify-tests
+FROM golang:1.27.4-trixie@sha256:f18c3d73a184fb0582828510722e723b63a93f7188d11dd223d9be6f6880e65d AS notify-tests
 WORKDIR /src
 RUN --mount=type=bind,target=/src,rw \
 	--mount=type=cache,id=motel-gomod,target=/go/pkg/mod \

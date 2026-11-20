@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -148,6 +149,44 @@ func TestStatusSaysNoSecretOfTheCredentialFile(t *testing.T) {
 				}
 			}
 		}
+	}
+}
+
+// Root's status says what a run refuses of the file's mode, in the
+// run's words and first; of a file root's alone it says nothing of it.
+func TestStatusAsRootSaysWhatTheRunRefusesOfTheFilesMode(t *testing.T) {
+	if os.Geteuid() != 0 {
+		t.Skip("the file has to be root's, as on a box")
+	}
+	path := filepath.Join(t.TempDir(), "repository.env")
+	must(t, os.WriteFile(path, []byte("RESTIC_REPOSITORY=s3:https://s3.example.com/bucket\nRESTIC_PASSWORD=the-secret\n"), 0o600))
+	for _, w := range credentialWarnings(path) {
+		if strings.HasPrefix(w, "the credential file ") {
+			t.Fatalf("of a file root's alone: %q", w)
+		}
+	}
+	must(t, os.Chmod(path, 0o644))
+	want := "the credential file " + path + " is open to others than root (mode 0644), and it holds the repository's password and the storage key: chmod 0600 " + path + ", as root"
+	if got := credentialWarnings(path); len(got) == 0 || got[0] != want {
+		t.Fatalf("status said %q\nwant first %q", got, want)
+	}
+}
+
+// A FIFO in the file's place is said, as the run refuses it, and not
+// waited on: a plain open would hold status until interrupted.
+func TestStatusAsRootDoesNotWaitOnAFIFO(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "repository.env")
+	must(t, syscall.Mkfifo(path, 0o600))
+	said := make(chan []string, 1)
+	go func() { said <- credentialWarnings(path) }()
+	select {
+	case got := <-said:
+		want := path + ": could not be read: it is not a regular file (p---------)"
+		if len(got) != 1 || got[0] != want {
+			t.Fatalf("status said %q\nwant %q", got, want)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("status waited on a FIFO in the credential file's place")
 	}
 }
 

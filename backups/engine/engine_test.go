@@ -193,6 +193,10 @@ func newBox(t *testing.T) *box {
 		return "the program under test", nil
 	}
 	t.Cleanup(func() { programOf = oldProgramOf })
+	// The credential file is the account under test's, as root's is on a box.
+	oldCredentialOwner := credentialOwner
+	credentialOwner = uint32(os.Getuid())
+	t.Cleanup(func() { credentialOwner = oldCredentialOwner })
 	oldOwnerOf, oldSelfBind := ownerOf, selfBind
 	ownerOf = func(acct passwd) (int, int) { b.owned4 = append(b.owned4, acct); return os.Getuid(), os.Getgid() }
 	selfBind = func(dir string) error { b.selfBound = append(b.selfBound, dir); return nil }

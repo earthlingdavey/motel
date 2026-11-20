@@ -23,7 +23,7 @@ const wrongArch = "this box is arm64 and ./server is an x86-64 executable: build
 func TestPreflightRefusalIs422BeforeAnyUnit(t *testing.T) {
 	rig := newTestRig(t)
 	rig.spec.preStart = []string{"./migrate"}
-	rig.runner.preflightErr = &preflightError{wrongArch}
+	rig.runner.preflightErr = &preflightError{msg: wrongArch}
 	err := deployOnceV1(t, rig)
 	var ve validationError
 	if !errors.As(err, &ve) || !strings.Contains(err.Error(), "pre-flight: this box is arm64") {
@@ -137,7 +137,7 @@ func TestRecoveryGivesUpOnARelaunchItsPreflightRefuses(t *testing.T) {
 	rig.store.state = appState{CurrentVersion: "v7", Nonce: recordedNonce, Handle: handleState{PID: 1}}
 	rig.store.ok = true
 	must(t, mkdirRelease(rig.spec, "v7"))
-	rig.runner.setPreflightErr(&preflightError{wrongArch})
+	rig.runner.setPreflightErr(&preflightError{msg: wrongArch})
 	rig.startWatchdogT(t) // nothing to supervise: it parks, and status reads it
 	done := make(chan struct{})
 	go func() { rig.ma.recover(context.Background(), zap.NewNop()); close(done) }()
@@ -192,7 +192,7 @@ func TestWatchdogParksOnARelaunchItsPreflightRefuses(t *testing.T) {
 		s := rig.ma.wd.currentState()
 		return s == wdStateGrace || s == wdStateWatching
 	})
-	rig.runner.setPreflightErr(&preflightError{wrongArch})
+	rig.runner.setPreflightErr(&preflightError{msg: wrongArch})
 	rig.runner.handleAt(0).kill()
 	advanceUntil(t, rig, time.Second, "the relaunch refused", func() bool {
 		return rig.ma.currentInstance() == nil
@@ -239,7 +239,7 @@ func TestRollbackRefusedAtPreflightKeepsServing(t *testing.T) {
 	rig := newTestRig(t)
 	deployV1(t, rig)
 	must(t, rig.ma.Deploy(context.Background(), deployRequest{url: "https://x/2", version: "v2"}))
-	rig.runner.setPreflightErr(&preflightError{wrongArch})
+	rig.runner.setPreflightErr(&preflightError{msg: wrongArch})
 	err := rig.ma.Deploy(context.Background(), deployRequest{version: "v1", rollback: true})
 	var ve validationError
 	if !errors.As(err, &ve) || !strings.Contains(err.Error(), "pre-flight: "+wrongArch) {

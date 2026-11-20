@@ -1200,7 +1200,7 @@ func TestEnsureRunningMissingBinaryIsPermanent(t *testing.T) {
 	if err := os.MkdirAll(rig.spec.dirs.release("v7"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	rig.runner.setStartErr(&preflightError{"exec: \"server\": executable file not found"})
+	rig.runner.setStartErr(&preflightError{msg: "exec: \"server\": executable file not found"})
 	err := rig.ma.ensureRunning()
 	if err == nil || transientRecovery(err) {
 		t.Fatalf("a missing binary must be a permanent recovery error, got %v", err)

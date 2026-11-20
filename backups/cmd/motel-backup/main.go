@@ -423,10 +423,7 @@ func showStatus(ctx context.Context, asJSON bool) error {
 	// says.
 	var warnings func() []string
 	if os.Geteuid() == 0 {
-		warnings = func() []string {
-			raw, err := os.ReadFile(cfg.EnvFile)
-			return envWarnings(cfg.EnvFile, raw, err)
-		}
+		warnings = func() []string { return credentialWarnings(cfg.EnvFile) }
 	}
 	r, lookErr := look.Look(ctx, look.Paths{EnvFile: cfg.EnvFile, OldEnvFile: cfg.OldEnvFile, Record: filepath.Join(cfg.StateDir, "status.json")}, time.Now(), warnings)
 	// A stdout that takes none of it (a full disk; a closed pipe where
@@ -445,6 +442,23 @@ func showStatus(ctx context.Context, asJSON bool) error {
 		return errors.New("not every app has a fresh backup and a restore proven lately")
 	}
 	return nil
+}
+
+// credentialWarnings is what status, as root, says of the credential
+// file at path, read as a run reads it (a FIFO in its place is refused,
+// not waited on): first what a run refuses of whose it is and its mode,
+// in the run's words, asked of the file it read; then envWarnings of
+// its bytes.
+func credentialWarnings(path string) []string {
+	raw, fi, err := engine.ReadRegular(path)
+	if err != nil {
+		return envWarnings(path, nil, err)
+	}
+	var out []string
+	if err := engine.CredentialRootsAlone(path, fi); err != nil {
+		out = append(out, err.Error())
+	}
+	return append(out, envWarnings(path, raw, nil)...)
 }
 
 // envWarnings is what status, as root, says of the credential file at

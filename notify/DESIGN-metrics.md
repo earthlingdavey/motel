@@ -66,8 +66,8 @@ their solutions:
 | The response observer | `observe <app>`, a handler the operator writes first in an app's site or route: its responses by class, time to headers and cache verdict, per release | liveswap/observe.go ("The response observer") |
 
 Every unit file is the one measured on hotserve-1 since 2026-11-10
-12:13 UTC (hotserve1_stack_test.md: three cold boots, no host listener,
-both directions verified), with the paths and flags of this section,
+12:13 UTC (three cold boots, no host listener, both directions
+verified), with the paths and flags of this section,
 except the two proxies' users and the drop-in's chmod of the store's
 data, set after the box's audit of 2026-11-11 found both proxies running
 as root and the data world-readable: measured in the e2e box (systemd
@@ -264,7 +264,7 @@ in `sandboxMotelPaths` (liveswap/sandbox.go), and the view probe reports
 `metrics_run`, `metrics_socket` and `metrics_state`, which the e2e suite
 asserts closed. The group keeps out every other system user. The store's
 TCP listener is in a namespace no app is in: from the host namespace
-`127.0.0.1:8428` is refused (measured, debian_package_namespace_test.md).
+`127.0.0.1:8428` is refused (measured).
 
 ## The metrics line
 
@@ -1657,7 +1657,7 @@ memory and the times there are the numbers to check first.
 The `.deb` **Suggests** `victoria-metrics`, for the reason it Suggests
 Alertmanager (DESIGN-notify.md, "Packaging and setup"): Debian's unit
 starts on install listening on `0.0.0.0:8428`, unauthenticated
-(measured, debian_package_namespace_test.md), and a `Depends` cannot
+(measured), and a `Depends` cannot
 order motel's scripts before it. vmalert ships in the same package, so
 there is one package to suggest. **`moteld monitor setup --metrics`**,
 run by root, is the store's setup. On a box where Alertmanager's has
@@ -2041,7 +2041,7 @@ the request thresholds over the pushed apps alone, a histogram read
 whole, disk history over a gap, a disk step, `GET /<app>`'s request
 queries over the store, a relaunch read past its stopped
 instance, and `scrape.yml` checked by `victoria-metrics` with unknown fields refused), every test that calls `vmTool`
-(`TestE2EMetricsListsEveryVMAlertTest` holds the list to them), and notify's two over `amtool` (Alertmanager's router over the rendered tree; that test holds their list too), run
+(`TestE2EMetricsListsEveryVMAlertTest` holds the list to them), and notify's three over `amtool` (Alertmanager's router over the rendered tree, and Alertmanager itself on it against a stub that redirects; that test holds their list too), run
 from a test binary built for the box (e2e/Dockerfile's `notify-tests`), none skipped; motel's push arrives
 (`job="moteld"`), with a deployed app's `motel_app_up`, release and CPU,
 and its memory where the host's memory controller reaches the user
