@@ -123,7 +123,7 @@ signed:
 | `/_motel/apps/<app>/alerts` | the app's alerts, as the box's Alertmanager holds them: each one's name, severity, summary, when it began, and whether a silence holds it and until when, or a deploy of the app; and whether the box could ask (`"monitor"`: `on`, `off` when the box's monitor block sends nothing to anyone or there is none, `unanswered`). Only alerts about that app: not the box's own (disks, certificates, backups), not the silences or who wrote them. Up to 5 s old |
 | `/_motel/apps/<app>/rules` | the rules the box alerts on that apply to the app: those of every app and the app's own `rule` lines, not one pinned to another app and none of the box's own checks (disks, backups, certificates). Each with what it fires on (its op, threshold, unit, `for`, and each guard's meaning) and the app's numbers alone: a check's last reading (its watchdog's restarts), and for a rule the metrics store evaluates, its value and whether vmalert holds it `pending` or `firing`, and since when; and whether the box could read the store (`"store"`: `on`, `off` with no `metrics` line, `unanswered`), and `rules_file` when the file vmalert reads is not this config's (a state is vmalert's). No query and no socket. The store's numbers are up to 30 s old, of an evaluation about a minute behind (as vmalert compared them) |
 | `/_motel/rules` | every rule the box alerts on, for a viewer of the box: as for an app's, with every app's numbers, the box's own checks (each filesystem's use, each app's backup age) and rules (a `disk_fill`'s prediction for each filesystem). `moteld monitor rules --json` from a laptop, without the store's socket and the queries |
-| `/_motel/alerts` | every alert the box's Alertmanager holds, for a viewer of the box: as for an app's, and with each the app it names and its instance (a path, a certificate's name, another site's); and every silence that is active or waits to start: its matchers, when it starts and ends, who made it and why (the operator's own words). Not the heartbeat, the test alert or the deploy mute itself, and no expired silence. At most 500 alerts, the newest, and 200 silences, the active ones and then the soonest to start, with `more_alerts` or `more_silences` when the box held more. Up to 5 s old |
+| `/_motel/alerts` | every alert the box's Alertmanager holds, for a viewer of the box: as for an app's, and with each the app it names and its instance (a path, a certificate's name, another site's); and every silence that is active or waits to start: its matchers, when it starts and ends, who made it and why (the operator's own words). Not the heartbeat, the test alert or the deploy mute itself, nor the two about a person's key (below), and no expired silence. At most 500 alerts, the newest, and 200 silences, the active ones and then the soonest to start, with `more_alerts` or `more_silences` when the box held more. Up to 5 s old |
 
 The `motel` command (for an M-series Mac, an archive on each release
 after v0.8.0; elsewhere, built from a clone of this repository:
@@ -183,7 +183,8 @@ the read go on.
   a valid signature by bob@example.com (key SHA256:…) from 203.0.113.9, outside every address list on their grants; refused
   ```
 
-The message shows the key's fingerprint by its start, as `moteld box
+Both go to your channels alone: no one reads them over HTTPS, not even
+a viewer of the box. The message shows the key's fingerprint by its start, as `moteld box
 describe` prints it on the `person` line; the alert's `instance` label
 and the journal hold it whole. When one of these comes:
 

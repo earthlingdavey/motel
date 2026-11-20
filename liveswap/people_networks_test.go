@@ -494,7 +494,7 @@ func TestNetworksFileHangs(t *testing.T) {
 	people := newTestPeople(t)
 	file := filepath.Join(t.TempDir(), "people-networks.json")
 	k, heard := testNetworks(t, file)
-	k.wait = 50 * time.Millisecond
+	k.wait = time.Second
 	release := make(chan struct{})
 	k.read = func(string) ([]byte, error) {
 		<-release
@@ -505,7 +505,7 @@ func TestNetworksFileHangs(t *testing.T) {
 	for i := range 50 {
 		k.seen(people.reg, people.alice.Fingerprint(), "alice", addr(fmt.Sprintf("10.0.%d.1", i)), zap.New(core))
 	}
-	if took := time.Since(began); took > 40*time.Millisecond {
+	if took := time.Since(began); took > 500*time.Millisecond {
 		t.Errorf("fifty requests took %s while the file was being read", took)
 	}
 	deadline := time.Now().Add(5 * time.Second)
@@ -515,7 +515,7 @@ func TestNetworksFileHangs(t *testing.T) {
 		}
 		time.Sleep(time.Millisecond)
 	}
-	if l := logs.FilterMessageSnippet("could not be used").All(); len(l) != 1 || !strings.Contains(l[0].ContextMap()["error"].(string), "not read within 50ms") {
+	if l := logs.FilterMessageSnippet("could not be used").All(); len(l) != 1 || !strings.Contains(l[0].ContextMap()["error"].(string), "not read within 1s") {
 		t.Errorf("journal %v", logs.All())
 	}
 	// The read that comes back after the wait is dropped: neither
@@ -609,7 +609,7 @@ func TestNetworksWriteFails(t *testing.T) {
 	people := newTestPeople(t)
 	file := filepath.Join(t.TempDir(), "people-networks.json")
 	k, heard := testNetworks(t, file)
-	k.every = 100 * time.Millisecond
+	k.every = time.Second
 	var mu sync.Mutex
 	fail, writes := true, 0
 	k.write = func(path string, data []byte) error {
@@ -660,7 +660,7 @@ func TestNetworksReorderWithinTheMinute(t *testing.T) {
 	people := newTestPeople(t)
 	file := filepath.Join(t.TempDir(), "people-networks.json")
 	k, _ := testNetworks(t, file)
-	k.every = 300 * time.Millisecond
+	k.every = 2 * time.Second
 	var mu sync.Mutex
 	var at []time.Time
 	k.write = func(path string, data []byte) error {
@@ -674,13 +674,14 @@ func TestNetworksReorderWithinTheMinute(t *testing.T) {
 	k.settle(t, false)
 	k.seen(people.reg, fp, "alice", addr("198.51.100.9"), zap.NewNop())
 	k.settle(t, false)
-	began := time.Now()
 	k.seen(people.reg, fp, "alice", addr("203.0.113.9"), zap.NewNop()) // a reorder alone
 	k.settle(t, false)
 	mu.Lock()
 	defer mu.Unlock()
-	if len(at) != 3 || at[2].Sub(began) < 200*time.Millisecond || at[1].Sub(at[0]) > 200*time.Millisecond {
-		t.Errorf("writes at %v (reorder from %v)", at, began)
+	// The new network is written within its own moment, not the 2 s of
+	// a reorder; the reorder waits its 2 s after the last write.
+	if len(at) != 3 || at[1].Sub(at[0]) > 1500*time.Millisecond || at[2].Sub(at[1]) < 1900*time.Millisecond {
+		t.Errorf("writes at %v", at)
 	}
 	b, _ := os.ReadFile(file)
 	if !strings.Contains(string(b), `["203.0.113.0/24","198.51.100.0/24"]`) {

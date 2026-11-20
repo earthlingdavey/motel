@@ -92,6 +92,11 @@ func raisedBy(name string) (motelAlert, bool) {
 	return motelAlert{}, false
 }
 
+// personAlerts are the two about a person's key, which go to the
+// operator's channels alone: no person's read over HTTPS holds them
+// (heldAlerts).
+var personAlerts = []string{liveswap.EventPersonNewNetwork, liveswap.EventPersonOutsideList}
+
 // notSilenceable are names motel posts that no silence may take:
 // Watchdog is the heartbeat, whose silence would make the check off the
 // box report the box down; NotifyTest is `moteld monitor test`'s own,

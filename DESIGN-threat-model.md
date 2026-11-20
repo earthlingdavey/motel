@@ -1130,9 +1130,10 @@ scope for the runtime model, in scope for release signing (roadmap).
   shipped mechanism"). It holds the people's public keys and grants and
   could answer any person's request with anything, as it answers any
   deploy's; it holds no private key and so can mint no person's token
-  for another box. It can rewrite or delete the record of the networks
-  each person's key was used from (`/var/lib/motel/people-networks.json`,
-  motel's own), which silences `person_new_network` on this box only:
+  for another box. It can rewrite the record of the networks each person's
+  key was used from (`/var/lib/motel/people-networks.json`, motel's
+  own) to hold any network, which silences `person_new_network` for it
+  on this box only (deleting it has every key told again):
   nothing it could not already do, since it answers every request and
   could post or drop any alert.
 - **T6 — Compromised identity of the box's config repository.** Three

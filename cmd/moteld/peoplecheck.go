@@ -106,12 +106,12 @@ func checkPeople(cfg []byte) error {
 // its block cannot see, because it sees the block alone: people with
 // no monitor channel to tell of them; a server whose forwarded requests
 // are all one network to the record of where each key was used (it
-// trusts proxies without trusted_proxies_strict); and, for a grant's
-// address list,
-// each server whose client's address comes from something a peer
-// sends: strictly trusted proxies (the headers named), and the PROXY
-// protocol. The serving process says the first at each load too, from
-// the installed file (box's loadRegistry).
+// trusts proxies without trusted_proxies_strict); and each server whose
+// client's address comes from something a peer sends, strictly trusted
+// proxies (the headers named) and the PROXY protocol: for a grant's
+// address list when one has a list, and otherwise for the record of
+// networks alone. The serving process says the first at each load too,
+// from the installed file (box's loadRegistry).
 func warnPeople(cfg []byte, stderr io.Writer) {
 	c, declares, from := readPeople(cfg)
 	if !declares {
@@ -125,16 +125,20 @@ func warnPeople(cfg []byte, stderr io.Writer) {
 			_, _ = fmt.Fprintf(stderr, "WARNING: box: %s\n", access.ForwardedNetworksWarning(name))
 		}
 	}
-	if !from {
-		return
-	}
 	for _, name := range c.servers() {
 		s := c.Apps.HTTP.Servers[name]
-		if s.trusts() && s.TrustedProxiesStrict > 0 {
+		strict := s.trusts() && s.TrustedProxiesStrict > 0
+		switch {
+		case from && strict:
 			_, _ = fmt.Fprintf(stderr, "WARNING: box: %s\n", access.FromProxiesWarning(name, s.headers()))
+		case strict:
+			_, _ = fmt.Fprintf(stderr, "WARNING: box: %s\n", access.NetworksFromHeadersWarning(name, s.headers()))
 		}
-		if s.proxyProtocol() {
+		switch {
+		case from && s.proxyProtocol():
 			_, _ = fmt.Fprintf(stderr, "WARNING: box: %s\n", access.FromProxyProtocolWarning(name))
+		case s.proxyProtocol():
+			_, _ = fmt.Fprintf(stderr, "WARNING: box: %s\n", access.NetworksFromProxyProtocolWarning(name))
 		}
 	}
 }

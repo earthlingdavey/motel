@@ -102,13 +102,16 @@ func TestWarnPeople(t *testing.T) {
 	}
 }
 
-// TestWarnPeopleForwardedIsOneNetwork: a box with people and a server
-// that trusts proxies without trusted_proxies_strict (by range or on
-// its unix socket, strict unset or -1) is told that the requests such a
-// proxy forwards are one network to the record of where each key was
-// used; a strict server, one that trusts no proxy, and a box with no
-// people are not.
-func TestWarnPeopleForwardedIsOneNetwork(t *testing.T) {
+// TestWarnPeopleNetworks: a box with people and a server that trusts
+// proxies without trusted_proxies_strict (by range or on its unix
+// socket, strict unset or -1) is told that the requests such a proxy
+// forwards are one network to the record of where each key was used;
+// with no grant's address list, a strict server is told that the network
+// is only as true as its proxy's headers, and a PROXY-protocol listener
+// that it is only as true as its allow list (with a list, the from-list
+// warnings say it); one that trusts no proxy, and a box with no people,
+// are told nothing.
+func TestWarnPeopleNetworks(t *testing.T) {
 	box := `"box":{"signers":[{"principal":"ops","type":"ssh-ed25519","key":"x"}],"people":[{"name":"bob","type":"ssh-ed25519","key":"x"}],"grants":[{"name":"bob","role":"viewer","scope":"box"}]}`
 	signers := `"box":{"signers":[{"principal":"ops","type":"ssh-ed25519","key":"x"}]}`
 	for _, c := range []struct {
@@ -120,6 +123,7 @@ func TestWarnPeopleForwardedIsOneNetwork(t *testing.T) {
 		{"a unix socket's proxy", box, `{"trusted_proxies_unix":true}`, true},
 		{"strict", box, `{"trusted_proxies":{"source":"static","ranges":["10.0.0.0/8"]},"trusted_proxies_strict":1}`, false},
 		{"no proxy", box, `{}`, false},
+		{"a PROXY protocol listener", box, `{"listener_wrappers":[{"wrapper":"proxy_protocol"}]}`, false},
 		{"loose, no people", signers, `{"trusted_proxies":{"source":"static","ranges":["10.0.0.0/8"]}}`, false},
 	} {
 		var stderr bytes.Buffer
@@ -127,6 +131,21 @@ func TestWarnPeopleForwardedIsOneNetwork(t *testing.T) {
 		if got := strings.Contains(stderr.String(), access.ForwardedNetworksWarning("srv0")); got != c.warn {
 			t.Errorf("%s: warned %v: %s", c.name, got, stderr.String())
 		}
+		strict := strings.Contains(c.server, `"trusted_proxies_strict":1`)
+		if got := strings.Contains(stderr.String(), access.NetworksFromHeadersWarning("srv0", []string{"X-Forwarded-For"})); got != (strict && c.box == box) {
+			t.Errorf("%s: warned of the headers %v: %s", c.name, got, stderr.String())
+		}
+		pp := strings.Contains(c.server, "proxy_protocol")
+		if got := strings.Contains(stderr.String(), access.NetworksFromProxyProtocolWarning("srv0")); got != (pp && c.box == box) {
+			t.Errorf("%s: warned of the PROXY protocol %v: %s", c.name, got, stderr.String())
+		}
+	}
+	// With a from list, the from-list warnings say it, and these do not.
+	var stderr bytes.Buffer
+	from := `"box":{"signers":[{"principal":"ops","type":"ssh-ed25519","key":"x"}],"people":[{"name":"bob","type":"ssh-ed25519","key":"x"}],"grants":[{"name":"bob","role":"viewer","scope":"box","from":["198.51.100.0/24"]}]}`
+	warnPeople([]byte(`{"apps":{`+from+`,"http":{"servers":{"srv0":{"trusted_proxies":{"source":"static","ranges":["10.0.0.0/8"]},"trusted_proxies_strict":1,"listener_wrappers":[{"wrapper":"proxy_protocol"}]}}}}}`), &stderr)
+	if out := stderr.String(); !strings.Contains(out, "a grant has a from list") || strings.Contains(out, "the network a person's key is told as used from") {
+		t.Errorf("with a from list: %s", out)
 	}
 }
 

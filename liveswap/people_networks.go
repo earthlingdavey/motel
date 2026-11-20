@@ -51,7 +51,8 @@ import (
 
 const (
 	// PeopleNetworksFile is where moteld keeps the networks: motel's own,
-	// 0600, in the data home moteld.service names (XDG_DATA_HOME).
+	// 0600, in /var/lib/motel, the motel user's home, which the package
+	// owns and never removes (and the data home moteld.service names).
 	PeopleNetworksFile = "/var/lib/motel/people-networks.json"
 
 	// The two events, names in notify's closed set of alerts.
@@ -62,7 +63,8 @@ const (
 	// networksHeldPerKey is the cut while the file is being read: a
 	// held network dropped would never be told, and a burst after a
 	// start can bring more than 16 at once, a throttled request
-	// counting as a use. At load each key is cut to networksPerKey.
+	// counting as a use. At load each key is cut to networksPerKey,
+	// and a network told then and cut is told again at its next use.
 	networksHeldPerKey = 4 * networksPerKey
 	networksVersion    = 1
 	// networksMaxBytes bounds the file read: a box lists at most
@@ -84,7 +86,8 @@ const (
 	// not read.
 	unknownNetwork = "unknown"
 	// summaryNameRunes cuts a person's name in a summary, and
-	// summaryKeyRunes the key's fingerprint, so that the longest sentence
+	// summaryKeyRunes the key's fingerprint, in bytes on a character's
+	// edge (deploytrust.CutRunes), so that the longest sentence
 	// (an outside-list's, with an IPv6 address) stays under the
 	// channels' 200: the journal's line names both whole, and the alert's
 	// instance label is the whole fingerprint.
