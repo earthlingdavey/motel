@@ -594,11 +594,11 @@ func (s *Session) scopes() Line {
 	return out
 }
 
-// roleSeg is a role as the whoami command says it: viewer, the one role
-// a box grants today, as a word; any other is the box's own word, which
-// the client took by its shape alone, and is quoted.
+// roleSeg is a role as the whoami command says it: viewer and logs, the
+// roles a box grants today, as words; any other is the box's own word,
+// which the client took by its shape alone, and is quoted.
 func roleSeg(role string) Seg {
-	if role == "viewer" {
+	if role == "viewer" || role == "logs" {
 		return own(role)
 	}
 	return quoted(role)
@@ -715,8 +715,11 @@ func (s *Session) MeViewFit(now time.Time, width int, cells Cells) []Line {
 			on = "app " + n
 		}
 		verb := roleSeg(r.Role)
-		if r.Role == "viewer" {
+		switch r.Role {
+		case "viewer":
 			verb = own("view")
+		case "logs":
+			verb = own("read logs")
 		}
 		out = append(out, cutTo(Line{own("  "), verb, own(pad("", 10-len([]rune(verb.T.String()))) + " " + on)}, width, cells))
 	}

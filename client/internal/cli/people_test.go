@@ -32,15 +32,15 @@ func meFingerprint() string {
 }
 
 // hostileWhoAmI is about runKey's key, from the box it asks (the fake
-// box's address); a role a box may name later (auditor) is quoted as
-// the box's word. whoami prints no box value outside its grammar: an answer with
+// box's address); viewer and logs are said as words, and a role a box
+// may name later (auditor) is quoted as the box's word. whoami prints no box value outside its grammar: an answer with
 // a hostile name, release, role or scope is not taken at all (client's
 // TestWhoamiNullsAndRoles), and a key or box that differs is quoted
 // (TestWhoamiAboutAnotherKeyOrBox).
 func hostileWhoAmI() wire.WhoAmI {
 	return wire.WhoAmI{
 		Name: "alice@example.com", Key: meFingerprint(),
-		Roles: []wire.RoleHeld{{Role: "viewer", Scope: "box"}, {Role: "viewer", Scope: "app:blog"}, {Role: "auditor", Scope: "app:shop-2"}},
+		Roles: []wire.RoleHeld{{Role: "viewer", Scope: "box"}, {Role: "viewer", Scope: "app:blog"}, {Role: "logs", Scope: "app:blog"}, {Role: "auditor", Scope: "app:shop-2"}},
 		Box:   "127.0.0.1", Version: "v0.7.0", Protocol: 1, TokenExpiresAt: whoamiNow.Add(270 * time.Second),
 	}
 }

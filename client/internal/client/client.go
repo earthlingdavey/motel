@@ -258,9 +258,9 @@ var (
 	// (box/proof/signers.go), at most 256 bytes.
 	nameRe = regexp.MustCompile(`^[A-Za-z0-9._@+-]{1,256}$`)
 	// roleRe is the shape of a role in a whoami's roles. A box grants
-	// one today, viewer; the shape is wider so that a later motel's
-	// role does not make the whole answer unreadable, and a word that
-	// is not viewer is printed quoted, as the box's (cli's whoamiView).
+	// two today, viewer and logs; the shape is wider so that a later
+	// motel's role does not make the whole answer unreadable, and a word
+	// that is neither is printed quoted, as the box's (cli's whoamiView).
 	roleRe = regexp.MustCompile(`^[a-z][a-z_-]{0,31}$`)
 )
 
@@ -996,8 +996,8 @@ func hold(v any) string {
 		// the box holds it to: the name to a person line's, the release
 		// to the Makefile's; the key and the box are compared, not
 		// printed. A role is held to its shape, which is wider than the
-		// one role a box grants, and printed as a word only when it is
-		// that one (roleRe).
+		// roles a box grants, and printed as a word only when it is one
+		// of them, viewer or logs (roleRe).
 		if !nameRe.MatchString(a.Name) {
 			return "its name is not one a box takes"
 		}
@@ -1072,7 +1072,7 @@ func badField(body []byte, v any) string {
 // --json prints whenever it is JSON. The box's words are
 // never the client's advice: needs and scope are used only when they
 // are the words access.Decide writes (liveswap/access/access.go,
-// Forbidden: "viewer", "deployer" or "key"; "app" or "box"), and the
+// Forbidden: "viewer", "logs", "deployer" or "key"; "app" or "box"), and the
 // sentence is built from them alone, so an app that exists and one
 // that does not read the same and no app is named. Any other needs,
 // a word a later box may name among them, is never put in the
@@ -1097,6 +1097,7 @@ func (c *Client) forbidden(ans *Answer) *Failure {
 	on := map[string]string{"app": "this app", "box": "the box"}[f.Scope]
 	needs := map[string]string{
 		"viewer":   "the viewer role on " + on,
+		"logs":     "the logs role on " + on,
 		"deployer": "a deploy token of " + on,
 		"key":      "a token your own key signs",
 	}[f.Needs]
