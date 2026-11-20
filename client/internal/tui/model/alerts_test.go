@@ -105,23 +105,23 @@ func TestAlertLines(t *testing.T) {
 		}
 	}
 	readAll()
-	got := strings.Join(lines(), "\n")
+	got := "\n" + strings.Join(lines(), "\n") + "\n"
 	for _, want := range []string{
-		"alerts      2 held · as of ",
+		"alerts      2 held · as of 0s ago",
 		"            all: motel monitor alerts --box deploy.example.com --app blog",
-		"alert       deploy_failed · warning · silenced until 15:",
+		"alert       deploy_failed · warning · silenced until 15:00 UTC · since 3m ago (13:57 UTC)",
 		"summary     deploy of e9a0b3f2c118 failed at starting",
-		"alert       errors_high · warning · since 25m ago",
+		"alert       errors_high · warning · since 25m ago (13:35 UTC)",
 	} {
-		if !strings.Contains(got, want) {
-			t.Errorf("the alerts lines:\n%s\nwant one holding %q", got, want)
+		if !strings.Contains(got, "\n"+want+"\n") {
+			t.Errorf("the alerts lines:\n%s\nwant the line %q", got, want)
 		}
 	}
 	for _, c := range []struct{ body, want string }{
 		{`{"monitor":"off","alerts":[]}`, "alerts      none: the box has no monitor, so nothing is raised"},
 		{`{"monitor":"unanswered","alerts":[]}`, "alerts      not known: the box could not ask its Alertmanager"},
 		{`{"monitor":"later","alerts":[]}`, "alerts      not known: the box says later of its monitor"},
-		{`{"monitor":"on","alerts":[]}`, "alerts      none held"},
+		{`{"monitor":"on","alerts":[]}`, "alerts      none held · as of "},
 		{`{"monitor":"on","alerts":[` + strings.Repeat(`{"name":"a","severity":"info","summary":"","starts_at":"@-1m","state":"unprocessed"},`, 4) +
 			`{"name":"a","severity":"info","summary":"","starts_at":"@-1m","state":"unprocessed"}]}`, "            and 2 more"},
 		{`{"monitor":"on","alerts":[{"name":"a","severity":"info","summary":"","starts_at":"@-1m","state":"unprocessed"}]}`, "alert       a · info · unprocessed · since 1m ago"},
@@ -129,14 +129,19 @@ func TestAlertLines(t *testing.T) {
 		f.Body("alerts/blog.json", c.body)
 		now = now.Add(model.AlertsEvery)
 		readAll()
-		if got := strings.Join(lines(), "\n"); !strings.Contains("\n"+got+"\n", "\n"+c.want) || strings.Contains(got, "more: ") {
+		got := strings.Join(lines(), "\n")
+		if !strings.Contains("\n"+got+"\n", "\n"+c.want) || strings.Contains(got, "more: ") {
 			t.Errorf("%s:\n%s\nwant a line holding %q", c.body, got, c.want)
+		}
+		// The command stands under a count of alerts held, and only there.
+		if all := strings.Contains("\n"+got+"\n", "\n            all: motel monitor alerts --box deploy.example.com --app blog\n"); all != strings.Contains(c.body, `"name"`) {
+			t.Errorf("%s: the all: line shown %v:\n%s", c.body, all, got)
 		}
 	}
 	f.Set("alerts:blog", fail(model.FailNoAnswer))
 	now = now.Add(model.AlertsEvery)
 	readAll()
-	if got := lines(); len(got) == 0 || !strings.HasSuffix(got[0], " · the last read failed") {
+	if got := lines(); len(got) < 2 || !strings.HasSuffix(got[0], " · the last read failed") || got[1] != "            the last read failed: no" {
 		t.Errorf("a failed read beside an answer: %q", got)
 	}
 	f.Set("alerts:blog", &model.Failure{Kind: model.FailNotFound, Message: "deploy.example.com answered 404"})
