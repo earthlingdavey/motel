@@ -370,8 +370,10 @@ until get lg -G --data-urlencode lines=50 -H "Authorization: Motel $P_LARS" "$BA
 	sleep 0.5
 done
 [ "$CODE" = 200 ] && [ "$(jget "$work/lg.b" 'j.kept')" = on ] && pass "lars: demo's logs, 200 and kept on" || fail "lars: demo's logs: $CODE $(head -c 600 "$work/lg.b")"
-[ "$(jget "$work/lg.b" 'j.lines.filter(l => l.text === "starting with SECRET=[redacted:SECRET]" && l.release === "'"$CV"'").length')" = 1 ] \
-	&& pass "lars: the crash release's line, its SECRET replaced, its release from its unit" || fail "lars: the crash line: $(head -c 800 "$work/lg.b")"
+# Its release is the unit's when journald read the line before the
+# shell, which exits at once, was gone; "" when it did not.
+[ "$(jget "$work/lg.b" 'j.lines.filter(l => l.text === "starting with SECRET=[redacted:SECRET]" && (l.release === "'"$CV"'" || l.release === "")).length')" = 1 ] \
+	&& pass "lars: the crash release's line, its SECRET replaced (release '$(jget "$work/lg.b" 'j.lines.find(l => l.text.startsWith("starting with")).release')')" || fail "lars: the crash line: $(head -c 800 "$work/lg.b")"
 [ "$(jget "$work/lg.b" 'j.lines.filter(l => l.text === "fatal: cannot start").length')" -ge 1 ] \
 	&& pass "lars: the child's line, which journald may keep with no unit" || fail "lars: the child's line: $(head -c 800 "$work/lg.b")"
 ! grep -qF "e2e-secret-value-1234" "$work/lg.b" && [ "$(jget "$work/lg.b" 'j.redacted_env.join(",")')" = SECRET ] \

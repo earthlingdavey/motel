@@ -261,21 +261,58 @@ func TestLogsBodyTimesAndCursorPassNoFilter(t *testing.T) {
 		t.Errorf("%s", w.Body)
 	}
 	// Shape: two lines made one by a value of the punctuation between them.
-	j = demoJournal(2, func(i int) string { return []string{"end of one", "start of two"}[i] })
-	h, people, _, _ = logsRig(t, j)
+	// The body goes whole through the filter, and names the key a line's
+	// own filtering replaced too.
+	j = demoJournal(2, func(i int) string { return []string{"made-up-value-0001 end of one", "start of two"}[i] })
+	h, people, _, logs := logsRig(t, j)
 	value := `one"},{"at":"2026-11-20T09:00:00.001Z","release":"v1","text":"start` // the text, a time and the punctuation between two lines
-	must(t, os.WriteFile(h.app.managed["demo"].spec.envFile, []byte("K="+value+"\n"), 0o600))
+	must(t, os.WriteFile(h.app.managed["demo"].spec.envFile, []byte("K="+value+"\nS=made-up-value-0001\n"), 0o600))
 	w = sendTo(t, h, "GET", "/_motel/apps/demo/logs", token(people.erin))
-	if strings.Contains(w.Body.String(), value) || !strings.Contains(w.Body.String(), `"cursor":"`+cursorOf(1)+`"`) {
+	if strings.Contains(w.Body.String(), value) || strings.Contains(w.Body.String(), "made-up-value") ||
+		!strings.Contains(w.Body.String(), `"cursor":"`+cursorOf(1)+`"`) || !strings.Contains(w.Body.String(), `"redacted_env":["K","S"]`) {
 		t.Errorf("a value across two lines: %d %s", w.Code, w.Body)
 	}
+	if got := logs.FilterMessage("access: person read logs").All(); len(got) != 1 || fmt.Sprint(got[0].ContextMap()["redacted_env"]) != "[K S]" {
+		t.Errorf("the fallback's journal line: %v", got)
+	}
 	// A withheld body (the env_file unreadable) is the filter's sentence,
-	// and no cursor.
+	// no cursor, and, sending no line, no journal line.
 	must(t, os.Remove(h.app.managed["demo"].spec.envFile))
 	h.app.managed["demo"].secretsLoaded = false
 	w = sendTo(t, h, "GET", "/_motel/apps/demo/logs", token(people.erin))
 	if w.Code != http.StatusOK || !strings.HasPrefix(w.Body.String(), `{"error":"response withheld`) || strings.Contains(w.Body.String(), "cursor") {
 		t.Errorf("withheld: %d %s", w.Code, w.Body)
+	}
+	if n := logs.FilterMessage("access: person read logs").Len(); n != 1 {
+		t.Errorf("a withheld body wrote a read's line: %d lines", n)
+	}
+}
+
+// TestLogsLongLineWithNoSpace: a line over 4 KiB with no whitespace
+// (minified JSON) keeps all of the cut but the last longest-form bytes,
+// where a value the cut split could be; and no piece of a value the
+// cut fell in is sent.
+func TestLogsLongLineWithNoSpace(t *testing.T) {
+	value := "made-up-value-across-the-cut-0001" // 33 bytes; its hex form is the longest, 66
+	f := NewRedactor([]string{"V=" + value}, nil)
+	for _, at := range []int{logsLineMax - 40, logsLineMax - 3, logsLineMax + 20, logsLineMax + 60} {
+		text := strings.Repeat("{", at) + value + strings.Repeat("}", 3000)
+		seen := map[string]bool{}
+		out := filterLogLine(f, text, seen)
+		if len(out) > logsLineMax || len(out) < logsLineMax-3-66-len("[redacted:V]") || !strings.HasSuffix(out, "…") || !utf8.ValidString(out) {
+			t.Errorf("value at %d: %d bytes, ends %q", at, len(out), out[max(0, len(out)-20):])
+		}
+		for n := 8; n <= len(value); n++ {
+			if strings.Contains(out, value[:n]) {
+				t.Errorf("value at %d: a piece of %d bytes is sent", at, n)
+				break
+			}
+		}
+	}
+	// With whitespace near the end, the cut is there, as before.
+	out := filterLogLine(f, strings.Repeat("x", logsLineMax-10)+" "+strings.Repeat("y", 100), map[string]bool{})
+	if out != strings.Repeat("x", logsLineMax-10)+" …" {
+		t.Errorf("a space near the cut: …%q", out[len(out)-20:])
 	}
 }
 
@@ -335,7 +372,7 @@ func TestLogsJournalLine(t *testing.T) {
 		{"person": "erin", "app": "demo", "lines": int64(3), "first": cursorOf(2), "last": cursorOf(4), "redacted_env": []any{"DB_PASSWORD"}},
 		{"person": "erin", "app": "demo", "lines": int64(5), "first": cursorOf(0), "last": cursorOf(4), "gap": true, "redacted_env": []any{"DB_PASSWORD"}},
 	} {
-		if got[i].Level != zap.InfoLevel || fmt.Sprint(got[i].ContextMap()) != fmt.Sprint(want) {
+		if got[i].Level != zap.WarnLevel || fmt.Sprint(got[i].ContextMap()) != fmt.Sprint(want) {
 			t.Errorf("line %d: %v %v, want %v", i, got[i].Level, got[i].ContextMap(), want)
 		}
 	}
@@ -438,7 +475,7 @@ func FuzzLogsEntry(f *testing.F) {
 		}
 		s, _, ok := filterLogs(r, body)
 		if !ok {
-			s = filterLogsWhole(r, body)
+			s, _, _ = filterLogsWhole(r, body)
 		}
 		if strings.Contains(s, "hunter2-of-demo") {
 			t.Fatalf("the value is sent: %s", s)

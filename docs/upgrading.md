@@ -425,7 +425,10 @@ have: the sandbox probe's line is `journalctl -t motel_sandboxprobe`
 wrote as `motel-backup`, their command's name). `journalctl -u
 motel-backup.service` and `-u motel_backup_…` are as before. Nothing to
 do, but a search of yours for the old names. Lines written before the
-install keep the names they were written under.
+install keep the names they were written under, which are the
+identifiers of apps named `backup` and `sandbox-probe`: a logs reader
+of an app so named is never sent a line the journal kept with no unit,
+which could be one of them (a crash loop's lines often are).
 
 ## A producer's state across the install
 

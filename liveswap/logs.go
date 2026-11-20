@@ -324,6 +324,10 @@ func takeLogs(ctx context.Context, src logsSource, q logsQuery, after string) (r
 		e, err := decodeEntry(raw)
 		if err != nil {
 			bad = err
+			if ctx.Err() != nil {
+				// journalctl killed inside an entry: the time is why.
+				bad = fmt.Errorf("journalctl: %w", ctx.Err())
+			}
 			return false
 		}
 		seen++
@@ -335,7 +339,7 @@ func takeLogs(ctx context.Context, src logsSource, q logsQuery, after string) (r
 			read.more = true
 			return false
 		}
-		if !belongsTo(e, q.app, q.uid) {
+		if !belongsTo(e, q.app, q.uid) || e.unit == "" && e.userUnit == "" && legacyIdentifiers[q.ident] {
 			if read.passedOver == 0 {
 				read.passedUnit = e.unit + " " + e.userUnit
 			}
@@ -382,6 +386,14 @@ func takeLogs(ctx context.Context, src logsSource, q logsQuery, after string) (r
 	}
 	return read, true, nil
 }
+
+// legacyIdentifiers are what motel's own units wrote under before they
+// took identifiers no app's name makes (probeIdentifier, backups/unit's
+// motel_backup): the identifiers of apps named sandbox-probe and backup,
+// whose journal may still hold the old lines. For those two an entry
+// with no unit field, which could be one of them, is passed over too:
+// their crash loops' lines with it, the cost of an app of that name.
+var legacyIdentifiers = map[string]bool{"motel-sandbox-probe": true, "motel-backup": true}
 
 // belongsTo is whether an entry's units, which journald sets from the
 // writer's cgroup and no writer can, are none, or the app's: a user unit

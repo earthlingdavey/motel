@@ -423,6 +423,40 @@ func TestLogsPassesOverAnotherUnitsEntry(t *testing.T) {
 	}
 }
 
+// TestLogsLegacyIdentifiers: an app named backup or sandbox-probe, whose
+// identifier motel's own units wrote under before they took one no app
+// makes, is not sent an entry with no unit field, which could be one of
+// those; its own units' entries are sent.
+func TestLogsLegacyIdentifiers(t *testing.T) {
+	for _, app := range []string{"backup", "sandbox-probe"} {
+		j := appJournal(3, lineN)
+		for i := range j {
+			j[i].userUnit = "motel-" + app + ".v1.0a1b2c3d0a1b2c3d.service"
+		}
+		j[1].unit, j[1].userUnit = "", ""
+		read, err := readLogs(context.Background(), &scriptedLogs{journal: j}, logsQuery{app: app, ident: syslogIdentifier(app), uid: logsUID, n: 50})
+		if err != nil || !slices.Equal(texts(read.lines), []string{"line 0", "line 2"}) || read.passedOver != 1 {
+			t.Errorf("%s: %q, passed over %d, %v", app, texts(read.lines), read.passedOver, err)
+		}
+	}
+	// Any other app's are sent.
+	j := appJournal(3, lineN)
+	j[1].unit, j[1].userUnit = "", ""
+	if read, _ := readLogs(context.Background(), &scriptedLogs{journal: j}, demoQuery(50, "")); len(read.lines) != 3 {
+		t.Errorf("demo: %q", texts(read.lines))
+	}
+}
+
+// cutSource hands the reader an entry cut short, as journalctl killed at
+// the read's time inside one leaves it, after the time ran out.
+type cutSource struct{ cancel context.CancelFunc }
+
+func (c cutSource) entries(_ context.Context, _ []string, each func([]byte) bool) error {
+	c.cancel()
+	each([]byte(`{"__CURSOR":"s=0123`))
+	return nil
+}
+
 // TestLogsReadFailsLoudly: an entry that is not one, a source that
 // fails, and a cursor journalctl gives that the key's grammar would
 // refuse, each fail the read, and nothing is sent.
@@ -434,6 +468,11 @@ func TestLogsReadFailsLoudly(t *testing.T) {
 	}
 	if _, err := readLogs(context.Background(), &scriptedLogs{err: errors.New("journalctl: boom")}, demoQuery(50, "")); err == nil {
 		t.Error("a failed journalctl read as no lines")
+	}
+	// journalctl killed inside an entry at the read's time: the time.
+	ctx, cancel := context.WithCancel(context.Background())
+	if _, err := readLogs(ctx, cutSource{cancel}, demoQuery(50, "")); !errors.Is(err, context.Canceled) {
+		t.Errorf("an entry cut by the time: %v", err)
 	}
 	j = appJournal(3, lineN)
 	j[2].cursor = "s=0123;i=1"
