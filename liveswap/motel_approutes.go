@@ -3,6 +3,7 @@ package liveswap
 import (
 	"cmp"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -109,7 +110,74 @@ func (h *Handler) serveMotelApp(w http.ResponseWriter, r *http.Request, who acce
 // release a deploy failed at.
 func (h *Handler) appAlerts(w http.ResponseWriter, r *http.Request, app appHandle) error {
 	body := app.alerts(r.Context(), h.app.alertsSource)
-	return RespondJSON(w, http.StatusOK, body, app.ma.redactorFor(app.ma.status()))
+	return respondFiltered(w, http.StatusOK, filterAlerts(body, app.ma.redactorFor(app.ma.status())))
+}
+
+// alertTimes are an alert's times: Alertmanager's, never the app's
+// bytes.
+var alertTimes = []string{"starts_at", "silenced_until"}
+
+// lastResort is the response filter's own body for one it could not
+// make JSON of (redactJSON).
+const lastResort = `{"error":"[#0]"}`
+
+// filterAlerts is the alerts body through the app's filter, its times
+// passing none: they are taken out of each alert and put back after the
+// filter's last pass, so that an env_file value that is a piece of one
+// (a date) cannot leave a time no client reads, and with it the answer
+// unread. A body the filter
+// withheld (its env_file unreadable) is sent as the filter left it.
+func filterAlerts(body wire.Alerts, f *Redactor) string {
+	rows := make([]map[string]json.RawMessage, len(body.Alerts))
+	for i, a := range body.Alerts {
+		raw, _ := json.Marshal(a) // strings, times and a bool: nothing to fail
+		_ = json.Unmarshal(raw, &rows[i])
+		for _, k := range alertTimes {
+			delete(rows[i], k)
+		}
+	}
+	raw, _ := json.Marshal(struct {
+		Monitor string                       `json:"monitor"`
+		Alerts  []map[string]json.RawMessage `json:"alerts"`
+	}{body.Monitor, rows}) // raw values from a marshal: nothing to fail
+	out := f.redactJSON(raw)
+	var got map[string]json.RawMessage
+	if json.Unmarshal([]byte(out), &got) != nil {
+		return lastResort // redactJSON returns JSON whatever it is given
+	}
+	var alerts []wire.Alert
+	if json.Unmarshal(got["alerts"], &alerts) != nil || len(alerts) != len(body.Alerts) {
+		// Withheld: the filter's own sentence, written again from what it
+		// left (one key, so the same bytes).
+		b, _ := json.Marshal(got) // raw values from a decode: nothing to fail
+		return string(b)
+	}
+	// Each alert as its wire type writes it, its times put back: what the
+	// filter left of its words, Alertmanager's times.
+	for i := range alerts {
+		alerts[i].StartsAt, alerts[i].SilencedUntil = body.Alerts[i].StartsAt, body.Alerts[i].SilencedUntil
+	}
+	var b []byte
+	var err error
+	if len(got) == 2 {
+		// The filter changed nothing at the top: the monitor first, as the
+		// wire type writes it.
+		b, err = json.Marshal(struct {
+			Monitor json.RawMessage `json:"monitor"`
+			Alerts  []wire.Alert    `json:"alerts"`
+		}{got["monitor"], alerts})
+	} else {
+		// A changed body's keys sorted, its redacted_env with them, as
+		// redactJSON writes one.
+		got["alerts"], err = json.Marshal(alerts)
+		if err == nil {
+			b, err = json.Marshal(got)
+		}
+	}
+	if err != nil {
+		return lastResort
+	}
+	return string(b)
 }
 
 // alerts is what src holds of the handle's app, newest first.

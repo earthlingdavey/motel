@@ -141,7 +141,7 @@ func TestAlertLines(t *testing.T) {
 	f.Set("alerts:blog", fail(model.FailNoAnswer))
 	now = now.Add(model.AlertsEvery)
 	readAll()
-	if got := lines(); len(got) == 0 || !strings.HasSuffix(got[0], " · the last read failed") {
+	if got := lines(); len(got) < 2 || !strings.HasSuffix(got[0], " · the last read failed") || got[1] != "            the last read failed: no" {
 		t.Errorf("a failed read beside an answer: %q", got)
 	}
 	f.Set("alerts:blog", &model.Failure{Kind: model.FailNotFound, Message: "deploy.example.com answered 404"})

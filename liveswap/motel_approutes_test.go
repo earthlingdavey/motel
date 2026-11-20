@@ -264,3 +264,36 @@ func TestAlertsChosenByTheHandle(t *testing.T) {
 		}
 	}
 }
+
+// TestAlertsTimesPassNoFilter: an env_file value that is a piece of an
+// alert's time (a date) is masked in the summary and leaves the times
+// whole, so the answer still reads.
+func TestAlertsTimesPassNoFilter(t *testing.T) {
+	h, people := alertsRig(t)
+	must(t, os.WriteFile(h.app.managed["demo"].spec.envFile, []byte("API_VERSION=2026-11-19\n"), 0o600))
+	t0 := time.Date(2026, 11, 19, 14, 0, 0, 0, time.UTC)
+	until := t0.Add(time.Hour)
+	h.app.SetAlertsSource(&fakeAlerts{ok: true, held: []AppAlert{
+		{App: "demo", Alert: wire.Alert{Name: "deploy_failed", Severity: "warning", Summary: "on 2026-11-19", StartsAt: t0, State: "suppressed", SilencedUntil: &until}},
+		{App: "demo", Alert: wire.Alert{Name: "errors_high", Severity: "warning", Summary: "demo: errors", StartsAt: t0.Add(-time.Hour), State: "active"}},
+	}})
+	w := sendTo(t, h, "GET", "/_motel/apps/demo/alerts", token(people.alice))
+	var got wire.Alerts
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil || w.Code != http.StatusOK || len(got.Alerts) != 2 || got.Monitor != wire.MonitorOn {
+		t.Fatalf("%v: %d %s", err, w.Code, w.Body)
+	}
+	a := got.Alerts[0]
+	if a.Summary != "on [redacted:API_VERSION]" || !a.StartsAt.Equal(t0) || a.SilencedUntil == nil || !a.SilencedUntil.Equal(until) || !got.Alerts[1].StartsAt.Equal(t0.Add(-time.Hour)) {
+		t.Errorf("the rows: %s", w.Body)
+	}
+	if !strings.HasSuffix(w.Body.String(), `"monitor":"on","redacted_env":["API_VERSION"]}`+"\n") {
+		t.Errorf("the body does not name the key it masked: %s", w.Body)
+	}
+	// A withheld body (the env_file unreadable) is the filter's sentence.
+	must(t, os.Remove(h.app.managed["demo"].spec.envFile))
+	h.app.managed["demo"].secretsLoaded = false
+	w = sendTo(t, h, "GET", "/_motel/apps/demo/alerts", token(people.alice))
+	if w.Code != http.StatusOK || !strings.HasPrefix(w.Body.String(), `{"error":"response withheld`) {
+		t.Errorf("withheld: %d %s", w.Code, w.Body)
+	}
+}

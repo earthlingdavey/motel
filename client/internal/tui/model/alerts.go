@@ -62,6 +62,11 @@ func (s *Session) alertLines(app string, now time.Time) []Line {
 		head = append(head, ownC(" · the last read failed", Warn))
 	}
 	out := []Line{field("alerts", head...)}
+	if a.alertsErr != nil {
+		// Why, beside the answer kept: it may be older than an alert
+		// that fires now.
+		out = append(out, field("", ownC("the last read failed: ", Warn), Seg{T: Capped(failureText(a.alertsErr), 2*LineMax)}))
+	}
 	if len(g.V.Alerts) > 0 {
 		// Under the head, where a window that cuts the details still
 		// shows it: the screen's y and P give the status, not these.
