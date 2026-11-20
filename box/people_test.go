@@ -751,6 +751,19 @@ func TestBothWebhooksTellANewNetwork(t *testing.T) {
 	}
 }
 
+// TestStopFlushesPeopleNetworks: the box app's Stop writes the record
+// of people's networks, as liveswap's does, for a config that has a box
+// block and no liveswap block.
+func TestStopFlushesPeopleNetworks(t *testing.T) {
+	saved := flushPeopleNetworks
+	t.Cleanup(func() { flushPeopleNetworks = saved })
+	calls := 0
+	flushPeopleNetworks = func() { calls++ }
+	if err := (&App{}).Stop(); err != nil || calls != 1 {
+		t.Errorf("Stop: %v, %d flushes", err, calls)
+	}
+}
+
 type announcements struct {
 	mu  sync.Mutex
 	got []liveswap.Announcement
