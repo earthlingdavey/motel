@@ -1571,29 +1571,50 @@ own `askSeries` and store client. The store held 14 days of synthetic
 pushes at 30 s for ten apps (seven behind observe, each with two
 releases' requests, histogram and cache series, deploys every one to
 three days, two stopped for hours, one moteld restart) and 1,000 filler
-series: 2,741 series, 57.7 million samples, 9.9 MB on disk. It was
-backfilled under a 2 GB cap (the import of 14 days at once was killed
-at 256 MB twice; a box fills its store 30 s at a time) and restarted
-under the 256 MB one before the queries. Each fetch is the four queries
-of one app and window:
+series, pushed on live every 30 s: 2,741 series, 57.7 million samples,
+9.9 MB on disk. It was backfilled under a 2 GB cap (the import of 14
+days at once was killed at 256 MB twice; a box fills its store 30 s at
+a time) and restarted under the 256 MB one before the queries. Each
+fetch is the four queries of one app and window, the store up 40
+minutes:
 
-| Window | One fetch, first after a store restart (median, max of 10 apps) | Again (store's cache warm) | An app with no observe |
+| Window | One fetch (median, max of 10 apps, one after another) | Again (store's cache warm) | An app with no observe |
 |---|---|---|---|
-| `1h` | 4 ms, 17 ms | 2 ms, 3 ms | 1 ms |
-| `24h` | 32 ms, 35 ms | 26 ms, 27 ms | 1 ms |
-| `7d` | 63 ms, 80 ms | 48 ms, 66 ms | 2 ms |
-| `14d` | 83 ms, 95 ms | 63 ms, 74 ms | 3 ms |
+| `1h` | 2 ms, 5 ms | 1 ms, 3 ms | 1 ms |
+| `24h` | 22 ms, 27 ms | 21 ms, 22 ms | 1 ms |
+| `7d` | 64 ms, 73 ms | 52 ms, 61 ms | 2 ms |
+| `14d` | 96 ms, 108 ms | 80 ms, 88 ms | 2 ms |
 
-Every app and window at once (40 fetches, 160 queries): 0.86 s, no
-error. The store's cgroup peaked at 96 MiB of its 256 MiB through all
-of it, with no OOM; its caches stay under `-memory.allowedBytes`. The
-dearest query is the 14-day p95, the guard's three reads of a
-histogram's day before each of 337 steps: 46 ms through the store's
-cache, 68 ms with `nocache=1`. Not measured on hotserve-1: this VM's
-cores are likely faster than a small box's (inferred), and real pushes
-compress worse than synthetic ones, so the budget's margin there
-(30 times one 14-day fetch, 3.5 times the 40 at once) is the number to
-check first.
+Every app and window at once (40 fetches, 160 queries): 0.96 s, no
+error. The dearest query is the 14-day p95, the guard's three reads of
+a histogram's day before each of 337 steps: 46 ms through the store's
+cache, 68 ms with `nocache=1`. So time is not the limit: the 3 s budget
+is 28 times one 14-day fetch and 3 times the 40 at once.
+
+**Memory is.** Under `MemoryMax=256M` the store was killed by the
+kernel twice, each time 7 to 9 minutes after a burst of every app's
+four windows at once (40 fetches), with only the push running after
+it; its log names nothing (an OOM kill). A controlled run from a fresh
+start: the push alone held the cgroup at 56 to 74 MiB for 8 minutes;
+every app's 1h and 24h at once (20 fetches) took it to 93 to 101 MiB,
+where it stayed; every app's 7d and 14d at once (20 fetches) took it
+to 211 MiB within a minute and to 254 MiB ten minutes later, 2 MiB
+under the cap, its caches 173 MiB of it (`vm_cache_size_bytes`, the
+query cache 29 MiB) against `-memory.allowedBytes=96MiB`. One viewer of
+a 14-day and a 24-hour window, read every 30 s for 28 minutes, held it
+at 205 to 211 MiB. Read one at a time (the same 20 fetches, 80 queries
+in 2 s, from a fresh start), the long windows took it the same way: 100
+MiB a minute after, 243 MiB three, 251 MiB at its peak, its caches 160
+MiB. So it is what the long windows read, not how many at once: they
+read every day's index of the 14, and the store's caches grow past the
+bytes allowed them over the minutes after. A box
+whose people read every app's long windows at once can lose its store
+to its cap: the store restarts (`Restart=on-failure`), the pushes and
+the rules' evaluation miss the restart, and `metrics_store_down` fires
+if it lasts. Owed, below; the choice is the owner's. Not measured on
+hotserve-1: real pushes compress worse than synthetic ones, and its
+store fills 30 s at a time rather than from a backfill, so both the
+memory and the times there are the numbers to check first.
 
 ## Packaging and setup
 
@@ -1955,6 +1976,7 @@ on its general scales. metrics' examples:
 |---|---|---|---|---|
 | vmalert refusing a `rules.yml` motel rendered (after a version change, say) keeps its old rules, and `up{job="vmalert"}` stays 1, so `metrics_rules_down` never fires and neither motel nor `moteld monitor rules` can tell (30, owed by the owner's decision of 2026-11-14): `scrape.yml` drops every vmalert series but `up`, and the chain (notify/metricspush.go) reads only `up`. The fix keeps `vmalert_config_last_reload_successful` in `scrape.yml` and reads it beside `up` (size 3, risk 2). The listing's `rules_file` speaks for the file, not for this. Read-only review at af7a124 | 3 | 2 | 5 | its own PR, with the `scrape.yml` change and the `moteld monitor setup --metrics` re-run on every box that docs/upgrading.md would order |
 | The old instance's stop is read as the old release's answers: a request it still held when its stop came (`drain`, 5 s by default, then SIGTERM, and SIGKILL after `grace`, 10 s) and that the stop cut before any header is a 502 counted under the old release, and timed as slow. The old window holds it whenever the first push the store took after the cutover came after the stop: with no outage, often at the defaults, since that push is anywhere in the 30 s after the cutover; with the store down over the cutover, whenever the store is back after the stop. Each such 502 raises the baseline's 5xx share and p95, so a regression's warning can be withheld (`old.share() > max_5xx_share`, `shareRose`, `p95Margin`), the more so the fewer the old release's responses in its window | 3 | 5 | 3 | its own change, the owner to choose how: liveswap counting the requests a stop cuts apart from the release's answers, or a window that ends before the stop, which the store cannot show when no push came between. Not this change: its window reads no more of the stop than the base's with no outage, and ends at the first push after the cutover, not at the check, which would read all of a long drain (/code-review of the old window's end; 15 5xx where 10 were due in `TestPostDeployTheBaselineOverTheStore`) |
+| Every app's 7-day and 14-day series read at once can take the store to its `MemoryMax=256M` and the kernel kill it ("An app's series", measured: killed twice 7 to 9 minutes after 40 fetches at once; 254 MiB of 256 after 20 long-window fetches; caches 173 MiB against `-memory.allowedBytes=96MiB`). It restarts on its own; the pushes and the rules' evaluation miss its restart. Wide: the store's budget is every box's | 3 | 5 | 1 | the owner's choice, its own change: a `MemoryMax=` and `-memory.allowedBytes` sized for the long windows (measured again under them), or no 7-day and 14-day windows until a box is measured. Reading them one at a time does not help (measured: 251 MiB after 20 fetches in series). Found measuring the series read (#586) |
 | The store's RSS on a 1 or 2 GB box (a day on hotserve-1's 3.8 GB is in "Footprint") | — | — | — | a deploy to a box of that size |
 | On a booted Debian host, the delete-a-leftover branch of the namespace unit's test before its delete (#430's `ExecStartPre`), measured in the e2e box alone. A reboot cannot reach it: a cold boot has an empty `/run`, so hotserve-1's of 2026-11-13 at a8038b4 took the nothing-to-delete branch alone (the unit's start took 165 ms, with no `Cannot remove namespace` line), and setup's re-run does not restart the namespace unit, which is active. #426's proxies have had their cold boot: the deploy of 01b2fd5 to hotserve-1 rebooted it at about 17:53 UTC on 2026-11-12, and both came back as no root | — | — | — | a start of the namespace unit on hotserve-1 with `/run/netns/motel-metrics` already there (a start after one that failed past its `ip netns add`), not a reboot |
 | Debian's security support for `victoria-metrics` 1.112.0 and `prometheus-alertmanager` 0.28.1 on trixie, whose binaries are built with Go 1.24.2 (the store, vmalert) and 1.24.1 (Alertmanager), and a dist-upgrade check of both drop-ins' flags | — | — | — | before any release |
