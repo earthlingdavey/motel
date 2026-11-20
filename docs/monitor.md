@@ -687,7 +687,8 @@ A person with the viewer role on the app or on the box
 ([people.md](people.md)) reads its numbers over the last hour, day, 7
 days or 14 days with `motel metrics <app> --range 1h|24h|7d|14d`, and
 `motel` alone draws them: `g` on an app's screen, `t` for another
-window. Each is a point a step (a minute over the hour, 5 minutes over
+window. This is on each release after v0.8.0; a box at v0.8.0 answers
+the read `404`. Each is a point a step (a minute over the hour, 5 minutes over
 the day, 30 over 7 days, an hour over 14), the newest of the last whole
 step, so up to an hour old over 14 days: the memory (each step's
 highest push), the CPU, and for an app behind `observe` its requests a
@@ -797,6 +798,8 @@ alerts` lists every alert (since when, and whether a silence or a
 deploy holds it, until when) and the silences, and `:alerts` in
 `motel` shows the same. A viewer of one app reads that app's alone:
 `motel monitor alerts --app <app>`. Neither can add or end a silence.
+Both are on each release after v0.8.0; a box at v0.8.0 answers them
+`404`.
 
 From your laptop, forward the socket to a socket of your own, in a
 directory only you can open, and ask that:
@@ -910,7 +913,8 @@ There is no `moteld monitor silence list`. Ask Alertmanager:
 `curl -s --unix-socket /run/motel-notify/am.sock http://am/api/v2/silences`.
 A person with the viewer role on the box reads the silences that are
 active or wait to start from their laptop, with every alert: `motel
-monitor alerts`, or `:alerts` in `motel` (docs/people.md).
+monitor alerts`, or `:alerts` in `motel` (docs/people.md), on each
+release after v0.8.0.
 Silences you post to the socket yourself work too, but motel checks
 nothing of them and leaves no line in its journal.
 
@@ -1064,7 +1068,7 @@ $ moteld monitor rules
 NAME                     SOURCE       KIND       SEVERITY  SCOPE      CONDITION                                                            NOW
 app_memory_high          builtin      threshold  warning   every app  > 0.9 share for 10m                                                  blog 0.55 share, shop 0.93104 share (firing for 17m)
 backup_stale             motel check  threshold  critical  box        > 3h                                                                 blog 58m, shop 3h59m30s
-disk_low                 motel check  threshold  warning   box        >= 80% warning, >= 90% critical, each clears 5 points under          /srv/motel 79.9% (warning), /var/lib/caddy 41.2%
+disk_low                 motel check  threshold  warning   box        >= 80% warning, >= 90% critical, each clears 5 points under          /var/lib/liveswap 79.9% (warning), /var/lib/motel/caddy 41.2%
 errors_high              operator     guarded    warning   every app  > 0.05 share for 10m, 2 guards                                       blog 0 share, shop 0.0612346 share (pending for 9m)
 watchdog_throttled       motel check  threshold  critical  every app  a further restart needed while >= its budget in its window is spent  shop 2 of 5 in 10m
 …
@@ -1078,7 +1082,8 @@ history too short). From a laptop, a person with the viewer role reads
 the same with `motel monitor rules` (a viewer of the box: every rule)
 or `motel monitor rules --app <app>` (a viewer of the app: the rules
 that apply to it, with its numbers alone), or `:rules` in the client's
-screens (docs/people.md).
+screens (docs/people.md), on each release after v0.8.0; a box at
+v0.8.0 answers those reads `404`.
 
 (The shape is a test's, not a box's; the full table has every alert,
 deploys and other events among them, whose condition is `-`.)

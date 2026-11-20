@@ -30,10 +30,22 @@ get here. Deploying from a CI that is not GitHub Actions, or from a
 laptop with a key, is [Deploying from outside GitHub](outside-github.md),
 once this page's box exists.
 
-On the laptop you need git 2.34 or later (it signs commits with an SSH
-key), `make`, and the SSH key the box is created with. Where a step
-shows a [GitHub CLI](https://cli.github.com/) (`gh`) command, GitHub's
-web pages do the same, and the step says where.
+What the laptop needs, on this page and the ones after it:
+
+- git 2.34 or later (it signs commits with an SSH key), `make`, `ssh`
+  and `curl`, and the SSH key the box is created with.
+- The [GitHub CLI](https://cli.github.com/) (`gh`), if you want it:
+  where a step shows a `gh` command, GitHub's web pages do the same,
+  and the step says where.
+- `age`, once the box has secrets ([Secrets](secrets.md)).
+- To run the box repository's `make check` yourself, Linux, with the
+  release's `moteld` on `PATH`, from the tarball on its releases page:
+  there is no macOS build. From a Mac, the repository's
+  workflow runs it on every push and pull request.
+- The laptop client, `motel`, only to read the box over HTTPS
+  ([Giving a person access](people.md)). No release up to v0.8.0
+  carries it; [client/README.md](../client/README.md#getting-it) says
+  how to get it.
 
 Names used throughout — replace them with yours as you go:
 
@@ -63,10 +75,15 @@ minute. At the provider:
 2. **TCP 80 and 443** must be reachable from the internet, and
    **UDP 443** too for HTTP/3. If the provider has a firewall, allow
    all three from anywhere; on one where each rule names a protocol,
-   such as Hetzner Cloud's, that is a rule for each. If it has none,
-   there is nothing to do. Leaving UDP 443 closed is a fine choice:
-   everything works, and browsers fall back to HTTP/2 over TCP without
-   saying so. The end of step 3 checks it.
+   such as Hetzner Cloud's, that is a rule for each. Allow 22 too
+   ([Hardening the box](hardening.md) narrows it to your own address),
+   and deny the rest: motel listens on no other port, but an app may
+   open one of its own, and the provider's firewall is what keeps it
+   shut. On a provider with none, only a firewall on the box itself
+   would, which these pages do not set up.
+   Leaving UDP 443 closed is a fine choice: everything works, and
+   browsers fall back to HTTP/2 over TCP without saying so. The end of
+   step 3 checks it.
 3. Point two DNS names at the server's address: `example.com` and
    `deploy.example.com`. motel gets certificates for both itself,
    once the names resolve and the ports are open.
@@ -358,6 +375,7 @@ init: this box's file is deploy.example.com/Caddyfile in the repository
 init: installed /etc/motel/Caddyfile
 init: this box applies commits descending from 4f1c2a9
 init: reloaded. From here, this box takes config only as signed commits sent by your repository's workflow.
+init: secrets for this box encrypt to age1…; moteld box key prints it again
 ```
 
 It refuses, writing nothing, a file with no `box` block, no signer or
