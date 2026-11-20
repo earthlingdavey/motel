@@ -31,8 +31,11 @@ type Logs struct {
 	Kept  string    `json:"kept"`
 	Lines []LogLine `json:"lines"`
 	// More is true when the read stopped with a line left unsent: the
-	// count asked for, or the box's 64 KiB of text, was reached. A
-	// follower asks again at once, with Cursor.
+	// count asked for, or the box's 64 KiB of text, was reached. After a
+	// follow (after sent, Gap false) the lines left are after the last
+	// one sent: a follower asks again at once, with Cursor. After a tail
+	// (no after, or Gap true) they are older than the first one sent,
+	// and no read reaches them.
 	More bool `json:"more"`
 	// Gap is true when the after a request sent was not honoured (it is
 	// no entry of this app's that the journal still holds): Lines are

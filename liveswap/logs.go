@@ -339,11 +339,14 @@ func takeLogs(ctx context.Context, src logsSource, q logsQuery, after string) (r
 			read.more = true
 			return false
 		}
-		if !belongsTo(e, q.app, q.uid) || e.unit == "" && e.userUnit == "" && legacyIdentifiers[q.ident] {
-			if read.passedOver == 0 {
-				read.passedUnit = e.unit + " " + e.userUnit
+		if legacy := e.unit == "" && e.userUnit == "" && legacyIdentifiers[q.ident]; legacy || !belongsTo(e, q.app, q.uid) {
+			if !legacy {
+				// Counted for the journal: no app's line has another unit.
+				if read.passedOver == 0 {
+					read.passedUnit = e.unit + " " + e.userUnit
+				}
+				read.passedOver++
 			}
-			read.passedOver++
 			if after != "" || read.cursor == "" {
 				read.cursor = e.cursor
 			}

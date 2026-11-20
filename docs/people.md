@@ -259,7 +259,10 @@ app. A cursor holds `;`, which a query must escape: `curl -G
   `env_file` in the forms the box knows, and some shapes of
   credential. `redacted_env` names the keys it replaced.
 - `more` is `true` when there was more than was sent: the count, or
-  64 KiB of text in one answer. A follower asks again at once.
+  64 KiB of text in one answer. After a follow the lines left are after
+  the last one sent: ask again at once with the cursor. After a tail
+  (no `after`, or `gap`) they are older than the first one sent, and no
+  read reaches them.
 - `cursor` is where the read got to, the `after` of the next. It is
   absent when the read took no line: keep the one you sent. Keep it in
   memory only, never on disk: it is the box's position in its journal.

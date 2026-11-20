@@ -426,7 +426,8 @@ func TestLogsPassesOverAnotherUnitsEntry(t *testing.T) {
 // TestLogsLegacyIdentifiers: an app named backup or sandbox-probe, whose
 // identifier motel's own units wrote under before they took one no app
 // makes, is not sent an entry with no unit field, which could be one of
-// those; its own units' entries are sent.
+// those; its own units' entries are sent, and the entry passed over is
+// not counted as another unit's, which the journal would tell.
 func TestLogsLegacyIdentifiers(t *testing.T) {
 	for _, app := range []string{"backup", "sandbox-probe"} {
 		j := appJournal(3, lineN)
@@ -435,7 +436,7 @@ func TestLogsLegacyIdentifiers(t *testing.T) {
 		}
 		j[1].unit, j[1].userUnit = "", ""
 		read, err := readLogs(context.Background(), &scriptedLogs{journal: j}, logsQuery{app: app, ident: syslogIdentifier(app), uid: logsUID, n: 50})
-		if err != nil || !slices.Equal(texts(read.lines), []string{"line 0", "line 2"}) || read.passedOver != 1 {
+		if err != nil || !slices.Equal(texts(read.lines), []string{"line 0", "line 2"}) || read.passedOver != 0 {
 			t.Errorf("%s: %q, passed over %d, %v", app, texts(read.lines), read.passedOver, err)
 		}
 	}

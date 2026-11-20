@@ -9,7 +9,6 @@ import (
 	"os"
 	"slices"
 	"strconv"
-	"strings"
 	"sync"
 	"time"
 	"unicode/utf8"
@@ -87,7 +86,14 @@ func (h *Handler) appLogs(w http.ResponseWriter, r *http.Request, app appHandle,
 		w.Header().Set("Retry-After", "1")
 		return RespondJSON(w, http.StatusServiceUnavailable, wire.Error{Error: logsBusyMessage}, NewRedactor(nil, nil))
 	}
-	defer give()
+	given := false
+	giveBack := func() {
+		if !given {
+			given = true
+			give()
+		}
+	}
+	defer giveBack()
 	n, _ := strconv.Atoi(wire.LogsLines[0])
 	if v, err := strconv.Atoi(q["lines"]); err == nil && slices.Contains(wire.LogsLines, q["lines"]) {
 		n = v
@@ -143,6 +149,9 @@ func (h *Handler) appLogs(w http.ResponseWriter, r *http.Request, app appHandle,
 		}
 		h.logger.Warn("access: person read logs", fields...)
 	}
+	// The slot bounds the journal's children and the filter's work, not
+	// a client's pace: a reader that stops reading holds no slot.
+	giveBack()
 	return respondFiltered(w, http.StatusOK, out)
 }
 
@@ -267,12 +276,12 @@ func filterLogsWhole(f *Redactor, body wire.Logs) (out string, keys []string, se
 // filterLogLine is one line's text through the app's filter, at most
 // logsLineMax bytes of it sent. The filter sees the text cut to
 // logsLineMax and the longest form it knows, so every value that begins
-// inside what is sent is whole when it is looked for; what it returns is
-// cut to logsLineMax, the piece a cut may have split dropped
-// (dropSplit), so no piece of a value the first cut split, which the
-// filter cannot know, is sent. A value with a space in it can still be
-// cut (DESIGN-liveswap.md, "Accepted residuals"). The keys it replaced
-// are added to seen.
+// inside what is sent is whole when it is looked for. Where that cut
+// fell, a value it split is a piece the filter cannot know, at the end
+// of what the filter returns and shorter than the longest form: those
+// last bytes go. Then what is left is cut to logsLineMax with "…" (a
+// marker or plain text may be cut there, no value). The keys it
+// replaced are added to seen.
 func filterLogLine(f *Redactor, text string, seen map[string]bool) string {
 	longest := 0
 	if f != nil && len(f.secrets) > 0 {
@@ -287,25 +296,13 @@ func filterLogLine(f *Redactor, text string, seen map[string]bool) string {
 	for _, k := range keys {
 		seen[k] = true
 	}
+	if cut {
+		out = cutText(out, max(len(out)-longest, 0))
+	}
 	if cut || len(out) > logsLineMax {
-		out = dropSplit(cutText(out, logsLineMax-len("…")), longest)
+		out = cutText(out, logsLineMax-len("…")) + "…"
 	}
 	return out
-}
-
-// dropSplit is s, a text a cut ended, without the piece of a known
-// value the cut may have split, and "…" in its place. A value split at
-// the end began less than longest bytes before it, so what goes is the
-// token up to the nearest whitespace (dropUnfinished) or the last
-// longest bytes, whichever is less: a line with no whitespace (minified
-// JSON, a long URL) keeps all but its last longest bytes.
-func dropSplit(s string, longest int) string {
-	const marker = "…"
-	keep := cutText(s, max(len(s)-longest, 0))
-	if i := strings.LastIndexAny(s, " \t\r\n"); i+1 > len(keep) {
-		keep = s[:i+1]
-	}
-	return keep + marker
 }
 
 // cutText is s cut to at most n bytes, on a rune's start.

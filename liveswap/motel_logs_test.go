@@ -230,8 +230,8 @@ func TestLogsLineFilteredBeforeItIsCut(t *testing.T) {
 			t.Errorf("line %d: %d bytes, ends %q", i+1, len(l.Text), l.Text[max(0, len(l.Text)-20):])
 		}
 	}
-	if !strings.HasSuffix(got.Lines[1].Text, "x …") {
-		t.Errorf("the value across the cut, replaced, then the marker the cut fell in dropped: …%q", got.Lines[1].Text[len(got.Lines[1].Text)-20:])
+	if !strings.HasSuffix(got.Lines[1].Text, " sess=[re…") {
+		t.Errorf("the value across the cut, replaced whole, then the marker cut: …%q", got.Lines[1].Text[len(got.Lines[1].Text)-20:])
 	}
 	if strings.Join(got.RedactedEnv, ",") != "SESSION_SECRET,SMTP_PASSWORD" {
 		t.Errorf("redacted_env: %q", got.RedactedEnv)
@@ -289,9 +289,11 @@ func TestLogsBodyTimesAndCursorPassNoFilter(t *testing.T) {
 }
 
 // TestLogsLongLineWithNoSpace: a line over 4 KiB with no whitespace
-// (minified JSON) keeps all of the cut but the last longest-form bytes,
-// where a value the cut split could be; and no piece of a value the
-// cut fell in is sent.
+// (minified JSON) keeps its first 4 KiB, less the last longest-form
+// bytes of what the filter saw when the first cut fell inside the line,
+// where a value that cut split could be; and no piece of a value either
+// cut fell in is sent. A known value longer than a line (its hex over
+// 4 KiB) empties no line shorter than the first cut.
 func TestLogsLongLineWithNoSpace(t *testing.T) {
 	value := "made-up-value-across-the-cut-0001" // 33 bytes; its hex form is the longest, 66
 	f := NewRedactor([]string{"V=" + value}, nil)
@@ -309,10 +311,16 @@ func TestLogsLongLineWithNoSpace(t *testing.T) {
 			}
 		}
 	}
-	// With whitespace near the end, the cut is there, as before.
+	// Whitespace changes nothing: the cut is by bytes.
 	out := filterLogLine(f, strings.Repeat("x", logsLineMax-10)+" "+strings.Repeat("y", 100), map[string]bool{})
-	if out != strings.Repeat("x", logsLineMax-10)+" …" {
+	if out != strings.Repeat("x", logsLineMax-10)+" yyyyyy…" {
 		t.Errorf("a space near the cut: …%q", out[len(out)-20:])
+	}
+	// A value whose hex form is over 4 KiB: a 6 KB line with no space and
+	// no value keeps its first 4 KiB.
+	big := NewRedactor([]string{"G=" + strings.Repeat("{\"k\":\"made-up\"}", 160)}, nil)
+	if out := filterLogLine(big, strings.Repeat("u", 6000), map[string]bool{}); out != strings.Repeat("u", logsLineMax-3)+"…" {
+		t.Errorf("a long value's filter: %d bytes, %.20q", len(out), out)
 	}
 }
 
@@ -498,4 +506,48 @@ func FuzzLogsEntry(f *testing.F) {
 			}
 		}
 	})
+}
+
+// stalledWriter is a client that does not read its answer: every write
+// waits until the test lets it go.
+type stalledWriter struct {
+	*httptest.ResponseRecorder
+	writing chan struct{}
+	release chan struct{}
+}
+
+func (s stalledWriter) Write(b []byte) (int, error) {
+	s.writing <- struct{}{}
+	<-s.release
+	return s.ResponseRecorder.Write(b)
+}
+
+// TestLogsStalledReaderHoldsNoSlot: a slot bounds the journal's children
+// and the filter, not a client's pace: four readers that stop reading
+// their answers leave every slot free for the next.
+func TestLogsStalledReaderHoldsNoSlot(t *testing.T) {
+	h, people, _, _ := logsRig(t, demoJournal(3, lineN))
+	release := make(chan struct{})
+	writing := make(chan struct{}, logsReadsAtOnce)
+	var wg sync.WaitGroup
+	for range logsReadsAtOnce {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			req := httptest.NewRequest(http.MethodGet, "http://"+personBox+"/_motel/apps/demo/logs", nil)
+			req.Header.Set("Authorization", token(people.erin))
+			_ = h.ServeHTTP(stalledWriter{httptest.NewRecorder(), writing, release}, req, nil)
+		}()
+	}
+	for range logsReadsAtOnce {
+		<-writing
+	}
+	if n := len(logsSlots); n != 0 {
+		t.Errorf("four readers stalled in their writes hold %d slots", n)
+	}
+	if w := sendTo(t, h, "GET", "/_motel/apps/demo/logs", token(people.erin)); w.Code != http.StatusOK {
+		t.Errorf("the next read: %d %s", w.Code, w.Body)
+	}
+	close(release)
+	wg.Wait()
 }
