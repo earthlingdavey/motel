@@ -194,7 +194,8 @@ func TestMeRule(t *testing.T) {
 }
 
 // TestMeLogsRole: logs is said as a word, as viewer is, in the title
-// and on the who-am-I screen, where its verb is "read logs"; a logs
+// and on the who-am-I screen, where its verb says the viewer's reads it
+// gives too, and the sentence on logs says the grant reads them; a logs
 // grant on the box offers the box screens, one on an app does not.
 func TestMeLogsRole(t *testing.T) {
 	for _, c := range []struct {
@@ -202,8 +203,8 @@ func TestMeLogsRole(t *testing.T) {
 		title, me string
 		boxViewer bool
 	}{
-		{[]wire.RoleHeld{{Role: "viewer", Scope: "app:blog"}, {Role: "logs", Scope: "app:blog"}}, "viewer of blog; logs of blog", "  read logs  app blog", false},
-		{[]wire.RoleHeld{{Role: "logs", Scope: "box"}}, "logs of the box", "  read logs  the box", true},
+		{[]wire.RoleHeld{{Role: "viewer", Scope: "app:blog"}, {Role: "logs", Scope: "app:blog"}}, "viewer of blog; logs of blog", "  view, read logs app blog", false},
+		{[]wire.RoleHeld{{Role: "logs", Scope: "box"}}, "logs of the box", "  view, read logs the box", true},
 		{[]wire.RoleHeld{{Role: "viewer", Scope: "box"}, {Role: "logs", Scope: "app:blog"}}, "viewer of the box; logs of blog", "  view       the box", true},
 	} {
 		s, _, now := session(t)
@@ -218,6 +219,9 @@ func TestMeLogsRole(t *testing.T) {
 		}
 		if !strings.Contains(text, c.me+"\n") || strings.Contains(text, `"logs"`) {
 			t.Errorf("%+v: who am I shows\n%s\nwant a line %q", c.roles, text, c.me)
+		}
+		if !strings.Contains(text, "Read logs: your logs grant reads them, but this client does not show them yet.") || strings.Contains(text, "does not offer them yet") {
+			t.Errorf("%+v: who am I says of logs\n%s", c.roles, text)
 		}
 		if s.BoxViewer() != c.boxViewer {
 			t.Errorf("%+v: box viewer %v", c.roles, s.BoxViewer())

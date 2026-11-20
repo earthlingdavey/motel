@@ -719,13 +719,21 @@ func (s *Session) MeViewFit(now time.Time, width int, cells Cells) []Line {
 		case "viewer":
 			verb = own("view")
 		case "logs":
-			verb = own("read logs")
+			verb = own("view, read logs")
 		}
 		out = append(out, cutTo(Line{own("  "), verb, own(pad("", 10-len([]rune(verb.T.String()))) + " " + on)}, width, cells))
 	}
 	// What may not be read here: logs, by anyone yet; the box's own
-	// alerts and silences, by anyone but a viewer of the box.
+	// alerts and silences, by anyone but a viewer of the box. A logs
+	// grant gives every read viewer gives on its scope, which its line
+	// says as "view" too.
 	cannot := "             Read logs: this client does not offer them yet."
+	for _, r := range me.Roles {
+		if r.Role == "logs" {
+			cannot = "             Read logs: your logs grant reads them, but this client does not show them yet."
+			break
+		}
+	}
 	if !s.BoxViewer() {
 		cannot += " Nor the box's own alerts and silences, which are a viewer of the box's: an app's are on its screen."
 	}

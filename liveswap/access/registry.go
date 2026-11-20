@@ -152,8 +152,11 @@ func (s Scopes) empty() bool { return !s.Box && len(s.Apps) == 0 }
 
 // Views is what a person may do from where one request came from, role
 // by role: built by Registry.Views, from the grants whose address list
-// holds the request's address. No role implies another here; what each
-// action needs is decidePerson's.
+// holds the request's address. Each role's scopes are kept apart; the
+// methods say what a set of them gives: Covers and CoversBox a viewer's
+// reads, which a viewer or a logs grant gives, and ReadsLogs the logs,
+// which a logs grant alone gives. What each action needs is
+// decidePerson's.
 type Views struct {
 	Viewer Scopes
 	Logs   Scopes
