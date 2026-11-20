@@ -14,10 +14,11 @@ same value, and a terminal does nothing. `version --json` and
 `key --json` print the client's own object.
 
 On a failure, stdout is the box's own body, made safe the same way, on
-exit 1 or 6, and on exit 5 when the 403's body was JSON. On any other
+exit 1 or 6, on exit 5 when the 403's body was JSON, and on exit 9 (the
+last status `status --follow` read). On any other
 failure (exit 2, 3, 4 or 8, or a 5 whose body was not JSON) it is
 `{"error":"…"}` holding the client's own sentence, the one stderr's
-last line prints after `motel: `. For exit 1, 2, 3, 4, 6 and 8, the
+last line prints after `motel: `. For exit 1, 2, 3, 4, 6, 8 and 9, the
 exit code says which of the two stdout is. For a 5, go by the object:
 the client's own has `error` alone, the sentence on stderr; the box's
 access check writes `needs` and `scope` beside its `error` (a plainer
@@ -31,6 +32,7 @@ motel key [--key <path>] [--name <you@example.com>]
 motel whoami                        who the box takes your key to be, and its roles from here
 motel apps                          the apps your key may view, one a line
 motel status <app> [--range 1h|24h] an app's status
+motel status <app> --follow         the deploy in flight, read until it ends; exits by its outcome
 motel deploys <app>                 its deploys, newest first
 motel deploys <app> <version>       one deploy's whole record
 motel box status                    the commit the box runs, its Caddyfile's digest, its key for secrets,
@@ -54,6 +56,27 @@ its phase once it has one, when the deploy started and by whom
 (`deploying    4c2d9e7b1a05 soaking, started 2026-11-19 14:12 UTC  by …`);
 its versions line marks the first version with that state when it is
 the one serving (`7c1e55d0a913 (running)`).
+
+`status --follow` prints the status, and with a deploy in flight reads
+it again every 5 s until the box no longer shows that deploy (the same
+version, taken at the same time), printing each phase once as the box
+lists it, with the time the box says it began (`14:12:03 UTC  soaking`):
+the box lists every phase so far, so none is missed between two reads,
+and the last ones come from the outcome's own list. Then it prints the
+outcome's record, as `deploys <app> <version>` does (a failure's error,
+exit, probe and log tail among it), and what serves (`now     7c1e55d0a913
+(running)`), and exits 0 when the deploy succeeded, 9 when it failed,
+and 3 when the box's last deploy is not that deploy's: of its version, and
+beginning with the phases it was seen in, each begun at the time the
+box gave (a push whose upload was never staged leaves none; so does
+another deploy that ended after it before the read). With no deploy in
+flight it prints the status and says so on stderr, exit 0; a box older
+than v0.8.0 in a deploy's phase, which names no deploy in flight,
+exits 3. A read that fails ends it, with that read's exit and its
+sentence saying the deploy may still run. ctrl-c stops following, not
+the deploy, exit 130. With `--json` it prints only the last status
+read, the box's own answer, on exit 0 and 9, and on exit 3 the
+client's `{"error":"…"}`, as every exit 3 does.
 
 `backup status` prints the box's verdict on its backups first, as the
 box's (`<host> says its backups are not healthy (at … UTC)`), then a
@@ -190,8 +213,9 @@ not healthy); 2 nothing was
 sent (usage, no box or key, an RSA or ECDSA key); 3 could not tell (no answer, not
 moteld's answer, any 5xx, a 429 that stood, the box's could not tell of `backup status`, and an Alertmanager that did not answer the box, for `monitor alerts`); 4 not accepted (a 401 after one
 retry); 5 not allowed (403); 6 not found (404); 8 the certificate did not
-verify (the client never continues past one); 130 interrupted. 7 is held
-for a box too old for people's tokens.
+verify (the client never continues past one); 9 the deploy `status
+--follow` followed failed; 130 interrupted. 7 is held for a box too old
+for people's tokens.
 
 ## Getting it
 
@@ -353,7 +377,7 @@ made by hand. Accepted:
 | An app's screen gives its alerts' command (`all: motel monitor alerts --box <host> [--key <path>] --app <app>`) on one row, cut at the window's edge like any line: at 60 columns, or with a long box or app name, its end is lost (`…`), and the screen's `c`, `y` and `P` give the status's command and answer, not the alerts'. Found by Copilot on #602, which asked for a way to the alerts the window cuts | 2 | 5 | 1 | 10 | 3 (the alerts in `c`'s overlay, or a screen of their own) | accepted: the cut is marked, the command is the status's with `monitor alerts` and `--app`. A screen of the alerts' own is a viewer of the box's only (the alerts-screen PR's `:alerts`), so a viewer of one app has the command alone |
 | A refusal said alone on a record's screen or an app's (a 403, a 404) is one row, cut at the window's edge with `…`: a long one (a 403 that did not say what it needs, or one quoting a value long in escapes) loses the box's words past the edge and the client's own after them (`motel whoami` lists the roles you hold from here.). Laid on rows instead (62d41e87, reverted), it took at most half the window's height and lost its end with no mark | 2 | 4 | 1 | 8 | 2 | accepted |
 | An app's "the last read failed" sentence is laid on rows within half the window's height, the fields under it: at 60x16 one quoting a value long in escapes (a 409 quoting 200 bidi overrides) fills those 8 rows, the last of them saying how many lines are not shown (`… 10 more lines: y shows the answer; then P prints it whole`), and its end (its cap's `…[cut]`) and every field under it, the state among them, are not on the screen. `y` shows the answer held, fetched before the failure, with the fields' values, but not the sentence's end, which nothing then shows; the deploys stay below it | 2 | 2 | 3 | 12 | 2 (a notice worded by whether the sentence is among the lines cut) | accepted |
-| A record's and an app's details are cut to the window, and cannot be scrolled: each line at the window's width, marked by its `…`, and the block to half the window's height, its last row then saying how many lines are not shown, that row's own among them (`… 2 more lines: y shows the answer; then P prints it whole`, an app at 60x16, where the cut was unmarked before #566). The half holds on an app with no deploys too, the rows under it then blank. `y` shows the box's answer as JSON, not laid out as the screen lays it, and itself cut past 2000 lines, said there, where `P` prints it whole | 2 | 5 | 1 | 10 | 3 (a header that scrolls is new screen behaviour) | accepted, by the owner's choice in #566 of the first of its options: the cut is said, the layout left |
+| A record's and an app's details are cut to the window, and cannot be scrolled: each line at the window's width, marked by its `…`, and the block to half the window's height, its last row then saying how many lines are not shown, that row's own among them (`… 4 more lines: y shows the answer; then P prints it whole`, an app at 60x16, where the cut was unmarked before #566). The half holds on an app with no deploys too, the rows under it then blank. `y` shows the box's answer as JSON, not laid out as the screen lays it, and itself cut past 2000 lines, said there, where `P` prints it whole | 2 | 5 | 1 | 10 | 3 (a header that scrolls is new screen behaviour) | accepted, by the owner's choice in #566 of the first of its options: the cut is said, the layout left |
 | With `--key` in it (whenever the key was named by `--key` or by `MOTEL_KEY`), `c`'s command lines are wider than the overlay at 80 columns for an ordinary key path and box name: `motel status --box deploy.smallhours.org --key '~/.ssh/id_ed25519.pub' -- example` is 81 characters and its `--json` line 88, where the overlay leaves a command line 76 cells (78 inside its border, 2 of indent). Both are cut at the edge and marked, and the overlay says not to copy them and that `P` prints the first whole; with a longer key path (`'~/tui1-trial/keys/trial.pub'`) both are cut before they differ, so they look alike as far as they show | 2 | 5 | 1 | 10 | 3 (a command laid on rows cannot be copied as one line) | accepted |
 | A mistyped `:` command is said on the crumb's row, cut where the apps screen's summary beside it begins: at 60 columns `? lists the : views;…`, the remedy whole and what was wrong cut away, the cut marked; at 80 `? lists the : views; no command "bogus" …`, what was wrong but its last word | 2 | 5 | 1 | 10 | 2 | accepted |
 | A hardware key's touch on the read made after one that waited 5 s or more and got no answer is counted in `waiting`'s seconds: the count goes on from the read that got none until the box answers, and the time a token is signed is left out only of the read in flight's own count, so after a 10 s touch the title bar says the box has been waited for 10 s longer than it has been asked. The word is true (the box has not answered); the number is long by the touch. Starting the count again at the signature would put `live` back for 5 s in an outage | 2 | 2 | 3 | 12 | 2 | accepted |
@@ -367,6 +391,12 @@ made by hand. Accepted:
 | `motel help tui`, as `motel help` with any word that is no command, says ``Unknown help topic [`tui`]`` and prints the usage, exit 0, where `motel tui` is refused, exit 2: cobra's own answer, and older than `motel` alone as the screen | 2 | 5 | 1 | 10 | 2 | accepted |
 | `motel` alone, where no box or key is found, interrupted (ctrl-c, the terminal closed) in the moment its help is being written: the help is on stdout, the line under it is not said, and the exit is 130, where an interrupted command prints nothing on stdout. The interrupt is looked for before the help is written (`TestSignalBeforeTheScreen`), not during: about 3.5 kB to a terminal, a few milliseconds unless the terminal is held (ctrl-s) | 2 | 2 | 3 | 12 | 2 (the help built whole, then written only if not interrupted) | accepted |
 | A client with #577's change reading a box on v0.8.0 or earlier: that box's `memory_bytes.now` is the range's newest point, kept while it is at most three steps old, so under `--range 24h` up to 15 minutes old (three 5-minute steps; 3 minutes at the hour), and its `avg_5m` and `memory_max_bytes` alike. The app's screen shows it as `now` beside `metrics     over 24h` with no age, where the client before this change said `newest point 14:00:10 UTC (12m ago)` under it | 2 | 5 | 3 | 30 | 2 | accepted over the bar, pending the owner (the skill's rule 4): it ends when the box takes this release, and telling the two kinds of box apart needs the client to judge the box's release |
+| Following a deploy (#580): a deploy seen only before its first phase (a push's upload) is matched to its outcome by its version and its end alone, so a later deploy of the same version that begins and ends before the next read (5 s on an app's screen and for `status --follow`, 30 s or more for another app) is taken for its outcome: `status --follow` exits by that one, and the app's screen says it; so does a step of the box's clock back between the two. Once the deploy was seen in a phase, its outcome must begin with the phases seen, each at the box's time, which no other deploy's does | 3 | 2 | 3 | 18 | 3 (the box would name each deploy, in `deploying` and `last_deploy`) | accepted: it takes two deploys of one version within one read, the first not yet past its upload |
+| `status --follow` ends at the first read that fails (no answer, a 5xx, a 429 that stood after its wait, a moteld restarting), with that read's exit and its sentence saying the deploy may still run, though it may end well a moment later; it is not asked again | 2 | 3 | 1 | 6 | 2 (a retry at its turn, and a count) | accepted: it ends red and named, and run again it follows the same deploy if it still runs |
+| `status --follow` signs its tokens as every command does, each lasting 300 s, so a follow of more than about 3.5 minutes with a hardware key asks for a touch on the terminal mid-follow, the reads waiting until it is given; the TUI's tokens last 600 s (`TestForTUI` holds the longer life to the TUI's client) | 2 | 3 | 1 | 6 | 1, risk 2 (a captured token then lasts twice as long) | accepted: a deploy's usual length is under a minute |
+| A phase a newer box names that this client does not know, in the deploy in flight's phases, makes the whole status "not moteld's answer", exit 3 (on the screens the app is `unknown`), for the rest of that deploy, as one in `last_deploy` already did until the next deploy and one in the status's phase while it lasts: since #580 the phases are printed, and so held to the outcome vocabulary | 2 | 5 | 1 | 10 | 2 (an unknown phase shown in the client's words) | accepted: it is said, and a client of the box's release knows its phases |
+| A TUI left without a key for 10 minutes pauses (the title bar says PAUSED), so a person waiting on an app's screen for CI to reach its deploy sees nothing of a deploy that begins after that until a key; `status --follow` follows only a deploy already in flight when it starts | 2 | 5 | 1 | 10 | 2 (no pause while an app's screen is open: a new rule for the rate and a hardware key's touches) | accepted: the pause is the owner's rule for an unattended TUI, and says itself |
+| An app's `ended` line puts its key hint last (`· d opens its record`), and its `phases` line the failed phase's `✖`: at 80 columns the line of a failure in soaking with 12-character versions is 85 cells, so the hint is cut (`…`), and a failed phase of 100 s or more cuts its `✖`; the line still says `failed in <phase>`, and help lists `d` | 2 | 5 | 1 | 10 | 1 (text), risk 2 | accepted: what is cut is a hint and a repeated mark |
 | `motel backup status` whose stdout takes none of its human output (a full disk, a closed pipe) exits 2 with the write's error, not the box's verdict (1, 3): every command's human output fails so | 2 | 3 | 1 | 6 | 2 | accepted: red and named; `--json` and the verdict's exit are what a script reads |
 | On the backups screen in a window 14 columns wide or less, far below the smallest the screens are laid for (60), a could not tell's quoted why is laid one character a row, each past its 14 columns of indent, so the rows show blank | 2 | 5 | 1 | 10 | 2 | accepted: no screen is laid for such a width; `y` shows the answer |
 | After a 404 to the backups (a moteld older than the read) the read is held until ctrl-r, and the screen does not say ctrl-r asks again, as an app's screen does not after a 404: once the box is upgraded it says the 404 until ctrl-r or `r` | 2 | 5 | 1 | 10 | 1 | accepted: the sentence names the cause, and ctrl-r is among the screen's keys (`?`) |
@@ -420,7 +450,9 @@ cut in its middle, in the table and the strip, its start and its end
 kept; two names that would be cut alike are shown longer, alike, until
 they differ, as far as the screen leaves room for STATE beside them;
 the whole name is what is opened, searched and printed. An app's
-screen shows its state and deploys, and under its state its alerts,
+screen shows its state and deploys, and under its state (and under
+the deploy's lines below, when it has them; for an app with no
+version yet, after its `deployed` line) its alerts,
 read while the screen is open (under their count the command that
 lists them whole, `motel monitor alerts --box <host> --app <app>`,
 since the screen's `y` and `P` give the status; then the first three,
@@ -433,8 +465,25 @@ in backoff by its row's word), and a `deploying` line
 under it the version in flight, its phase, when the deploy started and
 by whom (`4c2d9e7b1a05 soaking · started 25s ago (14:12 UTC) by …`;
 under "has no version yet: a deploy of it is in flight." before a first
-version serves); a deploy's record is laid out for
-reading a failure, its log tail last. The box screen shows the commit
+version serves), and a `phases` line under it the phases it has entered
+so far with the box's seconds, the last 4 (`… extracting 0.7s ›
+preparing 3.9s › starting 1.0s › soaking 18.0s`; a record lists them
+all). Following a deploy is staying on that screen: when a read no
+longer shows a deploy the session saw in flight (on any screen), an
+`ended` line in its place says how it ended and what serves
+(`4c2d9e7b1a05 failed in soaking · 3b8812aa0c4f serves · d opens its
+record`; `… succeeded · it serves`; `… ended with no outcome from the
+box`, by `status --follow`'s rule), and, while no other deploy runs, a
+`phases` line of the last 4 phases it passed through, one `… ` before
+them standing for any earlier, the one it failed in marked `✖` (`d`
+opens the record, which lists them all). It stays while the next deploy runs, when one was already
+in flight at the read that saw it end, and goes when a deploy is seen
+to begin after it, or the box's last deploy is another's (one begun and
+ended between two reads, which the `deployed` line says). `d` there
+opens the newest deploy's record, which for a deploy that failed is its
+own (the line says so only then: a relaunch writes no record, nor does
+a deploy refused before it began). A deploy's
+record is laid out for reading a failure, its log tail last. The box screen shows the commit
 the box runs, its Caddyfile's digest and its key for secrets, and, when
 the box says the Caddyfile is not the one that commit installed, a line
 under the digest that says so, as `motel box status`'s first line does.
@@ -540,7 +589,11 @@ SIGINT, SIGTERM or SIGHUP sent to the process, or the terminal closed under the 
   screen that shows it is open (the box screen shows all three). The
   open app is read every 5 s, and its alerts every 15 s while its screen
   is open (`AlertsEvery`, after the box's own 5 s of Alertmanager's
-  answer); every other app takes its turn in the rest of the
+  answer). Following a deploy costs no read of its own: it is the open
+  app's. `status --follow` reads once in 5 s, 0.2 a second, so one
+  beside a TUI keeps a person to 1.7; each person's reads count against
+  their own 2, so several people following one deploy cost the box 0.2
+  a second each. Every other app takes its turn in the rest of the
   budget, every 30 s, or longer with more apps than that covers (about
   55 s for 60 apps, 3 minutes for 200; 57 s and a little over 3
   minutes while an app's screen is open, its alerts read too), each at

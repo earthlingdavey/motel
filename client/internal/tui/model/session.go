@@ -89,6 +89,10 @@ type appData struct {
 	// alertsErr their newest read's failure.
 	alerts    *Got[wire.Alerts]
 	alertsErr error
+	// flight is the deploy the status held shows in flight, and ended
+	// the last one seen in flight that has since ended (follow).
+	flight *wire.DeployInFlight
+	ended  *ended
 }
 
 type recData struct {

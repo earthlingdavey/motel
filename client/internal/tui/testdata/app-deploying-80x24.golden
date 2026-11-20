@@ -2,6 +2,7 @@ motel · deploy.example.com · v0.7.0 │ alice@example.com · viewer … live �
 apps › api                                           as of 14:12:40 UTC · 0s ago
 state       running 3b8812aa0c4f · pid 41233 · unit motel-api.3b8812aa0c4f.3f9a…
 deploying   4c2d9e7b1a05 soaking · started 25s ago (14:12 UTC) by github:exampl…
+phases      … extracting 0.7s › preparing 3.9s › starting 1.0s › soaking 18.0s
 alerts      none held · as of 0s ago
 watchdog    watching · 0 restarts in its window
 deployed    succeeded 1h ago (13:12 UTC, 39 s) by github:example/api@refs/heads…
@@ -13,7 +14,6 @@ artifact    1842 entries · 38 MiB (the last deploy's)
 ─ DEPLOYS, newest first                                    on disk: 3b8812aa0c4f
   VERSION      RESULT    WHERE FINISHED (UTC) TOOK BY
   3b8812aa0c4f succeeded       11-15 13:12    39 s github:example/api@refs/head…
-
 
 
 

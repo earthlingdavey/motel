@@ -118,8 +118,10 @@ func TestServerGrammars(t *testing.T) {
 		{"a deploy's phase", strings.Replace(status, `"phase":"soaking"`, `"phase":"health gate"`, 1), &wire.Status{}, "a deploy's phase in it is not one a deploy has"},
 		{"a deploy in flight", strings.Replace(status, `"phase":"idle"`, `"phase":"soaking","deploying":{"version":"v3","deployed_by":"ci","started_at":"2026-11-14T09:14:00Z","phases":[{"name":"soaking","started_at":"2026-11-14T09:14:00Z","seconds":3}]}`, 1), &wire.Status{}, ""},
 		{"a version in flight with a space", strings.Replace(status, `"phase":"idle"`, `"phase":"soaking","deploying":{"version":"v3 (running)","started_at":"2026-11-14T09:14:00Z","phases":[]}`, 1), &wire.Status{}, "a version in it is not a version"},
-		// Not printed nor read: a phase a newer box names in flight is taken.
-		{"a phase in flight this client does not know", strings.Replace(status, `"phase":"idle"`, `"phase":"soaking","deploying":{"version":"v3","started_at":"2026-11-14T09:14:00Z","phases":[{"name":"fetch","started_at":"2026-11-14T09:14:00Z","seconds":3}]}`, 1), &wire.Status{}, ""},
+		// Printed on the app's screen and by status --follow: held as
+		// last_deploy's phases are.
+		{"a phase in flight this client does not know", strings.Replace(status, `"phase":"idle"`, `"phase":"soaking","deploying":{"version":"v3","started_at":"2026-11-14T09:14:00Z","phases":[{"name":"fetch","started_at":"2026-11-14T09:14:00Z","seconds":3}]}`, 1), &wire.Status{}, "a deploy's phase in it is not one a deploy has"},
+		{"a phase in flight in the client's words", strings.Replace(status, `"phase":"idle"`, `"phase":"soaking","deploying":{"version":"v3","started_at":"2026-11-14T09:14:00Z","phases":[{"name":"soaking 3.0s › succeeded","started_at":"2026-11-14T09:14:00Z","seconds":3}]}`, 1), &wire.Status{}, "a deploy's phase in it is not one a deploy has"},
 		{"a phase's name in the last deploy", strings.Replace(status, `"name":"downloading"`, `"name":"fetch"`, 1), &wire.Status{}, "a deploy's phase in it is not one a deploy has"},
 		{"a box status", box, &wire.BoxStatus{}, ""},
 		{"a commit of 39", strings.Replace(box, "3f9c2a1e0", "3f9c2a1e", 1), &wire.BoxStatus{}, "its commit is not a commit id"},
