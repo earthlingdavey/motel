@@ -100,8 +100,10 @@ const (
 	// queueMax bounds what waits for Alertmanager.
 	queueMax = 512
 	// earlyMax bounds the people's announcements kept while no config
-	// runs notify (engine.early).
+	// runs notify (engine.early), and earlyFor how long each is kept: a
+	// start's notify renders within amRequestTimeout.
 	earlyMax = 64
+	earlyFor = time.Minute
 	// maxSummary is the summary's length, in runes.
 	maxSummary = 200
 	// heartbeatEvery and heartbeatLife are the Watchdog's: posted every
@@ -225,8 +227,10 @@ type engine struct {
 	// while no config runs notify: a start's first seconds, when the
 	// http app can serve before notify's Start, and liveswap's record has
 	// already counted the network as told. At most earlyMax, told when a
-	// config next does (point).
-	early []Event
+	// config next does (point) if they are no older than earlyFor: an
+	// older one (a box with no monitor block for a while) has its journal
+	// line, and is not told late as if it were now.
+	early []earlyEvent
 
 	queue    []*pending
 	wake     chan struct{}
@@ -327,7 +331,7 @@ func (e *engine) report(ev Event) {
 func (e *engine) reportLocked(ev Event) {
 	if e.active == nil {
 		if ev.Source == sourceAccess && len(e.early) < earlyMax {
-			e.early = append(e.early, ev)
+			e.early = append(e.early, earlyEvent{ev, e.now()})
 		}
 		return
 	}
@@ -950,9 +954,18 @@ func (e *engine) point(a *App, post poster, known []string, logger *zap.Logger) 
 	}
 	early := e.early
 	e.early = nil
-	for _, ev := range early {
-		e.reportLocked(ev)
+	now := e.now()
+	for _, x := range early {
+		if now.Sub(x.at) <= earlyFor {
+			e.reportLocked(x.ev)
+		}
 	}
+}
+
+// earlyEvent is one of engine.early, with when it was told.
+type earlyEvent struct {
+	ev Event
+	at time.Time
 }
 
 // settle points the pollers at a's sources and ends what a no longer

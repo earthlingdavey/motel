@@ -52,20 +52,6 @@ type amHeld struct {
 // the rest for the box-wide read's list. The list holds expired
 // silences too, until Alertmanager's retention drops them (measured on
 // Debian's 0.28.1: "expired" beside "active" and "pending").
-// ofPersonAlert reports whether the silence holds one of personAlerts by
-// name: an equality matcher on alertname, as `moteld monitor silence add
-// --alert` makes it.
-func (s amHeldSilence) ofPersonAlert() bool {
-	return slices.ContainsFunc(s.Matchers, func(m struct {
-		Name    string `json:"name"`
-		Value   string `json:"value"`
-		IsRegex bool   `json:"isRegex"`
-		IsEqual *bool  `json:"isEqual"`
-	}) bool {
-		return m.Name == "alertname" && !m.IsRegex && (m.IsEqual == nil || *m.IsEqual) && slices.Contains(personAlerts, m.Value)
-	})
-}
-
 type amHeldSilence struct {
 	ID     string `json:"id"`
 	Status struct {
@@ -84,6 +70,20 @@ type amHeldSilence struct {
 	EndsAt    time.Time `json:"endsAt"`
 	CreatedBy string    `json:"createdBy"`
 	Comment   string    `json:"comment"`
+}
+
+// ofPersonAlert reports whether the silence holds one of personAlerts by
+// name: an equality matcher on alertname, as `moteld monitor silence add
+// --alert` makes it.
+func (s amHeldSilence) ofPersonAlert() bool {
+	return slices.ContainsFunc(s.Matchers, func(m struct {
+		Name    string `json:"name"`
+		Value   string `json:"value"`
+		IsRegex bool   `json:"isRegex"`
+		IsEqual *bool  `json:"isEqual"`
+	}) bool {
+		return m.Name == "alertname" && !m.IsRegex && (m.IsEqual == nil || *m.IsEqual) && slices.Contains(personAlerts, m.Value)
+	})
 }
 
 // wireSilence is s as the reads carry it, its times in UTC and each

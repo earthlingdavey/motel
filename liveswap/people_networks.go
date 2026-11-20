@@ -390,10 +390,11 @@ func (k *PeopleNetworks) announce(logger *zap.Logger, a Announcer, ann Announcem
 }
 
 // dropUnlistedLocked drops every key a registry newer than the last
-// one seen does not list: a person removed is forgotten, and named
-// anew as a first use if added back while the record still runs on
-// (a load that admits no one has no registry, and drops nothing until a
-// person is admitted again). An older registry (a reload's old
+// one seen does not list: a person removed is forgotten, and named anew
+// as a first use if added back, once a person's request has come under
+// the load that removed them (a load that admits no one has no
+// registry, and drops nothing until a person is admitted again). A key
+// is its record whatever name its line gives it. An older registry (a reload's old
 // handlers, serving for a moment beside the new) changes nothing.
 func (k *PeopleNetworks) dropUnlistedLocked(reg *access.Registry) {
 	if reg == nil || reg.Generation() <= k.generation {
@@ -462,14 +463,16 @@ func (k *PeopleNetworks) changedLocked(urgent bool) {
 // file does not, and waits for it, or for a write already under way, at
 // most networksStopWait: liveswap's Stop, so that a restart (an upgrade,
 // a reload's old config) tells nothing again for want of a write that
-// was due. A write that hangs is left to itself past the wait.
+// was due. A write that hangs is left to itself past the wait; while
+// writes fail, the minute's retry is left as it is and a stop waits
+// for nothing.
 func FlushPeopleNetworks() { sharedNetworks.flushWithin(networksStopWait) }
 
 func (k *PeopleNetworks) flushWithin(wait time.Duration) {
 	deadline := time.Now().Add(wait)
 	for {
 		k.mu.Lock()
-		idle := k.file == "" || k.state != networksRead || !k.dirty && !k.writing
+		idle := k.file == "" || k.state != networksRead || k.failing || !k.dirty && !k.writing
 		if !idle && !k.writing && (k.timer == nil || k.timer.Stop()) {
 			k.timer = time.AfterFunc(0, k.flush)
 		}

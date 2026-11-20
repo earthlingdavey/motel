@@ -133,6 +133,15 @@ func TestPeopleSinkBeforeNotifyRuns(t *testing.T) {
 	if got := te.drain(); len(got) != 0 {
 		t.Errorf("told again: %v", got)
 	}
+	// Kept past earlyFor (a box with no monitor block for a while), it is
+	// not told late as if it were now.
+	te.active = nil
+	s.Announce(liveswap.Announcement{Name: liveswap.EventPersonNewNetwork, Person: "alice@example.com", Key: fp, From: "198.51.100.0/24"})
+	te.advance(earlyFor + time.Second)
+	te.point(&App{}, te.p, te.known, te.logger)
+	if got := te.drain(); len(got) != 0 {
+		t.Errorf("told %s late: %v", earlyFor, got)
+	}
 }
 
 func certEvent(t *testing.T, name string, data map[string]any) caddy.Event {

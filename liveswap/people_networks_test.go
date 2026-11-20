@@ -638,7 +638,13 @@ func TestNetworksWriteFails(t *testing.T) {
 	}
 	fail = false
 	mu.Unlock()
-	k.flushWithin(5 * time.Second) // as a stop does: the retry, now
+	// The minute's retry, now.
+	k.mu.Lock()
+	if k.timer != nil && k.timer.Stop() {
+		k.timer = nil
+	}
+	k.mu.Unlock()
+	k.flush()
 	k.settle(t, false)
 	if l := logs.FilterMessageSnippet("could not be written").All(); len(l) != 1 || !strings.Contains(l[0].ContextMap()["error"].(string), "no space left") {
 		t.Errorf("journal %v", logs.All())
@@ -711,12 +717,29 @@ func TestNetworksFlushAtStop(t *testing.T) {
 	if !strings.Contains(string(b), `["203.0.113.0/24","198.51.100.0/24"]`) {
 		t.Errorf("written %s", b)
 	}
-	// With nothing due, and with no file, it returns at once.
+	// With nothing due, and with no file, it returns at once; and while
+	// writes fail, it tries no write and leaves the minute's retry.
 	began = time.Now()
 	k.flushWithin(5 * time.Second)
 	newPeopleNetworks("", time.Now).flushWithin(5 * time.Second)
-	if took := time.Since(began); took > 100*time.Millisecond {
-		t.Errorf("a flush of nothing took %s", took)
+	var mu sync.Mutex
+	writes := 0
+	k.write = func(string, []byte) error {
+		mu.Lock()
+		writes++
+		mu.Unlock()
+		return errors.New("no space left on device")
+	}
+	k.seen(people.reg, fp, "alice", addr("192.0.2.9"), zap.NewNop())
+	k.flushWithin(5 * time.Second) // the write that fails
+	k.flushWithin(5 * time.Second) // nothing more while they fail
+	if took := time.Since(began); took > 2*time.Second {
+		t.Errorf("flushes of nothing, or while writes fail, took %s", took)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if writes != 1 {
+		t.Errorf("%d writes tried while they fail", writes)
 	}
 }
 
@@ -805,7 +828,13 @@ func TestOnlyAVerifiedTokenCounts(t *testing.T) {
 	people := newTestPeople(t)
 	now := time.Now()
 	good := token(people.alice)
-	tampered := good[:len(good)-2] + map[bool]string{true: "AA", false: "AB"}[strings.HasSuffix(good, "AA")]
+	// One character of the signature changed, mid-way, so the encoding
+	// stays canonical and only the signature check refuses it.
+	i := len(good) - 20
+	tampered := good[:i] + map[bool]string{true: "B", false: "A"}[good[i] == 'A'] + good[i+1:]
+	if tampered == good {
+		t.Fatal("the tampered token is the token")
+	}
 	refused := [][]string{
 		{token(people.stranger)},
 		{people.alice.Token("other.example.test", now, time.Minute)},

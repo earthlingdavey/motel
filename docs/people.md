@@ -184,7 +184,8 @@ the read go on.
   ```
 
 Both go to your channels alone: no one reads them over HTTPS, not even
-a viewer of the box, nor a silence you make of them. The message shows the key's fingerprint by its start, as `moteld box
+a viewer of the box, nor a silence `moteld monitor silence add
+--alert` makes of them. The message shows the key's fingerprint by its start, as `moteld box
 describe` prints it on the `person` line; the alert's `instance` label
 and the journal hold it whole. When one of these comes:
 
