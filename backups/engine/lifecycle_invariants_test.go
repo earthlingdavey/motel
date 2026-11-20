@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -219,6 +220,30 @@ func TestARunRefusesWhatSetupRefusesWithSetupsWords(t *testing.T) {
 				panic(err)
 			}
 		}, "the credential file " + "%ENVFILE%" + " could not be read: it is not a regular file (p---------)"},
+		// A file made by hand under umask 022, or 027: what setup writes
+		// is root's alone, and the motel uid must never read the
+		// repository's password or the storage key.
+		{"a credential file others cannot read", func(b *box) {
+			if err := os.Chmod(b.cfg.EnvFile, 0o644); err != nil {
+				panic(err)
+			}
+		}, "the credential file %ENVFILE% is open to others than root (mode 0644), and it holds the repository's password and the storage key: chmod 0600 %ENVFILE%, as root"},
+		{"a credential file its group cannot read", func(b *box) {
+			if err := os.Chmod(b.cfg.EnvFile, 0o640); err != nil {
+				panic(err)
+			}
+		}, "the credential file %ENVFILE% is open to others than root (mode 0640)"},
+		// A directory others may write, whose writer could put another
+		// file in the credential file's place.
+		{"a credential file in a directory only root may write", func(b *box) {
+			if err := os.Chmod(filepath.Dir(b.cfg.EnvFile), 0o777); err != nil {
+				panic(err)
+			}
+		}, fmt.Sprintf("is uid %d's, mode 0777: it has to be root's and writable by nobody else, or someone else could put another file in the credential file's place: chown root:root ", os.Getuid())},
+		// Another account's file, whatever its mode: its owner may change
+		// it, or open it to anyone.
+		{"a credential file that is root's", func(b *box) { credentialOwner = uint32(os.Getuid()) + 1 },
+			fmt.Sprintf("the credential file %%ENVFILE%% belongs to uid %d, not root, and it holds the repository's password and the storage key: chown root:root %%ENVFILE%% && chmod 0600 %%ENVFILE%%, as root", os.Getuid())},
 		{"an account motel did not make", func(b *box) { b.comment = "" }, "the motel-backup account on this box was not made by motel"},
 		// The manager binds what it sees: where it does not see this
 		// command's mounts it would show every unit a bare mount point

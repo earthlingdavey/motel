@@ -8,9 +8,10 @@
 // units and makes mounts), so it touches as little as it can: it never
 // reads or removes anything an app wrote — it opens an app's
 // directories only as O_PATH, to name them (pin.go) — parses the
-// credential file, secrets and all, to refuse before any unit one the
-// manager could not read or would refuse whole, and one that names a
-// b2: repository or names it in another file (repositoryInUse),
+// credential file, secrets and all, to refuse before any unit one that
+// is not root's alone, one the manager could not read or would refuse
+// whole, and one that names a b2: repository or names it in another
+// file (repositoryInUse),
 // otherwise passing its path to the manager — and takes nothing from a
 // unit but an exit status and a small JSON file, of which it keeps only
 // what it recognises, cleaned (record.Text).
