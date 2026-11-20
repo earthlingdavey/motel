@@ -272,8 +272,8 @@ Properties that matter to the model:
   deploy's detail as it was built), beside which it would show the
   value by difference, has the body withheld as before, though across
   two answers (a marker in one deploy's record, the number in the
-  status once a later deploy has replaced that one as the last) a
-  reader can still set them side by side (an accepted row in
+  status once that deploy is no longer its last: a later deploy, or a
+  moteld restart) a reader can still set them side by side (an accepted row in
   liveswap/DESIGN-liveswap.md); and a body in which a value would stand across a token's edge goes
   through whole as before (liveswap/redact.go, rule 7). A figure the
   app's behaviour drives (its memory, its request counts) is a channel

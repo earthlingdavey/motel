@@ -818,7 +818,14 @@ func (r *Redactor) filterBody(raw string, seen map[string]bool) string {
 			// a marker the tail's cap cut).
 			replaced := maps.Clone(found)
 			for _, sec := range r.secrets {
-				if strings.Contains(raw, sec.marker) {
+				// As written, and as encoding/json escapes it (the angles
+				// of "<KEY removed>").
+				marked := strings.Contains(raw, sec.marker)
+				if !marked && strings.ContainsAny(sec.marker, "<>&") {
+					esc, _ := json.Marshal(sec.marker)
+					marked = strings.Contains(raw, string(esc[1:len(esc)-1]))
+				}
+				if marked {
 					for _, k := range sec.keys {
 						replaced[k] = true
 					}
