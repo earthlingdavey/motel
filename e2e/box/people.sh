@@ -337,10 +337,9 @@ client whoami --box "$HOST" --key "$work/lena"
 expect "lena, inside her from list: whoami" 0
 has "lena: whoami gives demo's viewer role from here" "$work/out" "roles    viewer of app demo"
 
-# A logs grant reads what a viewer grant reads on its scope, and nothing
-# more here: the logs read itself is not served yet. lara's logs grant
-# holds from her list alone, so from here whoami lists her viewer grant
-# and nothing else.
+# A logs grant reads what a viewer grant reads on its scope, and the
+# app's logs (people 2c). lara's logs grant holds from her list alone,
+# so from here whoami lists her viewer grant and nothing else.
 matrix lars 0 0 0 5 0 5 0 5
 grep -qx "roles    logs of app demo" "$work/lars.0.out" \
 	&& pass "lars: whoami gives demo's logs role, said as the client's word" || fail "lars: whoami: $(cat "$work/lars.0.out")"
@@ -353,6 +352,50 @@ grep -qx "roles    viewer of app demo" "$work/out" \
 	&& pass "lara: whoami gives demo's viewer role alone from here" || fail "lara: whoami: $(cat "$work/out")"
 client status demo --box "$HOST" --key "$work/lara"
 expect "lara: status demo, on her viewer grant" 0
+
+echo "=== people 2c: a logs reader reads demo's lines ==="
+# demo's journal is given lines of its own: a deploy of the crash
+# release, which prints its env_file's SECRET and a child's line, then
+# exits 3, so the deploy fails and demo serves $DV still. lars reads
+# demo's logs over HTTPS as docs/people.md says (the cursor's ; escaped
+# by curl -G --data-urlencode).
+CV=${DV}x
+MAXT=120 get dep -X POST -H "Authorization: Bearer $TOKEN" -d "{\"url\":\"$ART/demo-crash.tar.gz\",\"version\":\"$CV\"}" "$BASE/demo"
+case "$CODE" in 5*) pass "the crash release's deploy fails ($CODE), so demo's journal holds its lines" ;; *) fail "the crash deploy: $CODE $(head -c 300 "$work/dep.b")" ;; esac
+since_logs=$(date +%s)
+P_LARS=$(ptok lars)
+i=0
+until get lg -G --data-urlencode lines=50 -H "Authorization: Motel $P_LARS" "$BASE/_motel/apps/demo/logs" && grep -qF 'fatal: cannot start' "$work/lg.b"; do
+	i=$((i + 1)); [ "$i" -ge 20 ] && break
+	sleep 0.5
+done
+[ "$CODE" = 200 ] && [ "$(jget "$work/lg.b" 'j.kept')" = on ] && pass "lars: demo's logs, 200 and kept on" || fail "lars: demo's logs: $CODE $(head -c 600 "$work/lg.b")"
+[ "$(jget "$work/lg.b" 'j.lines.filter(l => l.text === "starting with SECRET=[redacted:SECRET]" && l.release === "'"$CV"'").length')" = 1 ] \
+	&& pass "lars: the crash release's line, its SECRET replaced, its release from its unit" || fail "lars: the crash line: $(head -c 800 "$work/lg.b")"
+[ "$(jget "$work/lg.b" 'j.lines.filter(l => l.text === "fatal: cannot start").length')" -ge 1 ] \
+	&& pass "lars: the child's line, which journald may keep with no unit" || fail "lars: the child's line: $(head -c 800 "$work/lg.b")"
+! grep -qF "e2e-secret-value-1234" "$work/lg.b" && [ "$(jget "$work/lg.b" 'j.redacted_env.join(",")')" = SECRET ] \
+	&& pass "lars: the answer holds no SECRET, and names the key it replaced" || fail "lars: the secret: $(head -c 800 "$work/lg.b")"
+! grep -qF "http://127.0.0.1:8000" "$work/lg.b" && pass "lars: no line of node-example's in demo's answer" || fail "lars: node-example's line in demo's: $(head -c 800 "$work/lg.b")"
+CUR=$(jget "$work/lg.b" 'j.cursor')
+printf '%s\n' "$CUR" | grep -Eqx 's=[0-9a-f]{32};i=[0-9a-f]+;b=[0-9a-f]{32};m=[0-9a-f]+;t=[0-9a-f]+;x=[0-9a-f]+' \
+	&& pass "lars: the answer's cursor is a journal cursor" || fail "lars: the cursor: '$CUR'"
+get lf -G --data-urlencode "after=$CUR" -H "Authorization: Motel $P_LARS" "$BASE/_motel/apps/demo/logs"
+[ "$CODE" = 200 ] && [ "$(jget "$work/lf.b" 'j.gap')" = false ] && ! grep -qF 'starting with SECRET' "$work/lf.b" \
+	&& pass "lars: a follow from that cursor sends no line twice" || fail "lars: the follow: $CODE $(head -c 600 "$work/lf.b")"
+get lx -G --data-urlencode "after=s=00000000000000000000000000000000;i=1;b=00000000000000000000000000000000;m=1;t=5f0000000000;x=1" -H "Authorization: Motel $P_LARS" "$BASE/_motel/apps/demo/logs"
+[ "$CODE" = 200 ] && [ "$(jget "$work/lx.b" 'j.gap')" = true ] && grep -qF 'fatal: cannot start' "$work/lx.b" \
+	&& pass "lars: a cursor the box never gave is a fresh tail with gap" || fail "lars: a made-up cursor: $CODE $(head -c 600 "$work/lx.b")"
+get lr -H "Authorization: Motel $(ptok lara)" "$BASE/_motel/apps/demo/logs"
+[ "$CODE" = 403 ] && [ "$(cat "$work/lr.b")" = '{"error":"this needs the logs role on this app","needs":"logs","scope":"app"}' ] \
+	&& pass "lara, outside her logs grant's list: 403 naming logs" || fail "lara's logs: $CODE $(cat "$work/lr.b")"
+get lv -H "Authorization: Motel $(ptok vera)" "$BASE/_motel/apps/demo/logs"
+[ "$CODE" = 403 ] && grep -qF '"needs":"logs"' "$work/lv.b" && pass "vera, a viewer of the box: 403 naming logs" || fail "vera's logs: $CODE $(cat "$work/lv.b")"
+journalctl -u moteld --since "@$since_logs" --no-pager -o cat >"$work/logsj"
+grep -F '"access: person read logs"' "$work/logsj" | grep -F '"person":"lars@e2e.test"' | grep -F '"app":"demo"' | grep -qF "\"last\":\"$CUR\"" \
+	&& pass "the journal says lars read demo's logs, to the cursor he was given" || fail "the read's journal line: $(grep -F 'person read logs' "$work/logsj" | head -c 600)"
+grep -F '"access: person refused logs"' "$work/logsj" | grep -F '"person":"lara@e2e.test"' | grep -qF '"needs":"logs app"' \
+	&& pass "the journal says lara was refused demo's logs" || fail "the refusal's journal line: $(grep -F 'refused logs' "$work/logsj" | head -c 600)"
 
 # eve's ECDSA key: the client refuses it before it signs or sends, and
 # `motel key` prints no person line the box would refuse.
