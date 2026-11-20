@@ -359,9 +359,9 @@ only root and the motel uid can send.
 | Event | Source | Kind | Severity | Fires | Resolves |
 |---|---|---|---|---|---|
 | `watchdog_throttled` | liveswap | state | critical | the restart budget is spent; again on any failed probe or crash during a recovery's hold, below the restart threshold too | the first healthy probe after it, held `max(30s, watchdog_grace)`; a deploy that succeeds; `watchdog off` |
-| `relaunch_refused` | liveswap | state | critical | the watchdog's relaunch is refused at its pre-flight | any path publishes an instance |
+| `relaunch_refused` | liveswap | state | critical | the watchdog's relaunch is refused at its pre-flight (its reason without the deployer's text, as for `deploy_refused`) | any path publishes an instance |
 | `deploy_failed` | liveswap | event | warning | a 5xx outcome, a push's upload that could not be staged, or app dirs that are not motel's; the summary names the version and the phase, never the error's text, and says nothing of what serves now | — |
-| `deploy_refused` | liveswap | event | warning | a 422 (liveswap's own words, through the filter) | — |
+| `deploy_refused` | liveswap | event | warning | a 422 (liveswap's own words, through the filter: a refusal whose message quotes the deployer's text, the artifact URL or a path in the release, is told without it, which the 422 and the journal keep) | — |
 | `rollback` | liveswap | event | warning | `?rollback=` succeeds | — |
 | `deploy_succeeded` | liveswap | event | info | a deploy succeeds; dropped unless `deploy_succeeded on` | — |
 | `deploy_in_progress` | liveswap | the mute | none | a deploy starts; re-posted each minute while it runs | it ends, whatever it came to |

@@ -224,7 +224,7 @@ func streamIDs(out []byte) []string {
 func runJournalctl(ctx context.Context, args []string, limit int) ([]byte, error) {
 	out := &tailWriter{max: limit}
 	stderr := &tailWriter{max: 1024}
-	cmd := exec.CommandContext(ctx, journalctlPath, args...) //nolint:gosec // a fixed program by absolute path; the arguments are validated unit names, pids the manager recorded, stream ids of journald's shape, a count and a timestamp built here, never request input
+	cmd := journalctlCommand(ctx, args)
 	cmd.Stdout, cmd.Stderr = out, stderr
 	if err := cmd.Run(); err != nil {
 		if msg := strings.TrimSpace(string(stderr.buf)); msg != "" {
@@ -233,6 +233,20 @@ func runJournalctl(ctx context.Context, args []string, limit int) ([]byte, error
 		return nil, fmt.Errorf("journalctl: %w", err)
 	}
 	return out.buf, nil
+}
+
+// journalctlCommand is the journalctl run, with an empty environment.
+// moteld's holds the operator's secrets (ACME DNS tokens among them),
+// and a child that inherited them would hold them in a process that,
+// after exec, is dumpable again. journalctl needs none of it: --user
+// picks the journal by the caller's uid, --no-pager starts no pager,
+// and -o cat writes each field's bytes as stored (measured on Debian
+// 13's systemd 257: the same bytes with no environment as with LANG,
+// LC_ALL, TZ, PATH and TERM set).
+func journalctlCommand(ctx context.Context, args []string) *exec.Cmd {
+	cmd := exec.CommandContext(ctx, journalctlPath, args...) //nolint:gosec // a fixed program by absolute path; the arguments are validated unit names, pids the manager recorded, stream ids of journald's shape, a count and a timestamp built here, never request input
+	cmd.Env = []string{}
+	return cmd
 }
 
 // tailWriter keeps the last max bytes written to it.

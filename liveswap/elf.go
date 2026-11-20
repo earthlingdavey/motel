@@ -32,10 +32,16 @@ import (
 // or the box's runtime layout as given — which the deploy reports as
 // a 422. Any other error from a pre-flight is motel's own (a bind
 // source that cannot be resolved, a file that cannot be read) and is
-// reported as such.
-type preflightError struct{ msg string }
+// reported as such. said is msg without the path it names, which a
+// symlink in the release can make any text the deployer chose
+// (validationError).
+type preflightError struct{ msg, said string }
 
 func (e *preflightError) Error() string { return e.msg }
+
+// commandsFile stands in a refusal's said for the path of the file a
+// command or a pre_start runs; the refusal's prefix says which.
+const commandsFile = "the file it runs"
 
 // elfMachines maps e_machine to the Go architecture name a box reports
 // as runtime.GOARCH, and the machine's own name for the message.
@@ -116,7 +122,11 @@ func checkMachine(path string) error {
 		return fmt.Errorf("reading %s: %w", path, err)
 	}
 	if goarch == elf32 && strconv.IntSize == 64 {
-		return &preflightError{fmt.Sprintf("%s is a 32-bit executable, and an app on this box runs the native %s system-call ABI only (SystemCallArchitectures=native): build it for %s", path, runtime.GOARCH, runtime.GOARCH)}
+		const refusal = "%s is a 32-bit executable, and an app on this box runs the native %s system-call ABI only (SystemCallArchitectures=native): build it for %s"
+		return &preflightError{
+			msg:  fmt.Sprintf(refusal, path, runtime.GOARCH, runtime.GOARCH),
+			said: fmt.Sprintf(refusal, commandsFile, runtime.GOARCH, runtime.GOARCH),
+		}
 	}
 	if goarch == "" || goarch == elf32 || goarch == runtime.GOARCH {
 		return nil
@@ -124,7 +134,11 @@ func checkMachine(path string) error {
 	if _, known := elfMachines[machineFor(runtime.GOARCH)]; !known {
 		return nil // a box whose machine this check does not know cannot compare
 	}
-	return &preflightError{fmt.Sprintf("this box is %s and %s is an %s executable: build on a runner of the box's architecture%s", runtime.GOARCH, path, name, runsOnHint(runtime.GOARCH))}
+	const refusal = "this box is %s and %s is an %s executable: build on a runner of the box's architecture%s"
+	return &preflightError{
+		msg:  fmt.Sprintf(refusal, runtime.GOARCH, path, name, runsOnHint(runtime.GOARCH)),
+		said: fmt.Sprintf(refusal, runtime.GOARCH, commandsFile, name, runsOnHint(runtime.GOARCH)),
+	}
 }
 
 // machineFor is elfMachines' inverse for the box's own architecture.

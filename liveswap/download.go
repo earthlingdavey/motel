@@ -117,20 +117,27 @@ func downloadArtifact(ctx context.Context, opts downloadOpts) (string, error) {
 //
 // Every refusal is a validationError: an unusable URL is the payload's
 // problem, and 422-with-the-reason is what lets the CI author fix it
-// without an operator reading server logs.
+// without an operator reading server logs. Each names or quotes the
+// URL, the deployer's text, so each has a said without it.
 func pinArtifactURL(rawURL string, allowInsecure bool, allowlist []artifactAllowEntry) (string, error) {
 	u, err := url.Parse(rawURL)
 	if err != nil {
-		return "", validationError{fmt.Sprintf("invalid artifact url: %v", err)}
+		// Its reason alone: a *url.Error quotes the whole URL, query
+		// and all.
+		var ue *url.Error
+		if errors.As(err, &ue) {
+			err = ue.Err
+		}
+		return "", validationError{msg: fmt.Sprintf("invalid artifact url: %v", err), said: "invalid artifact url"}
 	}
 	switch u.Scheme {
 	case "https":
 	case "http":
 		if !allowInsecure {
-			return "", validationError{fmt.Sprintf("artifact url %s is plain http; use https or set allow_insecure_http", redactURL(u))}
+			return "", validationError{msg: fmt.Sprintf("artifact url %s is plain http; use https or set allow_insecure_http", redactURL(u)), said: "artifact url is plain http; use https or set allow_insecure_http"}
 		}
 	default:
-		return "", validationError{fmt.Sprintf("artifact url %s has unsupported scheme %q", redactURL(u), u.Scheme)}
+		return "", validationError{msg: fmt.Sprintf("artifact url %s has unsupported scheme %q", redactURL(u), u.Scheme), said: "artifact url has unsupported scheme"}
 	}
 	entry, escapedPath, err := matchAllowlist(allowlist, u)
 	if err != nil {
@@ -138,7 +145,7 @@ func pinArtifactURL(rawURL string, allowInsecure bool, allowlist []artifactAllow
 		// message in the body: an allowlist refusal is the payload's
 		// problem, and the CI caller — who chose the URL — is the one
 		// who can fix it (or ask the operator to extend the entry).
-		return "", validationError{fmt.Sprintf("artifact url %s refused: %v", redactURL(u), err)}
+		return "", validationError{msg: fmt.Sprintf("artifact url %s refused: %v", redactURL(u), err), said: "artifact url refused"}
 	}
 	// From here on the request's URL is never used directly. The URL
 	// the fetch uses is a single concatenation whose provenance reads
@@ -162,7 +169,7 @@ func (d digestMismatch) Error() string {
 }
 
 // Unwrap makes errors.As find the validationError the webhook maps to 422.
-func (d digestMismatch) Unwrap() error { return validationError{d.Error()} }
+func (d digestMismatch) Unwrap() error { return validationError{msg: d.Error()} }
 
 // names is what the filter must let through: both digests, or nothing
 // for the zero value.
@@ -296,7 +303,7 @@ func (rf *releaseFetcher) fetch(ctx context.Context, spec *appSpec, req deployRe
 		releaseDir := spec.dirs.release(req.version)
 		if _, err := os.Stat(releaseDir); err != nil {
 			if os.IsNotExist(err) {
-				return "", archiveStats{}, validationError{fmt.Sprintf("no on-disk release %q to roll back to (it may have been pruned by keep)", req.version)}
+				return "", archiveStats{}, validationError{msg: fmt.Sprintf("no on-disk release %q to roll back to (it may have been pruned by keep)", req.version)}
 			}
 			return "", archiveStats{}, err // a real I/O/permission error is a server failure, not a missing target
 		}

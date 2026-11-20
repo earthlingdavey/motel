@@ -1580,6 +1580,32 @@ func TestExitAfterEndNamesTheUnloadedCleanExit(t *testing.T) {
 	}
 }
 
+// A release's command may be a symlink to a file outside the view whose
+// path is any text the deployer chose. The 422 names it; the said the
+// operator's channels are told stands the command's file in its place.
+func TestPreflightOutsideTheViewSaidNamesNoPath(t *testing.T) {
+	r, _ := newTestSystemdRunner(t)
+	spec := testApp(t)
+	target := filepath.Join(t.TempDir(), deployersWords)
+	if err := os.WriteFile(target, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	server := filepath.Join(spec.dir, "server")
+	if err := os.Remove(server); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, server); err != nil {
+		t.Fatal(err)
+	}
+	var pe *preflightError
+	if err := r.Preflight(spec); !errors.As(err, &pe) || !strings.Contains(pe.msg, target) || !strings.Contains(pe.msg, "not inside the sandbox view") {
+		t.Fatalf("want the 422 naming the file outside the view, got %v", err)
+	}
+	if want := commandsFile + " is not inside the sandbox view of app demo: "; !strings.HasPrefix(pe.said, want) || strings.Contains(pe.said, deployersWords) || strings.Contains(pe.said, spec.dir) {
+		t.Fatalf("said = %q, want it to start %q and name no path", pe.said, want)
+	}
+}
+
 // Preflight is the launch's resolution run early: the release's own
 // script passes; an executable for another machine is refused with the
 // runner to build on; a command outside the sandbox view is refused
