@@ -301,7 +301,7 @@ func TestLogsLongLineWithNoSpace(t *testing.T) {
 		text := strings.Repeat("{", at) + value + strings.Repeat("}", 3000)
 		seen := map[string]bool{}
 		out := filterLogLine(f, text, seen)
-		if len(out) > logsLineMax || len(out) < logsLineMax-3-logsCutMargin-len("[redacted:V]") || !strings.HasSuffix(out, "…") || !utf8.ValidString(out) {
+		if len(out) != logsLineMax || !strings.HasSuffix(out, "…") || !utf8.ValidString(out) {
 			t.Errorf("value at %d: %d bytes, ends %q", at, len(out), out[max(0, len(out)-20):])
 		}
 		for n := 8; n <= len(value); n++ {
@@ -322,12 +322,28 @@ func TestLogsLongLineWithNoSpace(t *testing.T) {
 	}
 	// A generated token longer than the margin, split by the first cut:
 	// no piece of its start is sent either.
-	long := strings.Repeat("Zq9", 200) // gitleaks:allow — made up for this test
-	for _, at := range []int{logsLineMax - 300, logsLineMax + 100} {
-		out := filterLogLine(NewRedactor(nil, nil), strings.Repeat("x", at)+" "+long+" after", map[string]bool{})
-		if strings.Contains(out, "Zq9") {
-			t.Errorf("a long token at %d: …%q", at, out[max(0, len(out)-40):])
+	long := strings.Repeat("Zq9", 3000) // gitleaks:allow — made up for this test
+	if out := filterLogLine(NewRedactor(nil, nil), strings.Repeat("x", 4000)+" "+long+" after", map[string]bool{}); strings.Contains(out, "Zq9") {
+		t.Errorf("a token longer than the margin: …%q", out[max(0, len(out)-40):])
+	}
+	// A private key on one line (an app's config logged as JSON), its
+	// block's end within the margin past the cut: replaced whole.
+	key := "-----BEGIN " + "PRIVATE KEY-----\\n" + strings.Repeat("MIIEvQIBADANBgkqhkiG9w0BAQEFAASC\\n", 70) + "-----END " + "PRIVATE KEY-----\\n" // gitleaks:allow — made up for this test
+	for _, total := range []int{6000, 20000} {
+		line := strings.Repeat("c", 3000) + `"private_key":"` + key + `"` + strings.Repeat("c", total)
+		if out := filterLogLine(NewRedactor(nil, nil), line, map[string]bool{}); strings.Contains(out, "MIIE") || total == 6000 && !strings.Contains(out, "[redacted:private-key]") {
+			t.Errorf("a key on one line of %d: …%q", total, out[max(0, len(out)-60):])
 		}
+	}
+	// Bytes that are not UTF-8: the filter sees them as written, so a
+	// value holding them is replaced; what is sent is valid UTF-8, within
+	// 4 KiB however many runs there are.
+	bad := NewRedactor([]string{"K=made\xffup-value-01"}, nil)
+	if out := filterLogLine(bad, "key made\xffup-value-01 here \xfe", map[string]bool{}); out != "key [redacted:K] here \uFFFD" {
+		t.Errorf("a value with a byte that is not UTF-8: %q", out)
+	}
+	if out := filterLogLine(nil, strings.Repeat("\xffa", 3000), map[string]bool{}); !utf8.ValidString(out) || len(out) > logsLineMax {
+		t.Errorf("runs of bad bytes: %d bytes, valid %v", len(out), utf8.ValidString(out))
 	}
 	// Whitespace changes nothing: the cut is by bytes.
 	out := filterLogLine(f, strings.Repeat("x", logsLineMax-10)+" "+strings.Repeat("y", 100), map[string]bool{})
@@ -510,9 +526,6 @@ func FuzzLogsEntry(f *testing.F) {
 		}
 		body := wire.Logs{Kept: wire.KeptOn, Lines: []wire.LogLine{}, More: read.more, Gap: read.gap, Cursor: read.cursor}
 		for _, l := range read.lines {
-			if !utf8.ValidString(l.text) {
-				t.Fatalf("not UTF-8: %q", l.text)
-			}
 			rel, _ := unitRelease(l.userUnit, "demo")
 			body.Lines = append(body.Lines, wire.LogLine{At: l.at, Release: rel, Text: l.text})
 		}

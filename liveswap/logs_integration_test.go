@@ -343,9 +343,9 @@ sleep 1
 // TestIntegrationLogsOddLines: what journald makes of odd output, read
 // back: a line over its 48 KiB is several entries, each read whole
 // (with --all; journalctl prints null for any of 4 KiB or more without
-// it); a NUL splits a line; an empty line is no entry; a run of bytes
-// that are not UTF-8 is one U+FFFD; control characters stay; a <3>
-// prefix is journald's, taken off.
+// it); a NUL splits a line; an empty line is no entry; bytes that are
+// not UTF-8 are read as written (sent as U+FFFD, a run one); control
+// characters stay; a <3> prefix is journald's, taken off.
 func TestIntegrationLogsOddLines(t *testing.T) {
 	r := integrationRunner(t)
 	app := logsName("itlogs-x")
@@ -361,15 +361,15 @@ printf 'last\n'
 sleep 1
 `))
 	read := waitLogs(t, app, 11)
-	want := []string{"plain", "an error with a level prefix", "bad \uFFFD bytes", "\x1b[31mred\x1b[0m", "cr\rinside", "nul", "after", "", "", "", "last"}
+	want := []string{"plain", "an error with a level prefix", "bad \xff\xfe bytes", "\x1b[31mred\x1b[0m", "cr\rinside", "nul", "after", "", "", "", "last"}
 	got := texts(read.lines)
 	if len(got) != len(want) {
 		t.Fatalf("%d lines, want %d: %.60q", len(got), len(want), got)
 	}
 	long := 0
 	for i, l := range got {
-		if !utf8.ValidString(l) {
-			t.Errorf("line %d is not UTF-8", i)
+		if s := filterLogLine(nil, l, map[string]bool{}); !utf8.ValidString(s) {
+			t.Errorf("line %d is not UTF-8 as sent: %q", i, s)
 		}
 		if want[i] == "" {
 			if strings.Trim(l, "h") != "" {

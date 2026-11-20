@@ -99,8 +99,9 @@ var errLogsEntryTooLong = fmt.Errorf("an entry of journalctl's output is over %d
 
 // decodeEntry reads one entry of -o json. MESSAGE is a string, or an
 // array of byte values when it is not UTF-8 or holds a control
-// character, each run of whose bytes that are not UTF-8 becomes one
-// U+FFFD. A MESSAGE
+// character, kept as the bytes it is: the filter must see an env_file
+// value's bytes as the app wrote them, and only what it returns is made
+// valid UTF-8 (filterLogLine). A MESSAGE
 // that is absent or null is an error, never an empty line: with --all
 // journalctl prints every MESSAGE.
 func decodeEntry(raw []byte) (logEntry, error) {
@@ -144,7 +145,7 @@ func entryText(raw json.RawMessage) (string, bool) {
 		if json.Unmarshal(raw, &s) != nil {
 			return "", false
 		}
-		return strings.ToValidUTF8(s, "\uFFFD"), true
+		return s, true
 	case raw[0] == '[':
 		var nums []int
 		if json.Unmarshal(raw, &nums) != nil {
@@ -157,7 +158,7 @@ func entryText(raw json.RawMessage) (string, bool) {
 			}
 			b[i] = byte(v)
 		}
-		return strings.ToValidUTF8(string(b), "\uFFFD"), true
+		return string(b), true
 	}
 	return "", false
 }

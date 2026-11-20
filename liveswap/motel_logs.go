@@ -280,9 +280,12 @@ func filterLogsWhole(f *Redactor, body wire.Logs) (out string, keys []string, se
 }
 
 // logsCutMargin is the least the filter sees of a cut line past what is
-// sent: the reach of a credential the shape and entropy layers know (a
-// provider token, a JWT's segments, a 20-character generated run).
-const logsCutMargin = 256
+// sent: the reach of a credential the shape and entropy layers know,
+// whose rule needs its end (a PEM block of an RSA key of 4,096 bits on
+// one line, about 3.3 KB; a JWT's three segments; a provider token).
+// A line is at most 48 KiB as journald stores it, so the filter reads
+// at most 12 KiB of one, 16 such lines an answer.
+const logsCutMargin = 8 << 10
 
 // tokenAlphabet is layer 4's (entropyTokenRe in redact.go).
 const tokenAlphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+=_-"
@@ -307,15 +310,23 @@ func filterLogLine(f *Redactor, text string, seen map[string]bool) string {
 	if cut {
 		text = cutText(text, pre)
 	}
+	// journald ends a stdout line at a NUL, so none is in one; a NUL would
+	// be the start of the shape rule 7 holds times by (redact.go).
+	text = strings.ReplaceAll(text, "\x00", "\uFFFD")
 	out, keys := f.Redact(text)
 	for _, k := range keys {
 		seen[k] = true
 	}
 	if cut {
-		// And what is left of a token longer than the margin: a run of
-		// layer 4's alphabet the cut ended, too short now to be judged.
-		out = strings.TrimRight(cutText(out, max(len(out)-longest, 0)), tokenAlphabet)
+		// And all of a token longer than the margin: the run of layer 4's
+		// alphabet the cut ended, which no layer saw whole.
+		run := len(strings.TrimRight(out, tokenAlphabet))
+		out = cutText(out, max(min(len(out)-longest, run), 0))
 	}
+	// The app's bytes that are not UTF-8, each run one U+FFFD, only now:
+	// the filter saw them as written. Before the last cut, so the text
+	// sent stays within logsLineMax.
+	out = strings.ToValidUTF8(out, "\uFFFD")
 	if cut || len(out) > logsLineMax {
 		out = cutText(out, logsLineMax-len("…")) + "…"
 	}

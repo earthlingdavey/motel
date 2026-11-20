@@ -290,7 +290,8 @@ journal says when, `lines under an app's identifier from a unit that
 is not the app's were not sent`) is among them, so read on to `last`:
 
 ```sh
-journalctl --cursor='<first>' -n <lines> SYSLOG_IDENTIFIER=motel-<app> _UID=$(id -u motel) _TRANSPORT=stdout
+journalctl --cursor='<first>' -o json SYSLOG_IDENTIFIER=motel-<app> _UID=$(id -u motel) _TRANSPORT=stdout \
+  | sed '/"__CURSOR":"<last>"/q'
 ```
 
 A person who follows an app writes one such line for each poll that

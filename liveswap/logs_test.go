@@ -13,7 +13,6 @@ import (
 	"sync"
 	"testing"
 	"time"
-	"unicode/utf8"
 )
 
 // logsUID is the uid the scripted journal's entries are of: this
@@ -171,7 +170,8 @@ func TestLogsArgs(t *testing.T) {
 }
 
 // TestLogsEntryDecodes: a MESSAGE that is a string, or an array of byte
-// values (not UTF-8: U+FFFD; a control character: as it is); the time
+// values (not UTF-8, or a control character: as it is, for the filter to
+// see as the app wrote it); the time
 // and the cursor; and every entry that is not one as asked (no MESSAGE,
 // null, no cursor, no time, a value that is no byte, a field twice) an
 // error, never an empty line.
@@ -183,16 +183,13 @@ func TestLogsEntryDecodes(t *testing.T) {
 		want    string
 	}{
 		{"a string", "GET /cart 200", "GET /cart 200"},
-		{"bytes that are not UTF-8", []int{'b', 'a', 'd', ' ', 0xff, 0xfe, '!'}, "bad \uFFFD!"},
+		{"bytes that are not UTF-8", []int{'b', 'a', 'd', ' ', 0xff, 0xfe, '!'}, "bad \xff\xfe!"},
 		{"a control character", []int{'c', 'r', '\r', 'x', 0x1b, '['}, "cr\rx\x1b["},
 		{"a long line", strings.Repeat("h", 49152), strings.Repeat("h", 49152)},
 	} {
 		e, err := decodeEntry(scriptEntry{cursor: testCursor, at: at, message: c.message, unit: "user@996.service", userUnit: "motel-demo.v1.0a1b2c3d0a1b2c3d.service"}.json())
 		if err != nil || e.text != c.want || !e.at.Equal(at) || e.cursor != testCursor || e.unit != "user@996.service" || e.userUnit != "motel-demo.v1.0a1b2c3d0a1b2c3d.service" {
 			t.Errorf("%s: %+v %v", c.name, e, err)
-		}
-		if !utf8.ValidString(e.text) {
-			t.Errorf("%s: not UTF-8", c.name)
 		}
 	}
 	for name, raw := range map[string]string{
