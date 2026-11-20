@@ -81,8 +81,15 @@ func TestPeopleSinkRaisesBoxEvents(t *testing.T) {
 	if _, ok := got[0].Labels["app"]; ok {
 		t.Errorf("a box event with an app label: %v", got[0].Labels)
 	}
-	if sum := got[0].Annotations["summary"]; sum != first.Summary() || !strings.Contains(sum, alice) {
+	if sum := got[0].Annotations["summary"]; sum != first.Summary() || !strings.Contains(sum, alice[:19]) {
 		t.Errorf("summary %q, want %q", sum, first.Summary())
+	}
+	// A long name that looks generated, cut in the summary: the cut is
+	// what the filter is told to leave.
+	long := liveswap.Announcement{Name: liveswap.EventPersonNewNetwork, Person: "svc-" + strings.Repeat("7f3e9d2a", 10), Key: bob, From: "203.0.113.0/24"}
+	s.Announce(long)
+	if got := te.drain(); len(got) != 1 || got[0].Annotations["summary"] != long.Summary() {
+		t.Errorf("a long name: %v, want %q", got, long.Summary())
 	}
 	for i := range 6 {
 		s.Announce(liveswap.Announcement{Name: liveswap.EventPersonNewNetwork, Person: "alice@example.com", Key: alice, From: fmt.Sprintf("198.51.%d.0/24", i)})
@@ -92,7 +99,7 @@ func TestPeopleSinkRaisesBoxEvents(t *testing.T) {
 	if len(got) != 4 || got[3].Labels["alertname"] != "person_outside_list" || got[3].Labels["key"] != "access/box/person_outside_list/"+bob {
 		t.Fatalf("posts %v", got)
 	}
-	if l := te.lines("monitor: event"); len(l) != 8 || l[5].ContextMap()["suppressed"] == nil || l[7].ContextMap()["suppressed"] != nil {
+	if l := te.lines("monitor: event"); len(l) != 9 || l[4].ContextMap()["suppressed"] != nil || l[5].ContextMap()["suppressed"] == nil || l[8].ContextMap()["suppressed"] != nil {
 		t.Errorf("journal %v", l)
 	}
 	s.Announce(liveswap.Announcement{Name: "something_else", Person: "x", Key: alice})

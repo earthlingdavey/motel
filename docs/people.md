@@ -183,8 +183,9 @@ the read go on.
   a valid signature by bob@example.com (key SHA256:…) from 203.0.113.9, outside every address list on their grants; refused
   ```
 
-The key's fingerprint is the one `moteld box describe` prints on the
-`person` line. When one of these comes:
+The message shows the key's fingerprint by its start, as `moteld box
+describe` prints it on the `person` line; the alert's `instance` label
+and the journal hold it whole. When one of these comes:
 
 1. **Ask the person** whether it was them: a train, a café, a new
    phone's hotspot or a VPN is a new network.
@@ -215,12 +216,14 @@ every request the proxy forwards is from "an address the box could not
 read", one network for all of them, so after a key's first use through
 the proxy nothing more is told of it. `moteld validate` warns of that.
 A proxy the box is not told of at all makes every request come from
-the proxy's own network.
+the proxy's own network, and a listener on a unix socket makes every
+request one the box could not read.
 
 What is kept: in `/var/lib/motel/people-networks.json` (moteld's own,
 `0600`), each key's fingerprint and its last 16 networks, never a time
 or a whole address. A key whose lines you remove is dropped from it at
-the next person's request after the reload. The file stays when the
+the next person's request after the reload; if you removed everyone,
+it stays until a person is admitted again. The file stays when the
 package is removed, `apt purge` too; delete it to forget them, and
 each key's next use is told again as its first. The journal and your
 channels keep each message (the person's name, the key's fingerprint,

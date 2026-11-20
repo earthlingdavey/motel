@@ -134,31 +134,52 @@ func TestNetworkOf(t *testing.T) {
 }
 
 // TestAnnouncementSummary: the sentences, as the channels and the
-// journal give them; a long name is cut so the network is never.
+// journal give them, the fingerprint's start in them; however long the
+// name and the address, every sentence stays within the channels' 200
+// runes, its end whole.
 func TestAnnouncementSummary(t *testing.T) {
 	fp := "SHA256:VKOVexampleexampleexampleexampleexampleexa" // gitleaks:allow
+	short := "SHA256:VKOVexamplee…"
 	for _, c := range []struct {
 		a    Announcement
 		want string
 	}{
 		{Announcement{Name: EventPersonNewNetwork, Person: "alice@example.com", Key: fp, From: "203.0.113.0/24"},
-			"alice@example.com (key " + fp + ") used this box from 203.0.113.0/24 for the first time"},
+			"alice@example.com (key " + short + ") used this box from 203.0.113.0/24 for the first time"},
 		{Announcement{Name: EventPersonNewNetwork, Person: "alice@example.com", Key: fp, From: "2001:db8:5::/48", First: true},
-			"alice@example.com (key " + fp + ") used this box for the first time, from 2001:db8:5::/48"},
+			"alice@example.com (key " + short + ") used this box for the first time, from 2001:db8:5::/48"},
 		{Announcement{Name: EventPersonNewNetwork, Person: "alice@example.com", Key: fp},
-			"alice@example.com (key " + fp + ") used this box from an address the box could not read for the first time"},
+			"alice@example.com (key " + short + ") used this box from an address the box could not read for the first time"},
 		{Announcement{Name: EventPersonOutsideList, Person: "alice@example.com", Key: fp, From: "203.0.113.9"},
-			"a valid signature by alice@example.com (key " + fp + ") from 203.0.113.9, outside every address list on their grants; refused"},
+			"a valid signature by alice@example.com (key " + short + ") from 203.0.113.9, outside every address list on their grants; refused"},
 		{Announcement{Name: EventPersonOutsideList, Person: "alice@example.com", Key: fp},
-			"a valid signature by alice@example.com (key " + fp + ") from an address the box could not read, outside every address list on their grants; refused"},
+			"a valid signature by alice@example.com (key " + short + ") from an address the box could not read, outside every address list on their grants; refused"},
 	} {
 		if got := c.a.Summary(); got != c.want {
 			t.Errorf("Summary() =\n  %q\nwant\n  %q", got, c.want)
 		}
+		if safe := c.a.Safe(); !slices.Equal(safe, []string{"alice@example.com", short}) {
+			t.Errorf("Safe() = %q", safe)
+		}
 	}
-	long := Announcement{Name: EventPersonNewNetwork, Person: strings.Repeat("a", access.MaxName), Key: fp, From: "2001:db8:ffff::/48"}
-	if s := long.Summary(); !strings.HasSuffix(s, "2001:db8:ffff::/48 for the first time") || len([]rune(s)) > 200 {
-		t.Errorf("a long name: %d runes, %q", len([]rune(s)), s)
+	name := strings.Repeat("a", access.MaxName)
+	for _, c := range []struct {
+		a   Announcement
+		end string
+	}{
+		{Announcement{Name: EventPersonNewNetwork, Person: name, Key: fp, From: "ffff:ffff:ffff::/48"}, "ffff:ffff:ffff::/48 for the first time"},
+		{Announcement{Name: EventPersonNewNetwork, Person: name, Key: fp, From: "ffff:ffff:ffff::/48", First: true}, "for the first time, from ffff:ffff:ffff::/48"},
+		{Announcement{Name: EventPersonNewNetwork, Person: name, Key: fp}, "from an address the box could not read for the first time"},
+		{Announcement{Name: EventPersonOutsideList, Person: name, Key: fp, From: "ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff"}, "from ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff, outside every address list on their grants; refused"},
+		{Announcement{Name: EventPersonOutsideList, Person: name, Key: fp}, "from an address the box could not read, outside every address list on their grants; refused"},
+	} {
+		got := c.a.Summary()
+		if n := len([]rune(got)); n > 200 || !strings.HasSuffix(got, c.end) || !strings.Contains(got, strings.Repeat("a", 48)) || strings.Contains(got, strings.Repeat("a", 49)) {
+			t.Errorf("a long name: %d runes, %q", n, got)
+		}
+		if safe := c.a.Safe(); !strings.Contains(got, safe[0]) || !strings.Contains(got, safe[1]) {
+			t.Errorf("Safe() %q is not what the summary %q shows", safe, got)
+		}
 	}
 }
 
@@ -265,34 +286,43 @@ func TestOutsideListOncePerHour(t *testing.T) {
 }
 
 // TestNetworksRemovedKeyDropped: a newer registry that does not list a
-// key drops it, so a key added back is told as a first use; an older
-// registry (a reload's old handlers) drops nothing.
+// key drops it; a request a reload's old handlers still serve under the
+// older registry, of that removed key, is neither recorded nor told;
+// the key added back is told as a first use. An older registry drops
+// nothing of what the newest lists.
 func TestNetworksRemovedKeyDropped(t *testing.T) {
 	people := newTestPeople(t)
 	k, heard := testNetworks(t, "")
-	fp := people.alice.Fingerprint()
+	fp, carol := people.alice.Fingerprint(), people.carol.Fingerprint()
 	k.seen(people.reg, fp, "alice", addr("203.0.113.9"), zap.NewNop())
 	carolOnly := registryOf(t, map[string]accesstest.Key{"carol": people.carol})
-	k.seen(carolOnly, people.carol.Fingerprint(), "carol", addr("203.0.113.9"), zap.NewNop())
+	k.seen(carolOnly, carol, "carol", addr("203.0.113.9"), zap.NewNop())
 	if k.nets(fp) != nil {
 		t.Fatalf("alice, no longer listed, kept: %v", k.nets(fp))
 	}
-	// The old registry, after the new: nothing is dropped, and alice's
-	// use is recorded as any.
-	k.seen(people.reg, fp, "alice", addr("203.0.113.9"), zap.NewNop())
-	if k.nets(people.carol.Fingerprint()) == nil {
-		t.Error("an older registry dropped a key")
+	if got := heard.take(); len(got) != 2 || got[1].Person != "carol" {
+		t.Fatalf("told %+v", got)
+	}
+	// The old registry, after the new: alice's request is nothing, and
+	// carol's, whom the newest lists, counts.
+	k.seen(people.reg, fp, "alice", addr("198.51.100.9"), zap.NewNop())
+	k.outsideList(people.reg, fp, "alice", addr("198.51.100.9"), zap.NewNop())
+	k.seen(people.reg, carol, "carol", addr("198.51.100.9"), zap.NewNop())
+	if k.nets(fp) != nil || k.nets(carol) == nil || len(k.nets(carol)) != 2 {
+		t.Errorf("under the old registry: alice %v, carol %v", k.nets(fp), k.nets(carol))
+	}
+	if got := heard.take(); len(got) != 1 || got[0].Person != "carol" {
+		t.Errorf("under the old registry, told %+v", got)
 	}
 	again := registryOf(t, map[string]accesstest.Key{"alice": people.alice, "carol": people.carol})
 	k.seen(again, fp, "alice", addr("203.0.113.9"), zap.NewNop())
-	got := heard.take()
-	if len(got) != 3 || !got[2].First || got[2].Person != "alice" {
-		t.Errorf("told %+v", got)
+	if got := heard.take(); len(got) != 1 || !got[0].First || got[0].Person != "alice" {
+		t.Errorf("alice added back: told %+v", got)
 	}
 	k.mu.Lock()
 	defer k.mu.Unlock()
 	if len(k.outside) != 0 || len(k.keys) != 2 {
-		t.Errorf("keys %v", k.keys)
+		t.Errorf("keys %v, outside %v", k.keys, k.outside)
 	}
 }
 
@@ -315,10 +345,17 @@ func registryOf(t testing.TB, keys map[string]accesstest.Key) *access.Registry {
 func TestNetworksFile(t *testing.T) {
 	people := newTestPeople(t)
 	file := filepath.Join(t.TempDir(), "people-networks.json")
+	leftover := filepath.Join(filepath.Dir(file), ".people-networks-1234.tmp")
+	if err := os.WriteFile(leftover, []byte("cut short"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	k, heard := testNetworks(t, file)
 	fp, carol := people.alice.Fingerprint(), people.carol.Fingerprint()
 	k.seen(people.reg, fp, "alice", addr("203.0.113.9"), zap.NewNop())
 	k.settle(t, false)
+	if _, err := os.Stat(leftover); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("a leftover temp file is still there: %v", err)
+	}
 	k.seen(people.reg, fp, "alice", addr("2001:db8:5::1"), zap.NewNop())
 	k.seen(people.reg, fp, "alice", netip.Addr{}, zap.NewNop())
 	k.settle(t, false)
@@ -461,12 +498,12 @@ func TestNetworksFileHangs(t *testing.T) {
 	release := make(chan struct{})
 	k.read = func(string) ([]byte, error) {
 		<-release
-		return []byte(`{"version":1,"keys":{"` + people.alice.Fingerprint() + `":["203.0.113.0/24"]}}`), nil
+		return []byte(`{"version":1,"keys":{"` + people.alice.Fingerprint() + `":["198.51.100.0/24"],"` + people.carol.Fingerprint() + `":["198.51.100.0/24"]}}`), nil
 	}
 	core, logs := observer.New(zap.InfoLevel)
 	began := time.Now()
 	for i := range 50 {
-		k.seen(people.reg, people.alice.Fingerprint(), "alice", addr(fmt.Sprintf("203.0.113.%d", i)), zap.New(core))
+		k.seen(people.reg, people.alice.Fingerprint(), "alice", addr(fmt.Sprintf("10.0.%d.1", i)), zap.New(core))
 	}
 	if took := time.Since(began); took > 40*time.Millisecond {
 		t.Errorf("fifty requests took %s while the file was being read", took)
@@ -481,13 +518,16 @@ func TestNetworksFileHangs(t *testing.T) {
 	if l := logs.FilterMessageSnippet("could not be used").All(); len(l) != 1 || !strings.Contains(l[0].ContextMap()["error"].(string), "not read within 50ms") {
 		t.Errorf("journal %v", logs.All())
 	}
+	// The read that comes back after the wait is dropped: neither
+	// network it held is kept.
 	close(release)
+	time.Sleep(20 * time.Millisecond)
 	k.settle(t, false)
-	if got := heard.take(); len(got) != 1 || !got[0].First {
-		t.Errorf("told %+v", got)
+	if got := heard.take(); len(got) != 50 || !got[0].First || got[0].From != "10.0.0.0/24" || got[49].From != "10.0.49.0/24" {
+		t.Errorf("told %d: %+v", len(got), got)
 	}
-	if n := k.nets(people.alice.Fingerprint()); !slices.Equal(n, []string{"203.0.113.0/24"}) {
-		t.Errorf("kept %v", n)
+	if n := k.nets(people.alice.Fingerprint()); len(n) != networksPerKey || slices.Contains(n, "198.51.100.0/24") || k.nets(people.carol.Fingerprint()) != nil {
+		t.Errorf("kept %v, carol %v", n, k.nets(people.carol.Fingerprint()))
 	}
 }
 

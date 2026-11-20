@@ -83,10 +83,13 @@ const (
 	// unknownNetwork is how the file spells an address the box could
 	// not read.
 	unknownNetwork = "unknown"
-	// summaryNameRunes cuts a person's name in a summary, so that the
-	// network or address after it is never cut off by the channels'
-	// 200: the journal's line names the person whole.
-	summaryNameRunes = 64
+	// summaryNameRunes cuts a person's name in a summary, and
+	// summaryKeyRunes the key's fingerprint, so that the longest sentence
+	// (an outside-list's, with an IPv6 address) stays under the
+	// channels' 200: the journal's line names both whole, and the alert's
+	// instance label is the whole fingerprint.
+	summaryNameRunes = 48
+	summaryKeyRunes  = len("SHA256:") + 12
 )
 
 // Announcement is one of the two events about a person's key.
@@ -106,7 +109,7 @@ type Announcement struct {
 // Summary is the announcement's one sentence, as the operator's
 // channels and the journal give it.
 func (a Announcement) Summary() string {
-	who := deploytrust.CutRunes(a.Person, summaryNameRunes) + " (key " + a.Key + ")"
+	who := a.shownPerson() + " (key " + a.shownKey() + ")"
 	from := "from " + a.From
 	if a.From == "" {
 		from = "from an address the box could not read"
@@ -120,6 +123,23 @@ func (a Announcement) Summary() string {
 		return who + " used this box " + from + " for the first time"
 	}
 }
+
+// shownPerson and shownKey are the name and the fingerprint as Summary
+// writes them: the fingerprint's start, as the person's line in `moteld
+// box describe` begins.
+func (a Announcement) shownPerson() string { return deploytrust.CutRunes(a.Person, summaryNameRunes) }
+
+func (a Announcement) shownKey() string {
+	if len(a.Key) <= summaryKeyRunes {
+		return a.Key
+	}
+	return deploytrust.CutRunes(a.Key, summaryKeyRunes) + "…"
+}
+
+// Safe are the strings of the summary a response filter must leave as
+// written: the name and the fingerprint as it shows them (a
+// fingerprint looks generated).
+func (a Announcement) Safe() []string { return []string{a.shownPerson(), a.shownKey()} }
 
 // Announcer is told each announcement: notify's, which raises it as a
 // one-shot to the operator's channels, installed by its Provision
@@ -262,6 +282,10 @@ func (k *PeopleNetworks) seen(reg *access.Registry, fp, person string, addr neti
 	k.mu.Lock()
 	k.logger = logger
 	k.dropUnlistedLocked(reg)
+	if k.droppedLocked(reg, fp) {
+		k.mu.Unlock()
+		return
+	}
 	kn := k.keys[fp]
 	if kn == nil {
 		kn = &keyNetworks{}
@@ -313,6 +337,10 @@ func (k *PeopleNetworks) outsideList(reg *access.Registry, fp, person string, ad
 	k.mu.Lock()
 	k.logger = logger
 	k.dropUnlistedLocked(reg)
+	if k.droppedLocked(reg, fp) {
+		k.mu.Unlock()
+		return
+	}
 	now := k.now()
 	if last, ok := k.outside[fp]; ok && now.Sub(last) < outsideListEvery {
 		k.mu.Unlock()
@@ -374,6 +402,18 @@ func (k *PeopleNetworks) dropUnlistedLocked(reg *access.Registry) {
 	}
 }
 
+// droppedLocked reports whether a request under reg, older than the
+// newest registry seen, is of a key the newest no longer lists: one of a
+// removed person's, still served by a reload's old handlers. It is
+// neither recorded nor told: the person is gone.
+func (k *PeopleNetworks) droppedLocked(reg *access.Registry, fp string) bool {
+	if reg == nil || reg.Generation() >= k.generation {
+		return false
+	}
+	_, listed := k.listed.Name(fp)
+	return !listed
+}
+
 // changedLocked says memory holds what the file does not, and has it
 // written: at once when urgent (a network added, a key dropped), else
 // within networksReorderEvery of the last write. Nothing is written
@@ -422,6 +462,10 @@ func (k *PeopleNetworks) flush() {
 	file, write := k.file, k.write
 	k.mu.Unlock()
 
+	// A temp file a write cut short left (a crash before its rename),
+	// by its pattern alone: here, where no other write of this process
+	// can be under way.
+	removeOwnLeftovers(filepath.Dir(file), networksPattern)
 	err := write(file, encodeNetworks(snapshot))
 
 	k.mu.Lock()
@@ -455,9 +499,6 @@ func (k *PeopleNetworks) startLoadLocked() {
 		k.loaded(nil, fmt.Errorf("it was not read within %s", k.wait))
 	})
 	go func() {
-		// A temp file a write cut short left: by its pattern alone, in
-		// the background like the read.
-		removeOwnLeftovers(filepath.Dir(file), networksPattern)
 		b, err := read(file)
 		k.loaded(b, err)
 	}()

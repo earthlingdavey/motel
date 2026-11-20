@@ -78,7 +78,7 @@ type peopleSink struct{ e *engine }
 func (s peopleSink) Announce(a liveswap.Announcement) {
 	oneShot := func(name string) {
 		s.e.report(Event{Name: name, Kind: kindEvent, Severity: SeverityWarning, Source: sourceAccess,
-			Instance: a.Key, Summary: a.Summary(), Safe: []string{a.Key, a.Person}})
+			Instance: a.Key, Summary: a.Summary(), Safe: a.Safe()})
 	}
 	switch a.Name {
 	case liveswap.EventPersonNewNetwork, liveswap.EventPersonOutsideList:
