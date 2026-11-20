@@ -128,9 +128,13 @@ var sandboxBaseView = []string{
 // route: the user manager's private socket and session bus (with
 // PrivateUsers= mapping the app's uid one-to-one, reaching it lets the
 // app ask the manager for a unit with no sandbox at all — read-only is
-// no defence, since connecting to a socket is not a write) and the
-// kernel interfaces the unit gets its own.
-var sandboxNeverReachable = []string{"/run/user", "/dev", "/sys", "/proc"}
+// no defence, since connecting to a socket is not a write), journald's
+// sockets (an app that reached them could write lines under another
+// app's identifier, which an app's logs are read by: /dev/log, under
+// /dev, points into the same directory) and the kernel interfaces the
+// unit gets its own. An app's output reaches journald only as its
+// unit's own stream, which the manager opens before the view exists.
+var sandboxNeverReachable = []string{"/run/user", "/run/systemd/journal", "/dev", "/sys", "/proc"}
 
 // sandboxMotelPaths is the supervisor's own state on a packaged
 // install: TLS keys and certificates, the admin socket's directory,

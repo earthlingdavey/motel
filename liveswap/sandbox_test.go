@@ -1194,6 +1194,35 @@ func TestBindDestinationsAreTheConfiguredPaths(t *testing.T) {
 	}
 }
 
+// TestSandboxViewHoldsNoJournalSocket: nothing an app's unit binds
+// reaches journald's sockets, by which a process could write lines
+// under another app's identifier, the field an app's logs are selected
+// by (motel_logs.go): no base-view entry is or holds /run/systemd/journal
+// or /dev/log, /run/systemd is never bound whole (only its resolve
+// directory), and a bind source onto the journal's directory, or one
+// holding it, is refused at launch. The integration lane writes from
+// inside a real unit (TestIntegrationLogsNothingForgedFromTheSandbox).
+func TestSandboxViewHoldsNoJournalSocket(t *testing.T) {
+	for _, p := range sandboxBaseView {
+		for _, socket := range []string{"/run/systemd/journal", "/run/systemd/journal/stdout", "/run/systemd/journal/socket", "/dev/log"} {
+			if overlaps(socket, p) {
+				t.Errorf("the base view's %s reaches %s", p, socket)
+			}
+		}
+		if pathWithin("/run/systemd", p) {
+			t.Errorf("the base view's %s binds /run/systemd whole", p)
+		}
+	}
+	for _, p := range []string{"/run/systemd/journal", "/run/systemd/journal/stdout", "/run/systemd", "/run", "/dev/log"} {
+		if err := refusedAsBindSource(p); err == nil {
+			t.Errorf("a bind source of %s was accepted at launch", p)
+		}
+	}
+	if err := refusedAsBindSource("/run/systemd/journald-motel"); err != nil {
+		t.Errorf("a sibling of the journal's directory, which is no part of it: %v", err)
+	}
+}
+
 // TestOverlapIsSymmetric: a path that CONTAINS a protected tree
 // exposes it exactly as surely as one inside it, because the binds are
 // recursive — `shared -> /run` carries /run/user (the manager's
