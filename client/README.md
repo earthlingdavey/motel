@@ -47,6 +47,18 @@ motel metrics <app> [--range 1h|24h|7d|14d]
 motel                               on a terminal, screens over the same reads (below)
 ```
 
+Later than v0.8.0, and not in a client built from v0.8.0's source:
+`status --follow` and following a deploy on an app's screen, which
+follow a box at v0.8.0 too; `box status`'s word that the Caddyfile is
+not the one its commit installed, which a box at v0.8.0 never sends,
+so nothing is said either way; and `backup status`, `monitor alerts`,
+`monitor rules` and `metrics`, with the box screen's backups line and
+the screens' `:backups`, `:alerts`, `:rules` and `:metrics` (`g` on an
+app's screen), whose reads a box has on each release after v0.8.0
+only. A later client asking a box at v0.8.0 for one of those reads is
+answered `404`: the command exits 6, and the screen says the box
+answered 404.
+
 Each command takes `--json`; `motel` alone, the screens, does not. `whoami`, `apps`, `backup status`, `monitor alerts`, `monitor rules` and `metrics` are asked with your own key
 only: with `MOTEL_TOKEN` set, name the key with `--key` (else exit 2,
 nothing sent). `<app>` is a name, or the app's URL
@@ -138,8 +150,8 @@ the active ones first and then the soonest to start, and says when it
 held more: the first line then says so.
 
 `monitor rules` reads `GET /_motel/rules`, for a viewer of the box, the
-remote twin of `moteld monitor rules` (motelctl-spec, row 15) without
-the store's socket and queries, which are the box's alone; `--app
+remote twin of `moteld monitor rules` without the store's socket and
+queries, which are the box's alone; `--app
 <app>` reads `GET /_motel/apps/<app>/rules`, for a viewer of the app or
 of the box: the rules that apply to it (every app's, and its own `rule`
 lines) with its numbers alone, never the box's own checks. The first

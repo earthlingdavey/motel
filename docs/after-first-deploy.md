@@ -6,8 +6,8 @@ config, secrets, the way back from an upgrade, day to day, and what to
 do at 3am. [Hardening the box](hardening.md) — SSH by key only, the
 SSH port shut to everyone but you, and, if you want them, an
 administrator who is not root, Debian's updates installed on their
-own, and seven kernel network modules no app needs refused — has a
-page of its own.
+own, seven kernel network modules no app needs refused, and a memory
+and CPU ceiling for all the apps together — has a page of its own.
 
 Names are the ones from the first page.
 

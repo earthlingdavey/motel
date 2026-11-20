@@ -283,7 +283,8 @@ motel-backup[9377]: demo: restore proven: snapshot c4f0d7c1 was fetched and chec
 
 A person with the viewer role on the box reads the same from their
 own laptop, without ssh: `motel backup status`, or `:backups` in
-`motel` (docs/people.md). It is what `status` says on the box, so it is
+`motel` (docs/people.md), on each release after v0.8.0; a box at
+v0.8.0 answers that read `404`. It is what `status` says on the box, so it is
 the box's claim about itself, as the next section says.
 
 What every line of `status` means is under

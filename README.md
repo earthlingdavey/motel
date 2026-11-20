@@ -1,7 +1,7 @@
 # motel
 
 **Deploy from `git push` to a single cheap server, with zero downtime.**
-One binary that is your reverse proxy, your deploy pipeline, your rate
+One package that is your reverse proxy, your deploy pipeline, your rate
 limiter, your page cache, and your apps' hourly backups, with its
 config and secrets kept in git — for indie hackers, solo devs, and
 small businesses running real apps on cheap servers. No Docker, no
@@ -114,12 +114,18 @@ without the feature it exists for.
 The laptop client, `motel` (experimental; [client/](client/README.md)),
 is on the same page for an M-series Mac from the first release after
 v0.8.0 on: `motel_<version>_darwin_arm64.tar.gz`, with the release's
-own number. Its README's "Getting it" fetches and checks it, and
-builds it from a clone on Linux and on an Intel Mac.
+own number. No release up to v0.8.0 carries it, so on those there is
+nothing to download: build it from a clone. Its README's "Getting it"
+fetches and checks it, and builds it from a clone on Linux and on an
+Intel Mac.
 
 **Installing and upgrading need root; everyday administering does
 not.** Checking a config
-(`moteld validate`) needs no privilege, and reading the journal —
+(`moteld validate`) needs no privilege, except on the box for a file
+whose `monitor` block has more than a `metrics` line: validate then
+reads the box's secrets in `/etc/motel/secrets`, which only root and
+the `motel` group can enter, and refuses the file to anyone else, so
+run it as root there. Reading the journal —
 moteld's and every app's — needs the `adm` group. The config changes
 only by a signed push from the box's repository
 ([examples/box](examples/box)), and so do the apps' secrets kept there,
@@ -140,8 +146,9 @@ changing the config, secrets (whose reference is
 [Secrets](docs/secrets.md)) and the way back, and
 [Hardening the box](docs/hardening.md) covers SSH by key only, the SSH
 port shut, and, optionally, an administrator who is not root,
-Debian's updates installed on their own, and seven kernel network
-modules no app needs refused.
+Debian's updates installed on their own, seven kernel network
+modules no app needs refused, and a memory and CPU ceiling for all the
+apps together.
 The first two use the three directories below, which the e2e suite
 builds and deploys on every change, so what they say works:
 

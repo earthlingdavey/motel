@@ -17,7 +17,7 @@ and signs.
 | File | What it is |
 |---|---|
 | `deploy.example.com/Caddyfile` | One box's whole config; becomes `/etc/motel/Caddyfile` on the box whose deploy host names the directory |
-| `deploy.example.com/MOTEL_VERSION` | Optional: the release that box runs, one line (`0.3.1`, `v0.3.1-rc1`), when it is not the one the workflow checks with ([A box on another release](#a-box-on-another-release)); never sent to the box |
+| `deploy.example.com/MOTEL_VERSION` | Optional: the release that box runs, one line (`0.8.0`, `v0.8.0-rc1`), when it is not the one the workflow checks with ([A box on another release](#a-box-on-another-release)); never sent to the box |
 | `.github/workflows/apply.yml` | `make check` on every push and pull request, with the latest stable moteld (a `MOTEL_VERSION` repository variable pins another, such as a prerelease, for every box; a box's own `MOTEL_VERSION` file pins that box's); on `main`, sends the commit to each box (`bin/apply`) |
 | `Makefile` | `make signer`, `make check`, `make wip`; for secrets, `make secret`, `make secrets`, `make secret-show`, `make rekey`, `make secrets-import` |
 | `bin/` | What the Makefile and the workflow run |
@@ -203,8 +203,10 @@ what it runs.
 
 An app's secrets are commits too, encrypted so that only the box
 and its readers can read them: see [Secrets](#secrets). Hardening the box — SSH by key only, the
-SSH port shut, and, optionally, an administrator who is not root and
-Debian's updates installed on their own — is on
+SSH port shut, and, optionally, an administrator who is not root,
+Debian's updates installed on their own, seven kernel network modules
+no app needs refused, and a memory and CPU ceiling for all the apps
+together — is on
 [Hardening the box](https://github.com/smallhoursorg/motel/blob/main/docs/hardening.md).
 
 ## Change the config
@@ -366,16 +368,16 @@ them, named, with nothing changed. A file beside the box's Caddyfile
 pins that box to its own release:
 
 ```
-deploy.example.com/MOTEL_VERSION     one line, of the form 0.3.1-rc1 or v0.3.1-rc1
+deploy.example.com/MOTEL_VERSION     one line, of the form 0.8.0-rc1 or v0.8.0-rc1
 ```
 
 `bin/install-moteld` then installs that release too, as
-`moteld-0.3.1-rc1`, verified against its `checksums.txt` like the
+`moteld-0.8.0-rc1`, verified against its `checksums.txt` like the
 rest, and `make check` checks that box's files with it, saying so in
 its line:
 
 ```
-deploy.example.com/Caddyfile → https://deploy.example.com/ (1 app, 1 signer), checked with moteld-0.3.1-rc1
+deploy.example.com/Caddyfile → https://deploy.example.com/ (1 app, 1 signer), checked with moteld-0.8.0-rc1
 ```
 
 For each box, in this order: its file; else the `MOTEL_VERSION`

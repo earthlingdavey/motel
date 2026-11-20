@@ -25,6 +25,9 @@ hardware key. Ask them for the line `motel key
 --name <their name>` prints: the `person` line for their key, ready to
 paste (the `motel` command is the laptop client, experimental; without
 it, the one line of their `.pub` file, with `person <name>` in front).
+No release up to v0.8.0 carries the client: on those, there is nothing
+to download, and they build it from a clone of this repository
+(client/README.md, "Getting it").
 Once you have pushed, `motel whoami` tells them who the box takes them
 to be and what they may read from where they are. If their key lives in
 an agent (a password manager's, say), `motel` reaches it through
@@ -54,8 +57,10 @@ box {
   numbers, and its numbers over time. `grant <name> viewer box` lets them read every app,
   the box's own status, what the box says of its backups, every
   alert and silence the box's Alertmanager holds, and every rule the box
-  alerts on with every number. `viewer` never reads logs, on an app or
-  on the box.
+  alerts on with every number. On a box at v0.8.0 either grant reads
+  status and deploys alone: the alerts, rules, numbers over time and
+  backups are on each release after it ([below](#what-they-reach)).
+  `viewer` never reads logs, on an app or on the box.
 - `grant <name> logs app <app>` lets them read everything `viewer`
   reads on that app, and its logs; `grant <name> logs box` everything
   `viewer` reads on the box, and every app's logs. Read [what a logs
@@ -93,11 +98,15 @@ box {
   as that listener's `allow` list. `moteld validate` warns of both.
 
 Check the file, then push it as any change to the box (a signed
-commit):
+commit). `make check`, at the top of the box's repository, checks every
+box's file; it needs a Linux `moteld`, and on a Mac the pull request's
+check runs it instead. Off the box, a bare `moteld validate` refuses a
+file whose `monitor` block reads a `{secret.…}`, since those values are
+on the box alone; `make check` tells it their names. To see the people
+lines as the box reads them, on Linux:
 
 ```sh
-moteld validate --config Caddyfile
-moteld box describe Caddyfile
+moteld box describe deploy.example.com/Caddyfile
 ```
 
 `describe` prints a `person` line per key with its fingerprint, which
@@ -168,14 +177,20 @@ signed:
 | `/_motel/apps/<app>/series[?range=1h\|24h\|7d\|14d]` | the app's numbers over the window (the hour when none is named), as the box's metrics store holds them, a point a step (a minute over the hour, 5 minutes over the day, 30 over 7 days, an hour over 14): its memory (each step's highest), CPU, and for an app behind `observe` its requests a second, 5xx share and p95; a step with no point is missing, never a zero; and whether the box could ask (`"store"`: `on`, `off` when the box's monitor block has no metrics line or there is none, `unanswered`). No panel, step or query of the reader's: the window is the one choice. Up to 30 s old. Experimental: the route and its JSON may change until a release's notes say otherwise |
 | `/_motel/alerts` | every alert the box's Alertmanager holds, for a viewer of the box: as for an app's, and with each the app it names and its instance (a path, a certificate's name, another site's); and every silence that is active or waits to start: its matchers, when it starts and ends, who made it and why (the operator's own words). Not the heartbeat, the test alert or the deploy mute itself, nor the two about a person's key (below), and no expired silence. At most 500 alerts, the newest, and 200 silences, the active ones and then the soonest to start, with `more_alerts` or `more_silences` when the box held more. Up to 5 s old |
 
+The last six rows, from `/_motel/backups` on, are on each release
+after v0.8.0. A box at v0.8.0 answers each of them `404`, `{"error":"not
+found"}`, to a person it admits.
+
 The `motel` command (for an M-series Mac, an archive on each release
 after v0.8.0; elsewhere, built from a clone of this repository:
 client/README.md, "Getting it") makes
 the token and asks:
 `motel whoami --box deploy.example.com`, `motel apps`, `motel status
-<app>`, `motel deploys <app> [<version>]`, `motel box status`, `motel backup
-status`, `motel monitor alerts [--app <app>]`, `motel monitor rules [--app <app>]`,
-`motel metrics <app> [--range 1h|24h|7d|14d]`; and
+<app>`, `motel deploys <app> [<version>]`, `motel box status`; on each
+release after v0.8.0, `motel backup status`, `motel monitor alerts
+[--app <app>]`, `motel monitor rules [--app <app>]` and `motel metrics
+<app> [--range 1h|24h|7d|14d]`, which a box at v0.8.0 answers `404`
+(the client exits 6); and
 `motel` alone, on a terminal, shows the same on screens. Without
 it, this makes one by hand and asks who they are (`box` is the box's
 name; the key is theirs; GNU or macOS `base64`):
@@ -197,7 +212,8 @@ or a box whose moteld is too old for people. An app they may not read
 is a `403` saying which role it needs, the same whether the app exists
 or not. Too many requests (more than 60 at once, then 2 a second) is a
 `429` with `Retry-After`. An app's logs without a `logs` grant on it,
-or on the box, are a `403` that needs `logs`, a viewer of the box's too.
+or on the box, are a `403` that needs `logs`, for a viewer of the box
+too.
 
 Who reads what, by the grant that applies from where they are:
 
@@ -210,6 +226,9 @@ Who reads what, by the grant that applies from where they are:
 | deploy, roll back, push | no | no | no | no | no |
 
 ## When their key is used from somewhere new
+
+On each release after v0.8.0. A box at v0.8.0 tells no one of where a
+key is used.
 
 A stolen key reads before anything else, so the box tells your
 monitor channels (the `operator` ones) when a person's key is used in a
