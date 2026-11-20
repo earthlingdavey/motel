@@ -125,6 +125,7 @@ func (m *MetricsStore) provision(ctx caddy.Context, ls *liveswap.App, n *App, lo
 			}
 		}
 		ls.SetMetricsSource(newMetricsView(m.client, m.logger))
+		ls.SetSeriesSource(seriesSource{view: theSeries, store: m.client, logger: m.logger})
 	}
 	if n == nil {
 		m.logger.Warn(storeAloneMessage)

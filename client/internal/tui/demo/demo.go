@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/fs"
+	"math"
 	"regexp"
 	"strconv"
 	"sync"
@@ -35,7 +36,7 @@ type Fake struct {
 
 	mu sync.Mutex
 	// Errs makes a read fail: keyed "whoami", "apps", "box", "backups", "box-alerts", an app's
-	// name, "<app>@<version>", or "alerts:<app>".
+	// name, "<app>@<version>", "alerts:<app>", or "series:<app>".
 	Errs map[string]error
 	// Bodies replaces a fixture's body, keyed by its path in fixtures/.
 	Bodies map[string]string
@@ -199,6 +200,87 @@ func (f *Fake) BoxAlerts(ctx context.Context) (model.Got[wire.BoxAlerts], error)
 	b, err := f.load(ctx, model.Job{Kind: model.KBoxAlerts}, "box-alerts", "box-alerts.json", &g.V)
 	g.Body = b
 	return g, err
+}
+
+// Series answers series/<app>/<range>.json when a test gave one
+// (Body), else a series it makes over the window ending at its clock's
+// last step: every app's memory and CPU, and for blog and shop their
+// requests too, with a gap of an hour and a half (a stop) six hours
+// back, so a screen shows a window whole, a gap and the request panels.
+// For an app the fixtures do not have, the store holds nothing.
+func (f *Fake) Series(ctx context.Context, app, rng string) (model.Got[wire.Series], error) {
+	var g model.Got[wire.Series]
+	j := model.Job{Kind: model.KSeries, App: app, Range: rng}
+	path := "series/" + app + "/" + rng + ".json"
+	f.mu.Lock()
+	_, replaced := f.Bodies[path]
+	now := f.Now()
+	f.mu.Unlock()
+	if !replaced {
+		b, err := json.Marshal(made(app, rng, now))
+		if err != nil {
+			return g, err
+		}
+		f.Body(path, string(b))
+	}
+	b, err := f.load(ctx, j, "series:"+app, path, &g.V)
+	g.Body = b
+	if !replaced {
+		f.mu.Lock()
+		delete(f.Bodies, path)
+		f.mu.Unlock()
+	}
+	return g, err
+}
+
+// made is the series Series makes of app over rng ending at now's last
+// step: numbers from a sine and the app's name, so a screen draws the
+// same plots at every run.
+func made(app, rng string, now time.Time) wire.Series {
+	spans := map[string]time.Duration{"1h": time.Hour, "24h": 24 * time.Hour, "7d": 7 * 24 * time.Hour, "14d": 14 * 24 * time.Hour}
+	steps := map[string]time.Duration{"1h": time.Minute, "24h": 5 * time.Minute, "7d": 30 * time.Minute, "14d": time.Hour}
+	span, step := spans[rng], steps[rng]
+	s := wire.Series{Store: wire.StoreOn, Window: rng, Panels: []wire.Panel{}}
+	if span == 0 {
+		return s
+	}
+	end := now.Truncate(step).UTC()
+	s.StepSeconds, s.End = int(step/time.Second), &end
+	if _, err := fs.Stat(fixtures, "fixtures/status/"+app+".json"); err != nil {
+		return s
+	}
+	seed := 0.0
+	for _, c := range app {
+		seed += float64(c)
+	}
+	observed := app == "blog" || app == "shop"
+	panels := map[string][][2]float64{}
+	for t := end.Add(-span); !t.After(end); t = t.Add(step) {
+		back := end.Sub(t)
+		if back > 6*time.Hour && back < 7*time.Hour+30*time.Minute {
+			continue // stopped: no point
+		}
+		x := float64(t.Unix())/3600 + seed
+		ts := float64(t.Unix())
+		day := (math.Sin(x*2*math.Pi/24) + 1) / 2
+		// The CPU and the requests follow the day hours apart from the
+		// memory, so the plots are not one shape.
+		busy := (math.Sin((x-7)*2*math.Pi/24) + 1) / 2
+		panels[wire.PanelMemory] = append(panels[wire.PanelMemory], [2]float64{ts, math.Round((120 + 60*day + float64(int(seed)%40)) * (1 << 20))})
+		panels[wire.PanelCPU] = append(panels[wire.PanelCPU], [2]float64{ts, math.Round((0.02+0.05*busy)*1e6) / 1e6})
+		if observed {
+			panels[wire.PanelRequests] = append(panels[wire.PanelRequests], [2]float64{ts, math.Round((2+6*busy)*1e6) / 1e6})
+			panels[wire.Panel5xx] = append(panels[wire.Panel5xx], [2]float64{ts, math.Round(0.004*busy*busy*1e4) / 1e4})
+			panels[wire.PanelP95] = append(panels[wire.PanelP95], [2]float64{ts, math.Round((40+80*busy*busy)*10) / 10})
+		}
+	}
+	for _, p := range []struct{ name, unit string }{{wire.PanelMemory, wire.UnitBytes}, {wire.PanelCPU, wire.UnitCores},
+		{wire.PanelRequests, wire.UnitPerSecond}, {wire.Panel5xx, wire.UnitShare}, {wire.PanelP95, wire.UnitMs}} {
+		if pts := panels[p.name]; len(pts) > 0 {
+			s.Panels = append(s.Panels, wire.Panel{Name: p.name, Unit: p.unit, Points: pts})
+		}
+	}
+	return s
 }
 
 // Key is the key the demo says it signs with: a made-up one.

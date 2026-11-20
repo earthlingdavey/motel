@@ -74,7 +74,7 @@ func (u *UI) run(text string) {
 		return w[1], true
 	}
 	// Each word takes so many: more is not run, and said.
-	most, known := map[string]int{"status": 2, "app": 2, "deploys": 3, "q": 1, "quit": 1, "apps": 1, "whoami": 1, "me": 1, "box": 1, "backups": 1, "alerts": 1, "help": 1, "keys": 1}[w[0]]
+	most, known := map[string]int{"status": 2, "app": 2, "deploys": 3, "q": 1, "quit": 1, "apps": 1, "whoami": 1, "me": 1, "box": 1, "backups": 1, "alerts": 1, "metrics": 3, "help": 1, "keys": 1}[w[0]]
 	if known && len(w) > most {
 		say(own("one word too many: "), quoted(strings.Join(w[most:], " ")), own(" is more than :"+w[0]+" takes"))
 		return
@@ -97,6 +97,22 @@ func (u *UI) run(text string) {
 		if w[0] == "deploys" && len(w) > 2 {
 			u.open(model.View{Screen: model.ScreenRecord, App: a, Version: w[2]})
 		}
+	case "metrics":
+		a, ok := app()
+		if !ok {
+			return
+		}
+		rng := model.SeriesRanges[0]
+		if len(w) > 2 {
+			if !slices.Contains(model.SeriesRanges, w[2]) {
+				say(quoted(w[2]), own(" is not a window: 1h, 24h, 7d or 14d"))
+				return
+			}
+			rng = w[2]
+		}
+		u.metricsRange = rng
+		u.open(model.View{Screen: model.ScreenApp, App: a})
+		u.open(model.View{Screen: model.ScreenMetrics, App: a, Range: rng})
 	case "whoami", "me":
 		u.open(model.View{Screen: model.ScreenMe})
 	case "box":
@@ -137,6 +153,8 @@ func (u *UI) complete(text string) []string {
 		all = append(all, "box", "backups", "alerts")
 	}
 	for _, a := range u.S.Names() {
+		// Not "metrics <app>": offered for "me", it would stand between
+		// esc and closing the line.
 		all = append(all, "status "+a, "deploys "+a)
 	}
 	var out []string

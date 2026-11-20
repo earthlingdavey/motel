@@ -391,6 +391,15 @@ func (l live) Alerts(ctx context.Context, app string) (model.Got[wire.Alerts], e
 	return got(v, ans, err)
 }
 
+func (l live) Series(ctx context.Context, app, rng string) (model.Got[wire.Series], error) {
+	a, err := client.ParseApp(app)
+	if err != nil {
+		return model.Got[wire.Series]{}, argument(err)
+	}
+	v, ans, err := l.c.Series(ctx, a, rng)
+	return got(v, ans, err)
+}
+
 func (l live) BoxAlerts(ctx context.Context) (model.Got[wire.BoxAlerts], error) {
 	v, ans, err := l.c.BoxAlerts(ctx)
 	return got(v, ans, err)

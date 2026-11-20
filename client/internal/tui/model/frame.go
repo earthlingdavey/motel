@@ -20,6 +20,9 @@ const (
 	ScreenBox
 	ScreenBackups
 	ScreenAlerts
+	// ScreenMetrics is an app's numbers over a window, opened from its
+	// screen.
+	ScreenMetrics
 	ScreenHelp
 	ScreenRefused
 	// ScreenStopHelp is help opened over a stop screen: it leaves, asks
@@ -27,10 +30,12 @@ const (
 	ScreenStopHelp
 )
 
-// View is the screen open and what it is of.
+// View is the screen open and what it is of: the app, a record's
+// version, the metrics screen's window.
 type View struct {
 	Screen       Screen
 	App, Version string
+	Range        string
 }
 
 // StopLine says why every read stopped, in the client's words, for the
@@ -53,7 +58,7 @@ func (s *Session) askAgain(now time.Time) Line {
 }
 
 // screenReads is the read behind each screen that has one.
-var screenReads = map[Screen]Kind{ScreenApps: KApps, ScreenApp: KStatus, ScreenRecord: KDeploy, ScreenMe: KWhoAmI, ScreenBox: KBox, ScreenBackups: KBackups, ScreenAlerts: KBoxAlerts}
+var screenReads = map[Screen]Kind{ScreenApps: KApps, ScreenApp: KStatus, ScreenRecord: KDeploy, ScreenMe: KWhoAmI, ScreenBox: KBox, ScreenBackups: KBackups, ScreenAlerts: KBoxAlerts, ScreenMetrics: KSeries}
 
 // CommandArgs is the motel command line that reads what v shows, as
 // its arguments: the command's words, --box so it works pasted
@@ -78,6 +83,8 @@ func (s *Session) commandArgs(v View, json bool) ([]string, bool) {
 			pos = append(pos, v.App)
 		case "<version>":
 			pos = append(pos, v.Version)
+		case "<range>":
+			args = append(args, v.Range)
 		default:
 			args = append(args, w)
 		}
@@ -158,6 +165,10 @@ func (s *Session) Body(v View) ([]byte, time.Time, bool) {
 		if s.BoxAlertsSt != nil {
 			return s.BoxAlertsSt.Body, s.BoxAlertsSt.At, true
 		}
+	case ScreenMetrics:
+		if g, _ := s.Series(v.App, v.Range); g != nil {
+			return g.Body, g.At, true
+		}
 	}
 	return nil, time.Time{}, false
 }
@@ -182,6 +193,9 @@ func (s *Session) readErr(v View) error {
 		return s.BackupsErr
 	case ScreenAlerts:
 		return s.BoxAlertsErr
+	case ScreenMetrics:
+		_, err := s.Series(v.App, v.Range)
+		return err
 	}
 	return nil
 }

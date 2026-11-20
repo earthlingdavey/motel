@@ -38,10 +38,12 @@ motel box status                    the commit the box runs, its Caddyfile's dig
 motel backup status                 what the box says of its backups, for a viewer of the box: the box's own claim
 motel monitor alerts --app <app>    an app's alerts, as the box's Alertmanager holds them
 motel monitor alerts                what the box's Alertmanager holds, for a viewer of the box: every alert, and the silences
+motel metrics <app> [--range 1h|24h|7d|14d]
+                                    an app's numbers over time: memory, cpu, requests, 5xx share, p95
 motel                               on a terminal, screens over the same reads (below)
 ```
 
-Each command takes `--json`; `motel` alone, the screens, does not. `whoami`, `apps`, `backup status` and `monitor alerts` are asked with your own key
+Each command takes `--json`; `motel` alone, the screens, does not. `whoami`, `apps`, `backup status`, `monitor alerts` and `metrics` are asked with your own key
 only: with `MOTEL_TOKEN` set, name the key with `--key` (else exit 2,
 nothing sent). `<app>` is a name, or the app's URL
 (`https://deploy.example.com/blog`, as `MOTEL_URL` holds it), which names
@@ -108,6 +110,32 @@ as not known, the box's word quoted, and an operator it does not know
 as `?`. The box sends at most 500 alerts, the newest, and 200 silences,
 the active ones first and then the soonest to start, and says when it
 held more: the first line then says so.
+
+`metrics <app> [--range 1h|24h|7d|14d]` reads `GET
+/_motel/apps/<app>/series`, for a viewer of the app or of the box: the
+app's numbers over the window (the box's default, the hour, when none is
+named), a point a step (a minute over the hour, 5 minutes over the day,
+30 over 7 days, an hour over 14), the newest of the last whole step. It
+prints the box's window, step and end, then a line a panel it knows
+(`memory`, `cpu`, `requests`, `5xx share`, `p95`): its lowest, highest
+and newest value, each with its time, and how many of the window's
+steps have a point; every word and number the client's own, written
+from the box's numbers. A panel it does not know is named as the box's,
+a word of its grammar, and not drawn; the request panels' absence says
+the box counts them only for an app behind `observe`. `--json` prints
+the points. It exits 0 when it read them, and when the box keeps no
+numbers (`"store":"off"`: no metrics line); 3 when the box could not
+ask its store (`"store":"unanswered"`) or names it in a word the client
+does not know, `--json` then printing the client's own sentence. An
+answer is held to its grammars before anything of it is used: the
+store's word and each panel's name and unit to `^[a-z0-9][a-z0-9_]{0,31}$`
+(the store's `^[a-z][a-z0-9_]{0,31}$`), the window to the client's set
+and the one asked, a step and an end with the store's answer, each name
+once, no more points than the window has steps, each inside the window,
+oldest first, at a whole second; anything else is not moteld's answer,
+exit 3. The box asks its store at most every 30 s for an app and window,
+so an answer can be that old. The spec's command (motelctl spec row 18,
+`motelctl metrics <app> --range <r>`).
 
 **Which box:** an app URL as `<app>`, else `--box`, `MOTEL_BOX`, the host
 of `MOTEL_URL`, or the box repository the shell is in (inside
@@ -188,7 +216,7 @@ other than the 401, 403, 404 and 429 below, a 409 for one; said as the
 box's: no header tells a gateway's from motel's; and `backup status`'s
 not healthy); 2 nothing was
 sent (usage, no box or key, an RSA or ECDSA key); 3 could not tell (no answer, not
-moteld's answer, any 5xx, a 429 that stood, the box's could not tell of `backup status`, and an Alertmanager that did not answer the box, for `monitor alerts`); 4 not accepted (a 401 after one
+moteld's answer, any 5xx, a 429 that stood, the box's could not tell of `backup status`, an Alertmanager that did not answer the box, for `monitor alerts`, and a store that did not, for `metrics`); 4 not accepted (a 401 after one
 retry); 5 not allowed (403); 6 not found (404); 8 the certificate did not
 verify (the client never continues past one); 130 interrupted. 7 is held
 for a box too old for people's tokens.
@@ -370,6 +398,9 @@ made by hand. Accepted:
 | `motel backup status` whose stdout takes none of its human output (a full disk, a closed pipe) exits 2 with the write's error, not the box's verdict (1, 3): every command's human output fails so | 2 | 3 | 1 | 6 | 2 | accepted: red and named; `--json` and the verdict's exit are what a script reads |
 | On the backups screen in a window 14 columns wide or less, far below the smallest the screens are laid for (60), a could not tell's quoted why is laid one character a row, each past its 14 columns of indent, so the rows show blank | 2 | 5 | 1 | 10 | 2 | accepted: no screen is laid for such a width; `y` shows the answer |
 | After a 404 to the backups (a moteld older than the read) the read is held until ctrl-r, and the screen does not say ctrl-r asks again, as an app's screen does not after a 404: once the box is upgraded it says the 404 until ctrl-r or `r` | 2 | 5 | 1 | 10 | 1 | accepted: the sentence names the cause, and ctrl-r is among the screen's keys (`?`) |
+| The metrics screen's plots are braille dots (U+2801 to U+28FF), which every East Asian width table gives one cell, and its axes and marks ASCII; but a terminal whose font has no braille draws each as its fallback glyph, and the plot reads as a row of boxes. The numbers above each plot (newest, highest, lowest, each with its time) still say what it shows | 2 | 2 | 1 | 4 | 2 (an ASCII plot, `.` and `'`, at half the height) | accepted: `motel metrics` prints the same numbers in words; the plots are checked on tcell's simulation screen alone, not yet in a real terminal or on a Mac |
+| A deploy mark on the metrics screen is a column of the window (28 minutes at 60 columns over a day, almost 5 hours over 14 days): two deploys in one column are one mark, and a mark says the deploy was within that column, not at its start. The legend line says how long a column is | 2 | 5 | 1 | 10 | 2 | accepted: the record's own time is on the app's screen (enter on its row) |
+| The metrics screen marks the latest deploy of each version the box keeps a record of, from the app's status: a version deployed twice is marked at its last deploy alone, a deploy older than the oldest record the box keeps is not marked, and a failed deploy never is. The legend says "a version's latest deploy that succeeded", and "records from <time>" when the oldest is inside the window | 2 | 5 | 1 | 10 | 3 (a read of every deploy, which the owner's M2 decision rules out) | accepted, by the owner's decision of 2026-11-20 that marks need no new read |
 | The box screen's alerts line counts an alert in a state the client does not know (none Alertmanager 0.28 has: `active`, `suppressed`, `unprocessed`) as firing, and marks the line as one that needs a look | 2 | 1 | 3 | 6 | 2 | accepted: `:alerts` says the state as not known, the box's word quoted; counting such a state apart is a fourth count on the line for a state no Alertmanager sends |
 | A silence's matcher's label name is the box's text, unquoted, so a name that holds `" = "x", `, which Alertmanager 0.28 takes in a UTF-8 label name, reads on the `matches` row as one more matcher | 2 | 1 | 3 | 6 | 2 | accepted: only root (or the motel user) writes a silence past motel's own route, which takes no label name; the row is labelled and cut, and `y` shows the answer |
 | When the box sends its alerts or silences cut at the cap (500, 200), the box screen's line counts those sent and does not say the box holds more; `:alerts` and `motel monitor alerts` do | 2 | 3 | 3 | 18 | 2 | accepted: the line points at `:alerts`, which says so; a box holding 500 alerts at once is far past what motel posts |
@@ -434,7 +465,26 @@ under it the version in flight, its phase, when the deploy started and
 by whom (`4c2d9e7b1a05 soaking · started 25s ago (14:12 UTC) by …`;
 under "has no version yet: a deploy of it is in flight." before a first
 version serves); a deploy's record is laid out for
-reading a failure, its log tail last. The box screen shows the commit
+reading a failure, its log tail last. `g` on an app's screen opens its
+metrics (`motel metrics`): the window over the hour at first, `t` the
+next (24h, 7d, 14d, then the hour again), esc back to the app; `g`
+again opens the window last shown, and `:metrics <app> [<window>]` goes
+there from anywhere. It says the window, its step and its end with
+that end's age, and what its deploy marks are; then a plot a panel the
+box sent and the client knows, as tall as lets the first be whole on
+the page (at 60x16, seven rows of four dots each), above each its
+newest, highest and lowest values with their times and the newest's
+age, the highest and lowest again at the top and the bottom of its
+axis, and under it the time axis with a `^` in each column that holds a
+version's latest deploy that succeeded (from the app's status, which
+the screen goes on reading), and the window's two ends. Points a step
+apart are joined; a step with no point is a gap, never a zero or a line
+across it. A panel absent says why (no point in the window; the request
+panels only for an app behind `observe`), and one the client does not
+know is named as the box's. The box with no metrics line, a store that
+did not answer, a word for the store the client does not know, and a
+moteld older than the read (a 404, which the title bar does not call a
+refusal) are each said in the client's words. The box screen shows the commit
 the box runs, its Caddyfile's digest and its key for secrets, and, when
 the box says the Caddyfile is not the one that commit installed, a line
 under the digest that says so, as `motel box status`'s first line does.
@@ -477,7 +527,7 @@ takes two, a combining mark none, and a character the door writes as
 an escape as many as the escape has): a line too wide is cut, `…` its
 last cell, and the title bar's and the crumb's right side is cut only
 when it alone takes the whole window or more (the apps' summary of hundreds of apps at 60 columns), the same way. `:` goes to a view in the command words (`:status blog`,
-`:deploys blog <version>`, `:me`, `:box`, `:backups`, `:alerts`); what is typed is held to the client's grammars, and a version to the box's own (at most 64 characters; `motel deploys` sends a longer one for the box to refuse), before anything is asked, and
+`:deploys blog <version>`, `:metrics blog 24h`, `:me`, `:box`, `:backups`, `:alerts`); what is typed is held to the client's grammars, and a version to the box's own (at most 64 characters; `motel deploys` sends a longer one for the box to refuse), before anything is asked, and
 what is wrong is said on the prompt's line; Enter runs what is typed,
 Tab takes a completion. `?` lists the keys of the screen below it,
 written from the table the keys are bound from, its rows wrapped to the window (an entry's words under its words), and scrolls, as its footer says. On a screen that reads
@@ -538,6 +588,10 @@ SIGINT, SIGTERM or SIGHUP sent to the process, or the terminal closed under the 
   of 60. The TUI keeps to 1.5 a second and 30 at once. The box's status,
   its backups and its alerts are read every 30 s, each only while a
   screen that shows it is open (the box screen shows all three). The
+  metrics screen's window is read every 30 s while it is shown
+  (`SeriesEvery`, the box's own 30 s per app and window), and the app's
+  status every 5 s beside it, for the deploy marks; another window is
+  read in its place, the first not. The
   open app is read every 5 s, and its alerts every 15 s while its screen
   is open (`AlertsEvery`, after the box's own 5 s of Alertmanager's
   answer); every other app takes its turn in the rest of the

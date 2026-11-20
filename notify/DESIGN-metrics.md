@@ -1490,6 +1490,103 @@ queries (the budget, the 4 MB cap, a point it cannot read) leaves
 anyone else sees. The whole body passes the app's response filter,
 as every status does.
 
+## An app's series
+
+`GET /_motel/apps/<app>/series[?range=1h|24h|7d|14d]` (liveswap's route,
+action `app.series`, for a viewer of the app or of the box:
+liveswap/access/DESIGN-access.md) gives a person the app's numbers over
+a window as points, which `motel metrics` prints and `motel` alone
+draws. Experimental. The window is the reader's one choice, from a
+closed set (`wire.SeriesRanges`); no panel, step or query is theirs.
+notify installs the source with the `metrics` line, beside the summary's
+(`seriesSource`, notify/seriesview.go); with none the route says
+`"store":"off"`.
+
+Four range queries over the socket, scoped to `app="<name>"` of the
+route's handle, at the window's fixed step, run at once:
+
+| Panel | Query (`STEP` the window's step) | Each point |
+|---|---|---|
+| `memory_bytes` | `max(max_over_time(motel_app_memory_bytes{app=…}[STEP]))` | the step's highest push: a peak between two points is not lost (a plain selector's point is the push at the step: 100 where the step held 500, `TestSeriesViewOverTheStore`) |
+| `cpu_cores` | `sum(UNIT_CPU)` at the summary's rate window over the hour (`2m`), the step's otherwise ("Operator rules") | the running unit's rate |
+| `requests_per_second`, `5xx_share` | `sum by (class) (inc(motel_app_requests_total{app=…}))` over `[STEP]`, the summary's guard ("Operator rules") | every class over the step, per second; 5xx of those sent (`aborted` left out), no point where none was sent |
+| `p95_ms` | `histogram_quantile(0.95, sum by (le) (hinc(motel_app_response_seconds)))` over `[STEP]` | the step's responses, in ms; no point where there were none |
+
+| Window | Step | Points a panel, at most | Body, measured (below) |
+|---|---|---|---|
+| `1h` | 60 s | 61 | 6.2 KB |
+| `24h` | 5 m | 289 | 30.2 KB |
+| `7d` | 30 m | 337 | 35.6 KB |
+| `14d` | 1 h | 337 | 35.5 KB |
+
+The window ends at the last multiple of its step: the store aligns a
+range query so itself (measured on 1.112.0: start and end rounded down
+to the step unless the query asks `nocache=1`), which lets it reuse
+what it computed for the last one, so the newest point is of the last
+whole step, up to a step old (an hour over 14 days), and the body's
+`end` says which. A step with no sample is no point: a gap, never a
+zero (measured with vmalert-tool: no point inside a ten-minute gap in
+the pushes at the hour's step; the first step after the gap counts its
+own push alone, the store keeping no sample from before the gap as its
+base, so a gap is no spike; over an hour the gap's counts are in). A
+point that is not a number (a quantile of no response) is none. Values
+are rounded as the summary's are (bytes whole, cores and rates to a
+millionth, shares to 1/10 000, milliseconds to a tenth). A panel with
+no point in the window is absent: the request panels for an app no
+observe handler names.
+
+One set of queries per app and window every 30 s at most for the
+process (`theSeries`), whatever the number of people and configs, one
+at a time (the others wait on it), within a 3 s budget that a caller
+going away does not cut; a failure is kept as long as an answer, told
+as `"store":"unanswered"` and journalled once (`monitor metrics: a
+person's read of an app's series was answered "store":"unanswered"`,
+with the app, the window and the error). Entries past 30 s are dropped
+as the next is made, so what is held is at most the answers asked for
+in the last 30 s: up to 1,685 points (27 KB) an app and window, about
+1 MB for ten apps' four windows. The route marshals the body per
+request: its words pass the app's filter, its numbers none (DESIGN-access.md),
+so the filter sees a few hundred bytes. Measured per request with a
+14-day body of every panel's 337 points (45.8 KB, every value long):
+0.39 ms for the whole route, a token checked, 0.29 ms of it the body;
+through the filter whole, at the 2.2 to 2.5 MB/s step-2-reads design
+measured, it would be about 20 ms. So the cache holds the source's
+answer, not filtered bytes.
+
+**Measured 2026-11-20** on this repository's dev VM (arm64, Lima),
+against Debian's `victoria-metrics` 1.112.0 under the box's flags and
+caps (`-retentionPeriod=14d`, `-memory.allowedBytes=96MiB`,
+`-search.latencyOffset=5s`, `MemoryMax=256M`, and `CPUQuota=200%` with
+`GOMAXPROCS=2` for a two-core box), reached through
+`systemd-socket-proxyd` on a unix socket as `vm.sock` is, by notify's
+own `askSeries` and store client. The store held 14 days of synthetic
+pushes at 30 s for ten apps (seven behind observe, each with two
+releases' requests, histogram and cache series, deploys every one to
+three days, two stopped for hours, one moteld restart) and 1,000 filler
+series: 2,741 series, 57.7 million samples, 9.9 MB on disk. It was
+backfilled under a 2 GB cap (the import of 14 days at once was killed
+at 256 MB twice; a box fills its store 30 s at a time) and restarted
+under the 256 MB one before the queries. Each fetch is the four queries
+of one app and window:
+
+| Window | One fetch, first after a store restart (median, max of 10 apps) | Again (store's cache warm) | An app with no observe |
+|---|---|---|---|
+| `1h` | 4 ms, 17 ms | 2 ms, 3 ms | 1 ms |
+| `24h` | 32 ms, 35 ms | 26 ms, 27 ms | 1 ms |
+| `7d` | 63 ms, 80 ms | 48 ms, 66 ms | 2 ms |
+| `14d` | 83 ms, 95 ms | 63 ms, 74 ms | 3 ms |
+
+Every app and window at once (40 fetches, 160 queries): 0.86 s, no
+error. The store's cgroup peaked at 96 MiB of its 256 MiB through all
+of it, with no OOM; its caches stay under `-memory.allowedBytes`. The
+dearest query is the 14-day p95, the guard's three reads of a
+histogram's day before each of 337 steps: 46 ms through the store's
+cache, 68 ms with `nocache=1`. Not measured on hotserve-1: this VM's
+cores are likely faster than a small box's (inferred), and real pushes
+compress worse than synthetic ones, so the budget's margin there
+(30 times one 14-day fetch, 3.5 times the 40 at once) is the number to
+check first.
+
 ## Packaging and setup
 
 The `.deb` **Suggests** `victoria-metrics`, for the reason it Suggests
@@ -1662,7 +1759,9 @@ TCP forward is an unauthenticated full-power API for every process on
 the laptop, and for a browser page through DNS rebinding; not
 measured). A deployer
 reads `GET /<app>`'s `metrics`; not the store, not the rules, not
-other apps.
+other apps. A person with the viewer role on an app reads its series
+("An app's series"): four fixed queries of that app's, never a query
+of theirs, over the HTTPS route and its token, no listener of its own.
 
 ## Footprint
 

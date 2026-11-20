@@ -244,6 +244,7 @@ TestPostDeployTheBaselineOverTheStore
 TestRenderedRulesFireAsMotelsAlerts
 TestRenderedRulesPassVMAlertDryRun
 TestScrapeConfigPassesTheStoresCheck
+TestSeriesViewOverTheStore
 TestStoreDiskFillWaitsForItsHistory
 '
 nvm=$(names_count "$vmtests")

@@ -106,6 +106,28 @@ func (c *Client) Alerts(ctx context.Context, app App) (wire.Alerts, *Answer, err
 	return a, ans, err
 }
 
+// Series is `motel metrics <app> [--range]`: GET
+// /_motel/apps/<app>/series, the app's numbers over a window as fixed
+// panels of points, for a person whose grants cover the app. rng is ""
+// for the box's default. The route is on the box's own name, whatever
+// path an app URL names. An answer about another window than the one
+// asked is not moteld's.
+func (c *Client) Series(ctx context.Context, app App, rng string) (wire.Series, *Answer, error) {
+	var s wire.Series
+	q := url.Values{}
+	if rng != "" {
+		if !slices.Contains(wire.SeriesRanges, rng) {
+			return s, nil, usagef("--range %q is not one of %s", rng, strings.Join(wire.SeriesRanges, ", "))
+		}
+		q.Set("range", rng)
+	}
+	ans, err := c.read(ctx, "/_motel/apps/"+app.Name+"/series", q, &s)
+	if err == nil && rng != "" && s.Window != rng {
+		err = c.NotMotel(ans, "it is of another window than the one asked")
+	}
+	return s, ans, err
+}
+
 // BoxAlerts is `motel monitor alerts`: GET /_motel/alerts, what the box's
 // Alertmanager holds (every alert, every silence that has not ended),
 // for a viewer of the box.

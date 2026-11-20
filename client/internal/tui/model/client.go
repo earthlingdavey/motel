@@ -17,7 +17,7 @@ import (
 
 // Client is one method per command the TUI reads with: whoami, apps,
 // status <app>, deploys <app> <version>, box status, backup status,
-// monitor alerts --app <app>, monitor alerts. Each returns the box's value
+// monitor alerts --app <app>, monitor alerts, metrics <app> --range. Each returns the box's value
 // and its body as received. An error is a *Failure, or the context's
 // own when it ended.
 type Client interface {
@@ -35,6 +35,8 @@ type Client interface {
 	// BoxAlerts is what the box's Alertmanager holds: every alert and
 	// every silence.
 	BoxAlerts(ctx context.Context) (Got[wire.BoxAlerts], error)
+	// Series is an app's numbers over a window, one of SeriesRanges.
+	Series(ctx context.Context, app, rng string) (Got[wire.Series], error)
 }
 
 // Got is one answer: the value, the body as received, and when it

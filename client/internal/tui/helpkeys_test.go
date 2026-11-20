@@ -18,7 +18,8 @@ import (
 // table, or moved off a screen, fails TestHelpIsTheKeys.
 var helpKeys = map[model.Screen][]string{
 	model.ScreenApps:     {"enter", "d", "/", "s", "j k ↑ ↓", "PgUp PgDn Home End", "↑ ↓", "c", "y", "P", "ctrl-r", ":", "esc", "?", "q"},
-	model.ScreenApp:      {"enter", "j k ↑ ↓", "PgUp PgDn Home End", "↑ ↓", "c", "y", "P", "ctrl-r", ":", "esc", "?", "q"},
+	model.ScreenApp:      {"enter", "g", "j k ↑ ↓", "PgUp PgDn Home End", "↑ ↓", "c", "y", "P", "ctrl-r", ":", "esc", "?", "q"},
+	model.ScreenMetrics:  {"t", "PgUp PgDn Home End", "↑ ↓", "↑ ↓", "c", "y", "P", "ctrl-r", ":", "esc", "?", "q"},
 	model.ScreenRecord:   {"w", "p n", "j k ↑ ↓", "PgUp PgDn Home End", "↑ ↓", "c", "y", "P", "ctrl-r", ":", "esc", "?", "q"},
 	model.ScreenMe:       {"PgUp PgDn Home End", "↑ ↓", "↑ ↓", "c", "y", "P", "ctrl-r", ":", "esc", "?", "q"},
 	model.ScreenBox:      {"PgUp PgDn Home End", "↑ ↓", "↑ ↓", "c", "y", "P", "ctrl-r", ":", "esc", "?", "q"},
@@ -102,6 +103,7 @@ func TestHelpIsTheKeys(t *testing.T) {
 		{model.ScreenRecord, func(h *harness) { h.open(record("blog", "e9a0b3f2c118")) }},
 		{model.ScreenMe, func(h *harness) { h.open(model.View{Screen: model.ScreenMe}) }},
 		{model.ScreenBox, func(h *harness) { h.open(model.View{Screen: model.ScreenBox}) }},
+		{model.ScreenMetrics, func(h *harness) { h.open(app("blog")); h.press("g") }},
 		{model.ScreenHelp, func(h *harness) { h.open(model.View{Screen: model.ScreenHelp}) }},
 		{model.ScreenRefused, stop},
 		{model.ScreenStopHelp, func(h *harness) { stop(h); h.press("?") }},

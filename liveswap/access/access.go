@@ -12,8 +12,8 @@
 // do before Decide existed, so on an app's path and on the box's own
 // Decide refuses nothing that its authentication accepted; under
 // /_motel/ it refuses a global source's token the people's routes
-// (liveswap/DESIGN-liveswap.md, "Who may take which action"). A person may read: an app's status, deploys and alerts where
-// a grant covers the app, the box's status, its backups' and every
+// (liveswap/DESIGN-liveswap.md, "Who may take which action"). A person may read: an app's status, deploys, alerts and
+// series where a grant covers the app, the box's status, its backups' and every
 // alert and silence with a grant on the box, and who they are and which apps they may view
 // whatever their grants (DESIGN-access.md).
 package access
@@ -44,13 +44,14 @@ const (
 	BoxBackups      Action = "box.backups"       // GET /_motel/backups
 	AppAlerts       Action = "app.alerts"        // GET /_motel/apps/<app>/alerts
 	BoxAlerts       Action = "box.alerts"        // GET /_motel/alerts
+	AppSeries       Action = "app.series"        // GET /_motel/apps/<app>/series
 )
 
 // MotelActions are the actions liveswap_webhook serves under /_motel/,
 // beside the apps' routes: box actions, and app actions on the app the
 // path names after /_motel/apps/. box_webhook serves the other box
 // actions.
-var MotelActions = []Action{BoxWhoami, BoxApps, BoxBackups, AppAlerts, BoxAlerts}
+var MotelActions = []Action{BoxWhoami, BoxApps, BoxBackups, AppAlerts, BoxAlerts, AppSeries}
 
 // Kind is which sort of principal a verified token stands for.
 type Kind int
@@ -107,6 +108,7 @@ var allowed = []cell{
 	{Person, BoxBackups},
 	{Person, AppAlerts},
 	{Person, BoxAlerts},
+	{Person, AppSeries},
 }
 
 // Forbidden is Decide's refusal of a principal the box verified, for
@@ -198,7 +200,7 @@ func decidePerson(p Principal, a Action, resource string) error {
 		return &Forbidden{Needs: "deployer", Scope: scope}
 	}
 	switch a {
-	case AppStatus, AppDeployRecord, AppAlerts:
+	case AppStatus, AppDeployRecord, AppAlerts, AppSeries:
 		if !p.Views.Covers(resource) {
 			return &Forbidden{Needs: "viewer", Scope: "app"}
 		}

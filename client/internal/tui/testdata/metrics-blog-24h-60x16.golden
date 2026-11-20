@@ -1,0 +1,16 @@
+motel · deploy.example.com · v0.7.0 │ alice@e… live · 0s ago
+apps › blog › metrics 24h        as of 14:12:40 UTC · 0s ago
+over 24h · a point every 5 m · to 14:10 UTC (2m ago) · t: a…
+^ a version's latest deploy that succeeded (a column is 28m)
+
+memory      newest 186.1 MiB at 14:10 (2m ago) · max 200.0 …
+   200M |  ⣀⡤⠖⠒⠋⠉⠉⠉⠓⠲⠤⣄⡀
+        |⠴⠋⠁           ⠙⠲⢤⡀                               ⢀⡤
+        |                 ⠙⠦⣄                           ⣠⠖⠋
+        |                   ⠈⠳⣄                      ⢀⡤⠞⠁
+        |                     ⠈⠙⢦⣀                 ⣀⡴⠋
+        |                        ⠈⠓⢦⣀           ⣀⡴⠚⠁
+   140M |                           ⠈⠓⠲⠤⣄⣀⣀⣀   ⠋⠁
+        +^---------------------------------------------^----
+         11-14 14:10                                   14:10
+↑↓ scroll  t window  y json  c cmd  esc back  ? more

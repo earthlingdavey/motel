@@ -25,6 +25,6 @@ VIEWS (type after :)
  box                          what the box runs (viewers of the box)
  backups                      what the box says of its backups (viewers of the box)
  alerts                       what fires on the box, and its silences (viewers of the box)
+ metrics <app> [<window>]     one app's numbers over 1h (or 24h, 7d, 14d), drawn
  help                         this
-
 ↑↓ scroll  esc close  q quit
