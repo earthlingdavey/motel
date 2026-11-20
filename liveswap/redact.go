@@ -175,7 +175,8 @@ import (
 //     last characters and the JSON after them could stand across a
 //     time's edge in the bytes it returns: putTimesBack looks for every
 //     known form across each edge, and a body with one, or whose
-//     placeholders the filter changed, or that holds heldMark already,
+//     placeholders the filter changed, or that holds a placeholder's
+//     shape already (a string that is a NUL and digits),
 //     goes through whole as before, times and all
 //     (TestHeldTimesFallBack). After the filter, the hoist's sort of
 //     the top level (withField) and the stream's spliced fields can set
@@ -823,91 +824,103 @@ var heldTimeKeys = map[string]bool{`"at"`: true, `"started_at"`: true, `"finishe
 var heldTimeRe = regexp.MustCompile(`^"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]{1,9})?(?:Z|[+-][0-9]{2}:[0-9]{2})"$`)
 
 // heldMark opens the placeholder a held time stands as while the body
-// is filtered, "\u0000<n>": a string that begins with a NUL, escaped.
-// No layer writes a quote before a backslash (a marker ends with a
-// bracket or an angle), and encoding/json writes the text only for a
-// string that begins with a NUL or a quote before a NUL in one; a
-// body that already holds it has no time held. An app's literal
-// \u0000 is written \\u0000, which does not hold it.
+// is filtered: a string that is a NUL, escaped, then the time's number
+// ("\u00003"), which placeholderRe matches. No layer makes such a
+// string (a marker is key names in brackets or angles), and a body that
+// holds one already, an app's line that is a NUL and digits, has no
+// time held. Placeholders are found as whole strings of the JSON, so an
+// app's text that only holds the bytes (a binary probe body's quote
+// before a NUL, a literal \u0000) is no placeholder.
 const heldMark = `"\u0000`
 
-// holdTimes is raw with each time under one of heldTimeKeys swapped for
-// its placeholder, and the times, in the order they stood. raw is a
-// JSON text (a marshalled body, or a record as written); one that does
-// not end its strings, or that holds heldMark, has nothing held.
-func holdTimes(raw string) (string, []string) {
-	if strings.Contains(raw, heldMark) {
-		return raw, nil
-	}
-	var b strings.Builder
-	var times []string
-	var key string
-	last := byte(0) // the last byte outside white space before i
-	for i := 0; i < len(raw); {
-		c := raw[i]
-		if c != '"' {
-			b.WriteByte(c)
-			if c != ' ' && c != '\t' && c != '\n' && c != '\r' {
-				last = c
-			}
-			i++
+var placeholderRe = regexp.MustCompile(`^"\\u0000[0-9]+"$`)
+
+// eachString calls f with the bounds of each string of the JSON text s,
+// in order, and whether it is a key; false when a string does not end.
+func eachString(s string, f func(i, j int, key bool)) bool {
+	for i := 0; i < len(s); i++ {
+		if s[i] != '"' {
 			continue
 		}
 		j := i + 1
-		for j < len(raw) && raw[j] != '"' {
-			if raw[j] == '\\' {
+		for j < len(s) && s[j] != '"' {
+			if s[j] == '\\' {
 				j++
 			}
 			j++
 		}
-		if j >= len(raw) {
-			return raw, nil
+		if j >= len(s) {
+			return false
 		}
-		s := raw[i : j+1]
+		f(i, j+1, strings.HasPrefix(strings.TrimLeft(s[j+1:], " \t\n\r"), ":"))
+		i = j
+	}
+	return true
+}
+
+// holdTimes is raw with each time under one of heldTimeKeys, as that
+// key's value, swapped for its placeholder, and the times, in the order
+// they stood. raw is a JSON text (a marshalled body, or a record as
+// written); one that does not end its strings, or that holds a string
+// shaped as a placeholder, has nothing held.
+func holdTimes(raw string) (string, []string) {
+	var b strings.Builder
+	var times []string
+	var key string
+	at, clash := 0, false
+	ended := eachString(raw, func(i, j int, isKey bool) {
+		s := raw[i:j]
 		switch {
-		case strings.HasPrefix(strings.TrimLeft(raw[j+1:], " \t\n\r"), ":"):
+		case placeholderRe.MatchString(s):
+			clash = true
+		case isKey:
 			key = s
-			b.WriteString(s)
-		case last == ':' && heldTimeKeys[key] && heldTimeRe.MatchString(s):
+		case heldTimeKeys[key] && heldTimeRe.MatchString(s) && strings.HasSuffix(strings.TrimRight(raw[:i], " \t\n\r"), ":"):
+			b.WriteString(raw[at:i])
 			b.WriteString(heldMark + strconv.Itoa(len(times)) + `"`)
 			times = append(times, s)
-		default:
-			b.WriteString(s)
+			at = j
 		}
-		last = '"'
-		i = j + 1
+	})
+	if !ended || clash || len(times) == 0 {
+		return raw, nil
 	}
+	b.WriteString(raw[at:])
 	return b.String(), times
 }
 
 // putTimesBack is out, the filter's bytes of a body holdTimes held
 // times out of, with each placeholder replaced by its time; false when
-// a placeholder is not where the filter found it (gone, or the body
-// withheld), or when a form of a known value stands in the bytes it
-// makes across a time's edge: one made of a time's last characters and
-// the JSON after them, which the filter never saw side by side. A form
-// wholly inside a time is the time's own text, and stays (rule 7).
+// the placeholders are not each where the filter found it, in order
+// (one gone, or the body withheld), or when a form of a known value
+// stands in the bytes it makes across a time's edge: one made of a
+// time's last characters and the JSON after them, which the filter
+// never saw side by side, or one that holds a time's quote. A form
+// wholly inside a time's text is the time's own, and stays (rule 7).
 // These are the bytes the filter returns: what redactJSON's hoist and
 // the stream's splices do after is rule 2's.
 func (r *Redactor) putTimesBack(out string, times []string) (string, bool) {
-	if strings.Count(out, heldMark) != len(times) {
-		return "", false
-	}
 	var b strings.Builder
 	spans := make([][2]int, 0, len(times))
-	rest := out
-	for n, t := range times {
-		p := heldMark + strconv.Itoa(n) + `"`
-		i := strings.Index(rest, p)
-		if i < 0 {
-			return "", false
+	n, at, misplaced := 0, 0, false
+	ended := eachString(out, func(i, j int, _ bool) {
+		if !placeholderRe.MatchString(out[i:j]) {
+			return
 		}
-		b.WriteString(rest[:i])
-		spans = append(spans, [2]int{b.Len(), b.Len() + len(t)})
-		b.WriteString(t)
-		rest = rest[i+len(p):]
+		if misplaced || n == len(times) || out[i:j] != heldMark+strconv.Itoa(n)+`"` {
+			misplaced = true
+			return
+		}
+		b.WriteString(out[at:i])
+		// The time's text, inside its quotes: a quote is the body's.
+		spans = append(spans, [2]int{b.Len() + 1, b.Len() + len(times[n]) - 1})
+		b.WriteString(times[n])
+		at, n = j, n+1
+	})
+	if !ended || misplaced || n != len(times) {
+		return "", false
 	}
-	b.WriteString(rest)
+	b.WriteString(out[at:])
 	s := b.String()
 	for _, sec := range r.secrets {
 		for from := 0; ; {

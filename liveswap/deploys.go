@@ -46,10 +46,11 @@ import (
 //  2. Nothing from disk reaches a response except through the filter
 //     as body text, but a record's times: held out of its layers while
 //     they have a time's shape (rule 3). A recorded version is a safe
-//     string like any other name, and no safe string equals a known value (redact.go,
-//     rule 1). Nothing is appended to a body after the filter's final
-//     pass (withField merges what the filtered body already reports;
-//     it adds nothing else).
+//     string like any other name, and no safe string equals a known
+//     value (redact.go, rule 1). Nothing is appended to a body after
+//     the filter's final pass but the times it held, put back
+//     (redact.go, rule 7), and withField's merge of what the filtered
+//     body already reports, which adds nothing else.
 //  3. Whatever the filter does to a body, the record on disk names
 //     its version and outcome, from values that cannot carry source
 //     data: the version the deployer named and the digest it was
@@ -57,7 +58,7 @@ import (
 //     are not all known), vocabulary, timestamps. The times are the
 //     box's clock, which the filter holds out of its layers (redact.go,
 //     rule 7): an env_file value that is a piece of one (a date)
-//     rewrites none. Read back, a record's time is held out of the
+//     rewrites none, but in the bodies that rule sends whole. Read back, a record's time is held out of the
 //     filter only while it has a time's shape (heldTimeRe), as a
 //     version read off disk is used only once it is valid.
 //     The vocabulary (status, phase) stands outside the filter in

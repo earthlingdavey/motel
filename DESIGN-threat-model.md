@@ -209,7 +209,9 @@ Properties that matter to the model:
   known value (a key named for its own value gets a number in
   brackets), and the first layer runs once more over the finished
   bytes — any fallback included — so the promise holds for the bytes
-  written, not only for the body as filtered; the safe strings are
+  written, not only for the body as filtered (a body's times are put
+  back after that pass, and a check across each time's edge holds the
+  promise for them: the fifth text below); the safe strings are
   held out of the heuristic layers as spans, so a version shaped like
   a token survives them. The one text outside the promise is the
   report field's own name, `redacted_env`: it is fixed, in every such

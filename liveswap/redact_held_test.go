@@ -71,7 +71,9 @@ func TestDeployRecordTimesPassNoFilter(t *testing.T) {
 // streamed, keeps its times whole: the status's, at the rig's clock,
 // and each phase line's, at the wall clock (today's date the value).
 func TestDeployAnswerTimesPassNoFilter(t *testing.T) {
-	h, _ := heldRig(t, "API_VERSION=2023-11-14\nTODAY="+time.Now().UTC().Format(time.DateOnly)+"\n")
+	// Today's and tomorrow's: a run across midnight still has one.
+	now := time.Now().UTC()
+	h, _ := heldRig(t, "API_VERSION=2023-11-14\nTODAY="+now.Format(time.DateOnly)+"\nTOMORROW="+now.AddDate(0, 0, 1).Format(time.DateOnly)+"\n")
 	w := do(t, h, http.MethodPost, "/demo", appToken(t), `{"url":"https://x/2.tgz","version":"v2"}`)
 	var s wire.Status
 	if err := json.Unmarshal(w.Body.Bytes(), &s); err != nil || w.Code != http.StatusOK || s.LastDeploy == nil || s.LastDeploy.Version != "v2" {
@@ -138,15 +140,20 @@ func TestHeldTimesAreTheBodysOwn(t *testing.T) {
 func TestHeldTimesFallBack(t *testing.T) {
 	const body = `{"started_at":"2023-11-14T22:13:20Z","error":"boom"}`
 	for _, c := range []struct{ value, in, want string }{
+		// A time's quote and its start: the quote is the body's.
+		{`"2023-11-14`, body, `{"error":"response withheld: a redacted value overlapped the response's own structure","redacted_env":["K"]}`},
 		// A time's end and the JSON after it.
 		{`20Z","error":"bo`, body, `{"redacted_env":["K"],"started_at":"2023-11-14T22:13:[redacted:K]om"}`},
 		// The JSON before a time and its start, which holds the time's
 		// opening quote; and the body's structure: withheld either way.
 		{`at":"2023-11`, body, `{"error":"response withheld: a redacted value overlapped the response's own structure","redacted_env":["K"]}`},
 		{`Z","error"`, body, `{"error":"response withheld: a redacted value overlapped the response's own structure","redacted_env":["K"]}`},
-		// The placeholder's text in the body (a string that begins with
-		// a NUL): nothing held.
-		{`2023-11-14`, `{"started_at":"2023-11-14T22:13:20Z","error":"\u0000a"}`, `{"error":"\u0000a","redacted_env":["K"],"started_at":"[redacted:K]T22:13:20Z"}`},
+		// A placeholder the filter replaced a value inside: the body
+		// whole, which does not hold the value.
+		{`0","error":"b`, body, body},
+		// A string of the body's shaped as a placeholder (a NUL and
+		// digits): nothing held.
+		{`2023-11-14`, `{"started_at":"2023-11-14T22:13:20Z","error":"\u00001"}`, `{"error":"\u00001","redacted_env":["K"],"started_at":"[redacted:K]T22:13:20Z"}`},
 	} {
 		got := NewRedactor([]string{"K=" + c.value}, nil).redactJSON([]byte(c.in))
 		if got != c.want || !json.Valid([]byte(got)) {
@@ -155,12 +162,13 @@ func TestHeldTimesFallBack(t *testing.T) {
 	}
 }
 
-// TestHeldTimesBesideANul: a NUL inside an app's line, or the text
+// TestHeldTimesBesideANul: a NUL in an app's line or probe body (one
+// that begins with it, a quote before it, as binary does), or the text
 // \u0000 it printed (PostgreSQL's "\u0000 cannot be converted to
 // text"), is no placeholder: the times are held.
 func TestHeldTimesBesideANul(t *testing.T) {
 	r := NewRedactor([]string{"API_VERSION=2023-11-14"}, nil)
-	for _, line := range []string{"a\x00b", `DETAIL: \u0000 cannot be converted to text.`} {
+	for _, line := range []string{"a\x00b", "\x00\x01binary", "ab\"\x00cd", "\x001x", `DETAIL: \u0000 cannot be converted to text.`} {
 		raw, _ := json.Marshal(map[string]any{"log_tail": []string{line}, "started_at": time.Unix(1_700_000_000, 0).UTC()})
 		if got := r.redactJSON(raw); got != string(raw) {
 			t.Errorf("%q:\n got %s\nwant %s", line, got, raw)

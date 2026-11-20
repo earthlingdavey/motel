@@ -30,6 +30,7 @@ func FuzzRedactor(f *testing.F) {
 		{"12345678", "00", "00"},
 		{"2023-11-14", "on ", ""},
 		{`20Z","error":"`, "", ""},
+		{`"2023-11-14`, "", ""},
 	} {
 		f.Add(s[0], s[1], s[2])
 	}
@@ -92,7 +93,7 @@ func FuzzRedactor(f *testing.F) {
 				rest = strings.NewReplacer(`"status":"succeeded"`, "", `"phase":"starting"`, "").Replace(rest)
 			}
 			for _, f := range []string{string(mustQuote(t, form)), form} {
-				if outsideTime(rest, f, `"2023-11-14T22:13:20Z"`) {
+				if outsideTime(rest, f, `"started_at":"`, "2023-11-14T22:13:20Z") {
 					t.Fatalf("form %q: survived in JSON body %s", form, js)
 				}
 			}
@@ -107,22 +108,21 @@ func FuzzRedactor(f *testing.F) {
 }
 
 // outsideTime reports whether f occurs in s anywhere but wholly inside
-// an occurrence of the time tm (rule 7).
-func outsideTime(s, f, tm string) bool {
+// the text of the time tm where it stands as the value of key (rule 7):
+// the pair as written, which no string's text can spell, its quotes
+// being escaped there.
+func outsideTime(s, f, key, tm string) bool {
+	lo, hi := -1, -1
+	if i := strings.Index(s, key+tm+`"`); i >= 0 {
+		lo, hi = i+len(key), i+len(key)+len(tm)
+	}
 	for from := 0; ; {
 		i := strings.Index(s[from:], f)
 		if i < 0 {
 			return false
 		}
 		start := from + i
-		inside := false
-		for j := max(0, start+len(f)-len(tm)); j <= start && j+len(tm) <= len(s); j++ {
-			if s[j:j+len(tm)] == tm {
-				inside = true
-				break
-			}
-		}
-		if !inside {
+		if start < lo || start+len(f) > hi {
 			return true
 		}
 		from = start + 1
