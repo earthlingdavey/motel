@@ -533,7 +533,7 @@ func TestProbeSandboxCapability(t *testing.T) {
 		// silently ignores PrivatePIDs=: the probe exits non-zero
 		// because the process is not pid 1. There is no lower tier to
 		// fall to, so this is a refusal — the operator must see why.
-		{"kernel ignores the PID namespace", errors.New("exit status 1"), []string{"sandbox probe unit", "exit status 1", "journalctl -t motel-sandbox-probe", "Debian 13", "systemd 257"}},
+		{"kernel ignores the PID namespace", errors.New("exit status 1"), []string{"sandbox probe unit", "exit status 1", "journalctl -t motel_sandboxprobe", "Debian 13", "systemd 257"}},
 		// A container, an LXC VPS, or a kernel built without user
 		// namespaces: the manager refuses the unit outright.
 		{"userns denied", denied, []string{"Permission denied", "Debian 13", "systemd 257"}},

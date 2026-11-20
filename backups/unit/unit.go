@@ -119,6 +119,15 @@ const (
 // it is called, has a unit of this shape.
 var nameRe = regexp.MustCompile(`^motel_backup_[a-z0-9_-]{1,200}\.service$`)
 
+// SyslogIdentifier is what every unit here writes its output under, for
+// the same reason: liveswap's apps write under motel-<app>, and a person
+// granted an app's logs is sent that app's identifier's lines
+// (liveswap/motel_logs.go). Left to the manager, a unit's identifier is
+// its command's name, motel-backup for the roles that run as the data
+// user, and an app named backup would be sent what they write about
+// every app. `journalctl -t motel_backup` shows every unit's.
+const SyslogIdentifier = "motel_backup"
+
 // baseView is the part of the OS a command needs in order to run at
 // all; every entry is optional. It is liveswap's list (sandbox.go)
 // without name resolution, which only units with Network get.
@@ -583,6 +592,7 @@ func (s Spec) properties() ([]sddbus.Property, error) {
 		{Name: "TimeoutStartUSec", Value: v(uint64(1<<64 - 1))},
 		{Name: "ExecStartEx", Value: v([]execCommand{{Path: s.Argv[0], Argv: s.Argv, Flags: []string{"no-env-expand"}}})},
 		{Name: "KillMode", Value: v("control-group")},
+		{Name: "SyslogIdentifier", Value: v(SyslogIdentifier)},
 
 		{Name: "TemporaryFileSystem", Value: v([]tmpfsMount{{"/", "ro"}})},
 		{Name: "PrivateTmp", Value: v(true)},

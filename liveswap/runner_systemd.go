@@ -734,7 +734,7 @@ func (r *systemdRunner) unitFor(spec startSpec, oneshot bool) (unitSpec, error) 
 	return unitSpec{
 		Name:             name,
 		Description:      desc,
-		SyslogIdentifier: syslogIdentifier(spec.app),
+		SyslogIdentifier: unitIdentifier(spec),
 		WorkingDirectory: spec.dir,
 		ExecStart:        append([]string{argv0}, spec.command[1:]...),
 		Environment:      env,
@@ -750,6 +750,21 @@ func (r *systemdRunner) unitFor(spec startSpec, oneshot bool) (unitSpec, error) 
 // under, the pre_start's and every instance's alike: what `journalctl
 // -t motel-<app>` finds it by.
 func syslogIdentifier(app string) string { return "motel-" + app }
+
+// probeIdentifier is what the sandbox probe's unit writes under: with
+// an underscore, as its unit name has, so that no app's name makes it
+// (motel-<app> is the apps' alone). A logs reader of an app named
+// sandbox-probe is so never sent the probe's line (motel_logs.go).
+const probeIdentifier = "motel_sandboxprobe"
+
+// unitIdentifier is the identifier a unit of spec writes its output
+// under: the app's, or the probe's own.
+func unitIdentifier(spec startSpec) string {
+	if spec.probe {
+		return probeIdentifier
+	}
+	return syslogIdentifier(spec.app)
+}
 
 // Start creates the unit; the start job of a simple service completes
 // once the manager has forked it, so this returns promptly. A unit

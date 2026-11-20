@@ -654,7 +654,7 @@ too, and stops at a refusal rather than retrying it (see
 
 **The host is measured at start.** Capability is probed by running a
 throwaway unit and checking the namespaces and seccomp from inside
-(`journalctl -t motel-sandbox-probe` shows what it saw). A host
+(`journalctl -t motel_sandboxprobe` shows what it saw). A host
 that cannot deliver the sandbox fails the start — admin socket and
 proxy included — with the probe's reason. That measurement is cached
 per connection to the user manager, so a reload does not repeat it;
@@ -804,7 +804,7 @@ skips the units' seccomp settings: a kernel without seccomp,
 `SYSTEMD_SECCOMP=0` in the user manager's environment, or a container
 whose own filter stops systemd installing one. The probe reads the
 seccomp mode inside its unit and checks that `RestrictNamespaces=`
-refuses it a user namespace. `journalctl -t motel-sandbox-probe`
+refuses it a user namespace. `journalctl -t motel_sandboxprobe`
 says why it refused (`seccomp 0`, `unshare allowed`). The fix is the
 host's: permit unprivileged user namespaces and seccomp for motel's
 user manager, or move to Debian 13. There is no way to run there

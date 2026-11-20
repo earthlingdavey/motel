@@ -1523,6 +1523,34 @@ func TestProbeUnitsAreNotAppUnits(t *testing.T) {
 	}
 }
 
+// TestOwnIdentifiersAreNoAppsName: what the probe's unit writes its
+// output under is no app's identifier, motel-<app>, whatever the app is
+// called, so a logs read of an app named sandbox-probe (the logs row
+// selects SYSLOG_IDENTIFIER=motel-<app>) is never given the probe's
+// line. An app's units, the pre_start's too, write under the app's.
+// The backup units' identifier is held in backups/unit.
+func TestOwnIdentifiersAreNoAppsName(t *testing.T) {
+	u, err := newSystemdRunner(nil, zap.NewNop()).unitFor(probeStartSpec("0a1b2c3d0a1b2c3d", "ipc:[4026531839]"), true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{u.SyslogIdentifier, probeIdentifier} {
+		if rest, ok := strings.CutPrefix(id, "motel-"); id != probeIdentifier || ok && appNameRe.MatchString(rest) {
+			t.Errorf("the probe writes under %q, which an app's name makes", id)
+		}
+	}
+	for _, oneshot := range []bool{false, true} {
+		spec := startSpec{app: "sandbox-probe", version: "v1", nonce: "0a1b2c3d0a1b2c3d", command: []string{"/bin/sh"}, dir: "/", sandbox: probeSandboxSpec()}
+		u, err := newSystemdRunner(nil, zap.NewNop()).unitFor(spec, oneshot)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if u.SyslogIdentifier != "motel-sandbox-probe" {
+			t.Errorf("an app named sandbox-probe writes under %q", u.SyslogIdentifier)
+		}
+	}
+}
+
 // TestSystemdRunnerSettlesFromUnpublishedMainPID covers the case the
 // settle loop used to get wrong: StartTransientUnit can return before
 // the manager has published any MainPID, so adopt reads 0. The first
