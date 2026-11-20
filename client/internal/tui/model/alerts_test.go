@@ -495,3 +495,43 @@ func TestAlertsBesideAStatusThatFailed(t *testing.T) {
 		}
 	}
 }
+
+// TestStatusRefusedDropsTheAlerts: alerts read before the box refused
+// the app's status are not shown again beside a later failure of it.
+func TestStatusRefusedDropsTheAlerts(t *testing.T) {
+	now := t0
+	f := &demo.Fake{Now: func() time.Time { return now }}
+	f.Body("apps.json", `{"apps": [{"name": "blog"}]}`)
+	s := &model.Session{Host: demo.Host, Now: f.Now, Engine: model.NewEngine(t0)}
+	s.Engine.Focus("blog", now)
+	s.Engine.AlertsOpen("blog", now)
+	for range 8 {
+		step(t, s, f, &now)
+	}
+	shown := func() bool {
+		var got []string
+		for _, l := range append(s.Overview("blog", now).Note, s.Overview("blog", now).Fields...) {
+			got = append(got, l.Text())
+		}
+		return strings.Contains(strings.Join(got, "\n"), "alerts      2 held")
+	}
+	if !shown() {
+		t.Fatal("the alerts are not shown to begin with")
+	}
+	f.Set("blog", fail(model.FailForbidden))
+	for range 4 {
+		if j := step(t, s, f, &now); j.Kind == model.KStatus {
+			break
+		}
+	}
+	f.Set("blog", fail(model.FailNoAnswer))
+	s.Engine.Again(now, model.Job{Kind: model.KStatus, App: "blog"})
+	for range 4 {
+		if j := step(t, s, f, &now); j.Kind == model.KStatus {
+			break
+		}
+	}
+	if shown() {
+		t.Error("alerts read before the status was refused are shown beside its later failure")
+	}
+}

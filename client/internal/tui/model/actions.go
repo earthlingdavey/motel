@@ -82,8 +82,9 @@ func readStatus(ctx context.Context, _ *Session, c Client, j Job) (func(*Session
 			a.err, a.errAt = err, at
 			if Forbidden(err) || NotFound(err) {
 				// The box's last word on it is a refusal: what was held of
-				// it goes, so no later failure can bring it back.
-				a.st = nil
+				// it goes, its alerts too, so no later failure can bring
+				// them back.
+				a.st, a.alerts = nil, nil
 			}
 			return
 		}
