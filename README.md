@@ -268,10 +268,13 @@ issues and pull requests are the maintainer's. See
 No local Go toolchain needed — everything runs in Docker:
 
 ```sh
-make test              # unit tests, all modules (race + coverage)
+make help              # every target, a line each
+make test              # unit tests, all modules (race + coverage); PKGS=./notify/... one module, RUN=TestName one test
 make test-integration  # real deploys through caddytest, under a real systemd user manager
 make e2e               # full stack: the liveswap and penaltybox suites against the shipped binary under systemd, restart survival + crash recovery, then signed box pushes
 make e2e-backup        # the backups suites — setup, a run, the timers, status, restore, the repository check — one box each against a local S3 server; CI runs it beside e2e
+make e2e-notify        # the notify suite: a box with Debian's Alertmanager and a stub receiver, its splits a box each; a bare run leaves heartbeat (~9.5 min) out, CI names it
+make e2e-metrics       # the metrics suite: notify's box with Debian's victoria-metrics and the same receiver, its splits a box each; not beside e2e-notify on one host
 make lint vet tidy     # golangci-lint (gofmt-gated), go vet, go mod tidy
 make tidy-check        # fails if go mod tidy would change a module's go.mod/go.sum; CI runs it on every PR that changes code
 make vulncheck         # govulncheck, all modules (tool dep in go.mod — Dependabot-bumped)
@@ -286,6 +289,7 @@ make fuzz              # fuzz the untrusted-input surfaces (FUZZTIME=2m per targ
 make fuzz-list         # what fuzz will run (discovered per module, not listed by hand); CI runs it on every PR that changes code
 make soak              # ~20min leak hunt: deploy/reload churn, goroutine/fd assertions; CI runs it per merge to main and weekly
 make build             # cross-compile linux amd64/arm64
+make build-client      # the laptop client, as a release builds it; GOOS=darwin GOARCH=arm64 for a Mac
 make package           # .deb via nfpm, and the client's archive for an M-series Mac, into dist/
 make install-test      # install dist/'s .deb under real systemd (Debian 13);
                        #   run `make package` first — dist/ is not rebuilt
