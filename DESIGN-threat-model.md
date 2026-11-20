@@ -209,9 +209,9 @@ Properties that matter to the model:
   known value (a key named for its own value gets a number in
   brackets), and the first layer runs once more over the finished
   bytes — any fallback included — so the promise holds for the bytes
-  written, not only for the body as filtered (a body's times are put
-  back after that pass, and a check across each time's edge holds the
-  promise for them: the fifth text below); the safe strings are
+  written, not only for the body as filtered (a body's times and
+  numbers are put back after that pass, and a check across each one's
+  edge holds the promise for them: the fifth text below); the safe strings are
   held out of the heuristic layers as spans, so a version shaped like
   a token survives them. The one text outside the promise is the
   report field's own name, `redacted_env`: it is fixed, in every such
@@ -272,7 +272,8 @@ Properties that matter to the model:
   deploy's detail as it was built), beside which it would show the
   value by difference, has the body withheld as before, though across
   two answers (a marker in one deploy's record, the number in the
-  status) a reader can still set them side by side (an accepted row in
+  status once a later deploy has replaced that one as the last) a
+  reader can still set them side by side (an accepted row in
   liveswap/DESIGN-liveswap.md); and a body in which a value would stand across a token's edge goes
   through whole as before (liveswap/redact.go, rule 7). A figure the
   app's behaviour drives (its memory, its request counts) is a channel

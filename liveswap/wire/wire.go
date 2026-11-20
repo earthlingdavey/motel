@@ -21,7 +21,9 @@
 // string of the app's that is a NUL, a ; and digits alone), or from a
 // box older than #604, and a
 // number never: rule 7 holds numbers too, and a body it sends whole
-// with a value in a number is withheld, as every such body was before.
+// with a value in a number is withheld, as every such body was before,
+// or, for a value made of JSON punctuation that runs from a string
+// across a number into the next, sent without that key and number.
 // A body the filter changed gains a top-level "redacted_env" naming the
 // env keys whose values it replaced, which only DeployResult has a
 // field for. Apps is made of bodies, one per app: each entry is

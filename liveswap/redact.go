@@ -201,8 +201,9 @@ import (
 //     of it and a body withheld for a number said the key's value was
 //     digits of one. A number that holds a value replaced elsewhere in
 //     the body (the app printed it: replaced by this filter, or by an
-//     earlier pass a nested redacted_env names, a failed deploy's
-//     detail) would show it beside that marker by difference, so such
+//     earlier pass, a failed deploy's detail, whose marker the body
+//     holds or a nested redacted_env names) would show it beside that
+//     marker by difference, so such
 //     a body goes through whole, and is withheld as before
 //     (TestHeldNumbersNotByDifference,
 //     TestFailedDeployNumberNotByDifference); a time keeps its hold, its
@@ -810,10 +811,19 @@ func (r *Redactor) filterBody(raw string, seen map[string]bool) string {
 			found := map[string]bool{}
 			out := r.filterWhole(body, found)
 			// Replaced in this body: what this pass found, and what an
-			// earlier pass did, which a nested redacted_env names (a
-			// failed deploy's detail, replaced as it was built,
-			// failureDetail in app.go).
+			// earlier pass did (a failed deploy's detail, replaced as it
+			// was built, failureDetail in app.go), which its marker in
+			// the body shows, or a nested redacted_env names (the name
+			// as written, or a marker when a value equals a key's name;
+			// a marker the tail's cap cut).
 			replaced := maps.Clone(found)
+			for _, sec := range r.secrets {
+				if strings.Contains(raw, sec.marker) {
+					for _, k := range sec.keys {
+						replaced[k] = true
+					}
+				}
+			}
 			if strings.Contains(raw, `"redacted_env"`) {
 				var tree any
 				_ = json.Unmarshal([]byte(raw), &tree)
@@ -967,7 +977,8 @@ func holdOut(raw string) (string, []heldToken) {
 // that holds a time's quote. A form wholly inside a time's text or a
 // number is the token's own, and stays (rule 7), but in a number when
 // the same key's value was replaced elsewhere in the body (replaced:
-// by this filter, or by an earlier pass a nested redacted_env names):
+// by this filter, or by an earlier pass, its marker in the body or its
+// key in a nested redacted_env):
 // the number whole beside that marker would show the value by
 // difference, where the body was withheld (a time's marker said as
 // much). These

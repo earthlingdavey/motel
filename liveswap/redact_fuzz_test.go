@@ -108,6 +108,19 @@ func FuzzRedactor(f *testing.F) {
 			if !strings.Contains(js, `"redacted_env":[`) && js != `{"error":"[#0]"}` {
 				t.Fatalf("form %q: keys not reported in %s", form, js)
 			}
+			// And a body whose only text is the affixes, so that a
+			// form that is a piece of the number (a seed of digits) is
+			// held there whole, the path no marker beside it sends whole.
+			lone, _ := json.Marshal(map[string]any{"error": prefix + suffix, "at": time.Unix(1_700_000_000, 0).UTC(), "count": 1700000000.25})
+			lj := r.redactJSON(lone)
+			if !json.Valid([]byte(lj)) {
+				t.Fatalf("form %q: redactJSON produced invalid JSON: %s", form, lj)
+			}
+			for _, f := range []string{string(mustQuote(t, form)), form} {
+				if outsideHeld(strings.Replace(lj, `"redacted_env":`, "", 1), f, [3]string{`"at":"`, "2023-11-14T22:13:20Z", `"`}, [3]string{`"count":`, "1700000000.25", `,`}) {
+					t.Fatalf("form %q: survived in JSON body %s", form, lj)
+				}
+			}
 		}
 	})
 }
