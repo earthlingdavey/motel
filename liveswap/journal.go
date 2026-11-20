@@ -202,6 +202,27 @@ const streamsMaxBytes = 64 * 1024
 // streamIDRe is a stream id as journald prints one.
 var streamIDRe = regexp.MustCompile(`^[0-9a-f]{32}$`)
 
+// cursorNumber is a number of a journal cursor as journalctl writes
+// it: lower-case hex, no leading zero, at most 64 bits.
+const cursorNumber = `(?:0|[1-9a-f][0-9a-f]{0,15})`
+
+// journalCursor is a journal cursor as journalctl writes one
+// (sd_journal_get_cursor, in systemd's sd-journal.c): the six fields
+// in that order, each id 32 lower-case hex digits, each number as
+// cursorNumber; at most 145 bytes of [0-9a-f;=bimstx], so one argument
+// that never begins with "-". journalctl itself takes far more (a time
+// alone, a sequence number alone, the fields in any order, upper case,
+// unknown fields), and seeks by any time or sequence number a cursor
+// names, one of this form with made-up ids among them: the grammar
+// keeps out what is no cursor, and does not make a cursor one the box
+// gave. The read that takes one must check that against the cursor's
+// own entry. No row reads it until the logs row.
+var journalCursor = &keyGrammar{
+	re: regexp.MustCompile(`^s=[0-9a-f]{32};i=` + cursorNumber + `;b=[0-9a-f]{32};m=` + cursorNumber +
+		`;t=` + cursorNumber + `;x=` + cursorNumber + `$`),
+	says: "a journal cursor, as an answer gave it",
+}
+
 // streamIDs reads journalctl's output, an entry a line, for the
 // distinct stream ids, in the order first met. What is not one — the
 // first line cut by the byte bound, the empty line of an entry with no

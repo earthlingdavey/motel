@@ -3,10 +3,15 @@ package liveswap
 import (
 	"context"
 	"encoding/json"
+	"maps"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
+	"regexp/syntax"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -316,5 +321,166 @@ func TestAlertsFilterFallsBack(t *testing.T) {
 		if strings.Contains(w.Body.String(), value) || !strings.Contains(w.Body.String(), "redacted:K") || !strings.Contains(w.Body.String(), `"starts_at":"2026-11-19T13:01:00Z"`) {
 			t.Errorf("K=%s: %d %s", value, w.Code, w.Body)
 		}
+	}
+}
+
+// withProbeRow adds, until the test ends, a row probe that takes lines,
+// a closed set, and after, a key held to journalCursor, whose function
+// records the query it is given and answers 204: the keys a read of
+// the journal declares, with no reader. It swaps the package's table,
+// as recordRows does, so no test that calls it may run in parallel.
+func withProbeRow(t *testing.T) *[]appQuery {
+	t.Helper()
+	saved := motelAppRoutes
+	t.Cleanup(func() { motelAppRoutes = saved })
+	got := new([]appQuery)
+	motelAppRoutes = append(slices.Clone(saved), motelAppRoute{
+		"probe", access.AppAlerts,
+		[]queryKey{{name: "lines", values: []string{"200", "50", "1000"}}, {name: "after", grammar: journalCursor}},
+		func(_ *Handler, w http.ResponseWriter, _ *http.Request, _ appHandle, q appQuery) error {
+			*got = append(*got, q)
+			w.WriteHeader(http.StatusNoContent)
+			return nil
+		},
+	})
+	return got
+}
+
+// probe422 is the probe row's 422: each key in the row's own words.
+const probe422 = `{"error":"GET /_motel/apps/{app}/probe takes only lines (one of 200, 50, 1000) and after (a journal cursor, as an answer gave it), each once"}` + "\n"
+
+// TestQueryKeyGrammar: a key held to a grammar is in the query only
+// when named, and then with the value as url.ParseQuery decoded it, a
+// cursor byte for byte, taken only when the grammar takes it whole;
+// the closed set beside it keeps its default. A raw ";" is no
+// separator url.ParseQuery takes, so a cursor sent with one is the 422,
+// never a key dropped. Anything else is the row's 422 too, and the
+// row's function does not run.
+func TestQueryKeyGrammar(t *testing.T) {
+	h, people := alertsRig(t)
+	got := withProbeRow(t)
+	alice := token(people.alice)
+	esc := url.QueryEscape
+	type cs = []struct {
+		name, query string
+		want        appQuery // nil for the 422
+	}
+	cases := cs{
+		{"no query", "", appQuery{"lines": "200"}},
+		{"an empty query", "?", appQuery{"lines": "200"}},
+		{"lines alone", "?lines=50", appQuery{"lines": "50"}},
+		{"after as url.Values writes it", "?" + url.Values{"after": {testCursor}}.Encode(), appQuery{"lines": "200", "after": testCursor}},
+		{"after, = raw and ; as %3B", "?after=" + strings.ReplaceAll(testCursor, ";", "%3B"), appQuery{"lines": "200", "after": testCursor}},
+		{"after, ; as %3b", "?after=" + strings.ReplaceAll(testCursor, ";", "%3b"), appQuery{"lines": "200", "after": testCursor}},
+		{"after and lines", "?" + url.Values{"after": {testCursor}, "lines": {"1000"}}.Encode(), appQuery{"lines": "1000", "after": testCursor}},
+		{"after, then lines", "?after=" + esc(testCursor) + "&lines=50", appQuery{"lines": "50", "after": testCursor}},
+		{"the widest cursor", "?after=" + esc(widestCursor), appQuery{"lines": "200", "after": widestCursor}},
+		{"a cursor of zeros", "?after=" + esc(zeroCursor), appQuery{"lines": "200", "after": zeroCursor}},
+		{"after with a raw ;", "?after=" + testCursor, nil},
+		{"after with a raw ;, after lines", "?lines=50&after=" + testCursor, nil},
+		{"after with a raw ;, before lines", "?after=" + testCursor + "&lines=50", nil},
+		{"after with %2B, a +", "?after=" + strings.Replace(esc(testCursor), "i%3D826", "i%3D%2B826", 1), nil},
+		{"after with a raw +, a space", "?after=" + strings.Replace(esc(testCursor), "i%3D826", "i%3D82+", 1), nil},
+		{"after empty", "?after=", nil},
+		{"after with no =", "?after", nil},
+		{"after with a NUL", "?after=" + esc(testCursor) + "%00", nil},
+		{"after twice, the same", "?after=" + esc(testCursor) + "&after=" + esc(testCursor), nil},
+		{"after that does not parse", "?after=%ZZ", nil},
+		{"a key the row does not take", "?after=" + esc(testCursor) + "&since=1h", nil},
+		{"After (case)", "?After=" + esc(testCursor), nil},
+		{"lines outside its set", "?lines=7&after=" + esc(testCursor), nil},
+		{"the app's env_file value", "?after=hunter2-of-demo", nil},
+	}
+	for name, form := range cursorForms {
+		cases = append(cases, struct {
+			name, query string
+			want        appQuery
+		}{"a cursor's form: " + name, "?after=" + esc(form), nil})
+	}
+	for _, c := range cases {
+		*got = nil
+		w := sendTo(t, h, "GET", "/_motel/apps/demo/probe"+c.query, alice)
+		switch {
+		case c.want == nil && (w.Code != http.StatusUnprocessableEntity || w.Body.String() != probe422):
+			t.Errorf("%s: %d %q, want 422 %q", c.name, w.Code, w.Body, probe422)
+		case c.want == nil && len(*got) != 0:
+			t.Errorf("%s: the row's function ran with %v", c.name, *got)
+		case c.want != nil && (w.Code != http.StatusNoContent || len(*got) != 1 || !maps.Equal((*got)[0], c.want)):
+			t.Errorf("%s: %d %s, the function given %v, want %v", c.name, w.Code, w.Body, *got, c.want)
+		}
+	}
+}
+
+// TestQueryKeyGrammarSays: the 422 of a row with a grammar key is the
+// row's words alone whatever the value: one holding the app's env_file
+// value is told no marker of it, and nothing of a cursor or of a long
+// value comes back.
+func TestQueryKeyGrammarSays(t *testing.T) {
+	h, people := alertsRig(t)
+	withProbeRow(t)
+	for _, q := range []string{
+		"?after=hunter2-of-demo",
+		"?after=" + url.QueryEscape(testCursor+";q=hunter2-of-demo"),
+		"?lines=50&after=hunter2-of-demo",
+		"?hunter2-of-demo=" + url.QueryEscape(testCursor),
+		"?after=" + testCursor,
+		"?after=" + strings.Repeat("hunter2-of-demo", 300),
+	} {
+		w := sendTo(t, h, "GET", "/_motel/apps/demo/probe"+q, token(people.alice))
+		if w.Code != http.StatusUnprocessableEntity || w.Body.String() != probe422 {
+			t.Errorf("%.40s: %d %q, want 422 %q", q, w.Code, w.Body, probe422)
+		}
+	}
+}
+
+// anchored is whether re matches whole values alone: its pattern, as
+// parsed, one sequence from the start of the text to its end, so that
+// no alternative at the top escapes either anchor (`^a|b$` matches any
+// value ending in b).
+func anchored(re *regexp.Regexp) bool {
+	p, err := syntax.Parse(re.String(), syntax.Perl)
+	if err != nil {
+		return false
+	}
+	p = p.Simplify()
+	return p.Op == syntax.OpConcat && len(p.Sub) >= 2 &&
+		p.Sub[0].Op == syntax.OpBeginText && p.Sub[len(p.Sub)-1].Op == syntax.OpEndText
+}
+
+// TestAppRouteKeys: every key of every row, the probe's among them, has
+// a name no other key of its row has, and exactly one of a closed set of
+// distinct, non-empty values or a grammar; a grammar is anchored, takes
+// no empty value (so a key not named is told from one named) and has
+// its words. A key with neither would panic on its row's first request.
+func TestAppRouteKeys(t *testing.T) {
+	for pattern, want := range map[string]bool{
+		`^[a-z]{3}$`: true, `^(?:a|b)$`: true, `^(a|bc)$`: true,
+		`^a|b$`: false, `^a$|^b$`: false, `(?m)^a$`: false, `^a`: false, `a$`: false, `a`: false, `^a\z`: true,
+	} {
+		if anchored(regexp.MustCompile(pattern)) != want {
+			t.Errorf("anchored(%s) = %v", pattern, !want)
+		}
+	}
+	withProbeRow(t)
+	for _, rt := range motelAppRoutes {
+		seen := map[string]bool{}
+		for _, k := range rt.keys {
+			switch g := k.grammar; {
+			case k.name == "" || seen[k.name]:
+				t.Errorf("%s: key %q empty or twice", rt.read, k.name)
+			case (g == nil) == (len(k.values) == 0):
+				t.Errorf("%s: key %q has %d values and a grammar %v: it needs one of the two", rt.read, k.name, len(k.values), g)
+			case g != nil && (!anchored(g.re) || g.re.MatchString("") || g.says == ""):
+				t.Errorf("%s: key %q's grammar %s is not anchored, takes \"\" or has no words", rt.read, k.name, g.re)
+			case g == nil && (slices.Contains(k.values, "") || len(slices.Compact(slices.Sorted(slices.Values(k.values)))) != len(k.values)):
+				t.Errorf("%s: key %q's values %q are not distinct and non-empty", rt.read, k.name, k.values)
+			}
+			seen[k.name] = true
+		}
+	}
+	if !slices.ContainsFunc(motelAppRoutes, func(rt motelAppRoute) bool {
+		return slices.ContainsFunc(rt.keys, func(k queryKey) bool { return k.grammar != nil })
+	}) {
+		t.Error("no row holds a key to a grammar: the probe row did not reach the table")
 	}
 }
