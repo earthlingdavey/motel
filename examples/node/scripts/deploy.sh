@@ -315,7 +315,7 @@ outcome() { # the http_status of a complete last line; else 200 for a whole sing
 refused() {
 	echo "the box refused this token. Most often its deploy_trust for this app does not accept:"
 	if [ -n "$minted" ]; then
-		printf '  %-18s%s\n' 'audience' "${MOTEL_AUDIENCE:-motel}" 'claim repository' "${GITHUB_REPOSITORY:-?}" 'claim ref' "${GITHUB_REF:-?}"
+		printf '  %-19s%s\n' 'audience' "${MOTEL_AUDIENCE:-motel}" 'claim repository' "${GITHUB_REPOSITORY:-?}" 'claim ref' "${GITHUB_REF:-?}" 'claim workflow_ref' "${GITHUB_WORKFLOW_REF:-?}"
 	else
 		echo "  the key this token was minted with (deploy_trust local { public_key ... })"
 		echo "  the audience, subject or claim it pins, against what moteld deploy-token was given"
@@ -343,11 +343,12 @@ finish() { # <what> <version sent>: dresses the outcome, exits on failure
 	! boxrefused || hint=$(refused)
 	[ -z "$hint" ] || printf '%s\n' "$hint"
 	# The box's pre-flight names the runner a release for its
-	# architecture is built on (liveswap/elf.go); the workflow takes its
-	# runner from a repository variable, which the box cannot know of.
+	# architecture is built on (liveswap/elf.go); the workflow's build
+	# job takes its runner from a repository variable, which the box
+	# cannot know of.
 	if [ -n "$actions" ] && [ "$code" = 422 ]; then
 		runner=$(printf '%s' "$why" | sed -n 's/.*(runs-on: \([A-Za-z0-9._-]*\)).*/\1/p')
-		[ -z "$runner" ] || echo "The workflow's runner is the repository variable MOTEL_RUNS_ON: gh variable set MOTEL_RUNS_ON -R ${GITHUB_REPOSITORY:-<owner/repo>} --body $runner (or Settings → Secrets and variables → Actions → Variables), then deploy again."
+		[ -z "$runner" ] || echo "The build job's runner is the repository variable MOTEL_RUNS_ON: gh variable set MOTEL_RUNS_ON -R ${GITHUB_REPOSITORY:-<owner/repo>} --body $runner (or Settings → Secrets and variables → Actions → Variables), then build again: push, or Re-run all jobs (a re-run of the deploy job alone sends this build again)."
 	fi
 	[ -n "$actions" ] && printf '::error title=%s::%s\n' "$(prop "motel: $what failed")" "$(msg "${phase:+in $phase: }${why:-see the response above}${hint:+; the log says what the box must trust}")"
 	if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
