@@ -26,6 +26,19 @@ var SeriesRanges = wire.SeriesRanges
 // seriesSpans are SeriesRanges' spans.
 var seriesSpans = map[string]time.Duration{"1h": time.Hour, "24h": 24 * time.Hour, "7d": 7 * 24 * time.Hour, "14d": 14 * 24 * time.Hour}
 
+// SeriesSpan is a window's span; 0 for one not in SeriesRanges.
+func SeriesSpan(window string) time.Duration { return seriesSpans[window] }
+
+// appRefused says the box's last word on app's status is a refusal (a
+// 403, a 404): nothing of the app is shown then, its series neither.
+func (s *Session) appRefused(app string) (error, bool) {
+	a := s.apps[app]
+	if a == nil || a.st != nil || !Forbidden(a.err) && !NotFound(a.err) {
+		return nil, false
+	}
+	return a.err, true
+}
+
 // seriesPanel is a panel the client draws: the box's name and unit, the
 // client's label, and how its values are written.
 type seriesPanel struct {
@@ -176,7 +189,7 @@ func (s *Session) dropSeries(app string) {
 func (s *Session) MetricsAsOf(app, rng string, now time.Time) Line {
 	s.seen(now)
 	g, err := s.Series(app, rng)
-	if g == nil {
+	if _, refused := s.appRefused(app); g == nil || refused {
 		return nil
 	}
 	l := s.asOf(g.At, now)
@@ -199,12 +212,12 @@ const plotLabel = 7
 func (s *Session) MetricsViewFit(app, rng string, now time.Time, width, height int, cells Cells) []Line {
 	s.seen(now)
 	g, err := s.Series(app, rng)
-	if a := s.apps[app]; a != nil && a.st == nil && (Forbidden(a.err) || NotFound(a.err)) {
+	if refusal, refused := s.appRefused(app); refused {
 		// The box refused the app's status: nothing of the app is shown,
 		// and the refusal is said, whatever the series' own read did, an
 		// answer of it since among it.
-		l := Line{{T: Capped(failureText(a.err), 4*LineMax)}}
-		if Forbidden(a.err) {
+		l := Line{{T: Capped(failureText(refusal), 4*LineMax)}}
+		if Forbidden(refusal) {
 			l = append(l, s.askAgain(now)...)
 		}
 		return Sentence(l, width, cells)
@@ -395,13 +408,20 @@ func panelPlot(p seriesPanel, in [][2]float64, start, end time.Time, step time.D
 		have[int64(pt[0])] = true
 	}
 	hits := 0
+	for t := start; !t.After(end) && end.Sub(start)/step <= 4096; t = t.Add(step) {
+		if have[t.Unix()] {
+			hits++
+		}
+	}
+	if end.Sub(start)/step > 4096 {
+		hits = len(have)
+	}
 	// Each step with no point breaks every cell its span (the step up to
 	// its time) is drawn in. A window of more steps than any box's (a
 	// fixture's step of a second over 14 days) is left unbroken.
 	if end.Sub(start)/step <= 4096 {
 		for t := start; !t.After(end); t = t.Add(step) {
 			if have[t.Unix()] {
-				hits++
 				continue
 			}
 			from := cellOf(maxTime(start, t.Add(-step+time.Second)), start, end, plotW)

@@ -111,7 +111,8 @@ func (c *Client) Alerts(ctx context.Context, app App) (wire.Alerts, *Answer, err
 // panels of points, for a person whose grants cover the app. rng is ""
 // for the box's default. The route is on the box's own name, whatever
 // path an app URL names. An answer about another window than the one
-// asked is not moteld's.
+// --range named is not moteld's; with none named, the box's default is
+// taken, whichever of the set it is.
 func (c *Client) Series(ctx context.Context, app App, rng string) (wire.Series, *Answer, error) {
 	var s wire.Series
 	q := url.Values{}

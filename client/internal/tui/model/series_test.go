@@ -388,6 +388,10 @@ func TestStatusRefusedDropsTheSeries(t *testing.T) {
 	if got := text(s.MetricsViewFit("blog", "24h", now, 0, 27, nil)); strings.Contains(got, "memory") || !strings.Contains(got, "no") {
 		t.Errorf("a series answered after the status was refused is shown: %q", got)
 	}
+	// Nor in the JSON overlay or the crumb.
+	if _, _, have := s.Body(model.View{Screen: model.ScreenMetrics, App: "blog", Range: "24h"}); have || s.MetricsAsOf("blog", "24h", now) != nil {
+		t.Error("the overlay or the crumb holds the series beside the status's refusal")
+	}
 	// Refused first, the series is held; the status refused after drops
 	// nothing that would let the screen say it is asking.
 	f2 := &demo.Fake{Now: func() time.Time { return now }}

@@ -1508,7 +1508,7 @@ route's handle, at the window's fixed step, run at once:
 | Panel | Query (`STEP` the window's step) | Each point |
 |---|---|---|
 | `memory_bytes` | `max(max_over_time(motel_app_memory_bytes{app=…}[STEP]))` | the step's highest push: a peak between two points is not lost (a plain selector's point is the push at the step: 100 where the step held 500, `TestSeriesViewOverTheStore`) |
-| `cpu_cores` | `sum(UNIT_CPU)` at the summary's rate window over the hour (`2m`), the step's otherwise ("Operator rules") | the running unit's rate |
+| `cpu_cores` | `sum(increase(motel_app_cpu_seconds_total{app=…}[STEP])) / STEP_SECONDS` | the CPU every unit used in the step, a second of it: its average cores. Not the summary's `UNIT_CPU`, which gives a point only when a unit pushed in the 75 s before it, so over an hour's step an app stopped at ten to, or a moteld restarted then, had no point for an hour it ran (the series read's fourth review); the store's `increase` drops a large first sample (a unit pushed first after it ran for hours), so the line's first load is no spike (`TestSeriesViewOverTheStore`) |
 | `requests_per_second`, `5xx_share` | `sum by (class) (inc(motel_app_requests_total{app=…}))` over `[STEP]`, the summary's guard ("Operator rules") | every class over the step, per second; 5xx of those sent (`aborted` left out), no point where none was sent |
 | `p95_ms` | `histogram_quantile(0.95, sum by (le) (hinc(motel_app_response_seconds)))` over `[STEP]` | the step's responses, in ms; no point where there were none |
 

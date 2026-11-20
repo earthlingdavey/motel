@@ -6,6 +6,7 @@ import (
 	"maps"
 	"math"
 	"slices"
+	"strconv"
 	"sync"
 	"time"
 
@@ -33,28 +34,30 @@ const (
 	seriesBudget = 3 * time.Second
 )
 
-// seriesWindow is one ?range= of the series: its span, the step
-// between points, and the CPU rate's window (two steps at the hour's
-// 60 s, as the summary's; one step otherwise).
+// seriesWindow is one ?range= of the series: its span, and the step
+// between points.
 type seriesWindow struct {
 	span, step time.Duration
-	rate       string
 }
 
 // seriesWindows are wire.SeriesRanges' spans and steps: at most 337
 // points a panel (the hour's 61), so a body stays bounded whatever the
 // window (DESIGN-metrics.md has the sizes measured).
 var seriesWindows = map[string]seriesWindow{
-	"1h":  {span: time.Hour, step: time.Minute, rate: "2m"},
-	"24h": {span: 24 * time.Hour, step: 5 * time.Minute, rate: "5m"},
-	"7d":  {span: 7 * 24 * time.Hour, step: 30 * time.Minute, rate: "30m"},
-	"14d": {span: 14 * 24 * time.Hour, step: time.Hour, rate: "1h"},
+	"1h":  {span: time.Hour, step: time.Minute},
+	"24h": {span: 24 * time.Hour, step: 5 * time.Minute},
+	"7d":  {span: 7 * 24 * time.Hour, step: 30 * time.Minute},
+	"14d": {span: 14 * 24 * time.Hour, step: time.Hour},
 }
 
 // seriesQueries is the four range queries of the app sel names, at
 // step: the memory's peak in each step (the push writes it every 30 s,
-// and a point at the step would hold one sample of the step's); the
-// running unit's CPU (cpuQuery, as the summary's); the responses by
+// and a point at the step would hold one sample of the step's); the CPU
+// every unit of the app used in the step, a second of it (its average
+// cores: a unit stopped or started inside the step is counted for its
+// part, where the summary's running unit, unitCPU, gives a step whose
+// last 75 s had no push no point at all, and a cutover's old unit
+// none); the responses by
 // class over each step, through the operator rules' guard
 // (counterIncrease, as the summary counts them), which gives both the
 // rate and the 5xx share; and the 95th percentile of each step's
@@ -62,7 +65,7 @@ var seriesWindows = map[string]seriesWindow{
 func seriesQueries(sel string, w seriesWindow) (mem, cpu, classes, p95 string) {
 	step := promDuration(w.step)
 	mem = "max(max_over_time(motel_app_memory_bytes{" + sel + "}[" + step + "]))"
-	cpu = cpuQuery(sel, w.rate)
+	cpu = "sum(increase(motel_app_cpu_seconds_total{" + sel + "}[" + step + "])) / " + strconv.Itoa(int(w.step/time.Second))
 	classes = "sum by (class) (" + counterIncrease("motel_app_requests_total{"+sel+"}", w.step, 0) + ")"
 	p95 = "histogram_quantile(0.95, sum by (le) (" + histogramIncrease("motel_app_response_seconds", "{"+sel+"}", w.step, 0) + "))"
 	return

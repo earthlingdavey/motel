@@ -155,7 +155,7 @@ func TestSeriesViewPanels(t *testing.T) {
 		switch {
 		case strings.HasPrefix(q, "max(max_over_time(motel_app_memory_bytes"):
 			return []series{{points: []point{{at(-3), 190840832.4}, {at(-1), 191889408}, {at(0), 12345678901.6}}}}
-		case strings.HasPrefix(q, "sum(rate("):
+		case strings.HasPrefix(q, "sum(increase(motel_app_cpu_seconds_total"):
 			return []series{{points: []point{{at(-3), 0.00012345678}, {at(-2), math.NaN()}, {at(0), 0.5}, {at(1), 9}}}}
 		case strings.HasPrefix(q, "sum by (class)"):
 			return []series{
@@ -320,6 +320,7 @@ func TestSeriesViewShares(t *testing.T) {
 //     gap is no spike; over an hour the gap's counts are in (1200,
 //     from 0 at the hour's start).
 //   - p95: the step's responses, interpolated in the buckets.
+//   - cpu: as the comment above its cases says.
 func TestSeriesViewOverTheStore(t *testing.T) {
 	tool := vmTool(t, "vmalert-tool")
 	dir := t.TempDir()
@@ -329,6 +330,10 @@ func TestSeriesViewOverTheStore(t *testing.T) {
 	hour, day := seriesWindows["1h"], seriesWindows["14d"]
 	mem1, _, classes1, p951 := seriesQueries(`app="a"`, hour)
 	mem14, _, classes14, _ := seriesQueries(`app="a"`, day)
+	cpu := func(app string, w seriesWindow) string {
+		_, q, _, _ := seriesQueries(`app="`+app+`"`, w)
+		return "round(" + q + ", 0.0001)"
+	}
 	const gap = "_x20"
 	// Buckets: 0.1 s, 1 s, +Inf; each push 10 responses, 9 under 0.1 s.
 	bucket := func(le string, per int) string {
@@ -349,6 +354,14 @@ tests:
         values: '0+10x40 ` + gap + ` 610+10x99'
 ` + bucket("0.1", 9) + bucket("1", 10) + bucket("+Inf", 10) + `      - series: 'motel_app_response_seconds_count{app="a",release="v1",job="moteld"}'
         values: '0+10x40 ` + gap + ` 610+10x99'
+      - series: 'motel_app_cpu_seconds_total{app="cut",unit="u1",job="moteld"}'
+        values: '0+15x200'
+      - series: 'motel_app_cpu_seconds_total{app="cut",unit="u2",job="moteld"}'
+        values: '_x201 7.5+7.5x38'
+      - series: 'motel_app_cpu_seconds_total{app="stop",unit="s1",job="moteld"}'
+        values: '0+15x100'
+      - series: 'motel_app_cpu_seconds_total{app="late",unit="l1",job="moteld"}'
+        values: '_x60 5000+15x60'
     metricsql_expr_test:
 `
 	expect := func(expr, at, samples string) {
@@ -365,5 +378,16 @@ tests:
 	expect(classes14, "60m", `[{labels: '{class="2xx"}', value: 1200}]`)
 	expect("round("+p951+", 0.001)", "10m", `[{labels: '{}', value: 0.55}]`)
 	expect("round("+p951+", 0.001)", "25m", `[]`)
+	// CPU: an app at 0.5 cores that stops at 50m has its hour's point at
+	// 60m, 50 minutes of it (the summary's running unit gives none
+	// there); none two minutes after it stopped. A cutover at 100m (u1
+	// at 0.5 cores, u2 at 0.25 from 100m30s) is the two units' CPU
+	// together, not each one's rate added. A unit first pushed at 5000 s
+	// (the line loaded after it ran for hours) is no spike.
+	expect(cpu("stop", day), "60m", `[{labels: '{}', value: 0.4167}]`)
+	expect("round("+cpuQuery(`app="stop"`, "1h")+", 0.0001)", "60m", `[]`)
+	expect(cpu("stop", hour), "52m", `[]`)
+	expect(cpu("cut", day), "120m", `[{labels: '{}', value: 0.4146}]`)
+	expect(cpu("late", hour), "31m", `[{labels: '{}', value: 0.5}]`)
 	runUnittest(t, tool, dir, test)
 }

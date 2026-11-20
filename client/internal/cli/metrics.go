@@ -98,7 +98,7 @@ func seriesView(s wire.Series, app, host string) render.Series {
 	}
 	steps := 0
 	if v.Step > 0 && s.End != nil {
-		steps = int(seriesSpan(s.Window)/v.Step) + 1
+		steps = int(model.SeriesSpan(s.Window)/v.Step) + 1
 	}
 	at := func(pt [2]float64) time.Time { return time.Unix(int64(pt[0]), 0) }
 	for _, p := range s.Panels {
@@ -127,9 +127,4 @@ func seriesView(s wire.Series, app, host string) render.Series {
 		v.Panels = append(v.Panels, pn)
 	}
 	return v
-}
-
-// seriesSpan is a window's span, by wire.SeriesRanges.
-func seriesSpan(w string) time.Duration {
-	return map[string]time.Duration{"1h": time.Hour, "24h": 24 * time.Hour, "7d": 7 * 24 * time.Hour, "14d": 14 * 24 * time.Hour}[w]
 }

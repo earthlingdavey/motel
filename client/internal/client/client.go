@@ -608,7 +608,7 @@ func holdSeries(s *wire.Series) string {
 	// No window a box keeps has a thousand steps (337 at the most). The
 	// seconds compared before they are a Duration, which a huge one
 	// would wrap.
-	if s.StepSeconds <= 0 || s.StepSeconds > int(span/time.Second) || s.End == nil {
+	if s.StepSeconds <= 0 || s.StepSeconds > int(span/time.Second) || int(span/time.Second)%s.StepSeconds != 0 || s.End == nil {
 		return "its step or its end is not one a window has"
 	}
 	step := time.Duration(s.StepSeconds) * time.Second

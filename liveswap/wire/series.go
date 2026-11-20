@@ -58,8 +58,9 @@ type Panel struct {
 //
 //   - memory_bytes: the highest push of the app's working set in the
 //     step, in bytes (a peak between two points is not lost);
-//   - cpu_cores: the running unit's CPU, in cores, as a rate over the
-//     step (at the hour, two steps);
+//   - cpu_cores: the CPU the app's units used in the step, every unit
+//     together, a second of the step: its average cores (a unit
+//     stopped or started inside it counted for its part);
 //   - requests_per_second: the responses observe counted, every class
 //     and release, over the step, per second;
 //   - 5xx_share: the 5xx share of the responses sent (a client gone

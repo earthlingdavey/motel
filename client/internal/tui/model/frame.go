@@ -166,8 +166,12 @@ func (s *Session) Body(v View) ([]byte, time.Time, bool) {
 			return s.BoxAlertsSt.Body, s.BoxAlertsSt.At, true
 		}
 	case ScreenMetrics:
+		// An answer held beside a refusal of the app's status is not
+		// shown, here as on the screen.
 		if g, _ := s.Series(v.App, v.Range); g != nil {
-			return g.Body, g.At, true
+			if _, refused := s.appRefused(v.App); !refused {
+				return g.Body, g.At, true
+			}
 		}
 	}
 	return nil, time.Time{}, false
