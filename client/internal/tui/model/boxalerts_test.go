@@ -179,3 +179,26 @@ func TestBoxAlertsLineCounts(t *testing.T) {
 		}
 	}
 }
+
+// TestMeSaysWhoReadsTheBoxAlerts: who am I says the box's alerts are
+// not this person's only when they are not a viewer of the box, and
+// then where an app's alerts are.
+func TestMeSaysWhoReadsTheBoxAlerts(t *testing.T) {
+	for _, c := range []struct {
+		scope string
+		says  bool
+	}{{"box", false}, {"app:blog", true}} {
+		s, f, now := session(t)
+		f.Body("whoami.json", `{"name":"alice@example.com","key":"`+demo.Key.Fingerprint+`","roles":[{"role":"viewer","scope":"`+c.scope+`"}],"box":"`+demo.Host+`","version":"v0.8.0","protocol":1,"token_expires_at":"@9m"}`)
+		for range 3 {
+			step(t, s, f, now)
+		}
+		if s.Me == nil {
+			t.Fatalf("%s: whoami not read: %v", c.scope, s.MeErr)
+		}
+		v := strings.Join(strings.Fields(joined(s.MeView(*now))), " ")
+		if strings.Contains(v, "Nor the box's own alerts and silences") != c.says || !strings.Contains(v, "Read logs: this client does not offer them yet.") {
+			t.Errorf("%s: who am I says\n%s", c.scope, v)
+		}
+	}
+}

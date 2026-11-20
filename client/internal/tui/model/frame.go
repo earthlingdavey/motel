@@ -687,9 +687,15 @@ func (s *Session) MeViewFit(now time.Time, width int, cells Cells) []Line {
 		}
 		out = append(out, cutTo(Line{own("  "), verb, own(pad("", 10-len([]rune(verb.T.String()))) + " " + on)}, width, cells))
 	}
+	// What may not be read here: logs, by anyone yet; the box's own
+	// alerts and silences, by anyone but a viewer of the box.
+	cannot := "             Read logs: this client does not offer them yet."
+	if !s.BoxViewer() {
+		cannot += " Nor the box's own alerts and silences, which are a viewer of the box's: an app's are on its screen."
+	}
 	out = append(out, laid(width, cells, nil,
 		field("you may not", own("roll back, relaunch, deploy or push: no person may yet. Deploys come from CI.")),
-		Line{own("             Read logs: this client does not offer them yet. The box's own alerts and silences are a viewer of the box's (:alerts).")}, nil,
+		Line{own(cannot)}, nil,
 		Line{own("What the box knows of you is in its Caddyfile (person and grant lines), which the operator keeps. `motel key` prints the line to send them.")})...)
 	if s.MeErr != nil {
 		out = append(append(out, nil), Sentence(Line{ownC("the last read failed: ", Warn), Seg{T: Capped(failureText(s.MeErr), 2*LineMax)}}, width, cells)...)
