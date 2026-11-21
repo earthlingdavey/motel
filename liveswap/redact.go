@@ -278,13 +278,14 @@ type secretForm struct {
 	literal bool
 	keys    []string
 	marker  string
-	// pattern is the text in any backslash escaping (escapePattern),
-	// for text and for a JSON body, "" when the text is letters and
-	// digits alone; anchor, the longest run of those, is looked for
-	// before the pattern is run, and the pattern is compiled the first
-	// time it is (spelling): a filter is built for each request, and
-	// most of its patterns never meet their anchor.
-	pattern [2]string
+	// escaped is whether the text has patterns that read it in any
+	// backslash escaping, for text and for a JSON body (escapePattern):
+	// not when it is letters and digits alone; anchor, the longest run
+	// of those, is looked for before a pattern is run, and each pattern
+	// is built and compiled the first time it is (spelling): a filter
+	// is built for each request, and most of its patterns never meet
+	// their anchor.
+	escaped bool
 	anchor  string
 	once    [2]sync.Once
 	re      [2]*regexp.Regexp
@@ -293,7 +294,7 @@ type secretForm struct {
 // spelling is the form's pattern for text or a body, compiled.
 func (sf *secretForm) spelling(inBody bool) *regexp.Regexp {
 	i := mode(inBody)
-	sf.once[i].Do(func() { sf.re[i] = regexp.MustCompile(sf.pattern[i]) })
+	sf.once[i].Do(func() { sf.re[i] = regexp.MustCompile(escapePatternFor(sf.text, inBody)) })
 	return sf.re[i]
 }
 
@@ -373,7 +374,7 @@ func NewRedactor(envFile []string, safe []string) *Redactor {
 	}
 	for _, sf := range r.secrets {
 		if sf.outside == nil { // an outcome word is read as written: its _ is no escape
-			sf.pattern, sf.anchor = escapePattern(sf.text)
+			sf.escaped, sf.anchor = escapePattern(sf.text)
 		}
 	}
 	for _, sf := range r.secrets {
@@ -571,8 +572,9 @@ const escapeAnchorMin = 4
 // shortEscapes are the one-letter escapes JSON writes.
 var shortEscapes = map[rune]byte{'\b': 'b', '\t': 't', '\n': 'n', '\f': 'f', '\r': 'r'}
 
-// escapePattern is form as the patterns that read it in any backslash
-// escaping, for text and for a JSON body, and its anchor. An escapable
+// escapePattern is whether form has patterns that read it in any
+// backslash escaping, for text and for a JSON body (escapePatternFor
+// builds them), and its anchor. In those patterns an escapable
 // character stands for itself behind any run of backslashes, or behind
 // one or more for \uXXXX in either case (a surrogate pair above the
 // BMP, or \UXXXXXXXX), \u{X…} (Ruby's), \xXX (past ASCII, each byte of
@@ -585,17 +587,23 @@ var shortEscapes = map[rune]byte{'\b': 'b', '\t': 't', '\n': 'n', '\f': 'f', '\r
 // run of them before an escaped quote leaves the quote its own; a lone
 // one is the value's in text only (escapePatternFor). Mixed
 // escaping (one / escaped and the next not), either case and any depth
-// are read alike. "" for a form of letters and digits alone, whose
+// are read alike. None for a form of letters and digits alone, whose
 // plain text is its only spelling, and for one with more than
-// escapeMax characters to read. Every piece is quoted, so the pattern
+// escapeMax characters to read. Every piece is quoted, so a pattern
 // always compiles.
-func escapePattern(form string) ([2]string, string) {
+func escapePattern(form string) (bool, string) {
 	if n := escapables(form); n == 0 || n > escapeMax {
-		return [2]string{}, form
+		return false, form
 	}
-	text, anchor := escapePatternFor(form, false)
-	body, _ := escapePatternFor(form, true)
-	return [2]string{text, body}, anchor
+	anchor, run := "", 0
+	for i, c := range form {
+		if escapable(c) || quotable(c) {
+			run = 0
+		} else if run++; run > len(anchor) {
+			anchor = form[i-run+1 : i+1]
+		}
+	}
+	return true, anchor
 }
 
 // escapePatternFor is escapePattern's pattern for text, or for a JSON
@@ -603,22 +611,17 @@ func escapePattern(form string) ([2]string, string) {
 // stand by itself, and in a body (JSON, where a lone one begins an
 // escape: \n is a newline, never the value's backslash and an n) it is
 // always escaped, a pair or more.
-func escapePatternFor(form string, inBody bool) (string, string) {
+func escapePatternFor(form string, inBody bool) string {
 	var b strings.Builder
-	anchor, run := "", 0
 	for i, c := range form {
 		size := utf8.RuneLen(c)
 		if c == utf8.RuneError {
 			_, size = utf8.DecodeRuneInString(form[i:])
 		}
 		if !escapable(c) && !quotable(c) {
-			if run++; run > len(anchor) {
-				anchor = form[i-run+1 : i+1]
-			}
 			b.WriteString(form[i : i+size])
 			continue
 		}
-		run = 0
 		b.WriteString(`(?:`)
 		if c == '\\' {
 			b.WriteString(`(?:\\\\)+`)
@@ -675,7 +678,7 @@ func escapePatternFor(form string, inBody bool) (string, string) {
 		}
 		b.WriteString(`)`)
 	}
-	return b.String(), anchor
+	return b.String()
 }
 
 // writeHexAnyCase writes n as digits hex digits, each letter in either
@@ -697,7 +700,7 @@ func writeHexAnyCase(b *strings.Builder, n rune, digits int) {
 // match of its pattern for text or a body (inBody) once its anchor is
 // in s.
 func (sf *secretForm) at(s string, from int, inBody bool) int {
-	if sf.pattern[0] == "" {
+	if !sf.escaped {
 		if i := strings.Index(s[from:], sf.text); i >= 0 {
 			return from + i
 		}
@@ -738,7 +741,7 @@ var shapeRules = []struct {
 	// runs on through \u0026, the & between its parameters as
 	// encoding/json writes it, and through a quote inside the query.
 	{regexp.MustCompile(`\b([a-z][a-z0-9+.-]*://[^\s"'?]+)\?[^\s"']+`), "$1?[redacted:query]",
-		regexp.MustCompile(`\b([a-z][a-z0-9+.-]*://[^\s"'?]+)\?(?:` + bodyRun(`'`) + `)+`)},
+		regexp.MustCompile(`\b([a-z][a-z0-9+.-]*://[^\s"'?]+)\?(?:` + bodyRun(`'`, `',`) + `)+`)},
 	// Provider prefixes.
 	{regexp.MustCompile(`\b(?:AKIA|ASIA)[A-Z0-9]{16}\b`), "[redacted:aws-key]", nil},
 	{regexp.MustCompile(`\bgh[pousr]_[A-Za-z0-9]{36,}\b`), "[redacted:github-token]", nil},
@@ -749,7 +752,8 @@ var shapeRules = []struct {
 	// key contains a credential word, whatever surrounds it
 	// (DB_PASSWORD, AWS_SECRET_ACCESS_KEY, STRIPE_API_KEY). The value
 	// must be 8+ characters that are not a delimiter, not a marker
-	// layer 1 left there, and not a path or placeholder (an argv flag
+	// layer 1 left there (behind backslashes too), and not a path or
+	// placeholder (an argv flag
 	// such as --api-key=/etc/motel/app.key names a file, not a
 	// secret). In a body the same pair inside a string, its quotes
 	// escaped at any depth (an app's JSON line in a failed deploy's
@@ -757,15 +761,16 @@ var shapeRules = []struct {
 	// units (bodyRun), so it ends on an escape's edge; an escaped
 	// backslash it ends with, before a quote or a space, is the value's
 	// (`hunter2\`), and the quote or space is put back ($3).
-	{regexp.MustCompile(`(?i)\b([a-z0-9_-]*` + credentialWords + `[a-z0-9_-]*)(["']?\s*[=:]\s*["']?)[^\s"',;\[/{][^\s"',;]{7,}`), "$1$2[redacted:credential]$3",
-		regexp.MustCompile(`(?i)\b([a-z0-9_-]*` + credentialWords + `[a-z0-9_-]*)((?:\\*["'])?\s*[=:]\s*(?:\\*["'])?)(?:[^\s"',;\[/{\\]|\\+[^"/\s\\])(?:(?:` + bodyRun(`',;`) + `){7,}|(?:` + bodyRun(`',;`) + `){6,}(?:\\\\)+(["\s]))`)},
+	{regexp.MustCompile(`(?i)\b([a-z0-9_-]*` + credentialWords + `[a-z0-9_-]*)(["']?\s*[=:]\s*["']?)\\*[^\s"',;\[/{\\][^\s"',;]{7,}`), "$1$2[redacted:credential]$3",
+		regexp.MustCompile(`(?i)\b([a-z0-9_-]*` + credentialWords + `[a-z0-9_-]*)((?:\\*["'])?\s*[=:]\s*(?:\\*["'])?)(?:[^\s"',;\[/{\\]|\\+[^"/\s\\\[{])(?:(?:` + bodyRun(`',;`, `',;`) + `){7,}|(?:` + bodyRun(`',;`, `',;`) + `){6,}(?:\\\\)+(["\s]))`)},
 }
 
 // credentialWords are the words of a key the credential rule takes.
 const credentialWords = `(?:password|passwd|secret|api[_-]?key|access[_-]?token|private[_-]?key)`
 
 // bodyRun is a unit of a run a shape rule takes in a JSON body, up to
-// a space, a quote that ends it, or one of stops: a character that is
+// a space, a quote that ends it (one followed by any of afterQuote:
+// the , after a URL's string in the app's JSON), or one of stops: a character that is
 // none of them; a run of backslashes and the character after it (\\x,
 // \u0026, a level down \\\\x), which is never a quote, a space or
 // another backslash; or a quote, escaped at any depth (an odd run of
@@ -774,8 +779,8 @@ const credentialWords = `(?:password|passwd|secret|api[_-]?key|access[_-]?token|
 // of an escape (\"\u0026). So a match ends on an escape's edge: it
 // never takes the backslash of a \" and leaves the quote to end the
 // string, which left the body unparsable and withheld whole.
-func bodyRun(stops string) string {
-	return `[^\s"\\` + stops + `]|\\+[^"\s\\]|\\(?:\\\\)*"(?:[^\s"\\:})\]` + stops + `]|\\+u)`
+func bodyRun(stops, afterQuote string) string {
+	return `[^\s"\\` + stops + `]|\\+[^"\s\\]|\\(?:\\\\)*"(?:[^\s"\\:})\]` + afterQuote + `]|\\+u)`
 }
 
 // basicCredentialRe finds "Basic <base64>"; the decode check is in
@@ -815,7 +820,7 @@ func (r *Redactor) replaceKnown(s string, seen map[string]bool, inBody bool) str
 			pattern = sec.inBody
 		}
 		switch {
-		case pattern == nil && sec.pattern[0] != "":
+		case pattern == nil && sec.escaped:
 			// From the first match: the part before it holds none.
 			s = s[:i] + sec.spelling(inBody).ReplaceAllLiteralString(s[i:], sec.marker)
 		case pattern == nil:
@@ -1015,9 +1020,11 @@ func (r *Redactor) heuristics(s string, inBody bool) string {
 // a JSON body (inBody), a token right after an escape's backslash (an
 // odd run of them: the \n, \t or \u0026 before it) begins with the
 // escape's letter, or its u and four hex digits: those stay, and the
-// rest is judged on its own, so a mask never takes half an escape and
-// leaves the body unparsable. In text a backslash is the text's own,
-// and the token is judged whole.
+// rest is judged on its own, as the token would be in text, against
+// the same bar (a token of 19 after \t is under it, as in text; its
+// run with the t was masked, and the body then withheld whole), so a
+// mask never takes half an escape and leaves the body unparsable. In
+// text a backslash is the text's own, and the token is judged whole.
 func (r *Redactor) maskTokens(s string, inBody bool) string {
 	locs := entropyTokenRe.FindAllStringIndex(s, -1)
 	if locs == nil {
@@ -1407,7 +1414,7 @@ func (r *Redactor) putBack(out string, held []heldToken, replaced map[string]boo
 				break
 			}
 			end := start + len(sec.text)
-			if sec.pattern[0] != "" {
+			if sec.escaped {
 				end = start + sec.spelling(true).FindStringIndex(s[start:])[1]
 			}
 			for first < len(spans) && spans[first].hi <= start {

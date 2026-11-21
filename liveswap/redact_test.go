@@ -379,6 +379,11 @@ func TestShapesEndOnAnEscapesEdge(t *testing.T) {
 		// signature), which a class without the backslash would send.
 		{"a query's parameters", "fetch https://s3.example/a.tgz?X-Amz-Credential=abc&X-Amz-Signature=def failed", "fetch https://s3.example/a.tgz?[redacted:query] failed"},
 		{"a query ending in a backslash", `https://x.example/a?key=abc\`, `https://x.example/a?[redacted:query]\`},
+		// The end of a URL's string in an app's JSON line ends the query.
+		{"a URL and the next field", `{"url":"https://x.example/a?b=c","next":"keepme","n":1}`, `{"url":"https://x.example/a?[redacted:query]","next":"keepme","n":1}`},
+		{"an array of URLs", `["https://x.example/a?b=c","https://y.example/b","plain words here"]`, `["https://x.example/a?[redacted:query]","https://y.example/b","plain words here"]`},
+		// A marker layer 1 wrote is not a credential, behind a backslash too.
+		{"a marker behind a backslash", `password=\[redacted:K] end`, `password=\[redacted:K] end`},
 		// A quote inside the query does not end it.
 		{"a quote inside a query", `GET https://s3.example/a?q="x"&X-Amz-Signature=abc123def`, `GET https://s3.example/a?[redacted:query]`},
 		// A secret holding a backslash is masked whole, in a body as in
@@ -415,6 +420,8 @@ func TestShapesEndOnAnEscapesEdge(t *testing.T) {
 		{`password=Xy7#kq\Lm2pQ next`, `password=[redacted:credential] next`},
 		{`see https://x.example/a?key=abc\" there`, `see https://x.example/a?[redacted:query]" there`},
 		{`password=hunter2\ next`, `password=[redacted:credential] next`},
+		{`password=\[redacted:K] end`, `password=\[redacted:K] end`},
+		{`password=\abcdefgh12 end`, `password=[redacted:credential] end`},
 		{`--api-key=C:\keys\app.key`, `--api-key=[redacted:credential]`},
 		// A backslash in text is the text's own: a token after it is
 		// masked whole.
