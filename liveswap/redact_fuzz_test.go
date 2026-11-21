@@ -54,8 +54,10 @@ func FuzzRedactor(f *testing.F) {
 			base64.RawStdEncoding.EncodeToString([]byte(value)), base64.URLEncoding.EncodeToString([]byte(value)),
 			base64.RawURLEncoding.EncodeToString([]byte(value)), hex.EncodeToString([]byte(value)),
 			url.QueryEscape(value), url.PathEscape(value)}
-		forms = append(forms, phpEscape(value), dotnetEscape(value), reprEscape(value),
-			string(mustQuote(t, string(mustQuote(t, value)))), phpEscape(phpEscape(value)))
+		if escapables(value) <= escapeMax { // past it, as written and as encoding/json escapes it alone
+			forms = append(forms, phpEscape(value), dotnetEscape(value), reprEscape(value),
+				string(mustQuote(t, string(mustQuote(t, value)))), phpEscape(phpEscape(value)))
+		}
 		for _, form := range forms {
 			// The one exemption is rule 3's: a value that is a word of
 			// the outcome vocabulary stands where the text makes it an
@@ -76,7 +78,11 @@ func FuzzRedactor(f *testing.F) {
 			// text in a string, escaped once more by the encoder: a valid
 			// body in, a valid body out, the form absent in either
 			// spelling, the key reported, whether the body was filtered or
-			// withheld.
+			// withheld. A value past escapeMax has no pattern: an
+			// encoding/json form escaped again is not read.
+			if escapables(value) > escapeMax && string(mustQuote(t, form)) != form && form != value {
+				continue
+			}
 			body, _ := json.Marshal(map[string]any{"error": prefix + form + suffix, "versions": []string{"x", "y"}, "status": "succeeded", "phase": "starting", "at": time.Unix(1_700_000_000, 0).UTC(), "count": 1700000000.25})
 			js := r.redactJSON(body)
 			if !json.Valid([]byte(js)) {

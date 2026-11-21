@@ -378,12 +378,18 @@ func TestShapesEndOnAnEscapesEdge(t *testing.T) {
 		// no parameter after the first is sent (a presigned URL's
 		// signature), which a class without the backslash would send.
 		{"a query's parameters", "fetch https://s3.example/a.tgz?X-Amz-Credential=abc&X-Amz-Signature=def failed", "fetch https://s3.example/a.tgz?[redacted:query] failed"},
-		{"a query ending in a backslash", `https://x.example/a?key=abc\`, `https://x.example/a?[redacted:query]`},
+		{"a query ending in a backslash", `https://x.example/a?key=abc\`, `https://x.example/a?[redacted:query]\`},
 		// A secret holding a backslash is masked whole, in a body as in
 		// text, and one ending in a backslash before a quote leaves the
 		// quote's own.
 		{"a secret with a backslash", `password=Xy7#kq\Lm2pQ`, `password=[redacted:credential]`},
-		{"a secret ending in a backslash, quoted", `password=hunter2hunter\"`, `password=[redacted:credential]"`},
+		{"a secret ending in a backslash, quoted", `password=hunter2hunter\" next`, `password=[redacted:credential]\" next`},
+		// A quote inside the value, followed by more of it, does not end
+		// it: the value is masked whole.
+		{"a secret holding a quote", `password=hunter2hunter"tailOfSecret`, `password=[redacted:credential]`},
+		{"a short secret holding a quote", `password=abc"defghij`, `password=[redacted:credential]`},
+		// An app's JSON line inside another: two levels of escaping.
+		{"a JSON line in a JSON line", `{"msg":"{\"db_password\":\"hunter2hunter\"}"}`, `{"msg":"{\"db_password\":\"[redacted:credential]\"}"}`},
 		// The same pair in an app's JSON line, its quotes escaped (F3).
 		{"an app's JSON line", `{"level":"info","db_password":"hunter2hunter"}`, `{"level":"info","db_password":"[redacted:credential]"}`},
 		{"an escaped path is not a credential", `{"api_key":"/etc/motel/app.key"}`, `{"api_key":"/etc/motel/app.key"}`},
@@ -405,6 +411,8 @@ func TestShapesEndOnAnEscapesEdge(t *testing.T) {
 		{`password=Xy7#kq\Lm2pQ next`, `password=[redacted:credential] next`},
 		{`see https://x.example/a?key=abc\" there`, `see https://x.example/a?[redacted:query]\" there`},
 		{`--api-key=C:\keys\app.key`, `--api-key=[redacted:credential]`},
+		// A backslash at a line's end is no escape of the line's end.
+		{"see https://x.example/a?key=abc\\\nnext_line_word more", "see https://x.example/a?[redacted:query]\\\nnext_line_word more"},
 	} {
 		if got, _ := (*Redactor)(nil).Redact(tc.in); got != tc.want {
 			t.Errorf("text %q:\n got %q\nwant %q", tc.in, got, tc.want)

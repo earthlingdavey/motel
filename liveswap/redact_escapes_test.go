@@ -150,6 +150,11 @@ func TestEscapePatternEdges(t *testing.T) {
 		{"every character escaped, no anchor", "\u043f\u0430\u0440\u043e\u043b\u044c\u0434\u0430", `x \u043f\u0430\u0440\u043e\u043b\u044c\u0434\u0430 y`, "x [redacted:K] y"},
 		{"a byte that is not UTF-8, as written", "pass\xffword1", "x pass\xffword1 y", "x [redacted:K] y"},
 		{"a byte that is not UTF-8, as encoding/json writes it", "pass\xffword1", `x pass\ufffdword1 y`, "x [redacted:K] y"},
+		{"a byte that is not UTF-8, as Go's %q writes it", "pass\xffword1", `x pass\xffword1 y`, "x [redacted:K] y"},
+		{"a byte that is not UTF-8, as Python's surrogateescape writes it", "pass\xffword1", `x pass\udcffword1 y`, "x [redacted:K] y"},
+		{"Ruby's inspect", "Pa#@w0rd-x9", `x "Pa\#@w0rd-x9" y`, `x "[redacted:K]" y`},
+		{"a shell's printf %q", "Pa#$w0rd!x9 sp", `x Pa#\$w0rd\!x9\ sp y`, "x [redacted:K] y"},
+		{"a rune as Ruby's \\u{}", "key-\U000E0001-river7", `x key-\u{E0001}-river7 y`, "x [redacted:K] y"},
 	} {
 		r := NewRedactor([]string{"K=" + tc.value}, nil)
 		if got, _ := r.Redact(tc.in); got != tc.want {
@@ -175,9 +180,19 @@ func TestEscapePatternEdges(t *testing.T) {
 			t.Errorf("%s: %s -> %s", tc.name, raw, body)
 		}
 	}
+	// A value with more than escapeMax escapable characters has no
+	// pattern: read as written and as encoding/json escapes it, as
+	// before patterns.
+	long := "abcdefgh" + strings.Repeat(`"`, escapeMax+1)
+	r := NewRedactor([]string{"K=" + long}, nil)
+	for _, in := range []string{long, string(mustQuote(t, long))} {
+		if got, _ := r.Redact("x " + in + " y"); got != "x [redacted:K] y" {
+			t.Errorf("a long value: %.40q", got)
+		}
+	}
 	// A key whose name holds an escape's letters is no spelling of a
 	// value: the marker is the named one.
-	r := NewRedactor([]string{"u003cfoo12345=<foo12345"}, nil)
+	r = NewRedactor([]string{"u003cfoo12345=<foo12345"}, nil)
 	if got, _ := r.Redact("x <foo12345 y"); got != "x [redacted:u003cfoo12345] y" {
 		t.Errorf("marker: %q", got)
 	}

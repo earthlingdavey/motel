@@ -487,6 +487,13 @@ func urlPasswords(v string) []string {
 // a JSON message inside a JSON log line).
 func secretForms(v string) []string {
 	forms := []string{v}
+	if escapables(v) > escapeMax {
+		// No pattern for it (escapePattern): as encoding/json escapes it,
+		// the one escaping read before patterns were.
+		if j, err := json.Marshal(v); err == nil && string(j[1:len(j)-1]) != v {
+			forms = append(forms, string(j[1:len(j)-1]))
+		}
+	}
 	b := []byte(v)
 	forms = append(forms,
 		base64.StdEncoding.EncodeToString(b),
@@ -508,13 +515,44 @@ func secretForms(v string) []string {
 // and backslash, and every character one of the runtimes measured
 // escapes by default (measured: testdata/escapes/runtime-escapes.tsv):
 // PHP's /, Go's and Gson's < > &, Gson's = and ', .NET's + and `, the
-// control characters, DEL, and every rune past ASCII.
+// control characters, DEL, and every rune past ASCII. Such a character
+// has escapes of its own (escapePattern).
 func escapable(c rune) bool {
 	switch c {
 	case '"', '\\', '/', '\'', '<', '>', '&', '=', '+', '`':
 		return true
 	}
 	return c < 0x20 || c == 0x7f || c >= 0x80
+}
+
+// quotable is whether c may stand behind a backslash with no escape of
+// its own: every other ASCII character but a letter or a digit, as a
+// quoting function writes some of them (Ruby's inspect \# before {, $
+// or @; a shell's printf %q \$ \! \# and a space).
+func quotable(c rune) bool {
+	return c >= ' ' && c < 0x7f && (c < 'a' || c > 'z') && (c < 'A' || c > 'Z') && (c < '0' || c > '9')
+}
+
+// escapeMax is the most escapable or quotable characters a form may
+// hold and have a pattern: past it the pattern's size and its run over
+// every body grow with the form (a value of tens of kilobytes, most of
+// it past ASCII), so such a form is read as written and as
+// encoding/json escapes it (secretForms). A 4,096-bit RSA key in PEM
+// holds about 220 (its pattern costs under a millisecond a body); a
+// value of 1,024 characters past ASCII cost 50 ms, measured.
+const escapeMax = 512
+
+// escapables is how many characters of s stand for more than
+// themselves in its pattern: the escapable and the quotable ones, and
+// each byte that is not UTF-8.
+func escapables(s string) int {
+	n := 0
+	for _, c := range s {
+		if escapable(c) || quotable(c) {
+			n++
+		}
+	}
+	return n
 }
 
 // escapeAnchorMin is the shortest anchor worth looking for before a
@@ -525,29 +563,37 @@ const escapeAnchorMin = 4
 var shortEscapes = map[rune]byte{'\b': 'b', '\t': 't', '\n': 'n', '\f': 'f', '\r': 'r'}
 
 // escapePattern is form as a pattern that reads it in any backslash
-// escaping, and its anchor: each escapable character stands for itself
+// escaping, and its anchor. An escapable character stands for itself
 // behind any run of backslashes, or behind one or more for \uXXXX in
-// either case (a surrogate pair above the BMP, or \UXXXXXXXX), \xXX, or
-// its short escape; the other characters stand for themselves. A
-// backslash is read as pairs first, so a run of them before an escaped
-// quote leaves the quote its own. Mixed escaping (one / escaped and the
-// next not), either case and any depth are read alike. "" for a form
-// with no escapable character: the plain text is its only spelling.
-// Every piece is quoted, so the pattern always compiles; Go's regexp
-// reads a byte that is not UTF-8 as U+FFFD, which is how such a byte
-// of the form is written here.
+// either case (a surrogate pair above the BMP, or \UXXXXXXXX), \u{X…}
+// (Ruby's), \xXX, or its short escape; a quotable one for itself behind
+// any run of backslashes; a letter or a digit for itself alone, and the
+// longest run of those is the anchor. A byte that is not UTF-8 stands
+// for itself (Go's regexp reads it as U+FFFD, which is how it is
+// written here), \ufffd (encoding/json's), \xXX (Go's %q) or \udcXX
+// (Python's surrogateescape). A backslash is read as pairs first, so a
+// run of them before an escaped quote leaves the quote its own. Mixed
+// escaping (one / escaped and the next not), either case and any depth
+// are read alike. "" for a form of letters and digits alone, whose
+// plain text is its only spelling, and for one with more than
+// escapeMax characters to read. Every piece is quoted, so the pattern
+// always compiles.
 func escapePattern(form string) (string, string) {
-	if strings.IndexFunc(form, escapable) < 0 {
+	if n := escapables(form); n == 0 || n > escapeMax {
 		return "", form
 	}
 	var b strings.Builder
 	anchor, run := "", 0
 	for i, c := range form {
-		if !escapable(c) {
+		size := utf8.RuneLen(c)
+		if c == utf8.RuneError {
+			_, size = utf8.DecodeRuneInString(form[i:])
+		}
+		if !escapable(c) && !quotable(c) {
 			if run++; run > len(anchor) {
 				anchor = form[i-run+1 : i+1]
 			}
-			b.WriteString(regexp.QuoteMeta(form[i : i+utf8.RuneLen(c)]))
+			b.WriteString(form[i : i+size])
 			continue
 		}
 		run = 0
@@ -557,6 +603,16 @@ func escapePattern(form string) (string, string) {
 		} else {
 			b.WriteString(`\\*`)
 			b.WriteString(regexp.QuoteMeta(string(c)))
+		}
+		if !escapable(c) {
+			b.WriteString(`)`)
+			continue
+		}
+		if c == utf8.RuneError && size == 1 {
+			b.WriteString(`|\\+x`)
+			writeHexAnyCase(&b, rune(form[i]), 2)
+			b.WriteString(`|\\+u[dD][cC]`)
+			writeHexAnyCase(&b, rune(form[i]), 2)
 		}
 		if c < 0x10000 {
 			b.WriteString(`|\\+u`)
@@ -569,6 +625,11 @@ func escapePattern(form string) (string, string) {
 			writeHexAnyCase(&b, lo, 4)
 			b.WriteString(`|\\+U`)
 			writeHexAnyCase(&b, c, 8)
+		}
+		if c >= 0x80 {
+			b.WriteString(`|\\+u\{0*`)
+			writeHexAnyCase(&b, c, len(strconv.FormatInt(int64(c), 16)))
+			b.WriteString(`\}`)
 		}
 		if c < 0x100 {
 			b.WriteString(`|\\+x`)
@@ -654,18 +715,24 @@ var shapeRules = []struct {
 	// not a path or placeholder (an argv flag such as
 	// --api-key=/etc/motel/app.key names a file, not a secret); a
 	// backslash is read with the character after it, as in the query
-	// rule, so the value ends on an escape's edge.
-	{regexp.MustCompile(`(?i)\b([a-z0-9_-]*(?:password|passwd|secret|api[_-]?key|access[_-]?token|private[_-]?key)[a-z0-9_-]*)((?:\\?["'])?\s*[=:]\s*(?:\\?["'])?)(?:[^\s"',;\[/{\\]|\\[^"/])(?:[^\s"',;\\]|\\[^"]){7,}`), "$1$2[redacted:credential]"},
+	// rule (escapedRun), so the value ends on an escape's edge. A quote,
+	// escaped at any depth, ends the pair's quotes, and the value too
+	// unless a character of the value follows it: one that holds a
+	// quote is masked whole, as the body that held it was withheld
+	// before the value ended on an escape's edge.
+	{regexp.MustCompile(`(?i)\b([a-z0-9_-]*(?:password|passwd|secret|api[_-]?key|access[_-]?token|private[_-]?key)[a-z0-9_-]*)((?:\\*["'])?\s*[=:]\s*(?:\\*["'])?)(?:[^\s"',;\[/{\\]|\\+[^"/\s\\])(?:[^\s"',;\\]|\\+[^"\s\\]|\\*"[^\s"',;:\\})\]]){7,}`), "$1$2[redacted:credential]"},
 }
 
-// escapedRun is a character of a run the shape rules take up to a
-// space or a quote: one that is neither, or a backslash with the
-// character after it, which is never a quote. Over a body's JSON a
-// match so ends on an escape's edge: it takes a \\ or a \u0026 whole,
-// and stops before a \" (a quote inside the app's text), where taking
-// the backslash alone left the quote to end the string, and the body
-// unparsable. In text a backslash before a quote ends the run too.
-const escapedRun = `(?:[^\s"'\\]|\\[^"])`
+// escapedRun is a character of a run the query rule takes up to a
+// space or a quote: one that is neither, or a run of backslashes with
+// the character after it, which is never a quote, a space or another
+// backslash. Over a body's JSON, at any depth, a match so ends on an
+// escape's edge: it takes a \\x or a \u0026 whole, and stops before a
+// run that ends in a quote (\", \\\" a level down: a quote inside the
+// app's text), where taking a backslash of it left the quote to end the
+// string, and the body unparsable. In text a backslash before a quote
+// or a space ends the run too, so it never runs on over a line's end.
+const escapedRun = `(?:[^\s"'\\]|\\+[^"\s\\])`
 
 // basicCredentialRe finds "Basic <base64>"; the decode check is in
 // redact, since a regexp cannot tell a credential from a word. Four
@@ -811,11 +878,11 @@ func (r *Redactor) finalPass(s string, seen map[string]bool, inBody bool) (strin
 	return t, r.replaceKnown(t, map[string]bool{}, inBody) == t
 }
 
-// settled is s, a body that holds nothing of the app's (one of the
+// sentence is s, a body that holds nothing of the app's (one of the
 // filter's withheld sentences), after the final pass, when that pass
 // leaves it JSON and holding still; else the body that can hold
 // nothing, returned as it is, with no pass of its own.
-func (r *Redactor) settled(s string, seen map[string]bool) string {
+func (r *Redactor) sentence(s string, seen map[string]bool) string {
 	t, still := r.finalPass(s, seen, true)
 	if !still || !json.Valid([]byte(t)) {
 		return `{"error":"[#0]"}`
@@ -1027,7 +1094,7 @@ func (r *Redactor) redactJSON(raw []byte) string {
 		if !json.Valid([]byte(body)) {
 			body = `{"error":"response withheld: the app's env_file could not be read"}`
 		}
-		body = r.settled(body, seen)
+		body = r.sentence(body, seen)
 	} else {
 		body = r.filterBody(string(raw), seen)
 	}
@@ -1106,11 +1173,11 @@ func (r *Redactor) filterWhole(raw string, seen map[string]bool) string {
 	outcomes := len(outcomePairRe.FindAllStringIndex(raw, -1))
 	body := r.filter(raw, seen, true)
 	if !json.Valid([]byte(body)) {
-		return r.settled(`{"error":"response withheld: a redacted value overlapped the response's own structure"}`, seen)
+		return r.sentence(`{"error":"response withheld: a redacted value overlapped the response's own structure"}`, seen)
 	}
 	body, still := r.finalPass(body, seen, true)
 	if !still {
-		return r.settled(`{"error":"response withheld: a marker and the text beside it made another redacted value"}`, seen)
+		return r.sentence(`{"error":"response withheld: a marker and the text beside it made another redacted value"}`, seen)
 	}
 	// Every outcome the body had is still a word (rule 3), or the body
 	// is withheld: a value that is part of a word ("ucceeded") was
@@ -1119,7 +1186,7 @@ func (r *Redactor) filterWhole(raw string, seen map[string]bool) string {
 	// find, and none moves one next to an outcome key, so nothing can
 	// make a pair; the count can only fall.
 	if len(outcomePairRe.FindAllStringIndex(body, -1)) < outcomes {
-		return r.settled(`{"error":"response withheld: a redacted value overlapped the response's own outcome"}`, seen)
+		return r.sentence(`{"error":"response withheld: a redacted value overlapped the response's own outcome"}`, seen)
 	}
 	return body
 }
