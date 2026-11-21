@@ -761,7 +761,7 @@ var shapeRules = []struct {
 	// backslash it ends with, before a quote or a space, is the value's
 	// (`hunter2\`), and the quote or space is put back ($3).
 	{regexp.MustCompile(`(?i)\b([a-z0-9_-]*` + credentialWords + `[a-z0-9_-]*)(["']?\s*[=:]\s*["']?)\\*[^\s"',;\[/{\\][^\s"',;]{7,}`), "$1$2[redacted:credential]$3",
-		regexp.MustCompile(`(?i)\b([a-z0-9_-]*` + credentialWords + `[a-z0-9_-]*)((?:\\*["'])?\s*[=:]\s*(?:\\*["'])?)(?:[^\s"',;\[/{\\]|\\+[^"/\s\\\[{])(?:(?:` + bodyRun(`',;`, `',;`) + `){7,}|(?:` + bodyRun(`',;`, `',;`) + `){6,}(?:\\\\)+(["\s]))`)},
+		regexp.MustCompile(`(?i)\b([a-z0-9_-]*` + credentialWords + `[a-z0-9_-]*)((?:\\*["'])?\s*[=:]\s*(?:\\*["'])?)(?:[^\s"',;\[/{\\]|\\+[^"/\s\\\[{])(?:` + bodyRun(`',;`, `',;`) + `){6,}(?:` + bodyRun(`',;`, `',;`) + `|(?:\\\\)+(["\s]))`)},
 }
 
 // credentialWords are the words of a key the credential rule takes.
