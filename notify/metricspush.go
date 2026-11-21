@@ -420,7 +420,7 @@ func (p *pusher) checkKilled() {
 	if n > 0 {
 		log.Warn("monitor metrics: the metrics store was killed by the kernel at its memory limit; systemd restarted it",
 			zap.Int("kills", n), zap.String("limit", ev.Details["limit"]), zap.String("since", ev.Details["first"]))
-		if err := os.WriteFile(path+".told", []byte(strconv.FormatInt(now.Unix(), 10)+"\n"), 0o640); err != nil {
+		if err := os.WriteFile(path+".told", []byte(strconv.FormatInt(now.Unix(), 10)+"\n"), 0o600); err != nil {
 			log.Warn("monitor metrics: could not keep when the store's kills were told", zap.Error(err))
 		}
 		p.report(ev)
