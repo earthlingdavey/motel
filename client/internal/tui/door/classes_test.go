@@ -238,10 +238,10 @@ func TestClassesBesideATag(t *testing.T) {
 // to take a break away, so after no other cluster can a tag begin a
 // row. The others (a letter and a combining mark, a Hangul syllable, a
 // flag) are not swept here; FuzzLine reaches them. Seen to fail: with
-// breaks judging each cluster by the text after it, on a thumbs-up or
-// an unassigned pictograph and a skin tone, then a tag, then a hyphen
-// and a digit, and on them and a hyphen, then a tag, then a digit (not
-// on one row).
+// rowbreak.At judging each cluster by the text after it, on a thumbs-up
+// or an unassigned pictograph and a skin tone, then a tag, then a
+// hyphen and a digit, and on them and a hyphen, then a tag, then a
+// digit (not on one row).
 func TestPairsBesideATag(t *testing.T) {
 	seg := func(s string, c model.Class) model.Seg { return model.Seg{T: termtext.From(s), C: c} }
 	var lefts []string

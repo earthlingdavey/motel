@@ -24,7 +24,7 @@ package door
 // U+1F44D U+1F3FD): box text could begin a row of its own, at the
 // row's start, where it reads as the client's. So the door asks
 // uniseg, as tview would, where tview would begin a row inside a text,
-// a tag beside a cluster or not (breaks), and writes the last character
+// a tag beside a cluster or not (rowbreak), and writes the last character
 // before each such break as an escape, as termtext writes a character
 // it will not pass: the thumbs-up, then \U0001f3fd. TestOneRow holds
 // it, in every widget kind used here, and TestPairsBesideATag and
@@ -45,6 +45,7 @@ import (
 	"github.com/rivo/tview"
 
 	"github.com/smallhoursorg/motel/client/internal/termtext"
+	"github.com/smallhoursorg/motel/client/internal/tui/door/rowbreak"
 	"github.com/smallhoursorg/motel/client/internal/tui/model"
 )
 
@@ -77,7 +78,7 @@ func unbreak(segs []string) []string {
 		return segs // no character of ASCII ends a row but the ones termtext escapes
 	}
 	for {
-		at := breaks(strings.Join(segs, ""))
+		at := rowbreak.At(strings.Join(segs, ""))
 		if len(at) == 0 {
 			return segs
 		}
@@ -106,39 +107,6 @@ func unbreak(segs []string) []string {
 		}
 		segs = out
 	}
-}
-
-// breaks is the byte offset in row of the last character, above ASCII,
-// of each cluster after which tview would begin a row, inside row or at
-// its end ("x" stands for what follows it), with a tag after the cluster
-// or not. tview's step (strings.go, v0.42.0) judges the break after a
-// cluster a tag follows by that cluster and the one character after the
-// tag, as if the text ended there, and Line may write a tag after any
-// cluster: so breaks asks uniseg that of each. Without a tag tview
-// judges the break by the text after it too, and uniseg reads a second
-// character after a cluster only to take a break away (LB25: none
-// before a hyphen a digit follows), so each break tview begins with no
-// tag is found too: TestOneRow, TestClassesOnOneRow and FuzzInert hold
-// that, drawn. So a thumbs-up and skin tone before "-0" is written as
-// an escape, as before any other character, in a Line and in Inert
-// alike, and Width agrees. A break after ASCII is left as it is: no
-// character of ASCII ends a row but the ones termtext escapes.
-func breaks(row string) (at []int) {
-	row += "x"
-	state := -1
-	for i, rest := 0, row; rest != ""; {
-		pre := state
-		var c string
-		c, rest, _, state = uniseg.StepString(rest, state)
-		if r, n := utf8.DecodeLastRuneInString(c); rest != "" && r >= 0x80 {
-			_, m := utf8.DecodeRuneInString(rest)
-			if _, _, b, _ := uniseg.StepString(row[i:i+len(c)+m], pre); b&uniseg.MaskLine == uniseg.LineMustBreak {
-				at = append(at, i+len(c)-n)
-			}
-		}
-		i += len(c)
-	}
-	return at
 }
 
 // escape is r as termtext.Quote writes one: \u and four hex digits, or
