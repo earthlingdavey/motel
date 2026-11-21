@@ -358,18 +358,31 @@ echo "=== people 2c: a logs reader reads demo's lines ==="
 # release, which prints its env_file's SECRET and a child's line, then
 # exits 3, so the deploy fails and demo serves $DV still. lars reads
 # demo's logs over HTTPS as docs/people.md says (the cursor's ; escaped
-# by curl -G --data-urlencode).
+# by curl -G --data-urlencode). The liveswap suite's crash deploys
+# (v3crash, v3crashstream) wrote the same lines to this box's journal,
+# so lars follows from a cursor taken before this deploy: only its
+# lines count.
+P_LARS=$(ptok lars)
+get l0 -G --data-urlencode lines=50 -H "Authorization: Motel $P_LARS" "$BASE/_motel/apps/demo/logs"
+CUR0=$(jget "$work/l0.b" 'j.cursor || ""')
+logs_since() {
+	if [ -n "$CUR0" ]; then
+		get lg -G --data-urlencode lines=50 --data-urlencode "after=$CUR0" -H "Authorization: Motel $P_LARS" "$BASE/_motel/apps/demo/logs"
+	else
+		get lg -G --data-urlencode lines=50 -H "Authorization: Motel $P_LARS" "$BASE/_motel/apps/demo/logs"
+	fi
+}
 CV=${DV}x
 MAXT=120 get dep -X POST -H "Authorization: Bearer $TOKEN" -d "{\"url\":\"$ART/demo-crash.tar.gz\",\"version\":\"$CV\"}" "$BASE/demo"
 case "$CODE" in 5*) pass "the crash release's deploy fails ($CODE), so demo's journal holds its lines" ;; *) fail "the crash deploy: $CODE $(head -c 300 "$work/dep.b")" ;; esac
 since_logs=$(date +%s)
-P_LARS=$(ptok lars)
 i=0
-until get lg -G --data-urlencode lines=50 -H "Authorization: Motel $P_LARS" "$BASE/_motel/apps/demo/logs" && grep -qF 'fatal: cannot start' "$work/lg.b"; do
+until logs_since && grep -qF 'fatal: cannot start' "$work/lg.b"; do
 	i=$((i + 1)); [ "$i" -ge 20 ] && break
 	sleep 0.5
 done
-[ "$CODE" = 200 ] && [ "$(jget "$work/lg.b" 'j.kept')" = on ] && pass "lars: demo's logs, 200 and kept on" || fail "lars: demo's logs: $CODE $(head -c 600 "$work/lg.b")"
+[ "$CODE" = 200 ] && [ "$(jget "$work/lg.b" 'j.kept')" = on ] && [ "$(jget "$work/lg.b" 'j.gap')" = false ] \
+	&& pass "lars: demo's logs since the deploy, 200, kept on, no gap" || fail "lars: demo's logs: $CODE $(head -c 600 "$work/lg.b")"
 # Its release is the unit's when journald read the line before the
 # shell, which exits at once, was gone; "" when it did not.
 [ "$(jget "$work/lg.b" 'j.lines.filter(l => l.text === "starting with SECRET=[redacted:SECRET]" && (l.release === "'"$CV"'" || l.release === "")).length')" = 1 ] \

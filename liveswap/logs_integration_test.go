@@ -209,8 +209,9 @@ func TestIntegrationLogsCrashLoopWhileJournaldIsBehind(t *testing.T) {
 	}
 	app := logsName("itlogs-p")
 	resume := pauseJournald(t)
+	// At most 50 launches, 1,000 lines, the most one read returns.
 	began, n := time.Now(), 0
-	for ; time.Since(began) < 2*time.Second; n++ {
+	for ; time.Since(began) < 2*time.Second && n < 50; n++ {
 		launch(app, n)
 	}
 	resume()

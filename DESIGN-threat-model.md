@@ -311,8 +311,8 @@ Properties that matter to the model:
   the list, a value under 8 characters, a secret split across lines,
   a secret the app fetched at runtime and printed in a low-entropy
   form, an inline `env` value (not a secret by policy: the Caddyfile
-  is in a repo), or a value the still-running instance was launched
-  with before a moteld restart if the file has changed since. Nor that
+  is in a repo), a value the still-running instance was launched
+  with before a moteld restart if the file has changed since, or a value the app's `env_file` no longer holds, in a line written while it did (a logs read reaches lines of any age, and the filter knows only the file's values now and those moteld has read since it started). Nor that
   a deploy source cannot confirm a guess of a value: a deploy's
   refusals echo its version and URL through the app's filter, and a
   version it deploys is named in the status; it can read the app's
@@ -1639,7 +1639,9 @@ does not isolate the runtime.
   `env_file` values in the forms it knows and some shapes of
   credential, and nothing else (a value escaped as another runtime
   escapes it, one split across two lines, journald's 48 KiB split
-  among them, one under 8 characters, another app's). Who reads is the
+  among them, one under 8 characters, another app's, and a value the app's `env_file` no longer holds, in a line written while it did (a logs read reaches lines of any age, and the filter knows only the file's values now and those moteld has read since it started)):
+  changing a value does not hide it in lines already written, so
+  revoke the old credential. Who reads is the
   safeguard: the operator's grant, its `from` list, and the journal
   line each read writes, from which the operator re-reads on the box
   exactly what was sent. The same residual as a failed deploy's journal

@@ -258,7 +258,9 @@ app. A cursor holds `;`, which a query must escape: `curl -G
   are as the app wrote them, for your terminal to be kept from.
 - Each line passes the app's filter on its own: the values of its
   `env_file` in the forms the box knows, and some shapes of
-  credential. `redacted_env` names the keys it replaced.
+  credential. `redacted_env` names the keys it replaced. Not a value the app's `env_file` no longer holds, in a line written while it did (a logs read reaches lines of any age, and the filter knows only the file's values now and those moteld has read since it started):
+  changing a value does not hide it in lines already written, so
+  revoke the old credential.
 - `more` is `true` when there was more than was sent: the count, or
   64 KiB of the lines' text as the journal holds it (what is sent can be
   longer: the filter's markers, JSON's escapes). After a follow the lines left are after

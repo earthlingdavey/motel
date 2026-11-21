@@ -404,12 +404,18 @@ func finalCut(f *Redactor, s string) string {
 // logsLineMax bytes of it sent. The filter sees the text cut to
 // logsLineMax and a margin, the longest form it knows or logsCutMargin
 // if more, so every value or credential that begins inside what is sent
-// is whole when it is looked for. Where that cut fell, a value or token
-// it split is a piece no layer can know, at the end of what the filter
-// returns and, but for a token longer than the margin, shorter than it:
-// the margin's bytes go, and the rest of such a token. Then what is left is cut to logsLineMax with
-// "…" (a marker or plain text may be cut there, nothing a layer would
-// have replaced). The keys it replaced are added to seen.
+// is whole when it is looked for (A). Where that cut fell, a value or
+// token it split is a piece no layer can know; it begins in the margin,
+// past logsLineMax, unless it is a token longer than the margin. So the
+// filter also sees the text cut at logsLineMax (B), and what is kept is
+// the start A and B have in common, less a run of layer 4's alphabet at
+// its end. A piece the first cut split is past B's input, so not in it;
+// one the second cut split is whole in A and replaced there, so A and B
+// part at it; a token longer than the margin, raw in both, is the run
+// that goes. What the filter shrank (a long token masked) costs nothing
+// of the start. Then what is left is cut to logsLineMax with "…" (a
+// marker or plain text may be cut there, nothing a layer would have
+// replaced). The keys it replaced are added to seen.
 func filterLogLine(f *Redactor, text string, seen map[string]bool) string {
 	longest := logsCutMargin
 	if f != nil && len(f.secrets) > 0 {
@@ -428,10 +434,8 @@ func filterLogLine(f *Redactor, text string, seen map[string]bool) string {
 		seen[k] = true
 	}
 	if cut {
-		// And all of a token longer than the margin: the run of layer 4's
-		// alphabet the cut ended, which no layer saw whole.
-		run := len(strings.TrimRight(out, tokenAlphabet))
-		out = cutText(out, max(min(len(out)-longest, run), 0))
+		b, _ := f.Redact(cutText(text, logsLineMax))
+		out = strings.TrimRight(commonStart(out, b), tokenAlphabet)
 	}
 	// The app's bytes that are not UTF-8, each run one U+FFFD, only now:
 	// the filter saw them as written. Before the last cut, so the text
@@ -443,13 +447,29 @@ func filterLogLine(f *Redactor, text string, seen map[string]bool) string {
 	return out
 }
 
-// cutText is s cut to at most n bytes, on a rune's start.
+// commonStart is the bytes a and b begin with alike, ended on a rune's
+// start: a rune they share the first bytes of and not the rest is not
+// kept.
+func commonStart(a, b string) string {
+	n := 0
+	for n < len(a) && n < len(b) && a[n] == b[n] {
+		n++
+	}
+	return cutText(a, n)
+}
+
+// cutText is s cut to at most n bytes, on a rune's start when one is
+// within a rune's length before n; at n otherwise (bytes that are no
+// UTF-8, a binary dump's run of continuation bytes, which ToValidUTF8
+// makes U+FFFD after).
 func cutText(s string, n int) string {
 	if len(s) <= n {
 		return s
 	}
-	for n > 0 && !utf8.RuneStart(s[n]) {
-		n--
+	for i := n; i > 0 && i > n-utf8.UTFMax; i-- {
+		if utf8.RuneStart(s[i]) {
+			return s[:i]
+		}
 	}
 	return s[:n]
 }

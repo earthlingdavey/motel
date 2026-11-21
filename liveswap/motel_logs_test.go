@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math/rand/v2"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -542,6 +543,148 @@ func TestLogsCursorPassesNoFilterInTheCheck(t *testing.T) {
 	w := sendTo(t, h, "GET", "/_motel/apps/demo/logs", token(people.erin))
 	if got := decodeLogs(t, w); len(got.Lines) != 2 || got.Cursor != cursorOf(1) {
 		t.Errorf("%d %s", w.Code, w.Body)
+	}
+}
+
+// pieces is whether out holds any 8-byte piece of v.
+func pieces(out, v string) bool {
+	for i := 0; i+8 <= len(v); i++ {
+		if strings.Contains(out, v[i:i+8]) {
+			return true
+		}
+	}
+	return false
+}
+
+// words is prose of n bytes or more: words of letters between spaces,
+// none of which a layer replaces.
+func words(n int) string {
+	return strings.Repeat("the app said ", n/13+1)
+}
+
+// TestLogsCutShapes: a line the first cut falls in keeps its readable
+// start, and sends no piece of a value or a token either cut split: a
+// value across logsLineMax, one across the first cut, one in the margin
+// between them, a token longer than the margin, a long token the filter
+// masks (its marker far shorter than it), and markers longer than their
+// values before the cut.
+func TestLogsCutShapes(t *testing.T) {
+	value := "planted.va/lue:0123 4567.89ab/cdef" // gitleaks:allow — made up for this test
+	f := NewRedactor([]string{"V=" + value}, nil)
+	pre := logsLineMax + logsCutMargin
+	base64ish := func(n int) string { // a token layer 4 masks
+		var b strings.Builder
+		for b.Len() < n {
+			b.WriteString("Qm9vdHN0cmFwX3Rva2VuOjE3Mz0aR8")
+		}
+		return b.String()[:n]
+	}
+	for _, c := range []struct {
+		name, text, start, planted string
+	}{
+		{"a value across logsLineMax", words(logsLineMax - 10)[:logsLineMax-10] + value + words(pre), "the app said", value},
+		{"a value across the first cut", words(pre - 10)[:pre-10] + value + words(100), "the app said", value},
+		{"a value in the margin", words(logsLineMax + 100)[:logsLineMax+100] + " " + value + " " + words(pre), "the app said", value},
+		{"a token longer than the margin", words(4000)[:4000] + " " + strings.Repeat("Zq9", 3000) + " end", "the app said", strings.Repeat("Zq9", 3000)},
+		{"a long token the filter masks", "ERROR decode failed for upload 17: " + base64ish(16000), "ERROR decode failed for upload 17: ", base64ish(16000)},
+		// The filter shrinks the start (a 9,000-byte token masked), so the
+		// piece of the value the first cut split comes to stand inside the
+		// first logsLineMax bytes of what it returns.
+		{"a value across the first cut, after a masked token", "upload " + base64ish(9000) + " " + words(pre)[:pre-9008-12] + value + words(100), "upload [masked, ", value},
+		{"markers longer than their values", strings.Repeat(value+", ", 400) + value + words(pre), "[redacted:V], [redacted:V]", value},
+	} {
+		out := filterLogLine(f, c.text, map[string]bool{})
+		if !strings.HasPrefix(out, c.start) || !strings.HasSuffix(out, "…") || len(out) > logsLineMax || !utf8.ValidString(out) {
+			t.Errorf("%s: %d bytes, %.60q … %q", c.name, len(out), out, out[max(0, len(out)-30):])
+		}
+		if pieces(out, c.planted) {
+			t.Errorf("%s: a piece of what was planted is sent: …%q", c.name, out[max(0, len(out)-60):])
+		}
+		// What is kept is at most the first logsLineMax bytes of the line
+		// as filtered: shorter where the filter shrank them.
+		if want := map[string]int{"a long token the filter masks": len("ERROR decode failed for upload 17: [masked, "), "markers longer than their values": 4096 / len(value+", ") * len("[redacted:V], "), "a value across the first cut, after a masked token": len("upload [masked, ")}[c.name]; want == 0 && len(out) < logsLineMax-200 || len(out) < want {
+			t.Errorf("%s: only %d bytes of the start kept", c.name, len(out))
+		}
+	}
+}
+
+// TestLogsCutRandom: lines of prose with a planted value, a long token
+// and a short one at random places, of random lengths past the first
+// cut: no 8-byte piece of the value or the token is ever sent, and the
+// prose before the first of them is.
+func TestLogsCutRandom(t *testing.T) {
+	value := "planted.va/lue:0123 4567.89ab/cdef" // gitleaks:allow — made up for this test
+	f := NewRedactor([]string{"V=" + value}, nil)
+	rnd := rand.New(rand.NewPCG(7, 11))
+	tok := func(n int) string {
+		const a = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
+		b := make([]byte, n)
+		for i := range b {
+			b[i] = a[rnd.IntN(len(a))]
+		}
+		return string(b)
+	}
+	for range 300 {
+		total := logsLineMax + logsCutMargin + rnd.IntN(12000)
+		long := tok(9000 + rnd.IntN(4000))
+		// Near a cut most of the time: across logsLineMax or the first
+		// cut, or anywhere; the token early half the time, so the filter
+		// shrinks the start.
+		near := func() int {
+			switch rnd.IntN(3) {
+			case 0:
+				return logsLineMax - rnd.IntN(40)
+			case 1:
+				return logsLineMax + logsCutMargin - rnd.IntN(40)
+			}
+			return rnd.IntN(total)
+		}
+		at, at2 := near(), rnd.IntN(4000)
+		if rnd.IntN(2) == 0 {
+			at2 = near()
+		}
+		var b strings.Builder
+		first := total
+		for b.Len() < total {
+			switch {
+			case b.Len() >= at && at >= 0:
+				first = min(first, b.Len())
+				b.WriteString(value)
+				at = -1
+			case b.Len() >= at2 && at2 >= 0:
+				first = min(first, b.Len())
+				b.WriteString(long)
+				at2 = -1
+			default:
+				b.WriteString("word" + strconv.Itoa(rnd.IntN(10)) + " ")
+			}
+		}
+		text := b.String()
+		out := filterLogLine(f, text, map[string]bool{})
+		if pieces(out, value) || pieces(out, long) || len(out) > logsLineMax || !utf8.ValidString(out) {
+			t.Fatalf("value at %d, token at %d, %d bytes: sent %d bytes, …%q", strings.Index(text, value), strings.Index(text, long), len(text), len(out), out[max(0, len(out)-60):])
+		}
+		// The prose before the first planted thing, up to where the cut
+		// may take a word, is sent.
+		if want := min(first, logsLineMax-3) - 20; want > 0 && !strings.HasPrefix(out, text[:want]) {
+			t.Fatalf("the start was not kept: planted at %d, sent %d bytes", first, len(out))
+		}
+	}
+}
+
+// TestCutTextBound: a cut walks back at most a rune's length for a
+// rune's start, so a run of bytes that are no UTF-8 (a binary dump) is
+// cut at the bound, not back through the run.
+func TestCutTextBound(t *testing.T) {
+	if got := cutText(strings.Repeat("\x80", 6000), 4093); len(got) != 4093 {
+		t.Errorf("a run of continuation bytes: %d bytes", len(got))
+	}
+	if got := cutText("ab"+strings.Repeat("é", 3000), 4093); len(got) != 4092 || !utf8.ValidString(got) {
+		t.Errorf("a two-byte rune at the cut: %d bytes, valid %v", len(got), utf8.ValidString(got))
+	}
+	out := filterLogLine(nil, strings.Repeat("ab\x80\x81\x82", 2000), map[string]bool{})
+	if len(out) < logsLineMax-10 || !utf8.ValidString(out) {
+		t.Errorf("a binary dump: %d bytes", len(out))
 	}
 }
 
