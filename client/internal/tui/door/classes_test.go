@@ -274,12 +274,17 @@ func TestPairsBesideATag(t *testing.T) {
 						l = l[:0]
 						return
 					}
+					alone := false
 					for j := 0; j < len(l); j += 3 {
 						one := l[j : j+3]
 						s := Line(one, true).s
 						if rows := len(tview.WordWrap(s+"x", 1<<30)); rows != 1 {
 							t.Errorf("%s (colour true) is not on one row: %d rows", lineName(one[1:]), rows)
+							alone = true
 						}
+					}
+					if !alone {
+						t.Errorf("the cases from %s to %s are not on one row, and each alone is", lineName(l[1:3]), lineName(l[len(l)-2:]))
 					}
 					l = l[:0]
 				}

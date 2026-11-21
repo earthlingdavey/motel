@@ -112,13 +112,9 @@ func breaks(row string) (at []int) {
 			at = append(at, end-len(string(r[len(r)-1])))
 		}
 	}
-	for _, i := range tagBreaks(row) {
-		if !slices.Contains(at, i) {
-			at = append(at, i)
-		}
-	}
+	at = append(at, tagBreaks(row)...)
 	slices.Sort(at)
-	return at
+	return slices.Compact(at)
 }
 
 // tagBreaks is the byte offset in row of the last character, above
