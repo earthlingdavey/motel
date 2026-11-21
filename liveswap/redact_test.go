@@ -393,6 +393,11 @@ func TestShapesEndOnAnEscapesEdge(t *testing.T) {
 		{"a backslash before a short secret", `password=\hunter2`, `password=[redacted:credential]`},
 		{"backslashes through a short secret", `password=a\b\c\d\e`, `password=[redacted:credential]`},
 		{"seven characters", `password=hunter2 next`, `password=hunter2 next`},
+		{"backslashes alone", `password=\\\\\\\\ next`, `password=[redacted:credential] next`},
+		// A backslash before a quote is the text's, or the escape of a
+		// quote in the app's own JSON: left as it is, and counted.
+		{"seven characters, a backslash and a quote", `password=hunter2\" next`, `password=[redacted:credential]\" next`},
+		{"seven characters and a backslash in a JSON line", `{"db_password":"hunter2\\"}`, `{"db_password":"[redacted:credential]\\"}`},
 		// A quote inside the query does not end it.
 		{"a quote inside a query", `GET https://s3.example/a?q="x"&X-Amz-Signature=abc123def`, `GET https://s3.example/a?[redacted:query]`},
 		// A secret holding a backslash is masked whole, in a body as in
@@ -433,6 +438,7 @@ func TestShapesEndOnAnEscapesEdge(t *testing.T) {
 		{`password=\abcdefgh12 end`, `password=[redacted:credential] end`},
 		{`password=\hunter2 end`, `password=[redacted:credential] end`},
 		{`password=\\hunter next`, `password=[redacted:credential] next`},
+		{`password=\\\\\\\\ next`, `password=[redacted:credential] next`},
 		{`password=hunter2 end`, `password=hunter2 end`},
 		{`--api-key=C:\keys\app.key`, `--api-key=[redacted:credential]`},
 		// A backslash in text is the text's own: a token after it is

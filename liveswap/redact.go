@@ -770,26 +770,40 @@ var shapeRules = []struct {
 	// (`hunter2\`), and the quote or space is put back ($5). Its 8 bytes
 	// are counted as the body holds them, and the text's as the text
 	// holds them, backslashes before the value too (min, replaceMin).
-	{regexp.MustCompile(`(?i)\b([a-z0-9_-]*` + credentialWords + `[a-z0-9_-]*)(["']?\s*[=:]\s*["']?)(\\*[^\s"',;\[/{\\][^\s"',;]*)`), "$1$2[redacted:credential]$5",
-		regexp.MustCompile(`(?i)\b([a-z0-9_-]*` + credentialWords + `[a-z0-9_-]*)((?:\\*["'])?\s*[=:]\s*(?:\\*["'])?)((?:[^\s"',;\[/{\\]|\\+[^"/\s\\\[{])(?:` + bodyRun(`',;`, `[^\s"\\:})\]',;]`) + `)*)(?:((?:\\\\)+)(["\s]))?`), 8},
+	{regexp.MustCompile(`(?i)\b([a-z0-9_-]*` + credentialWords + `[a-z0-9_-]*)(["']?\s*[=:]\s*["']?)(\\*[^\s"',;\[/{\\][^\s"',;]*|\\+)`), "$1$2[redacted:credential]$5",
+		regexp.MustCompile(`(?i)\b([a-z0-9_-]*` + credentialWords + `[a-z0-9_-]*)((?:\\*["'])?\s*[=:]\s*(?:\\*["'])?)((?:[^\s"',;\[/{\\]|\\+[^"/\s\\\[{])(?:` + bodyRun(`',;`, `[^\s"\\:})\]',;]`) + `)*|)(?:((?:\\\\)+)(["\s]))?`), 8},
 }
 
 // replaceMin is re over s with repl, each match replaced only when its
 // value (the third group, through the fourth when it matched) holds at
-// least min bytes; every match when min is 0.
-func replaceMin(re *regexp.Regexp, s, repl string, min int) string {
+// least min bytes; every match when min is 0. In a body (inBody), the
+// escaped backslashes of an odd run just past the match, before a
+// quote, count too: the bytes are the app's text's backslash before a
+// quote, or the escape of a quote in the app's own JSON a level down,
+// which no pattern can tell apart, so the run and its quote are left
+// as they are and the value before them is masked if the run makes it
+// long enough (`hunter2\"`).
+func replaceMin(re *regexp.Regexp, s, repl string, min int, inBody bool) string {
 	if min == 0 {
 		return re.ReplaceAllString(s, repl)
 	}
 	var out []byte
 	at := 0
 	for _, m := range re.FindAllStringSubmatchIndex(s, -1) {
-		end := m[7]
+		end, extra := m[7], 0
 		if len(m) > 9 && m[9] >= 0 {
 			end = m[9]
+		} else if inBody {
+			run := 0
+			for m[1]+run < len(s) && s[m[1]+run] == '\\' {
+				run++
+			}
+			if run%2 == 1 && m[1]+run < len(s) && s[m[1]+run] == '"' {
+				extra = run - 1
+			}
 		}
 		out = append(out, s[at:m[0]]...)
-		if end-m[6] < min {
+		if end-m[6]+extra < min {
 			out = append(out, s[m[0]:m[1]]...)
 		} else {
 			out = re.ExpandString(out, repl, s, m)
@@ -1036,7 +1050,7 @@ func (r *Redactor) heuristics(s string, inBody bool) string {
 		if inBody && rule.body != nil {
 			re = rule.body
 		}
-		s = replaceMin(re, s, rule.repl, rule.min)
+		s = replaceMin(re, s, rule.repl, rule.min, inBody)
 	}
 	s = basicCredentialRe.ReplaceAllStringFunc(s, func(m string) string {
 		// Basic's credential is base64 of user:password, and is one at
