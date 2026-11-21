@@ -716,6 +716,24 @@ before the load read; motel's own `ChannelFailed` tells of it either
 way. The re-run rewrites `scrape.yml` and restarts the store and
 vmalert; a push may fail meanwhile.
 
+**Run `moteld monitor setup --metrics` again on a box whose store was set
+up with a 256 MiB cap** (each load's warning names `10-motel.conf`).
+Until it is, the store keeps `MemoryMax=256M`, under which every app's
+long windows read at once, or ten apps' windows read over an hour, get
+it killed by the kernel, and a kill is told by nothing but systemd's
+`Failed with result 'oom-kill'` under its unit. The re-run writes the
+384 MiB cap (with no swap, `MemorySwapMax=0`) and the drop-in's `ExecStopPost=`, which names a kill at err
+under the store's unit and leaves the line motel tells the operator's
+channels of (`metrics_store_killed`); it restarts the store and
+vmalert, so a push may fail meanwhile. A cap of your own, set with
+`systemctl edit victoria-metrics`, is a drop-in of yours and stays as
+it is, over motel's. Back on an older `.deb`, its setup writes its own
+drop-in again, 256 MiB and no kill line, when root re-runs it; until
+then the newer drop-in stays and that version's loads warn that it
+differs. Its `store-killed` lines, which that version does not read,
+wait in `/var/lib/motel-metrics` and are told when a version that reads
+them runs again.
+
 ## Patching the host
 
 Apps run on the box's own `/usr`, so `apt upgrade` reaches an app at

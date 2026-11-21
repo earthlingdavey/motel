@@ -425,6 +425,13 @@
       ]
     },
     {
+      "name": "metrics_store_killed",
+      "source": "motel check",
+      "severity": "warning",
+      "subject": "box",
+      "kind": "event"
+    },
+    {
       "name": "metrics_store_read_only",
       "source": "motel check",
       "severity": "critical",

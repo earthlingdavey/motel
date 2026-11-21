@@ -4,8 +4,15 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
+	"io/fs"
+	"os"
+	"path/filepath"
 	"slices"
+	"strconv"
+	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -35,7 +42,18 @@ const (
 	eventStoreDown     = "metrics_store_down"
 	eventRulesDown     = "metrics_rules_down"
 	eventStoreReadOnly = "metrics_store_read_only"
+	eventStoreKilled   = "metrics_store_killed"
 	sourceMetrics      = "metrics"
+
+	// storeKilledName is the state directory's file the store's
+	// ExecStopPost= adds a line to at each kill at its MemoryMax=
+	// (units/metrics/10-motel.conf): the kill's time and the limit, in
+	// seconds and bytes.
+	storeKilledName = "store-killed"
+	// killHold is how long after one metrics_store_killed the next
+	// waits: a store killed again and again by the same reads is told
+	// once an hour, with how many kills, not at each.
+	killHold = time.Hour
 )
 
 // finalPushTimeout bounds the import of the push when the pusher stops
@@ -71,11 +89,16 @@ type pusher struct {
 	mu     sync.Mutex
 	now    func() time.Time
 	report func(Event)
-	logger *zap.Logger
-	active *MetricsStore
-	store  storeAPI
-	gather prometheus.Gatherer
-	live   []liveStore
+	// tellKill is report for metrics_store_killed: false when nothing
+	// took it (no config runs notify), and the kills are kept; canTell
+	// is whether anything would.
+	tellKill func(Event) bool
+	canTell  func() bool
+	logger   *zap.Logger
+	active   *MetricsStore
+	store    storeAPI
+	gather   prometheus.Gatherer
+	live     []liveStore
 
 	failingSince time.Time
 	storeDown    bool
@@ -99,18 +122,25 @@ type pusher struct {
 }
 
 func newPusher(report func(Event)) *pusher {
-	return &pusher{
+	p := &pusher{
 		now: time.Now, report: report, logger: zap.NewNop(),
 		failed: prometheus.NewCounter(prometheus.CounterOpts{
 			Name: "motel_metrics_push_failed_total",
 			Help: "Pushes of motel's metrics to the metrics store that failed.",
 		}),
 	}
+	p.tellKill = func(ev Event) bool { p.report(ev); return true }
+	p.canTell = func() bool { return true }
+	return p
 }
 
 // thePusher reports through notify's engine, which drops what it is
 // told while no config runs notify (a monitor block with channels).
-var thePusher = newPusher(theEngine.report)
+var thePusher = func() *pusher {
+	p := newPusher(theEngine.report)
+	p.tellKill, p.canTell = theEngine.reportIfTelling, theEngine.telling
+	return p
+}()
 
 // registerFailed puts the push's failure counter on a config's
 // registry, beside notify's own.
@@ -339,6 +369,7 @@ func (p *pusher) run(ctx context.Context) {
 	defer ticker.Stop()
 	odd := false
 	for {
+		p.checkKilled()
 		pctx, cancel := context.WithTimeout(ctx, storeRequestTimeout)
 		p.pushOnce(pctx)
 		cancel()
@@ -353,6 +384,180 @@ func (p *pusher) run(ctx context.Context) {
 		case <-ticker.C:
 		}
 	}
+}
+
+// checkKilled tells of the store's kills that its ExecStopPost= left in
+// the state directory (storeKilledName): one one-shot for all the lines
+// there, at most one a killHold (the time of the last kept beside them,
+// storeKilledName+".told", so that a moteld restart keeps it), and the
+// lines taken, so that each kill is told once. The file waits while
+// nothing would take the event (moteld down; no config running notify,
+// or none of its operator's channels kept: canTell says so, and nothing
+// is taken; tellKill's false keeps what a config gone within the tick
+// left taken), through the hold, and when the hold cannot be read, so
+// what the next one-shot says is every kill since the last. It is taken
+// by a rename to a name of its own under the lock the hook appends
+// under (storeKilledName+".lock", flock), so a line is in the file read
+// or in the next; a taken file a read failed on is read with the next.
+func (p *pusher) checkKilled() {
+	p.mu.Lock()
+	a, log, now, tell, canTell := p.active, p.logger, p.now(), p.tellKill, p.canTell
+	p.mu.Unlock()
+	if a == nil || !canTell() {
+		// Nothing would take it: the kills stay in the one file.
+		return
+	}
+	path := filepath.Join(a.stateDir(), storeKilledName)
+	switch b, err := os.ReadFile(path + ".told"); { //nolint:gosec // the state directory's own file
+	case errors.Is(err, fs.ErrNotExist):
+	case err != nil:
+		log.Warn("monitor metrics: could not read when the store's kills were last told: they wait", zap.Error(err))
+		return
+	default:
+		if t, err := strconv.ParseInt(strings.TrimSpace(string(b)), 10, 64); err == nil {
+			// A time ahead of now (the clock stepped back) holds nothing.
+			if d := now.Sub(time.Unix(t, 0)); d >= 0 && d < killHold {
+				return
+			}
+		}
+	}
+	if err := takeKilled(path, path+".taken."+strconv.FormatInt(now.UnixNano(), 10)); err != nil {
+		log.Warn("monitor metrics: could not take the store's kills", zap.String("file", path), zap.Error(err))
+	}
+	taken, _ := filepath.Glob(path + ".taken.*")
+	var lines []byte
+	var read []string
+	for _, f := range taken {
+		b, err := os.ReadFile(f) //nolint:gosec // the state directory's own file
+		if err != nil {
+			log.Warn("monitor metrics: could not read the store's kills", zap.String("file", f), zap.Error(err))
+			continue
+		}
+		lines, read = append(lines, b...), append(read, f)
+	}
+	ev, n := killedEvent(lines)
+	if n > 0 {
+		if !tell(ev) {
+			return // nothing took it: the files wait
+		}
+		log.Warn("monitor metrics: the metrics store was killed by the kernel; systemd restarted it", zap.String("summary", ev.Summary),
+			zap.Int("kills", n), zap.String("box_kills", ev.Details["box_kills"]), zap.String("limit", ev.Details["limit"]), zap.String("since", ev.Details["first"]))
+		if err := os.WriteFile(path+".told", []byte(strconv.FormatInt(now.Unix(), 10)+"\n"), 0o600); err != nil {
+			log.Warn("monitor metrics: could not keep when the store's kills were told", zap.Error(err))
+		}
+	}
+	for _, f := range read {
+		if err := os.Remove(f); err != nil {
+			log.Warn("monitor metrics: could not remove the store's kills told: they will be told again", zap.String("file", f), zap.Error(err))
+		}
+	}
+}
+
+// takeKilled renames the store's kill file to taken under the lock its
+// hook appends under (flock(1) on path+".lock"): a line is appended
+// before the rename, so it is read, or after, to a new file. No file,
+// or the lock held, is nothing taken this tick.
+func takeKilled(path, taken string) error {
+	if _, err := os.Lstat(path); errors.Is(err, fs.ErrNotExist) {
+		return nil // nothing to take; one written now is taken next tick
+	}
+	lock, err := os.OpenFile(path+".lock", os.O_CREATE|os.O_RDWR, 0o600) //nolint:gosec // the state directory's own file
+	if err != nil {
+		return err
+	}
+	defer func() { _ = lock.Close() }()
+	// Never waited on: a hook that stalls holding it would hold the push
+	// loop and the stop. Held, the file is taken at a later tick.
+	if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); errors.Is(err, syscall.EWOULDBLOCK) {
+		return nil
+	} else if err != nil {
+		return err
+	}
+	defer func() { _ = syscall.Flock(int(lock.Fd()), syscall.LOCK_UN) }()
+	if err := os.Rename(path, taken); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return err
+	}
+	return nil
+}
+
+// killedEvent is metrics_store_killed for the store-killed lines b, and
+// how many kills they hold: each line is the kill's Unix time and the
+// limit in bytes (systemd's word when there is none), or "box" for a
+// kill of the box's own out-of-memory killer under the limit. A line
+// that does not read so is still a kill.
+func killedEvent(b []byte) (Event, int) {
+	var first time.Time
+	limit, n, box, limited, changed := "", 0, 0, 0, false
+	for line := range strings.Lines(string(b)) {
+		f := strings.Fields(line)
+		if len(f) == 0 {
+			continue
+		}
+		n++
+		if t, err := strconv.ParseInt(f[0], 10, 64); err == nil && (first.IsZero() || time.Unix(t, 0).Before(first)) {
+			first = time.Unix(t, 0)
+		}
+		switch {
+		case len(f) < 2:
+		case f[1] == "box":
+			box++
+		default:
+			limited++
+			l := f[1]
+			if v, err := strconv.ParseUint(f[1], 10, 64); err == nil {
+				l = strconv.FormatUint(v>>20, 10) + " MiB"
+			}
+			if limit != "" && l != limit {
+				changed = true
+			}
+			limit = l
+		}
+	}
+	times := "once"
+	if n > 1 {
+		times = strconv.Itoa(n) + " times"
+	}
+	at := ""
+	if !first.IsZero() {
+		at = first.UTC().Format(" since 2006-01-02 15:04 UTC")
+		if n == 1 {
+			at = first.UTC().Format(" at 2006-01-02 15:04 UTC")
+		}
+	}
+	how := "at its memory limit"
+	switch {
+	case changed:
+		how += " (the last " + limit + ")"
+	case limit != "":
+		how += " (" + limit + ")"
+	}
+	remedy := "systemctl edit victoria-metrics, a MemoryMax= above the limit under [Service], then systemctl restart victoria-metrics; what fills it is how many apps and windows are read at once"
+	switch {
+	case box > 0 && limited == 0:
+		how, remedy = "when the box ran out of memory", "the box as a whole is short of memory: a higher limit for the store would not help"
+	case box > 0:
+		how += ", " + strconv.Itoa(box) + " of them when the box ran out of memory"
+	}
+	summary := fmt.Sprintf("the metrics store was killed %s%s, %s; it restarted by itself, missing pushes, rule checks and reads meanwhile", times, at, how)
+	if len([]rune(summary)) > maxSummary {
+		// The details carry the time and the box's share whole.
+		summary = fmt.Sprintf("the metrics store was killed %s, %s; it restarted by itself", times, how)
+	}
+	ev := Event{
+		Name: eventStoreKilled, Kind: kindEvent, Severity: SeverityWarning, Source: sourceMetrics,
+		Summary: summary,
+		Details: map[string]string{"kills": strconv.Itoa(n), "remedy": remedy},
+	}
+	if limit != "" {
+		ev.Details["limit"] = limit
+	}
+	if box > 0 {
+		ev.Details["box_kills"] = strconv.Itoa(box)
+	}
+	if !first.IsZero() {
+		ev.Details["first"] = first.UTC().Format(time.RFC3339)
+	}
+	return ev, n
 }
 
 // finalPush is release's push of what was counted since the last tick.
