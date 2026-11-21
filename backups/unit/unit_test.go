@@ -217,10 +217,13 @@ func TestSeesIsBoundedWhenTheManagerDoesNotAnswer(t *testing.T) {
 
 // And a manager that answers "no such unit" until the bound is one
 // that does not see the mount: not seen, which the command refuses as a
-// namespace of its own — never "did not answer".
+// namespace of its own — never "did not answer". The bound is a second,
+// not the 200ms above: the first question must be asked before it runs
+// out, and a loaded CI runner has held a goroutine 200ms between arming
+// the bound and asking (2026-11-12). The test waits out the whole bound.
 func TestSeesSaysNotSeenWhenTheManagerAnswersUntilTheBound(t *testing.T) {
 	old := seesWithin
-	seesWithin = 200 * time.Millisecond
+	seesWithin = time.Second
 	t.Cleanup(func() { seesWithin = old })
 	r := fakeRunner(&fakeConn{readErr: godbus.Error{Name: "org.freedesktop.systemd1.NoSuchUnit"}})
 	seen, err := r.Sees(context.Background(), "/run/motel-backup/0123456789ab/seen")
