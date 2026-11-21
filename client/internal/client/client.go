@@ -491,14 +491,16 @@ func (c *Client) Read(ans *Answer, v any) error {
 		case err != nil:
 			// moteld's answer, by its fields, with a value that did not
 			// decode: the box's response filter replaces a value equal
-			// to a secret, a timestamp's included, with its marker.
+			// to a secret, a timestamp's included, with its marker, and
+			// names the key in the answer's redacted_env, which no log
+			// line of the box's does: the sentence names them.
 			what := "a value in it"
 			if f := badField(ans.Body, v); f != "" {
 				what = "its " + f
 			}
 			return &Failure{Exit: ExitUnknown, Status: ans.Code, Message: fmt.Sprintf(
-				"%s answered, but %s could not be read: the box's response filter may have replaced it. The box's journal says which key it replaced.",
-				c.Box.Addr(), what)}
+				"%s answered, but %s could not be read: the box's response filter may have replaced it. %s",
+				c.Box.Addr(), what, replacedKeys(ans.Body))}
 		}
 		if why := hold(v); why != "" {
 			return c.notMotel(ans, why)
@@ -1043,6 +1045,39 @@ func scopeOK(s string) bool {
 	name, ok := strings.CutPrefix(s, "app:")
 	return ok && appRe.MatchString(name)
 }
+
+// replacedKeys says which env_file keys the answer's redacted_env
+// names: the keys whose values the box's response filter replaced
+// anywhere in it (liveswap's redactJSON). A key is named when it holds
+// to a key's grammar (liveswap's envKeyRe) within 128 characters, ten
+// at most; the others are counted. A key the filter replaced in the
+// list (one equal to another key's value) arrives as its marker, and is
+// counted. A body without one names none: the value was not one the
+// filter replaced (whoami's filter knows no value).
+func replacedKeys(body []byte) string {
+	// The key as written: a struct's field would take any case of it.
+	var top map[string]json.RawMessage
+	var all []string
+	if json.Unmarshal(body, &top) != nil || json.Unmarshal(top["redacted_env"], &all) != nil {
+		all = nil // not a list of strings: none named
+	}
+	all = slices.DeleteFunc(all, func(k string) bool { return k == "" }) // a null in it
+	if len(all) == 0 {
+		return "The answer names no key whose value the filter replaced."
+	}
+	keys := slices.DeleteFunc(slices.Clone(all), func(k string) bool { return len(k) > 128 || !envKeyRe.MatchString(k) })
+	named := keys[:min(len(keys), 10)]
+	switch {
+	case len(named) == 0:
+		return "The answer says the filter replaced values in it, and names their keys in no form shown here."
+	case len(named) < len(all):
+		return "The answer says the filter replaced, somewhere in it, the values of " + strings.Join(named, ", ") + " and " + strconv.Itoa(len(all)-len(named)) + " more."
+	}
+	return "The answer says the filter replaced, somewhere in it, the values of " + strings.Join(named, ", ") + "."
+}
+
+// envKeyRe is liveswap/app.go's: an env_file key as systemd takes one.
+var envKeyRe = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
 // badField is the first top-level field of v's type whose value in
 // body does not decode into it, by the wire type's own JSON name; ""

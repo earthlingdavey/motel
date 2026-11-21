@@ -164,7 +164,7 @@ Properties that matter to the model:
   `Handler.ServeHTTP` (liveswap/handler.go). The status endpoint is
   authenticated — not public.
 - **What the webhook says back is filtered** (liveswap/redact.go,
-  which states the filter's four rules; every body passes it —
+  which states the filter's four layers and seven rules; every body passes it —
   through `RespondJSON` in liveswap/handler.go, the record route's
   `respondFiltered`, the stream's lines, the record store's write).
   What it promises, plainly, within the limits below: when an app

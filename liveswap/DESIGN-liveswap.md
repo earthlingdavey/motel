@@ -783,7 +783,7 @@ plugin's handler can take its ID.
 | `motel_backups.go` | `GET /_motel/backups`; `BackupsSource`, which moteld installs (cmd/moteld/main.go); `allowBox` and `boxHandle`, which the backups, alerts and rules rows are given |
 | `wiretypes.go` | liveswap's names for the bodies, which are package `wire`'s types |
 | `wire/` | leaf package: every body liveswap's webhook answers with, and the box webhook's `GET /`, which a client decodes into without linking Caddy; `testdata/wire` pins the bytes |
-| `redact.go` | the response filter (`Redactor`) that `RespondJSON` applies: known `env_file` values in their encoded forms, a safe list, shape rules, entropy; the four rules every writer of a body holds head the file |
+| `redact.go` | the response filter (`Redactor`) that `RespondJSON` applies: known `env_file` values in their encoded forms, a safe list, shape rules, entropy; the seven rules every writer of a body holds head the file |
 | `deploytrust/` | leaf package: deploy auth — the `deploy_trust` grammar (`Parse`), its sources and verifiers (OIDC + local-key JWT verification), the webhook preamble (`Limiter.Authenticate`) and what a failed attempt costs the journal (`Limiter`, on an injected clock). Imports nothing of liveswap's; the box webhook authenticates through it too. `trusttest/` beside it mints tokens and runs an issuer for tests |
 | `internal/dispenser/` | leaf package: the one Caddyfile rule the parsers here and `deploytrust.Parse` apply alike — a repeated subdirective is refused — in one place so the two cannot drift |
 | `upstreams.go` | dynamic upstream source (the cutover read side) |

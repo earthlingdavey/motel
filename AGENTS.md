@@ -26,7 +26,7 @@ Everything runs in Docker through the Makefile; no host Go is needed.
 | Lane | One part | A bare run |
 |---|---|---|
 | `make e2e-notify` | `make e2e-notify NOTIFY_SPLITS=core`; or `reload`, `heartbeat` | core and reload (~4 min). heartbeat is notify 15, motel's 5-minute hold (~9.5 min): name it only when you change the hold, `heartbeatHoldAfter` and the code that holds and resumes the heartbeat in `notify/channelfailed.go`. CI always runs it. |
-| `make e2e-metrics` | `make e2e-metrics METRICS_SPLITS=view`; or `vmalert`, `store`, `rules` | all four (~5 min) |
+| `make e2e-metrics` | `make e2e-metrics METRICS_SPLITS=view`; or `vmalert`, `store`, `rules` | all four (~8 min) |
 | `make e2e-backup` | `make e2e-backup BACKUP_SUITES=setup`; or `backup`, `units`, `status`, `restore`, `check` | all six |
 | `make e2e` | | the whole lane |
 
