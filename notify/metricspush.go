@@ -89,8 +89,10 @@ type pusher struct {
 	now    func() time.Time
 	report func(Event)
 	// tellKill is report for metrics_store_killed: false when nothing
-	// took it (no config runs notify), and the kills are kept.
+	// took it (no config runs notify), and the kills are kept; canTell
+	// is whether anything would.
 	tellKill func(Event) bool
+	canTell  func() bool
 	logger   *zap.Logger
 	active   *MetricsStore
 	store    storeAPI
@@ -127,6 +129,7 @@ func newPusher(report func(Event)) *pusher {
 		}),
 	}
 	p.tellKill = func(ev Event) bool { p.report(ev); return true }
+	p.canTell = func() bool { return true }
 	return p
 }
 
@@ -134,7 +137,7 @@ func newPusher(report func(Event)) *pusher {
 // told while no config runs notify (a monitor block with channels).
 var thePusher = func() *pusher {
 	p := newPusher(theEngine.report)
-	p.tellKill = theEngine.reportIfTelling
+	p.tellKill, p.canTell = theEngine.reportIfTelling, theEngine.telling
 	return p
 }()
 
@@ -403,9 +406,10 @@ const killSettle = 5 * time.Second
 // still told. A taken file a read failed on is read with the next.
 func (p *pusher) checkKilled() {
 	p.mu.Lock()
-	a, log, now, tell := p.active, p.logger, p.now(), p.tellKill
+	a, log, now, tell, canTell := p.active, p.logger, p.now(), p.tellKill, p.canTell
 	p.mu.Unlock()
-	if a == nil {
+	if a == nil || !canTell() {
+		// Nothing would take it: the kills stay in the one file.
 		return
 	}
 	path := filepath.Join(a.stateDir(), storeKilledName)
@@ -447,7 +451,9 @@ func (p *pusher) checkKilled() {
 		}
 	}
 	for _, f := range read {
-		_ = os.Remove(f)
+		if err := os.Remove(f); err != nil {
+			log.Warn("monitor metrics: could not remove the store's kills told: they will be told again", zap.String("file", f), zap.Error(err))
+		}
 	}
 }
 
@@ -458,7 +464,7 @@ func (p *pusher) checkKilled() {
 // that does not read so is still a kill.
 func killedEvent(b []byte) (Event, int) {
 	var first time.Time
-	limit, n, box, changed := "", 0, 0, false
+	limit, n, box, limited, changed := "", 0, 0, 0, false
 	for line := range strings.Lines(string(b)) {
 		f := strings.Fields(line)
 		if len(f) == 0 {
@@ -473,6 +479,7 @@ func killedEvent(b []byte) (Event, int) {
 		case f[1] == "box":
 			box++
 		default:
+			limited++
 			l := f[1]
 			if v, err := strconv.ParseUint(f[1], 10, 64); err == nil {
 				l = strconv.FormatUint(v>>20, 10) + " MiB"
@@ -503,7 +510,7 @@ func killedEvent(b []byte) (Event, int) {
 	}
 	remedy := "systemctl edit victoria-metrics, MemoryMax= under [Service], then systemctl restart victoria-metrics; what fills it is how many apps and windows are read at once"
 	switch {
-	case box == n:
+	case box > 0 && limited == 0:
 		how, remedy = "when the box ran out of memory", "the box as a whole is short of memory: a higher limit for the store would not help"
 	case box > 0:
 		how += ", " + strconv.Itoa(box) + " of them when the box ran out of memory"

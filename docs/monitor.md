@@ -716,7 +716,7 @@ every-app rules running, each reading watched an hour after:
 |---|---|---|
 | nobody reading | 186 to 194 MiB | holds |
 | 3 apps, two people reading every window for an hour | 251 to 257 MiB | holds, a third free |
-| 10 apps, one person reading every window for an hour | 342 MiB (at 352) | holds |
+| 10 apps, one person reading every window for an hour | 342 MiB (at 352) | inferred to hold, about 40 MiB free |
 | 10 apps, two people reading every window for an hour | — | **killed** |
 | 10 apps, every app's four windows at once | — | **killed** |
 

@@ -889,15 +889,17 @@ cap=$(systemctl show -p MemoryMax --value victoria-metrics)
 swap=$(systemctl show -p MemorySwapMax --value victoria-metrics)
 # kill_store <since>: a real kill by the kernel: the store's limit
 # lowered under what it holds (and no swap, which a runner may have and
-# would take instead), put back once systemd has run the stop's
-# ExecStopPost= (the unit reaches auto-restart after it), so that the
-# line reads the lowered limit and the restart runs under the drop-in's.
+# would take instead), put back once the stop's ExecStopPost= has
+# written its line (it reads the limit first), within the second before
+# the restart, so that the restart runs under the drop-in's.
 # 0 when the store was killed and answers again.
 kill_store() {
 	n0=$(systemctl show -p NRestarts --value victoria-metrics)
+	ks=$(date '+%Y-%m-%d %H:%M:%S')
 	systemctl set-property --runtime victoria-metrics MemorySwapMax=0 MemoryMax=20M
 	i=0
-	until [ "$(systemctl show -p NRestarts --value victoria-metrics)" != "$n0" ] || [ "$(systemctl show -p SubState --value victoria-metrics)" = auto-restart ]; do
+	until journalctl -u victoria-metrics --since "$ks" -o cat --no-pager -p err | grep -q 'killed by the kernel' \
+		|| [ "$(systemctl show -p NRestarts --value victoria-metrics)" != "$n0" ]; do
 		i=$((i + 1)); [ "$i" -ge 300 ] && break; sleep 0.1
 	done
 	systemctl set-property --runtime victoria-metrics MemoryMax="$cap" MemorySwapMax="$swap"

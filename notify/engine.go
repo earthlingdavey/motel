@@ -320,6 +320,13 @@ func cleanText(known []string, s string, safe ...string) string {
 	return deploytrust.CutRunes(s, maxSummary)
 }
 
+// telling is whether a config runs notify to take what report is told.
+func (e *engine) telling() bool {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.active != nil
+}
+
 // reportIfTelling is report for an event whose source keeps it until
 // it is told (the store's kills): it says whether a config ran notify
 // to take it, where report drops what comes while none does.

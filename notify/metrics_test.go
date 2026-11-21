@@ -1557,13 +1557,25 @@ func TestStoreKillTold(t *testing.T) {
 	if got := tp.take(); len(got) != 0 {
 		t.Fatalf("read in the tick that took it: %+v", got)
 	}
-	// While nothing takes the event (no config runs notify) it waits.
+	// While nothing takes the event (no config runs notify) it waits,
+	// and kills meanwhile stay in the one file.
 	tp.tellKill = func(ev Event) bool { return false }
 	tp.at = tp.at.Add(pushEvery)
 	tp.checkKilled()
 	if left, _ := filepath.Glob(file + ".taken.*"); len(left) != 1 {
 		t.Fatalf("an event nothing took removed its lines: %v", left)
 	}
+	tp.canTell = func() bool { return false }
+	kill(tp.at)
+	tp.at = tp.at.Add(pushEvery)
+	tp.checkKilled()
+	if left, _ := filepath.Glob(file + "*"); len(left) != 2 {
+		t.Fatalf("a kill while nothing tells took a file of its own: %v", left)
+	}
+	if err := os.Remove(file); err != nil {
+		t.Fatal(err)
+	}
+	tp.canTell = func() bool { return true }
 	tp.tellKill = func(ev Event) bool { tp.report(ev); return true }
 	tp.at = tp.at.Add(pushEvery)
 	tp.checkKilled()
@@ -1664,6 +1676,10 @@ func TestStoreKilledEvent(t *testing.T) {
 	ev, _ = killedEvent([]byte("1795180000 402653184\n1795180100 536870912\n"))
 	if !strings.Contains(ev.Summary, "at its memory limit (the last 512 MiB);") {
 		t.Fatalf("kills under two limits: %+v", ev)
+	}
+	ev, _ = killedEvent([]byte("1795180000 box\n1795180100\n"))
+	if !strings.Contains(ev.Summary, ", when the box ran out of memory;") {
+		t.Fatalf("a box's kill beside a line with no limit: %+v", ev)
 	}
 	if _, n := killedEvent(nil); n != 0 {
 		t.Fatal("an empty file is a kill")
