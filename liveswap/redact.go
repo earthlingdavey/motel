@@ -491,8 +491,12 @@ var shapeRules = []struct {
 	// URL userinfo: scheme://user:pass@host.
 	{regexp.MustCompile(`\b([a-z][a-z0-9+.-]*://)[^/\s"'@:]+:[^/\s"'@]+@`), "$1[redacted:userinfo]@"},
 	// URL query strings: where presigned-URL credentials live. The
-	// same rule the box applies to its own logs (redactURL).
-	{regexp.MustCompile(`\b([a-z][a-z0-9+.-]*://[^\s"'?]+)\?[^\s"']+`), "$1?[redacted:query]"},
+	// same rule the box applies to its own logs (redactURL). A
+	// backslash is read with the character after it, never before a
+	// quote: in a body the query ends on an escape's edge, at the \" of
+	// a URL quoted in the app's text, and runs on through \u0026, the &
+	// between its parameters as encoding/json writes it.
+	{regexp.MustCompile(`\b([a-z][a-z0-9+.-]*://[^\s"'?]+)\?` + escapedRun + `+`), "$1?[redacted:query]"},
 	// Provider prefixes.
 	{regexp.MustCompile(`\b(?:AKIA|ASIA)[A-Z0-9]{16}\b`), "[redacted:aws-key]"},
 	{regexp.MustCompile(`\bgh[pousr]_[A-Za-z0-9]{36,}\b`), "[redacted:github-token]"},
@@ -501,13 +505,25 @@ var shapeRules = []struct {
 	{regexp.MustCompile(`\b[sr]k_(?:live|test)_[A-Za-z0-9]{16,}\b`), "[redacted:stripe-key]"},
 	// KEY=value, key: value and JSON "key":"value" assignments whose
 	// key contains a credential word, whatever surrounds it
-	// (DB_PASSWORD, AWS_SECRET_ACCESS_KEY, STRIPE_API_KEY). The value
-	// must be 8+ characters that are not a delimiter, not a marker
-	// layer 1 left there, and not a path or placeholder (an argv flag
-	// such as --api-key=/etc/motel/app.key names a file, not a
-	// secret).
-	{regexp.MustCompile(`(?i)\b([a-z0-9_-]*(?:password|passwd|secret|api[_-]?key|access[_-]?token|private[_-]?key)[a-z0-9_-]*)(["']?\s*[=:]\s*["']?)[^\s"',;\[/{][^\s"',;]{7,}`), "$1$2[redacted:credential]"},
+	// (DB_PASSWORD, AWS_SECRET_ACCESS_KEY, STRIPE_API_KEY), and the same
+	// pair inside a body's string, its quotes escaped (an app's JSON
+	// line in a failed deploy's tail). The value must be 8+ characters
+	// that are not a delimiter, not a marker layer 1 left there, and
+	// not a path or placeholder (an argv flag such as
+	// --api-key=/etc/motel/app.key names a file, not a secret); a
+	// backslash is read with the character after it, as in the query
+	// rule, so the value ends on an escape's edge.
+	{regexp.MustCompile(`(?i)\b([a-z0-9_-]*(?:password|passwd|secret|api[_-]?key|access[_-]?token|private[_-]?key)[a-z0-9_-]*)((?:\\?["'])?\s*[=:]\s*(?:\\?["'])?)(?:[^\s"',;\[/{\\]|\\[^"/])(?:[^\s"',;\\]|\\[^"]){7,}`), "$1$2[redacted:credential]"},
 }
+
+// escapedRun is a character of a run the shape rules take up to a
+// space or a quote: one that is neither, or a backslash with the
+// character after it, which is never a quote. Over a body's JSON a
+// match so ends on an escape's edge: it takes a \\ or a \u0026 whole,
+// and stops before a \" (a quote inside the app's text), where taking
+// the backslash alone left the quote to end the string, and the body
+// unparsable. In text a backslash before a quote ends the run too.
+const escapedRun = `(?:[^\s"'\\]|\\[^"])`
 
 // basicCredentialRe finds "Basic <base64>"; the decode check is in
 // redact, since a regexp cannot tell a credential from a word. Four
@@ -697,7 +713,54 @@ func (r *Redactor) heuristics(s string) string {
 		}
 		return m
 	})
-	return entropyTokenRe.ReplaceAllStringFunc(s, r.maskGenerated)
+	return r.maskTokens(s)
+}
+
+// maskTokens is layer 4 over s: each token judged by maskGenerated. A
+// token right after an escape's backslash (an odd run of them), which
+// in a body is the \n, \t or \u0026 before it, begins with the
+// escape's letter, or its u and four hex digits: those stay, and the
+// rest is judged on its own, so a mask never takes half an escape and
+// leaves the body unparsable.
+func (r *Redactor) maskTokens(s string) string {
+	locs := entropyTokenRe.FindAllStringIndex(s, -1)
+	if locs == nil {
+		return s
+	}
+	var b strings.Builder
+	at := 0
+	for _, l := range locs {
+		i, j := l[0], l[1]
+		b.WriteString(s[at:i])
+		if n := escapeAt(s, i); n > 0 {
+			b.WriteString(s[i : i+n])
+			i += n
+		}
+		b.WriteString(r.maskGenerated(s[i:j]))
+		at = j
+	}
+	b.WriteString(s[at:])
+	return b.String()
+}
+
+// escapeAt is how many bytes from i are the rest of an escape whose
+// backslash is just before i: none when the run of backslashes before i
+// is even (each escapes the next), five for a \u and four hex digits,
+// one otherwise.
+func escapeAt(s string, i int) int {
+	n := 0
+	for i-n > 0 && s[i-n-1] == '\\' {
+		n++
+	}
+	if n%2 == 0 {
+		return 0
+	}
+	if s[i] == 'u' && i+5 <= len(s) {
+		if _, err := strconv.ParseUint(s[i+1:i+5], 16, 16); err == nil {
+			return 5
+		}
+	}
+	return 1
 }
 
 // maskGenerated is layer 4 over one token. An assignment — an `=` with

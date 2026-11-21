@@ -161,3 +161,39 @@ func mustQuote(t *testing.T, s string) []byte {
 	}
 	return b[1 : len(b)-1]
 }
+
+// FuzzHeuristicsKeepJSON: a filter that knows no value never withholds a
+// body for its structure. Only a known value can overlap a body's JSON,
+// so a body withheld by such a filter is one a shape or entropy rule
+// broke: a match that took half of an escape the body's encoding wrote
+// in the app's text (a \" after a URL, the \t before a token). The
+// seeds are each shape the rules match, beside each escape.
+func FuzzHeuristicsKeepJSON(f *testing.F) {
+	for _, s := range []string{
+		`Get "https://api.example.com/v1?key=abc": dial tcp`,
+		`rejected "DB_PASSWORD=hunter2hunter" at login`,
+		`{"db_password":"hunter2hunter\\"}`,
+		"https://x.example/a?key=abc\\",
+		"id\tk3J9xQ2mZ8pL0vT7wR4nY6bH1",             // gitleaks:allow — made up for this test
+		"one\nk3J9xQ2mZ8pL0vT7wR4nY6bH1 two",        // gitleaks:allow — made up for this test
+		"a&k3J9xQ2mZ8pL0vT7wR4nY6bH1<b>",            // gitleaks:allow — made up for this test
+		"\"Bearer AbCdEfGhIjKlMnOpQrStUvWxYz0123\"", // gitleaks:allow — made up for this test
+		"\"postgres://app:hunter2@db/app\"",
+		"-----BEGIN PRIVATE KEY-----\nMIIE\n-----END PRIVATE KEY-----\"",
+		"\"Basic dToxMjM0NTY3OA==\"",
+	} {
+		f.Add(s)
+	}
+	f.Fuzz(func(t *testing.T, line string) {
+		if !utf8.ValidString(line) {
+			return // encoding/json writes U+FFFD for it: not the app's bytes
+		}
+		body, err := json.Marshal(map[string]any{"status": "failed", "log_tail": []string{line, "x"}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if js := (*Redactor)(nil).redactJSON(body); strings.Contains(js, "response withheld") || js == `{"error":"[#0]"}` {
+			t.Fatalf("a filter that knows no value withheld %q: %s", line, js)
+		}
+	})
+}

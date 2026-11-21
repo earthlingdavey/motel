@@ -362,6 +362,56 @@ func TestRedactorShapes(t *testing.T) {
 	}
 }
 
+// TestShapesEndOnAnEscapesEdge is the heuristics over a body's JSON,
+// where the app's text is escaped: a match ends on an escape's edge, so
+// the body stays JSON and is sent, filtered, rather than withheld whole
+// for a structure no known value touched; and what the rule masked in
+// text it masks in a body.
+func TestShapesEndOnAnEscapesEdge(t *testing.T) {
+	token := "k3J9xQ2mZ8pL0vT7wR4nY6bH1" // gitleaks:allow — made up for this test
+	for _, tc := range []struct{ name, line, want string }{
+		// The query rule took the backslash of a \" after the URL.
+		{"a quoted URL's query", `Get "https://api.example.com/v1?key=abc": dial tcp`, `Get "https://api.example.com/v1?[redacted:query]": dial tcp`},
+		// And the credential rule the backslash of a \" after the value.
+		{"a quoted assignment", `rejected "DB_PASSWORD=hunter2hunter" at login`, `rejected "DB_PASSWORD=[redacted:credential]" at login`},
+		// encoding/json writes & as \u0026: the query runs through it, so
+		// no parameter after the first is sent (a presigned URL's
+		// signature), which a class without the backslash would send.
+		{"a query's parameters", "fetch https://s3.example/a.tgz?X-Amz-Credential=abc&X-Amz-Signature=def failed", "fetch https://s3.example/a.tgz?[redacted:query] failed"},
+		{"a query ending in a backslash", `https://x.example/a?key=abc\`, `https://x.example/a?[redacted:query]`},
+		// A secret holding a backslash is masked whole, in a body as in
+		// text, and one ending in a backslash before a quote leaves the
+		// quote's own.
+		{"a secret with a backslash", `password=Xy7#kq\Lm2pQ`, `password=[redacted:credential]`},
+		{"a secret ending in a backslash, quoted", `password=hunter2hunter\"`, `password=[redacted:credential]"`},
+		// The same pair in an app's JSON line, its quotes escaped (F3).
+		{"an app's JSON line", `{"level":"info","db_password":"hunter2hunter"}`, `{"level":"info","db_password":"[redacted:credential]"}`},
+		{"an escaped path is not a credential", `{"api_key":"/etc/motel/app.key"}`, `{"api_key":"/etc/motel/app.key"}`},
+		// Layer 4: a token right after an escape kept the escape's letter
+		// in its run, and the mask took it (F1).
+		{"a token after a tab", "id\t" + token, "id\t[masked, 25 chars]"},
+		{"a token after a newline", "one\n" + token + " two", "one\n[masked, 25 chars] two"},
+		{"a token after an ampersand", "a&" + token, "a&[masked, 25 chars]"},
+	} {
+		body := mustJSON(t, tc.line)
+		got := (*Redactor)(nil).redactJSON([]byte(`{"log_tail":["` + string(body) + `","x"]}`))
+		want := `{"log_tail":["` + string(mustJSON(t, tc.want)) + `","x"]}`
+		if got != want {
+			t.Errorf("%s:\n got %s\nwant %s", tc.name, got, want)
+		}
+	}
+	// And in text, where the same lines were masked before.
+	for _, tc := range []struct{ in, want string }{
+		{`password=Xy7#kq\Lm2pQ next`, `password=[redacted:credential] next`},
+		{`see https://x.example/a?key=abc\" there`, `see https://x.example/a?[redacted:query]\" there`},
+		{`--api-key=C:\keys\app.key`, `--api-key=[redacted:credential]`},
+	} {
+		if got, _ := (*Redactor)(nil).Redact(tc.in); got != tc.want {
+			t.Errorf("text %q:\n got %q\nwant %q", tc.in, got, tc.want)
+		}
+	}
+}
+
 func TestRedactorEntropy(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
