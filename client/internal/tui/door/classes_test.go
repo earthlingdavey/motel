@@ -458,7 +458,7 @@ func TestLinesEachOnARow(t *testing.T) {
 func TestJoinedLinesWrapAsAlone(t *testing.T) {
 	lines := []string{"    :command-name rest", "    ,comma-word rest", "    )paren-word rest", "    plainword rest", "  -1 rest"}
 	draw := func(s Shown, w int, word bool) []string {
-		const h = 8
+		const h = 12
 		scr := sim(w, h)
 		tv := tview.NewTextView().SetDynamicColors(true).SetWrap(true).SetWordWrap(word)
 		SetText(tv, s)
@@ -472,14 +472,18 @@ func TestJoinedLinesWrapAsAlone(t *testing.T) {
 	}
 	for _, l := range lines {
 		joins := map[string][2]Shown{
-			"Texts":    {Texts([]termtext.Text{termtext.From("first"), termtext.From(l)}), Texts([]termtext.Text{termtext.From(l)})},
-			"Lines":    {Lines([]model.Line{{{T: termtext.From("first")}}, {{T: termtext.From(l)}}}, true), Lines([]model.Line{{{T: termtext.From(l)}}}, true)},
-			"LitLines": {LitLines("first\n" + l), LitLines(l)},
+			"Texts":          {Texts([]termtext.Text{termtext.From("first"), termtext.From(l)}), Texts([]termtext.Text{termtext.From(l)})},
+			"Lines":          {Lines([]model.Line{{{T: termtext.From("first")}}, {{T: termtext.From(l)}}}, true), Lines([]model.Line{{{T: termtext.From(l)}}}, true)},
+			"LitLines":       {LitLines("first\n" + l), LitLines(l)},
+			"Lines, dressed": {Lines([]model.Line{{{T: termtext.From("first")}}, {{T: termtext.From(l), C: model.Bad}}}, true), Lines([]model.Line{{{T: termtext.From(l), C: model.Bad}}}, true)},
 		}
 		for name, j := range joins {
 			for _, w := range []int{6, 8, 10, 12, 16} {
 				for _, word := range []bool{true, false} {
 					under, alone := draw(j[0], w, word), draw(j[1], w, word)
+					if alone[len(alone)-2] != "" {
+						t.Fatalf("%s, %q at width %d takes more rows than are drawn: %q", name, l, w, alone)
+					}
 					if !slices.Equal(under[1:], alone[:len(alone)-1]) {
 						t.Errorf("%s, %q at width %d, word wrap %v: under a line %q, alone %q", name, l, w, word, under[1:], alone)
 					}

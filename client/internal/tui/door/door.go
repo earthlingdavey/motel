@@ -296,7 +296,10 @@ func whole(segs []string) []string {
 // not a zero-width space: a space gives a break after it, and with word
 // wrap on, tview took that one, after a line's indent, before a token
 // that did not fit the rest of the row (a blank row, then the token at
-// the left edge, where hang keeps an entry under its indent).
+// the left edge, where hang keeps an entry under its indent). With the
+// joiner a line under another wraps as it does alone
+// (TestJoinedLinesWrapAsAlone), but for one that begins with a
+// combining mark, which the joiner keeps with the character after it.
 const rowEnd = "\n\u2060"
 
 // Lines is model lines as one tview text.
