@@ -172,50 +172,40 @@ func culprit(cases []string, holds func(string) bool) string {
 // segment), plain then dressed (the one that opens it), and one dressed
 // class then another (both); a few hundred pairs at a time as one
 // Line, each pair alone between zero-width spaces, which begin and end
-// a grapheme cluster whatever is beside them. Each is held as checkLine holds a
-// line: one row always, and its styles and width where no tag stands
-// inside a grapheme cluster (tagInCluster, the accepted row on
-// door.Line). Seen to fail: with Line's unbreak taken out, on the
-// thumbs-up then the skin tone across a tag (4 cells drawn, Width 14:
-// the tag keeps it on one row, and Width counts the escape); with Line
-// writing no closing tag, in every batch (a style left open).
+// a grapheme cluster whatever is beside them. Each is held as checkLine
+// holds a line. Seen to fail: with Line's unbreak taken out, on the
+// thumbs-up then the skin tone across a tag (not on one row); with Line
+// writing no closing tag, in every batch (a style left open); with
+// whole taken out of Line, on a spacing mark across a tag (5 cells
+// drawn, Width 4); with no zero-width space before a tag after a
+// Prepend character, on an Arabic number sign before a tag and a
+// zero-width space (7 cells drawn, Width 3, a style left open).
 func TestClassesBesideATag(t *testing.T) {
 	type pair struct {
 		a, b   model.Class
 		colour bool
 	}
-	held, rowsOnly := 0, 0
 	for _, p := range []pair{{model.Bad, model.Plain, true}, {model.Plain, model.Bad, true}, {model.Dim, model.Strong, false}} {
 		name := className[p.a] + " then " + className[p.b]
 		t.Run(name, func(t *testing.T) {
-			var lines [2]model.Line // lines[1]: pairs with a tag inside a cluster
+			var l model.Line
 			for _, x := range reps {
 				for _, y := range reps {
-					one := model.Line{{T: termtext.From("q" + string(x.r)), C: p.a}, {T: termtext.From(string(y.r) + "q"), C: p.b}}
-					in := 0
-					if tagInCluster(one, p.colour) {
-						in = 1
-					}
-					lines[in] = append(lines[in], model.Seg{T: termtext.From("\u200b")})
-					lines[in] = append(lines[in], one...)
+					l = append(l, model.Seg{T: termtext.From("\u200b")})
+					l = append(l, model.Seg{T: termtext.From("q" + string(x.r)), C: p.a}, model.Seg{T: termtext.From(string(y.r) + "q"), C: p.b})
 				}
 			}
-			held += len(lines[0]) / 3
-			rowsOnly += len(lines[1]) / 3
 			const batch = 3 * 300
-			for _, l := range lines {
-				for i := 0; i < len(l); i += batch {
-					b := l[i:min(i+batch, len(l))]
-					if !t.Run(strconv.Itoa(i/batch), func(t *testing.T) { checkLine(t, b, p.colour) }) {
-						for j := 0; j < len(b); j += 3 {
-							if !t.Run("alone", func(t *testing.T) { checkLine(t, b[j+1:j+3], p.colour) }) {
-								break
-							}
+			for i := 0; i < len(l); i += batch {
+				b := l[i:min(i+batch, len(l))]
+				if !t.Run(strconv.Itoa(i/batch), func(t *testing.T) { checkLine(t, b, p.colour) }) {
+					for j := 0; j < len(b); j += 3 {
+						if !t.Run("alone", func(t *testing.T) { checkLine(t, b[j+1:j+3], p.colour) }) {
+							break
 						}
 					}
 				}
 			}
 		})
 	}
-	t.Logf("%d pairs held whole, %d to one row only (a tag inside a cluster)", held, rowsOnly)
 }

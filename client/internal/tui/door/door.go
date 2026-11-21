@@ -36,6 +36,9 @@ package door
 
 import (
 	"strings"
+	"unicode/utf8"
+
+	"github.com/rivo/uniseg"
 
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
@@ -173,35 +176,64 @@ func tags(c model.Class, colour bool) (string, string) {
 	return "", ""
 }
 
-// Line is a model line as tview text. It does not hold its own tags
-// against the text beside them: tview steps a grapheme cluster at a
-// time and reads a tag only at a cluster's start, so where a tag (a
-// dressed segment's, one tags dresses) stands inside a cluster of the
-// line's text, a character beside it joining the one across it, that
-// cluster is drawn twice, wider than Width says unless the character
-// adds no cell (a combining mark); and a Prepend character before a
-// tag takes its [ into its cluster, so the tag is drawn as text and
-// its style is not closed. No screen puts box text
-// beside a tag today, only the client's own words (and, in the stop
-// line after a key failed to sign, the key's path as the person named
-// it, after the closing tag of "not asking: "), and no test would
-// fail if one did: put box free text only between plain or label
-// segments, or inside a dressed one between words of the client's own.
-// FuzzLine and TestClassesBesideATag hold every line to one row, and
-// to its styles and Width wherever no tag stands inside a cluster.
+// Line is a model line as tview text, each segment dressed by tags.
+// tview steps a grapheme cluster at a time and reads a tag only at a
+// cluster's start, so the door puts each tag between two clusters of
+// the line's text (whole: a character that joins the one before it
+// goes with it, into its segment and its style), and a zero-width
+// space between a tag and a Prepend character before it (dressTag).
+// FuzzLine and TestClassesBesideATag hold every line to one row, its
+// styles, its styles closed at its end, and Width.
 func Line(l model.Line, colour bool) Shown {
 	var b strings.Builder
 	segs := make([]string, len(l))
 	for i, s := range l {
 		segs[i] = tagless(s.T.String())
 	}
-	for i, t := range unbreak(segs) {
+	for i, t := range whole(unbreak(segs)) {
 		open, close := tags(l[i].C, colour)
-		b.WriteString(open)
+		dressTag(&b, open)
 		b.WriteString(t)
-		b.WriteString(close)
+		dressTag(&b, close)
 	}
 	return Shown{b.String()}
+}
+
+// dressTag writes tag after b, with a zero-width space before it when
+// b ends in a character that takes a [ after it into its own grapheme
+// cluster (a Prepend one), where tview would draw the tag as text. The
+// space is a cluster of its own whatever is beside it, and of no width.
+func dressTag(b *strings.Builder, tag string) {
+	if tag == "" {
+		return
+	}
+	if r, _ := utf8.DecodeLastRuneInString(b.String()); r >= 0x80 && uniseg.GraphemeClusterCount(string(r)+"[") == 1 {
+		b.WriteString("\u200b")
+	}
+	b.WriteString(tag)
+}
+
+// whole is segs with each grapheme cluster of their joined text in the
+// segment it begins in: tview reads a tag only between two clusters, so
+// one a tag cuts is drawn twice.
+func whole(segs []string) []string {
+	out := make([]string, len(segs))
+	j, end := 0, 0
+	if len(segs) > 0 {
+		end = len(segs[0])
+	}
+	at, state := 0, -1
+	for rest := strings.Join(segs, ""); rest != ""; {
+		var c string
+		c, rest, _, state = uniseg.FirstGraphemeClusterInString(rest, state)
+		for at >= end {
+			j++
+			end += len(segs[j])
+		}
+		out[j] += c
+		at += len(c)
+	}
+	return out
 }
 
 // Lines is model lines as one tview text.

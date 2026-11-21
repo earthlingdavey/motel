@@ -80,61 +80,18 @@ func doorSegs(l model.Line) []string {
 	return unbreak(segs)
 }
 
-// tagInCluster says whether a tag Line writes for l stands where the
-// door does not hold it (the accepted row on door.Line in
-// client/README.md): inside a grapheme cluster of the line's text as
-// tview steps it with the tags left out, or after a character that
-// takes the tag's [ into its own cluster (a Prepend one). tview steps a
-// cluster at a time and reads a tag only at a cluster's start: a cluster
-// cut by one is drawn twice, and a [ taken into one starts no tag.
-func tagInCluster(l model.Line, colour bool) bool {
-	segs := doorSegs(l)
-	joined := strings.Join(segs, "")
-	starts := map[int]bool{len(joined): true}
-	for at, rest, state := 0, joined, -1; rest != ""; {
-		var c string
-		starts[at] = true
-		c, rest, _, state = uniseg.FirstGraphemeClusterInString(rest, state)
-		at += len(c)
-	}
-	inside := func(at int) bool { return !starts[at] || takesBracket(joined[:at]) }
-	at := 0
-	for i, s := range segs {
-		open, close := tags(l[i].C, colour)
-		if open != "" && inside(at) {
-			return true
-		}
-		at += len(s)
-		if close != "" && inside(at) {
-			return true
-		}
-	}
-	return false
-}
-
-// takesBracket says whether the last character of s would take a [
-// after it into its grapheme cluster.
-func takesBracket(s string) bool {
-	r, _ := utf8.DecodeLastRuneInString(s)
-	return uniseg.GraphemeClusterCount(string(r)+"[") == 1
-}
-
 // checkLine holds l drawn as the screens draw a line, in a text view,
 // with a plain line under it: l is drawn on one row (the line under it
-// is on the next); and, where no tag stands inside a grapheme cluster
-// (tagInCluster), as many cells wide as l.Width says, each cell in the
-// style of the segment its cluster is in (no tag of the box's read,
-// not even to another class's style), and its styles closed at its end
-// (the line under it is drawn as it is alone).
+// is on the next), as many cells wide as l.Width says, each cell in the
+// style of the segment its grapheme cluster begins in (no tag of the
+// box's read, not even to another class's style), and its styles
+// closed at its end (the line under it is drawn as it is alone).
 func checkLine(t *testing.T, l model.Line, colour bool) {
 	t.Helper()
 	w := l.Width(Width) + 4
 	scr := drawLines([]model.Line{l, {{T: termtext.From("#")}}}, colour, w, 3)
 	if row(scr, 1, w) != "#" || row(scr, 2, w) != "" {
 		t.Errorf("%s (colour %v) is not drawn on one row: %q, %q, %q", lineName(l), colour, row(scr, 0, w), row(scr, 1, w), row(scr, 2, w))
-		return
-	}
-	if tagInCluster(l, colour) {
 		return
 	}
 	if _, st, _ := scr.Get(0, 1); st != lineStyle() {
@@ -184,24 +141,36 @@ var className = map[model.Class]string{model.Plain: "plain", model.Label: "label
 // FuzzLine: a whole Line, its segments the box's text (text cut at each
 // NUL, which termtext would write as \x00 anyway, at most eight) in any
 // order of classes (one byte of dress each; the first byte's low bit
-// is colour), as checkLine holds it. The restriction is the accepted
-// row on door.Line: where a tag stands inside a grapheme cluster, or
-// after a Prepend character, only the one row is held. Seen to fail:
-// with Line's unbreak taken out, on a thumbs-up and skin tone after a
-// dressed segment (not on one row); with tagless taken out of Line, on
-// a URL tag in box text; with Line writing no closing tag, on the
-// first seed (a style left open); and with the restriction off
-// (tagInCluster always false), on a spacing mark after a dressed
-// segment (4 cells drawn, Width 3) and a Prepend character before a
-// tag (the tag drawn as text: 10 cells, Width 6); with Line dressing
-// each segment as the next one, on the first seed (its first cell drawn
-// as plain where its segment is bad).
+// is colour), as checkLine holds it. Seen to fail: with Line's unbreak
+// taken out, on a thumbs-up and skin tone after a dressed segment (not
+// on one row); with tagless taken out of Line, on a URL tag in box
+// text; with Line writing no closing tag, on the first seed (a style
+// left open); with Line dressing each segment as the next one, on the
+// first seed (its first cell drawn as plain where its segment is bad);
+// with neither whole nor dressTag's zero-width space, on each seed of a
+// tag inside a cluster (a spacing mark: 4 cells drawn, Width 3; a
+// Hangul vowel: 3, Width 2; a flag: 4, Width 2; a pictograph after a
+// zero width joiner: 2, Width 1) and of a Prepend character before a
+// tag (the tag drawn as text, its style left open); and with whole but
+// no zero-width space, on the two Prepend seeds (8 cells drawn, Width
+// 4, a style left open; 7 cells drawn, Width 3).
 func FuzzLine(f *testing.F) {
 	for i, s := range bad {
 		f.Add([]byte{byte(i), byte(model.Bad), byte(model.Plain)}, "ok\x00"+s)
 		f.Add([]byte{1, byte(model.Plain), byte(model.Warn), byte(model.Plain)}, "a "+s+"\x00: \x00"+s)
 	}
 	f.Add([]byte{1, byte(model.Strong), byte(model.Bad)}, "\U0001f44d\x00\U0001f3fd")
+	// A tag inside a cluster: a spacing mark, a Hangul vowel, a flag's
+	// second half, a pictograph after a zero width joiner, each across
+	// the tag from the character it joins.
+	f.Add([]byte{1, byte(model.Bad), byte(model.Plain)}, "a\x00\u0903b")
+	f.Add([]byte{0, byte(model.Plain), byte(model.Strong)}, "\u1100\x00\u1161")
+	f.Add([]byte{1, byte(model.Warn), byte(model.Good)}, "\U0001f1e6\x00\U0001f1e8")
+	f.Add([]byte{1, byte(model.Good), byte(model.Plain)}, "\u2764\u200d\x00\u2764")
+	// A Prepend character before a tag: a closing one at the line's end,
+	// and an opening one before a character that ends its cluster.
+	f.Add([]byte{1, byte(model.Bad)}, "ok \u0600")
+	f.Add([]byte{0, byte(model.Plain), byte(model.Dim)}, "a\u0d4e\x00\u2060b")
 	f.Fuzz(func(t *testing.T, dress []byte, text string) {
 		if utf8.RuneCountInString(text) > 64 {
 			return
