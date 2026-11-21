@@ -179,7 +179,10 @@ func culprit(cases []string, holds func(string) bool) string {
 // whole taken out of Line, on a spacing mark across a tag (5 cells
 // drawn, Width 4); with no zero-width space before a tag after a
 // Prepend character, on an Arabic number sign before a tag and a
-// zero-width space (7 cells drawn, Width 3, a style left open).
+// zero-width space (7 cells drawn, Width 3, a style left open); with
+// whole leaving the zero-width space after a [ in the segment after it,
+// on an Arabic number sign then a [ across a tag (a [ with a tag after
+// it).
 func TestClassesBesideATag(t *testing.T) {
 	type pair struct {
 		a, b   model.Class

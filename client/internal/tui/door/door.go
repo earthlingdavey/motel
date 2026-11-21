@@ -215,10 +215,13 @@ func dressTag(b *strings.Builder, tag string) {
 
 // whole is segs with each grapheme cluster of their joined text in the
 // segment it begins in: tview reads a tag only between two clusters, so
-// one a tag cuts is drawn twice.
+// one a tag cuts is drawn twice. The zero-width space tagless writes
+// after a [ goes with it, though it is a cluster of its own, so that no
+// tag comes between them (a [ ends a cluster a Prepend character
+// begins in the segment before).
 func whole(segs []string) []string {
 	out := make([]string, len(segs))
-	j, end := 0, 0
+	j, end, last := 0, 0, 0
 	if len(segs) > 0 {
 		end = len(segs[0])
 	}
@@ -230,7 +233,12 @@ func whole(segs []string) []string {
 			j++
 			end += len(segs[j])
 		}
-		out[j] += c
+		k := j
+		if c == "\u200b" && strings.HasSuffix(out[last], "[") {
+			k = last
+		}
+		out[k] += c
+		last = k
 		at += len(c)
 	}
 	return out

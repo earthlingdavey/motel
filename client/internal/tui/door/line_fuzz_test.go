@@ -85,7 +85,8 @@ func doorSegs(l model.Line) []string {
 // is on the next), as many cells wide as l.Width says, each cell in the
 // style of the segment its grapheme cluster begins in (no tag of the
 // box's read, not even to another class's style), and its styles
-// closed at its end (the line under it is drawn as it is alone).
+// closed at its end (the line under it is drawn as it is alone); and
+// every [ in its text is a tag of the door's or inert (inertBrackets).
 func checkLine(t *testing.T, l model.Line, colour bool) {
 	t.Helper()
 	w := l.Width(Width) + 4
@@ -93,6 +94,9 @@ func checkLine(t *testing.T, l model.Line, colour bool) {
 	if row(scr, 1, w) != "#" || row(scr, 2, w) != "" {
 		t.Errorf("%s (colour %v) is not drawn on one row: %q, %q, %q", lineName(l), colour, row(scr, 0, w), row(scr, 1, w), row(scr, 2, w))
 		return
+	}
+	if s := Line(l, colour).s; !inertBrackets(s, colour) {
+		t.Errorf("%s (colour %v): a [ in %q is neither a tag of the door's nor followed by a zero-width space", lineName(l), colour, s)
 	}
 	if _, st, _ := scr.Get(0, 1); st != lineStyle() {
 		t.Errorf("%s (colour %v) leaves a style open: the line under it is drawn %v", lineName(l), colour, st)
@@ -127,6 +131,26 @@ func checkLine(t *testing.T, l model.Line, colour bool) {
 	}
 }
 
+// inertBrackets says whether every [ in s, a Line's text, begins one
+// of the tags tags writes, with colour or without, or is followed by
+// the zero-width space that makes it inert.
+func inertBrackets(s string, colour bool) bool {
+	for i := 0; i < len(s); i++ {
+		if s[i] != '[' || strings.HasPrefix(s[i+1:], "\u200b") {
+			continue
+		}
+		dress := false
+		for _, c := range classes {
+			open, close := tags(c, colour)
+			dress = dress || (open != "" && strings.HasPrefix(s[i:], open)) || (close != "" && strings.HasPrefix(s[i:], close))
+		}
+		if !dress {
+			return false
+		}
+	}
+	return true
+}
+
 // lineName names l's segments, their code points and classes.
 func lineName(l model.Line) string {
 	var out []string
@@ -151,9 +175,11 @@ var className = map[model.Class]string{model.Plain: "plain", model.Label: "label
 // tag inside a cluster (a spacing mark: 4 cells drawn, Width 3; a
 // Hangul vowel: 3, Width 2; a flag: 4, Width 2; a pictograph after a
 // zero width joiner: 2, Width 1) and of a Prepend character before a
-// tag (the tag drawn as text, its style left open); and with whole but
+// tag (the tag drawn as text, its style left open); with whole but
 // no zero-width space, on the two Prepend seeds (8 cells drawn, Width
-// 4, a style left open; 7 cells drawn, Width 3).
+// 4, a style left open; 7 cells drawn, Width 3); and with whole leaving
+// the zero-width space after a [ in the segment after it, on the URL
+// tag after a Prepend character (a [ with a tag after it).
 func FuzzLine(f *testing.F) {
 	for i, s := range bad {
 		f.Add([]byte{byte(i), byte(model.Bad), byte(model.Plain)}, "ok\x00"+s)
@@ -171,6 +197,9 @@ func FuzzLine(f *testing.F) {
 	// and an opening one before a character that ends its cluster.
 	f.Add([]byte{1, byte(model.Bad)}, "ok \u0600")
 	f.Add([]byte{0, byte(model.Plain), byte(model.Dim)}, "a\u0d4e\x00\u2060b")
+	// A Prepend character before the box's [ across a tag: the [ goes
+	// into the segment before, with its zero-width space.
+	f.Add([]byte{1, byte(model.Bad), byte(model.Plain)}, "x\u0600\x00[:::https://evil.example/x]link")
 	f.Fuzz(func(t *testing.T, dress []byte, text string) {
 		if utf8.RuneCountInString(text) > 64 {
 			return
