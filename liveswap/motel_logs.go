@@ -201,20 +201,20 @@ func filterLogs(f *Redactor, body wire.Logs) (string, []string, bool) {
 	var got words
 	dec := json.NewDecoder(bytes.NewReader([]byte(out)))
 	dec.DisallowUnknownFields()
-	if dec.Decode(&got) != nil || got.Kept != body.Kept || got.More != body.More || got.Gap != body.Gap || len(got.Lines) != len(lines) {
+	if dec.Decode(&got) != nil || got.Kept != body.Kept || got.More != body.More || got.Gap != body.Gap {
+		return "", nil, false
+	}
+	var top map[string]json.RawMessage
+	if json.Unmarshal([]byte(out), &top) != nil || !linesIntact(top["lines"], lines) {
 		return "", nil, false
 	}
 	for i := range got.Lines {
 		// A text the pass made longer than a line (a value that is a word
 		// of the outcome vocabulary, which a text's own pair kept, rule 3,
 		// replaced once escaped) is the fallback's to cut.
-		if !got.Lines[i].At.Equal(lines[i].At) || len(got.Lines[i].Text) > logsLineMax {
+		if len(got.Lines[i].Text) > logsLineMax {
 			return "", nil, false
 		}
-	}
-	var top map[string]json.RawMessage
-	if json.Unmarshal([]byte(out), &top) != nil {
-		return "", nil, false
 	}
 	keys := reportedKeys(seen)
 	for i, k := range keys {
@@ -235,7 +235,42 @@ func filterLogs(f *Redactor, body wire.Logs) (string, []string, bool) {
 	}{top["kept"], top["lines"], top["more"], top["gap"], body.Cursor, keys}) != nil {
 		return "", nil, false
 	}
-	return string(bytes.TrimSuffix(b.Bytes(), []byte("\n"))), keys, true
+	final := string(bytes.TrimSuffix(b.Bytes(), []byte("\n")))
+	if !settled(f, final) {
+		return "", nil, false
+	}
+	return final, keys, true
+}
+
+// settled is whether one more final pass would leave the body s as it
+// is: what was put beside the pass's bytes after it (a cut, the cursor,
+// redacted_env) made no form of a known value with them, nor stands
+// across a time's edge.
+func settled(f *Redactor, s string) bool {
+	again, ok := f.lastPass([]byte(s), map[string]bool{})
+	return ok && again == s
+}
+
+// linesIntact is whether raw, a body's lines after the filter, are the
+// lines that went in: as many, each exactly its at, release and text,
+// the times as they were and the words strings. A value of JSON's
+// punctuation can make two lines one, or fold a text into a release,
+// and leave JSON that parses.
+func linesIntact(raw json.RawMessage, want []wire.LogLine) bool {
+	var got []map[string]json.RawMessage
+	if json.Unmarshal(raw, &got) != nil || len(got) != len(want) {
+		return false
+	}
+	for i, l := range got {
+		var at time.Time
+		var release, text string
+		if len(l) != 3 || json.Unmarshal(l["at"], &at) != nil || !at.Equal(want[i].At) ||
+			json.Unmarshal(l["release"], &release) != nil || json.Unmarshal(l["text"], &text) != nil ||
+			l["release"] == nil || l["text"] == nil {
+			return false
+		}
+	}
+	return true
 }
 
 // filterLogsWhole is filterLogs' fallback: the body, each line filtered
@@ -263,13 +298,10 @@ func filterLogsWhole(f *Redactor, body wire.Logs) (out string, keys []string, se
 	// The lines as they went in, at their times, or none: a value of
 	// JSON's punctuation across two lines made them one, and a cursor and
 	// a count past both would say a line was sent that was not.
+	withheld := f.replaceKnown(`{"error":"response withheld: a redacted value overlapped the response's own structure"}`, map[string]bool{}, true)
 	var cut []wire.LogLine
-	same := json.Unmarshal(top["lines"], &cut) == nil && len(cut) == len(lines)
-	for i := 0; same && i < len(cut); i++ {
-		same = cut[i].At.Equal(lines[i].At)
-	}
-	if !same {
-		return f.replaceKnown(`{"error":"response withheld: a redacted value overlapped the response's own structure"}`, map[string]bool{}, true), nil, false
+	if !linesIntact(top["lines"], lines) || json.Unmarshal(top["lines"], &cut) != nil {
+		return withheld, nil, false
 	}
 	{
 		// A text the filter made longer than a line is cut, where no form
@@ -305,10 +337,15 @@ func filterLogsWhole(f *Redactor, body wire.Logs) (out string, keys []string, se
 	var b bytes.Buffer
 	enc := json.NewEncoder(&b)
 	enc.SetEscapeHTML(false)
-	if enc.Encode(top) != nil {
-		return out, had, true
+	if enc.Encode(top) == nil {
+		out = string(bytes.TrimSuffix(b.Bytes(), []byte("\n")))
 	}
-	return string(bytes.TrimSuffix(b.Bytes(), []byte("\n"))), had, true
+	// What the cuts and the cursor put beside the filter's bytes: one more
+	// final pass changes nothing, or nothing is sent.
+	if !settled(f, out) {
+		return withheld, nil, false
+	}
+	return out, had, true
 }
 
 // logsCutMargin is the least the filter sees of a cut line past what is

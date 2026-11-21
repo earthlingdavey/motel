@@ -490,6 +490,36 @@ func TestLogsFinalCut(t *testing.T) {
 	}
 }
 
+// TestLogsBodyStaysWhole: a value of JSON's punctuation that folds a
+// line's text into its release, or one that a fallback's cut and the
+// next line's JSON make whole, is in no answer sent: the body falls back,
+// and the fallback withholds what one more final pass would change.
+func TestLogsBodyStaysWhole(t *testing.T) {
+	cutAt := strings.Repeat("{", logsLineMax-len(`"status":"succeeded"`)) + `"status":"succeeded"`
+	for name, c := range map[string]struct {
+		env   string
+		texts []string
+		value string
+	}{
+		"a text folded into the release":           {"PUNCT=\",\"text\":\"\n", []string{"one", "two"}, `","text":"`},
+		"a value the cut makes with the next line": {"K=succeeded\nS=[redact…\"},{\"at\n", []string{cutAt, "two"}, `[redact…"},{"at`},
+	} {
+		h, people, _, _ := logsRig(t, demoJournal(2, func(i int) string { return c.texts[i] }))
+		must(t, os.WriteFile(h.app.managed["demo"].spec.envFile, []byte(c.env), 0o600))
+		w := sendTo(t, h, "GET", "/_motel/apps/demo/logs", token(people.erin))
+		if strings.Contains(w.Body.String(), c.value) {
+			t.Errorf("%s: the value is sent: %.300s", name, w.Body)
+		}
+		var got map[string]json.RawMessage
+		if json.Unmarshal(w.Body.Bytes(), &got) != nil {
+			t.Fatalf("%s: %s", name, w.Body)
+		}
+		if got["lines"] != nil && !linesIntact(got["lines"], []wire.LogLine{{At: demoJournal(2, lineN)[0].at}, {At: demoJournal(2, lineN)[1].at}}) {
+			t.Errorf("%s: lines sent damaged: %.300s", name, w.Body)
+		}
+	}
+}
+
 // TestLogsClientGone: a reader that goes away mid-read ends it, and that
 // is no failure of the journal's for moteld to log.
 func TestLogsClientGone(t *testing.T) {
