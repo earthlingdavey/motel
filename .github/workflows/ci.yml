@@ -298,9 +298,17 @@ jobs:
       # starts cold, once an arch. The Go is asked of plain `docker
       # compose`, the base file alone, and never of $COMPOSE: the CI
       # file's ./.cache bind sources, made now, would be root's, and
-      # the restore below could not unpack into them.
+      # the restore below could not unpack into them. In an assignment
+      # of its own, and refused when empty: this is the job's first
+      # pull of the image, and inside the echo a compose run that
+      # failed passed the step with no version, the key matched
+      # nothing, and the job built cold and saved a cache no run
+      # would restore.
       - id: go
-        run: echo "version=$(docker compose run --rm -T --no-deps dev go env GOVERSION)" >> "$GITHUB_OUTPUT"
+        run: |
+          v=$(docker compose run --rm -T --no-deps dev go env GOVERSION)
+          [ -n "$v" ] || { echo "the dev image gave no Go version" >&2; exit 1; }
+          echo "version=$v" >> "$GITHUB_OUTPUT"
       - id: cache
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
@@ -355,7 +363,10 @@ jobs:
       # The e2e job says why this cache, why one for the four lanes,
       # and why every lane's Go is built when its key missed.
       - id: go
-        run: echo "version=$(docker compose run --rm -T --no-deps dev go env GOVERSION)" >> "$GITHUB_OUTPUT"
+        run: |
+          v=$(docker compose run --rm -T --no-deps dev go env GOVERSION)
+          [ -n "$v" ] || { echo "the dev image gave no Go version" >&2; exit 1; }
+          echo "version=$v" >> "$GITHUB_OUTPUT"
       - id: cache
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
@@ -401,7 +412,10 @@ jobs:
       # The e2e job says why this cache, why one for the four lanes,
       # and why every lane's Go is built when its key missed.
       - id: go
-        run: echo "version=$(docker compose run --rm -T --no-deps dev go env GOVERSION)" >> "$GITHUB_OUTPUT"
+        run: |
+          v=$(docker compose run --rm -T --no-deps dev go env GOVERSION)
+          [ -n "$v" ] || { echo "the dev image gave no Go version" >&2; exit 1; }
+          echo "version=$v" >> "$GITHUB_OUTPUT"
       - id: cache
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
@@ -450,7 +464,10 @@ jobs:
       # The e2e job says why this cache, why one for the four lanes,
       # and why every lane's Go is built when its key missed.
       - id: go
-        run: echo "version=$(docker compose run --rm -T --no-deps dev go env GOVERSION)" >> "$GITHUB_OUTPUT"
+        run: |
+          v=$(docker compose run --rm -T --no-deps dev go env GOVERSION)
+          [ -n "$v" ] || { echo "the dev image gave no Go version" >&2; exit 1; }
+          echo "version=$v" >> "$GITHUB_OUTPUT"
       - id: cache
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:

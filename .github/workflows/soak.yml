@@ -96,7 +96,10 @@ jobs:
       # was in the image [measured there: 101 to 111 s, two runs of
       # 2026-11-21].
       - id: go
-        run: echo "version=$(docker compose run --rm -T --no-deps dev go env GOVERSION)" >> "$GITHUB_OUTPUT"
+        run: |
+          v=$(docker compose run --rm -T --no-deps dev go env GOVERSION)
+          [ -n "$v" ] || { echo "the dev image gave no Go version" >&2; exit 1; }
+          echo "version=$v" >> "$GITHUB_OUTPUT"
       - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .cache
