@@ -706,6 +706,30 @@ func TestCutTextBound(t *testing.T) {
 	}
 }
 
+// TestLogsGuessIsConfirmed: a logs reader who can send the app input
+// can test a guess of a whole env_file value, the oracle of
+// DESIGN-access.md row 26 by another way: a request line holding the
+// value comes back with the marker that names its key, one holding a
+// wrong guess as written, and the read's journal line names the key in
+// redacted_env. It holds what the filter does and the docs name (the
+// owner's decision is open); the filter cannot close it, since any
+// visible replacement confirms a match.
+func TestLogsGuessIsConfirmed(t *testing.T) {
+	h, people, _, logs := logsRig(t, demoJournal(2, func(i int) string {
+		return []string{`GET /hunter2-of-demo HTTP/1.1" 404`, `GET /hunter2-of-dumb HTTP/1.1" 404`}[i]
+	}))
+	w := sendTo(t, h, "GET", "/_motel/apps/demo/logs", token(people.erin))
+	got := decodeLogs(t, w)
+	if len(got.Lines) != 2 || got.Lines[0].Text != `GET /[redacted:DB_PASSWORD] HTTP/1.1" 404` || got.Lines[1].Text != `GET /hunter2-of-dumb HTTP/1.1" 404` ||
+		strings.Join(got.RedactedEnv, ",") != "DB_PASSWORD" {
+		t.Fatalf("%s", w.Body)
+	}
+	if lines := logs.FilterMessage("access: person read logs").All(); len(lines) != 1 ||
+		fmt.Sprint(lines[0].ContextMap()["redacted_env"]) != "[DB_PASSWORD]" || lines[0].ContextMap()["person"] != "erin" {
+		t.Errorf("the record: %v", lines)
+	}
+}
+
 // TestLogsClientGone: a reader that goes away mid-read ends it, and that
 // is no failure of the journal's for moteld to log.
 func TestLogsClientGone(t *testing.T) {

@@ -261,6 +261,16 @@ app. A cursor holds `;`, which a query must escape: `curl -G
   credential. `redacted_env` names the keys it replaced. Not a value the app's `env_file` no longer holds, in a line written while it did (a logs read reaches lines of any age, and the filter knows only the file's values now and those moteld has read since it started):
   changing a value does not hide it in lines already written, so
   revoke the old credential.
+- A logs reader who can send the app input (a request to its site, which
+  most apps log) can test a guess of an `env_file` value: a line holding
+  a whole value of 8 characters or more comes back as the marker that
+  names its key, and a wrong guess as written. Never a piece of a value,
+  and never a generated one, which cannot be guessed; a weak one (a
+  word, a reused password) can be. The filter cannot close it, since any
+  visible replacement confirms a match. Keep generated values in
+  `env_file`, and give `logs` only to people you would trust with them:
+  the `access: person read logs` line names the keys a read replaced, so
+  a confirmed guess leaves the person's name and the key in the journal.
 - `more` is `true` when there was more than was sent: the count, or
   64 KiB of the lines' text as the journal holds it (what is sent can be
   longer: the filter's markers, JSON's escapes). After a follow the lines left are after

@@ -273,7 +273,20 @@ Properties that matter to the model:
   the version asked for, answered `[redacted:DB_PASSWORD]` for a guess
   that held that value (as written, inside a longer string, in base64
   or hex, or a URL value's password alone), and a person with no more
-  than the viewer role could try values until one did. That 404 and
+  than the viewer role could try values until one did. A logs reader
+  reaches the same oracle another way, through an app's logs (`GET
+  /_motel/apps/<app>/logs`), for a `logs` grant alone. A logs reader who
+  can send the app input (a request to its site, which most apps log)
+  can test a guess of an `env_file` value: a line holding a whole value
+  of 8 characters or more comes back as the marker that names its key,
+  and a wrong guess as written. Never a piece of a value, and never a
+  generated one, which cannot be guessed; a weak one (a word, a reused
+  password) can be. The filter cannot close it, since any visible
+  replacement confirms a match. Keep generated values in `env_file`, and
+  give `logs` only to people you would trust with them: the `access:
+  person read logs` line names the keys a read replaced, so a confirmed
+  guess leaves the person's name and the key in the journal (the logs
+  reader's residual, below). That 404 and
   the 422 of a query that does not parse are the such bodies today;
   the 500 of the same read, whose error may name the record's file
   and so the version asked for, now says a fixed sentence and leaves
@@ -1652,6 +1665,18 @@ does not isolate the runtime.
   line each read writes, from which the operator re-reads on the box
   exactly what was sent. The same residual as a failed deploy's journal
   tail in a public CI log, for a reader the operator chose.
+  A logs reader who can send the app input (a request to its site, which
+  most apps log) can test a guess of an `env_file` value: a line holding
+  a whole value of 8 characters or more comes back as the marker that
+  names its key, and a wrong guess as written. Never a piece of a value,
+  and never a generated one, which cannot be guessed; a weak one (a
+  word, a reused password) can be. The filter cannot close it, since any
+  visible replacement confirms a match. Keep generated values in
+  `env_file`, and give `logs` only to people you would trust with them:
+  the `access: person read logs` line names the keys a read replaced, so
+  a confirmed guess leaves the person's name and the key in the journal.
+  Whether more is done about it (markers that name no key on a
+  person's read) is the owner's decision, open.
 - **Install-time supply chain** (motel's own build) is a CI concern;
   release signing is the roadmap answer, not a runtime control.
 - **T5 is contained, not prevented** — a supervisor RCE holds every
