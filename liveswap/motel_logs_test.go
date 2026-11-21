@@ -723,6 +723,44 @@ func TestLogsClientGone(t *testing.T) {
 	}
 }
 
+// TestLogsRefusedLineByApp: the refusal's line is once a minute for each
+// app of this box, and once a minute for every name that is no app here
+// together: two apps give two lines, twenty made-up names one, and an
+// app after them still its own. Each line names the name its request
+// gave.
+func TestLogsRefusedLineByApp(t *testing.T) {
+	h, people, _, logs := logsRig(t, demoJournal(1, lineN))
+	saved := logsNow
+	t.Cleanup(func() { logsNow = saved })
+	now := time.Date(2026, 11, 21, 9, 0, 0, 0, time.UTC)
+	logsNow = func() time.Time { return now }
+	refusedLogs.Lock()
+	clear(refusedLogs.last)
+	refusedLogs.Unlock()
+	apps := func() []string {
+		var got []string
+		for _, e := range logs.FilterMessage("access: person refused logs").All() {
+			got = append(got, fmt.Sprint(e.ContextMap()["app"]))
+		}
+		return got
+	}
+	sendTo(t, h, "GET", "/_motel/apps/demo/logs", token(people.alice))
+	sendTo(t, h, "GET", "/_motel/apps/blog/logs", token(people.alice))
+	for i := range 20 {
+		sendTo(t, h, "GET", "/_motel/apps/ghost"+strconv.Itoa(i)+"/logs", token(people.alice))
+	}
+	sendTo(t, h, "GET", "/_motel/apps/demo/logs", token(people.alice))
+	if got := apps(); strings.Join(got, ",") != "demo,blog,ghost0" {
+		t.Fatalf("within a minute: %q", got)
+	}
+	now = now.Add(time.Minute)
+	sendTo(t, h, "GET", "/_motel/apps/ghost7/logs", token(people.alice))
+	sendTo(t, h, "GET", "/_motel/apps/demo/logs", token(people.alice))
+	if got := apps(); strings.Join(got, ",") != "demo,blog,ghost0,ghost7,demo" {
+		t.Errorf("a minute on: %q", got)
+	}
+}
+
 // TestLogsReadFails: a journal that cannot be read is the 500 in fixed
 // words, and the reason in the box's journal.
 func TestLogsReadFails(t *testing.T) {

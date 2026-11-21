@@ -589,7 +589,7 @@ can read on the box exactly what was sent (docs/people.md, "Reading an
 app's logs"). A read that sends nothing (a follow with nothing new,
 `kept` `off`) writes none. A person `Decide` refuses an app's logs is a
 Warn line, `access: person refused logs`, with the address and what was
-needed, at most once a minute for a person and an app; a logs grant
+needed, at most once a minute for a person and each app of the box, and once a minute for a person and every name that is no app here, together; a logs grant
 with a `from` list asked from outside it is told only there (row 82).
 Four logs reads run at once in the process, each journalctl bounded by
 5 s and killed once the read has what it sends, each entry by 256 KiB,
@@ -812,7 +812,7 @@ access's examples:
 | 94 | an app's logs | a line of 4 KiB or more printed `null` by journalctl, sent empty; a `MESSAGE` that is not UTF-8 dropping the line | 3 | 5 | 3 | fix | `--all`; byte arrays read as bytes, each bad run one U+FFFD (`TestLogsEntryDecodes`, `TestIntegrationLogsOddLines`) |
 | 95 | an app's logs | journalctl's output unreadable: an operator's `SYSTEMD_COLORS=1` in moteld's environment wraps its JSON in colour codes (measured) | 2 | 5 | 1 | fix | journalctl with an empty environment (`journalctlCommand`, #616) |
 | 96 | an app's logs | an entry over the bound (journald's `LineMax=` raised), or a cursor a later systemd writes in another form, given out and refused (422) at the next poll | 2 | 5 | 1 | fix: size 1, risk 1 | the read fails, named, a 500 and a moteld line (`TestLogsEntryBound`, `TestLogsReadFailsLoudly`); every real cursor of the lane held to the grammar (`TestIntegrationLogsReadsTheAppsOwnLines`) |
-| 97 | an app's logs | a refused logs read heard by no one: a logs grant's `from` list held, from outside it, told to no channel (row 82) | 2 | 5 | 5 | fix: size 2, risk 1 (the owner's decision of 2026-11-20) | `access: person refused logs`, a Warn line, at most once a minute for a person and an app (`TestLogsRefusedLine`) |
+| 97 | an app's logs | a refused logs read heard by no one: a logs grant's `from` list held, from outside it, told to no channel (row 82) | 2 | 5 | 5 | fix: size 2, risk 1 (the owner's decision of 2026-11-20) | `access: person refused logs`, a Warn line, at most once a minute for a person and each app of the box, and once a minute for a person and every name that is no app here, together (`TestLogsRefusedLine`, `TestLogsRefusedLineByApp`; at the owner's word, 2026-11-21) |
 | 98 | an app's logs | no record of what a person was sent | 3 | 5 | 5 | fix | one line per read that sends lines, with its cursor range, at Warn, so a level that quiets moteld's Info lines keeps it; none for a body the filter withheld (`TestLogsJournalLine`, `TestLogsBodyTimesAndCursorPassNoFilter`) |
 
 ### Accepted residuals

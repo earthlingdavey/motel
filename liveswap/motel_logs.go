@@ -477,8 +477,9 @@ func cutText(s string, n int) string {
 
 // refusedLogs is when each person was last told refused an app's logs,
 // by person and app: the journal line is written at most once a minute
-// for each, as a throttled person's is. Entries older than a minute go
-// once the map holds refusedLogsKeep.
+// for each app of this box, and once a minute for every name that is no
+// app here together, as a throttled person's is. Entries older than a
+// minute go once the map holds refusedLogsKeep.
 var refusedLogs = struct {
 	sync.Mutex
 	last map[[2]string]time.Time
@@ -493,10 +494,15 @@ var logsNow = time.Now
 // app's logs: the person, the app the path named (an app or not, as
 // Decide does not ask), the address the grants' lists were held to, and
 // what was needed. A logs grant with a from list, asked from outside it,
-// is told only here.
+// is told only here. A person so writes at most one line a minute for
+// each app and one more: a name that is no app here (any the grammar
+// takes) shares the key "", which no app's name is.
 func (h *Handler) logsRefused(r *http.Request, person, app string, err error) {
 	now := logsNow()
-	key := [2]string{person, app}
+	key := [2]string{person, ""}
+	if h.app.managedApp(app) != nil {
+		key[1] = app
+	}
 	refusedLogs.Lock()
 	if at, ok := refusedLogs.last[key]; ok && now.Sub(at) < time.Minute {
 		refusedLogs.Unlock()

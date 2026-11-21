@@ -305,7 +305,7 @@ moteld -o cat | grep -v '"access: person read logs"'` hides them. A
 person who asks for an app's logs and is refused (no `logs` grant on
 it, or one whose `from` list does not hold their address) is a Warn
 line, `access: person refused logs`, with the address and what was
-needed, at most once a minute for a person and an app.
+needed, at most once a minute for a person and each app of the box, and once a minute for a person and every name that is no app here, together.
 
 **A chatty app can cost another app its lines.** Every app runs under
 one systemd user manager, and journald's rate limit is per unit of the
@@ -377,7 +377,7 @@ list, a network the key has not used before is told as
 since a grant applies, so the key was not used outside every list. A
 logs read from there is refused with a `403`, and is not told to your
 channels; moteld's journal has it (`access: person refused logs`, at
-most once a minute for a person and an app). To hear of their key used outside the office at all, put a
+most once a minute for a person and each app of the box, and once a minute for a person and every name that is no app here, together). To hear of their key used outside the office at all, put a
 `from` list on the viewer grant too.
 
 Each one-shot also has a line in moteld's journal, `access: a key used
