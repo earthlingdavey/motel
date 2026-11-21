@@ -221,31 +221,36 @@ func filterLogs(f *Redactor, body wire.Logs) (string, []string, bool) {
 		keys[i] = f.replaceKnown(k, seen, false) // a key name, not a body
 	}
 	// The pass's bytes as they are, in the wire type's order: no string
-	// of them is written again.
-	var b bytes.Buffer
-	enc := json.NewEncoder(&b)
-	enc.SetEscapeHTML(false)
-	if enc.Encode(struct {
-		Kept        json.RawMessage `json:"kept"`
-		Lines       json.RawMessage `json:"lines"`
-		More        json.RawMessage `json:"more"`
-		Gap         json.RawMessage `json:"gap"`
-		Cursor      string          `json:"cursor,omitempty"`
-		RedactedEnv []string        `json:"redacted_env,omitempty"`
-	}{top["kept"], top["lines"], top["more"], top["gap"], body.Cursor, keys}) != nil {
+	// of them is written again. Checked settled without the cursor, which
+	// passes no filter, then written with it.
+	assemble := func(cursor string) (string, bool) {
+		var b bytes.Buffer
+		enc := json.NewEncoder(&b)
+		enc.SetEscapeHTML(false)
+		err := enc.Encode(struct {
+			Kept        json.RawMessage `json:"kept"`
+			Lines       json.RawMessage `json:"lines"`
+			More        json.RawMessage `json:"more"`
+			Gap         json.RawMessage `json:"gap"`
+			Cursor      string          `json:"cursor,omitempty"`
+			RedactedEnv []string        `json:"redacted_env,omitempty"`
+		}{top["kept"], top["lines"], top["more"], top["gap"], cursor, keys})
+		return string(bytes.TrimSuffix(b.Bytes(), []byte("\n"))), err == nil
+	}
+	if bare, ok := assemble(""); !ok || !settled(f, bare) {
 		return "", nil, false
 	}
-	final := string(bytes.TrimSuffix(b.Bytes(), []byte("\n")))
-	if !settled(f, final) {
+	final, ok := assemble(body.Cursor)
+	if !ok {
 		return "", nil, false
 	}
 	return final, keys, true
 }
 
 // settled is whether one more final pass would leave the body s as it
-// is: what was put beside the pass's bytes after it (a cut, the cursor,
+// is: what was put beside the pass's bytes after it (a cut,
 // redacted_env) made no form of a known value with them, nor stands
-// across a time's edge.
+// across a time's edge. s holds no cursor, which passes no filter.
 func settled(f *Redactor, s string) bool {
 	again, ok := f.lastPass([]byte(s), map[string]bool{})
 	return ok && again == s
@@ -293,12 +298,12 @@ func filterLogsWhole(f *Redactor, body wire.Logs) (out string, keys []string, se
 	out = f.redactJSON(raw)
 	var top map[string]json.RawMessage
 	if json.Unmarshal([]byte(out), &top) != nil || top["lines"] == nil {
-		return out, nil, false
+		return unsent(f, out), nil, false
 	}
 	// The lines as they went in, at their times, or none: a value of
 	// JSON's punctuation across two lines made them one, and a cursor and
 	// a count past both would say a line was sent that was not.
-	withheld := f.replaceKnown(`{"error":"response withheld: a redacted value overlapped the response's own structure"}`, map[string]bool{}, true)
+	withheld := unsent(f, f.replaceKnown(`{"error":"response withheld: a redacted value overlapped the response's own structure"}`, map[string]bool{}, true))
 	var cut []wire.LogLine
 	if !linesIntact(top["lines"], lines) || json.Unmarshal(top["lines"], &cut) != nil {
 		return withheld, nil, false
@@ -326,8 +331,11 @@ func filterLogsWhole(f *Redactor, body wire.Logs) (out string, keys []string, se
 		names[i] = f.replaceKnown(k, seen, false) // a key name, not a body
 	}
 	out = withField(out, "redacted_env", names)
-	if json.Unmarshal([]byte(out), &top) != nil {
-		return out, nil, false
+	// What the cuts and redacted_env put beside the filter's bytes: one
+	// more final pass changes nothing, or nothing is sent. Before the
+	// cursor, which passes no filter.
+	if json.Unmarshal([]byte(out), &top) != nil || !settled(f, out) {
+		return withheld, nil, false
 	}
 	var had []string
 	_ = json.Unmarshal(top["redacted_env"], &had)
@@ -340,12 +348,19 @@ func filterLogsWhole(f *Redactor, body wire.Logs) (out string, keys []string, se
 	if enc.Encode(top) == nil {
 		out = string(bytes.TrimSuffix(b.Bytes(), []byte("\n")))
 	}
-	// What the cuts and the cursor put beside the filter's bytes: one more
-	// final pass changes nothing, or nothing is sent.
-	if !settled(f, out) {
-		return withheld, nil, false
-	}
 	return out, had, true
+}
+
+// unsent is s, a body that sends no line (a sentence of the filter's or
+// the route's), if one more known-value pass leaves it as it is; the
+// body that can hold nothing otherwise. A single pass replaces longest
+// first, so a marker and the words after it can make a longer value
+// that pass had looked for already.
+func unsent(f *Redactor, s string) string {
+	if f.replaceKnown(s, map[string]bool{}, true) != s {
+		return `{"error":"[#0]"}`
+	}
+	return s
 }
 
 // logsCutMargin is the least the filter sees of a cut line past what is

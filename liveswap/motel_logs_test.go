@@ -520,6 +520,31 @@ func TestLogsBodyStaysWhole(t *testing.T) {
 	}
 }
 
+// TestLogsWithheldHoldsNoValue: a body withheld for its structure is
+// sent only if one more pass leaves it as it is: a marker and the words
+// after it can make a longer value the single pass had looked for
+// already, which is then the body that can hold nothing.
+func TestLogsWithheldHoldsNoValue(t *testing.T) {
+	h, people, _, _ := logsRig(t, demoJournal(2, func(i int) string { return []string{"one", "two"}[i] }))
+	must(t, os.WriteFile(h.app.managed["demo"].spec.envFile, []byte("K=response\nS=[redacted:K] withheld\nPUNCT=\",\"text\":\"\n"), 0o600))
+	w := sendTo(t, h, "GET", "/_motel/apps/demo/logs", token(people.erin))
+	if strings.Contains(w.Body.String(), "[redacted:K] withheld") || w.Body.String() != `{"error":"[#0]"}`+"\n" {
+		t.Errorf("%d %s", w.Code, w.Body)
+	}
+}
+
+// TestLogsCursorPassesNoFilterInTheCheck: the check that one more pass
+// changes nothing is of the body without its cursor, which passes no
+// filter: an env_file value inside a cursor's id withholds nothing.
+func TestLogsCursorPassesNoFilterInTheCheck(t *testing.T) {
+	h, people, _, _ := logsRig(t, demoJournal(2, lineN))
+	must(t, os.WriteFile(h.app.managed["demo"].spec.envFile, []byte("K=0123456789abcdef\n"), 0o600))
+	w := sendTo(t, h, "GET", "/_motel/apps/demo/logs", token(people.erin))
+	if got := decodeLogs(t, w); len(got.Lines) != 2 || got.Cursor != cursorOf(1) {
+		t.Errorf("%d %s", w.Code, w.Body)
+	}
+}
+
 // TestLogsClientGone: a reader that goes away mid-read ends it, and that
 // is no failure of the journal's for moteld to log.
 func TestLogsClientGone(t *testing.T) {
