@@ -13,6 +13,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -265,4 +266,122 @@ func escapeEach(s string, esc func(rune) bool, format string, also map[rune]stri
 		}
 	}
 	return b.String()
+}
+
+// FuzzHeuristicsTextAndBodyAgree: what the shape and entropy layers mask
+// in a text they mask in a body too, where the text is JSON-escaped
+// once (a failed deploy's tail line) or twice (a JSON logger's line in
+// it). The filter knows no value; the pieces the text path replaced
+// with a marker are found by aligning the text with its filtered form,
+// and no 6-byte window of one may stand more often in the body's
+// string, unescaped to the text's depth, than in the filtered text.
+// The rules written for text that a body's escapes defeat are owed
+// (DESIGN-liveswap.md: the provider prefixes, JWTs, bearer, Basic,
+// userinfo and PEM); a text they mask is not asserted.
+func FuzzHeuristicsTextAndBodyAgree(f *testing.F) {
+	token := "k3J9xQ2mZ8pL0vT7wR4nY6bH1" // gitleaks:allow — made up for this test
+	for _, s := range []string{
+		`Get "https://api.example.com/v1?key=abc": dial tcp`,
+		`rejected "DB_PASSWORD=hunter2hunter" at login`,
+		`password=Xy7#kq\Lm2pQ next`,
+		`password=hunter2hunter"tailOfSecret`,
+		`password=abc"defghij`,
+		`{"msg":"{\"db_password\":\"hunter2hunter\"}"}`,
+		"https://x.example/a?key=abc\\\nnext_line_word more",
+		`C:\` + token,
+		`GET https://s3.example/a?q="x"&X-Amz-Signature=abc123def`,
+		`GET https://s3.example/a?q=""&X-Amz-Signature=abc123def`,
+		`GET https://s3.example/a?q={"mode":"x"}&X-Amz-Signature=abc123def`,
+		`GET https://s3.example/a?q=["x","y"]&X-Amz-Signature=abc123def`,
+		`{"url":"https://x.example/a?b=c","next":"keepme","n":1}`,
+		`password=hunter2\`,
+		`password=correct\ horse`,
+		`password=\hunter2 end`,
+		`password=abcd\efg`,
+		`password=a\b\c\d\e`,
+		`password=\\hunter next`,
+		`password=\\\\\\\\ next`,
+		`password=hunter2\" next`,
+		`{"db_password":"hunter2\\"}`,
+		"id\t" + token,
+		"one\n" + token + " two",
+		"a&" + token,
+		`fetch https://s3.example/a.tgz?X-Amz-Credential=abc&X-Amz-Signature=def failed`,
+	} {
+		f.Add(s)
+	}
+	excluded := regexp.MustCompile(`\[redacted:(?:aws-key|github-token|slack-token|stripe-key|jwt|basic-credential|userinfo|private-key)\]| \[redacted:token\]`)
+	marker := regexp.MustCompile(`\[(?:redacted:[a-z-]+|masked, [0-9]+ chars)\]`)
+	f.Fuzz(func(t *testing.T, text string) {
+		if !utf8.ValidString(text) || strings.ContainsRune(text, 0) || marker.MatchString(text) {
+			return
+		}
+		var none *Redactor
+		want, _ := none.Redact(text)
+		if excluded.MatchString(want) {
+			return
+		}
+		pieces := maskedPieces(text, want, marker)
+		if len(pieces) == 0 {
+			return
+		}
+		tail := func(body []byte) (string, bool) {
+			var got struct {
+				LogTail []string `json:"log_tail"`
+			}
+			if json.Unmarshal([]byte(none.redactJSON(body)), &got) != nil || len(got.LogTail) != 1 {
+				return "", false // withheld: FuzzHeuristicsKeepJSON's to judge
+			}
+			return got.LogTail[0], true
+		}
+		once, _ := json.Marshal(map[string]any{"log_tail": []string{text}})
+		line, _ := json.Marshal(map[string]string{"msg": text})
+		twice, _ := json.Marshal(map[string]any{"log_tail": []string{string(line)}})
+		for depth, body := range [][]byte{once, twice} {
+			got, ok := tail(body)
+			if !ok {
+				continue
+			}
+			if depth == 1 {
+				got = undoEscapes(got)
+			}
+			for _, p := range pieces {
+				for i := 0; i+6 <= len(p); i++ {
+					w := p[i : i+6]
+					if strings.Count(got, w) > strings.Count(want, w) {
+						t.Fatalf("depth %d: %q masked in text (%q) stands in the body: %q", depth+1, w, want, got)
+					}
+				}
+			}
+		}
+	})
+}
+
+// maskedPieces is the pieces of text its filtered form want replaced
+// with a marker: want is text's pieces in order with markers between.
+// Nil when they do not align.
+func maskedPieces(text, want string, marker *regexp.Regexp) []string {
+	kept := marker.Split(want, -1)
+	if len(kept) < 2 || !strings.HasPrefix(text, kept[0]) {
+		return nil
+	}
+	var pieces []string
+	at := len(kept[0])
+	for n, k := range kept[1:] {
+		i := strings.Index(text[at:], k)
+		if k == "" {
+			if n < len(kept)-2 {
+				return nil // two markers side by side: no alignment
+			}
+			i = len(text) - at
+		}
+		if i < 0 {
+			return nil
+		}
+		if i >= 6 {
+			pieces = append(pieces, text[at:at+i])
+		}
+		at += i + len(k)
+	}
+	return pieces
 }

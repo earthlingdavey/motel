@@ -771,7 +771,7 @@ var shapeRules = []struct {
 	// are counted as the body holds them, and the text's as the text
 	// holds them, backslashes before the value too (min, replaceMin).
 	{regexp.MustCompile(`(?i)\b([a-z0-9_-]*` + credentialWords + `[a-z0-9_-]*)(["']?\s*[=:]\s*["']?)(\\*[^\s"',;\[/{\\][^\s"',;]*|\\+)`), "$1$2[redacted:credential]$5",
-		regexp.MustCompile(`(?i)\b([a-z0-9_-]*` + credentialWords + `[a-z0-9_-]*)((?:\\*["'])?\s*[=:]\s*(?:\\*["'])?)((?:[^\s"',;\[/{\\]|\\+[^"/\s\\\[{])(?:` + bodyRun(`',;`, `[^\s"\\:})\]',;]`) + `)*|)(?:((?:\\\\)+)(["\s]))?`), 8},
+		regexp.MustCompile(`(?i)\b([a-z0-9_-]*` + credentialWords + `[a-z0-9_-]*)(` + bodyQuote + `?` + bodySpace + `[=:]` + bodySpaceAfter + bodyQuote + `?)((?:[^\s"',;\[/{\\]|\\+[^"/\s\\\[{])(?:` + bodyRun(`',;`, `[^\s"\\:})\]',;]`) + `)*|)(?:((?:\\\\)+)(["\s]))?`), 8},
 }
 
 // replaceMin is re over s with repl, each match replaced only when its
@@ -790,7 +790,7 @@ func replaceMin(re *regexp.Regexp, s, repl string, min int, inBody bool) string 
 	var out []byte
 	at := 0
 	for _, m := range re.FindAllStringSubmatchIndex(s, -1) {
-		end, extra := m[7], 0
+		end, extra, skip := m[7], 0, 0
 		if len(m) > 9 && m[9] >= 0 {
 			end = m[9]
 		} else if inBody {
@@ -799,22 +799,47 @@ func replaceMin(re *regexp.Regexp, s, repl string, min int, inBody bool) string 
 				run++
 			}
 			if run%2 == 1 && m[1]+run < len(s) && s[m[1]+run] == '"' {
+				// Pairs before a quote's own escape (\\\\\"): the value's
+				// backslashes, but for the last three, \\\", which are the
+				// escape of a quote a level down as well as one backslash
+				// of the value and its quote.
 				extra = run - 1
+				skip = max(run-3, 0)
 			}
 		}
 		out = append(out, s[at:m[0]]...)
 		if end-m[6]+extra < min {
 			out = append(out, s[m[0]:m[1]]...)
+			skip = 0
 		} else {
 			out = re.ExpandString(out, repl, s, m)
 		}
-		at = m[1]
+		at = m[1] + skip
 	}
 	if out == nil {
 		return s
 	}
 	return string(append(out, s[at:]...))
 }
+
+// bodyQuote is a quote around a pair in the app's text, in a JSON
+// body: escaped once (\") or, a level down, three times (\\\"), or an
+// apostrophe as written or as a repr escapes it (\\'). Not a longer
+// run: that is as much a value's backslashes before the quote that ends
+// a string a level down, which the value's count takes (replaceMin).
+const bodyQuote = `(?:\\"|\\\\\\"|(?:\\\\)?')`
+
+// bodySpace is the space a pattern over a JSON body allows where the
+// text's allows \s*: a character of it as written, or escaped at any
+// depth (\t, \r, \n, \f).
+const bodySpace = `(?:\s|\\+[tnrf])*`
+
+// bodySpaceAfter is bodySpace after the = of an assignment, where a
+// value may begin with backslashes of its own: an escape at depth 1
+// alone (an odd run), so that \\\\n0 is the value's, not a newline
+// before 0. A newline a level down there is taken into the value, which
+// is masked the more.
+const bodySpaceAfter = `(?:\s|\\(?:\\\\)*[tnrf])*`
 
 // credentialWords are the words of a key the credential rule takes.
 const credentialWords = `(?:password|passwd|secret|api[_-]?key|access[_-]?token|private[_-]?key)`
@@ -1101,15 +1126,18 @@ func (r *Redactor) maskTokens(s string, inBody bool) string {
 }
 
 // escapeAt is how many bytes from i are the rest of an escape whose
-// backslash is just before i: none when the run of backslashes before i
-// is even (each escapes the next), five for a \u and four hex digits,
-// one otherwise.
+// backslashes are just before i, at any depth: five for a u and four
+// hex digits after any run (\u0026, a level down \\u0026), one after an
+// odd run (\t), and one for an escape's letter after an even run (\\t:
+// a \t of the app's own JSON line, a level down); none when no
+// backslash is before i, or an even run before anything else (escaped
+// backslashes, and the text's own character).
 func escapeAt(s string, i int) int {
 	n := 0
 	for i-n > 0 && s[i-n-1] == '\\' {
 		n++
 	}
-	if n%2 == 0 {
+	if n == 0 {
 		return 0
 	}
 	if s[i] == 'u' && i+5 <= len(s) {
@@ -1117,7 +1145,10 @@ func escapeAt(s string, i int) int {
 			return 5
 		}
 	}
-	return 1
+	if n%2 == 1 || strings.IndexByte("bfnrt", s[i]) >= 0 {
+		return 1
+	}
+	return 0
 }
 
 // maskGenerated is layer 4 over one token. An assignment — an `=` with
