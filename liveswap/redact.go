@@ -650,9 +650,9 @@ func escapePatternFor(form string, inBody bool) string {
 			writeHexAnyCase(&b, hi, 4)
 			b.WriteString(`\\+u`)
 			writeHexAnyCase(&b, lo, 4)
-			b.WriteString(`|\\+U`)
-			writeHexAnyCase(&b, c, 8)
 		}
+		b.WriteString(`|\\+U`)
+		writeHexAnyCase(&b, c, 8)
 		if c >= 0x80 {
 			b.WriteString(`|\\+u\{0*`)
 			writeHexAnyCase(&b, c, len(strconv.FormatInt(int64(c), 16)))
@@ -722,18 +722,25 @@ var shapeRules = []struct {
 	// body, when set, is the rule as it runs over a JSON body, whose
 	// strings hold the app's text escaped (inBody); re is then the
 	// text's.
-	body *bodyRule
+	body *regexp.Regexp
+	// min, when set, is the fewest bytes a match's value (its third
+	// group, and its fourth: an escaped backslash it ends with) must
+	// hold, as the text or the body holds it, for the match to be
+	// replaced (replaceMin): a pattern's repetition counts an escape
+	// unit (\\e) as one, and a run of backslashes before a value as
+	// one.
+	min int
 }{
 	// PEM private keys, whole block.
-	{regexp.MustCompile(`-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----`), "[redacted:private-key]", nil},
+	{regexp.MustCompile(`-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----`), "[redacted:private-key]", nil, 0},
 	// JWT: three base64url segments, the header starting {"…
-	{regexp.MustCompile(`\beyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}\b`), "[redacted:jwt]", nil},
+	{regexp.MustCompile(`\beyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}\b`), "[redacted:jwt]", nil, 0},
 	// Authorization schemes with a token-shaped credential. The
 	// placeholder text in motel's own 401 body, "Bearer <jwt>", is
 	// not token-shaped and passes.
-	{regexp.MustCompile(`(?i)\b(bearer|basic|token)\s+[A-Za-z0-9._~+/=-]{20,}`), "$1 [redacted:token]", nil},
+	{regexp.MustCompile(`(?i)\b(bearer|basic|token)\s+[A-Za-z0-9._~+/=-]{20,}`), "$1 [redacted:token]", nil, 0},
 	// URL userinfo: scheme://user:pass@host.
-	{regexp.MustCompile(`\b([a-z][a-z0-9+.-]*://)[^/\s"'@:]+:[^/\s"'@]+@`), "$1[redacted:userinfo]@", nil},
+	{regexp.MustCompile(`\b([a-z][a-z0-9+.-]*://)[^/\s"'@:]+:[^/\s"'@]+@`), "$1[redacted:userinfo]@", nil, 0},
 	// URL query strings: where presigned-URL credentials live. The
 	// same rule the box applies to its own logs (redactURL). In a body
 	// the query is read in escape units (bodyRun): it ends on an
@@ -741,13 +748,13 @@ var shapeRules = []struct {
 	// runs on through \u0026, the & between its parameters as
 	// encoding/json writes it, and through a quote inside the query.
 	{regexp.MustCompile(`\b([a-z][a-z0-9+.-]*://[^\s"'?]+)\?[^\s"']+`), "$1?[redacted:query]",
-		&bodyRule{re: regexp.MustCompile(`\b([a-z][a-z0-9+.-]*://[^\s"'?]+)\?(?:` + bodyRun(`'`, `',`) + `)+`)}},
+		regexp.MustCompile(`\b([a-z][a-z0-9+.-]*://[^\s"'?]+)\?(?:` + bodyRun(`'`, `[^\s"\\',:]|:(?:\\(?:\\\\)*"|[^\s"\\])`) + `)+`), 0},
 	// Provider prefixes.
-	{regexp.MustCompile(`\b(?:AKIA|ASIA)[A-Z0-9]{16}\b`), "[redacted:aws-key]", nil},
-	{regexp.MustCompile(`\bgh[pousr]_[A-Za-z0-9]{36,}\b`), "[redacted:github-token]", nil},
-	{regexp.MustCompile(`\bgithub_pat_[A-Za-z0-9_]{22,}\b`), "[redacted:github-token]", nil},
-	{regexp.MustCompile(`\bxox[abposr]-[A-Za-z0-9-]{10,}\b`), "[redacted:slack-token]", nil},
-	{regexp.MustCompile(`\b[sr]k_(?:live|test)_[A-Za-z0-9]{16,}\b`), "[redacted:stripe-key]", nil},
+	{regexp.MustCompile(`\b(?:AKIA|ASIA)[A-Z0-9]{16}\b`), "[redacted:aws-key]", nil, 0},
+	{regexp.MustCompile(`\bgh[pousr]_[A-Za-z0-9]{36,}\b`), "[redacted:github-token]", nil, 0},
+	{regexp.MustCompile(`\bgithub_pat_[A-Za-z0-9_]{22,}\b`), "[redacted:github-token]", nil, 0},
+	{regexp.MustCompile(`\bxox[abposr]-[A-Za-z0-9-]{10,}\b`), "[redacted:slack-token]", nil, 0},
+	{regexp.MustCompile(`\b[sr]k_(?:live|test)_[A-Za-z0-9]{16,}\b`), "[redacted:stripe-key]", nil, 0},
 	// KEY=value, key: value and JSON "key":"value" assignments whose
 	// key contains a credential word, whatever surrounds it
 	// (DB_PASSWORD, AWS_SECRET_ACCESS_KEY, STRIPE_API_KEY). The value
@@ -761,40 +768,31 @@ var shapeRules = []struct {
 	// units (bodyRun), so it ends on an escape's edge; an escaped
 	// backslash it ends with, before a quote or a space, is the value's
 	// (`hunter2\`), and the quote or space is put back ($5). Its 8 bytes
-	// are counted as the body holds them (bodyRule.min), as the text
-	// rule counts the text's; a value behind backslashes counts them.
-	{regexp.MustCompile(`(?i)\b([a-z0-9_-]*` + credentialWords + `[a-z0-9_-]*)(["']?\s*[=:]\s*["']?)(?:[^\s"',;\[/{\\][^\s"',;]{7,}|\\+[^\s"',;\[/{\\][^\s"',;]{6,})`), "$1$2[redacted:credential]$5",
-		&bodyRule{re: regexp.MustCompile(`(?i)\b([a-z0-9_-]*` + credentialWords + `[a-z0-9_-]*)((?:\\*["'])?\s*[=:]\s*(?:\\*["'])?)((?:[^\s"',;\[/{\\]|\\+[^"/\s\\\[{])(?:` + bodyRun(`',;`, `',;`) + `)*)(?:((?:\\\\)+)(["\s]))?`), min: 8}},
+	// are counted as the body holds them, and the text's as the text
+	// holds them, backslashes before the value too (min, replaceMin).
+	{regexp.MustCompile(`(?i)\b([a-z0-9_-]*` + credentialWords + `[a-z0-9_-]*)(["']?\s*[=:]\s*["']?)(\\*[^\s"',;\[/{\\][^\s"',;]*)`), "$1$2[redacted:credential]$5",
+		regexp.MustCompile(`(?i)\b([a-z0-9_-]*` + credentialWords + `[a-z0-9_-]*)((?:\\*["'])?\s*[=:]\s*(?:\\*["'])?)((?:[^\s"',;\[/{\\]|\\+[^"/\s\\\[{])(?:` + bodyRun(`',;`, `[^\s"\\:})\]',;]`) + `)*)(?:((?:\\\\)+)(["\s]))?`), 8},
 }
 
-// bodyRule is a shape rule's pattern over a JSON body. min, when set,
-// is the fewest bytes the value (its third group and fourth, an escaped
-// backslash it ends with) must hold, as written in the body, for the
-// match to be replaced: escape units cannot be counted by a pattern's
-// repetition, which counts \\e as one where the text rule counts \e
-// as two.
-type bodyRule struct {
-	re  *regexp.Regexp
-	min int
-}
-
-// replace is the rule over s with repl.
-func (b *bodyRule) replace(s, repl string) string {
-	if b.min == 0 {
-		return b.re.ReplaceAllString(s, repl)
+// replaceMin is re over s with repl, each match replaced only when its
+// value (the third group, through the fourth when it matched) holds at
+// least min bytes; every match when min is 0.
+func replaceMin(re *regexp.Regexp, s, repl string, min int) string {
+	if min == 0 {
+		return re.ReplaceAllString(s, repl)
 	}
 	var out []byte
 	at := 0
-	for _, m := range b.re.FindAllStringSubmatchIndex(s, -1) {
-		end := m[9] // the fourth group's end, or the third's
-		if end < 0 {
-			end = m[7]
+	for _, m := range re.FindAllStringSubmatchIndex(s, -1) {
+		end := m[7]
+		if len(m) > 9 && m[9] >= 0 {
+			end = m[9]
 		}
 		out = append(out, s[at:m[0]]...)
-		if end-m[6] < b.min {
+		if end-m[6] < min {
 			out = append(out, s[m[0]:m[1]]...)
 		} else {
-			out = b.re.ExpandString(out, repl, s, m)
+			out = re.ExpandString(out, repl, s, m)
 		}
 		at = m[1]
 	}
@@ -808,8 +806,11 @@ func (b *bodyRule) replace(s, repl string) string {
 const credentialWords = `(?:password|passwd|secret|api[_-]?key|access[_-]?token|private[_-]?key)`
 
 // bodyRun is a unit of a run a shape rule takes in a JSON body, up to
-// a space, a quote that ends it (one followed by any of afterQuote:
-// the , after a URL's string in the app's JSON), or one of stops: a character that is
+// a space, a quote that ends it (one not followed by afterQuote: for a
+// query a character but , or a : before a space, so that the , after
+// a URL's string in the app's JSON and the ": of Go's `Get "…": dial`
+// end it, and JSON inside the query does not; for a credential a
+// character but : } ) ] , ;), or one of stops: a character that is
 // none of them; a run of backslashes and the character after it (\\x,
 // \u0026, a level down \\\\x), which is never a quote, a space or
 // another backslash; or quotes, each escaped at any depth (an odd run
@@ -819,7 +820,7 @@ const credentialWords = `(?:password|passwd|secret|api[_-]?key|access[_-]?token|
 // never takes the backslash of a \" and leaves the quote to end the
 // string, which left the body unparsable and withheld whole.
 func bodyRun(stops, afterQuote string) string {
-	return `[^\s"\\` + stops + `]|\\+[^"\s\\]|(?:\\(?:\\\\)*")+(?:[^\s"\\:})\]` + afterQuote + `]|\\+u)`
+	return `[^\s"\\` + stops + `]|\\+[^"\s\\]|(?:\\(?:\\\\)*")+(?:` + afterQuote + `|\\+u)`
 }
 
 // basicCredentialRe finds "Basic <base64>"; the decode check is in
@@ -1031,11 +1032,11 @@ func (r *Redactor) protectSafe(s string) (string, func(string) string) {
 // heuristics is layers 3 and 4; inBody is whether s is a JSON body.
 func (r *Redactor) heuristics(s string, inBody bool) string {
 	for _, rule := range shapeRules {
+		re := rule.re
 		if inBody && rule.body != nil {
-			s = rule.body.replace(s, rule.repl)
-			continue
+			re = rule.body
 		}
-		s = rule.re.ReplaceAllString(s, rule.repl)
+		s = replaceMin(re, s, rule.repl, rule.min)
 	}
 	s = basicCredentialRe.ReplaceAllStringFunc(s, func(m string) string {
 		// Basic's credential is base64 of user:password, and is one at

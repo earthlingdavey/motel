@@ -155,6 +155,7 @@ func TestEscapePatternEdges(t *testing.T) {
 		{"Ruby's inspect", "Pa#@w0rd-x9", `x "Pa\#@w0rd-x9" y`, `x "[redacted:K]" y`},
 		{"a shell's printf %q", "Pa#$w0rd!x9 sp", `x Pa#\$w0rd\!x9\ sp y`, "x [redacted:K] y"},
 		{"UTF-8 bytes as Python's repr of bytes writes them", "p\u00e4ssw\u00f6rd-\u00f1-12", `x b'p\xc3\xa4ssw\xc3\xb6rd-\xc3\xb1-12' y`, "x b'[redacted:K]' y"},
+		{"a quote as \\U and eight digits", `p"w-12345`, `x p\U00000022w-12345 y`, "x [redacted:K] y"},
 		{"a rune as Ruby's \\u{}", "key-\U000E0001-river7", `x key-\u{E0001}-river7 y`, "x [redacted:K] y"},
 	} {
 		r := NewRedactor([]string{"K=" + tc.value}, nil)

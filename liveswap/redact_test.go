@@ -384,6 +384,8 @@ func TestShapesEndOnAnEscapesEdge(t *testing.T) {
 		{"an array of URLs", `["https://x.example/a?b=c","https://y.example/b","plain words here"]`, `["https://x.example/a?[redacted:query]","https://y.example/b","plain words here"]`},
 		// A marker layer 1 wrote is not a credential, behind a backslash too.
 		{"a marker behind a backslash", `password=\[redacted:K] end`, `password=\[redacted:K] end`},
+		// Nor a JSON value with its own quotes and colon.
+		{"JSON inside a query", `GET https://s3.example/a?q={"mode":"x"}&X-Amz-Signature=abc123def`, `GET https://s3.example/a?[redacted:query]`},
 		// Two quotes inside it neither.
 		{"two quotes inside a query", `GET https://s3.example/a?q=""&X-Amz-Signature=abc123def`, `GET https://s3.example/a?[redacted:query]`},
 		// A value is counted as the body holds it: backslashes count.
@@ -430,6 +432,7 @@ func TestShapesEndOnAnEscapesEdge(t *testing.T) {
 		{`password=\[redacted:K] end`, `password=\[redacted:K] end`},
 		{`password=\abcdefgh12 end`, `password=[redacted:credential] end`},
 		{`password=\hunter2 end`, `password=[redacted:credential] end`},
+		{`password=\\hunter next`, `password=[redacted:credential] next`},
 		{`password=hunter2 end`, `password=hunter2 end`},
 		{`--api-key=C:\keys\app.key`, `--api-key=[redacted:credential]`},
 		// A backslash in text is the text's own: a token after it is
