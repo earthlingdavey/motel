@@ -1,7 +1,8 @@
 // Fuzz target for the response filter: whatever an env_file value is,
 // and whatever surrounds it, none of the forms the filter promises to
-// catch (as written, JSON-escaped, base64, hex, URL-escaped) survives
-// in the output, and the key it belonged to is reported. The corpus
+// catch (as written, base64, hex, URL-escaped, and each in a backslash
+// escaping: JSON's, PHP's, .NET's, a quoting function's, twice over)
+// survives in the output, and the key it belonged to is reported. The corpus
 // test (TestRedactorCorpus) holds the other direction — what must
 // survive; this one holds only the leak side.
 package liveswap
@@ -10,10 +11,12 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"net/url"
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf16"
 	"unicode/utf8"
 )
 
@@ -51,6 +54,8 @@ func FuzzRedactor(f *testing.F) {
 			base64.RawStdEncoding.EncodeToString([]byte(value)), base64.URLEncoding.EncodeToString([]byte(value)),
 			base64.RawURLEncoding.EncodeToString([]byte(value)), hex.EncodeToString([]byte(value)),
 			url.QueryEscape(value), url.PathEscape(value)}
+		forms = append(forms, phpEscape(value), dotnetEscape(value), reprEscape(value),
+			string(mustQuote(t, string(mustQuote(t, value)))), phpEscape(phpEscape(value)))
 		for _, form := range forms {
 			// The one exemption is rule 3's: a value that is a word of
 			// the outcome vocabulary stands where the text makes it an
@@ -68,14 +73,10 @@ func FuzzRedactor(f *testing.F) {
 				t.Fatalf("form %q: keys = %v", form, keys)
 			}
 			// And through the JSON path, as a real body carries it — the
-			// value in a string, escaped once by the encoder: a valid body
-			// in, a valid body out, the form absent, the key reported,
-			// whether the body was filtered or withheld. A form the
-			// encoder would escape again (the JSON-escaped form itself)
-			// is an encoding outside the list and is not asserted.
-			if string(mustQuote(t, form)) != form && form != value {
-				continue
-			}
+			// text in a string, escaped once more by the encoder: a valid
+			// body in, a valid body out, the form absent in either
+			// spelling, the key reported, whether the body was filtered or
+			// withheld.
 			body, _ := json.Marshal(map[string]any{"error": prefix + form + suffix, "versions": []string{"x", "y"}, "status": "succeeded", "phase": "starting", "at": time.Unix(1_700_000_000, 0).UTC(), "count": 1700000000.25})
 			js := r.redactJSON(body)
 			if !json.Valid([]byte(js)) {
@@ -196,4 +197,61 @@ func FuzzHeuristicsKeepJSON(f *testing.F) {
 			t.Fatalf("a filter that knows no value withheld %q: %s", line, js)
 		}
 	})
+}
+
+// phpEscape is a value as PHP's json_encode writes it by default: / as
+// \/, every rune past ASCII as \uXXXX in lower case (a surrogate pair
+// above the BMP), and JSON's own escapes.
+func phpEscape(s string) string {
+	return escapeEach(s, func(c rune) bool { return c >= 0x80 }, "\\u%04x", map[rune]string{'/': `\/`})
+}
+
+// dotnetEscape is a value as .NET's System.Text.Json writes it by
+// default: < > & ' + ` " and every rune past ASCII as \uXXXX in upper
+// case.
+func dotnetEscape(s string) string {
+	return escapeEach(s, func(c rune) bool { return c >= 0x7f || strings.ContainsRune("<>&'+`\"", c) }, "\\u%04X", nil)
+}
+
+// reprEscape is a value as Python's repr and Node's util.inspect write
+// it in single quotes: ' and \ behind a backslash, a control character
+// as \xXX.
+func reprEscape(s string) string {
+	var b strings.Builder
+	for _, c := range s {
+		switch {
+		case c == '\'' || c == '\\':
+			b.WriteString(`\` + string(c))
+		case c < 0x20 || c == 0x7f:
+			fmt.Fprintf(&b, `\x%02x`, c)
+		default:
+			b.WriteRune(c)
+		}
+	}
+	return b.String()
+}
+
+// escapeEach writes s with " and \ escaped, a control character as
+// \u00XX, each rune esc says as format (two of them above the BMP), and
+// the runes of also as given.
+func escapeEach(s string, esc func(rune) bool, format string, also map[rune]string) string {
+	var b strings.Builder
+	for _, c := range s {
+		switch {
+		case also[c] != "":
+			b.WriteString(also[c])
+		case esc(c) && c >= 0x10000:
+			hi, lo := utf16.EncodeRune(c)
+			fmt.Fprintf(&b, format+format, hi, lo)
+		case esc(c):
+			fmt.Fprintf(&b, format, c)
+		case c == '"' || c == '\\':
+			b.WriteString(`\` + string(c))
+		case c < 0x20:
+			fmt.Fprintf(&b, `\u%04x`, c)
+		default:
+			b.WriteRune(c)
+		}
+	}
+	return b.String()
 }

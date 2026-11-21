@@ -211,9 +211,13 @@ Properties that matter to the model:
   withholds still ends the stream with them. First, exact: every `env_file`
   value of 8+ characters this process has rendered for a launch (or,
   after a restart, read from the file for the filter), in each form
-  the filter recognises (as written, JSON-escaped, base64 standard and
-  URL alphabets padded and not, hex, URL-escaped, and a URL value's
-  password on its own), becomes `[redacted:KEY]`, and the body gains
+  the filter recognises (as written, base64 standard and URL alphabets
+  padded and not, hex, URL-escaped, and a URL value's password on its
+  own), each also in any backslash escaping at any depth (JSON's as
+  every runtime measured writes it, a quoting function's, and either
+  escaped again, as a body holds an app's JSON line: 38 encoders of
+  seven runtimes, liveswap/testdata/escapes/), becomes
+  `[redacted:KEY]`, and the body gains
   `redacted_env` naming the keys. motel is the party that knows
   these values, which is why the filter lives here and not in CI,
   where `::add-mask::` can only hide what the job itself knows.
@@ -308,7 +312,14 @@ Properties that matter to the model:
   `env_file` cannot be read, its values are unknown to the filter and
   every body that holds anything of that app's is withheld rather than
   sent through the heuristics alone. What the filter does **not** promise: an encoding not in
-  the list, a value under 8 characters, a secret split across lines,
+  the list; a known value in an escape other than a backslash escape
+  (`\uXXXX` in either case, a surrogate pair, `\UXXXXXXXX`, `\xXX`,
+  `\b \t \n \f \r`, or the character itself behind any run of
+  backslashes, all read at any depth): an HTML entity (`&amp;`, an HTML
+  error page as a probe's body), a percent-escape other than Go's query
+  and path escaping (lower-case hex, Python's `quote` keeping `/`),
+  `\a \v \e` or octal; or an encoding of the escaped text (base64 of
+  a JSON line); a value under 8 characters, a secret split across lines,
   a secret the app fetched at runtime and printed in a low-entropy
   form, an inline `env` value (not a secret by policy: the Caddyfile
   is in a repo), or a value the still-running instance was launched

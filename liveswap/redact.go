@@ -11,6 +11,9 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
+	"unicode/utf16"
+	"unicode/utf8"
 
 	"github.com/smallhoursorg/motel/liveswap/wire"
 )
@@ -30,10 +33,13 @@ import (
 // Four layers, in order:
 //
 //  1. Known values: every env_file value of secretMinLen or more, in
-//     the forms it could appear in — as written, JSON-escaped, base64
-//     (standard and URL alphabets, padded and not), hex, URL-escaped —
-//     and, for a value that is a URL with a password, the password on
-//     its own in the same forms. Replaced with [redacted:KEY], but
+//     the forms it could appear in — as written, base64 (standard and
+//     URL alphabets, padded and not), hex, URL-escaped — and, for a
+//     value that is a URL with a password, the password on its own in
+//     the same forms; each form also in any backslash escaping, at any
+//     depth (escapePattern): JSON's as every runtime measured writes
+//     it, a quoting function's, and either escaped again, as a body
+//     holds an app's JSON line. Replaced with [redacted:KEY], but
 //     inside a body's times and numbers, which no layer sees (rule
 //     7). Inline
 //     `env` values are not secrets by policy (the Caddyfile is in a
@@ -62,10 +68,11 @@ import (
 // fragment this layer cannot match and no heuristic can see.
 //
 // Best effort past layer 1, and documented as such in
-// DESIGN-threat-model.md: an encoding not in the list, a value under
-// secretMinLen, a secret split across lines, and a short generated
-// token the length-aware bar still misses (about half at 20 to 22
-// characters), all pass.
+// DESIGN-threat-model.md: an encoding not in the list, an escape that
+// is not a backslash's (an HTML entity, a percent-escape other than
+// Go's, octal), a value under secretMinLen, a secret split across
+// lines, and a short generated token the length-aware bar still misses
+// (about half at 20 to 22 characters), all pass.
 //
 // Seven rules hold across the layers and every writer of a body, and
 // the code is judged against them, not the other way round:
@@ -271,6 +278,22 @@ type secretForm struct {
 	literal bool
 	keys    []string
 	marker  string
+	// pattern is the text in any backslash escaping (escapePattern), ""
+	// when the text holds no character an encoder escapes; anchor, the
+	// longest run of the others, is looked for before the pattern is
+	// run, and the pattern is compiled the first time it is (spelling):
+	// a filter is built for each request, and most of its patterns
+	// never meet their anchor.
+	pattern string
+	anchor  string
+	once    sync.Once
+	re      *regexp.Regexp
+}
+
+// spelling is the form's pattern, compiled.
+func (sf *secretForm) spelling() *regexp.Regexp {
+	sf.once.Do(func() { sf.re = regexp.MustCompile(sf.pattern) })
+	return sf.re
 }
 
 // NewRedactor takes env_file KEY=VALUE pairs and the strings that must
@@ -339,13 +362,14 @@ func NewRedactor(envFile []string, safe []string) *Redactor {
 			}
 		}
 	}
-	all := make([]string, 0, len(r.secrets))
 	for _, sf := range r.secrets {
-		all = append(all, sf.text)
+		if sf.outside == nil { // an outcome word holds no escapable character
+			sf.pattern, sf.anchor = escapePattern(sf.text)
+		}
 	}
 	for _, sf := range r.secrets {
 		sort.Strings(sf.keys)
-		sf.marker = chooseMarker(sf.keys, all)
+		sf.marker = chooseMarker(sf.keys, r.secrets)
 	}
 	sort.SliceStable(r.secrets, func(i, j int) bool { return len(r.secrets[i].text) > len(r.secrets[j].text) })
 	return r
@@ -361,14 +385,15 @@ func contains(list []string, s string) bool {
 }
 
 // chooseMarker is the replacement for the values of keys: the first
-// candidate that contains no known form of any value — not only this
-// key's, since another key's value ("redacted", say) can be a
+// candidate that contains no known form of any value, in any spelling
+// its pattern reads — not only this key's, since another key's value
+// ("redacted", say) can be a
 // substring of a marker and would then be put back by a later
 // replacement. The named candidates come first; when every one of
 // them contains a form (a key named for its own value), the marker is
 // a number in brackets, which at under 8 characters can contain no
 // form at all.
-func chooseMarker(keys []string, all []string) string {
+func chooseMarker(keys []string, all []*secretForm) string {
 	label := strings.Join(keys, ",")
 	candidates := []string{
 		"[redacted:" + label + "]",
@@ -384,8 +409,11 @@ func chooseMarker(keys []string, all []string) string {
 			c = "[#" + strconv.Itoa(n-len(candidates)) + "]"
 		}
 		clean := true
+		// A spelling other than the text holds a backslash, and a
+		// marker holds one only if a key's name does.
+		escaped := strings.Contains(c, `\`)
 		for _, f := range all {
-			if strings.Contains(c, f) {
+			if strings.Contains(c, f.text) || escaped && f.at(c, 0) >= 0 {
 				clean = false
 				break
 			}
@@ -451,14 +479,14 @@ func urlPasswords(v string) []string {
 	return pws
 }
 
-// secretForms is every encoding of a value the filter recognises.
+// secretForms is every encoding of a value the filter recognises, each
+// also in any backslash escaping (escapePattern): JSON's, as
+// encoding/json writes the value and as every runtime measured does
+// (PHP's \/, Python's and .NET's \uXXXX), a quoting function's (\xXX,
+// \'), and either of those escaped again (an app's JSON line in a body,
+// a JSON message inside a JSON log line).
 func secretForms(v string) []string {
 	forms := []string{v}
-	if j, err := json.Marshal(v); err == nil {
-		if s := string(j[1 : len(j)-1]); s != v {
-			forms = append(forms, s)
-		}
-	}
 	b := []byte(v)
 	forms = append(forms,
 		base64.StdEncoding.EncodeToString(b),
@@ -474,6 +502,118 @@ func secretForms(v string) []string {
 		forms = append(forms, p)
 	}
 	return forms
+}
+
+// escapable is whether some encoder writes c as an escape: JSON's quote
+// and backslash, and every character one of the runtimes measured
+// escapes by default (measured: testdata/escapes/runtime-escapes.tsv):
+// PHP's /, Go's and Gson's < > &, Gson's = and ', .NET's + and `, the
+// control characters, DEL, and every rune past ASCII.
+func escapable(c rune) bool {
+	switch c {
+	case '"', '\\', '/', '\'', '<', '>', '&', '=', '+', '`':
+		return true
+	}
+	return c < 0x20 || c == 0x7f || c >= 0x80
+}
+
+// escapeAnchorMin is the shortest anchor worth looking for before a
+// pattern is run; a form with a shorter one runs its pattern always.
+const escapeAnchorMin = 4
+
+// shortEscapes are the one-letter escapes JSON writes.
+var shortEscapes = map[rune]byte{'\b': 'b', '\t': 't', '\n': 'n', '\f': 'f', '\r': 'r'}
+
+// escapePattern is form as a pattern that reads it in any backslash
+// escaping, and its anchor: each escapable character stands for itself
+// behind any run of backslashes, or behind one or more for \uXXXX in
+// either case (a surrogate pair above the BMP, or \UXXXXXXXX), \xXX, or
+// its short escape; the other characters stand for themselves. A
+// backslash is read as pairs first, so a run of them before an escaped
+// quote leaves the quote its own. Mixed escaping (one / escaped and the
+// next not), either case and any depth are read alike. "" for a form
+// with no escapable character: the plain text is its only spelling.
+// Every piece is quoted, so the pattern always compiles; Go's regexp
+// reads a byte that is not UTF-8 as U+FFFD, which is how such a byte
+// of the form is written here.
+func escapePattern(form string) (string, string) {
+	if strings.IndexFunc(form, escapable) < 0 {
+		return "", form
+	}
+	var b strings.Builder
+	anchor, run := "", 0
+	for i, c := range form {
+		if !escapable(c) {
+			if run++; run > len(anchor) {
+				anchor = form[i-run+1 : i+1]
+			}
+			b.WriteString(regexp.QuoteMeta(form[i : i+utf8.RuneLen(c)]))
+			continue
+		}
+		run = 0
+		b.WriteString(`(?:`)
+		if c == '\\' {
+			b.WriteString(`(?:\\\\)+|\\`)
+		} else {
+			b.WriteString(`\\*`)
+			b.WriteString(regexp.QuoteMeta(string(c)))
+		}
+		if c < 0x10000 {
+			b.WriteString(`|\\+u`)
+			writeHexAnyCase(&b, c, 4)
+		} else {
+			hi, lo := utf16.EncodeRune(c)
+			b.WriteString(`|\\+u`)
+			writeHexAnyCase(&b, hi, 4)
+			b.WriteString(`\\+u`)
+			writeHexAnyCase(&b, lo, 4)
+			b.WriteString(`|\\+U`)
+			writeHexAnyCase(&b, c, 8)
+		}
+		if c < 0x100 {
+			b.WriteString(`|\\+x`)
+			writeHexAnyCase(&b, c, 2)
+		}
+		if e, ok := shortEscapes[c]; ok {
+			b.WriteString(`|\\+`)
+			b.WriteByte(e)
+		}
+		b.WriteString(`)`)
+	}
+	return b.String(), anchor
+}
+
+// writeHexAnyCase writes n as digits hex digits, each letter in either
+// case.
+func writeHexAnyCase(b *strings.Builder, n rune, digits int) {
+	const lower, upper = "0123456789abcdef", "0123456789ABCDEF"
+	for shift := 4 * (digits - 1); shift >= 0; shift -= 4 {
+		d := (n >> shift) & 0xf
+		if d < 10 {
+			b.WriteByte(lower[d])
+		} else {
+			b.WriteString("[" + lower[d:d+1] + upper[d:d+1] + "]")
+		}
+	}
+}
+
+// at is where the first spelling of the form in s at or after from
+// begins, and -1 if none: the text, or for a form with a pattern, a
+// match of it once its anchor is in s.
+func (sf *secretForm) at(s string, from int) int {
+	if sf.pattern == "" {
+		if i := strings.Index(s[from:], sf.text); i >= 0 {
+			return from + i
+		}
+		return -1
+	}
+	if len(sf.anchor) >= escapeAnchorMin && !strings.Contains(s[from:], sf.anchor) {
+		return -1
+	}
+	if loc := sf.spelling().FindStringIndex(s[from:]); loc != nil {
+		return from + loc[0]
+	}
+	return -1
 }
 
 // shapeRules are the recognisable credential forms. Each replacement
@@ -544,15 +684,18 @@ var entropyTokenRe = regexp.MustCompile(`[A-Za-z0-9+=_-]{20,}`)
 // marker, and the keys found added to seen. A form that is a bare
 // word of the outcome vocabulary is replaced everywhere but where it
 // stands as an outcome (rule 3), and in a JSON body (inBody) the
-// app's own name everywhere but its "app" pair (rule 5). Markers
-// contain no form, so a second pass over its own output changes
-// nothing.
+// app's own name everywhere but its "app" pair (rule 5). A form with
+// a pattern (escapePattern) is replaced in every spelling it matches.
+// Markers contain no form, but a marker and the text beside it can
+// make one a pass had looked for already, which is why the final pass
+// must hold still (finalPass).
 func (r *Redactor) replaceKnown(s string, seen map[string]bool, inBody bool) string {
 	if r == nil {
 		return s
 	}
 	for _, sec := range r.secrets {
-		if !strings.Contains(s, sec.text) {
+		i := sec.at(s, 0)
+		if i < 0 {
 			continue
 		}
 		found := true
@@ -560,9 +703,13 @@ func (r *Redactor) replaceKnown(s string, seen map[string]bool, inBody bool) str
 		if inBody && sec.inBody != nil {
 			pattern = sec.inBody
 		}
-		if pattern == nil {
+		switch {
+		case pattern == nil && sec.pattern != "":
+			// From the first match: the part before it holds none.
+			s = s[:i] + sec.spelling().ReplaceAllLiteralString(s[i:], sec.marker)
+		case pattern == nil:
 			s = strings.ReplaceAll(s, sec.text, sec.marker)
-		} else {
+		default:
 			found = false
 			s = pattern.ReplaceAllStringFunc(s, func(m string) string {
 				if m[0] == '"' { // the pair, left as it is
@@ -854,7 +1001,7 @@ func (r *Redactor) holdOwnName(name string) {
 // numbers (rule 7), are the texts the strict property (FuzzRedactor) does not
 // cover.
 //
-// Layer 1 is a plain substring replacement, so a value made of JSON's
+// Layer 1 replaces a form wherever it stands, so a value made of JSON's
 // own punctuation could match across a string's delimiters and leave
 // the body unparsable; that body is withheld rather than sent, with
 // the keys still reported. A filter whose env_file could not be read
@@ -1135,12 +1282,15 @@ func (r *Redactor) putBack(out string, held []heldToken, replaced map[string]boo
 		// one it can begin in or before, and the spans it can reach
 		// follow it.
 		first := 0
-		for from := 0; ; {
-			i := strings.Index(s[from:], sec.text)
-			if i < 0 {
+		for from := 0; from <= len(s); {
+			start := sec.at(s, from)
+			if start < 0 {
 				break
 			}
-			start, end := from+i, from+i+len(sec.text)
+			end := start + len(sec.text)
+			if sec.pattern != "" {
+				end = start + sec.spelling().FindStringIndex(s[start:])[1]
+			}
 			for first < len(spans) && spans[first].hi <= start {
 				first++
 			}
